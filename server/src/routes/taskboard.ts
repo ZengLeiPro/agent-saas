@@ -55,6 +55,11 @@ const integrationPolicySchema = z.object({
   schemaVersion: z.literal(1),
   enabled: z.boolean(),
   revision: z.string().trim().max(128).default('server'),
+  workflowVersion: z.union([z.literal(2), z.literal(3)]).optional(),
+  featureFlags: z.object({
+    engineV3: z.boolean(), compose: z.boolean(), review: z.boolean(), merge: z.boolean(),
+    cleanup: z.boolean(), workspaceSync: z.boolean(),
+  }).strict().optional(),
   trigger: integrationTriggerSchema,
   batch: z.object({
     maxTasks: z.number().int().min(1).max(100),
@@ -214,6 +219,10 @@ const memberPatchSchema = z.object({
   role: z.enum(['viewer', 'editor', 'maintainer'] as const),
 }).strict();
 
+const integrationCandidateRequeueSchema = z.object({
+  reason: z.string().trim().min(3).max(1000),
+}).strict();
+
 const integrationBatchSchema = z.object({
   deliveryTaskIds: z.array(z.string().trim().min(1).max(128)).min(1).max(100),
   expectedBoardVersion: z.number().int().min(1),
@@ -246,6 +255,10 @@ const pageQueryFields = {
 };
 
 const paginationQuerySchema = z.object(pageQueryFields).strict();
+const integrationCandidateQuerySchema = z.object({
+  includeHistory: booleanQuerySchema(),
+  ...pageQueryFields,
+}).strict();
 
 const boardsQuerySchema = z.object({
   includeArchived: booleanQuerySchema(),
@@ -292,6 +305,12 @@ export interface TaskboardRouterOptions {
   /** 将上传暂存附件解析为当前用户工作区中的可信附件。 */
   agentCwd?: string;
   uploadManager?: UploadManager;
+  /** Maintainer-only, audited operator recovery for a permanently failed v3 candidate worker. */
+  requeueIntegrationV3Candidate?: (input: {
+    identity: TaskboardIdentity;
+    taskId: string;
+    reason: string;
+  }) => Promise<{ candidateId: string; taskId: string; previousError: string; status: 'idle' } | undefined>;
 }
 
 export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
@@ -369,9 +388,7 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   }));
 
   router.post('/boards/:id/integrations', route(async (req, res) => {
-    if (!options.service!.createIntegrationBatch || !options.executionService) {
-      throw new TaskboardExecutionUnavailableError();
-    }
+    if (!options.service!.createIntegrationBatch) throw new TaskboardExecutionUnavailableError();
     const input = parseOrReply(integrationBatchSchema, req.body, res, 'body');
     if (!input) return;
     const identity = identityFrom(req);
@@ -381,6 +398,13 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       input,
       'manual_batch',
     );
+    // Workflow v3 is driven exclusively by its durable candidate worker. Starting the legacy
+    // merge Agent here creates a second writer for the same manually-created batch.
+    if (task.workflowVersion === 3) {
+      res.status(202).json({ task });
+      return;
+    }
+    if (!options.executionService) throw new TaskboardExecutionUnavailableError();
     res.status(202).json(await options.executionService.startExecution(identity, task.id, {
       expectedVersion: task.version,
       purpose: 'merge',
@@ -610,6 +634,33 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   router.get('/tasks/:id/integration-sources', route(async (req, res) => {
     if (!options.service!.listIntegrationSources) throw new TaskboardExecutionUnavailableError();
     res.json(await options.service!.listIntegrationSources(identityFrom(req), req.params.id));
+  }));
+
+  router.get('/tasks/:id/integration-candidate', route(async (req, res) => {
+    if (!options.service!.getIntegrationCandidate) throw new TaskboardExecutionUnavailableError();
+    const query = parseOrReply(integrationCandidateQuerySchema, req.query, res, 'query');
+    if (!query) return;
+    res.json(await options.service!.getIntegrationCandidate(identityFrom(req), req.params.id, query));
+  }));
+
+  router.post('/tasks/:id/integration-candidate/requeue', route(async (req, res) => {
+    if (!options.requeueIntegrationV3Candidate) throw new TaskboardExecutionUnavailableError();
+    const input = parseOrReply(integrationCandidateRequeueSchema, req.body, res, 'body');
+    if (!input) return;
+    const identity = identityFrom(req);
+    const task = await options.service!.getTask(identity, req.params.id);
+    const board = await options.service!.getBoard(identity, task.boardId);
+    if (task.kind !== 'integration' || task.workflowVersion !== 3) {
+      throw new TaskboardValidationError('Task is not a Workflow v3 integration', 'TASKBOARD_CANDIDATE_WORKFLOW_VERSION_REQUIRED');
+    }
+    if (board.role !== 'maintainer' && board.role !== 'owner' && !board.canManage) {
+      throw new TaskboardPermissionError();
+    }
+    const result = await options.requeueIntegrationV3Candidate({ identity, taskId: task.id, reason: input.reason });
+    if (!result) {
+      throw new TaskboardValidationError('Candidate worker is not permanently failed or is no longer requeueable', 'TASKBOARD_CANDIDATE_REQUEUE_NOT_ALLOWED');
+    }
+    res.status(202).json(result);
   }));
 
   router.get('/tasks/:id/comments', route(async (req, res) => {

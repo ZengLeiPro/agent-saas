@@ -36,7 +36,10 @@ import { MemoryConsolidationEngine } from '../memory/consolidation/engine.js';
 import { TaskboardExecutionCoordinator, createTaskboardAttachmentAccess, createTaskboardRuntimeOptions } from '../taskboard/executionService.js';
 import { RetryableTaskboardService } from '../taskboard/retryableService.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
-import { configureTaskboardGithubRepositoryProvider } from '../taskboard/repositoryRuntime.js';
+import { configureTaskboardGithubRepositoryProvider, createIntegrationV3GithubAppRepositoryProvider } from '../taskboard/repositoryRuntime.js';
+import { buildRuntimeTaskboardIntegrationV3Options, startRuntimeTaskboardIntegrationV3, type RuntimeTaskboardIntegrationV3 } from './runtimeTaskboardIntegrationV3.js';
+import { createRuntimeIntegrationV3HealthProvider } from '../taskboard/integrationV3Observability.js';
+import { createIntegrationV3RequeueHandler } from '../taskboard/integrationV3Repair.js';
 import type { TaskboardService } from '../taskboard/types.js';
 import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import { MEMORY_CONSOLIDATION_DEFAULTS, type MemoryConsolidationResolvedConfig } from '../memory/consolidation/types.js';
@@ -140,8 +143,14 @@ import { GroupStore } from '../data/groups/store.js';
 import { SkillConfigStore, migrateFromManifest } from '../data/skills/index.js';
 import { GoogleWorkspaceOAuthService } from '../connectors/googleWorkspace.js';
 import { connectNotionCredential } from '../connectors/notion.js';
-import { scanPoolSkills as scanPoolSkillsForDispatch, scanTenantOwnSkillIds, scanUserCustomSkills } from '../data/skills/scanner.js';
+import {
+  scanPoolSkills as scanPoolSkillsForDispatch,
+  scanTenantOwnSkillIds,
+  scanUserCustomSkills,
+} from '../data/skills/scanner.js';
 import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
+import { resolveUserPersonalSkillIds as resolvePersonalSkillIds } from '../workspace/materialization/managedTenantSkills.js';
+import { createSkillDispatchState } from './skillDispatchState.js';
 import { resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import { agentDir, resolveAgentPath } from '../workspace/namespace.js';
 import { CronLeadership } from '../runtime/cronLeadership.js';
@@ -439,7 +448,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const skillsWarmup: SkillsWarmupStatus = { state: 'pending' };
   let skillMaterializationService: SkillMaterializationService | undefined;
   let skillMaterializationLeadership: CronLeadership | undefined;
-
   // Skills config store
   let skillConfigStore: SkillConfigStore | undefined;
   if (userStore) {
@@ -614,7 +622,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let appealStore: PgAppealStore | undefined;
   let taskboardService: TaskboardService | undefined;
   let taskboardStoreService: RetryableTaskboardService | undefined;
-  let taskboardExecutionCoordinator: TaskboardExecutionCoordinator | undefined;
+  let rawTaskboardStore: PgTaskboardStore | undefined, taskboardExecutionCoordinator: TaskboardExecutionCoordinator | undefined, integrationV3Runtime: RuntimeTaskboardIntegrationV3 | undefined, taskboardRepositoryProvider: ReturnType<typeof configureTaskboardGithubRepositoryProvider>, integrationV3RepositoryProvider: ReturnType<typeof createIntegrationV3GithubAppRepositoryProvider> | undefined;
   let pgArtifactStore: PgArtifactStore | undefined;
   let systemMetricsStore: PgSystemMetricsStore | undefined;
   let systemMetricsCollector: SystemMetricsCollector | undefined;
@@ -701,7 +709,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     resolvedClientDaemonAuthToken,
     resolvedFeishuConnector,
     feishuConnectorScopes,
-  } = await initializeRuntimeGovernanceCredentials(config, processCwd);
+  } = await initializeRuntimeGovernanceCredentials(config, processCwd); const integrationV3Adapters = (await import('./runtimeIntegrationV3ProductionAdapters.js')).resolveProductionIntegrationV3Adapters({ config, secretVault, ...options });
   // P4 防御纵深（2026-06-22 落地，06-26 收敛 admin 容器 env）：把按 tenant 装配子进程 env 的规则统一塞进
   // ServerLocal / Container 两条路径。buildTenantScopedEnv 会按 workspace.tenantId
   // 决定是"匿名内部调用保留完整 process.env"还是"明确 tenant 先剔除敏感宿主
@@ -774,6 +782,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         pool: pgEventStore.pool,
         tablePrefix: config.runtimeEventStore.tablePrefix,
       });
+      rawTaskboardStore = store;
       const retryableService = new RetryableTaskboardService(store);
       taskboardService = retryableService;
       taskboardStoreService = retryableService;
@@ -1154,6 +1163,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const runtimeEventStoreFor: (transcriptPath: string) => EventStore = pgEventStore
     ? (_transcriptPath) => pgEventStore!  // PG backend：共享 pool，按 session_id 过滤
     : (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath));
+  const resolveTenantSkillHistoricalProvenance = (tenantId: string) => skillGovernanceStore?.listTenantSkillHistoricalProvenance(tenantId) ?? Promise.resolve(new Map());
+  const resolveUserPersonalSkillIds = (user: { id: string; tenantId?: string }) => resolvePersonalSkillIds(user, skillGovernanceStore);
 
   if (skillConfigStore && userStore) {
     const materializationStore = pgEventStore
@@ -1179,6 +1190,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           ))
           .flatMap((agent) => agent.allowedSkills);
       },
+      resolveTenantSkillHistoricalProvenance,
+      resolveUserPersonalSkillIds, resolveUserPersonalSkillOwnership: skillGovernanceStore?.resolveUserPersonalSkillOwnership?.bind(skillGovernanceStore),
     });
     skillMaterializationService = new SkillMaterializationService({
       store: materializationStore,
@@ -1358,41 +1371,33 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
     await sessionLock.init();
   }
-
-  // Skills wiring：把 SkillConfigStore + sharedDir 缝成 raw runtime 的 SkillsDispatchConfig，
-  // 让 dispatch 不直接依赖 store 实现。
-  // δ: listForUser 加 configVersion-aware cache（pool 不变就复用扫描结果，避免
-  //    每次 dispatch readdirSync）；resolveSkillDir 加 safeName 防 path traversal。
   const skillsDispatchConfig: SkillsDispatchConfig | undefined = (() => {
     if (!skillConfigStore) return undefined;
     const store = skillConfigStore; // 闭包稳定捕获
     const poolDir = resolveAgentPath(sharedDir, 'skills-pool');
-    let cache: { version: number; entries: { id: string; name: string; description: string }[] } | null = null;
-    function getAllPoolEntries() {
-      const currentVersion = store.getConfigVersion();
-      if (cache && cache.version === currentVersion) return cache.entries;
-      const scanned = scanPoolSkillsForDispatch(poolDir).map((s) => ({
-        id: s.id,
-        // 保留 frontmatter name 字段（若无 fallback 到 id）
-        name: (s as { name?: string }).name || s.id,
-        description: s.description ?? '',
-      }));
-      cache = { version: currentVersion, entries: scanned };
-      return scanned;
-    }
+    const skillDispatchState = createSkillDispatchState({
+      findUser: (username) => userStore?.findByUsername(username),
+      agentCwd,
+      tenantsRootDir: tenantSkillsRootDir,
+      getConfigVersion: () => store.getConfigVersion(),
+      scanPoolSkills: () => scanPoolSkillsForDispatch(poolDir),
+      resolveTenantSkillHistoricalProvenance,
+      resolveUserPersonalSkillIds, resolveUserPersonalSkillOwnership: skillGovernanceStore?.resolveUserPersonalSkillOwnership?.bind(skillGovernanceStore),
+    });
     return {
-      ensureReady(username: string | undefined, requiredSkillIds: readonly string[] = []): Promise<void> {
+      async ensureReady(username: string | undefined, requiredSkillIds: readonly string[] = []): Promise<void> {
         // ws-only 负责 Skill/User 管理接口，runtime-worker 负责会话执行；两者各自持有
         // 文件 store 的内存副本。每次 dispatch 在物化与清单计算前重载共享配置，
         // 否则用户刚导入并启用的自建 skill 要等 runtime-worker 重启后才会生效。
         store.reload();
         userStore?.reload();
-        return skillMaterializationService?.ensureReady(username, requiredSkillIds, 'dispatch')
-          ?? Promise.resolve();
+        await (skillMaterializationService?.ensureReady(username, requiredSkillIds, 'dispatch')
+          ?? Promise.resolve());
+        await skillDispatchState.refresh(username);
       },
       listForUser(username: string | undefined, requiredSkillIds: readonly string[] = []): SkillEntry[] {
         if (!username) return [];
-        const all = getAllPoolEntries();
+        const all = skillDispatchState.getAllPoolEntries();
         const user = userStore?.findByUsername(username);
         const tenantId = user?.tenantId;
         const effective = new Set([
@@ -1401,10 +1406,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         ]);
         const poolResult = all.filter((s) => effective.has(s.id));
 
-        // 追加用户自建 skill：与前端 SkillSelector「自建」tab 同源。
-        // 早期 dispatch 只列 pool skill，自建 skill 上传后模型看不到、也调不到（invoke
-        // 前 allowed 校验会拒）；2026-07-03 起改为按 selection 暴露给模型，前端 Switch
-        // 可开关且真实生效。物理路径由 resolveSkillDir 优先命中 user workspace 副本。
+        // 按 selection 暴露用户自建 skill，路径由 resolveSkillDir 优先命中 workspace 副本。
         if (!user) return poolResult;
         try {
           const userCwd = resolveUserCwd(agentCwd, {
@@ -1417,6 +1419,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           const poolIds = new Set(all.map((s) => s.id));
           const tenantSkillsDir = user.tenantId ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, user.tenantId) : null;
           const tenantOwnIds = tenantSkillsDir ? scanTenantOwnSkillIds(tenantSkillsDir, poolIds) : new Set<string>();
+          const managedTenantIds = skillDispatchState.getManagedTenantIds(username);
           const effectiveTenantOwn = new Set(
             [
               ...store.getUserEffectiveTenantOwnSkills(username, user.tenantId, tenantOwnIds),
@@ -1433,7 +1436,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
               }))
             : [];
           const selected = new Set(store.getUserSelectedSkills(username));
-          const customExcluded = new Set([...poolIds, ...tenantOwnIds]);
+          const customExcluded = new Set([...poolIds, ...tenantOwnIds, ...managedTenantIds]);
           const customResult = scanUserCustomSkills(userSkillsDir, customExcluded)
             .filter((s) => selected.has(s.id))
             .map((s) => ({
@@ -1510,11 +1513,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   });
   googleWorkspaceOAuthService = initializedGoogleWorkspaceOAuthService;
   credentialBroker = initializedCredentialBroker;
-  configureTaskboardGithubRepositoryProvider(taskboardStoreService, userStore, {
+  taskboardRepositoryProvider = configureTaskboardGithubRepositoryProvider(taskboardStoreService, userStore, {
     connectionStore: connectorConnectionStore,
     vault: secretVault,
     onError: (error) => serverLogger.warn(`Taskboard GitHub credential resolve failed: ${error.message}`),
   });
+  if (config.integrationV3ControlPlane?.enabled === true && integrationV3Adapters.githubAppInstallationTokenProvider) integrationV3RepositoryProvider = createIntegrationV3GithubAppRepositoryProvider({ tokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, installationId: config.integrationV3ControlPlane.githubAppInstallationId });
   const initialMemoryIndexService = createMemoryIndexService(
     processCwd,
     config.memory?.index,
@@ -1898,7 +1902,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     } else if (config.memory) {
       delete config.memory.index;
     }
-
     const previous = memoryIndexServiceRef.current;
     const next = createMemoryIndexService(
       processCwd,
@@ -2064,18 +2067,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       logger: serverLogger.child('RuntimeScheduler'),
     });
     if (taskboardStoreService && defaultModelResolver) {
-      taskboardExecutionCoordinator = new TaskboardExecutionCoordinator({
-        store: taskboardStoreService,
-        scheduler: runtimeScheduler,
-        runStore: pgRunStore,
-        sessionCatalog,
-        eventStore: pgEventStore,
-        agentCwd,
-        executionConfig,
-        resolveDefaultModel: defaultModelResolver, ...createTaskboardRuntimeOptions({ modelResolver, userStore, timezone: config.server.timezone, logger: serverLogger, eventStore: pgEventStore, groupTaskboardSession: (input) => groupStore.addTaskboardSession(input), onSessionsChanged: clearSessionsListCache }),
-        logger: serverLogger.child('TaskboardExecution'),
-      });
+      taskboardExecutionCoordinator = new TaskboardExecutionCoordinator({ store: taskboardStoreService, scheduler: runtimeScheduler, runStore: pgRunStore, sessionCatalog,
+        eventStore: pgEventStore, agentCwd, executionConfig, resolveDefaultModel: defaultModelResolver,
+        ...createTaskboardRuntimeOptions({ modelResolver, userStore, timezone: config.server.timezone, logger: serverLogger, eventStore: pgEventStore, groupTaskboardSession: (input) => groupStore.addTaskboardSession(input), onSessionsChanged: clearSessionsListCache }),
+        logger: serverLogger.child('TaskboardExecution') });
     }
+    if (enableSingletonWorkers && rawTaskboardStore && taskboardExecutionCoordinator && config.integrationV3ControlPlane?.enabled === true && integrationV3RepositoryProvider)
+      integrationV3Runtime = startRuntimeTaskboardIntegrationV3(buildRuntimeTaskboardIntegrationV3Options({ store: rawTaskboardStore, executionCoordinator: taskboardExecutionCoordinator, repositoryProvider: integrationV3RepositoryProvider, processCwd, agentCwd, processRole: processRole === 'all' ? 'all' : 'runtime-worker', releaseIdentity: skillSourceRevision, runtimeIsolationAttestationProvider: integrationV3Adapters.runtimeIsolationAttestationProvider, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, control: config.integrationV3ControlPlane }));
     const getRuntimeSchedulerCapacitySnapshot = async () => {
       const persisted = await runtimeSchedulerConfigStore!.get();
       const effective = effectiveMaxConcurrentRuns(
@@ -2411,7 +2409,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // CronList/CronManage 内置工具接线：dispatch 构造早于 cronRuntime，
   // config 传的是惰性 getter（与 updateToolSettingsConfig 热改同模式）。
   rawRuntimeConfig.cronService = () => cronRuntime.service ?? undefined;
-
   // ── Cron leader 协调器（2026-07-15 零停机部署批次）─────────────────
   // 蓝绿部署下新旧实例短暂并存：cron 调度（含 memory_poll reconcile）必须
   // 单实例运行，否则同一任务双触发（双 run / 双扣费 / 双通知）。
@@ -2590,6 +2587,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const beginRuntimeDrain = async (): Promise<void> => {
     if (runtimeDrainStarted) return;
     runtimeDrainStarted = true;
+    await integrationV3Runtime?.stop();
     tenantLifecycleWatcher?.stop();
     memoryPollLeadershipGeneration += 1;
     // 1. 停止定时采样并取消在途 du。否则旧 Worker 在等待 run 安全交棒时仍会
@@ -2694,6 +2692,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     executionConfig,
     runtimeEventStoreFor,
     runtimeEventStoreSupportsPathless: Boolean(pgEventStore),
+    memoryWriteDelegationEnabled: (tenantId) => tenantId
+      ? getTenantMemoryFeatureStatus(tenantId).memoryWriteDelegationEnabled.effective
+      : false,
     ...(runtimeScheduler && pgRunStore ? {
       enqueueRuntime: {
         scheduler: runtimeScheduler,
@@ -3085,6 +3086,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     appealStore,
     taskboardService,
     taskboardExecutionService: taskboardExecutionCoordinator,
+    integrationV3WorkerShutdown: integrationV3Runtime ? () => integrationV3Runtime.stop() : undefined,
+    getIntegrationV3Health: createRuntimeIntegrationV3HealthProvider(config.integrationV3ControlPlane?.enabled === true, rawTaskboardStore, () => integrationV3Runtime?.health(), processRole),
+    requeueIntegrationV3Candidate: rawTaskboardStore ? createIntegrationV3RequeueHandler(rawTaskboardStore) : undefined,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },
     agentOptionsConfig,
@@ -3094,20 +3098,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     governanceAuditStore,
     membershipStore,
     entitlementStore,
-    directoryGroupStore, oauthGrantStore, assignmentStore,
-    credentialStore,
-    connectorCatalogStore,
+    directoryGroupStore,
+    oauthGrantStore,
+    assignmentStore,
+    credentialStore, connectorCatalogStore,
     environmentStore,
     agentResourceStore,
     skillGovernanceStore,
-    governanceChangeJobStore,
-    governanceChangePlanner,
-    governanceMigrationControlStore,
-    governanceWriteGate,
-    governanceShadowComparator,
-    contentAccessGrantStore,
-    governanceProjectionOutboxStore,
-    governanceProjectionReconciler,
+    governanceChangeJobStore, governanceChangePlanner, governanceMigrationControlStore,
+    governanceWriteGate, governanceShadowComparator, contentAccessGrantStore,
+    governanceProjectionOutboxStore, governanceProjectionReconciler,
     resourceReferenceStore,
     credentialBroker,
     flushGovernanceShadowProjections,

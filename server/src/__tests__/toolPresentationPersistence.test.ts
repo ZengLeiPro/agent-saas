@@ -78,6 +78,15 @@ describe('工具摘要持久化闭环', () => {
     });
   });
 
+  it('tool_use 解析保留所属 runId，刷新后业务计划仍能跨 user prompt 续接', async () => {
+    const projection = new LegacyTranscriptProjection(transcriptPath);
+    await projection.project(toolCallEvent());
+
+    const parsed = await parseTranscriptFile(transcriptPath);
+    const toolUse = parsed.blocks.find((block) => block.kind === 'tool_use');
+    expect(toolUse).toMatchObject({ toolName: 'Read', runId: 'run-1' });
+  });
+
   it('摘要不写进 raw——raw 的语义是「给模型看的原始 payload」', async () => {
     const projection = new LegacyTranscriptProjection(transcriptPath);
     await projection.project(toolCallEvent());

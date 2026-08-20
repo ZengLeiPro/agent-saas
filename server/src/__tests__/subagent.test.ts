@@ -66,6 +66,7 @@ async function makeFixture(options: {
   cleanupDirs: Set<string>;
   billingService?: BillingService;
   modelResolver?: RawRuntimeRunDispatchConfig['modelResolver'];
+  parentMemoryPolicyVersion?: 'v1' | 'v2';
 } = { cleanupDirs: new Set() }): Promise<SubagentFixture> {
   const tmp = await mkdtemp(join(tmpdir(), 'subagent-'));
   options.cleanupDirs.add(tmp);
@@ -112,6 +113,7 @@ async function makeFixture(options: {
     modelRef: 'mock/group-model',
     executionTarget: 'server-local',
     status: 'running',
+    ...(options.parentMemoryPolicyVersion ? { memoryPolicyVersion: options.parentMemoryPolicyVersion } : {}),
   });
   // transcript 落在真实 legacy-transcripts 根下（getTranscriptPath 行为），tenant 目录随测试清理
   options.cleanupDirs.add(dirname(dirname(parentRecord.transcriptPath)));
@@ -488,6 +490,39 @@ describe('runSubagent', () => {
     ]) {
       expect(toolNames).not.toContain(denied);
     }
+  });
+
+  it('v2 父会话派生的子 Agent 继承记忆只读边界', async () => {
+    const fixture = await makeFixture({ cleanupDirs, parentMemoryPolicyVersion: 'v2' });
+    const adapter = new TextOnlyAdapter();
+    const memoryProvider: ToolProvider = {
+      list: () => ['MemoryCommand', 'MemoryCommit'].map((name) => ({
+        id: name,
+        name,
+        displayName: name,
+        description: 'x',
+        schema: z.object({}),
+        risk: 'safe' as const,
+        approvalMode: 'never' as const,
+        auditCategory: 'test',
+      })),
+      invoke: async () => undefined,
+    };
+    const outcome = await runSubagent({
+      ...runnerDeps(fixture),
+      parentProviders: [createBuiltinTools(), memoryProvider],
+      agentType: SUBAGENT_TYPES.general,
+      request: { description: 't', prompt: 'p', includeCompanyInfo: false },
+      limiter: new SubagentLimiter(),
+      modelAdapterFactory: () => adapter,
+    });
+    await expect(fixture.config.sessionCatalog!.get(outcome.childSessionId)).resolves.toMatchObject({
+      memoryPolicyVersion: 'v2',
+      memoryAutomationEligible: false,
+    });
+    const toolNames = adapter.requests[0]!.tools.map((tool) => tool.name);
+    expect(toolNames).not.toContain('MemoryCommand');
+    expect(toolNames).not.toContain('MemoryCommit');
   });
 
   it('explore 白名单：开放 Shell 搜索，但不暴露独立 Write/Edit 工具', async () => {

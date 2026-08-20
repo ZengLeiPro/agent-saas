@@ -441,7 +441,7 @@ export function processWsEvent(
             ? {
                 ...message,
                 toolName: data.toolName || message.toolName || "unknown",
-                toolId: data.toolId || message.toolId || "",
+                toolId: data.toolId || message.toolId || "", ...(data.runId ? { runId: data.runId } : {}),
                 toolInput: "",
                 streaming: true,
                 executionStatus: message.executionStatus ?? "pending",
@@ -451,7 +451,7 @@ export function processWsEvent(
       } else {
         block.currentBlockIndex = msg.addMessage({
           type: "tool_use", toolName: data.toolName || "unknown",
-          toolInput: "", toolId: data.toolId || "", streaming: true,
+          toolInput: "", toolId: data.toolId || "", streaming: true, ...(data.runId ? { runId: data.runId } : {}),
           executionStatus: "pending",
         });
       }

@@ -53,6 +53,7 @@ export const TASKBOARD_RESOURCE_ACTIONS = [
   'integration.create',
   'integration.cancel',
   'integration.sources',
+  'integration.candidate',
   'integration.source.inspect',
   'integration.source.merge',
 ] as const;
@@ -72,6 +73,7 @@ export const TASKBOARD_READ_ACTIONS = [
   'execution.list',
   'execution.context',
   'integration.sources',
+  'integration.candidate',
   'integration.source.inspect',
 ] as const;
 export interface TaskboardAttachmentInput {
@@ -399,6 +401,11 @@ export async function invokeTaskboardAction(
       const sources = await service.listIntegrationSources(identity, taskId);
       return { count: sources.length, sources };
     }
+    case 'integration.candidate': {
+      if (!service.getIntegrationCandidate) throw new Error('任务看板 Integration v3 candidate 读取服务未启用');
+      const taskId = scope.execution?.task.id ?? requireId(input, 'taskId');
+      return await service.getIntegrationCandidate(identity, taskId) as unknown as Record<string, unknown>;
+    }
     case 'integration.source.inspect': {
       if (!scope.execution || !service.inspectIntegrationSourceV2) {
         throw new Error('仅当前 merge Execution 可以检查集成来源');
@@ -490,6 +497,7 @@ function assertExecutionScope(
     'execution.review_subject.record',
     'execution.resolve',
     'integration.sources',
+    'integration.candidate',
     'integration.source.inspect',
     'integration.source.merge',
   ];

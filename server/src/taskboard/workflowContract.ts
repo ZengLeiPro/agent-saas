@@ -2,17 +2,24 @@ import { createHash } from 'node:crypto';
 
 import type {
   TaskBoardExecutionPurpose,
+  TaskBoardIntegrationCandidateState,
   TaskBoardTask,
   TaskBoardWorkflowContract,
 } from '../../../shared/src/types/taskboard.js';
 import { TaskboardValidationError } from './types.js';
+import { purposeForIntegrationV3Candidate } from './workflow/decider.js';
+
+export interface WorkflowContractOptions {
+  candidateState?: TaskBoardIntegrationCandidateState;
+}
 
 export function resolveWorkflowContract(
   task: TaskBoardTask,
   requestedPurpose?: TaskBoardExecutionPurpose,
+  options: WorkflowContractOptions = {},
 ): TaskBoardWorkflowContract {
-  const purpose = requestedPurpose ?? purposeForTask(task);
-  const draft = buildContract(task, purpose);
+  const purpose = requestedPurpose ?? purposeForTask(task, options);
+  const draft = buildContract(task, purpose, options);
   return {
     ...draft,
     digest: createHash('sha256').update(stableJson(draft)).digest('hex'),
@@ -31,16 +38,30 @@ export function assertWorkflowOutcome(
   }
 }
 
-function purposeForTask(task: TaskBoardTask): TaskBoardExecutionPurpose {
-  if (task.kind === 'integration') return 'merge';
+function purposeForTask(task: TaskBoardTask, options: WorkflowContractOptions): TaskBoardExecutionPurpose {
+  if (task.kind === 'integration') {
+    if (task.workflowVersion === 3) {
+      const purpose = options.candidateState && purposeForIntegrationV3Candidate(options.candidateState);
+      if (!purpose) {
+        throw new TaskboardValidationError(
+          'Workflow v3 contract requires a dispatchable current candidate',
+          'TASKBOARD_CANDIDATE_EXECUTION_STATE_INVALID',
+        );
+      }
+      return purpose;
+    }
+    return 'merge';
+  }
   return task.status === 'in_review' ? 'review' : 'work';
 }
 
 function buildContract(
   task: TaskBoardTask,
   purpose: TaskBoardExecutionPurpose,
+  options: WorkflowContractOptions,
 ): Omit<TaskBoardWorkflowContract, 'digest'> {
   if (task.kind === 'integration') {
+    if (task.workflowVersion === 3) return buildIntegrationV3Contract(task, purpose, options);
     if (purpose !== 'merge') invalidPurpose(task, purpose);
     return {
       taskKind: task.kind ?? 'delivery',
@@ -116,6 +137,49 @@ function buildContract(
     allowedOutcomes: ['ready_for_review', 'blocked'],
     requiredEvidence: ['implementation summary', 'verification evidence'],
     blockedReasons: ['business_decision_required', 'external_dependency', 'workspace_unavailable'],
+  };
+}
+
+function buildIntegrationV3Contract(
+  task: TaskBoardTask,
+  purpose: TaskBoardExecutionPurpose,
+  options: WorkflowContractOptions,
+): Omit<TaskBoardWorkflowContract, 'digest'> {
+  const expected = options.candidateState && purposeForIntegrationV3Candidate(options.candidateState);
+  if (!expected || expected !== purpose) invalidPurpose(task, purpose);
+  if (purpose === 'review') {
+    return {
+      taskKind: 'integration',
+      purpose,
+      status: task.status,
+      objective: '独立复核绑定的 candidate revision；结论必须绑定 candidate、revision、head 与 workflow/lane epoch。',
+      capabilities: {
+        readContext: true,
+        comment: true,
+        modifyTaskBranch: false,
+        approveReviewedSubject: true,
+        merge: false,
+      },
+      allowedOutcomes: ['approved', 'changes_requested', 'stale_subject', 'blocked'],
+      requiredEvidence: ['candidate revision', 'candidate head oid', 'reviewed subject digest', 'test or inspection evidence'],
+      blockedReasons: ['subject_stale', 'epoch_stale', 'evidence_missing', 'external_dependency'],
+    };
+  }
+  return {
+    taskKind: 'integration',
+    purpose,
+    status: task.status,
+    objective: '修复当前 candidate revision；提交 candidate revision/head 凭据并请求系统复核，不得执行合并。',
+    capabilities: {
+      readContext: true,
+      comment: true,
+      modifyTaskBranch: true,
+      createFollowUpTask: false,
+      merge: false,
+    },
+    allowedOutcomes: ['ready_for_review', 'blocked'],
+    requiredEvidence: ['candidate revision', 'candidate head oid', 'implementation summary', 'verification evidence'],
+    blockedReasons: ['subject_stale', 'epoch_stale', 'external_dependency', 'workspace_unavailable'],
   };
 }
 

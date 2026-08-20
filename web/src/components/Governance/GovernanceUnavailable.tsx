@@ -18,6 +18,7 @@ export function GovernanceUnavailable({
 }: GovernanceUnavailableProps) {
   const status = typeof error === 'object' && error !== null && 'status' in error
     && typeof error.status === 'number' ? error.status : undefined;
+  const accessDenied = status === 403;
 
   return (
     <section
@@ -28,9 +29,11 @@ export function GovernanceUnavailable({
       <div className="flex items-start gap-3">
         <TriangleAlert className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
         <div className="min-w-0 flex-1">
-          <h3 className="font-semibold">权威治理结论暂不可获得</h3>
+          <h3 className="font-semibold">{accessDenied ? '权限不足' : '权限服务暂不可用'}</h3>
           <p className="mt-1 text-sm">
-            当前无法获取权威权限解释。系统不会降级为允许，请稍后重试。
+            {accessDenied
+              ? '当前账号没有访问此治理页面的权限，请联系组织管理员或平台管理员。'
+              : '当前无法获取权威权限判定。系统已停止敏感操作，但这不代表当前账号缺少权限，请稍后重试。'}
           </p>
           {status ? <p className="mt-2 text-xs opacity-80">服务状态：{status}</p> : null}
           {onRetry ? (

@@ -250,6 +250,8 @@ export interface AskUserQuestion {
 export interface OutboundEvent {
   type: OutboundEventType;
   sessionId?: string;
+  /** 所属 runtime run；工具块据此跨 user prompt 保持同一次业务计划。 */
+  runId?: string;
   content?: string;
   /** Web 可撤销草稿的稳定标识；旧客户端不声明能力时服务端不会发出。 */
   draftId?: string;

@@ -1,5 +1,7 @@
 import type { PoolClient } from 'pg';
 
+import { runIntegrationCandidateSchema } from './integrationCandidateSchema.js';
+
 interface TaskboardV2SchemaOptions {
   boardsTable: string;
   tasksTable: string;
@@ -353,4 +355,5 @@ export async function runTaskboardV2Schema(
       ON ${options.integrationTriggerOutboxTable} (board_id)
       WHERE status IN ('pending','processing')
   `);
+  await runIntegrationCandidateSchema(options, client);
 }

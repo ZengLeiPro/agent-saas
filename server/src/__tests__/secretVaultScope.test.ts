@@ -109,6 +109,16 @@ describe('InMemorySecretVault actor boundary', () => {
     } as never)).rejects.toThrow(/unknown actor/);
   });
 
+  it('GitHub App 私钥可由 git proxy 托管，并仅由系统 v3 运行时读取', async () => {
+    const vault = new InMemorySecretVault();
+    const ref = await vault.putSecret(GLOBAL_OWNER_ID, 'github_app', 'private-key', {
+      actor: 'git_proxy', userId: 'provisioner', scopes: ['secret:github_app:write'],
+    });
+    await expect(vault.getSecret(ref, {
+      actor: 'system', userId: '__system__', scopes: ['secret:github_app:read'],
+    })).resolves.toBe('private-key');
+  });
+
   it('system 仅可访问基础设施 allowlist，仍需精确 operation scope', async () => {
     const vault = new InMemorySecretVault();
     const writer: VaultCaller = {

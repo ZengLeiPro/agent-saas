@@ -298,7 +298,7 @@ export interface ApiTranscriptBlock {
   interjectionSourceRunId?: string;
   /** text block：来源 runtime event id，用于由成功 Run 终态确定性追认最终输出。 */
   sourceEventId?: string;
-  /** text block：所属 runtime run id；实时与历史使用同一关联语义。 */
+  /** text / tool_use block：所属 runtime run id；实时与历史使用同一关联语义。 */
   runId?: string;
   /** text block：该文本是所属 Run 成功终态的最终输出。 */
   finalOutput?: boolean;

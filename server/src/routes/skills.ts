@@ -29,12 +29,11 @@ import { personalSkillResourceId, tenantSkillResourceId } from '../services/tena
 import type { PlatformSkillConfig, TenantSkillRule } from '../data/skills/types.js';
 import {
   scanPoolSkillsAsync,
-  scanTenantOwnSkillIdsAsync,
   scanUserCustomSkillsAsync,
 } from '../data/skills/scanner.js';
-import { resolveTenantSkillsDir, resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
-import { agentDir, agentPath, agentSkillsDir, resolveAgentPath } from '../workspace/namespace.js';
+import { createSkillOwnershipResolver } from './skillOwnership.js';
+import { agentDir, agentPath, resolveAgentPath } from '../workspace/namespace.js';
 import { ensureWorkspaceDir, repairWorkspacePath, repairWorkspaceTreeAsync } from '../workspace/permissions.js';
 import type { UserStore } from '../data/users/store.js';
 import type { UserInfo, UserRecord } from '../data/users/types.js';
@@ -60,7 +59,8 @@ export interface SkillsRouterDeps {
   sharedDir: string;
   tenantSkillsRootDir?: string;
   skillMaterialization?: SkillMaterializationCoordinator;
-  skillGovernanceStore?: Pick<PgSkillGovernanceStore, 'getResource' | 'getVersion'>;
+  skillGovernanceStore?: Pick<PgSkillGovernanceStore, 'getResource' | 'getVersion'>
+    & Partial<Pick<PgSkillGovernanceStore, 'listTenantSkillHistoricalProvenance' | 'listPersonalByOwner'>>;
   legacyWriteGate?: {
     assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
   };
@@ -133,36 +133,19 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     };
   }
 
-  /**
-   * 用户的 `.ky-agent/skills` 目录。workspace 物理路径由 resolveUserCwd 统一决定；
-   * 本路由原代码仍用旧扁平路径 `<cwd>/<username>`，
-   * 导致非默认组织用户读不到自建 skill / 写到错路径。修复方式：要求 caller 传完
-   * 整 UserRecord（含 tenantId），用 resolveUserCwd 统一解析。
-   */
-  function getUserSkillsDir(user: SkillUser): string {
-    const userCwd = resolveUserCwd(agentCwd, { id: user.id, username: user.username, role: user.role as 'admin' | 'user', tenantId: user.tenantId });
-    return agentSkillsDir(userCwd);
-  }
-
-  /** 租户自有 skill 目录（tenants/<tenantId>/skills/）；tenantId 非法时抛错 */
-  function tenantSkillsDirFor(tenantId: string): string {
-    return tenantSkillsRootDir
-      ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, tenantId)
-      : resolveTenantSkillsDir(sharedDir, tenantId);
-  }
-
-  /** 租户自有 skill 现存 ID（与 pool 同名的被 shadow，不返回） */
-  async function getTenantOwnSkillIds(tenantId: string | undefined): Promise<Set<string>> {
-    if (!tenantId) return new Set();
-    try {
-      return scanTenantOwnSkillIdsAsync(
-        tenantSkillsDirFor(tenantId),
-        await getPoolSkillIds(),
-      );
-    } catch {
-      return new Set();
-    }
-  }
+  const {
+    getUserCwd,
+    getUserSkillsDir,
+    tenantSkillsDirFor,
+    getTenantOwnSkillIds,
+    getManagedTenantSkillIdsForUser,
+  } = createSkillOwnershipResolver({
+    agentCwd,
+    sharedDir,
+    tenantSkillsRootDir,
+    getPoolSkillIds,
+    skillGovernanceStore,
+  });
 
   async function getAllTenantOwnSkillIds(): Promise<Record<string, Set<string>>> {
     const tenantsRoot = tenantSkillsRootDir ?? join(sharedDir, 'tenants');
@@ -199,7 +182,10 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     for (const id of await getTenantOwnSkillIds(user.tenantId)) {
       if (skillConfigStore.isTenantOwnSkillAvailableToUser(user.tenantId, id, user.username)) allowed.add(id);
     }
-    const excluded = new Set([...await getKnownSystemSkillIds(), ...await getTenantOwnSkillIds(user.tenantId)]);
+    const excluded = new Set([
+      ...await getKnownSystemSkillIds(),
+      ...await getManagedTenantSkillIdsForUser(user),
+    ]);
     for (const skill of await scanUserCustomSkillsAsync(getUserSkillsDir(user), excluded)) allowed.add(skill.id);
     return allowed;
   }
@@ -412,7 +398,13 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       if (!dir) return;
       // 上传即启用：把新 skillId 追加到用户 selection，保持"上传立刻可用"的直觉体验。
       // 与前端「导入后 refresh 拉回列表看到 Switch 已开」呼应；用户之后仍可自由关闭。
-      await setUserSkillSelected(skillConfigStore, username, skillId, true);
+      // 选择写入失败时删除刚落盘的目录，不能返回一个需要手动补启用的半成功。
+      try {
+        await setUserSkillSelected(skillConfigStore, username, skillId, true);
+      } catch (error) {
+        await rm(dir, { recursive: true, force: true });
+        throw error;
+      }
       auditLog(req, 'skill_custom_uploaded', `${username}/${skillId}`);
       return res.json({ ok: true, skill: { id: skillId, name: meta.name, description: meta.description } });
     }
@@ -790,7 +782,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     try {
       const excluded = new Set([
         ...await getKnownSystemSkillIds(),
-        ...await getTenantOwnSkillIds(caller.tenantId),
+        ...await getManagedTenantSkillIdsForUser(caller),
       ]);
       const customSkills = await scanUserCustomSkillsAsync(getUserSkillsDir(caller), excluded);
       res.json({ users: customSkills.length > 0 ? { [caller.username]: customSkills } : {} });
@@ -822,7 +814,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if ((await getKnownSystemSkillIds()).has(skillId)) {
       return res.status(400).json({ error: '技能池文档必须通过 /pool 管理' });
     }
-    if ((await getTenantOwnSkillIds(target.tenantId)).has(skillId)) {
+    if ((await getManagedTenantSkillIdsForUser(target)).has(skillId)) {
       return res.status(400).json({ error: '组织技能文档必须通过 /tenants 管理' });
     }
 
@@ -848,7 +840,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if ((await getKnownSystemSkillIds()).has(skillId)) {
       return res.status(400).json({ error: '技能池文档必须通过 /pool 管理' });
     }
-    if ((await getTenantOwnSkillIds(target.tenantId)).has(skillId)) {
+    if ((await getManagedTenantSkillIdsForUser(target)).has(skillId)) {
       return res.status(400).json({ error: '组织技能文档必须通过 /tenants 管理' });
     }
 
@@ -887,7 +879,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (poolIds.has(skillId)) {
       return res.status(400).json({ error: '不能通过此接口删除技能池中的技能' });
     }
-    if ((await getTenantOwnSkillIds(target.tenantId)).has(skillId)) {
+    if ((await getManagedTenantSkillIdsForUser(target)).has(skillId)) {
       return res.status(400).json({ error: '不能通过此接口删除组织技能' });
     }
 
@@ -1191,7 +1183,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (!user) return res.status(404).json({ error: 'User not found' });
     const skillId = safeName(req.params.skillId);
     if (!skillId) return res.status(400).json({ error: 'Invalid skillId' });
-    if ((await getKnownSystemSkillIds()).has(skillId) || (await getTenantOwnSkillIds(user.tenantId)).has(skillId)) {
+    if ((await getKnownSystemSkillIds()).has(skillId) || (await getManagedTenantSkillIdsForUser(user)).has(skillId)) {
       return res.status(400).json({ error: '只能编辑自己的自建技能' });
     }
     const skillDir = join(getUserSkillsDir(user), skillId);
@@ -1215,7 +1207,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (!user) return res.status(404).json({ error: 'User not found' });
     const skillId = safeName(req.params.skillId);
     if (!skillId) return res.status(400).json({ error: 'Invalid skillId' });
-    if ((await getKnownSystemSkillIds()).has(skillId) || (await getTenantOwnSkillIds(user.tenantId)).has(skillId)) {
+    if ((await getKnownSystemSkillIds()).has(skillId) || (await getManagedTenantSkillIdsForUser(user)).has(skillId)) {
       return res.status(400).json({ error: '只能编辑自己的自建技能' });
     }
     const parsed = skillDocumentSchema.safeParse(req.body);
@@ -1280,7 +1272,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if ((await getKnownSystemSkillIds()).has(skillId)) {
       return res.status(400).json({ error: '不能通过此接口删除技能池中的技能' });
     }
-    if ((await getTenantOwnSkillIds(user.tenantId)).has(skillId)) {
+    if ((await getManagedTenantSkillIdsForUser(user)).has(skillId)) {
       return res.status(400).json({ error: '不能通过此接口删除组织技能' });
     }
 
@@ -1346,7 +1338,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     const poolSkills = await scanPoolSkillsAsync(poolDir);
     const selectionState = userSkillSelectionState(skillConfigStore, user.username);
     const poolIds = await getKnownSystemSkillIds();
-    const tenantOwnIds = await getTenantOwnSkillIds(user.tenantId);
+    const managedTenantIds = await getManagedTenantSkillIdsForUser(user);
 
     // Pool skills: 只返回平台授权、租户启用且成员范围允许的
     const visiblePoolSkills = poolSkills
@@ -1375,12 +1367,14 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
         }))
       : [];
 
-    // 自建 skills: 走用户 selection（2026-07-03 改）；排除系统层与组织层（被 shadow）。
+    // 自建 skills: 走用户 selection（2026-07-03 改）；排除系统层与已证明的组织物化副本。
     // 早期版本硬编码 selected:true + 前端 disabled Switch，用户无法关闭已上传的自建 skill；
     // 现在按 selection 状态呈现，前端 Switch 恢复可交互，同时用户可自删（DELETE /me/skills/:id）。
+    // 组织副本以当前租户目录或 skills-state.json 的 source=tenant provenance 识别，
+    // 不用其他租户的同名 ID 猜测个人目录归属。
     // 路径按 user.tenantId 解析（修 PR 4 漏改）
     const userDir = getUserSkillsDir(user);
-    const customExcluded = new Set([...poolIds, ...tenantOwnIds]);
+    const customExcluded = new Set([...poolIds, ...managedTenantIds]);
     const customSkills = await Promise.all((await scanUserCustomSkillsAsync(userDir, customExcluded)).map(async s => {
       const governance = user.tenantId
         ? await governedSkillView(personalSkillResourceId(user.id, s.id), user.tenantId, 'personal')

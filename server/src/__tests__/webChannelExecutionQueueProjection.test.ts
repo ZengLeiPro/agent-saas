@@ -449,4 +449,41 @@ describe('WebChannel queued execution projection', () => {
       await rm(tmp, { recursive: true, force: true });
     }
   });
+
+  it('pins a new kaiyan Web session to v2 at enqueue and does not recompute continuation', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'web-memory-policy-pin-'));
+    try {
+      const runStore = new MemoryRunStore();
+      const sessionCatalog = new FileSessionCatalog({ agentCwd: tmp });
+      let resolverEnabled = true;
+      const { channel } = createChannel({
+        agentCwd: tmp,
+        memoryWriteDelegationEnabled: () => resolverEnabled,
+        runtimeEventStoreFor: transcriptPath => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        enqueueRuntime: {
+          scheduler: { enqueue: async (input: UpsertRunInput) => runStore.upsertPending(input) } as any,
+          runStore, sessionCatalog, enabled: true,
+        },
+      });
+      const ws = new FakeWebSocket();
+      const client = {
+        ws: ws as any,
+        user: { ...PLATFORM_ADMIN_USER, tenantId: 'kaiyan' },
+        alive: true,
+        lastActivityAt: Date.now(),
+      };
+      await (channel as any).processChatMessage(client, chatMessage({ message: 'first', client_msg_id: 'policy-first' }));
+      const firstAck = ws.sent.find(message => message.data?.type === 'chat_ack')?.data;
+      expect(firstAck?.sessionId).toBeTruthy();
+      await expect(sessionCatalog.get(firstAck.sessionId)).resolves.toMatchObject({ memoryPolicyVersion: 'v2' });
+      resolverEnabled = false;
+      await (channel as any).processChatMessage(client, chatMessage({
+        sessionId: firstAck.sessionId, message: 'continue', client_msg_id: 'policy-continue',
+      }));
+      await expect(sessionCatalog.get(firstAck.sessionId)).resolves.toMatchObject({ memoryPolicyVersion: 'v2' });
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
 });

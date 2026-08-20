@@ -2,9 +2,12 @@ import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
 import type {
+  TaskBoardExecution,
   TaskBoardExecutionResolutionInput,
+  TaskBoardIntegrationCandidateState,
   TaskBoardTask,
 } from '../../../../shared/src/types/taskboard.js';
+import { integrationCandidateTableNames } from '../integrationCandidateSchema.js';
 import { rowToExecution } from '../storeHelpers.js';
 import {
   appendChange,
@@ -26,7 +29,11 @@ import {
   insertResolution,
   loadWorkflowFacts,
 } from './commandService.js';
-import { decideResolution } from './decider.js';
+import {
+  decideResolution,
+  type IntegrationV3ExecutionBinding,
+  type IntegrationV3Facts,
+} from './decider.js';
 
 export async function resolveExecutionV2(
   options: TaskboardV2StoreOptions,
@@ -91,6 +98,11 @@ export async function resolveExecutionV2(
     if (existingResolution.rows[0]) {
       await insertResolution(options, client, loaded.task, execution, input, { applied: false });
       return loaded.task;
+    }
+    if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3) {
+      return resolveIntegrationV3Execution(
+        options, client, identity, loaded.task, runId, execution, executionRow, input,
+      );
     }
     const facts = await loadWorkflowFacts(options, client, loaded.task);
     if (facts.hasMergeFact) {
@@ -276,6 +288,208 @@ export async function resolveExecutionV2(
     }
     return loadTask(options, client, taskId);
   });
+}
+
+async function resolveIntegrationV3Execution(
+  options: TaskboardV2StoreOptions,
+  client: PoolClient,
+  identity: TaskboardIdentity,
+  task: TaskBoardTask,
+  runId: string,
+  execution: TaskBoardExecution,
+  executionRow: Record<string, unknown>,
+  input: TaskBoardExecutionResolutionInput,
+): Promise<TaskBoardTask> {
+  const { candidatesTable, revisionsTable } = integrationCandidateTableNames(options.integrationSourcesTable);
+  const result = await client.query(
+    `SELECT c.*,r.head_oid,r.subject_digest
+       FROM ${candidatesTable} c
+       LEFT JOIN ${revisionsTable} r
+         ON r.candidate_id=c.id AND r.revision=c.current_revision
+      WHERE c.integration_task_id=$1
+      FOR UPDATE OF c`,
+    [task.id],
+  );
+  const row = result.rows[0] as Record<string, unknown> | undefined;
+  if (!row) {
+    throw new TaskboardValidationError(
+      'Workflow v3 integration task has no candidate',
+      'TASKBOARD_CANDIDATE_REQUIRED',
+    );
+  }
+  const candidate: IntegrationV3Facts = {
+    id: String(row.id),
+    state: String(row.state) as TaskBoardIntegrationCandidateState,
+    version: Number(row.version),
+    currentRevision: Number(row.current_revision),
+    workRound: Number(row.work_round),
+    workflowEpoch: String(row.workflow_epoch),
+    laneEpoch: String(row.lane_epoch),
+    ...(row.head_oid ? { headOid: String(row.head_oid) } : {}),
+  };
+  const binding = executionBinding(executionRow);
+  const active = ['queued', 'running', 'waiting_user', 'waiting_approval'].includes(String(executionRow.status))
+    && !execution.supersededAt && !execution.resolvedAt;
+  assertReceiptIdentityBoundToExecution(execution, input);
+  const decision = decideResolution(task, execution.purpose, input.outcome, {
+    hasMergeFact: candidate.state === 'merged',
+    candidate,
+    executionBinding: active ? binding : undefined,
+  });
+  if (decision.kind === 'ignore') {
+    const ignored = await insertResolution(options, client, task, execution, input, {
+      applied: false,
+      ignoredReason: decision.reason,
+    });
+    if (!ignored.replay) {
+      await appendChange(options, client, task.id, 'execution.receipt_ignored', 'system', runId, {
+        executionId: execution.id,
+        resolutionId: ignored.resolutionId,
+        outcome: input.outcome,
+        reason: decision.reason,
+        candidateId: candidate.id,
+        boundRevision: binding?.candidateRevision,
+        currentRevision: candidate.currentRevision,
+        boundWorkflowEpoch: binding?.candidateWorkflowEpoch,
+        currentWorkflowEpoch: candidate.workflowEpoch,
+        boundLaneEpoch: binding?.candidateLaneEpoch,
+        currentLaneEpoch: candidate.laneEpoch,
+      });
+    }
+    return task;
+  }
+  if (!binding || !candidate.headOid || !row.subject_digest) {
+    throw new TaskboardValidationError(
+      'Workflow v3 execution is missing candidate revision/head binding',
+      'TASKBOARD_CANDIDATE_EXECUTION_BINDING_REQUIRED',
+    );
+  }
+  assertReceiptBoundToExecution(execution, input, String(executionRow.workflow_epoch ?? 0));
+  const contract = resolveWorkflowContract(task, execution.purpose, { candidateState: candidate.state });
+  const maxSeqResult = await client.query(
+    `SELECT COALESCE(MAX(seq),0)::text AS seq FROM ${options.changesTable} WHERE task_id=$1`,
+    [task.id],
+  );
+  const policy = jsonObject((await client.query(
+    `SELECT integration_policy FROM ${options.boardsTable} WHERE id=$1`, [task.boardId],
+  )).rows[0]?.integration_policy) as { revision?: string } | undefined;
+  if (task.version !== input.receipt.taskVersion
+    || String(maxSeqResult.rows[0]?.seq ?? '0') !== input.receipt.changeSeq
+    || contract.digest !== input.receipt.contractDigest
+    || (policy?.revision ?? 'none') !== input.receipt.policyRevision
+    || String(row.subject_digest) !== input.receipt.subjectDigest) {
+    throw new TaskboardValidationError(
+      'Candidate context changed; read the latest context before resolving',
+      'TASKBOARD_CONTEXT_STALE',
+    );
+  }
+  assertWorkflowOutcome(contract, input.outcome);
+  if (decision.requestSystemReview) {
+    const canonical = await insertResolution(options, client, task, execution, input, { applied: true });
+    if (!canonical.replay) {
+      await appendChange(options, client, task.id, 'integration.candidate_review_requested',
+        'agent', identity.ownerUserId, {
+          schemaVersion: 3,
+          resolutionId: canonical.resolutionId,
+          executionId: execution.id,
+          runId,
+          purpose: execution.purpose,
+          outcome: input.outcome,
+          summary: input.summary,
+          evidence: input.evidence ?? [],
+          candidateId: candidate.id,
+          candidateRevision: candidate.currentRevision,
+          candidateHeadOid: candidate.headOid,
+          candidateWorkRound: candidate.workRound,
+          workflowEpoch: candidate.workflowEpoch,
+          laneEpoch: candidate.laneEpoch,
+          reconcileRequired: true,
+          reviewRequested: true,
+        });
+    }
+    // integrationTriggers must reconcile the provider head, append a revision
+    // when the subject changed, and only then move/dispatch canonical review.
+    return loadTask(options, client, task.id);
+  }
+  const nextStatus = decision.toStatus;
+  const nextCandidateState = decision.candidateState;
+  if (!nextStatus || !nextCandidateState) {
+    throw new TaskboardValidationError('Workflow v3 resolution is incomplete', 'TASKBOARD_WORKFLOW_TRANSITION_INVALID');
+  }
+  const canonical = await insertResolution(options, client, task, execution, input, {
+    applied: true,
+    toStatus: nextStatus,
+  });
+  if (canonical.replay) return task;
+  const approved = nextCandidateState === 'approved';
+  const candidateUpdate = await client.query(
+    `UPDATE ${candidatesTable}
+        SET state=$8,
+            approved_revision=CASE WHEN $9::boolean THEN current_revision ELSE NULL END,
+            approved_review_execution_id=CASE WHEN $9::boolean THEN $7 ELSE NULL END,
+            last_error=CASE WHEN $8='blocked' THEN $10 ELSE NULL END,
+            workflow_epoch=workflow_epoch+1,version=version+1,updated_at=now()
+      WHERE id=$1 AND version=$2 AND current_revision=$3 AND work_round=$4
+        AND workflow_epoch=$5::bigint AND lane_epoch=$6::bigint AND state=$11
+      RETURNING version,workflow_epoch`,
+    [candidate.id, candidate.version, candidate.currentRevision, candidate.workRound,
+      candidate.workflowEpoch, candidate.laneEpoch, execution.id, nextCandidateState,
+      approved, input.summary, candidate.state],
+  );
+  if (!candidateUpdate.rows[0]) {
+    throw new TaskboardValidationError('Candidate changed before resolution was applied', 'TASKBOARD_CANDIDATE_CAS_MISMATCH');
+  }
+  await client.query(
+    `UPDATE ${options.tasksTable}
+        SET status=$2,completed_at=NULL,workflow_epoch=workflow_epoch+1,
+            next_action='none',next_action_revision=next_action_revision+1,
+            version=version+1,updated_at=now()
+      WHERE id=$1`,
+    [task.id, nextStatus],
+  );
+  if (input.outcome === 'blocked') {
+    await client.query(
+      `INSERT INTO ${options.blockEpisodesTable}
+         (id,task_id,purpose,execution_id,reason_code,reason)
+       VALUES ($1,$2,$3,$4,'agent_needs_human',$5)`,
+      [randomUUID(), task.id, execution.purpose, execution.id, input.summary],
+    );
+  }
+  await appendChange(options, client, task.id, 'execution.resolved.v3', 'agent', identity.ownerUserId, {
+    schemaVersion: 3,
+    resolutionId: canonical.resolutionId,
+    executionId: execution.id,
+    runId,
+    purpose: execution.purpose,
+    outcome: input.outcome,
+    summary: input.summary,
+    evidence: input.evidence ?? [],
+    candidateId: candidate.id,
+    candidateRevision: candidate.currentRevision,
+    candidateHeadOid: candidate.headOid,
+    candidateWorkRound: candidate.workRound,
+    workflowEpoch: String(candidateUpdate.rows[0]!.workflow_epoch),
+    laneEpoch: candidate.laneEpoch,
+  });
+  return loadTask(options, client, task.id);
+}
+
+function executionBinding(row: Record<string, unknown>): IntegrationV3ExecutionBinding | undefined {
+  if (!row.candidate_id || row.candidate_version === null || row.candidate_version === undefined
+    || row.candidate_revision === null || row.candidate_revision === undefined
+    || row.candidate_work_round === null || row.candidate_work_round === undefined
+    || row.candidate_workflow_epoch === null || row.candidate_workflow_epoch === undefined
+    || row.candidate_lane_epoch === null || row.candidate_lane_epoch === undefined
+    || !row.candidate_head_oid) return undefined;
+  return {
+    candidateId: String(row.candidate_id),
+    candidateVersion: Number(row.candidate_version),
+    candidateRevision: Number(row.candidate_revision),
+    candidateWorkRound: Number(row.candidate_work_round),
+    candidateWorkflowEpoch: String(row.candidate_workflow_epoch),
+    candidateLaneEpoch: String(row.candidate_lane_epoch),
+    candidateHeadOid: String(row.candidate_head_oid),
+  };
 }
 
 async function recordRemediationCommit(

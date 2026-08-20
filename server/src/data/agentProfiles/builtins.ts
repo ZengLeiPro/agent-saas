@@ -61,6 +61,13 @@ const MEMORY_TOOLS = [
   'Write',
 ];
 
+const MEMORY_CONSOLIDATE_TOOLS = [
+  'MemoryCommit',
+  'MemoryList',
+  'MemorySearch',
+  'WaitForWorkspaceReady',
+];
+
 const EXPLORE_TOOLS_V1 = [
   'Glob',
   'Grep',
@@ -176,6 +183,15 @@ export const BUILTIN_AGENT_PROFILES: readonly BuiltinAgentProfileDefinition[] = 
     config: memoryPollConfig(MEMORY_TOOLS, true, ['server-remote']),
   },
   {
+    profileId: 'arp_system_memory_consolidate',
+    profileKey: 'memory_consolidate',
+    name: '会话记忆整合',
+    description: 'L2 会话记忆候选提取专用预设；只允许检索记忆并通过 MemoryCommit 提交。',
+    purpose: '隐藏的会话记忆整合任务',
+    publishedAt: TOOL_CONSOLIDATION_PROFILE_PUBLISHED_AT,
+    config: memoryPollConfig(MEMORY_CONSOLIDATE_TOOLS, false, ['server-remote']),
+  },
+  {
     profileId: 'arp_system_subagent_explore',
     profileKey: 'subagent_explore',
     name: '子 Agent · Explore',
@@ -262,6 +278,7 @@ export const BUILTIN_AGENT_PROFILE_BINDINGS: Readonly<Record<AgentProfileBinding
   main: 'arp_system_default_interactive',
   org_agent: 'arp_system_org_agent',
   memory_poll: 'arp_system_memory_poll',
+  memory_consolidate: 'arp_system_memory_consolidate',
   subagent_general: 'arp_system_subagent_general',
   subagent_explore: 'arp_system_subagent_explore',
   background_general: 'arp_system_subagent_general',

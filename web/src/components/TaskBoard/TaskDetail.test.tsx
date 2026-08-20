@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   continueTaskExecution: vi.fn(),
   resumeTask: vi.fn(),
   fetchIntegrationSources: vi.fn(),
+  fetchIntegrationCandidate: vi.fn(),
   addComment: vi.fn(),
   refreshComments: vi.fn(async () => undefined),
   comments: [] as TaskBoardComment[],
@@ -27,6 +28,7 @@ vi.mock("./api", async (importOriginal) => {
     ...actual,
     fetchTask: mocks.fetchTask,
     fetchIntegrationSources: mocks.fetchIntegrationSources,
+    fetchIntegrationCandidate: mocks.fetchIntegrationCandidate,
     continueTaskExecution: mocks.continueTaskExecution,
     resumeTask: mocks.resumeTask,
   };
@@ -113,6 +115,7 @@ describe("TaskDetail 草稿隔离", () => {
     mocks.executions = [];
     mocks.fetchTask.mockImplementation(async (id: string) => id === taskOne.id ? taskOne : taskTwo);
     mocks.fetchIntegrationSources.mockResolvedValue([]);
+    mocks.fetchIntegrationCandidate.mockResolvedValue(null);
     mocks.addComment.mockResolvedValue(undefined);
   });
 
@@ -295,22 +298,11 @@ describe("TaskDetail 草稿隔离", () => {
     }));
   });
 
-  it("工作分支可在任务详情中填写并保存", async () => {
-    const user = userEvent.setup();
-    const onUpdate = vi.fn(async (current: TaskBoardTask) => ({
-      ...current,
-      branch: "task/TASK-1-feature",
-      version: current.version + 1,
-    }));
-    render(<TaskDetail {...props({ onUpdate })} />);
+  it("任务详情不再展示工作分支表单", async () => {
+    render(<TaskDetail {...props()} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
-    await user.type(screen.getByRole("textbox", { name: "工作分支" }), "task/TASK-1-feature");
-    await user.click(screen.getByRole("button", { name: "保存任务" }));
-
-    await waitFor(() => expect(onUpdate).toHaveBeenCalledWith(taskOne, {
-      branch: "task/TASK-1-feature",
-    }));
+    expect(screen.queryByRole("textbox", { name: "工作分支" })).toBeNull();
   });
 
   it("advisory 可确认后单向升级为 delivery", async () => {
@@ -404,9 +396,9 @@ describe("TaskDetail 草稿隔离", () => {
     expect(mocks.refreshExecutions).toHaveBeenCalled();
   });
 
-  it("实施中且存在 active execution 时评论可继续实施", async () => {
+  it("Workflow v3 存在 active work execution 时评论可继续实施", async () => {
     const user = userEvent.setup();
-    const current = { ...taskOne, status: "in_progress" as const };
+    const current = { ...taskOne, kind: "integration" as const, workflowVersion: 3 as const, status: "in_progress" as const };
     const published = {
       id: "comment-active-in-progress",
       taskId: current.id,
@@ -664,6 +656,14 @@ describe("TaskDetail 草稿隔离", () => {
     expect(screen.getByText(/合并冲突需要自动修复/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "保存任务" })).toBeNull();
     expect(screen.queryByRole("button", { name: "交给 Agent" })).toBeNull();
+  });
+
+  it("Workflow v3 不暴露 legacy 继续集成入口", async () => {
+    const integrationTask = { ...taskOne, id: "integration-v3", identifier: "TASK-11", kind: "integration" as const, workflowVersion: 3 as const, status: "in_progress" as const };
+    render(<TaskDetail {...props({ task: integrationTask })} />);
+    await waitFor(() => expect(mocks.fetchIntegrationCandidate).toHaveBeenCalledWith(integrationTask.id));
+    expect(screen.queryByRole("button", { name: "继续集成" })).toBeNull(); expect(screen.queryByRole("checkbox", { name: /发表后继续/ })).toBeNull();
+    expect(screen.getByText(/Integration v3 由系统按 Candidate 状态自动推进/)).toBeTruthy();
   });
 
   it("集成阻塞恢复仅提交用户显式勾选的来源", async () => {

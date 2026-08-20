@@ -1,3 +1,4 @@
+export const MATERIALIZED_CONTENT_DIGEST_ALGORITHM = 'materialized-v2';
 export type GovernedSkillScope = 'platform' | 'tenant' | 'personal';
 export type GovernedSkillStatus = 'draft' | 'published' | 'retired';
 export type SkillCandidateStatus = 'draft' | 'submitted' | 'approved' | 'rejected' | 'published';
@@ -25,6 +26,14 @@ export interface GovernedSkillVersion {
   sourceCandidateId?: string;
   publishedAt: string;
   publishedBy: string;
+}
+
+/** 旧版治理摘要与当前物化摘要的兼容视图。 */
+export interface SkillHistoricalProvenance {
+  /** 按当前物化副本规则计算的摘要。 */
+  digests: readonly string[];
+  /** 旧版上传算法（包含未物化目录）留下的摘要，仅作一次性归属迁移凭据。 */
+  legacyDigests: readonly string[];
 }
 
 export interface SkillCandidate {

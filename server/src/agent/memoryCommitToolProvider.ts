@@ -215,7 +215,11 @@ export class MemoryCommitToolProvider implements ToolProvider {
       if (!quoteMatches(known.text, evidence.sourceQuote)) {
         return `evidence ${evidence.eventId} 的 sourceQuote 无法在原文定位`;
       }
-      if (known.role === 'user') hasUserEvidence = true;
+      if (known.role === 'user') {
+        hasUserEvidence = true;
+        // forget 是控制意图，不是可被重新物化的事实。即使提取模型违约，服务端也拒绝落盘。
+        if (isExplicitForgetControl(known.text)) return 'explicit_forget_control';
+      }
     }
     if (op.attribution === 'user_statement' && !hasUserEvidence) {
       return 'user_statement 必须至少引用一条 user 事件';
@@ -243,6 +247,12 @@ export class MemoryCommitToolProvider implements ToolProvider {
     }
     return null;
   }
+}
+
+function isExplicitForgetControl(text: string): boolean {
+  const normalized = text.trim();
+  return /(?:^|[，。！？!?；;\s])(?:请|麻烦)?(?:帮我)?(?:你)?(?:忘记|删除|清除|移除|不要再记|别再记|别记住)/u.test(normalized)
+    || /(?:^|[.!?;\s])(?:please\s+)?(?:forget|delete|remove)\b/iu.test(normalized);
 }
 
 /** quote 匹配：归一化空白后子串包含。 */

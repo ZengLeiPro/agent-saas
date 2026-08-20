@@ -3,7 +3,10 @@ import { createReadStream } from 'node:fs';
 import { lstat, readdir } from 'node:fs/promises';
 import { basename, join, relative } from 'node:path';
 
+import { MATERIALIZED_CONTENT_DIGEST_ALGORITHM } from '../../data/skillGovernance/types.js';
+
 const EXCLUDED_NAMES = new Set(['__pycache__', '.DS_Store', 'node_modules']);
+export { MATERIALIZED_CONTENT_DIGEST_ALGORITHM } from '../../data/skillGovernance/types.js';
 
 export function shouldIncludeMaterializedPath(path: string): boolean {
   return !EXCLUDED_NAMES.has(basename(path));
@@ -43,6 +46,38 @@ async function walk(root: string, current: string, hash: ReturnType<typeof creat
 export async function computeDirectoryFingerprint(root: string): Promise<string> {
   const hash = createHash('sha256');
   await walk(root, root, hash);
+  return hash.digest('hex');
+}
+
+async function walkSkillPackage(
+  root: string,
+  current: string,
+  hash: ReturnType<typeof createHash>,
+): Promise<void> {
+  const entries = (await readdir(current, { withFileTypes: true }))
+    .filter((entry) => shouldIncludeMaterializedPath(entry.name))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  for (const entry of entries) {
+    const path = join(current, entry.name);
+    const relativePath = relative(root, path).replaceAll('\\', '/');
+    const info = await lstat(path);
+    if (info.isSymbolicLink()) {
+      throw new Error(`技能源不允许包含软链接：${relativePath}`);
+    }
+    if (info.isDirectory()) {
+      await walkSkillPackage(root, path, hash);
+      continue;
+    }
+    if (!info.isFile()) continue;
+    hash.update(relativePath).update('\0').update(String(info.size)).update('\0');
+    await hashFile(path, hash);
+  }
+}
+
+/** 与技能包上传及物化副本一致的 contentDigest 算法，用于校验治理历史版本。 */
+export async function computeSkillPackageFingerprint(root: string): Promise<string> {
+  const hash = createHash('sha256');
+  await walkSkillPackage(root, root, hash);
   return hash.digest('hex');
 }
 

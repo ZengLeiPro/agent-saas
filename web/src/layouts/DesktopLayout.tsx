@@ -128,7 +128,7 @@ export function DesktopLayout(props: LayoutProps) {
   const { activeCapabilityTab, handleCapabilityTabChange } = useCapabilityNavigation(personalAgentEnabled);
 
   // 企业系统面板：从当前会话消息流 fold，与演示回放共用同一个 hook
-  const { snapshot: systemPanel, open: systemPanelOpen, selectView: selectSystemPanelView, dismiss: dismissSystemPanel } =
+  const { snapshot: systemPanel, pulse: systemPanelPulse, open: systemPanelOpen, selectView: selectSystemPanelView, dismiss: dismissSystemPanel } =
     useSystemPanelDock(messages, sessionId);
 
   const capabilityReplayActive = activeTab === "capabilities" && capabilityReplayOpen;
@@ -933,6 +933,7 @@ export function DesktopLayout(props: LayoutProps) {
                 <div className={cn("flex h-full min-h-0 flex-col", rightPanelKind !== 'system' && "hidden")}>
                   <SystemPanel
                     snapshot={systemPanel}
+                    pulse={systemPanelPulse}
                     onSelectView={selectSystemPanelView}
                     onClose={dismissSystemPanel}
                     className="min-h-0 flex-1"

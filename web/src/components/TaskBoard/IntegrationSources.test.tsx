@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TaskBoardIntegrationSource } from "@agent/shared/types/taskboard";
@@ -43,6 +43,15 @@ describe("useIntegrationSources request isolation", () => {
     first.resolve([source("a", "integration-a")]);
     await Promise.resolve();
     expect(result.current.sources.map((item) => item.id)).toEqual(["b"]);
+  });
+
+  it("retains stale source counts when a refresh for the same task fails", async () => {
+    fetchIntegrationSources.mockResolvedValueOnce([source("a", "integration-a")]).mockRejectedValueOnce(new Error("refresh failed"));
+    const { result } = renderHook(() => useIntegrationSources("integration-a"));
+    await waitFor(() => expect(result.current.sources).toHaveLength(1));
+    await act(async () => { await result.current.refresh(); });
+    await waitFor(() => expect(result.current.error).toBe("refresh failed"));
+    expect(result.current.sources.map((item) => item.id)).toEqual(["a"]);
   });
 
   it("clears the previous task data when the next task load fails", async () => {

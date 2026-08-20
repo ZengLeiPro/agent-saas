@@ -8,6 +8,7 @@ import {
 } from '../../../shared/src/types/taskboard.js';
 import {
   TaskboardConflictError,
+  TaskboardPermissionError,
   type TaskboardExecutionDispatch,
   type TaskboardExecutionModelContext,
   type TaskboardExecutionReconcileCandidate,
@@ -64,6 +65,11 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     ...(row.integration_state ? {
       integrationState: String(row.integration_state) as TaskBoardTask['integrationState'],
     } : {}),
+    ...(row.kind === 'integration'
+      ? { workflowVersion: row.workflow_version === null || row.workflow_version === undefined
+          ? 2 as const
+          : Number(row.workflow_version) as 2 | 3 }
+      : {}),
     mergeEligibility: taskMergeEligibility(row),
     workflowDisplayState: taskWorkflowDisplayState(row),
     ...taskResumeContext(row.resume_context),
@@ -242,6 +248,17 @@ export function isTerminalExecutionStatus(status: string): boolean {
 export function assertActiveBoard(board: TaskBoard): void {
   if (board.archivedAt) {
     throw new TaskboardValidationError('Archived boards are read-only', 'TASKBOARD_BOARD_ARCHIVED');
+  }
+}
+
+export function assertBoardRole(
+  role: TaskBoard['role'],
+  minimum: 'editor' | 'maintainer' | 'owner',
+): void {
+  const rank = role === 'owner' ? 4 : role === 'maintainer' ? 3 : role === 'editor' ? 2 : 1;
+  const required = minimum === 'owner' ? 4 : minimum === 'maintainer' ? 3 : 2;
+  if (rank < required) {
+    throw new TaskboardPermissionError('Taskboard role does not allow this operation');
   }
 }
 

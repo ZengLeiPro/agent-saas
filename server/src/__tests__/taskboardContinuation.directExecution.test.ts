@@ -116,6 +116,35 @@ describe('任务看板后续正式执行', () => {
     expect(rig.store.enqueueContinuation).not.toHaveBeenCalled();
   });
 
+  it('Workflow v3 无 active execution 时评论不得创建 merge execution', async () => {
+    const integration = { ...task, kind: 'integration' as const, workflowVersion: 3 as const, status: 'todo' as const };
+    const rig = makeRig({
+      getContinuationContext: vi.fn(async () => ({
+        task: integration, comment: comments[1]!, pendingComments: comments,
+      })),
+    });
+
+    await expect(rig.coordinator.continueExecution(identity, integration.id, comments[1]!.id))
+      .rejects.toMatchObject({ code: 'TASKBOARD_V3_COMMENT_CONTINUATION_REQUIRES_ACTIVE' });
+    expect(rig.store.claimExecution).not.toHaveBeenCalled();
+  });
+
+  it('Workflow v3 可通过评论继续 active work execution', async () => {
+    const integration = { ...task, kind: 'integration' as const, workflowVersion: 3 as const };
+    const execution = { ...activeExecution, taskId: integration.id };
+    const rig = makeRig({
+      getContinuationContext: vi.fn(async () => ({
+        task: integration, comment: comments[1]!, pendingComments: comments,
+        activeExecution: execution, latestExecution: execution,
+      })),
+    });
+
+    await rig.coordinator.continueExecution(identity, integration.id, comments[1]!.id);
+
+    expect(rig.store.enqueueContinuation).toHaveBeenCalled();
+    expect(rig.store.claimExecution).not.toHaveBeenCalled();
+  });
+
   it('终态、待合并、merged 与 blocked 评论均不得再次派发', async () => {
     for (const terminalTask of [
       { ...task, status: 'done' as const },

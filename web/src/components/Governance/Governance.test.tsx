@@ -60,12 +60,20 @@ describe('治理共享展示层', () => {
     expect(screen.getByRole('link', { name: '去授权' }).getAttribute('href')).toBe('/settings/connectors');
   });
 
-  it('503 错误明确 fail closed，绝不显示 allow', () => {
+  it('503 错误明确标记服务不可用，绝不误报账号缺权', () => {
     render(<GovernanceUnavailable error={Object.assign(new Error('private backend detail'), { status: 503 })} onRetry={vi.fn()} />);
 
-    expect(screen.getByRole('alert').textContent).toContain('权威治理结论暂不可获得');
-    expect(screen.getByRole('alert').textContent).toContain('不会降级为允许');
+    expect(screen.getByRole('alert').textContent).toContain('权限服务暂不可用');
+    expect(screen.getByRole('alert').textContent).toContain('不代表当前账号缺少权限');
     expect(screen.getByRole('alert').textContent).toContain('服务状态：503');
     expect(screen.getByRole('alert').textContent).not.toContain('private backend detail');
+  });
+
+  it('只有明确 403 才显示权限不足', () => {
+    render(<GovernanceUnavailable error={Object.assign(new Error('forbidden'), { status: 403 })} />);
+
+    expect(screen.getByRole('alert').textContent).toContain('权限不足');
+    expect(screen.getByRole('alert').textContent).toContain('当前账号没有访问此治理页面的权限');
+    expect(screen.getByRole('alert').textContent).not.toContain('权限服务暂不可用');
   });
 });

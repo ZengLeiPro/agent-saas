@@ -72,6 +72,7 @@ const BINDING_LABELS: Record<string, string> = {
   main: "默认交互 Agent",
   org_agent: "专职 Agent",
   memory_poll: "记忆轮询",
+  memory_consolidate: "会话记忆整合",
   subagent_general: "子 Agent · General",
   subagent_explore: "子 Agent · Explore",
   background_general: "后台 Agent · General",

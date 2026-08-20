@@ -29,6 +29,21 @@ function buildPool() {
       resources.set(String(params[0]), row);
       return { rows: [row], rowCount: 1 };
     }
+    if (sql.includes("version.definition_json->>'legacySkillId'=$3")) {
+      const matching = versions
+        .filter(version => (version.definition_json as Record<string, unknown>)?.legacySkillId === params[2])
+        .map(version => resources.get(String(version.skill_id)))
+        .filter((resource): resource is Record<string, unknown> => Boolean(resource));
+      const personal = matching.some(resource => (
+        resource.scope === 'personal'
+        && resource.tenant_id === params[0]
+        && resource.owner_user_id === params[1]
+      ));
+      const nonPersonal = matching.some(resource => (
+        resource.scope === 'tenant' && resource.tenant_id === params[0]
+      ));
+      return { rows: [{ personal, non_personal: nonPersonal }], rowCount: 1 };
+    }
     if (sql.includes('FROM test_governed_skills') && /skill_id\s*=\s*\$1/.test(sql)) {
       const row = resources.get(String(params[0]));
       const sameTenant = !sql.includes('tenant_id=$2') || row?.tenant_id === params[1];
@@ -69,9 +84,29 @@ function buildPool() {
       candidates.set(String(params[1]), row);
       return { rows: [row], rowCount: 1 };
     }
+    if (sql.includes('LEFT JOIN test_governed_skill_versions')) {
+      const rows = [...resources.values()]
+        .filter(resource => resource.tenant_id === params[0] && resource.scope === 'tenant')
+        .flatMap(resource => {
+          const resourceVersions = versions.filter(version => version.skill_id === resource.skill_id);
+          return resourceVersions.length > 0
+            ? resourceVersions.map(version => ({
+                skill_id: resource.skill_id,
+                definition_json: version.definition_json,
+              }))
+            : [{ skill_id: resource.skill_id, definition_json: null }];
+        });
+      return { rows, rowCount: rows.length };
+    }
     if (sql.includes('FROM test_governed_skill_versions') && sql.includes('digest=$2')) {
       const row = versions.find(item => item.skill_id === params[0] && item.digest === params[1]);
       return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+    }
+    if (sql.includes('FROM test_governed_skill_versions') && sql.includes('ORDER BY version_number')) {
+      const rows = versions
+        .filter(item => item.skill_id === params[0])
+        .sort((a, b) => Number(a.version_number) - Number(b.version_number));
+      return { rows, rowCount: rows.length };
     }
     if (sql.includes('MAX(version_number)')) {
       const max = versions.filter(item => item.skill_id === params[0]).reduce((n, item) => Math.max(n, Number(item.version_number)), 0);
@@ -115,6 +150,7 @@ function buildPool() {
 
 const definition = {
   name: '销售助手', description: '查询销售流程', contentRef: 'skill-content://sha256/abc',
+  legacySkillId: 'sales-helper', contentDigest: 'history-v1',
   entrypoint: 'SKILL.md', toolRequirements: ['WebSearch'],
 };
 
@@ -142,6 +178,41 @@ describe('Governed Skill + Candidate 发布链', () => {
     expect(created).toMatchObject({ skillId: 'sales-helper', scope: 'tenant', status: 'draft', revision: 1 });
   });
 
+  it('按目标 legacySkillId 返回完整的个人或非个人 ownership 结论', async () => {
+    const { pool, resources, versions } = buildPool();
+    resources.set('tenant-foreign', resourceRow({
+      skill_id: 'tenant-foreign', tenant_id: 'foreign', scope: 'tenant', status: 'published',
+    }));
+    resources.set('tenant-owned', resourceRow({
+      skill_id: 'tenant-owned', tenant_id: 'acme', scope: 'tenant', status: 'published',
+    }));
+    resources.set('platform-owned', resourceRow({
+      skill_id: 'platform-owned', tenant_id: 'pantheon', scope: 'platform', status: 'published',
+    }));
+    resources.set('personal-owned', resourceRow({
+      skill_id: 'personal-owned', tenant_id: 'acme', scope: 'personal', owner_user_id: 'user-1',
+      status: 'published',
+    }));
+    versions.push(
+      { skill_id: 'tenant-foreign', definition_json: { legacySkillId: 'legacy-foreign' } },
+      { skill_id: 'tenant-owned', definition_json: { legacySkillId: 'legacy-tenant' } },
+      { skill_id: 'platform-owned', definition_json: { legacySkillId: 'legacy-platform' } },
+      { skill_id: 'personal-owned', definition_json: { legacySkillId: 'legacy-personal' } },
+    );
+    const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
+
+    await expect(store.resolveUserPersonalSkillOwnership('acme', 'user-1', 'legacy-foreign'))
+      .resolves.toBeUndefined();
+    await expect(store.resolveUserPersonalSkillOwnership('acme', 'user-1', 'legacy-tenant'))
+      .resolves.toBe('not_personal');
+    await expect(store.resolveUserPersonalSkillOwnership('acme', 'user-1', 'legacy-platform'))
+      .resolves.toBeUndefined();
+    await expect(store.resolveUserPersonalSkillOwnership('acme', 'user-1', 'legacy-personal'))
+      .resolves.toBe('personal');
+    await expect(store.resolveUserPersonalSkillOwnership('acme', 'user-1', 'legacy-unknown'))
+      .resolves.toBeUndefined();
+  });
+
   it('治理上传可在单一事务内创建 tenant Skill 并发布 immutable v1', async () => {
     const { pool, resources, versions, queries } = buildPool();
     const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
@@ -160,8 +231,32 @@ describe('Governed Skill + Candidate 发布链', () => {
     });
     expect(resources.get('uploaded-skill')).toMatchObject({ status: 'published', current_version_id: expect.any(String) });
     expect(versions).toHaveLength(1);
+    await expect(store.listVersions('uploaded-skill')).resolves.toMatchObject([
+      { skillId: 'uploaded-skill', versionNumber: 1 },
+    ]);
+    const history = await store.listTenantSkillHistoricalProvenance('acme');
+    expect(history.get('sales-helper')).toEqual({ digests: [], legacyDigests: ['history-v1'] });
     expect(queries.filter(query => query === 'BEGIN')).toHaveLength(1);
     expect(queries.filter(query => query === 'COMMIT')).toHaveLength(1);
+  });
+
+  it('新摘要算法带标记，历史查询不把它降级为旧摘要', async () => {
+    const { pool } = buildPool();
+    const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
+    await store.createAndPublishResource({
+      skillId: 'current-skill',
+      tenantId: 'acme',
+      scope: 'tenant',
+      definition: {
+        ...definition,
+        legacySkillId: 'current-skill',
+        contentDigest: 'current-v2',
+        contentDigestAlgorithm: 'materialized-v2',
+      },
+      createdBy: 'org-admin',
+    });
+    const history = await store.listTenantSkillHistoricalProvenance('acme');
+    expect(history.get('current-skill')).toEqual({ digests: ['current-v2'], legacyDigests: [] });
   });
 
   it('个人候选副本按 draft→submitted→approved→published，发布 immutable version', async () => {

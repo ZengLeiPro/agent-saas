@@ -124,6 +124,13 @@ export interface SystemPanelSnapshot {
  * 刻意**不提供逆运算**——后退一律从 base 重新 fold。客户演示稿实测也是这个做法
  * （手写 reset 函数全量重放），而重新 fold 与会话消息的累加天然同构，后退零额外代码。
  */
+export interface PanelPulse {
+  op: 'pulse';
+  view: string;
+  ids: string[];
+  kind: 'scan' | 'hit' | 'new';
+}
+
 export type PanelPatch =
   | { op: 'focus'; view: string }
   | { op: 'toolbar'; view: string; title?: string; sub?: string }
@@ -139,8 +146,8 @@ export type PanelPatch =
   | { op: 'cellFlag'; view: string; rowId: string; colKey: string; tone: PanelTone; flag?: string }
   | { op: 'statsSet'; view: string; items: PanelStat[] }
   | { op: 'feedAppend'; view: string; item: PanelFeedItem }
-  /** 瞬时动效，不改数据。fold 时忽略，只喂给实时推进的动效层。 */
-  | { op: 'pulse'; view: string; ids: string[]; kind: 'scan' | 'hit' | 'new' };
+  /** 当前步骤的变化集合；不改持久数据，由实时渲染层单独消费。 */
+  | PanelPulse;
 
 // ============================================
 // 规范化：与 normalizeToolPresentation 同规格——脏数据返回 null，绝不抛错
@@ -680,7 +687,18 @@ function applyPatch(snapshot: SystemPanelSnapshot, p: PanelPatch): SystemPanelSn
     case 'tableRowUpdate':
       return mapView(snapshot, p.view, (view) =>
         view.widget.kind === 'table'
-          ? { ...view, widget: { ...view.widget, rows: view.widget.rows.map((r) => (r.id === p.id ? { ...r, ...p.set } : r)) } }
+          ? {
+              ...view,
+              widget: {
+                ...view.widget,
+                rows: view.widget.rows.map((r) => r.id === p.id ? {
+                  ...r,
+                  ...p.set,
+                  ...(p.set.cells ? { cells: { ...r.cells, ...p.set.cells } } : {}),
+                  ...(p.set.flags ? { flags: { ...r.flags, ...p.set.flags } } : {}),
+                } : r),
+              },
+            }
           : view);
     case 'cellFlag':
       return mapView(snapshot, p.view, (view) =>

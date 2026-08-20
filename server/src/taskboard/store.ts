@@ -52,6 +52,8 @@ import {
   updateTaskBranchFromExecution as updateStoredTaskBranchFromExecution,
 } from './executionTaskActions.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
+import { loadIntegrationCandidateProjection } from './integrationCandidateProjection.js';
+import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import { deleteStoredTask, rollbackStoredTask } from './storeTaskDelete.js';
 import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
 import {
@@ -88,6 +90,7 @@ import { resolveExecutionV2 as resolveStoredExecutionV2 } from './workflow/resol
 import { resumeBlockedTask as resumeStoredBlockedTask } from './workflow/resumeService.js';
 import {
   assertActiveBoard,
+  assertBoardRole,
   assertExpectedVersion,
   assertWritableTask,
   mapActiveBoardNameError,
@@ -102,10 +105,7 @@ import {
 } from './storeHelpers.js';
 import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns, assertTaskHasNoExecutionHistory } from './archiveGuard.js';
 import { deleteComment as deleteStoredComment, updateComment as updateStoredComment } from './storeComments.js';
-import {
-  getExecutionContextBySessionId as getStoredExecutionContextBySessionId,
-  searchExecutions as searchStoredExecutions,
-} from './storeExecutions.js';
+import { getExecutionContextBySessionId as getStoredExecutionContextBySessionId, searchExecutions as searchStoredExecutions } from './storeExecutions.js';
 import {
   listBoards as listStoredBoards,
   listComments as listStoredComments,
@@ -115,7 +115,8 @@ import {
   searchTasks as searchStoredTasks,
 } from './storeSearch.js';
 import { initializeTaskboardStore } from './storeSchema.js';
-import { requireTaskWithBoard as requireStoredTaskWithBoard } from './storeTaskAccess.js';
+import { assertIntegrationV3RuntimeAvailable } from './integrationV3ActivationStore.js';
+import { loadBoard as loadStoredBoard, requireTaskWithBoard as requireStoredTaskWithBoard } from './storeTaskAccess.js';
 import {
   claimWorkflowCancellations as claimStoredWorkflowCancellations,
   finishWorkflowCancellation as finishStoredWorkflowCancellation,
@@ -129,7 +130,6 @@ import {
 } from './storeExecutionLifecycle.js';
 import {
   TaskboardNotFoundError,
-  TaskboardPermissionError,
   TaskboardValidationError,
   type TaskboardBoardSearchFilter,
   type TaskboardContinuationContext,
@@ -212,6 +212,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   async init(): Promise<void> {
     await initializeTaskboardStore(this);
   }
+
   listMembers(identity: TaskboardIdentity, boardId: string): Promise<TaskBoardMember[]> {
     return listStoredBoardMembers(this, identity, boardId);
   }
@@ -252,6 +253,17 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return listStoredIntegrationSources(this, identity, integrationTaskId);
   }
 
+  /**
+   * Loads the durable v3 candidate projection after checking task visibility
+   * and workflow eligibility through the store's public task access path.
+   */
+  getIntegrationCandidate(
+    identity: TaskboardIdentity, integrationTaskId: string,
+    options?: { includeHistory?: boolean; page?: number; pageSize?: number },
+  ) {
+    return loadIntegrationCandidateProjection(this, identity, integrationTaskId, options);
+  }
+
   resumeBlockedTask(
     identity: TaskboardIdentity,
     taskId: string,
@@ -278,6 +290,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
 
   setRepositoryProvider(provider: RepositoryProvider): void {
     this.repositoryProvider = provider;
+  }
+
+  getRepositoryProvider(): RepositoryProvider | undefined {
+    return this.repositoryProvider;
   }
 
   attachExecutionPullRequestV2(
@@ -354,6 +370,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return this.requireBoard(this.pool, identity, boardId, false);
   }
   async createBoard(identity: TaskboardIdentity, input: TaskBoardCreateInput): Promise<TaskBoard> {
+    if (input.integrationPolicy?.enabled && input.integrationPolicy.workflowVersion === 3) await assertIntegrationV3RuntimeAvailable(this.pool, this.integrationSourcesTable);
     const name = requireText(input.name, 'Board name');
     const description = optionalText(input.description);
     const prompt = normalizeBoardPrompt(input.prompt ?? TASKBOARD_DEFAULT_PROMPT);
@@ -406,6 +423,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     }
   }
   async updateBoard(identity: TaskboardIdentity, boardId: string, input: TaskBoardPatchInput): Promise<TaskBoard> {
+    if (input.integrationPolicy?.enabled && input.integrationPolicy.workflowVersion === 3) await assertIntegrationV3RuntimeAvailable(this.pool, this.integrationSourcesTable);
     return this.withTransaction(async (client) => {
       const current = await this.requireOwnedBoard(client, identity, boardId, true);
       assertExpectedVersion(current, input.expectedVersion);
@@ -1084,7 +1102,20 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           archive ? 'TASKBOARD_TASK_ARCHIVED' : 'TASKBOARD_TASK_NOT_ARCHIVED',
         );
       }
-      if (archive) await assertTaskHasNoActiveRuns(this, client, taskId);
+      if (archive) {
+        await assertTaskHasNoActiveRuns(this, client, taskId);
+        if (loaded.task.kind === 'integration' && (loaded.task.workflowVersion ?? 2) === 3) {
+          const { candidatesTable } = integrationCandidateTableNames(this.integrationSourcesTable);
+          const candidate = await client.query(
+            `SELECT state FROM ${candidatesTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId]);
+          if (!candidate.rows[0] || !['merged','canceled'].includes(String(candidate.rows[0].state))) {
+            throw new TaskboardValidationError(
+              'Workflow v3 integration must be canceled or merged before archive',
+              'TASKBOARD_V3_ARCHIVE_REQUIRES_TERMINAL_CANDIDATE',
+            );
+          }
+        }
+      }
       await client.query(
         `UPDATE ${this.tasksTable} t
             SET archived_at=${archive ? 'now()' : 'NULL'}, version=t.version+1, updated_at=now()
@@ -1132,7 +1163,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     boardId: string,
     forUpdate: boolean,
   ): Promise<TaskBoard> {
-    return this.loadBoard(db, identity, boardId, forUpdate, false);
+    return loadStoredBoard(this, db, identity, boardId, forUpdate, false);
   }
 
   private requireOwnedBoard(
@@ -1141,29 +1172,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     boardId: string,
     forUpdate: boolean,
   ): Promise<TaskBoard> {
-    return this.loadBoard(db, identity, boardId, forUpdate, true);
-  }
-
-  private async loadBoard(
-    db: PgPool | PoolClient,
-    identity: TaskboardIdentity,
-    boardId: string,
-    forUpdate: boolean,
-    ownerOnly: boolean,
-  ): Promise<TaskBoard> {
-    const result = await db.query(
-      `SELECT b.id, b.owner_user_id, b.name, b.description, b.visibility, b.prompt, b.model, b.stage_models, b.stage_prompts,
-              b.repository, b.integration_policy, b.version, b.archived_at, b.created_at, b.updated_at,
-              CASE WHEN b.owner_user_id=$3 THEN 'owner' ELSE COALESCE(m.role,'viewer') END AS board_role
-         FROM ${this.boardsTable} b
-         LEFT JOIN ${this.membersTable} m ON m.board_id=b.id AND m.user_id=$3
-        WHERE b.id=$1 AND b.tenant_id=$2
-          AND (b.owner_user_id=$3 OR ($4::boolean=false AND b.visibility='organization'))
-        ${forUpdate ? 'FOR UPDATE OF b' : ''}`,
-      [boardId, identity.tenantId, identity.ownerUserId, ownerOnly],
-    );
-    if (!result.rows[0]) throw new TaskboardNotFoundError('Board not found');
-    return rowToBoard(result.rows[0], identity.ownerUserId);
+    return loadStoredBoard(this, db, identity, boardId, forUpdate, true);
   }
 
   async requireTask(
@@ -1197,16 +1206,5 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     } finally {
       client.release();
     }
-  }
-}
-
-function assertBoardRole(
-  role: TaskBoard['role'],
-  minimum: 'editor' | 'maintainer' | 'owner',
-): void {
-  const rank = role === 'owner' ? 4 : role === 'maintainer' ? 3 : role === 'editor' ? 2 : 1;
-  const required = minimum === 'owner' ? 4 : minimum === 'maintainer' ? 3 : 2;
-  if (rank < required) {
-    throw new TaskboardPermissionError('Taskboard role does not allow this operation');
   }
 }

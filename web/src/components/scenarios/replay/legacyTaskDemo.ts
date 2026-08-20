@@ -1,3 +1,4 @@
+import { derivePanelPulse, foldPanel } from "@agent/shared";
 import type {
   ApiTranscriptBlock,
   DetailLine,
@@ -62,10 +63,11 @@ function compactNarrativeBlocks(
   });
 }
 
-function todoBlock(id: string, todos: DemoTodo[]): ApiTranscriptBlock {
+function todoBlock(id: string, todos: DemoTodo[], runId: string): ApiTranscriptBlock {
   return {
     id,
     kind: "tool_use",
+    runId,
     title: "TodoWrite",
     defaultOpen: false,
     toolName: "TodoWrite",
@@ -244,6 +246,31 @@ function snapshotTodos(script: ReplayScript, currentIndex: number, phase: "start
   });
 }
 
+function withDerivedPanelDeltas(blocks: ApiTranscriptBlock[]): ApiTranscriptBlock[] {
+  let snapshot: ReturnType<typeof foldPanel> | null = null;
+  return blocks.map((block) => {
+    const presentation = block.presentation;
+    if (!presentation) return block;
+    if (!snapshot && presentation.panelBase) snapshot = presentation.panelBase;
+    if (presentation.panel === undefined) return block;
+    if (snapshot) snapshot = foldPanel(snapshot, presentation.panel);
+
+    const pulse = derivePanelPulse(presentation.panel, snapshot?.activeView);
+    if (!pulse) return block;
+    const hasExplicitPulse = presentation.panel.some((patch) => patch.op === "pulse");
+    const needsFocus = !!snapshot && snapshot.activeView !== pulse.view;
+    if (!needsFocus && hasExplicitPulse) return block;
+
+    const panel = [...presentation.panel];
+    if (needsFocus) {
+      panel.push({ op: "focus", view: pulse.view });
+      snapshot = { ...snapshot!, activeView: pulse.view };
+    }
+    if (!hasExplicitPulse) panel.push(pulse);
+    return { ...block, presentation: { ...presentation, panel } };
+  });
+}
+
 /**
  * 给旧版回放剧本补上真实 TodoWrite 快照。
  *
@@ -259,6 +286,7 @@ export function buildLegacyReplayBlocks(
   if (visibleStepCount === 0) return script.steps[0]?.blocks.slice(0, 1) ?? [];
 
   const visible: ApiTranscriptBlock[] = [];
+  const runId = `scenario-replay:${script.scenarioId}`;
   for (const [index, step] of script.steps.slice(0, visibleStepCount).entries()) {
     const leadingPrompts: ApiTranscriptBlock[] = [];
     const processBlocks = [...step.blocks];
@@ -269,6 +297,7 @@ export function buildLegacyReplayBlocks(
     visible.push(todoBlock(
       `demo-task-${index + 1}-start`,
       snapshotTodos(script, index, "start", decisions),
+      runId,
     ));
 
     // 工具过程收进步骤节；必要的短回复与产物卡留在终态快照之后，和真实 Agent
@@ -286,6 +315,7 @@ export function buildLegacyReplayBlocks(
     visible.push(todoBlock(
       `demo-task-${index + 1}-terminal-${decision ?? "default"}`,
       snapshotTodos(script, index, "terminal", decisions),
+      runId,
     ));
     const decisionNarrativeBlocks = decisionBlocks.filter((block) => block.kind === "text");
     const hasStructuredResult = [...processBlocks, ...decisionBlocks].some((block) => block.presentation);
@@ -294,5 +324,5 @@ export function buildLegacyReplayBlocks(
       hasStructuredResult,
     ));
   }
-  return visible;
+  return withDerivedPanelDeltas(visible);
 }

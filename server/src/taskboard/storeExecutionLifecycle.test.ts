@@ -181,6 +181,42 @@ describe('claimExecution model consistency', () => {
     });
   });
 
+  it('loads and validates the current v3 candidate before admitting a work execution', async () => {
+    const integrationTask: TaskBoardTask = {
+      ...task,
+      kind: 'integration',
+      workflowVersion: 3,
+      status: 'in_progress',
+    };
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('FROM taskboard_executions WHERE id=')) return { rows: [] };
+        if (sql.includes('AS merged')) return { rows: [{ merged: false }] };
+        if (sql.includes('SELECT c.id,c.state')) return { rows: [{
+          id: 'candidate-1', state: 'working', version: 4, current_revision: 2,
+          work_round: 1, workflow_epoch: '8', lane_epoch: '3', head_oid: 'head-2',
+        }] };
+        if (sql.includes('SELECT 1 WHERE EXISTS')) return { rows: [{}] };
+        return { rows: [] };
+      }),
+    };
+    const store = {
+      executionsTable: 'taskboard_executions',
+      continuationOutboxTable: 'taskboard_continuation_outbox',
+      integrationSourcesTable: 'taskboard_sources',
+      remediationAttemptsTable: 'taskboard_remediation_attempts',
+      requireTaskWithBoard: vi.fn(async () => ({
+        task: integrationTask, boardOwnerUserId: identity.ownerUserId, boardRole: 'owner',
+      })),
+      withTransaction: vi.fn(async (operation: (transaction: typeof client) => Promise<unknown>) => operation(client)),
+    } as unknown as PgTaskboardStore;
+
+    await expect(claimExecution(store, identity, task.id, claimInput())).rejects.toMatchObject({
+      code: 'TASKBOARD_EXECUTION_ACTIVE',
+    });
+    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('FOR UPDATE OF c'), [task.id]);
+  });
+
   it('accepts the selected work-stage model while holding the board lock', async () => {
     const client = {
       query: vi.fn(async () => ({

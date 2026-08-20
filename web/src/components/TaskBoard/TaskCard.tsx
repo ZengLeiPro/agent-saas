@@ -12,6 +12,7 @@ import {
   PRIORITY_LABELS,
   TASK_KIND_LABELS,
 } from "./constants";
+import { IntegrationCandidateCardSummary } from "./IntegrationCandidate";
 import { IntegrationCardSummary } from "./IntegrationSources";
 
 interface TaskCardProps {
@@ -115,16 +116,11 @@ export function TaskCard({
             {task.reviewedSubjectDigest ? <span className="ml-2 text-emerald-700 dark:text-emerald-400">已复核</span> : <span className="ml-2 text-amber-700 dark:text-amber-300">待复核</span>}
           </div>
         ) : null}
-        {task.labels.length ? (
-          <div className="mt-2 flex flex-wrap gap-1">
-            {task.labels.slice(0, 4).map((label) => (
-              <Badge key={label} variant="secondary" className="max-w-24 truncate font-normal">
-                {label}
-              </Badge>
-            ))}
-          </div>
+        {kind === "integration" ? (
+          task.workflowVersion === 3
+            ? <IntegrationCandidateCardSummary taskId={task.id} />
+            : <IntegrationCardSummary taskId={task.id} />
         ) : null}
-        {kind === "integration" ? <IntegrationCardSummary taskId={task.id} /> : null}
         {kind === "delivery" && task.integrationState ? (
           <div className="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
             集成状态：{INTEGRATION_SOURCE_STATE_LABELS[task.integrationState]}

@@ -44,9 +44,29 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
     tools: ModelToolDefinition[];
     context: RunContext;
   }): string {
-    const sessionId = input.context.sessionId.trim();
-    if (sessionId.length <= 64) return sessionId;
-    return createHash('sha256').update(sessionId).digest('hex');
+    const systemContent = input.messages
+      .filter(
+        (message): message is Extract<ModelChatMessage, { role: 'system' }> => message.role === 'system',
+      )
+      .map((message) => message.content)
+      .join('\n\n');
+    // Skill 工具描述包含按用户计算的可用技能清单；缓存指纹必须覆盖完整工具定义，
+    // 否则“无 Skill”与“已启用 Skill”的新会话会共享过期的清单。
+    const toolSignature = input.tools
+      .map((tool) => JSON.stringify({
+        id: tool.id,
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+        deferLoading: tool.deferLoading === true,
+        mcpServer: tool.mcpServer ?? null,
+      }))
+      .sort()
+      .join(',');
+    return createHash('sha256')
+      .update(`${input.model}\n${systemContent}\n${toolSignature}`)
+      .digest('hex')
+      .slice(0, 32);
   }
 
   async getContinuationBinding() {
@@ -111,6 +131,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
           serializedBody: input.serializedBody,
           tenantId: input.context.tenantId ?? '__default__',
           sessionId: input.context.sessionId,
+          cacheAffinityId: input.promptCacheKey ?? input.context.sessionId,
           clientRequestId: input.clientRequestId,
           signal: input.signal,
         });
@@ -161,7 +182,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
         'openai-beta': 'responses=experimental',
         accept: 'text/event-stream',
         'content-type': 'application/json',
-        'session-id': input.context.sessionId,
+        'session-id': input.promptCacheKey ?? input.context.sessionId,
         'x-client-request-id': input.clientRequestId,
       },
       body: input.serializedBody,

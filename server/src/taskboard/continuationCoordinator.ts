@@ -179,7 +179,15 @@ function canonicalizeContinuationDispatch(
   ) {
     throw new InvalidContinuationDispatchPayloadError(`评论续跑 payload 关联字段不一致：${dispatch.runId}`);
   }
-  return dispatch.payload;
+  return {
+    ...dispatch.payload,
+    session: {
+      ...dispatch.payload.session,
+      sessionSource: 'taskboard_execution',
+      memoryAutomationEligible: false,
+      memoryPolicyVersion: 'v2',
+    },
+  };
 }
 
 function assertContinuationRun(run: RunRecord, dispatch: TaskboardContinuationDispatch): void {

@@ -12,6 +12,7 @@ import type {
   TaskBoardExecutionContextResponse,
   TaskBoardExecutionResolutionInput,
   TaskBoardIntegrationBatchCreateInput,
+  TaskBoardIntegrationCandidateDetails,
   TaskBoardIntegrationSource,
   TaskBoardMember,
   TaskBoardMemberPatchInput,
@@ -340,6 +341,33 @@ export interface TaskboardExecutionStore {
   ): Promise<TaskBoardExecutionStartResult | null>;
 }
 
+export interface TaskboardIntegrationPushIssueInput {
+  executionId: string;
+  candidateId: string;
+  ttlMs?: number;
+}
+
+export interface TaskboardIntegrationPushInput {
+  executionId: string;
+  candidateId: string;
+  capabilityToken: string;
+  /** The only git selector accepted from an Agent. Ref, remote and path are server-resolved. */
+  commitOid: string;
+}
+
+export interface TaskboardIntegrationPushService {
+  health(): Promise<{ enabled: boolean; healthy: boolean; reason?: string }>;
+  issue(identity: TaskboardIdentity, input: TaskboardIntegrationPushIssueInput): Promise<{
+    capabilityToken: string;
+    expiresAt: string;
+  }>;
+  push(identity: TaskboardIdentity, input: TaskboardIntegrationPushInput): Promise<{
+    pushed: true;
+    candidateId: string;
+    commitOid: string;
+  }>;
+}
+
 export interface TaskboardExecutionService {
   listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]>;
   searchExecutions(
@@ -362,6 +390,20 @@ export interface TaskboardExecutionService {
     taskId: string,
     commentId: string,
   ): Promise<TaskBoardExecutionStartResult>;
+}
+
+export interface TaskboardIntegrationCandidateView extends TaskBoardIntegrationCandidateDetails {
+  operations: Array<{
+    id: string;
+    operationKey: string;
+    kind: string;
+    state: string;
+    attemptCount: number;
+    error?: string;
+    receipt?: Record<string, unknown>;
+    updatedAt: string;
+  }>;
+  worker: { status: string; checkpoint: Record<string, unknown>; error?: string };
 }
 
 export interface TaskboardService {
@@ -417,6 +459,11 @@ export interface TaskboardService {
     identity: TaskboardIdentity,
     integrationTaskId: string,
   ): Promise<TaskBoardIntegrationSource[]>;
+  getIntegrationCandidate?(
+    identity: TaskboardIdentity,
+    integrationTaskId: string,
+    options?: { includeHistory?: boolean; page?: number; pageSize?: number },
+  ): Promise<TaskboardIntegrationCandidateView>;
   resumeBlockedTask?(
     identity: TaskboardIdentity,
     taskId: string,

@@ -42,13 +42,14 @@ import {
   STATUS_LABELS,
   TASK_KIND_LABELS,
 } from "./constants";
-import { IntegrationSourceDetails, useIntegrationSources } from "./IntegrationSources";
+import { IntegrationTaskDetails } from "./IntegrationCandidate";
+import { useIntegrationSources } from "./IntegrationSources";
 import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from "./TaskAttachments";
 import { TaskDetailComments, EXECUTION_PURPOSE_LABELS } from "./TaskDetailComments";
 import { useTaskComments, useTaskExecutions } from "./hooks";
 
-type TaskDraftField = "title" | "description" | "branch" | "attachments" | "priority" | "stageModels";
+type TaskDraftField = "title" | "description" | "attachments" | "priority" | "stageModels";
 
 const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review", "merge"];
 const ACTIVE_EXECUTION_STATUSES = new Set(["queued", "running", "waiting_user", "waiting_approval"]);
@@ -62,7 +63,7 @@ function taskStageModels(task: TaskBoardTask): TaskBoardStageModels {
 
 function inheritedModelHint(board: TaskBoard | null, purpose: TaskBoardExecutionPurpose): string {
   const model = board?.stageModels?.[purpose] ?? board?.model;
-  return model ? `看板默认：${model}` : "未指定时继承看板默认模型";
+  return model ?? "未指定时继承看板默认模型";
 }
 
 interface TaskDetailProps {
@@ -123,7 +124,6 @@ export function TaskDetail({
   const [currentTask, setCurrentTask] = useState<TaskBoardTask | null>(task);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [branch, setBranch] = useState("");
   const [priority, setPriority] = useState<TaskBoardPriority>("none");
   const [stageModels, setStageModels] = useState<TaskBoardStageModels>({});
   const [executionStartedTaskId, setExecutionStartedTaskId] = useState<string | null>(null);
@@ -154,7 +154,7 @@ export function TaskDetail({
     refresh: refreshExecutions,
   } = useTaskExecutions(open && task ? task.id : null, active && open);
   const integrationSourcesState = useIntegrationSources(
-    open && currentTask?.kind === "integration" ? currentTask.id : null,
+    open && currentTask?.kind === "integration" && currentTask.workflowVersion !== 3 ? currentTask.id : null,
     active && open,
   );
 
@@ -163,7 +163,6 @@ export function TaskDetail({
     dirtyFieldsRef.current.clear();
     setTitle(next.title);
     setDescription(next.description);
-    setBranch(next.branch ?? "");
     taskAttachments.replaceFiles(next.attachments ?? []);
     setPriority(next.priority);
     setStageModels(taskStageModels(next));
@@ -173,7 +172,6 @@ export function TaskDetail({
     const dirty = dirtyFieldsRef.current;
     if (!dirty.has("title")) setTitle(next.title);
     if (!dirty.has("description")) setDescription(next.description);
-    if (!dirty.has("branch")) setBranch(next.branch ?? "");
     if (!dirty.has("attachments")) taskAttachments.replaceFiles(next.attachments ?? []);
     if (!dirty.has("priority")) setPriority(next.priority);
     if (!dirty.has("stageModels")) setStageModels(taskStageModels(next));
@@ -294,9 +292,14 @@ export function TaskDetail({
       ? ["todo", "in_progress"].includes(currentTask?.status ?? "canceled")
       : ["todo", "in_review"].includes(currentTask?.status ?? "canceled")
         || (currentTask?.status === "in_progress" && !executionActive));
-  const canContinueCurrentTask = (canRunCurrentTask && currentTask?.status !== "in_progress")
-    || (!readOnly && canExecute && taskKind !== "integration"
-      && currentTask?.status === "in_progress" && executionActive);
+  const isIntegrationV3 = taskKind === "integration" && currentTask?.workflowVersion === 3;
+  const canContinueCurrentTask = isIntegrationV3
+    ? (!readOnly && canExecute && executionActive
+      && ["in_progress", "in_review"].includes(currentTask?.status ?? "canceled")
+      && (latestExecution?.purpose === "work" || latestExecution?.purpose === "review"))
+    : (canRunCurrentTask && currentTask?.status !== "in_progress")
+      || (!readOnly && canExecute && taskKind !== "integration"
+        && currentTask?.status === "in_progress" && executionActive);
   const canTransitionCurrentTask = Boolean(
     currentTask
     && !readOnly
@@ -323,7 +326,6 @@ export function TaskDetail({
     const input: Omit<TaskBoardTaskPatchInput, "expectedVersion"> = {};
     if (dirty.has("title")) input.title = title.trim();
     if (dirty.has("description")) input.description = description.trim();
-    if (dirty.has("branch")) input.branch = branch.trim() || null;
     if (dirty.has("attachments")) input.attachments = toTaskBoardAttachments(taskAttachments.uploadedFiles);
     if (dirty.has("priority")) input.priority = priority;
     if (dirty.has("stageModels")) input.stageModels = stageModels;
@@ -637,7 +639,8 @@ export function TaskDetail({
                 {executionsError ? <p role="alert" className="text-xs text-destructive">{executionsError}</p> : null}
                 {latestExecution?.error ? <p className="whitespace-pre-wrap text-xs text-destructive">{latestExecution.error}</p> : null}
                 {canRunCurrentTask && (
-                  (taskKind === "integration" && ["todo", "in_progress"].includes(currentTask.status))
+                  (taskKind === "integration" && currentTask.workflowVersion !== 3
+                    && ["todo", "in_progress"].includes(currentTask.status))
                   || (taskKind !== "integration" && currentTask.status === "todo")
                   || (taskKind !== "integration" && currentTask.status === "in_review")
                   || (taskKind !== "integration" && currentTask.status === "in_progress" && !executionActive)
@@ -660,6 +663,12 @@ export function TaskDetail({
                           : "开始实施"}
                   </Button>
                 ) : null}
+                {taskKind === "integration" && currentTask.workflowVersion === 3
+                  && !["done", "canceled"].includes(currentTask.status) ? (
+                    <p className="text-xs text-muted-foreground">
+                      Integration v3 由系统按 Candidate 状态自动推进 Work、Review 与合并；异常时请在 Candidate 区重新排队或显式恢复。
+                    </p>
+                  ) : null}
                 {currentTask.providerPullRequestId ? <p>PR：<span className="font-mono">{currentTask.providerPullRequestId}</span>{currentTask.pullRequestNumber ? `（#${currentTask.pullRequestNumber}）` : ""}</p> : null}
                 {currentTask.reviewedSubjectDigest ? <p className="break-all text-xs text-muted-foreground">已复核对象：<span className="font-mono">{currentTask.reviewedSubjectDigest}</span></p> : null}
                 {currentTask.mergedCommitOid ? <p className="flex items-center gap-1 break-all text-xs text-emerald-700 dark:text-emerald-400"><GitCommitHorizontal className="size-3.5 shrink-0" />merged commit {currentTask.mergedCommitOid}</p> : null}
@@ -723,17 +732,13 @@ export function TaskDetail({
               </section>
 
               {taskKind === "integration" ? (
-                <IntegrationSourceDetails
-                  taskId={currentTask.id}
-                  state={integrationSourcesState}
+                <IntegrationTaskDetails
+                  task={currentTask}
+                  active={active && open}
+                  sourceState={integrationSourcesState}
                   selectedSourceIds={selectedResumeSourceIds}
-                  onSourceSelectionChange={currentTask.status === "blocked" && canTransitionTask ? (sourceId, selected) => {
-                    setSelectedResumeSourceIds((previous) => {
-                      const next = new Set(previous);
-                      if (selected) next.add(sourceId); else next.delete(sourceId);
-                      return next;
-                    });
-                  } : undefined}
+                  setSelectedSourceIds={setSelectedResumeSourceIds}
+                  sourceSelectionEnabled={currentTask.status === "blocked" && canTransitionTask}
                   onNavigateTask={onNavigateTask}
                 />
               ) : null}
@@ -801,21 +806,6 @@ export function TaskDetail({
                     <p className="text-xs text-muted-foreground">任务首次执行后，标题和正文已锁定；后续变更请通过评论补充。</p>
                   ) : null}
                 </div>
-                {taskKind === "delivery" ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="task-detail-branch">工作分支</Label>
-                    <Input
-                      id="task-detail-branch"
-                      value={branch}
-                      onChange={(event) => {
-                        dirtyFieldsRef.current.add("branch");
-                        setBranch(event.target.value);
-                      }}
-                      placeholder="由你填写，或由 Agent 创建后回写"
-                      disabled={editReadOnly || saving}
-                    />
-                  </div>
-                ) : null}
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>状态</Label>
@@ -858,9 +848,6 @@ export function TaskDetail({
                 <section aria-label="分阶段运行模型" className="space-y-3 rounded-lg border bg-muted/20 p-3">
                   <div>
                     <h3 className="text-sm font-medium">运行模型</h3>
-                    <p className="text-xs text-muted-foreground">
-                      按实施、复核、集成阶段分别选择；留空则继承看板对应阶段的默认模型。
-                    </p>
                   </div>
                   <div className="grid gap-3 sm:grid-cols-3">
                     {TASK_MODEL_PURPOSES.map((purpose) => (

@@ -252,10 +252,8 @@ function projectPanel(events: WorkflowTraceEventV1[]): SystemPanelSnapshot | nul
         },
         tone: unverifiedWrite ? 'warn' : toneForState(field.state),
         flags: {
-          state: {
-            tone: unverifiedWrite ? 'warn' : toneForState(field.state),
-            flag: unverifiedWrite ? '待核对' : field.before ? '已变化' : undefined,
-          },
+          // 状态文字已在 cell 中显示；flag 只保留语义色，避免“已变化 已变化”。
+          state: { tone: unverifiedWrite ? 'warn' : toneForState(field.state) },
         },
       }));
       view.widget.rows.push(...rows);
@@ -278,7 +276,8 @@ function projectPanel(events: WorkflowTraceEventV1[]): SystemPanelSnapshot | nul
         id: `${event.id}-${index + 1}`,
         cells: { object: field.label, value: field.value, state: '已核对' },
         tone: toneForState(field.state),
-        flags: { state: { tone: toneForState(field.state), flag: '已核对' } },
+        // 状态文字只显示一次；flag 负责着色，不再重复“已核对”。
+        flags: { state: { tone: toneForState(field.state) } },
       })));
     }
     activeView = key;

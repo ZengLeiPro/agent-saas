@@ -9,13 +9,14 @@ function user(id: string): MessageItem {
   return { id, type: "user", content: "next task" };
 }
 
-function todo(id: string, toolInput: string): MessageItem {
+function todo(id: string, toolInput: string, runId?: string): MessageItem {
   return {
     id,
     type: "tool_use",
     toolName: "TodoWrite",
     toolId: id,
     toolInput,
+    ...(runId ? { runId } : {}),
   };
 }
 
@@ -88,6 +89,23 @@ describe("projectBusinessStepEvents", () => {
       stepIndex: 2,
       stepCount: 2,
     });
+  });
+
+  it("keeps one plan instance and refreshes it to the latest step statuses", () => {
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("verify", "in_progress"), step("write", "pending")])),
+      todo("t2", todos([
+        step("verify", "completed", { outcome: { text: "核对完成" } }),
+        step("write", "in_progress"),
+      ])),
+    ], false);
+
+    const plans = result.events.filter((event) => event.kind === "plan");
+    expect(plans).toHaveLength(1);
+    expect(plans[0]?.todos).toMatchObject([
+      { id: "verify", status: "completed", outcome: { text: "核对完成" } },
+      { id: "write", status: "in_progress" },
+    ]);
   });
 
   it("keeps legacy display readable while stripping gate/actions and ignoring extension type", () => {
@@ -317,6 +335,32 @@ describe("projectBusinessStepEvents", () => {
     // 跨 Turn 首快照：plan 重新亮相 + 当前 in_progress 步骤的 start，不回放已完成步骤。
     expect(t3Events.map((event) => event.kind)).toEqual(["plan", "start"]);
     expect(result.events.filter((event) => event.kind === "complete")).toHaveLength(1);
+  });
+
+  it("keeps one plan across user prompts that belong to the same business run", () => {
+    const result = projectBusinessStepEvents([
+      user("user-1"),
+      todo("t1", todos([step("a", "in_progress"), step("b", "pending")]), "run-1"),
+      todo("t2", todos([step("a", "completed"), step("b", "pending")]), "run-1"),
+      user("approval-reply"),
+      todo("t3", todos([step("a", "completed"), step("b", "in_progress")]), "run-1"),
+      todo("t4", todos([step("a", "completed"), step("b", "completed")]), "run-1"),
+    ], false);
+
+    expect(result.events.filter((event) => event.kind === "plan")).toHaveLength(1);
+    expect(result.events[0].todos?.map((item) => item.status)).toEqual(["completed", "completed"]);
+    expect((result.eventsByAnchor.get("t3") ?? []).map((event) => event.kind)).toEqual(["start"]);
+  });
+
+  it("re-plans when an explicit run id changes without a user message", () => {
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("a", "in_progress")]), "run-1"),
+      todo("t2", todos([step("a", "completed")]), "run-1"),
+      todo("t3", todos([step("b", "in_progress")]), "run-2"),
+    ], false);
+
+    expect(result.events.filter((event) => event.kind === "plan")).toHaveLength(2);
+    expect((result.eventsByAnchor.get("t3") ?? []).map((event) => event.kind)).toEqual(["plan", "start"]);
   });
 
   it("ignores incomplete streaming payloads without hiding the message", () => {

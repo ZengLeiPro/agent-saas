@@ -31,6 +31,7 @@ import {
   reconcileTaskboardContinuation,
 } from './continuationCoordinator.js';
 import { reuseTaskboardSession } from './executionSession.js';
+import { taskboardExecutionSessionDescriptor } from './executionSessionMetadata.js';
 import {
   assertDispatchedRun,
   canonicalizeDispatchPayload,
@@ -146,11 +147,12 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     return this.startExecutionInternal(identity, taskId, input);
   }
 
-  startDirectExecution(
-    identity: TaskboardIdentity,
-    taskId: string,
-    expectedVersion: number,
-  ): Promise<TaskBoardExecutionStartResult> {
+  startIntegrationV3Execution(identity: TaskboardIdentity, taskId: string, input: TaskBoardExecutionStartInput,
+    executionId: string): Promise<TaskBoardExecutionStartResult> {
+    return this.startExecutionInternal(identity, taskId, input, { executionId, trigger: 'initial' });
+  }
+
+  startDirectExecution(identity: TaskboardIdentity, taskId: string, expectedVersion: number): Promise<TaskBoardExecutionStartResult> {
     return this.startExecutionInternal(identity, taskId, { expectedVersion, purpose: 'work' }, {
       executionId: `direct-${taskId}`,
       trigger: 'initial',
@@ -308,12 +310,12 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       : [];
     const executionId = options.executionId ?? randomUUID();
     const workSessionId = executions.find((execution) => execution.purpose === 'work')?.sessionId;
-    const sessionPrefix = purpose === 'review'
-      ? 'taskboard-review'
-      : purpose === 'merge'
-        ? 'taskboard-merge'
-        : 'taskboard';
-    const sessionId = workSessionId ?? `${sessionPrefix}-${randomUUID()}`;
+    const sessionDescriptor = taskboardExecutionSessionDescriptor(
+      launch.modelContext.taskKind,
+      purpose,
+      taskId,
+    );
+    const sessionId = workSessionId ?? `${sessionDescriptor.sessionPrefix}-${randomUUID()}`;
     const session = await reuseTaskboardSession({
       sessionCatalog: this.options.sessionCatalog,
       agentCwd: this.options.agentCwd,
@@ -337,6 +339,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         taskboardExecution: true,
         taskboardExecutionId: executionId,
         taskboardTaskId: taskId,
+        ...sessionDescriptor.integrationMetadata,
         outputTransactionMode: 'terminal_buffered',
         cwd: session.cwd,
         transcriptPath: session.transcriptPath,
@@ -350,6 +353,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
             taskboardExecution: true,
             taskboardExecutionId: executionId,
             taskboardTaskId: taskId,
+            ...sessionDescriptor.integrationMetadata,
           },
         },
       },
@@ -911,6 +915,11 @@ function assertContinuationAllowed(task: TaskBoardTask, activeExecution?: TaskBo
     throw new TaskboardValidationError('阻塞任务需要显式恢复后才能继续', 'TASKBOARD_RESUME_REQUIRED');
   }
   if (task.kind === 'integration') {
+    if (task.workflowVersion === 3) {
+      if (!activeExecution) throw new TaskboardValidationError('Integration v3 由系统按 Candidate 状态推进；当前没有可继续的 Agent 执行，请仅发表评论', 'TASKBOARD_V3_COMMENT_CONTINUATION_REQUIRES_ACTIVE');
+      if (!['work', 'review'].includes(activeExecution.purpose)) throw new TaskboardValidationError('Integration v3 只能继续当前的 Work 或 Review 执行', 'TASKBOARD_INTEGRATION_PURPOSE_INVALID');
+      return;
+    }
     if (!['todo', 'in_progress'].includes(task.status)) {
       throw new TaskboardValidationError('当前集成任务状态不允许从评论继续执行', 'TASKBOARD_EXECUTION_STATUS_INVALID');
     }

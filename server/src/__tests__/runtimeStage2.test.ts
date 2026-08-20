@@ -2,7 +2,6 @@ import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-
 // 指向真实 workspace-shared/prompts/，避免每个 tmp cwd 都要拷模板
 const SHARED_DIR = resolve(process.cwd(), '../workspace-shared');
 
@@ -66,6 +65,32 @@ describe('runtime stage 2 primitives', () => {
 
     expect(sessionId).toBeTruthy();
     expect((await sessionCatalog.get(sessionId!))?.status).toBe('idle');
+  });
+
+  it('direct DingTalk first run pins a new delegated session to v2', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'runtime-dingtalk-v2-pin-'));
+    cleanupDirs.add(cwd);
+    const sessionCatalog = new MemorySessionCatalog();
+    const abortController = new AbortController();
+    abortController.abort('test_complete_after_pin');
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new DOMException('aborted', 'AbortError'));
+    const dispatch = createRawRuntimeRunDispatch({
+      agentCwd: cwd,
+      sharedDir: SHARED_DIR,
+      sessionCatalog,
+      memory: { enabled: false },
+      memoryWriteDelegationEnabled: () => true,
+    });
+    let sessionId: string | undefined;
+    for await (const event of dispatch(
+      { channel: 'dingtalk', chatId: 'chat-dingtalk-v2', content: '首轮 pin' },
+      { channel: 'dingtalk', user: { id: 'user-1', username: 'alice', role: 'user', tenantId: 'kaiyan' } },
+      { abortController, modelConnection: { apiKey: 'sk-test' }, skipSystemPrompt: true, maxTurns: 1 },
+    )) {
+      if (event.type === 'session_init') sessionId = event.sessionId;
+    }
+    expect(sessionId).toBeTruthy();
+    await expect(sessionCatalog.get(sessionId!)).resolves.toMatchObject({ memoryPolicyVersion: 'v2' });
   });
 
   it('direct runtime lease 竞争失败会延后执行，不把 winner 的 run 标成 failed', async () => {
@@ -173,7 +198,6 @@ describe('runtime stage 2 primitives', () => {
     expect(events).toContainEqual(expect.objectContaining({ type: 'error', error: expect.stringContaining('session write failed') }));
     expect(release).toHaveBeenCalledTimes(1);
   });
-
   it('FileEventStore supports appendBatch and cursor pages without changing list()', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'eventstore-v2-'));
     cleanupDirs.add(cwd);
@@ -349,7 +373,6 @@ describe('runtime stage 2 primitives', () => {
       approvalId: 'approval-1',
       decision: 'rejected',
     });
-
     expect(append).toHaveBeenCalledTimes(1);
     expect(markStatus).not.toHaveBeenCalled();
   });
@@ -561,7 +584,6 @@ describe('runtime stage 2 primitives', () => {
     cleanupDirs.add(cwd);
     const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
     const approvalStore = new EventBackedApprovalStore(eventStore, 'session-1');
-
     const approval = await approvalStore.create({
       sessionId: 'session-1',
       runId: 'run-1',

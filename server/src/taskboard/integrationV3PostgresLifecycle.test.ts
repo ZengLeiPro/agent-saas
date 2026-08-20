@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { PostgresIntegrationEngineV3CandidateHost, PostgresIntegrationEngineV3FeatureHost, PostgresIntegrationProviderFenceHost } from './integrationEngineV3Postgres.js';
-import { PostgresIntegrationV3WorkerHost } from './integrationV3WorkerPostgres.js';
+import { PostgresIntegrationEngineV3CandidateHost, PostgresIntegrationEngineV3FeatureHost, PostgresIntegrationEngineV3RequestHost, PostgresIntegrationProviderFenceHost } from './integrationEngineV3Postgres.js';
+import { PostgresIntegrationV3ComposeHost, PostgresIntegrationV3WorkerHost } from './integrationV3WorkerPostgres.js';
 
-function workerHost(query: ReturnType<typeof vi.fn>) {
+function workerHost(query: ReturnType<typeof vi.fn>, dispatchAgent = vi.fn()) {
   return new PostgresIntegrationV3WorkerHost({
     pool: { query, connect: vi.fn() },
     candidatesTable: 'candidates', revisionsTable: 'revisions', sourceSnapshotsTable: 'snapshots',
     providerOperationsTable: 'operations', requestsOutboxTable: 'requests', tasksTable: 'tasks',
-    boardsTable: 'boards', executionsTable: 'executions', dispatchAgent: vi.fn(), syncWorkspace: vi.fn(), cleanup: vi.fn(),
+    boardsTable: 'boards', executionsTable: 'executions', dispatchAgent, syncWorkspace: vi.fn(), cleanup: vi.fn(),
   } as never);
 }
 
@@ -21,11 +21,15 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(query.mock.calls[0]![0]).not.toContain('repository_id');
   });
 
-  it('queries dynamic global and repository kill switches while claiming candidates', async () => {
+  it('claims against the frozen candidate v3 policy while retaining the database global kill switch', async () => {
     const query = vi.fn(async (_sql: string) => ({ rows: [] }));
     await workerHost(query).claimCandidate(30_000);
-    expect(query.mock.calls[0]![0]).toContain("current_setting('agent_saas.integration_v3_enabled'");
-    expect(query.mock.calls[0]![0]).toContain("b.integration_policy->'featureFlags'->>'engineV3'");
+    const sql = query.mock.calls[0]![0];
+    expect(sql).toContain("current_setting('agent_saas.integration_v3_enabled'");
+    expect(sql).toContain("c.policy_snapshot->>'workflowVersion'");
+    expect(sql).toContain("c.policy_snapshot->'featureFlags'->>'engineV3'");
+    expect(sql).not.toContain('integration_policy');
+    expect(sql).not.toContain('JOIN boards');
   });
 
   it('fails a provider write fence closed when a live kill switch is disabled', async () => {
@@ -79,6 +83,72 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(query.mock.calls[0]![0]).toContain('worker_attempts<9');
     expect(query.mock.calls[0]![0]).toContain('worker_available_at');
     expect(query.mock.calls[0]![1]).toEqual(['candidate-1', 'lease-1', 'temporary network failure', true]);
+  });
+
+  it('preserves a failed idempotent request and claims only the exact candidate subject fence', async () => {
+    const query = vi.fn(async (sql: string) => sql.includes('SELECT id,current_revision')
+      ? { rows: [{ id: 'candidate-1', current_revision: 2, workflow_epoch: '4', lane_epoch: '9', state: 'working' }] }
+      : { rows: [{ id: 'request-1' }] });
+    const requests = new PostgresIntegrationEngineV3RequestHost({
+      pool: { query }, candidatesTable: 'candidates', requestsOutboxTable: 'requests',
+    } as never);
+    await requests.requestWork({ candidateId: 'candidate-1', revision: 2, workRound: 3, subjectDigest: 'subject-2' });
+    const upsert = String(query.mock.calls[1]![0]);
+    expect(upsert).toContain('ON CONFLICT (request_key) DO UPDATE SET request_key=EXCLUDED.request_key');
+    expect(upsert).not.toContain("status='pending'");
+
+    const claimQuery = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [] }));
+    await workerHost(claimQuery).claimRequest(30_000);
+    const claim = String(claimQuery.mock.calls[0]![0]);
+    expect(claim).toContain("o.payload->>'subjectDigest'");
+    expect(claim).toContain('o.work_round=c.work_round');
+    expect(claim).toContain("o.payload->>'sourceSetDigest'");
+    expect(claim).toContain("o.kind='work' AND c.state='working'");
+    expect(claim).toContain("o.kind='review' AND c.state='in_review'");
+  });
+
+  it('uses the outbox id as the exact idempotency key across dispatch and binding', async () => {
+    const query = vi.fn(async (sql: string, _values?: unknown[]) => sql.includes('SELECT t.id,t.version')
+      ? { rows: [{ id: 'task-1', version: 4, tenant_id: 'tenant', owner_user_id: 'owner' }] }
+      : { rows: [{ id: 'request-1' }] });
+    const dispatch = vi.fn(async () => ({ executionId: 'integration-v3-request-request-1' }));
+    await workerHost(query, dispatch).dispatchAgent({
+      id: 'request-1', leaseId: 'lease-1', kind: 'work', candidateId: 'candidate-1', candidateRevision: 2, payload: {},
+    });
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ executionId: 'integration-v3-request-request-1' }));
+    expect(query.mock.calls.at(-1)?.[1]).toEqual(['request-1', 'lease-1', 'integration-v3-request-request-1']);
+  });
+
+  it('does not redispatch an outbox request that already carries its execution binding', async () => {
+    const query = vi.fn();
+    const dispatch = vi.fn();
+    await workerHost(query, dispatch).dispatchAgent({
+      id: 'request-1', leaseId: 'lease-1', kind: 'review', candidateId: 'candidate-1', candidateRevision: 2,
+      payload: { executionId: 'execution-1' },
+    });
+    expect(query).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('binds work completion to the request execution and canonical ready_for_review resolution', async () => {
+    const query = vi.fn(async (sql: string) => sql.includes('SELECT b.repository')
+      ? { rows: [{ repository: { provider: 'github', repositoryId: 'github:acme/app', owner: 'acme', name: 'app', baseBranch: 'main' }, owner_user_id: 'owner', tenant_id: 'tenant' }] }
+      : { rows: [] });
+    const host = new PostgresIntegrationV3ComposeHost({
+      pool: { query }, candidatesTable: 'candidates', sourceSnapshotsTable: 'snapshots', tasksTable: 'tasks', boardsTable: 'boards',
+      executionsTable: 'executions', resolutionsTable: 'resolutions', requestsOutboxTable: 'requests',
+      resolvePaths: async () => ({ repositoryPath: '/repo', worktreePath: '/worktree' }), runGit: vi.fn(), validateServerOwnedRepository: vi.fn(),
+    } as never);
+    await host.resolveContext({ candidate: {
+      id: 'candidate-1', integrationTaskId: 'integration-1', repositoryId: 'github:acme/app', baseBranch: 'main', branch: 'integration/1',
+      state: 'working', currentRevision: 2, workRound: 3, version: 4, workflowEpoch: '4', laneEpoch: '9', policyRevision: 'p1', mergeMethod: 'squash', policySnapshot: {}, createdAt: '', updatedAt: '',
+    }, revision: {} } as never);
+    const sql = String(query.mock.calls[0]![0]);
+    expect(sql).toContain("JOIN executions e ON e.id=o.payload->>'executionId'");
+    expect(sql).toContain('JOIN resolutions r ON r.execution_id=e.id');
+    expect(sql).toContain("e.status='succeeded' AND r.outcome='ready_for_review'");
+    expect(sql).toContain('r.historical=false AND r.applied=true');
+    expect(sql).toContain('o.work_round=c.work_round');
   });
 
   it('persists failed cleanup receipts and requeues them with bounded backoff', async () => {

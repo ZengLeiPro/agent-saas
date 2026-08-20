@@ -428,10 +428,10 @@ export interface GithubAppInstallationToken {
 
 /** Production v3 credential boundary, injected by the GitHub App adapter. */
 export interface GithubAppInstallationTokenProvider {
-  getInstallationToken(input: {
-    repositoryId: number;
-    installationId: number;
-  }): Promise<GithubAppInstallationToken | undefined>;
+  getInstallationToken(input: ({ repositoryId: number } | {
+    repositoryOwner: string;
+    repositoryName: string;
+  }) & { installationId: number }): Promise<GithubAppInstallationToken | undefined>;
 }
 
 export interface CreateRuntimeOptions {

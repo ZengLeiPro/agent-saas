@@ -255,7 +255,7 @@ export class PostgresIntegrationEngineV3RequestHost implements IntegrationEngine
   requestWorkspaceSync(input: { candidateId: string; revision: number; baseBranch: string; expectedBaseOid: string }) { return this.enqueue('workspace_sync', input.candidateId, input.revision, 0, input); }
   requestCleanup(input: { candidateId: string; branch: string; providerPullRequestId?: string; reason: string }) { return this.enqueue('cleanup', input.candidateId, undefined, 0, input); }
 
-  private async enqueue(kind: 'work'|'review'|'cleanup'|'workspace_sync', candidateId: string, revision: number | undefined, workRound: number, payload: object): Promise<{ requestId: string }> {
+  private async enqueue(kind: 'work'|'review'|'cleanup'|'workspace_sync', candidateId: string, revision: number | undefined, workRound: number, payload: object): Promise<{ requestId: string; status: string }> {
     const current = await this.options.pool.query(
       `SELECT id,current_revision,workflow_epoch,lane_epoch,state FROM ${this.options.candidatesTable} WHERE id=$1`, [candidateId]);
     const candidate = current.rows[0];
@@ -270,9 +270,10 @@ export class PostgresIntegrationEngineV3RequestHost implements IntegrationEngine
       `INSERT INTO ${this.options.requestsOutboxTable}
         (id,request_key,kind,candidate_id,candidate_revision,work_round,workflow_epoch,lane_epoch,payload)
        VALUES ($1,$2,$3,$4,$5,$6,$7::bigint,$8::bigint,$9::jsonb)
-       ON CONFLICT (request_key) DO UPDATE SET request_key=EXCLUDED.request_key RETURNING id`,
+       ON CONFLICT (request_key) DO UPDATE SET request_key=EXCLUDED.request_key
+       RETURNING id,status`,
       [id, requestKey, kind, candidateId, boundRevision, workRound, String(candidate.workflow_epoch), String(candidate.lane_epoch), JSON.stringify(payload)]);
-    return { requestId: String(inserted.rows[0]!.id) };
+    return { requestId: String(inserted.rows[0]!.id), status: String(inserted.rows[0]!.status) };
   }
 }
 

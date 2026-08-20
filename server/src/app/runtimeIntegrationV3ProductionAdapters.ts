@@ -54,8 +54,9 @@ export function createGithubAppInstallationTokenProvider(input: {
   const apiBaseUrl = (input.apiBaseUrl ?? 'https://api.github.com').replace(/\/$/, '');
   return {
     async getInstallationToken(request): Promise<GithubAppInstallationToken | undefined> {
-      if (!Number.isSafeInteger(request.repositoryId) || request.repositoryId <= 0
-        || !Number.isSafeInteger(request.installationId) || request.installationId <= 0) return undefined;
+      if (!Number.isSafeInteger(request.installationId) || request.installationId <= 0) return undefined;
+      if ('repositoryId' in request && (!Number.isSafeInteger(request.repositoryId) || request.repositoryId <= 0)) return undefined;
+      if ('repositoryOwner' in request && (!validGithubName(request.repositoryOwner) || !validGithubName(request.repositoryName))) return undefined;
       const privateKey = await input.privateKey();
       if (!privateKey.trim()) return undefined;
       const jwt = signGithubAppJwt(input.appId, privateKey, now());
@@ -68,7 +69,9 @@ export function createGithubAppInstallationTokenProvider(input: {
           'user-agent': 'agent-saas-integration-v3',
           'x-github-api-version': GITHUB_API_VERSION,
         },
-        body: JSON.stringify({ repository_ids: [request.repositoryId] }),
+        body: JSON.stringify('repositoryId' in request
+          ? { repository_ids: [request.repositoryId] }
+          : { repositories: [request.repositoryName] }),
       });
       const body: unknown = await response.json().catch(() => undefined);
       if (response.status !== 201) return undefined;
@@ -143,7 +146,7 @@ function signGithubAppJwt(appId: number, privateKey: string, nowMs: number): str
 
 function parseGithubInstallationToken(
   body: unknown,
-  request: { repositoryId: number; installationId: number },
+  request: ({ repositoryId: number } | { repositoryOwner: string; repositoryName: string }) & { installationId: number },
   nowMs: number,
 ): GithubAppInstallationToken | undefined {
   if (!isRecord(body) || typeof body.token !== 'string' || body.token.length < 20
@@ -152,13 +155,20 @@ function parseGithubInstallationToken(
   const expiresAtMs = Date.parse(body.expires_at);
   if (!Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs + 60_000 || expiresAtMs > nowMs + MAX_GITHUB_TOKEN_TTL_MS) return undefined;
   const repository = body.repositories[0];
-  if (!isRecord(repository) || repository.id !== request.repositoryId) return undefined;
+  if (!isRecord(repository) || !Number.isSafeInteger(repository.id) || repository.id <= 0) return undefined;
+  if ('repositoryId' in request && repository.id !== request.repositoryId) return undefined;
+  if ('repositoryOwner' in request && (typeof repository.full_name !== 'string'
+    || repository.full_name.toLowerCase() !== `${request.repositoryOwner}/${request.repositoryName}`.toLowerCase())) return undefined;
   return {
     token: body.token,
-    repositoryId: request.repositoryId,
+    repositoryId: repository.id,
     installationId: request.installationId,
     expiresAt: body.expires_at,
   };
+}
+
+function validGithubName(value: string): boolean {
+  return /^[A-Za-z0-9_.-]{1,100}$/.test(value);
 }
 
 function encodeJson(value: unknown): string {

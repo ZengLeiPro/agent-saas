@@ -25,6 +25,23 @@ describe('PostgresIntegrationV3ActivationStore', () => {
     expect(db.query).toHaveBeenCalledWith(expect.stringContaining('schema_version=$1 AND protocol_version=$2 AND policy_revision=$3'), expect.any(Array));
   });
 
+  it('does not publish a late healthy heartbeat after stop begins', async () => {
+    let resolveHealth!: (value: { healthy: boolean }) => void;
+    const getHealth = vi.fn(() => new Promise<{ healthy: boolean }>((resolve) => { resolveHealth = resolve; }));
+    const db = { query: vi.fn(async () => ({ rows: [] })) };
+    const heartbeat = createIntegrationV3ActivationHeartbeat({
+      store: new PostgresIntegrationV3ActivationStore(db as never, 'activation'),
+      releaseIdentity: 'release-green', processRole: 'runtime-worker', getHealth, intervalMs: 60_000,
+    });
+    const starting = heartbeat.start();
+    await vi.waitFor(() => expect(getHealth).toHaveBeenCalledTimes(1));
+    const stopping = heartbeat.stop();
+    resolveHealth({ healthy: true });
+    await Promise.all([starting, stopping]);
+    expect(db.query).toHaveBeenCalledTimes(1);
+    expect(db.query).toHaveBeenCalledWith(expect.stringContaining("SET status='inactive'"), [heartbeat.processIdentity, 'stopped']);
+  });
+
   it('marks the process inactive on stop after publishing a healthy heartbeat', async () => {
     const db = { query: vi.fn(async () => ({ rows: [] })) };
     const store = new PostgresIntegrationV3ActivationStore(db as never, 'activation');

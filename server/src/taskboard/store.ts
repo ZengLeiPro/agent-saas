@@ -105,10 +105,7 @@ import {
 } from './storeHelpers.js';
 import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns, assertTaskHasNoExecutionHistory } from './archiveGuard.js';
 import { deleteComment as deleteStoredComment, updateComment as updateStoredComment } from './storeComments.js';
-import {
-  getExecutionContextBySessionId as getStoredExecutionContextBySessionId,
-  searchExecutions as searchStoredExecutions,
-} from './storeExecutions.js';
+import { getExecutionContextBySessionId as getStoredExecutionContextBySessionId, searchExecutions as searchStoredExecutions } from './storeExecutions.js';
 import {
   listBoards as listStoredBoards,
   listComments as listStoredComments,
@@ -118,10 +115,8 @@ import {
   searchTasks as searchStoredTasks,
 } from './storeSearch.js';
 import { initializeTaskboardStore } from './storeSchema.js';
-import {
-  loadBoard as loadStoredBoard,
-  requireTaskWithBoard as requireStoredTaskWithBoard,
-} from './storeTaskAccess.js';
+import { assertIntegrationV3RuntimeAvailable } from './integrationV3ActivationStore.js';
+import { loadBoard as loadStoredBoard, requireTaskWithBoard as requireStoredTaskWithBoard } from './storeTaskAccess.js';
 import {
   claimWorkflowCancellations as claimStoredWorkflowCancellations,
   finishWorkflowCancellation as finishStoredWorkflowCancellation,
@@ -217,6 +212,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   async init(): Promise<void> {
     await initializeTaskboardStore(this);
   }
+
   listMembers(identity: TaskboardIdentity, boardId: string): Promise<TaskBoardMember[]> {
     return listStoredBoardMembers(this, identity, boardId);
   }
@@ -374,6 +370,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return this.requireBoard(this.pool, identity, boardId, false);
   }
   async createBoard(identity: TaskboardIdentity, input: TaskBoardCreateInput): Promise<TaskBoard> {
+    if (input.integrationPolicy?.enabled && input.integrationPolicy.workflowVersion === 3) await assertIntegrationV3RuntimeAvailable(this.pool, this.integrationSourcesTable);
     const name = requireText(input.name, 'Board name');
     const description = optionalText(input.description);
     const prompt = normalizeBoardPrompt(input.prompt ?? TASKBOARD_DEFAULT_PROMPT);
@@ -426,6 +423,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     }
   }
   async updateBoard(identity: TaskboardIdentity, boardId: string, input: TaskBoardPatchInput): Promise<TaskBoard> {
+    if (input.integrationPolicy?.enabled && input.integrationPolicy.workflowVersion === 3) await assertIntegrationV3RuntimeAvailable(this.pool, this.integrationSourcesTable);
     return this.withTransaction(async (client) => {
       const current = await this.requireOwnedBoard(client, identity, boardId, true);
       assertExpectedVersion(current, input.expectedVersion);

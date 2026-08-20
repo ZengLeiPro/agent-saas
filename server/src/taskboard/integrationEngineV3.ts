@@ -90,8 +90,8 @@ export interface IntegrationEngineV3FeatureHost {
 
 export interface IntegrationEngineV3RequestHost {
   /** Requests are durable, idempotent by their complete subject tuple, and dispatch-time fenced. */
-  requestWork(input: { candidateId: string; revision: number; workRound: number; subjectDigest: string }): Promise<{ requestId: string }>;
-  requestReview(input: { candidateId: string; revision: number; subjectDigest: string; sourceSetDigest: string }): Promise<{ requestId: string }>;
+  requestWork(input: { candidateId: string; revision: number; workRound: number; subjectDigest: string }): Promise<{ requestId: string; status?: string }>;
+  requestReview(input: { candidateId: string; revision: number; subjectDigest: string; sourceSetDigest: string }): Promise<{ requestId: string; status?: string }>;
   requestWorkspaceSync(input: { candidateId: string; revision: number; baseBranch: string; expectedBaseOid: string }): Promise<{ requestId: string }>;
   requestCleanup(input: { candidateId: string; branch: string; providerPullRequestId?: string; reason: string }): Promise<{ requestId: string }>;
 }
@@ -166,8 +166,22 @@ export class IntegrationEngineV3 {
       case 'request_work': {
         assertFlag(flags.composeEnabled, 'work');
         const revision = requireRevision(current);
-        const request = await this.options.requests.requestWork({ candidateId: current.candidate.id, revision: current.candidate.currentRevision, workRound: current.candidate.workRound + 1, subjectDigest: revision.subjectDigest });
-        const candidate = await this.options.candidates.beginNextWorkRound(current.candidate.id, current.candidate.version, current.candidate.currentRevision);
+        if (!['needs_work', 'working'].includes(current.candidate.state)) {
+          throw failClosed('Candidate is not awaiting or performing work', 'TASKBOARD_CANDIDATE_WORK_STATE_INVALID');
+        }
+        // Re-enqueueing in working is the deterministic repair for the outbox/candidate
+        // two-write boundary. The durable request key makes this a no-op unless a failed
+        // row needs to be revived.
+        const workRound = current.candidate.state === 'needs_work'
+          ? current.candidate.workRound + 1
+          : current.candidate.workRound;
+        const request = await this.options.requests.requestWork({ candidateId: current.candidate.id, revision: current.candidate.currentRevision, workRound, subjectDigest: revision.subjectDigest });
+        if (current.candidate.state === 'working' && request.status === 'failed') {
+          throw failClosed('Work request exhausted retries and requires operator recovery', 'TASKBOARD_CANDIDATE_REQUEST_FAILED');
+        }
+        const candidate = current.candidate.state === 'needs_work'
+          ? await this.options.candidates.beginNextWorkRound(current.candidate.id, current.candidate.version, current.candidate.currentRevision)
+          : current.candidate;
         return { candidate, status: 'requested', requestId: request.requestId };
       }
       case 'subject_refreshed':
@@ -175,6 +189,15 @@ export class IntegrationEngineV3 {
         return applied(await this.appendAndTransition(current, command.revision, 'waiting_checks'));
       case 'request_review':
         assertFlag(flags.reviewEnabled, 'review');
+        if (current.candidate.state === 'in_review') {
+          // Deterministically repair a request lost/failed after the candidate transition.
+          const revision = requireRevision(current);
+          const request = await this.options.requests.requestReview({ candidateId: current.candidate.id, revision: revision.revision, subjectDigest: revision.subjectDigest, sourceSetDigest: revision.sourceSetDigest });
+          if (request.status === 'failed') {
+            throw failClosed('Review request exhausted retries and requires operator recovery', 'TASKBOARD_CANDIDATE_REQUEST_FAILED');
+          }
+          return { candidate: current.candidate, status: 'requested', requestId: request.requestId };
+        }
         return this.observeChecks(current, true);
       case 'review_approved':
         assertFlag(flags.reviewEnabled, 'review');

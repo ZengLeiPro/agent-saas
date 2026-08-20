@@ -245,6 +245,7 @@ export function IntegrationCandidateDetails({
                 : details?.cleanup?.outcome === "skipped" ? `已合并 · cleanup 已跳过${details.cleanup.reason ? `：${details.cleanup.reason}` : ""}`
                   : "已合并 · cleanup 待处理"}
           </p> : null}
+          {details?.cleanup?.outcome === "failed" ? <Button type="button" variant="destructive" size="sm" disabled={requeueing} onClick={() => void requeue()}>{requeueing ? "重新排队中..." : "Maintainer 重新排队 cleanup"}</Button> : null}
           <p className="text-xs text-muted-foreground">last refreshed：<time dateTime={details?.lastRefreshedAt}>{details?.lastRefreshedAt ? new Date(details.lastRefreshedAt).toLocaleString("zh-CN") : "未知"}</time></p>
           {details?.worker?.error ? <div className="space-y-2">
             <p className="whitespace-pre-wrap text-xs text-destructive"><TriangleAlert className="mr-1 inline size-3.5" />worker_error：{details.worker.error}</p>

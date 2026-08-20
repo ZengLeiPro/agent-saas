@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 
 import type { PoolClient } from 'pg';
 
+import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
+import { TaskboardValidationError } from './types.js';
+
 export const INTEGRATION_V3_ACTIVATION_SCHEMA_VERSION = 3;
 export const INTEGRATION_V3_ACTIVATION_PROTOCOL_VERSION = 1;
 /** Bump whenever the worker admission/health policy changes incompatibly. */
@@ -75,6 +78,20 @@ export class PostgresIntegrationV3ActivationStore {
   }
 }
 
+export async function assertIntegrationV3RuntimeAvailable(
+  db: Queryable,
+  integrationSourcesTable: string,
+): Promise<void> {
+  const table = integrationCandidateTableNames(integrationSourcesTable).activationHeartbeatsTable;
+  const health = await new PostgresIntegrationV3ActivationStore(db, table).compatibleHealth();
+  if (!health.healthy) {
+    throw new TaskboardValidationError(
+      `Workflow v3 runtime is unavailable: ${health.reason ?? 'worker_unhealthy'}`,
+      'TASKBOARD_INTEGRATION_V3_RUNTIME_UNAVAILABLE',
+    );
+  }
+}
+
 export function createIntegrationV3ActivationHeartbeat(input: {
   store: PostgresIntegrationV3ActivationStore;
   releaseIdentity: string;
@@ -86,6 +103,7 @@ export function createIntegrationV3ActivationHeartbeat(input: {
   let timer: NodeJS.Timeout | undefined;
   let stopped = false;
   let writeChain = Promise.resolve();
+  let refreshChain = Promise.resolve();
   const write = (status: IntegrationV3ActivationStatus, reason?: string) => {
     writeChain = writeChain.catch(() => undefined).then(() => input.store.heartbeat({
       processIdentity,
@@ -96,15 +114,18 @@ export function createIntegrationV3ActivationHeartbeat(input: {
     }));
     return writeChain;
   };
-  const refresh = async () => {
-    if (stopped) return;
-    let health: { healthy: boolean; reason?: string };
-    try {
-      health = await input.getHealth();
-    } catch (error) {
-      health = { healthy: false, reason: error instanceof Error ? error.message : 'heartbeat_health_failed' };
-    }
-    await write(health.healthy ? 'healthy' : 'unhealthy', health.reason);
+  const refresh = () => {
+    refreshChain = refreshChain.catch(() => undefined).then(async () => {
+      if (stopped) return;
+      let health: { healthy: boolean; reason?: string };
+      try {
+        health = await input.getHealth();
+      } catch (error) {
+        health = { healthy: false, reason: error instanceof Error ? error.message : 'heartbeat_health_failed' };
+      }
+      if (!stopped) await write(health.healthy ? 'healthy' : 'unhealthy', health.reason);
+    });
+    return refreshChain;
   };
   return {
     processIdentity,
@@ -117,6 +138,7 @@ export function createIntegrationV3ActivationHeartbeat(input: {
     async stop(): Promise<void> {
       stopped = true;
       if (timer) clearInterval(timer);
+      await refreshChain;
       await writeChain;
       await input.store.markInactive(processIdentity);
     },

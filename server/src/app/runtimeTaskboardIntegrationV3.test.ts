@@ -14,6 +14,8 @@ import {
   buildRuntimeTaskboardIntegrationV3Options,
   createRuntimeIntegrationV3CleanupHost,
   resolveIntegrationV3RepositoryPaths,
+  startIntegrationV3ActivationRetry,
+  validateConfiguredIntegrationV3Repositories,
 } from './runtimeTaskboardIntegrationV3.js';
 
 const repository: TaskBoardRepositoryConfig = {
@@ -21,7 +23,67 @@ const repository: TaskBoardRepositoryConfig = {
   baseBranch: 'main', allowForkPullRequest: false,
 };
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => {
+  vi.useRealTimers();
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+describe('Integration v3 activation retry', () => {
+  it('starts once after the initial activation failure recovers', async () => {
+    vi.useFakeTimers();
+    const check = vi.fn()
+      .mockResolvedValueOnce({ healthy: false, reason: 'gateway_unhealthy' })
+      .mockResolvedValue({ healthy: true });
+    const start = vi.fn();
+    const setReason = vi.fn();
+    const activation = startIntegrationV3ActivationRetry({ check, start, setReason, retryIntervalMs: 100 });
+
+    await activation.initialAttempt;
+    expect(start).not.toHaveBeenCalled();
+    expect(setReason).toHaveBeenLastCalledWith('gateway_unhealthy');
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(check).toHaveBeenCalledTimes(2);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(activation.isActive()).toBe(true);
+    expect(setReason).toHaveBeenLastCalledWith(undefined);
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(check).toHaveBeenCalledTimes(2);
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels a pending retry when stopped', async () => {
+    vi.useFakeTimers();
+    const check = vi.fn().mockResolvedValue({ healthy: false, reason: 'gateway_unhealthy' });
+    const start = vi.fn();
+    const setReason = vi.fn();
+    const activation = startIntegrationV3ActivationRetry({ check, start, setReason, retryIntervalMs: 100 });
+
+    await activation.initialAttempt;
+    await activation.stop();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(start).not.toHaveBeenCalled();
+    expect(setReason).toHaveBeenLastCalledWith('stopped');
+  });
+});
+
+describe('Integration v3 repository activation probe', () => {
+  it('requires GitHub App access to every configured or active v3 repository', async () => {
+    const pool = { query: vi.fn(async () => ({ rows: [{ repository, owner_user_id: 'owner-1' }] })) };
+    const getReference = vi.fn(async () => ({ oid: 'a'.repeat(40), treeOid: 'b'.repeat(40) }));
+    await expect(validateConfiguredIntegrationV3Repositories({
+      pool, boardsTable: 'boards', tasksTable: 'tasks',
+    } as never, 'candidates', { getReference } as never)).resolves.toBe(true);
+    expect(getReference).toHaveBeenCalledWith(repository, 'main', 'owner-1');
+    getReference.mockRejectedValueOnce(new Error('GitHub App denied'));
+    await expect(validateConfiguredIntegrationV3Repositories({
+      pool, boardsTable: 'boards', tasksTable: 'tasks',
+    } as never, 'candidates', { getReference } as never)).resolves.toBe(false);
+  });
+});
 
 describe('buildRuntimeTaskboardIntegrationV3Options', () => {
   const base = {
@@ -43,7 +105,7 @@ describe('buildRuntimeTaskboardIntegrationV3Options', () => {
   it('does not use an independent probe as Integration Work admission before dispatch', () => {
     const source = readFileSync(new URL('./runtimeTaskboardIntegrationV3.ts', import.meta.url), 'utf8');
     const dispatchBlock = source.slice(source.indexOf('dispatchAgent:'), source.indexOf('syncWorkspace:', source.indexOf('dispatchAgent:')));
-    expect(dispatchBlock).toContain('executionCoordinator.startExecution');
+    expect(dispatchBlock).toContain('executionCoordinator.startIntegrationV3Execution');
     expect(dispatchBlock).not.toContain('.attest(');
     expect(dispatchBlock).not.toContain('validAttestation');
   });
@@ -52,15 +114,16 @@ describe('buildRuntimeTaskboardIntegrationV3Options', () => {
     const built = buildRuntimeTaskboardIntegrationV3Options({
       ...base, control,
       githubAppInstallationTokenProvider: {
-        getInstallationToken: async ({ repositoryId, installationId }) => ({
-          token: 'app-token', repositoryId, installationId,
+        getInstallationToken: async (input) => ({
+          token: 'app-token', repositoryId: 'repositoryId' in input ? input.repositoryId : 123,
+          installationId: input.installationId,
         }),
       },
     });
     await expect(built.resolveGithubToken?.({ tenantId: 't', ownerUserId: 'u', repositoryId: 'github-id:123' }))
       .resolves.toMatchObject({ mode: 'github_app', repositoryId: 123, installationId: 456 });
     await expect(built.resolveGithubToken?.({ tenantId: 't', ownerUserId: 'u', repositoryId: 'github:acme/widget' }))
-      .resolves.toBeUndefined();
+      .resolves.toMatchObject({ mode: 'github_app', repositoryId: 123, installationId: 456 });
   });
 });
 

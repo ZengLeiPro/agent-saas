@@ -4,7 +4,11 @@ import { join, resolve } from 'node:path';
 import type { TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
 import type { GithubAppInstallationTokenProvider, RuntimeIsolationAttestationProvider } from './runtimeContracts.js';
 import type { TaskboardExecutionCoordinator } from '../taskboard/executionService.js';
-import { createIntegrationV3ActivationHeartbeat, PostgresIntegrationV3ActivationStore } from '../taskboard/integrationV3ActivationStore.js';
+import {
+  createIntegrationV3ActivationHeartbeat,
+  INTEGRATION_V3_ACTIVATION_HEARTBEAT_MS,
+  PostgresIntegrationV3ActivationStore,
+} from '../taskboard/integrationV3ActivationStore.js';
 import { integrationCandidateTableNames } from '../taskboard/integrationCandidateSchema.js';
 import { IntegrationEngineV3 } from '../taskboard/integrationEngineV3.js';
 import {
@@ -44,6 +48,55 @@ import { serverLogger } from '../utils/logger.js';
 export interface RuntimeTaskboardIntegrationV3 {
   stop(): Promise<void>;
   health(): Promise<{ enabled: true; healthy: boolean; workerActive: boolean; reason?: string }>;
+}
+
+export function startIntegrationV3ActivationRetry(input: {
+  check(): Promise<{ healthy: boolean; reason?: string }>;
+  start(): void;
+  setReason(reason: string | undefined): void;
+  onError?(error: unknown): void;
+  retryIntervalMs?: number;
+}) {
+  let stopped = false;
+  let active = false;
+  let timer: NodeJS.Timeout | undefined;
+  let inFlight: Promise<void> | undefined;
+  const run = (): Promise<void> => {
+    if (stopped || active) return Promise.resolve();
+    if (inFlight) return inFlight;
+    inFlight = input.check().then((health) => {
+      if (stopped) input.setReason('stopped');
+      else if (!health.healthy) input.setReason(health.reason ?? 'worker_activation_failed');
+      else {
+        input.start();
+        active = true;
+        input.setReason(undefined);
+      }
+    }).catch((error) => {
+      if (!stopped) {
+        input.setReason('worker_activation_failed');
+        input.onError?.(error);
+      }
+    }).finally(() => {
+      inFlight = undefined;
+      if (!stopped && !active) {
+        timer = setTimeout(() => { void run(); }, input.retryIntervalMs ?? INTEGRATION_V3_ACTIVATION_HEARTBEAT_MS);
+        timer.unref();
+      }
+    });
+    return inFlight;
+  };
+  const initialAttempt = run();
+  return {
+    initialAttempt,
+    isActive: () => active,
+    async stop(): Promise<void> {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      await inFlight;
+      input.setReason('stopped');
+    },
+  };
 }
 
 export interface RuntimeIntegrationV3CleanupHostOptions {
@@ -231,11 +284,14 @@ export function startRuntimeTaskboardIntegrationV3(
     sourceSnapshotsTable: tables.sourceSnapshotsTable,
     boardsTable: store.boardsTable,
     executionsTable: store.executionsTable,
-    dispatchAgent: async ({ identity, taskId, expectedVersion, purpose }) => {
+    dispatchAgent: async ({ identity, taskId, expectedVersion, purpose, executionId }) => {
       // Work admission is enforced inside rawRuntimeRunDispatch against evidence returned
       // by provisioning the exact ACS SandboxRef. A standalone capability probe here would
       // attest a different boundary and is therefore intentionally forbidden.
-      await executionCoordinator.startExecution(identity, taskId, { expectedVersion, purpose });
+      const started = await executionCoordinator.startIntegrationV3Execution(
+        identity, taskId, { expectedVersion, purpose }, executionId,
+      );
+      return { executionId: started.execution.id };
     },
     syncWorkspace: async (request) => {
       const current = await workerHost.loadCurrent(request.candidateId);
@@ -275,6 +331,8 @@ export function startRuntimeTaskboardIntegrationV3(
     tasksTable: store.tasksTable,
     boardsTable: store.boardsTable,
     executionsTable: store.executionsTable,
+    resolutionsTable: store.resolutionsTable,
+    requestsOutboxTable: tables.requestsOutboxTable,
     resolvePaths: (repository, candidateId) => resolveIntegrationV3RepositoryPaths(
       repository,
       candidateId,
@@ -332,20 +390,28 @@ export function startRuntimeTaskboardIntegrationV3(
     processRole: options.processRole ?? 'runtime-worker',
     getHealth: runtimeHealth,
   });
-  const activation = Promise.all([
-    pushGateway.health(),
-    options.runtimeIsolationAttestationProvider?.attest({ admission: 'integration_v3_worker' }),
-  ]).then(([health, attestation]) => {
-    if (stopped) activationReason = 'stopped';
-    else if (!health.healthy) activationReason = health.reason ?? 'gateway_unhealthy';
-    else if (!validAttestation(attestation)) activationReason = 'runtime_isolation_attestation_unavailable';
-    else { worker.start(); workerActive = true; }
-    if (activationReason) serverLogger.warn(`Integration v3 worker disabled: ${activationReason}`);
-  }).catch((error) => {
-    activationReason = 'worker_activation_failed';
-    serverLogger.warn(`Integration v3 worker disabled: ${error instanceof Error ? error.message : String(error)}`);
+  const activation = startIntegrationV3ActivationRetry({
+    check: async () => {
+      const [health, attestation, repositoryAccess] = await Promise.all([
+        pushGateway.health(),
+        options.runtimeIsolationAttestationProvider?.attest({ admission: 'integration_v3_worker' }),
+        validateConfiguredIntegrationV3Repositories(store, tables.candidatesTable, repositoryProvider),
+      ]);
+      if (!health.healthy) return { healthy: false, reason: health.reason ?? 'gateway_unhealthy' };
+      if (!validAttestation(attestation)) return { healthy: false, reason: 'runtime_isolation_attestation_unavailable' };
+      if (!repositoryAccess) return { healthy: false, reason: 'github_app_repository_probe_failed' };
+      return { healthy: true };
+    },
+    start: () => { worker.start(); workerActive = true; },
+    setReason: (reason) => {
+      activationReason = reason;
+      if (reason && reason !== 'stopped') serverLogger.warn(`Integration v3 worker disabled: ${reason}`);
+    },
+    onError: (error) => serverLogger.warn(
+      `Integration v3 worker activation failed: ${error instanceof Error ? error.message : String(error)}`,
+    ),
   });
-  const heartbeatReady = activation.then(() => activationHeartbeat.start()).catch((error) => {
+  const heartbeatReady = activationHeartbeat.start().catch((error) => {
     serverLogger.warn(`Integration v3 activation heartbeat unavailable: ${error instanceof Error ? error.message : String(error)}`);
   });
   return {
@@ -356,6 +422,7 @@ export function startRuntimeTaskboardIntegrationV3(
     },
     async stop() {
       stopped = true;
+      await activation.stop();
       await heartbeatReady;
       try {
         await worker.stop();
@@ -365,6 +432,31 @@ export function startRuntimeTaskboardIntegrationV3(
       }
     },
   };
+}
+
+export async function validateConfiguredIntegrationV3Repositories(
+  store: PgTaskboardStore,
+  candidatesTable: string,
+  provider: RepositoryProvider,
+): Promise<boolean> {
+  if (!provider.getReference) return false;
+  try {
+    const result = await store.pool.query(
+      `SELECT DISTINCT b.repository,b.owner_user_id FROM ${store.boardsTable} b
+        WHERE (COALESCE((b.integration_policy->>'enabled')::boolean,false)
+          AND COALESCE((b.integration_policy->>'workflowVersion')::int,2)=3)
+          OR EXISTS (SELECT 1 FROM ${store.tasksTable} t JOIN ${candidatesTable} c ON c.integration_task_id=t.id
+            WHERE t.board_id=b.id AND c.state NOT IN ('merged','canceled'))`,
+    );
+    for (const row of result.rows) {
+      const repository = row.repository as TaskBoardRepositoryConfig | undefined;
+      if (!repository || repository.provider !== 'github' || !repository.baseBranch) return false;
+      await provider.getReference(repository, repository.baseBranch, String(row.owner_user_id));
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function createServerOwnedRepositoryValidator(controlledMirrorRoot: string | undefined) {

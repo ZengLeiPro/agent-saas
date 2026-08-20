@@ -122,6 +122,7 @@ const SYSTEM_INFRASTRUCTURE_PRINCIPALS: Readonly<Record<string, Partial<Record<V
   },
   'egress-proxy': { read: ['__system__'], write: ['egress_config_admin'] },
   feishu_connector: { read: ['__system__'] },
+  github_app: { read: ['__system__'] },
   image_gen_tools: { read: ['__system__'], write: ['image_gen_config_admin'] },
   server_remote: { read: ['__system__'] },
   'signup-sms': {

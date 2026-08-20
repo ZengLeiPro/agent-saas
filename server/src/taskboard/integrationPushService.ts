@@ -1,5 +1,6 @@
 import type { GithubAppInstallationTokenProvider } from '../app/runtimeContracts.js';
 import type { IntegrationPushCredential, IntegrationPushGateway } from './integrationPushGateway.js';
+import { githubAppRepositoryTargetFromId, resolveGithubAppRepositoryToken } from './githubAppRepositoryBinding.js';
 import type {
   TaskboardIdentity,
   TaskboardIntegrationPushInput,
@@ -42,14 +43,11 @@ export function createGithubAppIntegrationPushTokenResolver(deps: {
   onError?: (error: Error) => void;
 }) {
   return async (input: { tenantId: string; ownerUserId: string; repositoryId: string }): Promise<IntegrationPushCredential | undefined> => {
-    const match = /^github-id:(\d+)$/.exec(input.repositoryId);
-    if (!match) return undefined;
-    const repositoryId = Number(match[1]);
-    if (!Number.isSafeInteger(repositoryId) || repositoryId <= 0) return undefined;
+    const target = githubAppRepositoryTargetFromId(input.repositoryId);
+    if (!target) return undefined;
     try {
-      const credential = await deps.provider.getInstallationToken({ repositoryId, installationId: deps.installationId });
-      if (!credential || credential.repositoryId !== repositoryId || credential.installationId !== deps.installationId
-        || !credential.token) return undefined;
+      const credential = await resolveGithubAppRepositoryToken(deps.provider, deps.installationId, target);
+      if (!credential) return undefined;
       return {
         token: credential.token,
         mode: 'github_app',

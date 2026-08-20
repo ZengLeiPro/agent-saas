@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { TaskBoardIntegrationCandidate } from '../../../shared/src/types/taskboard.js';
 import { IntegrationPushCapabilityService } from './integrationPushCapability.js';
@@ -178,5 +178,31 @@ describe('DefaultIntegrationV3ComposeExecutor push replay', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('Integration v3 work completion gate', () => {
+  it('does not inspect or promote a changed remote head without a bound ready work execution', async () => {
+    const provider = { getReference: vi.fn() } as unknown as RepositoryProvider;
+    const composer = new DefaultIntegrationV3ComposeExecutor({
+      resolveContext: async () => ({
+        repository: { provider: 'github', repositoryId: 'github-id:123', owner: 'org', name: 'repo', baseBranch: 'main', allowForkPullRequest: false },
+        credentialOwnerId: 'owner-1', tenantId: 'tenant-1', repositoryPath: '/repo', worktreePath: '/worktree', sources: [],
+      }),
+      withRepositoryBranchLock: async <T>(_lock: unknown, action: () => Promise<T>) => action(),
+      validateServerOwnedRepository: async () => undefined,
+      runGit: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+      bindPullRequest: async () => undefined,
+    }, provider);
+    const value = candidate('a'.repeat(40));
+    value.providerPullRequestId = '77';
+    const result = await composer.refreshAfterWork(current(value, 'a'.repeat(40), {
+      candidateId: 'candidate-1', revision: 1, order: 0, integrationSourceId: 'source-1', deliveryTaskId: 'delivery-1',
+      deliveryTaskVersion: 1, repositoryId: 'github-id:123', providerPullRequestId: '11', frozenHeadOid: 'b'.repeat(40),
+      frozenBaseOid: 'a'.repeat(40), reviewedSubjectDigest: 'reviewed', reviewExecutionId: 'review-1',
+      reviewReceiptDigest: 'receipt', requirementDigest: 'requirement', createdAt: '2026-08-19T00:00:00.000Z',
+    }));
+    expect(result).toBeUndefined();
+    expect(provider.getReference).not.toHaveBeenCalled();
   });
 });

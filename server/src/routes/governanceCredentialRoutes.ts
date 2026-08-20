@@ -89,13 +89,21 @@ export function registerGovernanceCredentialRoutes(options: {
   personaFor: (req: Request) => Persona | undefined;
   canManageOrganization: (req: Request) => boolean;
   resourceTenantFor: (req: Request, requested?: string) => string | null;
-  credentialHealthCheck?: (connectorId: string, secret: string) => Promise<{ healthy: boolean; code: string }>;
+  credentialHealthCheck?: (connectorId: string, secret: string) => Promise<{ healthy: boolean; code: string; metadata?: Record<string, string> }>;
   onPersonalCredentialRevoked?: (input: { credential: GovernanceCredential; actorUserId: string }) => Promise<void>;
 }): void {
   const { router } = options;
   const hasActiveOffboarding = async (tenantId: string, userId: string): Promise<boolean> => Boolean(
     await options.changeJobs.findActiveForTarget(tenantId, 'user_offboarding', 'user', userId),
   );
+  const validateAliyunPersonalSecret = async (connectorId: string | null | undefined, secret: string) => {
+    if (connectorId !== 'aliyun' || !options.credentialHealthCheck) return undefined;
+    try {
+      return await options.credentialHealthCheck(connectorId, secret);
+    } catch {
+      return { healthy: false, code: 'CONNECTOR_HEALTH_CHECK_FAILED' };
+    }
+  };
 
   type ActiveCommit = { leaseToken: string; recovery?: Record<string, unknown> };
   const claimSignedCommit = async (res: Response, input: {
@@ -328,6 +336,12 @@ export function registerGovernanceCredentialRoutes(options: {
         ? res.status(500).json(compensationFailedBody('create', diagnosticId))
         : res.status(409).json({ error: 'Credential creation was safely reconciled', code: 'CREDENTIAL_CREATE_FAILED', status: 'failed' });
     }
+    let healthMetadata: Record<string, string> | undefined;
+    if (parsed.data.kind === 'personal_grant') {
+      const health = await validateAliyunPersonalSecret(parsed.data.connectorId, parsed.data.secret);
+      if (health && !health.healthy) return res.status(422).json({ error: 'Credential validation failed', code: health.code });
+      healthMetadata = health?.metadata;
+    }
     let secretRef: string | undefined;
     try {
       const secret = await options.vault.putSecret(vaultOwnerId, 'connector', parsed.data.secret, vaultCaller, { connectorId: parsed.data.connectorId, tenantId, credentialOwnerId: vaultCaller.userId });
@@ -370,7 +384,7 @@ export function registerGovernanceCredentialRoutes(options: {
         tenantId, connectorId: parsed.data.connectorId, kind: parsed.data.kind,
         ...(ownerUserId ? { ownerUserId } : {}), ...(custodianUserId ? { custodianUserId } : {}),
         ...(parsed.data.alias ? { alias: parsed.data.alias } : {}), purpose: parsed.data.purpose,
-        scopeSummary: parsed.data.scopeSummary ?? {}, secretRef,
+        scopeSummary: { ...(parsed.data.scopeSummary ?? {}), ...(healthMetadata ?? {}) }, secretRef,
         ...(parsed.data.expiresAt ? { expiresAt: parsed.data.expiresAt } : {}), createdBy: req.user!.sub,
       });
     } catch {
@@ -674,6 +688,16 @@ export function registerGovernanceCredentialRoutes(options: {
         leaseToken: claimed.leaseToken, status: 'failed', errorCode: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT',
       }, { changed: false })) return;
       return res.status(409).json({ error: 'Governance preview invalid or baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
+    }
+    if (target.credential.kind === 'personal_grant') {
+      const health = await validateAliyunPersonalSecret(target.credential.connectorId, mutation.secret);
+      if (health && !health.healthy) {
+        if (!await finishOrCritical(res, {
+          tenantId: target.tenantId, operation: 'rotate', idempotencyKey,
+          leaseToken: claimed.leaseToken, status: 'failed', errorCode: health.code,
+        }, { changed: false })) return;
+        return res.status(422).json({ error: 'Credential validation failed', code: health.code });
+      }
     }
 
     const caller = {

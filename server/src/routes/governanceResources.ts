@@ -140,7 +140,7 @@ export function createGovernanceResourcesRouter(deps: {
   };
   vault: SecretVault;
   audit: GovernanceAuditStore;
-  credentialHealthCheck?: (connectorId: string, secret: string) => Promise<{ healthy: boolean; code: string }>;
+  credentialHealthCheck?: (connectorId: string, secret: string) => Promise<{ healthy: boolean; code: string; metadata?: Record<string, string> }>;
   onPersonalCredentialRevoked?: Parameters<typeof registerGovernanceCredentialRoutes>[0]['onPersonalCredentialRevoked'];
 }): Router {
   if (deps.offboardingPreviewSecret.length < 32) {

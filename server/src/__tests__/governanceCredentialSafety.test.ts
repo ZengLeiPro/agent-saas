@@ -35,6 +35,7 @@ async function rig(input: {
   finishCommit?: ReturnType<typeof vi.fn>;
   claimCommit?: ReturnType<typeof vi.fn>;
   recordCommitProgress?: ReturnType<typeof vi.fn>;
+  credentialHealthCheck?: (connectorId: string, secret: string) => Promise<{ healthy: boolean; code: string; metadata?: Record<string, string> }>;
   onPersonalCredentialRevoked?: (input: { credential: GovernanceCredential; actorUserId: string }) => Promise<void>;
   now?: () => Date;
 } = {}) {
@@ -108,6 +109,7 @@ async function rig(input: {
     personaFor: () => 'org_admin',
     canManageOrganization: () => true,
     resourceTenantFor: (req, requested) => !requested || requested === req.user!.tenantId ? req.user!.tenantId : null,
+    ...(input.credentialHealthCheck ? { credentialHealthCheck: input.credentialHealthCheck } : {}),
     ...(input.onPersonalCredentialRevoked ? { onPersonalCredentialRevoked: input.onPersonalCredentialRevoked } : {}),
   });
   app.use('/api/governance/resources', router);
@@ -131,6 +133,67 @@ async function preview(test: Awaited<ReturnType<typeof rig>>, path: string, body
 }
 
 describe('governance credential signed commits', () => {
+  it('阿里云个人 Credential 在写入 Vault 前执行 STS 验证', async () => {
+    const health = vi.fn().mockResolvedValue({ healthy: false, code: 'UPSTREAM_IDENTITY_CHECK_FAILED' });
+    const putSecret = vi.fn();
+    const test = await rig({ credentialHealthCheck: health, putSecret });
+    const secret = JSON.stringify({ accessKeyId: 'LTAI-invalid', accessKeySecret: 'invalid', regionId: 'cn-shenzhen' });
+    const response = await test.request('/api/governance/resources/credentials', json({
+      connectorId: 'aliyun', kind: 'personal_grant', purpose: '阿里云 CLI 用户凭据',
+      scopeSummary: { regionId: 'cn-shenzhen', scopes: ['aliyun:*'] }, secret,
+    }));
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({ error: 'Credential validation failed', code: 'UPSTREAM_IDENTITY_CHECK_FAILED' });
+    expect(health).toHaveBeenCalledWith('aliyun', secret);
+    expect(putSecret).not.toHaveBeenCalled();
+  });
+
+  it('阿里云 STS 身份元数据写入治理 scopeSummary 供连接状态展示', async () => {
+    const health = vi.fn().mockResolvedValue({
+      healthy: true, code: 'UPSTREAM_IDENTITY_VERIFIED',
+      metadata: { accountId: '1234567890123456', identityArn: 'acs:ram::1234567890123456:user/agent-saas', identityType: 'RAMUser' },
+    });
+    const create = vi.fn().mockResolvedValue(credential({ connectorId: 'aliyun', kind: 'personal_grant', ownerUserId: 'admin-1' }));
+    const test = await rig({ credentialHealthCheck: health, create });
+    const secret = JSON.stringify({ accessKeyId: 'LTAI-valid', accessKeySecret: 'valid', regionId: 'cn-shenzhen' });
+    const response = await test.request('/api/governance/resources/credentials', json({
+      connectorId: 'aliyun', kind: 'personal_grant', purpose: '阿里云 CLI 用户凭据',
+      scopeSummary: { regionId: 'cn-shenzhen', scopes: ['aliyun:*'] }, secret,
+    }));
+
+    expect(response.status).toBe(201);
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      scopeSummary: {
+        regionId: 'cn-shenzhen', scopes: ['aliyun:*'], accountId: '1234567890123456',
+        identityArn: 'acs:ram::1234567890123456:user/agent-saas', identityType: 'RAMUser',
+      },
+    }));
+  });
+
+  it('阿里云个人 Credential rotation 在写入新 Secret 前执行 STS 验证', async () => {
+    const health = vi.fn().mockResolvedValue({ healthy: false, code: 'UPSTREAM_IDENTITY_CHECK_FAILED' });
+    const rotateSecret = vi.fn();
+    const test = await rig({
+      credentialHealthCheck: health,
+      getCredential: vi.fn().mockResolvedValue(credential({ connectorId: 'aliyun', kind: 'personal_grant', ownerUserId: 'admin-1' })),
+      rotateSecret,
+    });
+    const command = {
+      expectedVersion: 1,
+      secret: JSON.stringify({ accessKeyId: 'LTAI-invalid', accessKeySecret: 'invalid', regionId: 'cn-shenzhen' }),
+      reason: '更新阿里云 CLI 用户凭据',
+    };
+    const signed = await preview(test, '/api/governance/resources/credentials/cred-1/rotate/preview', command);
+    const response = await test.request('/api/governance/resources/credentials/cred-1/rotate', json({
+      ...command, previewId: signed.previewId, baselineDigest: signed.baselineDigest, expiresAt: signed.expiresAt,
+    }));
+
+    expect(response.status).toBe(422);
+    expect(health).toHaveBeenCalledWith('aliyun', command.secret);
+    expect(rotateSecret).not.toHaveBeenCalled();
+  });
+
   it('个人 Credential 所有者可以使用治理 rotation 更新 X Cookie', async () => {
     const personal = credential({
       connectorId: 'x', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,

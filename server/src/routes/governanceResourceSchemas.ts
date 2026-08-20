@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { isForbiddenGovernanceField } from '../../../shared/src/types/governance.js';
 
 const credentialScopeSummarySchema = z.object({
+  regionId: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)+$/).optional(),
+  accountId: z.string().min(1).max(128).optional(),
+  identityArn: z.string().min(1).max(500).optional(),
+  identityType: z.string().min(1).max(128).optional(),
   scopes: z.array(z.string().min(1).max(500)).max(100).optional(),
   operations: z.array(z.string().min(1).max(200)).max(100).optional(),
   constraints: z.array(z.string().min(1).max(500)).max(100).optional(),

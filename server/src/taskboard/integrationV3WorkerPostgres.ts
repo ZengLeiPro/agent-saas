@@ -370,12 +370,12 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
 
   async withRepositoryBranchLock<T>(lock: RepositoryWorkspaceSyncLock, operation: () => Promise<T>): Promise<T> {
     const client = await this.options.pool.connect();
-    const key = `${lock.repositoryPath}\u0000${lock.branch}`;
+    const key = [lock.repositoryPath, lock.branch];
     try {
-      await client.query('SELECT pg_advisory_lock(hashtextextended($1,0))', [key]);
+      await client.query('SELECT pg_advisory_lock(hashtext($1),hashtext($2))', key);
       return await operation();
     } finally {
-      await client.query('SELECT pg_advisory_unlock(hashtextextended($1,0))', [key]).catch(() => undefined);
+      await client.query('SELECT pg_advisory_unlock(hashtext($1),hashtext($2))', key).catch(() => undefined);
       client.release();
     }
   }

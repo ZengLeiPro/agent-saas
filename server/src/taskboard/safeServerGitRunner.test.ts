@@ -61,6 +61,23 @@ describe('safe server Git runner', () => {
       .resolves.toMatchObject({ exitCode: 0, stdout: '' });
   });
 
+  it('preserves fixed commit dates for deterministic commit-tree retries', async () => {
+    const root = repository();
+    writeFileSync(join(root, 'content.txt'), 'deterministic\n');
+    expect((await runSafeServerGit({ cwd: root, args: ['add', 'content.txt'] })).exitCode).toBe(0);
+    const tree = (await runSafeServerGit({ cwd: root, args: ['write-tree'] })).stdout.trim();
+    const env = {
+      GIT_AUTHOR_DATE: '2026-08-20T15:52:39.314Z',
+      GIT_COMMITTER_DATE: '2026-08-20T15:52:39.314Z',
+    };
+    const first = await runSafeServerGit({ cwd: root, args: ['commit-tree', tree, '-m', 'stable'], env });
+    const second = await runSafeServerGit({ cwd: root, args: ['commit-tree', tree, '-m', 'stable'], env });
+    expect(first.exitCode).toBe(0);
+    expect(second.stdout).toBe(first.stdout);
+    const dates = await runSafeServerGit({ cwd: root, args: ['show', '-s', '--format=%aI%n%cI', first.stdout.trim()] });
+    expect(dates.stdout.trim().split('\n')).toEqual(['2026-08-20T15:52:39+00:00', '2026-08-20T15:52:39+00:00']);
+  });
+
   it('pins network policy and does not depend on GIT_CONFIG_LOCAL', () => {
     const args = safeServerGitArgs(['status']).join(' ');
     expect(args).toContain('protocol.ext.allow=never');
@@ -106,6 +123,8 @@ describe('safe server Git runner', () => {
       GIT_ALLOW_PROTOCOL: 'file:https',
       GIT_ASKPASS: '/trusted/server/askpass',
       KY_GIT_PUSH_TOKEN: 'secret',
+      GIT_AUTHOR_DATE: '2026-08-20T15:52:39.314Z',
+      GIT_COMMITTER_DATE: '2026-08-20T15:52:39.314Z',
     });
     expect(env).toMatchObject({
       HOME: '/nonexistent/integration-v3-control-plane',
@@ -113,6 +132,8 @@ describe('safe server Git runner', () => {
       GIT_ALLOW_PROTOCOL: 'https',
       GIT_ASKPASS: '/trusted/server/askpass',
       KY_GIT_PUSH_TOKEN: 'secret',
+      GIT_AUTHOR_DATE: '2026-08-20T15:52:39.314Z',
+      GIT_COMMITTER_DATE: '2026-08-20T15:52:39.314Z',
     });
     for (const key of ['GIT_CONFIG_LOCAL', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0',
       'GIT_SSL_NO_VERIFY', 'HTTPS_PROXY']) expect(env).not.toHaveProperty(key);

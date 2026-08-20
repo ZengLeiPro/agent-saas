@@ -47,6 +47,7 @@ describe("TaskCard", () => {
     renderCard(task());
 
     expect(screen.getByText("曾磊 @zenglei")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "User" }).getAttribute("src")).toBe("/api/auth/avatar/user-1");
     expect(screen.getByText("提交 2026-08-13")).toBeTruthy();
     expect(screen.getByText("完成 2026-08-14")).toBeTruthy();
     expect(screen.getByRole("button", {

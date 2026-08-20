@@ -1,9 +1,7 @@
 import {
   TASKBOARD_PRIORITIES,
-  TASKBOARD_STATUSES,
   type TaskBoard,
   type TaskBoardPriority,
-  type TaskBoardStatus,
 } from "@agent/shared";
 import { Archive, ArchiveRestore, MoreHorizontal, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,13 +21,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { boardAllows, PRIORITY_LABELS, STATUS_LABELS } from "./constants";
+import { boardAllows, PRIORITY_LABELS } from "./constants";
 
 interface BoardToolbarProps {
   boards: TaskBoard[];
   board: TaskBoard;
   search: string;
-  desktopStatus: TaskBoardStatus | "all";
+  submitters: Array<{ id: string; label: string }>;
+  submitterUserId: string;
   priority: TaskBoardPriority | "all";
   archivedCount: number;
   message?: string | null;
@@ -39,7 +38,7 @@ interface BoardToolbarProps {
   onArchiveBoard: () => void;
   onRestoreBoard: () => void;
   onSearchChange: (value: string) => void;
-  onDesktopStatusChange: (value: TaskBoardStatus | "all") => void;
+  onSubmitterChange: (value: string) => void;
   onPriorityChange: (value: TaskBoardPriority | "all") => void;
   onOpenArchivedTasks: () => void;
 }
@@ -48,7 +47,8 @@ export function BoardToolbar({
   boards,
   board,
   search,
-  desktopStatus,
+  submitters,
+  submitterUserId,
   priority,
   archivedCount,
   message,
@@ -58,7 +58,7 @@ export function BoardToolbar({
   onArchiveBoard,
   onRestoreBoard,
   onSearchChange,
-  onDesktopStatusChange,
+  onSubmitterChange,
   onPriorityChange,
   onOpenArchivedTasks,
 }: BoardToolbarProps) {
@@ -123,13 +123,13 @@ export function BoardToolbar({
             aria-label="搜索任务"
           />
         </div>
-        <div className="hidden w-36 md:block">
-          <Select value={desktopStatus} onValueChange={(value) => onDesktopStatusChange(value as TaskBoardStatus | "all")}>
-            <SelectTrigger aria-label="状态筛选"><SelectValue /></SelectTrigger>
+        <div className="w-44">
+          <Select value={submitterUserId} onValueChange={onSubmitterChange}>
+            <SelectTrigger aria-label="提交人筛选"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">全部状态</SelectItem>
-              {TASKBOARD_STATUSES.map((status) => (
-                <SelectItem key={status} value={status}>{STATUS_LABELS[status]}</SelectItem>
+              <SelectItem value="all">全部提交人</SelectItem>
+              {submitters.map((submitter) => (
+                <SelectItem key={submitter.id} value={submitter.id}>{submitter.label}</SelectItem>
               ))}
             </SelectContent>
           </Select>

@@ -161,6 +161,33 @@ describe('Taskboard routes', () => {
     expect(await unavailable.json()).toMatchObject({ code: 'TASKBOARD_UNAVAILABLE' });
   });
 
+  it('returns only the current organization users with display-safe avatar data', async () => {
+    const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
+    const userStore = {
+      listAll: () => [
+        {
+          id: 'user-1', username: 'alice', realName: 'Alice', tenantId: 'tenant-a',
+          avatar: 'avatars/alice.png', avatarVersion: 7,
+          phone: '13800000000',
+        },
+        { id: 'user-2', username: 'bob', realName: 'Bob', tenantId: 'tenant-b' },
+      ],
+    } as unknown as UserStore;
+    const rig = await makeRig(makeService(captured), USER, captured, undefined, userStore);
+
+    const response = await rig.request('/api/taskboard/users');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      users: [{
+        id: 'user-1',
+        username: 'alice',
+        realName: 'Alice',
+        avatar: '/api/auth/avatar/user-1?v=7',
+        avatarVersion: 7,
+      }],
+    });
+  });
+
   it('uses tenantId/sub/username from req.user and rejects ownership fields through strict schemas', async () => {
     const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
     const rig = await makeRig(makeService(captured), USER, captured);

@@ -3,6 +3,7 @@ import type {
   TaskBoardExecutionStatus,
   TaskBoardPriority,
   TaskBoardStatus,
+  TaskBoardTask,
 } from "@agent/shared";
 import type {
   TaskBoardAllowedAction,
@@ -49,6 +50,35 @@ export const INTEGRATION_SOURCE_STATE_LABELS: Record<TaskBoardIntegrationSourceS
   waiting_remediation: "等待修复",
   needs_human: "需要人工处理",
 };
+
+const UPDATED_TIME_SORT_STATUSES = new Set<TaskBoardStatus>([
+  "in_progress",
+  "in_review",
+  "ready_to_merge",
+  "blocked",
+  "done",
+  "canceled",
+]);
+
+function timestamp(value: string | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/** 需求池与待实施保留手动顺序，其余状态按最近更新时间倒序展示。 */
+export function sortTaskBoardTasks(tasks: TaskBoardTask[], status: TaskBoardStatus): TaskBoardTask[] {
+  return tasks
+    .filter((task) => task.status === status && !task.archivedAt)
+    .sort((left, right) => {
+      if (UPDATED_TIME_SORT_STATUSES.has(status)) {
+        return timestamp(right.updatedAt) - timestamp(left.updatedAt)
+          || right.sortOrder - left.sortOrder
+          || right.identifier.localeCompare(left.identifier);
+      }
+      return left.sortOrder - right.sortOrder || left.identifier.localeCompare(right.identifier);
+    });
+}
 
 export function boardAllows(board: TaskBoard | null | undefined, action: TaskBoardAllowedAction): boolean {
   if (!board) return false;

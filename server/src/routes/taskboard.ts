@@ -2,6 +2,7 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import { z } from 'zod';
 
 import type { UserStore } from '../data/users/store.js';
+import { buildAvatarUrl } from './authAvatar.js';
 import type { UploadManager } from '../uploads/manager.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import {
@@ -12,6 +13,7 @@ import {
   TASKBOARD_VISIBILITIES,
   type TaskBoardAttachment,
   type TaskBoardComment,
+  type TaskBoardDirectoryUser,
   type TaskBoardTask,
   type TaskBoardUploadAttachment,
 } from '../../../shared/src/types/taskboard.js';
@@ -328,6 +330,27 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     }
     next();
   });
+
+  router.get('/users', route(async (req, res) => {
+    if (!options.userStore) throw new TaskboardExecutionUnavailableError();
+    const users = options.userStore.listAll()
+      .filter((user) => user.tenantId === req.user!.tenantId)
+      .sort((left, right) => {
+        const leftLabel = left.realName?.trim() || left.username;
+        const rightLabel = right.realName?.trim() || right.username;
+        return leftLabel.localeCompare(rightLabel, 'zh-CN')
+          || left.username.localeCompare(right.username, 'zh-CN');
+      })
+      .map((user): TaskBoardDirectoryUser => ({
+        id: user.id,
+        username: user.username,
+        ...(user.realName?.trim() ? { realName: user.realName.trim() } : {}),
+        ...(user.avatar ? { avatar: buildAvatarUrl(user.id, user.avatar, user.avatarVersion) } : {}),
+        ...(user.avatarVersion ? { avatarVersion: user.avatarVersion } : {}),
+        ...(user.disabled ? { disabled: true } : {}),
+      }));
+    res.json({ users });
+  }));
 
   router.get('/boards', route(async (req, res) => {
     const query = parseOrReply(boardsQuerySchema, req.query, res, 'query');

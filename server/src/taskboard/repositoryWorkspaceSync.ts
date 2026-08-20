@@ -195,7 +195,7 @@ async function prepareIntegrationWorktree(
   }
 
   await git(host, input.repositoryPath, [
-    'worktree', 'add', '-b', input.integrationBranch, '--', input.worktreePath, remoteBaseRef,
+    'worktree', 'add', '-b', input.integrationBranch, '--no-track', '--', input.worktreePath, remoteBaseRef,
   ]);
   return 'created';
 }

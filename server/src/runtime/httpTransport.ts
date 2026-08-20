@@ -1,3 +1,4 @@
+import { DEFAULT_SHELL_TIMEOUT_MS } from '../agent/toolOutput.js';
 import type { ToolDescriptor, WorkspaceRef } from '../agent/toolRuntime.js';
 import { WORKSPACE_HAND_TOOLS } from '../agent/toolRuntime.js';
 import type { ExecutionTransport } from './executionTransport.js';
@@ -18,6 +19,10 @@ const MAX_SSE_BUFFER_BYTES = 1024 * 1024;
  * RestartSec=5 拉起 + 启动耗时），累计 10s 退避基本覆盖。
  */
 const DEFAULT_CONNECT_RETRY_BACKOFF_MS = [1_000, 3_000, 6_000];
+const DEFAULT_STREAM_CLEANUP_GRACE_MS = 30_000;
+const DEFAULT_INVOCATION_RESULT_POLL_TIMEOUT_MS = 5_000;
+const DEFAULT_INVOCATION_RESULT_POLL_INTERVAL_MS = 100;
+const DEFAULT_INVOCATION_RESULT_REQUEST_TIMEOUT_MS = 1_000;
 
 /** 可被 AbortSignal 打断的 sleep；abort 时 reject AbortError（外层按既有 aborted 分支归一化）。 */
 function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
@@ -62,6 +67,14 @@ export interface HttpTransportOptions {
    * 默认 [1s, 3s, 6s]；传 [] 关闭重试。测试可传小值。
    */
   connectRetryBackoffMs?: number[];
+  /** 远端 Shell 超时后留给 hand/provider 收尾的传输宽限（毫秒）。 */
+  streamCleanupGraceMs?: number;
+  /** 连接被取消后查询 hand 最终 invocation 结果的最长等待时间（毫秒）。 */
+  invocationResultPollTimeoutMs?: number;
+  /** 查询 hand 最终 invocation 结果的轮询间隔（毫秒）。 */
+  invocationResultPollIntervalMs?: number;
+  /** DELETE/GET invocation 控制请求的单次最大等待时间（毫秒）。 */
+  invocationResultRequestTimeoutMs?: number;
   /**
    * 每次 invoke 前调用，按 workspace 装配一份要透传给远端 hand 的 env（wire.context.env）。
    * 只能返回 {@link HAND_ENV_ALLOWLIST} 内的 key（未上 allowlist 的会被 pickHandEnv 剥掉）；
@@ -102,6 +115,10 @@ export class HttpTransport implements ExecutionTransport {
   private readonly fetchImpl: typeof fetch;
   private readonly envResolver?: (workspace: WorkspaceRef) => Record<string, string | undefined>;
   private readonly connectRetryBackoffMs: number[];
+  private readonly streamCleanupGraceMs: number;
+  private readonly invocationResultPollTimeoutMs: number;
+  private readonly invocationResultPollIntervalMs: number;
+  private readonly invocationResultRequestTimeoutMs: number;
 
   constructor(options: HttpTransportOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
@@ -111,6 +128,10 @@ export class HttpTransport implements ExecutionTransport {
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.envResolver = options.envResolver;
     this.connectRetryBackoffMs = options.connectRetryBackoffMs ?? DEFAULT_CONNECT_RETRY_BACKOFF_MS;
+    this.streamCleanupGraceMs = Math.max(0, options.streamCleanupGraceMs ?? DEFAULT_STREAM_CLEANUP_GRACE_MS);
+    this.invocationResultPollTimeoutMs = Math.max(0, options.invocationResultPollTimeoutMs ?? DEFAULT_INVOCATION_RESULT_POLL_TIMEOUT_MS);
+    this.invocationResultPollIntervalMs = Math.max(1, options.invocationResultPollIntervalMs ?? DEFAULT_INVOCATION_RESULT_POLL_INTERVAL_MS);
+    this.invocationResultRequestTimeoutMs = Math.max(1, options.invocationResultRequestTimeoutMs ?? DEFAULT_INVOCATION_RESULT_REQUEST_TIMEOUT_MS);
   }
 
   /**
@@ -233,15 +254,21 @@ export class HttpTransport implements ExecutionTransport {
 
     // 用 AbortController 同时承载"调用方 abort"与"transport 超时"两个来源。
     const controller = new AbortController();
+    let cancellationPromise: Promise<void> | undefined;
+    const cancelOnce = () => {
+      cancellationPromise ??= this.cancelInvocation(request.context.invocationId);
+      return cancellationPromise;
+    };
     const onUpstreamAbort = () => {
       controller.abort();
-      void this.cancelInvocation(request.context.invocationId);
+      void cancelOnce();
     };
     upstreamSignal?.addEventListener('abort', onUpstreamAbort, { once: true });
-    const streamTimeoutMs = Math.max(this.invokeTimeoutMs, toolTimeoutMs(request) + 5_000);
+    const commandTimeoutMs = toolTimeoutMs(request);
+    const streamTimeoutMs = Math.max(this.invokeTimeoutMs, commandTimeoutMs > 0 ? commandTimeoutMs + this.streamCleanupGraceMs : 0);
     const timer = setTimeout(() => {
       controller.abort();
-      void this.cancelInvocation(request.context.invocationId);
+      void cancelOnce();
     }, streamTimeoutMs);
     timer.unref?.();
 
@@ -289,9 +316,12 @@ export class HttpTransport implements ExecutionTransport {
         };
       }
       if (controller.signal.aborted) {
+        await cancelOnce();
+        const recovered = await this.waitForInvocationResult(request.context.invocationId);
+        if (recovered) return markRemoteResultRecovered(recovered);
         return {
           status: 'error',
-          error: `hand-server 调用超时 (${this.invokeTimeoutMs}ms)`,
+          error: `hand-server 调用超时 (${streamTimeoutMs}ms)`,
           metadata: { timedOut: true },
         };
       }
@@ -313,15 +343,21 @@ export class HttpTransport implements ExecutionTransport {
     const wireRequest = this.buildWireRequest(request);
     const upstreamSignal = request.context.signal;
     const controller = new AbortController();
+    let cancellationPromise: Promise<void> | undefined;
+    const cancelOnce = () => {
+      cancellationPromise ??= this.cancelInvocation(request.context.invocationId);
+      return cancellationPromise;
+    };
     const onUpstreamAbort = () => {
       controller.abort();
-      void this.cancelInvocation(request.context.invocationId);
+      void cancelOnce();
     };
     upstreamSignal?.addEventListener('abort', onUpstreamAbort, { once: true });
-    const streamTimeoutMs = Math.max(this.invokeTimeoutMs, toolTimeoutMs(request) + 5_000);
+    const commandTimeoutMs = toolTimeoutMs(request);
+    const streamTimeoutMs = Math.max(this.invokeTimeoutMs, commandTimeoutMs > 0 ? commandTimeoutMs + this.streamCleanupGraceMs : 0);
     const timer = setTimeout(() => {
       controller.abort();
-      void this.cancelInvocation(request.context.invocationId);
+      void cancelOnce();
     }, streamTimeoutMs);
     timer.unref?.();
     let sawCompleted = false;
@@ -350,20 +386,28 @@ export class HttpTransport implements ExecutionTransport {
         yield { type: 'completed', response: { status: 'error', error: 'hand-server stream ended without completed chunk' } };
       }
     } catch (err) {
-      yield {
-        type: 'completed',
-        response: upstreamSignal?.aborted
-          ? { status: 'error', error: 'hand-server stream 被调用方 abort', metadata: { aborted: true } }
-          : controller.signal.aborted
-            ? { status: 'error', error: `hand-server stream 超时 (${streamTimeoutMs}ms)`, metadata: { timedOut: true } }
-            : { status: 'error', error: `hand-server stream 调用失败: ${err instanceof Error ? err.message : String(err)}` },
-      };
+      if (upstreamSignal?.aborted) {
+        sawCompleted = true;
+        yield { type: 'completed', response: { status: 'error', error: 'hand-server stream 被调用方 abort', metadata: { aborted: true } } };
+      } else if (controller.signal.aborted) {
+        await cancelOnce();
+        const recovered = await this.waitForInvocationResult(request.context.invocationId);
+        sawCompleted = true;
+        yield {
+          type: 'completed',
+          response: recovered
+            ? markRemoteResultRecovered(recovered)
+            : { status: 'error', error: `hand-server stream 超时 (${streamTimeoutMs}ms)`, metadata: { timedOut: true } },
+        };
+      } else {
+        yield { type: 'completed', response: { status: 'error', error: `hand-server stream 调用失败: ${err instanceof Error ? err.message : String(err)}` } };
+      }
     } finally {
       clearTimeout(timer);
       upstreamSignal?.removeEventListener('abort', onUpstreamAbort);
       if (!sawCompleted) {
         controller.abort();
-        await this.cancelInvocation(request.context.invocationId);
+        await cancelOnce();
       }
     }
   }
@@ -397,10 +441,83 @@ export class HttpTransport implements ExecutionTransport {
 
   async cancelInvocation(invocationId: string | undefined): Promise<void> {
     if (!invocationId) return;
-    await this.fetchImpl(`${this.baseUrl}/invocations/${encodeURIComponent(invocationId)}`, {
-      method: 'DELETE',
-      headers: { authorization: `Bearer ${this.authToken}` },
-    }).catch(() => undefined);
+    await this.fetchInvocationControlRequest(
+      `${this.baseUrl}/invocations/${encodeURIComponent(invocationId)}`,
+      { method: 'DELETE' },
+      this.invocationResultRequestTimeoutMs,
+      async (response) => response,
+    );
+  }
+
+  private async fetchInvocationControlRequest<T>(
+    url: string,
+    init: RequestInit,
+    timeoutMs: number,
+    parse: (response: Response) => Promise<T>,
+  ): Promise<T | undefined> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        resolve(undefined);
+      }, Math.max(1, timeoutMs));
+      timer.unref?.();
+    });
+    try {
+      const request = this.fetchImpl(url, {
+        ...init,
+        headers: {
+          authorization: `Bearer ${this.authToken}`,
+          ...(init.headers ?? {}),
+        },
+        signal: controller.signal,
+      }).then(parse);
+      return await Promise.race([request, timeout]);
+    } catch {
+      return undefined;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  private async fetchInvocationResult(
+    invocationId: string | undefined,
+    timeoutMs: number,
+  ): Promise<ToolInvocationResponse | undefined> {
+    if (!invocationId) return undefined;
+    return await this.fetchInvocationControlRequest(
+      `${this.baseUrl}/invocations/${encodeURIComponent(invocationId)}`,
+      { method: 'GET' },
+      timeoutMs,
+      async (response) => {
+        if (!response.ok) return undefined;
+        try {
+          const body = await response.json().catch(() => undefined) as { completed?: unknown; response?: unknown } | undefined;
+          if (body?.completed !== true) return undefined;
+          return parseToolInvocationResponse(body.response) ?? undefined;
+        } catch {
+          return undefined;
+        }
+      },
+    );
+  }
+
+  private async waitForInvocationResult(invocationId: string | undefined): Promise<ToolInvocationResponse | undefined> {
+    if (!invocationId || this.invocationResultPollTimeoutMs <= 0) return undefined;
+    const deadline = Date.now() + this.invocationResultPollTimeoutMs;
+    while (true) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return undefined;
+      const response = await this.fetchInvocationResult(
+        invocationId,
+        Math.min(this.invocationResultRequestTimeoutMs, remaining),
+      );
+      if (response) return response;
+      const sleepFor = Math.min(this.invocationResultPollIntervalMs, deadline - Date.now());
+      if (sleepFor <= 0) return undefined;
+      await sleepAbortable(sleepFor);
+    }
   }
 }
 
@@ -511,6 +628,16 @@ export interface WireToolInvocationRequest {
   };
 }
 
+function markRemoteResultRecovered(response: ToolInvocationResponse): ToolInvocationResponse {
+  return {
+    ...response,
+    metadata: {
+      ...(response.metadata ?? {}),
+      remoteResultRecovered: true,
+    },
+  };
+}
+
 async function safeText(response: Response): Promise<string> {
   try {
     return await response.text();
@@ -545,10 +672,13 @@ function parseToolInvocationResponse(body: unknown): ToolInvocationResponse | nu
   return null;
 }
 
-function toolTimeoutMs(request: ToolInvocationRequest): number {
+export function toolTimeoutMs(request: ToolInvocationRequest): number {
   const input = request.input;
   if (input && typeof input === 'object' && typeof (input as { timeoutMs?: unknown }).timeoutMs === 'number') {
     return (input as { timeoutMs: number }).timeoutMs;
+  }
+  if (request.toolName === 'Shell' && (!input || typeof input !== 'object' || (input as { mode?: unknown }).mode !== 'background')) {
+    return DEFAULT_SHELL_TIMEOUT_MS;
   }
   return 0;
 }

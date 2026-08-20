@@ -914,6 +914,11 @@ function assertContinuationAllowed(task: TaskBoardTask, activeExecution?: TaskBo
     throw new TaskboardValidationError('阻塞任务需要显式恢复后才能继续', 'TASKBOARD_RESUME_REQUIRED');
   }
   if (task.kind === 'integration') {
+    if (task.workflowVersion === 3) {
+      if (!activeExecution) throw new TaskboardValidationError('Integration v3 由系统按 Candidate 状态推进；当前没有可继续的 Agent 执行，请仅发表评论', 'TASKBOARD_V3_COMMENT_CONTINUATION_REQUIRES_ACTIVE');
+      if (!['work', 'review'].includes(activeExecution.purpose)) throw new TaskboardValidationError('Integration v3 只能继续当前的 Work 或 Review 执行', 'TASKBOARD_INTEGRATION_PURPOSE_INVALID');
+      return;
+    }
     if (!['todo', 'in_progress'].includes(task.status)) {
       throw new TaskboardValidationError('当前集成任务状态不允许从评论继续执行', 'TASKBOARD_EXECUTION_STATUS_INVALID');
     }

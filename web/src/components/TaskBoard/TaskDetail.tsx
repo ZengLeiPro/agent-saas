@@ -292,9 +292,14 @@ export function TaskDetail({
       ? ["todo", "in_progress"].includes(currentTask?.status ?? "canceled")
       : ["todo", "in_review"].includes(currentTask?.status ?? "canceled")
         || (currentTask?.status === "in_progress" && !executionActive));
-  const canContinueCurrentTask = (canRunCurrentTask && currentTask?.status !== "in_progress")
-    || (!readOnly && canExecute && taskKind !== "integration"
-      && currentTask?.status === "in_progress" && executionActive);
+  const isIntegrationV3 = taskKind === "integration" && currentTask?.workflowVersion === 3;
+  const canContinueCurrentTask = isIntegrationV3
+    ? (!readOnly && canExecute && executionActive
+      && ["in_progress", "in_review"].includes(currentTask?.status ?? "canceled")
+      && (latestExecution?.purpose === "work" || latestExecution?.purpose === "review"))
+    : (canRunCurrentTask && currentTask?.status !== "in_progress")
+      || (!readOnly && canExecute && taskKind !== "integration"
+        && currentTask?.status === "in_progress" && executionActive);
   const canTransitionCurrentTask = Boolean(
     currentTask
     && !readOnly

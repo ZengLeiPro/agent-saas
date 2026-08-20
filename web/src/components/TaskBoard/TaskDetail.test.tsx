@@ -396,9 +396,9 @@ describe("TaskDetail 草稿隔离", () => {
     expect(mocks.refreshExecutions).toHaveBeenCalled();
   });
 
-  it("实施中且存在 active execution 时评论可继续实施", async () => {
+  it("Workflow v3 存在 active work execution 时评论可继续实施", async () => {
     const user = userEvent.setup();
-    const current = { ...taskOne, status: "in_progress" as const };
+    const current = { ...taskOne, kind: "integration" as const, workflowVersion: 3 as const, status: "in_progress" as const };
     const published = {
       id: "comment-active-in-progress",
       taskId: current.id,
@@ -662,7 +662,7 @@ describe("TaskDetail 草稿隔离", () => {
     const integrationTask = { ...taskOne, id: "integration-v3", identifier: "TASK-11", kind: "integration" as const, workflowVersion: 3 as const, status: "in_progress" as const };
     render(<TaskDetail {...props({ task: integrationTask })} />);
     await waitFor(() => expect(mocks.fetchIntegrationCandidate).toHaveBeenCalledWith(integrationTask.id));
-    expect(screen.queryByRole("button", { name: "继续集成" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "继续集成" })).toBeNull(); expect(screen.queryByRole("checkbox", { name: /发表后继续/ })).toBeNull();
     expect(screen.getByText(/Integration v3 由系统按 Candidate 状态自动推进/)).toBeTruthy();
   });
 

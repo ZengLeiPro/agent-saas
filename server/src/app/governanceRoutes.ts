@@ -5,10 +5,12 @@ import type { WebChannel } from '../channels/web/channel.js';
 import { serverLogger } from '../utils/logger.js';
 import { createGovernanceAccessRouter } from '../routes/governanceAccess.js';
 import { createGovernanceResourcesRouter } from '../routes/governanceResources.js';
+import type { GovernanceCredential } from '../data/credentials/types.js';
 import { createGovernanceUiRouter } from '../routes/governanceUi.js';
 import { provisionTenant, rollbackProvisionedTenant } from '../data/tenants/provision.js';
 import { withTenantDebugModeLock } from '../data/tenants/debugModeLock.js';
 import { validateGovernanceCredentialHealth } from '../governance/credentialHealth.js';
+import { revokePendingXCredentials } from '../connectors/x.js';
 import { inventoryPersonalWorkspace } from './governancePersonalDataRetention.js';
 import type { ExecuteUserOffboarding } from './governanceOffboarding.js';
 import type { AppRuntime } from './runtime.js';
@@ -404,6 +406,24 @@ export function registerGovernanceRoutes(
       vault: runtime.secretVault,
       audit: runtime.governanceAuditStore,
       credentialHealthCheck: validateGovernanceCredentialHealth,
+      ...(runtime.connectorConnectionStore && runtime.userStore ? {
+        onPersonalCredentialRevoked: async ({ credential }: { credential: GovernanceCredential }) => {
+          if (credential.connectorId !== 'x' || !credential.ownerUserId) return;
+          const user = runtime.userStore!.findById(credential.ownerUserId);
+          if (!user || user.tenantId !== credential.tenantId) throw new Error('X credential owner not found');
+          const current = runtime.connectorConnectionStore!.get(user.username, 'x');
+          if (!current || current.tenantId !== credential.tenantId) return;
+          const currentOwnerId = current.userId ?? current.metadata?.credentialOwnerId;
+          if (currentOwnerId && currentOwnerId !== credential.ownerUserId) return;
+          await runtime.connectorConnectionStore!.disconnect(user.username, 'x', credential.tenantId);
+          await revokePendingXCredentials({
+            connectionStore: runtime.connectorConnectionStore!,
+            vault: runtime.secretVault!,
+            username: user.username,
+            excludeRefs: new Set([credential.secretRef]),
+          });
+        },
+      } : {}),
     }));
     if (options.executeUserOffboarding?.retry && !scheduledOffboardingRuntimes.has(runtime)) {
       scheduledOffboardingRuntimes.add(runtime);

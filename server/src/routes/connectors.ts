@@ -14,7 +14,8 @@ import {
 import {
   connectXCredential,
   disconnectXCredential,
-  getXConnection,
+  getXConnectionWithGovernance,
+  type XGovernanceCredentialReader,
 } from '../connectors/x.js';
 
 const githubConnectSchema = z.object({
@@ -46,6 +47,7 @@ const runtimeStateSchema = z.object({
 export interface ConnectorsRouterDeps {
   connectionStore: ConnectorConnectionStore;
   secretVault: SecretVault;
+  governanceCredentialStore?: XGovernanceCredentialReader;
   aliyunService?: AliyunConnectorService;
   legacyWriteGate?: {
     assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
@@ -184,10 +186,19 @@ export function createConnectorsRouter(deps: ConnectorsRouterDeps): Router {
     return res.json({ connection: toGithubConnectionView(connection) });
   });
 
-  router.get('/x', (req, res) => {
+  router.get('/x', async (req, res) => {
     const auth = authContext(req);
     if (!auth) return res.status(401).json({ error: 'Authentication required' });
-    return res.json({ connection: getXConnection(deps.connectionStore, auth) });
+    try {
+      const connection = await getXConnectionWithGovernance({
+        connectionStore: deps.connectionStore,
+        governanceCredentialStore: deps.governanceCredentialStore,
+        context: auth,
+      });
+      return res.json({ connection });
+    } catch (error) {
+      return res.status(503).json({ error: error instanceof Error ? error.message : '读取 X 连接失败' });
+    }
   });
 
   const connectX = async (req: Request, res: Response) => {

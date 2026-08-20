@@ -6,10 +6,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { JwtPayload } from '../auth/types.js';
+import type { GovernanceCredential } from '../data/credentials/types.js';
 import { AliyunConnectorService, type AliyunValidateCredentials } from '../connectors/aliyun.js';
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import { resolveGithubRuntimeEnv } from '../connectors/github.js';
-import { resolveXRuntimeEnv } from '../connectors/x.js';
+import { resolveXRuntimeEnv, type XGovernanceCredentialReader } from '../connectors/x.js';
 import { createConnectorsRouter } from '../routes/connectors.js';
 import { InMemorySecretVault } from '../security/secretVault.js';
 
@@ -27,6 +28,7 @@ afterEach(async () => {
 
 async function createRig(options: {
   legacyWriteGate?: { assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void> };
+  governanceCredentialStore?: XGovernanceCredentialReader;
 } = {}): Promise<Rig> {
   const root = mkdtempSync(join(tmpdir(), 'connectors-route-'));
   const connectionStore = new ConnectorConnectionStore(join(root, 'connections.json'));
@@ -53,6 +55,7 @@ async function createRig(options: {
   });
   app.use('/api/connectors', createConnectorsRouter({
     connectionStore, secretVault, aliyunService,
+    ...(options.governanceCredentialStore ? { governanceCredentialStore: options.governanceCredentialStore } : {}),
     ...(options.legacyWriteGate ? { legacyWriteGate: options.legacyWriteGate } : {}),
   }));
   const server: Server = await new Promise(resolve => {
@@ -187,6 +190,40 @@ describe('native connectors routes', () => {
     expect(write.status).toBe(409);
     expect(await write.json()).toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
     expect(gate.assertLegacyWriteAllowed).toHaveBeenCalledWith({ actor: 'user', compatibilityProjection: false });
+  });
+
+  it('X 连接状态 GET 与 runtime env 直接读取治理 Credential', async () => {
+    let governanceCredentials: GovernanceCredential[] = [];
+    const governanceCredentialStore = {
+      listForOwner: vi.fn().mockImplementation(async () => governanceCredentials),
+    } satisfies XGovernanceCredentialReader;
+    const rig = await createRig({ governanceCredentialStore });
+    const secret = await rig.secretVault.putSecret('user-1', 'connector', JSON.stringify({
+      authToken: 'governance-auth', ct0: 'governance-ct0',
+    }), {
+      actor: 'connector_proxy', userId: 'user-1', tenantId: 'tenant-a', scopes: ['secret:connector:write'],
+    }, { connectorId: 'x', tenantId: 'tenant-a', credentialOwnerId: 'user-1' });
+    governanceCredentials = [{
+      credentialId: 'credential-x', tenantId: 'tenant-a', connectorId: 'x' as const,
+      kind: 'personal_grant' as const, ownerUserId: 'user-1', purpose: 'X bird CLI 用户凭据',
+      scopeSummary: { scopes: ['x:*'] }, status: 'active' as const, generation: 1,
+      secretRef: secret.id, source: 'governance' as const, version: 2,
+      createdAt: '2026-08-20T10:00:00.000Z', createdBy: 'user-1',
+      updatedAt: '2026-08-20T10:01:00.000Z', updatedBy: 'user-1',
+    }];
+
+    const get = await rig.request('/api/connectors/x');
+    expect(get.status).toBe(200);
+    await expect(get.json()).resolves.toMatchObject({ connection: {
+      connectorId: 'x', status: 'connected', credentialId: 'credential-x', credentialVersion: 2,
+    } });
+    await expect(resolveXRuntimeEnv({
+      connectionStore: rig.connectionStore,
+      vault: rig.secretVault,
+      governanceCredentialStore,
+    }, { userId: 'user-1', username: 'alice', tenantId: 'tenant-a' })).resolves.toMatchObject({
+      AUTH_TOKEN: 'governance-auth', CT0: 'governance-ct0',
+    });
   });
 
   it('connects, pauses, resumes and disconnects X cookie credentials without returning secrets', async () => {

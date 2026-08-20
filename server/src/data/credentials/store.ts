@@ -309,7 +309,7 @@ export class PgCredentialStore {
       `UPDATE ${this.credentialsTable}
        SET generation=generation+1,status='active',last_validated_at=NULL,source='governance',
            version=version+1,updated_at=NOW(),updated_by=$4
-       WHERE tenant_id=$1 AND credential_id=$2 AND version=$3 AND kind='org_shared' AND status<>'revoked'
+       WHERE tenant_id=$1 AND credential_id=$2 AND version=$3 AND kind IN ('org_shared','personal_grant') AND status<>'revoked'
        RETURNING *`,
       [tenantId, credentialId, expectedVersion, updatedBy],
     );

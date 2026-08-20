@@ -58,28 +58,86 @@ export async function fetchXConnection(): Promise<XConnectionResponse> {
   return jsonOrError(await authFetch('/api/connectors/x'), '读取 X 连接失败');
 }
 
+interface XGovernanceCredentialSummary {
+  credentialId: string;
+  connectorId?: string;
+  kind: string;
+  status: string;
+  version: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+interface XGovernanceCredentialMutation {
+  credentialId: string;
+  version: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export async function connectX(input: XConnectInput): Promise<XConnectionResponse> {
   const authToken = input.authToken.trim();
   const ct0 = input.ct0.trim();
   if (!authToken || !ct0) throw new Error('X 连接凭据不能为空');
-  await governanceResourcesApi.createCredential({
-    connectorId: 'x',
-    kind: 'personal_grant',
-    purpose: 'X bird CLI 用户凭据',
-    scopeSummary: { scopes: ['x:*'] },
-    secret: JSON.stringify({ authToken, ct0 }),
-  });
-  return {
-    connection: {
+
+  const secret = JSON.stringify({ authToken, ct0 });
+  const current = await governanceResourcesApi.listCredentials<{ credentials: XGovernanceCredentialSummary[] }>();
+  const existing = current.credentials
+    .filter(credential => credential.connectorId === 'x'
+      && credential.kind === 'personal_grant'
+      && ['active', 'rotation_due'].includes(credential.status))
+    .sort((left, right) => (Date.parse(right.updatedAt ?? '') - Date.parse(left.updatedAt ?? ''))
+      || right.credentialId.localeCompare(left.credentialId))[0];
+
+  if (existing) {
+    const command = {
+      expectedVersion: existing.version,
+      secret,
+      reason: '更新 X bird CLI 用户凭据',
+    };
+    const preview = await governanceResourcesApi.previewCredentialRotation<{
+      previewId: string;
+      baselineDigest: string;
+      expiresAt: string;
+    }>(existing.credentialId, command);
+    await governanceResourcesApi.rotateCredential<XGovernanceCredentialMutation>(existing.credentialId, {
+      ...command,
+      previewId: preview.previewId,
+      baselineDigest: preview.baselineDigest,
+      expiresAt: preview.expiresAt,
+    });
+  } else {
+    await governanceResourcesApi.createCredential<XGovernanceCredentialMutation>({
       connectorId: 'x',
-      status: 'connected',
-      runtimeEnabled: true,
-    },
-  };
+      kind: 'personal_grant',
+      purpose: 'X bird CLI 用户凭据',
+      scopeSummary: { scopes: ['x:*'] },
+      secret,
+    });
+  }
+  return fetchXConnection();
 }
 
 export async function disconnectX(): Promise<XConnectionResponse> {
-  return jsonOrError(await authFetch('/api/connectors/x', { method: 'DELETE' }), 'X 断开失败');
+  const current = await governanceResourcesApi.listCredentials<{ credentials: XGovernanceCredentialSummary[] }>();
+  const credentials = current.credentials.filter(credential => credential.connectorId === 'x'
+    && credential.kind === 'personal_grant'
+    && ['active', 'rotation_due', 'expired', 'suspended', 'validation_failed'].includes(credential.status));
+  for (const credential of credentials) {
+    const command = { expectedVersion: credential.version, reason: '用户主动断开 X' };
+    const preview = await governanceResourcesApi.previewCredentialRevoke<{
+      previewId: string;
+      baselineDigest: string;
+      expiresAt: string;
+    }>(credential.credentialId, command);
+    await governanceResourcesApi.revokeCredential(credential.credentialId, {
+      ...command,
+      previewId: preview.previewId,
+      baselineDigest: preview.baselineDigest,
+      expiresAt: preview.expiresAt,
+    });
+  }
+  return fetchXConnection();
 }
 
 export async function fetchNotionConnection(): Promise<NotionConnectionResponse> {

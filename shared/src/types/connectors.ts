@@ -14,6 +14,8 @@ export interface XConnection {
   connectorId: 'x';
   status: 'connected' | 'disconnected';
   runtimeEnabled: boolean;
+  credentialId?: string;
+  credentialVersion?: number;
   connectedAt?: string;
   updatedAt?: string;
 }

@@ -2,6 +2,7 @@ import type { Server } from 'node:http';
 import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { GovernanceCredential } from '../data/credentials/types.js';
 import { registerGovernanceCredentialRoutes } from '../routes/governanceCredentialRoutes.js';
 
 const servers: Server[] = [];
@@ -30,9 +31,11 @@ async function rig(input: {
   putSecret?: ReturnType<typeof vi.fn>;
   rotateSecret?: ReturnType<typeof vi.fn>;
   revokeSecret?: ReturnType<typeof vi.fn>;
+  updateStatus?: ReturnType<typeof vi.fn>;
   finishCommit?: ReturnType<typeof vi.fn>;
   claimCommit?: ReturnType<typeof vi.fn>;
   recordCommitProgress?: ReturnType<typeof vi.fn>;
+  onPersonalCredentialRevoked?: (input: { credential: GovernanceCredential; actorUserId: string }) => Promise<void>;
   now?: () => Date;
 } = {}) {
   const commits = new Map<string, { identity: string; status: string; leaseToken: string; credentialId?: string; recovery?: Record<string, unknown> }>();
@@ -73,6 +76,7 @@ async function rig(input: {
   const putSecret = input.putSecret ?? vi.fn().mockResolvedValue({ id: 'vault-ref-new' });
   const rotateSecret = input.rotateSecret ?? vi.fn().mockResolvedValue({ id: 'vault-ref-hidden' });
   const revokeSecret = input.revokeSecret ?? vi.fn().mockResolvedValue(undefined);
+  const updateStatus = input.updateStatus ?? vi.fn().mockResolvedValue(credential({ status: 'revoked', generation: 2, version: 2 }));
   const app = express();
   app.use(express.json());
   app.use((req, res, next) => {
@@ -87,7 +91,7 @@ async function rig(input: {
     credentials: {
       create, get: getCredential, getBySecretRef: input.getBySecretRef ?? vi.fn().mockResolvedValue(null),
       claimCommit, recordCommitProgress, finishCommit, completeRotation, transferCustodian,
-      updateStatus: vi.fn(), recordValidation: vi.fn(),
+      updateStatus, recordValidation: vi.fn(),
     } as never,
     memberships: { getMembership: vi.fn(async (tenantId: string, userId: string) => (
       tenantId === 'tenant-a' && ['admin-1', 'member-2'].includes(userId)
@@ -104,6 +108,7 @@ async function rig(input: {
     personaFor: () => 'org_admin',
     canManageOrganization: () => true,
     resourceTenantFor: (req, requested) => !requested || requested === req.user!.tenantId ? req.user!.tenantId : null,
+    ...(input.onPersonalCredentialRevoked ? { onPersonalCredentialRevoked: input.onPersonalCredentialRevoked } : {}),
   });
   app.use('/api/governance/resources', router);
   const server: Server = await new Promise(resolve => {
@@ -126,6 +131,55 @@ async function preview(test: Awaited<ReturnType<typeof rig>>, path: string, body
 }
 
 describe('governance credential signed commits', () => {
+  it('个人 Credential 所有者可以使用治理 rotation 更新 X Cookie', async () => {
+    const personal = credential({
+      connectorId: 'x', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,
+      purpose: 'X bird CLI 用户凭据',
+    });
+    const getCredential = vi.fn().mockResolvedValue(personal);
+    const completeRotation = vi.fn().mockResolvedValue({ ...personal, status: 'active', generation: 2, version: 2 });
+    const test = await rig({ getCredential, completeRotation });
+    const command = {
+      expectedVersion: 1, secret: JSON.stringify({ authToken: 'new-auth', ct0: 'new-ct0' }),
+      reason: '更新 X bird CLI 用户凭据',
+    };
+    const signed = await preview(test, '/api/governance/resources/credentials/cred-1/rotate/preview', command);
+    const response = await test.request('/api/governance/resources/credentials/cred-1/rotate', json({
+      ...command, previewId: signed.previewId, baselineDigest: signed.baselineDigest, expiresAt: signed.expiresAt,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(test.rotateSecret).toHaveBeenCalledWith('vault-ref-hidden', command.secret, expect.objectContaining({
+      userId: 'admin-1', tenantId: 'tenant-a',
+    }));
+    expect(completeRotation).toHaveBeenCalledWith('tenant-a', 'cred-1', 1, 'admin-1');
+  });
+
+  it('个人 X Credential 撤销后触发旧连接器凭据清理回调', async () => {
+    const personal = credential({
+      connectorId: 'x', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,
+      secretRef: 'governance-secret',
+    });
+    const getCredential = vi.fn().mockResolvedValue(personal);
+    const updateStatus = vi.fn().mockResolvedValue({ ...personal, status: 'revoked', generation: 2, version: 2 });
+    const onPersonalCredentialRevoked = vi.fn<(input: { credential: GovernanceCredential; actorUserId: string }) => Promise<void>>().mockResolvedValue(undefined);
+    const test = await rig({ getCredential, updateStatus, onPersonalCredentialRevoked });
+
+    const signed = await preview(test, '/api/governance/resources/credentials/cred-1/revoke/preview', {
+      expectedVersion: 1, reason: '用户主动断开 X',
+    });
+    const response = await test.request('/api/governance/resources/credentials/cred-1/revoke', json({
+      expectedVersion: 1, reason: '用户主动断开 X',
+      previewId: signed.previewId, baselineDigest: signed.baselineDigest, expiresAt: signed.expiresAt,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(onPersonalCredentialRevoked).toHaveBeenCalledWith({
+      credential: personal, actorUserId: 'admin-1',
+    });
+    expect(test.revokeSecret).toHaveBeenCalledWith('governance-secret', expect.any(Object));
+  });
+
   it('并发创建只执行一次，完成后同一 preview 重放被拒绝', async () => {
     let releaseCreate!: () => void;
     const createStarted = new Promise<void>(resolve => { releaseCreate = resolve; });

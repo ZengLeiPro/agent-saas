@@ -65,7 +65,7 @@ const remoteOidStep = (): Step => ({
 });
 const listStep = (records: string): Step => ({
   cwd: REPOSITORY,
-  args: ['-c', 'core.quotePath=false', 'worktree', 'list', '--porcelain'],
+  args: ['worktree', 'list', '--porcelain'],
   result: { stdout: records },
 });
 const mainRecord = (head = MAIN_OID): string => worktreeRecord(REPOSITORY, head, 'main');
@@ -180,7 +180,7 @@ describe('syncRepositoryWorkspace', () => {
       validateServerOwnedRepository: vi.fn(async () => undefined),
       runGit: vi.fn(async ({ args }: RepositoryWorkspaceGitCommand) => {
         if (args[0] === 'rev-parse') return ok(`${REMOTE_OID}\n`);
-        if (args[0] === '-c') return ok(`${mainRecord(REMOTE_OID)}\n${integrationRecord(REMOTE_OID)}`);
+        if (args[0] === 'worktree' && args[1] === 'list') return ok(`${mainRecord(REMOTE_OID)}\n${integrationRecord(REMOTE_OID)}`);
         if (args[0] === 'merge-base') return ok();
         return ok();
       }),
@@ -218,7 +218,7 @@ describe('syncRepositoryWorkspace', () => {
       localBase: 'current',
       integrationWorktree: 'fast_forwarded',
     });
-    expect(host.commands.filter((command) => command.args[0] === 'worktree')).toEqual([]);
+    expect(host.commands.filter((command) => command.args[0] === 'worktree' && command.args[1] !== 'list')).toEqual([]);
     host.assertConsumed();
   });
 

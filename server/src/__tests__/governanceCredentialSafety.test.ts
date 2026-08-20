@@ -120,7 +120,7 @@ async function rig(input: {
   return {
     request: (path: string, init?: RequestInit) => fetch(`${base}${path}`, init),
     create, completeRotation, transferCustodian, getCredential, putSecret, rotateSecret, revokeSecret,
-    claimCommit, recordCommitProgress, finishCommit,
+    claimCommit, recordCommitProgress, finishCommit, updateStatus,
   };
 }
 
@@ -152,7 +152,7 @@ describe('governance credential signed commits', () => {
     expect(test.rotateSecret).toHaveBeenCalledWith('vault-ref-hidden', command.secret, expect.objectContaining({
       userId: 'admin-1', tenantId: 'tenant-a',
     }));
-    expect(completeRotation).toHaveBeenCalledWith('tenant-a', 'cred-1', 1, 'admin-1');
+    expect(completeRotation).toHaveBeenCalledWith('tenant-a', 'cred-1', 1, 'admin-1', false);
   });
 
   it('个人 X Credential 撤销后触发旧连接器凭据清理回调', async () => {
@@ -178,6 +178,112 @@ describe('governance credential signed commits', () => {
       credential: personal, actorUserId: 'admin-1',
     });
     expect(test.revokeSecret).toHaveBeenCalledWith('governance-secret', expect.any(Object));
+    expect(updateStatus).toHaveBeenCalledOnce();
+  });
+
+  it('Vault 撤销失败时保持 Credential 可重试，成功重试后才写入 revoked', async () => {
+    const personal = credential({
+      connectorId: 'x', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,
+      secretRef: 'governance-secret',
+    });
+    const getCredential = vi.fn().mockResolvedValue(personal);
+    const updateStatus = vi.fn().mockResolvedValue({ ...personal, status: 'revoked', generation: 2, version: 2 });
+    const revokeSecret = vi.fn()
+      .mockRejectedValueOnce(new Error('vault unavailable'))
+      .mockResolvedValue(undefined);
+    const test = await rig({ getCredential, updateStatus, revokeSecret });
+    const command = { expectedVersion: 1, reason: '用户主动断开 X' };
+
+    const firstPreview = await preview(test, '/api/governance/resources/credentials/cred-1/revoke/preview', command);
+    const first = await test.request('/api/governance/resources/credentials/cred-1/revoke', json({
+      ...command, previewId: firstPreview.previewId, baselineDigest: firstPreview.baselineDigest, expiresAt: firstPreview.expiresAt,
+    }));
+    expect(first.status).toBe(503);
+    await expect(first.json()).resolves.toMatchObject({ code: 'CREDENTIAL_VAULT_REVOKE_FAILED', retryable: true });
+    expect(updateStatus).not.toHaveBeenCalled();
+
+    const secondPreview = await preview(test, '/api/governance/resources/credentials/cred-1/revoke/preview', command);
+    const second = await test.request('/api/governance/resources/credentials/cred-1/revoke', json({
+      ...command, previewId: secondPreview.previewId, baselineDigest: secondPreview.baselineDigest, expiresAt: secondPreview.expiresAt,
+    }));
+    expect(second.status).toBe(200);
+    expect(updateStatus).toHaveBeenCalledOnce();
+    expect(revokeSecret).toHaveBeenCalledTimes(2);
+  });
+
+  it('旧连接器清理失败时保持 Credential 可重试，重试可收口治理撤销', async () => {
+    const personal = credential({
+      connectorId: 'x', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,
+      secretRef: 'governance-secret',
+    });
+    const getCredential = vi.fn().mockResolvedValue(personal);
+    const updateStatus = vi.fn().mockResolvedValue({ ...personal, status: 'revoked', generation: 2, version: 2 });
+    const onPersonalCredentialRevoked = vi.fn<(input: { credential: GovernanceCredential; actorUserId: string }) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('legacy cleanup unavailable'))
+      .mockResolvedValue(undefined);
+    const test = await rig({ getCredential, updateStatus, onPersonalCredentialRevoked });
+    const command = { expectedVersion: 1, reason: '用户主动断开 X' };
+
+    const firstPreview = await preview(test, '/api/governance/resources/credentials/cred-1/revoke/preview', command);
+    const first = await test.request('/api/governance/resources/credentials/cred-1/revoke', json({
+      ...command, previewId: firstPreview.previewId, baselineDigest: firstPreview.baselineDigest, expiresAt: firstPreview.expiresAt,
+    }));
+    expect(first.status).toBe(503);
+    await expect(first.json()).resolves.toMatchObject({ code: 'CREDENTIAL_LEGACY_CLEANUP_FAILED', retryable: true, changed: true });
+    expect(updateStatus).not.toHaveBeenCalled();
+
+    const secondPreview = await preview(test, '/api/governance/resources/credentials/cred-1/revoke/preview', command);
+    const second = await test.request('/api/governance/resources/credentials/cred-1/revoke', json({
+      ...command, previewId: secondPreview.previewId, baselineDigest: secondPreview.baselineDigest, expiresAt: secondPreview.expiresAt,
+    }));
+    expect(second.status).toBe(200);
+    expect(updateStatus).toHaveBeenCalledOnce();
+    expect(onPersonalCredentialRevoked).toHaveBeenCalledTimes(2);
+  });
+
+  it('已落为 revoked 的 Credential 仍可签名重试清理且不重复写状态', async () => {
+    const personal = credential({
+      connectorId: 'x', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,
+      secretRef: 'governance-secret', status: 'revoked', generation: 2, version: 2,
+    });
+    const getCredential = vi.fn().mockResolvedValue(personal);
+    const updateStatus = vi.fn();
+    const onPersonalCredentialRevoked = vi.fn<(input: { credential: GovernanceCredential; actorUserId: string }) => Promise<void>>().mockResolvedValue(undefined);
+    const test = await rig({ getCredential, updateStatus, onPersonalCredentialRevoked });
+    const command = { expectedVersion: 2, reason: '补偿 X 旧凭据清理' };
+    const signed = await preview(test, '/api/governance/resources/credentials/cred-1/revoke/preview', command);
+    expect(signed.impact).toMatchObject({ cleanupRetry: true, currentVersion: 2, nextVersion: 2 });
+    const response = await test.request('/api/governance/resources/credentials/cred-1/revoke', json({
+      ...command, previewId: signed.previewId, baselineDigest: signed.baselineDigest, expiresAt: signed.expiresAt,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(updateStatus).not.toHaveBeenCalled();
+    expect(onPersonalCredentialRevoked).toHaveBeenCalledOnce();
+  });
+
+  it('过期但仍 active 的 Credential rotation 会清除旧 expiresAt', async () => {
+    const expired = credential({
+      connectorId: 'x', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,
+      purpose: 'X bird CLI 用户凭据', expiresAt: '2026-08-13T03:00:00.000Z',
+    });
+    const getCredential = vi.fn().mockResolvedValue(expired);
+    const completeRotation = vi.fn().mockResolvedValue({
+      ...expired, status: 'active', generation: 2, version: 2, expiresAt: undefined,
+    });
+    const test = await rig({ getCredential, completeRotation });
+    const command = {
+      expectedVersion: 1, secret: JSON.stringify({ authToken: 'new-auth', ct0: 'new-ct0' }),
+      reason: '更新 X bird CLI 用户凭据',
+    };
+    const signed = await preview(test, '/api/governance/resources/credentials/cred-1/rotate/preview', command);
+    const response = await test.request('/api/governance/resources/credentials/cred-1/rotate', json({
+      ...command, previewId: signed.previewId, baselineDigest: signed.baselineDigest, expiresAt: signed.expiresAt,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(completeRotation).toHaveBeenCalledWith('tenant-a', 'cred-1', 1, 'admin-1', true);
+    await expect(response.json()).resolves.not.toHaveProperty('expiresAt');
   });
 
   it('并发创建只执行一次，完成后同一 preview 重放被拒绝', async () => {

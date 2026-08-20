@@ -125,6 +125,22 @@ describe('X governance connector API', () => {
     expect(api.authFetch).not.toHaveBeenCalledWith('/api/connectors/x', { method: 'DELETE' });
   });
 
+  it('断开 X 会重试已落为 revoked 的 Credential 清理', async () => {
+    api.listCredentials.mockResolvedValueOnce({ credentials: [
+      { credentialId: 'credential-retry', connectorId: 'x', kind: 'personal_grant', status: 'revoked', version: 6 },
+      { credentialId: 'other', connectorId: 'github', kind: 'personal_grant', status: 'revoked', version: 1 },
+    ] });
+    api.authFetch.mockResolvedValueOnce(jsonResponse(disconnected));
+
+    await expect(disconnectX()).resolves.toEqual(disconnected);
+    expect(api.previewCredentialRevoke).toHaveBeenCalledWith('credential-retry', {
+      expectedVersion: 6, reason: '用户主动断开 X',
+    });
+    expect(api.revokeCredential).toHaveBeenCalledWith('credential-retry', expect.objectContaining({
+      expectedVersion: 6, reason: '用户主动断开 X',
+    }));
+  });
+
   it('拒绝空白 X Cookie，不创建无效治理凭据', async () => {
     await expect(connectX({ authToken: ' ', ct0: 'ct0-cookie' })).rejects.toThrow('X 连接凭据不能为空');
     expect(api.createCredential).not.toHaveBeenCalled();

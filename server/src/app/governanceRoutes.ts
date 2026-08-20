@@ -416,12 +416,17 @@ export function registerGovernanceRoutes(
           const currentOwnerId = current.userId ?? current.metadata?.credentialOwnerId;
           if (currentOwnerId && currentOwnerId !== credential.ownerUserId) return;
           await runtime.connectorConnectionStore!.disconnect(user.username, 'x', credential.tenantId);
+          let pendingCleanupError: Error | undefined;
           await revokePendingXCredentials({
             connectionStore: runtime.connectorConnectionStore!,
             vault: runtime.secretVault!,
             username: user.username,
             excludeRefs: new Set([credential.secretRef]),
+            onError: (error, ref) => {
+              pendingCleanupError ??= new Error(`X legacy credential revoke failed ${ref}: ${error.message}`);
+            },
           });
+          if (pendingCleanupError) throw pendingCleanupError;
         },
       } : {}),
     }));

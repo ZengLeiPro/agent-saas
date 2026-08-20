@@ -6,9 +6,7 @@ import type {
   TaskBoardComment,
   TaskBoardExecutionContextInput,
   TaskBoardExecutionContextResponse,
-  TaskBoardExecutionPurpose,
   TaskBoardIntegrationBatchCreateInput,
-  TaskBoardIntegrationCandidateState,
   TaskBoardIntegrationSource,
   TaskBoardMember,
   TaskBoardMemberPatchInput,
@@ -26,7 +24,7 @@ import {
   computeIntegrationReviewReceiptDigest,
   computeIntegrationSourceSetDigest,
 } from './integrationCandidateDigest.js';
-import { resolveWorkflowContract } from './workflowContract.js';
+import { resolveExecutionContextWorkflowContract } from './executionContextContract.js';
 import {
   commentExecutionJoin,
   rowToComment,
@@ -557,24 +555,6 @@ export async function listIntegrationSources(
   } finally {
     client.release();
   }
-}
-
-export async function resolveExecutionContextWorkflowContract(
-  options: Pick<TaskboardV2StoreOptions, 'integrationSourcesTable'>,
-  client: Pick<PoolClient, 'query'>,
-  task: TaskBoardTask,
-  purpose?: TaskBoardExecutionPurpose,
-) {
-  if (task.kind !== 'integration' || task.workflowVersion !== 3) {
-    return resolveWorkflowContract(task, purpose);
-  }
-  const tables = integrationCandidateTableNames(options.integrationSourcesTable);
-  const candidate = await client.query(
-    `SELECT state FROM ${tables.candidatesTable} WHERE integration_task_id=$1 LIMIT 1`,
-    [task.id],
-  );
-  const candidateState = candidate.rows[0]?.state as TaskBoardIntegrationCandidateState | undefined;
-  return resolveWorkflowContract(task, purpose, { candidateState });
 }
 
 export async function getExecutionContextV2(

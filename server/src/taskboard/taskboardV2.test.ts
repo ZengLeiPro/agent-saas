@@ -4,7 +4,7 @@ import { allowedActionsForRole, normalizeRepositoryConfig } from './boardFields.
 import { resolveExecutionModelRef } from './executionFields.js';
 import { rowToExecution, rowToTask } from './storeHelpers.js';
 import { runTaskboardV2Schema } from './v2Schema.js';
-import { resolveExecutionContextWorkflowContract } from './v2Store.js';
+import { resolveExecutionContextWorkflowContract } from './executionContextContract.js';
 import { resolveWorkflowContract } from './workflowContract.js';
 
 const task = {

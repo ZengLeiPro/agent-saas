@@ -142,7 +142,7 @@ describe("McpManager 连接器目录", () => {
     expect(screen.getByText("阿里云")).toBeTruthy();
     expect(screen.getByText("X")).toBeTruthy();
     // GitHub、X、钉钉、飞书、Notion、Google Workspace、阿里云七张原生连接卡。
-    expect(screen.getAllByText("未连接")).toHaveLength(7);
+    await waitFor(() => expect(screen.getAllByText("未连接")).toHaveLength(7));
     expect(within(screen.getByLabelText("能力来源筛选")).getByRole("tab", { name: /全部\s*10/ })).toBeTruthy();
     expect(within(screen.getByLabelText("能力来源筛选")).getByRole("tab", { name: /平台提供\s*8/ })).toBeTruthy();
     expect(dwsAuthFetch).toHaveBeenCalledWith("/api/dws/connections");

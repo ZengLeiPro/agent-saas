@@ -6,6 +6,7 @@ import type {
 } from '../runtime/egressDispatcher.js';
 import {
   CodexResponsesWebSocketPool,
+  CodexWebSocketQuotaExhaustedError,
   CodexWebSocketUnavailableError,
 } from '../runtime/responses/codexResponsesWebSocketPool.js';
 
@@ -491,6 +492,25 @@ describe('CodexResponsesWebSocketPool', () => {
 
     expect(result.wireMode).toBe('websocket_full');
     expect(connector).toHaveBeenCalledTimes(2);
+    pool.close();
+  });
+
+  it('WebSocket 首帧额度不足会在暴露模型流前标记为可切换账号', async () => {
+    const socket = new FakeWebSocket();
+    const pool = new CodexResponsesWebSocketPool(connectorFor(socket));
+    const pending = pool.execute(request(body([
+      { type: 'message', role: 'user', content: 'first' },
+    ])));
+    await waitForSend(socket);
+    socket.emit({
+      type: 'error',
+      status_code: 429,
+      error: { code: 'insufficient_quota', message: 'quota exhausted' },
+    });
+
+    await expect(pending).rejects.toBeInstanceOf(CodexWebSocketQuotaExhaustedError);
+    await expect(pending).rejects.toMatchObject({ reason: 'quota_exhausted', code: 'insufficient_quota' });
+    expect(socket.readyState).toBe(3);
     pool.close();
   });
 

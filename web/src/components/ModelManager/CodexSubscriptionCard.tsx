@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ExternalLink, KeyRound, Loader2, RefreshCw, Save, Unplug } from "lucide-react";
+import { ArrowDown, ArrowUp, ExternalLink, KeyRound, Loader2, Plus, RefreshCw, Save, Trash2, Unplug } from "lucide-react";
 
 import { authFetch } from "@/lib/authFetch";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +45,20 @@ type CodexRuntimeStatus = {
   };
 };
 
+type CodexCredentialState = {
+  id?: string;
+  priority?: number;
+  configured: boolean;
+  connected: boolean;
+  accountBindingHash?: string;
+  accountIdHint?: string;
+  email?: string;
+  expiresAt?: string;
+  accessTokenExpired?: boolean;
+  generation?: number;
+  error?: string;
+};
+
 type CodexSubscriptionState = {
   config: {
     enabled: boolean;
@@ -52,18 +66,11 @@ type CodexSubscriptionState = {
     websocketEnabled?: boolean;
     endpoint: string;
     originator: string;
+    credentialCount?: number;
   };
-  credential: {
-    configured: boolean;
-    connected: boolean;
-    accountBindingHash?: string;
-    accountIdHint?: string;
-    email?: string;
-    expiresAt?: string;
-    accessTokenExpired?: boolean;
-    generation?: number;
-    error?: string;
-  };
+  /** 旧 Server 兼容别名；新接口使用 credentials。 */
+  credential?: CodexCredentialState;
+  credentials?: CodexCredentialState[];
   /** 蓝绿 N/N+1：旧 Server 尚未返回该字段时保持兼容。 */
   runtime?: CodexRuntimeStatus;
   warning?: string;
@@ -81,6 +88,11 @@ async function readJson<T>(response: Response): Promise<T & { error?: string }> 
   return (await response.json().catch(() => ({}))) as T & { error?: string };
 }
 
+function accountList(state: CodexSubscriptionState | null): CodexCredentialState[] {
+  if (state?.credentials) return state.credentials;
+  return state?.credential?.configured ? [state.credential] : [];
+}
+
 export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
   const [state, setState] = useState<CodexSubscriptionState | null>(null);
   const [enabled, setEnabled] = useState(false);
@@ -91,7 +103,8 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
   const [error, setError] = useState<string | null>(null);
 
   const applyState = useCallback((next: CodexSubscriptionState) => {
-    setState(next);
+    const credentials = next.credentials ?? (next.credential?.configured ? [next.credential] : []);
+    setState({ ...next, credentials });
     setEnabled(next.config.enabled);
     setWebsocketEnabled(next.config.websocketEnabled === true);
     setError(next.warning ?? null);
@@ -102,7 +115,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     try {
       const response = await authFetch("/api/admin/codex-subscription");
       const data = await readJson<CodexSubscriptionState>(response);
-      if (!response.ok || !data.config || !data.credential) {
+      if (!response.ok || !data.config) {
         throw new Error(data.error || `HTTP ${response.status}`);
       }
       applyState(data);
@@ -139,7 +152,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
           return;
         }
         if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-        if (data.status === "completed" && "config" in data && "credential" in data) {
+        if (data.status === "completed" && "config" in data) {
           applyState(data);
           setDeviceSession(null);
           return;
@@ -162,12 +175,14 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     };
   }, [applyState, deviceSession]);
 
-  const startAuthorization = useCallback(async () => {
+  const startAuthorization = useCallback(async (credentialRef?: string) => {
     setWorking(true);
     setError(null);
     try {
       const response = await authFetch("/api/admin/codex-subscription/device/start", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(credentialRef ? { credentialRef } : {}),
       });
       const data = await readJson<DeviceSession>(response);
       if (!response.ok || !data.sessionId) throw new Error(data.error || `HTTP ${response.status}`);
@@ -190,7 +205,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
         body: JSON.stringify({ enabled, websocketEnabled }),
       });
       const data = await readJson<CodexSubscriptionState>(response);
-      if (!response.ok || !data.config || !data.credential) {
+      if (!response.ok || !data.config) {
         throw new Error(data.error || `HTTP ${response.status}`);
       }
       applyState(data);
@@ -201,14 +216,67 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     }
   }, [applyState, enabled, websocketEnabled]);
 
+  const reorder = useCallback(async (fromIndex: number, toIndex: number) => {
+    const accounts = accountList(state);
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= accounts.length || toIndex >= accounts.length) return;
+    const next = [...accounts];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved!);
+    const refs = next.map((account) => account.id).filter((id): id is string => Boolean(id));
+    if (refs.length !== accounts.length) {
+      setError("当前服务端版本不支持多账号排序，请刷新后重试");
+      return;
+    }
+    setWorking(true);
+    setError(null);
+    try {
+      const response = await authFetch("/api/admin/codex-subscription/credentials/order", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credentialRefs: refs }),
+      });
+      const data = await readJson<CodexSubscriptionState>(response);
+      if (!response.ok || !data.config) throw new Error(data.error || `HTTP ${response.status}`);
+      applyState(data);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setWorking(false);
+    }
+  }, [applyState, state]);
+
+  const removeCredential = useCallback(async (account: CodexCredentialState) => {
+    if (!account.id) {
+      setError("当前服务端版本不支持删除该授权账号，请刷新后重试");
+      return;
+    }
+    const accountName = account.email ?? `尾号 ${account.accountIdHint ?? "未知"}`;
+    if (!window.confirm(`确定删除 Codex 授权账号「${accountName}」吗？`)) return;
+    setWorking(true);
+    setError(null);
+    try {
+      const response = await authFetch(
+        `/api/admin/codex-subscription/credentials/${encodeURIComponent(account.id)}`,
+        { method: "DELETE" },
+      );
+      const data = await readJson<CodexSubscriptionState>(response);
+      if (!response.ok || !data.config) throw new Error(data.error || `HTTP ${response.status}`);
+      applyState(data);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setWorking(false);
+    }
+  }, [applyState]);
+
   const disconnect = useCallback(async () => {
-    if (!window.confirm("确定断开 Codex 订阅账号并撤销已保存的 OAuth 凭据吗？")) return;
+    if (!window.confirm("确定断开全部 Codex 订阅账号并撤销已保存的 OAuth 凭据吗？")) return;
     setWorking(true);
     setError(null);
     try {
       const response = await authFetch("/api/admin/codex-subscription", { method: "DELETE" });
       const data = await readJson<CodexSubscriptionState>(response);
-      if (!response.ok || !data.config || !data.credential) {
+      if (!response.ok || !data.config) {
         throw new Error(data.error || `HTTP ${response.status}`);
       }
       applyState(data);
@@ -220,6 +288,9 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     }
   }, [applyState]);
 
+  const accounts = accountList(state);
+  const primary = accounts[0] ?? state?.credential;
+
   return (
     <Card className="h-fit">
       <CardHeader className="pb-3">
@@ -228,7 +299,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
             <KeyRound className="size-4 text-muted-foreground" />
             Codex 订阅账号
           </span>
-          {state?.credential.connected
+          {primary?.connected
             ? <Badge variant="secondary">已连接</Badge>
             : <Badge variant="outline">未连接</Badge>}
         </CardTitle>
@@ -243,6 +314,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
             <p className="text-xs text-muted-foreground">
               只提供 OpenAI Codex 订阅的原始 Responses 传输协议。OAuth 凭据保存在 SecretVault；
               Agent 的 system prompt、工具定义、tool loop 与会话历史仍由本平台掌控。
+              账号按下方优先级使用，仅在当前账号返回额度不足时切换下一个。
             </p>
 
             <div className="grid gap-3 md:grid-cols-2">
@@ -258,7 +330,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                 <input
                   type="checkbox"
                   checked={enabled}
-                  disabled={readOnly || working || !state?.credential.configured}
+                  disabled={readOnly || working || accounts.length === 0}
                   onChange={(event) => setEnabled(event.target.checked)}
                 />
                 启用订阅 transport
@@ -268,7 +340,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                   className="mt-0.5"
                   type="checkbox"
                   checked={websocketEnabled}
-                  disabled={readOnly || working || !enabled || !state?.credential.configured}
+                  disabled={readOnly || working || !enabled || accounts.length === 0}
                   onChange={(event) => setWebsocketEnabled(event.target.checked)}
                 />
                 <span>
@@ -280,16 +352,73 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
               </label>
             </div>
 
-            {state?.credential.configured && (
-              <div className="rounded-md border bg-muted/20 p-3 text-xs">
-                <div>账号：{state.credential.email ?? `尾号 ${state.credential.accountIdHint ?? "未知"}`}</div>
-                <div className="mt-1 text-muted-foreground">
-                  绑定指纹：{state.credential.accountBindingHash ?? "未知"}
-                  {state.credential.expiresAt
-                    ? ` · access token ${state.credential.accessTokenExpired ? "已到期，将自动刷新" : `到期 ${new Date(state.credential.expiresAt).toLocaleString()}`}`
-                    : ""}
-                </div>
-                {state.credential.error && <div className="mt-1 text-destructive">{state.credential.error}</div>}
+            {accounts.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-sm font-medium">授权账号优先级</div>
+                {accounts.map((account, index) => (
+                  <div key={account.id ?? `${account.email ?? "account"}-${index}`} className="rounded-md border bg-muted/20 p-3 text-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline">优先级 {index + 1}</Badge>
+                        <span>{account.email ?? `尾号 ${account.accountIdHint ?? "未知"}`}</span>
+                        {account.connected
+                          ? <Badge variant="secondary">可用</Badge>
+                          : <Badge variant="outline">异常</Badge>}
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2"
+                          disabled={readOnly || working || index === 0}
+                          onClick={() => void reorder(index, index - 1)}
+                          title="上移优先级"
+                        >
+                          <ArrowUp className="size-3.5" />
+                          上移
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2"
+                          disabled={readOnly || working || index === accounts.length - 1}
+                          onClick={() => void reorder(index, index + 1)}
+                          title="下移优先级"
+                        >
+                          <ArrowDown className="size-3.5" />
+                          下移
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2"
+                          disabled={readOnly || working || !account.id}
+                          onClick={() => void startAuthorization(account.id)}
+                        >
+                          <KeyRound className="size-3.5" />
+                          重授权
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-destructive hover:text-destructive"
+                          disabled={readOnly || working || !account.id}
+                          onClick={() => void removeCredential(account)}
+                        >
+                          <Trash2 className="size-3.5" />
+                          删除
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="mt-1 text-muted-foreground">
+                      绑定指纹：{account.accountBindingHash ?? "未知"}
+                      {account.expiresAt
+                        ? ` · access token ${account.accessTokenExpired ? "已到期，将自动刷新" : `到期 ${new Date(account.expiresAt).toLocaleString()}`}`
+                        : ""}
+                    </div>
+                    {account.error && <div className="mt-1 text-destructive">{account.error}</div>}
+                  </div>
+                ))}
               </div>
             )}
 
@@ -391,29 +520,29 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                 size="sm"
                 variant="outline"
                 disabled={readOnly || working}
-                onClick={startAuthorization}
+                onClick={() => void startAuthorization()}
               >
-                {working ? <Loader2 className="size-3.5 animate-spin" /> : <KeyRound className="size-3.5" />}
-                {state?.credential.configured ? "重新授权" : "连接 OpenAI 账号"}
+                {working ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+                添加授权账号
               </Button>
-              <Button size="sm" disabled={readOnly || working} onClick={save}>
+              <Button size="sm" disabled={readOnly || working || accounts.length === 0} onClick={() => void save()}>
                 <Save className="size-3.5" />
                 保存设置
               </Button>
-              <Button size="sm" variant="ghost" disabled={working} onClick={refresh}>
+              <Button size="sm" variant="ghost" disabled={working} onClick={() => void refresh()}>
                 <RefreshCw className="size-3.5" />
                 刷新
               </Button>
-              {state?.credential.configured && (
+              {accounts.length > 0 && (
                 <Button
                   size="sm"
                   variant="ghost"
                   className="text-destructive hover:text-destructive"
                   disabled={readOnly || working}
-                  onClick={disconnect}
+                  onClick={() => void disconnect()}
                 >
                   <Unplug className="size-3.5" />
-                  断开并撤销
+                  断开全部并撤销
                 </Button>
               )}
             </div>

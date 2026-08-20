@@ -32,6 +32,24 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(sql).not.toContain('JOIN boards');
   });
 
+  it('uses two PostgreSQL-safe advisory lock keys without embedding a NUL separator', async () => {
+    const query = vi.fn(async () => ({ rows: [] }));
+    const client = { query, release: vi.fn() };
+    const host = new PostgresIntegrationV3ComposeHost({
+      pool: { query, connect: vi.fn(async () => client) },
+      candidatesTable: 'candidates', sourceSnapshotsTable: 'snapshots', requestsOutboxTable: 'requests',
+      tasksTable: 'tasks', boardsTable: 'boards', executionsTable: 'executions', resolutionsTable: 'resolutions',
+      resolvePaths: vi.fn(), runGit: vi.fn(), validateServerOwnedRepository: vi.fn(),
+    } as never);
+    const operation = vi.fn(async () => 'done');
+    await expect(host.withRepositoryBranchLock({ repositoryPath: '/srv/mirror', branch: 'integration/task-1' }, operation)).resolves.toBe('done');
+    expect(query.mock.calls).toEqual([
+      ['SELECT pg_advisory_lock(hashtext($1),hashtext($2))', ['/srv/mirror', 'integration/task-1']],
+      ['SELECT pg_advisory_unlock(hashtext($1),hashtext($2))', ['/srv/mirror', 'integration/task-1']],
+    ]);
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
   it('fails a provider write fence closed when a live kill switch is disabled', async () => {
     const query = vi.fn(async (_sql: string) => ({ rows: [{
       global_enabled: true, repository_enabled: false, engine_enabled: true, merge_enabled: true,

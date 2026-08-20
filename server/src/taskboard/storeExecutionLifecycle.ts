@@ -11,7 +11,11 @@ import { nextTaskColumnSortOrder } from './continuationStore.js';
 import { applyExecutionTaskCompletion, enqueueAutomaticReview } from './executionCompletion.js';
 import { resolveExecutionModelRef } from './executionFields.js';
 import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
-import { assertExecutionRequestAllowed, isIrreversibleMerged } from './workflow/decider.js';
+import {
+  assertExecutionRequestAllowed,
+  isIrreversibleMerged,
+  type WorkflowFacts,
+} from './workflow/decider.js';
 import { loadWorkflowFacts } from './workflow/commandService.js';
 import {
   assertExecutionConfiguration,
@@ -94,7 +98,34 @@ export async function claimExecution(
       }
       return { task: loaded.task, execution };
     }
-    const facts = await loadWorkflowFacts(store, client, loaded.task);
+    const facts: WorkflowFacts = await loadWorkflowFacts(store, client, loaded.task);
+    let candidateBinding: Record<string, unknown> | undefined;
+    if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3) {
+      const tables = integrationCandidateTableNames(store.integrationSourcesTable);
+      const bound = await client.query(
+        `SELECT c.id,c.state,c.version,c.current_revision,c.work_round,c.workflow_epoch,c.lane_epoch,r.head_oid
+           FROM ${tables.candidatesTable} c LEFT JOIN ${tables.revisionsTable} r
+             ON r.candidate_id=c.id AND r.revision=c.current_revision
+          WHERE c.integration_task_id=$1 FOR UPDATE OF c`, [taskId]);
+      candidateBinding = bound.rows[0];
+      if (!candidateBinding) {
+        throw new TaskboardValidationError(
+          'Workflow v3 integration task has no current candidate',
+          'TASKBOARD_CANDIDATE_REQUIRED',
+        );
+      }
+      facts.candidate = {
+        id: String(candidateBinding.id),
+        state: String(candidateBinding.state) as NonNullable<WorkflowFacts['candidate']>['state'],
+        version: Number(candidateBinding.version),
+        currentRevision: Number(candidateBinding.current_revision),
+        workRound: Number(candidateBinding.work_round),
+        workflowEpoch: String(candidateBinding.workflow_epoch),
+        laneEpoch: String(candidateBinding.lane_epoch),
+        ...(candidateBinding.head_oid ? { headOid: String(candidateBinding.head_oid) } : {}),
+      };
+      facts.hasMergeFact ||= facts.candidate.state === 'merged';
+    }
     if (loaded.task.status === 'done' || loaded.task.status === 'canceled'
       || isIrreversibleMerged(loaded.task, facts)) {
       assertExecutionRequestAllowed(loaded.task, purpose, { facts });
@@ -157,21 +188,12 @@ export async function claimExecution(
       );
 
     const attemptId = input.attemptId ?? randomUUID();
-    let candidateBinding: Record<string, unknown> | undefined;
-    if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3) {
-      const tables = integrationCandidateTableNames(store.integrationSourcesTable);
-      const bound = await client.query(
-        `SELECT c.id,c.version,c.current_revision,c.work_round,c.workflow_epoch,c.lane_epoch,r.head_oid
-           FROM ${tables.candidatesTable} c JOIN ${tables.revisionsTable} r
-             ON r.candidate_id=c.id AND r.revision=c.current_revision
-          WHERE c.integration_task_id=$1 FOR UPDATE OF c`, [taskId]);
-      candidateBinding = bound.rows[0];
-      if (!candidateBinding) {
-        throw new TaskboardValidationError(
-          'Workflow v3 execution requires a current candidate revision binding',
-          'TASKBOARD_CANDIDATE_EXECUTION_BINDING_REQUIRED',
-        );
-      }
+    if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3
+      && !candidateBinding?.head_oid) {
+      throw new TaskboardValidationError(
+        'Workflow v3 execution requires a current candidate revision binding',
+        'TASKBOARD_CANDIDATE_EXECUTION_BINDING_REQUIRED',
+      );
     }
     let execution: TaskBoardExecution;
     try {

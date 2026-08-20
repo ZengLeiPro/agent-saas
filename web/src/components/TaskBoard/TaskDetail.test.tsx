@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   continueTaskExecution: vi.fn(),
   resumeTask: vi.fn(),
   fetchIntegrationSources: vi.fn(),
+  fetchIntegrationCandidate: vi.fn(),
   addComment: vi.fn(),
   refreshComments: vi.fn(async () => undefined),
   comments: [] as TaskBoardComment[],
@@ -27,6 +28,7 @@ vi.mock("./api", async (importOriginal) => {
     ...actual,
     fetchTask: mocks.fetchTask,
     fetchIntegrationSources: mocks.fetchIntegrationSources,
+    fetchIntegrationCandidate: mocks.fetchIntegrationCandidate,
     continueTaskExecution: mocks.continueTaskExecution,
     resumeTask: mocks.resumeTask,
   };
@@ -113,6 +115,7 @@ describe("TaskDetail 草稿隔离", () => {
     mocks.executions = [];
     mocks.fetchTask.mockImplementation(async (id: string) => id === taskOne.id ? taskOne : taskTwo);
     mocks.fetchIntegrationSources.mockResolvedValue([]);
+    mocks.fetchIntegrationCandidate.mockResolvedValue(null);
     mocks.addComment.mockResolvedValue(undefined);
   });
 
@@ -653,6 +656,25 @@ describe("TaskDetail 草稿隔离", () => {
     expect(screen.getByText(/合并冲突需要自动修复/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "保存任务" })).toBeNull();
     expect(screen.queryByRole("button", { name: "交给 Agent" })).toBeNull();
+  });
+
+  it("Workflow v3 不暴露 legacy 继续集成入口", async () => {
+    const integrationTask = {
+      ...taskOne,
+      id: "integration-v3",
+      identifier: "TASK-11",
+      kind: "integration" as const,
+      workflowVersion: 3 as const,
+      status: "in_progress" as const,
+    };
+    mocks.fetchTask.mockResolvedValue(integrationTask);
+    const onExecute = vi.fn();
+    render(<TaskDetail {...props({ task: integrationTask, onExecute })} />);
+
+    await waitFor(() => expect(mocks.fetchIntegrationCandidate).toHaveBeenCalledWith(integrationTask.id));
+    expect(screen.queryByRole("button", { name: "继续集成" })).toBeNull();
+    expect(screen.getByText(/Integration v3 由系统按 Candidate 状态自动推进/)).toBeTruthy();
+    expect(onExecute).not.toHaveBeenCalled();
   });
 
   it("集成阻塞恢复仅提交用户显式勾选的来源", async () => {

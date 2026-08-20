@@ -634,7 +634,8 @@ export function TaskDetail({
                 {executionsError ? <p role="alert" className="text-xs text-destructive">{executionsError}</p> : null}
                 {latestExecution?.error ? <p className="whitespace-pre-wrap text-xs text-destructive">{latestExecution.error}</p> : null}
                 {canRunCurrentTask && (
-                  (taskKind === "integration" && ["todo", "in_progress"].includes(currentTask.status))
+                  (taskKind === "integration" && currentTask.workflowVersion !== 3
+                    && ["todo", "in_progress"].includes(currentTask.status))
                   || (taskKind !== "integration" && currentTask.status === "todo")
                   || (taskKind !== "integration" && currentTask.status === "in_review")
                   || (taskKind !== "integration" && currentTask.status === "in_progress" && !executionActive)
@@ -657,6 +658,12 @@ export function TaskDetail({
                           : "开始实施"}
                   </Button>
                 ) : null}
+                {taskKind === "integration" && currentTask.workflowVersion === 3
+                  && !["done", "canceled"].includes(currentTask.status) ? (
+                    <p className="text-xs text-muted-foreground">
+                      Integration v3 由系统按 Candidate 状态自动推进 Work、Review 与合并；异常时请在 Candidate 区重新排队或显式恢复。
+                    </p>
+                  ) : null}
                 {currentTask.providerPullRequestId ? <p>PR：<span className="font-mono">{currentTask.providerPullRequestId}</span>{currentTask.pullRequestNumber ? `（#${currentTask.pullRequestNumber}）` : ""}</p> : null}
                 {currentTask.reviewedSubjectDigest ? <p className="break-all text-xs text-muted-foreground">已复核对象：<span className="font-mono">{currentTask.reviewedSubjectDigest}</span></p> : null}
                 {currentTask.mergedCommitOid ? <p className="flex items-center gap-1 break-all text-xs text-emerald-700 dark:text-emerald-400"><GitCommitHorizontal className="size-3.5 shrink-0" />merged commit {currentTask.mergedCommitOid}</p> : null}

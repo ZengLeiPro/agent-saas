@@ -12,6 +12,8 @@ const ALLOWED_ENDPOINT_SUFFIXES = [
   'push.apple.com',
   'notify.windows.com',
 ] as const;
+// Chromium may return a regional jmtN.google.com endpoint instead of fcm.googleapis.com.
+const CHROME_PUSH_HOST_PATTERN = /^jmt\d+\.google\.com$/;
 
 export interface WebPushMessage extends WebPushOwner {
   eventKey: string;
@@ -115,7 +117,10 @@ export function assertSafePushEndpoint(rawEndpoint: string): URL {
   }
   if (endpoint.protocol !== 'https:') throw new Error('PushSubscription endpoint 必须使用 HTTPS');
   const hostname = endpoint.hostname.toLowerCase();
-  if (!ALLOWED_ENDPOINT_SUFFIXES.some((suffix) => hostname === suffix || hostname.endsWith(`.${suffix}`))) {
+  const isKnownPushService = ALLOWED_ENDPOINT_SUFFIXES.some(
+    (suffix) => hostname === suffix || hostname.endsWith(`.${suffix}`),
+  );
+  if (!isKnownPushService && !CHROME_PUSH_HOST_PATTERN.test(hostname)) {
     throw new Error('PushSubscription endpoint 不是受支持的浏览器推送服务');
   }
   return endpoint;

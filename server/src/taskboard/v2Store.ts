@@ -6,7 +6,9 @@ import type {
   TaskBoardComment,
   TaskBoardExecutionContextInput,
   TaskBoardExecutionContextResponse,
+  TaskBoardExecutionPurpose,
   TaskBoardIntegrationBatchCreateInput,
+  TaskBoardIntegrationCandidateState,
   TaskBoardIntegrationSource,
   TaskBoardMember,
   TaskBoardMemberPatchInput,
@@ -557,6 +559,24 @@ export async function listIntegrationSources(
   }
 }
 
+export async function resolveExecutionContextWorkflowContract(
+  options: Pick<TaskboardV2StoreOptions, 'integrationSourcesTable'>,
+  client: Pick<PoolClient, 'query'>,
+  task: TaskBoardTask,
+  purpose?: TaskBoardExecutionPurpose,
+) {
+  if (task.kind !== 'integration' || task.workflowVersion !== 3) {
+    return resolveWorkflowContract(task, purpose);
+  }
+  const tables = integrationCandidateTableNames(options.integrationSourcesTable);
+  const candidate = await client.query(
+    `SELECT state FROM ${tables.candidatesTable} WHERE integration_task_id=$1 LIMIT 1`,
+    [task.id],
+  );
+  const candidateState = candidate.rows[0]?.state as TaskBoardIntegrationCandidateState | undefined;
+  return resolveWorkflowContract(task, purpose, { candidateState });
+}
+
 export async function getExecutionContextV2(
   options: TaskboardV2StoreOptions,
   identity: TaskboardIdentity,
@@ -579,7 +599,9 @@ export async function getExecutionContextV2(
       throw new TaskboardNotFoundError('Execution does not belong to this task');
     }
     const latestExecution = latestExecutionResult.rows[0] ? rowToExecution(latestExecutionResult.rows[0]) : undefined;
-    const contract = resolveWorkflowContract(loaded.task, latestExecution?.purpose);
+    const contract = await resolveExecutionContextWorkflowContract(
+      options, client, loaded.task, latestExecution?.purpose,
+    );
     const asOfResult = await client.query(
       `SELECT COALESCE(MAX(seq),0)::text AS seq FROM ${options.changesTable} WHERE task_id=$1`,
       [taskId],

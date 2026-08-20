@@ -4,6 +4,7 @@ import { allowedActionsForRole, normalizeRepositoryConfig } from './boardFields.
 import { resolveExecutionModelRef } from './executionFields.js';
 import { rowToExecution, rowToTask } from './storeHelpers.js';
 import { runTaskboardV2Schema } from './v2Schema.js';
+import { resolveExecutionContextWorkflowContract } from './v2Store.js';
 import { resolveWorkflowContract } from './workflowContract.js';
 
 const task = {
@@ -86,6 +87,19 @@ describe('taskboard V2 contracts', () => {
     expect(review.allowedOutcomes).toEqual(['approved', 'changes_requested', 'stale_subject', 'blocked']);
     expect(merge.capabilities).toMatchObject({ mergeReviewedSource: true, createRemediation: true, deploy: false });
     expect(new Set([work.digest, review.digest, merge.digest]).size).toBe(3);
+  });
+
+  it('resolves an Integration v3 execution context contract from the current candidate state', async () => {
+    const query = vi.fn(async (_sql: string) => ({ rows: [{ state: 'working' }] }));
+    const contract = await resolveExecutionContextWorkflowContract(
+      { integrationSourcesTable: 'runtime_taskboard_integration_sources' },
+      { query } as never,
+      { ...task, kind: 'integration', status: 'in_progress', workflowVersion: 3 },
+      'work',
+    );
+
+    expect(contract).toMatchObject({ taskKind: 'integration', purpose: 'work' });
+    expect(query.mock.calls[0]![0]).toContain('runtime_taskboard_integration_candidates');
   });
 
   it('treats a canceled integration source as historical and allows delivery reselection', () => {

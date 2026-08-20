@@ -15,6 +15,7 @@ import {
   configureRuntimeIntegrationV3RepositoryAccess,
   createRuntimeIntegrationV3CleanupHost,
   resolveIntegrationV3RepositoryPaths,
+  resolveRuntimeIntegrationV3CleanupContext,
   startIntegrationV3ActivationRetry,
 } from './runtimeTaskboardIntegrationV3.js';
 
@@ -204,6 +205,23 @@ describe('resolveIntegrationV3RepositoryPaths', () => {
 });
 
 describe('production Integration v3 cleanup host', () => {
+  it('reconstructs cleanup ownership and deterministic paths after the local mirror is already absent', async () => {
+    const query = vi.fn(async (sql: string) => sql.includes('SELECT b.tenant_id')
+      ? { rows: [{ tenant_id: 'tenant-1', owner_user_id: 'owner-1' }] }
+      : { rows: [{ provider_pull_request_id: '101' }, { provider_pull_request_id: '102' }] });
+    const context = await resolveRuntimeIntegrationV3CleanupContext({
+      pool: { query }, candidatesTable: 'candidates', tasksTable: 'tasks', boardsTable: 'boards',
+      sourceSnapshotsTable: 'snapshots', controlledMirrorRoot: '/srv/integration-v3',
+    }, { candidate: cleanupCandidate(), revision: cleanupRevision() });
+    expect(context).toEqual({
+      repositoryPath: '/srv/integration-v3/github_acme_widget',
+      worktreePath: '/srv/integration-v3/.worktrees/candidate-1',
+      tenantId: 'tenant-1', credentialOwnerId: 'owner-1',
+      sources: [{ providerPullRequestId: '101' }, { providerPullRequestId: '102' }],
+    });
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+
   it('revokes and fences capabilities, safely removes the server worktree, and explicitly skips source PRs by frozen policy', async () => {
     const root = mkdtempSync(join(tmpdir(), 'integration-v3-cleanup-host-')); roots.push(root);
     const mirrorRoot = join(root, 'mirrors');

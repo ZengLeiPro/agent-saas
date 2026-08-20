@@ -128,6 +128,41 @@ export interface RuntimeIntegrationV3CleanupHostOptions {
 }
 
 /** Production cleanup host wiring. Frozen v3 policy has no source-PR mutation switch, so every source is explicitly receipted as skipped. */
+export async function resolveRuntimeIntegrationV3CleanupContext(
+  options: {
+    pool: { query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> };
+    candidatesTable: string;
+    tasksTable: string;
+    boardsTable: string;
+    sourceSnapshotsTable: string;
+    controlledMirrorRoot: string;
+  },
+  current: Required<IntegrationV3WorkerCurrent>,
+): Promise<Awaited<ReturnType<RuntimeIntegrationV3CleanupHostOptions['resolveContext']>>> {
+  const [owner, snapshots] = await Promise.all([
+    options.pool.query(
+      `SELECT b.tenant_id,b.owner_user_id FROM ${options.candidatesTable} c
+        JOIN ${options.tasksTable} t ON t.id=c.integration_task_id
+        JOIN ${options.boardsTable} b ON b.id=t.board_id WHERE c.id=$1`,
+      [current.candidate.id],
+    ),
+    options.pool.query(
+      `SELECT provider_pull_request_id FROM ${options.sourceSnapshotsTable}
+        WHERE candidate_id=$1 AND revision=$2 ORDER BY source_order`,
+      [current.candidate.id, current.candidate.currentRevision],
+    ),
+  ]);
+  const row = owner.rows[0];
+  if (!row) throw new Error('Cleanup candidate owner context is unavailable');
+  return {
+    repositoryPath: resolve(options.controlledMirrorRoot, current.candidate.repositoryId.replace(/[^A-Za-z0-9._-]/g, '_')),
+    worktreePath: resolve(options.controlledMirrorRoot, '.worktrees', current.candidate.id),
+    tenantId: String(row.tenant_id),
+    credentialOwnerId: String(row.owner_user_id),
+    sources: snapshots.rows.map((snapshot) => ({ providerPullRequestId: String(snapshot.provider_pull_request_id) })),
+  };
+}
+
 export function createRuntimeIntegrationV3CleanupHost(
   options: RuntimeIntegrationV3CleanupHostOptions,
 ): (request: IntegrationV3RequestLease) => Promise<IntegrationV3CleanupReceipt> {
@@ -353,7 +388,14 @@ export function startRuntimeTaskboardIntegrationV3(
     cleanup: createRuntimeIntegrationV3CleanupHost({
       controlledMirrorRoot: options.controlledMirrorRoot,
       loadCurrent: (candidateId) => workerHost.loadCurrent(candidateId),
-      resolveContext: (current) => composeHost.resolveContext(current),
+      resolveContext: (current) => resolveRuntimeIntegrationV3CleanupContext({
+        pool: store.pool,
+        candidatesTable: tables.candidatesTable,
+        tasksTable: store.tasksTable,
+        boardsTable: store.boardsTable,
+        sourceSnapshotsTable: tables.sourceSnapshotsTable,
+        controlledMirrorRoot: options.controlledMirrorRoot!,
+      }, current),
       findActiveCapabilityIds: async (candidateId) => {
         const result = await store.pool.query(
           `SELECT id FROM ${capabilityHostOptions.capabilitiesTable} WHERE candidate_id=$1 AND status='active' ORDER BY id`,

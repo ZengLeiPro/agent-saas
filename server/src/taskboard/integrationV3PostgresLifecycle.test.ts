@@ -55,12 +55,12 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
       global_enabled: true, repository_enabled: false, engine_enabled: true, merge_enabled: true,
     }] }));
     const host = new PostgresIntegrationProviderFenceHost({
-      pool: { query }, tasksTable: 'x_taskboard_tasks', integrationLanesTable: 'lanes', candidatesTable: 'candidates',
+      pool: { query }, boardsTable: 'boards', tasksTable: 'tasks', integrationLanesTable: 'lanes', candidatesTable: 'candidates',
     } as never);
     await expect(host.assertCurrent({
       kind: 'merge_pull_request', fence: { candidateId: 'candidate-1', candidateRevision: 1, workflowEpoch: 1, laneEpoch: 1 },
     } as never)).rejects.toMatchObject({ code: 'TASKBOARD_INTEGRATION_KILL_SWITCH' });
-    expect(query.mock.calls[0]![0]).toContain('x_taskboard_boards');
+    expect(query.mock.calls[0]![0]).toContain('JOIN boards b');
   });
 
   it('loads succeeded merge operations for crash/restart convergence', async () => {

@@ -303,6 +303,7 @@ export function startRuntimeTaskboardIntegrationV3(
     pool: store.pool,
     tasksTable: store.tasksTable,
     executionsTable: store.executionsTable,
+    boardsTable: store.boardsTable,
     integrationSourcesTable: store.integrationSourcesTable,
     integrationLanesTable: store.integrationLanesTable,
     candidatesTable: tables.candidatesTable,

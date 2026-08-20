@@ -168,7 +168,7 @@ function stripTodoBlockActions(block: PresentationBlock): PresentationBlock | nu
   return safeBlock;
 }
 
-function normalizeTodoDisplay(raw: unknown): PresentationBlock[] | undefined {
+export function normalizeTodoDisplay(raw: unknown): PresentationBlock[] | undefined {
   if (!Array.isArray(raw)) return undefined;
 
   const blocks = raw.slice(0, TODO_DISPLAY_LIMIT).flatMap((item): PresentationBlock[] => {

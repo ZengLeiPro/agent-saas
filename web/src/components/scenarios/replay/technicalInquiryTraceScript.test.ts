@@ -62,7 +62,21 @@ describe('复杂询价 Workflow Trace Hero', () => {
     expect(business.events.map((event) => event.kind)).toEqual(['plan', 'start', 'complete']);
     expect(business.events.find((event) => event.kind === 'plan')?.stepCount).toBe(8);
     expect(business.events.find((event) => event.kind === 'complete')?.stepIndex).toBe(1);
-    expect(business.events.find((event) => event.kind === 'complete')?.todo?.outcome?.text).toContain('规格冲突');
+    const completed = business.events.find((event) => event.kind === 'complete');
+    expect(completed?.todo?.outcome?.text).toContain('规格冲突');
+    expect(completed?.todo?.display).toContainEqual({
+      kind: 'records',
+      layout: 'comparison',
+      title: '核对规格来源',
+      items: [{
+        label: '防护等级',
+        baseline: '客户消息 · IP67',
+        current: '询价附件 · IP65',
+        delta: '不一致，停止报价',
+        tone: 'danger',
+        note: '两个来源均保留，等待客户澄清后再继续报价',
+      }],
+    });
     expect(projection.panel?.activeView).toBe('source');
     expect(projection.panel?.foot).toContain('演示来源');
     expect(projection.panel?.foot).not.toContain('已连接');

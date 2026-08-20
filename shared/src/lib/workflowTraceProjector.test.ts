@@ -89,7 +89,14 @@ describe('Workflow Trace V1', () => {
     expect(business.events.map((event) => event.kind)).toEqual(['plan', 'start', 'complete', 'start']);
     expect(business.events.find((event) => event.kind === 'plan')?.todos?.map((todo) => todo.status))
       .toEqual(['completed', 'in_progress']);
-    expect(business.events.find((event) => event.kind === 'complete')?.todo?.outcome?.text).toBe('发现 1 项规格冲突');
+    const completed = business.events.find((event) => event.kind === 'complete');
+    expect(completed?.todo?.outcome?.text).toBe('发现 1 项规格冲突');
+    expect(completed?.todo?.display).toContainEqual({
+      kind: 'records',
+      layout: 'rows',
+      title: '核对规格来源',
+      items: [{ label: '客户消息', value: 'IP67' }, { label: '询价附件', value: 'IP65' }],
+    });
 
     expect(first.panel?.live).toBe(false);
     expect(first.panel?.foot).toContain('演示来源');

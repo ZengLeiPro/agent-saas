@@ -88,10 +88,14 @@ const steps: ReplayStep[] = [
           display: [{
             type: 'comparison',
             title: '核对规格来源',
-            items: [
-              { label: '客户消息', value: 'IP67', note: '当前原文' },
-              { label: '询价附件', value: 'IP65', note: '与消息冲突' },
-            ],
+            items: [{
+              label: '防护等级',
+              baseline: '客户消息 · IP67',
+              current: '询价附件 · IP65',
+              delta: '不一致，停止报价',
+              status: 'fail',
+              note: '两个来源均保留，等待客户澄清后再继续报价',
+            }],
           }],
           evidenceRefs: ['simulation:RFQ-SIM-2026-081'],
         },

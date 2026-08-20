@@ -8,8 +8,7 @@ import type {
 } from './systemPanel';
 import type { ToolPresentation } from './toolPresentation';
 import { normalizeDetailLine } from './toolPresentation';
-import { normalizeDisplay } from './presentation/registry';
-import type { TodoItem } from './extractTodos';
+import { normalizeTodoDisplay, type TodoItem } from './extractTodos';
 import {
   workflowTraceEventV1Schema,
   type WorkflowTraceEventV1,
@@ -363,7 +362,7 @@ function projectMessages(events: WorkflowTraceEventV1[]): MessageItem[] {
       const previous = todos.get(event.stepId);
       if (!previous) continue;
       const detail = normalizeLines(event.detail);
-      const display = normalizeDisplay(event.display);
+      const display = normalizeTodoDisplay(event.display);
       todos.set(event.stepId, {
         ...previous,
         status: event.status,

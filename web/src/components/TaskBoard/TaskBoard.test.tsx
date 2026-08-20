@@ -174,6 +174,39 @@ describe("TaskBoardView", () => {
     expect(screen.queryByRole("button", { name: /TASK-2/ })).toBeNull();
   }, 15_000);
 
+  it("可以拖动看板下拉选项排序，并将顺序保存在浏览器本地", async () => {
+    const user = userEvent.setup();
+    const view = render(<TaskBoardView />);
+    const trigger = screen.getByRole("combobox", { name: "选择看板" });
+    await user.click(trigger);
+
+    const source = screen.getByRole("option", { name: "市场事项（个人）" });
+    const target = screen.getByRole("option", { name: "产品研发（个人）" });
+    const dataTransfer = {
+      effectAllowed: "move",
+      dropEffect: "none",
+      setData: vi.fn(),
+      getData: vi.fn(() => "board-2"),
+    };
+    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.dragOver(target, { dataTransfer });
+    fireEvent.drop(target, { dataTransfer });
+
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "市场事项（个人）",
+      "产品研发（个人）",
+    ]);
+    expect(window.localStorage.getItem("taskboard:board-order")).toBe('["board-2","board-1"]');
+
+    view.unmount();
+    render(<TaskBoardView />);
+    await user.click(screen.getByRole("combobox", { name: "选择看板" }));
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "市场事项（个人）",
+      "产品研发（个人）",
+    ]);
+  });
+
   it("已完成列默认显示为竖排窄轨，展开状态按看板记忆", async () => {
     const user = userEvent.setup();
     const doneTask = {

@@ -1,3 +1,4 @@
+import { useState, type DragEvent } from "react";
 import {
   TASKBOARD_PRIORITIES,
   TASKBOARD_STATUSES,
@@ -24,6 +25,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { boardAllows, PRIORITY_LABELS, STATUS_LABELS } from "./constants";
+import {
+  loadBoardOrder,
+  orderBoards,
+  reorderBoardIds,
+  saveBoardOrder,
+} from "./boardOrder";
 
 interface BoardToolbarProps {
   boards: TaskBoard[];
@@ -62,7 +69,35 @@ export function BoardToolbar({
   onPriorityChange,
   onOpenArchivedTasks,
 }: BoardToolbarProps) {
+  const [boardOrder, setBoardOrder] = useState(loadBoardOrder);
+  const [draggedBoardId, setDraggedBoardId] = useState<string | null>(null);
+  const orderedBoards = orderBoards(boards, boardOrder);
   const readOnly = !!board.archivedAt;
+
+  const handleBoardDragStart = (event: DragEvent<HTMLDivElement>, boardId: string) => {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", boardId);
+    setDraggedBoardId(boardId);
+  };
+
+  const handleBoardDragOver = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  };
+
+  const handleBoardDrop = (event: DragEvent<HTMLDivElement>, targetBoardId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const sourceBoardId = draggedBoardId || event.dataTransfer.getData("text/plain");
+    setDraggedBoardId(null);
+    if (!sourceBoardId || sourceBoardId === targetBoardId) return;
+
+    const currentOrder = orderedBoards.map((item) => item.id);
+    const nextOrder = reorderBoardIds(currentOrder, sourceBoardId, targetBoardId);
+    if (nextOrder === currentOrder) return;
+    setBoardOrder(nextOrder);
+    saveBoardOrder(nextOrder);
+  };
   const canOpenSettings = boardAllows(board, "board.update")
     || boardAllows(board, "board.policy.update")
     || boardAllows(board, "board.members.manage");
@@ -76,8 +111,17 @@ export function BoardToolbar({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {boards.map((item) => (
-              <SelectItem key={item.id} value={item.id}>
+            {orderedBoards.map((item) => (
+              <SelectItem
+                key={item.id}
+                value={item.id}
+                draggable
+                title="拖动调整看板顺序（仅保存在本浏览器）"
+                onDragStart={(event) => handleBoardDragStart(event, item.id)}
+                onDragOver={handleBoardDragOver}
+                onDrop={(event) => handleBoardDrop(event, item.id)}
+                onDragEnd={() => setDraggedBoardId(null)}
+              >
                 {item.name}{item.visibility === "organization" ? "（组织）" : "（个人）"}{item.archivedAt ? "（已归档）" : ""}
               </SelectItem>
             ))}

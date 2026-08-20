@@ -255,8 +255,8 @@ describe('PresentationDetail 排版变体', () => {
     expect(screen.getByText('—')).toBeTruthy();
   });
 
-  it('连续 warn 行聚合为橙底色块，默认标题「需要注意」', () => {
-    render(
+  it('连续 warn 行聚合为按内容收缩的橙底色块，默认标题「需要注意」', () => {
+    const { container } = render(
       <PresentationDetail
         data={{
           title: 't',
@@ -268,6 +268,9 @@ describe('PresentationDetail 排版变体', () => {
         }}
       />,
     );
+    const warnGroup = container.querySelector('[data-detail-warn-group]');
+    expect(warnGroup?.className).toContain('w-fit');
+    expect(warnGroup?.className).toContain('max-w-full');
     expect(screen.getByText('需要注意')).toBeTruthy();
     expect(screen.getByText('名单导入缺少处理依据')).toBeTruthy();
     expect(screen.getByText('退订联系人保持停止触达')).toBeTruthy();

@@ -20,7 +20,7 @@ import type {
 
 const TONES = new Set<PresentationTone>(['neutral', 'info', 'success', 'warn', 'danger', 'muted']);
 const ACTION_KINDS = new Set(['primary', 'warning', 'danger', 'ghost', 'copy', 'link']);
-const LAYOUTS = new Set(['rows', 'grid', 'checklist']);
+const LAYOUTS = new Set(['rows', 'grid', 'comparison', 'checklist']);
 
 const DISPLAY_BLOCK_LIMIT = 40;
 const BODY_LINE_LIMIT = 20;
@@ -93,6 +93,9 @@ function recordItem(raw: unknown): RecordItem | null {
   return {
     label,
     ...optional('value', clampText(source.value) ?? undefined),
+    ...optional('baseline', clampText(source.baseline) ?? undefined),
+    ...optional('current', clampText(source.current) ?? undefined),
+    ...optional('delta', clampText(source.delta) ?? undefined),
     ...optional('tag', tag),
     ...optional('note', clampText(source.note) ?? undefined),
     ...optional('tone', tone(source.tone)),

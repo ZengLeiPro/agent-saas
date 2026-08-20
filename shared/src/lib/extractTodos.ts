@@ -86,17 +86,30 @@ function semanticRecordItem(raw: unknown, type: SemanticDisplayType): Record<str
   if (typeof source.label !== "string" || !source.label.trim()) return null;
   if (type === "facts" && (typeof source.value !== "string" || !source.value.trim())) return null;
 
+  const comparisonFields = [source.baseline, source.current, source.delta];
+  const hasComparisonFields = comparisonFields.some((value) => value !== undefined);
+  if (type === "comparison" && hasComparisonFields && !comparisonFields.every((value) => typeof value === "string" && value.trim())) {
+    return null;
+  }
+
   let tone: (typeof CHECKLIST_TONE)[keyof typeof CHECKLIST_TONE] | undefined;
   if (type === "checklist") {
     if (!(source.status === "pass" || source.status === "fail" || source.status === "warn" || source.status === "pending")) {
       return null;
     }
     tone = CHECKLIST_TONE[source.status];
+  } else if (type === "comparison" && (source.status === "pass" || source.status === "fail" || source.status === "warn" || source.status === "pending")) {
+    tone = CHECKLIST_TONE[source.status];
   }
 
   return {
     label: source.label,
     ...(source.value !== undefined ? { value: source.value } : {}),
+    ...(type === "comparison" && hasComparisonFields ? {
+      baseline: source.baseline,
+      current: source.current,
+      delta: source.delta,
+    } : {}),
     ...(type !== "facts" && source.note !== undefined ? { note: source.note } : {}),
     ...(type !== "facts" && source.detail !== undefined ? { detail: source.detail } : {}),
     ...(tone ? { tone } : {}),
@@ -130,9 +143,11 @@ function normalizeSemanticTodoBlock(raw: Record<string, unknown>): PresentationB
     .filter((item): item is Record<string, unknown> => item !== null);
   if (!items.length) return null;
 
+  const comparisonReady = type === "comparison"
+    && items.every((item) => item.baseline !== undefined && item.current !== undefined && item.delta !== undefined);
   const normalized = normalizeDisplay([{
     kind: "records",
-    layout: type === "checklist" ? "checklist" : "rows",
+    layout: type === "checklist" ? "checklist" : comparisonReady ? "comparison" : "rows",
     title: raw.title,
     items,
     ...(raw.footer !== undefined ? { footer: raw.footer } : {}),

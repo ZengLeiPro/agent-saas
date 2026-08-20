@@ -225,6 +225,17 @@ describe('BuiltinToolProvider — TodoWrite 协议', () => {
             ],
           },
           {
+            type: 'comparison',
+            title: '版本差异',
+            items: [{
+              label: '接口版本',
+              baseline: 'v1',
+              current: 'v2',
+              delta: '升级 1 个主版本',
+              status: 'warn',
+            }],
+          },
+          {
             type: 'checklist',
             title: '放行条件',
             items: [
@@ -266,6 +277,20 @@ describe('BuiltinToolProvider — TodoWrite 协议', () => {
         }],
       })).toThrow();
     }
+
+    expect(() => todoWriteToolDescriptor.schema.parse({
+      todos: [{
+        id: 'ambiguous-comparison',
+        kind: 'business',
+        content: '拒绝含义不明确的旧对照字段',
+        status: 'completed',
+        display: [{
+          type: 'comparison',
+          title: '版本差异',
+          items: [{ label: '预期', value: 'v2' }],
+        }],
+      }],
+    })).toThrow();
 
     for (const legacyBlock of [
       { kind: 'callout', tone: 'warn', body: ['当前不能放行'] },

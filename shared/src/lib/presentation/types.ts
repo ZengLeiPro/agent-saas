@@ -49,6 +49,10 @@ export interface CalloutBlock {
 export interface RecordItem {
   label: string;
   value?: string;
+  /** comparison 专用：基准/之前、当前/实际及二者差异。 */
+  baseline?: string;
+  current?: string;
+  delta?: string;
   tag?: { tone: PresentationTone; text: string };
   note?: string;
   /** 整行语气：danger 走删除线，warn 走警示底 */
@@ -62,7 +66,7 @@ export interface RecordItem {
 /** 条目卡：清单、对照表、检查项、命中列表等 */
 export interface RecordsBlock {
   kind: 'records';
-  layout: 'rows' | 'grid' | 'checklist';
+  layout: 'rows' | 'grid' | 'comparison' | 'checklist';
   title?: string;
   items: RecordItem[];
   footer?: string;

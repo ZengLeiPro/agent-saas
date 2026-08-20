@@ -239,7 +239,10 @@ export function groupDetailLines(detail: DetailLine[]): DetailGroup[] {
 function WarnGroup({ header, warns }: { header: string; warns: string[] }) {
   const businessText = useContext(VariantContext) !== "code";
   return (
-    <div className="space-y-1 rounded-md border border-warning/25 bg-warning/10 px-2.5 py-2">
+    <div
+      className="w-fit max-w-full space-y-1 rounded-md border border-warning/25 bg-warning/10 px-2.5 py-2"
+      data-detail-warn-group
+    >
       <div className={activityStatusTextClass("warning", "text-2xs font-medium leading-4")}>{header}</div>
       {warns.map((warn, i) => (
         <div key={i} className="flex items-start gap-1.5">

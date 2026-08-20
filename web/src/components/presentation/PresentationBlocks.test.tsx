@@ -140,6 +140,30 @@ describe('records', () => {
     expect(grid?.className).not.toMatch(/\bgrid-cols-[23]\b/);
   });
 
+  it('comparison 桌面显示四列，移动端按单项卡片重排并突出差异', () => {
+    const { container } = render(<PresentationBlocks blocks={[{
+      kind: 'records', layout: 'comparison', title: '阶段停留对照',
+      items: [
+        { label: '海川机械', baseline: '10 天', current: '22 天', delta: '+12 天', tone: 'warn' },
+        { label: '恒岳重工', baseline: '9 天', current: '9 天', delta: '一致', tone: 'success' },
+      ],
+    }]} />);
+
+    const records = container.querySelector('[data-records-block]');
+    const table = container.querySelector('[data-comparison-table]');
+    const rows = container.querySelectorAll('[data-comparison-row]');
+    expect(records?.className).toContain('w-full');
+    expect(records?.firstElementChild?.className).toContain('sm:min-w-[40rem]');
+    expect(table).toBeTruthy();
+    expect(rows).toHaveLength(2);
+    expect(screen.getByText('对照项')).toBeTruthy();
+    expect(screen.getAllByText('基准/之前').length).toBeGreaterThan(1);
+    expect(screen.getAllByText('当前/实际').length).toBeGreaterThan(1);
+    expect(screen.getAllByText('差异').length).toBeGreaterThan(1);
+    expect(screen.getByText('+12 天').className).toContain('text-warning');
+    expect(screen.getByText('一致').className).toContain('text-success');
+  });
+
   it('checklist 使用品牌色标题栏并按 tone 显示判定图标', () => {
     const { container } = render(<PresentationBlocks blocks={[{
       kind: 'records', layout: 'checklist', title: '需求看板验收',

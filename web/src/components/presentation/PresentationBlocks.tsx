@@ -210,7 +210,67 @@ function RecordRow({
   );
 }
 
+function ComparisonRow({ item }: { item: RecordItem }) {
+  const [open, setOpen] = useState(false);
+  const expandable = !!item.detail?.length;
+  const tone = item.tone ? TONE_MAP[item.tone] : "neutral";
+  return (
+    <div
+      className={cn(
+        "border-b border-border/60 px-4 py-3 last:border-b-0",
+        item.tone === "warn" && "bg-warning/5",
+        item.tone === "danger" && "bg-destructive/5",
+      )}
+      data-comparison-row
+    >
+      <button
+        type="button"
+        onClick={expandable ? () => setOpen((value) => !value) : undefined}
+        className={cn(
+          "grid w-full grid-cols-1 gap-x-4 gap-y-2 text-left sm:grid-cols-[minmax(8rem,1.2fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_auto] sm:items-start",
+          !expandable && "cursor-default",
+        )}
+      >
+        <span className="min-w-0 break-words text-sm font-medium text-foreground">{item.label}</span>
+        <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-2 text-sm sm:block">
+          <span className="text-xs text-muted-foreground sm:hidden">基准/之前</span>
+          <span className="break-words text-foreground">{item.baseline ?? "—"}</span>
+        </span>
+        <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-2 text-sm sm:block">
+          <span className="text-xs text-muted-foreground sm:hidden">当前/实际</span>
+          <span className="break-words text-foreground">{item.current ?? "—"}</span>
+        </span>
+        <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-2 text-sm sm:block">
+          <span className="text-xs text-muted-foreground sm:hidden">差异</span>
+          <span className={cn("break-words font-medium", item.tone ? activityStatusTextClass(tone) : "text-foreground")}>
+            {item.delta ?? "—"}
+          </span>
+        </span>
+        {expandable ? <ChevronRight className={cn("hidden size-3.5 shrink-0 transition-transform sm:block", open && "rotate-90")} /> : null}
+      </button>
+      {item.note ? <p className="mt-1 text-xs text-muted-foreground">{item.note}</p> : null}
+      {expandable && open ? <Detail lines={item.detail} /> : null}
+    </div>
+  );
+}
+
+function ComparisonView({ block }: { block: RecordsBlock }) {
+  return (
+    <div data-comparison-table>
+      <div className="hidden grid-cols-[minmax(8rem,1.2fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_auto] gap-x-4 border-b border-border/60 px-4 py-2 text-xs font-medium text-muted-foreground sm:grid">
+        <span>对照项</span>
+        <span>基准/之前</span>
+        <span>当前/实际</span>
+        <span>差异</span>
+        <span aria-hidden="true" />
+      </div>
+      {block.items.map((item, index) => <ComparisonRow key={index} item={item} />)}
+    </div>
+  );
+}
+
 function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext }) {
+  const comparison = block.layout === "comparison";
   const tabular = block.layout !== "grid";
   const checklist = block.layout === "checklist";
   const showValueColumn = tabular && block.items.some((item) => item.value !== undefined && item.value !== "");
@@ -223,12 +283,15 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
       : "grid-cols-[minmax(0,max-content)_auto_auto]";
   return (
     <div
-      className="inline-block max-w-full overflow-x-auto rounded-xl border border-primary/20 bg-card align-top"
+      className={cn(
+        "max-w-full overflow-x-auto rounded-xl border border-primary/20 bg-card align-top",
+        comparison ? "block w-full" : "inline-block",
+      )}
       data-records-block
       tabIndex={tabular ? 0 : undefined}
       aria-label={tabular ? `${block.title ?? "数据表格"}，可横向滚动` : undefined}
     >
-      <div className="w-max">
+      <div className={comparison ? "min-w-0 sm:min-w-[40rem]" : "w-max"}>
         {block.title ? (
           <div
             className="border-b border-primary/15 bg-primary/5 px-4 py-2.5 text-sm font-semibold text-foreground"
@@ -248,6 +311,8 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
               </div>
             ))}
           </div>
+        ) : comparison ? (
+          <ComparisonView block={block} />
         ) : (
           <div className={cn("grid w-max gap-x-4", tableColumns)} data-records-table>
             {block.items.map((item, i) => (

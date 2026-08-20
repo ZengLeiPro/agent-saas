@@ -13,7 +13,7 @@
 - `display`：只接受 `facts`、`list`、`comparison`、`checklist` 四种业务语义，不接受 `callout`、`records` 或 `layout` 等视觉实现字段。每个块的 `title` 都必填，使用简短业务动作或结果名称（如「核对工作树状态」「已创建提交」），不得使用空泛的「详情」「结果」；
   - `facts`：相互独立的短字段，如对象属性、提取结果、关键指标；展示层会在字段紧凑时自动使用网格，否则回退逐行展示；
   - `list`：普通清单、命中列表、提交记录；
-  - `comparison`：预期/实际、变更前后或多对象对照；
+  - `comparison`：预期/实际或变更前后的差异对照；每项使用 `label`、`baseline`、`current`、`delta`，可用 `status` 标记差异判定；
   - `checklist`：两项及以上的逐项判定，`item.status` 使用 `pass` / `fail` / `warn` / `pending`；单项判定继续使用顶层 `detail.verdict`；
 - `evidenceRefs`：支撑该步骤的真实对象、来源或回执的短引用（对象 ID/单据号/文件名/路径，每条尽量 ≤40 字）。它是引用不是内容：不要塞整句话，更不要塞数据明细——数据按语义写入 `detail` 或 `display`。
 

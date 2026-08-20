@@ -264,13 +264,6 @@ function PlanTodoRow({ todo, index }: { todo: TodoItem; index: number }) {
                 {index}
               </span>
             );
-  const statusLabel = status === "completed" ? "完成"
-    : status === "failed" ? "失败"
-      : status === "blocked" ? "阻断"
-        : status === "waiting" ? "等待"
-          : status === "in_progress" ? "进行中"
-            : null;
-
   return (
     <li className="flex items-start gap-2.5 py-1">
       <span className="mt-[3px] shrink-0">{icon}</span>
@@ -280,14 +273,6 @@ function PlanTodoRow({ todo, index }: { todo: TodoItem; index: number }) {
       )}>
         {todo.content}
       </span>
-      {statusLabel ? (
-        <span className={cn(
-          "shrink-0 text-2xs leading-5",
-          status === "in_progress" ? "text-primary" : "text-muted-foreground/70",
-        )}>
-          {statusLabel}
-        </span>
-      ) : null}
     </li>
   );
 }

@@ -178,7 +178,10 @@ describe("projectBusinessStepEvents", () => {
           {
             type: "comparison",
             title: "核对版本",
-            items: [{ label: "预期", value: "v2" }, { label: "实际", value: "v2" }],
+            items: [
+              { label: "接口版本", baseline: "v1", current: "v2", delta: "升级 1 个主版本", status: "warn" },
+              { label: "数据版本", baseline: "v2", current: "v2", delta: "一致", status: "pass" },
+            ],
           },
           {
             type: "checklist",
@@ -214,9 +217,12 @@ describe("projectBusinessStepEvents", () => {
       },
       {
         kind: "records",
-        layout: "rows",
+        layout: "comparison",
         title: "核对版本",
-        items: [{ label: "预期", value: "v2" }, { label: "实际", value: "v2" }],
+        items: [
+          { label: "接口版本", baseline: "v1", current: "v2", delta: "升级 1 个主版本", tone: "warn" },
+          { label: "数据版本", baseline: "v2", current: "v2", delta: "一致", tone: "success" },
+        ],
       },
       {
         kind: "records",

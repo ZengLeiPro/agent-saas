@@ -110,6 +110,16 @@ const todoFactsItemSchema = z.object({
   value: todoDisplayTextSchema,
 }).strict();
 
+const todoComparisonItemSchema = z.object({
+  label: todoDisplayTextSchema,
+  baseline: todoDisplayTextSchema,
+  current: todoDisplayTextSchema,
+  delta: todoDisplayTextSchema,
+  status: z.enum(['pass', 'fail', 'warn', 'pending']).optional(),
+  note: todoDisplayTextSchema.optional(),
+  detail: z.array(todoDetailLineSchema).max(60).optional(),
+}).strict();
+
 const todoChecklistItemSchema = z.object({
   label: todoDisplayTextSchema,
   status: z.enum(['pass', 'fail', 'warn', 'pending']),
@@ -134,9 +144,9 @@ const todoDisplayBlockSchema = z.discriminatedUnion('type', [
     footer: todoDisplayTextSchema.optional(),
   }).strict(),
   z.object({
-    type: z.literal('comparison').describe('预期/实际、变更前后或多对象对照结果。'),
+    type: z.literal('comparison').describe('预期/实际或变更前后的四列差异对照。'),
     title: todoDisplayTitleSchema,
-    items: z.array(todoListItemSchema).min(1).max(100),
+    items: z.array(todoComparisonItemSchema).min(1).max(100),
     footer: todoDisplayTextSchema.optional(),
   }).strict(),
   z.object({

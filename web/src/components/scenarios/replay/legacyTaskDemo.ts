@@ -17,6 +17,9 @@ type SemanticDisplay = {
   items: Array<{
     label: string;
     value?: string;
+    baseline?: string;
+    current?: string;
+    delta?: string;
     note?: string;
     status?: "pass" | "fail" | "warn" | "pending";
   }>;
@@ -149,7 +152,14 @@ function buildDisplay(
     return [{
       type: "comparison",
       title: "本步业务对照",
-      items: usableFacts.slice(0, 6).map((item) => ({ ...item, note: "来自本步执行结果" })),
+      items: usableFacts.slice(0, 6).map((item) => ({
+        label: item.label,
+        baseline: "会话开始时待处理",
+        current: item.value,
+        delta: "本步已形成结果",
+        status: terminalStatus === "completed" ? "pass" : terminalStatus === "failed" || terminalStatus === "blocked" ? "fail" : "pending",
+        note: "来自本步执行结果",
+      })),
     }];
   }
 

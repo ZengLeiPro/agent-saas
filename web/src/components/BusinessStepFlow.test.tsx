@@ -46,7 +46,7 @@ function expandEvidence() {
 const NO_FILL_SELECTORS = ["section.bg-success\\/5", "section.bg-warning\\/5", "section.bg-destructive\\/5"];
 
 describe("BusinessStepFlow", () => {
-  it("renders one frameless compact plan with live step statuses", () => {
+  it("renders one frameless compact plan with status icons but no redundant status text", () => {
     const { container } = render(
       <BusinessStepFlow
         event={event({
@@ -63,8 +63,8 @@ describe("BusinessStepFlow", () => {
 
     expect(screen.getByRole("region", { name: "业务计划" })).toBeTruthy();
     expect(screen.getByText("1/3 完成")).toBeTruthy();
-    expect(screen.getByText("完成")).toBeTruthy();
-    expect(screen.getByText("进行中")).toBeTruthy();
+    expect(screen.queryByText("完成")).toBeNull();
+    expect(screen.queryByText("进行中")).toBeNull();
     expect(screen.getByText("3")).toBeTruthy();
     const rows = ["读取订单", "核验订单", "写入结果"].map((label) => screen.getByText(label));
     expect(rows[1].className).toContain("font-medium");

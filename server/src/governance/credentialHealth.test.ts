@@ -23,7 +23,7 @@ describe('governance credential health', () => {
     const secret = JSON.stringify({ accessKeyId: 'LTAI-id', accessKeySecret: 'secret', regionId: 'cn-shenzhen' });
 
     await expect(validateGovernanceCredentialHealth('aliyun', secret)).resolves.toEqual({
-      healthy: true, code: 'UPSTREAM_IDENTITY_VERIFIED', metadata: { accountId: '1234567890123456' },
+      healthy: true, code: 'UPSTREAM_IDENTITY_VERIFIED', metadata: { regionId: 'cn-shenzhen', accountId: '1234567890123456' },
     });
     expect(validate).toHaveBeenCalledWith({ accessKeyId: 'LTAI-id', accessKeySecret: 'secret', regionId: 'cn-shenzhen' });
   });

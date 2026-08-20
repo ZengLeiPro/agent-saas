@@ -62,6 +62,7 @@ export const credentialCreatePreviewSchema = credentialCreateSchema.extend({
 export const credentialCreateCommitSchema = credentialCreatePreviewSchema.extend(credentialPreviewTokenShape).strict();
 export const credentialRotatePreviewSchema = z.object({
   expectedVersion: z.number().int().positive(), secret: z.string().min(1).max(10000), reason: z.string().min(3).max(500),
+  scopeSummary: credentialScopeSummarySchema.optional(),
 }).strict();
 export const credentialRotateCommitSchema = credentialRotatePreviewSchema.extend(credentialPreviewTokenShape).strict();
 export const credentialTransferPreviewSchema = z.object({

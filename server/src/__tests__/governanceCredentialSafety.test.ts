@@ -194,6 +194,81 @@ describe('governance credential signed commits', () => {
     expect(rotateSecret).not.toHaveBeenCalled();
   });
 
+  it('阿里云跨地域跨账号 rotation 原子持久化新 scopeSummary', async () => {
+    const personal = credential({
+      connectorId: 'aliyun', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,
+      purpose: '阿里云 CLI 用户凭据', scopeSummary: {
+        regionId: 'cn-shenzhen', accountId: 'old-account', identityType: 'RAMUser', scopes: ['aliyun:*'],
+      },
+    });
+    const health = vi.fn().mockResolvedValue({
+      healthy: true, code: 'UPSTREAM_IDENTITY_VERIFIED',
+      metadata: {
+        regionId: 'cn-hangzhou', accountId: 'new-account',
+        identityArn: 'acs:ram::new-account:user/agent-saas', identityType: 'RAMUser',
+      },
+    });
+    const nextScopeSummary = {
+      regionId: 'cn-hangzhou', accountId: 'new-account',
+      identityArn: 'acs:ram::new-account:user/agent-saas', identityType: 'RAMUser', scopes: ['aliyun:*'],
+    };
+    const completeRotation = vi.fn().mockResolvedValue(credential({
+      ...personal, generation: 2, version: 2, scopeSummary: nextScopeSummary,
+    }));
+    const test = await rig({
+      credentialHealthCheck: health,
+      getCredential: vi.fn().mockResolvedValue(personal),
+      completeRotation,
+    });
+    const command = {
+      expectedVersion: 1,
+      secret: JSON.stringify({ accessKeyId: 'LTAI-new', accessKeySecret: 'new-secret', regionId: 'cn-hangzhou' }),
+      reason: '更新阿里云 CLI 用户凭据', scopeSummary: { regionId: 'cn-hangzhou', scopes: ['aliyun:*'] },
+    };
+    const signed = await preview(test, '/api/governance/resources/credentials/cred-1/rotate/preview', command);
+    const response = await test.request('/api/governance/resources/credentials/cred-1/rotate', json({
+      ...command, previewId: signed.previewId, baselineDigest: signed.baselineDigest, expiresAt: signed.expiresAt,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(health).toHaveBeenCalledWith('aliyun', command.secret);
+    expect(completeRotation).toHaveBeenCalledWith('tenant-a', 'cred-1', 1, 'admin-1', false, nextScopeSummary);
+    await expect(response.json()).resolves.toMatchObject({ scopeSummary: nextScopeSummary });
+  });
+
+  it('阿里云 scopeSummary 持久化失败时回滚 Secret，不报告轮换成功', async () => {
+    const personal = credential({
+      connectorId: 'aliyun', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,
+      purpose: '阿里云 CLI 用户凭据', scopeSummary: { regionId: 'cn-shenzhen', accountId: 'old-account' },
+    });
+    const health = vi.fn().mockResolvedValue({
+      healthy: true, code: 'UPSTREAM_IDENTITY_VERIFIED',
+      metadata: { regionId: 'cn-hangzhou', accountId: 'new-account', identityType: 'RAMUser' },
+    });
+    const rotateSecret = vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
+    const completeRotation = vi.fn().mockRejectedValue(new Error('credential version conflict'));
+    const test = await rig({
+      credentialHealthCheck: health,
+      getCredential: vi.fn().mockResolvedValue(personal), rotateSecret, completeRotation,
+    });
+    const command = {
+      expectedVersion: 1,
+      secret: JSON.stringify({ accessKeyId: 'LTAI-new', accessKeySecret: 'new-secret-never-echo', regionId: 'cn-hangzhou' }),
+      reason: '更新阿里云 CLI 用户凭据', scopeSummary: { regionId: 'cn-hangzhou', scopes: ['aliyun:*'] },
+    };
+    const signed = await preview(test, '/api/governance/resources/credentials/cred-1/rotate/preview', command);
+    const response = await test.request('/api/governance/resources/credentials/cred-1/rotate', json({
+      ...command, previewId: signed.previewId, baselineDigest: signed.baselineDigest, expiresAt: signed.expiresAt,
+    }));
+
+    expect(response.status).toBe(409);
+    const body = await response.json() as Record<string, unknown>;
+    expect(body).toMatchObject({ code: 'CREDENTIAL_ROTATE_COMPENSATED', status: 'failed' });
+    expect(JSON.stringify(body)).not.toContain('new-secret-never-echo');
+    expect(rotateSecret).toHaveBeenCalledTimes(2);
+    expect(completeRotation).toHaveBeenCalledOnce();
+  });
+
   it('个人 Credential 所有者可以使用治理 rotation 更新 X Cookie', async () => {
     const personal = credential({
       connectorId: 'x', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,

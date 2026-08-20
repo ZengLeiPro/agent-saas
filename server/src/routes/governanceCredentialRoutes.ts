@@ -689,6 +689,9 @@ export function registerGovernanceCredentialRoutes(options: {
       }, { changed: false })) return;
       return res.status(409).json({ error: 'Governance preview invalid or baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
     }
+    let rotationScopeSummary = mutation.scopeSummary
+      ? { ...target.credential.scopeSummary, ...mutation.scopeSummary }
+      : undefined;
     if (target.credential.kind === 'personal_grant') {
       const health = await validateAliyunPersonalSecret(target.credential.connectorId, mutation.secret);
       if (health && !health.healthy) {
@@ -697,6 +700,12 @@ export function registerGovernanceCredentialRoutes(options: {
           leaseToken: claimed.leaseToken, status: 'failed', errorCode: health.code,
         }, { changed: false })) return;
         return res.status(422).json({ error: 'Credential validation failed', code: health.code });
+      }
+      if (health?.metadata) {
+        rotationScopeSummary = { ...target.credential.scopeSummary, ...(mutation.scopeSummary ?? {}), ...health.metadata };
+        for (const key of ['regionId', 'accountId', 'identityArn', 'identityType'] as const) {
+          if (!(key in health.metadata)) delete rotationScopeSummary[key];
+        }
       }
     }
 
@@ -755,9 +764,14 @@ export function registerGovernanceCredentialRoutes(options: {
       const shouldClearExpiredAt = Boolean(
         target.credential.expiresAt && Date.parse(target.credential.expiresAt) <= options.now().getTime(),
       );
-      credential = await options.credentials.completeRotation(
-        target.tenantId, target.credential.credentialId, mutation.expectedVersion, req.user!.sub, shouldClearExpiredAt,
-      );
+      credential = rotationScopeSummary
+        ? await options.credentials.completeRotation(
+          target.tenantId, target.credential.credentialId, mutation.expectedVersion, req.user!.sub,
+          shouldClearExpiredAt, rotationScopeSummary,
+        )
+        : await options.credentials.completeRotation(
+          target.tenantId, target.credential.credentialId, mutation.expectedVersion, req.user!.sub, shouldClearExpiredAt,
+        );
     } catch {
       try {
         await options.vault.rotateSecret(target.credential.secretRef, previousSecret, caller);

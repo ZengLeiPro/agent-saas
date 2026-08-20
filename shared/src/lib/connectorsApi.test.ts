@@ -96,11 +96,13 @@ describe('X governance connector API', () => {
       expectedVersion: 3,
       secret: JSON.stringify({ authToken: 'auth-cookie', ct0: 'ct0-cookie' }),
       reason: '更新 X bird CLI 用户凭据',
+      scopeSummary: { scopes: ['x:*'] },
     });
     expect(api.rotateCredential).toHaveBeenCalledWith('credential-x', {
       expectedVersion: 3,
       secret: JSON.stringify({ authToken: 'auth-cookie', ct0: 'ct0-cookie' }),
       reason: '更新 X bird CLI 用户凭据',
+      scopeSummary: { scopes: ['x:*'] },
       previewId: 'cpv2.preview', baselineDigest: 'baseline', expiresAt: '2026-08-20T10:05:00.000Z',
     });
   });
@@ -199,6 +201,35 @@ describe('X governance connector API', () => {
       connection: { connectorId: 'aliyun', status: 'disconnected' },
     });
     expect(api.authFetch).not.toHaveBeenCalledWith('/api/connectors/aliyun', { method: 'DELETE' });
+  });
+
+  it('阿里云跨地域轮换把新的 scopeSummary 一起提交治理 API', async () => {
+    api.listCredentials.mockResolvedValueOnce({ credentials: [{
+      credentialId: 'credential-aliyun', connectorId: 'aliyun', kind: 'personal_grant',
+      status: 'active', version: 4, updatedAt: '2026-08-20T10:00:00.000Z',
+    }] });
+    api.previewCredentialRotation.mockResolvedValue({
+      previewId: 'cpv2.aliyun-preview', baselineDigest: 'aliyun-baseline', expiresAt: '2026-08-20T10:05:00.000Z',
+    });
+    api.rotateCredential.mockResolvedValue({ credentialId: 'credential-aliyun', version: 5 });
+    api.authFetch.mockResolvedValueOnce(jsonResponse({
+      connection: { connectorId: 'aliyun', status: 'connected', runtimeEnabled: true, regionId: 'cn-hangzhou', credentialVersion: 5 },
+    }));
+
+    await expect(connectAliyun({
+      accessKeyId: 'LTAI-new', accessKeySecret: 'secret-new', regionId: 'cn-hangzhou',
+    })).resolves.toMatchObject({ connection: { regionId: 'cn-hangzhou', credentialVersion: 5 } });
+
+    const command = {
+      expectedVersion: 4,
+      secret: JSON.stringify({ accessKeyId: 'LTAI-new', accessKeySecret: 'secret-new', regionId: 'cn-hangzhou' }),
+      reason: '更新阿里云 CLI 用户凭据',
+      scopeSummary: { regionId: 'cn-hangzhou', scopes: ['aliyun:*'] },
+    };
+    expect(api.previewCredentialRotation).toHaveBeenCalledWith('credential-aliyun', command);
+    expect(api.rotateCredential).toHaveBeenCalledWith('credential-aliyun', {
+      ...command, previewId: 'cpv2.aliyun-preview', baselineDigest: 'aliyun-baseline', expiresAt: '2026-08-20T10:05:00.000Z',
+    });
   });
 
   it('拒绝空白 X Cookie，不创建无效治理凭据', async () => {

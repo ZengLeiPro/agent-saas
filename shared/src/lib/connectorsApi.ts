@@ -64,6 +64,7 @@ async function savePersonalCredential(input: {
       expectedVersion: existing.version,
       secret: input.secret,
       reason: input.rotateReason,
+      ...(input.scopeSummary ? { scopeSummary: input.scopeSummary } : {}),
     };
     const preview = await governanceResourcesApi.previewCredentialRotation<{
       previewId: string;

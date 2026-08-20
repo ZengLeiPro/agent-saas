@@ -40,6 +40,7 @@ async function checkAliyun(secret: string): Promise<CredentialHealthResult> {
       healthy: true,
       code: 'UPSTREAM_IDENTITY_VERIFIED',
       metadata: {
+        regionId,
         accountId: identity.accountId,
         ...(identity.arn ? { identityArn: identity.arn } : {}),
         ...(identity.identityType ? { identityType: identity.identityType } : {}),

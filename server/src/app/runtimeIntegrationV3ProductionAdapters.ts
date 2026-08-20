@@ -93,16 +93,19 @@ export function resolveProductionIntegrationV3Adapters(input: {
   if (input.config.integrationV3ControlPlane?.enabled !== true) return {};
   const runtimeIsolationAttestationProvider = input.runtimeIsolationAttestationProvider
     ?? createAcsRuntimeIsolationAttestationProvider({ config: input.config, secretVault: input.secretVault, fetchImpl: input.fetchImpl });
-  const app = input.config.integrationV3ControlPlane.githubApp;
-  const githubAppInstallationTokenProvider = input.githubAppInstallationTokenProvider
-    ?? (app ? createGithubAppInstallationTokenProvider({
+  const app = input.config.integrationV3ControlPlane.githubTokenMode === 'github_app'
+    ? input.config.integrationV3ControlPlane.githubApp
+    : undefined;
+  const githubAppInstallationTokenProvider = input.config.integrationV3ControlPlane.githubTokenMode === 'github_app'
+    ? input.githubAppInstallationTokenProvider ?? (app ? createGithubAppInstallationTokenProvider({
       appId: app.appId,
       privateKey: () => input.secretVault.getSecret(app.privateKeyRef, {
         actor: 'system', userId: '__system__', scopes: ['secret:github_app:read'],
       }),
       ...(app.apiBaseUrl ? { apiBaseUrl: app.apiBaseUrl } : {}),
       fetchImpl: input.fetchImpl,
-    }) : undefined);
+    }) : undefined)
+    : undefined;
   return { runtimeIsolationAttestationProvider, githubAppInstallationTokenProvider };
 }
 

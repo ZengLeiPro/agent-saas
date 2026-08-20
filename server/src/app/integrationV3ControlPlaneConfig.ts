@@ -11,9 +11,12 @@ const githubAppConfigSchema = z.object({
 export const integrationV3ControlPlaneConfigSchema = z.object({
   enabled: z.boolean(),
   controlledMirrorRoot: z.string().min(1),
-  /** v3 writes are bound to exactly one GitHub App installation. */
-  githubAppInstallationId: z.number().int().positive(),
-  githubTokenMode: z.literal('github_app').default('github_app'),
-  /** Optional only so disabled/test-injected runtimes remain representable; enabled production fails closed without it. */
+  githubTokenMode: z.enum(['github_app', 'personal_access_token']).default('github_app'),
+  /** Required only in github_app mode. */
+  githubAppInstallationId: z.number().int().positive().optional(),
   githubApp: githubAppConfigSchema.optional(),
+}).superRefine((value, ctx) => {
+  if (value.githubTokenMode === 'github_app' && !value.githubAppInstallationId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['githubAppInstallationId'], message: 'github_app mode requires an installation id' });
+  }
 }).optional();

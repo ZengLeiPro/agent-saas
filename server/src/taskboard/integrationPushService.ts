@@ -36,15 +36,62 @@ export class ControlledTaskboardIntegrationPushService implements TaskboardInteg
   }
 }
 
-/** Production v3 write resolver. No connector token or PAT fallback exists here. */
+/** Production v3 write resolver for an installation-scoped GitHub App token. */
+export function createPersonalAccessTokenIntegrationPushTokenResolver(deps: {
+  resolveToken(input: { tenantId: string; ownerUserId: string }): Promise<string | undefined>;
+  fetchImpl?: typeof fetch;
+  onError?: (error: Error) => void;
+}) {
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  return async (input: {
+    tenantId: string; ownerUserId: string; repositoryId: string; repositoryOwner: string; repositoryName: string;
+  }): Promise<IntegrationPushCredential | undefined> => {
+    const target = githubAppRepositoryTargetFromId(input.repositoryId);
+    if (!target || ('repositoryOwner' in target
+      && (target.repositoryOwner.toLowerCase() !== input.repositoryOwner.toLowerCase()
+        || target.repositoryName.toLowerCase() !== input.repositoryName.toLowerCase()))) return undefined;
+    try {
+      const token = await deps.resolveToken(input);
+      if (!token) return undefined;
+      const path = 'repositoryId' in target
+        ? `/repositories/${target.repositoryId}`
+        : `/repos/${encodeURIComponent(target.repositoryOwner)}/${encodeURIComponent(target.repositoryName)}`;
+      const response = await fetchImpl(`https://api.github.com${path}`, {
+        headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${token}`, 'user-agent': 'agent-saas-integration-v3' },
+      });
+      const body = await response.json().catch(() => undefined) as Record<string, unknown> | undefined;
+      const permissions = body?.permissions as Record<string, unknown> | undefined;
+      if (!body || response.status !== 200 || !Number.isSafeInteger(body.id) || Number(body.id) <= 0 || permissions?.push !== true) return undefined;
+      if ('repositoryId' in target && Number(body.id) !== target.repositoryId) return undefined;
+      if (typeof body.full_name !== 'string'
+        || body.full_name.toLowerCase() !== `${input.repositoryOwner}/${input.repositoryName}`.toLowerCase()) return undefined;
+      return {
+        token,
+        mode: 'personal_access_token',
+        repositoryId: Number(body.id),
+        configuredRepositoryId: input.repositoryId,
+        configuredRepositoryOwner: input.repositoryOwner,
+        configuredRepositoryName: input.repositoryName,
+      };
+    } catch (error) {
+      deps.onError?.(error instanceof Error ? error : new Error(String(error)));
+      return undefined;
+    }
+  };
+}
+
 export function createGithubAppIntegrationPushTokenResolver(deps: {
   provider: GithubAppInstallationTokenProvider;
   installationId: number;
   onError?: (error: Error) => void;
 }) {
-  return async (input: { tenantId: string; ownerUserId: string; repositoryId: string }): Promise<IntegrationPushCredential | undefined> => {
+  return async (input: {
+    tenantId: string; ownerUserId: string; repositoryId: string; repositoryOwner: string; repositoryName: string;
+  }): Promise<IntegrationPushCredential | undefined> => {
     const target = githubAppRepositoryTargetFromId(input.repositoryId);
-    if (!target) return undefined;
+    if (!target || ('repositoryOwner' in target
+      && (target.repositoryOwner.toLowerCase() !== input.repositoryOwner.toLowerCase()
+        || target.repositoryName.toLowerCase() !== input.repositoryName.toLowerCase()))) return undefined;
     try {
       const credential = await resolveGithubAppRepositoryToken(deps.provider, deps.installationId, target);
       if (!credential) return undefined;
@@ -52,6 +99,9 @@ export function createGithubAppIntegrationPushTokenResolver(deps: {
         token: credential.token,
         mode: 'github_app',
         repositoryId: credential.repositoryId,
+        configuredRepositoryId: input.repositoryId,
+        configuredRepositoryOwner: input.repositoryOwner,
+        configuredRepositoryName: input.repositoryName,
         installationId: credential.installationId,
       };
     } catch (error) {

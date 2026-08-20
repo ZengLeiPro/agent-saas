@@ -22,7 +22,7 @@ import { IntegrationProviderOperationService } from '../taskboard/integrationPro
 import { IntegrationPushCapabilityService } from '../taskboard/integrationPushCapability.js';
 import { PostgresIntegrationPushCapabilityHost } from '../taskboard/integrationPushCapabilityPostgres.js';
 import { IntegrationPushGateway, type IntegrationPushCredential } from '../taskboard/integrationPushGateway.js';
-import { createGithubAppIntegrationPushTokenResolver } from '../taskboard/integrationPushService.js';
+import { createGithubAppIntegrationPushTokenResolver, createPersonalAccessTokenIntegrationPushTokenResolver } from '../taskboard/integrationPushService.js';
 import { DefaultIntegrationV3ComposeExecutor } from '../taskboard/integrationV3ComposeExecutor.js';
 import {
   IntegrationV3Worker,
@@ -37,7 +37,7 @@ import {
 } from '../taskboard/integrationV3WorkerPostgres.js';
 import { canonicalGithubRepositoryUrl, isCanonicalGithubRepositoryRemote, type RepositoryProvider } from '../taskboard/repositoryProvider.js';
 import { runSafeServerGit, runSafeServerGitOrThrow } from '../taskboard/safeServerGitRunner.js';
-import { RepositoryProviderIntegrationEngineV3Adapter } from '../taskboard/repositoryRuntime.js';
+import { createIntegrationV3GithubAppRepositoryProvider, RepositoryProviderIntegrationEngineV3Adapter } from '../taskboard/repositoryRuntime.js';
 import type {
   RepositoryWorkspaceGitCommand,
   RepositoryWorkspaceGitResult,
@@ -191,29 +191,69 @@ interface StartRuntimeTaskboardIntegrationV3Options {
   enabled: boolean;
   processRole?: 'all' | 'runtime-worker';
   releaseIdentity?: string;
+  githubTokenMode?: 'github_app' | 'personal_access_token';
   githubAppInstallationId?: number;
   runtimeIsolationAttestationProvider?: RuntimeIsolationAttestationProvider;
-  resolveGithubToken?: (input: { tenantId: string; ownerUserId: string; repositoryId: string }) => Promise<IntegrationPushCredential | undefined>;
+  resolveGithubToken?: (input: {
+    tenantId: string; ownerUserId: string; repositoryId: string; repositoryOwner: string; repositoryName: string;
+  }) => Promise<IntegrationPushCredential | undefined>;
 }
 
-export function buildRuntimeTaskboardIntegrationV3Options(input: Omit<StartRuntimeTaskboardIntegrationV3Options,
-  'controlledMirrorRoot'|'enabled'|'githubAppInstallationId'|'resolveGithubToken'> & {
-  control?: { enabled: boolean; controlledMirrorRoot: string; githubAppInstallationId: number; githubTokenMode: 'github_app' };
+export function configureRuntimeIntegrationV3RepositoryAccess(input: {
+  store?: PgTaskboardStore;
+  taskboardRepositoryProvider?: RepositoryProvider;
+  control?: { enabled: boolean; githubTokenMode: 'github_app'|'personal_access_token'; githubAppInstallationId?: number };
   githubAppInstallationTokenProvider?: GithubAppInstallationTokenProvider;
-}): StartRuntimeTaskboardIntegrationV3Options {
-  const resolver = input.control && input.githubAppInstallationTokenProvider
+  resolvePersonalAccessToken(input: { tenantId: string; ownerUserId: string }): Promise<string | undefined>;
+}) {
+  const personalAccessTokenResolver = createPersonalAccessTokenIntegrationPushTokenResolver({
+    resolveToken: input.resolvePersonalAccessToken,
+    onError: (error) => serverLogger.warn(`Integration PAT repository probe failed: ${error.message}`),
+  });
+  const appTokenResolver = input.githubAppInstallationTokenProvider && input.control?.githubAppInstallationId
     ? createGithubAppIntegrationPushTokenResolver({
       provider: input.githubAppInstallationTokenProvider,
       installationId: input.control.githubAppInstallationId,
-      onError: (error) => serverLogger.warn(`Integration App credential resolve failed: ${error.message}`),
-    })
-    : undefined;
+      onError: (error) => serverLogger.warn(`Integration App repository probe failed: ${error.message}`),
+    }) : undefined;
+  const repositoryProvider = input.control?.enabled !== true ? undefined
+    : input.control.githubTokenMode === 'personal_access_token' ? input.taskboardRepositoryProvider
+      : input.githubAppInstallationTokenProvider && input.control.githubAppInstallationId
+        ? createIntegrationV3GithubAppRepositoryProvider({
+          tokenProvider: input.githubAppInstallationTokenProvider, installationId: input.control.githubAppInstallationId,
+        }) : undefined;
+  const credentialResolver = input.control?.githubTokenMode === 'personal_access_token' ? personalAccessTokenResolver : appTokenResolver;
+  if (input.control?.enabled && input.store) input.store.setIntegrationV3RepositoryProbe(async ({ tenantId, ownerUserId, repository }) => {
+    if (!repositoryProvider?.getReference || !credentialResolver || !repository.baseBranch) return false;
+    await repositoryProvider.getReference(repository, repository.baseBranch, ownerUserId);
+    return !!await credentialResolver({ tenantId, ownerUserId, repositoryId: repository.repositoryId,
+      repositoryOwner: repository.owner, repositoryName: repository.name });
+  });
+  return { repositoryProvider, personalAccessTokenResolver };
+}
+
+export function buildRuntimeTaskboardIntegrationV3Options(input: Omit<StartRuntimeTaskboardIntegrationV3Options,
+  'controlledMirrorRoot'|'enabled'|'githubTokenMode'|'githubAppInstallationId'|'resolveGithubToken'> & {
+  control?: { enabled: boolean; controlledMirrorRoot: string; githubAppInstallationId?: number; githubTokenMode: 'github_app'|'personal_access_token' };
+  githubAppInstallationTokenProvider?: GithubAppInstallationTokenProvider;
+  personalAccessTokenResolver?: StartRuntimeTaskboardIntegrationV3Options['resolveGithubToken'];
+}): StartRuntimeTaskboardIntegrationV3Options {
+  const resolver = input.control?.githubTokenMode === 'personal_access_token'
+    ? input.personalAccessTokenResolver
+    : input.control?.githubAppInstallationId && input.githubAppInstallationTokenProvider
+      ? createGithubAppIntegrationPushTokenResolver({
+        provider: input.githubAppInstallationTokenProvider,
+        installationId: input.control.githubAppInstallationId,
+        onError: (error) => serverLogger.warn(`Integration App credential resolve failed: ${error.message}`),
+      })
+      : undefined;
   return {
     ...input,
     enabled: input.control?.enabled === true,
     ...(input.control ? {
       controlledMirrorRoot: input.control.controlledMirrorRoot,
-      githubAppInstallationId: input.control.githubAppInstallationId,
+      githubTokenMode: input.control.githubTokenMode,
+      ...(input.control.githubAppInstallationId ? { githubAppInstallationId: input.control.githubAppInstallationId } : {}),
     } : {}),
     ...(resolver ? { resolveGithubToken: resolver } : {}),
   };
@@ -256,7 +296,7 @@ export function startRuntimeTaskboardIntegrationV3(
     enabled: options.enabled === true
       && !!options.runtimeIsolationAttestationProvider
       && !!options.resolveGithubToken
-      && Number.isSafeInteger(options.githubAppInstallationId),
+      && (options.githubTokenMode === 'personal_access_token' || Number.isSafeInteger(options.githubAppInstallationId)),
     allowedWorktreeRoots: options.controlledMirrorRoot ? [options.controlledMirrorRoot] : [],
     githubAppInstallationId: options.githubAppInstallationId,
     capabilityService,
@@ -273,7 +313,12 @@ export function startRuntimeTaskboardIntegrationV3(
       const paths = await resolveIntegrationV3RepositoryPaths(parsed, input.candidateId, {
         processCwd, agentCwd, controlledMirrorRoot: options.controlledMirrorRoot,
       });
-      return paths ? { worktreePath: paths.worktreePath, remoteUrl: canonicalGithubRepositoryUrl(parsed) } : undefined;
+      return paths ? {
+        worktreePath: paths.worktreePath,
+        remoteUrl: canonicalGithubRepositoryUrl(parsed),
+        repositoryOwner: parsed.owner,
+        repositoryName: parsed.name,
+      } : undefined;
     },
     resolveGithubToken: options.resolveGithubToken ?? (async () => undefined),
     operationService,
@@ -392,14 +437,12 @@ export function startRuntimeTaskboardIntegrationV3(
   });
   const activation = startIntegrationV3ActivationRetry({
     check: async () => {
-      const [health, attestation, repositoryAccess] = await Promise.all([
+      const [health, attestation] = await Promise.all([
         pushGateway.health(),
         options.runtimeIsolationAttestationProvider?.attest({ admission: 'integration_v3_worker' }),
-        validateConfiguredIntegrationV3Repositories(store, tables.candidatesTable, repositoryProvider),
       ]);
       if (!health.healthy) return { healthy: false, reason: health.reason ?? 'gateway_unhealthy' };
       if (!validAttestation(attestation)) return { healthy: false, reason: 'runtime_isolation_attestation_unavailable' };
-      if (!repositoryAccess) return { healthy: false, reason: 'github_app_repository_probe_failed' };
       return { healthy: true };
     },
     start: () => { worker.start(); workerActive = true; },
@@ -432,31 +475,6 @@ export function startRuntimeTaskboardIntegrationV3(
       }
     },
   };
-}
-
-export async function validateConfiguredIntegrationV3Repositories(
-  store: PgTaskboardStore,
-  candidatesTable: string,
-  provider: RepositoryProvider,
-): Promise<boolean> {
-  if (!provider.getReference) return false;
-  try {
-    const result = await store.pool.query(
-      `SELECT DISTINCT b.repository,b.owner_user_id FROM ${store.boardsTable} b
-        WHERE (COALESCE((b.integration_policy->>'enabled')::boolean,false)
-          AND COALESCE((b.integration_policy->>'workflowVersion')::int,2)=3)
-          OR EXISTS (SELECT 1 FROM ${store.tasksTable} t JOIN ${candidatesTable} c ON c.integration_task_id=t.id
-            WHERE t.board_id=b.id AND c.state NOT IN ('merged','canceled'))`,
-    );
-    for (const row of result.rows) {
-      const repository = row.repository as TaskBoardRepositoryConfig | undefined;
-      if (!repository || repository.provider !== 'github' || !repository.baseBranch) return false;
-      await provider.getReference(repository, repository.baseBranch, String(row.owner_user_id));
-    }
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function createServerOwnedRepositoryValidator(controlledMirrorRoot: string | undefined) {

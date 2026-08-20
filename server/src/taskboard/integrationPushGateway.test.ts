@@ -6,6 +6,7 @@ import { IntegrationPushCapabilityService, type IntegrationPushCapabilityBinding
 import { InMemoryIntegrationPushCapabilityHost } from './integrationPushCapabilityMemoryHost.js';
 import {
   IntegrationPushGateway,
+  type IntegrationPushCredential,
   type IntegrationPushGitRunner,
 } from './integrationPushGateway.js';
 import {
@@ -61,8 +62,9 @@ class FakeGit implements IntegrationPushGitRunner {
   }
 }
 
-async function fixture(credential: { token: string; mode: 'github_app'; repositoryId: number; installationId: number } | null = {
-  token: TOKEN, mode: 'github_app', repositoryId: 123, installationId: 456,
+async function fixture(credential: IntegrationPushCredential | null = {
+  token: TOKEN, mode: 'github_app', repositoryId: 123, configuredRepositoryId: binding.repositoryId,
+  configuredRepositoryOwner: 'org', configuredRepositoryName: 'repo', installationId: 456,
 }) {
   const root = await mkdtemp(`${tmpdir()}/integration-push-test-`);
   const host = new InMemoryIntegrationPushCapabilityHost();
@@ -78,7 +80,9 @@ async function fixture(credential: { token: string; mode: 'github_app'; reposito
     resolveTarget: async (input) => active && input.tenantId === binding.tenantId
       && input.executionId === binding.executionId && input.candidateId === binding.candidateId
       ? { binding, ownerUserId: 'owner-1' } : undefined,
-    resolveRepository: async () => ({ worktreePath: root, remoteUrl: 'https://github.com/org/repo.git' }),
+    resolveRepository: async () => ({
+      worktreePath: root, remoteUrl: 'https://github.com/org/repo.git', repositoryOwner: 'org', repositoryName: 'repo',
+    }),
     resolveGithubToken: async () => credential ?? undefined,
     githubAppInstallationId: 456,
     operationService,
@@ -107,10 +111,33 @@ describe('IntegrationPushGateway', () => {
       .rejects.toMatchObject({ code: 'disabled', retryable: false });
   });
 
+  it('accepts a PAT only when its GitHub-probed repository identity matches the capability repository', async () => {
+    const accepted = await fixture({ token: TOKEN, mode: 'personal_access_token', repositoryId: 123,
+      configuredRepositoryId: binding.repositoryId, configuredRepositoryOwner: 'org', configuredRepositoryName: 'repo' });
+    try {
+      const issued = await accepted.issue();
+      await expect(accepted.push(issued.capabilityToken)).resolves.toMatchObject({ pushed: true });
+    } finally { await rm(accepted.root, { recursive: true, force: true }); }
+
+    for (const credential of [
+      { token: TOKEN, mode: 'personal_access_token' as const, repositoryId: 123,
+        configuredRepositoryId: 'github-id:999', configuredRepositoryOwner: 'org', configuredRepositoryName: 'repo' },
+      { token: TOKEN, mode: 'personal_access_token' as const, repositoryId: 123,
+        configuredRepositoryId: binding.repositoryId, configuredRepositoryOwner: 'other', configuredRepositoryName: 'repo' },
+    ]) {
+      const rejected = await fixture(credential);
+      try {
+        const issued = await rejected.issue();
+        await expect(rejected.push(issued.capabilityToken)).rejects.toMatchObject({ code: 'credential_unavailable' });
+      } finally { await rm(rejected.root, { recursive: true, force: true }); }
+    }
+  });
+
   it('fails closed when the GitHub App token is missing or bound to another installation', async () => {
     for (const credential of [
       null,
-      { token: TOKEN, mode: 'github_app' as const, repositoryId: 123, installationId: 999 },
+      { token: TOKEN, mode: 'github_app' as const, repositoryId: 123, configuredRepositoryId: binding.repositoryId,
+        configuredRepositoryOwner: 'org', configuredRepositoryName: 'repo', installationId: 999 },
     ]) {
       const f = await fixture(credential);
       try {

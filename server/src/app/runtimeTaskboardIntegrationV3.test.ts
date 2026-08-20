@@ -12,10 +12,10 @@ import type {
 } from '../../../shared/src/types/taskboard.js';
 import {
   buildRuntimeTaskboardIntegrationV3Options,
+  configureRuntimeIntegrationV3RepositoryAccess,
   createRuntimeIntegrationV3CleanupHost,
   resolveIntegrationV3RepositoryPaths,
   startIntegrationV3ActivationRetry,
-  validateConfiguredIntegrationV3Repositories,
 } from './runtimeTaskboardIntegrationV3.js';
 
 const repository: TaskBoardRepositoryConfig = {
@@ -25,6 +25,7 @@ const repository: TaskBoardRepositoryConfig = {
 const roots: string[] = [];
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -70,18 +71,33 @@ describe('Integration v3 activation retry', () => {
   });
 });
 
-describe('Integration v3 repository activation probe', () => {
-  it('requires GitHub App access to every configured or active v3 repository', async () => {
-    const pool = { query: vi.fn(async () => ({ rows: [{ repository, owner_user_id: 'owner-1' }] })) };
+describe('Integration v3 worker activation', () => {
+  it('does not enumerate tenant repositories or credentials before starting the global worker', () => {
+    const source = readFileSync(new URL('./runtimeTaskboardIntegrationV3.ts', import.meta.url), 'utf8');
+    const activationBlock = source.slice(source.indexOf('const activation = startIntegrationV3ActivationRetry'), source.indexOf('const heartbeatReady'));
+    expect(activationBlock).not.toContain('store.pool.query');
+    expect(activationBlock).not.toContain('resolveGithubToken');
+    expect(activationBlock).not.toContain('repositoryAccess');
+  });
+});
+
+describe('Integration v3 board repository probe wiring', () => {
+  it('combines repository-specific read with PAT push permission and full identity verification', async () => {
+    let probe: ((input: { tenantId: string; ownerUserId: string; repository: TaskBoardRepositoryConfig }) => Promise<boolean>) | undefined;
     const getReference = vi.fn(async () => ({ oid: 'a'.repeat(40), treeOid: 'b'.repeat(40) }));
-    await expect(validateConfiguredIntegrationV3Repositories({
-      pool, boardsTable: 'boards', tasksTable: 'tasks',
-    } as never, 'candidates', { getReference } as never)).resolves.toBe(true);
-    expect(getReference).toHaveBeenCalledWith(repository, 'main', 'owner-1');
-    getReference.mockRejectedValueOnce(new Error('GitHub App denied'));
-    await expect(validateConfiguredIntegrationV3Repositories({
-      pool, boardsTable: 'boards', tasksTable: 'tasks',
-    } as never, 'candidates', { getReference } as never)).resolves.toBe(false);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      id: 123, full_name: 'acme/widget', permissions: { push: true },
+    }), { status: 200 })));
+    configureRuntimeIntegrationV3RepositoryAccess({
+      store: { setIntegrationV3RepositoryProbe: (value: typeof probe) => { probe = value; } } as never,
+      taskboardRepositoryProvider: { getReference } as never,
+      control: { enabled: true, githubTokenMode: 'personal_access_token' },
+      resolvePersonalAccessToken: async () => 'pat',
+    });
+    await expect(probe?.({ tenantId: 'tenant-1', ownerUserId: 'owner-1', repository: {
+      ...repository, repositoryId: 'github-id:123',
+    } })).resolves.toBe(true);
+    expect(getReference).toHaveBeenCalledWith(expect.objectContaining({ owner: 'acme', name: 'widget' }), 'main', 'owner-1');
   });
 });
 
@@ -110,6 +126,20 @@ describe('buildRuntimeTaskboardIntegrationV3Options', () => {
     expect(dispatchBlock).not.toContain('validAttestation');
   });
 
+  it('uses the existing PAT resolver without requiring an App installation', async () => {
+    const personalAccessTokenResolver = vi.fn(async () => ({ token: 'pat', mode: 'personal_access_token' as const,
+      repositoryId: 123, configuredRepositoryId: 'github:acme/widget',
+      configuredRepositoryOwner: 'acme', configuredRepositoryName: 'widget' }));
+    const built = buildRuntimeTaskboardIntegrationV3Options({
+      ...base,
+      control: { enabled: true, controlledMirrorRoot: '/srv/mirrors', githubTokenMode: 'personal_access_token' },
+      personalAccessTokenResolver,
+    });
+    expect(built.githubAppInstallationId).toBeUndefined();
+    expect(built.githubTokenMode).toBe('personal_access_token');
+    expect(built.resolveGithubToken).toBe(personalAccessTokenResolver);
+  });
+
   it('accepts only an injected App provider and preserves repository/installation binding', async () => {
     const built = buildRuntimeTaskboardIntegrationV3Options({
       ...base, control,
@@ -120,9 +150,9 @@ describe('buildRuntimeTaskboardIntegrationV3Options', () => {
         }),
       },
     });
-    await expect(built.resolveGithubToken?.({ tenantId: 't', ownerUserId: 'u', repositoryId: 'github-id:123' }))
+    await expect(built.resolveGithubToken?.({ tenantId: 't', ownerUserId: 'u', repositoryId: 'github-id:123', repositoryOwner: 'acme', repositoryName: 'widget' }))
       .resolves.toMatchObject({ mode: 'github_app', repositoryId: 123, installationId: 456 });
-    await expect(built.resolveGithubToken?.({ tenantId: 't', ownerUserId: 'u', repositoryId: 'github:acme/widget' }))
+    await expect(built.resolveGithubToken?.({ tenantId: 't', ownerUserId: 'u', repositoryId: 'github:acme/widget', repositoryOwner: 'acme', repositoryName: 'widget' }))
       .resolves.toMatchObject({ mode: 'github_app', repositoryId: 123, installationId: 456 });
   });
 });

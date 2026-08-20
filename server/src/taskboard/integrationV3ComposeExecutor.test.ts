@@ -121,8 +121,13 @@ describe('DefaultIntegrationV3ComposeExecutor push replay', () => {
         enabled: true, allowedWorktreeRoots: [root],
         capabilityService: new IntegrationPushCapabilityService(new InMemoryIntegrationPushCapabilityHost()),
         resolveTarget: async () => undefined,
-        resolveRepository: async () => ({ worktreePath, remoteUrl: 'https://github.com/org/repo.git' }),
-        resolveGithubToken: async () => ({ token: 'secret', mode: 'github_app', repositoryId: 123, installationId: 456 }),
+        resolveRepository: async () => ({
+          worktreePath, remoteUrl: 'https://github.com/org/repo.git', repositoryOwner: 'org', repositoryName: 'repo',
+        }),
+        resolveGithubToken: async () => ({
+          token: 'secret', mode: 'github_app', repositoryId: 123, configuredRepositoryId: 'github-id:123',
+          configuredRepositoryOwner: 'org', configuredRepositoryName: 'repo', installationId: 456,
+        }),
         githubAppInstallationId: 456, operationService, runner,
       });
       let bound: string | undefined;

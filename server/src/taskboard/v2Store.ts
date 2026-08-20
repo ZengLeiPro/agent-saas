@@ -10,6 +10,7 @@ import type {
   TaskBoardIntegrationSource,
   TaskBoardMember,
   TaskBoardMemberPatchInput,
+  TaskBoardRepositoryConfig,
   TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import { rowToBoard } from './boardFields.js';
@@ -57,6 +58,12 @@ export interface TaskboardV2StoreOptions {
   resolutionsTable: string;
   remediationAttemptsTable: string;
   cancellationOutboxTable: string;
+  /** Optional for structural v2 hosts; PgTaskboardStore always supplies a fail-closed implementation. */
+  probeIntegrationV3Repository?(input: {
+    tenantId: string;
+    ownerUserId: string;
+    repository: TaskBoardRepositoryConfig;
+  }): Promise<void>;
 }
 
 const SORT_GAP = 1024;
@@ -151,7 +158,7 @@ export async function createIntegrationBatch(
     if (Number(board.version) !== input.expectedBoardVersion) {
       throw new TaskboardConflictError(rowToBoard(board, identity.ownerUserId));
     }
-    const repository = jsonObject(board.repository) as { repositoryId?: string; baseBranch?: string } | undefined;
+    const repository = jsonObject(board.repository) as TaskBoardRepositoryConfig | undefined;
     const policy = jsonObject(board.integration_policy) as {
       enabled?: boolean;
       revision?: string;
@@ -172,6 +179,13 @@ export async function createIntegrationBatch(
     if (workflowVersion === 3) await assertIntegrationV3RuntimeAvailable(client, options.integrationSourcesTable);
     if (workflowVersion === 3 && !repository.baseBranch) {
       throw new TaskboardValidationError('Workflow v3 requires a repository base branch', 'TASKBOARD_REPOSITORY_REQUIRED');
+    }
+    if (workflowVersion === 3) {
+      await options.probeIntegrationV3Repository?.({
+        tenantId: identity.tenantId,
+        ownerUserId: identity.ownerUserId,
+        repository,
+      });
     }
     if (source !== 'manual_batch' && policy.trigger?.mode !== (source === 'scheduled_policy' ? 'scheduled' : 'on_ready')) {
       throw new TaskboardValidationError('Integration trigger no longer matches board policy', 'TASKBOARD_POLICY_CHANGED');

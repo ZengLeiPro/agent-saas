@@ -174,6 +174,16 @@ describe('DefaultIntegrationV3ComposeExecutor push replay', () => {
       }
       expect(bound).toBe('77');
       const remoteAfterFirst = runner.current();
+      bound = undefined;
+      try {
+        await composer.compose(current(firstCandidate, baseOid, source));
+        throw new Error('expected reload');
+      } catch (error: any) {
+        if (!(error instanceof IntegrationV3CandidateReloadRequiredError)) {
+          throw new Error(`unexpected pre-bind replay error: ${error.message}; code=${error.code}; stderr=${error.command?.args?.join(' ')}`);
+        }
+      }
+      expect(bound).toBe('77');
       const secondCandidate = { ...firstCandidate, providerPullRequestId: '77', version: 2 };
       const result = await composer.compose(current(secondCandidate, baseOid, source));
       expect(result.headOid).toBe(remoteAfterFirst);

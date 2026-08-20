@@ -104,7 +104,7 @@ describe('syncRepositoryWorkspace', () => {
       },
       {
         cwd: REPOSITORY,
-        args: ['worktree', 'add', '-b', 'integration/42', '--', WORKTREE, 'refs/remotes/origin/main'],
+        args: ['worktree', 'add', '-b', 'integration/42', '--no-track', '--', WORKTREE, 'refs/remotes/origin/main'],
       },
     ]);
 

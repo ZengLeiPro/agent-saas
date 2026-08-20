@@ -1076,6 +1076,7 @@ jobs:
               OLD_WORKER_PID=$(cat "$OLD_WORKER_PIDFILE")
               systemctl disable "${WORKER_SERVICE}@${WORKER_ACTIVE}"
               install -m 0644 /dev/null "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
+              log "runtime worker drain restart guard armed: /run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
               if ! kill -USR2 "$OLD_WORKER_PID" 2>/dev/null; then
                 log "ERROR: failed to drain active runtime worker $WORKER_ACTIVE pid=$OLD_WORKER_PID"
                 rollback_idle_and_exit

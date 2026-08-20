@@ -1,3 +1,4 @@
+import { governanceResourcesApi } from './governanceApi';
 import { authFetch } from './authFetch';
 import type {
   AliyunConnectInput,
@@ -58,11 +59,23 @@ export async function fetchXConnection(): Promise<XConnectionResponse> {
 }
 
 export async function connectX(input: XConnectInput): Promise<XConnectionResponse> {
-  return jsonOrError(await authFetch('/api/connectors/x', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
-  }), 'X 连接失败');
+  const authToken = input.authToken.trim();
+  const ct0 = input.ct0.trim();
+  if (!authToken || !ct0) throw new Error('X 连接凭据不能为空');
+  await governanceResourcesApi.createCredential({
+    connectorId: 'x',
+    kind: 'personal_grant',
+    purpose: 'X bird CLI 用户凭据',
+    scopeSummary: { scopes: ['x:*'] },
+    secret: JSON.stringify({ authToken, ct0 }),
+  });
+  return {
+    connection: {
+      connectorId: 'x',
+      status: 'connected',
+      runtimeEnabled: true,
+    },
+  };
 }
 
 export async function disconnectX(): Promise<XConnectionResponse> {

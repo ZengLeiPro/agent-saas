@@ -35,7 +35,7 @@ export const connectorStatusSchema = z.object({
   expectedVersion: z.number().int().positive(), status: z.enum(['disabled', 'retired']),
 }).strict();
 export const credentialCreateSchema = z.object({
-  tenantId: z.string().min(2).max(64).optional(), connectorId: z.string().min(2).max(96),
+  tenantId: z.string().min(2).max(64).optional(), connectorId: z.string().min(1).max(96),
   kind: z.enum(['org_shared', 'personal_grant', 'infrastructure']), custodianUserId: z.string().min(1).max(128).optional(),
   alias: z.string().max(100).optional(), purpose: z.string().min(1).max(500),
   scopeSummary: credentialScopeSummarySchema.optional(), secret: z.string().min(1).max(10000),

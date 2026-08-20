@@ -143,7 +143,11 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     "/api/uploads",
     tenantFeatureGuard(runtime.tenantStore, "filesEnabled", "文件能力"),
   );
-  app.use("/api", createUploadRouter({ agentCwd, uploadManager: runtime.uploadManager }));
+  app.use("/api", createUploadRouter({
+    agentCwd,
+    uploadManager: runtime.uploadManager,
+    sessionCatalog: runtime.sessionCatalog,
+  }));
   app.use(
     "/api",
     createFileRouter({ agentCwd, userOverrides: config.agent.userOverrides }),

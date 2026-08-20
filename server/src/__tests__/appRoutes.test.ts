@@ -253,6 +253,7 @@ describe('registerRoutes', () => {
     expect(mocked.createUploadRouter).toHaveBeenCalledWith({
       agentCwd: '/agent',
       uploadManager: runtime.uploadManager,
+      sessionCatalog: runtime.sessionCatalog,
     });
     expect(mocked.createFileRouter).toHaveBeenCalledWith({
       agentCwd: '/agent',

@@ -11,6 +11,7 @@ import {
   UploadDrainingError,
   type UploadManager,
 } from '../uploads/manager.js';
+import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 
 /**
  * 修复 multer 中文文件名编码问题（浏览器发送 UTF-8，multer 默认用 latin1 解析）
@@ -27,6 +28,7 @@ export interface UploadRouterOptions {
   /** Agent 工作目录（绝对路径） */
   agentCwd: string;
   uploadManager: UploadManager;
+  sessionCatalog?: Pick<SessionCatalog, 'get'>;
 }
 
 interface UploadRequest extends Request {
@@ -58,8 +60,20 @@ function uploadErrorResponse(error: unknown): { status: number; message: string;
  * @returns Express Router
  */
 export function createUploadRouter(options: UploadRouterOptions): Router {
-  const { agentCwd, uploadManager } = options;
+  const { agentCwd, uploadManager, sessionCatalog } = options;
   const router = Router();
+
+  async function assertSessionOwnership(req: Request): Promise<string | undefined> {
+    const rawSessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId.trim() : '';
+    if (!rawSessionId) return undefined;
+    const user = req.user;
+    const session = await sessionCatalog?.get(rawSessionId);
+    if (!user || !session || session.userId !== user.sub
+      || (session.tenantId && user.tenantId && session.tenantId !== user.tenantId)) {
+      throw Object.assign(new Error('Upload session is not owned by the current user'), { statusCode: 403 });
+    }
+    return rawSessionId;
+  }
 
   // Per-request 动态解析 upload 目录
   const storage = multer.diskStorage({
@@ -93,8 +107,10 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
     const uploadReq = req as UploadRequest;
     const requestId = randomUUID();
     let completionStarted = false;
+    let sessionId: string | undefined;
 
     try {
+      sessionId = await assertSessionOwnership(req);
       const userCwd = resolveRequestUserCwd(agentCwd, req);
       ensureWorkspaceRuntimeLayout(userCwd);
       uploadReq.uploadPartialDir = await uploadManager.beginRequest(userCwd, requestId);
@@ -104,6 +120,10 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
       if (error instanceof UploadDrainingError) {
         res.setHeader('Retry-After', '10');
         res.status(503).json({ success: false, error: '服务正在更新，请稍后重试', code: 'SERVER_DRAINING' });
+        return;
+      }
+      if (error && typeof error === 'object' && 'statusCode' in error && error.statusCode === 403) {
+        res.status(403).json({ success: false, error: '上传会话不属于当前用户' });
         return;
       }
       uploadLogger.error('Failed to prepare upload:', error);
@@ -167,7 +187,7 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
             isImage: file.mimetype.startsWith('image/') && supportedImageTypes.has(file.mimetype),
             isVoiceUpload: file.mimetype.startsWith('audio/') || /\.(wav|mp3|m4a|amr|ogg)$/i.test(fixedOriginalName),
           };
-        }));
+        }), sessionId ? { sessionId } : {});
         const uploadedFiles = finalized.map((file) => file.info);
         uploadLogger.info(`Upload complete request=${requestId} files=${uploadedFiles.length} bytes=${uploadedFiles.reduce((sum, file) => sum + file.size, 0)} names=${uploadedFiles.map((file) => file.originalName).join(', ')}`);
         if (!res.writableEnded) res.json({ success: true, files: uploadedFiles });

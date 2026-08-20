@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 
-import { CronToolProvider } from '../agent/cronToolProvider.js';
+import { CronToolProvider, cronManageToolDescriptor } from '../agent/cronToolProvider.js';
 import { createExecutionAuditRecorder, type AuthorizedToolCall, type ToolCallContext } from '../agent/toolRuntime.js';
 import { CronService } from '../cron/service.js';
 import type { CronJob } from '../cron/types.js';
@@ -360,5 +360,17 @@ describe('CronToolProvider', () => {
     await expect(
       provider.invoke(call('CronManage', { action: 'update' }), context(OWNER)),
     ).rejects.toThrow(/需要提供 id/);
+  });
+
+  it('Taskboard 附件参数只允许当前会话 attachmentId，不接受 relativePath', () => {
+    const attachmentId = '11111111-1111-4111-8111-111111111111';
+    expect(() => cronManageToolDescriptor.schema.parse({
+      target: 'taskboard', action: 'comment.create', taskId: 'task-1',
+      attachments: [{ attachmentId }],
+    })).not.toThrow();
+    expect(() => cronManageToolDescriptor.schema.parse({
+      target: 'taskboard', action: 'comment.create', taskId: 'task-1',
+      attachments: [{ attachmentId, relativePath: 'uploads/evidence.png' }],
+    })).toThrow();
   });
 });

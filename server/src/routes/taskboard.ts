@@ -11,6 +11,8 @@ import {
   TASKBOARD_TASK_KINDS,
   TASKBOARD_VISIBILITIES,
   type TaskBoardAttachment,
+  type TaskBoardComment,
+  type TaskBoardTask,
   type TaskBoardUploadAttachment,
 } from '../../../shared/src/types/taskboard.js';
 import {
@@ -427,13 +429,34 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     if (input.dispatch && !options.executionService?.startDirectExecution) {
       throw new TaskboardExecutionUnavailableError();
     }
+    const identity = identityFrom(req);
     const attachments = await resolveRequestAttachments(options, req, input.attachments);
-    const { dispatch, ...taskInput } = input;
-    let task = await options.service!.createTask(identityFrom(req), req.params.boardId, {
-      ...taskInput,
-      ...(attachments ? { attachments } : {}),
-    });
+    const ownerUserId = attachments?.length
+      ? (await options.service!.getBoard(identity, req.params.boardId)).ownerUserId
+      : undefined;
     await markRequestAttachments(options, req, attachments);
+    const { dispatch } = input;
+    const taskInput = { ...input };
+    delete taskInput.dispatch;
+    delete taskInput.attachments;
+    let task = await options.service!.createTask(identity, req.params.boardId, {
+      ...taskInput,
+      ...(attachments !== undefined && attachments.length === 0 ? { attachments: [] } : {}),
+    });
+    let scopedAttachments: TaskBoardUploadAttachment[] | undefined;
+    try {
+      scopedAttachments = await materializeRequestAttachments(options, req, identity, task.id, ownerUserId, attachments);
+      if (scopedAttachments) {
+        task = await options.service!.updateTask(identity, task.id, {
+          attachments: scopedAttachments,
+          expectedVersion: task.version,
+        });
+      }
+    } catch (error) {
+      await rollbackCreatedTask(options.service!, identity, task, error, async () => {
+        await cleanupRequestAttachments(options, identity, task.id, ownerUserId, scopedAttachments);
+      });
+    }
     if (dispatch) {
       task = (await options.executionService!.startDirectExecution!(
         identityFrom(req),
@@ -472,15 +495,60 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     res.json(await options.service!.getTask(identityFrom(req), req.params.id));
   }));
 
+  router.get('/tasks/:id/attachments/:attachmentId', route(async (req, res) => {
+    if (!options.agentCwd || !options.uploadManager) throw new TaskboardExecutionUnavailableError();
+    const identity = identityFrom(req);
+    const task = await options.service!.getTask(identity, req.params.id);
+    let attachment = (task.attachments ?? []).find((item) => item.attachmentId === req.params.attachmentId);
+    if (!attachment) {
+      const comments = await options.service!.listComments(identity, task.id);
+      attachment = comments
+        .flatMap((comment) => comment.attachments ?? [])
+        .find((item) => item.attachmentId === req.params.attachmentId);
+    }
+    if (!attachment?.attachmentId) throw new TaskboardNotFoundError('Task attachment not found');
+    const board = await options.service!.getBoard(identity, task.boardId);
+    const ownerCwd = resolveTaskOwnerCwd(options, identity, board.ownerUserId);
+    let absolutePath: string;
+    try {
+      absolutePath = await options.uploadManager.resolveTaskAttachment(ownerCwd, task.id, attachment);
+    } catch {
+      throw new TaskboardNotFoundError('Task attachment not found');
+    }
+    const forceDownload = req.query.download === '1' || req.query.download === 'true';
+    const inline = attachment.mimeType.startsWith('image/')
+      || attachment.mimeType.startsWith('video/')
+      || attachment.mimeType === 'application/pdf';
+    res.setHeader('Content-Type', attachment.mimeType);
+    res.setHeader('Content-Disposition', `${forceDownload || !inline ? 'attachment' : 'inline'}; filename="${encodeURIComponent(attachment.originalName)}"`);
+    res.setHeader('Cache-Control', 'private, no-cache');
+    await sendTaskAttachment(res, absolutePath);
+  }));
+
   router.patch('/tasks/:id', route(async (req, res) => {
     const input = parseOrReply(taskPatchSchema, req.body, res, 'body');
     if (!input) return;
+    const identity = identityFrom(req);
+    const current = await options.service!.getTask(identity, req.params.id);
     const attachments = await resolveRequestAttachments(options, req, input.attachments);
-    const task = await options.service!.updateTask(identityFrom(req), req.params.id, {
-      ...input,
-      ...(attachments ? { attachments } : {}),
-    });
-    await markRequestAttachments(options, req, attachments);
+    const ownerUserId = attachments?.length
+      ? (await options.service!.getBoard(identity, current.boardId)).ownerUserId
+      : undefined;
+    const taskInput = { ...input };
+    delete taskInput.attachments;
+    const scopedAttachments = await materializeRequestAttachments(options, req, identity, current.id, ownerUserId, attachments);
+    const appendedAttachments = appendTaskAttachments(current.attachments, scopedAttachments);
+    let task: TaskBoardTask;
+    try {
+      await markRequestAttachments(options, req, attachments);
+      task = await options.service!.updateTask(identity, req.params.id, {
+        ...taskInput,
+        ...(appendedAttachments !== undefined ? { attachments: appendedAttachments } : {}),
+      });
+    } catch (error) {
+      await cleanupRequestAttachments(options, identity, current.id, ownerUserId, scopedAttachments, current.attachments);
+      throw error;
+    }
     res.json(task);
   }));
 
@@ -608,12 +676,24 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   router.post('/tasks/:id/comments', route(async (req, res) => {
     const input = parseOrReply(commentCreateSchema, req.body, res, 'body');
     if (!input) return;
+    const identity = identityFrom(req);
+    const current = await options.service!.getTask(identity, req.params.id);
     const attachments = await resolveRequestAttachments(options, req, input.attachments);
-    const comment = await options.service!.createComment(identityFrom(req), req.params.id, {
-      ...input,
-      ...(attachments ? { attachments } : {}),
-    });
-    await markRequestAttachments(options, req, attachments);
+    const ownerUserId = attachments?.length
+      ? (await options.service!.getBoard(identity, current.boardId)).ownerUserId
+      : undefined;
+    const scopedAttachments = await materializeRequestAttachments(options, req, identity, current.id, ownerUserId, attachments);
+    let comment: TaskBoardComment;
+    try {
+      await markRequestAttachments(options, req, attachments);
+      comment = await options.service!.createComment(identity, req.params.id, {
+        body: input.body,
+        ...(scopedAttachments !== undefined ? { attachments: scopedAttachments } : {}),
+      });
+    } catch (error) {
+      await cleanupRequestAttachments(options, identity, current.id, ownerUserId, scopedAttachments);
+      throw error;
+    }
     res.status(201).json(comment);
   }));
 
@@ -677,6 +757,32 @@ async function markRequestAttachments(
   await options.uploadManager!.markReferenced(requestUserCwd(options, req), attachments, {});
 }
 
+function appendTaskAttachments(
+  existing: readonly TaskBoardAttachment[] | undefined,
+  additions: readonly TaskBoardUploadAttachment[] | undefined,
+): TaskBoardUploadAttachment[] | undefined {
+  if (!additions?.length) return undefined;
+  return [...(existing ?? []), ...additions] as TaskBoardUploadAttachment[];
+}
+
+async function cleanupRequestAttachments(
+  options: TaskboardRouterOptions,
+  identity: TaskboardIdentity,
+  taskId: string,
+  ownerUserId: string | undefined,
+  attachments: readonly TaskBoardUploadAttachment[] | undefined,
+  existing: readonly TaskBoardAttachment[] = [],
+): Promise<void> {
+  if (!attachments?.length || !ownerUserId || !options.uploadManager?.cleanupTaskAttachments) return;
+  const existingKeys = new Set(existing.map((attachment) => `${attachment.attachmentId}:${attachment.relativePath}`));
+  const created = attachments.filter((attachment) => !existingKeys.has(`${attachment.attachmentId}:${attachment.relativePath}`));
+  if (created.length) {
+    await options.uploadManager.cleanupTaskAttachments(
+      resolveTaskOwnerCwd(options, identity, ownerUserId), taskId, created,
+    );
+  }
+}
+
 function requestUserCwd(options: TaskboardRouterOptions, req: Request): string {
   if (!options.agentCwd || !options.uploadManager || !req.user) {
     throw new TaskboardValidationError('Taskboard attachment upload unavailable');
@@ -687,6 +793,84 @@ function requestUserCwd(options: TaskboardRouterOptions, req: Request): string {
     role: req.user.role,
     tenantId: req.user.tenantId,
   });
+}
+
+function resolveTaskOwnerCwd(
+  options: TaskboardRouterOptions,
+  identity: TaskboardIdentity,
+  ownerUserId: string,
+): string {
+  if (!options.agentCwd) throw new TaskboardExecutionUnavailableError();
+  if (ownerUserId === identity.ownerUserId) {
+    return resolveUserCwd(options.agentCwd, {
+      id: identity.ownerUserId,
+      username: identity.username,
+      role: identity.userRole ?? 'user',
+      tenantId: identity.tenantId,
+    });
+  }
+  const owner = options.userStore?.findById(ownerUserId);
+  if (!owner || owner.tenantId !== identity.tenantId) {
+    throw new TaskboardNotFoundError('Task attachment owner not found');
+  }
+  return resolveUserCwd(options.agentCwd, {
+    id: owner.id,
+    username: owner.username,
+    role: owner.role,
+    tenantId: owner.tenantId,
+  });
+}
+
+async function materializeRequestAttachments(
+  options: TaskboardRouterOptions,
+  req: Request,
+  identity: TaskboardIdentity,
+  taskId: string,
+  ownerUserId: string | undefined,
+  attachments: TaskBoardUploadAttachment[] | undefined,
+): Promise<TaskBoardUploadAttachment[] | undefined> {
+  if (attachments === undefined || attachments.length === 0) return attachments;
+  if (!options.uploadManager || !ownerUserId) {
+    throw new TaskboardValidationError(
+      'Taskboard task-scope attachment service unavailable',
+      'TASKBOARD_ATTACHMENT_UNAVAILABLE',
+    );
+  }
+  try {
+    return await options.uploadManager.materializeTaskAttachments(
+      requestUserCwd(options, req),
+      resolveTaskOwnerCwd(options, identity, ownerUserId),
+      taskId,
+      attachments,
+    );
+  } catch (error) {
+    if (error instanceof TaskboardValidationError) throw error;
+    throw new TaskboardValidationError(
+      error instanceof Error ? error.message : 'Failed to materialize attachment',
+      'TASKBOARD_ATTACHMENT_MATERIALIZATION_FAILED',
+    );
+  }
+}
+
+async function rollbackCreatedTask(
+  service: TaskboardService,
+  identity: TaskboardIdentity,
+  task: TaskBoardTask,
+  error: unknown,
+  cleanup?: () => Promise<void>,
+): Promise<never> {
+  try {
+    await service.rollbackTaskCreation(identity, task.id, { expectedVersion: task.version });
+    await cleanup?.();
+  } catch (cleanupError) {
+    const originalMessage = error instanceof Error ? error.message : String(error);
+    const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+    throw new TaskboardValidationError(
+      `Attachment write failed and created task cleanup failed: ${originalMessage}; ${cleanupMessage}`,
+      'TASKBOARD_ATTACHMENT_CLEANUP_FAILED',
+    );
+  }
+  throw error;
 }
 
 function identityFactory(options: TaskboardRouterOptions): (req: Request) => TaskboardIdentity {
@@ -701,6 +885,15 @@ function identityFactory(options: TaskboardRouterOptions): (req: Request) => Tas
       userRole: user.role,
     };
   };
+}
+
+function sendTaskAttachment(res: Response, absolutePath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    res.sendFile(absolutePath, { acceptRanges: true }, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
 }
 
 function route(handler: (req: Request, res: Response) => Promise<void>): RequestHandler {

@@ -424,6 +424,8 @@ export interface TaskboardService {
   archiveTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask>;
   restoreTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask>;
   deleteTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask>;
+  /** 仅供附件写入失败补偿：创建者可回滚自己刚创建的任务，不暴露为 Agent action。 */
+  rollbackTaskCreation(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask>;
 
   listComments(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardComment[]>;
   searchComments(

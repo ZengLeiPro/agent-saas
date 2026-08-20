@@ -78,7 +78,7 @@ const cronManageSchema = z.object({
   description: z.string().max(20_000).optional(),
   prompt: z.string().max(20_000).optional(),
   visibility: z.enum(TASKBOARD_VISIBILITIES).optional(),
-  body: z.string().trim().min(1).max(20_000).optional().describe('评论正文。'),
+  body: z.string().trim().max(20_000).optional().describe('评论正文；comment.create 可仅提交附件。'),
   reason: z.string().trim().min(1).max(2_000).optional().describe('取消集成任务的原因。'),
   enabled: z.boolean().optional().describe('cron 是否启用。create 时默认 true。'),
   schedule: cronScheduleSchema.optional().describe('cron create 必填。kind=cron：{expr: "0 9 * * *", tz: "Asia/Shanghai"}；kind=every：{everyMs}；kind=at：{atMs: epoch 毫秒}。'),
@@ -108,6 +108,9 @@ const cronManageSchema = z.object({
   nextTaskId: z.string().min(1).max(128).optional(),
   page: z.number().int().min(1).optional(),
   pageSize: z.number().int().min(1).max(100).optional(),
+  attachments: z.array(z.object({
+    attachmentId: z.string().uuid(),
+  }).strict()).max(50).optional().describe('taskboard 会话附件；只提交当前会话已上传附件的 attachmentId，不要提交 relativePath；task.update/兼容 update 会追加到既有任务附件，不替换旧附件。'),
   dispatch: z.boolean().optional().describe('task.create 或兼容 create 时立即派发 work Agent。'),
   include: z.array(z.enum(['task', 'board', 'comments', 'executions', 'activity', 'integrationSources'] as const)).max(6).optional(),
   historyMode: z.enum(['auto', 'full', 'delta'] as const).optional(),
@@ -341,7 +344,10 @@ export class CronToolProvider implements ToolProvider {
           username: identity.username,
           ...(identity.realName ? { displayName: `${identity.realName} @${identity.username}` } : {}),
           ...(identity.role ? { userRole: identity.role } : {}),
-        }, input, execution ? { execution } : {});
+        }, input, {
+          ...(execution ? { execution } : {}),
+          ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+        });
         recordTaskboardAudit(context, identity, input, taskboardExecution, result);
         return { content: JSON.stringify(result, null, 2) };
       } catch (error) {

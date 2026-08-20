@@ -448,6 +448,20 @@ describe('Taskboard routes', () => {
         expect(ids).toEqual([attachmentId]);
         return [canonical];
       },
+      materializeTaskAttachments: async (
+        _sourceCwd: string,
+        _targetCwd: string,
+        taskId: string,
+        attachments: readonly (typeof canonical)[],
+      ) => attachments.map((attachment) => ({
+        ...attachment,
+        relativePath: `taskboard/attachments/${taskId}/${attachmentId}-现场图.png`,
+      })),
+      resolveTaskAttachment: async (_ownerCwd: string, taskId: string, attachment: typeof canonical) => {
+        expect(taskId).toBe(TASK.id);
+        expect(attachment.attachmentId).toBe(attachmentId);
+        return `${process.cwd()}/package.json`;
+      },
       markReferenced: async () => undefined,
     } as unknown as TaskboardRouterOptions['uploadManager'];
     const rig = await makeRig(service, USER, undefined, undefined, undefined, {
@@ -461,8 +475,140 @@ describe('Taskboard routes', () => {
     }));
 
     expect(response.status).toBe(201);
-    expect(received).toEqual({ body: '', attachments: [canonical] });
-    expect(await response.json()).toMatchObject({ attachments: [canonical] });
+    expect(received).toEqual({
+      body: '',
+      attachments: [expect.objectContaining({
+        attachmentId,
+        relativePath: `taskboard/attachments/${TASK.id}/${attachmentId}-现场图.png`,
+      })],
+    });
+    expect(await response.json()).toMatchObject({
+      attachments: [expect.objectContaining({ relativePath: `taskboard/attachments/${TASK.id}/${attachmentId}-现场图.png` })],
+    });
+
+    const taskWithAttachment = {
+      ...TASK,
+      attachments: [{ ...canonical, mimeType: 'application/json', isImage: false }],
+    };
+    service.getTask = async (identity, taskId) => {
+      if (identity.ownerUserId !== USER.sub) throw new TaskboardPermissionError();
+      expect(taskId).toBe(TASK.id);
+      return taskWithAttachment;
+    };
+    const download = await rig.request(
+      `/api/taskboard/tasks/${TASK.id}/attachments/${attachmentId}?download=1`,
+    );
+    expect(download.status).toBe(200);
+    expect(download.headers.get('content-type')).toContain('application/json');
+    expect(await download.text()).toContain('"name"');
+
+    service.getTask = async (identity, taskId) => {
+      if (identity.ownerUserId !== USER.sub) throw new TaskboardPermissionError();
+      expect(taskId).toBe(TASK.id);
+      return TASK;
+    };
+    service.listComments = async (identity, taskId) => {
+      if (identity.ownerUserId !== USER.sub) throw new TaskboardPermissionError();
+      expect(taskId).toBe(TASK.id);
+      return [{ ...COMMENT, attachments: [canonical] }];
+    };
+    const commentDownload = await rig.request(
+      `/api/taskboard/tasks/${TASK.id}/attachments/${attachmentId}`,
+    );
+    expect(commentDownload.status).toBe(200);
+    expect(commentDownload.headers.get('content-type')).toContain('image/png');
+
+    rig.setCaller({ ...USER, sub: 'user-2', username: 'bob' });
+    const forbidden = await rig.request(
+      `/api/taskboard/tasks/${TASK.id}/attachments/${attachmentId}`,
+    );
+    expect(forbidden.status).toBe(403);
+  });
+
+  it('HTTP 附件引用标记失败时不落库任务、更新或评论', async () => {
+    const service = makeService({ identities: [], taskFilters: [], createBoards: [] });
+    let created = 0;
+    let updated = 0;
+    let comments = 0;
+    service.createTask = async () => { created += 1; return TASK; };
+    service.updateTask = async () => { updated += 1; return TASK; };
+    service.createComment = async () => { comments += 1; return COMMENT; };
+    const attachmentId = '44444444-4444-4444-8444-444444444444';
+    const canonical = {
+      attachmentId,
+      originalName: '证据.txt',
+      relativePath: `uploads/${attachmentId}_证据.txt`,
+      size: 1,
+      mimeType: 'text/plain',
+      isImage: false,
+    };
+    const uploadManager = {
+      resolveAttachments: async () => [canonical],
+      materializeTaskAttachments: async (
+        _sourceCwd: string,
+        _targetCwd: string,
+        _taskId: string,
+        attachments: readonly (typeof canonical)[],
+      ) => attachments,
+      markReferenced: async () => { throw new Error('reference failed'); },
+    } as unknown as TaskboardRouterOptions['uploadManager'];
+    const rig = await makeRig(service, USER, undefined, undefined, undefined, {
+      agentCwd: '/agent', uploadManager,
+    });
+    const attachment = { ...canonical };
+
+    expect((await rig.request('/api/taskboard/boards/board-1/tasks', postJson({
+      title: '引用失败任务', attachments: [attachment],
+    }))).status).toBe(503);
+    expect((await rig.request('/api/taskboard/tasks/task-1', patchJson({
+      title: '引用失败更新', attachments: [attachment], expectedVersion: TASK.version,
+    }))).status).toBe(503);
+    expect((await rig.request('/api/taskboard/tasks/task-1/comments', postJson({
+      body: '', attachments: [attachment],
+    }))).status).toBe(503);
+    expect({ created, updated, comments }).toEqual({ created: 0, updated: 0, comments: 0 });
+  });
+
+  it('创建任务的附件复制失败时回滚已创建任务', async () => {
+    const service = makeService({ identities: [], taskFilters: [], createBoards: [] });
+    let rolledBackTask: { id: string; version: number } | undefined;
+    service.rollbackTaskCreation = async (_identity, taskId, input) => {
+      rolledBackTask = { id: taskId, version: input.expectedVersion };
+      return { ...TASK, id: taskId, version: input.expectedVersion + 1, deletedAt: TASK.updatedAt };
+    };
+    const attachmentId = '33333333-3333-4333-8333-333333333333';
+    const uploadManager = {
+      resolveAttachments: async () => [{
+        attachmentId,
+        originalName: '证据.txt',
+        relativePath: `uploads/${attachmentId}_证据.txt`,
+        size: 1,
+        mimeType: 'text/plain',
+        isImage: false,
+      }],
+      materializeTaskAttachments: async () => {
+        throw new Error('copy failed');
+      },
+      markReferenced: async () => undefined,
+    } as unknown as TaskboardRouterOptions['uploadManager'];
+    const rig = await makeRig(service, USER, undefined, undefined, undefined, {
+      agentCwd: '/agent',
+      uploadManager,
+    });
+    const response = await rig.request('/api/taskboard/boards/board-1/tasks', postJson({
+      title: '复制失败任务',
+      attachments: [{
+        attachmentId,
+        originalName: '伪造名称.exe',
+        relativePath: '../../etc/passwd',
+        size: 1,
+        mimeType: 'application/octet-stream',
+        isImage: false,
+      }],
+    }));
+
+    expect(response.status).toBe(400);
+    expect(rolledBackTask).toEqual({ id: TASK.id, version: TASK.version });
   });
 
   it('provides paged board/task search and comment update/delete endpoints', async () => {
@@ -589,6 +735,7 @@ function makeService(captured: Captured): TaskboardService {
     async archiveTask(identity) { remember(identity); return { ...TASK, version: 2, archivedAt: TASK.updatedAt }; },
     async restoreTask(identity) { remember(identity); return { ...TASK, version: 2 }; },
     async deleteTask(identity) { remember(identity); return { ...TASK, version: 2, deletedAt: TASK.updatedAt }; },
+    async rollbackTaskCreation(identity) { remember(identity); return { ...TASK, version: 2, deletedAt: TASK.updatedAt }; },
     async listComments(identity) { remember(identity); return [COMMENT]; },
     async searchComments(identity, _taskId, filter = {}) {
       remember(identity);

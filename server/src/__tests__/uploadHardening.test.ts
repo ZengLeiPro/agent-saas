@@ -1,11 +1,12 @@
 import express from 'express';
 import { request as httpRequest, type Server } from 'node:http';
-import { mkdtemp, readFile, readdir, stat, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, stat, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createUploadRouter } from '../routes/upload.js';
+import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 import {
   DEFAULT_STAGED_RETENTION_MS,
   MAX_UPLOAD_FILE_BYTES,
@@ -31,13 +32,21 @@ describe('attachment upload hardening', () => {
     return root;
   }
 
-  async function startUploadServer(root: string, manager: UploadManager): Promise<string> {
+  async function startUploadServer(
+    root: string,
+    manager: UploadManager,
+    sessionCatalog?: Pick<SessionCatalog, 'get'>,
+  ): Promise<string> {
     const app = express();
     app.use((req, _res, next) => {
       req.user = USER;
       next();
     });
-    app.use('/api', createUploadRouter({ agentCwd: root, uploadManager: manager }));
+    app.use('/api', createUploadRouter({
+      agentCwd: root,
+      uploadManager: manager,
+      sessionCatalog,
+    }));
     const server = await new Promise<Server>((resolve) => {
       const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
     });
@@ -50,6 +59,22 @@ describe('attachment upload hardening', () => {
   it('uses the approved 2 GiB per-file and 20-file per-request limits', () => {
     expect(MAX_UPLOAD_FILE_BYTES).toBe(2 * 1024 * 1024 * 1024);
     expect(MAX_UPLOAD_FILES_PER_REQUEST).toBe(20);
+  });
+
+  it('rejects an upload session that is not owned by the current user', async () => {
+    const root = await createRoot();
+    const manager = new UploadManager({ agentCwd: root });
+    const sessionCatalog = {
+      get: async (sessionId: string) => sessionId === 'other-session'
+        ? ({ userId: 'user-2', tenantId: USER.tenantId } as any)
+        : null,
+    } as unknown as Pick<SessionCatalog, 'get'>;
+    const baseUrl = await startUploadServer(root, manager, sessionCatalog);
+
+    const response = await fetch(`${baseUrl}/api/upload?sessionId=other-session`, { method: 'POST' });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: '上传会话不属于当前用户' });
+    expect(manager.getActiveUploadCount()).toBe(0);
   });
 
   it('moves completed files atomically out of .partial and keeps repeated names distinct', async () => {
@@ -77,6 +102,31 @@ describe('attachment upload hardening', () => {
     });
   });
 
+  it('多附件任务复制中途失败时清理本次已复制文件', async () => {
+    const root = await createRoot();
+    const manager = new UploadManager({ agentCwd: root });
+    const userCwd = join(root, USER.tenantId, USER.sub);
+    await mkdir(join(userCwd, 'uploads'), { recursive: true });
+    await writeFile(join(userCwd, 'uploads', 'first.txt'), 'a');
+    const first = {
+      attachmentId: '11111111-1111-4111-8111-111111111111',
+      originalName: 'first.txt', relativePath: 'uploads/first.txt', size: 1,
+      mimeType: 'text/plain', isImage: false,
+    } as const;
+    const second = { ...first, attachmentId: '22222222-2222-4222-8222-222222222222', relativePath: 'uploads/missing.txt' };
+
+    await expect(manager.materializeTaskAttachments(userCwd, userCwd, 'task-1', [first, second]))
+      .rejects.toThrow('ENOENT');
+    await expect(readdir(join(userCwd, 'taskboard', 'attachments', 'task-1'))).resolves.toEqual([]);
+    const materialized = await manager.materializeTaskAttachments(userCwd, userCwd, 'task-1', [first]);
+    const repeated = await manager.materializeTaskAttachments(userCwd, userCwd, 'task-1', [first]);
+    expect(repeated[0]!.relativePath).not.toBe(materialized[0]!.relativePath);
+    await manager.cleanupTaskAttachments(userCwd, 'task-1', repeated);
+    await expect(stat(join(userCwd, materialized[0]!.relativePath))).resolves.toBeTruthy();
+    await manager.cleanupTaskAttachments(userCwd, 'task-1', materialized);
+    await expect(readdir(join(userCwd, 'taskboard', 'attachments', 'task-1'))).resolves.toEqual([]);
+  });
+
   it('rejects a 21-file request and removes its partial request directory', async () => {
     const root = await createRoot();
     const manager = new UploadManager({ agentCwd: root });
@@ -94,6 +144,46 @@ describe('attachment upload hardening', () => {
     expect(manager.getActiveUploadCount()).toBe(0);
     const partialRoot = join(root, USER.tenantId, USER.sub, 'uploads', '.partial');
     expect(await readdir(partialRoot)).toEqual([]);
+  });
+
+  it('binds attachment IDs to the upload session and copies task-scope files', async () => {
+    const root = await createRoot();
+    const sourceCwd = join(root, 'tenant-a', 'user-1');
+    const targetCwd = join(root, 'tenant-a', 'board-owner');
+    const attachmentId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const manager = new UploadManager({ agentCwd: root });
+    const partialDir = await manager.beginRequest(sourceCwd, 'request-session');
+    const sourcePath = join(partialDir, `${attachmentId}_evidence.pdf`);
+    await writeFile(sourcePath, 'evidence');
+    const [finalized] = await manager.completeRequest('request-session', [{
+      attachmentId,
+      filename: `${attachmentId}_evidence.pdf`,
+      partialPath: sourcePath,
+      originalName: 'evidence.pdf',
+      size: 8,
+      mimeType: 'application/pdf',
+      isImage: false,
+      isVoiceUpload: false,
+    }], { sessionId: 'session-a' });
+
+    await expect(manager.resolveAttachments(sourceCwd, [attachmentId], { sessionId: 'session-a' }))
+      .resolves.toHaveLength(1);
+    await expect(manager.resolveAttachments(sourceCwd, [attachmentId], { sessionId: 'session-b' }))
+      .rejects.toThrow('does not belong to session');
+
+    const sourceAttachment = { ...finalized.info, attachmentId };
+    const [scoped] = await manager.materializeTaskAttachments(sourceCwd, targetCwd, 'task-1', [sourceAttachment]);
+    expect(scoped.relativePath).toBe(`taskboard/attachments/task-1/${attachmentId}-evidence.pdf`);
+    expect(await readFile(join(targetCwd, scoped.relativePath), 'utf8')).toBe('evidence');
+    await expect(manager.resolveTaskAttachment(targetCwd, 'task-1', scoped)).resolves.toBe(
+      join(targetCwd, scoped.relativePath),
+    );
+
+    await manager.markReferenced(sourceCwd, [sourceAttachment], { sessionId: 'session-a' });
+    await expect(manager.markReferenced(sourceCwd, [sourceAttachment], { sessionId: 'session-b' }))
+      .rejects.toThrow('already bound to another session');
+    const state = JSON.parse(await readFile(join(sourceCwd, 'uploads', '.state', `${attachmentId}.json`), 'utf8'));
+    expect(state.sessionIds).toEqual(['session-a']);
   });
 
   it('removes an aborted request from .partial and releases the drain counter', async () => {

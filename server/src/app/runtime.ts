@@ -33,7 +33,7 @@ import { PgTerminalEventOutboxRunStore, startTerminalEventOutboxDispatcher } fro
 import { PgHandStore } from '../runtime/handStore.js';
 import { PgSessionProjectionStore } from '../runtime/sessionProjectionStore.js';
 import { MemoryConsolidationEngine } from '../memory/consolidation/engine.js';
-import { TaskboardExecutionCoordinator, createTaskboardRuntimeOptions } from '../taskboard/executionService.js';
+import { TaskboardExecutionCoordinator, createTaskboardAttachmentAccess, createTaskboardRuntimeOptions } from '../taskboard/executionService.js';
 import { RetryableTaskboardService } from '../taskboard/retryableService.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import { configureTaskboardGithubRepositoryProvider } from '../taskboard/repositoryRuntime.js';
@@ -1702,7 +1702,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     orgAgentStore,
     tenantStore,
     environmentStore,
-    taskboard: { service: () => taskboardService, executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService },
+    taskboard: { service: () => taskboardService, executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
       const effectiveAgentId = agentId
         ?? (await agentResourceStore?.findPersonalByOwner(tenantId, userId))?.agentId;
@@ -3022,7 +3022,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     sharedDir,
     tenantSkillsRootDir,
     uploadsDir,
-    uploadManager,
+    uploadManager, sessionCatalog,
     channelManager,
     dispatchMetricsStore,
     dingtalkDeps,

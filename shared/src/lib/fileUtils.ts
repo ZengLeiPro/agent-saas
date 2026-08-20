@@ -41,6 +41,20 @@ export async function resolveImageSrc(src: string, owner?: string, referrer?: st
   return url;
 }
 
+/** 生成按任务权限校验的任务附件下载 URL，不依赖上传者工作区路径。 */
+export async function resolveTaskAttachmentSrc(
+  taskId: string,
+  attachmentId: string,
+  download = false,
+): Promise<string> {
+  const platform = getPlatform();
+  const token = await platform.secureStorage.getItem(TOKEN_KEY);
+  const baseUrl = platform.platformConfig.getBaseUrl();
+  const query = download ? '?download=1' : '';
+  const tokenQuery = token ? `${query ? '&' : '?'}token=${encodeURIComponent(token)}` : '';
+  return `${baseUrl}/api/taskboard/tasks/${encodeURIComponent(taskId)}/attachments/${encodeURIComponent(attachmentId)}${query}${tokenQuery}`;
+}
+
 /** 匹配 .md 文件路径：绝对路径(/...)、相对路径(./... ../...)、或简单相对路径(assets/...) */
 export const MD_PATH_RE = /^(?:\/|\.\.?\/|(?![a-zA-Z]+:\/\/)[a-zA-Z0-9_])[^\s]*\.md$/;
 

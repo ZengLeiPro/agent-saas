@@ -1,9 +1,78 @@
+import type { TaskBoardUploadAttachment } from '../../../shared/src/types/taskboard.js';
 import type { UserStore } from '../data/users/store.js';
 import type { EventStore } from '../runtime/types.js';
+import type { UploadManager } from '../uploads/manager.js';
+import { resolveUserCwd } from '../workspace/resolver.js';
+import type { TaskboardIdentity } from './types.js';
 import type { TaskboardSessionGroupingOptions } from './sessionGrouping.js';
 
 type ModelResolver = (ref: string, tenantId?: string) => unknown | null;
 type SessionGroupedEvent = Parameters<NonNullable<TaskboardSessionGroupingOptions['onSessionGrouped']>>[0];
+
+export function createTaskboardAttachmentAccess(params: {
+  agentCwd: string;
+  uploadManager: UploadManager;
+  userStore?: UserStore;
+}) {
+  const userCwd = (identity: TaskboardIdentity) => resolveUserCwd(params.agentCwd, {
+    id: identity.ownerUserId,
+    username: identity.username,
+    role: identity.userRole ?? 'user',
+    tenantId: identity.tenantId,
+  });
+  const ownerCwd = (identity: TaskboardIdentity, ownerUserId: string) => {
+    if (ownerUserId === identity.ownerUserId) return userCwd(identity);
+    const owner = params.userStore?.findById(ownerUserId);
+    if (!owner || owner.tenantId !== identity.tenantId) {
+      throw new Error('Task attachment owner is unavailable');
+    }
+    return resolveUserCwd(params.agentCwd, {
+      id: owner.id,
+      username: owner.username,
+      role: owner.role,
+      tenantId: owner.tenantId,
+    });
+  };
+  return {
+    resolveAttachments: async (
+      identity: TaskboardIdentity,
+      attachmentIds: readonly string[],
+      refs: { sessionId?: string } = {},
+    ): Promise<TaskBoardUploadAttachment[]> => {
+      const resolved = await params.uploadManager.resolveAttachments(userCwd(identity), attachmentIds, refs);
+      return resolved.map((attachment, index) => ({
+        ...attachment,
+        attachmentId: attachment.attachmentId ?? attachmentIds[index]!,
+      }));
+    },
+    materializeTaskAttachments: async (
+      identity: TaskboardIdentity,
+      taskId: string,
+      ownerUserId: string,
+      attachments: readonly TaskBoardUploadAttachment[],
+    ): Promise<TaskBoardUploadAttachment[]> => params.uploadManager.materializeTaskAttachments(
+      userCwd(identity),
+      ownerCwd(identity, ownerUserId),
+      taskId,
+      attachments,
+    ),
+    cleanupTaskAttachments: async (
+      identity: TaskboardIdentity,
+      taskId: string,
+      ownerUserId: string,
+      attachments: readonly TaskBoardUploadAttachment[],
+    ): Promise<void> => params.uploadManager.cleanupTaskAttachments(
+      ownerCwd(identity, ownerUserId), taskId, attachments,
+    ),
+    markAttachmentsReferenced: async (
+      identity: TaskboardIdentity,
+      attachments: readonly TaskBoardUploadAttachment[],
+      refs: { sessionId?: string },
+    ): Promise<void> => {
+      await params.uploadManager.markReferenced(userCwd(identity), attachments, refs);
+    },
+  };
+}
 
 export function createTaskboardRuntimeOptions(params: {
   modelResolver?: ModelResolver;

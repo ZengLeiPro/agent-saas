@@ -50,6 +50,7 @@ export interface FileUploadState {
 export function useFileUpload(
   /** current active tab -- drag/drop only works on "chat" tab */
   activeTab: string,
+  getSessionId?: () => string | null,
 ): FileUploadState {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -116,7 +117,9 @@ export function useFileUpload(
         formData.append("files", file);
       });
 
-      const response = await authFetch("/api/upload", {
+      const sessionId = getSessionId?.()?.trim();
+      const uploadUrl = sessionId ? `/api/upload?sessionId=${encodeURIComponent(sessionId)}` : "/api/upload";
+      const response = await authFetch(uploadUrl, {
         method: "POST",
         body: formData,
       });
@@ -156,7 +159,7 @@ export function useFileUpload(
       activeUploadsRef.current.delete(uploadId);
       refreshUploading();
     }
-  }, [refreshUploading]);
+  }, [getSessionId, refreshUploading]);
 
   const handleFileSelect = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const fileList = event.target.files;

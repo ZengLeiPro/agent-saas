@@ -157,7 +157,8 @@ export async function initializeTaskboardStore(store: PgTaskboardStore): Promise
       `CREATE INDEX IF NOT EXISTS ${store.tasksTable}_board_column_idx `
       + `ON ${store.tasksTable} (board_id, status, sort_order)`,
     );
-    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${store.tasksTable}_client_request_uidx ON ${store.tasksTable} (board_id, client_request_id) WHERE client_request_id IS NOT NULL`);
+    await client.query(`DROP INDEX IF EXISTS ${store.tasksTable}_client_request_uidx`);
+    await client.query(`CREATE UNIQUE INDEX ${store.tasksTable}_client_request_uidx ON ${store.tasksTable} (board_id, client_request_id) WHERE client_request_id IS NOT NULL AND deleted_at IS NULL`);
     await client.query(
       `CREATE INDEX IF NOT EXISTS ${store.tasksTable}_board_archived_idx `
       + `ON ${store.tasksTable} (board_id, archived_at, updated_at DESC)`,

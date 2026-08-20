@@ -4,6 +4,7 @@ import type {
   TaskBoard,
   TaskBoardExecution,
   TaskBoardTask,
+  TaskBoardUploadAttachment,
 } from '../../../shared/src/types/taskboard.js';
 import { invokeTaskboardAction } from '../agent/taskboardToolActions.js';
 import {
@@ -73,7 +74,7 @@ function rig() {
     listComments: vi.fn(async () => []),
     searchComments: vi.fn(async () => ({ items: [], page: 1, pageSize: 20, total: 0, hasMore: false })),
     createComment: vi.fn(async (_identity, taskId, input) => ({
-      id: 'comment-1', taskId, body: input.body, authorType: 'user' as const,
+      id: 'comment-1', taskId, body: input.body, attachments: input.attachments, authorType: 'user' as const,
       authorId: identity.ownerUserId, authorName: identity.username, version: 1,
       createdAt: board.createdAt, updatedAt: board.updatedAt,
     })),
@@ -99,8 +100,11 @@ function rig() {
     updateTask: vi.fn(async (_identity, _taskId, input) => ({
       ...task,
       ...(input.branch === null ? { branch: undefined } : input.branch ? { branch: input.branch } : {}),
+      ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
       version: task.version + 1,
     })),
+    deleteTask: vi.fn(async () => ({ ...task, deletedAt: task.updatedAt, version: task.version + 1 })),
+    rollbackTaskCreation: vi.fn(async () => ({ ...task, deletedAt: task.updatedAt, version: task.version + 1 })),
     moveTask: vi.fn(async (_identity, _taskId, input) => ({
       ...task,
       status: input.status,
@@ -441,5 +445,307 @@ describe('CronManage taskboard actions', () => {
       }),
     );
     expect(executionService.startDirectExecution).toHaveBeenCalledWith(identity, 'task-new', 1);
+  });
+
+  it('task/comment 写入只接收会话 attachmentId，并持久化服务端解析出的元数据', async () => {
+    const { service, options } = rig();
+    const attachmentId = '11111111-1111-4111-8111-111111111111';
+    const canonical: TaskBoardUploadAttachment = {
+      attachmentId,
+      originalName: '验收证据.png',
+      relativePath: `uploads/${attachmentId}_验收证据.png`,
+      size: 128,
+      mimeType: 'image/png',
+      isImage: true,
+    };
+    const resolveAttachments = vi.fn(async (
+      _identity: TaskboardIdentity,
+      ids: readonly string[],
+      refs?: { sessionId?: string },
+    ) => {
+      expect(ids).toEqual([attachmentId]);
+      expect(refs).toEqual({ sessionId: 'session-attachment-test' });
+      return [canonical];
+    });
+    const markAttachmentsReferenced = vi.fn(async (
+      _identity: TaskboardIdentity,
+      attachments: readonly TaskBoardUploadAttachment[],
+      refs: { sessionId?: string },
+    ) => {
+      expect(attachments).toEqual([canonical]);
+      expect(refs).toEqual({ sessionId: 'session-attachment-test' });
+    });
+    const materializeTaskAttachments = vi.fn(async (
+      _identity: TaskboardIdentity,
+      taskId: string,
+      ownerUserId: string,
+      attachments: readonly TaskBoardUploadAttachment[],
+    ) => {
+      expect(ownerUserId).toBe(identity.ownerUserId);
+      return attachments.map((attachment) => ({
+        ...attachment,
+        relativePath: `taskboard/attachments/${taskId}/${attachment.attachmentId}-验收证据.png`,
+      }));
+    });
+    const attachmentOptions = {
+      ...options,
+      resolveAttachments,
+      materializeTaskAttachments,
+      markAttachmentsReferenced,
+    };
+    const scope = { sessionId: 'session-attachment-test' };
+
+    await invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'task.create', boardId: board.id, title: '带证据任务',
+      attachments: [{ attachmentId }],
+    }, scope);
+    await invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'task.update', taskId: task.id, expectedVersion: task.version,
+      attachments: [{ attachmentId }],
+    }, scope);
+    await invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'comment.create', taskId: task.id, attachments: [{ attachmentId }],
+    }, scope);
+
+    expect(service.createTask).toHaveBeenCalledWith(identity, board.id, expect.objectContaining({
+      title: '带证据任务',
+    }));
+    expect(service.createTask).toHaveBeenCalledWith(identity, board.id, expect.not.objectContaining({
+      attachments: [canonical],
+    }));
+    expect(service.updateTask).toHaveBeenCalledWith(identity, task.id, expect.objectContaining({
+      attachments: [expect.objectContaining({ relativePath: `taskboard/attachments/${task.id}/${attachmentId}-验收证据.png` })],
+      expectedVersion: task.version,
+    }));
+    expect(service.createComment).toHaveBeenCalledWith(identity, task.id, {
+      body: '', attachments: [expect.objectContaining({ relativePath: `taskboard/attachments/${task.id}/${attachmentId}-验收证据.png` })],
+    });
+    expect(resolveAttachments).toHaveBeenCalledTimes(3);
+    expect(materializeTaskAttachments).toHaveBeenCalledTimes(3);
+    expect(markAttachmentsReferenced).toHaveBeenCalledTimes(3);
+  });
+
+  it('task.update 携带附件时追加既有任务附件而不是替换', async () => {
+    const { service, options } = rig();
+    const attachmentId = '33333333-3333-4333-8333-333333333333';
+    const existing = {
+      attachmentId: 'old-attachment',
+      originalName: '已有证据.png',
+      relativePath: 'taskboard/attachments/task-1/old-attachment-已有证据.png',
+      size: 2,
+      mimeType: 'image/png',
+      isImage: true,
+    };
+    const source = {
+      attachmentId,
+      originalName: '新增证据.txt',
+      relativePath: `uploads/${attachmentId}_新增证据.txt`,
+      size: 1,
+      mimeType: 'text/plain',
+      isImage: false,
+    };
+    const scoped = {
+      ...source,
+      relativePath: `taskboard/attachments/${task.id}/${attachmentId}-新增证据.txt`,
+    };
+    vi.mocked(service.getTask).mockResolvedValueOnce({ ...task, attachments: [existing] });
+    const attachmentOptions = {
+      ...options,
+      resolveAttachments: vi.fn(async () => [source]),
+      materializeTaskAttachments: vi.fn(async () => [scoped]),
+      markAttachmentsReferenced: vi.fn(async () => undefined),
+    };
+
+    await invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'task.update', taskId: task.id, expectedVersion: task.version,
+      attachments: [{ attachmentId }],
+    }, { sessionId: 'session-append' });
+
+    expect(service.updateTask).toHaveBeenCalledWith(identity, task.id, {
+      attachments: [existing, scoped], expectedVersion: task.version,
+    });
+  });
+
+  it('兼容 create/update 携带附件时先标记，失败不落库', async () => {
+    const { service, executionStore, options } = rig();
+    const attachmentId = '66666666-6666-4666-8666-666666666666';
+    const source = {
+      attachmentId,
+      originalName: '兼容证据.txt',
+      relativePath: `uploads/${attachmentId}_兼容证据.txt`,
+      size: 1,
+      mimeType: 'text/plain',
+      isImage: false,
+    };
+    const materializeTaskAttachments = vi.fn(async () => [source]);
+    const attachmentOptions = {
+      ...options,
+      resolveAttachments: vi.fn(async () => [source]),
+      materializeTaskAttachments,
+      markAttachmentsReferenced: vi.fn(async () => { throw new Error('reference failed'); }),
+    };
+    const scope = { ...executionScope('work'), sessionId: 'session-legacy' };
+
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'create', boardId: board.id, title: '兼容创建', attachments: [{ attachmentId }],
+    }, scope)).rejects.toThrow('reference failed');
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'update', id: task.id, attachments: [{ attachmentId }],
+    }, scope)).rejects.toThrow('reference failed');
+
+    expect(executionStore.createTaskFromExecution).not.toHaveBeenCalled();
+    expect(service.updateTask).not.toHaveBeenCalled();
+    expect(materializeTaskAttachments).toHaveBeenCalledTimes(1);
+  });
+
+  it('兼容 create/update 落库失败时清理任务作用域附件', async () => {
+    const { service, executionStore, options } = rig();
+    const attachmentId = '77777777-7777-4777-8777-777777777777';
+    const source = {
+      attachmentId,
+      originalName: '兼容失败.txt',
+      relativePath: `uploads/${attachmentId}_兼容失败.txt`,
+      size: 1,
+      mimeType: 'text/plain',
+      isImage: false,
+    };
+    const scoped = {
+      ...source,
+      relativePath: `taskboard/attachments/${task.id}/${attachmentId}-兼容失败.txt`,
+    };
+    const cleanupTaskAttachments = vi.fn(async () => undefined);
+    const attachmentOptions = {
+      ...options,
+      resolveAttachments: vi.fn(async () => [source]),
+      materializeTaskAttachments: vi.fn(async () => [scoped]),
+      cleanupTaskAttachments,
+      markAttachmentsReferenced: vi.fn(async () => undefined),
+    };
+    vi.mocked(service.updateTask).mockRejectedValueOnce(new Error('legacy update failed'));
+    const scope = { ...executionScope('work'), sessionId: 'session-legacy-cleanup' };
+
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'update', id: task.id, attachments: [{ attachmentId }],
+    }, scope)).rejects.toThrow('legacy update failed');
+    expect(cleanupTaskAttachments).toHaveBeenCalledWith(identity, task.id, identity.ownerUserId, [scoped]);
+
+    vi.mocked(service.updateTask).mockRejectedValueOnce(new Error('execution create update failed'));
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'create', boardId: board.id, title: '兼容复制失败', attachments: [{ attachmentId }],
+    }, scope)).rejects.toThrow('execution create update failed');
+    expect(executionStore.createTaskFromExecution).toHaveBeenCalledTimes(1);
+    expect(service.rollbackTaskCreation).toHaveBeenCalledWith(identity, 'task-new', { expectedVersion: 1 });
+    expect(cleanupTaskAttachments).toHaveBeenCalledWith(identity, 'task-new', identity.ownerUserId, [scoped]);
+  });
+
+  it('附件引用标记失败时不落库任务、更新或评论', async () => {
+    const { service, options } = rig();
+    const attachmentId = '44444444-4444-4444-8444-444444444444';
+    const cleanupTaskAttachments = vi.fn(async () => undefined);
+    const attachmentOptions = {
+      ...options,
+      resolveAttachments: vi.fn(async () => [{
+        attachmentId,
+        originalName: '证据.txt',
+        relativePath: `uploads/${attachmentId}_证据.txt`,
+        size: 1,
+        mimeType: 'text/plain',
+        isImage: false,
+      }]),
+      materializeTaskAttachments: vi.fn(async (
+        _identity: TaskboardIdentity,
+        _taskId: string,
+        _ownerUserId: string,
+        attachments: readonly TaskBoardUploadAttachment[],
+      ) => [...attachments]),
+      cleanupTaskAttachments,
+      markAttachmentsReferenced: vi.fn(async () => { throw new Error('reference failed'); }),
+    };
+    const scope = { sessionId: 'session-reference-failure' };
+
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'task.create', boardId: board.id, title: '引用失败任务', attachments: [{ attachmentId }],
+    }, scope)).rejects.toThrow('reference failed');
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'task.update', taskId: task.id, expectedVersion: task.version, attachments: [{ attachmentId }],
+    }, scope)).rejects.toThrow('reference failed');
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'comment.create', taskId: task.id, attachments: [{ attachmentId }],
+    }, scope)).rejects.toThrow('reference failed');
+    expect(service.createTask).not.toHaveBeenCalled();
+    expect(service.updateTask).not.toHaveBeenCalled();
+    expect(service.createComment).not.toHaveBeenCalled();
+    expect(cleanupTaskAttachments).toHaveBeenCalledTimes(2);
+  });
+
+  it('任务或评论落库失败时清理已复制的任务作用域附件', async () => {
+    const { service, options } = rig();
+    const attachmentId = '55555555-5555-4555-8555-555555555555';
+    const source = {
+      attachmentId,
+      originalName: '证据.txt',
+      relativePath: `uploads/${attachmentId}_证据.txt`,
+      size: 1,
+      mimeType: 'text/plain',
+      isImage: false,
+    };
+    const scoped = { ...source, relativePath: `taskboard/attachments/${task.id}/${attachmentId}-证据.txt` };
+    const cleanupTaskAttachments = vi.fn(async () => undefined);
+    const attachmentOptions = {
+      ...options,
+      resolveAttachments: vi.fn(async () => [source]),
+      materializeTaskAttachments: vi.fn(async () => [scoped]),
+      markAttachmentsReferenced: vi.fn(async () => undefined),
+      cleanupTaskAttachments,
+    };
+    vi.mocked(service.updateTask).mockRejectedValueOnce(new Error('task write failed'));
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'task.update', taskId: task.id, expectedVersion: task.version,
+      attachments: [{ attachmentId }],
+    }, { sessionId: 'session-cleanup' })).rejects.toThrow('task write failed');
+    vi.mocked(service.createComment).mockRejectedValueOnce(new Error('comment write failed'));
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'comment.create', taskId: task.id, attachments: [{ attachmentId }],
+    }, { sessionId: 'session-cleanup' })).rejects.toThrow('comment write failed');
+    expect(cleanupTaskAttachments).toHaveBeenCalledTimes(2);
+    expect(cleanupTaskAttachments).toHaveBeenCalledWith(identity, task.id, identity.ownerUserId, [scoped]);
+  });
+
+  it('附件写入缺少会话上下文时拒绝，不向 resolver 传空 scope', async () => {
+    const { options } = rig();
+    const resolveAttachments = vi.fn(async () => [] as TaskBoardUploadAttachment[]);
+    const attachmentOptions = { ...options, resolveAttachments };
+
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'comment.create', taskId: task.id,
+      attachments: [{ attachmentId: '11111111-1111-4111-8111-111111111111' }],
+    })).rejects.toMatchObject({ code: 'TASKBOARD_ATTACHMENT_SESSION_REQUIRED' });
+    expect(resolveAttachments).not.toHaveBeenCalled();
+  });
+
+  it('task.create 附件复制失败时删除已创建任务', async () => {
+    const { service, options } = rig();
+    const attachmentId = '22222222-2222-4222-8222-222222222222';
+    const attachmentOptions = {
+      ...options,
+      resolveAttachments: vi.fn(async () => [{
+        attachmentId,
+        originalName: '证据.txt',
+        relativePath: `uploads/${attachmentId}_证据.txt`,
+        size: 1,
+        mimeType: 'text/plain',
+        isImage: false,
+      }]),
+      materializeTaskAttachments: vi.fn(async () => {
+        throw new Error('copy failed');
+      }),
+      markAttachmentsReferenced: vi.fn(async () => undefined),
+    };
+
+    await expect(invokeTaskboardAction(attachmentOptions, identity, {
+      action: 'task.create', boardId: board.id, title: '复制失败任务',
+      attachments: [{ attachmentId }],
+    }, { sessionId: 'session-copy-failure' })).rejects.toThrow('copy failed');
+    expect(service.rollbackTaskCreation).toHaveBeenCalledWith(identity, 'task-new', { expectedVersion: 1 });
   });
 });

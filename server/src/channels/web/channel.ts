@@ -104,6 +104,7 @@ import {
 } from './channelRuntimeHelpers.js';
 
 import { handleWebChannelEvents, type WebChannelEventTitleContext } from './channelEventHandler.js';
+import { bindChatAttachments } from './attachmentBinding.js';
 
 import { deriveSubmissionSessionId, resolveAuthoritativeSubmissionState } from './channelSubmissionHelpers.js';
 import type { ModelResolver, WebChannelRuntimeConfig } from './channelConfig.js';
@@ -2970,13 +2971,12 @@ export class WebChannel implements BaseChannel {
         `${user?.tenantId ?? 'tenant'}|${user?.sub ?? 'anon'}`,
         clientMsgId,
       );
-      const enqueueRunId = `${Date.now()}-${randomUUID()}`;
-      const streamId = String(++this.streamIdCounter);
+      if (attachments?.length && this.config.uploadManager && this.config.agentCwd
+        && !(await bindChatAttachments(this.config.uploadManager, this.config.agentCwd, userIdentity, attachments, enqueueSessionId, clientMsgId))) { this.idempotencySet(user?.sub, clientMsgId, 'failed', ''); this.sendChatRejected(ws, clientMsgId, 'attachment_state_failed', '附件会话归属保存失败，请重试'); return; }
+      const enqueueRunId = `${Date.now()}-${randomUUID()}`; const streamId = String(++this.streamIdCounter);
       let sessionPersisted = false;
-      let titleOwnerId = userIdentity?.id;
-      let durableAccepted = false;
-      let durableAcceptedSessionId = enqueueSessionId;
-      let durableAcceptedRunId = enqueueRunId;
+      let titleOwnerId = userIdentity?.id; let durableAccepted = false;
+      let durableAcceptedSessionId = enqueueSessionId; let durableAcceptedRunId = enqueueRunId;
       let durableAcceptedStreamId = streamId;
       let durableAcceptedDeliveryMode: 'queue' | 'steer' = deliveryMode;
       let durableAcceptedQueuedTargetRunId: string | undefined;

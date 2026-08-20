@@ -101,6 +101,9 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     await workerHost(claimQuery).claimRequest(30_000);
     const claim = String(claimQuery.mock.calls[0]![0]);
     expect(claim).toContain("o.payload->>'subjectDigest'");
+    expect(claim).toContain('LEFT JOIN revisions r');
+    expect(claim).toContain("COALESCE(r.subject_digest,'')");
+    expect(claim).not.toContain('c.subject_digest');
     expect(claim).toContain('o.work_round=c.work_round');
     expect(claim).toContain("o.payload->>'sourceSetDigest'");
     expect(claim).toContain("o.kind='work' AND c.state='working'");
@@ -131,7 +134,7 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
   });
 
   it('binds work completion to the request execution and canonical ready_for_review resolution', async () => {
-    const query = vi.fn(async (sql: string) => sql.includes('SELECT b.repository')
+    const query = vi.fn(async (sql: string, _values?: unknown[]) => sql.includes('SELECT b.repository')
       ? { rows: [{ repository: { provider: 'github', repositoryId: 'github:acme/app', owner: 'acme', name: 'app', baseBranch: 'main' }, owner_user_id: 'owner', tenant_id: 'tenant' }] }
       : { rows: [] });
     const host = new PostgresIntegrationV3ComposeHost({
@@ -142,13 +145,16 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     await host.resolveContext({ candidate: {
       id: 'candidate-1', integrationTaskId: 'integration-1', repositoryId: 'github:acme/app', baseBranch: 'main', branch: 'integration/1',
       state: 'working', currentRevision: 2, workRound: 3, version: 4, workflowEpoch: '4', laneEpoch: '9', policyRevision: 'p1', mergeMethod: 'squash', policySnapshot: {}, createdAt: '', updatedAt: '',
-    }, revision: {} } as never);
+    }, revision: { subjectDigest: 'subject-2' } } as never);
     const sql = String(query.mock.calls[0]![0]);
     expect(sql).toContain("JOIN executions e ON e.id=o.payload->>'executionId'");
     expect(sql).toContain('JOIN resolutions r ON r.execution_id=e.id');
     expect(sql).toContain("e.status='succeeded' AND r.outcome='ready_for_review'");
     expect(sql).toContain('r.historical=false AND r.applied=true');
     expect(sql).toContain('o.work_round=c.work_round');
+    expect(sql).toContain("o.payload->>'subjectDigest','')=$2");
+    expect(sql).not.toContain('c.subject_digest');
+    expect(query.mock.calls[0]![1]).toEqual(['candidate-1', 'subject-2']);
   });
 
   it('persists failed cleanup receipts and requeues them with bounded backoff', async () => {

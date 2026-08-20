@@ -121,6 +121,22 @@ describe('IntegrationV3Worker pure mock flow', () => {
     expect(releases.at(-1)).toEqual({ error: 'temporary workspace outage', retryable: true });
   });
 
+  it('reports pending, successful, and failed worker ticks to the activation heartbeat', async () => {
+    const host = new MemoryHost();
+    host.claimCandidate = async () => undefined;
+    const worker = new IntegrationV3Worker({
+      host,
+      engine: { execute: vi.fn() } as unknown as IntegrationEngineV3,
+      composer: { compose: vi.fn(), refreshAfterWork: vi.fn() },
+    });
+    expect(worker.health()).toEqual({ healthy: false, reason: 'worker_tick_pending' });
+    await worker.runOnce();
+    expect(worker.health()).toEqual({ healthy: true });
+    host.claimRequest = async () => { throw new Error('schema mismatch'); };
+    await expect(worker.runOnce()).rejects.toThrow('schema mismatch');
+    expect(worker.health()).toEqual({ healthy: false, reason: 'worker_tick_failed' });
+  });
+
   it('recovers a succeeded merge operation after restart without resending merge', async () => {
     const host = new MemoryHost();
     host.current.candidate = candidate('merging');

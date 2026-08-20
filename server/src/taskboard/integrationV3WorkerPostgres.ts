@@ -204,6 +204,8 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
       `WITH claim AS (
          SELECT o.id FROM ${this.options.requestsOutboxTable} o
          JOIN ${this.options.candidatesTable} c ON c.id=o.candidate_id
+         LEFT JOIN ${this.options.revisionsTable} r
+           ON r.candidate_id=c.id AND r.revision=c.current_revision
         WHERE o.status IN ('pending','processing') AND o.available_at<=now()
           AND (o.status='pending' OR o.lease_expires_at<now())
           AND o.candidate_revision=c.current_revision
@@ -213,9 +215,9 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
           AND ((o.kind='work' AND c.state='working'
                 AND o.work_round=c.work_round
                 AND COALESCE(o.payload->>'workRound','')=c.work_round::text
-                AND COALESCE(o.payload->>'subjectDigest','')=COALESCE(c.subject_digest,''))
+                AND COALESCE(o.payload->>'subjectDigest','')=COALESCE(r.subject_digest,''))
             OR (o.kind='review' AND c.state='in_review'
-                AND COALESCE(o.payload->>'subjectDigest','')=COALESCE(c.subject_digest,'')
+                AND COALESCE(o.payload->>'subjectDigest','')=COALESCE(r.subject_digest,'')
                 AND COALESCE(o.payload->>'sourceSetDigest','')=COALESCE(c.source_set_digest,''))
             OR o.kind='workspace_sync' OR (o.kind='cleanup' AND c.state IN ('merged','canceled')))
         ORDER BY o.created_at,o.id FOR UPDATE OF o SKIP LOCKED LIMIT 1
@@ -336,13 +338,13 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
             WHERE o.candidate_id=c.id AND o.candidate_revision=c.current_revision
               AND o.kind='work' AND o.work_round=c.work_round
               AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch
-              AND COALESCE(o.payload->>'subjectDigest','')=COALESCE(c.subject_digest,'')
+              AND COALESCE(o.payload->>'subjectDigest','')=$2
               AND e.task_id=c.integration_task_id AND e.purpose='work'
               AND e.status='succeeded' AND r.outcome='ready_for_review'
               AND r.historical=false AND r.applied=true
             ORDER BY r.resolved_at DESC,o.updated_at DESC LIMIT 1
          ) work ON true
-        WHERE c.id=$1`, [current.candidate.id]);
+        WHERE c.id=$1`, [current.candidate.id, current.revision.subjectDigest]);
     const row = result.rows[0];
     const repository = record(row?.repository) as unknown as TaskBoardRepositoryConfig;
     if (!row || repository.provider !== 'github' || repository.repositoryId !== current.candidate.repositoryId) throw new Error('Repository provider is unsupported or unknown');

@@ -65,6 +65,7 @@ describe('safe server Git runner', () => {
     const args = safeServerGitArgs(['status']).join(' ');
     expect(args).toContain('protocol.ext.allow=never');
     expect(args).toContain('core.fsmonitor=false');
+    expect(args).toContain('core.quotePath=false');
     expect(args).toContain('http.sslVerify=true');
     expect(args).toContain('http.proxy=');
     expect(safeServerGitEnvironment()).toMatchObject({

@@ -7,6 +7,7 @@ import type { RepositoryWorkspaceGitCommand, RepositoryWorkspaceGitResult } from
 const SAFE_GIT_CONFIG = [
   'core.hooksPath=/dev/null',
   'core.fsmonitor=false',
+  'core.quotePath=false',
   'user.name=Integration Worker',
   'user.email=integration-worker@localhost',
   'credential.helper=',

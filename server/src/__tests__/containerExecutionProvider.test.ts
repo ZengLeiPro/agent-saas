@@ -360,6 +360,25 @@ describeIfDocker('ContainerExecutionProvider', () => {
     expect(listContainers(prefix)).toBe('');
   });
 
+  it('preserves captured shell output and metadata on timeout', async () => {
+    const response = await invoke(provider, workspace(root), 'Shell', {
+      command: "printf 'before-timeout'; sleep 10",
+      timeoutMs: 700,
+    });
+
+    expect(response.status).toBe('error');
+    if (response.status === 'error') {
+      expect(response.error).toContain('timed out');
+      expect(response.error).toContain('before-timeout');
+      expect(response.metadata).toMatchObject({ timedOut: true, stdoutBytes: 14 });
+      const outputFiles = response.metadata?.outputFiles as Array<{ path: string }> | undefined;
+      expect(outputFiles).toHaveLength(1);
+      expect(readFileSync(join(root, outputFiles![0]!.path), 'utf-8')).toBe('before-timeout');
+    }
+    await sleep(1_000);
+    expect(listContainers(prefix)).toBe('');
+  });
+
   it('returns truncated shell output without failing at the model-visible budget', async () => {
     const result = await invokeOrThrow(provider, workspace(root), 'Shell', {
       command: 'node -e "process.stdout.write(\\\"x\\\".repeat(70 * 1024))"',

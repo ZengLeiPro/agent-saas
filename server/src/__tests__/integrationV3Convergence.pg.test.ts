@@ -158,6 +158,9 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
     await store.cancelIntegrationTask(identity, seed.taskId, {
       expectedVersion: task.version, reason: 'operator canceled',
     });
+    await pool.query(
+      `UPDATE ${seed.tables.candidatesTable} SET worker_status='failed' WHERE id<>$1`, [seed.candidateId],
+    );
     const options = pgOptions(seed);
     const host = new PostgresIntegrationV3WorkerHost({
       ...options, dispatchAgent: async () => ({ executionId: 'unused' }), syncWorkspace: async () => undefined,

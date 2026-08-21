@@ -232,7 +232,19 @@ export class IntegrationEngineV3 {
   }
 
   private async observeChecks(current: IntegrationEngineV3Current, dispatchReview: boolean): Promise<IntegrationEngineV3Result> {
-    const facts = await this.readAndValidateFacts(current);
+    const revision = requireRevision(current);
+    const facts = await this.readProviderFacts(current);
+    if (facts.repositoryId !== current.candidate.repositoryId
+      || facts.providerPullRequestId !== requiredPr(current.candidate)
+      || facts.baseBranch !== current.candidate.baseBranch
+      || facts.headOid !== revision.headOid
+      || facts.treeOid !== revision.treeOid
+      || facts.state !== 'open') {
+      throw failClosed('Provider subject drifted from the candidate revision', 'TASKBOARD_INTEGRATION_SUBJECT_DRIFT');
+    }
+    if (facts.baseOid !== revision.baseOid) {
+      return applied(await this.transition(current, 'needs_work', 'Provider base advanced; candidate refresh required'));
+    }
     if (!facts.requiredChecksKnown || facts.unsupportedRules.length || facts.mergeQueueRequired) {
       const reason = `Required GitHub gates are not authoritative or supported: ${facts.unsupportedRules.join(',') || 'unknown'}`;
       return applied(await this.transition(current, 'blocked', reason));
@@ -242,7 +254,6 @@ export class IntegrationEngineV3 {
       return { candidate: current.candidate, status: 'waiting' };
     }
     if (!dispatchReview) return { candidate: current.candidate, status: 'waiting' };
-    const revision = requireRevision(current);
     const request = await this.options.requests.requestReview({ candidateId: current.candidate.id, revision: revision.revision, subjectDigest: revision.subjectDigest, sourceSetDigest: revision.sourceSetDigest });
     const candidate = await this.transition(current, 'in_review');
     return { candidate, status: 'requested', requestId: request.requestId };
@@ -287,12 +298,22 @@ export class IntegrationEngineV3 {
     return { candidate, status: 'applied', operation };
   }
 
+  private async readProviderFacts(current: IntegrationEngineV3Current): Promise<IntegrationEngineV3ProviderFacts> {
+    const repository = await this.repository(current.candidate.repositoryId);
+    try {
+      return await this.options.provider.readFacts(
+        repository,
+        requiredPr(current.candidate),
+        this.options.credentialOwnerId,
+      );
+    } catch (error) {
+      throw failClosed(`Provider facts are unknown: ${errorMessage(error)}`, 'TASKBOARD_INTEGRATION_PROVIDER_FACTS_UNKNOWN');
+    }
+  }
+
   private async readAndValidateFacts(current: IntegrationEngineV3Current, allowMerged = false): Promise<IntegrationEngineV3ProviderFacts> {
     const revision = requireRevision(current);
-    const repository = await this.repository(current.candidate.repositoryId);
-    let facts: IntegrationEngineV3ProviderFacts;
-    try { facts = await this.options.provider.readFacts(repository, requiredPr(current.candidate), this.options.credentialOwnerId); }
-    catch (error) { throw failClosed(`Provider facts are unknown: ${errorMessage(error)}`, 'TASKBOARD_INTEGRATION_PROVIDER_FACTS_UNKNOWN'); }
+    const facts = await this.readProviderFacts(current);
     if (facts.repositoryId !== current.candidate.repositoryId || facts.providerPullRequestId !== requiredPr(current.candidate)
       || facts.baseBranch !== current.candidate.baseBranch || facts.baseOid !== revision.baseOid
       || facts.headOid !== revision.headOid || facts.treeOid !== revision.treeOid

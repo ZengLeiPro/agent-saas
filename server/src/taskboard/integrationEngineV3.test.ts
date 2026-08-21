@@ -110,6 +110,30 @@ describe('IntegrationEngineV3', () => {
     expect(requests.requestReview).not.toHaveBeenCalled();
   });
 
+  it('turns a current-base advance into a recoverable work round instead of a permanent worker failure', async () => {
+    const value = candidate('waiting_checks');
+    const { engine, candidates, requests } = setup('waiting_checks', facts({ baseOid: 'new-main' }));
+
+    const result = await engine.execute({ type: 'request_review', candidateId: value.id, expected: expected(value) });
+
+    expect(result.status).toBe('applied');
+    expect(candidates.value).toMatchObject({
+      state: 'needs_work',
+      lastError: 'Provider base advanced; candidate refresh required',
+    });
+    expect(requests.requestReview).not.toHaveBeenCalled();
+  });
+
+  it('still fails closed for provider head drift', async () => {
+    const value = candidate('waiting_checks');
+    const { engine, requests } = setup('waiting_checks', facts({ headOid: 'unexpected-head' }));
+
+    await expect(engine.execute({
+      type: 'request_review', candidateId: value.id, expected: expected(value),
+    })).rejects.toMatchObject({ code: 'TASKBOARD_INTEGRATION_SUBJECT_DRIFT' });
+    expect(requests.requestReview).not.toHaveBeenCalled();
+  });
+
   it('never resends an unknown merge and commits only after authoritative reconciliation', async () => {
     const value = candidate('approved');
     const context = setup('approved');

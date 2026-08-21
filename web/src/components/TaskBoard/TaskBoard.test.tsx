@@ -385,6 +385,39 @@ describe("TaskBoardView", () => {
     expect(restoredDoneColumn.className).toContain("w-10");
   });
 
+  it("已取消列默认显示为竖排窄轨，展开状态按看板记忆", async () => {
+    const user = userEvent.setup();
+    const canceledTask = {
+      ...taskOne,
+      id: "canceled-task",
+      identifier: "TASK-CANCELED",
+      status: "canceled" as const,
+    };
+    mocks.tasks = [canceledTask];
+    const view = render(<TaskBoardView />);
+
+    const canceledColumn = await screen.findByTestId("taskboard-canceled-column");
+    expect(canceledColumn.hasAttribute("open")).toBe(false);
+    expect(canceledColumn.className).toContain("w-10");
+    expect(canceledColumn.className).not.toContain("absolute");
+    expect(within(canceledColumn).getByText("已取消").className).toContain("writing-mode:vertical-rl");
+
+    await user.click(screen.getByTitle("展开已取消列"));
+    await waitFor(() => expect(canceledColumn.hasAttribute("open")).toBe(true));
+    expect(canceledColumn.className).toContain("w-72");
+    expect(within(canceledColumn).getByTestId("task-card-canceled-task")).toBeTruthy();
+    expect(window.localStorage.getItem("taskboard:board-1:canceled-collapsed")).toBe("false");
+
+    view.unmount();
+    render(<TaskBoardView />);
+    const restoredCanceledColumn = await screen.findByTestId("taskboard-canceled-column");
+    expect(restoredCanceledColumn.hasAttribute("open")).toBe(true);
+
+    await user.click(screen.getByTitle("折叠已取消列"));
+    await waitFor(() => expect(restoredCanceledColumn.hasAttribute("open")).toBe(false));
+    expect(restoredCanceledColumn.className).toContain("w-10");
+  });
+
   it("移动端状态 Select 只展示所选状态的单列任务", async () => {
     const user = userEvent.setup();
     render(<TaskBoardView />);

@@ -7,7 +7,6 @@ import type {
   ModelUsage,
   ModelWireMode,
 } from './modelRequestTypes.js';
-
 import type { ExecutionInvocationAudit } from '../agent/toolRuntime.js';
 import type { ToolPresentation } from '../agent/toolPresentationBuilder.js';
 import type { ToolAuthorization, ToolRisk, ExecutionTargetKind } from '../agent/toolRuntime.js';
@@ -20,7 +19,6 @@ import type {
 import type { ChannelContext, InboundMessage, OutboundEvent } from '../types/index.js';
 import type { RunStatus } from './runStore.js';
 import type { HandStatus } from './handStore.js';
-
 export type {
   ModelRequestDiagnostic,
   ModelResponseMode,
@@ -29,7 +27,6 @@ export type {
   ModelWireMode,
 } from './modelRequestTypes.js';
 export type { ModelRetryBlockedReason, ModelRetryReason } from './modelRetryTypes.js';
-
 export interface RuntimeConnection {
   apiKey?: string;
   baseUrl?: string;
@@ -75,12 +72,9 @@ export interface RunContext {
   profileId?: string;
   profileVersionId?: string;
   profileConfigDigest?: string;
-  /** 隐藏记忆审查：从父会话读取 Context Projection，当前 Run 仍写自身会话。 */
-  replaySourceSessionId?: string;
-  /** 隐藏记忆审查始终完整重放，不读取或持久化 previous_response_id 接力状态。 */
-  disableResponseRelay?: boolean;
-  /** 工具执行层的内部记忆维护标记；不改变模型可见工具定义。 */
-  memoryMaintenanceMode?: 'consolidation';
+  /** 隐藏记忆审查从父会话读取 Context Projection，当前 Run 仍写自身会话。 */ replaySourceSessionId?: string;
+  /** 隐藏记忆审查完整重放，不读写 previous_response_id。 */ disableResponseRelay?: boolean;
+  /** 工具执行层的内部记忆维护标记。 */ memoryMaintenanceMode?: 'consolidation';
   hooks?: AgentRunHooks;
   signal?: AbortSignal;
   /** 蓝绿排水协作信号；只在模型轮/工具批次已完整闭合后读取。 */

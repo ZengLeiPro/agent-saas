@@ -171,7 +171,8 @@ export class PostgresIntegrationEngineV3CandidateHost implements IntegrationEngi
       const row = current.rows[0];
       if (!row) throw new TaskboardNotFoundError('Integration candidate not found');
       const candidate = rowToIntegrationCandidate(row);
-      if (candidate.version !== input.expectedVersion || candidate.currentRevision !== input.expectedRevision || candidate.state !== 'merging') {
+      if (candidate.version !== input.expectedVersion || candidate.currentRevision !== input.expectedRevision
+        || (candidate.state !== 'merging' && candidate.state !== 'needs_human')) {
         throw new TaskboardValidationError('Candidate changed; reload before retrying', 'TASKBOARD_CANDIDATE_CAS_MISMATCH');
       }
       const operation = await client.query(
@@ -197,6 +198,7 @@ export class PostgresIntegrationEngineV3CandidateHost implements IntegrationEngi
         || String(expected.subjectDigest ?? '') !== String(revisionRow.subject_digest)
         || String(expected.treeOid ?? '') !== String(revisionRow.tree_oid)
         || String(receipt.providerPullRequestId ?? '') !== String(candidate.providerPullRequestId ?? '')
+        || String(receipt.providerRequestId ?? '') !== String(operationRow.operation_key)
         || String(receipt.mergedCommitOid ?? '') !== input.mergedCommitOid) {
         throw new TaskboardValidationError('Provider merge operation target or receipt does not match the approved revision', 'TASKBOARD_PROVIDER_OPERATION_RECEIPT_MISMATCH');
       }
@@ -214,7 +216,7 @@ export class PostgresIntegrationEngineV3CandidateHost implements IntegrationEngi
       const updated = await client.query(
         `UPDATE ${this.options.candidatesTable}
             SET state='merged',merged_commit_oid=$4,last_error=NULL,version=version+1,updated_at=now()
-          WHERE id=$1 AND version=$2 AND current_revision=$3 AND state='merging' RETURNING *`,
+          WHERE id=$1 AND version=$2 AND current_revision=$3 AND state IN ('merging','needs_human') RETURNING *`,
         [candidate.id, input.expectedVersion, input.expectedRevision, input.mergedCommitOid]);
       if (!updated.rows[0]) throw new TaskboardValidationError('Candidate changed; reload before retrying', 'TASKBOARD_CANDIDATE_CAS_MISMATCH');
       await client.query(

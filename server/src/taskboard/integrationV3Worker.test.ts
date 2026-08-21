@@ -186,19 +186,22 @@ describe('IntegrationV3Worker pure mock flow', () => {
     expect(worker.health()).toEqual({ healthy: false, reason: 'worker_tick_failed' });
   });
 
-  it('recovers a succeeded merge operation after restart without resending merge', async () => {
-    const host = new MemoryHost();
-    host.current.candidate = candidate('merging');
-    host.mergeOperation = { operationKey: 'succeeded-merge-op', state: 'succeeded' };
-    const engine = { execute: vi.fn(async (command: IntegrationEngineV3Command) => ({ candidate: { ...host.current.candidate, state: 'merged' }, status: 'applied' })) } as unknown as IntegrationEngineV3;
-    const worker = new IntegrationV3Worker({
-      host, engine,
-      composer: { compose: vi.fn(), refreshAfterWork: vi.fn() },
-    });
-    await worker.runOnce();
-    expect(engine.execute).toHaveBeenCalledWith(expect.objectContaining({ type: 'reconcile_merge', operationKey: 'succeeded-merge-op' }));
-    expect(host.errors.at(-1)).toBeUndefined();
-  });
+  it.each(['merging', 'needs_human'] as const)(
+    'recovers a succeeded merge operation from %s after restart without resending merge',
+    async (state) => {
+      const host = new MemoryHost();
+      host.current.candidate = candidate(state);
+      host.mergeOperation = { operationKey: 'succeeded-merge-op', state: 'succeeded' };
+      const engine = { execute: vi.fn(async (_command: IntegrationEngineV3Command) => ({ candidate: { ...host.current.candidate, state: 'merged' }, status: 'applied' })) } as unknown as IntegrationEngineV3;
+      const worker = new IntegrationV3Worker({
+        host, engine,
+        composer: { compose: vi.fn(), refreshAfterWork: vi.fn() },
+      });
+      await worker.runOnce();
+      expect(engine.execute).toHaveBeenCalledWith(expect.objectContaining({ type: 'reconcile_merge', operationKey: 'succeeded-merge-op' }));
+      expect(host.errors.at(-1)).toBeUndefined();
+    },
+  );
 });
 
 

@@ -63,7 +63,11 @@ function setup(state: TaskBoardIntegrationCandidate['state'], providerFacts = fa
     requestCleanup: vi.fn(async () => ({ requestId: 'cleanup-request' })),
   };
   let currentFacts = providerFacts;
-  const merge = vi.fn(async () => ({ providerRequestId: 'merge-request' }));
+  const merge = vi.fn(async (_repository: TaskBoardRepositoryConfig, input: { operationKey: string }) => ({
+    providerRequestId: input.operationKey,
+    providerPullRequestId: '42',
+    mergedCommitOid: 'commit-1',
+  }));
   const reconcileMerge = vi.fn(async () => ({ status: 'succeeded' as const, receipt: { providerPullRequestId: '42', mergedCommitOid: 'commit-1', mergedTreeOid: 'tree-1' } }));
   const getFlags = vi.fn(async () => ({ enabled: true, composeEnabled: true, reviewEnabled: true, mergeEnabled: true, cleanupEnabled: true, workspaceSyncEnabled: true }));
   const engine = new IntegrationEngineV3({
@@ -232,6 +236,55 @@ describe('IntegrationEngineV3', () => {
     expect(reconciled.candidate).toMatchObject({ state: 'merged', mergedCommitOid: 'commit-1' });
     expect(context.reconcileMerge).toHaveBeenCalledTimes(1);
     expect(context.merge).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts an exact direct controlled receipt when a squash merge tree includes an advanced base', async () => {
+    const value = candidate('approved');
+    const context = setup('approved');
+    context.merge.mockImplementationOnce(async (_repository: TaskBoardRepositoryConfig, input: { operationKey: string }) => {
+      context.setFacts(facts({
+        state: 'merged', baseOid: 'merged-main', mergeCommitOid: 'commit-1', mergedTreeOid: 'squash-result-tree',
+      }));
+      return {
+        providerRequestId: input.operationKey,
+        providerPullRequestId: '42',
+        mergedCommitOid: 'commit-1',
+      };
+    });
+
+    const result = await context.engine.execute({
+      type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
+    });
+
+    expect(result).toMatchObject({ status: 'applied', candidate: { state: 'merged', mergedCommitOid: 'commit-1' } });
+  });
+
+  it('recovers a needs_human candidate only from its exact succeeded controlled receipt', async () => {
+    const value = candidate('needs_human');
+    const context = setup('needs_human', facts({
+      state: 'merged', baseOid: 'merged-main', mergeCommitOid: 'commit-1', mergedTreeOid: 'squash-result-tree',
+    }));
+    const operationKey = integrationProviderOperationKey({
+      repositoryId: value.repositoryId,
+      candidateId: value.id,
+      candidateRevision: 1,
+      kind: 'merge_pull_request',
+      target: '42',
+    });
+    context.operations.records.set(operationKey, {
+      id: 'operation-1', operationKey, kind: 'merge_pull_request', repositoryId: value.repositoryId,
+      fence: { workflowEpoch: 3, laneEpoch: 9, candidateId: value.id, candidateRevision: 1, executionId: 'merge-execution-1' },
+      expected: {}, command: {}, intentDigest: 'digest', state: 'succeeded', attemptCount: 1,
+      receipt: { providerRequestId: operationKey, providerPullRequestId: '42', mergedCommitOid: 'commit-1' },
+      createdAt: '2026-08-19T00:00:00.000Z', updatedAt: '2026-08-19T00:00:00.000Z',
+    });
+
+    const result = await context.engine.execute({
+      type: 'reconcile_merge', candidateId: value.id, expected: expected(value), operationKey,
+    });
+
+    expect(result).toMatchObject({ status: 'applied', candidate: { state: 'merged', mergedCommitOid: 'commit-1' } });
+    expect(context.reconcileMerge).not.toHaveBeenCalled();
   });
 
   it('reconciles request rows from their target candidate states without advancing twice', async () => {

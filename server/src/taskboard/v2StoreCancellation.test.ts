@@ -51,6 +51,13 @@ describe('Workflow v3 integration cancellation convergence', () => {
     expect(cancellationSql).toContain('worker_lease_id=NULL');
     expect(cancellationSql).toContain('worker_lease_expires_at=NULL');
     expect(cancellationSql).toContain('worker_available_at=now()');
+    const providerCancellationCall = query.mock.calls.find(([sql]) => String(sql).includes('UPDATE integration_provider_operations_v3'));
+    expect(String(providerCancellationCall?.[0])).toContain("state='failed'");
+    expect(String(providerCancellationCall?.[0])).toContain("state='prepared'");
+    expect(providerCancellationCall?.[1]).toEqual([
+      candidate.id,
+      'Candidate canceled before provider execution: operator canceled',
+    ]);
     expect(String(query.mock.calls.at(-1)?.[0])).toBe('COMMIT');
   });
 });

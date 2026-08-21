@@ -456,7 +456,9 @@ export async function cancelIntegrationTask(
       const changed = await client.query(
         `UPDATE ${tables.candidatesTable}
             SET state='canceled',approved_revision=NULL,approved_review_execution_id=NULL,last_error=$2,
-                workflow_epoch=workflow_epoch+1,version=version+1,updated_at=now()
+                workflow_epoch=workflow_epoch+1,worker_status='idle',worker_checkpoint='{}'::jsonb,
+                worker_error=NULL,worker_lease_id=NULL,worker_lease_expires_at=NULL,worker_available_at=now(),
+                version=version+1,updated_at=now()
           WHERE id=$1 AND state NOT IN ('merged','canceled') RETURNING id`, [row.id, reason]);
       if (!changed.rows[0]) throw new TaskboardValidationError('Workflow v3 candidate changed', 'TASKBOARD_CANDIDATE_CAS_MISMATCH');
       await client.query(

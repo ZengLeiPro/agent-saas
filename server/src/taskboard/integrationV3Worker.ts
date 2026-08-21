@@ -190,8 +190,14 @@ export class IntegrationV3Worker {
           // non-atomic outbox/candidate transition and revives a bounded-failure row.
           result = await engine.execute({ type: 'request_work', candidateId: lease.candidateId, expected });
           const revision = requireRevision(current);
-          const refreshed = await this.options.composer.refreshAfterWork({ candidate: current.candidate, revision });
-          if (refreshed) result = await engine.execute({ type: 'subject_refreshed', candidateId: lease.candidateId, expected, revision: refreshed });
+          try {
+            const refreshed = await this.options.composer.refreshAfterWork({ candidate: current.candidate, revision });
+            if (refreshed) result = await engine.execute({ type: 'subject_refreshed', candidateId: lease.candidateId, expected, revision: refreshed });
+          } catch (error) {
+            if (error instanceof Error && error.name === 'IntegrationV3InvalidWorkResultError') {
+              result = await engine.execute({ type: 'needs_human', candidateId: lease.candidateId, expected, reason: error.message });
+            } else throw error;
+          }
           break;
         }
         case 'in_review':

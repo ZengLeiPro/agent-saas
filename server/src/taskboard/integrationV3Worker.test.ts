@@ -121,6 +121,25 @@ describe('IntegrationV3Worker pure mock flow', () => {
     expect(releases.at(-1)).toEqual({ error: 'temporary workspace outage', retryable: true });
   });
 
+  it('converges an invalid ready work result to needs_human without failing the worker lease', async () => {
+    const host = new MemoryHost();
+    host.current.candidate = candidate('working');
+    const execute = vi.fn(async (command: IntegrationEngineV3Command) => command.type === 'needs_human'
+      ? { candidate: { ...host.current.candidate, state: 'needs_human' as const, lastError: command.reason }, status: 'applied' as const }
+      : { candidate: host.current.candidate, status: 'requested' as const });
+    const invalid = new Error('Ready work result changed neither the integration head nor the base');
+    invalid.name = 'IntegrationV3InvalidWorkResultError';
+    const worker = new IntegrationV3Worker({
+      host,
+      engine: { execute } as unknown as IntegrationEngineV3,
+      composer: { compose: vi.fn(), refreshAfterWork: async () => { throw invalid; } },
+    });
+    await worker.runOnce();
+    expect(execute.mock.calls.map(([command]) => command.type)).toEqual(['request_work', 'needs_human']);
+    expect(host.checkpoints.at(-1)).toMatchObject({ state: 'needs_human', status: 'applied' });
+    expect(host.errors.at(-1)).toBeUndefined();
+  });
+
   it('reports pending, successful, and failed worker ticks to the activation heartbeat', async () => {
     const host = new MemoryHost();
     host.claimCandidate = async () => undefined;

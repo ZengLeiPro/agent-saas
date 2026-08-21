@@ -202,8 +202,10 @@ export class IntegrationPushGateway {
       revision: target.binding.revision, laneEpoch: target.binding.laneEpoch,
       workflowEpoch: target.binding.workflowEpoch, enabled: true,
     }, 'active integration work execution');
+    const sourceRepository = await this.resolvePushRepository(target);
     return withMaterializedWorkspaceCommit({
       workspaceRoot: input.workspaceRoot,
+      repositoryName: sourceRepository.repositoryName,
       commitOid: input.commitOid,
       expectedOldOid: target.binding.expectedOldOid,
     }, async ({ repositoryPath }) => {

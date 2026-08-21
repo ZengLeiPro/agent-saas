@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -48,7 +48,7 @@ describe('withMaterializedWorkspaceCommit', () => {
     const source = await repository();
     let temporaryRoot = '';
     const result = await withMaterializedWorkspaceCommit({
-      workspaceRoot: source.root,
+      workspaceRoot: source.root, repositoryName: 'repository',
       expectedOldOid: source.oldOid,
       commitOid: source.newOid,
       onTemporaryDirectory: (path) => { temporaryRoot = path; },
@@ -63,12 +63,27 @@ describe('withMaterializedWorkspaceCommit', () => {
     await expect(readFile(join(temporaryRoot, 'repository.git', 'HEAD'), 'utf8')).rejects.toThrow();
   });
 
+  it('resolves the authoritative repository below the shared workspace root', async () => {
+    const source = await repository();
+    const workspace = await mkdtemp(join(tmpdir(), 'workspace-root-'));
+    roots.push(workspace);
+    const repositoryPath = join(workspace, 'code', 'agent-saas');
+    await mkdir(join(workspace, 'code'), { recursive: true });
+    await rename(source.root, repositoryPath);
+    await expect(withMaterializedWorkspaceCommit({
+      workspaceRoot: workspace,
+      repositoryName: 'agent-saas',
+      expectedOldOid: source.oldOid,
+      commitOid: source.newOid,
+    }, async ({ commitOid }) => commitOid)).resolves.toBe(source.newOid);
+  });
+
   it('rejects alternates and symlinked object stores', async () => {
     const alternate = await repository();
     await mkdir(join(alternate.root, '.git', 'objects', 'info'), { recursive: true });
     await writeFile(join(alternate.root, '.git', 'objects', 'info', 'alternates'), '/tmp/evil\n');
     await expect(withMaterializedWorkspaceCommit({
-      workspaceRoot: alternate.root, expectedOldOid: alternate.oldOid, commitOid: alternate.newOid,
+      workspaceRoot: alternate.root, repositoryName: 'repository', expectedOldOid: alternate.oldOid, commitOid: alternate.newOid,
     }, async () => undefined)).rejects.toMatchObject({ code: 'alternates_forbidden' });
 
     const linked = await repository();
@@ -77,7 +92,7 @@ describe('withMaterializedWorkspaceCommit', () => {
     await rm(join(linked.root, '.git', 'objects'), { recursive: true });
     await symlink(outside, join(linked.root, '.git', 'objects'));
     await expect(withMaterializedWorkspaceCommit({
-      workspaceRoot: linked.root, expectedOldOid: linked.oldOid, commitOid: linked.newOid,
+      workspaceRoot: linked.root, repositoryName: 'repository', expectedOldOid: linked.oldOid, commitOid: linked.newOid,
     }, async () => undefined)).rejects.toMatchObject({ code: 'unsafe_git_metadata' });
   });
 
@@ -91,18 +106,18 @@ describe('withMaterializedWorkspaceCommit', () => {
     await git(source.root, ['merge', '--no-ff', mainBranch, '-m', 'merge']);
     const mergeOid = await git(source.root, ['rev-parse', 'HEAD']);
     await expect(withMaterializedWorkspaceCommit({
-      workspaceRoot: source.root, expectedOldOid: source.oldOid, commitOid: mergeOid,
+      workspaceRoot: source.root, repositoryName: 'repository', expectedOldOid: source.oldOid, commitOid: mergeOid,
     }, async () => undefined)).rejects.toMatchObject({ code: 'merge_commit_forbidden' });
 
     await expect(withMaterializedWorkspaceCommit({
-      workspaceRoot: source.root, expectedOldOid: source.oldOid, commitOid: source.newOid,
+      workspaceRoot: source.root, repositoryName: 'repository', expectedOldOid: source.oldOid, commitOid: source.newOid,
     }, async () => undefined)).resolves.toBeUndefined();
     await git(source.root, ['checkout', mainBranch]);
     await writeFile(join(source.root, 'file.txt'), 'three\n');
     await git(source.root, ['commit', '-am', 'third']);
     const thirdOid = await git(source.root, ['rev-parse', 'HEAD']);
     await expect(withMaterializedWorkspaceCommit({
-      workspaceRoot: source.root, expectedOldOid: source.oldOid, commitOid: thirdOid,
+      workspaceRoot: source.root, repositoryName: 'repository', expectedOldOid: source.oldOid, commitOid: thirdOid,
     }, async () => undefined)).rejects.toMatchObject({ code: 'parent_mismatch' });
   });
 
@@ -110,7 +125,7 @@ describe('withMaterializedWorkspaceCommit', () => {
     const source = await repository();
     let temporaryRoot = '';
     await expect(withMaterializedWorkspaceCommit({
-      workspaceRoot: source.root,
+      workspaceRoot: source.root, repositoryName: 'repository',
       expectedOldOid: source.oldOid,
       commitOid: source.newOid,
       onTemporaryDirectory: (path) => { temporaryRoot = path; },

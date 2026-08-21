@@ -36,6 +36,7 @@ export interface MaterializedWorkspaceCommit {
  */
 export async function withMaterializedWorkspaceCommit<T>(input: {
   workspaceRoot: string;
+  repositoryName: string;
   commitOid: string;
   expectedOldOid: string;
   tempRoot?: string;
@@ -44,7 +45,7 @@ export async function withMaterializedWorkspaceCommit<T>(input: {
   if (!OID.test(input.commitOid) || !OID.test(input.expectedOldOid)) {
     throw new WorkspaceCommitMaterializationError('object_missing');
   }
-  const objectDirectory = await resolveWorkspaceObjectDirectory(input.workspaceRoot);
+  const objectDirectory = await resolveWorkspaceObjectDirectory(input.workspaceRoot, input.repositoryName);
   const temporaryRoot = await mkdtemp(join(input.tempRoot ?? tmpdir(), 'taskboard-work-push-'));
   const repositoryPath = join(temporaryRoot, 'repository.git');
   let materialized = false;
@@ -69,48 +70,63 @@ export async function withMaterializedWorkspaceCommit<T>(input: {
   }
 }
 
-async function resolveWorkspaceObjectDirectory(workspaceRoot: string): Promise<string> {
+async function resolveWorkspaceObjectDirectory(workspaceRoot: string, repositoryName: string): Promise<string> {
   try {
-    if (!isAbsolute(workspaceRoot)) throw new Error('relative workspace');
+    if (!isAbsolute(workspaceRoot) || !/^[A-Za-z0-9_.-]+$/.test(repositoryName)) throw new Error('invalid workspace binding');
     const rootInfo = await lstat(workspaceRoot);
     if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error('unsafe workspace root');
     const root = await realpath(workspaceRoot);
-    const dotGit = join(root, '.git');
-    const dotGitInfo = await lstat(dotGit);
-    if (dotGitInfo.isSymbolicLink()) throw new Error('symlink git dir');
-    let gitDir: string;
-    if (dotGitInfo.isDirectory()) {
-      gitDir = await realpath(dotGit);
-    } else if (dotGitInfo.isFile() && dotGitInfo.size <= 4096) {
-      const match = /^gitdir:\s*(.+)\s*$/i.exec(await readFile(dotGit, 'utf8'));
-      if (!match) throw new Error('invalid gitdir file');
-      gitDir = await realpath(resolve(root, match[1]!));
-    } else throw new Error('invalid git metadata');
-    assertWithin(root, gitDir);
-    await assertNoSymlinkPath(root, gitDir);
-
-    const commonDirFile = join(gitDir, 'commondir');
-    let commonDir = gitDir;
-    try {
-      const info = await lstat(commonDirFile);
-      if (!info.isFile() || info.isSymbolicLink() || info.size > 4096) throw new Error('unsafe commondir');
-      const value = (await readFile(commonDirFile, 'utf8')).trim();
-      if (!value || value.includes('\0')) throw new Error('invalid commondir');
-      commonDir = await realpath(resolve(gitDir, value));
-    } catch (error) {
-      if (!isMissing(error)) throw error;
+    const candidates = [join(root, 'code', repositoryName), join(root, repositoryName), root];
+    for (const candidate of candidates) {
+      const objectDirectory = await resolveRepositoryObjectDirectory(root, candidate);
+      if (objectDirectory) return objectDirectory;
     }
-    assertWithin(root, commonDir);
-    await assertNoSymlinkPath(root, commonDir);
-    const objectDirectory = await realpath(join(commonDir, 'objects'));
-    assertWithin(root, objectDirectory);
-    await assertNoSymlinkPath(root, objectDirectory);
-    await assertSafeObjectStore(objectDirectory);
-    return objectDirectory;
+    throw new WorkspaceCommitMaterializationError('workspace_unavailable');
   } catch (error) {
     if (error instanceof WorkspaceCommitMaterializationError) throw error;
     throw new WorkspaceCommitMaterializationError('unsafe_git_metadata');
   }
+}
+
+async function resolveRepositoryObjectDirectory(workspaceRoot: string, candidate: string): Promise<string | undefined> {
+  let rootInfo;
+  try { rootInfo = await lstat(candidate); } catch (error) { if (isMissing(error)) return undefined; throw error; }
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error('unsafe repository root');
+  const root = await realpath(candidate);
+  assertWithin(workspaceRoot, root);
+  const dotGit = join(root, '.git');
+  let dotGitInfo;
+  try { dotGitInfo = await lstat(dotGit); } catch (error) { if (isMissing(error)) return undefined; throw error; }
+  if (dotGitInfo.isSymbolicLink()) throw new Error('symlink git dir');
+  let gitDir: string;
+  if (dotGitInfo.isDirectory()) {
+    gitDir = await realpath(dotGit);
+  } else if (dotGitInfo.isFile() && dotGitInfo.size <= 4096) {
+    const match = /^gitdir:\s*(.+)\s*$/i.exec(await readFile(dotGit, 'utf8'));
+    if (!match) throw new Error('invalid gitdir file');
+    gitDir = await realpath(resolve(root, match[1]!));
+  } else throw new Error('invalid git metadata');
+  assertWithin(workspaceRoot, gitDir);
+  await assertNoSymlinkPath(workspaceRoot, gitDir);
+
+  const commonDirFile = join(gitDir, 'commondir');
+  let commonDir = gitDir;
+  try {
+    const info = await lstat(commonDirFile);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > 4096) throw new Error('unsafe commondir');
+    const value = (await readFile(commonDirFile, 'utf8')).trim();
+    if (!value || value.includes('\0')) throw new Error('invalid commondir');
+    commonDir = await realpath(resolve(gitDir, value));
+  } catch (error) {
+    if (!isMissing(error)) throw error;
+  }
+  assertWithin(workspaceRoot, commonDir);
+  await assertNoSymlinkPath(workspaceRoot, commonDir);
+  const objectDirectory = await realpath(join(commonDir, 'objects'));
+  assertWithin(workspaceRoot, objectDirectory);
+  await assertNoSymlinkPath(workspaceRoot, objectDirectory);
+  await assertSafeObjectStore(objectDirectory);
+  return objectDirectory;
 }
 
 async function assertSafeObjectStore(root: string): Promise<void> {

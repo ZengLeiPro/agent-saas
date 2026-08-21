@@ -193,9 +193,9 @@ describe('GithubRepositoryProvider', () => {
   it('reconciles an already-created integration branch without creating it again', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'base-oid' } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ tree: { sha: 'tree-oid' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'base-oid', tree: { sha: 'tree-oid' } }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'base-oid' } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ tree: { sha: 'tree-oid' } }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'base-oid', tree: { sha: 'tree-oid' } }), { status: 200 }));
     const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
 
     const receipt = await provider.ensureIntegrationBranch(repository, {
@@ -210,7 +210,7 @@ describe('GithubRepositoryProvider', () => {
   it('rejects branch creation when the prepared base has drifted', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'new-base' } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ tree: { sha: 'new-tree' } }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'new-base', tree: { sha: 'new-tree' } }), { status: 200 }));
     const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
 
     await expect(provider.ensureIntegrationBranch(repository, {
@@ -227,9 +227,9 @@ describe('GithubRepositoryProvider', () => {
     };
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'candidate-oid' } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ tree: { sha: 'candidate-tree' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'candidate-oid', tree: { sha: 'candidate-tree' } }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'base-oid' } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ tree: { sha: 'base-tree' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'base-oid', tree: { sha: 'base-tree' } }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify([existing]), { status: 200 }));
     const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
 

@@ -82,6 +82,23 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(query.mock.calls[0]![0]).toContain('JOIN boards b');
   });
 
+  it('fences a stale prepared merge after the candidate returns to composition', async () => {
+    const query = vi.fn(async (_sql: string) => ({ rows: [{
+      integration_task_id: 'integration-1', current_revision: 4, workflow_epoch: '3', lane_epoch: '9',
+      state: 'composing', workflow_version: 3, task_epoch: '3', current_lane_epoch: '9',
+      active_integration_task_id: 'integration-1', global_enabled: true, repository_enabled: true,
+      engine_enabled: true, merge_enabled: true,
+    }] }));
+    const host = new PostgresIntegrationProviderFenceHost({
+      pool: { query }, boardsTable: 'boards', tasksTable: 'tasks', integrationLanesTable: 'lanes', candidatesTable: 'candidates',
+    } as never);
+
+    await expect(host.assertCurrent({
+      kind: 'merge_pull_request',
+      fence: { candidateId: 'candidate-1', candidateRevision: 4, workflowEpoch: 3, laneEpoch: 9 },
+    } as never)).rejects.toMatchObject({ code: 'TASKBOARD_PROVIDER_OPERATION_FENCE_MISMATCH' });
+  });
+
   it.each(['prepared', 'executing', 'unknown', 'succeeded'] as const)(
     'loads %s merge operations for crash/restart convergence',
     async (state) => {

@@ -306,6 +306,7 @@ export class PostgresIntegrationProviderFenceHost {
       || String(row.lane_epoch) !== String(operation.fence.laneEpoch)
       || String(row.current_lane_epoch) !== String(operation.fence.laneEpoch)
       || String(row.active_integration_task_id ?? '') !== String(row.integration_task_id)
+      || (operation.kind === 'merge_pull_request' && String(row.state) !== 'merging')
       || ['merged','canceled'].includes(String(row.state))) {
       throw new TaskboardValidationError('Provider operation fence is stale', 'TASKBOARD_PROVIDER_OPERATION_FENCE_MISMATCH');
     }

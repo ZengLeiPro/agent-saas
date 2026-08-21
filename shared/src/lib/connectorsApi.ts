@@ -1,4 +1,3 @@
-import { governanceResourcesApi } from './governanceApi';
 import { authFetch } from './authFetch';
 import type {
   AliyunConnectInput,
@@ -51,6 +50,7 @@ async function savePersonalCredential(input: {
   scopeSummary?: Record<string, unknown>;
   rotateReason: string;
 }): Promise<void> {
+  const { governanceResourcesApi } = await import('./governanceApi');
   const current = await governanceResourcesApi.listCredentials<{ credentials: PersonalCredentialSummary[] }>();
   const existing = current.credentials
     .filter(credential => credential.connectorId === input.connectorId
@@ -90,6 +90,7 @@ async function savePersonalCredential(input: {
 }
 
 async function revokePersonalCredentials(connectorId: string, reason: string): Promise<void> {
+  const { governanceResourcesApi } = await import('./governanceApi');
   const current = await governanceResourcesApi.listCredentials<{ credentials: PersonalCredentialSummary[] }>();
   const credentials = current.credentials.filter(credential => credential.connectorId === connectorId
     && credential.kind === 'personal_grant'

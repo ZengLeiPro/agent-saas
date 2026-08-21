@@ -22,7 +22,7 @@ import {
   resolveSessionCatalog,
   type RawRuntimeRunDispatchConfig,
 } from '../rawRuntimeRunDispatch.js';
-import { createRuntimeSessionRecord } from '../sessionCatalog.js';
+import { createRuntimeSessionRecord, type RuntimeSessionRecord } from '../sessionCatalog.js';
 import { getSubagentType } from '../subagent/agentTypes.js';
 import {
   SUBAGENT_PER_RUN_MAX_CONCURRENCY,
@@ -71,6 +71,10 @@ const logger = createLogger('BackgroundTaskService');
 const WAKE_CLAIM_STALE_MS = 60_000;
 const WAKE_BATCH_SIZE = 50;
 const CANCEL_POLL_MS = 2_000;
+
+export function resolveBackgroundSkillUsername(session: Pick<RuntimeSessionRecord, 'username' | 'orgAgentSnapshot'>): string | undefined {
+  return session.orgAgentSnapshot ? undefined : session.username;
+}
 
 export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
   private readonly runSubagentImpl: typeof runSubagent;
@@ -409,7 +413,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       const orgAgentSnapshot = taskSession.orgAgentSnapshot;
       const tooling = await collectRuntimeTooling(
         this.config,
-        taskSession.username,
+        resolveBackgroundSkillUsername(taskSession),
         orgAgentSnapshot
           ? composeSkillFilters(buildOrgAgentSkillFilter(orgAgentSnapshot))
           : () => true,

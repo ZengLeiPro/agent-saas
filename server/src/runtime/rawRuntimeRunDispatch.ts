@@ -650,11 +650,10 @@ export function buildRuntimeSkillsResolver(
 ): EffectiveSkillsResolver {
   return {
     list: (ctx) => prioritizeRuntimeSkills(filterRuntimeSkills(
-      skills.listForUser(resolveSkillContextUsername(ctx.channelContext), requiredSkillIds),
+      skills.listForUser(resolveSkillContextUsername(ctx.channelContext), requiredSkillIds, resolveSkillContextTenantId(ctx.channelContext)),
       skillFilter,
     ), preferredSkillIds),
-    resolveSkillDir: (skill, ctx) =>
-      skills.resolveSkillDir(resolveSkillContextUsername(ctx.channelContext), skill, requiredSkillIds),
+    resolveSkillDir: (skill, ctx) => skills.resolveSkillDir(resolveSkillContextUsername(ctx.channelContext), skill, requiredSkillIds, resolveSkillContextTenantId(ctx.channelContext)),
   };
 }
 
@@ -779,6 +778,7 @@ export function buildImageGenSkillFilter(
 export function resolveSkillContextUsername(context: ChannelContext | undefined): string | undefined {
   return context?.sessionOwner?.username ?? context?.user?.username;
 }
+export function resolveSkillContextTenantId(context: ChannelContext | undefined): string | undefined { return context?.sessionOwner?.tenantId ?? context?.user?.tenantId; }
 function resolveContextIsPlatformAdmin(context: ChannelContext | undefined): boolean {
   const identity = context?.user ?? context?.sessionOwner;
   return identity?.role === 'admin' && identity.tenantId === DEFAULT_TENANT_ID;

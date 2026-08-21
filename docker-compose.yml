@@ -81,7 +81,7 @@ services:
 
     volumes:
       # config.json 包含敏感字段（jwtSecret/connectionString）—— 不进镜像
-      # 本地 dev：把仓库根 config.json 挂进来；ECS：从 /etc/agent-runtime/config.json 挂载
+      # 本地 dev：把仓库根 config.json 挂进来；ECS：从 /etc/agent-saas/config.json 挂载
       - ${CONFIG_JSON_PATH:-./config.json}:/app/config.json:ro
       # ky-azeroth PAT 映射表；生产用稳定宿主路径，经 AZEROTH_TOKENS_FILE 指给 server
       - ${AZEROTH_TOKENS_FILE:-./server/config/azeroth-tokens.json}:${AZEROTH_TOKENS_FILE:-/app/server/config/azeroth-tokens.json}:ro

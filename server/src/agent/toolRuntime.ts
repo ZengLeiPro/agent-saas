@@ -151,6 +151,8 @@ export interface ToolCallContext {
   env?: Record<string, string>;
   sessionId?: string;
   runId?: string;
+  /** Runtime 内部记忆维护模式；只改变调用权限，不改变模型可见 descriptor。 */
+  memoryMaintenanceMode?: 'consolidation';
   runtimeIsolationRequirement?: RuntimeIsolationRequirement;
   toolCallId?: string;
   invocationId?: string;

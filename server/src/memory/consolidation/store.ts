@@ -15,7 +15,7 @@
  *   - runs.idempotency_key UNIQUE：同范围只有一份 ledger；
  *   - processed 只在 markApplied（applied/noop）里推进，且带 CHECK 约束；
  *   - per-user 文件写锁用 PG advisory lock（acquireCommitLock/releaseCommitLock），
- *     L1/L2/L3 提交文件前共用，替代进程内 maintenanceLock 作为正确性边界。
+ *     L1/L2/L3 共用；L2/L3 直接写 Markdown 时覆盖整个隐藏 Run。
  */
 
 import { randomUUID } from 'node:crypto';
@@ -177,10 +177,6 @@ export class PgMemoryConsolidationStore {
           model_requested TEXT,
           model_actual TEXT,
           prompt_version INTEGER NOT NULL,
-          input_hash TEXT,
-          base_memory_hash TEXT,
-          planned_postimage_hash TEXT,
-          proposal_json JSONB,
           usage_json JSONB,
           retry_count INTEGER NOT NULL DEFAULT 0,
           error_code TEXT,
@@ -369,20 +365,35 @@ export class PgMemoryConsolidationStore {
         `INSERT INTO ${this.stateTable}
            (tenant_id, user_id, workspace_id, session_id, active_run_ids,
             last_activity_at, status, last_boundary_global_sequence)
-         VALUES ($1, $2, $3, $4, '[]'::jsonb, $6, 'idle', $7)
+         VALUES ($1, $2, $3, $4, '[]'::jsonb, $6, 'idle', $8)
          ON CONFLICT (tenant_id, session_id) DO UPDATE SET
            active_run_ids = (
              SELECT COALESCE(jsonb_agg(value), '[]'::jsonb)
              FROM jsonb_array_elements_text(${this.stateTable}.active_run_ids) AS value
              WHERE value <> $5
            ),
+           due_at = CASE
+             WHEN ${this.stateTable}.target_session_sequence > ${this.stateTable}.processed_session_sequence
+             THEN $6::timestamptz + make_interval(mins => $7)
+             ELSE NULL
+           END,
+           first_pending_at = CASE
+             WHEN ${this.stateTable}.target_session_sequence > ${this.stateTable}.processed_session_sequence
+             THEN COALESCE(${this.stateTable}.first_pending_at, $6)
+             ELSE NULL
+           END,
+           status = CASE
+             WHEN ${this.stateTable}.status IN ('blocked', 'throttled') THEN ${this.stateTable}.status
+             WHEN ${this.stateTable}.target_session_sequence > ${this.stateTable}.processed_session_sequence THEN 'pending'
+             ELSE 'idle'
+           END,
            last_activity_at = GREATEST(COALESCE(${this.stateTable}.last_activity_at, $6), $6),
-           last_boundary_global_sequence = $7,
+           last_boundary_global_sequence = $8,
            updated_at = NOW()
-         WHERE ${this.stateTable}.last_boundary_global_sequence < $7`,
+         WHERE ${this.stateTable}.last_boundary_global_sequence < $8`,
         [
           input.tenantId, input.userId, input.workspaceId, input.sessionId,
-          input.runId, input.at, input.globalSequence,
+          input.runId, input.at, input.debounceMinutes, input.globalSequence,
         ],
       );
     }
@@ -390,34 +401,30 @@ export class PgMemoryConsolidationStore {
 
   /**
    * claim 一批到期可处理的 state（FOR UPDATE SKIP LOCKED）。
-   * 到期条件：pending/retry_wait，无 active run，(due_at 或 next_attempt_at 到期
-   * 或 first_pending_at+maxDeferral 到期)，且 target > processed。
+   * pending 只认最后一次 run_finished 后的 debounce due_at；不再存在连续对话
+   * 60 分钟强制切批。retry_wait 按 next_attempt_at，running 的过期 lease 可回收。
    */
   async claimDue(input: {
-    workerId: string; now: string; limit: number;
-    maxDeferralMinutes: number; leaseSeconds: number;
+    workerId: string; now: string; limit: number; leaseSeconds: number;
   }): Promise<ConsolidationState[]> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       const res = await client.query<StateRow>(
         `SELECT * FROM ${this.stateTable}
-         WHERE status IN ('pending', 'retry_wait')
-           AND target_session_sequence > processed_session_sequence
+         WHERE target_session_sequence > processed_session_sequence
            AND active_run_ids = '[]'::jsonb
-           AND (lease_expires_at IS NULL OR lease_expires_at < $1::timestamptz)
            AND (
-             (status = 'pending' AND (
-               due_at <= $1::timestamptz
-               OR (first_pending_at IS NOT NULL
-                   AND first_pending_at + make_interval(mins => $2) <= $1::timestamptz)
-             ))
-             OR (status = 'retry_wait' AND next_attempt_at <= $1::timestamptz)
+             ((status = 'pending' AND due_at <= $1::timestamptz)
+               OR (status = 'retry_wait' AND next_attempt_at <= $1::timestamptz))
+             AND (lease_expires_at IS NULL OR lease_expires_at < $1::timestamptz)
+             OR (status = 'running' AND lease_expires_at IS NOT NULL
+                 AND lease_expires_at < $1::timestamptz)
            )
          ORDER BY COALESCE(due_at, next_attempt_at) ASC
-         LIMIT $3
+         LIMIT $2
          FOR UPDATE SKIP LOCKED`,
-        [input.now, input.maxDeferralMinutes, input.limit],
+        [input.now, input.limit],
       );
       const claimed: ConsolidationState[] = [];
       for (const row of res.rows) {
@@ -537,7 +544,7 @@ export class PgMemoryConsolidationStore {
 
   // ── 幂等 run ledger ──────────────────────────────────────────
 
-  /** INSERT；唯一冲突时返回已有记录（可复用 prepared proposal，不再烧模型）。 */
+  /** INSERT；唯一冲突时返回已有 ledger 记录，避免同一范围重复创建执行记录。 */
   async insertOrGetRun(input: {
     idempotencyKey: string;
     tenantId: string; userId: string; workspaceId: string; sessionId: string;
@@ -568,10 +575,6 @@ export class PgMemoryConsolidationStore {
     idempotencyKey: string;
     status?: ConsolidationRunStatus;
     modelActual?: string;
-    inputHash?: string;
-    baseMemoryHash?: string;
-    plannedPostimageHash?: string;
-    proposalJson?: unknown;
     usageJson?: unknown;
     errorCode?: string;
     errorMessage?: string;
@@ -587,10 +590,6 @@ export class PgMemoryConsolidationStore {
     };
     if (input.status !== undefined) push('status', input.status);
     if (input.modelActual !== undefined) push('model_actual', input.modelActual);
-    if (input.inputHash !== undefined) push('input_hash', input.inputHash);
-    if (input.baseMemoryHash !== undefined) push('base_memory_hash', input.baseMemoryHash);
-    if (input.plannedPostimageHash !== undefined) push('planned_postimage_hash', input.plannedPostimageHash);
-    if (input.proposalJson !== undefined) push('proposal_json', JSON.stringify(input.proposalJson));
     if (input.usageJson !== undefined) push('usage_json', JSON.stringify(input.usageJson));
     if (input.errorCode !== undefined) push('error_code', input.errorCode);
     if (input.errorMessage !== undefined) push('error_message', input.errorMessage.slice(0, 2000));
@@ -634,10 +633,6 @@ export class PgMemoryConsolidationStore {
       modelRequested: (row.model_requested as string | null) ?? null,
       modelActual: (row.model_actual as string | null) ?? null,
       promptVersion: Number(row.prompt_version),
-      inputHash: (row.input_hash as string | null) ?? null,
-      baseMemoryHash: (row.base_memory_hash as string | null) ?? null,
-      plannedPostimageHash: (row.planned_postimage_hash as string | null) ?? null,
-      proposalJson: row.proposal_json,
       usageJson: row.usage_json,
       retryCount: Number(row.retry_count ?? 0),
       errorCode: (row.error_code as string | null) ?? null,
@@ -685,8 +680,7 @@ export class PgMemoryConsolidationStore {
     const res = await this.pool.query(
       `SELECT * FROM ${this.tombstonesTable}
        WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL
-       ORDER BY created_at DESC
-       LIMIT 500`,
+       ORDER BY created_at DESC`,
       [tenantId, userId],
     );
     return res.rows.map((row: Record<string, unknown>) => ({

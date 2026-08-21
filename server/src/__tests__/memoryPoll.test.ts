@@ -79,20 +79,18 @@ function toolContext(root = '/ws/tenant/user'): ToolCallContext {
 // toolProfiles
 // ============================================
 describe('memory_poll tool profile', () => {
-  it('无 profile 时返回 v1 记忆策略包装：隐藏 MemoryCommand/MemoryCommit 与主会话隐藏集', () => {
-    // 2026-07-29 记忆写入职责剥离批次：无 profile 的 run（主会话/子 agent）默认
-    // 套 v1 过滤——两个记忆政策工具不可见，其余透传。
+  it('无 profile 时返回 v1 记忆策略包装：隐藏 MemoryCommand 与主会话隐藏集', () => {
+    // 无 profile 的 run（主会话/子 agent）默认套 v1 过滤：显式记忆控制工具不可见。
     // 2026-08-03 工具面收敛批次：v1 额外隐藏主会话隐藏集 UserActivityList/MemoryList
     //（仅 memory_poll / memory_consolidate profile 白名单保留）。
     const inner = fakeToolRuntime();
     const withNewTools: ToolRuntime = {
-      list: () => [...ALL_TOOLS, descriptor('MemoryCommand', 'workspace_write'), descriptor('MemoryCommit', 'workspace_write')],
+      list: () => [...ALL_TOOLS, descriptor('MemoryCommand', 'workspace_write')],
       invoke: inner.invoke,
     };
     const wrapped = applyToolProfile(withNewTools, undefined);
     const names = wrapped.list(toolContext()).map((d) => d.name);
     expect(names).not.toContain('MemoryCommand');
-    expect(names).not.toContain('MemoryCommit');
     expect(names).not.toContain('UserActivityList');
     expect(names).not.toContain('MemoryList');
     expect(names).toEqual(ALL_TOOLS.map((d) => d.name).filter((name) => name !== 'UserActivityList' && name !== 'MemoryList'));
@@ -948,17 +946,16 @@ describe('CronService system job guard', () => {
   });
 });
 describe('main session v2 memory consumer boundary', () => {
-  it('hides MemoryCommand/MemoryCommit while retaining MemorySearch and Read', () => {
+  it('hides MemoryCommand while retaining MemorySearch and Read', () => {
     const inner = fakeToolRuntime();
     const runtime = applyToolProfile({
-      list: () => [...ALL_TOOLS, descriptor('MemoryCommand', 'workspace_write'), descriptor('MemoryCommit', 'workspace_write')],
+      list: () => [...ALL_TOOLS, descriptor('MemoryCommand', 'workspace_write')],
       invoke: inner.invoke,
     }, undefined, 'v2');
     const names = runtime.list(toolContext()).map(tool => tool.name);
     expect(names).toContain('MemorySearch');
     expect(names).toContain('Read');
     expect(names).not.toContain('MemoryCommand');
-    expect(names).not.toContain('MemoryCommit');
   });
 
   it.each([

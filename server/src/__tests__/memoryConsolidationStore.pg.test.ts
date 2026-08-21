@@ -125,18 +125,41 @@ describePg('PgMemoryConsolidationStore contract', () => {
 
   it('active run 存在时 claimDue 不取该会话；到期 + 无 active 才 claim', async () => {
     // 尚未到期（due=now+10m）→ claim 不到
-    let claimed = await store!.claimDue({ workerId: 'w-a', now: now(), limit: 10, maxDeferralMinutes: 60, leaseSeconds: 900 });
+    let claimed = await store!.claimDue({ workerId: 'w-a', now: now(), limit: 10, leaseSeconds: 900 });
     expect(claimed.find((s) => s.sessionId === BASE.sessionId)).toBeUndefined();
 
     // 到期（用未来时间模拟）→ claim 到并进入 running
     const future = new Date(Date.now() + 11 * 60_000).toISOString();
-    claimed = await store!.claimDue({ workerId: 'w-a', now: future, limit: 10, maxDeferralMinutes: 60, leaseSeconds: 900 });
+    claimed = await store!.claimDue({ workerId: 'w-a', now: future, limit: 10, leaseSeconds: 900 });
     const mine = claimed.find((s) => s.sessionId === BASE.sessionId);
     expect(mine?.status).toBe('running');
 
     // lease 未过期时第二个 worker claim 不到
-    const again = await store!.claimDue({ workerId: 'w-b', now: future, limit: 10, maxDeferralMinutes: 60, leaseSeconds: 900 });
+    const again = await store!.claimDue({ workerId: 'w-b', now: future, limit: 10, leaseSeconds: 900 });
     expect(again.find((s) => s.sessionId === BASE.sessionId)).toBeUndefined();
+
+    // worker 崩溃后 running lease 到期，其他 worker 可回收，不能永久卡死。
+    const afterLease = new Date(Date.parse(future) + 901_000).toISOString();
+    const reclaimed = await store!.claimDue({ workerId: 'w-c', now: afterLease, limit: 10, leaseSeconds: 900 });
+    expect(reclaimed.find((s) => s.sessionId === BASE.sessionId)?.status).toBe('running');
+  });
+
+  it('error run 不吞掉此前已 pending 的 backlog，只重新开始 debounce', async () => {
+    const base = { ...BASE, sessionId: 's-error-after-pending' };
+    await store!.applyRunFinished({
+      ...base, runId: 'r-success', sessionSequence: 40, at: now(), globalSequence: 100,
+      eligible: true, debounceMinutes: 10,
+    });
+    await store!.applyRunStarted({ ...base, runId: 'r-error', at: now(), globalSequence: 101 });
+    await store!.applyRunFinished({
+      ...base, runId: 'r-error', sessionSequence: 45, at: now(), globalSequence: 102,
+      eligible: false, debounceMinutes: 10,
+    });
+    const state = await store!.getState(base.tenantId, base.sessionId);
+    expect(state?.targetSessionSequence).toBe(40);
+    expect(state?.activeRunIds).toEqual([]);
+    expect(state?.status).toBe('pending');
+    expect(state?.dueAt).toBeTruthy();
   });
 
   it('idempotency key 唯一：同范围第二次 insertOrGetRun 返回已有记录', async () => {

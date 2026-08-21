@@ -111,7 +111,7 @@ async function syncLocked(
   const integrationRef = `refs/heads/${input.integrationBranch}`;
   const baseOid = singleOid(await git(host, input.repositoryPath, ['rev-parse', '--verify', remoteBaseRef]), remoteBaseRef);
   const worktrees = parseWorktrees((await git(host, input.repositoryPath, [
-    '-c', 'core.quotePath=false', 'worktree', 'list', '--porcelain',
+    'worktree', 'list', '--porcelain',
   ])).stdout);
 
   assertUniqueWorktreePathsAndBranches(worktrees);
@@ -195,7 +195,7 @@ async function prepareIntegrationWorktree(
   }
 
   await git(host, input.repositoryPath, [
-    'worktree', 'add', '-b', input.integrationBranch, '--', input.worktreePath, remoteBaseRef,
+    'worktree', 'add', '-b', input.integrationBranch, '--no-track', '--', input.worktreePath, remoteBaseRef,
   ]);
   return 'created';
 }

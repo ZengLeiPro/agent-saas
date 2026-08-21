@@ -41,15 +41,14 @@ const MEMORY_POLL_TOOL_ALLOWLIST: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * L2 记忆整合 profile（2026-07-29 记忆写入职责剥离批次）：比 memory_poll 更窄——
- * 无通用 Read/Shell/Write/Edit。digest 由服务端投影提供，模型不需要探索工作区；
- * 写入只经 MemoryCommit（服务端证据校验 + 固定序列化 + PG commit lock）。
- * 这是记忆投毒风险（R1/R8/R8b）的核心缓解：模型没有任何自由文件/命令能力。
+ * 旧 memory_consolidate profile 仅为存量隐藏会话兼容；新 L2 不再使用该 Profile，
+ * 而是继承父会话 Profile，并在 invoke 层开放真实记忆 Markdown。
  */
 const MEMORY_CONSOLIDATE_TOOL_ALLOWLIST: ReadonlySet<string> = new Set([
+  'Read',
+  'Write',
+  'Edit',
   'MemorySearch',
-  'MemoryList',
-  'MemoryCommit',
   'WaitForWorkspaceReady',
 ]);
 
@@ -81,27 +80,87 @@ export function applyToolProfile(
     return new ProfileFilteredToolRuntime(runtime, {
       isAllowed: (descriptor) =>
         MEMORY_CONSOLIDATE_TOOL_ALLOWLIST.has(descriptor.name) || MEMORY_CONSOLIDATE_TOOL_ALLOWLIST.has(descriptor.id),
+      guardInvoke: (call, context) => {
+        if (WRITE_PATH_PARAM[call.toolId]) guardMemoryPollWritePath(call, context);
+      },
       profileLabel: 'memory_consolidate',
     });
   }
   // 无后台 profile 的 run（主会话/子 agent/后台命令等）一律套记忆策略过滤：
-  // 默认 v1 = 隐藏 MemoryCommand/MemoryCommit + 主会话隐藏集（见上方常量注释）。
+  // 默认 v1 = 隐藏 MemoryCommand + 主会话隐藏集（见上方常量注释）。
   return applyMainSessionToolFilter(runtime, memoryPolicy ?? 'v1');
+}
+
+const MEMORY_CONSOLIDATION_INVOKE_ALLOWLIST: ReadonlySet<string> = new Set([
+  'Read',
+  'Write',
+  'Edit',
+  'MemorySearch',
+  'SessionContext',
+  'WaitForWorkspaceReady',
+]);
+
+/**
+ * 隐藏记忆审查只收窄 invoke，不过滤 list：模型看到的工具定义必须与父会话一致，
+ * 才能复用同一 prompt_cache_key。文件读写仅允许真实 MEMORY.md / memory/**\/*.md；
+ * SessionContext 默认指向父会话事实源，其余有副作用的工具一律拒绝。
+ */
+export function applyMemoryConsolidationInvocationPolicy(
+  runtime: ToolRuntime,
+  sourceSessionId: string | undefined,
+): ToolRuntime {
+  if (!sourceSessionId) return runtime;
+  return new MemoryConsolidationInvocationRuntime(runtime, sourceSessionId);
+}
+
+class MemoryConsolidationInvocationRuntime implements ToolRuntime {
+  constructor(
+    private readonly inner: ToolRuntime,
+    private readonly sourceSessionId: string,
+  ) {}
+
+  list(context?: ToolCallContext): ToolDescriptor[] {
+    return this.inner.list(context);
+  }
+
+  async invoke<TInput>(call: AuthorizedToolCall<TInput>, context: ToolCallContext): Promise<ToolResult> {
+    const descriptor = this.inner.list(context).find(
+      (candidate) => candidate.id === call.toolId || candidate.name === call.toolId,
+    );
+    const names = descriptor ? [descriptor.id, descriptor.name] : [call.toolId];
+    if (!names.some((name) => MEMORY_CONSOLIDATION_INVOKE_ALLOWLIST.has(name))) {
+      throw new Error(`记忆审查阶段禁止调用 ${call.toolId}；只允许读取、检索和编辑记忆 Markdown。`);
+    }
+    if (names.some((name) => name === 'Read' || name === 'Write' || name === 'Edit')) {
+      await guardMemoryMarkdownPath(call as AuthorizedToolCall, context);
+    }
+    const sourceContext = names.some((name) => name === 'SessionContext')
+      ? {
+          sessionId: this.sourceSessionId,
+          workspace: { ...context.workspace, sessionId: this.sourceSessionId },
+        }
+      : {};
+    return this.inner.invoke(call, {
+      ...context,
+      ...sourceContext,
+      memoryMaintenanceMode: 'consolidation',
+    });
+  }
 }
 
 /**
  * 主会话（无后台 profile）工具面过滤器。
  *
  * 命名沿革：原名 applyMemoryPolicyFilter（2026-07-29 记忆写入职责剥离批次引入，
- * 当时唯一职责是按租户记忆政策隐藏 MemoryCommand/MemoryCommit）；2026-08-03
+ * 当时唯一职责是按租户记忆政策隐藏记忆控制工具）；2026-08-03
  * 工具面收敛批次起兼管主会话隐藏集（UserActivityList/MemoryList），职责已
  * 超出「记忆政策」，故更名为中性的 applyMainSessionToolFilter（曾磊 08-03 拍板）。
  * v1/v2 分档语义仍来自租户记忆写入政策（memoryWriteDelegationEnabled）：
  *
- * - v1（默认）：隐藏 MemoryCommand/MemoryCommit 两个记忆政策工具，
- *   外加主会话隐藏集（UserActivityList/MemoryList，2026-08-03 起）。
+ * - v1（默认）：隐藏 MemoryCommand，外加主会话隐藏集
+ *   （UserActivityList/MemoryList，2026-08-03 起）。
  * - v2（memoryPolicyVersion=v2，租户 memoryWriteDelegationEnabled 的新会话）：
- *   隐藏 MemoryCommand/MemoryCommit，并对 Write/Edit/Shell 加记忆路径 deny guard。
+ *   隐藏 MemoryCommand，并对 Write/Edit/Shell 加记忆路径 deny guard。
  *   主 Agent 只消费记忆；后台记忆服务是唯一写入者。
  *
  * 后台 profile run（memory_poll/memory_consolidate）不经此函数——白名单本身
@@ -111,7 +170,7 @@ export type MemoryWritePolicyVersion = 'v1' | 'v2';
 
 /**
  * 主会话（无后台 profile）隐藏集（2026-08-03 工具面收敛批次扩充）：
- * - MemoryCommand/MemoryCommit：记忆写入职责剥离批次的政策工具，按 v1/v2 分档。
+ * - MemoryCommand：显式记忆控制工具，普通主会话隐藏。
  * - UserActivityList：记忆轮询的原料工具，主会话场景弱（用户活动本来就在会话里），
  *   仅 memory_poll profile 白名单保留。
  * - MemoryList：主会话有 Shell（`ls memory/` 等价）；存在价值在无 Shell 的
@@ -120,8 +179,8 @@ export type MemoryWritePolicyVersion = 'v1' | 'v2';
  * 这里只是主会话模型可见面的收敛。
  */
 const MAIN_SESSION_HIDDEN_COMMON = ['UserActivityList', 'MemoryList'];
-const MAIN_SESSION_HIDDEN_TOOLS_V1: ReadonlySet<string> = new Set(['MemoryCommand', 'MemoryCommit', ...MAIN_SESSION_HIDDEN_COMMON]);
-const MAIN_SESSION_HIDDEN_TOOLS_V2: ReadonlySet<string> = new Set(['MemoryCommand', 'MemoryCommit', ...MAIN_SESSION_HIDDEN_COMMON]);
+const MAIN_SESSION_HIDDEN_TOOLS_V1: ReadonlySet<string> = new Set(['MemoryCommand', ...MAIN_SESSION_HIDDEN_COMMON]);
+const MAIN_SESSION_HIDDEN_TOOLS_V2: ReadonlySet<string> = new Set(['MemoryCommand', ...MAIN_SESSION_HIDDEN_COMMON]);
 
 export function applyMainSessionToolFilter(runtime: ToolRuntime, policy: MemoryWritePolicyVersion): ToolRuntime {
   if (policy === 'v1') {
@@ -135,6 +194,8 @@ export function applyMainSessionToolFilter(runtime: ToolRuntime, policy: MemoryW
     isAllowed: (descriptor) =>
       !MAIN_SESSION_HIDDEN_TOOLS_V2.has(descriptor.name) && !MAIN_SESSION_HIDDEN_TOOLS_V2.has(descriptor.id),
     guardInvoke: async (call, context) => {
+      // 隐藏记忆审查沿用父会话同一套 descriptor；执行层另有更窄的 Markdown guard。
+      if (context.memoryMaintenanceMode === 'consolidation') return;
       const input = call.input as Record<string, unknown> | undefined;
       if (call.toolId === 'Shell') {
         const command = typeof input?.command === 'string' ? input.command : '';
@@ -209,6 +270,38 @@ async function resolveThroughExistingAncestors(target: string): Promise<string> 
       suffix.unshift(basename(cursor));
       cursor = parent;
     }
+  }
+}
+
+/** 隐藏记忆审查的 Read/Write/Edit 路径边界。 */
+async function guardMemoryMarkdownPath(call: AuthorizedToolCall, context: ToolCallContext): Promise<void> {
+  const paramName = call.toolId === 'Read' ? 'path' : WRITE_PATH_PARAM[call.toolId];
+  const input = call.input as Record<string, unknown> | undefined;
+  const rawPath = paramName && typeof input?.[paramName] === 'string'
+    ? (input[paramName] as string).trim()
+    : '';
+  if (!paramName || !rawPath) {
+    throw new Error(`记忆审查工具约束：${call.toolId} 缺少路径参数。`);
+  }
+  const root = resolve(context.workspace.root);
+  const target = isAbsolute(rawPath) ? resolve(rawPath) : resolve(join(root, rawPath));
+  const rel = relative(root, target);
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    throw new Error(`记忆审查工具约束：${call.toolId} 目标越界 workspace（${rawPath}）。`);
+  }
+  const normalized = rel.split('\\').join('/');
+  const allowed = normalized === 'MEMORY.md'
+    || (normalized.startsWith('memory/') && normalized.endsWith('.md'));
+  if (!allowed) {
+    throw new Error(`记忆审查工具约束：只允许访问 MEMORY.md 或 memory/**/*.md，拒绝 ${normalized}。`);
+  }
+  const [canonicalRoot, canonicalTarget] = await Promise.all([
+    resolveThroughExistingAncestors(root),
+    resolveThroughExistingAncestors(target),
+  ]);
+  const canonicalRel = relative(canonicalRoot, canonicalTarget).split('\\').join('/');
+  if (canonicalRel.startsWith('..') || isAbsolute(canonicalRel) || !isMemoryRelativePath(canonicalRel)) {
+    throw new Error(`记忆审查工具约束：${rawPath} 经符号链接越出记忆 Markdown 边界。`);
   }
 }
 

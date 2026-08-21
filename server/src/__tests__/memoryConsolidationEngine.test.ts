@@ -326,7 +326,7 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
       claimedStates: [state],
       projection: async () => ({
         sessionId: state.sessionId, tenantId: state.tenantId, userId: state.userId, username: 'alice',
-        channel: 'web', kind: 'user', workspaceId: state.workspaceId,
+        channel: 'web', kind: 'user' as const, workspaceId: state.workspaceId,
         metaJson: { memoryPolicyVersion: 'v2', sessionSource: 'taskboard_execution', memoryAutomationEligible: false },
       }),
     });
@@ -335,5 +335,99 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
 
     expect(harness.markIneligible).toHaveBeenCalledWith({ tenantId: state.tenantId, sessionId: state.sessionId });
     expect(harness.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('inherits the parent runtime instead of selecting a separate model/profile', async () => {
+    const state: ConsolidationState = {
+      tenantId: 't-enabled', userId: 'u1', workspaceId: 'ws1', sessionId: 'source-session',
+      processedSessionSequence: 10, targetSessionSequence: 42,
+      firstPendingAt: '2026-08-21T00:00:00.000Z', dueAt: '2026-08-21T00:10:00.000Z',
+      lastActivityAt: '2026-08-21T00:00:00.000Z', activeRunIds: [], status: 'running', attempts: 0,
+      nextAttemptAt: null, leaseOwner: 'worker-1', leaseExpiresAt: null, promptVersion: null,
+    };
+    const release = vi.fn(async () => undefined);
+    const updateRun = vi.fn(async () => undefined);
+    const markApplied = vi.fn(async () => undefined);
+    const markFailed = vi.fn(async () => 'retry_wait' as const);
+    const dispatchOptions: unknown[] = [];
+    const dispatch = vi.fn((_message, _context, options) => {
+      dispatchOptions.push(options);
+      return (async function* () {
+        yield { type: 'session_init' as const, sessionId: 'hidden-session' };
+        yield { type: 'done' as const };
+      })();
+    });
+    const store = {
+      init: vi.fn(async () => undefined),
+      getConsumerCursor: vi.fn(async () => 0),
+      advanceConsumerCursor: vi.fn(async () => undefined),
+      quarantineEnvelopeAndAdvanceCursor: vi.fn(async () => undefined),
+      claimDue: vi.fn(async () => [state]),
+      reviveThrottled: vi.fn(async () => 0),
+      getUserDailyUsage: vi.fn(async () => ({ runs: 0, inputTokens: 0 })),
+      acquireCommitLock: vi.fn(async () => ({ release })),
+      insertOrGetRun: vi.fn(async () => ({
+        created: true,
+        record: { id: 'ledger-1', status: 'started' },
+      })),
+      listActiveTombstones: vi.fn(async () => []),
+      updateRun,
+      markApplied,
+      markFailed,
+      markIneligible: vi.fn(async () => undefined),
+    } as unknown as PgMemoryConsolidationStore;
+    const engine = new MemoryConsolidationEngine({
+      store,
+      eventStore: {
+        listGlobalPage: vi.fn(async () => ({ events: [], hasMore: false })),
+        listSessionRange: vi.fn(async (sessionId: string) => sessionId === 'hidden-session' ? [{
+          sessionSequence: 4,
+          event: {
+            id: 'assistant-1', type: 'assistant_message', model: 'gpt-5.4',
+            usage: { inputTokens: 100, outputTokens: 8, cacheReadTokens: 80 },
+          },
+        }] : []),
+      },
+      projectionStore: { get: vi.fn(async () => ({
+        sessionId: state.sessionId, tenantId: state.tenantId, userId: state.userId, username: 'alice',
+        channel: 'web', kind: 'user' as const, model: 'gpt-5.4', workspaceId: state.workspaceId,
+        metaJson: { memoryPolicyVersion: 'v2', profileBindingKey: 'main' },
+      })) },
+      userStore: { findById: vi.fn(() => ({
+        id: 'u1', username: 'alice', role: 'user', tenantId: 't-enabled',
+      })) },
+      isTenantEnabled: () => true,
+      dispatch: dispatch as never,
+      agentCwd: '/tmp',
+      getConfig: () => ({ ...MEMORY_CONSOLIDATION_DEFAULTS, enabled: true }),
+    });
+
+    await workOnce(engine);
+
+    expect(store.insertOrGetRun).toHaveBeenCalledWith(expect.objectContaining({
+      modelRequested: 'gpt-5.4',
+    }));
+    expect(dispatchOptions).toHaveLength(1);
+    expect(dispatchOptions[0]).toEqual(expect.objectContaining({
+      memoryConsolidationSourceSessionId: 'source-session',
+      skipMemory: true,
+      approvalPolicy: { autoApproveTools: true },
+    }));
+    expect(dispatchOptions[0]).not.toEqual(expect.objectContaining({
+      toolProfile: expect.anything(),
+      model: expect.anything(),
+      executionTarget: expect.anything(),
+      skipPersona: expect.anything(),
+    }));
+    expect(updateRun).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'applied',
+      modelActual: 'gpt-5.4',
+      usageJson: expect.objectContaining({ inputTokens: 100, cacheReadTokens: 80 }),
+    }));
+    expect(markApplied).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'source-session', toSequence: 42,
+    }));
+    expect(markFailed).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
   });
 });

@@ -63,7 +63,12 @@ import { CronToolProvider } from '../agent/cronToolProvider.js';
 import { TenantCompanyInfoToolProvider } from '../agent/tenantCompanyInfoToolProvider.js';
 import { UserActivityToolProvider } from '../agent/userActivityToolProvider.js';
 import type { UserActivityService } from './userActivityService.js';
-import { applyToolProfile, normalizeToolProfile, type MemoryWritePolicyVersion } from './toolProfiles.js';
+import {
+  applyMemoryConsolidationInvocationPolicy,
+  applyToolProfile,
+  normalizeToolProfile,
+  type MemoryWritePolicyVersion,
+} from './toolProfiles.js';
 import {
   AgentRuntimeProfileResolver,
   applyAgentRuntimeProfile,
@@ -1158,8 +1163,29 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     }
     const resumeSessionId = options.resumeSessionId ?? context.resumeSessionId;
     const existingSession = resumeSessionId ? await sessionCatalog.get(resumeSessionId) : null;
-    const cwd = options.cwd ? resolve(options.cwd) : existingSession?.cwd ?? config.agentCwd;
-    let requestedModel = options.model;
+    const replaySourceSession = options.memoryConsolidationSourceSessionId
+      ? await sessionCatalog.get(options.memoryConsolidationSourceSessionId)
+      : null;
+    if (options.memoryConsolidationSourceSessionId && !replaySourceSession) {
+      yield { type: 'error', error: `记忆审查父会话不存在：${options.memoryConsolidationSourceSessionId}` };
+      return;
+    }
+    if (replaySourceSession?.status === 'running') {
+      yield { type: 'error', error: `记忆审查父会话仍在运行：${replaySourceSession.sessionId}` };
+      return;
+    }
+    const identitySource = context.sessionOwner || context.user;
+    if (replaySourceSession && (
+      replaySourceSession.userId !== identitySource?.id
+      || replaySourceSession.tenantId !== identitySource?.tenantId
+    )) {
+      yield { type: 'error', error: '记忆审查父会话与当前用户身份不一致' };
+      return;
+    }
+    const cwd = options.cwd
+      ? resolve(options.cwd)
+      : existingSession?.cwd ?? replaySourceSession?.cwd ?? config.agentCwd;
+    let requestedModel = options.model ?? replaySourceSession?.modelRef;
     let { model, modelConnection, modelProviderOptions } = resolveRuntimeModelOptions(
       config,
       requestedModel,
@@ -1169,9 +1195,10 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     let connection = modelConnection;
     let apiKey = connection?.apiKey || process.env.OPENAI_API_KEY;
     let baseUrl = connection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
-    const executionTarget = options.executionTarget ?? resolveDefaultExecutionTargetForContext(executionConfig, context);
+    const executionTarget = options.executionTarget
+      ?? replaySourceSession?.executionTarget
+      ?? resolveDefaultExecutionTargetForContext(executionConfig, context);
     const sandboxPolicy = buildRawRuntimeSandboxPolicy(config, context, cwd, executionTarget);
-    const identitySource = context.sessionOwner || context.user;
     const approvalPolicy = resolveEffectiveApprovalPolicy(config, options.approvalPolicy, {
       userId: identitySource?.id,
       username: identitySource?.username,
@@ -1184,7 +1211,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const abortController = options.abortController ?? new AbortController();
     enterSessionContext(sessionId, runId);
     const effectiveTenantId = resolveContextTenantId(context, existingSession);
-    const orgAgentId = options.orgAgentId ?? existingSession?.orgAgentId;
+    const orgAgentId = options.orgAgentId ?? existingSession?.orgAgentId ?? replaySourceSession?.orgAgentId;
     const connectorIdentity = orgAgentId ? { tenantId: effectiveTenantId }
       : existingSession ? {
           userId: existingSession.userId,
@@ -1222,7 +1249,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     if (config.agentRuntimeProfileResolver) {
       try {
         boundProfile = await config.agentRuntimeProfileResolver.resolveForSession({
-          existingSession,
+          existingSession: existingSession ?? replaySourceSession,
           bindingKey: resolveAgentProfileBindingKey({ toolProfile, orgAgentId }),
         });
         if (orgAgent) boundProfile = mergeOrgAgentBoundRuntimeProfile(boundProfile, orgAgent);
@@ -1307,14 +1334,14 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       ? boundProfile.version.config.model.modelRef
       : orgAgent
         ? requestedModel ?? model
-        : existingSession?.modelRef ?? options.modelRef ?? requestedModel ?? model;
+        : existingSession?.modelRef ?? replaySourceSession?.modelRef ?? options.modelRef ?? requestedModel ?? model;
     // 新会话首次落库时定版记忆策略，resume 只读既有 pin；
     // 后台 profile、专职 org Agent 与非用户通道固定 v1，避免与 L2 双写。
     // memory_consolidate 的隐藏来源由 createRuntimeSessionRecord 根据 toolProfile 固化。
     const isTaskboardExecution = existingSession?.sessionSource === 'taskboard_execution'
       || sessionId.startsWith('taskboard-');
     const memoryPolicyVersion: MemoryWritePolicyVersion = resolveSessionMemoryPolicy({
-      existing: existingSession,
+      existing: existingSession ?? replaySourceSession,
       delegationEnabled: config.memoryWriteDelegationEnabled?.(effectiveTenantId) === true,
       channel: context.channel,
       ...(toolProfile ? { toolProfile } : {}),
@@ -1322,7 +1349,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       ...(isTaskboardExecution ? { sessionSource: 'taskboard_execution' as const, memoryAutomationEligible: false } : {}),
     });
     const workspaceId = deriveRuntimeWorkspaceId({
-      existingSession,
+      existingSession: existingSession ?? replaySourceSession,
       fallbackSessionId: sessionId,
       identity: {
         id: identitySource?.id,
@@ -1342,6 +1369,10 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         modelRef: sessionModelRef,
         executionTarget,
         status: 'running', toolProfile, executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined,
+        ...(replaySourceSession ? {
+          sessionSource: 'memory_consolidation' as const,
+          memoryAutomationEligible: false,
+        } : {}),
         ...(orgAgentId ? { orgAgentId } : {}),
         ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
       })),
@@ -1413,6 +1444,10 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}),
         ...(approvalPolicy ? { approvalPolicy } : {}),
         ...(toolProfile ? { toolProfile } : {}),
+        ...(replaySourceSession ? {
+          memoryConsolidationSourceSessionId: replaySourceSession.sessionId,
+          forceFullContextReplay: true,
+        } : {}),
         ...(boundProfile ? profileRunMetadata(boundProfile) : {}),
         wakeMessage: {
           channel: message.channel,
@@ -1537,34 +1572,38 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       { ...(apiKey ? { apiKey } : {}), baseUrl },
       modelProviderOptions,
     );
+    const baseToolRuntime = new PlatformToolRuntime({
+      memoryIndexService: config.memoryIndexService,
+      executionTransportRegistry,
+      handStore: config.handStore,
+      resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
+      resolveWireEnv: buildTenantRemoteHandWireEnv,
+      artifactService: config.artifactService,
+      providers: [
+        ...tooling.providers,
+        ...(config.memoryControlProviders ?? []),
+        new SessionToolProvider(new SessionContextService(eventStore)),
+      ],
+      toolControls: config.toolControls,
+      backgroundTasks: config.backgroundTasks,
+    });
+    const profileToolRuntime = boundProfile
+      ? applyAgentRuntimeProfile(applyToolProfile(baseToolRuntime, toolProfile, memoryPolicyVersion), boundProfile)
+      : applyToolProfile(baseToolRuntime, toolProfile, memoryPolicyVersion);
+    const effectiveToolRuntime = applyMemoryConsolidationInvocationPolicy(
+      applyOrgAgentExecutionMode(
+        profileToolRuntime,
+        orgAgent?.runtime?.executionMode,
+        options.dispatcherCompletion === true,
+      ),
+      replaySourceSession?.sessionId,
+    );
     const loop = new RawAgentLoop({
       modelAdapter,
       eventStore,
       approvalStore,
       transcriptProjection: projection,
-      toolRuntime: applyOrgAgentExecutionMode(boundProfile
-        ? applyAgentRuntimeProfile(applyToolProfile(new PlatformToolRuntime({
-            memoryIndexService: config.memoryIndexService,
-            executionTransportRegistry,
-            handStore: config.handStore,
-            resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
-            resolveWireEnv: buildTenantRemoteHandWireEnv,
-            artifactService: config.artifactService,
-            providers: [...tooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
-            toolControls: config.toolControls,
-            backgroundTasks: config.backgroundTasks,
-          }), toolProfile, memoryPolicyVersion), boundProfile)
-        : applyToolProfile(new PlatformToolRuntime({
-        memoryIndexService: config.memoryIndexService,
-        executionTransportRegistry,
-        handStore: config.handStore,
-        resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
-        resolveWireEnv: buildTenantRemoteHandWireEnv,
-        artifactService: config.artifactService,
-        providers: [...tooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
-        toolControls: config.toolControls,
-        backgroundTasks: config.backgroundTasks,
-      }), toolProfile, memoryPolicyVersion), orgAgent?.runtime?.executionMode, options.dispatcherCompletion === true),
+      toolRuntime: effectiveToolRuntime,
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
@@ -1604,6 +1643,11 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         workerId: options.runtimeWorkerId,
         channelContext: context,
         approvalPolicy,
+        ...(replaySourceSession ? {
+          replaySourceSessionId: replaySourceSession.sessionId,
+          disableResponseRelay: true,
+          memoryMaintenanceMode: 'consolidation' as const,
+        } : {}),
         ...(boundProfile ? {
           profileId: boundProfile.binding.profileId,
           profileVersionId: boundProfile.binding.profileVersionId,
@@ -1693,7 +1737,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             return prepared;
           },
         } : {}),
-        ...(!isCompactCommand(message.content) && config.autoCompaction ? {
+        ...(!replaySourceSession && !isCompactCommand(message.content) && config.autoCompaction ? {
           evaluateAutoCompaction: (events: PlatformEvent[], forceReason?: string) => (
             config.autoCompaction!.evaluate({
               modelRef: sessionModelRef,
@@ -2885,6 +2929,23 @@ export async function wakeRuntimeSession(
   if (cancelRequested) {
     await options.lease?.release('cancelled', 'cancel_requested_before_wake');
     await appendRunStateChanged(eventStore, run.sessionId, run.runId, 'cancelled', run.status, 'cancel_requested_before_wake');
+    return;
+  }
+  // 隐藏记忆审查的写锁与 ledger/state 都由 MemoryConsolidationEngine 持有和提交。
+  // 进程崩溃/排水后禁止通用 scheduler 绕开该边界重放；由 state lease 过期后让
+  // engine 以同一幂等范围重新审查，模型会先读取真实 Markdown 现状。
+  if (typeof run.metadata?.memoryConsolidationSourceSessionId === 'string') {
+    const reason = 'memory_consolidation_run_not_recoverable';
+    await options.lease?.release('failed', reason);
+    await markRunState(
+      config.runStore,
+      eventStore,
+      run.sessionId,
+      run.runId,
+      'failed',
+      reason,
+    ).catch(() => undefined);
+    await sessionCatalog.markStatus(run.sessionId, 'error').catch(() => undefined);
     return;
   }
   // steering 行回收（2026-08-04 BUG-5 修复）：本 run 是回退执行的插话 source 时，

@@ -166,6 +166,41 @@ const CONTEXT_SYNTHESIS_PROMPT = [
 ].join('\n');
 const INVALID_PROMPT_RECOVERY_INPUT = '继续';
 const INVALID_PROMPT_CUSTOMER_ERROR = 'Agent 开小差了，请发送「继续」';
+
+/**
+ * 父会话是只读事实源，隐藏审查不得替它执行或持久化崩溃恢复。对已结束但仍缺
+ * tool_result 的批次，只在本次内存投影中补合成失败结果，保持 provider 请求合法。
+ */
+function closeUnfinishedReplayToolCalls(events: PlatformEvent[], sessionId: string): PlatformEvent[] {
+  const replay = buildRuntimeReplayState(events, [], sessionId);
+  if (replay.unclosedToolCalls.length === 0) return events;
+  const unclosedByBatch = new Map<string, typeof replay.unclosedToolCalls>();
+  for (const state of replay.unclosedToolCalls) {
+    const list = unclosedByBatch.get(state.batchId) ?? [];
+    list.push(state);
+    unclosedByBatch.set(state.batchId, list);
+  }
+  const closed: PlatformEvent[] = [];
+  for (const event of events) {
+    closed.push(event);
+    if (event.type !== 'assistant_tool_calls') continue;
+    for (const state of unclosedByBatch.get(event.id) ?? []) {
+      closed.push({
+        id: `memory-review-unclosed-${state.toolCallId}`,
+        timestamp: event.timestamp,
+        type: 'tool_result',
+        runId: event.runId,
+        sessionId,
+        toolCallId: state.toolCallId,
+        toolName: state.toolName,
+        content: '父会话结束前该工具调用未形成完整结果；记忆审查不会代为执行。',
+        isError: true,
+      });
+    }
+  }
+  return closed;
+}
+
 export interface RawAgentLoopOptions {
   modelAdapter: ModelAdapter;
   eventStore: EventStore;
@@ -637,18 +672,33 @@ export class RawAgentLoop implements AgentLoop {
       env: context.env,
       sessionId: context.sessionId,
       runId: context.runId,
+      ...(context.memoryMaintenanceMode ? { memoryMaintenanceMode: context.memoryMaintenanceMode } : {}),
       ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
       hooks: context.hooks,
       signal: context.signal,
     };
     const descriptors = this.toolRuntime.list(baseToolContext);
-    const priorEvents = await this.eventStore.list(context.sessionId, {
+    const replayListOptions = {
       excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
-      replayMode: 'bounded',
-    });
+      replayMode: 'bounded' as const,
+    };
+    const sourceEvents = context.replaySourceSessionId
+      ? closeUnfinishedReplayToolCalls(
+          await this.eventStore.list(context.replaySourceSessionId, replayListOptions),
+          context.replaySourceSessionId,
+        )
+      : [];
+    const loadCurrentEvents = () => this.eventStore.list(context.sessionId, replayListOptions);
+    const combineReplayEvents = (currentEvents: PlatformEvent[]) => (
+      context.replaySourceSessionId ? [...sourceEvents, ...currentEvents] : currentEvents
+    );
+    let currentEvents = await loadCurrentEvents();
+    const priorEvents = combineReplayEvents(currentEvents);
     const { tools, descriptorsByName } = await this.prepareSessionTools(descriptors, priorEvents, context);
+    // 普通会话恢复自身；隐藏审查只恢复隐藏会话自身。父会话永远只读，缺失的
+    // tool_result 已由 closeUnfinishedReplayToolCalls 在内存投影中补齐。
     const replayState = buildRuntimeReplayState(
-      priorEvents,
+      currentEvents,
       await this.approvalStore.list(context.sessionId),
       context.sessionId,
     );
@@ -657,12 +707,8 @@ export class RawAgentLoop implements AgentLoop {
       yield { type: 'error', error: recovery.message };
       return;
     }
-    const recoveredEvents = recovery.recovered > 0
-      ? await this.eventStore.list(context.sessionId, {
-        excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
-        replayMode: 'bounded',
-      })
-      : priorEvents;
+    if (recovery.recovered > 0) currentEvents = await loadCurrentEvents();
+    const recoveredEvents = combineReplayEvents(currentEvents);
     const restoredDraftState = await this.loadReplaceableDraftState(context);
     let restoredDraftRecoveryUsed = false;
     if (restoredDraftState) {
@@ -716,9 +762,9 @@ export class RawAgentLoop implements AgentLoop {
       }
     }
     const contextProjection = buildContextProjection(recoveredEvents, {
-      sessionId: context.sessionId,
+      sessionId: context.replaySourceSessionId ?? context.sessionId,
       runId: context.runId,
-      policy: this.contextPolicy,
+      policy: context.replaySourceSessionId ? { type: 'full_replay' } : this.contextPolicy,
     });
     const memoryMessage = input.memoryContext
       ? [{ role: 'user' as const, content: formatMemoryContext(input.memoryContext) }]
@@ -926,7 +972,9 @@ export class RawAgentLoop implements AgentLoop {
       warn: (message) => logger.warn(message),
     });
 
-    if (contextProjection.summaryEvent) await this.append(contextProjection.summaryEvent);
+    if (contextProjection.summaryEvent && !context.replaySourceSessionId) {
+      await this.append(contextProjection.summaryEvent);
+    }
     if (input.memoryContext) {
       await this.append({
         type: 'memory_context',
@@ -974,7 +1022,8 @@ export class RawAgentLoop implements AgentLoop {
     // 启动时查上一已完成 run 的 last_response_id（72h 内未过期），赋给本 run。
     // ChatCompletionsAdapter 收到 previousResponseId 会抛错 — 所以 runStore 只在
     // 模型走 protocol="responses" 时才有意义；dispatcher 已按 protocol 路由 adapter。
-    const usesStoredResponseState = this.modelAdapter.capabilities?.responseState !== 'stateless';
+    const usesStoredResponseState = !context.disableResponseRelay
+      && this.modelAdapter.capabilities?.responseState !== 'stateless';
     if (contextRewindRecoveryUsed) await this.clearResponseRelayState(context.sessionId, 'run wake');
     let currentResponseId = usesStoredResponseState && !contextRewindRecoveryUsed
       ? await this.loadInitialResponseId(context.sessionId, context.model, context.profileConfigDigest)
@@ -2647,6 +2696,7 @@ export class RawAgentLoop implements AgentLoop {
       env: context.env,
       sessionId: context.sessionId,
       runId: context.runId,
+      ...(context.memoryMaintenanceMode ? { memoryMaintenanceMode: context.memoryMaintenanceMode } : {}),
       ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
       hooks: context.hooks,
       signal: context.signal,
@@ -3344,7 +3394,8 @@ export class RawAgentLoop implements AgentLoop {
       event.type === 'context_rewind' && event.runId === args.context.runId
     ));
     if (contextRewindRecoveryUsed) clearProviderContinuations(args.messages);
-    const usesStoredResponseState = this.modelAdapter.capabilities?.responseState !== 'stateless';
+    const usesStoredResponseState = !args.context.disableResponseRelay
+      && this.modelAdapter.capabilities?.responseState !== 'stateless';
     if (contextRewindRecoveryUsed) await this.clearResponseRelayState(args.context.sessionId, 'resume wake');
     let currentResponseId = usesStoredResponseState && !contextRewindRecoveryUsed
       ? await this.loadInitialResponseId(

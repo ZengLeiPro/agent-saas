@@ -496,7 +496,7 @@ describe('runSubagent', () => {
     const fixture = await makeFixture({ cleanupDirs, parentMemoryPolicyVersion: 'v2' });
     const adapter = new TextOnlyAdapter();
     const memoryProvider: ToolProvider = {
-      list: () => ['MemoryCommand', 'MemoryCommit'].map((name) => ({
+      list: () => ['MemoryCommand'].map((name) => ({
         id: name,
         name,
         displayName: name,
@@ -522,7 +522,6 @@ describe('runSubagent', () => {
     });
     const toolNames = adapter.requests[0]!.tools.map((tool) => tool.name);
     expect(toolNames).not.toContain('MemoryCommand');
-    expect(toolNames).not.toContain('MemoryCommit');
   });
 
   it('explore 白名单：开放 Shell 搜索，但不暴露独立 Write/Edit 工具', async () => {

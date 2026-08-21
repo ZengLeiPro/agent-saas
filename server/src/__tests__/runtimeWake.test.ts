@@ -18,15 +18,19 @@ import type { RuntimeSessionRecord, SessionCatalog } from '../runtime/sessionCat
 import type { EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 
 class MemorySessionCatalog implements SessionCatalog {
-  constructor(private readonly session: RuntimeSessionRecord) {}
+  private readonly sessions: RuntimeSessionRecord[];
+
+  constructor(session: RuntimeSessionRecord | RuntimeSessionRecord[]) {
+    this.sessions = Array.isArray(session) ? session : [session];
+  }
   async upsert(): Promise<void> {}
   async ensure(): Promise<void> {}
   async get(sessionId: string): Promise<RuntimeSessionRecord | null> {
-    return sessionId === this.session.sessionId ? this.session : null;
+    return this.sessions.find((session) => session.sessionId === sessionId) ?? null;
   }
   async markStatus(): Promise<void> {}
   async findTranscriptPath(sessionId: string): Promise<string | null> {
-    return sessionId === this.session.sessionId ? this.session.transcriptPath : null;
+    return this.sessions.find((session) => session.sessionId === sessionId)?.transcriptPath ?? null;
   }
 }
 
@@ -699,6 +703,49 @@ describe('wakeRuntimeSession', () => {
     }
 
     expect(releases).toEqual([]);
+  });
+
+  it('does not wake hidden consolidation outside the engine lock and ledger boundary', async () => {
+    const now = new Date().toISOString();
+    const hidden: RuntimeSessionRecord = {
+      sessionId: 'memory-consolidation-hidden', userId: 'user-1', username: 'alice', tenantId: 'kaiyan',
+      channel: 'web', cwd: '/tmp/alice', transcriptPath: '/tmp/alice/hidden.jsonl',
+      modelRef: 'gpt-5.4', executionTarget: 'server-local', workspaceId: 'workspace-1',
+      status: 'running', createdAt: now, updatedAt: now,
+    };
+    const source: RuntimeSessionRecord = {
+      ...hidden,
+      sessionId: 'source-session',
+      transcriptPath: '/tmp/alice/source.jsonl',
+      status: 'running',
+    };
+    const run: RunRecord = {
+      runId: 'run-memory-wake', sessionId: hidden.sessionId, userId: hidden.userId,
+      tenantId: hidden.tenantId, status: 'running', model: 'gpt-5.4', channel: 'web',
+      requestedAt: now, updatedAt: now, executionTarget: hidden.executionTarget,
+      workspaceId: hidden.workspaceId,
+      metadata: {
+        memoryConsolidationSourceSessionId: source.sessionId,
+        forceFullContextReplay: true,
+        wakeMessage: { channel: 'web', chatId: hidden.sessionId, content: '开始记忆审查' },
+      },
+    };
+    const releases: Array<{ status?: RunStatus; reason?: string }> = [];
+    const lease: RuntimeWakeLease = {
+      runId: run.runId,
+      renew: async () => {},
+      release: async (status, reason) => { releases.push({ status, reason }); },
+    };
+
+    await wakeRuntimeSession({
+      agentCwd: '/tmp', sharedDir: '/tmp',
+      sessionCatalog: new MemorySessionCatalog([hidden, source]),
+      eventStoreFactory: () => new MemoryEventStore(),
+      runStore: { get: async () => run } as unknown as RunStore,
+    }, run, { lease });
+    expect(releases).toEqual([{
+      status: 'failed', reason: 'memory_consolidation_run_not_recoverable',
+    }]);
   });
 
   it('keeps the lease held when the normal wake dispatch reports an error', async () => {

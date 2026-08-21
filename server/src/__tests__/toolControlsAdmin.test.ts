@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { parseAppConfig } from '../app/config.js';
+import { loadAppConfig, parseAppConfig } from '../app/config.js';
 import { createToolControlsAdminRouter } from '../routes/toolControlsAdmin.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { InMemorySecretVault } from '../security/secretVault.js';
@@ -52,7 +52,7 @@ function makeWorkspace(rawConfig: ReturnType<typeof baseRawConfig> | Record<stri
 
 async function withApp<T>(
   rawConfig: ReturnType<typeof baseRawConfig> | Record<string, unknown>,
-  fn: (args: { baseUrl: string; configPath: string; runtimeConfig: ReturnType<typeof parseAppConfig> }) => Promise<T>,
+  fn: (args: { baseUrl: string; configPath: string; processCwd: string; runtimeConfig: ReturnType<typeof parseAppConfig> }) => Promise<T>,
   opts: Partial<Parameters<typeof createToolControlsAdminRouter>[0]> = {},
 ): Promise<T> {
   const { processCwd, configPath } = makeWorkspace(rawConfig);
@@ -72,7 +72,7 @@ async function withApp<T>(
   servers.push(server);
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('failed to bind test server');
-  return fn({ baseUrl: `http://127.0.0.1:${address.port}`, configPath, runtimeConfig });
+  return fn({ baseUrl: `http://127.0.0.1:${address.port}`, configPath, processCwd, runtimeConfig });
 }
 
 async function readJson(response: Response) {
@@ -509,6 +509,44 @@ describe('tool controls admin router', () => {
       expect(written.toolControls.tools?.Grep).toBeUndefined();
       expect(written.toolControls.tools?.Shell?.enabled).toBe(false);
       expect(runtimeConfig.toolControls?.tools?.Write?.descriptionOverride).toBeUndefined();
+    });
+  });
+
+  it('保留 replace descriptionOverride 到服务重启后的新配置实例', async () => {
+    await withApp(baseRawConfig(), async ({ baseUrl, processCwd }) => {
+      const override = { mode: 'replace' as const, text: '仅用于生成客户交付文档。' };
+      const saveResponse = await fetch(`${baseUrl}/api/admin/tool-controls/Write`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ descriptionOverride: override }),
+      });
+      expect(saveResponse.status).toBe(200);
+
+      // 模拟服务进程重启：必须从刚刚写入的 config.json 创建全新的 AppConfig，
+      // 而不是复用保存请求所在进程的内存对象。
+      const restartedConfig = loadAppConfig(processCwd);
+      expect(restartedConfig.toolControls?.tools?.Write?.descriptionOverride).toEqual(override);
+
+      const restartedApp = express();
+      restartedApp.use((req, _res, next) => {
+        (req as any).user = { sub: 'admin', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID };
+        next();
+      });
+      restartedApp.use('/api/admin/tool-controls', createToolControlsAdminRouter({
+        processCwd,
+        config: restartedConfig,
+      }));
+      const restartedServer = restartedApp.listen(0);
+      servers.push(restartedServer);
+      const address = restartedServer.address();
+      if (!address || typeof address === 'string') throw new Error('failed to bind restarted test server');
+
+      const restartResponse = await fetch(`http://127.0.0.1:${address.port}/api/admin/tool-controls`);
+      expect(restartResponse.status).toBe(200);
+      const restartBody = await readJson(restartResponse);
+      const write = restartBody.tools.find((tool: { id: string }) => tool.id === 'Write');
+      expect(write.descriptionOverride).toEqual(override);
+      expect(write.effectiveDescription).toBe(override.text);
     });
   });
 

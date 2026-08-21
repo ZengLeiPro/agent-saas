@@ -23,6 +23,7 @@ export interface IntegrationV3ComposeContext {
   repositoryPath: string;
   worktreePath: string;
   sources: TaskBoardIntegrationCandidateSourceSnapshot[];
+  trustedIntegrationBranchOids?: string[];
   workExecutionId?: string;
   workPushReceipt?: IntegrationV3WorkPushReceipt;
 }
@@ -116,14 +117,14 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
     const headOid = singleOid(commit);
     await git(this.host, context.worktreePath, ['reset', '--hard', headOid]);
 
-    const branchReceipt = current.candidate.providerPullRequestId
-      ? await this.provider.getReference(context.repository, current.candidate.branch, context.credentialOwnerId)
-      : await this.provider.ensureIntegrationBranch(context.repository, {
-        ref: current.candidate.branch,
-        expectedBaseOid: sync.baseOid,
-        expectedBaseTreeOid: singleOid(await git(this.host, context.worktreePath, ['rev-parse', `${sync.baseOid}^{tree}`])),
-        operationKey: operationKey(current.candidate.id, current.candidate.currentRevision, 'branch'),
-      }, context.credentialOwnerId);
+    const branchReceipt = await this.provider.ensureIntegrationBranch(context.repository, {
+      ref: current.candidate.branch,
+      expectedBaseOid: sync.baseOid,
+      expectedBaseTreeOid: singleOid(await git(this.host, context.worktreePath, ['rev-parse', `${sync.baseOid}^{tree}`])),
+      trustedExistingOids: context.trustedIntegrationBranchOids,
+      existingRequired: Boolean(current.candidate.providerPullRequestId),
+      operationKey: operationKey(current.candidate.id, current.candidate.currentRevision, 'branch'),
+    }, context.credentialOwnerId);
     await this.host.pushIntegrationHead({
       context, branch: current.candidate.branch, expectedOldOid: branchReceipt.oid, headOid,
       headParentOid: sync.baseOid,

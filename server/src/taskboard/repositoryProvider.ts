@@ -126,6 +126,8 @@ export interface RepositoryProvider {
     ref: string;
     expectedBaseOid: string;
     expectedBaseTreeOid: string;
+    trustedExistingOids?: string[];
+    existingRequired?: boolean;
     operationKey: string;
   }, credentialOwnerId: string): Promise<RepositoryBranchReceipt>;
   findIntegrationPullRequest?(repository: TaskBoardRepositoryConfig, input: {
@@ -270,16 +272,21 @@ export class GithubRepositoryProvider implements RepositoryProvider {
     return { known: ruleFacts.known, requiredChecks: checks.sort(compareChecks), mergeQueueRequired: ruleFacts.mergeQueueRequired, unsupportedRules: ruleFacts.unsupportedRules };
   }
 
-  async ensureIntegrationBranch(repository: TaskBoardRepositoryConfig, input: { ref: string; expectedBaseOid: string; expectedBaseTreeOid: string; operationKey: string }, credentialOwnerId: string): Promise<RepositoryBranchReceipt> {
+  async ensureIntegrationBranch(repository: TaskBoardRepositoryConfig, input: { ref: string; expectedBaseOid: string; expectedBaseTreeOid: string; trustedExistingOids?: string[]; existingRequired?: boolean; operationKey: string }, credentialOwnerId: string): Promise<RepositoryBranchReceipt> {
     assertOperationKey(input.operationKey);
     const ref = normalizeBranchRef(input.ref);
     const base = await this.getBaseReference(repository, credentialOwnerId);
     if (base.oid !== input.expectedBaseOid || base.treeOid !== input.expectedBaseTreeOid) throw new RepositoryProviderDriftError('Integration base ref changed before branch creation');
     const existing = await this.tryGetReference(repository, ref, credentialOwnerId);
     if (existing) {
-      if (existing.oid !== input.expectedBaseOid || existing.treeOid !== input.expectedBaseTreeOid) throw new RepositoryProviderDriftError('Existing integration branch does not match the prepared base');
+      const matchesPreparedBase = existing.oid === input.expectedBaseOid && existing.treeOid === input.expectedBaseTreeOid;
+      const matchesDurablePushIntent = input.trustedExistingOids?.includes(existing.oid) === true;
+      if (!matchesPreparedBase && !matchesDurablePushIntent) {
+        throw new RepositoryProviderDriftError('Existing integration branch does not match the prepared base or a durable push intent');
+      }
       return { operationKey: input.operationKey, ...existing, created: false, raw: {} };
     }
+    if (input.existingRequired) throw new RepositoryProviderDriftError('Bound integration branch is missing');
     const payload = asRecord(await this.request(repository, credentialOwnerId, this.repoPath(repository, '/git/refs'), {
       method: 'POST', body: JSON.stringify({ ref: `refs/heads/${ref}`, sha: input.expectedBaseOid }),
     }));

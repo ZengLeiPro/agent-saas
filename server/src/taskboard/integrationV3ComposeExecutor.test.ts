@@ -136,6 +136,7 @@ describe('DefaultIntegrationV3ComposeExecutor push replay', () => {
         resolveContext: async () => ({
           repository: { provider: 'github', repositoryId: 'github-id:123', owner: 'org', name: 'repo', baseBranch: 'main', allowForkPullRequest: false } as const,
           credentialOwnerId: 'owner-1', tenantId: 'tenant-1', repositoryPath, worktreePath, sources: [source],
+          trustedIntegrationBranchOids: ['f'.repeat(40)],
         }),
         withRepositoryBranchLock: async <T>(_lock: unknown, action: () => Promise<T>) => action(),
         validateServerOwnedRepository: async () => undefined,
@@ -155,8 +156,11 @@ describe('DefaultIntegrationV3ComposeExecutor push replay', () => {
         bindPullRequest: async (_id: string, _version: number, providerPullRequestId: string) => { bound = providerPullRequestId; },
       };
       const treeOf = async (oid: string) => (await git(repositoryPath, ['rev-parse', `${oid}^{tree}`])).stdout.trim();
+      const ensureIntegrationBranch = vi.fn(async (_repository: unknown, _input: { trustedExistingOids?: string[] }) => (
+        { oid: runner.current(), treeOid: await treeOf(runner.current()) }
+      ));
       const provider = {
-        ensureIntegrationBranch: async () => ({ oid: runner.current(), treeOid: await treeOf(runner.current()) }),
+        ensureIntegrationBranch,
         getReference: async (_repository: unknown, ref: string) => {
           const oid = ref === 'main' ? baseOid : runner.current();
           return { oid, treeOid: await treeOf(oid) };
@@ -174,6 +178,7 @@ describe('DefaultIntegrationV3ComposeExecutor push replay', () => {
         }
       }
       expect(bound).toBe('77');
+      expect(ensureIntegrationBranch.mock.calls[0]?.[1]).toMatchObject({ trustedExistingOids: ['f'.repeat(40)] });
       const remoteAfterFirst = runner.current();
       bound = undefined;
       try {
@@ -187,6 +192,8 @@ describe('DefaultIntegrationV3ComposeExecutor push replay', () => {
       expect(bound).toBe('77');
       const secondCandidate = { ...firstCandidate, providerPullRequestId: '77', version: 2 };
       const result = await composer.compose(current(secondCandidate, baseOid, source));
+      expect(ensureIntegrationBranch.mock.calls[2]?.[1]).toMatchObject({ existingRequired: true,
+        trustedExistingOids: ['f'.repeat(40)] });
       expect(result.headOid).toBe(remoteAfterFirst);
       expect(runner.pushes).toBe(1);
       expect(storage.records.size).toBe(1);

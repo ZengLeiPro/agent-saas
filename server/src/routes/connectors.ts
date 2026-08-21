@@ -71,8 +71,9 @@ export function createConnectorsRouter(deps: ConnectorsRouterDeps): Router {
   const router = Router();
 
   router.use(async (req, res, next) => {
-    if (req.method === 'PATCH' && req.path.endsWith('/runtime')) return next();
-    if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) || !deps.legacyWriteGate) return next();
+    const isLegacyNativeCredentialWrite = ['/github', '/x', '/aliyun'].includes(req.path)
+      && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
+    if (!isLegacyNativeCredentialWrite || !deps.legacyWriteGate) return next();
     try {
       await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
       next();

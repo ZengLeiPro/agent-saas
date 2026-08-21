@@ -196,6 +196,17 @@ describe('native connectors routes', () => {
     expect(gate.assertLegacyWriteAllowed).toHaveBeenCalledWith({ actor: 'user', compatibilityProjection: false });
   });
 
+  it('封闭 gate 不截获由后续专用路由处理的 OAuth 请求', async () => {
+    const gate = {
+      assertLegacyWriteAllowed: vi.fn().mockRejectedValue(new Error('sealed')),
+    };
+    const rig = await createRig({ legacyWriteGate: gate });
+
+    expect((await rig.request('/api/connectors/notion/auth/session', { method: 'POST' })).status).toBe(404);
+    expect((await rig.request('/api/connectors/google-workspace/oauth/start', { method: 'POST' })).status).toBe(404);
+    expect(gate.assertLegacyWriteAllowed).not.toHaveBeenCalled();
+  });
+
   it('X 连接状态 GET 与 runtime env 直接读取治理 Credential', async () => {
     let governanceCredentials: GovernanceCredential[] = [];
     const governanceCredentialStore = {

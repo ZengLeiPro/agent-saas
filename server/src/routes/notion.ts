@@ -32,7 +32,10 @@ export function createNotionRouter(options: NotionRouterOptions): Router {
   const router = Router();
 
   router.use('/connectors/notion', async (req, res, next) => {
-    if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) || !options.legacyWriteGate) return next();
+    const isGovernedAuthFlow = (req.method === 'POST' && req.path === '/auth/session')
+      || (req.method === 'DELETE' && req.path === '/');
+    const writesLegacyState = !isGovernedAuthFlow && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
+    if (!writesLegacyState || !options.legacyWriteGate) return next();
     try {
       await options.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
       next();

@@ -326,13 +326,17 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
     return { repository, credentialOwnerId: String(row.owner_user_id) };
   }
 
-  async findRecoverableMergeOperation(candidateId: string, revision: number): Promise<string | undefined> {
+  async findRecoverableMergeOperation(candidateId: string, revision: number) {
     const result = await this.options.pool.query(
-      `SELECT operation_key FROM ${this.options.providerOperationsTable}
+      `SELECT operation_key,state FROM ${this.options.providerOperationsTable}
         WHERE candidate_id=$1 AND candidate_revision=$2 AND kind='merge_pull_request'
-          AND state IN ('executing','unknown','succeeded')
-        ORDER BY CASE state WHEN 'succeeded' THEN 0 ELSE 1 END,updated_at DESC LIMIT 1`, [candidateId, revision]);
-    return result.rows[0] ? String(result.rows[0].operation_key) : undefined;
+          AND state IN ('prepared','executing','unknown','succeeded')
+        ORDER BY CASE state WHEN 'succeeded' THEN 0 WHEN 'executing' THEN 1
+          WHEN 'unknown' THEN 2 ELSE 3 END,updated_at DESC LIMIT 1`, [candidateId, revision]);
+    return result.rows[0] ? {
+      operationKey: String(result.rows[0].operation_key),
+      state: String(result.rows[0].state) as 'prepared' | 'executing' | 'unknown' | 'succeeded',
+    } : undefined;
   }
 }
 

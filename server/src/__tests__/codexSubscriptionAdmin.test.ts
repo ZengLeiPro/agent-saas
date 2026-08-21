@@ -198,4 +198,94 @@ describe('Codex subscription admin router', () => {
       }),
     );
   });
+
+  it('支持追加、排序和删除多个 Codex 授权账号', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'codex-subscription-admin-multi-'));
+    const processCwd = join(root, 'server');
+    mkdirSync(processCwd, { recursive: true });
+    const configPath = join(root, 'config.json');
+    writeFileSync(configPath, JSON.stringify(rawConfig(), null, 2), 'utf-8');
+
+    const config = parseAppConfig(rawConfig());
+    const vault = new InMemorySecretVault();
+    const credentialFetch = vi.fn(async () => new Response('', { status: 200 })) as unknown as typeof fetch;
+    const credentialManager = new CodexCredentialManager({
+      vault,
+      getConfig: () => config.codexSubscription,
+      fetchImpl: credentialFetch,
+    });
+    const oauthFetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        device_auth_id: 'device-one', user_code: 'ONE-0001', interval: 0,
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        authorization_code: 'auth-one', code_verifier: 'verifier-one', code_challenge: 'challenge-one',
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        access_token: jwt('acct-one'), refresh_token: 'refresh-one', id_token: jwt('acct-one'), expires_in: 3600,
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        device_auth_id: 'device-two', user_code: 'TWO-0002', interval: 0,
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        authorization_code: 'auth-two', code_verifier: 'verifier-two', code_challenge: 'challenge-two',
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        access_token: jwt('acct-two'), refresh_token: 'refresh-two', id_token: jwt('acct-two'), expires_in: 3600,
+      }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
+    const deviceAuthService = new CodexDeviceAuthService(oauthFetch);
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as any).user = {
+        sub: 'admin', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID,
+      };
+      next();
+    });
+    app.use('/api/admin/codex-subscription', createCodexSubscriptionAdminRouter({
+      processCwd, config, credentialManager, deviceAuthService,
+    }));
+    const server = app.listen(0);
+    servers.push(server);
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('failed to bind test server');
+    const baseUrl = `http://127.0.0.1:${address.port}/api/admin/codex-subscription`;
+
+    const startOne = await fetch(`${baseUrl}/device/start`, { method: 'POST' });
+    expect(startOne.status).toBe(201);
+    const sessionOne = await startOne.json() as { sessionId: string };
+    const completeOne = await fetch(`${baseUrl}/device/${sessionOne.sessionId}`);
+    expect(completeOne.status).toBe(200);
+    const oneState = await completeOne.json() as any;
+    expect(oneState.credentials).toHaveLength(1);
+
+    const startTwo = await fetch(`${baseUrl}/device/start`, { method: 'POST' });
+    expect(startTwo.status).toBe(201);
+    const sessionTwo = await startTwo.json() as { sessionId: string };
+    const completeTwo = await fetch(`${baseUrl}/device/${sessionTwo.sessionId}`);
+    expect(completeTwo.status).toBe(200);
+    const twoState = await completeTwo.json() as any;
+    expect(twoState.credentials).toHaveLength(2);
+    const firstId = twoState.credentials[0].id as string;
+    const secondId = twoState.credentials[1].id as string;
+
+    const reorder = await fetch(`${baseUrl}/credentials/order`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ credentialRefs: [secondId, firstId] }),
+    });
+    expect(reorder.status).toBe(200);
+    expect((await reorder.json() as any).credentials.map((item: any) => item.id))
+      .toEqual([secondId, firstId]);
+    expect(JSON.parse(readFileSync(configPath, 'utf-8')).codexSubscription).toMatchObject({
+      credentialRef: secondId,
+      credentialRefs: [secondId, firstId],
+    });
+
+    const remove = await fetch(`${baseUrl}/credentials/${encodeURIComponent(secondId)}`, { method: 'DELETE' });
+    expect(remove.status).toBe(200);
+    const remaining = await remove.json() as any;
+    expect(remaining.credentials).toHaveLength(1);
+    expect(remaining.credentials[0].id).toBe(firstId);
+  });
 });

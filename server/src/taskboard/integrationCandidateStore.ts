@@ -33,6 +33,7 @@ export interface IntegrationCandidateStoreOptions {
   tasksTable: string;
   executionsTable: string;
   integrationSourcesTable: string;
+  blockEpisodesTable: string;
 }
 
 export interface CreateIntegrationCandidateInput {
@@ -84,7 +85,7 @@ const transitions: Readonly<Record<TaskBoardIntegrationCandidateState, readonly 
   working: ['waiting_checks', 'in_review', 'blocked', 'needs_human', 'canceled'],
   in_review: ['approved', 'needs_work', 'blocked', 'needs_human', 'canceled'],
   approved: ['composing', 'merging', 'needs_human', 'canceled'],
-  merging: ['merged', 'needs_human'],
+  merging: ['composing', 'merged', 'needs_human'],
   blocked: ['preparing', 'composing', 'needs_work', 'in_review', 'needs_human', 'canceled'],
   needs_human: ['blocked', 'composing', 'canceled'],
   merged: [],
@@ -352,6 +353,37 @@ export class IntegrationCandidateStore {
         ],
       );
       if (!result.rows[0]) throw staleCandidate();
+      if (['approved', 'merging'].includes(candidate.state) && input.to === 'composing') {
+        await client.query(
+          `UPDATE ${this.options.tasksTable}
+              SET status='in_progress',completed_at=NULL,version=version+1,updated_at=now()
+            WHERE id=$1 AND status NOT IN ('done','canceled')`,
+          [candidate.integrationTaskId],
+        );
+      }
+      if (input.to === 'blocked' || input.to === 'needs_human') {
+        const projected = await client.query(
+          `UPDATE ${this.options.tasksTable}
+              SET status='blocked',completed_at=NULL,version=version+1,updated_at=now()
+            WHERE id=$1 AND status NOT IN ('done','canceled') RETURNING id`,
+          [candidate.integrationTaskId],
+        );
+        if (projected.rows[0] && input.lastError) {
+          const purpose = candidate.state === 'in_review'
+            ? 'review'
+            : candidate.state === 'approved' || candidate.state === 'merging' ? 'merge' : 'work';
+          await client.query(
+            `INSERT INTO ${this.options.blockEpisodesTable}
+               (id,task_id,purpose,reason_code,reason)
+             SELECT $1,$2,$3,$4,$5
+              WHERE NOT EXISTS (
+                SELECT 1 FROM ${this.options.blockEpisodesTable}
+                 WHERE task_id=$2 AND closed_at IS NULL
+              )`,
+            [randomUUID(), candidate.integrationTaskId, purpose, `integration_candidate_${input.to}`, input.lastError],
+          );
+        }
+      }
       return rowToIntegrationCandidate(result.rows[0]);
     });
   }

@@ -1,5 +1,9 @@
+import { lstat, realpath } from 'node:fs/promises';
+import { resolve } from 'node:path';
+
 import type { TaskBoardUploadAttachment } from '../../../shared/src/types/taskboard.js';
 import type { UserStore } from '../data/users/store.js';
+import { deriveStableWorkspaceId } from '../runtime/workspaceIdentity.js';
 import type { EventStore } from '../runtime/types.js';
 import type { UploadManager } from '../uploads/manager.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
@@ -71,6 +75,36 @@ export function createTaskboardAttachmentAccess(params: {
     ): Promise<void> => {
       await params.uploadManager.markReferenced(userCwd(identity), attachments, refs);
     },
+  };
+}
+
+export function createTaskboardTrustedWorkspaceResolver(agentCwd: string) {
+  return async (
+    identity: TaskboardIdentity,
+    workspace: { id?: string; executionTarget: string },
+  ): Promise<{ id: string; root: string } | undefined> => {
+    const expectedId = deriveStableWorkspaceId({
+      id: identity.ownerUserId,
+      tenantId: identity.tenantId,
+    }, 'unavailable');
+    // server-remote workspace.root is intentionally ignored. The stable workspace identity
+    // is resolved again against the brain's existing shared workspace mapping.
+    if (workspace.id !== expectedId) return undefined;
+    const configuredRoot = resolveUserCwd(agentCwd, {
+      id: identity.ownerUserId,
+      username: identity.username,
+      role: identity.userRole ?? 'user',
+      tenantId: identity.tenantId,
+    });
+    try {
+      const info = await lstat(configuredRoot);
+      if (!info.isDirectory() || info.isSymbolicLink()) return undefined;
+      const root = await realpath(configuredRoot);
+      if (root !== resolve(configuredRoot)) return undefined;
+      return { id: expectedId, root };
+    } catch {
+      return undefined;
+    }
   };
 }
 

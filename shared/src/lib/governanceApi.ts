@@ -321,6 +321,10 @@ export const governanceResourcesApi = {
     request<T>(withQuery(`${RESOURCE_BASE}/credentials/${id(credentialId)}/rotate/preview`, tenant(tenantId)), body('POST', command), schemaFor<T>(credentialOperationPreviewSchema)),
   rotateCredential: <T = unknown>(credentialId: string, command: GovernanceCommand, tenantId?: string) =>
     request<T>(withQuery(`${RESOURCE_BASE}/credentials/${id(credentialId)}/rotate`, tenant(tenantId)), body('POST', command)),
+  previewCredentialRevoke: <T = unknown>(credentialId: string, command: GovernanceCommand, tenantId?: string) =>
+    request<T>(withQuery(`${RESOURCE_BASE}/credentials/${id(credentialId)}/revoke/preview`, tenant(tenantId)), body('POST', command), schemaFor<T>(credentialOperationPreviewSchema)),
+  revokeCredential: <T = unknown>(credentialId: string, command: GovernanceCommand, tenantId?: string) =>
+    request<T>(withQuery(`${RESOURCE_BASE}/credentials/${id(credentialId)}/revoke`, tenant(tenantId)), body('POST', command)),
   previewCredentialTransfer: <T = unknown>(credentialId: string, command: GovernanceCommand, tenantId?: string) =>
     request<T>(withQuery(`${RESOURCE_BASE}/credentials/${id(credentialId)}/transfer/preview`, tenant(tenantId)), body('POST', command), schemaFor<T>(credentialOperationPreviewSchema)),
   transferCredential: <T = unknown>(credentialId: string, command: GovernanceCommand, tenantId?: string) =>

@@ -5,10 +5,14 @@ import type { WebChannel } from '../channels/web/channel.js';
 import { serverLogger } from '../utils/logger.js';
 import { createGovernanceAccessRouter } from '../routes/governanceAccess.js';
 import { createGovernanceResourcesRouter } from '../routes/governanceResources.js';
+import type { GovernanceCredential } from '../data/credentials/types.js';
 import { createGovernanceUiRouter } from '../routes/governanceUi.js';
 import { provisionTenant, rollbackProvisionedTenant } from '../data/tenants/provision.js';
 import { withTenantDebugModeLock } from '../data/tenants/debugModeLock.js';
 import { validateGovernanceCredentialHealth } from '../governance/credentialHealth.js';
+import { revokePendingAliyunCredentials } from '../connectors/aliyun.js';
+import { revokePendingGithubCredentials } from '../connectors/github.js';
+import { revokePendingXCredentials } from '../connectors/x.js';
 import { inventoryPersonalWorkspace } from './governancePersonalDataRetention.js';
 import type { ExecuteUserOffboarding } from './governanceOffboarding.js';
 import type { AppRuntime } from './runtime.js';
@@ -404,6 +408,34 @@ export function registerGovernanceRoutes(
       vault: runtime.secretVault,
       audit: runtime.governanceAuditStore,
       credentialHealthCheck: validateGovernanceCredentialHealth,
+      ...(runtime.connectorConnectionStore && runtime.userStore ? {
+        onPersonalCredentialRevoked: async ({ credential }: { credential: GovernanceCredential }) => {
+          const connectorId = credential.connectorId;
+          if (!connectorId || !['github', 'x', 'aliyun'].includes(connectorId) || !credential.ownerUserId) return;
+          const user = runtime.userStore!.findById(credential.ownerUserId);
+          if (!user || user.tenantId !== credential.tenantId) throw new Error(`${connectorId} credential owner not found`);
+          const current = runtime.connectorConnectionStore!.get(user.username, connectorId);
+          if (!current || current.tenantId !== credential.tenantId) return;
+          const currentOwnerId = current.userId ?? current.metadata?.credentialOwnerId;
+          if (currentOwnerId && currentOwnerId !== credential.ownerUserId) return;
+          await runtime.connectorConnectionStore!.disconnect(user.username, connectorId, credential.tenantId);
+          let pendingCleanupError: Error | undefined;
+          const onError = (error: Error, ref: string) => {
+            pendingCleanupError ??= new Error(`${connectorId} legacy credential revoke failed ${ref}: ${error.message}`);
+          };
+          const cleanupInput = {
+            connectionStore: runtime.connectorConnectionStore!,
+            vault: runtime.secretVault!,
+            username: user.username,
+            excludeRefs: new Set([credential.secretRef]),
+            onError,
+          };
+          if (connectorId === 'github') await revokePendingGithubCredentials(cleanupInput);
+          if (connectorId === 'x') await revokePendingXCredentials(cleanupInput);
+          if (connectorId === 'aliyun') await revokePendingAliyunCredentials(cleanupInput);
+          if (pendingCleanupError) throw pendingCleanupError;
+        },
+      } : {}),
     }));
     if (options.executeUserOffboarding?.retry && !scheduledOffboardingRuntimes.has(runtime)) {
       scheduledOffboardingRuntimes.add(runtime);

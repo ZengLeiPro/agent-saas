@@ -22,12 +22,19 @@ export function buildExecutionPrompt(
   ].join('\n');
 }
 
-export function executionWritebackInstructions(_context: TaskboardExecutionContext): string[] {
-  return [
+export function executionWritebackInstructions(context: TaskboardExecutionContext): string[] {
+  const instructions = [
     '- 读取任务看板返回的最新事实和结构化职责约束。',
     '- 自主完成当前职责，按需记录重要进展。',
     '- 结束前提交明确、真实且可验证的阶段结果。',
   ];
+  if (context.task.kind === 'integration' && context.task.workflowVersion === 3
+    && context.execution.purpose === 'work') {
+    instructions.splice(2, 0,
+      '- 创建单一直接父提交后，调用 execution.integration_candidate.push 且只传 commitOid；不得执行 git push。',
+      '- 只有受控 push 成功后，才能通过 execution.resolve 提交 ready_for_review。');
+  }
+  return instructions;
 }
 
 export function formatTaskboardComment(

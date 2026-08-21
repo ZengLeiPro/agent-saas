@@ -51,6 +51,7 @@ async function rig(input: {
   credentialClaimCommit?: ReturnType<typeof vi.fn>;
   credentialFinishCommit?: ReturnType<typeof vi.fn>;
   putSecret?: ReturnType<typeof vi.fn>;
+  revokeSecret?: ReturnType<typeof vi.fn>;
   executeUserOffboarding?: ReturnType<typeof vi.fn> & { retry?: ReturnType<typeof vi.fn> };
   getChangeJob?: ReturnType<typeof vi.fn>;
   projectionEnqueue?: ReturnType<typeof vi.fn>;
@@ -104,6 +105,7 @@ async function rig(input: {
   const environmentRetire = input.environmentRetire ?? vi.fn();
   const updateCredential = input.updateCredential ?? vi.fn();
   const putSecret = input.putSecret ?? vi.fn().mockResolvedValue({ id: 'sec-1' });
+  const revokeSecret = input.revokeSecret ?? vi.fn().mockResolvedValue(undefined);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -189,7 +191,7 @@ async function rig(input: {
       projectionOutbox: { enqueue: input.projectionEnqueue } as never,
       projectionReconciler: { reconcileOne: vi.fn().mockResolvedValue(null) } as never,
     } : {}),
-    vault: { putSecret, revokeSecret: vi.fn().mockResolvedValue(undefined) } as never,
+    vault: { putSecret, revokeSecret } as never,
     audit: { append: auditAppend } as never,
   }));
   const server: Server = await new Promise(resolve => {
@@ -203,7 +205,7 @@ async function rig(input: {
     auditAppend, agentCreate, agentPublish, agentSetStatus, agentArchive,
     skillCreate, skillPublishVersion, skillCreateCandidate, skillSubmitCandidate,
     skillReviewCandidate, skillPublishCandidate, skillImport, personalSkillImport, credentialCreate, updateCredential,
-    connectorUpdateStatus, environmentRetire, putSecret,
+    connectorUpdateStatus, environmentRetire, putSecret, revokeSecret,
   };
 }
 
@@ -294,6 +296,23 @@ describe('typed governance resource routes: authorization and credential boundar
     expect(sameTenantPlatform.agentCreate).not.toHaveBeenCalled();
     expect(sameTenantPlatform.skillCreate).not.toHaveBeenCalled();
     expect(sameTenantPlatform.credentialCreate).not.toHaveBeenCalled();
+  });
+
+  it('组织管理员读取治理凭据时仍能看到自己的个人 Credential，但不能看到他人的个人 Credential', async () => {
+    const listCredentials = vi.fn().mockResolvedValue([
+      { credentialId: 'org-credential', tenantId: 'tenant-a', kind: 'org_shared', status: 'active', version: 1 },
+      { credentialId: 'own-personal', tenantId: 'tenant-a', kind: 'personal_grant', ownerUserId: 'admin-1', status: 'active', version: 1 },
+      { credentialId: 'other-personal', tenantId: 'tenant-a', kind: 'personal_grant', ownerUserId: 'member-1', status: 'active', version: 1 },
+    ]);
+    const test = await rig({
+      user: { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' },
+      listCredentials,
+    });
+    const response = await test.request('/api/governance/resources/credentials');
+    expect(response.status).toBe(200);
+    const body = await response.json() as { credentials: Array<{ credentialId: string }> };
+    expect(body.credentials.map(item => item.credentialId)).toEqual(['org-credential', 'own-personal']);
+    expect(listCredentials).toHaveBeenCalledWith('tenant-a');
   });
 
   it('同租户 active org_admin 可管理组织资源，member 即使 owner/custodian 也不可', async () => {
@@ -420,6 +439,37 @@ describe('typed governance resource routes: authorization and credential boundar
     );
     expect(test.credentialCreate).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-a', ownerUserId: 'user-1', secretRef: 'sec-1',
+    }));
+  });
+
+  it('个人 Credential 所有者可通过签名治理撤销，并同步撤销 SecretVault Secret', async () => {
+    const personalCredential = {
+      credentialId: 'credential-x', tenantId: 'tenant-a', connectorId: 'x', kind: 'personal_grant',
+      ownerUserId: 'user-1', purpose: 'X bird CLI 用户凭据', scopeSummary: { scopes: ['x:*'] },
+      secretRef: 'secret-x', status: 'active', generation: 1, version: 1,
+    };
+    const getCredential = vi.fn().mockResolvedValue(personalCredential);
+    const updateCredential = vi.fn().mockResolvedValue({ ...personalCredential, status: 'revoked', generation: 2, version: 2 });
+    const test = await rig({ getCredential, updateCredential });
+
+    const preview = await test.request('/api/governance/resources/credentials/credential-x/revoke/preview', json('POST', {
+      expectedVersion: 1, reason: '用户主动断开 X',
+    }));
+    expect(preview.status).toBe(200);
+    const previewBody = await preview.json() as { previewId: string; baselineDigest: string; expiresAt: string };
+    const response = await test.request('/api/governance/resources/credentials/credential-x/revoke', json('POST', {
+      expectedVersion: 1, reason: '用户主动断开 X',
+      previewId: previewBody.previewId, baselineDigest: previewBody.baselineDigest, expiresAt: previewBody.expiresAt,
+    }));
+
+
+    expect(response.status).toBe(200);
+    expect(updateCredential).toHaveBeenCalledWith('credential-x', expect.objectContaining({
+      status: 'revoked', expectedVersion: 1, updatedBy: 'user-1', updateReason: '用户主动断开 X',
+    }));
+    expect(test.revokeSecret).toHaveBeenCalledWith('secret-x', expect.objectContaining({
+      actor: 'connector_proxy', userId: 'user-1', tenantId: 'tenant-a',
+      scopes: ['secret:connector:revoke'],
     }));
   });
 

@@ -80,10 +80,10 @@ function workspace(root = '/tmp/workspace'): WorkspaceRef {
 }
 
 describe('PlatformToolRuntime', () => {
-  it('allows shell execution up to ten minutes and rejects longer requests', () => {
-    expect(DEFAULT_SHELL_TIMEOUT_MS).toBe(600_000);
+  it('allows shell execution up to thirty minutes and rejects longer requests', () => {
+    expect(DEFAULT_SHELL_TIMEOUT_MS).toBe(1_800_000);
     expect(runShellToolDescriptor.schema.parse({ command: 'sleep 1', timeoutMs: MAX_SHELL_TIMEOUT_MS }))
-      .toEqual({ command: 'sleep 1', timeoutMs: 600_000 });
+      .toEqual({ command: 'sleep 1', timeoutMs: 1_800_000 });
     expect(() => runShellToolDescriptor.schema.parse({ command: 'sleep 1', timeoutMs: MAX_SHELL_TIMEOUT_MS + 1 }))
       .toThrow();
     expect(runShellToolDescriptor.schema.parse({

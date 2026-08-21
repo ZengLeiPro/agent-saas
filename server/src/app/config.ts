@@ -568,7 +568,7 @@ const codexSubscriptionConfigSchema = z.object({
   /** 灰度开关：同一连接内 previous_response_id 增量接力，异常自动回退 HTTP/SSE 全量。 */
   websocketEnabled: z.boolean().default(false),
   /** SecretVault ref；OAuth access/refresh token 不得直接进入 config.json。 */
-  credentialRef: z.string().min(1).optional(),
+  credentialRef: z.string().min(1).optional(), credentialRefs: z.array(z.string().min(1)).min(1).optional(),
   endpoint: z.string().url().refine((value) => {
     try {
       const url = new URL(value);

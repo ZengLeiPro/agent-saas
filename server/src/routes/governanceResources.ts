@@ -140,7 +140,8 @@ export function createGovernanceResourcesRouter(deps: {
   };
   vault: SecretVault;
   audit: GovernanceAuditStore;
-  credentialHealthCheck?: (connectorId: string, secret: string) => Promise<{ healthy: boolean; code: string }>;
+  credentialHealthCheck?: (connectorId: string, secret: string) => Promise<{ healthy: boolean; code: string; metadata?: Record<string, string> }>;
+  onPersonalCredentialRevoked?: Parameters<typeof registerGovernanceCredentialRoutes>[0]['onPersonalCredentialRevoked'];
 }): Router {
   if (deps.offboardingPreviewSecret.length < 32) {
     throw new Error('offboardingPreviewSecret must contain at least 32 characters');
@@ -440,7 +441,7 @@ export function createGovernanceResourcesRouter(deps: {
     const tenantId = tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
     const credentials = canManageTenant(req)
-      ? (await deps.credentials.listForTenant(tenantId)).filter(item => item.kind !== 'personal_grant')
+      ? (await deps.credentials.listForTenant(tenantId)).filter(item => item.kind !== 'personal_grant' || item.ownerUserId === req.user!.sub)
       : await deps.credentials.listForOwner(tenantId, req.user!.sub);
     res.json({ credentials: credentials.map(credentialView) });
   });
@@ -692,6 +693,7 @@ export function createGovernanceResourcesRouter(deps: {
     previewSecret: deps.offboardingPreviewSecret, now,
     personaFor: req => personas.get(req), canManageOrganization, resourceTenantFor,
     ...(deps.credentialHealthCheck ? { credentialHealthCheck: deps.credentialHealthCheck } : {}),
+    ...(deps.onPersonalCredentialRevoked ? { onPersonalCredentialRevoked: deps.onPersonalCredentialRevoked } : {}),
   });
   registerGovernanceEnvironmentRoutes({ router, personaFor: req => personas.get(req) });
 

@@ -357,6 +357,12 @@ export interface TaskboardIntegrationPushInput {
 
 export interface TaskboardIntegrationPushService {
   health(): Promise<{ enabled: boolean; healthy: boolean; reason?: string }>;
+  /** Trusted taskboard adapter entrypoint; execution/candidate target is server-resolved. */
+  pushCandidate(identity: TaskboardIdentity, input: {
+    executionId: string;
+    workspaceRoot: string;
+    commitOid: string;
+  }): Promise<{ pushed: true; candidateId: string; commitOid: string }>;
   issue(identity: TaskboardIdentity, input: TaskboardIntegrationPushIssueInput): Promise<{
     capabilityToken: string;
     expiresAt: string;

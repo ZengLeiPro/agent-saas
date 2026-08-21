@@ -14,7 +14,12 @@ import { ArchivedTasksSheet } from "./ArchivedTasksSheet";
 import { BoardDialog } from "./BoardDialog";
 import { BoardToolbar } from "./BoardToolbar";
 import { useBoardTasks, useTaskboardModelList, useTaskBoards } from "./hooks";
-import { boardAllows, canUserTransitionTask } from "./constants";
+import {
+  boardAllows,
+  canUserTransitionTask,
+  sortTaskBoardTasks,
+  taskStatusSupportsManualOrdering,
+} from "./constants";
 import { TaskColumns } from "./TaskColumns";
 import { TaskDetail } from "./TaskDetail";
 import { TaskDialog } from "./TaskDialog";
@@ -27,9 +32,7 @@ interface TaskBoardViewProps {
 type BoardDialogMode = "create" | "edit" | null;
 
 function sortedInStatus(tasks: TaskBoardTask[], status: TaskBoardStatus, excludedId?: string) {
-  return tasks
-    .filter((task) => !task.archivedAt && task.status === status && task.id !== excludedId)
-    .sort((left, right) => left.sortOrder - right.sortOrder);
+  return sortTaskBoardTasks(tasks, status).filter((task) => task.id !== excludedId);
 }
 
 function optimisticOrder(
@@ -98,8 +101,8 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [desktopStatus, setDesktopStatus] = useState<TaskBoardStatus | "all">("all");
   const [mobileStatus, setMobileStatus] = useState<TaskBoardStatus>("backlog");
+  const [submitterUserId, setSubmitterUserId] = useState("all");
   const [priority, setPriority] = useState<TaskBoardPriority | "all">("all");
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [selectedDeliveryTaskIds, setSelectedDeliveryTaskIds] = useState<Set<string>>(new Set());
@@ -155,16 +158,35 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     [selectedTaskId, tasks],
   );
 
+  const submitters = useMemo(() => {
+    const byId = new Map<string, { id: string; label: string }>();
+    for (const task of tasks) {
+      if (task.archivedAt || !task.creatorUserId || byId.has(task.creatorUserId)) continue;
+      byId.set(task.creatorUserId, {
+        id: task.creatorUserId,
+        label: task.creatorName?.trim() || task.creatorUserId,
+      });
+    }
+    return [...byId.values()].sort((left, right) => left.label.localeCompare(right.label, "zh-CN"));
+  }, [tasks]);
+
+  useEffect(() => {
+    if (submitterUserId !== "all" && !submitters.some((submitter) => submitter.id === submitterUserId)) {
+      setSubmitterUserId("all");
+    }
+  }, [submitterUserId, submitters]);
+
   const visibleTasks = useMemo(() => {
     const keyword = search.trim().toLocaleLowerCase("zh-CN");
     return tasks.filter((task) => {
       if (task.archivedAt) return false;
+      if (submitterUserId !== "all" && task.creatorUserId !== submitterUserId) return false;
       if (priority !== "all" && task.priority !== priority) return false;
       if (!keyword) return true;
       return [task.identifier, task.title, task.description, ...task.labels]
         .some((value) => value.toLocaleLowerCase("zh-CN").includes(keyword));
     });
-  }, [priority, search, tasks]);
+  }, [priority, search, submitterUserId, tasks]);
 
   const archivedTasks = useMemo(
     () => tasks.filter((task) => !!task.archivedAt).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
@@ -216,23 +238,38 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     setDraggedTaskId(null);
     const moved = tasks.find((task) => task.id === taskId);
     if (!moved || moved.archivedAt || boardReadOnly || nextTaskId === moved.id) return;
-    if (status === moved.status && !canReorderTask) return;
+    if (status === moved.status && (!canReorderTask || !taskStatusSupportsManualOrdering(status))) {
+      if (!taskStatusSupportsManualOrdering(status)) {
+        setNotice("该状态按更新时间排序，不能手动重排。");
+      }
+      return;
+    }
     if (status !== moved.status && (!canTransitionTask || !canUserTransitionTask(moved.kind, moved.status, status))) {
       setNotice("该任务状态由工作流推进，当前不能通过拖拽变更。");
       return;
     }
-    const target = sortedInStatus(tasks, status, moved.id);
-    const nextIndex = nextTaskId ? target.findIndex((task) => task.id === nextTaskId) : -1;
+    const supportsManualOrdering = taskStatusSupportsManualOrdering(status);
+    const target = supportsManualOrdering ? sortedInStatus(tasks, status, moved.id) : [];
+    const nextIndex = supportsManualOrdering && nextTaskId
+      ? target.findIndex((task) => task.id === nextTaskId)
+      : -1;
     const previousTaskId = nextIndex > 0
       ? target[nextIndex - 1]?.id
       : nextIndex === 0
         ? undefined
         : target.at(-1)?.id;
-    void moveTaskTo(moved, status, previousTaskId, nextTaskId).catch(() => undefined);
+    void moveTaskTo(
+      moved,
+      status,
+      supportsManualOrdering ? previousTaskId : undefined,
+      supportsManualOrdering ? nextTaskId : undefined,
+    ).catch(() => undefined);
   };
 
   const moveFromDetail = useCallback(async (task: TaskBoardTask, status: TaskBoardStatus) => {
-    const previousTaskId = sortedInStatus(tasks, status, task.id).at(-1)?.id;
+    const previousTaskId = taskStatusSupportsManualOrdering(status)
+      ? sortedInStatus(tasks, status, task.id).at(-1)?.id
+      : undefined;
     return moveTaskTo(task, status, previousTaskId, undefined);
   }, [moveTaskTo, tasks]);
 
@@ -322,7 +359,8 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
             boards={boards}
             board={selectedBoard}
             search={search}
-            desktopStatus={desktopStatus}
+            submitters={submitters}
+            submitterUserId={submitterUserId}
             priority={priority}
             archivedCount={archivedTasks.length}
             message={notice || boardsError || tasksError}
@@ -341,7 +379,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
               });
             }}
             onSearchChange={setSearch}
-            onDesktopStatusChange={setDesktopStatus}
+            onSubmitterChange={setSubmitterUserId}
             onPriorityChange={setPriority}
             onOpenArchivedTasks={() => setArchivedTasksOpen(true)}
           />
@@ -359,7 +397,6 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
                 canTransitionTask={canTransitionTask}
                 canCreateIntegration={canCreateIntegration}
                 selectedDeliveryTaskIds={selectedDeliveryTaskIds}
-                desktopStatus={desktopStatus}
                 mobileStatus={mobileStatus}
                 onMobileStatusChange={setMobileStatus}
                 onCreateTask={openTaskDialog}

@@ -6,6 +6,16 @@ import { canonicalGithubRepositoryUrl, type RepositoryProvider } from './reposit
 import { syncRepositoryWorkspace, type RepositoryWorkspaceSyncHost } from './repositoryWorkspaceSync.js';
 import type { IntegrationV3ComposeExecutor, IntegrationV3WorkerCurrent } from './integrationV3Worker.js';
 
+export interface IntegrationV3WorkPushReceipt {
+  executionId: string;
+  candidateId: string;
+  candidateRevision: number;
+  workflowEpoch: string;
+  laneEpoch: string;
+  oldOid: string;
+  newOid: string;
+}
+
 export interface IntegrationV3ComposeContext {
   repository: TaskBoardRepositoryConfig;
   credentialOwnerId: string;
@@ -14,16 +24,22 @@ export interface IntegrationV3ComposeContext {
   worktreePath: string;
   sources: TaskBoardIntegrationCandidateSourceSnapshot[];
   workExecutionId?: string;
+  workPushReceipt?: IntegrationV3WorkPushReceipt;
 }
 
 export interface IntegrationV3ComposeHost extends RepositoryWorkspaceSyncHost {
   resolveContext(current: Required<IntegrationV3WorkerCurrent>): Promise<IntegrationV3ComposeContext>;
+  withRepositoryFetchCredential?<T>(
+    context: IntegrationV3ComposeContext,
+    action: (env: Readonly<Record<string, string>>) => Promise<T>,
+  ): Promise<T>;
   /** Exact server-owned push. Must CAS the trusted integration ref; undefined means disabled fail-closed. */
   pushIntegrationHead?(input: {
     context: IntegrationV3ComposeContext;
     branch: string;
     expectedOldOid: string;
     headOid: string;
+    headParentOid: string;
     candidateId: string;
     revision: number;
     integrationTaskId: string;
@@ -51,13 +67,23 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
       if (status.stdout.length > 0) throw new Error('Integration worktree is dirty before recomposition');
       await git(this.host, context.worktreePath, ['reset', '--hard', current.revision.baseOid]);
     }
-    const sync = await syncRepositoryWorkspace(this.host, {
+    const syncInput = {
       repositoryPath: context.repositoryPath,
       worktreePath: context.worktreePath,
       baseBranch: current.candidate.baseBranch,
       integrationBranch: current.candidate.branch,
       controlledRemoteUrl: canonicalGithubRepositoryUrl(context.repository),
-    });
+      integrationWorktreeMode: 'reset_to_base' as const,
+      frozenPullRequestHeads: context.sources.map((source) => ({
+        providerPullRequestId: source.providerPullRequestId,
+        expectedHeadOid: source.frozenHeadOid,
+      })),
+    };
+    const sync = this.host.withRepositoryFetchCredential
+      ? await this.host.withRepositoryFetchCredential(context, (fetchEnvironment) => (
+        syncRepositoryWorkspace(this.host, { ...syncInput, fetchEnvironment })
+      ))
+      : await syncRepositoryWorkspace(this.host, syncInput);
     await git(this.host, context.worktreePath, ['reset', '--hard', sync.baseOid]);
     const ordered = [...context.sources].sort((a, b) => a.order - b.order);
     for (const source of ordered) {
@@ -100,6 +126,7 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
       }, context.credentialOwnerId);
     await this.host.pushIntegrationHead({
       context, branch: current.candidate.branch, expectedOldOid: branchReceipt.oid, headOid,
+      headParentOid: sync.baseOid,
       candidateId: current.candidate.id, revision: current.candidate.currentRevision,
       integrationTaskId: current.candidate.integrationTaskId,
       laneEpoch: Number(current.candidate.laneEpoch), workflowEpoch: Number(current.candidate.workflowEpoch),
@@ -137,21 +164,56 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
     // succeeded work execution with a canonical ready_for_review resolution may advance
     // the candidate subject.
     if (!context.workExecutionId) return undefined;
-    if (!current.candidate.providerPullRequestId || !this.provider.getReference) return undefined;
-    const remote = await this.provider.getReference(context.repository, current.candidate.branch, context.credentialOwnerId);
-    if (remote.oid === current.revision.headOid) return undefined;
-    const base = await this.provider.getReference(context.repository, current.candidate.baseBranch, context.credentialOwnerId);
+    if (!current.candidate.providerPullRequestId || !this.provider.getReference) {
+      throw new IntegrationV3InvalidWorkResultError('Ready work result cannot resolve the integration and base refs');
+    }
+    const [remote, base] = await Promise.all([
+      this.provider.getReference(context.repository, current.candidate.branch, context.credentialOwnerId),
+      this.provider.getReference(context.repository, current.candidate.baseBranch, context.credentialOwnerId),
+    ]);
+    if (remote.oid === current.revision.headOid) {
+      if (!current.revision.treeOid) {
+        throw new IntegrationV3InvalidWorkResultError('Current candidate revision has no trusted tree OID');
+      }
+      if (base.oid === current.revision.baseOid) {
+        throw new IntegrationV3InvalidWorkResultError('Ready work result changed neither the integration head nor the base');
+      }
+      return {
+        baseOid: base.oid,
+        headOid: current.revision.headOid,
+        treeOid: current.revision.treeOid,
+        sources: [...context.sources].sort((a, b) => a.order - b.order).map(stripSnapshotIdentity),
+        workExecutionId: context.workExecutionId,
+      };
+    }
+    if (!remote.treeOid) {
+      throw new IntegrationV3InvalidWorkResultError('Changed integration head has no trusted tree OID');
+    }
+    const receipt = context.workPushReceipt;
+    if (!receipt
+      || receipt.executionId !== context.workExecutionId
+      || receipt.candidateId !== current.candidate.id
+      || receipt.candidateRevision !== current.candidate.currentRevision
+      || receipt.workflowEpoch !== current.candidate.workflowEpoch
+      || receipt.laneEpoch !== current.candidate.laneEpoch
+      || receipt.oldOid !== current.revision.headOid
+      || receipt.newOid !== remote.oid) {
+      throw new IntegrationV3InvalidWorkResultError('Changed integration head has no matching succeeded push receipt');
+    }
     return {
       baseOid: base.oid,
       headOid: remote.oid,
       treeOid: remote.treeOid,
       sources: [...context.sources].sort((a, b) => a.order - b.order).map(stripSnapshotIdentity),
-      ...(context.workExecutionId ? { workExecutionId: context.workExecutionId } : {}),
+      workExecutionId: context.workExecutionId,
     };
   }
 }
 
 export class IntegrationV3ComposeDisabledError extends Error { readonly retryable = false; }
+export class IntegrationV3InvalidWorkResultError extends Error {
+  constructor(message: string) { super(message); this.name = 'IntegrationV3InvalidWorkResultError'; }
+}
 export class IntegrationV3ComposeConflictError extends Error {
   constructor(message: string) { super(message); this.name = 'IntegrationV3ComposeConflictError'; }
 }

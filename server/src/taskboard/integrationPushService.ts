@@ -14,6 +14,20 @@ export class ControlledTaskboardIntegrationPushService implements TaskboardInteg
 
   health() { return this.gateway.health(); }
 
+  pushCandidate(identity: TaskboardIdentity, input: {
+    executionId: string;
+    workspaceRoot: string;
+    commitOid: string;
+  }) {
+    return this.gateway.pushWorkspaceCommit({
+      tenantId: identity.tenantId,
+      requesterUserId: identity.ownerUserId,
+      executionId: input.executionId,
+      workspaceRoot: input.workspaceRoot,
+      commitOid: input.commitOid,
+    });
+  }
+
   issue(identity: TaskboardIdentity, input: TaskboardIntegrationPushIssueInput) {
     return this.gateway.issue({
       tenantId: identity.tenantId,

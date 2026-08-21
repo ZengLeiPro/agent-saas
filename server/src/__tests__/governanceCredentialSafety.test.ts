@@ -2,6 +2,7 @@ import type { Server } from 'node:http';
 import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { GovernanceCredential } from '../data/credentials/types.js';
 import { registerGovernanceCredentialRoutes } from '../routes/governanceCredentialRoutes.js';
 
 const servers: Server[] = [];
@@ -30,9 +31,12 @@ async function rig(input: {
   putSecret?: ReturnType<typeof vi.fn>;
   rotateSecret?: ReturnType<typeof vi.fn>;
   revokeSecret?: ReturnType<typeof vi.fn>;
+  updateStatus?: ReturnType<typeof vi.fn>;
   finishCommit?: ReturnType<typeof vi.fn>;
   claimCommit?: ReturnType<typeof vi.fn>;
   recordCommitProgress?: ReturnType<typeof vi.fn>;
+  credentialHealthCheck?: (connectorId: string, secret: string) => Promise<{ healthy: boolean; code: string; metadata?: Record<string, string> }>;
+  onPersonalCredentialRevoked?: (input: { credential: GovernanceCredential; actorUserId: string }) => Promise<void>;
   now?: () => Date;
 } = {}) {
   const commits = new Map<string, { identity: string; status: string; leaseToken: string; credentialId?: string; recovery?: Record<string, unknown> }>();
@@ -73,6 +77,7 @@ async function rig(input: {
   const putSecret = input.putSecret ?? vi.fn().mockResolvedValue({ id: 'vault-ref-new' });
   const rotateSecret = input.rotateSecret ?? vi.fn().mockResolvedValue({ id: 'vault-ref-hidden' });
   const revokeSecret = input.revokeSecret ?? vi.fn().mockResolvedValue(undefined);
+  const updateStatus = input.updateStatus ?? vi.fn().mockResolvedValue(credential({ status: 'revoked', generation: 2, version: 2 }));
   const app = express();
   app.use(express.json());
   app.use((req, res, next) => {
@@ -87,7 +92,7 @@ async function rig(input: {
     credentials: {
       create, get: getCredential, getBySecretRef: input.getBySecretRef ?? vi.fn().mockResolvedValue(null),
       claimCommit, recordCommitProgress, finishCommit, completeRotation, transferCustodian,
-      updateStatus: vi.fn(), recordValidation: vi.fn(),
+      updateStatus, recordValidation: vi.fn(),
     } as never,
     memberships: { getMembership: vi.fn(async (tenantId: string, userId: string) => (
       tenantId === 'tenant-a' && ['admin-1', 'member-2'].includes(userId)
@@ -104,6 +109,8 @@ async function rig(input: {
     personaFor: () => 'org_admin',
     canManageOrganization: () => true,
     resourceTenantFor: (req, requested) => !requested || requested === req.user!.tenantId ? req.user!.tenantId : null,
+    ...(input.credentialHealthCheck ? { credentialHealthCheck: input.credentialHealthCheck } : {}),
+    ...(input.onPersonalCredentialRevoked ? { onPersonalCredentialRevoked: input.onPersonalCredentialRevoked } : {}),
   });
   app.use('/api/governance/resources', router);
   const server: Server = await new Promise(resolve => {
@@ -115,7 +122,7 @@ async function rig(input: {
   return {
     request: (path: string, init?: RequestInit) => fetch(`${base}${path}`, init),
     create, completeRotation, transferCustodian, getCredential, putSecret, rotateSecret, revokeSecret,
-    claimCommit, recordCommitProgress, finishCommit,
+    claimCommit, recordCommitProgress, finishCommit, updateStatus,
   };
 }
 
@@ -126,6 +133,297 @@ async function preview(test: Awaited<ReturnType<typeof rig>>, path: string, body
 }
 
 describe('governance credential signed commits', () => {
+  it('阿里云个人 Credential 在写入 Vault 前执行 STS 验证', async () => {
+    const health = vi.fn().mockResolvedValue({ healthy: false, code: 'UPSTREAM_IDENTITY_CHECK_FAILED' });
+    const putSecret = vi.fn();
+    const test = await rig({ credentialHealthCheck: health, putSecret });
+    const secret = JSON.stringify({ accessKeyId: 'LTAI-invalid', accessKeySecret: 'invalid', regionId: 'cn-shenzhen' });
+    const response = await test.request('/api/governance/resources/credentials', json({
+      connectorId: 'aliyun', kind: 'personal_grant', purpose: '阿里云 CLI 用户凭据',
+      scopeSummary: { regionId: 'cn-shenzhen', scopes: ['aliyun:*'] }, secret,
+    }));
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({ error: 'Credential validation failed', code: 'UPSTREAM_IDENTITY_CHECK_FAILED' });
+    expect(health).toHaveBeenCalledWith('aliyun', secret);
+    expect(putSecret).not.toHaveBeenCalled();
+  });
+
+  it('阿里云 STS 身份元数据写入治理 scopeSummary 供连接状态展示', async () => {
+    const health = vi.fn().mockResolvedValue({
+      healthy: true, code: 'UPSTREAM_IDENTITY_VERIFIED',
+      metadata: { accountId: '1234567890123456', identityArn: 'acs:ram::1234567890123456:user/agent-saas', identityType: 'RAMUser' },
+    });
+    const create = vi.fn().mockResolvedValue(credential({ connectorId: 'aliyun', kind: 'personal_grant', ownerUserId: 'admin-1' }));
+    const test = await rig({ credentialHealthCheck: health, create });
+    const secret = JSON.stringify({ accessKeyId: 'LTAI-valid', accessKeySecret: 'valid', regionId: 'cn-shenzhen' });
+    const response = await test.request('/api/governance/resources/credentials', json({
+      connectorId: 'aliyun', kind: 'personal_grant', purpose: '阿里云 CLI 用户凭据',
+      scopeSummary: { regionId: 'cn-shenzhen', scopes: ['aliyun:*'] }, secret,
+    }));
+
+    expect(response.status).toBe(201);
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      scopeSummary: {
+        regionId: 'cn-shenzhen', scopes: ['aliyun:*'], accountId: '1234567890123456',
+        identityArn: 'acs:ram::1234567890123456:user/agent-saas', identityType: 'RAMUser',
+      },
+    }));
+  });
+
+  it('阿里云个人 Credential rotation 在写入新 Secret 前执行 STS 验证', async () => {
+    const health = vi.fn().mockResolvedValue({ healthy: false, code: 'UPSTREAM_IDENTITY_CHECK_FAILED' });
+    const rotateSecret = vi.fn();
+    const test = await rig({
+      credentialHealthCheck: health,
+      getCredential: vi.fn().mockResolvedValue(credential({ connectorId: 'aliyun', kind: 'personal_grant', ownerUserId: 'admin-1' })),
+      rotateSecret,
+    });
+    const command = {
+      expectedVersion: 1,
+      secret: JSON.stringify({ accessKeyId: 'LTAI-invalid', accessKeySecret: 'invalid', regionId: 'cn-shenzhen' }),
+      reason: '更新阿里云 CLI 用户凭据',
+    };
+    const signed = await preview(test, '/api/governance/resources/credentials/cred-1/rotate/preview', command);
+    const response = await test.request('/api/governance/resources/credentials/cred-1/rotate', json({
+      ...command, previewId: signed.previewId, baselineDigest: signed.baselineDigest, expiresAt: signed.expiresAt,
+    }));
+
+    expect(response.status).toBe(422);
+    expect(health).toHaveBeenCalledWith('aliyun', command.secret);
+    expect(rotateSecret).not.toHaveBeenCalled();
+  });
+
+  it('阿里云跨地域跨账号 rotation 原子持久化新 scopeSummary', async () => {
+    const personal = credential({
+      connectorId: 'aliyun', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,
+      purpose: '阿里云 CLI 用户凭据', scopeSummary: {
+        regionId: 'cn-shenzhen', accountId: 'old-account', identityType: 'RAMUser', scopes: ['aliyun:*'],
+      },
+    });
+    const health = vi.fn().mockResolvedValue({
+      healthy: true, code: 'UPSTREAM_IDENTITY_VERIFIED',
+      metadata: {
+        regionId: 'cn-hangzhou', accountId: 'new-account',
+        identityArn: 'acs:ram::new-account:user/agent-saas', identityType: 'RAMUser',
+      },
+    });
+    const nextScopeSummary = {
+      regionId: 'cn-hangzhou', accountId: 'new-account',
+      identityArn: 'acs:ram::new-account:user/agent-saas', identityType: 'RAMUser', scopes: ['aliyun:*'],
+    };
+    const completeRotation = vi.fn().mockResolvedValue(credential({
+      ...personal, generation: 2, version: 2, scopeSummary: nextScopeSummary,
+    }));
+    const test = await rig({
+      credentialHealthCheck: health,
+      getCredential: vi.fn().mockResolvedValue(personal),
+      completeRotation,
+    });
+    const command = {
+      expectedVersion: 1,
+      secret: JSON.stringify({ accessKeyId: 'LTAI-new', accessKeySecret: 'new-secret', regionId: 'cn-hangzhou' }),
+      reason: '更新阿里云 CLI 用户凭据', scopeSummary: { regionId: 'cn-hangzhou', scopes: ['aliyun:*'] },
+    };
+    const signed = await preview(test, '/api/governance/resources/credentials/cred-1/rotate/preview', command);
+    const response = await test.request('/api/governance/resources/credentials/cred-1/rotate', json({
+      ...command, previewId: signed.previewId, baselineDigest: signed.baselineDigest, expiresAt: signed.expiresAt,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(health).toHaveBeenCalledWith('aliyun', command.secret);
+    expect(completeRotation).toHaveBeenCalledWith('tenant-a', 'cred-1', 1, 'admin-1', false, nextScopeSummary);
+    await expect(response.json()).resolves.toMatchObject({ scopeSummary: nextScopeSummary });
+  });
+
+  it('阿里云 scopeSummary 持久化失败时回滚 Secret，不报告轮换成功', async () => {
+    const personal = credential({
+      connectorId: 'aliyun', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,
+      purpose: '阿里云 CLI 用户凭据', scopeSummary: { regionId: 'cn-shenzhen', accountId: 'old-account' },
+    });
+    const health = vi.fn().mockResolvedValue({
+      healthy: true, code: 'UPSTREAM_IDENTITY_VERIFIED',
+      metadata: { regionId: 'cn-hangzhou', accountId: 'new-account', identityType: 'RAMUser' },
+    });
+    const rotateSecret = vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
+    const completeRotation = vi.fn().mockRejectedValue(new Error('credential version conflict'));
+    const test = await rig({
+      credentialHealthCheck: health,
+      getCredential: vi.fn().mockResolvedValue(personal), rotateSecret, completeRotation,
+    });
+    const command = {
+      expectedVersion: 1,
+      secret: JSON.stringify({ accessKeyId: 'LTAI-new', accessKeySecret: 'new-secret-never-echo', regionId: 'cn-hangzhou' }),
+      reason: '更新阿里云 CLI 用户凭据', scopeSummary: { regionId: 'cn-hangzhou', scopes: ['aliyun:*'] },
+    };
+    const signed = await preview(test, '/api/governance/resources/credentials/cred-1/rotate/preview', command);
+    const response = await test.request('/api/governance/resources/credentials/cred-1/rotate', json({
+      ...command, previewId: signed.previewId, baselineDigest: signed.baselineDigest, expiresAt: signed.expiresAt,
+    }));
+
+    expect(response.status).toBe(409);
+    const body = await response.json() as Record<string, unknown>;
+    expect(body).toMatchObject({ code: 'CREDENTIAL_ROTATE_COMPENSATED', status: 'failed' });
+    expect(JSON.stringify(body)).not.toContain('new-secret-never-echo');
+    expect(rotateSecret).toHaveBeenCalledTimes(2);
+    expect(completeRotation).toHaveBeenCalledOnce();
+  });
+
+  it('个人 Credential 所有者可以使用治理 rotation 更新 X Cookie', async () => {
+    const personal = credential({
+      connectorId: 'x', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,
+      purpose: 'X bird CLI 用户凭据',
+    });
+    const getCredential = vi.fn().mockResolvedValue(personal);
+    const completeRotation = vi.fn().mockResolvedValue({ ...personal, status: 'active', generation: 2, version: 2 });
+    const test = await rig({ getCredential, completeRotation });
+    const command = {
+      expectedVersion: 1, secret: JSON.stringify({ authToken: 'new-auth', ct0: 'new-ct0' }),
+      reason: '更新 X bird CLI 用户凭据',
+    };
+    const signed = await preview(test, '/api/governance/resources/credentials/cred-1/rotate/preview', command);
+    const response = await test.request('/api/governance/resources/credentials/cred-1/rotate', json({
+      ...command, previewId: signed.previewId, baselineDigest: signed.baselineDigest, expiresAt: signed.expiresAt,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(test.rotateSecret).toHaveBeenCalledWith('vault-ref-hidden', command.secret, expect.objectContaining({
+      userId: 'admin-1', tenantId: 'tenant-a',
+    }));
+    expect(completeRotation).toHaveBeenCalledWith('tenant-a', 'cred-1', 1, 'admin-1', false);
+  });
+
+  it('个人 X Credential 撤销后触发旧连接器凭据清理回调', async () => {
+    const personal = credential({
+      connectorId: 'x', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,
+      secretRef: 'governance-secret',
+    });
+    const getCredential = vi.fn().mockResolvedValue(personal);
+    const updateStatus = vi.fn().mockResolvedValue({ ...personal, status: 'revoked', generation: 2, version: 2 });
+    const onPersonalCredentialRevoked = vi.fn<(input: { credential: GovernanceCredential; actorUserId: string }) => Promise<void>>().mockResolvedValue(undefined);
+    const test = await rig({ getCredential, updateStatus, onPersonalCredentialRevoked });
+
+    const signed = await preview(test, '/api/governance/resources/credentials/cred-1/revoke/preview', {
+      expectedVersion: 1, reason: '用户主动断开 X',
+    });
+    const response = await test.request('/api/governance/resources/credentials/cred-1/revoke', json({
+      expectedVersion: 1, reason: '用户主动断开 X',
+      previewId: signed.previewId, baselineDigest: signed.baselineDigest, expiresAt: signed.expiresAt,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(onPersonalCredentialRevoked).toHaveBeenCalledWith({
+      credential: personal, actorUserId: 'admin-1',
+    });
+    expect(test.revokeSecret).toHaveBeenCalledWith('governance-secret', expect.any(Object));
+    expect(updateStatus).toHaveBeenCalledOnce();
+  });
+
+  it('Vault 撤销失败时保持 Credential 可重试，成功重试后才写入 revoked', async () => {
+    const personal = credential({
+      connectorId: 'x', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,
+      secretRef: 'governance-secret',
+    });
+    const getCredential = vi.fn().mockResolvedValue(personal);
+    const updateStatus = vi.fn().mockResolvedValue({ ...personal, status: 'revoked', generation: 2, version: 2 });
+    const revokeSecret = vi.fn()
+      .mockRejectedValueOnce(new Error('vault unavailable'))
+      .mockResolvedValue(undefined);
+    const test = await rig({ getCredential, updateStatus, revokeSecret });
+    const command = { expectedVersion: 1, reason: '用户主动断开 X' };
+
+    const firstPreview = await preview(test, '/api/governance/resources/credentials/cred-1/revoke/preview', command);
+    const first = await test.request('/api/governance/resources/credentials/cred-1/revoke', json({
+      ...command, previewId: firstPreview.previewId, baselineDigest: firstPreview.baselineDigest, expiresAt: firstPreview.expiresAt,
+    }));
+    expect(first.status).toBe(503);
+    await expect(first.json()).resolves.toMatchObject({ code: 'CREDENTIAL_VAULT_REVOKE_FAILED', retryable: true });
+    expect(updateStatus).not.toHaveBeenCalled();
+
+    const secondPreview = await preview(test, '/api/governance/resources/credentials/cred-1/revoke/preview', command);
+    const second = await test.request('/api/governance/resources/credentials/cred-1/revoke', json({
+      ...command, previewId: secondPreview.previewId, baselineDigest: secondPreview.baselineDigest, expiresAt: secondPreview.expiresAt,
+    }));
+    expect(second.status).toBe(200);
+    expect(updateStatus).toHaveBeenCalledOnce();
+    expect(revokeSecret).toHaveBeenCalledTimes(2);
+  });
+
+  it('旧连接器清理失败时保持 Credential 可重试，重试可收口治理撤销', async () => {
+    const personal = credential({
+      connectorId: 'x', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,
+      secretRef: 'governance-secret',
+    });
+    const getCredential = vi.fn().mockResolvedValue(personal);
+    const updateStatus = vi.fn().mockResolvedValue({ ...personal, status: 'revoked', generation: 2, version: 2 });
+    const onPersonalCredentialRevoked = vi.fn<(input: { credential: GovernanceCredential; actorUserId: string }) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('legacy cleanup unavailable'))
+      .mockResolvedValue(undefined);
+    const test = await rig({ getCredential, updateStatus, onPersonalCredentialRevoked });
+    const command = { expectedVersion: 1, reason: '用户主动断开 X' };
+
+    const firstPreview = await preview(test, '/api/governance/resources/credentials/cred-1/revoke/preview', command);
+    const first = await test.request('/api/governance/resources/credentials/cred-1/revoke', json({
+      ...command, previewId: firstPreview.previewId, baselineDigest: firstPreview.baselineDigest, expiresAt: firstPreview.expiresAt,
+    }));
+    expect(first.status).toBe(503);
+    await expect(first.json()).resolves.toMatchObject({ code: 'CREDENTIAL_LEGACY_CLEANUP_FAILED', retryable: true, changed: true });
+    expect(updateStatus).not.toHaveBeenCalled();
+
+    const secondPreview = await preview(test, '/api/governance/resources/credentials/cred-1/revoke/preview', command);
+    const second = await test.request('/api/governance/resources/credentials/cred-1/revoke', json({
+      ...command, previewId: secondPreview.previewId, baselineDigest: secondPreview.baselineDigest, expiresAt: secondPreview.expiresAt,
+    }));
+    expect(second.status).toBe(200);
+    expect(updateStatus).toHaveBeenCalledOnce();
+    expect(onPersonalCredentialRevoked).toHaveBeenCalledTimes(2);
+  });
+
+  it('已落为 revoked 的 Credential 仍可签名重试清理且不重复写状态', async () => {
+    const personal = credential({
+      connectorId: 'x', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,
+      secretRef: 'governance-secret', status: 'revoked', generation: 2, version: 2,
+    });
+    const getCredential = vi.fn().mockResolvedValue(personal);
+    const updateStatus = vi.fn();
+    const onPersonalCredentialRevoked = vi.fn<(input: { credential: GovernanceCredential; actorUserId: string }) => Promise<void>>().mockResolvedValue(undefined);
+    const test = await rig({ getCredential, updateStatus, onPersonalCredentialRevoked });
+    const command = { expectedVersion: 2, reason: '补偿 X 旧凭据清理' };
+    const signed = await preview(test, '/api/governance/resources/credentials/cred-1/revoke/preview', command);
+    expect(signed.impact).toMatchObject({ cleanupRetry: true, currentVersion: 2, nextVersion: 2 });
+    const response = await test.request('/api/governance/resources/credentials/cred-1/revoke', json({
+      ...command, previewId: signed.previewId, baselineDigest: signed.baselineDigest, expiresAt: signed.expiresAt,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(updateStatus).not.toHaveBeenCalled();
+    expect(onPersonalCredentialRevoked).toHaveBeenCalledOnce();
+  });
+
+  it('过期但仍 active 的 Credential rotation 会清除旧 expiresAt', async () => {
+    const expired = credential({
+      connectorId: 'x', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,
+      purpose: 'X bird CLI 用户凭据', expiresAt: '2026-08-13T03:00:00.000Z',
+    });
+    const getCredential = vi.fn().mockResolvedValue(expired);
+    const completeRotation = vi.fn().mockResolvedValue({
+      ...expired, status: 'active', generation: 2, version: 2, expiresAt: undefined,
+    });
+    const test = await rig({ getCredential, completeRotation });
+    const command = {
+      expectedVersion: 1, secret: JSON.stringify({ authToken: 'new-auth', ct0: 'new-ct0' }),
+      reason: '更新 X bird CLI 用户凭据',
+    };
+    const signed = await preview(test, '/api/governance/resources/credentials/cred-1/rotate/preview', command);
+    const response = await test.request('/api/governance/resources/credentials/cred-1/rotate', json({
+      ...command, previewId: signed.previewId, baselineDigest: signed.baselineDigest, expiresAt: signed.expiresAt,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(completeRotation).toHaveBeenCalledWith('tenant-a', 'cred-1', 1, 'admin-1', true);
+    await expect(response.json()).resolves.not.toHaveProperty('expiresAt');
+  });
+
   it('并发创建只执行一次，完成后同一 preview 重放被拒绝', async () => {
     let releaseCreate!: () => void;
     const createStarted = new Promise<void>(resolve => { releaseCreate = resolve; });

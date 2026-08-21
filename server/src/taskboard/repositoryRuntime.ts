@@ -49,20 +49,26 @@ export class RepositoryProviderIntegrationEngineV3Adapter implements Integration
   constructor(private readonly provider: RepositoryProvider) {}
 
   async readFacts(repository: TaskBoardRepositoryConfig, providerPullRequestId: string, credentialOwnerId: string): Promise<IntegrationEngineV3ProviderFacts> {
-    if (!this.provider.getReference) throw new Error('Repository provider cannot resolve candidate tree facts');
+    if (!this.provider.getCommit || !this.provider.getReference) {
+      throw new Error('Repository provider cannot resolve candidate tree facts');
+    }
     const pull = await this.provider.getPullRequest(repository, providerPullRequestId, credentialOwnerId);
-    const [head, gates] = await Promise.all([
-      this.provider.getReference(repository, pull.headRef, credentialOwnerId),
+    const [head, base, gates, merged] = await Promise.all([
+      this.provider.getCommit(repository, pull.headOid, credentialOwnerId),
+      this.provider.getReference(repository, pull.baseRef, credentialOwnerId),
       this.provider.getRequiredGateCapabilities
         ? this.provider.getRequiredGateCapabilities(repository, pull.baseRef, credentialOwnerId)
         : Promise.resolve({ known: false, requiredChecks: [], mergeQueueRequired: false, unsupportedRules: ['required-gates-unavailable'] }),
+      pull.state === 'merged' && pull.mergeCommitOid
+        ? this.provider.getCommit(repository, pull.mergeCommitOid, credentialOwnerId)
+        : Promise.resolve(undefined),
     ]);
     return {
       repositoryId: repository.repositoryId,
       providerPullRequestId: pull.providerPullRequestId,
       state: pull.state,
       baseBranch: pull.baseRef,
-      baseOid: pull.baseOid,
+      baseOid: base.oid,
       headOid: pull.headOid,
       treeOid: head.treeOid,
       requiredChecksKnown: pull.requiredChecksKnown === true && gates.known,
@@ -70,9 +76,7 @@ export class RepositoryProviderIntegrationEngineV3Adapter implements Integration
       unsupportedRules: gates.unsupportedRules,
       mergeQueueRequired: gates.mergeQueueRequired,
       ...(pull.mergeCommitOid ? { mergeCommitOid: pull.mergeCommitOid } : {}),
-      // Git commit tree for a clean merge/squash is the approved head tree. Providers that
-      // cannot preserve/verify this must leave facts unknown and the engine fails closed.
-      ...(pull.state === 'merged' ? { mergedTreeOid: head.treeOid } : {}),
+      ...(merged ? { mergedTreeOid: merged.treeOid } : {}),
     };
   }
 

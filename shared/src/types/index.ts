@@ -156,6 +156,7 @@ export type {
   TaskBoardExecutionPurpose,
   TaskBoardVisibility,
   TaskBoard,
+  TaskBoardDirectoryUser,
   TaskBoardStageModels,
   TaskBoardAttachment,
   TaskBoardUploadAttachment,

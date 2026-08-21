@@ -23,6 +23,9 @@ const tool = (id: string, extra: Partial<Extract<MessageItem, { type: 'tool_use'
   id, type: 'tool_use', toolName: 'Bash', toolInput: '{}', toolId: id, ...extra,
 });
 const thinking = (id: string, streaming = false): MessageItem => ({ id, type: 'thinking', content: 't', streaming });
+const compaction = (id: string): MessageItem => ({
+  id, type: 'compaction', status: 'done',
+} as unknown as MessageItem);
 const businessTodo = (id: string, items: Array<Record<string, unknown>>): MessageItem => ({
   id,
   type: 'tool_use',
@@ -253,6 +256,27 @@ describe('groupMessages sectioning（章节化）', () => {
     expect(section2.start).toMatchObject({ kind: 'start', todo: { id: 'write' } });
     expect(section2.terminal).toBeUndefined();
     expect(section2.items.map(item => item.type)).toEqual(['activity_group', 'text']);
+  });
+
+  it('步骤中途压缩时把分界线归位到步骤上方，不切断 start→终态', () => {
+    const result = groupMessages([
+      twoStepPlan(),
+      tool('read-before', { toolName: 'Read' }),
+      compaction('compact-1'),
+      tool('read-after', { toolName: 'Read' }),
+      finishFirstStartSecond(),
+    ], false, opts);
+
+    expect(result.map(item => item.type)).toEqual([
+      'business_step', 'compaction', 'business_step_section', 'business_step_section',
+    ]);
+    expect(result[1].id).toBe('compact-1');
+    const section = result[2] as BusinessStepSection;
+    expect(section.start).toMatchObject({ kind: 'start', todo: { id: 'verify' } });
+    expect(section.terminal).toMatchObject({ kind: 'complete', todo: { id: 'verify' } });
+    expect(section.items).toHaveLength(2);
+    expect((section.items[0] as ActivityGroup).items.map(item => item.id)).toEqual(['read-before']);
+    expect((section.items[1] as ActivityGroup).items.map(item => item.id)).toEqual(['read-after']);
   });
 
   it('开放节只有在流末尾且 run 活跃时才是 isActive', () => {

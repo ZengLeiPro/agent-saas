@@ -9,6 +9,7 @@ import {
   executeTask,
   fetchBoardMembers,
   fetchIntegrationCandidate,
+  fetchTaskboardUsers,
   fetchIntegrationSources,
   patchTask,
   resumeTask,
@@ -113,6 +114,17 @@ describe("任务看板 API 错误对象", () => {
         body: JSON.stringify({ expectedVersion: task.version, decision: "批准恢复来源", sourceIds: ["source-1"] }),
       }),
     );
+  });
+
+  it("读取当前组织用户目录", async () => {
+    const users = [{ id: "user-1", username: "alice", realName: "Alice" }];
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify({ users }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+
+    await expect(fetchTaskboardUsers()).resolves.toEqual(users);
+    expect(authFetch).toHaveBeenCalledWith("/api/taskboard/users");
   });
 
   it("成员、人工集成与来源接口使用 V2 REST 契约", async () => {

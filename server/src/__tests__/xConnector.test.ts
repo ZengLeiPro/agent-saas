@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import {
+  getXConnectionWithGovernance,
   revokePendingXCredentials,
   resolveXRuntimeEnv,
 } from '../connectors/x.js';
@@ -34,6 +35,74 @@ function cookieCredential(authToken: string, ct0: string): string {
 }
 
 describe('X native connector', () => {
+  it('uses the governance Credential as the source for status and runtime env without a legacy connection record', async () => {
+    const root = createRoot();
+    const store = new ConnectorConnectionStore(join(root, 'connections.json'));
+    const vault = new InMemorySecretVault();
+    const secret = await vault.putSecret(
+      'user-1',
+      'connector',
+      cookieCredential('governance-auth', 'governance-ct0'),
+      writer,
+      { connectorId: 'x', tenantId: 'tenant-a', credentialOwnerId: 'user-1' },
+    );
+    const governanceCredential = {
+      credentialId: 'credential-x', tenantId: 'tenant-a', connectorId: 'x' as const,
+      kind: 'personal_grant' as const, ownerUserId: 'user-1', purpose: 'X bird CLI 用户凭据',
+      scopeSummary: { scopes: ['x:*'] }, status: 'active' as const, generation: 1,
+      secretRef: secret.id, source: 'governance' as const, version: 2,
+      createdAt: '2026-08-20T10:00:00.000Z', createdBy: 'user-1',
+      updatedAt: '2026-08-20T10:01:00.000Z', updatedBy: 'user-1',
+    };
+    const governanceCredentialStore = {
+      listForOwner: vi.fn().mockResolvedValue([governanceCredential]),
+    };
+    const context = { userId: 'user-1', username: 'alice', tenantId: 'tenant-a' };
+
+    await expect(resolveXRuntimeEnv(
+      { connectionStore: store, vault, governanceCredentialStore }, context,
+    )).resolves.toEqual({
+      AUTH_TOKEN: 'governance-auth',
+      CT0: 'governance-ct0',
+      TWITTER_AUTH_TOKEN: 'governance-auth',
+      TWITTER_CT0: 'governance-ct0',
+    });
+    await expect(getXConnectionWithGovernance({
+      connectionStore: store, governanceCredentialStore, context,
+    })).resolves.toMatchObject({
+      connectorId: 'x', status: 'connected', runtimeEnabled: true,
+      credentialId: 'credential-x', credentialVersion: 2,
+    });
+  });
+
+  it('does not fall back to a legacy connected record after governance Credential revocation', async () => {
+    const root = createRoot();
+    const store = new ConnectorConnectionStore(join(root, 'connections.json'));
+    const vault = new InMemorySecretVault();
+    const legacySecret = await vault.putSecret('user-1', 'connector', cookieCredential('legacy-auth', 'legacy-ct0'), writer);
+    await store.connect({
+      username: 'alice', userId: 'user-1', tenantId: 'tenant-a', connectorId: 'x',
+      credentialRefs: { cookies: legacySecret.id },
+    });
+    const revokedCredential = {
+      credentialId: 'credential-x', tenantId: 'tenant-a', connectorId: 'x' as const,
+      kind: 'personal_grant' as const, ownerUserId: 'user-1', purpose: 'X bird CLI 用户凭据',
+      scopeSummary: { scopes: ['x:*'] }, status: 'revoked' as const, generation: 2,
+      secretRef: legacySecret.id, source: 'governance' as const, version: 2,
+      createdAt: '2026-08-20T10:00:00.000Z', createdBy: 'user-1',
+      updatedAt: '2026-08-20T10:01:00.000Z', updatedBy: 'user-1',
+    };
+    const governanceCredentialStore = { listForOwner: vi.fn().mockResolvedValue([revokedCredential]) };
+    const context = { userId: 'user-1', username: 'alice', tenantId: 'tenant-a' };
+
+    await expect(resolveXRuntimeEnv(
+      { connectionStore: store, vault, governanceCredentialStore }, context,
+    )).resolves.toEqual({});
+    await expect(getXConnectionWithGovernance({
+      connectionStore: store, governanceCredentialStore, context,
+    })).resolves.toMatchObject({ connectorId: 'x', status: 'disconnected' });
+  });
+
   it('stores only one vault ref and injects both bird cookie env aliases for the owning user', async () => {
     const root = createRoot();
     const file = join(root, 'connections.json');

@@ -33,7 +33,7 @@ import { PgTerminalEventOutboxRunStore, startTerminalEventOutboxDispatcher } fro
 import { PgHandStore } from '../runtime/handStore.js';
 import { PgSessionProjectionStore } from '../runtime/sessionProjectionStore.js';
 import { MemoryConsolidationEngine } from '../memory/consolidation/engine.js';
-import { TaskboardExecutionCoordinator, createTaskboardAttachmentAccess, createTaskboardRuntimeOptions } from '../taskboard/executionService.js';
+import { TaskboardExecutionCoordinator, createTaskboardAttachmentAccess, createTaskboardRuntimeOptions, createTaskboardTrustedWorkspaceResolver } from '../taskboard/executionService.js';
 import { RetryableTaskboardService } from '../taskboard/retryableService.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import { configureTaskboardGithubRepositoryProvider } from '../taskboard/repositoryRuntime.js';
@@ -1517,7 +1517,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   });
   const configuredIntegrationV3Access = configureRuntimeIntegrationV3RepositoryAccess({ store: rawTaskboardStore, taskboardRepositoryProvider, control: config.integrationV3ControlPlane, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, resolvePersonalAccessToken: async ({ tenantId, ownerUserId }) => {
     const user = userStore?.findById(ownerUserId); if (!user || user.disabled || user.tenantId !== tenantId) return undefined;
-    return resolveGithubToken({ connectionStore: connectorConnectionStore, vault: secretVault, onError: (error) => serverLogger.warn(`Integration PAT resolve failed: ${error.message}`) }, { userId: user.id, username: user.username, tenantId });
+    return resolveGithubToken({ connectionStore: connectorConnectionStore, vault: secretVault, governanceCredentialStore: credentialStore, onError: (error) => serverLogger.warn(`Integration PAT resolve failed: ${error.message}`) }, { userId: user.id, username: user.username, tenantId });
   } });
   integrationV3RepositoryProvider = configuredIntegrationV3Access.repositoryProvider;
   const integrationV3PersonalAccessTokenResolver = configuredIntegrationV3Access.personalAccessTokenResolver;
@@ -1699,7 +1699,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     orgAgentStore,
     tenantStore,
     environmentStore,
-    taskboard: { service: () => taskboardService, executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
+    taskboard: { service: () => taskboardService, executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, integrationPush: () => integrationV3Runtime?.integrationPush, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
       const effectiveAgentId = agentId
         ?? (await agentResourceStore?.findPersonalByOwner(tenantId, userId))?.agentId;

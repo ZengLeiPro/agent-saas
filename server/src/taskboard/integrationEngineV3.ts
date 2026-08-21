@@ -261,9 +261,18 @@ export class IntegrationEngineV3 {
 
   private async mergeApproved(current: IntegrationEngineV3Current, executionId: string): Promise<IntegrationEngineV3Result> {
     const revision = requireRevision(current);
-    await this.readAndValidateFacts(current);
-    if (current.candidate.approvedRevision !== revision.revision || !current.candidate.approvedReviewExecutionId) throw failClosed('Approval is stale', 'TASKBOARD_CANDIDATE_APPROVAL_STALE');
     const operationKey = integrationProviderOperationKey({ repositoryId: current.candidate.repositoryId, candidateId: current.candidate.id, candidateRevision: revision.revision, kind: 'merge_pull_request', target: requiredPr(current.candidate) });
+    const facts = await this.readProviderFacts(current);
+    if (isBaseOnlyDrift(current, facts)) {
+      const prepared = current.candidate.state === 'merging'
+        ? await this.options.providerOperations.get(operationKey)
+        : undefined;
+      if (current.candidate.state === 'approved' || prepared?.state === 'prepared') {
+        return applied(await this.transition(current, 'composing'));
+      }
+    }
+    this.assertProviderFacts(current, facts);
+    if (current.candidate.approvedRevision !== revision.revision || !current.candidate.approvedReviewExecutionId) throw failClosed('Approval is stale', 'TASKBOARD_CANDIDATE_APPROVAL_STALE');
     const operation = await this.options.providerOperations.prepare({
       operationKey, kind: 'merge_pull_request', repositoryId: current.candidate.repositoryId,
       fence: { workflowEpoch: safeEpoch(current.candidate.workflowEpoch), laneEpoch: safeEpoch(current.candidate.laneEpoch), candidateId: current.candidate.id, candidateRevision: revision.revision, executionId },
@@ -312,15 +321,26 @@ export class IntegrationEngineV3 {
   }
 
   private async readAndValidateFacts(current: IntegrationEngineV3Current, allowMerged = false): Promise<IntegrationEngineV3ProviderFacts> {
-    const revision = requireRevision(current);
     const facts = await this.readProviderFacts(current);
-    if (facts.repositoryId !== current.candidate.repositoryId || facts.providerPullRequestId !== requiredPr(current.candidate)
-      || facts.baseBranch !== current.candidate.baseBranch || facts.baseOid !== revision.baseOid
-      || facts.headOid !== revision.headOid || facts.treeOid !== revision.treeOid
-      || (!allowMerged && facts.state !== 'open')) {
+    this.assertProviderFacts(current, facts, allowMerged);
+    return facts;
+  }
+
+  private assertProviderFacts(
+    current: IntegrationEngineV3Current,
+    facts: IntegrationEngineV3ProviderFacts,
+    allowMerged = false,
+  ): void {
+    const revision = requireRevision(current);
+    const merged = allowMerged && facts.state === 'merged';
+    if (facts.repositoryId !== current.candidate.repositoryId
+      || facts.providerPullRequestId !== requiredPr(current.candidate)
+      || facts.baseBranch !== current.candidate.baseBranch
+      || facts.headOid !== revision.headOid
+      || facts.treeOid !== revision.treeOid
+      || (!merged && (facts.state !== 'open' || facts.baseOid !== revision.baseOid))) {
       throw failClosed('Provider subject drifted from the candidate revision', 'TASKBOARD_INTEGRATION_SUBJECT_DRIFT');
     }
-    return facts;
   }
 
   private async appendAndTransition(current: IntegrationEngineV3Current, revision: Omit<AppendCandidateRevisionInput, 'expectedVersion' | 'expectedCurrentRevision' | 'nextState'>, to: 'waiting_checks'): Promise<TaskBoardIntegrationCandidate> {
@@ -359,6 +379,16 @@ function assertExpected(current: IntegrationEngineV3Current, expected: Integrati
 function assertReviewReceipt(current: IntegrationEngineV3Current, executionId: string, receipt: IntegrationReviewReceiptV3): void {
   const r = requireRevision(current);
   if (!executionId || receipt.candidateId !== current.candidate.id || receipt.revision !== r.revision || receipt.subjectDigest !== r.subjectDigest || receipt.sourceSetDigest !== r.sourceSetDigest) throw failClosed('Review receipt does not bind the current subject', 'TASKBOARD_INTEGRATION_REVIEW_RECEIPT_STALE');
+}
+function isBaseOnlyDrift(current: IntegrationEngineV3Current, facts: IntegrationEngineV3ProviderFacts): boolean {
+  const revision = requireRevision(current);
+  return facts.repositoryId === current.candidate.repositoryId
+    && facts.providerPullRequestId === requiredPr(current.candidate)
+    && facts.baseBranch === current.candidate.baseBranch
+    && facts.headOid === revision.headOid
+    && facts.treeOid === revision.treeOid
+    && facts.state === 'open'
+    && facts.baseOid !== revision.baseOid;
 }
 function subjectExpected(current: IntegrationEngineV3Current, revision: TaskBoardIntegrationCandidateRevision): Record<string, unknown> { return { repositoryId: current.candidate.repositoryId, baseOid: revision.baseOid, headOid: revision.headOid, treeOid: revision.treeOid, sourceSetDigest: revision.sourceSetDigest, policyRevision: revision.policyRevision, policySnapshotDigest: revision.policySnapshotDigest, subjectDigest: revision.subjectDigest }; }
 function requireRevision(current: IntegrationEngineV3Current): TaskBoardIntegrationCandidateRevision { if (!current.revision || current.revision.revision !== current.candidate.currentRevision) throw failClosed('Current candidate revision is unavailable', 'TASKBOARD_INTEGRATION_REVISION_UNKNOWN'); return current.revision; }

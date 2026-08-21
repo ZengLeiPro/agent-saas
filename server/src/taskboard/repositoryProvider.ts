@@ -69,6 +69,11 @@ export interface RepositoryReferenceSnapshot {
   treeOid: string;
 }
 
+export interface RepositoryCommitSnapshot {
+  oid: string;
+  treeOid: string;
+}
+
 export interface RepositoryRequiredGateCapabilities {
   known: boolean;
   requiredChecks: Array<{ name: string; appId?: number }>;
@@ -113,6 +118,7 @@ export interface RepositoryMergeReceipt {
 
 export interface RepositoryProvider {
   getPullRequest(repository: TaskBoardRepositoryConfig, providerPullRequestId: string, credentialOwnerId: string): Promise<RepositoryPullRequestSnapshot>;
+  getCommit?(repository: TaskBoardRepositoryConfig, oid: string, credentialOwnerId: string): Promise<RepositoryCommitSnapshot>;
   getReference?(repository: TaskBoardRepositoryConfig, ref: string, credentialOwnerId: string): Promise<RepositoryReferenceSnapshot>;
   getBaseReference?(repository: TaskBoardRepositoryConfig, credentialOwnerId: string): Promise<RepositoryReferenceSnapshot>;
   getRequiredGateCapabilities?(repository: TaskBoardRepositoryConfig, baseRef: string, credentialOwnerId: string): Promise<RepositoryRequiredGateCapabilities>;
@@ -216,13 +222,28 @@ export class GithubRepositoryProvider implements RepositoryProvider {
     };
   }
 
+  async getCommit(repository: TaskBoardRepositoryConfig, oid: string, credentialOwnerId: string): Promise<RepositoryCommitSnapshot> {
+    if (!/^[0-9a-f]{40,64}$/.test(oid)) throw new RepositoryProviderPolicyError('Invalid Git commit OID');
+    return this.readCommit(repository, oid, credentialOwnerId);
+  }
+
+  private async readCommit(repository: TaskBoardRepositoryConfig, oid: string, credentialOwnerId: string): Promise<RepositoryCommitSnapshot> {
+    const commit = asRecord(await this.request(
+      repository,
+      credentialOwnerId,
+      this.repoPath(repository, `/git/commits/${encodeURIComponent(oid)}`),
+    ));
+    const resolvedOid = requiredString(commit, 'sha', `GitHub commit ${oid} OID`);
+    if (resolvedOid !== oid) throw new Error('GitHub commit OID does not match the requested object');
+    return { oid: resolvedOid, treeOid: requiredString(commit.tree, 'sha', `GitHub commit ${oid} tree OID`) };
+  }
+
   async getReference(repository: TaskBoardRepositoryConfig, ref: string, credentialOwnerId: string): Promise<RepositoryReferenceSnapshot> {
     const normalizedRef = normalizeBranchRef(ref);
     const refPayload = asRecord(await this.request(repository, credentialOwnerId, this.repoPath(repository, `/git/ref/heads/${encodeRefPath(normalizedRef)}`)));
     const oid = requiredString(refPayload.object, 'sha', `GitHub ref ${normalizedRef} OID`);
-    const commit = asRecord(await this.request(repository, credentialOwnerId, this.repoPath(repository, `/git/commits/${encodeURIComponent(oid)}`)));
-    const treeOid = requiredString(commit.tree, 'sha', `GitHub ref ${normalizedRef} tree OID`);
-    return { ref: normalizedRef, oid, treeOid };
+    const commit = await this.readCommit(repository, oid, credentialOwnerId);
+    return { ref: normalizedRef, oid, treeOid: commit.treeOid };
   }
 
   getBaseReference(repository: TaskBoardRepositoryConfig, credentialOwnerId: string): Promise<RepositoryReferenceSnapshot> {

@@ -52,6 +52,25 @@ export function resolveLegacySkillIdForPreferenceProjection(
   return PERSONAL_SKILL_RESOURCE_ID_PATTERN.test(resourceId) ? undefined : resourceId;
 }
 
+/**
+ * 将治理偏好增量投影回旧版 Skill 选择集。
+ *
+ * 没有治理偏好的用户仍由旧版选择接口管理，不能因为一次空的治理投影
+ * 就把其已启用的技能全部清空。对已有偏好只修改对应的 legacy skill，
+ * 这样新建账号和治理迁移期间的手动选择都能保留。
+ */
+export function applyLegacySkillPreferences(
+  currentSkillIds: readonly string[],
+  preferences: readonly { legacySkillId: string; enabled: boolean }[],
+): string[] {
+  const selected = new Set(currentSkillIds);
+  for (const preference of preferences) {
+    if (preference.enabled) selected.add(preference.legacySkillId);
+    else selected.delete(preference.legacySkillId);
+  }
+  return [...selected];
+}
+
 export function debugModeFeaturesFromTenantSettings(
   features: Pick<TenantSettings["features"], "debugModeAllowed" | "debugModeEnabled">,
 ): Pick<TenantSettings["features"], "debugModeAllowed" | "debugModeEnabled"> {
@@ -456,9 +475,15 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
           const userId = typeof payload.userId === 'string' ? payload.userId : '';
           const user = userStore?.findById(userId);
           if (!user) throw new Error('GOVERNANCE_PROJECTION_INVALID');
-          const preferences = await assignmentStore?.listUserPreferences(userId) ?? [];
-          const selectedSkills: string[] = [];
-          for (const item of preferences.filter(entry => entry.resourceType === 'skill' && entry.enabled)) {
+          const preferences = (await assignmentStore?.listUserPreferences(userId) ?? [])
+            .filter(entry => entry.resourceType === 'skill');
+          // 没有任何治理偏好的新账号仍由旧版 Skill 选择接口管理；空投影不能
+          // 把它刚保存的选择集覆盖成 []。同理，治理投影只改它明确覆盖的
+          // skill，未进入治理偏好的平台/组织/个人 skill 继续保留旧选择。
+          if (preferences.length === 0) return;
+
+          const resolvedPreferences: Array<{ legacySkillId: string; enabled: boolean }> = [];
+          for (const item of preferences) {
             const resource = await skillGovernanceStore?.getResource(item.resourceId);
             const version = resource?.currentVersionId
               ? await skillGovernanceStore?.getVersion(resource.currentVersionId)
@@ -467,8 +492,15 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
               item.resourceId,
               version?.definition,
             );
-            if (legacySkillId) selectedSkills.push(legacySkillId);
+            if (legacySkillId) resolvedPreferences.push({ legacySkillId, enabled: item.enabled });
           }
+          if (resolvedPreferences.length === 0) return;
+          const currentSkills = skillConfigStore?.getUserSelectedSkills(user.username) ?? [];
+          const selectedSkills = applyLegacySkillPreferences(currentSkills, resolvedPreferences);
+          if (
+            currentSkills.length === selectedSkills.length
+            && currentSkills.every((skillId, index) => skillId === selectedSkills[index])
+          ) return;
           await skillConfigStore?.setUserSelectedSkills(user.username, selectedSkills);
         },
         platform_admin: async payload => {

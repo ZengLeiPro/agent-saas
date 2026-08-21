@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  applyLegacySkillPreferences,
   debugModeFeaturesFromTenantSettings,
   resolveLegacySkillIdForPreferenceProjection,
 } from '../app/runtimeGovernanceStores.js';
@@ -11,6 +12,16 @@ describe('debugModeFeaturesFromTenantSettings', () => {
       debugModeAllowed: true,
       debugModeEnabled: false,
     });
+  });
+});
+
+describe('applyLegacySkillPreferences', () => {
+  it('空治理偏好不清空旧版选择，显式偏好只覆盖对应技能', () => {
+    expect(applyLegacySkillPreferences(['browser', 'custom'], [])).toEqual(['browser', 'custom']);
+    expect(applyLegacySkillPreferences(['browser', 'custom'], [
+      { legacySkillId: 'custom', enabled: false },
+      { legacySkillId: 'report', enabled: true },
+    ])).toEqual(['browser', 'report']);
   });
 });
 

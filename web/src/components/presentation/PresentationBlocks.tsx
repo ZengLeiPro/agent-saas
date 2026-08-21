@@ -290,7 +290,7 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
     <div
       className={cn(
         "max-w-full overflow-x-auto rounded-xl border border-primary/20 bg-card align-top",
-        comparison ? "block w-full" : "inline-block",
+        comparison ? "block w-full" : "inline-block self-start",
       )}
       data-records-block
       tabIndex={tabular ? 0 : undefined}

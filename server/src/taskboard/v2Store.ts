@@ -462,6 +462,12 @@ export async function cancelIntegrationTask(
           WHERE id=$1 AND state NOT IN ('merged','canceled') RETURNING id`, [row.id, reason]);
       if (!changed.rows[0]) throw new TaskboardValidationError('Workflow v3 candidate changed', 'TASKBOARD_CANDIDATE_CAS_MISMATCH');
       await client.query(
+        `UPDATE ${tables.providerOperationsTable}
+            SET state='failed',error=$2,updated_at=now()
+          WHERE candidate_id=$1 AND state='prepared'`,
+        [row.id, `Candidate canceled before provider execution: ${reason}`],
+      );
+      await client.query(
         `UPDATE ${options.tasksTable}
             SET status='canceled',completed_at=NULL,workflow_epoch=workflow_epoch+1,next_action='none',
                 next_action_revision=next_action_revision+1,version=version+1,updated_at=now()

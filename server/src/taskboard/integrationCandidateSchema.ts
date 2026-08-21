@@ -327,6 +327,17 @@ const INTEGRATION_CANDIDATE_SCHEMA_MIGRATIONS = [
         ON ${activationHeartbeatsTable}(updated_at DESC) WHERE status='healthy'`);
     },
   },
+  {
+    version: 4,
+    name: 'cancel_prepared_provider_operations',
+    run: async (options: IntegrationCandidateSchemaOptions, client: Pick<PoolClient, 'query'>) => {
+      const { candidatesTable, providerOperationsTable } = integrationCandidateTableNames(options.integrationSourcesTable);
+      await client.query(`UPDATE ${providerOperationsTable} o
+        SET state='failed',error='Candidate canceled before provider execution',updated_at=now()
+        FROM ${candidatesTable} c
+        WHERE o.candidate_id=c.id AND c.state='canceled' AND o.state='prepared'`);
+    },
+  },
 ] as const;
 
 /**

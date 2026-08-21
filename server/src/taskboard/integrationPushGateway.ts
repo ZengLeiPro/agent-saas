@@ -546,10 +546,16 @@ export class IntegrationPushGateway {
     oldOid: string,
     newOid: string,
   ): boolean {
-    return operation.state === 'failed' && operation.attemptCount === 1
-      && operation.receipt?.verifiedNotApplied === true
-      && operation.receipt.ref === ref && operation.receipt.actualOid === oldOid
-      && operation.receipt.expectedOldOid === oldOid && operation.receipt.expectedNewOid === newOid;
+    const receipt = operation.receipt;
+    if (operation.attemptCount !== 1 || receipt?.ref !== ref || receipt.actualOid !== oldOid) return false;
+    if (operation.state === 'failed' && receipt.verifiedNotApplied === true) {
+      return receipt.expectedOldOid === oldOid && receipt.expectedNewOid === newOid;
+    }
+    // Before verified-old recovery existed, the same authoritative read-back was
+    // misclassified as needs_human/mismatch. Accept only that exact legacy receipt.
+    return operation.state === 'needs_human'
+      && operation.error === 'Exact remote ref points to an unexpected OID'
+      && receipt.expectedNew === newOid;
   }
 
   private async runExactPush(

@@ -134,6 +134,47 @@ describe('IntegrationEngineV3', () => {
     expect(requests.requestReview).not.toHaveBeenCalled();
   });
 
+  it.each(['approved', 'merging'] as const)(
+    'converges an externally merged %s candidate to needs_human without fabricating a controlled receipt',
+    async (state) => {
+      const value = candidate(state);
+      const context = setup(state, facts({
+        state: 'merged', baseOid: 'advanced-main', mergeCommitOid: 'external-merge', mergedTreeOid: 'tree-1',
+      }));
+
+      const result = await context.engine.execute({
+        type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
+      });
+
+      expect(result).toMatchObject({
+        status: 'applied',
+        candidate: {
+          state: 'needs_human',
+          lastError: expect.stringContaining('outside the controlled Workflow v3 operation'),
+        },
+      });
+      expect(context.merge).not.toHaveBeenCalled();
+      expect(context.operations.records.size).toBe(0);
+    },
+  );
+
+  it('converges a mismatched external merge to needs_human instead of poisoning worker health', async () => {
+    const value = candidate('merging');
+    const context = setup('merging', facts({
+      state: 'merged', baseOid: 'advanced-main', mergeCommitOid: 'external-merge', mergedTreeOid: 'different-tree',
+    }));
+
+    const result = await context.engine.execute({
+      type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
+    });
+
+    expect(result).toMatchObject({
+      status: 'applied',
+      candidate: { state: 'needs_human', lastError: expect.stringContaining('mismatched approved facts') },
+    });
+    expect(context.merge).not.toHaveBeenCalled();
+  });
+
   it('recomposes an approved candidate when the base advances before merge preparation', async () => {
     const value = candidate('approved');
     const context = setup('approved', facts({ baseOid: 'new-main' }));

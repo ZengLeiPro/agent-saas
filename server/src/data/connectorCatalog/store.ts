@@ -16,7 +16,7 @@ export interface PgConnectorCatalogStoreOptions {
   tablePrefix?: string;
 }
 
-const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{1,63}$/;
+const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const FORBIDDEN_DEFINITION_KEYS = new Set([
   'apikey', 'accesstoken', 'clientsecret', 'credential', 'credentialid',
   'password', 'secret', 'secretref', 'token', 'refreshtoken',

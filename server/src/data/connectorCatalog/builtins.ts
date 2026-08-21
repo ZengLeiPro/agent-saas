@@ -43,4 +43,11 @@ export const BUILTIN_CONNECTOR_DEFINITIONS: readonly BuiltinConnectorDefinition[
     capabilitySchema: { docs: ['read', 'write'], calendar: ['read', 'write'], messages: ['send'] },
     definition: { provider: 'feishu', transport: 'server_proxy' },
   },
+  {
+    connectorId: 'x',
+    name: 'X',
+    authMethods: ['cookies'],
+    capabilitySchema: {},
+    definition: { provider: 'x', transport: 'server_proxy' },
+  },
 ] as const;

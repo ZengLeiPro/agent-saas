@@ -1,5 +1,4 @@
-import { access, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import {
   IntegrationPushCapabilityService,
@@ -7,6 +6,7 @@ import {
 } from './integrationPushCapability.js';
 import type { AuthoritativeIntegrationPushTarget } from './integrationPushCapabilityPostgres.js';
 import { runSafeServerGit } from './safeServerGitRunner.js';
+import { withIntegrationGitAskpass } from './integrationGitAskpass.js';
 import {
   IntegrationProviderOperationService,
   integrationProviderOperationKey,
@@ -200,7 +200,7 @@ export class IntegrationPushGateway {
       throw new IntegrationPushGatewayError('credential_unavailable', false);
     }
 
-    await this.withAskpass(token.token, async (env) => {
+    await withIntegrationGitAskpass(token.token, async (env) => {
       const remoteOld = await this.runner.run({
         cwd,
         args: ['ls-remote', '--refs', repository.remoteUrl, target.binding.exactRef],
@@ -245,6 +245,8 @@ export class IntegrationPushGateway {
   async pushExact(input: {
     tenantId: string; ownerUserId: string; repositoryId: string; integrationTaskId: string;
     candidateId: string; revision: number; exactRef: string; expectedOldOid: string; newOid: string;
+    /** Server compose may re-parent a deterministic candidate when the authoritative base advanced. */
+    rebaseParentOid?: string;
     fence: IntegrationProviderOperationFence;
   }): Promise<void> {
     await this.assertHealthy();
@@ -277,7 +279,7 @@ export class IntegrationPushGateway {
     const service = this.options.operationService!;
     const prior = await service.get(operationKey);
     if (prior && prior.state !== 'prepared') {
-      await this.withAskpass(credential.token, async (env) => {
+      await withIntegrationGitAskpass(credential.token, async (env) => {
         await this.reconcileOrVerifyPriorPush(prior, input, cwd, repository.remoteUrl, env);
       });
       return;
@@ -285,13 +287,13 @@ export class IntegrationPushGateway {
     // Equality is only legal on a post-bind/restart replay with a matching durable
     // operation above. Never manufacture a no-op intent with a rewritten old OID.
     if (input.expectedOldOid === input.newOid) throw new IntegrationPushGatewayError('remote_old_mismatch', false);
-    await this.assertCommitGraph(cwd, input.expectedOldOid, input.newOid);
+    await this.assertCommitGraph(cwd, input.expectedOldOid, input.newOid, input.rebaseParentOid);
     const operation = await service.prepare({
       operationKey, kind: 'push_ref', repositoryId: input.repositoryId, fence: input.fence,
       expected: { ref: input.exactRef, oldOid: input.expectedOldOid, newOid: input.newOid },
       command: { ref: input.exactRef, oldOid: input.expectedOldOid, newOid: input.newOid },
     });
-    await this.withAskpass(credential.token, async (env) => {
+    await withIntegrationGitAskpass(credential.token, async (env) => {
       if (operation.state === 'unknown' || operation.state === 'executing') {
         const reconciled = await service.reconcile(operationKey, (record) => this.reconcileExactRef(record, cwd, repository.remoteUrl, env));
         if (reconciled.state !== 'succeeded') throw new IntegrationPushGatewayError('push_failed_unknown', false);
@@ -406,7 +408,7 @@ export class IntegrationPushGateway {
     }
   }
 
-  private async assertCommitGraph(cwd: string, oldOid: string, newOid: string): Promise<void> {
+  private async assertCommitGraph(cwd: string, oldOid: string, newOid: string, rebaseParentOid?: string): Promise<void> {
     try {
       const oldType = (await this.runner.run({ cwd, args: ['cat-file', '-t', oldOid] })).stdout.trim();
       const newType = (await this.runner.run({ cwd, args: ['cat-file', '-t', newOid] })).stdout.trim();
@@ -417,22 +419,12 @@ export class IntegrationPushGateway {
     const parents = (await this.runner.run({ cwd, args: ['rev-list', '--parents', '-n', '1', newOid] })
       .catch(() => { throw new IntegrationPushGatewayError('object_missing', true); })).stdout.trim().split(/\s+/);
     if (parents.length > 2) throw new IntegrationPushGatewayError('merge_commit_forbidden', true);
-    if (parents.length !== 2 || parents[1] !== oldOid) {
+    const parent = parents[1];
+    if (parents.length !== 2 || (parent !== oldOid && parent !== rebaseParentOid)) {
       throw new IntegrationPushGatewayError('parent_mismatch', true);
     }
   }
 
-  private async withAskpass<T>(token: string, action: (env: Record<string, string>) => Promise<T>): Promise<T> {
-    const dir = await mkdtemp(`${tmpdir()}/ky-integration-push-`);
-    const askpass = resolve(dir, 'askpass.sh');
-    try {
-      await writeFile(askpass, '#!/bin/sh\ncase "$1" in *Username*) printf "%s\\n" "x-access-token";; *) printf "%s\\n" "$KY_GIT_PUSH_TOKEN";; esac\n', { mode: 0o700 });
-      await access(askpass);
-      return await action({ GIT_ASKPASS: askpass, KY_GIT_PUSH_TOKEN: token });
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  }
 }
 
 export class ExecFileIntegrationPushGitRunner implements IntegrationPushGitRunner {
@@ -469,7 +461,7 @@ function sameBinding(a: IntegrationPushCapabilityBinding, b: IntegrationPushCapa
     && a.workflowEpoch === b.workflowEpoch;
 }
 
-function credentialMatchesRepository(
+export function credentialMatchesRepository(
   credential: IntegrationPushCredential,
   configured: { repositoryId: string; repositoryOwner: string; repositoryName: string },
   configuredInstallationId: number | undefined,

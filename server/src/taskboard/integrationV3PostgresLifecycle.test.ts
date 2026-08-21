@@ -28,6 +28,9 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(sql).toContain("current_setting('agent_saas.integration_v3_enabled'");
     expect(sql).toContain("c.policy_snapshot->>'workflowVersion'");
     expect(sql).toContain("c.policy_snapshot->'featureFlags'->>'engineV3'");
+    expect(sql).toContain("c.state IN ('preparing','composing','waiting_checks','needs_work','working','in_review','approved','merging')");
+    expect(sql).toContain("c.state IN ('merged','canceled')");
+    expect(sql).not.toContain("'blocked','needs_human'");
     expect(sql).not.toContain('integration_policy');
     expect(sql).not.toContain('JOIN boards');
   });

@@ -133,7 +133,8 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
             AND COALESCE((c.policy_snapshot->'featureFlags'->>'engineV3')::boolean,false)
             AND c.worker_status<>'failed' AND c.worker_available_at<=now()
             AND (c.worker_status='idle' OR c.worker_lease_expires_at<now())
-            AND (c.state NOT IN ('merged','canceled') OR c.worker_checkpoint->>'status' IS DISTINCT FROM 'requested')
+            AND (c.state IN ('preparing','composing','waiting_checks','needs_work','working','in_review','approved','merging')
+              OR (c.state IN ('merged','canceled') AND c.worker_checkpoint->>'status' IS DISTINCT FROM 'requested'))
           ORDER BY c.updated_at,c.id FOR UPDATE OF c SKIP LOCKED LIMIT 1
        )
        UPDATE ${this.options.candidatesTable} c
@@ -314,15 +315,27 @@ export interface PostgresIntegrationV3ComposeHostOptions {
   executionsTable: string;
   resolutionsTable: string;
   requestsOutboxTable: string;
-  resolvePaths(repository: TaskBoardRepositoryConfig, candidateId: string): Promise<{ repositoryPath: string; worktreePath: string } | undefined>;
+  resolvePaths(
+    repository: TaskBoardRepositoryConfig,
+    candidateId: string,
+    identity: { tenantId: string; ownerUserId: string },
+  ): Promise<{ repositoryPath: string; worktreePath: string } | undefined>;
   runGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult>;
   validateServerOwnedRepository(repositoryPath: string): Promise<void>;
+  withRepositoryFetchCredential?: IntegrationV3ComposeHost['withRepositoryFetchCredential'];
   pushIntegrationHead?: IntegrationV3ComposeHost['pushIntegrationHead'];
 }
 
 export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHost {
   readonly pushIntegrationHead;
   constructor(private readonly options: PostgresIntegrationV3ComposeHostOptions) { this.pushIntegrationHead = options.pushIntegrationHead; }
+
+  withRepositoryFetchCredential<T>(
+    context: IntegrationV3ComposeContext,
+    action: (env: Readonly<Record<string, string>>) => Promise<T>,
+  ): Promise<T> {
+    return this.options.withRepositoryFetchCredential?.(context, action) ?? action({});
+  }
 
   async resolveContext(current: Required<IntegrationV3WorkerCurrent>): Promise<IntegrationV3ComposeContext> {
     const result = await this.options.pool.query(
@@ -348,7 +361,9 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
     const row = result.rows[0];
     const repository = record(row?.repository) as unknown as TaskBoardRepositoryConfig;
     if (!row || repository.provider !== 'github' || repository.repositoryId !== current.candidate.repositoryId) throw new Error('Repository provider is unsupported or unknown');
-    const paths = await this.options.resolvePaths(repository, current.candidate.id);
+    const paths = await this.options.resolvePaths(repository, current.candidate.id, {
+      tenantId: String(row.tenant_id), ownerUserId: String(row.owner_user_id),
+    });
     if (!paths) throw new Error('Local repository workspace is unavailable');
     const snapshots = await this.options.pool.query(
       `SELECT * FROM ${this.options.sourceSnapshotsTable} WHERE candidate_id=$1 AND revision=$2 ORDER BY source_order`,

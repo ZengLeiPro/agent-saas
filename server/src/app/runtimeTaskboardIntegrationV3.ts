@@ -21,9 +21,10 @@ import {
 import { IntegrationProviderOperationService } from '../taskboard/integrationProviderOperations.js';
 import { IntegrationPushCapabilityService } from '../taskboard/integrationPushCapability.js';
 import { PostgresIntegrationPushCapabilityHost } from '../taskboard/integrationPushCapabilityPostgres.js';
-import { IntegrationPushGateway, type IntegrationPushCredential } from '../taskboard/integrationPushGateway.js';
+import { credentialMatchesRepository, IntegrationPushGateway, type IntegrationPushCredential } from '../taskboard/integrationPushGateway.js';
+import { withIntegrationGitAskpass } from '../taskboard/integrationGitAskpass.js';
 import { createGithubAppIntegrationPushTokenResolver, createPersonalAccessTokenIntegrationPushTokenResolver } from '../taskboard/integrationPushService.js';
-import { DefaultIntegrationV3ComposeExecutor } from '../taskboard/integrationV3ComposeExecutor.js';
+import { DefaultIntegrationV3ComposeExecutor, type IntegrationV3ComposeContext } from '../taskboard/integrationV3ComposeExecutor.js';
 import {
   IntegrationV3Worker,
   type IntegrationV3CleanupReceipt,
@@ -36,6 +37,7 @@ import {
   PostgresIntegrationV3WorkerHost,
 } from '../taskboard/integrationV3WorkerPostgres.js';
 import { canonicalGithubRepositoryUrl, isCanonicalGithubRepositoryRemote, type RepositoryProvider } from '../taskboard/repositoryProvider.js';
+import { provisionIntegrationV3RepositoryMirror } from '../taskboard/integrationV3RepositoryProvisioning.js';
 import { runSafeServerGit, runSafeServerGitOrThrow } from '../taskboard/safeServerGitRunner.js';
 import { createIntegrationV3GithubAppRepositoryProvider, RepositoryProviderIntegrationEngineV3Adapter } from '../taskboard/repositoryRuntime.js';
 import type {
@@ -359,6 +361,27 @@ export function startRuntimeTaskboardIntegrationV3(
     resolveGithubToken: options.resolveGithubToken ?? (async () => undefined),
     operationService,
   });
+  const withRepositoryCredential = async <T>(
+    context: Pick<IntegrationV3ComposeContext, 'tenantId' | 'credentialOwnerId' | 'repository'>,
+    action: (env: Readonly<Record<string, string>>) => Promise<T>,
+  ): Promise<T> => {
+    if (!options.resolveGithubToken) return action({});
+    const credential = await options.resolveGithubToken({
+      tenantId: context.tenantId,
+      ownerUserId: context.credentialOwnerId,
+      repositoryId: context.repository.repositoryId,
+      repositoryOwner: context.repository.owner,
+      repositoryName: context.repository.name,
+    });
+    if (!credential || !credentialMatchesRepository(credential, {
+      repositoryId: context.repository.repositoryId,
+      repositoryOwner: context.repository.owner,
+      repositoryName: context.repository.name,
+    }, options.githubAppInstallationId)) {
+      throw new Error('Integration repository credential is unavailable');
+    }
+    return withIntegrationGitAskpass(credential.token, action);
+  };
   let composeHost: PostgresIntegrationV3ComposeHost;
   const workerHost: PostgresIntegrationV3WorkerHost = new PostgresIntegrationV3WorkerHost({
     ...pgOptions,
@@ -378,13 +401,18 @@ export function startRuntimeTaskboardIntegrationV3(
       const current = await workerHost.loadCurrent(request.candidateId);
       if (!current.revision) throw new Error('Workspace sync requires a current candidate revision');
       const context = await composeHost.resolveContext({ candidate: current.candidate, revision: current.revision });
-      await (await import('../taskboard/repositoryWorkspaceSync.js')).syncRepositoryWorkspace(composeHost, {
-        repositoryPath: context.repositoryPath,
-        worktreePath: context.worktreePath,
-        baseBranch: current.candidate.baseBranch,
-        integrationBranch: current.candidate.branch,
-        controlledRemoteUrl: canonicalGithubRepositoryUrl(context.repository),
-      });
+      const { syncRepositoryWorkspace } = await import('../taskboard/repositoryWorkspaceSync.js');
+      await composeHost.withRepositoryFetchCredential(context, (fetchEnvironment) => (
+        syncRepositoryWorkspace(composeHost, {
+          repositoryPath: context.repositoryPath,
+          worktreePath: context.worktreePath,
+          baseBranch: current.candidate.baseBranch,
+          integrationBranch: current.candidate.branch,
+          controlledRemoteUrl: canonicalGithubRepositoryUrl(context.repository),
+          fetchEnvironment,
+          integrationWorktreeMode: 'reset_to_base',
+        })
+      ));
     },
     cleanup: createRuntimeIntegrationV3CleanupHost({
       controlledMirrorRoot: options.controlledMirrorRoot,
@@ -421,18 +449,41 @@ export function startRuntimeTaskboardIntegrationV3(
     executionsTable: store.executionsTable,
     resolutionsTable: store.resolutionsTable,
     requestsOutboxTable: tables.requestsOutboxTable,
-    resolvePaths: (repository, candidateId) => resolveIntegrationV3RepositoryPaths(
-      repository,
-      candidateId,
-      { processCwd, agentCwd, ...(options.controlledMirrorRoot ? { controlledMirrorRoot: options.controlledMirrorRoot } : {}) },
-    ),
+    resolvePaths: async (repository, candidateId, identity) => {
+      const roots = { processCwd, agentCwd, ...(options.controlledMirrorRoot ? { controlledMirrorRoot: options.controlledMirrorRoot } : {}) };
+      const existing = await resolveIntegrationV3RepositoryPaths(repository, candidateId, roots);
+      if (existing || !options.controlledMirrorRoot) return existing;
+      const client = await store.pool.connect();
+      const lock = ['integration-v3-mirror-provision', repository.repositoryId];
+      try {
+        await client.query('SELECT pg_advisory_lock(hashtext($1),hashtext($2))', lock);
+        const winner = await resolveIntegrationV3RepositoryPaths(repository, candidateId, roots);
+        if (winner) return winner;
+        await withRepositoryCredential({
+          tenantId: identity.tenantId,
+          credentialOwnerId: identity.ownerUserId,
+          repository,
+        }, (fetchEnvironment) => provisionIntegrationV3RepositoryMirror({
+          controlledMirrorRoot: options.controlledMirrorRoot!,
+          repository,
+          fetchEnvironment,
+          runGit,
+        }));
+        return resolveIntegrationV3RepositoryPaths(repository, candidateId, roots);
+      } finally {
+        await client.query('SELECT pg_advisory_unlock(hashtext($1),hashtext($2))', lock).catch(() => undefined);
+        client.release();
+      }
+    },
     runGit,
     validateServerOwnedRepository: createServerOwnedRepositoryValidator(options.controlledMirrorRoot),
+    withRepositoryFetchCredential: withRepositoryCredential,
     pushIntegrationHead: async (input) => pushGateway.pushExact({
       tenantId: input.context.tenantId, ownerUserId: input.context.credentialOwnerId,
       repositoryId: input.context.repository.repositoryId, integrationTaskId: input.integrationTaskId,
       candidateId: input.candidateId, revision: input.revision,
       exactRef: `refs/heads/${input.branch}`, expectedOldOid: input.expectedOldOid, newOid: input.headOid,
+      rebaseParentOid: input.headParentOid,
       fence: {
         workflowEpoch: input.workflowEpoch, laneEpoch: input.laneEpoch,
         candidateId: input.candidateId, candidateRevision: input.revision,

@@ -222,6 +222,28 @@ describe('syncRepositoryWorkspace', () => {
     host.assertConsumed();
   });
 
+  it('resets a clean deterministic compose worktree when the authoritative base advanced', async () => {
+    const host = new ScriptedHost([
+      fetchStep(),
+      remoteOidStep(),
+      listStep(`${mainRecord(REMOTE_OID)}\n${integrationRecord()}`),
+      statusStep(REPOSITORY),
+      ancestorStep('refs/heads/main', 'refs/remotes/origin/main', true),
+      ancestorStep('refs/remotes/origin/main', 'refs/heads/main', true),
+      statusStep(WORKTREE),
+      { cwd: WORKTREE, args: ['reset', '--hard', 'refs/remotes/origin/main'] },
+    ]);
+
+    await expect(syncRepositoryWorkspace(host, {
+      ...input,
+      integrationWorktreeMode: 'reset_to_base',
+    })).resolves.toMatchObject({
+      localBase: 'current',
+      integrationWorktree: 'reset_to_base',
+    });
+    host.assertConsumed();
+  });
+
   it('rejects unsafe refs and non-normalized paths before taking a lock or running Git', async () => {
     const host = new ScriptedHost([]);
 

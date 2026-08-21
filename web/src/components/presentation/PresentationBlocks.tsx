@@ -210,6 +210,9 @@ function RecordRow({
   );
 }
 
+// 数值列按内容收缩，避免宽消息下短值被多个 1fr 轨道平均撑开；剩余宽度由对照项吸收。
+const COMPARISON_COLUMNS = "sm:grid-cols-[minmax(10rem,1.2fr)_minmax(6rem,max-content)_minmax(6rem,max-content)_minmax(6rem,max-content)_auto]";
+
 function ComparisonRow({ item }: { item: RecordItem }) {
   const [open, setOpen] = useState(false);
   const expandable = !!item.detail?.length;
@@ -217,7 +220,7 @@ function ComparisonRow({ item }: { item: RecordItem }) {
   return (
     <div
       className={cn(
-        "border-b border-border/60 px-4 py-3 last:border-b-0",
+        "border-b border-border/60 px-4 py-2.5 last:border-b-0",
         item.tone === "warn" && "bg-warning/5",
         item.tone === "danger" && "bg-destructive/5",
       )}
@@ -227,22 +230,24 @@ function ComparisonRow({ item }: { item: RecordItem }) {
         type="button"
         onClick={expandable ? () => setOpen((value) => !value) : undefined}
         className={cn(
-          "grid w-full grid-cols-1 gap-x-4 gap-y-2 text-left sm:grid-cols-[minmax(8rem,1.2fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_auto] sm:items-start",
+          "grid w-full grid-cols-1 gap-x-3 gap-y-1.5 text-left",
+          COMPARISON_COLUMNS,
+          "sm:items-start",
           !expandable && "cursor-default",
         )}
       >
         <span className="min-w-0 break-words text-sm font-medium text-foreground">{item.label}</span>
-        <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-2 text-sm sm:block">
+        <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm sm:block">
           <span className="text-xs text-muted-foreground sm:hidden">基准/之前</span>
-          <span className="break-words text-foreground">{item.baseline ?? "—"}</span>
+          <span className="block max-w-64 break-words text-foreground">{item.baseline ?? "—"}</span>
         </span>
-        <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-2 text-sm sm:block">
+        <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm sm:block">
           <span className="text-xs text-muted-foreground sm:hidden">当前/实际</span>
-          <span className="break-words text-foreground">{item.current ?? "—"}</span>
+          <span className="block max-w-64 break-words text-foreground">{item.current ?? "—"}</span>
         </span>
-        <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-2 text-sm sm:block">
+        <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm sm:block">
           <span className="text-xs text-muted-foreground sm:hidden">差异</span>
-          <span className={cn("break-words font-medium", item.tone ? activityStatusTextClass(tone) : "text-foreground")}>
+          <span className={cn("block max-w-64 break-words font-medium", item.tone ? activityStatusTextClass(tone) : "text-foreground")}>
             {item.delta ?? "—"}
           </span>
         </span>
@@ -257,7 +262,7 @@ function ComparisonRow({ item }: { item: RecordItem }) {
 function ComparisonView({ block }: { block: RecordsBlock }) {
   return (
     <div data-comparison-table>
-      <div className="hidden grid-cols-[minmax(8rem,1.2fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_auto] gap-x-4 border-b border-border/60 px-4 py-2 text-xs font-medium text-muted-foreground sm:grid">
+      <div className={cn("hidden gap-x-3 border-b border-border/60 px-4 py-1.5 text-xs font-medium text-muted-foreground sm:grid", COMPARISON_COLUMNS)}>
         <span>对照项</span>
         <span>基准/之前</span>
         <span>当前/实际</span>
@@ -291,7 +296,7 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
       tabIndex={tabular ? 0 : undefined}
       aria-label={tabular ? `${block.title ?? "数据表格"}，可横向滚动` : undefined}
     >
-      <div className={comparison ? "min-w-0 sm:min-w-[40rem]" : "w-max"}>
+      <div className={comparison ? "min-w-0 sm:min-w-[36rem]" : "w-max"}>
         {block.title ? (
           <div
             className="border-b border-primary/15 bg-primary/5 px-4 py-2.5 text-sm font-semibold text-foreground"

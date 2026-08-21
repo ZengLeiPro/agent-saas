@@ -61,6 +61,18 @@ describe('工具并发安全契约', () => {
     expect(serialDescriptors.every((descriptor) => descriptor.concurrency === undefined)).toBe(true);
   });
 
+  it('Shell 只按入参放行前台 snapshot 调用', () => {
+    expect(runShellToolDescriptor.resolveConcurrency?.({ command: 'pnpm test', execution: 'snapshot' }))
+      .toBe('parallel');
+    expect(runShellToolDescriptor.resolveConcurrency?.({ command: 'git status', execution: 'workspace' }))
+      .toBeUndefined();
+    expect(runShellToolDescriptor.resolveConcurrency?.({
+      command: 'pnpm test',
+      execution: 'snapshot',
+      mode: 'background',
+    })).toBeUndefined();
+  });
+
   it('运行时拒绝未 opt-in 或风险配置漂移的 descriptor', () => {
     const call = { id: 'call-1', name: 'Read', arguments: '{"path":"a.txt"}' };
     const descriptors = new Map<string, ToolDescriptor>([['Read', readFileToolDescriptor]]);

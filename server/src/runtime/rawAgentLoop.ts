@@ -98,7 +98,6 @@ import {
   getInvalidPromptRequestBlockedFailure,
   isForcedDrainHandoff,
   isInvalidPromptRequestBlocked,
-  isParallelSafeToolCall,
   mergeUsage,
   parseToolArguments,
   resolveZombieToolCallTimeoutMs,
@@ -109,6 +108,7 @@ import {
 } from './rawAgentLoopHelpers.js';
 
 import { ApprovalAlreadyResolvedError, ApprovalPendingWithoutInteractionHook, InteractionPendingWithoutInteractionHook, RunLeaseLostError, ToolInvocationClaimLostError, captureModelStreamError, handleInvocationClaimLoss, readRunLeaseState, resolveClaimedWorkerId } from './rawAgentLoopControlErrors.js';
+import { collectParallelToolCallSegment, type PreparedParallelToolCall } from './toolParallelism.js';
 import { announceAppliedInterjections as announceInterjections, buildAtomicSteeringInputs, collectDurableInterjectionAnnouncementSourceRunIds, projectAtomicInterjectionEvents } from './rawAgentLoopInterjections.js';
 import {
   COMPACTION_REQUEST_PROMPT,
@@ -226,7 +226,6 @@ export interface ResumeInteractionInput {
   instructions: string;
   maxTurns: number;
 }
-
 
 export class RawAgentLoop implements AgentLoop {
   private readonly modelAdapter: ModelAdapter;
@@ -2175,19 +2174,16 @@ export class RawAgentLoop implements AgentLoop {
   }
 
   /**
-   * 执行一个 batch 的工具调用。默认严格串行；连续 ≥2 个声明并发安全的工具调用
-   * 组成一段并行 fan-out：
-   *   - 审批挂起是通过抛异常中止本 generator 实现的，任何可能触发审批/交互的工具
-   *     进入 Promise.all 都会让并发兄弟变成孤儿，因此并行窗只接受 descriptor
-   *     显式 opt-in 且
-   *     risk=safe、approvalMode=never 的工具；未声明工具（包括 MCP）默认串行。
+   * 执行 batch：默认串行；连续 ≥2 个已预授权调用组成 parallel fan-out：
+   *   - safe + never 工具可静态 opt-in；有风险工具只能由 resolveConcurrency 按
+   *     入参 opt-in，且必须在 fan-out 前取得 policy=allow 并固化 authorization。
+   *     需要人工审批的调用仍走串行挂起/恢复，绝不带并发兄弟进入 Promise.all。
    *   - 顺序契约不变：tool_use 块先按原 toolCalls 顺序全部 yield，执行完成后
    *     tool_result 三件套（yield + eventStore append + messages.push）仍按原顺序逐个
    *     进行——模型协议要求 tool_result 顺序稳定。并发期间 durable 的
    *     tool_invocation_* 事件会交错落库，replay/recovery 按 toolCallId 建 Map
    *     （runtime/replay.ts）不依赖跨 call 顺序，已核实安全。
-   *   - Agent 的并发额度仍由 subagentLimits 信号量控制；其他 opt-in 工具由
-   *     模型单批 toolCalls 数量自然限定，本层不另设重复限流。
+   *   - Agent 并发由 subagentLimits 控制；Shell 每段最多 4 个，防止资源过载。
    *   - abort：父 signal 经 ToolCallContext 传导给每个并发工具，级联取消。
    * 单个并发安全调用（段长 1）仍走下方串行分支，行为与既有路径一致。
    */
@@ -2201,24 +2197,21 @@ export class RawAgentLoop implements AgentLoop {
     const calls = args.calls;
     let index = 0;
     while (index < calls.length) {
-      let segmentEnd = index;
-      while (
-        segmentEnd < calls.length
-        && isParallelSafeToolCall(calls[segmentEnd]!, args.descriptorsByName)
-      ) {
-        segmentEnd += 1;
-      }
+      const { end: segmentEnd, preparedCalls } = await collectParallelToolCallSegment({
+        calls,
+        start: index,
+        descriptorsByName: args.descriptorsByName,
+        context: args.context,
+        toolPolicy: this.toolPolicy,
+        refreshPolicyContext: (context) => this.refreshApprovalPolicy(context),
+      });
 
-      if (segmentEnd - index >= 2) {
+      if (preparedCalls.length >= 2) {
         const segment = calls.slice(index, segmentEnd);
         for (const call of segment) {
-          // 准入工具的 policy 恒 allow → shouldEmit 恒 true；仍走同一判定入口，
-          // 保持与串行分支的行为对称。
-          if (await this.shouldEmitToolUseBeforeExecution(call, args.descriptorsByName, args.context)) {
-            yield { type: 'tool_start', toolId: call.id, toolName: call.name, runId: args.context.runId };
-            yield { type: 'tool_input_delta', toolId: call.id, toolName: call.name, partialJson: call.arguments };
-            yield { type: 'tool_end', toolId: call.id, toolName: call.name };
-          }
+          yield { type: 'tool_start', toolId: call.id, toolName: call.name, runId: args.context.runId };
+          yield { type: 'tool_input_delta', toolId: call.id, toolName: call.name, partialJson: call.arguments };
+          yield { type: 'tool_end', toolId: call.id, toolName: call.name };
         }
         // 第一项 invocation 是该并行段的 durable owner claim。它取得 claim 后先
         // 停在真正 invoke 之前，待其余调用启动再一起放行；重复 worker 会在第一项
@@ -2239,6 +2232,7 @@ export class RawAgentLoop implements AgentLoop {
           args.descriptorsByName,
           args.baseToolContext,
           ownerContext,
+          preparedCalls[0],
         );
         try {
           await Promise.race([
@@ -2247,11 +2241,12 @@ export class RawAgentLoop implements AgentLoop {
               throw new Error(`parallel owner invocation completed before claim: ${ownerInvocationId}`);
             }),
           ]);
-          const remainingOutcomes = segment.slice(1).map((call) => this.executeToolCall(
+          const remainingOutcomes = segment.slice(1).map((call, offset) => this.executeToolCall(
             call,
             args.descriptorsByName,
             args.baseToolContext,
             args.context,
+            preparedCalls[offset + 1],
           ));
           releaseOwner();
           const outcomes = await Promise.all([ownerOutcome, ...remainingOutcomes]);
@@ -2276,7 +2271,8 @@ export class RawAgentLoop implements AgentLoop {
       }
 
       const call = calls[index]!;
-      if (await this.shouldEmitToolUseBeforeExecution(
+      const prepared = preparedCalls[0];
+      if (prepared || await this.shouldEmitToolUseBeforeExecution(
         call,
         args.descriptorsByName,
         args.context,
@@ -2290,6 +2286,7 @@ export class RawAgentLoop implements AgentLoop {
         args.descriptorsByName,
         args.baseToolContext,
         args.context,
+        prepared,
       );
       yield* this.appendToolResult({
         call,
@@ -2704,9 +2701,10 @@ export class RawAgentLoop implements AgentLoop {
     descriptorsByName: Map<string, ToolDescriptor>,
     baseToolContext: ToolCallContext,
     context: RunContext,
+    prepared?: PreparedParallelToolCall,
   ): Promise<ToolExecutionOutcome> {
-    const descriptor = descriptorsByName.get(call.name);
-    const input = parseToolArguments(call.arguments);
+    const descriptor = prepared?.descriptor ?? descriptorsByName.get(call.name);
+    const input = prepared?.input ?? parseToolArguments(call.arguments);
     if (!descriptor) {
       // D4 + G1：工具名不在当前 turn 的 tools[] 白名单内（descriptorsByName 来自当前 turn descriptors）。
       // 错误措辞标准化避免 deepseek 字面执行"try different approach"陷入循环。
@@ -2748,59 +2746,61 @@ export class RawAgentLoop implements AgentLoop {
       };
     }
 
-    const policyContext = await this.refreshApprovalPolicy(context);
-    const decision = await this.toolPolicy.decide(descriptor, input, policyContext);
-    if (decision.type === 'requires_approval') {
-      const approval = await this.approvalStore.create({
-        sessionId: context.sessionId,
-        runId: context.runId,
-        toolCallId: call.id,
-        toolId: descriptor.id,
-        toolName: descriptor.name,
-        displayName: descriptor.displayName,
-        executionTarget: baseToolContext.workspace.executionTarget,
-        input,
-      });
-
-      if (!context.hooks?.onInteraction) {
-        throw new ApprovalPendingWithoutInteractionHook(approval.id);
-      }
-
-      let response;
-      try {
-        response = await context.hooks.onInteraction({
-          type: 'permission_request',
-          interactionId: approval.id,
+    if (!prepared) {
+      const policyContext = await this.refreshApprovalPolicy(context);
+      const decision = await this.toolPolicy.decide(descriptor, input, policyContext);
+      if (decision.type === 'requires_approval') {
+        const approval = await this.approvalStore.create({
           sessionId: context.sessionId,
           runId: context.runId,
           toolCallId: call.id,
-          invocationId: `${context.runId}:${call.id}`,
           toolId: descriptor.id,
           toolName: descriptor.name,
           displayName: descriptor.displayName,
-          toolInput: input && typeof input === 'object' ? input as Record<string, unknown> : { value: input },
+          executionTarget: baseToolContext.workspace.executionTarget,
+          input,
         });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        await this.approvalStore.resolvePending(approval.id, 'rejected', message);
-        return {
+
+        if (!context.hooks?.onInteraction) {
+          throw new ApprovalPendingWithoutInteractionHook(approval.id);
+        }
+
+        let response;
+        try {
+          response = await context.hooks.onInteraction({
+            type: 'permission_request',
+            interactionId: approval.id,
+            sessionId: context.sessionId,
+            runId: context.runId,
+            toolCallId: call.id,
+            invocationId: `${context.runId}:${call.id}`,
+            toolId: descriptor.id,
+            toolName: descriptor.name,
+            displayName: descriptor.displayName,
+            toolInput: input && typeof input === 'object' ? input as Record<string, unknown> : { value: input },
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          await this.approvalStore.resolvePending(approval.id, 'rejected', message);
+          return {
+            call,
+            descriptor,
+            input,
+            result: { content: standardizeToolError(`tool error: ${message}`) },
+            isError: true,
+          };
+        }
+
+        return this.resolveApprovalDecision({
+          approval,
+          response,
           call,
           descriptor,
           input,
-          result: { content: standardizeToolError(`tool error: ${message}`) },
-          isError: true,
-        };
+          baseToolContext,
+          context,
+        });
       }
-
-      return this.resolveApprovalDecision({
-        approval,
-        response,
-        call,
-        descriptor,
-        input,
-        baseToolContext,
-        context,
-      });
     }
 
     try {
@@ -2808,7 +2808,7 @@ export class RawAgentLoop implements AgentLoop {
         call,
         descriptor,
         input,
-        authorization: { approved: true, source: 'policy_auto' },
+        authorization: prepared?.authorization ?? { approved: true, source: 'policy_auto' },
         baseToolContext,
         context,
       });

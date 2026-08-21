@@ -6,12 +6,13 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
-import type {
-  AuthorizedToolCall,
-  ToolCallContext,
-  ToolDescriptor,
-  ToolResult,
-  ToolRuntime,
+import {
+  runShellToolDescriptor,
+  type AuthorizedToolCall,
+  type ToolCallContext,
+  type ToolDescriptor,
+  type ToolResult,
+  type ToolRuntime,
 } from '../agent/toolRuntime.js';
 import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
@@ -82,7 +83,7 @@ describe('drainToolCalls 通用并行窗', () => {
     constructor(private readonly expectedParallel: number) {}
 
     list(): ToolDescriptor[] {
-      return [agentDescriptor, readDescriptor, serialDescriptor];
+      return [agentDescriptor, readDescriptor, serialDescriptor, runShellToolDescriptor];
     }
 
     async invoke<TInput>(call: AuthorizedToolCall<TInput>, _context: ToolCallContext): Promise<ToolResult> {
@@ -94,7 +95,9 @@ describe('drainToolCalls 通用并行窗', () => {
 
       const tag = call.toolId === 'Agent'
         ? (call.input as { tag: string }).tag
-        : (call.input as { path: string }).path;
+        : call.toolId === 'Shell'
+          ? (call.input as { command: string }).command
+          : (call.input as { path: string }).path;
       this.order.push(`start:${call.toolId}:${tag}`);
       this.started += 1;
       if (this.started >= this.expectedParallel) this.releaseBarrier();
@@ -126,7 +129,11 @@ describe('drainToolCalls 通用并行窗', () => {
     }
   }
 
-  async function runLoop(toolRuntime: ToolRuntime, adapter: ModelAdapter): Promise<OutboundEvent[]> {
+  async function runLoop(
+    toolRuntime: ToolRuntime,
+    adapter: ModelAdapter,
+    autoApproveTools = false,
+  ): Promise<OutboundEvent[]> {
     const cwd = await mkdtemp(join(tmpdir(), 'subagent-loop-'));
     cleanupDirs.add(cwd);
     const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
@@ -151,6 +158,7 @@ describe('drainToolCalls 通用并行窗', () => {
         model: 'mock-model',
         cwd,
         channelContext: { channel: 'web', user: { id: 'u', username: 'alice', role: 'user', tenantId: 'kaiyan' } },
+        ...(autoApproveTools ? { approvalPolicy: { autoApproveTools: true } } : {}),
       },
     ));
   }
@@ -187,6 +195,58 @@ describe('drainToolCalls 通用并行窗', () => {
     const results = events.filter((event) => event.type === 'tool_result');
     expect(results.map((event) => event.toolResult)).toEqual(['done:a.txt', 'done:b.txt']);
     expect(results.map((event) => event.toolId)).toEqual(['c1', 'c2']);
+  });
+
+  it('已自动授权的前台 snapshot Shell 真正并发执行', async () => {
+    const toolRuntime = new BarrierToolRuntime(2);
+    const events = await runLoop(toolRuntime, new BatchAdapter([
+      { id: 'c1', name: 'Shell', arguments: JSON.stringify({ command: 'test-a', execution: 'snapshot' }) },
+      { id: 'c2', name: 'Shell', arguments: JSON.stringify({ command: 'test-b', execution: 'snapshot' }) },
+    ]), true);
+
+    expect(toolRuntime.order.indexOf('end:Shell:test-a')).toBeGreaterThan(
+      toolRuntime.order.indexOf('start:Shell:test-b'),
+    );
+    const results = events.filter((event) => event.type === 'tool_result');
+    expect(results.map((event) => event.toolResult)).toEqual(['done:test-a', 'done:test-b']);
+    expect(results.map((event) => event.toolId)).toEqual(['c1', 'c2']);
+  });
+
+  it('需要人工审批的 snapshot Shell 不会提前启动并发兄弟', async () => {
+    const toolRuntime = new BarrierToolRuntime(1);
+    await runLoop(toolRuntime, new BatchAdapter([
+      { id: 'c1', name: 'Shell', arguments: JSON.stringify({ command: 'approval-a', execution: 'snapshot' }) },
+      { id: 'c2', name: 'Shell', arguments: JSON.stringify({ command: 'approval-b', execution: 'snapshot' }) },
+    ]));
+
+    expect(toolRuntime.order).toEqual([]);
+  });
+
+  it('workspace Shell 即使已自动授权也保持串行', async () => {
+    const toolRuntime = new BarrierToolRuntime(1);
+    await runLoop(toolRuntime, new BatchAdapter([
+      { id: 'c1', name: 'Shell', arguments: JSON.stringify({ command: 'workspace-a', execution: 'workspace' }) },
+      { id: 'c2', name: 'Shell', arguments: JSON.stringify({ command: 'workspace-b', execution: 'workspace' }) },
+    ]), true);
+
+    expect(toolRuntime.order.indexOf('start:Shell:workspace-b')).toBeGreaterThan(
+      toolRuntime.order.indexOf('end:Shell:workspace-a'),
+    );
+  });
+
+  it('snapshot Shell 每个并行段最多启动四个', async () => {
+    const toolRuntime = new BarrierToolRuntime(4);
+    await runLoop(toolRuntime, new BatchAdapter(
+      Array.from({ length: 5 }, (_, index) => ({
+        id: `c${index + 1}`,
+        name: 'Shell',
+        arguments: JSON.stringify({ command: `snapshot-${index + 1}`, execution: 'snapshot' }),
+      })),
+    ), true);
+
+    expect(toolRuntime.order.indexOf('start:Shell:snapshot-5')).toBeGreaterThan(
+      toolRuntime.order.indexOf('end:Shell:snapshot-1'),
+    );
   });
 
   it('duplicate workers 在并行窗先争同一 owner claim，不会拆分 invocation', async () => {

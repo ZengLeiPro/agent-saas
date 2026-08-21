@@ -70,7 +70,7 @@ import {
   type WorkspaceArtifactPayload,
 } from './workspaceHandTools.js';
 import { materializeReadToolImage, tryReadWorkspaceImage } from './readImageTool.js';
-import { shellToolSchema, type ShellToolInput } from './shellToolSchema.js';
+import { resolveShellConcurrency, shellToolSchema, type ShellToolInput } from './shellToolSchema.js';
 const exec = promisify(execCb);
 
 const MEMORY_SHELL_MAYBE_CHANGED_INTERVAL_MS = 120_000;
@@ -192,13 +192,11 @@ export interface ToolDescriptor<TInput = unknown> {
   risk: ToolRisk;
   approvalMode: ToolApprovalMode;
   /**
-   * 同一模型响应中的相邻工具调用是否可与其他 opt-in 工具并行执行。
-   *
-   * 缺省为串行。只有无顺序依赖、无交互且可安全重叠执行的工具才可声明
-   * `parallel`；运行时还会额外要求 risk=safe、approvalMode=never，避免配置
-   * 漂移把写操作或审批操作静默放入并行窗。
+   * 同批调用默认串行。无条件并发只允许 safe + never 工具声明 `parallel`；
+   * 有风险但可按入参隔离的工具改用 resolveConcurrency，runtime 固化授权后放行。
    */
   concurrency?: 'parallel';
+  resolveConcurrency?: (input: unknown) => 'parallel' | undefined;
   auditCategory: string;
   /**
    * 内建工具的 admin UI 分组。缺省视为 MCP / 动态工具，admin 面板归入兜底分组。
@@ -425,6 +423,7 @@ export const runShellToolDescriptor: ToolDescriptor<ShellToolInput> = {
   schema: shellToolSchema,
   risk: 'dangerous',
   approvalMode: 'web',
+  resolveConcurrency: resolveShellConcurrency,
   auditCategory: 'process.shell',
   category: 'workspace',
   label: '执行 Shell',

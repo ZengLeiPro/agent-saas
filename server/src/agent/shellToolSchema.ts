@@ -13,6 +13,12 @@ export interface ShellToolInput {
   cwd?: string;
 }
 
+export function resolveShellConcurrency(input: unknown): 'parallel' | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const shell = input as Partial<ShellToolInput>;
+  return shell.mode !== 'background' && shell.execution === 'snapshot' ? 'parallel' : undefined;
+}
+
 export const shellToolSchema = z.object({
   command: z.string(),
   mode: z.enum(['foreground', 'background']).optional(),

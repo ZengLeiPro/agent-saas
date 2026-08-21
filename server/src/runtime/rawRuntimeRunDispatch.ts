@@ -42,7 +42,6 @@ import {
   hasMemorySearchTool,
   isToolEnabled,
   LocalWorkspaceProvider,
-  PlatformToolRuntime,
   type ExecutionTargetKind,
 } from '../agent/toolRuntime.js';
 import {
@@ -63,16 +62,19 @@ import { CronToolProvider } from '../agent/cronToolProvider.js';
 import { TenantCompanyInfoToolProvider } from '../agent/tenantCompanyInfoToolProvider.js';
 import { UserActivityToolProvider } from '../agent/userActivityToolProvider.js';
 import type { UserActivityService } from './userActivityService.js';
-import { applyToolProfile, normalizeToolProfile, type MemoryWritePolicyVersion } from './toolProfiles.js';
+import {
+  normalizeToolProfile,
+  type MemoryWritePolicyVersion,
+} from './toolProfiles.js';
+import { createRuntimeToolRuntime } from './runtimeToolRuntimeFactory.js';
 import {
   AgentRuntimeProfileResolver,
-  applyAgentRuntimeProfile,
   assertAgentProfileExecutionTarget,
   filterAgentProfileSkills,
   profileRunMetadata,
   resolveAgentProfileBindingKey,
   resolveAgentProfileMaxTurns,
-  type BoundAgentRuntimeProfile, applyOrgAgentExecutionMode, appendDispatcherInstructionSection, resolveAgentModePolicy,
+  type BoundAgentRuntimeProfile, appendDispatcherInstructionSection, resolveAgentModePolicy,
 } from './agentProfiles.js';
 import { McpClientToolProvider } from '../mcp/clientToolProvider.js';
 import type { McpClientManager } from '../mcp/clientManager.js';
@@ -127,6 +129,10 @@ import type { ContextReconstructionPolicy } from './contextProjection.js';
 import { appendResolvedRunSnapshot } from './appendResolvedRunSnapshot.js';
 export { appendResolvedRunSnapshot } from './appendResolvedRunSnapshot.js';
 import { buildConnectorRunEnv, reconcileConnectorRunEnv } from './connectorRunEnv.js';
+import {
+  rejectMemoryConsolidationWake,
+  resolveMemoryConsolidationReplaySource,
+} from './memoryConsolidationReplay.js';
 import { SessionContextService, SessionToolProvider } from './sessionContext.js';
 import { buildRuntimeReplayState, type RuntimeReplayState } from './replay.js';
 import {
@@ -168,12 +174,7 @@ import {
   normalizeInteractionResponse,
 } from './interactionProjection.js';
 import { loadPrompt, renderPrompt, type PromptVars } from './promptRenderer.js';
-import {
-  DEFAULT_SANDBOX_DENY_READ,
-  expandSandboxPaths,
-  type SandboxExpandContext,
-} from '../engine/sandbox.js';
-import { getAgentTranscriptDir } from '../data/transcripts/projectKey.js';
+import { buildRawRuntimeSandboxPolicy } from './rawRuntimeSandboxPolicy.js';
 import { deriveStableWorkspaceId } from './workspaceIdentity.js';
 // 注意：subagent/agentToolProvider.js 反向 import 本文件的装配小件（ESM 循环依赖，
 // 仅函数级引用、无模块求值期访问，安全）。
@@ -1158,8 +1159,21 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     }
     const resumeSessionId = options.resumeSessionId ?? context.resumeSessionId;
     const existingSession = resumeSessionId ? await sessionCatalog.get(resumeSessionId) : null;
-    const cwd = options.cwd ? resolve(options.cwd) : existingSession?.cwd ?? config.agentCwd;
-    let requestedModel = options.model;
+    const identitySource = context.sessionOwner || context.user;
+    const replayResolution = await resolveMemoryConsolidationReplaySource(
+      sessionCatalog,
+      options.memoryConsolidationSourceSessionId,
+      identitySource,
+    );
+    if (replayResolution.error) {
+      yield { type: 'error', error: replayResolution.error };
+      return;
+    }
+    const replaySourceSession = replayResolution.session;
+    const cwd = options.cwd
+      ? resolve(options.cwd)
+      : existingSession?.cwd ?? replaySourceSession?.cwd ?? config.agentCwd;
+    let requestedModel = options.model ?? replaySourceSession?.modelRef;
     let { model, modelConnection, modelProviderOptions } = resolveRuntimeModelOptions(
       config,
       requestedModel,
@@ -1169,9 +1183,10 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     let connection = modelConnection;
     let apiKey = connection?.apiKey || process.env.OPENAI_API_KEY;
     let baseUrl = connection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
-    const executionTarget = options.executionTarget ?? resolveDefaultExecutionTargetForContext(executionConfig, context);
+    const executionTarget = options.executionTarget
+      ?? replaySourceSession?.executionTarget
+      ?? resolveDefaultExecutionTargetForContext(executionConfig, context);
     const sandboxPolicy = buildRawRuntimeSandboxPolicy(config, context, cwd, executionTarget);
-    const identitySource = context.sessionOwner || context.user;
     const approvalPolicy = resolveEffectiveApprovalPolicy(config, options.approvalPolicy, {
       userId: identitySource?.id,
       username: identitySource?.username,
@@ -1184,7 +1199,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const abortController = options.abortController ?? new AbortController();
     enterSessionContext(sessionId, runId);
     const effectiveTenantId = resolveContextTenantId(context, existingSession);
-    const orgAgentId = options.orgAgentId ?? existingSession?.orgAgentId;
+    const orgAgentId = options.orgAgentId ?? existingSession?.orgAgentId ?? replaySourceSession?.orgAgentId;
     const connectorIdentity = orgAgentId ? { tenantId: effectiveTenantId }
       : existingSession ? {
           userId: existingSession.userId,
@@ -1222,7 +1237,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     if (config.agentRuntimeProfileResolver) {
       try {
         boundProfile = await config.agentRuntimeProfileResolver.resolveForSession({
-          existingSession,
+          existingSession: existingSession ?? replaySourceSession,
           bindingKey: resolveAgentProfileBindingKey({ toolProfile, orgAgentId }),
         });
         if (orgAgent) boundProfile = mergeOrgAgentBoundRuntimeProfile(boundProfile, orgAgent);
@@ -1307,14 +1322,14 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       ? boundProfile.version.config.model.modelRef
       : orgAgent
         ? requestedModel ?? model
-        : existingSession?.modelRef ?? options.modelRef ?? requestedModel ?? model;
+        : existingSession?.modelRef ?? replaySourceSession?.modelRef ?? options.modelRef ?? requestedModel ?? model;
     // 新会话首次落库时定版记忆策略，resume 只读既有 pin；
     // 后台 profile、专职 org Agent 与非用户通道固定 v1，避免与 L2 双写。
     // memory_consolidate 的隐藏来源由 createRuntimeSessionRecord 根据 toolProfile 固化。
     const isTaskboardExecution = existingSession?.sessionSource === 'taskboard_execution'
       || sessionId.startsWith('taskboard-');
     const memoryPolicyVersion: MemoryWritePolicyVersion = resolveSessionMemoryPolicy({
-      existing: existingSession,
+      existing: existingSession ?? replaySourceSession,
       delegationEnabled: config.memoryWriteDelegationEnabled?.(effectiveTenantId) === true,
       channel: context.channel,
       ...(toolProfile ? { toolProfile } : {}),
@@ -1322,7 +1337,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       ...(isTaskboardExecution ? { sessionSource: 'taskboard_execution' as const, memoryAutomationEligible: false } : {}),
     });
     const workspaceId = deriveRuntimeWorkspaceId({
-      existingSession,
+      existingSession: existingSession ?? replaySourceSession,
       fallbackSessionId: sessionId,
       identity: {
         id: identitySource?.id,
@@ -1342,6 +1357,10 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         modelRef: sessionModelRef,
         executionTarget,
         status: 'running', toolProfile, executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined,
+        ...(replaySourceSession ? {
+          sessionSource: 'memory_consolidation' as const,
+          memoryAutomationEligible: false,
+        } : {}),
         ...(orgAgentId ? { orgAgentId } : {}),
         ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
       })),
@@ -1413,6 +1432,10 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}),
         ...(approvalPolicy ? { approvalPolicy } : {}),
         ...(toolProfile ? { toolProfile } : {}),
+        ...(replaySourceSession ? {
+          memoryConsolidationSourceSessionId: replaySourceSession.sessionId,
+          forceFullContextReplay: true,
+        } : {}),
         ...(boundProfile ? profileRunMetadata(boundProfile) : {}),
         wakeMessage: {
           channel: message.channel,
@@ -1537,34 +1560,35 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       { ...(apiKey ? { apiKey } : {}), baseUrl },
       modelProviderOptions,
     );
-    const loop = new RawAgentLoop({
-      modelAdapter,
-      eventStore,
-      approvalStore,
-      transcriptProjection: projection,
-      toolRuntime: applyOrgAgentExecutionMode(boundProfile
-        ? applyAgentRuntimeProfile(applyToolProfile(new PlatformToolRuntime({
-            memoryIndexService: config.memoryIndexService,
-            executionTransportRegistry,
-            handStore: config.handStore,
-            resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
-            resolveWireEnv: buildTenantRemoteHandWireEnv,
-            artifactService: config.artifactService,
-            providers: [...tooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
-            toolControls: config.toolControls,
-            backgroundTasks: config.backgroundTasks,
-          }), toolProfile, memoryPolicyVersion), boundProfile)
-        : applyToolProfile(new PlatformToolRuntime({
+    const effectiveToolRuntime = createRuntimeToolRuntime({
+      platform: {
         memoryIndexService: config.memoryIndexService,
         executionTransportRegistry,
         handStore: config.handStore,
         resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
         resolveWireEnv: buildTenantRemoteHandWireEnv,
         artifactService: config.artifactService,
-        providers: [...tooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
+        providers: [
+          ...tooling.providers,
+          ...(config.memoryControlProviders ?? []),
+          new SessionToolProvider(new SessionContextService(eventStore)),
+        ],
         toolControls: config.toolControls,
         backgroundTasks: config.backgroundTasks,
-      }), toolProfile, memoryPolicyVersion), orgAgent?.runtime?.executionMode, options.dispatcherCompletion === true),
+      },
+      toolProfile,
+      memoryPolicyVersion,
+      boundProfile,
+      executionMode: orgAgent?.runtime?.executionMode,
+      dispatcherCompletion: options.dispatcherCompletion,
+      replaySourceSessionId: replaySourceSession?.sessionId,
+    });
+    const loop = new RawAgentLoop({
+      modelAdapter,
+      eventStore,
+      approvalStore,
+      transcriptProjection: projection,
+      toolRuntime: effectiveToolRuntime,
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
@@ -1604,6 +1628,11 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         workerId: options.runtimeWorkerId,
         channelContext: context,
         approvalPolicy,
+        ...(replaySourceSession ? {
+          replaySourceSessionId: replaySourceSession.sessionId,
+          disableResponseRelay: true,
+          memoryMaintenanceMode: 'consolidation' as const,
+        } : {}),
         ...(boundProfile ? {
           profileId: boundProfile.binding.profileId,
           profileVersionId: boundProfile.binding.profileVersionId,
@@ -1693,7 +1722,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             return prepared;
           },
         } : {}),
-        ...(!isCompactCommand(message.content) && config.autoCompaction ? {
+        ...(!replaySourceSession && !isCompactCommand(message.content) && config.autoCompaction ? {
           evaluateAutoCompaction: (events: PlatformEvent[], forceReason?: string) => (
             config.autoCompaction!.evaluate({
               modelRef: sessionModelRef,
@@ -1817,35 +1846,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
   };
 }
 
-function buildRawRuntimeSandboxPolicy(
-  config: RawRuntimeRunDispatchConfig,
-  context: ChannelContext,
-  cwd: string,
-  executionTarget: ExecutionTargetKind,
-): { denyRead: string[] } | undefined {
-  if (executionTarget !== 'server-local') return undefined;
-  const identity = context.sessionOwner ?? context.user;
-  if (!identity || !config.agentCwd || !config.sharedDir) return undefined;
-  // PR #31 transcript carve-out（与 engine/dispatch.ts 同策略）：
-  // 完整身份（id + tenantId）齐备时给当前用户开 transcript 读洞，否则不开洞，
-  // sandbox.ts 端默认 DENY ~/.agent-saas/legacy-transcripts 整目录兜底。
-  const agentTranscriptDir = identity.id && identity.tenantId
-    ? getAgentTranscriptDir({ tenantId: identity.tenantId, userId: identity.id })
-    : undefined;
-  const sandboxCtx: SandboxExpandContext = {
-    username: identity.username,
-    userCwd: cwd,
-    tenantCwd: resolve(cwd, '..'),
-    workspaceRoot: config.agentCwd,
-    sharedDir: config.sharedDir,
-    ...(agentTranscriptDir ? { agentTranscriptDir } : {}),
-  };
-  const denyRead = expandSandboxPaths(
-    config.dispatch?.sandbox?.denyRead ?? DEFAULT_SANDBOX_DENY_READ,
-    sandboxCtx,
-  );
-  return { denyRead };
-}
 export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchConfig) {
   const logger = config.logger ?? noopLogger;
   const sessionCatalog = resolveSessionCatalog(config);
@@ -2193,29 +2193,24 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       eventStore,
       approvalStore,
       transcriptProjection: projection,
-      toolRuntime: applyOrgAgentExecutionMode(boundProfile
-        ? applyAgentRuntimeProfile(applyToolProfile(new PlatformToolRuntime({
-            memoryIndexService: config.memoryIndexService,
-            executionTransportRegistry,
-            handStore: config.handStore,
-            resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
-            resolveWireEnv: buildTenantRemoteHandWireEnv,
-            artifactService: config.artifactService,
-            providers: [...resumeTooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
-            toolControls: config.toolControls,
-            backgroundTasks: config.backgroundTasks,
-          }), resumeToolProfile, memoryPolicyVersion), boundProfile)
-        : applyToolProfile(new PlatformToolRuntime({
-        memoryIndexService: config.memoryIndexService,
-        executionTransportRegistry,
-        handStore: config.handStore,
-        resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
-        resolveWireEnv: buildTenantRemoteHandWireEnv,
-        artifactService: config.artifactService,
-        providers: [...resumeTooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
-        toolControls: config.toolControls,
-        backgroundTasks: config.backgroundTasks,
-      }), resumeToolProfile, memoryPolicyVersion), orgAgent?.runtime?.executionMode, request.dispatcherCompletion === true),
+      toolRuntime: createRuntimeToolRuntime({
+        platform: {
+          memoryIndexService: config.memoryIndexService,
+          executionTransportRegistry,
+          handStore: config.handStore,
+          resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
+          resolveWireEnv: buildTenantRemoteHandWireEnv,
+          artifactService: config.artifactService,
+          providers: [...resumeTooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
+          toolControls: config.toolControls,
+          backgroundTasks: config.backgroundTasks,
+        },
+        toolProfile: resumeToolProfile,
+        memoryPolicyVersion,
+        boundProfile,
+        executionMode: orgAgent?.runtime?.executionMode,
+        dispatcherCompletion: request.dispatcherCompletion,
+      }),
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
@@ -2676,29 +2671,24 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       eventStore,
       approvalStore: createApprovalStoreForSession(config, sessionRecord, eventStore),
       transcriptProjection: projection,
-      toolRuntime: applyOrgAgentExecutionMode(boundProfile
-        ? applyAgentRuntimeProfile(applyToolProfile(new PlatformToolRuntime({
-            memoryIndexService: config.memoryIndexService,
-            executionTransportRegistry,
-            handStore: config.handStore,
-            resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
-            resolveWireEnv: buildTenantRemoteHandWireEnv,
-            artifactService: config.artifactService,
-            providers: [...resumeTooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
-            toolControls: config.toolControls,
-            backgroundTasks: config.backgroundTasks,
-          }), resumeToolProfile, memoryPolicyVersion), boundProfile)
-        : applyToolProfile(new PlatformToolRuntime({
-        memoryIndexService: config.memoryIndexService,
-        executionTransportRegistry,
-        handStore: config.handStore,
-        resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
-        resolveWireEnv: buildTenantRemoteHandWireEnv,
-        artifactService: config.artifactService,
-        providers: [...resumeTooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
-        toolControls: config.toolControls,
-        backgroundTasks: config.backgroundTasks,
-      }), resumeToolProfile, memoryPolicyVersion), orgAgent?.runtime?.executionMode, request.dispatcherCompletion === true),
+      toolRuntime: createRuntimeToolRuntime({
+        platform: {
+          memoryIndexService: config.memoryIndexService,
+          executionTransportRegistry,
+          handStore: config.handStore,
+          resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
+          resolveWireEnv: buildTenantRemoteHandWireEnv,
+          artifactService: config.artifactService,
+          providers: [...resumeTooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
+          toolControls: config.toolControls,
+          backgroundTasks: config.backgroundTasks,
+        },
+        toolProfile: resumeToolProfile,
+        memoryPolicyVersion,
+        boundProfile,
+        executionMode: orgAgent?.runtime?.executionMode,
+        dispatcherCompletion: request.dispatcherCompletion,
+      }),
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
@@ -2887,6 +2877,14 @@ export async function wakeRuntimeSession(
     await appendRunStateChanged(eventStore, run.sessionId, run.runId, 'cancelled', run.status, 'cancel_requested_before_wake');
     return;
   }
+  // 隐藏记忆审查由 engine 持有写锁与状态；通用 scheduler 不得跨崩溃重放。
+  if (await rejectMemoryConsolidationWake({
+    run,
+    lease: options.lease,
+    runStore: config.runStore,
+    eventStore,
+    sessionCatalog,
+  })) return;
   // steering 行回收（2026-08-04 BUG-5 修复）：本 run 是回退执行的插话 source 时，
   // 把它自己的 pending steering 行标 released + 清 metadata。不回收的话：
   // ① 它永远不能成为后续插话的 steering 目标（NOT EXISTS own_input pending 排除），

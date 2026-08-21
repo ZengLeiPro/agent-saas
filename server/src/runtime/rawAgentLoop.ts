@@ -66,8 +66,12 @@ import {
   buildRuntimeReplayState,
   type RuntimeReplayState,
   type RuntimeToolCallBatchState,
-  type RuntimeToolCallState,
 } from './replay.js';
+import {
+  buildSyntheticToolResultContent,
+  closeUnfinishedReplayToolCalls,
+  describeBlockingToolCall,
+} from './rawAgentLoopRecovery.js';
 import type { ToolInvocationStore } from './toolInvocationStore.js';
 import { selectRuntimeHandRoute, type HandStore } from './handStore.js';
 import type { RuntimeIsolationRequirement } from './runtimeIsolationEvidence.js';
@@ -166,6 +170,7 @@ const CONTEXT_SYNTHESIS_PROMPT = [
 ].join('\n');
 const INVALID_PROMPT_RECOVERY_INPUT = '继续';
 const INVALID_PROMPT_CUSTOMER_ERROR = 'Agent 开小差了，请发送「继续」';
+
 export interface RawAgentLoopOptions {
   modelAdapter: ModelAdapter;
   eventStore: EventStore;
@@ -637,18 +642,33 @@ export class RawAgentLoop implements AgentLoop {
       env: context.env,
       sessionId: context.sessionId,
       runId: context.runId,
+      ...(context.memoryMaintenanceMode ? { memoryMaintenanceMode: context.memoryMaintenanceMode } : {}),
       ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
       hooks: context.hooks,
       signal: context.signal,
     };
     const descriptors = this.toolRuntime.list(baseToolContext);
-    const priorEvents = await this.eventStore.list(context.sessionId, {
+    const replayListOptions = {
       excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
-      replayMode: 'bounded',
-    });
+      replayMode: 'bounded' as const,
+    };
+    const sourceEvents = context.replaySourceSessionId
+      ? closeUnfinishedReplayToolCalls(
+          await this.eventStore.list(context.replaySourceSessionId, replayListOptions),
+          context.replaySourceSessionId,
+        )
+      : [];
+    const loadCurrentEvents = () => this.eventStore.list(context.sessionId, replayListOptions);
+    const combineReplayEvents = (currentEvents: PlatformEvent[]) => (
+      context.replaySourceSessionId ? [...sourceEvents, ...currentEvents] : currentEvents
+    );
+    let currentEvents = await loadCurrentEvents();
+    const priorEvents = combineReplayEvents(currentEvents);
     const { tools, descriptorsByName } = await this.prepareSessionTools(descriptors, priorEvents, context);
+    // 普通会话恢复自身；隐藏审查只恢复隐藏会话自身。父会话永远只读，缺失的
+    // tool_result 已由 closeUnfinishedReplayToolCalls 在内存投影中补齐。
     const replayState = buildRuntimeReplayState(
-      priorEvents,
+      currentEvents,
       await this.approvalStore.list(context.sessionId),
       context.sessionId,
     );
@@ -657,12 +677,8 @@ export class RawAgentLoop implements AgentLoop {
       yield { type: 'error', error: recovery.message };
       return;
     }
-    const recoveredEvents = recovery.recovered > 0
-      ? await this.eventStore.list(context.sessionId, {
-        excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
-        replayMode: 'bounded',
-      })
-      : priorEvents;
+    if (recovery.recovered > 0) currentEvents = await loadCurrentEvents();
+    const recoveredEvents = combineReplayEvents(currentEvents);
     const restoredDraftState = await this.loadReplaceableDraftState(context);
     let restoredDraftRecoveryUsed = false;
     if (restoredDraftState) {
@@ -716,9 +732,9 @@ export class RawAgentLoop implements AgentLoop {
       }
     }
     const contextProjection = buildContextProjection(recoveredEvents, {
-      sessionId: context.sessionId,
+      sessionId: context.replaySourceSessionId ?? context.sessionId,
       runId: context.runId,
-      policy: this.contextPolicy,
+      policy: context.replaySourceSessionId ? { type: 'full_replay' } : this.contextPolicy,
     });
     const memoryMessage = input.memoryContext
       ? [{ role: 'user' as const, content: formatMemoryContext(input.memoryContext) }]
@@ -926,7 +942,9 @@ export class RawAgentLoop implements AgentLoop {
       warn: (message) => logger.warn(message),
     });
 
-    if (contextProjection.summaryEvent) await this.append(contextProjection.summaryEvent);
+    if (contextProjection.summaryEvent && !context.replaySourceSessionId) {
+      await this.append(contextProjection.summaryEvent);
+    }
     if (input.memoryContext) {
       await this.append({
         type: 'memory_context',
@@ -974,7 +992,8 @@ export class RawAgentLoop implements AgentLoop {
     // 启动时查上一已完成 run 的 last_response_id（72h 内未过期），赋给本 run。
     // ChatCompletionsAdapter 收到 previousResponseId 会抛错 — 所以 runStore 只在
     // 模型走 protocol="responses" 时才有意义；dispatcher 已按 protocol 路由 adapter。
-    const usesStoredResponseState = this.modelAdapter.capabilities?.responseState !== 'stateless';
+    const usesStoredResponseState = !context.disableResponseRelay
+      && this.modelAdapter.capabilities?.responseState !== 'stateless';
     if (contextRewindRecoveryUsed) await this.clearResponseRelayState(context.sessionId, 'run wake');
     let currentResponseId = usesStoredResponseState && !contextRewindRecoveryUsed
       ? await this.loadInitialResponseId(context.sessionId, context.model, context.profileConfigDigest)
@@ -2117,10 +2136,10 @@ export class RawAgentLoop implements AgentLoop {
   ): Promise<{ blocking: true; message: string } | { blocking: false; recovered: number }> {
     let recovered = 0;
     for (const state of replayState.unclosedToolCalls) {
-      const blocking = this.describeBlockingToolCall(state);
+      const blocking = describeBlockingToolCall(state, this.zombieToolCallTimeoutMs);
       if (blocking) return { blocking: true, message: blocking };
 
-      const content = this.buildSyntheticToolResultContent(state);
+      const content = buildSyntheticToolResultContent(state);
       await this.append({
         type: 'tool_result',
         runId: state.runId,
@@ -2133,80 +2152,6 @@ export class RawAgentLoop implements AgentLoop {
       recovered += 1;
     }
     return { blocking: false, recovered };
-  }
-
-  private describeBlockingToolCall(state: RuntimeToolCallState): string | undefined {
-    const approvalStatus = state.approval?.status ?? state.approvalResolution?.decision;
-    if (approvalStatus === 'pending') {
-      const approvalId = state.approval?.id ?? state.approvalRequest?.approvalId;
-      return `当前会话正在等待工具审批，请先处理 approval ${approvalId ?? state.toolCallId} for ${state.toolName}`;
-    }
-
-    if (
-      state.interactionRequest
-      && state.interactionRequest.interactionType === 'ask_user'
-      && !state.interactionResolution
-    ) {
-      return `当前会话正在等待你回答上一个工具问题，请先处理 interaction ${state.interactionRequest.interactionId} for ${state.toolName}`;
-    }
-
-    if (state.invocationStarted && !state.invocationCompleted && !state.cancelRequested) {
-      // 06-24 修：tool_invocation_started 写入后若长时间没有任何后续事件
-      //（completed / cancel_requested / 同 callId 的 chunk 等），多半是 server
-      // SIGKILL/crash 残留——shell 子进程被 SIGKILL，没机会写收尾事件，也没人
-      // 发 cancel。仍判 blocking 会让会话永久卡在「请稍后重试」（参见 06-24 凌晨
-      // session 3cab86d1 事故）。超过 zombieToolCallTimeoutMs 视为 zombie，
-      // 返回 undefined 让 recoverUnclosedToolCalls 走默认 synthetic 分支，
-      // 合成 tool_result(isError, 'tool execution was interrupted before producing a result')。
-      const startedAtMs = Date.parse(state.invocationStarted.timestamp);
-      const ageMs = Number.isFinite(startedAtMs) ? Date.now() - startedAtMs : 0;
-      if (ageMs >= this.zombieToolCallTimeoutMs) {
-        return undefined;
-      }
-      return `当前会话存在仍在执行或等待恢复的工具调用，请稍后重试 ${state.toolName} (${state.toolCallId})`;
-    }
-
-    return undefined;
-  }
-
-  private buildSyntheticToolResultContent(state: RuntimeToolCallState): string {
-    const approvalStatus = state.approval?.status ?? state.approvalResolution?.decision;
-    if (approvalStatus === 'rejected' || approvalStatus === 'timeout') {
-      return JSON.stringify({
-        error: `tool execution was ${approvalStatus} before producing a result`,
-        toolCallId: state.toolCallId,
-        toolName: state.toolName,
-        recoverable: false,
-      });
-    }
-
-    if (state.invocationCompleted) {
-      return JSON.stringify({
-        error: state.invocationCompleted.error
-          ?? `tool invocation completed with status=${state.invocationCompleted.status} but no tool_result was recorded`,
-        toolCallId: state.toolCallId,
-        toolName: state.toolName,
-        invocationId: state.invocationCompleted.invocationId,
-        status: state.invocationCompleted.status,
-        recoverable: false,
-      });
-    }
-
-    if (state.cancelRequested) {
-      return JSON.stringify({
-        error: `tool execution was cancelled before producing a result${state.cancelRequested.reason ? `: ${state.cancelRequested.reason}` : ''}`,
-        toolCallId: state.toolCallId,
-        toolName: state.toolName,
-        recoverable: false,
-      });
-    }
-
-    return JSON.stringify({
-      error: 'tool execution was interrupted before producing a result',
-      toolCallId: state.toolCallId,
-      toolName: state.toolName,
-      recoverable: false,
-    });
   }
 
   private async assertNoOpenToolCallBatchesBeforeModel(sessionId: string): Promise<void> {
@@ -2647,6 +2592,7 @@ export class RawAgentLoop implements AgentLoop {
       env: context.env,
       sessionId: context.sessionId,
       runId: context.runId,
+      ...(context.memoryMaintenanceMode ? { memoryMaintenanceMode: context.memoryMaintenanceMode } : {}),
       ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
       hooks: context.hooks,
       signal: context.signal,
@@ -3344,7 +3290,8 @@ export class RawAgentLoop implements AgentLoop {
       event.type === 'context_rewind' && event.runId === args.context.runId
     ));
     if (contextRewindRecoveryUsed) clearProviderContinuations(args.messages);
-    const usesStoredResponseState = this.modelAdapter.capabilities?.responseState !== 'stateless';
+    const usesStoredResponseState = !args.context.disableResponseRelay
+      && this.modelAdapter.capabilities?.responseState !== 'stateless';
     if (contextRewindRecoveryUsed) await this.clearResponseRelayState(args.context.sessionId, 'resume wake');
     let currentResponseId = usesStoredResponseState && !contextRewindRecoveryUsed
       ? await this.loadInitialResponseId(

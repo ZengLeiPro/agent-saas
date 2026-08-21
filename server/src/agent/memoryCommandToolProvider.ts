@@ -12,17 +12,21 @@
  * 原则：宁可多问一句，不可误删。
  */
 
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { z } from 'zod';
 
-import { checkMemoryTextSafety, normalizeFingerprint } from '../memory/consolidation/digest.js';
-import { sha256Text } from '../memory/consolidation/materialize.js';
+import { checkMemoryTextSafety, normalizeFingerprint } from '../memory/consolidation/safety.js';
 import type { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
 import { loadToolDescription } from './tools/descriptionLoader.js';
 import type { AuthorizedToolCall, ToolCallContext, ToolDescriptor, ToolProvider, ToolResult } from './toolRuntime.js';
+
+function sha256Text(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
+}
 
 const memoryCommandInputSchema = z.object({
   action: z.enum(['remember', 'forget', 'correct', 'question_answered', 'question_declined']),

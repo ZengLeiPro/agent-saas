@@ -223,8 +223,8 @@ export function applyAgentRuntimeProfile(
   runtime: ToolRuntime,
   bound: BoundAgentRuntimeProfile,
 ): ToolRuntime {
-  // L2 工具面已由 memory_consolidate tool profile 固定为最小白名单；Agent Profile
-  // 只负责模型、执行环境等运行参数，不得再次裁掉唯一提交工具 MemoryCommit。
+  // 旧 L2 工具面由 memory_consolidate tool profile 固定；新 L2 继承 main Profile，
+  // 此分支只保留给存量隐藏会话，避免二次过滤造成场景漂移。
   if (bound.binding.profileBindingKey === 'memory_consolidate') return runtime;
   return new AgentProfileFilteredToolRuntime(runtime, bound);
 }

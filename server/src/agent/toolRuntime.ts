@@ -144,7 +144,6 @@ export interface WorkspaceRef {
     denyRead: string[];
   };
 }
-
 export interface ToolCallContext {
   channelContext: ChannelContext;
   workspace: WorkspaceRef;
@@ -152,6 +151,7 @@ export interface ToolCallContext {
   env?: Record<string, string>;
   sessionId?: string;
   runId?: string;
+  /** Runtime 内部记忆维护模式；不改变模型可见 descriptor。 */ memoryMaintenanceMode?: 'consolidation';
   runtimeIsolationRequirement?: RuntimeIsolationRequirement;
   toolCallId?: string;
   invocationId?: string;

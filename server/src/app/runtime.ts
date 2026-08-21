@@ -47,7 +47,6 @@ import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import { MEMORY_CONSOLIDATION_DEFAULTS, type MemoryConsolidationResolvedConfig } from '../memory/consolidation/types.js';
 import { resolveTenantMemoryFeatureStatus } from '../memory/effectiveStatus.js';
 import { MemoryCommandToolProvider } from '../agent/memoryCommandToolProvider.js';
-import { MemoryCommitToolProvider } from '../agent/memoryCommitToolProvider.js';
 import {
   FileSessionReadStateStore,
   PgSessionReadStateStore,
@@ -1454,7 +1453,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         // 企业 Agent 使用 service identity，不创建影子成员；直接读取租户或平台授权源。
         const tenantId = contextTenantId;
         if (tenantId) {
-          const tenantDir = resolveAgentPath(resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, tenantId), skill);
+          const tenantDir = resolveAgentPath(
+            resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, tenantId),
+            skill,
+          );
           if (existsSync(tenantDir)) return tenantDir;
         }
         const sharedPoolDir = resolveAgentPath(poolDir, skill);
@@ -1621,7 +1623,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     logger: serverLogger.child('UserActivity'),
   });
   // ── L2 记忆整合 store（2026-07-29 记忆写入职责剥离批次）──────────
-  // 先于 dispatch config 构造：MemoryCommand/MemoryCommit provider 依赖它。
+  // 先于 dispatch config 构造：MemoryCommand 与 L2/L3 用户级锁依赖它。
   // 仅 PG 后端可用；file 后端（单机开发形态）不启用整套 L2/v2 能力。
   if (config.runtimeEventStore?.backend === 'pg') {
     memoryConsolidationStore = new PgMemoryConsolidationStore({
@@ -1687,11 +1689,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ...(memoryConsolidationStore ? {
       memoryControlProviders: [
         new MemoryCommandToolProvider({
-          store: memoryConsolidationStore,
-          memoryIndexService: memoryIndexServiceRef.current,
-          logger: { info: (msg) => serverLogger.info(msg), warn: (msg) => serverLogger.warn(msg) },
-        }),
-        new MemoryCommitToolProvider({
           store: memoryConsolidationStore,
           memoryIndexService: memoryIndexServiceRef.current,
           logger: { info: (msg) => serverLogger.info(msg), warn: (msg) => serverLogger.warn(msg) },

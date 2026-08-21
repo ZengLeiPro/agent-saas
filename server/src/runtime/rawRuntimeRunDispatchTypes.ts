@@ -123,9 +123,8 @@ export interface RawRuntimeRunDispatchConfig {
    */
   memoryWriteDelegationEnabled?: (tenantId: string | undefined) => boolean;
   /**
-   * 记忆控制工具 provider（MemoryCommand/MemoryCommit，2026-07-29 批次）。
-   * 注册进所有 run 的 PlatformToolRuntime，但可见性由 profile 白名单与
-   * memoryPolicyVersion 过滤控制：普通主会话均不可见。
+   * 记忆控制工具 provider（现仅 MemoryCommand）。注册进所有 run 的
+   * PlatformToolRuntime，但可见性由 profile 与 memoryPolicyVersion 过滤。
    */
   memoryControlProviders?: import('../agent/toolRuntime.js').ToolProvider[];
   agentStore?: AgentStore;

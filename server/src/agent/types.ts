@@ -166,6 +166,11 @@ export interface AgentRunOptions {
    */
   toolProfile?: 'memory_poll' | 'memory_consolidate';
   /**
+   * L2 会话结束记忆审查的内部入口。模型上下文从指定父会话完整重放，
+   * 当前隐藏 Run 的事件仍写入新会话；普通 API/通道不得设置。
+   */
+  memoryConsolidationSourceSessionId?: string;
+  /**
    * RuntimeScheduler auto-wake 内部入口：复用已 acquire lease 的 durable runId，
    * 避免恢复执行时再创建一个新的 run record。
    */

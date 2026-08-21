@@ -1,1 +1,0 @@
-提交本次记忆整合任务的候选记忆。仅在平台记忆整合任务中可用。每个候选必须引用输入证据范围内的真实 eventId、sessionSequence 与不超过 200 字符的原文摘录；attribution 必须如实标注 user_statement / agent_inference / external_source。服务端会逐条校验证据、检查忘记标记（tombstone）、过滤敏感值与命令性文本，然后以固定格式写入当日记忆文件。没有值得记录的内容时提交 operations=[]。一次任务只调用一次。

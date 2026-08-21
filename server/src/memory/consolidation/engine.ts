@@ -1,16 +1,11 @@
 /**
- * L2 记忆整合引擎：scanner（durable global cursor 消费 run 边界事件）+
- * worker（claim 到期会话 → digest → 隐藏 L2 run → MemoryCommit 落盘 → 推进游标）。
+ * L2 记忆审查引擎：durable global cursor 扫描 run 边界；会话静默期到达后，
+ * 启动隐藏 Run，从父会话完整 Context Projection 重放并直接维护真实 Markdown。
  *
- * 触发正确性来自 PG 全局游标扫描；`subscribeAppended` 只作低延迟唤醒
- * （它对首见会话不回放历史，进程重启后旧会话可能永远等不到通知）。
- * 蓝绿并存：scanner 用 PG advisory lock 选主（复用 CronLeadership 同款思路，
- * 此处直接依赖 claimDue 的 SKIP LOCKED + consumer cursor 单调推进保证不重不漏，
- * scanner 双跑只浪费不出错）。
- *
- * 租户门禁：只为 features.memoryConsolidationEnabled=true 的租户建 state；
- * 未开启租户的事件直接跳过并推进 cursor（开启后从开启时刻的新事件开始积累，
- * 不回填历史——曾磊 2026-07-29 拍板「机制全量上线 + 租户开关默认关、仅开 kaiyan」）。
+ * 正确性边界：durable cursor / state lease / idempotency ledger / active-run gate / 10 分钟
+ * debounce / per-user 进程锁与 PG advisory lock。Prompt Cache 由父会话同模型、同
+ * Profile、同 System Prompt、同工具 descriptor 的内容指纹自然复用；不使用
+ * previous_response_id。
  */
 
 import { createHash, randomUUID } from 'node:crypto';
@@ -18,35 +13,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { AgentRunDispatch } from '../../agent/types.js';
 import type { ChannelContext, InboundMessage } from '../../types/index.js';
 import { resolveUserCwd } from '../../workspace/resolver.js';
-import { tryAcquireMemoryMaintenance, releaseMemoryMaintenance } from '../maintenanceLock.js';
-import { buildMemoryDigest, type DigestSourceEvent } from './digest.js';
+import { releaseMemoryMaintenance, tryAcquireMemoryMaintenance } from '../maintenanceLock.js';
 import { buildConsolidationPrompt, MEMORY_CONSOLIDATION_PROMPT_VERSION } from './prompt.js';
-import { formatMemoryDate, materializeDailyOperations, readDailyFileHash } from './materialize.js';
 import { PgMemoryConsolidationStore } from './store.js';
 import {
   CONSOLIDATION_RETRY_BACKOFF_MINUTES,
-  type ConsolidationExecutionContext,
   type ConsolidationState,
-  type MemoryCandidateOperation,
   type MemoryConsolidationResolvedConfig,
 } from './types.js';
-
-// ── MemoryCommit 执行上下文注册表（worker 写入、tool provider 读取）────────
-
-const executionContexts = new Map<string, ConsolidationExecutionContext>();
-
-function contextKey(tenantId: string | undefined, userId: string): string {
-  return `${tenantId ?? '__none'}:${userId}`;
-}
-
-export function getConsolidationExecutionContext(
-  tenantId: string | undefined,
-  userId: string,
-): ConsolidationExecutionContext | undefined {
-  return executionContexts.get(contextKey(tenantId, userId));
-}
-
-// ── 引擎依赖 ───────────────────────────────────────────────────
 
 interface EventStoreForConsolidation {
   listGlobalPage(options: {
@@ -68,7 +42,10 @@ interface EventStoreForConsolidation {
     toInclusive: number;
     excludeTypes?: ReadonlyArray<string>;
     limit?: number;
-  }): Promise<Array<{ sessionSequence: number; event: Record<string, unknown> & { type: string; id: string } }>>;
+  }): Promise<Array<{
+    sessionSequence: number;
+    event: Record<string, unknown> & { type: string; id: string };
+  }>>;
 }
 
 interface ConsolidationProjection {
@@ -78,6 +55,8 @@ interface ConsolidationProjection {
   username?: string;
   channel?: string;
   kind: 'user' | 'subagent';
+  runtimeStatus?: string;
+  model?: string;
   workspaceId?: string;
   metaJson: {
     cronSystemKind?: string;
@@ -99,7 +78,13 @@ export interface MemoryConsolidationEngineOptions {
   eventStore: EventStoreForConsolidation;
   projectionStore: ProjectionStoreForConsolidation;
   userStore: {
-    findById(id: string): { id: string; username: string; role: string; tenantId?: string; disabled?: boolean } | undefined;
+    findById(id: string): {
+      id: string;
+      username: string;
+      role: string;
+      tenantId?: string;
+      disabled?: boolean;
+    } | undefined;
   };
   isTenantEnabled(tenantId: string): boolean;
   dispatch: AgentRunDispatch;
@@ -111,48 +96,12 @@ export interface MemoryConsolidationEngineOptions {
   };
 }
 
-/**
- * 事件切片（2026-07-29 P1 修复的核心纯函数，独立导出供合同测试）。
- * 返回本次实际处理的事件与 effectiveTo：token 预算切断 → 切断点；DB 行数
- * 截断 → 最后读到的行；否则 → target。effectiveTo < target 即 rangeTruncated，
- * 剩余段由 markApplied 的 target 超前逻辑自动保持 pending 续处理。
- */
-export function sliceEventsByBudget(input: {
-  rows: Array<{ sessionSequence: number; event: Record<string, unknown> }>;
-  target: number;
-  maxInputTokens: number;
-  dbRowLimit: number;
-}): { sliced: Array<{ sessionSequence: number; event: Record<string, unknown> }>; effectiveTo: number; rangeTruncated: boolean } {
-  const dbTruncated = input.rows.length >= input.dbRowLimit;
-  const sliced: Array<{ sessionSequence: number; event: Record<string, unknown> }> = [];
-  let tokenBudget = 0;
-  let tokenTruncated = false;
-  for (const row of input.rows) {
-    const rawContent = row.event.content;
-    const content = typeof rawContent === 'string' ? rawContent : '';
-    const estimated = Math.ceil(content.length / 3) + 50;
-    if (sliced.length > 0 && tokenBudget + estimated > input.maxInputTokens) {
-      tokenTruncated = true;
-      break;
-    }
-    sliced.push(row);
-    tokenBudget += estimated;
-  }
-  const effectiveTo = tokenTruncated
-    ? sliced[sliced.length - 1]!.sessionSequence
-    : dbTruncated
-      ? input.rows[input.rows.length - 1]!.sessionSequence
-      : input.target;
-  return { sliced, effectiveTo, rangeTruncated: effectiveTo < input.target };
-}
-
 const CONSUMER_NAME = 'memory-consolidation-v1';
 const CONSOLIDATION_CHAT_PREFIX = 'memory-consolidate-';
 /** 新会话 projection 正常应很快出现；超过一小时仍缺失视为 poison event。 */
 export const MISSING_PROJECTION_GRACE_MS = 60 * 60_000;
 const MISSING_PROJECTION_WARN_INTERVAL_MS = 5 * 60_000;
 const MAX_EVENT_FUTURE_SKEW_MS = 5 * 60_000;
-/** L2/L3 自身与子 agent 会话绝不能再被提取（防自我喂养）。 */
 const EXCLUDED_CHANNELS = new Set(['cron']);
 
 function isEligibleProjection(projection: ConsolidationProjection, sessionId: string): boolean {
@@ -163,6 +112,7 @@ function isEligibleProjection(projection: ConsolidationProjection, sessionId: st
     && meta.profileBindingKey !== 'memory_poll'
     && meta.profileBindingKey !== 'memory_consolidate'
     && meta.sessionSource !== 'taskboard_execution'
+    && meta.sessionSource !== 'memory_consolidation'
     && meta.memoryAutomationEligible !== false
     && (projection.channel === undefined || !EXCLUDED_CHANNELS.has(projection.channel))
     && !sessionId.startsWith('memory-maint-')
@@ -196,13 +146,12 @@ export class MemoryConsolidationEngine {
     this.scanTimer.unref?.();
     this.workTimer = setInterval(() => { void this.workOnce(); }, Math.max(config.scanIntervalMs, 5_000));
     this.workTimer.unref?.();
-    // throttled 状态每小时复核一次（跨 UTC 日界后配额刷新）
     this.reviveTimer = setInterval(() => {
       const current = this.options.getConfig();
       if (!current.enabled) return;
       void this.options.store.reviveThrottled(new Date().toISOString(), current.debounceMinutes)
         .catch((err) => this.options.logger?.warn(`consolidation reviveThrottled failed: ${message(err)}`));
-    }, 3600_000);
+    }, 3_600_000);
     this.reviveTimer.unref?.();
     void this.scanOnce();
     this.options.logger?.info(`MemoryConsolidationEngine started (${this.workerId})`);
@@ -216,16 +165,20 @@ export class MemoryConsolidationEngine {
     this.scanTimer = this.workTimer = this.reviveTimer = undefined;
   }
 
-  /** NOTIFY 唤醒（低延迟路径）；正确性不依赖此调用。 */
+  /** NOTIFY 只做低延迟唤醒；正确性仍来自 durable cursor。 */
   wake(): void {
     void this.scanOnce();
     void this.workOnce();
   }
 
-  // ── scanner：durable global cursor 消费 ─────────────────────
-
   private async scanOnce(): Promise<void> {
-    if (this.scanning || this.stopped) return;
+    if (this.stopped) return;
+    if (this.scanning) {
+      while (this.scanning && !this.stopped) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      return;
+    }
     this.scanning = true;
     try {
       const config = this.options.getConfig();
@@ -245,8 +198,6 @@ export class MemoryConsolidationEngine {
           const ok = await this.applyEnvelope(envelope, config);
           if (this.stopped || !this.options.getConfig().enabled) return;
           if (!ok) {
-            // projection 在宽限期内暂缺时 fail-closed；超过宽限期的 poison event
-            // 已由 applyEnvelope 先记隔离台账再返回 true，不会永久卡住 consumer。
             if (lastApplied > cursor) {
               await this.options.store.advanceConsumerCursor(CONSUMER_NAME, lastApplied);
             }
@@ -265,14 +216,12 @@ export class MemoryConsolidationEngine {
     }
   }
 
-  /** 返回 false = projection 暂缺，调用方必须停止推进 cursor。 */
+  /** false 表示 projection 尚在宽限期内缺失，consumer cursor 必须停住。 */
   private async applyEnvelope(
     envelope: Awaited<ReturnType<EventStoreForConsolidation['listGlobalPage']>>['events'][number],
     config: MemoryConsolidationResolvedConfig,
   ): Promise<boolean> {
     const event = envelope.event;
-    // 未开启租户按既定语义不回填历史；先于 projection 查询短路，避免其他租户的
-    // 历史孤儿事件阻塞已灰度租户的全局 consumer。
     if (!this.options.isTenantEnabled(envelope.tenantId)) return true;
 
     const projection = await this.options.projectionStore.get(envelope.sessionId, { includeDeleted: true });
@@ -289,7 +238,8 @@ export class MemoryConsolidationEngine {
         if (now - lastWarnedAt >= MISSING_PROJECTION_WARN_INTERVAL_MS) {
           this.missingProjectionWarnedAt.set(envelope.globalSequence, now);
           this.options.logger?.warn(
-            `consolidation scanner: session projection missing for ${envelope.sessionId} (global_seq=${envelope.globalSequence}), holding cursor within grace window`,
+            `consolidation scanner: session projection missing for ${envelope.sessionId} `
+            + `(global_seq=${envelope.globalSequence}), holding cursor within grace window`,
           );
         }
         return false;
@@ -300,7 +250,6 @@ export class MemoryConsolidationEngine {
         : tooFarInFuture
           ? 'projection_missing_future_timestamp'
           : 'projection_missing_after_grace';
-      // 隔离台账与 cursor 在 store 内同事务提交；进程崩溃时不会留下半套状态。
       await this.options.store.quarantineEnvelopeAndAdvanceCursor({
         consumerName: CONSUMER_NAME,
         globalSequence: envelope.globalSequence,
@@ -312,18 +261,14 @@ export class MemoryConsolidationEngine {
       });
       this.missingProjectionWarnedAt.delete(envelope.globalSequence);
       this.options.logger?.warn(
-        `consolidation scanner: quarantined event with missing projection session=${envelope.sessionId} global_seq=${envelope.globalSequence} reason=${reason}`,
+        `consolidation scanner: quarantined event with missing projection session=${envelope.sessionId} `
+        + `global_seq=${envelope.globalSequence} reason=${reason}`,
       );
       return true;
     }
     this.missingProjectionWarnedAt.delete(envelope.globalSequence);
 
-    // 跳过：非用户会话（subagent）、cron 系统会话（memory_poll 等）、隐藏维护会话。
-    // 2026-07-29 P1 修复：只处理 memoryPolicyVersion=v2 的会话——存量 v1 会话仍由
-    // 主 Agent 按 v1 提示语自主写记忆，L2 若同时提取会造成双写；缺 pin 的旧会话
-    // 一律视为 v1，不隐式接管。
     if (!isEligibleProjection(projection, envelope.sessionId)) return true;
-
     const user = this.options.userStore.findById(projection.userId!);
     if (!user || user.disabled) return true;
 
@@ -333,8 +278,8 @@ export class MemoryConsolidationEngine {
       workspaceId: projection.workspaceId ?? projection.username ?? projection.userId!,
       sessionId: envelope.sessionId,
     };
-    const runId = typeof event.runId === 'string' ? (event.runId as string) : 'unknown-run';
-    const at = typeof event.timestamp === 'string' ? (event.timestamp as string) : new Date().toISOString();
+    const runId = typeof event.runId === 'string' ? event.runId : 'unknown-run';
+    const at = typeof event.timestamp === 'string' ? event.timestamp : new Date().toISOString();
 
     if (event.type === 'run_started') {
       await this.options.store.applyRunStarted({ ...base, runId, at, globalSequence: envelope.globalSequence });
@@ -343,8 +288,7 @@ export class MemoryConsolidationEngine {
     if (event.type === 'run_finished') {
       const subtype = typeof event.subtype === 'string' ? event.subtype : 'success';
       const eligible = subtype === 'success'
-        || (subtype === 'interrupted' && config.includeInterrupted)
-        || (subtype === 'error' && config.includeError);
+        || (subtype === 'interrupted' && config.includeInterrupted);
       await this.options.store.applyRunFinished({
         ...base,
         runId,
@@ -354,12 +298,9 @@ export class MemoryConsolidationEngine {
         eligible,
         debounceMinutes: config.debounceMinutes,
       });
-      return true;
     }
     return true;
   }
-
-  // ── worker：claim → digest → L2 run → commit → 游标推进 ─────
 
   private async workOnce(): Promise<void> {
     if (this.working || this.stopped) return;
@@ -367,15 +308,18 @@ export class MemoryConsolidationEngine {
     try {
       const config = this.options.getConfig();
       if (!config.enabled) return;
+      // claim 前先把当前可见 run 边界消费完；若 scanner 已在跑则等待它收口。
+      await this.scanOnce();
+      if (this.stopped || !this.options.getConfig().enabled) return;
       const claimed = await this.options.store.claimDue({
         workerId: this.workerId,
         now: new Date().toISOString(),
         limit: config.workerConcurrency,
-        maxDeferralMinutes: config.maxDeferralMinutes,
         leaseSeconds: config.leaseSeconds,
       });
-      if (claimed.length === 0) return;
-      await Promise.all(claimed.map((state) => this.processState(state, config)));
+      if (claimed.length > 0) {
+        await Promise.all(claimed.map((state) => this.processState(state, config)));
+      }
     } catch (err) {
       this.options.logger?.warn(`consolidation work failed: ${message(err)}`);
     } finally {
@@ -383,25 +327,33 @@ export class MemoryConsolidationEngine {
     }
   }
 
-  private async processState(state: ConsolidationState, config: MemoryConsolidationResolvedConfig): Promise<void> {
+  private async processState(
+    state: ConsolidationState,
+    config: MemoryConsolidationResolvedConfig,
+  ): Promise<void> {
     const log = this.options.logger;
     const now = new Date().toISOString();
     try {
-      // 租户开关可能在 pending 期间被关：不丢 backlog，转 blocked 保留游标。
       if (!this.options.isTenantEnabled(state.tenantId)) {
         await this.options.store.markFailed({
-          tenantId: state.tenantId, sessionId: state.sessionId, now,
-          backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES, maxRetries: 0, permanent: true,
+          tenantId: state.tenantId,
+          sessionId: state.sessionId,
+          now,
+          backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
+          maxRetries: 0,
+          permanent: true,
         });
         return;
       }
-      // claim 后再次校验资格：会话可能在 pending 期间被补标为 TaskBoard/内部任务，
-      // 不能让历史 backlog 绕过 scanner 的新政策。
+
       const projection = await this.options.projectionStore.get(state.sessionId);
       if (!projection) {
         await this.options.store.markFailed({
-          tenantId: state.tenantId, sessionId: state.sessionId, now,
-          backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES, maxRetries: config.maxRetries,
+          tenantId: state.tenantId,
+          sessionId: state.sessionId,
+          now,
+          backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
+          maxRetries: config.maxRetries,
         });
         return;
       }
@@ -412,54 +364,78 @@ export class MemoryConsolidationEngine {
         log?.info(`consolidation discarded ineligible backlog session=${state.sessionId}`);
         return;
       }
-      // 单用户日配额熔断：保留 pending（throttled），不推进游标。
-      const daily = await this.options.store.getUserDailyUsage(state.tenantId, state.userId);
-      if (daily.runs >= config.maxConsolidationsPerUserPerDay
-        || daily.inputTokens >= config.maxInputTokensPerUserPerDay) {
-        await this.options.store.markThrottled({ tenantId: state.tenantId, sessionId: state.sessionId });
-        log?.info(`consolidation throttled user=${state.userId} runs=${daily.runs} tokens=${daily.inputTokens}`);
+      // scanner 的 active_run_ids 是 durable 主门禁；projection status 再做一次 claim 后复核，
+      // 覆盖 run_started 刚落会话目录但全局边界事件尚未被 scanner 消费的窗口。
+      if (projection.runtimeStatus === 'running') {
+        await this.options.store.markFailed({
+          tenantId: state.tenantId,
+          sessionId: state.sessionId,
+          now,
+          backoffMinutes: [1],
+          maxRetries: 9999,
+        });
         return;
       }
 
       const user = this.options.userStore.findById(state.userId);
       if (!user || user.disabled) {
         await this.options.store.markFailed({
-          tenantId: state.tenantId, sessionId: state.sessionId, now,
-          backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES, maxRetries: 0, permanent: true,
+          tenantId: state.tenantId,
+          sessionId: state.sessionId,
+          now,
+          backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
+          maxRetries: 0,
+          permanent: true,
         });
         return;
       }
 
-      // 同用户互斥：与 L3 memory_poll 共用进程内锁（fast-path）；
-      // 文件级正确性由 MemoryCommit 内的 PG commit lock 保证。
       if (!tryAcquireMemoryMaintenance(state.tenantId, state.userId)) {
         await this.options.store.markFailed({
-          tenantId: state.tenantId, sessionId: state.sessionId, now,
-          backoffMinutes: [1], maxRetries: 9999,
-        });
-        return;
-      }
-      const registryKey = contextKey(state.tenantId, state.userId);
-      if (executionContexts.has(registryKey)) {
-        releaseMemoryMaintenance(state.tenantId, state.userId);
-        await this.options.store.markFailed({
-          tenantId: state.tenantId, sessionId: state.sessionId, now,
-          backoffMinutes: [1], maxRetries: 9999,
+          tenantId: state.tenantId,
+          sessionId: state.sessionId,
+          now,
+          backoffMinutes: [1],
+          maxRetries: 9999,
         });
         return;
       }
 
+      let commitLock: { release(): Promise<void> } | null = null;
       try {
-        await this.runConsolidation(state, config, user, registryKey);
+        // 与 L3 memory_poll 共用同一把跨进程锁，并覆盖整个直接写 Markdown 的 Run。
+        commitLock = await this.options.store.acquireCommitLock(state.tenantId, state.userId, 5_000);
+        if (!commitLock) {
+          await this.options.store.markFailed({
+            tenantId: state.tenantId,
+            sessionId: state.sessionId,
+            now,
+            backoffMinutes: [1],
+            maxRetries: 9999,
+          });
+          return;
+        }
+        // 配额检查也放在用户级 PG 锁内，避免多个 L2 worker 同时读取旧额度后穿透。
+        const daily = await this.options.store.getUserDailyUsage(state.tenantId, state.userId);
+        if (daily.runs >= config.maxConsolidationsPerUserPerDay
+          || daily.inputTokens >= config.maxInputTokensPerUserPerDay) {
+          await this.options.store.markThrottled({ tenantId: state.tenantId, sessionId: state.sessionId });
+          log?.info(`consolidation throttled user=${state.userId} runs=${daily.runs} tokens=${daily.inputTokens}`);
+          return;
+        }
+        await this.runConsolidation(state, config, user, projection.model);
       } finally {
-        executionContexts.delete(registryKey);
+        if (commitLock) await commitLock.release().catch(() => undefined);
         releaseMemoryMaintenance(state.tenantId, state.userId);
       }
     } catch (err) {
       log?.warn(`consolidation processState failed session=${state.sessionId}: ${message(err)}`);
       await this.options.store.markFailed({
-        tenantId: state.tenantId, sessionId: state.sessionId, now: new Date().toISOString(),
-        backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES, maxRetries: config.maxRetries,
+        tenantId: state.tenantId,
+        sessionId: state.sessionId,
+        now: new Date().toISOString(),
+        backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
+        maxRetries: config.maxRetries,
       }).catch(() => undefined);
     }
   }
@@ -468,38 +444,13 @@ export class MemoryConsolidationEngine {
     state: ConsolidationState,
     config: MemoryConsolidationResolvedConfig,
     user: { id: string; username: string; role: string; tenantId?: string },
-    registryKey: string,
+    sourceModelRef?: string,
   ): Promise<void> {
-    const log = this.options.logger;
     const from = state.processedSessionSequence;
     const to = state.targetSessionSequence;
-
-    // ── 读取事件并按预算切片（2026-07-29 P1 修复：截断时游标只推进到实际
-    // 处理边界，剩余段保持 pending 续处理，绝不静默丢弃）────────────────
-    const EVENT_ROW_LIMIT = 2_000;
-    const rows = await this.options.eventStore.listSessionRange(state.sessionId, {
-      fromExclusive: from,
-      toInclusive: to,
-      excludeTypes: ['assistant_stream_event', 'assistant_thinking', 'memory_context', 'compaction'],
-      limit: EVENT_ROW_LIMIT,
-    });
-    const slice = sliceEventsByBudget({
-      rows,
-      target: to,
-      maxInputTokens: config.maxInputTokens,
-      dbRowLimit: EVENT_ROW_LIMIT,
-    });
-    const sliced: DigestSourceEvent[] = slice.sliced.map((row) => ({
-      sessionSequence: row.sessionSequence,
-      event: row.event as never,
-    }));
-    const effectiveTo = slice.effectiveTo;
-    const rangeTruncated = slice.rangeTruncated;
-
     const idempotencyKey = createHash('sha256')
-      .update(`${state.tenantId}|${state.sessionId}|${from}|${effectiveTo}`)
+      .update(`${state.tenantId}|${state.sessionId}|${from}|${to}`)
       .digest('hex');
-
     const { record } = await this.options.store.insertOrGetRun({
       idempotencyKey,
       tenantId: state.tenantId,
@@ -507,60 +458,26 @@ export class MemoryConsolidationEngine {
       workspaceId: state.workspaceId,
       sessionId: state.sessionId,
       fromSessionSequence: from,
-      toSessionSequence: effectiveTo,
+      toSessionSequence: to,
       promptVersion: MEMORY_CONSOLIDATION_PROMPT_VERSION,
-      ...(config.model ? { modelRequested: config.model } : {}),
+      ...(sourceModelRef ? { modelRequested: sourceModelRef } : {}),
     });
-    // 幂等恢复：已终态的同范围 ledger 直接对齐游标，不再烧模型。
     if (record.status === 'applied' || record.status === 'noop') {
       await this.options.store.markApplied({
-        tenantId: state.tenantId, sessionId: state.sessionId, toSequence: effectiveTo,
-        debounceMinutes: config.debounceMinutes, now: new Date().toISOString(),
-      });
-      return;
-    }
-    // 崩溃恢复（2026-07-29 P1 修复）：prepared = proposal 已持久化、文件写入
-    // 状态未知。按当前文件 hash 三分：已是 postimage → 补账；仍是 base →
-    // 服务端直接重放 proposal（不烧模型）；两者都不是 → 文件被其他写入者
-    // 推进过，回 started 走正常模型路径（写前会重读基线）。
-    if (record.status === 'prepared' && record.plannedPostimageHash && record.baseMemoryHash) {
-      const recovered = await this.recoverPreparedRun(state, record, config, user);
-      if (recovered) return;
-    }
-
-    const digest = buildMemoryDigest({
-      sourceEvents: sliced,
-      anchorEvents: [],
-      fromSequence: from,
-      toSequence: effectiveTo,
-      maxInputTokens: config.maxInputTokens,
-    });
-
-    if (digest.evidenceIndex.size === 0) {
-      // 范围内没有可作证据的对话内容（如纯工具审计），按 noop 收口。
-      await this.options.store.updateRun({ idempotencyKey, status: 'noop', finished: true });
-      await this.options.store.markApplied({
-        tenantId: state.tenantId, sessionId: state.sessionId, toSequence: effectiveTo,
-        debounceMinutes: config.debounceMinutes, now: new Date().toISOString(),
+        tenantId: state.tenantId,
+        sessionId: state.sessionId,
+        toSequence: to,
+        debounceMinutes: config.debounceMinutes,
+        now: new Date().toISOString(),
       });
       return;
     }
 
-    await this.options.store.updateRun({ idempotencyKey, inputHash: digest.inputHash });
-
-    const executionContext: ConsolidationExecutionContext = {
-      tenantId: state.tenantId,
-      userId: state.userId,
-      username: user.username,
-      workspaceId: state.workspaceId,
-      sourceSessionId: state.sessionId,
-      fromSessionSequence: from,
-      toSessionSequence: effectiveTo,
-      idempotencyKey,
-      consolidationRunId: record.id,
-      evidenceIndex: digest.evidenceIndex,
-    };
-    executionContexts.set(registryKey, executionContext);
+    const tombstones = await this.options.store.listActiveTombstones(state.tenantId, state.userId);
+    const forgottenSubjects = tombstones.map((tombstone) => {
+      if (tombstone.scope === 'all_memory') return '全部既有记忆';
+      return tombstone.subjectText ?? tombstone.memoryKey;
+    }).filter((subject): subject is string => Boolean(subject?.trim()));
 
     const identity = {
       id: user.id,
@@ -576,149 +493,153 @@ export class MemoryConsolidationEngine {
     const inbound: InboundMessage = {
       channel: 'web',
       chatId: `${CONSOLIDATION_CHAT_PREFIX}${Date.now()}`,
-      content: buildConsolidationPrompt({ digestText: digest.text, maxCandidates: config.maxCandidates }),
+      content: buildConsolidationPrompt({
+        fromSessionSequence: from,
+        toSessionSequence: to,
+        forgottenSubjects,
+      }),
     };
     const effectiveCwd = resolveUserCwd(this.options.agentCwd, identity);
 
     let dispatchError: string | undefined;
-    const timeoutMs = config.timeoutSeconds * 1000;
+    let completed = false;
+    let hiddenSessionId: string | undefined;
     const abort = new AbortController();
-    const timeoutTimer = setTimeout(() => abort.abort('memory_consolidation_timeout'), timeoutMs);
+    const timeoutTimer = setTimeout(
+      () => abort.abort('memory_consolidation_timeout'),
+      config.timeoutSeconds * 1000,
+    );
     try {
-      for await (const event of this.options.dispatch(
-        inbound,
-        channelContext,
-        {
-          maxTurns: config.maxTurns,
-          cwd: effectiveCwd,
-          toolProfile: 'memory_consolidate',
-          approvalPolicy: { autoApproveTools: true },
-          executionTarget: 'server-remote',
-          skipPersona: true,
-          skipMemory: true,
-          // 2026-07-29 P2 修复：controller 必须传给 dispatch，超时才能真正
-          // 取消底层 run（否则 timer 只是没人监听的摆设，维护锁被长期占用）。
-          abortController: abort,
-          ...(config.model ? { model: config.model } : {}),
-          ...(config.reasoningEffort
-            ? { modelProviderOptions: { reasoningEffort: config.reasoningEffort } }
-            : {}),
-        } as never,
-      )) {
-        if (abort.signal.aborted) break;
+      for await (const event of this.options.dispatch(inbound, channelContext, {
+        maxTurns: config.maxTurns,
+        cwd: effectiveCwd,
+        approvalPolicy: { autoApproveTools: true },
+        skipMemory: true,
+        abortController: abort,
+        memoryConsolidationSourceSessionId: state.sessionId,
+      })) {
+        if (event.type === 'session_init' && event.sessionId) hiddenSessionId = event.sessionId;
         if (event.type === 'error') dispatchError = event.error || 'unknown error';
-        else if (event.type === 'done') dispatchError = undefined;
+        if (event.type === 'done') completed = true;
+        if (abort.signal.aborted) break;
       }
     } finally {
       clearTimeout(timeoutTimer);
     }
 
-    const commit = executionContext.commitResult;
-    if (abort.signal.aborted && !commit) {
-      await this.options.store.updateRun({
-        idempotencyKey, status: 'retryable_failed', incrementRetry: true,
-        errorCode: 'timeout', errorMessage: `L2 run timeout after ${config.timeoutSeconds}s`, finished: true,
-      });
-      await this.options.store.markFailed({
-        tenantId: state.tenantId, sessionId: state.sessionId, now: new Date().toISOString(),
-        backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES, maxRetries: config.maxRetries,
-      });
+    if (abort.signal.aborted) {
+      await this.failRun(state, config, idempotencyKey, 'timeout',
+        `L2 run timeout after ${config.timeoutSeconds}s`, hiddenSessionId);
       return;
     }
-    if (!commit) {
-      // 模型没有调用 MemoryCommit（或 run 失败）：可重试，游标不动。
-      await this.options.store.updateRun({
-        idempotencyKey, status: 'retryable_failed', incrementRetry: true,
-        errorCode: dispatchError ? 'dispatch_error' : 'no_commit',
-        errorMessage: dispatchError ?? 'L2 run finished without MemoryCommit call', finished: true,
-      });
-      await this.options.store.markFailed({
-        tenantId: state.tenantId, sessionId: state.sessionId, now: new Date().toISOString(),
-        backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES, maxRetries: config.maxRetries,
-      });
+    if (!completed || dispatchError) {
+      await this.failRun(
+        state,
+        config,
+        idempotencyKey,
+        dispatchError ? 'dispatch_error' : 'incomplete_run',
+        dispatchError ?? 'L2 hidden run finished without done event',
+        hiddenSessionId,
+      );
       return;
     }
 
-    // MemoryCommit 内已完成文件写入与 ledger 状态（applied/noop/rejected/tombstone_blocked）
-    if (commit.status === 'applied' || commit.status === 'noop') {
-      await this.options.store.markApplied({
-        tenantId: state.tenantId, sessionId: state.sessionId, toSequence: effectiveTo,
-        debounceMinutes: config.debounceMinutes, now: new Date().toISOString(),
-      });
-      log?.info(
-        `consolidation ${commit.status} session=${state.sessionId} range=(${from},${effectiveTo}]`
-        + `${rangeTruncated ? ` truncated(target=${to})` : ''} applied=${commit.appliedCount} rejected=${commit.rejectedCount}`,
-      );
-    } else {
-      // rejected/tombstone_blocked：范围内容被安全层整体拒绝——按处理完成推进
-      // 游标（重跑同一范围只会再次被拒），但保留 ledger 供审计。
-      await this.options.store.markApplied({
-        tenantId: state.tenantId, sessionId: state.sessionId, toSequence: effectiveTo,
-        debounceMinutes: config.debounceMinutes, now: new Date().toISOString(),
-      });
-      log?.warn(
-        `consolidation ${commit.status} session=${state.sessionId} range=(${from},${effectiveTo}] — all candidates rejected`,
-      );
-    }
+    const usage = hiddenSessionId
+      ? await this.readHiddenRunUsage(hiddenSessionId)
+      : { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, modelActual: undefined };
+    await this.options.store.updateRun({
+      idempotencyKey,
+      status: 'applied',
+      ...(usage.modelActual ? { modelActual: usage.modelActual } : {}),
+      usageJson: {
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        cacheReadTokens: usage.cacheReadTokens,
+        ...(hiddenSessionId ? { hiddenSessionId } : {}),
+      },
+      applied: true,
+      finished: true,
+    });
+    await this.options.store.markApplied({
+      tenantId: state.tenantId,
+      sessionId: state.sessionId,
+      toSequence: to,
+      debounceMinutes: config.debounceMinutes,
+      now: new Date().toISOString(),
+    });
+    this.options.logger?.info(
+      `consolidation applied session=${state.sessionId} range=(${from},${to}] `
+      + `hidden=${hiddenSessionId ?? 'unknown'} input=${usage.inputTokens} cached=${usage.cacheReadTokens}`,
+    );
   }
 
-  /**
-   * prepared 崩溃恢复（2026-07-29 P1 修复）。返回 true = 已恢复收口（调用方
-   * 直接返回）；false = 需要走正常模型路径（record 已回 started）。
-   */
-  private async recoverPreparedRun(
+  private async failRun(
     state: ConsolidationState,
-    record: { idempotencyKey: string; toSessionSequence: number; baseMemoryHash: string | null; plannedPostimageHash: string | null; proposalJson: unknown },
     config: MemoryConsolidationResolvedConfig,
-    user: { id: string; username: string; role: string; tenantId?: string },
-  ): Promise<boolean> {
-    const log = this.options.logger;
-    const identity = {
-      id: user.id,
-      username: user.username,
-      role: (user.role === 'admin' ? 'admin' : 'user') as 'admin' | 'user',
-      ...(user.tenantId ? { tenantId: user.tenantId } : {}),
-    };
-    const workspaceRoot = resolveUserCwd(this.options.agentCwd, identity);
-    const proposal = record.proposalJson as { date?: string; operations?: unknown[]; accepted?: MemoryCandidateOperation[] } | null;
-    const date = typeof proposal?.date === 'string' ? proposal.date : formatMemoryDate();
-    const lock = await this.options.store.acquireCommitLock(state.tenantId, state.userId);
-    if (!lock) return false;
-    try {
-      const currentHash = await readDailyFileHash(workspaceRoot, date);
-      if (currentHash === record.plannedPostimageHash) {
-        // 文件已写、DB 未标记 → 补账，不重复写
-        await this.options.store.updateRun({ idempotencyKey: record.idempotencyKey, status: 'applied', applied: true, finished: true });
-        await this.options.store.markApplied({
-          tenantId: state.tenantId, sessionId: state.sessionId, toSequence: record.toSessionSequence,
-          debounceMinutes: config.debounceMinutes, now: new Date().toISOString(),
-        });
-        log?.info(`consolidation prepared-recovery: postimage matched, backfilled applied session=${state.sessionId}`);
-        return true;
-      }
-      const accepted = Array.isArray(proposal?.accepted) ? proposal!.accepted! : [];
-      if (currentHash === record.baseMemoryHash && accepted.length > 0) {
-        // 文件未写 → 服务端直接重放已校验 proposal，不再烧模型
-        const result = await materializeDailyOperations({ workspaceRoot, operations: accepted, date });
-        await this.options.store.updateRun({
-          idempotencyKey: record.idempotencyKey, status: 'applied',
-          plannedPostimageHash: result.postimageHash, applied: true, finished: true,
-        });
-        await this.options.store.markApplied({
-          tenantId: state.tenantId, sessionId: state.sessionId, toSequence: record.toSessionSequence,
-          debounceMinutes: config.debounceMinutes, now: new Date().toISOString(),
-        });
-        log?.info(`consolidation prepared-recovery: replayed proposal session=${state.sessionId} ops=${accepted.length}`);
-        return true;
-      }
-      // 文件被其他写入者推进（或 proposal 不可重放）→ 回 started 走正常模型路径
-      await this.options.store.updateRun({ idempotencyKey: record.idempotencyKey, status: 'started' });
-      log?.warn(`consolidation prepared-recovery: CAS mismatch, rerunning model session=${state.sessionId}`);
-      return false;
-    } finally {
-      await lock.release();
-    }
+    idempotencyKey: string,
+    errorCode: string,
+    errorMessage: string,
+    hiddenSessionId?: string,
+  ): Promise<void> {
+    const usage = hiddenSessionId ? await this.readHiddenRunUsage(hiddenSessionId) : undefined;
+    await this.options.store.updateRun({
+      idempotencyKey,
+      status: 'retryable_failed',
+      ...(usage?.modelActual ? { modelActual: usage.modelActual } : {}),
+      ...(usage ? {
+        usageJson: {
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          cacheReadTokens: usage.cacheReadTokens,
+          hiddenSessionId,
+        },
+      } : {}),
+      incrementRetry: true,
+      errorCode,
+      errorMessage,
+      finished: true,
+    });
+    await this.options.store.markFailed({
+      tenantId: state.tenantId,
+      sessionId: state.sessionId,
+      now: new Date().toISOString(),
+      backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
+      maxRetries: config.maxRetries,
+    });
   }
+
+  private async readHiddenRunUsage(hiddenSessionId: string): Promise<{
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    modelActual?: string;
+  }> {
+    const rows = await this.options.eventStore.listSessionRange(hiddenSessionId, {
+      fromExclusive: 0,
+      toInclusive: Number.MAX_SAFE_INTEGER,
+      limit: 2_000,
+    }).catch(() => []);
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let cacheReadTokens = 0;
+    let modelActual: string | undefined;
+    for (const { event } of rows) {
+      if (event.type !== 'assistant_message' && event.type !== 'assistant_tool_calls') continue;
+      const usage = event.usage;
+      if (usage && typeof usage === 'object' && !Array.isArray(usage)) {
+        const values = usage as Record<string, unknown>;
+        inputTokens += numberOrZero(values.inputTokens);
+        outputTokens += numberOrZero(values.outputTokens);
+        cacheReadTokens += numberOrZero(values.cacheReadTokens);
+      }
+      if (typeof event.model === 'string') modelActual = event.model;
+    }
+    return { inputTokens, outputTokens, cacheReadTokens, ...(modelActual ? { modelActual } : {}) };
+  }
+}
+
+function numberOrZero(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 function message(err: unknown): string {

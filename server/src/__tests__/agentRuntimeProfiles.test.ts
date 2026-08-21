@@ -173,7 +173,7 @@ describe('Agent Runtime Profile schema and runtime intersection', () => {
     }
   });
 
-  it('keeps MemoryCommit after composing memory_consolidate tool and Agent profiles', () => {
+  it('keeps direct Markdown tools in the legacy memory_consolidate profile', () => {
     expect(resolveAgentProfileBindingKey({ toolProfile: 'memory_consolidate' })).toBe('memory_consolidate');
     const consolidate = getBuiltinProfileByBinding('memory_consolidate');
     const narrowedConfig = structuredClone(consolidate.version.config);
@@ -192,12 +192,12 @@ describe('Agent Runtime Profile schema and runtime intersection', () => {
       },
     };
     const inner = new StaticToolRuntime([
-      'MemorySearch', 'MemoryList', 'MemoryCommit', 'WaitForWorkspaceReady', 'Shell',
+      'Read', 'Write', 'Edit', 'MemorySearch', 'WaitForWorkspaceReady', 'Shell',
     ].map((name) => toolDescriptor(name)));
     const runtime = applyAgentRuntimeProfile(applyToolProfile(inner, 'memory_consolidate'), bound);
 
     expect(runtime.list().map((tool) => tool.name)).toEqual([
-      'MemorySearch', 'MemoryList', 'MemoryCommit', 'WaitForWorkspaceReady',
+      'Read', 'Write', 'Edit', 'MemorySearch', 'WaitForWorkspaceReady',
     ]);
   });
 

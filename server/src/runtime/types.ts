@@ -75,6 +75,12 @@ export interface RunContext {
   profileId?: string;
   profileVersionId?: string;
   profileConfigDigest?: string;
+  /** 隐藏记忆审查：从父会话读取 Context Projection，当前 Run 仍写自身会话。 */
+  replaySourceSessionId?: string;
+  /** 隐藏记忆审查始终完整重放，不读取或持久化 previous_response_id 接力状态。 */
+  disableResponseRelay?: boolean;
+  /** 工具执行层的内部记忆维护标记；不改变模型可见工具定义。 */
+  memoryMaintenanceMode?: 'consolidation';
   hooks?: AgentRunHooks;
   signal?: AbortSignal;
   /** 蓝绿排水协作信号；只在模型轮/工具批次已完整闭合后读取。 */

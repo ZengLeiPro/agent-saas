@@ -48,16 +48,16 @@ const desktopStatuses: TaskBoardStatus[] = [
   "done",
 ];
 const columnClassName = "flex h-full w-72 shrink-0 flex-col rounded-xl border bg-muted/30";
-const collapsedDoneClassName = "flex h-full w-10 shrink-0 flex-col rounded-xl border bg-muted/30";
+const collapsedTerminalClassName = "flex h-full w-10 shrink-0 flex-col rounded-xl border bg-muted/30";
 const summaryMarkerClassName = "list-none [&::-webkit-details-marker]:hidden";
 
-function doneCollapsedStorageKey(boardId: string): string {
-  return `taskboard:${boardId}:done-collapsed`;
+function terminalCollapsedStorageKey(boardId: string, status: "done" | "canceled"): string {
+  return `taskboard:${boardId}:${status}-collapsed`;
 }
 
-function readDoneCollapsed(boardId: string): boolean {
+function readTerminalCollapsed(boardId: string, status: "done" | "canceled"): boolean {
   if (typeof window === "undefined") return true;
-  return window.localStorage.getItem(doneCollapsedStorageKey(boardId)) !== "false";
+  return window.localStorage.getItem(terminalCollapsedStorageKey(boardId, status)) !== "false";
 }
 
 export function TaskColumns({
@@ -78,11 +78,13 @@ export function TaskColumns({
   onDeliverySelectedChange,
   onDrop,
 }: TaskColumnsProps) {
-  const [doneCollapsed, setDoneCollapsed] = useState(() => readDoneCollapsed(boardId));
+  const [doneCollapsed, setDoneCollapsed] = useState(() => readTerminalCollapsed(boardId, "done"));
+  const [canceledCollapsed, setCanceledCollapsed] = useState(() => readTerminalCollapsed(boardId, "canceled"));
   const mobileTasks = sortTaskBoardTasks(tasks, mobileStatus);
 
   useEffect(() => {
-    setDoneCollapsed(readDoneCollapsed(boardId));
+    setDoneCollapsed(readTerminalCollapsed(boardId, "done"));
+    setCanceledCollapsed(readTerminalCollapsed(boardId, "canceled"));
   }, [boardId]);
   const dragEnabled = !readOnly && (canReorderTask || canTransitionTask);
   const canDragFromStatus = (status: TaskBoardStatus) => (
@@ -178,29 +180,32 @@ export function TaskColumns({
         {desktopStatuses.map((status) => {
           const columnTasks = sortTaskBoardTasks(tasks, status);
 
-          if (status === "done") {
+          if (status === "done" || status === "canceled") {
+            const collapsed = status === "done" ? doneCollapsed : canceledCollapsed;
+            const setCollapsed = status === "done" ? setDoneCollapsed : setCanceledCollapsed;
+
             return (
               <details
                 key={status}
                 data-status={status}
-                data-testid="taskboard-done-column"
+                data-testid={`taskboard-${status}-column`}
                 role="region"
                 aria-label={`${STATUS_LABELS[status]}列`}
-                open={!doneCollapsed}
+                open={!collapsed}
                 onToggle={(event) => {
-                  const collapsed = !event.currentTarget.open;
-                  setDoneCollapsed(collapsed);
-                  window.localStorage.setItem(doneCollapsedStorageKey(boardId), String(collapsed));
+                  const nextCollapsed = !event.currentTarget.open;
+                  setCollapsed(nextCollapsed);
+                  window.localStorage.setItem(terminalCollapsedStorageKey(boardId, status), String(nextCollapsed));
                 }}
-                className={doneCollapsed ? collapsedDoneClassName : columnClassName}
+                className={collapsed ? collapsedTerminalClassName : columnClassName}
               >
                 <summary
-                  className={`${summaryMarkerClassName} ${doneCollapsed
+                  className={`${summaryMarkerClassName} ${collapsed
                     ? "flex h-full min-h-56 cursor-pointer flex-col items-center gap-2 rounded-xl py-2 text-xs font-medium outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                     : "flex shrink-0 cursor-pointer items-center justify-between border-b px-3 py-2.5 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"}`}
-                  title={doneCollapsed ? "展开已完成列" : "折叠已完成列"}
+                  title={collapsed ? `展开${STATUS_LABELS[status]}列` : `折叠${STATUS_LABELS[status]}列`}
                 >
-                  {doneCollapsed ? (
+                  {collapsed ? (
                     <>
                       <ChevronRight className="size-3.5 shrink-0" />
                       <span className="[writing-mode:vertical-rl]">{STATUS_LABELS[status]}</span>

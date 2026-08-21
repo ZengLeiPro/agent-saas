@@ -24,7 +24,7 @@ import {
   computeIntegrationReviewReceiptDigest,
   computeIntegrationSourceSetDigest,
 } from './integrationCandidateDigest.js';
-import { resolveWorkflowContract } from './workflowContract.js';
+import { resolveExecutionContextWorkflowContract } from './executionContextContract.js';
 import {
   commentExecutionJoin,
   rowToComment,
@@ -579,7 +579,9 @@ export async function getExecutionContextV2(
       throw new TaskboardNotFoundError('Execution does not belong to this task');
     }
     const latestExecution = latestExecutionResult.rows[0] ? rowToExecution(latestExecutionResult.rows[0]) : undefined;
-    const contract = resolveWorkflowContract(loaded.task, latestExecution?.purpose);
+    const contract = await resolveExecutionContextWorkflowContract(
+      options, client, loaded.task, latestExecution?.purpose,
+    );
     const asOfResult = await client.query(
       `SELECT COALESCE(MAX(seq),0)::text AS seq FROM ${options.changesTable} WHERE task_id=$1`,
       [taskId],

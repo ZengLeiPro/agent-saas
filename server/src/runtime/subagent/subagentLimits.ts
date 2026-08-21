@@ -4,7 +4,7 @@
  * 三层闸门（依据见方案 D6 表格）：
  *   - Runtime Worker 进程并发 30：跨用户、会话和 run 的共享背压，满额时排队而非拒绝。
  *   - 单 run 并发 6：防单个任务独占 Worker；drainToolCalls 的并行窗靠这个信号量排队。
- *   - 硬超时 60min + maxTurns 200：给复杂调研/执行任务充分空间；上下文阈值与
+ *   - 硬超时 120min + maxTurns 500：给复杂调研/执行任务充分空间；上下文阈值与
  *     工具失败熔断由 RawAgentLoop 独立治理，超时 = terminate + status:timeout。
  *
  * 不限制单 run 累计派生次数：累计次数与瞬时资源压力无关，长任务可以分批派生。
@@ -15,8 +15,8 @@
 
 export const SUBAGENT_GLOBAL_MAX_CONCURRENCY = 30;
 export const SUBAGENT_PER_RUN_MAX_CONCURRENCY = 6;
-export const SUBAGENT_HARD_TIMEOUT_MS = 60 * 60 * 1000;
-export const SUBAGENT_MAX_TURNS = 200;
+export const SUBAGENT_HARD_TIMEOUT_MS = 120 * 60 * 1000;
+export const SUBAGENT_MAX_TURNS = 500;
 
 /** 结果截断保险丝（D5）：静态上限 24k chars，75% head + 25% tail 按行截断。 */
 export const SUBAGENT_RESULT_MAX_CHARS = 24_000;

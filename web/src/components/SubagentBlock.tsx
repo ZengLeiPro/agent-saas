@@ -36,6 +36,7 @@ export function SubagentBlock(props: SubagentBlockProps) {
   const meta = [
     props.model,
     typeof props.durationMs === 'number' ? formatActivityDuration(props.durationMs) : undefined,
+    typeof props.turnCount === 'number' ? `${props.turnCount} 轮` : undefined,
     typeof props.totalTokens === 'number' ? `${formatTokenCount(props.totalTokens)} tokens` : undefined,
   ].filter(Boolean).join(' · ');
 
@@ -43,7 +44,6 @@ export function SubagentBlock(props: SubagentBlockProps) {
     <AgentActivityShell
       state={activityState(props.status)}
       title={`子任务 ${props.agentType}`}
-      subtitle={props.resultPreview || props.errorMessage}
       meta={meta || undefined}
       expanded={expanded}
       onToggle={() => setExpanded((value) => !value)}
@@ -62,7 +62,7 @@ export function SubagentBlock(props: SubagentBlockProps) {
         <div className="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
           {props.model && <span>模型 {props.model}</span>}
           {typeof props.durationMs === 'number' && <span>耗时 {formatActivityDuration(props.durationMs)}</span>}
-          {typeof props.turnCount === 'number' && <span>{props.turnCount} turns</span>}
+          {typeof props.turnCount === 'number' && <span>{props.turnCount} 轮</span>}
           {typeof props.toolUseCount === 'number' && <span>{props.toolUseCount} 次工具</span>}
           {typeof props.totalTokens === 'number' && <span>{formatTokenCount(props.totalTokens)} tokens</span>}
         </div>

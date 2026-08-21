@@ -66,7 +66,7 @@ const CRON_MANAGE_ACTIONS = ['delete', 'run', ...TASKBOARD_MANAGE_ACTIONS] as co
 const dateTimeSchema = z.string().datetime({ offset: true });
 const cronManageSchema = z.object({
   target: z.enum(['cron', 'taskboard']).optional().describe('操作对象。默认 cron；taskboard 由服务端按当前用户与租户鉴权。'),
-  action: z.enum(CRON_MANAGE_ACTIONS).describe('cron 支持 list/create/update/delete/run；taskboard 支持 board/task/comment/execution 资源 action，并兼容旧 Execution action。'),
+  action: z.enum(CRON_MANAGE_ACTIONS).describe('cron 支持 list/create/update/delete/run；taskboard 支持 board/task/comment/execution 资源 action。Integration Work commit 后须调用 execution.integration_candidate.push，且不得自行 git push。'),
   id: z.string().optional().describe('cron job、旧 taskboard 任务或评论 id。'),
   boardId: z.string().optional().describe('taskboard 看板 id。'),
   taskId: z.string().optional().describe('taskboard 任务 id。'),
@@ -137,7 +137,9 @@ const cronManageSchema = z.object({
   }).strict().optional(),
   deliveryTaskIds: z.array(z.string().min(1).max(128)).min(1).max(100).optional(),
   expectedBoardVersion: z.number().int().min(1).optional(),
-});
+  commitOid: z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/).optional()
+    .describe('仅 execution.integration_candidate.push 使用：Work Agent 刚创建的完整 commit OID。'),
+}).strict();
 
 export const cronManageToolDescriptor: ToolDescriptor<CronManageInput> = {
   id: 'CronManage',
@@ -165,6 +167,7 @@ export const cronManageToolDescriptor: ToolDescriptor<CronManageInput> = {
       && action !== 'task.dispatch'
       && action !== 'comment.delete'
       && action !== 'integration.create'
+      && action !== 'execution.integration_candidate.push'
       && dispatch !== true
     ) return { risk: 'workspace_write' };
     return undefined;
@@ -224,13 +227,15 @@ function recordTaskboardAudit(
         ? 'execution'
         : 'task';
   const resultResource = result?.[objectType] as { id?: unknown } | undefined;
-  const objectId = typeof resultResource?.id === 'string'
-    ? resultResource.id
-    : objectType === 'board'
-      ? input.boardId
-      : objectType === 'comment'
-        ? input.id ?? input.taskId
-        : input.taskId ?? input.id ?? input.boardId;
+  const objectId = action === 'execution.integration_candidate.push' && typeof result?.candidateId === 'string'
+    ? result.candidateId
+    : typeof resultResource?.id === 'string'
+      ? resultResource.id
+      : objectType === 'board'
+        ? input.boardId
+        : objectType === 'comment'
+          ? input.id ?? input.taskId
+          : input.taskId ?? input.id ?? input.boardId;
   const partialFailure = result?.created === true && result.dispatched === false;
   const dispatchError = partialFailure
     ? (result?.dispatchError as { message?: unknown } | undefined)?.message
@@ -338,14 +343,22 @@ export class CronToolProvider implements ToolProvider {
             ? await executionStore!.getExecutionContextBySessionId(executionLocator.id)
             : null;
         if (taskboardExecution && !execution) throw new Error('任务看板执行上下文不存在');
-        const result = await invokeTaskboardAction(this.options.taskboard, {
+        const taskboardIdentity = {
           tenantId,
           ownerUserId: identity.id,
           username: identity.username,
           ...(identity.realName ? { displayName: `${identity.realName} @${identity.username}` } : {}),
           ...(identity.role ? { userRole: identity.role } : {}),
-        }, input, {
+        };
+        const trustedWorkspace = input.action === 'execution.integration_candidate.push'
+          ? await this.options.taskboard.resolveTrustedWorkspace?.(taskboardIdentity, {
+              ...(context.workspace.id ? { id: context.workspace.id } : {}),
+              executionTarget: context.workspace.executionTarget,
+            })
+          : undefined;
+        const result = await invokeTaskboardAction(this.options.taskboard, taskboardIdentity, input, {
           ...(execution ? { execution } : {}),
+          ...(trustedWorkspace ? { trustedWorkspace } : {}),
           ...(context.sessionId ? { sessionId: context.sessionId } : {}),
         });
         recordTaskboardAudit(context, identity, input, taskboardExecution, result);

@@ -58,6 +58,12 @@ export async function resumeBlockedTask(
           RETURNING epoch`, [locked.rows[0].repository_id, taskId]);
       if (!lane.rows[0]) throw new TaskboardValidationError(
         'Repository lane is owned by another integration', 'TASKBOARD_INTEGRATION_ACTIVE');
+      const episode = await client.query(
+        `SELECT purpose FROM ${options.blockEpisodesTable}
+          WHERE task_id=$1 AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1`,
+        [taskId],
+      );
+      const resumeState = episode.rows[0]?.purpose === 'review' ? 'in_review' : 'needs_work';
       const candidate = await client.query(
         `UPDATE ${candidatesTable}
             SET workflow_epoch=workflow_epoch+1,lane_epoch=$2::bigint,
@@ -88,7 +94,15 @@ export async function resumeBlockedTask(
         [randomUUID(), `v3:resume:${String(candidate.rows[0].id)}:${String(candidate.rows[0].workflow_epoch)}`,
           candidate.rows[0].id, candidate.rows[0].current_revision, candidate.rows[0].work_round,
           candidate.rows[0].workflow_epoch, candidate.rows[0].lane_epoch,
-          JSON.stringify({ candidateId: candidate.rows[0].id, revision: Number(candidate.rows[0].current_revision), decision, reason: 'resume_reconcile' })],
+          JSON.stringify({
+            candidateId: candidate.rows[0].id,
+            revision: Number(candidate.rows[0].current_revision),
+            workflowEpoch: String(candidate.rows[0].workflow_epoch),
+            laneEpoch: String(candidate.rows[0].lane_epoch),
+            resumeState,
+            decision,
+            reason: 'resume_reconcile',
+          })],
       );
       await appendChange(options, client, taskId, 'integration.candidate_reconcile_requested',
         'user', identity.ownerUserId, {

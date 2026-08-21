@@ -133,7 +133,8 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
             AND COALESCE((c.policy_snapshot->'featureFlags'->>'engineV3')::boolean,false)
             AND c.worker_status<>'failed' AND c.worker_available_at<=now()
             AND (c.worker_status='idle' OR c.worker_lease_expires_at<now())
-            AND (c.state NOT IN ('merged','canceled') OR c.worker_checkpoint->>'status' IS DISTINCT FROM 'requested')
+            AND (c.state IN ('preparing','composing','waiting_checks','needs_work','working','in_review','approved','merging')
+              OR (c.state IN ('merged','canceled') AND c.worker_checkpoint->>'status' IS DISTINCT FROM 'requested'))
           ORDER BY c.updated_at,c.id FOR UPDATE OF c SKIP LOCKED LIMIT 1
        )
        UPDATE ${this.options.candidatesTable} c
@@ -258,7 +259,31 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
     );
     if (!bound.rows[0]) throw new Error('Candidate execution request lease changed before binding');
   }
-  syncWorkspace(request: IntegrationV3RequestLease) { return this.options.syncWorkspace(request); }
+  async syncWorkspace(request: IntegrationV3RequestLease): Promise<void> {
+    await this.options.syncWorkspace(request);
+    if (request.payload.reason !== 'resume_reconcile') return;
+    const resumeState = request.payload.resumeState;
+    if (resumeState !== 'needs_work' && resumeState !== 'in_review') {
+      throw new Error('Workspace resume state is invalid');
+    }
+    const result = await this.options.pool.query(
+      `WITH resumed AS (
+         UPDATE ${this.options.candidatesTable}
+            SET state=$3,last_error=NULL,version=version+1,updated_at=now()
+          WHERE id=$1 AND current_revision=$2
+            AND workflow_epoch=$4::bigint AND lane_epoch=$5::bigint
+            AND state IN ('blocked','needs_human')
+          RETURNING integration_task_id
+       )
+       UPDATE ${this.options.tasksTable} t
+          SET status=CASE WHEN $3='in_review' THEN 'in_review' ELSE 'in_progress' END,
+              version=version+1,updated_at=now()
+         FROM resumed WHERE t.id=resumed.integration_task_id RETURNING t.id`,
+      [request.candidateId, request.candidateRevision, resumeState,
+        String(request.payload.workflowEpoch ?? ''), String(request.payload.laneEpoch ?? '')],
+    );
+    if (!result.rows[0]) throw new Error('Workspace resume fence is stale');
+  }
   cleanup(request: IntegrationV3RequestLease) { return this.options.cleanup(request); }
 
   async completeRequest(request: IntegrationV3RequestLease, receipt?: IntegrationV3CleanupReceipt): Promise<void> {
@@ -314,15 +339,27 @@ export interface PostgresIntegrationV3ComposeHostOptions {
   executionsTable: string;
   resolutionsTable: string;
   requestsOutboxTable: string;
-  resolvePaths(repository: TaskBoardRepositoryConfig, candidateId: string): Promise<{ repositoryPath: string; worktreePath: string } | undefined>;
+  resolvePaths(
+    repository: TaskBoardRepositoryConfig,
+    candidateId: string,
+    identity: { tenantId: string; ownerUserId: string },
+  ): Promise<{ repositoryPath: string; worktreePath: string } | undefined>;
   runGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult>;
   validateServerOwnedRepository(repositoryPath: string): Promise<void>;
+  withRepositoryFetchCredential?: IntegrationV3ComposeHost['withRepositoryFetchCredential'];
   pushIntegrationHead?: IntegrationV3ComposeHost['pushIntegrationHead'];
 }
 
 export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHost {
   readonly pushIntegrationHead;
   constructor(private readonly options: PostgresIntegrationV3ComposeHostOptions) { this.pushIntegrationHead = options.pushIntegrationHead; }
+
+  withRepositoryFetchCredential<T>(
+    context: IntegrationV3ComposeContext,
+    action: (env: Readonly<Record<string, string>>) => Promise<T>,
+  ): Promise<T> {
+    return this.options.withRepositoryFetchCredential?.(context, action) ?? action({});
+  }
 
   async resolveContext(current: Required<IntegrationV3WorkerCurrent>): Promise<IntegrationV3ComposeContext> {
     const result = await this.options.pool.query(
@@ -348,7 +385,9 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
     const row = result.rows[0];
     const repository = record(row?.repository) as unknown as TaskBoardRepositoryConfig;
     if (!row || repository.provider !== 'github' || repository.repositoryId !== current.candidate.repositoryId) throw new Error('Repository provider is unsupported or unknown');
-    const paths = await this.options.resolvePaths(repository, current.candidate.id);
+    const paths = await this.options.resolvePaths(repository, current.candidate.id, {
+      tenantId: String(row.tenant_id), ownerUserId: String(row.owner_user_id),
+    });
     if (!paths) throw new Error('Local repository workspace is unavailable');
     const snapshots = await this.options.pool.query(
       `SELECT * FROM ${this.options.sourceSnapshotsTable} WHERE candidate_id=$1 AND revision=$2 ORDER BY source_order`,

@@ -3,12 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { PostgresIntegrationEngineV3CandidateHost, PostgresIntegrationEngineV3FeatureHost, PostgresIntegrationEngineV3RequestHost, PostgresIntegrationProviderFenceHost } from './integrationEngineV3Postgres.js';
 import { PostgresIntegrationV3ComposeHost, PostgresIntegrationV3WorkerHost } from './integrationV3WorkerPostgres.js';
 
-function workerHost(query: ReturnType<typeof vi.fn>, dispatchAgent = vi.fn()) {
+function workerHost(query: ReturnType<typeof vi.fn>, dispatchAgent = vi.fn(), syncWorkspace = vi.fn()) {
   return new PostgresIntegrationV3WorkerHost({
     pool: { query, connect: vi.fn() },
     candidatesTable: 'candidates', revisionsTable: 'revisions', sourceSnapshotsTable: 'snapshots',
     providerOperationsTable: 'operations', requestsOutboxTable: 'requests', tasksTable: 'tasks',
-    boardsTable: 'boards', executionsTable: 'executions', dispatchAgent, syncWorkspace: vi.fn(), cleanup: vi.fn(),
+    boardsTable: 'boards', executionsTable: 'executions', dispatchAgent, syncWorkspace, cleanup: vi.fn(),
   } as never);
 }
 
@@ -28,8 +28,26 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(sql).toContain("current_setting('agent_saas.integration_v3_enabled'");
     expect(sql).toContain("c.policy_snapshot->>'workflowVersion'");
     expect(sql).toContain("c.policy_snapshot->'featureFlags'->>'engineV3'");
+    expect(sql).toContain("c.state IN ('preparing','composing','waiting_checks','needs_work','working','in_review','approved','merging')");
+    expect(sql).toContain("c.state IN ('merged','canceled')");
+    expect(sql).not.toContain("'blocked','needs_human'");
     expect(sql).not.toContain('integration_policy');
     expect(sql).not.toContain('JOIN boards');
+  });
+
+  it('resumes a fenced blocked candidate only after workspace sync succeeds', async () => {
+    const query = vi.fn(async () => ({ rows: [{ id: 'task-1' }] }));
+    const syncWorkspace = vi.fn(async () => undefined);
+    const host = workerHost(query, vi.fn(), syncWorkspace);
+    await host.syncWorkspace({
+      id: 'request-1', leaseId: 'lease-1', kind: 'workspace_sync',
+      candidateId: 'candidate-1', candidateRevision: 2,
+      payload: { reason: 'resume_reconcile', resumeState: 'needs_work', workflowEpoch: '3', laneEpoch: '4' },
+    });
+    expect(syncWorkspace).toHaveBeenCalledOnce();
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("state IN ('blocked','needs_human')"), [
+      'candidate-1', 2, 'needs_work', '3', '4',
+    ]);
   });
 
   it('uses two PostgreSQL-safe advisory lock keys without embedding a NUL separator', async () => {

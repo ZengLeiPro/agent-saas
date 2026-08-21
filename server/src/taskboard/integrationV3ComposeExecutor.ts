@@ -18,12 +18,17 @@ export interface IntegrationV3ComposeContext {
 
 export interface IntegrationV3ComposeHost extends RepositoryWorkspaceSyncHost {
   resolveContext(current: Required<IntegrationV3WorkerCurrent>): Promise<IntegrationV3ComposeContext>;
+  withRepositoryFetchCredential?<T>(
+    context: IntegrationV3ComposeContext,
+    action: (env: Readonly<Record<string, string>>) => Promise<T>,
+  ): Promise<T>;
   /** Exact server-owned push. Must CAS the trusted integration ref; undefined means disabled fail-closed. */
   pushIntegrationHead?(input: {
     context: IntegrationV3ComposeContext;
     branch: string;
     expectedOldOid: string;
     headOid: string;
+    headParentOid: string;
     candidateId: string;
     revision: number;
     integrationTaskId: string;
@@ -51,13 +56,19 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
       if (status.stdout.length > 0) throw new Error('Integration worktree is dirty before recomposition');
       await git(this.host, context.worktreePath, ['reset', '--hard', current.revision.baseOid]);
     }
-    const sync = await syncRepositoryWorkspace(this.host, {
+    const syncInput = {
       repositoryPath: context.repositoryPath,
       worktreePath: context.worktreePath,
       baseBranch: current.candidate.baseBranch,
       integrationBranch: current.candidate.branch,
       controlledRemoteUrl: canonicalGithubRepositoryUrl(context.repository),
-    });
+      integrationWorktreeMode: 'reset_to_base' as const,
+    };
+    const sync = this.host.withRepositoryFetchCredential
+      ? await this.host.withRepositoryFetchCredential(context, (fetchEnvironment) => (
+        syncRepositoryWorkspace(this.host, { ...syncInput, fetchEnvironment })
+      ))
+      : await syncRepositoryWorkspace(this.host, syncInput);
     await git(this.host, context.worktreePath, ['reset', '--hard', sync.baseOid]);
     const ordered = [...context.sources].sort((a, b) => a.order - b.order);
     for (const source of ordered) {
@@ -100,6 +111,7 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
       }, context.credentialOwnerId);
     await this.host.pushIntegrationHead({
       context, branch: current.candidate.branch, expectedOldOid: branchReceipt.oid, headOid,
+      headParentOid: sync.baseOid,
       candidateId: current.candidate.id, revision: current.candidate.currentRevision,
       integrationTaskId: current.candidate.integrationTaskId,
       laneEpoch: Number(current.candidate.laneEpoch), workflowEpoch: Number(current.candidate.workflowEpoch),

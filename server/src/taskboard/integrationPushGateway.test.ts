@@ -228,6 +228,23 @@ describe('IntegrationPushGateway', () => {
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 
+  it('allows server compose to re-parent a single commit onto an advanced authoritative base', async () => {
+    const f = await fixture();
+    const advancedBase = 'c'.repeat(40);
+    f.git.parentLine = `${B} ${advancedBase}`;
+    try {
+      await expect(f.gateway.pushExact({
+        tenantId: binding.tenantId, ownerUserId: 'owner-1', repositoryId: binding.repositoryId,
+        integrationTaskId: binding.integrationTaskId, candidateId: binding.candidateId,
+        revision: binding.revision, exactRef: binding.exactRef, expectedOldOid: A, newOid: B,
+        rebaseParentOid: advancedBase,
+        fence: { workflowEpoch: binding.workflowEpoch, laneEpoch: binding.laneEpoch,
+          candidateId: binding.candidateId, candidateRevision: binding.revision, executionId: 'compose-rebase' },
+      })).resolves.toBeUndefined();
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(1);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
   it('verifies a succeeded ledger receipt and exact remote head on post-bind replay without constructing a new intent', async () => {
     const f = await fixture();
     const first = {

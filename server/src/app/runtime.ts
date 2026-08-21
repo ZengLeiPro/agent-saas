@@ -1454,10 +1454,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         // 企业 Agent 使用 service identity，不创建影子成员；直接读取租户或平台授权源。
         const tenantId = contextTenantId;
         if (tenantId) {
-          const tenantDir = resolveAgentPath(
-            resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, tenantId),
-            skill,
-          );
+          const tenantDir = resolveAgentPath(resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, tenantId), skill);
           if (existsSync(tenantDir)) return tenantDir;
         }
         const sharedPoolDir = resolveAgentPath(poolDir, skill);

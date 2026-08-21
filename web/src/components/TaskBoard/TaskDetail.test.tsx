@@ -2,7 +2,7 @@ import type { ComponentProps } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { TaskBoardComment, TaskBoardExecution, TaskBoardTask } from "@agent/shared";
+import type { ModelList, TaskBoardComment, TaskBoardExecution, TaskBoardTask } from "@agent/shared";
 import { TaskBoardConflictError } from "./api";
 import { TaskDetail } from "./TaskDetail";
 
@@ -71,6 +71,15 @@ function task(id: string, title: string, version = 3): TaskBoardTask {
 const taskOne = task("task-1", "任务一");
 const taskTwo = task("task-2", "任务二");
 const commentDefaults = { taskId: taskOne.id, version: 1, createdAt: "2026-08-19T01:00:00.000Z", updatedAt: "2026-08-19T01:00:00.000Z" };
+const modelList: ModelList = {
+  groups: [{ id: "group-a", name: "模型组", models: [{ id: "model-c", name: "模型 C" }] }],
+  default: "group-a/model-c",
+  allowCrossGroupSwitch: true,
+  showGroupNames: true,
+  showContextTokens: true,
+  allowContextTokenDetails: false,
+};
+
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((resolvePromise) => {
@@ -149,7 +158,7 @@ describe("TaskDetail 草稿隔离", () => {
     ];
     const { container } = render(<TaskDetail {...props()} />);
 
-    expect(await screen.findAllByText("实施阶段")).toHaveLength(1);
+    expect(await screen.findAllByText("实施阶段")).toHaveLength(2);
     expect(screen.getAllByRole("link", { name: "打开会话" })).toHaveLength(2);
     expect(screen.getAllByRole("link", { name: "打开会话" })[0]?.getAttribute("href")).toBe("/chat/session-work");
     expect(screen.queryByText("支持 Markdown 格式")).toBeNull();
@@ -270,12 +279,26 @@ describe("TaskDetail 草稿隔离", () => {
     expect(onUpdate.mock.calls[1]?.[1]).toEqual({ title: saved.title });
   });
 
-  it("任务详情编辑表单不显示任务级阶段模型配置", async () => {
-    render(<TaskDetail {...props()} />);
+  it("任务详情可按实施与复核阶段指定模型并保存任务级覆盖，但不提供集成阶段选择", async () => {
+    const user = userEvent.setup();
+    const onUpdate = vi.fn(async (current: TaskBoardTask) => ({
+      ...current,
+      stageModels: { work: "group-a/model-c", review: "group-a/model-c" },
+      version: current.version + 1,
+    }));
+    render(<TaskDetail {...props({ onUpdate })} modelList={modelList} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
-    expect(screen.queryByRole("region", { name: "分阶段运行模型" })).toBeNull();
-    expect(screen.queryByRole("combobox", { name: "实施阶段运行模型" })).toBeNull();
+    for (const purpose of ["实施阶段", "复核阶段"]) {
+      await user.click(screen.getByRole("combobox", { name: `${purpose}运行模型` }));
+      await user.click(screen.getByRole("option", { name: "模型 C" }));
+    }
+    expect(screen.queryByRole("combobox", { name: "集成阶段运行模型" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "保存任务" }));
+
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledWith(taskOne, {
+      stageModels: { work: "group-a/model-c", review: "group-a/model-c" },
+    }));
   });
 
   it("任务详情不再展示工作分支表单", async () => {

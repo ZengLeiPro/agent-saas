@@ -1,39 +1,61 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { TaskBoardTaskCreateInput } from "@agent/shared";
+import type { ModelList, TaskBoardTaskCreateInput } from "@agent/shared";
 import { TaskDialog } from "./TaskDialog";
 
 const mocks = vi.hoisted(() => ({ authFetch: vi.fn() }));
 vi.mock("@/lib/authFetch", () => ({ authFetch: mocks.authFetch }));
+
+const modelList: ModelList = {
+  groups: [{ id: "group-a", name: "模型组", models: [{ id: "model-b", name: "模型 B" }] }],
+  default: "group-a/model-b",
+  allowCrossGroupSwitch: true,
+  showGroupNames: true,
+  showContextTokens: true,
+  allowContextTokenDetails: false,
+};
 
 describe("TaskDialog 交互", () => {
   beforeEach(() => {
     mocks.authFetch.mockReset();
   });
 
-  it("新建任务表单不显示任务级阶段模型配置", async () => {
+  it("下拉选项浮在弹窗之上，连续选择状态、优先级与实施/复核模型后可提交", async () => {
     const user = userEvent.setup();
-    const onCreate = vi.fn(async (_input: TaskBoardTaskCreateInput) => undefined);
-    render(<TaskDialog open onOpenChange={vi.fn()} onCreate={onCreate} />);
+    const onCreate = vi.fn(async () => undefined);
+    render(
+      <TaskDialog
+        open
+        modelList={modelList}
+        onOpenChange={vi.fn()}
+        onCreate={onCreate}
+      />,
+    );
 
     await user.type(screen.getByRole("textbox", { name: "标题" }), "修复任务看板交互");
     expect(screen.queryByRole("textbox", { name: "工作分支" })).toBeNull();
-    expect(screen.queryByRole("region", { name: "分阶段运行模型" })).toBeNull();
-    expect(screen.queryByRole("combobox", { name: "实施阶段运行模型" })).toBeNull();
     await user.click(screen.getByRole("combobox", { name: "新任务状态" }));
     expect(screen.getByRole("listbox").className).toContain("z-[110]");
     await user.click(screen.getByRole("option", { name: "待实施" }));
     await user.click(screen.getByRole("combobox", { name: "新任务优先级" }));
     await user.click(screen.getByRole("option", { name: "紧急" }));
+    for (const purpose of ["实施阶段", "复核阶段"]) {
+      await user.click(screen.getByRole("combobox", { name: `${purpose}运行模型` }));
+      await user.click(screen.getByRole("option", { name: "模型 B" }));
+    }
+    expect(screen.queryByRole("combobox", { name: "集成阶段运行模型" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
       title: "修复任务看板交互",
       status: "todo",
       priority: "urgent",
+      stageModels: {
+        work: "group-a/model-b",
+        review: "group-a/model-b",
+      },
     })));
-    expect(onCreate.mock.calls[0]?.[0]).not.toHaveProperty("stageModels");
   });
 
   it("TASK-84 可显式创建 advisory，且不提交分支字段", async () => {

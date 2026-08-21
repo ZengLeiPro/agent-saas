@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import {
   TASKBOARD_PRIORITIES,
   TASKBOARD_STATUSES,
+  type ModelList,
+  type TaskBoard,
   type TaskBoardExecutionPurpose,
+  type TaskBoardStageModels,
   type TaskBoardExecutionStartResult,
   type TaskBoardPriority,
   type TaskBoardStatus,
@@ -41,18 +44,38 @@ import {
 } from "./constants";
 import { IntegrationTaskDetails } from "./IntegrationCandidate";
 import { useIntegrationSources } from "./IntegrationSources";
+import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from "./TaskAttachments";
-import { TaskDetailComments } from "./TaskDetailComments";
+import { TaskDetailComments, EXECUTION_PURPOSE_LABELS } from "./TaskDetailComments";
 import { useTaskComments, useTaskExecutions } from "./hooks";
 
-type TaskDraftField = "title" | "description" | "attachments" | "priority";
+type TaskDraftField = "title" | "description" | "attachments" | "priority" | "stageModels";
 
+const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review"];
 const ACTIVE_EXECUTION_STATUSES = new Set(["queued", "running", "waiting_user", "waiting_approval"]);
+
+function taskStageModels(task: TaskBoardTask): TaskBoardStageModels {
+  if (task.stageModels && Object.keys(task.stageModels).length > 0) {
+    return {
+      ...(task.stageModels.work ? { work: task.stageModels.work } : {}),
+      ...(task.stageModels.review ? { review: task.stageModels.review } : {}),
+    };
+  }
+  return task.model
+    ? { work: task.model, review: task.model }
+    : {};
+}
+
+function inheritedModelHint(board: TaskBoard | null, purpose: TaskBoardExecutionPurpose): string {
+  const model = board?.stageModels?.[purpose] ?? board?.model;
+  return model ?? "未指定时继承看板默认模型";
+}
 
 interface TaskDetailProps {
   open: boolean;
   active?: boolean;
   task: TaskBoardTask | null;
+  board?: TaskBoard | null;
   boardReadOnly: boolean;
   canUpdateTask?: boolean;
   canTransitionTask?: boolean;
@@ -61,6 +84,7 @@ interface TaskDetailProps {
   canComment?: boolean;
   canExecute?: boolean;
   canCancelIntegration?: boolean;
+  modelList?: ModelList | null;
   onOpenChange: (open: boolean) => void;
   onTaskLoaded: (task: TaskBoardTask) => void;
   onNavigateTask?: (taskId: string) => void;
@@ -82,6 +106,7 @@ export function TaskDetail({
   open,
   active = true,
   task,
+  board = null,
   boardReadOnly,
   canUpdateTask = true,
   canTransitionTask = true,
@@ -90,6 +115,7 @@ export function TaskDetail({
   canComment = true,
   canExecute = true,
   canCancelIntegration = false,
+  modelList = null,
   onOpenChange,
   onTaskLoaded,
   onNavigateTask,
@@ -104,6 +130,7 @@ export function TaskDetail({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<TaskBoardPriority>("none");
+  const [stageModels, setStageModels] = useState<TaskBoardStageModels>({});
   const [executionStartedTaskId, setExecutionStartedTaskId] = useState<string | null>(null);
   const [commentBody, setCommentBody] = useState("");
   const [continueAfterComment, setContinueAfterComment] = useState(false);
@@ -143,6 +170,7 @@ export function TaskDetail({
     setDescription(next.description);
     taskAttachments.replaceFiles(next.attachments ?? []);
     setPriority(next.priority);
+    setStageModels(taskStageModels(next));
   }, [taskAttachments.replaceFiles]);
 
   const mergeServerDraft = useCallback((next: TaskBoardTask) => {
@@ -151,6 +179,7 @@ export function TaskDetail({
     if (!dirty.has("description")) setDescription(next.description);
     if (!dirty.has("attachments")) taskAttachments.replaceFiles(next.attachments ?? []);
     if (!dirty.has("priority")) setPriority(next.priority);
+    if (!dirty.has("stageModels")) setStageModels(taskStageModels(next));
   }, [taskAttachments.replaceFiles]);
 
   useEffect(() => {
@@ -304,6 +333,7 @@ export function TaskDetail({
     if (dirty.has("description")) input.description = description.trim();
     if (dirty.has("attachments")) input.attachments = toTaskBoardAttachments(taskAttachments.uploadedFiles);
     if (dirty.has("priority")) input.priority = priority;
+    if (dirty.has("stageModels")) input.stageModels = stageModels;
 
     const operationTask = currentTask;
     const requestId = ++detailRequestRef.current;
@@ -822,6 +852,30 @@ export function TaskDetail({
                     </Select>
                   </div>
                 </div>
+                <section aria-label="分阶段运行模型" className="space-y-3 rounded-lg border bg-muted/20 p-3">
+                  <div>
+                    <h3 className="text-sm font-medium">运行模型</h3>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {TASK_MODEL_PURPOSES.map((purpose) => (
+                      <div className="space-y-2" key={purpose}>
+                        <Label>{EXECUTION_PURPOSE_LABELS[purpose]}</Label>
+                        <ModelSelect
+                          modelList={modelList}
+                          value={stageModels[purpose] ?? null}
+                          onChange={(next) => {
+                            dirtyFieldsRef.current.add("stageModels");
+                            setStageModels((current) => ({ ...current, [purpose]: next ?? undefined }));
+                          }}
+                          inheritLabel="继承看板对应阶段模型"
+                          ariaLabel={`${EXECUTION_PURPOSE_LABELS[purpose]}运行模型`}
+                          disabled={editReadOnly || saving}
+                        />
+                        <p className="text-[11px] text-muted-foreground">{inheritedModelHint(board, purpose)}</p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
                 {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
                 <div className="flex flex-wrap gap-2">
                   {!editReadOnly ? <Button type="submit" disabled={saving || taskAttachments.uploading}>保存任务</Button> : null}

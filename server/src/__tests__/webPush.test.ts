@@ -128,7 +128,9 @@ describe('WebPushService', () => {
 
   it('只接受主流浏览器推送服务的 HTTPS endpoint', () => {
     expect(assertSafePushEndpoint('https://web.push.apple.com/Q/test').hostname).toBe('web.push.apple.com');
+    expect(assertSafePushEndpoint('https://jmt17.google.com/fcm/send/test').hostname).toBe('jmt17.google.com');
     expect(() => assertSafePushEndpoint('http://fcm.googleapis.com/x')).toThrow('HTTPS');
+    expect(() => assertSafePushEndpoint('https://accounts.google.com/push')).toThrow('不是受支持');
     expect(() => assertSafePushEndpoint('https://127.0.0.1/push')).toThrow('不是受支持');
   });
 });

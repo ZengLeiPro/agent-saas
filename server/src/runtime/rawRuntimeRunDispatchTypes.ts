@@ -84,9 +84,18 @@ export type ModelAdapterFactory = (
 
 export interface SkillsDispatchConfig {
   /** requiredSkillIds 由专职 Agent 提供，是独立于成员个人勾选的固有能力。 */
-  listForUser(username: string | undefined, requiredSkillIds?: readonly string[]): SkillEntry[];
-  resolveSkillDir(username: string | undefined, skill: string, requiredSkillIds?: readonly string[]): string | null;
-  /** 工具清单装配前完成该用户的增量物化；所有磁盘 I/O 在专用 async worker。 */
+  listForUser(
+    username: string | undefined,
+    requiredSkillIds?: readonly string[],
+    tenantId?: string,
+  ): SkillEntry[];
+  resolveSkillDir(
+    username: string | undefined,
+    skill: string,
+    requiredSkillIds?: readonly string[],
+    tenantId?: string,
+  ): string | null;
+  /** 工具清单装配前完成真实成员的增量物化；service identity 不走成员物化。 */
   ensureReady?: (username: string | undefined, requiredSkillIds?: readonly string[]) => Promise<void>;
 }
 

@@ -381,15 +381,19 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
     try {
       const configText = readFileSync(configPath, 'utf-8');
       const rawConfig = parseJsonc(configText);
+      // 管理端可能运行在蓝绿切换后的旧进程中：内存 config 未必包含其他进程
+      // 已落盘的 override。单工具 patch 必须以刚读到的磁盘快照为基线，否则
+      // 随后的保存会把不在旧内存里的工具恢复默认，重启后才暴露该丢失。
+      const persistedConfig = parseAppConfig(rawConfig);
       const mergedToolControls = mergeSingleToolPatch(
-        options.config.toolControls,
+        persistedConfig.toolControls,
         toolId,
         req.body ?? {},
       );
       nextSettings = validateToolSettingsUpdate(
         rawConfig,
         mergedToolControls,
-        options.config.webTools ?? undefined,
+        persistedConfig.webTools ?? undefined,
       );
       await options.validateToolSettingsConfig?.(nextSettings);
     } catch (error) {

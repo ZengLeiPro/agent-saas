@@ -550,6 +550,33 @@ describe('tool controls admin router', () => {
     });
   });
 
+  it('single-tool PUT 以磁盘快照合并，避免旧进程覆盖其他已保存的 descriptionOverride', async () => {
+    const diskConfig = baseRawConfig();
+    const existingOverride = { mode: 'replace' as const, text: '仅用于生成客户交付文档。' };
+    (diskConfig.toolControls.tools as Record<string, { enabled?: boolean; descriptionOverride?: typeof existingOverride }>).Write = {
+      descriptionOverride: existingOverride,
+    };
+    const staleRuntimeConfig = parseAppConfig(baseRawConfig());
+
+    await withApp(diskConfig, async ({ baseUrl, processCwd }) => {
+      const response = await fetch(`${baseUrl}/api/admin/tool-controls/TodoWrite`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          descriptionOverride: { mode: 'append', text: '用于提交任务进度。' },
+        }),
+      });
+      expect(response.status).toBe(200);
+
+      const persisted = loadAppConfig(processCwd);
+      expect(persisted.toolControls?.tools?.Write?.descriptionOverride).toEqual(existingOverride);
+      expect(persisted.toolControls?.tools?.TodoWrite?.descriptionOverride).toEqual({
+        mode: 'append',
+        text: '用于提交任务进度。',
+      });
+    }, { config: staleRuntimeConfig });
+  });
+
   it('single-tool PUT can flip enabled without editing webTools payload', async () => {
     await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
       const res = await fetch(`${baseUrl}/api/admin/tool-controls/Edit`, {

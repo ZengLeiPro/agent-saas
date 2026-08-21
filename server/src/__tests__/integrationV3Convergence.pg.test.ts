@@ -131,7 +131,7 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
       `SELECT * FROM ${seed.tables.requestsOutboxTable} WHERE candidate_id=$1 AND kind='workspace_sync'`, [seed.candidateId],
     );
     const host = new PostgresIntegrationV3WorkerHost({
-      ...pgOptions(seed), dispatchAgent: async () => ({ executionId: 'unused' }),
+      ...pgOptions(seed), releaseIdentity: 'test-release', dispatchAgent: async () => ({ executionId: 'unused' }),
       syncWorkspace: async () => undefined, cleanup: async () => undefined,
     });
     await host.syncWorkspace({
@@ -159,11 +159,14 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
       expectedVersion: task.version, reason: 'operator canceled',
     });
     await pool.query(
-      `UPDATE ${seed.tables.candidatesTable} SET worker_status='failed' WHERE id<>$1`, [seed.candidateId],
+      `UPDATE ${seed.tables.candidatesTable}
+          SET worker_status='failed',worker_release_identity='test-release'
+        WHERE id<>$1`,
+      [seed.candidateId],
     );
     const options = pgOptions(seed);
     const host = new PostgresIntegrationV3WorkerHost({
-      ...options, dispatchAgent: async () => ({ executionId: 'unused' }), syncWorkspace: async () => undefined,
+      ...options, releaseIdentity: 'test-release', dispatchAgent: async () => ({ executionId: 'unused' }), syncWorkspace: async () => undefined,
       cleanup: async () => undefined,
     });
     const engine = new IntegrationEngineV3({

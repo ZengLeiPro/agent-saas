@@ -389,6 +389,7 @@ export function startRuntimeTaskboardIntegrationV3(
   let composeHost: PostgresIntegrationV3ComposeHost;
   const workerHost: PostgresIntegrationV3WorkerHost = new PostgresIntegrationV3WorkerHost({
     ...pgOptions,
+    releaseIdentity: options.releaseIdentity ?? 'unknown-release',
     sourceSnapshotsTable: tables.sourceSnapshotsTable,
     boardsTable: store.boardsTable,
     executionsTable: store.executionsTable,

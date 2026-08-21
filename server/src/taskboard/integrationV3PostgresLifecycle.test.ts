@@ -9,6 +9,7 @@ function workerHost(query: ReturnType<typeof vi.fn>, dispatchAgent = vi.fn(), sy
     candidatesTable: 'candidates', revisionsTable: 'revisions', sourceSnapshotsTable: 'snapshots',
     providerOperationsTable: 'operations', requestsOutboxTable: 'requests', tasksTable: 'tasks', blockEpisodesTable: 'blocks',
     boardsTable: 'boards', executionsTable: 'executions', dispatchAgent, syncWorkspace, cleanup: vi.fn(),
+    releaseIdentity: 'release-2',
   } as never);
 }
 
@@ -22,7 +23,7 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
   });
 
   it('claims against the frozen candidate v3 policy while retaining the database global kill switch', async () => {
-    const query = vi.fn(async (_sql: string) => ({ rows: [] }));
+    const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [] }));
     await workerHost(query).claimCandidate(30_000);
     const sql = query.mock.calls[0]![0];
     expect(sql).toContain("current_setting('agent_saas.integration_v3_enabled'");
@@ -30,6 +31,9 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(sql).toContain("c.policy_snapshot->'featureFlags'->>'engineV3'");
     expect(sql).toContain("c.state IN ('preparing','composing','waiting_checks','needs_work','working','in_review','approved','merging')");
     expect(sql).toContain("c.state IN ('merged','canceled')");
+    expect(sql).toContain("c.worker_status<>'failed' OR c.worker_release_identity IS DISTINCT FROM $3");
+    expect(sql).toContain("worker_release_identity=$3");
+    expect(query.mock.calls[0]![1]).toEqual([expect.any(String), 30_000, 'release-2']);
     expect(sql).not.toContain("'blocked','needs_human'");
     expect(sql).not.toContain('integration_policy');
     expect(sql).not.toContain('JOIN boards');

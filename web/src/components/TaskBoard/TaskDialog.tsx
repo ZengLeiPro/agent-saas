@@ -36,7 +36,7 @@ import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, toTaskBoardAttachments } from "./TaskAttachments";
 
 const CREATE_TASK_STATUSES = ["backlog", "todo", "in_progress"] as const satisfies readonly TaskBoardStatus[];
-const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review", "merge"];
+const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review"];
 
 function createClientRequestId(): string {
   return `task-dialog-${Date.now()}-${Math.random().toString(36).slice(2)}`;

@@ -7,6 +7,7 @@ import {
   buildHealthResponse,
   buildToolsResponse,
   handleCancelInvocation,
+  handleGetInvocationResult,
   handleExecute,
   handleExecuteStream,
   handleProvision,
@@ -29,6 +30,7 @@ const logger: Logger = {
 const handlerDeps = {
   config,
   invocations: new Map<string, AbortController>(),
+  invocationResults: new Map(),
   workspaceResolver,
   provider,
   internalExecutionTarget,
@@ -62,9 +64,14 @@ const server = createServer((req, res) => {
     return;
   }
 
-  const cancelMatch = req.url?.match(/^\/invocations\/([^/?#]+)$/);
-  if (cancelMatch) {
-    void handleCancelInvocation(req, res, handlerDeps, decodeURIComponent(cancelMatch[1]!));
+  const invocationMatch = req.url?.match(/^\/invocations\/([^/?#]+)$/);
+  if (invocationMatch) {
+    const invocationId = decodeURIComponent(invocationMatch[1]!);
+    if (req.method === 'GET') {
+      void handleGetInvocationResult(req, res, handlerDeps, invocationId);
+    } else {
+      void handleCancelInvocation(req, res, handlerDeps, invocationId);
+    }
     return;
   }
 

@@ -5,6 +5,7 @@ import type {
   EgressWebSocketConnector,
 } from '../egressDispatcher.js';
 import { ResponsesTransportStreamError } from './responsesTransport.js';
+import { isCodexQuotaError, quotaErrorCode } from './codexQuota.js';
 
 const DEFAULT_FIRST_EVENT_TIMEOUT_MS = 30_000;
 const DEFAULT_IDLE_EVENT_TIMEOUT_MS = 5 * 60_000;
@@ -74,6 +75,17 @@ export class CodexWebSocketUnavailableError extends Error {
   constructor(message: string, readonly reason: string) {
     super(message);
     this.name = 'CodexWebSocketUnavailableError';
+  }
+}
+
+export class CodexWebSocketQuotaExhaustedError extends CodexWebSocketUnavailableError {
+  readonly status = 429;
+  readonly code: string;
+
+  constructor(message: string, code?: string) {
+    super(message, 'quota_exhausted');
+    this.name = 'CodexWebSocketQuotaExhaustedError';
+    this.code = code ?? 'quota_exhausted';
   }
 }
 
@@ -401,7 +413,16 @@ export class CodexResponsesWebSocketPool {
           lastSequenceNumber = event.sequence_number;
         }
         const code = errorCodeFromEvent(event);
+        const message = errorMessageFromEvent(event);
         const status = eventStatus(event);
+        if (!exposed && isCodexQuotaError({ status, code, message })) {
+          rejectBeforeExpose(new CodexWebSocketQuotaExhaustedError(
+            message || 'Codex 订阅额度不足',
+            quotaErrorCode({ code, message }),
+          ));
+          this.discard(entry, 'quota_exhausted');
+          return;
+        }
         if (!exposed && status === 401) {
           rejectBeforeExpose(new CodexWebSocketUnavailableError(
             'Codex WebSocket authentication failed',
@@ -730,9 +751,37 @@ function errorCodeFromEvent(event: Record<string, unknown>): string | undefined 
   const direct = event.code;
   if (typeof direct === 'string') return direct;
   const error = event.error;
-  if (!error || typeof error !== 'object' || Array.isArray(error)) return undefined;
-  const nested = (error as Record<string, unknown>).code;
-  return typeof nested === 'string' ? nested : undefined;
+  if (error && typeof error === 'object' && !Array.isArray(error)) {
+    const nested = (error as Record<string, unknown>).code;
+    if (typeof nested === 'string') return nested;
+  }
+  const response = event.response;
+  if (response && typeof response === 'object' && !Array.isArray(response)) {
+    const responseError = (response as Record<string, unknown>).error;
+    if (responseError && typeof responseError === 'object' && !Array.isArray(responseError)) {
+      const nested = (responseError as Record<string, unknown>).code;
+      if (typeof nested === 'string') return nested;
+    }
+  }
+  return undefined;
+}
+
+function errorMessageFromEvent(event: Record<string, unknown>): string | undefined {
+  if (typeof event.message === 'string') return event.message;
+  const error = event.error;
+  if (error && typeof error === 'object' && !Array.isArray(error)) {
+    const message = (error as Record<string, unknown>).message;
+    if (typeof message === 'string') return message;
+  }
+  const response = event.response;
+  if (response && typeof response === 'object' && !Array.isArray(response)) {
+    const responseError = (response as Record<string, unknown>).error;
+    if (responseError && typeof responseError === 'object' && !Array.isArray(responseError)) {
+      const message = (responseError as Record<string, unknown>).message;
+      if (typeof message === 'string') return message;
+    }
+  }
+  return undefined;
 }
 
 function eventStatus(event: Record<string, unknown>): number | undefined {

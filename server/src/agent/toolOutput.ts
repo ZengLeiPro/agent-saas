@@ -5,7 +5,7 @@ export const MAX_READ_OUTPUT_BYTES = 64 * 1024;
 export const MAX_SHELL_RETURN_CHARS = 64 * 1024;
 export const MAX_SHELL_CAPTURE_BYTES = 4 * 1024 * 1024;
 export const MAX_SHELL_STREAM_BYTES = 64 * 1024;
-export const MAX_SHELL_TIMEOUT_MS = 10 * 60_000;
+export const MAX_SHELL_TIMEOUT_MS = 30 * 60_000;
 export const DEFAULT_SHELL_TIMEOUT_MS = MAX_SHELL_TIMEOUT_MS;
 export const MAX_BACKGROUND_SHELL_TIMEOUT_MS = 24 * 60 * 60_000;
 export const DEFAULT_BACKGROUND_SHELL_TIMEOUT_MS = 60 * 60_000;
@@ -25,6 +25,8 @@ export interface ShellOutputSummary {
   exitCode?: number | null;
   signal?: NodeJS.Signals | string | null;
   durationMs?: number;
+  timedOut?: boolean;
+  aborted?: boolean;
   captureLimitExceeded?: boolean;
   outputFiles?: ShellOutputFileRef[];
   outputFileError?: string;
@@ -67,6 +69,8 @@ export function formatShellOutput(input: ShellOutputSummary): string {
   const header = [
     exit === undefined ? undefined : `Exit code: ${exit}`,
     input.durationMs === undefined ? undefined : `Wall time: ${(input.durationMs / 1000).toFixed(3)}s`,
+    input.timedOut ? 'Termination: timeout' : undefined,
+    input.aborted ? 'Termination: aborted' : undefined,
     `Output bytes: stdout=${input.stdoutBytes} stderr=${input.stderrBytes}`,
     `Output lines: stdout=${stdoutLines} stderr=${stderrLines}`,
     input.outputFiles?.length

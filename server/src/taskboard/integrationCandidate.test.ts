@@ -209,6 +209,68 @@ describe('integration candidate v3 mapper and invariants', () => {
     })).rejects.toMatchObject({ code: 'TASKBOARD_CANDIDATE_SOURCE_OWNERSHIP_MISMATCH' });
   });
 
+  it('atomically projects blocked candidates to the task and one open block episode', async () => {
+    const candidateRow = {
+      id: candidate.id, integration_task_id: candidate.integrationTaskId, repository_id: candidate.repositoryId,
+      base_branch: candidate.baseBranch, branch: candidate.branch, state: 'in_review', current_revision: 1,
+      work_round: 1, version: 4, workflow_epoch: 2, lane_epoch: 3, policy_revision: candidate.policyRevision,
+      merge_method: candidate.mergeMethod, policy_snapshot: candidate.policySnapshot,
+      source_set_digest: candidate.sourceSetDigest, created_at: candidate.createdAt, updated_at: candidate.updatedAt,
+    };
+    const query = vi.fn(async (sql: string, _values?: unknown[]) => {
+      if (sql.includes('SELECT * FROM') && sql.includes('FOR UPDATE')) return { rows: [candidateRow] };
+      if (sql.includes('UPDATE ky_taskboard_integration_candidates')) return { rows: [{ ...candidateRow, state: 'needs_human', version: 5, last_error: 'invalid work receipt' }] };
+      if (sql.includes('UPDATE tasks')) return { rows: [{ id: candidate.integrationTaskId }] };
+      return { rows: [] };
+    });
+    const client = { query, release: vi.fn() };
+    const store = new IntegrationCandidateStore({
+      pool: { connect: vi.fn(async () => client) }, tasksTable: 'tasks', executionsTable: 'executions',
+      integrationSourcesTable: 'ky_taskboard_integration_sources', blockEpisodesTable: 'blocks',
+    } as never);
+    await store.transition(candidate.id, {
+      expectedVersion: 4, expectedRevision: 1, to: 'needs_human', lastError: 'invalid work receipt',
+    });
+    const sql = query.mock.calls.map(([text]) => String(text));
+    expect(sql).toContainEqual(expect.stringContaining("SET status='blocked'"));
+    const episode = sql.find((text) => text.includes('INSERT INTO blocks'))!;
+    expect(episode).toContain('WHERE NOT EXISTS');
+    expect(query.mock.calls.find(([text]) => String(text).includes('INSERT INTO blocks'))?.[1])
+      .toEqual([expect.any(String), 'integration-1', 'review', 'integration_candidate_needs_human', 'invalid work receipt']);
+    expect(sql.at(-1)).toBe('COMMIT');
+  });
+
+  it('atomically returns a merge-stage task to in_progress when safe recomposition is required', async () => {
+    const candidateRow = {
+      id: candidate.id, integration_task_id: candidate.integrationTaskId, repository_id: candidate.repositoryId,
+      base_branch: candidate.baseBranch, branch: candidate.branch, provider_pull_request_id: '42', state: 'merging',
+      current_revision: 1, work_round: 1, version: 4, workflow_epoch: 2, lane_epoch: 3,
+      policy_revision: candidate.policyRevision, merge_method: candidate.mergeMethod, policy_snapshot: candidate.policySnapshot,
+      source_set_digest: candidate.sourceSetDigest, approved_revision: 1, approved_review_execution_id: 'review-1',
+      created_at: candidate.createdAt, updated_at: candidate.updatedAt,
+    };
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('SELECT * FROM') && sql.includes('FOR UPDATE')) return { rows: [candidateRow] };
+      if (sql.includes('UPDATE ky_taskboard_integration_candidates')) {
+        return { rows: [{ ...candidateRow, state: 'composing', version: 5, approved_revision: null, approved_review_execution_id: null }] };
+      }
+      return { rows: [] };
+    });
+    const client = { query, release: vi.fn() };
+    const store = new IntegrationCandidateStore({
+      pool: { connect: vi.fn(async () => client) }, tasksTable: 'tasks', executionsTable: 'executions',
+      integrationSourcesTable: 'ky_taskboard_integration_sources', blockEpisodesTable: 'blocks',
+    } as never);
+
+    const result = await store.transition(candidate.id, {
+      expectedVersion: 4, expectedRevision: 1, to: 'composing',
+    });
+
+    expect(result.state).toBe('composing');
+    expect(result.approvedRevision).toBeUndefined();
+    expect(query.mock.calls.map(([text]) => String(text))).toContainEqual(expect.stringContaining("SET status='in_progress'"));
+  });
+
   it('requires current revision approval before merging and a receipt before merged', () => {
     expect(() => assertCandidateTransition(candidate, {
       expectedVersion: 4, expectedRevision: 1, to: 'approved',
@@ -219,6 +281,9 @@ describe('integration candidate v3 mapper and invariants', () => {
     expect(() => assertCandidateTransition({ ...candidate, state: 'merging' }, {
       expectedVersion: 4, expectedRevision: 1, to: 'merged',
     })).toThrow('provider commit OID');
+    expect(() => assertCandidateTransition({ ...candidate, state: 'merging' }, {
+      expectedVersion: 4, expectedRevision: 1, to: 'composing',
+    })).not.toThrow();
     expect(() => assertCandidateTransition({ ...candidate, state: 'merging' }, {
       expectedVersion: 4, expectedRevision: 1, to: 'canceled',
     })).toThrow('Invalid candidate transition');

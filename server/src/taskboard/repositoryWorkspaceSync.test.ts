@@ -104,7 +104,7 @@ describe('syncRepositoryWorkspace', () => {
       },
       {
         cwd: REPOSITORY,
-        args: ['worktree', 'add', '-b', 'integration/42', '--', WORKTREE, 'refs/remotes/origin/main'],
+        args: ['worktree', 'add', '-b', 'integration/42', '--no-track', '--', WORKTREE, 'refs/remotes/origin/main'],
       },
     ]);
 
@@ -114,6 +114,61 @@ describe('syncRepositoryWorkspace', () => {
       integrationWorktree: 'created',
     });
     expect(host.locks).toEqual([{ repositoryPath: REPOSITORY, branch: 'integration/42' }]);
+    host.assertConsumed();
+  });
+
+  it('fetches and verifies frozen PR heads before deterministic compose', async () => {
+    const frozenHeadOid = '4'.repeat(40);
+    const frozenRef = 'refs/ky-integration-v3/source-heads/pr-74';
+    const host = new ScriptedHost([
+      { cwd: REPOSITORY, args: [
+        'fetch', '--no-tags', '--prune', '--', input.controlledRemoteUrl,
+        '+refs/heads/main:refs/remotes/origin/main',
+        `+refs/pull/74/head:${frozenRef}`,
+      ] },
+      {
+        cwd: REPOSITORY,
+        args: ['rev-parse', '--verify', frozenRef],
+        result: { stdout: `${frozenHeadOid}\n` },
+      },
+      remoteOidStep(),
+      listStep(`${mainRecord(REMOTE_OID)}\n${integrationRecord(REMOTE_OID)}`),
+      statusStep(REPOSITORY),
+      ancestorStep('refs/heads/main', 'refs/remotes/origin/main', true),
+      ancestorStep('refs/remotes/origin/main', 'refs/heads/main', true),
+      statusStep(WORKTREE),
+      ancestorStep('refs/heads/integration/42', 'refs/remotes/origin/main', true),
+      ancestorStep('refs/remotes/origin/main', 'refs/heads/integration/42', true),
+    ]);
+
+    await expect(syncRepositoryWorkspace(host, {
+      ...input,
+      frozenPullRequestHeads: [{ providerPullRequestId: '74', expectedHeadOid: frozenHeadOid }],
+    })).resolves.toMatchObject({ integrationWorktree: 'current' });
+    host.assertConsumed();
+  });
+
+  it('fails closed when a frozen PR ref no longer matches its reviewed head', async () => {
+    const expectedHeadOid = '4'.repeat(40);
+    const actualHeadOid = '5'.repeat(40);
+    const frozenRef = 'refs/ky-integration-v3/source-heads/pr-74';
+    const host = new ScriptedHost([
+      { cwd: REPOSITORY, args: [
+        'fetch', '--no-tags', '--prune', '--', input.controlledRemoteUrl,
+        '+refs/heads/main:refs/remotes/origin/main',
+        `+refs/pull/74/head:${frozenRef}`,
+      ] },
+      {
+        cwd: REPOSITORY,
+        args: ['rev-parse', '--verify', frozenRef],
+        result: { stdout: `${actualHeadOid}\n` },
+      },
+    ]);
+
+    await expect(syncRepositoryWorkspace(host, {
+      ...input,
+      frozenPullRequestHeads: [{ providerPullRequestId: '74', expectedHeadOid }],
+    })).rejects.toMatchObject({ code: 'WORKTREE_DIVERGED' });
     host.assertConsumed();
   });
 
@@ -219,6 +274,28 @@ describe('syncRepositoryWorkspace', () => {
       integrationWorktree: 'fast_forwarded',
     });
     expect(host.commands.filter((command) => command.args[0] === 'worktree' && command.args[1] !== 'list')).toEqual([]);
+    host.assertConsumed();
+  });
+
+  it('resets a clean deterministic compose worktree when the authoritative base advanced', async () => {
+    const host = new ScriptedHost([
+      fetchStep(),
+      remoteOidStep(),
+      listStep(`${mainRecord(REMOTE_OID)}\n${integrationRecord()}`),
+      statusStep(REPOSITORY),
+      ancestorStep('refs/heads/main', 'refs/remotes/origin/main', true),
+      ancestorStep('refs/remotes/origin/main', 'refs/heads/main', true),
+      statusStep(WORKTREE),
+      { cwd: WORKTREE, args: ['reset', '--hard', 'refs/remotes/origin/main'] },
+    ]);
+
+    await expect(syncRepositoryWorkspace(host, {
+      ...input,
+      integrationWorktreeMode: 'reset_to_base',
+    })).resolves.toMatchObject({
+      localBase: 'current',
+      integrationWorktree: 'reset_to_base',
+    });
     host.assertConsumed();
   });
 

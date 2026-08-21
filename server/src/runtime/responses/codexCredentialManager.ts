@@ -24,7 +24,10 @@ function systemVaultCaller(operation: VaultOperation): VaultCaller {
 
 export interface CodexSubscriptionRuntimeConfig {
   enabled?: boolean;
+  /** 兼容旧配置；运行时会把它视为 credentialRefs[0]。 */
   credentialRef?: string;
+  /** 按优先级排列的 SecretVault refs。 */
+  credentialRefs?: string[];
   endpoint?: string;
   originator?: string;
   /** 连接内 stateful 接力；关闭时保持 HTTP/SSE 全量历史。 */
@@ -41,9 +44,14 @@ export interface CodexOAuthTokens {
 export interface CodexTokenBundle extends CodexOAuthTokens {
   accountId: string;
   generation: number;
+  /** 仅运行时携带，不写入 SecretVault bundle。 */
+  credentialRef?: string;
 }
 
 export interface CodexCredentialStatus {
+  /** 管理 API 用于排序、重授权和删除的 opaque SecretVault ref。 */
+  id?: string;
+  priority?: number;
   configured: boolean;
   connected: boolean;
   accountBindingHash?: string;
@@ -100,9 +108,20 @@ export class CodexCredentialManager {
     fetchImpl?: typeof fetch;
   }) {}
 
-  getConfiguration(): Required<Pick<CodexSubscriptionRuntimeConfig, 'enabled' | 'endpoint' | 'originator' | 'websocketEnabled'>>
-    & Pick<CodexSubscriptionRuntimeConfig, 'credentialRef'> {
+  getCredentialRefs(): string[] {
     const raw = this.options.getConfig() ?? {};
+    const refs = raw.credentialRefs?.length
+      ? raw.credentialRefs
+      : raw.credentialRef
+        ? [raw.credentialRef]
+        : [];
+    return Array.from(new Set(refs.filter((ref): ref is string => typeof ref === 'string' && ref.trim().length > 0)));
+  }
+
+  getConfiguration(): Required<Pick<CodexSubscriptionRuntimeConfig, 'enabled' | 'endpoint' | 'originator' | 'websocketEnabled'>>
+    & { credentialRef?: string; credentialRefs: string[] } {
+    const raw = this.options.getConfig() ?? {};
+    const credentialRefs = this.getCredentialRefs();
     return {
       enabled: raw.enabled === true,
       endpoint: validateCodexEndpoint(raw.endpoint ?? CODEX_RESPONSES_ENDPOINT),
@@ -110,18 +129,34 @@ export class CodexCredentialManager {
       // Keep the current CLI/TUI identity as the safe wire default; the app still owns the harness.
       originator: validateOriginator(raw.originator ?? 'codex-tui'),
       websocketEnabled: raw.websocketEnabled === true,
-      ...(raw.credentialRef ? { credentialRef: raw.credentialRef } : {}),
+      credentialRefs,
+      ...(credentialRefs[0] ? { credentialRef: credentialRefs[0] } : {}),
     };
   }
 
   async getCredentials(
     forceRefresh = false,
     staleGeneration?: number,
+    credentialRef?: string,
+  ): Promise<CodexTokenBundle> {
+    return this.getCredentialsForCredential(
+      credentialRef ?? this.getCredentialRefs()[0],
+      forceRefresh,
+      staleGeneration,
+    );
+  }
+
+  async getCredentialsForCredential(
+    credentialRef: string | undefined,
+    forceRefresh = false,
+    staleGeneration?: number,
   ): Promise<CodexTokenBundle> {
     const config = this.getConfiguration();
     if (!config.enabled) throw new Error('Codex subscription transport 未启用');
-    if (!config.credentialRef) throw new Error('Codex subscription 尚未完成账号授权');
-    const credentialRef = config.credentialRef;
+    if (!credentialRef) throw new Error('Codex subscription 尚未完成账号授权');
+    if (!config.credentialRefs.includes(credentialRef)) {
+      throw new Error('Codex subscription 授权账号不存在或已被移除');
+    }
 
     const observed = await this.readBundle(credentialRef);
     if (
@@ -130,12 +165,12 @@ export class CodexCredentialManager {
       && observed.generation > staleGeneration
       && !isExpiring(observed)
     ) {
-      return observed;
+      return { ...observed, credentialRef };
     }
-    if (!forceRefresh && !isExpiring(observed)) return observed;
+    if (!forceRefresh && !isExpiring(observed)) return { ...observed, credentialRef };
 
     const existing = this.refreshInFlight.get(credentialRef);
-    if (existing) return existing;
+    if (existing) return existing.then((bundle) => ({ ...bundle, credentialRef }));
 
     const promise = this.refreshUnderLock(
       credentialRef,
@@ -149,7 +184,7 @@ export class CodexCredentialManager {
         }
       });
     this.refreshInFlight.set(credentialRef, promise);
-    return promise;
+    return promise.then((bundle) => ({ ...bundle, credentialRef }));
   }
 
   async persistLogin(tokens: CodexOAuthTokens, existingRef?: string): Promise<{
@@ -199,12 +234,26 @@ export class CodexCredentialManager {
     return remoteWarning ? { remoteWarning } : {};
   }
 
-  async getStatus(): Promise<CodexCredentialStatus> {
-    const config = this.getConfiguration();
-    if (!config.credentialRef) return { configured: false, connected: false };
+  async getStatus(credentialRef?: string): Promise<CodexCredentialStatus> {
+    const ref = credentialRef ?? this.getCredentialRefs()[0];
+    if (!ref) return { configured: false, connected: false };
+    return this.getStatusForCredential(ref);
+  }
+
+  async getStatuses(): Promise<CodexCredentialStatus[]> {
+    const refs = this.getCredentialRefs();
+    return Promise.all(refs.map(async (ref, index) => ({
+      ...(await this.getStatusForCredential(ref)),
+      id: ref,
+      priority: index + 1,
+    })));
+  }
+
+  private async getStatusForCredential(credentialRef: string): Promise<CodexCredentialStatus> {
     try {
-      const bundle = await this.readBundle(config.credentialRef);
+      const bundle = await this.readBundle(credentialRef);
       return {
+        id: credentialRef,
         configured: true,
         // access token 到期不等于账号断开：refresh token 会在下一次模型请求前自动续期。
         connected: true,
@@ -219,6 +268,7 @@ export class CodexCredentialManager {
       };
     } catch (error) {
       return {
+        id: credentialRef,
         configured: true,
         connected: false,
         error: compactOAuthError(error),

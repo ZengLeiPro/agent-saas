@@ -21,6 +21,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+function credentialRefs(options: CreateCodexSubscriptionAdminRouterOptions): string[] {
+  return options.credentialManager.getCredentialRefs();
+}
+
+function configWithCredentialRefs(
+  current: ReturnType<CodexCredentialManager['getConfiguration']>,
+  refs: string[],
+  overrides: Partial<Pick<CodexSubscriptionConfig, 'enabled' | 'websocketEnabled'>> = {},
+): CodexSubscriptionConfig {
+  return {
+    enabled: overrides.enabled ?? current.enabled,
+    websocketEnabled: (overrides.websocketEnabled ?? current.websocketEnabled)
+      && (overrides.enabled ?? current.enabled),
+    endpoint: current.endpoint,
+    originator: current.originator,
+    ...(refs[0] ? { credentialRef: refs[0], credentialRefs: refs } : {}),
+  };
+}
+
 function persistConfig(
   options: CreateCodexSubscriptionAdminRouterOptions,
   next: CodexSubscriptionConfig,
@@ -46,14 +65,18 @@ function persistConfig(
 
 async function publicState(options: CreateCodexSubscriptionAdminRouterOptions) {
   const configuration = options.credentialManager.getConfiguration();
+  const credentials = await options.credentialManager.getStatuses();
   return {
     config: {
       enabled: configuration.enabled,
       websocketEnabled: configuration.websocketEnabled,
       endpoint: configuration.endpoint,
       originator: configuration.originator,
+      credentialCount: credentials.length,
     },
-    credential: await options.credentialManager.getStatus(),
+    // credential 保留为旧前端兼容别名；新的管理界面使用 credentials 排序操作。
+    credential: credentials[0] ?? { configured: false, connected: false },
+    credentials,
     runtime: options.credentialManager.getRuntimeStatus(),
   };
 }
@@ -70,25 +93,22 @@ export function createCodexSubscriptionAdminRouter(
 
   router.put('/', async (req, res) => {
     const current = options.credentialManager.getConfiguration();
+    const refs = credentialRefs(options);
     const body = isRecord(req.body) ? req.body : {};
     const enabled = typeof body.enabled === 'boolean' ? body.enabled : current.enabled;
     const requestedWebsocketEnabled = typeof body.websocketEnabled === 'boolean'
       ? body.websocketEnabled
       : current.websocketEnabled;
-    const websocketEnabled = enabled && requestedWebsocketEnabled;
-    if (enabled && !current.credentialRef) {
-      res.status(409).json({ error: '请先完成 Codex 账号授权，再启用订阅 transport' });
+    if (enabled && refs.length === 0) {
+      res.status(409).json({ error: '请先完成至少一个 Codex 账号授权，再启用订阅 transport' });
       return;
     }
 
     try {
-      persistConfig(options, {
+      persistConfig(options, configWithCredentialRefs(current, refs, {
         enabled,
-        websocketEnabled,
-        endpoint: current.endpoint,
-        originator: current.originator,
-        ...(current.credentialRef ? { credentialRef: current.credentialRef } : {}),
-      });
+        websocketEnabled: requestedWebsocketEnabled,
+      }));
       options.closeWebSockets?.();
       res.json(await publicState(options));
     } catch (error) {
@@ -96,9 +116,44 @@ export function createCodexSubscriptionAdminRouter(
     }
   });
 
-  router.post('/device/start', async (_req, res) => {
+  router.put('/credentials/order', async (req, res) => {
+    const current = options.credentialManager.getConfiguration();
+    const currentRefs = credentialRefs(options);
+    const body = isRecord(req.body) ? req.body : {};
+    const requested = Array.isArray(body.credentialRefs)
+      ? body.credentialRefs.filter((ref): ref is string => typeof ref === 'string' && ref.length > 0)
+      : [];
+    const requestedSet = new Set(requested);
+    if (
+      requested.length !== currentRefs.length
+      || requestedSet.size !== currentRefs.length
+      || currentRefs.some((ref) => !requestedSet.has(ref))
+    ) {
+      res.status(400).json({ error: '授权账号排序必须包含全部已配置账号，且不能重复' });
+      return;
+    }
+
     try {
-      const session = await options.deviceAuthService.start();
+      persistConfig(options, configWithCredentialRefs(current, requested));
+      res.json(await publicState(options));
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/device/start', async (req, res) => {
+    try {
+      const body = isRecord(req.body) ? req.body : {};
+      const replaceCredentialRef = typeof body.credentialRef === 'string'
+        ? body.credentialRef.trim()
+        : '';
+      if (replaceCredentialRef && !credentialRefs(options).includes(replaceCredentialRef)) {
+        res.status(404).json({ error: '待重授权的 Codex 账号不存在' });
+        return;
+      }
+      const session = await options.deviceAuthService.start(
+        replaceCredentialRef ? { replaceCredentialRef } : undefined,
+      );
       res.status(201).json(session);
     } catch (error) {
       res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
@@ -118,21 +173,26 @@ export function createCodexSubscriptionAdminRouter(
       }
 
       const current = options.credentialManager.getConfiguration();
+      const currentRefs = credentialRefs(options);
+      const replaceCredentialRef = result.replaceCredentialRef;
+      if (replaceCredentialRef && !currentRefs.includes(replaceCredentialRef)) {
+        throw new Error('待重授权的 Codex 账号已被移除，请重新发起授权');
+      }
       const persisted = await options.credentialManager.persistLogin(
         result.tokens,
-        current.credentialRef,
+        replaceCredentialRef,
       );
+      const nextRefs = replaceCredentialRef
+        ? currentRefs
+        : [...currentRefs, persisted.credentialRef];
       try {
-        persistConfig(options, {
+        persistConfig(options, configWithCredentialRefs(current, nextRefs, {
           enabled: true,
           websocketEnabled: current.websocketEnabled,
-          endpoint: current.endpoint,
-          originator: current.originator,
-          credentialRef: persisted.credentialRef,
-        });
+        }));
         options.closeWebSockets?.();
       } catch (error) {
-        if (!current.credentialRef) {
+        if (!replaceCredentialRef) {
           await options.credentialManager.revoke(persisted.credentialRef).catch(() => undefined);
         }
         throw error;
@@ -144,33 +204,64 @@ export function createCodexSubscriptionAdminRouter(
     }
   });
 
-  router.delete('/', async (_req, res) => {
+  router.delete('/credentials/:credentialRef', async (req, res) => {
     const current = options.credentialManager.getConfiguration();
+    const currentRefs = credentialRefs(options);
+    const ref = req.params.credentialRef;
+    if (!currentRefs.includes(ref)) {
+      res.status(404).json({ error: 'Codex 授权账号不存在' });
+      return;
+    }
+    const nextRefs = currentRefs.filter((item) => item !== ref);
     try {
-      persistConfig(options, {
-        enabled: false,
-        websocketEnabled: false,
-        endpoint: current.endpoint,
-        originator: current.originator,
-      });
+      persistConfig(options, configWithCredentialRefs(current, nextRefs, {
+        enabled: nextRefs.length > 0 ? current.enabled : false,
+        websocketEnabled: nextRefs.length > 0 ? current.websocketEnabled : false,
+      }));
       options.closeWebSockets?.();
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
       return;
     }
 
-    let cleanupWarning: string | undefined;
-    if (current.credentialRef) {
+    let warning: string | undefined;
+    try {
+      warning = (await options.credentialManager.revoke(ref)).remoteWarning;
+    } catch {
+      warning = 'transport 已更新，但旧 SecretVault 凭据清理失败，请检查凭据存储';
+    }
+    res.json({
+      ...(await publicState(options)),
+      ...(warning ? { warning } : {}),
+    });
+  });
+
+  router.delete('/', async (_req, res) => {
+    const current = options.credentialManager.getConfiguration();
+    const refs = credentialRefs(options);
+    try {
+      persistConfig(options, configWithCredentialRefs(current, [], {
+        enabled: false,
+        websocketEnabled: false,
+      }));
+      options.closeWebSockets?.();
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+
+    const warnings: string[] = [];
+    for (const ref of refs) {
       try {
-        const result = await options.credentialManager.revoke(current.credentialRef);
-        cleanupWarning = result.remoteWarning;
+        const result = await options.credentialManager.revoke(ref);
+        if (result.remoteWarning) warnings.push(result.remoteWarning);
       } catch {
-        cleanupWarning = 'transport 已禁用，但旧 SecretVault 凭据清理失败，请检查凭据存储';
+        warnings.push('部分 SecretVault 凭据清理失败，请检查凭据存储');
       }
     }
     res.json({
       ...(await publicState(options)),
-      ...(cleanupWarning ? { warning: cleanupWarning } : {}),
+      ...(warnings.length > 0 ? { warning: warnings.join('；') } : {}),
     });
   });
 

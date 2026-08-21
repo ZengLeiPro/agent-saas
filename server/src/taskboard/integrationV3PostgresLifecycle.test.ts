@@ -3,12 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { PostgresIntegrationEngineV3CandidateHost, PostgresIntegrationEngineV3FeatureHost, PostgresIntegrationEngineV3RequestHost, PostgresIntegrationProviderFenceHost } from './integrationEngineV3Postgres.js';
 import { PostgresIntegrationV3ComposeHost, PostgresIntegrationV3WorkerHost } from './integrationV3WorkerPostgres.js';
 
-function workerHost(query: ReturnType<typeof vi.fn>, dispatchAgent = vi.fn()) {
+function workerHost(query: ReturnType<typeof vi.fn>, dispatchAgent = vi.fn(), syncWorkspace = vi.fn()) {
   return new PostgresIntegrationV3WorkerHost({
     pool: { query, connect: vi.fn() },
     candidatesTable: 'candidates', revisionsTable: 'revisions', sourceSnapshotsTable: 'snapshots',
-    providerOperationsTable: 'operations', requestsOutboxTable: 'requests', tasksTable: 'tasks',
-    boardsTable: 'boards', executionsTable: 'executions', dispatchAgent, syncWorkspace: vi.fn(), cleanup: vi.fn(),
+    providerOperationsTable: 'operations', requestsOutboxTable: 'requests', tasksTable: 'tasks', blockEpisodesTable: 'blocks',
+    boardsTable: 'boards', executionsTable: 'executions', dispatchAgent, syncWorkspace, cleanup: vi.fn(),
+    releaseIdentity: 'release-2',
   } as never);
 }
 
@@ -22,14 +23,52 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
   });
 
   it('claims against the frozen candidate v3 policy while retaining the database global kill switch', async () => {
-    const query = vi.fn(async (_sql: string) => ({ rows: [] }));
+    const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [] }));
     await workerHost(query).claimCandidate(30_000);
     const sql = query.mock.calls[0]![0];
     expect(sql).toContain("current_setting('agent_saas.integration_v3_enabled'");
     expect(sql).toContain("c.policy_snapshot->>'workflowVersion'");
     expect(sql).toContain("c.policy_snapshot->'featureFlags'->>'engineV3'");
+    expect(sql).toContain("c.state IN ('preparing','composing','waiting_checks','needs_work','working','in_review','approved','merging')");
+    expect(sql).toContain("c.state IN ('merged','canceled')");
+    expect(sql).toContain("c.state='needs_human'");
+    expect(sql).toContain("o.state='succeeded'");
+    expect(sql).toContain("o.receipt->>'providerRequestId'=o.operation_key");
+    expect(sql).toContain("c.worker_checkpoint->>'releaseIdentity' IS DISTINCT FROM $3");
+    expect(sql).toContain("c.worker_status<>'failed' OR c.worker_checkpoint->>'releaseIdentity' IS DISTINCT FROM $3");
+    expect(sql).toContain("jsonb_build_object('releaseIdentity',$3::text)");
+    expect(query.mock.calls[0]![1]).toEqual([expect.any(String), 30_000, 'release-2']);
+    expect(sql).not.toContain("'blocked','needs_human'");
     expect(sql).not.toContain('integration_policy');
     expect(sql).not.toContain('JOIN boards');
+  });
+
+  it('preserves the claiming release identity in every worker checkpoint without a schema dependency', async () => {
+    const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [] }));
+    await workerHost(query).checkpointCandidate(
+      { candidateId: 'candidate-1', leaseId: 'lease-1' },
+      { state: 'merging', status: 'idle' },
+    );
+    expect(query.mock.calls[0]![0]).toContain("jsonb_build_object('releaseIdentity',$4::text)");
+    expect(query.mock.calls[0]![1]).toEqual([
+      'candidate-1', 'lease-1', JSON.stringify({ state: 'merging', status: 'idle' }), 'release-2',
+    ]);
+  });
+
+  it('resumes a fenced blocked candidate only after workspace sync succeeds', async () => {
+    const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [{ id: 'task-1' }] }));
+    const syncWorkspace = vi.fn(async () => undefined);
+    const host = workerHost(query, vi.fn(), syncWorkspace);
+    await host.syncWorkspace({
+      id: 'request-1', leaseId: 'lease-1', kind: 'workspace_sync',
+      candidateId: 'candidate-1', candidateRevision: 2,
+      payload: { reason: 'resume_reconcile', resumeState: 'needs_work', workflowEpoch: '3', laneEpoch: '4' },
+    });
+    expect(syncWorkspace).toHaveBeenCalledOnce();
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("state IN ('blocked','needs_human')"), [
+      'candidate-1', 2, 'needs_work', '3', '4',
+    ]);
+    expect(String(query.mock.calls[0]![0])).toContain('UPDATE blocks b SET closed_at=COALESCE');
   });
 
   it('uses two PostgreSQL-safe advisory lock keys without embedding a NUL separator', async () => {
@@ -55,20 +94,45 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
       global_enabled: true, repository_enabled: false, engine_enabled: true, merge_enabled: true,
     }] }));
     const host = new PostgresIntegrationProviderFenceHost({
-      pool: { query }, tasksTable: 'x_taskboard_tasks', integrationLanesTable: 'lanes', candidatesTable: 'candidates',
+      pool: { query }, boardsTable: 'boards', tasksTable: 'tasks', integrationLanesTable: 'lanes', candidatesTable: 'candidates',
     } as never);
     await expect(host.assertCurrent({
       kind: 'merge_pull_request', fence: { candidateId: 'candidate-1', candidateRevision: 1, workflowEpoch: 1, laneEpoch: 1 },
     } as never)).rejects.toMatchObject({ code: 'TASKBOARD_INTEGRATION_KILL_SWITCH' });
-    expect(query.mock.calls[0]![0]).toContain('x_taskboard_boards');
+    expect(query.mock.calls[0]![0]).toContain('JOIN boards b');
   });
 
-  it('loads succeeded merge operations for crash/restart convergence', async () => {
-    const query = vi.fn(async (_text: string, _values?: unknown[]) => ({ rows: [{ operation_key: 'merge-succeeded' }] }));
-    const host = workerHost(query);
-    await expect(host.findRecoverableMergeOperation('candidate-1', 4)).resolves.toBe('merge-succeeded');
-    expect(query.mock.calls[0]![0]).toContain("state IN ('executing','unknown','succeeded')");
+  it('fences a stale prepared merge after the candidate returns to composition', async () => {
+    const query = vi.fn(async (_sql: string) => ({ rows: [{
+      integration_task_id: 'integration-1', current_revision: 4, workflow_epoch: '3', lane_epoch: '9',
+      state: 'composing', workflow_version: 3, task_epoch: '3', current_lane_epoch: '9',
+      active_integration_task_id: 'integration-1', global_enabled: true, repository_enabled: true,
+      engine_enabled: true, merge_enabled: true,
+    }] }));
+    const host = new PostgresIntegrationProviderFenceHost({
+      pool: { query }, boardsTable: 'boards', tasksTable: 'tasks', integrationLanesTable: 'lanes', candidatesTable: 'candidates',
+    } as never);
+
+    await expect(host.assertCurrent({
+      kind: 'merge_pull_request',
+      fence: { candidateId: 'candidate-1', candidateRevision: 4, workflowEpoch: 3, laneEpoch: 9 },
+    } as never)).rejects.toMatchObject({ code: 'TASKBOARD_PROVIDER_OPERATION_FENCE_MISMATCH' });
   });
+
+  it.each(['prepared', 'executing', 'unknown', 'succeeded'] as const)(
+    'loads %s merge operations for crash/restart convergence',
+    async (state) => {
+      const query = vi.fn(async (_text: string, _values?: unknown[]) => ({
+        rows: [{ operation_key: `merge-${state}`, state }],
+      }));
+      const host = workerHost(query);
+      await expect(host.findRecoverableMergeOperation('candidate-1', 4)).resolves.toEqual({
+        operationKey: `merge-${state}`,
+        state,
+      });
+      expect(query.mock.calls[0]![0]).toContain("state IN ('prepared','executing','unknown','succeeded')");
+    },
+  );
 
   it('rejects commitMerged without an exact succeeded merge operation receipt', async () => {
     const candidateRow = {
@@ -153,17 +217,19 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
 
   it('binds work completion to the request execution and canonical ready_for_review resolution', async () => {
     const query = vi.fn(async (sql: string, _values?: unknown[]) => sql.includes('SELECT b.repository')
-      ? { rows: [{ repository: { provider: 'github', repositoryId: 'github:acme/app', owner: 'acme', name: 'app', baseBranch: 'main' }, owner_user_id: 'owner', tenant_id: 'tenant' }] }
+      ? { rows: [{ repository: { provider: 'github', repositoryId: 'github:acme/app', owner: 'acme', name: 'app', baseBranch: 'main' }, owner_user_id: 'owner', tenant_id: 'tenant',
+        work_execution_id: 'work-1', push_execution_id: 'work-1', push_candidate_id: 'candidate-1', push_candidate_revision: 2,
+        push_workflow_epoch: 4, push_lane_epoch: 9, push_old_oid: 'head-2', push_new_oid: 'head-3' }] }
       : { rows: [] });
     const host = new PostgresIntegrationV3ComposeHost({
       pool: { query }, candidatesTable: 'candidates', sourceSnapshotsTable: 'snapshots', tasksTable: 'tasks', boardsTable: 'boards',
-      executionsTable: 'executions', resolutionsTable: 'resolutions', requestsOutboxTable: 'requests',
+      executionsTable: 'executions', resolutionsTable: 'resolutions', requestsOutboxTable: 'requests', providerOperationsTable: 'operations',
       resolvePaths: async () => ({ repositoryPath: '/repo', worktreePath: '/worktree' }), runGit: vi.fn(), validateServerOwnedRepository: vi.fn(),
     } as never);
-    await host.resolveContext({ candidate: {
+    const context = await host.resolveContext({ candidate: {
       id: 'candidate-1', integrationTaskId: 'integration-1', repositoryId: 'github:acme/app', baseBranch: 'main', branch: 'integration/1',
       state: 'working', currentRevision: 2, workRound: 3, version: 4, workflowEpoch: '4', laneEpoch: '9', policyRevision: 'p1', mergeMethod: 'squash', policySnapshot: {}, createdAt: '', updatedAt: '',
-    }, revision: { subjectDigest: 'subject-2' } } as never);
+    }, revision: { subjectDigest: 'subject-2', headOid: 'head-2' } } as never);
     const sql = String(query.mock.calls[0]![0]);
     expect(sql).toContain("JOIN executions e ON e.id=o.payload->>'executionId'");
     expect(sql).toContain('JOIN resolutions r ON r.execution_id=e.id');
@@ -171,8 +237,15 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(sql).toContain('r.historical=false AND r.applied=true');
     expect(sql).toContain('o.work_round=c.work_round');
     expect(sql).toContain("o.payload->>'subjectDigest','')=$2");
+    expect(sql).toContain("o.kind='push_ref' AND o.state='succeeded'");
+    expect(sql).toContain('o.execution_id=work.execution_id');
+    expect(sql).toContain('o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch');
     expect(sql).not.toContain('c.subject_digest');
-    expect(query.mock.calls[0]![1]).toEqual(['candidate-1', 'subject-2']);
+    expect(query.mock.calls[0]![1]).toEqual(['candidate-1', 'subject-2', 'head-2']);
+    expect(context.workPushReceipt).toEqual({
+      executionId: 'work-1', candidateId: 'candidate-1', candidateRevision: 2,
+      workflowEpoch: '4', laneEpoch: '9', oldOid: 'head-2', newOid: 'head-3',
+    });
   });
 
   it('persists failed cleanup receipts and requeues them with bounded backoff', async () => {

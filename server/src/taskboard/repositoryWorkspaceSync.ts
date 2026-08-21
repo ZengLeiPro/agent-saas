@@ -36,6 +36,15 @@ export interface RepositoryWorkspaceSyncInput {
   integrationBranch: string;
   /** Canonical server-configured HTTPS URL; remote aliases/config are never used for network access. */
   controlledRemoteUrl: string;
+  /** Short-lived server-owned askpass environment used only by the explicit fetch. */
+  fetchEnvironment?: Readonly<Record<string, string>>;
+  /** Deterministic compose may replace a clean local integration ref when the base advanced. */
+  integrationWorktreeMode?: 'fast_forward' | 'reset_to_base';
+  /** Frozen GitHub PR heads whose exact objects must be materialized before deterministic compose. */
+  frozenPullRequestHeads?: readonly {
+    providerPullRequestId: string;
+    expectedHeadOid: string;
+  }[];
 }
 
 export interface RepositoryWorkspaceSyncResult {
@@ -45,7 +54,7 @@ export interface RepositoryWorkspaceSyncResult {
   integrationRef: string;
   baseOid: string;
   localBase: 'absent' | 'current' | 'fast_forwarded';
-  integrationWorktree: 'created' | 'current' | 'fast_forwarded';
+  integrationWorktree: 'created' | 'current' | 'fast_forwarded' | 'reset_to_base';
 }
 
 export type RepositoryWorkspaceSyncErrorCode =
@@ -101,11 +110,28 @@ async function syncLocked(
     );
   }
   const remoteBaseRef = `refs/remotes/origin/${input.baseBranch}`;
-  // Explicit URL/refspec avoids local remote.*.url, uploadpack and helper config.
+  const frozenHeads = input.frozenPullRequestHeads ?? [];
+  // Explicit URL/refspec avoids local remote.*.url, uploadpack and helper config. Fetching the
+  // frozen PR refs here is mandatory: an old reviewed source head need not be reachable from main.
   await git(host, input.repositoryPath, [
     'fetch', '--no-tags', '--prune', '--', input.controlledRemoteUrl,
     `+refs/heads/${input.baseBranch}:${remoteBaseRef}`,
-  ]);
+    ...frozenHeads.map(({ providerPullRequestId }) => (
+      `+refs/pull/${providerPullRequestId}/head:${frozenPullRequestHeadRef(providerPullRequestId)}`
+    )),
+  ], input.fetchEnvironment);
+  for (const frozen of frozenHeads) {
+    const actual = singleOid(
+      await git(host, input.repositoryPath, ['rev-parse', '--verify', frozenPullRequestHeadRef(frozen.providerPullRequestId)]),
+      `frozen pull request ${frozen.providerPullRequestId}`,
+    );
+    if (actual !== frozen.expectedHeadOid) {
+      throw new RepositoryWorkspaceSyncError(
+        `Frozen pull request ${frozen.providerPullRequestId} head drifted: expected ${frozen.expectedHeadOid}, received ${actual}`,
+        'WORKTREE_DIVERGED',
+      );
+    }
+  }
 
   const baseRef = `refs/heads/${input.baseBranch}`;
   const integrationRef = `refs/heads/${input.integrationBranch}`;
@@ -182,20 +208,30 @@ async function prepareIntegrationWorktree(
 
   if (atRequestedPath) {
     await assertClean(host, atRequestedPath);
+    if (input.integrationWorktreeMode === 'reset_to_base') {
+      await git(host, atRequestedPath.path, ['reset', '--hard', remoteBaseRef]);
+      return 'reset_to_base';
+    }
     return fastForwardWorktree(host, input.repositoryPath, atRequestedPath.path, integrationRef, remoteBaseRef);
   }
 
   const branchExists = await refExists(host, input.repositoryPath, integrationRef);
   if (branchExists) {
-    await assertFastForwardable(host, input.repositoryPath, integrationRef, remoteBaseRef);
+    if (input.integrationWorktreeMode !== 'reset_to_base') {
+      await assertFastForwardable(host, input.repositoryPath, integrationRef, remoteBaseRef);
+    }
     await git(host, input.repositoryPath, ['worktree', 'add', '--', input.worktreePath, integrationRef]);
+    if (input.integrationWorktreeMode === 'reset_to_base') {
+      await git(host, input.worktreePath, ['reset', '--hard', remoteBaseRef]);
+      return 'reset_to_base';
+    }
     if (await isAncestor(host, input.repositoryPath, remoteBaseRef, integrationRef)) return 'created';
     await git(host, input.worktreePath, ['merge', '--ff-only', remoteBaseRef]);
     return 'fast_forwarded';
   }
 
   await git(host, input.repositoryPath, [
-    'worktree', 'add', '-b', input.integrationBranch, '--', input.worktreePath, remoteBaseRef,
+    'worktree', 'add', '-b', input.integrationBranch, '--no-track', '--', input.worktreePath, remoteBaseRef,
   ]);
   return 'created';
 }
@@ -261,8 +297,9 @@ async function git(
   host: RepositoryWorkspaceSyncHost,
   cwd: string,
   args: readonly string[],
+  env?: Readonly<Record<string, string>>,
 ): Promise<RepositoryWorkspaceGitResult> {
-  const command = { cwd, args };
+  const command = { cwd, args, ...(env ? { env } : {}) };
   const result = await runGit(host, command);
   if (result.exitCode !== 0) throw commandFailure(command, result);
   return result;
@@ -350,10 +387,25 @@ function validateInput(input: RepositoryWorkspaceSyncInput): RepositoryWorkspace
   assertBranch(input.baseBranch, 'baseBranch');
   assertBranch(input.integrationBranch, 'integrationBranch');
   assertControlledRemoteUrl(input.controlledRemoteUrl);
+  const frozenByPullRequest = new Map<string, string>();
+  for (const frozen of input.frozenPullRequestHeads ?? []) {
+    if (!/^[1-9]\d*$/.test(frozen.providerPullRequestId) || !OID_PATTERN.test(frozen.expectedHeadOid)) {
+      throw new RepositoryWorkspaceSyncError('Frozen pull request head is invalid', 'INVALID_REF');
+    }
+    const previous = frozenByPullRequest.get(frozen.providerPullRequestId);
+    if (previous && previous !== frozen.expectedHeadOid) {
+      throw new RepositoryWorkspaceSyncError('Frozen pull request has conflicting expected heads', 'INVALID_REF');
+    }
+    frozenByPullRequest.set(frozen.providerPullRequestId, frozen.expectedHeadOid);
+  }
   if (input.baseBranch === input.integrationBranch) {
     throw new RepositoryWorkspaceSyncError('Base and integration branches must differ', 'INVALID_REF');
   }
   return { ...input };
+}
+
+function frozenPullRequestHeadRef(providerPullRequestId: string): string {
+  return `refs/ky-integration-v3/source-heads/pr-${providerPullRequestId}`;
 }
 
 function assertControlledRemoteUrl(value: string): void {

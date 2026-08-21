@@ -222,6 +222,16 @@ export interface TaskBoardMember {
   updatedAt: string;
 }
 
+/** 当前组织中可用于看板成员配置与筛选展示的用户目录项。 */
+export interface TaskBoardDirectoryUser {
+  id: string;
+  username: string;
+  realName?: string;
+  avatar?: string;
+  avatarVersion?: number;
+  disabled?: boolean;
+}
+
 export interface TaskBoardAttachment {
   attachmentId?: string;
   originalName: string;
@@ -284,6 +294,8 @@ export interface TaskBoardTask {
   version: number;
   creatorUserId?: string;
   creatorName?: string;
+  /** 提交人的头像版本，用于避免头像替换后继续命中旧缓存。 */
+  creatorAvatarVersion?: number;
   completedAt?: string;
   archivedAt?: string;
   deletedAt?: string;

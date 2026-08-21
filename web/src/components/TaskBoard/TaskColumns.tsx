@@ -14,7 +14,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TaskCard } from "./TaskCard";
-import { STATUS_LABELS } from "./constants";
+import {
+  sortTaskBoardTasks,
+  STATUS_LABELS,
+  taskStatusSupportsManualOrdering,
+} from "./constants";
 
 interface TaskColumnsProps {
   boardId: string;
@@ -25,7 +29,6 @@ interface TaskColumnsProps {
   canTransitionTask: boolean;
   canCreateIntegration: boolean;
   selectedDeliveryTaskIds: Set<string>;
-  desktopStatus: TaskBoardStatus | "all";
   mobileStatus: TaskBoardStatus;
   onMobileStatusChange: (status: TaskBoardStatus) => void;
   onCreateTask: (status: TaskBoardStatus) => void;
@@ -38,12 +41,6 @@ interface TaskColumnsProps {
     nextTaskId: string | undefined,
     event: DragEvent<HTMLElement>,
   ) => void;
-}
-
-function sortedTasks(tasks: TaskBoardTask[], status: TaskBoardStatus): TaskBoardTask[] {
-  return tasks
-    .filter((task) => task.status === status && !task.archivedAt)
-    .sort((left, right) => left.sortOrder - right.sortOrder);
 }
 
 const desktopStatuses: TaskBoardStatus[] = [
@@ -72,7 +69,6 @@ export function TaskColumns({
   canTransitionTask,
   canCreateIntegration,
   selectedDeliveryTaskIds,
-  desktopStatus,
   mobileStatus,
   onMobileStatusChange,
   onCreateTask,
@@ -83,14 +79,19 @@ export function TaskColumns({
   onDrop,
 }: TaskColumnsProps) {
   const [doneCollapsed, setDoneCollapsed] = useState(() => readDoneCollapsed(boardId));
-  const mobileTasks = sortedTasks(tasks, mobileStatus);
+  const mobileTasks = sortTaskBoardTasks(tasks, mobileStatus);
 
   useEffect(() => {
     setDoneCollapsed(readDoneCollapsed(boardId));
   }, [boardId]);
   const dragEnabled = !readOnly && (canReorderTask || canTransitionTask);
+  const canDragFromStatus = (status: TaskBoardStatus) => (
+    dragEnabled && (taskStatusSupportsManualOrdering(status) || status === "canceled")
+  );
 
-  const renderStatusBody = (status: TaskBoardStatus, columnTasks: TaskBoardTask[]) => (
+  const renderStatusBody = (status: TaskBoardStatus, columnTasks: TaskBoardTask[]) => {
+    const statusDragEnabled = canDragFromStatus(status);
+    return (
     <>
       {["backlog", "todo"].includes(status) ? (
         <div className="shrink-0 border-b p-2">
@@ -122,7 +123,7 @@ export function TaskColumns({
             key={task.id}
             task={task}
             readOnly={readOnly}
-            allowDrag={dragEnabled}
+            allowDrag={statusDragEnabled}
             selectable={canCreateIntegration && task.mergeEligibility === "eligible"}
             selected={selectedDeliveryTaskIds.has(task.id)}
             onSelectedChange={onDeliverySelectedChange}
@@ -139,7 +140,8 @@ export function TaskColumns({
         ) : null}
       </div>
     </>
-  );
+    );
+  };
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -174,9 +176,7 @@ export function TaskColumns({
         className="hidden h-full min-w-0 gap-3 overflow-x-auto pb-2 md:flex"
       >
         {desktopStatuses.map((status) => {
-          const columnTasks = desktopStatus === "all" || desktopStatus === status
-            ? sortedTasks(tasks, status)
-            : [];
+          const columnTasks = sortTaskBoardTasks(tasks, status);
 
           if (status === "done") {
             return (

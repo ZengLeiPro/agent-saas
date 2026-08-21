@@ -106,6 +106,7 @@ function toIso(value: unknown): string { return value instanceof Date ? value.to
 export interface PostgresIntegrationEngineV3HostOptions {
   pool: { connect(): Promise<PoolClient>; query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> };
   tasksTable: string;
+  boardsTable: string;
   executionsTable: string;
   integrationSourcesTable: string;
   integrationLanesTable: string;
@@ -113,6 +114,7 @@ export interface PostgresIntegrationEngineV3HostOptions {
   revisionsTable: string;
   providerOperationsTable: string;
   requestsOutboxTable: string;
+  blockEpisodesTable: string;
 }
 
 /** Candidate host used by the real taskboard flow. The merge commit is one DB transaction. */
@@ -169,7 +171,8 @@ export class PostgresIntegrationEngineV3CandidateHost implements IntegrationEngi
       const row = current.rows[0];
       if (!row) throw new TaskboardNotFoundError('Integration candidate not found');
       const candidate = rowToIntegrationCandidate(row);
-      if (candidate.version !== input.expectedVersion || candidate.currentRevision !== input.expectedRevision || candidate.state !== 'merging') {
+      if (candidate.version !== input.expectedVersion || candidate.currentRevision !== input.expectedRevision
+        || (candidate.state !== 'merging' && candidate.state !== 'needs_human')) {
         throw new TaskboardValidationError('Candidate changed; reload before retrying', 'TASKBOARD_CANDIDATE_CAS_MISMATCH');
       }
       const operation = await client.query(
@@ -195,6 +198,7 @@ export class PostgresIntegrationEngineV3CandidateHost implements IntegrationEngi
         || String(expected.subjectDigest ?? '') !== String(revisionRow.subject_digest)
         || String(expected.treeOid ?? '') !== String(revisionRow.tree_oid)
         || String(receipt.providerPullRequestId ?? '') !== String(candidate.providerPullRequestId ?? '')
+        || String(receipt.providerRequestId ?? '') !== String(operationRow.operation_key)
         || String(receipt.mergedCommitOid ?? '') !== input.mergedCommitOid) {
         throw new TaskboardValidationError('Provider merge operation target or receipt does not match the approved revision', 'TASKBOARD_PROVIDER_OPERATION_RECEIPT_MISMATCH');
       }
@@ -212,7 +216,7 @@ export class PostgresIntegrationEngineV3CandidateHost implements IntegrationEngi
       const updated = await client.query(
         `UPDATE ${this.options.candidatesTable}
             SET state='merged',merged_commit_oid=$4,last_error=NULL,version=version+1,updated_at=now()
-          WHERE id=$1 AND version=$2 AND current_revision=$3 AND state='merging' RETURNING *`,
+          WHERE id=$1 AND version=$2 AND current_revision=$3 AND state IN ('merging','needs_human') RETURNING *`,
         [candidate.id, input.expectedVersion, input.expectedRevision, input.mergedCommitOid]);
       if (!updated.rows[0]) throw new TaskboardValidationError('Candidate changed; reload before retrying', 'TASKBOARD_CANDIDATE_CAS_MISMATCH');
       await client.query(
@@ -279,11 +283,8 @@ export class PostgresIntegrationEngineV3RequestHost implements IntegrationEngine
 
 /** Durable fence used immediately before/after every provider operation. */
 export class PostgresIntegrationProviderFenceHost {
-  constructor(private readonly options: Pick<PostgresIntegrationEngineV3HostOptions, 'pool'|'tasksTable'|'integrationLanesTable'|'candidatesTable'>) {}
+  constructor(private readonly options: Pick<PostgresIntegrationEngineV3HostOptions, 'pool'|'boardsTable'|'tasksTable'|'integrationLanesTable'|'candidatesTable'>) {}
   async assertCurrent(operation: IntegrationProviderOperationRecord): Promise<void> {
-    const boardsTable = this.options.tasksTable.endsWith('_tasks')
-      ? `${this.options.tasksTable.slice(0, -'_tasks'.length)}_boards`
-      : (() => { throw new Error('Cannot derive boards table for dynamic Integration v3 gate'); })();
     const result = await this.options.pool.query(
       `SELECT c.integration_task_id,c.current_revision,c.workflow_epoch,c.lane_epoch,c.state,t.workflow_version,t.workflow_epoch AS task_epoch,
               l.epoch AS current_lane_epoch,l.active_integration_task_id,
@@ -293,7 +294,7 @@ export class PostgresIntegrationProviderFenceHost {
               COALESCE((b.integration_policy->'featureFlags'->>'merge')::boolean,false) AS merge_enabled
          FROM ${this.options.candidatesTable} c
          JOIN ${this.options.tasksTable} t ON t.id=c.integration_task_id
-         JOIN ${boardsTable} b ON b.id=t.board_id
+         JOIN ${this.options.boardsTable} b ON b.id=t.board_id
          JOIN ${this.options.integrationLanesTable} l ON l.repository_id=c.repository_id
         WHERE c.id=$1`, [operation.fence.candidateId]);
     const row = result.rows[0];
@@ -307,6 +308,7 @@ export class PostgresIntegrationProviderFenceHost {
       || String(row.lane_epoch) !== String(operation.fence.laneEpoch)
       || String(row.current_lane_epoch) !== String(operation.fence.laneEpoch)
       || String(row.active_integration_task_id ?? '') !== String(row.integration_task_id)
+      || (operation.kind === 'merge_pull_request' && String(row.state) !== 'merging')
       || ['merged','canceled'].includes(String(row.state))) {
       throw new TaskboardValidationError('Provider operation fence is stale', 'TASKBOARD_PROVIDER_OPERATION_FENCE_MISMATCH');
     }

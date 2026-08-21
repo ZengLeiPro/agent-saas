@@ -265,6 +265,23 @@ describe("MessageList business step sections", () => {
     expect(screen.getByText("订单资料完整")).toBeTruthy();
   });
 
+  it("moves a mid-step compaction divider above the intact business step", () => {
+    const compactedMessages = messages();
+    compactedMessages.splice(3, 0, {
+      id: "compact-1",
+      type: "compaction",
+      status: "done",
+    } as unknown as MessageItem);
+
+    render(<MessageList messages={compactedMessages} loading={false} debugModeOverride />);
+
+    const divider = screen.getByText("上下文已压缩");
+    const stepToggle = screen.getByRole("button", { name: /核验订单.*第 1\/2 步/ });
+    expect(divider.compareDocumentPosition(stepToggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /核验订单.*第 1\/2 步/ })).toHaveLength(1);
+    expect(screen.getByRole("region", { name: "业务步骤已完成" })).toBeTruthy();
+  });
+
   it("honors always-collapsed and always-expanded personal preferences", () => {
     const withOpenActivity: MessageItem[] = [
       ...messages(),

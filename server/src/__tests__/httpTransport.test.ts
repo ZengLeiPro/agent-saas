@@ -4,6 +4,7 @@ import type { WorkspaceRef } from '../agent/toolRuntime.js';
 import {
   HttpTransport,
   serializeRequest,
+  toolTimeoutMs,
   type WireToolInvocationRequest,
 } from '../runtime/httpTransport.js';
 import type { ToolInvocationRequest, ToolInvocationResponse } from '../runtime/handProtocol.js';
@@ -36,6 +37,21 @@ function mockOk(body: ToolInvocationResponse): typeof fetch {
 }
 
 describe('HttpTransport.serializeRequest', () => {
+  it('uses the thirty-minute default only for foreground Shell requests', () => {
+    expect(toolTimeoutMs(buildRequest({
+      toolName: 'Shell',
+      input: { command: 'pnpm test' },
+    }))).toBe(1_800_000);
+    expect(toolTimeoutMs(buildRequest({
+      toolName: 'Shell',
+      input: { command: 'pnpm test', mode: 'background' },
+    }))).toBe(0);
+    expect(toolTimeoutMs(buildRequest({
+      toolName: 'Shell',
+      input: { command: 'pnpm test', timeoutMs: 123 },
+    }))).toBe(123);
+  });
+
   it('drops brain-local workspace.root and AbortSignal', () => {
     const request = buildRequest({
       context: { workspace: SAMPLE_WORKSPACE, signal: new AbortController().signal },
@@ -563,6 +579,104 @@ describe('HttpTransport.invokeStream', () => {
     }))) seen.push(chunk);
 
     expect(seen).toEqual([{ type: 'completed', response: { status: 'success', content: 'tail' } }]);
+  });
+
+  it('recovers the remote final result after the transport stream timeout', async () => {
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const target = String(url);
+      urls.push(target);
+      if (target.endsWith('/execute-stream')) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        });
+      }
+      if (target.endsWith('/invocations/run-1%3Acall-timeout')) {
+        if (init?.method === 'GET') {
+          return new Response(JSON.stringify({
+            status: 'ok',
+            invocationId: 'run-1:call-timeout',
+            completed: true,
+            response: { status: 'error', error: 'Shell timed out after 100ms', metadata: { timedOut: true } },
+          }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({ status: 'ok', cancelled: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ status: 'error', error: 'unexpected URL' }), { status: 500 });
+    }) as unknown as typeof fetch;
+    const transport = new HttpTransport({
+      baseUrl: 'http://h',
+      authToken: 'secret-token-12345',
+      fetchImpl,
+      invokeTimeoutMs: 20,
+      streamCleanupGraceMs: 0,
+      invocationResultPollTimeoutMs: 100,
+      invocationResultPollIntervalMs: 1,
+    });
+
+    const seen = [];
+    for await (const chunk of transport.invokeStream(buildRequest({
+      toolName: 'Shell',
+      input: { command: 'sleep 1', timeoutMs: 1 },
+      context: { workspace: SAMPLE_WORKSPACE, invocationId: 'run-1:call-timeout' },
+    }))) seen.push(chunk);
+
+    expect(seen.at(-1)).toMatchObject({
+      type: 'completed',
+      response: {
+        status: 'error',
+        error: 'Shell timed out after 100ms',
+        metadata: { timedOut: true, remoteResultRecovered: true },
+      },
+    });
+    expect(urls).toContain('http://h/invocations/run-1%3Acall-timeout');
+    expect(urls.filter((url) => url.endsWith('/invocations/run-1%3Acall-timeout'))).toHaveLength(2);
+  });
+
+  it('bounds hanging DELETE and GET requests during timeout recovery', async () => {
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const target = String(url);
+      urls.push(target);
+      if (target.endsWith('/execute-stream')) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        });
+      }
+      if (init?.method === 'GET') {
+        return new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Promise<Response>(() => undefined);
+    }) as unknown as typeof fetch;
+    const transport = new HttpTransport({
+      baseUrl: 'http://h',
+      authToken: 'secret-token-12345',
+      fetchImpl,
+      invokeTimeoutMs: 10,
+      streamCleanupGraceMs: 0,
+      invocationResultPollTimeoutMs: 20,
+      invocationResultPollIntervalMs: 1,
+      invocationResultRequestTimeoutMs: 5,
+    });
+
+    const startedAt = Date.now();
+    const seen = [];
+    for await (const chunk of transport.invokeStream(buildRequest({
+      toolName: 'Shell',
+      input: { command: 'sleep 1', timeoutMs: 1 },
+      context: { workspace: SAMPLE_WORKSPACE, invocationId: 'run-1:call-hanging-control' },
+    }))) seen.push(chunk);
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(seen.at(-1)).toMatchObject({
+      type: 'completed',
+      response: { status: 'error', metadata: { timedOut: true } },
+    });
+    expect(urls).toContain('http://h/invocations/run-1%3Acall-hanging-control');
+    expect(urls.filter((url) => url.endsWith('/invocations/run-1%3Acall-hanging-control')).length).toBeGreaterThanOrEqual(2);
   });
 
   it('sends DELETE /invocations/:id when upstream aborts a streaming invocation', async () => {

@@ -11,8 +11,10 @@ import {
 } from './codexCredentialManager.js';
 import {
   CodexResponsesWebSocketPool,
+  CodexWebSocketQuotaExhaustedError,
   CodexWebSocketUnavailableError,
 } from './codexResponsesWebSocketPool.js';
+import { isCodexQuotaError, quotaErrorCode } from './codexQuota.js';
 import type {
   ResponsesTransport,
   ResponsesTransportExecuteInput,
@@ -80,9 +82,44 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
   }
 
   async execute(input: ResponsesTransportExecuteInput): Promise<ResponsesTransportExecuteResult> {
+    const orderedRefs = this.orderedCredentialRefs();
     const first = await this.credentials.getCredentials(false);
-    const firstPrepared = prepareRequestForBinding(input, this.bindingFor(first.accountId));
-    const firstResult = await this.executeWithToken(firstPrepared.input, first.accessToken, first.accountId);
+    const candidateRefs = Array.from(new Set([
+      ...(first.credentialRef ? [first.credentialRef] : []),
+      ...orderedRefs,
+    ]));
+    if (candidateRefs.length === 0) {
+      throw new Error('Codex subscription 尚未完成账号授权');
+    }
+
+    let token = first;
+    for (let index = 0; index < candidateRefs.length; index += 1) {
+      const credentialRef = candidateRefs[index];
+      if (index > 0) token = await this.getCredentialsForCredential(credentialRef);
+      try {
+        const result = await this.executeWithAuthRecovery(input, token);
+        if (!(await isCodexQuotaResponse(result.response))) {
+          return result;
+        }
+        if (index === candidateRefs.length - 1) return result;
+        await result.response.body?.cancel().catch(() => undefined);
+      } catch (error) {
+        if (!isCodexQuotaTransportError(error)) throw error;
+        if (index === candidateRefs.length - 1) {
+          return quotaErrorResult(input, token.accountId, error);
+        }
+      }
+    }
+
+    throw new Error('Codex subscription 未能选择可用授权账号');
+  }
+
+  private async executeWithAuthRecovery(
+    input: ResponsesTransportExecuteInput,
+    token: Awaited<ReturnType<CodexCredentialManager['getCredentials']>>,
+  ): Promise<ResponsesTransportExecuteResult> {
+    const firstPrepared = prepareRequestForBinding(input, this.bindingFor(token.accountId));
+    const firstResult = await this.executeWithToken(firstPrepared.input, token.accessToken, token.accountId);
     if (firstResult.response.status !== 401) {
       return {
         ...firstResult,
@@ -91,7 +128,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
     }
 
     await firstResult.response.body?.cancel().catch(() => undefined);
-    const refreshed = await this.credentials.getCredentials(true, first.generation);
+    const refreshed = await this.credentials.getCredentials(true, token.generation, token.credentialRef);
     const retryPrepared = prepareRequestForBinding(input, this.bindingFor(refreshed.accountId));
     const retried = await this.executeWithToken(
       retryPrepared.input,
@@ -103,6 +140,28 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
       authRetryCount: 1,
       ...(firstPrepared.reset || retryPrepared.reset ? { continuationReplayReset: true } : {}),
     };
+  }
+
+  private orderedCredentialRefs(): string[] {
+    const manager = this.credentials as CodexCredentialManager & {
+      getCredentialRefs?: () => string[];
+    };
+    const refs = typeof manager.getCredentialRefs === 'function'
+      ? manager.getCredentialRefs()
+      : [this.credentials.getConfiguration().credentialRef].filter((ref): ref is string => !!ref);
+    return Array.from(new Set(refs.filter((ref): ref is string => typeof ref === 'string' && ref.length > 0)));
+  }
+
+  private async getCredentialsForCredential(
+    credentialRef: string,
+  ): Promise<Awaited<ReturnType<CodexCredentialManager['getCredentials']>>> {
+    const manager = this.credentials as CodexCredentialManager & {
+      getCredentialsForCredential?: CodexCredentialManager['getCredentialsForCredential'];
+    };
+    if (typeof manager.getCredentialsForCredential === 'function') {
+      return manager.getCredentialsForCredential(credentialRef);
+    }
+    return this.credentials.getCredentials(false, undefined, credentialRef);
   }
 
   observeResult(input: Parameters<CodexCredentialManager['recordModelResult']>[0]): void {
@@ -147,6 +206,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
           wireRequestBodyBytes: result.wireRequestBodyBytes,
         };
       } catch (error) {
+        if (error instanceof CodexWebSocketQuotaExhaustedError) throw error;
         if (!(error instanceof CodexWebSocketUnavailableError)) throw error;
         this.credentials.recordWireRequest({
           mode: 'http_sse_full',
@@ -205,6 +265,55 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
       accountBindingHash: hashAccountBinding(accountId),
     };
   }
+}
+
+async function isCodexQuotaResponse(response: Response): Promise<boolean> {
+  if (response.ok) return false;
+  const text = await response.clone().text().catch(() => '');
+  let code: string | undefined;
+  let message: string | undefined;
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const error = parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)
+      ? parsed.error as Record<string, unknown>
+      : parsed;
+    code = typeof error.code === 'string' ? error.code : undefined;
+    message = typeof error.message === 'string' ? error.message : undefined;
+  } catch {
+    // 非 JSON body 仍交给统一文本判定。
+  }
+  return isCodexQuotaError({ status: response.status, code, message, rawText: text });
+}
+
+function isCodexQuotaTransportError(error: unknown): error is CodexWebSocketQuotaExhaustedError {
+  return error instanceof CodexWebSocketQuotaExhaustedError
+    || (error instanceof CodexWebSocketUnavailableError && error.reason === 'quota_exhausted');
+}
+
+function quotaErrorResult(
+  input: ResponsesTransportExecuteInput,
+  accountId: string,
+  error: CodexWebSocketQuotaExhaustedError,
+): ResponsesTransportExecuteResult {
+  const body = JSON.stringify({
+    error: {
+      code: error.code || quotaErrorCode({ message: error.message }),
+      message: error.message,
+    },
+  });
+  return {
+    response: new Response(body, {
+      status: error.status,
+      headers: { 'content-type': 'application/json' },
+    }),
+    continuationBinding: {
+      provider: 'openai_codex_subscription',
+      issuer: 'https://chatgpt.com/backend-api/codex/responses',
+      accountBindingHash: hashAccountBinding(accountId),
+    },
+    wireMode: 'http_sse_full',
+    wireRequestBodyBytes: Buffer.byteLength(input.serializedBody, 'utf8'),
+  };
 }
 
 function prepareRequestForBinding(

@@ -82,12 +82,20 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(query.mock.calls[0]![0]).toContain('JOIN boards b');
   });
 
-  it('loads succeeded merge operations for crash/restart convergence', async () => {
-    const query = vi.fn(async (_text: string, _values?: unknown[]) => ({ rows: [{ operation_key: 'merge-succeeded' }] }));
-    const host = workerHost(query);
-    await expect(host.findRecoverableMergeOperation('candidate-1', 4)).resolves.toBe('merge-succeeded');
-    expect(query.mock.calls[0]![0]).toContain("state IN ('executing','unknown','succeeded')");
-  });
+  it.each(['prepared', 'executing', 'unknown', 'succeeded'] as const)(
+    'loads %s merge operations for crash/restart convergence',
+    async (state) => {
+      const query = vi.fn(async (_text: string, _values?: unknown[]) => ({
+        rows: [{ operation_key: `merge-${state}`, state }],
+      }));
+      const host = workerHost(query);
+      await expect(host.findRecoverableMergeOperation('candidate-1', 4)).resolves.toEqual({
+        operationKey: `merge-${state}`,
+        state,
+      });
+      expect(query.mock.calls[0]![0]).toContain("state IN ('prepared','executing','unknown','succeeded')");
+    },
+  );
 
   it('rejects commitMerged without an exact succeeded merge operation receipt', async () => {
     const candidateRow = {

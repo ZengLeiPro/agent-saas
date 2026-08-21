@@ -31,7 +31,7 @@ class MemoryHost implements IntegrationV3WorkerHost {
   dispatched: IntegrationV3RequestLease[] = [];
   cleanupCalls: IntegrationV3RequestLease[] = [];
   completedRequests: Array<{ request: IntegrationV3RequestLease; receipt?: import('./integrationV3Worker.js').IntegrationV3CleanupReceipt }> = [];
-  operationKey?: string;
+  mergeOperation?: { operationKey: string; state: 'prepared' | 'executing' | 'unknown' | 'succeeded' };
   async claimCandidate() {
     if (['merged', 'canceled'].includes(this.current.candidate.state) && this.checkpoints.at(-1)?.status === 'requested') return undefined;
     return { candidateId: 'candidate-1', leaseId: 'candidate-lease' };
@@ -53,7 +53,7 @@ class MemoryHost implements IntegrationV3WorkerHost {
   }
   async completeRequest(request: IntegrationV3RequestLease, receipt?: import('./integrationV3Worker.js').IntegrationV3CleanupReceipt) { this.completedRequests.push({ request, ...(receipt ? { receipt } : {}) }); }
   async releaseRequest() { throw new Error('unexpected request failure'); }
-  async findRecoverableMergeOperation() { return this.operationKey; }
+  async findRecoverableMergeOperation() { return this.mergeOperation; }
 }
 
 function request(kind: 'work'|'review'|'cleanup'): IntegrationV3RequestLease {
@@ -73,7 +73,9 @@ describe('IntegrationV3Worker pure mock flow', () => {
         };
         host.current.candidate = { ...host.current.candidate, state: next[command.type] ?? host.current.candidate.state, version: host.current.candidate.version + 1 };
         if (command.type === 'request_review') host.requests.push(request('review'));
-        if (command.type === 'merge_approved') host.operationKey = 'merge-op';
+        if (command.type === 'merge_approved') {
+          host.mergeOperation = { operationKey: 'merge-op', state: 'unknown' };
+        }
         if (command.type === 'cleanup') host.requests.push(request('cleanup'));
         return { candidate: structuredClone(host.current.candidate), status: command.type === 'merge_approved' ? 'provider_unknown' : command.type === 'cleanup' ? 'requested' : 'applied' };
       }),
@@ -102,6 +104,34 @@ describe('IntegrationV3Worker pure mock flow', () => {
     expect(host.completedRequests.at(-1)).toMatchObject({ request: { kind: 'cleanup' }, receipt: { outcome: 'succeeded' } });
     expect(host.dispatched.every((item) => item.kind === 'work' || item.kind === 'review')).toBe(true);
     expect(host.errors.filter(Boolean)).toEqual(['Provider outcome awaits durable reconciliation']);
+  });
+
+  it('replays a prepared merge intent after a crash between prepare and execute', async () => {
+    const host = new MemoryHost();
+    host.current.candidate = {
+      ...candidate('merging'),
+      approvedRevision: 1,
+      approvedReviewExecutionId: 'review-exec',
+    };
+    host.mergeOperation = { operationKey: 'merge-prepared', state: 'prepared' };
+    const execute = vi.fn(async (command: IntegrationEngineV3Command) => ({
+      candidate: { ...host.current.candidate, state: 'merged' as const },
+      status: 'applied' as const,
+      ...(command.type === 'merge_approved' ? {} : { unexpected: command.type }),
+    }));
+    const worker = new IntegrationV3Worker({
+      host,
+      engine: { execute } as unknown as IntegrationEngineV3,
+      composer: { compose: vi.fn(), refreshAfterWork: vi.fn() },
+    });
+
+    await worker.runOnce();
+
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'merge_approved',
+      executionId: 'integration-v3-worker:candidate-1:r1',
+    }));
+    expect(host.errors.at(-1)).toBeUndefined();
   });
 
   it('durably requeues transient compose failures instead of terminally failing the candidate', async () => {
@@ -159,7 +189,7 @@ describe('IntegrationV3Worker pure mock flow', () => {
   it('recovers a succeeded merge operation after restart without resending merge', async () => {
     const host = new MemoryHost();
     host.current.candidate = candidate('merging');
-    host.operationKey = 'succeeded-merge-op';
+    host.mergeOperation = { operationKey: 'succeeded-merge-op', state: 'succeeded' };
     const engine = { execute: vi.fn(async (command: IntegrationEngineV3Command) => ({ candidate: { ...host.current.candidate, state: 'merged' }, status: 'applied' })) } as unknown as IntegrationEngineV3;
     const worker = new IntegrationV3Worker({
       host, engine,

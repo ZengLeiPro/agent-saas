@@ -41,6 +41,11 @@ export interface IntegrationV3CleanupReceipt {
   completedAt: string;
 }
 
+export interface IntegrationV3RecoverableMergeOperation {
+  operationKey: string;
+  state: 'prepared' | 'executing' | 'unknown' | 'succeeded';
+}
+
 export interface IntegrationV3WorkerHost {
   claimCandidate(leaseMs: number): Promise<IntegrationV3CandidateLease | undefined>;
   loadCurrent(candidateId: string): Promise<IntegrationV3WorkerCurrent>;
@@ -52,7 +57,7 @@ export interface IntegrationV3WorkerHost {
   cleanup(request: IntegrationV3RequestLease): Promise<IntegrationV3CleanupReceipt | void>;
   completeRequest(request: IntegrationV3RequestLease, receipt?: IntegrationV3CleanupReceipt): Promise<void>;
   releaseRequest(request: IntegrationV3RequestLease, error: string, retryable: boolean): Promise<void>;
-  findRecoverableMergeOperation(candidateId: string, revision: number): Promise<string | undefined>;
+  findRecoverableMergeOperation(candidateId: string, revision: number): Promise<IntegrationV3RecoverableMergeOperation | undefined>;
   logger?: { info(message: string): void; warn(message: string): void };
 }
 
@@ -207,8 +212,25 @@ export class IntegrationV3Worker {
           result = await engine.execute({ type: 'merge_approved', candidateId: lease.candidateId, expected, executionId: `integration-v3-worker:${lease.candidateId}:r${current.candidate.currentRevision}` });
           break;
         case 'merging': {
-          const operationKey = await this.options.host.findRecoverableMergeOperation(lease.candidateId, current.candidate.currentRevision);
-          if (operationKey) result = await engine.execute({ type: 'reconcile_merge', candidateId: lease.candidateId, expected, operationKey });
+          const operation = await this.options.host.findRecoverableMergeOperation(
+            lease.candidateId,
+            current.candidate.currentRevision,
+          );
+          if (operation?.state === 'prepared') {
+            result = await engine.execute({
+              type: 'merge_approved',
+              candidateId: lease.candidateId,
+              expected,
+              executionId: `integration-v3-worker:${lease.candidateId}:r${current.candidate.currentRevision}`,
+            });
+          } else if (operation) {
+            result = await engine.execute({
+              type: 'reconcile_merge',
+              candidateId: lease.candidateId,
+              expected,
+              operationKey: operation.operationKey,
+            });
+          }
           break;
         }
         case 'merged':

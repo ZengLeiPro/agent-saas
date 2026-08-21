@@ -9,6 +9,13 @@ export const BUILTIN_CONNECTOR_DEFINITIONS: readonly BuiltinConnectorDefinition[
     definition: { provider: 'github', transport: 'server_proxy' },
   },
   {
+    connectorId: 'x',
+    name: 'X',
+    authMethods: ['cookie'],
+    capabilitySchema: { posts: ['read', 'write'], search: ['read'] },
+    definition: { provider: 'x', transport: 'native_runtime', cli: 'bird' },
+  },
+  {
     connectorId: 'aliyun',
     name: '阿里云',
     authMethods: ['access_key'],
@@ -42,12 +49,5 @@ export const BUILTIN_CONNECTOR_DEFINITIONS: readonly BuiltinConnectorDefinition[
     authMethods: ['oauth'],
     capabilitySchema: { docs: ['read', 'write'], calendar: ['read', 'write'], messages: ['send'] },
     definition: { provider: 'feishu', transport: 'server_proxy' },
-  },
-  {
-    connectorId: 'x',
-    name: 'X',
-    authMethods: ['cookies'],
-    capabilitySchema: {},
-    definition: { provider: 'x', transport: 'server_proxy' },
   },
 ] as const;

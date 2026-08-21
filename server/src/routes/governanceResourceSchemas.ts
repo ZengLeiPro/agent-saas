@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { isForbiddenGovernanceField } from '../../../shared/src/types/governance.js';
 
 const credentialScopeSummarySchema = z.object({
+  regionId: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)+$/).optional(),
+  accountId: z.string().min(1).max(128).optional(),
+  identityArn: z.string().min(1).max(500).optional(),
+  identityType: z.string().min(1).max(128).optional(),
   scopes: z.array(z.string().min(1).max(500)).max(100).optional(),
   operations: z.array(z.string().min(1).max(200)).max(100).optional(),
   constraints: z.array(z.string().min(1).max(500)).max(100).optional(),
@@ -35,7 +39,7 @@ export const connectorStatusSchema = z.object({
   expectedVersion: z.number().int().positive(), status: z.enum(['disabled', 'retired']),
 }).strict();
 export const credentialCreateSchema = z.object({
-  tenantId: z.string().min(2).max(64).optional(), connectorId: z.string().min(2).max(96),
+  tenantId: z.string().min(2).max(64).optional(), connectorId: z.string().min(1).max(96),
   kind: z.enum(['org_shared', 'personal_grant', 'infrastructure']), custodianUserId: z.string().min(1).max(128).optional(),
   alias: z.string().max(100).optional(), purpose: z.string().min(1).max(500),
   scopeSummary: credentialScopeSummarySchema.optional(), secret: z.string().min(1).max(10000),
@@ -58,6 +62,7 @@ export const credentialCreatePreviewSchema = credentialCreateSchema.extend({
 export const credentialCreateCommitSchema = credentialCreatePreviewSchema.extend(credentialPreviewTokenShape).strict();
 export const credentialRotatePreviewSchema = z.object({
   expectedVersion: z.number().int().positive(), secret: z.string().min(1).max(10000), reason: z.string().min(3).max(500),
+  scopeSummary: credentialScopeSummarySchema.optional(),
 }).strict();
 export const credentialRotateCommitSchema = credentialRotatePreviewSchema.extend(credentialPreviewTokenShape).strict();
 export const credentialTransferPreviewSchema = z.object({

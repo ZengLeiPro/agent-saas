@@ -110,6 +110,22 @@ function buildPool(state: PoolState = { credentialRows: [], issueRows: [] }) {
       const row = state.credentialRows.find(r => r.secret_ref === boundParams[0]);
       return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
     }
+    if (sql.includes('UPDATE test_credentials') && sql.includes('generation=generation+1') && sql.includes('RETURNING')) {
+      const current = state.credentialRows.find(row => row.credential_id === boundParams[1]);
+      if (!current || Number(current.version) !== Number(boundParams[2])) return { rows: [], rowCount: 0 };
+      const updated = {
+        ...current,
+        status: 'active',
+        generation: String(Number(current.generation as string) + 1),
+        version: String(Number(current.version as string) + 1),
+        source: 'governance',
+        expires_at: boundParams[4] ? null : current.expires_at,
+        scope_summary_json: boundParams[5] === null ? current.scope_summary_json : JSON.parse(String(boundParams[5])),
+        updated_by: boundParams[3],
+      };
+      state.credentialRows = state.credentialRows.map(row => row.credential_id === current.credential_id ? updated : row);
+      return { rows: [updated], rowCount: 1 };
+    }
     if (sql.includes('UPDATE test_credentials') && sql.includes('RETURNING')) {
       const current = state.credentialRows[0];
       if (!current || Number(current.version) !== Number(boundParams[3])) return { rows: [], rowCount: 0 };
@@ -181,6 +197,27 @@ describe('Credential 治理事实模型', () => {
       tenantId: 'acme', ownerUserId: 'user-1', kind: 'personal_grant', secretRef: 'ref-1', purpose: 'test', createdBy: 'admin',
     })).rejects.toMatchObject({ code: 'CREDENTIAL_SECRET_REF_CONFLICT' });
     expect(state.credentialRows).toHaveLength(1);
+  });
+
+  it('completeRotation 原子更新 Secret generation 与 scopeSummary，版本冲突不改旧元数据', async () => {
+    const { pool, state } = buildPool();
+    const store = new PgCredentialStore({ pool, tablePrefix: 'test' });
+    state.credentialRows.push(credentialRow({
+      scope_summary_json: { regionId: 'cn-shenzhen', accountId: 'old-account' }, expires_at: '2026-09-01T00:00:00.000Z',
+    }));
+
+    const rotated = await store.completeRotation('acme', 'cred-1', 1, 'user-1', false, {
+      regionId: 'cn-hangzhou', accountId: 'new-account', identityType: 'RAMUser',
+    });
+    expect(rotated).toMatchObject({ generation: 2, version: 2, source: 'governance' });
+    expect(rotated.scopeSummary).toEqual({ regionId: 'cn-hangzhou', accountId: 'new-account', identityType: 'RAMUser' });
+
+    await expect(store.completeRotation('acme', 'cred-1', 1, 'user-1', false, {
+      regionId: 'cn-beijing', accountId: 'wrong-version',
+    })).rejects.toMatchObject({ code: 'CREDENTIAL_VERSION_CONFLICT' });
+    expect(state.credentialRows[0]?.scope_summary_json).toEqual({
+      regionId: 'cn-hangzhou', accountId: 'new-account', identityType: 'RAMUser',
+    });
   });
 
   it('suspend/revoke 走版本化事务；revoked 终态不可再改，重复 suspend 拒绝', async () => {

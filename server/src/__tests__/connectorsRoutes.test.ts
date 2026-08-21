@@ -6,10 +6,12 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { JwtPayload } from '../auth/types.js';
+import type { GovernanceCredential } from '../data/credentials/types.js';
 import { AliyunConnectorService, type AliyunValidateCredentials } from '../connectors/aliyun.js';
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import { resolveGithubRuntimeEnv } from '../connectors/github.js';
-import { resolveXRuntimeEnv } from '../connectors/x.js';
+import { type GovernanceCredentialReader } from '../connectors/governanceCredential.js';
+import { resolveXRuntimeEnv, type XGovernanceCredentialReader } from '../connectors/x.js';
 import { createConnectorsRouter } from '../routes/connectors.js';
 import { InMemorySecretVault } from '../security/secretVault.js';
 
@@ -17,6 +19,7 @@ interface Rig {
   request(path: string, init?: RequestInit): Promise<Response>;
   connectionStore: ConnectorConnectionStore;
   secretVault: InMemorySecretVault;
+  aliyunService: AliyunConnectorService;
   close(): Promise<void>;
 }
 
@@ -27,6 +30,7 @@ afterEach(async () => {
 
 async function createRig(options: {
   legacyWriteGate?: { assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void> };
+  governanceCredentialStore?: GovernanceCredentialReader;
 } = {}): Promise<Rig> {
   const root = mkdtempSync(join(tmpdir(), 'connectors-route-'));
   const connectionStore = new ConnectorConnectionStore(join(root, 'connections.json'));
@@ -34,6 +38,7 @@ async function createRig(options: {
   const aliyunService = new AliyunConnectorService({
     connectionStore,
     vault: secretVault,
+    ...(options.governanceCredentialStore ? { governanceCredentialStore: options.governanceCredentialStore } : {}),
     validateCredentials: vi.fn<AliyunValidateCredentials>().mockResolvedValue({
       accountId: '1234567890123456',
       arn: 'acs:ram::1234567890123456:user/agent-saas',
@@ -53,6 +58,7 @@ async function createRig(options: {
   });
   app.use('/api/connectors', createConnectorsRouter({
     connectionStore, secretVault, aliyunService,
+    ...(options.governanceCredentialStore ? { governanceCredentialStore: options.governanceCredentialStore } : {}),
     ...(options.legacyWriteGate ? { legacyWriteGate: options.legacyWriteGate } : {}),
   }));
   const server: Server = await new Promise(resolve => {
@@ -63,6 +69,7 @@ async function createRig(options: {
   const rig: Rig = {
     connectionStore,
     secretVault,
+    aliyunService,
     request: (path, init) => fetch(`${baseUrl}${path}`, init),
     close: async () => {
       await new Promise<void>(resolve => server.close(() => resolve()));
@@ -187,6 +194,92 @@ describe('native connectors routes', () => {
     expect(write.status).toBe(409);
     expect(await write.json()).toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
     expect(gate.assertLegacyWriteAllowed).toHaveBeenCalledWith({ actor: 'user', compatibilityProjection: false });
+  });
+
+  it('X 连接状态 GET 与 runtime env 直接读取治理 Credential', async () => {
+    let governanceCredentials: GovernanceCredential[] = [];
+    const governanceCredentialStore = {
+      listForOwner: vi.fn().mockImplementation(async () => governanceCredentials),
+    } satisfies XGovernanceCredentialReader;
+    const rig = await createRig({ governanceCredentialStore });
+    const secret = await rig.secretVault.putSecret('user-1', 'connector', JSON.stringify({
+      authToken: 'governance-auth', ct0: 'governance-ct0',
+    }), {
+      actor: 'connector_proxy', userId: 'user-1', tenantId: 'tenant-a', scopes: ['secret:connector:write'],
+    }, { connectorId: 'x', tenantId: 'tenant-a', credentialOwnerId: 'user-1' });
+    governanceCredentials = [{
+      credentialId: 'credential-x', tenantId: 'tenant-a', connectorId: 'x' as const,
+      kind: 'personal_grant' as const, ownerUserId: 'user-1', purpose: 'X bird CLI 用户凭据',
+      scopeSummary: { scopes: ['x:*'] }, status: 'active' as const, generation: 1,
+      secretRef: secret.id, source: 'governance' as const, version: 2,
+      createdAt: '2026-08-20T10:00:00.000Z', createdBy: 'user-1',
+      updatedAt: '2026-08-20T10:01:00.000Z', updatedBy: 'user-1',
+    }];
+
+    const get = await rig.request('/api/connectors/x');
+    expect(get.status).toBe(200);
+    await expect(get.json()).resolves.toMatchObject({ connection: {
+      connectorId: 'x', status: 'connected', credentialId: 'credential-x', credentialVersion: 2,
+    } });
+    await expect(resolveXRuntimeEnv({
+      connectionStore: rig.connectionStore,
+      vault: rig.secretVault,
+      governanceCredentialStore,
+    }, { userId: 'user-1', username: 'alice', tenantId: 'tenant-a' })).resolves.toMatchObject({
+      AUTH_TOKEN: 'governance-auth', CT0: 'governance-ct0',
+    });
+  });
+
+  it('GitHub 与阿里云连接状态及运行环境读取治理 Credential', async () => {
+    let governanceCredentials: GovernanceCredential[] = [];
+    const governanceCredentialStore = {
+      listForOwner: vi.fn().mockImplementation(async () => governanceCredentials),
+    } satisfies GovernanceCredentialReader;
+    const rig = await createRig({ governanceCredentialStore });
+    const githubSecret = await rig.secretVault.putSecret('user-1', 'connector', 'github-governance-token', {
+      actor: 'connector_proxy', userId: 'user-1', tenantId: 'tenant-a', scopes: ['secret:connector:write'],
+    }, { connectorId: 'github', tenantId: 'tenant-a', credentialOwnerId: 'user-1' });
+    const aliyunSecret = await rig.secretVault.putSecret('user-1', 'connector', JSON.stringify({
+      accessKeyId: 'LTAI-governance', accessKeySecret: 'aliyun-governance-secret',
+    }), {
+      actor: 'connector_proxy', userId: 'user-1', tenantId: 'tenant-a', scopes: ['secret:connector:write'],
+    }, { connectorId: 'aliyun', tenantId: 'tenant-a', credentialOwnerId: 'user-1' });
+    const base = {
+      tenantId: 'tenant-a', kind: 'personal_grant' as const, ownerUserId: 'user-1',
+      status: 'active' as const, generation: 1, source: 'governance' as const,
+      createdAt: '2026-08-20T10:00:00.000Z', createdBy: 'user-1',
+      updatedAt: '2026-08-20T10:01:00.000Z', updatedBy: 'user-1',
+    };
+    governanceCredentials = [
+      {
+        ...base, credentialId: 'credential-github', connectorId: 'github',
+        purpose: 'GitHub CLI 用户凭据', scopeSummary: { scopes: ['github:*'] },
+        secretRef: githubSecret.id, version: 2,
+      },
+      {
+        ...base, credentialId: 'credential-aliyun', connectorId: 'aliyun',
+        purpose: '阿里云 CLI 用户凭据', scopeSummary: { regionId: 'cn-shenzhen', scopes: ['aliyun:*'] },
+        secretRef: aliyunSecret.id, version: 3,
+      },
+    ];
+
+    await expect(rig.request('/api/connectors/github').then(response => response.json())).resolves.toMatchObject({
+      connection: { connectorId: 'github', status: 'connected', credentialId: 'credential-github', credentialVersion: 2 },
+    });
+    await expect(resolveGithubRuntimeEnv({
+      connectionStore: rig.connectionStore, vault: rig.secretVault, governanceCredentialStore,
+    }, { userId: 'user-1', username: 'alice', tenantId: 'tenant-a' })).resolves.toEqual({
+      GH_TOKEN: 'github-governance-token', GITHUB_TOKEN: 'github-governance-token',
+    });
+
+    await expect(rig.request('/api/connectors/aliyun').then(response => response.json())).resolves.toMatchObject({
+      connection: { connectorId: 'aliyun', status: 'connected', credentialId: 'credential-aliyun', credentialVersion: 3, regionId: 'cn-shenzhen' },
+    });
+    await expect(rig.aliyunService.resolveRuntimeEnv({ userId: 'user-1', username: 'alice', tenantId: 'tenant-a' })).resolves.toEqual({
+      ALIBABA_CLOUD_ACCESS_KEY_ID: 'LTAI-governance',
+      ALIBABA_CLOUD_ACCESS_KEY_SECRET: 'aliyun-governance-secret',
+      ALIBABA_CLOUD_REGION_ID: 'cn-shenzhen',
+    });
   });
 
   it('connects, pauses, resumes and disconnects X cookie credentials without returning secrets', async () => {

@@ -5,16 +5,18 @@ import type { SecretVault } from '../security/secretVault.js';
 import type { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import type { AliyunConnectorService } from '../connectors/aliyun.js';
 import { isNativeRuntimeConnectorId } from '../connectors/runtimeState.js';
+import type { GovernanceCredentialReader } from '../connectors/governanceCredential.js';
 import {
   GITHUB_CONNECTOR_ID,
   GITHUB_TOKEN_CREDENTIAL_KEY,
+  getGithubConnectionWithGovernance,
   revokePendingGithubCredentials,
   toGithubConnectionView,
 } from '../connectors/github.js';
 import {
   connectXCredential,
   disconnectXCredential,
-  getXConnection,
+  getXConnectionWithGovernance,
 } from '../connectors/x.js';
 
 const githubConnectSchema = z.object({
@@ -46,6 +48,7 @@ const runtimeStateSchema = z.object({
 export interface ConnectorsRouterDeps {
   connectionStore: ConnectorConnectionStore;
   secretVault: SecretVault;
+  governanceCredentialStore?: GovernanceCredentialReader;
   aliyunService?: AliyunConnectorService;
   legacyWriteGate?: {
     assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
@@ -94,17 +97,19 @@ export function createConnectorsRouter(deps: ConnectorsRouterDeps): Router {
     return res.json({ connectorId, runtimeEnabled: parsed.data.runtimeEnabled });
   });
 
-  router.get('/github', (req, res) => {
+  router.get('/github', async (req, res) => {
     const auth = authContext(req);
     if (!auth) return res.status(401).json({ error: 'Authentication required' });
-    const record = deps.connectionStore.get(auth.username, GITHUB_CONNECTOR_ID);
-    const owned = record?.userId === auth.userId && record.tenantId === auth.tenantId ? record : undefined;
-    res.json({
-      connection: toGithubConnectionView(
-        owned,
-        deps.connectionStore.isRuntimeEnabled(auth.username, GITHUB_CONNECTOR_ID),
-      ),
-    });
+    try {
+      const connection = await getGithubConnectionWithGovernance({
+        connectionStore: deps.connectionStore,
+        governanceCredentialStore: deps.governanceCredentialStore,
+        context: auth,
+      });
+      return res.json({ connection });
+    } catch (error) {
+      return res.status(503).json({ error: error instanceof Error ? error.message : '读取 GitHub 连接失败' });
+    }
   });
 
   const connectGithub = async (req: Request, res: Response) => {
@@ -184,10 +189,19 @@ export function createConnectorsRouter(deps: ConnectorsRouterDeps): Router {
     return res.json({ connection: toGithubConnectionView(connection) });
   });
 
-  router.get('/x', (req, res) => {
+  router.get('/x', async (req, res) => {
     const auth = authContext(req);
     if (!auth) return res.status(401).json({ error: 'Authentication required' });
-    return res.json({ connection: getXConnection(deps.connectionStore, auth) });
+    try {
+      const connection = await getXConnectionWithGovernance({
+        connectionStore: deps.connectionStore,
+        governanceCredentialStore: deps.governanceCredentialStore,
+        context: auth,
+      });
+      return res.json({ connection });
+    } catch (error) {
+      return res.status(503).json({ error: error instanceof Error ? error.message : '读取 X 连接失败' });
+    }
   });
 
   const connectX = async (req: Request, res: Response) => {
@@ -228,11 +242,15 @@ export function createConnectorsRouter(deps: ConnectorsRouterDeps): Router {
     }
   });
 
-  router.get('/aliyun', (req, res) => {
+  router.get('/aliyun', async (req, res) => {
     const auth = authContext(req);
     if (!auth) return res.status(401).json({ error: 'Authentication required' });
     if (!deps.aliyunService) return res.status(503).json({ error: '阿里云连接器未启用' });
-    return res.json({ connection: deps.aliyunService.getConnection(auth) });
+    try {
+      return res.json({ connection: await deps.aliyunService.getConnectionWithGovernance(auth) });
+    } catch (error) {
+      return res.status(503).json({ error: error instanceof Error ? error.message : '读取阿里云连接失败' });
+    }
   });
 
   router.post('/aliyun', async (req, res) => {

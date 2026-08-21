@@ -263,6 +263,16 @@ export class IntegrationEngineV3 {
     const revision = requireRevision(current);
     const operationKey = integrationProviderOperationKey({ repositoryId: current.candidate.repositoryId, candidateId: current.candidate.id, candidateRevision: revision.revision, kind: 'merge_pull_request', target: requiredPr(current.candidate) });
     const facts = await this.readProviderFacts(current);
+    if (facts.state === 'merged') {
+      const exact = isExactMergedSubject(current, facts);
+      return applied(await this.transition(
+        current,
+        'needs_human',
+        exact
+          ? 'Provider PR was merged outside the controlled Workflow v3 operation; audit or replacement validation is required'
+          : 'Provider PR was externally merged with unknown or mismatched approved facts',
+      ));
+    }
     if (isBaseOnlyDrift(current, facts)) {
       const prepared = current.candidate.state === 'merging'
         ? await this.options.providerOperations.get(operationKey)
@@ -379,6 +389,16 @@ function assertExpected(current: IntegrationEngineV3Current, expected: Integrati
 function assertReviewReceipt(current: IntegrationEngineV3Current, executionId: string, receipt: IntegrationReviewReceiptV3): void {
   const r = requireRevision(current);
   if (!executionId || receipt.candidateId !== current.candidate.id || receipt.revision !== r.revision || receipt.subjectDigest !== r.subjectDigest || receipt.sourceSetDigest !== r.sourceSetDigest) throw failClosed('Review receipt does not bind the current subject', 'TASKBOARD_INTEGRATION_REVIEW_RECEIPT_STALE');
+}
+function isExactMergedSubject(current: IntegrationEngineV3Current, facts: IntegrationEngineV3ProviderFacts): boolean {
+  const revision = requireRevision(current);
+  return facts.repositoryId === current.candidate.repositoryId
+    && facts.providerPullRequestId === requiredPr(current.candidate)
+    && facts.baseBranch === current.candidate.baseBranch
+    && facts.headOid === revision.headOid
+    && facts.treeOid === revision.treeOid
+    && Boolean(facts.mergeCommitOid)
+    && facts.mergedTreeOid === revision.treeOid;
 }
 function isBaseOnlyDrift(current: IntegrationEngineV3Current, facts: IntegrationEngineV3ProviderFacts): boolean {
   const revision = requireRevision(current);

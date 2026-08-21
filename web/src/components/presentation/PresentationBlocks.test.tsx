@@ -83,6 +83,7 @@ describe('records', () => {
     }]} />);
     const records = container.querySelector('[data-records-block]');
     expect(records?.className).toContain('inline-block');
+    expect(records?.className).toContain('self-start');
     expect(records?.className).toContain('max-w-full');
     expect(records?.className).toContain('overflow-x-auto');
     expect(records?.className).toContain('rounded-xl');

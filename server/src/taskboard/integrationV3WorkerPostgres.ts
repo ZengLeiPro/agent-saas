@@ -137,6 +137,14 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
             AND c.worker_available_at<=now()
             AND (c.worker_status IN ('idle','failed') OR c.worker_lease_expires_at<now())
             AND (c.state IN ('preparing','composing','waiting_checks','needs_work','working','in_review','approved','merging')
+              OR (c.state='needs_human'
+                AND c.worker_checkpoint->>'releaseIdentity' IS DISTINCT FROM $3
+                AND EXISTS (
+                  SELECT 1 FROM ${this.options.providerOperationsTable} o
+                   WHERE o.candidate_id=c.id AND o.candidate_revision=c.current_revision
+                     AND o.kind='merge_pull_request' AND o.state='succeeded'
+                     AND o.receipt->>'providerRequestId'=o.operation_key
+                ))
               OR (c.state IN ('merged','canceled') AND c.worker_checkpoint->>'status' IS DISTINCT FROM 'requested'))
           ORDER BY c.updated_at,c.id FOR UPDATE OF c SKIP LOCKED LIMIT 1
        )

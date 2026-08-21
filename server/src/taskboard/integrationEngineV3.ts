@@ -300,7 +300,9 @@ export class IntegrationEngineV3 {
   }
 
   private async reconcileMerge(current: IntegrationEngineV3Current, operationKey: string): Promise<IntegrationEngineV3Result> {
-    if (current.candidate.state !== 'merging') throw failClosed('Only a merging candidate can reconcile', 'TASKBOARD_INTEGRATION_RECONCILE_STATE_INVALID');
+    if (current.candidate.state !== 'merging' && current.candidate.state !== 'needs_human') {
+      throw failClosed('Only a merging or recoverable needs_human candidate can reconcile', 'TASKBOARD_INTEGRATION_RECONCILE_STATE_INVALID');
+    }
     const repository = await this.repository(current.candidate.repositoryId);
     const operation = await this.options.providerOperations.reconcile(operationKey, (record) => this.options.provider.reconcileMerge(record, repository, this.options.credentialOwnerId));
     if (operation.state !== 'succeeded') return { candidate: current.candidate, status: 'provider_unknown', operation };
@@ -309,8 +311,14 @@ export class IntegrationEngineV3 {
 
   private async finishMerge(current: Required<IntegrationEngineV3Current>, operation: IntegrationProviderOperationRecord): Promise<IntegrationEngineV3Result> {
     const facts = await this.readAndValidateFacts(current, true);
-    if (facts.state !== 'merged' || !facts.mergeCommitOid || !facts.mergedTreeOid || facts.mergedTreeOid !== current.revision.treeOid) {
-      const candidate = await this.transition(current, 'needs_human', 'Merged provider facts or merged tree are unknown/mismatched');
+    const receipt = operation.receipt ?? {};
+    const receiptCommitOid = typeof receipt.mergedCommitOid === 'string' ? receipt.mergedCommitOid : undefined;
+    const directControlledReceipt = receipt.providerRequestId === operation.operationKey;
+    const exactReconciledTree = receipt.mergedTreeOid === current.revision.treeOid
+      && facts.mergedTreeOid === current.revision.treeOid;
+    if (facts.state !== 'merged' || !facts.mergeCommitOid || receiptCommitOid !== facts.mergeCommitOid
+      || (!directControlledReceipt && !exactReconciledTree)) {
+      const candidate = await this.transition(current, 'needs_human', 'Merged provider facts do not match the controlled operation receipt');
       return { candidate, status: 'provider_unknown', operation };
     }
     const candidate = await this.options.candidates.commitMerged({ candidateId: current.candidate.id, expectedVersion: current.candidate.version, expectedRevision: current.revision.revision, mergedCommitOid: facts.mergeCommitOid, providerOperationId: operation.id });

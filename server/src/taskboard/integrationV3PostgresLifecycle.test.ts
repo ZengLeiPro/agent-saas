@@ -31,6 +31,10 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(sql).toContain("c.policy_snapshot->'featureFlags'->>'engineV3'");
     expect(sql).toContain("c.state IN ('preparing','composing','waiting_checks','needs_work','working','in_review','approved','merging')");
     expect(sql).toContain("c.state IN ('merged','canceled')");
+    expect(sql).toContain("c.state='needs_human'");
+    expect(sql).toContain("o.state='succeeded'");
+    expect(sql).toContain("o.receipt->>'providerRequestId'=o.operation_key");
+    expect(sql).toContain("c.worker_checkpoint->>'releaseIdentity' IS DISTINCT FROM $3");
     expect(sql).toContain("c.worker_status<>'failed' OR c.worker_checkpoint->>'releaseIdentity' IS DISTINCT FROM $3");
     expect(sql).toContain("jsonb_build_object('releaseIdentity',$3::text)");
     expect(query.mock.calls[0]![1]).toEqual([expect.any(String), 30_000, 'release-2']);

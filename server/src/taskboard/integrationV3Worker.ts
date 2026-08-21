@@ -233,6 +233,21 @@ export class IntegrationV3Worker {
           }
           break;
         }
+        case 'needs_human': {
+          const operation = await this.options.host.findRecoverableMergeOperation(
+            lease.candidateId,
+            current.candidate.currentRevision,
+          );
+          if (operation?.state === 'succeeded') {
+            result = await engine.execute({
+              type: 'reconcile_merge',
+              candidateId: lease.candidateId,
+              expected,
+              operationKey: operation.operationKey,
+            });
+          }
+          break;
+        }
         case 'merged':
         case 'canceled':
           result = await engine.execute({ type: 'cleanup', candidateId: lease.candidateId, expected, reason: `candidate_${current.candidate.state}` });

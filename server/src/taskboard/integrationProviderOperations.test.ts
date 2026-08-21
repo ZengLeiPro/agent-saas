@@ -110,6 +110,33 @@ describe('IntegrationProviderOperationService', () => {
     expect(result).toMatchObject({ state: 'unknown', error: 'ref is not visible yet', attemptCount: 1 });
   });
 
+  it('terminalizes an evidence-backed not-applied result without resending the operation', async () => {
+    const { service } = setup();
+    await service.prepare(intent);
+    await service.execute(operationKey, async () => { throw new Error('transport failed'); });
+
+    const result = await service.reconcile(operationKey, async () => ({
+      status: 'not_applied', detail: 'exact ref remains at the expected old OID',
+      evidence: { actualOid: 'base-oid', verifiedNotApplied: true },
+    }));
+
+    expect(result).toMatchObject({ state: 'failed', attemptCount: 1,
+      error: 'exact ref remains at the expected old OID',
+      receipt: { actualOid: 'base-oid', verifiedNotApplied: true } });
+  });
+
+  it('does not classify an in-flight executing operation as not applied', async () => {
+    const { service, storage } = setup();
+    const prepared = await service.prepare(intent);
+    await storage.compareAndSet({ id: prepared.id, expectedState: 'prepared', nextState: 'executing',
+      patch: { attemptCount: 1, updatedAt: prepared.updatedAt } });
+
+    await expect(service.reconcile(operationKey, async () => ({
+      status: 'not_applied', detail: 'ref still old', evidence: { verifiedNotApplied: true },
+    }))).rejects.toBeInstanceOf(ProviderOperationReconcileRequiredError);
+    expect(await storage.getByOperationKey(operationKey)).toMatchObject({ state: 'executing', attemptCount: 1 });
+  });
+
   it('moves a reconciled mismatch to needs_human', async () => {
     const { service } = setup();
     await service.prepare(intent);

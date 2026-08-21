@@ -28,8 +28,10 @@ const binding: IntegrationPushCapabilityBinding = {
 
 class MemoryOperations implements IntegrationProviderOperationStorageHost {
   records = new Map<string, IntegrationProviderOperationRecord>();
+  beforeInsert?: (record: IntegrationProviderOperationRecord) => void;
   async getByOperationKey(key: string) { return this.records.get(key); }
   async insertPrepared(record: IntegrationProviderOperationRecord) {
+    this.beforeInsert?.(record); this.beforeInsert = undefined;
     const existing = this.records.get(record.operationKey); if (existing) return existing;
     this.records.set(record.operationKey, record); return record;
   }
@@ -46,6 +48,8 @@ class FakeGit implements IntegrationPushGitRunner {
   parentLine = `${B} ${A}`;
   remoteLine = `${A}\t${binding.exactRef}\n`;
   failPush = false;
+  failPushCount = 0;
+  remoteLineAfterFailedPush?: string;
   constructor(private readonly root: string) {}
   async run(input: { cwd: string; args: string[]; env?: Record<string, string> }): Promise<{ stdout: string }> {
     this.calls.push({ args: input.args, env: input.env });
@@ -55,7 +59,13 @@ class FakeGit implements IntegrationPushGitRunner {
     if (input.args[0] === 'rev-list') return { stdout: `${this.parentLine}\n` };
     if (input.args[0] === 'ls-remote') return { stdout: this.remoteLine };
     if (input.args[0] === 'push') {
-      if (this.failPush) throw new Error(`provider echoed ${TOKEN}`);
+      if (this.failPush || this.failPushCount > 0) {
+        if (this.failPushCount > 0) this.failPushCount -= 1;
+        if (this.remoteLineAfterFailedPush !== undefined) this.remoteLine = this.remoteLineAfterFailedPush;
+        throw new Error(`provider echoed ${TOKEN}`);
+      }
+      const [newOid, ref] = input.args.at(-1)!.split(':');
+      this.remoteLine = `${newOid}\t${ref}\n`;
       return { stdout: '' };
     }
     throw new Error(`unexpected git call ${input.args[0]}`);
@@ -97,6 +107,16 @@ async function fixture(credential: IntegrationPushCredential | null = {
     candidateId: binding.candidateId, capabilityToken, commitOid,
   });
   return { root, host, capabilityService, gateway, git, operationStorage, issue, push, disableTarget: () => { active = false; } };
+}
+
+function exactPushInput() {
+  return {
+    tenantId: binding.tenantId, ownerUserId: 'owner-1', repositoryId: binding.repositoryId,
+    integrationTaskId: binding.integrationTaskId, candidateId: binding.candidateId,
+    revision: binding.revision, exactRef: binding.exactRef, expectedOldOid: A, newOid: B,
+    fence: { workflowEpoch: binding.workflowEpoch, laneEpoch: binding.laneEpoch,
+      candidateId: binding.candidateId, candidateRevision: binding.revision, executionId: 'compose-1' },
+  };
 }
 
 describe('IntegrationPushGateway', () => {
@@ -208,23 +228,75 @@ describe('IntegrationPushGateway', () => {
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 
-  it('durably records exact push intent and reconciles unknown by read-back without a second write', async () => {
+  it('reconciles an ambiguous push that actually applied without a second write', async () => {
     const f = await fixture();
-    const input = {
-      tenantId: binding.tenantId, ownerUserId: 'owner-1', repositoryId: binding.repositoryId,
-      integrationTaskId: binding.integrationTaskId, candidateId: binding.candidateId,
-      revision: binding.revision, exactRef: binding.exactRef, expectedOldOid: A, newOid: B,
-      fence: { workflowEpoch: binding.workflowEpoch, laneEpoch: binding.laneEpoch,
-        candidateId: binding.candidateId, candidateRevision: binding.revision, executionId: 'compose-1' },
-    };
+    const input = exactPushInput();
     try {
-      f.git.failPush = true;
-      await expect(f.gateway.pushExact(input)).rejects.toMatchObject({ code: 'push_failed_unknown' });
-      expect([...f.operationStorage.records.values()][0]).toMatchObject({ kind: 'push_ref', state: 'unknown', expected: { oldOid: A, newOid: B } });
-      f.git.failPush = false; f.git.remoteLine = `${B}\t${binding.exactRef}\n`;
+      f.git.failPushCount = 1;
+      f.git.remoteLineAfterFailedPush = `${B}\t${binding.exactRef}\n`;
       await expect(f.gateway.pushExact(input)).resolves.toBeUndefined();
       expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(1);
-      expect([...f.operationStorage.records.values()][0]?.state).toBe('succeeded');
+      expect([...f.operationStorage.records.values()][0]).toMatchObject({
+        kind: 'push_ref', state: 'succeeded', attemptCount: 1,
+        expected: { oldOid: A, newOid: B }, receipt: { newOid: B, reconciled: true },
+      });
+      await expect(f.gateway.pushExact({ ...input, expectedOldOid: B })).resolves.toBeUndefined();
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(1);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it('retries once with a separate ledger operation after proving the first push left the ref unchanged', async () => {
+    const f = await fixture();
+    try {
+      f.git.failPushCount = 1;
+      await expect(f.gateway.pushExact(exactPushInput())).resolves.toBeUndefined();
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(2);
+      expect([...f.operationStorage.records.values()]).toEqual(expect.arrayContaining([
+        expect.objectContaining({ state: 'failed', attemptCount: 1,
+          receipt: expect.objectContaining({ actualOid: A, verifiedNotApplied: true }) }),
+        expect.objectContaining({ state: 'succeeded', attemptCount: 1,
+          receipt: expect.objectContaining({ newOid: B, recoveredAfterVerifiedOld: true }) }),
+      ]));
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it('never performs a third push when the single verified-old retry is also ambiguous and unapplied', async () => {
+    const f = await fixture();
+    try {
+      f.git.failPushCount = 2;
+      await expect(f.gateway.pushExact(exactPushInput())).rejects.toMatchObject({ code: 'push_failed_unknown' });
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(2);
+      expect([...f.operationStorage.records.values()]).toHaveLength(2);
+      expect([...f.operationStorage.records.values()].every((operation) => operation.state === 'failed')).toBe(true);
+      await expect(f.gateway.pushExact(exactPushInput())).rejects.toMatchObject({ code: 'push_failed_unknown' });
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(2);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it('does not retry when reconciliation sees a third-party OID or cannot see the exact ref', async () => {
+    for (const remoteLine of [`${'c'.repeat(40)}\t${binding.exactRef}\n`, '']) {
+      const f = await fixture();
+      try {
+        f.git.failPushCount = 1;
+        f.git.remoteLineAfterFailedPush = remoteLine;
+        await expect(f.gateway.pushExact(exactPushInput())).rejects.toMatchObject({ code: 'push_failed_unknown' });
+        expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(1);
+        expect([...f.operationStorage.records.values()][0]?.state).toBe(remoteLine ? 'needs_human' : 'unknown');
+      } finally { await rm(f.root, { recursive: true, force: true }); }
+    }
+  });
+
+  it('does not reconcile or duplicate a concurrent in-flight push that wins between get and prepare', async () => {
+    const f = await fixture();
+    try {
+      f.operationStorage.beforeInsert = (record) => {
+        f.operationStorage.records.set(record.operationKey, { ...record, state: 'executing', attemptCount: 1 });
+      };
+      await expect(f.gateway.pushExact(exactPushInput())).rejects.toMatchObject({
+        code: 'push_failed_unknown', retryable: true,
+      });
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(0);
+      expect([...f.operationStorage.records.values()][0]).toMatchObject({ state: 'executing', attemptCount: 1 });
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 

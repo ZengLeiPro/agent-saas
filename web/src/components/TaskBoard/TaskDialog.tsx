@@ -1,10 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import {
   TASKBOARD_PRIORITIES,
-  type ModelList,
-  type TaskBoardExecutionPurpose,
   type TaskBoardPriority,
-  type TaskBoardStageModels,
   type TaskBoardStatus,
   type TaskBoardTaskCreateInput,
 } from "@agent/shared";
@@ -31,12 +28,9 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { PRIORITY_LABELS, STATUS_LABELS } from "./constants";
-import { EXECUTION_PURPOSE_LABELS } from "./TaskDetailComments";
-import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, toTaskBoardAttachments } from "./TaskAttachments";
 
 const CREATE_TASK_STATUSES = ["backlog", "todo", "in_progress"] as const satisfies readonly TaskBoardStatus[];
-const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review", "merge"];
 
 function createClientRequestId(): string {
   return `task-dialog-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -46,7 +40,6 @@ interface TaskDialogProps {
   open: boolean;
   active?: boolean;
   initialStatus?: TaskBoardStatus;
-  modelList?: ModelList | null;
   onOpenChange: (open: boolean) => void;
   onCreate: (input: TaskBoardTaskCreateInput) => Promise<void>;
 }
@@ -55,7 +48,6 @@ export function TaskDialog({
   open,
   active = true,
   initialStatus = "backlog",
-  modelList = null,
   onOpenChange,
   onCreate,
 }: TaskDialogProps) {
@@ -66,7 +58,6 @@ export function TaskDialog({
   const [priority, setPriority] = useState<TaskBoardPriority>("none");
   const [dispatch, setDispatch] = useState(false);
   const [clientRequestId, setClientRequestId] = useState("");
-  const [stageModels, setStageModels] = useState<TaskBoardStageModels>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const attachments = useFileUpload("taskboard");
@@ -82,7 +73,6 @@ export function TaskDialog({
     setPriority("none");
     setDispatch(false);
     setClientRequestId(createClientRequestId());
-    setStageModels({});
     setError(null);
     attachments.clearFiles();
   }, [attachments.clearFiles, initialStatus, open]);
@@ -116,7 +106,6 @@ export function TaskDialog({
         priority,
         ...(clientRequestId ? { clientRequestId } : {}),
         ...(status === "in_progress" && dispatch ? { dispatch: true } : {}),
-        ...(Object.keys(stageModels).length ? { stageModels } : {}),
       });
       onOpenChange(false);
     } catch (caught) {
@@ -232,31 +221,6 @@ export function TaskDialog({
               </Select>
             </div>
           </div>
-          <section aria-label="分阶段运行模型" className="space-y-3 rounded-lg border bg-muted/20 p-3">
-            <h3 className="text-sm font-medium">运行模型</h3>
-            <div className="grid gap-3 sm:grid-cols-3">
-              {TASK_MODEL_PURPOSES.map((purpose) => (
-                <div className="space-y-2" key={purpose}>
-                  <Label>{EXECUTION_PURPOSE_LABELS[purpose]}</Label>
-                  <ModelSelect
-                    modelList={modelList}
-                    value={stageModels[purpose] ?? null}
-                    onChange={(next) => {
-                      setStageModels((current) => {
-                        const updated = { ...current };
-                        if (next) updated[purpose] = next;
-                        else delete updated[purpose];
-                        return updated;
-                      });
-                    }}
-                    inheritLabel="继承看板对应阶段模型"
-                    ariaLabel={`${EXECUTION_PURPOSE_LABELS[purpose]}运行模型`}
-                    disabled={submitting}
-                  />
-                </div>
-              ))}
-            </div>
-          </section>
           {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
         </form>
         <DialogFooter>

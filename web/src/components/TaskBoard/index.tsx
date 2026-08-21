@@ -433,7 +433,6 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         active={active}
         open={taskDialogOpen}
         initialStatus={taskDialogStatus}
-        modelList={modelList}
         onOpenChange={setTaskDialogOpen}
         onCreate={async (input) => {
           await addTask(input);
@@ -443,7 +442,6 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         active={active}
         open={detailOpen}
         task={selectedTask}
-        board={selectedBoard}
         boardReadOnly={boardReadOnly}
         canUpdateTask={canUpdateTask}
         canTransitionTask={canTransitionTask}
@@ -452,7 +450,6 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         canComment={canComment}
         canExecute={canExecute}
         canCancelIntegration={canCancelIntegration}
-        modelList={modelList}
         onOpenChange={setDetailOpen}
         onTaskLoaded={syncTask}
         onNavigateTask={(taskId) => {

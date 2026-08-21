@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildImageGenSkillFilter,
   buildRuntimeSkillFilter,
+  resolveSkillContextTenantId,
   resolveSkillContextUsername,
 } from '../runtime/rawRuntimeRunDispatch.js';
 import type { RawRuntimeRunDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
@@ -28,6 +29,21 @@ describe('resolveSkillContextUsername', () => {
     };
 
     expect(resolveSkillContextUsername(context)).toBe('admin');
+  });
+
+  it('keeps the service principal tenant when the username is not a member account', () => {
+    const context: ChannelContext = {
+      channel: 'dingtalk',
+      sessionOwner: {
+        id: 'adws-account-1',
+        username: 'agent-dws:org-kaikai',
+        role: 'user',
+        tenantId: 'tenant-1',
+      },
+    };
+
+    expect(resolveSkillContextUsername(context)).toBe('agent-dws:org-kaikai');
+    expect(resolveSkillContextTenantId(context)).toBe('tenant-1');
   });
 });
 

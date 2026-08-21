@@ -1390,20 +1390,33 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           ?? Promise.resolve());
         await skillDispatchState.refresh(username);
       },
-      listForUser(username: string | undefined, requiredSkillIds: readonly string[] = []): SkillEntry[] {
-        if (!username) return [];
+      listForUser(username: string | undefined, requiredSkillIds: readonly string[] = [], contextTenantId?: string): SkillEntry[] {
         const all = skillDispatchState.getAllPoolEntries();
-        const user = userStore?.findByUsername(username);
-        const tenantId = user?.tenantId;
+        const user = username ? userStore?.findByUsername(username) : undefined;
+        const tenantId = user?.tenantId ?? contextTenantId;
+        if (!user && !tenantId) return [];
         const effective = new Set([
-          ...store.getUserEffectivePoolSkills(username, tenantId),
+          ...(user ? store.getUserEffectivePoolSkills(user.username, tenantId) : []),
           ...store.getOrgAgentEffectivePoolSkills(tenantId, requiredSkillIds),
         ]);
         const poolResult = all.filter((s) => effective.has(s.id));
 
-        // 按 selection 暴露用户自建 skill，路径由 resolveSkillDir 优先命中 workspace 副本。
-        if (!user) return poolResult;
         try {
+          const poolIds = new Set(all.map((s) => s.id));
+          const tenantSkillsDir = tenantId ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, tenantId) : null;
+          const tenantOwnIds = tenantSkillsDir ? scanTenantOwnSkillIds(tenantSkillsDir, poolIds) : new Set<string>();
+          const effectiveTenantOwn = new Set([
+            ...(user ? store.getUserEffectiveTenantOwnSkills(user.username, tenantId, tenantOwnIds) : []),
+            ...store.getOrgAgentEffectiveTenantOwnSkills(tenantId, tenantOwnIds, requiredSkillIds),
+          ]);
+          const tenantResult = tenantSkillsDir
+            ? scanUserCustomSkills(tenantSkillsDir, poolIds)
+              .filter((s) => effectiveTenantOwn.has(s.id))
+              .map((s) => ({ id: s.id, name: (s as { name?: string }).name || s.id, description: s.description ?? '' }))
+            : [];
+          if (!user) return [...poolResult, ...tenantResult];
+
+          // 按 selection 暴露用户自建 skill，路径由 resolveSkillDir 优先命中 workspace 副本。
           const userCwd = resolveUserCwd(agentCwd, {
             id: user.id,
             username: user.username,
@@ -1411,54 +1424,41 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
             tenantId: user.tenantId,
           });
           const userSkillsDir = resolveAgentPath(userCwd, 'skills');
-          const poolIds = new Set(all.map((s) => s.id));
-          const tenantSkillsDir = user.tenantId ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, user.tenantId) : null;
-          const tenantOwnIds = tenantSkillsDir ? scanTenantOwnSkillIds(tenantSkillsDir, poolIds) : new Set<string>();
-          const managedTenantIds = skillDispatchState.getManagedTenantIds(username);
-          const effectiveTenantOwn = new Set(
-            [
-              ...store.getUserEffectiveTenantOwnSkills(username, user.tenantId, tenantOwnIds),
-              ...store.getOrgAgentEffectiveTenantOwnSkills(user.tenantId, tenantOwnIds, requiredSkillIds),
-            ],
-          );
-          const tenantResult = tenantSkillsDir
-            ? scanUserCustomSkills(tenantSkillsDir, poolIds)
-              .filter((s) => effectiveTenantOwn.has(s.id))
-              .map((s) => ({
-                id: s.id,
-                name: (s as { name?: string }).name || s.id,
-                description: s.description ?? '',
-              }))
-            : [];
-          const selected = new Set(store.getUserSelectedSkills(username));
+          const managedTenantIds = skillDispatchState.getManagedTenantIds(user.username);
+          const selected = new Set(store.getUserSelectedSkills(user.username));
           const customExcluded = new Set([...poolIds, ...tenantOwnIds, ...managedTenantIds]);
           const customResult = scanUserCustomSkills(userSkillsDir, customExcluded)
             .filter((s) => selected.has(s.id))
-            .map((s) => ({
-              id: s.id,
-              name: (s as { name?: string }).name || s.id,
-              description: s.description ?? '',
-            }));
+            .map((s) => ({ id: s.id, name: (s as { name?: string }).name || s.id, description: s.description ?? '' }));
           return [...poolResult, ...tenantResult, ...customResult];
         } catch {
-          // 非法路径 / 扫描失败：静默降级为仅 pool，dispatch 不因单用户目录异常而崩
+          // 非法路径 / 扫描失败：静默降级为仅 pool，dispatch 不因目录异常而崩
           return poolResult;
         }
       },
-      resolveSkillDir(username: string | undefined, skill: string, requiredSkillIds: readonly string[] = []): string | null {
-        if (!username) return null;
+      resolveSkillDir(username: string | undefined, skill: string, _requiredSkillIds: readonly string[] = [], contextTenantId?: string): string | null {
         if (!SAFE_SKILL_NAME_RE.test(skill)) return null; // 防 path traversal
-        // 优先 user workspace 副本（已被 syncSkills 复制）
-        // PR 4 路径修复：扁平 `<cwd>/<username>` 已废弃，必须 resolveUserCwd
-        // 才能命中正确路径（非 kaiyan 组织用户在 dispatch 时永远 fallback 到
-        // pool 副本，agent 调 skill 时实际读到的可能不是用户最新修改的）。
-        const u = userStore?.findByUsername(username);
-        const userCwd = u
-          ? resolveUserCwd(agentCwd, { id: u.id, username: u.username, role: u.role, tenantId: u.tenantId })
-          : join(agentCwd, username); // 用户不存在时的兼容兜底
-        const userDir = resolveAgentPath(userCwd, 'skills', skill);
-        if (existsSync(userDir)) return userDir;
-        return null;
+        const user = username ? userStore?.findByUsername(username) : undefined;
+        if (user) {
+          // 真实成员只使用已物化到个人 workspace 的副本，不能回退读取共享源。
+          const userCwd = resolveUserCwd(agentCwd, {
+            id: user.id,
+            username: user.username,
+            role: user.role,
+            tenantId: user.tenantId,
+          });
+          const userDir = resolveAgentPath(userCwd, 'skills', skill);
+          return existsSync(userDir) ? userDir : null;
+        }
+
+        // 企业 Agent 使用 service identity，不创建影子成员；直接读取租户或平台授权源。
+        const tenantId = contextTenantId;
+        if (tenantId) {
+          const tenantDir = resolveAgentPath(resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, tenantId), skill);
+          if (existsSync(tenantDir)) return tenantDir;
+        }
+        const sharedPoolDir = resolveAgentPath(poolDir, skill);
+        return existsSync(sharedPoolDir) ? sharedPoolDir : null;
       },
     };
   })();

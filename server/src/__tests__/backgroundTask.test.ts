@@ -5,7 +5,11 @@ import {
   PlatformToolRuntime,
   type ToolCallContext,
 } from '../agent/toolRuntime.js';
-import { DurableBackgroundTaskService, escapeXml } from '../runtime/background/backgroundTaskService.js';
+import {
+  DurableBackgroundTaskService,
+  escapeXml,
+  resolveBackgroundSkillUsername,
+} from '../runtime/background/backgroundTaskService.js';
 import type {
   ListBackgroundTasksOptions,
   RunRecord,
@@ -224,6 +228,13 @@ function fixture(): {
 }
 
 describe('DurableBackgroundTaskService', () => {
+  it('skips member Skill materialization for organization service identities', () => {
+    expect(resolveBackgroundSkillUsername(session('member'))).toBe('alice');
+    expect(resolveBackgroundSkillUsername({
+      username: 'agent-dws:org-kaikai', orgAgentSnapshot: {} as RuntimeSessionRecord['orgAgentSnapshot'],
+    })).toBeUndefined();
+  });
+
   it('reserves background Shell with the effective tenant remote workspace', async () => {
     const invoke = vi.fn(async () => ({
       status: 'success' as const,

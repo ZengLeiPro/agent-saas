@@ -812,7 +812,7 @@ export class WebChannel implements BaseChannel {
         this.inProcessOutboundRuns.delete(input.runId);
         if (input.userId) {
           if (!input.event.error) {
-            void this.markSessionUnread({
+            void this.markSessionUnreadOnCompletion({
               userId: input.userId,
               sessionId: input.sessionId,
               eventKey: `done:${input.runId}`,
@@ -1064,7 +1064,7 @@ export class WebChannel implements BaseChannel {
         if (runStore) {
           void runStore.get(runId).then((record) => {
             if (!record?.userId) return;
-            return this.markSessionUnread({
+            return this.markSessionUnreadOnCompletion({
               userId: record.userId,
               sessionId,
               eventKey: `done:${runId}`,
@@ -4158,6 +4158,17 @@ export class WebChannel implements BaseChannel {
    * 调上游模型 → 落 meta.generatedTitle。首条长消息、续聊补偿、所有终态与
    * 跨进程 durable 终态共用；会话级 in-flight 仅合并并发，失败后仍可重试。
    */
+  private markSessionUnreadOnCompletion(input: {
+    userId: string;
+    sessionId: string;
+    eventKey: string;
+    broadcastEvenIfUnchanged?: boolean;
+  }): Promise<void> {
+    // 任务看板执行会话在完成后不应作为待处理消息提醒；执行中请求用户介入仍沿用未读提醒。
+    if (input.sessionId.startsWith('taskboard-')) return Promise.resolve();
+    return this.markSessionUnread(input);
+  }
+
   private async markSessionUnread(input: {
     userId: string;
     sessionId: string;

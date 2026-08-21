@@ -31,12 +31,24 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(sql).toContain("c.policy_snapshot->'featureFlags'->>'engineV3'");
     expect(sql).toContain("c.state IN ('preparing','composing','waiting_checks','needs_work','working','in_review','approved','merging')");
     expect(sql).toContain("c.state IN ('merged','canceled')");
-    expect(sql).toContain("c.worker_status<>'failed' OR c.worker_release_identity IS DISTINCT FROM $3");
-    expect(sql).toContain("worker_release_identity=$3");
+    expect(sql).toContain("c.worker_status<>'failed' OR c.worker_checkpoint->>'releaseIdentity' IS DISTINCT FROM $3");
+    expect(sql).toContain("jsonb_build_object('releaseIdentity',$3::text)");
     expect(query.mock.calls[0]![1]).toEqual([expect.any(String), 30_000, 'release-2']);
     expect(sql).not.toContain("'blocked','needs_human'");
     expect(sql).not.toContain('integration_policy');
     expect(sql).not.toContain('JOIN boards');
+  });
+
+  it('preserves the claiming release identity in every worker checkpoint without a schema dependency', async () => {
+    const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [] }));
+    await workerHost(query).checkpointCandidate(
+      { candidateId: 'candidate-1', leaseId: 'lease-1' },
+      { state: 'merging', status: 'idle' },
+    );
+    expect(query.mock.calls[0]![0]).toContain("jsonb_build_object('releaseIdentity',$4::text)");
+    expect(query.mock.calls[0]![1]).toEqual([
+      'candidate-1', 'lease-1', JSON.stringify({ state: 'merging', status: 'idle' }), 'release-2',
+    ]);
   });
 
   it('resumes a fenced blocked candidate only after workspace sync succeeds', async () => {

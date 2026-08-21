@@ -133,7 +133,7 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
           WHERE COALESCE(NULLIF(current_setting('agent_saas.integration_v3_enabled',true),'')::boolean,true)
             AND COALESCE((c.policy_snapshot->>'workflowVersion')::int,2)=3
             AND COALESCE((c.policy_snapshot->'featureFlags'->>'engineV3')::boolean,false)
-            AND (c.worker_status<>'failed' OR c.worker_release_identity IS DISTINCT FROM $3)
+            AND (c.worker_status<>'failed' OR c.worker_checkpoint->>'releaseIdentity' IS DISTINCT FROM $3)
             AND c.worker_available_at<=now()
             AND (c.worker_status IN ('idle','failed') OR c.worker_lease_expires_at<now())
             AND (c.state IN ('preparing','composing','waiting_checks','needs_work','working','in_review','approved','merging')
@@ -143,8 +143,8 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
        UPDATE ${this.options.candidatesTable} c
           SET worker_status='processing',worker_lease_id=$1,
               worker_lease_expires_at=now()+($2::bigint*interval '1 millisecond'),worker_error=NULL,
-              worker_attempts=CASE WHEN c.worker_release_identity IS DISTINCT FROM $3 THEN 0 ELSE c.worker_attempts END,
-              worker_release_identity=$3
+              worker_attempts=CASE WHEN c.worker_checkpoint->>'releaseIdentity' IS DISTINCT FROM $3 THEN 0 ELSE c.worker_attempts END,
+              worker_checkpoint=c.worker_checkpoint||jsonb_build_object('releaseIdentity',$3::text)
          FROM claim WHERE c.id=claim.id RETURNING c.id`,
       [leaseId, leaseMs, this.options.releaseIdentity],
     );
@@ -180,9 +180,10 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
 
   async checkpointCandidate(lease: IntegrationV3CandidateLease, checkpoint: Record<string, unknown>): Promise<void> {
     await this.options.pool.query(
-      `UPDATE ${this.options.candidatesTable} SET worker_checkpoint=$3::jsonb,updated_at=updated_at
+      `UPDATE ${this.options.candidatesTable}
+          SET worker_checkpoint=$3::jsonb||jsonb_build_object('releaseIdentity',$4::text),updated_at=updated_at
         WHERE id=$1 AND worker_lease_id=$2 AND worker_status='processing'`,
-      [lease.candidateId, lease.leaseId, JSON.stringify(checkpoint)],
+      [lease.candidateId, lease.leaseId, JSON.stringify(checkpoint), this.options.releaseIdentity],
     );
   }
 

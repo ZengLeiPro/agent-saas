@@ -198,7 +198,7 @@ function StepSummaryBody({ todo }: { todo: TodoItem }) {
   if (!hasStepSummaryBody(todo)) return null;
   const detailParts = migrateLegacySectionVerdicts(todo.detail);
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col gap-3">
       {detailParts.map((part, index) => part.kind === "detail" ? (
         <PresentationDetail key={index} data={{ title: "", detail: part.lines }} className="mt-0" variant="plain" />
       ) : (

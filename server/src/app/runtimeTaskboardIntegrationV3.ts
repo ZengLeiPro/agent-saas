@@ -23,7 +23,8 @@ import { IntegrationPushCapabilityService } from '../taskboard/integrationPushCa
 import { PostgresIntegrationPushCapabilityHost } from '../taskboard/integrationPushCapabilityPostgres.js';
 import { credentialMatchesRepository, IntegrationPushGateway, type IntegrationPushCredential } from '../taskboard/integrationPushGateway.js';
 import { withIntegrationGitAskpass } from '../taskboard/integrationGitAskpass.js';
-import { createGithubAppIntegrationPushTokenResolver, createPersonalAccessTokenIntegrationPushTokenResolver } from '../taskboard/integrationPushService.js';
+import { ControlledTaskboardIntegrationPushService, createGithubAppIntegrationPushTokenResolver, createPersonalAccessTokenIntegrationPushTokenResolver } from '../taskboard/integrationPushService.js';
+import type { TaskboardIntegrationPushService } from '../taskboard/types.js';
 import { DefaultIntegrationV3ComposeExecutor, type IntegrationV3ComposeContext } from '../taskboard/integrationV3ComposeExecutor.js';
 import {
   IntegrationV3Worker,
@@ -48,6 +49,7 @@ import type { PgTaskboardStore } from '../taskboard/store.js';
 import { serverLogger } from '../utils/logger.js';
 
 export interface RuntimeTaskboardIntegrationV3 {
+  readonly integrationPush: TaskboardIntegrationPushService;
   stop(): Promise<void>;
   health(): Promise<{ enabled: true; healthy: boolean; workerActive: boolean; reason?: string }>;
 }
@@ -339,6 +341,7 @@ export function startRuntimeTaskboardIntegrationV3(
     githubAppInstallationId: options.githubAppInstallationId,
     capabilityService,
     resolveTarget: (input) => capabilityHost.resolveTarget(input),
+    resolveExecutionTarget: (input) => capabilityHost.resolveExecutionTarget(input),
     resolveRepository: async (input) => {
       if (!options.controlledMirrorRoot) return undefined;
       const result = await store.pool.query(
@@ -553,6 +556,7 @@ export function startRuntimeTaskboardIntegrationV3(
     serverLogger.warn(`Integration v3 activation heartbeat unavailable: ${error instanceof Error ? error.message : String(error)}`);
   });
   return {
+    integrationPush: new ControlledTaskboardIntegrationPushService(pushGateway),
     async health() {
       await heartbeatReady;
       const health = await runtimeHealth();

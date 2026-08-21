@@ -13,6 +13,7 @@ import {
   type IntegrationProviderOperationFence,
   type IntegrationProviderOperationRecord,
 } from './integrationProviderOperations.js';
+import { withMaterializedWorkspaceCommit } from './workspaceCommitMaterializer.js';
 
 const OID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
@@ -34,6 +35,11 @@ export interface IntegrationPushGatewayOptions {
     tenantId: string;
     executionId: string;
     candidateId: string;
+  }): Promise<AuthoritativeIntegrationPushTarget | undefined>;
+  /** Resolves the current candidate solely from the active execution row. */
+  resolveExecutionTarget?(input: {
+    tenantId: string;
+    executionId: string;
   }): Promise<AuthoritativeIntegrationPushTarget | undefined>;
   resolveRepository(input: {
     tenantId: string;
@@ -166,77 +172,152 @@ export class IntegrationPushGateway {
     commitOid: string;
   }): Promise<{ pushed: true; candidateId: string; commitOid: string }> {
     await this.assertHealthy();
+    const target = await this.authorizeRuntimePush(input);
+    const repository = await this.resolvePushRepository(target);
+    const cwd = await this.resolveControlledWorktree(repository.worktreePath);
+    await this.pushAuthorized({ ...input, target, repository, cwd, durable: false });
+    return { pushed: true, candidateId: input.candidateId, commitOid: input.commitOid };
+  }
+
+  /** Server-only Work Agent path. The opaque capability never crosses this call boundary. */
+  async pushWorkspaceCommit(input: {
+    tenantId: string;
+    requesterUserId: string;
+    executionId: string;
+    workspaceRoot: string;
+    commitOid: string;
+  }): Promise<{ pushed: true; candidateId: string; commitOid: string }> {
+    await this.assertHealthy();
+    if (!this.options.resolveExecutionTarget) throw new IntegrationPushGatewayError('target_unavailable', false);
+    const target = await this.options.resolveExecutionTarget({
+      tenantId: input.tenantId,
+      executionId: input.executionId,
+    });
+    if (!target || target.ownerUserId !== input.requesterUserId) {
+      throw new IntegrationPushGatewayError('target_unavailable', false);
+    }
+    await this.options.capabilityService.fence({
+      tenantId: target.binding.tenantId, repositoryId: target.binding.repositoryId,
+      integrationTaskId: target.binding.integrationTaskId, candidateId: target.binding.candidateId,
+      revision: target.binding.revision, laneEpoch: target.binding.laneEpoch,
+      workflowEpoch: target.binding.workflowEpoch, enabled: true,
+    }, 'active integration work execution');
+    return withMaterializedWorkspaceCommit({
+      workspaceRoot: input.workspaceRoot,
+      commitOid: input.commitOid,
+      expectedOldOid: target.binding.expectedOldOid,
+    }, async ({ repositoryPath }) => {
+      // Issue only after source objects are self-contained and verified, then push immediately.
+      const issued = await this.options.capabilityService.issue({ binding: target.binding });
+      let pushed = false;
+      try {
+        const runtimeInput = {
+          tenantId: input.tenantId, requesterUserId: input.requesterUserId,
+          executionId: input.executionId, candidateId: target.binding.candidateId,
+          capabilityToken: issued.token, commitOid: input.commitOid,
+        };
+        const authorized = await this.authorizeRuntimePush(runtimeInput);
+        const repository = await this.resolvePushRepository(authorized);
+        await this.pushAuthorized({
+          ...runtimeInput, target: authorized, repository, cwd: repositoryPath, durable: true,
+        });
+        pushed = true;
+        return { pushed: true as const, candidateId: target.binding.candidateId, commitOid: input.commitOid };
+      } finally {
+        // Consumed ambiguous writes remain consumed and revoke() treats that as idempotent.
+        await this.options.capabilityService.revoke(
+          issued.capabilityId,
+          pushed ? 'integration work push completed' : 'integration work push failed before capability consumption',
+        );
+      }
+    });
+  }
+
+  private async authorizeRuntimePush(input: {
+    tenantId: string; requesterUserId: string; executionId: string; candidateId: string;
+    capabilityToken: string; commitOid: string;
+  }): Promise<AuthoritativeIntegrationPushTarget> {
     if (!OID.test(input.commitOid)) throw new IntegrationPushGatewayError('invalid_commit', true);
     const capability = await this.options.capabilityService.verify(input.capabilityToken);
     assertRuntimeTarget(capability.binding, input);
     const target = await this.options.resolveTarget(input);
-    if (!target || target.ownerUserId !== input.requesterUserId
-      || !sameBinding(target.binding, capability.binding)) {
+    if (!target || target.ownerUserId !== input.requesterUserId || !sameBinding(target.binding, capability.binding)) {
       throw new IntegrationPushGatewayError('target_unavailable', false);
     }
+    return target;
+  }
+
+  private async resolvePushRepository(target: AuthoritativeIntegrationPushTarget): Promise<IntegrationPushRepositoryAccess> {
     const repository = await this.options.resolveRepository({
-      tenantId: target.binding.tenantId,
-      repositoryId: target.binding.repositoryId,
-      ownerUserId: target.ownerUserId,
-      candidateId: target.binding.candidateId,
+      tenantId: target.binding.tenantId, repositoryId: target.binding.repositoryId,
+      ownerUserId: target.ownerUserId, candidateId: target.binding.candidateId,
     });
     if (!repository) throw new IntegrationPushGatewayError('worktree_unavailable', true);
-    const cwd = await this.resolveControlledWorktree(repository.worktreePath);
     validateRemote(repository.remoteUrl);
+    return repository;
+  }
 
+  private async pushAuthorized(input: {
+    tenantId: string; requesterUserId: string; executionId: string; candidateId: string;
+    capabilityToken: string; commitOid: string; target: AuthoritativeIntegrationPushTarget;
+    repository: IntegrationPushRepositoryAccess; cwd: string; durable: boolean;
+  }): Promise<void> {
+    const { target, repository, cwd } = input;
     await this.assertCommitGraph(cwd, target.binding.expectedOldOid, input.commitOid);
-    const token = await this.options.resolveGithubToken({
-      tenantId: target.binding.tenantId,
-      ownerUserId: target.ownerUserId,
-      repositoryId: target.binding.repositoryId,
-      repositoryOwner: repository.repositoryOwner,
+    const credential = await this.options.resolveGithubToken({
+      tenantId: target.binding.tenantId, ownerUserId: target.ownerUserId,
+      repositoryId: target.binding.repositoryId, repositoryOwner: repository.repositoryOwner,
       repositoryName: repository.repositoryName,
     });
-    if (!token || !credentialMatchesRepository(token, {
-      repositoryId: target.binding.repositoryId,
-      repositoryOwner: repository.repositoryOwner,
+    if (!credential || !credentialMatchesRepository(credential, {
+      repositoryId: target.binding.repositoryId, repositoryOwner: repository.repositoryOwner,
       repositoryName: repository.repositoryName,
-    }, this.options.githubAppInstallationId)) {
-      throw new IntegrationPushGatewayError('credential_unavailable', false);
-    }
-
-    await withIntegrationGitAskpass(token.token, async (env) => {
-      const remoteOld = await this.runner.run({
-        cwd,
-        args: ['ls-remote', '--refs', repository.remoteUrl, target.binding.exactRef],
-        env,
-        redactOutput: true,
-      }).catch(() => { throw new IntegrationPushGatewayError('remote_old_mismatch', true); });
-      const fields = remoteOld.stdout.trim().split(/\s+/);
-      if (fields.length !== 2 || fields[0] !== target.binding.expectedOldOid || fields[1] !== target.binding.exactRef) {
-        throw new IntegrationPushGatewayError('remote_old_mismatch', true);
+    }, this.options.githubAppInstallationId)) throw new IntegrationPushGatewayError('credential_unavailable', false);
+    const operationKey = integrationProviderOperationKey({
+      repositoryId: target.binding.repositoryId, candidateId: target.binding.candidateId,
+      candidateRevision: target.binding.revision, kind: 'push_ref',
+      target: `work:${target.binding.executionId}:${target.binding.exactRef}@${input.commitOid}`,
+    });
+    const operation = input.durable ? await this.options.operationService!.prepare({
+      operationKey, kind: 'push_ref', repositoryId: target.binding.repositoryId,
+      fence: {
+        workflowEpoch: target.binding.workflowEpoch, laneEpoch: target.binding.laneEpoch,
+        candidateId: target.binding.candidateId, candidateRevision: target.binding.revision,
+        executionId: target.binding.executionId,
+      },
+      expected: { ref: target.binding.exactRef, oldOid: target.binding.expectedOldOid, newOid: input.commitOid },
+      command: { ref: target.binding.exactRef, oldOid: target.binding.expectedOldOid, newOid: input.commitOid },
+    }) : undefined;
+    await withIntegrationGitAskpass(credential.token, async (env) => {
+      if (operation && operation.state !== 'prepared') {
+        await this.reconcileOrVerifyPriorPush(operation, {
+          repositoryId: target.binding.repositoryId, candidateId: target.binding.candidateId,
+          revision: target.binding.revision, exactRef: target.binding.exactRef, newOid: input.commitOid,
+          fence: operation.fence,
+        }, cwd, repository.remoteUrl, env);
+        return;
       }
-      // Consume only after every deterministic/pre-push check. From this point any failure is
-      // ambiguous and the bearer is intentionally not reusable; issue a fresh capability only
-      // after reconciling the exact remote ref.
+      const remoteOld = await this.readExactRemoteRef(cwd, repository.remoteUrl, target.binding.exactRef, env)
+        .catch(() => { throw new IntegrationPushGatewayError('remote_old_mismatch', true); });
+      if (remoteOld !== target.binding.expectedOldOid) throw new IntegrationPushGatewayError('remote_old_mismatch', true);
       await this.options.capabilityService.consume(input.capabilityToken, {
-        ref: target.binding.exactRef,
-        oldOid: target.binding.expectedOldOid,
-        newOid: input.commitOid,
-        isFastForward: true,
-        operation: 'update',
-        laneEpoch: target.binding.laneEpoch,
+        ref: target.binding.exactRef, oldOid: target.binding.expectedOldOid, newOid: input.commitOid,
+        isFastForward: true, operation: 'update', laneEpoch: target.binding.laneEpoch,
         workflowEpoch: target.binding.workflowEpoch,
       });
-      await this.runner.run({
-        cwd,
-        args: [
-          'push',
-          `--force-with-lease=${target.binding.exactRef}:${target.binding.expectedOldOid}`,
-          '--',
-          repository.remoteUrl,
-          `${input.commitOid}:${target.binding.exactRef}`,
-        ],
-        env,
-        redactOutput: true,
-      }).catch(() => { throw new IntegrationPushGatewayError('push_failed_unknown', false); });
+      const write = async () => {
+        await this.runner.run({
+          cwd, args: ['push', `--force-with-lease=${target.binding.exactRef}:${target.binding.expectedOldOid}`,
+            '--', repository.remoteUrl, `${input.commitOid}:${target.binding.exactRef}`],
+          env, redactOutput: true,
+        });
+        return { ref: target.binding.exactRef, oldOid: target.binding.expectedOldOid, newOid: input.commitOid };
+      };
+      if (operation) {
+        const completed = await this.options.operationService!.execute(operationKey, write);
+        if (completed.state !== 'succeeded') throw new IntegrationPushGatewayError('push_failed_unknown', false);
+      } else await write().catch(() => { throw new IntegrationPushGatewayError('push_failed_unknown', false); });
     });
-    return { pushed: true, candidateId: input.candidateId, commitOid: input.commitOid };
   }
 
   /** Trusted compose boundary. Every write is first persisted as an exact semantic

@@ -282,16 +282,13 @@ describe("TaskDetail 草稿隔离", () => {
   it("任务详情可按实施与复核阶段指定模型并保存任务级覆盖，但不提供集成阶段选择", async () => {
     const user = userEvent.setup();
     const onUpdate = vi.fn(async (current: TaskBoardTask) => ({
-      ...current,
-      stageModels: { work: "group-a/model-c", review: "group-a/model-c" },
-      version: current.version + 1,
+      ...current, stageModels: { work: "group-a/model-c", review: "group-a/model-c" }, version: current.version + 1,
     }));
     render(<TaskDetail {...props({ onUpdate })} modelList={modelList} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
     for (const purpose of ["实施阶段", "复核阶段"]) {
-      await user.click(screen.getByRole("combobox", { name: `${purpose}运行模型` }));
-      await user.click(screen.getByRole("option", { name: "模型 C" }));
+      await user.click(screen.getByRole("combobox", { name: `${purpose}运行模型` })); await user.click(screen.getByRole("option", { name: "模型 C" }));
     }
     expect(screen.queryByRole("combobox", { name: "集成阶段运行模型" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "保存任务" }));

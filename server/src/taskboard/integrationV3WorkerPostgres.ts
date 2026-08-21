@@ -259,7 +259,31 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
     );
     if (!bound.rows[0]) throw new Error('Candidate execution request lease changed before binding');
   }
-  syncWorkspace(request: IntegrationV3RequestLease) { return this.options.syncWorkspace(request); }
+  async syncWorkspace(request: IntegrationV3RequestLease): Promise<void> {
+    await this.options.syncWorkspace(request);
+    if (request.payload.reason !== 'resume_reconcile') return;
+    const resumeState = request.payload.resumeState;
+    if (resumeState !== 'needs_work' && resumeState !== 'in_review') {
+      throw new Error('Workspace resume state is invalid');
+    }
+    const result = await this.options.pool.query(
+      `WITH resumed AS (
+         UPDATE ${this.options.candidatesTable}
+            SET state=$3,last_error=NULL,version=version+1,updated_at=now()
+          WHERE id=$1 AND current_revision=$2
+            AND workflow_epoch=$4::bigint AND lane_epoch=$5::bigint
+            AND state IN ('blocked','needs_human')
+          RETURNING integration_task_id
+       )
+       UPDATE ${this.options.tasksTable} t
+          SET status=CASE WHEN $3='in_review' THEN 'in_review' ELSE 'in_progress' END,
+              version=version+1,updated_at=now()
+         FROM resumed WHERE t.id=resumed.integration_task_id RETURNING t.id`,
+      [request.candidateId, request.candidateRevision, resumeState,
+        String(request.payload.workflowEpoch ?? ''), String(request.payload.laneEpoch ?? '')],
+    );
+    if (!result.rows[0]) throw new Error('Workspace resume fence is stale');
+  }
   cleanup(request: IntegrationV3RequestLease) { return this.options.cleanup(request); }
 
   async completeRequest(request: IntegrationV3RequestLease, receipt?: IntegrationV3CleanupReceipt): Promise<void> {

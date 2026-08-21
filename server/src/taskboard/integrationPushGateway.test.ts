@@ -273,6 +273,30 @@ describe('IntegrationPushGateway', () => {
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 
+  it('recovers the exact legacy needs_human receipt that misclassified an unchanged old ref', async () => {
+    const f = await fixture();
+    try {
+      f.git.failPushCount = 1;
+      f.git.remoteLineAfterFailedPush = `${'c'.repeat(40)}\t${binding.exactRef}\n`;
+      await expect(f.gateway.pushExact(exactPushInput())).rejects.toMatchObject({ code: 'push_failed_unknown' });
+      const legacy = [...f.operationStorage.records.values()][0]!;
+      f.operationStorage.records.set(legacy.operationKey, {
+        ...legacy,
+        receipt: { ref: binding.exactRef, actualOid: A, expectedNew: B },
+      });
+      f.git.remoteLine = `${A}\t${binding.exactRef}\n`;
+      f.git.remoteLineAfterFailedPush = undefined;
+
+      await expect(f.gateway.pushExact(exactPushInput())).resolves.toBeUndefined();
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(2);
+      expect([...f.operationStorage.records.values()]).toEqual(expect.arrayContaining([
+        expect.objectContaining({ state: 'needs_human', attemptCount: 1 }),
+        expect.objectContaining({ state: 'succeeded', attemptCount: 1,
+          receipt: expect.objectContaining({ recoveryOf: legacy.operationKey }) }),
+      ]));
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
   it('does not retry when reconciliation sees a third-party OID or cannot see the exact ref', async () => {
     for (const remoteLine of [`${'c'.repeat(40)}\t${binding.exactRef}\n`, '']) {
       const f = await fixture();
@@ -282,6 +306,8 @@ describe('IntegrationPushGateway', () => {
         await expect(f.gateway.pushExact(exactPushInput())).rejects.toMatchObject({ code: 'push_failed_unknown' });
         expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(1);
         expect([...f.operationStorage.records.values()][0]?.state).toBe(remoteLine ? 'needs_human' : 'unknown');
+        await expect(f.gateway.pushExact(exactPushInput())).rejects.toMatchObject({ code: 'push_failed_unknown' });
+        expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(1);
       } finally { await rm(f.root, { recursive: true, force: true }); }
     }
   });

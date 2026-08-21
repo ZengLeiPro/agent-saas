@@ -74,6 +74,10 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
       integrationBranch: current.candidate.branch,
       controlledRemoteUrl: canonicalGithubRepositoryUrl(context.repository),
       integrationWorktreeMode: 'reset_to_base' as const,
+      frozenPullRequestHeads: context.sources.map((source) => ({
+        providerPullRequestId: source.providerPullRequestId,
+        expectedHeadOid: source.frozenHeadOid,
+      })),
     };
     const sync = this.host.withRepositoryFetchCredential
       ? await this.host.withRepositoryFetchCredential(context, (fetchEnvironment) => (

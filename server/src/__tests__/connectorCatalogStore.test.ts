@@ -158,13 +158,13 @@ describe('Connector Catalog', () => {
     definitions.set('github', definitionRow({ connector_id: 'github', status: 'disabled', version: '4' }));
     const store = new PgConnectorCatalogStore({ pool, tablePrefix: 'test' });
     const result = await store.ensureBuiltins('system:builtin-catalog');
-    expect(result).toEqual({ created: 5, unchanged: 1 });
+    expect(result).toEqual({ created: 6, unchanged: 1 });
     expect(definitions.get('github')).toMatchObject({ status: 'disabled', version: '4' });
   });
 
-  it('builtin 注册表覆盖当前六个集成且不含 Secret', () => {
+  it('builtin 注册表覆盖当前七个集成且不含 Secret', () => {
     expect(BUILTIN_CONNECTOR_DEFINITIONS.map(item => item.connectorId).sort()).toEqual([
-      'aliyun', 'dws', 'feishu', 'github', 'google_workspace', 'notion',
+      'aliyun', 'dws', 'feishu', 'github', 'google_workspace', 'notion', 'x',
     ]);
     expect(JSON.stringify(BUILTIN_CONNECTOR_DEFINITIONS).toLowerCase()).not.toContain('secret');
     expect(JSON.stringify(BUILTIN_CONNECTOR_DEFINITIONS).toLowerCase()).not.toContain('tokenvalue');

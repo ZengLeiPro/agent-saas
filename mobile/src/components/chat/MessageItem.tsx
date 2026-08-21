@@ -1247,6 +1247,7 @@ function SubagentBlock({ message }: { message: MessageItem & { type: 'subagent' 
   const meta = [
     message.model,
     typeof message.durationMs === 'number' ? `${(message.durationMs / 1000).toFixed(1)}s` : undefined,
+    typeof message.turnCount === 'number' ? `${message.turnCount} 轮` : undefined,
     typeof message.totalTokens === 'number' ? `${formatTokenCount(message.totalTokens)} tokens` : undefined,
   ].filter(Boolean).join(' · ');
 
@@ -1254,7 +1255,6 @@ function SubagentBlock({ message }: { message: MessageItem & { type: 'subagent' 
     <AgentActivityShell
       state={state}
       title={`子任务 ${message.agentType}`}
-      subtitle={message.resultPreview || message.errorMessage}
       meta={meta || undefined}
       expanded={expanded}
       onToggle={() => setExpanded((value) => !value)}
@@ -1263,7 +1263,7 @@ function SubagentBlock({ message }: { message: MessageItem & { type: 'subagent' 
         <Text style={{ ...typography.caption, color: colors.mutedForeground }}>
           {[
             message.model ? `模型 ${message.model}` : undefined,
-            typeof message.turnCount === 'number' ? `${message.turnCount} turns` : undefined,
+            typeof message.turnCount === 'number' ? `${message.turnCount} 轮` : undefined,
             typeof message.toolUseCount === 'number' ? `${message.toolUseCount} 次工具` : undefined,
           ].filter(Boolean).join(' · ')}
         </Text>

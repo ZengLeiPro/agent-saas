@@ -37,9 +37,20 @@ export class PostgresIntegrationPushCapabilityHost implements IntegrationPushCap
     executionId: string;
     candidateId: string;
   }): Promise<AuthoritativeIntegrationPushTarget | undefined> {
-    const result = await this.options.pool.query(this.authoritativeTargetSql(false), [
+    const result = await this.options.pool.query(this.authoritativeTargetSql(false, true), [
       input.executionId,
       input.candidateId,
+      input.tenantId,
+    ]);
+    return result.rows[0] ? this.rowToTarget(result.rows[0]) : undefined;
+  }
+
+  async resolveExecutionTarget(input: {
+    tenantId: string;
+    executionId: string;
+  }): Promise<AuthoritativeIntegrationPushTarget | undefined> {
+    const result = await this.options.pool.query(this.authoritativeTargetSql(false, false, true), [
+      input.executionId,
       input.tenantId,
     ]);
     return result.rows[0] ? this.rowToTarget(result.rows[0]) : undefined;
@@ -170,7 +181,7 @@ export class PostgresIntegrationPushCapabilityHost implements IntegrationPushCap
     binding: IntegrationPushCapabilityBinding,
     lock: boolean,
   ): Promise<AuthoritativeIntegrationPushTarget | undefined> {
-    const result = await client.query(this.authoritativeTargetSql(lock), [
+    const result = await client.query(this.authoritativeTargetSql(lock, true), [
       binding.executionId,
       binding.candidateId,
       binding.tenantId,
@@ -178,7 +189,10 @@ export class PostgresIntegrationPushCapabilityHost implements IntegrationPushCap
     return result.rows[0] ? this.rowToTarget(result.rows[0]) : undefined;
   }
 
-  private authoritativeTargetSql(lock: boolean): string {
+  private authoritativeTargetSql(lock: boolean, bindCandidate: boolean, workOnly = false): string {
+    const tenantParameter = bindCandidate ? '$3' : '$2';
+    const candidatePredicate = bindCandidate ? ' AND c.id=$2' : '';
+    const purposePredicate = workOnly ? "e.purpose='work'" : "e.purpose IN ('work','review')";
     return `SELECT e.id AS execution_id,e.candidate_revision,e.candidate_lane_epoch,e.candidate_workflow_epoch,
                    c.id AS candidate_id,c.integration_task_id,c.repository_id,c.branch,c.current_revision,
                    c.lane_epoch,c.workflow_epoch,r.head_oid,b.tenant_id,b.owner_user_id
@@ -187,9 +201,9 @@ export class PostgresIntegrationPushCapabilityHost implements IntegrationPushCap
               JOIN ${this.options.boardsTable} b ON b.id=t.board_id
               JOIN ${this.options.candidatesTable} c ON c.id=e.candidate_id AND c.integration_task_id=t.id
               JOIN ${this.options.revisionsTable} r ON r.candidate_id=c.id AND r.revision=c.current_revision
-             WHERE e.id=$1 AND c.id=$2 AND b.tenant_id=$3
+             WHERE e.id=$1${candidatePredicate} AND b.tenant_id=${tenantParameter}
                AND t.workflow_version=3 AND t.kind='integration'
-               AND e.purpose IN ('work','review')
+               AND ${purposePredicate}
                AND e.status IN ('queued','running','waiting_user','waiting_approval')
                AND c.state NOT IN ('merged','canceled','blocked','needs_human')
                AND e.candidate_revision=c.current_revision

@@ -232,15 +232,28 @@ export class IntegrationEngineV3 {
   }
 
   private async observeChecks(current: IntegrationEngineV3Current, dispatchReview: boolean): Promise<IntegrationEngineV3Result> {
-    const facts = await this.readAndValidateFacts(current);
+    const revision = requireRevision(current);
+    const facts = await this.readProviderFacts(current);
+    if (facts.repositoryId !== current.candidate.repositoryId
+      || facts.providerPullRequestId !== requiredPr(current.candidate)
+      || facts.baseBranch !== current.candidate.baseBranch
+      || facts.headOid !== revision.headOid
+      || facts.treeOid !== revision.treeOid
+      || facts.state !== 'open') {
+      throw failClosed('Provider subject drifted from the candidate revision', 'TASKBOARD_INTEGRATION_SUBJECT_DRIFT');
+    }
+    if (facts.baseOid !== revision.baseOid) {
+      return applied(await this.transition(current, 'needs_work', 'Provider base advanced; candidate refresh required'));
+    }
     if (!facts.requiredChecksKnown || facts.unsupportedRules.length || facts.mergeQueueRequired) {
       const reason = `Required GitHub gates are not authoritative or supported: ${facts.unsupportedRules.join(',') || 'unknown'}`;
       return applied(await this.transition(current, 'blocked', reason));
     }
     if (facts.requiredChecks.some((check) => check.status === 'failure')) return applied(await this.transition(current, 'needs_work', 'Required checks failed'));
-    if (facts.requiredChecks.some((check) => check.status === 'pending')) return { candidate: current.candidate, status: 'waiting' };
+    if (facts.requiredChecks.length === 0 || facts.requiredChecks.some((check) => check.status === 'pending')) {
+      return { candidate: current.candidate, status: 'waiting' };
+    }
     if (!dispatchReview) return { candidate: current.candidate, status: 'waiting' };
-    const revision = requireRevision(current);
     const request = await this.options.requests.requestReview({ candidateId: current.candidate.id, revision: revision.revision, subjectDigest: revision.subjectDigest, sourceSetDigest: revision.sourceSetDigest });
     const candidate = await this.transition(current, 'in_review');
     return { candidate, status: 'requested', requestId: request.requestId };
@@ -248,9 +261,28 @@ export class IntegrationEngineV3 {
 
   private async mergeApproved(current: IntegrationEngineV3Current, executionId: string): Promise<IntegrationEngineV3Result> {
     const revision = requireRevision(current);
-    await this.readAndValidateFacts(current);
-    if (current.candidate.approvedRevision !== revision.revision || !current.candidate.approvedReviewExecutionId) throw failClosed('Approval is stale', 'TASKBOARD_CANDIDATE_APPROVAL_STALE');
     const operationKey = integrationProviderOperationKey({ repositoryId: current.candidate.repositoryId, candidateId: current.candidate.id, candidateRevision: revision.revision, kind: 'merge_pull_request', target: requiredPr(current.candidate) });
+    const facts = await this.readProviderFacts(current);
+    if (facts.state === 'merged') {
+      const exact = isExactMergedSubject(current, facts);
+      return applied(await this.transition(
+        current,
+        'needs_human',
+        exact
+          ? 'Provider PR was merged outside the controlled Workflow v3 operation; audit or replacement validation is required'
+          : 'Provider PR was externally merged with unknown or mismatched approved facts',
+      ));
+    }
+    if (isBaseOnlyDrift(current, facts)) {
+      const prepared = current.candidate.state === 'merging'
+        ? await this.options.providerOperations.get(operationKey)
+        : undefined;
+      if (current.candidate.state === 'approved' || prepared?.state === 'prepared') {
+        return applied(await this.transition(current, 'composing'));
+      }
+    }
+    this.assertProviderFacts(current, facts);
+    if (current.candidate.approvedRevision !== revision.revision || !current.candidate.approvedReviewExecutionId) throw failClosed('Approval is stale', 'TASKBOARD_CANDIDATE_APPROVAL_STALE');
     const operation = await this.options.providerOperations.prepare({
       operationKey, kind: 'merge_pull_request', repositoryId: current.candidate.repositoryId,
       fence: { workflowEpoch: safeEpoch(current.candidate.workflowEpoch), laneEpoch: safeEpoch(current.candidate.laneEpoch), candidateId: current.candidate.id, candidateRevision: revision.revision, executionId },
@@ -285,19 +317,40 @@ export class IntegrationEngineV3 {
     return { candidate, status: 'applied', operation };
   }
 
-  private async readAndValidateFacts(current: IntegrationEngineV3Current, allowMerged = false): Promise<IntegrationEngineV3ProviderFacts> {
-    const revision = requireRevision(current);
+  private async readProviderFacts(current: IntegrationEngineV3Current): Promise<IntegrationEngineV3ProviderFacts> {
     const repository = await this.repository(current.candidate.repositoryId);
-    let facts: IntegrationEngineV3ProviderFacts;
-    try { facts = await this.options.provider.readFacts(repository, requiredPr(current.candidate), this.options.credentialOwnerId); }
-    catch (error) { throw failClosed(`Provider facts are unknown: ${errorMessage(error)}`, 'TASKBOARD_INTEGRATION_PROVIDER_FACTS_UNKNOWN'); }
-    if (facts.repositoryId !== current.candidate.repositoryId || facts.providerPullRequestId !== requiredPr(current.candidate)
-      || facts.baseBranch !== current.candidate.baseBranch || facts.baseOid !== revision.baseOid
-      || facts.headOid !== revision.headOid || facts.treeOid !== revision.treeOid
-      || (!allowMerged && facts.state !== 'open')) {
+    try {
+      return await this.options.provider.readFacts(
+        repository,
+        requiredPr(current.candidate),
+        this.options.credentialOwnerId,
+      );
+    } catch (error) {
+      throw failClosed(`Provider facts are unknown: ${errorMessage(error)}`, 'TASKBOARD_INTEGRATION_PROVIDER_FACTS_UNKNOWN');
+    }
+  }
+
+  private async readAndValidateFacts(current: IntegrationEngineV3Current, allowMerged = false): Promise<IntegrationEngineV3ProviderFacts> {
+    const facts = await this.readProviderFacts(current);
+    this.assertProviderFacts(current, facts, allowMerged);
+    return facts;
+  }
+
+  private assertProviderFacts(
+    current: IntegrationEngineV3Current,
+    facts: IntegrationEngineV3ProviderFacts,
+    allowMerged = false,
+  ): void {
+    const revision = requireRevision(current);
+    const merged = allowMerged && facts.state === 'merged';
+    if (facts.repositoryId !== current.candidate.repositoryId
+      || facts.providerPullRequestId !== requiredPr(current.candidate)
+      || facts.baseBranch !== current.candidate.baseBranch
+      || facts.headOid !== revision.headOid
+      || facts.treeOid !== revision.treeOid
+      || (!merged && (facts.state !== 'open' || facts.baseOid !== revision.baseOid))) {
       throw failClosed('Provider subject drifted from the candidate revision', 'TASKBOARD_INTEGRATION_SUBJECT_DRIFT');
     }
-    return facts;
   }
 
   private async appendAndTransition(current: IntegrationEngineV3Current, revision: Omit<AppendCandidateRevisionInput, 'expectedVersion' | 'expectedCurrentRevision' | 'nextState'>, to: 'waiting_checks'): Promise<TaskBoardIntegrationCandidate> {
@@ -336,6 +389,26 @@ function assertExpected(current: IntegrationEngineV3Current, expected: Integrati
 function assertReviewReceipt(current: IntegrationEngineV3Current, executionId: string, receipt: IntegrationReviewReceiptV3): void {
   const r = requireRevision(current);
   if (!executionId || receipt.candidateId !== current.candidate.id || receipt.revision !== r.revision || receipt.subjectDigest !== r.subjectDigest || receipt.sourceSetDigest !== r.sourceSetDigest) throw failClosed('Review receipt does not bind the current subject', 'TASKBOARD_INTEGRATION_REVIEW_RECEIPT_STALE');
+}
+function isExactMergedSubject(current: IntegrationEngineV3Current, facts: IntegrationEngineV3ProviderFacts): boolean {
+  const revision = requireRevision(current);
+  return facts.repositoryId === current.candidate.repositoryId
+    && facts.providerPullRequestId === requiredPr(current.candidate)
+    && facts.baseBranch === current.candidate.baseBranch
+    && facts.headOid === revision.headOid
+    && facts.treeOid === revision.treeOid
+    && Boolean(facts.mergeCommitOid)
+    && facts.mergedTreeOid === revision.treeOid;
+}
+function isBaseOnlyDrift(current: IntegrationEngineV3Current, facts: IntegrationEngineV3ProviderFacts): boolean {
+  const revision = requireRevision(current);
+  return facts.repositoryId === current.candidate.repositoryId
+    && facts.providerPullRequestId === requiredPr(current.candidate)
+    && facts.baseBranch === current.candidate.baseBranch
+    && facts.headOid === revision.headOid
+    && facts.treeOid === revision.treeOid
+    && facts.state === 'open'
+    && facts.baseOid !== revision.baseOid;
 }
 function subjectExpected(current: IntegrationEngineV3Current, revision: TaskBoardIntegrationCandidateRevision): Record<string, unknown> { return { repositoryId: current.candidate.repositoryId, baseOid: revision.baseOid, headOid: revision.headOid, treeOid: revision.treeOid, sourceSetDigest: revision.sourceSetDigest, policyRevision: revision.policyRevision, policySnapshotDigest: revision.policySnapshotDigest, subjectDigest: revision.subjectDigest }; }
 function requireRevision(current: IntegrationEngineV3Current): TaskBoardIntegrationCandidateRevision { if (!current.revision || current.revision.revision !== current.candidate.currentRevision) throw failClosed('Current candidate revision is unavailable', 'TASKBOARD_INTEGRATION_REVISION_UNKNOWN'); return current.revision; }

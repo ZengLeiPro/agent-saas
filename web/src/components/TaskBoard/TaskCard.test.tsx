@@ -21,6 +21,7 @@ function task(overrides: Partial<TaskBoardTask> = {}): TaskBoardTask {
     version: 2,
     creatorUserId: "user-1",
     creatorName: "曾磊 @zenglei",
+    creatorAvatarVersion: 7,
     createdAt: new Date(2026, 7, 13, 12).toISOString(),
     completedAt: new Date(2026, 7, 14, 12).toISOString(),
     updatedAt: new Date(2026, 7, 14, 12).toISOString(),
@@ -47,6 +48,7 @@ describe("TaskCard", () => {
     renderCard(task());
 
     expect(screen.getByText("曾磊 @zenglei")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "User" }).getAttribute("src")).toBe("/api/auth/avatar/user-1?v=7");
     expect(screen.getByText("提交 2026-08-13")).toBeTruthy();
     expect(screen.getByText("完成 2026-08-14")).toBeTruthy();
     expect(screen.getByRole("button", {

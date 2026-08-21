@@ -69,12 +69,12 @@ describe('SubagentBlock', () => {
       </TestSubagentTranscriptProvider>,
     );
 
-    // 排版型外壳：状态文字标签已删，失败语义由红色 icon 承载；折叠行显示标题+结果预览。
-    expect(screen.getByText(/部分材料/)).toBeTruthy();
-    expect(screen.getByText('gpt-5.6 · 10m · 123.5k tokens')).toBeTruthy();
+    // 排版型外壳：状态文字标签已删，失败语义由红色 icon 承载；折叠行只显示标题和指标。
+    expect(screen.queryByText('部分材料')).toBeNull();
+    expect(screen.getByText('gpt-5.6 · 10m · 42 轮 · 123.5k tokens')).toBeTruthy();
 
     await user.click(screen.getByRole('button', { name: /子任务 调研金球奖/ }));
-    expect(screen.getByText('42 turns')).toBeTruthy();
+    expect(screen.getByText('42 轮')).toBeTruthy();
     expect(screen.getByText('67 次工具')).toBeTruthy();
     expect(screen.getByText('upstream EOF')).toBeTruthy();
     expect(screen.getAllByText('部分材料').some((node) => node.className.includes('leading-4'))).toBe(true);

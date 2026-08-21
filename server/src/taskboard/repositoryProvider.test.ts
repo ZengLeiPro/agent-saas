@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { GithubRepositoryProvider, repositorySubjectDigest } from './repositoryProvider.js';
 
+const unavailablePolicyFeature = 'Upgrade to GitHub Pro or make this repository public to enable this feature.';
 const repository = {
   provider: 'github' as const,
   repositoryId: 'github:acme/app',
@@ -74,6 +75,27 @@ describe('GithubRepositoryProvider', () => {
     expect(snapshot.requiredChecks).toContainEqual({ name: 'github:checks-unavailable', status: 'failure' });
   });
 
+  it('uses observed checks when private-repository policy APIs are explicitly unavailable', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        number: 42, state: 'open', merged: false, draft: false, mergeable: true,
+        head: { ref: 'feat/x', sha: 'head-oid', repo: { full_name: 'acme/app' } },
+        base: { ref: 'main', sha: 'base-oid', repo: { full_name: 'acme/app' } },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        check_runs: [{ name: 'CI', status: 'completed', conclusion: 'success' }],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ statuses: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: unavailablePolicyFeature }), { status: 403 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: unavailablePolicyFeature }), { status: 403 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const snapshot = await provider.getPullRequest(repository, '42', 'owner-user');
+
+    expect(snapshot.requiredChecksKnown).toBe(true);
+    expect(snapshot.requiredChecks).toEqual([{ name: 'CI', status: 'success' }]);
+  });
+
   it('rejects pull requests outside the configured base or repository', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(JSON.stringify({
       number: 42, state: 'open', merged: false, draft: false, mergeable: true,
@@ -130,6 +152,21 @@ describe('GithubRepositoryProvider', () => {
     expect(snapshot.requiredChecks).toEqual([{ name: 'github:checks-unavailable', status: 'failure' }]);
   });
 
+  it('treats unavailable private-repository policy features as an authoritative absence of provider gates', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockImplementation(async () => new Response(JSON.stringify({ message: unavailablePolicyFeature }), { status: 403 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const capabilities = await provider.getRequiredGateCapabilities(repository, 'main', 'owner-user');
+
+    expect(capabilities).toEqual({
+      known: true,
+      requiredChecks: [],
+      mergeQueueRequired: false,
+      unsupportedRules: [],
+    });
+  });
+
   it('reads required gate identities and merge-queue capability from protection and rulesets', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ checks: [{ context: 'test', app_id: 7 }] }), { status: 200 }))
@@ -156,9 +193,9 @@ describe('GithubRepositoryProvider', () => {
   it('reconciles an already-created integration branch without creating it again', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'base-oid' } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ tree: { sha: 'tree-oid' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'base-oid', tree: { sha: 'tree-oid' } }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'base-oid' } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ tree: { sha: 'tree-oid' } }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'base-oid', tree: { sha: 'tree-oid' } }), { status: 200 }));
     const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
 
     const receipt = await provider.ensureIntegrationBranch(repository, {
@@ -173,7 +210,7 @@ describe('GithubRepositoryProvider', () => {
   it('rejects branch creation when the prepared base has drifted', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'new-base' } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ tree: { sha: 'new-tree' } }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'new-base', tree: { sha: 'new-tree' } }), { status: 200 }));
     const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
 
     await expect(provider.ensureIntegrationBranch(repository, {
@@ -190,9 +227,9 @@ describe('GithubRepositoryProvider', () => {
     };
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'candidate-oid' } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ tree: { sha: 'candidate-tree' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'candidate-oid', tree: { sha: 'candidate-tree' } }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'base-oid' } }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ tree: { sha: 'base-tree' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'base-oid', tree: { sha: 'base-tree' } }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify([existing]), { status: 200 }));
     const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
 

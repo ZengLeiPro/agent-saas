@@ -65,7 +65,7 @@ const remoteOidStep = (): Step => ({
 });
 const listStep = (records: string): Step => ({
   cwd: REPOSITORY,
-  args: ['-c', 'core.quotePath=false', 'worktree', 'list', '--porcelain'],
+  args: ['worktree', 'list', '--porcelain'],
   result: { stdout: records },
 });
 const mainRecord = (head = MAIN_OID): string => worktreeRecord(REPOSITORY, head, 'main');
@@ -104,7 +104,7 @@ describe('syncRepositoryWorkspace', () => {
       },
       {
         cwd: REPOSITORY,
-        args: ['worktree', 'add', '-b', 'integration/42', '--', WORKTREE, 'refs/remotes/origin/main'],
+        args: ['worktree', 'add', '-b', 'integration/42', '--no-track', '--', WORKTREE, 'refs/remotes/origin/main'],
       },
     ]);
 
@@ -180,7 +180,7 @@ describe('syncRepositoryWorkspace', () => {
       validateServerOwnedRepository: vi.fn(async () => undefined),
       runGit: vi.fn(async ({ args }: RepositoryWorkspaceGitCommand) => {
         if (args[0] === 'rev-parse') return ok(`${REMOTE_OID}\n`);
-        if (args[0] === '-c') return ok(`${mainRecord(REMOTE_OID)}\n${integrationRecord(REMOTE_OID)}`);
+        if (args[0] === 'worktree' && args[1] === 'list') return ok(`${mainRecord(REMOTE_OID)}\n${integrationRecord(REMOTE_OID)}`);
         if (args[0] === 'merge-base') return ok();
         return ok();
       }),
@@ -218,7 +218,29 @@ describe('syncRepositoryWorkspace', () => {
       localBase: 'current',
       integrationWorktree: 'fast_forwarded',
     });
-    expect(host.commands.filter((command) => command.args[0] === 'worktree')).toEqual([]);
+    expect(host.commands.filter((command) => command.args[0] === 'worktree' && command.args[1] !== 'list')).toEqual([]);
+    host.assertConsumed();
+  });
+
+  it('resets a clean deterministic compose worktree when the authoritative base advanced', async () => {
+    const host = new ScriptedHost([
+      fetchStep(),
+      remoteOidStep(),
+      listStep(`${mainRecord(REMOTE_OID)}\n${integrationRecord()}`),
+      statusStep(REPOSITORY),
+      ancestorStep('refs/heads/main', 'refs/remotes/origin/main', true),
+      ancestorStep('refs/remotes/origin/main', 'refs/heads/main', true),
+      statusStep(WORKTREE),
+      { cwd: WORKTREE, args: ['reset', '--hard', 'refs/remotes/origin/main'] },
+    ]);
+
+    await expect(syncRepositoryWorkspace(host, {
+      ...input,
+      integrationWorktreeMode: 'reset_to_base',
+    })).resolves.toMatchObject({
+      localBase: 'current',
+      integrationWorktree: 'reset_to_base',
+    });
     host.assertConsumed();
   });
 

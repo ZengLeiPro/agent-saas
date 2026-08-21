@@ -16,6 +16,7 @@ import type {
 import type {
   TaskBoardIntegrationBatchCreateInput,
   TaskBoardIntegrationCandidateDetails,
+  TaskBoardDirectoryUser,
   TaskBoardIntegrationSource,
   TaskBoardMember,
   TaskBoardMemberPatchInput,
@@ -68,6 +69,11 @@ function jsonRequest(method: "POST" | "PATCH" | "PUT" | "DELETE", body?: unknown
 export async function fetchBoards(): Promise<TaskBoard[]> {
   const response = await authFetch(`${API_BASE}/boards?includeArchived=true`);
   return parseEntity<TaskBoard[]>(response, "任务看板", "boards");
+}
+
+export async function fetchTaskboardUsers(): Promise<TaskBoardDirectoryUser[]> {
+  const response = await authFetch(`${API_BASE}/users`);
+  return parseEntity<TaskBoardDirectoryUser[]>(response, "组织用户", "users");
 }
 
 export async function createBoard(input: TaskBoardCreateInput): Promise<TaskBoard> {

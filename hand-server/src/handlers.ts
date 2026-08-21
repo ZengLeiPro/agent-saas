@@ -29,9 +29,15 @@ export interface Logger {
   error(msg: string): void;
 }
 
+export interface InvocationResultRecord {
+  response: ToolInvocationResponse;
+  createdAt: number;
+}
+
 export interface HandlerDeps {
   config: HandServerConfig;
   invocations?: Map<string, AbortController>;
+  invocationResults?: Map<string, InvocationResultRecord>;
   workspaceResolver: WorkspaceResolver;
   provider: ExecutionProvider;
   /**
@@ -490,6 +496,30 @@ function truncate(value: string, maxBytes: number): string {
 }
 
 
+const INVOCATION_RESULT_TTL_MS = 10 * 60_000;
+const INVOCATION_RESULT_MAX = 10_000;
+
+function storeInvocationResult(
+  deps: HandlerDeps,
+  invocationId: string | undefined,
+  response: ToolInvocationResponse,
+): void {
+  if (!invocationId || !deps.invocationResults) return;
+  const results = deps.invocationResults;
+  if (results.has(invocationId)) results.delete(invocationId);
+  while (results.size >= INVOCATION_RESULT_MAX) {
+    const oldestId = results.keys().next().value as string | undefined;
+    if (!oldestId) break;
+    results.delete(oldestId);
+  }
+  const record: InvocationResultRecord = { response, createdAt: Date.now() };
+  results.set(invocationId, record);
+  const timer = setTimeout(() => {
+    if (results.get(invocationId) === record) results.delete(invocationId);
+  }, INVOCATION_RESULT_TTL_MS);
+  timer.unref?.();
+}
+
 interface PreparedToolInvocation {
   ok: true;
   toolRequest: ToolInvocationRequest;
@@ -598,13 +628,15 @@ async function executePreparedTool(
   prepared: PreparedToolInvocation,
   deps: HandlerDeps,
 ): Promise<ToolInvocationResponse> {
+  let response: ToolInvocationResponse;
   try {
-    return await deps.provider.execute(prepared.toolRequest);
+    response = await deps.provider.execute(prepared.toolRequest);
   } catch (err) {
-    return { status: 'error', error: `hand-server provider.execute throw: ${err instanceof Error ? err.message : String(err)}` };
-  } finally {
-    prepared.cleanup();
+    response = { status: 'error', error: `hand-server provider.execute throw: ${err instanceof Error ? err.message : String(err)}` };
   }
+  storeInvocationResult(deps, prepared.invocationId, response);
+  prepared.cleanup();
+  return response;
 }
 
 /**
@@ -683,18 +715,33 @@ export async function handleExecuteStream(
   try {
     if (deps.provider.executeStream) {
       for await (const chunk of deps.provider.executeStream(prepared.toolRequest)) {
+        if (chunk.type === 'completed') {
+          sawCompleted = true;
+          storeInvocationResult(deps, prepared.invocationId, chunk.response);
+        }
         const written = await writeChunk(chunk);
         if (!written) break;
       }
     } else {
       const response = await executePreparedTool(prepared, deps);
+      sawCompleted = true;
       await writeChunk({ type: 'completed', response });
     }
   } catch (err) {
-    await writeChunk({ type: 'completed', response: { status: 'error', error: `hand-server provider.executeStream throw: ${err instanceof Error ? err.message : String(err)}` } });
+    const response: ToolInvocationResponse = {
+      status: 'error',
+      error: `hand-server provider.executeStream throw: ${err instanceof Error ? err.message : String(err)}`,
+    };
+    storeInvocationResult(deps, prepared.invocationId, response);
+    sawCompleted = true;
+    await writeChunk({ type: 'completed', response });
   } finally {
     clearInterval(heartbeat);
-    if (!sawCompleted) await writeChunk({ type: 'completed', response: { status: 'error', error: 'provider stream ended without completed chunk' } });
+    if (!sawCompleted) {
+      const response: ToolInvocationResponse = { status: 'error', error: 'provider stream ended without completed chunk' };
+      storeInvocationResult(deps, prepared.invocationId, response);
+      await writeChunk({ type: 'completed', response });
+    }
     res.off('close', markClosed);
     prepared.cleanup();
     if (!res.destroyed && !res.writableEnded) res.end();
@@ -715,6 +762,38 @@ export async function handleCancelInvocation(
   controller.abort();
   retainCancelledInvocation(deps, invocationId, controller);
   return sendJson(res, 200, { status: 'ok', invocationId, cancelled: true });
+}
+
+export async function handleGetInvocationResult(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: HandlerDeps,
+  invocationId: string,
+): Promise<void> {
+  if (req.method !== 'GET') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use GET' });
+  const auth = req.headers.authorization ?? '';
+  const match = /^Bearer\s+(.+)$/i.exec(auth);
+  if (!match || match[1] !== deps.config.authToken) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
+  const record = deps.invocationResults?.get(invocationId);
+  if (record) {
+    return sendJson(res, 200, {
+      status: 'ok',
+      invocationId,
+      completed: true,
+      response: record.response,
+      createdAt: record.createdAt,
+    });
+  }
+  const invocation = deps.invocations?.get(invocationId);
+  if (invocation) {
+    return sendJson(res, 200, {
+      status: 'ok',
+      invocationId,
+      completed: false,
+      cancelled: invocation.signal.aborted,
+    });
+  }
+  return sendJson(res, 404, { status: 'error', error: 'invocation result not found', invocationId });
 }
 
 export async function handleWorkspaceLifecycle(

@@ -36,6 +36,10 @@ export interface RepositoryWorkspaceSyncInput {
   integrationBranch: string;
   /** Canonical server-configured HTTPS URL; remote aliases/config are never used for network access. */
   controlledRemoteUrl: string;
+  /** Short-lived server-owned askpass environment used only by the explicit fetch. */
+  fetchEnvironment?: Readonly<Record<string, string>>;
+  /** Deterministic compose may replace a clean local integration ref when the base advanced. */
+  integrationWorktreeMode?: 'fast_forward' | 'reset_to_base';
 }
 
 export interface RepositoryWorkspaceSyncResult {
@@ -45,7 +49,7 @@ export interface RepositoryWorkspaceSyncResult {
   integrationRef: string;
   baseOid: string;
   localBase: 'absent' | 'current' | 'fast_forwarded';
-  integrationWorktree: 'created' | 'current' | 'fast_forwarded';
+  integrationWorktree: 'created' | 'current' | 'fast_forwarded' | 'reset_to_base';
 }
 
 export type RepositoryWorkspaceSyncErrorCode =
@@ -105,13 +109,13 @@ async function syncLocked(
   await git(host, input.repositoryPath, [
     'fetch', '--no-tags', '--prune', '--', input.controlledRemoteUrl,
     `+refs/heads/${input.baseBranch}:${remoteBaseRef}`,
-  ]);
+  ], input.fetchEnvironment);
 
   const baseRef = `refs/heads/${input.baseBranch}`;
   const integrationRef = `refs/heads/${input.integrationBranch}`;
   const baseOid = singleOid(await git(host, input.repositoryPath, ['rev-parse', '--verify', remoteBaseRef]), remoteBaseRef);
   const worktrees = parseWorktrees((await git(host, input.repositoryPath, [
-    '-c', 'core.quotePath=false', 'worktree', 'list', '--porcelain',
+    'worktree', 'list', '--porcelain',
   ])).stdout);
 
   assertUniqueWorktreePathsAndBranches(worktrees);
@@ -182,20 +186,30 @@ async function prepareIntegrationWorktree(
 
   if (atRequestedPath) {
     await assertClean(host, atRequestedPath);
+    if (input.integrationWorktreeMode === 'reset_to_base') {
+      await git(host, atRequestedPath.path, ['reset', '--hard', remoteBaseRef]);
+      return 'reset_to_base';
+    }
     return fastForwardWorktree(host, input.repositoryPath, atRequestedPath.path, integrationRef, remoteBaseRef);
   }
 
   const branchExists = await refExists(host, input.repositoryPath, integrationRef);
   if (branchExists) {
-    await assertFastForwardable(host, input.repositoryPath, integrationRef, remoteBaseRef);
+    if (input.integrationWorktreeMode !== 'reset_to_base') {
+      await assertFastForwardable(host, input.repositoryPath, integrationRef, remoteBaseRef);
+    }
     await git(host, input.repositoryPath, ['worktree', 'add', '--', input.worktreePath, integrationRef]);
+    if (input.integrationWorktreeMode === 'reset_to_base') {
+      await git(host, input.worktreePath, ['reset', '--hard', remoteBaseRef]);
+      return 'reset_to_base';
+    }
     if (await isAncestor(host, input.repositoryPath, remoteBaseRef, integrationRef)) return 'created';
     await git(host, input.worktreePath, ['merge', '--ff-only', remoteBaseRef]);
     return 'fast_forwarded';
   }
 
   await git(host, input.repositoryPath, [
-    'worktree', 'add', '-b', input.integrationBranch, '--', input.worktreePath, remoteBaseRef,
+    'worktree', 'add', '-b', input.integrationBranch, '--no-track', '--', input.worktreePath, remoteBaseRef,
   ]);
   return 'created';
 }
@@ -261,8 +275,9 @@ async function git(
   host: RepositoryWorkspaceSyncHost,
   cwd: string,
   args: readonly string[],
+  env?: Readonly<Record<string, string>>,
 ): Promise<RepositoryWorkspaceGitResult> {
-  const command = { cwd, args };
+  const command = { cwd, args, ...(env ? { env } : {}) };
   const result = await runGit(host, command);
   if (result.exitCode !== 0) throw commandFailure(command, result);
   return result;

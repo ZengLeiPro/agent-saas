@@ -174,6 +174,16 @@ describe('DefaultIntegrationV3ComposeExecutor push replay', () => {
       }
       expect(bound).toBe('77');
       const remoteAfterFirst = runner.current();
+      bound = undefined;
+      try {
+        await composer.compose(current(firstCandidate, baseOid, source));
+        throw new Error('expected reload');
+      } catch (error: any) {
+        if (!(error instanceof IntegrationV3CandidateReloadRequiredError)) {
+          throw new Error(`unexpected pre-bind replay error: ${error.message}; code=${error.code}; stderr=${error.command?.args?.join(' ')}`);
+        }
+      }
+      expect(bound).toBe('77');
       const secondCandidate = { ...firstCandidate, providerPullRequestId: '77', version: 2 };
       const result = await composer.compose(current(secondCandidate, baseOid, source));
       expect(result.headOid).toBe(remoteAfterFirst);
@@ -209,5 +219,77 @@ describe('Integration v3 work completion gate', () => {
     }));
     expect(result).toBeUndefined();
     expect(provider.getReference).not.toHaveBeenCalled();
+  });
+});
+
+describe('Integration v3 ready work subject convergence', () => {
+  const oldHead = '1'.repeat(40);
+  const newHead = '2'.repeat(40);
+  const oldBase = '3'.repeat(40);
+  const newBase = '4'.repeat(40);
+  const oldTree = '5'.repeat(40);
+  const newTree = '6'.repeat(40);
+
+  function fixture(input: { remoteHead?: string; remoteBase?: string; receipt?: Record<string, unknown> | null } = {}) {
+    const value = candidate(oldBase);
+    value.state = 'working';
+    value.providerPullRequestId = '77';
+    const loaded = current(value, oldBase, { frozenHeadOid: oldHead });
+    loaded.revision.treeOid = oldTree;
+    const workPushReceipt = input.receipt === null ? undefined : {
+      executionId: 'work-1', candidateId: value.id, candidateRevision: 1,
+      workflowEpoch: '4', laneEpoch: '3', oldOid: oldHead, newOid: input.remoteHead ?? oldHead,
+      ...input.receipt,
+    };
+    const provider = {
+      getReference: vi.fn(async (_repository: unknown, ref: string) => ref === value.branch
+        ? { oid: input.remoteHead ?? oldHead, treeOid: input.remoteHead === newHead ? newTree : oldTree }
+        : { oid: input.remoteBase ?? oldBase, treeOid: 'base-tree' }),
+    } as unknown as RepositoryProvider;
+    const composer = new DefaultIntegrationV3ComposeExecutor({
+      resolveContext: async () => ({
+        repository: { provider: 'github', repositoryId: value.repositoryId, owner: 'org', name: 'repo', baseBranch: 'main', allowForkPullRequest: false },
+        credentialOwnerId: 'owner-1', tenantId: 'tenant-1', repositoryPath: '/repo', worktreePath: '/worktree',
+        sources: [], workExecutionId: 'work-1', ...(workPushReceipt ? { workPushReceipt } : {}),
+      }),
+      withRepositoryBranchLock: async <T>(_lock: unknown, action: () => Promise<T>) => action(),
+      validateServerOwnedRepository: async () => undefined,
+      runGit: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+      bindPullRequest: async () => undefined,
+    }, provider);
+    return { composer, loaded };
+  }
+
+  it('refreshes the revision when ready work keeps the head but the base advances', async () => {
+    const { composer, loaded } = fixture({ remoteBase: newBase });
+    await expect(composer.refreshAfterWork(loaded)).resolves.toMatchObject({
+      baseOid: newBase, headOid: oldHead, treeOid: oldTree, workExecutionId: 'work-1',
+    });
+  });
+
+  it('rejects a ready work result that changes neither head nor base', async () => {
+    const { composer, loaded } = fixture();
+    await expect(composer.refreshAfterWork(loaded)).rejects.toMatchObject({ name: 'IntegrationV3InvalidWorkResultError' });
+  });
+
+  it('refreshes a changed head only with the exact succeeded work push receipt', async () => {
+    const { composer, loaded } = fixture({ remoteHead: newHead, remoteBase: newBase });
+    await expect(composer.refreshAfterWork(loaded)).resolves.toMatchObject({
+      baseOid: newBase, headOid: newHead, treeOid: newTree, workExecutionId: 'work-1',
+    });
+  });
+
+  it.each([
+    ['missing', null],
+    ['wrong execution', { executionId: 'work-other' }],
+    ['wrong candidate', { candidateId: 'candidate-other' }],
+    ['wrong revision', { candidateRevision: 2 }],
+    ['wrong old OID', { oldOid: '7'.repeat(40) }],
+    ['wrong new OID', { newOid: '8'.repeat(40) }],
+    ['wrong workflow epoch', { workflowEpoch: '5' }],
+    ['wrong lane epoch', { laneEpoch: '5' }],
+  ])('rejects a changed head with %s push receipt', async (_name, receipt) => {
+    const { composer, loaded } = fixture({ remoteHead: newHead, receipt });
+    await expect(composer.refreshAfterWork(loaded)).rejects.toMatchObject({ name: 'IntegrationV3InvalidWorkResultError' });
   });
 });

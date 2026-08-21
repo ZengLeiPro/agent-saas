@@ -2,6 +2,13 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import { z } from 'zod';
 
 import type { UserStore } from '../data/users/store.js';
+import {
+  listTaskboardDirectoryUsers,
+  withCreatorAvatarVersion,
+  withCreatorAvatarVersionInExecution,
+  withCreatorAvatarVersions,
+  withCreatorAvatarVersionsPage,
+} from './taskboardAvatar.js';
 import type { UploadManager } from '../uploads/manager.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import {
@@ -316,6 +323,8 @@ export interface TaskboardRouterOptions {
 export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   const router = Router();
   const identityFrom = identityFactory(options);
+  const sendTask = (req: Request, res: Response, task: TaskBoardTask) =>
+    res.json(withCreatorAvatarVersion(options.userStore, identityFrom(req), task));
 
   router.use((req, res, next) => {
     if (!req.user) {
@@ -328,6 +337,12 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     }
     next();
   });
+
+  router.get('/users', route(async (req, res) => {
+    if (!options.userStore) throw new TaskboardExecutionUnavailableError();
+    const users = listTaskboardDirectoryUsers(options.userStore, req.user!.tenantId);
+    res.json({ users });
+  }));
 
   router.get('/boards', route(async (req, res) => {
     const query = parseOrReply(boardsQuerySchema, req.query, res, 'query');
@@ -401,26 +416,29 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     // Workflow v3 is driven exclusively by its durable candidate worker. Starting the legacy
     // merge Agent here creates a second writer for the same manually-created batch.
     if (task.workflowVersion === 3) {
-      res.status(202).json({ task });
+      res.status(202).json({ task: withCreatorAvatarVersion(options.userStore, identity, task) });
       return;
     }
     if (!options.executionService) throw new TaskboardExecutionUnavailableError();
-    res.status(202).json(await options.executionService.startExecution(identity, task.id, {
+    const execution = await options.executionService.startExecution(identity, task.id, {
       expectedVersion: task.version,
       purpose: 'merge',
-    }));
+    });
+    res.status(202).json(withCreatorAvatarVersionInExecution(options.userStore, identity, execution));
   }));
 
   router.get('/boards/:boardId/tasks', route(async (req, res) => {
     const query = parseOrReply(tasksQuerySchema, req.query, res, 'query');
     if (!query) return;
-    res.json(await options.service!.listTasks(identityFrom(req), req.params.boardId, {
+    const identity = identityFrom(req);
+    const tasks = await options.service!.listTasks(identity, req.params.boardId, {
       includeArchived: query.includeArchived,
       ...(query.search ? { search: query.search } : {}),
       ...(query.status?.length ? { statuses: query.status } : {}),
       ...(query.kind?.length ? { kinds: query.kind } : {}),
       ...(query.priority?.length ? { priorities: query.priority } : {}),
-    }));
+    });
+    res.json(withCreatorAvatarVersions(options.userStore, identity, tasks));
   }));
 
   router.post('/boards/:boardId/tasks', route(async (req, res) => {
@@ -464,13 +482,14 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
         task.version,
       )).task;
     }
-    res.status(201).json(task);
+    res.status(201).json(withCreatorAvatarVersion(options.userStore, identity, task));
   }));
 
   router.get('/tasks/search', route(async (req, res) => {
     const query = parseOrReply(taskSearchQuerySchema, req.query, res, 'query');
     if (!query) return;
-    res.json(await options.service!.searchTasks(identityFrom(req), {
+    const identity = identityFrom(req);
+    const page = await options.service!.searchTasks(identity, {
       boardId: query.boardId,
       boardName: query.boardName,
       includeArchived: query.includeArchived,
@@ -488,11 +507,12 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       dueBefore: query.dueBefore,
       page: query.page,
       pageSize: query.pageSize,
-    }));
+    });
+    res.json(withCreatorAvatarVersionsPage(options.userStore, identity, page));
   }));
 
   router.get('/tasks/:id', route(async (req, res) => {
-    res.json(await options.service!.getTask(identityFrom(req), req.params.id));
+    sendTask(req, res, await options.service!.getTask(identityFrom(req), req.params.id));
   }));
 
   router.get('/tasks/:id/attachments/:attachmentId', route(async (req, res) => {
@@ -549,31 +569,31 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       await cleanupRequestAttachments(options, identity, current.id, ownerUserId, scopedAttachments, current.attachments);
       throw error;
     }
-    res.json(task);
+    res.json(withCreatorAvatarVersion(options.userStore, identity, task));
   }));
 
   router.post('/tasks/:id/move', route(async (req, res) => {
     const input = parseOrReply(taskMoveSchema, req.body, res, 'body');
     if (!input) return;
-    res.json(await options.service!.moveTask(identityFrom(req), req.params.id, input));
+    sendTask(req, res, await options.service!.moveTask(identityFrom(req), req.params.id, input));
   }));
 
   router.post('/tasks/:id/archive', route(async (req, res) => {
     const input = parseOrReply(expectedVersionSchema, req.body, res, 'body');
     if (!input) return;
-    res.json(await options.service!.archiveTask(identityFrom(req), req.params.id, input));
+    sendTask(req, res, await options.service!.archiveTask(identityFrom(req), req.params.id, input));
   }));
 
   router.post('/tasks/:id/restore', route(async (req, res) => {
     const input = parseOrReply(expectedVersionSchema, req.body, res, 'body');
     if (!input) return;
-    res.json(await options.service!.restoreTask(identityFrom(req), req.params.id, input));
+    sendTask(req, res, await options.service!.restoreTask(identityFrom(req), req.params.id, input));
   }));
 
   router.delete('/tasks/:id', route(async (req, res) => {
     const input = parseOrReply(expectedVersionSchema, req.body, res, 'body');
     if (!input) return;
-    res.json(await options.service!.deleteTask(identityFrom(req), req.params.id, input));
+    sendTask(req, res, await options.service!.deleteTask(identityFrom(req), req.params.id, input));
   }));
 
   router.get('/tasks/:id/executions', route(async (req, res) => {
@@ -603,11 +623,9 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     }
     const input = parseOrReply(executionStartSchema, req.body, res, 'body');
     if (!input) return;
-    res.status(202).json(await options.executionService.startExecution(
-      identityFrom(req),
-      req.params.id,
-      input,
-    ));
+    const identity = identityFrom(req);
+    const execution = await options.executionService.startExecution(identity, req.params.id, input);
+    res.status(202).json(withCreatorAvatarVersionInExecution(options.userStore, identity, execution));
   }));
 
   router.post('/tasks/:id/context', route(async (req, res) => {
@@ -621,14 +639,14 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     if (!options.service!.resumeBlockedTask) throw new TaskboardExecutionUnavailableError();
     const input = parseOrReply(taskResumeSchema, req.body, res, 'body');
     if (!input) return;
-    res.json(await options.service!.resumeBlockedTask(identityFrom(req), req.params.id, input));
+    sendTask(req, res, await options.service!.resumeBlockedTask(identityFrom(req), req.params.id, input));
   }));
 
   router.post('/tasks/:id/integration-cancel', route(async (req, res) => {
     if (!options.service!.cancelIntegrationTask) throw new TaskboardExecutionUnavailableError();
     const input = parseOrReply(integrationCancelSchema, req.body, res, 'body');
     if (!input) return;
-    res.json(await options.service!.cancelIntegrationTask(identityFrom(req), req.params.id, input));
+    sendTask(req, res, await options.service!.cancelIntegrationTask(identityFrom(req), req.params.id, input));
   }));
 
   router.get('/tasks/:id/integration-sources', route(async (req, res) => {

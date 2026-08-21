@@ -7,6 +7,7 @@ import type { RepositoryWorkspaceGitCommand, RepositoryWorkspaceGitResult } from
 const SAFE_GIT_CONFIG = [
   'core.hooksPath=/dev/null',
   'core.fsmonitor=false',
+  'core.quotePath=false',
   'user.name=Integration Worker',
   'user.email=integration-worker@localhost',
   'credential.helper=',
@@ -21,7 +22,12 @@ const SAFE_GIT_CONFIG = [
   'protocol.ext.allow=never',
 ] as const;
 
-const ALLOWED_ENV_OVERRIDES = new Set(['GIT_ASKPASS', 'KY_GIT_PUSH_TOKEN']);
+const ALLOWED_ENV_OVERRIDES = new Set([
+  'GIT_ASKPASS',
+  'KY_GIT_PUSH_TOKEN',
+  'GIT_AUTHOR_DATE',
+  'GIT_COMMITTER_DATE',
+]);
 const ALLOWED_CORE_CONFIG = new Map<string, ReadonlySet<string>>([
   ['repositoryformatversion', new Set(['0'])],
   ['filemode', new Set(['true', 'false'])],

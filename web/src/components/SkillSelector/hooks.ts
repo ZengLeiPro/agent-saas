@@ -9,11 +9,18 @@ import {
 } from "@agent/shared";
 import type { MySkillsResponse } from "@agent/shared";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
+import { useAuth } from "@/contexts/AuthContext";
 
 let cachedData: Record<string, MySkillsResponse> = {};
 
 export function useMySkills(username?: string) {
-  const key = username || "__me__";
+  const { user } = useAuth();
+  // `/me` 的响应来自当前 token；缓存也必须按不可变账号身份隔离，不能把
+  // 多账号切换后的上一个账号状态复用给当前账号。管理员查看他人时仍按目标
+  // username 隔离，避免与自己的 `/me` 缓存混用。
+  const key = username
+    ? `user:${username}`
+    : `me:${user?.tenantId ?? "anonymous"}:${user?.id ?? "anonymous"}`;
   const [data, setData] = useState<MySkillsResponse | null>(cachedData[key] ?? null);
   const [loading, setLoading] = useState(cachedData[key] == null);
   const [error, setError] = useState<string | null>(null);
@@ -35,11 +42,10 @@ export function useMySkills(username?: string) {
   }, [username, key]);
 
   useEffect(() => {
-    if (cachedData[key]) {
-      setData(cachedData[key]);
-      setLoading(false);
-      return;
-    }
+    const cached = cachedData[key];
+    setData(cached ?? null);
+    setLoading(cached == null);
+    if (cached) return;
     void refresh();
   }, [key, refresh]);
 

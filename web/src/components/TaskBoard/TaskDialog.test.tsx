@@ -21,7 +21,7 @@ describe("TaskDialog 交互", () => {
     mocks.authFetch.mockReset();
   });
 
-  it("下拉选项浮在弹窗之上，连续选择状态、优先级与三阶段模型后可提交", async () => {
+  it("下拉选项浮在弹窗之上，连续选择状态、优先级与实施/复核模型后可提交", async () => {
     const user = userEvent.setup();
     const onCreate = vi.fn(async () => undefined);
     render(
@@ -40,10 +40,11 @@ describe("TaskDialog 交互", () => {
     await user.click(screen.getByRole("option", { name: "待实施" }));
     await user.click(screen.getByRole("combobox", { name: "新任务优先级" }));
     await user.click(screen.getByRole("option", { name: "紧急" }));
-    for (const purpose of ["实施阶段", "复核阶段", "集成阶段"]) {
+    for (const purpose of ["实施阶段", "复核阶段"]) {
       await user.click(screen.getByRole("combobox", { name: `${purpose}运行模型` }));
       await user.click(screen.getByRole("option", { name: "模型 B" }));
     }
+    expect(screen.queryByRole("combobox", { name: "集成阶段运行模型" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
@@ -53,7 +54,6 @@ describe("TaskDialog 交互", () => {
       stageModels: {
         work: "group-a/model-b",
         review: "group-a/model-b",
-        merge: "group-a/model-b",
       },
     })));
   });

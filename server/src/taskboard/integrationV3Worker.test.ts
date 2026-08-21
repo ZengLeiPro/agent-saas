@@ -31,7 +31,7 @@ class MemoryHost implements IntegrationV3WorkerHost {
   dispatched: IntegrationV3RequestLease[] = [];
   cleanupCalls: IntegrationV3RequestLease[] = [];
   completedRequests: Array<{ request: IntegrationV3RequestLease; receipt?: import('./integrationV3Worker.js').IntegrationV3CleanupReceipt }> = [];
-  operationKey?: string;
+  mergeOperation?: { operationKey: string; state: 'prepared' | 'executing' | 'unknown' | 'succeeded' };
   async claimCandidate() {
     if (['merged', 'canceled'].includes(this.current.candidate.state) && this.checkpoints.at(-1)?.status === 'requested') return undefined;
     return { candidateId: 'candidate-1', leaseId: 'candidate-lease' };
@@ -53,7 +53,7 @@ class MemoryHost implements IntegrationV3WorkerHost {
   }
   async completeRequest(request: IntegrationV3RequestLease, receipt?: import('./integrationV3Worker.js').IntegrationV3CleanupReceipt) { this.completedRequests.push({ request, ...(receipt ? { receipt } : {}) }); }
   async releaseRequest() { throw new Error('unexpected request failure'); }
-  async findRecoverableMergeOperation() { return this.operationKey; }
+  async findRecoverableMergeOperation() { return this.mergeOperation; }
 }
 
 function request(kind: 'work'|'review'|'cleanup'): IntegrationV3RequestLease {
@@ -73,7 +73,9 @@ describe('IntegrationV3Worker pure mock flow', () => {
         };
         host.current.candidate = { ...host.current.candidate, state: next[command.type] ?? host.current.candidate.state, version: host.current.candidate.version + 1 };
         if (command.type === 'request_review') host.requests.push(request('review'));
-        if (command.type === 'merge_approved') host.operationKey = 'merge-op';
+        if (command.type === 'merge_approved') {
+          host.mergeOperation = { operationKey: 'merge-op', state: 'unknown' };
+        }
         if (command.type === 'cleanup') host.requests.push(request('cleanup'));
         return { candidate: structuredClone(host.current.candidate), status: command.type === 'merge_approved' ? 'provider_unknown' : command.type === 'cleanup' ? 'requested' : 'applied' };
       }),
@@ -104,6 +106,34 @@ describe('IntegrationV3Worker pure mock flow', () => {
     expect(host.errors.filter(Boolean)).toEqual(['Provider outcome awaits durable reconciliation']);
   });
 
+  it('replays a prepared merge intent after a crash between prepare and execute', async () => {
+    const host = new MemoryHost();
+    host.current.candidate = {
+      ...candidate('merging'),
+      approvedRevision: 1,
+      approvedReviewExecutionId: 'review-exec',
+    };
+    host.mergeOperation = { operationKey: 'merge-prepared', state: 'prepared' };
+    const execute = vi.fn(async (command: IntegrationEngineV3Command) => ({
+      candidate: { ...host.current.candidate, state: 'merged' as const },
+      status: 'applied' as const,
+      ...(command.type === 'merge_approved' ? {} : { unexpected: command.type }),
+    }));
+    const worker = new IntegrationV3Worker({
+      host,
+      engine: { execute } as unknown as IntegrationEngineV3,
+      composer: { compose: vi.fn(), refreshAfterWork: vi.fn() },
+    });
+
+    await worker.runOnce();
+
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'merge_approved',
+      executionId: 'integration-v3-worker:candidate-1:r1',
+    }));
+    expect(host.errors.at(-1)).toBeUndefined();
+  });
+
   it('durably requeues transient compose failures instead of terminally failing the candidate', async () => {
     const host = new MemoryHost();
     host.current.candidate = candidate('composing');
@@ -119,6 +149,25 @@ describe('IntegrationV3Worker pure mock flow', () => {
     });
     await worker.runOnce();
     expect(releases.at(-1)).toEqual({ error: 'temporary workspace outage', retryable: true });
+  });
+
+  it('converges an invalid ready work result to needs_human without failing the worker lease', async () => {
+    const host = new MemoryHost();
+    host.current.candidate = candidate('working');
+    const execute = vi.fn(async (command: IntegrationEngineV3Command) => command.type === 'needs_human'
+      ? { candidate: { ...host.current.candidate, state: 'needs_human' as const, lastError: command.reason }, status: 'applied' as const }
+      : { candidate: host.current.candidate, status: 'requested' as const });
+    const invalid = new Error('Ready work result changed neither the integration head nor the base');
+    invalid.name = 'IntegrationV3InvalidWorkResultError';
+    const worker = new IntegrationV3Worker({
+      host,
+      engine: { execute } as unknown as IntegrationEngineV3,
+      composer: { compose: vi.fn(), refreshAfterWork: async () => { throw invalid; } },
+    });
+    await worker.runOnce();
+    expect(execute.mock.calls.map(([command]) => command.type)).toEqual(['request_work', 'needs_human']);
+    expect(host.checkpoints.at(-1)).toMatchObject({ state: 'needs_human', status: 'applied' });
+    expect(host.errors.at(-1)).toBeUndefined();
   });
 
   it('reports pending, successful, and failed worker ticks to the activation heartbeat', async () => {
@@ -140,7 +189,7 @@ describe('IntegrationV3Worker pure mock flow', () => {
   it('recovers a succeeded merge operation after restart without resending merge', async () => {
     const host = new MemoryHost();
     host.current.candidate = candidate('merging');
-    host.operationKey = 'succeeded-merge-op';
+    host.mergeOperation = { operationKey: 'succeeded-merge-op', state: 'succeeded' };
     const engine = { execute: vi.fn(async (command: IntegrationEngineV3Command) => ({ candidate: { ...host.current.candidate, state: 'merged' }, status: 'applied' })) } as unknown as IntegrationEngineV3;
     const worker = new IntegrationV3Worker({
       host, engine,

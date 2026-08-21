@@ -105,6 +105,7 @@ export interface IntegrationV3WorkerPostgresOptions {
   providerOperationsTable: string;
   requestsOutboxTable: string;
   tasksTable: string;
+  blockEpisodesTable: string;
   boardsTable: string;
   executionsTable: string;
   dispatchAgent(input: {
@@ -116,6 +117,7 @@ export interface IntegrationV3WorkerPostgresOptions {
   }): Promise<{ executionId: string }>;
   syncWorkspace(request: IntegrationV3RequestLease): Promise<void>;
   cleanup(request: IntegrationV3RequestLease): Promise<IntegrationV3CleanupReceipt | void>;
+  releaseIdentity: string;
   logger?: IntegrationV3WorkerHost['logger'];
 }
 
@@ -131,16 +133,20 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
           WHERE COALESCE(NULLIF(current_setting('agent_saas.integration_v3_enabled',true),'')::boolean,true)
             AND COALESCE((c.policy_snapshot->>'workflowVersion')::int,2)=3
             AND COALESCE((c.policy_snapshot->'featureFlags'->>'engineV3')::boolean,false)
-            AND c.worker_status<>'failed' AND c.worker_available_at<=now()
-            AND (c.worker_status='idle' OR c.worker_lease_expires_at<now())
-            AND (c.state NOT IN ('merged','canceled') OR c.worker_checkpoint->>'status' IS DISTINCT FROM 'requested')
+            AND (c.worker_status<>'failed' OR c.worker_checkpoint->>'releaseIdentity' IS DISTINCT FROM $3)
+            AND c.worker_available_at<=now()
+            AND (c.worker_status IN ('idle','failed') OR c.worker_lease_expires_at<now())
+            AND (c.state IN ('preparing','composing','waiting_checks','needs_work','working','in_review','approved','merging')
+              OR (c.state IN ('merged','canceled') AND c.worker_checkpoint->>'status' IS DISTINCT FROM 'requested'))
           ORDER BY c.updated_at,c.id FOR UPDATE OF c SKIP LOCKED LIMIT 1
        )
        UPDATE ${this.options.candidatesTable} c
           SET worker_status='processing',worker_lease_id=$1,
-              worker_lease_expires_at=now()+($2::bigint*interval '1 millisecond'),worker_error=NULL
+              worker_lease_expires_at=now()+($2::bigint*interval '1 millisecond'),worker_error=NULL,
+              worker_attempts=CASE WHEN c.worker_checkpoint->>'releaseIdentity' IS DISTINCT FROM $3 THEN 0 ELSE c.worker_attempts END,
+              worker_checkpoint=c.worker_checkpoint||jsonb_build_object('releaseIdentity',$3::text)
          FROM claim WHERE c.id=claim.id RETURNING c.id`,
-      [leaseId, leaseMs],
+      [leaseId, leaseMs, this.options.releaseIdentity],
     );
     return result.rows[0] ? { candidateId: String(result.rows[0].id), leaseId } : undefined;
   }
@@ -174,9 +180,10 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
 
   async checkpointCandidate(lease: IntegrationV3CandidateLease, checkpoint: Record<string, unknown>): Promise<void> {
     await this.options.pool.query(
-      `UPDATE ${this.options.candidatesTable} SET worker_checkpoint=$3::jsonb,updated_at=updated_at
+      `UPDATE ${this.options.candidatesTable}
+          SET worker_checkpoint=$3::jsonb||jsonb_build_object('releaseIdentity',$4::text),updated_at=updated_at
         WHERE id=$1 AND worker_lease_id=$2 AND worker_status='processing'`,
-      [lease.candidateId, lease.leaseId, JSON.stringify(checkpoint)],
+      [lease.candidateId, lease.leaseId, JSON.stringify(checkpoint), this.options.releaseIdentity],
     );
   }
 
@@ -258,7 +265,36 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
     );
     if (!bound.rows[0]) throw new Error('Candidate execution request lease changed before binding');
   }
-  syncWorkspace(request: IntegrationV3RequestLease) { return this.options.syncWorkspace(request); }
+  async syncWorkspace(request: IntegrationV3RequestLease): Promise<void> {
+    await this.options.syncWorkspace(request);
+    if (request.payload.reason !== 'resume_reconcile') return;
+    const resumeState = request.payload.resumeState;
+    if (resumeState !== 'needs_work' && resumeState !== 'in_review') {
+      throw new Error('Workspace resume state is invalid');
+    }
+    const result = await this.options.pool.query(
+      `WITH resumed AS (
+         UPDATE ${this.options.candidatesTable}
+            SET state=$3,last_error=NULL,version=version+1,updated_at=now()
+          WHERE id=$1 AND current_revision=$2
+            AND workflow_epoch=$4::bigint AND lane_epoch=$5::bigint
+            AND state IN ('blocked','needs_human')
+          RETURNING integration_task_id
+       ), task_resumed AS (
+         UPDATE ${this.options.tasksTable} t
+            SET status=CASE WHEN $3='in_review' THEN 'in_review' ELSE 'in_progress' END,
+                version=version+1,updated_at=now()
+           FROM resumed WHERE t.id=resumed.integration_task_id RETURNING t.id
+       ), closed AS (
+         UPDATE ${this.options.blockEpisodesTable} b SET closed_at=COALESCE(b.closed_at,now())
+           FROM task_resumed WHERE b.task_id=task_resumed.id AND b.closed_at IS NULL RETURNING b.id
+       )
+       SELECT id FROM task_resumed`,
+      [request.candidateId, request.candidateRevision, resumeState,
+        String(request.payload.workflowEpoch ?? ''), String(request.payload.laneEpoch ?? '')],
+    );
+    if (!result.rows[0]) throw new Error('Workspace resume fence is stale');
+  }
   cleanup(request: IntegrationV3RequestLease) { return this.options.cleanup(request); }
 
   async completeRequest(request: IntegrationV3RequestLease, receipt?: IntegrationV3CleanupReceipt): Promise<void> {
@@ -295,13 +331,17 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
     return { repository, credentialOwnerId: String(row.owner_user_id) };
   }
 
-  async findRecoverableMergeOperation(candidateId: string, revision: number): Promise<string | undefined> {
+  async findRecoverableMergeOperation(candidateId: string, revision: number) {
     const result = await this.options.pool.query(
-      `SELECT operation_key FROM ${this.options.providerOperationsTable}
+      `SELECT operation_key,state FROM ${this.options.providerOperationsTable}
         WHERE candidate_id=$1 AND candidate_revision=$2 AND kind='merge_pull_request'
-          AND state IN ('executing','unknown','succeeded')
-        ORDER BY CASE state WHEN 'succeeded' THEN 0 ELSE 1 END,updated_at DESC LIMIT 1`, [candidateId, revision]);
-    return result.rows[0] ? String(result.rows[0].operation_key) : undefined;
+          AND state IN ('prepared','executing','unknown','succeeded')
+        ORDER BY CASE state WHEN 'succeeded' THEN 0 WHEN 'executing' THEN 1
+          WHEN 'unknown' THEN 2 ELSE 3 END,updated_at DESC LIMIT 1`, [candidateId, revision]);
+    return result.rows[0] ? {
+      operationKey: String(result.rows[0].operation_key),
+      state: String(result.rows[0].state) as 'prepared' | 'executing' | 'unknown' | 'succeeded',
+    } : undefined;
   }
 }
 
@@ -314,9 +354,15 @@ export interface PostgresIntegrationV3ComposeHostOptions {
   executionsTable: string;
   resolutionsTable: string;
   requestsOutboxTable: string;
-  resolvePaths(repository: TaskBoardRepositoryConfig, candidateId: string): Promise<{ repositoryPath: string; worktreePath: string } | undefined>;
+  providerOperationsTable: string;
+  resolvePaths(
+    repository: TaskBoardRepositoryConfig,
+    candidateId: string,
+    identity: { tenantId: string; ownerUserId: string },
+  ): Promise<{ repositoryPath: string; worktreePath: string } | undefined>;
   runGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult>;
   validateServerOwnedRepository(repositoryPath: string): Promise<void>;
+  withRepositoryFetchCredential?: IntegrationV3ComposeHost['withRepositoryFetchCredential'];
   pushIntegrationHead?: IntegrationV3ComposeHost['pushIntegrationHead'];
 }
 
@@ -324,10 +370,20 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
   readonly pushIntegrationHead;
   constructor(private readonly options: PostgresIntegrationV3ComposeHostOptions) { this.pushIntegrationHead = options.pushIntegrationHead; }
 
+  withRepositoryFetchCredential<T>(
+    context: IntegrationV3ComposeContext,
+    action: (env: Readonly<Record<string, string>>) => Promise<T>,
+  ): Promise<T> {
+    return this.options.withRepositoryFetchCredential?.(context, action) ?? action({});
+  }
+
   async resolveContext(current: Required<IntegrationV3WorkerCurrent>): Promise<IntegrationV3ComposeContext> {
     const result = await this.options.pool.query(
       `SELECT b.repository,b.owner_user_id,b.tenant_id,
-              work.execution_id AS work_execution_id
+              work.execution_id AS work_execution_id,
+              push.execution_id AS push_execution_id,push.candidate_id AS push_candidate_id,
+              push.candidate_revision AS push_candidate_revision,push.workflow_epoch AS push_workflow_epoch,
+              push.lane_epoch AS push_lane_epoch,push.old_oid AS push_old_oid,push.new_oid AS push_new_oid
          FROM ${this.options.candidatesTable} c JOIN ${this.options.tasksTable} t ON t.id=c.integration_task_id
          JOIN ${this.options.boardsTable} b ON b.id=t.board_id
          LEFT JOIN LATERAL (
@@ -344,11 +400,24 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
               AND r.historical=false AND r.applied=true
             ORDER BY r.resolved_at DESC,o.updated_at DESC LIMIT 1
          ) work ON true
-        WHERE c.id=$1`, [current.candidate.id, current.revision.subjectDigest]);
+         LEFT JOIN LATERAL (
+           SELECT o.execution_id,o.candidate_id,o.candidate_revision,o.workflow_epoch,o.lane_epoch,
+                  o.expected->>'oldOid' AS old_oid,o.expected->>'newOid' AS new_oid
+             FROM ${this.options.providerOperationsTable} o
+            WHERE work.execution_id IS NOT NULL AND o.kind='push_ref' AND o.state='succeeded'
+              AND o.execution_id=work.execution_id AND o.candidate_id=c.id
+              AND o.candidate_revision=c.current_revision
+              AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch
+              AND o.expected->>'oldOid'=$3
+            ORDER BY o.updated_at DESC,o.id DESC LIMIT 1
+         ) push ON true
+        WHERE c.id=$1`, [current.candidate.id, current.revision.subjectDigest, current.revision.headOid]);
     const row = result.rows[0];
     const repository = record(row?.repository) as unknown as TaskBoardRepositoryConfig;
     if (!row || repository.provider !== 'github' || repository.repositoryId !== current.candidate.repositoryId) throw new Error('Repository provider is unsupported or unknown');
-    const paths = await this.options.resolvePaths(repository, current.candidate.id);
+    const paths = await this.options.resolvePaths(repository, current.candidate.id, {
+      tenantId: String(row.tenant_id), ownerUserId: String(row.owner_user_id),
+    });
     if (!paths) throw new Error('Local repository workspace is unavailable');
     const snapshots = await this.options.pool.query(
       `SELECT * FROM ${this.options.sourceSnapshotsTable} WHERE candidate_id=$1 AND revision=$2 ORDER BY source_order`,
@@ -357,6 +426,15 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
       repository, credentialOwnerId: String(row.owner_user_id), tenantId: String(row.tenant_id), ...paths,
       sources: snapshots.rows.map(rowToIntegrationCandidateSourceSnapshot),
       ...(row.work_execution_id ? { workExecutionId: String(row.work_execution_id) } : {}),
+      ...(row.push_execution_id ? { workPushReceipt: {
+        executionId: String(row.push_execution_id),
+        candidateId: String(row.push_candidate_id),
+        candidateRevision: Number(row.push_candidate_revision),
+        workflowEpoch: String(row.push_workflow_epoch),
+        laneEpoch: String(row.push_lane_epoch),
+        oldOid: String(row.push_old_oid),
+        newOid: String(row.push_new_oid),
+      } } : {}),
     };
   }
 
@@ -370,12 +448,12 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
 
   async withRepositoryBranchLock<T>(lock: RepositoryWorkspaceSyncLock, operation: () => Promise<T>): Promise<T> {
     const client = await this.options.pool.connect();
-    const key = `${lock.repositoryPath}\u0000${lock.branch}`;
+    const key = [lock.repositoryPath, lock.branch];
     try {
-      await client.query('SELECT pg_advisory_lock(hashtextextended($1,0))', [key]);
+      await client.query('SELECT pg_advisory_lock(hashtext($1),hashtext($2))', key);
       return await operation();
     } finally {
-      await client.query('SELECT pg_advisory_unlock(hashtextextended($1,0))', [key]).catch(() => undefined);
+      await client.query('SELECT pg_advisory_unlock(hashtext($1),hashtext($2))', key).catch(() => undefined);
       client.release();
     }
   }

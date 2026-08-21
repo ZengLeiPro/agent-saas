@@ -22,12 +22,13 @@ interface DeviceSession {
   intervalMs: number;
   nextPollAt: number;
   expiresAt: number;
+  replaceCredentialRef?: string;
   completedTokens?: CodexOAuthTokens;
 }
 
 export type CodexDevicePollResult =
   | { status: 'pending'; retryAfterMs: number }
-  | { status: 'completed'; tokens: CodexOAuthTokens }
+  | { status: 'completed'; tokens: CodexOAuthTokens; replaceCredentialRef?: string }
   | { status: 'expired' };
 
 export class CodexDeviceAuthService {
@@ -35,13 +36,14 @@ export class CodexDeviceAuthService {
 
   constructor(private readonly fetchImpl: typeof fetch = fetch) {}
 
-  async start(signal?: AbortSignal): Promise<{
+  async start(options: { signal?: AbortSignal; replaceCredentialRef?: string } = {}): Promise<{
     sessionId: string;
     userCode: string;
     verificationUri: string;
     intervalSeconds: number;
     expiresAt: string;
   }> {
+    const signal = options.signal;
     const response = await this.fetchImpl(DEVICE_USER_CODE_URL, {
       method: 'POST',
       headers: {
@@ -74,6 +76,7 @@ export class CodexDeviceAuthService {
       intervalMs: Math.max(1_000, normalizedIntervalSeconds * 1_000),
       nextPollAt: now,
       expiresAt: now + DEVICE_SESSION_TTL_MS,
+      ...(options.replaceCredentialRef ? { replaceCredentialRef: options.replaceCredentialRef } : {}),
     };
     this.sessions.set(session.id, session);
     this.pruneExpired(now);
@@ -94,7 +97,13 @@ export class CodexDeviceAuthService {
       this.sessions.delete(sessionId);
       return { status: 'expired' };
     }
-    if (session.completedTokens) return { status: 'completed', tokens: session.completedTokens };
+    if (session.completedTokens) {
+      return {
+        status: 'completed',
+        tokens: session.completedTokens,
+        ...(session.replaceCredentialRef ? { replaceCredentialRef: session.replaceCredentialRef } : {}),
+      };
+    }
     if (session.nextPollAt > now) {
       return { status: 'pending', retryAfterMs: session.nextPollAt - now };
     }
@@ -138,7 +147,11 @@ export class CodexDeviceAuthService {
         ...(signal ? { signal } : {}),
       });
       session.completedTokens = await readOAuthTokenResponse(tokenResponse, 'exchange');
-      return { status: 'completed', tokens: session.completedTokens };
+      return {
+        status: 'completed',
+        tokens: session.completedTokens,
+        ...(session.replaceCredentialRef ? { replaceCredentialRef: session.replaceCredentialRef } : {}),
+      };
     }
 
     const text = await response.text().catch(() => '');

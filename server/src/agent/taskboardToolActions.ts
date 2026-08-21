@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { appendTaskboardAttachments, cleanupTaskboardAttachments, materializeTaskboardAttachments, resolveTaskboardAttachments } from './taskboardAttachmentActions.js';
+import { assertTaskboardExecutionScope } from './taskboardExecutionScope.js';
 
 import type {
   TaskBoardContextReceipt,
@@ -18,6 +19,7 @@ import type {
   TaskboardExecutionService,
   TaskboardExecutionStore,
   TaskboardIdentity,
+  TaskboardIntegrationPushService,
   TaskboardService,
   TaskboardTaskSearchFilter,
 } from '../taskboard/types.js';
@@ -47,6 +49,7 @@ export const TASKBOARD_RESOURCE_ACTIONS = [
   'execution.list',
   'execution.context',
   'execution.comment',
+  'execution.integration_candidate.push',
   'execution.pull_request.set',
   'execution.review_subject.record',
   'execution.resolve',
@@ -132,10 +135,17 @@ export interface TaskboardManageInput {
   receipt?: TaskBoardContextReceipt;
   deliveryTaskIds?: string[];
   expectedBoardVersion?: number;
+  /** execution.integration_candidate.push 的唯一模型输入。 */
+  commitOid?: string;
 }
 export interface TaskboardToolOptions {
   service: () => TaskboardService | undefined;
   executionService?: () => TaskboardExecutionService | undefined;
+  integrationPush?: () => TaskboardIntegrationPushService | undefined;
+  resolveTrustedWorkspace?: (
+    identity: TaskboardIdentity,
+    workspace: { id?: string; executionTarget: string },
+  ) => Promise<{ id: string; root: string } | undefined>;
   /** 解析当前用户会话上传的附件 ID；不得接受模型传入的工作区路径。 */
   resolveAttachments?: (
     identity: TaskboardIdentity,
@@ -173,6 +183,8 @@ export interface TaskboardToolOptions {
 export interface TaskboardActionScope {
   /** 当前调用来自看板 Execution 时存在，用于服务端 fencing。 */
   execution?: TaskboardExecutionContext;
+  /** 由平台 workspace resolver 绑定的 brain 本机共享 workspace；绝不取模型路径。 */
+  trustedWorkspace?: { id: string; root: string };
   /** 当前会话 ID，用于把已提交附件标记为该会话引用。 */
   sessionId?: string;
 }
@@ -184,7 +196,7 @@ export async function invokeTaskboardAction(
 ): Promise<Record<string, unknown>> {
   const service = options.service();
   if (!service) throw new Error('任务看板服务未启用');
-  assertExecutionScope(input, scope.execution, identity);
+  assertTaskboardExecutionScope(input, scope.execution, identity);
   if (
     !scope.execution
     && TASKBOARD_LEGACY_ACTIONS.includes(input.action as (typeof TASKBOARD_LEGACY_ACTIONS)[number])
@@ -332,6 +344,18 @@ export async function invokeTaskboardAction(
         },
       }) as unknown as Record<string, unknown>;
     }
+    case 'execution.integration_candidate.push': {
+      if (!scope.execution || !scope.trustedWorkspace) {
+        throw new Error('当前 Integration Work Execution 缺少受信 workspace 绑定');
+      }
+      const integrationPush = options.integrationPush?.();
+      if (!integrationPush) throw new Error('Integration Work 受控 push 服务未启用');
+      return integrationPush.pushCandidate(identity, {
+        executionId: scope.execution.execution.id,
+        workspaceRoot: scope.trustedWorkspace.root,
+        commitOid: requireCommitOid(input.commitOid),
+      });
+    }
     case 'execution.comment': {
       if (!scope.execution || !service.createExecutionCommentV2) {
         throw new Error('仅当前任务 Execution 可以写入 Agent 进展评论');
@@ -475,87 +499,6 @@ function taskboardCreateRequestId(input: TaskboardManageInput, scope: TaskboardA
     model: input.model,
   })).digest('hex').slice(0, 32);
   return `taskboard-tool:${sourceRunId.slice(-64)}:${digest}`;
-}
-
-function assertExecutionScope(
-  input: TaskboardManageInput,
-  context: TaskboardExecutionContext | undefined,
-  identity: TaskboardIdentity,
-): void {
-  if (!context) return;
-  if (
-    context.identity.tenantId !== identity.tenantId
-    || context.identity.ownerUserId !== identity.ownerUserId
-  ) throw new Error('任务看板执行身份不匹配');
-  if (!['queued', 'running', 'waiting_user', 'waiting_approval'].includes(context.execution.status)) {
-    throw new Error('任务看板执行已终止，不能继续回写');
-  }
-  const executionActions = [
-    'execution.context',
-    'execution.comment',
-    'execution.pull_request.set',
-    'execution.review_subject.record',
-    'execution.resolve',
-    'integration.sources',
-    'integration.candidate',
-    'integration.source.inspect',
-    'integration.source.merge',
-  ];
-  if (executionActions.includes(input.action)) {
-    if (input.taskId && input.taskId !== context.task.id) {
-      throw new Error('看板 Agent 只能操作当前任务');
-    }
-    if (input.action.startsWith('integration.') && context.task.kind !== 'integration') {
-      throw new Error('只有 integration 任务可以读取集成来源');
-    }
-    return;
-  }
-  if (!TASKBOARD_LEGACY_ACTIONS.includes(input.action as (typeof TASKBOARD_LEGACY_ACTIONS)[number])) {
-    throw new Error('看板 Agent Execution 只能使用当前任务协议 action，不能进入普通会话管理域');
-  }
-  const currentTask = context.task;
-  switch (input.action) {
-    case 'list':
-      if (input.id !== currentTask.id || input.boardId || input.includeArchived) {
-        throw new Error('看板 Agent 只能读取当前任务详情');
-      }
-      return;
-    case 'update': {
-      const changed = ['title', 'description', 'priority', 'labels', 'dueAt', 'model']
-        .some((field) => input[field as keyof TaskboardManageInput] !== undefined);
-      if (currentTask.kind === 'advisory' || context.execution.purpose !== 'work'
-        || input.id !== currentTask.id || (input.branch === undefined && input.attachments === undefined) || changed) {
-        throw new Error('看板 Agent 只能回写当前任务的 branch 或追加附件，且须符合当前工作流能力');
-      }
-      return;
-    }
-    case 'move':
-      if (context.execution.protocolVersion === 2) {
-        throw new Error('当前 Execution 必须通过结构化 resolution 提交阶段结果');
-      }
-      if (
-        input.id !== currentTask.id
-        || context.execution.purpose !== 'review'
-        || !['ready_to_merge', 'todo', 'blocked'].includes(input.status ?? '')
-      ) throw new Error('只有当前任务的复核 Agent 可以确认待合并、退回待实施或标记阻塞');
-      return;
-    case 'create':
-      if (
-        currentTask.kind === 'advisory'
-        || input.boardId !== currentTask.boardId
-        || (input.status !== undefined && input.status !== 'todo')
-        || context.execution.purpose === 'review'
-        || (context.execution.purpose === 'work' && input.kind !== undefined && input.kind !== 'delivery')
-        || (context.execution.purpose === 'merge' && (input.kind !== 'remediation' || !input.sourceId))
-      ) {
-        throw new Error('当前职责不能创建该后续任务');
-      }
-      return;
-    case 'execute':
-      throw new Error('看板 Agent 不能派发已有任务；请用 create + dispatch 创建独立后续 Agent');
-    default:
-      throw new Error(`看板 Agent 不支持 action=${input.action}`);
-  }
 }
 
 async function boardSearch(
@@ -986,6 +929,14 @@ function requireVersion(input: TaskboardManageInput): number {
 
 function requireId(input: TaskboardManageInput, field: 'id' | 'boardId' | 'taskId'): string {
   return requireField(input[field], field);
+}
+
+function requireCommitOid(value: string | undefined): string {
+  const normalized = value?.trim();
+  if (!normalized || !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(normalized)) {
+    throw new Error('action 需要提供完整 commitOid');
+  }
+  return normalized;
 }
 
 function requireField(value: string | undefined, field: string): string {

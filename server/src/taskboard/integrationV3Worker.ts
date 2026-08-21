@@ -41,6 +41,11 @@ export interface IntegrationV3CleanupReceipt {
   completedAt: string;
 }
 
+export interface IntegrationV3RecoverableMergeOperation {
+  operationKey: string;
+  state: 'prepared' | 'executing' | 'unknown' | 'succeeded';
+}
+
 export interface IntegrationV3WorkerHost {
   claimCandidate(leaseMs: number): Promise<IntegrationV3CandidateLease | undefined>;
   loadCurrent(candidateId: string): Promise<IntegrationV3WorkerCurrent>;
@@ -52,7 +57,7 @@ export interface IntegrationV3WorkerHost {
   cleanup(request: IntegrationV3RequestLease): Promise<IntegrationV3CleanupReceipt | void>;
   completeRequest(request: IntegrationV3RequestLease, receipt?: IntegrationV3CleanupReceipt): Promise<void>;
   releaseRequest(request: IntegrationV3RequestLease, error: string, retryable: boolean): Promise<void>;
-  findRecoverableMergeOperation(candidateId: string, revision: number): Promise<string | undefined>;
+  findRecoverableMergeOperation(candidateId: string, revision: number): Promise<IntegrationV3RecoverableMergeOperation | undefined>;
   logger?: { info(message: string): void; warn(message: string): void };
 }
 
@@ -190,8 +195,14 @@ export class IntegrationV3Worker {
           // non-atomic outbox/candidate transition and revives a bounded-failure row.
           result = await engine.execute({ type: 'request_work', candidateId: lease.candidateId, expected });
           const revision = requireRevision(current);
-          const refreshed = await this.options.composer.refreshAfterWork({ candidate: current.candidate, revision });
-          if (refreshed) result = await engine.execute({ type: 'subject_refreshed', candidateId: lease.candidateId, expected, revision: refreshed });
+          try {
+            const refreshed = await this.options.composer.refreshAfterWork({ candidate: current.candidate, revision });
+            if (refreshed) result = await engine.execute({ type: 'subject_refreshed', candidateId: lease.candidateId, expected, revision: refreshed });
+          } catch (error) {
+            if (error instanceof Error && error.name === 'IntegrationV3InvalidWorkResultError') {
+              result = await engine.execute({ type: 'needs_human', candidateId: lease.candidateId, expected, reason: error.message });
+            } else throw error;
+          }
           break;
         }
         case 'in_review':
@@ -201,8 +212,25 @@ export class IntegrationV3Worker {
           result = await engine.execute({ type: 'merge_approved', candidateId: lease.candidateId, expected, executionId: `integration-v3-worker:${lease.candidateId}:r${current.candidate.currentRevision}` });
           break;
         case 'merging': {
-          const operationKey = await this.options.host.findRecoverableMergeOperation(lease.candidateId, current.candidate.currentRevision);
-          if (operationKey) result = await engine.execute({ type: 'reconcile_merge', candidateId: lease.candidateId, expected, operationKey });
+          const operation = await this.options.host.findRecoverableMergeOperation(
+            lease.candidateId,
+            current.candidate.currentRevision,
+          );
+          if (operation?.state === 'prepared') {
+            result = await engine.execute({
+              type: 'merge_approved',
+              candidateId: lease.candidateId,
+              expected,
+              executionId: `integration-v3-worker:${lease.candidateId}:r${current.candidate.currentRevision}`,
+            });
+          } else if (operation) {
+            result = await engine.execute({
+              type: 'reconcile_merge',
+              candidateId: lease.candidateId,
+              expected,
+              operationKey: operation.operationKey,
+            });
+          }
           break;
         }
         case 'merged':

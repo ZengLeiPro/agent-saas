@@ -24,4 +24,16 @@ describe('taskboard execution writeback prompt', () => {
     expect(work).not.toContain('status=');
     expect(work).not.toContain('target=taskboard');
   });
+
+  it('Workflow v3 Integration Work 明确先受控 push、禁止 git push、后 ready_for_review', () => {
+    const integrationWork = context('work');
+    integrationWork.task.kind = 'integration';
+    integrationWork.task.workflowVersion = 3;
+    const prompt = executionWritebackInstructions(integrationWork).join('\n');
+    expect(prompt).toContain('execution.integration_candidate.push');
+    expect(prompt).toContain('只传 commitOid');
+    expect(prompt).toContain('不得执行 git push');
+    expect(prompt.indexOf('受控 push 成功')).toBeLessThan(prompt.indexOf('ready_for_review') + 1);
+    expect(executionWritebackInstructions(context('review')).join('\n')).not.toContain('integration_candidate.push');
+  });
 });

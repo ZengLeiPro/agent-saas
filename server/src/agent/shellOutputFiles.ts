@@ -9,8 +9,8 @@ import {
 
 const SHELL_OUTPUT_DIR = 'tmp/tool-results';
 
-export function shouldPersistShellOutput(stdout: string, stderr: string): boolean {
-  return stdout.length + stderr.length > MAX_SHELL_RETURN_CHARS;
+export function shouldPersistShellOutput(stdout: string, stderr: string, force = false): boolean {
+  return force || stdout.length + stderr.length > MAX_SHELL_RETURN_CHARS;
 }
 
 export async function persistShellOutputFiles(input: {
@@ -18,8 +18,9 @@ export async function persistShellOutputFiles(input: {
   invocationId?: string;
   stdout: string;
   stderr: string;
+  force?: boolean;
 }): Promise<ShellOutputFileRef[]> {
-  if (!shouldPersistShellOutput(input.stdout, input.stderr)) return [];
+  if (!shouldPersistShellOutput(input.stdout, input.stderr, input.force)) return [];
   const baseName = sanitizeFileSegment(input.invocationId ?? `shell-${Date.now()}-${randomUUID().slice(0, 8)}`);
   const files: ShellOutputFileRef[] = [];
   if (input.stdout) files.push(await writeChannelOutput(input.workspaceRoot, baseName, 'stdout', input.stdout));

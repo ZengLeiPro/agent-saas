@@ -51,13 +51,18 @@ import { useTaskComments, useTaskExecutions } from "./hooks";
 
 type TaskDraftField = "title" | "description" | "attachments" | "priority" | "stageModels";
 
-const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review", "merge"];
+const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review"];
 const ACTIVE_EXECUTION_STATUSES = new Set(["queued", "running", "waiting_user", "waiting_approval"]);
 
 function taskStageModels(task: TaskBoardTask): TaskBoardStageModels {
-  if (task.stageModels && Object.keys(task.stageModels).length > 0) return task.stageModels;
+  if (task.stageModels && Object.keys(task.stageModels).length > 0) {
+    return {
+      ...(task.stageModels.work ? { work: task.stageModels.work } : {}),
+      ...(task.stageModels.review ? { review: task.stageModels.review } : {}),
+    };
+  }
   return task.model
-    ? { work: task.model, review: task.model, merge: task.model }
+    ? { work: task.model, review: task.model }
     : {};
 }
 
@@ -430,19 +435,21 @@ export function TaskDetail({
 
   const resumeBlocked = async () => {
     if (!currentTask || currentTask.status !== "blocked" || !canTransitionTask || executionActive) return;
-    const sourceIds = taskKind === "integration"
+    const sourceIds = taskKind === "integration" && !isIntegrationV3
       ? integrationSourcesState.sources
         .filter((source) => source.state === "needs_human" && selectedResumeSourceIds.has(source.id))
         .map((source) => source.id)
       : undefined;
-    if (taskKind === "integration" && !sourceIds?.length) {
+    if (taskKind === "integration" && !isIntegrationV3 && !sourceIds?.length) {
       setError("请先勾选至少一个要恢复的 needs_human 集成来源");
       return;
     }
     const decision = window.prompt(
-      taskKind === "integration"
-        ? `请填写恢复 ${sourceIds!.length} 个阻塞来源的决策与后续要求`
-        : "请填写解除阻塞后的恢复决策与后续要求",
+      isIntegrationV3
+        ? "请填写恢复 Workflow v3 Candidate 的决策与后续要求"
+        : taskKind === "integration"
+          ? `请填写恢复 ${sourceIds!.length} 个阻塞来源的决策与后续要求`
+          : "请填写解除阻塞后的恢复决策与后续要求",
     )?.trim();
     if (!decision) return;
     const operationTask = currentTask;
@@ -681,11 +688,11 @@ export function TaskDetail({
                         size="sm"
                         variant="outline"
                         onClick={() => void resumeBlocked()}
-                        disabled={saving || executionActive || (taskKind === "integration"
+                        disabled={saving || executionActive || (taskKind === "integration" && !isIntegrationV3
                           && (integrationSourcesState.loading || integrationSourcesState.error !== null
                             || selectedResumeSourceIds.size === 0))}
                       >
-                        显式恢复{taskKind === "integration" ? "阻塞来源" : "任务"}
+                        显式恢复{isIntegrationV3 ? " Candidate" : taskKind === "integration" ? "阻塞来源" : "任务"}
                       </Button>
                     ) : null}
                   </div>

@@ -121,12 +121,13 @@ jobs:
           pnpm -F server exec vitest run
           src/__tests__/sessionShareStore.pg.test.ts
 
-      - name: Verify taskboard attachment rollback PostgreSQL contract explicitly
+      - name: Verify taskboard PostgreSQL contracts explicitly
         env:
           TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
         run: >-
           pnpm -F server exec vitest run
           src/__tests__/taskboardAttachmentRollback.pg.test.ts
+          src/__tests__/integrationV3Convergence.pg.test.ts
 
       - name: Verify governance PostgreSQL contracts explicitly
         env:
@@ -876,6 +877,9 @@ jobs:
           PREV_IDLE_TARGET=$(readlink "$COLOR_DIR/$IDLE" 2>/dev/null || true)
           PREVIOUS_UPDATED=0
           WORKER_CANDIDATE_STARTED=0
+          WORKER_ACTIVE_DRAINED=0
+          WORKER_PREACTIVATED=0
+          WORKER_V3_ENABLED=false
           WORKER_IDLE=""
           PREV_WORKER_IDLE_TARGET=""
           log "switch color/$IDLE: $(readlink "$COLOR_DIR/$IDLE" 2>/dev/null || echo '<none>') -> $RELEASE_DIR"
@@ -893,12 +897,19 @@ jobs:
             log "deploy FAILED before traffic switch; old color $ACTIVE untouched and still serving"
             if [ "$WORKER_CANDIDATE_STARTED" -eq 1 ] && [ -n "$WORKER_IDLE" ]; then
               log "stop runtime worker candidate: ${WORKER_SERVICE}@${WORKER_IDLE}"
-              systemctl stop "${WORKER_SERVICE}@${WORKER_IDLE}" || true
+              systemctl disable --now "${WORKER_SERVICE}@${WORKER_IDLE}" || true
               if [ -n "$PREV_WORKER_IDLE_TARGET" ]; then
                 ln -sfn "$PREV_WORKER_IDLE_TARGET" "$WORKER_DIR/$WORKER_IDLE"
               else
                 rm -f "$WORKER_DIR/$WORKER_IDLE"
               fi
+            fi
+            if [ "$WORKER_ACTIVE_DRAINED" -eq 1 ] && [ -n "${WORKER_ACTIVE:-}" ]; then
+              log "restore previous runtime worker after pre-Web failure: ${WORKER_SERVICE}@${WORKER_ACTIVE}"
+              echo "$WORKER_ACTIVE" > "$WORKER_ACTIVE_COLOR_FILE"
+              rm -f "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
+              systemctl reset-failed "${WORKER_SERVICE}@${WORKER_ACTIVE}" 2>/dev/null || true
+              systemctl enable --now "${WORKER_SERVICE}@${WORKER_ACTIVE}" || true
             fi
             journalctl -u "${SERVICE_NAME}@${IDLE}" -n 120 --no-pager || true
             log "stop idle unit ${SERVICE_NAME}@${IDLE}"
@@ -928,6 +939,206 @@ jobs:
             rm -f -- "$RELEASE_TGZ" || log "WARN: failed upload cleanup failed"
             exit 1
           }
+
+          # ── 5.5 Runtime Worker 候选：在 Web readiness 前完成接管 ──
+          # 新 Web 的 v3 readiness 依赖同 release 的健康 worker。候选先启动，旧 worker
+          # 协作排空后由候选取得 activation ownership；只有 heartbeat healthy 才启动 Web。
+          WORKER_ACTIVE=""
+          if [ "$WORKER_DEPLOY_REQUIRED" = "true" ]; then
+            # ClientDaemonGateway 目前仍是进程内连接表，不能跨 ws-only/runtime-worker
+            # 转发。生产若显式启用，必须在 Web 切流前停止，保留旧 all 进程继续服务。
+            CLIENT_DAEMON_PREFLIGHT=0
+            (
+              cd "$RELEASE_DIR/server"
+              node --input-type=module -e '
+                import { readFileSync } from "node:fs";
+                import { parse } from "jsonc-parser";
+                const errors = [];
+                const path = process.env.AGENT_SAAS_CONFIG_PATH || "/etc/agent-saas/config.json";
+                const config = parse(readFileSync(path, "utf8"), errors, { allowTrailingComma: true });
+                if (errors.length > 0) process.exit(3);
+                if (config?.clientDaemon) process.exit(42);
+                if (config?.runtimeEventStore?.backend === "pg") {
+                  const prefix = config.runtimeEventStore.tablePrefix || "runtime";
+                  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(prefix)) process.exit(3);
+                  const table = `${prefix}_client_daemon_devices`;
+                  const pg = await import("pg");
+                  const client = new pg.Client({ connectionString: config.runtimeEventStore.connectionString });
+                  await client.connect();
+                  try {
+                    const exists = await client.query("SELECT to_regclass($1)::text AS name", [table]);
+                    if (exists.rows[0]?.name) {
+                      const active = await client.query(`SELECT 1 FROM "${table}" WHERE status = $1 LIMIT 1`, ["active"]);
+                      if (active.rowCount > 0) process.exitCode = 43;
+                    }
+                  } finally {
+                    await client.end();
+                  }
+                }
+              '
+            ) || CLIENT_DAEMON_PREFLIGHT=$?
+            if [ "$CLIENT_DAEMON_PREFLIGHT" -eq 42 ]; then
+              log "ERROR: runtime worker split blocked because production clientDaemon is configured"
+              rollback_idle_and_exit
+            elif [ "$CLIENT_DAEMON_PREFLIGHT" -eq 43 ]; then
+              log "ERROR: runtime worker split blocked because active clientDaemon devices exist"
+              rollback_idle_and_exit
+            elif [ "$CLIENT_DAEMON_PREFLIGHT" -ne 0 ]; then
+              log "ERROR: runtime worker config preflight failed with status=$CLIENT_DAEMON_PREFLIGHT"
+              rollback_idle_and_exit
+            fi
+
+            if [ -f "$WORKER_ACTIVE_COLOR_FILE" ]; then
+              WORKER_ACTIVE=$(tr -d '[:space:]' < "$WORKER_ACTIVE_COLOR_FILE")
+              case "$WORKER_ACTIVE" in
+                blue) WORKER_IDLE="green" ;;
+                green) WORKER_IDLE="blue" ;;
+                *)
+                  log "ERROR: invalid runtime worker active color '$WORKER_ACTIVE'"
+                  rollback_idle_and_exit
+                  ;;
+              esac
+              if ! systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}"; then
+                log "ERROR: active runtime worker ${WORKER_SERVICE}@${WORKER_ACTIVE} is not active"
+                rollback_idle_and_exit
+              fi
+            else
+              for candidate_color in blue green; do
+                if systemctl is-active --quiet "${WORKER_SERVICE}@${candidate_color}"; then
+                  log "ERROR: runtime worker marker missing but ${WORKER_SERVICE}@${candidate_color} is active; refusing ambiguous bootstrap"
+                  rollback_idle_and_exit
+                fi
+              done
+              WORKER_IDLE="blue"
+            fi
+
+            if systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}"; then
+              log "runtime worker idle unit ${WORKER_SERVICE}@${WORKER_IDLE} still draining; waiting up to 600s"
+              WORKER_IDLE_WAITED=0
+              while systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}"; do
+                if [ "$WORKER_IDLE_WAITED" -ge 600 ]; then
+                  log "ERROR: runtime worker idle unit still active after 600s; refusing force-stop of durable runs"
+                  rollback_idle_and_exit
+                fi
+                sleep 5
+                WORKER_IDLE_WAITED=$((WORKER_IDLE_WAITED + 5))
+              done
+            fi
+
+            PREV_WORKER_IDLE_TARGET=$(readlink "$WORKER_DIR/$WORKER_IDLE" 2>/dev/null || true)
+            log "switch worker/$WORKER_IDLE: ${PREV_WORKER_IDLE_TARGET:-<none>} -> $RELEASE_DIR"
+            ln -sfn "$RELEASE_DIR" "$WORKER_DIR/$WORKER_IDLE"
+            WORKER_CANDIDATE_STARTED=1
+            log "runtime worker candidate prepared: color=$WORKER_IDLE (activation precedes Web readiness)"
+          else
+            if [ ! -f "$WORKER_ACTIVE_COLOR_FILE" ]; then
+              log "ERROR: classifier skipped runtime worker but active marker is missing"
+              rollback_idle_and_exit
+            fi
+            WORKER_ACTIVE=$(tr -d '[:space:]' < "$WORKER_ACTIVE_COLOR_FILE")
+            case "$WORKER_ACTIVE" in blue|green) ;; *) log "ERROR: invalid runtime worker active color '$WORKER_ACTIVE'"; rollback_idle_and_exit ;; esac
+            if ! systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}"; then
+              log "ERROR: classifier skipped runtime worker but active unit is unavailable"
+              rollback_idle_and_exit
+            fi
+            log "runtime worker unchanged: active=$WORKER_ACTIVE (pure Web/non-runtime release)"
+          fi
+
+
+          if [ "$WORKER_DEPLOY_REQUIRED" = "true" ]; then
+            rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" \
+              "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready" \
+              "/run/agent-saas-runtime-worker-${WORKER_IDLE}.draining"
+            systemctl enable --now "${WORKER_SERVICE}@${WORKER_IDLE}"
+
+            WORKER_PROCESS_READY=0
+            for _ in $(seq 1 180); do
+              worker_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" 2>/dev/null || true)
+              worker_ready_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready" 2>/dev/null || true)
+              if systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}" \
+                && [ -n "$worker_pid" ] && [ "$worker_pid" = "$worker_ready_pid" ] \
+                && kill -0 "$worker_pid" 2>/dev/null; then
+                WORKER_PROCESS_READY=1
+                break
+              fi
+              sleep 1
+            done
+            if [ "$WORKER_PROCESS_READY" -ne 1 ]; then
+              log "ERROR: runtime worker candidate process failed readiness before Web start"
+              rollback_idle_and_exit
+            fi
+
+            if [ -n "${WORKER_ACTIVE:-}" ]; then
+              OLD_WORKER_PIDFILE="/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid"
+              if [ ! -f "$OLD_WORKER_PIDFILE" ]; then
+                log "ERROR: active runtime worker pidfile is missing: $OLD_WORKER_PIDFILE"
+                rollback_idle_and_exit
+              fi
+              OLD_WORKER_PID=$(cat "$OLD_WORKER_PIDFILE")
+              systemctl disable "${WORKER_SERVICE}@${WORKER_ACTIVE}"
+              install -m 0644 /dev/null "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
+              log "runtime worker drain restart guard armed: /run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
+              if ! kill -USR2 "$OLD_WORKER_PID" 2>/dev/null; then
+                log "ERROR: failed to drain active runtime worker $WORKER_ACTIVE pid=$OLD_WORKER_PID"
+                rollback_idle_and_exit
+              fi
+              WORKER_OLD_WAITED=0
+              while systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}"; do
+                if [ "$WORKER_OLD_WAITED" -ge 600 ]; then
+                  log "ERROR: active runtime worker did not drain within 600s"
+                  rollback_idle_and_exit
+                fi
+                sleep 5
+                WORKER_OLD_WAITED=$((WORKER_OLD_WAITED + 5))
+              done
+              WORKER_ACTIVE_DRAINED=1
+              log "active runtime worker drained before Web start: color=$WORKER_ACTIVE waited=${WORKER_OLD_WAITED}s"
+            fi
+
+            WORKER_V3_ENABLED=$(node -e '
+              const config = require("/etc/agent-saas/config.json");
+              process.stdout.write(config.integrationV3ControlPlane?.enabled === true ? "true" : "false");
+            ')
+            if [ "$WORKER_V3_ENABLED" = "true" ]; then
+              WORKER_V3_DB_URL=$(node -e '
+                const config = require("/etc/agent-saas/config.json");
+                process.stdout.write(config.runtimeEventStore?.connectionString ?? "");
+              ')
+              WORKER_V3_HEARTBEATS_TABLE=$(node -e '
+                const config = require("/etc/agent-saas/config.json");
+                const prefix = config.runtimeEventStore?.tablePrefix ?? "runtime";
+                if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(prefix)) process.exit(2);
+                process.stdout.write(`${prefix}_taskboard_integration_activation_heartbeats_v3`);
+              ')
+              if [ -z "$WORKER_V3_DB_URL" ]; then
+                log "ERROR: Workflow v3 is enabled but runtimeEventStore.connectionString is missing"
+                rollback_idle_and_exit
+              fi
+              WORKER_V3_READY=0
+              for _ in $(seq 1 180); do
+                worker_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" 2>/dev/null || true)
+                worker_v3_ready=$(psql "$WORKER_V3_DB_URL" -X -qAt -v ON_ERROR_STOP=1 -c \
+                  "SELECT CASE WHEN EXISTS (
+                     SELECT 1 FROM ${WORKER_V3_HEARTBEATS_TABLE}
+                      WHERE process_identity LIKE 'runtime-worker:${worker_pid}:%'
+                        AND release_identity='${RELEASE_ID}' AND process_role='runtime-worker'
+                        AND status='healthy' AND updated_at>=clock_timestamp()-interval '30 seconds'
+                   ) THEN 1 ELSE 0 END" 2>/dev/null || echo 0)
+                if [ "$worker_v3_ready" = "1" ]; then
+                  WORKER_V3_READY=1
+                  break
+                fi
+                sleep 1
+              done
+              if [ "$WORKER_V3_READY" -ne 1 ]; then
+                log "ERROR: runtime worker candidate has no healthy Workflow v3 heartbeat before Web start"
+                rollback_idle_and_exit
+              fi
+            fi
+            echo "$WORKER_IDLE" > "$WORKER_ACTIVE_COLOR_FILE"
+            WORKER_PREACTIVATED=1
+            log "runtime worker promoted before Web readiness: color=$WORKER_IDLE release=$RELEASE_ID"
+          fi
 
           # ── 6. 启动 idle 色 + ready 门禁（180s）──
           # enable --now：候选色先具备开机自启；切流成功后立即 disable 旧色，
@@ -1037,111 +1248,6 @@ jobs:
           fi
           log "smoke ok: healthz 200, drain status: $SMOKE_DRAIN_STATUS"
 
-          # ── 8.5 Runtime Worker 候选：仅运行时代码受影响时滚动 ──
-          # 切流前只准备 idle worker symlink，不让候选提前 claim 任务；Web 切流成功
-          # 后再启动并等 readyfile，随后更新 marker、SIGUSR2 排空旧 worker。
-          # 切流前失败可完整回退且不触碰正在执行的任务。
-          WORKER_ACTIVE=""
-          if [ "$WORKER_DEPLOY_REQUIRED" = "true" ]; then
-            # ClientDaemonGateway 目前仍是进程内连接表，不能跨 ws-only/runtime-worker
-            # 转发。生产若显式启用，必须在 Web 切流前停止，保留旧 all 进程继续服务。
-            CLIENT_DAEMON_PREFLIGHT=0
-            (
-              cd "$RELEASE_DIR/server"
-              node --input-type=module -e '
-                import { readFileSync } from "node:fs";
-                import { parse } from "jsonc-parser";
-                const errors = [];
-                const path = process.env.AGENT_SAAS_CONFIG_PATH || "/etc/agent-saas/config.json";
-                const config = parse(readFileSync(path, "utf8"), errors, { allowTrailingComma: true });
-                if (errors.length > 0) process.exit(3);
-                if (config?.clientDaemon) process.exit(42);
-                if (config?.runtimeEventStore?.backend === "pg") {
-                  const prefix = config.runtimeEventStore.tablePrefix || "runtime";
-                  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(prefix)) process.exit(3);
-                  const table = `${prefix}_client_daemon_devices`;
-                  const pg = await import("pg");
-                  const client = new pg.Client({ connectionString: config.runtimeEventStore.connectionString });
-                  await client.connect();
-                  try {
-                    const exists = await client.query("SELECT to_regclass($1)::text AS name", [table]);
-                    if (exists.rows[0]?.name) {
-                      const active = await client.query(`SELECT 1 FROM "${table}" WHERE status = $1 LIMIT 1`, ["active"]);
-                      if (active.rowCount > 0) process.exitCode = 43;
-                    }
-                  } finally {
-                    await client.end();
-                  }
-                }
-              '
-            ) || CLIENT_DAEMON_PREFLIGHT=$?
-            if [ "$CLIENT_DAEMON_PREFLIGHT" -eq 42 ]; then
-              log "ERROR: runtime worker split blocked because production clientDaemon is configured"
-              rollback_idle_and_exit
-            elif [ "$CLIENT_DAEMON_PREFLIGHT" -eq 43 ]; then
-              log "ERROR: runtime worker split blocked because active clientDaemon devices exist"
-              rollback_idle_and_exit
-            elif [ "$CLIENT_DAEMON_PREFLIGHT" -ne 0 ]; then
-              log "ERROR: runtime worker config preflight failed with status=$CLIENT_DAEMON_PREFLIGHT"
-              rollback_idle_and_exit
-            fi
-
-            if [ -f "$WORKER_ACTIVE_COLOR_FILE" ]; then
-              WORKER_ACTIVE=$(tr -d '[:space:]' < "$WORKER_ACTIVE_COLOR_FILE")
-              case "$WORKER_ACTIVE" in
-                blue) WORKER_IDLE="green" ;;
-                green) WORKER_IDLE="blue" ;;
-                *)
-                  log "ERROR: invalid runtime worker active color '$WORKER_ACTIVE'"
-                  rollback_idle_and_exit
-                  ;;
-              esac
-              if ! systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}"; then
-                log "ERROR: active runtime worker ${WORKER_SERVICE}@${WORKER_ACTIVE} is not active"
-                rollback_idle_and_exit
-              fi
-            else
-              for candidate_color in blue green; do
-                if systemctl is-active --quiet "${WORKER_SERVICE}@${candidate_color}"; then
-                  log "ERROR: runtime worker marker missing but ${WORKER_SERVICE}@${candidate_color} is active; refusing ambiguous bootstrap"
-                  rollback_idle_and_exit
-                fi
-              done
-              WORKER_IDLE="blue"
-            fi
-
-            if systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}"; then
-              log "runtime worker idle unit ${WORKER_SERVICE}@${WORKER_IDLE} still draining; waiting up to 600s"
-              WORKER_IDLE_WAITED=0
-              while systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}"; do
-                if [ "$WORKER_IDLE_WAITED" -ge 600 ]; then
-                  log "ERROR: runtime worker idle unit still active after 600s; refusing force-stop of durable runs"
-                  rollback_idle_and_exit
-                fi
-                sleep 5
-                WORKER_IDLE_WAITED=$((WORKER_IDLE_WAITED + 5))
-              done
-            fi
-
-            PREV_WORKER_IDLE_TARGET=$(readlink "$WORKER_DIR/$WORKER_IDLE" 2>/dev/null || true)
-            log "switch worker/$WORKER_IDLE: ${PREV_WORKER_IDLE_TARGET:-<none>} -> $RELEASE_DIR"
-            ln -sfn "$RELEASE_DIR" "$WORKER_DIR/$WORKER_IDLE"
-            WORKER_CANDIDATE_STARTED=1
-            log "runtime worker candidate prepared: color=$WORKER_IDLE (start deferred until Web cutover succeeds)"
-          else
-            if [ ! -f "$WORKER_ACTIVE_COLOR_FILE" ]; then
-              log "ERROR: classifier skipped runtime worker but active marker is missing"
-              rollback_idle_and_exit
-            fi
-            WORKER_ACTIVE=$(tr -d '[:space:]' < "$WORKER_ACTIVE_COLOR_FILE")
-            case "$WORKER_ACTIVE" in blue|green) ;; *) log "ERROR: invalid runtime worker active color '$WORKER_ACTIVE'"; rollback_idle_and_exit ;; esac
-            if ! systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}"; then
-              log "ERROR: classifier skipped runtime worker but active unit is unavailable"
-              rollback_idle_and_exit
-            fi
-            log "runtime worker unchanged: active=$WORKER_ACTIVE (pure Web/non-runtime release)"
-          fi
-
           # ── 9. 切流：重写 nginx upstream（新色 primary、旧色 backup）→ nginx -t → reload ──
           UPSTREAM_BAK="/tmp/agent-saas-upstream.conf.bak.$$"
           API_SITE_BAK="/tmp/agent-api-kaiyan.conf.bak.$$"
@@ -1206,136 +1312,13 @@ jobs:
           log "active color updated: $ACTIVE -> $IDLE"
           log "boot ownership updated: enabled=$IDLE disabled=$ACTIVE"
 
-          # ── 10.5 提升 Runtime Worker 候选并协作排空旧 worker ──
+          # ── 10.5 Runtime Worker 已在 Web readiness 前完成接管 ──
           if [ "$WORKER_DEPLOY_REQUIRED" = "true" ]; then
-            rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" \
-              "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready" \
-              "/run/agent-saas-runtime-worker-${WORKER_IDLE}.draining"
-            systemctl enable --now "${WORKER_SERVICE}@${WORKER_IDLE}"
-            WORKER_V3_ENABLED=$(node -e '
-              const config = require("/etc/agent-saas/config.json");
-              process.stdout.write(config.integrationV3ControlPlane?.enabled === true ? "true" : "false");
-            ')
-            WORKER_V3_DB_URL=""
-            WORKER_V3_HEARTBEATS_TABLE=""
-            if [ "$WORKER_V3_ENABLED" = "true" ]; then
-              WORKER_V3_DB_URL=$(node -e '
-                const config = require("/etc/agent-saas/config.json");
-                process.stdout.write(config.runtimeEventStore?.connectionString ?? "");
-              ')
-              WORKER_V3_HEARTBEATS_TABLE=$(node -e '
-                const config = require("/etc/agent-saas/config.json");
-                const prefix = config.runtimeEventStore?.tablePrefix ?? "runtime";
-                if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(prefix)) process.exit(2);
-                process.stdout.write(`${prefix}_taskboard_integration_activation_heartbeats_v3`);
-              ')
-              if [ -z "$WORKER_V3_DB_URL" ]; then
-                log "ERROR: Workflow v3 is enabled but runtimeEventStore.connectionString is missing"
-                exit 1
-              fi
-              log "runtime worker candidate requires a compatible Workflow v3 heartbeat"
-            fi
-            WORKER_READY=0
-            WORKER_READY_WAITED=0
-            for _ in $(seq 1 180); do
-              worker_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" 2>/dev/null || true)
-              worker_ready_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready" 2>/dev/null || true)
-              worker_v3_ready=1
-              if [ "$WORKER_V3_ENABLED" = "true" ] && [ -n "$worker_pid" ]; then
-                worker_v3_ready=$(psql "$WORKER_V3_DB_URL" -X -qAt -v ON_ERROR_STOP=1 -c \
-                  "SELECT CASE WHEN EXISTS (
-                     SELECT 1 FROM ${WORKER_V3_HEARTBEATS_TABLE}
-                      WHERE process_identity LIKE 'runtime-worker:${worker_pid}:%'
-                        AND release_identity='${RELEASE_ID}' AND process_role='runtime-worker'
-                        AND status='healthy' AND updated_at>=clock_timestamp()-interval '30 seconds'
-                   ) THEN 1 ELSE 0 END" 2>/dev/null || echo 0)
-              fi
-              if systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}" \
-                && [ -n "$worker_pid" ] && [ "$worker_pid" = "$worker_ready_pid" ] \
-                && kill -0 "$worker_pid" 2>/dev/null && [ "$worker_v3_ready" = "1" ]; then
-                WORKER_READY=1
-                break
-              fi
-              sleep 1
-              WORKER_READY_WAITED=$((WORKER_READY_WAITED + 1))
-            done
-            if [ "$WORKER_READY" -ne 1 ]; then
-              log "ERROR: runtime worker candidate failed readiness after Web cutover"
-              journalctl -u "${WORKER_SERVICE}@${WORKER_IDLE}" -n 160 --no-pager || true
-              systemctl disable "${WORKER_SERVICE}@${WORKER_IDLE}"
-              worker_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" 2>/dev/null || true)
-              worker_drain_marker="/run/agent-saas-runtime-worker-${WORKER_IDLE}.draining"
-              install -m 0644 /dev/null "$worker_drain_marker"
-              if [ -n "$worker_pid" ] && kill -0 "$worker_pid" 2>/dev/null; then
-                if kill -USR2 "$worker_pid" 2>/dev/null; then
-                  log "runtime worker candidate drain signal sent after readiness failure: color=$WORKER_IDLE pid=$worker_pid"
-                else
-                  log "ERROR: failed to signal runtime worker candidate after readiness failure: color=$WORKER_IDLE pid=$worker_pid"
-                fi
-              fi
-              old_app_pidfile="/run/${SERVICE_NAME}-${ACTIVE}.pid"
-              old_app_pid=$(cat "$old_app_pidfile" 2>/dev/null || true)
-              if [ -n "$old_app_pid" ] && kill -0 "$old_app_pid" 2>/dev/null \
-                && kill -USR2 "$old_app_pid" 2>/dev/null; then
-                log "old app drain signal sent after runtime worker readiness failure: color=$ACTIVE pid=$old_app_pid"
-              else
-                log "ERROR: failed to signal old app after runtime worker readiness failure: color=$ACTIVE pid=${old_app_pid:-missing}"
-              fi
-              WORKER_FAILED_WAITED=0
-              while [ "$WORKER_FAILED_WAITED" -lt 60 ] \
-                && systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}"; do
-                sleep 5
-                WORKER_FAILED_WAITED=$((WORKER_FAILED_WAITED + 5))
-              done
-              if systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}"; then
-                log "ERROR: failed runtime worker candidate still draining after 60s; no force-stop issued"
-                exit 1
-              fi
-              if [ -n "$PREV_WORKER_IDLE_TARGET" ]; then
-                ln -sfn "$PREV_WORKER_IDLE_TARGET" "$WORKER_DIR/$WORKER_IDLE"
-              else
-                rm -f "$WORKER_DIR/$WORKER_IDLE"
-              fi
-              rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" \
-                "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready" \
-                "$worker_drain_marker"
-              log "runtime worker idle target restored after readiness failure: color=$WORKER_IDLE target=${PREV_WORKER_IDLE_TARGET:-<none>}"
+            if [ "$WORKER_PREACTIVATED" -ne 1 ]; then
+              log "ERROR: runtime worker was not promoted before Web traffic switch"
               exit 1
             fi
-            log "runtime worker candidate ready: color=$WORKER_IDLE pid=$worker_pid waited=${WORKER_READY_WAITED}s"
-            echo "$WORKER_IDLE" > "$WORKER_ACTIVE_COLOR_FILE"
-            log "runtime worker active color updated: ${WORKER_ACTIVE:-<bootstrap>} -> $WORKER_IDLE"
-            if [ -n "$WORKER_ACTIVE" ]; then
-              systemctl disable "${WORKER_SERVICE}@${WORKER_ACTIVE}"
-              log "runtime worker boot ownership updated: enabled=$WORKER_IDLE disabled=$WORKER_ACTIVE"
-              OLD_WORKER_PIDFILE="/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid"
-              if [ ! -f "$OLD_WORKER_PIDFILE" ]; then
-                log "ERROR: old runtime worker pidfile missing after traffic switch: $OLD_WORKER_PIDFILE"
-                exit 1
-              fi
-              OLD_WORKER_PID=$(cat "$OLD_WORKER_PIDFILE")
-              OLD_WORKER_DRAIN_MARKER="/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
-              install -m 0644 /dev/null "$OLD_WORKER_DRAIN_MARKER"
-              log "runtime worker drain restart guard armed: $OLD_WORKER_DRAIN_MARKER"
-              if ! kill -USR2 "$OLD_WORKER_PID" 2>/dev/null; then
-                log "ERROR: failed to signal old runtime worker $WORKER_ACTIVE pid=$OLD_WORKER_PID"
-                exit 1
-              fi
-              log "runtime worker drain signal sent: color=$WORKER_ACTIVE pid=$OLD_WORKER_PID"
-              WORKER_OLD_WAITED=0
-              while [ "$WORKER_OLD_WAITED" -lt 60 ] \
-                && systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}"; do
-                sleep 5
-                WORKER_OLD_WAITED=$((WORKER_OLD_WAITED + 5))
-              done
-              if systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}"; then
-                log "old runtime worker draining in background after 60s; no force-stop issued"
-              else
-                log "old runtime worker drained after ${WORKER_OLD_WAITED}s"
-              fi
-            else
-              log "runtime worker bootstrap completed: active=$WORKER_IDLE"
-            fi
+            log "runtime worker already active: color=$WORKER_IDLE release=$RELEASE_ID"
           fi
 
           # ── 11. 生成蓝绿 rollback.sh（幂等覆盖）：ssh 上来执行 bash /opt/agent-saas-app/rollback.sh ──

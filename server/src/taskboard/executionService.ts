@@ -54,7 +54,7 @@ import {
   TaskboardPermissionError,
   TaskboardValidationError,
 } from './types.js';
-export { createTaskboardAttachmentAccess, createTaskboardRuntimeOptions } from './runtimeOptions.js';
+export { createTaskboardAttachmentAccess, createTaskboardRuntimeOptions, createTaskboardTrustedWorkspaceResolver } from './runtimeOptions.js';
 import type {
   TaskboardExecutionClaimInput,
   TaskboardExecutionContext,

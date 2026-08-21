@@ -188,9 +188,16 @@ export class ContainerExecutionProvider implements ExecutionProvider {
             stderrLimit: MAX_SHELL_CAPTURE_BYTES,
             signal,
             allowNonZeroExit: true,
+            returnOutputOnError: true,
             runtimeEnv: context.env,
           }, audit);
-          const { outputFiles, outputFileError } = await this.persistShellOutput(workspace, context.invocationId, result.stdout, result.stderr);
+          const { outputFiles, outputFileError } = await this.persistShellOutput(
+            workspace,
+            context.invocationId,
+            result.stdout,
+            result.stderr,
+            Boolean(result.error || result.timedOut || result.aborted || result.outputExceeded),
+          );
           const content = formatShellOutput({
             ...result,
             outputFiles,
@@ -202,12 +209,17 @@ export class ContainerExecutionProvider implements ExecutionProvider {
             stdoutBytes: result.stdoutBytes,
             stderrBytes: result.stderrBytes,
             durationMs: result.durationMs,
+            ...(result.timedOut ? { timedOut: true } : {}),
+            ...(result.aborted ? { aborted: true } : {}),
+            ...(result.outputExceeded ? { outputExceeded: true } : {}),
             ...(outputFiles.length > 0 ? { outputFiles } : {}),
             ...(outputFileError ? { outputFileError } : {}),
           };
-          return result.exitCode === 0
-            ? { status: 'success', content, audit, metadata }
-            : { status: 'error', error: `command exited ${result.exitCode ?? result.signal}\n\n${content}`, audit, metadata };
+          return result.error
+            ? { status: 'error', error: `${result.error}\n\n${content}`, audit, metadata }
+            : result.exitCode === 0
+              ? { status: 'success', content, audit, metadata }
+              : { status: 'error', error: `command exited ${result.exitCode ?? result.signal}\n\n${content}`, audit, metadata };
         }
         case 'Edit': {
           const args = input as { file_path: string; old_string: string; new_string: string; replace_all?: boolean };
@@ -285,10 +297,17 @@ export class ContainerExecutionProvider implements ExecutionProvider {
       stderrLimit: MAX_SHELL_CAPTURE_BYTES,
       signal,
       allowNonZeroExit: true,
+      returnOutputOnError: true,
       onOutput: createLimitedStreamForwarder((chunk) => { queue.push(chunk); wake(); }),
     }, audit)
       .then(async (result) => {
-        const { outputFiles, outputFileError } = await this.persistShellOutput(workspace, context.invocationId, result.stdout, result.stderr);
+        const { outputFiles, outputFileError } = await this.persistShellOutput(
+          workspace,
+          context.invocationId,
+          result.stdout,
+          result.stderr,
+          Boolean(result.error || result.timedOut || result.aborted || result.outputExceeded),
+        );
         const content = formatShellOutput({
           ...result,
           outputFiles,
@@ -300,14 +319,19 @@ export class ContainerExecutionProvider implements ExecutionProvider {
           stdoutBytes: result.stdoutBytes,
           stderrBytes: result.stderrBytes,
           durationMs: result.durationMs,
+          ...(result.timedOut ? { timedOut: true } : {}),
+          ...(result.aborted ? { aborted: true } : {}),
+          ...(result.outputExceeded ? { outputExceeded: true } : {}),
           ...(outputFiles.length > 0 ? { outputFiles } : {}),
           ...(outputFileError ? { outputFileError } : {}),
         };
         queue.push({
           type: 'completed',
-          response: result.exitCode === 0
-            ? { status: 'success', content, audit, metadata }
-            : { status: 'error', error: `command exited ${result.exitCode ?? result.signal}\n\n${content}`, audit, metadata },
+          response: result.error
+            ? { status: 'error', error: `${result.error}\n\n${content}`, audit, metadata }
+            : result.exitCode === 0
+              ? { status: 'success', content, audit, metadata }
+              : { status: 'error', error: `command exited ${result.exitCode ?? result.signal}\n\n${content}`, audit, metadata },
         });
       })
       .catch((err) => queue.push({ type: 'completed', response: { status: 'error', error: err instanceof Error ? err.message : String(err), audit } }))
@@ -324,6 +348,7 @@ export class ContainerExecutionProvider implements ExecutionProvider {
     invocationId: string | undefined,
     stdout: string,
     stderr: string,
+    force = false,
   ) {
     try {
       return {
@@ -332,6 +357,7 @@ export class ContainerExecutionProvider implements ExecutionProvider {
           invocationId,
           stdout,
           stderr,
+          force,
         }),
       };
     } catch (err) {
@@ -386,6 +412,7 @@ export class ContainerExecutionProvider implements ExecutionProvider {
       stderrLimit: number;
       signal?: AbortSignal;
       allowNonZeroExit?: boolean;
+      returnOutputOnError?: boolean;
       onOutput?: (channel: 'stdout' | 'stderr', content: string, byteLength: number) => void;
       runtimeEnv?: Record<string, string>;
     },
@@ -398,6 +425,10 @@ export class ContainerExecutionProvider implements ExecutionProvider {
     exitCode: number | null;
     signal: NodeJS.Signals | null;
     durationMs: number;
+    error?: string;
+    timedOut?: boolean;
+    aborted?: boolean;
+    outputExceeded?: boolean;
   }> {
     const name = `${this.containerNamePrefix}-${randomUUID()}`;
     const dockerArgs = [
@@ -449,8 +480,11 @@ export class ContainerExecutionProvider implements ExecutionProvider {
     let stdoutBytes = 0;
     let stderrBytes = 0;
     let timedOut = false;
+    let aborted = false;
     let outputExceeded = false;
     let spawnError: unknown;
+    let terminationStarted = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
 
     const cleanup = async () => {
       try {
@@ -464,29 +498,31 @@ export class ContainerExecutionProvider implements ExecutionProvider {
     };
 
     const terminate = () => {
+      if (terminationStarted) return;
+      terminationStarted = true;
       child.kill('SIGTERM');
-      setTimeout(() => child.kill('SIGKILL'), 2_000).unref();
+      killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
+      killTimer.unref?.();
     };
 
     const timer = setTimeout(() => {
       timedOut = true;
       terminate();
-      void cleanup();
     }, options.timeoutMs);
     timer.unref();
 
     const abortListener = () => {
+      aborted = true;
       terminate();
-      void cleanup();
     };
     options.signal?.addEventListener('abort', abortListener, { once: true });
+    if (options.signal?.aborted) abortListener();
 
     child.stdout.on('data', (chunk: Buffer) => {
       stdoutBytes += chunk.length;
       if (stdoutBytes > options.stdoutLimit) {
         outputExceeded = true;
         terminate();
-        void cleanup();
         return;
       }
       const text = chunk.toString('utf-8');
@@ -498,7 +534,6 @@ export class ContainerExecutionProvider implements ExecutionProvider {
       if (stderrBytes > options.stderrLimit) {
         outputExceeded = true;
         terminate();
-        void cleanup();
         return;
       }
       const text = chunk.toString('utf-8');
@@ -518,15 +553,17 @@ export class ContainerExecutionProvider implements ExecutionProvider {
       spawnError = err;
     } finally {
       clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
       options.signal?.removeEventListener('abort', abortListener);
     }
+    if (terminationStarted || spawnError) await cleanup();
 
     const error = this.classifyDockerError({
       exit,
       spawnError,
       timedOut,
       outputExceeded,
-      aborted: options.signal?.aborted === true,
+      aborted: aborted || options.signal?.aborted === true,
       stdout,
       stderr,
       timeoutMs: options.timeoutMs,
@@ -546,12 +583,26 @@ export class ContainerExecutionProvider implements ExecutionProvider {
       status: error ? 'error' : 'success',
       ...(timedOut ? { timedOut: true } : {}),
       ...(outputExceeded ? { outputExceeded: true } : {}),
-      ...(options.signal?.aborted ? { aborted: true } : {}),
+      ...(aborted || options.signal?.aborted ? { aborted: true } : {}),
       ...(error ? { error } : {}),
     } satisfies ExecutionInvocationAudit);
 
     if (error) {
-      await cleanup();
+      if (options.returnOutputOnError) {
+        return {
+          stdout,
+          stderr,
+          stdoutBytes,
+          stderrBytes,
+          exitCode: exit?.code ?? null,
+          signal: exit?.signal ?? null,
+          durationMs,
+          error,
+          ...(timedOut ? { timedOut: true } : {}),
+          ...(aborted || options.signal?.aborted ? { aborted: true } : {}),
+          ...(outputExceeded ? { outputExceeded: true } : {}),
+        };
+      }
       throw new Error(error);
     }
     return {

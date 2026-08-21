@@ -6,6 +6,7 @@ import { BoardMembers } from "./BoardMembers";
 
 const mocks = vi.hoisted(() => ({
   fetchBoardMembers: vi.fn(),
+  fetchTaskboardUsers: vi.fn(),
   upsertBoardMember: vi.fn(),
   deleteBoardMember: vi.fn(),
 }));
@@ -38,6 +39,11 @@ describe("BoardMembers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.fetchBoardMembers.mockResolvedValue([member]);
+    mocks.fetchTaskboardUsers.mockResolvedValue([
+      { id: "owner-1", username: "owner", realName: "所有者" },
+      { id: "user-2", username: "user2", realName: "成员二" },
+      { id: "user-3", username: "user3", realName: "成员三" },
+    ]);
     mocks.upsertBoardMember.mockImplementation(async (_boardId: string, input: { userId: string; role: "viewer" | "editor" | "maintainer" }) => ({
       ...member,
       ...input,
@@ -49,16 +55,17 @@ describe("BoardMembers", () => {
     const user = userEvent.setup();
     render(<BoardMembers board={board} canManage />);
 
-    expect(await screen.findByText("owner-1")).toBeTruthy();
-    expect(screen.getByText("所有者")).toBeTruthy();
-    await user.click(screen.getByRole("combobox", { name: "user-2 的角色" }));
+    expect(await screen.findByText("所有者 @owner")).toBeTruthy();
+    await user.click(screen.getByRole("combobox", { name: "成员二 @user2 的角色" }));
     await user.click(screen.getByRole("option", { name: "维护者" }));
     await waitFor(() => expect(mocks.upsertBoardMember).toHaveBeenCalledWith(board.id, {
       userId: "user-2",
       role: "maintainer",
     }));
 
-    await user.type(screen.getByRole("textbox", { name: "用户 ID" }), "user-3");
+    await user.click(screen.getByRole("combobox", { name: "选择组织用户" }));
+    await user.type(screen.getByRole("searchbox", { name: "搜索组织用户" }), "成员三");
+    await user.click(screen.getByRole("option", { name: /成员三 @user3/ }));
     await user.click(screen.getByRole("combobox", { name: "新成员角色" }));
     await user.click(screen.getByRole("option", { name: "编辑者" }));
     await user.click(screen.getByRole("button", { name: "添加" }));
@@ -67,15 +74,16 @@ describe("BoardMembers", () => {
       role: "editor",
     }));
 
-    await user.click(screen.getByRole("button", { name: "移除成员 user-2" }));
+    await user.click(screen.getByRole("button", { name: "移除成员 成员二 @user2" }));
     await waitFor(() => expect(mocks.deleteBoardMember).toHaveBeenCalledWith(board.id, "user-2"));
   });
 
   it("无 members.manage 权限时角色和删除按钮只读", async () => {
     render(<BoardMembers board={{ ...board, role: "viewer", allowedActions: ["board.read"] }} canManage={false} />);
 
-    expect(await screen.findByRole("combobox", { name: "user-2 的角色" })).toHaveProperty("disabled", true);
-    expect(screen.getByRole("button", { name: "移除成员 user-2" })).toHaveProperty("disabled", true);
+    expect(await screen.findByRole("combobox", { name: "成员二 @user2 的角色" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "移除成员 成员二 @user2" })).toHaveProperty("disabled", true);
     expect(screen.queryByRole("textbox", { name: "用户 ID" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "选择组织用户" })).toBeNull();
   });
 });

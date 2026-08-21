@@ -190,9 +190,18 @@ describe('native connectors routes', () => {
     expect((await rig.request('/api/connectors/github')).status).toBe(200);
     const pause = await rig.request('/api/connectors/github/runtime', json('PATCH', { runtimeEnabled: false }));
     expect(pause.status).toBe(200);
-    const write = await rig.request('/api/connectors/github', json('POST', { token: 'github_pat_route_test' }));
-    expect(write.status).toBe(409);
-    expect(await write.json()).toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
+    for (const path of [
+      '/api/connectors/github',
+      '/api/connectors/github/',
+      '/api/connectors/GitHub',
+      '/api/connectors/x/',
+      '/api/connectors/ALIYUN/',
+    ]) {
+      const write = await rig.request(path, { method: 'POST' });
+      expect(write.status).toBe(409);
+      await expect(write.json()).resolves.toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
+    }
+    expect(gate.assertLegacyWriteAllowed).toHaveBeenCalledTimes(5);
     expect(gate.assertLegacyWriteAllowed).toHaveBeenCalledWith({ actor: 'user', compatibilityProjection: false });
   });
 

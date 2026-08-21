@@ -105,6 +105,7 @@ export interface IntegrationV3WorkerPostgresOptions {
   providerOperationsTable: string;
   requestsOutboxTable: string;
   tasksTable: string;
+  blockEpisodesTable: string;
   boardsTable: string;
   executionsTable: string;
   dispatchAgent(input: {
@@ -274,11 +275,16 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
             AND workflow_epoch=$4::bigint AND lane_epoch=$5::bigint
             AND state IN ('blocked','needs_human')
           RETURNING integration_task_id
+       ), task_resumed AS (
+         UPDATE ${this.options.tasksTable} t
+            SET status=CASE WHEN $3='in_review' THEN 'in_review' ELSE 'in_progress' END,
+                version=version+1,updated_at=now()
+           FROM resumed WHERE t.id=resumed.integration_task_id RETURNING t.id
+       ), closed AS (
+         UPDATE ${this.options.blockEpisodesTable} b SET closed_at=COALESCE(b.closed_at,now())
+           FROM task_resumed WHERE b.task_id=task_resumed.id AND b.closed_at IS NULL RETURNING b.id
        )
-       UPDATE ${this.options.tasksTable} t
-          SET status=CASE WHEN $3='in_review' THEN 'in_review' ELSE 'in_progress' END,
-              version=version+1,updated_at=now()
-         FROM resumed WHERE t.id=resumed.integration_task_id RETURNING t.id`,
+       SELECT id FROM task_resumed`,
       [request.candidateId, request.candidateRevision, resumeState,
         String(request.payload.workflowEpoch ?? ''), String(request.payload.laneEpoch ?? '')],
     );
@@ -339,6 +345,7 @@ export interface PostgresIntegrationV3ComposeHostOptions {
   executionsTable: string;
   resolutionsTable: string;
   requestsOutboxTable: string;
+  providerOperationsTable: string;
   resolvePaths(
     repository: TaskBoardRepositoryConfig,
     candidateId: string,
@@ -364,7 +371,10 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
   async resolveContext(current: Required<IntegrationV3WorkerCurrent>): Promise<IntegrationV3ComposeContext> {
     const result = await this.options.pool.query(
       `SELECT b.repository,b.owner_user_id,b.tenant_id,
-              work.execution_id AS work_execution_id
+              work.execution_id AS work_execution_id,
+              push.execution_id AS push_execution_id,push.candidate_id AS push_candidate_id,
+              push.candidate_revision AS push_candidate_revision,push.workflow_epoch AS push_workflow_epoch,
+              push.lane_epoch AS push_lane_epoch,push.old_oid AS push_old_oid,push.new_oid AS push_new_oid
          FROM ${this.options.candidatesTable} c JOIN ${this.options.tasksTable} t ON t.id=c.integration_task_id
          JOIN ${this.options.boardsTable} b ON b.id=t.board_id
          LEFT JOIN LATERAL (
@@ -381,7 +391,18 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
               AND r.historical=false AND r.applied=true
             ORDER BY r.resolved_at DESC,o.updated_at DESC LIMIT 1
          ) work ON true
-        WHERE c.id=$1`, [current.candidate.id, current.revision.subjectDigest]);
+         LEFT JOIN LATERAL (
+           SELECT o.execution_id,o.candidate_id,o.candidate_revision,o.workflow_epoch,o.lane_epoch,
+                  o.expected->>'oldOid' AS old_oid,o.expected->>'newOid' AS new_oid
+             FROM ${this.options.providerOperationsTable} o
+            WHERE work.execution_id IS NOT NULL AND o.kind='push_ref' AND o.state='succeeded'
+              AND o.execution_id=work.execution_id AND o.candidate_id=c.id
+              AND o.candidate_revision=c.current_revision
+              AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch
+              AND o.expected->>'oldOid'=$3
+            ORDER BY o.updated_at DESC,o.id DESC LIMIT 1
+         ) push ON true
+        WHERE c.id=$1`, [current.candidate.id, current.revision.subjectDigest, current.revision.headOid]);
     const row = result.rows[0];
     const repository = record(row?.repository) as unknown as TaskBoardRepositoryConfig;
     if (!row || repository.provider !== 'github' || repository.repositoryId !== current.candidate.repositoryId) throw new Error('Repository provider is unsupported or unknown');
@@ -396,6 +417,15 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
       repository, credentialOwnerId: String(row.owner_user_id), tenantId: String(row.tenant_id), ...paths,
       sources: snapshots.rows.map(rowToIntegrationCandidateSourceSnapshot),
       ...(row.work_execution_id ? { workExecutionId: String(row.work_execution_id) } : {}),
+      ...(row.push_execution_id ? { workPushReceipt: {
+        executionId: String(row.push_execution_id),
+        candidateId: String(row.push_candidate_id),
+        candidateRevision: Number(row.push_candidate_revision),
+        workflowEpoch: String(row.push_workflow_epoch),
+        laneEpoch: String(row.push_lane_epoch),
+        oldOid: String(row.push_old_oid),
+        newOid: String(row.push_new_oid),
+      } } : {}),
     };
   }
 

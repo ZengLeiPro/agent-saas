@@ -114,6 +114,7 @@ export interface PostgresIntegrationEngineV3HostOptions {
   revisionsTable: string;
   providerOperationsTable: string;
   requestsOutboxTable: string;
+  blockEpisodesTable: string;
 }
 
 /** Candidate host used by the real taskboard flow. The merge commit is one DB transaction. */

@@ -314,6 +314,7 @@ export function startRuntimeTaskboardIntegrationV3(
     revisionsTable: tables.revisionsTable,
     providerOperationsTable: tables.providerOperationsTable,
     requestsOutboxTable: tables.requestsOutboxTable,
+    blockEpisodesTable: store.blockEpisodesTable,
   };
 
   const candidateHost = new PostgresIntegrationEngineV3CandidateHost(pgOptions);
@@ -452,6 +453,7 @@ export function startRuntimeTaskboardIntegrationV3(
     executionsTable: store.executionsTable,
     resolutionsTable: store.resolutionsTable,
     requestsOutboxTable: tables.requestsOutboxTable,
+    providerOperationsTable: tables.providerOperationsTable,
     resolvePaths: async (repository, candidateId, identity) => {
       const roots = { processCwd, agentCwd, ...(options.controlledMirrorRoot ? { controlledMirrorRoot: options.controlledMirrorRoot } : {}) };
       const existing = await resolveIntegrationV3RepositoryPaths(repository, candidateId, roots);

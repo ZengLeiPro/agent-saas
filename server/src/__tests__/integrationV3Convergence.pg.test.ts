@@ -1,0 +1,194 @@
+import { randomUUID } from 'node:crypto';
+
+import pg from 'pg';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+import { integrationCandidateTableNames } from '../taskboard/integrationCandidateSchema.js';
+import { IntegrationEngineV3 } from '../taskboard/integrationEngineV3.js';
+import {
+  PostgresIntegrationEngineV3CandidateHost,
+  PostgresIntegrationEngineV3FeatureHost,
+  PostgresIntegrationEngineV3RequestHost,
+} from '../taskboard/integrationEngineV3Postgres.js';
+import { IntegrationV3Worker } from '../taskboard/integrationV3Worker.js';
+import { PostgresIntegrationV3WorkerHost } from '../taskboard/integrationV3WorkerPostgres.js';
+import { PgTaskboardStore } from '../taskboard/store.js';
+import type { TaskboardIdentity } from '../taskboard/types.js';
+
+const { Pool } = pg;
+const connectionString = process.env.TEST_DATABASE_URL?.trim();
+const describePg = connectionString ? describe : describe.skip;
+const identity: TaskboardIdentity = {
+  tenantId: 'tenant-v3-convergence', ownerUserId: 'v3-convergence-owner', username: 'v3-convergence-owner',
+};
+
+describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
+  const prefix = `tbv3c_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
+  let pool: InstanceType<typeof Pool>;
+  let store: PgTaskboardStore;
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: connectionString!, connectionTimeoutMillis: 5_000 });
+    store = new PgTaskboardStore({ pool, tablePrefix: prefix });
+    await store.init();
+  }, 30_000);
+
+  afterAll(async () => {
+    if (!pool) return;
+    try {
+      const tables = await pool.query(
+        `SELECT tablename FROM pg_tables WHERE schemaname=current_schema() AND tablename LIKE $1`, [`${prefix}%`],
+      );
+      for (const row of tables.rows) await pool.query(`DROP TABLE IF EXISTS ${String(row.tablename)} CASCADE`);
+    } finally {
+      await pool.end();
+    }
+  }, 30_000);
+
+  async function seedCandidate(input: {
+    state: 'waiting_checks' | 'working' | 'blocked';
+    taskStatus: 'todo' | 'in_progress';
+    checkpoint?: Record<string, unknown>;
+  }) {
+    const board = await store.createBoard(identity, { name: `V3 convergence ${randomUUID()}` });
+    const taskId = randomUUID();
+    const candidateId = randomUUID();
+    const repositoryId = `repo-${candidateId}`;
+    await pool.query(
+      `INSERT INTO ${store.tasksTable}
+         (id,board_id,identifier,kind,title,status,sort_order,workflow_version)
+       VALUES($1,$2,$3,'integration','V3 convergence',$4,1,3)`,
+      [taskId, board.id, `V3-${taskId.slice(0, 8)}`, input.taskStatus],
+    );
+    const tables = integrationCandidateTableNames(store.integrationSourcesTable);
+    await pool.query(
+      `INSERT INTO ${tables.candidatesTable}
+         (id,integration_task_id,repository_id,base_branch,branch,state,current_revision,workflow_epoch,lane_epoch,
+          policy_revision,merge_method,policy_snapshot,source_set_digest,worker_status,worker_checkpoint)
+       VALUES($1,$2,$3,'main',$4,$5,1,1,1,'p1','squash',$6::jsonb,'sources','idle',$7::jsonb)`,
+      [candidateId, taskId, repositoryId, `integration/${candidateId}`, input.state,
+        JSON.stringify({ workflowVersion: 3, featureFlags: { engineV3: true, cleanup: true } }),
+        JSON.stringify(input.checkpoint ?? {})],
+    );
+    await pool.query(
+      `INSERT INTO ${tables.revisionsTable}
+         (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,source_set_digest,
+          subject_digest,policy_snapshot_digest,policy_revision,merge_method,work_round)
+       VALUES($1,1,1,'base-1','head-1','provider_subject','tree-1','sources','subject-1','policy-1','p1','squash',0)`,
+      [candidateId],
+    );
+    await pool.query(
+      `INSERT INTO ${store.integrationLanesTable}(repository_id,board_id,active_integration_task_id,epoch)
+       VALUES($1,$2,$3,1)`, [repositoryId, board.id, taskId],
+    );
+    return { board, taskId, candidateId, tables };
+  }
+
+  function pgOptions(seed: Awaited<ReturnType<typeof seedCandidate>>) {
+    return {
+      pool, candidatesTable: seed.tables.candidatesTable, revisionsTable: seed.tables.revisionsTable,
+      sourceSnapshotsTable: seed.tables.sourceSnapshotsTable, providerOperationsTable: seed.tables.providerOperationsTable,
+      requestsOutboxTable: seed.tables.requestsOutboxTable, tasksTable: store.tasksTable,
+      blockEpisodesTable: store.blockEpisodesTable, boardsTable: store.boardsTable,
+      executionsTable: store.executionsTable, integrationSourcesTable: store.integrationSourcesTable,
+      integrationLanesTable: store.integrationLanesTable,
+    };
+  }
+
+  it('projects blocked candidate states to the task and creates only one open episode', async () => {
+    const seed = await seedCandidate({ state: 'waiting_checks', taskStatus: 'todo' });
+    const host = new PostgresIntegrationEngineV3CandidateHost(pgOptions(seed));
+    const current = await host.getCurrent(seed.candidateId);
+    await host.transition(seed.candidateId, {
+      expectedVersion: current.candidate.version, expectedRevision: 1,
+      to: 'blocked', lastError: 'provider gates unavailable',
+    });
+    const blocked = await host.getCurrent(seed.candidateId);
+    await host.transition(seed.candidateId, {
+      expectedVersion: blocked.candidate.version, expectedRevision: 1,
+      to: 'needs_human', lastError: 'operator decision required',
+    });
+    expect((await store.getTask(identity, seed.taskId)).status).toBe('blocked');
+    const episodes = await pool.query(
+      `SELECT purpose,reason FROM ${store.blockEpisodesTable} WHERE task_id=$1 AND closed_at IS NULL`, [seed.taskId],
+    );
+    expect(episodes.rows).toEqual([{ purpose: 'work', reason: 'provider gates unavailable' }]);
+  });
+
+  it('uses the locked candidate as v3 resume authority and closes the episode after workspace sync', async () => {
+    const seed = await seedCandidate({ state: 'blocked', taskStatus: 'todo' });
+    const episodeId = randomUUID();
+    await pool.query(
+      `INSERT INTO ${store.blockEpisodesTable}(id,task_id,purpose,reason_code,reason)
+       VALUES($1,$2,'work','integration_candidate_blocked','workspace requires repair')`,
+      [episodeId, seed.taskId],
+    );
+    const task = await store.getTask(identity, seed.taskId);
+    await expect(store.resumeBlockedTask(identity, seed.taskId, {
+      expectedVersion: task.version, decision: 'reconcile workspace',
+    })).resolves.toMatchObject({ id: seed.taskId });
+    const queued = await pool.query(
+      `SELECT * FROM ${seed.tables.requestsOutboxTable} WHERE candidate_id=$1 AND kind='workspace_sync'`, [seed.candidateId],
+    );
+    const host = new PostgresIntegrationV3WorkerHost({
+      ...pgOptions(seed), dispatchAgent: async () => ({ executionId: 'unused' }),
+      syncWorkspace: async () => undefined, cleanup: async () => undefined,
+    });
+    await host.syncWorkspace({
+      id: String(queued.rows[0].id), leaseId: 'lease-1', kind: 'workspace_sync',
+      candidateId: seed.candidateId, candidateRevision: 1, payload: queued.rows[0].payload,
+    });
+    expect((await store.getTask(identity, seed.taskId)).status).toBe('in_progress');
+    expect((await pool.query(
+      `SELECT closed_at FROM ${store.blockEpisodesTable} WHERE id=$1`, [episodeId],
+    )).rows[0].closed_at).toBeInstanceOf(Date);
+  });
+
+  it('resets requested cancellation state so terminal cleanup is claimable', async () => {
+    const seed = await seedCandidate({
+      state: 'working', taskStatus: 'in_progress', checkpoint: { state: 'working', status: 'requested' },
+    });
+    await pool.query(
+      `UPDATE ${seed.tables.candidatesTable}
+          SET worker_status='processing',worker_lease_id='stale-lease',
+              worker_lease_expires_at=now()+interval '1 hour',worker_error='stale error'
+        WHERE id=$1`, [seed.candidateId],
+    );
+    const task = await store.getTask(identity, seed.taskId);
+    await store.cancelIntegrationTask(identity, seed.taskId, {
+      expectedVersion: task.version, reason: 'operator canceled',
+    });
+    await pool.query(
+      `UPDATE ${seed.tables.candidatesTable} SET worker_status='failed' WHERE id<>$1`, [seed.candidateId],
+    );
+    const options = pgOptions(seed);
+    const host = new PostgresIntegrationV3WorkerHost({
+      ...options, dispatchAgent: async () => ({ executionId: 'unused' }), syncWorkspace: async () => undefined,
+      cleanup: async () => undefined,
+    });
+    const engine = new IntegrationEngineV3({
+      candidates: new PostgresIntegrationEngineV3CandidateHost(options),
+      features: new PostgresIntegrationEngineV3FeatureHost(options),
+      requests: new PostgresIntegrationEngineV3RequestHost(options),
+      providerOperations: {} as never, provider: {} as never,
+      credentialOwnerId: identity.ownerUserId, resolveRepository: async () => undefined,
+    });
+    const worker = new IntegrationV3Worker({
+      host, engine, composer: { compose: vi.fn(), refreshAfterWork: vi.fn() },
+    });
+    await worker.runOnce();
+    const candidate = (await pool.query(
+      `SELECT state,worker_status,worker_checkpoint,worker_error,worker_lease_id
+         FROM ${seed.tables.candidatesTable} WHERE id=$1`, [seed.candidateId],
+    )).rows[0];
+    expect(candidate).toMatchObject({
+      state: 'canceled', worker_status: 'idle', worker_error: null, worker_lease_id: null,
+    });
+    expect(candidate.worker_checkpoint).toMatchObject({ state: 'canceled', status: 'requested' });
+    const cleanup = await pool.query(
+      `SELECT kind,status FROM ${seed.tables.requestsOutboxTable} WHERE candidate_id=$1 AND kind='cleanup'`,
+      [seed.candidateId],
+    );
+    expect(cleanup.rows).toEqual([{ kind: 'cleanup', status: 'pending' }]);
+  });
+});

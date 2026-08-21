@@ -27,14 +27,15 @@ export async function resumeBlockedTask(
     await requireBoardAccess(options, client, identity, loaded.task.boardId, 'maintainer', false);
     if (loaded.task.version !== input.expectedVersion) throw new TaskboardConflictError(loaded.task);
     const facts = await loadWorkflowFacts(options, client, loaded.task);
-    if (loaded.task.status !== 'blocked' || facts.hasMergeFact) {
+    const workflowV3 = loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3;
+    if (facts.hasMergeFact || (!workflowV3 && loaded.task.status !== 'blocked')) {
       throw new TaskboardValidationError('Only a non-merged blocked task can be resumed', 'TASKBOARD_RESUME_INVALID');
     }
     const decision = input.decision.trim();
     if (!decision) throw new TaskboardValidationError('Resume decision is required');
     let resumePurpose: 'work' | 'review' | 'merge' = 'work';
     let resumedSourceIds: string[] = [];
-    if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3) {
+    if (workflowV3) {
       if (input.sourceIds?.length) {
         throw new TaskboardValidationError(
           'Workflow v3 resume cannot select or reuse legacy sources',

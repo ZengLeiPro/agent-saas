@@ -105,6 +105,7 @@ describe('DefaultIntegrationV3ComposeExecutor push replay', () => {
       await writeFile(join(repositoryPath, 'delivery.txt'), 'delivery\n');
       await git(repositoryPath, ['add', '.']); await git(repositoryPath, ['commit', '-m', 'delivery']);
       const sourceHead = (await git(repositoryPath, ['rev-parse', 'HEAD'])).stdout.trim();
+      await git(repositoryPath, ['update-ref', 'refs/pull/11/head', sourceHead]);
       await git(repositoryPath, ['checkout', 'main']);
 
       const source = {

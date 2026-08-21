@@ -558,7 +558,7 @@ export function BusinessStepSectionView({
             {titleLabel}
           </span>
           <StepBadge index={terminal?.stepIndex ?? start.stepIndex} count={terminal?.stepCount ?? start.stepCount} />
-          {terminalMeta && section.processAnomaly ? (
+          {terminalMeta && section.processAnomaly && sectionOpen ? (
             // 跨层矛盾角标：平台事实（区间内同类操作最后一次仍失败）压过模型
             // 干净完成叙事。浅色低重量，不改写模型文本。
             <span className={activityStatusBadgeClass("warning", "opacity-75")}>过程有异常</span>

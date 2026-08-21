@@ -606,7 +606,7 @@ describe("BusinessStepSectionView", () => {
     expect(screen.getByText("税号校验失败，已终止")).toBeTruthy();
   });
 
-  it("processAnomaly 时只渲染浅色「过程有异常」角标，不恢复终态标签", () => {
+  it("processAnomaly 只在展开后渲染浅色「过程有异常」角标，不恢复终态标签", () => {
     const terminal = event({
       kind: "complete",
       todo: { id: "a", kind: "business", content: "同步钉钉待办", status: "completed", outcome: { text: "已创建", tone: "ok" } },
@@ -618,6 +618,9 @@ describe("BusinessStepSectionView", () => {
     );
 
     expect(screen.queryByText("已完成")).toBeNull();
+    expect(screen.queryByText("过程有异常")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /同步钉钉待办/ }));
     expect(screen.getByText("过程有异常")).toBeTruthy();
   });
 

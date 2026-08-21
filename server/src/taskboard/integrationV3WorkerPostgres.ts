@@ -117,6 +117,7 @@ export interface IntegrationV3WorkerPostgresOptions {
   }): Promise<{ executionId: string }>;
   syncWorkspace(request: IntegrationV3RequestLease): Promise<void>;
   cleanup(request: IntegrationV3RequestLease): Promise<IntegrationV3CleanupReceipt | void>;
+  releaseIdentity: string;
   logger?: IntegrationV3WorkerHost['logger'];
 }
 
@@ -132,17 +133,20 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
           WHERE COALESCE(NULLIF(current_setting('agent_saas.integration_v3_enabled',true),'')::boolean,true)
             AND COALESCE((c.policy_snapshot->>'workflowVersion')::int,2)=3
             AND COALESCE((c.policy_snapshot->'featureFlags'->>'engineV3')::boolean,false)
-            AND c.worker_status<>'failed' AND c.worker_available_at<=now()
-            AND (c.worker_status='idle' OR c.worker_lease_expires_at<now())
+            AND (c.worker_status<>'failed' OR c.worker_release_identity IS DISTINCT FROM $3)
+            AND c.worker_available_at<=now()
+            AND (c.worker_status IN ('idle','failed') OR c.worker_lease_expires_at<now())
             AND (c.state IN ('preparing','composing','waiting_checks','needs_work','working','in_review','approved','merging')
               OR (c.state IN ('merged','canceled') AND c.worker_checkpoint->>'status' IS DISTINCT FROM 'requested'))
           ORDER BY c.updated_at,c.id FOR UPDATE OF c SKIP LOCKED LIMIT 1
        )
        UPDATE ${this.options.candidatesTable} c
           SET worker_status='processing',worker_lease_id=$1,
-              worker_lease_expires_at=now()+($2::bigint*interval '1 millisecond'),worker_error=NULL
+              worker_lease_expires_at=now()+($2::bigint*interval '1 millisecond'),worker_error=NULL,
+              worker_attempts=CASE WHEN c.worker_release_identity IS DISTINCT FROM $3 THEN 0 ELSE c.worker_attempts END,
+              worker_release_identity=$3
          FROM claim WHERE c.id=claim.id RETURNING c.id`,
-      [leaseId, leaseMs],
+      [leaseId, leaseMs, this.options.releaseIdentity],
     );
     return result.rows[0] ? { candidateId: String(result.rows[0].id), leaseId } : undefined;
   }

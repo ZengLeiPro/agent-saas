@@ -95,6 +95,7 @@ async function installIntegrationCandidateSchemaV1(
     ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_lease_expires_at TIMESTAMPTZ;
     ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_checkpoint JSONB NOT NULL DEFAULT '{}'::jsonb;
     ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_error TEXT;
+    ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_release_identity TEXT;
     ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_attempts INTEGER NOT NULL DEFAULT 0 CHECK (worker_attempts >= 0);
     ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_available_at TIMESTAMPTZ NOT NULL DEFAULT now()
   `);

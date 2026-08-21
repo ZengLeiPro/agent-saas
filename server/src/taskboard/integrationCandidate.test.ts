@@ -337,5 +337,6 @@ describe('integration candidate v3 schema', () => {
     expect(ddl).toContain('ALTER COLUMN tree_oid DROP NOT NULL');
     expect(ddl).toContain('TASKBOARD_CANDIDATE_MERGE_RECONCILIATION_REQUIRED');
     expect(ddl).toContain('worker_attempts INTEGER NOT NULL DEFAULT 0');
+    expect(ddl).toContain('worker_release_identity TEXT');
   });
 });

@@ -51,13 +51,18 @@ import { useTaskComments, useTaskExecutions } from "./hooks";
 
 type TaskDraftField = "title" | "description" | "attachments" | "priority" | "stageModels";
 
-const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review", "merge"];
+const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review"];
 const ACTIVE_EXECUTION_STATUSES = new Set(["queued", "running", "waiting_user", "waiting_approval"]);
 
 function taskStageModels(task: TaskBoardTask): TaskBoardStageModels {
-  if (task.stageModels && Object.keys(task.stageModels).length > 0) return task.stageModels;
+  if (task.stageModels && Object.keys(task.stageModels).length > 0) {
+    return {
+      ...(task.stageModels.work ? { work: task.stageModels.work } : {}),
+      ...(task.stageModels.review ? { review: task.stageModels.review } : {}),
+    };
+  }
   return task.model
-    ? { work: task.model, review: task.model, merge: task.model }
+    ? { work: task.model, review: task.model }
     : {};
 }
 

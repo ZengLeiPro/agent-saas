@@ -238,7 +238,9 @@ export class IntegrationEngineV3 {
       return applied(await this.transition(current, 'blocked', reason));
     }
     if (facts.requiredChecks.some((check) => check.status === 'failure')) return applied(await this.transition(current, 'needs_work', 'Required checks failed'));
-    if (facts.requiredChecks.some((check) => check.status === 'pending')) return { candidate: current.candidate, status: 'waiting' };
+    if (facts.requiredChecks.length === 0 || facts.requiredChecks.some((check) => check.status === 'pending')) {
+      return { candidate: current.candidate, status: 'waiting' };
+    }
     if (!dispatchReview) return { candidate: current.candidate, status: 'waiting' };
     const revision = requireRevision(current);
     const request = await this.options.requests.requestReview({ candidateId: current.candidate.id, revision: revision.revision, subjectDigest: revision.subjectDigest, sourceSetDigest: revision.sourceSetDigest });

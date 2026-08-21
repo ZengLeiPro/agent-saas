@@ -179,12 +179,17 @@ export class GithubRepositoryProvider implements RepositoryProvider {
     let rulesetsValue: unknown;
     const protectionHasNoChecks = requiredResult.status === 'fulfilled'
       && normalizeRequiredCheckIdentities(requiredResult.value).length === 0;
-    if (protectionHasNoChecks || (requiredResult.status === 'rejected' && requiredResult.reason instanceof GithubApiError && requiredResult.reason.status === 404)) {
+    const protectionUnavailable = requiredResult.status === 'rejected'
+      && isUnavailableGithubPolicyFeature(requiredResult.reason);
+    if (protectionHasNoChecks
+      || protectionUnavailable
+      || (requiredResult.status === 'rejected' && requiredResult.reason instanceof GithubApiError && requiredResult.reason.status === 404)) {
       try {
         rulesetsValue = await this.getRulesetDetails(repository, credentialOwnerId);
         requiredKnown = !rulesetsRequireUnknownStatusChecks(rulesetsValue);
-      } catch {
-        requiredKnown = false;
+      } catch (error) {
+        rulesetsValue = [];
+        requiredKnown = protectionUnavailable && isUnavailableGithubPolicyFeature(error);
       }
     }
     const requiredChecks = normalizeChecks(
@@ -230,8 +235,12 @@ export class GithubRepositoryProvider implements RepositoryProvider {
       this.request(repository, credentialOwnerId, this.repoPath(repository, `/branches/${encodeURIComponent(normalizedBase)}/protection/required_status_checks`)),
       this.getRulesetDetails(repository, credentialOwnerId),
     ]);
-    const protectionAbsent = protection.status === 'rejected' && protection.reason instanceof GithubApiError && protection.reason.status === 404;
-    if ((!protectionAbsent && protection.status === 'rejected') || rulesets.status === 'rejected') {
+    const protectionAbsent = protection.status === 'rejected'
+      && (protection.reason instanceof GithubApiError && protection.reason.status === 404
+        || isUnavailableGithubPolicyFeature(protection.reason));
+    const rulesetsAbsent = rulesets.status === 'rejected' && isUnavailableGithubPolicyFeature(rulesets.reason);
+    if ((!protectionAbsent && protection.status === 'rejected')
+      || (!rulesetsAbsent && rulesets.status === 'rejected')) {
       return { known: false, requiredChecks: [], mergeQueueRequired: false, unsupportedRules: ['provider-gates-unavailable'] };
     }
     const checks = normalizeRequiredCheckIdentities(protection.status === 'fulfilled' ? protection.value : undefined);
@@ -357,6 +366,11 @@ export function repositorySubjectDigest(input: { repositoryId: string; providerP
 }
 
 export class GithubApiError extends Error { constructor(readonly status: number, message: string) { super(message); this.name = 'GithubApiError'; } }
+function isUnavailableGithubPolicyFeature(error: unknown): boolean {
+  if (!(error instanceof GithubApiError) || error.status !== 403) return false;
+  const message = error.message.toLowerCase();
+  return message.includes('upgrade to github pro') && message.includes('make this repository public');
+}
 export class RepositoryProviderDriftError extends Error { constructor(message: string) { super(message); this.name = 'RepositoryProviderDriftError'; } }
 export class RepositoryProviderDuplicateError extends Error { constructor(message: string) { super(message); this.name = 'RepositoryProviderDuplicateError'; } }
 export class RepositoryProviderPolicyError extends Error { constructor(message: string) { super(message); this.name = 'RepositoryProviderPolicyError'; } }

@@ -23,6 +23,7 @@ afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recur
 
 class Operations implements IntegrationProviderOperationStorageHost {
   records = new Map<string, IntegrationProviderOperationRecord>();
+  beforeCompareAndSet?: (record: IntegrationProviderOperationRecord) => void;
   async getByOperationKey(key: string) { return this.records.get(key); }
   async insertPrepared(record: IntegrationProviderOperationRecord) {
     const current = this.records.get(record.operationKey);
@@ -35,7 +36,8 @@ class Operations implements IntegrationProviderOperationStorageHost {
     nextState: IntegrationProviderOperationState; patch: Partial<IntegrationProviderOperationRecord>;
   }) {
     const current = [...this.records.values()].find((record) => record.id === input.id);
-    if (!current || current.state !== input.expectedState) return undefined;
+    if (current) { this.beforeCompareAndSet?.(current); this.beforeCompareAndSet = undefined; }
+    if (!current || this.records.get(current.operationKey)?.state !== input.expectedState) return undefined;
     const next = { ...current, ...input.patch, state: input.nextState };
     this.records.set(next.operationKey, next);
     return next;
@@ -134,6 +136,20 @@ describe('IntegrationPushGateway.pushWorkspaceCommit', () => {
       state: 'succeeded', kind: 'push_ref', expected: { oldOid: f.source.oldOid, newOid: f.source.newOid },
     });
     await expect(access(f.runner.pushCwd!)).rejects.toThrow();
+  });
+
+  it('maps an execute CAS race to a retryable gateway result without duplicating the Work push', async () => {
+    const f = await fixture();
+    f.operations.beforeCompareAndSet = (record) => {
+      f.operations.records.set(record.operationKey, { ...record, state: 'executing', attemptCount: 1 });
+    };
+
+    await expect(f.gateway.pushWorkspaceCommit({
+      tenantId: f.binding.tenantId, requesterUserId: 'owner-1', executionId: f.binding.executionId,
+      workspaceRoot: f.source.root, commitOid: f.source.newOid,
+    })).rejects.toMatchObject({ code: 'push_failed_unknown', retryable: true });
+    expect(f.runner.calls.filter((call) => call.args[0] === 'push')).toHaveLength(0);
+    expect([...f.operations.records.values()][0]).toMatchObject({ state: 'executing', attemptCount: 1 });
   });
 
   it('revokes the server-only capability on deterministic failure', async () => {

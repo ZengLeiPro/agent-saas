@@ -9,6 +9,7 @@ import { runSafeServerGit } from './safeServerGitRunner.js';
 import { withIntegrationGitAskpass } from './integrationGitAskpass.js';
 import {
   IntegrationProviderOperationService,
+  ProviderOperationReconcileRequiredError,
   integrationProviderOperationKey,
   type IntegrationProviderOperationFence,
   type IntegrationProviderOperationRecord,
@@ -316,7 +317,20 @@ export class IntegrationPushGateway {
         return { ref: target.binding.exactRef, oldOid: target.binding.expectedOldOid, newOid: input.commitOid };
       };
       if (operation) {
-        const completed = await this.options.operationService!.execute(operationKey, write);
+        let completed: IntegrationProviderOperationRecord;
+        try {
+          completed = await this.options.operationService!.execute(operationKey, write);
+        } catch (error) {
+          if (!(error instanceof ProviderOperationReconcileRequiredError)) throw error;
+          const raced = await this.options.operationService!.get(operationKey);
+          if (!raced) throw new IntegrationPushGatewayError('push_failed_unknown', false);
+          await this.reconcileOrVerifyPriorPush(raced, {
+            repositoryId: target.binding.repositoryId, candidateId: target.binding.candidateId,
+            revision: target.binding.revision, exactRef: target.binding.exactRef, newOid: input.commitOid,
+            fence: operation.fence,
+          }, cwd, repository.remoteUrl, env);
+          return;
+        }
         if (completed.state !== 'succeeded') throw new IntegrationPushGatewayError('push_failed_unknown', false);
       } else await write().catch(() => { throw new IntegrationPushGatewayError('push_failed_unknown', false); });
     });
@@ -377,21 +391,35 @@ export class IntegrationPushGateway {
       command: { ref: input.exactRef, oldOid: input.expectedOldOid, newOid: input.newOid },
     });
     await withIntegrationGitAskpass(credential.token, async (env) => {
-      if (operation.state === 'unknown' || operation.state === 'executing') {
-        const reconciled = await service.reconcile(operationKey, (record) => this.reconcileExactRef(record, cwd, repository.remoteUrl, env));
-        if (reconciled.state !== 'succeeded') throw new IntegrationPushGatewayError('push_failed_unknown', false);
+      if (operation.state !== 'prepared') {
+        await this.reconcileOrVerifyPriorPush(operation, input, cwd, repository.remoteUrl, env);
         return;
       }
       const remoteOld = await this.readExactRemoteRef(cwd, repository.remoteUrl, input.exactRef, env);
       if (remoteOld !== input.expectedOldOid) throw new IntegrationPushGatewayError('remote_old_mismatch', true);
-      const completed = await service.execute(operationKey, async () => {
-        await this.runner.run({
-          cwd, args: ['push', `--force-with-lease=${input.exactRef}:${input.expectedOldOid}`, '--',
-            repository.remoteUrl, `${input.newOid}:${input.exactRef}`], env, redactOutput: true,
+      let completed: IntegrationProviderOperationRecord;
+      try {
+        completed = await service.execute(operationKey, async () => {
+          await this.runExactPush(cwd, repository.remoteUrl, input.exactRef, input.expectedOldOid, input.newOid, env);
+          return { ref: input.exactRef, oldOid: input.expectedOldOid, newOid: input.newOid };
         });
-        return { ref: input.exactRef, oldOid: input.expectedOldOid, newOid: input.newOid };
-      });
-      if (completed.state !== 'succeeded') throw new IntegrationPushGatewayError('push_failed_unknown', false);
+      } catch (error) {
+        if (!(error instanceof ProviderOperationReconcileRequiredError)) throw error;
+        const raced = await service.get(operationKey);
+        if (!raced) throw new IntegrationPushGatewayError('push_failed_unknown', false);
+        await this.reconcileOrVerifyPriorPush(raced, input, cwd, repository.remoteUrl, env);
+        return;
+      }
+      if (completed.state === 'executing') throw new IntegrationPushGatewayError('push_failed_unknown', true);
+      if (completed.state === 'unknown') {
+        completed = await service.reconcile(operationKey, (record) => this.reconcileExactRef(record, cwd, repository.remoteUrl, env));
+      }
+      if (completed.state === 'succeeded') return;
+      if (this.isVerifiedNotApplied(completed, input.exactRef, input.expectedOldOid, input.newOid)) {
+        await this.executeVerifiedOldRetry(completed, input, cwd, repository.remoteUrl, env);
+        return;
+      }
+      throw new IntegrationPushGatewayError('push_failed_unknown', false);
     });
   }
 
@@ -419,35 +447,123 @@ export class IntegrationPushGateway {
     operation: IntegrationProviderOperationRecord,
     input: {
       repositoryId: string; candidateId: string; revision: number; exactRef: string; newOid: string;
-      fence: IntegrationProviderOperationFence;
+      rebaseParentOid?: string; fence: IntegrationProviderOperationFence;
     },
     cwd: string,
     remoteUrl: string,
     env: Record<string, string>,
   ): Promise<void> {
     const expectedRef = String(operation.expected.ref ?? '');
+    const expectedOld = String(operation.expected.oldOid ?? '');
     const expectedNew = String(operation.expected.newOid ?? '');
     const fence = operation.fence;
     if (operation.kind !== 'push_ref' || operation.repositoryId !== input.repositoryId
-      || expectedRef !== input.exactRef || expectedNew !== input.newOid
+      || expectedRef !== input.exactRef || expectedNew !== input.newOid || !OID.test(expectedOld)
       || fence.candidateId !== input.candidateId || fence.candidateRevision !== input.revision
       || fence.workflowEpoch !== input.fence.workflowEpoch || fence.laneEpoch !== input.fence.laneEpoch) {
       throw new IntegrationPushGatewayError('push_failed_unknown', false);
     }
     let durable = operation;
-    if (durable.state === 'unknown' || durable.state === 'executing') {
+    if (durable.state === 'executing') throw new IntegrationPushGatewayError('push_failed_unknown', true);
+    if (durable.state === 'unknown') {
       durable = await this.options.operationService!.reconcile(
         durable.operationKey,
         (record) => this.reconcileExactRef(record, cwd, remoteUrl, env),
       );
     }
-    if (durable.state !== 'succeeded'
-      || String(durable.receipt?.ref ?? '') !== input.exactRef
-      || String(durable.receipt?.newOid ?? '') !== input.newOid) {
-      throw new IntegrationPushGatewayError('push_failed_unknown', false);
+    if (durable.state === 'succeeded'
+      && String(durable.receipt?.ref ?? '') === input.exactRef
+      && String(durable.receipt?.newOid ?? '') === input.newOid) {
+      const actual = await this.readExactRemoteRef(cwd, remoteUrl, input.exactRef, env);
+      if (actual !== input.newOid) throw new IntegrationPushGatewayError('remote_old_mismatch', false);
+      return;
     }
+    if (this.isVerifiedNotApplied(durable, input.exactRef, expectedOld, input.newOid)) {
+      await this.assertCommitGraph(cwd, expectedOld, input.newOid, input.rebaseParentOid);
+      await this.executeVerifiedOldRetry(durable, input, cwd, remoteUrl, env);
+      return;
+    }
+    throw new IntegrationPushGatewayError('push_failed_unknown', false);
+  }
+
+  private async executeVerifiedOldRetry(
+    original: IntegrationProviderOperationRecord,
+    input: {
+      repositoryId: string; candidateId: string; revision: number; exactRef: string; newOid: string;
+      fence: IntegrationProviderOperationFence;
+    },
+    cwd: string,
+    remoteUrl: string,
+    env: Record<string, string>,
+  ): Promise<void> {
+    const oldOid = String(original.expected.oldOid ?? '');
+    const operationKey = integrationProviderOperationKey({
+      repositoryId: input.repositoryId, candidateId: input.candidateId,
+      candidateRevision: input.revision, kind: 'push_ref',
+      target: `${input.exactRef}@${input.newOid}:verified-old-retry:${original.operationKey}`,
+    });
+    const service = this.options.operationService!;
+    const operation = await service.prepare({
+      operationKey, kind: 'push_ref', repositoryId: input.repositoryId, fence: input.fence,
+      expected: { ref: input.exactRef, oldOid, newOid: input.newOid, recoveryOf: original.operationKey },
+      command: { ref: input.exactRef, oldOid, newOid: input.newOid, recoveryOf: original.operationKey },
+    });
+    let durable = operation;
+    if (durable.state === 'executing') throw new IntegrationPushGatewayError('push_failed_unknown', true);
+    if (durable.state === 'unknown') {
+      durable = await service.reconcile(operationKey, (record) => this.reconcileExactRef(record, cwd, remoteUrl, env));
+    }
+    if (durable.state === 'succeeded') {
+      const actual = await this.readExactRemoteRef(cwd, remoteUrl, input.exactRef, env);
+      if (actual !== input.newOid) throw new IntegrationPushGatewayError('remote_old_mismatch', false);
+      return;
+    }
+    if (durable.state !== 'prepared') throw new IntegrationPushGatewayError('push_failed_unknown', false);
+    const remoteOld = await this.readExactRemoteRef(cwd, remoteUrl, input.exactRef, env);
+    if (remoteOld !== oldOid) throw new IntegrationPushGatewayError('remote_old_mismatch', false);
+    try {
+      durable = await service.execute(operationKey, async () => {
+        await this.runExactPush(cwd, remoteUrl, input.exactRef, oldOid, input.newOid, env);
+        return { ref: input.exactRef, oldOid, newOid: input.newOid,
+          recoveryOf: original.operationKey, recoveredAfterVerifiedOld: true };
+      });
+    } catch (error) {
+      if (!(error instanceof ProviderOperationReconcileRequiredError)) throw error;
+      durable = await service.get(operationKey) ?? operation;
+    }
+    if (durable.state === 'executing') throw new IntegrationPushGatewayError('push_failed_unknown', true);
+    if (durable.state === 'unknown') {
+      durable = await service.reconcile(operationKey, (record) => this.reconcileExactRef(record, cwd, remoteUrl, env));
+    }
+    if (durable.state !== 'succeeded') throw new IntegrationPushGatewayError('push_failed_unknown', false);
     const actual = await this.readExactRemoteRef(cwd, remoteUrl, input.exactRef, env);
     if (actual !== input.newOid) throw new IntegrationPushGatewayError('remote_old_mismatch', false);
+  }
+
+  private isVerifiedNotApplied(
+    operation: IntegrationProviderOperationRecord,
+    ref: string,
+    oldOid: string,
+    newOid: string,
+  ): boolean {
+    return operation.state === 'failed' && operation.attemptCount === 1
+      && operation.receipt?.verifiedNotApplied === true
+      && operation.receipt.ref === ref && operation.receipt.actualOid === oldOid
+      && operation.receipt.expectedOldOid === oldOid && operation.receipt.expectedNewOid === newOid;
+  }
+
+  private async runExactPush(
+    cwd: string,
+    remoteUrl: string,
+    exactRef: string,
+    oldOid: string,
+    newOid: string,
+    env: Record<string, string>,
+  ): Promise<void> {
+    await this.runner.run({
+      cwd, args: ['push', `--force-with-lease=${exactRef}:${oldOid}`, '--', remoteUrl, `${newOid}:${exactRef}`],
+      env, redactOutput: true,
+    });
   }
 
   private async readExactRemoteRef(cwd: string, remoteUrl: string, exactRef: string, env: Record<string, string>): Promise<string | undefined> {
@@ -465,9 +581,17 @@ export class IntegrationPushGateway {
     env: Record<string, string>,
   ) {
     const ref = String(operation.expected.ref ?? '');
+    const expectedOld = String(operation.expected.oldOid ?? '');
     const expectedNew = String(operation.expected.newOid ?? '');
     const actual = await this.readExactRemoteRef(cwd, remoteUrl, ref, env);
     if (actual === expectedNew) return { status: 'succeeded' as const, receipt: { ref, newOid: actual, reconciled: true } };
+    if (actual === expectedOld) {
+      return {
+        status: 'not_applied' as const,
+        detail: 'Exact remote ref remains at the expected old OID',
+        evidence: { ref, actualOid: actual, expectedOldOid: expectedOld, expectedNewOid: expectedNew, verifiedNotApplied: true },
+      };
+    }
     if (!actual) return { status: 'not_found' as const, detail: 'Exact remote ref is not visible' };
     return { status: 'mismatch' as const, detail: 'Exact remote ref points to an unexpected OID', evidence: { ref, actualOid: actual, expectedNew } };
   }

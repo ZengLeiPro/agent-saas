@@ -73,6 +73,7 @@ export interface IntegrationProviderOperationFenceHost {
 
 export type IntegrationProviderReconcileResult =
   | { status: 'succeeded'; receipt: Record<string, unknown> }
+  | { status: 'not_applied'; detail: string; evidence: Record<string, unknown> }
   | { status: 'not_found'; detail?: string }
   | { status: 'mismatch'; detail: string; evidence?: Record<string, unknown> }
   | { status: 'indeterminate'; detail: string };
@@ -140,7 +141,8 @@ export class IntegrationProviderOperationService {
 
   /**
    * Reconcile is read-only at the provider. not_found/indeterminate remain unknown;
-   * it is intentionally forbidden to infer that a write is safe to resend.
+   * not_applied is a terminal, evidence-backed no-effect result. Any later retry must
+   * be a separate durable operation with its own bounded semantic key.
    */
   async reconcile(
     operationKey: string,
@@ -156,6 +158,15 @@ export class IntegrationProviderOperationService {
     await this.fences.assertCurrent(current);
     if (result.status === 'succeeded') {
       return this.transitionOrReload(current, current.state, 'succeeded', { receipt: result.receipt });
+    }
+    if (result.status === 'not_applied') {
+      if (current.state !== 'unknown') {
+        throw new ProviderOperationReconcileRequiredError(operationKey, current.state);
+      }
+      return this.transitionOrReload(current, 'unknown', 'failed', {
+        error: result.detail,
+        receipt: result.evidence,
+      });
     }
     if (result.status === 'mismatch') {
       return this.transitionOrReload(current, current.state, 'needs_human', {

@@ -1114,8 +1114,11 @@ jobs:
                 log "ERROR: Workflow v3 is enabled but runtimeEventStore.connectionString is missing"
                 rollback_idle_and_exit
               fi
+              # 单次 ACS 隔离证明探针最多 90s，失败后 10s 重试；240s 允许两次
+              # 满超时后完成第三次探针，避免把临时冷启动误判为候选 worker 失败。
+              WORKER_V3_READY_TIMEOUT=240
               WORKER_V3_READY=0
-              for _ in $(seq 1 180); do
+              for _ in $(seq 1 "$WORKER_V3_READY_TIMEOUT"); do
                 worker_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" 2>/dev/null || true)
                 worker_v3_ready=$(psql "$WORKER_V3_DB_URL" -X -qAt -v ON_ERROR_STOP=1 -c \
                   "SELECT CASE WHEN EXISTS (
@@ -1131,7 +1134,7 @@ jobs:
                 sleep 1
               done
               if [ "$WORKER_V3_READY" -ne 1 ]; then
-                log "ERROR: runtime worker candidate has no healthy Workflow v3 heartbeat before Web start"
+                log "ERROR: runtime worker candidate has no healthy Workflow v3 heartbeat before Web start (${WORKER_V3_READY_TIMEOUT}s)"
                 rollback_idle_and_exit
               fi
             fi

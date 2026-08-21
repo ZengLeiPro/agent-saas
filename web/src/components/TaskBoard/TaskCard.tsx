@@ -1,6 +1,7 @@
 import type { DragEvent } from "react";
 import type { TaskBoardTask } from "@agent/shared";
-import { CalendarDays, CircleCheck, GitBranch, GitCommitHorizontal, MessageCircle, UserRound } from "lucide-react";
+import { CalendarDays, CircleCheck, GitBranch, GitCommitHorizontal, MessageCircle } from "lucide-react";
+import { UserAvatar } from "@/components/AgentAvatar";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
@@ -141,7 +142,12 @@ export function TaskCard({
         <div className="mt-3 space-y-2 border-t pt-2.5 text-xs text-muted-foreground">
           <div className="flex min-w-0 items-center gap-3">
             <span className="inline-flex min-w-0 items-center gap-1.5" title={creatorName}>
-              <UserRound className="size-3.5 shrink-0" />
+              <UserAvatar
+                userId={task.creatorUserId}
+                avatar={task.creatorUserId}
+                version={task.creatorAvatarVersion}
+                size={20}
+              />
               <span className="truncate">{creatorName}</span>
             </span>
             <span className="ml-auto inline-flex shrink-0 items-center gap-1" aria-label={`${task.commentCount} 条评论`}>

@@ -160,7 +160,8 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
     });
     await pool.query(
       `UPDATE ${seed.tables.candidatesTable}
-          SET worker_status='failed',worker_release_identity='test-release'
+          SET worker_status='failed',
+              worker_checkpoint=worker_checkpoint||jsonb_build_object('releaseIdentity','test-release')
         WHERE id<>$1`,
       [seed.candidateId],
     );

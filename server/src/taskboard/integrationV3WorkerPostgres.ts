@@ -391,7 +391,8 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
               work.execution_id AS work_execution_id,
               push.execution_id AS push_execution_id,push.candidate_id AS push_candidate_id,
               push.candidate_revision AS push_candidate_revision,push.workflow_epoch AS push_workflow_epoch,
-              push.lane_epoch AS push_lane_epoch,push.old_oid AS push_old_oid,push.new_oid AS push_new_oid
+              push.lane_epoch AS push_lane_epoch,push.old_oid AS push_old_oid,push.new_oid AS push_new_oid,
+              trusted.old_oids AS trusted_integration_branch_oids
          FROM ${this.options.candidatesTable} c JOIN ${this.options.tasksTable} t ON t.id=c.integration_task_id
          JOIN ${this.options.boardsTable} b ON b.id=t.board_id
          LEFT JOIN LATERAL (
@@ -419,6 +420,21 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
               AND o.expected->>'oldOid'=$3
             ORDER BY o.updated_at DESC,o.id DESC LIMIT 1
          ) push ON true
+         LEFT JOIN LATERAL (
+           SELECT array_agg(DISTINCT oid.value) FILTER (
+                    WHERE oid.value ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'
+                  ) AS old_oids
+             FROM ${this.options.providerOperationsTable} o
+             CROSS JOIN LATERAL (VALUES
+               (o.expected->>'oldOid'),
+               (CASE WHEN o.state='succeeded' THEN o.expected->>'newOid' END)
+             ) oid(value)
+            WHERE o.candidate_id=c.id AND o.candidate_revision=c.current_revision
+              AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch
+              AND o.kind='push_ref' AND o.attempt_count>0
+              AND o.state IN ('executing','unknown','failed','needs_human','succeeded')
+              AND o.expected->>'ref'=('refs/heads/'||c.branch)
+         ) trusted ON true
         WHERE c.id=$1`, [current.candidate.id, current.revision.subjectDigest, current.revision.headOid]);
     const row = result.rows[0];
     const repository = record(row?.repository) as unknown as TaskBoardRepositoryConfig;
@@ -433,6 +449,9 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
     return {
       repository, credentialOwnerId: String(row.owner_user_id), tenantId: String(row.tenant_id), ...paths,
       sources: snapshots.rows.map(rowToIntegrationCandidateSourceSnapshot),
+      trustedIntegrationBranchOids: Array.isArray(row.trusted_integration_branch_oids)
+        ? row.trusted_integration_branch_oids.map(String)
+        : [],
       ...(row.work_execution_id ? { workExecutionId: String(row.work_execution_id) } : {}),
       ...(row.push_execution_id ? { workPushReceipt: {
         executionId: String(row.push_execution_id),

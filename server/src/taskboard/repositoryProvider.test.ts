@@ -207,6 +207,51 @@ describe('GithubRepositoryProvider', () => {
     expect(fetchImpl.mock.calls.some((call) => call[1]?.method === 'POST')).toBe(false);
   });
 
+  it('accepts an existing integration branch only when its OID is backed by a durable push intent', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'new-base' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'new-base', tree: { sha: 'new-tree' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'trusted-old' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'trusted-old', tree: { sha: 'old-tree' } }), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const receipt = await provider.ensureIntegrationBranch(repository, {
+      ref: 'integration/task-1', expectedBaseOid: 'new-base', expectedBaseTreeOid: 'new-tree',
+      trustedExistingOids: ['trusted-old'], operationKey: 'branch:task-1:r1',
+    }, 'owner-user');
+
+    expect(receipt).toMatchObject({ created: false, oid: 'trusted-old', treeOid: 'old-tree' });
+    expect(fetchImpl.mock.calls.some((call) => call[1]?.method === 'POST')).toBe(false);
+  });
+
+  it('rejects an existing integration branch that matches neither base nor durable push intent', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'new-base' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'new-base', tree: { sha: 'new-tree' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'third-party' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'third-party', tree: { sha: 'third-tree' } }), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    await expect(provider.ensureIntegrationBranch(repository, {
+      ref: 'integration/task-1', expectedBaseOid: 'new-base', expectedBaseTreeOid: 'new-tree',
+      trustedExistingOids: ['trusted-old'], operationKey: 'branch:task-1:r1',
+    }, 'owner-user')).rejects.toThrow('durable push intent');
+  });
+
+  it('does not recreate a missing branch after an Integration PR is already bound', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'new-base' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sha: 'new-base', tree: { sha: 'new-tree' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    await expect(provider.ensureIntegrationBranch(repository, {
+      ref: 'integration/task-1', expectedBaseOid: 'new-base', expectedBaseTreeOid: 'new-tree',
+      existingRequired: true, trustedExistingOids: ['trusted-old'], operationKey: 'branch:task-1:r1',
+    }, 'owner-user')).rejects.toThrow('Bound integration branch is missing');
+    expect(fetchImpl.mock.calls.some((call) => call[1]?.method === 'POST')).toBe(false);
+  });
+
   it('rejects branch creation when the prepared base has drifted', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'new-base' } }), { status: 200 }))

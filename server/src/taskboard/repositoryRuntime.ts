@@ -51,8 +51,9 @@ export class RepositoryProviderIntegrationEngineV3Adapter implements Integration
   async readFacts(repository: TaskBoardRepositoryConfig, providerPullRequestId: string, credentialOwnerId: string): Promise<IntegrationEngineV3ProviderFacts> {
     if (!this.provider.getReference) throw new Error('Repository provider cannot resolve candidate tree facts');
     const pull = await this.provider.getPullRequest(repository, providerPullRequestId, credentialOwnerId);
-    const [head, gates] = await Promise.all([
+    const [head, base, gates] = await Promise.all([
       this.provider.getReference(repository, pull.headRef, credentialOwnerId),
+      this.provider.getReference(repository, pull.baseRef, credentialOwnerId),
       this.provider.getRequiredGateCapabilities
         ? this.provider.getRequiredGateCapabilities(repository, pull.baseRef, credentialOwnerId)
         : Promise.resolve({ known: false, requiredChecks: [], mergeQueueRequired: false, unsupportedRules: ['required-gates-unavailable'] }),
@@ -62,7 +63,7 @@ export class RepositoryProviderIntegrationEngineV3Adapter implements Integration
       providerPullRequestId: pull.providerPullRequestId,
       state: pull.state,
       baseBranch: pull.baseRef,
-      baseOid: pull.baseOid,
+      baseOid: base.oid,
       headOid: pull.headOid,
       treeOid: head.treeOid,
       requiredChecksKnown: pull.requiredChecksKnown === true && gates.known,

@@ -99,6 +99,17 @@ describe('IntegrationEngineV3', () => {
     expect(requests.requestReview).not.toHaveBeenCalled();
   });
 
+  it('waits for at least one observed check when no provider-enforced gate can exist', async () => {
+    const value = candidate('waiting_checks');
+    const { engine, candidates, requests } = setup('waiting_checks', facts({ requiredChecks: [] }));
+
+    const result = await engine.execute({ type: 'request_review', candidateId: value.id, expected: expected(value) });
+
+    expect(result.status).toBe('waiting');
+    expect(candidates.value.state).toBe('waiting_checks');
+    expect(requests.requestReview).not.toHaveBeenCalled();
+  });
+
   it('never resends an unknown merge and commits only after authoritative reconciliation', async () => {
     const value = candidate('approved');
     const context = setup('approved');

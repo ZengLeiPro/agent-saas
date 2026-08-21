@@ -2,6 +2,12 @@ import StsClientModule from '@alicloud/sts20150401';
 import { Config as OpenApiConfig } from '@alicloud/openapi-client';
 
 import type { SecretVault } from '../security/secretVault.js';
+import type { GovernanceCredential } from '../data/credentials/types.js';
+import {
+  isUsableGovernanceCredential,
+  listPersonalGovernanceCredentials,
+  type GovernanceCredentialReader,
+} from './governanceCredential.js';
 import type { ConnectorConnectionRecord, ConnectorConnectionStore } from './connectionStore.js';
 
 const StsClient = (
@@ -62,20 +68,36 @@ export function createAliyunValidateCredentials(): AliyunValidateCredentials {
   };
 }
 
+function metadataValue(
+  credential: GovernanceCredential | undefined,
+  record: ConnectorConnectionRecord | undefined,
+  key: string,
+): string | undefined {
+  const governanceValue = credential?.scopeSummary[key];
+  if (typeof governanceValue === 'string' && governanceValue.length > 0) return governanceValue;
+  const legacyValue = record?.metadata?.[key];
+  return typeof legacyValue === 'string' && legacyValue.length > 0 ? legacyValue : undefined;
+}
+
 export function toAliyunConnectionView(
   record?: ConnectorConnectionRecord,
   runtimeEnabled = true,
+  credential?: GovernanceCredential,
 ): AliyunConnectionView {
   return {
     connectorId: ALIYUN_CONNECTOR_ID,
-    status: record?.status ?? 'disconnected',
+    status: credential ? 'connected' : (record?.status ?? 'disconnected'),
     runtimeEnabled,
-    accountId: record?.metadata?.accountId,
-    identityArn: record?.metadata?.identityArn,
-    identityType: record?.metadata?.identityType,
-    regionId: record?.metadata?.regionId,
-    connectedAt: record?.connectedAt,
-    updatedAt: record?.updatedAt,
+    ...(credential ? {
+      credentialId: credential.credentialId,
+      credentialVersion: credential.version,
+    } : {}),
+    accountId: metadataValue(credential, record, 'accountId'),
+    identityArn: metadataValue(credential, record, 'identityArn'),
+    identityType: metadataValue(credential, record, 'identityType'),
+    regionId: metadataValue(credential, record, 'regionId'),
+    connectedAt: credential?.createdAt ?? record?.connectedAt,
+    updatedAt: credential?.updatedAt ?? record?.updatedAt,
   };
 }
 
@@ -106,10 +128,21 @@ function parseAccessKeySecret(value: string): AliyunAccessKeySecret {
   };
 }
 
+function ownedRecord(
+  connectionStore: ConnectorConnectionStore,
+  context: { userId: string; username: string; tenantId: string },
+): ConnectorConnectionRecord | undefined {
+  const record = connectionStore.get(context.username, ALIYUN_CONNECTOR_ID);
+  return record?.userId === context.userId && record.tenantId === context.tenantId
+    ? record
+    : undefined;
+}
+
 export async function revokePendingAliyunCredentials(input: {
   connectionStore: ConnectorConnectionStore;
   vault: SecretVault;
   username?: string;
+  excludeRefs?: ReadonlySet<string>;
   onError?: (error: Error, ref: string) => void;
 }): Promise<number> {
   let revoked = 0;
@@ -120,12 +153,14 @@ export async function revokePendingAliyunCredentials(input: {
   for (const record of records) {
     for (const ref of record.pendingRevokeRefs ?? []) {
       try {
-        await input.vault.revokeSecret(ref, {
-          actor: 'connector_proxy',
-          userId: record.userId,
-          tenantId: record.tenantId,
-          scopes: ['secret:connector:revoke'],
-        });
+        if (!input.excludeRefs?.has(ref)) {
+          await input.vault.revokeSecret(ref, {
+            actor: 'connector_proxy',
+            userId: record.userId,
+            tenantId: record.tenantId,
+            scopes: ['secret:connector:revoke'],
+          });
+        }
         await input.connectionStore.markCredentialRevoked(record.username, ALIYUN_CONNECTOR_ID, ref);
         revoked++;
       } catch (error) {
@@ -142,19 +177,38 @@ export class AliyunConnectorService {
   constructor(private readonly deps: {
     connectionStore: ConnectorConnectionStore;
     vault: SecretVault;
+    governanceCredentialStore?: GovernanceCredentialReader;
     validateCredentials?: AliyunValidateCredentials;
     onError?: (error: Error) => void;
   }) {}
 
   getConnection(context: { userId: string; username: string; tenantId: string }): AliyunConnectionView {
-    const record = this.deps.connectionStore.get(context.username, ALIYUN_CONNECTOR_ID);
-    if (!record || record.userId !== context.userId || record.tenantId !== context.tenantId) {
-      return toAliyunConnectionView(undefined);
-    }
+    const record = ownedRecord(this.deps.connectionStore, context);
     return toAliyunConnectionView(
       record,
       this.deps.connectionStore.isRuntimeEnabled(context.username, ALIYUN_CONNECTOR_ID),
     );
+  }
+
+  async getConnectionWithGovernance(
+    context: { userId: string; username: string; tenantId: string },
+  ): Promise<AliyunConnectionView> {
+    const runtimeEnabled = this.deps.connectionStore.isRuntimeEnabled(context.username, ALIYUN_CONNECTOR_ID);
+    const record = ownedRecord(this.deps.connectionStore, context);
+    if (this.deps.governanceCredentialStore) {
+      const credentials = await listPersonalGovernanceCredentials(
+        this.deps.governanceCredentialStore,
+        context,
+        ALIYUN_CONNECTOR_ID,
+      );
+      const credential = credentials.find(isUsableGovernanceCredential);
+      if (credential) {
+        const projectedRecord = credential.source === 'legacy_projection' ? record : undefined;
+        return toAliyunConnectionView(projectedRecord, runtimeEnabled, credential);
+      }
+      if (credentials.length > 0) return toAliyunConnectionView(undefined, runtimeEnabled);
+    }
+    return toAliyunConnectionView(record, runtimeEnabled);
   }
 
   async connect(
@@ -241,20 +295,39 @@ export class AliyunConnectorService {
   }
 
   async resolveRuntimeEnv(context: { userId: string; username: string; tenantId: string }): Promise<Record<string, string>> {
-    const record = this.deps.connectionStore.get(context.username, ALIYUN_CONNECTOR_ID);
-    const credentialRef = record?.status === 'connected'
-      && this.deps.connectionStore.isRuntimeEnabled(context.username, ALIYUN_CONNECTOR_ID)
-      && record.userId === context.userId
-      && record.tenantId === context.tenantId
-      ? record.credentialRefs[ALIYUN_ACCESS_KEY_CREDENTIAL_KEY]
-      : undefined;
-    const regionId = record?.metadata?.regionId;
+    if (!this.deps.connectionStore.isRuntimeEnabled(context.username, ALIYUN_CONNECTOR_ID)) return {};
+
+    const legacyRecord = ownedRecord(this.deps.connectionStore, context);
+    let governanceCredentials: GovernanceCredential[] = [];
+    if (this.deps.governanceCredentialStore) {
+      try {
+        governanceCredentials = await listPersonalGovernanceCredentials(
+          this.deps.governanceCredentialStore,
+          context,
+          ALIYUN_CONNECTOR_ID,
+        );
+      } catch (error) {
+        this.deps.onError?.(error instanceof Error ? error : new Error(String(error)));
+        return {};
+      }
+    }
+    const governanceCredential = governanceCredentials.find(isUsableGovernanceCredential);
+    const record = governanceCredential || governanceCredentials.length > 0 ? undefined : legacyRecord;
+    if (!governanceCredential && (
+      governanceCredentials.length > 0
+      || !record
+      || record.status !== 'connected'
+    )) return {};
+
+    const credentialRef = governanceCredential?.secretRef
+      ?? record?.credentialRefs[ALIYUN_ACCESS_KEY_CREDENTIAL_KEY];
+    const regionId = metadataValue(governanceCredential, legacyRecord, 'regionId');
     if (!credentialRef || !regionId) return {};
 
     try {
       const rawSecret = await this.deps.vault.getSecret(credentialRef, {
         actor: 'connector_proxy',
-        userId: context.userId,
+        userId: governanceCredential?.ownerUserId ?? context.userId,
         tenantId: context.tenantId,
         scopes: ['secret:connector:read'],
       });

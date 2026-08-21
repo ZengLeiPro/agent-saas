@@ -2,6 +2,8 @@ export interface GithubConnection {
   connectorId: 'github';
   status: 'connected' | 'disconnected';
   runtimeEnabled: boolean;
+  credentialId?: string;
+  credentialVersion?: number;
   connectedAt?: string;
   updatedAt?: string;
 }
@@ -14,6 +16,8 @@ export interface XConnection {
   connectorId: 'x';
   status: 'connected' | 'disconnected';
   runtimeEnabled: boolean;
+  credentialId?: string;
+  credentialVersion?: number;
   connectedAt?: string;
   updatedAt?: string;
 }
@@ -110,6 +114,8 @@ export interface AliyunConnection {
   connectorId: 'aliyun';
   status: 'connected' | 'disconnected';
   runtimeEnabled: boolean;
+  credentialId?: string;
+  credentialVersion?: number;
   accountId?: string;
   identityArn?: string;
   identityType?: string;

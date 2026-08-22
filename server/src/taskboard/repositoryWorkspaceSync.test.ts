@@ -26,6 +26,7 @@ const input = {
 type Step = {
   cwd: string;
   args: readonly string[];
+  env?: Readonly<Record<string, string>>;
   result?: Partial<RepositoryWorkspaceGitResult>;
 };
 
@@ -45,7 +46,7 @@ class ScriptedHost implements RepositoryWorkspaceSyncHost {
   async runGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult> {
     this.commands.push(command);
     const step = this.steps.shift();
-    expect(command).toEqual(step && { cwd: step.cwd, args: step.args });
+    expect(command).toEqual(step && { cwd: step.cwd, args: step.args, ...(step.env ? { env: step.env } : {}) });
     if (!step) throw new Error('Unexpected Git command');
     return { exitCode: 0, stdout: '', stderr: '', ...step.result };
   }
@@ -80,6 +81,14 @@ function statusStep(path: string, stdout = ''): Step {
   return { cwd: path, args: ['status', '--porcelain=v1', '--untracked-files=all'], result: { stdout } };
 }
 
+function shallowStep(shallow = false): Step {
+  return {
+    cwd: REPOSITORY,
+    args: ['rev-parse', '--is-shallow-repository'],
+    result: { stdout: `${shallow}\n` },
+  };
+}
+
 function ancestorStep(ancestor: string, descendant: string, yes: boolean): Step {
   return {
     cwd: REPOSITORY,
@@ -105,6 +114,7 @@ describe('syncCandidateRevisionObjects', () => {
 
   it('fetches exact Provider refs and verifies the immutable candidate subject', async () => {
     const host = new ScriptedHost([
+      shallowStep(),
       { cwd: REPOSITORY, args: [
         'fetch', '--no-tags', '--', input.controlledRemoteUrl,
         '+refs/heads/main:refs/remotes/origin/main',
@@ -126,26 +136,55 @@ describe('syncCandidateRevisionObjects', () => {
     host.assertConsumed();
   });
 
+  it('unshallows the controlled mirror before exporting candidate connectivity', async () => {
+    const host = new ScriptedHost([
+      shallowStep(true),
+      { cwd: REPOSITORY, args: [
+        'fetch', '--no-tags', '--unshallow', '--', input.controlledRemoteUrl,
+        '+refs/heads/main:refs/remotes/origin/main',
+        `+refs/pull/108/head:${candidateRef}`,
+      ] },
+      { cwd: REPOSITORY, args: ['rev-parse', '--verify', candidateRef], result: { stdout: `${INTEGRATION_OID}\n` } },
+      { cwd: REPOSITORY, args: ['rev-parse', '--verify', `${MAIN_OID}^{commit}`], result: { stdout: `${MAIN_OID}\n` } },
+      { cwd: REPOSITORY, args: ['rev-parse', '--verify', `${INTEGRATION_OID}^{tree}`], result: { stdout: `${REMOTE_OID}\n` } },
+      ancestorStep(MAIN_OID, 'refs/remotes/origin/main', true),
+      ancestorStep(MAIN_OID, INTEGRATION_OID, true),
+    ]);
+
+    await expect(syncCandidateRevisionObjects(host, candidate)).resolves.toMatchObject({ headOid: INTEGRATION_OID });
+    host.assertConsumed();
+  });
+
   it('identifies a controlled fetch timeout instead of reporting an opaque Git exit', async () => {
-    const host = new ScriptedHost([{
+    const host = new ScriptedHost([
+      shallowStep(),
+      {
       cwd: REPOSITORY,
       args: [
         'fetch', '--no-tags', '--', input.controlledRemoteUrl,
         '+refs/heads/main:refs/remotes/origin/main',
         `+refs/pull/108/head:${candidateRef}`,
       ],
+      env: { GIT_ASKPASS: 'secret' },
       result: { exitCode: 1, stderr: 'Git command timed out after 120000ms' },
     }]);
 
-    await expect(syncCandidateRevisionObjects(host, candidate)).rejects.toMatchObject({
+    const error = await syncCandidateRevisionObjects(host, {
+      ...candidate,
+      fetchEnvironment: { GIT_ASKPASS: 'secret' },
+    }).catch((cause) => cause);
+    expect(error).toMatchObject({
       code: 'GIT_COMMAND_FAILED',
       message: 'Git fetch failed: Git command timed out after 120000ms',
+      command: { cwd: REPOSITORY, args: host.commands[1]!.args },
     });
+    expect(error.command).not.toHaveProperty('env');
     host.assertConsumed();
   });
 
   it('fails closed when the frozen base is no longer reachable from authoritative main', async () => {
     const host = new ScriptedHost([
+      shallowStep(),
       { cwd: REPOSITORY, args: [
         'fetch', '--no-tags', '--', input.controlledRemoteUrl,
         '+refs/heads/main:refs/remotes/origin/main',
@@ -163,6 +202,7 @@ describe('syncCandidateRevisionObjects', () => {
 
   it('fails closed when the Integration PR head drifted', async () => {
     const host = new ScriptedHost([
+      shallowStep(),
       { cwd: REPOSITORY, args: [
         'fetch', '--no-tags', '--', input.controlledRemoteUrl,
         '+refs/heads/main:refs/remotes/origin/main',

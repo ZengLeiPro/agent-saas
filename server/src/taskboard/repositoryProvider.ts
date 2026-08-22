@@ -63,6 +63,47 @@ export interface RepositoryPullRequestSnapshot {
   subjectDigest: string;
 }
 
+export interface RepositoryWorkflowStep {
+  number: number;
+  name: string;
+  status: string;
+  conclusion?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface RepositoryWorkflowJob {
+  id: string;
+  name: string;
+  status: string;
+  conclusion?: string;
+  startedAt?: string;
+  completedAt?: string;
+  htmlUrl?: string;
+  steps: RepositoryWorkflowStep[];
+  /** Opaque reference for a future server-side log read; it never contains credentials. */
+  failureLogRef?: string;
+}
+
+export interface RepositoryWorkflowRun {
+  id: string;
+  name: string;
+  event: string;
+  status: string;
+  conclusion?: string;
+  headOid: string;
+  startedAt?: string;
+  completedAt?: string;
+  htmlUrl?: string;
+  jobs: RepositoryWorkflowJob[];
+}
+
+export interface RepositoryPullRequestInspection extends RepositoryPullRequestSnapshot {
+  repositoryId: string;
+  providerQueriedAt: string;
+  workflowRuns: RepositoryWorkflowRun[];
+}
+
 export interface RepositoryReferenceSnapshot {
   ref: string;
   oid: string;
@@ -118,6 +159,8 @@ export interface RepositoryMergeReceipt {
 
 export interface RepositoryProvider {
   getPullRequest(repository: TaskBoardRepositoryConfig, providerPullRequestId: string, credentialOwnerId: string): Promise<RepositoryPullRequestSnapshot>;
+  inspectPullRequest?(repository: TaskBoardRepositoryConfig, providerPullRequestId: string, credentialOwnerId: string): Promise<RepositoryPullRequestInspection>;
+  getWorkflowJobLog?(repository: TaskBoardRepositoryConfig, providerJobId: string, credentialOwnerId: string): Promise<string>;
   getCommit?(repository: TaskBoardRepositoryConfig, oid: string, credentialOwnerId: string): Promise<RepositoryCommitSnapshot>;
   getReference?(repository: TaskBoardRepositoryConfig, ref: string, credentialOwnerId: string): Promise<RepositoryReferenceSnapshot>;
   getBaseReference?(repository: TaskBoardRepositoryConfig, credentialOwnerId: string): Promise<RepositoryReferenceSnapshot>;
@@ -222,6 +265,88 @@ export class GithubRepositoryProvider implements RepositoryProvider {
       requiredChecks, requiredChecksKnown,
       subjectDigest: repositorySubjectDigest({ repositoryId: repository.repositoryId, providerPullRequestId: String(number), number, headOid, baseRef, baseOid }),
     };
+  }
+
+  async inspectPullRequest(
+    repository: TaskBoardRepositoryConfig,
+    providerPullRequestId: string,
+    credentialOwnerId: string,
+  ): Promise<RepositoryPullRequestInspection> {
+    const pullRequest = await this.getPullRequest(repository, providerPullRequestId, credentialOwnerId);
+    const runsValue = asRecord(await this.request(
+      repository,
+      credentialOwnerId,
+      this.repoPath(repository, `/actions/runs?head_sha=${encodeURIComponent(pullRequest.headOid)}&per_page=100`),
+    ));
+    const runs = Array.isArray(runsValue.workflow_runs) ? runsValue.workflow_runs.map(asRecord) : [];
+    const workflowRuns = await Promise.all(runs
+      .filter((run) => String(run.head_sha ?? '') === pullRequest.headOid)
+      .map(async (run): Promise<RepositoryWorkflowRun> => {
+        const id = requiredString(run, 'id', 'GitHub workflow run id');
+        const jobsValue = asRecord(await this.request(
+          repository,
+          credentialOwnerId,
+          this.repoPath(repository, `/actions/runs/${encodeURIComponent(id)}/jobs?per_page=100`),
+        ));
+        const jobs = Array.isArray(jobsValue.jobs) ? jobsValue.jobs.map(asRecord) : [];
+        return {
+          id,
+          name: String(run.name ?? run.display_title ?? `workflow-${id}`),
+          event: String(run.event ?? ''),
+          status: String(run.status ?? 'unknown'),
+          ...(run.conclusion ? { conclusion: String(run.conclusion) } : {}),
+          headOid: String(run.head_sha ?? ''),
+          ...(run.run_started_at ? { startedAt: String(run.run_started_at) } : {}),
+          ...(run.updated_at ? { completedAt: String(run.updated_at) } : {}),
+          ...(run.html_url ? { htmlUrl: String(run.html_url) } : {}),
+          jobs: jobs.map((job): RepositoryWorkflowJob => {
+            const jobId = requiredString(job, 'id', 'GitHub workflow job id');
+            const conclusion = job.conclusion ? String(job.conclusion) : undefined;
+            return {
+              id: jobId,
+              name: String(job.name ?? `job-${jobId}`),
+              status: String(job.status ?? 'unknown'),
+              ...(conclusion ? { conclusion } : {}),
+              ...(job.started_at ? { startedAt: String(job.started_at) } : {}),
+              ...(job.completed_at ? { completedAt: String(job.completed_at) } : {}),
+              ...(job.html_url ? { htmlUrl: String(job.html_url) } : {}),
+              steps: Array.isArray(job.steps) ? job.steps.map((rawStep) => {
+                const step = asRecord(rawStep);
+                return {
+                  number: Number(step.number ?? 0),
+                  name: String(step.name ?? 'step'),
+                  status: String(step.status ?? 'unknown'),
+                  ...(step.conclusion ? { conclusion: String(step.conclusion) } : {}),
+                  ...(step.started_at ? { startedAt: String(step.started_at) } : {}),
+                  ...(step.completed_at ? { completedAt: String(step.completed_at) } : {}),
+                };
+              }) : [],
+              ...(['failure', 'timed_out', 'cancelled', 'action_required'].includes(conclusion ?? '')
+                ? { failureLogRef: `github-job:${jobId}` }
+                : {}),
+            };
+          }),
+        };
+      }));
+    return {
+      ...pullRequest,
+      repositoryId: repository.repositoryId,
+      providerQueriedAt: new Date().toISOString(),
+      workflowRuns,
+    };
+  }
+
+  async getWorkflowJobLog(
+    repository: TaskBoardRepositoryConfig,
+    providerJobId: string,
+    credentialOwnerId: string,
+  ): Promise<string> {
+    if (!/^\d+$/.test(providerJobId)) throw new RepositoryProviderPolicyError('Invalid GitHub workflow job id');
+    return this.requestText(
+      repository,
+      credentialOwnerId,
+      this.repoPath(repository, `/actions/jobs/${encodeURIComponent(providerJobId)}/logs`),
+    );
   }
 
   async getCommit(repository: TaskBoardRepositoryConfig, oid: string, credentialOwnerId: string): Promise<RepositoryCommitSnapshot> {
@@ -378,6 +503,26 @@ export class GithubRepositoryProvider implements RepositoryProvider {
   }
 
   private repoPath(repository: TaskBoardRepositoryConfig, suffix: string): string { return `/repos/${repository.owner}/${repository.name}${suffix}`; }
+
+  private async requestText(
+    repository: TaskBoardRepositoryConfig,
+    credentialOwnerId: string,
+    path: string,
+  ): Promise<string> {
+    const token = await this.options.resolveToken(repository, credentialOwnerId);
+    if (!token) throw new Error('GitHub repository credential is unavailable');
+    const response = await this.fetchImpl(`${this.apiBaseUrl}${path}`, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'agent-saas-taskboard-provider',
+      },
+    });
+    const text = await response.text();
+    if (!response.ok) throw new GithubApiError(response.status, text || `GitHub API ${response.status}`);
+    return text.slice(0, 200_000);
+  }
 
   private async request(repository: TaskBoardRepositoryConfig, credentialOwnerId: string, path: string, init: RequestInit = {}): Promise<unknown> {
     const token = await this.options.resolveToken(repository, credentialOwnerId);

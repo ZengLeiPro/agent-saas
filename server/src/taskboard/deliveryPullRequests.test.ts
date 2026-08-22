@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { recordReviewedExecutionSubject } from './deliveryPullRequests.js';
+import {
+  assertPullRequestGate,
+  pullRequestGateStatus,
+  recordReviewedExecutionSubject,
+} from './deliveryPullRequests.js';
 import type { IntegrationOperationHost } from './integrationOperations.js';
 import type { RepositoryPullRequestSnapshot } from './repositoryProvider.js';
 import type { TaskboardIdentity } from './types.js';
@@ -92,6 +96,53 @@ function hostWithPullRequest(pullRequest: RepositoryPullRequestSnapshot) {
   } as unknown as IntegrationOperationHost;
   return { host, transactionClient };
 }
+
+describe('pull request CI gate', () => {
+  const current: RepositoryPullRequestSnapshot = {
+    ...mergedPullRequest,
+    state: 'open',
+    mergeCommitOid: undefined,
+    requiredChecksKnown: true,
+    requiredChecks: [{ name: 'Build & Check', status: 'success' }],
+  };
+
+  const statusCases: Array<[RepositoryPullRequestSnapshot, string]> = [
+    [{ ...current, requiredChecks: [{ name: 'Build & Check', status: 'pending' }] }, 'pending'],
+    [{ ...current, requiredChecks: [{ name: 'Build & Check', status: 'failure' }] }, 'failure'],
+    [{ ...current, requiredChecksKnown: false }, 'unavailable'],
+    [current, 'success'],
+  ];
+
+  it.each(statusCases)('classifies Provider checks fail-closed as %s', (snapshot, expected) => {
+    expect(pullRequestGateStatus(snapshot)).toBe(expected);
+  });
+
+  it('accepts only the exact registered head/base/subject', () => {
+    expect(() => assertPullRequestGate(current, {
+      providerPullRequestId: current.providerPullRequestId,
+      headOid: current.headOid,
+      baseOid: current.baseOid,
+      subjectDigest: current.subjectDigest,
+    })).not.toThrow();
+    expect(() => assertPullRequestGate({ ...current, headOid: 'new-head' }, {
+      providerPullRequestId: current.providerPullRequestId,
+      headOid: current.headOid,
+    })).toThrowError(expect.objectContaining({ code: 'TASKBOARD_SUBJECT_STALE' }));
+  });
+
+  const rejectionCases: Array<[RepositoryPullRequestSnapshot, string]> = [
+    [{ ...current, requiredChecks: [{ name: 'Build & Check', status: 'pending' }] }, 'TASKBOARD_CI_PENDING'],
+    [{ ...current, requiredChecks: [{ name: 'Build & Check', status: 'failure' }] }, 'TASKBOARD_CI_FAILED'],
+    [{ ...current, requiredChecksKnown: false }, 'TASKBOARD_CI_UNAVAILABLE'],
+  ];
+
+  it.each(rejectionCases)('rejects non-green checks with %s', (snapshot, code) => {
+    expect(() => assertPullRequestGate(snapshot, {
+      providerPullRequestId: current.providerPullRequestId,
+      headOid: current.headOid,
+    })).toThrowError(expect.objectContaining({ code }));
+  });
+});
 
 describe('recordReviewedExecutionSubject external merge reconciliation', () => {
   it('converges an externally merged pull request and fences the active review', async () => {

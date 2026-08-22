@@ -2,35 +2,16 @@ import { randomUUID } from 'node:crypto';
 import pg, { type PoolClient } from 'pg';
 
 import {
-  TASKBOARD_DEFAULT_PROMPT,
-  type TaskBoard,
-  type TaskBoardComment,
-  type TaskBoardCommentCreateInput,
-  type TaskBoardCommentPatchInput,
-  type TaskBoardCreateInput,
-  type TaskBoardExecution,
-  type TaskBoardExecutionContextInput,
-  type TaskBoardExecutionContextResponse,
-  type TaskBoardExecutionResolutionInput,
-  type TaskBoardExecutionStartResult,
-  type TaskBoardIntegrationBatchCreateInput,
-  type TaskBoardIntegrationSource,
-  type TaskBoardMember,
-  type TaskBoardMemberPatchInput,
-  type TaskBoardPatchInput, type TaskBoardRepositoryConfig,
-  type TaskBoardTask,
-  type TaskBoardTaskCreateInput,
-  type TaskBoardTaskMoveInput,
-  type TaskBoardTaskPatchInput,
+  TASKBOARD_DEFAULT_PROMPT, type TaskBoard, type TaskBoardComment, type TaskBoardCommentCreateInput,
+  type TaskBoardCommentPatchInput, type TaskBoardCreateInput, type TaskBoardExecution,
+  type TaskBoardExecutionContextInput, type TaskBoardExecutionContextResponse, type TaskBoardExecutionResolutionInput,
+  type TaskBoardExecutionStartResult, type TaskBoardIntegrationBatchCreateInput, type TaskBoardIntegrationSource,
+  type TaskBoardMember, type TaskBoardMemberPatchInput, type TaskBoardPatchInput, type TaskBoardRepositoryConfig,
+  type TaskBoardTask, type TaskBoardTaskCreateInput, type TaskBoardTaskMoveInput, type TaskBoardTaskPatchInput,
 } from '../../../shared/src/types/taskboard.js';
 import {
-  completeContinuation,
-  listTaskExecutions,
-  loadContinuationContext,
-  loadExecutionContext,
-  loadExecutionModelContext,
-  markContinuationRunning,
-  nextTaskColumnSortOrder,
+  completeContinuation, listTaskExecutions, loadContinuationContext, loadExecutionContext,
+  loadExecutionModelContext, markContinuationRunning, nextTaskColumnSortOrder,
 } from './continuationStore.js';
 import {
   claimContinuationDispatch,
@@ -67,13 +48,13 @@ import {
 } from './boardFields.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
 import { claimIntegrationDispatchCandidates } from './integrationTriggers.js';
-import { attachExecutionPullRequest, recordReviewedExecutionSubject } from './deliveryPullRequests.js';
 import {
-  inspectIntegrationSource,
-  linkIntegrationRemediation,
-  mergeIntegrationSource,
-  reconcileUnknownMergeOperations,
-  type IntegrationSourceInspection,
+  attachExecutionPullRequest, inspectExecutionPullRequest, readExecutionPullRequestJobLog,
+  recordReviewedExecutionSubject, type ExecutionPullRequestInspection,
+} from './deliveryPullRequests.js';
+import {
+  inspectIntegrationSource, linkIntegrationRemediation, mergeIntegrationSource, readIntegrationSourceJobLog,
+  reconcileUnknownMergeOperations, type IntegrationSourceInspection,
 } from './integrationOperations.js';
 import {
   appendBoardChange,
@@ -297,6 +278,19 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return attachExecutionPullRequest(this, identity, runId, providerPullRequestId);
   }
 
+  inspectExecutionPullRequestV2(identity: TaskboardIdentity, runId: string): Promise<ExecutionPullRequestInspection> {
+    return inspectExecutionPullRequest(this, identity, runId);
+  }
+
+  readExecutionPullRequestJobLogV2(
+    identity: TaskboardIdentity,
+    runId: string,
+    inspectionId: string,
+    providerJobId: string,
+  ): Promise<{ inspectionId: string; providerJobId: string; log: string }> {
+    return readExecutionPullRequestJobLog(this, identity, runId, inspectionId, providerJobId);
+  }
+
   recordReviewedExecutionSubjectV2(
     identity: TaskboardIdentity,
     runId: string,
@@ -312,6 +306,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return inspectIntegrationSource(this, identity, runId, sourceId);
   }
 
+  readIntegrationSourceJobLogV2(identity: TaskboardIdentity, runId: string, sourceId: string, inspectionId: string, providerJobId: string) {
+    return readIntegrationSourceJobLog(this, identity, runId, sourceId, inspectionId, providerJobId);
+  }
   mergeIntegrationSourceV2(identity: TaskboardIdentity, runId: string, sourceId: string) {
     return mergeIntegrationSource(this, identity, runId, sourceId);
   }

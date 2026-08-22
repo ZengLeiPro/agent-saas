@@ -72,6 +72,7 @@ function buildContract(
         readContext: true,
         comment: true,
         mergeReviewedSource: true,
+        inspectPullRequestCi: true,
         createRemediation: true,
         modifyUnreviewedMain: false,
         deploy: false,
@@ -113,10 +114,11 @@ function buildContract(
         comment: true,
         modifyTaskBranch: false,
         approveReviewedSubject: true,
+        inspectPullRequestCi: true,
         merge: false,
       },
       allowedOutcomes: ['approved', 'changes_requested', 'stale_subject', 'blocked'],
-      requiredEvidence: ['reviewed subject digest', 'test or inspection evidence'],
+      requiredEvidence: ['reviewed subject digest', 'current-head CI inspection receipt', 'test or inspection evidence'],
       blockedReasons: ['subject_stale', 'evidence_missing', 'external_dependency'],
     };
   }
@@ -132,10 +134,12 @@ function buildContract(
       comment: true,
       modifyTaskBranch: true,
       createFollowUpTask: true,
+      attachPullRequest: true,
+      inspectPullRequestCi: true,
       merge: false,
     },
     allowedOutcomes: ['ready_for_review', 'blocked'],
-    requiredEvidence: ['implementation summary', 'verification evidence'],
+    requiredEvidence: ['implementation summary', 'verification evidence', 'current-head CI inspection receipt'],
     blockedReasons: ['business_decision_required', 'external_dependency', 'workspace_unavailable'],
   };
 }
@@ -158,6 +162,7 @@ function buildIntegrationV3Contract(
         comment: true,
         modifyTaskBranch: false,
         approveReviewedSubject: true,
+        inspectPullRequestCi: true,
         merge: false,
       },
       allowedOutcomes: ['approved', 'changes_requested', 'stale_subject', 'blocked'],

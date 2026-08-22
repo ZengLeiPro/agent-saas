@@ -287,6 +287,49 @@ describe('GithubRepositoryProvider', () => {
     expect(fetchImpl.mock.calls.some((call) => call[1]?.method === 'POST')).toBe(false);
   });
 
+  it('returns workflow, job, step and controlled failure-log references for the exact PR head', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        number: 42, state: 'open', merged: false, draft: false, mergeable: true,
+        head: { ref: 'feat/x', sha: 'head-oid', repo: { full_name: 'acme/app' } },
+        base: { ref: 'main', sha: 'base-oid', repo: { full_name: 'acme/app' } },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        check_runs: [{ name: 'Build & Check', status: 'completed', conclusion: 'failure' }],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ statuses: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ contexts: ['Build & Check'] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ workflow_runs: [{
+        id: 501, name: 'CI', event: 'pull_request', status: 'completed', conclusion: 'failure',
+        head_sha: 'head-oid', run_started_at: '2026-08-22T08:00:00Z', updated_at: '2026-08-22T08:05:00Z',
+      }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ jobs: [{
+        id: 701, name: 'Build & Check', status: 'completed', conclusion: 'failure',
+        steps: [{ number: 4, name: 'Run tests', status: 'completed', conclusion: 'failure' }],
+      }] }), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const inspection = await provider.inspectPullRequest(repository, '42', 'owner-user');
+
+    expect(inspection).toMatchObject({
+      repositoryId: repository.repositoryId,
+      headOid: 'head-oid',
+      workflowRuns: [{
+        id: '501', headOid: 'head-oid',
+        jobs: [{ id: '701', failureLogRef: 'github-job:701', steps: [{ name: 'Run tests', conclusion: 'failure' }] }],
+      }],
+    });
+  });
+
+  it('reads a bounded workflow job log through the server-side credential', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('failure details', { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    await expect(provider.getWorkflowJobLog(repository, '701', 'owner-user')).resolves.toBe('failure details');
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://api.github.com/repos/acme/app/actions/jobs/701/logs');
+    await expect(provider.getWorkflowJobLog(repository, '../701', 'owner-user')).rejects.toThrow('Invalid GitHub workflow job id');
+  });
+
   it('fails closed when multiple Integration PRs exist for one branch', async () => {
     const pulls = [81, 82].map((number) => ({ number, head: { ref: 'integration/task-1', sha: 'candidate-oid' }, base: { ref: 'main' } }));
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify(pulls), { status: 200 }));

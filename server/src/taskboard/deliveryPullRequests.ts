@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
 import type { TaskBoardTask } from '../../../shared/src/types/taskboard.js';
@@ -7,6 +8,7 @@ import {
 } from './integrationOperations.js';
 import type {
   RepositoryProvider,
+  RepositoryPullRequestInspection,
   RepositoryPullRequestSnapshot,
 } from './repositoryProvider.js';
 import { rowToTask, visibleCommentPredicate } from './storeHelpers.js';
@@ -18,6 +20,191 @@ import {
 } from './types.js';
 
 interface DeliveryPullRequestHost extends IntegrationOperationHost {}
+
+export interface ExecutionPullRequestInspectionReceipt {
+  inspectionId: string;
+  digest: string;
+  executionId: string;
+  taskId: string;
+  purpose: 'work' | 'review';
+  repositoryId: string;
+  providerPullRequestId: string;
+  headOid: string;
+  providerQueriedAt: string;
+}
+
+export interface ExecutionPullRequestInspection {
+  receipt: ExecutionPullRequestInspectionReceipt;
+  snapshot: RepositoryPullRequestInspection;
+  gateStatus: 'success' | 'pending' | 'failure' | 'unavailable';
+}
+
+export async function inspectExecutionPullRequest(
+  host: DeliveryPullRequestHost,
+  identity: TaskboardIdentity,
+  runId: string,
+): Promise<ExecutionPullRequestInspection> {
+  const context = await loadContext(host, identity, runId, ['work', 'review']);
+  if (!context.providerPullRequestId) {
+    throw new TaskboardValidationError('Delivery task has no pull request', 'TASKBOARD_PULL_REQUEST_REQUIRED');
+  }
+  const provider = requireProvider(host);
+  const snapshot = provider.inspectPullRequest
+    ? await provider.inspectPullRequest(context.repository, context.providerPullRequestId, context.boardOwnerUserId)
+    : {
+        ...await provider.getPullRequest(context.repository, context.providerPullRequestId, context.boardOwnerUserId),
+        repositoryId: context.repository.repositoryId,
+        providerQueriedAt: new Date().toISOString(),
+        workflowRuns: [],
+      };
+  assertPullRequestIdentity(context, snapshot);
+  const gateStatus = pullRequestGateStatus(snapshot);
+  const inspectionId = randomUUID();
+  const receipt: ExecutionPullRequestInspectionReceipt = {
+    inspectionId,
+    digest: inspectionDigest(context.executionId, inspectionId, snapshot),
+    executionId: context.executionId,
+    taskId: context.taskId,
+    purpose: context.purpose,
+    repositoryId: context.repository.repositoryId,
+    providerPullRequestId: snapshot.providerPullRequestId,
+    headOid: snapshot.headOid,
+    providerQueriedAt: snapshot.providerQueriedAt,
+  };
+  const client = await host.pool.connect();
+  try {
+    await client.query('BEGIN');
+    await lockExecution(client, host, runId, context.taskId);
+    const current = await client.query(
+      `SELECT provider_pull_request_id,head_oid FROM ${host.tasksTable} WHERE id=$1 FOR UPDATE`,
+      [context.taskId],
+    );
+    if (String(current.rows[0]?.provider_pull_request_id ?? '') !== snapshot.providerPullRequestId
+      || (current.rows[0]?.head_oid && String(current.rows[0].head_oid) !== snapshot.headOid)) {
+      throw new TaskboardValidationError('Pull request head changed during inspection', 'TASKBOARD_SUBJECT_STALE');
+    }
+    await client.query(
+      `UPDATE ${host.tasksTable}
+          SET provider_ci_inspection_id=$2,provider_ci_execution_id=$3,
+              provider_ci_purpose=$4,provider_ci_head_oid=$5,provider_ci_status=$6,
+              provider_ci_inspected_at=$7,version=version+1,updated_at=now()
+        WHERE id=$1`,
+      [context.taskId, inspectionId, context.executionId, context.purpose,
+        snapshot.headOid, gateStatus, snapshot.providerQueriedAt],
+    );
+    await client.query(
+      `INSERT INTO ${host.changesTable}
+         (task_id, change_type, actor_type, actor_id, execution_id, payload)
+       VALUES ($1,'pull_request.inspected','agent',$2,$3,$4::jsonb)`,
+      [context.taskId, runId, context.executionId, JSON.stringify({ receipt, gateStatus, snapshot })],
+    );
+    await client.query('COMMIT');
+    return { receipt, snapshot, gateStatus };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function readExecutionPullRequestJobLog(
+  host: DeliveryPullRequestHost,
+  identity: TaskboardIdentity,
+  runId: string,
+  inspectionId: string,
+  providerJobId: string,
+): Promise<{ inspectionId: string; providerJobId: string; log: string }> {
+  const context = await loadContext(host, identity, runId, ['work', 'review']);
+  const readClient = await host.pool.connect();
+  let payload: Record<string, unknown> | undefined;
+  try {
+    const result = await readClient.query(
+      `SELECT payload FROM ${host.changesTable}
+        WHERE task_id=$1 AND execution_id=$2 AND change_type='pull_request.inspected'
+          AND payload->'receipt'->>'inspectionId'=$3
+        ORDER BY seq DESC LIMIT 1`,
+      [context.taskId, context.executionId, inspectionId],
+    );
+    payload = jsonObject(result.rows[0]?.payload);
+  } finally {
+    readClient.release();
+  }
+  const snapshot = jsonObject(payload?.snapshot);
+  const runs = Array.isArray(snapshot?.workflowRuns) ? snapshot.workflowRuns : [];
+  const job = runs.flatMap((run) => {
+    const jobs = jsonObject(run)?.jobs;
+    return Array.isArray(jobs) ? jobs : [];
+  }).map(jsonObject).find((candidate) => candidate?.id === providerJobId);
+  if (!job || job.failureLogRef !== `github-job:${providerJobId}`) {
+    throw new TaskboardValidationError('Workflow job is not part of this inspection receipt', 'TASKBOARD_CI_LOG_SCOPE_INVALID');
+  }
+  const provider = requireProvider(host);
+  if (!provider.getWorkflowJobLog) {
+    throw new TaskboardValidationError('Provider job log reader is unavailable', 'TASKBOARD_CI_UNAVAILABLE');
+  }
+  const log = await provider.getWorkflowJobLog(context.repository, providerJobId, context.boardOwnerUserId);
+  const client = await host.pool.connect();
+  try {
+    await client.query('BEGIN');
+    await lockExecution(client, host, runId, context.taskId);
+    await client.query(
+      `INSERT INTO ${host.changesTable}
+         (task_id, change_type, actor_type, actor_id, execution_id, payload)
+       VALUES ($1,'pull_request.failure_log_read','agent',$2,$3,$4::jsonb)`,
+      [context.taskId, runId, context.executionId, JSON.stringify({ inspectionId, providerJobId })],
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+  return { inspectionId, providerJobId, log };
+}
+
+export function pullRequestGateStatus(
+  snapshot: RepositoryPullRequestSnapshot,
+): ExecutionPullRequestInspection['gateStatus'] {
+  if (snapshot.state !== 'open' || snapshot.draft) return 'failure';
+  if (snapshot.requiredChecksKnown !== true) return 'unavailable';
+  if (snapshot.requiredChecks.some((check) => check.status === 'failure')) return 'failure';
+  if (snapshot.requiredChecks.some((check) => check.status !== 'success')) return 'pending';
+  return 'success';
+}
+
+export function assertPullRequestGate(
+  snapshot: RepositoryPullRequestSnapshot,
+  expected: { providerPullRequestId: string; headOid: string; baseOid?: string; subjectDigest?: string },
+): void {
+  if (snapshot.providerPullRequestId !== expected.providerPullRequestId
+    || snapshot.headOid !== expected.headOid
+    || (expected.baseOid && snapshot.baseOid !== expected.baseOid)
+    || (expected.subjectDigest && snapshot.subjectDigest !== expected.subjectDigest)) {
+    throw new TaskboardValidationError('Pull request subject changed after inspection', 'TASKBOARD_SUBJECT_STALE');
+  }
+  if (snapshot.state !== 'open' || snapshot.draft) {
+    throw new TaskboardValidationError('Pull request is closed or draft', 'TASKBOARD_PR_NOT_OPEN');
+  }
+  if (snapshot.requiredChecksKnown !== true) {
+    throw new TaskboardValidationError('Provider could not authoritatively determine required checks', 'TASKBOARD_CI_UNAVAILABLE');
+  }
+  const failed = snapshot.requiredChecks.filter((check) => check.status === 'failure');
+  if (failed.length) {
+    throw new TaskboardValidationError(
+      `Required checks failed: ${failed.map((check) => check.name).join(', ')}`,
+      'TASKBOARD_CI_FAILED',
+    );
+  }
+  const pending = snapshot.requiredChecks.filter((check) => check.status !== 'success');
+  if (pending.length) {
+    throw new TaskboardValidationError(
+      `Required checks are pending: ${pending.map((check) => check.name).join(', ')}`,
+      'TASKBOARD_CI_PENDING',
+    );
+  }
+}
 
 export async function attachExecutionPullRequest(
   host: DeliveryPullRequestHost,
@@ -46,6 +233,9 @@ export async function attachExecutionPullRequest(
       `UPDATE ${host.tasksTable}
           SET provider_pull_request_id=$2, pull_request_number=$3,
               head_oid=$4, base_oid=$5, reviewed_subject_digest=NULL,
+              provider_ci_inspection_id=NULL,provider_ci_execution_id=NULL,
+              provider_ci_purpose=NULL,provider_ci_head_oid=NULL,
+              provider_ci_status=NULL,provider_ci_inspected_at=NULL,
               version=version+1, updated_at=now()
         WHERE id=$1
         RETURNING *,
@@ -263,6 +453,7 @@ async function loadContext(
   taskId: string;
   executionId: string;
   runId: string;
+  purpose: 'work' | 'review';
   isRemediation: boolean;
   providerPullRequestId?: string;
   sourceProviderPullRequestId?: string;
@@ -314,6 +505,7 @@ async function loadContext(
       taskId: String(row.task_id),
       executionId: String(row.execution_id),
       runId,
+      purpose: String(row.purpose) as 'work' | 'review',
       isRemediation: String(row.kind) === 'remediation',
       ...(row.provider_pull_request_id ? { providerPullRequestId: String(row.provider_pull_request_id) } : {}),
       ...(row.source_provider_pull_request_id
@@ -352,6 +544,34 @@ async function lockExecution(
     [runId, taskId],
   );
   if (!result.rows[0]) throw new TaskboardValidationError('Taskboard execution changed');
+}
+
+function assertPullRequestIdentity(
+  context: Awaited<ReturnType<typeof loadContext>>,
+  snapshot: RepositoryPullRequestSnapshot,
+): void {
+  if (snapshot.providerPullRequestId !== context.providerPullRequestId
+    || snapshot.baseRef !== context.repository.baseBranch) {
+    throw new TaskboardValidationError('Provider returned a pull request outside the registered subject', 'TASKBOARD_SUBJECT_STALE');
+  }
+  assertRemediationPullRequest(context, snapshot.providerPullRequestId);
+  assertRemediationBranch(context, snapshot.headRef);
+}
+
+function inspectionDigest(
+  executionId: string,
+  inspectionId: string,
+  snapshot: RepositoryPullRequestInspection,
+): string {
+  return createHash('sha256').update(JSON.stringify({
+    executionId,
+    inspectionId,
+    repositoryId: snapshot.repositoryId,
+    providerPullRequestId: snapshot.providerPullRequestId,
+    headOid: snapshot.headOid,
+    subjectDigest: snapshot.subjectDigest,
+    providerQueriedAt: snapshot.providerQueriedAt,
+  })).digest('hex');
 }
 
 function assertRemediationPullRequest(

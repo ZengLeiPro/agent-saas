@@ -30,13 +30,31 @@ const contextRow = {
 const pull: RepositoryPullRequestSnapshot = {
   providerPullRequestId: '101', number: 101, state: 'open', draft: false,
   headRef: 'feature', headOid: 'head-1', baseRef: 'main', baseOid: 'base-1',
-  mergeable: true, requiredChecks: [{ name: 'ci', status: 'success' }], subjectDigest: 'digest-reviewed',
+  mergeable: true, requiredChecks: [{ name: 'ci', status: 'success' }], requiredChecksKnown: true,
+  subjectDigest: 'digest-reviewed',
 };
 const identity = { tenantId: 'tenant-1', ownerUserId: 'owner-1', username: 'owner' };
 
 function host(client: { query: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> }, provider?: RepositoryProvider) {
+  const guardedClient = {
+    ...client,
+    query: vi.fn(async (sql: string, values?: unknown[]) => {
+      if (sql.includes("change_type='pull_request.inspected'")) {
+        return { rows: [{ payload: {
+          receipt: {
+            executionId: 'execution-1', taskId: 'integration-1', sourceId: 'source-1',
+            providerPullRequestId: '101', headOid: 'head-1',
+          },
+          snapshot: pull,
+        } }] };
+      }
+      return (client.query as unknown as (
+        text: string, parameters?: unknown[],
+      ) => Promise<{ rows: Record<string, unknown>[] }>)(sql, values);
+    }),
+  };
   return {
-    pool: { connect: vi.fn(async () => client) }, boardsTable: 'boards', tasksTable: 'tasks',
+    pool: { connect: vi.fn(async () => guardedClient) }, boardsTable: 'boards', tasksTable: 'tasks',
     commentsTable: 'comments', executionsTable: 'executions', changesTable: 'changes',
     integrationLanesTable: 'lanes', integrationSourcesTable: 'sources', mergeAuthorizationsTable: 'auths',
     mergeOperationsTable: 'operations', blockEpisodesTable: 'blocks', remediationAttemptsTable: 'attempts',

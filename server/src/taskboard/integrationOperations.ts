@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
 import type {
@@ -7,6 +7,7 @@ import type {
 } from '../../../shared/src/types/taskboard.js';
 import type {
   RepositoryProvider,
+  RepositoryPullRequestInspection,
   RepositoryPullRequestSnapshot,
 } from './repositoryProvider.js';
 import {
@@ -42,7 +43,17 @@ export interface IntegrationOperationHost {
 
 export interface IntegrationSourceInspection {
   source: TaskBoardIntegrationSource;
-  pullRequest: RepositoryPullRequestSnapshot;
+  pullRequest: RepositoryPullRequestInspection;
+  inspectionReceipt: {
+    inspectionId: string;
+    executionId: string;
+    taskId: string;
+    sourceId: string;
+    providerPullRequestId: string;
+    headOid: string;
+    providerQueriedAt: string;
+    digest: string;
+  };
 }
 
 export async function inspectIntegrationSource(
@@ -53,16 +64,29 @@ export async function inspectIntegrationSource(
 ): Promise<IntegrationSourceInspection> {
   const loaded = await loadOperationContext(host, identity, runId, sourceId);
   const provider = requireProvider(host);
-  const pullRequest = await provider.getPullRequest(
-    loaded.repository,
-    loaded.source.providerPullRequestId,
-    loaded.boardOwnerUserId,
-  );
+  const pullRequest = provider.inspectPullRequest
+    ? await provider.inspectPullRequest(
+        loaded.repository,
+        loaded.source.providerPullRequestId,
+        loaded.boardOwnerUserId,
+      )
+    : {
+        ...await provider.getPullRequest(
+          loaded.repository,
+          loaded.source.providerPullRequestId,
+          loaded.boardOwnerUserId,
+        ),
+        repositoryId: loaded.repository.repositoryId,
+        providerQueriedAt: new Date().toISOString(),
+        workflowRuns: [],
+      };
+  const inspectionReceipt = await recordIntegrationInspection(host, loaded, sourceId, pullRequest);
   if (['merged', 'needs_human', 'resolving_conflict', 'waiting_remediation'].includes(loaded.source.state)) {
-    return { source: loaded.source, pullRequest };
+    return { source: loaded.source, pullRequest, inspectionReceipt };
   }
   const failedChecks = loaded.requireGreenChecks
-    && pullRequest.requiredChecks.some((check) => check.status === 'failure');
+    && (pullRequest.requiredChecksKnown !== true
+      || pullRequest.requiredChecks.some((check) => check.status === 'failure'));
   const nextState = pullRequest.subjectDigest !== loaded.source.reviewedSubjectDigest
     ? 're_reviewing'
     : pullRequest.mergeable === false || failedChecks
@@ -80,7 +104,60 @@ export async function inspectIntegrationSource(
       nextState,
       failedChecks ? 'Required checks failed; automatic remediation is required' : undefined,
     );
-  return { source, pullRequest };
+  return { source, pullRequest, inspectionReceipt };
+}
+
+export async function readIntegrationSourceJobLog(
+  host: IntegrationOperationHost,
+  identity: TaskboardIdentity,
+  runId: string,
+  sourceId: string,
+  inspectionId: string,
+  providerJobId: string,
+): Promise<{ inspectionId: string; providerJobId: string; log: string }> {
+  const loaded = await loadOperationContext(host, identity, runId, sourceId);
+  const readClient = await host.pool.connect();
+  let payload: Record<string, unknown> | undefined;
+  try {
+    const result = await readClient.query(
+      `SELECT payload FROM ${host.changesTable}
+        WHERE task_id=$1 AND execution_id=$2 AND change_type='pull_request.inspected'
+          AND payload->'receipt'->>'inspectionId'=$3
+          AND payload->'receipt'->>'sourceId'=$4
+        ORDER BY seq DESC LIMIT 1`,
+      [loaded.source.integrationTaskId, loaded.executionId, inspectionId, sourceId],
+    );
+    payload = jsonObject(result.rows[0]?.payload);
+  } finally {
+    readClient.release();
+  }
+  const snapshot = jsonObject(payload?.snapshot);
+  const runs = Array.isArray(snapshot?.workflowRuns) ? snapshot.workflowRuns : [];
+  const job = runs.flatMap((run) => {
+    const jobs = jsonObject(run)?.jobs;
+    return Array.isArray(jobs) ? jobs : [];
+  }).map(jsonObject).find((candidate) => candidate?.id === providerJobId);
+  if (!job || job.failureLogRef !== `github-job:${providerJobId}`) {
+    throw new TaskboardValidationError('Workflow job is not part of this source inspection', 'TASKBOARD_CI_LOG_SCOPE_INVALID');
+  }
+  const provider = requireProvider(host);
+  if (!provider.getWorkflowJobLog) {
+    throw new TaskboardValidationError('Provider job log reader is unavailable', 'TASKBOARD_CI_UNAVAILABLE');
+  }
+  const log = await provider.getWorkflowJobLog(loaded.repository, providerJobId, loaded.boardOwnerUserId);
+  const client = await host.pool.connect();
+  try {
+    await client.query(
+      `INSERT INTO ${host.changesTable}
+         (task_id, change_type, actor_type, actor_id, execution_id, payload)
+       VALUES ($1,'pull_request.failure_log_read','agent',$2,$3,$4::jsonb)`,
+      [loaded.source.integrationTaskId, loaded.executionId, loaded.executionId,
+        JSON.stringify({ inspectionId, sourceId, providerJobId })],
+    );
+  } finally {
+    client.release();
+  }
+  return { inspectionId, providerJobId, log };
 }
 
 export async function mergeIntegrationSource(
@@ -93,12 +170,16 @@ export async function mergeIntegrationSource(
   if (['needs_human', 'waiting_remediation', 'resolving_conflict', 're_reviewing', 'canceled'].includes(loaded.source.state)) {
     throw new TaskboardValidationError('Integration source requires an explicit workflow transition', 'TASKBOARD_SOURCE_NOT_MERGEABLE');
   }
+  const inspectionHeadOid = await assertIntegrationInspectionReceipt(host, loaded, sourceId);
   const provider = requireProvider(host);
   const pullRequest = await provider.getPullRequest(
     loaded.repository,
     loaded.source.providerPullRequestId,
     loaded.boardOwnerUserId,
   );
+  if (pullRequest.headOid !== inspectionHeadOid) {
+    throw new TaskboardValidationError('Pull request head changed after merge inspection', 'TASKBOARD_SUBJECT_STALE');
+  }
   if (pullRequest.state === 'merged') {
     if (!pullRequest.mergeCommitOid) {
       throw new TaskboardValidationError('Provider did not return the merged commit oid', 'TASKBOARD_PROVIDER_RECEIPT_INCOMPLETE');
@@ -128,7 +209,8 @@ export async function mergeIntegrationSource(
       exhausted ? 'TASKBOARD_REMEDIATION_EXHAUSTED' : 'TASKBOARD_MERGE_CONFLICT',
     );
   }
-  if (loaded.requireGreenChecks && pullRequest.requiredChecks.some((check) => check.status === 'failure')) {
+  if (loaded.requireGreenChecks && (pullRequest.requiredChecksKnown !== true
+    || pullRequest.requiredChecks.some((check) => check.status === 'failure'))) {
     const exhausted = (loaded.source.remediationCount ?? 0) >= loaded.maxAutomaticRemediationRounds;
     await recordMergeConflict(host, sourceId, exhausted, 'Required checks failed; automatic remediation is required');
     throw new TaskboardValidationError(
@@ -431,6 +513,76 @@ export async function reconcileUnknownMergeOperations(host: IntegrationOperation
     }
   }
   return reconciled;
+}
+
+async function recordIntegrationInspection(
+  host: IntegrationOperationHost,
+  loaded: Awaited<ReturnType<typeof loadOperationContext>>,
+  sourceId: string,
+  snapshot: RepositoryPullRequestInspection,
+): Promise<IntegrationSourceInspection['inspectionReceipt']> {
+  const inspectionId = randomUUID();
+  const receipt = {
+    inspectionId,
+    executionId: loaded.executionId,
+    taskId: loaded.source.integrationTaskId,
+    sourceId,
+    providerPullRequestId: snapshot.providerPullRequestId,
+    headOid: snapshot.headOid,
+    providerQueriedAt: snapshot.providerQueriedAt,
+    digest: createHash('sha256').update(JSON.stringify({
+      inspectionId, executionId: loaded.executionId, taskId: loaded.source.integrationTaskId,
+      sourceId, providerPullRequestId: snapshot.providerPullRequestId,
+      headOid: snapshot.headOid, providerQueriedAt: snapshot.providerQueriedAt,
+    })).digest('hex'),
+  };
+  const client = await host.pool.connect();
+  try {
+    await client.query(
+      `INSERT INTO ${host.changesTable}
+         (task_id, change_type, actor_type, actor_id, execution_id, payload)
+       VALUES ($1,'pull_request.inspected','agent',$2,$3,$4::jsonb)`,
+      [loaded.source.integrationTaskId, loaded.executionId, loaded.executionId,
+        JSON.stringify({ receipt, sourceId, snapshot })],
+    );
+    return receipt;
+  } finally {
+    client.release();
+  }
+}
+
+async function assertIntegrationInspectionReceipt(
+  host: IntegrationOperationHost,
+  loaded: Awaited<ReturnType<typeof loadOperationContext>>,
+  sourceId: string,
+): Promise<string> {
+  const client = await host.pool.connect();
+  try {
+    const result = await client.query(
+      `SELECT payload FROM ${host.changesTable}
+        WHERE task_id=$1 AND execution_id=$2 AND change_type='pull_request.inspected'
+          AND payload->'receipt'->>'sourceId'=$3
+        ORDER BY seq DESC LIMIT 1`,
+      [loaded.source.integrationTaskId, loaded.executionId, sourceId],
+    );
+    const payload = jsonObject(result.rows[0]?.payload);
+    const receipt = jsonObject(payload?.receipt);
+    const snapshot = jsonObject(payload?.snapshot);
+    if (!receipt || !snapshot
+      || receipt.executionId !== loaded.executionId
+      || receipt.taskId !== loaded.source.integrationTaskId
+      || receipt.sourceId !== sourceId
+      || receipt.providerPullRequestId !== loaded.source.providerPullRequestId
+      || receipt.headOid !== snapshot.headOid) {
+      throw new TaskboardValidationError(
+        'Current merge execution must inspect this source before merging',
+        'TASKBOARD_CI_INSPECTION_REQUIRED',
+      );
+    }
+    return String(receipt.headOid);
+  } finally {
+    client.release();
+  }
 }
 
 async function loadOperationContext(

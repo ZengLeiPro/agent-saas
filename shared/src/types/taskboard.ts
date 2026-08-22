@@ -276,6 +276,12 @@ export interface TaskBoardTask {
   providerPullRequestId?: string;
   pullRequestNumber?: number;
   reviewedSubjectDigest?: string;
+  providerCiInspectionId?: string;
+  providerCiExecutionId?: string;
+  providerCiPurpose?: TaskBoardExecutionPurpose;
+  providerCiHeadOid?: string;
+  providerCiStatus?: 'success' | 'pending' | 'failure' | 'unavailable';
+  providerCiInspectedAt?: string;
   mergedCommitOid?: string;
   integrationTaskId?: string;
   integrationTaskIdentifier?: string;

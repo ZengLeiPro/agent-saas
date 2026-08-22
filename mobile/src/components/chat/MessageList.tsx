@@ -353,7 +353,12 @@ export function MessageList({
   const internalRef = useRef<FlashListRef<RenderItem>>(null);
   const listRef = externalRef ?? internalRef;
 
-  const filteredMessages = useMemo(() => messages.filter(m => m.type !== 'file_download'), [messages]);
+  // [FILE] 标记仍由文本块内联渲染；Artifact(deliver) 没有文本载体，必须保留为
+  // 独立文件卡，且下载走 artifactId 签名 URL，不依赖工作区源文件。
+  const filteredMessages = useMemo(
+    () => messages.filter(m => m.type !== 'file_download' || !!m.artifactId),
+    [messages],
+  );
   const renderItems = useMemo(() => groupMessages(filteredMessages, loading), [filteredMessages, loading]);
   const bubbleItems = useMemo(() => groupIntoBubbles(renderItems), [renderItems]);
 

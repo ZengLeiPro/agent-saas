@@ -95,11 +95,11 @@ git checkout main
 `config.json` 在 `.gitignore` 里，**不能 commit**。从本机模板复制或新建：
 
 ```bash
-# /etc/agent-runtime/config.json （挂载点路径，固定）
-sudo mkdir -p /etc/agent-runtime
-sudo cp config.example.json /etc/agent-runtime/config.json
-sudo chmod 600 /etc/agent-runtime/config.json
-sudo nano /etc/agent-runtime/config.json
+# /etc/agent-saas/config.json（systemd 与 Compose 共用的唯一权威路径）
+sudo mkdir -p /etc/agent-saas
+sudo cp config.example.json /etc/agent-saas/config.json
+sudo chmod 600 /etc/agent-saas/config.json
+sudo nano /etc/agent-saas/config.json
 ```
 
 必填字段：
@@ -131,7 +131,7 @@ sudo nano /srv/agent-saas/.env.ecs
 字段速览（详见模板内注释）：
 
 ```ini
-CONFIG_JSON_PATH=/etc/agent-runtime/config.json
+CONFIG_JSON_PATH=/etc/agent-saas/config.json
 AZEROTH_TOKENS_FILE=/etc/agent-saas/azeroth-tokens.json
 
 OPENAI_API_KEY=<生产 key 或留空走 baseUrl>

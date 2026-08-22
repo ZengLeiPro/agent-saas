@@ -519,9 +519,8 @@ describe('WebChannel active stream reconnect', () => {
     }]);
   });
 
-  it('does not emit artifact_created after tool_result for in-process CreateArtifact deliveries', () => {
-    const channel = createChannel();
-    const emitted: any[] = [];
+  it('projects Artifact(deliver) tool_result metadata into a standalone artifact card', () => {
+    const channel = createChannel(); const emitted: any[] = [];
     (channel as any).eventBus = {
       ...fakeEventBus(),
       emitSession: (_ctx: unknown, data: unknown) => emitted.push(data),
@@ -533,20 +532,21 @@ describe('WebChannel active stream reconnect', () => {
       event: {
         type: 'tool_result',
         toolId: 'call-artifact-1',
-        toolName: 'CreateArtifact',
-        toolResult: JSON.stringify({
+        toolName: 'Artifact',
+        toolResult: JSON.stringify({ action: 'deliver', artifactId: 'artifact_test-1' }),
+        toolResultMetadata: { artifactAction: 'deliver',
+          deliveryId: 'artifact_delivery:session-artifact-1:artifact_test-1',
           artifactId: 'artifact_test-1',
-          kind: 'file',
+          artifactKind: 'file',
           fileName: '客户清单.xlsx',
-          sourcePath: 'assets/20260704/客户清单.xlsx',
           sizeBytes: 6454,
           mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }),
+        },
       } as any,
     });
 
-    expect(emitted.some((d: { type: string }) => d.type === 'tool_result')).toBe(true);
-    expect(emitted.some((d: { type: string }) => d.type === 'artifact_created')).toBe(false);
+    expect(emitted).toEqual([{ type: 'artifact_created', artifactId: 'artifact_test-1', fileName: '客户清单.xlsx', kind: 'file', sizeBytes: 6454,
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }]);
   });
 
   it('projects replaceable draft outbound events into the WebSocket protocol', () => {

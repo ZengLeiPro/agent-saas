@@ -53,7 +53,7 @@ export interface IntegrationV3RequeueResult {
   candidateId: string;
   taskId: string;
   previousError: string;
-  recoveryKind: 'worker' | 'cleanup';
+  recoveryKind: 'composition' | 'worker' | 'cleanup';
   outboxId?: string;
   status: 'idle';
 }
@@ -256,30 +256,60 @@ export async function applyIntegrationV3Repair(
 }
 
 /**
- * Explicit operator requeue for either a permanently failed nonterminal worker or the failed
- * cleanup request of a terminal candidate. Cleanup recovery is fenced to the candidate's current
- * revision and epochs, and only requeues the cleanup outbox row (never provider operations).
- * The caller owns the transaction and authorization; recovery and audit use the same client.
+ * Explicit operator recovery for a permanently failed nonterminal worker, an incomplete legacy
+ * composition, or the failed cleanup request of a terminal candidate. The legacy composition path
+ * is deliberately narrow: only a failed stale-binding Work request for an incomplete source_seed
+ * without a provider PR returns to composing. Its failed outbox row remains immutable audit evidence.
+ * Cleanup recovery is fenced to the candidate's current revision and epochs, and only requeues the
+ * cleanup outbox row (never provider operations). The caller owns the transaction and authorization;
+ * recovery and audit use the same client.
  */
 export async function requeueFailedIntegrationV3Candidate(
   db: Queryable,
-  tables: Pick<IntegrationV3RepairTables, 'candidates' | 'requestsOutbox'> & { changes: string },
+  tables: Pick<IntegrationV3RepairTables, 'candidates' | 'requestsOutbox'> & { revisions: string; changes: string },
   input: { taskId: string; actorId: string; reason: string },
 ): Promise<IntegrationV3RequeueResult | undefined> {
   const result = await db.query(
     `WITH current_candidate AS (
-       SELECT id,integration_task_id,current_revision,work_round,workflow_epoch,lane_epoch,state,
-              worker_status,worker_error,worker_lease_id
-         FROM ${tables.candidates}
-        WHERE integration_task_id=$1
-        FOR UPDATE
+       SELECT c.id,c.integration_task_id,c.current_revision,c.work_round,c.workflow_epoch,c.lane_epoch,c.state,
+              c.provider_pull_request_id,c.worker_status,c.worker_error,c.worker_lease_id,
+              r.subject_kind,r.tree_oid,r.composition_complete
+         FROM ${tables.candidates} c
+         JOIN ${tables.revisions} r ON r.candidate_id=c.id AND r.revision=c.current_revision
+        WHERE c.integration_task_id=$1
+        FOR UPDATE OF c
+     ), legacy_failed_work AS (
+       SELECT o.id AS outbox_id,o.candidate_id
+         FROM ${tables.requestsOutbox} o
+         JOIN current_candidate c ON c.id=o.candidate_id
+        WHERE c.worker_status='failed' AND c.worker_lease_id IS NULL
+          AND c.state='working' AND c.provider_pull_request_id IS NULL
+          AND c.subject_kind='source_seed' AND c.composition_complete=FALSE AND c.tree_oid IS NULL
+          AND c.worker_error='Work request exhausted retries and requires operator recovery'
+          AND o.kind='work' AND o.status='failed' AND o.lease_id IS NULL
+          AND o.last_error='Candidate execution workspace binding is stale'
+          AND o.candidate_revision=c.current_revision AND o.work_round=c.work_round
+          AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch
+        ORDER BY o.updated_at DESC,o.id
+        FOR UPDATE OF o SKIP LOCKED LIMIT 1
+     ), composition_requeued AS (
+       UPDATE ${tables.candidates} c
+          SET state='composing',worker_status='idle',worker_error=NULL,worker_attempts=0,
+              worker_available_at=now(),worker_lease_id=NULL,worker_lease_expires_at=NULL,
+              worker_checkpoint=COALESCE(c.worker_checkpoint,'{}'::jsonb)||jsonb_build_object(
+                'requeuedAt',now(),'requeuedBy',$2::text,'requeueReason',$3::text,
+                'recoveryKind','composition'),updated_at=now()
+         FROM current_candidate current,legacy_failed_work failed
+        WHERE c.id=current.id AND c.id=failed.candidate_id
+        RETURNING c.id,c.integration_task_id,current.worker_error AS previous_error,failed.outbox_id
      ), worker_requeued AS (
        UPDATE ${tables.candidates} c
           SET worker_status='idle',worker_error=NULL,worker_lease_id=NULL,worker_lease_expires_at=NULL,
               worker_checkpoint=COALESCE(c.worker_checkpoint,'{}'::jsonb)||jsonb_build_object(
                 'requeuedAt',now(),'requeuedBy',$2::text,'requeueReason',$3::text),updated_at=now()
          FROM current_candidate current
-        WHERE c.id=current.id AND current.worker_status='failed'
+        WHERE NOT EXISTS (SELECT 1 FROM composition_requeued)
+          AND c.id=current.id AND current.worker_status='failed'
           AND current.worker_lease_id IS NULL AND current.state NOT IN ('merged','canceled')
         RETURNING c.id,c.integration_task_id,current.worker_error AS previous_error
      ), failed_request AS (
@@ -304,7 +334,8 @@ export async function requeueFailedIntegrationV3Candidate(
        SELECT o.id,o.candidate_id,o.last_error
          FROM ${tables.requestsOutbox} o
          JOIN current_candidate c ON c.id=o.candidate_id
-        WHERE NOT EXISTS (SELECT 1 FROM worker_requeued)
+        WHERE NOT EXISTS (SELECT 1 FROM composition_requeued)
+          AND NOT EXISTS (SELECT 1 FROM worker_requeued)
           AND c.state IN ('merged','canceled')
           AND o.kind='cleanup' AND o.status='failed' AND o.lease_id IS NULL
           AND o.candidate_revision=c.current_revision
@@ -319,6 +350,10 @@ export async function requeueFailedIntegrationV3Candidate(
         WHERE o.id=failed.id
         RETURNING o.id AS outbox_id,o.candidate_id,failed.last_error AS previous_error
      )
+     SELECT composition.id,composition.integration_task_id,composition.previous_error,
+            'composition'::text AS recovery_kind,composition.outbox_id,'idle'::text AS status
+       FROM composition_requeued composition
+     UNION ALL
      SELECT worker.id,worker.integration_task_id,worker.previous_error,
             'worker'::text AS recovery_kind,
             (SELECT request.outbox_id::text FROM request_requeued request) AS outbox_id,'idle'::text AS status
@@ -351,13 +386,13 @@ export function createIntegrationV3RequeueHandler(store: {
   integrationSourcesTable: string;
   changesTable: string;
 }) {
-  const { candidatesTable: candidates, requestsOutboxTable: requestsOutbox }
+  const { candidatesTable: candidates, revisionsTable: revisions, requestsOutboxTable: requestsOutbox }
     = integrationCandidateTableNames(store.integrationSourcesTable);
   return async (input: { identity: TaskboardIdentity; taskId: string; reason: string }) => {
     const client = await store.pool.connect();
     try {
       await client.query('BEGIN');
-      const result = await requeueFailedIntegrationV3Candidate(client, { candidates, requestsOutbox, changes: store.changesTable }, {
+      const result = await requeueFailedIntegrationV3Candidate(client, { candidates, revisions, requestsOutbox, changes: store.changesTable }, {
         taskId: input.taskId, actorId: input.identity.ownerUserId, reason: input.reason,
       });
       await client.query('COMMIT');

@@ -142,6 +142,17 @@ describe("TaskBoardView", () => {
     expect(screen.getByRole("button", { name: /创建看板/ })).toBeTruthy();
   });
 
+  it("切回任务看板时重新加载看板和任务", async () => {
+    const { rerender } = render(<TaskBoardView active={false} />);
+    expect(mocks.refreshBoards).not.toHaveBeenCalled();
+    expect(mocks.refreshTasks).not.toHaveBeenCalled();
+
+    rerender(<TaskBoardView active />);
+
+    await waitFor(() => expect(mocks.refreshBoards).toHaveBeenCalledOnce());
+    expect(mocks.refreshTasks).toHaveBeenCalledOnce();
+  });
+
   it("支持多看板、固定八列、关键词与优先级筛选", async () => {
     const user = userEvent.setup();
     render(<TaskBoardView />);
@@ -149,7 +160,7 @@ describe("TaskBoardView", () => {
     await waitFor(() => expect(screen.getByRole("combobox", { name: "选择看板" })).toBeTruthy());
     expect(screen.getAllByRole("region", { name: /列$/ }).map((column) => column.getAttribute("aria-label"))).toEqual([
       "需求池列",
-      "待实施列",
+      "待推进列",
       "实施中列",
       "复核中列",
       "待合并列",
@@ -428,13 +439,13 @@ describe("TaskBoardView", () => {
     expect(within(mobileList).queryByRole("button", { name: /打开任务 TASK-2/ })).toBeNull();
 
     await user.click(screen.getByRole("combobox", { name: "移动端状态" }));
-    await user.click(screen.getByRole("option", { name: "待实施" }));
-    expect(mobileList.getAttribute("aria-label")).toBe("待实施任务列表");
+    await user.click(screen.getByRole("option", { name: "待推进" }));
+    expect(mobileList.getAttribute("aria-label")).toBe("待推进任务列表");
     expect(within(mobileList).getByRole("button", { name: /打开任务 TASK-2/ })).toBeTruthy();
     expect(within(mobileList).queryByRole("button", { name: /打开任务 TASK-1/ })).toBeNull();
   });
 
-  it("仅需求池和待实施列可快捷新建，工作流状态禁止直接创建", async () => {
+  it("仅需求池和待推进列可快捷新建，工作流状态禁止直接创建", async () => {
     const user = userEvent.setup();
     render(<TaskBoardView />);
 

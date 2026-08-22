@@ -37,7 +37,7 @@ describe("TaskDialog 交互", () => {
     expect(screen.queryByRole("textbox", { name: "工作分支" })).toBeNull();
     await user.click(screen.getByRole("combobox", { name: "新任务状态" }));
     expect(screen.getByRole("listbox").className).toContain("z-[110]");
-    await user.click(screen.getByRole("option", { name: "待实施" }));
+    await user.click(screen.getByRole("option", { name: "待推进" }));
     await user.click(screen.getByRole("combobox", { name: "新任务优先级" }));
     await user.click(screen.getByRole("option", { name: "紧急" }));
     for (const purpose of ["实施阶段", "复核阶段"]) {
@@ -103,7 +103,7 @@ describe("TaskDialog 交互", () => {
     await user.type(screen.getByRole("textbox", { name: "标题" }), "契约校验");
     await user.click(screen.getByRole("combobox", { name: "新任务状态" }));
     expect(screen.getByRole("option", { name: "需求池" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "待实施" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "待推进" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "实施中" })).toBeTruthy();
     for (const illegal of ["复核中", "待合并", "已阻塞", "已完成", "已取消"]) {
       expect(screen.queryByRole("option", { name: illegal })).toBeNull();

@@ -214,6 +214,24 @@ describe('health router', () => {
     expect(await response.json()).toMatchObject({ status: 'ok', integrationV3: { status: 'ok', releaseReady: true } });
   });
 
+  it('keeps remediation deployment ready while reporting a failed candidate', async () => {
+    const server = await startHealthServer({
+      getIntegrationV3Health: async () => ({
+        status: 'degraded', releaseReady: true, reasons: ['active_failed_candidate'],
+        metrics: { capturedAt: new Date().toISOString(), unknownOperationCount: 0, oldestUnknownOperationAgeMs: null,
+          staleLaneCount: 0, staleOutboxCount: 0, oldestOutboxAgeMs: null, cleanupFailureCount: 0,
+          activeFailedCandidateCount: 1, gatewayDisabled: false, gatewayHealthy: true, activeV2Count: 0, activeV3Count: 1,
+          costBudgetUsed: null, costBudgetLimit: null, workRoundBudgetUsed: null, workRoundBudgetLimit: null },
+      }),
+    });
+    servers.push(server);
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: 'ok', integrationV3: { status: 'degraded', releaseReady: true, reasons: ['active_failed_candidate'] },
+    });
+  });
+
   it.each([
     'worker_or_required_adapter_unavailable',
     'runtime_isolation_attestation_unavailable',

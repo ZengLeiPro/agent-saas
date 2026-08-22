@@ -1,6 +1,7 @@
 import type { TaskBoardIntegrationCandidate, TaskBoardIntegrationCandidateRevision } from '../../../shared/src/types/taskboard.js';
 import type { AppendCandidateRevisionInput } from './integrationCandidateStore.js';
 import type { IntegrationEngineV3, IntegrationEngineV3ExpectedSubject, IntegrationEngineV3Result } from './integrationEngineV3.js';
+import { IntegrationV3ComposeConflictError } from './integrationV3ComposeExecutor.js';
 
 export type IntegrationV3RequestKind = 'work' | 'review' | 'cleanup' | 'workspace_sync';
 
@@ -26,7 +27,7 @@ export interface IntegrationV3WorkerCurrent {
 export type IntegrationV3CleanupActionStatus = 'succeeded' | 'skipped' | 'failed';
 
 export interface IntegrationV3CleanupActionReceipt {
-  action: 'revoke_capabilities' | 'fence_capabilities' | 'remove_candidate_worktree' | 'source_pull_request';
+  action: 'revoke_capabilities' | 'fence_capabilities' | 'terminalize_prepared_operations' | 'remove_candidate_worktree' | 'source_pull_request';
   status: IntegrationV3CleanupActionStatus;
   target?: string;
   reason?: string;
@@ -43,7 +44,7 @@ export interface IntegrationV3CleanupReceipt {
 
 export interface IntegrationV3RecoverableMergeOperation {
   operationKey: string;
-  state: 'prepared' | 'executing' | 'unknown' | 'succeeded';
+  state: 'prepared' | 'executing' | 'unknown' | 'failed' | 'needs_human' | 'succeeded';
 }
 
 export interface IntegrationV3WorkerHost {
@@ -188,8 +189,11 @@ export class IntegrationV3Worker {
             const composed = await this.options.composer.compose({ candidate: current.candidate, revision });
             result = await engine.execute({ type: 'compose_clean', candidateId: lease.candidateId, expected, revision: composed });
           } catch (error) {
-            if (error instanceof Error && error.name === 'IntegrationV3ComposeConflictError') {
-              result = await engine.execute({ type: 'compose_conflict', candidateId: lease.candidateId, expected, evidence: error.message });
+            if (error instanceof IntegrationV3ComposeConflictError) {
+              result = await engine.execute({
+                type: 'compose_conflict', candidateId: lease.candidateId, expected,
+                evidence: error.message, revision: error.revision,
+              });
             } else throw error;
           }
           break;
@@ -296,6 +300,7 @@ export function expectedSubject(current: IntegrationV3WorkerCurrent): Integratio
       baseOid: revision.baseOid,
       headOid: revision.headOid,
       treeOid: revision.treeOid,
+      compositionComplete: revision.compositionComplete,
       sourceSetDigest: revision.sourceSetDigest,
       policySnapshotDigest: revision.policySnapshotDigest,
       subjectDigest: revision.subjectDigest,
@@ -322,7 +327,7 @@ function isRetryable(error: unknown): boolean {
   return !deterministic.has(code);
 }
 function assertCleanupReceipt(receipt: IntegrationV3CleanupReceipt): void {
-  const required = ['revoke_capabilities', 'fence_capabilities', 'remove_candidate_worktree'] as const;
+  const required = ['revoke_capabilities', 'fence_capabilities', 'terminalize_prepared_operations', 'remove_candidate_worktree'] as const;
   for (const action of required) {
     if (!receipt.actions.some((item) => item.action === action)) throw new Error(`Cleanup receipt missing action: ${action}`);
   }

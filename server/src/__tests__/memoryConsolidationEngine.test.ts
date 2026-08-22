@@ -147,6 +147,10 @@ afterEach(() => {
 });
 
 describe('MemoryConsolidationEngine scanner', () => {
+  it('默认静默期为 30 分钟', () => {
+    expect(MEMORY_CONSOLIDATION_DEFAULTS.debounceMinutes).toBe(30);
+  });
+
   it('全局关闭：只初始化表，不启动 scanner/worker，也不响应 wake', async () => {
     const harness = createHarness({ configEnabled: false });
 
@@ -159,6 +163,15 @@ describe('MemoryConsolidationEngine scanner', () => {
     expect(harness.claimDue).not.toHaveBeenCalled();
     expect(harness.reviveThrottled).not.toHaveBeenCalled();
     expect(harness.info).toHaveBeenCalledWith('MemoryConsolidationEngine disabled by global config');
+  });
+
+  it('全局启用：启动时一次性恢复旧版本遗留的 throttled 状态', async () => {
+    const harness = createHarness();
+
+    await harness.engine.start();
+    harness.engine.stop();
+
+    expect(harness.reviveThrottled).toHaveBeenCalledOnce();
   });
 
   it('空游标遇到超期缺 projection 事件：先写隔离台账，再推进到该 global sequence', async () => {
@@ -364,7 +377,6 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
       quarantineEnvelopeAndAdvanceCursor: vi.fn(async () => undefined),
       claimDue: vi.fn(async () => [state]),
       reviveThrottled: vi.fn(async () => 0),
-      getUserDailyUsage: vi.fn(async () => ({ runs: 0, inputTokens: 0 })),
       acquireCommitLock: vi.fn(async () => ({ release })),
       insertOrGetRun: vi.fn(async () => ({
         created: true,
@@ -384,7 +396,7 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
           sessionSequence: 4,
           event: {
             id: 'assistant-1', type: 'assistant_message', model: 'gpt-5.4',
-            usage: { inputTokens: 100, outputTokens: 8, cacheReadTokens: 80 },
+            usage: { inputTokens: 100, outputTokens: 8, cacheReadInputTokens: 80 },
           },
         }] : []),
       },

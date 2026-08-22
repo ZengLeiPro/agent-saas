@@ -210,8 +210,8 @@ function RecordRow({
   );
 }
 
-// 数值列按内容收缩，避免宽消息下短值被多个 1fr 轨道平均撑开；剩余宽度由对照项吸收。
-const COMPARISON_COLUMNS = "sm:grid-cols-[minmax(10rem,1.2fr)_minmax(6rem,max-content)_minmax(6rem,max-content)_minmax(6rem,max-content)_auto]";
+// 表头和数据行共用同一组比例列，避免长值以 max-content 撑开后挤压相邻列。
+const COMPARISON_COLUMNS = "sm:grid-cols-[minmax(8rem,1.2fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_auto]";
 
 function ComparisonRow({ item }: { item: RecordItem }) {
   const [open, setOpen] = useState(false);
@@ -230,7 +230,7 @@ function ComparisonRow({ item }: { item: RecordItem }) {
         type="button"
         onClick={expandable ? () => setOpen((value) => !value) : undefined}
         className={cn(
-          "grid w-full grid-cols-1 gap-x-3 gap-y-1.5 text-left",
+          "grid w-full grid-cols-1 gap-x-4 gap-y-2 text-left",
           COMPARISON_COLUMNS,
           "sm:items-start",
           !expandable && "cursor-default",
@@ -239,15 +239,15 @@ function ComparisonRow({ item }: { item: RecordItem }) {
         <span className="min-w-0 break-words text-sm font-medium text-foreground">{item.label}</span>
         <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm sm:block">
           <span className="text-xs text-muted-foreground sm:hidden">基准/之前</span>
-          <span className="block max-w-64 break-words text-foreground">{item.baseline ?? "—"}</span>
+          <span className="break-words text-foreground">{item.baseline ?? "—"}</span>
         </span>
         <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm sm:block">
           <span className="text-xs text-muted-foreground sm:hidden">当前/实际</span>
-          <span className="block max-w-64 break-words text-foreground">{item.current ?? "—"}</span>
+          <span className="break-words text-foreground">{item.current ?? "—"}</span>
         </span>
         <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm sm:block">
           <span className="text-xs text-muted-foreground sm:hidden">差异</span>
-          <span className={cn("block max-w-64 break-words font-medium", item.tone ? activityStatusTextClass(tone) : "text-foreground")}>
+          <span className={cn("break-words font-medium", item.tone ? activityStatusTextClass(tone) : "text-foreground")}>
             {item.delta ?? "—"}
           </span>
         </span>
@@ -262,7 +262,7 @@ function ComparisonRow({ item }: { item: RecordItem }) {
 function ComparisonView({ block }: { block: RecordsBlock }) {
   return (
     <div data-comparison-table>
-      <div className={cn("hidden gap-x-3 border-b border-border/60 px-4 py-1.5 text-xs font-medium text-muted-foreground sm:grid", COMPARISON_COLUMNS)}>
+      <div className={cn("hidden gap-x-4 border-b border-border/60 px-4 py-2 text-xs font-medium text-muted-foreground sm:grid", COMPARISON_COLUMNS)}>
         <span>对照项</span>
         <span>基准/之前</span>
         <span>当前/实际</span>
@@ -306,7 +306,13 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
           </div>
         ) : null}
         {block.layout === "grid" ? (
-          <div className="inline-grid grid-cols-[repeat(2,minmax(0,max-content))] gap-x-8 gap-y-2 p-4 sm:grid-cols-[repeat(3,minmax(0,max-content))]" data-records-grid>
+          <div
+            className={cn(
+              "inline-grid grid-cols-[repeat(2,minmax(0,max-content))] gap-x-8 gap-y-2 p-4",
+              block.items.length !== 4 && "sm:grid-cols-[repeat(3,minmax(0,max-content))]",
+            )}
+            data-records-grid
+          >
             {block.items.map((item, i) => (
               <div className="max-w-64" key={i}>
                 <div className="break-words text-xs text-muted-foreground">{item.label}</div>

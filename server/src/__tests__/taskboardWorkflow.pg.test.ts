@@ -11,35 +11,27 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import type { RepositoryProvider } from '../taskboard/repositoryProvider.js';
 import type { TaskboardExecutionClaimInput, TaskboardIdentity } from '../taskboard/types.js';
+import { seedSuccessfulReviewCi } from './taskboardCiPgTestHelpers.js';
 
 const { Pool } = pg;
 const execFileAsync = promisify(execFile);
 const connectionString = process.env.TEST_DATABASE_URL?.trim();
 const describePg = connectionString ? describe : describe.skip;
 
-const identity: TaskboardIdentity = {
-  tenantId: 'tenant-workflow', ownerUserId: 'workflow-owner', username: 'workflow-owner',
-};
-
+const identity: TaskboardIdentity = { tenantId: 'tenant-workflow', ownerUserId: 'workflow-owner', username: 'workflow-owner' };
 function executionClaim(taskId: string, version: number, executionId: string, runId: string): TaskboardExecutionClaimInput {
   const now = new Date().toISOString();
   const sessionId = `session-${executionId}`;
   return {
     expectedVersion: version, executionId, runId, sessionId, purpose: 'work', protocolVersion: 2,
     executionOwnerUserId: identity.ownerUserId,
-    dispatch: {
-      version: 1,
-      session: {
-        sessionId, userId: identity.ownerUserId, username: identity.username, tenantId: identity.tenantId,
-        channel: 'web', cwd: '/tmp/taskboard-workflow-pg', transcriptPath: `/tmp/${sessionId}.jsonl`,
-        status: 'running', createdAt: now, updatedAt: now,
-      },
-      run: {
-        runId, sessionId, userId: identity.ownerUserId, tenantId: identity.tenantId,
-        channel: 'web', idempotencyKey: `taskboard-execution:${executionId}`,
-        metadata: { taskboardExecution: true, taskboardExecutionId: executionId, taskId },
-      },
-    },
+    dispatch: { version: 1,
+      session: { sessionId, userId: identity.ownerUserId, username: identity.username,
+        tenantId: identity.tenantId, channel: 'web', cwd: '/tmp/taskboard-workflow-pg',
+        transcriptPath: `/tmp/${sessionId}.jsonl`, status: 'running', createdAt: now, updatedAt: now },
+      run: { runId, sessionId, userId: identity.ownerUserId, tenantId: identity.tenantId, channel: 'web',
+        idempotencyKey: `taskboard-execution:${executionId}`,
+        metadata: { taskboardExecution: true, taskboardExecutionId: executionId, taskId } } },
   };
 }
 
@@ -194,9 +186,12 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     const integration = await store.createTask(identity, board.id, { title: 'Canceled integration', status: 'todo' });
     await pool.query(`UPDATE ${store.tasksTable} SET kind='integration',status='canceled' WHERE id=$1`, [integration.id]);
     await pool.query(
-      `UPDATE ${store.tasksTable} SET status='ready_to_merge',provider_pull_request_id='701',reviewed_subject_digest='digest-701' WHERE id=$1`,
+      `UPDATE ${store.tasksTable}
+          SET status='ready_to_merge',provider_pull_request_id='701',head_oid='head-701',base_oid='base-701',
+              reviewed_subject_digest='digest-701' WHERE id=$1`,
       [delivery.id],
     );
+    await seedSuccessfulReviewCi(pool, store, delivery.id, 'head-701');
     await pool.query(
       `INSERT INTO ${store.integrationSourcesTable}
          (id,integration_task_id,delivery_task_id,repository_id,provider_pull_request_id,reviewed_subject_digest,source_order,state)
@@ -285,7 +280,8 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       getPullRequest: async () => ({
         providerPullRequestId: '77', number: 77, state: 'open', draft: false,
         headRef: 'task/77', headOid: 'head-77', baseRef: 'main', baseOid: 'base-1',
-        mergeable: true, requiredChecks: [{ name: 'test', status: 'success' }], subjectDigest: 'digest-77',
+        mergeable: true, requiredChecks: [{ name: 'test', status: 'success' }], requiredChecksKnown: true,
+        subjectDigest: 'digest-77',
       }),
       mergePullRequest: async (_repository, input) => ({
         providerRequestId: input.requestId, providerPullRequestId: input.providerPullRequestId,
@@ -313,9 +309,10 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     const delivery = await store.createTask(identity, board.id, { title: 'D', status: 'todo' });
     await pool.query(
       `UPDATE ${store.tasksTable} SET status='ready_to_merge',provider_pull_request_id='77',
-              reviewed_subject_digest='digest-77',version=version+1 WHERE id=$1`,
+              head_oid='head-77',base_oid='base-1',reviewed_subject_digest='digest-77',version=version+1 WHERE id=$1`,
       [delivery.id],
     );
+    await seedSuccessfulReviewCi(pool, store, delivery.id, 'head-77');
     const integration = await store.createIntegrationBatch(identity, board.id, {
       deliveryTaskIds: [delivery.id], expectedBoardVersion: (await store.getBoard(identity, board.id)).version,
     });
@@ -343,12 +340,12 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       [executionId, integration.id, runId, `session-${executionId}`, `attempt-${executionId}`, identity.ownerUserId],
     );
     const context = await store.getExecutionContextV2(identity, integration.id, { runId });
+    await store.inspectIntegrationSourceV2(identity, runId, source.id);
     await store.mergeIntegrationSourceV2(identity, runId, source.id);
 
     const firstRemediation = await store.getTask(identity, remediation.id);
     expect(firstRemediation).toMatchObject({ status: 'done', completedAt: expect.any(String) });
     const remediationVersion = firstRemediation.version;
-    await store.mergeIntegrationSourceV2(identity, runId, source.id);
     const [deliveryAfter, remediationAfter, integrationAfter] = await Promise.all([
       store.getTask(identity, delivery.id), store.getTask(identity, remediation.id), store.getTask(identity, integration.id),
     ]);
@@ -383,7 +380,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       getPullRequest: async () => ({
         providerPullRequestId: '801', number: 801, state: 'open', draft: false,
         headRef: 'feature/801', headOid, baseRef: 'main', baseOid: 'base-1', mergeable,
-        requiredChecks: [{ name: 'ci', status: 'success' }], subjectDigest,
+        requiredChecks: [{ name: 'ci', status: 'success' }], requiredChecksKnown: true, subjectDigest,
       }),
       mergePullRequest: async (_repository, input) => {
         mergeCalls.push(input.providerPullRequestId);
@@ -421,6 +418,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
         WHERE id=$1`,
       [delivery.id],
     );
+    await seedSuccessfulReviewCi(pool, store, delivery.id, 'head-base');
     const integration = await store.createIntegrationBatch(identity, board.id, {
       deliveryTaskIds: [delivery.id], expectedBoardVersion: (await store.getBoard(identity, board.id)).version,
     });
@@ -430,9 +428,10 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     const mergeClaim = executionClaim(integration.id, integration.version, mergeExecutionId, mergeRunId);
     mergeClaim.purpose = 'merge';
     const mergeStarted = await store.claimExecution(identity, integration.id, mergeClaim);
-    const mergeContext = await store.getExecutionContextV2(identity, integration.id, { runId: mergeRunId });
+    await store.inspectIntegrationSourceV2(identity, mergeRunId, source.id);
     await expect(store.mergeIntegrationSourceV2(identity, mergeRunId, source.id))
-      .rejects.toMatchObject({ code: 'TASKBOARD_MERGE_CONFLICT' });
+      .rejects.toMatchObject({ code: 'TASKBOARD_SOURCE_NOT_MERGEABLE' });
+    const mergeContext = await store.getExecutionContextV2(identity, integration.id, { runId: mergeRunId });
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
       state: 'resolving_conflict', remediationCount: 0,
     });
@@ -461,6 +460,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     await store.claimExecution(identity, recovery!.task.id, remediationClaim);
     await expect(store.attachExecutionPullRequestV2(identity, remediationRunId, '999'))
       .rejects.toMatchObject({ code: 'TASKBOARD_REMEDIATION_PR_MISMATCH' });
+    await store.inspectExecutionPullRequestV2(identity, remediationRunId);
     const noCommitContext = await store.getExecutionContextV2(identity, recovery!.task.id, {
       runId: remediationRunId,
     });
@@ -477,10 +477,14 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       [recovery!.task.id],
     );
     expect(activeAttempt.rows[0]).toMatchObject({ state: 'active', round: 1 });
+    headOid = 'head-fixed';
+    subjectDigest = 'digest-fixed';
+    mergeable = true;
     await pool.query(
       `UPDATE ${store.tasksTable} SET head_oid='head-fixed',version=version+1 WHERE id=$1`,
       [recovery!.task.id],
     );
+    await store.inspectExecutionPullRequestV2(identity, remediationRunId);
     const remediationContext = await store.getExecutionContextV2(identity, recovery!.task.id, {
       runId: remediationRunId,
     });
@@ -496,8 +500,6 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       status: 'succeeded', commentBody: 'Remediation work delivered',
     });
 
-    headOid = 'head-fixed';
-    subjectDigest = 'digest-fixed';
     const reviewExecutionId = randomUUID();
     const reviewRunId = `review-run-${reviewExecutionId}`;
     const reviewClaim = executionClaim(
@@ -505,6 +507,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     );
     reviewClaim.purpose = 'review';
     await store.claimExecution(identity, recovery!.task.id, reviewClaim);
+    await store.inspectExecutionPullRequestV2(identity, reviewRunId);
     await store.recordReviewedExecutionSubjectV2(identity, reviewRunId);
     const reviewContext = await store.getExecutionContextV2(identity, recovery!.task.id, { runId: reviewRunId });
     await store.createExecutionCommentV2(identity, reviewRunId, 'Review delivery');
@@ -527,6 +530,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     );
     resumedClaim.purpose = 'merge';
     await store.claimExecution(identity, integration.id, resumedClaim);
+    await store.inspectIntegrationSourceV2(identity, resumedRunId, source.id);
     const merged = await store.mergeIntegrationSourceV2(identity, resumedRunId, source.id);
     expect(merged.source).toMatchObject({ state: 'merged', mergedCommitOid: 'merge-801' });
     expect(mergeCalls).toEqual(['801']);
@@ -553,30 +557,34 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
         },
       },
     });
+    let checkStatus: 'failure' | 'success' = 'success';
+    const provider: RepositoryProvider = {
+      getPullRequest: async () => ({
+        providerPullRequestId: '901', number: 901, state: 'open', draft: false,
+        headRef: 'feature/901', headOid: 'head-901', baseRef: 'main', baseOid: 'base-901', mergeable: true,
+        requiredChecks: [{ name: 'ci', status: checkStatus }], requiredChecksKnown: true, subjectDigest: 'digest-901',
+      }),
+      mergePullRequest: async () => { throw new Error('must not merge'); },
+    };
+    store.setRepositoryProvider(provider);
     const delivery = await store.createTask(identity, board.id, { title: 'Check failure', status: 'todo' });
     await pool.query(`UPDATE ${store.tasksTable} SET status='ready_to_merge',provider_pull_request_id='901',
       pull_request_number=901,head_oid='head-901',base_oid='base-901',reviewed_subject_digest='digest-901' WHERE id=$1`, [delivery.id]);
+    await seedSuccessfulReviewCi(pool, store, delivery.id, 'head-901');
     const integration = await store.createIntegrationBatch(identity, board.id, {
       deliveryTaskIds: [delivery.id], expectedBoardVersion: (await store.getBoard(identity, board.id)).version,
     });
+    checkStatus = 'failure';
     const source = (await store.listIntegrationSources(identity, integration.id))[0]!;
     const executionId = randomUUID();
     const runId = `checks-run-${executionId}`;
     const claim = executionClaim(integration.id, integration.version, executionId, runId);
     claim.purpose = 'merge';
     await store.claimExecution(identity, integration.id, claim);
-    const context = await store.getExecutionContextV2(identity, integration.id, { runId });
-    const provider: RepositoryProvider = {
-      getPullRequest: async () => ({
-        providerPullRequestId: '901', number: 901, state: 'open', draft: false,
-        headRef: 'feature/901', headOid: 'head-901', baseRef: 'main', baseOid: 'base-901', mergeable: true,
-        requiredChecks: [{ name: 'ci', status: 'failure' }], subjectDigest: 'digest-901',
-      }),
-      mergePullRequest: async () => { throw new Error('must not merge'); },
-    };
-    store.setRepositoryProvider(provider);
+    await store.inspectIntegrationSourceV2(identity, runId, source.id);
     await expect(store.mergeIntegrationSourceV2(identity, runId, source.id))
-      .rejects.toMatchObject({ code: 'TASKBOARD_CHECKS_FAILED' });
+      .rejects.toMatchObject({ code: 'TASKBOARD_SOURCE_NOT_MERGEABLE' });
+    const context = await store.getExecutionContextV2(identity, integration.id, { runId });
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
       state: 'resolving_conflict', remediationCount: 0,
     });
@@ -586,8 +594,10 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     });
     await store.completeExecution(runId, { status: 'succeeded', commentBody: 'Waiting for checks remediation' });
     const candidates = await store.claimIntegrationDispatchCandidatesV2(10);
-    expect(candidates.filter((candidate) => candidate.task.kind === 'integration')).toHaveLength(0);
-    expect(candidates.filter((candidate) => candidate.task.kind === 'remediation')).toHaveLength(1);
+    expect(candidates.filter((candidate) => candidate.task.boardId === board.id
+      && candidate.task.kind === 'integration')).toHaveLength(0);
+    expect(candidates.filter((candidate) => candidate.task.boardId === board.id
+      && candidate.task.kind === 'remediation')).toHaveLength(1);
   });
 
 
@@ -610,12 +620,21 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
         },
       },
     });
+    store.setRepositoryProvider({
+      getPullRequest: async () => ({
+        providerPullRequestId: '88', number: 88, state: 'open', draft: false,
+        headRef: 'feature/88', headOid: 'head-88', baseRef: 'main', baseOid: 'base-88', mergeable: true,
+        requiredChecks: [{ name: 'ci', status: 'success' }], requiredChecksKnown: true, subjectDigest: 'digest-88',
+      }),
+      mergePullRequest: async () => { throw new Error('not used'); },
+    });
     const delivery = await store.createTask(identity, board.id, { title: 'repair target', status: 'todo' });
     await pool.query(
       `UPDATE ${store.tasksTable} SET status='ready_to_merge',provider_pull_request_id='88',
-              reviewed_subject_digest='digest-88',version=version+1 WHERE id=$1`,
+              head_oid='head-88',base_oid='base-88',reviewed_subject_digest='digest-88',version=version+1 WHERE id=$1`,
       [delivery.id],
     );
+    await seedSuccessfulReviewCi(pool, store, delivery.id, 'head-88');
     const integration = await store.createIntegrationBatch(identity, board.id, {
       deliveryTaskIds: [delivery.id], expectedBoardVersion: (await store.getBoard(identity, board.id)).version,
     });

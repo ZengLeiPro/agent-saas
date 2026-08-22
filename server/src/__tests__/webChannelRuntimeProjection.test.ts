@@ -196,6 +196,51 @@ describe('WebChannel runtime event projection', () => {
       });
     });
 
+    it('任务看板会话完成后不写未读状态，普通会话仍保留完成提醒', async () => {
+      const unreadCalls: Array<{ sessionId: string; eventKey: string }> = [];
+      const rig = makeRig({
+        userStore: { findById: () => ({ id: USER.sub, tenantId: USER.tenantId }) } as any,
+        sessionReadStateStore: {
+          markUnread: async (input: { sessionId: string; eventKey: string }) => {
+            unreadCalls.push({ sessionId: input.sessionId, eventKey: input.eventKey });
+            return true;
+          },
+        } as any,
+      });
+      const taskboardSessionId = `taskboard-${randomUUID()}`;
+      const ordinarySessionId = randomUUID();
+
+      rig.channel.publishRuntimeOutboundEvent({
+        sessionId: taskboardSessionId,
+        runId: 'taskboard-completed-run',
+        userId: USER.sub,
+        event: { type: 'session_init', sessionId: taskboardSessionId },
+      });
+      rig.channel.publishRuntimeOutboundEvent({
+        sessionId: taskboardSessionId,
+        runId: 'taskboard-completed-run',
+        userId: USER.sub,
+        event: { type: 'done' },
+      });
+      rig.channel.publishRuntimeOutboundEvent({
+        sessionId: ordinarySessionId,
+        runId: 'ordinary-completed-run',
+        userId: USER.sub,
+        event: { type: 'session_init', sessionId: ordinarySessionId },
+      });
+      rig.channel.publishRuntimeOutboundEvent({
+        sessionId: ordinarySessionId,
+        runId: 'ordinary-completed-run',
+        userId: USER.sub,
+        event: { type: 'done' },
+      });
+      await flushMicrotasks();
+
+      expect(unreadCalls).toEqual([
+        { sessionId: ordinarySessionId, eventKey: 'done:ordinary-completed-run' },
+      ]);
+    });
+
     it('error 事件：done 携带 error + session_status failed（带 reason），buffer 收口', () => {
       const rig = makeRig();
       const sessionId = randomUUID();

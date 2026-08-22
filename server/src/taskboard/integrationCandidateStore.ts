@@ -61,11 +61,13 @@ export interface AppendCandidateRevisionInput {
   baseOid: string;
   headOid: string;
   treeOid: string;
+  compositionComplete?: boolean;
   workExecutionId?: string;
   reviewExecutionId?: string;
   sources: CandidateSourceSnapshotInput[];
   /** Optional atomic state convergence used by v3 engine after persisting the new subject. */
-  nextState?: 'waiting_checks' | 'in_review';
+  nextState?: 'needs_work' | 'waiting_checks' | 'in_review';
+  lastError?: string;
 }
 
 export interface TransitionCandidateInput {
@@ -266,15 +268,16 @@ export class IntegrationCandidateStore {
       });
       await client.query(
         `INSERT INTO ${this.revisionsTable}
-          (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,source_set_digest,
-           subject_digest,policy_snapshot_digest,policy_revision,merge_method,work_round,
+          (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,composition_complete,
+           source_set_digest,subject_digest,policy_snapshot_digest,policy_revision,merge_method,work_round,
            work_execution_id,review_execution_id)
-         VALUES ($1,$2,$3,$4,$5,'provider_subject',$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+         VALUES ($1,$2,$3,$4,$5,'provider_subject',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
         [
           candidate.id, revision, INTEGRATION_CANDIDATE_DIGEST_VERSION,
           required(input.baseOid, 'baseOid'), required(input.headOid, 'headOid'), required(input.treeOid, 'treeOid'),
-          sourceSetDigest, subjectDigest, policySnapshotDigest, candidate.policyRevision,
-          candidate.mergeMethod, candidate.workRound, input.workExecutionId ?? null, input.reviewExecutionId ?? null,
+          input.compositionComplete ?? true, sourceSetDigest, subjectDigest, policySnapshotDigest,
+          candidate.policyRevision, candidate.mergeMethod, candidate.workRound,
+          input.workExecutionId ?? null, input.reviewExecutionId ?? null,
         ],
       );
       for (const source of input.sources) {
@@ -295,11 +298,11 @@ export class IntegrationCandidateStore {
       const updated = await client.query(
         `UPDATE ${this.candidatesTable}
             SET current_revision=$4,source_set_digest=$5,state=COALESCE($6,state),approved_revision=NULL,
-                approved_review_execution_id=NULL,version=version+1,updated_at=now()
+                approved_review_execution_id=NULL,last_error=$8,version=version+1,updated_at=now()
           WHERE id=$1 AND version=$2 AND current_revision=$3 AND state=$7
           RETURNING *`,
         [candidate.id, input.expectedVersion, input.expectedCurrentRevision, revision, sourceSetDigest,
-          input.nextState ?? null, candidate.state],
+          input.nextState ?? null, candidate.state, input.lastError ?? null],
       );
       if (!updated.rows[0]) throw staleCandidate();
       return rowToIntegrationCandidate(updated.rows[0]);

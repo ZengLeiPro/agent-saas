@@ -1,7 +1,7 @@
 /**
  * 内置 brain-only 工具集：TodoWrite / AskUserQuestion。
  *
- * Workspace 文件工具（Edit / CreateArtifact）已经迁入 workspace hand
+ * Workspace 文件工具（Edit / Artifact）已经迁入 workspace hand
  * 契约，由 WorkspaceToolProvider 统一路由到 server-local / server-container /
  * server-remote / client，避免 brain 进程绕过 hand 直接读写 workspace.root。
  */
@@ -22,6 +22,7 @@ import type {
 
 export {
   artifactCreateToolDescriptor,
+  artifactToolDescriptor,
   editToolDescriptor,
 } from './workspaceHandTools.js';
 

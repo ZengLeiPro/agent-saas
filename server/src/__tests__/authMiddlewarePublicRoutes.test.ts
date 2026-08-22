@@ -30,6 +30,8 @@ describe("auth middleware public routes", () => {
     app.post("/api/auth/sms/login", (_req, res) => res.json({ ok: true }));
     app.get("/api/healthz", (_req, res) => res.send("ok"));
     app.get("/api/healthz/drain", (_req, res) => res.json({ idle: true }));
+    app.get("/api/share/artifacts/test-token", (_req, res) => res.json({ ok: true }));
+    app.get("/api/share/artifacts/test-token/content", (_req, res) => res.send("ok"));
     app.get("/api/share/sessions/test-token", (_req, res) => res.json({ ok: true }));
     app.get("/api/share/sessions/test-token/file", (_req, res) => res.json({ ok: true }));
     app.get("/api/share/workflow-replays/00000000-0000-4000-8000-000000000000", (_req, res) => res.json({ ok: true }));
@@ -75,6 +77,13 @@ describe("auth middleware public routes", () => {
   it("healthz 与 drain 探针免登录可达", async () => {
     expect((await fetch(`${baseUrl}/api/healthz`)).status).toBe(200);
     expect((await fetch(`${baseUrl}/api/healthz/drain`)).status).toBe(200);
+  });
+
+  it("Artifact 分享 metadata/content 仅 GET|HEAD 免登录可达", async () => {
+    expect((await fetch(`${baseUrl}/api/share/artifacts/test-token`)).status).toBe(200);
+    expect((await fetch(`${baseUrl}/api/share/artifacts/test-token/content`)).status).toBe(200);
+    expect((await fetch(`${baseUrl}/api/share/artifacts/test-token/content`, { method: "HEAD" })).status).toBe(200);
+    expect((await fetch(`${baseUrl}/api/share/artifacts/test-token/content`, { method: "POST" })).status).toBe(401);
   });
 
   it("会话分享公开读取端点免登录可达", async () => {

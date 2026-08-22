@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 
 import type { TaskBoardIntegrationCandidateSourceSnapshot, TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
+import { computeIntegrationSourceSetDigest } from './integrationCandidateDigest.js';
+import type { AppendCandidateRevisionInput } from './integrationCandidateStore.js';
 import { canonicalGithubRepositoryUrl, type RepositoryProvider } from './repositoryProvider.js';
 import { syncRepositoryWorkspace, type RepositoryWorkspaceSyncHost } from './repositoryWorkspaceSync.js';
 import type { IntegrationV3ComposeExecutor, IntegrationV3WorkerCurrent } from './integrationV3Worker.js';
@@ -12,6 +14,7 @@ export interface IntegrationV3WorkPushReceipt {
   candidateRevision: number;
   workflowEpoch: string;
   laneEpoch: string;
+  ref: string;
   oldOid: string;
   newOid: string;
 }
@@ -60,6 +63,10 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
     if (!this.provider.ensureIntegrationBranch || !this.provider.ensureIntegrationPullRequest || !this.provider.getReference) {
       throw new IntegrationV3ComposeDisabledError('Repository provider does not support integration branch/PR composition');
     }
+    const ordered = [...context.sources].sort((a, b) => a.order - b.order);
+    if (computeIntegrationSourceSetDigest(ordered.map(stripSnapshotIdentity)) !== current.revision.sourceSetDigest) {
+      throw new IntegrationV3InvalidWorkResultError('Compose context does not match the complete frozen source set');
+    }
     if (await directoryExists(context.worktreePath)) {
       // Any failure after the deterministic commit is checked out can leave the branch ahead
       // while the candidate revision is still unchanged. Normalize only a clean controlled
@@ -86,58 +93,72 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
       ))
       : await syncRepositoryWorkspace(this.host, syncInput);
     await git(this.host, context.worktreePath, ['reset', '--hard', sync.baseOid]);
-    const ordered = [...context.sources].sort((a, b) => a.order - b.order);
+    const baseTreeOid = singleOid(await git(this.host, context.worktreePath, ['rev-parse', `${sync.baseOid}^{tree}`]));
+    let treeOid = baseTreeOid;
     for (const source of ordered) {
       // A delivery PR may contain multiple commits; compose its frozen base..head range in source order.
       try {
         await git(this.host, context.worktreePath, ['cherry-pick', '--no-commit', `${source.frozenBaseOid}..${source.frozenHeadOid}`]);
+        treeOid = singleOid(await git(this.host, context.worktreePath, ['write-tree']));
       } catch (error) {
         await this.host.runGit({ cwd: context.worktreePath, args: ['cherry-pick', '--abort'] }).catch(() => undefined);
-        throw new IntegrationV3ComposeConflictError(
-          `Frozen source ${source.integrationSourceId} conflicts at ${source.frozenHeadOid}: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        await git(this.host, context.worktreePath, ['reset', '--hard', sync.baseOid]);
+        const evidence = `Frozen source ${source.integrationSourceId} conflicts at ${source.frozenHeadOid}: ${error instanceof Error ? error.message : String(error)}`;
+        const revision = await this.publishSubject({
+          current, context, ordered, baseOid: sync.baseOid, baseTreeOid, treeOid,
+          compositionComplete: false, conflictSourceId: source.integrationSourceId,
+        });
+        throw new IntegrationV3ComposeConflictError(evidence, revision);
       }
     }
-    const treeOid = singleOid(await git(this.host, context.worktreePath, ['write-tree']));
+    return this.publishSubject({
+      current, context, ordered, baseOid: sync.baseOid, baseTreeOid, treeOid,
+      compositionComplete: true,
+    });
+  }
+
+  private async publishSubject(input: {
+    current: Required<IntegrationV3WorkerCurrent>;
+    context: IntegrationV3ComposeContext;
+    ordered: TaskBoardIntegrationCandidateSourceSnapshot[];
+    baseOid: string;
+    baseTreeOid: string;
+    treeOid: string;
+    compositionComplete: boolean;
+    conflictSourceId?: string;
+  }) {
+    const { current, context, ordered, baseOid, baseTreeOid, treeOid, compositionComplete } = input;
     const timestamp = new Date(current.candidate.createdAt).toISOString();
-    const message = `Integration candidate ${current.candidate.id} revision ${current.candidate.currentRevision + 1}\n\nSource-Set: ${digestSources(ordered)}\n`;
+    const conflictLine = input.conflictSourceId ? `Conflict-Source: ${input.conflictSourceId}\n` : '';
+    const message = `Integration candidate ${current.candidate.id} revision ${current.candidate.currentRevision + 1}\n\nSource-Set: ${digestSources(ordered)}\nComposition-Complete: ${compositionComplete}\n${conflictLine}`;
     const commit = await this.host.runGit({
       cwd: context.worktreePath,
-      args: ['commit-tree', treeOid, '-p', sync.baseOid, '-m', message],
+      args: ['commit-tree', treeOid, '-p', baseOid, '-m', message],
       env: {
-        GIT_AUTHOR_NAME: 'Integration Worker',
-        GIT_AUTHOR_EMAIL: 'integration-worker@localhost',
-        GIT_AUTHOR_DATE: timestamp,
-        GIT_COMMITTER_NAME: 'Integration Worker',
-        GIT_COMMITTER_EMAIL: 'integration-worker@localhost',
-        GIT_COMMITTER_DATE: timestamp,
+        GIT_AUTHOR_NAME: 'Integration Worker', GIT_AUTHOR_EMAIL: 'integration-worker@localhost',
+        GIT_AUTHOR_DATE: timestamp, GIT_COMMITTER_NAME: 'Integration Worker',
+        GIT_COMMITTER_EMAIL: 'integration-worker@localhost', GIT_COMMITTER_DATE: timestamp,
       },
     });
     if (commit.exitCode !== 0) throw new Error(commit.stderr || 'git commit-tree failed');
     const headOid = singleOid(commit);
     await git(this.host, context.worktreePath, ['reset', '--hard', headOid]);
-
-    const branchReceipt = await this.provider.ensureIntegrationBranch(context.repository, {
-      ref: current.candidate.branch,
-      expectedBaseOid: sync.baseOid,
-      expectedBaseTreeOid: singleOid(await git(this.host, context.worktreePath, ['rev-parse', `${sync.baseOid}^{tree}`])),
+    const branchReceipt = await this.provider.ensureIntegrationBranch!(context.repository, {
+      ref: current.candidate.branch, expectedBaseOid: baseOid, expectedBaseTreeOid: baseTreeOid,
       trustedExistingOids: context.trustedIntegrationBranchOids,
       existingRequired: Boolean(current.candidate.providerPullRequestId),
       operationKey: operationKey(current.candidate.id, current.candidate.currentRevision, 'branch'),
     }, context.credentialOwnerId);
-    await this.host.pushIntegrationHead({
+    await this.host.pushIntegrationHead!({
       context, branch: current.candidate.branch, expectedOldOid: branchReceipt.oid, headOid,
-      headParentOid: sync.baseOid,
-      candidateId: current.candidate.id, revision: current.candidate.currentRevision,
-      integrationTaskId: current.candidate.integrationTaskId,
+      headParentOid: baseOid, candidateId: current.candidate.id,
+      revision: current.candidate.currentRevision, integrationTaskId: current.candidate.integrationTaskId,
       laneEpoch: Number(current.candidate.laneEpoch), workflowEpoch: Number(current.candidate.workflowEpoch),
     });
-    const remote = await this.provider.getReference(context.repository, current.candidate.branch, context.credentialOwnerId);
+    const remote = await this.provider.getReference!(context.repository, current.candidate.branch, context.credentialOwnerId);
     if (remote.oid !== headOid || remote.treeOid !== treeOid) throw new Error('Provider integration ref does not match composed revision');
-    const pull = await this.provider.ensureIntegrationPullRequest(context.repository, {
-      headRef: current.candidate.branch,
-      baseRef: current.candidate.baseBranch,
-      expectedHeadOid: headOid,
+    const pull = await this.provider.ensureIntegrationPullRequest!(context.repository, {
+      headRef: current.candidate.branch, baseRef: current.candidate.baseBranch, expectedHeadOid: headOid,
       title: `Integration: ${current.candidate.integrationTaskId}`,
       body: `Managed Integration v3 candidate ${current.candidate.id}.`,
       operationKey: operationKey(current.candidate.id, current.candidate.currentRevision, 'pull'),
@@ -147,13 +168,10 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
     }
     if (!current.candidate.providerPullRequestId) {
       await this.host.bindPullRequest(current.candidate.id, current.candidate.version, pull.providerPullRequestId);
-      // Binding advances candidate CAS. The worker will reload and deterministically compose again.
       throw new IntegrationV3CandidateReloadRequiredError();
     }
     return {
-      baseOid: sync.baseOid,
-      headOid,
-      treeOid,
+      baseOid, headOid, treeOid, compositionComplete,
       sources: ordered.map(stripSnapshotIdentity),
       ...(context.workExecutionId ? { workExecutionId: context.workExecutionId } : {}),
     };
@@ -165,6 +183,10 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
     // current work execution with a fenced in_review transition may advance
     // the candidate subject; later Run completion cannot override that explicit decision.
     if (!context.workExecutionId) return undefined;
+    const ordered = [...context.sources].sort((a, b) => a.order - b.order);
+    if (computeIntegrationSourceSetDigest(ordered.map(stripSnapshotIdentity)) !== current.revision.sourceSetDigest) {
+      throw new IntegrationV3InvalidWorkResultError('Work context does not match the complete frozen source set');
+    }
     if (!current.candidate.providerPullRequestId || !this.provider.getReference) {
       throw new IntegrationV3InvalidWorkResultError('Ready work result cannot resolve the integration and base refs');
     }
@@ -176,6 +198,9 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
       if (!current.revision.treeOid) {
         throw new IntegrationV3InvalidWorkResultError('Current candidate revision has no trusted tree OID');
       }
+      if (!current.revision.compositionComplete) {
+        throw new IntegrationV3InvalidWorkResultError('Incomplete composition requires an exact succeeded work push');
+      }
       if (base.oid === current.revision.baseOid) {
         throw new IntegrationV3InvalidWorkResultError('Ready work result changed neither the integration head nor the base');
       }
@@ -183,7 +208,8 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
         baseOid: base.oid,
         headOid: current.revision.headOid,
         treeOid: current.revision.treeOid,
-        sources: [...context.sources].sort((a, b) => a.order - b.order).map(stripSnapshotIdentity),
+        compositionComplete: true,
+        sources: ordered.map(stripSnapshotIdentity),
         workExecutionId: context.workExecutionId,
       };
     }
@@ -197,15 +223,20 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
       || receipt.candidateRevision !== current.candidate.currentRevision
       || receipt.workflowEpoch !== current.candidate.workflowEpoch
       || receipt.laneEpoch !== current.candidate.laneEpoch
+      || receipt.ref !== `refs/heads/${current.candidate.branch}`
       || receipt.oldOid !== current.revision.headOid
       || receipt.newOid !== remote.oid) {
       throw new IntegrationV3InvalidWorkResultError('Changed integration head has no matching succeeded push receipt');
+    }
+    if (!current.revision.compositionComplete && remote.treeOid === current.revision.treeOid) {
+      throw new IntegrationV3InvalidWorkResultError('Incomplete composition work push did not change the candidate tree');
     }
     return {
       baseOid: base.oid,
       headOid: remote.oid,
       treeOid: remote.treeOid,
-      sources: [...context.sources].sort((a, b) => a.order - b.order).map(stripSnapshotIdentity),
+      compositionComplete: true,
+      sources: ordered.map(stripSnapshotIdentity),
       workExecutionId: context.workExecutionId,
     };
   }
@@ -216,7 +247,13 @@ export class IntegrationV3InvalidWorkResultError extends Error {
   constructor(message: string) { super(message); this.name = 'IntegrationV3InvalidWorkResultError'; }
 }
 export class IntegrationV3ComposeConflictError extends Error {
-  constructor(message: string) { super(message); this.name = 'IntegrationV3ComposeConflictError'; }
+  constructor(
+    message: string,
+    readonly revision: Omit<AppendCandidateRevisionInput, 'expectedVersion' | 'expectedCurrentRevision' | 'nextState'>,
+  ) {
+    super(message);
+    this.name = 'IntegrationV3ComposeConflictError';
+  }
 }
 export class IntegrationV3CandidateReloadRequiredError extends Error { readonly retryable = true; constructor() { super('Candidate PR binding advanced; reload required'); } }
 

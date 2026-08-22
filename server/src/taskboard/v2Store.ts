@@ -2,18 +2,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
 import type {
-  TaskBoardChange,
-  TaskBoardComment,
-  TaskBoardExecutionContextInput,
-  TaskBoardExecutionContextResponse,
-  TaskBoardIntegrationBatchCreateInput,
-  TaskBoardIntegrationSource,
-  TaskBoardMember,
-  TaskBoardMemberPatchInput,
-  TaskBoardRepositoryConfig,
-  TaskBoardTask,
+  TaskBoardChange, TaskBoardComment, TaskBoardExecutionContextInput, TaskBoardExecutionContextResponse,
+  TaskBoardIntegrationBatchCreateInput, TaskBoardIntegrationSource, TaskBoardMember, TaskBoardMemberPatchInput,
+  TaskBoardRepositoryConfig, TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import { rowToBoard } from './boardFields.js';
+import { loadExecutionIntegrationCandidate } from './executionCandidateContext.js';
+import { assertIntegrationSourcesProviderReady } from './integrationSourceCiGate.js';
+import type { RepositoryProvider } from './repositoryProvider.js';
 import { rowToIntegrationSource } from './integrationSourceMapper.js';
 import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import { assertIntegrationV3RuntimeAvailable } from './integrationV3ActivationStore.js';
@@ -57,6 +53,8 @@ export interface TaskboardV2StoreOptions {
   integrationTriggerOutboxTable: string;
   remediationAttemptsTable: string;
   cancellationOutboxTable: string;
+  repositoryProvider?: RepositoryProvider;
+  integrationV3RepositoryProvider?: RepositoryProvider;
   /** Optional for structural v2 hosts; PgTaskboardStore always supplies a fail-closed implementation. */
   probeIntegrationV3Repository?(input: {
     tenantId: string;
@@ -251,6 +249,8 @@ export async function createIntegrationBatch(
         );
       }
     }
+    const sourceProvider = workflowVersion === 3 ? options.integrationV3RepositoryProvider : options.repositoryProvider;
+    await assertIntegrationSourcesProviderReady(sourceProvider, repository, String(board.owner_user_id), sources.rows);
     const duplicate = await client.query(
       `SELECT s.delivery_task_id,s.provider_pull_request_id
          FROM ${options.integrationSourcesTable} s
@@ -369,9 +369,9 @@ export async function createIntegrationBatch(
           policy.revision, policy.execution?.mergeMethod ?? 'squash', JSON.stringify(policySnapshot), sourceSetDigest]);
       await client.query(
         `INSERT INTO ${tables.revisionsTable}
-          (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,source_set_digest,subject_digest,
-           policy_snapshot_digest,policy_revision,merge_method,work_round)
-         VALUES ($1,1,1,$2,$3,'source_seed',NULL,$4,$5,$6,$7,$8,0)`,
+          (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,composition_complete,
+           source_set_digest,subject_digest,policy_snapshot_digest,policy_revision,merge_method,work_round)
+         VALUES ($1,1,1,$2,$3,'source_seed',NULL,FALSE,$4,$5,$6,$7,$8,0)`,
         [candidateId, bootstrapBaseOid, bootstrapHeadOid, sourceSetDigest, subjectDigest,
           policySnapshotDigest, policy.revision, policy.execution?.mergeMethod ?? 'squash']);
       for (const frozen of frozenSources) {
@@ -626,10 +626,7 @@ export async function getExecutionContextV2(
       )
       : undefined;
     const sources = include.has('integrationSources') && loaded.task.kind === 'integration'
-      ? await client.query(
-        `SELECT * FROM ${options.integrationSourcesTable} WHERE integration_task_id=$1 ORDER BY source_order`,
-        [taskId],
-      )
+      ? await client.query(`SELECT * FROM ${options.integrationSourcesTable} WHERE integration_task_id=$1 ORDER BY source_order`, [taskId])
       : undefined;
     const policy = jsonObject(loaded.board.integration_policy) as { revision?: string } | undefined;
     return {
@@ -638,6 +635,8 @@ export async function getExecutionContextV2(
       ...(comments ? { comments: comments.rows.map(rowToComment) } : {}),
       ...(executions ? { executions: executions.rows.map(rowToExecution) } : {}),
       ...(sources ? { integrationSources: sources.rows.map(rowToIntegrationSource) } : {}),
+      ...(include.has('integrationSources') && loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3
+        ? { integrationCandidate: await loadExecutionIntegrationCandidate(client, options.integrationSourcesTable, taskId) } : {}),
       ...(page.length ? { changes: page.map(rowToChange) } : {}),
       asOfSeq,
       ...(page.length && changeRows.rows.length > limit

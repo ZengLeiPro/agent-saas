@@ -54,7 +54,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
 
   async function makeCompactHarness(
     adapter: ModelAdapter,
-    options: { relayState?: LatestResponseSessionState | null } = {},
+    options: { relayState?: LatestResponseSessionState | null; compactionPrompt?: string } = {},
   ) {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-compact-'));
     cleanupDirs.add(cwd);
@@ -79,6 +79,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore,
+      compactionPrompt: options.compactionPrompt,
     });
     const context: RunContext = {
       runId: 'run-compact-1',
@@ -194,6 +195,24 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     expect(projection.messages.some((m) => typeof m.content === 'string' && m.content.includes('/compact'))).toBe(false);
   });
 
+  it('手动 /compact 使用平台配置的压缩指令', async () => {
+    const adapter = new SummaryAdapter(['自定义指令摘要。']);
+    const { eventStore, loop, context } = await makeCompactHarness(adapter, {
+      compactionPrompt: '请按自定义格式输出压缩摘要。',
+    });
+    await seedHistory(eventStore);
+
+    await collect(loop.compact(
+      { message: { channel: 'web', chatId: 'chat-1', content: '/compact' }, instructions: '正常指令' },
+      context,
+    ));
+
+    expect(adapter.requests[0]?.messages.at(-1)).toEqual({
+      role: 'user',
+      content: '请按自定义格式输出压缩摘要。',
+    });
+  });
+
   it('Responses 接力状态存在时仍用本地全量投影压缩，避免已超窗远端链接力失败', async () => {
     const adapter = new SummaryAdapter(['接力摘要正文，长度足够作为摘要输出。']);
     const { eventStore, loop, context, clearedSessions } = await makeCompactHarness(adapter, {
@@ -300,6 +319,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
       });
     }
 
+    const compactionPrompt = '请按自定义自动压缩格式输出摘要。';
     let queued: QueuedInterjection[] = [];
     class InlineAutoCompactAdapter implements ModelAdapter {
       requests: ModelRequest[] = [];
@@ -308,7 +328,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
       async *stream(request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
         this.requests.push(request);
         const lastContent = request.messages.at(-1)?.content;
-        const isCompaction = typeof lastContent === 'string' && lastContent.includes('上下文压缩');
+        const isCompaction = lastContent === compactionPrompt;
         if (isCompaction) {
           queued = [{
             inputId: 'input-during-compact',
@@ -370,6 +390,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore,
+      compactionPrompt,
     });
     let evaluations = 0;
     const forceReasons: Array<string | undefined> = [];
@@ -400,6 +421,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
 
     expect(adapter.normalCalls).toBe(2);
     expect(adapter.requests).toHaveLength(3);
+    expect(adapter.requests[1]?.messages.at(-1)).toEqual({ role: 'user', content: compactionPrompt });
     expect(JSON.stringify(adapter.requests[2]?.messages)).toContain('## 自动摘要');
     expect(JSON.stringify(adapter.requests[2]?.messages)).toContain('完成当前任务');
     expect(JSON.stringify(adapter.requests[2]?.messages)).toContain('<resume-policy>');

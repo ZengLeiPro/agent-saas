@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import { createReadStream } from 'node:fs';
-import { chmod, lstat, mkdtemp, opendir, readFile, realpath, rm } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, open, opendir, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -19,8 +19,8 @@ export class WorkspaceCommitMaterializationError extends Error {
     | 'object_missing'
     | 'merge_commit_forbidden'
     | 'parent_mismatch'
-    | 'materialization_failed') {
-    super(`Workspace commit materialization rejected: ${code}`);
+    | 'materialization_failed', public readonly stage?: string, cause?: unknown) {
+    super(`Workspace commit materialization rejected: ${code}${stage ? ` at ${stage}` : ''}`, cause ? { cause } : undefined);
     this.name = 'WorkspaceCommitMaterializationError';
   }
 }
@@ -31,7 +31,7 @@ export interface MaterializedWorkspaceCommit {
 }
 
 /**
- * Imports one direct-parent commit from a bound user workspace without invoking Git in
+ * Imports one single-parent commit from a bound user workspace without invoking Git in
  * that workspace. Source config, hooks, remotes and credential helpers are never read.
  * The callback sees a self-contained 0700 temporary bare repository; cleanup is unconditional.
  */
@@ -40,10 +40,13 @@ export async function withMaterializedWorkspaceCommit<T>(input: {
   repositoryName: string;
   commitOid: string;
   expectedOldOid: string;
+  /** Immutable candidate revision base; permits a controlled rebase only when it diverged from expectedOldOid. */
+  expectedBaseOid?: string;
   tempRoot?: string;
   onTemporaryDirectory?: (path: string) => void;
 }, action: (materialized: MaterializedWorkspaceCommit) => Promise<T>): Promise<T> {
-  if (!OID.test(input.commitOid) || !OID.test(input.expectedOldOid)) {
+  if (!OID.test(input.commitOid) || !OID.test(input.expectedOldOid)
+    || (input.expectedBaseOid !== undefined && !OID.test(input.expectedBaseOid))) {
     throw new WorkspaceCommitMaterializationError('object_missing');
   }
   const objectDirectory = await resolveWorkspaceObjectDirectory(input.workspaceRoot, input.repositoryName);
@@ -56,10 +59,18 @@ export async function withMaterializedWorkspaceCommit<T>(input: {
     await runGit(temporaryRoot, ['init', '--bare', 'repository.git']);
     await chmod(repositoryPath, 0o700);
     const alternateEnv = { GIT_ALTERNATE_OBJECT_DIRECTORIES: objectDirectory };
-    await assertCommitGraph(repositoryPath, input.expectedOldOid, input.commitOid, alternateEnv);
+    await assertCommitGraph(
+      repositoryPath, input.expectedOldOid, input.commitOid, input.expectedBaseOid, alternateEnv,
+    );
     await runGit(repositoryPath, ['update-ref', 'refs/heads/candidate', input.commitOid], alternateEnv);
+    await runGit(repositoryPath, ['update-ref', 'refs/taskboard/expected-old', input.expectedOldOid], alternateEnv);
+    if (input.expectedBaseOid) {
+      await runGit(repositoryPath, ['update-ref', 'refs/taskboard/expected-base', input.expectedBaseOid], alternateEnv);
+    }
     await runGit(repositoryPath, ['repack', '-a', '-d'], alternateEnv, 30_000);
-    await assertCommitGraph(repositoryPath, input.expectedOldOid, input.commitOid, {});
+    await assertCommitGraph(
+      repositoryPath, input.expectedOldOid, input.commitOid, input.expectedBaseOid, {},
+    );
     await runGit(repositoryPath, ['fsck', '--full', '--no-dangling'], {}, 30_000);
     materialized = true;
     return await action({ repositoryPath, commitOid: input.commitOid });
@@ -101,40 +112,60 @@ export async function materializeCandidateObjects(input: {
   const sourceRepositoryPath = await realpath(input.sourceRepositoryPath);
   const objectDirectory = await resolveWorkspaceObjectDirectory(input.workspaceRoot, input.repositoryName);
   const temporaryRoot = await mkdtemp(join(input.tempRoot ?? tmpdir(), 'taskboard-candidate-objects-'));
+  let stage = 'temporary_repository';
   try {
     await chmod(temporaryRoot, 0o700);
+    stage = 'source_connectivity';
     await assertCandidateObjects(sourceRepositoryPath, input.baseOid, input.headOid, input.treeOid, {});
+    stage = 'target_binding';
     await assertWorkspaceObjectDirectoryBinding(input.workspaceRoot, input.repositoryName, objectDirectory);
     const targetEnv = { GIT_OBJECT_DIRECTORY: objectDirectory };
     const sinkRepositoryPath = join(temporaryRoot, 'sink.git');
     await runGit(temporaryRoot, ['init', '--bare', 'sink.git']);
+    stage = 'target_probe';
     if (!await hasCandidateObjects(sinkRepositoryPath, input.baseOid, input.headOid, input.treeOid, targetEnv)) {
-      const prefix = join(temporaryRoot, 'candidate');
+      const packPath = join(temporaryRoot, 'candidate.pack');
+      stage = 'target_ancestor';
       const targetAncestor = await findNearestCompleteTargetAncestor(
         sourceRepositoryPath,
         sinkRepositoryPath,
         input.baseOid,
         targetEnv,
       );
-      const hash = await runGitWithInput(
+      stage = 'pack_objects';
+      await runGitWithInputToFile(
         sourceRepositoryPath,
-        ['pack-objects', prefix, '--revs'],
-        `${input.headOid}\n${targetAncestor ? `^${targetAncestor}\n` : ''}`,
+        ['pack-objects', '--stdout', '--revs'],
+        `${input.headOid}\n${input.baseOid}\n${targetAncestor ? `^${targetAncestor}\n` : ''}`,
+        packPath,
         {},
         120_000,
       );
-      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(hash)) throw new Error('invalid pack hash');
+      stage = 'pack_index_binding';
       await assertWorkspaceObjectDirectoryBinding(input.workspaceRoot, input.repositoryName, objectDirectory);
-      await runGitWithFileInput(
+      stage = 'pack_index';
+      const hash = await runGitWithFileInput(
         sinkRepositoryPath,
         ['index-pack', '--stdin'],
-        `${prefix}-${hash}.pack`,
+        packPath,
         targetEnv,
         120_000,
       );
+      if (!/^(?:pack\t)?(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(hash)) throw new Error('invalid pack hash');
     }
+    stage = 'final_binding';
     await assertWorkspaceObjectDirectoryBinding(input.workspaceRoot, input.repositoryName, objectDirectory);
+    stage = 'final_connectivity';
     await assertCandidateObjects(sinkRepositoryPath, input.baseOid, input.headOid, input.treeOid, targetEnv);
+    stage = 'final_hash_verification';
+    await verifyCandidateObjectHashes(
+      sinkRepositoryPath,
+      temporaryRoot,
+      input.baseOid,
+      input.headOid,
+      input.treeOid,
+      targetEnv,
+    );
     return {
       repositoryName: input.repositoryName,
       baseOid: input.baseOid,
@@ -142,8 +173,10 @@ export async function materializeCandidateObjects(input: {
       treeOid: input.treeOid,
     };
   } catch (error) {
-    if (error instanceof WorkspaceCommitMaterializationError) throw error;
-    throw new WorkspaceCommitMaterializationError('materialization_failed');
+    if (error instanceof WorkspaceCommitMaterializationError) {
+      throw error.stage ? error : new WorkspaceCommitMaterializationError(error.code, stage, error);
+    }
+    throw new WorkspaceCommitMaterializationError('materialization_failed', stage, error);
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
@@ -242,12 +275,16 @@ async function assertCommitGraph(
   repositoryPath: string,
   expectedOldOid: string,
   commitOid: string,
+  expectedBaseOid: string | undefined,
   env: Record<string, string>,
 ): Promise<void> {
   try {
     const oldType = (await runGit(repositoryPath, ['cat-file', '-t', expectedOldOid], env)).trim();
     const newType = (await runGit(repositoryPath, ['cat-file', '-t', commitOid], env)).trim();
-    if (oldType !== 'commit' || newType !== 'commit') throw new Error('not commit');
+    const baseType = expectedBaseOid
+      ? (await runGit(repositoryPath, ['cat-file', '-t', expectedBaseOid], env)).trim()
+      : 'commit';
+    if (oldType !== 'commit' || newType !== 'commit' || baseType !== 'commit') throw new Error('not commit');
   } catch {
     throw new WorkspaceCommitMaterializationError('object_missing');
   }
@@ -258,8 +295,22 @@ async function assertCommitGraph(
     throw new WorkspaceCommitMaterializationError('object_missing');
   }
   if (fields.length > 2) throw new WorkspaceCommitMaterializationError('merge_commit_forbidden');
-  if (fields.length !== 2 || fields[1] !== expectedOldOid) {
+  if (fields.length !== 2) throw new WorkspaceCommitMaterializationError('parent_mismatch');
+  const parentOid = fields[1];
+  if (parentOid === expectedOldOid) return;
+  if (!expectedBaseOid || parentOid !== expectedBaseOid || expectedBaseOid === expectedOldOid) {
     throw new WorkspaceCommitMaterializationError('parent_mismatch');
+  }
+  try {
+    const mergeBase = (await runGit(
+      repositoryPath, ['merge-base', expectedBaseOid, expectedOldOid], env,
+    )).trim();
+    if (!OID.test(mergeBase) || mergeBase === expectedBaseOid) {
+      throw new WorkspaceCommitMaterializationError('parent_mismatch');
+    }
+  } catch (error) {
+    if (error instanceof WorkspaceCommitMaterializationError) throw error;
+    throw new WorkspaceCommitMaterializationError('object_missing');
   }
 }
 
@@ -288,6 +339,36 @@ async function findNearestCompleteTargetAncestor(
     }
   }
   return undefined;
+}
+
+async function verifyCandidateObjectHashes(
+  sourceRepositoryPath: string,
+  temporaryRoot: string,
+  baseOid: string,
+  headOid: string,
+  treeOid: string,
+  sourceEnv: Record<string, string>,
+): Promise<void> {
+  const verificationRepositoryPath = join(temporaryRoot, 'verification.git');
+  const verificationPackPath = join(temporaryRoot, 'verification.pack');
+  await runGit(temporaryRoot, ['init', '--bare', 'verification.git']);
+  await runGitWithInputToFile(
+    sourceRepositoryPath,
+    ['pack-objects', '--stdout', '--revs'],
+    `${headOid}\n${baseOid}\n`,
+    verificationPackPath,
+    sourceEnv,
+    120_000,
+  );
+  const hash = await runGitWithFileInput(
+    verificationRepositoryPath,
+    ['index-pack', '--stdin'],
+    verificationPackPath,
+    {},
+    120_000,
+  );
+  if (!/^(?:pack\t)?(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(hash)) throw new Error('invalid verification pack hash');
+  await assertCandidateObjects(verificationRepositoryPath, baseOid, headOid, treeOid, {});
 }
 
 async function assertCandidateObjects(
@@ -332,6 +413,46 @@ async function runGitWithInput(
   timeout = 30_000,
 ): Promise<string> {
   return runSpawnedGit(cwd, args, extraEnv, timeout, (child) => child.stdin!.end(input));
+}
+
+async function runGitWithInputToFile(
+  cwd: string,
+  args: string[],
+  input: string,
+  outputPath: string,
+  extraEnv: Record<string, string> = {},
+  timeout = 30_000,
+): Promise<void> {
+  const output = await open(outputPath, 'wx', 0o600);
+  const child = spawn('git', args, {
+    cwd,
+    stdio: ['pipe', output.fd, 'pipe'],
+    env: safeGitEnvironment(cwd, extraEnv),
+  });
+  let stderr = '';
+  let timedOut = false;
+  child.stdin!.on('error', () => undefined);
+  child.stderr!.setEncoding('utf8');
+  child.stderr!.on('data', (chunk: string) => {
+    if (stderr.length < MAX_GIT_OUTPUT) stderr += chunk.slice(0, MAX_GIT_OUTPUT - stderr.length);
+  });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill('SIGKILL');
+  }, timeout);
+  try {
+    child.stdin!.end(input);
+    const exitCode = await new Promise<number>((resolveExit, reject) => {
+      child.once('error', reject);
+      child.once('close', (code) => resolveExit(code ?? -1));
+    });
+    if (exitCode !== 0) {
+      throw new Error(`controlled git command failed: ${timedOut ? `timed out after ${timeout}ms` : stderr.trim()}`);
+    }
+  } finally {
+    clearTimeout(timer);
+    await output.close();
+  }
 }
 
 async function runGitWithFileInput(

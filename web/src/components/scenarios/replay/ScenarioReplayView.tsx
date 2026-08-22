@@ -371,6 +371,8 @@ export function ScenarioReplayView({
               isLoadingMessages={false}
               scrollContainerRef={scrollRef}
               debugModeOverride={false}
+              businessStepDisplayModeOverride="collapsed"
+              showBusinessStepOutcomeWhenCollapsed
             />
             {currentApproval && currentDecision !== "approved" ? (
               <div className="shrink-0 border-t border-border/60 bg-warning-subtle px-4 py-3">

@@ -122,6 +122,22 @@ function rig() {
       status: 'canceled' as const,
       version: input.expectedVersion + 1,
     })),
+    inspectExecutionPullRequestV2: vi.fn(async () => ({
+      gateStatus: 'success' as const,
+      receipt: {
+        inspectionId: 'inspection-1', digest: 'digest', executionId: execution.id,
+        taskId: task.id, purpose: 'review' as const, repositoryId: 'repo-1',
+        providerPullRequestId: '42', headOid: 'head-42', providerQueriedAt: task.updatedAt,
+      },
+      snapshot: {
+        providerPullRequestId: '42', number: 42, state: 'open' as const, draft: false,
+        headRef: task.branch!, headOid: 'head-42', baseRef: 'main', baseOid: 'base-1',
+        mergeable: true, requiredChecksKnown: true,
+        requiredChecks: [{ name: 'Build & Check', status: 'success' as const }],
+        subjectDigest: 'subject-42', repositoryId: 'repo-1', providerQueriedAt: task.updatedAt,
+        workflowRuns: [],
+      },
+    })),
   } as unknown as TaskboardService;
   const executionService = {
     listExecutions: vi.fn(async () => [execution]),
@@ -216,9 +232,9 @@ describe('CronManage taskboard actions', () => {
       action: 'execution.transition', status: 'ready_to_merge',
     }, scope)).resolves.toMatchObject({ transitioned: true, task: { status: 'ready_to_merge' } });
 
-    expect(service.transitionExecutionV2).toHaveBeenCalledWith(identity, execution.runId, {
-      status: 'ready_to_merge',
-    });
+    expect(service.transitionExecutionV2).toHaveBeenCalledWith(
+      identity, execution.runId, { status: 'ready_to_merge' },
+    );
   });
 
   it('普通会话创建带分支任务并用显式版本回写字段', async () => {
@@ -770,4 +786,15 @@ describe('CronManage taskboard actions', () => {
     }, { sessionId: 'session-copy-failure' })).rejects.toThrow('copy failed');
     expect(service.rollbackTaskCreation).toHaveBeenCalledWith(identity, 'task-new', { expectedVersion: 1 });
   });
+
+  it('当前 Work/Review Execution 可通过受控 action 检查登记 PR 与 CI', async () => {
+    const { service, options } = rig();
+    const scope = executionScope('review');
+
+    await expect(invokeTaskboardAction(options, identity,
+      { action: 'execution.pull_request.inspect', taskId: task.id }, scope)).resolves.toMatchObject({
+      gateStatus: 'success',
+      receipt: { executionId: execution.id, taskId: task.id, headOid: 'head-42' },
+    });
+    expect(service.inspectExecutionPullRequestV2).toHaveBeenCalledWith(identity, execution.runId); });
 });

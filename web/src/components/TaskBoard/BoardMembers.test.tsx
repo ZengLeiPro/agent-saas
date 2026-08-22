@@ -64,6 +64,8 @@ describe("BoardMembers", () => {
     }));
 
     await user.click(screen.getByRole("combobox", { name: "选择组织用户" }));
+    const userList = await screen.findByRole("listbox", { name: "组织用户列表" });
+    expect(userList.parentElement?.className).toContain("z-[110]");
     await user.type(screen.getByRole("searchbox", { name: "搜索组织用户" }), "成员三");
     await user.click(screen.getByRole("option", { name: /成员三 @user3/ }));
     await user.click(screen.getByRole("combobox", { name: "新成员角色" }));

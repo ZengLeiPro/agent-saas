@@ -276,6 +276,12 @@ export interface TaskBoardTask {
   providerPullRequestId?: string;
   pullRequestNumber?: number;
   reviewedSubjectDigest?: string;
+  providerCiInspectionId?: string;
+  providerCiExecutionId?: string;
+  providerCiPurpose?: TaskBoardExecutionPurpose;
+  providerCiHeadOid?: string;
+  providerCiStatus?: 'success' | 'pending' | 'failure' | 'unavailable';
+  providerCiInspectedAt?: string;
   mergedCommitOid?: string;
   integrationTaskId?: string;
   integrationTaskIdentifier?: string;
@@ -363,12 +369,19 @@ export interface TaskBoardChange {
   createdAt: string;
 }
 
+export interface TaskBoardExecutionIntegrationCandidate {
+  candidate: TaskBoardIntegrationCandidate;
+  revision?: TaskBoardIntegrationCandidateRevision;
+  sourceSnapshots: TaskBoardIntegrationCandidateSourceSnapshot[];
+}
+
 export interface TaskBoardExecutionContextResponse {
   board: TaskBoard;
   task: TaskBoardTask;
   comments?: TaskBoardComment[];
   executions?: TaskBoardExecution[];
   integrationSources?: TaskBoardIntegrationSource[];
+  integrationCandidate?: TaskBoardExecutionIntegrationCandidate;
   changes?: TaskBoardChange[];
   asOfSeq: string;
   nextCursor?: string;
@@ -410,6 +423,8 @@ export interface TaskBoardIntegrationCandidateRevision {
   /** source_seed revisions intentionally have no Git tree; provider_subject revisions always do. */
   subjectKind?: 'source_seed' | 'provider_subject';
   treeOid?: string;
+  /** False until deterministic composition or a fenced Work push incorporates the complete frozen source set. */
+  compositionComplete: boolean;
   sourceSetDigest: string;
   subjectDigest: string;
   policySnapshotDigest: string;

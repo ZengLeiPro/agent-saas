@@ -302,9 +302,7 @@
     // 完整重放 Context Projection，并直接维护真实 Markdown。仅 PG 后端可用。
     "consolidation": {
       "enabled": false,
-      "debounceMinutes": 10,
-      "maxConsolidationsPerUserPerDay": 12,
-      "maxInputTokensPerUserPerDay": 100000
+      "debounceMinutes": 30
     },
     // 记忆索引（SQLite + FTS5 + sqlite-vec 向量混合检索）
     // 启用后替代纯关键词搜索，提供语义理解能力

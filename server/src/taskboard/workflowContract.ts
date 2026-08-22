@@ -22,10 +22,10 @@ export function resolveWorkflowContract(
       if (!expected || expected !== purpose) invalidPurpose(task, purpose);
       return purpose === 'work'
         ? { ...base, objective: '修复当前 candidate revision，受控 push 后请求系统复核。', capabilities: { readContext: true, comment: true, modifyTaskBranch: true, merge: false }, allowedStatuses: ['in_review', 'blocked'] }
-        : { ...base, objective: '独立复核绑定的 candidate revision。', capabilities: { readContext: true, comment: true, approveReviewedSubject: true, merge: false }, allowedStatuses: ['ready_to_merge', 'todo', 'in_review', 'blocked'] };
+        : { ...base, objective: '独立复核绑定的 candidate revision。', capabilities: { readContext: true, comment: true, approveReviewedSubject: true, inspectPullRequestCi: true, merge: false }, allowedStatuses: ['ready_to_merge', 'todo', 'in_review', 'blocked'] };
     }
     if (purpose !== 'merge') invalidPurpose(task, purpose);
-    return { ...base, objective: '验证并集成所有冻结来源。', capabilities: { readContext: true, comment: true, mergeReviewedSource: true, createRemediation: true }, allowedStatuses: ['in_progress', 'done', 'blocked'] };
+    return { ...base, objective: '验证并集成所有冻结来源。', capabilities: { readContext: true, comment: true, mergeReviewedSource: true, inspectPullRequestCi: true, createRemediation: true }, allowedStatuses: ['in_progress', 'done', 'blocked'] };
   }
   if (purpose === 'merge') invalidPurpose(task, purpose);
   if (task.kind === 'advisory') {
@@ -33,10 +33,10 @@ export function resolveWorkflowContract(
     return { ...base, taskKind: 'advisory', objective: '完成答复、分析或建议；不得实施外部变更。', capabilities: { readContext: true, comment: true, merge: false }, allowedStatuses: ['todo', 'blocked'] };
   }
   if (purpose === 'review') return {
-    ...base, objective: '独立复核当前不可变 PR subject。', capabilities: { readContext: true, comment: true, approveReviewedSubject: true, merge: false },
+    ...base, objective: '独立复核当前不可变 PR subject。', capabilities: { readContext: true, comment: true, approveReviewedSubject: true, inspectPullRequestCi: true, merge: false },
     allowedStatuses: task.kind === 'remediation' ? ['done', 'todo', 'in_review', 'blocked'] : ['ready_to_merge', 'todo', 'in_review', 'blocked'],
   };
-  return { ...base, objective: task.kind === 'remediation' ? '完成关联集成问题修复并交付复核。' : '完成任务实施和自检并交付复核。', capabilities: { readContext: true, comment: true, modifyTaskBranch: true, createFollowUpTask: true, merge: false }, allowedStatuses: ['in_review', 'blocked'] };
+  return { ...base, objective: task.kind === 'remediation' ? '完成关联集成问题修复并交付复核。' : '完成任务实施和自检并交付复核。', capabilities: { readContext: true, comment: true, modifyTaskBranch: true, createFollowUpTask: true, attachPullRequest: true, inspectPullRequestCi: true, merge: false }, allowedStatuses: ['in_review', 'blocked'] };
 }
 
 function purposeForTask(task: TaskBoardTask, options: WorkflowContractOptions): TaskBoardExecutionPurpose {

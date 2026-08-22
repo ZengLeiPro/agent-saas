@@ -238,7 +238,7 @@ export async function listSessions(
  */
 export async function deleteSession(
   sessionId: string,
-  options?: { deleteSidecarDir?: boolean }
+  options?: { deleteSidecarDir?: boolean; preserveMeta?: boolean }
 ): Promise<{ deleted: boolean; transcriptPath?: string; sidecarPath?: string }> {
   if (!isValidSessionId(sessionId)) throw new Error("Invalid sessionId format");
 
@@ -248,14 +248,15 @@ export async function deleteSession(
   assertAllowedTranscriptPath(transcriptPath);
   await fs.unlink(transcriptPath);
 
-  const metaPath = transcriptPath.replace(/\.jsonl$/, '.meta.json');
-  try { await fs.unlink(metaPath); } catch { /* meta may not exist */ }
-  notifySessionMetaDeleted(sessionId);
-
   let sidecarPath: string | undefined;
-  if (options?.deleteSidecarDir) {
+  if (options?.deleteSidecarDir && !options.preserveMeta) {
     sidecarPath = path.join(path.dirname(transcriptPath), sessionId);
-    try { await fs.rm(sidecarPath, { recursive: true, force: true }); } catch { /* noop */ }
+    await fs.rm(sidecarPath, { recursive: true, force: true });
+  }
+  if (!options?.preserveMeta) {
+    const metaPath = transcriptPath.replace(/\.jsonl$/, '.meta.json');
+    try { await fs.unlink(metaPath); } catch { /* meta may not exist */ }
+    notifySessionMetaDeleted(sessionId);
   }
 
   return { deleted: true, transcriptPath, sidecarPath };
@@ -301,13 +302,12 @@ export async function deleteSessionMetaOnly(
   const actualMetaPath = metaPath.replace(/\.jsonl$/, '.meta.json');
   assertAllowedTranscriptPath(actualMetaPath);
 
-  try { await fs.unlink(actualMetaPath); } catch { return { deleted: false }; }
-  notifySessionMetaDeleted(sessionId);
-
   if (options?.deleteSidecarDir) {
     const sidecarPath = path.join(path.dirname(actualMetaPath), sessionId);
-    try { await fs.rm(sidecarPath, { recursive: true, force: true }); } catch { /* noop */ }
+    await fs.rm(sidecarPath, { recursive: true, force: true });
   }
+  try { await fs.unlink(actualMetaPath); } catch { return { deleted: false }; }
+  notifySessionMetaDeleted(sessionId);
   return { deleted: true };
 }
 

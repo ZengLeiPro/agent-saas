@@ -57,7 +57,7 @@ describePg('Taskboard advisory promotion', () => {
     expect(promoted).toMatchObject({ kind: 'delivery', status: 'todo' });
     expect(promoted).not.toHaveProperty('completedAt');
     const changes = await pool.query(
-      `SELECT type, payload FROM ${store.changesTable} WHERE task_id=$1 ORDER BY seq DESC LIMIT 1`,
+      `SELECT change_type AS type, payload FROM ${store.changesTable} WHERE task_id=$1 ORDER BY seq DESC LIMIT 1`,
       [advisory.id],
     );
     expect(changes.rows[0]).toMatchObject({

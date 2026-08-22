@@ -32,7 +32,8 @@ describe('GithubRepositoryProvider', () => {
         ],
       }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ statuses: [] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ contexts: ['test', 'lint'] }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ contexts: ['test', 'lint'] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
     const provider = new GithubRepositoryProvider({
       resolveToken: async () => 'secret-token',
       fetchImpl,
@@ -61,6 +62,124 @@ describe('GithubRepositoryProvider', () => {
     expect(fetchImpl.mock.calls[0]?.[1]?.headers).toMatchObject({ Authorization: 'Bearer secret-token' });
   });
 
+  it('does not satisfy an App-bound required check with a same-name check from another App', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        number: 42, state: 'open', merged: false, draft: false, mergeable: true,
+        head: { ref: 'feat/x', sha: 'head-oid', repo: { full_name: 'acme/app' } },
+        base: { ref: 'main', sha: 'base-oid', repo: { full_name: 'acme/app' } },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        check_runs: [{ name: 'Build & Check', app: { id: 8 }, status: 'completed', conclusion: 'success' }],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ statuses: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ checks: [{ context: 'Build & Check', app_id: 7 }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const snapshot = await provider.getPullRequest(repository, '42', 'owner-user');
+
+    expect(snapshot.requiredChecksKnown).toBe(true);
+    expect(snapshot.requiredChecks).toEqual([{ name: 'Build & Check', appId: 7, status: 'pending' }]);
+  });
+
+  it('treats a null App binding as any source instead of the impossible appId zero', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        number: 42, state: 'open', merged: false, draft: false, mergeable: true,
+        head: { ref: 'feat/x', sha: 'head-oid', repo: { full_name: 'acme/app' } },
+        base: { ref: 'main', sha: 'base-oid', repo: { full_name: 'acme/app' } },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        check_runs: [{ name: 'Build & Check', app: { id: 8 }, status: 'completed', conclusion: 'success' }],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ statuses: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ checks: [{ context: 'Build & Check', app_id: null }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const snapshot = await provider.getPullRequest(repository, '42', 'owner-user');
+
+    expect(snapshot.requiredChecks).toEqual([{ name: 'Build & Check', status: 'success' }]);
+  });
+
+  it.each(['bad', '999', true, 0, -1, 1.5])(
+    'fails closed for malformed ruleset integration_id=%s instead of downgrading to any App',
+    async (integrationId) => {
+      const fetchImpl = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          number: 42, state: 'open', merged: false, draft: false, mergeable: true,
+          head: { ref: 'feat/x', sha: 'head-oid', repo: { full_name: 'acme/app' } },
+          base: { ref: 'main', sha: 'base-oid', repo: { full_name: 'acme/app' } },
+        }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          check_runs: [{ name: 'ci', app: { id: 999 }, status: 'completed', conclusion: 'success' }],
+        }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ statuses: [] }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ contexts: [] }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify([{
+          type: 'required_status_checks',
+          parameters: { required_status_checks: [{ context: 'ci', integration_id: integrationId }] },
+        }]), { status: 200 }));
+      const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+      const snapshot = await provider.getPullRequest(repository, '42', 'owner-user');
+
+      expect(snapshot.requiredChecksKnown).toBe(false);
+      expect(snapshot.requiredChecks).toContainEqual({ name: 'github:checks-unavailable', status: 'failure' });
+    },
+  );
+
+  it('uses the newest combined status instead of allowing an older success to hide a failure', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        number: 42, state: 'open', merged: false, draft: false, mergeable: true,
+        head: { ref: 'feat/x', sha: 'head-oid', repo: { full_name: 'acme/app' } },
+        base: { ref: 'main', sha: 'base-oid', repo: { full_name: 'acme/app' } },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ statuses: [
+        { context: 'Build & Check', state: 'failure', updated_at: '2026-08-22T11:00:00Z' },
+        { context: 'Build & Check', state: 'success', updated_at: '2026-08-22T10:00:00Z' },
+      ] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ contexts: ['Build & Check'] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const snapshot = await provider.getPullRequest(repository, '42', 'owner-user');
+
+    expect(snapshot.requiredChecks).toEqual([{ name: 'Build & Check', status: 'failure' }]);
+  });
+
+  it('merges classic branch-protection and ruleset required checks for Delivery gates', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        number: 42, state: 'open', merged: false, draft: false, mergeable: true,
+        head: { ref: 'feat/x', sha: 'head-oid', repo: { full_name: 'acme/app' } },
+        base: { ref: 'main', sha: 'base-oid', repo: { full_name: 'acme/app' } },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [
+        { name: 'classic-ci', status: 'completed', conclusion: 'success' },
+        { name: 'ruleset-ci', app: { id: 8 }, status: 'completed', conclusion: 'failure' },
+      ] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ statuses: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ contexts: ['classic-ci'] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { type: 'required_status_checks', parameters: {
+          required_status_checks: [{ context: 'ruleset-ci', integration_id: 8 }],
+        } },
+      ]), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const snapshot = await provider.getPullRequest(repository, '42', 'owner-user');
+
+    expect(snapshot.requiredChecksKnown).toBe(true);
+    expect(snapshot.requiredChecks).toEqual([
+      { name: 'classic-ci', status: 'success' },
+      { name: 'ruleset-ci', appId: 8, status: 'failure' },
+    ]);
+  });
+
   it('fails closed when GitHub check facts cannot be read', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -75,7 +194,7 @@ describe('GithubRepositoryProvider', () => {
     expect(snapshot.requiredChecks).toContainEqual({ name: 'github:checks-unavailable', status: 'failure' });
   });
 
-  it('uses observed checks when private-repository policy APIs are explicitly unavailable', async () => {
+  it('does not promote optional observed checks when private-repository policy APIs confirm no required gates', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({
         number: 42, state: 'open', merged: false, draft: false, mergeable: true,
@@ -93,7 +212,7 @@ describe('GithubRepositoryProvider', () => {
     const snapshot = await provider.getPullRequest(repository, '42', 'owner-user');
 
     expect(snapshot.requiredChecksKnown).toBe(true);
-    expect(snapshot.requiredChecks).toEqual([{ name: 'CI', status: 'success' }]);
+    expect(snapshot.requiredChecks).toEqual([]);
   });
 
   it('rejects pull requests outside the configured base or repository', async () => {
@@ -170,14 +289,10 @@ describe('GithubRepositoryProvider', () => {
   it('reads required gate identities and merge-queue capability from protection and rulesets', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ checks: [{ context: 'test', app_id: 7 }] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 99 }]), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        id: 99,
-        rules: [
-          { type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'lint', integration_id: 8 }] } },
-          { type: 'merge_queue' },
-        ],
-      }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'lint', integration_id: 8 }] } },
+        { type: 'merge_queue' },
+      ]), { status: 200 }));
     const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
 
     const capabilities = await provider.getRequiredGateCapabilities(repository, 'main', 'owner-user');
@@ -187,6 +302,51 @@ describe('GithubRepositoryProvider', () => {
       requiredChecks: [{ name: 'lint', appId: 8 }, { name: 'test', appId: 7 }],
       mergeQueueRequired: true,
       unsupportedRules: [],
+    });
+    expect(fetchImpl.mock.calls[1]?.[0]).toBe('https://api.github.com/repos/acme/app/rules/branches/main');
+  });
+
+  it('fails closed when applicable branch rules contain unsupported workflow or code-scanning gates', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ contexts: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { type: 'workflows', parameters: { workflows: [{ path: '.github/workflows/ci.yml' }] } },
+        { type: 'code_scanning', parameters: { code_scanning_tools: [{ tool: 'CodeQL' }] } },
+      ]), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const capabilities = await provider.getRequiredGateCapabilities(repository, 'main', 'owner-user');
+
+    expect(capabilities).toEqual({
+      known: false,
+      requiredChecks: [],
+      mergeQueueRequired: false,
+      unsupportedRules: ['code_scanning', 'workflows'],
+    });
+  });
+
+  it('fails closed for unknown, missing or malformed applicable branch rules', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ contexts: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { type: 'new_ci_gate', parameters: {} },
+        {},
+        { type: 'required_status_checks', parameters: { required_status_checks: [{}] } },
+        { type: 'required_signatures' },
+      ]), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const capabilities = await provider.getRequiredGateCapabilities(repository, 'main', 'owner-user');
+
+    expect(capabilities).toEqual({
+      known: false,
+      requiredChecks: [],
+      mergeQueueRequired: false,
+      unsupportedRules: [
+        'ruleset-required-status-check-invalid',
+        'ruleset-rule-type-missing',
+        'unknown-rule:new_ci_gate',
+      ],
     });
   });
 
@@ -285,6 +445,50 @@ describe('GithubRepositoryProvider', () => {
     expect(receipt).toMatchObject({ created: false, providerPullRequestId: '81', headOid: 'candidate-oid' });
     expect(fetchImpl).toHaveBeenCalledTimes(5);
     expect(fetchImpl.mock.calls.some((call) => call[1]?.method === 'POST')).toBe(false);
+  });
+
+  it('returns workflow, job, step and controlled failure-log references for the exact PR head', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        number: 42, state: 'open', merged: false, draft: false, mergeable: true,
+        head: { ref: 'feat/x', sha: 'head-oid', repo: { full_name: 'acme/app' } },
+        base: { ref: 'main', sha: 'base-oid', repo: { full_name: 'acme/app' } },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        check_runs: [{ name: 'Build & Check', status: 'completed', conclusion: 'failure' }],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ statuses: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ contexts: ['Build & Check'] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ workflow_runs: [{
+        id: 501, name: 'CI', event: 'pull_request', status: 'completed', conclusion: 'failure',
+        head_sha: 'head-oid', run_started_at: '2026-08-22T08:00:00Z', updated_at: '2026-08-22T08:05:00Z',
+      }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ jobs: [{
+        id: 701, name: 'Build & Check', status: 'completed', conclusion: 'failure',
+        steps: [{ number: 4, name: 'Run tests', status: 'completed', conclusion: 'failure' }],
+      }] }), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const inspection = await provider.inspectPullRequest(repository, '42', 'owner-user');
+
+    expect(inspection).toMatchObject({
+      repositoryId: repository.repositoryId,
+      headOid: 'head-oid',
+      workflowRuns: [{
+        id: '501', headOid: 'head-oid',
+        jobs: [{ id: '701', failureLogRef: 'github-job:701', steps: [{ name: 'Run tests', conclusion: 'failure' }] }],
+      }],
+    });
+  });
+
+  it('reads a bounded workflow job log through the server-side credential', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('failure details', { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    await expect(provider.getWorkflowJobLog(repository, '701', 'owner-user')).resolves.toBe('failure details');
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://api.github.com/repos/acme/app/actions/jobs/701/logs');
+    await expect(provider.getWorkflowJobLog(repository, '../701', 'owner-user')).rejects.toThrow('Invalid GitHub workflow job id');
   });
 
   it('fails closed when multiple Integration PRs exist for one branch', async () => {

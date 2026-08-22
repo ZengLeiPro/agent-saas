@@ -50,6 +50,8 @@ export const TASKBOARD_RESOURCE_ACTIONS = [
   'execution.comment',
   'execution.integration_candidate.push',
   'execution.pull_request.set',
+  'execution.pull_request.inspect',
+  'execution.pull_request.log',
   'execution.review_subject.record',
   'execution.transition',
   'integration.create',
@@ -57,6 +59,7 @@ export const TASKBOARD_RESOURCE_ACTIONS = [
   'integration.sources',
   'integration.candidate',
   'integration.source.inspect',
+  'integration.source.log',
   'integration.source.merge',
 ] as const;
 export const TASKBOARD_MANAGE_ACTIONS = [
@@ -88,6 +91,8 @@ export interface TaskboardManageInput {
   taskId?: string;
   sourceId?: string;
   providerPullRequestId?: string;
+  inspectionId?: string;
+  providerJobId?: string;
   kind?: TaskBoardTaskKind;
   name?: string;
   title?: string;
@@ -372,6 +377,26 @@ export async function invokeTaskboardAction(
       );
       return { updated: true, task };
     }
+    case 'execution.pull_request.inspect': {
+      if (!scope.execution || !service.inspectExecutionPullRequestV2) {
+        throw new Error('仅当前 work/review Execution 可以检查 pull request 与 CI');
+      }
+      return await service.inspectExecutionPullRequestV2(
+        identity,
+        scope.execution.execution.runId,
+      ) as unknown as Record<string, unknown>;
+    }
+    case 'execution.pull_request.log': {
+      if (!scope.execution || !service.readExecutionPullRequestJobLogV2) {
+        throw new Error('仅当前 work/review Execution 可以读取受控 CI 失败日志');
+      }
+      return await service.readExecutionPullRequestJobLogV2(
+        identity,
+        scope.execution.execution.runId,
+        requireField(input.inspectionId, 'inspectionId'),
+        requireField(input.providerJobId, 'providerJobId'),
+      );
+    }
     case 'execution.review_subject.record': {
       if (!scope.execution || !service.recordReviewedExecutionSubjectV2) {
         throw new Error('仅当前 review Execution 可以登记已审 subject');
@@ -428,6 +453,18 @@ export async function invokeTaskboardAction(
         scope.execution.execution.runId,
         requireField(input.sourceId, 'sourceId'),
       ) as unknown as Record<string, unknown>;
+    }
+    case 'integration.source.log': {
+      if (!scope.execution || !service.readIntegrationSourceJobLogV2) {
+        throw new Error('仅当前 merge Execution 可以读取受控 CI 失败日志');
+      }
+      return await service.readIntegrationSourceJobLogV2(
+        identity,
+        scope.execution.execution.runId,
+        requireField(input.sourceId, 'sourceId'),
+        requireField(input.inspectionId, 'inspectionId'),
+        requireField(input.providerJobId, 'providerJobId'),
+      );
     }
     case 'integration.source.merge': {
       if (!scope.execution || !service.mergeIntegrationSourceV2) {

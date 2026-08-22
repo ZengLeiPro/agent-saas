@@ -37,9 +37,8 @@ import { statVerdict, visibleOutcomeStats, type OutcomeStat } from "./detailSema
 //   （活动组/工具块），无框 = 业务叙事」是刻意的视觉分层。
 // - 状态色只落在 icon 与小徽标上，容器一律融入背景。
 // - 归属感由缩进 + 极淡左竖线表达（timeline 语言），不靠边框。
-// - 终态步骤智能折叠时保留标题与 outcome；展开后再呈现 detail/display，以及同排的
-//   「过程 / 依据」折叠入口；入口控制的内容区都在下一行占满可用宽度。
-//   用户选择「始终折叠」时，outcome 与统计标签也随正文隐藏。
+// - 终态步骤折叠时只保留标题与展开控制；展开后再呈现 outcome、detail/display，
+//   以及同排的「过程 / 依据」折叠入口；入口控制的内容区都在下一行占满可用宽度。
 //
 // 内容纪律（08-03 二轮：样式对齐 demo + 槽位去重）：
 // - 顶层 detail 使用无框业务摘要（PresentationDetail variant="plain"）；判定、风险、
@@ -336,7 +335,7 @@ function StartRow({ event }: { event: BusinessStepEventItem }) {
   );
 }
 
-/** 终态块（无节归属时的扁平流渲染）。智能折叠保留 outcome，始终折叠隐藏全部正文。 */
+/** 终态块（无节归属时的扁平流渲染）。折叠时隐藏全部正文。 */
 function TerminalBlock({
   event,
   open,
@@ -346,7 +345,7 @@ function TerminalBlock({
   event: BusinessStepEventItem;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
-  showOutcomeWhenCollapsed: boolean;
+  showOutcomeWhenCollapsed?: boolean;
 }) {
   const todo = event.todo;
   const meta = TERMINAL_META[event.kind];
@@ -429,16 +428,16 @@ export function BusinessStepFlow({
   event,
   open,
   onOpenChange,
+  showOutcomeWhenCollapsed,
   planHasOpenStep,
   onTogglePlan,
-  showOutcomeWhenCollapsed = true,
 }: {
   event: BusinessStepEventItem;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  showOutcomeWhenCollapsed?: boolean;
   planHasOpenStep?: boolean;
   onTogglePlan?: () => void;
-  showOutcomeWhenCollapsed?: boolean;
 }) {
   switch (event.kind) {
     case "plan":
@@ -474,7 +473,7 @@ function countSectionProcessItems(section: BusinessStepSection): number {
 }
 
 /**
- * 业务步骤节：终态智能折叠时保留标题与 outcome，展开后再呈现详情与过程。
+ * 业务步骤节：终态折叠时只保留标题，展开后再呈现 outcome、详情与过程。
  * children 由 MessageList 用完整消息渲染逻辑生成，本组件只提供节壳。
  */
 export function BusinessStepSectionView({
@@ -484,7 +483,7 @@ export function BusinessStepSectionView({
   systemActions,
   open,
   onOpenChange,
-  showOutcomeWhenCollapsed = true,
+  showOutcomeWhenCollapsed,
 }: {
   section: BusinessStepSection;
   debugMode: boolean;
@@ -566,7 +565,7 @@ export function BusinessStepSectionView({
             {titleLabel}
           </span>
           <StepBadge index={terminal?.stepIndex ?? start.stepIndex} count={terminal?.stepCount ?? start.stepCount} />
-          {terminalMeta && section.processAnomaly ? (
+          {terminalMeta && section.processAnomaly && sectionOpen ? (
             // 跨层矛盾角标：平台事实（区间内同类操作最后一次仍失败）压过模型
             // 干净完成叙事。浅色低重量，不改写模型文本。
             <span className={activityStatusBadgeClass("warning", "opacity-75")}>过程有异常</span>

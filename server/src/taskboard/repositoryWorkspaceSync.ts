@@ -136,8 +136,12 @@ export async function syncCandidateRevisionObjects(
       }
       const remoteBaseRef = `refs/remotes/origin/${input.baseBranch}`;
       const candidateHeadRef = `refs/ky-integration-v3/candidates/${input.candidateId}/r${input.candidateRevision}/head`;
+      const shallow = (await git(host, input.repositoryPath, ['rev-parse', '--is-shallow-repository'])).stdout.trim();
+      if (shallow !== 'true' && shallow !== 'false') {
+        throw new RepositoryWorkspaceSyncError('Git returned an invalid shallow repository state', 'WORKTREE_UNKNOWN');
+      }
       await git(host, input.repositoryPath, [
-        'fetch', '--no-tags', '--', input.controlledRemoteUrl,
+        'fetch', '--no-tags', ...(shallow === 'true' ? ['--unshallow'] : []), '--', input.controlledRemoteUrl,
         `+refs/heads/${input.baseBranch}:${remoteBaseRef}`,
         `+refs/pull/${input.providerPullRequestId}/head:${candidateHeadRef}`,
       ], input.fetchEnvironment);
@@ -159,9 +163,10 @@ export async function syncCandidateRevisionObjects(
         await git(host, input.repositoryPath, ['rev-parse', '--verify', `${input.expectedHeadOid}^{tree}`]),
         input.expectedTreeOid,
       );
+      // The authoritative base may advance after a PR head is prepared; exact subject
+      // identity does not require that newer base tip to be an ancestor of the PR head.
       if (actualBase !== input.expectedBaseOid || actualTree !== input.expectedTreeOid
-        || !await isAncestor(host, input.repositoryPath, input.expectedBaseOid, remoteBaseRef)
-        || !await isAncestor(host, input.repositoryPath, input.expectedBaseOid, input.expectedHeadOid)) {
+        || !await isAncestor(host, input.repositoryPath, input.expectedBaseOid, remoteBaseRef)) {
         throw new RepositoryWorkspaceSyncError('Candidate revision object identity or ancestry mismatch', 'WORKTREE_DIVERGED');
       }
       return {
@@ -392,7 +397,7 @@ async function runGit(
     throw new RepositoryWorkspaceSyncError(
       `Git command could not be executed: ${error instanceof Error ? error.message : String(error)}`,
       'GIT_COMMAND_FAILED',
-      command,
+      diagnosticCommand(command),
     );
   }
 }
@@ -403,7 +408,15 @@ function commandFailure(
 ): RepositoryWorkspaceSyncError {
   const detail = result.stderr.trim() || `exit code ${result.exitCode}`;
   const operation = /^[a-z][a-z-]*$/.test(command.args[0] ?? '') ? command.args[0] : 'command';
-  return new RepositoryWorkspaceSyncError(`Git ${operation} failed: ${detail}`, 'GIT_COMMAND_FAILED', command);
+  return new RepositoryWorkspaceSyncError(
+    `Git ${operation} failed: ${detail}`,
+    'GIT_COMMAND_FAILED',
+    diagnosticCommand(command),
+  );
+}
+
+function diagnosticCommand(command: RepositoryWorkspaceGitCommand): RepositoryWorkspaceGitCommand {
+  return { cwd: command.cwd, args: command.args };
 }
 
 function parseWorktrees(output: string): WorktreeRecord[] {

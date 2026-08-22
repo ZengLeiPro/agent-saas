@@ -22,6 +22,9 @@ describe('integration v3 observability and release gate', () => {
       active_v2_count: 4, active_v3_count: 5,
     }] })) } as any;
     const metrics = await collectIntegrationV3Metrics(db, tables, async () => ({ enabled: false, healthy: false, reason: 'disabled' }));
+    const metricsSql = String(db.query.mock.calls[0]![0]);
+    expect(metricsSql).toContain('clock_timestamp()-min(updated_at)');
+    expect(metricsSql).not.toContain('clock_timestamp()-min(created_at)');
     expect(metrics).toMatchObject({
       unknownOperationCount: 2, oldestUnknownOperationAgeMs: 700000, staleLaneCount: 1,
       staleOutboxCount: 3, oldestOutboxAgeMs: 800000, cleanupFailureCount: 1,
@@ -31,6 +34,26 @@ describe('integration v3 observability and release gate', () => {
     expect(evaluateIntegrationV3Health(metrics)).toMatchObject({
       status: 'degraded', releaseReady: false,
       reasons: expect.arrayContaining(['unknown_operation_too_old', 'stale_integration_lane', 'cleanup_failure', 'gateway_disabled']),
+    });
+  });
+
+  it('reports failed candidates without weakening infrastructure release gates', () => {
+    const metrics = {
+      capturedAt: new Date().toISOString(),
+      unknownOperationCount: 0, oldestUnknownOperationAgeMs: null,
+      staleLaneCount: 0, staleOutboxCount: 0, oldestOutboxAgeMs: null,
+      cleanupFailureCount: 0, activeFailedCandidateCount: 1,
+      gatewayDisabled: false, gatewayHealthy: true,
+      activeV2Count: 0, activeV3Count: 1,
+      costBudgetUsed: null, costBudgetLimit: null,
+      workRoundBudgetUsed: null, workRoundBudgetLimit: null,
+    };
+    expect(evaluateIntegrationV3Health(metrics)).toMatchObject({
+      status: 'degraded', releaseReady: true, reasons: ['active_failed_candidate'],
+    });
+    expect(evaluateIntegrationV3Health({ ...metrics, gatewayHealthy: false })).toMatchObject({
+      status: 'degraded', releaseReady: false,
+      reasons: ['active_failed_candidate', 'gateway_unhealthy'],
     });
   });
 

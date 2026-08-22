@@ -2,7 +2,7 @@
  * L2 记忆审查引擎：durable global cursor 扫描 run 边界；会话静默期到达后，
  * 启动隐藏 Run，从父会话完整 Context Projection 重放并直接维护真实 Markdown。
  *
- * 正确性边界：durable cursor / state lease / idempotency ledger / active-run gate / 10 分钟
+ * 正确性边界：durable cursor / state lease / idempotency ledger / active-run gate / 30 分钟
  * debounce / per-user 进程锁与 PG advisory lock。Prompt Cache 由父会话同模型、同
  * Profile、同 System Prompt、同工具 descriptor 的内容指纹自然复用；不使用
  * previous_response_id。
@@ -124,7 +124,6 @@ function isEligibleProjection(projection: ConsolidationProjection, sessionId: st
 export class MemoryConsolidationEngine {
   private scanTimer: ReturnType<typeof setInterval> | undefined;
   private workTimer: ReturnType<typeof setInterval> | undefined;
-  private reviveTimer: ReturnType<typeof setInterval> | undefined;
   private scanning = false;
   private working = false;
   private stopped = true;
@@ -141,18 +140,13 @@ export class MemoryConsolidationEngine {
       this.options.logger?.info('MemoryConsolidationEngine disabled by global config');
       return;
     }
+    // 旧版本可能留下 throttled 状态；新版本不再产生该状态，启动时一次性恢复。
+    await this.options.store.reviveThrottled();
     this.stopped = false;
     this.scanTimer = setInterval(() => { void this.scanOnce(); }, config.scanIntervalMs);
     this.scanTimer.unref?.();
     this.workTimer = setInterval(() => { void this.workOnce(); }, Math.max(config.scanIntervalMs, 5_000));
     this.workTimer.unref?.();
-    this.reviveTimer = setInterval(() => {
-      const current = this.options.getConfig();
-      if (!current.enabled) return;
-      void this.options.store.reviveThrottled(new Date().toISOString(), current.debounceMinutes)
-        .catch((err) => this.options.logger?.warn(`consolidation reviveThrottled failed: ${message(err)}`));
-    }, 3_600_000);
-    this.reviveTimer.unref?.();
     void this.scanOnce();
     this.options.logger?.info(`MemoryConsolidationEngine started (${this.workerId})`);
   }
@@ -161,8 +155,7 @@ export class MemoryConsolidationEngine {
     this.stopped = true;
     if (this.scanTimer) clearInterval(this.scanTimer);
     if (this.workTimer) clearInterval(this.workTimer);
-    if (this.reviveTimer) clearInterval(this.reviveTimer);
-    this.scanTimer = this.workTimer = this.reviveTimer = undefined;
+    this.scanTimer = this.workTimer = undefined;
   }
 
   /** NOTIFY 只做低延迟唤醒；正确性仍来自 durable cursor。 */
@@ -415,14 +408,6 @@ export class MemoryConsolidationEngine {
           });
           return;
         }
-        // 配额检查也放在用户级 PG 锁内，避免多个 L2 worker 同时读取旧额度后穿透。
-        const daily = await this.options.store.getUserDailyUsage(state.tenantId, state.userId);
-        if (daily.runs >= config.maxConsolidationsPerUserPerDay
-          || daily.inputTokens >= config.maxInputTokensPerUserPerDay) {
-          await this.options.store.markThrottled({ tenantId: state.tenantId, sessionId: state.sessionId });
-          log?.info(`consolidation throttled user=${state.userId} runs=${daily.runs} tokens=${daily.inputTokens}`);
-          return;
-        }
         await this.runConsolidation(state, config, user, projection.model);
       } finally {
         if (commitLock) await commitLock.release().catch(() => undefined);
@@ -630,7 +615,7 @@ export class MemoryConsolidationEngine {
         const values = usage as Record<string, unknown>;
         inputTokens += numberOrZero(values.inputTokens);
         outputTokens += numberOrZero(values.outputTokens);
-        cacheReadTokens += numberOrZero(values.cacheReadTokens);
+        cacheReadTokens += numberOrZero(values.cacheReadInputTokens);
       }
       if (typeof event.model === 'string') modelActual = event.model;
     }

@@ -515,21 +515,11 @@ export class PgMemoryConsolidationStore {
     return 'retry_wait';
   }
 
-  async markThrottled(input: { tenantId: string; sessionId: string }): Promise<void> {
-    await this.pool.query(
-      `UPDATE ${this.stateTable} SET status = 'throttled', lease_owner = NULL, lease_expires_at = NULL, updated_at = NOW()
-       WHERE tenant_id = $1 AND session_id = $2`,
-      [input.tenantId, input.sessionId],
-    );
-  }
-
-  /** throttled 状态每日恢复（新一天配额刷新时由 scheduler 调用）。 */
-  async reviveThrottled(now: string, debounceMinutes: number): Promise<number> {
+  /** 兼容恢复旧版本配额留下的 throttled 状态；新版本不再产生该状态。 */
+  async reviveThrottled(): Promise<number> {
     const res = await this.pool.query(
-      `UPDATE ${this.stateTable} SET
-         status = 'pending', due_at = $1::timestamptz + make_interval(mins => $2), updated_at = NOW()
+      `UPDATE ${this.stateTable} SET status = 'pending', updated_at = NOW()
        WHERE status = 'throttled' AND target_session_sequence > processed_session_sequence`,
-      [now, debounceMinutes],
     );
     return res.rowCount ?? 0;
   }
@@ -600,23 +590,6 @@ export class PgMemoryConsolidationStore {
       `UPDATE ${this.runsTable} SET ${sets.join(', ')} WHERE idempotency_key = $1`,
       params,
     );
-  }
-
-  /** 单用户当日（UTC 日界）已执行的 L2 次数与输入 token 合计（配额熔断用）。 */
-  async getUserDailyUsage(tenantId: string, userId: string): Promise<{ runs: number; inputTokens: number }> {
-    const res = await this.pool.query<{ runs: string; input_tokens: string | null }>(
-      `SELECT COUNT(*) AS runs,
-              COALESCE(SUM((usage_json->>'inputTokens')::bigint), 0) AS input_tokens
-       FROM ${this.runsTable}
-       WHERE tenant_id = $1 AND user_id = $2
-         AND created_at >= date_trunc('day', NOW())
-         AND status NOT IN ('rejected')`,
-      [tenantId, userId],
-    );
-    return {
-      runs: Number(res.rows[0]?.runs ?? 0),
-      inputTokens: Number(res.rows[0]?.input_tokens ?? 0),
-    };
   }
 
   private mapRun(row: Record<string, unknown>): ConsolidationRunRecord {

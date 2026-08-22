@@ -19,6 +19,7 @@ import {
 } from '../v2Store.js';
 import { TaskboardNotFoundError, TaskboardValidationError, type TaskboardIdentity } from '../types.js';
 import { loadWorkflowFacts } from './commandService.js';
+import { assertCurrentCandidatePullRequestGate, assertCurrentPullRequestGate } from './pullRequestGate.js';
 import { decideTransition, isCurrentIntegrationV3Execution, type IntegrationV3ExecutionBinding, type IntegrationV3Facts } from './decider.js';
 
 const ACTIVE = ['queued', 'running', 'waiting_user', 'waiting_approval'];
@@ -94,6 +95,10 @@ export async function transitionExecutionV2(
     if (execution.purpose === 'review' && nextStatus === 'ready_to_merge' && !loaded.task.reviewedSubjectDigest) {
       throw new TaskboardValidationError('Review must record the exact pull request subject before approval', 'TASKBOARD_REVIEW_SUBJECT_REQUIRED');
     }
+    if ((execution.purpose === 'work' && nextStatus === 'in_review')
+      || (execution.purpose === 'review' && nextStatus === 'ready_to_merge')) {
+      await assertCurrentPullRequestGate(options, client, loaded.task, loaded.board, execution.id, execution.purpose);
+    }
     if (loaded.task.kind === 'remediation' && execution.purpose === 'work' && nextStatus === 'in_review') {
       if (!await recordRemediationCommit(options, client, taskId, execution.id)) {
         throw new TaskboardValidationError('Remediation work must produce a new commit before entering review', 'TASKBOARD_REMEDIATION_COMMIT_REQUIRED');
@@ -133,7 +138,7 @@ async function transitionIntegrationV3(
 ): Promise<TaskBoardTask> {
   const { candidatesTable, revisionsTable } = integrationCandidateTableNames(options.integrationSourcesTable);
   const result = await client.query(
-    `SELECT c.*,r.head_oid,r.subject_digest FROM ${candidatesTable} c
+    `SELECT c.*,r.base_oid,r.head_oid,r.subject_digest FROM ${candidatesTable} c
      LEFT JOIN ${revisionsTable} r ON r.candidate_id=c.id AND r.revision=c.current_revision
      WHERE c.integration_task_id=$1 FOR UPDATE OF c`, [task.id]);
   const row = result.rows[0] as Record<string, unknown> | undefined;
@@ -149,6 +154,16 @@ async function transitionIntegrationV3(
     throw new TaskboardValidationError('Candidate changed or execution binding expired', 'TASKBOARD_EXECUTION_FENCED');
   }
   const decision = decideTransition(task, execution.purpose, status, { hasMergeFact: false, candidate, executionBinding: binding });
+  if (execution.purpose === 'review' && status === 'ready_to_merge') {
+    await assertCurrentCandidatePullRequestGate(options, client, task, execution.id, {
+      candidateId: candidate.id,
+      revision: candidate.currentRevision,
+      providerPullRequestId: String(row.provider_pull_request_id ?? ''),
+      headOid: candidate.headOid,
+      baseOid: String(row.base_oid ?? ''),
+      subjectDigest: String(row.subject_digest),
+    });
+  }
   if (decision.requestSystemReview) {
     await markTransitioned(options, client, execution, status);
     await appendChange(options, client, task.id, 'integration.candidate_review_requested', 'agent', identity.ownerUserId, {

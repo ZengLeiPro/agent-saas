@@ -77,7 +77,7 @@ describe('IntegrationProviderOperationService', () => {
     expect(completed).toMatchObject({ state: 'succeeded', attemptCount: 1, receipt: { oid: 'base-oid' } });
     expect(duplicateExecute.state).toBe('succeeded');
     expect(executor).toHaveBeenCalledTimes(1);
-    expect(fences.assertCurrent).toHaveBeenCalledTimes(2);
+    expect(fences.assertCurrent).toHaveBeenCalledTimes(3);
   });
 
   it('records a timeout as unknown and reconciles the provider receipt without resending', async () => {
@@ -122,7 +122,7 @@ describe('IntegrationProviderOperationService', () => {
 
     expect(result).toMatchObject({ state: 'failed', attemptCount: 1,
       error: 'exact ref remains at the expected old OID',
-      receipt: { actualOid: 'base-oid', verifiedNotApplied: true } });
+      receipt: { outcome: 'not_applied', actualOid: 'base-oid', verifiedNotApplied: true } });
   });
 
   it('does not classify an in-flight executing operation as not applied', async () => {
@@ -154,6 +154,39 @@ describe('IntegrationProviderOperationService', () => {
     await service.prepare(intent);
 
     await expect(service.prepare({ ...intent, expected: { baseOid: 'drifted-base' } })).rejects.toBeInstanceOf(ProviderOperationKeyCollisionError);
+  });
+
+  it('records a definitive executor rejection as explicitly not applied', async () => {
+    const { service } = setup();
+    await service.prepare(intent);
+
+    const result = await service.execute(
+      operationKey,
+      async () => { throw new Error('final provider gate rejected'); },
+      { isDefinitiveFailure: () => true },
+    );
+
+    expect(result).toMatchObject({
+      state: 'failed', attemptCount: 1, error: 'final provider gate rejected',
+      receipt: { outcome: 'not_applied', evidence: 'executor_definitive_failure' },
+    });
+  });
+
+  it('terminalizes an executing operation when its second pre-provider fence is stale', async () => {
+    const storage = new MemoryStorage();
+    const fences = { assertCurrent: vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('candidate cleanup fenced provider calls')) };
+    const service = new IntegrationProviderOperationService(storage, fences);
+    const executor = vi.fn(async () => ({ ok: true }));
+    await service.prepare(intent);
+
+    const result = await service.execute(operationKey, executor);
+
+    expect(result).toMatchObject({ state: 'failed', attemptCount: 1,
+      error: 'candidate cleanup fenced provider calls',
+      receipt: { outcome: 'not_applied', evidence: 'pre_execution_fence_rejected' } });
+    expect(executor).not.toHaveBeenCalled();
   });
 
   it('fails before a write when durable fences are stale', async () => {

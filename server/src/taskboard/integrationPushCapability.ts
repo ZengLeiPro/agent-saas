@@ -17,6 +17,7 @@ export interface IntegrationPushCapabilityBinding {
   executionId: string;
   exactRef: string;
   expectedOldOid: string;
+  expectedBaseOid: string;
   laneEpoch: number;
   workflowEpoch: number;
 }
@@ -83,7 +84,9 @@ export interface IntegrationPushRequest {
   ref: string;
   oldOid: string;
   newOid: string;
-  /** The gateway computes this from the repository object graph, never from runtime input. */
+  /** The gateway resolves the unique parent from the repository object graph. */
+  parentOid: string;
+  /** The gateway computes this from parentOid === oldOid, never from runtime input. */
   isFastForward: boolean;
   operation: 'update' | 'create' | 'delete';
   laneEpoch: number;
@@ -106,6 +109,7 @@ export class IntegrationPushCapabilityError extends Error {
       | 'fenced'
       | 'ref_mismatch'
       | 'old_oid_mismatch'
+      | 'parent_oid_mismatch'
       | 'epoch_mismatch'
       | 'delete_forbidden'
       | 'create_forbidden'
@@ -209,12 +213,20 @@ export function validatePushRequest(
   validateExactIntegrationRef(request.ref);
   validateOid(request.oldOid);
   validateOid(request.newOid);
+  validateOid(request.parentOid);
   if (request.ref !== binding.exactRef) throw new IntegrationPushCapabilityError('ref_mismatch');
   if (request.oldOid !== binding.expectedOldOid) throw new IntegrationPushCapabilityError('old_oid_mismatch');
+  if (request.parentOid !== binding.expectedOldOid && request.parentOid !== binding.expectedBaseOid) {
+    throw new IntegrationPushCapabilityError('parent_oid_mismatch');
+  }
   if (request.laneEpoch !== binding.laneEpoch || request.workflowEpoch !== binding.workflowEpoch) {
     throw new IntegrationPushCapabilityError('epoch_mismatch');
   }
-  if (!request.isFastForward) throw new IntegrationPushCapabilityError('force_push_forbidden');
+  const expectedFastForward = request.parentOid === binding.expectedOldOid;
+  if (request.isFastForward !== expectedFastForward
+    || (!request.isFastForward && binding.expectedBaseOid === binding.expectedOldOid)) {
+    throw new IntegrationPushCapabilityError('force_push_forbidden');
+  }
 }
 
 export function validateExactIntegrationRef(ref: string): void {
@@ -247,7 +259,10 @@ function normalizeAndValidateBinding(input: IntegrationPushCapabilityBinding): I
   }
   validateExactIntegrationRef(input.exactRef);
   validateOid(input.expectedOldOid);
-  if (ZERO_OID.test(input.expectedOldOid)) throw new IntegrationPushCapabilityError('invalid_oid');
+  validateOid(input.expectedBaseOid);
+  if (ZERO_OID.test(input.expectedOldOid) || ZERO_OID.test(input.expectedBaseOid)) {
+    throw new IntegrationPushCapabilityError('invalid_oid');
+  }
   return { ...input };
 }
 

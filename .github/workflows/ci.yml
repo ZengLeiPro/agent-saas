@@ -90,81 +90,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check engineering ratchets
-        run: pnpm check:ratchets
-
-      - name: Typecheck server
-        run: pnpm -F server typecheck
-
-      - name: Build server production bundle
-        run: pnpm -F server build
-
-      # 用 test:coverage 替代 test：@vitest/coverage-v8 产 lcov + json-summary，
-      # 供后续 Report/Upload/Diff 步骤消费。observed 期不设阈值门禁，
-      # 覆盖率数据本轮跑失败=测试跑失败，退化为原 Run tests 行为。
-      - name: Run tests with coverage
-        run: pnpm test:coverage
-
-      # 单独执行真 PG suite 并显式注入临时数据库，防止缺 URL 时 describe.skip 假绿。
-      - name: Verify memory consolidation PostgreSQL contracts explicitly
+      - name: Run PR preflight
         env:
+          TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
           MEMORY_CONSOLIDATION_TEST_PG_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
-        run: >-
-          pnpm -F server exec vitest run
-          src/__tests__/memoryConsolidationStore.pg.test.ts
-          src/__tests__/pgEventStoreGlobalPage.pg.test.ts
+        run: pnpm preflight:pr
 
-      - name: Verify session share PostgreSQL contract explicitly
-        env:
-          TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
-        run: >-
-          pnpm -F server exec vitest run
-          src/__tests__/sessionShareStore.pg.test.ts
-
-      - name: Verify taskboard PostgreSQL contracts explicitly
-        env:
-          TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
-        run: >-
-          pnpm -F server exec vitest run
-          src/__tests__/taskboardAttachmentRollback.pg.test.ts
-          src/__tests__/integrationV3Convergence.pg.test.ts
-
-      - name: Verify governance PostgreSQL contracts explicitly
-        env:
-          TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
-        run: >-
-          pnpm -F server exec vitest run
-          src/__tests__/governanceSchemaMigration.pg.test.ts
-          src/__tests__/governanceProjectionPool.pg.test.ts
-
-      - name: Verify queue consistency PostgreSQL contracts explicitly
-        env:
-          TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
-        run: >-
-          pnpm -F server exec vitest run
-          src/__tests__/pgRunStoreSteering.pg.test.ts
-          src/__tests__/pgToolInvocationTerminalGate.pg.test.ts
-
-      - name: Check Web API domain boundary
-        run: pnpm -F web check:api-boundary
-
-      - name: Scenarios schema lint
-        run: pnpm scenarios:lint
-
-      - name: Scenarios sanitize check
-        run: pnpm sanitize-check
-
-      # web build 内含 tsc，同时完成 typecheck + vite build
-      - name: Build frontend (split-domain contract)
-        env:
-          VITE_API_BASE: https://api.agent.kaiyan.net
-          VITE_WEB_ORIGIN: https://agent.kaiyan.net
-        run: pnpm -F web build:oss
-
-      - name: Check Web startup resource ratchet
-        run: pnpm check:web-startup-budget -- --dist web/dist
-
-      # 覆盖率报告不作为门禁，测试失败也应打印/上传能拿到的部分数据。
       - name: Report coverage summary
         if: always()
         run: pnpm coverage:summary

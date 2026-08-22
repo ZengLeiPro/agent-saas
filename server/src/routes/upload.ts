@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
-import { basename, extname } from 'path';
+import { copyFile, lstat, realpath } from 'fs/promises';
+import { basename, extname, join, resolve, sep } from 'path';
 import multer from 'multer';
 import { Router, type Request } from 'express';
 import { resolveUserCwd } from '../workspace/resolver.js';
@@ -22,6 +23,39 @@ function fixFilename(filename: string): string {
   } catch {
     return filename;
   }
+}
+
+function safeUploadFilename(originalName: string): string {
+  const ext = extname(originalName);
+  const baseName = basename(originalName, ext)
+    .replace(/[^a-zA-Z0-9_\-\u4e00-\u9fa5]/g, '_')
+    .substring(0, 100);
+  return `${randomUUID()}_${baseName || 'file'}${ext}`;
+}
+
+function mimeTypeForAsset(path: string): string {
+  const extension = extname(path).toLowerCase();
+  const types: Record<string, string> = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.svg': 'image/svg+xml',
+    '.pdf': 'application/pdf',
+    '.json': 'application/json',
+    '.csv': 'text/csv',
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  };
+  return types[extension] ?? 'application/octet-stream';
+}
+
+function isWithin(path: string, root: string): boolean {
+  return path === root || path.startsWith(`${root}${sep}`);
 }
 
 export interface UploadRouterOptions {
@@ -86,12 +120,7 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
       cb(null, partialDir);
     },
     filename: (_req, file, cb) => {
-      const fixedName = fixFilename(file.originalname);
-      const ext = extname(fixedName);
-      const baseName = basename(fixedName, ext)
-        .replace(/[^a-zA-Z0-9_\-\u4e00-\u9fa5]/g, '_')
-        .substring(0, 100);
-      cb(null, `${randomUUID()}_${baseName || 'file'}${ext}`);
+      cb(null, safeUploadFilename(fixFilename(file.originalname)));
     },
   });
 
@@ -101,6 +130,100 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
       fileSize: MAX_UPLOAD_FILE_BYTES,
       files: MAX_UPLOAD_FILES_PER_REQUEST,
     },
+  });
+
+  router.post('/upload/assets', async (req, res) => {
+    const requestId = randomUUID();
+    let requestStarted = false;
+    try {
+      const sessionId = await assertSessionOwnership(req);
+      const paths = Array.isArray(req.body?.paths) ? req.body.paths : [];
+      if (paths.length === 0 || paths.length > MAX_UPLOAD_FILES_PER_REQUEST
+        || paths.some((path: unknown) => typeof path !== 'string')) {
+        res.status(400).json({ success: false, error: `请选择 1-${MAX_UPLOAD_FILES_PER_REQUEST} 个资料库文件` });
+        return;
+      }
+
+      const uniquePaths = [...new Set(paths as string[])];
+      if (uniquePaths.length !== paths.length) {
+        res.status(400).json({ success: false, error: '不能重复选择同一个文件' });
+        return;
+      }
+
+      const userCwd = resolveRequestUserCwd(agentCwd, req);
+      ensureWorkspaceRuntimeLayout(userCwd);
+      const assetsRoot = resolve(userCwd, 'assets');
+      const realAssetsRoot = await realpath(assetsRoot);
+      const partialDir = await uploadManager.beginRequest(userCwd, requestId);
+      requestStarted = true;
+      const supportedImageTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+      const prepared = [];
+
+      for (const requestedPath of uniquePaths) {
+        if (!requestedPath.startsWith('assets/') || requestedPath.includes('\0')
+          || requestedPath.split('/').includes('..')) {
+          throw Object.assign(new Error('Invalid asset path'), { statusCode: 400 });
+        }
+        const sourcePath = resolve(userCwd, requestedPath);
+        if (!isWithin(sourcePath, assetsRoot)) {
+          throw Object.assign(new Error('Asset path escaped assets directory'), { statusCode: 400 });
+        }
+        const sourceStats = await lstat(sourcePath);
+        if (sourceStats.isSymbolicLink() || !sourceStats.isFile()) {
+          throw Object.assign(new Error('Selected asset is not a regular file'), { statusCode: 400 });
+        }
+        if (sourceStats.size > MAX_UPLOAD_FILE_BYTES) {
+          throw Object.assign(new Error('单文件不能超过 2 GiB'), { statusCode: 413 });
+        }
+        const realSourcePath = await realpath(sourcePath);
+        if (!isWithin(realSourcePath, realAssetsRoot)) {
+          throw Object.assign(new Error('Asset path escaped assets directory'), { statusCode: 400 });
+        }
+
+        const originalName = basename(sourcePath);
+        const filename = safeUploadFilename(originalName);
+        const attachmentId = filename.slice(0, filename.indexOf('_'));
+        const partialPath = join(partialDir, filename);
+        const mimeType = mimeTypeForAsset(originalName);
+        await copyFile(realSourcePath, partialPath);
+        prepared.push({
+          attachmentId,
+          filename,
+          partialPath,
+          originalName,
+          size: sourceStats.size,
+          mimeType,
+          isImage: supportedImageTypes.has(mimeType),
+          isVoiceUpload: false,
+        });
+      }
+
+      const finalized = await uploadManager.completeRequest(
+        requestId,
+        prepared,
+        sessionId ? { sessionId } : {},
+      );
+      requestStarted = false;
+      res.json({ success: true, files: finalized.map((file) => file.info) });
+    } catch (error) {
+      if (requestStarted) await uploadManager.finishFailedRequest(requestId, 'failed');
+      const status = error && typeof error === 'object' && 'statusCode' in error
+        ? Number(error.statusCode)
+        : error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'
+          ? 400
+          : 500;
+      uploadLogger.warn(`Asset import failed request=${requestId}: ${error instanceof Error ? error.message : String(error)}`);
+      res.status(status).json({
+        success: false,
+        error: status === 413
+          ? '单文件不能超过 2 GiB'
+          : status === 403
+            ? '上传会话不属于当前用户'
+            : status === 400
+              ? '所选资料库文件无效或已不存在'
+              : '添加资料失败',
+      });
+    }
   });
 
   router.post('/upload', async (req, res) => {

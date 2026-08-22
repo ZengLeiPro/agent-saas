@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type { PoolClient } from 'pg';
 
 export interface IntegrationCandidateSchemaOptions {
@@ -137,6 +139,7 @@ async function installIntegrationCandidateSchemaV1(
       head_oid TEXT NOT NULL,
       subject_kind TEXT NOT NULL DEFAULT 'provider_subject' CHECK (subject_kind IN ('source_seed','provider_subject')),
       tree_oid TEXT,
+      composition_complete BOOLEAN NOT NULL DEFAULT TRUE,
       source_set_digest TEXT NOT NULL,
       CHECK ((subject_kind='source_seed' AND tree_oid IS NULL)
         OR (subject_kind='provider_subject' AND tree_oid IS NOT NULL)),
@@ -156,6 +159,8 @@ async function installIntegrationCandidateSchemaV1(
     ALTER TABLE ${revisionsTable}
       ADD COLUMN IF NOT EXISTS subject_kind TEXT NOT NULL DEFAULT 'provider_subject'
         CHECK (subject_kind IN ('source_seed','provider_subject'));
+    ALTER TABLE ${revisionsTable}
+      ADD COLUMN IF NOT EXISTS composition_complete BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE ${revisionsTable} ALTER COLUMN tree_oid DROP NOT NULL
   `);
   await client.query(`
@@ -296,6 +301,43 @@ async function installIntegrationCandidateSchemaV1(
   }
 }
 
+async function installCompositionCompletenessGuards(
+  revisionsTable: string,
+  client: Pick<PoolClient, 'query'>,
+): Promise<void> {
+  const namespace = createHash('sha256').update(revisionsTable).digest('hex').slice(0, 12);
+  const sourceSeedFunction = `tbv3_${namespace}_source_seed_fn`;
+  const immutableFunction = `tbv3_${namespace}_revision_immutable_fn`;
+  await client.query(`
+    ALTER TABLE ${revisionsTable}
+      ADD COLUMN IF NOT EXISTS composition_complete BOOLEAN NOT NULL DEFAULT TRUE;
+    DROP TRIGGER IF EXISTS ${revisionsTable}_source_seed_incomplete ON ${revisionsTable};
+    DROP TRIGGER IF EXISTS ${revisionsTable}_immutable_update ON ${revisionsTable};
+    DROP TRIGGER IF EXISTS tbv3_source_seed_incomplete ON ${revisionsTable};
+    DROP TRIGGER IF EXISTS tbv3_revision_immutable ON ${revisionsTable};
+    CREATE OR REPLACE FUNCTION ${sourceSeedFunction}()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $function$
+    BEGIN
+      IF NEW.subject_kind='source_seed' THEN NEW.composition_complete:=FALSE; END IF;
+      RETURN NEW;
+    END
+    $function$;
+    CREATE TRIGGER tbv3_source_seed_incomplete
+      BEFORE INSERT OR UPDATE OF subject_kind,composition_complete ON ${revisionsTable}
+      FOR EACH ROW EXECUTE FUNCTION ${sourceSeedFunction}();
+    UPDATE ${revisionsTable}
+       SET composition_complete=FALSE
+     WHERE subject_kind='source_seed' AND composition_complete IS DISTINCT FROM FALSE;
+    CREATE OR REPLACE FUNCTION ${immutableFunction}()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $function$
+    BEGIN
+      RAISE EXCEPTION 'TASKBOARD_CANDIDATE_SNAPSHOT_IMMUTABLE';
+    END
+    $function$;
+    CREATE TRIGGER tbv3_revision_immutable BEFORE UPDATE ON ${revisionsTable}
+      FOR EACH ROW EXECUTE FUNCTION ${immutableFunction}()
+  `);
+}
 
 const INTEGRATION_CANDIDATE_SCHEMA_MIGRATIONS = [
   { version: 1, name: 'candidate_v3_expand_base', run: installIntegrationCandidateSchemaV1 },
@@ -336,6 +378,65 @@ const INTEGRATION_CANDIDATE_SCHEMA_MIGRATIONS = [
         SET state='failed',error='Candidate canceled before provider execution',updated_at=now()
         FROM ${candidatesTable} c
         WHERE o.candidate_id=c.id AND c.state='canceled' AND o.state='prepared'`);
+    },
+  },
+  {
+    version: 5,
+    name: 'terminalize_unexecuted_provider_operations',
+    run: async (options: IntegrationCandidateSchemaOptions, client: Pick<PoolClient, 'query'>) => {
+      const { candidatesTable, providerOperationsTable } = integrationCandidateTableNames(options.integrationSourcesTable);
+      await client.query(`
+        LOCK TABLE ${candidatesTable},${providerOperationsTable} IN SHARE ROW EXCLUSIVE MODE;
+        CREATE OR REPLACE FUNCTION ${providerOperationsTable}_terminal_candidate_fn()
+        RETURNS TRIGGER LANGUAGE plpgsql AS $function$
+        BEGIN
+          PERFORM 1 FROM ${candidatesTable} c
+            WHERE c.id=NEW.candidate_id AND c.state NOT IN ('merged','canceled') FOR UPDATE;
+          IF NOT FOUND THEN RAISE EXCEPTION 'TASKBOARD_CANDIDATE_PROVIDER_OPERATION_TERMINAL'; END IF;
+          RETURN NEW;
+        END
+        $function$;
+        DROP TRIGGER IF EXISTS ${providerOperationsTable}_terminal_candidate ON ${providerOperationsTable};
+        CREATE TRIGGER ${providerOperationsTable}_terminal_candidate BEFORE INSERT ON ${providerOperationsTable}
+          FOR EACH ROW EXECUTE FUNCTION ${providerOperationsTable}_terminal_candidate_fn();
+        CREATE OR REPLACE FUNCTION ${candidatesTable}_terminalize_prepared_operations_fn()
+        RETURNS TRIGGER LANGUAGE plpgsql AS $function$
+        BEGIN
+          UPDATE ${providerOperationsTable}
+             SET state='failed',error='Terminal candidate cleanup found unexecuted provider operation',
+                 receipt=jsonb_build_object('outcome','not_applied','evidence','attempt_count=0'),updated_at=now()
+           WHERE candidate_id=NEW.id AND state='prepared' AND attempt_count=0;
+          RETURN NEW;
+        END
+        $function$;
+        DROP TRIGGER IF EXISTS ${candidatesTable}_terminalize_prepared_operations ON ${candidatesTable};
+        CREATE TRIGGER ${candidatesTable}_terminalize_prepared_operations
+          AFTER UPDATE OF state ON ${candidatesTable}
+          FOR EACH ROW WHEN (NEW.state IN ('merged','canceled') AND OLD.state IS DISTINCT FROM NEW.state)
+          EXECUTE FUNCTION ${candidatesTable}_terminalize_prepared_operations_fn();
+        UPDATE ${providerOperationsTable} o
+           SET state='failed',error='Terminal candidate cleanup found unexecuted provider operation',
+               receipt=jsonb_build_object('outcome','not_applied','evidence','attempt_count=0'),updated_at=now()
+          FROM ${candidatesTable} c
+         WHERE o.candidate_id=c.id AND c.state IN ('merged','canceled')
+           AND o.state='prepared' AND o.attempt_count=0
+      `);
+    },
+  },
+  {
+    version: 6,
+    name: 'track_incomplete_composition_subjects',
+    run: async (options: IntegrationCandidateSchemaOptions, client: Pick<PoolClient, 'query'>) => {
+      const { revisionsTable } = integrationCandidateTableNames(options.integrationSourcesTable);
+      await installCompositionCompletenessGuards(revisionsTable, client);
+    },
+  },
+  {
+    version: 7,
+    name: 'normalize_composition_guard_identifiers',
+    run: async (options: IntegrationCandidateSchemaOptions, client: Pick<PoolClient, 'query'>) => {
+      const { revisionsTable } = integrationCandidateTableNames(options.integrationSourcesTable);
+      await installCompositionCompletenessGuards(revisionsTable, client);
     },
   },
 ] as const;

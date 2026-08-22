@@ -17,7 +17,7 @@ const details: TaskBoardIntegrationCandidateDetails = {
   },
   revisions: [{
     candidateId: "candidate-1", revision: 2, digestVersion: 1, baseOid: "aaaaaaaaaaaaaaaa",
-    headOid: "bbbbbbbbbbbbbbbb", treeOid: "cccccccccccccccc", sourceSetDigest: "sha256:sources",
+    headOid: "bbbbbbbbbbbbbbbb", treeOid: "cccccccccccccccc", compositionComplete: true, sourceSetDigest: "sha256:sources",
     subjectDigest: "sha256:subject", policySnapshotDigest: "sha256:policy", policyRevision: "policy-2",
     mergeMethod: "squash", workRound: 1, workExecutionId: "work-2", reviewExecutionId: "review-2",
     createdAt: "2026-08-19T02:00:00.000Z",

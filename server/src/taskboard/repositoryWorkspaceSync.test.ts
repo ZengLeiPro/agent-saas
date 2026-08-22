@@ -112,7 +112,7 @@ describe('syncCandidateRevisionObjects', () => {
   };
   const candidateRef = 'refs/ky-integration-v3/candidates/candidate-1/r2/head';
 
-  it('fetches exact Provider refs and verifies the immutable candidate subject', async () => {
+  it('verifies exact Provider refs when an advanced base and PR head have diverged', async () => {
     const host = new ScriptedHost([
       shallowStep(),
       { cwd: REPOSITORY, args: [
@@ -124,7 +124,6 @@ describe('syncCandidateRevisionObjects', () => {
       { cwd: REPOSITORY, args: ['rev-parse', '--verify', `${MAIN_OID}^{commit}`], result: { stdout: `${MAIN_OID}\n` } },
       { cwd: REPOSITORY, args: ['rev-parse', '--verify', `${INTEGRATION_OID}^{tree}`], result: { stdout: `${REMOTE_OID}\n` } },
       ancestorStep(MAIN_OID, 'refs/remotes/origin/main', true),
-      ancestorStep(MAIN_OID, INTEGRATION_OID, true),
     ]);
 
     await expect(syncCandidateRevisionObjects(host, candidate)).resolves.toEqual({
@@ -148,7 +147,6 @@ describe('syncCandidateRevisionObjects', () => {
       { cwd: REPOSITORY, args: ['rev-parse', '--verify', `${MAIN_OID}^{commit}`], result: { stdout: `${MAIN_OID}\n` } },
       { cwd: REPOSITORY, args: ['rev-parse', '--verify', `${INTEGRATION_OID}^{tree}`], result: { stdout: `${REMOTE_OID}\n` } },
       ancestorStep(MAIN_OID, 'refs/remotes/origin/main', true),
-      ancestorStep(MAIN_OID, INTEGRATION_OID, true),
     ]);
 
     await expect(syncCandidateRevisionObjects(host, candidate)).resolves.toMatchObject({ headOid: INTEGRATION_OID });

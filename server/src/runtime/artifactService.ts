@@ -80,6 +80,9 @@ export interface ArtifactServiceOptions {
   isArtifactPinned?: (artifactId: string) => Promise<boolean>;
   /** Serializes share creation with the GC check/delete critical section. */
   withArtifactLock?: <T>(artifactId: string, operation: () => Promise<T>) => Promise<T>;
+  withBlobLock?: <T>(uri: string, operation: () => Promise<T>) => Promise<T>;
+  withSessionLock?: <T>(sessionId: string, operation: () => Promise<T>) => Promise<T>;
+  assertSessionActive?: (sessionId: string) => Promise<boolean>;
 }
 
 const DEFAULT_READ_URL_TTL_SECONDS = 15 * 60;
@@ -138,7 +141,11 @@ export class ArtifactService {
   /** Internal share path. Never returns a storage URL. */
   async readContentForShare(artifactId: string): Promise<ArtifactContent> {
     const record = await this.getRecordForShare(artifactId);
-    return { record, data: await this.options.blobStore.get(record.uri) };
+    return { record, data: await this.readBlobForShare(record) };
+  }
+
+  async readBlobForShare(record: ArtifactRecord): Promise<Buffer> {
+    return this.options.blobStore.get(record.uri);
   }
 
   async ensureCanAccessSession(sessionId: string, user?: RuntimeArtifactUser): Promise<void> {
@@ -146,33 +153,41 @@ export class ArtifactService {
   }
 
   async createFromBytes(input: CreateArtifactFromBytesInput): Promise<ArtifactRecord> {
-    const buffer = Buffer.isBuffer(input.data) ? input.data : Buffer.from(input.data);
-    this.assertSizeAllowed(buffer.byteLength);
-    const blob = await this.options.blobStore.put({
-      data: buffer,
-      contentType: input.mimeType,
-      extension: input.fileName ? extname(input.fileName) : undefined,
-    });
-    try {
-      return await this.options.artifactStore.create({
-        sessionId: input.sessionId,
-        workspaceId: input.workspaceId,
-        producingHandId: input.producingHandId,
-        kind: input.kind ?? inferKind(input.fileName),
-        uri: blob.uri,
-        mimeType: input.mimeType ?? blob.contentType,
-        sizeBytes: blob.sizeBytes,
-        sha256: blob.sha256,
-        metadata: {
-          ...(input.metadata ?? {}),
-          ...(input.fileName ? { fileName: basename(input.fileName) } : {}),
-        },
+    const create = async (): Promise<ArtifactRecord> => {
+      if (this.options.assertSessionActive && !await this.options.assertSessionActive(input.sessionId)) {
+        throw new ArtifactServiceError(409, 'Session is deleted');
+      }
+      const buffer = Buffer.isBuffer(input.data) ? input.data : Buffer.from(input.data);
+      this.assertSizeAllowed(buffer.byteLength);
+      const blob = await this.options.blobStore.put({
+        data: buffer,
+        contentType: input.mimeType,
+        extension: input.fileName ? extname(input.fileName) : undefined,
       });
-    } catch (error) {
-      // Blob 已写入但 metadata 落库失败时立即补偿，避免每次失败都留下唯一对象。
-      await this.options.blobStore.delete(blob.uri).catch(() => undefined);
-      throw error;
-    }
+      try {
+        return await this.options.artifactStore.create({
+          sessionId: input.sessionId,
+          workspaceId: input.workspaceId,
+          producingHandId: input.producingHandId,
+          kind: input.kind ?? inferKind(input.fileName),
+          uri: blob.uri,
+          mimeType: input.mimeType ?? blob.contentType,
+          sizeBytes: blob.sizeBytes,
+          sha256: blob.sha256,
+          metadata: {
+            ...(input.metadata ?? {}),
+            ...(input.fileName ? { fileName: basename(input.fileName) } : {}),
+          },
+        });
+      } catch (error) {
+        // Blob 已写入但 metadata 落库失败时立即补偿，避免每次失败都留下唯一对象。
+        await this.options.blobStore.delete(blob.uri).catch(() => undefined);
+        throw error;
+      }
+    };
+    return this.options.withSessionLock
+      ? this.options.withSessionLock(input.sessionId, create)
+      : create();
   }
 
   async createFromWorkspaceFile(input: CreateArtifactFromWorkspaceFileInput): Promise<ArtifactRecord> {
@@ -268,11 +283,14 @@ export class ArtifactService {
   }
 
   private async deleteRecordAndUnreferencedBlob(record: ArtifactRecord): Promise<void> {
-    const referenceCount = await this.options.artifactStore.countByUri(record.uri);
-    // 新对象 URI 唯一；历史内容寻址对象可能仍被多条记录共享。最后一条引用删除时
-    // 先确认 Blob 已清理，再删 metadata，避免吞掉存储失败后留下无法追踪的敏感孤儿。
-    if (referenceCount <= 1) await this.options.blobStore.delete(record.uri);
-    await this.options.artifactStore.delete(record.artifactId);
+    const remove = async () => {
+      const referenceCount = await this.options.artifactStore.countByUri(record.uri);
+      // 新对象 URI 唯一；历史内容寻址对象可能仍被多条记录共享。最后一条引用删除时
+      // 先确认 Blob 已清理，再删 metadata，避免吞掉存储失败后留下无法追踪的敏感孤儿。
+      if (referenceCount <= 1) await this.options.blobStore.delete(record.uri);
+      await this.options.artifactStore.delete(record.artifactId);
+    };
+    return this.options.withBlobLock ? this.options.withBlobLock(record.uri, remove) : remove();
   }
 
   private async assertSessionOwner(sessionId: string, user: RuntimeArtifactUser): Promise<void> {

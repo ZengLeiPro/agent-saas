@@ -63,7 +63,7 @@ import {
   type ArtifactStore,
 } from '../runtime/artifactStore.js';
 import { ArtifactService } from '../runtime/artifactService.js';
-import { artifactContentAudit, initializeArtifactShareService, initializeArtifactShareStore, type ArtifactShareService, type ArtifactShareStore } from './artifactRuntime.js';
+import { artifactContentAudit, artifactServiceLifecycleOptions, initializeArtifactShareService, initializeArtifactShareStore, type ArtifactShareService, type ArtifactShareStore } from './artifactRuntime.js';
 import { PgImageBlobStore, setImageBlobStore } from '../runtime/imageBlobStore.js';
 import {
   InMemorySessionShareStore,
@@ -1304,8 +1304,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     signingSecret: artifactConfig?.signedUrlSecret ?? config.auth?.jwtSecret,
     defaultReadUrlTtlSeconds: artifactConfig?.readUrlTtlSeconds,
     maxBlobBytes: artifactConfig?.maxBlobBytes,
-    isArtifactPinned: artifactId => artifactShareStore!.isArtifactPinned(artifactId),
-    withArtifactLock: (artifactId, operation) => artifactShareStore!.withArtifactLock(artifactId, operation),
+    ...artifactServiceLifecycleOptions(artifactShareStore, sessionCatalog),
     resolveSessionTenantId: async sessionId => (await sessionCatalog.get(sessionId))?.tenantId,
     authorizeContentAccess: contentAccessGrantStore
       ? input => contentAccessGrantStore!.authorize(input)

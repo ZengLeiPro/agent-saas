@@ -22,6 +22,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionsRouter } from '../routes/sessions.js';
+import { permanentlyDeleteSession } from '../routes/sessionPermanentDeletion.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
 import { writeSessionMeta, readSessionMeta, type SessionMeta } from '../data/transcripts/meta.js';
 import { InMemorySessionShareStore } from '../data/sessionShares/store.js';
@@ -345,7 +346,7 @@ describe('sessions routes lifecycle coverage', () => {
     // 未删除会话
     const { sessionId: liveSession } = await writeSession(OWNER);
 
-    const { server, baseUrl } = await startServer(agentCwd, OWNER);
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, { artifactShareStore: new InMemoryArtifactShareStore() });
     servers.push(server);
 
     // 未删除会话不能 restore → 400
@@ -365,6 +366,22 @@ describe('sessions routes lifecycle coverage', () => {
     expect((await ok.json() as { restored: boolean }).restored).toBe(true);
     const meta = await readSessionMeta(transcriptPath);
     expect(meta?.deletedAt).toBeUndefined();
+  });
+
+  it('永久删除在 session lock 内重验 tombstone，已恢复时不执行任何物理清理', async () => {
+    const purge = vi.fn(async () => ({ scanned: 0, deleted: 0 }));
+    const lifecycle = createSessionArtifactLifecycle(new InMemoryArtifactShareStore(), { deleteArtifactsForSessions: purge })!;
+    const revokeShares = vi.spyOn(lifecycle, 'revokeShares');
+    const deleteTranscriptPreservingMeta = vi.fn(async () => true);
+    const deleteMetaAndSidecar = vi.fn(async () => true);
+    await expect(permanentlyDeleteSession({
+      sessionId: randomUUID(), ownerUserId: OWNER.id, hasTranscript: true, artifactLifecycle: lifecycle,
+      isStillDeleted: async () => false, deleteTranscriptPreservingMeta, deleteMetaAndSidecar,
+    })).resolves.toBe(false);
+    expect(revokeShares).not.toHaveBeenCalled();
+    expect(deleteTranscriptPreservingMeta).not.toHaveBeenCalled();
+    expect(deleteMetaAndSidecar).not.toHaveBeenCalled();
+    expect(purge).not.toHaveBeenCalled();
   });
 
   it('DELETE /sessions/:id/permanent：未在回收站 400、回收站内成功永久删除', async () => {
@@ -389,6 +406,28 @@ describe('sessions routes lifecycle coverage', () => {
     expect(deleteArtifactsForSessions).toHaveBeenCalledWith([trashed]);
     // transcript 已被物理删除
     await expect(readSessionMeta(transcriptPath)).resolves.toBeNull();
+  });
+
+  it('永久删除在 Artifact 清理失败时保留 meta tombstone，并可由同一端点重试', async () => {
+    const deletedAt = new Date().toISOString();
+    const { sessionId, transcriptPath } = await writeSession(OWNER, { deletedAt, deletedBy: OWNER.username });
+    const deleteArtifactsForSessions = vi.fn()
+      .mockRejectedValueOnce(new Error('blob store unavailable'))
+      .mockResolvedValueOnce({ scanned: 1, deleted: 1 });
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, {
+      artifactService: { deleteArtifactsForSessions },
+    });
+    servers.push(server);
+
+    const failed = await fetch(`${baseUrl}/api/sessions/${sessionId}/permanent`, { method: 'DELETE' });
+    expect(failed.status).toBe(500);
+    expect((await failed.json() as { error: string }).error).toContain('blob store unavailable');
+    expect(await readSessionMeta(transcriptPath)).toMatchObject({ deletedAt });
+
+    const retried = await fetch(`${baseUrl}/api/sessions/${sessionId}/permanent`, { method: 'DELETE' });
+    expect(retried.status).toBe(200);
+    expect(deleteArtifactsForSessions).toHaveBeenCalledTimes(2);
+    expect(await readSessionMeta(transcriptPath)).toBeNull();
   });
 
   it('GET /sessions/trash：仅列出当前用户已软删除会话', async () => {

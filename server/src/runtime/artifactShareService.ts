@@ -74,7 +74,9 @@ export class ArtifactShareService {
     user: RuntimeArtifactUser | undefined,
     request: UpsertArtifactShareRequest,
   ): Promise<OwnerArtifactShare> {
-    return this.options.store.withArtifactLock(artifactId, async () => {
+    const candidate = await this.options.artifactService.getForOwner(artifactId, user);
+    return this.options.store.withArtifactSessionLock(artifactId, candidate.sessionId, async () => {
+      // 会话锁内重跑 owner/tombstone 校验；软删除若先提交，这里必须失败而不是复活分享。
       const record = await this.options.artifactService.getForOwner(artifactId, user);
       const current = await this.options.store.getCurrent(artifactId, user!.sub);
       const nowMs = this.now().getTime();
@@ -109,8 +111,11 @@ export class ArtifactShareService {
   }
 
   async revoke(artifactId: string, user?: RuntimeArtifactUser): Promise<boolean> {
-    await this.options.artifactService.getForOwner(artifactId, user);
-    return this.options.store.revoke(artifactId, user!.sub);
+    const candidate = await this.options.artifactService.getForOwner(artifactId, user);
+    return this.options.store.withArtifactSessionLock(artifactId, candidate.sessionId, async () => {
+      await this.options.artifactService.getForOwner(artifactId, user);
+      return this.options.store.revoke(artifactId, user!.sub);
+    });
   }
 
   async getPublicMetadata(token: string): Promise<PublicArtifactShareMetadata> {
@@ -130,10 +135,15 @@ export class ArtifactShareService {
     };
   }
 
-  async getPublicContent(token: string): Promise<{ share: ArtifactShareRecord; record: ArtifactRecord; data: Buffer }> {
+  async getPublicContentMetadata(token: string): Promise<{ share: ArtifactShareRecord; record: ArtifactRecord }> {
     const share = await this.resolvePublicShare(token);
-    const { record, data } = await this.options.artifactService.readContentForShare(share.artifactId);
-    return { share, record, data };
+    const record = await this.options.artifactService.getRecordForShare(share.artifactId);
+    return { share, record };
+  }
+
+  async getPublicContent(token: string): Promise<{ share: ArtifactShareRecord; record: ArtifactRecord; data: Buffer }> {
+    const { share, record } = await this.getPublicContentMetadata(token);
+    return { share, record, data: await this.options.artifactService.readBlobForShare(record) };
   }
 
   async resolvePublicShare(token: string): Promise<ArtifactShareRecord> {

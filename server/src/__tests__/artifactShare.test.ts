@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Server } from 'node:http';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { writeSessionMeta } from '../data/transcripts/meta.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
@@ -11,6 +11,7 @@ import { createArtifactsRouter } from '../routes/artifacts.js';
 import { ArtifactService, type RuntimeArtifactUser } from '../runtime/artifactService.js';
 import { ArtifactShareService } from '../runtime/artifactShareService.js';
 import { InMemoryArtifactShareStore, PgArtifactShareStore } from '../runtime/artifactShareStore.js';
+import { createSessionArtifactLifecycle } from '../runtime/sessionArtifactLifecycle.js';
 import { InMemoryArtifactStore, LocalArtifactBlobStore } from '../runtime/artifactStore.js';
 
 const SESSION_ID = '11111111-2222-4333-8444-555555555555';
@@ -62,6 +63,7 @@ describe('ArtifactShare backend', () => {
       agentCwd,
       signingSecret: 'artifact-read-test-secret',
       isArtifactPinned: artifactId => shareStore.isArtifactPinned(artifactId),
+      withBlobLock: (uri, operation) => shareStore.withBlobLock(uri, operation),
     });
     shareService = new ArtifactShareService({
       store: shareStore,
@@ -102,6 +104,35 @@ describe('ArtifactShare backend', () => {
     const share = await shareService.upsert(artifact.artifactId, OWNER, {});
     expect(share.publicPath).toBe(`/public/artifacts/${encodeURIComponent(share.token)}`);
     expect(Date.parse(share.expiresAt) - now.getTime()).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it('serializes soft deletion with share upsert so a deleted session cannot regain an active link', async () => {
+    const artifact = await artifactService.createFromBytes({ sessionId: SESSION_ID, data: 'race', fileName: 'race.txt' });
+    const lifecycle = createSessionArtifactLifecycle(shareStore, artifactService)!;
+    let releaseDelete!: () => void;
+    let signalDeleteStarted!: () => void;
+    const deleteStarted = new Promise<void>(resolve => { signalDeleteStarted = resolve; });
+    const deleteGate = new Promise<void>(resolve => { releaseDelete = resolve; });
+    const transcriptPath = getTranscriptPath(join(agentCwd, 'kaiyan', OWNER.sub), SESSION_ID);
+    const deletion = lifecycle.withRevoked(SESSION_ID, OWNER.sub, async () => {
+      signalDeleteStarted();
+      await deleteGate;
+      await writeSessionMeta(transcriptPath, {
+        userId: OWNER.sub, username: OWNER.username, tenantId: OWNER.tenantId, channel: 'web',
+        createdAt: now.toISOString(), deletedAt: now.toISOString(),
+      });
+    });
+    await deleteStarted;
+    const upsert = shareService.upsert(artifact.artifactId, OWNER, {}).then(
+      value => ({ value }), error => ({ error }),
+    );
+    await new Promise(resolve => setImmediate(resolve));
+    releaseDelete();
+    await deletion;
+
+    const outcome = await upsert;
+    expect(outcome).toMatchObject({ error: { statusCode: 404 } });
+    expect(await shareStore.getCurrent(artifact.artifactId, OWNER.sub)).toBeNull();
   });
 
   it('stores only the token hash, rebuilds a stable token, and enforces the 30-day TTL', async () => {
@@ -168,9 +199,11 @@ describe('ArtifactShare backend', () => {
       expect(content.headers.get('content-security-policy')).toContain('sandbox');
       await expect(content.text()).resolves.toContain('<script>');
 
+      const blobRead = vi.spyOn(blobStore, 'get');
       const head = await fetch(`${ownerServer.baseUrl}/api/share/artifacts/${share.token}/content`, { method: 'HEAD' });
       expect(head.status).toBe(200);
       expect(head.headers.get('content-length')).toBe('25');
+      expect(blobRead).not.toHaveBeenCalled();
 
       const revoke = await fetch(`${ownerServer.baseUrl}/api/artifacts/${artifact.artifactId}/share`, { method: 'DELETE' });
       expect(revoke.status).toBe(200);
@@ -206,10 +239,31 @@ describe('ArtifactShare backend', () => {
       metadata: { fileName: 'two.txt' },
     });
 
-    await artifactService.deleteArtifactsForSessions([SESSION_ID]);
-    await expect(blobStore.get(second.uri)).resolves.toEqual(Buffer.from('same-blob'));
-    await artifactService.deleteArtifactsForSessions([SESSION_2]);
+    await Promise.all([
+      artifactService.deleteArtifactsForSessions([SESSION_ID]),
+      artifactService.deleteArtifactsForSessions([SESSION_2]),
+    ]);
     await expect(blobStore.get(second.uri)).rejects.toThrow();
+  });
+
+  it('acquires artifact and session advisory locks on one PG connection in stable order', async () => {
+    const calls: Array<{ sql: string; params?: unknown[] }> = [];
+    const client = {
+      query: async (sql: string, params?: unknown[]) => { calls.push({ sql, params }); return { rows: [] }; },
+      release: vi.fn(),
+    };
+    const store = new PgArtifactShareStore({
+      pool: { query: vi.fn() } as never,
+      lockPool: { connect: async () => client } as never,
+      tablePrefix: 'test',
+    });
+    await expect(store.withArtifactSessionLock('artifact-1', SESSION_ID, async () => 'done')).resolves.toBe('done');
+    expect(calls.filter(call => call.sql.includes('pg_advisory_xact_lock')).map(call => call.params?.[0])).toEqual([
+      'artifact-share:artifact:artifact-1',
+      `artifact-share:session:${SESSION_ID}`,
+    ]);
+    expect(calls.map(call => call.sql)).toEqual(expect.arrayContaining(['BEGIN', 'COMMIT']));
+    expect(client.release).toHaveBeenCalledOnce();
   });
 
   it('PG schema and writes contain token_hash but no plaintext token column', async () => {

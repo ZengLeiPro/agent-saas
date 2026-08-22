@@ -90,8 +90,8 @@ function pruneUnknownToolControls(toolControls: ToolControlsConfig): ToolControl
   );
   // CreateArtifact 合并进 Artifact 后保留显式禁用态；不迁移旧 descriptionOverride，
   // 因为其中可能仍要求模型手写已退休的 fileCardMarker。
-  if (!knownTools.Artifact && configuredTools.CreateArtifact?.enabled === false) {
-    knownTools.Artifact = { enabled: false };
+  if (configuredTools.CreateArtifact?.enabled === false) {
+    knownTools.Artifact = { ...knownTools.Artifact, enabled: false };
   }
   const next = { ...toolControls };
   if (Object.keys(knownTools).length > 0) next.tools = knownTools;

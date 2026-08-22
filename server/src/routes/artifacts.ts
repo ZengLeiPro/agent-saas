@@ -2,7 +2,8 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
-import type { ArtifactKind } from '../runtime/artifactStore.js';
+import type { ArtifactKind, ArtifactRecord } from '../runtime/artifactStore.js';
+import type { ArtifactShareRecord } from '../runtime/artifactShareStore.js';
 import {
   ArtifactService,
   ArtifactServiceError,
@@ -213,19 +214,7 @@ export function createArtifactsRouter(options: ArtifactsRouterOptions): Router {
     }
     try {
       const { share, record, data } = await options.artifactShareService.getPublicContent(req.params.token);
-      const mimeType = record.mimeType || 'application/octet-stream';
-      const dangerous = isActiveContentType(mimeType);
-      const rawFileName = typeof record.metadata.fileName === 'string' ? record.metadata.fileName : `${record.artifactId}.bin`;
-      const fileName = rawFileName.split(/[\\/]/).pop() || `${record.artifactId}.bin`;
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      res.setHeader('Content-Type', mimeType);
-      res.setHeader('Content-Length', String(data.byteLength));
-      res.setHeader(
-        'Content-Disposition',
-        buildContentDisposition(dangerous || share.allowDownload ? 'attachment' : 'inline', fileName),
-      );
-      if (dangerous) res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+      setPublicContentHeaders(res, share, record, data.byteLength);
       res.send(data);
     } catch (err) {
       sendArtifactError(res, err);
@@ -233,8 +222,18 @@ export function createArtifactsRouter(options: ArtifactsRouterOptions): Router {
   };
 
   // Register HEAD before GET because Express otherwise treats GET as an implicit HEAD handler.
-  router.head('/share/artifacts/:token/content', (req: Request, res: Response) => {
-    void servePublicContent(req, res);
+  router.head('/share/artifacts/:token/content', async (req: Request, res: Response) => {
+    if (!options.artifactShareService) {
+      res.status(404).json({ error: 'Artifact share not found' });
+      return;
+    }
+    try {
+      const { share, record } = await options.artifactShareService.getPublicContentMetadata(req.params.token);
+      setPublicContentHeaders(res, share, record, record.sizeBytes);
+      res.end();
+    } catch (err) {
+      sendArtifactError(res, err);
+    }
   });
   router.get('/share/artifacts/:token/content', (req: Request, res: Response) => {
     void servePublicContent(req, res);
@@ -255,6 +254,24 @@ export function createArtifactsRouter(options: ArtifactsRouterOptions): Router {
   });
 
   return router;
+}
+
+function setPublicContentHeaders(
+  res: Response,
+  share: Pick<ArtifactShareRecord, 'allowDownload'>,
+  record: ArtifactRecord,
+  contentLength?: number,
+): void {
+  const mimeType = record.mimeType || 'application/octet-stream';
+  const dangerous = isActiveContentType(mimeType);
+  const rawFileName = typeof record.metadata.fileName === 'string' ? record.metadata.fileName : `${record.artifactId}.bin`;
+  const fileName = rawFileName.split(/[\\/]/).pop() || `${record.artifactId}.bin`;
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Type', mimeType);
+  if (contentLength !== undefined) res.setHeader('Content-Length', String(contentLength));
+  res.setHeader('Content-Disposition', buildContentDisposition(dangerous || share.allowDownload ? 'attachment' : 'inline', fileName));
+  if (dangerous) res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
 }
 
 function sendArtifactError(res: Response, err: unknown): void {

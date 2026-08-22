@@ -43,11 +43,14 @@ export interface ArtifactShareStore {
   revokeBySession(sessionId: string, ownerUserId: string): Promise<number>;
   isArtifactPinned(artifactId: string): Promise<boolean>;
   withArtifactLock<T>(artifactId: string, operation: () => Promise<T>): Promise<T>;
+  withBlobLock<T>(uri: string, operation: () => Promise<T>): Promise<T>;
+  withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T>;
+  withArtifactSessionLock<T>(artifactId: string, sessionId: string, operation: () => Promise<T>): Promise<T>;
 }
 
 export class InMemoryArtifactShareStore implements ArtifactShareStore {
   private readonly records = new Map<string, ArtifactShareRecord>();
-  private readonly artifactLocks = new Map<string, Promise<void>>();
+  private readonly locks = new Map<string, Promise<void>>();
 
   constructor(private readonly now: () => Date = () => new Date()) {}
 
@@ -146,19 +149,41 @@ export class InMemoryArtifactShareStore implements ArtifactShareStore {
     );
   }
 
-  async withArtifactLock<T>(artifactId: string, operation: () => Promise<T>): Promise<T> {
-    const previous = this.artifactLocks.get(artifactId) ?? Promise.resolve();
-    let release!: () => void;
-    const current = new Promise<void>(resolve => { release = resolve; });
-    const queued = previous.then(() => current);
-    this.artifactLocks.set(artifactId, queued);
-    await previous;
-    try {
-      return await operation();
-    } finally {
-      release();
-      if (this.artifactLocks.get(artifactId) === queued) this.artifactLocks.delete(artifactId);
-    }
+  withArtifactLock<T>(artifactId: string, operation: () => Promise<T>): Promise<T> {
+    return this.withLocks([`artifact:${artifactId}`], operation);
+  }
+
+  withBlobLock<T>(uri: string, operation: () => Promise<T>): Promise<T> {
+    return this.withLocks([`blob:${uri}`], operation);
+  }
+
+  withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    return this.withLocks([`session:${sessionId}`], operation);
+  }
+
+  withArtifactSessionLock<T>(artifactId: string, sessionId: string, operation: () => Promise<T>): Promise<T> {
+    return this.withLocks([`artifact:${artifactId}`, `session:${sessionId}`], operation);
+  }
+
+  private async withLocks<T>(keys: string[], operation: () => Promise<T>): Promise<T> {
+    const ordered = [...new Set(keys)].sort();
+    const acquire = async (index: number): Promise<T> => {
+      if (index >= ordered.length) return operation();
+      const key = ordered[index]!;
+      const previous = this.locks.get(key) ?? Promise.resolve();
+      let release!: () => void;
+      const current = new Promise<void>(resolve => { release = resolve; });
+      const queued = previous.then(() => current);
+      this.locks.set(key, queued);
+      await previous;
+      try {
+        return await acquire(index + 1);
+      } finally {
+        release();
+        if (this.locks.get(key) === queued) this.locks.delete(key);
+      }
+    };
+    return acquire(0);
   }
 }
 
@@ -321,14 +346,32 @@ export class PgArtifactShareStore implements ArtifactShareStore {
     return !!result.rows[0];
   }
 
-  async withArtifactLock<T>(artifactId: string, operation: () => Promise<T>): Promise<T> {
-    // Advisory lock 使用独立 max=1 的连接池；锁内业务查询继续使用主池，哪怕主池
-    // poolMax=1 也不会出现“持有唯一连接再等待唯一连接”的自死锁。
+  withArtifactLock<T>(artifactId: string, operation: () => Promise<T>): Promise<T> {
+    return this.withLocks([`artifact:${artifactId}`], operation);
+  }
+
+  withBlobLock<T>(uri: string, operation: () => Promise<T>): Promise<T> {
+    return this.withLocks([`blob:${uri}`], operation);
+  }
+
+  withSessionLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    return this.withLocks([`session:${sessionId}`], operation);
+  }
+
+  withArtifactSessionLock<T>(artifactId: string, sessionId: string, operation: () => Promise<T>): Promise<T> {
+    return this.withLocks([`artifact:${artifactId}`, `session:${sessionId}`], operation);
+  }
+
+  private async withLocks<T>(keys: string[], operation: () => Promise<T>): Promise<T> {
+    // 同一事务按稳定顺序获取全部 advisory locks，既避免多进程竞态，也避免
+    // lockPool max=1 时通过嵌套调用等待自己持有的唯一连接。
     let client: PoolClient | undefined;
     try {
       client = await this.lockPool.connect();
       await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`artifact-share:${artifactId}`]);
+      for (const key of [...new Set(keys)].sort()) {
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`artifact-share:${key}`]);
+      }
       const result = await operation();
       await client.query('COMMIT');
       return result;

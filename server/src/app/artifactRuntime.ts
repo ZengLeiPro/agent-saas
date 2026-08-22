@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { GovernanceAuditStore } from '../data/governance-audit/index.js';
+import { readSessionMeta } from '../data/transcripts/meta.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { ArtifactShareService } from '../runtime/artifactShareService.js';
 import {
@@ -8,7 +9,8 @@ import {
   PgArtifactShareStore,
   type ArtifactShareStore,
 } from '../runtime/artifactShareStore.js';
-import type { ArtifactService } from '../runtime/artifactService.js';
+import type { ArtifactService, ArtifactServiceOptions } from '../runtime/artifactService.js';
+import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 export type { ArtifactShareService, ArtifactShareStore };
 
 export async function initializeArtifactShareStore(pg?: {
@@ -33,6 +35,23 @@ export function initializeArtifactShareService(
   }
   warn('Artifact sharing disabled: persistent artifact.signedUrlSecret or auth.jwtSecret is required');
   return undefined;
+}
+
+export function artifactServiceLifecycleOptions(
+  store: ArtifactShareStore,
+  sessionCatalog: SessionCatalog,
+): Pick<ArtifactServiceOptions, 'isArtifactPinned' | 'withArtifactLock' | 'withBlobLock' | 'withSessionLock' | 'assertSessionActive'> {
+  return {
+    isArtifactPinned: artifactId => store.isArtifactPinned(artifactId),
+    withArtifactLock: (artifactId, operation) => store.withArtifactLock(artifactId, operation),
+    withBlobLock: (uri, operation) => store.withBlobLock(uri, operation),
+    withSessionLock: (sessionId, operation) => store.withSessionLock(sessionId, operation),
+    assertSessionActive: async sessionId => {
+      const transcriptPath = await sessionCatalog.findTranscriptPath(sessionId);
+      const meta = transcriptPath ? await readSessionMeta(transcriptPath) : null;
+      return !!meta && !meta.deletedAt;
+    },
+  };
 }
 
 export function artifactContentAudit(

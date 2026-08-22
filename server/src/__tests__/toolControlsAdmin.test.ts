@@ -539,7 +539,10 @@ describe('tool controls admin router', () => {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          toolControls: { tools: { CreateArtifact: { enabled: false } } },
+          toolControls: { tools: {
+            Artifact: { enabled: true, descriptionOverride: { mode: 'append', text: 'keep me' } },
+            CreateArtifact: { enabled: false },
+          } },
           webTools: null,
         }),
       });
@@ -548,6 +551,7 @@ describe('tool controls admin router', () => {
       expect(body.tools.find((tool: { id: string }) => tool.id === 'Artifact').enabled).toBe(false);
       const written = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(written.toolControls.tools.Artifact.enabled).toBe(false);
+      expect(written.toolControls.tools.Artifact.descriptionOverride).toEqual({ mode: 'append', text: 'keep me' });
       expect(written.toolControls.tools.CreateArtifact).toBeUndefined();
     });
   });

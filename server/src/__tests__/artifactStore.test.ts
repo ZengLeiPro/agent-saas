@@ -81,6 +81,39 @@ describe('LocalArtifactBlobStore', () => {
     }
   });
 
+  it('serializes creation with permanent deletion and rejects the post-delete write', async () => {
+    const blobRoot = await mkdtemp(path.join(os.tmpdir(), 'artifact-blob-'));
+    try {
+      const artifactStore = new InMemoryArtifactStore();
+      const shareStore = new InMemoryArtifactShareStore();
+      let active = true;
+      const service = new ArtifactService({
+        artifactStore,
+        blobStore: new LocalArtifactBlobStore({ rootDir: blobRoot }),
+        agentCwd: blobRoot,
+        withSessionLock: (sessionId, operation) => shareStore.withSessionLock(sessionId, operation),
+        assertSessionActive: async () => active,
+      });
+      let releaseDelete!: () => void;
+      let signalDeleteStarted!: () => void;
+      const deleteStarted = new Promise<void>(resolve => { signalDeleteStarted = resolve; });
+      const deletion = shareStore.withSessionLock('session-1', async () => {
+        signalDeleteStarted();
+        await new Promise<void>(resolve => { releaseDelete = resolve; });
+        active = false;
+      });
+      await deleteStarted;
+      const creation = service.createFromBytes({ sessionId: 'session-1', data: 'late' });
+      releaseDelete();
+      await deletion;
+
+      await expect(creation).rejects.toMatchObject({ statusCode: 409 });
+      await expect(artifactStore.listForSession('session-1')).resolves.toEqual([]);
+    } finally {
+      await rm(blobRoot, { recursive: true, force: true });
+    }
+  });
+
   it('GC rechecks deliveredAt under the Artifact lock before deleting a stale candidate', async () => {
     const blobRoot = await mkdtemp(path.join(os.tmpdir(), 'artifact-blob-'));
     try {

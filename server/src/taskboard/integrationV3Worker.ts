@@ -1,7 +1,7 @@
 import type { TaskBoardIntegrationCandidate, TaskBoardIntegrationCandidateRevision } from '../../../shared/src/types/taskboard.js';
 import type { AppendCandidateRevisionInput } from './integrationCandidateStore.js';
 import type { IntegrationEngineV3, IntegrationEngineV3ExpectedSubject, IntegrationEngineV3Result } from './integrationEngineV3.js';
-import { IntegrationV3ComposeConflictError } from './integrationV3ComposeExecutor.js';
+import { IntegrationV3CandidateReloadRequiredError, IntegrationV3ComposeConflictError } from './integrationV3ComposeExecutor.js';
 
 export type IntegrationV3RequestKind = 'work' | 'review' | 'cleanup' | 'workspace_sync';
 
@@ -281,6 +281,10 @@ export class IntegrationV3Worker {
         await this.options.host.releaseCandidate(lease);
       }
     } catch (error) {
+      if (error instanceof IntegrationV3CandidateReloadRequiredError) {
+        await this.options.host.releaseCandidate(lease);
+        return;
+      }
       await this.options.host.releaseCandidate(lease, message(error), isRetryable(error));
     }
   }

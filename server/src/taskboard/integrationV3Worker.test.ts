@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { TaskBoardIntegrationCandidate, TaskBoardIntegrationCandidateRevision } from '../../../shared/src/types/taskboard.js';
 import type { IntegrationEngineV3, IntegrationEngineV3Command } from './integrationEngineV3.js';
-import { IntegrationV3ComposeConflictError } from './integrationV3ComposeExecutor.js';
+import { IntegrationV3CandidateReloadRequiredError, IntegrationV3ComposeConflictError } from './integrationV3ComposeExecutor.js';
 import { IntegrationV3Worker, type IntegrationV3RequestLease, type IntegrationV3WorkerHost } from './integrationV3Worker.js';
 import { executeIntegrationV3Cleanup, terminalizeIntegrationV3PreparedOperations } from './integrationV3WorkerPostgres.js';
 
@@ -178,6 +178,25 @@ describe('IntegrationV3Worker pure mock flow', () => {
     });
     await worker.runOnce();
     expect(releases.at(-1)).toEqual({ error: 'temporary workspace outage', retryable: true });
+  });
+
+  it('reloads after PR binding advances without persisting a worker error', async () => {
+    const host = new MemoryHost();
+    host.current.candidate = candidate('composing');
+    const releaseCandidate = vi.fn(async () => undefined);
+    host.releaseCandidate = releaseCandidate;
+    const worker = new IntegrationV3Worker({
+      host,
+      engine: { execute: vi.fn() } as unknown as IntegrationEngineV3,
+      composer: {
+        compose: async () => { throw new IntegrationV3CandidateReloadRequiredError(); },
+        refreshAfterWork: async () => undefined,
+      },
+    });
+
+    await worker.runOnce();
+
+    expect(releaseCandidate).toHaveBeenCalledWith({ candidateId: 'candidate-1', leaseId: 'candidate-lease' });
   });
 
   it('converges an invalid ready work result to needs_human without failing the worker lease', async () => {

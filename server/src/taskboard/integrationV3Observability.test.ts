@@ -37,6 +37,26 @@ describe('integration v3 observability and release gate', () => {
     });
   });
 
+  it('reports failed candidates without weakening infrastructure release gates', () => {
+    const metrics = {
+      capturedAt: new Date().toISOString(),
+      unknownOperationCount: 0, oldestUnknownOperationAgeMs: null,
+      staleLaneCount: 0, staleOutboxCount: 0, oldestOutboxAgeMs: null,
+      cleanupFailureCount: 0, activeFailedCandidateCount: 1,
+      gatewayDisabled: false, gatewayHealthy: true,
+      activeV2Count: 0, activeV3Count: 1,
+      costBudgetUsed: null, costBudgetLimit: null,
+      workRoundBudgetUsed: null, workRoundBudgetLimit: null,
+    };
+    expect(evaluateIntegrationV3Health(metrics)).toMatchObject({
+      status: 'degraded', releaseReady: true, reasons: ['active_failed_candidate'],
+    });
+    expect(evaluateIntegrationV3Health({ ...metrics, gatewayHealthy: false })).toMatchObject({
+      status: 'degraded', releaseReady: false,
+      reasons: ['active_failed_candidate', 'gateway_unhealthy'],
+    });
+  });
+
   it('fails readiness when the control plane is disabled while durable v3 work remains', async () => {
     const db = { query: vi.fn(async (sql: string) => sql.includes('AS count')
       ? { rows: [{ count: 1 }] }

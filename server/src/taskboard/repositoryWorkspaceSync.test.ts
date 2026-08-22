@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   RepositoryWorkspaceSyncError,
+  syncCandidateRevisionObjects,
   syncRepositoryWorkspace,
   type RepositoryWorkspaceGitCommand,
   type RepositoryWorkspaceGitResult,
@@ -86,6 +87,76 @@ function ancestorStep(ancestor: string, descendant: string, yes: boolean): Step 
     result: { exitCode: yes ? 0 : 1 },
   };
 }
+
+describe('syncCandidateRevisionObjects', () => {
+  const candidate = {
+    repositoryPath: REPOSITORY,
+    integrationBranch: 'integration/task-1',
+    baseBranch: 'main',
+    controlledRemoteUrl: input.controlledRemoteUrl,
+    candidateId: 'candidate-1',
+    candidateRevision: 2,
+    providerPullRequestId: '108',
+    expectedBaseOid: MAIN_OID,
+    expectedHeadOid: INTEGRATION_OID,
+    expectedTreeOid: REMOTE_OID,
+  };
+  const candidateRef = 'refs/ky-integration-v3/candidates/candidate-1/r2/head';
+
+  it('fetches exact Provider refs and verifies the immutable candidate subject', async () => {
+    const host = new ScriptedHost([
+      { cwd: REPOSITORY, args: [
+        'fetch', '--no-tags', '--', input.controlledRemoteUrl,
+        '+refs/heads/main:refs/remotes/origin/main',
+        `+refs/pull/108/head:${candidateRef}`,
+      ] },
+      { cwd: REPOSITORY, args: ['rev-parse', '--verify', candidateRef], result: { stdout: `${INTEGRATION_OID}\n` } },
+      { cwd: REPOSITORY, args: ['rev-parse', '--verify', `${MAIN_OID}^{commit}`], result: { stdout: `${MAIN_OID}\n` } },
+      { cwd: REPOSITORY, args: ['rev-parse', '--verify', `${INTEGRATION_OID}^{tree}`], result: { stdout: `${REMOTE_OID}\n` } },
+      ancestorStep(MAIN_OID, 'refs/remotes/origin/main', true),
+      ancestorStep(MAIN_OID, INTEGRATION_OID, true),
+    ]);
+
+    await expect(syncCandidateRevisionObjects(host, candidate)).resolves.toEqual({
+      repositoryPath: REPOSITORY,
+      baseOid: MAIN_OID,
+      headOid: INTEGRATION_OID,
+      treeOid: REMOTE_OID,
+    });
+    host.assertConsumed();
+  });
+
+  it('fails closed when the frozen base is no longer reachable from authoritative main', async () => {
+    const host = new ScriptedHost([
+      { cwd: REPOSITORY, args: [
+        'fetch', '--no-tags', '--', input.controlledRemoteUrl,
+        '+refs/heads/main:refs/remotes/origin/main',
+        `+refs/pull/108/head:${candidateRef}`,
+      ] },
+      { cwd: REPOSITORY, args: ['rev-parse', '--verify', candidateRef], result: { stdout: `${INTEGRATION_OID}\n` } },
+      { cwd: REPOSITORY, args: ['rev-parse', '--verify', `${MAIN_OID}^{commit}`], result: { stdout: `${MAIN_OID}\n` } },
+      { cwd: REPOSITORY, args: ['rev-parse', '--verify', `${INTEGRATION_OID}^{tree}`], result: { stdout: `${REMOTE_OID}\n` } },
+      ancestorStep(MAIN_OID, 'refs/remotes/origin/main', false),
+    ]);
+
+    await expect(syncCandidateRevisionObjects(host, candidate)).rejects.toMatchObject({ code: 'WORKTREE_DIVERGED' });
+    host.assertConsumed();
+  });
+
+  it('fails closed when the Integration PR head drifted', async () => {
+    const host = new ScriptedHost([
+      { cwd: REPOSITORY, args: [
+        'fetch', '--no-tags', '--', input.controlledRemoteUrl,
+        '+refs/heads/main:refs/remotes/origin/main',
+        `+refs/pull/108/head:${candidateRef}`,
+      ] },
+      { cwd: REPOSITORY, args: ['rev-parse', '--verify', candidateRef], result: { stdout: `${'5'.repeat(40)}\n` } },
+    ]);
+
+    await expect(syncCandidateRevisionObjects(host, candidate)).rejects.toMatchObject({ code: 'WORKTREE_DIVERGED' });
+    host.assertConsumed();
+  });
+});
 
 describe('syncRepositoryWorkspace', () => {
   it('fetches origin, fast-forwards a clean behind main, and creates a new integration worktree', async () => {

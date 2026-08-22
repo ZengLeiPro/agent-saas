@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { withMaterializedWorkspaceCommit } from './workspaceCommitMaterializer.js';
+import { materializeCandidateObjects, withMaterializedWorkspaceCommit } from './workspaceCommitMaterializer.js';
 
 const execFileAsync = promisify(execFile);
 const roots: string[] = [];
@@ -42,6 +42,63 @@ async function repository() {
   const newOid = await git(root, ['rev-parse', 'HEAD']);
   return { root, oldOid, newOid };
 }
+
+describe('materializeCandidateObjects', () => {
+  it('imports exact candidate objects without changing workspace refs, index or worktree', async () => {
+    const source = await repository();
+    const treeOid = await git(source.root, ['rev-parse', `${source.newOid}^{tree}`]);
+    const workspace = await mkdtemp(join(tmpdir(), 'candidate-workspace-'));
+    roots.push(workspace);
+    const target = join(workspace, 'code', 'agent-saas');
+    await mkdir(join(workspace, 'code'), { recursive: true });
+    await mkdir(target);
+    await git(target, ['init']);
+    await writeFile(join(target, 'local.txt'), 'untouched\n');
+    const headBefore = await readFile(join(target, '.git', 'HEAD'), 'utf8');
+
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root,
+      workspaceRoot: workspace,
+      repositoryName: 'agent-saas',
+      baseOid: source.oldOid,
+      headOid: source.newOid,
+      treeOid,
+    })).resolves.toMatchObject({ baseOid: source.oldOid, headOid: source.newOid, treeOid });
+
+    expect(await git(target, ['cat-file', '-t', source.oldOid])).toBe('commit');
+    expect(await git(target, ['cat-file', '-t', source.newOid])).toBe('commit');
+    expect(await readFile(join(target, '.git', 'HEAD'), 'utf8')).toBe(headBefore);
+    expect(await git(target, ['status', '--short'])).toBe('?? local.txt');
+    expect(await git(target, ['for-each-ref', '--format=%(refname)'])).toBe('');
+
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root,
+      workspaceRoot: workspace,
+      repositoryName: 'agent-saas',
+      baseOid: source.oldOid,
+      headOid: source.newOid,
+      treeOid,
+    })).resolves.toMatchObject({ headOid: source.newOid });
+  });
+
+  it('rejects an unverified candidate tree before dispatch', async () => {
+    const source = await repository();
+    const workspace = await mkdtemp(join(tmpdir(), 'candidate-workspace-'));
+    roots.push(workspace);
+    const target = join(workspace, 'agent-saas');
+    await mkdir(target);
+    await git(target, ['init']);
+
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root,
+      workspaceRoot: workspace,
+      repositoryName: 'agent-saas',
+      baseOid: source.oldOid,
+      headOid: source.newOid,
+      treeOid: 'f'.repeat(40),
+    })).rejects.toMatchObject({ code: 'object_missing' });
+  });
+});
 
 describe('withMaterializedWorkspaceCommit', () => {
   it('materializes a real direct-parent commit and removes alternate access before callback', async () => {

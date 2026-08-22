@@ -71,6 +71,55 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(String(query.mock.calls[0]![0])).toContain('UPDATE blocks b SET closed_at=COALESCE');
   });
 
+  it('rechecks the durable request fence and carries the exact candidate binding into pre-dispatch preparation', async () => {
+    const query = vi.fn(async (_text: string, _values?: unknown[]) => ({ rows: [{
+      id: 'task-1', version: 7, tenant_id: 'tenant-1', owner_user_id: 'owner-1',
+    }] }));
+    const dispatchAgent = vi.fn(async (input: { assertCurrent(): Promise<void> }) => {
+      await input.assertCurrent();
+      return { executionId: 'execution-1' };
+    });
+    const host = workerHost(query, dispatchAgent);
+    await host.dispatchAgent({
+      id: 'request-1', leaseId: 'lease-1', kind: 'work',
+      candidateId: 'candidate-1', candidateRevision: 2, payload: {},
+    });
+    const sql = String(query.mock.calls[0]![0]);
+    expect(sql).toContain("o.lease_id=$4 AND o.status='processing'");
+    expect(sql).toContain('o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch');
+    expect(query.mock.calls[0]![1]).toEqual(['candidate-1', 2, 'request-1', 'lease-1']);
+    expect(String(query.mock.calls[1]![0])).toContain("lease_expires_at=now()+interval '5 minutes'");
+    expect(dispatchAgent).toHaveBeenCalledWith(expect.objectContaining({
+      candidateId: 'candidate-1', candidateRevision: 2,
+      taskId: 'task-1', expectedVersion: 7, purpose: 'work',
+    }));
+  });
+
+  it('prevents Agent start when the request fence changes during workspace preparation', async () => {
+    let selectCount = 0;
+    const query = vi.fn(async (text: string) => {
+      if (text.includes('SELECT t.id')) {
+        selectCount += 1;
+        return { rows: selectCount === 1 ? [{
+          id: 'task-1', version: 7, tenant_id: 'tenant-1', owner_user_id: 'owner-1',
+        }] : [] };
+      }
+      if (text.includes("SET lease_expires_at=now()+interval '5 minutes'")) return { rows: [{ id: 'request-1' }] };
+      return { rows: [] };
+    });
+    let started = false;
+    const host = workerHost(query, vi.fn(async (input: { assertCurrent(): Promise<void> }) => {
+      await input.assertCurrent();
+      started = true;
+      return { executionId: 'execution-1' };
+    }));
+    await expect(host.dispatchAgent({
+      id: 'request-1', leaseId: 'lease-1', kind: 'work',
+      candidateId: 'candidate-1', candidateRevision: 2, payload: {},
+    })).rejects.toThrow('dispatch fence changed');
+    expect(started).toBe(false);
+  });
+
   it('uses two PostgreSQL-safe advisory lock keys without embedding a NUL separator', async () => {
     const query = vi.fn(async () => ({ rows: [] }));
     const client = { query, release: vi.fn() };

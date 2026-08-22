@@ -1,4 +1,5 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { createReadStream } from 'node:fs';
 import { chmod, lstat, mkdtemp, opendir, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
@@ -67,6 +68,94 @@ export async function withMaterializedWorkspaceCommit<T>(input: {
     throw new WorkspaceCommitMaterializationError('materialization_failed');
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
+export interface MaterializedCandidateObjects {
+  repositoryName: string;
+  baseOid: string;
+  headOid: string;
+  treeOid: string;
+}
+
+/**
+ * Copies an exact, server-validated candidate subject into a bound workspace object store.
+ * It never reads workspace Git config and never changes refs, HEAD, index or worktree files.
+ */
+export async function materializeCandidateObjects(input: {
+  sourceRepositoryPath: string;
+  workspaceRoot: string;
+  repositoryName: string;
+  baseOid: string;
+  headOid: string;
+  treeOid: string;
+  tempRoot?: string;
+}): Promise<MaterializedCandidateObjects> {
+  if (![input.baseOid, input.headOid, input.treeOid].every((value) => OID.test(value))) {
+    throw new WorkspaceCommitMaterializationError('object_missing');
+  }
+  const sourceInfo = await lstat(input.sourceRepositoryPath).catch(() => undefined);
+  if (!sourceInfo?.isDirectory() || sourceInfo.isSymbolicLink()) {
+    throw new WorkspaceCommitMaterializationError('materialization_failed');
+  }
+  const sourceRepositoryPath = await realpath(input.sourceRepositoryPath);
+  const objectDirectory = await resolveWorkspaceObjectDirectory(input.workspaceRoot, input.repositoryName);
+  const temporaryRoot = await mkdtemp(join(input.tempRoot ?? tmpdir(), 'taskboard-candidate-objects-'));
+  try {
+    await chmod(temporaryRoot, 0o700);
+    await assertCandidateObjects(sourceRepositoryPath, input.baseOid, input.headOid, input.treeOid, {});
+    await assertWorkspaceObjectDirectoryBinding(input.workspaceRoot, input.repositoryName, objectDirectory);
+    const targetEnv = { GIT_OBJECT_DIRECTORY: objectDirectory };
+    const sinkRepositoryPath = join(temporaryRoot, 'sink.git');
+    await runGit(temporaryRoot, ['init', '--bare', 'sink.git']);
+    if (!await hasCandidateObjects(sinkRepositoryPath, input.baseOid, input.headOid, input.treeOid, targetEnv)) {
+      const prefix = join(temporaryRoot, 'candidate');
+      const targetAncestor = await findNearestCompleteTargetAncestor(
+        sourceRepositoryPath,
+        sinkRepositoryPath,
+        input.baseOid,
+        targetEnv,
+      );
+      const hash = await runGitWithInput(
+        sourceRepositoryPath,
+        ['pack-objects', prefix, '--revs'],
+        `${input.headOid}\n${targetAncestor ? `^${targetAncestor}\n` : ''}`,
+        {},
+        120_000,
+      );
+      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(hash)) throw new Error('invalid pack hash');
+      await assertWorkspaceObjectDirectoryBinding(input.workspaceRoot, input.repositoryName, objectDirectory);
+      await runGitWithFileInput(
+        sinkRepositoryPath,
+        ['index-pack', '--stdin'],
+        `${prefix}-${hash}.pack`,
+        targetEnv,
+        120_000,
+      );
+    }
+    await assertWorkspaceObjectDirectoryBinding(input.workspaceRoot, input.repositoryName, objectDirectory);
+    await assertCandidateObjects(sinkRepositoryPath, input.baseOid, input.headOid, input.treeOid, targetEnv);
+    return {
+      repositoryName: input.repositoryName,
+      baseOid: input.baseOid,
+      headOid: input.headOid,
+      treeOid: input.treeOid,
+    };
+  } catch (error) {
+    if (error instanceof WorkspaceCommitMaterializationError) throw error;
+    throw new WorkspaceCommitMaterializationError('materialization_failed');
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
+async function assertWorkspaceObjectDirectoryBinding(
+  workspaceRoot: string,
+  repositoryName: string,
+  expectedObjectDirectory: string,
+): Promise<void> {
+  if (await resolveWorkspaceObjectDirectory(workspaceRoot, repositoryName) !== expectedObjectDirectory) {
+    throw new WorkspaceCommitMaterializationError('unsafe_git_metadata');
   }
 }
 
@@ -174,6 +263,133 @@ async function assertCommitGraph(
   }
 }
 
+async function findNearestCompleteTargetAncestor(
+  sourceRepositoryPath: string,
+  targetRepositoryPath: string,
+  baseOid: string,
+  targetEnv: Record<string, string>,
+): Promise<string | undefined> {
+  const candidates = (await runGit(
+    sourceRepositoryPath,
+    ['rev-list', '--first-parent', '--max-count=128', baseOid],
+  )).trim().split(/\s+/).filter((oid) => OID.test(oid));
+  for (const candidate of candidates) {
+    try {
+      await runGit(targetRepositoryPath, ['cat-file', '-e', `${candidate}^{commit}`], targetEnv);
+      await runGit(
+        targetRepositoryPath,
+        ['fsck', '--connectivity-only', '--no-dangling', candidate],
+        targetEnv,
+        30_000,
+      );
+      return candidate;
+    } catch {
+      // Try an older first-parent boundary; without one the pack remains self-contained.
+    }
+  }
+  return undefined;
+}
+
+async function assertCandidateObjects(
+  cwd: string,
+  baseOid: string,
+  headOid: string,
+  treeOid: string,
+  env: Record<string, string>,
+): Promise<void> {
+  try {
+    if ((await runGit(cwd, ['cat-file', '-t', baseOid], env)).trim() !== 'commit') throw new Error('base');
+    if ((await runGit(cwd, ['cat-file', '-t', headOid], env)).trim() !== 'commit') throw new Error('head');
+    const actualTree = (await runGit(cwd, ['rev-parse', `${headOid}^{tree}`], env)).trim();
+    if (actualTree !== treeOid) throw new Error('tree');
+    await runGit(cwd, ['fsck', '--connectivity-only', '--no-dangling', headOid, baseOid], env, 30_000);
+  } catch {
+    throw new WorkspaceCommitMaterializationError('object_missing');
+  }
+}
+
+async function hasCandidateObjects(
+  cwd: string,
+  baseOid: string,
+  headOid: string,
+  treeOid: string,
+  env: Record<string, string>,
+): Promise<boolean> {
+  try {
+    await assertCandidateObjects(cwd, baseOid, headOid, treeOid, env);
+    return true;
+  } catch (error) {
+    if (error instanceof WorkspaceCommitMaterializationError && error.code === 'object_missing') return false;
+    throw error;
+  }
+}
+
+async function runGitWithInput(
+  cwd: string,
+  args: string[],
+  input: string,
+  extraEnv: Record<string, string> = {},
+  timeout = 30_000,
+): Promise<string> {
+  return runSpawnedGit(cwd, args, extraEnv, timeout, (child) => child.stdin!.end(input));
+}
+
+async function runGitWithFileInput(
+  cwd: string,
+  args: string[],
+  inputPath: string,
+  extraEnv: Record<string, string> = {},
+  timeout = 30_000,
+): Promise<string> {
+  return runSpawnedGit(cwd, args, extraEnv, timeout, (child) => createReadStream(inputPath).pipe(child.stdin!));
+}
+
+async function runSpawnedGit(
+  cwd: string,
+  args: string[],
+  extraEnv: Record<string, string>,
+  timeout: number,
+  provideInput: (child: ReturnType<typeof spawn>) => void,
+): Promise<string> {
+  const child = spawn('git', args, {
+    cwd,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: safeGitEnvironment(cwd, extraEnv),
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk: string) => {
+    if (stdout.length < MAX_GIT_OUTPUT) stdout += chunk.slice(0, MAX_GIT_OUTPUT - stdout.length);
+  });
+  child.stderr.on('data', (chunk: string) => {
+    if (stderr.length < MAX_GIT_OUTPUT) stderr += chunk.slice(0, MAX_GIT_OUTPUT - stderr.length);
+  });
+  const timer = setTimeout(() => child.kill('SIGKILL'), timeout);
+  try {
+    provideInput(child);
+    const exitCode = await new Promise<number>((resolveExit, reject) => {
+      child.once('error', reject);
+      child.once('close', (code) => resolveExit(code ?? -1));
+    });
+    if (exitCode !== 0) throw new Error(`controlled git command failed: ${stderr.trim()}`);
+    return stdout.trim();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function safeGitEnvironment(cwd: string, extraEnv: Record<string, string>): NodeJS.ProcessEnv {
+  return {
+    PATH: process.env.PATH ?? '/usr/bin:/bin',
+    LANG: 'C', LC_ALL: 'C', HOME: cwd,
+    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_TERMINAL_PROMPT: '0', GIT_PROTOCOL_FROM_USER: '0', GIT_ALLOW_PROTOCOL: '',
+    ...extraEnv,
+  };
+}
+
 async function runGit(
   cwd: string,
   args: string[],
@@ -185,13 +401,7 @@ async function runGit(
       cwd,
       timeout,
       maxBuffer: MAX_GIT_OUTPUT,
-      env: {
-        PATH: process.env.PATH ?? '/usr/bin:/bin',
-        LANG: 'C', LC_ALL: 'C', HOME: cwd,
-        GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
-        GIT_TERMINAL_PROMPT: '0', GIT_PROTOCOL_FROM_USER: '0', GIT_ALLOW_PROTOCOL: '',
-        ...extraEnv,
-      },
+      env: safeGitEnvironment(cwd, extraEnv),
     });
     return result.stdout;
   } catch {

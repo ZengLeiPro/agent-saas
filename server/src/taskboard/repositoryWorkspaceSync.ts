@@ -47,6 +47,27 @@ export interface RepositoryWorkspaceSyncInput {
   }[];
 }
 
+export interface CandidateRevisionObjectSyncInput {
+  repositoryPath: string;
+  integrationBranch: string;
+  baseBranch: string;
+  controlledRemoteUrl: string;
+  fetchEnvironment?: Readonly<Record<string, string>>;
+  candidateId: string;
+  candidateRevision: number;
+  providerPullRequestId: string;
+  expectedBaseOid: string;
+  expectedHeadOid: string;
+  expectedTreeOid: string;
+}
+
+export interface CandidateRevisionObjectSyncResult {
+  repositoryPath: string;
+  baseOid: string;
+  headOid: string;
+  treeOid: string;
+}
+
 export interface RepositoryWorkspaceSyncResult {
   repositoryPath: string;
   worktreePath: string;
@@ -94,6 +115,62 @@ export async function syncRepositoryWorkspace(
   return host.withRepositoryBranchLock(
     { repositoryPath: input.repositoryPath, branch: input.integrationBranch },
     () => syncLocked(host, input),
+  );
+}
+
+export async function syncCandidateRevisionObjects(
+  host: RepositoryWorkspaceSyncHost,
+  input: CandidateRevisionObjectSyncInput,
+): Promise<CandidateRevisionObjectSyncResult> {
+  validateCandidateObjectSyncInput(input);
+  return host.withRepositoryBranchLock(
+    { repositoryPath: input.repositoryPath, branch: input.integrationBranch },
+    async () => {
+      try {
+        await host.validateServerOwnedRepository(input.repositoryPath);
+      } catch (error) {
+        throw new RepositoryWorkspaceSyncError(
+          `Server-owned mirror validation failed: ${error instanceof Error ? error.message : String(error)}`,
+          'MIRROR_UNSAFE',
+        );
+      }
+      const remoteBaseRef = `refs/remotes/origin/${input.baseBranch}`;
+      const candidateHeadRef = `refs/ky-integration-v3/candidates/${input.candidateId}/r${input.candidateRevision}/head`;
+      await git(host, input.repositoryPath, [
+        'fetch', '--no-tags', '--', input.controlledRemoteUrl,
+        `+refs/heads/${input.baseBranch}:${remoteBaseRef}`,
+        `+refs/pull/${input.providerPullRequestId}/head:${candidateHeadRef}`,
+      ], input.fetchEnvironment);
+      const actualHead = singleOid(
+        await git(host, input.repositoryPath, ['rev-parse', '--verify', candidateHeadRef]),
+        candidateHeadRef,
+      );
+      if (actualHead !== input.expectedHeadOid) {
+        throw new RepositoryWorkspaceSyncError(
+          `Candidate pull request head drifted: expected ${input.expectedHeadOid}, received ${actualHead}`,
+          'WORKTREE_DIVERGED',
+        );
+      }
+      const actualBase = singleOid(
+        await git(host, input.repositoryPath, ['rev-parse', '--verify', `${input.expectedBaseOid}^{commit}`]),
+        input.expectedBaseOid,
+      );
+      const actualTree = singleOid(
+        await git(host, input.repositoryPath, ['rev-parse', '--verify', `${input.expectedHeadOid}^{tree}`]),
+        input.expectedTreeOid,
+      );
+      if (actualBase !== input.expectedBaseOid || actualTree !== input.expectedTreeOid
+        || !await isAncestor(host, input.repositoryPath, input.expectedBaseOid, remoteBaseRef)
+        || !await isAncestor(host, input.repositoryPath, input.expectedBaseOid, input.expectedHeadOid)) {
+        throw new RepositoryWorkspaceSyncError('Candidate revision object identity or ancestry mismatch', 'WORKTREE_DIVERGED');
+      }
+      return {
+        repositoryPath: input.repositoryPath,
+        baseOid: actualBase,
+        headOid: actualHead,
+        treeOid: actualTree,
+      };
+    },
   );
 }
 
@@ -372,6 +449,21 @@ function singleOid(result: RepositoryWorkspaceGitResult, ref: string): string {
     throw new RepositoryWorkspaceSyncError(`Git returned an invalid oid for ${ref}`, 'WORKTREE_UNKNOWN');
   }
   return oid;
+}
+
+function validateCandidateObjectSyncInput(input: CandidateRevisionObjectSyncInput): void {
+  if (!isSafeAbsolutePath(input.repositoryPath) || input.repositoryPath === '/') {
+    throw new RepositoryWorkspaceSyncError('repositoryPath must be a normalized absolute path', 'INVALID_PATH');
+  }
+  assertBranch(input.baseBranch, 'baseBranch');
+  assertBranch(input.integrationBranch, 'integrationBranch');
+  assertControlledRemoteUrl(input.controlledRemoteUrl);
+  if (!/^[A-Za-z0-9-]{1,128}$/.test(input.candidateId)
+    || !Number.isInteger(input.candidateRevision) || input.candidateRevision < 1
+    || !/^[1-9]\d*$/.test(input.providerPullRequestId)
+    || ![input.expectedBaseOid, input.expectedHeadOid, input.expectedTreeOid].every((oid) => OID_PATTERN.test(oid))) {
+    throw new RepositoryWorkspaceSyncError('Candidate revision object binding is invalid', 'INVALID_REF');
+  }
 }
 
 function validateInput(input: RepositoryWorkspaceSyncInput): RepositoryWorkspaceSyncInput {

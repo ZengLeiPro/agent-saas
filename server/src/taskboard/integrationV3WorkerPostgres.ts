@@ -114,6 +114,9 @@ export interface IntegrationV3WorkerPostgresOptions {
     expectedVersion: number;
     purpose: 'work' | 'review';
     executionId: string;
+    candidateId: string;
+    candidateRevision: number;
+    assertCurrent(): Promise<void>;
   }): Promise<{ executionId: string }>;
   syncWorkspace(request: IntegrationV3RequestLease): Promise<void>;
   cleanup(request: IntegrationV3RequestLease): Promise<IntegrationV3CleanupReceipt | void>;
@@ -253,17 +256,38 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
 
   async dispatchAgent(request: IntegrationV3RequestLease): Promise<void> {
     if (typeof request.payload.executionId === 'string' && request.payload.executionId) return;
-    const result = await this.options.pool.query(
+    const loadDispatchFence = () => this.options.pool.query(
       `SELECT t.id,t.version,b.tenant_id,b.owner_user_id
          FROM ${this.options.candidatesTable} c JOIN ${this.options.tasksTable} t ON t.id=c.integration_task_id
          JOIN ${this.options.boardsTable} b ON b.id=t.board_id
-        WHERE c.id=$1 AND c.current_revision=$2`, [request.candidateId, request.candidateRevision]);
+         JOIN ${this.options.requestsOutboxTable} o ON o.id=$3
+        WHERE c.id=$1 AND c.current_revision=$2
+          AND o.lease_id=$4 AND o.status='processing'
+          AND o.candidate_id=c.id AND o.candidate_revision=c.current_revision
+          AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch`,
+      [request.candidateId, request.candidateRevision, request.id, request.leaseId],
+    );
+    const result = await loadDispatchFence();
     const row = result.rows[0];
     if (!row) throw new Error('Candidate execution dispatch fence is stale');
+    const renewed = await this.options.pool.query(
+      `UPDATE ${this.options.requestsOutboxTable}
+          SET lease_expires_at=now()+interval '5 minutes',updated_at=now()
+        WHERE id=$1 AND lease_id=$2 AND status='processing' RETURNING id`,
+      [request.id, request.leaseId],
+    );
+    if (!renewed.rows[0]) throw new Error('Candidate execution request lease changed before workspace preparation');
     const executionId = `integration-v3-request-${request.id}`;
     await this.options.dispatchAgent({
       identity: { tenantId: String(row.tenant_id), ownerUserId: String(row.owner_user_id), username: 'board-owner' },
       taskId: String(row.id), expectedVersion: Number(row.version), purpose: request.kind as 'work'|'review', executionId,
+      candidateId: request.candidateId, candidateRevision: request.candidateRevision,
+      assertCurrent: async () => {
+        const verified = (await loadDispatchFence()).rows[0];
+        if (!verified || Number(verified.version) !== Number(row.version)) {
+          throw new Error('Candidate execution dispatch fence changed during workspace preparation');
+        }
+      },
     });
     const bound = await this.options.pool.query(
       `UPDATE ${this.options.requestsOutboxTable}

@@ -877,7 +877,7 @@ jobs:
           PREV_IDLE_TARGET=$(readlink "$COLOR_DIR/$IDLE" 2>/dev/null || true)
           PREVIOUS_UPDATED=0
           WORKER_CANDIDATE_STARTED=0
-          WORKER_ACTIVE_DRAINED=0
+          WORKER_ACTIVE_DRAIN_STARTED=0
           WORKER_PREACTIVATED=0
           WORKER_V3_ENABLED=false
           WORKER_IDLE=""
@@ -895,6 +895,33 @@ jobs:
           # nginx/active-color 全程未动，老色一直在服务，用户零影响。
           rollback_idle_and_exit() {
             log "deploy FAILED before traffic switch; old color $ACTIVE untouched and still serving"
+            if [ "$WORKER_ACTIVE_DRAIN_STARTED" -eq 1 ] && [ -n "${WORKER_ACTIVE:-}" ]; then
+              log "restore previous runtime worker after pre-Web failure: ${WORKER_SERVICE}@${WORKER_ACTIVE}"
+              echo "$WORKER_ACTIVE" > "$WORKER_ACTIVE_COLOR_FILE"
+              rm -f "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid" \
+                "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.ready" \
+                "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
+              systemctl reset-failed "${WORKER_SERVICE}@${WORKER_ACTIVE}" 2>/dev/null || true
+              systemctl enable "${WORKER_SERVICE}@${WORKER_ACTIVE}"
+              systemctl restart "${WORKER_SERVICE}@${WORKER_ACTIVE}"
+              WORKER_ACTIVE_RESTORED=0
+              for _ in $(seq 1 180); do
+                restored_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid" 2>/dev/null || true)
+                restored_ready_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.ready" 2>/dev/null || true)
+                if systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}" \
+                  && [ -n "$restored_pid" ] && [ "$restored_pid" = "$restored_ready_pid" ] \
+                  && kill -0 "$restored_pid" 2>/dev/null; then
+                  WORKER_ACTIVE_RESTORED=1
+                  break
+                fi
+                sleep 1
+              done
+              if [ "$WORKER_ACTIVE_RESTORED" -ne 1 ]; then
+                log "ERROR: previous runtime worker failed readiness during rollback; preserving candidate release for recovery"
+                exit 1
+              fi
+              log "previous runtime worker restored before candidate stop: color=$WORKER_ACTIVE"
+            fi
             if [ "$WORKER_CANDIDATE_STARTED" -eq 1 ] && [ -n "$WORKER_IDLE" ]; then
               log "stop runtime worker candidate: ${WORKER_SERVICE}@${WORKER_IDLE}"
               systemctl disable --now "${WORKER_SERVICE}@${WORKER_IDLE}" || true
@@ -903,13 +930,6 @@ jobs:
               else
                 rm -f "$WORKER_DIR/$WORKER_IDLE"
               fi
-            fi
-            if [ "$WORKER_ACTIVE_DRAINED" -eq 1 ] && [ -n "${WORKER_ACTIVE:-}" ]; then
-              log "restore previous runtime worker after pre-Web failure: ${WORKER_SERVICE}@${WORKER_ACTIVE}"
-              echo "$WORKER_ACTIVE" > "$WORKER_ACTIVE_COLOR_FILE"
-              rm -f "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
-              systemctl reset-failed "${WORKER_SERVICE}@${WORKER_ACTIVE}" 2>/dev/null || true
-              systemctl enable --now "${WORKER_SERVICE}@${WORKER_ACTIVE}" || true
             fi
             journalctl -u "${SERVICE_NAME}@${IDLE}" -n 120 --no-pager || true
             log "stop idle unit ${SERVICE_NAME}@${IDLE}"
@@ -938,6 +958,94 @@ jobs:
             esac
             rm -f -- "$RELEASE_TGZ" || log "WARN: failed upload cleanup failed"
             exit 1
+          }
+
+          recover_interrupted_runtime_worker_drain() {
+            local color="$1"
+            local guard="/run/agent-saas-runtime-worker-${color}.draining"
+            local interrupted_candidate=""
+            local INTERRUPTED_CANDIDATE_WAITED=0
+            local ACTIVE_WORKER_RECOVERED=0
+            local active_pid="" active_ready_pid="" recovered_pid="" recovered_ready_pid="" interrupted_pid=""
+            active_pid=$(cat "/run/agent-saas-runtime-worker-${color}.pid" 2>/dev/null || true)
+            active_ready_pid=$(cat "/run/agent-saas-runtime-worker-${color}.ready" 2>/dev/null || true)
+            if systemctl is-active --quiet "${WORKER_SERVICE}@${color}" \
+              && [ ! -f "$guard" ] && [ -n "$active_pid" ] \
+              && [ "$active_pid" = "$active_ready_pid" ] && kill -0 "$active_pid" 2>/dev/null; then
+              if ! systemctl enable "${WORKER_SERVICE}@${color}"; then
+                log "ERROR: failed to preserve runtime worker boot ownership: color=$color"
+                return 1
+              fi
+              log "runtime worker marker target is ready and enabled: color=$color"
+            else
+              if [ ! -f "$guard" ]; then
+                log "ERROR: active runtime worker ${WORKER_SERVICE}@${color} is not ready without an interrupted-drain guard"
+                return 1
+              fi
+              log "recover interrupted runtime worker drain before rollout: ${WORKER_SERVICE}@${color}"
+              if ! rm -f "/run/agent-saas-runtime-worker-${color}.pid" \
+                "/run/agent-saas-runtime-worker-${color}.ready" "$guard"; then
+                log "ERROR: failed to clear interrupted runtime worker guard: color=$color"
+                return 1
+              fi
+              systemctl reset-failed "${WORKER_SERVICE}@${color}" 2>/dev/null || true
+              if ! systemctl enable "${WORKER_SERVICE}@${color}"; then
+                log "ERROR: failed to enable interrupted runtime worker: color=$color"
+                return 1
+              fi
+              if ! systemctl restart "${WORKER_SERVICE}@${color}"; then
+                log "ERROR: failed to restart interrupted runtime worker: color=$color"
+                return 1
+              fi
+              ACTIVE_WORKER_RECOVERED=0
+              for _ in $(seq 1 180); do
+                recovered_pid=$(cat "/run/agent-saas-runtime-worker-${color}.pid" 2>/dev/null || true)
+                recovered_ready_pid=$(cat "/run/agent-saas-runtime-worker-${color}.ready" 2>/dev/null || true)
+                if systemctl is-active --quiet "${WORKER_SERVICE}@${color}" \
+                  && [ -n "$recovered_pid" ] && [ "$recovered_pid" = "$recovered_ready_pid" ] \
+                  && kill -0 "$recovered_pid" 2>/dev/null; then
+                  ACTIVE_WORKER_RECOVERED=1
+                  break
+                fi
+                sleep 1
+              done
+              if [ "$ACTIVE_WORKER_RECOVERED" -ne 1 ]; then
+                log "ERROR: interrupted runtime worker drain recovery failed readiness"
+                return 1
+              fi
+              log "interrupted runtime worker drain recovered: color=$color"
+            fi
+
+            case "$color" in blue) interrupted_candidate="green" ;; green) interrupted_candidate="blue" ;; esac
+            if ! systemctl disable "${WORKER_SERVICE}@${interrupted_candidate}"; then
+              log "ERROR: failed to disable non-marker runtime worker candidate: color=$interrupted_candidate"
+              return 1
+            fi
+            if systemctl is-active --quiet "${WORKER_SERVICE}@${interrupted_candidate}"; then
+              interrupted_pid=$(cat "/run/agent-saas-runtime-worker-${interrupted_candidate}.pid" 2>/dev/null || true)
+              if [ -z "$interrupted_pid" ]; then
+                log "ERROR: interrupted runtime worker candidate pidfile is missing: color=$interrupted_candidate"
+                return 1
+              fi
+              if ! install -m 0644 /dev/null "/run/agent-saas-runtime-worker-${interrupted_candidate}.draining"; then
+                log "ERROR: failed to arm interrupted runtime worker candidate drain guard: color=$interrupted_candidate"
+                return 1
+              fi
+              if ! kill -USR2 "$interrupted_pid" 2>/dev/null; then
+                log "ERROR: interrupted runtime worker candidate drain signal failed: color=$interrupted_candidate"
+                return 1
+              fi
+              while systemctl is-active --quiet "${WORKER_SERVICE}@${interrupted_candidate}"; do
+                if [ "$INTERRUPTED_CANDIDATE_WAITED" -ge 960 ]; then
+                  log "ERROR: interrupted runtime worker candidate did not drain within 960s: color=$interrupted_candidate"
+                  return 1
+                fi
+                sleep 5
+                INTERRUPTED_CANDIDATE_WAITED=$((INTERRUPTED_CANDIDATE_WAITED + 5))
+              done
+              log "interrupted runtime worker candidate drained after active recovery: color=$interrupted_candidate"
+            fi
+            return 0
           }
 
           # ── 5.5 Runtime Worker 候选：在 Web readiness 前完成接管 ──
@@ -998,8 +1106,7 @@ jobs:
                   rollback_idle_and_exit
                   ;;
               esac
-              if ! systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}"; then
-                log "ERROR: active runtime worker ${WORKER_SERVICE}@${WORKER_ACTIVE} is not active"
+              if ! recover_interrupted_runtime_worker_drain "$WORKER_ACTIVE"; then
                 rollback_idle_and_exit
               fi
             else
@@ -1037,7 +1144,7 @@ jobs:
             fi
             WORKER_ACTIVE=$(tr -d '[:space:]' < "$WORKER_ACTIVE_COLOR_FILE")
             case "$WORKER_ACTIVE" in blue|green) ;; *) log "ERROR: invalid runtime worker active color '$WORKER_ACTIVE'"; rollback_idle_and_exit ;; esac
-            if ! systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}"; then
+            if ! recover_interrupted_runtime_worker_drain "$WORKER_ACTIVE"; then
               log "ERROR: classifier skipped runtime worker but active unit is unavailable"
               rollback_idle_and_exit
             fi
@@ -1077,21 +1184,22 @@ jobs:
               OLD_WORKER_PID=$(cat "$OLD_WORKER_PIDFILE")
               systemctl disable "${WORKER_SERVICE}@${WORKER_ACTIVE}"
               install -m 0644 /dev/null "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
+              WORKER_ACTIVE_DRAIN_STARTED=1
               log "runtime worker drain restart guard armed: /run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
               if ! kill -USR2 "$OLD_WORKER_PID" 2>/dev/null; then
                 log "ERROR: failed to drain active runtime worker $WORKER_ACTIVE pid=$OLD_WORKER_PID"
                 rollback_idle_and_exit
               fi
+              WORKER_DRAIN_TIMEOUT=960
               WORKER_OLD_WAITED=0
               while systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}"; do
-                if [ "$WORKER_OLD_WAITED" -ge 600 ]; then
-                  log "ERROR: active runtime worker did not drain within 600s"
+                if [ "$WORKER_OLD_WAITED" -ge "$WORKER_DRAIN_TIMEOUT" ]; then
+                  log "ERROR: active runtime worker did not drain within ${WORKER_DRAIN_TIMEOUT}s"
                   rollback_idle_and_exit
                 fi
                 sleep 5
                 WORKER_OLD_WAITED=$((WORKER_OLD_WAITED + 5))
               done
-              WORKER_ACTIVE_DRAINED=1
               log "active runtime worker drained before Web start: color=$WORKER_ACTIVE waited=${WORKER_OLD_WAITED}s"
             fi
 

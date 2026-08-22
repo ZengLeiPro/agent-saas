@@ -99,7 +99,15 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(rollbackBlock).toContain('systemctl disable --now "${WORKER_SERVICE}@${WORKER_IDLE}"');
     expect(rollbackBlock).toContain('restore previous runtime worker after pre-Web failure');
     expect(rollbackBlock).toContain('echo "$WORKER_ACTIVE" > "$WORKER_ACTIVE_COLOR_FILE"');
-    expect(rollbackBlock).toContain('systemctl enable --now "${WORKER_SERVICE}@${WORKER_ACTIVE}"');
+    expect(rollbackBlock).toContain('WORKER_ACTIVE_DRAIN_STARTED');
+    expect(rollbackBlock).toContain('systemctl enable "${WORKER_SERVICE}@${WORKER_ACTIVE}"');
+    expect(rollbackBlock).toContain('systemctl restart "${WORKER_SERVICE}@${WORKER_ACTIVE}"');
+    expect(rollbackBlock.indexOf('previous runtime worker restored before candidate stop'))
+      .toBeLessThan(rollbackBlock.indexOf('stop runtime worker candidate:'));
+    expect(workflow).toContain('WORKER_DRAIN_TIMEOUT=960');
+    expect(workflow).toContain('recover interrupted runtime worker drain before rollout');
+    expect(workflow).toContain('interrupted runtime worker candidate drained after active recovery');
+    expect(workflow.split('recover_interrupted_runtime_worker_drain "$WORKER_ACTIVE"')).toHaveLength(3);
     expect(workflow).toContain('WORKER_V3_READY_TIMEOUT=240');
     expect(workflow).toContain('for _ in $(seq 1 "$WORKER_V3_READY_TIMEOUT")');
     expect(workflow).toContain('runtime worker candidate has no healthy Workflow v3 heartbeat before Web start (${WORKER_V3_READY_TIMEOUT}s)');

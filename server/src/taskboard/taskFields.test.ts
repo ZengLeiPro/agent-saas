@@ -46,6 +46,14 @@ describe('taskboard task status DDL', () => {
     );
   });
 
+  it('migrates controlled push capabilities to bind the immutable candidate base', () => {
+    const sql = executionFieldMigrationSql('runtime_taskboard_execs');
+    expect(sql).toContain('expected_base_oid TEXT NOT NULL');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS expected_base_oid TEXT');
+    expect(sql).toContain('SET expected_base_oid=expected_old_oid WHERE expected_base_oid IS NULL');
+    expect(sql).toContain('ALTER COLUMN expected_base_oid SET NOT NULL');
+  });
+
   it('defines every delivery evidence column written by pull request registration', () => {
     const ddl = taskTableSql('runtime_taskboard_tasks', 'runtime_taskboards');
     const migration = taskFieldsMigrationSql('runtime_taskboard_tasks');

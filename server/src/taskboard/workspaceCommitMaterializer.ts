@@ -31,7 +31,7 @@ export interface MaterializedWorkspaceCommit {
 }
 
 /**
- * Imports one direct-parent commit from a bound user workspace without invoking Git in
+ * Imports one single-parent commit from a bound user workspace without invoking Git in
  * that workspace. Source config, hooks, remotes and credential helpers are never read.
  * The callback sees a self-contained 0700 temporary bare repository; cleanup is unconditional.
  */
@@ -40,10 +40,13 @@ export async function withMaterializedWorkspaceCommit<T>(input: {
   repositoryName: string;
   commitOid: string;
   expectedOldOid: string;
+  /** Immutable candidate revision base; permits a controlled rebase only when it diverged from expectedOldOid. */
+  expectedBaseOid?: string;
   tempRoot?: string;
   onTemporaryDirectory?: (path: string) => void;
 }, action: (materialized: MaterializedWorkspaceCommit) => Promise<T>): Promise<T> {
-  if (!OID.test(input.commitOid) || !OID.test(input.expectedOldOid)) {
+  if (!OID.test(input.commitOid) || !OID.test(input.expectedOldOid)
+    || (input.expectedBaseOid !== undefined && !OID.test(input.expectedBaseOid))) {
     throw new WorkspaceCommitMaterializationError('object_missing');
   }
   const objectDirectory = await resolveWorkspaceObjectDirectory(input.workspaceRoot, input.repositoryName);
@@ -56,10 +59,18 @@ export async function withMaterializedWorkspaceCommit<T>(input: {
     await runGit(temporaryRoot, ['init', '--bare', 'repository.git']);
     await chmod(repositoryPath, 0o700);
     const alternateEnv = { GIT_ALTERNATE_OBJECT_DIRECTORIES: objectDirectory };
-    await assertCommitGraph(repositoryPath, input.expectedOldOid, input.commitOid, alternateEnv);
+    await assertCommitGraph(
+      repositoryPath, input.expectedOldOid, input.commitOid, input.expectedBaseOid, alternateEnv,
+    );
     await runGit(repositoryPath, ['update-ref', 'refs/heads/candidate', input.commitOid], alternateEnv);
+    await runGit(repositoryPath, ['update-ref', 'refs/taskboard/expected-old', input.expectedOldOid], alternateEnv);
+    if (input.expectedBaseOid) {
+      await runGit(repositoryPath, ['update-ref', 'refs/taskboard/expected-base', input.expectedBaseOid], alternateEnv);
+    }
     await runGit(repositoryPath, ['repack', '-a', '-d'], alternateEnv, 30_000);
-    await assertCommitGraph(repositoryPath, input.expectedOldOid, input.commitOid, {});
+    await assertCommitGraph(
+      repositoryPath, input.expectedOldOid, input.commitOid, input.expectedBaseOid, {},
+    );
     await runGit(repositoryPath, ['fsck', '--full', '--no-dangling'], {}, 30_000);
     materialized = true;
     return await action({ repositoryPath, commitOid: input.commitOid });
@@ -264,12 +275,16 @@ async function assertCommitGraph(
   repositoryPath: string,
   expectedOldOid: string,
   commitOid: string,
+  expectedBaseOid: string | undefined,
   env: Record<string, string>,
 ): Promise<void> {
   try {
     const oldType = (await runGit(repositoryPath, ['cat-file', '-t', expectedOldOid], env)).trim();
     const newType = (await runGit(repositoryPath, ['cat-file', '-t', commitOid], env)).trim();
-    if (oldType !== 'commit' || newType !== 'commit') throw new Error('not commit');
+    const baseType = expectedBaseOid
+      ? (await runGit(repositoryPath, ['cat-file', '-t', expectedBaseOid], env)).trim()
+      : 'commit';
+    if (oldType !== 'commit' || newType !== 'commit' || baseType !== 'commit') throw new Error('not commit');
   } catch {
     throw new WorkspaceCommitMaterializationError('object_missing');
   }
@@ -280,8 +295,22 @@ async function assertCommitGraph(
     throw new WorkspaceCommitMaterializationError('object_missing');
   }
   if (fields.length > 2) throw new WorkspaceCommitMaterializationError('merge_commit_forbidden');
-  if (fields.length !== 2 || fields[1] !== expectedOldOid) {
+  if (fields.length !== 2) throw new WorkspaceCommitMaterializationError('parent_mismatch');
+  const parentOid = fields[1];
+  if (parentOid === expectedOldOid) return;
+  if (!expectedBaseOid || parentOid !== expectedBaseOid || expectedBaseOid === expectedOldOid) {
     throw new WorkspaceCommitMaterializationError('parent_mismatch');
+  }
+  try {
+    const mergeBase = (await runGit(
+      repositoryPath, ['merge-base', expectedBaseOid, expectedOldOid], env,
+    )).trim();
+    if (!OID.test(mergeBase) || mergeBase === expectedBaseOid) {
+      throw new WorkspaceCommitMaterializationError('parent_mismatch');
+    }
+  } catch (error) {
+    if (error instanceof WorkspaceCommitMaterializationError) throw error;
+    throw new WorkspaceCommitMaterializationError('object_missing');
   }
 }
 

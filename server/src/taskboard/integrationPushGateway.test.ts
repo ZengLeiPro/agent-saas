@@ -18,12 +18,14 @@ import {
 
 const A = 'a'.repeat(40);
 const B = 'b'.repeat(40);
+const C = 'c'.repeat(40);
 const TOKEN = 'github-secret-never-log';
 
 const binding: IntegrationPushCapabilityBinding = {
   tenantId: 'tenant-1', repositoryId: 'github-id:123', integrationTaskId: 'task-1',
   candidateId: 'candidate-1', revision: 2, executionId: 'execution-1',
-  exactRef: 'refs/heads/integration/task-1', expectedOldOid: A, laneEpoch: 3, workflowEpoch: 4,
+  exactRef: 'refs/heads/integration/task-1', expectedOldOid: A, expectedBaseOid: C,
+  laneEpoch: 3, workflowEpoch: 4,
 };
 
 class MemoryOperations implements IntegrationProviderOperationStorageHost {
@@ -46,6 +48,7 @@ class MemoryOperations implements IntegrationProviderOperationStorageHost {
 class FakeGit implements IntegrationPushGitRunner {
   calls: Array<{ args: string[]; env?: Record<string, string> }> = [];
   parentLine = `${B} ${A}`;
+  mergeBaseLine = `${'d'.repeat(40)}\n`;
   remoteLine = `${A}\t${binding.exactRef}\n`;
   failPush = false;
   failPushCount = 0;
@@ -58,6 +61,7 @@ class FakeGit implements IntegrationPushGitRunner {
     if (input.args[0] === 'rev-parse') return { stdout: `${this.root}\n` };
     if (input.args[0] === 'cat-file') return { stdout: 'commit\n' };
     if (input.args[0] === 'rev-list') return { stdout: `${this.parentLine}\n` };
+    if (input.args[0] === 'merge-base') return { stdout: this.mergeBaseLine };
     if (input.args[0] === 'ls-remote') {
       if (this.failLsRemoteCount > 0) {
         this.failLsRemoteCount -= 1;
@@ -186,6 +190,30 @@ describe('IntegrationPushGateway', () => {
       ]);
       expect(JSON.stringify(push.args)).not.toContain(TOKEN);
       await expect(f.capabilityService.verify(issued.capabilityToken)).rejects.toMatchObject({ code: 'already_consumed' });
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it('allows a controlled rebase only onto the immutable base after real base divergence', async () => {
+    const f = await fixture();
+    try {
+      f.git.parentLine = `${B} ${binding.expectedBaseOid}`;
+      const issued = await f.issue();
+      await expect(f.push(issued.capabilityToken)).resolves.toMatchObject({ pushed: true, commitOid: B });
+      expect(f.git.calls.find((call) => call.args[0] === 'push')?.args).toContain(
+        `--force-with-lease=${binding.exactRef}:${binding.expectedOldOid}`,
+      );
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it('rejects a rebase rewrite when the immutable base is already an ancestor of the old head', async () => {
+    const f = await fixture();
+    try {
+      f.git.parentLine = `${B} ${binding.expectedBaseOid}`;
+      f.git.mergeBaseLine = `${binding.expectedBaseOid}\n`;
+      const issued = await f.issue();
+      await expect(f.push(issued.capabilityToken)).rejects.toMatchObject({ code: 'parent_mismatch' });
+      await expect(f.capabilityService.verify(issued.capabilityToken)).resolves.toMatchObject({ status: 'active' });
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(0);
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 

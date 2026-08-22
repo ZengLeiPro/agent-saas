@@ -93,13 +93,41 @@ async function sourceRepository() {
   return { root, oldOid, newOid: await git(['rev-parse', 'HEAD']) };
 }
 
-async function fixture(resolveCredential = true) {
+async function rebasedSourceRepository() {
   const source = await sourceRepository();
+  const git = async (args: string[]) => (await execFileAsync('git', args, {
+    cwd: source.root,
+    env: {
+      PATH: process.env.PATH, HOME: source.root,
+      GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_AUTHOR_NAME: 'Work Agent', GIT_AUTHOR_EMAIL: 'agent@example.invalid',
+      GIT_COMMITTER_NAME: 'Work Agent', GIT_COMMITTER_EMAIL: 'agent@example.invalid',
+    },
+  })).stdout.trim();
+  const commonOid = source.oldOid;
+  const oldOid = source.newOid;
+  await git(['checkout', '--detach', commonOid]);
+  await writeFile(join(source.root, 'base.txt'), 'advanced base\n');
+  await git(['add', 'base.txt']);
+  await git(['commit', '-m', 'advanced base']);
+  const baseOid = await git(['rev-parse', 'HEAD']);
+  await writeFile(join(source.root, 'work.txt'), 'rebased candidate\n');
+  await git(['commit', '-am', 'rebased candidate']);
+  return { root: source.root, oldOid, baseOid, newOid: await git(['rev-parse', 'HEAD']) };
+}
+
+async function fixture(
+  resolveCredential = true,
+  suppliedSource?: { root: string; oldOid: string; newOid: string; baseOid?: string },
+) {
+  const source: { root: string; oldOid: string; newOid: string; baseOid?: string } =
+    suppliedSource ?? await sourceRepository();
   const ref = 'refs/heads/integration/task-1';
   const binding: IntegrationPushCapabilityBinding = {
     tenantId: 'tenant-1', repositoryId: 'github-id:123', integrationTaskId: 'task-1',
     candidateId: 'candidate-1', revision: 2, executionId: 'execution-1', exactRef: ref,
-    expectedOldOid: source.oldOid, laneEpoch: 3, workflowEpoch: 4,
+    expectedOldOid: source.oldOid, expectedBaseOid: source.baseOid ?? source.oldOid,
+    laneEpoch: 3, workflowEpoch: 4,
   };
   const capabilityService = new IntegrationPushCapabilityService(new InMemoryIntegrationPushCapabilityHost());
   const operations = new Operations();
@@ -145,6 +173,26 @@ describe('IntegrationPushGateway.pushWorkspaceCommit', () => {
     await expect(access(f.runner.pushCwd!)).rejects.toThrow();
   });
 
+  it('pushes a re-parented Work commit with the old remote head kept as the exact lease', async () => {
+    const source = await rebasedSourceRepository();
+    const f = await fixture(true, source);
+    const result = await f.gateway.pushWorkspaceCommit({
+      tenantId: f.binding.tenantId, requesterUserId: 'owner-1', executionId: f.binding.executionId,
+      workspaceRoot: f.source.root, commitOid: f.source.newOid,
+    });
+    expect(result).toEqual({ pushed: true, candidateId: f.binding.candidateId, commitOid: f.source.newOid });
+    expect(f.runner.calls.find((call) => call.args[0] === 'push')?.args).toEqual([
+      'push', `--force-with-lease=${f.binding.exactRef}:${f.source.oldOid}`, '--',
+      'https://github.com/org/repo.git', `${f.source.newOid}:${f.binding.exactRef}`,
+    ]);
+    expect([...f.operations.records.values()][0]).toMatchObject({
+      state: 'succeeded',
+      expected: { oldOid: f.source.oldOid, newOid: f.source.newOid },
+      receipt: { parentOid: source.baseOid, pushMode: 'rebase' },
+    });
+    await expect(access(f.runner.pushCwd!)).rejects.toThrow();
+  });
+
   it('keeps a durable Work operation prepared when exact-ref reads are exhausted', async () => {
     const f = await fixture();
     f.runner.failLsRemoteCount = 3;
@@ -156,6 +204,13 @@ describe('IntegrationPushGateway.pushWorkspaceCommit', () => {
     expect(f.runner.calls.filter((call) => call.args[0] === 'ls-remote')).toHaveLength(3);
     expect(f.runner.calls.filter((call) => call.args[0] === 'push')).toHaveLength(0);
     expect([...f.operations.records.values()][0]).toMatchObject({ state: 'prepared', attemptCount: 0 });
+
+    await expect(f.gateway.pushWorkspaceCommit({
+      tenantId: f.binding.tenantId, requesterUserId: 'owner-1', executionId: f.binding.executionId,
+      workspaceRoot: f.source.root, commitOid: f.source.newOid,
+    })).resolves.toMatchObject({ pushed: true, commitOid: f.source.newOid });
+    expect(f.runner.calls.filter((call) => call.args[0] === 'push')).toHaveLength(1);
+    expect([...f.operations.records.values()][0]).toMatchObject({ state: 'succeeded', attemptCount: 1 });
   });
 
   it('maps an execute CAS race to a retryable gateway result without duplicating the Work push', async () => {

@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import type {
   TaskBoardPriority,
   TaskBoardStatus,
@@ -109,6 +109,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
   const [creatingIntegration, setCreatingIntegration] = useState(false);
   const [archivedTasksOpen, setArchivedTasksOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const wasActiveRef = useRef(active);
 
   const boardReadOnly = !!selectedBoard?.archivedAt;
   const canCreateTask = boardAllows(selectedBoard, "task.create");
@@ -197,6 +198,11 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     setNotice(null);
     await Promise.all([refreshBoards(), refreshTasks()]);
   }, [refreshBoards, refreshTasks]);
+
+  useEffect(() => {
+    if (active && !wasActiveRef.current) void refresh();
+    wasActiveRef.current = active;
+  }, [active, refresh]);
 
   const reportMoveError = useCallback((caught: unknown) => {
     if (caught instanceof TaskBoardConflictError) {

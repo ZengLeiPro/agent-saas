@@ -143,7 +143,10 @@ export class IntegrationProviderOperationService {
       return await this.transitionOrReload(executing, 'executing', 'succeeded', { receipt });
     } catch (error) {
       const definitive = options.isDefinitiveFailure?.(error) === true;
-      return this.transitionOrReload(executing, 'executing', definitive ? 'failed' : 'unknown', { error: errorMessage(error) });
+      return this.transitionOrReload(executing, 'executing', definitive ? 'failed' : 'unknown', {
+        error: errorMessage(error),
+        ...(definitive ? { receipt: { outcome: 'not_applied', evidence: 'executor_definitive_failure' } } : {}),
+      });
     }
   }
 
@@ -173,7 +176,7 @@ export class IntegrationProviderOperationService {
       }
       return this.transitionOrReload(current, 'unknown', 'failed', {
         error: result.detail,
-        receipt: result.evidence,
+        receipt: { ...result.evidence, outcome: 'not_applied' },
       });
     }
     if (result.status === 'mismatch') {

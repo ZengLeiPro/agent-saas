@@ -13,7 +13,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  artifactCreateToolDescriptor,
+  artifactToolDescriptor,
   askUserQuestionToolDescriptor,
   editToolDescriptor,
   todoWriteToolDescriptor,
@@ -39,7 +39,7 @@ const ALL_TOOLS = [
   editToolDescriptor,
   todoWriteToolDescriptor,
   askUserQuestionToolDescriptor,
-  artifactCreateToolDescriptor,
+  artifactToolDescriptor,
   // toolRuntime.ts workspace runtime —— 4（BashOutput/KillBash 已并入 BackgroundTask，2026-08-03）
   waitForWorkspaceReadyToolDescriptor,
   readFileToolDescriptor,

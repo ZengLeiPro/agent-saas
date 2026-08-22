@@ -38,6 +38,7 @@ import {
   type WorkspaceProvider,
 } from '../agent/toolRuntime.js';
 import { DefaultToolPolicy } from './toolPolicy.js';
+import { DEFAULT_COMPACTION_REQUEST_PROMPT } from '../systemPrompts/compaction.js';
 import { standardizeToolError } from './agentPlanDefense.js';
 import { LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
 import { buildModelUserContent } from './imageAttachments.js';
@@ -111,7 +112,6 @@ import { ApprovalAlreadyResolvedError, ApprovalPendingWithoutInteractionHook, In
 import { collectParallelToolCallSegment, type PreparedParallelToolCall } from './toolParallelism.js';
 import { announceAppliedInterjections as announceInterjections, buildAtomicSteeringInputs, collectDurableInterjectionAnnouncementSourceRunIds, projectAtomicInterjectionEvents } from './rawAgentLoopInterjections.js';
 import {
-  COMPACTION_REQUEST_PROMPT,
   COMPACT_COMMAND_MODEL_CONTENT,
   MIN_COMPACTABLE_MESSAGES,
   StreamEventBatcher,
@@ -190,7 +190,7 @@ export interface RawAgentLoopOptions {
    */
   runStore?: RunStore;
   /** 已由显式 model capability 解析出的 MCP 加载方式；缺省保持 eager 零回归。 */
-  mcpLoadingMode?: EffectiveMcpLoadingMode;
+  mcpLoadingMode?: EffectiveMcpLoadingMode; compactionPrompt?: string;
   streamEventBatch?: StreamEventBatchOptions;
   /**
    * 把「invocationStarted 但既无 completed 也无 cancel_requested」的工具调用判定
@@ -240,7 +240,7 @@ export class RawAgentLoop implements AgentLoop {
   private readonly handStore?: HandStore;
   private readonly runtimeIsolationRequirement?: RuntimeIsolationRequirement;
   private readonly runStore?: RunStore;
-  private readonly mcpLoadingMode: EffectiveMcpLoadingMode;
+  private readonly mcpLoadingMode: EffectiveMcpLoadingMode; private readonly compactionPrompt: string;
   private readonly streamEventBatch: Required<StreamEventBatchOptions>;
   private readonly zombieToolCallTimeoutMs: number;
   private readonly parallelInvocationGates = new WeakMap<RunContext, {
@@ -266,7 +266,7 @@ export class RawAgentLoop implements AgentLoop {
     this.handStore = options.handStore;
     this.runtimeIsolationRequirement = options.runtimeIsolationRequirement;
     this.runStore = options.runStore;
-    this.mcpLoadingMode = options.mcpLoadingMode ?? 'eager';
+    this.mcpLoadingMode = options.mcpLoadingMode ?? 'eager'; this.compactionPrompt = options.compactionPrompt?.trim() || DEFAULT_COMPACTION_REQUEST_PROMPT;
     this.streamEventBatch = {
       maxEvents: options.streamEventBatch?.maxEvents ?? 25,
       maxBytes: options.streamEventBatch?.maxBytes ?? 32 * 1024,
@@ -2036,7 +2036,7 @@ export class RawAgentLoop implements AgentLoop {
       const requestMessages: ModelChatMessage[] = [
         { role: 'system', content: input.instructions },
         ...compressedMessages,
-        { role: 'user', content: COMPACTION_REQUEST_PROMPT },
+        { role: 'user', content: this.compactionPrompt },
       ];
       let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
       await context.authorizeModelTurn?.();

@@ -75,6 +75,7 @@ export interface ChatAppState {
   compactSession: () => Promise<void>;
   removeFile: (index: number) => void;
   handleFileSelect: (event: ChangeEvent<HTMLInputElement>) => Promise<void>;
+  handleAssetSelect: (paths: string[]) => Promise<void>;
   handlePaste: (event: ClipboardEvent) => Promise<void>;
   sendMessage: () => Promise<void>;
   /** 当前 run 运行时显式插话；普通 sendMessage 始终走串行 queue。 */

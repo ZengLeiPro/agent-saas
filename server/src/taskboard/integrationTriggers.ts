@@ -76,7 +76,8 @@ export async function claimIntegrationDispatchCandidates(
     host,
     Math.max(0, recoveryLimit - recoveries.length),
   );
-  return [...created, ...recoveries, ...recoverable];
+  const candidates = [...created, ...recoveries, ...recoverable];
+  return candidates.filter((candidate, index) => candidates.findIndex((item) => item.task.id === candidate.task.id) === index);
 }
 
 async function enqueueScheduledTriggers(host: IntegrationTriggerHost): Promise<void> {

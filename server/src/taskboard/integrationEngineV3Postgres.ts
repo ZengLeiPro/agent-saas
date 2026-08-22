@@ -134,7 +134,8 @@ export class PostgresIntegrationEngineV3CandidateHost implements IntegrationEngi
   async getCurrent(candidateId: string): Promise<IntegrationEngineV3Current> {
     const result = await this.options.pool.query(
       `SELECT c.*,r.candidate_id AS r_candidate_id,r.revision AS r_revision,r.digest_version AS r_digest_version,
-              r.base_oid AS r_base_oid,r.head_oid AS r_head_oid,r.tree_oid AS r_tree_oid,
+              r.base_oid AS r_base_oid,r.head_oid AS r_head_oid,r.subject_kind AS r_subject_kind,r.tree_oid AS r_tree_oid,
+              r.composition_complete AS r_composition_complete,
               r.source_set_digest AS r_source_set_digest,r.subject_digest AS r_subject_digest,
               r.policy_snapshot_digest AS r_policy_snapshot_digest,r.policy_revision AS r_policy_revision,
               r.merge_method AS r_merge_method,r.work_round AS r_work_round,
@@ -150,7 +151,8 @@ export class PostgresIntegrationEngineV3CandidateHost implements IntegrationEngi
       candidate: rowToIntegrationCandidate(row),
       ...(Number(row.r_revision ?? 0) > 0 ? { revision: rowToIntegrationCandidateRevision({
         candidate_id: row.r_candidate_id, revision: row.r_revision, digest_version: row.r_digest_version,
-        base_oid: row.r_base_oid, head_oid: row.r_head_oid, tree_oid: row.r_tree_oid,
+        base_oid: row.r_base_oid, head_oid: row.r_head_oid, subject_kind: row.r_subject_kind, tree_oid: row.r_tree_oid,
+        composition_complete: row.r_composition_complete,
         source_set_digest: row.r_source_set_digest, subject_digest: row.r_subject_digest,
         policy_snapshot_digest: row.r_policy_snapshot_digest, policy_revision: row.r_policy_revision,
         merge_method: row.r_merge_method, work_round: row.r_work_round,

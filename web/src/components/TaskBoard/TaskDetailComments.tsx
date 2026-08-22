@@ -31,6 +31,8 @@ type TaskDetailCommentsProps = {
   commentsLoading: boolean;
   commentsError: string | null;
   currentTask: TaskBoardTask;
+  taskDescription?: string | null;
+  taskAttachments?: TaskBoardTask["attachments"];
   latestExecution?: TaskBoardExecution;
   latestExecutionActive: boolean;
   commentReadOnly: boolean;
@@ -51,6 +53,8 @@ export function TaskDetailComments({
   commentsLoading,
   commentsError,
   currentTask,
+  taskDescription,
+  taskAttachments = [],
   latestExecution,
   latestExecutionActive,
   commentReadOnly,
@@ -84,6 +88,18 @@ export function TaskDetailComments({
         {commentsError ? <p role="alert" className="mb-4 text-sm text-destructive">{commentsError}</p> : null}
         {commentsLoading ? <p className="text-sm text-muted-foreground">正在加载评论...</p> : null}
         <div className="space-y-0">
+          {taskDescription !== undefined && taskDescription !== null ? (
+            <article data-testid="task-description-comment" className="pb-6">
+              <div className="min-w-0 rounded-lg border bg-card p-3 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                  <span className="text-xs font-medium text-foreground">任务正文</span>
+                  <time className="text-xs text-muted-foreground">{new Date(currentTask.createdAt).toLocaleString("zh-CN")}</time>
+                </div>
+                {taskDescription ? <TaskCommentMarkdown body={taskDescription} /> : null}
+                <TaskAttachmentList taskId={currentTask.id} attachments={taskAttachments} />
+              </div>
+            </article>
+          ) : null}
           {comments.map((comment) => {
             const purpose = comment.executionPurpose;
             const sessionHref = comment.sessionId
@@ -121,7 +137,7 @@ export function TaskDetailComments({
             );
           })}
         </div>
-        {!commentsLoading && comments.length === 0 ? (
+        {!commentsLoading && comments.length === 0 && (taskDescription === undefined || taskDescription === null) ? (
           <div className="flex min-h-40 items-center justify-center rounded-lg border border-dashed bg-background text-sm text-muted-foreground">
             暂无评论
           </div>

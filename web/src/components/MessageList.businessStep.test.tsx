@@ -205,7 +205,7 @@ describe("MessageList business step sections", () => {
     const currentToggle = screen.getByRole("button", { name: /写入核验结果.*第 2\/2 步/ });
     expect(completedToggle.getAttribute("aria-expanded")).toBe("false");
     expect(currentToggle.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByText("17/18 张通过，1 张退回")).toBeTruthy();
+    expect(screen.queryByText("17/18 张通过，1 张退回")).toBeNull();
     expect(screen.queryByText("订单资料完整")).toBeNull();
     expect(screen.queryByText(/过程 · 1 项/)).toBeNull();
     expect(screen.queryByText("读取订单")).toBeNull();
@@ -247,6 +247,8 @@ describe("MessageList business step sections", () => {
     fireEvent.click(collapseAll);
     expect(screen.getByRole("button", { name: "全部展开" })).toBeTruthy();
     expect(screen.queryByText("已运行")).toBeNull();
+    expect(screen.queryByText("17/18 张通过，1 张退回")).toBeNull();
+    expect(screen.queryByTestId("outcome-stats")).toBeNull();
     expect(screen.queryByText("订单资料完整")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "全部展开" }));

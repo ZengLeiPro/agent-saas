@@ -28,6 +28,12 @@ export function taskTableSql(tasksTable: string, boardsTable: string): string {
       head_oid TEXT,
       base_oid TEXT,
       reviewed_subject_digest TEXT,
+      provider_ci_inspection_id TEXT,
+      provider_ci_execution_id TEXT,
+      provider_ci_purpose TEXT,
+      provider_ci_head_oid TEXT,
+      provider_ci_status TEXT,
+      provider_ci_inspected_at TIMESTAMPTZ,
       merged_commit_oid TEXT,
       completed_at TIMESTAMPTZ,
       client_request_id TEXT,
@@ -54,6 +60,12 @@ export function taskFieldsMigrationSql(tasksTable: string): string {
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS head_oid TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS base_oid TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS reviewed_subject_digest TEXT;
+    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS provider_ci_inspection_id TEXT;
+    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS provider_ci_execution_id TEXT;
+    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS provider_ci_purpose TEXT;
+    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS provider_ci_head_oid TEXT;
+    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS provider_ci_status TEXT;
+    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS provider_ci_inspected_at TIMESTAMPTZ;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS merged_commit_oid TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS client_request_id TEXT;

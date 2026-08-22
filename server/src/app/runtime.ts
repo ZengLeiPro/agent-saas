@@ -62,6 +62,7 @@ import {
   type ArtifactStore,
 } from '../runtime/artifactStore.js';
 import { ArtifactService } from '../runtime/artifactService.js';
+import { artifactContentAudit, artifactServiceLifecycleOptions, initializeArtifactShareService, initializeArtifactShareStore, type ArtifactShareService, type ArtifactShareStore } from './artifactRuntime.js';
 import { PgImageBlobStore, setImageBlobStore } from '../runtime/imageBlobStore.js';
 import {
   InMemorySessionShareStore,
@@ -646,6 +647,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let feishuAuthFlowService: FeishuAuthFlowService | undefined;
   let artifactStore: ArtifactStore | undefined;
   let artifactService: ArtifactService | undefined;
+  let artifactShareStore: ArtifactShareStore | undefined;
+  let artifactShareService: ArtifactShareService | undefined;
   let sessionShareStore: SessionShareStore | undefined;
   let agentRuntimeProfileStore: AgentRuntimeProfileStore | undefined;
   let connectorDictionaryStore: ConnectorDictionaryStore | undefined;
@@ -1139,6 +1142,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       orgAgentStore?.setPostPersistObserver(undefined);
       skillConfigStore?.setPostPersistObserver(undefined);
       await flushGovernanceShadowProjections?.();
+      await artifactShareStore?.close?.();
       await pgEventStore!.close();
     };
     serverLogger.info('Runtime EventStore initialized: backend=pg; durable RunStore + HandStore + RuntimeScheduler initialized');
@@ -1234,6 +1238,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     await sessionReadStateStore.init();
   }
   sessionShareStore ??= new InMemorySessionShareStore();
+  const pgRuntimeEventStore = config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore : undefined;
+  artifactShareStore ??= await initializeArtifactShareStore(pgEventStore && pgRuntimeEventStore ? { pool: pgEventStore.pool, connectionString: pgRuntimeEventStore.connectionString, tablePrefix: pgRuntimeEventStore.tablePrefix } : undefined);
   if (!agentRuntimeProfileStore) {
     agentRuntimeProfileStore = new InMemoryAgentRuntimeProfileStore();
     await agentRuntimeProfileStore.init();
@@ -1299,29 +1305,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     signingSecret: artifactConfig?.signedUrlSecret ?? config.auth?.jwtSecret,
     defaultReadUrlTtlSeconds: artifactConfig?.readUrlTtlSeconds,
     maxBlobBytes: artifactConfig?.maxBlobBytes,
+    ...artifactServiceLifecycleOptions(artifactShareStore, sessionCatalog),
     resolveSessionTenantId: async sessionId => (await sessionCatalog.get(sessionId))?.tenantId,
     authorizeContentAccess: contentAccessGrantStore
       ? input => contentAccessGrantStore!.authorize(input)
       : undefined,
-    auditContentAccess: governanceAuditStore
-      ? async input => {
-          await governanceAuditStore!.append({
-            correlationId: `artifact-read:${input.sessionId}:${randomUUID()}`,
-            actorType: 'user',
-            actorUserId: input.subjectUserId,
-            actorPersona: 'platform_admin',
-            actorTenantId: DEFAULT_TENANT_ID,
-            action: 'session.content.session_export',
-            targetType: 'session_artifact',
-            targetId: input.sessionId,
-            targetTenantId: input.tenantId,
-            purpose: 'incident content export',
-            result: 'succeeded',
-            metadata: { scope: input.scope },
-          });
-        }
-      : undefined,
+    auditContentAccess: artifactContentAudit(governanceAuditStore),
   });
+  artifactShareService = initializeArtifactShareService(artifactShareStore, artifactService, artifactConfig?.signedUrlSecret ?? config.auth?.jwtSecret, message => serverLogger.warn(message));
   if (artifactConfig?.retentionDays && enableSingletonWorkers) {
     const runArtifactGc = async () => {
       const result = await artifactService!.pruneExpiredArtifacts(artifactConfig.retentionDays!, 200);
@@ -1516,9 +1507,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     vault: secretVault,
     onError: (error) => serverLogger.warn(`Taskboard GitHub credential resolve failed: ${error.message}`),
   });
-  const configuredIntegrationV3Access = configureRuntimeIntegrationV3RepositoryAccess({ store: rawTaskboardStore, taskboardRepositoryProvider, control: config.integrationV3ControlPlane, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, resolvePersonalAccessToken: async ({ tenantId, ownerUserId }) => {
-    const user = userStore?.findById(ownerUserId); if (!user || user.disabled || user.tenantId !== tenantId) return undefined;
-    return resolveGithubToken({ connectionStore: connectorConnectionStore, vault: secretVault, governanceCredentialStore: credentialStore, onError: (error) => serverLogger.warn(`Integration PAT resolve failed: ${error.message}`) }, { userId: user.id, username: user.username, tenantId });
+  const configuredIntegrationV3Access = configureRuntimeIntegrationV3RepositoryAccess({ store: rawTaskboardStore, control: config.integrationV3ControlPlane, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, resolvePersonalAccessToken: async ({ tenantId, ownerUserId }) => {
+    const user = userStore?.findById(ownerUserId); if (!user || user.disabled || (tenantId && user.tenantId !== tenantId)) return undefined;
+    return resolveGithubToken({ connectionStore: connectorConnectionStore, vault: secretVault, governanceCredentialStore: credentialStore, onError: (error) => serverLogger.warn(`Integration PAT resolve failed: ${error.message}`) }, { userId: user.id, username: user.username, tenantId: user.tenantId });
   } });
   integrationV3RepositoryProvider = configuredIntegrationV3Access.repositoryProvider;
   const integrationV3PersonalAccessTokenResolver = configuredIntegrationV3Access.personalAccessTokenResolver;
@@ -3125,6 +3116,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentRuntimeProfileStore,
     connectorDictionaryStore,
     artifactService,
+    artifactShareService,
+    artifactShareStore,
     sessionShareStore,
     artifactShutdown,
     clientDaemonGateway,

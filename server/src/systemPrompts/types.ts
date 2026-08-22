@@ -12,6 +12,7 @@ export const SYSTEM_PROMPT_IDS = [
   'utility.title',
   'utility.guardrail',
   'utility.imageUnderstanding',
+  'utility.compaction',
 ] as const;
 
 export type SystemPromptId = typeof SYSTEM_PROMPT_IDS[number];

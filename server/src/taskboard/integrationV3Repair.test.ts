@@ -58,6 +58,38 @@ describe('integration v3 invariant repair', () => {
     expect(db.query.mock.calls[0]![0]).not.toContain("state='prepared'");
   });
 
+  it('returns only the exact incomplete legacy composition to composing and preserves its failed Work evidence', async () => {
+    const db = dbWithRows([{
+      id: 'candidate-legacy', integration_task_id: 'task-1',
+      previous_error: 'Work request exhausted retries and requires operator recovery',
+      recovery_kind: 'composition', outbox_id: 'work-request-legacy', status: 'idle',
+    }], []);
+
+    await expect(requeueFailedIntegrationV3Candidate(db, {
+      candidates: 'candidates', revisions: 'revisions', requestsOutbox: 'outbox', changes: 'changes',
+    }, {
+      taskId: 'task-1', actorId: 'maintainer-1', reason: 'partial composition support deployed',
+    })).resolves.toEqual({
+      candidateId: 'candidate-legacy', taskId: 'task-1',
+      previousError: 'Work request exhausted retries and requires operator recovery',
+      recoveryKind: 'composition', outboxId: 'work-request-legacy', status: 'idle',
+    });
+
+    const recoverySql = String(db.query.mock.calls[0]![0]);
+    expect(recoverySql).toContain("c.state='working' AND c.provider_pull_request_id IS NULL");
+    expect(recoverySql).toContain("c.subject_kind='source_seed' AND c.composition_complete=FALSE AND c.tree_oid IS NULL");
+    expect(recoverySql).toContain("o.last_error='Candidate execution workspace binding is stale'");
+    expect(recoverySql).toContain("SET state='composing',worker_status='idle',worker_error=NULL,worker_attempts=0");
+    expect(recoverySql).toContain('NOT EXISTS (SELECT 1 FROM composition_requeued)');
+    expect(db.query).toHaveBeenNthCalledWith(2, expect.stringContaining('integration.v3.worker_requeued'), [
+      'task-1', 'maintainer-1', JSON.stringify({
+        candidateId: 'candidate-legacy', reason: 'partial composition support deployed',
+        previousError: 'Work request exhausted retries and requires operator recovery',
+        recoveryKind: 'composition', outboxId: 'work-request-legacy',
+      }),
+    ]);
+  });
+
   it('requeues only a permanently failed nonterminal worker and writes the operator audit payload', async () => {
     const db = dbWithRows([{
       id: 'candidate-1', integration_task_id: 'task-1', previous_error: 'provider denied',
@@ -65,7 +97,7 @@ describe('integration v3 invariant repair', () => {
     }], []);
 
     await expect(requeueFailedIntegrationV3Candidate(db, {
-      candidates: 'candidates', requestsOutbox: 'outbox', changes: 'changes',
+      candidates: 'candidates', revisions: 'revisions', requestsOutbox: 'outbox', changes: 'changes',
     }, {
       taskId: 'task-1', actorId: 'maintainer-1', reason: 'credentials repaired',
     })).resolves.toEqual({
@@ -94,7 +126,7 @@ describe('integration v3 invariant repair', () => {
     }], []);
 
     await expect(requeueFailedIntegrationV3Candidate(db, {
-      candidates: 'candidates', requestsOutbox: 'outbox', changes: 'changes',
+      candidates: 'candidates', revisions: 'revisions', requestsOutbox: 'outbox', changes: 'changes',
     }, {
       taskId: 'task-1', actorId: 'maintainer-1', reason: 'worktree repaired',
     })).resolves.toEqual({

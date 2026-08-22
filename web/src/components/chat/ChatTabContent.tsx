@@ -42,6 +42,7 @@ interface ChatTabContentProps {
   onStop?: () => void;
   stopping?: boolean;
   onFileSelect: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onAssetSelect?: (paths: string[]) => Promise<void> | void;
   onPaste?: (event: React.ClipboardEvent) => void;
   tts?: TtsProps;
   ttsStateMap?: Record<string, TtsState>;
@@ -180,6 +181,7 @@ export function ChatTabContent({
   onStop,
   stopping,
   onFileSelect,
+  onAssetSelect,
   onPaste,
   tts,
   ttsStateMap,
@@ -359,6 +361,7 @@ export function ChatTabContent({
               onStop={onStop}
               stopping={stopping}
               onFileSelect={onFileSelect}
+              onAssetSelect={onAssetSelect}
               onPaste={onPaste}
               scrollContainerRef={scrollContainerRef as React.RefObject<HTMLDivElement>}
               isNearBottomRef={isNearBottomRef}

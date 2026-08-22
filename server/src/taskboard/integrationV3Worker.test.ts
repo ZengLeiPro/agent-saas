@@ -6,12 +6,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { TaskBoardIntegrationCandidate, TaskBoardIntegrationCandidateRevision } from '../../../shared/src/types/taskboard.js';
 import type { IntegrationEngineV3, IntegrationEngineV3Command } from './integrationEngineV3.js';
+import { IntegrationV3ComposeConflictError } from './integrationV3ComposeExecutor.js';
 import { IntegrationV3Worker, type IntegrationV3RequestLease, type IntegrationV3WorkerHost } from './integrationV3Worker.js';
 import { executeIntegrationV3Cleanup, terminalizeIntegrationV3PreparedOperations } from './integrationV3WorkerPostgres.js';
 
 const revision: TaskBoardIntegrationCandidateRevision = {
   candidateId: 'candidate-1', revision: 1, digestVersion: 1, baseOid: 'base', headOid: 'head', treeOid: 'tree',
-  sourceSetDigest: 'sources', subjectDigest: 'subject', policySnapshotDigest: 'policy', policyRevision: 'p1',
+  compositionComplete: true, sourceSetDigest: 'sources', subjectDigest: 'subject', policySnapshotDigest: 'policy', policyRevision: 'p1',
   mergeMethod: 'squash', workRound: 0, createdAt: '2026-08-19T00:00:00.000Z',
 };
 function candidate(state: TaskBoardIntegrationCandidate['state']): TaskBoardIntegrationCandidate {
@@ -31,7 +32,7 @@ class MemoryHost implements IntegrationV3WorkerHost {
   dispatched: IntegrationV3RequestLease[] = [];
   cleanupCalls: IntegrationV3RequestLease[] = [];
   completedRequests: Array<{ request: IntegrationV3RequestLease; receipt?: import('./integrationV3Worker.js').IntegrationV3CleanupReceipt }> = [];
-  mergeOperation?: { operationKey: string; state: 'prepared' | 'executing' | 'unknown' | 'succeeded' };
+  mergeOperation?: { operationKey: string; state: 'prepared' | 'executing' | 'unknown' | 'failed' | 'needs_human' | 'succeeded' };
   async claimCandidate() {
     if (['merged', 'canceled'].includes(this.current.candidate.state) && this.checkpoints.at(-1)?.status === 'requested') return undefined;
     return { candidateId: 'candidate-1', leaseId: 'candidate-lease' };
@@ -105,6 +106,33 @@ describe('IntegrationV3Worker pure mock flow', () => {
     expect(host.completedRequests.at(-1)).toMatchObject({ request: { kind: 'cleanup' }, receipt: { outcome: 'succeeded' } });
     expect(host.dispatched.every((item) => item.kind === 'work' || item.kind === 'review')).toBe(true);
     expect(host.errors.filter(Boolean)).toEqual(['Provider outcome awaits durable reconciliation']);
+  });
+
+  it('passes the trusted incomplete revision with compose conflict evidence to the engine', async () => {
+    const host = new MemoryHost();
+    host.current.candidate = candidate('composing');
+    const partial = {
+      baseOid: 'base', headOid: 'partial-head', treeOid: 'partial-tree',
+      compositionComplete: false, sources: [],
+    };
+    const execute = vi.fn(async () => ({
+      candidate: { ...host.current.candidate, state: 'needs_work' as const, currentRevision: 2 },
+      status: 'applied' as const,
+    }));
+    const worker = new IntegrationV3Worker({
+      host, engine: { execute } as unknown as IntegrationEngineV3,
+      composer: {
+        compose: vi.fn(async () => { throw new IntegrationV3ComposeConflictError('source conflict', partial); }),
+        refreshAfterWork: vi.fn(),
+      },
+    });
+
+    await worker.runOnce();
+
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'compose_conflict', evidence: 'source conflict', revision: partial,
+    }));
+    expect(host.errors.at(-1)).toBeUndefined();
   });
 
   it('replays a prepared merge intent after a crash between prepare and execute', async () => {
@@ -207,6 +235,29 @@ describe('IntegrationV3Worker pure mock flow', () => {
     releaseClaim();
     await activeTick;
   });
+
+  it.each(['failed', 'needs_human'] as const)(
+    'recovers a terminal %s merge operation from merging after restart',
+    async (operationState) => {
+      const host = new MemoryHost();
+      host.current.candidate = candidate('merging');
+      host.mergeOperation = { operationKey: `terminal-${operationState}-op`, state: operationState };
+      const engine = { execute: vi.fn(async (_command: IntegrationEngineV3Command) => ({
+        candidate: { ...host.current.candidate, state: 'needs_human' as const }, status: 'applied' as const,
+      })) } as unknown as IntegrationEngineV3;
+      const worker = new IntegrationV3Worker({
+        host, engine,
+        composer: { compose: vi.fn(), refreshAfterWork: vi.fn() },
+      });
+
+      await worker.runOnce();
+
+      expect(engine.execute).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'reconcile_merge', operationKey: `terminal-${operationState}-op`,
+      }));
+      expect(host.errors.at(-1)).toBeUndefined();
+    },
+  );
 
   it.each(['merging', 'needs_human'] as const)(
     'recovers a succeeded merge operation from %s after restart without resending merge',

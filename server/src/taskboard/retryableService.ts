@@ -44,6 +44,7 @@ import type {
   TaskboardTaskSearchFilter,
 } from './types.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
+import type { ExecutionPullRequestInspection } from './deliveryPullRequests.js';
 
 export interface InitializableTaskboardService extends TaskboardService, TaskboardExecutionStore {
   init(): Promise<void>;
@@ -329,6 +330,26 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.attachExecutionPullRequestV2(identity, runId, providerPullRequestId);
   }
 
+  async inspectExecutionPullRequestV2(
+    identity: TaskboardIdentity,
+    runId: string,
+  ): Promise<ExecutionPullRequestInspection> {
+    await this.init();
+    if (!this.target.inspectExecutionPullRequestV2) throw new Error('Taskboard repository provider unavailable');
+    return this.target.inspectExecutionPullRequestV2(identity, runId);
+  }
+
+  async readExecutionPullRequestJobLogV2(
+    identity: TaskboardIdentity,
+    runId: string,
+    inspectionId: string,
+    providerJobId: string,
+  ): Promise<{ inspectionId: string; providerJobId: string; log: string }> {
+    await this.init();
+    if (!this.target.readExecutionPullRequestJobLogV2) throw new Error('Taskboard repository provider unavailable');
+    return this.target.readExecutionPullRequestJobLogV2(identity, runId, inspectionId, providerJobId);
+  }
+
   async recordReviewedExecutionSubjectV2(
     identity: TaskboardIdentity,
     runId: string,
@@ -346,6 +367,18 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     await this.init();
     if (!this.target.inspectIntegrationSourceV2) throw new Error('Taskboard integration provider unavailable');
     return this.target.inspectIntegrationSourceV2(identity, runId, sourceId);
+  }
+
+  async readIntegrationSourceJobLogV2(
+    identity: TaskboardIdentity,
+    runId: string,
+    sourceId: string,
+    inspectionId: string,
+    providerJobId: string,
+  ): Promise<{ inspectionId: string; providerJobId: string; log: string }> {
+    await this.init();
+    if (!this.target.readIntegrationSourceJobLogV2) throw new Error('Taskboard integration provider unavailable');
+    return this.target.readIntegrationSourceJobLogV2(identity, runId, sourceId, inspectionId, providerJobId);
   }
 
   async mergeIntegrationSourceV2(

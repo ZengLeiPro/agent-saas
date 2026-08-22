@@ -85,20 +85,27 @@ describe('Integration v3 worker activation', () => {
 describe('Integration v3 board repository probe wiring', () => {
   it('combines repository-specific read with PAT push permission and full identity verification', async () => {
     let probe: ((input: { tenantId: string; ownerUserId: string; repository: TaskBoardRepositoryConfig }) => Promise<boolean>) | undefined;
-    const getReference = vi.fn(async () => ({ oid: 'a'.repeat(40), treeOid: 'b'.repeat(40) }));
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-      id: 123, full_name: 'acme/widget', permissions: { push: true },
-    }), { status: 200 })));
+    let reviewProvider: unknown;
+    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(JSON.stringify(
+      String(url).includes('/git/ref/heads/main')
+        ? { ref: 'refs/heads/main', object: { sha: 'a'.repeat(40) } }
+        : String(url).includes('/git/commits/')
+          ? { sha: 'a'.repeat(40), tree: { sha: 'b'.repeat(40) } }
+          : { id: 123, full_name: 'acme/widget', permissions: { push: true } },
+    ), { status: 200 })));
     configureRuntimeIntegrationV3RepositoryAccess({
-      store: { setIntegrationV3RepositoryProbe: (value: typeof probe) => { probe = value; } } as never,
-      taskboardRepositoryProvider: { getReference } as never,
+      store: {
+        setIntegrationV3RepositoryProvider: (value: unknown) => { reviewProvider = value; },
+        setIntegrationV3RepositoryProbe: (value: typeof probe) => { probe = value; },
+      } as never,
       control: { enabled: true, githubTokenMode: 'personal_access_token' },
       resolvePersonalAccessToken: async () => 'pat',
     });
     await expect(probe?.({ tenantId: 'tenant-1', ownerUserId: 'owner-1', repository: {
       ...repository, repositoryId: 'github-id:123',
     } })).resolves.toBe(true);
-    expect(getReference).toHaveBeenCalledWith(expect.objectContaining({ owner: 'acme', name: 'widget' }), 'main', 'owner-1');
+    expect(reviewProvider).toBeDefined();
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/git/ref/heads/main'), expect.any(Object));
   });
 });
 
@@ -332,7 +339,7 @@ function cleanupCandidate(): TaskBoardIntegrationCandidate {
 function cleanupRevision(): TaskBoardIntegrationCandidateRevision {
   return {
     candidateId: 'candidate-1', revision: 1, digestVersion: 1, baseOid: 'base', headOid: 'head', treeOid: 'tree',
-    sourceSetDigest: 'sources', subjectDigest: 'subject', policySnapshotDigest: 'policy', policyRevision: 'policy-1',
+    compositionComplete: true, sourceSetDigest: 'sources', subjectDigest: 'subject', policySnapshotDigest: 'policy', policyRevision: 'policy-1',
     mergeMethod: 'squash', workRound: 0, createdAt: '2026-08-19T00:00:00.000Z',
   };
 }

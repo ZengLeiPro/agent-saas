@@ -5,8 +5,7 @@
  * 真源来自 ~/.agent-saas/legacy-transcripts/<tenantId>/<userId>/*.jsonl
  * （PR #31 起的新 Agent SaaS layout；旧 cwd-derived transcript root 不再作为在线读路径）
  */
-import { Router } from "express";
-import type { Request, Response } from "express";
+import { Router, type Request, type Response } from "express";
 import { createHash, randomUUID } from "node:crypto";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
@@ -29,12 +28,7 @@ import {
   getAgentTranscriptDir,
   type SessionListItem,
 } from "../data/transcripts/index.js";
-import {
-  readSessionMeta,
-  writeSessionMeta,
-  updateSessionMeta,
-  type SessionMeta,
-} from "../data/transcripts/meta.js";
+import { readSessionMeta, writeSessionMeta, updateSessionMeta, type SessionMeta } from "../data/transcripts/meta.js";
 import { resolveUserCwd } from "../workspace/resolver.js";
 import { TTLCache } from "../utils/cache.js";
 import {
@@ -77,9 +71,9 @@ import type { AgentStore } from "../data/agents/store.js";
 import type { AgentProfileInfo } from "../data/agents/types.js";
 import { isAssignedToOrgAgent, type OrgAgentStore } from "../data/orgAgents/store.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
-import type { SessionShareSnapshot, SessionShareStore } from "../data/sessionShares/store.js";
+import { isShareExpired, type SessionShareSnapshot, type SessionShareStore } from "../data/sessionShares/store.js";
+import { permanentlyDeleteSession, type SessionArtifactLifecycle } from './sessionPermanentDeletion.js';
 import type { SessionReadStateStore } from "../data/sessionReadStateStore.js";
-import { isShareExpired } from "../data/sessionShares/store.js";
 import {
   collectSessionShareCandidateFiles,
   normalizeSessionShareFilePath,
@@ -448,6 +442,7 @@ export interface SessionsRouterOptions {
   resolveContextAccounting?: ContextAccountingResolver;
   /** 会话只读分享存储。 */
   sessionShareStore?: SessionShareStore;
+  /** Revoke on soft delete; erase metadata/blob on permanent delete. */ artifactLifecycle?: SessionArtifactLifecycle;
   /** PG 会话元数据投影；在线列表优先走索引，无 PG 的测试/开发环境回退文件扫描。 */
   sessionProjectionStore?: {
     get?(
@@ -1849,10 +1844,15 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         if (!meta?.deletedAt || meta.userId !== req.user.sub) continue;
 
         try {
-          const result = item.hasTranscript
-            ? await deleteSession(item.sessionId, { deleteSidecarDir: true })
-            : await deleteSessionMetaOnly(item.sessionId, { deleteSidecarDir: true });
-          if (!result.deleted) {
+          const deleted = await permanentlyDeleteSession({
+            sessionId: item.sessionId,
+            ownerUserId: meta.userId,
+            hasTranscript: item.hasTranscript,
+            artifactLifecycle: options.artifactLifecycle, isStillDeleted: async () => readSessionMeta(item.metaPath).then(meta => !!meta?.deletedAt && meta.userId === req.user!.sub),
+            deleteTranscriptPreservingMeta: async () => !item.hasTranscript || (await deleteSession(item.sessionId, { preserveMeta: true })).deleted,
+            deleteMetaAndSidecar: async () => (await deleteSessionMetaOnly(item.sessionId, { deleteSidecarDir: true })).deleted,
+          });
+          if (!deleted) {
             failedSessionIds.push(item.sessionId);
             continue;
           }
@@ -3106,33 +3106,34 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           return;
         }
 
-        // 优先找 .jsonl，fallback 到 .meta.json
-        let transcriptPath = await findTranscriptPathBySessionId(sessionId);
-        if (!transcriptPath) {
-          transcriptPath = await findMetaPathBySessionId(sessionId);
-        }
-        if (!transcriptPath) {
-          res.status(404).json({ error: "Session not found" });
-          return;
-        }
-        const meta = await readSessionMeta(transcriptPath);
-        // Owner-self gate：只允许 owner 自己 restore（admin 代恢复能力已收回）
-        if (!meta || meta.userId !== req.user.sub) {
-          res.status(403).json({ error: "Access denied" });
-          return;
-        }
-        if (!meta.deletedAt) {
-          res.status(400).json({ error: "Session is not deleted" });
-          return;
-        }
+        const restore = async () => {
+          let transcriptPath = await findTranscriptPathBySessionId(sessionId);
+          if (!transcriptPath) {
+            transcriptPath = await findMetaPathBySessionId(sessionId);
+          }
+          if (!transcriptPath) {
+            res.status(404).json({ error: "Session not found" });
+            return;
+          }
+          const meta = await readSessionMeta(transcriptPath);
+          // Owner-self gate：只允许 owner 自己 restore（admin 代恢复能力已收回）
+          if (!meta || meta.userId !== req.user!.sub) {
+            res.status(403).json({ error: "Access denied" });
+            return;
+          }
+          if (!meta.deletedAt) {
+            res.status(400).json({ error: "Session is not deleted" });
+            return;
+          }
 
-        // 移除 deletedAt/deletedBy
-        const { deletedAt, deletedBy, ...rest } = meta;
-        await writeSessionMeta(transcriptPath, rest as SessionMeta);
-
-        auditLog(req, "session_restored", sessionId);
-        sessionsListCache.clear();
-        res.json({ ok: true, restored: true });
+          // 移除 deletedAt/deletedBy
+          const { deletedAt, deletedBy, ...rest } = meta;
+          await writeSessionMeta(transcriptPath, rest as SessionMeta);
+          auditLog(req, "session_restored", sessionId);
+          sessionsListCache.clear();
+          res.json({ ok: true, restored: true });
+        };
+        await (options.artifactLifecycle ? options.artifactLifecycle.withSessionLock(sessionId, restore) : restore());
       } catch (err) {
         const msg = String(err instanceof Error ? err.message : err);
         res.status(500).json({ error: msg });
@@ -3184,23 +3185,17 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           return;
         }
 
-        // 有 .jsonl 时走完整删除；否则只清理孤儿 meta + sidecar
-        if (hasTranscript) {
-          const result = await deleteSession(sessionId, {
-            deleteSidecarDir: true,
-          });
-          if (!result.deleted) {
-            res.status(404).json({ error: "Session not found" });
-            return;
-          }
-        } else {
-          const result = await deleteSessionMetaOnly(sessionId, {
-            deleteSidecarDir: true,
-          });
-          if (!result.deleted) {
-            res.status(404).json({ error: "Session meta not found" });
-            return;
-          }
+        const deleted = await permanentlyDeleteSession({
+          sessionId,
+          ownerUserId: req.user.sub,
+          hasTranscript,
+          artifactLifecycle: options.artifactLifecycle, isStillDeleted: async () => readSessionMeta(transcriptPath).then(meta => !!meta?.deletedAt && meta.userId === req.user!.sub),
+          deleteTranscriptPreservingMeta: async () => !hasTranscript || (await deleteSession(sessionId, { preserveMeta: true })).deleted,
+          deleteMetaAndSidecar: async () => (await deleteSessionMetaOnly(sessionId, { deleteSidecarDir: true })).deleted,
+        });
+        if (!deleted) {
+          res.status(404).json({ error: "Session not found" });
+          return;
         }
 
         auditLog(req, "session_permanently_deleted", sessionId);
@@ -3299,23 +3294,28 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         return;
       }
 
-      // 已经软删除的不重复操作
-      if (meta.deletedAt) {
+      const applySoftDelete = async (): Promise<boolean> => {
+        // 会话锁内重读 tombstone，避免排队期间的 restore/delete 改变被旧快照覆盖。
+        const currentMeta = await readSessionMeta(transcriptPath);
+        if (!currentMeta) throw new Error("Session not found"); if (currentMeta.deletedAt) return false;
+        await options.sessionShareStore?.revokeBySession(sessionId, currentMeta.userId).catch((err) => {
+          apiLogger.warn(
+            `[sessions] revoke share on delete failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+        await updateSessionMeta(transcriptPath, {
+          deletedAt: new Date().toISOString(),
+          deletedBy: req.user?.username || "anonymous",
+        });
+        return true;
+      };
+      const changed = options.artifactLifecycle
+        ? await options.artifactLifecycle.withRevoked(sessionId, meta.userId, applySoftDelete)
+        : await applySoftDelete();
+      if (!changed) {
         res.json({ ok: true, softDeleted: true });
         return;
       }
-
-      await options.sessionShareStore?.revokeBySession(sessionId, meta.userId).catch((err) => {
-        apiLogger.warn(
-          `[sessions] revoke share on delete failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
-
-      // 软删除：写入 deletedAt + deletedBy
-      await updateSessionMeta(transcriptPath, {
-        deletedAt: new Date().toISOString(),
-        deletedBy: req.user?.username || "anonymous",
-      });
 
       auditLog(req, "session_soft_deleted", sessionId);
       sessionsListCache.clear();

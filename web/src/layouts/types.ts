@@ -102,6 +102,7 @@ export interface LayoutProps {
   resendQueuedInterjection: (clientMsgId: string) => void;
   dismissQueuedInterjection: (clientMsgId: string) => void;
   handleFileSelect: (event: ChangeEvent<HTMLInputElement>) => Promise<void>;
+  handleAssetSelect: (paths: string[]) => Promise<void>;
   handlePaste: (event: ClipboardEvent) => Promise<void>;
   ttsProps: TtsProps | undefined;
   ttsStateMap: Record<string, TtsState>;

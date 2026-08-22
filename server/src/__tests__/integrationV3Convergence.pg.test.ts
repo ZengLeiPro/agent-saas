@@ -3,13 +3,14 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { integrationCandidateTableNames } from '../taskboard/integrationCandidateSchema.js';
+import { integrationCandidateTableNames, runIntegrationCandidateSchema } from '../taskboard/integrationCandidateSchema.js';
 import { IntegrationEngineV3 } from '../taskboard/integrationEngineV3.js';
 import {
   PostgresIntegrationEngineV3CandidateHost,
   PostgresIntegrationEngineV3FeatureHost,
   PostgresIntegrationEngineV3RequestHost,
 } from '../taskboard/integrationEngineV3Postgres.js';
+import { requeueFailedIntegrationV3Candidate } from '../taskboard/integrationV3Repair.js';
 import { IntegrationV3Worker } from '../taskboard/integrationV3Worker.js';
 import { PostgresIntegrationV3WorkerHost } from '../taskboard/integrationV3WorkerPostgres.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
@@ -49,6 +50,12 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
     state: 'waiting_checks' | 'working' | 'blocked';
     taskStatus: 'todo' | 'in_progress';
     checkpoint?: Record<string, unknown>;
+    revision?: {
+      subjectKind?: 'provider_subject' | 'source_seed';
+      treeOid?: string | null;
+      compositionComplete?: boolean;
+      workRound?: number;
+    };
   }) {
     const board = await store.createBoard(identity, { name: `V3 convergence ${randomUUID()}` });
     const taskId = randomUUID();
@@ -72,10 +79,12 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
     );
     await pool.query(
       `INSERT INTO ${tables.revisionsTable}
-         (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,source_set_digest,
-          subject_digest,policy_snapshot_digest,policy_revision,merge_method,work_round)
-       VALUES($1,1,1,'base-1','head-1','provider_subject','tree-1','sources','subject-1','policy-1','p1','squash',0)`,
-      [candidateId],
+         (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,composition_complete,
+          source_set_digest,subject_digest,policy_snapshot_digest,policy_revision,merge_method,work_round)
+       VALUES($1,1,1,'base-1','head-1',$2,$3,$4,'sources','subject-1','policy-1','p1','squash',$5)`,
+      [candidateId, input.revision?.subjectKind ?? 'provider_subject',
+        input.revision?.treeOid === undefined ? 'tree-1' : input.revision.treeOid,
+        input.revision?.compositionComplete ?? true, input.revision?.workRound ?? 0],
     );
     await pool.query(
       `INSERT INTO ${store.integrationLanesTable}(repository_id,board_id,active_integration_task_id,epoch)
@@ -94,6 +103,109 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
       integrationLanesTable: store.integrationLanesTable,
     };
   }
+
+  it('forces source_seed incomplete when an old writer omits the v6 column', async () => {
+    const seed = await seedCandidate({ state: 'waiting_checks', taskStatus: 'todo' });
+    await pool.query(
+      `INSERT INTO ${seed.tables.revisionsTable}
+         (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,source_set_digest,
+          subject_digest,policy_snapshot_digest,policy_revision,merge_method,work_round)
+       VALUES($1,2,1,'base-2','head-2','source_seed',NULL,'sources-2','subject-2','policy-2','p1','squash',0)`,
+      [seed.candidateId],
+    );
+    const row = await pool.query(
+      `SELECT composition_complete FROM ${seed.tables.revisionsTable} WHERE candidate_id=$1 AND revision=2`,
+      [seed.candidateId],
+    );
+    expect(row.rows).toEqual([{ composition_complete: false }]);
+  });
+
+  it('recovers only the legacy incomplete source_seed by returning it to composing and preserving failed Work evidence', async () => {
+    const seed = await seedCandidate({
+      state: 'working', taskStatus: 'in_progress',
+      revision: { subjectKind: 'source_seed', treeOid: null, compositionComplete: false },
+    });
+    const workerError = 'Work request exhausted retries and requires operator recovery';
+    const requestError = 'Candidate execution workspace binding is stale';
+    await pool.query(
+      `UPDATE ${seed.tables.candidatesTable}
+          SET worker_status='failed',worker_error=$2,worker_attempts=5,worker_lease_id=NULL
+        WHERE id=$1`,
+      [seed.candidateId, workerError],
+    );
+    const outboxId = randomUUID();
+    await pool.query(
+      `INSERT INTO ${seed.tables.requestsOutboxTable}
+         (id,request_key,kind,candidate_id,candidate_revision,work_round,workflow_epoch,lane_epoch,
+          payload,status,attempts,last_error)
+       VALUES($1,$2,'work',$3,1,0,1,1,'{}'::jsonb,'failed',5,$4)`,
+      [outboxId, `legacy-${outboxId}`, seed.candidateId, requestError],
+    );
+
+    await expect(requeueFailedIntegrationV3Candidate(pool, {
+      candidates: seed.tables.candidatesTable, revisions: seed.tables.revisionsTable,
+      requestsOutbox: seed.tables.requestsOutboxTable, changes: store.changesTable,
+    }, {
+      taskId: seed.taskId, actorId: identity.ownerUserId, reason: 'partial composition support deployed',
+    })).resolves.toEqual({
+      candidateId: seed.candidateId, taskId: seed.taskId, previousError: workerError,
+      recoveryKind: 'composition', outboxId, status: 'idle',
+    });
+
+    const candidate = await pool.query(
+      `SELECT state,worker_status,worker_error,worker_attempts,provider_pull_request_id
+         FROM ${seed.tables.candidatesTable} WHERE id=$1`, [seed.candidateId],
+    );
+    expect(candidate.rows).toEqual([{
+      state: 'composing', worker_status: 'idle', worker_error: null, worker_attempts: 0,
+      provider_pull_request_id: null,
+    }]);
+    const outbox = await pool.query(
+      `SELECT status,attempts,last_error FROM ${seed.tables.requestsOutboxTable} WHERE id=$1`, [outboxId],
+    );
+    expect(outbox.rows).toEqual([{ status: 'failed', attempts: 5, last_error: requestError }]);
+  });
+
+  it('exposes the current candidate revision and complete frozen snapshots to Work context', async () => {
+    const seed = await seedCandidate({ state: 'working', taskStatus: 'in_progress' });
+    const deliveryTaskId = randomUUID();
+    const integrationSourceId = randomUUID();
+    const reviewExecutionId = randomUUID();
+    await pool.query(
+      `INSERT INTO ${store.tasksTable}
+         (id,board_id,identifier,kind,title,status,sort_order)
+       VALUES($1,$2,$3,'delivery','Frozen source','ready_to_merge',2)`,
+      [deliveryTaskId, seed.board.id, `SRC-${deliveryTaskId.slice(0, 8)}`],
+    );
+    await pool.query(
+      `INSERT INTO ${store.executionsTable}
+         (id,task_id,run_id,session_id,status,purpose,trigger,protocol_version,attempt_id,requested_by,finished_at)
+       VALUES($1,$2,$3,$4,'succeeded','review','initial',2,$5,$6,now())`,
+      [reviewExecutionId, deliveryTaskId, `run-${reviewExecutionId}`, `session-${reviewExecutionId}`,
+        `attempt-${reviewExecutionId}`, identity.ownerUserId],
+    );
+    await pool.query(
+      `INSERT INTO ${store.integrationSourcesTable}
+         (id,integration_task_id,delivery_task_id,repository_id,provider_pull_request_id,
+          reviewed_subject_digest,source_order,state)
+       VALUES($1,$2,$3,$4,'77','reviewed',0,'ready')`,
+      [integrationSourceId, seed.taskId, deliveryTaskId, seed.repositoryId],
+    );
+    await pool.query(
+      `INSERT INTO ${seed.tables.sourceSnapshotsTable}
+         (candidate_id,revision,source_order,integration_source_id,delivery_task_id,delivery_task_version,
+          repository_id,provider_pull_request_id,frozen_head_oid,frozen_base_oid,reviewed_subject_digest,
+          review_execution_id,review_receipt_digest,requirement_digest)
+       VALUES($1,1,0,$2,$3,1,$4,'77','frozen-head','frozen-base','reviewed',$5,'receipt','requirement')`,
+      [seed.candidateId, integrationSourceId, deliveryTaskId, seed.repositoryId, reviewExecutionId],
+    );
+    const context = await store.getExecutionContextV2(identity, seed.taskId, { include: ['integrationSources'] });
+    expect(context.integrationCandidate).toMatchObject({
+      candidate: { id: seed.candidateId, state: 'working' },
+      revision: { revision: 1, compositionComplete: true, sourceSetDigest: 'sources' },
+      sourceSnapshots: [{ order: 0, frozenHeadOid: 'frozen-head', frozenBaseOid: 'frozen-base' }],
+    });
+  });
 
   it('projects blocked candidate states to the task and creates only one open episode', async () => {
     const seed = await seedCandidate({ state: 'waiting_checks', taskStatus: 'todo' });
@@ -225,5 +337,57 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
       [seed.candidateId],
     );
     expect(cleanup.rows).toEqual([{ kind: 'cleanup', status: 'pending' }]);
+  });
+
+  it('upgrades existing v5 source seeds without weakening revision immutability', async () => {
+    const seed = await seedCandidate({ state: 'waiting_checks', taskStatus: 'todo' });
+    const root = store.integrationSourcesTable.slice(0, -'_sources'.length);
+    const migrationsTable = `${root}_candidate_schema_migrations_v3`;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`DROP TRIGGER tbv3_source_seed_incomplete ON ${seed.tables.revisionsTable}`);
+      await client.query(`DROP TRIGGER tbv3_revision_immutable ON ${seed.tables.revisionsTable}`);
+      await client.query(`ALTER TABLE ${seed.tables.revisionsTable} DROP COLUMN composition_complete`);
+      await client.query(`CREATE TRIGGER ${seed.tables.revisionsTable}_immutable_update
+        BEFORE UPDATE ON ${seed.tables.revisionsTable}
+        FOR EACH ROW EXECUTE FUNCTION ${seed.tables.revisionsTable}_immutable_fn()`);
+      await client.query(`DELETE FROM ${migrationsTable} WHERE version IN (6,7)`);
+      await client.query('COMMIT');
+      await client.query(
+        `INSERT INTO ${seed.tables.revisionsTable}
+           (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,source_set_digest,
+            subject_digest,policy_snapshot_digest,policy_revision,merge_method,work_round)
+         VALUES($1,2,1,'base-2','head-2','source_seed',NULL,'sources-2','subject-2','policy-2','p1','squash',0)`,
+        [seed.candidateId],
+      );
+
+      await runIntegrationCandidateSchema({
+        tasksTable: store.tasksTable,
+        executionsTable: store.executionsTable,
+        integrationSourcesTable: store.integrationSourcesTable,
+      }, client);
+
+      const revisions = await client.query(
+        `SELECT revision,composition_complete FROM ${seed.tables.revisionsTable}
+          WHERE candidate_id=$1 ORDER BY revision`,
+        [seed.candidateId],
+      );
+      expect(revisions.rows).toEqual([
+        { revision: 1, composition_complete: true },
+        { revision: 2, composition_complete: false },
+      ]);
+      await expect(client.query(
+        `UPDATE ${seed.tables.revisionsTable} SET composition_complete=FALSE WHERE candidate_id=$1 AND revision=1`,
+        [seed.candidateId],
+      )).rejects.toThrow('TASKBOARD_CANDIDATE_SNAPSHOT_IMMUTABLE');
+      expect((await client.query(`SELECT version,name FROM ${migrationsTable} WHERE version IN (6,7) ORDER BY version`)).rows)
+        .toEqual([
+          { version: 6, name: 'track_incomplete_composition_subjects' },
+          { version: 7, name: 'normalize_composition_guard_identifiers' },
+        ]);
+    } finally {
+      client.release();
+    }
   });
 });

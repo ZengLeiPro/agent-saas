@@ -242,7 +242,7 @@ export interface RawRuntimeRunDispatchConfig {
    * safe 只读工具；未配置（file backend / 测试）时工具不挂载。
    */
   userActivityService?: UserActivityService;
-  /** Artifact service used by hand-backed CreateArtifact. */
+  /** Artifact service used by the model-facing Artifact tool and hand-backed create protocol. */
   artifactService?: ArtifactService;
   /**
    * 自动上下文压缩（/compact v2）。配置后，正常回答结束但 run 尚未终态时

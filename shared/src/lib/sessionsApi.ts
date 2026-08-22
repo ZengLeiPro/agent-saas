@@ -18,7 +18,33 @@ const INTERACTIVE_RESULT_TOOLS = new Set([
   "EnterPlanMode",
   "ExitPlanMode",
   "Agent",
+  "Artifact",
 ]);
+
+function artifactDeliveryMessage(
+  id: string,
+  toolName: string | undefined,
+  metadata: ReturnType<typeof normalizeToolResultMetadata>,
+): MessageItem | null {
+  if (toolName !== 'Artifact' || metadata?.artifactAction !== 'deliver') return null;
+  const artifactId = metadata.artifactId;
+  const fileName = metadata.fileName;
+  const artifactKind = metadata.artifactKind;
+  if (typeof artifactId !== 'string' || typeof fileName !== 'string') return null;
+  if (artifactKind !== 'file' && artifactKind !== 'screenshot' && artifactKind !== 'patch'
+    && artifactKind !== 'log' && artifactKind !== 'blob') return null;
+  return {
+    id: `${id}-artifact-${artifactId}`,
+    type: 'file_download',
+    fileName,
+    fileType: typeof metadata.mimeType === 'string' ? metadata.mimeType : '',
+    filePath: fileName,
+    fileSize: typeof metadata.sizeBytes === 'number' ? metadata.sizeBytes : 0,
+    artifactId,
+    artifactKind,
+    ...(typeof metadata.mimeType === 'string' ? { mimeType: metadata.mimeType } : {}),
+  };
+}
 
 function parseSubagentDescription(content: string): string {
   try {
@@ -331,6 +357,8 @@ function mapBlock(
       const presentation = normalizeToolPresentation(block.presentation);
       // 结构化执行事实同一条通道、同一条不可信边界规则
       const toolMetadata = normalizeToolResultMetadata(block.toolMetadata);
+      const deliveredArtifact = artifactDeliveryMessage(id, block.toolName, toolMetadata);
+      if (deliveredArtifact) return deliveredArtifact;
       if (block.toolName === "AskUserQuestion" && !block.publicActivityOnly) {
         return tryConvertAskUser(block, resultText);
       }
@@ -444,8 +472,13 @@ export function mapSessionDetailToMessages(detail: ApiSessionDetail, owner?: str
   }
 
   const messages: MessageItem[] = [];
+  const deliveredArtifactIds = new Set<string>();
   for (const block of detail.blocks) {
     const msg = mapBlock(block, toolResultMap, owner);
+    if (msg?.type === 'file_download' && msg.artifactId) {
+      if (deliveredArtifactIds.has(msg.artifactId)) continue;
+      deliveredArtifactIds.add(msg.artifactId);
+    }
     if (msg) messages.push(msg);
     if (block.kind === "text") {
       messages.push(...extractFileMessages(block.id, block.content, owner));

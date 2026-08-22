@@ -80,9 +80,10 @@ services:
       NO_PROXY: "${NO_PROXY:-localhost,127.0.0.1,hand-server,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"
 
     volumes:
-      # config.json 包含敏感字段（jwtSecret/connectionString）—— 不进镜像
-      # 本地 dev：把仓库根 config.json 挂进来；ECS：从 /etc/agent-runtime/config.json 挂载
-      - ${CONFIG_JSON_PATH:-./config.json}:/app/config.json:ro
+      # config.json 包含敏感字段（jwtSecret/connectionString）—— 不进镜像。
+      # 平台管理会持久化工具覆盖等配置，必须写回宿主的同一配置文件；ECS 与 systemd
+      # 统一使用 /etc/agent-saas/config.json，重启或重新部署不会回退到镜像内默认值。
+      - ${CONFIG_JSON_PATH:-./config.json}:/app/config.json
       # ky-azeroth PAT 映射表；生产用稳定宿主路径，经 AZEROTH_TOKENS_FILE 指给 server
       - ${AZEROTH_TOKENS_FILE:-./server/config/azeroth-tokens.json}:${AZEROTH_TOKENS_FILE:-/app/server/config/azeroth-tokens.json}:ro
       # workspace：β-Q2 决策 = NAS 挂载（生产 ECS 上把 ./workspace 改成 /mnt/nas/agent-runtime/workspace）

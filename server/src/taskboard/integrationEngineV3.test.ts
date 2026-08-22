@@ -7,7 +7,7 @@ import { IntegrationProviderOperationService, integrationProviderOperationKey, t
 const repository: TaskBoardRepositoryConfig = { provider: 'github', repositoryId: 'github:acme/app', owner: 'acme', name: 'app', baseBranch: 'main', allowForkPullRequest: false };
 const revision: TaskBoardIntegrationCandidateRevision = {
   candidateId: 'candidate-1', revision: 1, digestVersion: 1, baseOid: 'base-1', headOid: 'head-1', treeOid: 'tree-1',
-  sourceSetDigest: 'sha256:sources', subjectDigest: 'sha256:subject', policySnapshotDigest: 'sha256:policy', policyRevision: 'policy-1',
+  compositionComplete: true, sourceSetDigest: 'sha256:sources', subjectDigest: 'sha256:subject', policySnapshotDigest: 'sha256:policy', policyRevision: 'policy-1',
   mergeMethod: 'squash', workRound: 0, createdAt: '2026-08-19T00:00:00.000Z',
 };
 function candidate(state: TaskBoardIntegrationCandidate['state']): TaskBoardIntegrationCandidate {
@@ -21,7 +21,8 @@ function candidate(state: TaskBoardIntegrationCandidate['state']): TaskBoardInte
 }
 function expected(value: TaskBoardIntegrationCandidate): IntegrationEngineV3ExpectedSubject {
   return { candidateVersion: value.version, candidateRevision: 1, workflowEpoch: '3', laneEpoch: '9', repositoryId: repository.repositoryId,
-    baseOid: revision.baseOid, headOid: revision.headOid, treeOid: revision.treeOid, sourceSetDigest: revision.sourceSetDigest,
+    baseOid: revision.baseOid, headOid: revision.headOid, treeOid: revision.treeOid,
+    compositionComplete: revision.compositionComplete, sourceSetDigest: revision.sourceSetDigest,
     policyRevision: revision.policyRevision, policySnapshotDigest: revision.policySnapshotDigest, subjectDigest: revision.subjectDigest };
 }
 function facts(overrides: Partial<IntegrationEngineV3ProviderFacts> = {}): IntegrationEngineV3ProviderFacts {
@@ -30,9 +31,18 @@ function facts(overrides: Partial<IntegrationEngineV3ProviderFacts> = {}): Integ
 }
 
 class MemoryCandidateHost implements IntegrationEngineV3CandidateHost {
+  lastAppend?: Parameters<IntegrationEngineV3CandidateHost['appendRevision']>[1];
+  revisionValue = structuredClone(revision);
   constructor(public value: TaskBoardIntegrationCandidate) {}
-  async getCurrent() { return { candidate: structuredClone(this.value), revision: structuredClone(revision) }; }
-  async appendRevision(): Promise<TaskBoardIntegrationCandidate> { throw new Error('not used'); }
+  async getCurrent() { return { candidate: structuredClone(this.value), revision: structuredClone(this.revisionValue) }; }
+  async appendRevision(_candidateId: string, input: Parameters<IntegrationEngineV3CandidateHost['appendRevision']>[1]) {
+    this.lastAppend = structuredClone(input);
+    this.value = {
+      ...this.value, currentRevision: this.value.currentRevision + 1, version: this.value.version + 1,
+      state: input.nextState ?? this.value.state, ...(input.lastError ? { lastError: input.lastError } : {}),
+    };
+    return structuredClone(this.value);
+  }
   async beginNextWorkRound(): Promise<TaskBoardIntegrationCandidate> { this.value = { ...this.value, state: 'working', workRound: this.value.workRound + 1, version: this.value.version + 1 }; return structuredClone(this.value); }
   async transition(_id: string, input: { to: TaskBoardIntegrationCandidate['state']; approvedReviewExecutionId?: string; mergedCommitOid?: string; lastError?: string }): Promise<TaskBoardIntegrationCandidate> {
     this.value = { ...this.value, state: input.to, version: this.value.version + 1, ...(input.approvedReviewExecutionId ? { approvedRevision: 1, approvedReviewExecutionId: input.approvedReviewExecutionId } : {}), ...(input.lastError ? { lastError: input.lastError } : {}) };
@@ -92,6 +102,56 @@ describe('IntegrationEngineV3', () => {
     const stale = { ...expected(candidate('waiting_checks')), headOid: 'stale-head' };
     await expect(engine.execute({ type: 'request_review', candidateId: 'candidate-1', expected: stale })).rejects.toMatchObject({ code: 'TASKBOARD_CANDIDATE_CAS_MISMATCH' });
     expect(requests.requestReview).not.toHaveBeenCalled();
+  });
+
+  it('atomically persists an incomplete conflict subject before requesting work', async () => {
+    const value = candidate('composing');
+    const { engine, candidates } = setup('composing');
+    const partial = {
+      baseOid: 'base-2', headOid: 'partial-head', treeOid: 'partial-tree', compositionComplete: false,
+      sources: [],
+    };
+    const result = await engine.execute({
+      type: 'compose_conflict', candidateId: value.id, expected: expected(value),
+      evidence: 'source conflict', revision: partial,
+    });
+    expect(result.candidate).toMatchObject({ state: 'needs_work', currentRevision: 2, lastError: 'source conflict' });
+    expect(candidates.lastAppend).toMatchObject({
+      ...partial, nextState: 'needs_work', lastError: 'source conflict',
+      expectedVersion: 7, expectedCurrentRevision: 1,
+    });
+  });
+
+  it('rejects review dispatch for an incomplete composition subject', async () => {
+    const value = candidate('waiting_checks');
+    const { engine, candidates, requests } = setup('waiting_checks');
+    candidates.revisionValue.compositionComplete = false;
+    await expect(engine.execute({
+      type: 'request_review', candidateId: value.id,
+      expected: { ...expected(value), compositionComplete: false },
+    })).rejects.toMatchObject({ code: 'TASKBOARD_CANDIDATE_COMPOSITION_INCOMPLETE' });
+    expect(requests.requestReview).not.toHaveBeenCalled();
+  });
+
+  it('rechecks composition completeness at review approval and merge entry', async () => {
+    const reviewing = setup('in_review');
+    reviewing.candidates.revisionValue.compositionComplete = false;
+    await expect(reviewing.engine.execute({
+      type: 'review_approved', candidateId: 'candidate-1',
+      expected: { ...expected(candidate('in_review')), compositionComplete: false },
+      reviewExecutionId: 'review-1', receipt: {
+        executionId: 'review-1', candidateId: 'candidate-1', revision: 1,
+        subjectDigest: revision.subjectDigest, sourceSetDigest: revision.sourceSetDigest,
+      },
+    })).rejects.toMatchObject({ code: 'TASKBOARD_CANDIDATE_COMPOSITION_INCOMPLETE' });
+
+    const merging = setup('approved');
+    merging.candidates.revisionValue.compositionComplete = false;
+    await expect(merging.engine.execute({
+      type: 'merge_approved', candidateId: 'candidate-1',
+      expected: { ...expected(candidate('approved')), compositionComplete: false }, executionId: 'merge-1',
+    })).rejects.toMatchObject({ code: 'TASKBOARD_CANDIDATE_COMPOSITION_INCOMPLETE' });
+    expect(merging.merge).not.toHaveBeenCalled();
   });
 
   it('fails closed when GitHub required gate facts are unknown', async () => {

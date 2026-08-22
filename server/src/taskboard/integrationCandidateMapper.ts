@@ -60,6 +60,7 @@ export function rowToIntegrationCandidateRevision(
     headOid: String(row.head_oid),
     subjectKind: String(row.subject_kind ?? 'provider_subject') as TaskBoardIntegrationCandidateRevision['subjectKind'],
     ...(row.tree_oid == null ? {} : { treeOid: String(row.tree_oid) }),
+    compositionComplete: row.composition_complete == null ? true : Boolean(row.composition_complete),
     sourceSetDigest: String(row.source_set_digest),
     subjectDigest: String(row.subject_digest),
     policySnapshotDigest: String(row.policy_snapshot_digest),

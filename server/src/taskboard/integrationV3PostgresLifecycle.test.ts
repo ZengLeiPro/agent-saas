@@ -289,7 +289,8 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     const query = vi.fn(async (sql: string, _values?: unknown[]) => sql.includes('SELECT b.repository')
       ? { rows: [{ repository: { provider: 'github', repositoryId: 'github:acme/app', owner: 'acme', name: 'app', baseBranch: 'main' }, owner_user_id: 'owner', tenant_id: 'tenant',
         work_execution_id: 'work-1', push_execution_id: 'work-1', push_candidate_id: 'candidate-1', push_candidate_revision: 2,
-        push_workflow_epoch: 4, push_lane_epoch: 9, push_old_oid: 'head-2', push_new_oid: 'head-3',
+        push_workflow_epoch: 4, push_lane_epoch: 9, push_ref: 'refs/heads/integration/1',
+        push_old_oid: 'head-2', push_new_oid: 'head-3',
         trusted_integration_branch_oids: ['a'.repeat(40)] }] }
       : { rows: [] });
     const host = new PostgresIntegrationV3ComposeHost({
@@ -311,7 +312,10 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(sql).toContain("o.kind='push_ref' AND o.state='succeeded'");
     expect(sql).toContain("o.state IN ('executing','unknown','failed','needs_human','succeeded')");
     expect(sql).toContain("o.expected->>'ref'=('refs/heads/'||c.branch)");
-    expect(sql).toContain("CASE WHEN o.state='succeeded' THEN o.expected->>'newOid' END");
+    expect(sql).toContain("CASE WHEN o.state IN ('executing','unknown','succeeded') THEN o.expected->>'newOid' END");
+    expect(sql).toContain("o.receipt->>'ref'=o.expected->>'ref'");
+    expect(sql).toContain("o.receipt->>'oldOid'=o.expected->>'oldOid'");
+    expect(sql).toContain("o.receipt->>'newOid'=o.expected->>'newOid'");
     expect(sql).toContain('o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch');
     expect(sql).toContain('o.attempt_count>0');
     expect(sql).toContain('o.execution_id=work.execution_id');
@@ -321,7 +325,8 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(context.trustedIntegrationBranchOids).toEqual(['a'.repeat(40)]);
     expect(context.workPushReceipt).toEqual({
       executionId: 'work-1', candidateId: 'candidate-1', candidateRevision: 2,
-      workflowEpoch: '4', laneEpoch: '9', oldOid: 'head-2', newOid: 'head-3',
+      workflowEpoch: '4', laneEpoch: '9', ref: 'refs/heads/integration/1',
+      oldOid: 'head-2', newOid: 'head-3',
     });
   });
 

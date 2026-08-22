@@ -22,6 +22,7 @@ export interface IntegrationEngineV3ExpectedSubject {
   baseOid?: string;
   headOid?: string;
   treeOid?: string;
+  compositionComplete?: boolean;
   sourceSetDigest?: string;
   policyRevision: string;
   policySnapshotDigest?: string;
@@ -100,7 +101,7 @@ interface CommandBase { candidateId: string; expected: IntegrationEngineV3Expect
 export type IntegrationEngineV3Command =
   | (CommandBase & { type: 'start_compose' })
   | (CommandBase & { type: 'compose_clean'; revision: Omit<AppendCandidateRevisionInput, 'expectedVersion' | 'expectedCurrentRevision' | 'nextState'> })
-  | (CommandBase & { type: 'compose_conflict'; evidence: string })
+  | (CommandBase & { type: 'compose_conflict'; evidence: string; revision: Omit<AppendCandidateRevisionInput, 'expectedVersion' | 'expectedCurrentRevision' | 'nextState'> })
   | (CommandBase & { type: 'observe_checks' })
   | (CommandBase & { type: 'request_work' })
   | (CommandBase & { type: 'subject_refreshed'; revision: Omit<AppendCandidateRevisionInput, 'expectedVersion' | 'expectedCurrentRevision' | 'nextState'> })
@@ -115,6 +116,7 @@ export type IntegrationEngineV3Command =
   | (CommandBase & { type: 'sync_main' });
 
 export interface IntegrationReviewReceiptV3 {
+  executionId: string;
   candidateId: string;
   revision: number;
   subjectDigest: string;
@@ -160,7 +162,9 @@ export class IntegrationEngineV3 {
         return applied(await this.appendAndTransition(current, command.revision, 'waiting_checks'));
       case 'compose_conflict':
         assertFlag(flags.composeEnabled, 'compose');
-        return applied(await this.transition(current, 'needs_work', command.evidence));
+        return applied(await this.appendAndTransition(current, {
+          ...command.revision, compositionComplete: false, lastError: command.evidence,
+        }, 'needs_work'));
       case 'observe_checks':
         return this.observeChecks(current, false);
       case 'request_work': {
@@ -189,6 +193,7 @@ export class IntegrationEngineV3 {
         return applied(await this.appendAndTransition(current, command.revision, 'waiting_checks'));
       case 'request_review':
         assertFlag(flags.reviewEnabled, 'review');
+        assertCompositionComplete(current);
         if (current.candidate.state === 'in_review') {
           // Deterministically repair a request lost/failed after the candidate transition.
           const revision = requireRevision(current);
@@ -201,6 +206,7 @@ export class IntegrationEngineV3 {
         return this.observeChecks(current, true);
       case 'review_approved':
         assertFlag(flags.reviewEnabled, 'review');
+        assertCompositionComplete(current);
         assertReviewReceipt(current, command.reviewExecutionId, command.receipt);
         return applied(await this.transition(current, 'approved', undefined, command.reviewExecutionId));
       case 'review_changes_requested':
@@ -208,6 +214,7 @@ export class IntegrationEngineV3 {
         return applied(await this.transition(current, 'needs_work', 'Review requested changes'));
       case 'merge_approved':
         assertFlag(flags.mergeEnabled, 'merge');
+        assertCompositionComplete(current);
         return this.mergeApproved(current, command.executionId);
       case 'reconcile_merge':
         return this.reconcileMerge(current, command.operationKey);
@@ -361,7 +368,7 @@ export class IntegrationEngineV3 {
     }
   }
 
-  private async appendAndTransition(current: IntegrationEngineV3Current, revision: Omit<AppendCandidateRevisionInput, 'expectedVersion' | 'expectedCurrentRevision' | 'nextState'>, to: 'waiting_checks'): Promise<TaskBoardIntegrationCandidate> {
+  private async appendAndTransition(current: IntegrationEngineV3Current, revision: Omit<AppendCandidateRevisionInput, 'expectedVersion' | 'expectedCurrentRevision' | 'nextState'>, to: 'needs_work' | 'waiting_checks'): Promise<TaskBoardIntegrationCandidate> {
     return this.options.candidates.appendRevision(current.candidate.id, {
       ...revision,
       expectedVersion: current.candidate.version,
@@ -386,17 +393,18 @@ function assertExpected(current: IntegrationEngineV3Current, expected: Integrati
   if (c.version !== expected.candidateVersion || c.currentRevision !== expected.candidateRevision || c.workflowEpoch !== expected.workflowEpoch
     || c.laneEpoch !== expected.laneEpoch || c.repositoryId !== expected.repositoryId || c.policyRevision !== expected.policyRevision) throw casMismatch();
   if (c.currentRevision === 0) {
-    if (current.revision || expected.baseOid || expected.headOid || expected.treeOid || expected.sourceSetDigest || expected.subjectDigest || expected.policySnapshotDigest) throw casMismatch();
+    if (current.revision || expected.baseOid || expected.headOid || expected.treeOid || expected.compositionComplete !== undefined || expected.sourceSetDigest || expected.subjectDigest || expected.policySnapshotDigest) throw casMismatch();
     return;
   }
   const r = requireRevision(current);
   if (r.revision !== c.currentRevision || r.baseOid !== expected.baseOid || r.headOid !== expected.headOid || r.treeOid !== expected.treeOid
+    || r.compositionComplete !== expected.compositionComplete
     || r.sourceSetDigest !== expected.sourceSetDigest || r.policyRevision !== expected.policyRevision
     || r.policySnapshotDigest !== expected.policySnapshotDigest || r.subjectDigest !== expected.subjectDigest) throw casMismatch();
 }
 function assertReviewReceipt(current: IntegrationEngineV3Current, executionId: string, receipt: IntegrationReviewReceiptV3): void {
   const r = requireRevision(current);
-  if (!executionId || receipt.candidateId !== current.candidate.id || receipt.revision !== r.revision || receipt.subjectDigest !== r.subjectDigest || receipt.sourceSetDigest !== r.sourceSetDigest) throw failClosed('Review receipt does not bind the current subject', 'TASKBOARD_INTEGRATION_REVIEW_RECEIPT_STALE');
+  if (!executionId || receipt.executionId !== executionId || receipt.candidateId !== current.candidate.id || receipt.revision !== r.revision || receipt.subjectDigest !== r.subjectDigest || receipt.sourceSetDigest !== r.sourceSetDigest) throw failClosed('Review receipt does not bind the current subject', 'TASKBOARD_INTEGRATION_REVIEW_RECEIPT_STALE');
 }
 function isExactMergedSubject(current: IntegrationEngineV3Current, facts: IntegrationEngineV3ProviderFacts): boolean {
   const revision = requireRevision(current);
@@ -418,8 +426,9 @@ function isBaseOnlyDrift(current: IntegrationEngineV3Current, facts: Integration
     && facts.state === 'open'
     && facts.baseOid !== revision.baseOid;
 }
-function subjectExpected(current: IntegrationEngineV3Current, revision: TaskBoardIntegrationCandidateRevision): Record<string, unknown> { return { repositoryId: current.candidate.repositoryId, baseOid: revision.baseOid, headOid: revision.headOid, treeOid: revision.treeOid, sourceSetDigest: revision.sourceSetDigest, policyRevision: revision.policyRevision, policySnapshotDigest: revision.policySnapshotDigest, subjectDigest: revision.subjectDigest }; }
+function subjectExpected(current: IntegrationEngineV3Current, revision: TaskBoardIntegrationCandidateRevision): Record<string, unknown> { return { repositoryId: current.candidate.repositoryId, baseOid: revision.baseOid, headOid: revision.headOid, treeOid: revision.treeOid, compositionComplete: revision.compositionComplete, sourceSetDigest: revision.sourceSetDigest, policyRevision: revision.policyRevision, policySnapshotDigest: revision.policySnapshotDigest, subjectDigest: revision.subjectDigest }; }
 function requireRevision(current: IntegrationEngineV3Current): TaskBoardIntegrationCandidateRevision { if (!current.revision || current.revision.revision !== current.candidate.currentRevision) throw failClosed('Current candidate revision is unavailable', 'TASKBOARD_INTEGRATION_REVISION_UNKNOWN'); return current.revision; }
+function assertCompositionComplete(current: IntegrationEngineV3Current): void { if (!requireRevision(current).compositionComplete) throw failClosed('Incomplete composition cannot enter review or merge', 'TASKBOARD_CANDIDATE_COMPOSITION_INCOMPLETE'); }
 function requiredPr(candidate: TaskBoardIntegrationCandidate): string { if (!candidate.providerPullRequestId) throw failClosed('Integration PR identity is unknown', 'TASKBOARD_INTEGRATION_PR_UNKNOWN'); return candidate.providerPullRequestId; }
 function safeEpoch(value: string): number { const number = Number(value); if (!Number.isSafeInteger(number) || number < 0) throw failClosed('Workflow or lane epoch is outside safe integer range', 'TASKBOARD_INTEGRATION_EPOCH_INVALID'); return number; }
 function assertFlag(enabled: boolean, action: string): void { if (!enabled) throw failClosed(`Integration ${action} kill switch is active`, 'TASKBOARD_INTEGRATION_KILL_SWITCH'); }

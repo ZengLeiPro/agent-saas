@@ -166,7 +166,7 @@ function buildIntegrationV3Contract(
         merge: false,
       },
       allowedOutcomes: ['approved', 'changes_requested', 'stale_subject', 'blocked'],
-      requiredEvidence: ['candidate revision', 'candidate head oid', 'reviewed subject digest', 'test or inspection evidence'],
+      requiredEvidence: ['candidate revision', 'candidate head oid', 'reviewed subject digest', 'current-candidate CI inspection receipt'],
       blockedReasons: ['subject_stale', 'epoch_stale', 'evidence_missing', 'external_dependency'],
     };
   }

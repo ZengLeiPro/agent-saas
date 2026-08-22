@@ -30,6 +30,19 @@ describe('taskboard execution writeback prompt', () => {
     expect(merge).toContain('Provider 不可用时失败关闭');
   });
 
+  it('Workflow v3 Integration Review 明确检查并绑定当前 candidate revision', () => {
+    const integrationReview = context('review');
+    integrationReview.task.kind = 'integration';
+    integrationReview.task.workflowVersion = 3;
+
+    const prompt = executionWritebackInstructions(integrationReview).join('\n');
+
+    expect(prompt).toContain('execution.pull_request.inspect');
+    expect(prompt).toContain('当前 candidate revision');
+    expect(prompt).toContain('candidate/revision/subject');
+    expect(prompt).toContain('服务端硬门禁');
+  });
+
   it('Workflow v3 Integration Work 明确先受控 push、禁止 git push、后 ready_for_review', () => {
     const integrationWork = context('work');
     integrationWork.task.kind = 'integration';

@@ -138,6 +138,21 @@ describe('IntegrationEngineV3', () => {
     expect(requests.requestReview).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['unavailable', facts({ requiredChecksKnown: false }), 'TASKBOARD_INTEGRATION_REQUIRED_CHECKS_UNKNOWN'],
+    ['failure', facts({ requiredChecks: [{ name: 'ci', status: 'failure' }] }), 'TASKBOARD_INTEGRATION_REQUIRED_CHECKS_FAILED'],
+    ['pending', facts({ requiredChecks: [{ name: 'ci', status: 'pending' }] }), 'TASKBOARD_INTEGRATION_REQUIRED_CHECKS_PENDING'],
+  ] as const)('rechecks required checks and blocks %s before the final merge side effect', async (_case, providerFacts, code) => {
+    const value = candidate('approved');
+    const { engine, merge, operations } = setup('approved', providerFacts);
+
+    await expect(engine.execute({
+      type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
+    })).rejects.toMatchObject({ code });
+    expect(merge).not.toHaveBeenCalled();
+    expect(operations.records.size).toBe(0);
+  });
+
   it.each(['approved', 'merging'] as const)(
     'converges an externally merged %s candidate to needs_human without fabricating a controlled receipt',
     async (state) => {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   assertPullRequestGate,
+  inspectExecutionPullRequest,
   pullRequestGateStatus,
   recordReviewedExecutionSubject,
 } from './deliveryPullRequests.js';
@@ -110,6 +111,7 @@ describe('pull request CI gate', () => {
     [{ ...current, requiredChecks: [{ name: 'Build & Check', status: 'pending' }] }, 'pending'],
     [{ ...current, requiredChecks: [{ name: 'Build & Check', status: 'failure' }] }, 'failure'],
     [{ ...current, requiredChecksKnown: false }, 'unavailable'],
+    [{ ...current, requiredChecks: [] }, 'pending'],
     [current, 'success'],
   ];
 
@@ -134,6 +136,7 @@ describe('pull request CI gate', () => {
     [{ ...current, requiredChecks: [{ name: 'Build & Check', status: 'pending' }] }, 'TASKBOARD_CI_PENDING'],
     [{ ...current, requiredChecks: [{ name: 'Build & Check', status: 'failure' }] }, 'TASKBOARD_CI_FAILED'],
     [{ ...current, requiredChecksKnown: false }, 'TASKBOARD_CI_UNAVAILABLE'],
+    [{ ...current, requiredChecks: [] }, 'TASKBOARD_CI_PENDING'],
   ];
 
   it.each(rejectionCases)('rejects non-green checks with %s', (snapshot, code) => {
@@ -176,5 +179,60 @@ describe('recordReviewedExecutionSubject external merge reconciliation', () => {
     await expect(recordReviewedExecutionSubject(host, identity, 'run-41')).rejects.toMatchObject({
       code: 'TASKBOARD_PR_NOT_OPEN',
     });
+  });
+});
+
+describe('Workflow v3 candidate PR inspection', () => {
+  it('binds a Review receipt to the exact candidate revision and current head', async () => {
+    const snapshot = {
+      ...mergedPullRequest,
+      state: 'open' as const,
+      mergeCommitOid: undefined,
+      headRef: 'integration/integration-1',
+      headOid: 'candidate-head',
+      baseOid: 'candidate-base',
+      requiredChecksKnown: true,
+      requiredChecks: [{ name: 'Build & Check', status: 'success' as const }],
+      repositoryId: 'github:acme/repo',
+      providerQueriedAt: '2026-08-22T11:00:00.000Z',
+      workflowRuns: [],
+    };
+    const loadClient = client(async () => ({ rows: [{
+      task_id: 'integration-1', kind: 'integration', task_branch: null, provider_pull_request_id: null,
+      execution_id: 'review-1', purpose: 'review', execution_status: 'running', resolved_at: null, superseded_at: null,
+      repository: contextRow().repository, owner_user_id: identity.ownerUserId,
+      candidate_id: 'candidate-1', candidate_revision: 3, candidate_provider_pull_request_id: '32',
+      candidate_branch: 'integration/integration-1', candidate_head_oid: 'candidate-head',
+      candidate_base_oid: 'candidate-base', candidate_subject_digest: 'candidate-subject-3',
+    }] }));
+    const transactionClient = client(async (sql) => {
+      if (sql.includes('SELECT id FROM tasks')) return { rows: [{ id: 'integration-1' }] };
+      if (sql.includes('SELECT id FROM executions')) return { rows: [{ id: 'review-1' }] };
+      if (sql.includes('FROM sources_candidates c')) return { rows: [{
+        provider_pull_request_id: '32', current_revision: 3, head_oid: 'candidate-head',
+        subject_digest: 'candidate-subject-3',
+      }] };
+      return { rows: [] };
+    });
+    const clients = [loadClient, transactionClient];
+    const host = {
+      ...hostWithPullRequest(mergedPullRequest).host,
+      pool: { connect: vi.fn(async () => clients.shift()!) },
+      repositoryProvider: {
+        getPullRequest: vi.fn(async () => snapshot),
+        inspectPullRequest: vi.fn(async () => snapshot),
+        mergePullRequest: vi.fn(),
+      },
+    } as unknown as IntegrationOperationHost;
+
+    const result = await inspectExecutionPullRequest(host, identity, 'run-review-1');
+
+    expect(result.gateStatus).toBe('success');
+    expect(result.receipt).toMatchObject({
+      taskId: 'integration-1', executionId: 'review-1', purpose: 'review',
+      candidateId: 'candidate-1', candidateRevision: 3, candidateSubjectDigest: 'candidate-subject-3',
+      providerPullRequestId: '32', headOid: 'candidate-head',
+    });
+    expect(transactionClient.query).toHaveBeenCalledWith('COMMIT');
   });
 });

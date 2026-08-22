@@ -282,6 +282,7 @@ export class IntegrationEngineV3 {
       }
     }
     this.assertProviderFacts(current, facts);
+    this.assertRequiredChecksGreen(facts);
     if (current.candidate.approvedRevision !== revision.revision || !current.candidate.approvedReviewExecutionId) throw failClosed('Approval is stale', 'TASKBOARD_CANDIDATE_APPROVAL_STALE');
     const operation = await this.options.providerOperations.prepare({
       operationKey, kind: 'merge_pull_request', repositoryId: current.candidate.repositoryId,
@@ -358,6 +359,25 @@ export class IntegrationEngineV3 {
       || facts.treeOid !== revision.treeOid
       || (!merged && (facts.state !== 'open' || facts.baseOid !== revision.baseOid))) {
       throw failClosed('Provider subject drifted from the candidate revision', 'TASKBOARD_INTEGRATION_SUBJECT_DRIFT');
+    }
+  }
+
+  private assertRequiredChecksGreen(facts: IntegrationEngineV3ProviderFacts): void {
+    if (!facts.requiredChecksKnown || facts.unsupportedRules.length || facts.mergeQueueRequired) {
+      throw failClosed(
+        `Required GitHub gates are not authoritative or supported: ${facts.unsupportedRules.join(',') || 'unknown'}`,
+        'TASKBOARD_INTEGRATION_REQUIRED_CHECKS_UNKNOWN',
+      );
+    }
+    const failed = facts.requiredChecks.filter((check) => check.status === 'failure');
+    if (failed.length) {
+      throw failClosed(
+        `Required checks failed: ${failed.map((check) => check.name).join(', ')}`,
+        'TASKBOARD_INTEGRATION_REQUIRED_CHECKS_FAILED',
+      );
+    }
+    if (facts.requiredChecks.length === 0 || facts.requiredChecks.some((check) => check.status !== 'success')) {
+      throw failClosed('Required checks are pending', 'TASKBOARD_INTEGRATION_REQUIRED_CHECKS_PENDING');
     }
   }
 

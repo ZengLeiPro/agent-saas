@@ -221,34 +221,27 @@ export class GithubRepositoryProvider implements RepositoryProvider {
     const headRef = requiredString(pullRecord.head, 'ref', 'GitHub pull request head ref');
     this.assertPullRequestPolicy(repository, pullRecord, baseRef);
 
-    const [checksResult, statusesResult, requiredResult] = await Promise.allSettled([
+    const [checksResult, statusesResult, capabilitiesResult] = await Promise.allSettled([
       this.request(repository, credentialOwnerId, this.repoPath(repository, `/commits/${encodeURIComponent(headOid)}/check-runs`)),
       this.request(repository, credentialOwnerId, this.repoPath(repository, `/commits/${encodeURIComponent(headOid)}/status`)),
-      this.request(repository, credentialOwnerId, this.repoPath(repository, `/branches/${encodeURIComponent(baseRef)}/protection/required_status_checks`)),
+      this.getRequiredGateCapabilities(repository, baseRef, credentialOwnerId),
     ]);
-    let requiredKnown = requiredResult.status === 'fulfilled';
-    let rulesetsValue: unknown;
-    const protectionHasNoChecks = requiredResult.status === 'fulfilled'
-      && normalizeRequiredCheckIdentities(requiredResult.value).length === 0;
-    const protectionUnavailable = requiredResult.status === 'rejected'
-      && isUnavailableGithubPolicyFeature(requiredResult.reason);
-    if (protectionHasNoChecks
-      || protectionUnavailable
-      || (requiredResult.status === 'rejected' && requiredResult.reason instanceof GithubApiError && requiredResult.reason.status === 404)) {
-      try {
-        rulesetsValue = await this.getRulesetDetails(repository, credentialOwnerId);
-        requiredKnown = !rulesetsRequireUnknownStatusChecks(rulesetsValue);
-      } catch (error) {
-        rulesetsValue = [];
-        requiredKnown = protectionUnavailable && isUnavailableGithubPolicyFeature(error);
-      }
-    }
+    const capabilities = capabilitiesResult.status === 'fulfilled' ? capabilitiesResult.value : undefined;
     const requiredChecks = normalizeChecks(
       checksResult.status === 'fulfilled' ? checksResult.value : undefined,
       statusesResult.status === 'fulfilled' ? statusesResult.value : undefined,
-      requiredResult.status === 'fulfilled' ? requiredResult.value : undefined,
+      capabilities ? {
+        checks: capabilities.requiredChecks.map((check) => ({
+          context: check.name,
+          ...(check.appId !== undefined ? { app_id: check.appId } : {}),
+        })),
+      } : undefined,
     );
-    const requiredChecksKnown = requiredKnown && checksResult.status === 'fulfilled' && statusesResult.status === 'fulfilled';
+    const requiredChecksKnown = capabilities?.known === true
+      && capabilities.unsupportedRules.length === 0
+      && !capabilities.mergeQueueRequired
+      && checksResult.status === 'fulfilled'
+      && statusesResult.status === 'fulfilled';
     if (!requiredChecksKnown) requiredChecks.push({ name: 'github:checks-unavailable', status: 'failure' });
 
     const numberFromProvider = Number(pullRecord.number);
@@ -381,7 +374,7 @@ export class GithubRepositoryProvider implements RepositoryProvider {
     const normalizedBase = normalizeBranchRef(baseRef);
     const [protection, rulesets] = await Promise.allSettled([
       this.request(repository, credentialOwnerId, this.repoPath(repository, `/branches/${encodeURIComponent(normalizedBase)}/protection/required_status_checks`)),
-      this.getRulesetDetails(repository, credentialOwnerId),
+      this.getRulesetDetails(repository, normalizedBase, credentialOwnerId),
     ]);
     const protectionAbsent = protection.status === 'rejected'
       && (protection.reason instanceof GithubApiError && protection.reason.status === 404
@@ -479,14 +472,14 @@ export class GithubRepositoryProvider implements RepositoryProvider {
     return { providerRequestId: input.operationKey ?? input.requestId, providerPullRequestId: input.providerPullRequestId, merged: payload.merged === true, ...(payload.sha ? { mergedCommitOid: String(payload.sha) } : {}), ...(payload.message ? { message: String(payload.message) } : {}), raw: payload };
   }
 
-  private async getRulesetDetails(repository: TaskBoardRepositoryConfig, credentialOwnerId: string): Promise<unknown[]> {
-    const summaries = await this.request(repository, credentialOwnerId, this.repoPath(repository, '/rulesets?includes_parents=true'));
-    if (!Array.isArray(summaries)) throw new Error('GitHub rulesets response is invalid');
-    return Promise.all(summaries.map(async (summary) => {
-      const id = Number(asRecord(summary).id);
-      if (!Number.isSafeInteger(id) || id < 1) throw new Error('GitHub ruleset id is missing');
-      return this.request(repository, credentialOwnerId, this.repoPath(repository, `/rulesets/${id}?includes_parents=true`));
-    }));
+  private async getRulesetDetails(repository: TaskBoardRepositoryConfig, baseRef: string, credentialOwnerId: string): Promise<unknown[]> {
+    const rules = await this.request(
+      repository,
+      credentialOwnerId,
+      this.repoPath(repository, `/rules/branches/${encodeURIComponent(normalizeBranchRef(baseRef))}`),
+    );
+    if (!Array.isArray(rules)) throw new Error('GitHub applicable branch rules response is invalid');
+    return [{ rules }];
   }
 
   private async tryGetReference(repository: TaskBoardRepositoryConfig, ref: string, credentialOwnerId: string): Promise<RepositoryReferenceSnapshot | undefined> {
@@ -554,33 +547,71 @@ function encodeRefPath(ref: string): string { return ref.split('/').map(encodeUR
 function assertOperationKey(value: string): void { if (!value || value.length > 240 || !/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value)) throw new Error('A valid semantic provider operation key is required'); }
 function asRecord(value: unknown): Record<string, any> { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {}; }
 function requiredString(container: unknown, key: string, label: string): string { const value = String(asRecord(container)[key] ?? ''); if (!value) throw new Error(`${label} is missing`); return value; }
+function optionalPositiveInteger(value: unknown): number | undefined {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number > 0 ? number : undefined;
+}
 function checkIdentityKey(name: string, appId?: number): string { return `${name}\u0000${appId ?? '*'}`; }
 function compareChecks(a: { name: string; appId?: number }, b: { name: string; appId?: number }): number { return checkIdentityKey(a.name, a.appId).localeCompare(checkIdentityKey(b.name, b.appId)); }
 
 function normalizeChecks(checksValue: unknown, statusesValue: unknown, requiredValue: unknown): RepositoryRequiredCheck[] {
-  const observed = new Map<string, RepositoryCheckStatus>();
+  const observed = new Map<string, { status: RepositoryCheckStatus; observedAt: number }>();
+  const recordObserved = (key: string, status: RepositoryCheckStatus, timestamp: unknown) => {
+    const parsed = Date.parse(String(timestamp ?? ''));
+    const observedAt = Number.isFinite(parsed) ? parsed : 0;
+    const current = observed.get(key);
+    const severity = { success: 0, pending: 1, failure: 2 } as const;
+    if (!current || observedAt > current.observedAt
+      || (observedAt === current.observedAt && severity[status] > severity[current.status])) {
+      observed.set(key, { status, observedAt });
+    }
+  };
   const runs = asRecord(checksValue).check_runs;
-  if (Array.isArray(runs)) for (const item of runs) { const run = asRecord(item); const name = String(run.name ?? 'check'); const appId = Number(asRecord(run.app).id); const conclusion = String(run.conclusion ?? ''); const status: RepositoryCheckStatus = run.status !== 'completed' ? 'pending' : ['success', 'neutral', 'skipped'].includes(conclusion) ? 'success' : 'failure'; observed.set(checkIdentityKey(name, Number.isInteger(appId) ? appId : undefined), status); observed.set(checkIdentityKey(name), status); }
+  if (Array.isArray(runs)) for (const item of runs) {
+    const run = asRecord(item);
+    const name = String(run.name ?? 'check');
+    const appId = optionalPositiveInteger(asRecord(run.app).id);
+    const conclusion = String(run.conclusion ?? '');
+    const status: RepositoryCheckStatus = run.status !== 'completed'
+      ? 'pending'
+      : ['success', 'neutral', 'skipped'].includes(conclusion) ? 'success' : 'failure';
+    const timestamp = run.completed_at ?? run.started_at ?? run.created_at;
+    recordObserved(checkIdentityKey(name, appId), status, timestamp);
+    recordObserved(checkIdentityKey(name), status, timestamp);
+  }
   const statuses = asRecord(statusesValue).statuses;
-  if (Array.isArray(statuses)) for (const item of statuses) { const status = asRecord(item); const name = String(status.context ?? 'status'); const state = String(status.state ?? 'pending'); observed.set(checkIdentityKey(name), state === 'success' ? 'success' : state === 'pending' ? 'pending' : 'failure'); }
+  if (Array.isArray(statuses)) for (const item of statuses) {
+    const status = asRecord(item);
+    const name = String(status.context ?? 'status');
+    const state = String(status.state ?? 'pending');
+    recordObserved(
+      checkIdentityKey(name),
+      state === 'success' ? 'success' : state === 'pending' ? 'pending' : 'failure',
+      status.updated_at ?? status.created_at,
+    );
+  }
   const required = normalizeRequiredCheckIdentities(requiredValue);
   const identities: Array<{ name: string; appId?: number }> = required.length
     ? required
     : [...new Set([...observed.keys()].filter((key) => key.endsWith('\u0000*')).map((key) => key.slice(0, -2)))].map((name) => ({ name }));
-  return identities.sort(compareChecks).map((identity) => ({ ...identity, status: observed.get(checkIdentityKey(identity.name, identity.appId)) ?? observed.get(checkIdentityKey(identity.name)) ?? 'pending' }));
+  return identities.sort(compareChecks).map((identity) => ({
+    ...identity,
+    status: observed.get(checkIdentityKey(identity.name, identity.appId))?.status
+      ?? (identity.appId === undefined ? observed.get(checkIdentityKey(identity.name))?.status : undefined)
+      ?? 'pending',
+  }));
 }
 
 function normalizeRequiredCheckIdentities(value: unknown): Array<{ name: string; appId?: number }> {
   const record = asRecord(value); const result = new Map<string, { name: string; appId?: number }>();
   if (Array.isArray(record.contexts)) for (const context of record.contexts) { const item = { name: String(context) }; result.set(checkIdentityKey(item.name), item); }
-  if (Array.isArray(record.checks)) for (const raw of record.checks) { const check = asRecord(raw); if (!check.context) continue; const appId = Number(check.app_id); const item = { name: String(check.context), ...(Number.isInteger(appId) ? { appId } : {}) }; result.set(checkIdentityKey(item.name, item.appId), item); }
+  if (Array.isArray(record.checks)) for (const raw of record.checks) { const check = asRecord(raw); if (!check.context) continue; const appId = optionalPositiveInteger(check.app_id); const item = { name: String(check.context), ...(appId !== undefined ? { appId } : {}) }; result.set(checkIdentityKey(item.name, item.appId), item); }
   return [...result.values()];
 }
 
 function inspectRulesets(value: unknown): { known: boolean; requiredChecks: Array<{ name: string; appId?: number }>; mergeQueueRequired: boolean; unsupportedRules: string[] } {
   if (!Array.isArray(value)) return { known: false, requiredChecks: [], mergeQueueRequired: false, unsupportedRules: ['invalid-rulesets-response'] };
   const requiredChecks: Array<{ name: string; appId?: number }> = []; const unsupported = new Set<string>(); let mergeQueueRequired = false;
-  for (const rawSet of value) { const set = asRecord(rawSet); const rules = set.rules; if (!Array.isArray(rules)) continue; for (const rawRule of rules) { const rule = asRecord(rawRule); const type = String(rule.type ?? ''); if (type === 'required_status_checks') { const parameters = asRecord(rule.parameters); const checks = parameters.required_status_checks; if (!Array.isArray(checks)) { unsupported.add('ruleset-required-status-checks-unresolved'); continue; } for (const rawCheck of checks) { const check = asRecord(rawCheck); if (!check.context) continue; const appId = Number(check.integration_id); requiredChecks.push({ name: String(check.context), ...(Number.isInteger(appId) ? { appId } : {}) }); } } else if (type === 'merge_queue') mergeQueueRequired = true; else if (['required_deployments', 'required_signatures', 'required_code_scanning'].includes(type)) unsupported.add(type); } }
+  for (const rawSet of value) { const set = asRecord(rawSet); const rules = set.rules; if (!Array.isArray(rules)) continue; for (const rawRule of rules) { const rule = asRecord(rawRule); const type = String(rule.type ?? ''); if (type === 'required_status_checks') { const parameters = asRecord(rule.parameters); const checks = parameters.required_status_checks; if (!Array.isArray(checks)) { unsupported.add('ruleset-required-status-checks-unresolved'); continue; } for (const rawCheck of checks) { const check = asRecord(rawCheck); if (!check.context) continue; const appId = optionalPositiveInteger(check.integration_id); requiredChecks.push({ name: String(check.context), ...(appId !== undefined ? { appId } : {}) }); } } else if (type === 'merge_queue') mergeQueueRequired = true; else if (['required_deployments', 'required_signatures', 'required_code_scanning', 'code_scanning', 'workflows', 'required_workflows'].includes(type)) unsupported.add(type); } }
   return { known: unsupported.size === 0, requiredChecks, mergeQueueRequired, unsupportedRules: [...unsupported].sort() };
 }
-function rulesetsRequireUnknownStatusChecks(value: unknown): boolean { const facts = inspectRulesets(value); return !facts.known || facts.requiredChecks.length > 0; }

@@ -228,9 +228,4 @@ describePg('PgMemoryConsolidationStore contract', () => {
     expect(lock3).not.toBeNull();
     await lock3!.release();
   });
-
-  it('getUserDailyUsage 汇总当日 run 数', async () => {
-    const usage = await store!.getUserDailyUsage('t1', 'u1');
-    expect(usage.runs).toBeGreaterThanOrEqual(1); // k-1 已入账
-  });
 });

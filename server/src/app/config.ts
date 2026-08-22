@@ -386,12 +386,8 @@ const memoryPollingSchema = z.object({
  */
 const memoryConsolidationSchema = z.object({
   enabled: z.boolean().optional(),
-  /** 静默期（分钟）：run_finished 后无新 run 达此时长才提取，默认 10 */
+  /** 静默期（分钟）：run_finished 后无新 run 达此时长才提取，默认 30 */
   debounceMinutes: z.number().int().min(1).max(120).optional(),
-  /** 单用户每日提取次数上限，默认 12（防 debounce 退化为逐轮） */
-  maxConsolidationsPerUserPerDay: z.number().int().min(1).max(100).optional(),
-  /** 单用户每日输入 token 上限，默认 100000 */
-  maxInputTokensPerUserPerDay: z.number().int().min(10_000).max(1_000_000).optional(),
   scanIntervalMs: z.number().int().min(1_000).max(60_000).optional(),
   scanBatchSize: z.number().int().min(10).max(5_000).optional(),
   workerConcurrency: z.number().int().min(1).max(16).optional(),

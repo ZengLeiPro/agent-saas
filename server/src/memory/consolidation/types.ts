@@ -6,6 +6,7 @@
  * 从父会话完整 Context Projection 重放，并直接维护真实 Markdown。
  */
 
+/** throttled 仅用于兼容旧版本遗留状态；新引擎启动时会恢复为 pending。 */
 export type ConsolidationStateStatus =
   | 'idle'
   | 'pending'
@@ -83,8 +84,6 @@ export interface MemoryTombstone {
 export interface MemoryConsolidationResolvedConfig {
   enabled: boolean;
   debounceMinutes: number;
-  maxConsolidationsPerUserPerDay: number;
-  maxInputTokensPerUserPerDay: number;
   scanIntervalMs: number;
   scanBatchSize: number;
   workerConcurrency: number;
@@ -98,9 +97,7 @@ export interface MemoryConsolidationResolvedConfig {
 
 export const MEMORY_CONSOLIDATION_DEFAULTS: MemoryConsolidationResolvedConfig = {
   enabled: false,
-  debounceMinutes: 10,
-  maxConsolidationsPerUserPerDay: 12,
-  maxInputTokensPerUserPerDay: 100_000,
+  debounceMinutes: 30,
   scanIntervalMs: 10_000,
   scanBatchSize: 500,
   workerConcurrency: 2,

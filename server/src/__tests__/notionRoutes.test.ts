@@ -124,11 +124,18 @@ describe('Notion connector routes', () => {
     expect(assertLegacyWriteAllowed).not.toHaveBeenCalled();
   });
 
-  it('sealed gate 下 Notion POST 与 DELETE 仍返回原迁移封锁响应', async () => {
+  it('sealed gate 下 Notion 授权和本地断开仍可执行', async () => {
     const assertLegacyWriteAllowed = vi.fn(async () => { throw new Error('sealed'); });
+    const start = vi.fn(async () => ({
+      sessionId: 'session-a', tenantId: USER.tenantId, userId: USER.id, username: USER.username,
+      status: 'awaiting_user' as const, expiresAt: '2026-08-22T00:00:00.000Z',
+      createdAt: '2026-08-21T00:00:00.000Z', updatedAt: '2026-08-21T00:00:00.000Z',
+    }));
+    const disconnect = vi.fn(async () => ({ connection: { status: 'disconnected' } }));
     const baseUrl = await listen({
-      authFlowService: authFlow(),
+      authFlowService: { ...authFlow(), start },
       connectionStore: {} as any,
+      disconnect: disconnect as any,
       userStore: { findById: vi.fn(() => USER) } as any,
       available: true,
       legacyWriteGate: { assertLegacyWriteAllowed },
@@ -137,15 +144,11 @@ describe('Notion connector routes', () => {
     const postResponse = await fetch(`${baseUrl}/api/connectors/notion/auth/session`, { method: 'POST' });
     const deleteResponse = await fetch(`${baseUrl}/api/connectors/notion`, { method: 'DELETE' });
 
-    expect(postResponse.status).toBe(409);
-    await expect(postResponse.json()).resolves.toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
-    expect(deleteResponse.status).toBe(409);
-    await expect(deleteResponse.json()).resolves.toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
-    expect(assertLegacyWriteAllowed).toHaveBeenCalledTimes(2);
-    expect(assertLegacyWriteAllowed).toHaveBeenCalledWith({
-      actor: 'user',
-      compatibilityProjection: false,
-    });
+    expect(postResponse.status).toBe(202);
+    expect(deleteResponse.status).toBe(200);
+    expect(start).toHaveBeenCalledWith(USER);
+    expect(disconnect).toHaveBeenCalledWith(USER.id, USER.username, USER.tenantId);
+    expect(assertLegacyWriteAllowed).not.toHaveBeenCalled();
   });
 
   it('服务未配置时明确返回 unavailable', async () => {

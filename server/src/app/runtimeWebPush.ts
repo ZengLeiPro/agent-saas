@@ -23,7 +23,7 @@ export interface RuntimeWebPushAssembly {
   initialize(eventStore: PgEventStore, tablePrefix?: string): Promise<void>;
   warnIfUnavailable(): void;
   appendCronChannel(channels: NotifyChannel[], notifyConfig: NotifyConfig): void;
-  deliverRuntimeEvent(event: PlatformEvent): void;
+  deliverRuntimeEvent(event: PlatformEvent): Promise<void>;
 }
 
 /** Keeps Web Push startup and runtime delivery wiring in one lifecycle-owned adapter. */
@@ -63,14 +63,17 @@ export function createRuntimeWebPushAssembly(
       }
     },
 
-    deliverRuntimeEvent(event) {
+    async deliverRuntimeEvent(event) {
       const sessionStore = options.getSessionStore();
       if (!service || !sessionStore) return;
-      void notifyWebPushForRuntimeEvent(event, { service, sessionStore }).catch((err) => {
+      try {
+        await notifyWebPushForRuntimeEvent(event, { service, sessionStore });
+      } catch (err) {
         options.logger.warn(
           `Web Push runtime event delivery failed: event=${event.type} error=${err instanceof Error ? err.message : String(err)}`,
         );
-      });
+        throw err;
+      }
     },
   };
 }

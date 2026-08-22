@@ -2746,7 +2746,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           `Taskboard runtime event projection failed: event=${event.type} error=${err instanceof Error ? err.message : String(err)}`,
         );
       });
-      if (event.type !== 'tenant_lifecycle_changed') runtimeWebPush.deliverRuntimeEvent(event);
+      if (event.type !== 'tenant_lifecycle_changed') await runtimeWebPush.deliverRuntimeEvent(event);
       if (event.type === 'tenant_lifecycle_changed') {
         await applyTenantLifecycleChange(event, {
           tenantStore,

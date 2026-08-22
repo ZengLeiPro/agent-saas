@@ -206,7 +206,7 @@ describe("TaskDetail 草稿隔离", () => {
     fireEvent.change(comment, { target: { value: "任务一评论草稿" } });
 
     await user.click(screen.getByRole("combobox", { name: "任务状态" }));
-    await user.click(screen.getByRole("option", { name: "待实施" }));
+    await user.click(screen.getByRole("option", { name: "待推进" }));
     await waitFor(() => expect(initialProps.onMove).toHaveBeenCalled());
     expect(title.value).toBe("未保存的新标题");
     expect(comment.value).toBe("任务一评论草稿");
@@ -317,7 +317,7 @@ describe("TaskDetail 草稿隔离", () => {
     await waitFor(() => expect(onUpdate).toHaveBeenCalledWith(advisory, { kind: "delivery" }));
     expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("不能改回 advisory"));
     expect(await screen.findByText("交付任务")).toBeTruthy();
-    expect(screen.getAllByText("待实施").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("待推进").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "升级为交付任务" })).toBeNull();
     confirmSpy.mockRestore();
   });
@@ -545,7 +545,7 @@ describe("TaskDetail 草稿隔离", () => {
     expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).disabled).toBe(false);
   });
 
-  it("待实施任务可以显式交给 Agent，并展示执行会话入口", async () => {
+  it("待推进任务可以显式交给 Agent，并展示执行会话入口", async () => {
     const user = userEvent.setup();
     const todoTask = { ...taskOne, status: "todo" as const };
     const runningTask = { ...todoTask, status: "in_progress" as const, version: todoTask.version + 1 };

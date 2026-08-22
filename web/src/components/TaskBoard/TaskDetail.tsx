@@ -355,7 +355,7 @@ export function TaskDetail({
 
   const promoteToDelivery = async () => {
     if (!currentTask || taskKind !== "advisory" || editReadOnly || !canTransitionTask) return;
-    if (!window.confirm("确认将该答复与分析任务升级为交付任务吗？升级后将进入待实施，且不能改回 advisory。")) return;
+    if (!window.confirm("确认将该答复与分析任务升级为交付任务吗？升级后将进入待推进，且不能改回 advisory。")) return;
     const operationTask = currentTask;
     const requestId = ++detailRequestRef.current;
     setSaving(true);

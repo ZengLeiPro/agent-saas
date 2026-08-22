@@ -11,6 +11,12 @@ describe('direct workflow transitions', () => {
   it('maps remediation review approval directly to done', () => {
     expect(decideTransition(task({kind:'remediation',status:'in_review'}), 'review', 'done', {hasMergeFact:false})).toEqual({toStatus:'done'});
   });
+  it('only lets legacy integration merge finish after a complete merge fact', () => {
+    const integration = task({ kind: 'integration', status: 'in_progress', workflowVersion: 2 });
+    expect(() => decideTransition(integration, 'merge', 'done', { hasMergeFact: false })).toThrow();
+    expect(decideTransition(integration, 'merge', 'done', { hasMergeFact: true })).toEqual({ toStatus: 'done' });
+    expect(() => decideTransition(integration, 'merge', 'in_progress', { hasMergeFact: true })).toThrow();
+  });
   it('exposes allowedStatuses without evidence fields', () => {
     expect(resolveWorkflowContract(task(), 'work').allowedStatuses).toEqual(['in_review','blocked']);
   });

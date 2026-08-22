@@ -24,11 +24,6 @@ export async function runTaskboardV2Schema(
   options: TaskboardV2SchemaOptions,
   client: PoolClient,
 ): Promise<void> {
-  const legacyResolutionsTable = options.executionsTable.endsWith('_taskboard_execs')
-    ? options.executionsTable.replace(/_taskboard_execs$/, '_taskboard_resolutions')
-    : options.executionsTable.endsWith('_executions')
-      ? options.executionsTable.replace(/_executions$/, '_resolutions')
-      : `${options.executionsTable}_resolutions`;
   await client.query(`
     ALTER TABLE ${options.tasksTable}
       ADD COLUMN IF NOT EXISTS resume_context JSONB
@@ -213,32 +208,6 @@ export async function runTaskboardV2Schema(
     ALTER TABLE ${options.executionsTable} ADD COLUMN IF NOT EXISTS fence_epoch BIGINT NOT NULL DEFAULT 0;
     ALTER TABLE ${options.executionsTable} ADD COLUMN IF NOT EXISTS terminal_reason_code TEXT;
   `);
-  // Preserve the terminal fence for executions completed by the retired protocol before dropping its storage.
-  await client.query(`
-    DO $$
-    BEGIN
-      IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-         WHERE table_schema=current_schema() AND table_name='${options.executionsTable}'
-           AND column_name='resolution_id'
-      ) AND EXISTS (
-        SELECT 1 FROM information_schema.columns
-         WHERE table_schema=current_schema() AND table_name='${options.executionsTable}'
-           AND column_name='resolved_at'
-      ) THEN
-        UPDATE ${options.executionsTable}
-           SET transitioned_at=COALESCE(transitioned_at,resolved_at),
-               terminal_reason_code=COALESCE(terminal_reason_code,'legacy_resolution_migrated')
-         WHERE resolution_id IS NOT NULL;
-      END IF;
-    END $$
-  `);
-  // TaskBoard Resolution is retired. Immutable change history remains untouched.
-  await client.query(`DROP TABLE IF EXISTS ${legacyResolutionsTable}`);
-  await client.query(`
-    ALTER TABLE ${options.executionsTable} DROP COLUMN IF EXISTS resolution_id;
-    ALTER TABLE ${options.executionsTable} DROP COLUMN IF EXISTS resolved_at
-  `);
   await client.query(`
     CREATE TABLE IF NOT EXISTS ${options.remediationAttemptsTable} (
       id TEXT PRIMARY KEY,
@@ -326,4 +295,48 @@ export async function runTaskboardV2Schema(
       WHERE status IN ('pending','processing')
   `);
   await runIntegrationCandidateSchema(options, client);
+}
+
+export async function retireTaskboardResolutionSchema(
+  options: Pick<TaskboardV2SchemaOptions, 'executionsTable'>,
+  client: PoolClient,
+): Promise<void> {
+  const legacyResolutionsTable = options.executionsTable.endsWith('_taskboard_execs')
+    ? options.executionsTable.replace(/_taskboard_execs$/, '_taskboard_resolutions')
+    : options.executionsTable.endsWith('_executions')
+      ? options.executionsTable.replace(/_executions$/, '_resolutions')
+      : `${options.executionsTable}_resolutions`;
+  await client.query('BEGIN');
+  try {
+    // Preserve the terminal fence for executions completed by the retired protocol.
+    await client.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema=current_schema() AND table_name='${options.executionsTable}'
+             AND column_name='resolution_id'
+        ) AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema=current_schema() AND table_name='${options.executionsTable}'
+             AND column_name='resolved_at'
+        ) THEN
+          UPDATE ${options.executionsTable}
+             SET transitioned_at=COALESCE(transitioned_at,resolved_at),
+                 terminal_reason_code=COALESCE(terminal_reason_code,'legacy_resolution_migrated')
+           WHERE resolution_id IS NOT NULL;
+        END IF;
+      END $$
+    `);
+    // Immutable change history remains untouched.
+    await client.query(`DROP TABLE IF EXISTS ${legacyResolutionsTable}`);
+    await client.query(`
+      ALTER TABLE ${options.executionsTable} DROP COLUMN IF EXISTS resolution_id;
+      ALTER TABLE ${options.executionsTable} DROP COLUMN IF EXISTS resolved_at
+    `);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  }
 }

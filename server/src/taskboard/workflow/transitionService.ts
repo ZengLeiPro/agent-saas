@@ -72,8 +72,16 @@ export async function transitionExecutionV2(
       return transitionIntegrationV3(options, client, identity, loaded.task, execution, executionRow, input.status);
     }
     const facts = await loadWorkflowFacts(options, client, loaded.task);
-    if (facts.hasMergeFact || loaded.task.status === 'done' || loaded.task.status === 'canceled') {
+    const completingMergedIntegration = loaded.task.kind === 'integration'
+      && loaded.task.workflowVersion !== 3
+      && execution.purpose === 'merge'
+      && input.status === 'done';
+    if (loaded.task.status === 'done' || loaded.task.status === 'canceled'
+      || (facts.hasMergeFact && !completingMergedIntegration)) {
       throw new TaskboardValidationError('Expired or terminal execution cannot transition the task', 'TASKBOARD_EXECUTION_FENCED');
+    }
+    if (completingMergedIntegration && !facts.hasMergeFact) {
+      throw new TaskboardValidationError('Integration task has no complete merge fact', 'TASKBOARD_INTEGRATION_INCOMPLETE');
     }
     const decision = decideTransition(loaded.task, execution.purpose, input.status, facts);
     const nextStatus = decision.toStatus;
@@ -90,11 +98,6 @@ export async function transitionExecutionV2(
       if (!await recordRemediationCommit(options, client, taskId, execution.id)) {
         throw new TaskboardValidationError('Remediation work must produce a new commit before entering review', 'TASKBOARD_REMEDIATION_COMMIT_REQUIRED');
       }
-    }
-    if (loaded.task.kind === 'integration' && nextStatus === 'done') {
-      const remaining = await client.query(
-        `SELECT 1 FROM ${options.integrationSourcesTable} WHERE integration_task_id=$1 AND state<>'merged' LIMIT 1`, [taskId]);
-      if (remaining.rows[0]) throw new TaskboardValidationError('Integration task still has unmerged sources', 'TASKBOARD_INTEGRATION_INCOMPLETE');
     }
     if (remediationApproval) {
       const resumed = await client.query(

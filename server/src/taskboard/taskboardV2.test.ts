@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { allowedActionsForRole, normalizeRepositoryConfig } from './boardFields.js';
 import { resolveExecutionModelRef } from './executionFields.js';
 import { rowToExecution, rowToTask } from './storeHelpers.js';
-import { runTaskboardV2Schema } from './v2Schema.js';
+import { retireTaskboardResolutionSchema, runTaskboardV2Schema } from './v2Schema.js';
 import { resolveExecutionContextWorkflowContract } from './executionContextContract.js';
 import { resolveWorkflowContract } from './workflowContract.js';
 
@@ -137,6 +137,7 @@ describe('taskboard V2 contracts', () => {
       remediationAttemptsTable: 'tb_remediation_attempts',
       cancellationOutboxTable: 'tb_cancellation_outbox',
     }, client as never);
+    await retireTaskboardResolutionSchema({ executionsTable: 'tb_executions' }, client as never);
     const ddl = sql.join('\n');
 
     expect(ddl).toContain('ADD COLUMN IF NOT EXISTS resume_context JSONB');
@@ -150,8 +151,27 @@ describe('taskboard V2 contracts', () => {
     expect(ddl).toContain('TASKBOARD_ACTIVE_PR_DUPLICATES');
     expect(ddl).toContain('apr_uq');
     expect(ddl).toContain("terminal_reason_code=COALESCE(terminal_reason_code,'legacy_resolution_migrated')");
+    expect(sql.at(-1)).toBe('COMMIT');
+    expect(sql.lastIndexOf('BEGIN')).toBeGreaterThan(sql.findIndex((statement) => statement.includes('TASKBOARD_ACTIVE_PR_DUPLICATES')));
     expect(ddl).toContain('DROP TABLE IF EXISTS tb_resolutions');
     expect(ddl).toContain('DROP COLUMN IF EXISTS resolution_id');
     expect(ddl).toContain('DROP COLUMN IF EXISTS resolved_at');
+  });
+
+  it('rolls back retired protocol cleanup when a destructive statement fails', async () => {
+    const sql: string[] = [];
+    const client = {
+      query: vi.fn(async (text: string) => {
+        sql.push(text);
+        if (text.includes('DROP COLUMN IF EXISTS resolution_id')) throw new Error('injected cleanup failure');
+        return { rows: [] };
+      }),
+    };
+
+    await expect(retireTaskboardResolutionSchema(
+      { executionsTable: 'tb_executions' },
+      client as never,
+    )).rejects.toThrow('injected cleanup failure');
+    expect(sql.at(-1)).toBe('ROLLBACK');
   });
 });

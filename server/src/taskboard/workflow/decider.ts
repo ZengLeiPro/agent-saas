@@ -155,7 +155,12 @@ export function decideTransition(
   status: TaskBoardStatus,
   facts: WorkflowFacts,
 ): TransitionDecision {
-  if (isIrreversibleMerged(task, facts) || TERMINAL_STATUSES.has(task.status)) {
+  const completingMergedIntegration = task.kind === 'integration'
+    && task.workflowVersion !== 3
+    && purpose === 'merge'
+    && status === 'done';
+  if (TERMINAL_STATUSES.has(task.status)
+    || (isIrreversibleMerged(task, facts) && !completingMergedIntegration)) {
     throw new TaskboardValidationError('Terminal task cannot accept a transition', 'TASKBOARD_EXECUTION_FENCED');
   }
   if (task.kind === 'integration' && task.workflowVersion === 3) {
@@ -187,8 +192,10 @@ export function decideTransition(
       : ['ready_to_merge', 'todo', 'in_review', 'blocked'];
     if (allowed.includes(status)) return { toStatus: status };
   }
-  if (purpose === 'merge' && task.kind === 'integration'
-    && ['in_progress', 'done', 'blocked'].includes(status)) return { toStatus: status };
+  if (purpose === 'merge' && task.kind === 'integration') {
+    if (status === 'done' && facts.hasMergeFact) return { toStatus: status };
+    if (status === 'in_progress' || status === 'blocked') return { toStatus: status };
+  }
   return invalidTransition(task, purpose, status);
 }
 

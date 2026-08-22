@@ -1,5 +1,6 @@
 import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   IntegrationPushCapabilityService,
   type IntegrationPushCapabilityBinding,
@@ -94,6 +95,7 @@ export type IntegrationPushGatewayErrorCode =
   | 'parent_mismatch'
   | 'merge_commit_forbidden'
   | 'remote_old_mismatch'
+  | 'remote_read_failed'
   | 'credential_unavailable'
   | 'push_failed_unknown';
 
@@ -300,8 +302,7 @@ export class IntegrationPushGateway {
         }, cwd, repository.remoteUrl, env);
         return;
       }
-      const remoteOld = await this.readExactRemoteRef(cwd, repository.remoteUrl, target.binding.exactRef, env)
-        .catch(() => { throw new IntegrationPushGatewayError('remote_old_mismatch', true); });
+      const remoteOld = await this.readExactRemoteRef(cwd, repository.remoteUrl, target.binding.exactRef, env);
       if (remoteOld !== target.binding.expectedOldOid) throw new IntegrationPushGatewayError('remote_old_mismatch', true);
       await this.options.capabilityService.consume(input.capabilityToken, {
         ref: target.binding.exactRef, oldOid: target.binding.expectedOldOid, newOid: input.commitOid,
@@ -573,11 +574,19 @@ export class IntegrationPushGateway {
   }
 
   private async readExactRemoteRef(cwd: string, remoteUrl: string, exactRef: string, env: Record<string, string>): Promise<string | undefined> {
-    const result = await this.runner.run({ cwd, args: ['ls-remote', '--refs', remoteUrl, exactRef], env, redactOutput: true });
-    if (!result.stdout.trim()) return undefined;
-    const fields = result.stdout.trim().split(/\s+/);
-    if (fields.length !== 2 || fields[1] !== exactRef || !OID.test(fields[0]!)) throw new Error('invalid remote ref response');
-    return fields[0];
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const result = await this.runner.run({ cwd, args: ['ls-remote', '--refs', remoteUrl, exactRef], env, redactOutput: true });
+        if (!result.stdout.trim()) return undefined;
+        const fields = result.stdout.trim().split(/\s+/);
+        if (fields.length !== 2 || fields[1] !== exactRef || !OID.test(fields[0]!)) throw new Error('invalid remote ref response');
+        return fields[0];
+      } catch {
+        if (attempt === 3) throw new IntegrationPushGatewayError('remote_read_failed', true);
+        await delay(attempt * 200);
+      }
+    }
+    throw new IntegrationPushGatewayError('remote_read_failed', true);
   }
 
   private async reconcileExactRef(

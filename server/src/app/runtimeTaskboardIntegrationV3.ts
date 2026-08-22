@@ -41,12 +41,16 @@ import { canonicalGithubRepositoryUrl, isCanonicalGithubRepositoryRemote, type R
 import { provisionIntegrationV3RepositoryMirror } from '../taskboard/integrationV3RepositoryProvisioning.js';
 import { runSafeServerGit, runSafeServerGitOrThrow } from '../taskboard/safeServerGitRunner.js';
 import { createIntegrationV3GithubAppRepositoryProvider, RepositoryProviderIntegrationEngineV3Adapter } from '../taskboard/repositoryRuntime.js';
-import type {
-  RepositoryWorkspaceGitCommand,
-  RepositoryWorkspaceGitResult,
+import {
+  syncCandidateRevisionObjects,
+  syncRepositoryWorkspace,
+  type RepositoryWorkspaceGitCommand,
+  type RepositoryWorkspaceGitResult,
 } from '../taskboard/repositoryWorkspaceSync.js';
 import type { PgTaskboardStore } from '../taskboard/store.js';
+import { materializeCandidateObjects } from '../taskboard/workspaceCommitMaterializer.js';
 import { serverLogger } from '../utils/logger.js';
+import { resolveUserCwd } from '../workspace/resolver.js';
 
 export interface RuntimeTaskboardIntegrationV3 {
   readonly integrationPush: TaskboardIntegrationPushService;
@@ -393,7 +397,45 @@ export function startRuntimeTaskboardIntegrationV3(
     sourceSnapshotsTable: tables.sourceSnapshotsTable,
     boardsTable: store.boardsTable,
     executionsTable: store.executionsTable,
-    dispatchAgent: async ({ identity, taskId, expectedVersion, purpose, executionId }) => {
+    dispatchAgent: async ({ identity, taskId, expectedVersion, purpose, executionId, candidateId, candidateRevision, assertCurrent }) => {
+      const current = await workerHost.loadCurrent(candidateId);
+      if (!current.revision || !current.revision.treeOid || current.candidate.currentRevision !== candidateRevision
+        || current.revision.revision !== candidateRevision || !current.candidate.providerPullRequestId) {
+        throw new Error('Candidate execution workspace binding is stale');
+      }
+      const revision = current.revision;
+      const treeOid = current.revision.treeOid;
+      const providerPullRequestId = current.candidate.providerPullRequestId;
+      const context = await composeHost.resolveContext({ candidate: current.candidate, revision });
+      const objects = await composeHost.withRepositoryFetchCredential(context, (fetchEnvironment) => (
+        syncCandidateRevisionObjects(composeHost, {
+          repositoryPath: context.repositoryPath,
+          integrationBranch: current.candidate.branch,
+          baseBranch: current.candidate.baseBranch,
+          controlledRemoteUrl: canonicalGithubRepositoryUrl(context.repository),
+          fetchEnvironment,
+          candidateId,
+          candidateRevision,
+          providerPullRequestId,
+          expectedBaseOid: revision.baseOid,
+          expectedHeadOid: revision.headOid,
+          expectedTreeOid: treeOid,
+        })
+      ));
+      await materializeCandidateObjects({
+        sourceRepositoryPath: objects.repositoryPath,
+        workspaceRoot: resolveUserCwd(agentCwd, {
+          id: identity.ownerUserId,
+          username: identity.username,
+          role: 'user',
+          tenantId: identity.tenantId,
+        }),
+        repositoryName: context.repository.name,
+        baseOid: objects.baseOid,
+        headOid: objects.headOid,
+        treeOid: objects.treeOid,
+      });
+      await assertCurrent();
       // Work admission is enforced inside rawRuntimeRunDispatch against evidence returned
       // by provisioning the exact ACS SandboxRef. A standalone capability probe here would
       // attest a different boundary and is therefore intentionally forbidden.
@@ -406,7 +448,6 @@ export function startRuntimeTaskboardIntegrationV3(
       const current = await workerHost.loadCurrent(request.candidateId);
       if (!current.revision) throw new Error('Workspace sync requires a current candidate revision');
       const context = await composeHost.resolveContext({ candidate: current.candidate, revision: current.revision });
-      const { syncRepositoryWorkspace } = await import('../taskboard/repositoryWorkspaceSync.js');
       await composeHost.withRepositoryFetchCredential(context, (fetchEnvironment) => (
         syncRepositoryWorkspace(composeHost, {
           repositoryPath: context.repositoryPath,

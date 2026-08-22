@@ -38,6 +38,9 @@ const PUBLIC_ROUTES: Array<{ method?: string; path: string | RegExp }> = [
   { method: "GET", path: "/connectors/oauth/callback" },
   { method: "GET", path: "/mcp/oauth/client-metadata" },
   { method: "GET", path: /^\/artifacts\/[^/]+\/content$/ },
+  { method: "GET", path: /^\/share\/artifacts\/[^/]+$/ },
+  { method: "GET", path: /^\/share\/artifacts\/[^/]+\/content$/ },
+  { method: "HEAD", path: /^\/share\/artifacts\/[^/]+\/content$/ },
   { method: "GET", path: /^\/share\/sessions\/[^/]+$/ },
   { path: /^\/share\/sessions\/[^/]+\/file$/ },
 ];

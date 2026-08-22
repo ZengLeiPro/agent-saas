@@ -15,6 +15,8 @@ import type { resolveTenantMemoryFeatureStatus } from '../memory/effectiveStatus
 import type { SessionReadStateStore } from '../data/sessionReadStateStore.js';
 import type { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import type { ArtifactService } from '../runtime/artifactService.js';
+import type { ArtifactShareService } from '../runtime/artifactShareService.js';
+import type { ArtifactShareStore } from '../runtime/artifactShareStore.js';
 import type { SessionShareStore } from '../data/sessionShares/store.js';
 import type { RuntimePerformanceWorkloadSnapshot } from '../runtime/runtimePerformanceSampler.js';
 import type { RuntimeSchedulerCapacityController } from '../runtime/runtimeSchedulerConfigStore.js';
@@ -365,6 +367,10 @@ export interface AppRuntime {
   connectorDictionaryStore: ConnectorDictionaryStore;
   /** Artifact metadata/blob service for runtime-produced artifacts. */
   artifactService?: ArtifactService;
+  /** Owner-managed public Artifact sharing; absent when no persistent signing secret exists. */
+  artifactShareService?: ArtifactShareService;
+  /** Share persistence also drives GC pins and session-delete revocation. */
+  artifactShareStore?: ArtifactShareStore;
   /** 会话只读分享存储。 */
   sessionShareStore: SessionShareStore;
   /** Artifact GC timer cleanup. */

@@ -165,6 +165,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       "/api",
       createArtifactsRouter({
         artifactService: runtime.artifactService,
+        artifactShareService: runtime.artifactShareService,
         defaultReadUrlTtlSeconds: config.artifact?.readUrlTtlSeconds,
       }),
     );
@@ -269,6 +270,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       runtimeEventStoreFor: runtime.runtimeEventStoreFor,
       resolveContextAccounting: (modelRef) => resolveContextAccountingFromModels(config.models, modelRef),
       sessionShareStore: runtime.sessionShareStore,
+      artifactShareStore: runtime.artifactShareStore,
+      artifactService: runtime.artifactService,
       sessionProjectionStore: runtime.runtimeSessionProjectionStore,
       sessionReadStateStore: runtime.sessionReadStateStore,
       sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId),

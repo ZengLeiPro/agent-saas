@@ -76,6 +76,10 @@ export interface ArtifactServiceOptions {
     sessionId: string;
     scope: 'session_export';
   }) => Promise<void>;
+  /** Active public shares pin immutable artifacts until revoke/expiry. */
+  isArtifactPinned?: (artifactId: string) => Promise<boolean>;
+  /** Serializes share creation with the GC check/delete critical section. */
+  withArtifactLock?: <T>(artifactId: string, operation: () => Promise<T>) => Promise<T>;
 }
 
 const DEFAULT_READ_URL_TTL_SECONDS = 15 * 60;
@@ -104,6 +108,39 @@ export class ArtifactService {
     return record;
   }
 
+  /** Owner-self check for creating or managing a public share; admin grants never substitute ownership. */
+  async getForOwner(artifactId: string, user?: RuntimeArtifactUser): Promise<ArtifactRecord> {
+    if (!user) throw new ArtifactServiceError(401, 'Authentication required');
+    const record = await this.options.artifactStore.get(artifactId);
+    if (!record) throw new ArtifactServiceError(404, 'Artifact not found');
+    await this.assertSessionOwner(record.sessionId, user);
+    return record;
+  }
+
+  async markDelivered(artifactId: string): Promise<ArtifactRecord> {
+    const update = async (): Promise<ArtifactRecord> => {
+      const record = await this.options.artifactStore.markDelivered(artifactId, new Date().toISOString());
+      if (!record) throw new ArtifactServiceError(404, 'Artifact not found');
+      return record;
+    };
+    return this.options.withArtifactLock
+      ? this.options.withArtifactLock(artifactId, update)
+      : update();
+  }
+
+  /** Internal share path. Callers must validate the public share token first. */
+  async getRecordForShare(artifactId: string): Promise<ArtifactRecord> {
+    const record = await this.options.artifactStore.get(artifactId);
+    if (!record) throw new ArtifactServiceError(404, 'Artifact not found');
+    return record;
+  }
+
+  /** Internal share path. Never returns a storage URL. */
+  async readContentForShare(artifactId: string): Promise<ArtifactContent> {
+    const record = await this.getRecordForShare(artifactId);
+    return { record, data: await this.options.blobStore.get(record.uri) };
+  }
+
   async ensureCanAccessSession(sessionId: string, user?: RuntimeArtifactUser): Promise<void> {
     await this.assertCanAccessSession(sessionId, user);
   }
@@ -116,20 +153,26 @@ export class ArtifactService {
       contentType: input.mimeType,
       extension: input.fileName ? extname(input.fileName) : undefined,
     });
-    return this.options.artifactStore.create({
-      sessionId: input.sessionId,
-      workspaceId: input.workspaceId,
-      producingHandId: input.producingHandId,
-      kind: input.kind ?? inferKind(input.fileName),
-      uri: blob.uri,
-      mimeType: input.mimeType ?? blob.contentType,
-      sizeBytes: blob.sizeBytes,
-      sha256: blob.sha256,
-      metadata: {
-        ...(input.metadata ?? {}),
-        ...(input.fileName ? { fileName: basename(input.fileName) } : {}),
-      },
-    });
+    try {
+      return await this.options.artifactStore.create({
+        sessionId: input.sessionId,
+        workspaceId: input.workspaceId,
+        producingHandId: input.producingHandId,
+        kind: input.kind ?? inferKind(input.fileName),
+        uri: blob.uri,
+        mimeType: input.mimeType ?? blob.contentType,
+        sizeBytes: blob.sizeBytes,
+        sha256: blob.sha256,
+        metadata: {
+          ...(input.metadata ?? {}),
+          ...(input.fileName ? { fileName: basename(input.fileName) } : {}),
+        },
+      });
+    } catch (error) {
+      // Blob 已写入但 metadata 落库失败时立即补偿，避免每次失败都留下唯一对象。
+      await this.options.blobStore.delete(blob.uri).catch(() => undefined);
+      throw error;
+    }
   }
 
   async createFromWorkspaceFile(input: CreateArtifactFromWorkspaceFileInput): Promise<ArtifactRecord> {
@@ -157,12 +200,12 @@ export class ArtifactService {
   async createReadUrlForUser(
     artifactId: string,
     user: RuntimeArtifactUser | undefined,
-    opts: { baseUrl: string; expiresInSeconds?: number },
+    opts: { baseUrl: string; expiresInSeconds?: number; forceProxy?: boolean },
   ): Promise<ArtifactReadUrl> {
     const record = await this.getForUser(artifactId, user);
     const ttlSeconds = opts.expiresInSeconds ?? this.defaultReadUrlTtlSeconds;
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
-    if (record.uri.startsWith('oss://')) {
+    if (record.uri.startsWith('oss://') && !opts.forceProxy) {
       return {
         url: await this.options.blobStore.createReadUrl(record.uri, { expiresInSeconds: ttlSeconds }),
         expiresAt,
@@ -193,9 +236,19 @@ export class ArtifactService {
     const records = await this.options.artifactStore.listOlderThan(cutoff, limit);
     let deleted = 0;
     for (const record of records) {
-      await this.options.blobStore.delete(record.uri).catch(() => undefined);
-      await this.options.artifactStore.delete(record.artifactId);
-      deleted += 1;
+      const cleanup = async (): Promise<boolean> => {
+        // listOlderThan 只是候选快照；deliver 可能随后写入 deliveredAt。锁内必须
+        // 重读，不能用旧 record 删除刚完成交付的 Artifact。
+        const current = await this.options.artifactStore.get(record.artifactId);
+        if (!current || current.deliveredAt) return false;
+        if (await this.options.isArtifactPinned?.(record.artifactId)) return false;
+        await this.deleteRecordAndUnreferencedBlob(current);
+        return true;
+      };
+      const didDelete = this.options.withArtifactLock
+        ? await this.options.withArtifactLock(record.artifactId, cleanup)
+        : await cleanup();
+      if (didDelete) deleted += 1;
     }
     return { scanned: records.length, deleted };
   }
@@ -208,11 +261,39 @@ export class ArtifactService {
       : (await Promise.all(ids.map(id => this.options.artifactStore.listForSession(id)))).flat();
     let deleted = 0;
     for (const record of records) {
-      await this.options.blobStore.delete(record.uri).catch(() => undefined);
-      await this.options.artifactStore.delete(record.artifactId);
+      await this.deleteRecordAndUnreferencedBlob(record);
       deleted += 1;
     }
     return { scanned: records.length, deleted };
+  }
+
+  private async deleteRecordAndUnreferencedBlob(record: ArtifactRecord): Promise<void> {
+    const referenceCount = await this.options.artifactStore.countByUri(record.uri);
+    // 新对象 URI 唯一；历史内容寻址对象可能仍被多条记录共享。最后一条引用删除时
+    // 先确认 Blob 已清理，再删 metadata，避免吞掉存储失败后留下无法追踪的敏感孤儿。
+    if (referenceCount <= 1) await this.options.blobStore.delete(record.uri);
+    await this.options.artifactStore.delete(record.artifactId);
+  }
+
+  private async assertSessionOwner(sessionId: string, user: RuntimeArtifactUser): Promise<void> {
+    const userCwd = resolveUserCwd(this.options.agentCwd, {
+      id: user.sub,
+      username: user.username,
+      role: 'user',
+      tenantId: user.tenantId,
+    });
+    const transcriptPath = getTranscriptPath(userCwd, sessionId, { tenantId: user.tenantId, userId: user.sub });
+    let meta = await readSessionMeta(transcriptPath);
+    if (!meta) meta = await readSessionMeta(getTranscriptPath(userCwd, sessionId));
+    if (
+      !meta
+      || meta.userId !== user.sub
+      || (meta.tenantId !== undefined && meta.tenantId !== user.tenantId)
+      || meta.deletedAt
+      || hidesMemoryPollFrom({ role: user.role, tenantId: user.tenantId }, meta)
+    ) {
+      throw new ArtifactServiceError(404, 'Artifact not found');
+    }
   }
 
   private async assertCanAccessSession(sessionId: string, user?: RuntimeArtifactUser): Promise<void> {

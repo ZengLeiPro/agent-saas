@@ -78,6 +78,8 @@ import type { AgentProfileInfo } from "../data/agents/types.js";
 import { isAssignedToOrgAgent, type OrgAgentStore } from "../data/orgAgents/store.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import type { SessionShareSnapshot, SessionShareStore } from "../data/sessionShares/store.js";
+import type { ArtifactShareStore } from "../runtime/artifactShareStore.js";
+import type { ArtifactService } from "../runtime/artifactService.js";
 import type { SessionReadStateStore } from "../data/sessionReadStateStore.js";
 import { isShareExpired } from "../data/sessionShares/store.js";
 import {
@@ -448,6 +450,10 @@ export interface SessionsRouterOptions {
   resolveContextAccounting?: ContextAccountingResolver;
   /** 会话只读分享存储。 */
   sessionShareStore?: SessionShareStore;
+  /** Artifact public shares are revoked before any session deletion. */
+  artifactShareStore?: ArtifactShareStore;
+  /** Immutable Artifact metadata and blobs are erased before permanent session deletion. */
+  artifactService?: Pick<ArtifactService, "deleteArtifactsForSessions">;
   /** PG 会话元数据投影；在线列表优先走索引，无 PG 的测试/开发环境回退文件扫描。 */
   sessionProjectionStore?: {
     get?(
@@ -1849,6 +1855,8 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         if (!meta?.deletedAt || meta.userId !== req.user.sub) continue;
 
         try {
+          await options.artifactShareStore?.revokeBySession(item.sessionId, meta.userId);
+          await options.artifactService?.deleteArtifactsForSessions([item.sessionId]);
           const result = item.hasTranscript
             ? await deleteSession(item.sessionId, { deleteSidecarDir: true })
             : await deleteSessionMetaOnly(item.sessionId, { deleteSidecarDir: true });
@@ -3184,6 +3192,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           return;
         }
 
+        await options.artifactShareStore?.revokeBySession(sessionId, req.user.sub);
+        await options.artifactService?.deleteArtifactsForSessions([sessionId]);
+
         // 有 .jsonl 时走完整删除；否则只清理孤儿 meta + sidecar
         if (hasTranscript) {
           const result = await deleteSession(sessionId, {
@@ -3298,6 +3309,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         res.status(404).json({ error: "Session not found" });
         return;
       }
+
+      // Artifact public access must be closed even for an idempotent repeat delete.
+      await options.artifactShareStore?.revokeBySession(sessionId, meta.userId);
 
       // 已经软删除的不重复操作
       if (meta.deletedAt) {

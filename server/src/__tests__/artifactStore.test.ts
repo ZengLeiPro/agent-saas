@@ -1,20 +1,24 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { InMemoryArtifactStore, LocalArtifactBlobStore } from '../runtime/artifactStore.js';
+import { InMemoryArtifactShareStore } from '../runtime/artifactShareStore.js';
 import { ArtifactService } from '../runtime/artifactService.js';
 import { PlatformToolRuntime } from '../agent/toolRuntime.js';
 
 describe('LocalArtifactBlobStore', () => {
-  it('stores blobs content-addressably and returns checksum metadata', async () => {
+  it('stores immutable blobs under unique keys and returns checksum metadata', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'artifact-blob-'));
     try {
       const store = new LocalArtifactBlobStore({ rootDir: root });
       const put = await store.put({ data: 'hello artifact', contentType: 'text/plain', extension: 'txt' });
+      const second = await store.put({ data: 'hello artifact', contentType: 'text/plain', extension: 'txt' });
 
       expect(put.uri).toMatch(/^local:\/\//);
+      expect(second.uri).not.toBe(put.uri);
+      expect(second.sha256).toBe(put.sha256);
       expect(put.sizeBytes).toBe(Buffer.byteLength('hello artifact'));
       expect(put.sha256).toMatch(/^[a-f0-9]{64}$/);
       await expect(store.get(put.uri)).resolves.toEqual(Buffer.from('hello artifact'));
@@ -77,14 +81,38 @@ describe('LocalArtifactBlobStore', () => {
     }
   });
 
-  it('CreateArtifact registers a workspace file through the artifact service', async () => {
+  it('GC rechecks deliveredAt under the Artifact lock before deleting a stale candidate', async () => {
+    const blobRoot = await mkdtemp(path.join(os.tmpdir(), 'artifact-blob-'));
+    try {
+      const artifactStore = new InMemoryArtifactStore();
+      const shareStore = new InMemoryArtifactShareStore();
+      const service = new ArtifactService({
+        artifactStore,
+        blobStore: new LocalArtifactBlobStore({ rootDir: blobRoot }),
+        agentCwd: blobRoot,
+        isArtifactPinned: id => shareStore.isArtifactPinned(id),
+        withArtifactLock: (id, operation) => shareStore.withArtifactLock(id, operation),
+      });
+      const created = await service.createFromBytes({ sessionId: 'session-1', data: 'durable' });
+      await service.markDelivered(created.artifactId);
+      vi.spyOn(artifactStore, 'listOlderThan').mockResolvedValue([created]);
+
+      await expect(service.pruneExpiredArtifacts(0)).resolves.toEqual({ scanned: 1, deleted: 0 });
+      await expect(artifactStore.get(created.artifactId)).resolves.toMatchObject({ deliveredAt: expect.any(String) });
+    } finally {
+      await rm(blobRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('Artifact(create|deliver) registers an immutable file and emits durable delivery metadata', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'artifact-tool-'));
     const blobRoot = await mkdtemp(path.join(os.tmpdir(), 'artifact-blob-'));
     try {
       await mkdir(path.join(root, 'logs'), { recursive: true });
       await writeFile(path.join(root, 'logs', 'result.log'), 'tool artifact');
+      const artifactStore = new InMemoryArtifactStore();
       const service = new ArtifactService({
-        artifactStore: new InMemoryArtifactStore(),
+        artifactStore,
         blobStore: new LocalArtifactBlobStore({ rootDir: blobRoot }),
         agentCwd: root,
         signingSecret: 'tool-artifact-signing-secret',
@@ -92,8 +120,8 @@ describe('LocalArtifactBlobStore', () => {
       const tools = new PlatformToolRuntime({ artifactService: service });
       const result = await tools.invoke(
         {
-          toolId: 'CreateArtifact',
-          input: { file_path: 'logs/result.log', kind: 'log', mime_type: 'text/plain' },
+          toolId: 'Artifact',
+          input: { action: 'create', file_path: 'logs/result.log', kind: 'log', mime_type: 'text/plain' },
           authorization: { approved: true, source: 'policy_auto' },
         },
         {
@@ -113,7 +141,6 @@ describe('LocalArtifactBlobStore', () => {
         sourcePath?: string;
         mimeType?: string;
         userVisible?: boolean;
-        fileCardMarker?: string;
         deliveryInstruction?: string;
       };
       expect(parsed.artifactId).toMatch(/^artifact_/);
@@ -122,8 +149,55 @@ describe('LocalArtifactBlobStore', () => {
       expect(parsed.sourcePath).toBe('logs/result.log');
       expect(parsed.mimeType).toBe('text/plain');
       expect(parsed.userVisible).toBe(false);
-      expect(parsed.fileCardMarker).toBe('[FILE]{"filePath":"logs/result.log"}[/FILE]');
-      expect(parsed.deliveryInstruction).toContain('not automatically shown to the user');
+      expect(parsed).not.toHaveProperty('fileCardMarker');
+      expect(parsed.deliveryInstruction).toContain('Artifact(action="deliver"');
+
+      const delivered = await tools.invoke(
+        {
+          toolId: 'Artifact',
+          input: { action: 'deliver', artifact_id: parsed.artifactId },
+          authorization: { approved: true, source: 'policy_auto' },
+        },
+        {
+          channelContext: { channel: 'web', user: { id: 'u1', username: 'alice', role: 'user' } },
+          workspace: {
+            root,
+            sessionId: '11111111-2222-4333-8444-555555555555',
+            id: 'workspace-1',
+            executionTarget: 'server-local',
+          },
+        },
+      );
+      expect(JSON.parse(delivered?.content ?? '{}')).toMatchObject({
+        action: 'deliver',
+        artifactId: parsed.artifactId,
+        fileName: 'result.log',
+        userVisible: true,
+      });
+      expect(delivered?.metadata).toMatchObject({
+        artifactAction: 'deliver',
+        artifactId: parsed.artifactId,
+        artifactKind: 'log',
+        fileName: 'result.log',
+      });
+      expect((await artifactStore.get(parsed.artifactId!))?.deliveredAt).toEqual(expect.any(String));
+      await expect(artifactStore.listOlderThan('9999-12-31T23:59:59.999Z')).resolves.toEqual([]);
+      await expect(tools.invoke(
+        {
+          toolId: 'Artifact',
+          input: { action: 'deliver', artifact_id: parsed.artifactId },
+          authorization: { approved: true, source: 'policy_auto' },
+        },
+        {
+          channelContext: { channel: 'web', user: { id: 'u1', username: 'alice', role: 'user' } },
+          workspace: {
+            root,
+            sessionId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+            id: 'workspace-2',
+            executionTarget: 'server-local',
+          },
+        },
+      )).rejects.toThrow(/does not belong to the current session/);
       await expect(service.getContentBySignedToken(parsed.artifactId!, 'bad')).rejects.toThrow(/Invalid artifact token/);
     } finally {
       await rm(root, { recursive: true, force: true });

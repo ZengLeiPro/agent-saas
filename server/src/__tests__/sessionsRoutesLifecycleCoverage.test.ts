@@ -25,6 +25,7 @@ import { createSessionsRouter } from '../routes/sessions.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
 import { writeSessionMeta, readSessionMeta, type SessionMeta } from '../data/transcripts/meta.js';
 import { InMemorySessionShareStore } from '../data/sessionShares/store.js';
+import { InMemoryArtifactShareStore } from '../runtime/artifactShareStore.js';
 import { resolveUserCwd, type WorkspaceUser } from '../workspace/resolver.js';
 
 const OWNER = { id: 'user-owner', username: 'owner', role: 'user', tenantId: 'kaiyan' } satisfies WorkspaceUser;
@@ -40,6 +41,8 @@ async function startServer(
   opts: {
     withShareStore?: boolean;
     shareStore?: InMemorySessionShareStore;
+    artifactShareStore?: InMemoryArtifactShareStore;
+    artifactService?: { deleteArtifactsForSessions(sessionIds: string[]): Promise<{ scanned: number; deleted: number }> };
     sessionReadStateStore?: {
       init(): Promise<void>;
       markUnread(input: { tenantId: string; userId: string; sessionId: string; eventKey: string }): Promise<boolean>;
@@ -68,6 +71,8 @@ async function startServer(
   app.use('/api', createSessionsRouter({
     agentCwd,
     ...(opts.withShareStore ? { sessionShareStore: opts.shareStore ?? new InMemorySessionShareStore() } : {}),
+    ...(opts.artifactShareStore ? { artifactShareStore: opts.artifactShareStore } : {}),
+    ...(opts.artifactService ? { artifactService: opts.artifactService } : {}),
     ...(opts.sessionReadStateStore ? { sessionReadStateStore: opts.sessionReadStateStore } : {}),
     ...(opts.sessionProjectionStore ? { sessionProjectionStore: opts.sessionProjectionStore } : {}),
   }));
@@ -306,7 +311,9 @@ describe('sessions routes lifecycle coverage', () => {
 
   it('DELETE /sessions/:id：软删除成功、重复删除幂等、跨用户 403', async () => {
     const { sessionId, transcriptPath } = await writeSession(OWNER);
-    const { server, baseUrl } = await startServer(agentCwd, OWNER);
+    const artifactShareStore = new InMemoryArtifactShareStore();
+    const revokeBySession = vi.spyOn(artifactShareStore, 'revokeBySession');
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, { artifactShareStore });
     servers.push(server);
 
     // 软删除 → 200 softDeleted，meta 写入 deletedAt
@@ -316,6 +323,7 @@ describe('sessions routes lifecycle coverage', () => {
     const meta = await readSessionMeta(transcriptPath);
     expect(meta?.deletedAt).toBeTruthy();
     expect(meta?.deletedBy).toBe(OWNER.username);
+    expect(revokeBySession).toHaveBeenCalledWith(sessionId, OWNER.id);
 
     // 重复删除 → 幂等 200
     const again = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
@@ -364,7 +372,10 @@ describe('sessions routes lifecycle coverage', () => {
     const deletedAt = new Date().toISOString();
     const { sessionId: trashed, transcriptPath } = await writeSession(OWNER, { deletedAt, deletedBy: OWNER.username });
 
-    const { server, baseUrl } = await startServer(agentCwd, OWNER);
+    const deleteArtifactsForSessions = vi.fn(async (_sessionIds: string[]) => ({ scanned: 1, deleted: 1 }));
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, {
+      artifactService: { deleteArtifactsForSessions },
+    });
     servers.push(server);
 
     // 未软删除的会话不能永久删除 → 400
@@ -375,6 +386,7 @@ describe('sessions routes lifecycle coverage', () => {
     const ok = await fetch(`${baseUrl}/api/sessions/${trashed}/permanent`, { method: 'DELETE' });
     expect(ok.status).toBe(200);
     expect((await ok.json() as { permanentlyDeleted: boolean }).permanentlyDeleted).toBe(true);
+    expect(deleteArtifactsForSessions).toHaveBeenCalledWith([trashed]);
     // transcript 已被物理删除
     await expect(readSessionMeta(transcriptPath)).resolves.toBeNull();
   });
@@ -406,12 +418,16 @@ describe('sessions routes lifecycle coverage', () => {
     const foreign = await writeSession(OTHER, { deletedAt, deletedBy: OTHER.username });
     await rm(orphan.transcriptPath);
 
-    const { server, baseUrl } = await startServer(agentCwd, OWNER);
+    const deleteArtifactsForSessions = vi.fn(async (_sessionIds: string[]) => ({ scanned: 1, deleted: 1 }));
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, {
+      artifactService: { deleteArtifactsForSessions },
+    });
     servers.push(server);
 
     const res = await fetch(`${baseUrl}/api/sessions/trash`, { method: 'DELETE' });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, deletedCount: 2 });
+    expect(deleteArtifactsForSessions.mock.calls.map(([ids]) => ids[0]).sort()).toEqual([first.sessionId, orphan.sessionId].sort());
     await expect(readSessionMeta(first.transcriptPath)).resolves.toBeNull();
     await expect(readSessionMeta(orphan.transcriptPath)).resolves.toBeNull();
     await expect(readSessionMeta(live.transcriptPath)).resolves.not.toBeNull();

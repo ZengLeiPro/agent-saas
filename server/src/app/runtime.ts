@@ -63,6 +63,12 @@ import {
   type ArtifactStore,
 } from '../runtime/artifactStore.js';
 import { ArtifactService } from '../runtime/artifactService.js';
+import { ArtifactShareService } from '../runtime/artifactShareService.js';
+import {
+  InMemoryArtifactShareStore,
+  PgArtifactShareStore,
+  type ArtifactShareStore,
+} from '../runtime/artifactShareStore.js';
 import { PgImageBlobStore, setImageBlobStore } from '../runtime/imageBlobStore.js';
 import {
   InMemorySessionShareStore,
@@ -645,6 +651,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let feishuAuthFlowService: FeishuAuthFlowService | undefined;
   let artifactStore: ArtifactStore | undefined;
   let artifactService: ArtifactService | undefined;
+  let artifactShareStore: ArtifactShareStore | undefined;
+  let artifactShareService: ArtifactShareService | undefined;
   let sessionShareStore: SessionShareStore | undefined;
   let agentRuntimeProfileStore: AgentRuntimeProfileStore | undefined;
   let connectorDictionaryStore: ConnectorDictionaryStore | undefined;
@@ -951,6 +959,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
     await pgArtifactStore.init();
     artifactStore = pgArtifactStore;
+    const pgArtifactShareStore = new PgArtifactShareStore({
+      pool: pgEventStore.pool,
+      connectionString: config.runtimeEventStore.connectionString,
+      tablePrefix: config.runtimeEventStore.tablePrefix,
+    });
+    await pgArtifactShareStore.init();
+    artifactShareStore = pgArtifactShareStore;
     // 模型图片 blob 副本：uploads/ 可被用户一键清空，历史会话重放要能从这里取回字节。
     // init 失败只降级（读图回落文件系统、历史图缺失时降级占位），不阻断服务启动。
     try {
@@ -1138,6 +1153,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       orgAgentStore?.setPostPersistObserver(undefined);
       skillConfigStore?.setPostPersistObserver(undefined);
       await flushGovernanceShadowProjections?.();
+      await artifactShareStore?.close?.();
       await pgEventStore!.close();
     };
     serverLogger.info('Runtime EventStore initialized: backend=pg; durable RunStore + HandStore + RuntimeScheduler initialized');
@@ -1233,6 +1249,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     await sessionReadStateStore.init();
   }
   sessionShareStore ??= new InMemorySessionShareStore();
+  artifactShareStore ??= new InMemoryArtifactShareStore();
   if (!agentRuntimeProfileStore) {
     agentRuntimeProfileStore = new InMemoryAgentRuntimeProfileStore();
     await agentRuntimeProfileStore.init();
@@ -1298,6 +1315,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     signingSecret: artifactConfig?.signedUrlSecret ?? config.auth?.jwtSecret,
     defaultReadUrlTtlSeconds: artifactConfig?.readUrlTtlSeconds,
     maxBlobBytes: artifactConfig?.maxBlobBytes,
+    isArtifactPinned: artifactId => artifactShareStore!.isArtifactPinned(artifactId),
+    withArtifactLock: (artifactId, operation) => artifactShareStore!.withArtifactLock(artifactId, operation),
     resolveSessionTenantId: async sessionId => (await sessionCatalog.get(sessionId))?.tenantId,
     authorizeContentAccess: contentAccessGrantStore
       ? input => contentAccessGrantStore!.authorize(input)
@@ -1321,6 +1340,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         }
       : undefined,
   });
+  const artifactShareSigningSecret = artifactConfig?.signedUrlSecret ?? config.auth?.jwtSecret;
+  if (artifactShareSigningSecret && artifactShareSigningSecret.length >= 16) {
+    artifactShareService = new ArtifactShareService({
+      store: artifactShareStore,
+      artifactService,
+      signingSecret: artifactShareSigningSecret,
+    });
+  } else {
+    serverLogger.warn('Artifact sharing disabled: persistent artifact.signedUrlSecret or auth.jwtSecret is required');
+  }
   if (artifactConfig?.retentionDays && enableSingletonWorkers) {
     const runArtifactGc = async () => {
       const result = await artifactService!.pruneExpiredArtifacts(artifactConfig.retentionDays!, 200);
@@ -3132,6 +3161,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentRuntimeProfileStore,
     connectorDictionaryStore,
     artifactService,
+    artifactShareService,
+    artifactShareStore,
     sessionShareStore,
     artifactShutdown,
     clientDaemonGateway,

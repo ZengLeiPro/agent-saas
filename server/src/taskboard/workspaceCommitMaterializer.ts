@@ -125,7 +125,7 @@ export async function materializeCandidateObjects(input: {
       await runGitWithInputToFile(
         sourceRepositoryPath,
         ['pack-objects', '--stdout', '--revs'],
-        `${input.headOid}\n${targetAncestor ? `^${targetAncestor}\n` : ''}`,
+        `${input.headOid}\n${input.baseOid}\n${targetAncestor ? `^${targetAncestor}\n` : ''}`,
         packPath,
         {},
         120_000,
@@ -146,6 +146,15 @@ export async function materializeCandidateObjects(input: {
     await assertWorkspaceObjectDirectoryBinding(input.workspaceRoot, input.repositoryName, objectDirectory);
     stage = 'final_connectivity';
     await assertCandidateObjects(sinkRepositoryPath, input.baseOid, input.headOid, input.treeOid, targetEnv);
+    stage = 'final_hash_verification';
+    await verifyCandidateObjectHashes(
+      sinkRepositoryPath,
+      temporaryRoot,
+      input.baseOid,
+      input.headOid,
+      input.treeOid,
+      targetEnv,
+    );
     return {
       repositoryName: input.repositoryName,
       baseOid: input.baseOid,
@@ -301,6 +310,36 @@ async function findNearestCompleteTargetAncestor(
     }
   }
   return undefined;
+}
+
+async function verifyCandidateObjectHashes(
+  sourceRepositoryPath: string,
+  temporaryRoot: string,
+  baseOid: string,
+  headOid: string,
+  treeOid: string,
+  sourceEnv: Record<string, string>,
+): Promise<void> {
+  const verificationRepositoryPath = join(temporaryRoot, 'verification.git');
+  const verificationPackPath = join(temporaryRoot, 'verification.pack');
+  await runGit(temporaryRoot, ['init', '--bare', 'verification.git']);
+  await runGitWithInputToFile(
+    sourceRepositoryPath,
+    ['pack-objects', '--stdout', '--revs'],
+    `${headOid}\n${baseOid}\n`,
+    verificationPackPath,
+    sourceEnv,
+    120_000,
+  );
+  const hash = await runGitWithFileInput(
+    verificationRepositoryPath,
+    ['index-pack', '--stdin'],
+    verificationPackPath,
+    {},
+    120_000,
+  );
+  if (!/^(?:pack\t)?(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(hash)) throw new Error('invalid verification pack hash');
+  await assertCandidateObjects(verificationRepositoryPath, baseOid, headOid, treeOid, {});
 }
 
 async function assertCandidateObjects(

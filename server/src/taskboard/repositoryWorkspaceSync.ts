@@ -163,9 +163,10 @@ export async function syncCandidateRevisionObjects(
         await git(host, input.repositoryPath, ['rev-parse', '--verify', `${input.expectedHeadOid}^{tree}`]),
         input.expectedTreeOid,
       );
+      // The authoritative base may advance after a PR head is prepared; exact subject
+      // identity does not require that newer base tip to be an ancestor of the PR head.
       if (actualBase !== input.expectedBaseOid || actualTree !== input.expectedTreeOid
-        || !await isAncestor(host, input.repositoryPath, input.expectedBaseOid, remoteBaseRef)
-        || !await isAncestor(host, input.repositoryPath, input.expectedBaseOid, input.expectedHeadOid)) {
+        || !await isAncestor(host, input.repositoryPath, input.expectedBaseOid, remoteBaseRef)) {
         throw new RepositoryWorkspaceSyncError('Candidate revision object identity or ancestry mismatch', 'WORKTREE_DIVERGED');
       }
       return {

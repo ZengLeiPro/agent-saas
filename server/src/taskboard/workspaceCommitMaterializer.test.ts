@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rename, rm, stat, symlink, writeFile } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { deflateSync } from 'node:zlib';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { materializeCandidateObjects, withMaterializedWorkspaceCommit } from './workspaceCommitMaterializer.js';
@@ -79,6 +80,73 @@ describe('materializeCandidateObjects', () => {
       headOid: source.newOid,
       treeOid,
     })).resolves.toMatchObject({ headOid: source.newOid });
+  });
+
+  it('rejects a target loose object whose path OID does not match its content', async () => {
+    const source = await repository();
+    await git(source.root, ['commit', '--allow-empty', '-m', 'candidate']);
+    const headOid = await git(source.root, ['rev-parse', 'HEAD']);
+    const treeOid = await git(source.root, ['rev-parse', `${headOid}^{tree}`]);
+    const workspace = await mkdtemp(join(tmpdir(), 'poisoned-candidate-workspace-'));
+    roots.push(workspace);
+    const target = join(workspace, 'agent-saas');
+    await mkdir(target);
+    await git(target, ['init']);
+    await git(target, ['fetch', '--no-tags', source.root, source.newOid]);
+
+    const commit = `${await git(source.root, ['cat-file', 'commit', headOid])}\npoison\n`;
+    const raw = Buffer.concat([
+      Buffer.from(`commit ${Buffer.byteLength(commit)}\0`),
+      Buffer.from(commit),
+    ]);
+    const objectDirectory = join(target, '.git', 'objects', headOid.slice(0, 2));
+    await mkdir(objectDirectory, { recursive: true });
+    await writeFile(join(objectDirectory, headOid.slice(2)), deflateSync(raw));
+
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root,
+      workspaceRoot: workspace,
+      repositoryName: 'agent-saas',
+      baseOid: source.newOid,
+      headOid,
+      treeOid,
+    })).rejects.toMatchObject({ code: 'materialization_failed', stage: 'pack_index' });
+  });
+
+  it('imports both exact tips when the authoritative base advanced beyond the PR head', async () => {
+    const source = await repository();
+    const baseBranch = await git(source.root, ['branch', '--show-current']);
+    await git(source.root, ['checkout', '-b', 'candidate', source.oldOid]);
+    await writeFile(join(source.root, 'candidate.txt'), 'candidate\n');
+    await git(source.root, ['add', 'candidate.txt']);
+    await git(source.root, ['commit', '-m', 'candidate']);
+    const headOid = await git(source.root, ['rev-parse', 'HEAD']);
+    const treeOid = await git(source.root, ['rev-parse', `${headOid}^{tree}`]);
+    await git(source.root, ['checkout', baseBranch]);
+    await writeFile(join(source.root, 'base.txt'), 'advanced base\n');
+    await git(source.root, ['add', 'base.txt']);
+    await git(source.root, ['commit', '-m', 'advanced base']);
+    const baseOid = await git(source.root, ['rev-parse', 'HEAD']);
+    await expect(git(source.root, ['merge-base', '--is-ancestor', baseOid, headOid])).rejects.toThrow();
+
+    const workspace = await mkdtemp(join(tmpdir(), 'diverged-candidate-workspace-'));
+    roots.push(workspace);
+    const target = join(workspace, 'agent-saas');
+    await mkdir(target);
+    await git(target, ['init']);
+    await git(target, ['fetch', '--no-tags', source.root, source.oldOid]);
+
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root,
+      workspaceRoot: workspace,
+      repositoryName: 'agent-saas',
+      baseOid,
+      headOid,
+      treeOid,
+    })).resolves.toMatchObject({ baseOid, headOid, treeOid });
+    expect(await git(target, ['cat-file', '-t', baseOid])).toBe('commit');
+    expect(await git(target, ['cat-file', '-t', headOid])).toBe('commit');
+    await expect(git(target, ['fsck', '--connectivity-only', '--no-dangling', baseOid, headOid])).resolves.toBe('');
   });
 
   it('rejects an unverified candidate tree before dispatch', async () => {

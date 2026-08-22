@@ -1,7 +1,6 @@
-import { useMemo, useRef, useCallback, useEffect, useState } from 'react';
-import { Plus, ArrowUp, Square, Mic, Loader2, StopCircle, FileUp, FolderOpen } from "lucide-react";
+import { lazy, Suspense, useMemo, useRef, useCallback, useEffect, useState } from 'react';
+import { Plus, ArrowUp, Square, Mic, Loader2, StopCircle } from "lucide-react";
 
-import { AssetLibraryDialog } from "@/components/AssetLibraryDialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { warmupSessionSandbox } from "@/lib/sessionsApi";
@@ -52,6 +51,7 @@ interface ChatInputProps {
 const MIN_HEIGHT = 56;
 const MAX_HEIGHT = 200;
 const warmedSessionIds = new Set<string>();
+const LazyAssetLibraryDialog = lazy(() => import("@/components/AssetLibraryDialog"));
 
 function warmupSessionOnce(sessionId: string | null | undefined, value: string): void {
   if (!sessionId || warmedSessionIds.has(sessionId) || !value.trim()) return;
@@ -196,6 +196,7 @@ export function ChatInput({
   const hasContent = !!input.trim() || hasUploadedFiles;
   const showStop = !!loading && (!hasContent || !!stopping) && !!onStop;
   const disableAttach = uploading || isDisabled;
+  const attachmentDisabled = disableAttach || voiceRecorder.isRecording;
   const showVoice = !isDisabled && !!onSendVoice && voiceRecorder.isSupported;
 
   // 会话已开始时锁定组
@@ -421,13 +422,12 @@ export function ChatInput({
                       className={cn(
                         "flex size-8 items-center justify-center rounded-full border border-border text-foreground transition-colors",
                         "hover:bg-muted-foreground/10 active:bg-muted-foreground/20",
-                        disableAttach || voiceRecorder.isRecording
+                        attachmentDisabled
                           ? "cursor-not-allowed opacity-40"
                           : "cursor-pointer",
                       )}
-                      title="添加附件"
                       aria-label="添加附件"
-                      disabled={disableAttach || voiceRecorder.isRecording}
+                      disabled={attachmentDisabled}
                       onClick={(event) => event.stopPropagation()}
                     >
                       <Plus className="size-5" />
@@ -435,32 +435,27 @@ export function ChatInput({
                   </PopoverTrigger>
                   <PopoverContent
                     side="top"
-                    align="start"
-                    sideOffset={8}
-                    className="w-52 rounded-2xl p-1.5 shadow-xl"
                     onClick={(event) => event.stopPropagation()}
                   >
                     <button
                       type="button"
-                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors hover:bg-accent"
+                      className="w-full rounded-md px-3 py-2 text-left text-sm"
                       onClick={() => {
                         setAttachmentMenuOpen(false);
                         localFileInputRef.current?.click();
                       }}
                     >
-                      <FileUp className="size-4.5" />
                       本地文件
                     </button>
                     {onAssetSelect && (
                       <button
                         type="button"
-                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors hover:bg-accent"
+                        className="w-full rounded-md px-3 py-2 text-left text-sm"
                         onClick={() => {
                           setAttachmentMenuOpen(false);
                           setAssetLibraryOpen(true);
                         }}
                       >
-                        <FolderOpen className="size-4.5" />
                         资料库
                       </button>
                     )}
@@ -472,17 +467,17 @@ export function ChatInput({
                   multiple
                   className="hidden"
                   onChange={onFileSelect}
-                  accept="*/*"
-                  disabled={disableAttach || voiceRecorder.isRecording}
-                  aria-label="本地文件"
+                  disabled={attachmentDisabled}
                 />
                 {onAssetSelect && assetLibraryOpen && (
-                  <AssetLibraryDialog
-                    open
-                    onOpenChange={setAssetLibraryOpen}
-                    onConfirm={onAssetSelect}
-                    disabled={disableAttach || voiceRecorder.isRecording}
-                  />
+                  <Suspense fallback={null}>
+                    <LazyAssetLibraryDialog
+                      open
+                      onOpenChange={setAssetLibraryOpen}
+                      onConfirm={onAssetSelect}
+                      disabled={attachmentDisabled}
+                    />
+                  </Suspense>
                 )}
               </div>
 

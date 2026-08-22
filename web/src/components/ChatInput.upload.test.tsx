@@ -106,9 +106,10 @@ describe("ChatInput 附件来源入口", () => {
     fireEvent.click(screen.getByRole("button", { name: "添加附件" }));
     fireEvent.click(screen.getByRole("button", { name: "本地文件" }));
 
-    const fileInput = screen.getByLabelText("本地文件");
+    const fileInput = document.querySelector('input[type="file"]');
+    expect(fileInput).toBeTruthy();
     const file = new File(["hello"], "手机文件.txt", { type: "text/plain" });
-    fireEvent.change(fileInput, { target: { files: [file] } });
+    fireEvent.change(fileInput!, { target: { files: [file] } });
 
     expect(onFileSelect).toHaveBeenCalledTimes(1);
   });

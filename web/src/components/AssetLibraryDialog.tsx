@@ -233,3 +233,5 @@ export function AssetLibraryDialog({
     </Dialog>
   );
 }
+
+export default AssetLibraryDialog;

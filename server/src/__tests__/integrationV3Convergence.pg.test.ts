@@ -155,7 +155,10 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
     );
     await insertOperation('before-terminal');
 
-    await pool.query(`UPDATE ${seed.tables.candidatesTable} SET state='merged' WHERE id=$1`, [seed.candidateId]);
+    await pool.query(
+      `UPDATE ${seed.tables.candidatesTable} SET state='merged',merged_commit_oid='merged-1' WHERE id=$1`,
+      [seed.candidateId],
+    );
 
     const operation = (await pool.query(
       `SELECT state,attempt_count,receipt FROM ${seed.tables.providerOperationsTable} WHERE id='before-terminal'`,

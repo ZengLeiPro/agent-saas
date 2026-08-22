@@ -22,6 +22,9 @@ describe('integration v3 observability and release gate', () => {
       active_v2_count: 4, active_v3_count: 5,
     }] })) } as any;
     const metrics = await collectIntegrationV3Metrics(db, tables, async () => ({ enabled: false, healthy: false, reason: 'disabled' }));
+    const metricsSql = String(db.query.mock.calls[0]![0]);
+    expect(metricsSql).toContain('clock_timestamp()-min(updated_at)');
+    expect(metricsSql).not.toContain('clock_timestamp()-min(created_at)');
     expect(metrics).toMatchObject({
       unknownOperationCount: 2, oldestUnknownOperationAgeMs: 700000, staleLaneCount: 1,
       staleOutboxCount: 3, oldestOutboxAgeMs: 800000, cleanupFailureCount: 1,

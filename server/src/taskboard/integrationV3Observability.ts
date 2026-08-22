@@ -145,7 +145,7 @@ export async function collectIntegrationV3Metrics(
              OR c.state IN ('merged','canceled') OR c.lane_epoch<>l.epoch)) AS stale_lane_count,
          (SELECT count(*)::int FROM ${tables.requestsOutbox}
            WHERE status IN ('pending','processing') AND updated_at < now()-interval '15 minutes') AS stale_outbox_count,
-         (SELECT EXTRACT(EPOCH FROM (clock_timestamp()-min(created_at)))*1000
+         (SELECT EXTRACT(EPOCH FROM (clock_timestamp()-min(updated_at)))*1000
             FROM ${tables.requestsOutbox} WHERE status IN ('pending','processing')) AS outbox_age_ms,
          (SELECT count(*)::int FROM ${tables.requestsOutbox}
            WHERE kind='cleanup' AND status='failed') AS cleanup_failure_count,

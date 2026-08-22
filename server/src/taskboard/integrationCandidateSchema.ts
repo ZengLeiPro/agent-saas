@@ -392,6 +392,7 @@ const INTEGRATION_CANDIDATE_SCHEMA_MIGRATIONS = [
       await client.query(`
         ALTER TABLE ${revisionsTable}
           ADD COLUMN IF NOT EXISTS composition_complete BOOLEAN NOT NULL DEFAULT TRUE;
+        DROP TRIGGER IF EXISTS ${revisionsTable}_immutable_update ON ${revisionsTable};
         CREATE OR REPLACE FUNCTION ${revisionsTable}_source_seed_incomplete_fn()
         RETURNS TRIGGER LANGUAGE plpgsql AS $function$
         BEGIN
@@ -405,7 +406,9 @@ const INTEGRATION_CANDIDATE_SCHEMA_MIGRATIONS = [
           FOR EACH ROW EXECUTE FUNCTION ${revisionsTable}_source_seed_incomplete_fn();
         UPDATE ${revisionsTable}
            SET composition_complete=FALSE
-         WHERE subject_kind='source_seed' AND composition_complete IS DISTINCT FROM FALSE
+         WHERE subject_kind='source_seed' AND composition_complete IS DISTINCT FROM FALSE;
+        CREATE TRIGGER ${revisionsTable}_immutable_update BEFORE UPDATE ON ${revisionsTable}
+          FOR EACH ROW EXECUTE FUNCTION ${revisionsTable}_immutable_fn()
       `);
     },
   },

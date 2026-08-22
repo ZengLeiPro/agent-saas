@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { integrationCandidateTableNames } from '../taskboard/integrationCandidateSchema.js';
+import { integrationCandidateTableNames, runIntegrationCandidateSchema } from '../taskboard/integrationCandidateSchema.js';
 import { IntegrationEngineV3 } from '../taskboard/integrationEngineV3.js';
 import {
   PostgresIntegrationEngineV3CandidateHost,
@@ -282,5 +282,54 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
       [seed.candidateId],
     );
     expect(cleanup.rows).toEqual([{ kind: 'cleanup', status: 'pending' }]);
+  });
+
+  it('upgrades existing v5 source seeds without weakening revision immutability', async () => {
+    const seed = await seedCandidate({ state: 'waiting_checks', taskStatus: 'todo' });
+    const root = store.integrationSourcesTable.slice(0, -'_sources'.length);
+    const migrationsTable = `${root}_candidate_schema_migrations_v3`;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`DROP TRIGGER ${seed.tables.revisionsTable}_source_seed_incomplete ON ${seed.tables.revisionsTable}`);
+      await client.query(`DROP TRIGGER ${seed.tables.revisionsTable}_immutable_update ON ${seed.tables.revisionsTable}`);
+      await client.query(`ALTER TABLE ${seed.tables.revisionsTable} DROP COLUMN composition_complete`);
+      await client.query(`CREATE TRIGGER ${seed.tables.revisionsTable}_immutable_update
+        BEFORE UPDATE ON ${seed.tables.revisionsTable}
+        FOR EACH ROW EXECUTE FUNCTION ${seed.tables.revisionsTable}_immutable_fn()`);
+      await client.query(`DELETE FROM ${migrationsTable} WHERE version=6`);
+      await client.query('COMMIT');
+      await client.query(
+        `INSERT INTO ${seed.tables.revisionsTable}
+           (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,source_set_digest,
+            subject_digest,policy_snapshot_digest,policy_revision,merge_method,work_round)
+         VALUES($1,2,1,'base-2','head-2','source_seed',NULL,'sources-2','subject-2','policy-2','p1','squash',0)`,
+        [seed.candidateId],
+      );
+
+      await runIntegrationCandidateSchema({
+        tasksTable: store.tasksTable,
+        executionsTable: store.executionsTable,
+        integrationSourcesTable: store.integrationSourcesTable,
+      }, client);
+
+      const revisions = await client.query(
+        `SELECT revision,composition_complete FROM ${seed.tables.revisionsTable}
+          WHERE candidate_id=$1 ORDER BY revision`,
+        [seed.candidateId],
+      );
+      expect(revisions.rows).toEqual([
+        { revision: 1, composition_complete: true },
+        { revision: 2, composition_complete: false },
+      ]);
+      await expect(client.query(
+        `UPDATE ${seed.tables.revisionsTable} SET composition_complete=FALSE WHERE candidate_id=$1 AND revision=1`,
+        [seed.candidateId],
+      )).rejects.toThrow('TASKBOARD_CANDIDATE_SNAPSHOT_IMMUTABLE');
+      expect((await client.query(`SELECT name FROM ${migrationsTable} WHERE version=6`)).rows)
+        .toEqual([{ name: 'track_incomplete_composition_subjects' }]);
+    } finally {
+      client.release();
+    }
   });
 });

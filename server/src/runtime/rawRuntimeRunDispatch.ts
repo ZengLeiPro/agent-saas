@@ -136,14 +136,14 @@ import {
 import { SessionContextService, SessionToolProvider } from './sessionContext.js';
 import { buildRuntimeReplayState, type RuntimeReplayState } from './replay.js';
 import {
-  createOrgAgentSessionSnapshot,
   createRuntimeSessionRecord,
   resolveSessionMemoryPolicy,
   FileSessionCatalog,
-  type OrgAgentCollectionAssignmentPin,
   type RuntimeSessionRecord,
   type SessionCatalog,
 } from './sessionCatalog.js';
+import { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgAgentSessionResolution.js';
+export { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgAgentSessionResolution.js';
 import type { ApprovalRecord, ApprovalStore, EventStore, ModelAttachmentRef, PlatformEvent, QueuedInterjection, RunContext } from './types.js';
 import type { RunRecord, RunStore } from './runStore.js';
 import type { HandRecord, HandStore, WorkspaceRecipe } from './handStore.js';
@@ -694,60 +694,6 @@ export function buildOrgAgentSkillFilter(
 ): RuntimeSkillFilter {
   const allowed = new Set(resolveOrgAgentRuntimeSkillIds(agent));
   return (skill) => allowed.has(skill.id);
-}
-
-/**
- * 解析专职 Agent 覆盖三态：
- *   - null：orgAgentId 缺省 → 个人 Agent 路径照旧（兼容红线：零行为变化）
- *   - { error }：record 缺失 / disabled / audience 无效 / 租户不符 / store 未配置 → 调用方 yield error
- *     **fail-closed**，绝不静默回退个人 persona + 全量 skill（漏一处 = 审批恢复后越权）
- *   - { agent }：正常应用覆盖（org 名 / 限定提示语 / skill 白名单 / 跳过 persona+memory）
- */
-export function resolveOrgAgentOverrides(
-  config: Pick<RawRuntimeRunDispatchConfig, 'orgAgentStore'>,
-  orgAgentId: string | undefined,
-  tenantId: string | undefined,
-): null | { error: string } | { agent: OrgAgentRecord } {
-  if (!orgAgentId) return null;
-  const store = config.orgAgentStore;
-  if (!store) {
-    return { error: `企业专家服务不可用（orgAgentId=${orgAgentId}），已终止本次运行` };
-  }
-  const record = store.get(orgAgentId);
-  if (!record || !record.enabled || !record.audience) {
-    return { error: '该企业专家已被停用或删除，请联系组织管理员' };
-  }
-  if (record.tenantId !== tenantId) {
-    // 跨租户/租户身份缺失一律 fail-closed（与 channel 侧 org_agent_unavailable 防枚举语义一致）
-    return { error: '该企业专家已被停用或删除，请联系组织管理员' };
-  }
-  return { agent: record };
-}
-
-export async function resolveOrgAgentSessionSnapshot(input: {
-  orgAgent: OrgAgentRecord | undefined;
-  existingSession?: RuntimeSessionRecord | null;
-  replaySourceSession?: RuntimeSessionRecord | null;
-  tenantId?: string;
-  userId?: string;
-  agentId?: string;
-  resolveAssignments?: (scope: {
-    tenantId: string;
-    userId: string;
-    agentId: string;
-  }) => Promise<OrgAgentCollectionAssignmentPin[]>;
-}): Promise<RuntimeSessionRecord['orgAgentSnapshot'] | undefined> {
-  const inherited = input.existingSession?.orgAgentSnapshot
-    ?? input.replaySourceSession?.orgAgentSnapshot;
-  if (inherited || input.existingSession || !input.orgAgent) return inherited;
-  const assignments = input.agentId && input.userId && input.tenantId && input.resolveAssignments
-    ? await input.resolveAssignments({
-        tenantId: input.tenantId,
-        userId: input.userId,
-        agentId: input.agentId,
-      })
-    : undefined;
-  return createOrgAgentSessionSnapshot(input.orgAgent, assignments);
 }
 
 export function buildRuntimeSkillFilter(availableHands: HandRecord[]): RuntimeSkillFilter {

@@ -46,7 +46,6 @@ import type { TaskboardService } from '../taskboard/types.js';
 import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import { MEMORY_CONSOLIDATION_DEFAULTS, type MemoryConsolidationResolvedConfig } from '../memory/consolidation/types.js';
 import { resolveTenantMemoryFeatureStatus } from '../memory/effectiveStatus.js';
-import { MemoryCommandToolProvider } from '../agent/memoryCommandToolProvider.js';
 import {
   FileSessionReadStateStore,
   PgSessionReadStateStore,
@@ -232,11 +231,7 @@ import { createAuthMiddleware } from '../auth/middleware.js';
 import { sanitizeUserOverrides } from '../security/extraDirs.js';
 import { initializeRuntimeGovernanceStores } from './runtimeGovernanceStores.js';
 import type { ContextStore } from '../context/store/index.js';
-import {
-  AssignmentContextRecallScopeResolver,
-  PgContextRecallService,
-} from '../context/retrieval/index.js';
-import { ContextSearchToolProvider } from '../agent/contextSearchToolProvider.js';
+import { createRuntimeMemoryContextTools } from './runtimeMemoryContextTools.js';
 import { initializeRuntimeGovernanceConnectors } from './runtimeGovernanceConnectors.js';
 import {
   initializeRuntimeGovernanceCredentials,
@@ -659,8 +654,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let governanceAuditStore: GovernanceAuditStore | undefined;
   let membershipStore: PgMembershipStore | undefined;
   let entitlementStore: PgEntitlementStore | undefined;
-  let directoryGroupStore: PgDirectoryGroupStore | undefined; let oauthGrantStore: PgOAuthGrantStore | undefined; let assignmentStore: PgAssignmentStore | undefined;
-  let contextStore: ContextStore | undefined;
+  let directoryGroupStore: PgDirectoryGroupStore | undefined; let oauthGrantStore: PgOAuthGrantStore | undefined; let assignmentStore: PgAssignmentStore | undefined; let contextStore: ContextStore | undefined;
   let credentialStore: PgCredentialStore | undefined;
   let connectorCatalogStore: PgConnectorCatalogStore | undefined;
   let environmentStore: PgEnvironmentStore | undefined;
@@ -749,8 +743,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       governanceAuditStore,
       membershipStore,
       entitlementStore,
-      directoryGroupStore, oauthGrantStore, assignmentStore,
-      contextStore,
+      directoryGroupStore, oauthGrantStore, assignmentStore, contextStore,
       credentialStore,
       connectorCatalogStore,
       environmentStore,
@@ -1672,32 +1665,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   });
   const codexDeviceAuthService = new CodexDeviceAuthService(egressFetch);
   const titleModelAdapterFactory = createTitleModelAdapterFactory(codexCredentialManager, egressFetch);
-  const contextToolProvider = contextStore && assignmentStore && pgEventStore
-    ? new ContextSearchToolProvider(
-        new PgContextRecallService({
-          pool: pgEventStore.pool,
-          ...(config.runtimeEventStore?.backend === 'pg' && config.runtimeEventStore.tablePrefix
-            ? { tablePrefix: config.runtimeEventStore.tablePrefix }
-            : {}),
-        }),
-        new AssignmentContextRecallScopeResolver(assignmentStore, {
-          resourceTypes: ['org_knowledge'],
-          resolveSessionPin: async subject => {
-            if (!subject.sessionId) return null;
-            const session = await sessionCatalog.get(subject.sessionId);
-            if (!session) return null;
-            return {
-              tenantId: session.tenantId ?? '',
-              userId: session.userId,
-              ...(session.orgAgentId ? { orgAgentId: session.orgAgentId } : {}),
-              ...(session.orgAgentSnapshot?.collectionAssignments
-                ? { collectionAssignments: session.orgAgentSnapshot.collectionAssignments }
-                : {}),
-            };
-          },
-        }),
-      )
-    : undefined;
+  const memoryContextTools = createRuntimeMemoryContextTools({
+    contextStore, assignments: assignmentStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, sessionCatalog,
+    memoryStore: memoryConsolidationStore, memoryIndexService: memoryIndexServiceRef.current, logger: { info: msg => serverLogger.info(msg), warn: msg => serverLogger.warn(msg) },
+  });
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
     agentCwd,
     sharedDir,
@@ -1720,28 +1691,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     memoryWriteDelegationEnabled: (tenantId) => tenantId
       ? getTenantMemoryFeatureStatus(tenantId).memoryWriteDelegationEnabled.effective
       : false,
-    ...(memoryConsolidationStore || contextToolProvider ? {
-      memoryControlProviders: [
-        ...(memoryConsolidationStore ? [new MemoryCommandToolProvider({
-          store: memoryConsolidationStore,
-          memoryIndexService: memoryIndexServiceRef.current,
-          logger: { info: (msg) => serverLogger.info(msg), warn: (msg) => serverLogger.warn(msg) },
-        })] : []),
-        ...(contextToolProvider ? [contextToolProvider] : []),
-      ],
-    } : {}),
-    agentStore,
-    orgAgentStore,
-    ...(assignmentStore ? {
-      resolveOrgAgentCollectionAssignments: async ({ tenantId, userId, agentId }: { tenantId: string; userId: string; agentId: string }) =>
-        (await assignmentStore!.listEffectiveResourceIds(tenantId, userId, 'org_knowledge', agentId))
-          .map(binding => ({
-            collectionId: binding.resourceId,
-            assignmentVersion: binding.assignmentVersion,
-            resourceType: 'org_knowledge' as const,
-          })),
-    } : {}),
-    tenantStore,
+    ...memoryContextTools, agentStore, orgAgentStore, tenantStore,
     environmentStore,
     taskboard: { service: () => taskboardService, executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, integrationPush: () => integrationV3Runtime?.integrationPush, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
@@ -3141,9 +3091,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     entitlementStore,
     directoryGroupStore,
     oauthGrantStore,
-    assignmentStore,
-    contextStore,
-    credentialStore, connectorCatalogStore,
+    assignmentStore, contextStore, credentialStore, connectorCatalogStore,
     environmentStore,
     agentResourceStore,
     skillGovernanceStore,

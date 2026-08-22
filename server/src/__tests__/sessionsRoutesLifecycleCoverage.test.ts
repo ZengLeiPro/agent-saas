@@ -26,6 +26,7 @@ import { getTranscriptPath } from '../data/transcripts/store.js';
 import { writeSessionMeta, readSessionMeta, type SessionMeta } from '../data/transcripts/meta.js';
 import { InMemorySessionShareStore } from '../data/sessionShares/store.js';
 import { InMemoryArtifactShareStore } from '../runtime/artifactShareStore.js';
+import { createSessionArtifactLifecycle } from '../runtime/sessionArtifactLifecycle.js';
 import { resolveUserCwd, type WorkspaceUser } from '../workspace/resolver.js';
 
 const OWNER = { id: 'user-owner', username: 'owner', role: 'user', tenantId: 'kaiyan' } satisfies WorkspaceUser;
@@ -71,8 +72,7 @@ async function startServer(
   app.use('/api', createSessionsRouter({
     agentCwd,
     ...(opts.withShareStore ? { sessionShareStore: opts.shareStore ?? new InMemorySessionShareStore() } : {}),
-    ...(opts.artifactShareStore ? { artifactShareStore: opts.artifactShareStore } : {}),
-    ...(opts.artifactService ? { artifactService: opts.artifactService } : {}),
+    artifactLifecycle: createSessionArtifactLifecycle(opts.artifactShareStore, opts.artifactService),
     ...(opts.sessionReadStateStore ? { sessionReadStateStore: opts.sessionReadStateStore } : {}),
     ...(opts.sessionProjectionStore ? { sessionProjectionStore: opts.sessionProjectionStore } : {}),
   }));

@@ -1,5 +1,6 @@
 import type { WebMessageDisplayConfig } from '../../types/index.js';
 import { isSkillTool } from '../toolNameResolver.js';
+export { projectArtifactDelivery } from './artifactDeliveryProjection.js';
 
 export type WebBlockType = 'text' | 'thinking' | 'tool_use';
 

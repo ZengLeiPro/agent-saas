@@ -308,8 +308,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
   /** 只读分享页使用 share token 读取快照关联文件，不依赖登录态。 */
   shareToken?: string;
 }) {
-  const [resolvedSize, setResolvedSize] = useState(fileSize);
-  const [artifactPreviewOpen, setArtifactPreviewOpen] = useState(false);
+  const [resolvedSize, setResolvedSize] = useState(fileSize); const [artifactPreviewOpen, setArtifactPreviewOpen] = useState(false);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const ownerParam = owner ? `&owner=${encodeURIComponent(owner)}` : '';
 
@@ -422,16 +421,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
           </button>
         </div>
       </div>
-      {artifactId ? (
-        <ArtifactPreviewDialog
-          open={artifactPreviewOpen}
-          artifactId={artifactId}
-          fileName={fileName}
-          fileSize={resolvedSize}
-          mimeType={mimeType}
-          onOpenChange={setArtifactPreviewOpen}
-        />
-      ) : null}
+      {artifactId ? <ArtifactPreviewDialog open={artifactPreviewOpen} artifactId={artifactId} fileName={fileName} fileSize={resolvedSize} mimeType={mimeType} onOpenChange={setArtifactPreviewOpen} /> : null}
       {previewSrc && (
         <ImageLightbox
           src={previewSrc}

@@ -59,6 +59,7 @@ import { createGoogleWorkspaceRouter } from "../routes/googleWorkspace.js";
 import { revokeAllUserConnectorCredentials } from "../connectors/lifecycle.js";
 import { createNativeOAuthHandoffRouter, NativeOAuthHandoffStore } from '../connectors/nativeOAuthHandoff.js';
 import { runtimeRunController } from "../runtime/runController.js";
+import { createSessionArtifactLifecycle } from '../runtime/sessionArtifactLifecycle.js';
 import { createTenantsRouter } from "../routes/tenants.js";
 import { deleteTenantResources } from "../data/tenants/cleanup.js";
 import { createGovernanceOffboardingExecutor, createSafeCronOffboardingExecutor, type ExecuteUserOffboarding } from './governanceOffboarding.js';
@@ -270,8 +271,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       runtimeEventStoreFor: runtime.runtimeEventStoreFor,
       resolveContextAccounting: (modelRef) => resolveContextAccountingFromModels(config.models, modelRef),
       sessionShareStore: runtime.sessionShareStore,
-      artifactShareStore: runtime.artifactShareStore,
-      artifactService: runtime.artifactService,
+      artifactLifecycle: createSessionArtifactLifecycle(runtime.artifactShareStore, runtime.artifactService),
       sessionProjectionStore: runtime.runtimeSessionProjectionStore,
       sessionReadStateStore: runtime.sessionReadStateStore,
       sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId),

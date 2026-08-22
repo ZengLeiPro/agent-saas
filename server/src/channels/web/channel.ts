@@ -13,11 +13,7 @@ import { homedir } from 'os';
 import { dirname, resolve as resolvePath } from 'path';
 import type { Express } from 'express';
 import type { WebSocket } from 'ws';
-import {
-  getWebDisplayConfig,
-  isDedicatedWebTool,
-} from './displayFilter.js';
-import { projectArtifactDelivery } from './artifactDeliveryProjection.js';
+import { getWebDisplayConfig, isDedicatedWebTool, projectArtifactDelivery } from './displayFilter.js';
 import { chatLogger } from '../../utils/logger.js';
 import type {
   WebMessageDisplayConfig,
@@ -736,10 +732,7 @@ export class WebChannel implements BaseChannel {
         });
         break;
       case 'tool_result': {
-        const artifactDelivery = projectArtifactDelivery(
-          input.event.toolName,
-          input.event.toolResultMetadata,
-        );
+        const artifactDelivery = projectArtifactDelivery(input.event.toolName, input.event.toolResultMetadata);
         if (artifactDelivery) emitSession(artifactDelivery);
         if (isDedicatedWebTool(input.event.toolName)) break;
         emitSession({

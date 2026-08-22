@@ -65,14 +65,13 @@ import {
   artifactCreateToolDescriptor,
   artifactToolDescriptor,
   createWorkspaceArtifactPayload,
-  type ArtifactInput,
-  type CreateArtifactInput,
   editToolDescriptor,
   runWorkspaceEdit,
   workspaceArtifactPreparedContent,
   type WorkspaceArtifactPayload,
 } from './workspaceHandTools.js';
 import { materializeReadToolImage, tryReadWorkspaceImage } from './readImageTool.js';
+import { createdArtifactToolResult, prepareArtifactInvocation } from './artifactToolRuntime.js';
 import { resolveShellConcurrency, shellToolSchema, type ShellToolInput } from './shellToolSchema.js';
 const exec = promisify(execCb);
 
@@ -982,11 +981,7 @@ class WorkspaceToolProvider implements ToolProvider {
       if (tool.id === artifactCreateToolDescriptor.id) return false;
       return true;
     });
-    return [
-      waitForWorkspaceReadyToolDescriptor,
-      ...workspaceTools,
-      ...(this.artifactService ? [artifactToolDescriptor] : []),
-    ];
+    return [waitForWorkspaceReadyToolDescriptor, ...workspaceTools, ...(this.artifactService ? [artifactToolDescriptor] : [])];
   }
 
   async invoke<TInput>(call: AuthorizedToolCall<TInput>, context: ToolCallContext): Promise<ToolResult | undefined> {
@@ -995,9 +990,7 @@ class WorkspaceToolProvider implements ToolProvider {
       return await this.waitForWorkspaceReady(context, input.timeoutMs ?? 15_000);
     }
 
-    const descriptor = call.toolId === artifactToolDescriptor.id
-      ? artifactToolDescriptor
-      : WORKSPACE_HAND_TOOLS.find((tool) => tool.id === call.toolId);
+    const descriptor = call.toolId === artifactToolDescriptor.id ? artifactToolDescriptor : WORKSPACE_HAND_TOOLS.find((tool) => tool.id === call.toolId);
     if (!descriptor) return undefined;
     if ((call.toolId === artifactToolDescriptor.id || call.toolId === artifactCreateToolDescriptor.id) && !this.artifactService) {
       throw new Error('Artifact: artifact service is not configured.');
@@ -1014,19 +1007,10 @@ class WorkspaceToolProvider implements ToolProvider {
     let transportToolName = call.toolId;
     let transportInput = parsedInput;
     if (call.toolId === artifactToolDescriptor.id) {
-      const artifactInput = parsedInput as ArtifactInput;
-      if (artifactInput.action === 'deliver') {
-        if (!artifactInput.artifact_id) throw new Error('Artifact(deliver): artifact_id is required.');
-        return await this.deliverArtifact(artifactInput.artifact_id, context);
-      }
-      if (!artifactInput.file_path) throw new Error('Artifact(create): file_path is required.');
+      const prepared = await prepareArtifactInvocation(parsedInput as Parameters<typeof prepareArtifactInvocation>[0], this.artifactService!, context);
+      if (prepared.action === 'deliver') return prepared.result;
       transportToolName = artifactCreateToolDescriptor.id;
-      transportInput = {
-        file_path: artifactInput.file_path,
-        ...(artifactInput.kind ? { kind: artifactInput.kind } : {}),
-        ...(artifactInput.mime_type ? { mime_type: artifactInput.mime_type } : {}),
-        ...(artifactInput.metadata ? { metadata: artifactInput.metadata } : {}),
-      } satisfies CreateArtifactInput;
+      transportInput = prepared.transportInput;
     }
     const route = await this.resolveTenantHandRoute(context);
     if (route.kind === 'blocked') {
@@ -1153,33 +1137,7 @@ class WorkspaceToolProvider implements ToolProvider {
     }
     this.notifyMemoryIndexIfNeeded(call.toolId, parsedInput, workspaceForHand, response);
     if (call.toolId === artifactToolDescriptor.id || call.toolId === artifactCreateToolDescriptor.id) {
-      const artifact = await this.createArtifactFromHandResponse(response, context, transportInput);
-      const fileName = typeof artifact.metadata?.fileName === 'string' ? artifact.metadata.fileName : undefined;
-      const sourcePath = typeof artifact.metadata?.sourcePath === 'string' ? artifact.metadata.sourcePath : undefined;
-      const metadata = {
-        artifactAction: 'create',
-        artifactId: artifact.artifactId,
-        artifactKind: artifact.kind,
-        ...(fileName ? { fileName } : {}),
-        ...(artifact.sizeBytes !== undefined ? { sizeBytes: artifact.sizeBytes } : {}),
-        ...(artifact.sha256 ? { sha256: artifact.sha256 } : {}),
-        ...(artifact.mimeType ? { mimeType: artifact.mimeType } : {}),
-      };
-      return {
-        content: JSON.stringify({
-          action: 'create',
-          artifactId: artifact.artifactId,
-          kind: artifact.kind,
-          ...(fileName ? { fileName } : {}),
-          ...(sourcePath ? { sourcePath } : {}),
-          sizeBytes: artifact.sizeBytes,
-          sha256: artifact.sha256,
-          mimeType: artifact.mimeType,
-          userVisible: false,
-          deliveryInstruction: `Use Artifact(action="deliver", artifact_id="${artifact.artifactId}") to show this artifact to the user.`,
-        }, null, 2),
-        metadata,
-      };
+      return createdArtifactToolResult(await this.createArtifactFromHandResponse(response, context, transportInput));
     }
     const modelImages = call.toolId === readFileToolDescriptor.id ? await materializeReadToolImage(response, context.workspace.root) : undefined;
     // 在这里产出摘要而不是等收口点兜底：response.metadata 是**截断前**的真实
@@ -1212,51 +1170,6 @@ class WorkspaceToolProvider implements ToolProvider {
       content: response.content, ...(modelImages ? { modelImages } : {}),
       ...(presentation ? { presentation } : {}),
       ...(resultMetadata ? { metadata: resultMetadata } : {}),
-    };
-  }
-
-  private async deliverArtifact(artifactId: string, context: ToolCallContext): Promise<ToolResult> {
-    if (!this.artifactService) throw new Error('Artifact: artifact service is not configured.');
-    const sessionId = context.sessionId ?? context.workspace.sessionId;
-    if (!sessionId) throw new Error('Artifact(deliver): sessionId is required.');
-
-    // 不接受“知道 artifactId 就能交付”：模型只能交付当前会话创建的 Artifact。
-    // 用户侧下载还会再次经过 ArtifactService 的 owner/tenant ACL。
-    const candidate = await this.artifactService.getForUser(artifactId);
-    if (candidate.sessionId !== sessionId) {
-      throw new Error('Artifact(deliver): artifact does not belong to the current session.');
-    }
-    // 先写持久 delivery reference 再返回 tool_result。若进程在两者之间崩溃，最多
-    // 留下一个随会话删除清理的 pin，不会出现历史卡已落库但 Blob 被 GC 的数据损坏。
-    const artifact = await this.artifactService.markDelivered(artifactId);
-
-    const fileName = typeof artifact.metadata?.fileName === 'string'
-      ? artifact.metadata.fileName
-      : `${artifact.artifactId}.bin`;
-    const deliveryId = `artifact_delivery:${sessionId}:${artifact.artifactId}`;
-    const payload = {
-      action: 'deliver' as const,
-      deliveryId,
-      artifactId: artifact.artifactId,
-      kind: artifact.kind,
-      fileName,
-      ...(artifact.sizeBytes !== undefined ? { sizeBytes: artifact.sizeBytes } : {}),
-      ...(artifact.sha256 ? { sha256: artifact.sha256 } : {}),
-      ...(artifact.mimeType ? { mimeType: artifact.mimeType } : {}),
-      userVisible: true,
-    };
-    return {
-      content: JSON.stringify(payload, null, 2),
-      metadata: {
-        artifactAction: 'deliver',
-        deliveryId,
-        artifactId: artifact.artifactId,
-        artifactKind: artifact.kind,
-        fileName,
-        ...(artifact.sizeBytes !== undefined ? { sizeBytes: artifact.sizeBytes } : {}),
-        ...(artifact.sha256 ? { sha256: artifact.sha256 } : {}),
-        ...(artifact.mimeType ? { mimeType: artifact.mimeType } : {}),
-      },
     };
   }
 

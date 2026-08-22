@@ -63,12 +63,7 @@ import {
   type ArtifactStore,
 } from '../runtime/artifactStore.js';
 import { ArtifactService } from '../runtime/artifactService.js';
-import { ArtifactShareService } from '../runtime/artifactShareService.js';
-import {
-  InMemoryArtifactShareStore,
-  PgArtifactShareStore,
-  type ArtifactShareStore,
-} from '../runtime/artifactShareStore.js';
+import { artifactContentAudit, initializeArtifactShareService, initializeArtifactShareStore, type ArtifactShareService, type ArtifactShareStore } from './artifactRuntime.js';
 import { PgImageBlobStore, setImageBlobStore } from '../runtime/imageBlobStore.js';
 import {
   InMemorySessionShareStore,
@@ -959,13 +954,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
     await pgArtifactStore.init();
     artifactStore = pgArtifactStore;
-    const pgArtifactShareStore = new PgArtifactShareStore({
-      pool: pgEventStore.pool,
-      connectionString: config.runtimeEventStore.connectionString,
-      tablePrefix: config.runtimeEventStore.tablePrefix,
-    });
-    await pgArtifactShareStore.init();
-    artifactShareStore = pgArtifactShareStore;
     // 模型图片 blob 副本：uploads/ 可被用户一键清空，历史会话重放要能从这里取回字节。
     // init 失败只降级（读图回落文件系统、历史图缺失时降级占位），不阻断服务启动。
     try {
@@ -1249,7 +1237,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     await sessionReadStateStore.init();
   }
   sessionShareStore ??= new InMemorySessionShareStore();
-  artifactShareStore ??= new InMemoryArtifactShareStore();
+  const pgRuntimeEventStore = config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore : undefined;
+  artifactShareStore ??= await initializeArtifactShareStore(pgEventStore && pgRuntimeEventStore ? { pool: pgEventStore.pool, connectionString: pgRuntimeEventStore.connectionString, tablePrefix: pgRuntimeEventStore.tablePrefix } : undefined);
   if (!agentRuntimeProfileStore) {
     agentRuntimeProfileStore = new InMemoryAgentRuntimeProfileStore();
     await agentRuntimeProfileStore.init();
@@ -1321,35 +1310,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     authorizeContentAccess: contentAccessGrantStore
       ? input => contentAccessGrantStore!.authorize(input)
       : undefined,
-    auditContentAccess: governanceAuditStore
-      ? async input => {
-          await governanceAuditStore!.append({
-            correlationId: `artifact-read:${input.sessionId}:${randomUUID()}`,
-            actorType: 'user',
-            actorUserId: input.subjectUserId,
-            actorPersona: 'platform_admin',
-            actorTenantId: DEFAULT_TENANT_ID,
-            action: 'session.content.session_export',
-            targetType: 'session_artifact',
-            targetId: input.sessionId,
-            targetTenantId: input.tenantId,
-            purpose: 'incident content export',
-            result: 'succeeded',
-            metadata: { scope: input.scope },
-          });
-        }
-      : undefined,
+    auditContentAccess: artifactContentAudit(governanceAuditStore),
   });
-  const artifactShareSigningSecret = artifactConfig?.signedUrlSecret ?? config.auth?.jwtSecret;
-  if (artifactShareSigningSecret && artifactShareSigningSecret.length >= 16) {
-    artifactShareService = new ArtifactShareService({
-      store: artifactShareStore,
-      artifactService,
-      signingSecret: artifactShareSigningSecret,
-    });
-  } else {
-    serverLogger.warn('Artifact sharing disabled: persistent artifact.signedUrlSecret or auth.jwtSecret is required');
-  }
+  artifactShareService = initializeArtifactShareService(artifactShareStore, artifactService, artifactConfig?.signedUrlSecret ?? config.auth?.jwtSecret, message => serverLogger.warn(message));
   if (artifactConfig?.retentionDays && enableSingletonWorkers) {
     const runArtifactGc = async () => {
       const result = await artifactService!.pruneExpiredArtifacts(artifactConfig.retentionDays!, 200);

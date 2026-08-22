@@ -23,6 +23,7 @@ import { PgContentAccessGrantStore } from '../data/contentAccess/index.js';
 import { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore } from '../data/governanceProjection/index.js';
 import { GovernanceShadowComparator, GovernanceWriteGate, PgGovernanceMigrationControlStore } from '../data/migrationControl/index.js';
 import { PgResourceReferenceStore } from '../data/resourceReferences/index.js';
+import { ContextStore } from '../context/store/index.js';
 import { PgRunResolutionSnapshotStore } from '../runtime/runResolutionSnapshotStore.js';
 import { UserStore } from '../data/users/store.js';
 import { TenantStore } from '../data/tenants/store.js';
@@ -170,6 +171,7 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
   let directoryGroupStore: PgDirectoryGroupStore | undefined;
   let oauthGrantStore: PgOAuthGrantStore | undefined;
   let assignmentStore: PgAssignmentStore | undefined;
+  let contextStore: ContextStore | undefined;
   let credentialStore: PgCredentialStore | undefined;
   let connectorCatalogStore: PgConnectorCatalogStore | undefined;
   let environmentStore: PgEnvironmentStore | undefined;
@@ -268,6 +270,9 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
       platformTenantId: DEFAULT_TENANT_ID,
     });
     await assignmentStore.init();
+    // PgAssignmentStore.init() has already run the official governance migration ledger,
+    // including the Context Plane schema. ContextStore itself owns no parallel migrator.
+    contextStore = new ContextStore({ pool: pgEventStore.pool, tablePrefix });
     credentialStore = new PgCredentialStore({
       pool: pgEventStore.pool,
       tablePrefix: tablePrefix,
@@ -872,6 +877,7 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
     directoryGroupStore,
     oauthGrantStore,
     assignmentStore,
+    contextStore,
     credentialStore,
     connectorCatalogStore,
     environmentStore,

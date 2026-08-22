@@ -171,6 +171,128 @@ export type OAuthGrantResponse = z.infer<typeof oauthGrantResponseSchema>;
 export type OAuthRevocationPreview = z.infer<typeof oauthRevocationPreviewSchema>;
 export type OAuthRevocationResult = z.infer<typeof oauthRevocationResultSchema>;
 
+const contextScopeSchema = z.object({
+  enabled: z.boolean(),
+  summary: z.string(),
+  from: z.string().datetime({ offset: true }).nullable().optional(),
+  through: z.string().datetime({ offset: true }).nullable().optional(),
+  includes: z.array(z.string()).optional(),
+}).strict().refine(
+  value => !value.from || !value.through || Date.parse(value.from) <= Date.parse(value.through),
+  { message: 'from must not be after through', path: ['through'] },
+);
+const contextBackfillCoverageSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('items'),
+    coveredItems: z.number().int().nonnegative(),
+    totalItems: z.number().int().nonnegative(),
+  }).strict(),
+  z.object({
+    kind: z.literal('time'),
+    coveredFrom: z.string().datetime({ offset: true }).nullable(),
+    coveredThrough: z.string().datetime({ offset: true }).nullable(),
+  }).strict(),
+]).superRefine((value, context) => {
+  if (value.kind === 'items' && value.coveredItems > value.totalItems) {
+    context.addIssue({
+      code: 'custom', message: 'coveredItems must not exceed totalItems', path: ['coveredItems'],
+    });
+  }
+  if (value.kind === 'time' && value.coveredFrom && value.coveredThrough
+    && Date.parse(value.coveredFrom) > Date.parse(value.coveredThrough)) {
+    context.addIssue({
+      code: 'custom', message: 'coveredFrom must not be after coveredThrough', path: ['coveredThrough'],
+    });
+  }
+});
+export const contextSourceSchema = z.object({
+  sourceId: z.string().min(1),
+  name: z.string().min(1),
+  system: z.string().min(1),
+  collectionId: z.string().min(1),
+  collection: z.string().min(1),
+  status: z.enum(['healthy', 'syncing', 'attention', 'paused']),
+  lastSyncedAt: z.string().datetime({ offset: true }).nullable(),
+  backfillCoverage: contextBackfillCoverageSchema,
+  watermarkLagSeconds: z.number().nonnegative().nullable(),
+  ingestOutcomes: z.object({
+    truncated: z.number().int().nonnegative(),
+    refused: z.number().int().nonnegative(),
+    unreadable: z.number().int().nonnegative(),
+  }).strict(),
+  historicalLearningScope: contextScopeSchema,
+  realtimeListeningScope: contextScopeSchema,
+}).strict();
+export const contextConsumerSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  kind: z.string().min(1),
+  status: z.enum(['current', 'lagging', 'blocked', 'offline']),
+  watermarkAt: z.string().datetime({ offset: true }).nullable(),
+  lagSeconds: z.number().nonnegative().nullable(),
+  detail: z.string().optional(),
+}).strict();
+export const contextCenterSnapshotSchema = z.object({
+  generatedAt: z.string().datetime({ offset: true }),
+  sources: z.array(contextSourceSchema),
+  consumers: z.array(contextConsumerSchema),
+}).strict();
+export const contextEvidenceSchema = z.object({
+  id: z.string().min(1),
+  sourceName: z.string().min(1),
+  collection: z.string().min(1),
+  author: z.string().nullable(),
+  occurredAt: z.string().datetime({ offset: true }),
+  quote: z.string().min(1),
+  derived: z.boolean(),
+  freshness: z.enum(['fresh', 'aging', 'stale', 'unknown']),
+  freshnessAsOf: z.string().datetime({ offset: true }).nullable(),
+  originalUrl: z.string().nullable(),
+}).strict();
+const contextEvidenceListSchema = z.array(contextEvidenceSchema);
+
+export type ContextCenterSnapshotDto = z.infer<typeof contextCenterSnapshotSchema>;
+export type ContextEvidenceDto = z.infer<typeof contextEvidenceSchema>;
+export interface ContextEvidenceQuery {
+  sourceId: string;
+  collectionId: string;
+  recordId?: string;
+}
+
+async function contextPlaneRequest<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
+  try {
+    return await request(path, signal ? { signal } : undefined, schema);
+  } catch (cause) {
+    if (cause instanceof GovernanceApiError && cause.status === 403) {
+      throw new GovernanceApiError('CONTEXT_PLANE_FORBIDDEN', '当前账号无权查看 Context Center。', 403);
+    }
+    if (cause instanceof GovernanceApiError && cause.status === 404) {
+      throw new GovernanceApiError('CONTEXT_PLANE_UNAVAILABLE', 'Context Center 服务端能力尚未提供。', 404);
+    }
+    if (cause instanceof GovernanceApiError && cause.status === 503) {
+      throw new GovernanceApiError('CONTEXT_PLANE_UNAVAILABLE', 'Context Center 服务暂不可用，请稍后重试。', 503);
+    }
+    throw cause;
+  }
+}
+
+/** Organization-admin Context Plane read adapter. Tenant scope is resolved by the authenticated server session. */
+export const contextCenterApi = {
+  getSnapshot: (options?: { signal?: AbortSignal }) => contextPlaneRequest(
+    '/api/admin/context-plane/snapshot',
+    contextCenterSnapshotSchema,
+    options?.signal,
+  ),
+  listEvidence: (query: ContextEvidenceQuery, options?: { signal?: AbortSignal }) => {
+    const path = withQuery('/api/admin/context-plane/evidence', {
+      sourceId: query.sourceId,
+      collectionId: query.collectionId,
+      ...(query.recordId === undefined ? {} : { recordId: query.recordId }),
+    });
+    return contextPlaneRequest(path, contextEvidenceListSchema, options?.signal);
+  },
+};
+
 /** Existing /api/governance/access endpoints. Raw records remain fail-closed and UI-safe. */
 export const governanceAccessApi = {
   getProjection: <T = unknown>(projectionId: string) =>

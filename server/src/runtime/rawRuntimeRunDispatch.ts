@@ -140,6 +140,7 @@ import {
   createRuntimeSessionRecord,
   resolveSessionMemoryPolicy,
   FileSessionCatalog,
+  type OrgAgentCollectionAssignmentPin,
   type RuntimeSessionRecord,
   type SessionCatalog,
 } from './sessionCatalog.js';
@@ -722,6 +723,33 @@ export function resolveOrgAgentOverrides(
   }
   return { agent: record };
 }
+
+export async function resolveOrgAgentSessionSnapshot(input: {
+  orgAgent: OrgAgentRecord | undefined;
+  existingSession?: RuntimeSessionRecord | null;
+  replaySourceSession?: RuntimeSessionRecord | null;
+  tenantId?: string;
+  userId?: string;
+  agentId?: string;
+  resolveAssignments?: (scope: {
+    tenantId: string;
+    userId: string;
+    agentId: string;
+  }) => Promise<OrgAgentCollectionAssignmentPin[]>;
+}): Promise<RuntimeSessionRecord['orgAgentSnapshot'] | undefined> {
+  const inherited = input.existingSession?.orgAgentSnapshot
+    ?? input.replaySourceSession?.orgAgentSnapshot;
+  if (inherited || input.existingSession || !input.orgAgent) return inherited;
+  const assignments = input.agentId && input.userId && input.tenantId && input.resolveAssignments
+    ? await input.resolveAssignments({
+        tenantId: input.tenantId,
+        userId: input.userId,
+        agentId: input.agentId,
+      })
+    : undefined;
+  return createOrgAgentSessionSnapshot(input.orgAgent, assignments);
+}
+
 export function buildRuntimeSkillFilter(availableHands: HandRecord[]): RuntimeSkillFilter {
   const hasTenantAcsHand = availableHands.some((hand) => (
     typeof hand.metadata?.tenantRemoteHandId === 'string'
@@ -1344,7 +1372,18 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         tenantId: effectiveTenantId,
       },
     });
-    const orgAgentSnapshot = orgAgent ? createOrgAgentSessionSnapshot(orgAgent) : undefined;
+    // Collection authorization is pinned exactly once for a new org-Agent session.
+    // Existing sessions retain their original pin; legacy sessions without one keep
+    // the compatibility path (fresh authorization in the recall scope resolver).
+    const orgAgentSnapshot = await resolveOrgAgentSessionSnapshot({
+      orgAgent,
+      existingSession,
+      replaySourceSession,
+      tenantId: effectiveTenantId,
+      userId: identitySource?.id,
+      agentId: orgAgentId,
+      resolveAssignments: config.resolveOrgAgentCollectionAssignments,
+    });
     let sessionRecord: RuntimeSessionRecord = {
       ...(existingSession ?? createRuntimeSessionRecord({
         sessionId,

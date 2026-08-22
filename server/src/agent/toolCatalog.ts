@@ -42,6 +42,7 @@ import { generateImageToolDescriptor } from './imageGenToolProvider.js';
 import { audioTranscribeToolDescriptor } from './audioTranscribeToolProvider.js';
 import { cronManageToolDescriptor } from './cronToolProvider.js';
 import { sessionContextToolDescriptor } from '../runtime/sessionContext.js';
+import { contextGetToolDescriptor, contextSearchToolDescriptor } from './contextSearchToolProvider.js';
 
 /**
  * 平台内建工具的完整清单。展示顺序=admin 主页 grid 内工具卡片顺序。
@@ -57,6 +58,8 @@ export const PLATFORM_TOOL_CATALOG: readonly ToolDescriptor[] = [
   // memory
   memorySearchToolDescriptor,
   memoryListToolDescriptor,
+  contextSearchToolDescriptor,
+  contextGetToolDescriptor,
   userActivityListToolDescriptor,
   companyInfoToolDescriptor,
   // skill
@@ -115,6 +118,8 @@ export const PLATFORM_TOOL_SOURCE_MODULE: Readonly<Record<string, string>> = {
   AskUserQuestion: 'server/src/agent/builtinTools.ts',
   MemorySearch: 'server/src/agent/memorySearchToolProvider.ts',
   MemoryList: 'server/src/agent/memorySearchToolProvider.ts',
+  ContextSearch: 'server/src/agent/contextSearchToolProvider.ts',
+  ContextGet: 'server/src/agent/contextSearchToolProvider.ts',
   UserActivityList: 'server/src/agent/userActivityToolProvider.ts',
   CompanyInfo: 'server/src/agent/tenantCompanyInfoToolProvider.ts',
   Skill: 'server/src/agent/skillToolProvider.ts',

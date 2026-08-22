@@ -34,6 +34,10 @@ vi.mock("@/components/TenantManager/hooks", () => ({
 }));
 
 vi.mock("@agent/shared/lib/governanceApi", () => ({
+  contextCenterApi: {
+    getSnapshot: vi.fn().mockResolvedValue({ generatedAt: "2026-08-22T15:40:00.000Z", sources: [], consumers: [] }),
+    listEvidence: vi.fn().mockResolvedValue([]),
+  },
   governanceAccessApi: {
     listMemberships: mocks.listMemberships,
     createMembership: mocks.createMembership,

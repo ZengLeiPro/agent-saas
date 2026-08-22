@@ -231,6 +231,12 @@ import { setSessionMetaProjectionSink } from '../data/transcripts/meta.js';
 import { createAuthMiddleware } from '../auth/middleware.js';
 import { sanitizeUserOverrides } from '../security/extraDirs.js';
 import { initializeRuntimeGovernanceStores } from './runtimeGovernanceStores.js';
+import type { ContextStore } from '../context/store/index.js';
+import {
+  AssignmentContextRecallScopeResolver,
+  PgContextRecallService,
+} from '../context/retrieval/index.js';
+import { ContextSearchToolProvider } from '../agent/contextSearchToolProvider.js';
 import { initializeRuntimeGovernanceConnectors } from './runtimeGovernanceConnectors.js';
 import {
   initializeRuntimeGovernanceCredentials,
@@ -654,6 +660,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let membershipStore: PgMembershipStore | undefined;
   let entitlementStore: PgEntitlementStore | undefined;
   let directoryGroupStore: PgDirectoryGroupStore | undefined; let oauthGrantStore: PgOAuthGrantStore | undefined; let assignmentStore: PgAssignmentStore | undefined;
+  let contextStore: ContextStore | undefined;
   let credentialStore: PgCredentialStore | undefined;
   let connectorCatalogStore: PgConnectorCatalogStore | undefined;
   let environmentStore: PgEnvironmentStore | undefined;
@@ -743,6 +750,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       membershipStore,
       entitlementStore,
       directoryGroupStore, oauthGrantStore, assignmentStore,
+      contextStore,
       credentialStore,
       connectorCatalogStore,
       environmentStore,
@@ -1664,6 +1672,32 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   });
   const codexDeviceAuthService = new CodexDeviceAuthService(egressFetch);
   const titleModelAdapterFactory = createTitleModelAdapterFactory(codexCredentialManager, egressFetch);
+  const contextToolProvider = contextStore && assignmentStore && pgEventStore
+    ? new ContextSearchToolProvider(
+        new PgContextRecallService({
+          pool: pgEventStore.pool,
+          ...(config.runtimeEventStore?.backend === 'pg' && config.runtimeEventStore.tablePrefix
+            ? { tablePrefix: config.runtimeEventStore.tablePrefix }
+            : {}),
+        }),
+        new AssignmentContextRecallScopeResolver(assignmentStore, {
+          resourceTypes: ['org_knowledge'],
+          resolveSessionPin: async subject => {
+            if (!subject.sessionId) return null;
+            const session = await sessionCatalog.get(subject.sessionId);
+            if (!session) return null;
+            return {
+              tenantId: session.tenantId ?? '',
+              userId: session.userId,
+              ...(session.orgAgentId ? { orgAgentId: session.orgAgentId } : {}),
+              ...(session.orgAgentSnapshot?.collectionAssignments
+                ? { collectionAssignments: session.orgAgentSnapshot.collectionAssignments }
+                : {}),
+            };
+          },
+        }),
+      )
+    : undefined;
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
     agentCwd,
     sharedDir,
@@ -1686,17 +1720,27 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     memoryWriteDelegationEnabled: (tenantId) => tenantId
       ? getTenantMemoryFeatureStatus(tenantId).memoryWriteDelegationEnabled.effective
       : false,
-    ...(memoryConsolidationStore ? {
+    ...(memoryConsolidationStore || contextToolProvider ? {
       memoryControlProviders: [
-        new MemoryCommandToolProvider({
+        ...(memoryConsolidationStore ? [new MemoryCommandToolProvider({
           store: memoryConsolidationStore,
           memoryIndexService: memoryIndexServiceRef.current,
           logger: { info: (msg) => serverLogger.info(msg), warn: (msg) => serverLogger.warn(msg) },
-        }),
+        })] : []),
+        ...(contextToolProvider ? [contextToolProvider] : []),
       ],
     } : {}),
     agentStore,
     orgAgentStore,
+    ...(assignmentStore ? {
+      resolveOrgAgentCollectionAssignments: async ({ tenantId, userId, agentId }: { tenantId: string; userId: string; agentId: string }) =>
+        (await assignmentStore!.listEffectiveResourceIds(tenantId, userId, 'org_knowledge', agentId))
+          .map(binding => ({
+            collectionId: binding.resourceId,
+            assignmentVersion: binding.assignmentVersion,
+            resourceType: 'org_knowledge' as const,
+          })),
+    } : {}),
     tenantStore,
     environmentStore,
     taskboard: { service: () => taskboardService, executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, integrationPush: () => integrationV3Runtime?.integrationPush, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
@@ -2894,7 +2938,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   }
 
   if (agentDwsAccountStore) agentDwsRuntime = await createAgentDwsRuntime({
-    agentCwd, accountStore: agentDwsAccountStore, messageStore: agentDwsMessageStore, pgEventStore, pgRunStore,
+    agentCwd, accountStore: agentDwsAccountStore, assignmentStore, contextStore, messageStore: agentDwsMessageStore, pgEventStore, pgRunStore,
     tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix ?? 'agent_runtime' : 'agent_runtime', dispatch: finalDispatch, resolveDefaultModel: tenantId => defaultModelResolver?.(tenantId) ?? null,
     resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured),
     enableWorker: enableSchedulerWorker, logger: serverLogger,
@@ -3098,6 +3142,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     directoryGroupStore,
     oauthGrantStore,
     assignmentStore,
+    contextStore,
     credentialStore, connectorCatalogStore,
     environmentStore,
     agentResourceStore,

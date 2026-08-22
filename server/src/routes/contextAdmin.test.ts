@@ -1,0 +1,155 @@
+import type { AddressInfo } from 'node:net';
+import express from 'express';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  contextCenterSnapshotSchema,
+  contextEvidenceSchema,
+} from '../../../shared/src/lib/governanceApi.js';
+import {
+  createContextAdminRouter,
+  type ContextAdminStorePort,
+} from './contextAdmin.js';
+
+const servers: import('node:http').Server[] = [];
+afterEach(async () => {
+  await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve()))));
+});
+
+async function start(user: Express.Request['user'], store?: ContextAdminStorePort) {
+  const app = express();
+  app.use((req, _res, next) => { req.user = user; next(); });
+  app.use('/api/admin/context-plane', createContextAdminRouter({
+    ...(store ? { store } : {}),
+    now: () => new Date('2026-08-22T16:00:00.000Z'),
+  }));
+  const server = await new Promise<import('node:http').Server>(resolve => {
+    const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+  });
+  servers.push(server);
+  const address = server.address() as AddressInfo;
+  return `http://127.0.0.1:${address.port}/api/admin/context-plane`;
+}
+
+function createStore(overrides: Partial<ContextAdminStorePort> = {}): ContextAdminStorePort {
+  return {
+    listSources: vi.fn(async () => [{
+      sourceId: 'source-a', kind: 'dws', displayName: '钉钉', status: 'active',
+    }]),
+    listCollections: vi.fn(async () => [{
+      sourceId: 'source-a', collectionId: 'collection-a', displayName: '产品知识', status: 'active',
+    }]),
+    listPartitions: vi.fn(async () => [{
+      sourceId: 'source-a', collectionId: 'collection-a', status: 'complete',
+      watermark: '2026-08-22T15:58:00.000Z', coverageStart: '2026-01-01T00:00:00.000Z',
+      coverageEnd: '2026-08-22T15:58:00.000Z', truncated: true, refused: false,
+      updatedAt: '2026-08-22T15:59:00.000Z',
+    }]),
+    getEvidence: vi.fn(async () => []),
+    listEvidence: vi.fn(async () => []),
+    ...overrides,
+  };
+}
+
+const orgAdmin = { sub: 'admin-a', username: 'admin', role: 'admin' as const, tenantId: 'tenant-a' };
+
+describe('Context Plane admin HTTP contract', () => {
+  it('builds one truthful shared-schema card per source+collection without inventing an item total', async () => {
+    const store = createStore();
+    const base = await start(orgAdmin, store);
+
+    const response = await fetch(`${base}/snapshot`);
+    expect(response.status).toBe(200);
+    const snapshot = contextCenterSnapshotSchema.parse(await response.json());
+    expect(snapshot).toEqual({
+      generatedAt: '2026-08-22T16:00:00.000Z',
+      sources: [{
+        sourceId: 'source-a', name: '钉钉', system: 'dws',
+        collectionId: 'collection-a', collection: '产品知识', status: 'healthy',
+        lastSyncedAt: '2026-08-22T15:59:00.000Z',
+        backfillCoverage: {
+          kind: 'time', coveredFrom: '2026-01-01T00:00:00.000Z',
+          coveredThrough: '2026-08-22T15:58:00.000Z',
+        },
+        watermarkLagSeconds: 120,
+        ingestOutcomes: { truncated: 1, refused: 0, unreadable: 0 },
+        historicalLearningScope: {
+          enabled: true, summary: '已配置', from: '2026-01-01T00:00:00.000Z',
+          through: '2026-08-22T15:58:00.000Z',
+        },
+        realtimeListeningScope: { enabled: true, summary: '已配置' },
+      }],
+      consumers: [],
+    });
+    expect(store.listSources).toHaveBeenCalledWith('tenant-a');
+    expect(store.listCollections).toHaveBeenCalledWith('tenant-a');
+    expect(store.listPartitions).toHaveBeenCalledWith('tenant-a');
+    expect(JSON.stringify(snapshot)).not.toContain('totalItems');
+  });
+
+  it('uses 未配置/unknown when collection source or sync metadata is absent', async () => {
+    const base = await start(orgAdmin, createStore({
+      listSources: vi.fn(async () => []),
+      listPartitions: vi.fn(async () => []),
+    }));
+
+    const snapshot = contextCenterSnapshotSchema.parse(await (await fetch(`${base}/snapshot`)).json());
+    expect(snapshot.sources[0]).toMatchObject({
+      sourceId: 'source-a', name: '未配置', system: 'unknown', status: 'paused',
+      backfillCoverage: { kind: 'time', coveredFrom: null, coveredThrough: null },
+      watermarkLagSeconds: null,
+      historicalLearningScope: { enabled: false, summary: '未配置' },
+      realtimeListeningScope: { enabled: false, summary: '未配置' },
+    });
+  });
+
+  it('requires sourceId+collectionId, lists collection evidence, maps stored fields and skips missing excerpts', async () => {
+    const listEvidence = vi.fn(async () => [{
+      sourceId: 'source-a', collectionId: 'collection-a', evidenceId: 'stored-evidence', kind: 'source_locator',
+      data: {
+        excerpt: '交付验收前必须完成生产回归。', externalId: 'external-1',
+        occurredAt: '2026-08-20T02:30:00.000Z', url: 'https://example.test/doc', author: '王小明',
+      },
+      createdAt: '2026-08-22T15:00:00.000Z',
+    }, {
+      sourceId: 'source-a', collectionId: 'collection-a', evidenceId: 'missing-excerpt', kind: 'source_locator',
+      data: { externalId: 'external-2' }, createdAt: '2026-08-22T15:00:00.000Z',
+    }]);
+    const base = await start(orgAdmin, createStore({ listEvidence }));
+
+    expect((await fetch(`${base}/evidence?sourceId=source-a`)).status).toBe(400);
+    const response = await fetch(`${base}/evidence?sourceId=source-a&collectionId=collection-a`);
+    expect(response.status).toBe(200);
+    const items = contextEvidenceSchema.array().parse(await response.json());
+    expect(items).toEqual([{
+      id: 'external-1', sourceName: 'source-a', collection: 'collection-a', author: '王小明',
+      occurredAt: '2026-08-20T02:30:00.000Z', quote: '交付验收前必须完成生产回归。',
+      derived: false, freshness: 'unknown', freshnessAsOf: null, originalUrl: 'https://example.test/doc',
+    }]);
+    expect(listEvidence).toHaveBeenCalledWith('tenant-a', 'source-a', 'collection-a');
+  });
+
+  it('uses getEvidence only when recordId is present', async () => {
+    const getEvidence = vi.fn(async () => [{
+      sourceId: 'source-a', collectionId: 'collection-a', evidenceId: 'evidence-1', kind: 'derived',
+      data: { excerpt: '摘要' }, createdAt: '2026-08-22T15:00:00.000Z',
+    }]);
+    const listEvidence = vi.fn(async () => []);
+    const base = await start(orgAdmin, createStore({ getEvidence, listEvidence }));
+
+    const response = await fetch(`${base}/evidence?sourceId=source-a&collectionId=collection-a&recordId=record-a`);
+    expect(contextEvidenceSchema.array().parse(await response.json())).toHaveLength(1);
+    expect(getEvidence).toHaveBeenCalledWith('tenant-a', 'source-a', 'collection-a', 'record-a');
+    expect(listEvidence).not.toHaveBeenCalled();
+  });
+
+  it('locks organization admins to their tenant and returns 503 for an unavailable optional Store', async () => {
+    const store = createStore();
+    const base = await start(orgAdmin, store);
+    expect((await fetch(`${base}/snapshot?tenantId=tenant-b`)).status).toBe(403);
+    expect(store.listSources).not.toHaveBeenCalled();
+
+    const unavailableBase = await start(orgAdmin);
+    expect((await fetch(`${unavailableBase}/snapshot`)).status).toBe(503);
+  });
+});

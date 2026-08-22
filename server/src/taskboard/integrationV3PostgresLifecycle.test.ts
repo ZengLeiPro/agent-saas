@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { PostgresIntegrationEngineV3CandidateHost, PostgresIntegrationEngineV3FeatureHost, PostgresIntegrationEngineV3RequestHost, PostgresIntegrationProviderFenceHost } from './integrationEngineV3Postgres.js';
+import { PostgresIntegrationEngineV3CandidateHost, PostgresIntegrationEngineV3FeatureHost, PostgresIntegrationEngineV3RequestHost, PostgresIntegrationProviderFenceHost, PostgresIntegrationProviderOperationStorage } from './integrationEngineV3Postgres.js';
 import { PostgresIntegrationV3ComposeHost, PostgresIntegrationV3WorkerHost } from './integrationV3WorkerPostgres.js';
 
 function workerHost(query: ReturnType<typeof vi.fn>, dispatchAgent = vi.fn(), syncWorkspace = vi.fn()) {
@@ -14,6 +14,27 @@ function workerHost(query: ReturnType<typeof vi.fn>, dispatchAgent = vi.fn(), sy
 }
 
 describe('Integration v3 PostgreSQL lifecycle hosts', () => {
+  it('serializes provider operation prepare against terminal candidate transitions', async () => {
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    const storage = new PostgresIntegrationProviderOperationStorage({
+      pool: { query }, candidatesTable: 'candidates', providerOperationsTable: 'operations',
+    });
+
+    await expect(storage.insertPrepared({
+      id: 'operation-1', operationKey: 'operation-key-1', intentDigest: 'digest', kind: 'push_ref',
+      repositoryId: 'github:acme/app',
+      fence: { candidateId: 'candidate-1', candidateRevision: 1, workflowEpoch: 2, laneEpoch: 3, executionId: 'execution-1' },
+      expected: {}, command: {}, state: 'prepared', attemptCount: 0,
+      createdAt: '2026-08-22T00:00:00.000Z', updatedAt: '2026-08-22T00:00:00.000Z',
+    })).rejects.toThrow('terminal candidate fence');
+
+    const sql = query.mock.calls[0]![0];
+    expect(sql).toContain("c.state NOT IN ('merged','canceled')");
+    expect(sql).toContain('FOR UPDATE');
+  });
+
   it('freezes flags to the exact candidate, including terminal cleanup', async () => {
     const query = vi.fn(async (_text: string, _values?: unknown[]) => ({ rows: [{ policy_snapshot: { workflowVersion: 3, featureFlags: { engineV3: true, cleanup: true } } }] }));
     const host = new PostgresIntegrationEngineV3FeatureHost({ pool: { query }, candidatesTable: 'candidates' } as never);

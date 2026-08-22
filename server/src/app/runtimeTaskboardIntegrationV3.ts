@@ -35,6 +35,7 @@ import {
 import {
   executeIntegrationV3Cleanup,
   PostgresIntegrationV3ComposeHost,
+  terminalizeIntegrationV3PreparedOperations,
   PostgresIntegrationV3WorkerHost,
 } from '../taskboard/integrationV3WorkerPostgres.js';
 import { canonicalGithubRepositoryUrl, isCanonicalGithubRepositoryRemote, type RepositoryProvider } from '../taskboard/repositoryProvider.js';
@@ -129,6 +130,7 @@ export interface RuntimeIntegrationV3CleanupHostOptions {
     workflowEpoch: number;
     enabled: false;
   }, reason: string): Promise<number>;
+  terminalizePreparedOperations(candidateId: string, reason: string): Promise<number>;
   withRepositoryBranchLock<T>(
     lock: { repositoryPath: string; branch: string }, operation: () => Promise<T>,
   ): Promise<T>;
@@ -217,6 +219,7 @@ export function createRuntimeIntegrationV3CleanupHost(
           enabled: false,
         }, reason);
       },
+      terminalizePreparedOperations: () => options.terminalizePreparedOperations(current.candidate.id, reason),
       applySourcePullRequest: async () => {
         throw new Error('Frozen integration policy does not authorize source pull request mutation');
       },
@@ -323,7 +326,8 @@ export function startRuntimeTaskboardIntegrationV3(
 
   const candidateHost = new PostgresIntegrationEngineV3CandidateHost(pgOptions);
   const operationStorage = new PostgresIntegrationProviderOperationStorage({
-    pool: store.pool, providerOperationsTable: tables.providerOperationsTable,
+    pool: store.pool, candidatesTable: tables.candidatesTable,
+    providerOperationsTable: tables.providerOperationsTable,
   });
   const operationService = new IntegrationProviderOperationService(
     operationStorage, new PostgresIntegrationProviderFenceHost(pgOptions),
@@ -480,6 +484,9 @@ export function startRuntimeTaskboardIntegrationV3(
       },
       revokeCapability: (capabilityId, reason) => capabilityService.revoke(capabilityId, reason),
       fenceCapabilities: (fence, reason) => capabilityService.fence(fence, reason),
+      terminalizePreparedOperations: (candidateId, reason) => terminalizeIntegrationV3PreparedOperations({
+        pool: store.pool, providerOperationsTable: tables.providerOperationsTable, candidateId, reason,
+      }),
       withRepositoryBranchLock: (lock, operation) => composeHost.withRepositoryBranchLock(lock, operation),
       runGit,
     }),

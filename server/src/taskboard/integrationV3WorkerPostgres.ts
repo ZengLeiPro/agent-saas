@@ -412,14 +412,18 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
 
   async findRecoverableMergeOperation(candidateId: string, revision: number) {
     const result = await this.options.pool.query(
-      `SELECT operation_key,state FROM ${this.options.providerOperationsTable}
-        WHERE candidate_id=$1 AND candidate_revision=$2 AND kind='merge_pull_request'
-          AND state IN ('prepared','executing','unknown','succeeded')
-        ORDER BY CASE state WHEN 'succeeded' THEN 0 WHEN 'executing' THEN 1
-          WHEN 'unknown' THEN 2 ELSE 3 END,updated_at DESC LIMIT 1`, [candidateId, revision]);
+      `SELECT o.operation_key,o.state FROM ${this.options.providerOperationsTable} o
+        JOIN ${this.options.candidatesTable} c ON c.id=o.candidate_id
+        WHERE o.candidate_id=$1 AND o.candidate_revision=$2 AND o.kind='merge_pull_request'
+          AND o.repository_id=c.repository_id
+          AND o.command->>'providerPullRequestId'=c.provider_pull_request_id
+          AND o.state IN ('prepared','executing','unknown','failed','needs_human','succeeded')
+        ORDER BY CASE o.state WHEN 'succeeded' THEN 0 WHEN 'needs_human' THEN 1
+          WHEN 'failed' THEN 2 WHEN 'executing' THEN 3 WHEN 'unknown' THEN 4 ELSE 5 END,
+          o.updated_at DESC LIMIT 1`, [candidateId, revision]);
     return result.rows[0] ? {
       operationKey: String(result.rows[0].operation_key),
-      state: String(result.rows[0].state) as 'prepared' | 'executing' | 'unknown' | 'succeeded',
+      state: String(result.rows[0].state) as 'prepared' | 'executing' | 'unknown' | 'failed' | 'needs_human' | 'succeeded',
     } : undefined;
   }
 }

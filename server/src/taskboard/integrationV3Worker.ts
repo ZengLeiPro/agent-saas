@@ -44,7 +44,7 @@ export interface IntegrationV3CleanupReceipt {
 
 export interface IntegrationV3RecoverableMergeOperation {
   operationKey: string;
-  state: 'prepared' | 'executing' | 'unknown' | 'succeeded';
+  state: 'prepared' | 'executing' | 'unknown' | 'failed' | 'needs_human' | 'succeeded';
 }
 
 export interface IntegrationV3WorkerHost {

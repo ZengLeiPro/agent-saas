@@ -2,19 +2,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
 import type {
-  TaskBoardChange,
-  TaskBoardComment,
-  TaskBoardExecutionContextInput,
-  TaskBoardExecutionContextResponse,
-  TaskBoardIntegrationBatchCreateInput,
-  TaskBoardIntegrationSource,
-  TaskBoardMember,
-  TaskBoardMemberPatchInput,
-  TaskBoardRepositoryConfig,
-  TaskBoardTask,
+  TaskBoardChange, TaskBoardComment, TaskBoardExecutionContextInput, TaskBoardExecutionContextResponse,
+  TaskBoardIntegrationBatchCreateInput, TaskBoardIntegrationSource, TaskBoardMember, TaskBoardMemberPatchInput,
+  TaskBoardRepositoryConfig, TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import { rowToBoard } from './boardFields.js';
 import { loadExecutionIntegrationCandidate } from './executionCandidateContext.js';
+import { assertIntegrationSourcesProviderReady } from './integrationSourceCiGate.js';
+import type { RepositoryProvider } from './repositoryProvider.js';
 import { rowToIntegrationSource } from './integrationSourceMapper.js';
 import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import { assertIntegrationV3RuntimeAvailable } from './integrationV3ActivationStore.js';
@@ -59,6 +54,8 @@ export interface TaskboardV2StoreOptions {
   resolutionsTable: string;
   remediationAttemptsTable: string;
   cancellationOutboxTable: string;
+  repositoryProvider?: RepositoryProvider;
+  integrationV3RepositoryProvider?: RepositoryProvider;
   /** Optional for structural v2 hosts; PgTaskboardStore always supplies a fail-closed implementation. */
   probeIntegrationV3Repository?(input: {
     tenantId: string;
@@ -253,6 +250,8 @@ export async function createIntegrationBatch(
         );
       }
     }
+    const sourceProvider = workflowVersion === 3 ? options.integrationV3RepositoryProvider : options.repositoryProvider;
+    await assertIntegrationSourcesProviderReady(sourceProvider, repository, String(board.owner_user_id), sources.rows);
     const duplicate = await client.query(
       `SELECT s.delivery_task_id,s.provider_pull_request_id
          FROM ${options.integrationSourcesTable} s

@@ -20,12 +20,12 @@ describe('RepositoryProviderIntegrationEngineV3Adapter', () => {
         providerPullRequestId: '42',
         number: 42,
         state: 'open' as const,
-        draft: false,
+        draft: true,
         headRef: 'integration/task-1',
         headOid: 'head-1',
         baseRef: 'main',
         baseOid: 'stale-pr-base',
-        mergeable: true,
+        mergeable: false,
         requiredChecksKnown: true,
         requiredChecks: [{ name: 'CI', status: 'success' as const }],
         subjectDigest: 'sha256:subject',
@@ -34,7 +34,7 @@ describe('RepositoryProviderIntegrationEngineV3Adapter', () => {
       getReference: vi.fn(async (_repository, ref: string) => ({ ref, oid: 'current-main', treeOid: 'main-tree' })),
       getRequiredGateCapabilities: vi.fn(async () => ({
         known: true,
-        requiredChecks: [],
+        requiredChecks: [{ name: 'CI' }],
         mergeQueueRequired: false,
         unsupportedRules: [],
       })),
@@ -49,9 +49,37 @@ describe('RepositoryProviderIntegrationEngineV3Adapter', () => {
       baseOid: 'current-main',
       headOid: 'head-1',
       treeOid: 'head-1-tree',
+      draft: true,
+      mergeable: false,
     });
     expect(provider.getCommit).toHaveBeenCalledWith(repository, 'head-1', 'owner-1');
     expect(provider.getReference).toHaveBeenCalledWith(repository, 'main', 'owner-1');
+  });
+
+  it('fails closed when required-check identities change between Provider reads', async () => {
+    const provider = {
+      getPullRequest: vi.fn(async () => ({
+        providerPullRequestId: '42', number: 42, state: 'open' as const, draft: false,
+        headRef: 'integration/task-1', headOid: 'head-1', baseRef: 'main', baseOid: 'base-1',
+        mergeable: true, requiredChecksKnown: true,
+        requiredChecks: [{ name: 'CI', appId: 1, status: 'success' as const }], subjectDigest: 'sha256:subject',
+      })),
+      getCommit: vi.fn(async (_repository, oid: string) => ({ oid, treeOid: `${oid}-tree` })),
+      getReference: vi.fn(async (_repository, ref: string) => ({ ref, oid: 'current-main', treeOid: 'main-tree' })),
+      getRequiredGateCapabilities: vi.fn(async () => ({
+        known: true,
+        requiredChecks: [{ name: 'CI', appId: 1 }, { name: 'Security', appId: 2 }],
+        mergeQueueRequired: false,
+        unsupportedRules: [],
+      })),
+      mergePullRequest: vi.fn(),
+    } as unknown as RepositoryProvider;
+    const adapter = new RepositoryProviderIntegrationEngineV3Adapter(provider);
+
+    const facts = await adapter.readFacts(repository, '42', 'owner-1');
+
+    expect(facts.requiredChecksKnown).toBe(false);
+    expect(facts.unsupportedRules).toContain('required-check-identities-changed');
   });
 
   it('resolves the merged tree from the provider merge commit instead of the former head branch', async () => {

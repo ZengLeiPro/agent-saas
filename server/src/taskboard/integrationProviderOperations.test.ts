@@ -122,7 +122,7 @@ describe('IntegrationProviderOperationService', () => {
 
     expect(result).toMatchObject({ state: 'failed', attemptCount: 1,
       error: 'exact ref remains at the expected old OID',
-      receipt: { actualOid: 'base-oid', verifiedNotApplied: true } });
+      receipt: { outcome: 'not_applied', actualOid: 'base-oid', verifiedNotApplied: true } });
   });
 
   it('does not classify an in-flight executing operation as not applied', async () => {
@@ -154,6 +154,22 @@ describe('IntegrationProviderOperationService', () => {
     await service.prepare(intent);
 
     await expect(service.prepare({ ...intent, expected: { baseOid: 'drifted-base' } })).rejects.toBeInstanceOf(ProviderOperationKeyCollisionError);
+  });
+
+  it('records a definitive executor rejection as explicitly not applied', async () => {
+    const { service } = setup();
+    await service.prepare(intent);
+
+    const result = await service.execute(
+      operationKey,
+      async () => { throw new Error('final provider gate rejected'); },
+      { isDefinitiveFailure: () => true },
+    );
+
+    expect(result).toMatchObject({
+      state: 'failed', attemptCount: 1, error: 'final provider gate rejected',
+      receipt: { outcome: 'not_applied', evidence: 'executor_definitive_failure' },
+    });
   });
 
   it('terminalizes an executing operation when its second pre-provider fence is stale', async () => {

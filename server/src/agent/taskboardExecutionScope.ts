@@ -19,8 +19,10 @@ export function assertTaskboardExecutionScope(
   }
   const executionActions = [
     'execution.context', 'execution.comment', 'execution.integration_candidate.push',
-    'execution.pull_request.set', 'execution.review_subject.record', 'execution.resolve',
-    'integration.sources', 'integration.candidate', 'integration.source.inspect', 'integration.source.merge',
+    'execution.pull_request.set', 'execution.pull_request.inspect', 'execution.pull_request.log',
+    'execution.review_subject.record', 'execution.resolve',
+    'integration.sources', 'integration.candidate', 'integration.source.inspect',
+    'integration.source.log', 'integration.source.merge',
   ];
   if (executionActions.includes(input.action)) {
     if (input.taskId && input.taskId !== context.task.id) throw new Error('看板 Agent 只能操作当前任务');

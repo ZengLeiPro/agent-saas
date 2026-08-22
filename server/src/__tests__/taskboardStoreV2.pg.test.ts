@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { PgTaskboardStore } from '../taskboard/store.js';
 import type { TaskboardIdentity } from '../taskboard/types.js';
+import { seedSuccessfulReviewCi } from './taskboardCiPgTestHelpers.js';
 
 const { Pool } = pg;
 const connectionString = process.env.TEST_DATABASE_URL?.trim();
@@ -95,10 +96,26 @@ describePg('PgTaskboardStore V2 integration contract', () => {
       `UPDATE ${store.tasksTable}
           SET status='ready_to_merge', provider_pull_request_id=identifier,
               pull_request_number=CASE id WHEN $1 THEN 101 ELSE 102 END,
+              head_oid='head-'||id,base_oid='base-main',
               reviewed_subject_digest='digest-'||id, version=version+1
         WHERE id=ANY($2::text[])`,
       [first.id, [first.id, second.id]],
     );
+    await seedSuccessfulReviewCi(pool, store, first.id, `head-${first.id}`);
+    await seedSuccessfulReviewCi(pool, store, second.id, `head-${second.id}`);
+    store.setRepositoryProvider({
+      getPullRequest: async (_repository, providerPullRequestId) => {
+        const source = providerPullRequestId === first.identifier ? first : second;
+        return {
+          providerPullRequestId, number: source.id === first.id ? 101 : 102,
+          state: 'open', draft: false, headRef: `feature/${source.identifier}`,
+          headOid: `head-${source.id}`, baseRef: 'main', baseOid: 'base-main', mergeable: true,
+          requiredChecks: [{ name: 'ci', status: 'success' }], requiredChecksKnown: true,
+          subjectDigest: `digest-${source.id}`,
+        };
+      },
+      mergePullRequest: async () => { throw new Error('not used'); },
+    });
     const freshBoard = await store.getBoard(bob, board.id);
     const integration = await store.createIntegrationBatch!(bob, board.id, {
       deliveryTaskIds: [first.id, second.id],

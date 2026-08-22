@@ -107,7 +107,9 @@ describe('taskboard V2 contracts', () => {
       id: task.id, board_id: task.boardId, identifier: task.identifier, kind: 'delivery',
       title: task.title, description: '', status: 'ready_to_merge', priority: 'none', labels: [],
       sort_order: 1, comment_count: 0, version: 2,
-      provider_pull_request_id: '101', reviewed_subject_digest: 'digest-101',
+      provider_pull_request_id: '101', reviewed_subject_digest: 'digest-101', head_oid: 'head-101',
+      provider_ci_status: 'success', provider_ci_purpose: 'review', provider_ci_head_oid: 'head-101',
+      provider_ci_inspected_at: new Date().toISOString(),
       integration_source_id: 'source-old', integration_task_id: 'integration-old', integration_state: 'canceled',
       created_at: task.createdAt, updated_at: task.updatedAt,
     })).toMatchObject({ mergeEligibility: 'eligible', integrationState: 'canceled' });

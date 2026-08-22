@@ -8,6 +8,8 @@ import type {
   TaskBoardTask,
 } from '../../../../shared/src/types/taskboard.js';
 import { integrationCandidateTableNames } from '../integrationCandidateSchema.js';
+import { assertPullRequestGate } from '../deliveryPullRequests.js';
+import type { RepositoryPullRequestSnapshot } from '../repositoryProvider.js';
 import { rowToExecution } from '../storeHelpers.js';
 import {
   appendChange,
@@ -161,6 +163,18 @@ export async function resolveExecutionV2(
         'TASKBOARD_REVIEW_SUBJECT_REQUIRED',
       );
     }
+    let verifiedPullRequest: RepositoryPullRequestSnapshot | undefined;
+    if ((contract.purpose === 'work' && input.outcome === 'ready_for_review')
+      || (contract.purpose === 'review' && input.outcome === 'approved')) {
+      verifiedPullRequest = await assertCurrentPullRequestGate(
+        options,
+        client,
+        loaded.task,
+        loaded.board,
+        execution.id,
+        contract.purpose,
+      );
+    }
     if (loaded.task.kind === 'remediation' && input.outcome === 'ready_for_review') {
       const hasNewCommit = await recordRemediationCommit(options, client, taskId, execution.id);
       if (!hasNewCommit) {
@@ -241,10 +255,16 @@ export async function resolveExecutionV2(
                   WHEN $2='ready_to_merge' THEN 'merge'
                   ELSE 'none'
                 END,
+                provider_ci_execution_id=CASE WHEN $3::text IS NULL THEN provider_ci_execution_id ELSE $3 END,
+                provider_ci_purpose=CASE WHEN $3::text IS NULL THEN provider_ci_purpose ELSE $4 END,
+                provider_ci_head_oid=CASE WHEN $3::text IS NULL THEN provider_ci_head_oid ELSE $5 END,
+                provider_ci_status=CASE WHEN $3::text IS NULL THEN provider_ci_status ELSE 'success' END,
+                provider_ci_inspected_at=CASE WHEN $3::text IS NULL THEN provider_ci_inspected_at ELSE now() END,
                 next_action_revision=next_action_revision+1,
                 version=version+1, updated_at=now()
           WHERE id=$1`,
-        [taskId, nextStatus],
+        [taskId, nextStatus, verifiedPullRequest ? execution.id : null,
+          verifiedPullRequest ? contract.purpose : null, verifiedPullRequest?.headOid ?? null],
       );
     }
     if (input.outcome === 'needs_human' || input.outcome === 'blocked') {
@@ -302,7 +322,7 @@ async function resolveIntegrationV3Execution(
 ): Promise<TaskBoardTask> {
   const { candidatesTable, revisionsTable } = integrationCandidateTableNames(options.integrationSourcesTable);
   const result = await client.query(
-    `SELECT c.*,r.head_oid,r.subject_digest
+    `SELECT c.*,r.base_oid,r.head_oid,r.subject_digest
        FROM ${candidatesTable} c
        LEFT JOIN ${revisionsTable} r
          ON r.candidate_id=c.id AND r.revision=c.current_revision
@@ -384,6 +404,16 @@ async function resolveIntegrationV3Execution(
     );
   }
   assertWorkflowOutcome(contract, input.outcome);
+  if (execution.purpose === 'review' && input.outcome === 'approved') {
+    await assertCurrentCandidatePullRequestGate(options, client, task, execution.id, {
+      candidateId: candidate.id,
+      revision: candidate.currentRevision,
+      providerPullRequestId: String(row.provider_pull_request_id ?? ''),
+      headOid: candidate.headOid,
+      baseOid: String(row.base_oid ?? ''),
+      subjectDigest: String(row.subject_digest),
+    });
+  }
   if (decision.requestSystemReview) {
     const canonical = await insertResolution(options, client, task, execution, input, { applied: true });
     if (!canonical.replay) {
@@ -569,6 +599,176 @@ async function recordRemediationCommit(
     remediationCount: Number(source.rows[0].remediation_count),
   });
   return true;
+}
+
+export async function assertCurrentCandidatePullRequestGate(
+  options: TaskboardV2StoreOptions,
+  client: PoolClient,
+  task: TaskBoardTask,
+  executionId: string,
+  candidate: {
+    candidateId: string;
+    revision: number;
+    providerPullRequestId: string;
+    headOid: string;
+    baseOid: string;
+    subjectDigest: string;
+  },
+): Promise<RepositoryPullRequestSnapshot> {
+  if (!candidate.providerPullRequestId || !candidate.headOid || !candidate.baseOid) {
+    throw new TaskboardValidationError('Candidate pull request binding is incomplete', 'TASKBOARD_PULL_REQUEST_REQUIRED');
+  }
+  const taskResult = await client.query(
+    `SELECT provider_ci_inspection_id,provider_ci_execution_id,provider_ci_purpose,
+            provider_ci_head_oid,provider_ci_status
+       FROM ${options.tasksTable} WHERE id=$1 FOR UPDATE`,
+    [task.id],
+  );
+  const row = taskResult.rows[0];
+  const inspectionResult = await client.query(
+    `SELECT payload FROM ${options.changesTable}
+      WHERE task_id=$1 AND execution_id=$2 AND change_type='pull_request.inspected'
+      ORDER BY seq DESC LIMIT 1`,
+    [task.id, executionId],
+  );
+  const payload = jsonObject(inspectionResult.rows[0]?.payload);
+  const receipt = jsonObject(payload?.receipt);
+  if (!payload || !receipt
+    || receipt.executionId !== executionId
+    || receipt.taskId !== task.id
+    || receipt.purpose !== 'review'
+    || receipt.providerPullRequestId !== candidate.providerPullRequestId
+    || receipt.headOid !== candidate.headOid
+    || receipt.candidateId !== candidate.candidateId
+    || Number(receipt.candidateRevision) !== candidate.revision
+    || receipt.candidateSubjectDigest !== candidate.subjectDigest
+    || payload.gateStatus !== 'success'
+    || row?.provider_ci_inspection_id !== receipt.inspectionId
+    || row?.provider_ci_execution_id !== executionId
+    || row?.provider_ci_purpose !== 'review'
+    || row?.provider_ci_head_oid !== candidate.headOid
+    || row?.provider_ci_status !== 'success') {
+    throw new TaskboardValidationError(
+      'Current review execution must inspect successful checks for the current candidate revision',
+      'TASKBOARD_CI_INSPECTION_REQUIRED',
+    );
+  }
+  const boardResult = await client.query(
+    `SELECT repository,owner_user_id FROM ${options.boardsTable} WHERE id=$1`,
+    [task.boardId],
+  );
+  const board = boardResult.rows[0];
+  const repository = jsonObject(board?.repository);
+  const provider = options.integrationV3RepositoryProvider;
+  if (!repository || repository.provider !== 'github' || !provider) {
+    throw new TaskboardValidationError('Integration v3 repository provider is unavailable', 'TASKBOARD_CI_UNAVAILABLE');
+  }
+  let current: RepositoryPullRequestSnapshot;
+  try {
+    current = await provider.getPullRequest(
+      repository as {
+        provider: 'github'; repositoryId: string; owner: string; name: string;
+        baseBranch: string; allowForkPullRequest: false;
+      },
+      candidate.providerPullRequestId,
+      String(board.owner_user_id),
+    );
+  } catch (error) {
+    throw new TaskboardValidationError(
+      `Repository provider inspection failed: ${error instanceof Error ? error.message : String(error)}`,
+      'TASKBOARD_CI_UNAVAILABLE',
+    );
+  }
+  assertPullRequestGate(current, {
+    providerPullRequestId: candidate.providerPullRequestId,
+    headOid: candidate.headOid,
+    baseOid: candidate.baseOid,
+    requireMergeable: true,
+  });
+  if (current.baseRef !== repository.baseBranch) {
+    throw new TaskboardValidationError('Candidate pull request base changed after inspection', 'TASKBOARD_SUBJECT_STALE');
+  }
+  return current;
+}
+
+export async function assertCurrentPullRequestGate(
+  options: TaskboardV2StoreOptions,
+  client: PoolClient,
+  task: TaskBoardTask,
+  board: Record<string, unknown>,
+  executionId: string,
+  purpose: 'work' | 'review',
+): Promise<RepositoryPullRequestSnapshot> {
+  const taskResult = await client.query(
+    `SELECT provider_pull_request_id,head_oid,base_oid,reviewed_subject_digest,
+            provider_ci_inspection_id,provider_ci_execution_id,provider_ci_purpose,
+            provider_ci_head_oid,provider_ci_status
+       FROM ${options.tasksTable} WHERE id=$1 FOR UPDATE`,
+    [task.id],
+  );
+  const row = taskResult.rows[0];
+  const providerPullRequestId = String(row?.provider_pull_request_id ?? '');
+  const headOid = String(row?.head_oid ?? '');
+  if (!providerPullRequestId || !headOid) {
+    throw new TaskboardValidationError('Pull request registration lacks an exact head oid', 'TASKBOARD_PULL_REQUEST_REQUIRED');
+  }
+  const inspectionResult = await client.query(
+    `SELECT payload FROM ${options.changesTable}
+      WHERE task_id=$1 AND execution_id=$2 AND change_type='pull_request.inspected'
+      ORDER BY seq DESC LIMIT 1`,
+    [task.id, executionId],
+  );
+  const payload = jsonObject(inspectionResult.rows[0]?.payload);
+  const receipt = jsonObject(payload?.receipt);
+  const inspected = jsonObject(payload?.snapshot);
+  if (!payload || !receipt || !inspected
+    || receipt.executionId !== executionId
+    || receipt.taskId !== task.id
+    || receipt.purpose !== purpose
+    || receipt.providerPullRequestId !== providerPullRequestId
+    || receipt.headOid !== headOid
+    || payload.gateStatus !== 'success'
+    || row?.provider_ci_inspection_id !== receipt.inspectionId
+    || row?.provider_ci_execution_id !== executionId
+    || row?.provider_ci_purpose !== purpose
+    || row?.provider_ci_head_oid !== headOid
+    || row?.provider_ci_status !== 'success') {
+    throw new TaskboardValidationError(
+      'Current execution must inspect the registered pull request and successful checks for the current head',
+      'TASKBOARD_CI_INSPECTION_REQUIRED',
+    );
+  }
+  const repository = jsonObject(board.repository);
+  const provider = options.repositoryProvider;
+  if (!repository || repository.provider !== 'github' || !provider) {
+    throw new TaskboardValidationError('Repository provider is unavailable', 'TASKBOARD_CI_UNAVAILABLE');
+  }
+  let current: RepositoryPullRequestSnapshot;
+  try {
+    current = await provider.getPullRequest(
+      repository as {
+        provider: 'github'; repositoryId: string; owner: string; name: string;
+        baseBranch: string; allowForkPullRequest: false;
+      },
+      providerPullRequestId,
+      String(board.owner_user_id),
+    );
+  } catch (error) {
+    throw new TaskboardValidationError(
+      `Repository provider inspection failed: ${error instanceof Error ? error.message : String(error)}`,
+      'TASKBOARD_CI_UNAVAILABLE',
+    );
+  }
+  assertPullRequestGate(current, {
+    providerPullRequestId,
+    headOid,
+    ...(row?.base_oid ? { baseOid: String(row.base_oid) } : {}),
+    ...(purpose === 'review' && row?.reviewed_subject_digest
+      ? { subjectDigest: String(row.reviewed_subject_digest) }
+      : {}),
+    ...(purpose === 'review' ? { requireMergeable: true } : {}),
+  });
+  return current;
 }
 
 function jsonObject(value: unknown): Record<string, unknown> | undefined {

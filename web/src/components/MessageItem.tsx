@@ -27,7 +27,7 @@ import { EntityIcons } from '@/lib/icons';
 import { requestOpenBillingBadge } from '@/lib/billingBadgeBus';
 import { publicSessionShareFileUrl } from '@/lib/sessionShareApi';
 import { ImageLightbox } from './ImageLightbox';
-import { ArtifactPreviewDialog } from '@/components/artifacts/ArtifactPreviewDialog';
+const LazyArtifactPreviewDialog = lazy(() => import('@/components/artifacts/ArtifactPreviewDialog').then(module => ({ default: module.ArtifactPreviewDialog })));
 
 // react-markdown 懒加载：不阻塞首屏渲染，模块加载后立即可用
 const markdownPromise = import("react-markdown");
@@ -421,7 +421,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
           </button>
         </div>
       </div>
-      {artifactId ? <ArtifactPreviewDialog open={artifactPreviewOpen} artifactId={artifactId} fileName={fileName} fileSize={resolvedSize} mimeType={mimeType} onOpenChange={setArtifactPreviewOpen} /> : null}
+      {artifactId && artifactPreviewOpen ? <Suspense fallback={null}><LazyArtifactPreviewDialog open artifactId={artifactId} fileName={fileName} fileSize={resolvedSize} mimeType={mimeType} onOpenChange={setArtifactPreviewOpen} /></Suspense> : null}
       {previewSrc && (
         <ImageLightbox
           src={previewSrc}

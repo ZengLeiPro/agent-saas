@@ -71,13 +71,14 @@ export class PostgresIntegrationPushCapabilityHost implements IntegrationPushCap
       const inserted = await client.query(
         `INSERT INTO ${this.options.capabilitiesTable}
           (id,secret_hash,tenant_id,repository_id,integration_task_id,candidate_id,revision,
-           execution_id,exact_ref,expected_old_oid,lane_epoch,workflow_epoch,issued_at,expires_at,status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'active')
+           execution_id,exact_ref,expected_old_oid,expected_base_oid,lane_epoch,workflow_epoch,issued_at,expires_at,status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'active')
          ON CONFLICT (id) DO NOTHING RETURNING *`,
         [record.id, record.secretHash, record.binding.tenantId, record.binding.repositoryId,
           record.binding.integrationTaskId, record.binding.candidateId, record.binding.revision,
           record.binding.executionId, record.binding.exactRef, record.binding.expectedOldOid,
-          record.binding.laneEpoch, record.binding.workflowEpoch, record.issuedAt, record.expiresAt],
+          record.binding.expectedBaseOid, record.binding.laneEpoch, record.binding.workflowEpoch,
+          record.issuedAt, record.expiresAt],
       );
       return inserted.rows[0]
         ? { ok: true, record: rowToRecord(inserted.rows[0]) }
@@ -195,7 +196,7 @@ export class PostgresIntegrationPushCapabilityHost implements IntegrationPushCap
     const purposePredicate = workOnly ? "e.purpose='work'" : "e.purpose IN ('work','review')";
     return `SELECT e.id AS execution_id,e.candidate_revision,e.candidate_lane_epoch,e.candidate_workflow_epoch,
                    c.id AS candidate_id,c.integration_task_id,c.repository_id,c.branch,c.current_revision,
-                   c.lane_epoch,c.workflow_epoch,r.head_oid,b.tenant_id,b.owner_user_id
+                   c.lane_epoch,c.workflow_epoch,r.head_oid,r.base_oid,b.tenant_id,b.owner_user_id
               FROM ${this.options.executionsTable} e
               JOIN ${this.options.tasksTable} t ON t.id=e.task_id
               JOIN ${this.options.boardsTable} b ON b.id=t.board_id
@@ -224,6 +225,7 @@ export class PostgresIntegrationPushCapabilityHost implements IntegrationPushCap
         executionId: String(row.execution_id),
         exactRef,
         expectedOldOid: String(row.head_oid),
+        expectedBaseOid: String(row.base_oid),
         laneEpoch: Number(row.lane_epoch),
         workflowEpoch: Number(row.workflow_epoch),
       },
@@ -255,8 +257,8 @@ function rowToRecord(row: Record<string, unknown>): IntegrationPushCapabilityRec
       tenantId: String(row.tenant_id), repositoryId: String(row.repository_id),
       integrationTaskId: String(row.integration_task_id), candidateId: String(row.candidate_id),
       revision: Number(row.revision), executionId: String(row.execution_id), exactRef: String(row.exact_ref),
-      expectedOldOid: String(row.expected_old_oid), laneEpoch: Number(row.lane_epoch),
-      workflowEpoch: Number(row.workflow_epoch),
+      expectedOldOid: String(row.expected_old_oid), expectedBaseOid: String(row.expected_base_oid),
+      laneEpoch: Number(row.lane_epoch), workflowEpoch: Number(row.workflow_epoch),
     },
     issuedAt: toIso(row.issued_at), expiresAt: toIso(row.expires_at),
     status: String(row.status) as IntegrationPushCapabilityRecord['status'],
@@ -270,8 +272,8 @@ function sameBinding(a: IntegrationPushCapabilityBinding, b: IntegrationPushCapa
   return a.tenantId === b.tenantId && a.repositoryId === b.repositoryId
     && a.integrationTaskId === b.integrationTaskId && a.candidateId === b.candidateId
     && a.revision === b.revision && a.executionId === b.executionId && a.exactRef === b.exactRef
-    && a.expectedOldOid === b.expectedOldOid && a.laneEpoch === b.laneEpoch
-    && a.workflowEpoch === b.workflowEpoch;
+    && a.expectedOldOid === b.expectedOldOid && a.expectedBaseOid === b.expectedBaseOid
+    && a.laneEpoch === b.laneEpoch && a.workflowEpoch === b.workflowEpoch;
 }
 
 function matchesFenceRow(binding: IntegrationPushCapabilityBinding, row: Record<string, unknown>): boolean {

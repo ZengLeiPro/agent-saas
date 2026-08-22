@@ -31,7 +31,7 @@ export function executionWritebackInstructions(context: TaskboardExecutionContex
   if (context.task.kind === 'integration' && context.task.workflowVersion === 3
     && context.execution.purpose === 'work') {
     instructions.splice(2, 0,
-      '- 创建单一直接父提交后，调用 execution.integration_candidate.push 且只传 commitOid；不得执行 git push。',
+      '- 创建单父提交后调用 execution.integration_candidate.push 且只传 commitOid；正常修复以当前 head 为父，基线漂移重建以冻结 base 为父；不得执行 git push。',
       '- 只有受控 push 成功后，才能通过 execution.resolve 提交 ready_for_review。');
   }
   return instructions;

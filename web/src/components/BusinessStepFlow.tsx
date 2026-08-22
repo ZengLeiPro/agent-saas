@@ -340,10 +340,12 @@ function TerminalBlock({
   event,
   open,
   onOpenChange,
+  showOutcomeWhenCollapsed,
 }: {
   event: BusinessStepEventItem;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  showOutcomeWhenCollapsed?: boolean;
 }) {
   const todo = event.todo;
   const meta = TERMINAL_META[event.kind];
@@ -353,7 +355,7 @@ function TerminalBlock({
   const { label, tone, Icon } = meta;
   const hasEvidence = !!todo.evidenceRefs?.length;
   const bodyOpen = open ?? localOpen;
-  const showOutcome = bodyOpen && !!todo.outcome;
+  const showOutcome = !!todo.outcome && (bodyOpen || showOutcomeWhenCollapsed);
   const toggle = () => {
     const next = !bodyOpen;
     if (onOpenChange) onOpenChange(next);
@@ -426,12 +428,14 @@ export function BusinessStepFlow({
   event,
   open,
   onOpenChange,
+  showOutcomeWhenCollapsed,
   planHasOpenStep,
   onTogglePlan,
 }: {
   event: BusinessStepEventItem;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  showOutcomeWhenCollapsed?: boolean;
   planHasOpenStep?: boolean;
   onTogglePlan?: () => void;
 }) {
@@ -451,6 +455,7 @@ export function BusinessStepFlow({
           event={event}
           open={open}
           onOpenChange={onOpenChange}
+          showOutcomeWhenCollapsed={showOutcomeWhenCollapsed}
         />
       );
     default:
@@ -478,6 +483,7 @@ export function BusinessStepSectionView({
   systemActions,
   open,
   onOpenChange,
+  showOutcomeWhenCollapsed,
 }: {
   section: BusinessStepSection;
   debugMode: boolean;
@@ -489,6 +495,7 @@ export function BusinessStepSectionView({
   systemActions?: ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  showOutcomeWhenCollapsed?: boolean;
 }) {
   const { start, terminal, isActive } = section;
   const terminalMeta = terminal ? TERMINAL_META[terminal.kind] : undefined;
@@ -500,7 +507,7 @@ export function BusinessStepSectionView({
   const [processOpen, setProcessOpen] = useState(!terminal);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const sectionOpen = open ?? localOpen;
-  const showOutcome = sectionOpen && !!terminal?.todo?.outcome;
+  const showOutcome = !!terminal?.todo?.outcome && (sectionOpen || showOutcomeWhenCollapsed);
   const terminalKey = terminal?.id ?? null;
   useEffect(() => {
     if (!terminalKey) return;

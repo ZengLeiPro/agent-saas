@@ -1,7 +1,7 @@
 import { lazy, Suspense, useMemo, useRef, useCallback, useEffect, useState } from 'react';
 import { Plus, ArrowUp, Square, Mic, Loader2, StopCircle } from "lucide-react";
 
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { warmupSessionSandbox } from "@/lib/sessionsApi";
 import type { ModelList } from "@/types/models";
@@ -51,7 +51,7 @@ interface ChatInputProps {
 const MIN_HEIGHT = 56;
 const MAX_HEIGHT = 200;
 const warmedSessionIds = new Set<string>();
-const LazyAssetLibraryDialog = lazy(() => import("@/components/AssetLibraryDialog"));
+const LazyAttachmentControls = lazy(() => import("@/components/AttachmentControls"));
 
 function warmupSessionOnce(sessionId: string | null | undefined, value: string): void {
   if (!sessionId || warmedSessionIds.has(sessionId) || !value.trim()) return;
@@ -100,7 +100,6 @@ export function ChatInput({
   const localFileInputRef = useRef<HTMLInputElement>(null);
   const [tooShortTip, setTooShortTip] = useState(false);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
-  const [assetLibraryOpen, setAssetLibraryOpen] = useState(false);
 
   const voiceRecorder = useVoiceRecorder({
     onVoiceSend: async (wavBlob, durationMs) => {
@@ -433,33 +432,19 @@ export function ChatInput({
                       <Plus className="size-5" />
                     </button>
                   </PopoverTrigger>
-                  <PopoverContent
-                    side="top"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <button
-                      type="button"
-                      className="w-full rounded-md px-3 py-2 text-left text-sm"
-                      onClick={() => {
-                        setAttachmentMenuOpen(false);
-                        localFileInputRef.current?.click();
-                      }}
-                    >
-                      本地文件
-                    </button>
-                    {onAssetSelect && (
-                      <button
-                        type="button"
-                        className="w-full rounded-md px-3 py-2 text-left text-sm"
-                        onClick={() => {
+                  {attachmentMenuOpen && (
+                    <Suspense fallback={null}>
+                      <LazyAttachmentControls
+                        onLocalFile={() => {
                           setAttachmentMenuOpen(false);
-                          setAssetLibraryOpen(true);
+                          localFileInputRef.current?.click();
                         }}
-                      >
-                        资料库
-                      </button>
-                    )}
-                  </PopoverContent>
+                        onMenuOpenChange={setAttachmentMenuOpen}
+                        onAssetConfirm={onAssetSelect}
+                        disabled={attachmentDisabled}
+                      />
+                    </Suspense>
+                  )}
                 </Popover>
                 <input
                   ref={localFileInputRef}
@@ -469,16 +454,6 @@ export function ChatInput({
                   onChange={onFileSelect}
                   disabled={attachmentDisabled}
                 />
-                {onAssetSelect && assetLibraryOpen && (
-                  <Suspense fallback={null}>
-                    <LazyAssetLibraryDialog
-                      open
-                      onOpenChange={setAssetLibraryOpen}
-                      onConfirm={onAssetSelect}
-                      disabled={attachmentDisabled}
-                    />
-                  </Suspense>
-                )}
               </div>
 
               <div className="flex items-center gap-1">

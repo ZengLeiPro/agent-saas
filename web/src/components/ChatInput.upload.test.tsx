@@ -92,19 +92,28 @@ describe("ChatInput 布局", () => {
 });
 
 describe("ChatInput 附件来源入口", () => {
-  it("点击添加附件后先显示本地文件和资料库选项", () => {
+  it("点击添加附件后先显示本地文件和资料库选项", async () => {
     renderInput({ onAssetSelect: vi.fn() });
 
     fireEvent.click(screen.getByRole("button", { name: "添加附件" }));
 
-    expect(screen.getByRole("button", { name: "本地文件" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "本地文件" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "资料库" })).toBeTruthy();
   });
 
-  it("选择本地文件后仍走既有上传回调", () => {
+  it("选择资料库后打开 assets 选择弹窗", async () => {
+    renderInput({ onAssetSelect: vi.fn() });
+
+    fireEvent.click(screen.getByRole("button", { name: "添加附件" }));
+    fireEvent.click(await screen.findByRole("button", { name: "资料库" }));
+
+    expect(await screen.findByText("从资料库添加")).toBeTruthy();
+  });
+
+  it("选择本地文件后仍走既有上传回调", async () => {
     const { onFileSelect } = renderInput({ onAssetSelect: vi.fn() });
     fireEvent.click(screen.getByRole("button", { name: "添加附件" }));
-    fireEvent.click(screen.getByRole("button", { name: "本地文件" }));
+    fireEvent.click(await screen.findByRole("button", { name: "本地文件" }));
 
     const fileInput = document.querySelector('input[type="file"]');
     expect(fileInput).toBeTruthy();

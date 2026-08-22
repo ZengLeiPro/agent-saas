@@ -810,7 +810,6 @@ export const MessageList = memo(function MessageList({
                     systemActions={systemActions}
                     open={sectionOpen}
                     onOpenChange={(open) => setBusinessStepOpen(sub.id, open)}
-                    showOutcomeWhenCollapsed={businessStepDisplayMode !== 'collapsed'}
                   >
                     {sub.items.map((child) => renderFlowItem(child))}
                   </BusinessStepSectionView>
@@ -827,7 +826,6 @@ export const MessageList = memo(function MessageList({
                     onOpenChange={terminal ? (open) => setBusinessStepOpen(sub.id, open) : undefined}
                     planHasOpenStep={sub.kind === 'plan' ? planHasOpenStep(sub.id) : undefined}
                     onTogglePlan={sub.kind === 'plan' ? () => toggleBusinessPlan(sub.id) : undefined}
-                    showOutcomeWhenCollapsed={businessStepDisplayMode !== 'collapsed'}
                   />
                 </ErrorBoundary>
               );

@@ -14,6 +14,7 @@ import type {
 
 export interface IntegrationEngineV3PostgresOptions {
   pool: Pick<Pool, 'query'>;
+  candidatesTable: string;
   providerOperationsTable: string;
 }
 
@@ -31,10 +32,16 @@ export class PostgresIntegrationProviderOperationStorage implements IntegrationP
 
   async insertPrepared(record: IntegrationProviderOperationRecord): Promise<IntegrationProviderOperationRecord> {
     const result = await this.options.pool.query(
-      `INSERT INTO ${this.options.providerOperationsTable}
+      `WITH candidate_lock AS MATERIALIZED (
+         SELECT c.id FROM ${this.options.candidatesTable} c
+          WHERE c.id=$6 AND c.state NOT IN ('merged','canceled')
+          FOR UPDATE
+       )
+       INSERT INTO ${this.options.providerOperationsTable}
         (id,operation_key,intent_digest,kind,repository_id,candidate_id,candidate_revision,
          workflow_epoch,lane_epoch,execution_id,expected,command,state,attempt_count,receipt,error,created_at,updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13,$14,$15::jsonb,$16,$17,$18)
+       SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13,$14,$15::jsonb,$16,$17,$18
+         FROM candidate_lock
        ON CONFLICT (operation_key) DO NOTHING RETURNING *`,
       [record.id, record.operationKey, record.intentDigest, record.kind, record.repositoryId,
         record.fence.candidateId, record.fence.candidateRevision, record.fence.workflowEpoch,
@@ -45,7 +52,7 @@ export class PostgresIntegrationProviderOperationStorage implements IntegrationP
     );
     if (result.rows[0]) return rowToProviderOperation(result.rows[0]);
     const winner = await this.getByOperationKey(record.operationKey);
-    if (!winner) throw new Error('Provider operation insert race produced no winning row');
+    if (!winner) throw new Error('Provider operation insert rejected by terminal candidate fence');
     return winner;
   }
 

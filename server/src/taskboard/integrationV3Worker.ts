@@ -26,7 +26,7 @@ export interface IntegrationV3WorkerCurrent {
 export type IntegrationV3CleanupActionStatus = 'succeeded' | 'skipped' | 'failed';
 
 export interface IntegrationV3CleanupActionReceipt {
-  action: 'revoke_capabilities' | 'fence_capabilities' | 'remove_candidate_worktree' | 'source_pull_request';
+  action: 'revoke_capabilities' | 'fence_capabilities' | 'terminalize_prepared_operations' | 'remove_candidate_worktree' | 'source_pull_request';
   status: IntegrationV3CleanupActionStatus;
   target?: string;
   reason?: string;
@@ -322,7 +322,7 @@ function isRetryable(error: unknown): boolean {
   return !deterministic.has(code);
 }
 function assertCleanupReceipt(receipt: IntegrationV3CleanupReceipt): void {
-  const required = ['revoke_capabilities', 'fence_capabilities', 'remove_candidate_worktree'] as const;
+  const required = ['revoke_capabilities', 'fence_capabilities', 'terminalize_prepared_operations', 'remove_candidate_worktree'] as const;
   for (const action of required) {
     if (!receipt.actions.some((item) => item.action === action)) throw new Error(`Cleanup receipt missing action: ${action}`);
   }

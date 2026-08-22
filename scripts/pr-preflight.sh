@@ -23,5 +23,7 @@ pnpm -F server exec vitest run \
 pnpm -F web check:api-boundary
 pnpm scenarios:lint
 pnpm sanitize-check
+VITE_API_BASE="${VITE_API_BASE:-https://api.agent.kaiyan.net}" \
+VITE_WEB_ORIGIN="${VITE_WEB_ORIGIN:-https://agent.kaiyan.net}" \
 pnpm -F web build:oss
 pnpm check:web-startup-budget -- --dist web/dist

@@ -10,6 +10,7 @@ import {
   PostgresIntegrationEngineV3FeatureHost,
   PostgresIntegrationEngineV3RequestHost,
 } from '../taskboard/integrationEngineV3Postgres.js';
+import { requeueFailedIntegrationV3Candidate } from '../taskboard/integrationV3Repair.js';
 import { IntegrationV3Worker } from '../taskboard/integrationV3Worker.js';
 import { PostgresIntegrationV3WorkerHost } from '../taskboard/integrationV3WorkerPostgres.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
@@ -49,6 +50,12 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
     state: 'waiting_checks' | 'working' | 'blocked';
     taskStatus: 'todo' | 'in_progress';
     checkpoint?: Record<string, unknown>;
+    revision?: {
+      subjectKind?: 'provider_subject' | 'source_seed';
+      treeOid?: string | null;
+      compositionComplete?: boolean;
+      workRound?: number;
+    };
   }) {
     const board = await store.createBoard(identity, { name: `V3 convergence ${randomUUID()}` });
     const taskId = randomUUID();
@@ -72,10 +79,12 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
     );
     await pool.query(
       `INSERT INTO ${tables.revisionsTable}
-         (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,source_set_digest,
-          subject_digest,policy_snapshot_digest,policy_revision,merge_method,work_round)
-       VALUES($1,1,1,'base-1','head-1','provider_subject','tree-1','sources','subject-1','policy-1','p1','squash',0)`,
-      [candidateId],
+         (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,composition_complete,
+          source_set_digest,subject_digest,policy_snapshot_digest,policy_revision,merge_method,work_round)
+       VALUES($1,1,1,'base-1','head-1',$2,$3,$4,'sources','subject-1','policy-1','p1','squash',$5)`,
+      [candidateId, input.revision?.subjectKind ?? 'provider_subject',
+        input.revision?.treeOid === undefined ? 'tree-1' : input.revision.treeOid,
+        input.revision?.compositionComplete ?? true, input.revision?.workRound ?? 0],
     );
     await pool.query(
       `INSERT INTO ${store.integrationLanesTable}(repository_id,board_id,active_integration_task_id,epoch)
@@ -109,6 +118,52 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
       [seed.candidateId],
     );
     expect(row.rows).toEqual([{ composition_complete: false }]);
+  });
+
+  it('recovers only the legacy incomplete source_seed by returning it to composing and preserving failed Work evidence', async () => {
+    const seed = await seedCandidate({
+      state: 'working', taskStatus: 'in_progress',
+      revision: { subjectKind: 'source_seed', treeOid: null, compositionComplete: false },
+    });
+    const workerError = 'Work request exhausted retries and requires operator recovery';
+    const requestError = 'Candidate execution workspace binding is stale';
+    await pool.query(
+      `UPDATE ${seed.tables.candidatesTable}
+          SET worker_status='failed',worker_error=$2,worker_attempts=5,worker_lease_id=NULL
+        WHERE id=$1`,
+      [seed.candidateId, workerError],
+    );
+    const outboxId = randomUUID();
+    await pool.query(
+      `INSERT INTO ${seed.tables.requestsOutboxTable}
+         (id,request_key,kind,candidate_id,candidate_revision,work_round,workflow_epoch,lane_epoch,
+          payload,status,attempts,last_error)
+       VALUES($1,$2,'work',$3,1,0,1,1,'{}'::jsonb,'failed',5,$4)`,
+      [outboxId, `legacy-${outboxId}`, seed.candidateId, requestError],
+    );
+
+    await expect(requeueFailedIntegrationV3Candidate(pool, {
+      candidates: seed.tables.candidatesTable, revisions: seed.tables.revisionsTable,
+      requestsOutbox: seed.tables.requestsOutboxTable, changes: store.changesTable,
+    }, {
+      taskId: seed.taskId, actorId: identity.ownerUserId, reason: 'partial composition support deployed',
+    })).resolves.toEqual({
+      candidateId: seed.candidateId, taskId: seed.taskId, previousError: workerError,
+      recoveryKind: 'composition', outboxId, status: 'idle',
+    });
+
+    const candidate = await pool.query(
+      `SELECT state,worker_status,worker_error,worker_attempts,provider_pull_request_id
+         FROM ${seed.tables.candidatesTable} WHERE id=$1`, [seed.candidateId],
+    );
+    expect(candidate.rows).toEqual([{
+      state: 'composing', worker_status: 'idle', worker_error: null, worker_attempts: 0,
+      provider_pull_request_id: null,
+    }]);
+    const outbox = await pool.query(
+      `SELECT status,attempts,last_error FROM ${seed.tables.requestsOutboxTable} WHERE id=$1`, [outboxId],
+    );
+    expect(outbox.rows).toEqual([{ status: 'failed', attempts: 5, last_error: requestError }]);
   });
 
   it('exposes the current candidate revision and complete frozen snapshots to Work context', async () => {

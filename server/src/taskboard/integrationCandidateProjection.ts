@@ -64,7 +64,7 @@ export async function loadIntegrationCandidateProjection(
       [row.id, Number(row.current_revision)],
     );
   const revisionNumbers = revisionResult.rows.map((revision) => Number(revision.revision));
-  const [countResult, snapshots, operations, cleanupResult] = await Promise.all([
+  const [countResult, snapshots, operations, cleanupResult, requestsResult] = await Promise.all([
     includeHistory
       ? store.pool.query(`SELECT count(*)::int AS total FROM ${tables.revisionsTable} WHERE candidate_id=$1`, [row.id])
       : Promise.resolve({ rows: [{ total: revisionNumbers.length }] }),
@@ -87,6 +87,15 @@ export async function loadIntegrationCandidateProjection(
         WHERE candidate_id=$1 AND kind='cleanup' AND candidate_revision=$2
         ORDER BY created_at DESC LIMIT 1`,
       [row.id, Number(row.current_revision)],
+    ),
+    store.pool.query(
+      `SELECT kind,status,attempts,last_error,payload->>'executionId' AS execution_id,updated_at
+         FROM ${tables.requestsOutboxTable}
+        WHERE candidate_id=$1 AND candidate_revision=$2
+          AND workflow_epoch=$3::bigint AND lane_epoch=$4::bigint
+          AND kind IN ('work','review','workspace_sync')
+        ORDER BY created_at DESC LIMIT 10`,
+      [row.id, Number(row.current_revision), String(row.workflow_epoch), String(row.lane_epoch)],
     ),
   ]);
   const total = Number(countResult.rows[0]?.total ?? 0);
@@ -113,6 +122,14 @@ export async function loadIntegrationCandidateProjection(
         : row.worker_checkpoint ?? {},
       ...(row.worker_error ? { error: String(row.worker_error) } : {}),
     },
+    requests: requestsResult.rows.map((request) => ({
+      kind: String(request.kind) as 'work' | 'review' | 'workspace_sync',
+      status: String(request.status),
+      attempts: Number(request.attempts),
+      ...(request.last_error ? { error: String(request.last_error) } : {}),
+      ...(request.execution_id ? { executionId: String(request.execution_id) } : {}),
+      updatedAt: request.updated_at instanceof Date ? request.updated_at.toISOString() : String(request.updated_at),
+    })),
     ...(cleanup ? { cleanup } : {}),
     history: { includeHistory, page, pageSize, total, hasMore: includeHistory && page * pageSize < total },
     lastRefreshedAt: new Date().toISOString(),

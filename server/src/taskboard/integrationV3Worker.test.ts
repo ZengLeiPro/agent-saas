@@ -186,6 +186,27 @@ describe('IntegrationV3Worker pure mock flow', () => {
     expect(worker.health()).toEqual({ healthy: false, reason: 'worker_tick_failed' });
   });
 
+  it('keeps readiness healthy during a bounded active tick and fails stale after the bound', async () => {
+    const host = new MemoryHost();
+    host.claimCandidate = async () => undefined;
+    const worker = new IntegrationV3Worker({
+      host,
+      engine: { execute: vi.fn() } as unknown as IntegrationEngineV3,
+      composer: { compose: vi.fn(), refreshAfterWork: vi.fn() },
+      maxActiveTickMs: 30_000,
+    });
+    await worker.runOnce();
+    let releaseClaim!: () => void;
+    host.claimRequest = () => new Promise((resolve) => { releaseClaim = () => resolve(undefined); });
+    const activeTick = worker.runOnce();
+    await vi.waitFor(() => expect(releaseClaim).toBeTypeOf('function'));
+    const now = Date.now();
+    expect(worker.health(now + 29_000)).toEqual({ healthy: true });
+    expect(worker.health(now + 31_000)).toEqual({ healthy: false, reason: 'worker_tick_stale' });
+    releaseClaim();
+    await activeTick;
+  });
+
   it.each(['merging', 'needs_human'] as const)(
     'recovers a succeeded merge operation from %s after restart without resending merge',
     async (state) => {

@@ -46,7 +46,11 @@ describe('loadIntegrationCandidateProjection', () => {
         id: 'operation-1', operation_key: 'compose:1', kind: 'compose', state: 'succeeded',
         attempt_count: 1, receipt: '{"headOid":"abc"}', updated_at: now,
       }] })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{
+        kind: 'work', status: 'failed', attempts: 5, last_error: 'workspace preparation failed',
+        execution_id: null, updated_at: now,
+      }] });
     const host = hostWith(query, { kind: 'integration', workflowVersion: 3 });
 
     const projection = await loadIntegrationCandidateProjection(host, identity, 'task-1');
@@ -56,9 +60,15 @@ describe('loadIntegrationCandidateProjection', () => {
       id: 'operation-1', operationKey: 'compose:1', receipt: { headOid: 'abc' },
     })]);
     expect(projection.worker).toEqual({ status: 'running', checkpoint: { step: 'compose' } });
+    expect(projection.requests).toEqual([expect.objectContaining({
+      kind: 'work', status: 'failed', attempts: 5, error: 'workspace preparation failed',
+    })]);
     expect(projection.history).toMatchObject({ includeHistory: false, total: 1, hasMore: false });
     expect(query).toHaveBeenNthCalledWith(2, expect.stringContaining('revision=$2'), ['candidate-1', 1]);
-    expect(query).toHaveBeenCalledTimes(5);
+    expect(query).toHaveBeenNthCalledWith(6, expect.stringContaining("kind IN ('work','review','workspace_sync')"), [
+      'candidate-1', 1, '4', '5',
+    ]);
+    expect(query).toHaveBeenCalledTimes(6);
   });
 
   it('defaults to current revision and pages historical revisions only when explicitly requested', async () => {
@@ -71,7 +81,8 @@ describe('loadIntegrationCandidateProjection', () => {
       }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ total: 5 }] })
-      .mockResolvedValueOnce({ rows: [{ status: 'completed', last_error: 'skipped-by-policy: cleanup disabled', updated_at: now }] });
+      .mockResolvedValueOnce({ rows: [{ status: 'completed', last_error: 'skipped-by-policy: cleanup disabled', updated_at: now }] })
+      .mockResolvedValueOnce({ rows: [] });
     const host = hostWith(query, { kind: 'integration', workflowVersion: 3 });
 
     const projection = await loadIntegrationCandidateProjection(host, identity, 'task-1', {

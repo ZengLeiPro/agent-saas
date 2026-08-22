@@ -479,6 +479,14 @@ export interface TaskBoardIntegrationCandidateDetails {
     updatedAt: string;
   }>;
   worker?: { status: string; checkpoint: Record<string, unknown>; error?: string };
+  requests?: Array<{
+    kind: "work" | "review" | "workspace_sync";
+    status: string;
+    attempts: number;
+    error?: string;
+    executionId?: string;
+    updatedAt: string;
+  }>;
   cleanup?: {
     outcome: "pending" | "completed" | "failed" | "skipped";
     requestStatus: string;

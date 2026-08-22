@@ -402,7 +402,8 @@ function commandFailure(
   result: RepositoryWorkspaceGitResult,
 ): RepositoryWorkspaceSyncError {
   const detail = result.stderr.trim() || `exit code ${result.exitCode}`;
-  return new RepositoryWorkspaceSyncError(`Git command failed: ${detail}`, 'GIT_COMMAND_FAILED', command);
+  const operation = /^[a-z][a-z-]*$/.test(command.args[0] ?? '') ? command.args[0] : 'command';
+  return new RepositoryWorkspaceSyncError(`Git ${operation} failed: ${detail}`, 'GIT_COMMAND_FAILED', command);
 }
 
 function parseWorktrees(output: string): WorktreeRecord[] {

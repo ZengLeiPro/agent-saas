@@ -126,6 +126,24 @@ describe('syncCandidateRevisionObjects', () => {
     host.assertConsumed();
   });
 
+  it('identifies a controlled fetch timeout instead of reporting an opaque Git exit', async () => {
+    const host = new ScriptedHost([{
+      cwd: REPOSITORY,
+      args: [
+        'fetch', '--no-tags', '--', input.controlledRemoteUrl,
+        '+refs/heads/main:refs/remotes/origin/main',
+        `+refs/pull/108/head:${candidateRef}`,
+      ],
+      result: { exitCode: 1, stderr: 'Git command timed out after 120000ms' },
+    }]);
+
+    await expect(syncCandidateRevisionObjects(host, candidate)).rejects.toMatchObject({
+      code: 'GIT_COMMAND_FAILED',
+      message: 'Git fetch failed: Git command timed out after 120000ms',
+    });
+    host.assertConsumed();
+  });
+
   it('fails closed when the frozen base is no longer reachable from authoritative main', async () => {
     const host = new ScriptedHost([
       { cwd: REPOSITORY, args: [

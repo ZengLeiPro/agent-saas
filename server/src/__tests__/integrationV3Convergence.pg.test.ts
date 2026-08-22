@@ -113,13 +113,28 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
 
   it('exposes the current candidate revision and complete frozen snapshots to Work context', async () => {
     const seed = await seedCandidate({ state: 'working', taskStatus: 'in_progress' });
+    const deliveryTaskId = randomUUID();
+    const integrationSourceId = randomUUID();
+    await pool.query(
+      `INSERT INTO ${store.tasksTable}
+         (id,board_id,identifier,kind,title,status,sort_order)
+       VALUES($1,$2,$3,'delivery','Frozen source','ready_to_merge',2)`,
+      [deliveryTaskId, seed.board.id, `SRC-${deliveryTaskId.slice(0, 8)}`],
+    );
+    await pool.query(
+      `INSERT INTO ${store.integrationSourcesTable}
+         (id,integration_task_id,delivery_task_id,repository_id,provider_pull_request_id,
+          reviewed_subject_digest,source_order,state)
+       VALUES($1,$2,$3,$4,'77','reviewed',0,'ready')`,
+      [integrationSourceId, seed.taskId, deliveryTaskId, seed.repositoryId],
+    );
     await pool.query(
       `INSERT INTO ${seed.tables.sourceSnapshotsTable}
          (candidate_id,revision,source_order,integration_source_id,delivery_task_id,delivery_task_version,
           repository_id,provider_pull_request_id,frozen_head_oid,frozen_base_oid,reviewed_subject_digest,
           review_execution_id,review_receipt_digest,requirement_digest)
        VALUES($1,1,0,$2,$3,1,$4,'77','frozen-head','frozen-base','reviewed','review-1','receipt','requirement')`,
-      [seed.candidateId, randomUUID(), randomUUID(), seed.repositoryId],
+      [seed.candidateId, integrationSourceId, deliveryTaskId, seed.repositoryId],
     );
     const context = await store.getExecutionContextV2(identity, seed.taskId, { include: ['integrationSources'] });
     expect(context.integrationCandidate).toMatchObject({

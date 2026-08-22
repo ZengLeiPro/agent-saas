@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type { PoolClient } from 'pg';
 
 export interface IntegrationCandidateSchemaOptions {
@@ -299,6 +301,43 @@ async function installIntegrationCandidateSchemaV1(
   }
 }
 
+async function installCompositionCompletenessGuards(
+  revisionsTable: string,
+  client: Pick<PoolClient, 'query'>,
+): Promise<void> {
+  const namespace = createHash('sha256').update(revisionsTable).digest('hex').slice(0, 12);
+  const sourceSeedFunction = `tbv3_${namespace}_source_seed_fn`;
+  const immutableFunction = `tbv3_${namespace}_revision_immutable_fn`;
+  await client.query(`
+    ALTER TABLE ${revisionsTable}
+      ADD COLUMN IF NOT EXISTS composition_complete BOOLEAN NOT NULL DEFAULT TRUE;
+    DROP TRIGGER IF EXISTS ${revisionsTable}_source_seed_incomplete ON ${revisionsTable};
+    DROP TRIGGER IF EXISTS ${revisionsTable}_immutable_update ON ${revisionsTable};
+    DROP TRIGGER IF EXISTS tbv3_source_seed_incomplete ON ${revisionsTable};
+    DROP TRIGGER IF EXISTS tbv3_revision_immutable ON ${revisionsTable};
+    CREATE OR REPLACE FUNCTION ${sourceSeedFunction}()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $function$
+    BEGIN
+      IF NEW.subject_kind='source_seed' THEN NEW.composition_complete:=FALSE; END IF;
+      RETURN NEW;
+    END
+    $function$;
+    CREATE TRIGGER tbv3_source_seed_incomplete
+      BEFORE INSERT OR UPDATE OF subject_kind,composition_complete ON ${revisionsTable}
+      FOR EACH ROW EXECUTE FUNCTION ${sourceSeedFunction}();
+    UPDATE ${revisionsTable}
+       SET composition_complete=FALSE
+     WHERE subject_kind='source_seed' AND composition_complete IS DISTINCT FROM FALSE;
+    CREATE OR REPLACE FUNCTION ${immutableFunction}()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $function$
+    BEGIN
+      RAISE EXCEPTION 'TASKBOARD_CANDIDATE_SNAPSHOT_IMMUTABLE';
+    END
+    $function$;
+    CREATE TRIGGER tbv3_revision_immutable BEFORE UPDATE ON ${revisionsTable}
+      FOR EACH ROW EXECUTE FUNCTION ${immutableFunction}()
+  `);
+}
 
 const INTEGRATION_CANDIDATE_SCHEMA_MIGRATIONS = [
   { version: 1, name: 'candidate_v3_expand_base', run: installIntegrationCandidateSchemaV1 },
@@ -389,27 +428,15 @@ const INTEGRATION_CANDIDATE_SCHEMA_MIGRATIONS = [
     name: 'track_incomplete_composition_subjects',
     run: async (options: IntegrationCandidateSchemaOptions, client: Pick<PoolClient, 'query'>) => {
       const { revisionsTable } = integrationCandidateTableNames(options.integrationSourcesTable);
-      await client.query(`
-        ALTER TABLE ${revisionsTable}
-          ADD COLUMN IF NOT EXISTS composition_complete BOOLEAN NOT NULL DEFAULT TRUE;
-        DROP TRIGGER IF EXISTS ${revisionsTable}_immutable_update ON ${revisionsTable};
-        CREATE OR REPLACE FUNCTION ${revisionsTable}_source_seed_incomplete_fn()
-        RETURNS TRIGGER LANGUAGE plpgsql AS $function$
-        BEGIN
-          IF NEW.subject_kind='source_seed' THEN NEW.composition_complete:=FALSE; END IF;
-          RETURN NEW;
-        END
-        $function$;
-        DROP TRIGGER IF EXISTS ${revisionsTable}_source_seed_incomplete ON ${revisionsTable};
-        CREATE TRIGGER ${revisionsTable}_source_seed_incomplete
-          BEFORE INSERT OR UPDATE OF subject_kind,composition_complete ON ${revisionsTable}
-          FOR EACH ROW EXECUTE FUNCTION ${revisionsTable}_source_seed_incomplete_fn();
-        UPDATE ${revisionsTable}
-           SET composition_complete=FALSE
-         WHERE subject_kind='source_seed' AND composition_complete IS DISTINCT FROM FALSE;
-        CREATE TRIGGER ${revisionsTable}_immutable_update BEFORE UPDATE ON ${revisionsTable}
-          FOR EACH ROW EXECUTE FUNCTION ${revisionsTable}_immutable_fn()
-      `);
+      await installCompositionCompletenessGuards(revisionsTable, client);
+    },
+  },
+  {
+    version: 7,
+    name: 'normalize_composition_guard_identifiers',
+    run: async (options: IntegrationCandidateSchemaOptions, client: Pick<PoolClient, 'query'>) => {
+      const { revisionsTable } = integrationCandidateTableNames(options.integrationSourcesTable);
+      await installCompositionCompletenessGuards(revisionsTable, client);
     },
   },
 ] as const;

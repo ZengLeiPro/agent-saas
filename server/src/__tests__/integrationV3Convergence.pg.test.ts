@@ -291,13 +291,13 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(`DROP TRIGGER ${seed.tables.revisionsTable}_source_seed_incomplete ON ${seed.tables.revisionsTable}`);
-      await client.query(`DROP TRIGGER ${seed.tables.revisionsTable}_immutable_update ON ${seed.tables.revisionsTable}`);
+      await client.query(`DROP TRIGGER tbv3_source_seed_incomplete ON ${seed.tables.revisionsTable}`);
+      await client.query(`DROP TRIGGER tbv3_revision_immutable ON ${seed.tables.revisionsTable}`);
       await client.query(`ALTER TABLE ${seed.tables.revisionsTable} DROP COLUMN composition_complete`);
       await client.query(`CREATE TRIGGER ${seed.tables.revisionsTable}_immutable_update
         BEFORE UPDATE ON ${seed.tables.revisionsTable}
         FOR EACH ROW EXECUTE FUNCTION ${seed.tables.revisionsTable}_immutable_fn()`);
-      await client.query(`DELETE FROM ${migrationsTable} WHERE version=6`);
+      await client.query(`DELETE FROM ${migrationsTable} WHERE version IN (6,7)`);
       await client.query('COMMIT');
       await client.query(
         `INSERT INTO ${seed.tables.revisionsTable}
@@ -326,8 +326,11 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
         `UPDATE ${seed.tables.revisionsTable} SET composition_complete=FALSE WHERE candidate_id=$1 AND revision=1`,
         [seed.candidateId],
       )).rejects.toThrow('TASKBOARD_CANDIDATE_SNAPSHOT_IMMUTABLE');
-      expect((await client.query(`SELECT name FROM ${migrationsTable} WHERE version=6`)).rows)
-        .toEqual([{ name: 'track_incomplete_composition_subjects' }]);
+      expect((await client.query(`SELECT version,name FROM ${migrationsTable} WHERE version IN (6,7) ORDER BY version`)).rows)
+        .toEqual([
+          { version: 6, name: 'track_incomplete_composition_subjects' },
+          { version: 7, name: 'normalize_composition_guard_identifiers' },
+        ]);
     } finally {
       client.release();
     }

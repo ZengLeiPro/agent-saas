@@ -611,7 +611,54 @@ function normalizeRequiredCheckIdentities(value: unknown): Array<{ name: string;
 
 function inspectRulesets(value: unknown): { known: boolean; requiredChecks: Array<{ name: string; appId?: number }>; mergeQueueRequired: boolean; unsupportedRules: string[] } {
   if (!Array.isArray(value)) return { known: false, requiredChecks: [], mergeQueueRequired: false, unsupportedRules: ['invalid-rulesets-response'] };
-  const requiredChecks: Array<{ name: string; appId?: number }> = []; const unsupported = new Set<string>(); let mergeQueueRequired = false;
-  for (const rawSet of value) { const set = asRecord(rawSet); const rules = set.rules; if (!Array.isArray(rules)) continue; for (const rawRule of rules) { const rule = asRecord(rawRule); const type = String(rule.type ?? ''); if (type === 'required_status_checks') { const parameters = asRecord(rule.parameters); const checks = parameters.required_status_checks; if (!Array.isArray(checks)) { unsupported.add('ruleset-required-status-checks-unresolved'); continue; } for (const rawCheck of checks) { const check = asRecord(rawCheck); if (!check.context) continue; const appId = optionalPositiveInteger(check.integration_id); requiredChecks.push({ name: String(check.context), ...(appId !== undefined ? { appId } : {}) }); } } else if (type === 'merge_queue') mergeQueueRequired = true; else if (['required_deployments', 'required_signatures', 'required_code_scanning', 'code_scanning', 'workflows', 'required_workflows'].includes(type)) unsupported.add(type); } }
+  const requiredChecks: Array<{ name: string; appId?: number }> = [];
+  const unsupported = new Set<string>();
+  const ciIrrelevantRules = new Set([
+    'creation', 'update', 'deletion', 'required_linear_history', 'required_signatures',
+    'non_fast_forward', 'pull_request',
+    'commit_message_pattern', 'commit_author_email_pattern', 'committer_email_pattern',
+    'branch_name_pattern', 'tag_name_pattern', 'file_path_restriction', 'max_file_path_length',
+    'file_extension_restriction', 'max_file_size',
+  ]);
+  const unsupportedCiRules = new Set([
+    'required_deployments', 'required_code_scanning', 'code_scanning',
+    'workflows', 'required_workflows',
+  ]);
+  let mergeQueueRequired = false;
+  for (const rawSet of value) {
+    const rules = asRecord(rawSet).rules;
+    if (!Array.isArray(rules)) {
+      unsupported.add('ruleset-rules-unresolved');
+      continue;
+    }
+    for (const rawRule of rules) {
+      const rule = asRecord(rawRule);
+      const type = typeof rule.type === 'string' ? rule.type : '';
+      if (!type) {
+        unsupported.add('ruleset-rule-type-missing');
+      } else if (type === 'required_status_checks') {
+        const checks = asRecord(rule.parameters).required_status_checks;
+        if (!Array.isArray(checks)) {
+          unsupported.add('ruleset-required-status-checks-unresolved');
+          continue;
+        }
+        for (const rawCheck of checks) {
+          const check = asRecord(rawCheck);
+          if (typeof check.context !== 'string' || !check.context.trim()) {
+            unsupported.add('ruleset-required-status-check-invalid');
+            continue;
+          }
+          const appId = optionalPositiveInteger(check.integration_id);
+          requiredChecks.push({ name: check.context, ...(appId !== undefined ? { appId } : {}) });
+        }
+      } else if (type === 'merge_queue') {
+        mergeQueueRequired = true;
+      } else if (unsupportedCiRules.has(type)) {
+        unsupported.add(type);
+      } else if (!ciIrrelevantRules.has(type)) {
+        unsupported.add(`unknown-rule:${type}`);
+      }
+    }
+  }
   return { known: unsupported.size === 0, requiredChecks, mergeQueueRequired, unsupportedRules: [...unsupported].sort() };
 }

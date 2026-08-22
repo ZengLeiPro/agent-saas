@@ -84,16 +84,22 @@ export async function inspectIntegrationSource(
   if (['merged', 'needs_human', 'resolving_conflict', 'waiting_remediation'].includes(loaded.source.state)) {
     return { source: loaded.source, pullRequest, inspectionReceipt };
   }
+  const unavailableChecks = loaded.requireGreenChecks
+    && pullRequest.requiredChecksKnown !== true;
   const failedChecks = loaded.requireGreenChecks
-    && (pullRequest.requiredChecksKnown !== true
-      || pullRequest.requiredChecks.some((check) => check.status === 'failure'));
+    && pullRequest.requiredChecksKnown === true
+    && pullRequest.requiredChecks.some((check) => check.status === 'failure');
+  const pendingChecks = loaded.requireGreenChecks
+    && pullRequest.requiredChecksKnown === true
+    && (pullRequest.requiredChecks.length === 0
+      || pullRequest.requiredChecks.some((check) => check.status !== 'success'));
   const nextState = pullRequest.subjectDigest !== loaded.source.reviewedSubjectDigest
     ? 're_reviewing'
     : pullRequest.mergeable === false || failedChecks
       ? (loaded.source.remediationCount ?? 0) >= loaded.maxAutomaticRemediationRounds
         ? 'needs_human'
         : 'resolving_conflict'
-      : loaded.requireGreenChecks && pullRequest.requiredChecks.some((check) => check.status !== 'success')
+      : unavailableChecks || pendingChecks
         ? 'waiting_retry'
         : 'ready';
   const source = nextState === 're_reviewing'
@@ -102,7 +108,9 @@ export async function inspectIntegrationSource(
       host,
       sourceId,
       nextState,
-      failedChecks ? 'Required checks failed; automatic remediation is required' : undefined,
+      failedChecks
+        ? 'Required checks failed; automatic remediation is required'
+        : unavailableChecks ? 'Required checks are unavailable from Provider' : undefined,
     );
   return { source, pullRequest, inspectionReceipt };
 }
@@ -209,8 +217,12 @@ export async function mergeIntegrationSource(
       exhausted ? 'TASKBOARD_REMEDIATION_EXHAUSTED' : 'TASKBOARD_MERGE_CONFLICT',
     );
   }
-  if (loaded.requireGreenChecks && (pullRequest.requiredChecksKnown !== true
-    || pullRequest.requiredChecks.some((check) => check.status === 'failure'))) {
+  if (loaded.requireGreenChecks && pullRequest.requiredChecksKnown !== true) {
+    await updateSourceState(host, sourceId, 'waiting_retry', 'Required checks are unavailable from Provider');
+    throw new TaskboardValidationError('Required checks are unavailable from Provider', 'TASKBOARD_CI_UNAVAILABLE');
+  }
+  if (loaded.requireGreenChecks
+    && pullRequest.requiredChecks.some((check) => check.status === 'failure')) {
     const exhausted = (loaded.source.remediationCount ?? 0) >= loaded.maxAutomaticRemediationRounds;
     await recordMergeConflict(host, sourceId, exhausted, 'Required checks failed; automatic remediation is required');
     throw new TaskboardValidationError(
@@ -220,8 +232,9 @@ export async function mergeIntegrationSource(
       exhausted ? 'TASKBOARD_REMEDIATION_EXHAUSTED' : 'TASKBOARD_CHECKS_FAILED',
     );
   }
-  if (loaded.requireGreenChecks && pullRequest.requiredChecks.some((check) => check.status !== 'success')) {
-    await updateSourceState(host, sourceId, 'waiting_retry', 'Required checks are not green');
+  if (loaded.requireGreenChecks && (pullRequest.requiredChecks.length === 0
+    || pullRequest.requiredChecks.some((check) => check.status !== 'success'))) {
+    await updateSourceState(host, sourceId, 'waiting_retry', 'Required checks are not green or have not been observed');
     throw new TaskboardValidationError('Required checks are not green', 'TASKBOARD_CHECKS_PENDING');
   }
 

@@ -200,6 +200,8 @@ describe('Workflow v3 candidate PR inspection', () => {
     const loadClient = client(async () => ({ rows: [{
       task_id: 'integration-1', kind: 'integration', task_branch: null, provider_pull_request_id: null,
       execution_id: 'review-1', purpose: 'review', execution_status: 'running', resolved_at: null, superseded_at: null,
+      execution_candidate_id: 'candidate-1', execution_candidate_revision: 3,
+      execution_candidate_head_oid: 'candidate-head',
       repository: contextRow().repository, owner_user_id: identity.ownerUserId,
       candidate_id: 'candidate-1', candidate_revision: 3, candidate_provider_pull_request_id: '32',
       candidate_branch: 'integration/integration-1', candidate_head_oid: 'candidate-head',
@@ -234,5 +236,30 @@ describe('Workflow v3 candidate PR inspection', () => {
       providerPullRequestId: '32', headOid: 'candidate-head',
     });
     expect(transactionClient.query).toHaveBeenCalledWith('COMMIT');
+  });
+
+  it('rejects a stale Review execution before inspecting a newer candidate revision', async () => {
+    const loadClient = client(async () => ({ rows: [{
+      task_id: 'integration-1', kind: 'integration', task_branch: null, provider_pull_request_id: null,
+      execution_id: 'review-1', purpose: 'review', execution_status: 'running', resolved_at: null, superseded_at: null,
+      execution_candidate_id: 'candidate-1', execution_candidate_revision: 2,
+      execution_candidate_head_oid: 'old-head',
+      repository: contextRow().repository, owner_user_id: identity.ownerUserId,
+      candidate_id: 'candidate-1', candidate_revision: 3, candidate_provider_pull_request_id: '32',
+      candidate_branch: 'integration/integration-1', candidate_head_oid: 'candidate-head',
+      candidate_base_oid: 'candidate-base', candidate_subject_digest: 'candidate-subject-3',
+    }] }));
+    const inspectPullRequest = vi.fn();
+    const host = {
+      ...hostWithPullRequest(mergedPullRequest).host,
+      pool: { connect: vi.fn(async () => loadClient) },
+      repositoryProvider: {
+        getPullRequest: vi.fn(), inspectPullRequest, mergePullRequest: vi.fn(),
+      },
+    } as unknown as IntegrationOperationHost;
+
+    await expect(inspectExecutionPullRequest(host, identity, 'run-review-1'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_SUBJECT_STALE' });
+    expect(inspectPullRequest).not.toHaveBeenCalled();
   });
 });

@@ -505,6 +505,8 @@ async function loadContext(
     const result = await client.query(
       `SELECT t.id AS task_id,t.kind,t.branch AS task_branch,t.provider_pull_request_id,
               e.id AS execution_id,e.purpose,e.status AS execution_status,e.resolved_at,e.superseded_at,
+              e.candidate_id AS execution_candidate_id,e.candidate_revision AS execution_candidate_revision,
+              e.candidate_head_oid AS execution_candidate_head_oid,
               b.repository,b.owner_user_id,
               candidate.id AS candidate_id,candidate.current_revision AS candidate_revision,
               candidate.provider_pull_request_id AS candidate_provider_pull_request_id,
@@ -541,6 +543,15 @@ async function loadContext(
     const kind = String(row.kind);
     const purpose = String(row.purpose);
     const isIntegrationV3 = kind === 'integration' && purpose === 'review' && Boolean(row.candidate_id);
+    if (isIntegrationV3
+      && (String(row.execution_candidate_id ?? '') !== String(row.candidate_id)
+        || Number(row.execution_candidate_revision) !== Number(row.candidate_revision)
+        || String(row.execution_candidate_head_oid ?? '') !== String(row.candidate_head_oid ?? ''))) {
+      throw new TaskboardValidationError(
+        'Review execution is bound to a stale candidate revision',
+        'TASKBOARD_SUBJECT_STALE',
+      );
+    }
     if ((!['delivery', 'remediation'].includes(kind) && !isIntegrationV3) || !purposes.includes(purpose)) {
       throw new TaskboardValidationError('Execution purpose cannot inspect the current pull request');
     }

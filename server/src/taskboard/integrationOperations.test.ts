@@ -159,6 +159,107 @@ describe('integration operation guards', () => {
     expect(guardedUpdate).toContain('provider_receipt_id IS NULL');
   });
 
+  it('keeps a source waiting when inspection observes no checks', async () => {
+    const statements: string[] = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) {
+          return { rows: [{ ...sourceRow, state: 'waiting_retry' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => ({ ...pull, requiredChecks: [] })),
+      inspectPullRequest: vi.fn(async () => ({
+        ...pull, requiredChecks: [], repositoryId: 'repo-1',
+        providerQueriedAt: '2026-08-22T12:00:00.000Z', workflowRuns: [],
+      })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(inspectIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .resolves.toMatchObject({ source: { state: 'waiting_retry' } });
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('keeps a source waiting instead of requesting remediation when Provider checks are unavailable', async () => {
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) {
+          return { rows: [{ ...sourceRow, state: 'waiting_retry', last_error: 'Required checks are unavailable from Provider' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const unavailable = { ...pull, requiredChecksKnown: false, requiredChecks: [] };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => unavailable),
+      inspectPullRequest: vi.fn(async () => ({
+        ...unavailable, repositoryId: 'repo-1',
+        providerQueriedAt: '2026-08-22T12:00:00.000Z', workflowRuns: [],
+      })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(inspectIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .resolves.toMatchObject({ source: { state: 'waiting_retry' } });
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects merge before preparing an operation when no checks were observed', async () => {
+    const statements: string[] = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) {
+          return { rows: [{ ...sourceRow, state: 'waiting_retry' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => ({ ...pull, requiredChecks: [] })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(mergeIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_CHECKS_PENDING' });
+    expect(statements.some((sql) => sql.includes('INSERT INTO operations'))).toBe(false);
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects merge as unavailable without preparing an operation or requesting remediation', async () => {
+    const statements: string[] = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) {
+          return { rows: [{ ...sourceRow, state: 'waiting_retry' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => ({ ...pull, requiredChecksKnown: false, requiredChecks: [] })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(mergeIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_CI_UNAVAILABLE' });
+    expect(statements.some((sql) => sql.includes('INSERT INTO operations'))).toBe(false);
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
   it('required checks failure requests remediation without consuming a round', async () => {
     const statements: string[] = [];
     const client = {

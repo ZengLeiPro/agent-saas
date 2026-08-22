@@ -298,6 +298,31 @@ describe('GithubRepositoryProvider', () => {
     });
   });
 
+  it('fails closed for unknown, missing or malformed applicable branch rules', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ contexts: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { type: 'new_ci_gate', parameters: {} },
+        {},
+        { type: 'required_status_checks', parameters: { required_status_checks: [{}] } },
+        { type: 'required_signatures' },
+      ]), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const capabilities = await provider.getRequiredGateCapabilities(repository, 'main', 'owner-user');
+
+    expect(capabilities).toEqual({
+      known: false,
+      requiredChecks: [],
+      mergeQueueRequired: false,
+      unsupportedRules: [
+        'ruleset-required-status-check-invalid',
+        'ruleset-rule-type-missing',
+        'unknown-rule:new_ci_gate',
+      ],
+    });
+  });
+
   it('reconciles an already-created integration branch without creating it again', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ object: { sha: 'base-oid' } }), { status: 200 }))

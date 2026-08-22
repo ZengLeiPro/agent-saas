@@ -80,6 +80,7 @@ export function executionFieldMigrationSql(executionsTable: string): string {
       execution_id TEXT NOT NULL REFERENCES ${executionsTable}(id),
       exact_ref TEXT NOT NULL,
       expected_old_oid TEXT NOT NULL,
+      expected_base_oid TEXT NOT NULL,
       lane_epoch BIGINT NOT NULL,
       workflow_epoch BIGINT NOT NULL,
       issued_at TIMESTAMPTZ NOT NULL,
@@ -92,6 +93,12 @@ export function executionFieldMigrationSql(executionsTable: string): string {
       CHECK ((status = 'consumed') = (consumed_at IS NOT NULL)),
       CHECK ((status = 'revoked') = (revoked_at IS NOT NULL))
     );
+    ALTER TABLE ${executionsTable}_integration_push_capabilities
+      ADD COLUMN IF NOT EXISTS expected_base_oid TEXT;
+    UPDATE ${executionsTable}_integration_push_capabilities
+      SET expected_base_oid=expected_old_oid WHERE expected_base_oid IS NULL;
+    ALTER TABLE ${executionsTable}_integration_push_capabilities
+      ALTER COLUMN expected_base_oid SET NOT NULL;
     CREATE INDEX IF NOT EXISTS ${executionsTable}_integration_push_capabilities_active_idx
       ON ${executionsTable}_integration_push_capabilities
       (tenant_id, repository_id, integration_task_id, expires_at)

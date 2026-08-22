@@ -22,7 +22,22 @@ describe('PostgresIntegrationPushCapabilityHost execution target resolution', ()
     expect(sql).toContain("e.purpose='work'");
     expect(sql).toContain("e.status IN ('queued','running','waiting_user','waiting_approval')");
     expect(sql).toContain('c.id=e.candidate_id');
+    expect(sql).toContain('r.base_oid');
     expect(sql).not.toContain('AND c.id=$2');
+  });
+
+  it('binds both the remote lease head and immutable revision base from authoritative rows', async () => {
+    const query = vi.fn(async () => ({ rows: [{
+      execution_id: 'execution-1', tenant_id: 'tenant-1', repository_id: 'github-id:123',
+      integration_task_id: 'task-1', candidate_id: 'candidate-1', current_revision: 4,
+      branch: 'integration/task-1', head_oid: 'a'.repeat(40), base_oid: 'b'.repeat(40),
+      lane_epoch: 7, workflow_epoch: 9, owner_user_id: 'owner-1',
+    }] }));
+    const target = await host(query).resolveExecutionTarget({ tenantId: 'tenant-1', executionId: 'execution-1' });
+    expect(target?.binding).toMatchObject({
+      expectedOldOid: 'a'.repeat(40), expectedBaseOid: 'b'.repeat(40),
+      exactRef: 'refs/heads/integration/task-1',
+    });
   });
 
   it('keeps candidate binding for capability verification paths', async () => {

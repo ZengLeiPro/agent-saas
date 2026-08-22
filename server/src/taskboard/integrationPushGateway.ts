@@ -1,5 +1,6 @@
 import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   IntegrationPushCapabilityService,
   type IntegrationPushCapabilityBinding,
@@ -94,6 +95,7 @@ export type IntegrationPushGatewayErrorCode =
   | 'parent_mismatch'
   | 'merge_commit_forbidden'
   | 'remote_old_mismatch'
+  | 'remote_read_failed'
   | 'credential_unavailable'
   | 'push_failed_unknown';
 
@@ -209,6 +211,7 @@ export class IntegrationPushGateway {
       repositoryName: sourceRepository.repositoryName,
       commitOid: input.commitOid,
       expectedOldOid: target.binding.expectedOldOid,
+      expectedBaseOid: target.binding.expectedBaseOid,
     }, async ({ repositoryPath }) => {
       // Issue only after source objects are self-contained and verified, then push immediately.
       const issued = await this.options.capabilityService.issue({ binding: target.binding });
@@ -266,7 +269,9 @@ export class IntegrationPushGateway {
     repository: IntegrationPushRepositoryAccess; cwd: string; durable: boolean;
   }): Promise<void> {
     const { target, repository, cwd } = input;
-    await this.assertCommitGraph(cwd, target.binding.expectedOldOid, input.commitOid);
+    const graph = await this.assertCommitGraph(
+      cwd, target.binding.expectedOldOid, input.commitOid, target.binding.expectedBaseOid, true,
+    );
     const credential = await this.options.resolveGithubToken({
       tenantId: target.binding.tenantId, ownerUserId: target.ownerUserId,
       repositoryId: target.binding.repositoryId, repositoryOwner: repository.repositoryOwner,
@@ -288,6 +293,8 @@ export class IntegrationPushGateway {
         candidateId: target.binding.candidateId, candidateRevision: target.binding.revision,
         executionId: target.binding.executionId,
       },
+      // Keep the durable intent backward-compatible with pre-rebase Work operations.
+      // The commit OID binds the immutable graph; parent/mode are added only to the success receipt.
       expected: { ref: target.binding.exactRef, oldOid: target.binding.expectedOldOid, newOid: input.commitOid },
       command: { ref: target.binding.exactRef, oldOid: target.binding.expectedOldOid, newOid: input.commitOid },
     }) : undefined;
@@ -300,13 +307,12 @@ export class IntegrationPushGateway {
         }, cwd, repository.remoteUrl, env);
         return;
       }
-      const remoteOld = await this.readExactRemoteRef(cwd, repository.remoteUrl, target.binding.exactRef, env)
-        .catch(() => { throw new IntegrationPushGatewayError('remote_old_mismatch', true); });
+      const remoteOld = await this.readExactRemoteRef(cwd, repository.remoteUrl, target.binding.exactRef, env);
       if (remoteOld !== target.binding.expectedOldOid) throw new IntegrationPushGatewayError('remote_old_mismatch', true);
       await this.options.capabilityService.consume(input.capabilityToken, {
         ref: target.binding.exactRef, oldOid: target.binding.expectedOldOid, newOid: input.commitOid,
-        isFastForward: true, operation: 'update', laneEpoch: target.binding.laneEpoch,
-        workflowEpoch: target.binding.workflowEpoch,
+        parentOid: graph.parentOid, isFastForward: graph.isFastForward, operation: 'update',
+        laneEpoch: target.binding.laneEpoch, workflowEpoch: target.binding.workflowEpoch,
       });
       const write = async () => {
         await this.runner.run({
@@ -314,7 +320,10 @@ export class IntegrationPushGateway {
             '--', repository.remoteUrl, `${input.commitOid}:${target.binding.exactRef}`],
           env, redactOutput: true,
         });
-        return { ref: target.binding.exactRef, oldOid: target.binding.expectedOldOid, newOid: input.commitOid };
+        return {
+          ref: target.binding.exactRef, oldOid: target.binding.expectedOldOid, newOid: input.commitOid,
+          parentOid: graph.parentOid, pushMode: graph.isFastForward ? 'fast_forward' : 'rebase',
+        };
       };
       if (operation) {
         let completed: IntegrationProviderOperationRecord;
@@ -573,11 +582,19 @@ export class IntegrationPushGateway {
   }
 
   private async readExactRemoteRef(cwd: string, remoteUrl: string, exactRef: string, env: Record<string, string>): Promise<string | undefined> {
-    const result = await this.runner.run({ cwd, args: ['ls-remote', '--refs', remoteUrl, exactRef], env, redactOutput: true });
-    if (!result.stdout.trim()) return undefined;
-    const fields = result.stdout.trim().split(/\s+/);
-    if (fields.length !== 2 || fields[1] !== exactRef || !OID.test(fields[0]!)) throw new Error('invalid remote ref response');
-    return fields[0];
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const result = await this.runner.run({ cwd, args: ['ls-remote', '--refs', remoteUrl, exactRef], env, redactOutput: true });
+        if (!result.stdout.trim()) return undefined;
+        const fields = result.stdout.trim().split(/\s+/);
+        if (fields.length !== 2 || fields[1] !== exactRef || !OID.test(fields[0]!)) throw new Error('invalid remote ref response');
+        return fields[0];
+      } catch {
+        if (attempt === 3) throw new IntegrationPushGatewayError('remote_read_failed', true);
+        await delay(attempt * 200);
+      }
+    }
+    throw new IntegrationPushGatewayError('remote_read_failed', true);
   }
 
   private async reconcileExactRef(
@@ -621,21 +638,40 @@ export class IntegrationPushGateway {
     }
   }
 
-  private async assertCommitGraph(cwd: string, oldOid: string, newOid: string, rebaseParentOid?: string): Promise<void> {
+  private async assertCommitGraph(
+    cwd: string,
+    oldOid: string,
+    newOid: string,
+    rebaseParentOid?: string,
+    requireDivergedRebase = false,
+  ): Promise<{ parentOid: string; isFastForward: boolean }> {
     try {
       const oldType = (await this.runner.run({ cwd, args: ['cat-file', '-t', oldOid] })).stdout.trim();
       const newType = (await this.runner.run({ cwd, args: ['cat-file', '-t', newOid] })).stdout.trim();
-      if (oldType !== 'commit' || newType !== 'commit') throw new Error('not commit');
+      const baseType = rebaseParentOid
+        ? (await this.runner.run({ cwd, args: ['cat-file', '-t', rebaseParentOid] })).stdout.trim()
+        : 'commit';
+      if (oldType !== 'commit' || newType !== 'commit' || baseType !== 'commit') throw new Error('not commit');
     } catch {
       throw new IntegrationPushGatewayError('object_missing', true);
     }
     const parents = (await this.runner.run({ cwd, args: ['rev-list', '--parents', '-n', '1', newOid] })
       .catch(() => { throw new IntegrationPushGatewayError('object_missing', true); })).stdout.trim().split(/\s+/);
     if (parents.length > 2) throw new IntegrationPushGatewayError('merge_commit_forbidden', true);
-    const parent = parents[1];
-    if (parents.length !== 2 || (parent !== oldOid && parent !== rebaseParentOid)) {
+    if (parents.length !== 2) throw new IntegrationPushGatewayError('parent_mismatch', true);
+    const parentOid = parents[1]!;
+    if (parentOid === oldOid) return { parentOid, isFastForward: true };
+    if (!rebaseParentOid || parentOid !== rebaseParentOid || rebaseParentOid === oldOid) {
       throw new IntegrationPushGatewayError('parent_mismatch', true);
     }
+    if (requireDivergedRebase) {
+      const mergeBase = await this.runner.run({ cwd, args: ['merge-base', rebaseParentOid, oldOid] })
+        .catch(() => { throw new IntegrationPushGatewayError('object_missing', true); });
+      if (!OID.test(mergeBase.stdout.trim()) || mergeBase.stdout.trim() === rebaseParentOid) {
+        throw new IntegrationPushGatewayError('parent_mismatch', true);
+      }
+    }
+    return { parentOid, isFastForward: false };
   }
 
 }
@@ -670,8 +706,8 @@ function sameBinding(a: IntegrationPushCapabilityBinding, b: IntegrationPushCapa
   return a.tenantId === b.tenantId && a.repositoryId === b.repositoryId
     && a.integrationTaskId === b.integrationTaskId && a.candidateId === b.candidateId
     && a.revision === b.revision && a.executionId === b.executionId && a.exactRef === b.exactRef
-    && a.expectedOldOid === b.expectedOldOid && a.laneEpoch === b.laneEpoch
-    && a.workflowEpoch === b.workflowEpoch;
+    && a.expectedOldOid === b.expectedOldOid && a.expectedBaseOid === b.expectedBaseOid
+    && a.laneEpoch === b.laneEpoch && a.workflowEpoch === b.workflowEpoch;
 }
 
 export function credentialMatchesRepository(

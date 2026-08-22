@@ -810,13 +810,11 @@ export class WebChannel implements BaseChannel {
         }
         this.inProcessOutboundRuns.delete(input.runId);
         if (input.userId) {
-          if (!input.event.error) {
-            void this.markSessionUnread({
-              userId: input.userId,
-              sessionId: input.sessionId,
-              eventKey: `done:${input.runId}`,
-            });
-          }
+          if (!input.event.error) void this.markSessionUnread({
+            userId: input.userId,
+            sessionId: input.sessionId,
+            eventKey: `done:${input.runId}`,
+          });
           this.eventBus.emitUser(input.userId, {
             type: 'session_status',
             sessionId: input.sessionId,
@@ -1062,8 +1060,7 @@ export class WebChannel implements BaseChannel {
         const runStore = this.config.enqueueRuntime?.runStore;
         if (runStore) {
           void runStore.get(runId).then((record) => {
-            if (!record?.userId) return;
-            return this.markSessionUnread({
+            if (record?.userId) return this.markSessionUnread({
               userId: record.userId,
               sessionId,
               eventKey: `done:${runId}`,
@@ -4163,6 +4160,8 @@ export class WebChannel implements BaseChannel {
     eventKey: string;
     broadcastEvenIfUnchanged?: boolean;
   }): Promise<void> {
+    // 任务看板执行会话完成时不应作为未读提醒；执行中请求用户介入仍沿用未读提醒。
+    if (input.sessionId.startsWith('taskboard-') && input.eventKey.startsWith('done:')) return;
     const store = this.config.sessionReadStateStore;
     const user = this.config.userStore?.findById(input.userId);
     if (!store) return;

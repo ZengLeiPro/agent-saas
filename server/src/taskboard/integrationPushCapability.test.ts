@@ -11,6 +11,7 @@ import { InMemoryIntegrationPushCapabilityHost } from './integrationPushCapabili
 
 const A = 'a'.repeat(40);
 const B = 'b'.repeat(40);
+const C = 'c'.repeat(40);
 
 const binding: IntegrationPushCapabilityBinding = {
   tenantId: 'tenant-1',
@@ -21,6 +22,7 @@ const binding: IntegrationPushCapabilityBinding = {
   executionId: 'execution-1',
   exactRef: 'refs/heads/integration/task-1',
   expectedOldOid: A,
+  expectedBaseOid: C,
   laneEpoch: 7,
   workflowEpoch: 11,
 };
@@ -29,6 +31,7 @@ const request: IntegrationPushRequest = {
   ref: binding.exactRef,
   oldOid: A,
   newOid: B,
+  parentOid: A,
   isFastForward: true,
   operation: 'update',
   laneEpoch: 7,
@@ -92,6 +95,17 @@ describe('IntegrationPushCapabilityService', () => {
     await expectCode(service.consume(token, request), 'already_consumed');
   });
 
+  it('allows one exact rebase update onto the bound immutable base', async () => {
+    const { service } = await setup();
+    const { token } = await service.issue({ binding });
+    const consumed = await service.consume(token, {
+      ...request,
+      parentOid: binding.expectedBaseOid,
+      isFastForward: false,
+    });
+    expect(consumed.status).toBe('consumed');
+  });
+
   it('atomically admits only one of two concurrent consumers', async () => {
     const { service } = await setup();
     const { token } = await service.issue({ binding });
@@ -110,8 +124,10 @@ describe('IntegrationPushCapabilityService', () => {
     ['delete operation', { operation: 'delete', newOid: '0'.repeat(40) }, 'delete_forbidden'],
     ['zero new OID disguised as update', { newOid: '0'.repeat(40) }, 'delete_forbidden'],
     ['ref creation', { operation: 'create', oldOid: '0'.repeat(40) }, 'create_forbidden'],
-    ['force push', { isFastForward: false }, 'force_push_forbidden'],
-    ['stale old OID', { oldOid: 'c'.repeat(40) }, 'old_oid_mismatch'],
+    ['force push without rebase parent', { isFastForward: false }, 'force_push_forbidden'],
+    ['rebase parent disguised as fast-forward', { parentOid: C, isFastForward: true }, 'force_push_forbidden'],
+    ['unbound parent', { parentOid: 'd'.repeat(40), isFastForward: false }, 'parent_oid_mismatch'],
+    ['stale old OID', { oldOid: 'd'.repeat(40) }, 'old_oid_mismatch'],
     ['stale lane epoch', { laneEpoch: 6 }, 'epoch_mismatch'],
     ['stale workflow epoch', { workflowEpoch: 10 }, 'epoch_mismatch'],
   ] as const)('rejects attack: %s', async (_name, patch, code) => {

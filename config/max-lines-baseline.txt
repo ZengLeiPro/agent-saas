@@ -26,7 +26,7 @@ server/src/__tests__/wsEventProcessor.test.ts	830	test
 server/src/agent/toolRuntime.ts	1560	production
 server/src/app/config.ts	1491	production
 server/src/app/runtime.ts	3165	production
-server/src/channels/web/channel.ts	4385	production
+server/src/channels/web/channel.ts	4384	production
 server/src/cron/service.ts	1084	production
 server/src/data/billing/pgBillingStore.ts	2319	production
 server/src/data/transcripts/parse.ts	2042	production

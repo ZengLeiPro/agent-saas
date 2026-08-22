@@ -30,6 +30,7 @@ describePg('Workflow v3 Provider admission (PostgreSQL)', () => {
       processIdentity: `test:${randomUUID()}`, releaseIdentity: 'test-release',
       processRole: 'runtime-worker', status: 'healthy',
     });
+    store.setIntegrationV3RepositoryProbe(async () => true);
   }, 30_000);
 
   afterAll(async () => {

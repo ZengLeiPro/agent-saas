@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeSessionMeta } from '../data/transcripts/meta.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
 import { createArtifactsRouter } from '../routes/artifacts.js';
+import { permanentlyDeleteSession } from '../routes/sessionPermanentDeletion.js';
 import { ArtifactService, type RuntimeArtifactUser } from '../runtime/artifactService.js';
 import { ArtifactShareService } from '../runtime/artifactShareService.js';
 import { InMemoryArtifactShareStore, PgArtifactShareStore } from '../runtime/artifactShareStore.js';
@@ -38,6 +39,25 @@ async function startServer(
 
 function stopServer(server: Server): Promise<void> {
   return new Promise(resolve => server.close(() => resolve()));
+}
+
+function createStrictSingleConnectionLockPool() {
+  const calls: Array<{ sql: string; params?: unknown[] }> = [];
+  let leased = false;
+  const release = vi.fn(() => { leased = false; });
+  const client = {
+    query: async (sql: string, params?: unknown[]) => {
+      calls.push({ sql, params });
+      return { rows: [], rowCount: 0 };
+    },
+    release,
+  };
+  const connect = vi.fn(async () => {
+    if (leased) throw new Error('strict lockPool max=1 re-entry');
+    leased = true;
+    return client;
+  });
+  return { calls, connect, release, lockPool: { connect } };
 }
 
 describe('ArtifactShare backend', () => {
@@ -244,6 +264,71 @@ describe('ArtifactShare backend', () => {
       artifactService.deleteArtifactsForSessions([SESSION_2]),
     ]);
     await expect(blobStore.get(second.uri)).rejects.toThrow();
+  });
+
+  it('reuses the PG lock transaction for nested artifact-to-blob GC locks', async () => {
+    const strict = createStrictSingleConnectionLockPool();
+    const pgPool = { query: vi.fn(async () => ({ rows: [], rowCount: 0 })) };
+    const pgStore = new PgArtifactShareStore({
+      pool: pgPool as never,
+      lockPool: strict.lockPool as never,
+      tablePrefix: 'test',
+    });
+    const store = new InMemoryArtifactStore();
+    const service = new ArtifactService({
+      artifactStore: store,
+      blobStore,
+      agentCwd,
+      isArtifactPinned: artifactId => pgStore.isArtifactPinned(artifactId),
+      withArtifactLock: (artifactId, operation) => pgStore.withArtifactLock(artifactId, operation),
+      withBlobLock: (uri, operation) => pgStore.withBlobLock(uri, operation),
+    });
+    const created = await service.createFromBytes({ sessionId: SESSION_ID, data: 'stale' });
+    created.createdAt = '2020-01-01T00:00:00.000Z';
+
+    await expect(service.pruneExpiredArtifacts(1)).resolves.toEqual({ scanned: 1, deleted: 1 });
+    expect(strict.connect).toHaveBeenCalledOnce();
+    expect(strict.release).toHaveBeenCalledOnce();
+    expect(strict.calls.filter(call => call.sql.includes('pg_advisory_xact_lock')).map(call => call.params?.[0])).toEqual([
+      `artifact-share:artifact:${created.artifactId}`,
+      `artifact-share:blob:${created.uri}`,
+    ]);
+  });
+
+  it('reuses the PG lock transaction for nested session-to-blob permanent deletion locks', async () => {
+    const strict = createStrictSingleConnectionLockPool();
+    const pgPool = { query: vi.fn(async () => ({ rows: [], rowCount: 0 })) };
+    const pgStore = new PgArtifactShareStore({
+      pool: pgPool as never,
+      lockPool: strict.lockPool as never,
+      tablePrefix: 'test',
+    });
+    const store = new InMemoryArtifactStore();
+    const service = new ArtifactService({
+      artifactStore: store,
+      blobStore,
+      agentCwd,
+      withBlobLock: (uri, operation) => pgStore.withBlobLock(uri, operation),
+    });
+    const created = await service.createFromBytes({ sessionId: SESSION_ID, data: 'deleted' });
+    const lifecycle = createSessionArtifactLifecycle(pgStore, service)!;
+
+    await expect(permanentlyDeleteSession({
+      sessionId: SESSION_ID,
+      ownerUserId: OWNER.sub,
+      hasTranscript: true,
+      artifactLifecycle: lifecycle,
+      isStillDeleted: async () => true,
+      deleteTranscriptPreservingMeta: async () => true,
+      deleteMetaAndSidecar: async () => true,
+    })).resolves.toBe(true);
+    expect(strict.connect).toHaveBeenCalledOnce();
+    expect(strict.release).toHaveBeenCalledOnce();
+    expect(await store.get(created.artifactId)).toBeNull();
+    expect(strict.calls.filter(call => call.sql.includes('pg_advisory_xact_lock')).map(call => call.params?.[0])).toEqual([
+      `artifact-share:session:${SESSION_ID}`,
+      `artifact-share:blob:${created.uri}`,
+    ]);
   });
 
   it('acquires artifact and session advisory locks on one PG connection in stable order', async () => {

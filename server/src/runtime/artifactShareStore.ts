@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import pg, { type PoolClient } from 'pg';
 
@@ -187,6 +188,11 @@ export class InMemoryArtifactShareStore implements ArtifactShareStore {
   }
 }
 
+interface PgLockContext {
+  client: PoolClient;
+  active: boolean;
+}
+
 export interface PgArtifactShareStoreOptions {
   pool?: PgPool;
   /** Dedicated pool for advisory locks; production normally derives it from connectionString. */
@@ -202,6 +208,7 @@ export class PgArtifactShareStore implements ArtifactShareStore {
   private readonly ownsPool: boolean;
   private readonly lockPool: PgPool;
   private readonly ownsLockPool: boolean;
+  private readonly lockContext = new AsyncLocalStorage<PgLockContext>();
 
   constructor(options: PgArtifactShareStoreOptions) {
     if (!options.pool && !options.connectionString) {
@@ -363,23 +370,38 @@ export class PgArtifactShareStore implements ArtifactShareStore {
   }
 
   private async withLocks<T>(keys: string[], operation: () => Promise<T>): Promise<T> {
-    // 同一事务按稳定顺序获取全部 advisory locks，既避免多进程竞态，也避免
-    // lockPool max=1 时通过嵌套调用等待自己持有的唯一连接。
-    let client: PoolClient | undefined;
+    // GC 与永久删除会跨 service 嵌套加锁；沿用当前异步链的事务/client，避免
+    // max=1 专用池在持锁 operation 内二次 connect 后等待自己。
+    const inherited = this.lockContext.getStore();
+    if (inherited?.active) {
+      await this.acquireLocks(inherited.client, keys);
+      return operation();
+    }
+
+    let context: PgLockContext | undefined;
     try {
-      client = await this.lockPool.connect();
+      const client = await this.lockPool.connect();
+      context = { client, active: true };
       await client.query('BEGIN');
-      for (const key of [...new Set(keys)].sort()) {
-        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`artifact-share:${key}`]);
-      }
-      const result = await operation();
+      await this.acquireLocks(client, keys);
+      const result = await this.lockContext.run(context, operation);
+      context.active = false;
       await client.query('COMMIT');
       return result;
     } catch (err) {
-      await client?.query('ROLLBACK').catch(() => undefined);
+      await context?.client.query('ROLLBACK').catch(() => undefined);
       throw err;
     } finally {
-      client?.release();
+      if (context) {
+        context.active = false;
+        context.client.release();
+      }
+    }
+  }
+
+  private async acquireLocks(client: PoolClient, keys: string[]): Promise<void> {
+    for (const key of [...new Set(keys)].sort()) {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`artifact-share:${key}`]);
     }
   }
 }

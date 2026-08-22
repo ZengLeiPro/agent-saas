@@ -96,6 +96,30 @@ describe('integration operation guards', () => {
     expect(statements.some((sql) => sql.includes('l.epoch=$8::bigint'))).toBe(true);
   });
 
+  it('rejects a stale merge when the source enters conflict resolution before operation preparation', async () => {
+    const statements: string[] = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('SELECT state, reviewed_subject_digest')) {
+          return { rows: [{ state: 'resolving_conflict', reviewed_subject_digest: 'digest-reviewed' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => pull),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(mergeIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_PROVIDER_GUARD_STALE' });
+    expect(statements.some((sql) => sql.includes('INSERT INTO operations'))).toBe(false);
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
   it('does not move the source pointer when a remediation task belongs to another source', async () => {
     const statements: string[] = [];
     const client = {
@@ -186,6 +210,56 @@ describe('integration operation guards', () => {
     expect(provider.mergePullRequest).not.toHaveBeenCalled();
   });
 
+  it('keeps a source waiting when Provider mergeability is unknown', async () => {
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) {
+          return { rows: [{ ...sourceRow, state: 'waiting_retry', last_error: 'Pull request mergeability is unknown' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => ({ ...pull, mergeable: null })),
+      inspectPullRequest: vi.fn(async () => ({
+        ...pull, mergeable: null, repositoryId: 'repo-1',
+        providerQueriedAt: '2026-08-22T12:00:00.000Z', workflowRuns: [],
+      })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(inspectIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .resolves.toMatchObject({ source: { state: 'waiting_retry' } });
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('does not overwrite a concurrent conflict-resolution transition from a stale inspection', async () => {
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) return { rows: [] };
+        if (sql.includes('SELECT * FROM sources WHERE id=')) {
+          return { rows: [{ ...sourceRow, state: 'resolving_conflict' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => ({ ...pull, mergeable: null })),
+      inspectPullRequest: vi.fn(async () => ({
+        ...pull, mergeable: null, repositoryId: 'repo-1',
+        providerQueriedAt: '2026-08-22T12:00:00.000Z', workflowRuns: [],
+      })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(inspectIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .resolves.toMatchObject({ source: { state: 'resolving_conflict' } });
+  });
+
   it('keeps a source waiting instead of requesting remediation when Provider checks are unavailable', async () => {
     const client = {
       release: vi.fn(),
@@ -232,6 +306,30 @@ describe('integration operation guards', () => {
 
     await expect(mergeIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
       .rejects.toMatchObject({ code: 'TASKBOARD_CHECKS_PENDING' });
+    expect(statements.some((sql) => sql.includes('INSERT INTO operations'))).toBe(false);
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown mergeability before preparing an operation or calling Provider merge', async () => {
+    const statements: string[] = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) {
+          return { rows: [{ ...sourceRow, state: 'waiting_retry' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => ({ ...pull, mergeable: null })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(mergeIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_MERGEABILITY_UNKNOWN' });
     expect(statements.some((sql) => sql.includes('INSERT INTO operations'))).toBe(false);
     expect(provider.mergePullRequest).not.toHaveBeenCalled();
   });

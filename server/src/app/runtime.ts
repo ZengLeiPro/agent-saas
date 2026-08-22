@@ -1515,9 +1515,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     vault: secretVault,
     onError: (error) => serverLogger.warn(`Taskboard GitHub credential resolve failed: ${error.message}`),
   });
-  const configuredIntegrationV3Access = configureRuntimeIntegrationV3RepositoryAccess({ store: rawTaskboardStore, taskboardRepositoryProvider, control: config.integrationV3ControlPlane, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, resolvePersonalAccessToken: async ({ tenantId, ownerUserId }) => {
-    const user = userStore?.findById(ownerUserId); if (!user || user.disabled || user.tenantId !== tenantId) return undefined;
-    return resolveGithubToken({ connectionStore: connectorConnectionStore, vault: secretVault, governanceCredentialStore: credentialStore, onError: (error) => serverLogger.warn(`Integration PAT resolve failed: ${error.message}`) }, { userId: user.id, username: user.username, tenantId });
+  const configuredIntegrationV3Access = configureRuntimeIntegrationV3RepositoryAccess({ store: rawTaskboardStore, control: config.integrationV3ControlPlane, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, resolvePersonalAccessToken: async ({ tenantId, ownerUserId }) => {
+    const user = userStore?.findById(ownerUserId); if (!user || user.disabled || (tenantId && user.tenantId !== tenantId)) return undefined;
+    return resolveGithubToken({ connectionStore: connectorConnectionStore, vault: secretVault, governanceCredentialStore: credentialStore, onError: (error) => serverLogger.warn(`Integration PAT resolve failed: ${error.message}`) }, { userId: user.id, username: user.username, tenantId: user.tenantId });
   } });
   integrationV3RepositoryProvider = configuredIntegrationV3Access.repositoryProvider;
   const integrationV3PersonalAccessTokenResolver = configuredIntegrationV3Access.personalAccessTokenResolver;

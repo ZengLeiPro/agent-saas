@@ -249,9 +249,8 @@ export async function createIntegrationBatch(
         );
       }
     }
-    await assertIntegrationSourcesProviderReady(
-      options.repositoryProvider, repository, String(board.owner_user_id), sources.rows,
-    );
+    const sourceProvider = workflowVersion === 3 ? options.integrationV3RepositoryProvider : options.repositoryProvider;
+    await assertIntegrationSourcesProviderReady(sourceProvider, repository, String(board.owner_user_id), sources.rows);
     const duplicate = await client.query(
       `SELECT s.delivery_task_id,s.provider_pull_request_id
          FROM ${options.integrationSourcesTable} s

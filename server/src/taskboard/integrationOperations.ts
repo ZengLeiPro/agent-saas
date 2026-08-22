@@ -100,7 +100,7 @@ export async function inspectIntegrationSource(
       ? (loaded.source.remediationCount ?? 0) >= loaded.maxAutomaticRemediationRounds
         ? 'needs_human'
         : 'resolving_conflict'
-      : unavailableChecks || pendingChecks
+      : pullRequest.mergeable !== true || unavailableChecks || pendingChecks
         ? 'waiting_retry'
         : 'ready';
   const source = nextState === 're_reviewing'
@@ -111,7 +111,9 @@ export async function inspectIntegrationSource(
       nextState,
       failedChecks
         ? 'Required checks failed; automatic remediation is required'
-        : unavailableChecks ? 'Required checks are unavailable from Provider' : undefined,
+        : pullRequest.mergeable !== true ? 'Pull request mergeability is unknown'
+          : unavailableChecks ? 'Required checks are unavailable from Provider' : undefined,
+      loaded.source.state,
     );
   return { source, pullRequest, inspectionReceipt };
 }
@@ -201,7 +203,7 @@ export async function mergeIntegrationSource(
     });
   }
   if (pullRequest.state !== 'open' || pullRequest.draft) {
-    await updateSourceState(host, sourceId, 'needs_human', 'Pull request is not open and mergeable');
+    await updateSourceState(host, sourceId, 'needs_human', 'Pull request is not open and mergeable', loaded.source.state);
     throw new TaskboardValidationError('Pull request is not open for merge', 'TASKBOARD_PR_NOT_OPEN');
   }
   if (pullRequest.subjectDigest !== loaded.source.reviewedSubjectDigest) {
@@ -218,8 +220,12 @@ export async function mergeIntegrationSource(
       exhausted ? 'TASKBOARD_REMEDIATION_EXHAUSTED' : 'TASKBOARD_MERGE_CONFLICT',
     );
   }
+  if (pullRequest.mergeable !== true) {
+    await updateSourceState(host, sourceId, 'waiting_retry', 'Pull request mergeability is unknown', loaded.source.state);
+    throw new TaskboardValidationError('Pull request mergeability is unknown', 'TASKBOARD_MERGEABILITY_UNKNOWN');
+  }
   if (loaded.requireGreenChecks && pullRequest.requiredChecksKnown !== true) {
-    await updateSourceState(host, sourceId, 'waiting_retry', 'Required checks are unavailable from Provider');
+    await updateSourceState(host, sourceId, 'waiting_retry', 'Required checks are unavailable from Provider', loaded.source.state);
     throw new TaskboardValidationError('Required checks are unavailable from Provider', 'TASKBOARD_CI_UNAVAILABLE');
   }
   if (loaded.requireGreenChecks
@@ -235,7 +241,7 @@ export async function mergeIntegrationSource(
   }
   if (loaded.requireGreenChecks && (pullRequest.requiredChecks.length === 0
     || pullRequest.requiredChecks.some((check) => check.status !== 'success'))) {
-    await updateSourceState(host, sourceId, 'waiting_retry', 'Required checks are not green or have not been observed');
+    await updateSourceState(host, sourceId, 'waiting_retry', 'Required checks are not green or have not been observed', loaded.source.state);
     throw new TaskboardValidationError('Required checks are not green', 'TASKBOARD_CHECKS_PENDING');
   }
 
@@ -704,7 +710,7 @@ async function prepareOperation(
         'TASKBOARD_PROVIDER_RESULT_UNKNOWN',
       );
     }
-    if (['needs_human', 'waiting_remediation', 're_reviewing', 'canceled'].includes(String(source.rows[0].state))) {
+    if (!['ready', 'merging'].includes(String(source.rows[0].state))) {
       throw new TaskboardValidationError(
         'Integration source changed before merge preparation',
         'TASKBOARD_PROVIDER_GUARD_STALE',
@@ -914,6 +920,7 @@ async function updateSourceState(
   sourceId: string,
   state: TaskBoardIntegrationSource['state'],
   error?: string,
+  expectedState?: TaskBoardIntegrationSource['state'],
 ): Promise<TaskBoardIntegrationSource> {
   return withTransaction(host, async (client) => {
     const result = await client.query(
@@ -921,8 +928,9 @@ async function updateSourceState(
           SET state=$2, last_error=$3, updated_at=now()
         WHERE id=$1 AND state<>'merged'
           AND merged_commit_oid IS NULL AND provider_receipt_id IS NULL
+          AND ($4::text IS NULL OR state=$4)
         RETURNING *`,
-      [sourceId, state, error ?? null],
+      [sourceId, state, error ?? null, expectedState ?? null],
     );
     if (result.rows[0]) return rowToSource(result.rows[0]);
     const current = await client.query(

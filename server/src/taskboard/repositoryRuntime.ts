@@ -63,6 +63,10 @@ export class RepositoryProviderIntegrationEngineV3Adapter implements Integration
         ? this.provider.getCommit(repository, pull.mergeCommitOid, credentialOwnerId)
         : Promise.resolve(undefined),
     ]);
+    const requiredCheckIdentitiesStable = sameRequiredCheckIdentities(pull.requiredChecks, gates.requiredChecks);
+    const unsupportedRules = requiredCheckIdentitiesStable
+      ? gates.unsupportedRules
+      : [...new Set([...gates.unsupportedRules, 'required-check-identities-changed'])].sort();
     return {
       repositoryId: repository.repositoryId,
       providerPullRequestId: pull.providerPullRequestId,
@@ -73,9 +77,9 @@ export class RepositoryProviderIntegrationEngineV3Adapter implements Integration
       baseOid: base.oid,
       headOid: pull.headOid,
       treeOid: head.treeOid,
-      requiredChecksKnown: pull.requiredChecksKnown === true && gates.known,
+      requiredChecksKnown: pull.requiredChecksKnown === true && gates.known && requiredCheckIdentitiesStable,
       requiredChecks: pull.requiredChecks,
-      unsupportedRules: gates.unsupportedRules,
+      unsupportedRules,
       mergeQueueRequired: gates.mergeQueueRequired,
       ...(pull.mergeCommitOid ? { mergeCommitOid: pull.mergeCommitOid } : {}),
       ...(merged ? { mergedTreeOid: merged.treeOid } : {}),
@@ -103,4 +107,14 @@ export class RepositoryProviderIntegrationEngineV3Adapter implements Integration
       return { status: 'indeterminate', detail: error instanceof Error ? error.message : String(error) };
     }
   }
+}
+
+function sameRequiredCheckIdentities(
+  observed: Array<{ name: string; appId?: number }>,
+  authoritative: Array<{ name: string; appId?: number }>,
+): boolean {
+  const identity = (check: { name: string; appId?: number }) => `${check.name}\u0000${check.appId ?? '*'}`;
+  const left = observed.map(identity).sort();
+  const right = authoritative.map(identity).sort();
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }

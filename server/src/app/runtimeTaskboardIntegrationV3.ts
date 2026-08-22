@@ -38,7 +38,7 @@ import {
   terminalizeIntegrationV3PreparedOperations,
   PostgresIntegrationV3WorkerHost,
 } from '../taskboard/integrationV3WorkerPostgres.js';
-import { canonicalGithubRepositoryUrl, isCanonicalGithubRepositoryRemote, type RepositoryProvider } from '../taskboard/repositoryProvider.js';
+import { canonicalGithubRepositoryUrl, GithubRepositoryProvider, isCanonicalGithubRepositoryRemote, type RepositoryProvider } from '../taskboard/repositoryProvider.js';
 import { provisionIntegrationV3RepositoryMirror } from '../taskboard/integrationV3RepositoryProvisioning.js';
 import { runSafeServerGit, runSafeServerGitOrThrow } from '../taskboard/safeServerGitRunner.js';
 import { createIntegrationV3GithubAppRepositoryProvider, RepositoryProviderIntegrationEngineV3Adapter } from '../taskboard/repositoryRuntime.js';
@@ -247,10 +247,9 @@ interface StartRuntimeTaskboardIntegrationV3Options {
 
 export function configureRuntimeIntegrationV3RepositoryAccess(input: {
   store?: PgTaskboardStore;
-  taskboardRepositoryProvider?: RepositoryProvider;
   control?: { enabled: boolean; githubTokenMode: 'github_app'|'personal_access_token'; githubAppInstallationId?: number };
   githubAppInstallationTokenProvider?: GithubAppInstallationTokenProvider;
-  resolvePersonalAccessToken(input: { tenantId: string; ownerUserId: string }): Promise<string | undefined>;
+  resolvePersonalAccessToken(input: { tenantId?: string; ownerUserId: string }): Promise<string | undefined>;
 }) {
   const personalAccessTokenResolver = createPersonalAccessTokenIntegrationPushTokenResolver({
     resolveToken: input.resolvePersonalAccessToken,
@@ -262,8 +261,11 @@ export function configureRuntimeIntegrationV3RepositoryAccess(input: {
       installationId: input.control.githubAppInstallationId,
       onError: (error) => serverLogger.warn(`Integration App repository probe failed: ${error.message}`),
     }) : undefined;
+  const personalAccessTokenRepositoryProvider = new GithubRepositoryProvider({
+    resolveToken: async (_repository, ownerUserId) => input.resolvePersonalAccessToken({ ownerUserId }),
+  });
   const repositoryProvider = input.control?.enabled !== true ? undefined
-    : input.control.githubTokenMode === 'personal_access_token' ? input.taskboardRepositoryProvider
+    : input.control.githubTokenMode === 'personal_access_token' ? personalAccessTokenRepositoryProvider
       : input.githubAppInstallationTokenProvider && input.control.githubAppInstallationId
         ? createIntegrationV3GithubAppRepositoryProvider({
           tokenProvider: input.githubAppInstallationTokenProvider, installationId: input.control.githubAppInstallationId,

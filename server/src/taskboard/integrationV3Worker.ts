@@ -74,6 +74,7 @@ export interface IntegrationV3WorkerOptions {
   intervalMs?: number;
   leaseMs?: number;
   maxRequestsPerTick?: number;
+  maxActiveTickMs?: number;
 }
 
 /** Durable single-item worker. SQL hosts provide SKIP LOCKED leases; the driver remains pure/mockable. */
@@ -82,15 +83,18 @@ export class IntegrationV3Worker {
   private stopped = true;
   private running?: Promise<void>;
   private lastSuccessfulTickAt?: number;
+  private activeTickStartedAt?: number;
   private lastTickError?: string;
   private readonly intervalMs: number;
   private readonly leaseMs: number;
   private readonly maxRequestsPerTick: number;
+  private readonly maxActiveTickMs: number;
 
   constructor(private readonly options: IntegrationV3WorkerOptions) {
     this.intervalMs = Math.max(100, options.intervalMs ?? 2_000);
     this.leaseMs = Math.max(this.intervalMs * 3, options.leaseMs ?? 30_000);
     this.maxRequestsPerTick = Math.max(1, options.maxRequestsPerTick ?? 10);
+    this.maxActiveTickMs = Math.max(this.leaseMs, options.maxActiveTickMs ?? 300_000);
   }
 
   start(): void {
@@ -107,6 +111,7 @@ export class IntegrationV3Worker {
   }
 
   async runOnce(): Promise<void> {
+    this.activeTickStartedAt = Date.now();
     try {
       for (let index = 0; index < this.maxRequestsPerTick; index += 1) {
         const request = await this.options.host.claimRequest(this.leaseMs);
@@ -120,6 +125,8 @@ export class IntegrationV3Worker {
     } catch (error) {
       this.lastTickError = message(error);
       throw error;
+    } finally {
+      this.activeTickStartedAt = undefined;
     }
   }
 
@@ -127,6 +134,9 @@ export class IntegrationV3Worker {
     if (this.lastTickError) return { healthy: false, reason: 'worker_tick_failed' };
     if (this.lastSuccessfulTickAt === undefined) return { healthy: false, reason: 'worker_tick_pending' };
     if (now - this.lastSuccessfulTickAt > Math.max(this.intervalMs * 3, 10_000)) {
+      if (this.activeTickStartedAt !== undefined && now - this.activeTickStartedAt <= this.maxActiveTickMs) {
+        return { healthy: true };
+      }
       return { healthy: false, reason: 'worker_tick_stale' };
     }
     return { healthy: true };

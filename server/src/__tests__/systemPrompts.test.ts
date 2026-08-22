@@ -31,6 +31,21 @@ describe('system prompt registry', () => {
     expect(registry.list().find((item) => item.id === 'main.static')?.overridden).toBe(false);
   });
 
+  it('allows the compaction request instruction to be overridden', () => {
+    const registry = new SystemPromptRegistry(SHARED_DIR, {
+      'utility.compaction': '按项目状态、风险与下一步输出摘要。',
+    });
+
+    expect(registry.get('utility.compaction')).toBe('按项目状态、风险与下一步输出摘要。');
+    expect(registry.list().find((item) => item.id === 'utility.compaction')).toMatchObject({
+      category: 'utility',
+      overridden: true,
+    });
+
+    registry.replaceOverrides({});
+    expect(registry.get('utility.compaction')).toContain('上下文压缩');
+  });
+
   it('buildInstructions reads current overrides and still renders template variables', () => {
     const registry = new SystemPromptRegistry(SHARED_DIR, {
       'main.static': 'STATIC-V1',

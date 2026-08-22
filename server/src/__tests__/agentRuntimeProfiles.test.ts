@@ -377,6 +377,29 @@ describe('real RawAgentLoop Profile scenarios', () => {
     expect(systemMessage(newAdapter.requests[0]!)).toContain('PROFILE_V2_MARKER');
   });
 
+  it('allows a stale digest only for a current built-in background Worker Profile', async () => {
+    const store = new MutableProfileStore();
+    await store.init();
+    const resolver = new AgentRuntimeProfileResolver(store);
+    const background = boundFromBuiltin('background_general');
+    const staleBackground = {
+      ...sessionFromBound(background),
+      profileConfigDigest: 'stale-background-digest',
+    };
+    await expect(resolver.resolveForSession({
+      existingSession: staleBackground,
+      bindingKey: 'background_general',
+    })).resolves.toMatchObject({
+      binding: { profileVersionId: background.binding.profileVersionId },
+    });
+
+    const main = boundFromBuiltin('main');
+    await expect(resolver.resolveForSession({
+      existingSession: { ...sessionFromBound(main), profileConfigDigest: 'stale-main-digest' },
+      bindingKey: 'main',
+    })).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
   it('Responses relay only reuses state produced by the same Profile config digest', async () => {
     const bound = boundFromBuiltin('main');
     const runStore = {

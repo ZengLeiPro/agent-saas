@@ -126,7 +126,15 @@ export class AgentRuntimeProfileResolver {
     }
     const digest = digestAgentRuntimeProfileConfig(version.config);
     if (digest !== version.configDigest || session.profileConfigDigest !== version.configDigest) {
-      throw new AgentRuntimeProfileError('会话 Profile 摘要校验失败，已拒绝切换到其他版本', 'CONFLICT');
+      // 后台 Worker 可能由升级前的进程创建、升级后的进程执行。内置 Profile 的
+      // 版本 ID 不变时，仅允许它重新绑定当前内置定义；数据库 Profile 仍严格拒绝。
+      const currentBuiltinBackgroundProfile = (expectedBindingKey === 'background_general'
+        || expectedBindingKey === 'background_explore')
+        && session.profileVersionId === builtin.version.profileVersionId
+        && digest === version.configDigest;
+      if (!currentBuiltinBackgroundProfile) {
+        throw new AgentRuntimeProfileError('会话 Profile 摘要校验失败，已拒绝切换到其他版本', 'CONFLICT');
+      }
     }
     return this.toBound({ expected: expectedBindingKey, bindingKey: expectedBindingKey, profile, version, source }, session.profileResolution ?? source);
   }

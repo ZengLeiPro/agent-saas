@@ -770,49 +770,50 @@ export function TaskDetail({
               </section>
 
               <form className="space-y-4" onSubmit={save}>
-                <div className="space-y-2">
-                  <Label htmlFor="task-detail-title">
-                    标题 <span className="text-destructive" aria-hidden="true">*</span>
-                  </Label>
-                  <Input
-                    id="task-detail-title"
-                    value={title}
-                    onChange={(event) => {
-                      dirtyFieldsRef.current.add("title");
-                      setTitle(event.target.value);
-                    }}
-                    disabled={contentReadOnly || saving}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="task-detail-description">正文</Label>
-                  <Textarea
-                    id="task-detail-description"
-                    value={description}
-                    onChange={(event) => {
-                      dirtyFieldsRef.current.add("description");
-                      setDescription(event.target.value);
-                    }}
-                    rows={7}
-                    disabled={contentReadOnly || saving}
-                    onPaste={(event) => {
-                      if (event.clipboardData.files.length > 0) dirtyFieldsRef.current.add("attachments");
-                      void taskAttachments.handlePaste(event);
-                    }}
-                  />
-                  {contentReadOnly ? (
-                    <TaskAttachmentList taskId={currentTask.id} attachments={taskAttachments.uploadedFiles} />
-                  ) : (
-                    <TaskAttachmentField
-                      upload={taskAttachments}
-                      disabled={saving}
-                      onFilesChanged={() => dirtyFieldsRef.current.add("attachments")}
-                    />
-                  )}
-                  {executionStarted && !editReadOnly ? (
-                    <p className="text-xs text-muted-foreground">任务首次执行后，标题和正文已锁定；后续变更请通过评论补充。</p>
-                  ) : null}
-                </div>
+                {!executionStarted ? (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="task-detail-title">
+                        标题 <span className="text-destructive" aria-hidden="true">*</span>
+                      </Label>
+                      <Input
+                        id="task-detail-title"
+                        value={title}
+                        onChange={(event) => {
+                          dirtyFieldsRef.current.add("title");
+                          setTitle(event.target.value);
+                        }}
+                        disabled={contentReadOnly || saving}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="task-detail-description">正文</Label>
+                      <Textarea
+                        id="task-detail-description"
+                        value={description}
+                        onChange={(event) => {
+                          dirtyFieldsRef.current.add("description");
+                          setDescription(event.target.value);
+                        }}
+                        rows={7}
+                        disabled={contentReadOnly || saving}
+                        onPaste={(event) => {
+                          if (event.clipboardData.files.length > 0) dirtyFieldsRef.current.add("attachments");
+                          void taskAttachments.handlePaste(event);
+                        }}
+                      />
+                      {contentReadOnly ? (
+                        <TaskAttachmentList taskId={currentTask.id} attachments={taskAttachments.uploadedFiles} />
+                      ) : (
+                        <TaskAttachmentField
+                          upload={taskAttachments}
+                          disabled={saving}
+                          onFilesChanged={() => dirtyFieldsRef.current.add("attachments")}
+                        />
+                      )}
+                    </div>
+                  </>
+                ) : null}
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>状态</Label>
@@ -924,6 +925,8 @@ export function TaskDetail({
                 commentsLoading={commentsLoading}
                 commentsError={commentsError}
                 currentTask={currentTask}
+                taskDescription={executionStarted ? description : null}
+                taskAttachments={executionStarted ? taskAttachments.uploadedFiles : []}
                 latestExecution={latestExecution}
                 latestExecutionActive={Boolean(latestExecution && ACTIVE_EXECUTION_STATUSES.has(latestExecution.status))}
                 commentReadOnly={commentReadOnly}

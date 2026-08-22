@@ -142,6 +142,17 @@ describe("TaskBoardView", () => {
     expect(screen.getByRole("button", { name: /创建看板/ })).toBeTruthy();
   });
 
+  it("切回任务看板时重新加载看板和任务", async () => {
+    const { rerender } = render(<TaskBoardView active={false} />);
+    expect(mocks.refreshBoards).not.toHaveBeenCalled();
+    expect(mocks.refreshTasks).not.toHaveBeenCalled();
+
+    rerender(<TaskBoardView active />);
+
+    await waitFor(() => expect(mocks.refreshBoards).toHaveBeenCalledOnce());
+    expect(mocks.refreshTasks).toHaveBeenCalledOnce();
+  });
+
   it("支持多看板、固定八列、关键词与优先级筛选", async () => {
     const user = userEvent.setup();
     render(<TaskBoardView />);

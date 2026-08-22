@@ -1,5 +1,6 @@
 import { GUARDRAIL_SYSTEM_PROMPT } from '../agent/guardrail.js';
 import { TITLE_SYSTEM_PROMPT } from '../agent/titleGenerator.js';
+import { DEFAULT_COMPACTION_REQUEST_PROMPT } from '../systemPrompts/compaction.js';
 import { loadPrompt } from './promptRenderer.js';
 import { IMAGE_UNDERSTANDING_SYSTEM_PROMPT } from './imageUnderstanding.js';
 import {
@@ -138,6 +139,13 @@ const DEFINITIONS_META: ReadonlyArray<Omit<SystemPromptDefinition, 'defaultConte
     description: '主模型不支持图片时，独立视觉模型使用的 system message。',
     variables: [],
   },
+  {
+    id: 'utility.compaction',
+    category: 'utility',
+    label: '运行时 · 上下文压缩',
+    description: '会话压缩时发送给主模型的摘要请求指令；手动与自动压缩共用。',
+    variables: [],
+  },
 ];
 
 export class SystemPromptRegistry {
@@ -187,6 +195,7 @@ export class SystemPromptRegistry {
       case 'utility.title': return TITLE_SYSTEM_PROMPT;
       case 'utility.guardrail': return GUARDRAIL_SYSTEM_PROMPT;
       case 'utility.imageUnderstanding': return IMAGE_UNDERSTANDING_SYSTEM_PROMPT;
+      case 'utility.compaction': return DEFAULT_COMPACTION_REQUEST_PROMPT;
     }
   }
 }

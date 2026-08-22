@@ -610,8 +610,10 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     });
     await store.completeExecution(runId, { status: 'succeeded', commentBody: 'Waiting for checks remediation' });
     const candidates = await store.claimIntegrationDispatchCandidatesV2(10);
-    expect(candidates.filter((candidate) => candidate.task.kind === 'integration')).toHaveLength(0);
-    expect(candidates.filter((candidate) => candidate.task.kind === 'remediation')).toHaveLength(1);
+    expect(candidates.filter((candidate) => candidate.task.boardId === board.id
+      && candidate.task.kind === 'integration')).toHaveLength(0);
+    expect(candidates.filter((candidate) => candidate.task.boardId === board.id
+      && candidate.task.kind === 'remediation')).toHaveLength(1);
   });
 
   it('schema migration projects one valid legacy Resolution and exposes duplicate/incomplete anomalies', async () => {

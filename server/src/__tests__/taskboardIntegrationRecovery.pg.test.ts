@@ -345,10 +345,10 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       identity, integration.id,
       executionClaim(integration.id, exhaustedCandidate!.task.version, exhaustedExecutionId, exhaustedRunId, 'merge'),
     );
-    const exhaustedContext = await store.getExecutionContextV2(identity, integration.id, { runId: exhaustedRunId });
     await store.inspectIntegrationSourceV2(identity, exhaustedRunId, source.id);
     await expect(store.mergeIntegrationSourceV2(identity, exhaustedRunId, source.id))
       .rejects.toMatchObject({ code: 'TASKBOARD_SOURCE_NOT_MERGEABLE' });
+    const exhaustedContext = await store.getExecutionContextV2(identity, integration.id, { runId: exhaustedRunId });
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
       state: 'needs_human', remediationCount: 2,
     });

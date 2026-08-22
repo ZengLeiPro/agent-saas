@@ -338,6 +338,12 @@ describe('integration candidate v3 schema', () => {
     expect(ddl).toContain("WHERE subject_kind='source_seed' AND composition_complete IS DISTINCT FROM FALSE");
     expect(ddl).toContain("IF NEW.subject_kind='source_seed' THEN NEW.composition_complete:=FALSE");
     expect(ddl).toContain('BEFORE INSERT OR UPDATE OF subject_kind,composition_complete');
+    expect(ddl).toContain('CREATE TRIGGER tbv3_source_seed_incomplete');
+    const v6ImmutableDrop = ddl.lastIndexOf('DROP TRIGGER IF EXISTS ky_taskboard_integration_candidate_revisions_immutable_update');
+    const v6Backfill = ddl.lastIndexOf('SET composition_complete=FALSE');
+    const v6ImmutableRestore = ddl.lastIndexOf('CREATE TRIGGER tbv3_revision_immutable BEFORE UPDATE');
+    expect(v6ImmutableDrop).toBeLessThan(v6Backfill);
+    expect(v6ImmutableRestore).toBeGreaterThan(v6Backfill);
     expect(ddl).toContain('ALTER COLUMN tree_oid DROP NOT NULL');
     expect(ddl).toContain('TASKBOARD_CANDIDATE_MERGE_RECONCILIATION_REQUIRED');
     expect(ddl).toContain('worker_attempts INTEGER NOT NULL DEFAULT 0');

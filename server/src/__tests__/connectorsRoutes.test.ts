@@ -190,10 +190,30 @@ describe('native connectors routes', () => {
     expect((await rig.request('/api/connectors/github')).status).toBe(200);
     const pause = await rig.request('/api/connectors/github/runtime', json('PATCH', { runtimeEnabled: false }));
     expect(pause.status).toBe(200);
-    const write = await rig.request('/api/connectors/github', json('POST', { token: 'github_pat_route_test' }));
-    expect(write.status).toBe(409);
-    expect(await write.json()).toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
+    for (const path of [
+      '/api/connectors/github',
+      '/api/connectors/github/',
+      '/api/connectors/GitHub',
+      '/api/connectors/x/',
+      '/api/connectors/ALIYUN/',
+    ]) {
+      const write = await rig.request(path, { method: 'POST' });
+      expect(write.status).toBe(409);
+      await expect(write.json()).resolves.toMatchObject({ code: 'MIGRATION_LEGACY_WRITE_SEALED' });
+    }
+    expect(gate.assertLegacyWriteAllowed).toHaveBeenCalledTimes(5);
     expect(gate.assertLegacyWriteAllowed).toHaveBeenCalledWith({ actor: 'user', compatibilityProjection: false });
+  });
+
+  it('封闭 gate 不截获由后续专用路由处理的 OAuth 请求', async () => {
+    const gate = {
+      assertLegacyWriteAllowed: vi.fn().mockRejectedValue(new Error('sealed')),
+    };
+    const rig = await createRig({ legacyWriteGate: gate });
+
+    expect((await rig.request('/api/connectors/notion/auth/session', { method: 'POST' })).status).toBe(404);
+    expect((await rig.request('/api/connectors/google-workspace/oauth/start', { method: 'POST' })).status).toBe(404);
+    expect(gate.assertLegacyWriteAllowed).not.toHaveBeenCalled();
   });
 
   it('X 连接状态 GET 与 runtime env 直接读取治理 Credential', async () => {

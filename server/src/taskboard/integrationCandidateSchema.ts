@@ -338,6 +338,49 @@ const INTEGRATION_CANDIDATE_SCHEMA_MIGRATIONS = [
         WHERE o.candidate_id=c.id AND c.state='canceled' AND o.state='prepared'`);
     },
   },
+  {
+    version: 5,
+    name: 'terminalize_unexecuted_provider_operations',
+    run: async (options: IntegrationCandidateSchemaOptions, client: Pick<PoolClient, 'query'>) => {
+      const { candidatesTable, providerOperationsTable } = integrationCandidateTableNames(options.integrationSourcesTable);
+      await client.query(`
+        LOCK TABLE ${candidatesTable},${providerOperationsTable} IN SHARE ROW EXCLUSIVE MODE;
+        CREATE OR REPLACE FUNCTION ${providerOperationsTable}_terminal_candidate_fn()
+        RETURNS TRIGGER LANGUAGE plpgsql AS $function$
+        BEGIN
+          PERFORM 1 FROM ${candidatesTable} c
+            WHERE c.id=NEW.candidate_id AND c.state NOT IN ('merged','canceled') FOR UPDATE;
+          IF NOT FOUND THEN RAISE EXCEPTION 'TASKBOARD_CANDIDATE_PROVIDER_OPERATION_TERMINAL'; END IF;
+          RETURN NEW;
+        END
+        $function$;
+        DROP TRIGGER IF EXISTS ${providerOperationsTable}_terminal_candidate ON ${providerOperationsTable};
+        CREATE TRIGGER ${providerOperationsTable}_terminal_candidate BEFORE INSERT ON ${providerOperationsTable}
+          FOR EACH ROW EXECUTE FUNCTION ${providerOperationsTable}_terminal_candidate_fn();
+        CREATE OR REPLACE FUNCTION ${candidatesTable}_terminalize_prepared_operations_fn()
+        RETURNS TRIGGER LANGUAGE plpgsql AS $function$
+        BEGIN
+          UPDATE ${providerOperationsTable}
+             SET state='failed',error='Terminal candidate cleanup found unexecuted provider operation',
+                 receipt=jsonb_build_object('outcome','not_applied','evidence','attempt_count=0'),updated_at=now()
+           WHERE candidate_id=NEW.id AND state='prepared' AND attempt_count=0;
+          RETURN NEW;
+        END
+        $function$;
+        DROP TRIGGER IF EXISTS ${candidatesTable}_terminalize_prepared_operations ON ${candidatesTable};
+        CREATE TRIGGER ${candidatesTable}_terminalize_prepared_operations
+          AFTER UPDATE OF state ON ${candidatesTable}
+          FOR EACH ROW WHEN (NEW.state IN ('merged','canceled') AND OLD.state IS DISTINCT FROM NEW.state)
+          EXECUTE FUNCTION ${candidatesTable}_terminalize_prepared_operations_fn();
+        UPDATE ${providerOperationsTable} o
+           SET state='failed',error='Terminal candidate cleanup found unexecuted provider operation',
+               receipt=jsonb_build_object('outcome','not_applied','evidence','attempt_count=0'),updated_at=now()
+          FROM ${candidatesTable} c
+         WHERE o.candidate_id=c.id AND c.state IN ('merged','canceled')
+           AND o.state='prepared' AND o.attempt_count=0
+      `);
+    },
+  },
 ] as const;
 
 /**

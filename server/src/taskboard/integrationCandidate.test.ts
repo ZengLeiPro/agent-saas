@@ -339,5 +339,12 @@ describe('integration candidate v3 schema', () => {
     expect(ddl).toContain('worker_attempts INTEGER NOT NULL DEFAULT 0');
     expect(ddl).toContain("c.state='canceled' AND o.state='prepared'");
     expect(ddl).toContain("SET state='failed',error='Candidate canceled before provider execution'");
+    expect(ddl).toContain("c.state IN ('merged','canceled')");
+    expect(ddl).toContain("o.state='prepared' AND o.attempt_count=0");
+    expect(ddl).toContain("error='Terminal candidate cleanup found unexecuted provider operation'");
+    expect(ddl).toContain('IN SHARE ROW EXCLUSIVE MODE');
+    expect(ddl).toContain('TASKBOARD_CANDIDATE_PROVIDER_OPERATION_TERMINAL');
+    expect(ddl).toContain('BEFORE INSERT ON ky_taskboard_integration_provider_operations_v3');
+    expect(ddl).toContain('AFTER UPDATE OF state ON ky_taskboard_integration_candidates');
   });
 });

@@ -91,7 +91,7 @@ describePg('Workflow v3 Provider admission (PostgreSQL)', () => {
 
     expect(integration.workflowVersion).toBe(3);
     expect(v3GetPullRequest).toHaveBeenCalledWith(
-      expect.objectContaining({ repositoryId: 'github:acme/v3-provider' }), '99', identity.ownerUserId,
+      expect.objectContaining({ owner: 'acme', name: 'v3-provider' }), '99', identity.ownerUserId,
     );
     expect(legacyGetPullRequest).not.toHaveBeenCalled();
   });

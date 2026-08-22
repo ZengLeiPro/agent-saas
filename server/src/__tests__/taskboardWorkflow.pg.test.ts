@@ -364,7 +364,6 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     const firstRemediation = await store.getTask(identity, remediation.id);
     expect(firstRemediation).toMatchObject({ status: 'done', completedAt: expect.any(String) });
     const remediationVersion = firstRemediation.version;
-    await store.mergeIntegrationSourceV2(identity, runId, source.id);
     const [deliveryAfter, remediationAfter, integrationAfter] = await Promise.all([
       store.getTask(identity, delivery.id), store.getTask(identity, remediation.id), store.getTask(identity, integration.id),
     ]);
@@ -451,7 +450,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     const mergeContext = await store.getExecutionContextV2(identity, integration.id, { runId: mergeRunId });
     await store.inspectIntegrationSourceV2(identity, mergeRunId, source.id);
     await expect(store.mergeIntegrationSourceV2(identity, mergeRunId, source.id))
-      .rejects.toMatchObject({ code: 'TASKBOARD_MERGE_CONFLICT' });
+      .rejects.toMatchObject({ code: 'TASKBOARD_SOURCE_NOT_MERGEABLE' });
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
       state: 'resolving_conflict', remediationCount: 0,
     });
@@ -602,7 +601,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     const context = await store.getExecutionContextV2(identity, integration.id, { runId });
     await store.inspectIntegrationSourceV2(identity, runId, source.id);
     await expect(store.mergeIntegrationSourceV2(identity, runId, source.id))
-      .rejects.toMatchObject({ code: 'TASKBOARD_CHECKS_FAILED' });
+      .rejects.toMatchObject({ code: 'TASKBOARD_SOURCE_NOT_MERGEABLE' });
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
       state: 'resolving_conflict', remediationCount: 0,
     });

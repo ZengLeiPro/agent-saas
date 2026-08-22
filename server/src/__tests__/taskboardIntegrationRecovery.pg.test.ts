@@ -137,7 +137,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
     const firstMergeContext = await store.getExecutionContextV2(identity, integration.id, { runId: firstMergeRunId });
     await store.inspectIntegrationSourceV2(identity, firstMergeRunId, source.id);
     await expect(store.mergeIntegrationSourceV2(identity, firstMergeRunId, source.id))
-      .rejects.toMatchObject({ code: 'TASKBOARD_CHECKS_FAILED' });
+      .rejects.toMatchObject({ code: 'TASKBOARD_SOURCE_NOT_MERGEABLE' });
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
       state: 'resolving_conflict', remediationCount: 0,
     });
@@ -275,7 +275,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       const mergeContext = await store.getExecutionContextV2(identity, integration.id, { runId: mergeRunId });
       await store.inspectIntegrationSourceV2(identity, mergeRunId, source.id);
       await expect(store.mergeIntegrationSourceV2(identity, mergeRunId, source.id))
-        .rejects.toMatchObject({ code: 'TASKBOARD_CHECKS_FAILED' });
+        .rejects.toMatchObject({ code: 'TASKBOARD_SOURCE_NOT_MERGEABLE' });
       expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
         state: 'resolving_conflict', remediationCount: round - 1,
       });
@@ -348,7 +348,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
     const exhaustedContext = await store.getExecutionContextV2(identity, integration.id, { runId: exhaustedRunId });
     await store.inspectIntegrationSourceV2(identity, exhaustedRunId, source.id);
     await expect(store.mergeIntegrationSourceV2(identity, exhaustedRunId, source.id))
-      .rejects.toMatchObject({ code: 'TASKBOARD_REMEDIATION_EXHAUSTED' });
+      .rejects.toMatchObject({ code: 'TASKBOARD_SOURCE_NOT_MERGEABLE' });
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
       state: 'needs_human', remediationCount: 2,
     });

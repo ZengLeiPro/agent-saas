@@ -74,6 +74,19 @@ describe("TaskDetailComments", () => {
     expect(author.textContent).not.toContain("）");
   });
 
+  it("将已执行任务的正文作为评论区首条消息", () => {
+    renderComments({
+      taskDescription: "任务背景说明",
+      comments: [agentComment],
+    });
+
+    const taskDescription = screen.getByTestId("task-description-comment");
+    expect(taskDescription.textContent).toContain("任务正文");
+    expect(taskDescription.textContent).toContain("任务背景说明");
+    expect(taskDescription.compareDocumentPosition(screen.getByText("已完成实施。")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText("暂无评论")).toBeNull();
+  });
+
   it("评论加载完成后自动滚动到底部", async () => {
     const { rerender } = renderComments({ comments: [agentComment], commentsLoading: true });
     const scrollContainer = screen.getByTestId("task-comments-scroll");

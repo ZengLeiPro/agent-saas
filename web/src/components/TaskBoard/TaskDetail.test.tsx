@@ -166,7 +166,7 @@ describe("TaskDetail 草稿隔离", () => {
     expect(container.querySelector("[aria-label='任务评论'] .size-8")).toBeNull();
   });
 
-  it("执行开始后锁定标题和正文，切换到未执行任务应解除锁定", async () => {
+  it("执行开始后隐藏左侧标题和正文，并将正文作为评论区首条消息", async () => {
     const runningTask = { ...taskOne, status: "in_progress" as const };
     const execution: TaskBoardExecution = {
       id: "execution-lock",
@@ -181,19 +181,17 @@ describe("TaskDetail 草稿隔离", () => {
     mocks.fetchTask.mockResolvedValue(runningTask);
     const { rerender } = render(<TaskDetail {...props({ task: runningTask })} />);
 
-    expect((await screen.findByRole("textbox", { name: "标题" }) as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).disabled).toBe(true);
+    expect((await screen.findByTestId("task-description-comment")).textContent).toContain("任务一正文");
+    expect(screen.getByText("任务正文")).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "标题" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "正文" })).toBeNull();
     expect((screen.getByRole("textbox", { name: "发表评论" }) as HTMLTextAreaElement).disabled).toBe(false);
-    expect(screen.getByText("任务首次执行后，标题和正文已锁定；后续变更请通过评论补充。")).toBeTruthy();
 
     mocks.executions = [];
-    rerender(<TaskDetail {...props({ task: runningTask })} />);
-    mocks.executions = [execution];
     mocks.fetchTask.mockResolvedValue(taskTwo);
     rerender(<TaskDetail {...props({ task: taskTwo })} />);
-    mocks.executions = [];
-    rerender(<TaskDetail {...props({ task: taskTwo })} />);
-    await waitFor(() => expect((screen.getByRole("textbox", { name: "标题" }) as HTMLInputElement).disabled).toBe(false));
+    await waitFor(() => expect((screen.getByRole("textbox", { name: "标题" }) as HTMLInputElement).value).toBe("任务二"));
+    expect(screen.queryByTestId("task-description-comment")).toBeNull();
   });
 
   it("改变状态不会重置未保存字段，切换任务会清空评论草稿", async () => {

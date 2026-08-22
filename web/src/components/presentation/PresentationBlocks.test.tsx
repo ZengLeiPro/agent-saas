@@ -158,7 +158,7 @@ describe('records', () => {
     expect(grid?.children).toHaveLength(4);
   });
 
-  it('comparison 数值列按内容收缩，移动端按单项卡片重排并突出差异', () => {
+  it('comparison 使用同轨比例列，移动端按单项卡片重排并突出差异', () => {
     const longValue = '这是一段需要在比较列内换行的长文本'.repeat(8);
     const { container } = render(<PresentationBlocks blocks={[{
       kind: 'records', layout: 'comparison', title: '阶段停留对照',
@@ -174,29 +174,29 @@ describe('records', () => {
     const rows = container.querySelectorAll('[data-comparison-row]');
     const header = table?.firstElementChild;
     const row = rows[0]?.querySelector('button');
-    const columns = 'sm:grid-cols-[minmax(10rem,1.2fr)_minmax(6rem,max-content)_minmax(6rem,max-content)_minmax(6rem,max-content)_auto]';
+    const columns = 'sm:grid-cols-[minmax(8rem,1.2fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_auto]';
     expect(records?.className).toContain('w-full');
     expect(records?.firstElementChild?.className).toContain('sm:min-w-[36rem]');
     expect(header?.className).toContain(columns);
-    expect(header?.className).toContain('gap-x-3');
+    expect(header?.className).toContain('gap-x-4');
     expect(row?.className).toContain(columns);
-    expect(row?.className).toContain('gap-x-3');
-    expect(row?.className).toContain('gap-y-1.5');
+    expect(row?.className).toContain('gap-x-4');
+    expect(row?.className).toContain('gap-y-2');
     expect(rows[0]?.className).toContain('py-2.5');
     expect(table).toBeTruthy();
     expect(rows).toHaveLength(3);
     const constrainedValues = screen.getAllByText(longValue);
     expect(constrainedValues).toHaveLength(3);
     for (const value of constrainedValues) {
-      expect(value.className).toContain('block');
-      expect(value.className).toContain('max-w-64');
       expect(value.className).toContain('break-words');
+      expect(value.className).not.toContain('max-w-64');
     }
     expect(screen.getByText('对照项')).toBeTruthy();
     expect(screen.getAllByText('基准/之前').length).toBeGreaterThan(1);
     expect(screen.getAllByText('当前/实际').length).toBeGreaterThan(1);
     expect(screen.getAllByText('差异').length).toBeGreaterThan(1);
-    expect(screen.getByText('+12 天').className).toContain('max-w-64');
+    expect(screen.getByText('+12 天').className).toContain('break-words');
+    expect(screen.getByText('+12 天').className).not.toContain('max-w-64');
     expect(screen.getByText('+12 天').className).toContain('text-warning');
     expect(screen.getByText('一致').className).toContain('text-success');
   });

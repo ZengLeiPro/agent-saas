@@ -34,7 +34,7 @@ function contextRow() {
     execution_id: 'execution-41',
     purpose: 'review',
     execution_status: 'running',
-    resolved_at: null,
+    transitioned_at: null,
     superseded_at: null,
     repository: {
       provider: 'github', repositoryId: 'github:acme/repo', owner: 'acme', name: 'repo',
@@ -83,7 +83,7 @@ function hostWithPullRequest(pullRequest: RepositoryPullRequestSnapshot) {
     executionsTable: 'executions', changesTable: 'changes', integrationLanesTable: 'lanes',
     integrationSourcesTable: 'sources', mergeAuthorizationsTable: 'authorizations',
     mergeOperationsTable: 'operations', blockEpisodesTable: 'blocks',
-    remediationAttemptsTable: 'attempts', resolutionsTable: 'resolutions',
+    remediationAttemptsTable: 'attempts',
     cancellationOutboxTable: 'cancellations',
     repositoryProvider: {
       getPullRequest: vi.fn(async () => pullRequest),

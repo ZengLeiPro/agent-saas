@@ -24,7 +24,7 @@ export async function applyExecutionTaskCompletion(
   executionCreatedAt: string | Date,
   input: TaskboardExecutionCompletionInput,
 ): Promise<boolean> {
-  // Candidate transitions are resolution-driven and epoch fenced. Legacy
+  // Candidate transitions are protocol-driven and epoch fenced. Legacy
   // completion callbacks (including late callbacks) must never project a v3
   // integration task status.
   if (task.kind === 'integration' && task.workflowVersion === 3) {

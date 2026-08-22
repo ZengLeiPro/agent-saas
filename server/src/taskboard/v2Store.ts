@@ -55,7 +55,6 @@ export interface TaskboardV2StoreOptions {
   mergeOperationsTable: string;
   blockEpisodesTable: string;
   integrationTriggerOutboxTable: string;
-  resolutionsTable: string;
   remediationAttemptsTable: string;
   cancellationOutboxTable: string;
   /** Optional for structural v2 hosts; PgTaskboardStore always supplies a fail-closed implementation. */
@@ -621,22 +620,7 @@ export async function getExecutionContextV2(
       : undefined;
     const executions = include.has('executions')
       ? await client.query(
-        `SELECT e.*,r.outcome AS resolution_outcome,r.summary AS resolution_summary,
-                r.to_status AS task_status_after,r.ignored_reason,r.historical AS resolution_historical,
-                (r.execution_id IS NOT NULL) AS has_resolution,
-                legacy.candidate_count AS legacy_resolution_count,
-                legacy.valid_count AS legacy_resolution_valid_count
-           FROM ${options.executionsTable} e
-           LEFT JOIN ${options.resolutionsTable} r ON r.execution_id=e.id
-           LEFT JOIN LATERAL (
-             SELECT count(*)::int AS candidate_count,
-                    count(*) FILTER (WHERE NULLIF(c.payload->>'outcome','') IS NOT NULL
-                      AND NULLIF(c.payload->>'summary','') IS NOT NULL)::int AS valid_count
-               FROM ${options.changesTable} c
-              WHERE c.task_id=e.task_id AND c.change_type IN ('execution.resolved','execution.resolved.v2')
-                AND (c.payload->>'executionId'=e.id
-                  OR ((c.payload->>'executionId') IS NULL AND c.payload->>'runId'=e.run_id))
-           ) legacy ON true
+        `SELECT e.* FROM ${options.executionsTable} e
           WHERE e.task_id=$1 ORDER BY e.created_at,e.id`,
         [taskId],
       )
@@ -661,25 +645,6 @@ export async function getExecutionContextV2(
         : {}),
       hasMore: changeRows.rows.length > limit,
       contract,
-      receipt: {
-        ...(latestExecution ? {
-          schemaVersion: 2 as const,
-          runId: latestExecution.runId,
-          executionId: latestExecution.id,
-          attemptId: latestExecution.attemptId ?? latestExecution.id,
-          purpose: latestExecution.purpose,
-          workflowEpoch: String(latestExecutionResult.rows[0]?.workflow_epoch ?? '0'),
-          fenceEpoch: latestExecution.fenceEpoch ?? '0',
-        } : {}),
-        taskId,
-        taskVersion: loaded.task.version,
-        changeSeq: asOfSeq,
-        contractDigest: contract.digest,
-        policyRevision: policy?.revision ?? 'none',
-        ...(loaded.task.reviewedSubjectDigest
-          ? { subjectDigest: loaded.task.reviewedSubjectDigest }
-          : {}),
-      },
     };
   } finally {
     client.release();
@@ -701,7 +666,7 @@ export async function createExecutionCommentV2(
          JOIN ${options.tasksTable} t ON t.id=e.task_id
          JOIN ${options.boardsTable} b ON b.id=t.board_id
         WHERE e.run_id=$1 AND e.status IN ('queued','running','waiting_user','waiting_approval')
-          AND e.resolved_at IS NULL AND e.superseded_at IS NULL
+          AND e.transitioned_at IS NULL AND e.superseded_at IS NULL
           AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
         FOR UPDATE OF e`,
       [runId, identity.tenantId, identity.ownerUserId],

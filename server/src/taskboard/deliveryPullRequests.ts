@@ -276,7 +276,7 @@ async function loadContext(
   try {
     const result = await client.query(
       `SELECT t.id AS task_id,t.kind,t.branch AS task_branch,t.provider_pull_request_id,
-              e.id AS execution_id,e.purpose,e.status AS execution_status,e.resolved_at,e.superseded_at,
+              e.id AS execution_id,e.purpose,e.status AS execution_status,e.transitioned_at,e.superseded_at,
               b.repository,b.owner_user_id,
               remediation_source.provider_pull_request_id AS source_provider_pull_request_id,
               delivery.provider_pull_request_id AS delivery_provider_pull_request_id,
@@ -302,7 +302,7 @@ async function loadContext(
     if (!['delivery', 'remediation'].includes(String(row.kind)) || !purposes.includes(String(row.purpose))) {
       throw new TaskboardValidationError('Execution purpose cannot update task pull request');
     }
-    if (row.resolved_at || row.superseded_at
+    if (row.transitioned_at || row.superseded_at
       || !['queued', 'running', 'waiting_user', 'waiting_approval'].includes(String(row.execution_status))) {
       throw new TaskboardValidationError('Taskboard execution is no longer active');
     }
@@ -347,7 +347,7 @@ async function lockExecution(
     `SELECT id FROM ${host.executionsTable}
       WHERE run_id=$1 AND task_id=$2
         AND status IN ('queued','running','waiting_user','waiting_approval')
-        AND resolved_at IS NULL AND superseded_at IS NULL
+        AND transitioned_at IS NULL AND superseded_at IS NULL
       FOR UPDATE`,
     [runId, taskId],
   );

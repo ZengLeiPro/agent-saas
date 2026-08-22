@@ -162,8 +162,8 @@ export class DefaultIntegrationV3ComposeExecutor implements IntegrationV3Compose
   async refreshAfterWork(current: Required<IntegrationV3WorkerCurrent>) {
     const context = await this.host.resolveContext(current);
     // A remote ref can move for reasons unrelated to the bound remediation run. Only a
-    // succeeded work execution with a canonical ready_for_review resolution may advance
-    // the candidate subject.
+    // current work execution with a fenced in_review transition may advance
+    // the candidate subject; later Run completion cannot override that explicit decision.
     if (!context.workExecutionId) return undefined;
     if (!current.candidate.providerPullRequestId || !this.provider.getReference) {
       throw new IntegrationV3InvalidWorkResultError('Ready work result cannot resolve the integration and base refs');

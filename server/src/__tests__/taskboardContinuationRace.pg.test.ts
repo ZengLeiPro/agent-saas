@@ -60,7 +60,7 @@ describePg('Taskboard continuation PostgreSQL race contract', () => {
     try {
       await pool.query(`DROP TABLE IF EXISTS
         ${store.integrationTriggerOutboxTable}, ${store.blockEpisodesTable}, ${store.cancellationOutboxTable},
-        ${store.resolutionsTable}, ${store.remediationAttemptsTable}, ${store.mergeOperationsTable},
+        ${store.remediationAttemptsTable}, ${store.mergeOperationsTable},
         ${store.mergeAuthorizationsTable}, ${store.integrationSourcesTable}, ${store.integrationLanesTable},
         ${store.attemptsTable}, ${store.changesTable}, ${store.membersTable}, ${store.continuationOutboxTable},
         ${store.executionOutboxTable}, ${store.executionsTable}, ${store.commentsTable}, ${store.tasksTable},

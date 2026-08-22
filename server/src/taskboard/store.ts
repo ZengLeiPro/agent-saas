@@ -11,7 +11,7 @@ import {
   type TaskBoardExecution,
   type TaskBoardExecutionContextInput,
   type TaskBoardExecutionContextResponse,
-  type TaskBoardExecutionResolutionInput,
+  type TaskBoardExecutionTransitionInput,
   type TaskBoardExecutionStartResult,
   type TaskBoardIntegrationBatchCreateInput,
   type TaskBoardIntegrationSource,
@@ -87,7 +87,7 @@ import {
   removeBoardMember as removeStoredBoardMember,
   upsertBoardMember as upsertStoredBoardMember,
 } from './v2Store.js';
-import { resolveExecutionV2 as resolveStoredExecutionV2 } from './workflow/resolutionService.js';
+import { transitionExecutionV2 as transitionStoredExecutionV2 } from './workflow/transitionService.js';
 import { resumeBlockedTask as resumeStoredBlockedTask } from './workflow/resumeService.js';
 import {
   assertActiveBoard,
@@ -181,7 +181,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   readonly mergeOperationsTable: string;
   readonly blockEpisodesTable: string;
   readonly integrationTriggerOutboxTable: string;
-  readonly resolutionsTable: string;
   readonly remediationAttemptsTable: string;
   readonly cancellationOutboxTable: string;
   repositoryProvider?: RepositoryProvider;
@@ -206,7 +205,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     this.mergeOperationsTable = `${prefix}_taskboard_merge_ops`;
     this.blockEpisodesTable = `${prefix}_taskboard_block_episodes`;
     this.integrationTriggerOutboxTable = `${prefix}_taskboard_integration_outbox`;
-    this.resolutionsTable = `${prefix}_taskboard_resolutions`;
     this.remediationAttemptsTable = `${prefix}_taskboard_remediation_attempts`;
     this.cancellationOutboxTable = `${prefix}_taskboard_cancel_outbox`;
   }
@@ -341,12 +339,12 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return claimIntegrationDispatchCandidates(this, limit);
   }
 
-  resolveExecutionV2(
+  transitionExecutionV2(
     identity: TaskboardIdentity,
     runId: string,
-    input: TaskBoardExecutionResolutionInput,
+    input: TaskBoardExecutionTransitionInput,
   ): Promise<TaskBoardTask> {
-    return resolveStoredExecutionV2(this, identity, runId, input);
+    return transitionStoredExecutionV2(this, identity, runId, input);
   }
 
   async listBoards(identity: TaskboardIdentity, includeArchived = false): Promise<TaskBoard[]> {

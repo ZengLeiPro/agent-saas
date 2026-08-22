@@ -63,7 +63,6 @@ describePg('PgTaskboardStore continuation contract', () => {
       await pool.query(`DROP TABLE IF EXISTS ${store.integrationTriggerOutboxTable} CASCADE`);
       await pool.query(`DROP TABLE IF EXISTS ${store.blockEpisodesTable} CASCADE`);
       await pool.query(`DROP TABLE IF EXISTS ${store.cancellationOutboxTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.resolutionsTable} CASCADE`);
       await pool.query(`DROP TABLE IF EXISTS ${store.remediationAttemptsTable} CASCADE`);
       await pool.query(`DROP TABLE IF EXISTS ${store.mergeOperationsTable} CASCADE`);
       await pool.query(`DROP TABLE IF EXISTS ${store.mergeAuthorizationsTable} CASCADE`);

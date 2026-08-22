@@ -25,7 +25,6 @@ export interface TaskboardTaskDeleteHost {
   integrationTriggerOutboxTable: string;
   continuationOutboxTable: string;
   executionOutboxTable: string;
-  resolutionsTable: string;
   remediationAttemptsTable: string;
   cancellationOutboxTable: string;
   requireTaskWithBoard(

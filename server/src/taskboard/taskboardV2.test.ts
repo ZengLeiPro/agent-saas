@@ -83,10 +83,9 @@ describe('taskboard V2 contracts', () => {
       status: 'in_progress',
     }, 'merge');
 
-    expect(work.allowedOutcomes).toEqual(['ready_for_review', 'blocked']);
-    expect(review.allowedOutcomes).toEqual(['approved', 'changes_requested', 'stale_subject', 'blocked']);
-    expect(merge.capabilities).toMatchObject({ mergeReviewedSource: true, createRemediation: true, deploy: false });
-    expect(new Set([work.digest, review.digest, merge.digest]).size).toBe(3);
+    expect(work.allowedStatuses).toEqual(['in_review', 'blocked']);
+    expect(review.allowedStatuses).toEqual(['ready_to_merge', 'todo', 'in_review', 'blocked']);
+    expect(merge.capabilities).toMatchObject({ mergeReviewedSource: true, createRemediation: true });
   });
 
   it('resolves an Integration v3 execution context contract from the current candidate state', async () => {
@@ -113,22 +112,6 @@ describe('taskboard V2 contracts', () => {
     })).toMatchObject({ mergeEligibility: 'eligible', integrationState: 'canceled' });
   });
 
-  it('projects legacy Resolution anomalies explicitly instead of showing them as missing', () => {
-    const base = {
-      id: 'execution-1', task_id: task.id, run_id: 'run-1', session_id: 'session-1',
-      status: 'succeeded', purpose: 'work', requested_by: 'alice',
-      created_at: task.createdAt, updated_at: task.updatedAt,
-    };
-    expect(rowToExecution({ ...base, legacy_resolution_count: 2, legacy_resolution_valid_count: 2 }))
-      .toMatchObject({ resolutionState: 'legacy_ambiguous', resolutionIssue: expect.stringContaining('2 条') });
-    expect(rowToExecution({ ...base, legacy_resolution_count: 1, legacy_resolution_valid_count: 0 }))
-      .toMatchObject({ resolutionState: 'legacy_incomplete' });
-    expect(rowToExecution({
-      ...base, has_resolution: true, resolution_historical: true,
-      resolution_id: 'historical:1', resolution_outcome: 'completed',
-    })).toMatchObject({ resolutionState: 'historical', resolutionOutcome: 'completed' });
-  });
-
   it('installs immutable change log, repository lane, saga and durable trigger schema', async () => {
     const sql: string[] = [];
     const client = {
@@ -151,7 +134,6 @@ describe('taskboard V2 contracts', () => {
       mergeOperationsTable: 'tb_operations',
       blockEpisodesTable: 'tb_blocks',
       integrationTriggerOutboxTable: 'tb_trigger_outbox',
-      resolutionsTable: 'tb_resolutions',
       remediationAttemptsTable: 'tb_remediation_attempts',
       cancellationOutboxTable: 'tb_cancellation_outbox',
     }, client as never);
@@ -167,6 +149,9 @@ describe('taskboard V2 contracts', () => {
     expect(ddl).toContain('provider_receipt JSONB');
     expect(ddl).toContain('TASKBOARD_ACTIVE_PR_DUPLICATES');
     expect(ddl).toContain('apr_uq');
-    expect(ddl).toContain('historical_projection');
+    expect(ddl).toContain("terminal_reason_code=COALESCE(terminal_reason_code,'legacy_resolution_migrated')");
+    expect(ddl).toContain('DROP TABLE IF EXISTS tb_resolutions');
+    expect(ddl).toContain('DROP COLUMN IF EXISTS resolution_id');
+    expect(ddl).toContain('DROP COLUMN IF EXISTS resolved_at');
   });
 });

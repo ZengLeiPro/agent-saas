@@ -176,11 +176,11 @@ async function withActiveExecutionTask<T>(
       throw new TaskboardValidationError('Archived taskboard resources are read-only');
     }
     const executionResult = await client.query(
-      `SELECT status,resolved_at,superseded_at FROM ${options.executionsTable} WHERE run_id=$1 FOR UPDATE`,
+      `SELECT status,transitioned_at,superseded_at FROM ${options.executionsTable} WHERE run_id=$1 FOR UPDATE`,
       [runId],
     );
     if (!executionResult.rows[0]
-      || executionResult.rows[0].resolved_at || executionResult.rows[0].superseded_at
+      || executionResult.rows[0].transitioned_at || executionResult.rows[0].superseded_at
       || !ACTIVE_EXECUTION_STATUSES.includes(String(executionResult.rows[0].status))) {
       throw new TaskboardValidationError(
         'Taskboard execution is no longer active',

@@ -26,13 +26,13 @@ export function executionWritebackInstructions(context: TaskboardExecutionContex
   const instructions = [
     '- 读取任务看板返回的最新事实和结构化职责约束。',
     '- 自主完成当前职责，按需记录重要进展。',
-    '- 结束前提交明确、真实且可验证的阶段结果。',
+    '- 结束前先用 execution.comment 写入明确、真实且可验证的阶段结果，再用 execution.transition 只指定下一状态。',
   ];
   if (context.task.kind === 'integration' && context.task.workflowVersion === 3
     && context.execution.purpose === 'work') {
     instructions.splice(2, 0,
       '- 创建单一直接父提交后，调用 execution.integration_candidate.push 且只传 commitOid；不得执行 git push。',
-      '- 只有受控 push 成功后，才能通过 execution.resolve 提交 ready_for_review。');
+      '- 只有受控 push 成功后，才能通过 execution.transition({status: "in_review"}) 请求系统复核。');
   }
   return instructions;
 }

@@ -127,7 +127,7 @@ export async function scanIntegrationV3Invariants(
        JOIN ${tables.candidates} c ON c.id=e.candidate_id
        JOIN ${tables.lanes} l ON l.repository_id=c.repository_id
       WHERE e.status IN ('queued','running','waiting_user','waiting_approval')
-        AND e.resolved_at IS NULL AND e.superseded_at IS NULL
+        AND e.transitioned_at IS NULL AND e.superseded_at IS NULL
         AND (e.candidate_workflow_epoch IS DISTINCT FROM c.workflow_epoch
           OR e.candidate_lane_epoch IS DISTINCT FROM c.lane_epoch
           OR e.candidate_lane_epoch IS DISTINCT FROM l.epoch
@@ -231,7 +231,7 @@ export async function applyIntegrationV3Repair(
           SET status='cancelled',finished_at=COALESCE(finished_at,now()),superseded_at=COALESCE(superseded_at,now()),
               fence_epoch=fence_epoch+1,terminal_reason_code='integration_v3_epoch_mismatch',updated_at=now()
         WHERE id=$1 AND status IN ('queued','running','waiting_user','waiting_approval')
-          AND resolved_at IS NULL AND superseded_at IS NULL RETURNING id`,
+          AND transitioned_at IS NULL AND superseded_at IS NULL RETURNING id`,
       [finding.executionId],
     );
     return { finding, outcome: result.rows[0] ? 'repaired' : 'no_longer_present' };

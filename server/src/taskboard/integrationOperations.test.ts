@@ -16,7 +16,7 @@ const sourceRow = {
 };
 const contextRow = {
   ...sourceRow, execution_id: 'execution-1', purpose: 'merge', execution_status: 'running',
-  resolved_at: null, superseded_at: null, integration_task_id_actual: 'integration-1',
+  transitioned_at: null, superseded_at: null, integration_task_id_actual: 'integration-1',
   integration_status: 'in_progress', tenant_id: 'tenant-1', owner_user_id: 'owner-1',
   repository: { provider: 'github', repositoryId: 'repo-1', owner: 'acme', name: 'repo', baseBranch: 'main', allowForkPullRequest: false },
   integration_policy: {
@@ -40,7 +40,7 @@ function host(client: { query: ReturnType<typeof vi.fn>; release: ReturnType<typ
     commentsTable: 'comments', executionsTable: 'executions', changesTable: 'changes',
     integrationLanesTable: 'lanes', integrationSourcesTable: 'sources', mergeAuthorizationsTable: 'auths',
     mergeOperationsTable: 'operations', blockEpisodesTable: 'blocks', remediationAttemptsTable: 'attempts',
-    resolutionsTable: 'resolutions', cancellationOutboxTable: 'cancellations', repositoryProvider: provider,
+    cancellationOutboxTable: 'cancellations', repositoryProvider: provider,
   } as unknown as Parameters<typeof mergeIntegrationSource>[0];
 }
 
@@ -94,7 +94,7 @@ describe('integration operation guards', () => {
         }] };
         if (sql.includes('SELECT id AS execution_id')) return { rows: [{
           execution_id: 'execution-1', purpose: 'merge', execution_status: 'running',
-          resolved_at: null, superseded_at: null,
+          transitioned_at: null, superseded_at: null,
         }] };
         if (sql.includes('INSERT INTO attempts')) return { rows: [] };
         if (sql.includes('FROM attempts') && sql.includes('remediation_task_id=$1')) return { rows: [{

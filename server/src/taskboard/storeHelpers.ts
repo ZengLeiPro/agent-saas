@@ -171,26 +171,6 @@ export function visibleCommentPredicate(commentAlias: string, changesTable: stri
   ))`;
 }
 
-function executionResolutionProjection(row: Record<string, unknown>): Pick<TaskBoardExecution, 'resolutionState' | 'resolutionIssue'> {
-  if (row.has_resolution === true || row.resolution_id || row.resolution_outcome) {
-    return { resolutionState: row.resolution_historical === true ? 'historical' : 'canonical' };
-  }
-  const candidates = Number(row.legacy_resolution_count ?? 0);
-  const valid = Number(row.legacy_resolution_valid_count ?? 0);
-  if (candidates > 1) {
-    return {
-      resolutionState: 'legacy_ambiguous',
-      resolutionIssue: `检测到 ${candidates} 条历史结论，无法唯一迁移`,
-    };
-  }
-  if (candidates === 1 && valid !== 1) {
-    return {
-      resolutionState: 'legacy_incomplete',
-      resolutionIssue: '历史结论字段不完整，未迁移为结构化结论',
-    };
-  }
-  return { resolutionState: 'missing' };
-}
 
 export function rowToExecution(row: Record<string, unknown>): TaskBoardExecution {
   return {
@@ -207,13 +187,6 @@ export function rowToExecution(row: Record<string, unknown>): TaskBoardExecution
     ...(row.attempt_id ? { attemptId: String(row.attempt_id) } : {}),
     requestedBy: String(row.requested_by),
     ...(row.error !== null && row.error !== undefined ? { error: String(row.error) } : {}),
-    ...(row.resolution_id ? { resolutionId: String(row.resolution_id) } : {}),
-    ...(row.resolution_outcome ? { resolutionOutcome: String(row.resolution_outcome) } : {}),
-    ...(row.resolution_summary ? { resolutionSummary: String(row.resolution_summary) } : {}),
-    ...executionResolutionProjection(row),
-    ...(row.task_status_after ? { taskStatusAfter: String(row.task_status_after) as TaskBoardTask['status'] } : {}),
-    ...(row.resolved_at ? { resolvedAt: toIso(row.resolved_at) } : {}),
-    ...(row.ignored_reason ? { ignoredReason: String(row.ignored_reason) } : {}),
     ...(row.superseded_at ? { supersededAt: toIso(row.superseded_at) } : {}),
     ...(row.fence_epoch !== null && row.fence_epoch !== undefined ? { fenceEpoch: String(row.fence_epoch) } : {}),
     ...(row.started_at ? { startedAt: toIso(row.started_at) } : {}),

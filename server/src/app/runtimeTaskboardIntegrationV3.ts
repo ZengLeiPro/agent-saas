@@ -493,7 +493,6 @@ export function startRuntimeTaskboardIntegrationV3(
     tasksTable: store.tasksTable,
     boardsTable: store.boardsTable,
     executionsTable: store.executionsTable,
-    resolutionsTable: store.resolutionsTable,
     requestsOutboxTable: tables.requestsOutboxTable,
     providerOperationsTable: tables.providerOperationsTable,
     resolvePaths: async (repository, candidateId, identity) => {

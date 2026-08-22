@@ -73,6 +73,12 @@ function rig() {
     getTask: vi.fn(async () => task),
     listComments: vi.fn(async () => []),
     searchComments: vi.fn(async () => ({ items: [], page: 1, pageSize: 20, total: 0, hasMore: false })),
+    createExecutionCommentV2: vi.fn(async (_identity, _runId, body) => ({
+      id: 'agent-comment', taskId: task.id, body, authorType: 'agent' as const,
+      authorId: execution.runId, authorName: 'Agent', version: 1,
+      createdAt: board.createdAt, updatedAt: board.updatedAt,
+    })),
+    transitionExecutionV2: vi.fn(async (_identity, _runId, input) => ({ ...task, status: input.status })),
     createComment: vi.fn(async (_identity, taskId, input) => ({
       id: 'comment-1', taskId, body: input.body, attachments: input.attachments, authorType: 'user' as const,
       authorId: identity.ownerUserId, authorName: identity.username, version: 1,
@@ -199,6 +205,22 @@ describe('CronManage taskboard actions', () => {
     expect(executionService.listExecutions).toHaveBeenCalledWith(identity, task.id);
   });
 
+  it('Execution 只用 comment 写交付并用 transition 指定下一状态', async () => {
+    const { service, options } = rig();
+    const scope = executionScope('review', 2);
+
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'execution.comment', body: '复核通过，检查记录见评论。',
+    }, scope)).resolves.toMatchObject({ created: true, comment: { body: '复核通过，检查记录见评论。' } });
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'execution.transition', status: 'ready_to_merge',
+    }, scope)).resolves.toMatchObject({ transitioned: true, task: { status: 'ready_to_merge' } });
+
+    expect(service.transitionExecutionV2).toHaveBeenCalledWith(identity, execution.runId, {
+      status: 'ready_to_merge',
+    });
+  });
+
   it('普通会话创建带分支任务并用显式版本回写字段', async () => {
     const { service, options } = rig();
 
@@ -311,7 +333,7 @@ describe('CronManage taskboard actions', () => {
     );
   });
 
-  it('V2 Execution 禁止使用旧 move 回写，必须提交结构化 resolution', async () => {
+  it('V2 Execution 禁止使用旧 move 回写，必须通过 transition 指定下一状态', async () => {
     const { executionStore, options } = rig();
 
     await expect(invokeTaskboardAction(
@@ -319,7 +341,7 @@ describe('CronManage taskboard actions', () => {
       identity,
       { action: 'move', id: task.id, status: 'ready_to_merge' },
       executionScope('review', 2),
-    )).rejects.toThrow('结构化 resolution');
+    )).rejects.toThrow('execution.transition');
     expect(executionStore.moveTaskFromExecution).not.toHaveBeenCalled();
   });
 

@@ -35,7 +35,6 @@ export interface IntegrationOperationHost {
   mergeOperationsTable: string;
   blockEpisodesTable: string;
   remediationAttemptsTable: string;
-  resolutionsTable: string;
   cancellationOutboxTable: string;
   repositoryProvider?: RepositoryProvider;
 }
@@ -248,7 +247,7 @@ export async function linkIntegrationRemediation(
     const sourceRow = sourceResult.rows[0];
     if (!sourceRow) throw new TaskboardNotFoundError('Integration source not found');
     const executionResult = await client.query(
-      `SELECT id AS execution_id,purpose,status AS execution_status,resolved_at,superseded_at
+      `SELECT id AS execution_id,purpose,status AS execution_status,transitioned_at,superseded_at
          FROM ${host.executionsTable}
         WHERE task_id=$1 AND run_id=$2
         FOR UPDATE`,
@@ -256,7 +255,7 @@ export async function linkIntegrationRemediation(
     );
     const row = executionResult.rows[0] ? { ...sourceRow, ...executionResult.rows[0] } : undefined;
     if (!row) throw new TaskboardNotFoundError('Integration source execution not found');
-    if (row.purpose !== 'merge' || row.resolved_at || row.superseded_at
+    if (row.purpose !== 'merge' || row.transitioned_at || row.superseded_at
       || !['queued', 'running', 'waiting_user', 'waiting_approval'].includes(String(row.execution_status))) {
       throw new TaskboardValidationError('Merge execution is not active');
     }
@@ -454,7 +453,7 @@ async function loadOperationContext(
   try {
     const result = await client.query(
       `SELECT s.*, e.id AS execution_id,e.purpose,e.status AS execution_status,
-              e.resolved_at,e.superseded_at,
+              e.transitioned_at,e.superseded_at,
               i.id AS integration_task_id_actual, i.status AS integration_status,
               b.tenant_id, b.owner_user_id, b.repository, b.integration_policy,
               l.active_integration_task_id, l.epoch,
@@ -474,7 +473,7 @@ async function loadOperationContext(
     );
     const row = result.rows[0];
     if (!row) throw new TaskboardNotFoundError('Integration source execution not found');
-    if (row.purpose !== 'merge' || row.resolved_at || row.superseded_at
+    if (row.purpose !== 'merge' || row.transitioned_at || row.superseded_at
       || !['queued', 'running', 'waiting_user', 'waiting_approval'].includes(String(row.execution_status))) {
       throw new TaskboardValidationError('Merge execution is not active');
     }
@@ -635,7 +634,7 @@ async function markOperationExecuting(
           AND o.state='prepared'
           AND e.id=$4 AND e.run_id=$5 AND e.task_id=i.id AND e.purpose='merge'
           AND e.status IN ('queued','running','waiting_user','waiting_approval')
-          AND e.resolved_at IS NULL AND e.superseded_at IS NULL
+          AND e.transitioned_at IS NULL AND e.superseded_at IS NULL
           AND i.id=$6 AND i.status IN ('todo','in_progress') AND i.board_id=b.id
           AND a.id=$3 AND a.integration_task_id=i.id AND a.repository_id=$7
           AND a.revoked_at IS NULL AND (a.expires_at IS NULL OR a.expires_at>clock_timestamp())

@@ -33,14 +33,11 @@ export interface WorkflowFacts {
   executionBinding?: IntegrationV3ExecutionBinding;
 }
 
-export type ResolutionDecision =
-  | {
-    kind: 'apply';
-    toStatus?: TaskBoardStatus;
-    candidateState?: TaskBoardIntegrationCandidateState;
-    requestSystemReview?: boolean;
-  }
-  | { kind: 'ignore'; reason: 'merged_terminal' | 'execution_superseded' };
+export type TransitionDecision = {
+  toStatus?: TaskBoardStatus;
+  candidateState?: TaskBoardIntegrationCandidateState;
+  requestSystemReview?: boolean;
+};
 
 const TERMINAL_STATUSES = new Set<TaskBoardStatus>(['done', 'canceled']);
 
@@ -152,78 +149,52 @@ export function assertExecutionRequestAllowed(
   }
 }
 
-export function decideResolution(
+export function decideTransition(
   task: TaskBoardTask,
   purpose: TaskBoardExecutionPurpose,
-  outcome: string,
+  status: TaskBoardStatus,
   facts: WorkflowFacts,
-): ResolutionDecision {
-  if (isIrreversibleMerged(task, facts)) return { kind: 'ignore', reason: 'merged_terminal' };
-  if (TERMINAL_STATUSES.has(task.status)) {
-    throw new TaskboardValidationError(
-      'Terminal task cannot accept another resolution',
-      'TASKBOARD_TERMINAL_RESOLUTION_FORBIDDEN',
-    );
+): TransitionDecision {
+  if (isIrreversibleMerged(task, facts) || TERMINAL_STATUSES.has(task.status)) {
+    throw new TaskboardValidationError('Terminal task cannot accept a transition', 'TASKBOARD_EXECUTION_FENCED');
   }
   if (task.kind === 'integration' && task.workflowVersion === 3) {
     const candidate = facts.candidate;
-    if (!candidate) {
-      throw new TaskboardValidationError('Workflow v3 resolution requires the current candidate', 'TASKBOARD_CANDIDATE_REQUIRED');
+    if (!candidate || !isCurrentIntegrationV3Execution(candidate, facts.executionBinding)) {
+      throw new TaskboardValidationError('Candidate execution is no longer current', 'TASKBOARD_EXECUTION_FENCED');
     }
-    if (!isCurrentIntegrationV3Execution(candidate, facts.executionBinding)) {
-      return { kind: 'ignore', reason: 'execution_superseded' };
-    }
-    const expectedPurpose = purposeForIntegrationV3Candidate(candidate.state);
-    if (expectedPurpose !== purpose) invalidResolution(task, purpose, outcome);
-    if (purpose === 'work' && candidate.state !== 'working') invalidResolution(task, purpose, outcome);
-    if (purpose === 'work') {
-      if (outcome === 'ready_for_review') return { kind: 'apply', requestSystemReview: true };
-      if (outcome === 'blocked') return { kind: 'apply', toStatus: 'blocked', candidateState: 'blocked' };
+    if (purposeForIntegrationV3Candidate(candidate.state) !== purpose) invalidTransition(task, purpose, status);
+    if (purpose === 'work' && candidate.state === 'working') {
+      if (status === 'in_review') return { requestSystemReview: true };
+      if (status === 'blocked') return { toStatus: 'blocked', candidateState: 'blocked' };
     }
     if (purpose === 'review') {
-      if (outcome === 'approved') return { kind: 'apply', toStatus: 'ready_to_merge', candidateState: 'approved' };
-      if (outcome === 'changes_requested' || outcome === 'stale_subject') {
-        return { kind: 'apply', toStatus: 'todo', candidateState: 'needs_work' };
-      }
-      if (outcome === 'blocked') return { kind: 'apply', toStatus: 'blocked', candidateState: 'blocked' };
+      if (status === 'ready_to_merge') return { toStatus: status, candidateState: 'approved' };
+      if (status === 'todo') return { toStatus: status, candidateState: 'needs_work' };
+      if (status === 'in_review') return { toStatus: status, candidateState: 'in_review' };
+      if (status === 'blocked') return { toStatus: status, candidateState: 'blocked' };
     }
-    return invalidResolution(task, purpose, outcome);
+    return invalidTransition(task, purpose, status);
   }
   if (purpose === 'work') {
-    if (!['in_progress', 'todo'].includes(task.status)) invalidResolution(task, purpose, outcome);
-    if (task.kind === 'advisory') {
-      if (outcome === 'completed') return { kind: 'apply', toStatus: 'todo' };
-      if (outcome === 'blocked') return { kind: 'apply', toStatus: 'blocked' };
-      invalidResolution(task, purpose, outcome);
-    }
-    if (outcome === 'ready_for_review') return { kind: 'apply', toStatus: 'in_review' };
-    if (outcome === 'blocked') return { kind: 'apply', toStatus: 'blocked' };
+    if (!['in_progress', 'todo'].includes(task.status)) invalidTransition(task, purpose, status);
+    if (task.kind === 'advisory' && (status === 'todo' || status === 'blocked')) return { toStatus: status };
+    if (task.kind !== 'advisory' && (status === 'in_review' || status === 'blocked')) return { toStatus: status };
   }
-  if (purpose === 'review') {
-    if (task.status !== 'in_review') invalidResolution(task, purpose, outcome);
-    if (outcome === 'approved') {
-      return { kind: 'apply', toStatus: task.kind === 'remediation' ? 'done' : 'ready_to_merge' };
-    }
-    if (outcome === 'changes_requested') return { kind: 'apply', toStatus: 'todo' };
-    if (outcome === 'stale_subject') return { kind: 'apply', toStatus: 'in_review' };
-    if (outcome === 'blocked') return { kind: 'apply', toStatus: 'blocked' };
+  if (purpose === 'review' && task.status === 'in_review') {
+    const allowed = task.kind === 'remediation'
+      ? ['done', 'todo', 'in_review', 'blocked']
+      : ['ready_to_merge', 'todo', 'in_review', 'blocked'];
+    if (allowed.includes(status)) return { toStatus: status };
   }
-  if (purpose === 'merge') {
-    if (task.kind !== 'integration') invalidResolution(task, purpose, outcome);
-    if (outcome === 'progress') return { kind: 'apply' };
-    if (outcome === 'completed') return { kind: 'apply', toStatus: 'done' };
-    if (outcome === 'needs_human') return { kind: 'apply', toStatus: 'blocked' };
-  }
-  return invalidResolution(task, purpose, outcome);
+  if (purpose === 'merge' && task.kind === 'integration'
+    && ['in_progress', 'done', 'blocked'].includes(status)) return { toStatus: status };
+  return invalidTransition(task, purpose, status);
 }
 
-function invalidResolution(
-  task: TaskBoardTask,
-  purpose: TaskBoardExecutionPurpose,
-  outcome: string,
-): never {
+function invalidTransition(task: TaskBoardTask, purpose: TaskBoardExecutionPurpose, status: TaskBoardStatus): never {
   throw new TaskboardValidationError(
-    `Outcome ${outcome} is invalid for ${task.kind ?? 'legacy delivery'} ${purpose} from ${task.status}`,
+    `Status ${status} is invalid for ${task.kind ?? 'legacy delivery'} ${purpose} from ${task.status}`,
     'TASKBOARD_WORKFLOW_TRANSITION_INVALID',
   );
 }

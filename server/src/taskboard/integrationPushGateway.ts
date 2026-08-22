@@ -386,7 +386,7 @@ export class IntegrationPushGateway {
     const prior = await service.get(operationKey);
     if (prior && prior.state !== 'prepared') {
       await withIntegrationGitAskpass(credential.token, async (env) => {
-        await this.reconcileOrVerifyPriorPush(prior, input, cwd, repository.remoteUrl, env);
+        await this.reconcileOrVerifyPriorPush(prior, input, cwd, repository.remoteUrl, env, true);
       });
       return;
     }
@@ -461,6 +461,7 @@ export class IntegrationPushGateway {
     cwd: string,
     remoteUrl: string,
     env: Record<string, string>,
+    reconcileExecuting = false,
   ): Promise<void> {
     const expectedRef = String(operation.expected.ref ?? '');
     const expectedOld = String(operation.expected.oldOid ?? '');
@@ -473,8 +474,8 @@ export class IntegrationPushGateway {
       throw new IntegrationPushGatewayError('push_failed_unknown', false);
     }
     let durable = operation;
-    if (durable.state === 'executing') throw new IntegrationPushGatewayError('push_failed_unknown', true);
-    if (durable.state === 'unknown') {
+    if (durable.state === 'executing' && !reconcileExecuting) throw new IntegrationPushGatewayError('push_failed_unknown', true);
+    if (durable.state === 'unknown' || durable.state === 'executing') {
       durable = await this.options.operationService!.reconcile(
         durable.operationKey,
         (record) => this.reconcileExactRef(record, cwd, remoteUrl, env),
@@ -607,7 +608,7 @@ export class IntegrationPushGateway {
     const expectedOld = String(operation.expected.oldOid ?? '');
     const expectedNew = String(operation.expected.newOid ?? '');
     const actual = await this.readExactRemoteRef(cwd, remoteUrl, ref, env);
-    if (actual === expectedNew) return { status: 'succeeded' as const, receipt: { ref, newOid: actual, reconciled: true } };
+    if (actual === expectedNew) return { status: 'succeeded' as const, receipt: { ref, oldOid: expectedOld, newOid: actual, reconciled: true } };
     if (actual === expectedOld) {
       return {
         status: 'not_applied' as const,

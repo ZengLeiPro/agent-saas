@@ -95,6 +95,40 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
     };
   }
 
+  it('forces source_seed incomplete when an old writer omits the v6 column', async () => {
+    const seed = await seedCandidate({ state: 'waiting_checks', taskStatus: 'todo' });
+    await pool.query(
+      `INSERT INTO ${seed.tables.revisionsTable}
+         (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,source_set_digest,
+          subject_digest,policy_snapshot_digest,policy_revision,merge_method,work_round)
+       VALUES($1,2,1,'base-2','head-2','source_seed',NULL,'sources-2','subject-2','policy-2','p1','squash',0)`,
+      [seed.candidateId],
+    );
+    const row = await pool.query(
+      `SELECT composition_complete FROM ${seed.tables.revisionsTable} WHERE candidate_id=$1 AND revision=2`,
+      [seed.candidateId],
+    );
+    expect(row.rows).toEqual([{ composition_complete: false }]);
+  });
+
+  it('exposes the current candidate revision and complete frozen snapshots to Work context', async () => {
+    const seed = await seedCandidate({ state: 'working', taskStatus: 'in_progress' });
+    await pool.query(
+      `INSERT INTO ${seed.tables.sourceSnapshotsTable}
+         (candidate_id,revision,source_order,integration_source_id,delivery_task_id,delivery_task_version,
+          repository_id,provider_pull_request_id,frozen_head_oid,frozen_base_oid,reviewed_subject_digest,
+          review_execution_id,review_receipt_digest,requirement_digest)
+       VALUES($1,1,0,$2,$3,1,$4,'77','frozen-head','frozen-base','reviewed','review-1','receipt','requirement')`,
+      [seed.candidateId, randomUUID(), randomUUID(), seed.repositoryId],
+    );
+    const context = await store.getExecutionContextV2(identity, seed.taskId, { include: ['integrationSources'] });
+    expect(context.integrationCandidate).toMatchObject({
+      candidate: { id: seed.candidateId, state: 'working' },
+      revision: { revision: 1, compositionComplete: true, sourceSetDigest: 'sources' },
+      sourceSnapshots: [{ order: 0, frozenHeadOid: 'frozen-head', frozenBaseOid: 'frozen-base' }],
+    });
+  });
+
   it('projects blocked candidate states to the task and creates only one open episode', async () => {
     const seed = await seedCandidate({ state: 'waiting_checks', taskStatus: 'todo' });
     const host = new PostgresIntegrationEngineV3CandidateHost(pgOptions(seed));

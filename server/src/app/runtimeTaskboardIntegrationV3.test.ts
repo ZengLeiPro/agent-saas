@@ -332,7 +332,7 @@ function cleanupCandidate(): TaskBoardIntegrationCandidate {
 function cleanupRevision(): TaskBoardIntegrationCandidateRevision {
   return {
     candidateId: 'candidate-1', revision: 1, digestVersion: 1, baseOid: 'base', headOid: 'head', treeOid: 'tree',
-    sourceSetDigest: 'sources', subjectDigest: 'subject', policySnapshotDigest: 'policy', policyRevision: 'policy-1',
+    compositionComplete: true, sourceSetDigest: 'sources', subjectDigest: 'subject', policySnapshotDigest: 'policy', policyRevision: 'policy-1',
     mergeMethod: 'squash', workRound: 0, createdAt: '2026-08-19T00:00:00.000Z',
   };
 }

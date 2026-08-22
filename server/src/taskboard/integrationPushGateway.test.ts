@@ -49,6 +49,7 @@ class FakeGit implements IntegrationPushGitRunner {
   remoteLine = `${A}\t${binding.exactRef}\n`;
   failPush = false;
   failPushCount = 0;
+  failLsRemoteCount = 0;
   remoteLineAfterFailedPush?: string;
   constructor(private readonly root: string) {}
   async run(input: { cwd: string; args: string[]; env?: Record<string, string> }): Promise<{ stdout: string }> {
@@ -57,7 +58,13 @@ class FakeGit implements IntegrationPushGitRunner {
     if (input.args[0] === 'rev-parse') return { stdout: `${this.root}\n` };
     if (input.args[0] === 'cat-file') return { stdout: 'commit\n' };
     if (input.args[0] === 'rev-list') return { stdout: `${this.parentLine}\n` };
-    if (input.args[0] === 'ls-remote') return { stdout: this.remoteLine };
+    if (input.args[0] === 'ls-remote') {
+      if (this.failLsRemoteCount > 0) {
+        this.failLsRemoteCount -= 1;
+        throw new Error(`provider echoed ${TOKEN}`);
+      }
+      return { stdout: this.remoteLine };
+    }
     if (input.args[0] === 'push') {
       if (this.failPush || this.failPushCount > 0) {
         if (this.failPushCount > 0) this.failPushCount -= 1;
@@ -210,6 +217,28 @@ describe('IntegrationPushGateway', () => {
       await expect(f.capabilityService.verify(merge.capabilityToken)).resolves.toMatchObject({ status: 'active' });
       f.git.parentLine = `${B} ${'d'.repeat(40)}`;
       await expect(f.push(merge.capabilityToken)).rejects.toMatchObject({ code: 'parent_mismatch' });
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it('retries transient exact-ref reads before the controlled push', async () => {
+    const f = await fixture();
+    try {
+      const issued = await f.issue();
+      f.git.failLsRemoteCount = 2;
+      await expect(f.push(issued.capabilityToken)).resolves.toMatchObject({ pushed: true, commitOid: B });
+      expect(f.git.calls.filter((call) => call.args[0] === 'ls-remote')).toHaveLength(3);
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(1);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it('reports exhausted exact-ref reads separately without consuming the capability', async () => {
+    const f = await fixture();
+    try {
+      const issued = await f.issue();
+      f.git.failLsRemoteCount = 3;
+      await expect(f.push(issued.capabilityToken)).rejects.toMatchObject({ code: 'remote_read_failed', retryable: true });
+      await expect(f.capabilityService.verify(issued.capabilityToken)).resolves.toMatchObject({ status: 'active' });
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(0);
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 

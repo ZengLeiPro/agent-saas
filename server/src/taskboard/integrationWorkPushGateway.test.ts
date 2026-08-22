@@ -47,11 +47,18 @@ class Operations implements IntegrationProviderOperationStorageHost {
 class RealObjectFakeRemoteRunner implements IntegrationPushGitRunner {
   calls: Array<{ cwd: string; args: string[]; env?: Record<string, string> }> = [];
   pushCwd?: string;
+  failLsRemoteCount = 0;
   constructor(private readonly oldOid: string, private readonly ref: string) {}
   async run(input: { cwd: string; args: string[]; env?: Record<string, string> }): Promise<{ stdout: string }> {
     this.calls.push(input);
     if (input.args[0] === '--version') return { stdout: 'git version 2.45.0\n' };
-    if (input.args[0] === 'ls-remote') return { stdout: `${this.oldOid}\t${this.ref}\n` };
+    if (input.args[0] === 'ls-remote') {
+      if (this.failLsRemoteCount > 0) {
+        this.failLsRemoteCount -= 1;
+        throw new Error(`provider echoed ${TOKEN}`);
+      }
+      return { stdout: `${this.oldOid}\t${this.ref}\n` };
+    }
     if (input.args[0] === 'push') { this.pushCwd = input.cwd; return { stdout: '' }; }
     const result = await execFileAsync('git', input.args, {
       cwd: input.cwd,
@@ -136,6 +143,19 @@ describe('IntegrationPushGateway.pushWorkspaceCommit', () => {
       state: 'succeeded', kind: 'push_ref', expected: { oldOid: f.source.oldOid, newOid: f.source.newOid },
     });
     await expect(access(f.runner.pushCwd!)).rejects.toThrow();
+  });
+
+  it('keeps a durable Work operation prepared when exact-ref reads are exhausted', async () => {
+    const f = await fixture();
+    f.runner.failLsRemoteCount = 3;
+
+    await expect(f.gateway.pushWorkspaceCommit({
+      tenantId: f.binding.tenantId, requesterUserId: 'owner-1', executionId: f.binding.executionId,
+      workspaceRoot: f.source.root, commitOid: f.source.newOid,
+    })).rejects.toMatchObject({ code: 'remote_read_failed', retryable: true });
+    expect(f.runner.calls.filter((call) => call.args[0] === 'ls-remote')).toHaveLength(3);
+    expect(f.runner.calls.filter((call) => call.args[0] === 'push')).toHaveLength(0);
+    expect([...f.operations.records.values()][0]).toMatchObject({ state: 'prepared', attemptCount: 0 });
   });
 
   it('maps an execute CAS race to a retryable gateway result without duplicating the Work push', async () => {

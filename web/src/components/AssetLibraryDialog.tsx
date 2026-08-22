@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatFileSize } from "@agent/shared";
+import { MAX_UPLOAD_FILES_PER_REQUEST } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
 interface AssetLibraryDialogProps {
@@ -37,6 +38,7 @@ export function AssetLibraryDialog({
 }: AssetLibraryDialogProps) {
   const [path, setPath] = useState("assets");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectionError, setSelectionError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const { entries, loading, error, refresh } = useFileList(path);
   const selectedCount = selected.size;
@@ -54,12 +56,19 @@ export function AssetLibraryDialog({
       setPath(entry.path);
       return;
     }
-    setSelected((previous) => {
-      const next = new Set(previous);
-      if (next.has(entry.path)) next.delete(entry.path);
-      else next.add(entry.path);
-      return next;
-    });
+    if (selected.has(entry.path)) {
+      const next = new Set(selected);
+      next.delete(entry.path);
+      setSelected(next);
+      setSelectionError(null);
+      return;
+    }
+    if (selected.size >= MAX_UPLOAD_FILES_PER_REQUEST) {
+      setSelectionError(`单次最多添加 ${MAX_UPLOAD_FILES_PER_REQUEST} 个文件，请先取消部分选择`);
+      return;
+    }
+    setSelected(new Set(selected).add(entry.path));
+    setSelectionError(null);
   };
 
   const handleConfirm = async () => {
@@ -68,6 +77,7 @@ export function AssetLibraryDialog({
     try {
       await onConfirm([...selected]);
       setSelected(new Set());
+      setSelectionError(null);
       setPath("assets");
       onOpenChange(false);
     } catch {
@@ -110,7 +120,7 @@ export function AssetLibraryDialog({
             <DialogHeader className="shrink-0 border-b px-5 py-4 pr-14 text-left">
               <DialogTitle>从资料库添加</DialogTitle>
               <DialogDescription>
-                可跨文件夹选择多个文件，已选择 {selectedCount} 个
+                可跨文件夹选择，单次最多 {MAX_UPLOAD_FILES_PER_REQUEST} 个；已选择 {selectedCount} 个
               </DialogDescription>
             </DialogHeader>
 
@@ -203,7 +213,12 @@ export function AssetLibraryDialog({
             </div>
 
             <div className="flex shrink-0 items-center justify-between gap-3 border-t px-5 py-4">
-              <span className="text-sm text-muted-foreground">已选择 {selectedCount} 个文件</span>
+              <div className="min-w-0">
+                <span className="text-sm text-muted-foreground">已选择 {selectedCount} 个文件</span>
+                {selectionError && (
+                  <p className="mt-1 text-xs text-destructive" role="alert">{selectionError}</p>
+                )}
+              </div>
               <div className="flex items-center gap-2">
                 <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>取消</Button>
                 <Button onClick={() => { void handleConfirm(); }} disabled={selectedCount === 0 || submitting || disabled}>

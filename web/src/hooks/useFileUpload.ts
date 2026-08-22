@@ -183,8 +183,9 @@ export function useFileUpload(
   const handleAssetSelect = useCallback(async (paths: string[]) => {
     if (paths.length === 0) return;
     if (paths.length > MAX_UPLOAD_FILES_PER_REQUEST) {
-      setUploadError(`单次最多上传 ${MAX_UPLOAD_FILES_PER_REQUEST} 个文件`);
-      return;
+      const message = `单次最多上传 ${MAX_UPLOAD_FILES_PER_REQUEST} 个文件`;
+      setUploadError(message);
+      throw new Error(message);
     }
 
     const generation = generationRef.current;

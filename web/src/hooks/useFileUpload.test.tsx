@@ -81,6 +81,18 @@ describe("useFileUpload 并发隔离", () => {
     expect(result.current.uploadedFiles[0]?.originalName).toBe("方案.pdf");
   });
 
+  it("资料库超出 20 个文件时 reject，避免调用方误判成功", async () => {
+    const { result } = renderHook(() => useFileUpload("chat"));
+    const paths = Array.from({ length: 21 }, (_, index) => `assets/${index}.txt`);
+
+    await act(async () => {
+      await expect(result.current.handleAssetSelect(paths)).rejects.toThrow("单次最多上传 20 个文件");
+    });
+
+    expect(result.current.uploadError).toBe("单次最多上传 20 个文件");
+    expect(mocks.authFetch).not.toHaveBeenCalled();
+  });
+
   it("清空或切换草稿后忽略旧上传响应", async () => {
     const pending = deferred<Response>();
     mocks.authFetch.mockReturnValueOnce(pending.promise);

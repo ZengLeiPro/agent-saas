@@ -17,6 +17,7 @@ describe('MessageItem Artifact 卡片', () => {
       id: 'artifact-card-1',
       type: 'file_download',
       fileName: '客户清单.xlsx',
+      fileType: 'xlsx',
       filePath: 'artifacts/artifact-1/客户清单.xlsx',
       fileSize: 6454,
       artifactId: 'artifact-1',

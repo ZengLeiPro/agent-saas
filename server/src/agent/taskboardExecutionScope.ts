@@ -58,7 +58,7 @@ export function assertTaskboardExecutionScope(
       }
       if (input.id !== currentTask.id || context.execution.purpose !== 'review'
         || !['ready_to_merge', 'todo', 'blocked'].includes(input.status ?? '')) {
-        throw new Error('只有当前任务的复核 Agent 可以确认待合并、退回待实施或标记阻塞');
+        throw new Error('只有当前任务的复核 Agent 可以确认待合并、退回待推进或标记阻塞');
       }
       return;
     case 'create':

@@ -46,7 +46,7 @@ shared/src/schemas/workflowScenario.ts	1025	production
 web/src/components/BillingManager/index.tsx	2258	production
 web/src/components/DesktopSessionSidebar.tsx	2457	production
 web/src/components/MessageItem.tsx	1125	production
-web/src/components/MessageList.tsx	1129	production
+web/src/components/MessageList.tsx	1127	production
 web/src/components/MobileSessionList.tsx	1033	production
 web/src/components/ModelManager/index.tsx	1366	production
 web/src/components/RuntimeOperationsManager/index.tsx	1219	production

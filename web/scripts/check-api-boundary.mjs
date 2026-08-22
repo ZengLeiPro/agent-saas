@@ -5,7 +5,11 @@ import ts from "typescript";
 
 const root = fileURLToPath(new URL("../src/", import.meta.url));
 const webRoot = fileURLToPath(new URL("../", import.meta.url));
-const approvedFetchFactories = new Set(["apiUrl", "publicSessionShareFileUrl"]);
+const approvedFetchFactories = new Set([
+  "apiUrl",
+  "publicSessionShareFileUrl",
+  "resolveArtifactContentUrl",
+]);
 const violations = [];
 
 async function collectFiles(dir) {

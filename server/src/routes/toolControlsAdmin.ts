@@ -84,9 +84,15 @@ function hydratePreservedSearchCredential(rawConfig: unknown, webTools: unknown)
 
 function pruneUnknownToolControls(toolControls: ToolControlsConfig): ToolControlsConfig {
   if (!toolControls) return toolControls;
+  const configuredTools = toolControls.tools ?? {};
   const knownTools = Object.fromEntries(
-    Object.entries(toolControls.tools ?? {}).filter(([toolId]) => PLATFORM_TOOL_CATALOG_BY_ID.has(toolId)),
+    Object.entries(configuredTools).filter(([toolId]) => PLATFORM_TOOL_CATALOG_BY_ID.has(toolId)),
   );
+  // CreateArtifact 合并进 Artifact 后保留显式禁用态；不迁移旧 descriptionOverride，
+  // 因为其中可能仍要求模型手写已退休的 fileCardMarker。
+  if (configuredTools.CreateArtifact?.enabled === false) {
+    knownTools.Artifact = { ...knownTools.Artifact, enabled: false };
+  }
   const next = { ...toolControls };
   if (Object.keys(knownTools).length > 0) next.tools = knownTools;
   else delete next.tools;

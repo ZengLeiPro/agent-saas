@@ -9,20 +9,10 @@ import {
   FilePreviewActions,
   useFilePreviewPrint,
 } from "@/components/FilePreviewActions";
+import { injectSandboxCsp as injectSharedSandboxCsp } from "@/lib/htmlSandbox";
 
-/** HTML 产物预览的沙箱 CSP。演示回放的产物面板复用同一份，避免安全策略分叉。 */
-export const HTML_SANDBOX_CSP = [
-  "default-src 'none'",
-  "script-src 'unsafe-inline' blob:",
-  "style-src 'unsafe-inline' data:",
-  "img-src data: blob:",
-  "font-src data:",
-  "media-src data: blob:",
-  "connect-src 'none'",
-  "form-action 'none'",
-  "base-uri 'none'",
-  "navigate-to 'none'",
-].join("; ");
+// 保留既有导出，演示回放与其它调用方继续复用同一份安全策略。
+export { HTML_SANDBOX_CSP } from "@/lib/htmlSandbox";
 
 interface HtmlPreviewPanelProps {
   filePath: string;
@@ -37,14 +27,9 @@ function htmlDownloadUrl(filePath: string, owner?: string) {
   return `/api/file/download?path=${encodeURIComponent(filePath)}${ownerParam}`;
 }
 
-function injectSandboxCsp(html: string) {
-  const meta = `<meta http-equiv="Content-Security-Policy" content="${HTML_SANDBOX_CSP}">`;
+export function injectSandboxCsp(html: string) {
   const printBridge = `<script>window.addEventListener("message",function(event){if(event.source===window.parent&&event.data&&event.data.type===${JSON.stringify(FILE_PREVIEW_PRINT_MESSAGE)}){window.addEventListener("afterprint",function(){window.parent.postMessage({type:${JSON.stringify(FILE_PREVIEW_PRINT_DONE_MESSAGE)}},"*");},{once:true});window.print();}});</script>`;
-  const headMatch = html.match(/<head(\s[^>]*)?>/i);
-  if (!headMatch) return `${meta}${printBridge}${html}`;
-
-  const index = html.indexOf(headMatch[0]) + headMatch[0].length;
-  return `${html.slice(0, index)}${meta}${printBridge}${html.slice(index)}`;
+  return injectSharedSandboxCsp(html, printBridge);
 }
 
 export function HtmlPreviewPanel({ filePath, owner, shareToken, onBack, hideHeader }: HtmlPreviewPanelProps) {

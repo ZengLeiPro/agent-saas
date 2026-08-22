@@ -342,7 +342,7 @@ describe("transcript activity durations", () => {
     })]);
   });
 
-  it("does not emit an artifact delivery card from CreateArtifact tool results", () => {
+  it("restores an Artifact(deliver) file card from durable tool_result metadata", () => {
     const detail: ApiSessionDetail = {
       sessionId: "session-artifact",
       stats: { lines: 2, parsedLines: 2, parseErrors: 0 },
@@ -350,11 +350,21 @@ describe("transcript activity durations", () => {
         {
           id: "tool-artifact",
           kind: "tool_use",
-          title: "工具调用: CreateArtifact",
+          title: "工具调用: Artifact",
           defaultOpen: false,
-          content: "{\"file_path\":\"assets/20260702/report.pdf\"}",
-          toolName: "CreateArtifact",
+          content: "{\"action\":\"deliver\",\"artifact_id\":\"artifact_hist_123\"}",
+          toolName: "Artifact",
           toolId: "call-artifact",
+          toolMetadata: {
+            artifactAction: "deliver",
+            deliveryId: "artifact_delivery:session-artifact:artifact_hist_123",
+            artifactId: "artifact_hist_123",
+            artifactKind: "file",
+            fileName: "report.pdf",
+            sizeBytes: 4096,
+            mimeType: "application/pdf",
+            sha256: "cafebabe",
+          },
         },
         {
           id: "tool-artifact-result",
@@ -362,15 +372,15 @@ describe("transcript activity durations", () => {
           title: "结果",
           defaultOpen: false,
           content: JSON.stringify({
+            action: "deliver",
             artifactId: "artifact_hist_123",
             kind: "file",
             fileName: "report.pdf",
-            sourcePath: "assets/20260702/report.pdf",
             sizeBytes: 4096,
             mimeType: "application/pdf",
             sha256: "cafebabe",
           }),
-          toolName: "CreateArtifact",
+          toolName: "Artifact",
           toolId: "call-artifact",
         },
       ],
@@ -378,12 +388,14 @@ describe("transcript activity durations", () => {
 
     const messages = mapSessionDetailToMessages(detail, "alice");
 
-    // tool_use 只标记 resultReady；文件是否展示由最终回复里的 [FILE] 决定。
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({
-      type: "tool_use",
-      toolName: "CreateArtifact",
-      resultReady: true,
+      type: "file_download",
+      artifactId: "artifact_hist_123",
+      artifactKind: "file",
+      fileName: "report.pdf",
+      fileType: "application/pdf",
+      fileSize: 4096,
     });
   });
 });

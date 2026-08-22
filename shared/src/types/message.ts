@@ -129,7 +129,7 @@ export type MessageItem =
       fileSize: number;
       owner?: string;
       /**
-       * Artifact 归档标识。CreateArtifact 工具产出的正式交付物会带上此字段：
+       * Artifact 归档标识。Artifact(action="deliver") 产出的正式交付物会带上此字段：
        * 有 artifactId 时前端走 /api/artifacts/:id/read-url 签名 URL 下载/预览；
        * 未提供（老的 [FILE] 标记路径）则走 /api/file/download 直读工作区文件。
        */

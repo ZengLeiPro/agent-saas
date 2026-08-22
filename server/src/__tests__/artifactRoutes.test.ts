@@ -132,6 +132,27 @@ describe('artifact routes', () => {
     }
   });
 
+  it('forces active signed content to attachment with sandbox headers', async () => {
+    const artifact = await service.createFromBytes({
+      sessionId: SESSION_ID,
+      data: '<!doctype html><script>top.location="https://example.test"</script>',
+      fileName: 'active.html',
+      mimeType: 'text/html',
+    });
+    const { server, baseUrl } = await startServer(service, { sub: 'user-1', username: 'alice', role: 'user', tenantId: 'kaiyan' });
+    try {
+      const readUrl = await fetch(`${baseUrl}/api/artifacts/${artifact.artifactId}/read-url?proxy=true`);
+      const signed = await readUrl.json() as { url: string; direct: boolean };
+      expect(signed.direct).toBe(false);
+      const content = await fetch(signed.url);
+      expect(content.headers.get('content-disposition')).toMatch(/^attachment;/);
+      expect(content.headers.get('x-content-type-options')).toBe('nosniff');
+      expect(content.headers.get('content-security-policy')).toContain('sandbox');
+    } finally {
+      await stopServer(server);
+    }
+  });
+
   it('hides artifacts from users who do not own the session', async () => {
     const artifact = await service.createFromBytes({
       sessionId: SESSION_ID,

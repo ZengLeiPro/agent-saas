@@ -141,6 +141,23 @@ describe('records', () => {
     expect(grid?.className).not.toMatch(/\bgrid-cols-[23]\b/);
   });
 
+  it('四个 facts 在桌面端保持 2×2 四宫格', () => {
+    const { container } = render(<PresentationBlocks blocks={[{
+      kind: 'records', layout: 'grid', title: '开发基线',
+      items: [
+        { label: '基线分支', value: 'main' },
+        { label: '基线提交', value: '9c2d35eb824af22d6c7e2236990f161227904185' },
+        { label: '开发分支', value: 'feat/context-plane' },
+        { label: '仓库状态', value: '创建前无未提交改动' },
+      ],
+    }]} />);
+
+    const grid = container.querySelector('[data-records-grid]');
+    expect(grid?.className).toContain('grid-cols-[repeat(2,minmax(0,max-content))]');
+    expect(grid?.className).not.toContain('sm:grid-cols-[repeat(3,minmax(0,max-content))]');
+    expect(grid?.children).toHaveLength(4);
+  });
+
   it('comparison 数值列按内容收缩，移动端按单项卡片重排并突出差异', () => {
     const longValue = '这是一段需要在比较列内换行的长文本'.repeat(8);
     const { container } = render(<PresentationBlocks blocks={[{

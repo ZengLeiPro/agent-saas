@@ -20,8 +20,9 @@ export type ToolResultMetadata = Record<string, ToolResultMetadataValue>;
 
 /** 键数量上限：白名单最长的一项（Shell）是 8 个，留一倍余量 */
 const METADATA_KEY_LIMIT = 16;
-/** 字符串值上限，与服务端 `RESULT_METADATA_TEXT_LIMIT` 对齐 */
+/** 普通执行枚举/标识保持短值；文件名允许覆盖主流文件系统的 255-byte 上限。 */
 const METADATA_TEXT_LIMIT = 120;
+const ARTIFACT_FILE_NAME_LIMIT = 512;
 /** 键名上限：白名单里最长的是 `outputExceeded`(14) */
 const METADATA_KEY_LENGTH_LIMIT = 40;
 
@@ -39,7 +40,8 @@ export function normalizeToolResultMetadata(raw: unknown): ToolResultMetadata | 
       result[key] = value;
     } else if (typeof value === 'string') {
       const trimmed = value.trim();
-      if (!trimmed || trimmed.length > METADATA_TEXT_LIMIT) continue;
+      const textLimit = key === 'fileName' ? ARTIFACT_FILE_NAME_LIMIT : METADATA_TEXT_LIMIT;
+      if (!trimmed || trimmed.length > textLimit) continue;
       result[key] = trimmed;
     } else {
       continue;

@@ -38,6 +38,7 @@ export interface FileUploadState {
   replaceFiles: (files: UploadedFile[]) => void;
   removeFile: (index: number) => void;
   handleFileSelect: (event: ChangeEvent<HTMLInputElement>) => Promise<void>;
+  handleAssetSelect: (paths: string[]) => Promise<void>;
   handleDragOver: (event: DragEvent) => void;
   handleDragLeave: (event: DragEvent) => void;
   handleDrop: (event: DragEvent) => Promise<void>;
@@ -179,6 +180,49 @@ export function useFileUpload(
     event.target.value = "";
   }, [uploadFiles]);
 
+  const handleAssetSelect = useCallback(async (paths: string[]) => {
+    if (paths.length === 0) return;
+    if (paths.length > MAX_UPLOAD_FILES_PER_REQUEST) {
+      const message = `单次最多上传 ${MAX_UPLOAD_FILES_PER_REQUEST} 个文件`;
+      setUploadError(message);
+      throw new Error(message);
+    }
+
+    const generation = generationRef.current;
+    const uploadId = ++nextUploadIdRef.current;
+    activeUploadsRef.current.set(uploadId, generation);
+    refreshUploading();
+    setUploadError(null);
+
+    try {
+      const sessionId = getSessionId?.()?.trim();
+      const uploadUrl = sessionId ? `/api/upload/assets?sessionId=${encodeURIComponent(sessionId)}` : "/api/upload/assets";
+      const response = await authFetch(uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paths }),
+      });
+      const data = await response.json().catch(() => ({})) as {
+        success?: boolean;
+        error?: string;
+        files?: UploadedFile[];
+      };
+      if (!response.ok || !data.success || !data.files) {
+        throw new Error(data.error || `Upload failed: ${response.status}`);
+      }
+      if (generation !== generationRef.current) return;
+      setUploadedFiles((previous) => [...previous, ...data.files!]);
+    } catch (error) {
+      if (generation === generationRef.current) {
+        setUploadError(`添加资料失败：${error instanceof Error ? error.message : "未知错误"}`);
+      }
+      throw error;
+    } finally {
+      activeUploadsRef.current.delete(uploadId);
+      refreshUploading();
+    }
+  }, [getSessionId, refreshUploading]);
+
   const handlePaste = useCallback(async (event: ClipboardEvent) => {
     const items = event.clipboardData?.items;
     if (!items) return;
@@ -301,6 +345,7 @@ export function useFileUpload(
     replaceFiles,
     removeFile,
     handleFileSelect,
+    handleAssetSelect,
     handlePaste,
     handleDragOver,
     handleDragLeave,

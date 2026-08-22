@@ -48,6 +48,8 @@ describe('taskboard execution writeback prompt', () => {
     integrationWork.task.kind = 'integration';
     integrationWork.task.workflowVersion = 3;
     const prompt = executionWritebackInstructions(integrationWork).join('\n');
+    expect(prompt).toContain('integrationCandidate');
+    expect(prompt).toContain('sourceSnapshots 中完整冻结来源集');
     expect(prompt).toContain('execution.integration_candidate.push');
     expect(prompt).toContain('只传 commitOid');
     expect(prompt).toContain('基线漂移重建以冻结 base 为父');

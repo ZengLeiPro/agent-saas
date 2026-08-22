@@ -183,6 +183,29 @@ describe('integration operation guards', () => {
     expect(guardedUpdate).toContain('provider_receipt_id IS NULL');
   });
 
+  it('does not project Provider inspection over a source that already entered merging', async () => {
+    const statements: string[] = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        if (sql.includes('e.id AS execution_id')) return { rows: [{ ...contextRow, state: 'merging' }] };
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => pull),
+      inspectPullRequest: vi.fn(async () => ({
+        ...pull, repositoryId: 'repo-1', providerQueriedAt: '2026-08-22T12:00:00.000Z', workflowRuns: [],
+      })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(inspectIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .resolves.toMatchObject({ source: { state: 'merging' } });
+    expect(statements.some((sql) => sql.includes('UPDATE sources'))).toBe(false);
+  });
+
   it('keeps a source waiting when inspection observes no checks', async () => {
     const statements: string[] = [];
     const client = {
@@ -377,6 +400,8 @@ describe('integration operation guards', () => {
       .rejects.toMatchObject({ code: 'TASKBOARD_CHECKS_FAILED' });
     const conflictUpdate = statements.find((sql) => sql.includes('UPDATE sources'));
     expect(conflictUpdate).toContain("SET state=$2, remediation_task_id=NULL");
+    expect(conflictUpdate).toContain('s.state=$4');
+    expect(conflictUpdate).toContain("o.state IN ('prepared','executing','unknown')");
     expect(conflictUpdate).not.toContain('remediation_count=remediation_count+1');
     expect(provider.mergePullRequest).not.toHaveBeenCalled();
   });
@@ -404,6 +429,8 @@ describe('integration operation guards', () => {
     const sourceUpdate = statements.findIndex((sql) => sql.includes("SET state='re_reviewing'"));
     expect(taskLock).toBeGreaterThanOrEqual(0);
     expect(sourceUpdate).toBeGreaterThan(taskLock);
+    expect(statements[sourceUpdate]).toContain('s.state=$2');
+    expect(statements[sourceUpdate]).toContain("o.state IN ('prepared','executing','unknown')");
   });
 
   it('revalidates review binding in Task -> Source -> Execution lock order', async () => {

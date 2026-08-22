@@ -137,6 +137,7 @@ async function installIntegrationCandidateSchemaV1(
       head_oid TEXT NOT NULL,
       subject_kind TEXT NOT NULL DEFAULT 'provider_subject' CHECK (subject_kind IN ('source_seed','provider_subject')),
       tree_oid TEXT,
+      composition_complete BOOLEAN NOT NULL DEFAULT TRUE,
       source_set_digest TEXT NOT NULL,
       CHECK ((subject_kind='source_seed' AND tree_oid IS NULL)
         OR (subject_kind='provider_subject' AND tree_oid IS NOT NULL)),
@@ -156,6 +157,8 @@ async function installIntegrationCandidateSchemaV1(
     ALTER TABLE ${revisionsTable}
       ADD COLUMN IF NOT EXISTS subject_kind TEXT NOT NULL DEFAULT 'provider_subject'
         CHECK (subject_kind IN ('source_seed','provider_subject'));
+    ALTER TABLE ${revisionsTable}
+      ADD COLUMN IF NOT EXISTS composition_complete BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE ${revisionsTable} ALTER COLUMN tree_oid DROP NOT NULL
   `);
   await client.query(`
@@ -378,6 +381,31 @@ const INTEGRATION_CANDIDATE_SCHEMA_MIGRATIONS = [
           FROM ${candidatesTable} c
          WHERE o.candidate_id=c.id AND c.state IN ('merged','canceled')
            AND o.state='prepared' AND o.attempt_count=0
+      `);
+    },
+  },
+  {
+    version: 6,
+    name: 'track_incomplete_composition_subjects',
+    run: async (options: IntegrationCandidateSchemaOptions, client: Pick<PoolClient, 'query'>) => {
+      const { revisionsTable } = integrationCandidateTableNames(options.integrationSourcesTable);
+      await client.query(`
+        ALTER TABLE ${revisionsTable}
+          ADD COLUMN IF NOT EXISTS composition_complete BOOLEAN NOT NULL DEFAULT TRUE;
+        CREATE OR REPLACE FUNCTION ${revisionsTable}_source_seed_incomplete_fn()
+        RETURNS TRIGGER LANGUAGE plpgsql AS $function$
+        BEGIN
+          IF NEW.subject_kind='source_seed' THEN NEW.composition_complete:=FALSE; END IF;
+          RETURN NEW;
+        END
+        $function$;
+        DROP TRIGGER IF EXISTS ${revisionsTable}_source_seed_incomplete ON ${revisionsTable};
+        CREATE TRIGGER ${revisionsTable}_source_seed_incomplete
+          BEFORE INSERT OR UPDATE OF subject_kind,composition_complete ON ${revisionsTable}
+          FOR EACH ROW EXECUTE FUNCTION ${revisionsTable}_source_seed_incomplete_fn();
+        UPDATE ${revisionsTable}
+           SET composition_complete=FALSE
+         WHERE subject_kind='source_seed' AND composition_complete IS DISTINCT FROM FALSE
       `);
     },
   },

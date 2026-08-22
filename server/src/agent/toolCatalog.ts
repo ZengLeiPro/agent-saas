@@ -30,7 +30,7 @@ import {
 } from './toolRuntime.js';
 import {
   editToolDescriptor,
-  artifactCreateToolDescriptor,
+  artifactToolDescriptor,
 } from './workspaceHandTools.js';
 import { todoWriteToolDescriptor, askUserQuestionToolDescriptor } from './builtinTools.js';
 import { memorySearchToolDescriptor, memoryListToolDescriptor } from './memorySearchToolProvider.js';
@@ -52,7 +52,7 @@ export const PLATFORM_TOOL_CATALOG: readonly ToolDescriptor[] = [
   readFileToolDescriptor,
   writeFileToolDescriptor,
   editToolDescriptor,
-  artifactCreateToolDescriptor,
+  artifactToolDescriptor,
   runShellToolDescriptor,
   // memory
   memorySearchToolDescriptor,
@@ -110,7 +110,7 @@ export const PLATFORM_TOOL_SOURCE_MODULE: Readonly<Record<string, string>> = {
   Shell: 'server/src/agent/toolRuntime.ts',
   WaitForWorkspaceReady: 'server/src/agent/toolRuntime.ts',
   Edit: 'server/src/agent/workspaceHandTools.ts',
-  CreateArtifact: 'server/src/agent/workspaceHandTools.ts',
+  Artifact: 'server/src/agent/workspaceHandTools.ts',
   TodoWrite: 'server/src/agent/builtinTools.ts',
   AskUserQuestion: 'server/src/agent/builtinTools.ts',
   MemorySearch: 'server/src/agent/memorySearchToolProvider.ts',

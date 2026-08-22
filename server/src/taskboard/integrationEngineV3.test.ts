@@ -3,11 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TaskBoardIntegrationCandidate, TaskBoardIntegrationCandidateRevision, TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
 import { IntegrationEngineV3, type IntegrationEngineV3CandidateHost, type IntegrationEngineV3ExpectedSubject, type IntegrationEngineV3ProviderFacts, type IntegrationEngineV3RequestHost } from './integrationEngineV3.js';
 import { IntegrationProviderOperationService, integrationProviderOperationKey, type IntegrationProviderOperationRecord, type IntegrationProviderOperationState, type IntegrationProviderOperationStorageHost } from './integrationProviderOperations.js';
+import { TaskboardValidationError } from './types.js';
 
 const repository: TaskBoardRepositoryConfig = { provider: 'github', repositoryId: 'github:acme/app', owner: 'acme', name: 'app', baseBranch: 'main', allowForkPullRequest: false };
 const revision: TaskBoardIntegrationCandidateRevision = {
   candidateId: 'candidate-1', revision: 1, digestVersion: 1, baseOid: 'base-1', headOid: 'head-1', treeOid: 'tree-1',
-  sourceSetDigest: 'sha256:sources', subjectDigest: 'sha256:subject', policySnapshotDigest: 'sha256:policy', policyRevision: 'policy-1',
+  compositionComplete: true, sourceSetDigest: 'sha256:sources', subjectDigest: 'sha256:subject', policySnapshotDigest: 'sha256:policy', policyRevision: 'policy-1',
   mergeMethod: 'squash', workRound: 0, createdAt: '2026-08-19T00:00:00.000Z',
 };
 function candidate(state: TaskBoardIntegrationCandidate['state']): TaskBoardIntegrationCandidate {
@@ -21,7 +22,8 @@ function candidate(state: TaskBoardIntegrationCandidate['state']): TaskBoardInte
 }
 function expected(value: TaskBoardIntegrationCandidate): IntegrationEngineV3ExpectedSubject {
   return { candidateVersion: value.version, candidateRevision: 1, workflowEpoch: '3', laneEpoch: '9', repositoryId: repository.repositoryId,
-    baseOid: revision.baseOid, headOid: revision.headOid, treeOid: revision.treeOid, sourceSetDigest: revision.sourceSetDigest,
+    baseOid: revision.baseOid, headOid: revision.headOid, treeOid: revision.treeOid,
+    compositionComplete: revision.compositionComplete, sourceSetDigest: revision.sourceSetDigest,
     policyRevision: revision.policyRevision, policySnapshotDigest: revision.policySnapshotDigest, subjectDigest: revision.subjectDigest };
 }
 function facts(overrides: Partial<IntegrationEngineV3ProviderFacts> = {}): IntegrationEngineV3ProviderFacts {
@@ -30,9 +32,18 @@ function facts(overrides: Partial<IntegrationEngineV3ProviderFacts> = {}): Integ
 }
 
 class MemoryCandidateHost implements IntegrationEngineV3CandidateHost {
+  lastAppend?: Parameters<IntegrationEngineV3CandidateHost['appendRevision']>[1];
+  revisionValue = structuredClone(revision);
   constructor(public value: TaskBoardIntegrationCandidate) {}
-  async getCurrent() { return { candidate: structuredClone(this.value), revision: structuredClone(revision) }; }
-  async appendRevision(): Promise<TaskBoardIntegrationCandidate> { throw new Error('not used'); }
+  async getCurrent() { return { candidate: structuredClone(this.value), revision: structuredClone(this.revisionValue) }; }
+  async appendRevision(_candidateId: string, input: Parameters<IntegrationEngineV3CandidateHost['appendRevision']>[1]) {
+    this.lastAppend = structuredClone(input);
+    this.value = {
+      ...this.value, currentRevision: this.value.currentRevision + 1, version: this.value.version + 1,
+      state: input.nextState ?? this.value.state, ...(input.lastError ? { lastError: input.lastError } : {}),
+    };
+    return structuredClone(this.value);
+  }
   async beginNextWorkRound(): Promise<TaskBoardIntegrationCandidate> { this.value = { ...this.value, state: 'working', workRound: this.value.workRound + 1, version: this.value.version + 1 }; return structuredClone(this.value); }
   async transition(_id: string, input: { to: TaskBoardIntegrationCandidate['state']; approvedReviewExecutionId?: string; mergedCommitOid?: string; lastError?: string }): Promise<TaskBoardIntegrationCandidate> {
     this.value = { ...this.value, state: input.to, version: this.value.version + 1, ...(input.approvedReviewExecutionId ? { approvedRevision: 1, approvedReviewExecutionId: input.approvedReviewExecutionId } : {}), ...(input.lastError ? { lastError: input.lastError } : {}) };
@@ -69,14 +80,16 @@ function setup(state: TaskBoardIntegrationCandidate['state'], providerFacts = fa
     mergedCommitOid: 'commit-1',
   }));
   const reconcileMerge = vi.fn(async () => ({ status: 'succeeded' as const, receipt: { providerPullRequestId: '42', mergedCommitOid: 'commit-1', mergedTreeOid: 'tree-1' } }));
+  const readFacts = vi.fn(async () => structuredClone(currentFacts));
+  const assertCurrent = vi.fn(async () => undefined);
   const getFlags = vi.fn(async () => ({ enabled: true, composeEnabled: true, reviewEnabled: true, mergeEnabled: true, cleanupEnabled: true, workspaceSyncEnabled: true }));
   const engine = new IntegrationEngineV3({
-    candidates, providerOperations: new IntegrationProviderOperationService(operations, { assertCurrent: async () => undefined }),
-    provider: { readFacts: async () => structuredClone(currentFacts), merge, reconcileMerge },
+    candidates, providerOperations: new IntegrationProviderOperationService(operations, { assertCurrent }),
+    provider: { readFacts, merge, reconcileMerge },
     features: { getFlags }, requests,
     resolveRepository: async () => repository, credentialOwnerId: 'owner-1',
   });
-  return { engine, candidates, operations, requests, merge, reconcileMerge, getFlags, setFacts(value: IntegrationEngineV3ProviderFacts) { currentFacts = value; } };
+  return { engine, candidates, operations, requests, readFacts, assertCurrent, merge, reconcileMerge, getFlags, setFacts(value: IntegrationEngineV3ProviderFacts) { currentFacts = value; } };
 }
 
 describe('IntegrationEngineV3', () => {
@@ -106,6 +119,56 @@ describe('IntegrationEngineV3', () => {
 
     expect(candidates.value.state).toBe(expectedState);
     expect(requests.requestReview).not.toHaveBeenCalled();
+  });
+
+  it('atomically persists an incomplete conflict subject before requesting work', async () => {
+    const value = candidate('composing');
+    const { engine, candidates } = setup('composing');
+    const partial = {
+      baseOid: 'base-2', headOid: 'partial-head', treeOid: 'partial-tree', compositionComplete: false,
+      sources: [],
+    };
+    const result = await engine.execute({
+      type: 'compose_conflict', candidateId: value.id, expected: expected(value),
+      evidence: 'source conflict', revision: partial,
+    });
+    expect(result.candidate).toMatchObject({ state: 'needs_work', currentRevision: 2, lastError: 'source conflict' });
+    expect(candidates.lastAppend).toMatchObject({
+      ...partial, nextState: 'needs_work', lastError: 'source conflict',
+      expectedVersion: 7, expectedCurrentRevision: 1,
+    });
+  });
+
+  it('rejects review dispatch for an incomplete composition subject', async () => {
+    const value = candidate('waiting_checks');
+    const { engine, candidates, requests } = setup('waiting_checks');
+    candidates.revisionValue.compositionComplete = false;
+    await expect(engine.execute({
+      type: 'request_review', candidateId: value.id,
+      expected: { ...expected(value), compositionComplete: false },
+    })).rejects.toMatchObject({ code: 'TASKBOARD_CANDIDATE_COMPOSITION_INCOMPLETE' });
+    expect(requests.requestReview).not.toHaveBeenCalled();
+  });
+
+  it('rechecks composition completeness at review approval and merge entry', async () => {
+    const reviewing = setup('in_review');
+    reviewing.candidates.revisionValue.compositionComplete = false;
+    await expect(reviewing.engine.execute({
+      type: 'review_approved', candidateId: 'candidate-1',
+      expected: { ...expected(candidate('in_review')), compositionComplete: false },
+      reviewExecutionId: 'review-1', receipt: {
+        executionId: 'review-1', candidateId: 'candidate-1', revision: 1,
+        subjectDigest: revision.subjectDigest, sourceSetDigest: revision.sourceSetDigest,
+      },
+    })).rejects.toMatchObject({ code: 'TASKBOARD_CANDIDATE_COMPOSITION_INCOMPLETE' });
+
+    const merging = setup('approved');
+    merging.candidates.revisionValue.compositionComplete = false;
+    await expect(merging.engine.execute({
+      type: 'merge_approved', candidateId: 'candidate-1',
+      expected: { ...expected(candidate('approved')), compositionComplete: false }, executionId: 'merge-1',
+    })).rejects.toMatchObject({ code: 'TASKBOARD_CANDIDATE_COMPOSITION_INCOMPLETE' });
+    expect(merging.merge).not.toHaveBeenCalled();
   });
 
   it('fails closed when GitHub required gate facts are unknown', async () => {
@@ -172,7 +235,7 @@ describe('IntegrationEngineV3', () => {
 
     await expect(engine.execute({
       type: 'review_approved', candidateId: value.id, expected: expected(value), reviewExecutionId: 'review-1',
-      receipt: { candidateId: value.id, revision: 1, subjectDigest: revision.subjectDigest, sourceSetDigest: revision.sourceSetDigest },
+      receipt: { executionId: 'review-1', candidateId: value.id, revision: 1, subjectDigest: revision.subjectDigest, sourceSetDigest: revision.sourceSetDigest },
     })).rejects.toMatchObject({ code });
     expect(candidates.value.state).toBe('in_review');
   });
@@ -193,6 +256,67 @@ describe('IntegrationEngineV3', () => {
     })).rejects.toMatchObject({ code });
     expect(merge).not.toHaveBeenCalled();
     expect(operations.records.size).toBe(0);
+  });
+
+  it.each([
+    ['draft', facts({ draft: true }), 'TASKBOARD_INTEGRATION_PR_DRAFT'],
+    ['unknown mergeability', facts({ mergeable: null }), 'TASKBOARD_INTEGRATION_MERGEABILITY_UNKNOWN'],
+    ['required check failure', facts({ requiredChecks: [{ name: 'ci', status: 'failure' }] }), 'TASKBOARD_INTEGRATION_REQUIRED_CHECKS_FAILED'],
+    ['required gate identity drift', facts({ requiredChecksKnown: false, unsupportedRules: ['required-check-identities-changed'] }), 'TASKBOARD_INTEGRATION_REQUIRED_CHECKS_UNKNOWN'],
+  ] as const)('revalidates Provider facts inside the controlled merge callback and blocks %s', async (_case, changedFacts, code) => {
+    const value = candidate('approved');
+    const context = setup('approved');
+    context.readFacts
+      .mockResolvedValueOnce(facts())
+      .mockResolvedValueOnce(changedFacts);
+
+    await expect(context.engine.execute({
+      type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
+    })).rejects.toMatchObject({ code });
+
+    expect(context.readFacts).toHaveBeenCalledTimes(2);
+    expect(context.merge).not.toHaveBeenCalled();
+    expect(context.candidates.value).toMatchObject({ state: 'needs_human', lastError: expect.any(String) });
+    expect([...context.operations.records.values()]).toEqual([
+      expect.objectContaining({ state: 'failed', attemptCount: 1 }),
+    ]);
+  });
+
+  it('converges to needs_human when the merge fence is stale before operation execution', async () => {
+    const value = candidate('approved');
+    const context = setup('approved');
+    context.assertCurrent.mockRejectedValueOnce(new TaskboardValidationError(
+      'Provider operation fence is stale',
+      'TASKBOARD_PROVIDER_OPERATION_FENCE_MISMATCH',
+    ));
+
+    await expect(context.engine.execute({
+      type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
+    })).rejects.toMatchObject({ code: 'TASKBOARD_PROVIDER_OPERATION_FENCE_MISMATCH' });
+
+    expect(context.candidates.value).toMatchObject({ state: 'needs_human' });
+    expect(context.merge).not.toHaveBeenCalled();
+    expect([...context.operations.records.values()]).toEqual([
+      expect.objectContaining({ state: 'prepared', attemptCount: 0 }),
+    ]);
+  });
+
+  it('converges to needs_human when the final pre-side-effect fence rejects execution', async () => {
+    const value = candidate('approved');
+    const context = setup('approved');
+    context.assertCurrent
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new TaskboardValidationError(
+        'Dynamic Integration v3 kill switch is active',
+        'TASKBOARD_INTEGRATION_KILL_SWITCH',
+      ));
+
+    const result = await context.engine.execute({
+      type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
+    });
+
+    expect(result).toMatchObject({ status: 'applied', candidate: { state: 'needs_human' }, operation: { state: 'failed' } });
+    expect(context.merge).not.toHaveBeenCalled();
   });
 
   it('rejects unknown mergeability before handling simultaneous base drift during final merge', async () => {

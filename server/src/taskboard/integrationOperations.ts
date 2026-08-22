@@ -82,7 +82,7 @@ export async function inspectIntegrationSource(
         workflowRuns: [],
       };
   const inspectionReceipt = await recordIntegrationInspection(host, loaded, sourceId, pullRequest);
-  if (['merged', 'needs_human', 'resolving_conflict', 'waiting_remediation'].includes(loaded.source.state)) {
+  if (['merged', 'merging', 'needs_human', 'resolving_conflict', 'waiting_remediation'].includes(loaded.source.state)) {
     return { source: loaded.source, pullRequest, inspectionReceipt };
   }
   const unavailableChecks = loaded.requireGreenChecks
@@ -104,7 +104,7 @@ export async function inspectIntegrationSource(
         ? 'waiting_retry'
         : 'ready';
   const source = nextState === 're_reviewing'
-    ? await markSourceForRereview(host, sourceId)
+    ? await markSourceForRereview(host, sourceId, loaded.source.state)
     : await updateSourceState(
       host,
       sourceId,
@@ -207,12 +207,12 @@ export async function mergeIntegrationSource(
     throw new TaskboardValidationError('Pull request is not open for merge', 'TASKBOARD_PR_NOT_OPEN');
   }
   if (pullRequest.subjectDigest !== loaded.source.reviewedSubjectDigest) {
-    await markSourceForRereview(host, sourceId);
+    await markSourceForRereview(host, sourceId, loaded.source.state);
     throw new TaskboardValidationError('Pull request subject changed and must be reviewed again', 'TASKBOARD_SUBJECT_STALE');
   }
   if (pullRequest.mergeable === false) {
     const exhausted = (loaded.source.remediationCount ?? 0) >= loaded.maxAutomaticRemediationRounds;
-    await recordMergeConflict(host, sourceId, exhausted, 'Pull request has merge conflicts');
+    await recordMergeConflict(host, sourceId, exhausted, loaded.source.state, 'Pull request has merge conflicts');
     throw new TaskboardValidationError(
       exhausted
         ? 'Automatic remediation rounds exhausted; human intervention is required'
@@ -231,7 +231,7 @@ export async function mergeIntegrationSource(
   if (loaded.requireGreenChecks
     && pullRequest.requiredChecks.some((check) => check.status === 'failure')) {
     const exhausted = (loaded.source.remediationCount ?? 0) >= loaded.maxAutomaticRemediationRounds;
-    await recordMergeConflict(host, sourceId, exhausted, 'Required checks failed; automatic remediation is required');
+    await recordMergeConflict(host, sourceId, exhausted, loaded.source.state, 'Required checks failed; automatic remediation is required');
     throw new TaskboardValidationError(
       exhausted
         ? 'Automatic remediation rounds exhausted; human intervention is required'
@@ -286,6 +286,7 @@ export async function mergeIntegrationSource(
         host,
         sourceId,
         (loaded.source.remediationCount ?? 0) >= loaded.maxAutomaticRemediationRounds,
+        'merging',
         receipt.message ?? 'Provider refused merge',
       );
       throw new TaskboardValidationError(receipt.message ?? 'Provider refused merge', 'TASKBOARD_PROVIDER_MERGE_REJECTED');
@@ -852,15 +853,20 @@ async function recordMergeConflict(
   host: IntegrationOperationHost,
   sourceId: string,
   exhausted: boolean,
+  expectedState: TaskBoardIntegrationSource['state'],
   error = 'Pull request has merge conflicts',
 ): Promise<void> {
   await withTransaction(host, async (client) => {
     await client.query(
-      `UPDATE ${host.integrationSourcesTable}
+      `UPDATE ${host.integrationSourcesTable} s
           SET state=$2, remediation_task_id=NULL, last_error=$3, updated_at=now()
-        WHERE id=$1 AND state<>'merged'
-          AND merged_commit_oid IS NULL AND provider_receipt_id IS NULL`,
-      [sourceId, exhausted ? 'needs_human' : 'resolving_conflict', error],
+        WHERE s.id=$1 AND s.state=$4
+          AND s.merged_commit_oid IS NULL AND s.provider_receipt_id IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM ${host.mergeOperationsTable} o
+             WHERE o.integration_source_id=s.id AND o.state IN ('prepared','executing','unknown')
+          )`,
+      [sourceId, exhausted ? 'needs_human' : 'resolving_conflict', error, expectedState],
     );
   });
 }
@@ -868,6 +874,7 @@ async function recordMergeConflict(
 async function markSourceForRereview(
   host: IntegrationOperationHost,
   sourceId: string,
+  expectedState: TaskBoardIntegrationSource['state'],
 ): Promise<TaskBoardIntegrationSource> {
   return withTransaction(host, async (client) => {
     const preview = await client.query(
@@ -881,12 +888,16 @@ async function markSourceForRereview(
       [preview.rows[0].delivery_task_id],
     );
     const result = await client.query(
-      `UPDATE ${host.integrationSourcesTable}
+      `UPDATE ${host.integrationSourcesTable} s
           SET state='re_reviewing', last_error='Pull request subject changed after review', updated_at=now()
-        WHERE id=$1 AND state<>'merged'
-          AND merged_commit_oid IS NULL AND provider_receipt_id IS NULL
-        RETURNING *`,
-      [sourceId],
+        WHERE s.id=$1 AND s.state=$2
+          AND s.merged_commit_oid IS NULL AND s.provider_receipt_id IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM ${host.mergeOperationsTable} o
+             WHERE o.integration_source_id=s.id AND o.state IN ('prepared','executing','unknown')
+          )
+        RETURNING s.*`,
+      [sourceId, expectedState],
     );
     let row = result.rows[0];
     if (!row) {

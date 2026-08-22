@@ -63,6 +63,7 @@ import {
 import {
   WORKSPACE_ARTIFACT_PAYLOAD_METADATA_KEY,
   artifactCreateToolDescriptor,
+  artifactToolDescriptor,
   createWorkspaceArtifactPayload,
   editToolDescriptor,
   runWorkspaceEdit,
@@ -70,6 +71,7 @@ import {
   type WorkspaceArtifactPayload,
 } from './workspaceHandTools.js';
 import { materializeReadToolImage, tryReadWorkspaceImage } from './readImageTool.js';
+import { createdArtifactToolResult, prepareArtifactInvocation } from './artifactToolRuntime.js';
 import { resolveShellConcurrency, shellToolSchema, type ShellToolInput } from './shellToolSchema.js';
 const exec = promisify(execCb);
 
@@ -975,10 +977,11 @@ class WorkspaceToolProvider implements ToolProvider {
     // DurableBackgroundTaskService.invokeCommandControl 仍按原协议名内部调用。
     const workspaceTools = WORKSPACE_HAND_TOOLS.filter((tool) => {
       if (tool.id === bashOutputToolDescriptor.id || tool.id === killBashToolDescriptor.id) return false;
-      if (tool.id === artifactCreateToolDescriptor.id && !this.artifactService) return false;
+      // CreateArtifact 是 hand 内部协议名；模型只看到合并后的 Artifact。
+      if (tool.id === artifactCreateToolDescriptor.id) return false;
       return true;
     });
-    return [waitForWorkspaceReadyToolDescriptor, ...workspaceTools];
+    return [waitForWorkspaceReadyToolDescriptor, ...workspaceTools, ...(this.artifactService ? [artifactToolDescriptor] : [])];
   }
 
   async invoke<TInput>(call: AuthorizedToolCall<TInput>, context: ToolCallContext): Promise<ToolResult | undefined> {
@@ -987,18 +990,28 @@ class WorkspaceToolProvider implements ToolProvider {
       return await this.waitForWorkspaceReady(context, input.timeoutMs ?? 15_000);
     }
 
-    const descriptor = WORKSPACE_HAND_TOOLS.find((tool) => tool.id === call.toolId);
+    const descriptor = call.toolId === artifactToolDescriptor.id ? artifactToolDescriptor : WORKSPACE_HAND_TOOLS.find((tool) => tool.id === call.toolId);
     if (!descriptor) return undefined;
-    if (call.toolId === artifactCreateToolDescriptor.id && !this.artifactService) {
-      throw new Error('CreateArtifact: artifact service is not configured.');
+    if ((call.toolId === artifactToolDescriptor.id || call.toolId === artifactCreateToolDescriptor.id) && !this.artifactService) {
+      throw new Error('Artifact: artifact service is not configured.');
     }
 
     if (descriptor.risk === 'workspace_write' && !call.authorization?.approved) {
       throw new Error(`Tool ${call.toolId} requires prior authorization.`);
     }
 
-    // 解析入参用 hand 端公示的 schema（校验 + 应用 default）
+    // 解析入参用模型/hand 公示的 schema（校验 + 应用 default）。Artifact 是
+    // brain 侧合并工具：deliver 完全在服务端完成；create 再翻译为 hand 的
+    // CreateArtifact 兼容协议，避免 remote hand 滚动升级期间 contract drift。
     let parsedInput: unknown = parseToolInput(descriptor, call.input);
+    let transportToolName = call.toolId;
+    let transportInput = parsedInput;
+    if (call.toolId === artifactToolDescriptor.id) {
+      const prepared = await prepareArtifactInvocation(parsedInput as Parameters<typeof prepareArtifactInvocation>[0], this.artifactService!, context);
+      if (prepared.action === 'deliver') return prepared.result;
+      transportToolName = artifactCreateToolDescriptor.id;
+      transportInput = prepared.transportInput;
+    }
     const route = await this.resolveTenantHandRoute(context);
     if (route.kind === 'blocked') {
       throw new Error(route.message);
@@ -1046,11 +1059,12 @@ class WorkspaceToolProvider implements ToolProvider {
       });
       reservedTaskId = reservation.taskId;
       parsedInput = { ...shellInput, taskId: reservation.taskId };
+      transportInput = parsedInput;
     }
 
     const request = {
-      toolName: call.toolId,
-      input: parsedInput,
+      toolName: transportToolName,
+      input: transportInput,
       context: {
         ...(context.invocationId ? { invocationId: context.invocationId } : {}),
         ...(handId ? { handId } : {}),
@@ -1122,26 +1136,8 @@ class WorkspaceToolProvider implements ToolProvider {
       }
     }
     this.notifyMemoryIndexIfNeeded(call.toolId, parsedInput, workspaceForHand, response);
-    if (call.toolId === artifactCreateToolDescriptor.id) {
-      const artifact = await this.createArtifactFromHandResponse(response, context, call.input);
-      const fileName = typeof artifact.metadata?.fileName === 'string' ? artifact.metadata.fileName : undefined;
-      const sourcePath = typeof artifact.metadata?.sourcePath === 'string' ? artifact.metadata.sourcePath : undefined;
-      return {
-        content: JSON.stringify({
-          artifactId: artifact.artifactId,
-          kind: artifact.kind,
-          ...(fileName ? { fileName } : {}),
-          ...(sourcePath ? { sourcePath } : {}),
-          sizeBytes: artifact.sizeBytes,
-          sha256: artifact.sha256,
-          mimeType: artifact.mimeType,
-          userVisible: false,
-          ...(sourcePath ? { fileCardMarker: `[FILE]${JSON.stringify({ filePath: sourcePath })}[/FILE]` } : {}),
-          deliveryInstruction: sourcePath
-            ? 'This artifact has been registered but is not automatically shown to the user. To show it to the user, include fileCardMarker exactly in your final answer.'
-            : 'This artifact has been registered but is not automatically shown to the user.',
-        }, null, 2),
-      };
+    if (call.toolId === artifactToolDescriptor.id || call.toolId === artifactCreateToolDescriptor.id) {
+      return createdArtifactToolResult(await this.createArtifactFromHandResponse(response, context, transportInput));
     }
     const modelImages = call.toolId === readFileToolDescriptor.id ? await materializeReadToolImage(response, context.workspace.root) : undefined;
     // 在这里产出摘要而不是等收口点兜底：response.metadata 是**截断前**的真实
@@ -1486,7 +1482,11 @@ export function isToolEnabled(
   const name = typeof tool === 'string' ? tool : tool.name;
   const byId = controls?.tools?.[id]?.enabled;
   const byName = name !== id ? controls?.tools?.[name]?.enabled : undefined;
-  return byId !== false && byName !== false;
+  // 工具合并迁移安全：曾显式禁用 CreateArtifact 的平台不能在升级后意外重新
+  // 开启 Artifact(create|deliver)。旧键仅继承 enabled=false；旧描述不继承，避免
+  // 把 fileCardMarker 等已退休契约重新注入模型。
+  const legacyDisabled = id === 'Artifact' && controls?.tools?.CreateArtifact?.enabled === false;
+  return byId !== false && byName !== false && !legacyDisabled;
 }
 
 /**

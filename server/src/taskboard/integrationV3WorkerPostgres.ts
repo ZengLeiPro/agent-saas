@@ -210,7 +210,8 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
   async loadCurrent(candidateId: string): Promise<IntegrationV3WorkerCurrent> {
     const result = await this.options.pool.query(
       `SELECT c.*,r.candidate_id AS r_candidate_id,r.revision AS r_revision,r.digest_version AS r_digest_version,
-              r.base_oid AS r_base_oid,r.head_oid AS r_head_oid,r.tree_oid AS r_tree_oid,
+              r.base_oid AS r_base_oid,r.head_oid AS r_head_oid,r.subject_kind AS r_subject_kind,r.tree_oid AS r_tree_oid,
+              r.composition_complete AS r_composition_complete,
               r.source_set_digest AS r_source_set_digest,r.subject_digest AS r_subject_digest,
               r.policy_snapshot_digest AS r_policy_snapshot_digest,r.policy_revision AS r_policy_revision,
               r.merge_method AS r_merge_method,r.work_round AS r_work_round,r.work_execution_id AS r_work_execution_id,
@@ -225,7 +226,8 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
       candidate: rowToIntegrationCandidate(row),
       ...(row.r_candidate_id ? { revision: rowToIntegrationCandidateRevision({
         candidate_id: row.r_candidate_id, revision: row.r_revision, digest_version: row.r_digest_version,
-        base_oid: row.r_base_oid, head_oid: row.r_head_oid, tree_oid: row.r_tree_oid,
+        base_oid: row.r_base_oid, head_oid: row.r_head_oid, subject_kind: row.r_subject_kind, tree_oid: row.r_tree_oid,
+        composition_complete: row.r_composition_complete,
         source_set_digest: row.r_source_set_digest, subject_digest: row.r_subject_digest,
         policy_snapshot_digest: row.r_policy_snapshot_digest, policy_revision: row.r_policy_revision,
         merge_method: row.r_merge_method, work_round: row.r_work_round, work_execution_id: row.r_work_execution_id,
@@ -460,7 +462,8 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
               work.execution_id AS work_execution_id,
               push.execution_id AS push_execution_id,push.candidate_id AS push_candidate_id,
               push.candidate_revision AS push_candidate_revision,push.workflow_epoch AS push_workflow_epoch,
-              push.lane_epoch AS push_lane_epoch,push.old_oid AS push_old_oid,push.new_oid AS push_new_oid,
+              push.lane_epoch AS push_lane_epoch,push.ref AS push_ref,
+              push.old_oid AS push_old_oid,push.new_oid AS push_new_oid,
               trusted.old_oids AS trusted_integration_branch_oids
          FROM ${this.options.candidatesTable} c JOIN ${this.options.tasksTable} t ON t.id=c.integration_task_id
          JOIN ${this.options.boardsTable} b ON b.id=t.board_id
@@ -480,13 +483,17 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
          ) work ON true
          LEFT JOIN LATERAL (
            SELECT o.execution_id,o.candidate_id,o.candidate_revision,o.workflow_epoch,o.lane_epoch,
-                  o.expected->>'oldOid' AS old_oid,o.expected->>'newOid' AS new_oid
+                  o.receipt->>'ref' AS ref,o.receipt->>'oldOid' AS old_oid,o.receipt->>'newOid' AS new_oid
              FROM ${this.options.providerOperationsTable} o
             WHERE work.execution_id IS NOT NULL AND o.kind='push_ref' AND o.state='succeeded'
               AND o.execution_id=work.execution_id AND o.candidate_id=c.id
               AND o.candidate_revision=c.current_revision
               AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch
+              AND o.expected->>'ref'=('refs/heads/'||c.branch)
               AND o.expected->>'oldOid'=$3
+              AND o.receipt->>'ref'=o.expected->>'ref'
+              AND o.receipt->>'oldOid'=o.expected->>'oldOid'
+              AND o.receipt->>'newOid'=o.expected->>'newOid'
             ORDER BY o.updated_at DESC,o.id DESC LIMIT 1
          ) push ON true
          LEFT JOIN LATERAL (
@@ -496,7 +503,7 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
              FROM ${this.options.providerOperationsTable} o
              CROSS JOIN LATERAL (VALUES
                (o.expected->>'oldOid'),
-               (CASE WHEN o.state='succeeded' THEN o.expected->>'newOid' END)
+               (CASE WHEN o.state IN ('executing','unknown','succeeded') THEN o.expected->>'newOid' END)
              ) oid(value)
             WHERE o.candidate_id=c.id AND o.candidate_revision=c.current_revision
               AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch
@@ -528,6 +535,7 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
         candidateRevision: Number(row.push_candidate_revision),
         workflowEpoch: String(row.push_workflow_epoch),
         laneEpoch: String(row.push_lane_epoch),
+        ref: String(row.push_ref),
         oldOid: String(row.push_old_oid),
         newOid: String(row.push_new_oid),
       } } : {}),

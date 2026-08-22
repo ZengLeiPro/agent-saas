@@ -27,6 +27,7 @@ import { EntityIcons } from '@/lib/icons';
 import { requestOpenBillingBadge } from '@/lib/billingBadgeBus';
 import { publicSessionShareFileUrl } from '@/lib/sessionShareApi';
 import { ImageLightbox } from './ImageLightbox';
+const LazyArtifactPreviewDialog = lazy(() => import('@/components/artifacts/ArtifactPreviewDialog').then(module => ({ default: module.ArtifactPreviewDialog })));
 
 // react-markdown 懒加载：不阻塞首屏渲染，模块加载后立即可用
 const markdownPromise = import("react-markdown");
@@ -294,7 +295,7 @@ async function artifactDownload(artifactId: string, fileName: string) {
 }
 
 /** 文件下载卡片，fileSize 为 0 时通过 HEAD 请求懒加载真实大小 */
-function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, artifactId, shareToken }: {
+function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, artifactId, mimeType, shareToken }: {
   fileName: string;
   filePath: string;
   fileSize: number;
@@ -302,10 +303,12 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
   owner?: string;
   /** legacy artifact_created 事件：优先走 artifact 签名 URL,不依赖 workspace 文件仍在原位。 */
   artifactId?: string;
+  /** Artifact 内容寻址存储侧记录的真实 MIME，用于专用预览器选择。 */
+  mimeType?: string;
   /** 只读分享页使用 share token 读取快照关联文件，不依赖登录态。 */
   shareToken?: string;
 }) {
-  const [resolvedSize, setResolvedSize] = useState(fileSize);
+  const [resolvedSize, setResolvedSize] = useState(fileSize); const [artifactPreviewOpen, setArtifactPreviewOpen] = useState(false);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const ownerParam = owner ? `&owner=${encodeURIComponent(owner)}` : '';
 
@@ -346,21 +349,16 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
   const visual = getFileTypeVisual(fileName);
   const TypeIcon = CATEGORY_ICON[visual.category];
   const isImage = visual.category === 'image';
-  // artifact 图片有签名 URL 可用,直接 lightbox；其他类型暂只支持下载
-  // （filePreview 依赖工作区路径,artifact 不适用）。
+  // Artifact 使用独立预览器，未知二进制也会提供明确的仅下载状态。
   const canOpenPreview = artifactId
-    ? isImage
+    ? true
     : shareToken
       ? (isImage || (isShareable && !!filePreview))
       : (isImage || (isPreviewable && !!filePreview));
 
   const handleClick = () => {
     if (artifactId) {
-      if (isImage) {
-        void resolveArtifactUrl(artifactId)
-          .then(setPreviewSrc)
-          .catch(() => { /* 打开失败静默；下载按钮仍可用 */ });
-      }
+      setArtifactPreviewOpen(true);
       return;
     }
     if (shareToken) {
@@ -423,6 +421,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
           </button>
         </div>
       </div>
+      {artifactId && artifactPreviewOpen ? <Suspense fallback={null}><LazyArtifactPreviewDialog open artifactId={artifactId} fileName={fileName} fileSize={resolvedSize} mimeType={mimeType} onOpenChange={setArtifactPreviewOpen} /></Suspense> : null}
       {previewSrc && (
         <ImageLightbox
           src={previewSrc}
@@ -948,6 +947,7 @@ export const MessageItem = memo(function MessageItem({
         filePreview={filePreview}
         owner={message.owner}
         {...(message.artifactId ? { artifactId: message.artifactId } : {})}
+        mimeType={message.mimeType}
         shareToken={filePreview?.shareToken}
       />
     );

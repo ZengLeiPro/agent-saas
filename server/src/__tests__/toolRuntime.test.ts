@@ -129,10 +129,10 @@ describe('PlatformToolRuntime', () => {
     ]);
   });
 
-  it('exposes CreateArtifact only when artifact service is configured', () => {
-    expect(new PlatformToolRuntime().list().map((tool) => tool.id)).not.toContain('CreateArtifact');
-    expect(new PlatformToolRuntime({ artifactService: {} as never }).list().map((tool) => tool.id))
-      .toContain('CreateArtifact');
+  it('exposes the merged Artifact tool only when its service is configured', () => {
+    expect(new PlatformToolRuntime().list().map(tool => tool.id)).not.toContain('Artifact');
+    const ids = new PlatformToolRuntime({ artifactService: {} as never }).list().map(tool => tool.id);
+    expect(ids).toContain('Artifact');
   });
 
   it('only exposes MemorySearch when a memory index service is configured', () => {

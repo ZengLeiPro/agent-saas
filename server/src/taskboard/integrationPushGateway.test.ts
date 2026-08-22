@@ -11,6 +11,7 @@ import {
 } from './integrationPushGateway.js';
 import {
   IntegrationProviderOperationService,
+  integrationProviderOperationKey,
   type IntegrationProviderOperationRecord,
   type IntegrationProviderOperationState,
   type IntegrationProviderOperationStorageHost,
@@ -117,7 +118,7 @@ async function fixture(credential: IntegrationPushCredential | null = {
     tenantId: binding.tenantId, requesterUserId: 'owner-1', executionId: binding.executionId,
     candidateId: binding.candidateId, capabilityToken, commitOid,
   });
-  return { root, host, capabilityService, gateway, git, operationStorage, issue, push, disableTarget: () => { active = false; } };
+  return { root, host, capabilityService, gateway, git, operationStorage, operationService, issue, push, disableTarget: () => { active = false; } };
 }
 
 function exactPushInput() {
@@ -367,6 +368,30 @@ describe('IntegrationPushGateway', () => {
         expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(1);
       } finally { await rm(f.root, { recursive: true, force: true }); }
     }
+  });
+
+  it('reconciles a durable executing intent found before replay without issuing another push', async () => {
+    const f = await fixture();
+    const input = exactPushInput();
+    try {
+      const operationKey = integrationProviderOperationKey({
+        repositoryId: input.repositoryId, candidateId: input.candidateId,
+        candidateRevision: input.revision, kind: 'push_ref', target: `${input.exactRef}@${input.newOid}`,
+      });
+      const prepared = await f.operationService.prepare({
+        operationKey, kind: 'push_ref', repositoryId: input.repositoryId, fence: input.fence,
+        expected: { ref: input.exactRef, oldOid: input.expectedOldOid, newOid: input.newOid },
+        command: { ref: input.exactRef, oldOid: input.expectedOldOid, newOid: input.newOid },
+      });
+      await f.operationStorage.compareAndSet({ id: prepared.id, expectedState: 'prepared', nextState: 'executing', patch: { attemptCount: 1 } });
+      f.git.remoteLine = `${B}\t${binding.exactRef}\n`;
+
+      await expect(f.gateway.pushExact(input)).resolves.toBeUndefined();
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(0);
+      expect([...f.operationStorage.records.values()][0]).toMatchObject({
+        state: 'succeeded', receipt: { ref: binding.exactRef, oldOid: A, newOid: B, reconciled: true },
+      });
+    } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 
   it('does not reconcile or duplicate a concurrent in-flight push that wins between get and prepare', async () => {

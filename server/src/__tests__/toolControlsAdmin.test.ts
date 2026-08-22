@@ -94,7 +94,7 @@ describe('tool controls admin router', () => {
         'Read',
         'Write',
         'Edit',
-        'CreateArtifact',
+        'Artifact',
         'Shell',
         'MemorySearch',
         'MemoryList',
@@ -530,6 +530,29 @@ describe('tool controls admin router', () => {
       expect(written.toolControls.tools.Grep).toBeUndefined();
       // 原有的 Shell 关闭仍在
       expect(written.toolControls.tools.Shell.enabled).toBe(false);
+    });
+  });
+
+  it('migrates legacy CreateArtifact disabled state to Artifact when saving settings', async () => {
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath }) => {
+      const response = await fetch(`${baseUrl}/api/admin/tool-controls`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          toolControls: { tools: {
+            Artifact: { enabled: true, descriptionOverride: { mode: 'append', text: 'keep me' } },
+            CreateArtifact: { enabled: false },
+          } },
+          webTools: null,
+        }),
+      });
+      expect(response.status).toBe(200);
+      const body = await readJson(response);
+      expect(body.tools.find((tool: { id: string }) => tool.id === 'Artifact').enabled).toBe(false);
+      const written = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(written.toolControls.tools.Artifact.enabled).toBe(false);
+      expect(written.toolControls.tools.Artifact.descriptionOverride).toEqual({ mode: 'append', text: 'keep me' });
+      expect(written.toolControls.tools.CreateArtifact).toBeUndefined();
     });
   });
 

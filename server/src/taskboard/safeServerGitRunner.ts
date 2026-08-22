@@ -4,6 +4,9 @@ import { dirname, resolve } from 'node:path';
 
 import type { RepositoryWorkspaceGitCommand, RepositoryWorkspaceGitResult } from './repositoryWorkspaceSync.js';
 
+const DEFAULT_GIT_TIMEOUT_MS = 30_000;
+const FETCH_GIT_TIMEOUT_MS = 120_000;
+
 const SAFE_GIT_CONFIG = [
   'core.hooksPath=/dev/null',
   'core.fsmonitor=false',
@@ -77,6 +80,10 @@ export function safeServerGitEnvironment(overrides: Readonly<Record<string, stri
   };
 }
 
+export function safeServerGitTimeoutMs(args: readonly string[]): number {
+  return args[0] === 'fetch' ? FETCH_GIT_TIMEOUT_MS : DEFAULT_GIT_TIMEOUT_MS;
+}
+
 export function runSafeServerGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult> {
   try {
     assertSafeRepository(command.cwd);
@@ -87,6 +94,7 @@ export function runSafeServerGit(command: RepositoryWorkspaceGitCommand): Promis
       stderr: error instanceof Error ? error.message : String(error),
     });
   }
+  const timeoutMs = safeServerGitTimeoutMs(command.args);
   return new Promise((resolveResult) => execFile(
     'git',
     safeServerGitArgs(command.args),
@@ -94,16 +102,26 @@ export function runSafeServerGit(command: RepositoryWorkspaceGitCommand): Promis
       cwd: command.cwd,
       env: safeServerGitEnvironment(command.env),
       maxBuffer: 16 * 1024 * 1024,
-      timeout: 30_000,
+      timeout: timeoutMs,
     },
     (error, stdout, stderr) => resolveResult({
       exitCode: error && typeof error === 'object' && 'code' in error && typeof error.code === 'number'
         ? error.code
         : error ? 1 : 0,
       stdout,
-      stderr,
+      stderr: safeServerGitFailureStderr(error, stderr, timeoutMs),
     }),
   ));
+}
+
+export function safeServerGitFailureStderr(error: unknown, stderr: string, timeoutMs: number): string {
+  const output = stderr.trim();
+  if (error && typeof error === 'object' && 'killed' in error && error.killed === true) {
+    const timeout = `Git command timed out after ${timeoutMs}ms`;
+    return output ? `${output}\n${timeout}` : timeout;
+  }
+  if (output) return output;
+  return error instanceof Error ? error.message : '';
 }
 
 /**

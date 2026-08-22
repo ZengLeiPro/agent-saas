@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { runSafeServerGit, safeServerGitArgs, safeServerGitEnvironment } from './safeServerGitRunner.js';
+import {
+  runSafeServerGit,
+  safeServerGitArgs,
+  safeServerGitEnvironment,
+  safeServerGitFailureStderr,
+  safeServerGitTimeoutMs,
+} from './safeServerGitRunner.js';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -77,6 +83,19 @@ describe('safe server Git runner', () => {
     const dates = await runSafeServerGit({ cwd: root, args: ['show', '-s', '--format=%aI%n%cI', first.stdout.trim()] });
     expect(dates.stdout.trim().split('\n').map((value) => new Date(value).toISOString()))
       .toEqual(['2026-08-20T15:52:39.000Z', '2026-08-20T15:52:39.000Z']);
+  });
+
+  it('allows controlled fetches to complete without relaxing other Git command timeouts', () => {
+    expect(safeServerGitTimeoutMs(['fetch', '--no-tags'])).toBe(120_000);
+    expect(safeServerGitTimeoutMs(['status', '--porcelain=v1'])).toBe(30_000);
+    expect(safeServerGitTimeoutMs(['push', '--porcelain'])).toBe(30_000);
+  });
+
+  it('preserves Git stderr while always identifying timeout termination', () => {
+    expect(safeServerGitFailureStderr({ killed: true }, 'remote: partial progress\n', 120_000))
+      .toBe('remote: partial progress\nGit command timed out after 120000ms');
+    expect(safeServerGitFailureStderr({ killed: true }, '', 120_000))
+      .toBe('Git command timed out after 120000ms');
   });
 
   it('pins network policy and does not depend on GIT_CONFIG_LOCAL', () => {

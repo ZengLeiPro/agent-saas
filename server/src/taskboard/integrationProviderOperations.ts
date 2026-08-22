@@ -130,6 +130,14 @@ export class IntegrationProviderOperationService {
     });
     if (!executing) return this.resolveExecuteRace(operationKey);
     try {
+      await this.fences.assertCurrent(executing);
+    } catch (error) {
+      return this.transitionOrReload(executing, 'executing', 'failed', {
+        error: errorMessage(error),
+        receipt: { outcome: 'not_applied', evidence: 'pre_execution_fence_rejected' },
+      });
+    }
+    try {
       const receipt = await executor(executing);
       await this.fences.assertCurrent(executing);
       return await this.transitionOrReload(executing, 'executing', 'succeeded', { receipt });

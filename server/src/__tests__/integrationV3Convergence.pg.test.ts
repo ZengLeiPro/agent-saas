@@ -81,7 +81,7 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
       `INSERT INTO ${store.integrationLanesTable}(repository_id,board_id,active_integration_task_id,epoch)
        VALUES($1,$2,$3,1)`, [repositoryId, board.id, taskId],
     );
-    return { board, taskId, candidateId, tables };
+    return { board, taskId, candidateId, repositoryId, tables };
   }
 
   function pgOptions(seed: Awaited<ReturnType<typeof seedCandidate>>) {
@@ -142,6 +142,34 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
     expect((await pool.query(
       `SELECT closed_at FROM ${store.blockEpisodesTable} WHERE id=$1`, [episodeId],
     )).rows[0].closed_at).toBeInstanceOf(Date);
+  });
+
+  it('terminalizes unexecuted operations on terminal transition, rejects late inserts, and permits archive', async () => {
+    const seed = await seedCandidate({ state: 'waiting_checks', taskStatus: 'todo' });
+    const insertOperation = (id: string) => pool.query(
+      `INSERT INTO ${seed.tables.providerOperationsTable}
+         (id,operation_key,intent_digest,kind,repository_id,candidate_id,candidate_revision,
+          workflow_epoch,lane_epoch,execution_id,expected,command,state,attempt_count)
+       VALUES($1,$2,'digest','push_ref',$3,$4,1,1,1,'execution-1','{}'::jsonb,'{}'::jsonb,'prepared',0)`,
+      [id, `operation-${id}`, seed.repositoryId, seed.candidateId],
+    );
+    await insertOperation('before-terminal');
+
+    await pool.query(`UPDATE ${seed.tables.candidatesTable} SET state='merged' WHERE id=$1`, [seed.candidateId]);
+
+    const operation = (await pool.query(
+      `SELECT state,attempt_count,receipt FROM ${seed.tables.providerOperationsTable} WHERE id='before-terminal'`,
+    )).rows[0];
+    expect(operation).toMatchObject({
+      state: 'failed', attempt_count: 0,
+      receipt: { outcome: 'not_applied', evidence: 'attempt_count=0' },
+    });
+    await expect(insertOperation('after-terminal')).rejects.toThrow('TASKBOARD_CANDIDATE_PROVIDER_OPERATION_TERMINAL');
+
+    await pool.query(`UPDATE ${store.tasksTable} SET status='done',version=version+1 WHERE id=$1`, [seed.taskId]);
+    const task = await store.getTask(identity, seed.taskId);
+    await expect(store.archiveTask(identity, seed.taskId, { expectedVersion: task.version }))
+      .resolves.toMatchObject({ id: seed.taskId, archivedAt: expect.any(String) });
   });
 
   it('resets requested cancellation state so terminal cleanup is claimable', async () => {

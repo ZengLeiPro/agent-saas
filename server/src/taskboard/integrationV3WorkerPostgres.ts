@@ -26,7 +26,35 @@ export interface IntegrationV3CleanupExecutorOptions {
   runGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult>;
   revokeCapabilities(): Promise<void>;
   fenceCapabilities(): Promise<void>;
+  terminalizePreparedOperations(): Promise<number>;
   applySourcePullRequest(input: { id: string; action: 'close' | 'comment' }): Promise<void>;
+}
+
+export async function terminalizeIntegrationV3PreparedOperations(options: {
+  pool: { query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> };
+  providerOperationsTable: string;
+  candidateId: string;
+  reason: string;
+}): Promise<number> {
+  const result = await options.pool.query(
+    `WITH terminalized AS (
+       UPDATE ${options.providerOperationsTable}
+          SET state='failed',error=$2,
+              receipt=jsonb_build_object('outcome','not_applied','evidence','attempt_count=0'),
+              updated_at=now()
+        WHERE candidate_id=$1 AND state='prepared' AND attempt_count=0
+        RETURNING id
+     )
+     SELECT (SELECT count(*) FROM terminalized)::int AS terminalized_count,
+            (SELECT count(*) FROM ${options.providerOperationsTable} o
+              WHERE o.candidate_id=$1 AND o.state IN ('prepared','executing','unknown')
+                AND NOT EXISTS (SELECT 1 FROM terminalized t WHERE t.id=o.id))::int AS remaining_count`,
+    [options.candidateId, `Candidate cleanup terminalized unexecuted provider operation: ${options.reason}`],
+  );
+  const terminalizedCount = Number(result.rows[0]?.terminalized_count ?? 0);
+  const remainingCount = Number(result.rows[0]?.remaining_count ?? 0);
+  if (remainingCount > 0) throw new Error(`${remainingCount} active provider operation(s) require reconciliation`);
+  return terminalizedCount;
 }
 
 /** Fail-closed cleanup orchestration. Every attempted or policy-skipped action is receipted. */
@@ -38,6 +66,23 @@ export async function executeIntegrationV3Cleanup(options: IntegrationV3CleanupE
   };
   await perform('revoke_capabilities', options.revokeCapabilities);
   await perform('fence_capabilities', options.fenceCapabilities);
+  try {
+    const count = await options.terminalizePreparedOperations();
+    actions.push({ action: 'terminalize_prepared_operations', status: 'succeeded', target: String(count) });
+  } catch (error) {
+    actions.push({
+      action: 'terminalize_prepared_operations', status: 'failed',
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  if (actions.some((action) => action.status === 'failed')) {
+    const reason = 'cleanup safety barrier failed before destructive actions';
+    actions.push({ action: 'remove_candidate_worktree', status: 'skipped', target: options.worktreePath, reason });
+    for (const source of options.sourcePullRequests) {
+      actions.push({ action: 'source_pull_request', status: 'skipped', target: source.id, reason });
+    }
+    return { version: 1, outcome: 'failed', actions, completedAt: new Date().toISOString() };
+  }
   try {
     assertServerOwnedWorktreePath(options.controlledWorktreeRoot, options.worktreePath, options.candidateId);
     let alreadyAbsent = false;

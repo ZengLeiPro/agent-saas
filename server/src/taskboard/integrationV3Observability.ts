@@ -194,7 +194,13 @@ export function evaluateIntegrationV3Health(
   if ((metrics.activeFailedCandidateCount ?? 0) > limits.maxActiveFailedCandidateCount) reasons.push('active_failed_candidate');
   if (limits.requireGateway && metrics.gatewayDisabled) reasons.push('gateway_disabled');
   else if (limits.requireGateway && !metrics.gatewayHealthy) reasons.push('gateway_unhealthy');
-  return { status: reasons.length === 0 ? 'ok' : 'degraded', releaseReady: reasons.length === 0, reasons, metrics };
+  const releaseBlockingReasons = reasons.filter((reason) => reason !== 'active_failed_candidate');
+  return {
+    status: reasons.length === 0 ? 'ok' : 'degraded',
+    releaseReady: releaseBlockingReasons.length === 0,
+    reasons,
+    metrics,
+  };
 }
 
 /** Global false wins; a repository override can only disable, never bypass the global switch. */

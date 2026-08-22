@@ -73,7 +73,7 @@ export function MobileLayout(props: LayoutProps) {
     retryMessage, forkFromMessage, lastMessageRef, scrollContainerRef, isNearBottomRef,
     handlePermissionResponse, handleAskUserResponse,
     uploadedFiles, removeFile, input, uploading, uploadError, dismissUploadError, setInput,
-    sendMessage, interjectMessage, sendVoiceMessage, stopping, stopGeneration, handleFileSelect, handlePaste, ttsProps, ttsStateMap, modelList,
+    sendMessage, interjectMessage, sendVoiceMessage, stopping, stopGeneration, handleFileSelect, handleAssetSelect, handlePaste, ttsProps, ttsStateMap, modelList,
     queuedInterjections, cancelQueuedInterjection, editQueuedInterjection, resendQueuedInterjection, dismissQueuedInterjection,
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
@@ -540,6 +540,7 @@ export function MobileLayout(props: LayoutProps) {
               onResendQueuedInterjection={resendQueuedInterjection}
               onDismissQueuedInterjection={dismissQueuedInterjection}
               onFileSelect={(event) => { void handleFileSelect(event); }}
+              onAssetSelect={handleAssetSelect}
               onPaste={(event) => { void handlePaste(event); }}
               tts={ttsProps}
               ttsStateMap={ttsStateMap}

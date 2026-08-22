@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { buildContextMigrationSql } from './store/migration.js';
+import { buildContextMigrationSql, contextTableNames, contextTablePrefix } from './store/migration.js';
 import { ContextStore } from './store/store.js';
 import { ContextStoreError, type ContextJson } from './store/types.js';
 import { computeContextContentHash } from './store/validation.js';
@@ -149,6 +149,32 @@ describe('ContextStore PostgreSQL data layer', () => {
     expect(sql).toContain('UNIQUE (tenant_id, collection_id)');
     expect(sql).toContain("content_hash ~ '^[0-9a-f]{64}$'");
     expect(sql).toContain('seq BIGINT GENERATED ALWAYS AS IDENTITY');
+  });
+
+  it('accepts governance test prefixes while keeping truncated PostgreSQL identifiers distinct', () => {
+    const prefix = 'p'.repeat(30);
+    expect(contextTablePrefix(prefix)).toBe(prefix);
+    expect(() => contextTablePrefix(`${prefix}x`)).toThrow('Invalid PostgreSQL identifier');
+
+    const identifiers = buildContextMigrationSql(prefix)
+      .map(statement => statement.match(/CREATE (?:TABLE|INDEX) IF NOT EXISTS ([a-zA-Z0-9_]+)/)?.[1])
+      .filter((identifier): identifier is string => Boolean(identifier))
+      .map(identifier => identifier.slice(0, 63));
+    expect(new Set(identifiers).size).toBe(identifiers.length);
+    expect(contextTableNames(prefix).partitions).toBe(`${prefix}_context_sync_partitions`);
+  });
+
+  it('maps tenant-wide collection unique violations to the stable identity conflict code', async () => {
+    const duplicate = Object.assign(new Error('duplicate key'), { code: '23505' });
+    const store = new ContextStore({
+      pool: { query: vi.fn().mockRejectedValue(duplicate) } as never,
+      tablePrefix: 'test',
+    });
+
+    await expect(store.createCollection({
+      tenantId: 'tenant-a', sourceId: 'source-a', collectionId: 'shared',
+      externalKey: 'chat', displayName: '聊天',
+    })).rejects.toMatchObject({ code: 'CONTEXT_IDENTITY_CONFLICT' });
   });
 
   it('keeps reads tenant-first and does not return another tenant row', async () => {

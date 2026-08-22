@@ -42,6 +42,17 @@ import {
 
 type Row = Record<string, unknown>;
 
+async function mapIdentityConflict<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === '23505') {
+      throw new ContextStoreError('CONTEXT_IDENTITY_CONFLICT');
+    }
+    throw error;
+  }
+}
+
 function iso(value: unknown): string {
   return value instanceof Date ? value.toISOString() : String(value);
 }
@@ -214,13 +225,13 @@ export class ContextStore {
     assertContextText(input.externalKey, 1000);
     assertContextText(input.displayName);
     assertContextObject(input.metadata ?? {});
-    const result = await this.options.pool.query(`
+    const result = await mapIdentityConflict(() => this.options.pool.query(`
       INSERT INTO ${this.tables.collections}
         (tenant_id,source_id,collection_id,external_key,display_name,metadata_json)
       VALUES ($1,$2,$3,$4,$5,$6::jsonb)
       ON CONFLICT (tenant_id,source_id,collection_id) DO NOTHING RETURNING *
     `, [input.tenantId, input.sourceId, input.collectionId, input.externalKey,
-      input.displayName, JSON.stringify(input.metadata ?? {})]);
+      input.displayName, JSON.stringify(input.metadata ?? {})]));
     if (!result.rows[0]) throw new ContextStoreError('CONTEXT_IDENTITY_CONFLICT');
     return collectionFromRow(result.rows[0]);
   }

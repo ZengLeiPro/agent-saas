@@ -89,7 +89,8 @@ describePg('PgContextStore PostgreSQL integration', () => {
     expect((await store.getOutboxCursor('tenant-a')).seq).toBe('9007199254740993');
     expect(await store.getEvidence('tenant-a', 'source-a', 'collection-shared', 'message-1'))
       .toMatchObject([{ evidenceId: 'message-1:source', kind: 'source_locator' }]);
-    expect(await store.getPartition('tenant-a', 'source-a', 'collection-shared', 'chat:main'))
-      .toMatchObject({ status: 'complete', watermark: { to: '2026-08-23T00:00:00.000Z' }, leaseOwner: undefined });
+    const partition = await store.getPartition('tenant-a', 'source-a', 'collection-shared', 'chat:main');
+    expect(partition).toMatchObject({ status: 'complete', watermark: { to: '2026-08-23T00:00:00.000Z' } });
+    expect(partition).not.toHaveProperty('leaseOwner');
   });
 });

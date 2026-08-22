@@ -3,8 +3,9 @@ import type pg from 'pg';
 export type ContextPgPool = pg.Pool;
 
 const IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-// Longest generated index suffix leaves 20 bytes below PostgreSQL's 63-byte identifier limit.
-const MAX_PREFIX_LENGTH = 20;
+// At 30 bytes, even the two longest generated index names remain distinct after
+// PostgreSQL's 63-byte identifier truncation (their first differing byte is retained).
+const MAX_PREFIX_LENGTH = 30;
 
 export function contextTablePrefix(value = 'runtime'): string {
   if (!IDENTIFIER_PATTERN.test(value) || value.length > MAX_PREFIX_LENGTH) {

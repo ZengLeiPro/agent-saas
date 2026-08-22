@@ -3026,7 +3026,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
   }, [session.sessionId, session.sessions, modelList]);
 
-  // ---- Cleanup on unmount ----
   useEffect(() => {
     return () => {
       for (const t of ackTimersRef.current.values()) clearTimeout(t);

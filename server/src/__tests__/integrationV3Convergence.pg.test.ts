@@ -115,11 +115,19 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
     const seed = await seedCandidate({ state: 'working', taskStatus: 'in_progress' });
     const deliveryTaskId = randomUUID();
     const integrationSourceId = randomUUID();
+    const reviewExecutionId = randomUUID();
     await pool.query(
       `INSERT INTO ${store.tasksTable}
          (id,board_id,identifier,kind,title,status,sort_order)
        VALUES($1,$2,$3,'delivery','Frozen source','ready_to_merge',2)`,
       [deliveryTaskId, seed.board.id, `SRC-${deliveryTaskId.slice(0, 8)}`],
+    );
+    await pool.query(
+      `INSERT INTO ${store.executionsTable}
+         (id,task_id,run_id,session_id,status,purpose,trigger,protocol_version,attempt_id,requested_by,finished_at)
+       VALUES($1,$2,$3,$4,'succeeded','review','initial',2,$5,$6,now())`,
+      [reviewExecutionId, deliveryTaskId, `run-${reviewExecutionId}`, `session-${reviewExecutionId}`,
+        `attempt-${reviewExecutionId}`, identity.ownerUserId],
     );
     await pool.query(
       `INSERT INTO ${store.integrationSourcesTable}
@@ -133,8 +141,8 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
          (candidate_id,revision,source_order,integration_source_id,delivery_task_id,delivery_task_version,
           repository_id,provider_pull_request_id,frozen_head_oid,frozen_base_oid,reviewed_subject_digest,
           review_execution_id,review_receipt_digest,requirement_digest)
-       VALUES($1,1,0,$2,$3,1,$4,'77','frozen-head','frozen-base','reviewed','review-1','receipt','requirement')`,
-      [seed.candidateId, integrationSourceId, deliveryTaskId, seed.repositoryId],
+       VALUES($1,1,0,$2,$3,1,$4,'77','frozen-head','frozen-base','reviewed',$5,'receipt','requirement')`,
+      [seed.candidateId, integrationSourceId, deliveryTaskId, seed.repositoryId, reviewExecutionId],
     );
     const context = await store.getExecutionContextV2(identity, seed.taskId, { include: ['integrationSources'] });
     expect(context.integrationCandidate).toMatchObject({

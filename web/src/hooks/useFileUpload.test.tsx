@@ -63,6 +63,24 @@ describe("useFileUpload 并发隔离", () => {
     expect(result.current.uploadedFiles.map((file) => file.originalName)).toEqual(["a.txt", "b.txt"]);
   });
 
+  it("从资料库添加时调用服务端导入接口并追加附件", async () => {
+    mocks.authFetch.mockResolvedValueOnce(uploadResponse("方案.pdf"));
+    const { result } = renderHook(() => useFileUpload("chat", () => "session-1"));
+
+    await act(async () => {
+      await result.current.handleAssetSelect(["assets/20260822/方案.pdf"]);
+    });
+
+    expect(mocks.authFetch).toHaveBeenCalledWith(
+      "/api/upload/assets?sessionId=session-1",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ paths: ["assets/20260822/方案.pdf"] }),
+      }),
+    );
+    expect(result.current.uploadedFiles[0]?.originalName).toBe("方案.pdf");
+  });
+
   it("清空或切换草稿后忽略旧上传响应", async () => {
     const pending = deferred<Response>();
     mocks.authFetch.mockReturnValueOnce(pending.promise);

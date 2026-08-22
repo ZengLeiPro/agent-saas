@@ -3088,6 +3088,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     compactSession,
     removeFile: fileUpload.removeFile,
     handleFileSelect: fileUpload.handleFileSelect,
+    handleAssetSelect: fileUpload.handleAssetSelect,
     handlePaste: fileUpload.handlePaste,
     sendMessage,
     interjectMessage,

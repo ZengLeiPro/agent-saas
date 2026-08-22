@@ -1,6 +1,8 @@
 import { useMemo, useRef, useCallback, useEffect, useState } from 'react';
-import { Plus, ArrowUp, Square, Mic, Loader2, StopCircle } from "lucide-react";
+import { Plus, ArrowUp, Square, Mic, Loader2, StopCircle, FileUp, FolderOpen } from "lucide-react";
 
+import { AssetLibraryDialog } from "@/components/AssetLibraryDialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { warmupSessionSandbox } from "@/lib/sessionsApi";
 import type { ModelList } from "@/types/models";
@@ -28,6 +30,7 @@ interface ChatInputProps {
   onStop?: () => void;
   stopping?: boolean;
   onFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onAssetSelect?: (paths: string[]) => Promise<void> | void;
   onPaste?: (e: React.ClipboardEvent) => void;
   scrollContainerRef?: React.RefObject<HTMLDivElement>;
   isNearBottomRef?: React.MutableRefObject<boolean>;
@@ -73,6 +76,7 @@ export function ChatInput({
   onStop,
   stopping,
   onFileSelect,
+  onAssetSelect,
   onPaste,
   scrollContainerRef,
   isNearBottomRef,
@@ -93,7 +97,10 @@ export function ChatInput({
   const isDisabled = disabled === true;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const localFileInputRef = useRef<HTMLInputElement>(null);
   const [tooShortTip, setTooShortTip] = useState(false);
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [assetLibraryOpen, setAssetLibraryOpen] = useState(false);
 
   const voiceRecorder = useVoiceRecorder({
     onVoiceSend: async (wavBlob, durationMs) => {
@@ -407,28 +414,76 @@ export function ChatInput({
             {/* 底部工具栏 */}
             <div className="flex items-center justify-between px-4 pb-3">
               <div className="flex items-center gap-0.5">
-                <label
-                  className={cn(
-                    "relative flex size-8 items-center justify-center overflow-hidden rounded-full border border-border text-foreground transition-colors",
-                    "hover:bg-muted-foreground/10 active:bg-muted-foreground/20",
-                    disableAttach || voiceRecorder.isRecording
-                      ? "cursor-not-allowed opacity-40"
-                      : "cursor-pointer",
-                  )}
-                  title="添加附件"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <Plus className="size-5" />
-                  <input
-                    type="file"
-                    multiple
-                    className="absolute inset-0 size-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-                    onChange={onFileSelect}
-                    accept="*/*"
+                <Popover open={attachmentMenuOpen} onOpenChange={setAttachmentMenuOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex size-8 items-center justify-center rounded-full border border-border text-foreground transition-colors",
+                        "hover:bg-muted-foreground/10 active:bg-muted-foreground/20",
+                        disableAttach || voiceRecorder.isRecording
+                          ? "cursor-not-allowed opacity-40"
+                          : "cursor-pointer",
+                      )}
+                      title="添加附件"
+                      aria-label="添加附件"
+                      disabled={disableAttach || voiceRecorder.isRecording}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <Plus className="size-5" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    side="top"
+                    align="start"
+                    sideOffset={8}
+                    className="w-52 rounded-2xl p-1.5 shadow-xl"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors hover:bg-accent"
+                      onClick={() => {
+                        setAttachmentMenuOpen(false);
+                        localFileInputRef.current?.click();
+                      }}
+                    >
+                      <FileUp className="size-4.5" />
+                      本地文件
+                    </button>
+                    {onAssetSelect && (
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors hover:bg-accent"
+                        onClick={() => {
+                          setAttachmentMenuOpen(false);
+                          setAssetLibraryOpen(true);
+                        }}
+                      >
+                        <FolderOpen className="size-4.5" />
+                        资料库
+                      </button>
+                    )}
+                  </PopoverContent>
+                </Popover>
+                <input
+                  ref={localFileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={onFileSelect}
+                  accept="*/*"
+                  disabled={disableAttach || voiceRecorder.isRecording}
+                  aria-label="本地文件"
+                />
+                {onAssetSelect && assetLibraryOpen && (
+                  <AssetLibraryDialog
+                    open
+                    onOpenChange={setAssetLibraryOpen}
+                    onConfirm={onAssetSelect}
                     disabled={disableAttach || voiceRecorder.isRecording}
-                    aria-label="添加附件"
                   />
-                </label>
+                )}
               </div>
 
               <div className="flex items-center gap-1">

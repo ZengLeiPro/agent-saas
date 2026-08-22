@@ -78,6 +78,8 @@ describe('Work/Review current-head CI hard gate', () => {
     ['head drift', { providerResult: { ...current, headOid: 'new-head' } }, 'TASKBOARD_SUBJECT_STALE'],
     ['base drift', { providerResult: { ...current, baseOid: 'new-base' } }, 'TASKBOARD_SUBJECT_STALE'],
     ['subject drift', { providerResult: { ...current, subjectDigest: 'new-subject' } }, 'TASKBOARD_SUBJECT_STALE'],
+    ['not mergeable', { providerResult: { ...current, mergeable: false } }, 'TASKBOARD_PR_NOT_MERGEABLE'],
+    ['unknown mergeability', { providerResult: { ...current, mergeable: null } }, 'TASKBOARD_MERGEABILITY_UNKNOWN'],
   ] as const)('rejects %s fail-closed', async (_label, config, code) => {
     const { client, options } = rig(config as Parameters<typeof rig>[0]);
     await expect(assertCurrentPullRequestGate(
@@ -130,21 +132,24 @@ function candidateRig(input: {
     }),
   };
   const getPullRequest = vi.fn(async () => input.providerResult ?? current);
+  const genericGetPullRequest = vi.fn(async () => { throw new Error('generic OAuth provider must not be used'); });
   const options = {
     tasksTable: 'tasks', changesTable: 'changes', boardsTable: 'boards',
-    repositoryProvider: { getPullRequest, mergePullRequest: vi.fn() },
+    repositoryProvider: { getPullRequest: genericGetPullRequest, mergePullRequest: vi.fn() },
+    integrationV3RepositoryProvider: { getPullRequest, mergePullRequest: vi.fn() },
   } as never;
-  return { client, options, getPullRequest };
+  return { client, options, getPullRequest, genericGetPullRequest };
 }
 
 describe('Workflow v3 candidate Review CI hard gate', () => {
   it('accepts only a current-review receipt bound to the exact candidate revision and green head', async () => {
-    const { client, options, getPullRequest } = candidateRig();
+    const { client, options, getPullRequest, genericGetPullRequest } = candidateRig();
 
     await expect(assertCurrentCandidatePullRequestGate(
       options, client as never, candidateTask, 'execution-1', candidateBinding,
     )).resolves.toEqual(current);
     expect(getPullRequest).toHaveBeenCalledWith(board.repository, '42', 'owner-1');
+    expect(genericGetPullRequest).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -158,6 +163,9 @@ describe('Workflow v3 candidate Review CI hard gate', () => {
       requiredChecks: [{ name: 'Build & Check', status: 'pending' as const }],
     } }, 'TASKBOARD_CI_PENDING'],
     ['no checks observed', { providerResult: { ...current, requiredChecks: [] } }, 'TASKBOARD_CI_PENDING'],
+    ['draft pull request', { providerResult: { ...current, draft: true } }, 'TASKBOARD_PR_NOT_OPEN'],
+    ['not mergeable', { providerResult: { ...current, mergeable: false } }, 'TASKBOARD_PR_NOT_MERGEABLE'],
+    ['unknown mergeability', { providerResult: { ...current, mergeable: null } }, 'TASKBOARD_MERGEABILITY_UNKNOWN'],
   ] as const)('rejects %s fail-closed', async (_label, config, code) => {
     const { client, options } = candidateRig(config as Parameters<typeof candidateRig>[0]);
     await expect(assertCurrentCandidatePullRequestGate(

@@ -269,6 +269,7 @@ export function configureRuntimeIntegrationV3RepositoryAccess(input: {
           tokenProvider: input.githubAppInstallationTokenProvider, installationId: input.control.githubAppInstallationId,
         }) : undefined;
   const credentialResolver = input.control?.githubTokenMode === 'personal_access_token' ? personalAccessTokenResolver : appTokenResolver;
+  input.store?.setIntegrationV3RepositoryProvider(repositoryProvider);
   if (input.control?.enabled && input.store) input.store.setIntegrationV3RepositoryProbe(async ({ tenantId, ownerUserId, repository }) => {
     if (!repositoryProvider?.getReference || !credentialResolver || !repository.baseBranch) return false;
     await repositoryProvider.getReference(repository, repository.baseBranch, ownerUserId);

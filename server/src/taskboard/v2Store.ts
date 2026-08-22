@@ -54,6 +54,7 @@ export interface TaskboardV2StoreOptions {
   remediationAttemptsTable: string;
   cancellationOutboxTable: string;
   repositoryProvider?: RepositoryProvider;
+  integrationV3RepositoryProvider?: RepositoryProvider;
   /** Optional for structural v2 hosts; PgTaskboardStore always supplies a fail-closed implementation. */
   probeIntegrationV3Repository?(input: {
     tenantId: string;

@@ -67,6 +67,8 @@ export class RepositoryProviderIntegrationEngineV3Adapter implements Integration
       repositoryId: repository.repositoryId,
       providerPullRequestId: pull.providerPullRequestId,
       state: pull.state,
+      draft: pull.draft,
+      mergeable: pull.mergeable,
       baseBranch: pull.baseRef,
       baseOid: base.oid,
       headOid: pull.headOid,

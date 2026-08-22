@@ -25,7 +25,7 @@ function expected(value: TaskBoardIntegrationCandidate): IntegrationEngineV3Expe
     policyRevision: revision.policyRevision, policySnapshotDigest: revision.policySnapshotDigest, subjectDigest: revision.subjectDigest };
 }
 function facts(overrides: Partial<IntegrationEngineV3ProviderFacts> = {}): IntegrationEngineV3ProviderFacts {
-  return { repositoryId: repository.repositoryId, providerPullRequestId: '42', state: 'open', baseBranch: 'main', baseOid: 'base-1', headOid: 'head-1', treeOid: 'tree-1',
+  return { repositoryId: repository.repositoryId, providerPullRequestId: '42', state: 'open', draft: false, mergeable: true, baseBranch: 'main', baseOid: 'base-1', headOid: 'head-1', treeOid: 'tree-1',
     requiredChecksKnown: true, requiredChecks: [{ name: 'ci', status: 'success' }], unsupportedRules: [], mergeQueueRequired: false, ...overrides };
 }
 
@@ -94,6 +94,20 @@ describe('IntegrationEngineV3', () => {
     expect(requests.requestReview).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['draft', facts({ draft: true }), 'blocked'],
+    ['not mergeable', facts({ mergeable: false }), 'needs_work'],
+    ['unknown mergeability', facts({ mergeable: null }), 'waiting_checks'],
+  ] as const)('does not request Review when the Provider PR is %s', async (_case, providerFacts, expectedState) => {
+    const value = candidate('waiting_checks');
+    const { engine, candidates, requests } = setup('waiting_checks', providerFacts);
+
+    await engine.execute({ type: 'request_review', candidateId: value.id, expected: expected(value) });
+
+    expect(candidates.value.state).toBe(expectedState);
+    expect(requests.requestReview).not.toHaveBeenCalled();
+  });
+
   it('fails closed when GitHub required gate facts are unknown', async () => {
     const value = candidate('waiting_checks');
     const { engine, candidates, requests } = setup('waiting_checks', facts({ requiredChecksKnown: false }));
@@ -128,6 +142,16 @@ describe('IntegrationEngineV3', () => {
     expect(requests.requestReview).not.toHaveBeenCalled();
   });
 
+  it('rejects a draft before handling simultaneous base drift during Review dispatch', async () => {
+    const value = candidate('waiting_checks');
+    const { engine, candidates, requests } = setup('waiting_checks', facts({ draft: true, baseOid: 'new-main' }));
+
+    await engine.execute({ type: 'request_review', candidateId: value.id, expected: expected(value) });
+
+    expect(candidates.value.state).toBe('blocked');
+    expect(requests.requestReview).not.toHaveBeenCalled();
+  });
+
   it('still fails closed for provider head drift', async () => {
     const value = candidate('waiting_checks');
     const { engine, requests } = setup('waiting_checks', facts({ headOid: 'unexpected-head' }));
@@ -139,10 +163,28 @@ describe('IntegrationEngineV3', () => {
   });
 
   it.each([
+    ['draft', facts({ draft: true }), 'TASKBOARD_INTEGRATION_PR_DRAFT'],
+    ['not mergeable', facts({ mergeable: false }), 'TASKBOARD_INTEGRATION_NOT_MERGEABLE'],
+    ['unknown mergeability', facts({ mergeable: null }), 'TASKBOARD_INTEGRATION_MERGEABILITY_UNKNOWN'],
+  ] as const)('rechecks Provider readiness and blocks Review approval for %s', async (_case, providerFacts, code) => {
+    const value = candidate('in_review');
+    const { engine, candidates } = setup('in_review', providerFacts);
+
+    await expect(engine.execute({
+      type: 'review_approved', candidateId: value.id, expected: expected(value), reviewExecutionId: 'review-1',
+      receipt: { candidateId: value.id, revision: 1, subjectDigest: revision.subjectDigest, sourceSetDigest: revision.sourceSetDigest },
+    })).rejects.toMatchObject({ code });
+    expect(candidates.value.state).toBe('in_review');
+  });
+
+  it.each([
+    ['draft', facts({ draft: true }), 'TASKBOARD_INTEGRATION_PR_DRAFT'],
+    ['not mergeable', facts({ mergeable: false }), 'TASKBOARD_INTEGRATION_NOT_MERGEABLE'],
+    ['unknown mergeability', facts({ mergeable: null }), 'TASKBOARD_INTEGRATION_MERGEABILITY_UNKNOWN'],
     ['unavailable', facts({ requiredChecksKnown: false }), 'TASKBOARD_INTEGRATION_REQUIRED_CHECKS_UNKNOWN'],
     ['failure', facts({ requiredChecks: [{ name: 'ci', status: 'failure' }] }), 'TASKBOARD_INTEGRATION_REQUIRED_CHECKS_FAILED'],
     ['pending', facts({ requiredChecks: [{ name: 'ci', status: 'pending' }] }), 'TASKBOARD_INTEGRATION_REQUIRED_CHECKS_PENDING'],
-  ] as const)('rechecks required checks and blocks %s before the final merge side effect', async (_case, providerFacts, code) => {
+  ] as const)('rechecks Provider readiness and blocks %s before the final merge side effect', async (_case, providerFacts, code) => {
     const value = candidate('approved');
     const { engine, merge, operations } = setup('approved', providerFacts);
 
@@ -151,6 +193,17 @@ describe('IntegrationEngineV3', () => {
     })).rejects.toMatchObject({ code });
     expect(merge).not.toHaveBeenCalled();
     expect(operations.records.size).toBe(0);
+  });
+
+  it('rejects unknown mergeability before handling simultaneous base drift during final merge', async () => {
+    const value = candidate('approved');
+    const context = setup('approved', facts({ mergeable: null, baseOid: 'new-main' }));
+
+    await expect(context.engine.execute({
+      type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
+    })).rejects.toMatchObject({ code: 'TASKBOARD_INTEGRATION_MERGEABILITY_UNKNOWN' });
+    expect(context.candidates.value.state).toBe('approved');
+    expect(context.operations.records.size).toBe(0);
   });
 
   it.each(['approved', 'merging'] as const)(
@@ -314,6 +367,18 @@ describe('IntegrationEngineV3', () => {
     const review = await reviewing.engine.execute({ type: 'request_review', candidateId: reviewValue.id, expected: expected(reviewValue) });
     expect(review.candidate).toMatchObject({ state: 'in_review', version: 7 });
     expect(reviewing.requests.requestReview).toHaveBeenCalledWith(expect.objectContaining({ subjectDigest: revision.subjectDigest, sourceSetDigest: revision.sourceSetDigest }));
+  });
+
+  it('revalidates Provider readiness before repairing a lost Review request', async () => {
+    const reviewing = setup('in_review', facts({ draft: true }));
+    const reviewValue = reviewing.candidates.value;
+
+    const result = await reviewing.engine.execute({
+      type: 'request_review', candidateId: reviewValue.id, expected: expected(reviewValue),
+    });
+
+    expect(result.candidate.state).toBe('blocked');
+    expect(reviewing.requests.requestReview).not.toHaveBeenCalled();
   });
 
   it('turns an exhausted work/review request into explicit operator recovery instead of auto-reviving it', async () => {

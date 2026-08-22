@@ -166,6 +166,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   readonly remediationAttemptsTable: string;
   readonly cancellationOutboxTable: string;
   repositoryProvider?: RepositoryProvider;
+  integrationV3RepositoryProvider?: RepositoryProvider;
   private integrationV3RepositoryProbe?: IntegrationV3RepositoryProbe;
   constructor(options: PgTaskboardStoreOptions) {
     const prefix = sanitizeIdentifier(options.tablePrefix ?? 'runtime');
@@ -262,9 +263,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   setRepositoryProvider(provider: RepositoryProvider): void {
     this.repositoryProvider = provider;
   }
-  getRepositoryProvider(): RepositoryProvider | undefined {
-    return this.repositoryProvider;
-  }
+  getRepositoryProvider(): RepositoryProvider | undefined { return this.repositoryProvider; }
+  setIntegrationV3RepositoryProvider(provider: RepositoryProvider | undefined): void { this.integrationV3RepositoryProvider = provider; }
   setIntegrationV3RepositoryProbe(probe: IntegrationV3RepositoryProbe): void { this.integrationV3RepositoryProbe = probe; }
   probeIntegrationV3Repository(input: IntegrationV3RepositoryProbeInput): Promise<void> {
     return runIntegrationV3RepositoryProbe(this.integrationV3RepositoryProbe, input);

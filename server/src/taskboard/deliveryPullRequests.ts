@@ -52,7 +52,7 @@ export async function inspectExecutionPullRequest(
   if (!context.providerPullRequestId) {
     throw new TaskboardValidationError('Current execution has no pull request', 'TASKBOARD_PULL_REQUEST_REQUIRED');
   }
-  const provider = requireProvider(host);
+  const provider = context.candidateId ? requireIntegrationV3Provider(host) : requireProvider(host);
   const snapshot = provider.inspectPullRequest
     ? await provider.inspectPullRequest(context.repository, context.providerPullRequestId, context.boardOwnerUserId)
     : {
@@ -167,7 +167,7 @@ export async function readExecutionPullRequestJobLog(
   if (!job || job.failureLogRef !== `github-job:${providerJobId}`) {
     throw new TaskboardValidationError('Workflow job is not part of this inspection receipt', 'TASKBOARD_CI_LOG_SCOPE_INVALID');
   }
-  const provider = requireProvider(host);
+  const provider = context.candidateId ? requireIntegrationV3Provider(host) : requireProvider(host);
   if (!provider.getWorkflowJobLog) {
     throw new TaskboardValidationError('Provider job log reader is unavailable', 'TASKBOARD_CI_UNAVAILABLE');
   }
@@ -205,7 +205,7 @@ export function pullRequestGateStatus(
 
 export function assertPullRequestGate(
   snapshot: RepositoryPullRequestSnapshot,
-  expected: { providerPullRequestId: string; headOid: string; baseOid?: string; subjectDigest?: string },
+  expected: { providerPullRequestId: string; headOid: string; baseOid?: string; subjectDigest?: string; requireMergeable?: boolean },
 ): void {
   if (snapshot.providerPullRequestId !== expected.providerPullRequestId
     || snapshot.headOid !== expected.headOid
@@ -215,6 +215,12 @@ export function assertPullRequestGate(
   }
   if (snapshot.state !== 'open' || snapshot.draft) {
     throw new TaskboardValidationError('Pull request is closed or draft', 'TASKBOARD_PR_NOT_OPEN');
+  }
+  if (expected.requireMergeable && snapshot.mergeable !== true) {
+    throw new TaskboardValidationError(
+      snapshot.mergeable === false ? 'Pull request is not mergeable' : 'Pull request mergeability is unknown',
+      snapshot.mergeable === false ? 'TASKBOARD_PR_NOT_MERGEABLE' : 'TASKBOARD_MERGEABILITY_UNKNOWN',
+    );
   }
   if (snapshot.requiredChecksKnown !== true) {
     throw new TaskboardValidationError('Provider could not authoritatively determine required checks', 'TASKBOARD_CI_UNAVAILABLE');
@@ -303,7 +309,7 @@ export async function recordReviewedExecutionSubject(
     throw new TaskboardValidationError('Delivery task has no pull request');
   }
   assertRemediationPullRequest(context, context.providerPullRequestId);
-  const provider = requireProvider(host);
+  const provider = context.candidateId ? requireIntegrationV3Provider(host) : requireProvider(host);
   const pullRequest = await provider.getPullRequest(
     context.repository,
     context.providerPullRequestId,
@@ -690,6 +696,13 @@ function requireProvider(host: DeliveryPullRequestHost): RepositoryProvider {
     throw new TaskboardValidationError('Repository provider is unavailable');
   }
   return host.repositoryProvider;
+}
+
+function requireIntegrationV3Provider(host: DeliveryPullRequestHost): RepositoryProvider {
+  if (!host.integrationV3RepositoryProvider) {
+    throw new TaskboardValidationError('Integration v3 repository provider is unavailable', 'TASKBOARD_CI_UNAVAILABLE');
+  }
+  return host.integrationV3RepositoryProvider;
 }
 
 function jsonObject(value: unknown): Record<string, unknown> | undefined {

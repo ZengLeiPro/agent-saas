@@ -384,10 +384,13 @@ export class GithubRepositoryProvider implements RepositoryProvider {
       || (!rulesetsAbsent && rulesets.status === 'rejected')) {
       return { known: false, requiredChecks: [], mergeQueueRequired: false, unsupportedRules: ['provider-gates-unavailable'] };
     }
-    const checks = normalizeRequiredCheckIdentities(protection.status === 'fulfilled' ? protection.value : undefined);
+    const protectionValue = protection.status === 'fulfilled' ? protection.value : undefined;
+    const checks = normalizeRequiredCheckIdentities(protectionValue);
+    const protectionErrors = requiredCheckIdentityErrors(protectionValue);
     const ruleFacts = inspectRulesets(rulesets.status === 'fulfilled' ? rulesets.value : []);
     for (const check of ruleFacts.requiredChecks) if (!checks.some((item) => item.name === check.name && item.appId === check.appId)) checks.push(check);
-    return { known: ruleFacts.known, requiredChecks: checks.sort(compareChecks), mergeQueueRequired: ruleFacts.mergeQueueRequired, unsupportedRules: ruleFacts.unsupportedRules };
+    const unsupportedRules = [...new Set([...protectionErrors, ...ruleFacts.unsupportedRules])].sort();
+    return { known: ruleFacts.known && protectionErrors.length === 0, requiredChecks: checks.sort(compareChecks), mergeQueueRequired: ruleFacts.mergeQueueRequired, unsupportedRules };
   }
 
   async ensureIntegrationBranch(repository: TaskBoardRepositoryConfig, input: { ref: string; expectedBaseOid: string; expectedBaseTreeOid: string; trustedExistingOids?: string[]; existingRequired?: boolean; operationKey: string }, credentialOwnerId: string): Promise<RepositoryBranchReceipt> {
@@ -548,8 +551,7 @@ function assertOperationKey(value: string): void { if (!value || value.length > 
 function asRecord(value: unknown): Record<string, any> { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {}; }
 function requiredString(container: unknown, key: string, label: string): string { const value = String(asRecord(container)[key] ?? ''); if (!value) throw new Error(`${label} is missing`); return value; }
 function optionalPositiveInteger(value: unknown): number | undefined {
-  const number = Number(value);
-  return Number.isSafeInteger(number) && number > 0 ? number : undefined;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 function checkIdentityKey(name: string, appId?: number): string { return `${name}\u0000${appId ?? '*'}`; }
 function compareChecks(a: { name: string; appId?: number }, b: { name: string; appId?: number }): number { return checkIdentityKey(a.name, a.appId).localeCompare(checkIdentityKey(b.name, b.appId)); }
@@ -590,16 +592,35 @@ function normalizeChecks(checksValue: unknown, statusesValue: unknown, requiredV
       status.updated_at ?? status.created_at,
     );
   }
-  const required = normalizeRequiredCheckIdentities(requiredValue);
-  const identities: Array<{ name: string; appId?: number }> = required.length
-    ? required
-    : [...new Set([...observed.keys()].filter((key) => key.endsWith('\u0000*')).map((key) => key.slice(0, -2)))].map((name) => ({ name }));
+  const identities = normalizeRequiredCheckIdentities(requiredValue);
   return identities.sort(compareChecks).map((identity) => ({
     ...identity,
     status: observed.get(checkIdentityKey(identity.name, identity.appId))?.status
       ?? (identity.appId === undefined ? observed.get(checkIdentityKey(identity.name))?.status : undefined)
       ?? 'pending',
   }));
+}
+
+function requiredCheckIdentityErrors(value: unknown): string[] {
+  const record = asRecord(value);
+  if (record.contexts !== undefined && !Array.isArray(record.contexts)) {
+    return ['branch-protection-required-status-check-invalid'];
+  }
+  if (record.checks !== undefined && !Array.isArray(record.checks)) {
+    return ['branch-protection-required-status-check-invalid'];
+  }
+  if ((Array.isArray(record.contexts) && record.contexts.some((context) => typeof context !== 'string' || !context.trim()))) {
+    return ['branch-protection-required-status-check-invalid'];
+  }
+  for (const raw of Array.isArray(record.checks) ? record.checks : []) {
+    const check = asRecord(raw);
+    const appId = optionalPositiveInteger(check.app_id);
+    if (typeof check.context !== 'string' || !check.context.trim()
+      || (check.app_id !== undefined && check.app_id !== null && appId === undefined)) {
+      return ['branch-protection-required-status-check-invalid'];
+    }
+  }
+  return [];
 }
 
 function normalizeRequiredCheckIdentities(value: unknown): Array<{ name: string; appId?: number }> {
@@ -649,6 +670,10 @@ function inspectRulesets(value: unknown): { known: boolean; requiredChecks: Arra
             continue;
           }
           const appId = optionalPositiveInteger(check.integration_id);
+          if (check.integration_id !== undefined && check.integration_id !== null && appId === undefined) {
+            unsupported.add('ruleset-required-status-check-invalid');
+            continue;
+          }
           requiredChecks.push({ name: check.context, ...(appId !== undefined ? { appId } : {}) });
         }
       } else if (type === 'merge_queue') {

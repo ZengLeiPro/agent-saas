@@ -103,6 +103,33 @@ describe('GithubRepositoryProvider', () => {
     expect(snapshot.requiredChecks).toEqual([{ name: 'Build & Check', status: 'success' }]);
   });
 
+  it.each(['bad', '999', true, 0, -1, 1.5])(
+    'fails closed for malformed ruleset integration_id=%s instead of downgrading to any App',
+    async (integrationId) => {
+      const fetchImpl = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          number: 42, state: 'open', merged: false, draft: false, mergeable: true,
+          head: { ref: 'feat/x', sha: 'head-oid', repo: { full_name: 'acme/app' } },
+          base: { ref: 'main', sha: 'base-oid', repo: { full_name: 'acme/app' } },
+        }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          check_runs: [{ name: 'ci', app: { id: 999 }, status: 'completed', conclusion: 'success' }],
+        }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ statuses: [] }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ contexts: [] }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify([{
+          type: 'required_status_checks',
+          parameters: { required_status_checks: [{ context: 'ci', integration_id: integrationId }] },
+        }]), { status: 200 }));
+      const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+      const snapshot = await provider.getPullRequest(repository, '42', 'owner-user');
+
+      expect(snapshot.requiredChecksKnown).toBe(false);
+      expect(snapshot.requiredChecks).toContainEqual({ name: 'github:checks-unavailable', status: 'failure' });
+    },
+  );
+
   it('uses the newest combined status instead of allowing an older success to hide a failure', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -167,7 +194,7 @@ describe('GithubRepositoryProvider', () => {
     expect(snapshot.requiredChecks).toContainEqual({ name: 'github:checks-unavailable', status: 'failure' });
   });
 
-  it('uses observed checks when private-repository policy APIs are explicitly unavailable', async () => {
+  it('does not promote optional observed checks when private-repository policy APIs confirm no required gates', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({
         number: 42, state: 'open', merged: false, draft: false, mergeable: true,
@@ -185,7 +212,7 @@ describe('GithubRepositoryProvider', () => {
     const snapshot = await provider.getPullRequest(repository, '42', 'owner-user');
 
     expect(snapshot.requiredChecksKnown).toBe(true);
-    expect(snapshot.requiredChecks).toEqual([{ name: 'CI', status: 'success' }]);
+    expect(snapshot.requiredChecks).toEqual([]);
   });
 
   it('rejects pull requests outside the configured base or repository', async () => {

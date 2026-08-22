@@ -52,6 +52,8 @@ export interface IntegrationEngineV3ProviderFacts {
   repositoryId: string;
   providerPullRequestId: string;
   state: 'open' | 'closed' | 'merged';
+  draft: boolean;
+  mergeable: boolean | null;
   baseBranch: string;
   baseOid: string;
   headOid: string;
@@ -189,20 +191,11 @@ export class IntegrationEngineV3 {
         return applied(await this.appendAndTransition(current, command.revision, 'waiting_checks'));
       case 'request_review':
         assertFlag(flags.reviewEnabled, 'review');
-        if (current.candidate.state === 'in_review') {
-          // Deterministically repair a request lost/failed after the candidate transition.
-          const revision = requireRevision(current);
-          const request = await this.options.requests.requestReview({ candidateId: current.candidate.id, revision: revision.revision, subjectDigest: revision.subjectDigest, sourceSetDigest: revision.sourceSetDigest });
-          if (request.status === 'failed') {
-            throw failClosed('Review request exhausted retries and requires operator recovery', 'TASKBOARD_CANDIDATE_REQUEST_FAILED');
-          }
-          return { candidate: current.candidate, status: 'requested', requestId: request.requestId };
-        }
         return this.observeChecks(current, true);
       case 'review_approved':
         assertFlag(flags.reviewEnabled, 'review');
         assertReviewReceipt(current, command.reviewExecutionId, command.receipt);
-        return applied(await this.transition(current, 'approved', undefined, command.reviewExecutionId));
+        return this.reviewApproved(current, command.reviewExecutionId);
       case 'review_changes_requested':
         assertReviewReceipt(current, command.reviewExecutionId, command.receipt);
         return applied(await this.transition(current, 'needs_work', 'Review requested changes'));
@@ -242,6 +235,13 @@ export class IntegrationEngineV3 {
       || facts.state !== 'open') {
       throw failClosed('Provider subject drifted from the candidate revision', 'TASKBOARD_INTEGRATION_SUBJECT_DRIFT');
     }
+    if (facts.draft) {
+      return applied(await this.transition(current, 'blocked', 'Provider pull request is draft'));
+    }
+    if (facts.mergeable === false) {
+      return applied(await this.transition(current, 'needs_work', 'Provider pull request is not mergeable'));
+    }
+    if (facts.mergeable !== true) return { candidate: current.candidate, status: 'waiting' };
     if (facts.baseOid !== revision.baseOid) {
       return applied(await this.transition(current, 'needs_work', 'Provider base advanced; candidate refresh required'));
     }
@@ -255,8 +255,20 @@ export class IntegrationEngineV3 {
     }
     if (!dispatchReview) return { candidate: current.candidate, status: 'waiting' };
     const request = await this.options.requests.requestReview({ candidateId: current.candidate.id, revision: revision.revision, subjectDigest: revision.subjectDigest, sourceSetDigest: revision.sourceSetDigest });
-    const candidate = await this.transition(current, 'in_review');
+    if (request.status === 'failed') {
+      throw failClosed('Review request exhausted retries and requires operator recovery', 'TASKBOARD_CANDIDATE_REQUEST_FAILED');
+    }
+    const candidate = current.candidate.state === 'in_review'
+      ? current.candidate
+      : await this.transition(current, 'in_review');
     return { candidate, status: 'requested', requestId: request.requestId };
+  }
+
+  private async reviewApproved(current: IntegrationEngineV3Current, reviewExecutionId: string): Promise<IntegrationEngineV3Result> {
+    const facts = await this.readProviderFacts(current);
+    this.assertProviderFacts(current, facts);
+    this.assertRequiredChecksGreen(facts);
+    return applied(await this.transition(current, 'approved', undefined, reviewExecutionId));
   }
 
   private async mergeApproved(current: IntegrationEngineV3Current, executionId: string): Promise<IntegrationEngineV3Result> {
@@ -273,6 +285,7 @@ export class IntegrationEngineV3 {
           : 'Provider PR was externally merged with unknown or mismatched approved facts',
       ));
     }
+    this.assertPullRequestMergeable(facts);
     if (isBaseOnlyDrift(current, facts)) {
       const prepared = current.candidate.state === 'merging'
         ? await this.options.providerOperations.get(operationKey)
@@ -359,6 +372,19 @@ export class IntegrationEngineV3 {
       || facts.treeOid !== revision.treeOid
       || (!merged && (facts.state !== 'open' || facts.baseOid !== revision.baseOid))) {
       throw failClosed('Provider subject drifted from the candidate revision', 'TASKBOARD_INTEGRATION_SUBJECT_DRIFT');
+    }
+    if (!merged) this.assertPullRequestMergeable(facts);
+  }
+
+  private assertPullRequestMergeable(facts: IntegrationEngineV3ProviderFacts): void {
+    if (facts.draft) {
+      throw failClosed('Provider pull request is draft', 'TASKBOARD_INTEGRATION_PR_DRAFT');
+    }
+    if (facts.mergeable !== true) {
+      throw failClosed(
+        facts.mergeable === false ? 'Provider pull request is not mergeable' : 'Provider mergeability is unknown',
+        facts.mergeable === false ? 'TASKBOARD_INTEGRATION_NOT_MERGEABLE' : 'TASKBOARD_INTEGRATION_MERGEABILITY_UNKNOWN',
+      );
     }
   }
 

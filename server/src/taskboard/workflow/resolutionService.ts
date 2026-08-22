@@ -659,9 +659,9 @@ export async function assertCurrentCandidatePullRequestGate(
   );
   const board = boardResult.rows[0];
   const repository = jsonObject(board?.repository);
-  const provider = options.repositoryProvider;
+  const provider = options.integrationV3RepositoryProvider;
   if (!repository || repository.provider !== 'github' || !provider) {
-    throw new TaskboardValidationError('Repository provider is unavailable', 'TASKBOARD_CI_UNAVAILABLE');
+    throw new TaskboardValidationError('Integration v3 repository provider is unavailable', 'TASKBOARD_CI_UNAVAILABLE');
   }
   let current: RepositoryPullRequestSnapshot;
   try {
@@ -683,6 +683,7 @@ export async function assertCurrentCandidatePullRequestGate(
     providerPullRequestId: candidate.providerPullRequestId,
     headOid: candidate.headOid,
     baseOid: candidate.baseOid,
+    requireMergeable: true,
   });
   if (current.baseRef !== repository.baseBranch) {
     throw new TaskboardValidationError('Candidate pull request base changed after inspection', 'TASKBOARD_SUBJECT_STALE');
@@ -765,6 +766,7 @@ export async function assertCurrentPullRequestGate(
     ...(purpose === 'review' && row?.reviewed_subject_digest
       ? { subjectDigest: String(row.reviewed_subject_digest) }
       : {}),
+    ...(purpose === 'review' ? { requireMergeable: true } : {}),
   });
   return current;
 }

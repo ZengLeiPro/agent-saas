@@ -39,6 +39,7 @@ export interface IntegrationOperationHost {
   resolutionsTable: string;
   cancellationOutboxTable: string;
   repositoryProvider?: RepositoryProvider;
+  integrationV3RepositoryProvider?: RepositoryProvider;
 }
 
 export interface IntegrationSourceInspection {

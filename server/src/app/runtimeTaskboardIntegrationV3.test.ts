@@ -85,12 +85,16 @@ describe('Integration v3 worker activation', () => {
 describe('Integration v3 board repository probe wiring', () => {
   it('combines repository-specific read with PAT push permission and full identity verification', async () => {
     let probe: ((input: { tenantId: string; ownerUserId: string; repository: TaskBoardRepositoryConfig }) => Promise<boolean>) | undefined;
+    let reviewProvider: unknown;
     const getReference = vi.fn(async () => ({ oid: 'a'.repeat(40), treeOid: 'b'.repeat(40) }));
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       id: 123, full_name: 'acme/widget', permissions: { push: true },
     }), { status: 200 })));
     configureRuntimeIntegrationV3RepositoryAccess({
-      store: { setIntegrationV3RepositoryProbe: (value: typeof probe) => { probe = value; } } as never,
+      store: {
+        setIntegrationV3RepositoryProvider: (value: unknown) => { reviewProvider = value; },
+        setIntegrationV3RepositoryProbe: (value: typeof probe) => { probe = value; },
+      } as never,
       taskboardRepositoryProvider: { getReference } as never,
       control: { enabled: true, githubTokenMode: 'personal_access_token' },
       resolvePersonalAccessToken: async () => 'pat',
@@ -99,6 +103,7 @@ describe('Integration v3 board repository probe wiring', () => {
       ...repository, repositoryId: 'github-id:123',
     } })).resolves.toBe(true);
     expect(getReference).toHaveBeenCalledWith(expect.objectContaining({ owner: 'acme', name: 'widget' }), 'main', 'owner-1');
+    expect(reviewProvider).toBeDefined();
   });
 });
 

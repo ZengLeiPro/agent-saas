@@ -221,6 +221,10 @@ describe('Workflow v3 candidate PR inspection', () => {
       ...hostWithPullRequest(mergedPullRequest).host,
       pool: { connect: vi.fn(async () => clients.shift()!) },
       repositoryProvider: {
+        getPullRequest: vi.fn(async () => { throw new Error('generic OAuth provider must not be used'); }),
+        mergePullRequest: vi.fn(),
+      },
+      integrationV3RepositoryProvider: {
         getPullRequest: vi.fn(async () => snapshot),
         inspectPullRequest: vi.fn(async () => snapshot),
         mergePullRequest: vi.fn(),

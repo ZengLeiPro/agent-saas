@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { TaskBoardIntegrationCandidate, TaskBoardIntegrationCandidateRevision, TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
-import { IntegrationEngineV3, type IntegrationEngineV3CandidateHost, type IntegrationEngineV3ExpectedSubject, type IntegrationEngineV3ProviderFacts, type IntegrationEngineV3RequestHost } from './integrationEngineV3.js';
+import { IntegrationEngineV3, type IntegrationEngineV3CandidateHost, type IntegrationEngineV3ExpectedSubject, type IntegrationEngineV3ProviderFacts, type IntegrationEngineV3ProviderHost, type IntegrationEngineV3RequestHost } from './integrationEngineV3.js';
 import { IntegrationProviderOperationService, integrationProviderOperationKey, type IntegrationProviderOperationRecord, type IntegrationProviderOperationState, type IntegrationProviderOperationStorageHost } from './integrationProviderOperations.js';
 import { TaskboardValidationError } from './types.js';
 
@@ -79,7 +79,7 @@ function setup(state: TaskBoardIntegrationCandidate['state'], providerFacts = fa
     providerPullRequestId: '42',
     mergedCommitOid: 'commit-1',
   }));
-  const reconcileMerge = vi.fn(async () => ({ status: 'succeeded' as const, receipt: { providerPullRequestId: '42', mergedCommitOid: 'commit-1', mergedTreeOid: 'tree-1' } }));
+  const reconcileMerge = vi.fn<IntegrationEngineV3ProviderHost['reconcileMerge']>(async () => ({ status: 'succeeded', receipt: { providerPullRequestId: '42', mergedCommitOid: 'commit-1', mergedTreeOid: 'tree-1' } }));
   const readFacts = vi.fn(async () => structuredClone(currentFacts));
   const assertCurrent = vi.fn(async () => undefined);
   const getFlags = vi.fn(async () => ({ enabled: true, composeEnabled: true, reviewEnabled: true, mergeEnabled: true, cleanupEnabled: true, workspaceSyncEnabled: true }));
@@ -282,6 +282,36 @@ describe('IntegrationEngineV3', () => {
     ]);
   });
 
+  it('recovers a restarting merging candidate from an explicitly not-applied failed operation', async () => {
+    const value = candidate('merging');
+    const context = setup('merging');
+    context.readFacts
+      .mockResolvedValueOnce(facts())
+      .mockResolvedValueOnce(facts({ draft: true }));
+    vi.spyOn(context.candidates, 'transition')
+      .mockRejectedValueOnce(new Error('candidate transition temporarily unavailable'));
+
+    await expect(context.engine.execute({
+      type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
+    })).rejects.toThrow('candidate transition temporarily unavailable');
+
+    expect(context.candidates.value.state).toBe('merging');
+    expect([...context.operations.records.values()]).toEqual([
+      expect.objectContaining({
+        state: 'failed',
+        receipt: { outcome: 'not_applied', evidence: 'executor_definitive_failure' },
+      }),
+    ]);
+
+    context.setFacts(facts({ draft: true }));
+    const recovered = await context.engine.execute({
+      type: 'merge_approved', candidateId: value.id, expected: expected(context.candidates.value), executionId: 'merge-execution-1',
+    });
+
+    expect(recovered).toMatchObject({ status: 'applied', candidate: { state: 'needs_human' }, operation: { state: 'failed' } });
+    expect(context.merge).not.toHaveBeenCalled();
+  });
+
   it('converges to needs_human when the merge fence is stale before operation execution', async () => {
     const value = candidate('approved');
     const context = setup('approved');
@@ -430,6 +460,73 @@ describe('IntegrationEngineV3', () => {
     expect(context.merge).toHaveBeenCalledTimes(1);
   });
 
+  it('converges an evidence-backed not-applied merge reconciliation to needs_human', async () => {
+    const value = candidate('approved');
+    const context = setup('approved');
+    context.merge.mockRejectedValueOnce(new Error('timeout before merge outcome was known'));
+    const first = await context.engine.execute({
+      type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
+    });
+    context.reconcileMerge.mockResolvedValueOnce({
+      status: 'not_applied', detail: 'Provider confirms the pull request stayed open',
+      evidence: { verifiedNotApplied: true },
+    });
+    vi.spyOn(context.candidates, 'transition')
+      .mockRejectedValueOnce(new Error('candidate convergence temporarily unavailable'));
+
+    await expect(context.engine.execute({
+      type: 'reconcile_merge', candidateId: value.id, expected: expected(context.candidates.value),
+      operationKey: first.operation!.operationKey,
+    })).rejects.toThrow('candidate convergence temporarily unavailable');
+
+    const failed = context.operations.records.get(first.operation!.operationKey)!;
+    expect(failed).toMatchObject({ state: 'failed', receipt: { outcome: 'not_applied' } });
+    context.operations.records.set(failed.operationKey, {
+      ...failed,
+      receipt: { verifiedNotApplied: true },
+    });
+
+    const recovered = await context.engine.execute({
+      type: 'reconcile_merge', candidateId: value.id, expected: expected(context.candidates.value),
+      operationKey: first.operation!.operationKey,
+    });
+
+    expect(recovered).toMatchObject({
+      status: 'applied', candidate: { state: 'needs_human' }, operation: { state: 'failed' },
+    });
+    expect(context.reconcileMerge).toHaveBeenCalledTimes(1);
+    expect(context.merge).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers a restarting merging candidate from a reconcile mismatch operation', async () => {
+    const value = candidate('approved');
+    const context = setup('approved');
+    context.merge.mockRejectedValueOnce(new Error('merge outcome unknown'));
+    const first = await context.engine.execute({
+      type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
+    });
+    context.reconcileMerge.mockResolvedValueOnce({
+      status: 'mismatch', detail: 'Provider receipt does not match the approved tree',
+      evidence: { actualTreeOid: 'other-tree' },
+    });
+    vi.spyOn(context.candidates, 'transition')
+      .mockRejectedValueOnce(new Error('candidate convergence temporarily unavailable'));
+
+    await expect(context.engine.execute({
+      type: 'reconcile_merge', candidateId: value.id, expected: expected(context.candidates.value),
+      operationKey: first.operation!.operationKey,
+    })).rejects.toThrow('candidate convergence temporarily unavailable');
+    expect(context.operations.records.get(first.operation!.operationKey)).toMatchObject({ state: 'needs_human' });
+
+    const recovered = await context.engine.execute({
+      type: 'reconcile_merge', candidateId: value.id, expected: expected(context.candidates.value),
+      operationKey: first.operation!.operationKey,
+    });
+
+    expect(recovered).toMatchObject({ status: 'applied', candidate: { state: 'needs_human' }, operation: { state: 'needs_human' } });
+    expect(context.reconcileMerge).toHaveBeenCalledTimes(1);
+  });
+
   it('accepts an exact direct controlled receipt when a squash merge tree includes an advanced base', async () => {
     const value = candidate('approved');
     const context = setup('approved');
@@ -477,6 +574,31 @@ describe('IntegrationEngineV3', () => {
 
     expect(result).toMatchObject({ status: 'applied', candidate: { state: 'merged', mergedCommitOid: 'commit-1' } });
     expect(context.reconcileMerge).not.toHaveBeenCalled();
+  });
+
+  it('keeps a needs_human candidate stable when a succeeded receipt still mismatches Provider facts', async () => {
+    const value = candidate('needs_human');
+    const context = setup('needs_human', facts({
+      state: 'merged', baseOid: 'merged-main', mergeCommitOid: 'commit-1', mergedTreeOid: 'tree-1',
+    }));
+    const operationKey = integrationProviderOperationKey({
+      repositoryId: value.repositoryId, candidateId: value.id, candidateRevision: 1,
+      kind: 'merge_pull_request', target: '42',
+    });
+    context.operations.records.set(operationKey, {
+      id: 'operation-1', operationKey, kind: 'merge_pull_request', repositoryId: value.repositoryId,
+      fence: { workflowEpoch: 3, laneEpoch: 9, candidateId: value.id, candidateRevision: 1, executionId: 'merge-execution-1' },
+      expected: {}, command: {}, intentDigest: 'digest', state: 'succeeded', attemptCount: 1,
+      receipt: { providerRequestId: operationKey, providerPullRequestId: '42', mergedCommitOid: 'other-commit' },
+      createdAt: '2026-08-19T00:00:00.000Z', updatedAt: '2026-08-19T00:00:00.000Z',
+    });
+
+    const result = await context.engine.execute({
+      type: 'reconcile_merge', candidateId: value.id, expected: expected(value), operationKey,
+    });
+
+    expect(result).toMatchObject({ status: 'provider_unknown', candidate: { state: 'needs_human' } });
+    expect(context.candidates.value.version).toBe(value.version);
   });
 
   it('reconciles request rows from their target candidate states without advancing twice', async () => {

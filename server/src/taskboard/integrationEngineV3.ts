@@ -281,6 +281,13 @@ export class IntegrationEngineV3 {
   private async mergeApproved(current: IntegrationEngineV3Current, executionId: string): Promise<IntegrationEngineV3Result> {
     const revision = requireRevision(current);
     const operationKey = integrationProviderOperationKey({ repositoryId: current.candidate.repositoryId, candidateId: current.candidate.id, candidateRevision: revision.revision, kind: 'merge_pull_request', target: requiredPr(current.candidate) });
+    if (current.candidate.state === 'merging') {
+      const existingOperation = await this.options.providerOperations.get(operationKey);
+      if (existingOperation?.state === 'failed' || existingOperation?.state === 'needs_human') {
+        const candidate = await this.transition(current, 'needs_human', existingOperation.error ?? 'Provider merge was definitively not applied');
+        return { candidate, status: 'applied', operation: existingOperation };
+      }
+    }
     const facts = await this.readProviderFacts(current);
     if (facts.state === 'merged') {
       const exact = isExactMergedSubject(current, facts);
@@ -310,6 +317,10 @@ export class IntegrationEngineV3 {
       expected: subjectExpected(current, revision),
       command: { providerPullRequestId: requiredPr(current.candidate), expectedHeadOid: revision.headOid, method: current.candidate.mergeMethod },
     });
+    if (operation.state === 'failed' || operation.state === 'needs_human') {
+      const candidate = await this.transition(current, 'needs_human', operation.error ?? 'Provider merge was definitively not applied');
+      return { candidate, status: 'applied', operation };
+    }
     const merging = current.candidate.state === 'merging' ? current.candidate : await this.transition(current, 'merging');
     const repository = await this.repository(current.candidate.repositoryId);
     let finalGateError: unknown;
@@ -337,7 +348,7 @@ export class IntegrationEngineV3 {
       await this.transition({ candidate: merging, revision }, 'needs_human', errorMessage(finalGateError));
       throw finalGateError;
     }
-    if (completed.state === 'failed') {
+    if (completed.state === 'failed' || completed.state === 'needs_human') {
       const candidate = await this.transition({ candidate: merging, revision }, 'needs_human', completed.error ?? 'Provider operation fence rejected the merge');
       return { candidate, status: 'applied', operation: completed };
     }
@@ -349,8 +360,32 @@ export class IntegrationEngineV3 {
     if (current.candidate.state !== 'merging' && current.candidate.state !== 'needs_human') {
       throw failClosed('Only a merging or recoverable needs_human candidate can reconcile', 'TASKBOARD_INTEGRATION_RECONCILE_STATE_INVALID');
     }
+    const revision = requireRevision(current);
+    const expectedOperationKey = integrationProviderOperationKey({
+      repositoryId: current.candidate.repositoryId,
+      candidateId: current.candidate.id,
+      candidateRevision: revision.revision,
+      kind: 'merge_pull_request',
+      target: requiredPr(current.candidate),
+    });
+    if (operationKey !== expectedOperationKey) {
+      throw failClosed('Merge operation does not bind the current candidate revision', 'TASKBOARD_INTEGRATION_RECONCILE_OPERATION_MISMATCH');
+    }
+    const existingOperation = await this.options.providerOperations.get(operationKey);
+    if (existingOperation?.state === 'failed' || existingOperation?.state === 'needs_human') {
+      const candidate = current.candidate.state === 'needs_human'
+        ? current.candidate
+        : await this.transition(current, 'needs_human', existingOperation.error ?? 'Provider merge was definitively not applied');
+      return { candidate, status: 'applied', operation: existingOperation };
+    }
     const repository = await this.repository(current.candidate.repositoryId);
     const operation = await this.options.providerOperations.reconcile(operationKey, (record) => this.options.provider.reconcileMerge(record, repository, this.options.credentialOwnerId));
+    if (operation.state === 'failed' || operation.state === 'needs_human') {
+      const candidate = current.candidate.state === 'needs_human'
+        ? current.candidate
+        : await this.transition(current, 'needs_human', operation.error ?? 'Provider merge was definitively not applied');
+      return { candidate, status: 'applied', operation };
+    }
     if (operation.state !== 'succeeded') return { candidate: current.candidate, status: 'provider_unknown', operation };
     return this.finishMerge(current as Required<IntegrationEngineV3Current>, operation);
   }
@@ -364,7 +399,9 @@ export class IntegrationEngineV3 {
       && facts.mergedTreeOid === current.revision.treeOid;
     if (facts.state !== 'merged' || !facts.mergeCommitOid || receiptCommitOid !== facts.mergeCommitOid
       || (!directControlledReceipt && !exactReconciledTree)) {
-      const candidate = await this.transition(current, 'needs_human', 'Merged provider facts do not match the controlled operation receipt');
+      const candidate = current.candidate.state === 'needs_human'
+        ? current.candidate
+        : await this.transition(current, 'needs_human', 'Merged provider facts do not match the controlled operation receipt');
       return { candidate, status: 'provider_unknown', operation };
     }
     const candidate = await this.options.candidates.commitMerged({ candidateId: current.candidate.id, expectedVersion: current.candidate.version, expectedRevision: current.revision.revision, mergedCommitOid: facts.mergeCommitOid, providerOperationId: operation.id });

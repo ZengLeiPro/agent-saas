@@ -32,7 +32,7 @@ class MemoryHost implements IntegrationV3WorkerHost {
   dispatched: IntegrationV3RequestLease[] = [];
   cleanupCalls: IntegrationV3RequestLease[] = [];
   completedRequests: Array<{ request: IntegrationV3RequestLease; receipt?: import('./integrationV3Worker.js').IntegrationV3CleanupReceipt }> = [];
-  mergeOperation?: { operationKey: string; state: 'prepared' | 'executing' | 'unknown' | 'succeeded' };
+  mergeOperation?: { operationKey: string; state: 'prepared' | 'executing' | 'unknown' | 'failed' | 'needs_human' | 'succeeded' };
   async claimCandidate() {
     if (['merged', 'canceled'].includes(this.current.candidate.state) && this.checkpoints.at(-1)?.status === 'requested') return undefined;
     return { candidateId: 'candidate-1', leaseId: 'candidate-lease' };
@@ -235,6 +235,29 @@ describe('IntegrationV3Worker pure mock flow', () => {
     releaseClaim();
     await activeTick;
   });
+
+  it.each(['failed', 'needs_human'] as const)(
+    'recovers a terminal %s merge operation from merging after restart',
+    async (operationState) => {
+      const host = new MemoryHost();
+      host.current.candidate = candidate('merging');
+      host.mergeOperation = { operationKey: `terminal-${operationState}-op`, state: operationState };
+      const engine = { execute: vi.fn(async (_command: IntegrationEngineV3Command) => ({
+        candidate: { ...host.current.candidate, state: 'needs_human' as const }, status: 'applied' as const,
+      })) } as unknown as IntegrationEngineV3;
+      const worker = new IntegrationV3Worker({
+        host, engine,
+        composer: { compose: vi.fn(), refreshAfterWork: vi.fn() },
+      });
+
+      await worker.runOnce();
+
+      expect(engine.execute).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'reconcile_merge', operationKey: `terminal-${operationState}-op`,
+      }));
+      expect(host.errors.at(-1)).toBeUndefined();
+    },
+  );
 
   it.each(['merging', 'needs_human'] as const)(
     'recovers a succeeded merge operation from %s after restart without resending merge',

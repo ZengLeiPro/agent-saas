@@ -935,12 +935,16 @@ async function updateSourceState(
 ): Promise<TaskBoardIntegrationSource> {
   return withTransaction(host, async (client) => {
     const result = await client.query(
-      `UPDATE ${host.integrationSourcesTable}
+      `UPDATE ${host.integrationSourcesTable} s
           SET state=$2, last_error=$3, updated_at=now()
-        WHERE id=$1 AND state<>'merged'
-          AND merged_commit_oid IS NULL AND provider_receipt_id IS NULL
-          AND ($4::text IS NULL OR state=$4)
-        RETURNING *`,
+        WHERE s.id=$1 AND s.state<>'merged'
+          AND s.merged_commit_oid IS NULL AND s.provider_receipt_id IS NULL
+          AND ($4::text IS NULL OR s.state=$4)
+          AND NOT EXISTS (
+            SELECT 1 FROM ${host.mergeOperationsTable} o
+             WHERE o.integration_source_id=s.id AND o.state IN ('prepared','executing','unknown')
+          )
+        RETURNING s.*`,
       [sourceId, state, error ?? null, expectedState ?? null],
     );
     if (result.rows[0]) return rowToSource(result.rows[0]);

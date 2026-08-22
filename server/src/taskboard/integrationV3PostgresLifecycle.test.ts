@@ -189,7 +189,7 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     } as never)).rejects.toMatchObject({ code: 'TASKBOARD_PROVIDER_OPERATION_FENCE_MISMATCH' });
   });
 
-  it.each(['prepared', 'executing', 'unknown', 'succeeded'] as const)(
+  it.each(['prepared', 'executing', 'unknown', 'failed', 'needs_human', 'succeeded'] as const)(
     'loads %s merge operations for crash/restart convergence',
     async (state) => {
       const query = vi.fn(async (_text: string, _values?: unknown[]) => ({
@@ -200,7 +200,8 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
         operationKey: `merge-${state}`,
         state,
       });
-      expect(query.mock.calls[0]![0]).toContain("state IN ('prepared','executing','unknown','succeeded')");
+      expect(query.mock.calls[0]![0]).toContain("o.state IN ('prepared','executing','unknown','failed','needs_human','succeeded')");
+      expect(query.mock.calls[0]![0]).toContain("o.command->>'providerPullRequestId'=c.provider_pull_request_id");
     },
   );
 

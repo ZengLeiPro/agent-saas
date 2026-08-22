@@ -258,6 +258,35 @@ describe('integration operation guards', () => {
     expect(provider.mergePullRequest).not.toHaveBeenCalled();
   });
 
+  it('keeps an unknown merge isolated from inspection-driven remediation', async () => {
+    const statements: string[] = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        if (sql.includes('e.id AS execution_id')) return { rows: [{ ...contextRow, state: 'waiting_retry' }] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) return { rows: [] };
+        if (sql.includes('SELECT * FROM sources WHERE id=')) {
+          return { rows: [{ ...sourceRow, state: 'waiting_retry', last_error: 'Provider result is unknown; reconciliation required' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const conflicted = { ...pull, mergeable: false };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => conflicted),
+      inspectPullRequest: vi.fn(async () => ({
+        ...conflicted, repositoryId: 'repo-1', providerQueriedAt: '2026-08-22T12:00:00.000Z', workflowRuns: [],
+      })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(inspectIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .resolves.toMatchObject({ source: { state: 'waiting_retry' } });
+    const projection = statements.find((sql) => sql.includes('UPDATE sources') && sql.includes('SET state=$2'));
+    expect(projection).toContain("o.state IN ('prepared','executing','unknown')");
+  });
+
   it('does not overwrite a concurrent conflict-resolution transition from a stale inspection', async () => {
     const client = {
       release: vi.fn(),

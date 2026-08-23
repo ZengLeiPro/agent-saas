@@ -101,10 +101,11 @@ export const MEMORY_CONSOLIDATION_DEFAULTS: MemoryConsolidationResolvedConfig = 
   scanIntervalMs: 10_000,
   scanBatchSize: 500,
   workerConcurrency: 2,
-  leaseSeconds: 900,
-  timeoutSeconds: 600,
+  // lease 必须覆盖一小时 Run 上限，并留出提交与终态落库缓冲，避免过期后重复领取。
+  leaseSeconds: 3_900,
+  timeoutSeconds: 3_600,
   maxRetries: 5,
-  maxTurns: 8,
+  maxTurns: 1_000,
   includeInterrupted: true,
   promptVersion: 2,
 };

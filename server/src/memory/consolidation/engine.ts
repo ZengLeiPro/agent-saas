@@ -1,9 +1,10 @@
 /**
  * L2 记忆审查引擎：durable global cursor 扫描 run 边界；会话静默期到达后，
- * 启动隐藏 Run，从父会话完整 Context Projection 重放并直接维护真实 Markdown。
+ * 启动隐藏 Run，从父会话完整 Context Projection 重放；文件工具先写进程内草稿，
+ * Run 成功后才在短时用户锁内做冲突校验并提交真实 Markdown。
  *
  * 正确性边界：durable cursor / state lease / idempotency ledger / active-run gate / 30 分钟
- * debounce / per-user 进程锁与 PG advisory lock。Prompt Cache 由父会话同模型、同
+ * debounce / per-user 进程锁与提交阶段 PG advisory lock。Prompt Cache 由父会话同模型、同
  * Profile、同 System Prompt、同工具 descriptor 的内容指纹自然复用；不使用
  * previous_response_id。
  */
@@ -11,9 +12,16 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { AgentRunDispatch } from '../../agent/types.js';
-import type { ChannelContext, InboundMessage } from '../../types/index.js';
+import type { ChannelContext, InboundMessage, OutboundEvent } from '../../types/index.js';
 import { resolveUserCwd } from '../../workspace/resolver.js';
 import { releaseMemoryMaintenance, tryAcquireMemoryMaintenance } from '../maintenanceLock.js';
+import {
+  commitMemoryConsolidationDraft,
+  discardMemoryConsolidationDraft,
+  inspectMemoryConsolidationDraft,
+  recoverMemoryConsolidationPreparedCommit,
+  MemoryConsolidationDraftConflictError,
+} from './draft.js';
 import { buildConsolidationPrompt, MEMORY_CONSOLIDATION_PROMPT_VERSION } from './prompt.js';
 import { PgMemoryConsolidationStore } from './store.js';
 import {
@@ -140,8 +148,12 @@ export class MemoryConsolidationEngine {
       this.options.logger?.info('MemoryConsolidationEngine disabled by global config');
       return;
     }
-    // 旧版本可能留下 throttled 状态；新版本不再产生该状态，启动时一次性恢复。
-    await this.options.store.reviveThrottled();
+    // 旧版本可能留下 throttled，或因普通运行失败耗尽重试而粘住 blocked；
+    // 启动时一次性恢复，worker 随后会重新执行完整资格检查。
+    await Promise.all([
+      this.options.store.reviveThrottled(),
+      this.options.store.reviveLegacyBlocked(),
+    ]);
     this.stopped = false;
     this.scanTimer = setInterval(() => { void this.scanOnce(); }, config.scanIntervalMs);
     this.scanTimer.unref?.();
@@ -331,6 +343,7 @@ export class MemoryConsolidationEngine {
         await this.options.store.markFailed({
           tenantId: state.tenantId,
           sessionId: state.sessionId,
+          ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
           now,
           backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
           maxRetries: 0,
@@ -344,6 +357,7 @@ export class MemoryConsolidationEngine {
         await this.options.store.markFailed({
           tenantId: state.tenantId,
           sessionId: state.sessionId,
+          ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
           now,
           backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
           maxRetries: config.maxRetries,
@@ -353,7 +367,11 @@ export class MemoryConsolidationEngine {
       if (projection.tenantId !== state.tenantId
         || projection.userId !== state.userId
         || !isEligibleProjection(projection, state.sessionId)) {
-        await this.options.store.markIneligible({ tenantId: state.tenantId, sessionId: state.sessionId });
+        await this.options.store.markIneligible({
+          tenantId: state.tenantId,
+          sessionId: state.sessionId,
+          ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
+        });
         log?.info(`consolidation discarded ineligible backlog session=${state.sessionId}`);
         return;
       }
@@ -363,6 +381,7 @@ export class MemoryConsolidationEngine {
         await this.options.store.markFailed({
           tenantId: state.tenantId,
           sessionId: state.sessionId,
+          ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
           now,
           backoffMinutes: [1],
           maxRetries: 9999,
@@ -375,6 +394,7 @@ export class MemoryConsolidationEngine {
         await this.options.store.markFailed({
           tenantId: state.tenantId,
           sessionId: state.sessionId,
+          ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
           now,
           backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
           maxRetries: 0,
@@ -387,6 +407,7 @@ export class MemoryConsolidationEngine {
         await this.options.store.markFailed({
           tenantId: state.tenantId,
           sessionId: state.sessionId,
+          ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
           now,
           backoffMinutes: [1],
           maxRetries: 9999,
@@ -394,23 +415,11 @@ export class MemoryConsolidationEngine {
         return;
       }
 
-      let commitLock: { release(): Promise<void> } | null = null;
       try {
-        // 与 L3 memory_poll 共用同一把跨进程锁，并覆盖整个直接写 Markdown 的 Run。
-        commitLock = await this.options.store.acquireCommitLock(state.tenantId, state.userId, 5_000);
-        if (!commitLock) {
-          await this.options.store.markFailed({
-            tenantId: state.tenantId,
-            sessionId: state.sessionId,
-            now,
-            backoffMinutes: [1],
-            maxRetries: 9999,
-          });
-          return;
-        }
+        // 进程内门禁只防止同一用户重复启动 L2；真实文件写入由成功 Run 的
+        // 草稿提交阶段持短时 PG 锁完成，不再让长时间模型推理阻塞显式记忆写入。
         await this.runConsolidation(state, config, user, projection.model);
       } finally {
-        if (commitLock) await commitLock.release().catch(() => undefined);
         releaseMemoryMaintenance(state.tenantId, state.userId);
       }
     } catch (err) {
@@ -418,6 +427,7 @@ export class MemoryConsolidationEngine {
       await this.options.store.markFailed({
         tenantId: state.tenantId,
         sessionId: state.sessionId,
+        ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
         now: new Date().toISOString(),
         backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
         maxRetries: config.maxRetries,
@@ -436,6 +446,13 @@ export class MemoryConsolidationEngine {
     const idempotencyKey = createHash('sha256')
       .update(`${state.tenantId}|${state.sessionId}|${from}|${to}`)
       .digest('hex');
+    const identity = {
+      id: user.id,
+      username: user.username,
+      role: (user.role === 'admin' ? 'admin' : 'user') as 'admin' | 'user',
+      ...(user.tenantId ? { tenantId: user.tenantId } : {}),
+    };
+    const effectiveCwd = resolveUserCwd(this.options.agentCwd, identity);
     const { record } = await this.options.store.insertOrGetRun({
       idempotencyKey,
       tenantId: state.tenantId,
@@ -447,10 +464,40 @@ export class MemoryConsolidationEngine {
       promptVersion: MEMORY_CONSOLIDATION_PROMPT_VERSION,
       ...(sourceModelRef ? { modelRequested: sourceModelRef } : {}),
     });
+
+    const recordedUsage = record.usageJson as Record<string, unknown> | null;
+    if (recordedUsage?.commitJournal) {
+      let recoveryLock: { release(): Promise<void> } | null = null;
+      try {
+        recoveryLock = await this.options.store.acquireCommitLock(state.tenantId, state.userId, 5_000);
+        if (!recoveryLock) {
+          await this.options.store.markFailed({
+            tenantId: state.tenantId,
+            sessionId: state.sessionId,
+            ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
+            now: new Date().toISOString(),
+            backoffMinutes: [1],
+            maxRetries: config.maxRetries,
+          });
+          return;
+        }
+        const recovered = await recoverMemoryConsolidationPreparedCommit(
+          effectiveCwd,
+          recordedUsage?.commitJournal,
+        );
+        this.options.logger?.warn(
+          `consolidation recovered interrupted commit user=${state.userId} files=${recovered}`,
+        );
+      } finally {
+        if (recoveryLock) await recoveryLock.release().catch(() => undefined);
+      }
+    }
+
     if (record.status === 'applied' || record.status === 'noop') {
       await this.options.store.markApplied({
         tenantId: state.tenantId,
         sessionId: state.sessionId,
+        ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
         toSequence: to,
         debounceMinutes: config.debounceMinutes,
         now: new Date().toISOString(),
@@ -464,12 +511,6 @@ export class MemoryConsolidationEngine {
       return tombstone.subjectText ?? tombstone.memoryKey;
     }).filter((subject): subject is string => Boolean(subject?.trim()));
 
-    const identity = {
-      id: user.id,
-      username: user.username,
-      role: (user.role === 'admin' ? 'admin' : 'user') as 'admin' | 'user',
-      ...(user.tenantId ? { tenantId: user.tenantId } : {}),
-    };
     const channelContext: ChannelContext = {
       channel: 'web',
       user: identity,
@@ -484,54 +525,150 @@ export class MemoryConsolidationEngine {
         forgottenSubjects,
       }),
     };
-    const effectiveCwd = resolveUserCwd(this.options.agentCwd, identity);
-
     let dispatchError: string | undefined;
     let completed = false;
     let hiddenSessionId: string | undefined;
     const abort = new AbortController();
-    const timeoutTimer = setTimeout(
-      () => abort.abort('memory_consolidation_timeout'),
-      config.timeoutSeconds * 1000,
-    );
+    let dispatchIterator: AsyncIterator<OutboundEvent> | undefined;
+    let rejectTimeout!: (error: Error) => void;
+    const timeout = new Promise<never>((_resolve, reject) => { rejectTimeout = reject; });
+    const timeoutTimer = setTimeout(() => {
+      abort.abort('memory_consolidation_timeout');
+      rejectTimeout(new Error(`L2 run timeout after ${config.timeoutSeconds}s`));
+    }, config.timeoutSeconds * 1000);
     try {
-      for await (const event of this.options.dispatch(inbound, channelContext, {
-        maxTurns: config.maxTurns,
-        cwd: effectiveCwd,
-        approvalPolicy: { autoApproveTools: true },
-        skipMemory: true,
-        abortController: abort,
-        memoryConsolidationSourceSessionId: state.sessionId,
-      })) {
-        if (event.type === 'session_init' && event.sessionId) hiddenSessionId = event.sessionId;
-        if (event.type === 'error') dispatchError = event.error || 'unknown error';
-        if (event.type === 'done') completed = true;
-        if (abort.signal.aborted) break;
+      try {
+        dispatchIterator = this.options.dispatch(inbound, channelContext, {
+          maxTurns: config.maxTurns,
+          cwd: effectiveCwd,
+          approvalPolicy: { autoApproveTools: true },
+          skipMemory: true,
+          abortController: abort,
+          memoryConsolidationSourceSessionId: state.sessionId,
+        })[Symbol.asyncIterator]();
+        for (;;) {
+          const next = await Promise.race([dispatchIterator.next(), timeout]);
+          if (next.done) break;
+          const event = next.value;
+          if (event.type === 'session_init' && event.sessionId) hiddenSessionId = event.sessionId;
+          if (event.type === 'error') dispatchError = event.error || 'unknown error';
+          if (event.type === 'done') completed = true;
+          if (abort.signal.aborted) break;
+        }
+      } catch (error) {
+        dispatchError = message(error);
       }
     } finally {
       clearTimeout(timeoutTimer);
+      if (abort.signal.aborted && dispatchIterator?.return) {
+        void dispatchIterator.return().catch(() => undefined);
+      }
     }
 
     if (abort.signal.aborted) {
+      discardMemoryConsolidationDraft(hiddenSessionId);
       await this.failRun(state, config, idempotencyKey, 'timeout',
         `L2 run timeout after ${config.timeoutSeconds}s`, hiddenSessionId);
       return;
     }
-    if (!completed || dispatchError) {
+    if (!completed || dispatchError || !hiddenSessionId) {
+      discardMemoryConsolidationDraft(hiddenSessionId);
       await this.failRun(
         state,
         config,
         idempotencyKey,
         dispatchError ? 'dispatch_error' : 'incomplete_run',
-        dispatchError ?? 'L2 hidden run finished without done event',
+        dispatchError ?? 'L2 hidden run finished without session_init/done event',
         hiddenSessionId,
       );
       return;
     }
 
-    const usage = hiddenSessionId
-      ? await this.readHiddenRunUsage(hiddenSessionId)
-      : { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, modelActual: undefined };
+    const leaseRenewed = state.leaseOwner
+      ? await this.options.store.renewLease({
+          tenantId: state.tenantId,
+          sessionId: state.sessionId,
+          leaseOwner: state.leaseOwner,
+          now: new Date().toISOString(),
+          leaseSeconds: 300,
+        })
+      : false;
+    if (!leaseRenewed) {
+      discardMemoryConsolidationDraft(hiddenSessionId);
+      this.options.logger?.warn(`consolidation lease lost before commit session=${state.sessionId}`);
+      return;
+    }
+
+    const usage = await this.readHiddenRunUsage(hiddenSessionId);
+    const draftPlan = await inspectMemoryConsolidationDraft(hiddenSessionId);
+    try {
+      await this.options.store.updateRun({
+        idempotencyKey,
+        status: 'prepared',
+        ...(usage.modelActual ? { modelActual: usage.modelActual } : {}),
+        usageJson: {
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          cacheReadTokens: usage.cacheReadTokens,
+          hiddenSessionId,
+          changedFiles: draftPlan.changedFiles,
+          commitJournal: draftPlan.commitJournal,
+        },
+      });
+    } catch (error) {
+      discardMemoryConsolidationDraft(hiddenSessionId);
+      throw error;
+    }
+
+    let commitLock: { release(): Promise<void> } | null = null;
+    let commitError: unknown;
+    let leaseLostBeforeCommit = false;
+    try {
+      commitLock = await this.options.store.acquireCommitLock(state.tenantId, state.userId, 5_000);
+      if (!commitLock) commitError = new Error('L2 memory draft commit lock unavailable');
+      else {
+        const stillOwned = await this.options.store.renewLease({
+          tenantId: state.tenantId,
+          sessionId: state.sessionId,
+          leaseOwner: state.leaseOwner!,
+          now: new Date().toISOString(),
+          leaseSeconds: 300,
+        });
+        if (!stillOwned) {
+          leaseLostBeforeCommit = true;
+          commitError = new Error('L2 memory draft lease lost before commit');
+        } else {
+          await commitMemoryConsolidationDraft(hiddenSessionId);
+        }
+      }
+    } catch (error) {
+      commitError = error;
+    } finally {
+      if (commitLock) await commitLock.release().catch(() => undefined);
+    }
+    if (commitError) {
+      discardMemoryConsolidationDraft(hiddenSessionId);
+      const conflict = commitError instanceof MemoryConsolidationDraftConflictError;
+      await this.failRun(
+        state,
+        config,
+        idempotencyKey,
+        conflict
+          ? 'commit_conflict'
+          : leaseLostBeforeCommit
+            ? 'commit_lease_lost'
+            : commitLock ? 'commit_error' : 'commit_lock_timeout',
+        message(commitError),
+        hiddenSessionId,
+        !conflict && !leaseLostBeforeCommit && commitLock
+          ? draftPlan.commitJournal
+          : undefined,
+      );
+      return;
+    }
+
+    // prepared journal 已随 ledger 持久化；此刻所有 rename 已完成。后续 DB 落库失败时，
+    // 同一范围会先校验/补齐 staged 内容，再基于已提交 Markdown 做幂等收敛。
     await this.options.store.updateRun({
       idempotencyKey,
       status: 'applied',
@@ -540,7 +677,8 @@ export class MemoryConsolidationEngine {
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
         cacheReadTokens: usage.cacheReadTokens,
-        ...(hiddenSessionId ? { hiddenSessionId } : {}),
+        hiddenSessionId,
+        changedFiles: draftPlan.changedFiles,
       },
       applied: true,
       finished: true,
@@ -548,6 +686,7 @@ export class MemoryConsolidationEngine {
     await this.options.store.markApplied({
       tenantId: state.tenantId,
       sessionId: state.sessionId,
+      ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
       toSequence: to,
       debounceMinutes: config.debounceMinutes,
       now: new Date().toISOString(),
@@ -565,6 +704,7 @@ export class MemoryConsolidationEngine {
     errorCode: string,
     errorMessage: string,
     hiddenSessionId?: string,
+    commitJournal?: unknown,
   ): Promise<void> {
     const usage = hiddenSessionId ? await this.readHiddenRunUsage(hiddenSessionId) : undefined;
     await this.options.store.updateRun({
@@ -577,6 +717,7 @@ export class MemoryConsolidationEngine {
           outputTokens: usage.outputTokens,
           cacheReadTokens: usage.cacheReadTokens,
           hiddenSessionId,
+          ...(commitJournal ? { commitJournal } : {}),
         },
       } : {}),
       incrementRetry: true,
@@ -587,6 +728,7 @@ export class MemoryConsolidationEngine {
     await this.options.store.markFailed({
       tenantId: state.tenantId,
       sessionId: state.sessionId,
+      ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
       now: new Date().toISOString(),
       backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
       maxRetries: config.maxRetries,

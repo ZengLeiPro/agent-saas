@@ -182,7 +182,7 @@ describePg('PgMemoryConsolidationStore contract', () => {
     expect(state?.leaseOwner).toBeNull();
   });
 
-  it('markFailed 走退避；超过 maxRetries 转 blocked', async () => {
+  it('运行失败耗尽预算后暂时 blocked，并可在启动恢复', async () => {
     await store!.applyRunFinished({
       ...BASE, runId: 'r2', sessionSequence: 50, at: now(), globalSequence: 12,
       eligible: true, debounceMinutes: 10,
@@ -197,9 +197,19 @@ describePg('PgMemoryConsolidationStore contract', () => {
       backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES, maxRetries: 1,
     });
     expect(r2).toBe('blocked');
+    expect((await store!.getState(BASE.tenantId, BASE.sessionId))?.status).toBe('blocked');
+    await store!.applyRunFinished({
+      ...BASE, runId: 'r3', sessionSequence: 60, at: now(), globalSequence: 13,
+      eligible: true, debounceMinutes: 10,
+    });
+    expect((await store!.getState(BASE.tenantId, BASE.sessionId))?.status).toBe('pending');
+    await store!.markFailed({
+      tenantId: BASE.tenantId, sessionId: BASE.sessionId, now: now(),
+      backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES, maxRetries: 0, permanent: true,
+    });
+    expect(await store!.reviveLegacyBlocked()).toBeGreaterThanOrEqual(1);
     const state = await store!.getState(BASE.tenantId, BASE.sessionId);
-    expect(state?.status).toBe('blocked');
-    // blocked 后 processed 不动
+    expect(state?.status).toBe('pending');
     expect(state?.processedSessionSequence).toBe(40);
   });
 

@@ -1623,13 +1623,20 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       logger: { warn: (msg) => serverLogger.warn(msg) },
     });
   }
-  const resolveMemoryConsolidationConfig = (): MemoryConsolidationResolvedConfig => ({
-    ...MEMORY_CONSOLIDATION_DEFAULTS,
-    enabled: config.memory?.consolidation?.enabled === true,
-    ...Object.fromEntries(
-      Object.entries(config.memory?.consolidation ?? {}).filter(([key, value]) => key !== 'enabled' && value !== undefined),
-    ),
-  });
+  const resolveMemoryConsolidationConfig = (): MemoryConsolidationResolvedConfig => {
+    const resolved = {
+      ...MEMORY_CONSOLIDATION_DEFAULTS,
+      enabled: config.memory?.consolidation?.enabled === true,
+      ...Object.fromEntries(
+        Object.entries(config.memory?.consolidation ?? {}).filter(([key, value]) => key !== 'enabled' && value !== undefined),
+      ),
+    } as MemoryConsolidationResolvedConfig;
+    // running lease 必须覆盖整个 Run，并给草稿提交/终态落库留出缓冲。
+    return {
+      ...resolved,
+      leaseSeconds: Math.max(resolved.leaseSeconds, resolved.timeoutSeconds + 300),
+    };
+  };
   const getTenantMemoryFeatureStatus = (tenantId: string) => {
     let features;
     try {

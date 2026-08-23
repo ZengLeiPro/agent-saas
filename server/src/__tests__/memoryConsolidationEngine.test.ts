@@ -69,6 +69,7 @@ function createHarness(input: {
   const claimDue = vi.fn(async () => input.claimedStates ?? []);
   const markIneligible = vi.fn(async () => undefined);
   const reviveThrottled = vi.fn(async () => 0);
+  const reviveLegacyBlocked = vi.fn(async () => 0);
   const applyRunStarted = vi.fn(async () => undefined);
   const applyRunFinished = vi.fn(async () => undefined);
   const store = {
@@ -79,6 +80,7 @@ function createHarness(input: {
     claimDue,
     markIneligible,
     reviveThrottled,
+    reviveLegacyBlocked,
     applyRunStarted,
     applyRunFinished,
   } as unknown as PgMemoryConsolidationStore;
@@ -120,6 +122,7 @@ function createHarness(input: {
     claimDue,
     markIneligible,
     reviveThrottled,
+    reviveLegacyBlocked,
     applyRunStarted,
     applyRunFinished,
     listGlobalPage,
@@ -147,8 +150,12 @@ afterEach(() => {
 });
 
 describe('MemoryConsolidationEngine scanner', () => {
-  it('默认静默期为 30 分钟', () => {
+  it('默认静默期为 30 分钟，隐藏审查有一小时和 1000 轮预算', () => {
     expect(MEMORY_CONSOLIDATION_DEFAULTS.debounceMinutes).toBe(30);
+    expect(MEMORY_CONSOLIDATION_DEFAULTS.timeoutSeconds).toBe(3_600);
+    expect(MEMORY_CONSOLIDATION_DEFAULTS.maxTurns).toBe(1_000);
+    expect(MEMORY_CONSOLIDATION_DEFAULTS.leaseSeconds)
+      .toBeGreaterThan(MEMORY_CONSOLIDATION_DEFAULTS.timeoutSeconds);
   });
 
   it('全局关闭：只初始化表，不启动 scanner/worker，也不响应 wake', async () => {
@@ -162,6 +169,7 @@ describe('MemoryConsolidationEngine scanner', () => {
     expect(harness.listGlobalPage).not.toHaveBeenCalled();
     expect(harness.claimDue).not.toHaveBeenCalled();
     expect(harness.reviveThrottled).not.toHaveBeenCalled();
+    expect(harness.reviveLegacyBlocked).not.toHaveBeenCalled();
     expect(harness.info).toHaveBeenCalledWith('MemoryConsolidationEngine disabled by global config');
   });
 
@@ -172,6 +180,7 @@ describe('MemoryConsolidationEngine scanner', () => {
     harness.engine.stop();
 
     expect(harness.reviveThrottled).toHaveBeenCalledOnce();
+    expect(harness.reviveLegacyBlocked).toHaveBeenCalledOnce();
   });
 
   it('空游标遇到超期缺 projection 事件：先写隔离台账，再推进到该 global sequence', async () => {
@@ -346,7 +355,11 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
 
     await workOnce(harness.engine);
 
-    expect(harness.markIneligible).toHaveBeenCalledWith({ tenantId: state.tenantId, sessionId: state.sessionId });
+    expect(harness.markIneligible).toHaveBeenCalledWith({
+      tenantId: state.tenantId,
+      sessionId: state.sessionId,
+      leaseOwner: 'worker-1',
+    });
     expect(harness.dispatch).not.toHaveBeenCalled();
   });
 
@@ -362,6 +375,7 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
     const updateRun = vi.fn(async () => undefined);
     const markApplied = vi.fn(async () => undefined);
     const markFailed = vi.fn(async () => 'retry_wait' as const);
+    const acquireCommitLock = vi.fn(async () => ({ release }));
     const dispatchOptions: unknown[] = [];
     const dispatch = vi.fn((_message, _context, options) => {
       dispatchOptions.push(options);
@@ -377,7 +391,8 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
       quarantineEnvelopeAndAdvanceCursor: vi.fn(async () => undefined),
       claimDue: vi.fn(async () => [state]),
       reviveThrottled: vi.fn(async () => 0),
-      acquireCommitLock: vi.fn(async () => ({ release })),
+      acquireCommitLock,
+      renewLease: vi.fn(async () => true),
       insertOrGetRun: vi.fn(async () => ({
         created: true,
         record: { id: 'ledger-1', status: 'started' },
@@ -424,6 +439,7 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
       memoryConsolidationSourceSessionId: 'source-session',
       skipMemory: true,
       approvalPolicy: { autoApproveTools: true },
+      maxTurns: 1_000,
     }));
     expect(dispatchOptions[0]).not.toEqual(expect.objectContaining({
       toolProfile: expect.anything(),
@@ -431,6 +447,7 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
       executionTarget: expect.anything(),
       skipPersona: expect.anything(),
     }));
+    expect(updateRun).toHaveBeenCalledWith(expect.objectContaining({ status: 'prepared' }));
     expect(updateRun).toHaveBeenCalledWith(expect.objectContaining({
       status: 'applied',
       modelActual: 'gpt-5.4',
@@ -440,6 +457,8 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
       sessionId: 'source-session', toSequence: 42,
     }));
     expect(markFailed).not.toHaveBeenCalled();
+    expect(acquireCommitLock).toHaveBeenCalledOnce();
+    expect(dispatch.mock.invocationCallOrder[0]).toBeLessThan(acquireCommitLock.mock.invocationCallOrder[0]!);
     expect(release).toHaveBeenCalledOnce();
   });
 });

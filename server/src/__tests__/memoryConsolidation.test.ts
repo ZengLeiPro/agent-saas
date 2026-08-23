@@ -1,10 +1,16 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ToolCallContext, ToolDescriptor, ToolRuntime } from '../agent/toolRuntime.js';
+import {
+  commitMemoryConsolidationDraft,
+  discardMemoryConsolidationDraft,
+  inspectMemoryConsolidationDraft,
+  recoverMemoryConsolidationPreparedCommit,
+} from '../memory/consolidation/draft.js';
 import { checkMemoryTextSafety, normalizeFingerprint } from '../memory/consolidation/safety.js';
 import {
   applyMainSessionToolFilter,
@@ -53,6 +59,7 @@ function toolContext(root: string): ToolCallContext {
 
 const tempDirs: string[] = [];
 afterEach(async () => {
+  discardMemoryConsolidationDraft('hidden-session');
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -91,10 +98,11 @@ describe('hidden memory review invocation policy', () => {
       input: { path: 'memory/2026-08-21.md', content: '事实' },
       authorization: { source: 'policy_auto' },
     } as never, toolContext(root));
-    expect(invoke).toHaveBeenCalledWith(expect.objectContaining({ toolId: 'Write' }), expect.objectContaining({
-      memoryMaintenanceMode: 'consolidation',
-      sessionId: 'hidden-session',
-    }));
+    expect(invoke).not.toHaveBeenCalled();
+    await expect(readFile(join(root, 'memory/2026-08-21.md'), 'utf8')).rejects.toThrow();
+    await commitMemoryConsolidationDraft('hidden-session');
+    expect(await readFile(join(root, 'memory/2026-08-21.md'), 'utf8')).toBe('事实');
+    expect((await stat(join(root, 'memory/2026-08-21.md'))).mode & 0o777).toBe(0o600);
 
     await expect(runtime.invoke({
       toolId: 'WebSearch',
@@ -119,6 +127,69 @@ describe('hidden memory review invocation policy', () => {
       input: { path: '../MEMORY.md', content: 'x' },
       authorization: { source: 'policy_auto' },
     } as never, toolContext(root))).rejects.toThrow('越界 workspace');
+    await expect(runtime.invoke({
+      toolId: 'Write',
+      input: { path: 'memory/oversized.md', content: 'x'.repeat(1024 * 1024 + 1) },
+      authorization: { source: 'policy_auto' },
+    } as never, toolContext(root))).rejects.toThrow('单文件超过上限');
+  });
+
+  it('多文件提交留下 durable journal，重启恢复可补齐中断写入', async () => {
+    const root = await tempWorkspace();
+    const runtime = applyMemoryConsolidationInvocationPolicy(fakeRuntime(), 'source-session');
+    const context = toolContext(root);
+    await runtime.invoke({
+      toolId: 'Edit',
+      input: { file_path: 'MEMORY.md', old_string: '# Memory', new_string: '# 已整合', replace_all: false },
+      authorization: { source: 'policy_auto' },
+    } as never, context);
+    await runtime.invoke({
+      toolId: 'Write',
+      input: { path: 'memory/2026-08-22.md', content: '长期事实' },
+      authorization: { source: 'policy_auto' },
+    } as never, context);
+    const prepared = await inspectMemoryConsolidationDraft('hidden-session');
+    await commitMemoryConsolidationDraft('hidden-session');
+
+    // 模拟进程在多文件 rename 之间退出：一份已提交，一份仍是 baseline。
+    await writeFile(join(root, 'MEMORY.md'), '# Memory\n', 'utf8');
+    expect(await recoverMemoryConsolidationPreparedCommit(root, prepared.commitJournal)).toBe(1);
+    expect(await readFile(join(root, 'MEMORY.md'), 'utf8')).toBe('# 已整合\n');
+    expect(await readFile(join(root, 'memory/2026-08-22.md'), 'utf8')).toBe('长期事实');
+  });
+
+  it('prepared 恢复先全量校验，后续冲突不会先写前序文件', async () => {
+    const root = await tempWorkspace();
+    await expect(recoverMemoryConsolidationPreparedCommit(root, {
+      version: 1,
+      entries: [
+        { relativePath: 'MEMORY.md', baseline: '# Memory\n', staged: '# 不应写入\n' },
+        { relativePath: 'memory/conflict.md', baseline: '不存在的 baseline', staged: '新值' },
+      ],
+    })).rejects.toThrow('审查期间已变化');
+    expect(await readFile(join(root, 'MEMORY.md'), 'utf8')).toBe('# Memory\n');
+  });
+
+  it('Run 内读写只作用于草稿，提交前冲突不会覆盖显式记忆修改', async () => {
+    const root = await tempWorkspace();
+    const runtime = applyMemoryConsolidationInvocationPolicy(fakeRuntime(), 'source-session');
+    const context = toolContext(root);
+
+    await runtime.invoke({
+      toolId: 'Read',
+      input: { path: 'MEMORY.md' },
+      authorization: { source: 'policy_auto' },
+    } as never, context);
+    await runtime.invoke({
+      toolId: 'Edit',
+      input: { file_path: 'MEMORY.md', old_string: '# Memory', new_string: '# 草稿', replace_all: false },
+      authorization: { source: 'policy_auto' },
+    } as never, context);
+
+    expect(await readFile(join(root, 'MEMORY.md'), 'utf8')).toBe('# Memory\n');
+    await writeFile(join(root, 'MEMORY.md'), '# 显式修改\n', 'utf8');
+    await expect(commitMemoryConsolidationDraft('hidden-session')).rejects.toThrow('审查期间已变化');
+    expect(await readFile(join(root, 'MEMORY.md'), 'utf8')).toBe('# 显式修改\n');
   });
 
   it('符号链接不能把记忆路径绕到 workspace 外', async () => {

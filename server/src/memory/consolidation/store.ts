@@ -348,8 +348,7 @@ export class PgMemoryConsolidationStore {
            first_pending_at = COALESCE(${this.stateTable}.first_pending_at, $6),
            due_at = $6::timestamptz + make_interval(mins => $7),
            last_activity_at = GREATEST(COALESCE(${this.stateTable}.last_activity_at, $6), $6),
-           status = CASE WHEN ${this.stateTable}.status IN ('blocked', 'throttled')
-                         THEN ${this.stateTable}.status ELSE 'pending' END,
+           status = 'pending', attempts = 0, next_attempt_at = NULL,
            last_boundary_global_sequence = $9,
            updated_at = NOW()
          WHERE ${this.stateTable}.last_boundary_global_sequence < $9`,
@@ -448,9 +447,25 @@ export class PgMemoryConsolidationStore {
     }
   }
 
+  /** 提交前续租并校验 fencing token；失败表示该 state 已被其他 worker 接管。 */
+  async renewLease(input: {
+    tenantId: string; sessionId: string; leaseOwner: string; now: string; leaseSeconds: number;
+  }): Promise<boolean> {
+    const res = await this.pool.query(
+      `UPDATE ${this.stateTable} SET
+         lease_expires_at = $4::timestamptz + make_interval(secs => $5), updated_at = NOW()
+       WHERE tenant_id = $1 AND session_id = $2 AND status = 'running'
+         AND active_run_ids = '[]'::jsonb
+         AND lease_owner = $3 AND lease_expires_at >= $4::timestamptz`,
+      [input.tenantId, input.sessionId, input.leaseOwner, input.now, input.leaseSeconds],
+    );
+    return (res.rowCount ?? 0) === 1;
+  }
+
   /** applied/noop：processed 推进到 toSequence；若 target 已超前则回到 pending，否则 idle。 */
   async markApplied(input: {
     tenantId: string; sessionId: string; toSequence: number; debounceMinutes: number; now: string;
+    leaseOwner?: string;
   }): Promise<void> {
     await this.pool.query(
       `UPDATE ${this.stateTable} SET
@@ -463,56 +478,74 @@ export class PgMemoryConsolidationStore {
          first_pending_at = CASE WHEN target_session_sequence > GREATEST(processed_session_sequence, $3)
                                  THEN COALESCE(first_pending_at, $4::timestamptz) ELSE NULL END,
          updated_at = NOW()
-       WHERE tenant_id = $1 AND session_id = $2`,
-      [input.tenantId, input.sessionId, input.toSequence, input.now, input.debounceMinutes],
+       WHERE tenant_id = $1 AND session_id = $2
+         AND ($6::text IS NULL OR lease_owner = $6)`,
+      [input.tenantId, input.sessionId, input.toSequence, input.now, input.debounceMinutes, input.leaseOwner ?? null],
     );
   }
 
   /** 会话已被政策排除：原子丢弃全部 backlog，后续新事件仍须重新通过 scanner 资格检查。 */
-  async markIneligible(input: { tenantId: string; sessionId: string }): Promise<void> {
+  async markIneligible(input: { tenantId: string; sessionId: string; leaseOwner?: string }): Promise<void> {
     await this.pool.query(
       `UPDATE ${this.stateTable} SET
          processed_session_sequence = target_session_sequence,
          attempts = 0, next_attempt_at = NULL, lease_owner = NULL, lease_expires_at = NULL,
          status = 'idle', due_at = NULL, first_pending_at = NULL, updated_at = NOW()
-       WHERE tenant_id = $1 AND session_id = $2`,
-      [input.tenantId, input.sessionId],
+       WHERE tenant_id = $1 AND session_id = $2
+         AND ($3::text IS NULL OR lease_owner = $3)`,
+      [input.tenantId, input.sessionId, input.leaseOwner ?? null],
     );
   }
 
-  /** 可重试失败：attempts+1，按退避序列排 next_attempt_at；超过 maxRetries 转 blocked。 */
+  /** 可重试失败：attempts+1 并按退避序列重排；耗尽预算后暂时 blocked，后续新活动会恢复。 */
   async markFailed(input: {
     tenantId: string; sessionId: string; now: string;
     backoffMinutes: readonly number[]; maxRetries: number;
-    permanent?: boolean;
+    permanent?: boolean; leaseOwner?: string;
   }): Promise<'retry_wait' | 'blocked'> {
-    const res = await this.pool.query<{ attempts: number }>(
-      `UPDATE ${this.stateTable} SET
-         attempts = attempts + 1, lease_owner = NULL, lease_expires_at = NULL, updated_at = NOW()
-       WHERE tenant_id = $1 AND session_id = $2
-       RETURNING attempts`,
-      [input.tenantId, input.sessionId],
-    );
-    const attempts = res.rows[0]?.attempts ?? 1;
-    const blocked = input.permanent === true || attempts > input.maxRetries;
-    if (blocked) {
-      await this.pool.query(
-        `UPDATE ${this.stateTable} SET status = 'blocked', next_attempt_at = NULL, updated_at = NOW()
-         WHERE tenant_id = $1 AND session_id = $2`,
-        [input.tenantId, input.sessionId],
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const res = await client.query<{ attempts: number }>(
+        `UPDATE ${this.stateTable} SET
+           attempts = attempts + 1, lease_owner = NULL, lease_expires_at = NULL, updated_at = NOW()
+         WHERE tenant_id = $1 AND session_id = $2
+           AND ($3::text IS NULL OR lease_owner = $3)
+         RETURNING attempts`,
+        [input.tenantId, input.sessionId, input.leaseOwner ?? null],
       );
-      return 'blocked';
+      if (res.rows.length === 0) {
+        await client.query('COMMIT');
+        return 'retry_wait';
+      }
+      const attempts = res.rows[0]!.attempts;
+      const blocked = input.permanent === true || attempts > input.maxRetries;
+      if (blocked) {
+        await client.query(
+          `UPDATE ${this.stateTable} SET status = 'blocked', next_attempt_at = NULL, updated_at = NOW()
+           WHERE tenant_id = $1 AND session_id = $2`,
+          [input.tenantId, input.sessionId],
+        );
+        await client.query('COMMIT');
+        return 'blocked';
+      }
+      const backoff = input.backoffMinutes[Math.min(attempts - 1, input.backoffMinutes.length - 1)] ?? 60;
+      await client.query(
+        `UPDATE ${this.stateTable} SET
+           status = 'retry_wait',
+           next_attempt_at = $3::timestamptz + make_interval(mins => $4),
+           updated_at = NOW()
+         WHERE tenant_id = $1 AND session_id = $2`,
+        [input.tenantId, input.sessionId, input.now, backoff],
+      );
+      await client.query('COMMIT');
+      return 'retry_wait';
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
     }
-    const backoff = input.backoffMinutes[Math.min(attempts - 1, input.backoffMinutes.length - 1)] ?? 60;
-    await this.pool.query(
-      `UPDATE ${this.stateTable} SET
-         status = 'retry_wait',
-         next_attempt_at = $3::timestamptz + make_interval(mins => $4),
-         updated_at = NOW()
-       WHERE tenant_id = $1 AND session_id = $2`,
-      [input.tenantId, input.sessionId, input.now, backoff],
-    );
-    return 'retry_wait';
   }
 
   /** 兼容恢复旧版本配额留下的 throttled 状态；新版本不再产生该状态。 */
@@ -520,6 +553,20 @@ export class PgMemoryConsolidationStore {
     const res = await this.pool.query(
       `UPDATE ${this.stateTable} SET status = 'pending', updated_at = NOW()
        WHERE status = 'throttled' AND target_session_sequence > processed_session_sequence`,
+    );
+    return res.rowCount ?? 0;
+  }
+
+  /**
+   * blocked 只是有界重试后的暂停态，不得永久粘住。启动时恢复 backlog，
+   * worker 会重新执行资格检查并按真实原因处理；后续新活动也会直接恢复 pending。
+   */
+  async reviveLegacyBlocked(): Promise<number> {
+    const res = await this.pool.query(
+      `UPDATE ${this.stateTable} SET
+         status = 'pending', attempts = 0, next_attempt_at = NULL,
+         lease_owner = NULL, lease_expires_at = NULL, updated_at = NOW()
+       WHERE status = 'blocked' AND target_session_sequence > processed_session_sequence`,
     );
     return res.rowCount ?? 0;
   }

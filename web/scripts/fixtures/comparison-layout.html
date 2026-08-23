@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Comparison 布局回归夹具</title>
+  </head>
+  <body>
+    <main id="root" style="width: 800px"></main>
+    <script type="module">
+      import React from "react";
+      import { createRoot } from "react-dom/client";
+      import "../../src/index.css";
+      import { PresentationBlocks } from "../../src/components/presentation/PresentationBlocks.tsx";
+
+      const blocks = [{
+        kind: "records",
+        layout: "comparison",
+        title: "跨行列对齐检查",
+        items: [
+          { label: "短项", baseline: "A", current: "B", delta: "+1" },
+          { label: "中等长度标签", baseline: "C", current: "D", delta: "+2" },
+          { label: "这是一个明显更长且需要换行的对照项标签", baseline: "E", current: "F", delta: "+3" },
+        ],
+      }];
+
+      createRoot(document.getElementById("root")).render(
+        React.createElement(PresentationBlocks, { blocks }),
+      );
+    </script>
+  </body>
+</html>

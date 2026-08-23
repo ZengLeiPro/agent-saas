@@ -210,8 +210,8 @@ function RecordRow({
   );
 }
 
-// 首列按内容收拢并限制最大宽度，三列对照值等分剩余空间；表头与数据行共用轨道以保持对齐。
-const COMPARISON_COLUMNS = "sm:grid-cols-[fit-content(16rem)_repeat(3,minmax(8rem,1fr))_auto]";
+// 首列固定为紧凑标签轨道，避免独立行按内容计算宽度后破坏纵向对齐；三列对照值等分剩余空间。
+const COMPARISON_COLUMNS = "sm:grid-cols-[9rem_repeat(3,minmax(8rem,1fr))_auto]";
 
 function ComparisonRow({ item }: { item: RecordItem }) {
   const [open, setOpen] = useState(false);
@@ -235,6 +235,7 @@ function ComparisonRow({ item }: { item: RecordItem }) {
           "sm:items-start",
           !expandable && "cursor-default",
         )}
+        data-comparison-track
       >
         <span className="min-w-0 break-words text-sm font-medium text-foreground">{item.label}</span>
         <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm sm:block">
@@ -262,7 +263,10 @@ function ComparisonRow({ item }: { item: RecordItem }) {
 function ComparisonView({ block }: { block: RecordsBlock }) {
   return (
     <div data-comparison-table>
-      <div className={cn("hidden gap-x-3 border-b border-border/60 px-4 py-2 text-xs font-medium text-muted-foreground sm:grid", COMPARISON_COLUMNS)}>
+      <div
+        className={cn("hidden gap-x-3 border-b border-border/60 px-4 py-2 text-xs font-medium text-muted-foreground sm:grid", COMPARISON_COLUMNS)}
+        data-comparison-track
+      >
         <span>对照项</span>
         <span>基准/之前</span>
         <span>当前/实际</span>

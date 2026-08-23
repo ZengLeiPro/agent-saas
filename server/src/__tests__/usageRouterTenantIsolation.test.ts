@@ -346,6 +346,30 @@ describe('Usage 路由组织隔离', () => {
     });
   });
 
+  describe('GET /trend-by-model', () => {
+    it('组织 admin 自动限本组织，平台 admin 可指定 tenantId', async () => {
+      seedCrossTenant();
+
+      h.setCaller(WAIN_ADMIN);
+      const orgBody = await (await h.request('/api/admin/usage/trend-by-model?range=today')).json();
+      expect(orgBody.tenantId).toBe('wain');
+      expect(orgBody.points[0].models[0].inputTokens).toBe(200);
+
+      h.setCaller(PLATFORM_ADMIN);
+      const platformBody = await (await h.request(
+        '/api/admin/usage/trend-by-model?range=today&tenantId=kaiyan',
+      )).json();
+      expect(platformBody.tenantId).toBe('kaiyan');
+      expect(platformBody.points[0].models[0].inputTokens).toBe(100);
+    });
+
+    it('组织 admin 不能通过 tenantId 查询其他组织', async () => {
+      h.setCaller(WAIN_ADMIN);
+      const res = await h.request('/api/admin/usage/trend-by-model?range=today&tenantId=kaiyan');
+      expect(res.status).toBe(403);
+    });
+  });
+
   describe('POST /rebuild — requirePlatformAdmin', () => {
     it('平台 admin → 202', async () => {
       h.setCaller(PLATFORM_ADMIN);
@@ -457,6 +481,13 @@ describe('USD 成本脱敏（2026-07-14，policy.showCost fail-closed）', () =>
       const trend = await (await rig.request('/api/admin/usage/trend')).json();
       expect(trend.costRedacted).toBe(true);
       for (const p of trend.points) expect(p.costUsd).toBeUndefined();
+
+      const trendByModel = await (await rig.request('/api/admin/usage/trend-by-model')).json();
+      expect(trendByModel.costRedacted).toBe(true);
+      expect(trendByModel.points.length).toBeGreaterThan(0);
+      for (const p of trendByModel.points) {
+        for (const m of p.models) expect(m.totalCostUsd).toBeUndefined();
+      }
     });
   });
 

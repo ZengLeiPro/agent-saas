@@ -7,6 +7,7 @@
  *   GET /overview?range=7d|30d|mtd|today      → 期间总览（含活跃用户数、缓存命中率）
  *   GET /by-user?range=...                    → 用户排行（含 realName enrich）
  *   GET /by-model?range=...&username=...      → 模型分布（可选 username 过滤）
+ *   GET /trend-by-model?range=...             → 北京时间自然日 × 模型趋势
  *   GET /trend?username=...&range=...         → 单用户日趋势
  *   GET /data-range                           → 数据完整性元信息（最早/最晚/首条带 cost 的日期）
  *
@@ -342,6 +343,51 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
       family: family ?? null,
       tenantId: tenant.tenantId ?? null,
       channels: redactCost ? rows.map((r) => omitKey(r as unknown as Record<string, unknown>, 'totalCostUsd')) : rows,
+      ...(redactCost ? { costRedacted: true } : {}),
+    });
+  });
+
+  router.get('/trend-by-model', async (req: Request, res: Response) => {
+    const parsed = querySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid query', issues: parsed.error.issues });
+      return;
+    }
+    const tenant = resolveQueryTenant(req, parsed.data.tenantId);
+    if (!tenant.ok) {
+      res.status(tenant.status).json({ error: tenant.error });
+      return;
+    }
+    const { fromDate, toDate, range } = resolveStoreRange(parsed.data, store, tenant.tenantId);
+    if (!rangeIsValid(fromDate, toDate)) {
+      res.status(400).json({ error: 'Invalid range: from must be before or equal to to' });
+      return;
+    }
+    const family = parsed.data.family as ModelFamily | undefined;
+    const redactCost = await shouldRedactCost(req, getTenantPolicy);
+    const rows = store.getTrendByModel(
+      fromDate,
+      toDate,
+      parsed.data.username,
+      family,
+      tenant.tenantId,
+    );
+    res.json({
+      fromDate,
+      toDate,
+      range,
+      username: parsed.data.username ?? null,
+      tenantId: tenant.tenantId ?? null,
+      family: family ?? null,
+      points: redactCost
+        ? rows.map((point) => ({
+            ...point,
+            models: point.models.map((model) => omitKey(
+              model as unknown as Record<string, unknown>,
+              'totalCostUsd',
+            )),
+          }))
+        : rows,
       ...(redactCost ? { costRedacted: true } : {}),
     });
   });

@@ -199,6 +199,51 @@ describe('token usage aggregation', () => {
     });
   });
 
+  describe('getTrendByModel', () => {
+    it('按有数据的北京日期与模型聚合，并按日期升序、模型 token 降序', () => {
+      const points = store.getTrendByModel('2026-05-14', '2026-05-17');
+      expect(points.map(p => p.date)).toEqual(['2026-05-14', '2026-05-15', '2026-05-16']);
+      expect(points[1].models.map(m => m.model)).toEqual([
+        'claude-opus-4-7',
+        'claude-haiku-4-5',
+      ]);
+      expect(points[1].models[0]).toMatchObject({
+        inputTokens: 2300,
+        outputTokens: 1150,
+        cacheReadTokens: 23000,
+        cacheCreationTokens: 500,
+        totalTokens: 26950,
+        totalTurns: 2,
+      });
+    });
+
+    it('沿用 username / family / tenant 条件与模型 token 口径', () => {
+      store.upsertRaw({
+        date: '2026-05-15', username: 'admin', tenantId: 'kaiyan', model: 'gpt-5', channel: 'web',
+        inputTokens: 900, outputTokens: 50, cacheReadTokens: 800, cacheCreationTokens: 200,
+        costUsdMicro: 1234, turnDelta: 1,
+        occurredAtMs: Date.parse('2026-05-15T09:30:00+08:00'),
+      });
+      const points = store.getTrendByModel(
+        '2026-05-15T09:00',
+        '2026-05-15T09:59',
+        'admin',
+        'gpt',
+        'kaiyan',
+      );
+      expect(points).toHaveLength(1);
+      expect(points[0].models).toEqual([expect.objectContaining({
+        model: 'gpt-5',
+        totalTokens: 950,
+        totalCostUsd: 0.001234,
+        totalTurns: 1,
+      })]);
+      expect(store.getTrendByModel(
+        '2026-05-15', '2026-05-15', undefined, 'gpt', 'other-tenant',
+      )).toEqual([]);
+    });
+  });
+
   describe('getTrend', () => {
     it('returns daily points ordered ascending', () => {
       const points = store.getTrend('admin', '2026-05-14', '2026-05-16');

@@ -9,7 +9,7 @@
  * - 后端按 policy.showCost 脱敏 ¥ 字段（costRedacted）→ 成本区退化为 token 口径；
  * - EntityLink 走 plain 模式（不渲染 platform-admin 跳转），组织列隐藏。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,6 +22,7 @@ import { AdminErrorAlert, EntityLink, MetricCard } from "@/components/PlatformAd
 import { RUN_LABEL, formatToolName } from "@/components/PlatformAdmin/displayText";
 import { classifyFailureReason } from "@/components/PlatformAdmin/errorText";
 import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
+import { todayBeijingDate } from "@/components/TenantAnalytics/metrics";
 import { ToolAnalysisPanel } from "@/components/PlatformAdmin/ToolAnalysisPanel";
 
 import { runTraceApi } from "@/components/RunTraceExplorer/api";
@@ -29,7 +30,10 @@ import { formatCount, formatMs, formatRate, formatYuan } from "@/components/RunT
 import { RunStatusBadge } from "@/components/RunTraceExplorer/StatusBadge";
 import type { EfficiencyReport } from "@/components/RunTraceExplorer/types";
 
+import { usageApi } from "./api";
 import { formatTokens } from "./format";
+import { ModelTokenTrendCard } from "./ModelTokenTrendChart";
+import type { ModelTrendResp } from "./types";
 
 const DAYS_OPTIONS: SegmentedOption<number>[] = [
   { value: 7, label: "7 天" },
@@ -67,6 +71,14 @@ export function nearestEffDays(days: number): number {
   return hit;
 }
 
+/** 最近 N 个北京时间自然日（含今天），用于让 14 天档也走 usage custom range。 */
+function recentBeijingRange(days: number): { from: string; to: string } {
+  const to = todayBeijingDate();
+  const toUtc = Date.parse(`${to}T00:00:00Z`);
+  const from = new Date(toUtc - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+  return { from, to };
+}
+
 /** 工具错误率红色高亮阈值 */
 const ERROR_RATE_ALERT = 0.05;
 
@@ -98,23 +110,43 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
   const [data, setData] = useState<EfficiencyReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [modelTrend, setModelTrend] = useState<ModelTrendResp | null>(null);
+  const [modelTrendLoading, setModelTrendLoading] = useState(true);
+  const [modelTrendError, setModelTrendError] = useState<string | null>(null);
+  const loadSequence = useRef(0);
   const plain = !linkEntities;
 
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     setLoading(true);
+    setModelTrendLoading(true);
+    setData(null);
+    setModelTrend(null);
     setError(null);
-    try {
-      const resp = await runTraceApi.efficiency({ days, ...(tenantId ? { tenantId } : {}) });
-      setData(resp);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
+    setModelTrendError(null);
+
+    const tenantArgs = tenantId ? { tenantId } : {};
+    const [efficiencyResult, trendResult] = await Promise.allSettled([
+      runTraceApi.efficiency({ days, ...tenantArgs }),
+      usageApi.trendByModel({ ...recentBeijingRange(days), ...tenantArgs }),
+    ]);
+    if (sequence !== loadSequence.current) return;
+
+    if (efficiencyResult.status === "fulfilled") setData(efficiencyResult.value);
+    else setError(efficiencyResult.reason instanceof Error ? efficiencyResult.reason.message : String(efficiencyResult.reason));
+
+    if (trendResult.status === "fulfilled") setModelTrend(trendResult.value);
+    else setModelTrendError(trendResult.reason instanceof Error ? trendResult.reason.message : String(trendResult.reason));
+
+    setLoading(false);
+    setModelTrendLoading(false);
   }, [days, tenantId]);
 
   useEffect(() => {
     void load();
+    return () => {
+      loadSequence.current += 1;
+    };
   }, [load]);
 
   return (
@@ -127,8 +159,8 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
           value={days}
           onChange={setDays}
         />
-        <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-          <RefreshCw className={cn("mr-1 size-3.5", loading && "animate-spin")} />
+        <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading || modelTrendLoading}>
+          <RefreshCw className={cn("mr-1 size-3.5", (loading || modelTrendLoading) && "animate-spin")} />
           刷新
         </Button>
         {data && (
@@ -226,6 +258,13 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
                     <MetricCard title="缓存命中率" value={formatRate(data.cost.cacheHitRate)} />
                   </div>
                 )}
+
+                <ModelTokenTrendCard
+                  response={modelTrend}
+                  loading={modelTrendLoading}
+                  error={modelTrendError}
+                  labelFor={labelFor}
+                />
 
                 <Card>
                   <CardHeader className="pb-2">

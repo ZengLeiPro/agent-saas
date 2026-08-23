@@ -438,4 +438,33 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
     expect(completed?.task).toMatchObject({ status: 'todo' });
     expect(completed?.execution).toMatchObject({ status: 'cancelled' });
   });
+
+  it('归档后的 in_review delivery 不再被重新调度：人工出口必须真的生效', async () => {
+    const board = await store.createBoard(identity, {
+      name: 'Archived delivery escape hatch',
+      repository: {
+        provider: 'github', repositoryId: 'github:acme/archived', owner: 'acme', name: 'archived',
+        baseBranch: 'main', allowForkPullRequest: false,
+      },
+    });
+    const delivery = await store.createTask(identity, board.id, { title: 'Stuck in review', status: 'todo' });
+    await pool.query(
+      `UPDATE ${store.tasksTable}
+          SET status='in_review',provider_pull_request_id='87',pull_request_number=87,
+              head_oid='head-87',base_oid='base-87',version=version+1
+        WHERE id=$1`,
+      [delivery.id],
+    );
+
+    // 卡在 in_review 且已绑定 PR 的 delivery 会被持续重新调度。
+    expect((await store.claimIntegrationDispatchCandidatesV2(10))
+      .filter((candidate) => candidate.task.id === delivery.id)).toHaveLength(1);
+
+    // moveTask 对 in_review 硬拒，归档是唯一的人工出口——它必须真能叫停调度。
+    const stuck = await store.getTask(identity, delivery.id);
+    await store.archiveTask(identity, delivery.id, { expectedVersion: stuck.version });
+
+    expect((await store.claimIntegrationDispatchCandidatesV2(10))
+      .filter((candidate) => candidate.task.id === delivery.id)).toHaveLength(0);
+  });
 });

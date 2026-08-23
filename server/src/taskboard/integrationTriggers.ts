@@ -474,6 +474,10 @@ async function loadUnstartedIntegrationTasks(
                   )
                 ))
           )
+          -- 归档/删除是 in_review 任务唯一的人工出口（moveTask 对该状态硬拒），
+          -- 这里漏掉过滤会让已归档任务被无限重新调度，人工无从叫停。
+          AND t.archived_at IS NULL
+          AND t.deleted_at IS NULL
           AND NOT EXISTS (
             SELECT 1 FROM ${host.executionsTable} e
              WHERE e.task_id=t.id AND e.status IN ('queued','running','waiting_user','waiting_approval')

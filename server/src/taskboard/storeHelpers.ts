@@ -121,15 +121,12 @@ function taskMergeEligibility(row: Record<string, unknown>): TaskBoardTask['merg
   if (row.kind !== 'delivery') return 'not_applicable';
   if (row.integration_state === 'merged' || row.merged_commit_oid) return 'merged';
   if (row.integration_state !== 'canceled' && (row.integration_source_id || row.integration_task_id)) return 'claimed';
-  const inspectedAt = row.provider_ci_inspected_at ? new Date(String(row.provider_ci_inspected_at)).getTime() : 0;
-  const inspectionFresh = Number.isFinite(inspectedAt) && Date.now() - inspectedAt <= 10 * 60 * 1000;
   return row.status === 'ready_to_merge'
     && row.provider_pull_request_id
     && row.reviewed_subject_digest
     && row.provider_ci_status === 'success'
     && row.provider_ci_purpose === 'review'
     && row.provider_ci_head_oid === row.head_oid
-    && inspectionFresh
     ? 'eligible'
     : 'not_applicable';
 }

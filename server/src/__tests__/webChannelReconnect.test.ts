@@ -549,6 +549,41 @@ describe('WebChannel active stream reconnect', () => {
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }]);
   });
 
+  it('projects Artifact(deliver) payload when an older event path omits metadata', () => {
+    const channel = createChannel(); const emitted: any[] = [];
+    (channel as any).eventBus = {
+      ...fakeEventBus(),
+      emitSession: (_ctx: unknown, data: unknown) => emitted.push(data),
+    };
+
+    channel.publishRuntimeOutboundEvent({
+      sessionId: 'session-artifact-fallback',
+      runId: 'run-artifact-fallback',
+      event: {
+        type: 'tool_result',
+        toolId: 'call-artifact-fallback',
+        toolName: 'Artifact',
+        toolResult: JSON.stringify({
+          action: 'deliver',
+          artifactId: 'artifact_fallback',
+          kind: 'log',
+          fileName: '执行日志.txt',
+          sizeBytes: 32,
+          mimeType: 'text/plain',
+        }),
+      } as any,
+    });
+
+    expect(emitted).toEqual([{
+      type: 'artifact_created',
+      artifactId: 'artifact_fallback',
+      fileName: '执行日志.txt',
+      kind: 'log',
+      sizeBytes: 32,
+      mimeType: 'text/plain',
+    }]);
+  });
+
   it('projects replaceable draft outbound events into the WebSocket protocol', () => {
     const channel = createChannel();
     const emitted: any[] = [];

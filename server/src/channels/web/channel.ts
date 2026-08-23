@@ -732,7 +732,11 @@ export class WebChannel implements BaseChannel {
         });
         break;
       case 'tool_result': {
-        const artifactDelivery = projectArtifactDelivery(input.event.toolName, input.event.toolResultMetadata);
+        const artifactDelivery = projectArtifactDelivery(
+          input.event.toolName,
+          input.event.toolResultMetadata,
+          input.event.toolResult,
+        );
         if (artifactDelivery) emitSession(artifactDelivery);
         if (isDedicatedWebTool(input.event.toolName)) break;
         emitSession({

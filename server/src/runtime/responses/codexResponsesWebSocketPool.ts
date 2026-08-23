@@ -440,7 +440,7 @@ export class CodexResponsesWebSocketPool {
           return;
         }
 
-        const frame = encoder.encode(`event: ${eventType || 'message'}\ndata: ${text}\n\n`);
+        const frame = encoder.encode(`event: ${eventType || 'message'}\n${sseDataLines(text)}\n\n`);
         if (exposed) controllerRef?.enqueue(frame);
         else bufferedFrames.push(frame);
 
@@ -787,6 +787,17 @@ function errorMessageFromEvent(event: Record<string, unknown>): string | undefin
 function eventStatus(event: Record<string, unknown>): number | undefined {
   if (typeof event.status === 'number') return event.status;
   return typeof event.status_code === 'number' ? event.status_code : undefined;
+}
+
+/**
+ * 把上游 WS 消息体渲染成 SSE data 段。上游错误响应（例如 HTTP 400
+ * invalid_function_parameters）返回的是 pretty-printed 多行 JSON，直接拼成
+ * 单行 `data: ${text}` 会让空行提前终止 SSE 帧、后续行因缺少 `data:` 前缀被
+ * 消费端丢弃，最终只剩 `{` 触发误导性的 MODEL_SSE_JSON_INVALID，真实错误被吞掉。
+ * SSE 规范允许多个 data 行，消费端按 \n 重新拼接即可还原原文。
+ */
+function sseDataLines(text: string): string {
+  return text.split(/\r\n|\r|\n/).map(line => `data: ${line}`).join('\n');
 }
 
 function websocketMessageText(data: unknown): string | undefined {

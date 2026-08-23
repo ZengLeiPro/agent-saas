@@ -45,6 +45,11 @@ class FakeWebSocket extends EventTarget {
     this.dispatchEvent(eventWith('message', { data: JSON.stringify(payload) }));
   }
 
+  /** 上游错误响应是 pretty-printed 多行 JSON，emit 的紧凑序列化复现不了。 */
+  emitRaw(text: string): void {
+    this.dispatchEvent(eventWith('message', { data: text }));
+  }
+
   fail(error: Error): void {
     this.dispatchEvent(eventWith('error', { error, message: error.message }));
   }
@@ -143,6 +148,37 @@ async function establish(
 }
 
 describe('CodexResponsesWebSocketPool', () => {
+  it('上游多行 JSON 事件逐行加 data: 前缀，消费端能还原真实错误而不是只拿到 {', async () => {
+    const socket = new FakeWebSocket();
+    const pool = new CodexResponsesWebSocketPool(connectorFor(socket));
+    const pending = pool.execute(request(body([{ type: 'message', role: 'user', content: 'hi' }])));
+    await waitForSend(socket);
+    socket.emit({ type: 'response.created', response: { id: 'resp-1' } });
+    const result = await pending;
+
+    // 上游拒绝工具 schema 时返回 pretty-printed 多行 JSON。
+    socket.emitRaw(JSON.stringify({
+      type: 'response.failed',
+      error: {
+        message: "Invalid schema for function 'ContextSearch': '^[\\p{L}]+$' is not a 'regex'.",
+        code: 'invalid_function_parameters',
+      },
+    }, null, 2));
+    complete(socket, 'resp-1');
+
+    const sse = await result.response.text();
+    const block = sse.split('\n\n').find(part => part.includes('invalid_function_parameters'));
+    expect(block).toBeDefined();
+    // 复刻 responsesApiAdapter 的消费逻辑：只取 data: 行再按 \n 重组。
+    const data = block!.split('\n')
+      .filter(line => line.startsWith('data:'))
+      .map(line => line.slice('data:'.length).trimStart())
+      .join('\n')
+      .trim();
+    expect(JSON.parse(data).error.code).toBe('invalid_function_parameters');
+    pool.close();
+  });
+
   it('首轮发全量，严格追加时在同一 socket 只发 suffix + previous_response_id', async () => {
     const socket = new FakeWebSocket();
     const connector = connectorFor(socket);

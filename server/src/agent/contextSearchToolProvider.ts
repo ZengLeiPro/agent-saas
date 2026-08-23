@@ -20,7 +20,12 @@ const DEFAULT_CONTEXT_LIMIT = 10;
 const MAX_CONTEXT_LIMIT = 50;
 const MAX_FILTER_VALUES = 20;
 
-const filterValueSchema = z.string().trim().min(1).max(128).regex(/^[\p{L}\p{N}_.:/-]+$/u);
+// 用 refine 而非 regex：regex 会被 toJSONSchema() 展开成 pattern，而 OpenAI 的
+// 工具 schema 校验器不支持 Unicode property escapes（\p{L}），整份 tools 会被
+// 拒为 invalid_function_parameters。refine 不进 JSON Schema，服务端校验强度不变。
+const FILTER_VALUE_PATTERN = /^[\p{L}\p{N}_.:/-]+$/u;
+const filterValueSchema = z.string().trim().min(1).max(128)
+  .refine(value => FILTER_VALUE_PATTERN.test(value), 'filter values must match [\\p{L}\\p{N}_.:/-]+');
 const filterListSchema = z.array(filterValueSchema).min(1).max(MAX_FILTER_VALUES)
   .refine(values => new Set(values).size === values.length, 'filter values must be unique');
 const isoTimeSchema = z.string().datetime({ offset: true });

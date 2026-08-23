@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Search, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { Search, SlidersHorizontal } from "lucide-react";
 
 import { TenantDebugModeSetting } from "@/components/Governance/DebugModeSettings";
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useGovernanceRequest } from "@/hooks/useGovernanceRequest";
+import { EntityIcons } from "@/lib/icons";
 import { governanceAccessApi } from "@agent/shared/lib/governanceApi";
 
 interface EntitlementRecord {
@@ -304,7 +305,7 @@ export function OrganizationPoliciesPage({ tenantId }: { tenantId: string }) {
     </div>
 
     <section className="rounded-xl border bg-card p-4" aria-labelledby="debug-policy-title">
-      <div className="mb-3 flex items-center gap-2"><ShieldCheck className="size-4" /><h3 id="debug-policy-title" className="font-medium">成员调试模式</h3></div>
+      <div className="mb-3 flex items-center gap-2"><EntityIcons.admin className="size-4" /><h3 id="debug-policy-title" className="font-medium">成员调试模式</h3></div>
       <TenantDebugModeSetting tenantId={tenantId} level="organization" />
     </section>
 

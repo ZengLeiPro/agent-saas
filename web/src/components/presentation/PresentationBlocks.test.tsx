@@ -174,7 +174,7 @@ describe('records', () => {
     const rows = container.querySelectorAll('[data-comparison-row]');
     const header = table?.firstElementChild;
     const row = rows[0]?.querySelector('button');
-    const columns = 'sm:grid-cols-[9rem_repeat(3,minmax(8rem,1fr))_auto]';
+    const columns = 'sm:grid-cols-[9rem_repeat(3,minmax(8rem,1fr))_0.875rem]';
     expect(records?.className).toContain('w-full');
     expect(records?.firstElementChild?.className).toContain('sm:min-w-[36rem]');
     expect(header?.className).toContain(columns);

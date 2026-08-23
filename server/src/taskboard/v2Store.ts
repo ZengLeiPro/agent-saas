@@ -285,7 +285,7 @@ export async function createIntegrationBatch(
       `INSERT INTO ${options.tasksTable}
          (id, board_id, identifier, kind, title, description, status, priority, labels,
           sort_order, creator_user_id, creator_name, workflow_version, version)
-       VALUES ($1,$2,$3,'integration',$4,$5,'todo','high',ARRAY['integration']::text[],$6,$7,$8,$9,1)`,
+       VALUES ($1,$2,$3,'integration',$4,$5,'in_progress','high',ARRAY['integration']::text[],$6,$7,$8,$9,1)`,
       [
         integrationTaskId,
         boardId,

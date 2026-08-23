@@ -1,15 +1,11 @@
-/**
- * L2 scanner 回归测试：覆盖全局关闭态、空游标 poison event、projection 宽限期、
- * 隔离台账先写后推进，以及未启用租户短路。生产曾因首个缺 projection 的历史
- * run 边界事件永久卡在空 consumer cursor，本文件专门锁住该故障形态。
- */
-
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
 import { afterEach, describe, expect, it, vi } from 'vitest';
-
+import {
+  inspectMemoryConsolidationDraft,
+  invokeMemoryConsolidationDraftTool,
+} from '../memory/consolidation/draft.js';
 import {
   MemoryConsolidationEngine,
   MISSING_PROJECTION_GRACE_MS,
@@ -25,11 +21,8 @@ type BoundaryEvent = {
   sessionId: string;
   event: Record<string, unknown> & { type: string; id: string };
 };
-
 type TestableEngine = {
-  stopped: boolean;
-  scanOnce(): Promise<void>;
-  workOnce(): Promise<void>;
+  stopped: boolean; scanOnce(): Promise<void>; workOnce(): Promise<void>;
 };
 
 function boundaryEvent(input: {
@@ -154,7 +147,12 @@ function createRecoveryHarness(input: {
   commitJournal: unknown;
   journalBoundarySequence?: number;
   stateBoundarySequence?: number;
+  tombstoneIds?: string[];
+  currentTombstoneIds?: string[];
+  recoverPrepared?: boolean;
+  timeoutSeconds?: number;
   fenceResult?: { boundaryChanged: boolean; fence: {
+    listActiveTombstoneIds: ReturnType<typeof vi.fn>;
     finalizeApplied: ReturnType<typeof vi.fn>;
     retireJournalAndRequeue: ReturnType<typeof vi.fn>;
     release: ReturnType<typeof vi.fn>;
@@ -171,11 +169,12 @@ function createRecoveryHarness(input: {
   };
   const releaseCommitLock = vi.fn(async () => undefined);
   const releaseFence = vi.fn(async () => undefined);
+  const listActiveTombstoneIds = vi.fn(async () => input.currentTombstoneIds ?? []);
   const finalizeApplied = vi.fn(async () => undefined);
   const retireJournalAndRequeue = vi.fn(async () => undefined);
   const fenceResult = input.fenceResult ?? {
     boundaryChanged: false,
-    fence: { finalizeApplied, retireJournalAndRequeue, release: releaseFence },
+    fence: { listActiveTombstoneIds, finalizeApplied, retireJournalAndRequeue, release: releaseFence },
   };
   const dispatch = input.dispatch ?? vi.fn(() => (async function* () {})());
   const updateRun = vi.fn(async (_runInput?: unknown) => undefined);
@@ -192,7 +191,7 @@ function createRecoveryHarness(input: {
       acquireFence: acquireCommitFence,
       release: releaseCommitLock,
     })),
-    findPreparedCommitRun: vi.fn(async () => ({
+    findPreparedCommitRun: vi.fn(async () => input.recoverPrepared === false ? null : ({
       id: 'ledger-recovery', idempotencyKey: 'recovery-key',
       tenantId: state.tenantId, userId: state.userId, workspaceId: state.workspaceId,
       sessionId: state.sessionId, fromSessionSequence: 10, toSessionSequence: 42,
@@ -203,9 +202,14 @@ function createRecoveryHarness(input: {
         hiddenSessionId: 'old-hidden',
         commitJournal: input.commitJournal,
         commitBoundarySequence: input.journalBoundarySequence ?? 100,
+        tombstoneIds: input.tombstoneIds ?? [],
       },
     })),
-    insertOrGetRun: vi.fn(),
+    insertOrGetRun: vi.fn(async () => ({
+      created: true,
+      record: { id: 'ledger-current', status: 'started' as const },
+    })),
+    renewLease: vi.fn(async () => true),
     updateRun,
     updateRunFenced,
     markApplied: vi.fn(async () => undefined),
@@ -231,10 +235,15 @@ function createRecoveryHarness(input: {
     isTenantEnabled: () => true,
     dispatch: dispatch as never,
     agentCwd: input.agentCwd ?? '/tmp',
-    getConfig: () => ({ ...MEMORY_CONSOLIDATION_DEFAULTS, enabled: true }),
+    getConfig: () => ({
+      ...MEMORY_CONSOLIDATION_DEFAULTS,
+      enabled: true,
+      ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
+    }),
   });
   return {
     engine, state, store, dispatch, updateRun, updateRunFenced, markFailed, failRunAndState,
+    listActiveTombstoneIds: fenceResult.fence?.listActiveTombstoneIds ?? listActiveTombstoneIds,
     finalizeApplied: fenceResult.fence?.finalizeApplied ?? finalizeApplied,
     retireJournalAndRequeue: fenceResult.fence?.retireJournalAndRequeue ?? retireJournalAndRequeue,
     releaseFence: fenceResult.fence?.release ?? releaseFence,
@@ -463,6 +472,81 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
     expect(harness.dispatch).not.toHaveBeenCalled();
   });
 
+  it('timeout 时 iterator.return 同步抛错也会继续收敛失败状态', async () => {
+    const dispatch = vi.fn(() => ({
+      [Symbol.asyncIterator]: () => ({
+        next: () => new Promise<never>(() => undefined),
+        return: () => { throw new Error('iterator return failed'); },
+      }),
+    }));
+    const harness = createRecoveryHarness({
+      commitJournal: { version: 1, entries: [] },
+      recoverPrepared: false,
+      timeoutSeconds: 0,
+      dispatch,
+    });
+
+    await workOnce(harness.engine);
+
+    expect(harness.failRunAndState).toHaveBeenCalledWith(expect.objectContaining({
+      errorCode: 'timeout',
+    }));
+  });
+
+  it('续租查询抛错时仍清理隐藏草稿和固定 root fd', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'memory-renew-error-'));
+    tempDirs.push(root);
+    const userRoot = join(root, 't-enabled', 'u1');
+    await mkdir(userRoot, { recursive: true });
+    await invokeMemoryConsolidationDraftTool({
+      toolId: 'Write', input: { content: '# stale draft\n' },
+      authorization: { source: 'policy_auto' },
+    } as never, {
+      sessionId: 'hidden-renew-error',
+      workspace: { root: userRoot, executionTarget: 'server-local' },
+    } as never, 'MEMORY.md');
+    const dispatch = vi.fn(() => (async function* () {
+      yield { type: 'session_init' as const, sessionId: 'hidden-renew-error' };
+      yield { type: 'done' as const };
+    })());
+    const harness = createRecoveryHarness({
+      agentCwd: root,
+      commitJournal: { version: 1, entries: [] },
+      recoverPrepared: false,
+      dispatch,
+    });
+    harness.store.renewLease = vi.fn(async () => { throw new Error('lease database unavailable'); });
+
+    await workOnce(harness.engine);
+
+    expect((await inspectMemoryConsolidationDraft('hidden-renew-error')).changedFiles).toEqual([]);
+    expect(harness.markFailed).toHaveBeenCalled();
+  });
+
+  it('模型运行期间 tombstone 集合变化时退休 prepared journal 且不提交 stale draft', async () => {
+    const dispatch = vi.fn(() => (async function* () {
+      yield { type: 'session_init' as const, sessionId: 'hidden-tombstone-change' };
+      yield { type: 'done' as const };
+    })());
+    const harness = createRecoveryHarness({
+      commitJournal: { version: 1, entries: [] },
+      recoverPrepared: false,
+      currentTombstoneIds: ['forgotten-during-run'],
+      dispatch,
+    });
+
+    await workOnce(harness.engine);
+
+    expect(harness.updateRunFenced).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'prepared',
+      usageJson: expect.objectContaining({ tombstoneIds: [] }),
+    }));
+    expect(harness.retireJournalAndRequeue).toHaveBeenCalledWith(expect.objectContaining({
+      errorCode: 'commit_tombstone_superseded',
+    }));
+    expect(harness.finalizeApplied).not.toHaveBeenCalled();
+  });
+
   it('prepared journal 恢复完成后原子收敛且不再次运行模型', async () => {
     const root = await mkdtemp(join(tmpdir(), 'memory-recovery-applied-'));
     tempDirs.push(root);
@@ -488,6 +572,31 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
     expect(harness.markFailed).not.toHaveBeenCalled();
     expect(harness.releaseCommitLock).toHaveBeenCalledOnce();
     expect(await readFile(join(userRoot, 'MEMORY.md'), 'utf8')).toBe('# staged\n');
+  });
+
+  it('prepared 恢复发现 tombstone 集合变化时回滚旧文件并重排', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'memory-recovery-tombstone-'));
+    tempDirs.push(root);
+    const userRoot = join(root, 't-enabled', 'u1');
+    await mkdir(userRoot, { recursive: true });
+    await writeFile(join(userRoot, 'MEMORY.md'), '# stale staged\n', 'utf8');
+    const harness = createRecoveryHarness({
+      agentCwd: root,
+      tombstoneIds: [],
+      currentTombstoneIds: ['forgotten-now'],
+      commitJournal: {
+        version: 1,
+        entries: [{ relativePath: 'MEMORY.md', baseline: '# baseline\n', staged: '# stale staged\n' }],
+      },
+    });
+
+    await workOnce(harness.engine);
+
+    expect(harness.finalizeApplied).not.toHaveBeenCalled();
+    expect(harness.retireJournalAndRequeue).toHaveBeenCalledWith(expect.objectContaining({
+      errorCode: 'recovery_tombstone_superseded',
+    }));
+    expect(await readFile(join(userRoot, 'MEMORY.md'), 'utf8')).toBe('# baseline\n');
   });
 
   it('prepared journal 冲突会原子退休旧记录并立即重排 state', async () => {
@@ -581,6 +690,7 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
     };
     const release = vi.fn(async () => undefined);
     const releaseFence = vi.fn(async () => undefined);
+    const listActiveTombstoneIds = vi.fn(async () => [] as string[]);
     const finalizeApplied = vi.fn(async () => undefined);
     const retireJournalAndRequeue = vi.fn(async () => undefined);
     const updateRun = vi.fn(async (_runInput?: unknown) => undefined);
@@ -593,7 +703,7 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
     const failRunAndState = vi.fn(async () => 'retry_wait' as const);
     const acquireCommitFence = vi.fn(async () => ({
       boundaryChanged: false,
-      fence: { finalizeApplied, retireJournalAndRequeue, release: releaseFence },
+      fence: { listActiveTombstoneIds, finalizeApplied, retireJournalAndRequeue, release: releaseFence },
     }));
     const acquireCommitLock = vi.fn(async () => ({
       acquireFence: acquireCommitFence,

@@ -488,6 +488,19 @@ export class PgMemoryConsolidationStore {
       return {
         boundaryChanged: false,
         fence: {
+          listActiveTombstoneIds: async () => {
+            const tombstones = await client.query<{ id: string }>(
+              `SELECT tombstone.id
+               FROM ${this.tombstonesTable} tombstone
+               JOIN ${this.stateTable} state
+                 ON state.tenant_id = tombstone.tenant_id AND state.user_id = tombstone.user_id
+               WHERE state.tenant_id = $1 AND state.session_id = $2
+                 AND tombstone.revoked_at IS NULL
+               ORDER BY tombstone.id`,
+              [input.tenantId, input.sessionId],
+            );
+            return tombstones.rows.map((row) => row.id);
+          },
           finalizeApplied: async (finalInput) => {
             try {
               const runResult = await client.query(

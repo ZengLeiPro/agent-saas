@@ -115,6 +115,7 @@ const CONSOLIDATION_CHAT_PREFIX = 'memory-consolidate-';
 export const MISSING_PROJECTION_GRACE_MS = 60 * 60_000;
 const MISSING_PROJECTION_WARN_INTERVAL_MS = 5 * 60_000;
 const MAX_EVENT_FUTURE_SKEW_MS = 5 * 60_000;
+const DRAFT_CLEANUP_WAIT_MS = 5_000;
 const EXCLUDED_CHANNELS = new Set(['cron']);
 
 function isEligibleProjection(projection: ConsolidationProjection, sessionId: string): boolean {
@@ -518,11 +519,15 @@ export class MemoryConsolidationEngine {
         const sameGeneration = Number.isSafeInteger(journalBoundarySequence)
           && journalBoundarySequence === state.lastBoundaryGlobalSequence
           && preparedRecord.toSessionSequence === to;
+        const preparedTombstoneIds = parseTombstoneSnapshot(preparedUsage.tombstoneIds);
+        const currentTombstoneIds = await fenceResult.fence.listActiveTombstoneIds();
+        const tombstonesChanged = !preparedTombstoneIds
+          || !sameTombstoneSnapshot(preparedTombstoneIds, currentTombstoneIds);
         const recoveredUsage = { ...preparedUsage };
         delete recoveredUsage.commitJournal;
         delete recoveredUsage.commitBoundarySequence;
         try {
-          if (sameGeneration) {
+          if (sameGeneration && !tombstonesChanged) {
             try {
               const recovered = await recoverMemoryConsolidationPreparedCommit(
                 effectiveCwd,
@@ -552,12 +557,14 @@ export class MemoryConsolidationEngine {
             idempotencyKey: preparedRecord.idempotencyKey,
             now: new Date().toISOString(),
             usageJson: recoveredUsage,
-            errorCode: sameGeneration
-              ? 'recovery_conflict_superseded'
-              : 'recovery_boundary_superseded',
-            errorMessage: sameGeneration
-              ? 'prepared journal conflicts with the current Markdown baseline'
-              : 'prepared journal was rolled back after the run boundary changed',
+            errorCode: tombstonesChanged
+              ? 'recovery_tombstone_superseded'
+              : sameGeneration ? 'recovery_conflict_superseded' : 'recovery_boundary_superseded',
+            errorMessage: tombstonesChanged
+              ? 'prepared journal tombstone snapshot is stale'
+              : sameGeneration
+                ? 'prepared journal conflicts with the current Markdown baseline'
+                : 'prepared journal was rolled back after the run boundary changed',
           });
           this.options.logger?.warn(
             `consolidation rolled back superseded journal session=${state.sessionId} files=${rolledBack}`,
@@ -596,6 +603,7 @@ export class MemoryConsolidationEngine {
     }
 
     const tombstones = await this.options.store.listActiveTombstones(state.tenantId, state.userId);
+    const tombstoneIds = tombstones.map((tombstone) => tombstone.id).sort();
     const forgottenSubjects = tombstones.map((tombstone) => {
       if (tombstone.scope === 'all_memory') return '全部既有记忆';
       return tombstone.subjectText ?? tombstone.memoryKey;
@@ -620,6 +628,7 @@ export class MemoryConsolidationEngine {
     let hiddenSessionId: string | undefined;
     const abort = new AbortController();
     let dispatchIterator: AsyncIterator<OutboundEvent> | undefined;
+    let iteratorDrain: Promise<unknown> | undefined;
     let rejectTimeout!: (error: Error) => void;
     const timeout = new Promise<never>((_resolve, reject) => { rejectTimeout = reject; });
     const timeoutTimer = setTimeout(() => {
@@ -651,18 +660,18 @@ export class MemoryConsolidationEngine {
     } finally {
       clearTimeout(timeoutTimer);
       if (abort.signal.aborted && dispatchIterator?.return) {
-        void dispatchIterator.return().catch(() => undefined);
+        iteratorDrain = Promise.resolve().then(() => dispatchIterator!.return!());
       }
     }
 
     if (abort.signal.aborted) {
-      discardMemoryConsolidationDraft(hiddenSessionId);
+      await this.cleanupAbortedDraft(hiddenSessionId, iteratorDrain);
       await this.failRun(state, config, idempotencyKey, 'timeout',
         `L2 run timeout after ${config.timeoutSeconds}s`, hiddenSessionId);
       return;
     }
     if (!completed || dispatchError || !hiddenSessionId) {
-      discardMemoryConsolidationDraft(hiddenSessionId);
+      await discardMemoryConsolidationDraft(hiddenSessionId);
       await this.failRun(
         state,
         config,
@@ -674,29 +683,33 @@ export class MemoryConsolidationEngine {
       return;
     }
 
-    const leaseRenewed = state.leaseOwner
-      ? await this.options.store.renewLease({
-          tenantId: state.tenantId,
-          sessionId: state.sessionId,
-          leaseOwner: state.leaseOwner,
-          now: new Date().toISOString(),
-          leaseSeconds: 300,
-        })
-      : false;
+    const leaseRenewed = await (async () => {
+      try {
+        return state.leaseOwner
+          ? await this.options.store.renewLease({
+              tenantId: state.tenantId,
+              sessionId: state.sessionId,
+              leaseOwner: state.leaseOwner,
+              now: new Date().toISOString(),
+              leaseSeconds: 300,
+            })
+          : false;
+      } catch (error) {
+        await discardMemoryConsolidationDraft(hiddenSessionId);
+        throw error;
+      }
+    })();
     if (!leaseRenewed) {
-      discardMemoryConsolidationDraft(hiddenSessionId);
+      await discardMemoryConsolidationDraft(hiddenSessionId);
       this.options.logger?.warn(`consolidation lease lost before commit session=${state.sessionId}`);
       return;
     }
 
-    const usage = await this.readHiddenRunUsage(hiddenSessionId);
-    const draftPlan = await inspectMemoryConsolidationDraft(hiddenSessionId);
-    try {
-      const prepared = await updateRunFenced({
-        idempotencyKey,
-        status: 'prepared',
-        ...(usage.modelActual ? { modelActual: usage.modelActual } : {}),
-        usageJson: {
+    const preparedDraft = await (async () => {
+      try {
+        const usage = await this.readHiddenRunUsage(hiddenSessionId);
+        const draftPlan = await inspectMemoryConsolidationDraft(hiddenSessionId);
+        const preparedUsage = {
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,
           cacheReadTokens: usage.cacheReadTokens,
@@ -704,16 +717,26 @@ export class MemoryConsolidationEngine {
           changedFiles: draftPlan.changedFiles,
           commitJournal: draftPlan.commitJournal,
           commitBoundarySequence: state.lastBoundaryGlobalSequence,
-        },
-      });
-      if (!prepared) {
-        discardMemoryConsolidationDraft(hiddenSessionId);
-        return;
+          tombstoneIds,
+        };
+        const prepared = await updateRunFenced({
+          idempotencyKey,
+          status: 'prepared',
+          ...(usage.modelActual ? { modelActual: usage.modelActual } : {}),
+          usageJson: preparedUsage,
+        });
+        if (!prepared) {
+          await discardMemoryConsolidationDraft(hiddenSessionId);
+          return null;
+        }
+        return { usage, draftPlan, preparedUsage };
+      } catch (error) {
+        await discardMemoryConsolidationDraft(hiddenSessionId);
+        throw error;
       }
-    } catch (error) {
-      discardMemoryConsolidationDraft(hiddenSessionId);
-      throw error;
-    }
+    })();
+    if (!preparedDraft) return;
+    const { usage, draftPlan, preparedUsage } = preparedDraft;
 
     let commitLock: MemoryConsolidationCommitLock | null = null;
     let commitFence: MemoryConsolidationCommitFence | null = null;
@@ -743,6 +766,24 @@ export class MemoryConsolidationEngine {
           leaseLostBeforeCommit = true;
           commitError = new Error('L2 memory draft state fence lost before commit');
         } else {
+          const currentTombstoneIds = await commitFence.listActiveTombstoneIds();
+          if (!sameTombstoneSnapshot(tombstoneIds, currentTombstoneIds)) {
+            const retiredUsage: Record<string, unknown> = { ...preparedUsage };
+            delete retiredUsage.commitJournal;
+            delete retiredUsage.commitBoundarySequence;
+            await commitFence.retireJournalAndRequeue({
+              idempotencyKey,
+              now: new Date().toISOString(),
+              usageJson: retiredUsage,
+              errorCode: 'commit_tombstone_superseded',
+              errorMessage: 'active tombstones changed while the hidden consolidation run was executing',
+            });
+            await discardMemoryConsolidationDraft(hiddenSessionId);
+            this.options.logger?.warn(
+              `consolidation tombstones changed before commit session=${state.sessionId}; requeued`,
+            );
+            return;
+          }
           await commitMemoryConsolidationDraft(hiddenSessionId);
           filesCommitted = true;
           await commitFence.finalizeApplied({
@@ -768,7 +809,7 @@ export class MemoryConsolidationEngine {
       if (commitLock) await commitLock.release().catch(() => undefined);
     }
     if (commitError) {
-      discardMemoryConsolidationDraft(hiddenSessionId);
+      await discardMemoryConsolidationDraft(hiddenSessionId);
       // 文件已全部 rename 后，COMMIT 失败可能只是确认响应丢失；保留 prepared ledger，
       // 让下一次 claim 通过 journal 判定 DB 实际结果，绝不能把已 applied 的 ledger 回写为失败。
       if (filesCommitted || (leaseLostBeforeCommit && !boundaryChangedBeforeCommit)) return;
@@ -787,6 +828,7 @@ export class MemoryConsolidationEngine {
         !conflict && !leaseLostBeforeCommit && commitLock
           ? draftPlan.commitJournal
           : undefined,
+        tombstoneIds,
       );
       return;
     }
@@ -797,6 +839,46 @@ export class MemoryConsolidationEngine {
     );
   }
 
+  private async cleanupAbortedDraft(
+    hiddenSessionId: string | undefined,
+    iteratorDrain: Promise<unknown> | undefined,
+  ): Promise<void> {
+    const cleanup = Promise.allSettled([
+      iteratorDrain ?? Promise.resolve(),
+      discardMemoryConsolidationDraft(hiddenSessionId),
+    ]).then(async (results) => {
+      // iterator drain 期间若还有迟到工具调用，二次清理负责关闭其新建草稿。
+      await discardMemoryConsolidationDraft(hiddenSessionId);
+      const rejected = results.find((result) => result.status === 'rejected');
+      if (rejected?.status === 'rejected') throw rejected.reason;
+    });
+    const observedCleanup = cleanup.catch((error) => {
+      this.options.logger?.warn(
+        `consolidation aborted draft cleanup failed hidden=${hiddenSessionId ?? 'unknown'}: ${message(error)}`,
+      );
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = await Promise.race([
+      observedCleanup.then(() => false),
+      new Promise<true>((resolveTimeout) => {
+        timer = setTimeout(() => resolveTimeout(true), DRAFT_CLEANUP_WAIT_MS);
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (timedOut) {
+      this.options.logger?.warn(
+        `consolidation aborted draft cleanup continues in background hidden=${hiddenSessionId ?? 'unknown'}`,
+      );
+      // 不依赖 iterator drain：再次同步启动 closing fence，迟到草稿也进入后台排空。
+      void discardMemoryConsolidationDraft(hiddenSessionId).catch((error) => {
+        this.options.logger?.warn(
+          `consolidation late draft cleanup failed hidden=${hiddenSessionId ?? 'unknown'}: ${message(error)}`,
+        );
+      });
+      void observedCleanup;
+    }
+  }
+
   private async failRun(
     state: ConsolidationState,
     config: MemoryConsolidationResolvedConfig,
@@ -805,6 +887,7 @@ export class MemoryConsolidationEngine {
     errorMessage: string,
     hiddenSessionId?: string,
     commitJournal?: unknown,
+    tombstoneIds?: string[],
   ): Promise<void> {
     const usage = hiddenSessionId ? await this.readHiddenRunUsage(hiddenSessionId) : undefined;
     if (!state.leaseOwner) return;
@@ -828,6 +911,7 @@ export class MemoryConsolidationEngine {
           ...(commitJournal ? {
             commitJournal,
             commitBoundarySequence: state.lastBoundaryGlobalSequence,
+            tombstoneIds: tombstoneIds ?? [],
           } : {}),
         },
       } : {}),
@@ -864,6 +948,18 @@ export class MemoryConsolidationEngine {
     }
     return { inputTokens, outputTokens, cacheReadTokens, ...(modelActual ? { modelActual } : {}) };
   }
+}
+
+function parseTombstoneSnapshot(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.some((id) => typeof id !== 'string')) return null;
+  const sorted = [...value].sort();
+  return new Set(sorted).size === sorted.length ? sorted : null;
+}
+
+function sameTombstoneSnapshot(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const sortedRight = [...right].sort();
+  return left.every((id, index) => id === sortedRight[index]);
 }
 
 function numberOrZero(value: unknown): number {

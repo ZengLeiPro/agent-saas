@@ -59,7 +59,7 @@ function toolContext(root: string): ToolCallContext {
 
 const tempDirs: string[] = [];
 afterEach(async () => {
-  discardMemoryConsolidationDraft('hidden-session');
+  await discardMemoryConsolidationDraft('hidden-session');
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -294,11 +294,11 @@ describe('hidden memory review invocation policy', () => {
     })).rejects.toThrow('无效');
   });
 
-  it('inspect 拒绝 baseline 总量超限、保证生成的 journal 一定可恢复', async () => {
+  it('加载阶段提前拒绝 baseline 总量超限、不会生成不可恢复 journal', async () => {
     const root = await tempWorkspace();
     const runtime = applyMemoryConsolidationInvocationPolicy(fakeRuntime(), 'source-session');
     const baseline = 'x'.repeat(1024 * 1024);
-    for (let index = 0; index < 9; index += 1) {
+    for (let index = 0; index < 8; index += 1) {
       const path = `memory/large-${index}.md`;
       await writeFile(join(root, path), baseline, 'utf8');
       await runtime.invoke({
@@ -306,7 +306,13 @@ describe('hidden memory review invocation policy', () => {
         authorization: { source: 'policy_auto' },
       } as never, toolContext(root));
     }
-    await expect(inspectMemoryConsolidationDraft('hidden-session')).rejects.toThrow('内容超过上限');
+    const overflowPath = 'memory/large-8.md';
+    await writeFile(join(root, overflowPath), baseline, 'utf8');
+    await expect(runtime.invoke({
+      toolId: 'Write', input: { path: overflowPath, content: 'small-8' },
+      authorization: { source: 'policy_auto' },
+    } as never, toolContext(root))).rejects.toThrow('baseline 总大小超过上限');
+    expect((await inspectMemoryConsolidationDraft('hidden-session')).changedFiles).toHaveLength(8);
   });
 
   it('记忆区内的叶子符号链接也会被拒绝而不是被 rename 替换', async () => {

@@ -11,6 +11,7 @@ export interface PgConsolidationStoreOptions {
 }
 
 export interface MemoryConsolidationCommitFence {
+  listActiveTombstoneIds(): Promise<string[]>;
   finalizeApplied(input: {
     idempotencyKey: string; toSequence: number; debounceMinutes: number; now: string;
     modelActual?: string; usageJson: unknown;

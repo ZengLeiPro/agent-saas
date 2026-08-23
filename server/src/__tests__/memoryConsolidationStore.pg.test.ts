@@ -308,6 +308,10 @@ describePg('PgMemoryConsolidationStore contract', () => {
       toSessionSequence: claimed.targetSessionSequence,
       promptVersion: 2,
     });
+    const tombstone = await store!.insertTombstone({
+      tenantId: base.tenantId, userId: base.userId, workspaceId: base.workspaceId,
+      scope: 'all_memory', source: 'explicit_user_forget',
+    });
     const commitLock = await store!.acquireCommitLock(base.tenantId, base.userId);
     expect(commitLock).not.toBeNull();
     const fenceResult = await commitLock!.acquireFence({
@@ -320,6 +324,7 @@ describePg('PgMemoryConsolidationStore contract', () => {
       boundarySequence: claimed.lastBoundaryGlobalSequence,
     });
     expect(fenceResult.fence).not.toBeNull();
+    expect(await fenceResult.fence!.listActiveTombstoneIds()).toContain(tombstone.id);
     let runStartedApplied = false;
     const runStarted = store!.applyRunStarted({
       ...base, runId: 'r-new', at: now(), globalSequence: 201,

@@ -42,6 +42,7 @@ interface MemoryDraft {
   staged: Map<string, DraftContent>;
   queue: Promise<void>;
   closing: boolean;
+  closePromise?: Promise<void>;
 }
 
 export class MemoryConsolidationDraftConflictError extends Error {
@@ -53,6 +54,7 @@ export class MemoryConsolidationDraftConflictError extends Error {
 
 const drafts = new Map<string, MemoryDraft>();
 const draftCreations = new Map<string, { rootPath: string; promise: Promise<MemoryDraft> }>();
+const draftClosures = new Map<string, Promise<void>>();
 
 export interface MemoryCommitJournal {
   version: 1;
@@ -174,6 +176,7 @@ async function assertRootCurrent(draft: MemoryDraft): Promise<void> {
 async function draftFor(context: ToolCallContext): Promise<MemoryDraft> {
   if (!context.sessionId) throw new Error('记忆审查草稿缺少 sessionId。');
   const rootPath = resolve(context.workspace.root);
+  if (draftClosures.has(context.sessionId)) throw new Error('记忆审查草稿正在关闭。');
   const existing = drafts.get(context.sessionId);
   if (existing) {
     if (existing.rootPath !== rootPath) throw new Error('记忆审查草稿 workspace 在同一会话内发生变化。');
@@ -261,6 +264,20 @@ function stagedBytes(draft: MemoryDraft, replacingPath?: string, replacingConten
   return total;
 }
 
+function assertBaselineCapacity(
+  draft: MemoryDraft,
+  relativePath: string,
+  content: DraftContent,
+): void {
+  let total = content === null ? 0 : Buffer.byteLength(content);
+  for (const [path, baseline] of draft.baseline) {
+    if (path !== relativePath && baseline !== null) total += Buffer.byteLength(baseline);
+  }
+  if (total > MAX_DRAFT_TOTAL_BYTES) {
+    throw new Error(`记忆审查草稿 baseline 总大小超过上限 ${MAX_DRAFT_TOTAL_BYTES} 字节。`);
+  }
+}
+
 function assertDraftCapacity(draft: MemoryDraft, relativePath: string, content: DraftContent): void {
   if (!draft.staged.has(relativePath) && draft.staged.size >= MAX_DRAFT_FILES) {
     throw new Error(`记忆审查草稿文件数超过上限 ${MAX_DRAFT_FILES}。`);
@@ -276,6 +293,7 @@ function assertDraftCapacity(draft: MemoryDraft, relativePath: string, content: 
 async function ensureLoaded(draft: MemoryDraft, relativePath: string): Promise<DraftContent> {
   if (draft.staged.has(relativePath)) return draft.staged.get(relativePath) ?? null;
   const content = await readCurrent(draft.rootHandle, relativePath);
+  assertBaselineCapacity(draft, relativePath, content);
   assertDraftCapacity(draft, relativePath, content);
   draft.baseline.set(relativePath, content);
   draft.staged.set(relativePath, content);
@@ -608,28 +626,46 @@ export async function commitMemoryConsolidationDraft(
       throw error;
     }
     drafts.delete(sessionId);
-    disposeDraft(draft);
+    void trackDraftClosure(sessionId, draft).catch(() => undefined);
     return { changedFiles: changed.map(([path]) => path) };
   });
 }
 
-function disposeDraft(draft: MemoryDraft): void {
-  if (draft.closing) return;
-  draft.closing = true;
-  const drained = draft.queue;
-  void drained.then(() => draft.rootHandle.close()).catch(() => undefined);
+function disposeDraft(draft: MemoryDraft): Promise<void> {
+  if (!draft.closing) {
+    draft.closing = true;
+    const drained = draft.queue;
+    draft.closePromise = drained.then(() => draft.rootHandle.close());
+  }
+  return draft.closePromise ?? Promise.resolve();
 }
 
-export function discardMemoryConsolidationDraft(sessionId: string | undefined): void {
+function trackDraftClosure(sessionId: string, draft: MemoryDraft): Promise<void> {
+  const existing = draftClosures.get(sessionId);
+  if (existing) return existing;
+  const closing = disposeDraft(draft).finally(() => {
+    if (draftClosures.get(sessionId) === closing) draftClosures.delete(sessionId);
+  });
+  draftClosures.set(sessionId, closing);
+  return closing;
+}
+
+export async function discardMemoryConsolidationDraft(
+  sessionId: string | undefined,
+): Promise<void> {
   if (!sessionId) return;
+  const closing: Promise<void>[] = [];
+  const tracked = draftClosures.get(sessionId);
+  if (tracked) closing.push(tracked);
   const draft = drafts.get(sessionId);
   drafts.delete(sessionId);
-  if (draft) disposeDraft(draft);
+  if (draft) closing.push(trackDraftClosure(sessionId, draft));
   const pending = draftCreations.get(sessionId);
   if (pending) {
-    void pending.promise.then((created) => {
+    closing.push(pending.promise.then((created) => {
       if (drafts.get(sessionId) === created) drafts.delete(sessionId);
-      disposeDraft(created);
-    }).catch(() => undefined);
+      return trackDraftClosure(sessionId, created);
+    }));
   }
+  await Promise.all(closing);
 }

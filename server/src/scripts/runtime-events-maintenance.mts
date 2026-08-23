@@ -2,6 +2,7 @@
 import pg from 'pg';
 
 import { loadAppConfig } from '../app/config.js';
+import { RuntimeEventRetention } from '../runtime/runtimeEventRetention.js';
 
 const { Pool } = pg;
 
@@ -9,6 +10,11 @@ interface CliOptions {
   processCwd: string;
   connectionString?: string;
   tablePrefix?: string;
+  executeRetention: boolean;
+  legalDeleteThroughGlobalSequence?: string;
+  authorizationRef?: string;
+  batchLimit: number;
+  maxBatchesPerCategory: number;
   executeDrop: boolean;
   dropRunIdx: boolean;
 }
@@ -23,11 +29,29 @@ const runtimeConfig = options.connectionString
 
 const prefix = sanitizeIdentifier(runtimeConfig.tablePrefix ?? 'runtime');
 const eventsTable = `${prefix}_events`;
+const toolInvocationsTable = `${prefix}_tool_invocations`;
 const billingProjectionStateTable = `${prefix}_billing_projection_state`;
 const pool = new Pool({ connectionString: runtimeConfig.connectionString });
 
 try {
   await printReadOnlyChecks(pool, eventsTable, billingProjectionStateTable);
+  const retention = new RuntimeEventRetention({
+    pool,
+    eventsTable,
+    toolInvocationsTable,
+    billingProjectionStateTable,
+    executionMode: options.executeRetention ? 'execute' : 'dry-run',
+    legalDeleteThroughGlobalSequence: options.legalDeleteThroughGlobalSequence,
+    authorizationRef: options.authorizationRef,
+    batchLimit: options.batchLimit,
+    maxBatchesPerCategory: options.maxBatchesPerCategory,
+    logger: { info: console.log, warn: console.warn },
+  });
+  console.log('\n== 5. bounded runtime event retention ==');
+  console.log(JSON.stringify(await retention.runOnce(), null, 2));
+  if (!options.executeRetention) {
+    console.log('[dry-run] 默认只读；执行删除需同时传 --execute-retention、--legal-delete-through 与 --authorization-ref。');
+  }
   if (options.executeDrop) {
     await dropDeadIndexes(pool, eventsTable, { dropRunIdx: options.dropRunIdx });
   } else {
@@ -188,11 +212,34 @@ function resolveRuntimeConfig(processCwd: string, tablePrefix?: string): { conne
 function parseArgs(args: string[]): CliOptions {
   const parsed: CliOptions = {
     processCwd: process.cwd(),
+    executeRetention: false,
+    batchLimit: 10_000,
+    maxBatchesPerCategory: 1,
     executeDrop: false,
     dropRunIdx: false,
   };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
+    if (arg === '--execute-retention') {
+      parsed.executeRetention = true;
+      continue;
+    }
+    if (arg === '--legal-delete-through') {
+      parsed.legalDeleteThroughGlobalSequence = requireValue(args, ++i, arg);
+      continue;
+    }
+    if (arg === '--authorization-ref') {
+      parsed.authorizationRef = requireValue(args, ++i, arg);
+      continue;
+    }
+    if (arg === '--batch-limit') {
+      parsed.batchLimit = parseBoundedInt(requireValue(args, ++i, arg), arg, 1, 100_000);
+      continue;
+    }
+    if (arg === '--max-batches-per-category') {
+      parsed.maxBatchesPerCategory = parseBoundedInt(requireValue(args, ++i, arg), arg, 1, 1000);
+      continue;
+    }
     if (arg === '--execute-drop') {
       parsed.executeDrop = true;
       continue;
@@ -214,6 +261,21 @@ function parseArgs(args: string[]): CliOptions {
       continue;
     }
     throw new Error(`未知参数: ${arg}`);
+  }
+  if ((parsed.executeRetention || parsed.executeDrop) && !parsed.authorizationRef) {
+    throw new Error('写操作必须提供 --authorization-ref <变更/审批单号>');
+  }
+  if (parsed.executeRetention && !parsed.legalDeleteThroughGlobalSequence) {
+    throw new Error('--execute-retention 必须提供 --legal-delete-through <global_sequence>');
+  }
+  return parsed;
+}
+
+function parseBoundedInt(value: string, name: string, min: number, max: number): number {
+  if (!/^\d+$/.test(value)) throw new Error(`${name} 必须是整数`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
+    throw new Error(`${name} 必须在 ${min}-${max} 之间`);
   }
   return parsed;
 }

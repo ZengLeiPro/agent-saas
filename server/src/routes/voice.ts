@@ -4,11 +4,10 @@
  * 提供语音文件回放端点，支持 Range 请求用于音频 seeking。
  */
 
-import { lstat } from "fs/promises";
-import { createReadStream } from "fs";
-import { resolve } from "path";
+import { resolve, relative } from "path";
 import { Router } from "express";
 import { resolveUserCwd } from "../workspace/resolver.js";
+import { UnsafeFilePathError, openTrustedFile } from "../security/trustedFile.js";
 
 export interface VoiceRouterOptions {
   agentCwd: string;
@@ -67,24 +66,19 @@ export function createVoiceRouter(options: VoiceRouterOptions): Router {
         return;
       }
 
-      // 检查文件是否存在
-      let fileStat;
+      let opened;
       try {
-        fileStat = await lstat(absolutePath);
-      } catch {
-        res.status(404).json({ error: "File not found" });
+        opened = await openTrustedFile(userCwd, relative(userCwd, absolutePath));
+      } catch (error) {
+        if (error instanceof UnsafeFilePathError) {
+          res.status(403).json({ error: "Access denied: symbolic links not allowed" });
+        } else {
+          res.status(404).json({ error: "File not found" });
+        }
         return;
       }
 
-      // 安全校验：拒绝符号链接（防 symlink 穿越工作区）
-      if (fileStat.isSymbolicLink()) {
-        res
-          .status(403)
-          .json({ error: "Access denied: symbolic links not allowed" });
-        return;
-      }
-
-      const fileSize = fileStat.size;
+      const fileSize = opened.stats.size;
 
       // 根据扩展名推断 MIME 类型
       const mimeMap: Record<string, string> = {
@@ -106,6 +100,7 @@ export function createVoiceRouter(options: VoiceRouterOptions): Router {
         const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
 
         if (start >= fileSize || end >= fileSize || start > end) {
+          await opened.handle.close();
           res
             .status(416)
             .setHeader("Content-Range", `bytes */${fileSize}`)
@@ -119,13 +114,13 @@ export function createVoiceRouter(options: VoiceRouterOptions): Router {
         res.setHeader("Content-Length", end - start + 1);
         res.setHeader("Content-Type", contentType);
 
-        createReadStream(absolutePath, { start, end }).pipe(res);
+        opened.handle.createReadStream({ start, end, autoClose: true }).pipe(res);
       } else {
         res.setHeader("Content-Length", fileSize);
         res.setHeader("Content-Type", contentType);
         res.setHeader("Accept-Ranges", "bytes");
 
-        createReadStream(absolutePath).pipe(res);
+        opened.handle.createReadStream({ autoClose: true }).pipe(res);
       }
     } catch (error) {
       res.status(500).json({ error: "Failed to stream audio file" });

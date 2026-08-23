@@ -2,7 +2,7 @@
  * WebSocket Client - platform-agnostic singleton WS connection manager
  *
  * Supports:
- * - JWT auth via query string
+ * - JWT auth via a controlled first frame after the bare WebSocket upgrade
  * - Auto-reconnect with exponential backoff
  * - Message send/receive
  * - Connection state management
@@ -169,10 +169,11 @@ class WsClient {
     private consecutiveFailures = 0;
     private onAuthFailureFn: (() => void) | null = null;
 
-    /** Get WS URL (async - reads token from secure storage) */
-    private async getWsUrl(): Promise<string> {
+    /** Resolve endpoint and credential separately so JWT never enters URLs/logs. */
+    private async getConnectionParams(): Promise<{ url: string; token: string }> {
         const token = await getPlatform().secureStorage.getItem(TOKEN_KEY);
-        return getPlatform().platformConfig.getWsUrl(token);
+        if (!token) throw new Error('Missing authentication token');
+        return { url: getPlatform().platformConfig.getWsUrl(), token };
     }
 
     /** Reference-counted connect. Returns a release function. */
@@ -227,11 +228,11 @@ class WsClient {
     /** Establish connection */
     async connect(): Promise<void> {
         // Already connected
-        if (this.ws?.readyState === WebSocket.OPEN) {
+        if (this.ws?.readyState === WebSocket.OPEN && this.state === 'connected') {
             return;
         }
         // Currently connecting - reuse the same promise
-        if (this.ws?.readyState === WebSocket.CONNECTING) {
+        if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
             return new Promise<void>((resolve, reject) => {
                 const prevResolve = this.connectPromiseResolve;
                 const prevReject = this.connectPromiseReject;
@@ -263,8 +264,8 @@ class WsClient {
         }, CONNECT_TIMEOUT_MS);
 
         try {
-            const url = await this.getWsUrl();
-            this.doConnect(url);
+            const { url, token } = await this.getConnectionParams();
+            this.doConnect(url, token);
         } catch {
             this.scheduleRetry();
         }
@@ -272,7 +273,7 @@ class WsClient {
         return connectPromise;
     }
 
-    private doConnect(url: string): void {
+    private doConnect(url: string, token: string): void {
         const isReconnect = this.retryAttempt > 0;
         this.setState(isReconnect ? 'reconnecting' : 'connecting');
 
@@ -287,16 +288,7 @@ class WsClient {
 
         ws.onopen = () => {
             if (this.ws !== ws) return; // stale — a newer connection has replaced us
-            this.retryAttempt = 0;
-            this.consecutiveFailures = 0;
-            this.setState('connected');
-            // Clear connect timeout
-            if (this.connectTimeoutTimer) { clearTimeout(this.connectTimeoutTimer); this.connectTimeoutTimer = null; }
-            this.connectPromiseResolve?.();
-            this.connectPromiseResolve = null;
-            this.connectPromiseReject = null;
-            // Start heartbeat
-            this.startHeartbeat();
+            ws.send(JSON.stringify({ action: 'auth', token }));
         };
 
         ws.onmessage = (event: MessageEvent) => {
@@ -309,6 +301,18 @@ class WsClient {
                 this.lastPongAt = now;
                 const messageData = envelope.data as { type?: string; epoch?: unknown; seq?: unknown } | null | undefined;
                 const msgType = messageData?.type;
+                if (msgType === 'auth_ok') {
+                    this.retryAttempt = 0;
+                    this.consecutiveFailures = 0;
+                    this.setState('connected');
+                    if (this.connectTimeoutTimer) { clearTimeout(this.connectTimeoutTimer); this.connectTimeoutTimer = null; }
+                    this.connectPromiseResolve?.();
+                    this.connectPromiseResolve = null;
+                    this.connectPromiseReject = null;
+                    this.startHeartbeat();
+                    return;
+                }
+                if (this.state !== 'connected') return;
                 // pong 只证明链路存活，不能推进恢复 cursor/epoch。若 pong 后、对应 overflow/sync_ok
                 // 前断线，提前采纳其 E2/seq 会让重连 sync 跳过本应执行的恢复窗口。
                 if (msgType === 'pong') {
@@ -377,8 +381,8 @@ class WsClient {
             this.retryTimer = null;
             if (!this.intentionalClose) {
                 try {
-                    const url = await this.getWsUrl();
-                    this.doConnect(url);
+                    const { url, token } = await this.getConnectionParams();
+                    this.doConnect(url, token);
                 } catch {
                     this.scheduleRetry();
                 }
@@ -480,7 +484,7 @@ class WsClient {
 
     /** Send message, returns whether successful */
     send(msg: WsOutboundMessage): boolean {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        if (this.state === 'connected' && this.ws && this.ws.readyState === WebSocket.OPEN) {
             // wsClient 持有从 sync/真实事件得到的最新 epoch，覆盖调用方可能滞后的副本。
             const outbound = msg.action === 'sync' && this.serverEpoch
                 ? { ...msg, epoch: this.serverEpoch }
@@ -502,7 +506,7 @@ class WsClient {
 
     /** Whether currently connected */
     get isConnected(): boolean {
-        return this.ws?.readyState === WebSocket.OPEN;
+        return this.state === 'connected' && this.ws?.readyState === WebSocket.OPEN;
     }
 
     /** Current connection state */

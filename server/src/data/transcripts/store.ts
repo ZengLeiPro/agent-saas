@@ -17,6 +17,7 @@ import {
   type TranscriptOwnerRef,
 } from "./projectKey.js";
 import { notifySessionMetaDeleted } from "./meta.js";
+import { TENANT_SLUG_PATTERN } from "../tenants/types.js";
 
 export interface SessionListItem {
   sessionId: string;
@@ -113,6 +114,21 @@ export async function findTranscriptPathBySessionId(
   const match = files.find((file) => path.basename(file) === `${sessionId}.jsonl`);
   if (match) return match;
   return null;
+}
+
+/**
+ * Runtime Audit 专用的 tenant-scoped transcript 定位。绝不先按 sessionId 全局命中
+ * 再做事后过滤；同租户内若同一 sessionId 命中多个文件也返回 null（fail-closed）。
+ */
+export async function findTranscriptPathByTenantAndSessionId(
+  tenantId: string,
+  sessionId: string,
+): Promise<string | null> {
+  if (!TENANT_SLUG_PATTERN.test(tenantId) || !isValidSessionId(sessionId)) return null;
+  const tenantRoot = path.join(AGENT_LEGACY_TRANSCRIPTS_ROOT, tenantId);
+  const files = await listTranscriptFilesRecursive(tenantRoot);
+  const matches = files.filter((file) => path.basename(file) === `${sessionId}.jsonl`);
+  return matches.length === 1 ? matches[0]! : null;
 }
 
 /**

@@ -127,10 +127,9 @@ export const mobileConfig: IPlatformConfig = {
   getBaseUrl(): string {
     return resolveBaseUrl();
   },
-  getWsUrl(token: string | null): string {
+  getWsUrl(): string {
     const httpUrl = resolveBaseUrl();
     const wsUrl = httpUrl.replace(/^http/, "ws");
-    const params = token ? `?token=${encodeURIComponent(token)}` : "";
-    return `${wsUrl}/ws${params}`;
+    return `${wsUrl}/ws`;
   },
 };

@@ -20,7 +20,8 @@ export interface IMessageCache {
 
 export interface IPlatformConfig {
   getBaseUrl(): string;
-  getWsUrl(token: string | null): string;
+  /** Bare endpoint; credentials are sent only in the auth first frame. */
+  getWsUrl(): string;
   platform: 'web' | 'mobile';
 }
 

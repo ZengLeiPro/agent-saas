@@ -10,13 +10,12 @@ export const webConfig: IPlatformConfig = {
   getBaseUrl(): string {
     return API_BASE;
   },
-  getWsUrl(token: string | null): string {
-    const params = token ? `?token=${encodeURIComponent(token)}` : '';
+  getWsUrl(): string {
     if (API_BASE) {
       // https:// -> wss://，http:// -> ws://
-      return `${API_BASE.replace(/^http/, 'ws')}/ws${params}`;
+      return `${API_BASE.replace(/^http/, 'ws')}/ws`;
     }
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${protocol}//${window.location.host}/ws${params}`;
+    return `${protocol}//${window.location.host}/ws`;
   },
 };

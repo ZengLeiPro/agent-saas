@@ -6,8 +6,16 @@ export interface RuntimeEventRetentionOptions {
   toolInvocationsTable: string;
   billingProjectionStateTable: string;
   enabled?: boolean;
+  /** 默认 dry-run；execute 必须同时提供 legal watermark 与授权单号。 */
+  executionMode?: 'dry-run' | 'execute';
+  /** 法务/合规已授权删除到（含）此 global_sequence；缺省为 0，阻断删除。 */
+  legalDeleteThroughGlobalSequence?: string;
+  /** execute 模式必填的变更/审批单号，只用于门禁和日志，不写入事件。 */
+  authorizationRef?: string;
   sweepIntervalMinutes?: number;
   batchLimit?: number;
+  /** 每个类别每轮最多删除批数；默认 10，避免单轮长时间追赶。 */
+  maxBatchesPerCategory?: number;
   terminalDeltaGraceMinutes?: number;
   successfulSummaryRetentionHours?: number;
   failedSummaryRetentionDays?: number;
@@ -25,9 +33,13 @@ export interface RuntimeEventRetentionOptions {
 }
 
 export interface RuntimeEventRetentionResult {
+  mode: 'dry-run' | 'execute';
   deleted: number;
   deletedByCategory: Record<string, number>;
+  eligibleByCategory: Record<string, number>;
+  legalWatermark: string;
   billingWatermark: string;
+  effectiveDeleteThrough: string;
   maxGlobalSequence: string;
 }
 
@@ -45,8 +57,8 @@ const HAND_RETENTION_TYPES = ['hand_provisioning_log', 'hand_health_changed', 'h
  * 清理 runtime_events 中只服务于短期重放/排障的过程事件。
  *
  * 永久事件（消息、tool_result、工具生命周期、审计、计费事实）不在任何类别中。
- * 所有 DELETE 都受 billing projection 水位约束，并以单条 CTE 原子锁定、删除，
- * 避免蓝绿实例并发清理同一批记录。
+ * 所有 DELETE 都受 billing projection 与法务授权双水位约束，并以单条 CTE
+ * 原子锁定、删除，避免蓝绿实例并发清理同一批记录。缺省模式严格只读 dry-run。
  */
 export class RuntimeEventRetention {
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -55,8 +67,12 @@ export class RuntimeEventRetention {
   private readonly eventsTable: string;
   private readonly toolInvocationsTable: string;
   private readonly billingProjectionStateTable: string;
+  private readonly executionMode: 'dry-run' | 'execute';
+  private readonly legalDeleteThroughGlobalSequence: bigint;
+  private readonly authorizationRef: string | undefined;
   private readonly sweepIntervalMinutes: number;
   private readonly batchLimit: number;
+  private readonly maxBatchesPerCategory: number;
   private readonly terminalDeltaGraceMinutes: number;
   private readonly successfulSummaryRetentionHours: number;
   private readonly failedSummaryRetentionDays: number;
@@ -70,8 +86,18 @@ export class RuntimeEventRetention {
     this.eventsTable = sanitizeIdentifier(options.eventsTable);
     this.toolInvocationsTable = sanitizeIdentifier(options.toolInvocationsTable);
     this.billingProjectionStateTable = sanitizeIdentifier(options.billingProjectionStateTable);
+    this.executionMode = options.executionMode ?? 'dry-run';
+    this.legalDeleteThroughGlobalSequence = parseWatermark(options.legalDeleteThroughGlobalSequence);
+    this.authorizationRef = options.authorizationRef?.trim() || undefined;
+    if (this.executionMode === 'execute' && !this.authorizationRef) {
+      throw new Error('RuntimeEventRetention execute 模式必须提供 authorizationRef');
+    }
+    if (this.executionMode === 'execute' && this.legalDeleteThroughGlobalSequence <= 0n) {
+      throw new Error('RuntimeEventRetention execute 模式必须提供正数 legalDeleteThroughGlobalSequence');
+    }
     this.sweepIntervalMinutes = clampInt(options.sweepIntervalMinutes ?? 10, 1, 24 * 60);
     this.batchLimit = clampInt(options.batchLimit ?? 10_000, 1, 100_000);
+    this.maxBatchesPerCategory = clampInt(options.maxBatchesPerCategory ?? 10, 1, 1000);
     this.terminalDeltaGraceMinutes = clampInt(options.terminalDeltaGraceMinutes ?? 10, 1, 24 * 60);
     this.successfulSummaryRetentionHours = clampInt(options.successfulSummaryRetentionHours ?? 24, 1, 365 * 24);
     this.failedSummaryRetentionDays = clampInt(options.failedSummaryRetentionDays ?? 7, 1, 3650);
@@ -91,7 +117,9 @@ export class RuntimeEventRetention {
     this.stopped = false;
     this.scheduleNext();
     this.options.logger?.info?.(
-      `RuntimeEventRetention started: interval=${this.sweepIntervalMinutes}m batchLimit=${this.batchLimit}`,
+      `RuntimeEventRetention started: mode=${this.executionMode} interval=${this.sweepIntervalMinutes}m `
+      + `batchLimit=${this.batchLimit} maxBatchesPerCategory=${this.maxBatchesPerCategory} `
+      + `legalWatermark=${this.legalDeleteThroughGlobalSequence.toString()}`,
     );
   }
 
@@ -109,25 +137,45 @@ export class RuntimeEventRetention {
     }
     this.inFlight = true;
     try {
-      const projection = await this.advanceBillingProjection();
+      // dry-run 必须严格只读，不能为了预览推进 billing projection。
+      const projection = this.executionMode === 'execute'
+        ? await this.advanceBillingProjection()
+        : await this.readBillingProjectionLag();
+      const effectiveDeleteThrough = minBigInt(
+        projection.billingWatermark,
+        this.legalDeleteThroughGlobalSequence,
+      );
       const deletedByCategory: Record<string, number> = {};
+      const eligibleByCategory: Record<string, number> = {};
       let deleted = 0;
 
-      for (const category of this.buildCategories(projection.billingWatermark)) {
+      for (const category of this.buildCategories(effectiveDeleteThrough)) {
+        if (this.executionMode === 'dry-run') {
+          eligibleByCategory[category.name] = await this.countCategory(category);
+          deletedByCategory[category.name] = 0;
+          continue;
+        }
         const categoryDeleted = await this.deleteCategory(category);
         deletedByCategory[category.name] = categoryDeleted;
+        eligibleByCategory[category.name] = categoryDeleted;
         deleted += categoryDeleted;
       }
 
       const result: RuntimeEventRetentionResult = {
+        mode: this.executionMode,
         deleted,
         deletedByCategory,
+        eligibleByCategory,
+        legalWatermark: this.legalDeleteThroughGlobalSequence.toString(),
         billingWatermark: projection.billingWatermark.toString(),
+        effectiveDeleteThrough: effectiveDeleteThrough.toString(),
         maxGlobalSequence: projection.maxGlobalSequence.toString(),
       };
       this.options.logger?.info?.(
-        `RuntimeEventRetention finished: deleted=${deleted} categories=${JSON.stringify(deletedByCategory)} `
-        + `billingWatermark=${result.billingWatermark} maxGlobalSequence=${result.maxGlobalSequence}`,
+        `RuntimeEventRetention finished: mode=${result.mode} deleted=${deleted} `
+        + `eligible=${JSON.stringify(eligibleByCategory)} authorizationRef=${this.authorizationRef ?? 'none'} `
+        + `legalWatermark=${result.legalWatermark} billingWatermark=${result.billingWatermark} `
+        + `effectiveDeleteThrough=${result.effectiveDeleteThrough} maxGlobalSequence=${result.maxGlobalSequence}`,
       );
       return result;
     } finally {
@@ -305,9 +353,21 @@ export class RuntimeEventRetention {
     ];
   }
 
+  /** 只统计下一批候选；SQL 复用相同 CTE/水位/TTL，且不推进任何 projection。 */
+  private async countCategory(category: RetentionCategory): Promise<number> {
+    const marker = `\n          DELETE FROM ${this.eventsTable} e`;
+    const markerAt = category.deleteSql.lastIndexOf(marker);
+    if (markerAt < 0) throw new Error(`retention category ${category.name} 缺少 DELETE marker`);
+    const candidateSql = category.deleteSql.slice(0, markerAt)
+      .replace('FOR UPDATE OF e SKIP LOCKED', '');
+    const countSql = `${candidateSql}\n          SELECT COUNT(*)::text AS eligible FROM candidates`;
+    const result = await this.options.pool.query<{ eligible: string }>(countSql, category.params);
+    return Number(result.rows[0]?.eligible ?? '0');
+  }
+
   private async deleteCategory(category: RetentionCategory): Promise<number> {
     let deleted = 0;
-    while (true) {
+    for (let batchNo = 0; batchNo < this.maxBatchesPerCategory; batchNo++) {
       const batch = await this.options.pool.query(category.deleteSql, category.params);
       const batchDeleted = batch.rowCount ?? 0;
       deleted += batchDeleted;
@@ -364,6 +424,18 @@ function sanitizeIdentifier(value: string): string {
     throw new Error(`非法 PG identifier: ${value}`);
   }
   return value;
+}
+
+function parseWatermark(value: string | undefined): bigint {
+  const normalized = value?.trim() || '0';
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error(`非法 retention watermark: ${normalized}`);
+  }
+  return BigInt(normalized);
+}
+
+function minBigInt(a: bigint, b: bigint): bigint {
+  return a < b ? a : b;
 }
 
 function clampInt(value: number, min: number, max: number): number {

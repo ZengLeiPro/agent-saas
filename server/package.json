@@ -29,6 +29,7 @@
     "verify:server-remote-smoke": "tsx scripts/verify-server-remote-smoke.mts",
     "verify:codex-websocket": "tsx scripts/verify-codex-websocket-stateful.mts",
     "verify:pg-event-store": "tsx scripts/verify-pg-event-store.mts",
+    "maintenance:runtime-events": "tsx src/scripts/runtime-events-maintenance.mts",
     "backfill:runtime-sessions": "tsx scripts/backfill-runtime-sessions.mts",
     "repair:taskboard-workflow": "tsx scripts/repairTaskboardWorkflow.ts",
     "kb:previews": "tsx scripts/generate-kb-previews.mts",

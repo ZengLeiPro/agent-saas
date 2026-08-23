@@ -132,6 +132,36 @@ describe('AcsNetworkPolicyManager helpers', () => {
     expect(rules[1]).toEqual({ action: 'allow', to: [{ cidr: '172.16.177.77/32' }] });
   });
 
+  it('按 CIDR 包含关系拒绝可覆盖 metadata IP 的宽网段放行', () => {
+    const manifest = buildTrafficPolicyManifest({
+      namespace: 'agent-saas-coding',
+      ref: REF,
+      policy: {
+        mode: 'private-egress',
+        denyPrivateNetworks: false,
+        allowCidrs: [
+          '100.100.100.0/24',
+          '100.100.0.0/16',
+          '0.0.0.0/0',
+          '100.100.101.0/24',
+        ],
+      },
+      extraAllowCidrs: ['100.100.96.0/20'],
+    });
+    const rules = ((manifest.spec as any).egress.rules ?? []) as any[];
+    const explicitAllows = rules
+      .filter((rule) => rule.action === 'allow')
+      .flatMap((rule) => rule.to ?? [])
+      .filter((peer: any) => typeof peer.cidr === 'string')
+      .map((peer: any) => peer.cidr);
+
+    expect(explicitAllows).toContain('100.100.101.0/24');
+    expect(explicitAllows).not.toContain('100.100.100.0/24');
+    expect(explicitAllows).not.toContain('100.100.0.0/16');
+    expect(explicitAllows).not.toContain('100.100.96.0/20');
+    expect(explicitAllows).not.toContain('0.0.0.0/0');
+  });
+
   it('isolated 模式下代理也不放行（隔离语义不留后门）', () => {
     const manifest = buildTrafficPolicyManifest({
       namespace: 'agent-saas-coding',

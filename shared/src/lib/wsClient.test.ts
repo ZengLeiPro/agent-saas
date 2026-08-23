@@ -55,9 +55,10 @@ class FakeWebSocket {
 
   // ── 测试驱动辅助 ──
   /** 模拟服务端接受连接 */
-  simulateOpen(): void {
+  simulateOpen(completeAuth = true): void {
     this.readyState = FAKE_OPEN;
     this.onopen?.();
+    if (completeAuth) this.simulateMessage({ data: { type: 'auth_ok' } });
   }
   /** 模拟收到一帧（envelope JSON） */
   simulateMessage(envelope: unknown): void {
@@ -84,7 +85,7 @@ function makePlatform(token: string | null = 'tok'): PlatformDeps {
     messageCache: {} as PlatformDeps['messageCache'],
     platformConfig: {
       getBaseUrl: () => 'https://api.example.com',
-      getWsUrl: (t: string | null) => `wss://api.example.com/ws?token=${t ?? ''}`,
+      getWsUrl: () => 'wss://api.example.com/ws',
       platform: 'web' as const,
     },
     scheduleFlush: () => 0,
@@ -129,17 +130,32 @@ describe('wsClient - 建立连接', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     const ws = latestWs();
-    expect(ws.url).toContain('wss://api.example.com/ws?token=tok');
+    expect(ws.url).toBe('wss://api.example.com/ws');
+    expect(ws.url).not.toContain('tok');
     // 首连状态 connecting
     expect(states).toContain('connecting');
 
     ws.simulateOpen();
+    expect(JSON.parse(ws.sent[0])).toEqual({ action: 'auth', token: 'tok' });
     await p;
 
     expect(wsClient.isConnected).toBe(true);
     expect(wsClient.currentState).toBe('connected');
     expect(states).toContain('connected');
     off();
+  });
+
+  it('认证确认前禁止业务发送，且连接状态保持 connecting', async () => {
+    const p = wsClient.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = latestWs();
+    ws.simulateOpen(false);
+    expect(wsClient.currentState).toBe('connecting');
+    expect(wsClient.send({ action: 'detach' })).toBe(false);
+    expect(ws.sent.map((frame) => JSON.parse(frame))).toEqual([{ action: 'auth', token: 'tok' }]);
+    ws.simulateMessage({ data: { type: 'auth_ok' } });
+    await p;
+    expect(wsClient.currentState).toBe('connected');
   });
 
   it('connect() 已连接时直接返回，不重复建连', async () => {

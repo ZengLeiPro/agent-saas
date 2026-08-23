@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isIP } from 'node:net';
 
+import { ipv4InCidr } from './cidr.js';
 import type { AcsOrchestratorConfig } from './config.js';
 import { type Kubectl, type KubectlResult } from './kubectl.js';
 import type { SandboxRef } from './sandboxManager.js';
@@ -26,7 +27,8 @@ const DNS_SERVICE_PEER = { service: { namespace: 'kube-system', name: 'kube-dns'
 const ALIYUN_VPC_DNS_CIDRS = ['100.100.2.136/32', '100.100.2.138/32'];
 const DNS_ALLOW_PEERS = [DNS_SERVICE_PEER, ...ALIYUN_VPC_DNS_CIDRS.map(cidrPeer)];
 const IPV4_ALL = '0.0.0.0/0';
-const METADATA_CIDR = '100.100.100.200/32';
+const METADATA_IP = '100.100.100.200';
+const METADATA_CIDR = `${METADATA_IP}/32`;
 
 interface ProbeCheck {
   exitCode: number | null;
@@ -243,9 +245,9 @@ function cidrPeer(cidr: string): TrafficPeer {
   return { cidr };
 }
 
-/** 元数据服务不接受任何形式的显式放行（含 /32 与更宽的包含段） */
+/** 元数据服务不接受任何形式的显式放行（含裸 IP、/32 与更宽的包含段） */
 function withoutMetadata(cidrs: readonly string[]): string[] {
-  return cidrs.filter((cidr) => cidr !== METADATA_CIDR && cidr !== '100.100.100.200');
+  return cidrs.filter((cidr) => cidr !== METADATA_IP && !ipv4InCidr(METADATA_IP, cidr));
 }
 
 function ipv4Cidrs(values: readonly string[]): string[] {

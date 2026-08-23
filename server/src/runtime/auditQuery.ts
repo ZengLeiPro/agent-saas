@@ -53,19 +53,17 @@ export interface RuntimeAuditEntry {
 }
 
 export interface AuditQueryOptions {
+  /**
+   * 强制组织边界。所有 Runtime Audit 调用（包括平台管理员）都必须显式提供；
+   * 查询实现会在运行时再次校验，避免绕过路由后仅凭 sessionId/runId 查询。
+   */
+  tenantId: string;
   /** 截取返回数量（应用在 since/runId 过滤之后） */
   limit?: number;
   /** 跳过前 N 条（先 since/runId 过滤再 offset） */
   offset?: number;
   /** ISO 字符串；仅返回 `timestamp >= since` 的条目 */
   since?: string;
-  /**
-   * 组织过滤（PR 10）。
-   *   - undefined → 跨组织（仅平台 admin 用，路由层会传 undefined）
-   *   - 具体 slug → 仅该组织；非平台 admin 必须传 caller.tenantId
-   * EventStore backend 在内存里 filter；DuckDB backend SQL where 加 tenant_id = ?
-   */
-  tenantId?: string;
 }
 
 export interface AuditSummary {
@@ -88,18 +86,18 @@ export interface AuditSummaryByRun extends AuditSummary {
 }
 
 export interface RuntimeAuditQuery {
-  listBySessionId(sessionId: string, options?: AuditQueryOptions): Promise<RuntimeAuditEntry[]>;
-  /** 以 sessionId 为入口，在该 session 的 runtime-events 内按 runId 过滤。 */
-  listByRunId(sessionId: string, runId: string, options?: AuditQueryOptions): Promise<RuntimeAuditEntry[]>;
-  summarize(sessionId: string, options?: AuditQueryOptions): Promise<AuditSummary>;
+  listBySessionId(sessionId: string, options: AuditQueryOptions): Promise<RuntimeAuditEntry[]>;
+  /** 以 tenantId + sessionId 为边界，在该 session 的 runtime-events 内按 runId 过滤。 */
+  listByRunId(sessionId: string, runId: string, options: AuditQueryOptions): Promise<RuntimeAuditEntry[]>;
+  summarize(sessionId: string, options: AuditQueryOptions): Promise<AuditSummary>;
   /**
-   * 跨 session 按 runId 全局查询。仅 DuckDB backend 实现；EventStore backend
-   * 不提供（缺省即 `undefined`），admin route 通过此可选性 type-guard 检测、
-   * 在 file 模式下返回 503。
+   * 在显式 tenantId 切片内跨 session 按 runId 查询。EventStore backend 不提供
+   * （缺省即 `undefined`），admin route 通过此可选性 type-guard 检测、在 file
+   * 模式下返回 503。
    */
-  listByRunIdGlobal?(runId: string, options?: AuditQueryOptions): Promise<RuntimeAuditEntry[]>;
-  /** 跨 session runId 的分布汇总 + 涉及 session 列表。同上仅 DuckDB 实现。 */
-  summarizeByRunIdGlobal?(runId: string, options?: AuditQueryOptions): Promise<AuditSummaryByRun>;
+  listByRunIdGlobal?(runId: string, options: AuditQueryOptions): Promise<RuntimeAuditEntry[]>;
+  /** tenant 切片内跨 session runId 的分布汇总 + 涉及 session 列表。 */
+  summarizeByRunIdGlobal?(runId: string, options: AuditQueryOptions): Promise<AuditSummaryByRun>;
 }
 
 /** 把 PlatformEvent.tool_audit 映射成对外的 RuntimeAuditEntry */
@@ -134,17 +132,18 @@ function parseSince(since: string | undefined): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
+function requireAuditTenant(options: AuditQueryOptions): string {
+  const tenantId = options?.tenantId?.trim();
+  if (!tenantId) throw new Error('Runtime Audit query requires tenantId');
+  return tenantId;
+}
+
 function applyOptions(
   entries: RuntimeAuditEntry[],
-  options: AuditQueryOptions | undefined,
+  options: AuditQueryOptions,
 ): RuntimeAuditEntry[] {
-  if (!options) return entries;
-  let result = entries;
-  // PR 10：tenantId 过滤（EventStore backend 用内存 filter；DuckDB backend SQL where 处理）
-  if (options.tenantId !== undefined) {
-    const t = options.tenantId;
-    result = result.filter((entry) => entry.tenantId === t);
-  }
+  const tenantId = requireAuditTenant(options);
+  let result = entries.filter((entry) => entry.tenantId === tenantId);
   const sinceMs = parseSince(options.since);
   if (sinceMs !== null) {
     result = result.filter((entry) => {
@@ -160,7 +159,7 @@ function applyOptions(
   return result;
 }
 
-export type TranscriptPathResolver = (sessionId: string) => Promise<string | null>;
+export type TranscriptPathResolver = (tenantId: string, sessionId: string) => Promise<string | null>;
 
 /**
  * 直接基于 FileEventStore 的 audit 查询实现。
@@ -180,25 +179,24 @@ export class EventStoreRuntimeAuditQuery implements RuntimeAuditQuery {
     } = {},
   ) {}
 
-  async listBySessionId(sessionId: string, options?: AuditQueryOptions): Promise<RuntimeAuditEntry[]> {
-    const entries = await this.readEntries(sessionId);
+  async listBySessionId(sessionId: string, options: AuditQueryOptions): Promise<RuntimeAuditEntry[]> {
+    const tenantId = requireAuditTenant(options);
+    const entries = await this.readEntries(tenantId, sessionId);
     return applyOptions(entries, options);
   }
 
-  async listByRunId(sessionId: string, runId: string, options?: AuditQueryOptions): Promise<RuntimeAuditEntry[]> {
-    const entries = await this.readEntries(sessionId);
+  async listByRunId(sessionId: string, runId: string, options: AuditQueryOptions): Promise<RuntimeAuditEntry[]> {
+    const tenantId = requireAuditTenant(options);
+    const entries = await this.readEntries(tenantId, sessionId);
     const filtered = entries.filter((entry) => entry.runId === runId);
     return applyOptions(filtered, options);
   }
 
-  async summarize(sessionId: string, options?: AuditQueryOptions): Promise<AuditSummary> {
-    const all = await this.readEntries(sessionId);
-    // PR 10：tenantId 过滤要在 total 与 filtered 中分别考虑——total 应为该 session
-    // 在 caller 视野内的全部 entry（不含跨组织漏数），filtered 再叠加 since。
-    const tenantFiltered = options?.tenantId !== undefined
-      ? all.filter(e => e.tenantId === options.tenantId)
-      : all;
-    const filtered = applyOptions(tenantFiltered, options ? { since: options.since } : undefined);
+  async summarize(sessionId: string, options: AuditQueryOptions): Promise<AuditSummary> {
+    const tenantId = requireAuditTenant(options);
+    const all = await this.readEntries(tenantId, sessionId);
+    const tenantFiltered = all.filter(e => e.tenantId === tenantId);
+    const filtered = applyOptions(tenantFiltered, { tenantId, ...(options.since ? { since: options.since } : {}) });
     const summary: AuditSummary = {
       total: tenantFiltered.length,
       filteredTotal: filtered.length,
@@ -215,8 +213,8 @@ export class EventStoreRuntimeAuditQuery implements RuntimeAuditQuery {
     return summary;
   }
 
-  private async readEntries(sessionId: string): Promise<RuntimeAuditEntry[]> {
-    const transcriptPath = await this.transcriptResolver(sessionId);
+  private async readEntries(tenantId: string, sessionId: string): Promise<RuntimeAuditEntry[]> {
+    const transcriptPath = await this.transcriptResolver(tenantId, sessionId);
     if (!transcriptPath) return [];
     const eventLogPath = getRuntimeEventLogPath(transcriptPath);
     const store = this.options.createEventStore
@@ -251,36 +249,33 @@ export class DuckDBRuntimeAuditQuery implements RuntimeAuditQuery {
     private readonly tickBeforeQuery: boolean = true,
   ) {}
 
-  async listBySessionId(sessionId: string, options?: AuditQueryOptions): Promise<RuntimeAuditEntry[]> {
+  async listBySessionId(sessionId: string, options: AuditQueryOptions): Promise<RuntimeAuditEntry[]> {
+    const tenantId = requireAuditTenant(options);
     await this.maybeTick();
     const where: string[] = ['session_id = $1'];
     const params: DuckDBValue[] =[sessionId];
-    appendSince(where, params, options?.since);
-    appendTenant(where, params, options?.tenantId);
+    appendSince(where, params, options.since);
+    appendTenant(where, params, tenantId);
     const sql = buildSelectSql(where, options);
     return this.runSelect(sql, params);
   }
 
-  async listByRunId(sessionId: string, runId: string, options?: AuditQueryOptions): Promise<RuntimeAuditEntry[]> {
+  async listByRunId(sessionId: string, runId: string, options: AuditQueryOptions): Promise<RuntimeAuditEntry[]> {
+    const tenantId = requireAuditTenant(options);
     await this.maybeTick();
     const where: string[] = ['session_id = $1', 'run_id = $2'];
     const params: DuckDBValue[] =[sessionId, runId];
-    appendSince(where, params, options?.since);
-    appendTenant(where, params, options?.tenantId);
+    appendSince(where, params, options.since);
+    appendTenant(where, params, tenantId);
     const sql = buildSelectSql(where, options);
     return this.runSelect(sql, params);
   }
 
-  async summarize(sessionId: string, options?: AuditQueryOptions): Promise<AuditSummary> {
+  async summarize(sessionId: string, options: AuditQueryOptions): Promise<AuditSummary> {
+    const tenantId = requireAuditTenant(options);
     await this.maybeTick();
-
-    // PR 10：tenantId 入参——total / filteredTotal / 各 GROUP BY 全部按 tenant 切片
-    const baseParams: DuckDBValue[] = [sessionId];
-    let baseTenantClause = '';
-    if (options?.tenantId !== undefined) {
-      baseParams.push(options.tenantId);
-      baseTenantClause = ` AND tenant_id = $${baseParams.length}`;
-    }
+    const baseParams: DuckDBValue[] = [sessionId, tenantId];
+    const baseTenantClause = ' AND tenant_id = $2';
 
     const totalResult = await this.db.runAndReadAll(
       `SELECT COUNT(*) AS c FROM tool_audit WHERE session_id = $1${baseTenantClause};`,
@@ -353,14 +348,13 @@ export class DuckDBRuntimeAuditQuery implements RuntimeAuditQuery {
    * 约束（不同 session 理论可以撞同名 runId，虽然现状 randomUUID 不会），
    * 该接口按 run_id 直查，不限 session_id。
    */
-  async listByRunIdGlobal(runId: string, options?: AuditQueryOptions): Promise<RuntimeAuditEntry[]> {
+  async listByRunIdGlobal(runId: string, options: AuditQueryOptions): Promise<RuntimeAuditEntry[]> {
+    const tenantId = requireAuditTenant(options);
     await this.maybeTick();
     const where: string[] = ['run_id = $1'];
     const params: DuckDBValue[] = [runId];
-    appendSince(where, params, options?.since);
-    // PR 10：listByRunIdGlobal 的名字会让 caller 误以为它跨组织，但实际仅平台 admin 可调
-    // （路由层判定）。当 caller 是组织 admin 时路由层会传 tenantId 强制限本组织。
-    appendTenant(where, params, options?.tenantId);
+    appendSince(where, params, options.since);
+    appendTenant(where, params, tenantId);
     const sql = buildSelectSql(where, options);
     return this.runSelect(sql, params);
   }
@@ -369,16 +363,11 @@ export class DuckDBRuntimeAuditQuery implements RuntimeAuditQuery {
    * 跨 session runId 的汇总：分布 + 涉及的 session 列表。
    * `total` = 该 runId 全部条目；`filteredTotal` 应用 since 过滤后的条目。
    */
-  async summarizeByRunIdGlobal(runId: string, options?: AuditQueryOptions): Promise<AuditSummaryByRun> {
+  async summarizeByRunIdGlobal(runId: string, options: AuditQueryOptions): Promise<AuditSummaryByRun> {
+    const tenantId = requireAuditTenant(options);
     await this.maybeTick();
-
-    // PR 10：tenantId 切片 — total / filteredTotal / sessionIds / 各分布都按 caller 视野
-    const baseParams: DuckDBValue[] = [runId];
-    let baseTenantClause = '';
-    if (options?.tenantId !== undefined) {
-      baseParams.push(options.tenantId);
-      baseTenantClause = ` AND tenant_id = $${baseParams.length}`;
-    }
+    const baseParams: DuckDBValue[] = [runId, tenantId];
+    const baseTenantClause = ' AND tenant_id = $2';
 
     const totalResult = await this.db.runAndReadAll(
       `SELECT COUNT(*) AS c FROM tool_audit WHERE run_id = $1${baseTenantClause};`,
@@ -492,7 +481,7 @@ const SELECT_COLUMNS = `
   error
 `;
 
-function buildSelectSql(whereClauses: string[], options: AuditQueryOptions | undefined): string {
+function buildSelectSql(whereClauses: string[], options: AuditQueryOptions): string {
   const where = whereClauses.join(' AND ');
   let sql = `SELECT ${SELECT_COLUMNS} FROM tool_audit WHERE ${where} ORDER BY timestamp ASC`;
   const limit = options?.limit;
@@ -513,9 +502,8 @@ function appendSince(where: string[], params: DuckDBValue[], since: string | und
   where.push(`timestamp >= CAST($${params.length} AS TIMESTAMP)`);
 }
 
-/** PR 10：把 tenantId 入参追加到 where + params。undefined 不追加（跨组织视角，仅平台 admin 用） */
-function appendTenant(where: string[], params: DuckDBValue[], tenantId: string | undefined): void {
-  if (tenantId === undefined) return;
+/** 所有 DuckDB 查询都显式绑定 tenant_id，禁止无租户全局路径。 */
+function appendTenant(where: string[], params: DuckDBValue[], tenantId: string): void {
   params.push(tenantId);
   where.push(`tenant_id = $${params.length}`);
 }

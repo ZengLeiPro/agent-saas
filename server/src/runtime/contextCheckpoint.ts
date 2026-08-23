@@ -11,6 +11,8 @@ export const CHECKPOINT_SUMMARY_CONTEXT_RATIO = 0.08;
 export const CHECKPOINT_SUMMARY_TOKEN_CAP = 16_384;
 export const CHECKPOINT_RAW_TAIL_TOKEN_CAP = 65_536;
 export const CHECKPOINT_TARGET_THRESHOLD_RATIO = 0.5;
+/** 正常会话保持全部确定性用户轨迹；仅极端长会话超过此预算后退化最早消息。 */
+export const CHECKPOINT_USER_HISTORY_TOKEN_CAP = 60_000;
 
 const USER_TEXT_MAX_CHARS = 500;
 const USER_TEXT_HEAD_CHARS = 360;
@@ -24,6 +26,8 @@ export interface ContextCheckpointPlanInput {
   /** system prompt、memory、工具定义等不会被 checkpoint 替代的固定成本。 */
   baseFixedTokens?: number;
   sourceRunId?: string;
+  /** 仅在模型窗口是可信配置值时启用；未知窗口的临时估算不应用来裁掉用户历史。 */
+  adaptUserHistoryToTarget?: boolean;
 }
 
 export interface ContextCheckpointPlan {
@@ -32,6 +36,7 @@ export interface ContextCheckpointPlan {
   summaryBudgetTokens: number;
   rawTailBudgetTokens: number;
   fixedTokens: number;
+  userHistoryTokenCap: number;
   rawTailObservedTokens: number;
   rawTailStartIndex: number;
   rawTailStartEventId?: string;
@@ -90,6 +95,7 @@ export function extractCheckpointTaskAnchors(
 function checkpointProjectionFixedTokens(
   events: PlatformEvent[],
   taskAnchors: CheckpointTaskAnchor[],
+  userHistoryTokenCap: number,
 ): number {
   const taskAnchorIds = new Set(taskAnchors.map((anchor) => anchor.eventId));
   const userTrajectory = events.flatMap((event) => {
@@ -100,15 +106,17 @@ function checkpointProjectionFixedTokens(
     ) return [];
     const content = event.content.trim();
     if (!content) return [];
-    const excerpt = truncateCheckpointUserText(content);
     return [{
       eventId: event.id,
       timestamp: event.timestamp,
-      text: excerpt.text,
-      originalChars: excerpt.originalChars,
+      text: content,
+      originalChars: content.length,
     }];
   });
-  return estimateContextTokens({ taskAnchors, userTrajectory }) + CHECKPOINT_PROTOCOL_TOKEN_RESERVE;
+  return Math.min(
+    estimateContextTokens({ taskAnchors, userTrajectory }),
+    userHistoryTokenCap,
+  ) + CHECKPOINT_PROTOCOL_TOKEN_RESERVE;
 }
 
 interface AtomicRange {
@@ -186,22 +194,65 @@ export function selectAtomicRawTail(
     for (let index = range.start; index <= range.end; index += 1) rangeByIndex.set(index, range);
   }
 
-  let startIndex = events.length;
-  let observedTokens = 0;
+  // 逐个原子单元只投影一次并累加上界，避免 O(n²)，也不依赖“切片越短 Token
+  // 必然越少”的假设（历史图片会按切片内最近轮次重新裁剪，单调性并不成立）。
+  // 每单元独立投影会保留更多图片/continuation 和数组外壳，因此是完整后缀的保守上界。
+  const unsafePrefix = new Array<number>(events.length + 1).fill(0);
+  for (let index = 0; index < events.length; index += 1) {
+    unsafePrefix[index + 1] = unsafePrefix[index]! + (unsafeIndices.has(index) ? 1 : 0);
+  }
+  const acceptedStarts: number[] = [];
+  let estimatedUpperTokens = 0;
   let cursor = events.length - 1;
   while (cursor >= 0) {
-    if (unsafeIndices.has(cursor)) break;
     const range = rangeByIndex.get(cursor);
-    const unitStart = range?.start ?? cursor;
-    const candidate = events.slice(unitStart);
-    if (candidate.some((_, relativeIndex) => unsafeIndices.has(unitStart + relativeIndex))) break;
-    const candidateTokens = estimateRawEventTokens(candidate);
-    if (candidateTokens > rawTailBudgetTokens) break;
-    startIndex = unitStart;
-    observedTokens = candidateTokens;
+    let unitStart = range?.start ?? cursor;
+    const first = events[unitStart]!;
+    if (first.type === 'assistant_message' || first.type === 'assistant_tool_calls') {
+      let scan = unitStart - 1;
+      let pendingStart = unitStart;
+      let foundThinking = false;
+      while (scan >= 0) {
+        const previous = events[scan]!;
+        if (previous.type === 'assistant_thinking' && previous.runId === first.runId) {
+          foundThinking = true;
+          pendingStart = scan;
+          scan -= 1;
+          continue;
+        }
+        // 渐进式 MCP 加载不会清空 pendingReasoning；若它夹在 thinking 与 assistant
+        // 输出之间，也必须随同一个原子单元保留或压缩。
+        if (previous.type === 'mcp_tools_loaded' && previous.runId === first.runId) {
+          pendingStart = scan;
+          scan -= 1;
+          continue;
+        }
+        break;
+      }
+      if (foundThinking) unitStart = pendingStart;
+    }
+    const unsafeCount = unsafePrefix[cursor + 1]! - unsafePrefix[unitStart]!;
+    if (unsafeCount > 0) break;
+    const unitTokens = estimateRawEventTokens(events.slice(unitStart, cursor + 1));
+    if (estimatedUpperTokens + unitTokens > rawTailBudgetTokens) break;
+    estimatedUpperTokens += unitTokens;
+    acceptedStarts.push(unitStart);
     cursor = unitStart - 1;
   }
-  return { startIndex, observedTokens };
+  if (acceptedStarts.length === 0) return { startIndex: events.length, observedTokens: 0 };
+
+  let selectedStart = acceptedStarts.at(-1)!;
+  let selectedTokens = estimateRawEventTokens(events.slice(selectedStart));
+  // 防御性兜底：若未来投影规则打破“单元和为上界”，只缩短尾部，绝不突破预算。
+  while (selectedTokens > rawTailBudgetTokens && acceptedStarts.length > 1) {
+    acceptedStarts.pop();
+    selectedStart = acceptedStarts.at(-1)!;
+    selectedTokens = estimateRawEventTokens(events.slice(selectedStart));
+  }
+  if (selectedTokens > rawTailBudgetTokens) {
+    return { startIndex: events.length, observedTokens: 0 };
+  }
+  return { startIndex: selectedStart, observedTokens: selectedTokens };
 }
 
 export function planContextCheckpoint(input: ContextCheckpointPlanInput): ContextCheckpointPlan {
@@ -213,8 +264,18 @@ export function planContextCheckpoint(input: ContextCheckpointPlanInput): Contex
     CHECKPOINT_SUMMARY_TOKEN_CAP,
   );
   const taskAnchors = extractCheckpointTaskAnchors(input.events, input.sourceRunId);
-  const fixedTokens = Math.max(0, Math.floor(input.baseFixedTokens ?? 0))
-    + checkpointProjectionFixedTokens(input.events, taskAnchors);
+  const baseFixedTokens = Math.max(0, Math.floor(input.baseFixedTokens ?? 0));
+  const userHistoryTokenCap = input.adaptUserHistoryToTarget === false
+    ? CHECKPOINT_USER_HISTORY_TOKEN_CAP
+    : Math.min(
+      CHECKPOINT_USER_HISTORY_TOKEN_CAP,
+      Math.max(
+        0,
+        targetTokens - baseFixedTokens - summaryBudgetTokens - CHECKPOINT_PROTOCOL_TOKEN_RESERVE,
+      ),
+    );
+  const fixedTokens = baseFixedTokens
+    + checkpointProjectionFixedTokens(input.events, taskAnchors, userHistoryTokenCap);
   const rawTailBudgetTokens = Math.min(
     CHECKPOINT_RAW_TAIL_TOKEN_CAP,
     Math.max(0, targetTokens - fixedTokens - summaryBudgetTokens),
@@ -230,6 +291,7 @@ export function planContextCheckpoint(input: ContextCheckpointPlanInput): Contex
     summaryBudgetTokens,
     rawTailBudgetTokens,
     fixedTokens,
+    userHistoryTokenCap,
     rawTailObservedTokens: rawTail.observedTokens,
     rawTailStartIndex: rawTail.startIndex,
     ...(input.events[rawTail.startIndex] ? { rawTailStartEventId: input.events[rawTail.startIndex]!.id } : {}),

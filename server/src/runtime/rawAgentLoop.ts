@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type {
   InteractionEvent,
   InteractionResponse,
@@ -58,6 +58,7 @@ import {
   hasActiveCheckpointForRun,
   planContextCheckpoint,
 } from './contextCheckpoint.js';
+import { validateCompactionSummary } from './compactionSummary.js';
 import {
   getModelAutoCompactThreshold,
   getModelContextWindow,
@@ -734,6 +735,7 @@ export class RawAgentLoop implements AgentLoop {
       sessionId: context.replaySourceSessionId ?? context.sessionId,
       runId: context.runId,
       policy: context.replaySourceSessionId ? { type: 'full_replay' } : this.contextPolicy,
+      excludeMemoryContext: Boolean(input.memoryContext),
     });
     const memoryMessage = input.memoryContext
       ? [{ role: 'user' as const, content: formatMemoryContext(input.memoryContext) }]
@@ -1078,6 +1080,7 @@ export class RawAgentLoop implements AgentLoop {
                   input.memoryContext,
                   tools,
                 ]),
+                currentMemoryInjected: Boolean(input.memoryContext),
               },
             );
             if (outcome.usage) totalUsage = mergeUsage(totalUsage, outcome.usage);
@@ -1094,6 +1097,7 @@ export class RawAgentLoop implements AgentLoop {
                 sessionId: context.sessionId,
                 runId: context.runId,
                 policy: this.contextPolicy,
+                excludeMemoryContext: Boolean(input.memoryContext),
               });
               messages.splice(
                 0,
@@ -1173,6 +1177,7 @@ export class RawAgentLoop implements AgentLoop {
                     input.memoryContext,
                     tools,
                   ]),
+                  currentMemoryInjected: Boolean(input.memoryContext),
                 },
               );
               if (outcome.usage) totalUsage = mergeUsage(totalUsage, outcome.usage);
@@ -1189,6 +1194,7 @@ export class RawAgentLoop implements AgentLoop {
                   sessionId: context.sessionId,
                   runId: context.runId,
                   policy: this.contextPolicy,
+                  excludeMemoryContext: Boolean(input.memoryContext),
                 });
                 messages.splice(
                   0,
@@ -1548,6 +1554,12 @@ export class RawAgentLoop implements AgentLoop {
                   inline: true,
                   trigger: 'threshold',
                   sourceRunId: context.runId,
+                  baseFixedTokens: estimateContextTokens([
+                    input.instructions,
+                    input.memoryContext,
+                    tools,
+                  ]),
+                  currentMemoryInjected: Boolean(input.memoryContext),
                 },
               );
               if (outcome.usage) totalUsage = mergeUsage(totalUsage, outcome.usage);
@@ -1564,6 +1576,7 @@ export class RawAgentLoop implements AgentLoop {
                   sessionId: context.sessionId,
                   runId: context.runId,
                   policy: this.contextPolicy,
+                  excludeMemoryContext: Boolean(input.memoryContext),
                 });
                 messages.splice(
                   0,
@@ -2003,6 +2016,7 @@ export class RawAgentLoop implements AgentLoop {
           sessionId: context.sessionId,
           runId: context.runId,
           policy: this.contextPolicy,
+          excludeMemoryContext: options.currentMemoryInjected === true,
         }).messages,
       ]);
       const contextWindow = configuredWindow ?? Math.max(1, estimatedCurrentTokens * 2);
@@ -2016,6 +2030,7 @@ export class RawAgentLoop implements AgentLoop {
         baseFixedTokens: options.baseFixedTokens
           ?? estimateContextTokens([input.instructions, tools]),
         sourceRunId: options.sourceRunId,
+        adaptUserHistoryToTarget: configuredWindow !== undefined,
       });
       const compressedProjection = buildContextProjection(
         priorEvents.slice(0, plan.rawTailStartIndex),
@@ -2023,6 +2038,7 @@ export class RawAgentLoop implements AgentLoop {
           sessionId: context.sessionId,
           runId: context.runId,
           policy: this.contextPolicy,
+          excludeMemoryContext: options.currentMemoryInjected === true,
         },
       );
       const compressedMessages = compressedProjection.messages;
@@ -2071,7 +2087,17 @@ export class RawAgentLoop implements AgentLoop {
         });
       }
       if (!summaryText && completed.content) summaryText = completed.content;
-      if (!summaryText.trim()) throw new Error('compaction failed: model returned empty summary');
+      const summary = summaryText.trim();
+      if (!summary) throw new Error('compaction failed: model returned empty summary');
+      const summaryValidation = validateCompactionSummary(summary);
+      if (!summaryValidation.valid) {
+        logger.warn(
+          `[compact] summary validation warning session=${context.sessionId} run=${context.runId} `
+          + `missing=${summaryValidation.missingSections.join(',') || 'none'} `
+          + `maintenanceAttribution=${summaryValidation.maintenanceInstructionAttributedToUser}`,
+        );
+      }
+      const summaryPromptDigest = createHash('sha256').update(this.compactionPrompt).digest('hex');
 
       if (this.runStore?.clearResponseSessionStateBySession) {
         const cleared = await this.runStore.clearResponseSessionStateBySession(context.sessionId);
@@ -2083,7 +2109,7 @@ export class RawAgentLoop implements AgentLoop {
         type: 'compaction',
         runId: context.runId,
         sessionId: context.sessionId,
-        summary: summaryText.trim(),
+        summary,
         coveredEventCount: plan.coveredEventCount,
         ...(plan.rawTailStartEventId ? { cutoffEventId: plan.rawTailStartEventId } : {}),
         ...(options.inline ? { inline: true } : {}),
@@ -2096,11 +2122,16 @@ export class RawAgentLoop implements AgentLoop {
             : {}),
           targetTokens: plan.targetTokens,
           summaryBudgetTokens: plan.summaryBudgetTokens,
-          summaryObservedTokens: estimateContextTokens(summaryText.trim()),
+          summaryObservedTokens: estimateContextTokens(summary),
           rawTailBudgetTokens: plan.rawTailBudgetTokens,
           rawTailObservedTokens: plan.rawTailObservedTokens,
           fixedTokens: plan.fixedTokens,
           taskAnchors: plan.taskAnchors,
+          summaryModel: context.model,
+          ...(context.modelRef ? { summaryModelRef: context.modelRef } : {}),
+          summaryPromptDigest,
+          summaryValidation,
+          userHistoryTokenCap: plan.userHistoryTokenCap,
         },
       });
 
@@ -2112,7 +2143,7 @@ export class RawAgentLoop implements AgentLoop {
       const resultText = `✅ 上下文已压缩：${plan.coveredEventCount} 条较早事件已归纳，保留 ${priorEvents.length - plan.coveredEventCount} 条最近原始事件（完整记录仍可检索）。`;
       yield {
         type: 'compaction_end',
-        compaction: { summary: summaryText.trim(), coveredEventCount: plan.coveredEventCount },
+        compaction: { summary, coveredEventCount: plan.coveredEventCount },
       };
       return { status: 'compacted', numTurns: 1, resultText, ...(totalUsage ? { usage: totalUsage } : {}) };
     } catch (err) {

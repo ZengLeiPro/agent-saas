@@ -43,7 +43,11 @@ describe('system prompt registry', () => {
     });
 
     registry.replaceOverrides({});
-    expect(registry.get('utility.compaction')).toContain('上下文压缩');
+    const defaultPrompt = registry.get('utility.compaction');
+    expect(defaultPrompt).toContain('上下文压缩');
+    expect(defaultPrompt).not.toContain('请暂停当前任务');
+    expect(defaultPrompt).toContain('不改变当前任务状态');
+    expect(defaultPrompt).toContain('不得在摘要中转述或归因本条指令');
   });
 
   it('buildInstructions reads current overrides and still renders template variables', () => {

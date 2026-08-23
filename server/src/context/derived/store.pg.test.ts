@@ -135,7 +135,8 @@ describePg('DerivedContextStore PostgreSQL integration', () => {
     const taskId = entityId('tenant-a', 'Task', 'task-1', 'source-a');
     const evidence = { sourceId: 'source-a', collectionId: 'collection-a', recordId: 'task-r', recordRevision: 2, evidenceId: 'task-ev-2' };
     const targetItemId = (await derived.listActiveItems({ tenantId: 'tenant-a', entityId: taskId }))
-      .find(item => item.itemType === 'Status')!.itemId;
+      .find(item => item.itemType === 'Status'
+        && item.evidence.some(ref => ref.recordId === evidence.recordId && ref.recordRevision === evidence.recordRevision))!.itemId;
     await expect(derived.appendReview({
       tenantId: 'tenant-a', actorId: 'user-a', entityId: taskId, expectedRevision: 1, scope: { type: 'org' },
       action: 'assert', targetItemId, itemType: 'Status', semanticKey: 'status', value: { code: 'accepted' }, evidence: [evidence],

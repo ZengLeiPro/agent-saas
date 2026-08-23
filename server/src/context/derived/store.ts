@@ -289,6 +289,9 @@ export class DerivedContextStore {
         if (!input.itemType || !input.semanticKey || input.value === undefined
           || input.itemType !== target.item_type || input.semanticKey !== target.semantic_key) invalid();
         itemId = `ctx-review-${reviewId}`;
+        const itemRevision = await nextItemStorageRevision(
+          client, this.tables, input.tenantId, entity.generation, input.entityId, input.itemType, input.semanticKey,
+        );
         const envelope = itemEnvelope({
           itemId, entityId: input.entityId, itemType: input.itemType, semanticKey: input.semanticKey,
           value: input.value, valueFingerprint: fingerprint(input.value), derivation: 'review', authority,
@@ -303,7 +306,7 @@ export class DerivedContextStore {
         [input.tenantId, entity.generation, itemId, input.itemType, input.entityId, input.semanticKey,
           JSON.stringify(envelope), searchable(input.value), authority === 'steward' ? 'steward' : 'user',
           authority === 'steward' ? 'authoritative' : 'advisory', input.validFrom ?? this.now().toISOString(),
-          input.validTo ?? null, nextRevision, input.scope.type === 'person' ? input.scope.personId : null,
+          input.validTo ?? null, itemRevision, input.scope.type === 'person' ? input.scope.personId : null,
           JSON.stringify(input.scope.type === 'person' ? [input.scope.personId] : [])]);
         await insertEvidence(client, this.tables, this.baseTables, input.tenantId, entity.generation, itemId, input.evidence);
       } else {
@@ -835,6 +838,27 @@ async function reviewRevision(
       AND r.comment::jsonb->>'action' IN ('assert','reject')`,
   [tenantId, entityId, scope.type, scope.type === 'person' ? scope.personId : null]);
   return Number(result.rows[0]?.revision ?? 1);
+}
+
+async function nextItemStorageRevision(
+  client: PoolClient,
+  tables: ContextPhase4TableNames,
+  tenantId: string,
+  generation: string,
+  entityId: string,
+  itemType: DerivedItemType,
+  semanticKey: string,
+): Promise<number> {
+  // Scope-specific CAS revisions may overlap. The v25 item uniqueness contract is global
+  // within an entity generation, so allocate a separate storage revision under the entity lock.
+  const result = await client.query(`SELECT COALESCE(MAX(i.revision),0)+1 AS revision
+    FROM ${tables.derivedItems} i
+    WHERE i.tenant_id=$1 AND i.generation=$2 AND i.subject_generation=$2
+      AND i.subject_entity_id=$3 AND i.item_type=$4 AND i.semantic_key=$5`,
+  [tenantId, generation, entityId, itemType, semanticKey]);
+  const revision = Number(result.rows[0]?.revision);
+  if (!Number.isSafeInteger(revision) || revision < 1) invalid();
+  return revision;
 }
 
 async function findReviewTarget(

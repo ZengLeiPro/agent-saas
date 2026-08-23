@@ -22,9 +22,10 @@ import type { EventStore } from './types.js';
  * - **status 收敛逻辑**：只在状态翻转时写库 + emit event；保持 ready 时只更新
  *   `lastHealthCheckOkAt` metadata，避免每 30s 一轮的写入风暴。
  * - **重试驱动**：unhealthy hand 若缓存了 WorkspaceRecipe，会按 metadata.provision
- *   retryPolicy 到期后 best-effort replay `/provision`，成功后收敛回 ready。
- * - **并发**：每轮 max in-flight = handCount（典型 ≤ 数十个），单次 health
- *   调用本身受 healthTimeoutMs 限制。
+ *   retryPolicy 到期后 best-effort replay `/provision`；单轮耗尽后冷却再开新周期，
+ *   成功后才收敛回 ready。
+ * - **恢复限流**：健康探测按 endpoint/token 合并；session-specific `/provision`
+ *   每轮最多发起固定数量，避免大面积故障恢复时形成 provision 风暴。
  */
 
 export interface HandHealthScannerOptions {
@@ -44,6 +45,10 @@ export interface HandHealthScannerOptions {
   defaultServerRemoteAuthToken?: string;
   /** Enable replaying cached WorkspaceRecipe for unhealthy hands. Default true. */
   enableReprovision?: boolean;
+  /** 达到单轮 maxAttempts 后再次开启重试周期的冷却时间。默认 10min。 */
+  exhaustedRetryCooldownMs?: number;
+  /** 单次 scan 最多发起多少个 session-specific /provision，避免恢复风暴。默认 10。 */
+  maxReprovisionAttemptsPerScan?: number;
   /**
    * ready→unhealthy 翻转前的二次确认间隔（毫秒），默认 5s。
    * 2026-07-15 零停机部署批次：orchestrator drain 重启有 5-15s 连接拒绝空窗，
@@ -60,13 +65,18 @@ export class HandHealthScanner {
   private readonly healthTimeoutMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly unhealthyConfirmDelayMs: number;
+  private readonly exhaustedRetryCooldownMs: number;
+  private readonly maxReprovisionAttemptsPerScan: number;
   private inFlight = false;
+  private reprovisionAttemptsThisScan = 0;
 
   constructor(private readonly options: HandHealthScannerOptions) {
     this.intervalMs = options.intervalMs ?? 30_000;
     this.healthTimeoutMs = options.healthTimeoutMs ?? 5_000;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.unhealthyConfirmDelayMs = options.unhealthyConfirmDelayMs ?? 5_000;
+    this.exhaustedRetryCooldownMs = options.exhaustedRetryCooldownMs ?? 10 * 60_000;
+    this.maxReprovisionAttemptsPerScan = options.maxReprovisionAttemptsPerScan ?? 10;
   }
 
   start(): void {
@@ -102,6 +112,7 @@ export class HandHealthScanner {
   async scanOnce(): Promise<{ scanned: number; flipped: number }> {
     if (this.inFlight) return { scanned: 0, flipped: 0 };
     this.inFlight = true;
+    this.reprovisionAttemptsThisScan = 0;
     try {
       const store = this.options.handStore;
       if (!store.listByType) {
@@ -248,9 +259,14 @@ export class HandHealthScanner {
     const provision = parseProvisionMetadata(hand.metadata?.provision);
     const now = Date.now();
     if (provision.nextAttemptAt && Date.parse(provision.nextAttemptAt) > now) return false;
-    if (provision.attempts >= provision.maxAttempts) return false;
+    let attempt = provision.attempts + 1;
+    if (provision.attempts >= provision.maxAttempts) {
+      const lastAttemptAtMs = provision.lastAttemptAt ? Date.parse(provision.lastAttemptAt) : Number.NaN;
+      if (Number.isFinite(lastAttemptAtMs) && lastAttemptAtMs + this.exhaustedRetryCooldownMs > now) return false;
+      attempt = 1;
+    }
+    if (this.reprovisionAttemptsThisScan >= this.maxReprovisionAttemptsPerScan) return false;
 
-    const attempt = provision.attempts + 1;
     let authToken: string | undefined;
     try {
       authToken = await this.resolveToken(hand);
@@ -263,6 +279,7 @@ export class HandHealthScanner {
       lastHealthCheckAt: new Date().toISOString(),
     });
     if (!claimed) return false;
+    this.reprovisionAttemptsThisScan += 1;
     hand = claimed;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.healthTimeoutMs);
@@ -353,7 +370,9 @@ export class HandHealthScanner {
   ): Promise<void> {
     const base = parseProvisionMetadata(hand.metadata?.provision);
     const retryPolicy = parseRetryPolicy(metadata) ?? { maxAttempts: base.maxAttempts, backoffMs: base.backoffMs };
-    const delayMs = retryPolicy.backoffMs[Math.min(attempt - 1, retryPolicy.backoffMs.length - 1)] ?? 15_000;
+    const delayMs = attempt >= retryPolicy.maxAttempts
+      ? this.exhaustedRetryCooldownMs
+      : retryPolicy.backoffMs[Math.min(attempt - 1, retryPolicy.backoffMs.length - 1)] ?? 15_000;
     const failure = typeof error === 'string' ? error : 'hand reprovision failed';
     const completed = await this.completeProvisionRecovery(hand, recoveryToken, 'unhealthy', {
       provisionFailure: failure,
@@ -362,7 +381,7 @@ export class HandHealthScanner {
         lastStatus: 'error',
         lastAttemptAt: new Date().toISOString(),
         lastError: failure,
-        nextAttemptAt: attempt >= retryPolicy.maxAttempts ? undefined : new Date(Date.now() + delayMs).toISOString(),
+        nextAttemptAt: new Date(Date.now() + delayMs).toISOString(),
         retryPolicy,
       },
     });
@@ -464,7 +483,13 @@ function parseCachedRecipe(value: unknown, expectedWorkspaceId: string): Workspa
   return recipe;
 }
 
-function parseProvisionMetadata(value: unknown): { attempts: number; maxAttempts: number; backoffMs: number[]; nextAttemptAt?: string } {
+function parseProvisionMetadata(value: unknown): {
+  attempts: number;
+  maxAttempts: number;
+  backoffMs: number[];
+  nextAttemptAt?: string;
+  lastAttemptAt?: string;
+} {
   const obj = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const retryPolicy = parseRetryPolicy(obj.retryPolicy) ?? { maxAttempts: 3, backoffMs: [1000, 5000, 15000] };
   return {
@@ -472,6 +497,7 @@ function parseProvisionMetadata(value: unknown): { attempts: number; maxAttempts
     maxAttempts: retryPolicy.maxAttempts,
     backoffMs: retryPolicy.backoffMs,
     ...(typeof obj.nextAttemptAt === 'string' ? { nextAttemptAt: obj.nextAttemptAt } : {}),
+    ...(typeof obj.lastAttemptAt === 'string' ? { lastAttemptAt: obj.lastAttemptAt } : {}),
   };
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import type { TaskBoard } from "@agent/shared";
 import type { TaskBoardDirectoryUser, TaskBoardMember, TaskBoardMemberRole } from "@agent/shared/types/taskboard";
 import { Check, LoaderCircle, Search, Trash2, UserPlus } from "lucide-react";
@@ -6,11 +6,6 @@ import { UserAvatar } from "@/components/AgentAvatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -48,6 +43,7 @@ export function BoardMembers({ board, canManage }: BoardMembersProps) {
   const [userPickerOpen, setUserPickerOpen] = useState(false);
   const [role, setRole] = useState<EditableRole>("viewer");
   const [loading, setLoading] = useState(true);
+  const userListId = useId();
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -170,60 +166,20 @@ export function BoardMembers({ board, canManage }: BoardMembersProps) {
         <div className="grid gap-2 sm:grid-cols-[1fr_7rem_auto] sm:items-end">
           <div className="space-y-1.5">
             <Label>组织用户</Label>
-            <Popover open={userPickerOpen} onOpenChange={setUserPickerOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={userPickerOpen}
-                  aria-label="选择组织用户"
-                  disabled={loading || users.length === 0 || savingUserId !== null}
-                  className="w-full justify-between font-normal"
-                >
-                  <span className="truncate">{selectedUser ? userLabel(selectedUser) : "选择组织用户"}</span>
-                  <Search className="ml-2 size-4 shrink-0 text-muted-foreground" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-[min(24rem,calc(100vw-2rem))] p-2">
-                <Input
-                  autoFocus
-                  type="search"
-                  value={userSearch}
-                  onChange={(event) => setUserSearch(event.target.value)}
-                  placeholder="搜索姓名、账号或用户 ID"
-                  aria-label="搜索组织用户"
-                />
-                <div role="listbox" aria-label="组织用户列表" className="mt-2 max-h-56 space-y-1 overflow-y-auto">
-                  {availableUsers.map((user) => {
-                    const label = userLabel(user);
-                    return (
-                      <button
-                        key={user.id}
-                        type="button"
-                        role="option"
-                        aria-selected={selectedUserId === user.id}
-                        disabled={user.disabled}
-                        className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                        onClick={() => {
-                          setSelectedUserId(user.id);
-                          setUserSearch("");
-                          setUserPickerOpen(false);
-                        }}
-                      >
-                        <UserAvatar userId={user.id} avatar={user.avatar} version={user.avatarVersion} size={24} />
-                        <span className="min-w-0 flex-1 truncate">{label}</span>
-                        {user.disabled ? <span className="text-xs text-muted-foreground">已停用</span> : null}
-                        {selectedUserId === user.id ? <Check className="size-4 shrink-0" /> : null}
-                      </button>
-                    );
-                  })}
-                  {availableUsers.length === 0 ? (
-                    <p className="px-2 py-4 text-center text-xs text-muted-foreground">没有匹配的组织用户</p>
-                  ) : null}
-                </div>
-              </PopoverContent>
-            </Popover>
+            <Button
+              type="button"
+              variant="outline"
+              role="combobox"
+              aria-expanded={userPickerOpen}
+              aria-controls={userPickerOpen ? userListId : undefined}
+              aria-label="选择组织用户"
+              disabled={loading || users.length === 0 || savingUserId !== null}
+              className="w-full justify-between font-normal"
+              onClick={() => setUserPickerOpen((open) => !open)}
+            >
+              <span className="truncate">{selectedUser ? userLabel(selectedUser) : "选择组织用户"}</span>
+              <Search className="ml-2 size-4 shrink-0 text-muted-foreground" />
+            </Button>
           </div>
           <div className="space-y-1.5">
             <Label>角色</Label>
@@ -237,6 +193,46 @@ export function BoardMembers({ board, canManage }: BoardMembersProps) {
           <Button type="button" disabled={!selectedUserId || savingUserId !== null} onClick={() => void saveMember(selectedUserId, role)}>
             <UserPlus className="size-4" />添加
           </Button>
+          {userPickerOpen ? (
+            <div className="rounded-md border bg-popover p-2 text-popover-foreground shadow-md sm:col-span-3">
+              <Input
+                autoFocus
+                type="search"
+                value={userSearch}
+                onChange={(event) => setUserSearch(event.target.value)}
+                placeholder="搜索姓名、账号或用户 ID"
+                aria-label="搜索组织用户"
+              />
+              <div id={userListId} role="listbox" aria-label="组织用户列表" className="mt-2 max-h-56 space-y-1 overflow-y-auto">
+                {availableUsers.map((user) => {
+                  const label = userLabel(user);
+                  return (
+                    <button
+                      key={user.id}
+                      type="button"
+                      role="option"
+                      aria-selected={selectedUserId === user.id}
+                      disabled={user.disabled}
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => {
+                        setSelectedUserId(user.id);
+                        setUserSearch("");
+                        setUserPickerOpen(false);
+                      }}
+                    >
+                      <UserAvatar userId={user.id} avatar={user.avatar} version={user.avatarVersion} size={24} />
+                      <span className="min-w-0 flex-1 truncate">{label}</span>
+                      {user.disabled ? <span className="text-xs text-muted-foreground">已停用</span> : null}
+                      {selectedUserId === user.id ? <Check className="size-4 shrink-0" /> : null}
+                    </button>
+                  );
+                })}
+                {availableUsers.length === 0 ? (
+                  <p className="px-2 py-4 text-center text-xs text-muted-foreground">没有匹配的组织用户</p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
       {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}

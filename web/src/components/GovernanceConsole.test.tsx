@@ -1,3 +1,4 @@
+import { lazy } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { governanceRoute } from "@/lib/governanceNavigation";
@@ -47,6 +48,23 @@ describe("GovernanceConsole", () => {
     expect(localNav.textContent).toContain("会话");
     expect(localNav.textContent).not.toContain("组织");
     expect(screen.getByText("复用运行追踪内容")).toBeTruthy();
+  });
+
+  it("叶子页面首次懒加载时保留控制台壳层，只替换内容区", () => {
+    const PendingPage = lazy(() => new Promise<{ default: () => null }>(() => undefined));
+    render(
+      <GovernanceConsole
+        area="platform"
+        route={governanceRoute("platform.governance.system-settings")}
+        onExit={() => undefined}
+      >
+        <PendingPage />
+      </GovernanceConsole>,
+    );
+
+    expect(screen.getByRole("navigation", { name: "平台控制台工作区" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "系统配置" })).toBeTruthy();
+    expect(screen.getByTestId("governance-page-loading")).toBeTruthy();
   });
 
   it("平台管理员进入组织作用域显示常驻 banner，并从切换器过滤 pantheon", async () => {

@@ -44,12 +44,12 @@ describePg('任务标题生成的并发幂等', () => {
     app.use('/api/taskboard', createTaskboardRouter({
       service: store,
       generateTaskTitle: async (description) => {
-        titleGenerationCalls += 1;
         if (description === 'pending 访问隔离') {
           markDelayedTitleStarted?.();
           await delayedTitleRelease;
           return '隔离后的标题';
         }
+        titleGenerationCalls += 1;
         await new Promise((resolve) => setTimeout(resolve, 25));
         return '并发唯一标题';
       },

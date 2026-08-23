@@ -1,6 +1,5 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
-
 import type { UserStore } from '../data/users/store.js';
 import {
   listTaskboardDirectoryUsers,
@@ -23,6 +22,7 @@ import {
   type TaskBoardUploadAttachment,
 } from '../../../shared/src/types/taskboard.js';
 import { assertActiveBoard, assertBoardRole } from '../taskboard/storeHelpers.js';
+import { generateAndApplyTaskTitle } from '../taskboard/taskTitle.js';
 import {
   TaskboardConflictError,
   TaskboardExecutionUnavailableError,
@@ -456,16 +456,17 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     const attachments = await resolveRequestAttachments(options, req, input.attachments);
     const ownerUserId = attachments?.length ? board.ownerUserId : undefined;
     await markRequestAttachments(options, req, attachments);
-    const releaseClientRequestLock = input.clientRequestId ? await options.service!.acquireTaskClientRequestLock(identity, req.params.boardId, input.clientRequestId) : undefined;
     const { dispatch } = input;
+    const title = input.title ?? (input.clientRequestId ? null : await generateTaskTitle(input.description ?? '', identity));
+    const taskInput = { ...input, title: title ?? '' };
+    delete taskInput.dispatch; delete taskInput.attachments;
+    const createInput = { ...taskInput, ...(attachments !== undefined && attachments.length === 0 ? { attachments: [] } : {}) };
     let task: TaskBoardTask;
-    try {
-      const existingTask = input.clientRequestId ? await options.service!.findTaskByClientRequestId(identity, req.params.boardId, input.clientRequestId) : null;
-      const title = existingTask?.title ?? input.title ?? await generateTaskTitle(input.description ?? '', identity);
-      const taskInput = { ...input, title: title ?? '' };
-      delete taskInput.dispatch; delete taskInput.attachments;
-      task = await options.service!.createTask(identity, req.params.boardId, { ...taskInput, ...(attachments !== undefined && attachments.length === 0 ? { attachments: [] } : {}) });
-    } finally { await releaseClientRequestLock?.(); }
+    if (input.clientRequestId) {
+      const result = await options.service!.createTaskWithResult(identity, req.params.boardId, createInput);
+      task = result.task;
+      if (result.created && input.title === undefined) task = await generateAndApplyTaskTitle(options.service!, identity, task, input.description ?? '', generateTaskTitle);
+    } else { task = await options.service!.createTask(identity, req.params.boardId, createInput); }
     let scopedAttachments: TaskBoardUploadAttachment[] | undefined;
     try {
       scopedAttachments = await materializeRequestAttachments(options, req, identity, task.id, ownerUserId, attachments);

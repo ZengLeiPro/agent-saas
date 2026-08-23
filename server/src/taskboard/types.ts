@@ -43,6 +43,11 @@ export interface TaskboardIdentity {
   userRole?: "admin" | "user";
 }
 
+export interface TaskboardTaskCreateResult {
+  task: TaskBoardTask;
+  created: boolean;
+}
+
 export interface TaskboardPage<T> {
   items: T[];
   page: number;
@@ -307,6 +312,11 @@ export interface TaskboardExecutionStore {
     runId: string,
     input: TaskBoardTaskCreateInput,
   ): Promise<TaskBoardTask>;
+  createTaskFromExecutionWithResult(
+    identity: TaskboardIdentity,
+    runId: string,
+    input: TaskBoardTaskCreateInput,
+  ): Promise<TaskboardTaskCreateResult>;
   moveTaskFromExecution(
     identity: TaskboardIdentity,
     runId: string,
@@ -423,8 +433,7 @@ export interface TaskboardService {
   listTasks(identity: TaskboardIdentity, boardId: string, filter?: TaskboardTaskListFilter): Promise<TaskBoardTask[]>;
   searchTasks(identity: TaskboardIdentity, filter?: TaskboardTaskSearchFilter): Promise<TaskboardPage<TaskBoardTask>>;
   createTask(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskBoardTask>;
-  acquireTaskClientRequestLock(identity: TaskboardIdentity, boardId: string, clientRequestId: string): Promise<() => Promise<void>>;
-  findTaskByClientRequestId(identity: TaskboardIdentity, boardId: string, clientRequestId: string): Promise<TaskBoardTask | null>;
+  createTaskWithResult(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskboardTaskCreateResult>;
   getTask(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardTask>;
   updateTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskPatchInput): Promise<TaskBoardTask>;
   moveTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskMoveInput): Promise<TaskBoardTask>;

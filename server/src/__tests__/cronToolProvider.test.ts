@@ -254,6 +254,7 @@ describe('CronToolProvider', () => {
           getExecutionContextBySessionId,
           updateTaskBranchFromExecution,
           createTaskFromExecution: vi.fn(),
+          createTaskFromExecutionWithResult: vi.fn(),
           moveTaskFromExecution: vi.fn(),
         }),
       },

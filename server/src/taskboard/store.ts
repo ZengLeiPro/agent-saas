@@ -29,6 +29,7 @@ import {
 } from './executionOutboxStore.js';
 import {
   createTaskFromExecution as createStoredTaskFromExecution,
+  createTaskFromExecutionWithResult as createStoredTaskFromExecutionWithResult,
   updateTaskBranchFromExecution as updateStoredTaskBranchFromExecution,
 } from './executionTaskActions.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
@@ -36,7 +37,6 @@ import { loadIntegrationCandidateProjection } from './integrationCandidateProjec
 import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import { runIntegrationV3RepositoryProbe, type IntegrationV3RepositoryProbe, type IntegrationV3RepositoryProbeInput } from './integrationV3RepositoryProbe.js';
 import { deleteStoredTask, rollbackStoredTask } from './storeTaskDelete.js';
-import { acquireTaskClientRequestLock as acquireStoredTaskClientRequestLock, findTaskByClientRequestId as findStoredTaskByClientRequestId } from './taskClientRequests.js';
 import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
 import {
   allowedActionsForRole,
@@ -128,9 +128,11 @@ import {
   type TaskboardPage,
   type TaskboardPageFilter,
   type TaskboardService,
+  type TaskboardTaskCreateResult,
   type TaskboardTaskListFilter,
   type TaskboardTaskSearchFilter,
 } from './types.js';
+
 const { Pool } = pg;
 type PgPool = InstanceType<typeof Pool>;
 const DEFAULT_SORT_GAP = 1024;
@@ -606,7 +608,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<TaskboardPage<TaskBoardTask>> {
     return searchStoredTasks(this, identity, filter);
   }
-  async createTask(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskBoardTask> {
+  async createTask(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskBoardTask> { return (await this.createTaskWithResult(identity, boardId, input)).task; }
+  async createTaskWithResult(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskboardTaskCreateResult> {
     return this.withTransaction(async (client) => {
       const board = await this.requireBoard(client, identity, boardId, true);
       assertBoardRole(board.role, 'editor');
@@ -636,7 +639,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           `SELECT t.*, (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', this.changesTable)}) AS comment_count FROM ${this.tasksTable} t WHERE t.board_id=$1 AND t.client_request_id=$2 AND t.deleted_at IS NULL`,
           [boardId, input.clientRequestId],
         );
-        if (existing.rows[0]) return rowToTask(existing.rows[0]);
+        if (existing.rows[0]) return { task: rowToTask(existing.rows[0]), created: false };
       }
       const numberResult = await client.query(
         `UPDATE ${this.boardsTable}
@@ -693,11 +696,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         kind: input.kind ?? 'delivery',
         status,
       });
-      return this.requireTask(client, identity, taskId, false);
+      return { task: await this.requireTask(client, identity, taskId, false), created: true };
     });
   }
-  async acquireTaskClientRequestLock(identity: TaskboardIdentity, boardId: string, clientRequestId: string) { return acquireStoredTaskClientRequestLock(this, identity, boardId, clientRequestId); }
-  async findTaskByClientRequestId(identity: TaskboardIdentity, boardId: string, clientRequestId: string) { return findStoredTaskByClientRequestId(this, identity, boardId, clientRequestId); }
   async getTask(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardTask> {
     return this.requireTask(this.pool, identity, taskId, false);
   }
@@ -983,11 +984,10 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   }
 
   async createTaskFromExecution(
-    identity: TaskboardIdentity,
-    runId: string,
-    input: TaskBoardTaskCreateInput,
-  ): Promise<TaskBoardTask> {
-    return createStoredTaskFromExecution(this, identity, runId, input);
+    identity: TaskboardIdentity, runId: string, input: TaskBoardTaskCreateInput,
+  ): Promise<TaskBoardTask> { return createStoredTaskFromExecution(this, identity, runId, input); }
+  async createTaskFromExecutionWithResult(identity: TaskboardIdentity, runId: string, input: TaskBoardTaskCreateInput) {
+    return createStoredTaskFromExecutionWithResult(this, identity, runId, input);
   }
   enqueueContinuation(
     taskId: string,

@@ -69,21 +69,27 @@ describe('创建任务前的标题生成保护', () => {
 
       let existingTask: Awaited<ReturnType<TaskboardService['createTask']>> | null = null;
       service.getBoard = async () => ({ ...VIEWER_BOARD, id: 'owner-board', role: 'owner', canManage: true });
-      let lockTail = Promise.resolve();
-      service.acquireTaskClientRequestLock = async () => {
-        const previous = lockTail;
+      let createTail = Promise.resolve();
+      service.createTaskWithResult = async (_identity, boardId, input) => {
+        const previous = createTail;
         let release!: () => void;
-        lockTail = new Promise<void>((resolve) => { release = resolve; });
+        createTail = new Promise<void>((resolve) => { release = resolve; });
         await previous;
-        return async () => release();
+        try {
+          if (existingTask) return { task: existingTask, created: false };
+          existingTask = {
+            id: 'task-1', boardId, identifier: 'TASK-1', title: input.title ?? '',
+            description: input.description ?? '', status: 'backlog', priority: 'none', labels: [],
+            sortOrder: 1024, commentCount: 0, version: 1,
+            createdAt: VIEWER_BOARD.createdAt, updatedAt: VIEWER_BOARD.updatedAt,
+          };
+          return { task: existingTask, created: true };
+        } finally { release(); }
       };
-      service.findTaskByClientRequestId = async () => existingTask;
-      service.createTask = async (_identity, boardId, input) => existingTask ??= {
-        id: 'task-1', boardId, identifier: 'TASK-1', title: input.title ?? '',
-        description: input.description ?? '', status: 'backlog', priority: 'none', labels: [],
-        sortOrder: 1024, commentCount: 0, version: 1,
-        createdAt: VIEWER_BOARD.createdAt, updatedAt: VIEWER_BOARD.updatedAt,
+      service.updateTask = async (_identity, _taskId, input) => existingTask = {
+        ...existingTask!, title: input.title ?? '', version: existingTask!.version + 1,
       };
+      service.getTask = async () => existingTask!;
       const responses = await Promise.all(Array.from({ length: 2 }, () => fetch(
         `${baseUrl}/api/taskboard/boards/owner-board/tasks`,
         {

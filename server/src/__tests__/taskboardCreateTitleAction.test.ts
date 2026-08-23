@@ -64,22 +64,29 @@ describe('Agent 创建任务的自动标题', () => {
       kind: 'delivery', status: 'in_progress', priority: 'none', labels: [], sortOrder: 1024,
       commentCount: 0, version: 1, createdAt: board.createdAt, updatedAt: board.updatedAt,
     };
-    const createTaskFromExecution = vi.fn(async (_identity, _runId, input) => ({
-      ...parentTask,
-      id: `task-${createTaskFromExecution.mock.calls.length + 1}`,
-      identifier: `TASK-${createTaskFromExecution.mock.calls.length + 2}`,
-      title: input.title ?? '',
-      description: input.description ?? '',
-      status: 'todo' as const,
-    }));
+    let existingTask: TaskBoardTask | null = null;
+    const createTaskFromExecutionWithResult = vi.fn(async (_identity, _runId, input) => {
+      if (existingTask) return { task: existingTask, created: false };
+      existingTask = {
+        ...parentTask, id: 'task-2', identifier: 'TASK-2', title: input.title ?? '',
+        description: input.description ?? '', status: 'todo' as const,
+      };
+      return { task: existingTask, created: true };
+    });
     const generateTaskTitle = vi.fn()
       .mockResolvedValueOnce('Execution 自动标题')
       .mockResolvedValueOnce(null);
-    const service = {} as TaskboardService;
+    const service = {
+      updateTask: vi.fn(async (_identity, _taskId, input) => {
+        existingTask = { ...existingTask!, title: input.title ?? '', version: existingTask!.version + 1 };
+        return existingTask;
+      }),
+      getTask: vi.fn(async () => existingTask!),
+    } as unknown as TaskboardService;
     const options = {
       service: () => service,
       generateTaskTitle,
-      executionStore: () => ({ createTaskFromExecution } as never),
+      executionStore: () => ({ createTaskFromExecutionWithResult } as never),
     };
     const scope = {
       execution: {
@@ -95,14 +102,21 @@ describe('Agent 创建任务的自动标题', () => {
       },
     };
 
-    await invokeTaskboardAction(options, identity, {
-      action: 'create', boardId: board.id, description: 'Execution 第一条正文',
+    const first = await invokeTaskboardAction(options, identity, {
+      action: 'create', boardId: board.id, description: 'Execution 正文',
     }, scope);
-    await invokeTaskboardAction(options, identity, {
-      action: 'create', boardId: board.id, description: 'Execution 第二条正文',
+    const replay = await invokeTaskboardAction(options, identity, {
+      action: 'create', boardId: board.id, description: 'Execution 正文',
+    }, scope);
+    existingTask = null;
+    const failed = await invokeTaskboardAction(options, identity, {
+      action: 'create', boardId: board.id, description: 'Execution 失败正文',
     }, scope);
 
-    expect(createTaskFromExecution.mock.calls.map((call) => call[2].title))
-      .toEqual(['Execution 自动标题', '']);
+    expect(first).toMatchObject({ task: { title: 'Execution 自动标题' } });
+    expect(replay).toMatchObject({ task: { title: 'Execution 自动标题' } });
+    expect(failed).toMatchObject({ task: { title: '' } });
+    expect(generateTaskTitle).toHaveBeenCalledTimes(2);
+    expect(createTaskFromExecutionWithResult).toHaveBeenCalledTimes(3);
   });
 });

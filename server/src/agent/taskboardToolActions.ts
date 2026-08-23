@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { appendTaskboardAttachments, cleanupTaskboardAttachments, materializeTaskboardAttachments, resolveTaskboardAttachments } from './taskboardAttachmentActions.js';
 import { assertTaskboardExecutionScope } from './taskboardExecutionScope.js';
 import { assertActiveBoard, assertBoardRole } from '../taskboard/storeHelpers.js';
+import { generateAndApplyTaskTitle } from '../taskboard/taskTitle.js';
 
 import type {
   TaskBoardExecutionPurpose,
@@ -178,6 +179,7 @@ export interface TaskboardToolOptions {
     | 'getExecutionContextBySessionId'
     | 'updateTaskBranchFromExecution'
     | 'createTaskFromExecution'
+    | 'createTaskFromExecutionWithResult'
     | 'moveTaskFromExecution'
   > | undefined;
 }
@@ -752,14 +754,14 @@ async function createExecutionTask(
   const dispatcher = input.dispatch ? requireExecutionService(options.executionService?.()) : undefined;
   const service = options.service();
   if (!service) throw new Error('任务看板服务未启用');
-  const title = input.title ?? await options.generateTaskTitle?.(input.description ?? '', identity);
+  const clientRequestId = taskboardCreateRequestId(input, { execution });
   const attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
   const ownerUserId = attachments?.length
     ? (await service.getBoard(identity, execution.task.boardId)).ownerUserId
     : undefined;
   await markTaskboardAttachments(options, identity, attachments, scope);
-  let task = await executionStore.createTaskFromExecution(identity, execution.execution.runId, {
-    title: title ?? '',
+  const createResult = await executionStore.createTaskFromExecutionWithResult(identity, execution.execution.runId, {
+    title: input.title ?? '',
     kind,
     ...(input.description !== undefined ? { description: input.description } : {}),
     ...(typeof input.branch === 'string' ? { branch: input.branch } : {}),
@@ -769,8 +771,14 @@ async function createExecutionTask(
     ...(input.labels ? { labels: input.labels } : {}),
     ...(typeof input.dueAt === 'string' ? { dueAt: input.dueAt } : {}),
     ...(typeof input.model === 'string' ? { model: input.model } : {}),
-    clientRequestId: taskboardCreateRequestId(input, { execution }),
+    clientRequestId,
   });
+  let task = createResult.task;
+  if (createResult.created && input.title === undefined) {
+    task = await generateAndApplyTaskTitle(
+      service, identity, task, input.description ?? '', options.generateTaskTitle ?? (async () => null),
+    );
+  }
   let scopedAttachments: TaskBoardUploadAttachment[] | undefined;
   try {
     scopedAttachments = await materializeTaskboardAttachments(options, identity, task.id, ownerUserId, attachments);

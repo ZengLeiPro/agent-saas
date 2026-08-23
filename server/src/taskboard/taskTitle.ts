@@ -9,7 +9,8 @@ import type { BillingService } from '../data/billing/service.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
-import type { TaskboardIdentity } from './types.js';
+import type { TaskBoardTask } from '../../../shared/src/types/taskboard.js';
+import type { TaskboardIdentity, TaskboardService } from './types.js';
 
 export interface TaskboardTitleGeneratorOptions {
   agentCwd?: string;
@@ -43,6 +44,22 @@ export function createRuntimeTaskboardTitleGenerator(
     tokenUsageStore: runtime.tokenUsageStore,
     billingService: runtime.billingService,
   });
+}
+
+export async function generateAndApplyTaskTitle(
+  service: TaskboardService,
+  identity: TaskboardIdentity,
+  task: TaskBoardTask,
+  description: string,
+  generateTitle: (description: string, identity: TaskboardIdentity) => Promise<string | null>,
+): Promise<TaskBoardTask> {
+  const title = await generateTitle(description, identity);
+  if (!title) return task;
+  try {
+    return await service.updateTask(identity, task.id, { title, expectedVersion: task.version });
+  } catch {
+    return service.getTask(identity, task.id).catch(() => task);
+  }
 }
 
 export function createTaskboardTitleGenerator(options: TaskboardTitleGeneratorOptions) {

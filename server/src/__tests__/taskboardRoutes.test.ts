@@ -714,7 +714,7 @@ function makeService(captured: Captured): TaskboardService {
       return { items: [BOARD], page: filter.page ?? 1, pageSize: filter.pageSize ?? 20, total: 1, hasMore: false };
     },
     async getBoard(identity) { remember(identity); return BOARD; },
-    async acquireTaskClientRequestLock() { return async () => undefined; }, async findTaskByClientRequestId() { return null; },
+    async createTaskWithResult(identity) { remember(identity); return { task: TASK, created: true }; },
     async createBoard(identity, input) { remember(identity); captured.createBoards.push(input); return BOARD; },
     async updateBoard(identity) { remember(identity); return BOARD; },
     async archiveBoard(identity) { remember(identity); return { ...BOARD, version: 2, archivedAt: BOARD.updatedAt }; },

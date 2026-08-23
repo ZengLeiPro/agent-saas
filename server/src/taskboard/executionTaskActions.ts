@@ -16,6 +16,7 @@ import {
   TaskboardNotFoundError,
   TaskboardValidationError,
   type TaskboardIdentity,
+  type TaskboardTaskCreateResult,
 } from './types.js';
 
 interface ExecutionTaskActionOptions {
@@ -65,6 +66,15 @@ export async function createTaskFromExecution(
   runId: string,
   input: TaskBoardTaskCreateInput,
 ): Promise<TaskBoardTask> {
+  return (await createTaskFromExecutionWithResult(options, identity, runId, input)).task;
+}
+
+export async function createTaskFromExecutionWithResult(
+  options: ExecutionTaskActionOptions,
+  identity: TaskboardIdentity,
+  runId: string,
+  input: TaskBoardTaskCreateInput,
+): Promise<TaskboardTaskCreateResult> {
   return withActiveExecutionTask(options, identity, runId, async (client, currentTask) => {
     if (currentTask.kind === 'advisory') {
       throw new TaskboardValidationError(
@@ -87,7 +97,7 @@ export async function createTaskFromExecution(
           WHERE t.board_id=$1 AND t.client_request_id=$2 AND t.deleted_at IS NULL`,
         [currentTask.boardId, input.clientRequestId],
       );
-      if (existing.rows[0]) return rowToTask(existing.rows[0]);
+      if (existing.rows[0]) return { task: rowToTask(existing.rows[0]), created: false };
     }
     const numberResult = await client.query(
       `UPDATE ${options.boardsTable}
@@ -135,7 +145,7 @@ export async function createTaskFromExecution(
        VALUES ($1,'task.created_from_execution','agent',$2,$3::jsonb)`,
       [taskId, runId, JSON.stringify({ sourceTaskId: currentTask.id, kind })],
     );
-    return loadTask(options, client, taskId);
+    return { task: await loadTask(options, client, taskId), created: true };
   });
 }
 

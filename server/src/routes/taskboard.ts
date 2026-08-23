@@ -2,6 +2,7 @@ import { Router, type Request, type RequestHandler, type Response } from 'expres
 import { z } from 'zod';
 
 import { boardCiPolicySchema } from './taskboardCiPolicySchema.js';
+import { registerTaskboardWatchRoutes } from './taskboardWatch.js';
 
 import type { UserStore } from '../data/users/store.js';
 import {
@@ -517,24 +518,7 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     res.json(withCreatorAvatarVersionsPage(options.userStore, identity, page));
   }));
 
-  router.get('/tasks/:id', route(async (req, res) => {
-    const identity = identityFrom(req);
-    const task = await options.service!.getTask(identity, req.params.id);
-    const watched = options.service!.isTaskWatched
-      ? await options.service!.isTaskWatched(identity, req.params.id)
-      : false;
-    res.json({ ...withCreatorAvatarVersion(options.userStore, identity, task), watched });
-  }));
-
-  router.put('/tasks/:id/watch', route(async (req, res) => {
-    if (!options.service!.setTaskWatched) throw new TaskboardExecutionUnavailableError('Task watch unavailable');
-    res.json({ watched: await options.service!.setTaskWatched(identityFrom(req), req.params.id, true) });
-  }));
-
-  router.delete('/tasks/:id/watch', route(async (req, res) => {
-    if (!options.service!.setTaskWatched) throw new TaskboardExecutionUnavailableError('Task watch unavailable');
-    res.json({ watched: await options.service!.setTaskWatched(identityFrom(req), req.params.id, false) });
-  }));
+  registerTaskboardWatchRoutes(router, options, identityFrom, route);
 
   router.get('/tasks/:id/attachments/:attachmentId', route(async (req, res) => {
     if (!options.agentCwd || !options.uploadManager) throw new TaskboardExecutionUnavailableError();

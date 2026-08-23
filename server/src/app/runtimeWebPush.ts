@@ -4,6 +4,8 @@ import type { NotifyConfig } from '../cron/types.js';
 import type { UserStore } from '../data/users/store.js';
 import type { PgEventStore } from '../runtime/pgEventStore.js';
 import type { PgSessionProjectionStore } from '../runtime/sessionProjectionStore.js';
+import type { PgTaskboardStore } from '../taskboard/store.js';
+import { TaskboardStatusNotificationWorker } from '../taskboard/statusNotificationWorker.js';
 import type { PlatformEvent } from '../runtime/types.js';
 import type { Logger } from '../utils/logger.js';
 import { notifyWebPushForRuntimeEvent } from '../webPush/runtimeEventNotifier.js';
@@ -24,6 +26,26 @@ export interface RuntimeWebPushAssembly {
   warnIfUnavailable(): void;
   appendCronChannel(channels: NotifyChannel[], notifyConfig: NotifyConfig): void;
   deliverRuntimeEvent(event: PlatformEvent): Promise<void>;
+}
+
+export function startTaskboardStatusNotificationWorker(
+  store: PgTaskboardStore,
+  service: WebPushService | undefined,
+  enabled: boolean,
+): TaskboardStatusNotificationWorker | undefined {
+  if (!service || !enabled) return undefined;
+  const worker = new TaskboardStatusNotificationWorker({
+    pool: store.pool,
+    tasksTable: store.tasksTable,
+    boardsTable: store.boardsTable,
+    commentsTable: store.commentsTable,
+    executionsTable: store.executionsTable,
+    watchersTable: store.watchersTable,
+    outboxTable: store.statusNotificationOutboxTable,
+    service,
+  });
+  worker.start();
+  return worker;
 }
 
 /** Keeps Web Push startup and runtime delivery wiring in one lifecycle-owned adapter. */

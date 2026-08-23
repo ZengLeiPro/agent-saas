@@ -36,7 +36,6 @@ import { MemoryConsolidationEngine } from '../memory/consolidation/engine.js';
 import { TaskboardExecutionCoordinator, createTaskboardAttachmentAccess, createTaskboardRuntimeOptions, createTaskboardTrustedWorkspaceResolver } from '../taskboard/executionService.js';
 import { RetryableTaskboardService } from '../taskboard/retryableService.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
-import { TaskboardStatusNotificationWorker } from '../taskboard/statusNotificationWorker.js';
 import { configureTaskboardGithubRepositoryProvider } from '../taskboard/repositoryRuntime.js';
 import type { RepositoryProvider } from '../taskboard/repositoryProvider.js';
 import { resolveGithubToken } from '../connectors/github.js';
@@ -102,7 +101,7 @@ import type { NotifyChannel } from '../cron/notifyChannel.js';
 import { createDingtalkNotifyChannel } from '../cron/notifyChannels/index.js';
 import { buildFollowupContext } from '../cron/followup.js';
 import { assertDevDatabaseSafety, loadAppConfig } from './config.js';
-import { createRuntimeWebPushAssembly } from './runtimeWebPush.js';
+import { createRuntimeWebPushAssembly, startTaskboardStatusNotificationWorker } from './runtimeWebPush.js';
 import { createModelResolvers } from './modelResolvers.js';
 import { createTitleModelAdapterFactory, resolveTitleGeneratorConfigs } from './titleGeneratorConfigs.js';
 import { resolveGuardrailModelConfigs } from './guardrailModelConfigs.js';
@@ -619,8 +618,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let appealStore: PgAppealStore | undefined;
   let taskboardService: TaskboardService | undefined;
   let taskboardStoreService: RetryableTaskboardService | undefined;
-  let rawTaskboardStore: PgTaskboardStore | undefined, taskboardExecutionCoordinator: TaskboardExecutionCoordinator | undefined, integrationV3Runtime: RuntimeTaskboardIntegrationV3 | undefined, taskboardRepositoryProvider: ReturnType<typeof configureTaskboardGithubRepositoryProvider>, integrationV3RepositoryProvider: RepositoryProvider | undefined;
-  let taskboardStatusNotificationWorker: TaskboardStatusNotificationWorker | undefined;
+  let rawTaskboardStore: PgTaskboardStore | undefined, taskboardExecutionCoordinator: TaskboardExecutionCoordinator | undefined, integrationV3Runtime: RuntimeTaskboardIntegrationV3 | undefined, taskboardRepositoryProvider: ReturnType<typeof configureTaskboardGithubRepositoryProvider>, integrationV3RepositoryProvider: RepositoryProvider | undefined, taskboardStatusNotificationWorker: ReturnType<typeof startTaskboardStatusNotificationWorker>;
   let pgArtifactStore: PgArtifactStore | undefined;
   let systemMetricsStore: PgSystemMetricsStore | undefined;
   let systemMetricsCollector: SystemMetricsCollector | undefined;
@@ -786,24 +784,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       const retryableService = new RetryableTaskboardService(store);
       taskboardService = retryableService;
       taskboardStoreService = retryableService;
-      let taskboardInitialized = true;
-      await retryableService.init().catch((err) => {
-        taskboardInitialized = false;
+      await retryableService.init().then(() => { taskboardStatusNotificationWorker = startTaskboardStatusNotificationWorker(store, runtimeWebPush.service, enableSingletonWorkers); }).catch((err) => {
         serverLogger.warn(`PgTaskboardStore init failed; requests return 503 until a later init retry succeeds: ${err instanceof Error ? err.message : String(err)}`);
       });
-      if (taskboardInitialized && enableSingletonWorkers && runtimeWebPush.service) {
-        taskboardStatusNotificationWorker = new TaskboardStatusNotificationWorker({
-          pool: store.pool,
-          tasksTable: store.tasksTable,
-          boardsTable: store.boardsTable,
-          commentsTable: store.commentsTable,
-          executionsTable: store.executionsTable,
-          watchersTable: store.watchersTable,
-          outboxTable: store.statusNotificationOutboxTable,
-          service: runtimeWebPush.service,
-        });
-        taskboardStatusNotificationWorker.start();
-      }
     } catch (err) {
       taskboardService = undefined;
       taskboardStoreService = undefined;
@@ -1138,8 +1121,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       handHealthScanner?.stop();
       handLeaseJanitor?.stop();
       systemMetricsCollector?.stop();
-      alertNotifier?.stop();
-      taskboardStatusNotificationWorker?.stop();
+      alertNotifier?.stop(); taskboardStatusNotificationWorker?.stop();
       await taskboardExecutionCoordinator?.stop();
       terminalEventOutboxDispatcher.stop();
       await runtimeScheduler?.stop();
@@ -2585,8 +2567,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let runtimeDrainStarted = false;
   const beginRuntimeDrain = async (): Promise<void> => {
     if (runtimeDrainStarted) return;
-    runtimeDrainStarted = true;
-    taskboardStatusNotificationWorker?.stop();
+    runtimeDrainStarted = true; taskboardStatusNotificationWorker?.stop();
     await integrationV3Runtime?.stop();
     tenantLifecycleWatcher?.stop();
     memoryPollLeadershipGeneration += 1;

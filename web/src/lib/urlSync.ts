@@ -1,3 +1,4 @@
+import { startTransition } from 'react';
 import type { AppTab } from '@/types/sidebar';
 import type { CanonicalSettingsSectionId, SettingsSectionInput } from '@/types/settings';
 import {
@@ -651,7 +652,8 @@ function notifyRouteChange(): void {
 export function navigateGovernance(state: GovernanceRouteState, options: { replace?: boolean } = {}): void {
   if (options.replace) replaceGovernanceUrl(state);
   else pushGovernanceUrl(state);
-  notifyRouteChange();
+  // 路由目标含懒加载页面时保留当前控制台，chunk 就绪后再一次性切换。
+  startTransition(notifyRouteChange);
 }
 
 /** 个人设置页内导航：继承来源并累计深度，关闭时可一次返回来源而不在后退中重开。 */

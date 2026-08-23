@@ -1,4 +1,4 @@
-import { startTransition, useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { ApiSessionListItem } from "@/lib/sessionsApi";
 import type { AskUserAnswers, MemoryRecallData, NotificationData, PluginInstallData, SessionRuntimeStatus } from "@agent/shared";
@@ -1170,49 +1170,41 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         governanceRoute: urlGovernanceRoute,
         canonicalPath,
       } = parseUrl();
-      const applyUrlState = () => {
-        setGovernanceRouteRaw(urlGovernanceRoute);
-        setPendingCanonicalPath(canonicalPath);
-        if (urlAdminSettings) {
-          // admin settings modal 路径：activeTab 同步到 admin frame，modal 打开到对应 section
-          setSettingsOpen(false);
-          setActiveTabRaw(tab);
-          setAdminSettingsRaw(urlAdminSettings);
-          return;
-        }
-        if (urlSettingsSection) {
-          setAdminSettingsRaw(null);
-          setSettingsOpen(true);
-          setSettingsSectionRaw(urlSettingsSection);
-          return;
-        }
+      setGovernanceRouteRaw(urlGovernanceRoute);
+      setPendingCanonicalPath(canonicalPath);
+      if (urlAdminSettings) {
+        // admin settings modal 路径：activeTab 同步到 admin frame，modal 打开到对应 section
         setSettingsOpen(false);
-        setAdminSettingsRaw(null);
-        if (tab === 'platform-admin') {
-          setPlatformAdminSectionRaw(urlAdminSection ?? 'overview');
-          setPlatformAdminEntityIdRaw(urlAdminEntityId);
-        }
-        if (tab === 'tenant-admin' && urlTenantAdminSection) {
-          setTenantAdminSectionRaw(urlTenantAdminSection);
-        }
-        immediateSessionIdRef.current = urlSessionId;
-        queuedSessionIdRef.current = urlSessionId;
-        mutateQueuedInterjections((prev) => prev);
         setActiveTabRaw(tab);
-        if (tab === 'chat') {
-          if (urlSessionId && urlSessionId !== sessionIdRef.current) {
-            markSessionRead(urlSessionId);
-            selectSessionRawRef.current(urlSessionId);
-          } else if (!urlSessionId && sessionIdRef.current) {
-            newSessionRawRef.current();
-          }
+        setAdminSettingsRaw(urlAdminSettings);
+        return;
+      }
+      if (urlSettingsSection) {
+        setAdminSettingsRaw(null);
+        setSettingsOpen(true);
+        setSettingsSectionRaw(urlSettingsSection);
+        return;
+      }
+      setSettingsOpen(false);
+      setAdminSettingsRaw(null);
+      if (tab === 'platform-admin') {
+        setPlatformAdminSectionRaw(urlAdminSection ?? 'overview');
+        setPlatformAdminEntityIdRaw(urlAdminEntityId);
+      }
+      if (tab === 'tenant-admin' && urlTenantAdminSection) {
+        setTenantAdminSectionRaw(urlTenantAdminSection);
+      }
+      immediateSessionIdRef.current = urlSessionId;
+      queuedSessionIdRef.current = urlSessionId;
+      mutateQueuedInterjections((prev) => prev);
+      setActiveTabRaw(tab);
+      if (tab === 'chat') {
+        if (urlSessionId && urlSessionId !== sessionIdRef.current) {
+          markSessionRead(urlSessionId);
+          selectSessionRawRef.current(urlSessionId);
+        } else if (!urlSessionId && sessionIdRef.current) {
+          newSessionRawRef.current();
         }
-      };
-      // 懒加载治理页面时保留当前页，chunk 就绪后再一次性切换，避免整块 fallback 闪烁。
-      if (urlGovernanceRoute?.area === 'platform' || urlGovernanceRoute?.area === 'organization') {
-        startTransition(applyUrlState);
-      } else {
-        applyUrlState();
       }
     };
     window.addEventListener('popstate', handler);

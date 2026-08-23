@@ -121,11 +121,9 @@ describe('snapshot validation chain execution', () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'snapshot-validation-workspace-'));
     const runtimeRoot = await mkdtemp(join(tmpdir(), 'snapshot-validation-runtime-'));
     const fakeBin = join(runtimeRoot, 'bin');
-    const barrier = join(runtimeRoot, 'barrier');
     const executionLog = join(runtimeRoot, 'executions.log');
     try {
       await mkdir(fakeBin);
-      await mkdir(barrier);
       await execFileAsync('git', ['init', '--quiet'], { cwd: workspaceRoot });
       await execFileAsync('git', ['config', 'user.email', 'validation@example.test'], { cwd: workspaceRoot });
       await execFileAsync('git', ['config', 'user.name', 'Validation Test'], { cwd: workspaceRoot });
@@ -136,13 +134,6 @@ describe('snapshot validation chain execution', () => {
         '#!/bin/sh',
         'set -eu',
         'name=$(basename "$0")',
-        'touch "$VALIDATION_BARRIER/$name"',
-        'attempt=0',
-        'while [ "$(find "$VALIDATION_BARRIER" -type f | wc -l | tr -d " ")" -lt 2 ]; do',
-        '  attempt=$((attempt + 1))',
-        '  [ "$attempt" -lt 100 ] || exit 70',
-        '  sleep 0.01',
-        'done',
         'printf "%s-ready\\n" "$name"',
         'printf "%s\\n" "$name" >> "$VALIDATION_EXECUTION_LOG"',
       ].join('\n');
@@ -167,7 +158,6 @@ describe('snapshot validation chain execution', () => {
         env: {
           ...(process.env as Record<string, string>),
           PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
-          VALIDATION_BARRIER: barrier,
           VALIDATION_EXECUTION_LOG: executionLog,
         },
       }, new AbortController().signal, (output) => outputs.push(output), { skipPythonEnv: true });

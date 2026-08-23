@@ -226,7 +226,10 @@ describe('context checkpoint 返工边界', () => {
       runId: 'run-old',
       execution: 'server',
       paths: ['mcp_large.unused'],
-      tools: [{ id: 'unused', name: 'mcp_large.unused', description: '超大 schema'.repeat(80_000), parameters: {} }],
+      tools: [
+        { id: 'unused', name: 'mcp_large.unused', description: '超大 schema'.repeat(80_000), parameters: {} },
+        { id: 'small', name: 'mcp_small.used', description: '小 schema', parameters: {} },
+      ],
     } as PlatformEvent;
     const normalCheckpoint = checkpoint('normal-checkpoint', metadata({}), '已完成旧工具调查。');
     const projection = buildContextProjection([
@@ -238,6 +241,13 @@ describe('context checkpoint 返工边界', () => {
     expect(estimateContextTokens(projection.messages)).toBeLessThan(2_000);
     expect(projection.messages.some((message) => message.role === 'additional_tools')).toBe(false);
     expect(JSON.stringify(projection.messages)).toContain('继续处理');
+    const retainedUnused = buildContextProjection([
+      normalCheckpoint,
+      { ...largeMcp, id: 'retained-unused-mcp', timestamp: '2026-01-01T00:00:03.000Z' } as PlatformEvent,
+      { ...user('retained-latest', '继续但仍不调用该工具'), runId: 'run-next' } as PlatformEvent,
+    ], { sessionId: 'session-1', runId: 'run-next' });
+    expect(retainedUnused.messages.some((message) => message.role === 'additional_tools')).toBe(false);
+    expect(estimateContextTokens(retainedUnused.messages)).toBeLessThan(2_000);
 
     const usedCall = {
       ...base,
@@ -245,7 +255,10 @@ describe('context checkpoint 返工边界', () => {
       type: 'assistant_tool_calls',
       runId: 'run-next',
       content: '',
-      toolCalls: [{ id: 'used-call-id', name: 'mcp_large.unused', arguments: '{}' }],
+      toolCalls: [
+        { id: 'used-call-id', name: 'mcp_large.unused', arguments: '{}' },
+        { id: 'small-call-id', name: 'mcp_small.used', arguments: '{}' },
+      ],
     } as PlatformEvent;
     const usedResult = {
       ...base,
@@ -256,12 +269,22 @@ describe('context checkpoint 返工边界', () => {
       toolName: 'mcp_large.unused',
       content: '结果已消费',
     } as PlatformEvent;
+    const smallResult = {
+      ...base,
+      id: 'small-result',
+      type: 'tool_result',
+      runId: 'run-next',
+      toolCallId: 'small-call-id',
+      toolName: 'mcp_small.used',
+      content: '小工具结果',
+    } as PlatformEvent;
     const usedProjection = buildContextProjection([
-      largeMcp, normalCheckpoint, usedCall, usedResult,
+      largeMcp, normalCheckpoint, usedCall, usedResult, smallResult,
     ], { sessionId: 'session-1', runId: 'run-next' });
     expect(estimateContextTokens(usedProjection.messages)).toBeLessThan(2_000);
     expect(usedProjection.messages.map((message) => message.role)).toEqual(['user']);
     expect(JSON.stringify(usedProjection.messages)).not.toContain('used-call-id');
+    expect(JSON.stringify(usedProjection.messages)).not.toContain('mcp_small.used');
   });
 
   it('首次压缩把单个超大原子输出降级为有界摘录并保留首条目标与最新纠正', () => {
@@ -278,6 +301,32 @@ describe('context checkpoint 返工边界', () => {
         runId: 'run-active',
         content: `超长输出开头：${'中间结论'.repeat(120_000)}：超长输出结尾`,
       } as PlatformEvent,
+      {
+        ...base,
+        id: 'bounded-call',
+        type: 'assistant_tool_calls',
+        runId: 'run-active',
+        content: '',
+        toolCalls: [{ id: 'bounded-call-id', name: 'Read', arguments: '{"path":"a.txt"}' }],
+      } as PlatformEvent,
+      {
+        ...base,
+        id: 'bounded-result',
+        type: 'tool_result',
+        runId: 'run-active',
+        toolCallId: 'bounded-call-id',
+        toolName: 'Read',
+        content: '工具结论：B 方案数据完整',
+      } as PlatformEvent,
+      {
+        ...base,
+        id: 'bounded-result-duplicate',
+        type: 'tool_result',
+        runId: 'run-active',
+        toolCallId: 'bounded-call-id',
+        toolName: 'Read',
+        content: '同 callId 补充结果：校验通过',
+      } as PlatformEvent,
       { ...user('latest-fix', '最新纠正：只保留 B 方案'), runId: 'run-active' } as PlatformEvent,
     ];
     expect(estimateContextTokens(buildContextProjection(events, {
@@ -292,6 +341,9 @@ describe('context checkpoint 返工边界', () => {
     expect(serialized).toContain('最新纠正');
     expect(serialized).toContain('超长输出开头');
     expect(serialized).toContain('超长输出结尾');
+    expect(serialized).toContain('bounded-call-id');
+    expect(serialized).toContain('工具结论：B 方案数据完整');
+    expect(serialized).toContain('同 callId 补充结果：校验通过');
   });
 
   it('连续压缩同样收缩无 checkpoint 元数据的存量 compaction', () => {

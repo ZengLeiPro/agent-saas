@@ -247,15 +247,35 @@ export function buildBoundedInitialCompactionMessages(
   if (estimateContextTokens(rawMessages) <= budget) return rawMessages;
   if (budget <= 0) return [];
 
-  const entries = events.flatMap((event, index) => {
-    const text = compactionSourceText(event)?.trim();
-    return text ? [{ index, event, text }] : [];
-  });
+  const resultsByCallId = new Map<string, Array<Extract<PlatformEvent, { type: 'tool_result' }>>>();
+  for (const event of events) {
+    if (event.type !== 'tool_result') continue;
+    const results = resultsByCallId.get(event.toolCallId) ?? [];
+    results.push(event);
+    resultsByCallId.set(event.toolCallId, results);
+  }
+  const groupedResultIds = new Set<string>();
+  const entries: Array<{ index: number; event: PlatformEvent; text: string }> = [];
+  for (const [index, event] of events.entries()) {
+    if (event.type === 'tool_result' && groupedResultIds.has(event.id)) continue;
+    const texts = [compactionSourceText(event)?.trim() ?? ''];
+    if (event.type === 'assistant_tool_calls') {
+      for (const call of event.toolCalls) {
+        for (const result of resultsByCallId.get(call.id) ?? []) {
+          groupedResultIds.add(result.id);
+          texts.push(compactionSourceText(result) ?? '');
+        }
+      }
+    }
+    const text = texts.filter(Boolean).join('\n\n');
+    if (text) entries.push({ index, event, text });
+  }
   const selected = new Map<number, string>();
   const userEntries = entries.filter(({ event }) => event.type === 'user_message');
   const priority = [userEntries[0], userEntries.at(-1)].filter((entry) => entry !== undefined);
   const candidates = [...priority, ...entries.slice().reverse()];
-  const wrapperTokens = estimateContextTokens('<context-compaction-source>\n</context-compaction-source>');
+  const wrapper = '<context-compaction-source>\n这是首次 checkpoint 的有界历史摘录；被省略的原始事件仍可通过 SessionContext 检索。\n\n';
+  const wrapperTokens = estimateContextTokens(`${wrapper}\n</context-compaction-source>`) + 32;
   let remaining = Math.max(0, budget - wrapperTokens);
   for (const entry of candidates) {
     if (selected.has(entry.index) || remaining <= 0) continue;
@@ -265,15 +285,22 @@ export function buildBoundedInitialCompactionMessages(
     const excerpt = fitCompactionSourceText(entry.text, excerptBudget);
     if (!excerpt) continue;
     const block = `${label}\n${excerpt}`;
-    const blockTokens = estimateContextTokens(block);
+    const blockTokens = estimateContextTokens(block)
+      + (selected.size > 0 ? estimateContextTokens('\n\n') : 0);
     if (blockTokens > remaining) continue;
     selected.set(entry.index, block);
     remaining -= blockTokens;
   }
-  const body = [...selected.entries()].sort(([left], [right]) => left - right).map(([, block]) => block).join('\n\n');
-  const content = `<context-compaction-source>\n这是首次 checkpoint 的有界历史摘录；被省略的原始事件仍可通过 SessionContext 检索。\n\n${body}\n</context-compaction-source>`;
-  const bounded = fitCompactionSourceText(content, budget);
-  return bounded ? [{ role: 'user', content: bounded }] : [];
+  const render = () => {
+    const body = [...selected.entries()].sort(([left], [right]) => left - right).map(([, block]) => block).join('\n\n');
+    return `${wrapper}${body}\n</context-compaction-source>`;
+  };
+  let content = render();
+  while (estimateContextTokens(content) > budget && selected.size > 0) {
+    selected.delete([...selected.keys()].at(-1)!);
+    content = render();
+  }
+  return estimateContextTokens(content) <= budget ? [{ role: 'user', content }] : [];
 }
 
 export function selectAtomicRawTail(

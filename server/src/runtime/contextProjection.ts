@@ -609,18 +609,12 @@ export function buildContextProjection(allEvents: PlatformEvent[], options: Cont
         )).map((call) => call.name)
         : []
     )));
-    const present = new Set(
-      replayMessages
-        .filter((message): message is Extract<ModelChatMessage, { role: 'additional_tools' }> => (
-          message.role === 'additional_tools'
-        ))
-        .flatMap((message) => message.tools.map((tool) => tool.name)),
-    );
+    const replayWithoutMcpSchemas = replayMessages.filter((message) => message.role !== 'additional_tools');
     const restored = new Map<string, Extract<ModelChatMessage, { role: 'additional_tools' }>['tools'][number]>();
     for (const event of rewoundVisibleEvents) {
       if (event.type !== 'mcp_tools_loaded') continue;
       for (const tool of event.tools) {
-        if (requiredNames.has(tool.name) && !present.has(tool.name)) restored.set(tool.name, tool);
+        if (requiredNames.has(tool.name)) restored.set(tool.name, tool);
       }
     }
     const checkpointTarget = visibleEvents.slice().reverse().find((event) => (
@@ -634,18 +628,26 @@ export function buildContextProjection(allEvents: PlatformEvent[], options: Cont
       : Math.max(
         0,
         checkpointBudget.targetTokens - checkpointBudget.fixedTokens
-          - estimateContextTokens([prefix, replayMessages]) - 64,
+          - estimateContextTokens([prefix, replayWithoutMcpSchemas]) - 64,
       );
-    const boundedTools = [...restored.values()].filter((tool) => {
-      const toolTokens = estimateContextTokens(tool);
-      if (toolTokens > remainingTokens) return false;
-      remainingTokens -= toolTokens;
-      return true;
-    });
-    const availableNames = new Set([...present, ...boundedTools.map((tool) => tool.name)]);
+    const selectedSchemaNames = new Set<string>();
+    for (const message of replayWithoutMcpSchemas) {
+      if (message.role !== 'assistant' || !message.tool_calls) continue;
+      const batchNames = [...new Set(message.tool_calls.map((call) => call.function.name).filter((name) => (
+        requiredNames.has(name) && !selectedSchemaNames.has(name)
+      )))];
+      const batchTools = batchNames.map((name) => restored.get(name)).filter((tool) => tool !== undefined);
+      if (batchTools.length !== batchNames.length) continue;
+      const batchTokens = estimateContextTokens(batchTools);
+      if (batchTokens > remainingTokens) continue;
+      remainingTokens -= batchTokens;
+      for (const name of batchNames) selectedSchemaNames.add(name);
+    }
+    const boundedTools = [...selectedSchemaNames].map((name) => restored.get(name)!);
+    const availableNames = new Set(boundedTools.map((tool) => tool.name));
     const omittedNames = new Set([...requiredNames].filter((name) => !availableNames.has(name)));
     const omittedCallIds = new Set<string>();
-    const boundedReplay = replayMessages.filter((message) => {
+    const boundedReplay = replayWithoutMcpSchemas.filter((message) => {
       if (message.role === 'assistant' && message.tool_calls?.some((call) => (
         omittedNames.has(call.function.name)
       ))) {

@@ -6,7 +6,6 @@ import {
   Check,
   ChevronRight,
   FileArchive,
-  Files,
   Folder,
   FolderTree,
   Loader2,
@@ -31,7 +30,10 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MAX_UPLOAD_FILES_PER_REQUEST } from "@/lib/constants";
+import { EntityIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+
+const FilesIcon = EntityIcons.files;
 
 interface AssetLibraryDialogProps {
   open: boolean;
@@ -198,7 +200,7 @@ export function AssetLibraryDialog({
                 )}
                 onClick={() => setViewMode("all")}
               >
-                <Files className="size-4" />
+                <FilesIcon className="size-4" />
                 所有文件
               </button>
             </div>
@@ -220,7 +222,7 @@ export function AssetLibraryDialog({
                 <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
                   {viewMode === "all" ? (
                     <span className="flex items-center gap-2 px-1 font-medium">
-                      <Files className="size-4 text-muted-foreground" />
+                      <FilesIcon className="size-4 text-muted-foreground" />
                       所有文件
                     </span>
                   ) : (

@@ -360,7 +360,7 @@ export class DerivedContextStore {
     await client.query(`UPDATE ${this.tables.derivedItems} old SET lifecycle='superseded',valid_to=NOW(),updated_at=NOW()
       FROM ${this.tables.itemEvidence} ie
       WHERE old.tenant_id=$1 AND old.subject_entity_id=$2 AND old.item_type=$3 AND old.semantic_key=$4
-        AND old.lifecycle='active' AND ie.tenant_id=old.tenant_id AND ie.generation=old.generation AND ie.item_id=old.item_id
+        AND old.lifecycle='active' AND old.derivation='source' AND ie.tenant_id=old.tenant_id AND ie.generation=old.generation AND ie.item_id=old.item_id
         AND ie.source_id=$5 AND ie.collection_id=$6 AND ie.record_id=$7 AND ie.record_revision<$8`,
     [tenantId, item.entityId, item.itemType, item.semanticKey, item.sourceId, item.collectionId, item.recordId, item.recordRevision]);
     await client.query(`INSERT INTO ${this.tables.derivedItems}

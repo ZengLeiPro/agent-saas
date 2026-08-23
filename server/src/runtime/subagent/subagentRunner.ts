@@ -38,6 +38,7 @@ import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
 import type { ExecutionTransportRegistry } from '../executionTransport.js';
 import { LegacyTranscriptProjection } from '../legacyTranscriptProjection.js';
 import { RawAgentLoop } from '../rawAgentLoop.js';
+import { customerSafeRuntimeError } from '../runtimeFailure.js';
 import {
   buildTenantRemoteHandWireEnv,
   createApprovalStoreForSession,
@@ -551,6 +552,8 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       status = 'failed';
       errorMessage = streamError ?? `子 agent 异常终止（subtype=${meta?.subtype ?? 'unknown'}）`;
     }
+
+    errorMessage = customerSafeRuntimeError(errorMessage, meta?.failureKind);
 
     const modelUsage = meta?.modelUsage;
     const totalTokens = sumUsageTokens(modelUsage);

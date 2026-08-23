@@ -8,6 +8,13 @@ export interface RuntimeFailureProtocol {
 
 export const POLICY_REJECTION_CUSTOMER_MESSAGE = '当前模型受策略限制，请切换其他模型继续。';
 
+export function customerSafeRuntimeError(
+  errorMessage: string | undefined,
+  failureKind: RuntimeFailureKind | undefined,
+): string | undefined {
+  return failureKind === 'policy_rejection' ? POLICY_REJECTION_CUSTOMER_MESSAGE : errorMessage;
+}
+
 const POLICY_REJECTION_ERROR_CODES = new Set(['cyber_policy']);
 
 export function classifyModelFailure(

@@ -48,6 +48,7 @@ import {
   type SubagentLimiter,
 } from './subagentLimits.js';
 import { runSubagent, type SubagentOutcome } from './subagentRunner.js';
+import { customerSafeRuntimeError } from '../runtimeFailure.js';
 import { formatSubagentFailureHeader } from './subagentFailureFormatting.js';
 
 const logger = createLogger('AgentToolProvider');
@@ -245,7 +246,9 @@ export class AgentToolProvider implements ToolProvider {
       toolUseCount: outcome.toolUseCount,
       turnCount: outcome.turnCount,
       durationMs: outcome.durationMs,
-      ...(outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {}),
+      ...(outcome.errorMessage ? {
+        errorMessage: customerSafeRuntimeError(outcome.errorMessage, outcome.failureKind),
+      } : {}),
       ...(outcome.failureKind ? { failureKind: outcome.failureKind } : {}),
       ...(outcome.recoveryAction ? { recoveryAction: outcome.recoveryAction } : {}),
       ...(outcome.text.trim()

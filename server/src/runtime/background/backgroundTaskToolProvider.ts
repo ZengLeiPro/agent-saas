@@ -8,6 +8,7 @@ import type {
   ToolResult,
 } from '../../agent/toolRuntime.js';
 import { loadToolDescription } from '../../agent/tools/descriptionLoader.js';
+import { customerSafeRuntimeError } from '../runtimeFailure.js';
 import type { RunRecord } from '../runStore.js';
 import type { BackgroundTaskRuntime } from './backgroundTaskRuntime.js';
 
@@ -96,6 +97,7 @@ function toTaskView(task: RunRecord, includeFullResult: boolean): Record<string,
   const safeResult = result && typeof result === 'object'
     ? result as Record<string, unknown>
     : undefined;
+  const failureKind = safeResult?.failureKind === 'policy_rejection' ? 'policy_rejection' : undefined;
   return {
     taskId: task.runId,
     shortTaskId: typeof task.metadata.shortTaskId === 'string' ? task.metadata.shortTaskId : undefined,
@@ -106,14 +108,17 @@ function toTaskView(task: RunRecord, includeFullResult: boolean): Record<string,
     requestedAt: task.requestedAt,
     startedAt: task.startedAt,
     completedAt: task.completedAt ?? task.failedAt ?? task.cancelledAt,
-    statusReason: task.statusReason,
+    statusReason: customerSafeRuntimeError(task.statusReason, failureKind),
     wakeState: task.metadata.wakeState,
     result: safeResult ? {
       status: safeResult.status,
       text: typeof safeResult.text === 'string'
         ? includeFullResult ? safeResult.text : safeResult.text.slice(0, 500)
         : undefined,
-      errorMessage: safeResult.errorMessage,
+      errorMessage: customerSafeRuntimeError(
+        typeof safeResult.errorMessage === 'string' ? safeResult.errorMessage : undefined,
+        failureKind,
+      ),
       failureKind: safeResult.failureKind,
       recoveryAction: safeResult.recoveryAction,
       spillPath: safeResult.spillPath,

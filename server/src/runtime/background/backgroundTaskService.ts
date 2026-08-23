@@ -12,6 +12,7 @@ import type { ChannelContext, UserIdentity } from '../../types/index.js';
 import { createLogger } from '../../utils/logger.js';
 import { buildConnectorRunEnv } from '../connectorRunEnv.js';
 import { runtimeRunController } from '../runController.js';
+import { customerSafeRuntimeError } from '../runtimeFailure.js';
 import { resolveModelOutputTransactionMode } from '../modelOutputTransaction.js';
 import type { RunRecord, RunStatus, RunStore } from '../runStore.js';
 import {
@@ -852,7 +853,6 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     if (!task) throw new Error('后台任务不存在，或不属于当前会话/用户。');
     return task;
   }
-
   private async freezeOutcome(record: RunRecord, outcome: SubagentOutcome): Promise<void> {
     const current = await this.config.runStore?.get(record.runId);
     if (current?.status === 'cancelled') {
@@ -865,10 +865,11 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       return;
     }
     const stored = await persistResultText(record, outcome.text, outcome.childRunId);
+    const safeErrorMessage = customerSafeRuntimeError(outcome.errorMessage, outcome.failureKind);
     const result: StoredBackgroundResult = {
       status: outcome.status,
       text: stored.text,
-      ...(outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {}), ...(outcome.failureKind ? { failureKind: outcome.failureKind } : {}), ...(outcome.recoveryAction ? { recoveryAction: outcome.recoveryAction } : {}),
+      ...(safeErrorMessage ? { errorMessage: safeErrorMessage } : {}), ...(outcome.failureKind ? { failureKind: outcome.failureKind } : {}), ...(outcome.recoveryAction ? { recoveryAction: outcome.recoveryAction } : {}),
       ...(stored.spillPath ? { spillPath: stored.spillPath } : {}),
       childSessionId: outcome.childSessionId,
       childRunId: outcome.childRunId,
@@ -878,7 +879,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       durationMs: outcome.durationMs,
     };
     const status = outcomeToRunStatus(outcome.status);
-    const statusReason = status === 'completed' ? undefined : outcome.errorMessage ?? `background_${outcome.status}`;
+    const statusReason = status === 'completed' ? undefined : safeErrorMessage ?? `background_${outcome.status}`;
     const updated = await markBackgroundTaskTerminal(this.config.runStore!, record.runId, status, statusReason, {
       backgroundResult: result,
       wakeState: 'pending',

@@ -3,37 +3,56 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AssetLibraryDialog } from "./AssetLibraryDialog";
 
-const mocks = vi.hoisted(() => ({ entries: [] as Array<{
+interface MockEntry {
   name: string;
   path: string;
   isDirectory: boolean;
   size: number;
   modifiedAt: number;
   extension: string;
-}> }));
+}
+
+const mocks = vi.hoisted(() => ({
+  entries: [] as MockEntry[],
+  allEntries: [] as MockEntry[],
+  listCalls: [] as Array<{ path: string; recursive?: boolean }>,
+}));
 
 vi.mock("@/components/FileBrowser/useFileList", () => ({
-  useFileList: () => ({
-    entries: mocks.entries,
-    loading: false,
-    error: null,
-    refresh: vi.fn(),
-  }),
+  useFileList: (path: string, _owner?: string, recursive?: boolean) => {
+    mocks.listCalls.push({ path, recursive });
+    return {
+      entries: recursive ? mocks.allEntries : mocks.entries,
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+    };
+  },
 }));
 
 vi.mock("@/components/FileBrowser/fileIcons", () => ({
   FileIconTile: () => <span data-testid="file-icon" />,
 }));
 
-function fileEntry(index: number) {
+function fileEntry(index: number): MockEntry {
   return {
     name: `资料-${index}.pdf`,
     path: `assets/资料-${index}.pdf`,
     isDirectory: false,
     size: 1024,
-    modifiedAt: 1,
+    modifiedAt: index,
     extension: ".pdf",
   };
+}
+
+function renderDialog(onConfirm = vi.fn()) {
+  render(
+    <AssetLibraryDialog
+      open
+      onOpenChange={vi.fn()}
+      onConfirm={onConfirm}
+    />,
+  );
 }
 
 describe("AssetLibraryDialog", () => {
@@ -42,6 +61,8 @@ describe("AssetLibraryDialog", () => {
       { name: "资料", path: "assets/资料", isDirectory: true, size: 0, modifiedAt: 1, extension: "" },
       { name: "方案.pdf", path: "assets/方案.pdf", isDirectory: false, size: 1024, modifiedAt: 1, extension: ".pdf" },
     ];
+    mocks.allEntries = [];
+    mocks.listCalls = [];
   });
 
   it("多选 assets 文件并确认添加", async () => {
@@ -64,16 +85,52 @@ describe("AssetLibraryDialog", () => {
     });
   });
 
+  it("所有文件视图递归读取并展示文件所在目录", () => {
+    mocks.allEntries = [
+      {
+        name: "合同.pdf",
+        path: "assets/客户资料/合同.pdf",
+        isDirectory: false,
+        size: 2048,
+        modifiedAt: 2,
+        extension: ".pdf",
+      },
+    ];
+    renderDialog();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "所有文件" })[0]);
+
+    expect(mocks.listCalls).toContainEqual({ path: "assets", recursive: true });
+    expect(screen.getByRole("button", { name: /合同\.pdf/ }).textContent).toContain("客户资料");
+  });
+
+  it("支持按名称切换升序和降序", () => {
+    mocks.entries = [
+      { ...fileEntry(1), name: "B.pdf", path: "assets/B.pdf" },
+      { ...fileEntry(2), name: "A.pdf", path: "assets/A.pdf" },
+    ];
+    renderDialog();
+
+    const sortButton = screen.getByRole("button", { name: "按名称排序" });
+    fireEvent.click(sortButton);
+    expect(
+      screen.getByRole("button", { name: /A\.pdf/ }).compareDocumentPosition(
+        screen.getByRole("button", { name: /B\.pdf/ }),
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    fireEvent.click(sortButton);
+    expect(
+      screen.getByRole("button", { name: /B\.pdf/ }).compareDocumentPosition(
+        screen.getByRole("button", { name: /A\.pdf/ }),
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("选择第 21 个文件时明确提示上限并保留前 20 个选择", () => {
     mocks.entries = Array.from({ length: 21 }, (_, index) => fileEntry(index + 1));
     const onConfirm = vi.fn();
-    render(
-      <AssetLibraryDialog
-        open
-        onOpenChange={vi.fn()}
-        onConfirm={onConfirm}
-      />,
-    );
+    renderDialog(onConfirm);
 
     const fileButtons = screen.getAllByRole("button").filter((button) => button.textContent?.startsWith("资料-"));
     expect(fileButtons).toHaveLength(21);

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { RefreshCw, TriangleAlert, UserPlus } from "lucide-react";
 
-import { MemberDebugModeSetting, TenantDebugModeSetting } from "@/components/Governance/DebugModeSettings";
+import { MemberDebugModeSetting } from "@/components/Governance/DebugModeSettings";
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
 import { MembershipIdentityActions } from "@/components/OrganizationGovernance/MembershipIdentityActions";
 import { ContextCenterPage, type ContextCenterApiPort } from "@/components/ContextCenter";
@@ -15,6 +15,8 @@ import { useGovernanceRequest } from "@/hooks/useGovernanceRequest";
 import { governanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
 import { navigateGovernance } from "@/lib/urlSync";
 import { contextCenterApi, governanceAccessApi, governanceResourcesApi } from "@agent/shared/lib/governanceApi";
+
+export { OrganizationPoliciesPage } from "./OrganizationPoliciesPage";
 
 interface MembershipRecord {
   userId: string;
@@ -118,8 +120,7 @@ interface EntitlementRecord {
   version: number;
 }
 interface ResourceScope { resourceType: string; mode: "all" | "selected"; resourceIds: string[]; version: number }
-interface TenantPolicy { policyKey: string; value: unknown; source: string; version: number }
-interface EntitlementResponse { entitlement: EntitlementRecord | null; scopes: ResourceScope[]; policies: TenantPolicy[] }
+interface EntitlementResponse { entitlement: EntitlementRecord | null; scopes: ResourceScope[]; policies: unknown[] }
 interface GovernancePreview { previewId: string; baselineDigest: string; expiresAt: string; impact: Record<string, unknown>; changeId: string }
 interface GovernanceReceipt { changeId: string; auditId: string; effectiveAt?: string; projectionStatus?: string }
 interface ConnectorRecord { connectorId: string; name: string; status: string; authMethods: string[]; version: number; healthTestSupported?: boolean }
@@ -444,50 +445,6 @@ export function OrganizationOffboardingPage({ tenantId }: { tenantId: string }) 
 function Receipt({ receipt }: { receipt: GovernanceReceipt | null }) {
   if (!receipt) return null;
   return <div role="status" className="rounded-lg border bg-muted/30 p-3 text-xs">治理回执 · Change ID：{receipt.changeId} · Audit ID：{receipt.auditId}{receipt.effectiveAt ? ` · ${new Date(receipt.effectiveAt).toLocaleString()}` : ""}</div>;
-}
-
-function PolicyEditor({ tenantId, policy, onCommitted }: { tenantId: string; policy: TenantPolicy; onCommitted: () => void }) {
-  const [value, setValue] = useState(policy.value === true ? "allow" : "deny");
-  const [reason, setReason] = useState("");
-  const [preview, setPreview] = useState<GovernancePreview | null>(null);
-  const [receipt, setReceipt] = useState<GovernanceReceipt | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const inherited = policy.source !== "governance";
-  const runPreview = async () => {
-    setBusy(true); setError(null); setReceipt(null);
-    try { setPreview(await governanceAccessApi.previewPolicy<GovernancePreview>(policy.policyKey, { expectedVersion: policy.version, value: value === "allow", reason }, tenantId)); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { setBusy(false); }
-  };
-  const commit = async () => {
-    if (!preview) return;
-    setBusy(true); setError(null);
-    try {
-      const result = await governanceAccessApi.updatePolicy<GovernanceReceipt>(policy.policyKey, { expectedVersion: policy.version, value: value === "allow", reason, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }, tenantId);
-      setReceipt(result); setPreview(null); onCommitted();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { setBusy(false); }
-  };
-  return <li className="space-y-3 py-3">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div><div className="font-mono text-xs">{policy.policyKey}</div><div className="mt-1 text-xs text-muted-foreground">v{policy.version} · {inherited ? `继承（当前${policy.value === true ? "允许" : "禁止"}）` : policy.value === true ? "明确允许" : "明确禁止"}</div></div><select aria-label={`${policy.policyKey} 策略`} className="rounded-md border bg-background px-2 py-1 text-sm" value={value} onChange={event => { setValue(event.target.value); setPreview(null); }}><option value="allow">允许</option><option value="deny">禁止</option></select></div>
-    <div className="flex flex-wrap gap-2"><input aria-label={`${policy.policyKey} 变更原因`} className="min-w-64 flex-1 rounded-md border bg-background px-3 py-2 text-sm" placeholder="填写变更原因（至少 3 个字符）" value={reason} onChange={event => { setReason(event.target.value); setPreview(null); }} /><Button variant="outline" disabled={busy || reason.trim().length < 3} onClick={() => void runPreview()}>预览</Button>{preview ? <Button disabled={busy || Date.parse(preview.expiresAt) <= Date.now()} onClick={() => void commit()}>提交</Button> : null}</div>
-    {preview ? <div className="rounded-lg border p-3 text-xs">签名预览：v{policy.version} → v{policy.version + 1} · 有效至 {new Date(preview.expiresAt).toLocaleString()}</div> : null}
-    {error ? <div role="alert" className="text-xs text-destructive">{error}</div> : null}<Receipt receipt={receipt} />
-  </li>;
-}
-
-export function OrganizationPoliciesPage({ tenantId }: { tenantId: string }) {
-  const request = useMemo(() => () => governanceAccessApi.getEntitlements<EntitlementResponse>(tenantId), [tenantId]);
-  const { data, loading, error, retry } = useGovernanceRequest(request, `policies:${tenantId}`);
-  if (loading) return <Loading />;
-  if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
-  const policies = (data?.policies ?? []).filter(policy => policy.policyKey !== "runtime.debug_mode.allowed" && policy.policyKey !== "runtime.debug_mode.enabled");
-  return <div><SectionTitle title="权限策略" description="平台权益只读；组织策略逐项显示继承、允许或禁止，并通过版本化 preview → commit 留下审计回执。" />
-    <div className="rounded-xl border bg-card p-4"><div className="font-medium">平台权益</div><div className="mt-2 text-sm">状态：{data?.entitlement ? localizedValue(data.entitlement.status) : "未配置"}</div><div className="mt-1 text-xs text-muted-foreground">来源：{data?.entitlement ? localizedValue(data.entitlement.source, sourceLabels) : "—"} · v{data?.entitlement?.version ?? 0}</div></div>
-    <div className="mt-4"><TenantDebugModeSetting tenantId={tenantId} level="organization" /></div>
-    <div className="mt-4 rounded-xl border bg-card p-4"><div className="font-medium">组织策略</div>{policies.length ? <ul className="mt-2 divide-y">{policies.map(policy => <PolicyEditor key={`${policy.policyKey}:${policy.version}`} tenantId={tenantId} policy={policy} onCommitted={retry} />)}</ul> : <Empty text="权威策略表当前为空。" />}</div>
-  </div>;
 }
 
 function CredentialAction({ tenantId, item, mode, onCommitted }: { tenantId: string; item: CredentialRecord; mode: "rotate" | "transfer"; onCommitted: () => void }) {

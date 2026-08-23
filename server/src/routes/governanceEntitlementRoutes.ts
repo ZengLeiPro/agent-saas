@@ -3,6 +3,7 @@ import type { Request, Router } from 'express';
 import { z } from 'zod';
 
 import type { PgEntitlementStore } from '../data/entitlements/index.js';
+import { getTenantPolicyDefinition } from '../data/entitlements/policyCatalog.js';
 import { isOrganizationEditableTenantPolicyKey, type EntitlementResourceType } from '../data/entitlements/types.js';
 import { PLATFORM_TENANT_ID } from '../data/tenants/types.js';
 import { governanceDigest } from '../data/governance-audit/index.js';
@@ -126,7 +127,10 @@ export function registerGovernanceEntitlementRoutes(options: {
     }));
     const policyActions = policies.map(policy => ({
       ...policy,
-      allowedActions: persona === 'org_admin' && isOrganizationEditableTenantPolicyKey(policy.policyKey)
+      definition: getTenantPolicyDefinition(policy.policyKey),
+      allowedActions: persona === 'org_admin'
+        && typeof policy.value === 'boolean'
+        && isOrganizationEditableTenantPolicyKey(policy.policyKey)
         ? [{ id: 'edit_policy', label: '编辑组织策略', resourceType: 'tenant_policy' }]
         : [],
     }));

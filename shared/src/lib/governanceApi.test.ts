@@ -186,6 +186,7 @@ describe('governanceApi fail closed', () => {
       policies: [{
         tenantId: 'tenant-1', policyKey: 'skill.custom.enabled', value: true,
         source: 'governance', version: 2, ...metadata,
+        definition: { label: '自定义技能', description: '允许组织创建自定义 Skill。', group: 'models_tools', groupLabel: '模型与工具', valueType: 'boolean' },
       }],
       allowedActions: [{ id: 'suspend', label: '暂停权益', change: { status: 'suspended' }, requiresReason: true }],
     }));
@@ -193,6 +194,7 @@ describe('governanceApi fail closed', () => {
     await expect(governanceAccessApi.getEntitlements('tenant-1')).resolves.toMatchObject({
       entitlement: { tenantId: 'tenant-1', updatedBy: 'platform-1' },
       scopes: [{ resourceType: 'skill', allowedActions: [{ resourceType: 'skill' }] }],
+      policies: [{ policyKey: 'skill.custom.enabled', definition: { label: '自定义技能', valueType: 'boolean' } }],
     });
   });
 

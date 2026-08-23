@@ -1,7 +1,7 @@
 import type { AgentRunDispatch } from '../agent/index.js';
 import { DwsContextRuntime } from '../context/sync/index.js';
 import type { ContextStore } from '../context/store/index.js';
-import type { AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
+import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import { AgentDwsAuthFlowService } from '../dws/agentAuthFlow.js';
@@ -27,6 +27,8 @@ export interface AgentDwsRuntimeBundle {
   authFlowService: AgentDwsAuthFlowService;
   messageRouter?: AgentDwsMessageRouter;
   eventGateway: DwsPersonalEventGateway;
+  onContextPolicyUpdated(account: AgentDwsAccountRecord): Promise<void>;
+  onEnabledChanged(account: AgentDwsAccountRecord, enabled: boolean): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -120,7 +122,7 @@ export async function createAgentDwsRuntime(options: {
     onConnected: async account => {
       if (!options.enableWorker) return;
       await eventGateway.startAccount(account);
-      void contextRuntime?.syncAccount(account).catch(error => {
+      void contextRuntime?.resumeAccount(account).catch(error => {
         options.logger.warn(
           `DWS context initial backfill failed account=${account.accountId}: ${error instanceof Error ? error.message : String(error)}`,
         );
@@ -141,6 +143,12 @@ export async function createAgentDwsRuntime(options: {
     authFlowService,
     messageRouter,
     eventGateway,
+    async onContextPolicyUpdated(account) {
+      await contextRuntime?.onContextPolicyUpdated(account);
+    },
+    async onEnabledChanged(account, enabled) {
+      await contextRuntime?.onAccountEnabledChanged(account, enabled);
+    },
     async stop() {
       await authFlowService.stop();
       await eventGateway.stop();

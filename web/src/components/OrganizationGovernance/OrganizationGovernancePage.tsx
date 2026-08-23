@@ -4,7 +4,7 @@ import { RefreshCw, TriangleAlert, UserPlus } from "lucide-react";
 import { MemberDebugModeSetting, TenantDebugModeSetting } from "@/components/Governance/DebugModeSettings";
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
 import { MembershipIdentityActions } from "@/components/OrganizationGovernance/MembershipIdentityActions";
-import { ContextCenterPage } from "@/components/ContextCenter";
+import { ContextCenterPage, type ContextCenterApiPort } from "@/components/ContextCenter";
 import { MemoryKnowledgeGovernance } from "@/components/OrganizationGovernance/MemoryKnowledgeGovernance";
 import { UserFormDialog, type UserFormData } from "@/components/UserManager/UserFormDialog";
 import { Badge } from "@/components/ui/badge";
@@ -520,6 +520,10 @@ export function OrganizationCredentialsPage({ tenantId }: { tenantId: string }) 
 }
 
 export function OrganizationMemoryKnowledgePage({ tenantId }: { tenantId: string }) {
+  const scopedContextApi = useMemo<ContextCenterApiPort>(() => ({
+    getSnapshot: options => contextCenterApi.getSnapshot({ ...options, tenantId }),
+    listEvidence: (query, options) => contextCenterApi.listEvidence(query, { ...options, tenantId }),
+  }), [tenantId]);
   return (
     <Tabs defaultValue="governance" className="min-h-0">
       <TabsList aria-label="记忆与知识区域">
@@ -530,7 +534,7 @@ export function OrganizationMemoryKnowledgePage({ tenantId }: { tenantId: string
         <MemoryKnowledgeGovernance tenantId={tenantId} />
       </TabsContent>
       <TabsContent value="context-center" className="mt-4 min-h-0">
-        <ContextCenterPage api={contextCenterApi} />
+        <ContextCenterPage api={scopedContextApi} />
       </TabsContent>
     </Tabs>
   );

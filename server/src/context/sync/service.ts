@@ -39,7 +39,10 @@ export interface ContextSyncRequest {
   scope: ContextSyncScope;
   source: ContextSyncSource;
   conversationId?: string;
+  conversationIds?: readonly string[];
   from?: string;
+  /** Lower bound used only for a target that does not yet have a watermark. */
+  initialFrom?: string;
   to?: string;
   pageSize?: number;
 }
@@ -69,12 +72,14 @@ export class DwsContextSyncService {
       ...request.scope,
       source: request.source,
       ...(request.conversationId ? { conversationId: request.conversationId } : {}),
+      ...(request.conversationIds ? { conversationIds: [...request.conversationIds] } : {}),
     };
     const expectedWatermark = await this.options.store.getWatermark(key);
     const to = canonicalTimestamp(request.to ?? this.clock().toISOString(), 'window.to');
     const from = canonicalTimestamp(
       request.from
         ?? expectedWatermark
+        ?? request.initialFrom
         ?? new Date(Date.parse(to) - this.defaultLookbackMs).toISOString(),
       'window.from',
     );
@@ -92,12 +97,17 @@ export class DwsContextSyncService {
       await this.options.store.clearRetryState(key);
       return { ...result, watermarkAdvanced: true };
     } catch (error) {
-      await this.options.store.recordRetryFailure({
-        key,
-        window,
-        error: compactError(error),
-        failedAt: this.clock().toISOString(),
-      });
+      try {
+        await this.options.store.recordRetryFailure({
+          key,
+          window,
+          error: compactError(error),
+          failedAt: this.clock().toISOString(),
+        });
+      } catch {
+        // A policy reset intentionally invalidates the old fence. Never reacquire
+        // from the stale operation merely to persist its retry state.
+      }
       throw error;
     }
   }
@@ -114,6 +124,7 @@ export class DwsContextSyncService {
       scope: scopeFromKey(key),
       source: key.source,
       ...(key.conversationId ? { conversationId: key.conversationId } : {}),
+      ...(key.conversationIds ? { conversationIds: key.conversationIds } : {}),
       from: retry.window.from,
       to: retry.window.to,
     });
@@ -209,6 +220,7 @@ export class DwsContextSyncService {
       return this.options.client.listChatMessages({
         ...common,
         ...(key.conversationId ? { conversationId: key.conversationId } : {}),
+        ...(key.conversationIds ? { conversationIds: key.conversationIds } : {}),
       });
     }
     if (key.source === 'wiki') return this.options.client.listWikiDocuments(common);
@@ -228,11 +240,25 @@ export class DwsContextSyncService {
       const items: ContextIngestItem[] = [];
       for (const raw of rawItems) {
         const document = raw as Parameters<typeof normalizeWikiDocument>[1];
-        const body = await this.options.client.getWikiDocumentBody({
-          scope: scopeFromKey(key),
-          documentId: document.documentId,
-        });
-        items.push(normalizeWikiDocument(context, document, body));
+        try {
+          const body = await this.options.client.getWikiDocumentBody({
+            scope: scopeFromKey(key),
+            documentId: document.documentId,
+            ...(document.extension ? { extension: document.extension } : {}),
+          });
+          items.push(normalizeWikiDocument(context, document, body));
+        } catch (error) {
+          if (!isWikiDocumentRevokedError(error)) throw error;
+          items.push({
+            ...normalizeWikiDocument(context, document, {
+              content: '',
+              format: 'metadata-only',
+              unreadable: true,
+              unreadableReason: 'document_revoked',
+            }),
+            revoked: true,
+          });
+        }
       }
       return items;
     }
@@ -253,6 +279,11 @@ export class DwsContextSyncService {
   }
 }
 
+function isWikiDocumentRevokedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /(?:\b403\b|\b404\b|forbidden|permission denied|access denied|not found)/i.test(message);
+}
+
 function scopeFromKey(key: ContextSyncKey): ContextSyncScope {
   return { tenantId: key.tenantId, accountId: key.accountId, profileId: key.profileId };
 }
@@ -261,8 +292,18 @@ function validateRequest(request: ContextSyncRequest): void {
   requiredText(request.scope.tenantId, 'tenantId');
   requiredText(request.scope.accountId, 'accountId');
   requiredText(request.scope.profileId, 'profileId');
-  if (request.conversationId && request.source !== 'chat') {
+  if ((request.conversationId || request.conversationIds) && request.source !== 'chat') {
     throw new Error('Context sync conversation target is only valid for chat');
+  }
+  if (request.conversationId && request.conversationIds) {
+    throw new Error('Context sync conversation target must use one scope form');
+  }
+  if (request.conversationIds) {
+    if (request.conversationIds.length === 0
+      || request.conversationIds.some(value => !optionalText(value))
+      || new Set(request.conversationIds).size !== request.conversationIds.length) {
+      throw new Error('Context sync selected conversations must be non-empty and unique');
+    }
   }
 }
 

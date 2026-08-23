@@ -4,29 +4,57 @@
  * 由 web MessageItem 的 splitByFileMarkers 泛化而来：
  * - FILE 分支与原实现逐行为等价（JSON 解析失败静默跳过标记、filePath 缺失跳过）——
  *   兼容性红线：纯 FILE 输入的切分输出必须与旧逻辑一致。
- * - CITE 分支（引用溯源卡，2026-07 唯恩批次）：JSON 失败或 doc 非法时**整个
- *   match 原样保留为文本**（不吞不崩）；page 非正整数丢弃；label 缺省 =
- *   doc basename + ` p.N`。
+ * - CITE 分支支持两类互斥 payload：知识库文档 `{ doc, page?, label? }` 与
+ *   会话 Context `{ contextId, label }`。JSON 或必填字段非法时**整个 match
+ *   原样保留为文本**（不吞不崩）；文档 page 非正整数时仅丢弃 page。
  */
 
 /** [FILE]{...}[/FILE] 与 [CITE]{...}[/CITE]，反向引用保证首尾配对 */
 export const MESSAGE_MARKER_RE = /\[(FILE|CITE)\](\{.*?\})\[\/\1\]/g;
 
+export type DocumentCitationSegment = {
+  type: 'citation';
+  doc: string;
+  page?: number;
+  label: string;
+};
+
+export type ContextCitationSegment = {
+  type: 'citation';
+  contextId: string;
+  label: string;
+};
+
 export type MarkerSegment =
   | { type: 'text'; content: string }
   | { type: 'file'; filePath: string; fileName: string }
-  | { type: 'citation'; doc: string; page?: number; label: string };
+  | DocumentCitationSegment
+  | ContextCitationSegment;
 
-export type CitationSegment = Extract<MarkerSegment, { type: 'citation' }>;
+export type CitationSegment = DocumentCitationSegment | ContextCitationSegment;
 
 /**
  * 解析 [CITE] 标记的 JSON payload。
- * 失败（非 JSON / doc 缺失或非字符串 / doc 为空）返回 null——调用侧将整个
- * match 原样保留为文本。page 非正整数时丢弃（仅丢 page，引用卡仍渲染）。
+ *
+ * - 出现 contextId 字段时按 Context 引用解析，contextId 与 label 都必须是
+ *   非空字符串；payload 中可能夹带的 tenant/user/session 字段不会进入结果。
+ * - 否则沿用文档引用规则：doc 必须为非空字符串，page 非正整数时仅丢弃，
+ *   label 缺省时由 basename 与合法页码生成。
+ * - 任一分支失败返回 null，调用侧会把整个 marker 原样保留为文本。
  */
 export function parseCitationPayload(raw: string): CitationSegment | null {
   try {
-    const json = JSON.parse(raw) as { doc?: unknown; page?: unknown; label?: unknown };
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const json = parsed as Record<string, unknown>;
+
+    if (Object.prototype.hasOwnProperty.call(json, 'contextId')) {
+      const contextId = typeof json.contextId === 'string' ? json.contextId.trim() : '';
+      const label = typeof json.label === 'string' ? json.label.trim() : '';
+      if (!contextId || !label) return null;
+      return { type: 'citation', contextId, label };
+    }
+
     const doc = typeof json.doc === 'string' ? json.doc.trim() : '';
     if (!doc) return null;
     const page = typeof json.page === 'number' && Number.isInteger(json.page) && json.page > 0

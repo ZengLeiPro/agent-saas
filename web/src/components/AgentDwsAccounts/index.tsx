@@ -26,6 +26,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { authFetch } from "@/lib/authFetch";
+import { ContextPolicyDialog } from './ContextPolicyDialog';
 
 interface AgentDwsAccountsPageProps {
   tenantId: string;
@@ -133,6 +134,29 @@ function eventKindsText(account: AgentDwsAccount): string {
   return account.eventKinds.map((kind) => kind === "at_me" ? "@我的消息" : "全部单聊").join("、");
 }
 
+function contextPolicyText(account: AgentDwsAccount): { historical: string; realtime: string; other: string } {
+  const historical = account.contextPolicy.historical;
+  const realtime = account.contextPolicy.realtime;
+  return {
+    historical: historical.mode === 'none'
+      ? '历史：不采集'
+      : historical.mode === 'all'
+        ? `历史：全部会话 · ${historical.lookbackDays} 天`
+        : `历史：${historical.conversationIds.length} 个会话 · ${historical.lookbackDays} 天`,
+    realtime: realtime.mode === 'none'
+      ? '实时：不监听'
+      : realtime.mode === 'all'
+        ? '实时：全部会话'
+        : `实时：${realtime.conversationIds.length} 个会话`,
+    other: [
+      account.contextPolicy.wiki?.enabled ? 'Wiki' : null,
+      account.contextPolicy.minutes?.enabled
+        ? `听记 ${account.contextPolicy.minutes.lookbackDays} 天`
+        : null,
+    ].filter(Boolean).join(' · ') || '文档/听记：不采集',
+  };
+}
+
 export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageProps) {
   const [accounts, setAccounts] = useState<AgentDwsAccount[]>([]);
   const [agents, setAgents] = useState<OrgAgentOption[]>([]);
@@ -149,6 +173,7 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
   const [displayName, setDisplayName] = useState("");
   const [loginId, setLoginId] = useState("");
   const [corpId, setCorpId] = useState("");
+  const [contextPolicyAccount, setContextPolicyAccount] = useState<AgentDwsAccount | null>(null);
 
   const tenantScopeRef = useRef({ tenantId });
   if (tenantScopeRef.current.tenantId !== tenantId) tenantScopeRef.current = { tenantId };
@@ -219,6 +244,7 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
     setDisplayName("");
     setLoginId("");
     setCorpId("");
+    setContextPolicyAccount(null);
     setAccounts([]);
     setAgents([]);
     setSessions({});
@@ -456,6 +482,13 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
     }
   };
 
+  const handleContextPolicySaved = (account: AgentDwsAccount) => {
+    setAccounts(current => replaceAccount(current, account));
+    setContextPolicyAccount(account);
+    setActionError('');
+    setNotice('Context 范围已更新');
+  };
+
   return (
     <div className="space-y-5">
       <SettingsPanelHeader
@@ -527,6 +560,7 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
                   <TableHead>授权状态</TableHead>
                   <TableHead>Personal Stream</TableHead>
                   <TableHead>事件范围</TableHead>
+                  <TableHead>Context 范围</TableHead>
                   <TableHead>最近事件</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
@@ -549,6 +583,7 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
                     : authorizationNeedsReset
                       ? "重置授权"
                       : account.status === "active" ? "重新授权" : "发起 OAuth";
+                  const contextScope = contextPolicyText(account);
 
                   return (
                     <TableRow key={account.accountId}>
@@ -592,6 +627,11 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
                       <TableCell className="min-w-36 whitespace-normal text-xs text-muted-foreground">
                         {eventKindsText(account)}
                       </TableCell>
+                      <TableCell className="min-w-48 whitespace-normal text-xs text-muted-foreground">
+                        <div>{contextScope.historical}</div>
+                        <div className="mt-1">{contextScope.realtime}</div>
+                        <div className="mt-1">{contextScope.other}</div>
+                      </TableCell>
                       <TableCell className="min-w-28 text-xs text-muted-foreground">
                         {formatDateTime(account.lastEventAt)}
                       </TableCell>
@@ -609,6 +649,14 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
                             />
                           </div>
                           <div className="flex flex-wrap justify-end gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setContextPolicyAccount(account)}
+                              disabled={rowBusy}
+                            >
+                              配置 Context
+                            </Button>
                             <Button
                               variant="outline"
                               size="sm"
@@ -647,6 +695,14 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
           )}
         </CardContent>
       </Card>
+
+      <ContextPolicyDialog
+        account={contextPolicyAccount}
+        tenantId={tenantId}
+        open={contextPolicyAccount !== null}
+        onOpenChange={(open) => { if (!open) setContextPolicyAccount(null); }}
+        onSaved={handleContextPolicySaved}
+      />
 
       <Dialog open={createOpen} onOpenChange={handleCreateOpenChange}>
         <DialogContent>

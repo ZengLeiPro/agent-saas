@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
-import { contextTableNames, type ContextPgPool } from '../store/index.js';
+import { contextTableNames, contextTablePrefix, type ContextPgPool } from '../store/index.js';
 import type { ContextObject } from '../store/types.js';
 import type { ContextRecallService } from './ports.js';
 import type {
@@ -26,7 +27,10 @@ interface RecallIdPayload {
 export interface PgContextRecallServiceOptions {
   pool: ContextPgPool;
   tablePrefix?: string;
+  idSigningKey?: string;
 }
+
+const PROCESS_CONTEXT_ID_SIGNING_KEY = randomBytes(32).toString('base64url');
 
 /**
  * PostgreSQL baseline recall. It intentionally uses only exact matches, ILIKE and
@@ -34,9 +38,14 @@ export interface PgContextRecallServiceOptions {
  */
 export class PgContextRecallService implements ContextRecallService {
   private readonly tables;
+  private readonly agentDwsAccountsTable: string;
+  private readonly idSigningKey: string;
 
   constructor(private readonly options: PgContextRecallServiceOptions) {
-    this.tables = contextTableNames(options.tablePrefix);
+    const tablePrefix = contextTablePrefix(options.tablePrefix);
+    this.tables = contextTableNames(tablePrefix);
+    this.agentDwsAccountsTable = `${tablePrefix}_agent_dws_accounts`;
+    this.idSigningKey = options.idSigningKey?.trim() || PROCESS_CONTEXT_ID_SIGNING_KEY;
   }
 
   async search(request: ContextRecallSearchRequest): Promise<ContextRecallSearchResult> {
@@ -66,6 +75,8 @@ export class PgContextRecallService implements ContextRecallService {
       FROM ${this.tables.records} r
       JOIN ${this.tables.sources} s
         ON s.tenant_id=r.tenant_id AND s.source_id=r.source_id
+      LEFT JOIN ${this.agentDwsAccountsTable} a
+        ON a.tenant_id=r.tenant_id AND a.account_id=s.config_json->>'accountId'
       JOIN ${this.tables.collections} c
         ON c.tenant_id=r.tenant_id AND c.source_id=r.source_id AND c.collection_id=r.collection_id
       LEFT JOIN LATERAL (
@@ -86,6 +97,8 @@ export class PgContextRecallService implements ContextRecallService {
       WHERE r.tenant_id=$1 AND r.collection_id=ANY($2::text[])
         AND r.deleted=FALSE AND r.revoked=FALSE
         AND s.status='active' AND c.status='active'
+        AND (s.kind<>'dws' OR a.status='active')
+        ${chatPolicySql('r', 's', 'c', 'a')}
         AND (
           r.record_id=$3 OR r.external_record_id=$3
           OR r.content_json::text ILIKE $4 ESCAPE '\\'
@@ -111,23 +124,28 @@ export class PgContextRecallService implements ContextRecallService {
 
   async get(request: ContextRecallGetRequest): Promise<ContextRecallGetResult> {
     throwIfAborted(request.signal);
-    const id = decodeRecallId(request.id);
+    const id = decodeRecallId(request.id, this.idSigningKey);
     if (!id || id.t !== request.subject.tenantId) return { hit: null, degraded: false };
     const assignmentVersions = scopeVersions(request.scope.collections);
     if (!assignmentVersions.has(id.c)) return { hit: null, degraded: false };
 
     const result = await this.options.pool.query(`
-      SELECT r.tenant_id,r.source_id,r.collection_id,r.record_id,r.current_revision,
-             r.content_json,r.metadata_json,r.source_updated_at,r.observed_at,
+      SELECT v.tenant_id,v.source_id,v.collection_id,v.record_id,v.revision AS current_revision,
+             v.content_json,v.metadata_json,v.source_updated_at,v.observed_at,
              s.kind AS source_kind,s.display_name AS source_display_name,
-             COALESCE(NULLIF(r.metadata_json->>'kind',''),s.kind) AS record_kind,
+             COALESCE(NULLIF(v.metadata_json->>'kind',''),s.kind) AS record_kind,
              COALESCE(sync_health.degraded,FALSE) AS sync_degraded,
              sync_health.sync_as_of,
              COALESCE(evidence.items,'[]'::jsonb) AS evidence_items,
              1 AS route_rank
       FROM ${this.tables.records} r
+      JOIN ${this.tables.revisions} v
+        ON v.tenant_id=r.tenant_id AND v.source_id=r.source_id
+          AND v.collection_id=r.collection_id AND v.record_id=r.record_id AND v.revision=$5
       JOIN ${this.tables.sources} s
         ON s.tenant_id=r.tenant_id AND s.source_id=r.source_id
+      LEFT JOIN ${this.agentDwsAccountsTable} a
+        ON a.tenant_id=r.tenant_id AND a.account_id=s.config_json->>'accountId'
       JOIN ${this.tables.collections} c
         ON c.tenant_id=r.tenant_id AND c.source_id=r.source_id AND c.collection_id=r.collection_id
       LEFT JOIN LATERAL (
@@ -141,13 +159,15 @@ export class PgContextRecallService implements ContextRecallService {
           'evidenceId',e.evidence_id,'kind',e.kind,'data',e.data_json
         ) ORDER BY e.evidence_id) AS items
         FROM ${this.tables.evidence} e
-        WHERE e.tenant_id=r.tenant_id AND e.source_id=r.source_id
-          AND e.collection_id=r.collection_id AND e.record_id=r.record_id
-          AND e.revision=r.current_revision
+        WHERE e.tenant_id=v.tenant_id AND e.source_id=v.source_id
+          AND e.collection_id=v.collection_id AND e.record_id=v.record_id
+          AND e.revision=v.revision
       ) evidence ON TRUE
       WHERE r.tenant_id=$1 AND r.source_id=$2 AND r.collection_id=$3 AND r.record_id=$4
-        AND r.current_revision=$5 AND r.deleted=FALSE AND r.revoked=FALSE
+        AND r.deleted=FALSE AND r.revoked=FALSE
         AND s.status='active' AND c.status='active'
+        AND (s.kind<>'dws' OR a.status='active')
+        ${chatPolicySql('v', 's', 'c', 'a')}
     `, [id.t, id.s, id.c, id.r, id.v]);
     throwIfAborted(request.signal);
     if (!result.rows[0]) return { hit: null, degraded: false };
@@ -193,7 +213,10 @@ export class PgContextRecallService implements ContextRecallService {
         ? { status: 'fresh', asOf: syncAsOf }
         : { status: 'unknown', ...(observedAt ? { asOf: observedAt } : {}), reason: 'context_sync_status_unavailable' };
     return {
-      id: encodeRecallId({ t: tenantId, s: sourceId, c: collectionId, r: recordId, v: revision }),
+      id: encodeRecallId(
+        { t: tenantId, s: sourceId, c: collectionId, r: recordId, v: revision },
+        this.idSigningKey,
+      ),
       collectionId,
       assignmentVersion: assignmentVersions.get(collectionId)!,
       kind: String(row.record_kind),
@@ -249,6 +272,7 @@ function evidenceFromRow(row: Row, identity: {
       revision: identity.revision,
       kind: String(record.kind),
       ...(stringField(data, 'excerpt') ? { excerpt: stringField(data, 'excerpt') } : {}),
+      ...(stringField(data, 'author') ? { author: stringField(data, 'author') } : {}),
       ...(stringField(data, 'url') ? { url: stringField(data, 'url') } : {}),
       ...(stringField(data, 'occurredAt') ? { occurredAt: stringField(data, 'occurredAt') } : {}),
     }];
@@ -274,24 +298,101 @@ function optionalIso(value: unknown): string | undefined {
   return value instanceof Date ? value.toISOString() : new Date(String(value)).toISOString();
 }
 
+function chatPolicySql(
+  recordAlias: string,
+  sourceAlias: string,
+  collectionAlias: string,
+  accountAlias: string,
+): string {
+  // DWS retrieval reads the account row as the authorization source of truth.
+  // The Context Source mirror remains operational metadata, not a security dependency.
+  const policy = `(CASE WHEN ${sourceAlias}.kind='dws'
+    THEN ${accountAlias}.event_policy_json #> '{contextPolicy}'
+    ELSE ${sourceAlias}.config_json #> '{contextPolicy}' END)`;
+  const conversation = `COALESCE(${recordAlias}.metadata_json->>'conversationId','')`;
+  const occurredAtText = `${recordAlias}.metadata_json->>'occurredAt'`;
+  const occurredAt = `COALESCE(
+    CASE WHEN PG_INPUT_IS_VALID(${occurredAtText},'timestamp with time zone')
+      THEN (${occurredAtText})::timestamptz END,
+    ${recordAlias}.source_updated_at,
+    ${recordAlias}.observed_at
+  )`;
+  const selectionAllows = (branch: 'historical' | 'realtime') => `(
+    ${policy} #>> '{${branch},mode}' = 'all'
+    OR (
+      ${policy} #>> '{${branch},mode}' = 'selected'
+      AND jsonb_typeof(${policy} #> '{${branch},conversationIds}') = 'array'
+      AND (${policy} #> '{${branch},conversationIds}') ? ${conversation}
+    )
+  )`;
+  const historicalDays = `${policy} #>> '{historical,lookbackDays}'`;
+  const historical = `(
+    ${selectionAllows('historical')}
+    AND ${historicalDays} ~ '^[0-9]{1,3}$'
+    AND (${historicalDays})::integer BETWEEN 1 AND 365
+    AND ${occurredAt} >= NOW() - MAKE_INTERVAL(days => (${historicalDays})::integer)
+  )`;
+  const effectiveAt = `COALESCE(
+    CASE WHEN ${policy} #>> '{realtime,mode}' = 'all'
+      THEN ${policy} #>> '{realtimeEffectiveAt,all}'
+      ELSE (${policy} #> '{realtimeEffectiveAt,conversations}') ->> ${conversation}
+    END,
+    ${policy} #>> '{effectiveAt}'
+  )`;
+  const realtimeCutoff = `CASE
+    WHEN PG_INPUT_IS_VALID(${effectiveAt},'timestamp with time zone')
+    THEN (${effectiveAt})::timestamptz
+  END`;
+  const realtime = `(
+    ${selectionAllows('realtime')}
+    AND ${occurredAt} >= ${realtimeCutoff}
+  )`;
+  // Every domain is fail-closed. Chat uses the union of time-bounded historical
+  // learning and post-effective realtime listening; Wiki/minutes require their
+  // explicit opt-in flags.
+  return `AND CASE ${collectionAlias}.external_key
+    WHEN 'chat' THEN (${historical} OR ${realtime})
+    WHEN 'wiki' THEN ${policy} #>> '{wiki,enabled}' = 'true'
+    WHEN 'minutes' THEN (
+      ${policy} #>> '{minutes,enabled}' = 'true'
+      AND ${policy} #>> '{minutes,lookbackDays}' ~ '^[0-9]{1,3}$'
+      AND (${policy} #>> '{minutes,lookbackDays}')::integer BETWEEN 1 AND 365
+      AND ${occurredAt} >= NOW() - MAKE_INTERVAL(
+        days => (${policy} #>> '{minutes,lookbackDays}')::integer
+      )
+    )
+    ELSE FALSE
+  END`;
+}
+
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, match => `\\${match}`);
 }
 
-function encodeRecallId(value: RecallIdPayload): string {
-  return `ctx1.${Buffer.from(JSON.stringify(value)).toString('base64url')}`;
+function encodeRecallId(value: RecallIdPayload, signingKey: string): string {
+  const payload = Buffer.from(JSON.stringify(value)).toString('base64url');
+  return `ctx1.${payload}.${signRecallId(payload, signingKey)}`;
 }
 
-function decodeRecallId(value: string): RecallIdPayload | null {
+function decodeRecallId(value: string, signingKey: string): RecallIdPayload | null {
   if (!value.startsWith('ctx1.') || value.length > 512) return null;
   try {
-    const parsed = JSON.parse(Buffer.from(value.slice(5), 'base64url').toString('utf8')) as Record<string, unknown>;
+    const parts = value.split('.');
+    if (parts.length !== 3 || parts[0] !== 'ctx1' || !parts[1] || !parts[2]) return null;
+    const expected = Buffer.from(signRecallId(parts[1], signingKey));
+    const actual = Buffer.from(parts[2]);
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
+    const parsed = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as Record<string, unknown>;
     if (typeof parsed.t !== 'string' || typeof parsed.s !== 'string' || typeof parsed.c !== 'string'
       || typeof parsed.r !== 'string' || !Number.isSafeInteger(parsed.v) || Number(parsed.v) < 1) return null;
     return { t: parsed.t, s: parsed.s, c: parsed.c, r: parsed.r, v: Number(parsed.v) };
   } catch {
     return null;
   }
+}
+
+function signRecallId(payload: string, signingKey: string): string {
+  return createHmac('sha256', signingKey).update(`context-recall:${payload}`).digest('base64url');
 }
 
 function throwIfAborted(signal?: AbortSignal): void {

@@ -1657,7 +1657,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const codexDeviceAuthService = new CodexDeviceAuthService(egressFetch);
   const titleModelAdapterFactory = createTitleModelAdapterFactory(codexCredentialManager, egressFetch);
   const memoryContextTools = createRuntimeMemoryContextTools({
-    contextStore, assignments: assignmentStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, sessionCatalog,
+    contextStore, assignments: assignmentStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, recallIdSigningKey: config.auth?.jwtSecret, sessionCatalog,
     memoryStore: memoryConsolidationStore, memoryIndexService: memoryIndexServiceRef.current, logger: { info: msg => serverLogger.info(msg), warn: msg => serverLogger.warn(msg) },
   });
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
@@ -3025,8 +3025,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentDwsAccountStore,
     agentDwsMessageStore,
     agentDwsAuthFlowService: agentDwsRuntime?.authFlowService, agentDwsMessageRouter: agentDwsRuntime?.messageRouter,
-    dwsPersonalEventGateway: agentDwsRuntime?.eventGateway,
-    notionAuthFlowService,
+    dwsPersonalEventGateway: agentDwsRuntime?.eventGateway, agentDwsContextPolicyUpdated: agentDwsRuntime?.onContextPolicyUpdated,
+    agentDwsEnabledChanged: agentDwsRuntime?.onEnabledChanged, notionAuthFlowService,
     getNotionConnection,
     disconnectNotionConnection,
     googleWorkspaceOAuthService,

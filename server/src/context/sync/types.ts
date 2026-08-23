@@ -15,8 +15,10 @@ export interface ContextSyncWindow {
 
 export interface ContextSyncTarget {
   source: ContextSyncSource;
-  /** Chat event wakes use a separate, conversation-scoped watermark. */
+  /** One addressed conversation, primarily for event wakes and compatibility. */
   conversationId?: string;
+  /** A selected chat scope pulled in one upstream scan; values must be canonical and unique. */
+  conversationIds?: readonly string[];
 }
 
 export interface ContextSyncKey extends ContextSyncScope, ContextSyncTarget {}
@@ -41,6 +43,7 @@ export interface ContextIngestItem {
   updatedAt?: string;
   url?: string;
   metadata: Record<string, string | number | boolean | null>;
+  revoked?: boolean;
   /** Always present so clipping can never silently look complete. */
   truncation: ContextContentTruncation;
 }

@@ -478,15 +478,20 @@ describe('governanceApi fail closed', () => {
         freshness: 'fresh', freshnessAsOf: '2026-08-22T15:38:00.000Z', originalUrl: null,
       }]));
 
-    await expect(contextCenterApi.getSnapshot()).resolves.toMatchObject({ sources: [], consumers: [] });
+    await expect(contextCenterApi.getSnapshot({ tenantId: 'tenant target' }))
+      .resolves.toMatchObject({ sources: [], consumers: [] });
     await expect(contextCenterApi.listEvidence({
       sourceId: 'dingtalk/source', collectionId: 'product docs', recordId: 'record?1',
-    })).resolves.toHaveLength(1);
+    }, { tenantId: 'tenant target' })).resolves.toHaveLength(1);
 
-    expect(mockAuthFetch).toHaveBeenNthCalledWith(1, '/api/admin/context-plane/snapshot', undefined);
+    expect(mockAuthFetch).toHaveBeenNthCalledWith(
+      1,
+      '/api/admin/context-plane/snapshot?tenantId=tenant+target',
+      undefined,
+    );
     expect(mockAuthFetch).toHaveBeenNthCalledWith(
       2,
-      '/api/admin/context-plane/evidence?sourceId=dingtalk%2Fsource&collectionId=product+docs&recordId=record%3F1',
+      '/api/admin/context-plane/evidence?tenantId=tenant+target&sourceId=dingtalk%2Fsource&collectionId=product+docs&recordId=record%3F1',
       undefined,
     );
   });

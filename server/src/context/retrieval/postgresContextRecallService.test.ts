@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { PgContextRecallService } from './postgresContextRecallService.js';
@@ -47,6 +49,14 @@ describe('PgContextRecallService', () => {
     expect(query.mock.calls[0]![0]).toContain('r.record_id=$3 OR r.external_record_id=$3');
     expect(query.mock.calls[0]![0]).toContain('ILIKE $4');
     expect(query.mock.calls[0]![0]).toContain('COALESCE(r.source_updated_at,r.observed_at) >= $7');
+    expect(query.mock.calls[0]![0]).toContain('LEFT JOIN test_agent_dws_accounts a');
+    expect(query.mock.calls[0]![0]).toContain("a.event_policy_json #> '{contextPolicy}'");
+    expect(query.mock.calls[0]![0]).toContain("s.kind<>'dws' OR a.status='active'");
+    expect(query.mock.calls[0]![0]).toContain("CASE c.external_key");
+    expect(query.mock.calls[0]![0]).toContain("{historical,lookbackDays}");
+    expect(query.mock.calls[0]![0]).toContain("{realtimeEffectiveAt,all}");
+    expect(query.mock.calls[0]![0]).toContain("{wiki,enabled}");
+    expect(query.mock.calls[0]![0]).toContain("{minutes,lookbackDays}");
     expect(query.mock.calls[0]![1]).toEqual([
       'tenant-a', ['collection-a'], 'Quarterly plan', '%Quarterly plan%', ['document'], ['source-a'],
       '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', 5,
@@ -61,6 +71,15 @@ describe('PgContextRecallService', () => {
         evidence: [{ evidenceId: 'ev-1', excerpt: 'Quarterly plan' }],
       }],
     });
+
+    await expect(service.get({ subject, scope, id: result.hits[0]!.id })).resolves.toMatchObject({
+      hit: { collectionId: 'collection-a' },
+    });
+    expect(query.mock.calls[2]![0]).toContain("{historical,mode}");
+    expect(query.mock.calls[2]![0]).toContain("{realtime,conversationIds}");
+    expect(query.mock.calls[2]![0]).toContain('v.revision=$5');
+    expect(query.mock.calls[2]![0]).toContain('r.deleted=FALSE AND r.revoked=FALSE');
+    expect(query.mock.calls[2]![0]).toContain('e.revision=v.revision');
   });
 
   it('treats opaque ids as routing only and returns null outside the freshly authorized scope', async () => {
@@ -68,6 +87,13 @@ describe('PgContextRecallService', () => {
     const service = new PgContextRecallService({ pool: { query } as never, tablePrefix: 'test' });
     const search = await service.search({ subject, scope, query: 'plan', limit: 1, filters: {} });
     const id = search.hits[0]!.id;
+    const parts = id.split('.');
+    const payload = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as Record<string, unknown>;
+    payload.v = 1;
+    const tamperedId = `ctx1.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.${parts[2]}`;
+    await expect(service.get({ subject, scope, id: tamperedId }))
+      .resolves.toEqual({ hit: null, degraded: false });
+
     const denied = await service.get({
       subject,
       id,

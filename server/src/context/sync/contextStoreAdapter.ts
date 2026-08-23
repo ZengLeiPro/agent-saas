@@ -87,12 +87,16 @@ export interface ContextStoreSyncAdapterOptions {
 }
 
 interface ActiveLease {
+  tenantId: string;
   identity: ContextPartitionIdentity;
   leaseFence: number;
+  renewAfterMs: number;
   initialWatermark: string | null;
   window?: ContextSyncWindow;
   truncated: boolean;
   retryCount: number;
+  pendingFinalRecords?: ContextIngestRecordInput[];
+  pendingRevocations?: ContextIngestRecordInput[];
 }
 
 const DEFAULT_LEASE_MS = 5 * 60_000;
@@ -111,6 +115,7 @@ export class ContextStoreSyncAdapter implements ContextSyncStore {
   private readonly retryBaseMs: number;
   private readonly retryMaxMs: number;
   private readonly active = new Map<string, ActiveLease>();
+  private readonly invalidated = new Set<string>();
 
   constructor(private readonly options: ContextStoreSyncAdapterOptions) {
     this.leaseOwner = options.leaseOwner ?? `context-sync-${randomUUID()}`;
@@ -120,15 +125,29 @@ export class ContextStoreSyncAdapter implements ContextSyncStore {
   }
 
   async getWatermark(key: ContextSyncKey): Promise<string | null> {
-    const identity = this.identity(key);
-    await this.options.store.ensurePartition({ tenantId: key.tenantId, ...identity });
-    const partition = await this.options.store.getPartition(
-      key.tenantId,
-      identity.sourceId,
-      identity.collectionId,
-      identity.partitionKey,
-    );
-    return watermarkFromPartition(partition);
+    // Acquire before any upstream read. A policy reset increments the fence, so
+    // an operation that started under the old policy can never write afterward.
+    return (await this.lease(key)).initialWatermark;
+  }
+
+  async heartbeat(): Promise<void> {
+    const now = Date.now();
+    for (const [mapKey, lease] of this.active) {
+      if (now < lease.renewAfterMs) continue;
+      const renewed = await this.options.store.renewPartitionLease({
+        tenantId: lease.tenantId,
+        ...lease.identity,
+        leaseOwner: this.leaseOwner,
+        leaseFence: lease.leaseFence,
+        leaseMs: this.leaseMs,
+      });
+      if (!renewed) {
+        this.active.delete(mapKey);
+        this.invalidated.add(mapKey);
+        throw new Error('Context sync partition lease was invalidated');
+      }
+      lease.renewAfterMs = now + Math.max(1_000, Math.floor(this.leaseMs / 3));
+    }
   }
 
   async getResumeCursor(
@@ -155,16 +174,23 @@ export class ContextStoreSyncAdapter implements ContextSyncStore {
     const lease = await this.lease(page.key);
     lease.window = page.window;
     lease.truncated ||= page.truncated;
+    const records = page.items.map(toContextRecord);
+    if (!page.nextCursor) {
+      // Hold the terminal page until advanceWatermark so its records, revisions,
+      // evidence, outbox rows and high watermark share one PostgreSQL transaction.
+      lease.pendingFinalRecords = records;
+      return;
+    }
     await this.options.store.ingestPage({
       tenantId: page.key.tenantId,
       ...lease.identity,
       leaseOwner: this.leaseOwner,
       leaseFence: lease.leaseFence,
-      records: page.items.map(toContextRecord),
+      records,
       checkpoint: {
         windowStart: page.window.from,
         windowEnd: page.window.to,
-        ...(page.nextCursor ? { pageCursor: page.nextCursor } : {}),
+        pageCursor: page.nextCursor,
         truncated: lease.truncated,
         complete: false,
       },
@@ -185,30 +211,14 @@ export class ContextStoreSyncAdapter implements ContextSyncStore {
     );
     const present = new Set(input.externalRecordIds);
     const missing = current.filter(externalRecordId => !present.has(externalRecordId));
-    if (missing.length === 0) return 0;
-    for (let offset = 0; offset < missing.length; offset += 500) {
-      const batch = missing.slice(offset, offset + 500);
-      await this.options.store.ingestPage({
-        tenantId: input.key.tenantId,
-        ...lease.identity,
-        leaseOwner: this.leaseOwner,
-        leaseFence: lease.leaseFence,
-        records: batch.map(externalRecordId => ({
-          recordId: `dws-${digest(externalRecordId).slice(0, 48)}`,
-          externalRecordId,
-          content: null,
-          metadata: { source: input.key.source, revocationReason: 'inventory_absent' },
-          revoked: true,
-          observedAt: input.window.to,
-        })),
-        checkpoint: {
-          windowStart: input.window.from,
-          windowEnd: input.window.to,
-          truncated: lease.truncated,
-          complete: false,
-        },
-      });
-    }
+    lease.pendingRevocations = missing.map(externalRecordId => ({
+      recordId: `dws-${digest(externalRecordId).slice(0, 48)}`,
+      externalRecordId,
+      content: null,
+      metadata: { source: input.key.source, revocationReason: 'inventory_absent' },
+      revoked: true,
+      observedAt: input.window.to,
+    }));
     return missing.length;
   }
 
@@ -227,7 +237,10 @@ export class ContextStoreSyncAdapter implements ContextSyncStore {
       ...lease.identity,
       leaseOwner: this.leaseOwner,
       leaseFence: lease.leaseFence,
-      records: [],
+      records: [
+        ...(lease.pendingFinalRecords ?? []),
+        ...(lease.pendingRevocations ?? []),
+      ],
       checkpoint: {
         watermark: input.value,
         ...(window ? {
@@ -291,13 +304,20 @@ export class ContextStoreSyncAdapter implements ContextSyncStore {
     const retryAt = new Date(
       Date.parse(input.failedAt) + retryDelay(lease.retryCount + 1, this.retryBaseMs, this.retryMaxMs),
     ).toISOString();
+    const refused = /(?:\b401\b|\b403\b|forbidden|permission denied|unauthorized|not authorized|access denied)/i
+      .test(input.error);
     const partition = await this.options.store.failPartition({
       tenantId: input.key.tenantId,
       ...lease.identity,
       leaseOwner: this.leaseOwner,
       leaseFence: lease.leaseFence,
-      errorCode: 'CONTEXT_SYNC_FAILED',
+      errorCode: refused
+        ? 'CONTEXT_SYNC_REFUSED'
+        : input.error.includes('returned truncated upstream content')
+          ? 'CONTEXT_SYNC_UNREADABLE'
+          : 'CONTEXT_SYNC_FAILED',
       retryAt,
+      ...(refused ? { refused: true } : {}),
     });
     this.active.delete(keyString(input.key));
     return {
@@ -322,6 +342,7 @@ export class ContextStoreSyncAdapter implements ContextSyncStore {
 
   private async lease(key: ContextSyncKey): Promise<ActiveLease> {
     const mapKey = keyString(key);
+    if (this.invalidated.has(mapKey)) throw new Error('Context sync partition lease was invalidated');
     const current = this.active.get(mapKey);
     if (current) {
       const renewed = await this.options.store.renewPartitionLease({
@@ -331,8 +352,13 @@ export class ContextStoreSyncAdapter implements ContextSyncStore {
         leaseFence: current.leaseFence,
         leaseMs: this.leaseMs,
       });
-      if (renewed) return current;
+      if (renewed) {
+        current.renewAfterMs = Date.now() + Math.max(1_000, Math.floor(this.leaseMs / 3));
+        return current;
+      }
       this.active.delete(mapKey);
+      this.invalidated.add(mapKey);
+      throw new Error('Context sync partition lease was invalidated');
     }
 
     const identity = this.identity(key);
@@ -345,8 +371,10 @@ export class ContextStoreSyncAdapter implements ContextSyncStore {
     });
     if (!partition) throw new Error('Context sync partition lease is unavailable');
     const lease: ActiveLease = {
+      tenantId: key.tenantId,
       identity,
       leaseFence: partition.leaseFence,
+      renewAfterMs: Date.now() + Math.max(1_000, Math.floor(this.leaseMs / 3)),
       initialWatermark: watermarkFromPartition(partition),
       truncated: false,
       retryCount: partition.retryCount,
@@ -358,7 +386,7 @@ export class ContextStoreSyncAdapter implements ContextSyncStore {
 
 export function defaultPartitionIdentity(key: ContextSyncKey): ContextPartitionIdentity {
   const accountHash = digest(`${key.tenantId}\0${key.accountId}\0${key.profileId}`).slice(0, 32);
-  const targetHash = digest(`${key.source}\0${key.conversationId ?? '*'}`).slice(0, 32);
+  const targetHash = digest(`${key.source}\0${conversationTargetKey(key)}`).slice(0, 32);
   return {
     sourceId: `dws-${accountHash}`,
     collectionId: `dws-${key.source}-${accountHash}`,
@@ -392,12 +420,19 @@ function toContextRecord(item: ContextIngestItem): ContextIngestRecordInput {
     ...(item.conversationId ? { conversationId: item.conversationId } : {}),
     ...(item.url ? { url: item.url } : {}),
     ...(author ? { author } : {}),
+    ...(item.metadata.unreadable === true ? {
+      unreadable: true,
+      unreadableReason: typeof item.metadata.unreadableReason === 'string'
+        ? item.metadata.unreadableReason
+        : 'content_unavailable',
+    } : {}),
   };
   return {
     recordId: `dws-${digest(item.idempotencyKey).slice(0, 48)}`,
     externalRecordId: item.idempotencyKey,
     content,
     metadata,
+    ...(item.revoked ? { revoked: true } : {}),
     sourceUpdatedAt: item.updatedAt ?? item.occurredAt,
     observedAt: item.occurredAt,
     evidence: [{
@@ -443,8 +478,14 @@ function keyString(key: ContextSyncKey): string {
     key.accountId,
     key.profileId,
     key.source,
-    key.conversationId ?? '',
+    conversationTargetKey(key),
   ]);
+}
+
+function conversationTargetKey(key: ContextSyncKey): string {
+  if (key.conversationId) return `one:${key.conversationId}`;
+  if (key.conversationIds) return `selected:${[...key.conversationIds].sort().join('\0')}`;
+  return '*';
 }
 
 function digest(value: string): string {

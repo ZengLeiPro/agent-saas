@@ -281,7 +281,7 @@ interface MessageListProps {
   /** 独立传入，避免 ttsProps 引用因 stateMap 变化而重建 */
   ttsStateMap?: Record<string, TtsState>;
   agentProfile?: AgentProfile | null;
-  sessionParticipants?: SessionParticipants | null;
+  sessionParticipants?: SessionParticipants | null; sessionId?: string | null;
   /** 分享页等只读上下文可显式指定调试模式；未传时沿用当前登录用户设置。 */
   debugModeOverride?: boolean;
   businessStepDisplayModeOverride?: BusinessStepDisplayMode; showBusinessStepOutcomeWhenCollapsed?: boolean;
@@ -309,7 +309,7 @@ export const MessageList = memo(function MessageList({
   tts,
   ttsStateMap,
   agentProfile,
-  sessionParticipants,
+  sessionParticipants, sessionId,
   debugModeOverride, businessStepDisplayModeOverride, showBusinessStepOutcomeWhenCollapsed,
   emptySlot,
 }: MessageListProps) {
@@ -857,7 +857,7 @@ export const MessageList = memo(function MessageList({
               <ErrorBoundary key={sub.id} inline>
                 <MessageItem
                   message={sub}
-                  index={origIndex}
+                  index={origIndex} sessionId={sessionId}
                   onPermissionResponse={onPermissionResponse}
                   onAskUserResponse={onAskUserResponse}
                   onRetry={onRetry}
@@ -979,7 +979,7 @@ export const MessageList = memo(function MessageList({
                 <ErrorBoundary inline>
                   <MessageItem
                     message={item}
-                    index={origIndex}
+                    index={origIndex} sessionId={sessionId}
                     onPermissionResponse={onPermissionResponse}
                     onAskUserResponse={onAskUserResponse}
                     onRetry={onRetry}
@@ -1012,7 +1012,7 @@ export const MessageList = memo(function MessageList({
                 <ErrorBoundary inline>
                   <MessageItem
                     message={item}
-                    index={origIndex}
+                    index={origIndex} sessionId={sessionId}
                     onPermissionResponse={onPermissionResponse}
                     onAskUserResponse={onAskUserResponse}
                     onRetry={onRetry}
@@ -1056,7 +1056,7 @@ export const MessageList = memo(function MessageList({
               <ErrorBoundary inline>
                 <MessageItem
                   message={item}
-                  index={origIndex}
+                  index={origIndex} sessionId={sessionId}
                   onPermissionResponse={onPermissionResponse}
                   onAskUserResponse={onAskUserResponse}
                   onRetry={onRetry}

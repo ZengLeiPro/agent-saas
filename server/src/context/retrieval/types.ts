@@ -58,6 +58,7 @@ export interface ContextRecallEvidence {
   revision: number;
   kind: string;
   excerpt?: string;
+  author?: string;
   url?: string;
   occurredAt?: string;
 }

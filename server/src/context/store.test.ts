@@ -14,6 +14,8 @@ function partitionRow(overrides: Record<string, unknown> = {}) {
     status: 'syncing', watermark_json: null, window_start: null, window_end: null, page_cursor: null,
     lease_owner: 'worker-a', lease_fence: 1, lease_expires_at: FUTURE, retry_count: 0,
     next_retry_at: null, last_error_code: null, coverage_start: null, coverage_end: null,
+    source_kind: 'dws', source_status: 'active', collection_status: 'active',
+    source_account_revision: '1', account_status: 'active', account_revision: 1,
     truncated: false, refused: false, updated_at: NOW, ...overrides,
   };
 }
@@ -64,6 +66,23 @@ class IngestClient {
       }
       this.snapshot = undefined;
       return { rows: [], rowCount: 0 };
+    }
+    if (normalized.includes('FROM test_context_sources s') && normalized.includes('FOR SHARE OF s,c')) {
+      return { rows: [{
+        source_kind: this.partition.source_kind,
+        source_status: this.partition.source_status,
+        collection_status: this.partition.collection_status,
+        config_json: {
+          accountId: 'account-a',
+          accountRevision: this.partition.source_account_revision,
+        },
+      }], rowCount: 1 };
+    }
+    if (normalized.includes('FROM test_agent_dws_accounts') && normalized.includes('FOR SHARE')) {
+      return { rows: [{
+        status: this.partition.account_status,
+        revision: this.partition.account_revision,
+      }], rowCount: 1 };
     }
     if (normalized.includes('SELECT * FROM test_context_sync_partitions') && normalized.includes('FOR UPDATE')) {
       return { rows: [this.partition], rowCount: 1 };
@@ -249,6 +268,24 @@ describe('ContextStore PostgreSQL data layer', () => {
     expect(client.evidence).toHaveLength(2);
     expect(client.outbox.map(row => row.seq)).toEqual(['1', '2']);
     expect(client.query.mock.calls.filter(([sql]) => sql === 'COMMIT')).toHaveLength(3);
+    const checkpointSql = client.query.mock.calls.find(([sql]) => String(sql).includes('coverage_start=CASE'))?.[0];
+    expect(checkpointSql).toContain('LEAST(coverage_start');
+    expect(checkpointSql).toContain('GREATEST(coverage_end');
+  });
+
+  it('resets refused partitions only through an explicit operator recovery action', async () => {
+    const query = vi.fn(async (_sql: string, _params?: unknown[]) => ({
+      rows: [{ partition_key: 'a' }, { partition_key: 'b' }],
+    }));
+    const store = new ContextStore({ pool: { query } as never, tablePrefix: 'test' });
+    await expect(store.resetRefusedPartitions('tenant-a', 'source-a', 'collection-a')).resolves.toBe(2);
+    expect(query.mock.calls[0]![0]).toContain("SET status='idle',refused=FALSE");
+    expect(query.mock.calls[0]![1]).toEqual(['tenant-a', 'source-a', 'collection-a']);
+
+    await expect(store.resetPartitionsForPolicyChange('tenant-a', 'source-a', 'collection-a')).resolves.toBe(2);
+    expect(query.mock.calls[1]![0]).toContain('watermark_json=NULL');
+    expect(query.mock.calls[1]![0]).toContain('coverage_start=NULL,coverage_end=NULL');
+    expect(query.mock.calls[1]![0]).toContain('lease_fence=lease_fence+1');
   });
 
   it('fingerprints canonical content, caller hash, metadata, lifecycle, source time, and evidence', async () => {
@@ -321,6 +358,17 @@ describe('ContextStore PostgreSQL data layer', () => {
     client.partition = partitionRow({ lease_fence: 2 });
     const store = new ContextStore({ pool: { connect: vi.fn(async () => client) } as never, tablePrefix: 'test' });
     await expect(store.ingestPage(ingestInput({ title: 'one' }))).rejects.toMatchObject({ code: 'CONTEXT_LEASE_LOST' });
+    expect(client.record).toBeUndefined();
+    expect(client.outbox).toHaveLength(0);
+  });
+
+  it('rejects DWS writes when the account revision no longer matches the source mirror', async () => {
+    const client = new IngestClient();
+    client.partition = partitionRow({ source_account_revision: '1', account_revision: 2 });
+    const store = new ContextStore({ pool: { connect: vi.fn(async () => client) } as never, tablePrefix: 'test' });
+
+    await expect(store.ingestPage(ingestInput({ title: 'one' })))
+      .rejects.toMatchObject({ code: 'CONTEXT_LEASE_LOST' });
     expect(client.record).toBeUndefined();
     expect(client.outbox).toHaveLength(0);
   });

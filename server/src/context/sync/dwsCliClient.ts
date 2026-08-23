@@ -9,6 +9,12 @@ import type {
 } from './ports.js';
 import type { ContextSyncScope, ContextSyncWindow } from './types.js';
 
+const MAX_WIKI_SPACE_PAGES = 100;
+const MAX_WIKI_DEPTH = 4;
+const MAX_WIKI_NODES_PER_SPACE = 500;
+const MAX_WIKI_DOCUMENTS = 10_000;
+const READABLE_WIKI_EXTENSIONS = new Set(['', 'adoc', 'amd', 'md', 'adocx']);
+
 export interface DwsCliExecutionContext {
   tenantId: string;
   accountId: string;
@@ -34,6 +40,7 @@ export interface DwsCliJsonExecutor {
 
 export interface DwsCliContextClientOptions {
   executor: DwsCliJsonExecutor;
+  beforeExecute?: () => Promise<void>;
   resolveExecution?: (scope: ContextSyncScope) => Promise<{
     env?: Readonly<Record<string, string>>;
     context?: Readonly<Record<string, unknown>>;
@@ -70,6 +77,7 @@ export class DwsCliContextClient implements DwsContextClient {
     cursor?: string;
     pageSize: number;
     conversationId?: string;
+    conversationIds?: readonly string[];
   }): Promise<DwsPage<DwsChatMessage>> {
     const args = withProfile([
       'dws', 'chat', 'message', 'list-all',
@@ -80,11 +88,22 @@ export class DwsCliContextClient implements DwsContextClient {
     ], input.scope.profileId);
     const payload = await this.execute(args, input.scope, 'chat.list');
     const page = parsePage(payload, ['items', 'messages', 'list', 'records']);
-    const items = page.items
-      .map(parseChatMessage)
-      .filter((item): item is DwsChatMessage => Boolean(item))
-      .filter(item => !input.conversationId || item.conversationId === input.conversationId);
-    return pageResult(items, page);
+    const selected = input.conversationIds ? new Set(input.conversationIds) : undefined;
+    const items: DwsChatMessage[] = [];
+    let unreadable = false;
+    for (const raw of page.items) {
+      const rawConversationId = chatConversationId(raw);
+      const addressed = (!input.conversationId || rawConversationId === input.conversationId)
+        && (!selected || (rawConversationId ? selected.has(rawConversationId) : true));
+      if (!addressed) continue;
+      const item = parseChatMessage(raw);
+      if (!item) {
+        unreadable = true;
+        continue;
+      }
+      items.push(item);
+    }
+    return pageResult(items, { ...page, truncated: page.truncated || unreadable });
   }
 
   async listWikiDocuments(input: {
@@ -93,39 +112,119 @@ export class DwsCliContextClient implements DwsContextClient {
     cursor?: string;
     pageSize: number;
   }): Promise<DwsPage<DwsWikiDocument>> {
-    // DWS currently exposes creation-time filters but no update-time feed. A
-    // bounded creation window would permanently miss edits to older documents,
-    // so Phase 1 deliberately performs a complete paginated inventory scan.
-    const args = withProfile([
-      'dws', 'doc', '+search',
-      '--limit', String(Math.min(input.pageSize, 30)),
-      ...(input.cursor ? ['--cursor', input.cursor] : []),
-    ], input.scope.profileId);
-    const payload = await this.execute(args, input.scope, 'wiki.list');
-    const page = parsePage(payload, ['items', 'documents', 'nodes', 'list', 'records']);
-    const items = page.items
-      .map(parseWikiDocument)
-      .filter((item): item is DwsWikiDocument => Boolean(item));
-    // Inventory reconciliation must never treat an unparseable upstream item as
-    // a confirmed deletion. Mark the page incomplete so the window is retried.
-    return pageResult(items, {
-      ...page,
-      truncated: page.truncated || items.length !== page.items.length,
-    });
+    // Wiki deletion reconciliation is safe only against a complete space/node
+    // inventory. `doc +search` is merely a recent-access view and must never be
+    // used as deletion truth.
+    const spaces: string[] = [];
+    const seenSpaceCursors = new Set<string>();
+    let spaceCursor: string | undefined;
+    let truncated = false;
+    for (let pageNumber = 0; pageNumber < MAX_WIKI_SPACE_PAGES; pageNumber += 1) {
+      const payload = await this.execute(withProfile([
+        'dws', 'wiki', 'space', 'list',
+        ...(spaceCursor ? ['--cursor', spaceCursor] : []),
+      ], input.scope.profileId), input.scope, 'wiki.list');
+      const page = parsePage(payload, ['wikiSpaces', 'wiki_spaces', 'spaces', 'items']);
+      for (const raw of page.items) {
+        const spaceId = optionalString(asRecord(raw), ['workspaceId', 'workspace_id', 'spaceId', 'space_id', 'id']);
+        if (!spaceId) truncated = true;
+        else spaces.push(spaceId);
+      }
+      truncated ||= page.truncated;
+      if (!page.nextCursor) break;
+      if (seenSpaceCursors.has(page.nextCursor) || page.nextCursor === spaceCursor) {
+        truncated = true;
+        break;
+      }
+      seenSpaceCursors.add(page.nextCursor);
+      spaceCursor = page.nextCursor;
+      if (pageNumber === MAX_WIKI_SPACE_PAGES - 1) truncated = true;
+    }
+
+    const items: DwsWikiDocument[] = [];
+    for (const spaceId of [...new Set(spaces)].sort()) {
+      const queue: Array<{ folder?: string; depth: number }> = [{ depth: 0 }];
+      const seenFolders = new Set<string>();
+      let visited = 0;
+      while (queue.length > 0) {
+        const next = queue.shift()!;
+        if (visited >= MAX_WIKI_NODES_PER_SPACE || items.length >= MAX_WIKI_DOCUMENTS) {
+          truncated = true;
+          break;
+        }
+        let nodeCursor: string | undefined;
+        const seenNodeCursors = new Set<string>();
+        for (let pageNumber = 0; pageNumber < MAX_WIKI_NODES_PER_SPACE; pageNumber += 1) {
+          const payload = await this.execute(withProfile([
+            'dws', 'wiki', 'node', 'list', '--workspace', spaceId,
+            ...(next.folder ? ['--folder', next.folder] : []),
+            ...(nodeCursor ? ['--cursor', nodeCursor] : []),
+          ], input.scope.profileId), input.scope, 'wiki.list');
+          const page = parsePage(payload, ['nodes', 'items']);
+          truncated ||= page.truncated;
+          for (const raw of page.items) {
+            visited += 1;
+            if (visited > MAX_WIKI_NODES_PER_SPACE || items.length >= MAX_WIKI_DOCUMENTS) {
+              truncated = true;
+              break;
+            }
+            if (isWikiFolder(raw)) {
+              const folderId = optionalString(asRecord(raw), ['nodeId', 'node_id', 'id']);
+              if (!folderId) {
+                truncated = true;
+              } else if (next.depth + 1 < MAX_WIKI_DEPTH && !seenFolders.has(folderId)) {
+                seenFolders.add(folderId);
+                queue.push({ folder: folderId, depth: next.depth + 1 });
+              } else if (next.depth + 1 >= MAX_WIKI_DEPTH) {
+                truncated = true;
+              }
+              continue;
+            }
+            const document = parseWikiDocument(raw);
+            if (!document) truncated = true;
+            else items.push({ ...document, spaceId });
+          }
+          if (visited >= MAX_WIKI_NODES_PER_SPACE || items.length >= MAX_WIKI_DOCUMENTS) {
+            // Hitting a defensive cap is incomplete even when it lands exactly on
+            // a page boundary; otherwise a hidden next page could trigger revoke.
+            truncated = true;
+            break;
+          }
+          if (!page.nextCursor) break;
+          if (seenNodeCursors.has(page.nextCursor) || page.nextCursor === nodeCursor) {
+            truncated = true;
+            break;
+          }
+          seenNodeCursors.add(page.nextCursor);
+          nodeCursor = page.nextCursor;
+          if (pageNumber === MAX_WIKI_NODES_PER_SPACE - 1) truncated = true;
+        }
+      }
+      if (items.length >= MAX_WIKI_DOCUMENTS) break;
+    }
+    return { items, ...(truncated ? { truncated: true } : {}) };
   }
 
   async getWikiDocumentBody(input: {
     scope: ContextSyncScope;
     documentId: string;
+    extension?: string;
   }): Promise<DwsWikiDocumentBody> {
+    if (!READABLE_WIKI_EXTENSIONS.has((input.extension ?? '').toLowerCase())) {
+      return {
+        content: '', format: 'metadata-only', unreadable: true, unreadableReason: 'unsupported_format',
+      };
+    }
     const args = withProfile([
       'dws', 'doc', 'read', '--node', input.documentId, '--content-format', 'markdown',
     ], input.scope.profileId);
     const payload = await this.execute(args, input.scope, 'wiki.read');
     if (typeof payload === 'string') return { content: payload };
     const record = payloadRecord(payload);
+    const content = contentField(record, ['content', 'markdown', 'text', 'body']);
     return {
-      content: contentField(record, ['content', 'markdown', 'text', 'body']),
+      content,
+      ...(!content ? { unreadable: true, unreadableReason: 'body_unavailable' } : {}),
       ...(optionalString(record, ['format', 'contentFormat', 'content_format'])
         ? { format: optionalString(record, ['format', 'contentFormat', 'content_format']) } : {}),
       ...(optionalTimestamp(record, ['updatedAt', 'modifiedAt', 'gmtModified', 'updateTime'])
@@ -148,14 +247,17 @@ export class DwsCliContextClient implements DwsContextClient {
     const page = parsePage(payload, ['items', 'minutes', 'tasks', 'list', 'records']);
     const from = Date.parse(input.window.from);
     const to = Date.parse(input.window.to);
-    const items = page.items
-      .map(parseMinutesRecord)
+    const parsed = page.items.map(parseMinutesRecord);
+    const items = parsed
       .filter((item): item is DwsMinutesRecord => Boolean(item))
       .filter(item => {
         const timestamp = Date.parse(item.updatedAt ?? item.startedAt);
         return timestamp >= from && timestamp < to;
       });
-    return pageResult(items, page);
+    return pageResult(items, {
+      ...page,
+      truncated: page.truncated || parsed.some(item => item === null),
+    });
   }
 
   async getMinutesSummary(input: {
@@ -230,6 +332,7 @@ export class DwsCliContextClient implements DwsContextClient {
       context?: Readonly<Record<string, unknown>>;
     } = {};
     try {
+      await this.options.beforeExecute?.();
       resolved = await this.options.resolveExecution?.(scope) ?? {};
       const context: DwsCliExecutionContext = {
         ...resolved.context,
@@ -281,6 +384,12 @@ function pageResult<T>(items: T[], page: ParsedPage): DwsPage<T> {
   };
 }
 
+function chatConversationId(value: unknown): string | undefined {
+  return optionalString(asRecord(value), [
+    'conversationId', 'conversation_id', 'openConversationId', 'open_conversation_id', 'cid',
+  ]);
+}
+
 function parseChatMessage(value: unknown): DwsChatMessage | null {
   const record = asRecord(value);
   const messageId = optionalString(record, ['messageId', 'msgId', 'message_id', 'msg_id', 'id']);
@@ -303,6 +412,12 @@ function parseChatMessage(value: unknown): DwsChatMessage | null {
   };
 }
 
+function isWikiFolder(value: unknown): boolean {
+  const record = asRecord(value);
+  const type = optionalString(record, ['nodeType', 'node_type', 'type', 'kind'])?.toLowerCase();
+  return type === 'folder' || optionalBoolean(record, ['isFolder', 'is_folder']) === true;
+}
+
 function parseWikiDocument(value: unknown): DwsWikiDocument | null {
   const record = asRecord(value);
   const documentId = optionalString(record, ['documentId', 'docId', 'nodeId', 'node_id', 'token', 'id']);
@@ -319,7 +434,10 @@ function parseWikiDocument(value: unknown): DwsWikiDocument | null {
       ? { createdAt: optionalTimestamp(record, ['createdAt', 'createTime', 'createdTime', 'gmtCreate']) } : {}),
     ...(optionalString(record, ['spaceId', 'workspaceId', 'workspace_id'])
       ? { spaceId: optionalString(record, ['spaceId', 'workspaceId', 'workspace_id']) } : {}),
-    ...(optionalString(record, ['url', 'link']) ? { url: optionalString(record, ['url', 'link']) } : {}),
+    ...(optionalString(record, ['extension', 'fileExtension', 'file_extension', 'suffix'])
+      ? { extension: optionalString(record, ['extension', 'fileExtension', 'file_extension', 'suffix']) } : {}),
+    ...(optionalString(record, ['url', 'docUrl', 'doc_url', 'link'])
+      ? { url: optionalString(record, ['url', 'docUrl', 'doc_url', 'link']) } : {}),
   };
 }
 

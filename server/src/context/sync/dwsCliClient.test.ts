@@ -14,7 +14,7 @@ function setup(outputs: unknown[]) {
 }
 
 describe('DwsCliContextClient', () => {
-  it('locks chat list-all argv, parses the real cursor envelope, and filters conversation wakes', async () => {
+  it('locks chat list-all argv, parses the real cursor envelope, and filters selected conversations in one scan', async () => {
     const { client, json } = setup([{
       data: {
         messages: [
@@ -33,7 +33,7 @@ describe('DwsCliContextClient', () => {
     }]);
 
     const result = await client.listChatMessages({
-      scope, window, pageSize: 50, conversationId: 'conversation-a',
+      scope, window, pageSize: 50, conversationIds: ['conversation-a', 'conversation-c'],
     });
 
     expect(json).toHaveBeenCalledWith([
@@ -59,6 +59,13 @@ describe('DwsCliContextClient', () => {
     });
   });
 
+  it('marks an unreadable addressed chat item incomplete instead of silently advancing', async () => {
+    const { client } = setup([{ items: [{ openConversationId: 'conversation-a', content: 'missing id/time' }] }]);
+    await expect(client.listChatMessages({
+      scope, window, pageSize: 20, conversationIds: ['conversation-a'],
+    })).resolves.toEqual({ items: [], truncated: true });
+  });
+
   it('passes a later chat cursor and marks an unpageable hasMore response truncated', async () => {
     const { client, json } = setup([{ items: [], hasMore: true }]);
 
@@ -68,59 +75,86 @@ describe('DwsCliContextClient', () => {
     expect(json.mock.calls[0]![0]).toContain('cursor-2');
   });
 
-  it('maps wiki discovery and doc read to existing DWS commands', async () => {
+  it('builds deletion-safe Wiki inventory from spaces and recursive nodes', async () => {
     const { client, json } = setup([
-      {
-        result: {
-          items: [{
-            nodeId: 'doc-a', name: '方案', modifiedTime: '2026-08-22T00:30:00Z',
-            createdTime: '2026-08-22T00:20:00Z', workspaceId: 'wiki-a',
-            url: 'https://alidocs.dingtalk.com/i/nodes/doc-a',
-          }],
-          nextPageToken: 'wiki-cursor-2',
-          hasMore: true,
-        },
-      },
+      { result: { wikiSpaces: [{ workspaceId: 'wiki-a' }], hasMore: false } },
+      { data: { nodes: [{
+        nodeId: 'doc-a', name: '方案', modifiedTime: '2026-08-22T00:30:00Z',
+        createdTime: '2026-08-22T00:20:00Z', extension: 'adoc',
+        docUrl: 'https://alidocs.dingtalk.com/i/nodes/doc-a',
+      }] } },
       { data: { content: '# 方案', contentFormat: 'markdown', isTruncated: true } },
     ]);
 
-    const documents = await client.listWikiDocuments({ scope, window, cursor: 'wiki-cursor-1', pageSize: 100 });
-    const body = await client.getWikiDocumentBody({ scope, documentId: 'doc-a' });
+    const documents = await client.listWikiDocuments({ scope, window, pageSize: 100 });
+    const body = await client.getWikiDocumentBody({ scope, documentId: 'doc-a', extension: 'adoc' });
 
     expect(json.mock.calls[0]![0]).toEqual([
-      'dws', 'doc', '+search',
-      '--limit', '30',
-      '--cursor', 'wiki-cursor-1',
-      '--profile', 'corp:user',
-      '--format', 'json',
+      'dws', 'wiki', 'space', 'list', '--profile', 'corp:user', '--format', 'json',
     ]);
-    expect(documents).toEqual({
-      items: [{
-        documentId: 'doc-a', title: '方案', updatedAt: '2026-08-22T00:30:00.000Z',
-        createdAt: '2026-08-22T00:20:00.000Z', spaceId: 'wiki-a',
-        url: 'https://alidocs.dingtalk.com/i/nodes/doc-a',
-      }],
-      nextCursor: 'wiki-cursor-2',
-    });
     expect(json.mock.calls[1]![0]).toEqual([
+      'dws', 'wiki', 'node', 'list', '--workspace', 'wiki-a',
+      '--profile', 'corp:user', '--format', 'json',
+    ]);
+    expect(documents).toEqual({ items: [{
+      documentId: 'doc-a', title: '方案', updatedAt: '2026-08-22T00:30:00.000Z',
+      createdAt: '2026-08-22T00:20:00.000Z', extension: 'adoc', spaceId: 'wiki-a',
+      url: 'https://alidocs.dingtalk.com/i/nodes/doc-a',
+    }] });
+    expect(json.mock.calls[2]![0]).toEqual([
       'dws', 'doc', 'read', '--node', 'doc-a', '--content-format', 'markdown',
       '--profile', 'corp:user', '--format', 'json',
     ]);
     expect(body).toEqual({ content: '# 方案', format: 'markdown', truncated: true });
   });
 
-  it('marks a wiki inventory page incomplete when any upstream row cannot be parsed', async () => {
-    const { client } = setup([{
-      items: [
+  it('follows Wiki node cursors before declaring an inventory complete', async () => {
+    const { client, json } = setup([
+      { wikiSpaces: [{ workspaceId: 'wiki-a' }] },
+      { nodes: [{ nodeId: 'doc-a', name: 'A', modifiedTime: '2026-08-22T00:30:00Z' }], nextCursor: 'node-cursor-2' },
+      { nodes: [{ nodeId: 'doc-b', name: 'B', modifiedTime: '2026-08-22T00:40:00Z' }] },
+    ]);
+
+    await expect(client.listWikiDocuments({ scope, window, pageSize: 30 }))
+      .resolves.toMatchObject({ items: [
+        expect.objectContaining({ documentId: 'doc-a' }),
+        expect.objectContaining({ documentId: 'doc-b' }),
+      ] });
+    expect(json.mock.calls[2]![0]).toContain('node-cursor-2');
+  });
+
+  it('marks an exact Wiki node cap incomplete instead of reconciling a hidden next page', async () => {
+    const { client } = setup([
+      { wikiSpaces: [{ workspaceId: 'wiki-a' }] },
+      {
+        nodes: Array.from({ length: 500 }, (_, index) => ({
+          nodeId: `doc-${index}`,
+          name: `文档 ${index}`,
+          modifiedTime: '2026-08-22T00:30:00Z',
+        })),
+        nextCursor: 'hidden-page',
+      },
+    ]);
+
+    const result = await client.listWikiDocuments({ scope, window, pageSize: 500 });
+    expect(result.items).toHaveLength(500);
+    expect(result.truncated).toBe(true);
+  });
+
+  it('marks a Wiki inventory incomplete when any addressed node cannot be parsed', async () => {
+    const { client } = setup([
+      { wikiSpaces: [{ workspaceId: 'wiki-a' }] },
+      { nodes: [
         { nodeId: 'doc-a', name: 'A', modifiedTime: '2026-08-22T00:30:00Z' },
         { nodeId: 'missing-required-fields' },
-      ],
-      nextCursor: 'unsafe-next-page',
-    }]);
+      ] },
+    ]);
 
     await expect(client.listWikiDocuments({ scope, window, pageSize: 30 }))
       .resolves.toEqual({
-        items: [{ documentId: 'doc-a', title: 'A', updatedAt: '2026-08-22T00:30:00.000Z' }],
+        items: [{
+          documentId: 'doc-a', title: 'A', updatedAt: '2026-08-22T00:30:00.000Z', spaceId: 'wiki-a',
+        }],
         truncated: true,
       });
   });

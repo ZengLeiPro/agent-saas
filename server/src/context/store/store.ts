@@ -1,6 +1,11 @@
 import type { PoolClient } from 'pg';
 
-import { contextTableNames, type ContextPgPool, type ContextTableNames } from './migration.js';
+import {
+  contextTableNames,
+  contextTablePrefix,
+  type ContextPgPool,
+  type ContextTableNames,
+} from './migration.js';
 import {
   ContextStoreError,
   type ContextCollection,
@@ -162,9 +167,12 @@ export interface ContextStoreOptions {
 
 export class ContextStore {
   readonly tables: ContextTableNames;
+  private readonly agentDwsAccountsTable: string;
 
   constructor(private readonly options: ContextStoreOptions) {
-    this.tables = contextTableNames(options.tablePrefix);
+    const tablePrefix = contextTablePrefix(options.tablePrefix);
+    this.tables = contextTableNames(tablePrefix);
+    this.agentDwsAccountsTable = `${tablePrefix}_agent_dws_accounts`;
   }
 
   async createSource(input: CreateContextSourceInput): Promise<ContextSource> {
@@ -299,6 +307,41 @@ export class ContextStore {
     return partitionFromRow(result.rows[0]!);
   }
 
+  async resetPartitionsForPolicyChange(
+    tenantId: string,
+    sourceId: string,
+    collectionId: string,
+  ): Promise<number> {
+    const result = await this.options.pool.query(`
+      UPDATE ${this.tables.partitions}
+      SET status='idle',watermark_json=NULL,window_start=NULL,window_end=NULL,page_cursor=NULL,
+          lease_owner=NULL,lease_expires_at=NULL,lease_fence=lease_fence+1,
+          retry_count=0,next_retry_at=NULL,last_error_code=NULL,
+          coverage_start=NULL,coverage_end=NULL,
+          truncated=FALSE,refused=FALSE,updated_at=NOW()
+      WHERE tenant_id=$1 AND source_id=$2 AND collection_id=$3
+      RETURNING partition_key
+    `, [tenantId, sourceId, collectionId]);
+    return result.rows.length;
+  }
+
+  async resetRefusedPartitions(
+    tenantId: string,
+    sourceId: string,
+    collectionId?: string,
+  ): Promise<number> {
+    const result = await this.options.pool.query(`
+      UPDATE ${this.tables.partitions}
+      SET status='idle',refused=FALSE,retry_count=0,next_retry_at=NULL,last_error_code=NULL,
+          window_start=NULL,window_end=NULL,page_cursor=NULL,truncated=FALSE,updated_at=NOW()
+      WHERE tenant_id=$1 AND source_id=$2
+        AND ($3::text IS NULL OR collection_id=$3)
+        AND (refused=TRUE OR status='refused')
+      RETURNING partition_key
+    `, [tenantId, sourceId, collectionId ?? null]);
+    return result.rows.length;
+  }
+
   async getPartition(tenantId: string, sourceId: string, collectionId: string, partitionKey: string): Promise<ContextSyncPartition | null> {
     assertScope(tenantId, sourceId, collectionId);
     assertContextText(partitionKey, 500);
@@ -374,7 +417,7 @@ export class ContextStore {
 
   async ingestPage(input: IngestContextPageInput): Promise<IngestContextPageResult> {
     assertFence(input);
-    if (!Array.isArray(input.records) || input.records.length > 1000) throw new ContextStoreError('CONTEXT_INVALID');
+    if (!Array.isArray(input.records) || input.records.length > 20_000) throw new ContextStoreError('CONTEXT_INVALID');
     input.records.forEach(assertContextRecordInput);
     const externalIds = new Set<string>();
     for (const record of input.records) {
@@ -393,6 +436,36 @@ export class ContextStore {
       || (coverageStart && coverageEnd && coverageEnd < coverageStart)) throw new ContextStoreError('CONTEXT_INVALID');
 
     return this.withTransaction(async client => {
+      // Lock authorization before the partition. Account policy updates must
+      // wait for an in-flight ingest, or commit first and make its revision stale.
+      const resources = await client.query(`
+        SELECT s.kind AS source_kind,s.status AS source_status,s.config_json,
+               c.status AS collection_status
+        FROM ${this.tables.sources} s
+        JOIN ${this.tables.collections} c
+          ON c.tenant_id=s.tenant_id AND c.source_id=s.source_id
+        WHERE s.tenant_id=$1 AND s.source_id=$2 AND c.collection_id=$3
+        FOR SHARE OF s,c
+      `, [input.tenantId, input.sourceId, input.collectionId]);
+      const resource = resources.rows[0] as Row | undefined;
+      if (!resource || resource.source_status !== 'active' || resource.collection_status !== 'active') {
+        throw new ContextStoreError('CONTEXT_LEASE_LOST');
+      }
+      if (resource.source_kind === 'dws') {
+        const sourceConfig = json<ContextObject>(resource.config_json);
+        const accountId = typeof sourceConfig.accountId === 'string' ? sourceConfig.accountId : '';
+        const sourceAccountRevision = sourceConfig.accountRevision;
+        const account = await client.query(`
+          SELECT status,revision FROM ${this.agentDwsAccountsTable}
+          WHERE tenant_id=$1 AND account_id=$2
+          FOR SHARE
+        `, [input.tenantId, accountId]);
+        const accountRow = account.rows[0] as Row | undefined;
+        if (!accountRow || accountRow.status !== 'active'
+          || String(sourceAccountRevision ?? '') !== String(accountRow.revision ?? '')) {
+          throw new ContextStoreError('CONTEXT_LEASE_LOST');
+        }
+      }
       const locked = await client.query(`
         SELECT * FROM ${this.tables.partitions}
         WHERE tenant_id=$1 AND source_id=$2 AND collection_id=$3 AND partition_key=$4
@@ -494,7 +567,10 @@ export class ContextStore {
         SET watermark_json=CASE WHEN $7::boolean THEN $8::jsonb ELSE watermark_json END,
             window_start=COALESCE($9::timestamptz,window_start),window_end=COALESCE($10::timestamptz,window_end),
             page_cursor=CASE WHEN $11::boolean THEN NULL WHEN $12::boolean THEN $13 ELSE page_cursor END,
-            coverage_start=COALESCE($14::timestamptz,coverage_start),coverage_end=COALESCE($15::timestamptz,coverage_end),
+            coverage_start=CASE WHEN $14::timestamptz IS NULL THEN coverage_start
+              WHEN coverage_start IS NULL THEN $14::timestamptz ELSE LEAST(coverage_start,$14::timestamptz) END,
+            coverage_end=CASE WHEN $15::timestamptz IS NULL THEN coverage_end
+              WHEN coverage_end IS NULL THEN $15::timestamptz ELSE GREATEST(coverage_end,$15::timestamptz) END,
             truncated=COALESCE($16,truncated),refused=COALESCE($17,refused),
             status=CASE WHEN COALESCE($17,FALSE) THEN 'refused' WHEN $11 THEN 'complete' ELSE 'syncing' END,
             lease_owner=CASE WHEN $18::boolean OR $11::boolean OR COALESCE($17,FALSE) THEN NULL ELSE lease_owner END,
@@ -559,6 +635,20 @@ export class ContextStore {
         created_at: row.revision_created_at,
       }),
     };
+  }
+
+  async countUnreadableRecords(
+    tenantId: string,
+    sourceId: string,
+    collectionId: string,
+  ): Promise<number> {
+    assertScope(tenantId, sourceId, collectionId);
+    const result = await this.options.pool.query(`
+      SELECT COUNT(*)::integer AS count FROM ${this.tables.records}
+      WHERE tenant_id=$1 AND source_id=$2 AND collection_id=$3
+        AND deleted=FALSE AND revoked=FALSE AND metadata_json->>'unreadable'='true'
+    `, [tenantId, sourceId, collectionId]);
+    return Number((result.rows[0] as Row | undefined)?.count ?? 0);
   }
 
   async listEvidence(

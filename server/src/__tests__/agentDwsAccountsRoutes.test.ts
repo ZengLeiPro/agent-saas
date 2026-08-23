@@ -52,6 +52,17 @@ class FakeAccountStore implements AgentDwsAccountStore {
     Object.assign(record, { status: enabled ? (record.profileId ? 'active' : 'draft') : 'paused', revision: record.revision + 1 });
     return record;
   });
+  setContextPolicy = vi.fn(async (
+    tenantId: string,
+    accountId: string,
+    policy: NonNullable<AgentDwsAccountRecord['contextPolicy']>,
+    expectedRevision: number,
+  ) => {
+    const record = await this.required(tenantId, accountId);
+    expect(expectedRevision).toBe(record.revision);
+    Object.assign(record, { contextPolicy: policy, revision: record.revision + 1 });
+    return record;
+  });
   claimRuntimeLease = vi.fn(async () => true);
   renewRuntimeLease = vi.fn(async () => true);
   releaseRuntimeLease = vi.fn(async () => undefined);
@@ -71,6 +82,8 @@ async function listen(options: {
   messageStore?: Pick<AgentDwsMessageStore, 'listForAccount'>;
   authFlowService?: AgentDwsAuthFlowServiceLike;
   audit?: InMemoryGovernanceAuditStore;
+  onContextPolicyUpdated?: (account: AgentDwsAccountRecord) => void | Promise<void>;
+  onEnabledChanged?: (account: AgentDwsAccountRecord, enabled: boolean) => void | Promise<void>;
 }): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
   app.use(express.json());
@@ -83,6 +96,8 @@ async function listen(options: {
     messageStore: options.messageStore,
     authFlowService: options.authFlowService,
     auditStore: options.audit ?? new InMemoryGovernanceAuditStore(),
+    ...(options.onContextPolicyUpdated ? { onContextPolicyUpdated: options.onContextPolicyUpdated } : {}),
+    ...(options.onEnabledChanged ? { onEnabledChanged: options.onEnabledChanged } : {}),
   }));
   return new Promise(resolve => {
     const server = app.listen(0, '127.0.0.1', () => {
@@ -161,6 +176,82 @@ describe('Agent DWS accounts routes', () => {
     expect(audit.events.map(event => event.result)).toEqual(['intent', 'succeeded']);
   });
 
+  it('以 CAS 更新聊天上下文策略、写审计并调用资源镜像回调', async () => {
+    const store = new FakeAccountStore();
+    store.records.push(makeAccount({ revision: 5 }));
+    const audit = new InMemoryGovernanceAuditStore();
+    const onContextPolicyUpdated = vi.fn(async () => undefined);
+    const opened = await listen({ store, audit, onContextPolicyUpdated });
+    server = opened.server;
+
+    const response = await fetch(`${opened.baseUrl}/api/agent-dws-accounts/adws-1/context-policy`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        expectedRevision: 5,
+        historical: { mode: 'selected', conversationIds: ['cid-a', 'cid-b'], lookbackDays: 14 },
+        realtime: { mode: 'all', conversationIds: [] },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(store.setContextPolicy).toHaveBeenCalledWith(
+      'tenant-a',
+      'adws-1',
+      expect.objectContaining({
+        historical: { mode: 'selected', conversationIds: ['cid-a', 'cid-b'], lookbackDays: 14 },
+        realtime: { mode: 'all', conversationIds: [] },
+        wiki: { enabled: false },
+        minutes: { enabled: false, lookbackDays: 30 },
+        realtimeEffectiveAt: { all: expect.any(String) },
+      }),
+      5,
+      USER.sub,
+    );
+    expect(onContextPolicyUpdated).toHaveBeenCalledWith(expect.objectContaining({ revision: 6 }));
+    expect(audit.events.map(event => event.result)).toEqual(['intent', 'succeeded']);
+    const body = await response.json() as { account: Record<string, unknown> };
+    expect(body.account.contextPolicy).toEqual(expect.objectContaining({
+      historical: { mode: 'selected', conversationIds: ['cid-a', 'cid-b'], lookbackDays: 14 },
+      realtime: { mode: 'all', conversationIds: [] },
+      wiki: { enabled: false },
+      minutes: { enabled: false, lookbackDays: 30 },
+      realtimeEffectiveAt: { all: expect.any(String) },
+    }));
+  });
+
+  it('严格拒绝重复、越界或与 mode 不一致的会话范围', async () => {
+    const store = new FakeAccountStore();
+    store.records.push(makeAccount());
+    const opened = await listen({ store });
+    server = opened.server;
+
+    const invalidPolicies = [
+      {
+        expectedRevision: 1,
+        historical: { mode: 'selected', conversationIds: ['cid-a', 'cid-a'], lookbackDays: 30 },
+        realtime: { mode: 'none', conversationIds: [] },
+      },
+      {
+        expectedRevision: 1,
+        historical: { mode: 'all', conversationIds: ['cid-a'], lookbackDays: 30 },
+        realtime: { mode: 'none', conversationIds: [] },
+      },
+      {
+        expectedRevision: 1,
+        historical: { mode: 'none', conversationIds: [], lookbackDays: 366 },
+        realtime: { mode: 'selected', conversationIds: [] },
+      },
+    ];
+    for (const body of invalidPolicies) {
+      const response = await fetch(`${opened.baseUrl}/api/agent-dws-accounts/adws-1/context-policy`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(400);
+    }
+    expect(store.setContextPolicy).not.toHaveBeenCalled();
+  });
+
   it('发起授权时使用账号 revision，授权码只来自 auth session', async () => {
     const store = new FakeAccountStore();
     store.records.push(makeAccount({ revision: 3 }));
@@ -195,9 +286,11 @@ describe('Agent DWS accounts routes', () => {
     const store = new FakeAccountStore();
     store.records.push(makeAccount({ status: 'authorizing', revision: 4 }));
     const cancel = vi.fn(async () => undefined);
+    const onEnabledChanged = vi.fn(async () => undefined);
     const opened = await listen({
       store,
       authFlowService: { start: vi.fn(), getLatest: vi.fn(), cancel, stop: vi.fn() },
+      onEnabledChanged,
     });
     server = opened.server;
 
@@ -208,6 +301,10 @@ describe('Agent DWS accounts routes', () => {
     });
     expect(response.status).toBe(200);
     expect(cancel).toHaveBeenCalledWith('tenant-a', 'adws-1');
+    expect(onEnabledChanged).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: 'adws-1', status: 'paused' }),
+      false,
+    );
   });
 
   it('授权启动失败时标记可能已变更，并且不泄露底层错误', async () => {

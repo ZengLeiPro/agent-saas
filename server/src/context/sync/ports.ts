@@ -69,6 +69,7 @@ export interface DwsWikiDocument {
   updatedAt: string;
   createdAt?: string;
   spaceId?: string;
+  extension?: string;
   url?: string;
 }
 
@@ -77,6 +78,8 @@ export interface DwsWikiDocumentBody {
   format?: string;
   updatedAt?: string;
   truncated?: boolean;
+  unreadable?: boolean;
+  unreadableReason?: string;
 }
 
 export interface DwsMinutesRecord {
@@ -108,12 +111,14 @@ interface DwsWindowPageInput {
 export interface DwsContextClient {
   listChatMessages(input: DwsWindowPageInput & {
     conversationId?: string;
+    conversationIds?: readonly string[];
   }): Promise<DwsPage<DwsChatMessage>>;
 
   listWikiDocuments(input: DwsWindowPageInput): Promise<DwsPage<DwsWikiDocument>>;
   getWikiDocumentBody(input: {
     scope: ContextSyncScope;
     documentId: string;
+    extension?: string;
   }): Promise<DwsWikiDocumentBody>;
 
   listMinutes(input: DwsWindowPageInput): Promise<DwsPage<DwsMinutesRecord>>;

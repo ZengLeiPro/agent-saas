@@ -1,6 +1,40 @@
 export type AgentDwsAccountStatus = 'draft' | 'authorizing' | 'active' | 'paused' | 'error';
 export type AgentDwsRuntimeStatus = 'stopped' | 'starting' | 'ready' | 'error';
 export type AgentDwsEventKind = 'at_me' | 'all_direct';
+export type AgentDwsContextPolicyMode = 'none' | 'selected' | 'all';
+
+export const AGENT_DWS_CONTEXT_POLICY_MAX_CONVERSATIONS = 100;
+export const AGENT_DWS_CONTEXT_POLICY_MAX_LOOKBACK_DAYS = 365;
+
+export interface AgentDwsContextPolicySelection {
+  mode: AgentDwsContextPolicyMode;
+  conversationIds: string[];
+}
+
+export interface AgentDwsHistoricalContextPolicy extends AgentDwsContextPolicySelection {
+  lookbackDays: number;
+}
+
+export interface AgentDwsContextPolicy {
+  historical: AgentDwsHistoricalContextPolicy;
+  realtime: AgentDwsContextPolicySelection;
+  wiki?: { enabled: boolean };
+  minutes?: { enabled: boolean; lookbackDays: number };
+  /** Per-scope consent timestamps prevent scope changes from creating hidden backfill. */
+  realtimeEffectiveAt?: { all?: string; conversations?: Record<string, string> };
+  /** Legacy lower bound retained for compatibility with already persisted rows. */
+  effectiveAt?: string;
+}
+
+/** Legacy/malformed rows must never implicitly grant chat learning or listening. */
+export function failClosedAgentDwsContextPolicy(): AgentDwsContextPolicy {
+  return {
+    historical: { mode: 'none', conversationIds: [], lookbackDays: 30 },
+    realtime: { mode: 'none', conversationIds: [] },
+    wiki: { enabled: false },
+    minutes: { enabled: false, lookbackDays: 30 },
+  };
+}
 
 export interface AgentDwsAccountRecord {
   accountId: string;
@@ -16,6 +50,8 @@ export interface AgentDwsAccountRecord {
   status: AgentDwsAccountStatus;
   runtimeStatus: AgentDwsRuntimeStatus;
   eventKinds: AgentDwsEventKind[];
+  /** Optional only for compatibility with callers holding a pre-policy snapshot. */
+  contextPolicy?: AgentDwsContextPolicy;
   lastEventAt?: string;
   lastError?: string;
   revision: number;

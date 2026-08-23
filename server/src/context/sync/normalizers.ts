@@ -62,6 +62,10 @@ export function normalizeWikiDocument(
     metadata: {
       ...(document.spaceId ? { spaceId: document.spaceId } : {}),
       ...(body.format ? { format: body.format } : {}),
+      ...(body.unreadable ? {
+        unreadable: true,
+        unreadableReason: body.unreadableReason ?? 'body_unavailable',
+      } : {}),
     },
     truncation: content.truncation,
   };
@@ -96,6 +100,7 @@ export function normalizeMinutes(
       hasSummary: Boolean(summary.content),
       hasTranscript: Boolean(transcript.content),
       ...(minutes.durationSeconds !== undefined ? { durationSeconds: minutes.durationSeconds } : {}),
+      ...(!joined ? { unreadable: true, unreadableReason: 'content_unavailable' } : {}),
     },
     truncation: content.truncation,
   };

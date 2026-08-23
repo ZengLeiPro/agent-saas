@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../../data/agentDwsAccounts/index.js';
 import type { ToolInvocationRequest } from '../../runtime/handProtocol.js';
 import type { ContextStore } from '../store/index.js';
+import { defaultPartitionIdentity } from './contextStoreAdapter.js';
 import { DwsContextRuntime, DwsRemoteJsonExecutor } from './dwsContextRuntime.js';
 
 const account: AgentDwsAccountRecord = {
@@ -15,6 +16,10 @@ const account: AgentDwsAccountRecord = {
   status: 'active',
   runtimeStatus: 'ready',
   eventKinds: ['at_me'],
+  contextPolicy: {
+    historical: { mode: 'all', conversationIds: [], lookbackDays: 30 },
+    realtime: { mode: 'all', conversationIds: [] },
+  },
   revision: 1,
   createdAt: '2026-08-22T00:00:00.000Z',
   createdBy: 'admin-a',
@@ -42,8 +47,10 @@ describe('DwsContextRuntime', () => {
       content: '{"items":[]}',
     }));
     const contextStore = {
-      getSource: vi.fn(async () => ({ sourceId: 'existing' })),
-      getCollection: vi.fn(async () => ({ collectionId: 'existing' })),
+      getSource: vi.fn(async () => ({ sourceId: 'existing', config: {}, revision: 1 })),
+      updateSource: vi.fn(async (input: Record<string, unknown>) => ({ config: input.config, revision: 2 })),
+      getCollection: vi.fn(async () => ({ collectionId: 'existing', metadata: {}, revision: 1 })),
+      updateCollection: vi.fn(async (input: Record<string, unknown>) => ({ metadata: input.metadata, revision: 2 })),
       getPartition: vi.fn(async () => ({
         tenantId: 'tenant-a',
         sourceId: 'source-a',
@@ -73,6 +80,179 @@ describe('DwsContextRuntime', () => {
 
     expect(contextStore.getPartition).toHaveBeenCalledTimes(1);
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('periodically syncs selected history and keeps realtime-only targets durable without historical lookback', async () => {
+    const contextStore = {
+      getSource: vi.fn(async () => ({ sourceId: 'existing', config: {}, revision: 1 })),
+      updateSource: vi.fn(async (input: Record<string, unknown>) => ({ config: input.config, revision: 2 })),
+      getCollection: vi.fn(async () => ({ collectionId: 'existing', metadata: {}, revision: 1 })),
+      updateCollection: vi.fn(async (input: Record<string, unknown>) => ({ metadata: input.metadata, revision: 2 })),
+      getPartition: vi.fn(async () => ({
+        tenantId: 'tenant-a', sourceId: 'source-a', collectionId: 'collection-a', partitionKey: 'chat',
+        status: 'retry_wait', windowStart: '2026-08-22T00:00:00.000Z',
+        windowEnd: '2026-08-22T01:00:00.000Z', nextRetryAt: '2026-08-22T02:00:00.000Z',
+        retryCount: 1, leaseFence: 1, truncated: false, refused: false,
+        updatedAt: '2026-08-22T01:00:00.000Z',
+      })),
+    } as unknown as ContextStore;
+    let current = account;
+    const store = accountStore();
+    vi.mocked(store.getForTenant).mockImplementation(async () => current);
+    const runtime = new DwsContextRuntime({
+      agentCwd: '/workspace/agent', accountStore: store, contextStore,
+      clock: () => new Date('2026-08-22T01:30:00.000Z'),
+      resolveServerRemote: async () => ({ baseUrl: 'https://hand.test', authToken: 'secret' }),
+    });
+
+    current = {
+      ...account,
+      contextPolicy: {
+        historical: { mode: 'selected', conversationIds: ['cid-a', 'cid-b'], lookbackDays: 7 },
+        realtime: { mode: 'none', conversationIds: [] },
+      },
+    };
+    await runtime.syncAccount(current, ['chat']);
+    expect(contextStore.getPartition).toHaveBeenCalledTimes(1);
+
+    vi.mocked(contextStore.getPartition).mockClear();
+    current = {
+      ...account,
+      contextPolicy: {
+        historical: { mode: 'none', conversationIds: [], lookbackDays: 7 },
+        realtime: { mode: 'all', conversationIds: [] },
+      },
+    };
+    await runtime.syncAccount(current, ['chat']);
+    expect(contextStore.getPartition).toHaveBeenCalledTimes(1);
+
+    vi.mocked(contextStore.getPartition).mockClear();
+    current = {
+      ...account,
+      contextPolicy: {
+        historical: { mode: 'none', conversationIds: [], lookbackDays: 7 },
+        realtime: { mode: 'none', conversationIds: [] },
+      },
+    };
+    await runtime.syncAccount(current, ['minutes', 'wiki']);
+    expect(contextStore.getPartition).not.toHaveBeenCalled();
+
+    current = {
+      ...account,
+      contextPolicy: {
+        historical: { mode: 'none', conversationIds: [], lookbackDays: 7 },
+        realtime: { mode: 'none', conversationIds: [] },
+        wiki: { enabled: true },
+        minutes: { enabled: true, lookbackDays: 14 },
+      },
+    };
+    await runtime.syncAccount(current, ['minutes', 'wiki']);
+    expect(contextStore.getPartition).toHaveBeenCalledTimes(2);
+  });
+
+  it('filters event wakes with a freshly loaded realtime policy and scopes allowed wakes to the conversation', async () => {
+    const current = {
+      ...account,
+      contextPolicy: {
+        historical: { mode: 'none' as const, conversationIds: [], lookbackDays: 30 },
+        realtime: { mode: 'selected' as const, conversationIds: ['cid-allowed'] },
+      },
+    };
+    const contextStore = {
+      getSource: vi.fn(async () => ({ sourceId: 'existing', config: {}, revision: 1 })),
+      updateSource: vi.fn(async (input: Record<string, unknown>) => ({ config: input.config, revision: 2 })),
+      getCollection: vi.fn(async () => ({ collectionId: 'existing', metadata: {}, revision: 1 })),
+      updateCollection: vi.fn(async (input: Record<string, unknown>) => ({ metadata: input.metadata, revision: 2 })),
+      getPartition: vi.fn(async () => ({
+        tenantId: 'tenant-a', sourceId: 'source-a', collectionId: 'collection-a', partitionKey: 'chat',
+        status: 'retry_wait', windowStart: '2026-08-22T00:00:00.000Z',
+        windowEnd: '2026-08-22T01:00:00.000Z', nextRetryAt: '2026-08-22T02:00:00.000Z',
+        retryCount: 1, leaseFence: 1, truncated: false, refused: false,
+        updatedAt: '2026-08-22T01:00:00.000Z',
+      })),
+    } as unknown as ContextStore;
+    const store = accountStore(current);
+    const runtime = new DwsContextRuntime({
+      agentCwd: '/workspace/agent', accountStore: store, contextStore,
+      clock: () => new Date('2026-08-22T01:30:00.000Z'),
+      resolveServerRemote: async () => ({ baseUrl: 'https://hand.test', authToken: 'secret' }),
+    });
+
+    await runtime.wake(account, {
+      type: 'user_im_message_receive_at', eventId: 'event-denied', conversationId: 'cid-denied', raw: {},
+    });
+    expect(contextStore.getPartition).not.toHaveBeenCalled();
+
+    await runtime.wake(account, {
+      type: 'user_im_message_receive_at', eventId: 'event-allowed', conversationId: 'cid-allowed',
+      timestamp: Date.parse('2026-08-22T01:29:00.000Z'), raw: {},
+    });
+    expect(store.getForTenant).toHaveBeenCalledTimes(3);
+    const identity = defaultPartitionIdentity({
+      tenantId: 'tenant-a', accountId: 'account-a', profileId: 'profile-a',
+      source: 'chat', conversationIds: ['cid-allowed'],
+    });
+    expect(contextStore.getPartition).toHaveBeenCalledWith(
+      'tenant-a', identity.sourceId, identity.collectionId, identity.partitionKey,
+    );
+  });
+
+  it('mirrors policy into source config and chat collection metadata on policy update', async () => {
+    const sourceRecord = { config: { accountId: 'account-a', profileId: 'profile-a' }, revision: 1 };
+    const collectionRecord = { metadata: { keep: true }, revision: 1 };
+    const updateSource = vi.fn(async (input: Record<string, unknown>) => ({
+      ...sourceRecord, config: input.config, revision: 2,
+    }));
+    const updateCollection = vi.fn(async (input: Record<string, unknown>) => ({
+      ...collectionRecord, metadata: input.metadata, revision: 2,
+    }));
+    const resetRefusedPartitions = vi.fn(async () => 1);
+    const resetPartitionsForPolicyChange = vi.fn(async () => 1);
+    const contextStore = {
+      getSource: vi.fn(async () => sourceRecord), updateSource,
+      getCollection: vi.fn(async () => collectionRecord), updateCollection,
+      resetRefusedPartitions, resetPartitionsForPolicyChange,
+    } as unknown as ContextStore;
+    const selected = {
+      ...account,
+      contextPolicy: {
+        historical: { mode: 'selected' as const, conversationIds: ['cid-a'], lookbackDays: 14 },
+        realtime: { mode: 'none' as const, conversationIds: [] },
+      },
+    };
+    const runtime = new DwsContextRuntime({
+      agentCwd: '/workspace/agent', accountStore: accountStore(selected), contextStore,
+      resolveServerRemote: async () => ({ baseUrl: 'https://hand.test', authToken: 'secret' }),
+    });
+
+    await runtime.onContextPolicyUpdated(selected);
+
+    expect(updateSource).toHaveBeenCalledWith(expect.objectContaining({
+      config: expect.objectContaining({
+        contextPolicy: expect.objectContaining({
+          historical: selected.contextPolicy.historical,
+          realtime: selected.contextPolicy.realtime,
+        }),
+      }),
+    }));
+    expect(resetPartitionsForPolicyChange).toHaveBeenCalledWith(
+      'tenant-a', expect.stringMatching(/^dws-/), expect.stringMatching(/^dws-chat-/),
+    );
+    expect(updateCollection).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({
+        keep: true,
+        contextPolicy: expect.objectContaining({
+          historical: selected.contextPolicy.historical,
+          realtime: selected.contextPolicy.realtime,
+        }),
+        historicalLearning: expect.objectContaining({ mode: 'selected', lookbackDays: 14 }),
+        realtimeListening: expect.objectContaining({ mode: 'none', enabled: false }),
+      }),
+    }));
+
+    await runtime.onAccountEnabledChanged({ ...selected, status: 'paused' }, false);
+    expect(updateSource).toHaveBeenCalledWith(expect.objectContaining({ status: 'disabled' }));
+    expect(updateCollection).toHaveBeenCalledWith(expect.objectContaining({ status: 'disabled' }));
   });
 });
 

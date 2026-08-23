@@ -6,6 +6,7 @@ import type { AppRuntime } from "./runtime.js";
 import { registerAudioTranscribeAdminRoute } from "./audioTranscribeAdminRoute.js";
 import { registerGovernanceRoutes } from './governanceRoutes.js';
 import { activeOffboardingWriteFence, tenantFeatureGuard } from "./routeGuards.js";
+import { createContextRecallRuntime } from './runtimeMemoryContextTools.js';
 export { activeOffboardingWriteFence } from "./routeGuards.js";
 import type { UserInfo } from "../data/users/types.js";
 import { getPublicModelList, getUserPublicModelList, resolveContextAccountingFromModels } from "./models.js";
@@ -33,6 +34,8 @@ import {
   createContentOpsRouter,
   createDwsRouter,
   createFeishuRouter,
+  createContextCitationsRouter,
+  createContextAdminRouter,
 } from "../routes/index.js";
 import { createAuthRouter } from "../routes/auth.js";
 import { createSignupRouters } from "../routes/signup.js";
@@ -204,7 +207,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   app.use('/api', createAgentDwsAccountsRouter({
     accountStore: runtime.agentDwsAccountStore, messageStore: runtime.agentDwsMessageStore,
     authFlowService: runtime.agentDwsAuthFlowService, eventGateway: runtime.dwsPersonalEventGateway,
-    auditStore: runtime.governanceAuditStore }));
+    auditStore: runtime.governanceAuditStore,
+    onContextPolicyUpdated: runtime.agentDwsContextPolicyUpdated,
+    onEnabledChanged: runtime.agentDwsEnabledChanged }));
   // 飞书单轨连接状态：浏览器/PG 只接触非敏感元数据；用户 token 与官方 CLI
   // 加密 keychain 始终保存在其独立 NAS workspace 的 .lark-cli/ 内。
   app.use("/api", createFeishuRouter({
@@ -243,6 +248,26 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     }),
   );
   app.use("/api/contentops", createContentOpsRouter());
+  const contextRecall = runtime.sessionCatalog
+    ? createContextRecallRuntime({
+        contextStore: runtime.contextStore,
+        assignments: runtime.assignmentStore,
+        pool: runtime.runtimePgEventStore?.pool,
+        tablePrefix: config.runtimeEventStore?.backend === 'pg'
+          ? config.runtimeEventStore.tablePrefix
+          : undefined,
+        recallIdSigningKey: config.auth?.jwtSecret,
+        sessionCatalog: runtime.sessionCatalog,
+      })
+    : undefined;
+  app.use('/api', createContextCitationsRouter({
+    sessionCatalog: runtime.sessionCatalog,
+    recall: contextRecall?.recall,
+    scopes: contextRecall?.scopes,
+  }));
+  app.use('/api/admin/context-plane', requireAdmin, createContextAdminRouter({
+    store: runtime.contextStore,
+  }));
   const webChannel = channelManager.getChannel<WebChannel>("web");
   app.use(
     "/api",

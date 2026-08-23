@@ -23,7 +23,7 @@ import {
   type TaskBoardUploadAttachment,
 } from '../../../shared/src/types/taskboard.js';
 import { assertActiveBoard, assertBoardRole } from '../taskboard/storeHelpers.js';
-import { generateAndApplyTaskTitle } from '../taskboard/taskTitle.js';
+import { generateAndApplyTaskTitle, generateTaskTitleSafely } from '../taskboard/taskTitle.js';
 import {
   TaskboardConflictError,
   TaskboardExecutionUnavailableError,
@@ -57,7 +57,6 @@ const integrationTriggerSchema = z.discriminatedUnion('mode', [
     allowedRoles: z.array(z.enum(['maintainer', 'owner'] as const)).min(1).max(2),
   }).strict(),
 ]);
-
 const integrationPolicySchema = z.object({
   schemaVersion: z.literal(1),
   enabled: z.boolean(),
@@ -84,19 +83,16 @@ const integrationPolicySchema = z.object({
     deploy: z.literal(false),
   }).strict(),
 }).strict();
-
 const boardStageModelsSchema = z.object({
   work: z.string().trim().min(1).max(256).optional(),
   review: z.string().trim().min(1).max(256).optional(),
   merge: z.string().trim().min(1).max(256).optional(),
 }).strict();
-
 const stagePromptsSchema = z.object({
   work: z.string().trim().max(20_000).optional(),
   review: z.string().trim().max(20_000).optional(),
   merge: z.string().trim().max(20_000).optional(),
 }).strict();
-
 const boardCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().max(4_000).optional(),
@@ -108,7 +104,6 @@ const boardCreateSchema = z.object({
   repository: repositorySchema.optional(),
   integrationPolicy: integrationPolicySchema.optional(),
 }).strict();
-
 const boardPatchSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   description: z.string().max(4_000).optional(),
@@ -127,16 +122,13 @@ const boardPatchSchema = z.object({
     || input.visibility !== undefined || input.repository !== undefined || input.integrationPolicy !== undefined,
   { message: 'At least one board field is required' },
 );
-
 const expectedVersionSchema = z.object({
   expectedVersion: z.number().int().min(1),
 }).strict();
-
 const executionStartSchema = z.object({
   expectedVersion: z.number().int().min(1),
   purpose: z.enum(TASKBOARD_EXECUTION_PURPOSES).optional(),
 }).strict();
-
 const labelsSchema = z.array(z.string().trim().min(1).max(64)).max(20)
   .transform((labels) => [...new Set(labels)]);
 const dueAtSchema = z.string().datetime({ offset: true });
@@ -149,7 +141,6 @@ const attachmentSchema = z.object({
   isImage: z.boolean(),
 }).strict();
 const attachmentsSchema = z.array(attachmentSchema).max(50);
-
 const taskCreateSchema = z.object({
   title: z.string().trim().min(1).max(240).optional(),
   description: z.string().max(20_000).optional(),
@@ -456,19 +447,28 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     const board = await options.service!.getBoard(identity, req.params.boardId);
     assertBoardRole(board.role, 'editor');
     assertActiveBoard(board);
-    const attachments = await resolveRequestAttachments(options, req, input.attachments);
-    const ownerUserId = attachments?.length ? board.ownerUserId : undefined;
-    await markRequestAttachments(options, req, attachments);
     const { dispatch } = input;
-    const title = input.title ?? (input.clientRequestId ? null : await generateTaskTitle(input.description ?? '', identity));
+    const title = input.title ?? (input.clientRequestId ? null : await generateTaskTitleSafely(generateTaskTitle, input.description ?? '', identity));
+    let attachments: TaskBoardUploadAttachment[] | undefined; let ownerUserId: string | undefined;
+    if (!input.clientRequestId) {
+      attachments = await resolveRequestAttachments(options, req, input.attachments);
+      ownerUserId = attachments?.length ? board.ownerUserId : undefined;
+      await markRequestAttachments(options, req, attachments);
+    }
     const taskInput = { ...input, title: title ?? '' };
     delete taskInput.dispatch; delete taskInput.attachments;
-    const createInput = { ...taskInput, ...(attachments !== undefined && attachments.length === 0 ? { attachments: [] } : {}) };
-    const result = input.clientRequestId ? await options.service!.createTaskWithResult(identity, req.params.boardId, createInput) : { task: await options.service!.createTask(identity, req.params.boardId, createInput), created: false };
+    const createInput = { ...taskInput, ...(input.attachments !== undefined && input.attachments.length === 0 ? { attachments: [] } : {}) };
+    const result = input.clientRequestId ? await options.service!.createTaskWithResult(identity, req.params.boardId, createInput) : { task: await options.service!.createTask(identity, req.params.boardId, createInput), created: true };
+    if (!result.created) { res.status(201).json(withCreatorAvatarVersion(options.userStore, identity, result.task)); return; }
     let task = result.task;
-    if (result.created && input.title === undefined) task = await generateAndApplyTaskTitle(options.service!, identity, task, input.description ?? '', generateTaskTitle);
+    if (input.clientRequestId && input.title === undefined) task = await generateAndApplyTaskTitle(options.service!, identity, task, input.description ?? '', generateTaskTitle);
     let scopedAttachments: TaskBoardUploadAttachment[] | undefined;
     try {
+      if (input.clientRequestId) {
+        attachments = await resolveRequestAttachments(options, req, input.attachments);
+        ownerUserId = attachments?.length ? board.ownerUserId : undefined;
+        await markRequestAttachments(options, req, attachments);
+      }
       scopedAttachments = await materializeRequestAttachments(options, req, identity, task.id, ownerUserId, attachments);
       if (scopedAttachments) {
         task = await options.service!.updateTask(identity, task.id, {

@@ -36,6 +36,16 @@ describe('任务看板标题生成', () => {
     );
   });
 
+  it('共享配置刷新异常时返回空标题', async () => {
+    const generateTitle = createTaskboardTitleGenerator({
+      agentCwd: '/agent',
+      titleGeneratorConfigs: titleConfig,
+      refreshSharedConfig: vi.fn(() => { throw new Error('配置刷新失败'); }),
+    });
+
+    await expect(generateTitle('根据正文生成任务标题', identity)).resolves.toBeNull();
+  });
+
   it('模型或计费不可用时返回空标题', async () => {
     const generateTitle = createTaskboardTitleGenerator({
       agentCwd: '/agent',

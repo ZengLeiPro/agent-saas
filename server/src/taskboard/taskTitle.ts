@@ -46,6 +46,14 @@ export function createRuntimeTaskboardTitleGenerator(
   });
 }
 
+export async function generateTaskTitleSafely(
+  generateTitle: (description: string, identity: TaskboardIdentity) => Promise<string | null>,
+  description: string,
+  identity: TaskboardIdentity,
+): Promise<string | null> {
+  try { return await generateTitle(description, identity); } catch { return null; }
+}
+
 export async function generateAndApplyTaskTitle(
   service: TaskboardService,
   identity: TaskboardIdentity,
@@ -53,7 +61,7 @@ export async function generateAndApplyTaskTitle(
   description: string,
   generateTitle: (description: string, identity: TaskboardIdentity) => Promise<string | null>,
 ): Promise<TaskBoardTask> {
-  const title = await generateTitle(description, identity);
+  const title = await generateTaskTitleSafely(generateTitle, description, identity);
   if (!title) return task;
   try {
     return await service.updateTask(identity, task.id, { title, expectedVersion: task.version });
@@ -64,13 +72,12 @@ export async function generateAndApplyTaskTitle(
 
 export function createTaskboardTitleGenerator(options: TaskboardTitleGeneratorOptions) {
   return async (description: string, identity: TaskboardIdentity): Promise<string | null> => {
-    options.refreshSharedConfig?.();
-    if (!description.trim() || !options.agentCwd || !options.titleGeneratorConfigs?.length) return null;
-
-    const sessionId = `task-title-${randomUUID()}`;
-    let utilityBilling: Awaited<ReturnType<BillingService['beginUtilityModelRun']>> | undefined;
-
     try {
+      options.refreshSharedConfig?.();
+      if (!description.trim() || !options.agentCwd || !options.titleGeneratorConfigs?.length) return null;
+
+      const sessionId = `task-title-${randomUUID()}`;
+      let utilityBilling: Awaited<ReturnType<BillingService['beginUtilityModelRun']>> | undefined;
       utilityBilling = options.billingService
         ? await options.billingService.beginUtilityModelRun({
             tenantId: identity.tenantId || DEFAULT_TENANT_ID,

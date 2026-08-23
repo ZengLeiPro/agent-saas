@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { appendTaskboardAttachments, cleanupTaskboardAttachments, materializeTaskboardAttachments, resolveTaskboardAttachments } from './taskboardAttachmentActions.js';
 import { assertTaskboardExecutionScope } from './taskboardExecutionScope.js';
 import { assertActiveBoard, assertBoardRole } from '../taskboard/storeHelpers.js';
-import { generateAndApplyTaskTitle } from '../taskboard/taskTitle.js';
+import { generateAndApplyTaskTitle, generateTaskTitleSafely } from '../taskboard/taskTitle.js';
 
 import type {
   TaskBoardExecutionPurpose,
@@ -606,7 +606,7 @@ async function createTask(
   if (input.dispatch && input.status && input.status !== 'todo') {
     throw new Error('dispatch=true 只支持创建 todo 任务');
   }
-  const title = input.title ?? await options.generateTaskTitle?.(input.description ?? '', identity);
+  const title = input.title ?? await generateTaskTitleSafely(options.generateTaskTitle ?? (async () => null), input.description ?? '', identity);
   const attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
   const ownerUserId = attachments?.length ? board.ownerUserId : undefined;
   await markTaskboardAttachments(options, identity, attachments, scope);
@@ -755,17 +755,12 @@ async function createExecutionTask(
   const service = options.service();
   if (!service) throw new Error('任务看板服务未启用');
   const clientRequestId = taskboardCreateRequestId(input, { execution });
-  const attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
-  const ownerUserId = attachments?.length
-    ? (await service.getBoard(identity, execution.task.boardId)).ownerUserId
-    : undefined;
-  await markTaskboardAttachments(options, identity, attachments, scope);
   const createResult = await executionStore.createTaskFromExecutionWithResult(identity, execution.execution.runId, {
     title: input.title ?? '',
     kind,
     ...(input.description !== undefined ? { description: input.description } : {}),
     ...(typeof input.branch === 'string' ? { branch: input.branch } : {}),
-    ...(attachments !== undefined && attachments.length === 0 ? { attachments: [] } : {}),
+    ...(input.attachments !== undefined && input.attachments.length === 0 ? { attachments: [] } : {}),
     status: 'todo',
     ...(input.priority ? { priority: input.priority } : {}),
     ...(input.labels ? { labels: input.labels } : {}),
@@ -773,14 +768,22 @@ async function createExecutionTask(
     ...(typeof input.model === 'string' ? { model: input.model } : {}),
     clientRequestId,
   });
+  if (!createResult.created) return { created: false, task: createResult.task };
   let task = createResult.task;
-  if (createResult.created && input.title === undefined) {
+  if (input.title === undefined) {
     task = await generateAndApplyTaskTitle(
       service, identity, task, input.description ?? '', options.generateTaskTitle ?? (async () => null),
     );
   }
+  let attachments: TaskBoardUploadAttachment[] | undefined;
+  let ownerUserId: string | undefined;
   let scopedAttachments: TaskBoardUploadAttachment[] | undefined;
   try {
+    attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
+    ownerUserId = attachments?.length
+      ? (await service.getBoard(identity, execution.task.boardId)).ownerUserId
+      : undefined;
+    await markTaskboardAttachments(options, identity, attachments, scope);
     scopedAttachments = await materializeTaskboardAttachments(options, identity, task.id, ownerUserId, attachments);
     if (scopedAttachments) {
       task = await service.updateTask(identity, task.id, {

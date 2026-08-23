@@ -1,7 +1,7 @@
 import type { Server } from 'node:http';
 
 import express from 'express';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { JwtPayload } from '../auth/types.js';
 import { createTaskboardRouter } from '../routes/taskboard.js';
@@ -33,6 +33,14 @@ const VIEWER_BOARD = {
 describe('创建任务前的标题生成保护', () => {
   it('先校验权限，并在幂等重试时跳过重复标题生成', async () => {
     let titleGenerationCalls = 0;
+    let existingTask: Awaited<ReturnType<TaskboardService['createTask']>> | null = null;
+    let notifyTitleStarted!: () => void;
+    let releaseTitle!: () => void;
+    const titleStarted = new Promise<void>((resolve) => { notifyTitleStarted = resolve; });
+    const titleGate = new Promise<void>((resolve) => { releaseTitle = resolve; });
+    const startDirectExecution = vi.fn(async () => ({
+      task: { ...existingTask!, version: existingTask!.version + 1 }, execution: {},
+    }));
     const service = {
       getBoard: async (_identity: unknown, boardId: string) => {
         if (boardId === VIEWER_BOARD.id) return VIEWER_BOARD;
@@ -44,9 +52,12 @@ describe('创建任务前的标题生成保护', () => {
     app.use((req, _res, next) => { req.user = USER; next(); });
     app.use('/api/taskboard', createTaskboardRouter({
       service,
-      generateTaskTitle: async () => {
+      executionService: { startDirectExecution } as never,
+      generateTaskTitle: async (description) => {
         titleGenerationCalls += 1;
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        if (description === '生成器拒绝') throw new Error('生成器拒绝');
+        notifyTitleStarted();
+        await titleGate;
         return '自动标题';
       },
     }));
@@ -64,10 +75,10 @@ describe('创建任务前的标题生成保护', () => {
           body: JSON.stringify({ description: '无权限请求不得触发模型' }),
         });
         expect(response.status).toBe(expectedStatus);
+        await response.json();
       }
       expect(titleGenerationCalls).toBe(0);
 
-      let existingTask: Awaited<ReturnType<TaskboardService['createTask']>> | null = null;
       service.getBoard = async () => ({ ...VIEWER_BOARD, id: 'owner-board', role: 'owner', canManage: true });
       let createTail = Promise.resolve();
       service.createTaskWithResult = async (_identity, boardId, input) => {
@@ -86,19 +97,45 @@ describe('创建任务前的标题生成保护', () => {
           return { task: existingTask, created: true };
         } finally { release(); }
       };
-      service.updateTask = async (_identity, _taskId, input) => existingTask = {
-        ...existingTask!, title: input.title ?? '', version: existingTask!.version + 1,
-      };
+      service.updateTask = vi.fn(async (_identity, _taskId, input) => existingTask = {
+        ...existingTask!, title: input.title ?? existingTask!.title,
+        attachments: input.attachments ?? existingTask!.attachments,
+        version: existingTask!.version + 1,
+      });
       service.getTask = async () => existingTask!;
-      const responses = await Promise.all(Array.from({ length: 2 }, () => fetch(
-        `${baseUrl}/api/taskboard/boards/owner-board/tasks`,
-        {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ description: '幂等创建', clientRequestId: 'request-1' }),
-        },
-      )));
-      expect(responses.map((response) => response.status)).toEqual([201, 201]);
+      service.createTask = async (_identity, boardId, input) => ({
+        id: 'task-2', boardId, identifier: 'TASK-2', title: input.title ?? '',
+        description: input.description ?? '', status: 'backlog', priority: 'none', labels: [],
+        sortOrder: 2048, commentCount: 0, version: 1,
+        createdAt: VIEWER_BOARD.createdAt, updatedAt: VIEWER_BOARD.updatedAt,
+      });
+      service.rollbackTaskCreation = vi.fn();
+      const first = fetch(`${baseUrl}/api/taskboard/boards/owner-board/tasks`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ description: '幂等创建', clientRequestId: 'request-1', attachments: [], status: 'in_progress', dispatch: true }),
+      });
+      await titleStarted;
+      const replay = await fetch(`${baseUrl}/api/taskboard/boards/owner-board/tasks`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ description: '幂等创建', clientRequestId: 'request-1', attachments: [], status: 'in_progress', dispatch: true }),
+      });
+      expect(replay.status).toBe(201);
+      await replay.json();
+      releaseTitle();
+      const firstResponse = await first;
+      expect(firstResponse.status).toBe(201);
+      await firstResponse.json();
       expect(titleGenerationCalls).toBe(1);
+      expect(service.updateTask).toHaveBeenCalledTimes(2);
+      expect(startDirectExecution).toHaveBeenCalledOnce();
+      expect(service.rollbackTaskCreation).not.toHaveBeenCalled();
+
+      const rejected = await fetch(`${baseUrl}/api/taskboard/boards/owner-board/tasks`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ description: '生成器拒绝' }),
+      });
+      expect(rejected.status).toBe(201);
+      expect((await rejected.json()).title).toBe('');
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

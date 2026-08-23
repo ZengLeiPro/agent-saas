@@ -43,7 +43,8 @@ describe('Agent 创建任务的自动标题', () => {
     const service = { getBoard: vi.fn(async () => board), createTask } as unknown as TaskboardService;
     const generateTaskTitle = vi.fn()
       .mockResolvedValueOnce('自动生成标题')
-      .mockResolvedValueOnce(null);
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error('生成器拒绝'));
     const options = { service: () => service, generateTaskTitle };
 
     await invokeTaskboardAction(options, identity, {
@@ -52,10 +53,14 @@ describe('Agent 创建任务的自动标题', () => {
     await invokeTaskboardAction(options, identity, {
       action: 'task.create', boardId: board.id, description: '第二条正文',
     });
+    await invokeTaskboardAction(options, identity, {
+      action: 'task.create', boardId: board.id, description: '第三条正文',
+    });
 
     expect(generateTaskTitle).toHaveBeenNthCalledWith(1, '第一条正文', identity);
     expect(generateTaskTitle).toHaveBeenNthCalledWith(2, '第二条正文', identity);
-    expect(createTask.mock.calls.map((call) => call[2].title)).toEqual(['自动生成标题', '']);
+    expect(generateTaskTitle).toHaveBeenNthCalledWith(3, '第三条正文', identity);
+    expect(createTask.mock.calls.map((call) => call[2].title)).toEqual(['自动生成标题', '', '']);
   });
 
   it('Execution action=create 仅传正文时生成标题，失败时保存空标题', async () => {
@@ -73,19 +78,29 @@ describe('Agent 创建任务的自动标题', () => {
       };
       return { task: existingTask, created: true };
     });
+    let notifyTitleStarted!: () => void;
+    let releaseTitle!: () => void;
+    const titleStarted = new Promise<void>((resolve) => { notifyTitleStarted = resolve; });
+    const titleGate = new Promise<void>((resolve) => { releaseTitle = resolve; });
     const generateTaskTitle = vi.fn()
-      .mockResolvedValueOnce('Execution 自动标题')
-      .mockResolvedValueOnce(null);
+      .mockImplementationOnce(async () => { notifyTitleStarted(); await titleGate; return 'Execution 自动标题'; })
+      .mockRejectedValueOnce(new Error('生成器拒绝'));
     const service = {
       updateTask: vi.fn(async (_identity, _taskId, input) => {
-        existingTask = { ...existingTask!, title: input.title ?? '', version: existingTask!.version + 1 };
+        existingTask = {
+          ...existingTask!, title: input.title ?? existingTask!.title,
+          attachments: input.attachments ?? existingTask!.attachments,
+          version: existingTask!.version + 1,
+        };
         return existingTask;
       }),
       getTask: vi.fn(async () => existingTask!),
     } as unknown as TaskboardService;
+    const startDirectExecution = vi.fn(async () => ({ task: existingTask!, execution: {} }));
     const options = {
       service: () => service,
       generateTaskTitle,
+      executionService: () => ({ startDirectExecution } as never),
       executionStore: () => ({ createTaskFromExecutionWithResult } as never),
     };
     const scope = {
@@ -102,21 +117,26 @@ describe('Agent 创建任务的自动标题', () => {
       },
     };
 
-    const first = await invokeTaskboardAction(options, identity, {
-      action: 'create', boardId: board.id, description: 'Execution 正文',
+    const firstPending = invokeTaskboardAction(options, identity, {
+      action: 'create', boardId: board.id, description: 'Execution 正文', attachments: [], dispatch: true,
     }, scope);
+    await titleStarted;
     const replay = await invokeTaskboardAction(options, identity, {
-      action: 'create', boardId: board.id, description: 'Execution 正文',
+      action: 'create', boardId: board.id, description: 'Execution 正文', attachments: [], dispatch: true,
     }, scope);
+    releaseTitle();
+    const first = await firstPending;
     existingTask = null;
     const failed = await invokeTaskboardAction(options, identity, {
       action: 'create', boardId: board.id, description: 'Execution 失败正文',
     }, scope);
 
-    expect(first).toMatchObject({ task: { title: 'Execution 自动标题' } });
-    expect(replay).toMatchObject({ task: { title: 'Execution 自动标题' } });
-    expect(failed).toMatchObject({ task: { title: '' } });
+    expect(first).toMatchObject({ created: true, task: { title: 'Execution 自动标题' } });
+    expect(replay).toMatchObject({ created: false, task: { title: '' } });
+    expect(failed).toMatchObject({ created: true, task: { title: '' } });
     expect(generateTaskTitle).toHaveBeenCalledTimes(2);
+    expect(service.updateTask).toHaveBeenCalledTimes(2);
+    expect(startDirectExecution).toHaveBeenCalledOnce();
     expect(createTaskFromExecutionWithResult).toHaveBeenCalledTimes(3);
   });
 });

@@ -211,12 +211,29 @@ export async function startGoogleWorkspaceOAuth(nativeDeviceId?: string): Promis
   }), '启动 Google Workspace 授权失败');
 }
 
-export async function disconnectGoogleWorkspace(): Promise<void> {
-  const res = await authFetch('/api/connectors/google-workspace', { method: 'DELETE' });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string };
-    throw new Error(body.error || 'Google Workspace 断开失败');
+async function revokeGoogleWorkspaceOAuthGrants(reason: string): Promise<void> {
+  const { governanceAccessApi } = await import('./governanceApi');
+  const current = await governanceAccessApi.listOAuthGrants();
+  const grants = current.grants.filter(grant => grant.provider === 'google'
+    && grant.connectorId === 'google-workspace'
+    && (grant.status === 'active' || grant.status === 'error'));
+  for (const grant of grants) {
+    const preview = await governanceAccessApi.previewOAuthGrantRevocation(grant.grantId, reason);
+    if (preview.impact.blockers.length > 0) {
+      throw new Error(`Google Workspace 授权无法撤销：${preview.impact.blockers.join('；')}`);
+    }
+    await governanceAccessApi.revokeOAuthGrant(grant.grantId, {
+      reason,
+      previewId: preview.previewId,
+      baselineDigest: preview.baselineDigest,
+      expiresAt: preview.expiresAt,
+    });
   }
+}
+
+export async function disconnectGoogleWorkspace(): Promise<GoogleWorkspaceConnectionResponse> {
+  await revokeGoogleWorkspaceOAuthGrants('用户主动断开 Google Workspace');
+  return fetchGoogleWorkspaceConnection();
 }
 
 function normalizeAliyunInput(input: AliyunConnectInput): AliyunConnectInput {

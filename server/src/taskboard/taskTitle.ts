@@ -63,39 +63,44 @@ export function createTaskboardTitleGenerator(options: TaskboardTitleGeneratorOp
             channel: 'title',
           })
         : undefined;
-      const title = await generateTitleWithFallback(
-        description,
-        '',
-        options.titleGeneratorConfigs,
-        undefined,
-        undefined,
-        {
-          systemPrompt: options.getTitleSystemPrompt?.(),
-          modelAdapterFactory: options.titleModelAdapterFactory,
-          runtimeContext: {
-            sessionId,
-            tenantId: identity.tenantId,
-            cwd: resolveUserCwd(options.agentCwd, {
-              id: identity.ownerUserId,
+      let title: string | null = null;
+      try {
+        title = await generateTitleWithFallback(
+          description,
+          '',
+          options.titleGeneratorConfigs,
+          undefined,
+          undefined,
+          {
+            systemPrompt: options.getTitleSystemPrompt?.(),
+            modelAdapterFactory: options.titleModelAdapterFactory,
+            runtimeContext: {
+              sessionId,
               tenantId: identity.tenantId,
-              username: identity.username,
-              role: identity.userRole ?? 'user',
-            }),
+              cwd: resolveUserCwd(options.agentCwd, {
+                id: identity.ownerUserId,
+                tenantId: identity.tenantId,
+                username: identity.username,
+                role: identity.userRole ?? 'user',
+              }),
+            },
+            beforeModelCall: () => utilityBilling?.beforeModelCall(),
+            onUsage: async (model, usage) => {
+              await utilityBilling?.recordUsage(model, usage);
+              if (!options.tokenUsageStore) return;
+              options.tokenUsageStore.recordResult({
+                username: identity.username,
+                tenantId: identity.tenantId || DEFAULT_TENANT_ID,
+                channel: 'title',
+                modelUsage: { [model]: usage },
+                occurredAtMs: Date.now(),
+              });
+            },
           },
-          beforeModelCall: () => utilityBilling?.beforeModelCall(),
-          onUsage: async (model, usage) => {
-            await utilityBilling?.recordUsage(model, usage);
-            if (!options.tokenUsageStore) return;
-            options.tokenUsageStore.recordResult({
-              username: identity.username,
-              tenantId: identity.tenantId || DEFAULT_TENANT_ID,
-              channel: 'title',
-              modelUsage: { [model]: usage },
-              occurredAtMs: Date.now(),
-            });
-          },
-        },
-      );
+        );
+      } catch {
+        // 标题是旁路能力；授权或记账失败后仍需进入 finalize 尝试结算。
+      }
       try {
         await utilityBilling?.finalize();
       } catch {

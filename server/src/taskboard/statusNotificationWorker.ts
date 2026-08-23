@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 
+import type { UserStore } from '../data/users/store.js';
 import type { WebPushService } from '../webPush/service.js';
 import { createLogger } from '../utils/logger.js';
 
@@ -10,39 +11,40 @@ const KEY_STATUSES = {
   canceled: '已取消',
 } as const;
 const MAX_ATTEMPTS = 5;
+const WEB_PUSH_RETRY_DELAY_SECONDS = 65;
 
-type PgPool = Pool;
+class WebPushDeliveryDeferredError extends Error {}
+
 type KeyStatus = keyof typeof KEY_STATUSES;
 
 interface ClaimedNotification {
   id: string;
   taskId: string;
+  boardId: string;
+  tenantId: string;
+  taskIdentifier: string;
+  taskTitle: string;
   fromStatus: string;
   toStatus: KeyStatus;
+  recipientUserIds: string[];
+  summary?: string;
   attemptCount: number;
   leaseId: string;
 }
 
-interface NotificationTask {
-  id: string;
-  boardId: string;
-  identifier: string;
-  title: string;
+interface CurrentTaskAccess {
   tenantId: string;
-  creatorUserId?: string;
-  responsibleUserId?: string;
-  summary?: string;
+  ownerUserId: string;
+  visibility: 'personal' | 'organization';
 }
 
 export interface TaskboardStatusNotificationWorkerOptions {
-  pool: PgPool;
+  pool: Pool;
   tasksTable: string;
   boardsTable: string;
-  commentsTable: string;
-  executionsTable: string;
-  watchersTable: string;
   outboxTable: string;
   service: WebPushService;
+  userStore?: UserStore;
   pollIntervalMs?: number;
 }
 
@@ -69,12 +71,13 @@ export class TaskboardStatusNotificationWorker {
     const claimed = await this.claim();
     if (!claimed) return false;
     try {
-      const task = await this.loadTask(claimed.taskId);
-      if (task) await this.deliver(claimed, task);
+      const access = await this.loadCurrentAccess(claimed);
+      if (access) await this.deliver(claimed, access);
       await this.finish(claimed, 'delivered');
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.finish(claimed, claimed.attemptCount >= MAX_ATTEMPTS ? 'failed' : 'pending', detail);
+      const deferred = error instanceof WebPushDeliveryDeferredError;
+      await this.finish(claimed, !deferred && claimed.attemptCount >= MAX_ATTEMPTS ? 'failed' : 'pending', detail, deferred);
       this.logger.warn(`任务状态通知失败 outbox=${claimed.id} attempt=${claimed.attemptCount}: ${detail}`);
     }
     return true;
@@ -111,86 +114,92 @@ export class TaskboardStatusNotificationWorker {
              attempt_count=o.attempt_count+1
         FROM candidate
        WHERE o.id=candidate.id
-      RETURNING o.id::text,o.task_id,o.from_status,o.to_status,o.attempt_count
+      RETURNING o.id::text,o.task_id,o.board_id,o.tenant_id,o.task_identifier,o.task_title,
+                o.from_status,o.to_status,o.recipient_user_ids,o.event_summary,o.attempt_count
     `, [leaseId]);
     const row = result.rows[0];
     if (!row) return null;
     return {
       id: String(row.id),
       taskId: String(row.task_id),
+      boardId: String(row.board_id),
+      tenantId: String(row.tenant_id),
+      taskIdentifier: String(row.task_identifier),
+      taskTitle: String(row.task_title),
       fromStatus: String(row.from_status),
       toStatus: String(row.to_status) as KeyStatus,
+      recipientUserIds: parseRecipientIds(row.recipient_user_ids),
+      ...(row.event_summary ? { summary: String(row.event_summary) } : {}),
       attemptCount: Number(row.attempt_count),
       leaseId,
     };
   }
 
-  private async loadTask(taskId: string): Promise<NotificationTask | null> {
+  private async loadCurrentAccess(claimed: ClaimedNotification): Promise<CurrentTaskAccess | null> {
     const result = await this.options.pool.query<Record<string, unknown>>(`
-      SELECT t.id,t.board_id,t.identifier,t.title,t.creator_user_id,b.tenant_id,
-        (SELECT e.requested_by FROM ${this.options.executionsTable} e
-          WHERE e.task_id=t.id ORDER BY e.created_at DESC LIMIT 1) AS responsible_user_id,
-        (SELECT c.body FROM ${this.options.commentsTable} c
-          WHERE c.task_id=t.id AND c.author_type='agent'
-          ORDER BY c.created_at DESC LIMIT 1) AS summary
+      SELECT b.tenant_id,b.owner_user_id,b.visibility
       FROM ${this.options.tasksTable} t
       JOIN ${this.options.boardsTable} b ON b.id=t.board_id
-      WHERE t.id=$1 AND t.deleted_at IS NULL
-    `, [taskId]);
+      WHERE t.id=$1 AND t.board_id=$2 AND t.deleted_at IS NULL
+    `, [claimed.taskId, claimed.boardId]);
     const row = result.rows[0];
     if (!row) return null;
     return {
-      id: String(row.id),
-      boardId: String(row.board_id),
-      identifier: String(row.identifier),
-      title: String(row.title),
       tenantId: String(row.tenant_id),
-      ...(row.creator_user_id ? { creatorUserId: String(row.creator_user_id) } : {}),
-      ...(row.responsible_user_id ? { responsibleUserId: String(row.responsible_user_id) } : {}),
-      ...(row.summary ? { summary: String(row.summary) } : {}),
+      ownerUserId: String(row.owner_user_id),
+      visibility: String(row.visibility) as CurrentTaskAccess['visibility'],
     };
   }
 
-  private async deliver(claimed: ClaimedNotification, task: NotificationTask): Promise<void> {
-    const watchers = await this.options.pool.query<{ user_id: string }>(
-      `SELECT user_id FROM ${this.options.watchersTable} WHERE task_id=$1 ORDER BY user_id`,
-      [task.id],
-    );
-    const recipients = uniqueRecipients([
-      task.creatorUserId,
-      task.responsibleUserId,
-      ...watchers.rows.map((row) => row.user_id),
-    ]);
-    const status = buildTaskboardStatusBody(claimed.toStatus, task.summary);
-    const url = `/cron?view=board&boardId=${encodeURIComponent(task.boardId)}&taskId=${encodeURIComponent(task.id)}`;
+  private async deliver(claimed: ClaimedNotification, access: CurrentTaskAccess): Promise<void> {
+    this.options.userStore?.reload();
+    const recipients = claimed.recipientUserIds.filter((userId) => this.canReadCurrentTask(userId, access));
+    const status = buildTaskboardStatusBody(claimed.toStatus, claimed.summary);
+    const url = `/cron?view=board&boardId=${encodeURIComponent(claimed.boardId)}&taskId=${encodeURIComponent(claimed.taskId)}`;
 
+    const failures: string[] = [];
+    let deferredCount = 0;
     for (const userId of recipients) {
-      const result = await this.options.service.send({
-        tenantId: task.tenantId,
-        userId,
-        eventKey: `taskboard:${claimed.id}:${claimed.toStatus}`,
-        taskName: `${task.identifier} · ${task.title}`,
-        status,
-        url,
-      });
-      if (result.failed > 0) throw new Error(`${result.failed} 个浏览器订阅投递失败`);
+      try {
+        const result = await this.options.service.send({
+          tenantId: access.tenantId,
+          userId,
+          eventKey: `taskboard:${claimed.id}:${claimed.toStatus}`,
+          taskName: `${claimed.taskIdentifier} · ${claimed.taskTitle}`,
+          status,
+          url,
+        });
+        if (result.failed > 0) failures.push(`${userId}: ${result.failed} 个浏览器订阅投递失败`);
+        deferredCount += result.deferred;
+      } catch (error) {
+        failures.push(`${userId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
+    if (failures.length > 0) throw new Error(failures.join('; '));
+    if (deferredCount > 0) throw new WebPushDeliveryDeferredError(`${deferredCount} 个浏览器订阅等待重试`);
+  }
+
+  private canReadCurrentTask(userId: string, access: CurrentTaskAccess): boolean {
+    if (access.visibility !== 'organization' && userId !== access.ownerUserId) return false;
+    const user = this.options.userStore?.findById(userId);
+    return !this.options.userStore || Boolean(user && user.tenantId === access.tenantId && !user.disabled);
   }
 
   private async finish(
     claimed: ClaimedNotification,
     state: 'pending' | 'delivered' | 'failed',
     error?: string,
+    deferred = false,
   ): Promise<void> {
-    const retryDelaySeconds = Math.min(60, 2 ** Math.max(0, claimed.attemptCount - 1));
     await this.options.pool.query(`
       UPDATE ${this.options.outboxTable}
          SET state=$3, lease_id=NULL, lease_expires_at=NULL,
              available_at=CASE WHEN $3='pending' THEN now()+($4::int * interval '1 second') ELSE available_at END,
              delivered_at=CASE WHEN $3='delivered' THEN now() ELSE delivered_at END,
+             attempt_count=CASE WHEN $6::boolean THEN GREATEST(attempt_count-1,0) ELSE attempt_count END,
              last_error=$5
        WHERE id=$1::bigint AND lease_id=$2
-    `, [claimed.id, claimed.leaseId, state, retryDelaySeconds, error?.slice(0, 1_000) ?? null]);
+    `, [claimed.id, claimed.leaseId, state, WEB_PUSH_RETRY_DELAY_SECONDS, error?.slice(0, 1_000) ?? null, deferred]);
   }
 }
 
@@ -202,6 +211,10 @@ export function buildTaskboardStatusBody(status: KeyStatus, summary?: string): s
 
 export function uniqueRecipients(values: Array<string | undefined>): string[] {
   return [...new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
+}
+
+function parseRecipientIds(value: unknown): string[] {
+  return uniqueRecipients(Array.isArray(value) ? value.map((item) => String(item)) : []);
 }
 
 function summarizeComment(value?: string): string {

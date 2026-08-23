@@ -159,7 +159,13 @@ describe('taskboard V2 contracts', () => {
     expect(ddl).toContain('ADD COLUMN IF NOT EXISTS resume_context JSONB');
     expect(ddl).toContain('CREATE TABLE IF NOT EXISTS tb_watchers');
     expect(ddl).toContain('CREATE TABLE IF NOT EXISTS tb_status_notify_outbox');
-    expect(ddl).toContain('CREATE TRIGGER tb_status_notify_outbox_trigger');
+    expect(ddl).toContain('CREATE CONSTRAINT TRIGGER tb_status_notify_outbox_trigger');
+    expect(ddl).toContain('DEFERRABLE INITIALLY DEFERRED');
+    expect(ddl).toContain('recipient_user_ids TEXT[] NOT NULL');
+    expect(ddl).toContain('DELETE FROM tb_status_notify_outbox');
+    expect(ddl.indexOf('CREATE CONSTRAINT TRIGGER tb_status_notify_outbox_trigger'))
+      .toBeLessThan(ddl.indexOf('DELETE FROM tb_status_notify_outbox'));
+    expect(ddl).toContain('event_summary');
     expect(ddl).toContain("NEW.status IN ('blocked','done','canceled')");
     expect(ddl).toContain('CREATE OR REPLACE RULE tb_changes_no_update');
     expect(ddl).toContain('CREATE OR REPLACE RULE tb_changes_no_delete');

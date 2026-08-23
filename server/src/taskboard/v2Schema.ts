@@ -52,9 +52,15 @@ export async function runTaskboardV2Schema(
     CREATE TABLE IF NOT EXISTS ${options.statusNotificationOutboxTable} (
       id BIGSERIAL PRIMARY KEY,
       task_id TEXT NOT NULL REFERENCES ${options.tasksTable}(id) ON DELETE CASCADE,
+      board_id TEXT NOT NULL REFERENCES ${options.boardsTable}(id) ON DELETE CASCADE,
+      tenant_id TEXT NOT NULL,
+      task_identifier TEXT NOT NULL,
+      task_title TEXT NOT NULL,
       task_version INTEGER NOT NULL,
       from_status TEXT NOT NULL,
       to_status TEXT NOT NULL CHECK (to_status IN ('blocked','done','canceled')),
+      recipient_user_ids TEXT[] NOT NULL,
+      event_summary TEXT,
       state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','processing','delivered','failed')),
       attempt_count INTEGER NOT NULL DEFAULT 0,
       available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -67,6 +73,15 @@ export async function runTaskboardV2Schema(
     )
   `);
   await client.query(`
+    ALTER TABLE ${options.statusNotificationOutboxTable}
+      ADD COLUMN IF NOT EXISTS board_id TEXT REFERENCES ${options.boardsTable}(id) ON DELETE CASCADE,
+      ADD COLUMN IF NOT EXISTS tenant_id TEXT,
+      ADD COLUMN IF NOT EXISTS task_identifier TEXT,
+      ADD COLUMN IF NOT EXISTS task_title TEXT,
+      ADD COLUMN IF NOT EXISTS recipient_user_ids TEXT[] NOT NULL DEFAULT '{}',
+      ADD COLUMN IF NOT EXISTS event_summary TEXT
+  `);
+  await client.query(`
     CREATE INDEX IF NOT EXISTS ${options.statusNotificationOutboxTable}_claim_idx
       ON ${options.statusNotificationOutboxTable} (state, available_at, id)
       WHERE state IN ('pending','processing')
@@ -77,19 +92,47 @@ export async function runTaskboardV2Schema(
     BEGIN
       IF OLD.status IS DISTINCT FROM NEW.status AND NEW.status IN ('blocked','done','canceled') THEN
         INSERT INTO ${options.statusNotificationOutboxTable}
-          (task_id, task_version, from_status, to_status)
-        VALUES (NEW.id, NEW.version, OLD.status, NEW.status)
+          (task_id, board_id, tenant_id, task_identifier, task_title, task_version, from_status, to_status,
+           recipient_user_ids, event_summary)
+        SELECT NEW.id, NEW.board_id, b.tenant_id, NEW.identifier, NEW.title, NEW.version, OLD.status, NEW.status,
+          ARRAY(
+            SELECT DISTINCT recipient.user_id
+            FROM (
+              SELECT NEW.creator_user_id AS user_id
+              UNION ALL
+              SELECT (SELECT e.requested_by FROM ${options.executionsTable} e WHERE e.task_id=NEW.id ORDER BY e.created_at DESC,e.id DESC LIMIT 1)
+              UNION ALL
+              SELECT w.user_id FROM ${options.watchersTable} w WHERE w.task_id=NEW.id
+            ) recipient
+            WHERE recipient.user_id IS NOT NULL AND btrim(recipient.user_id)<>''
+          ),
+          (SELECT c.body FROM ${options.commentsTable} c
+            WHERE c.task_id=NEW.id AND c.author_type='agent'
+              AND c.author_id=(SELECT e.run_id FROM ${options.executionsTable} e WHERE e.task_id=NEW.id ORDER BY e.created_at DESC,e.id DESC LIMIT 1)
+            ORDER BY c.created_at DESC,c.id DESC LIMIT 1)
+        FROM ${options.boardsTable} b WHERE b.id=NEW.board_id
         ON CONFLICT (task_id, task_version, to_status) DO NOTHING;
       END IF;
       RETURN NEW;
     END;
-    $$ LANGUAGE plpgsql
+    $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS ${options.statusNotificationOutboxTable}_trigger ON ${options.tasksTable};
+    CREATE CONSTRAINT TRIGGER ${options.statusNotificationOutboxTable}_trigger
+      AFTER UPDATE ON ${options.tasksTable}
+      DEFERRABLE INITIALLY DEFERRED
+      FOR EACH ROW EXECUTE FUNCTION ${options.statusNotificationOutboxTable}_enqueue()
   `);
   await client.query(`
-    DROP TRIGGER IF EXISTS ${options.statusNotificationOutboxTable}_trigger ON ${options.tasksTable};
-    CREATE TRIGGER ${options.statusNotificationOutboxTable}_trigger
-      AFTER UPDATE OF status ON ${options.tasksTable}
-      FOR EACH ROW EXECUTE FUNCTION ${options.statusNotificationOutboxTable}_enqueue()
+    DELETE FROM ${options.statusNotificationOutboxTable}
+    WHERE board_id IS NULL
+  `);
+  await client.query(`
+    ALTER TABLE ${options.statusNotificationOutboxTable}
+      ALTER COLUMN board_id SET NOT NULL,
+      ALTER COLUMN tenant_id SET NOT NULL,
+      ALTER COLUMN task_identifier SET NOT NULL,
+      ALTER COLUMN task_title SET NOT NULL,
+      ALTER COLUMN recipient_user_ids DROP DEFAULT
   `);
   await client.query(`
     CREATE TABLE IF NOT EXISTS ${options.changesTable} (

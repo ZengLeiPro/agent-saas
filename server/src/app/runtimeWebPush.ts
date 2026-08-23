@@ -32,17 +32,16 @@ export function startTaskboardStatusNotificationWorker(
   store: PgTaskboardStore,
   service: WebPushService | undefined,
   enabled: boolean,
+  userStore?: UserStore,
 ): TaskboardStatusNotificationWorker | undefined {
   if (!service || !enabled) return undefined;
   const worker = new TaskboardStatusNotificationWorker({
     pool: store.pool,
     tasksTable: store.tasksTable,
     boardsTable: store.boardsTable,
-    commentsTable: store.commentsTable,
-    executionsTable: store.executionsTable,
-    watchersTable: store.watchersTable,
     outboxTable: store.statusNotificationOutboxTable,
     service,
+    userStore,
   });
   worker.start();
   return worker;

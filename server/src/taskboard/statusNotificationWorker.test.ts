@@ -2,27 +2,32 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { TaskboardStatusNotificationWorker, buildTaskboardStatusBody, uniqueRecipients } from './statusNotificationWorker.js';
 
-describe('TaskboardStatusNotificationWorker', () => {
-  it('向创建者、最近执行发起者与关注者去重发送，并携带任务深链和结果摘要', async () => {
-    const query = vi.fn()
-      .mockResolvedValueOnce({ rows: [{
-        id: '42', task_id: 'task-1', from_status: 'in_review', to_status: 'done', attempt_count: 1,
-      }] })
-      .mockResolvedValueOnce({ rows: [{
-        id: 'task-1', board_id: 'board-1', identifier: 'TASK-86', title: '关键通知',
-        creator_user_id: 'creator', responsible_user_id: 'owner', tenant_id: 'tenant-1',
-        summary: '## 已完成实现\n其余详情',
-      }] })
-      .mockResolvedValueOnce({ rows: [{ user_id: 'watcher' }, { user_id: 'creator' }] })
-      .mockResolvedValue({ rows: [] });
-    const send = vi.fn().mockResolvedValue({ sent: 1, failed: 0, skipped: 0 });
-    const worker = new TaskboardStatusNotificationWorker({
-      pool: { query } as never,
-      tasksTable: 'tasks', boardsTable: 'boards', commentsTable: 'comments', executionsTable: 'executions',
-      watchersTable: 'watchers', outboxTable: 'outbox', service: { send } as never,
-    });
+function claimRow(patch: Record<string, unknown> = {}) {
+  return {
+    id: '42', task_id: 'task-1', board_id: 'board-1', tenant_id: 'tenant-1',
+    task_identifier: 'TASK-86', task_title: '关键通知', from_status: 'in_review', to_status: 'done',
+    recipient_user_ids: ['creator', 'owner', 'watcher'], event_summary: '## 已完成实现\n其余详情',
+    attempt_count: 1, ...patch,
+  };
+}
 
-    await expect(worker.runOnce()).resolves.toBe(true);
+function workerWith(query: ReturnType<typeof vi.fn>, send: ReturnType<typeof vi.fn>, userStore?: object) {
+  return new TaskboardStatusNotificationWorker({
+    pool: { query } as never,
+    tasksTable: 'tasks', boardsTable: 'boards', outboxTable: 'outbox', service: { send } as never,
+    userStore: userStore as never,
+  });
+}
+
+describe('TaskboardStatusNotificationWorker', () => {
+  it('使用状态事件快照向创建者、负责人和关注者发送对应摘要', async () => {
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [claimRow()] })
+      .mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-1', owner_user_id: 'board-owner', visibility: 'organization' }] })
+      .mockResolvedValue({ rows: [] });
+    const send = vi.fn().mockResolvedValue({ sent: 1, failed: 0, skipped: 0, deferred: 0 });
+
+    await expect(workerWith(query, send).runOnce()).resolves.toBe(true);
 
     expect(send).toHaveBeenCalledTimes(3);
     expect(send.mock.calls.map(([message]) => message.userId).sort()).toEqual(['creator', 'owner', 'watcher']);
@@ -30,31 +35,86 @@ describe('TaskboardStatusNotificationWorker', () => {
       tenantId: 'tenant-1', eventKey: 'taskboard:42:done', taskName: 'TASK-86 · 关键通知',
       status: '已完成：已完成实现', url: '/cron?view=board&boardId=board-1&taskId=task-1',
     }));
-    expect(String(query.mock.calls.at(-1)?.[0])).toContain("state=$3");
+    expect(query.mock.calls.map(([sql]) => String(sql)).join('\n')).not.toContain('FROM comments');
     expect(query.mock.calls.at(-1)?.[1]?.[2]).toBe('delivered');
   });
 
-  it('投递失败会保留 outbox 重试，而不是丢失状态事件', async () => {
+  it('failed 后 delivery claim 暂缓时继续保留 outbox，不误标 delivered', async () => {
     const query = vi.fn()
-      .mockResolvedValueOnce({ rows: [{
-        id: '43', task_id: 'task-2', from_status: 'in_progress', to_status: 'blocked', attempt_count: 1,
-      }] })
-      .mockResolvedValueOnce({ rows: [{
-        id: 'task-2', board_id: 'board-2', identifier: 'TASK-2', title: '失败任务',
-        creator_user_id: 'creator', tenant_id: 'tenant-1', summary: '缺少生产凭据',
-      }] })
+      .mockResolvedValueOnce({ rows: [claimRow({ id: '43', to_status: 'blocked', attempt_count: 1 })] })
+      .mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-1', owner_user_id: 'creator', visibility: 'personal' }] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [claimRow({ id: '43', to_status: 'blocked', attempt_count: 2 })] })
+      .mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-1', owner_user_id: 'creator', visibility: 'personal' }] })
       .mockResolvedValue({ rows: [] });
-    const worker = new TaskboardStatusNotificationWorker({
-      pool: { query } as never,
-      tasksTable: 'tasks', boardsTable: 'boards', commentsTable: 'comments', executionsTable: 'executions',
-      watchersTable: 'watchers', outboxTable: 'outbox',
-      service: { send: vi.fn().mockResolvedValue({ sent: 0, failed: 1, skipped: 0 }) } as never,
-    });
+    const send = vi.fn()
+      .mockResolvedValueOnce({ sent: 0, failed: 1, skipped: 0, deferred: 0 })
+      .mockResolvedValueOnce({ sent: 0, failed: 0, skipped: 0, deferred: 1 });
+    const worker = workerWith(query, send);
 
     await expect(worker.runOnce()).resolves.toBe(true);
+    await expect(worker.runOnce()).resolves.toBe(true);
+
+    const finishes = query.mock.calls.filter(([sql]) => String(sql).includes('SET state=$3'));
+    expect(finishes).toHaveLength(2);
+    expect(finishes.map(([, params]) => params[2])).toEqual(['pending', 'pending']);
+    expect(finishes.map(([, params]) => params[3])).toEqual([65, 65]);
+    expect(finishes.map(([, params]) => params[5])).toEqual([false, true]);
+  });
+
+  it('单个收件人失败时仍继续尝试其余收件人', async () => {
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [claimRow({ recipient_user_ids: ['first', 'second'] })] })
+      .mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-1', owner_user_id: 'owner', visibility: 'organization' }] })
+      .mockResolvedValue({ rows: [] });
+    const send = vi.fn()
+      .mockResolvedValueOnce({ sent: 0, failed: 1, skipped: 0, deferred: 0 })
+      .mockResolvedValueOnce({ sent: 1, failed: 0, skipped: 0, deferred: 0 });
+
+    await workerWith(query, send).runOnce();
+
+    expect(send).toHaveBeenCalledTimes(2);
     expect(query.mock.calls.at(-1)?.[1]?.[2]).toBe('pending');
-    expect(query.mock.calls.at(-1)?.[1]?.[4]).toContain('投递失败');
+  });
+
+  it('组织看板投递前刷新用户并过滤已禁用或已迁出租户的收件人', async () => {
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [claimRow({ recipient_user_ids: ['valid', 'disabled', 'moved'] })] })
+      .mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-1', owner_user_id: 'owner', visibility: 'organization' }] })
+      .mockResolvedValue({ rows: [] });
+    const send = vi.fn().mockResolvedValue({ sent: 1, failed: 0, skipped: 0, deferred: 0 });
+    const users = new Map([
+      ['valid', { id: 'valid', tenantId: 'tenant-1' }],
+      ['disabled', { id: 'disabled', tenantId: 'tenant-1', disabled: false }],
+      ['moved', { id: 'moved', tenantId: 'tenant-2' }],
+    ]);
+    const reload = vi.fn(() => { users.set('disabled', { id: 'disabled', tenantId: 'tenant-1', disabled: true }); });
+
+    await workerWith(query, send, { reload, findById: (id: string) => users.get(id) }).runOnce();
+
+    expect(reload).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ userId: 'valid' }));
+  });
+
+  it('组织看板改为个人后不再向历史关注者发送', async () => {
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [claimRow({ recipient_user_ids: ['board-owner', 'old-watcher', 'disabled'] })] })
+      .mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-1', owner_user_id: 'board-owner', visibility: 'personal' }] })
+      .mockResolvedValue({ rows: [] });
+    const send = vi.fn().mockResolvedValue({ sent: 1, failed: 0, skipped: 0, deferred: 0 });
+    const users = new Map([
+      ['board-owner', { id: 'board-owner', tenantId: 'tenant-1' }],
+      ['old-watcher', { id: 'old-watcher', tenantId: 'tenant-1' }],
+      ['disabled', { id: 'disabled', tenantId: 'tenant-1', disabled: true }],
+    ]);
+
+    const reload = vi.fn();
+    await workerWith(query, send, { reload, findById: (id: string) => users.get(id) }).runOnce();
+
+    expect(reload).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ userId: 'board-owner' }));
   });
 });
 

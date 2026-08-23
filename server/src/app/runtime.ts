@@ -781,10 +781,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         tablePrefix: config.runtimeEventStore.tablePrefix,
       });
       rawTaskboardStore = store;
-      const retryableService = new RetryableTaskboardService(store);
+      const retryableService = new RetryableTaskboardService(store, { onReady: () => { taskboardStatusNotificationWorker ??= startTaskboardStatusNotificationWorker(store, runtimeWebPush.service, enableSingletonWorkers, userStore); } });
       taskboardService = retryableService;
       taskboardStoreService = retryableService;
-      await retryableService.init().then(() => { taskboardStatusNotificationWorker = startTaskboardStatusNotificationWorker(store, runtimeWebPush.service, enableSingletonWorkers); }).catch((err) => {
+      await retryableService.init().catch((err) => {
         serverLogger.warn(`PgTaskboardStore init failed; requests return 503 until a later init retry succeeds: ${err instanceof Error ? err.message : String(err)}`);
       });
     } catch (err) {

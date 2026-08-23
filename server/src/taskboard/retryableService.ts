@@ -59,13 +59,17 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
   private ready = false;
   private initializing: Promise<void> | undefined;
 
-  constructor(private readonly target: InitializableTaskboardService) {}
+  constructor(
+    private readonly target: InitializableTaskboardService,
+    private readonly options: { onReady?: () => void | Promise<void> } = {},
+  ) {}
 
   async init(): Promise<void> {
     if (this.ready) return;
     if (!this.initializing) {
       this.initializing = this.target.init()
-        .then(() => {
+        .then(async () => {
+          await this.options.onReady?.();
           this.ready = true;
         })
         .finally(() => {

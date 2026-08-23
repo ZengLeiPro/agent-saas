@@ -103,8 +103,8 @@ describe('WebPushService', () => {
       status: '执行成功',
       url: '/chat/session-1',
     };
-    await expect(service.send(message)).resolves.toEqual({ sent: 2, failed: 0, skipped: 0 });
-    await expect(service.send(message)).resolves.toEqual({ sent: 0, failed: 0, skipped: 2 });
+    await expect(service.send(message)).resolves.toEqual({ sent: 2, failed: 0, skipped: 0, deferred: 0 });
+    await expect(service.send(message)).resolves.toEqual({ sent: 0, failed: 0, skipped: 2, deferred: 0 });
     expect(webPush.sendNotification).toHaveBeenCalledTimes(2);
     const payload = JSON.parse(vi.mocked(webPush.sendNotification).mock.calls[0]![1] as string);
     expect(payload).toEqual(expect.objectContaining({ title: '日报汇总', body: '执行成功', url: '/chat/session-1' }));
@@ -122,7 +122,7 @@ describe('WebPushService', () => {
       taskName: '后台分析',
       status: '执行失败',
       url: '/chat/session-1',
-    })).resolves.toEqual({ sent: 0, failed: 1, skipped: 0 });
+    })).resolves.toEqual({ sent: 0, failed: 1, skipped: 0, deferred: 0 });
     expect(await service.list(owner)).toEqual([]);
   });
 
@@ -136,6 +136,32 @@ describe('WebPushService', () => {
 });
 
 describe('PgWebPushStore 隔离条件', () => {
+  it('近期 failed delivery 返回 deferred，而不是与已投递记录一起记为 skipped', async () => {
+    const current: WebPushSubscriptionRecord = {
+      id: 'sub-1', ...owner, endpoint: subscription('deferred').endpoint, endpointHash: 'hash',
+      p256dh: 'p', auth: 'a', deviceName: 'Chrome',
+      createdAt: '2026-08-13T00:00:00.000Z', updatedAt: '2026-08-13T00:00:00.000Z',
+    };
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('FROM agent_saas_web_push_subscriptions')) return { rows: [{
+        id: current.id, tenant_id: current.tenantId, user_id: current.userId, endpoint: current.endpoint,
+        endpoint_hash: current.endpointHash, p256dh: current.p256dh, auth: current.auth,
+        device_name: current.deviceName, created_at: current.createdAt, updated_at: current.updatedAt,
+      }] };
+      if (sql.includes('INSERT INTO agent_saas_web_push_deliveries')) return { rows: [], rowCount: 0 };
+      if (sql.includes('SELECT status FROM agent_saas_web_push_deliveries')) return { rows: [{ status: 'failed' }] };
+      return { rows: [] };
+    });
+    const release = vi.fn();
+    const pgStore = new PgWebPushStore({
+      pool: { connect: vi.fn().mockResolvedValue({ query, release }) } as never,
+      tablePrefix: 'agent_saas',
+    });
+
+    await expect(pgStore.claimDelivery(owner, current, 'event-1')).resolves.toEqual({ deferred: true });
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it('查询和删除始终同时携带 tenantId 与 userId', async () => {
     const query = vi.fn()
       .mockResolvedValueOnce({ rows: [] })
@@ -157,7 +183,7 @@ describe('PgWebPushStore 隔离条件', () => {
 
 describe('Web Push 触发链路', () => {
   it('Cron 使用任务 owner 和结果会话，且不携带结果正文', async () => {
-    const send = vi.spyOn(service, 'send').mockResolvedValue({ sent: 1, failed: 0, skipped: 0 });
+    const send = vi.spyOn(service, 'send').mockResolvedValue({ sent: 1, failed: 0, skipped: 0, deferred: 0 });
     const channel = createWebPushNotifyChannel({
       service,
       userStore: { findById: vi.fn().mockReturnValue({ id: 'user-a', tenantId: 'tenant-a' }) } as never,
@@ -173,7 +199,7 @@ describe('Web Push 触发链路', () => {
   });
 
   it('后台 Agent 成功/失败按父会话归属发送，后台命令与取消不通知', async () => {
-    const send = vi.spyOn(service, 'send').mockResolvedValue({ sent: 1, failed: 0, skipped: 0 });
+    const send = vi.spyOn(service, 'send').mockResolvedValue({ sent: 1, failed: 0, skipped: 0, deferred: 0 });
     const sessionStore = {
       get: vi.fn().mockResolvedValue({
         sessionId: 'session-1', tenantId: 'tenant-a', userId: 'user-a', title: '父会话', metaJson: {},
@@ -200,7 +226,7 @@ describe('Web Push 触发链路', () => {
   });
 
   it('审批只按 approval_requested 通知一次，忽略同一审批派生的 permission_request', async () => {
-    const send = vi.spyOn(service, 'send').mockResolvedValue({ sent: 1, failed: 0, skipped: 0 });
+    const send = vi.spyOn(service, 'send').mockResolvedValue({ sent: 1, failed: 0, skipped: 0, deferred: 0 });
     const sessionStore = {
       get: vi.fn().mockResolvedValue({
         sessionId: 'session-1', tenantId: 'tenant-a', userId: 'user-a', title: '合同审核', metaJson: {},
@@ -222,7 +248,7 @@ describe('Web Push 触发链路', () => {
   });
 
   it('等待补充信息按会话投影归属发送，事件用户不一致时拒绝串发', async () => {
-    const send = vi.spyOn(service, 'send').mockResolvedValue({ sent: 1, failed: 0, skipped: 0 });
+    const send = vi.spyOn(service, 'send').mockResolvedValue({ sent: 1, failed: 0, skipped: 0, deferred: 0 });
     const sessionStore = {
       get: vi.fn().mockResolvedValue({
         sessionId: 'session-1', tenantId: 'tenant-a', userId: 'user-a', title: '采购核对', metaJson: {},

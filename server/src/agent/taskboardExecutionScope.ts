@@ -18,9 +18,9 @@ export function assertTaskboardExecutionScope(
     throw new Error('任务看板执行已终止，不能继续回写');
   }
   const executionActions = [
-    'execution.context', 'execution.comment', 'execution.integration_candidate.push',
+    'execution.context', 'execution.comment', 'execution.transition', 'execution.integration_candidate.push',
     'execution.pull_request.set', 'execution.pull_request.inspect', 'execution.pull_request.log',
-    'execution.review_subject.record', 'execution.resolve',
+    'execution.review_subject.record',
     'integration.sources', 'integration.candidate', 'integration.source.inspect',
     'integration.source.log', 'integration.source.merge',
   ];
@@ -56,7 +56,7 @@ export function assertTaskboardExecutionScope(
     }
     case 'move':
       if (context.execution.protocolVersion === 2) {
-        throw new Error('当前 Execution 必须通过结构化 resolution 提交阶段结果');
+        throw new Error('当前 Execution 必须通过 execution.transition 指定下一状态');
       }
       if (input.id !== currentTask.id || context.execution.purpose !== 'review'
         || !['ready_to_merge', 'todo', 'blocked'].includes(input.status ?? '')) {

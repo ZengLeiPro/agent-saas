@@ -750,25 +750,6 @@ export function TaskDetail({
                 />
               ) : null}
 
-              <section aria-label="业务结论" className="mb-6 space-y-2 rounded-lg border bg-muted/20 p-4 text-sm">
-                <h3 className="text-sm font-semibold">业务结论（Resolution）</h3>
-                {latestExecution?.resolutionOutcome ? (
-                  <>
-                    <p>
-                      {latestExecution.resolutionOutcome}
-                      {latestExecution.resolutionState === "historical" ? " · 历史结论（已迁移）" : ""}
-                      {latestExecution.ignoredReason && latestExecution.ignoredReason !== "historical_projection" ? ` · 已忽略（${latestExecution.ignoredReason}）` : ""}
-                    </p>
-                    {latestExecution.resolutionSummary ? <p className="whitespace-pre-wrap text-xs text-muted-foreground">{latestExecution.resolutionSummary}</p> : null}
-                    {latestExecution.taskStatusAfter ? <p className="text-xs text-muted-foreground">裁决后流程：{STATUS_LABELS[latestExecution.taskStatusAfter]}</p> : null}
-                  </>
-                ) : latestExecution?.resolutionState === "legacy_ambiguous" || latestExecution?.resolutionState === "legacy_incomplete" ? (
-                  <p role="alert" className="text-xs text-amber-700 dark:text-amber-300">
-                    历史结论（未迁移）：{latestExecution.resolutionIssue}
-                  </p>
-                ) : <p className="text-xs text-muted-foreground">尚未提交结构化业务结论。</p>}
-              </section>
-
               <form className="space-y-4" onSubmit={save}>
                 {!executionStarted ? (
                   <>

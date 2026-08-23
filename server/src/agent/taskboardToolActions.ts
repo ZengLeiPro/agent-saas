@@ -3,7 +3,6 @@ import { appendTaskboardAttachments, cleanupTaskboardAttachments, materializeTas
 import { assertTaskboardExecutionScope } from './taskboardExecutionScope.js';
 
 import type {
-  TaskBoardContextReceipt,
   TaskBoardExecutionPurpose,
   TaskBoardPriority,
   TaskBoardStatus,
@@ -54,7 +53,7 @@ export const TASKBOARD_RESOURCE_ACTIONS = [
   'execution.pull_request.inspect',
   'execution.pull_request.log',
   'execution.review_subject.record',
-  'execution.resolve',
+  'execution.transition',
   'integration.create',
   'integration.cancel',
   'integration.sources',
@@ -132,12 +131,7 @@ export interface TaskboardManageInput {
   historyMode?: 'auto' | 'full' | 'delta';
   cursor?: string;
   limit?: number;
-  resolutionId?: string;
-  outcome?: string;
-  summary?: string;
   reason?: string;
-  evidence?: string[];
-  receipt?: TaskBoardContextReceipt;
   deliveryTaskIds?: string[];
   expectedBoardVersion?: number;
   /** execution.integration_candidate.push 的唯一模型输入。 */
@@ -413,18 +407,13 @@ export async function invokeTaskboardAction(
       );
       return { updated: true, task };
     }
-    case 'execution.resolve': {
-      if (!scope.execution || !service.resolveExecutionV2 || !input.receipt) {
-        throw new Error('当前任务 Execution 缺少 resolution 服务或 context receipt');
+    case 'execution.transition': {
+      if (!scope.execution || !service.transitionExecutionV2) {
+        throw new Error('仅当前任务 Execution 可以推进任务状态');
       }
-      const task = await service.resolveExecutionV2(identity, scope.execution.execution.runId, {
-        ...(input.resolutionId ? { resolutionId: input.resolutionId } : {}),
-        outcome: requireField(input.outcome, 'outcome'),
-        summary: requireField(input.summary, 'summary'),
-        ...(input.evidence ? { evidence: input.evidence } : {}),
-        receipt: input.receipt,
-      });
-      return { resolved: true, task };
+      if (!input.status) throw new Error('execution.transition 需要 status');
+      const task = await service.transitionExecutionV2(identity, scope.execution.execution.runId, { status: input.status });
+      return { transitioned: true, task };
     }
     case 'integration.create': {
       if (!service.createIntegrationBatch) throw new Error('任务看板集成批次服务未启用');
@@ -871,7 +860,7 @@ async function moveLegacyTask(
 ): Promise<Record<string, unknown>> {
   if (execution) {
     if (execution.execution.protocolVersion === 2) {
-      throw new Error('当前 Execution 必须通过结构化 resolution 提交阶段结果');
+      throw new Error('当前 Execution 必须通过 execution.transition 指定下一状态');
     }
     const status = input.status;
     const executionStore = options.executionStore?.();

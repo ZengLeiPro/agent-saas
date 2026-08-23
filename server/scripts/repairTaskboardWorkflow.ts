@@ -43,7 +43,7 @@ export function parseWorkflowRepairArgs(argv: string[]): Args {
   };
 }
 
-const ACTIVE_EXECUTION = "e.status IN ('queued','running','waiting_user','waiting_approval') AND e.resolved_at IS NULL AND e.superseded_at IS NULL";
+const ACTIVE_EXECUTION = "e.status IN ('queued','running','waiting_user','waiting_approval') AND e.transitioned_at IS NULL AND e.superseded_at IS NULL";
 const SOURCE_MERGE_FACT = "s.state='merged' OR s.merged_commit_oid IS NOT NULL OR s.provider_receipt_id IS NOT NULL";
 
 function scope(boardExpression: string, taskExpressions: string[]): string {
@@ -79,7 +79,7 @@ async function main(): Promise<void> {
     changes: `${p}_taskboard_changes`, blocks: `${p}_taskboard_block_episodes`,
     operations: `${p}_taskboard_merge_ops`, continuations: `${p}_taskboard_cont_outbox`,
     cancellations: `${p}_taskboard_cancel_outbox`, lanes: `${p}_taskboard_integration_lanes`,
-    authorizations: `${p}_taskboard_merge_auths`, resolutions: `${p}_taskboard_resolutions`,
+    authorizations: `${p}_taskboard_merge_auths`,
     candidates: `${p}_taskboard_integration_candidates`,
     providerOperationsV3: `${p}_taskboard_integration_provider_operations_v3`,
     requestsOutboxV3: `${p}_taskboard_integration_requests_outbox_v3`,
@@ -135,17 +135,6 @@ async function main(): Promise<void> {
       type: 'merged_active_continuation', taskId: row.id, boardId: row.board_id, detail: row,
     });
 
-    const duplicateResolutions = await client.query(
-      `SELECT t.id,t.board_id,c.payload->>'runId' AS run_id,count(*)::int AS resolution_count
-         FROM ${tables.tasks} t JOIN ${tables.changes} c ON c.task_id=t.id
-        WHERE c.change_type IN ('execution.resolved','execution.resolved.v2')${deliveryIncidentScope}
-        GROUP BY t.id,t.board_id,c.payload->>'runId' HAVING count(*)>1`,
-      params,
-    );
-    for (const row of duplicateResolutions.rows) findings.push({
-      type: 'duplicate_legacy_resolution', taskId: row.id, boardId: row.board_id, detail: row,
-    });
-
     const mismatchedPurpose = await client.query(
       `SELECT t.id,t.board_id,e.id AS execution_id,e.purpose,e.status
          FROM ${tables.tasks} t JOIN ${tables.execs} e ON e.task_id=t.id
@@ -153,38 +142,6 @@ async function main(): Promise<void> {
       params,
     );
     for (const row of mismatchedPurpose.rows) findings.push({ type: 'integration_purpose_mismatch', taskId: row.id, boardId: row.board_id, detail: row });
-
-    const remediation = await client.query(
-      `SELECT t.id,t.board_id,t.status FROM ${tables.tasks} t
-        WHERE t.kind='remediation' AND t.status='ready_to_merge'
-          AND EXISTS (
-            SELECT 1 FROM ${tables.execs} e JOIN ${tables.resolutions} r ON r.execution_id=e.id
-             WHERE e.task_id=t.id AND e.purpose='review' AND r.outcome='approved'
-          )${scope('t.board_id', [
-          't.id',
-          `(SELECT s.delivery_task_id FROM ${tables.attempts} a JOIN ${tables.sources} s ON s.id=a.integration_source_id WHERE a.remediation_task_id=t.id LIMIT 1)`,
-          `(SELECT s.integration_task_id FROM ${tables.attempts} a JOIN ${tables.sources} s ON s.id=a.integration_source_id WHERE a.remediation_task_id=t.id LIMIT 1)`,
-        ])}`,
-      params,
-    );
-    for (const row of remediation.rows) findings.push({ type: 'remediation_not_converged', taskId: row.id, boardId: row.board_id, detail: row });
-
-    const remediationWithoutApproval = await client.query(
-      `SELECT t.id,t.board_id,t.status FROM ${tables.tasks} t
-        WHERE t.kind='remediation' AND t.status='ready_to_merge'
-          AND NOT EXISTS (
-            SELECT 1 FROM ${tables.execs} e JOIN ${tables.resolutions} r ON r.execution_id=e.id
-             WHERE e.task_id=t.id AND e.purpose='review' AND r.outcome='approved'
-          )${scope('t.board_id', [
-          't.id',
-          `(SELECT s.delivery_task_id FROM ${tables.attempts} a JOIN ${tables.sources} s ON s.id=a.integration_source_id WHERE a.remediation_task_id=t.id LIMIT 1)`,
-          `(SELECT s.integration_task_id FROM ${tables.attempts} a JOIN ${tables.sources} s ON s.id=a.integration_source_id WHERE a.remediation_task_id=t.id LIMIT 1)`,
-        ])}`,
-      params,
-    );
-    for (const row of remediationWithoutApproval.rows) findings.push({
-      type: 'manual_remediation_review_required', taskId: row.id, boardId: row.board_id, detail: row,
-    });
 
     const mergedRemediations = await client.query(
       `SELECT r.id,t.board_id,a.id AS attempt_id,a.state,s.id AS source_id,
@@ -273,8 +230,7 @@ async function main(): Promise<void> {
       for (const finding of findings) {
         if (finding.type.startsWith('v3.')) continue;
         if (finding.type === 'manual_advisory_reclassification_candidate'
-          || finding.type === 'manual_remediation_review_required'
-          || finding.type === 'duplicate_legacy_resolution') continue;
+          || finding.type === 'manual_remediation_review_required') continue;
         if (finding.type === 'duplicate_active_source' && Number(finding.detail.merge_fact_count ?? 0) > 1) {
           throw new Error(`TASKBOARD_DUPLICATE_ACTIVE_SOURCE_AMBIGUOUS: ${String(finding.detail.repository_id)}:${String(finding.detail.provider_pull_request_id)}`);
         }

@@ -142,8 +142,9 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       state: 'resolving_conflict', remediationCount: 0,
     });
     expect(await store.claimIntegrationDispatchCandidatesV2(10)).toHaveLength(0);
-    await store.resolveExecutionV2(identity, firstMergeRunId, {
-      outcome: 'progress', summary: 'Checks failure routed to remediation', receipt: firstMergeContext.receipt,
+    await store.createExecutionCommentV2(identity, firstMergeRunId, 'Protocol delivery');
+    await store.transitionExecutionV2(identity, firstMergeRunId, {
+      status: 'in_progress',
     });
     await store.completeExecution(firstMergeRunId, { status: 'succeeded', commentBody: 'Waiting for checks remediation' });
 
@@ -169,9 +170,9 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
     const remediationContext = await store.getExecutionContextV2(identity, recovery!.task.id, {
       runId: remediationRunId,
     });
-    const remediationResolved = await store.resolveExecutionV2(identity, remediationRunId, {
-      outcome: 'ready_for_review', summary: 'Checks fixed with a new commit', evidence: ['checks rerun'],
-      receipt: remediationContext.receipt,
+    await store.createExecutionCommentV2(identity, remediationRunId, 'Protocol delivery');
+    const remediationResolved = await store.transitionExecutionV2(identity, remediationRunId, {
+      status: 'in_review',
     });
     expect(remediationResolved.status).toBe('in_review');
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
@@ -188,9 +189,9 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
     await store.inspectExecutionPullRequestV2(identity, reviewRunId);
     await store.recordReviewedExecutionSubjectV2(identity, reviewRunId);
     const reviewContext = await store.getExecutionContextV2(identity, recovery!.task.id, { runId: reviewRunId });
-    const approved = await store.resolveExecutionV2(identity, reviewRunId, {
-      outcome: 'approved', summary: 'New PR subject and green checks reviewed', evidence: ['ci=success'],
-      receipt: reviewContext.receipt,
+    await store.createExecutionCommentV2(identity, reviewRunId, 'Protocol delivery');
+    const approved = await store.transitionExecutionV2(identity, reviewRunId, {
+      status: 'ready_to_merge',
     });
     expect(approved.status).toBe('done');
     await store.completeExecution(reviewRunId, { status: 'succeeded', commentBody: 'Checks remediation approved' });
@@ -279,8 +280,9 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
         state: 'resolving_conflict', remediationCount: round - 1,
       });
-      await store.resolveExecutionV2(identity, mergeRunId, {
-        outcome: 'progress', summary: `Checks failure round ${round}`, receipt: mergeContext.receipt,
+      await store.createExecutionCommentV2(identity, mergeRunId, 'Protocol delivery');
+      await store.transitionExecutionV2(identity, mergeRunId, {
+        status: 'in_progress',
       });
       await store.completeExecution(mergeRunId, { status: 'succeeded', commentBody: 'Route to remediation' });
 
@@ -306,9 +308,9 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       const remediationContext = await store.getExecutionContextV2(identity, recovery!.task.id, {
         runId: remediationRunId,
       });
-      const remediationResolved = await store.resolveExecutionV2(identity, remediationRunId, {
-        outcome: 'ready_for_review', summary: `Checks remediation commit ${round}`, evidence: ['ci rerun'],
-        receipt: remediationContext.receipt,
+      await store.createExecutionCommentV2(identity, remediationRunId, 'Protocol delivery');
+      const remediationResolved = await store.transitionExecutionV2(identity, remediationRunId, {
+        status: 'in_review',
       });
       expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
         state: 'waiting_remediation', remediationCount: round,
@@ -324,9 +326,9 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       await store.inspectExecutionPullRequestV2(identity, reviewRunId);
       await store.recordReviewedExecutionSubjectV2(identity, reviewRunId);
       const reviewContext = await store.getExecutionContextV2(identity, recovery!.task.id, { runId: reviewRunId });
-      const approved = await store.resolveExecutionV2(identity, reviewRunId, {
-        outcome: 'approved', summary: `Checks review ${round}`, evidence: ['subject refreshed'],
-        receipt: reviewContext.receipt,
+      await store.createExecutionCommentV2(identity, reviewRunId, 'Protocol delivery');
+      const approved = await store.transitionExecutionV2(identity, reviewRunId, {
+        status: 'ready_to_merge',
       });
       expect(approved.status).toBe('done');
       await store.completeExecution(reviewRunId, { status: 'succeeded', commentBody: 'Review complete' });
@@ -352,8 +354,9 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
       state: 'needs_human', remediationCount: 2,
     });
-    await store.resolveExecutionV2(identity, exhaustedRunId, {
-      outcome: 'needs_human', summary: 'Two actual checks remediation rounds exhausted', receipt: exhaustedContext.receipt,
+    await store.createExecutionCommentV2(identity, exhaustedRunId, 'Protocol delivery');
+    await store.transitionExecutionV2(identity, exhaustedRunId, {
+      status: 'blocked',
     });
     await store.completeExecution(exhaustedRunId, { status: 'succeeded', commentBody: 'Human intervention required' });
     const remaining = await store.claimIntegrationDispatchCandidatesV2(10);

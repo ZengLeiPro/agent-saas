@@ -10,7 +10,7 @@ import type {
   TaskBoardExecutionPurpose,
   TaskBoardExecutionContextInput,
   TaskBoardExecutionContextResponse,
-  TaskBoardExecutionResolutionInput,
+  TaskBoardExecutionTransitionInput,
   TaskBoardIntegrationBatchCreateInput,
   TaskBoardIntegrationCandidateDetails,
   TaskBoardIntegrationSource,
@@ -527,10 +527,10 @@ export interface TaskboardService {
     remediationTaskId: string,
   ): Promise<TaskBoardIntegrationSource>;
   reconcileMergeOperationsV2?(limit?: number): Promise<number>;
-  resolveExecutionV2?(
+  transitionExecutionV2?(
     identity: TaskboardIdentity,
     runId: string,
-    input: TaskBoardExecutionResolutionInput,
+    input: TaskBoardExecutionTransitionInput,
   ): Promise<TaskBoardTask>;
 }
 

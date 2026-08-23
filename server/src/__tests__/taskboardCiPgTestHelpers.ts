@@ -16,8 +16,8 @@ export async function seedSuccessfulReviewCi(
   await pool.query(
     `INSERT INTO ${store.executionsTable}
        (id,task_id,run_id,session_id,status,purpose,trigger,protocol_version,attempt_id,
-        requested_by,started_at,finished_at,resolved_at)
-     VALUES($1,$2,$3,$4,'succeeded','review','initial',2,$5,'test-reviewer',now(),now(),now())`,
+        requested_by,started_at,finished_at)
+     VALUES($1,$2,$3,$4,'succeeded','review','initial',2,$5,'test-reviewer',now(),now())`,
     [executionId, taskId, `seed-review-${executionId}`, `seed-session-${executionId}`, `seed-attempt-${executionId}`],
   );
   await pool.query(

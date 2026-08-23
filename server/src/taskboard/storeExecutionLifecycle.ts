@@ -390,20 +390,14 @@ async function completeExecutionInternal(
       return { task: loaded.task, execution: currentExecution };
     }
     let completionInput = input;
-    let hasProtocolResolution = false;
-    if (currentExecution.protocolVersion === 2) {
-      const resolution = await client.query(
-        `SELECT 1 FROM ${store.resolutionsTable} WHERE execution_id=$1 LIMIT 1`,
-        [currentExecution.id],
-      );
-      hasProtocolResolution = Boolean(resolution.rows[0]);
-      if (input.status === 'succeeded' && !hasProtocolResolution) {
-        completionInput = {
-          status: 'failed',
-          error: 'TASKBOARD_PROTOCOL_INCOMPLETE',
-          commentBody: 'Agent Run 已结束，但没有提交结构化任务结果。任务状态保持不变。',
-        };
-      }
+    const hasProtocolTransition = currentExecution.protocolVersion === 2
+      && Boolean(executionResult.rows[0].transitioned_at);
+    if (currentExecution.protocolVersion === 2 && input.status === 'succeeded' && !hasProtocolTransition) {
+      completionInput = {
+        status: 'failed',
+        error: 'TASKBOARD_PROTOCOL_INCOMPLETE',
+        commentBody: 'Agent Run 已结束，但没有调用 execution.transition。',
+      };
     }
     const archivedResult = await finalizeExecutionForArchivedTask(
       store, client, loaded.task, loaded.boardArchivedAt, currentExecution, completionInput,
@@ -414,7 +408,7 @@ async function completeExecutionInternal(
     const executionSucceeded = await applyExecutionTaskCompletion(
       store, client, identity, loaded.task, currentExecution, executionResult.rows[0].created_at, completionInput,
     );
-    if (currentExecution.protocolVersion === 2 && !hasProtocolResolution
+    if (currentExecution.protocolVersion === 2 && !hasProtocolTransition
       && (completionInput.status === 'failed' || completionInput.status === 'cancelled')
       && !workflowFacts.hasMergeFact
       && loaded.task.status !== 'done' && loaded.task.status !== 'canceled') {
@@ -476,6 +470,28 @@ async function completeExecutionInternal(
             completionInput.error || 'Automatic execution retries exhausted'],
         );
       }
+    }
+
+    const existingExecutionComment = await client.query(
+      `SELECT 1 FROM ${store.changesTable}
+        WHERE task_id=$1 AND change_type='execution.comment' AND actor_id=$2 LIMIT 1`,
+      [taskId, runId],
+    );
+    if (completionInput.status !== 'succeeded'
+      || !existingExecutionComment.rows[0]
+      || (completionInput.attachments?.length ?? 0) > 0) {
+      const deliveryComment = await client.query(
+        `INSERT INTO ${store.commentsTable}
+           (id,task_id,body,attachments,author_type,author_id,author_name,continuation_eligible,version)
+         VALUES ($1,$2,$3,$4::jsonb,'agent',$5,'Agent',false,1)
+         RETURNING id`,
+        [randomUUID(), taskId, completionInput.commentBody.trim(),
+          JSON.stringify(completionInput.attachments ?? []), runId],
+      );
+      await appendTaskChange(store, client, taskId, 'execution.comment', 'agent', runId, {
+        commentId: String(deliveryComment.rows[0]!.id),
+        automatic: true,
+      });
     }
 
     const updated = await client.query(

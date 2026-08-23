@@ -435,7 +435,6 @@ export interface PostgresIntegrationV3ComposeHostOptions {
   tasksTable: string;
   boardsTable: string;
   executionsTable: string;
-  resolutionsTable: string;
   requestsOutboxTable: string;
   providerOperationsTable: string;
   resolvePaths(
@@ -475,15 +474,13 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
            SELECT e.id AS execution_id
              FROM ${this.options.requestsOutboxTable} o
              JOIN ${this.options.executionsTable} e ON e.id=o.payload->>'executionId'
-             JOIN ${this.options.resolutionsTable} r ON r.execution_id=e.id
             WHERE o.candidate_id=c.id AND o.candidate_revision=c.current_revision
               AND o.kind='work' AND o.work_round=c.work_round
               AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch
               AND COALESCE(o.payload->>'subjectDigest','')=$2
               AND e.task_id=c.integration_task_id AND e.purpose='work'
-              AND e.status='succeeded' AND r.outcome='ready_for_review'
-              AND r.historical=false AND r.applied=true
-            ORDER BY r.resolved_at DESC,o.updated_at DESC LIMIT 1
+              AND e.transitioned_at IS NOT NULL
+            ORDER BY e.transitioned_at DESC,o.updated_at DESC LIMIT 1
          ) work ON true
          LEFT JOIN LATERAL (
            SELECT o.execution_id,o.candidate_id,o.candidate_revision,o.workflow_epoch,o.lane_epoch,

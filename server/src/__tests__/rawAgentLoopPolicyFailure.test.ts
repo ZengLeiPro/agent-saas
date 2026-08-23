@@ -2,7 +2,8 @@ import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PlatformToolRuntime } from '../agent/toolRuntime.js';
+import { z } from 'zod';
+import { PlatformToolRuntime, type ToolProvider } from '../agent/toolRuntime.js';
 import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
@@ -31,6 +32,45 @@ class PartialPolicyFailureAdapter implements ModelAdapter {
     };
   }
 }
+
+class MultiTurnPolicyFailureAdapter implements ModelAdapter {
+  calls = 0;
+
+  async *stream(_request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+    this.calls += 1;
+    if (this.calls === 1) {
+      yield { type: 'text_delta', content: '前一轮正文' };
+      yield {
+        type: 'completed',
+        content: '前一轮正文',
+        toolCalls: [{ id: 'call-check', name: 'Check', arguments: '{}' }],
+      };
+      return;
+    }
+    yield {
+      type: 'completed',
+      content: '当前轮部分正文',
+      toolCalls: [],
+      terminalStatus: 'failed',
+      errorCode: 'cyber_policy',
+      errorMessage: 'Responses API HTTP 200: cyber_policy',
+      modelRequestId: 'request-policy-2',
+      attemptId: 'attempt-policy-2',
+      emittedOutputCount: 1,
+      providerStatus: 200,
+      failureKind: 'policy_rejection',
+      recoveryAction: 'switch_model',
+    };
+  }
+}
+
+const checkToolProvider: ToolProvider = {
+  list: () => [{
+    id: 'Check', name: 'Check', displayName: '检查', description: '测试工具', schema: z.object({}),
+    risk: 'safe', approvalMode: 'never', auditCategory: 'test.check',
+  }],
+  invoke: async (call) => call.toolId === 'Check' ? { content: '检查完成' } : undefined,
+};
 
 class PartialOrdinaryFailureAdapter implements ModelAdapter {
   async *stream(_request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
@@ -101,6 +141,44 @@ describe('RawAgentLoop policy failure', () => {
     expect(persisted.find((event) => event.type === 'run_finished')).toMatchObject({
       error: '当前模型受策略限制，请切换其他模型继续。',
       failureKind: 'policy_rejection', recoveryAction: 'switch_model',
+    });
+  });
+
+  it('多轮工具调用后的策略拒绝向子任务结果保留前轮正文与当前 partial', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-policy-multi-turn-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const adapter = new MultiTurnPolicyFailureAdapter();
+    const onResult = vi.fn();
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-policy-multi-turn'),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime({ providers: [checkToolProvider] }),
+    });
+
+    await collect(loop.run({
+      message: { channel: 'web', chatId: 'chat-1', content: '执行多轮任务' },
+      prompt: '执行多轮任务', instructions: '完成任务。', maxTurns: 2,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId: 'run-policy-multi-turn', sessionId: 'session-policy-multi-turn', model: 'gpt-5.6-sol', cwd,
+      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      hooks: { onResult },
+    }));
+
+    expect(adapter.calls).toBe(2);
+    expect(onResult).toHaveBeenCalledWith(expect.objectContaining({
+      subtype: 'error',
+      resultText: '前一轮正文当前轮部分正文',
+      failureKind: 'policy_rejection',
+      recoveryAction: 'switch_model',
+    }));
+    const persisted = await eventStore.list('session-policy-multi-turn');
+    expect(persisted.some((event) => event.type === 'tool_result' && event.content === '检查完成')).toBe(true);
+    expect(persisted.find((event) => event.type === 'assistant_message')).toMatchObject({
+      content: '当前轮部分正文', incomplete: true,
     });
   });
 

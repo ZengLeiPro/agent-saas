@@ -435,6 +435,38 @@ describe("MessageList business step sections", () => {
     expect(screen.getByText(/任务全部完成/)).toBeTruthy();
   });
 
+  it("非 debug MessageList 将策略拒绝子任务显示为失败文案并提供换模入口", () => {
+    const onSwitchModel = vi.fn();
+    const policyMessages: MessageItem[] = [
+      { id: "thinking-policy", type: "thinking", content: "检查策略", streaming: false },
+      {
+        id: "subagent-policy",
+        type: "subagent",
+        toolId: "tool-policy",
+        agentType: "general",
+        status: "failed",
+        errorMessage: "当前模型受策略限制，请切换其他模型继续。",
+        failureKind: "policy_rejection",
+        recoveryAction: "switch_model",
+      },
+    ];
+
+    const { container } = render(
+      <MessageList
+        messages={policyMessages}
+        loading={false}
+        debugModeOverride={false}
+        onSwitchModel={onSwitchModel}
+      />,
+    );
+
+    expect(screen.getByText("当前模型受策略限制，请切换其他模型继续。")).toBeTruthy();
+    expect(screen.queryByText("已运行")).toBeNull();
+    expect(container.querySelector(".lucide-circle-x")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "切换模型" }));
+    expect(onSwitchModel).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps a 500-message conversation DOM bounded before viewport measurement", () => {
     const longMessages = Array.from({ length: 500 }, (_, index): MessageItem => ({
       id: `user-${index + 1}`,

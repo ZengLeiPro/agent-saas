@@ -104,6 +104,11 @@ export function describeRuntimeFailure(
   };
 }
 
+export function mergeRuntimeFailureResultText(finalText: string, preservedTurnText: string): string {
+  if (!preservedTurnText || finalText.endsWith(preservedTurnText)) return finalText;
+  return `${finalText}${preservedTurnText}`;
+}
+
 export function assertSuccessfulModelTerminal(completed: Extract<ModelEvent, { type: 'completed' }>): void {
   if (completed.terminalStatus && completed.terminalStatus !== 'completed') {
     if (

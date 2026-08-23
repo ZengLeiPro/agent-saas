@@ -172,6 +172,8 @@ export type MessageItem =
       severity?: 'error' | 'cancelled' | 'billing';
       failureKind?: RuntimeFailureKind;
       recoveryAction?: RuntimeRecoveryAction;
+      /** 终态所属 runtime run；用于 live 与 durable refresh 稳定去重。 */
+      runId?: string;
       timestamp?: number;
     };
 

@@ -100,6 +100,7 @@ import {
   getInvalidPromptRequestBlockedFailure,
   isForcedDrainHandoff,
   isInvalidPromptRequestBlocked,
+  mergeRuntimeFailureResultText,
   mergeUsage,
   parseToolArguments,
   resolveZombieToolCallTimeoutMs,
@@ -108,7 +109,6 @@ import {
   unavailableToolMessage,
   type InvalidPromptRequestBlockedFailure,
 } from './rawAgentLoopHelpers.js';
-
 import { ApprovalAlreadyResolvedError, ApprovalPendingWithoutInteractionHook, InteractionPendingWithoutInteractionHook, RunLeaseLostError, ToolInvocationClaimLostError, captureModelStreamError, handleInvocationClaimLoss, readRunLeaseState, resolveClaimedWorkerId } from './rawAgentLoopControlErrors.js';
 import { collectParallelToolCallSegment, type PreparedParallelToolCall } from './toolParallelism.js';
 import { announceAppliedInterjections as announceInterjections, buildAtomicSteeringInputs, collectDurableInterjectionAnnouncementSourceRunIds, projectAtomicInterjectionEvents } from './rawAgentLoopInterjections.js';
@@ -1857,7 +1857,7 @@ export class RawAgentLoop implements AgentLoop {
       await context.hooks?.onResult?.({
         subtype: 'error',
         numTurns: turn,
-        resultText: preservedTurnText || finalText,
+        resultText: mergeRuntimeFailureResultText(finalText, preservedTurnText),
         ...(modelUsage ? { modelUsage } : {}),
         ...(failureProtocol ?? {}),
       });
@@ -3872,7 +3872,7 @@ export class RawAgentLoop implements AgentLoop {
       await args.context.hooks?.onResult?.({
         subtype: 'error',
         numTurns: turn,
-        resultText: preservedTurnText || finalText,
+        resultText: mergeRuntimeFailureResultText(finalText, preservedTurnText),
         ...(modelUsage ? { modelUsage } : {}),
         ...(failureProtocol ?? {}),
       });

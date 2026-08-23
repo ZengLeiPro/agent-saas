@@ -431,7 +431,7 @@ export function useSession(
                   id: `system-error-${lrs.runId}`,
                   type: 'system-error',
                   content: alertContent,
-                  severity, ...(lrs.failureKind ? { failureKind: lrs.failureKind } : {}), ...(lrs.recoveryAction ? { recoveryAction: lrs.recoveryAction } : {}),
+                  severity, runId: lrs.runId, ...(lrs.failureKind ? { failureKind: lrs.failureKind } : {}), ...(lrs.recoveryAction ? { recoveryAction: lrs.recoveryAction } : {}),
                   ...(lrs.finishedAt ? { timestamp: Date.parse(lrs.finishedAt) || Date.now() } : {}),
                 });
               }

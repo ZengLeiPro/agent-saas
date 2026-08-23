@@ -1353,7 +1353,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       const msgs = msgRef.current.messagesRef.current;
       const last = msgs[msgs.length - 1];
       if (!(last?.type === 'system-error' && last.content === alertContent && last.failureKind === args.failureKind && last.recoveryAction === args.recoveryAction)) {
-        msgRef.current.addMessage({ type: 'system-error', content: alertContent, severity, ...(args.failureKind ? { failureKind: args.failureKind } : {}), ...(args.recoveryAction ? { recoveryAction: args.recoveryAction } : {}), timestamp: Date.now() });
+        msgRef.current.addMessage({ type: 'system-error', content: alertContent, severity, runId: args.runId, ...(args.failureKind ? { failureKind: args.failureKind } : {}), ...(args.recoveryAction ? { recoveryAction: args.recoveryAction } : {}), timestamp: Date.now() });
       }
     }
 
@@ -2140,14 +2140,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                   id: m.id,
                   type: 'system-error',
                   content: alertContent,
-                  severity: alertSeverity, ...(doneEvent.failureKind ? { failureKind: doneEvent.failureKind } : {}), ...(doneEvent.recoveryAction ? { recoveryAction: doneEvent.recoveryAction } : {}),
+                  severity: alertSeverity, runId: doneEvent.runId, ...(doneEvent.failureKind ? { failureKind: doneEvent.failureKind } : {}), ...(doneEvent.recoveryAction ? { recoveryAction: doneEvent.recoveryAction } : {}),
                   timestamp: Date.now(),
                 }));
               } else {
                 msgRef.current.addMessage({
                   type: 'system-error',
                   content: alertContent,
-                  severity: alertSeverity, ...(doneEvent.failureKind ? { failureKind: doneEvent.failureKind } : {}), ...(doneEvent.recoveryAction ? { recoveryAction: doneEvent.recoveryAction } : {}),
+                  severity: alertSeverity, runId: doneEvent.runId, ...(doneEvent.failureKind ? { failureKind: doneEvent.failureKind } : {}), ...(doneEvent.recoveryAction ? { recoveryAction: doneEvent.recoveryAction } : {}),
                   timestamp: Date.now(),
                 });
               }

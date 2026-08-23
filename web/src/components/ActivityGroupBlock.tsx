@@ -8,6 +8,7 @@ import { RuntimeStatusBlock } from './RuntimeStatusBlock';
 import { AgentActivityShell, type AgentActivityState } from './AgentActivityShell';
 import { activityStatusIconClass, activityStatusTextClass, formatActivityDuration, type ActivityStatusTone } from './activityStatusStyles';
 import { cn } from '@/lib/utils';
+import { POLICY_REJECTION_FAILURE_MESSAGE } from '@agent/shared';
 
 interface GroupSummaryInfo {
   text: string;
@@ -139,6 +140,20 @@ function getActiveGroupSummary(items: MessageItem[]): GroupSummaryInfo {
 function getGroupSummary(items: MessageItem[], isActive: boolean, debugMode: boolean): GroupSummaryInfo {
   if (isActive) return getActiveGroupSummary(items);
 
+  const hasPolicyRejection = items.some((item) => (
+    item.type === 'subagent'
+    && item.failureKind === 'policy_rejection'
+    && item.recoveryAction === 'switch_model'
+  ));
+  if (hasPolicyRejection) {
+    return {
+      text: POLICY_REJECTION_FAILURE_MESSAGE,
+      tone: 'danger',
+      durationMs: getActivityDurationMs(items),
+      active: false,
+    };
+  }
+
   const cancelledCount = items.filter(item => (
     (item.type === 'tool_use' && item.executionStatus === 'cancelled')
     || (item.type === 'subagent' && item.status === 'cancelled')
@@ -235,7 +250,9 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
         ? 'waiting'
         : summary.tone === 'neutral'
           ? 'cancelled'
-          : 'completed';
+          : summary.tone === 'danger'
+            ? 'failed'
+            : 'completed';
   const meta = [
     !summary.active ? formatActivityDuration(summary.durationMs) : undefined,
     summary.progress,

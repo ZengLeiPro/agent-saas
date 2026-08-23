@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PgContextRecallService } from './postgresContextRecallService.js';
+import { ContextSourceAuthorizationRegistry } from './sourceAuthorization.js';
 import {
   AssignmentContextRecallScopeResolver,
   ContextRecallScopeDriftError,
@@ -52,6 +53,13 @@ describe('PgContextRecallService', () => {
     expect(query.mock.calls[0]![0]).toContain('LEFT JOIN test_agent_dws_accounts a');
     expect(query.mock.calls[0]![0]).toContain("a.event_policy_json #> '{contextPolicy}'");
     expect(query.mock.calls[0]![0]).toContain("s.kind<>'dws' OR a.status='active'");
+    expect(query.mock.calls[0]![0]).toContain("auth_partition.refused=TRUE OR auth_partition.status='refused'");
+    expect(query.mock.calls[0]![0]).toContain("i.review_status='confirmed'");
+    expect(query.mock.calls[0]![0]).toContain("i.valid_from<=NOW()");
+    expect(query.mock.calls[0]![0]).toContain("i.owner_principal=$10");
+    expect(query.mock.calls[0]![0]).toContain("'conflictStatus',i.conflict_status");
+    expect(query.mock.calls[0]![0]).toContain("'evidenceId',ie.evidence_id");
+    expect(query.mock.calls[0]![0]).toContain("other.record_revision<>r.current_revision");
     expect(query.mock.calls[0]![0]).toContain("CASE c.external_key");
     expect(query.mock.calls[0]![0]).toContain("{historical,lookbackDays}");
     expect(query.mock.calls[0]![0]).toContain("{realtimeEffectiveAt,all}");
@@ -59,7 +67,7 @@ describe('PgContextRecallService', () => {
     expect(query.mock.calls[0]![0]).toContain("{minutes,lookbackDays}");
     expect(query.mock.calls[0]![1]).toEqual([
       'tenant-a', ['collection-a'], 'Quarterly plan', '%Quarterly plan%', ['document'], ['source-a'],
-      '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', 5,
+      '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', 5, 'user-a',
     ]);
     expect(result).toMatchObject({
       degraded: true,
@@ -67,7 +75,7 @@ describe('PgContextRecallService', () => {
       hits: [{
         collectionId: 'collection-a', assignmentVersion: 7, kind: 'document',
         freshness: { status: 'fresh' },
-        route: { strategy: 'postgres_exact_ilike' },
+        route: { strategy: 'postgres_exact_ilike_derived' },
         evidence: [{ evidenceId: 'ev-1', excerpt: 'Quarterly plan' }],
       }],
     });
@@ -79,7 +87,65 @@ describe('PgContextRecallService', () => {
     expect(query.mock.calls[2]![0]).toContain("{realtime,conversationIds}");
     expect(query.mock.calls[2]![0]).toContain('v.revision=$5');
     expect(query.mock.calls[2]![0]).toContain('r.deleted=FALSE AND r.revoked=FALSE');
+    expect(query.mock.calls[2]![0]).toContain('r.owner_principal,r.acl_principals');
     expect(query.mock.calls[2]![0]).toContain('e.revision=v.revision');
+  });
+
+  it('adds only confirmed evidence-bound derived context to an already authorized source hit', async () => {
+    const query = vi.fn(async (sql: string) => sql.includes('BOOL_OR(refused OR status')
+      ? { rows: [{ refused: false, truncated: false, retry_wait: false }] }
+      : { rows: [hitRow({
+          route_rank: 3,
+          derived_items: [{ itemId: 'item-a', itemType: 'Status', semanticKey: 'status', value: { code: 'blocked' },
+            authority: 'informational', conflictStatus: 'open',
+            evidence: { sourceId: 'source-a', collectionId: 'collection-a', recordId: 'record-a', recordRevision: 2, evidenceId: 'ev-1' } }],
+        })] });
+    const service = new PgContextRecallService({ pool: { query } as never, tablePrefix: 'test' });
+    const result = await service.search({ subject, scope, query: 'blocked', limit: 5, filters: {} });
+    expect(result.hits[0]).toMatchObject({ derived: true, route: { stages: ['derived'] } });
+    expect(result.hits[0]?.content).toContain('[已确认派生上下文');
+    expect(result.hits[0]?.content).toContain('"code":"blocked"');
+    expect(result.hits[0]?.content).toContain('"conflictStatus":"open"');
+    expect(result.hits[0]?.content).toContain('"evidenceId":"ev-1"');
+  });
+
+  it('batch-authorizes taskboard candidates and never returns native-denied content', async () => {
+    const taskRows = [
+      hitRow({ source_kind: 'taskboard', record_id: 'allowed', metadata_json: { kind: 'board', boardId: 'board-a' } }),
+      hitRow({ source_kind: 'taskboard', record_id: 'denied', metadata_json: { kind: 'board', boardId: 'board-b' } }),
+    ];
+    const query = vi.fn(async (sql: string) => sql.includes('BOOL_OR(refused OR status')
+      ? { rows: [{ refused: false, truncated: false, retry_wait: false }] }
+      : { rows: taskRows });
+    const registry = new ContextSourceAuthorizationRegistry({
+      taskboard: { authorizeBatch: vi.fn(async (_subject, locators: readonly { recordId: string }[]) => locators.map(value => value.recordId === 'allowed')) },
+    });
+    const service = new PgContextRecallService({ pool: { query } as never, tablePrefix: 'test', sourceAuthorizationRegistry: registry });
+    const result = await service.search({ subject, scope, query: 'task', limit: 5, filters: {} });
+    expect(result).toMatchObject({ degraded: false, hits: [{ content: JSON.stringify({ text: 'Quarterly plan' }) }] });
+    expect(result.hits).toHaveLength(1);
+    expect(query.mock.calls[0]![0]).toContain("WHEN s.kind<>'dws' THEN TRUE");
+  });
+
+  it('fails closed with a non-sensitive degraded reason when a taskboard authorizer is absent or throws', async () => {
+    const row = hitRow({ source_kind: 'taskboard', metadata_json: { kind: 'task', taskId: 'task-a' } });
+    const query = vi.fn(async (sql: string) => sql.includes('BOOL_OR(refused OR status')
+      ? { rows: [{ refused: false, truncated: false, retry_wait: false }] }
+      : { rows: [row] });
+    const missing = new PgContextRecallService({ pool: { query } as never, tablePrefix: 'test' });
+    await expect(missing.search({ subject, scope, query: 'secret', limit: 5, filters: {} })).resolves.toEqual({
+      hits: [], degraded: true, degradationReasons: ['context_source_authorizer_missing'],
+    });
+
+    const broken = new PgContextRecallService({
+      pool: { query } as never, tablePrefix: 'test',
+      sourceAuthorizationRegistry: new ContextSourceAuthorizationRegistry({
+        taskboard: { authorizeBatch: async () => { throw new Error('unavailable'); } },
+      }),
+    });
+    const result = await broken.search({ subject, scope, query: 'secret', limit: 5, filters: {} });
+    expect(result).toEqual({ hits: [], degraded: true, degradationReasons: ['context_source_authorization_error'] });
+    expect(JSON.stringify(result)).not.toContain('Quarterly plan');
   });
 
   it('treats opaque ids as routing only and returns null outside the freshly authorized scope', async () => {

@@ -75,6 +75,9 @@ describePg('PgContextStore PostgreSQL integration', () => {
       leaseOwner: 'worker-a', leaseFence: lease!.leaseFence,
       records: [{
         recordId: 'message-1', externalRecordId: 'message-1', content: { text: '项目已获批' },
+        entityType: 'project', recordKind: 'event', nativeId: '项目/泉州：一号',
+        occurredAt: '2026-08-22T20:00:00+08:00', sourceEventId: 'taskboard-change:一',
+        ownerPrincipal: 'user:owner', aclPrincipals: ['user:z', 'user:a', 'user:a'],
         sourceUpdatedAt: '2026-08-22T12:00:00.000Z',
         evidence: [{ evidenceId: 'message-1:source', kind: 'source_locator', data: { conversationId: 'chat-a' } }],
       }],
@@ -86,7 +89,23 @@ describePg('PgContextStore PostgreSQL integration', () => {
     });
 
     expect(result.outbox[0]?.seq).toBe('9007199254740993');
+    expect(result.outbox[0]?.payload).toMatchObject({
+      version: 2, entityType: 'project', recordKind: 'event', nativeId: '项目/泉州：一号',
+      occurredAt: '2026-08-22T12:00:00.000Z', sourceEventId: 'taskboard-change:一',
+      ownerPrincipal: 'user:owner', aclPrincipals: ['user:a', 'user:z'],
+    });
     expect((await store.getOutboxCursor('tenant-a')).seq).toBe('9007199254740993');
+    expect(await store.getRecord('tenant-a', 'source-a', 'collection-shared', 'message-1')).toMatchObject({
+      record: {
+        entityType: 'project', recordKind: 'event', nativeId: '项目/泉州：一号',
+        occurredAt: '2026-08-22T12:00:00.000Z', sourceEventId: 'taskboard-change:一',
+        ownerPrincipal: 'user:owner', aclPrincipals: ['user:a', 'user:z'],
+      },
+      revision: {
+        entityType: 'project', recordKind: 'event', nativeId: '项目/泉州：一号',
+        ownerPrincipal: 'user:owner', aclPrincipals: ['user:a', 'user:z'],
+      },
+    });
     expect(await store.getEvidence('tenant-a', 'source-a', 'collection-shared', 'message-1'))
       .toMatchObject([{ evidenceId: 'message-1:source', kind: 'source_locator' }]);
     const partition = await store.getPartition('tenant-a', 'source-a', 'collection-shared', 'chat:main');

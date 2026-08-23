@@ -1,9 +1,15 @@
 import { Buffer } from 'node:buffer';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
+import { tableNames as contextPhase23TableNames } from '../phase23/migration.js';
 import { contextTableNames, contextTablePrefix, type ContextPgPool } from '../store/index.js';
 import type { ContextObject } from '../store/types.js';
 import type { ContextRecallService } from './ports.js';
+import {
+  ContextSourceAuthorizationRegistry,
+  contextSourceLocatorFromRow,
+  type ContextSourceAuthorizationDenyReason,
+} from './sourceAuthorization.js';
 import type {
   ContextRecallEvidence,
   ContextRecallFreshness,
@@ -28,6 +34,8 @@ export interface PgContextRecallServiceOptions {
   pool: ContextPgPool;
   tablePrefix?: string;
   idSigningKey?: string;
+  /** Optional for legacy chat/wiki/minutes compatibility; taskboard fails closed without it. */
+  sourceAuthorizationRegistry?: ContextSourceAuthorizationRegistry;
 }
 
 const PROCESS_CONTEXT_ID_SIGNING_KEY = randomBytes(32).toString('base64url');
@@ -38,12 +46,14 @@ const PROCESS_CONTEXT_ID_SIGNING_KEY = randomBytes(32).toString('base64url');
  */
 export class PgContextRecallService implements ContextRecallService {
   private readonly tables;
+  private readonly derivedTables;
   private readonly agentDwsAccountsTable: string;
   private readonly idSigningKey: string;
 
   constructor(private readonly options: PgContextRecallServiceOptions) {
     const tablePrefix = contextTablePrefix(options.tablePrefix);
     this.tables = contextTableNames(tablePrefix);
+    this.derivedTables = contextPhase23TableNames(tablePrefix);
     this.agentDwsAccountsTable = `${tablePrefix}_agent_dws_accounts`;
     this.idSigningKey = options.idSigningKey?.trim() || PROCESS_CONTEXT_ID_SIGNING_KEY;
   }
@@ -62,15 +72,19 @@ export class PgContextRecallService implements ContextRecallService {
     const result = await this.options.pool.query(`
       SELECT r.tenant_id,r.source_id,r.collection_id,r.record_id,r.current_revision,
              r.content_json,r.metadata_json,r.source_updated_at,r.observed_at,
-             s.kind AS source_kind,s.display_name AS source_display_name,
-             COALESCE(NULLIF(r.metadata_json->>'kind',''),s.kind) AS record_kind,
+             s.kind AS source_kind,s.display_name AS source_display_name,c.external_key AS collection_external_key,
+             r.deleted,r.entity_type,r.native_id,r.occurred_at,r.source_event_id,r.owner_principal,r.acl_principals,
+             COALESCE(r.record_kind,NULLIF(r.metadata_json->>'kind',''),s.kind) AS record_kind,
              COALESCE(sync_health.degraded,FALSE) AS sync_degraded,
              sync_health.sync_as_of,
              COALESCE(evidence.items,'[]'::jsonb) AS evidence_items,
+             COALESCE(derived_context.items,'[]'::jsonb) AS derived_items,
+             COALESCE(derived_context.matches_query,FALSE) AS derived_match,
              CASE
                WHEN r.record_id=$3 OR r.external_record_id=$3 THEN 1
                WHEN r.content_json::text=$3 OR r.metadata_json::text=$3 THEN 2
-               ELSE 3
+               WHEN COALESCE(derived_context.matches_query,FALSE) THEN 3
+               ELSE 4
              END AS route_rank
       FROM ${this.tables.records} r
       JOIN ${this.tables.sources} s
@@ -94,31 +108,74 @@ export class PgContextRecallService implements ContextRecallService {
           AND e.collection_id=r.collection_id AND e.record_id=r.record_id
           AND e.revision=r.current_revision
       ) evidence ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT JSONB_AGG(JSONB_BUILD_OBJECT(
+          'itemId',i.item_id,'itemType',i.item_type,'semanticKey',i.semantic_key,
+          'value',i.value_json->'value','authority',i.authority,'conflictStatus',i.conflict_status,
+          'validFrom',i.valid_from,'validTo',i.valid_to,
+          'evidence',JSONB_BUILD_OBJECT('sourceId',ie.source_id,'collectionId',ie.collection_id,
+            'recordId',ie.record_id,'recordRevision',ie.record_revision,'evidenceId',ie.evidence_id)
+        ) ORDER BY CASE i.authority WHEN 'authoritative' THEN 3 WHEN 'advisory' THEN 2 ELSE 1 END DESC,
+          i.semantic_key,i.item_id) AS items,
+          BOOL_OR(i.search_text ILIKE $4 ESCAPE '\\') AS matches_query
+        FROM ${this.derivedTables.derivedItems} i
+        JOIN ${this.derivedTables.itemEvidence} ie ON ie.tenant_id=i.tenant_id
+          AND ie.generation=i.generation AND ie.item_id=i.item_id AND ie.revoked=FALSE
+          AND ie.source_id=r.source_id AND ie.collection_id=r.collection_id
+          AND ie.record_id=r.record_id AND ie.record_revision=r.current_revision
+        WHERE i.tenant_id=r.tenant_id AND i.lifecycle='active' AND i.review_status='confirmed'
+          AND i.valid_from<=NOW() AND (i.valid_to IS NULL OR i.valid_to>NOW())
+          AND (i.derivation='source' OR i.owner_principal IS NULL OR i.owner_principal=$10)
+          AND NOT EXISTS (
+            SELECT 1 FROM ${this.derivedTables.itemEvidence} other
+            WHERE other.tenant_id=i.tenant_id AND other.generation=i.generation AND other.item_id=i.item_id
+              AND (other.revoked=TRUE OR other.source_id<>r.source_id OR other.collection_id<>r.collection_id
+                OR other.record_id<>r.record_id OR other.record_revision<>r.current_revision)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM ${this.derivedTables.reviews} rejected
+            WHERE rejected.tenant_id=i.tenant_id AND rejected.review_status='rejected' AND rejected.revoked=FALSE
+              AND rejected.comment IS NOT NULL AND PG_INPUT_IS_VALID(rejected.comment,'jsonb')
+              AND rejected.comment::jsonb->>'rejectFingerprint'=i.value_json->>'valueFingerprint'
+              AND (rejected.comment::jsonb #>> '{scope,type}'='org'
+                OR rejected.comment::jsonb #>> '{scope,personId}'=$10)
+          )
+      ) derived_context ON TRUE
       WHERE r.tenant_id=$1 AND r.collection_id=ANY($2::text[])
         AND r.deleted=FALSE AND r.revoked=FALSE
         AND s.status='active' AND c.status='active'
         AND (s.kind<>'dws' OR a.status='active')
+        AND NOT EXISTS (
+          SELECT 1 FROM ${this.tables.partitions} auth_partition
+          WHERE auth_partition.tenant_id=r.tenant_id AND auth_partition.source_id=r.source_id
+            AND auth_partition.collection_id=r.collection_id
+            AND (auth_partition.refused=TRUE OR auth_partition.status='refused')
+        )
         ${chatPolicySql('r', 's', 'c', 'a')}
         AND (
           r.record_id=$3 OR r.external_record_id=$3
           OR r.content_json::text ILIKE $4 ESCAPE '\\'
           OR r.metadata_json::text ILIKE $4 ESCAPE '\\'
+          OR COALESCE(derived_context.matches_query,FALSE)
         )
-        AND ($5::text[] IS NULL OR COALESCE(NULLIF(r.metadata_json->>'kind',''),s.kind)=ANY($5::text[]))
+        AND ($5::text[] IS NULL OR COALESCE(r.record_kind,NULLIF(r.metadata_json->>'kind',''),s.kind)=ANY($5::text[]))
         AND ($6::text[] IS NULL OR r.source_id=ANY($6::text[]) OR s.kind=ANY($6::text[]))
         AND ($7::timestamptz IS NULL OR COALESCE(r.source_updated_at,r.observed_at) >= $7)
         AND ($8::timestamptz IS NULL OR COALESCE(r.source_updated_at,r.observed_at) < $8)
       ORDER BY route_rank,COALESCE(r.source_updated_at,r.observed_at) DESC,r.record_id
       LIMIT $9
-    `, [request.subject.tenantId, collectionIds, request.query, escapedPattern, kinds, sources, from, to, request.limit]);
+    `, [request.subject.tenantId, collectionIds, request.query, escapedPattern, kinds, sources, from, to,
+      request.limit, request.subject.userId]);
     throwIfAborted(request.signal);
 
-    const hits = result.rows.map(row => this.hitFromRow(row as Row, assignmentVersions));
+    const authorization = await this.authorizeNativeRows(request.subject, result.rows as Row[]);
+    const hits = authorization.rows.map(row => this.hitFromRow(row, assignmentVersions));
     const scopeHealth = await this.loadScopeHealth(request.subject.tenantId, collectionIds);
+    const reasons = [...new Set([...scopeHealth.reasons, ...authorization.reasons])];
     return {
       hits,
-      degraded: scopeHealth.reasons.length > 0,
-      ...(scopeHealth.reasons.length ? { degradationReasons: scopeHealth.reasons } : {}),
+      degraded: reasons.length > 0,
+      ...(reasons.length ? { degradationReasons: reasons } : {}),
     };
   }
 
@@ -132,11 +189,15 @@ export class PgContextRecallService implements ContextRecallService {
     const result = await this.options.pool.query(`
       SELECT v.tenant_id,v.source_id,v.collection_id,v.record_id,v.revision AS current_revision,
              v.content_json,v.metadata_json,v.source_updated_at,v.observed_at,
-             s.kind AS source_kind,s.display_name AS source_display_name,
-             COALESCE(NULLIF(v.metadata_json->>'kind',''),s.kind) AS record_kind,
+             s.kind AS source_kind,s.display_name AS source_display_name,c.external_key AS collection_external_key,
+             v.deleted,v.entity_type,v.native_id,v.occurred_at,v.source_event_id,
+             r.owner_principal,r.acl_principals,
+             COALESCE(v.record_kind,NULLIF(v.metadata_json->>'kind',''),s.kind) AS record_kind,
              COALESCE(sync_health.degraded,FALSE) AS sync_degraded,
              sync_health.sync_as_of,
              COALESCE(evidence.items,'[]'::jsonb) AS evidence_items,
+             COALESCE(derived_context.items,'[]'::jsonb) AS derived_items,
+             FALSE AS derived_match,
              1 AS route_rank
       FROM ${this.tables.records} r
       JOIN ${this.tables.revisions} v
@@ -163,21 +224,89 @@ export class PgContextRecallService implements ContextRecallService {
           AND e.collection_id=v.collection_id AND e.record_id=v.record_id
           AND e.revision=v.revision
       ) evidence ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT JSONB_AGG(JSONB_BUILD_OBJECT(
+          'itemId',i.item_id,'itemType',i.item_type,'semanticKey',i.semantic_key,
+          'value',i.value_json->'value','authority',i.authority,'conflictStatus',i.conflict_status,
+          'validFrom',i.valid_from,'validTo',i.valid_to,
+          'evidence',JSONB_BUILD_OBJECT('sourceId',ie.source_id,'collectionId',ie.collection_id,
+            'recordId',ie.record_id,'recordRevision',ie.record_revision,'evidenceId',ie.evidence_id)
+        ) ORDER BY CASE i.authority WHEN 'authoritative' THEN 3 WHEN 'advisory' THEN 2 ELSE 1 END DESC,
+          i.semantic_key,i.item_id) AS items
+        FROM ${this.derivedTables.derivedItems} i
+        JOIN ${this.derivedTables.itemEvidence} ie ON ie.tenant_id=i.tenant_id
+          AND ie.generation=i.generation AND ie.item_id=i.item_id AND ie.revoked=FALSE
+          AND ie.source_id=v.source_id AND ie.collection_id=v.collection_id
+          AND ie.record_id=v.record_id AND ie.record_revision=v.revision
+        WHERE i.tenant_id=v.tenant_id AND i.lifecycle='active' AND i.review_status='confirmed'
+          AND i.valid_from<=NOW() AND (i.valid_to IS NULL OR i.valid_to>NOW())
+          AND (i.derivation='source' OR i.owner_principal IS NULL OR i.owner_principal=$6)
+          AND NOT EXISTS (
+            SELECT 1 FROM ${this.derivedTables.itemEvidence} other
+            WHERE other.tenant_id=i.tenant_id AND other.generation=i.generation AND other.item_id=i.item_id
+              AND (other.revoked=TRUE OR other.source_id<>v.source_id OR other.collection_id<>v.collection_id
+                OR other.record_id<>v.record_id OR other.record_revision<>v.revision)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM ${this.derivedTables.reviews} rejected
+            WHERE rejected.tenant_id=i.tenant_id AND rejected.review_status='rejected' AND rejected.revoked=FALSE
+              AND rejected.comment IS NOT NULL AND PG_INPUT_IS_VALID(rejected.comment,'jsonb')
+              AND rejected.comment::jsonb->>'rejectFingerprint'=i.value_json->>'valueFingerprint'
+              AND (rejected.comment::jsonb #>> '{scope,type}'='org'
+                OR rejected.comment::jsonb #>> '{scope,personId}'=$6)
+          )
+      ) derived_context ON TRUE
       WHERE r.tenant_id=$1 AND r.source_id=$2 AND r.collection_id=$3 AND r.record_id=$4
         AND r.deleted=FALSE AND r.revoked=FALSE
         AND s.status='active' AND c.status='active'
         AND (s.kind<>'dws' OR a.status='active')
+        AND NOT EXISTS (
+          SELECT 1 FROM ${this.tables.partitions} auth_partition
+          WHERE auth_partition.tenant_id=r.tenant_id AND auth_partition.source_id=r.source_id
+            AND auth_partition.collection_id=r.collection_id
+            AND (auth_partition.refused=TRUE OR auth_partition.status='refused')
+        )
         ${chatPolicySql('v', 's', 'c', 'a')}
-    `, [id.t, id.s, id.c, id.r, id.v]);
+    `, [id.t, id.s, id.c, id.r, id.v, request.subject.userId]);
     throwIfAborted(request.signal);
     if (!result.rows[0]) return { hit: null, degraded: false };
-    const hit = this.hitFromRow(result.rows[0] as Row, assignmentVersions);
-    const degraded = Boolean((result.rows[0] as Row).sync_degraded);
+    const row = result.rows[0] as Row;
+    const authorization = await this.authorizeNativeRows(request.subject, [row]);
+    if (!authorization.rows[0]) {
+      return {
+        hit: null,
+        degraded: authorization.reasons.length > 0,
+        ...(authorization.reasons.length ? { degradationReasons: authorization.reasons } : {}),
+      };
+    }
+    const hit = this.hitFromRow(authorization.rows[0], assignmentVersions);
+    const reasons = [
+      ...(row.sync_degraded ? ['context_sync_incomplete'] : []),
+      ...authorization.reasons,
+    ];
     return {
       hit,
-      degraded,
-      ...(degraded ? { degradationReasons: ['context_sync_incomplete'] } : {}),
+      degraded: reasons.length > 0,
+      ...(reasons.length ? { degradationReasons: reasons } : {}),
     };
+  }
+
+  private async authorizeNativeRows(
+    subject: { tenantId: string; userId: string },
+    rows: readonly Row[],
+  ): Promise<{ rows: Row[]; reasons: ContextSourceAuthorizationDenyReason[] }> {
+    const native = rows.map((row, index) => ({ row, index }))
+      .filter(({ row }) => String(row.source_kind).toLowerCase() !== 'dws');
+    if (native.length === 0) return { rows: [...rows], reasons: [] };
+    const registry = this.options.sourceAuthorizationRegistry ?? new ContextSourceAuthorizationRegistry();
+    const decisions = await registry.authorizeBatch(subject, native.map(({ row }) => contextSourceLocatorFromRow(row)));
+    const deniedIndexes = new Set<number>();
+    const reasons: ContextSourceAuthorizationDenyReason[] = [];
+    decisions.forEach((decision, index) => {
+      if (!decision.authorized) deniedIndexes.add(native[index]!.index);
+      if (decision.reason && !reasons.includes(decision.reason)) reasons.push(decision.reason);
+    });
+    return { rows: rows.filter((_row, index) => !deniedIndexes.has(index)), reasons };
   }
 
   private async loadScopeHealth(tenantId: string, collectionIds: string[]): Promise<{ reasons: string[] }> {
@@ -206,7 +335,13 @@ export class PgContextRecallService implements ContextRecallService {
     const metadata = objectValue(row.metadata_json);
     const sourceUpdatedAt = optionalIso(row.source_updated_at);
     const observedAt = optionalIso(row.observed_at);
+    const occurredAt = optionalIso(row.occurred_at) ?? stringField(metadata, 'occurredAt');
     const syncAsOf = optionalIso(row.sync_as_of);
+    const derivedItems = jsonArray(row.derived_items);
+    const sourceContent = contentText(row.content_json);
+    const content = derivedItems.length > 0
+      ? `${sourceContent}\n\n[已确认派生上下文；仍须以所附 Evidence 为准]\n${JSON.stringify(derivedItems)}`
+      : sourceContent;
     const freshness: ContextRecallFreshness = row.sync_degraded
       ? { status: 'stale', ...(syncAsOf ? { asOf: syncAsOf } : {}), reason: 'context_sync_incomplete' }
       : syncAsOf
@@ -220,8 +355,8 @@ export class PgContextRecallService implements ContextRecallService {
       collectionId,
       assignmentVersion: assignmentVersions.get(collectionId)!,
       kind: String(row.record_kind),
-      content: contentText(row.content_json),
-      score: row.route_rank === 1 ? 1 : row.route_rank === 2 ? 0.8 : 0.5,
+      content,
+      score: row.route_rank === 1 ? 1 : row.route_rank === 2 ? 0.8 : row.route_rank === 3 ? 0.7 : 0.5,
       source: {
         sourceId,
         kind: String(row.source_kind),
@@ -229,13 +364,17 @@ export class PgContextRecallService implements ContextRecallService {
         ...(stringField(metadata, 'url') ? { url: stringField(metadata, 'url') } : {}),
       },
       time: {
-        ...(stringField(metadata, 'occurredAt') ? { occurredAt: stringField(metadata, 'occurredAt') } : {}),
+        ...(occurredAt ? { occurredAt } : {}),
         ...(sourceUpdatedAt ? { sourceUpdatedAt } : {}),
         ...(observedAt ? { observedAt } : {}),
       },
       freshness,
-      route: { strategy: 'postgres_exact_ilike', stages: row.route_rank === 1 ? ['exact'] : ['ilike'] },
-      derived: metadata.derived === true,
+      route: {
+        strategy: 'postgres_exact_ilike_derived',
+        stages: row.route_rank === 1 || row.route_rank === 2
+          ? ['exact'] : row.route_rank === 3 ? ['derived'] : ['ilike'],
+      },
+      derived: metadata.derived === true || derivedItems.length > 0,
       evidence: evidenceFromRow(row, { sourceId, collectionId, recordId, revision }),
     };
   }
@@ -282,6 +421,11 @@ function evidenceFromRow(row: Row, identity: {
 function contentText(value: unknown): string {
   if (typeof value === 'string') return value;
   return JSON.stringify(value);
+}
+
+function jsonArray(value: unknown): unknown[] {
+  const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+  return Array.isArray(parsed) ? parsed : [];
 }
 
 function objectValue(value: unknown): ContextObject {
@@ -350,7 +494,7 @@ function chatPolicySql(
   // Every domain is fail-closed. Chat uses the union of time-bounded historical
   // learning and post-effective realtime listening; Wiki/minutes require their
   // explicit opt-in flags.
-  return `AND CASE ${collectionAlias}.external_key
+  return `AND CASE WHEN ${sourceAlias}.kind<>'dws' THEN TRUE ELSE CASE ${collectionAlias}.external_key
     WHEN 'chat' THEN (${historical} OR ${realtime})
     WHEN 'wiki' THEN ${policy} #>> '{wiki,enabled}' = 'true'
     WHEN 'minutes' THEN (
@@ -362,7 +506,7 @@ function chatPolicySql(
       )
     )
     ELSE FALSE
-  END`;
+  END END`;
 }
 
 function escapeLike(value: string): string {

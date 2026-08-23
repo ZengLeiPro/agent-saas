@@ -214,7 +214,6 @@ import {
 } from '../data/connectorDictionaryStore.js';
 import { setConnectorDictionary, setTenantConnectorDictionaries } from '../agent/toolPresentationBuilder.js';
 import { UploadManager } from '../uploads/manager.js';
-
 import { migrateCronGroups } from '../data/groups/migrate.js';
 import { findTranscriptPathBySessionId } from '../data/transcripts/store.js';
 import { runStartupMigrations } from '../data/migrations/startup.js';
@@ -232,7 +231,7 @@ import { createAuthMiddleware } from '../auth/middleware.js';
 import { sanitizeUserOverrides } from '../security/extraDirs.js';
 import { initializeRuntimeGovernanceStores } from './runtimeGovernanceStores.js';
 import type { ContextStore } from '../context/store/index.js';
-import { createRuntimeMemoryContextTools } from './runtimeMemoryContextTools.js';
+import { createRuntimeContextPlane, createRuntimeMemoryContextTools } from './runtimeMemoryContextTools.js';
 import { initializeRuntimeGovernanceConnectors } from './runtimeGovernanceConnectors.js';
 import {
   initializeRuntimeGovernanceCredentials,
@@ -291,7 +290,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       `processRole=${processRole} requires runtimeEventStore.backend=pg for cross-instance tenant lifecycle coordination`,
     );
   }
-
   // 从配置初始化全局 Logger（必须在其他模块使用 logger 之前）
   const loggingConfig = config.observability?.logging;
   if (loggingConfig !== false) {
@@ -303,7 +301,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ...(opts.colorEnabled !== undefined ? { colorEnabled: opts.colorEnabled } : {}),
     });
   }
-
   const agentCwd = config.agent.cwd ? resolve(processCwd, config.agent.cwd) : processCwd;
   ensureDirectory(agentCwd, 'agent cwd directory');
   const projectRoot = resolve(processCwd, '..');
@@ -320,7 +317,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     processCwd,
     globalAgentCwd: agentCwd,
   });
-
   // PR 6 P0-5：多组织 settings 加载
   //   - v1：`workspace-shared/.ky-agent/settings.json` → sharedEnv (default tenant fallback)
   //   - v2 per-tenant：`workspace-shared/<tenantSlug>/.ky-agent/settings.json` → tenantSharedEnv[slug]
@@ -332,7 +328,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   if (!sharedEnv) {
     serverLogger.warn(`Shared settings not found: ${sharedSettingsPath}`);
   }
-
   // v2：sharedDir/<tenantSlug>/.ky-agent/settings.json — 扫子目录拼 map
   const tenantSharedEnv: Record<string, Record<string, string>> = {};
   try {
@@ -1502,6 +1497,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   });
   googleWorkspaceOAuthService = initializedGoogleWorkspaceOAuthService;
   credentialBroker = initializedCredentialBroker;
+  const { authorizationRegistry: contextSourceAuthorizationRegistry, derivedStore: derivedContextStore,
+    syncRuntime: contextPlanePhase2Runtime } = createRuntimeContextPlane({
+    contextStore, taskboardStore: rawTaskboardStore, membershipStore, assignmentStore, userStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, fetchImpl: egressFetch, enableWorker: enableSchedulerWorker, logger: serverLogger,
+  });
   taskboardRepositoryProvider = configureTaskboardGithubRepositoryProvider(taskboardStoreService, userStore, {
     connectionStore: connectorConnectionStore,
     vault: secretVault,
@@ -1657,7 +1656,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const codexDeviceAuthService = new CodexDeviceAuthService(egressFetch);
   const titleModelAdapterFactory = createTitleModelAdapterFactory(codexCredentialManager, egressFetch);
   const memoryContextTools = createRuntimeMemoryContextTools({
-    contextStore, assignments: assignmentStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, recallIdSigningKey: config.auth?.jwtSecret, sessionCatalog,
+    contextStore, assignments: assignmentStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, recallIdSigningKey: config.auth?.jwtSecret, sessionCatalog, sourceAuthorizationRegistry: contextSourceAuthorizationRegistry,
     memoryStore: memoryConsolidationStore, memoryIndexService: memoryIndexServiceRef.current, logger: { info: msg => serverLogger.info(msg), warn: msg => serverLogger.warn(msg) },
   });
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
@@ -3031,6 +3030,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     disconnectNotionConnection,
     googleWorkspaceOAuthService,
     notionAuthFlowShutdown: notionAuthFlowService ? () => notionAuthFlowService?.stop() : undefined,
+    contextPlaneShutdown: contextPlanePhase2Runtime ? () => contextPlanePhase2Runtime!.stop() : undefined,
     dwsAuthKeepaliveShutdown: dwsAuthKeepaliveService || dwsAuthFlowService || agentDwsRuntime
       ? async () => {
           dwsAuthFlowService?.stop();
@@ -3082,7 +3082,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     entitlementStore,
     directoryGroupStore,
     oauthGrantStore,
-    assignmentStore, contextStore, credentialStore, connectorCatalogStore,
+    assignmentStore, contextStore, contextSourceAuthorizationRegistry, derivedContextStore, credentialStore, connectorCatalogStore,
     environmentStore,
     agentResourceStore,
     skillGovernanceStore,

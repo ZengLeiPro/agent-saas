@@ -63,8 +63,21 @@ export interface ContextAdminStorePort {
   ): Promise<number>;
 }
 
+export interface ContextAdminConsumerStorePort {
+  listConsumers(tenantId: string): Promise<Array<{
+    id: string;
+    name: string;
+    kind: string;
+    status: 'current' | 'lagging' | 'blocked' | 'offline';
+    watermarkAt: string | null;
+    lagSeconds: number | null;
+    detail?: string;
+  }>>;
+}
+
 export interface ContextAdminRouterOptions {
   store?: ContextAdminStorePort;
+  consumers?: ContextAdminConsumerStorePort;
   now?: () => Date;
 }
 
@@ -123,7 +136,8 @@ export function createContextAdminRouter(options: ContextAdminRouterOptions): Ro
         now,
         unreadableCounts.get(collectionKey(collection.sourceId, collection.collectionId)) ?? 0,
       ));
-      return res.json({ generatedAt: now.toISOString(), sources: cards, consumers: [] });
+      const consumers = options.consumers ? await options.consumers.listConsumers(tenantId) : [];
+      return res.json({ generatedAt: now.toISOString(), sources: cards, consumers });
     } catch {
       return res.status(503).json({ code: 'CONTEXT_ADMIN_READ_UNAVAILABLE' });
     }

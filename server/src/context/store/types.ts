@@ -3,6 +3,18 @@ export type ContextObject = Record<string, ContextJson>;
 
 export type ContextResourceStatus = 'active' | 'disabled' | 'revoked' | 'deleted';
 export type ContextPartitionStatus = 'idle' | 'syncing' | 'retry_wait' | 'complete' | 'refused';
+export type ContextEntityType = 'customer' | 'project' | 'person' | 'meeting' | 'task';
+export type ContextRecordKind = 'snapshot' | 'event';
+
+export interface ContextTypedEnvelope {
+  entityType?: ContextEntityType;
+  recordKind?: ContextRecordKind;
+  nativeId?: string;
+  occurredAt?: string;
+  sourceEventId?: string;
+  ownerPrincipal?: string;
+  aclPrincipals?: string[];
+}
 
 export interface ContextSource {
   tenantId: string;
@@ -121,7 +133,7 @@ export interface FailContextPartitionInput extends ContextPartitionFenceInput {
   refused?: boolean;
 }
 
-export interface ContextSourceRecord {
+export interface ContextSourceRecord extends ContextTypedEnvelope {
   tenantId: string;
   sourceId: string;
   collectionId: string;
@@ -139,7 +151,7 @@ export interface ContextSourceRecord {
   updatedAt: string;
 }
 
-export interface ContextRecordRevision {
+export interface ContextRecordRevision extends ContextTypedEnvelope {
   tenantId: string;
   sourceId: string;
   collectionId: string;
@@ -173,7 +185,7 @@ export interface ContextEvidenceInput {
   data: ContextObject;
 }
 
-export interface ContextIngestRecordInput {
+export interface ContextIngestRecordInput extends ContextTypedEnvelope {
   recordId: string;
   externalRecordId: string;
   content: ContextJson;

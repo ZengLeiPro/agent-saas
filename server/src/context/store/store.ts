@@ -19,6 +19,7 @@ import {
   type ContextSource,
   type ContextSourceRecord,
   type ContextSyncPartition,
+  type ContextTypedEnvelope,
   type CreateContextCollectionInput,
   type CreateContextSourceInput,
   type EnsureContextPartitionInput,
@@ -42,7 +43,9 @@ import {
   assertContextStatus,
   assertContextText,
   computeContextVersionFingerprint,
+  normalizeContextAclPrincipals,
   parseContextDate,
+  parseContextEnvelopeDate,
 } from './validation.js';
 
 type Row = Record<string, unknown>;
@@ -68,6 +71,24 @@ function optionalIso(value: unknown): string | undefined {
 
 function json<T extends ContextJson>(value: unknown): T {
   return (typeof value === 'string' ? JSON.parse(value) : value) as T;
+}
+
+function envelopeFromRow(row: Row): ContextTypedEnvelope {
+  const rawAclPrincipals = typeof row.acl_principals === 'string'
+    ? json<ContextJson>(row.acl_principals)
+    : row.acl_principals;
+  const aclPrincipals = Array.isArray(rawAclPrincipals)
+    ? rawAclPrincipals.map(value => String(value))
+    : undefined;
+  return {
+    ...(row.entity_type === null || row.entity_type === undefined ? {} : { entityType: String(row.entity_type) as ContextTypedEnvelope['entityType'] }),
+    ...(row.record_kind === null || row.record_kind === undefined ? {} : { recordKind: String(row.record_kind) as ContextTypedEnvelope['recordKind'] }),
+    ...(row.native_id === null || row.native_id === undefined ? {} : { nativeId: String(row.native_id) }),
+    ...(optionalIso(row.occurred_at) ? { occurredAt: optionalIso(row.occurred_at) } : {}),
+    ...(row.source_event_id === null || row.source_event_id === undefined ? {} : { sourceEventId: String(row.source_event_id) }),
+    ...(row.owner_principal === null || row.owner_principal === undefined ? {} : { ownerPrincipal: String(row.owner_principal) }),
+    ...(aclPrincipals === undefined ? {} : { aclPrincipals }),
+  };
 }
 
 function sourceFromRow(row: Row): ContextSource {
@@ -113,6 +134,7 @@ function recordFromRow(row: Row): ContextSourceRecord {
     tenantId: String(row.tenant_id), sourceId: String(row.source_id), collectionId: String(row.collection_id),
     recordId: String(row.record_id), externalRecordId: String(row.external_record_id),
     currentRevision: Number(row.current_revision), contentHash: String(row.content_hash),
+    ...envelopeFromRow(row),
     content: json(row.content_json), metadata: json<ContextObject>(row.metadata_json),
     deleted: Boolean(row.deleted), revoked: Boolean(row.revoked),
     ...(optionalIso(row.source_updated_at) ? { sourceUpdatedAt: optionalIso(row.source_updated_at) } : {}),
@@ -124,6 +146,7 @@ function revisionFromRow(row: Row): ContextRecordRevision {
   return {
     tenantId: String(row.tenant_id), sourceId: String(row.source_id), collectionId: String(row.collection_id),
     recordId: String(row.record_id), revision: Number(row.revision), contentHash: String(row.content_hash),
+    ...envelopeFromRow(row),
     content: json(row.content_json), metadata: json<ContextObject>(row.metadata_json),
     deleted: Boolean(row.deleted), revoked: Boolean(row.revoked),
     ...(optionalIso(row.source_updated_at) ? { sourceUpdatedAt: optionalIso(row.source_updated_at) } : {}),
@@ -489,6 +512,8 @@ export class ContextStore {
         const revoked = item.revoked ?? false;
         const sourceUpdatedAt = parseContextDate(item.sourceUpdatedAt);
         const observedAt = parseContextDate(item.observedAt) ?? new Date().toISOString();
+        const occurredAt = parseContextEnvelopeDate(item.occurredAt);
+        const aclPrincipals = normalizeContextAclPrincipals(item.aclPrincipals);
         await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
           `context-record:${input.tenantId}:${input.sourceId}:${input.collectionId}:${item.externalRecordId}`,
         ]);
@@ -513,22 +538,31 @@ export class ContextStore {
           const updated = await client.query(`
             UPDATE ${this.tables.records}
             SET current_revision=$5,content_hash=$6,content_json=$7::jsonb,metadata_json=$8::jsonb,
-                deleted=$9,revoked=$10,source_updated_at=$11::timestamptz,observed_at=$12::timestamptz,updated_at=NOW()
+                deleted=$9,revoked=$10,source_updated_at=$11::timestamptz,observed_at=$12::timestamptz,
+                entity_type=$13,record_kind=$14,native_id=$15,occurred_at=$16::timestamptz,
+                source_event_id=$17,owner_principal=$18,acl_principals=$19::jsonb,updated_at=NOW()
             WHERE tenant_id=$1 AND source_id=$2 AND collection_id=$3 AND record_id=$4 RETURNING *
           `, [input.tenantId, input.sourceId, input.collectionId, item.recordId, revision, contentHash,
-            JSON.stringify(item.content), JSON.stringify(metadata), deleted, revoked, sourceUpdatedAt ?? null, observedAt]);
+            JSON.stringify(item.content), JSON.stringify(metadata), deleted, revoked, sourceUpdatedAt ?? null, observedAt,
+            item.entityType ?? null, item.recordKind ?? null, item.nativeId ?? null, occurredAt ?? null,
+            item.sourceEventId ?? null, item.ownerPrincipal ?? null,
+            aclPrincipals === undefined ? null : JSON.stringify(aclPrincipals)]);
           recordRow = updated.rows[0] as Row;
           revised += 1;
         } else {
           const inserted = await client.query(`
             INSERT INTO ${this.tables.records}
               (tenant_id,source_id,collection_id,record_id,external_record_id,current_revision,content_hash,
-               content_json,metadata_json,deleted,revoked,source_updated_at,observed_at)
-            VALUES ($1,$2,$3,$4,$5,1,$6,$7::jsonb,$8::jsonb,$9,$10,$11::timestamptz,$12::timestamptz)
+               content_json,metadata_json,deleted,revoked,source_updated_at,observed_at,
+               entity_type,record_kind,native_id,occurred_at,source_event_id,owner_principal,acl_principals)
+            VALUES ($1,$2,$3,$4,$5,1,$6,$7::jsonb,$8::jsonb,$9,$10,$11::timestamptz,$12::timestamptz,
+                    $13,$14,$15,$16::timestamptz,$17,$18,$19::jsonb)
             RETURNING *
           `, [input.tenantId, input.sourceId, input.collectionId, item.recordId, item.externalRecordId,
             contentHash, JSON.stringify(item.content), JSON.stringify(metadata), deleted, revoked,
-            sourceUpdatedAt ?? null, observedAt]);
+            sourceUpdatedAt ?? null, observedAt, item.entityType ?? null, item.recordKind ?? null,
+            item.nativeId ?? null, occurredAt ?? null, item.sourceEventId ?? null,
+            item.ownerPrincipal ?? null, aclPrincipals === undefined ? null : JSON.stringify(aclPrincipals)]);
           recordRow = inserted.rows[0] as Row;
           created += 1;
         }
@@ -536,10 +570,15 @@ export class ContextStore {
         await client.query(`
           INSERT INTO ${this.tables.revisions}
             (tenant_id,source_id,collection_id,record_id,revision,content_hash,content_json,metadata_json,
-             deleted,revoked,source_updated_at,observed_at)
-          VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11::timestamptz,$12::timestamptz)
+             deleted,revoked,source_updated_at,observed_at,entity_type,record_kind,native_id,occurred_at,
+             source_event_id,owner_principal,acl_principals)
+          VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11::timestamptz,$12::timestamptz,
+                  $13,$14,$15,$16::timestamptz,$17,$18,$19::jsonb)
         `, [input.tenantId, input.sourceId, input.collectionId, item.recordId, revision, contentHash,
-          JSON.stringify(item.content), JSON.stringify(metadata), deleted, revoked, sourceUpdatedAt ?? null, observedAt]);
+          JSON.stringify(item.content), JSON.stringify(metadata), deleted, revoked, sourceUpdatedAt ?? null, observedAt,
+          item.entityType ?? null, item.recordKind ?? null, item.nativeId ?? null, occurredAt ?? null,
+          item.sourceEventId ?? null, item.ownerPrincipal ?? null,
+          aclPrincipals === undefined ? null : JSON.stringify(aclPrincipals)]);
         const evidenceItems = [...(item.evidence ?? [])]
           .sort((left, right) => left.evidenceId < right.evidenceId ? -1 : left.evidenceId > right.evidenceId ? 1 : 0);
         for (const evidence of evidenceItems) {
@@ -552,12 +591,26 @@ export class ContextStore {
         }
         const eventType: ContextOutboxEvent['eventType'] = revoked
           ? 'context.record.revoked' : deleted ? 'context.record.deleted' : 'context.record.upserted';
+        const payload: ContextObject = {
+          version: 2,
+          contentHash,
+          deleted,
+          revoked,
+          externalRecordId: item.externalRecordId,
+          ...(item.entityType === undefined ? {} : { entityType: item.entityType }),
+          ...(item.recordKind === undefined ? {} : { recordKind: item.recordKind }),
+          ...(item.nativeId === undefined ? {} : { nativeId: item.nativeId }),
+          ...(occurredAt === undefined ? {} : { occurredAt }),
+          ...(item.sourceEventId === undefined ? {} : { sourceEventId: item.sourceEventId }),
+          ...(item.ownerPrincipal === undefined ? {} : { ownerPrincipal: item.ownerPrincipal }),
+          ...(aclPrincipals === undefined ? {} : { aclPrincipals }),
+        };
         const event = await client.query(`
           INSERT INTO ${this.tables.outbox}
             (tenant_id,event_type,source_id,collection_id,record_id,record_revision,payload_json)
           VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb) RETURNING *
         `, [input.tenantId, eventType, input.sourceId, input.collectionId, item.recordId, revision,
-          JSON.stringify({ contentHash, deleted, revoked, externalRecordId: item.externalRecordId })]);
+          JSON.stringify(payload)]);
         outbox.push(outboxFromRow(event.rows[0] as Row));
         void recordRow;
       }
@@ -612,7 +665,10 @@ export class ContextStore {
         v.content_json AS revision_content_json,v.metadata_json AS revision_metadata_json,
         v.deleted AS revision_deleted,v.revoked AS revision_revoked,
         v.source_updated_at AS revision_source_updated_at,v.observed_at AS revision_observed_at,
-        v.created_at AS revision_created_at
+        v.entity_type AS revision_entity_type,v.record_kind AS revision_record_kind,
+        v.native_id AS revision_native_id,v.occurred_at AS revision_occurred_at,
+        v.source_event_id AS revision_source_event_id,v.owner_principal AS revision_owner_principal,
+        v.acl_principals AS revision_acl_principals,v.created_at AS revision_created_at
       FROM ${this.tables.records} r JOIN ${this.tables.revisions} v
         ON v.tenant_id=r.tenant_id AND v.source_id=r.source_id AND v.collection_id=r.collection_id
         AND v.record_id=r.record_id AND v.revision=r.current_revision
@@ -632,6 +688,13 @@ export class ContextStore {
         revoked: row.revision_revoked,
         source_updated_at: row.revision_source_updated_at,
         observed_at: row.revision_observed_at,
+        entity_type: row.revision_entity_type,
+        record_kind: row.revision_record_kind,
+        native_id: row.revision_native_id,
+        occurred_at: row.revision_occurred_at,
+        source_event_id: row.revision_source_event_id,
+        owner_principal: row.revision_owner_principal,
+        acl_principals: row.revision_acl_principals,
         created_at: row.revision_created_at,
       }),
     };

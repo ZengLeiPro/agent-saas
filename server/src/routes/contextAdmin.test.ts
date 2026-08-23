@@ -8,6 +8,7 @@ import {
 } from '../../../shared/src/lib/governanceApi.js';
 import {
   createContextAdminRouter,
+  type ContextAdminConsumerStorePort,
   type ContextAdminStorePort,
 } from './contextAdmin.js';
 
@@ -16,11 +17,16 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve()))));
 });
 
-async function start(user: Express.Request['user'], store?: ContextAdminStorePort) {
+async function start(
+  user: Express.Request['user'],
+  store?: ContextAdminStorePort,
+  consumers?: ContextAdminConsumerStorePort,
+) {
   const app = express();
   app.use((req, _res, next) => { req.user = user; next(); });
   app.use('/api/admin/context-plane', createContextAdminRouter({
     ...(store ? { store } : {}),
+    ...(consumers ? { consumers } : {}),
     now: () => new Date('2026-08-22T16:00:00.000Z'),
   }));
   const server = await new Promise<import('node:http').Server>(resolve => {
@@ -173,6 +179,25 @@ describe('Context Plane admin HTTP contract', () => {
     expect(contextEvidenceSchema.array().parse(await response.json())).toHaveLength(1);
     expect(getEvidence).toHaveBeenCalledWith('tenant-a', 'source-a', 'collection-a', 'record-a');
     expect(listEvidence).not.toHaveBeenCalled();
+  });
+
+  it('reports durable derived consumers and fails closed when their read model is unavailable', async () => {
+    const consumers: ContextAdminConsumerStorePort = { listConsumers: vi.fn(async () => [{
+      id: 'deterministic-v1', name: 'deterministic-v1', kind: 'deterministic-projector',
+      status: 'lagging' as const, watermarkAt: '2026-08-22T15:59:00.000Z', lagSeconds: null,
+      detail: '待处理 3 个 Context revision',
+    }]) };
+    const base = await start(orgAdmin, createStore(), consumers);
+    const snapshot = contextCenterSnapshotSchema.parse(await (await fetch(`${base}/snapshot`)).json());
+    expect(snapshot.consumers).toEqual([expect.objectContaining({
+      id: 'deterministic-v1', status: 'lagging', detail: '待处理 3 个 Context revision',
+    })]);
+    expect(consumers.listConsumers).toHaveBeenCalledWith('tenant-a');
+
+    const unavailable = await start(orgAdmin, createStore(), {
+      listConsumers: vi.fn(async () => { throw new Error('db unavailable'); }),
+    });
+    expect((await fetch(`${unavailable}/snapshot`)).status).toBe(503);
   });
 
   it('locks organization admins to their tenant and returns 503 for an unavailable optional Store', async () => {

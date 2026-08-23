@@ -6,6 +6,7 @@ import {
   type ContextCollectionAssignmentReader,
   type ContextRecallScopeResolver,
   type ContextRecallService,
+  type ContextSourceAuthorizationRegistry,
 } from '../context/retrieval/index.js';
 import type { ContextPgPool, ContextStore } from '../context/store/index.js';
 import type { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
@@ -13,6 +14,7 @@ import type { MemoryIndexService } from '../memory/index/service.js';
 import type { RawRuntimeRunDispatchConfig } from '../runtime/rawRuntimeRunDispatchTypes.js';
 import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { ToolProvider } from '../agent/toolRuntime.js';
+export { createRuntimeContextPlane } from './runtimeContextPlane.js';
 
 interface RuntimeMemoryContextToolsOptions {
   contextStore?: ContextStore;
@@ -21,6 +23,7 @@ interface RuntimeMemoryContextToolsOptions {
   tablePrefix?: string;
   recallIdSigningKey?: string;
   sessionCatalog: Pick<SessionCatalog, 'get'>;
+  sourceAuthorizationRegistry?: ContextSourceAuthorizationRegistry;
   memoryStore?: PgMemoryConsolidationStore;
   memoryIndexService?: MemoryIndexService | null;
   logger?: { info?: (message: string) => void; warn?: (message: string) => void };
@@ -39,7 +42,7 @@ export interface ContextRecallRuntime {
 /** Shared construction keeps model tools and the user-facing citation API on one ACL path. */
 export function createContextRecallRuntime(
   options: Pick<RuntimeMemoryContextToolsOptions,
-    'contextStore' | 'assignments' | 'pool' | 'tablePrefix' | 'recallIdSigningKey' | 'sessionCatalog'>,
+    'contextStore' | 'assignments' | 'pool' | 'tablePrefix' | 'recallIdSigningKey' | 'sessionCatalog' | 'sourceAuthorizationRegistry'>,
 ): ContextRecallRuntime | undefined {
   if (!options.contextStore || !options.assignments || !options.pool) return undefined;
   return {
@@ -47,6 +50,7 @@ export function createContextRecallRuntime(
       pool: options.pool,
       ...(options.tablePrefix ? { tablePrefix: options.tablePrefix } : {}),
       ...(options.recallIdSigningKey ? { idSigningKey: options.recallIdSigningKey } : {}),
+      ...(options.sourceAuthorizationRegistry ? { sourceAuthorizationRegistry: options.sourceAuthorizationRegistry } : {}),
     }),
     scopes: new AssignmentContextRecallScopeResolver(options.assignments, {
       resourceTypes: ['org_knowledge'],

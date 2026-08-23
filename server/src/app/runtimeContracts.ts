@@ -45,6 +45,8 @@ import type { PgDirectoryGroupStore } from '../data/directoryGroups/index.js';
 import type { PgOAuthGrantStore } from '../data/oauthGrants/index.js';
 import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { ContextStore } from '../context/store/index.js';
+import type { ContextSourceAuthorizationRegistry } from '../context/retrieval/index.js';
+import type { DerivedContextStore } from '../context/derived/index.js';
 import type { PgCredentialStore } from '../data/credentials/index.js';
 import type { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
 import type { PgEnvironmentStore } from '../data/environments/index.js';
@@ -188,6 +190,7 @@ export interface AppRuntime {
   notionAuthFlowShutdown?: () => void;
   /** 停止 DWS 授权守活 worker（ws-only 进程不启动）。 */
   dwsAuthKeepaliveShutdown?: () => void | Promise<void>;
+  contextPlaneShutdown?: () => Promise<void>;
   /** 飞书连接只保存非敏感元数据；用户 token 与加密 keychain 均留在其 workspace。 */
   feishuConnectionStore?: FeishuConnectionStore;
   /** 飞书首次绑定：Server 驱动官方 lark-cli split device flow。 */
@@ -290,6 +293,10 @@ export interface AppRuntime {
   assignmentStore?: PgAssignmentStore;
   /** PostgreSQL Context Plane data store；仅 PG runtime 装配。 */
   contextStore?: ContextStore;
+  /** Context 原生 source 的读时 ACL registry；Citation 与 Agent Recall 必须复用同一实例。 */
+  contextSourceAuthorizationRegistry?: ContextSourceAuthorizationRegistry;
+  /** Phase 3 deterministic entities/items/reviews/profile relational store. */
+  derivedContextStore?: DerivedContextStore;
   /** P2 Credential 治理事实模型；影子回填 legacy connector 连接，仅读取不拦截。 */
   credentialStore?: PgCredentialStore;
   /** 版本化 Connector Catalog；与 Tool Presentation Dictionary 严格分离。 */

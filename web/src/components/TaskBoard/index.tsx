@@ -31,6 +31,8 @@ interface TaskBoardViewProps {
 
 type BoardDialogMode = "create" | "edit" | null;
 
+const TASKS_REFRESH_INTERVAL_MS = 3_000;
+
 function sortedInStatus(tasks: TaskBoardTask[], status: TaskBoardStatus, excludedId?: string) {
   return sortTaskBoardTasks(tasks, status).filter((task) => task.id !== excludedId);
 }
@@ -110,6 +112,12 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
   const [archivedTasksOpen, setArchivedTasksOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const wasActiveRef = useRef(active);
+  const deepLinkRef = useRef((() => {
+    const query = new URLSearchParams(window.location.search);
+    return { boardId: query.get("boardId"), taskId: query.get("taskId") };
+  })());
+  const deepLinkHandledRef = useRef(false);
+  const deepLinkLoadingSeenRef = useRef(false);
 
   const boardReadOnly = !!selectedBoard?.archivedAt;
   const canCreateTask = boardAllows(selectedBoard, "task.create");
@@ -135,7 +143,10 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
       return;
     }
     if (!selectedBoardId || !boards.some((board) => board.id === selectedBoardId)) {
-      setSelectedBoardId((boards.find((board) => !board.archivedAt) ?? boards[0]).id);
+      const linkedBoard = deepLinkRef.current.boardId
+        ? boards.find((board) => board.id === deepLinkRef.current.boardId)
+        : undefined;
+      setSelectedBoardId((linkedBoard ?? boards.find((board) => !board.archivedAt) ?? boards[0]).id);
     }
   }, [boards, selectedBoardId]);
 
@@ -148,11 +159,32 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
   }, [selectedBoard?.id, tasks]);
 
   useEffect(() => {
-    if (selectedTaskId && !tasks.some((task) => task.id === selectedTaskId)) {
+    if (deepLinkHandledRef.current || !selectedBoardId) return;
+    if (tasksLoading) {
+      deepLinkLoadingSeenRef.current = true;
+      return;
+    }
+    if (!deepLinkLoadingSeenRef.current) return;
+    const linked = deepLinkRef.current;
+    if (!linked.taskId || linked.boardId !== selectedBoardId) {
+      deepLinkHandledRef.current = true;
+      return;
+    }
+    deepLinkHandledRef.current = true;
+    if (tasks.some((task) => task.id === linked.taskId)) {
+      setSelectedTaskId(linked.taskId);
+      setDetailOpen(true);
+    } else {
+      setNotice("通知关联的任务不可见或已删除");
+    }
+  }, [selectedBoardId, tasks, tasksLoading]);
+
+  useEffect(() => {
+    if (!tasksLoading && selectedTaskId && !tasks.some((task) => task.id === selectedTaskId)) {
       setSelectedTaskId(null);
       setDetailOpen(false);
     }
-  }, [selectedTaskId, tasks]);
+  }, [selectedTaskId, tasks, tasksLoading]);
 
   const selectedTask = useMemo(
     () => tasks.find((task) => task.id === selectedTaskId) ?? null,
@@ -203,6 +235,21 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     if (active && !wasActiveRef.current) void refresh();
     wasActiveRef.current = active;
   }, [active, refresh]);
+
+  useEffect(() => {
+    if (!active || !selectedBoard) return;
+    let disposed = false;
+    let timer: number | undefined;
+    const pollTasks = async () => {
+      await refreshTasks();
+      if (!disposed) timer = window.setTimeout(() => void pollTasks(), TASKS_REFRESH_INTERVAL_MS);
+    };
+    timer = window.setTimeout(() => void pollTasks(), TASKS_REFRESH_INTERVAL_MS);
+    return () => {
+      disposed = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [active, refreshTasks, selectedBoard]);
 
   const reportMoveError = useCallback((caught: unknown) => {
     if (caught instanceof TaskBoardConflictError) {

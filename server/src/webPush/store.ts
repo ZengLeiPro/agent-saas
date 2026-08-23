@@ -54,6 +54,10 @@ export interface WebPushDeliveryClaim {
   invalidate(): Promise<void>;
 }
 
+export interface WebPushDeliveryDeferred {
+  deferred: true;
+}
+
 /**
  * Web Push 订阅与投递幂等记录。
  *
@@ -190,7 +194,7 @@ export class PgWebPushStore {
     owner: WebPushOwner,
     expected: WebPushSubscriptionRecord,
     eventKey: string,
-  ): Promise<WebPushDeliveryClaim | null> {
+  ): Promise<WebPushDeliveryClaim | WebPushDeliveryDeferred | null> {
     const client = await this.options.pool.connect();
     let closed = false;
     const close = async (commit: boolean) => {
@@ -225,8 +229,14 @@ export class PgWebPushStore {
         RETURNING subscription_id
       `, [expected.id, eventKey]);
       if ((claimed.rowCount ?? 0) === 0) {
+        const existing = await client.query<{ status: string }>(
+          `SELECT status FROM ${this.deliveriesTable} WHERE subscription_id=$1 AND event_key=$2`,
+          [expected.id, eventKey],
+        );
         await close(false);
-        return null;
+        return existing.rows[0]?.status === 'failed' || existing.rows[0]?.status === 'pending'
+          ? { deferred: true }
+          : null;
       }
 
       return {

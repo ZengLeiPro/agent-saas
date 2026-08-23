@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskBoard, TaskBoardTask } from "@agent/shared";
@@ -151,6 +151,27 @@ describe("TaskBoardView", () => {
 
     await waitFor(() => expect(mocks.refreshBoards).toHaveBeenCalledOnce());
     expect(mocks.refreshTasks).toHaveBeenCalledOnce();
+  });
+
+  it("停留在任务看板时持续刷新任务，离开后停止", async () => {
+    vi.useFakeTimers();
+    try {
+      const { rerender } = render(<TaskBoardView active />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(mocks.refreshTasks).toHaveBeenCalledOnce();
+      expect(mocks.refreshBoards).not.toHaveBeenCalled();
+
+      rerender(<TaskBoardView active={false} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6_000);
+      });
+      expect(mocks.refreshTasks).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("支持多看板、固定八列、关键词与优先级筛选", async () => {

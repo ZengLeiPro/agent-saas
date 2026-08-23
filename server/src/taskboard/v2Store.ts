@@ -281,7 +281,7 @@ export async function createIntegrationBatch(
     const tail = await client.query(
       `SELECT COALESCE(MAX(sort_order),0) AS max_sort_order
          FROM ${options.tasksTable}
-        WHERE board_id=$1 AND status='todo' AND archived_at IS NULL`,
+        WHERE board_id=$1 AND status='in_progress' AND archived_at IS NULL`,
       [boardId],
     );
     const integrationTaskId = randomUUID();
@@ -290,7 +290,7 @@ export async function createIntegrationBatch(
       `INSERT INTO ${options.tasksTable}
          (id, board_id, identifier, kind, title, description, status, priority, labels,
           sort_order, creator_user_id, creator_name, workflow_version, version)
-       VALUES ($1,$2,$3,'integration',$4,$5,'todo','high',ARRAY['integration']::text[],$6,$7,$8,$9,1)`,
+       VALUES ($1,$2,$3,'integration',$4,$5,'in_progress','high',ARRAY['integration']::text[],$6,$7,$8,$9,1)`,
       [
         integrationTaskId,
         boardId,

@@ -6,7 +6,7 @@ function policyOutcome(): SubagentOutcome {
   return {
     status: 'failed',
     text: '已生成的部分结论',
-    errorMessage: '当前模型受策略限制，请切换其他模型继续。',
+    errorMessage: 'Responses API HTTP 400: cyber_policy request_id=req-secret',
     failureKind: 'policy_rejection',
     recoveryAction: 'switch_model',
     totalTokens: 10,
@@ -28,5 +28,6 @@ describe('subagent policy failure', () => {
     expect(header).toContain('当前模型受策略限制，请切换其他模型继续。');
     expect(header).not.toContain('cyber_policy');
     expect(header).not.toContain('Responses API');
+    expect(header).not.toContain('req-secret');
   });
 });

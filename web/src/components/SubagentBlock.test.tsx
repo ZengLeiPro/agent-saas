@@ -50,6 +50,7 @@ function TranscriptPanelHost() {
 describe('SubagentBlock', () => {
   it('expands metrics and opens the child transcript in the shared side panel', async () => {
     const user = userEvent.setup();
+    const onSwitchModel = vi.fn();
     render(
       <TestSubagentTranscriptProvider>
         <SubagentBlock
@@ -62,8 +63,11 @@ describe('SubagentBlock', () => {
           totalTokens={123_456}
           toolUseCount={67}
           turnCount={42}
-          errorMessage="upstream EOF"
+          errorMessage="当前模型受策略限制，请切换其他模型继续。"
+          failureKind="policy_rejection"
+          recoveryAction="switch_model"
           resultPreview="部分材料"
+          onSwitchModel={onSwitchModel}
         />
         <TranscriptPanelHost />
       </TestSubagentTranscriptProvider>,
@@ -72,11 +76,13 @@ describe('SubagentBlock', () => {
     // 排版型外壳：状态文字标签已删，失败语义由红色 icon 承载；折叠行只显示标题和指标。
     expect(screen.queryByText('部分材料')).toBeNull();
     expect(screen.getByText('gpt-5.6 · 10m · 42 轮 · 123.5k tokens')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '切换模型' }));
+    expect(onSwitchModel).toHaveBeenCalledOnce();
 
     await user.click(screen.getByRole('button', { name: /子任务 调研金球奖/ }));
     expect(screen.getByText('42 轮')).toBeTruthy();
     expect(screen.getByText('67 次工具')).toBeTruthy();
-    expect(screen.getByText('upstream EOF')).toBeTruthy();
+    expect(screen.getByText('当前模型受策略限制，请切换其他模型继续。')).toBeTruthy();
     expect(screen.getAllByText('部分材料').some((node) => node.className.includes('leading-4'))).toBe(true);
 
     await user.click(screen.getAllByRole('button', { name: '查看完整过程' })[0]);

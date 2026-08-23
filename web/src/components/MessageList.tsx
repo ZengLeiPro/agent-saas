@@ -841,7 +841,7 @@ export const MessageList = memo(function MessageList({
                     items={sub.items}
                     isActive={sub.isActive}
                     isLast={sub.id === lastActivityGroupId}
-                    debugMode={debugMode}
+                    debugMode={debugMode} onSwitchModel={onSwitchModel}
                   />
                 </ErrorBoundary>
               );
@@ -860,7 +860,7 @@ export const MessageList = memo(function MessageList({
                   index={origIndex} sessionId={sessionId}
                   onPermissionResponse={onPermissionResponse}
                   onAskUserResponse={onAskUserResponse}
-                  onRetry={onRetry}
+                  onRetry={onRetry} onSwitchModel={onSwitchModel}
                   onFork={onFork}
                   isFirstUser={false}
                   isLoading={loading}
@@ -930,7 +930,7 @@ export const MessageList = memo(function MessageList({
                 )}
                 <div className={cn(showHeader && HEADER_FLOW_PADDING_CLASS)}>
                   <ErrorBoundary inline>
-                    <ActivityGroupBlock items={item.items} isActive={item.isActive} isLast={item.id === lastActivityGroupId} debugMode={debugMode} />
+                    <ActivityGroupBlock items={item.items} isActive={item.isActive} isLast={item.id === lastActivityGroupId} debugMode={debugMode} onSwitchModel={onSwitchModel} />
                   </ErrorBoundary>
                 </div>
               </div>
@@ -1059,7 +1059,7 @@ export const MessageList = memo(function MessageList({
                   index={origIndex} sessionId={sessionId}
                   onPermissionResponse={onPermissionResponse}
                   onAskUserResponse={onAskUserResponse}
-                  onRetry={onRetry}
+                  onRetry={onRetry} onSwitchModel={onSwitchModel}
                   onFork={onFork}
                   isFirstUser={item.type === 'user' && item.id === firstUserMsgId}
                   isLoading={loading}

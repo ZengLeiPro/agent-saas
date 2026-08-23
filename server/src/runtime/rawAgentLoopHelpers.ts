@@ -84,8 +84,8 @@ export function describeRuntimeFailure(
   failureProtocol?: RuntimeFailureProtocol;
 } {
   const diagnosticMessage = error instanceof Error ? error.message : String(error);
-  const preservedTurnText = pendingTurnText || (error instanceof ModelProviderError ? error.partialContent ?? '' : '');
   const failureProtocol = getStructuredModelFailure(error);
+  const preservedTurnText = pendingTurnText || (failureProtocol?.failureKind === 'policy_rejection' && error instanceof ModelProviderError ? error.partialContent ?? '' : '');
   const message = failureProtocol?.failureKind === 'policy_rejection'
     ? POLICY_REJECTION_CUSTOMER_MESSAGE
     : isInvalidPromptRequestBlocked(error)
@@ -122,7 +122,7 @@ export function assertSuccessfulModelTerminal(completed: Extract<ModelEvent, { t
         completed.emittedOutputCount,
         completed.failureKind,
         completed.recoveryAction,
-        completed.content,
+        completed.failureKind === 'policy_rejection' ? completed.content : undefined,
       );
     }
     throw new Error(

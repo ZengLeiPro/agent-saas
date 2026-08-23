@@ -275,6 +275,8 @@ export interface ApiSubagentActivity {
   toolUseCount?: number;
   turnCount?: number;
   errorMessage?: string;
+  failureKind?: RuntimeFailureKind;
+  recoveryAction?: RuntimeRecoveryAction;
   resultPreview?: string;
 }
 

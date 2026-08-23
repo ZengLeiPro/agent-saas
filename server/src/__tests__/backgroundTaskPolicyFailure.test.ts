@@ -8,12 +8,12 @@ describe('background task policy failure', () => {
     const task = {
       runId: 'bg-policy',
       status: 'failed',
-      statusReason: '当前模型受策略限制，请切换其他模型继续。',
+      statusReason: 'Responses API HTTP 400: cyber_policy request_id=req-secret',
       metadata: {
         backgroundResult: {
           status: 'failed',
           text: '已生成的部分结论',
-          errorMessage: '当前模型受策略限制，请切换其他模型继续。',
+          errorMessage: 'Responses API HTTP 400: cyber_policy request_id=req-secret',
           failureKind: 'policy_rejection',
           recoveryAction: 'switch_model',
           totalTokens: 10,
@@ -35,7 +35,9 @@ describe('background task policy failure', () => {
     expect(content).toContain('<failure-kind>policy_rejection</failure-kind>');
     expect(content).toContain('<recovery-action>switch_model</recovery-action>');
     expect(content).toContain('当前模型受策略限制，请切换其他模型继续。');
+    expect(content).toContain('已生成的部分结论');
     expect(content).not.toContain('cyber_policy');
     expect(content).not.toContain('Responses API');
+    expect(content).not.toContain('req-secret');
   });
 });

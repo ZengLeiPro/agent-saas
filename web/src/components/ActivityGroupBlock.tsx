@@ -161,7 +161,7 @@ function getGroupSummary(items: MessageItem[], isActive: boolean, debugMode: boo
   };
 }
 
-function ActivityItem({ item, debugMode = true }: { item: MessageItem; debugMode?: boolean }) {
+function ActivityItem({ item, debugMode = true, onSwitchModel }: { item: MessageItem; debugMode?: boolean; onSwitchModel?: () => void }) {
   switch (item.type) {
     case 'runtime_status':
       return <RuntimeStatusBlock status={item.status} content={item.content} />;
@@ -178,7 +178,7 @@ function ActivityItem({ item, debugMode = true }: { item: MessageItem; debugMode
       return <ToolResultBlock toolName={item.toolName} result={item.result} {...(item.presentation ? { presentation: item.presentation } : {})} debugMode={debugMode} />;
     case 'subagent':
       if (!debugMode && !item.presentation) return <ExecutionHiddenPlaceholder isActive={item.status === 'running'} durationMs={item.durationMs} hasIssue={item.status === 'failed' || item.status === 'timeout'} />;
-      return <SubagentBlock {...item} />;
+      return <SubagentBlock {...item} onSwitchModel={onSwitchModel} />;
     default:
       return null;
   }
@@ -189,6 +189,7 @@ interface ActivityGroupBlockProps {
   isActive: boolean;
   isLast?: boolean;
   debugMode?: boolean;
+  onSwitchModel?: () => void;
   /** 透传给折叠行外壳（壳自身不带流向外边距，间距由容器 gap 统一承担）。 */
   className?: string;
 }
@@ -210,7 +211,7 @@ export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: {
   );
 }
 
-export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isActive, debugMode = true, className }: ActivityGroupBlockProps) {
+export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isActive, debugMode = true, onSwitchModel, className }: ActivityGroupBlockProps) {
   // 折叠行已提供分组摘要，具体工具详情由用户按需展开，避免长会话默认铺满执行细节。
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -220,7 +221,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
     // [&>*]:my-0 继续作为防御性约束，避免后续子组件重新引入流向 margin。
     return (
       <div className={cn('[&>*]:my-0', className)}>
-        <ActivityItem item={items[0]} debugMode={debugMode} />
+        <ActivityItem item={items[0]} debugMode={debugMode} onSwitchModel={onSwitchModel} />
       </div>
     );
   }
@@ -250,6 +251,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
       expanded={debugMode && isExpanded}
       disabled={!debugMode}
       onToggle={() => setIsExpanded((value) => !value)}
+      actions={onSwitchModel && items.some((item) => item.type === 'subagent' && item.recoveryAction === 'switch_model') ? <button type="button" onClick={onSwitchModel} className="rounded-md px-2 py-1 text-xs font-medium text-foreground/75 transition-colors hover:bg-muted hover:text-foreground">切换模型</button> : undefined}
       className={className}
     >
       <div className="flex flex-col gap-3 [&>*]:my-0">

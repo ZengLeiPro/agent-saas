@@ -28,7 +28,6 @@ import { requestOpenBillingBadge } from '@/lib/billingBadgeBus';
 import { publicSessionShareFileUrl } from '@/lib/sessionShareApi';
 import { ImageLightbox } from './ImageLightbox';
 const LazyArtifactPreviewDialog = lazy(() => import('@/components/artifacts/ArtifactPreviewDialog').then(module => ({ default: module.ArtifactPreviewDialog })));
-
 // react-markdown 懒加载：不阻塞首屏渲染，模块加载后立即可用
 const markdownPromise = import("react-markdown");
 const remarkGfmPromise = import("remark-gfm");
@@ -1033,6 +1032,7 @@ export const MessageItem = memo(function MessageItem({
     return (
       <SubagentBlock
         {...message}
+        onSwitchModel={onSwitchModel}
       />
     );
   }

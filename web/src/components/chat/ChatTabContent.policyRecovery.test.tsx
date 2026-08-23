@@ -1,5 +1,6 @@
 import { createRef, type ComponentProps } from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ChatTabContent } from './ChatTabContent';
@@ -11,25 +12,10 @@ vi.mock('@/components/AskUserPromptPanel', () => ({ AskUserPromptPanel: () => nu
 vi.mock('@/components/QueuedMessageBar', () => ({ QueuedMessageBar: () => null }));
 
 vi.mock('@/components/MessageList', () => ({
-  MessageList: ({ onSwitchModel }: { onSwitchModel?: () => void }) => (
-    <button type="button" onClick={onSwitchModel}>切换模型</button>
-  ),
-}));
-
-vi.mock('@/components/ChatInput', () => ({
-  ChatInput: ({
-    input,
-    modelSelectorOpen,
-    onModelChange,
-  }: {
-    input: string;
-    modelSelectorOpen?: boolean;
-    onModelChange?: (value: string) => void;
-  }) => (
+  MessageList: ({ messages, onSwitchModel }: { messages: Array<{ content?: string }>; onSwitchModel?: () => void }) => (
     <div>
-      <div data-testid="composer-draft">{input}</div>
-      <div data-testid="model-selector-state">{modelSelectorOpen ? 'open' : 'closed'}</div>
-      <button type="button" onClick={() => onModelChange?.('other/model')}>选择其他模型</button>
+      <div data-testid="session-history">{messages.map((message) => message.content).filter(Boolean).join('\n')}</div>
+      <button type="button" onClick={onSwitchModel}>切换模型</button>
     </div>
   ),
 }));
@@ -62,7 +48,7 @@ function makeProps(overrides: Partial<Props> = {}): Props {
       showGroupNames: false,
       showContextTokens: false,
       allowContextTokenDetails: false,
-      groups: [{ id: 'main', name: '主模型', models: [{ id: 'model', name: '当前模型' }] }],
+      groups: [{ id: 'main', name: '主模型', models: [{ id: 'model', name: '当前模型' }, { id: 'other', name: '其他模型' }] }],
     },
     selectedModel: 'main/model',
     sessionId: 'session-policy',
@@ -72,22 +58,25 @@ function makeProps(overrides: Partial<Props> = {}): Props {
 }
 
 describe('ChatTabContent 策略拒绝恢复', () => {
-  it('点击错误按钮打开现有模型选择器，保留会话草稿且不自动选模或发送', () => {
+  it('点击错误按钮操作真实模型选择器，换模后会话历史和草稿不丢且不自动发送', async () => {
+    const user = userEvent.setup();
     const onModelChange = vi.fn();
     const onSend = vi.fn();
     render(<ChatTabContent {...makeProps({ onModelChange, onSend })} />);
 
-    expect(screen.getByTestId('model-selector-state').textContent).toBe('closed');
-    fireEvent.click(screen.getByRole('button', { name: '切换模型' }));
+    expect(screen.queryByRole('option', { name: '其他模型' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: '切换模型' }));
 
-    expect(screen.getByTestId('model-selector-state').textContent).toBe('open');
-    expect(screen.getByTestId('composer-draft').textContent).toBe('尚未发送的草稿');
+    expect(await screen.findByRole('option', { name: '其他模型' })).toBeTruthy();
+    expect(screen.getByDisplayValue('尚未发送的草稿')).toBeTruthy();
+    expect(screen.getByTestId('session-history').textContent).toContain('当前模型受策略限制');
     expect(onModelChange).not.toHaveBeenCalled();
     expect(onSend).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: '选择其他模型' }));
-    expect(onModelChange).toHaveBeenCalledWith('other/model');
-    expect(screen.getByTestId('composer-draft').textContent).toBe('尚未发送的草稿');
+    await user.click(screen.getByRole('option', { name: '其他模型' }));
+    expect(onModelChange).toHaveBeenCalledWith('main/other');
+    expect(screen.getByDisplayValue('尚未发送的草稿')).toBeTruthy();
+    expect(screen.getByTestId('session-history').textContent).toContain('当前模型受策略限制');
     expect(onSend).not.toHaveBeenCalled();
   });
 });

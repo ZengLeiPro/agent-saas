@@ -399,7 +399,7 @@ function mapBlock(
           ...(typeof block.subagent?.totalTokens === "number" ? { totalTokens: block.subagent.totalTokens } : {}),
           ...(typeof block.subagent?.toolUseCount === "number" ? { toolUseCount: block.subagent.toolUseCount } : {}),
           ...(typeof block.subagent?.turnCount === "number" ? { turnCount: block.subagent.turnCount } : {}),
-          ...(block.subagent?.errorMessage ? { errorMessage: block.subagent.errorMessage } : {}),
+          ...(block.subagent?.errorMessage ? { errorMessage: block.subagent.errorMessage } : {}), ...(block.subagent?.failureKind ? { failureKind: block.subagent.failureKind } : {}), ...(block.subagent?.recoveryAction ? { recoveryAction: block.subagent.recoveryAction } : {}),
           ...(resultPreview ? { resultPreview } : {}),
         };
       }

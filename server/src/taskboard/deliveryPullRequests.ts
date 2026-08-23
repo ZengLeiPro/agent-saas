@@ -336,12 +336,32 @@ export async function recordReviewedExecutionSubject(
   try {
     await client.query('BEGIN');
     await lockExecution(client, host, runId, context.taskId);
-    const current = await client.query(
-      `SELECT provider_pull_request_id FROM ${host.tasksTable} WHERE id=$1 FOR UPDATE`,
-      [context.taskId],
-    );
-    if (current.rows[0]?.provider_pull_request_id !== context.providerPullRequestId) {
-      throw new TaskboardValidationError('Pull request changed during review', 'TASKBOARD_SUBJECT_STALE');
+    if (context.isIntegrationV3) {
+      const tables = integrationCandidateTableNames(host.integrationSourcesTable);
+      const current = await client.query(
+        `SELECT c.provider_pull_request_id,c.current_revision,r.head_oid,r.base_oid,r.subject_digest
+           FROM ${tables.candidatesTable} c
+           JOIN ${tables.revisionsTable} r
+             ON r.candidate_id=c.id AND r.revision=c.current_revision
+          WHERE c.id=$1 AND c.integration_task_id=$2 FOR UPDATE OF c`,
+        [context.candidateId, context.taskId],
+      );
+      const row = current.rows[0];
+      if (String(row?.provider_pull_request_id ?? '') !== pullRequest.providerPullRequestId
+        || Number(row?.current_revision) !== context.candidateRevision
+        || String(row?.head_oid ?? '') !== pullRequest.headOid
+        || String(row?.base_oid ?? '') !== pullRequest.baseOid
+        || String(row?.subject_digest ?? '') !== context.candidateSubjectDigest) {
+        throw new TaskboardValidationError('Pull request changed during review', 'TASKBOARD_SUBJECT_STALE');
+      }
+    } else {
+      const current = await client.query(
+        `SELECT provider_pull_request_id FROM ${host.tasksTable} WHERE id=$1 FOR UPDATE`,
+        [context.taskId],
+      );
+      if (current.rows[0]?.provider_pull_request_id !== context.providerPullRequestId) {
+        throw new TaskboardValidationError('Pull request changed during review', 'TASKBOARD_SUBJECT_STALE');
+      }
     }
     const result = await client.query(
       `UPDATE ${host.tasksTable}

@@ -313,6 +313,7 @@ async function shutdownCleanup(): Promise<void> {
     httpServer?.close();
     cronService?.stop();
     await runtime?.integrationV3WorkerShutdown?.();
+    await runtime?.contextPlaneShutdown?.();
     runtime?.notionAuthFlowShutdown?.();
     await runtime?.dwsAuthKeepaliveShutdown?.();
     runtime?.feishuAuthKeepaliveShutdown?.();
@@ -392,6 +393,9 @@ process.on('SIGUSR2', () => {
   // 停止接受新 HTTP 连接（已建立的 WS/流不受影响，继续跑完）
   httpServer?.close();
   runtime?.notionAuthFlowShutdown?.();
+  void Promise.resolve(runtime?.contextPlaneShutdown?.()).catch((err) => {
+    serverLogger.warn(`Drain: Context Plane shutdown failed: ${err instanceof Error ? err.message : String(err)}`);
+  });
   void Promise.resolve(runtime?.dwsAuthKeepaliveShutdown?.()).catch((err) => {
     serverLogger.warn(`Drain: DWS shutdown failed: ${err instanceof Error ? err.message : String(err)}`);
   });

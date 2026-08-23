@@ -98,7 +98,10 @@ class IngestClient {
         tenant_id: params[0], source_id: params[1], collection_id: params[2], record_id: params[3],
         external_record_id: params[4], content_hash: params[5], content_json: JSON.parse(String(params[6])),
         metadata_json: JSON.parse(String(params[7])), deleted: params[8], revoked: params[9],
-        source_updated_at: params[10], observed_at: params[11],
+        source_updated_at: params[10], observed_at: params[11], entity_type: params[12],
+        record_kind: params[13], native_id: params[14], occurred_at: params[15], source_event_id: params[16],
+        owner_principal: params[17],
+        acl_principals: params[18] === null ? null : JSON.parse(String(params[18])),
       });
       return { rows: [this.record], rowCount: 1 };
     }
@@ -107,13 +110,19 @@ class IngestClient {
         ...this.record, current_revision: params[4], content_hash: params[5],
         content_json: JSON.parse(String(params[6])), metadata_json: JSON.parse(String(params[7])),
         deleted: params[8], revoked: params[9], source_updated_at: params[10], observed_at: params[11],
+        entity_type: params[12], record_kind: params[13], native_id: params[14], occurred_at: params[15],
+        source_event_id: params[16], owner_principal: params[17],
+        acl_principals: params[18] === null ? null : JSON.parse(String(params[18])),
       });
       return { rows: [this.record], rowCount: 1 };
     }
     if (normalized.includes('INSERT INTO test_context_record_revisions')) {
       this.revisions.push({
         revision: params[4], content_hash: params[5], metadata_json: JSON.parse(String(params[7])),
-        deleted: params[8], revoked: params[9], source_updated_at: params[10],
+        deleted: params[8], revoked: params[9], source_updated_at: params[10], observed_at: params[11],
+        entity_type: params[12], record_kind: params[13], native_id: params[14], occurred_at: params[15],
+        source_event_id: params[16], owner_principal: params[17],
+        acl_principals: params[18] === null ? null : JSON.parse(String(params[18])),
       });
       return { rows: [], rowCount: 1 };
     }
@@ -271,6 +280,96 @@ describe('ContextStore PostgreSQL data layer', () => {
     const checkpointSql = client.query.mock.calls.find(([sql]) => String(sql).includes('coverage_start=CASE'))?.[0];
     expect(checkpointSql).toContain('LEAST(coverage_start');
     expect(checkpointSql).toContain('GREATEST(coverage_end');
+  });
+
+  it('persists a Unicode native locator and emits only populated typed envelope fields in outbox v2', async () => {
+    const client = new IngestClient();
+    const store = new ContextStore({ pool: { connect: vi.fn(async () => client) } as never, tablePrefix: 'test' });
+    await expect(store.ingestPage(ingestInput({ title: '客户会议' }, {
+      entityType: 'meeting', recordKind: 'event', nativeId: '客户/泉州：会议-一',
+      occurredAt: '2026-08-23T14:30:00+08:00', sourceEventId: 'event:会议/一',
+      ownerPrincipal: 'user:owner', aclPrincipals: ['user:z', 'user:a', 'user:a'],
+    }))).resolves.toMatchObject({ created: 1 });
+
+    expect(client.record).toMatchObject({
+      entity_type: 'meeting', record_kind: 'event', native_id: '客户/泉州：会议-一',
+      occurred_at: '2026-08-23T06:30:00.000Z', source_event_id: 'event:会议/一',
+      owner_principal: 'user:owner', acl_principals: ['user:a', 'user:z'],
+    });
+    expect(client.revisions[0]).toMatchObject({ native_id: '客户/泉州：会议-一', acl_principals: ['user:a', 'user:z'] });
+    expect(client.outbox[0]?.payload_json).toEqual({
+      version: 2, contentHash: client.record?.content_hash, deleted: false, revoked: false,
+      externalRecordId: 'external-a', entityType: 'meeting', recordKind: 'event',
+      nativeId: '客户/泉州：会议-一', occurredAt: '2026-08-23T06:30:00.000Z',
+      sourceEventId: 'event:会议/一', ownerPrincipal: 'user:owner', aclPrincipals: ['user:a', 'user:z'],
+    });
+  });
+
+  it('canonicalizes ACL order for idempotency and revisions owner or ACL changes', async () => {
+    const client = new IngestClient();
+    const store = new ContextStore({ pool: { connect: vi.fn(async () => client) } as never, tablePrefix: 'test' });
+    const base = { ownerPrincipal: 'user:owner-a', aclPrincipals: ['user:b', 'user:a', 'user:a'] };
+
+    await expect(store.ingestPage(ingestInput({ title: 'one' }, base))).resolves.toMatchObject({ created: 1 });
+    await expect(store.ingestPage(ingestInput({ title: 'one' }, {
+      ownerPrincipal: 'user:owner-a', aclPrincipals: ['user:a', 'user:b'],
+    }))).resolves.toMatchObject({ unchanged: 1, revised: 0 });
+    await expect(store.ingestPage(ingestInput({ title: 'one' }, {
+      ownerPrincipal: 'user:owner-b', aclPrincipals: ['user:b', 'user:a'],
+    }))).resolves.toMatchObject({ revised: 1 });
+    await expect(store.ingestPage(ingestInput({ title: 'one' }, {
+      ownerPrincipal: 'user:owner-b', aclPrincipals: ['user:c', 'user:a'],
+    }))).resolves.toMatchObject({ revised: 1 });
+
+    expect(client.revisions).toHaveLength(3);
+    expect(client.record).toMatchObject({ owner_principal: 'user:owner-b', acl_principals: ['user:a', 'user:c'] });
+  });
+
+  it('keeps legacy DWS input and old rows without envelope columns compatible', async () => {
+    const client = new IngestClient();
+    const store = new ContextStore({ pool: { connect: vi.fn(async () => client) } as never, tablePrefix: 'test' });
+    await expect(store.ingestPage(ingestInput({ title: 'legacy' }))).resolves.toMatchObject({ created: 1 });
+    expect(client.record).toMatchObject({
+      entity_type: null, record_kind: null, native_id: null, occurred_at: null,
+      source_event_id: null, owner_principal: null, acl_principals: null,
+    });
+    expect(client.outbox[0]?.payload_json).toEqual({
+      version: 2, contentHash: client.record?.content_hash, deleted: false, revoked: false,
+      externalRecordId: 'external-a',
+    });
+
+    const legacy = recordRow();
+    const query = vi.fn(async () => ({ rows: [{
+      ...legacy,
+      revision_revision: 1, revision_content_hash: legacy.content_hash,
+      revision_content_json: legacy.content_json, revision_metadata_json: {}, revision_deleted: false,
+      revision_revoked: false, revision_source_updated_at: null, revision_observed_at: NOW,
+      revision_created_at: NOW,
+    }] }));
+    const readStore = new ContextStore({ pool: { query } as never, tablePrefix: 'test' });
+    const result = await readStore.getRecord('tenant-a', 'source-a', 'collection-a', 'record-a');
+    expect(result?.record).not.toHaveProperty('entityType');
+    expect(result?.revision).not.toHaveProperty('aclPrincipals');
+  });
+
+  it.each([
+    { entityType: 'company' },
+    { recordKind: 'delta' },
+    { nativeId: '' },
+    { nativeId: 'x'.repeat(1001) },
+    { occurredAt: 'not-a-date' },
+    { occurredAt: '2026-02-30T00:00:00.000Z' },
+    { sourceEventId: 'x'.repeat(1001) },
+    { ownerPrincipal: 'x'.repeat(501) },
+    { aclPrincipals: 'user:a' },
+    { aclPrincipals: Array.from({ length: 257 }, (_, index) => `user:${index}`) },
+    { aclPrincipals: [''] },
+  ])('rejects invalid typed envelope %#', async invalidEnvelope => {
+    const client = new IngestClient();
+    const store = new ContextStore({ pool: { connect: vi.fn(async () => client) } as never, tablePrefix: 'test' });
+    await expect(store.ingestPage(ingestInput({ title: 'invalid' }, invalidEnvelope)))
+      .rejects.toMatchObject({ code: 'CONTEXT_INVALID' });
+    expect(client.query).not.toHaveBeenCalled();
   });
 
   it('resets refused partitions only through an explicit operator recovery action', async () => {

@@ -7,6 +7,7 @@ import { registerAudioTranscribeAdminRoute } from "./audioTranscribeAdminRoute.j
 import { registerGovernanceRoutes } from './governanceRoutes.js';
 import { activeOffboardingWriteFence, tenantFeatureGuard } from "./routeGuards.js";
 import { createContextRecallRuntime } from './runtimeMemoryContextTools.js';
+import { createContextAdminConsumerStore } from './runtimeContextAdmin.js';
 export { activeOffboardingWriteFence } from "./routeGuards.js";
 import type { UserInfo } from "../data/users/types.js";
 import { getPublicModelList, getUserPublicModelList, resolveContextAccountingFromModels } from "./models.js";
@@ -258,6 +259,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           : undefined,
         recallIdSigningKey: config.auth?.jwtSecret,
         sessionCatalog: runtime.sessionCatalog,
+        sourceAuthorizationRegistry: runtime.contextSourceAuthorizationRegistry,
       })
     : undefined;
   app.use('/api', createContextCitationsRouter({
@@ -267,6 +269,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   }));
   app.use('/api/admin/context-plane', requireAdmin, createContextAdminRouter({
     store: runtime.contextStore,
+    consumers: createContextAdminConsumerStore(runtime, config),
   }));
   const webChannel = channelManager.getChannel<WebChannel>("web");
   app.use(

@@ -5,6 +5,7 @@ import { governanceV22Statements } from './v22Migration.js';
 import { governanceV23Statements } from './v23Migration.js';
 import { governanceV18Statements } from './v18Migration.js';
 import { buildContextMigrationSql } from '../../context/store/migration.js';
+import { buildContextPhase23MigrationSql } from '../../context/phase23/migration.js';
 
 export type GovernancePgPool = pg.Pool;
 
@@ -907,6 +908,10 @@ function migrations(prefix: string): GovernanceMigration[] {
       // introduce a second context-specific schema_versions table.
       version: 24,
       statements: buildContextMigrationSql(prefix),
+    },
+    {
+      version: 25,
+      statements: buildContextPhase23MigrationSql(prefix),
     },
   ];
 }

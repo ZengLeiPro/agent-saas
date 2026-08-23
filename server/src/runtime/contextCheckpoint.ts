@@ -3,6 +3,7 @@ import { buildChatMessagesFromEvents } from './legacyTranscriptProjection.js';
 import type {
   CheckpointTaskAnchor,
   ModelAttachmentRef,
+  ModelChatMessage,
   PlatformEvent,
 } from './types.js';
 
@@ -189,6 +190,90 @@ function buildAtomicToolRanges(events: PlatformEvent[]): {
 
 function estimateRawEventTokens(events: PlatformEvent[]): number {
   return estimateContextTokens(buildChatMessagesFromEvents(events));
+}
+
+function compactionSourceText(event: PlatformEvent): string | undefined {
+  switch (event.type) {
+    case 'user_message': {
+      const attachments = event.attachments?.map((attachment) => (
+        `${attachment.originalName ?? '附件'}(attachmentId=${attachment.attachmentId})`
+      )).join(', ');
+      return [event.modelContent ?? event.content, attachments ? `附件：${attachments}` : ''].filter(Boolean).join('\n');
+    }
+    case 'memory_context':
+    case 'assistant_message':
+    case 'assistant_thinking':
+      return event.content;
+    case 'tool_result':
+      return `tool_result callId=${event.toolCallId} tool=${event.toolName}\n${event.content}`;
+    case 'assistant_tool_calls':
+      return [event.content, ...event.toolCalls.map((call) => (
+        `tool_call callId=${call.id} tool=${call.name} arguments=${call.arguments}`
+      ))].filter(Boolean).join('\n');
+    case 'mcp_tools_loaded':
+      return `已加载 MCP 工具：${event.tools.map((tool) => tool.name).join(', ')}`;
+    default:
+      return undefined;
+  }
+}
+
+function fitCompactionSourceText(content: string, tokenBudget: number): string {
+  if (tokenBudget <= 0) return '';
+  if (estimateContextTokens(content) <= tokenBudget) return content;
+  let low = 0;
+  let high = content.length;
+  let best = '';
+  while (low <= high) {
+    const retainedChars = Math.floor((low + high) / 2);
+    const headChars = Math.ceil(retainedChars * 0.7);
+    const candidate = `${content.slice(0, headChars)}\n……[中间内容因首次压缩输入预算省略]……\n${content.slice(-(retainedChars - headChars))}`;
+    if (estimateContextTokens(candidate) <= tokenBudget) {
+      best = candidate;
+      low = retainedChars + 1;
+    } else {
+      high = retainedChars - 1;
+    }
+  }
+  return best;
+}
+
+/** 首次 checkpoint 尚无旧摘要可折叠时，将超窗原始历史降级为有界、可总结的事件摘录。 */
+export function buildBoundedInitialCompactionMessages(
+  events: PlatformEvent[],
+  tokenBudget: number,
+): ModelChatMessage[] {
+  const budget = Math.max(0, Math.floor(tokenBudget));
+  const rawMessages = buildChatMessagesFromEvents(events);
+  if (estimateContextTokens(rawMessages) <= budget) return rawMessages;
+  if (budget <= 0) return [];
+
+  const entries = events.flatMap((event, index) => {
+    const text = compactionSourceText(event)?.trim();
+    return text ? [{ index, event, text }] : [];
+  });
+  const selected = new Map<number, string>();
+  const userEntries = entries.filter(({ event }) => event.type === 'user_message');
+  const priority = [userEntries[0], userEntries.at(-1)].filter((entry) => entry !== undefined);
+  const candidates = [...priority, ...entries.slice().reverse()];
+  const wrapperTokens = estimateContextTokens('<context-compaction-source>\n</context-compaction-source>');
+  let remaining = Math.max(0, budget - wrapperTokens);
+  for (const entry of candidates) {
+    if (selected.has(entry.index) || remaining <= 0) continue;
+    const label = `[${entry.event.timestamp} ${entry.event.type} eventId=${entry.event.id}]`;
+    const labelTokens = estimateContextTokens(label);
+    const excerptBudget = Math.min(2_048, Math.max(0, remaining - labelTokens));
+    const excerpt = fitCompactionSourceText(entry.text, excerptBudget);
+    if (!excerpt) continue;
+    const block = `${label}\n${excerpt}`;
+    const blockTokens = estimateContextTokens(block);
+    if (blockTokens > remaining) continue;
+    selected.set(entry.index, block);
+    remaining -= blockTokens;
+  }
+  const body = [...selected.entries()].sort(([left], [right]) => left - right).map(([, block]) => block).join('\n\n');
+  const content = `<context-compaction-source>\n这是首次 checkpoint 的有界历史摘录；被省略的原始事件仍可通过 SessionContext 检索。\n\n${body}\n</context-compaction-source>`;
+  const bounded = fitCompactionSourceText(content, budget);
+  return bounded ? [{ role: 'user', content: bounded }] : [];
 }
 
 export function selectAtomicRawTail(

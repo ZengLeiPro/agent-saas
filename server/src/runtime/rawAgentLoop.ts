@@ -57,7 +57,6 @@ import { governModelRequestMessages } from './contextGovernor.js';
 import {
   hasActiveCheckpointForRun,
   planContextCheckpoint,
-  planContinuousCheckpointInput,
 } from './contextCheckpoint.js';
 import { createCompactionSummaryAudit, formatCompactionSummaryWarning } from './compactionSummary.js';
 import {
@@ -123,6 +122,7 @@ import {
   isEmergencyContextPressure,
   parseContextPressureState,
   parseReplaceableDraftRunState,
+  prepareCompactionInputMessages,
   resolveInvokedSkillName,
   type CompactionOptions,
   type CompactionOutcome,
@@ -2015,22 +2015,14 @@ export class RawAgentLoop implements AgentLoop {
         sourceRunId: options.sourceRunId,
         adaptUserHistoryToTarget: configuredWindow !== undefined,
       });
-      const compressedEvents = priorEvents.slice(0, plan.rawTailStartIndex);
-      const continuousInput = planContinuousCheckpointInput(compressedEvents, Math.max(0, contextWindow - estimateContextTokens([input.instructions, tools, this.compactionPrompt]) - plan.userHistoryTokenCap - plan.summaryBudgetTokens - 1_024));
-      const compressedProjection = buildContextProjection(
-        compressedEvents,
-        {
-          sessionId: context.sessionId,
-          runId: context.runId,
-          policy: this.contextPolicy,
-          excludeMemoryContext: true,
-          checkpointUserHistoryTokenCap: plan.userHistoryTokenCap,
-          checkpointSummaryTokenCap: continuousInput.summaryTokenCap, checkpointRetainedStartIndex: continuousInput.retainedStartIndex, collapseCheckpointRawTail: true,
-        },
-      );
-      const compressedMessages = compressedProjection.messages;
+      const compactInput = prepareCompactionInputMessages({
+        compressedEvents: priorEvents.slice(0, plan.rawTailStartIndex), plan, contextWindow,
+        fixedRequestTokens: estimateContextTokens([input.instructions, tools, this.compactionPrompt]),
+        sessionId: context.sessionId, runId: context.runId, policy: this.contextPolicy,
+      });
+      const compressedMessages = compactInput.messages;
       const minimumMessages = options.trigger === 'threshold' ? 1 : MIN_COMPACTABLE_MESSAGES;
-      if (plan.coveredEventCount <= 0 || compressedMessages.length < minimumMessages) {
+      if (plan.coveredEventCount <= 0 || compactInput.projectedMessageCount < minimumMessages || compressedMessages.length === 0) {
         const note = '当前会话历史很短，无需压缩。';
         yield { type: 'compaction_end', compaction: { skipped: true, note, coveredEventCount: 0 } };
         return { status: 'skipped', numTurns: 0, resultText: note };
@@ -2040,6 +2032,10 @@ export class RawAgentLoop implements AgentLoop {
         ...compressedMessages,
         { role: 'user', content: this.compactionPrompt },
       ];
+      const requestUpperTokens = estimateContextTokens([requestMessages, tools]) + plan.summaryBudgetTokens;
+      if (requestUpperTokens > contextWindow) {
+        throw new Error(`compaction request exceeds context window: ${requestUpperTokens}/${contextWindow}`);
+      }
       let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
       await context.authorizeModelTurn?.();
       // 黑箱消费：thinking 丢弃、text 静默累积，不向外 yield 流式内容。

@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { estimateContextTokens } from '../runtime/contextBreakdown.js';
-import { planContextCheckpoint, planContinuousCheckpointInput } from '../runtime/contextCheckpoint.js';
+import {
+  buildBoundedInitialCompactionMessages,
+  planContextCheckpoint,
+  planContinuousCheckpointInput,
+} from '../runtime/contextCheckpoint.js';
 import { buildContextProjection } from '../runtime/contextProjection.js';
 import type { ContextCheckpointMetadata, PlatformEvent } from '../runtime/types.js';
 
@@ -212,6 +216,82 @@ describe('context checkpoint 返工边界', () => {
     expect(serialized).not.toContain('超长旧输出');
     expect(serialized).not.toContain('checkpoint 后超长输出');
     expect(serialized).not.toContain('large-tool');
+  });
+
+  it('普通 checkpoint replay 不恢复未被 retained tool interaction 使用的超大 MCP schema', () => {
+    const largeMcp = {
+      ...base,
+      id: 'normal-replay-large-mcp',
+      type: 'mcp_tools_loaded',
+      runId: 'run-old',
+      execution: 'server',
+      paths: ['mcp_large.unused'],
+      tools: [{ id: 'unused', name: 'mcp_large.unused', description: '超大 schema'.repeat(80_000), parameters: {} }],
+    } as PlatformEvent;
+    const normalCheckpoint = checkpoint('normal-checkpoint', metadata({}), '已完成旧工具调查。');
+    const projection = buildContextProjection([
+      largeMcp,
+      normalCheckpoint,
+      { ...user('normal-latest', '继续处理，但不再调用旧工具'), runId: 'run-next' } as PlatformEvent,
+    ], { sessionId: 'session-1', runId: 'run-next' });
+
+    expect(estimateContextTokens(projection.messages)).toBeLessThan(2_000);
+    expect(projection.messages.some((message) => message.role === 'additional_tools')).toBe(false);
+    expect(JSON.stringify(projection.messages)).toContain('继续处理');
+
+    const usedCall = {
+      ...base,
+      id: 'used-large-call',
+      type: 'assistant_tool_calls',
+      runId: 'run-next',
+      content: '',
+      toolCalls: [{ id: 'used-call-id', name: 'mcp_large.unused', arguments: '{}' }],
+    } as PlatformEvent;
+    const usedResult = {
+      ...base,
+      id: 'used-large-result',
+      type: 'tool_result',
+      runId: 'run-next',
+      toolCallId: 'used-call-id',
+      toolName: 'mcp_large.unused',
+      content: '结果已消费',
+    } as PlatformEvent;
+    const usedProjection = buildContextProjection([
+      largeMcp, normalCheckpoint, usedCall, usedResult,
+    ], { sessionId: 'session-1', runId: 'run-next' });
+    expect(estimateContextTokens(usedProjection.messages)).toBeLessThan(2_000);
+    expect(usedProjection.messages.map((message) => message.role)).toEqual(['user']);
+    expect(JSON.stringify(usedProjection.messages)).not.toContain('used-call-id');
+  });
+
+  it('首次压缩把单个超大原子输出降级为有界摘录并保留首条目标与最新纠正', () => {
+    const events = [
+      {
+        ...user('initial-goal', '首条目标：分析所有方案'),
+        runId: 'run-active',
+        attachments: [{ attachmentId: 'attachment-1', originalName: '方案数据.xlsx' }],
+      } as PlatformEvent,
+      {
+        ...base,
+        id: 'huge-first-output',
+        type: 'assistant_message',
+        runId: 'run-active',
+        content: `超长输出开头：${'中间结论'.repeat(120_000)}：超长输出结尾`,
+      } as PlatformEvent,
+      { ...user('latest-fix', '最新纠正：只保留 B 方案'), runId: 'run-active' } as PlatformEvent,
+    ];
+    expect(estimateContextTokens(buildContextProjection(events, {
+      sessionId: 'session-1', runId: 'run-active',
+    }).messages)).toBeGreaterThan(300_000);
+
+    const bounded = buildBoundedInitialCompactionMessages(events, 8_000);
+    const serialized = JSON.stringify(bounded);
+    expect(estimateContextTokens(bounded)).toBeLessThanOrEqual(8_000);
+    expect(serialized).toContain('首条目标');
+    expect(serialized).toContain('attachment-1');
+    expect(serialized).toContain('最新纠正');
+    expect(serialized).toContain('超长输出开头');
+    expect(serialized).toContain('超长输出结尾');
   });
 
   it('连续压缩同样收缩无 checkpoint 元数据的存量 compaction', () => {

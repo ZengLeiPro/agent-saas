@@ -273,55 +273,57 @@ describe('context projection', () => {
     expect(projection.selectedEvents.map((e) => e.id)).toEqual(['event-2', 'event-3']);
   });
 
-  it('在 compaction/recent window 丢弃历史位置后恢复已加载 MCP 真实工具定义', () => {
+  it('只为 retained tool interaction 恢复 MCP schema，不恢复未使用的压缩前工具', () => {
     const loaded = {
-      id: 'loaded-1',
-      timestamp: '2026-01-01T00:00:01.000Z',
-      type: 'mcp_tools_loaded',
-      runId: 'run-1',
-      sessionId: 'session-1',
-      execution: 'server',
+      id: 'loaded-1', timestamp: '2026-01-01T00:00:01.000Z', type: 'mcp_tools_loaded',
+      runId: 'run-1', sessionId: 'session-1', execution: 'server',
       paths: ['mcp_github.mcp__github__get_issue'],
       tools: [{
-        id: 'mcp__github__get_issue',
-        name: 'mcp__github__get_issue',
-        description: '读取 issue',
-        parameters: { type: 'object', properties: {} },
-        deferLoading: true,
-        mcpServer: {
-          serverName: 'github', namespace: 'mcp_github', displayName: 'GitHub', description: 'GitHub',
-        },
+        id: 'mcp__github__get_issue', name: 'mcp__github__get_issue', description: '读取 issue',
+        parameters: { type: 'object', properties: {} }, deferLoading: true,
+        mcpServer: { serverName: 'github', namespace: 'mcp_github', displayName: 'GitHub', description: 'GitHub' },
       }],
     } as PlatformEvent;
     const compacted = {
-      id: 'compaction-mcp',
-      timestamp: '2026-01-01T00:00:02.000Z',
-      type: 'compaction',
-      runId: 'run-compact',
-      sessionId: 'session-1',
-      summary: '已读取过 GitHub issue。',
-      coveredEventCount: 1,
+      id: 'compaction-mcp', timestamp: '2026-01-01T00:00:02.000Z', type: 'compaction',
+      runId: 'run-compact', sessionId: 'session-1', summary: '已读取过 GitHub issue。', coveredEventCount: 1,
     } as PlatformEvent;
     const after = { ...event(3), content: '继续处理这个 issue' };
+    const call = {
+      id: 'call-event', timestamp: '2026-01-01T00:00:04.000Z', type: 'assistant_tool_calls',
+      runId: 'run-next', sessionId: 'session-1', content: '',
+      toolCalls: [{ id: 'call-1', name: 'mcp__github__get_issue', arguments: '{}' }],
+    } as PlatformEvent;
+    const result = {
+      id: 'result-event', timestamp: '2026-01-01T00:00:05.000Z', type: 'tool_result',
+      runId: 'run-next', sessionId: 'session-1', toolCallId: 'call-1', toolName: 'mcp__github__get_issue', content: 'issue 内容',
+    } as PlatformEvent;
 
-    const projection = buildContextProjection([loaded, compacted, after], {
-      sessionId: 'session-1',
-      runId: 'run-next',
+    const unused = buildContextProjection([loaded, compacted, after], {
+      sessionId: 'session-1', runId: 'run-next',
+    });
+    expect(unused.messages.map((message) => message.role)).toEqual(['user', 'user']);
+
+    const projection = buildContextProjection([loaded, compacted, after, call, result], {
+      sessionId: 'session-1', runId: 'run-next',
     });
     expect(projection.messages.map((message) => message.role)).toEqual([
-      'user', 'additional_tools', 'user',
+      'user', 'additional_tools', 'user', 'assistant', 'tool',
     ]);
     expect(projection.messages[1]).toMatchObject({
-      role: 'additional_tools',
-      tools: [expect.objectContaining({ name: 'mcp__github__get_issue' })],
+      role: 'additional_tools', tools: [expect.objectContaining({ name: 'mcp__github__get_issue' })],
     });
 
-    const recent = buildContextProjection([loaded, event(2), after], {
-      sessionId: 'session-1',
-      runId: 'run-next',
-      policy: { type: 'recent_window', recentEvents: 1 },
+    const thinking = {
+      id: 'thinking-event', timestamp: '2026-01-01T00:00:00.000Z', type: 'assistant_thinking',
+      runId: 'run-next', sessionId: 'session-1', content: '先读取 issue',
+    } as PlatformEvent;
+    const recentLoaded = { ...loaded, runId: 'run-next' } as PlatformEvent;
+    const recent = buildContextProjection([thinking, recentLoaded, call, result], {
+      sessionId: 'session-1', runId: 'run-next', policy: { type: 'recent_window', recentEvents: 1 },
     });
-    expect(recent.messages.map((message) => message.role)).toEqual(['additional_tools', 'user']);
+    expect(recent.messages.map((message) => message.role)).toEqual(['additional_tools', 'assistant', 'tool']);
+    expect(recent.messages[1]).toMatchObject({ reasoning_content: '先读取 issue' });
   });
 });
 

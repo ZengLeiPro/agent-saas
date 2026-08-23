@@ -592,9 +592,23 @@ export function buildContextProjection(allEvents: PlatformEvent[], options: Cont
   const withRestoredMcpTools = (
     prefix: ModelChatMessage[],
     replayMessages: ModelChatMessage[],
+    selectedEvents: PlatformEvent[],
   ): ModelChatMessage[] => {
     // 连续压缩只需要当前请求已提供的 tools，不能从完整历史无上限恢复旧 MCP schema。
     if (options.collapseCheckpointRawTail) return [...prefix, ...replayMessages];
+    const selectedToolResultIds = new Set(selectedEvents.flatMap((event) => (
+      event.type === 'tool_result' ? [event.toolCallId] : []
+    )));
+    const mcpNames = new Set(rewoundVisibleEvents.flatMap((event) => (
+      event.type === 'mcp_tools_loaded' ? event.tools.map((tool) => tool.name) : []
+    )));
+    const requiredNames = new Set(rewoundVisibleEvents.flatMap((event) => (
+      event.type === 'assistant_tool_calls'
+        ? event.toolCalls.filter((call) => mcpNames.has(call.name) && (
+          selectedEvents.includes(event) || selectedToolResultIds.has(call.id)
+        )).map((call) => call.name)
+        : []
+    )));
     const present = new Set(
       replayMessages
         .filter((message): message is Extract<ModelChatMessage, { role: 'additional_tools' }> => (
@@ -606,28 +620,62 @@ export function buildContextProjection(allEvents: PlatformEvent[], options: Cont
     for (const event of rewoundVisibleEvents) {
       if (event.type !== 'mcp_tools_loaded') continue;
       for (const tool of event.tools) {
-        if (!present.has(tool.name)) restored.set(tool.name, tool);
+        if (requiredNames.has(tool.name) && !present.has(tool.name)) restored.set(tool.name, tool);
       }
     }
-    return restored.size > 0
-      ? [...prefix, { role: 'additional_tools', tools: [...restored.values()] }, ...replayMessages]
-      : [...prefix, ...replayMessages];
+    const checkpointTarget = visibleEvents.slice().reverse().find((event) => (
+      event.type === 'compaction' && event.checkpoint
+    ));
+    const checkpointBudget = checkpointTarget?.type === 'compaction'
+      ? checkpointTarget.checkpoint
+      : undefined;
+    let remainingTokens = checkpointBudget === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.max(
+        0,
+        checkpointBudget.targetTokens - checkpointBudget.fixedTokens
+          - estimateContextTokens([prefix, replayMessages]) - 64,
+      );
+    const boundedTools = [...restored.values()].filter((tool) => {
+      const toolTokens = estimateContextTokens(tool);
+      if (toolTokens > remainingTokens) return false;
+      remainingTokens -= toolTokens;
+      return true;
+    });
+    const availableNames = new Set([...present, ...boundedTools.map((tool) => tool.name)]);
+    const omittedNames = new Set([...requiredNames].filter((name) => !availableNames.has(name)));
+    const omittedCallIds = new Set<string>();
+    const boundedReplay = replayMessages.filter((message) => {
+      if (message.role === 'assistant' && message.tool_calls?.some((call) => (
+        omittedNames.has(call.function.name)
+      ))) {
+        for (const call of message.tool_calls) omittedCallIds.add(call.id);
+        return false;
+      }
+      return message.role !== 'tool' || !omittedCallIds.has(message.tool_call_id);
+    });
+    return boundedTools.length > 0
+      ? [...prefix, { role: 'additional_tools', tools: boundedTools }, ...boundedReplay]
+      : [...prefix, ...boundedReplay];
   };
   switch (policy.type) {
     case 'full_replay':
       {
         const replayMessages = buildChatMessagesFromEvents(events);
       return {
-        messages: withRestoredMcpTools(summaryMessages, replayMessages),
+        messages: withRestoredMcpTools(summaryMessages, replayMessages, events),
         policy: policy.type,
         selectedEvents: events,
       };
       }
     case 'recent_window': {
-      const selectedEvents = lastN(events, policy.recentEvents ?? DEFAULT_RECENT_EVENTS);
+      const selectedEvents = expandToolInteractionSelection(
+        lastN(events, policy.recentEvents ?? DEFAULT_RECENT_EVENTS),
+        events,
+      );
       const replayMessages = buildChatMessagesFromEvents(selectedEvents);
       return {
-        messages: withRestoredMcpTools(summaryMessages, replayMessages),
+        messages: withRestoredMcpTools(summaryMessages, replayMessages, selectedEvents),
         policy: policy.type,
         selectedEvents,
       };
@@ -635,10 +683,13 @@ export function buildContextProjection(allEvents: PlatformEvent[], options: Cont
     case 'manual_slice': {
       const start = clampIndex(policy.start ?? 0, events.length);
       const end = clampIndex(policy.end ?? events.length, events.length);
-      const selectedEvents = events.slice(Math.min(start, end), Math.max(start, end));
+      const selectedEvents = expandToolInteractionSelection(
+        events.slice(Math.min(start, end), Math.max(start, end)),
+        events,
+      );
       const replayMessages = buildChatMessagesFromEvents(selectedEvents);
       return {
-        messages: withRestoredMcpTools(summaryMessages, replayMessages),
+        messages: withRestoredMcpTools(summaryMessages, replayMessages, selectedEvents),
         policy: policy.type,
         selectedEvents,
       };
@@ -646,18 +697,51 @@ export function buildContextProjection(allEvents: PlatformEvent[], options: Cont
     case 'retrieval_augmented': {
       const matches = searchEvents(events, policy.query, policy.maxMatches ?? DEFAULT_MAX_MATCHES);
       const recent = lastN(events, policy.recentEvents ?? DEFAULT_RECENT_EVENTS);
-      const selectedEvents = uniqueEvents([...matches, ...recent]);
+      const selectedEvents = expandToolInteractionSelection(
+        uniqueEvents([...matches, ...recent]),
+        events,
+      );
       const retrievalMessage = matches.length > 0
         ? [{ role: 'user' as const, content: formatRetrievalMessage(policy.query, matches) }]
         : [];
       const replayMessages = buildChatMessagesFromEvents(selectedEvents);
       return {
-        messages: withRestoredMcpTools([...summaryMessages, ...retrievalMessage], replayMessages),
+        messages: withRestoredMcpTools([...summaryMessages, ...retrievalMessage], replayMessages, selectedEvents),
         policy: policy.type,
         selectedEvents,
       };
     }
   }
+}
+
+function expandToolInteractionSelection(
+  selectedEvents: PlatformEvent[],
+  allEvents: PlatformEvent[],
+): PlatformEvent[] {
+  const selectedIds = new Set(selectedEvents.map((event) => event.id));
+  const selectedCallIds = new Set(selectedEvents.flatMap((event) => (
+    event.type === 'tool_result'
+      ? [event.toolCallId]
+      : event.type === 'assistant_tool_calls' ? event.toolCalls.map((call) => call.id) : []
+  )));
+  for (const [index, event] of allEvents.entries()) {
+    if (event.type !== 'assistant_tool_calls') continue;
+    const callIds = event.toolCalls.map((call) => call.id);
+    if (!callIds.some((id) => selectedCallIds.has(id))) continue;
+    selectedIds.add(event.id);
+    for (const candidate of allEvents) {
+      if (candidate.type === 'tool_result' && callIds.includes(candidate.toolCallId)) {
+        selectedIds.add(candidate.id);
+      }
+    }
+    for (let thinkingIndex = index - 1; thinkingIndex >= 0; thinkingIndex -= 1) {
+      const candidate = allEvents[thinkingIndex]!;
+      if (candidate.type === 'mcp_tools_loaded' && candidate.runId === event.runId) continue;
+      if (candidate.type !== 'assistant_thinking' || candidate.runId !== event.runId) break;
+      selectedIds.add(candidate.id);
+    }
+  }
+  return allEvents.filter((event) => selectedIds.has(event.id));
 }
 
 function formatRetrievalMessage(query: string, matches: PlatformEvent[]): string {

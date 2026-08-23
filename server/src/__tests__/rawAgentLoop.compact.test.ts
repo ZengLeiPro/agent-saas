@@ -3,7 +3,9 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PlatformToolRuntime } from '../agent/toolRuntime.js';
+import { configureModelPricing } from '../data/usage/pricing.js';
 import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
+import { estimateContextTokens } from '../runtime/contextBreakdown.js';
 import { buildContextProjection } from '../runtime/contextProjection.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
@@ -105,6 +107,57 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     await eventStore.append({ type: 'user_message', runId: 'run-old-4', sessionId: 'session-compact', content: '最后看下 D 方案' });
     await eventStore.append({ type: 'assistant_message', runId: 'run-old-4', sessionId: 'session-compact', content: 'D 方案与 B 接近，仍推荐 B。' });
   }
+
+  it('首次 checkpoint 的超大单事件在发流前降级到真实窗口 hard budget', async () => {
+    configureModelPricing({ groups: [{ models: [{ value: 'compact-small', context_window: 16_000 }] }] });
+    try {
+      const adapter = new SummaryAdapter(['## 摘要\n已提取超长输出的首尾关键结论。']);
+      const { eventStore, loop, context } = await makeCompactHarness(adapter);
+      context.model = 'compact-small';
+      await eventStore.append({ type: 'user_message', runId: 'run-old', sessionId: 'session-compact', content: '请分析超长资料' });
+      await eventStore.append({ type: 'assistant_message', runId: 'run-old', sessionId: 'session-compact', content: '先确认分析范围。' });
+      await eventStore.append({ type: 'user_message', runId: 'run-old', sessionId: 'session-compact', content: '分析全部章节。' });
+      await eventStore.append({
+        type: 'assistant_message', runId: 'run-old', sessionId: 'session-compact',
+        content: `超长输出开头：${'关键资料'.repeat(120_000)}：超长输出结尾`,
+      });
+      await eventStore.append({ type: 'user_message', runId: 'run-old', sessionId: 'session-compact', content: '最新纠正：聚焦结论' });
+
+      const outbound = await collect(loop.compact(
+        { message: { channel: 'web', chatId: 'chat-1', content: '/compact' }, instructions: '系统指令。' },
+        context,
+      ));
+
+      expect(outbound.some((event) => event.type === 'error')).toBe(false);
+      expect(adapter.requests).toHaveLength(1);
+      const request = adapter.requests[0]!;
+      expect(estimateContextTokens([request.messages, request.tools]) + (request.maxOutputTokens ?? 0)).toBeLessThanOrEqual(16_000);
+      expect(JSON.stringify(request.messages)).toContain('context-compaction-source');
+      expect(JSON.stringify(request.messages).length).toBeLessThan(50_000);
+    } finally {
+      configureModelPricing(undefined);
+    }
+  });
+
+  it('首次压缩固定成本耗尽窗口时不调用模型也不落空 checkpoint', async () => {
+    configureModelPricing({ groups: [{ models: [{ value: 'compact-tiny', context_window: 1_000 }] }] });
+    try {
+      const adapter = new SummaryAdapter(['不应生成']);
+      const { eventStore, loop, context } = await makeCompactHarness(adapter);
+      context.model = 'compact-tiny';
+      await seedHistory(eventStore);
+      const outbound = await collect(loop.compact(
+        { message: { channel: 'web', chatId: 'chat-1', content: '/compact' }, instructions: '系统指令。' },
+        context,
+      ));
+
+      expect(adapter.requests).toHaveLength(0);
+      expect(outbound.some((event) => event.type === 'compaction_end')).toBe(true);
+      expect((await eventStore.list('session-compact')).some((event) => event.type === 'compaction')).toBe(false);
+    } finally {
+      configureModelPricing(undefined);
+    }
+  });
 
   it('成功链路：黑箱事件流、cutoff 落库、接力链清空、投影=摘要+轨迹+保留窗口', async () => {
     const adapter = new SummaryAdapter(['## 摘要\n', '用户对比了 A/B 方案，结论：推荐 B（成本更低），A 的结论是 X=42。']);

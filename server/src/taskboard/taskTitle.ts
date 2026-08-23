@@ -21,6 +21,30 @@ export interface TaskboardTitleGeneratorOptions {
   billingService?: BillingService;
 }
 
+export interface TaskboardTitleGeneratorRuntime {
+  titleGeneratorConfigs?: TitleGeneratorConfig[];
+  titleModelAdapterFactory?: TitleModelAdapterFactory;
+  refreshSharedConfig: () => void;
+  systemPromptRegistry: { get(key: string): string };
+  tokenUsageStore?: TokenUsageStore;
+  billingService?: BillingService;
+}
+
+export function createRuntimeTaskboardTitleGenerator(
+  agentCwd: string,
+  runtime: TaskboardTitleGeneratorRuntime,
+) {
+  return createTaskboardTitleGenerator({
+    agentCwd,
+    titleGeneratorConfigs: runtime.titleGeneratorConfigs,
+    titleModelAdapterFactory: runtime.titleModelAdapterFactory,
+    refreshSharedConfig: runtime.refreshSharedConfig,
+    getTitleSystemPrompt: () => runtime.systemPromptRegistry.get('utility.title'),
+    tokenUsageStore: runtime.tokenUsageStore,
+    billingService: runtime.billingService,
+  });
+}
+
 export function createTaskboardTitleGenerator(options: TaskboardTitleGeneratorOptions) {
   return async (description: string, identity: TaskboardIdentity): Promise<string | null> => {
     options.refreshSharedConfig?.();

@@ -11,13 +11,6 @@ import {
 } from './taskboardAvatar.js';
 import type { UploadManager } from '../uploads/manager.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
-import type {
-  TitleGeneratorConfig,
-  TitleModelAdapterFactory,
-} from '../agent/titleGenerator.js';
-import type { BillingService } from '../data/billing/service.js';
-import type { TokenUsageStore } from '../data/usage/store.js';
-import { createTaskboardTitleGenerator } from '../taskboard/taskTitle.js';
 import {
   TASKBOARD_EXECUTION_PURPOSES,
   TASKBOARD_PRIORITIES,
@@ -319,13 +312,6 @@ export interface TaskboardRouterOptions {
   /** 将上传暂存附件解析为当前用户工作区中的可信附件。 */
   agentCwd?: string;
   uploadManager?: UploadManager;
-  /** 平台管理的会话标题模型链；任务标题生成直接复用这套配置。 */
-  titleGeneratorConfigs?: TitleGeneratorConfig[];
-  titleModelAdapterFactory?: TitleModelAdapterFactory;
-  refreshSharedConfig?: () => void;
-  getTitleSystemPrompt?: () => string;
-  tokenUsageStore?: TokenUsageStore;
-  billingService?: BillingService;
   /** 测试或特殊部署可替换标题生成；返回 null 时创建空标题。 */
   generateTaskTitle?: (description: string, identity: TaskboardIdentity) => Promise<string | null>;
   /** Maintainer-only, audited operator recovery for a permanently failed v3 candidate worker. */
@@ -339,7 +325,7 @@ export interface TaskboardRouterOptions {
 export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   const router = Router();
   const identityFrom = identityFactory(options);
-  const generateTaskTitle = options.generateTaskTitle ?? createTaskboardTitleGenerator(options);
+  const generateTaskTitle = options.generateTaskTitle ?? (async () => null);
   const sendTask = (req: Request, res: Response, task: TaskBoardTask) =>
     res.json(withCreatorAvatarVersion(options.userStore, identityFrom(req), task));
 

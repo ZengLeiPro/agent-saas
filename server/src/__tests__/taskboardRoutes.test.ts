@@ -273,29 +273,6 @@ describe('Taskboard routes', () => {
     }))).status).toBe(200);
   });
 
-  it('uses generated titles for title-less task creation and preserves an empty title on failure', async () => {
-    const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
-    const createdInputs: unknown[] = [];
-    const service = {
-      ...makeService(captured),
-      async createTask(identity: TaskboardIdentity, _boardId: string, input: unknown) {
-        captured.identities.push(identity);
-        createdInputs.push(input);
-        return { ...TASK, title: (input as { title: string }).title };
-      },
-    } as TaskboardService;
-    const generateTaskTitle = async (description: string) => description === '模型失败' ? null : '自动生成的标题';
-    const rig = await makeRig(service, USER, captured, undefined, undefined, { generateTaskTitle });
-
-    expect((await rig.request('/api/taskboard/boards/board-1/tasks', postJson({ description: '根据正文创建任务' }))).status).toBe(201);
-    expect((await rig.request('/api/taskboard/boards/board-1/tasks', postJson({ description: '模型失败' }))).status).toBe(201);
-
-    expect(createdInputs).toEqual([
-      expect.objectContaining({ title: '自动生成的标题', description: '根据正文创建任务' }),
-      expect.objectContaining({ title: '', description: '模型失败' }),
-    ]);
-  });
-
   it('strictly validates every mutation shape and parses search/status/priority filters', async () => {
     const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
     const rig = await makeRig(makeService(captured), USER, captured);

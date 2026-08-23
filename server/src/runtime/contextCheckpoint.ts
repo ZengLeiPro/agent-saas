@@ -291,6 +291,7 @@ export function buildBoundedInitialCompactionMessages(
     selected.set(entry.index, block);
     remaining -= blockTokens;
   }
+  if (selected.size === 0) return [];
   const render = () => {
     const body = [...selected.entries()].sort(([left], [right]) => left - right).map(([, block]) => block).join('\n\n');
     return `${wrapper}${body}\n</context-compaction-source>`;

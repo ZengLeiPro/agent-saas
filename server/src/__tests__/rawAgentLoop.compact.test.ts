@@ -7,9 +7,11 @@ import { configureModelPricing } from '../data/usage/pricing.js';
 import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
 import { estimateContextTokens } from '../runtime/contextBreakdown.js';
 import { buildContextProjection } from '../runtime/contextProjection.js';
+import { planContextCheckpoint } from '../runtime/contextCheckpoint.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
 import { RawAgentLoop } from '../runtime/rawAgentLoop.js';
+import { toModelToolDefinition } from '../runtime/rawAgentLoopHelpers.js';
 import type { LatestResponseSessionState, RunStore } from '../runtime/runStore.js';
 import type {
   ModelAdapter,
@@ -18,6 +20,7 @@ import type {
   QueuedInterjection,
   RunContext,
 } from '../runtime/types.js';
+import { DEFAULT_COMPACTION_REQUEST_PROMPT } from '../systemPrompts/compaction.js';
 import type { OutboundEvent } from '../types/index.js';
 
 async function collect(stream: AsyncIterable<OutboundEvent>): Promise<OutboundEvent[]> {
@@ -74,12 +77,13 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
         return 2;
       }),
     } as unknown as RunStore;
+    const toolRuntime = new PlatformToolRuntime();
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
       approvalStore: new EventBackedApprovalStore(eventStore, 'session-compact'),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
-      toolRuntime: new PlatformToolRuntime(),
+      toolRuntime,
       runStore,
       compactionPrompt: options.compactionPrompt,
     });
@@ -93,7 +97,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
         user: { id: 'user-1', username: 'leo', role: 'user' },
       },
     };
-    return { cwd, eventStore, loop, context, clearedSessions };
+    return { cwd, eventStore, loop, context, clearedSessions, toolRuntime };
   }
 
   /** 4 轮真实交互：统一 checkpoint planner 根据 Token 预算选择原始尾部，不再固定保留 1 轮。 */
@@ -154,6 +158,53 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
       expect(adapter.requests).toHaveLength(0);
       expect(outbound.some((event) => event.type === 'compaction_end')).toBe(true);
       expect((await eventStore.list('session-compact')).some((event) => event.type === 'compaction')).toBe(false);
+    } finally {
+      configureModelPricing(undefined);
+    }
+  });
+
+  it('首次压缩正预算不足以容纳事件块时不调用模型也不落空 checkpoint', async () => {
+    const adapter = new SummaryAdapter(['不应生成']);
+    const { cwd, eventStore, loop, context, toolRuntime } = await makeCompactHarness(adapter);
+    await seedHistory(eventStore);
+    const instructions = '系统指令。';
+    const tools = toolRuntime.list({
+      channelContext: context.channelContext,
+      workspace: { root: cwd, executionTarget: 'server-local' },
+      sessionId: context.sessionId,
+      runId: context.runId,
+    }).map(toModelToolDefinition);
+    const priorEvents = await eventStore.list(context.sessionId);
+    const fixedRequestTokens = estimateContextTokens([instructions, tools, DEFAULT_COMPACTION_REQUEST_PROMPT]);
+    const baseFixedTokens = estimateContextTokens([instructions, tools]);
+    const wrapperOnlyTokens = estimateContextTokens('<context-compaction-source>\n这是首次 checkpoint 的有界历史摘录；被省略的原始事件仍可通过 SessionContext 检索。\n\n\n</context-compaction-source>');
+    let contextWindow = 0;
+    for (let candidate = fixedRequestTokens + 1_024; candidate < fixedRequestTokens + 20_000; candidate += 1) {
+      const plan = planContextCheckpoint({
+        events: priorEvents,
+        contextWindow: candidate,
+        thresholdTokens: Math.max(1, Math.floor(candidate * 0.8)),
+        baseFixedTokens,
+        adaptUserHistoryToTarget: true,
+      });
+      const sourceBudget = candidate - fixedRequestTokens - plan.summaryBudgetTokens - 1_024;
+      if (sourceBudget >= wrapperOnlyTokens && sourceBudget < wrapperOnlyTokens + 32) {
+        contextWindow = candidate;
+        break;
+      }
+    }
+    expect(contextWindow).toBeGreaterThan(0);
+    configureModelPricing({ groups: [{ models: [{ value: 'compact-wrapper-only', context_window: contextWindow }] }] });
+    try {
+      context.model = 'compact-wrapper-only';
+      const outbound = await collect(loop.compact(
+        { message: { channel: 'web', chatId: 'chat-1', content: '/compact' }, instructions },
+        context,
+      ));
+
+      expect(adapter.requests).toHaveLength(0);
+      expect(outbound.some((event) => event.type === 'compaction_end')).toBe(true);
+      expect((await eventStore.list(context.sessionId)).some((event) => event.type === 'compaction')).toBe(false);
     } finally {
       configureModelPricing(undefined);
     }

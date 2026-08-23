@@ -613,11 +613,15 @@ export function replaceTenantAdminUrl(state: { section?: TenantAdminSection | nu
   }
 }
 
-/** V2 治理 route 写入 history；页面 Shell 接线前不会替代现有 UI route state。 */
+/**
+ * V2 治理 route 写入 history。
+ *
+ * 控制台内部菜单必须保持 SPA 跳转：不能让待应用的 SW 更新借一次菜单点击整页刷新，
+ * 否则平台/组织控制台会随机出现白屏闪烁。更新仍由提示条、冷启动与真实浏览器导航处理。
+ */
 export function pushGovernanceUrl(state: GovernanceRouteState): void {
   const next = buildGovernanceUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    if (maybeNavigateWithUpdate(next)) return;
     window.history.pushState({}, '', next);
   }
 }

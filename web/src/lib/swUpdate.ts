@@ -209,7 +209,9 @@ export function maybeNavigateWithUpdate(targetUrl: string): boolean {
  * popstate 拦截入口（URL 已变，直接原地 reload 即到新版）。
  * 返回 true 表示已接管刷新，调用方应跳过本次 SPA 状态同步。
  */
-export function maybeReloadOnPopstate(): boolean {
+export function maybeReloadOnPopstate(event?: Pick<Event, "isTrusted">): boolean {
+  // pushState 后由应用派发的合成 popstate 只是 SPA 状态同步，绝不能被当成浏览器导航强刷。
+  if (event && !event.isTrusted) return false;
   if (!updateReady || applying || hasGuardActive()) return false;
   return autoApply();
 }

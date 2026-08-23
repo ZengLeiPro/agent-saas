@@ -56,6 +56,10 @@ describe("未就绪时导航拦截入口短路（不跳转）", () => {
   it("maybeReloadOnPopstate 在未就绪时返回 false，不触发 reload", () => {
     expect(maybeReloadOnPopstate()).toBe(false);
   });
+
+  it("应用派发的 synthetic popstate 永远不触发整页更新", () => {
+    expect(maybeReloadOnPopstate(new PopStateEvent("popstate"))).toBe(false);
+  });
 });
 
 describe("自动更新熔断（防整页刷新循环）", () => {

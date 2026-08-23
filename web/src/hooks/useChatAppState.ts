@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { startTransition, useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { ApiSessionListItem } from "@/lib/sessionsApi";
 import type { AskUserAnswers, MemoryRecallData, NotificationData, PluginInstallData, SessionRuntimeStatus } from "@agent/shared";
@@ -1155,10 +1155,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // 浏览器前进/后退 → 解析 URL → 更新状态（不操作 URL）
   useEffect(() => {
-    const handler = () => {
-      // update-on-navigation：popstate 时 URL 已变，有 pending SW 更新且无守门
-      // 条件直接原地 reload 到新版本，跳过本次 SPA 状态同步
-      if (maybeReloadOnPopstate()) return;
+    const handler = (event: PopStateEvent) => {
+      // 只有用户真实触发的前进/后退才允许借导航应用 SW 更新；应用内部派发的
+      // synthetic popstate 只是让 SPA 重读 URL，强刷会造成管理菜单随机闪屏。
+      if (maybeReloadOnPopstate(event)) return;
       const {
         tab,
         sessionId: urlSessionId,
@@ -1170,41 +1170,49 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         governanceRoute: urlGovernanceRoute,
         canonicalPath,
       } = parseUrl();
-      setGovernanceRouteRaw(urlGovernanceRoute);
-      setPendingCanonicalPath(canonicalPath);
-      if (urlAdminSettings) {
-        // admin settings modal 路径：activeTab 同步到 admin frame，modal 打开到对应 section
-        setSettingsOpen(false);
-        setActiveTabRaw(tab);
-        setAdminSettingsRaw(urlAdminSettings);
-        return;
-      }
-      if (urlSettingsSection) {
-        setAdminSettingsRaw(null);
-        setSettingsOpen(true);
-        setSettingsSectionRaw(urlSettingsSection);
-        return;
-      }
-      setSettingsOpen(false);
-      setAdminSettingsRaw(null);
-      if (tab === 'platform-admin') {
-        setPlatformAdminSectionRaw(urlAdminSection ?? 'overview');
-        setPlatformAdminEntityIdRaw(urlAdminEntityId);
-      }
-      if (tab === 'tenant-admin' && urlTenantAdminSection) {
-        setTenantAdminSectionRaw(urlTenantAdminSection);
-      }
-      immediateSessionIdRef.current = urlSessionId;
-      queuedSessionIdRef.current = urlSessionId;
-      mutateQueuedInterjections((prev) => prev);
-      setActiveTabRaw(tab);
-      if (tab === 'chat') {
-        if (urlSessionId && urlSessionId !== sessionIdRef.current) {
-          markSessionRead(urlSessionId);
-          selectSessionRawRef.current(urlSessionId);
-        } else if (!urlSessionId && sessionIdRef.current) {
-          newSessionRawRef.current();
+      const applyUrlState = () => {
+        setGovernanceRouteRaw(urlGovernanceRoute);
+        setPendingCanonicalPath(canonicalPath);
+        if (urlAdminSettings) {
+          // admin settings modal 路径：activeTab 同步到 admin frame，modal 打开到对应 section
+          setSettingsOpen(false);
+          setActiveTabRaw(tab);
+          setAdminSettingsRaw(urlAdminSettings);
+          return;
         }
+        if (urlSettingsSection) {
+          setAdminSettingsRaw(null);
+          setSettingsOpen(true);
+          setSettingsSectionRaw(urlSettingsSection);
+          return;
+        }
+        setSettingsOpen(false);
+        setAdminSettingsRaw(null);
+        if (tab === 'platform-admin') {
+          setPlatformAdminSectionRaw(urlAdminSection ?? 'overview');
+          setPlatformAdminEntityIdRaw(urlAdminEntityId);
+        }
+        if (tab === 'tenant-admin' && urlTenantAdminSection) {
+          setTenantAdminSectionRaw(urlTenantAdminSection);
+        }
+        immediateSessionIdRef.current = urlSessionId;
+        queuedSessionIdRef.current = urlSessionId;
+        mutateQueuedInterjections((prev) => prev);
+        setActiveTabRaw(tab);
+        if (tab === 'chat') {
+          if (urlSessionId && urlSessionId !== sessionIdRef.current) {
+            markSessionRead(urlSessionId);
+            selectSessionRawRef.current(urlSessionId);
+          } else if (!urlSessionId && sessionIdRef.current) {
+            newSessionRawRef.current();
+          }
+        }
+      };
+      // 懒加载治理页面时保留当前页，chunk 就绪后再一次性切换，避免整块 fallback 闪烁。
+      if (urlGovernanceRoute?.area === 'platform' || urlGovernanceRoute?.area === 'organization') {
+        startTransition(applyUrlState);
+      } else {
+        applyUrlState();
       }
     };
     window.addEventListener('popstate', handler);

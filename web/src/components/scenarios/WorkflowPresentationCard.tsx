@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { CAPABILITY_SURFACE_HOVER } from "@/components/CapabilityCenter/CatalogUi";
 import { cn } from "@/lib/utils";
 import { getReplayScript } from "./replay/registry";
-import { isHeroReplayScenario } from "./replay/availability";
 import { isHookScenario } from "./workflowUi";
 import type { WorkflowScenarioCardProps } from "./ScenarioCard";
 
@@ -28,7 +27,7 @@ export function WorkflowPresentationCard({
           <MousePointerClick className="size-3" />
           {isHookScenario(scenario)
             ? scenario.triggerBadge
-            : (isHeroReplayScenario(scenario.id) || replayScript?.mode === "hero")
+            : (!replayScript || replayScript.mode === "hero")
               ? "完整业务闭环"
               : "快速体验"}
         </Badge>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { demoWorldFixture } from "./demoWorldFixture";
-import { hookReplayScenarioIds, loadHookReplayScript } from "./registry";
+import { hookReplayScenarioIds, loadLazyReplayScript } from "./lazyRegistry";
 
 describe("demoWorldFixture", () => {
   it("统一演示日、订单与应收总盘", () => {
@@ -61,7 +61,7 @@ describe("demoWorldFixture", () => {
 
   it("10 个 hook 不再出现本批已知冲突口径", async () => {
     const scripts = await Promise.all(
-      hookReplayScenarioIds().map((scenarioId) => loadHookReplayScript(scenarioId)!),
+      hookReplayScenarioIds().map((scenarioId) => loadLazyReplayScript(scenarioId)!),
     );
     const text = scripts.flatMap((script) => [
       ...Object.values(script.artifacts ?? {}),

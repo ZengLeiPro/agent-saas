@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   HANDWRITTEN_REPLAY_SCENARIO_IDS,
-  HERO_REPLAY_SCENARIO_IDS,
-  HOOK_REPLAY_SCENARIO_IDS,
+  hasLazyReplayScript,
 } from "./availability";
 import {
   allReplayScripts,
+} from "./registry";
+import {
   heroReplayScenarioIds,
   hookReplayScenarioIds,
-  loadHeroReplayScript,
-  loadHookReplayScript,
-} from "./registry";
+  loadLazyReplayScript,
+} from "./lazyRegistry";
 import type { ReplayScript, ReplayStep } from "./types";
 
 /**
@@ -25,11 +25,11 @@ import type { ReplayScript, ReplayStep } from "./types";
 
 const scripts = allReplayScripts();
 const heroScripts = await Promise.all(
-  heroReplayScenarioIds().map((scenarioId) => loadHeroReplayScript(scenarioId)!),
+  heroReplayScenarioIds().map((scenarioId) => loadLazyReplayScript(scenarioId)!),
 );
 // 钩子剧本懒加载：契约门禁必须覆盖到它们，测试里全部装载
 const hookScripts = await Promise.all(
-  hookReplayScenarioIds().map((scenarioId) => loadHookReplayScript(scenarioId)!),
+  hookReplayScenarioIds().map((scenarioId) => loadLazyReplayScript(scenarioId)!),
 );
 const gatedScripts = [...scripts, ...heroScripts, ...hookScripts];
 
@@ -60,18 +60,20 @@ describe("剧本注册表", () => {
   });
 
   it("七类 Hero 剧本懒加载表与轻量可用性索引一致", () => {
-    expect(new Set(heroReplayScenarioIds())).toEqual(new Set(HERO_REPLAY_SCENARIO_IDS));
+    expect(heroReplayScenarioIds()).toHaveLength(7);
+    expect(heroReplayScenarioIds().every(hasLazyReplayScript)).toBe(true);
     const ids = heroScripts.map((script) => script.scenarioId);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(new Set(ids)).toEqual(new Set(HERO_REPLAY_SCENARIO_IDS));
+    expect(new Set(ids)).toEqual(new Set(heroReplayScenarioIds()));
     expect(heroScripts.every((script) => script.mode === "hero")).toBe(true);
   });
 
   it("钩子剧本懒加载表与轻量可用性索引一致，scenarioId 与装载键一一对应", () => {
-    expect(new Set(hookReplayScenarioIds())).toEqual(new Set(HOOK_REPLAY_SCENARIO_IDS));
+    expect(hookReplayScenarioIds()).toHaveLength(10);
+    expect(hookReplayScenarioIds().every(hasLazyReplayScript)).toBe(true);
     const ids = hookScripts.map((script) => script.scenarioId);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(new Set(ids)).toEqual(new Set(HOOK_REPLAY_SCENARIO_IDS));
+    expect(new Set(ids)).toEqual(new Set(hookReplayScenarioIds()));
   });
 });
 

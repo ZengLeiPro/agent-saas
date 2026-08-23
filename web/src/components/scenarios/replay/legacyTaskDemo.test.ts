@@ -10,11 +10,12 @@ import {
 import { buildLegacyReplayBlocks } from "./legacyTaskDemo";
 import {
   allReplayScripts,
+} from "./registry";
+import {
   heroReplayScenarioIds,
   hookReplayScenarioIds,
-  loadHeroReplayScript,
-  loadHookReplayScript,
-} from "./registry";
+  loadLazyReplayScript,
+} from "./lazyRegistry";
 import type { ReplayScript, ReplayStep } from "./types";
 
 function toolBlock(id: string, title: string): ApiTranscriptBlock {
@@ -107,7 +108,7 @@ describe("legacy task demo", () => {
 
   it("全部 hook legacy 演示在审批回复和后续 prompt 后仍只有一个计划实例", async () => {
     for (const scenarioId of hookReplayScenarioIds()) {
-      const loaded = loadHookReplayScript(scenarioId);
+      const loaded = loadLazyReplayScript(scenarioId);
       if (!loaded) throw new Error(`未注册 legacy 剧本：${scenarioId}`);
       const replay = await loaded;
       const decisions = Object.fromEntries(
@@ -129,12 +130,12 @@ describe("legacy task demo", () => {
 
   it("全部正式剧本的每组业务面板写入都能自动形成当前可见 delta", async () => {
     const heroScripts = await Promise.all(heroReplayScenarioIds().map(async (scenarioId) => {
-      const loaded = loadHeroReplayScript(scenarioId);
+      const loaded = loadLazyReplayScript(scenarioId);
       if (!loaded) throw new Error(`未注册 Hero 剧本：${scenarioId}`);
       return loaded;
     }));
     const hookScripts = await Promise.all(hookReplayScenarioIds().map(async (scenarioId) => {
-      const loaded = loadHookReplayScript(scenarioId);
+      const loaded = loadLazyReplayScript(scenarioId);
       if (!loaded) throw new Error(`未注册 legacy 剧本：${scenarioId}`);
       return loaded;
     }));

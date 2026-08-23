@@ -3,9 +3,14 @@ import type pg from 'pg';
 
 import { PgGovernanceMigrationRunner, governanceTablePrefix } from '../governance-schema/index.js';
 import {
+  AGENT_DWS_CONTEXT_POLICY_MAX_CONVERSATIONS,
+  AGENT_DWS_CONTEXT_POLICY_MAX_LOOKBACK_DAYS,
   AgentDwsAccountInvariantError,
+  failClosedAgentDwsContextPolicy,
   type AgentDwsAccountRecord,
   type AgentDwsAuthorizedProfile,
+  type AgentDwsContextPolicy,
+  type AgentDwsContextPolicyMode,
   type CreateAgentDwsAccountInput,
 } from './types.js';
 
@@ -20,6 +25,13 @@ export interface AgentDwsAccountStore {
   markAuthorized(tenantId: string, accountId: string, expectedRevision: number, profile: AgentDwsAuthorizedProfile, updatedBy: string): Promise<AgentDwsAccountRecord>;
   markAuthorizationFailed(tenantId: string, accountId: string, expectedRevision: number, error: string, updatedBy: string): Promise<void>;
   setEnabled(tenantId: string, accountId: string, enabled: boolean, expectedRevision: number, updatedBy: string): Promise<AgentDwsAccountRecord>;
+  setContextPolicy(
+    tenantId: string,
+    accountId: string,
+    policy: AgentDwsContextPolicy,
+    expectedRevision: number,
+    updatedBy: string,
+  ): Promise<AgentDwsAccountRecord>;
   claimRuntimeLease(accountId: string, leaseOwner: string, leaseTtlMs: number): Promise<boolean>;
   renewRuntimeLease(accountId: string, leaseOwner: string, leaseTtlMs: number): Promise<boolean>;
   releaseRuntimeLease(accountId: string, leaseOwner: string): Promise<void>;
@@ -194,6 +206,31 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
     return await this.requireUpdated(result.rows[0], tenantId, accountId);
   }
 
+  async setContextPolicy(
+    tenantId: string,
+    accountId: string,
+    policy: AgentDwsContextPolicy,
+    expectedRevision: number,
+    updatedBy: string,
+  ): Promise<AgentDwsAccountRecord> {
+    const result = await this.pool.query(`
+      UPDATE ${this.table}
+      SET event_policy_json=jsonb_set(
+            COALESCE(event_policy_json,'{}'::jsonb),
+            '{contextPolicy}',
+            $4::jsonb,
+            TRUE
+          ),
+          revision=revision+1,updated_at=NOW(),updated_by=$5
+      WHERE tenant_id=$1 AND account_id=$2 AND revision=$3
+      RETURNING *
+    `, [tenantId, accountId, expectedRevision, JSON.stringify({
+      ...policy,
+      effectiveAt: new Date().toISOString(),
+    }), updatedBy]);
+    return await this.requireUpdated(result.rows[0], tenantId, accountId);
+  }
+
   async claimRuntimeLease(accountId: string, leaseOwner: string, leaseTtlMs: number): Promise<boolean> {
     const result = await this.pool.query(`
       UPDATE ${this.table}
@@ -287,6 +324,7 @@ function mapRow(row: Record<string, unknown>): AgentDwsAccountRecord {
     status: String(row.status) as AgentDwsAccountRecord['status'],
     runtimeStatus: String(row.runtime_status) as AgentDwsAccountRecord['runtimeStatus'],
     eventKinds: eventKinds.length > 0 ? eventKinds : ['at_me', 'all_direct'],
+    contextPolicy: parseContextPolicy(policy.contextPolicy),
     ...(row.last_event_at ? { lastEventAt: iso(row.last_event_at) } : {}),
     ...(text(row.last_error) ? { lastError: text(row.last_error) } : {}),
     revision: Number(row.revision),
@@ -297,6 +335,80 @@ function mapRow(row: Record<string, unknown>): AgentDwsAccountRecord {
   };
 }
 
+function parseContextPolicy(value: unknown): AgentDwsContextPolicy {
+  const policy = objectValue(value);
+  const historical = parseSelection(policy.historical, true);
+  const realtime = parseSelection(policy.realtime, false);
+  if (!historical || !realtime) return failClosedAgentDwsContextPolicy();
+  const effectiveAt = optionalIsoText(policy.effectiveAt);
+  const realtimeEffectiveAt = parseRealtimeEffectiveAt(policy.realtimeEffectiveAt);
+  return {
+    historical: { ...historical.selection, lookbackDays: historical.lookbackDays! },
+    realtime: realtime.selection,
+    wiki: { enabled: objectValue(policy.wiki).enabled === true },
+    minutes: parseMinutesPolicy(policy.minutes),
+    ...(realtimeEffectiveAt ? { realtimeEffectiveAt } : {}),
+    ...(effectiveAt ? { effectiveAt } : {}),
+  };
+}
+
+function parseRealtimeEffectiveAt(
+  value: unknown,
+): AgentDwsContextPolicy['realtimeEffectiveAt'] | undefined {
+  const input = objectValue(value);
+  const all = optionalIsoText(input.all);
+  const rawConversations = objectValue(input.conversations);
+  const conversations: Record<string, string> = {};
+  for (const [conversationId, timestamp] of Object.entries(rawConversations)) {
+    const parsed = optionalIsoText(timestamp);
+    if (conversationId.length > 256 || !conversationId.trim() || !parsed) continue;
+    conversations[conversationId] = parsed;
+  }
+  if (!all && Object.keys(conversations).length === 0) return undefined;
+  return { ...(all ? { all } : {}), ...(Object.keys(conversations).length ? { conversations } : {}) };
+}
+
+function parseMinutesPolicy(value: unknown): { enabled: boolean; lookbackDays: number } {
+  const input = objectValue(value);
+  const lookbackDays = Number(input.lookbackDays);
+  return {
+    enabled: input.enabled === true
+      && Number.isSafeInteger(lookbackDays)
+      && lookbackDays >= 1
+      && lookbackDays <= AGENT_DWS_CONTEXT_POLICY_MAX_LOOKBACK_DAYS,
+    lookbackDays: Number.isSafeInteger(lookbackDays)
+      && lookbackDays >= 1
+      && lookbackDays <= AGENT_DWS_CONTEXT_POLICY_MAX_LOOKBACK_DAYS
+      ? lookbackDays
+      : 30,
+  };
+}
+
+function parseSelection(value: unknown, historical: boolean): {
+  selection: { mode: AgentDwsContextPolicyMode; conversationIds: string[] };
+  lookbackDays?: number;
+} | null {
+  const input = objectValue(value);
+  const mode = input.mode;
+  if (mode !== 'none' && mode !== 'selected' && mode !== 'all') return null;
+  if (!Array.isArray(input.conversationIds)
+    || input.conversationIds.length > AGENT_DWS_CONTEXT_POLICY_MAX_CONVERSATIONS) return null;
+  const conversationIds = input.conversationIds.map(item => (
+    typeof item === 'string' && item === item.trim() && item.length > 0 && item.length <= 256 ? item : null
+  ));
+  if (conversationIds.some(item => item === null)) return null;
+  const ids = conversationIds as string[];
+  if (new Set(ids).size !== ids.length) return null;
+  if ((mode === 'selected') !== (ids.length > 0)) return null;
+  if (historical && (!Number.isSafeInteger(input.lookbackDays)
+    || Number(input.lookbackDays) < 1
+    || Number(input.lookbackDays) > AGENT_DWS_CONTEXT_POLICY_MAX_LOOKBACK_DAYS)) return null;
+  return {
+    selection: { mode, conversationIds: ids },
+    ...(historical ? { lookbackDays: Number(input.lookbackDays) } : {}),
+  };
+}
+
 function objectValue(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
@@ -304,6 +416,12 @@ function objectValue(value: unknown): Record<string, unknown> {
 
 function text(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function optionalIsoText(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
 }
 
 function iso(value: unknown): string {

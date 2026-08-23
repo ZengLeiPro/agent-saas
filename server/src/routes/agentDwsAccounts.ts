@@ -6,9 +6,13 @@ import { z } from 'zod';
 import { isPlatformAdmin } from '../auth/middleware.js';
 import type { GovernanceAuditStore } from '../data/governance-audit/index.js';
 import {
+  AGENT_DWS_CONTEXT_POLICY_MAX_CONVERSATIONS,
+  AGENT_DWS_CONTEXT_POLICY_MAX_LOOKBACK_DAYS,
   AgentDwsAccountInvariantError,
+  failClosedAgentDwsContextPolicy,
   type AgentDwsAccountRecord,
   type AgentDwsAccountStore,
+  type AgentDwsContextPolicy,
 } from '../data/agentDwsAccounts/index.js';
 import type { AgentDwsInboxRecord, AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
@@ -27,13 +31,49 @@ const createSchema = z.object({
 });
 const expectedRevisionSchema = z.object({ expectedRevision: z.number().int().positive() });
 const enabledSchema = expectedRevisionSchema.extend({ enabled: z.boolean() });
+const conversationIdsSchema = z.array(z.string().trim().min(1).max(256))
+  .max(AGENT_DWS_CONTEXT_POLICY_MAX_CONVERSATIONS)
+  .refine(items => new Set(items).size === items.length, 'conversationIds must be unique');
+const selectionSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('none'), conversationIds: z.array(z.never()).max(0) }).strict(),
+  z.object({ mode: z.literal('all'), conversationIds: z.array(z.never()).max(0) }).strict(),
+  z.object({ mode: z.literal('selected'), conversationIds: conversationIdsSchema.min(1) }).strict(),
+]);
+const contextPolicySchema = expectedRevisionSchema.extend({
+  historical: z.discriminatedUnion('mode', [
+    z.object({
+      mode: z.literal('none'),
+      conversationIds: z.array(z.never()).max(0),
+      lookbackDays: z.number().int().min(1).max(AGENT_DWS_CONTEXT_POLICY_MAX_LOOKBACK_DAYS),
+    }).strict(),
+    z.object({
+      mode: z.literal('all'),
+      conversationIds: z.array(z.never()).max(0),
+      lookbackDays: z.number().int().min(1).max(AGENT_DWS_CONTEXT_POLICY_MAX_LOOKBACK_DAYS),
+    }).strict(),
+    z.object({
+      mode: z.literal('selected'),
+      conversationIds: conversationIdsSchema.min(1),
+      lookbackDays: z.number().int().min(1).max(AGENT_DWS_CONTEXT_POLICY_MAX_LOOKBACK_DAYS),
+    }).strict(),
+  ]),
+  realtime: selectionSchema,
+  wiki: z.object({ enabled: z.boolean() }).strict().optional().default({ enabled: false }),
+  minutes: z.object({
+    enabled: z.boolean(),
+    lookbackDays: z.number().int().min(1).max(AGENT_DWS_CONTEXT_POLICY_MAX_LOOKBACK_DAYS),
+  }).strict().optional().default({ enabled: false, lookbackDays: 30 }),
+}).strict();
 const inboxQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
 class AgentDwsMutationFailure extends Error {
   constructor(
-    readonly code: 'AGENT_DWS_AUTH_START_FAILED' | 'AGENT_DWS_RUNTIME_SYNC_FAILED',
+    readonly code:
+      | 'AGENT_DWS_AUTH_START_FAILED'
+      | 'AGENT_DWS_RUNTIME_SYNC_FAILED'
+      | 'AGENT_DWS_CONTEXT_POLICY_SYNC_FAILED',
     readonly changed: boolean,
   ) {
     super(code);
@@ -46,6 +86,8 @@ export interface AgentDwsAccountsRouterOptions {
   authFlowService?: AgentDwsAuthFlowServiceLike;
   eventGateway?: DwsPersonalEventGateway;
   auditStore?: GovernanceAuditStore;
+  onContextPolicyUpdated?: (account: AgentDwsAccountRecord) => void | Promise<void>;
+  onEnabledChanged?: (account: AgentDwsAccountRecord, enabled: boolean) => void | Promise<void>;
 }
 
 export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOptions): Router {
@@ -136,8 +178,42 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
         } else if (account.status === 'active') {
           await options.eventGateway?.startAccount(account);
         }
+        await options.onEnabledChanged?.(account, parsed.data.enabled);
       } catch {
         throw new AgentDwsMutationFailure('AGENT_DWS_RUNTIME_SYNC_FAILED', true);
+      }
+      return { status: 200, body: { account: toPublicAccount(account) } };
+    });
+  });
+
+  router.patch('/agent-dws-accounts/:accountId/context-policy', async (req, res) => {
+    const parsed = contextPolicySchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const tenantId = tenantFor(req);
+    if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
+    await runMutation(req, res, options, {
+      action: 'agent_dws_account.update_context_policy',
+      tenantId,
+      targetId: req.params.accountId,
+      purpose: 'update Agent DingTalk chat context learning and realtime listening policy',
+    }, async () => {
+      const previous = await options.accountStore!.getForTenant(tenantId, req.params.accountId);
+      const account = await options.accountStore!.setContextPolicy(
+        tenantId,
+        req.params.accountId,
+        withRealtimeConsentTimestamps({
+          historical: parsed.data.historical,
+          realtime: parsed.data.realtime,
+          wiki: parsed.data.wiki,
+          minutes: parsed.data.minutes,
+        }, previous?.contextPolicy),
+        parsed.data.expectedRevision,
+        req.user!.sub,
+      );
+      try {
+        await options.onContextPolicyUpdated?.(account);
+      } catch {
+        throw new AgentDwsMutationFailure('AGENT_DWS_CONTEXT_POLICY_SYNC_FAILED', true);
       }
       return { status: 200, body: { account: toPublicAccount(account) } };
     });
@@ -346,6 +422,36 @@ function queryTenant(req: Request): string | undefined {
     : undefined;
 }
 
+function withRealtimeConsentTimestamps(
+  policy: AgentDwsContextPolicy,
+  previous: AgentDwsContextPolicy | undefined,
+  now = new Date().toISOString(),
+): AgentDwsContextPolicy {
+  const previousPolicy = previous ?? failClosedAgentDwsContextPolicy();
+  const previousMarkers = previousPolicy.realtimeEffectiveAt;
+  if (policy.realtime.mode === 'none') return { ...policy, realtimeEffectiveAt: {} };
+  if (policy.realtime.mode === 'all') {
+    const alreadyAllowed = previousPolicy.realtime.mode === 'all';
+    return {
+      ...policy,
+      realtimeEffectiveAt: {
+        all: alreadyAllowed ? previousMarkers?.all ?? previousPolicy.effectiveAt ?? now : now,
+      },
+    };
+  }
+  const conversations: Record<string, string> = {};
+  for (const conversationId of policy.realtime.conversationIds) {
+    const inherited = previousPolicy.realtime.mode === 'all'
+      ? previousMarkers?.all ?? previousPolicy.effectiveAt
+      : previousPolicy.realtime.mode === 'selected'
+        && previousPolicy.realtime.conversationIds.includes(conversationId)
+        ? previousMarkers?.conversations?.[conversationId] ?? previousPolicy.effectiveAt
+        : undefined;
+    conversations[conversationId] = inherited ?? now;
+  }
+  return { ...policy, realtimeEffectiveAt: { conversations } };
+}
+
 function toPublicAccount(account: AgentDwsAccountRecord): Record<string, unknown> {
   return {
     accountId: account.accountId,
@@ -361,6 +467,7 @@ function toPublicAccount(account: AgentDwsAccountRecord): Record<string, unknown
     status: account.status,
     runtimeStatus: account.runtimeStatus,
     eventKinds: account.eventKinds,
+    contextPolicy: account.contextPolicy ?? failClosedAgentDwsContextPolicy(),
     lastEventAt: account.lastEventAt ?? null,
     lastError: account.lastError ?? null,
     revision: account.revision,
@@ -423,7 +530,9 @@ function mapError(error: unknown): { status: number; code: string; message: stri
       code: error.code,
       message: error.code === 'AGENT_DWS_AUTH_START_FAILED'
         ? '账号状态已更新，但钉钉授权流程未能启动，请刷新后重试'
-        : '账号状态已更新，但 Personal Stream 同步失败，请刷新查看运行状态',
+        : error.code === 'AGENT_DWS_CONTEXT_POLICY_SYNC_FAILED'
+          ? 'Context 范围已保存，但检索策略同步失败，请刷新后重试'
+          : '账号状态已更新，但 Personal Stream 同步失败，请刷新查看运行状态',
       changed: error.changed,
     };
   }

@@ -17,7 +17,7 @@ import { useFilePreview } from '@/contexts/FilePreviewContext';
 import { authFetch } from '@/lib/authFetch';
 import { extractTextFromChildren, getCellMinWidthPx } from '@/lib/tableCellWidth';
 import { MD_PATH_RE, HTML_PATH_RE, resolveImageSrc, getPreviewFileType, getFileTypeVisual, splitByMessageMarkers, stripPartialCiteMarker } from '@agent/shared';
-import { CitationCard } from './CitationCard';
+import { MessageCitationCard } from './MessageCitationCard';
 import { MessageFeedbackButton } from './MessageFeedback';
 import { GuardrailAppealButton } from './GuardrailAppealButton';
 import type { TtsState } from '@/hooks/useTtsPlayer';
@@ -655,7 +655,7 @@ interface MessageItemProps {
   /** user-voice 消息的播放状态（从外部注入以支持 memo） */
   voicePlayState?: import('@/hooks/useVoicePlayer').VoicePlayState;
   /** 是否显示思考、工具、技能/子任务等执行细节。 */
-  debugMode?: boolean;
+  debugMode?: boolean; sessionId?: string | null;
 }
 
 export const MessageItem = memo(function MessageItem({
@@ -672,7 +672,7 @@ export const MessageItem = memo(function MessageItem({
   ttsIsActive: ttsIsActiveProp,
   voicePlayer,
   voicePlayState,
-  debugMode = true,
+  debugMode = true, sessionId,
 }: MessageItemProps) {
   const filePreview = useFilePreview();
   const msgKey = `msg-${index}`;
@@ -856,7 +856,7 @@ export const MessageItem = memo(function MessageItem({
                   </div>
                 ) : seg.type === 'citation' ? (
                   <div key={`cite-${si}`} className="my-1.5 not-prose">
-                    <CitationCard doc={seg.doc} page={seg.page} label={seg.label} />
+                    <MessageCitationCard citation={seg} sessionId={sessionId} />
                   </div>
                 ) : (
                   <Suspense key={`text-${si}`} fallback={<div className="whitespace-pre-wrap break-words">{seg.content}</div>}>
@@ -1121,5 +1121,5 @@ export const MessageItem = memo(function MessageItem({
   prev.ttsState === next.ttsState &&
   prev.ttsIsActive === next.ttsIsActive &&
   prev.voicePlayState === next.voicePlayState &&
-  prev.debugMode === next.debugMode
+  prev.debugMode === next.debugMode && prev.sessionId === next.sessionId
 ));

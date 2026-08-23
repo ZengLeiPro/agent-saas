@@ -13,6 +13,8 @@ const mocked = vi.hoisted(() => {
   const contentOpsRouter = { id: 'content-ops-router' };
   const dwsRouter = { id: 'dws-router' };
   const feishuRouter = { id: 'feishu-router' };
+  const contextCitationsRouter = { id: 'context-citations-router' };
+  const contextAdminRouter = { id: 'context-admin-router' };
   const userRoleRouter = { id: 'user-role-router' };
   const dingtalkRouter = { id: 'dingtalk-router' };
   const cronRouter = { id: 'cron-router' };
@@ -49,6 +51,8 @@ const mocked = vi.hoisted(() => {
     contentOpsRouter,
     dwsRouter,
     feishuRouter,
+    contextCitationsRouter,
+    contextAdminRouter,
     userRoleRouter,
     dingtalkRouter,
     cronRouter,
@@ -83,6 +87,8 @@ const mocked = vi.hoisted(() => {
     createContentOpsRouter: vi.fn(() => contentOpsRouter),
     createDwsRouter: vi.fn(() => dwsRouter),
     createFeishuRouter: vi.fn(() => feishuRouter),
+    createContextCitationsRouter: vi.fn(() => contextCitationsRouter),
+    createContextAdminRouter: vi.fn(() => contextAdminRouter),
     createUserRoleRouter: vi.fn(() => userRoleRouter),
     createDingtalkSessionRouter: vi.fn(() => dingtalkRouter),
     createCronRouter: vi.fn(() => cronRouter),
@@ -119,6 +125,8 @@ vi.mock('../routes/index.js', () => ({
   createContentOpsRouter: mocked.createContentOpsRouter,
   createDwsRouter: mocked.createDwsRouter,
   createFeishuRouter: mocked.createFeishuRouter,
+  createContextCitationsRouter: mocked.createContextCitationsRouter,
+  createContextAdminRouter: mocked.createContextAdminRouter,
   createUserRoleRouter: mocked.createUserRoleRouter,
   createCronRouter: mocked.createCronRouter,
   createWebPushRouter: mocked.createWebPushRouter,
@@ -192,6 +200,8 @@ describe('registerRoutes', () => {
     mocked.createContentOpsRouter.mockClear();
     mocked.createDwsRouter.mockClear();
     mocked.createFeishuRouter.mockClear();
+    mocked.createContextCitationsRouter.mockClear();
+    mocked.createContextAdminRouter.mockClear();
     mocked.createUserRoleRouter.mockClear();
     mocked.createDingtalkSessionRouter.mockClear();
     mocked.createCronRouter.mockClear();
@@ -312,9 +322,14 @@ describe('registerRoutes', () => {
     //   + Agent DWS 账号路由 = 44
     //   + Agent DWS 精确前缀管理员门禁 = 45
     //   + 租户专家模板 = 46
+    //   + 普通用户 Context citation = 47
     // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(46);
+    expect(app.use).toHaveBeenCalledTimes(48);
+    expect(app.use).toHaveBeenCalledWith('/api', mocked.contextCitationsRouter);
+    expect(app.use).toHaveBeenCalledWith(
+      '/api/admin/context-plane', mocked.requireAdmin, mocked.contextAdminRouter,
+    );
     expect(app.use).toHaveBeenCalledWith('/api/tenant/expert-templates', expect.any(Function));
     expect(mocked.createWebPushRouter).toHaveBeenCalledWith(undefined);
     expect(app.use).toHaveBeenCalledWith('/api/web-push', mocked.webPushRouter);

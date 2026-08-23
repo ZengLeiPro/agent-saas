@@ -161,6 +161,7 @@ describe('ContextSearchToolProvider', () => {
       degraded: true,
       degradationReasons: ['assignment_snapshot_stale', 'reranker_unavailable'],
       hits: [{
+        citationMarker: '[CITE]{"contextId":"hit-a","label":"Launch plan"}[/CITE]',
         source: { sourceId: 'wiki' },
         time: { occurredAt: '2026-08-20T09:00:00Z' },
         freshness: { status: 'stale' },

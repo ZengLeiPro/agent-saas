@@ -55,7 +55,7 @@ export const contextSearchToolDescriptor: ToolDescriptor<ContextSearchInput> = {
   id: 'ContextSearch',
   name: 'ContextSearch',
   displayName: 'Context Search',
-  description: 'Search authenticated organizational context. Identity and collection scope are resolved only by the server; use filters to narrow results.',
+  description: 'Search authenticated organizational context. Identity and collection scope are resolved only by the server. When an answer uses a hit, copy its citationMarker verbatim into the answer so the user can reopen the evidence.',
   schema: contextSearchSchema,
   risk: 'safe',
   approvalMode: 'never',
@@ -231,8 +231,10 @@ function assertHitAuthorized(hit: ContextRecallHit, scope: ContextRecallResolved
 }
 
 function formatHit(hit: ContextRecallHit): Record<string, unknown> {
+  const citationLabel = hit.source.displayName?.trim() || hit.source.kind || hit.kind;
   return {
     id: hit.id,
+    citationMarker: `[CITE]${JSON.stringify({ contextId: hit.id, label: citationLabel })}[/CITE]`,
     collectionId: hit.collectionId,
     assignmentVersion: hit.assignmentVersion,
     kind: hit.kind,

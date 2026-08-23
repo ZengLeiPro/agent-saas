@@ -38,6 +38,12 @@ function createStore(overrides: Partial<ContextAdminStorePort> = {}): ContextAdm
     }]),
     listCollections: vi.fn(async () => [{
       sourceId: 'source-a', collectionId: 'collection-a', displayName: '产品知识', status: 'active',
+      metadata: {
+        historicalLearning: {
+          enabled: true, mode: 'selected', conversationIds: ['cid-a', 'cid-b'], lookbackDays: 30,
+        },
+        realtimeListening: { enabled: true, mode: 'all', conversationIds: [] },
+      },
     }]),
     listPartitions: vi.fn(async () => [{
       sourceId: 'source-a', collectionId: 'collection-a', status: 'complete',
@@ -47,6 +53,7 @@ function createStore(overrides: Partial<ContextAdminStorePort> = {}): ContextAdm
     }]),
     getEvidence: vi.fn(async () => []),
     listEvidence: vi.fn(async () => []),
+    countUnreadableRecords: vi.fn(async () => 0),
     ...overrides,
   };
 }
@@ -74,10 +81,10 @@ describe('Context Plane admin HTTP contract', () => {
         watermarkLagSeconds: 120,
         ingestOutcomes: { truncated: 1, refused: 0, unreadable: 0 },
         historicalLearningScope: {
-          enabled: true, summary: '已配置', from: '2026-01-01T00:00:00.000Z',
+          enabled: true, summary: '2 个指定会话 · 30 天', from: '2026-01-01T00:00:00.000Z',
           through: '2026-08-22T15:58:00.000Z',
         },
-        realtimeListeningScope: { enabled: true, summary: '已配置' },
+        realtimeListeningScope: { enabled: true, summary: '全部会话' },
       }],
       consumers: [],
     });
@@ -87,9 +94,26 @@ describe('Context Plane admin HTTP contract', () => {
     expect(JSON.stringify(snapshot)).not.toContain('totalItems');
   });
 
+  it('reports persisted unreadable sync failures instead of inventing a zero', async () => {
+    const store = createStore({
+      countUnreadableRecords: vi.fn(async () => 2),
+      listPartitions: vi.fn(async () => [{
+        sourceId: 'source-a', collectionId: 'collection-a', status: 'retry_wait',
+        truncated: true, refused: false, lastErrorCode: 'CONTEXT_SYNC_UNREADABLE',
+        updatedAt: '2026-08-22T15:59:00.000Z',
+      }]),
+    });
+    const base = await start(orgAdmin, store);
+    const snapshot = contextCenterSnapshotSchema.parse(await (await fetch(`${base}/snapshot`)).json());
+    expect(snapshot.sources[0]?.ingestOutcomes.unreadable).toBe(3);
+  });
+
   it('uses 未配置/unknown when collection source or sync metadata is absent', async () => {
     const base = await start(orgAdmin, createStore({
       listSources: vi.fn(async () => []),
+      listCollections: vi.fn(async () => [{
+        sourceId: 'source-a', collectionId: 'collection-a', displayName: '产品知识', status: 'active',
+      }]),
       listPartitions: vi.fn(async () => []),
     }));
 
@@ -114,6 +138,10 @@ describe('Context Plane admin HTTP contract', () => {
     }, {
       sourceId: 'source-a', collectionId: 'collection-a', evidenceId: 'missing-excerpt', kind: 'source_locator',
       data: { externalId: 'external-2' }, createdAt: '2026-08-22T15:00:00.000Z',
+    }, {
+      sourceId: 'source-a', collectionId: 'collection-a', evidenceId: 'unreadable', kind: 'source_locator',
+      data: { externalId: 'external-3', unreadable: true, unreadableReason: 'unsupported_format' },
+      createdAt: '2026-08-22T15:00:00.000Z',
     }]);
     const base = await start(orgAdmin, createStore({ listEvidence }));
 
@@ -125,6 +153,10 @@ describe('Context Plane admin HTTP contract', () => {
       id: 'external-1', sourceName: 'source-a', collection: 'collection-a', author: '王小明',
       occurredAt: '2026-08-20T02:30:00.000Z', quote: '交付验收前必须完成生产回归。',
       derived: false, freshness: 'unknown', freshnessAsOf: null, originalUrl: 'https://example.test/doc',
+    }, {
+      id: 'external-3', sourceName: 'source-a', collection: 'collection-a', author: null,
+      occurredAt: '2026-08-22T15:00:00.000Z', quote: '不可读：unsupported_format',
+      derived: false, freshness: 'unknown', freshnessAsOf: null, originalUrl: null,
     }]);
     expect(listEvidence).toHaveBeenCalledWith('tenant-a', 'source-a', 'collection-a');
   });

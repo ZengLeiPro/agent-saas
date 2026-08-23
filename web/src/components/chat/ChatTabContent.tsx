@@ -285,6 +285,7 @@ export function ChatTabContent({
           ttsStateMap={ttsStateMap}
           agentProfile={displayAgentProfile}
           sessionParticipants={displaySessionParticipants}
+          sessionId={readOnly ? undefined : sessionId}
           debugModeOverride={debugModeOverride}
           emptySlot={readOnly || initialComposer ? undefined : emptySlot}
         />

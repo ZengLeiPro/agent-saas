@@ -22,6 +22,12 @@ const account: AgentDwsAccount = {
   status: "draft",
   runtimeStatus: "stopped",
   eventKinds: ["at_me", "all_direct"],
+  contextPolicy: {
+    historical: { mode: "none", conversationIds: [], lookbackDays: 30 },
+    realtime: { mode: "none", conversationIds: [] },
+    wiki: { enabled: false },
+    minutes: { enabled: false, lookbackDays: 30 },
+  },
   lastEventAt: null,
   lastError: null,
   revision: 1,
@@ -62,7 +68,33 @@ describe("AgentDwsAccountsPage", () => {
           session: awaitingSession,
         }, 202);
       }
+      if (path === "/api/agent-dws-accounts/adws-1/context-policy?tenantId=tenant-a" && init?.method === "PATCH") {
+        return jsonResponse({ account: { ...account, revision: 2 } });
+      }
       return jsonResponse({ error: "unexpected request" }, 500);
+    });
+  });
+
+  it("配置历史学习与实时监听时提交 fail-closed 范围和 CAS revision", async () => {
+    const user = userEvent.setup();
+    render(<AgentDwsAccountsPage tenantId="tenant-a" />);
+
+    await screen.findByText("销售助手");
+    expect(screen.getByText("历史：不采集")).toBeTruthy();
+    expect(screen.getByText("实时：不监听")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "配置 Context" }));
+    expect(await screen.findByRole("heading", { name: "配置 Context 范围" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "保存范围" }));
+
+    expect(await screen.findByText("Context 范围已更新")).toBeTruthy();
+    const updateCall = vi.mocked(authFetch).mock.calls.find((call) => String(call[0]).includes("/context-policy?"));
+    expect(updateCall?.[0]).toBe("/api/agent-dws-accounts/adws-1/context-policy?tenantId=tenant-a");
+    expect(JSON.parse(String(updateCall?.[1]?.body))).toEqual({
+      expectedRevision: 1,
+      historical: { mode: "none", conversationIds: [], lookbackDays: 30 },
+      realtime: { mode: "none", conversationIds: [] },
+      wiki: { enabled: false },
+      minutes: { enabled: false, lookbackDays: 30 },
     });
   });
 

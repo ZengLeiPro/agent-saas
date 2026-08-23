@@ -4,6 +4,8 @@ import {
   AssignmentContextRecallScopeResolver,
   PgContextRecallService,
   type ContextCollectionAssignmentReader,
+  type ContextRecallScopeResolver,
+  type ContextRecallService,
 } from '../context/retrieval/index.js';
 import type { ContextPgPool, ContextStore } from '../context/store/index.js';
 import type { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
@@ -17,7 +19,8 @@ interface RuntimeMemoryContextToolsOptions {
   assignments?: ContextCollectionAssignmentReader;
   pool?: ContextPgPool;
   tablePrefix?: string;
-  sessionCatalog: SessionCatalog;
+  recallIdSigningKey?: string;
+  sessionCatalog: Pick<SessionCatalog, 'get'>;
   memoryStore?: PgMemoryConsolidationStore;
   memoryIndexService?: MemoryIndexService | null;
   logger?: { info?: (message: string) => void; warn?: (message: string) => void };
@@ -27,6 +30,42 @@ type RuntimeMemoryContextTools = Pick<
   RawRuntimeRunDispatchConfig,
   'memoryControlProviders' | 'resolveOrgAgentCollectionAssignments'
 >;
+
+export interface ContextRecallRuntime {
+  recall: ContextRecallService;
+  scopes: ContextRecallScopeResolver;
+}
+
+/** Shared construction keeps model tools and the user-facing citation API on one ACL path. */
+export function createContextRecallRuntime(
+  options: Pick<RuntimeMemoryContextToolsOptions,
+    'contextStore' | 'assignments' | 'pool' | 'tablePrefix' | 'recallIdSigningKey' | 'sessionCatalog'>,
+): ContextRecallRuntime | undefined {
+  if (!options.contextStore || !options.assignments || !options.pool) return undefined;
+  return {
+    recall: new PgContextRecallService({
+      pool: options.pool,
+      ...(options.tablePrefix ? { tablePrefix: options.tablePrefix } : {}),
+      ...(options.recallIdSigningKey ? { idSigningKey: options.recallIdSigningKey } : {}),
+    }),
+    scopes: new AssignmentContextRecallScopeResolver(options.assignments, {
+      resourceTypes: ['org_knowledge'],
+      resolveSessionPin: async subject => {
+        if (!subject.sessionId) return null;
+        const session = await options.sessionCatalog.get(subject.sessionId);
+        if (!session) return null;
+        return {
+          tenantId: session.tenantId ?? '',
+          userId: session.userId,
+          ...(session.orgAgentId ? { orgAgentId: session.orgAgentId } : {}),
+          ...(session.orgAgentSnapshot?.collectionAssignments
+            ? { collectionAssignments: session.orgAgentSnapshot.collectionAssignments }
+            : {}),
+        };
+      },
+    }),
+  };
+}
 
 export function createRuntimeMemoryContextTools(
   options: RuntimeMemoryContextToolsOptions,
@@ -39,29 +78,9 @@ export function createRuntimeMemoryContextTools(
       logger: options.logger,
     }));
   }
-  if (options.contextStore && options.assignments && options.pool) {
-    memoryControlProviders.push(new ContextSearchToolProvider(
-      new PgContextRecallService({
-        pool: options.pool,
-        ...(options.tablePrefix ? { tablePrefix: options.tablePrefix } : {}),
-      }),
-      new AssignmentContextRecallScopeResolver(options.assignments, {
-        resourceTypes: ['org_knowledge'],
-        resolveSessionPin: async subject => {
-          if (!subject.sessionId) return null;
-          const session = await options.sessionCatalog.get(subject.sessionId);
-          if (!session) return null;
-          return {
-            tenantId: session.tenantId ?? '',
-            userId: session.userId,
-            ...(session.orgAgentId ? { orgAgentId: session.orgAgentId } : {}),
-            ...(session.orgAgentSnapshot?.collectionAssignments
-              ? { collectionAssignments: session.orgAgentSnapshot.collectionAssignments }
-              : {}),
-          };
-        },
-      }),
-    ));
+  const contextRecall = createContextRecallRuntime(options);
+  if (contextRecall) {
+    memoryControlProviders.push(new ContextSearchToolProvider(contextRecall.recall, contextRecall.scopes));
   }
 
   return {

@@ -239,9 +239,13 @@ export type {
   AgentDwsAccountStatus,
   AgentDwsRuntimeStatus,
   AgentDwsEventKind,
+  AgentDwsContextPolicyMode,
+  AgentDwsContextPolicySelection,
+  AgentDwsContextPolicy,
   AgentDwsAuthSession,
   CreateAgentDwsAccountInput,
   UpdateAgentDwsAccountInput,
+  UpdateAgentDwsContextPolicyInput,
 } from "./agentDwsAccount";
 
 export type {

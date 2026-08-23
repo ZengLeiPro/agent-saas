@@ -12,6 +12,21 @@ export type AgentDwsRuntimeStatus =
   | "error";
 
 export type AgentDwsEventKind = "at_me" | "all_direct";
+export type AgentDwsContextPolicyMode = "none" | "selected" | "all";
+
+export interface AgentDwsContextPolicySelection {
+  mode: AgentDwsContextPolicyMode;
+  conversationIds: string[];
+}
+
+export interface AgentDwsContextPolicy {
+  historical: AgentDwsContextPolicySelection & { lookbackDays: number };
+  realtime: AgentDwsContextPolicySelection;
+  wiki: { enabled: boolean };
+  minutes: { enabled: boolean; lookbackDays: number };
+  realtimeEffectiveAt?: { all?: string; conversations?: Record<string, string> };
+  effectiveAt?: string;
+}
 
 export interface AgentDwsAccount {
   accountId: string;
@@ -27,6 +42,7 @@ export interface AgentDwsAccount {
   status: AgentDwsAccountStatus;
   runtimeStatus: AgentDwsRuntimeStatus;
   eventKinds: AgentDwsEventKind[];
+  contextPolicy: AgentDwsContextPolicy;
   lastEventAt: string | null;
   lastError: string | null;
   revision: number;
@@ -55,4 +71,8 @@ export interface CreateAgentDwsAccountInput {
 export interface UpdateAgentDwsAccountInput {
   expectedRevision: number;
   enabled: boolean;
+}
+
+export interface UpdateAgentDwsContextPolicyInput extends AgentDwsContextPolicy {
+  expectedRevision: number;
 }

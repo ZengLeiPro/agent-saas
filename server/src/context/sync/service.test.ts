@@ -123,6 +123,25 @@ describe('DwsContextSyncService', () => {
     expect(store.reconcileInventory).toHaveBeenCalledBefore(vi.mocked(store.advanceWatermark));
   });
 
+  it('revokes one Wiki document when its canonical body returns 403 without poisoning the inventory', async () => {
+    const { service, store, client, pages } = setup();
+    vi.mocked(client.listWikiDocuments).mockResolvedValueOnce({
+      items: [{ documentId: 'doc-revoked', title: '已撤权', updatedAt: '2026-08-22T00:10:00.000Z' }],
+    });
+    vi.mocked(client.getWikiDocumentBody).mockRejectedValueOnce(new Error('403 forbidden'));
+
+    await service.syncWindow({ scope, source: 'wiki', from, to });
+
+    expect(pages[0]?.items[0]).toMatchObject({
+      sourceId: 'doc-revoked',
+      content: '',
+      revoked: true,
+      metadata: { unreadable: true, unreadableReason: 'document_revoked' },
+    });
+    expect(store.advanceWatermark).toHaveBeenCalledTimes(1);
+    expect(store.recordRetryFailure).not.toHaveBeenCalled();
+  });
+
   it('lands a wiki body flagged incomplete upstream but does not advance the watermark', async () => {
     const { service, store, client, pages } = setup();
     vi.mocked(client.listWikiDocuments).mockResolvedValueOnce({
@@ -186,6 +205,23 @@ describe('DwsContextSyncService', () => {
     expect(pages[0]!.items[0]!.idempotencyKey).toBe(pages[1]!.items[0]!.idempotencyKey);
     expect(store.ingestPage).toHaveBeenCalledTimes(3);
     expect(store.advanceWatermark).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses initialFrom only for a target without a watermark', async () => {
+    const { service, store, client } = setup();
+    const initialFrom = '2026-08-22T00:59:00.000Z';
+
+    await service.syncWindow({ scope, source: 'chat', conversationId: 'conversation-a', initialFrom, to });
+    expect(client.listChatMessages).toHaveBeenLastCalledWith(expect.objectContaining({
+      window: { from: initialFrom, to },
+      conversationId: 'conversation-a',
+    }));
+
+    vi.mocked(store.getWatermark).mockResolvedValueOnce('2026-08-22T00:45:00.000Z');
+    await service.syncWindow({ scope, source: 'chat', conversationId: 'conversation-a', initialFrom, to });
+    expect(client.listChatMessages).toHaveBeenLastCalledWith(expect.objectContaining({
+      window: { from: '2026-08-22T00:45:00.000Z', to },
+    }));
   });
 
   it('uses an event only to wake its conversation and fetches canonical message content', async () => {

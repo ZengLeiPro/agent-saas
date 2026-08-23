@@ -82,6 +82,42 @@ describe('splitByMessageMarkers', () => {
     expect(parseCitationPayload('{"doc":"x/y.pdf","page":7}')).toEqual({ type: 'citation', doc: 'x/y.pdf', page: 7, label: 'y.pdf p.7' });
   });
 
+  it('支持 Context contextId+label，并丢弃 marker 中的非可信身份字段', () => {
+    expect(parseCitationPayload(JSON.stringify({
+      contextId: ' context/会话 1 ',
+      label: ' 销售群原话 ',
+      tenantId: 'marker-tenant',
+      userId: 'marker-user',
+      sessionId: 'marker-session',
+    }))).toEqual({
+      type: 'citation',
+      contextId: 'context/会话 1',
+      label: '销售群原话',
+    });
+
+    expect(splitByMessageMarkers(
+      '依据 [CITE]{"contextId":"ctx-42","label":"客户反馈"}[/CITE] 回答',
+    )).toEqual([
+      { type: 'text', content: '依据 ' },
+      { type: 'citation', contextId: 'ctx-42', label: '客户反馈' },
+      { type: 'text', content: ' 回答' },
+    ]);
+  });
+
+  it('Context payload 缺 contextId/label 或字段类型错误时原样显示', () => {
+    const invalid = [
+      '[CITE]{"contextId":"ctx-1"}[/CITE]',
+      '[CITE]{"contextId":"","label":"标签"}[/CITE]',
+      '[CITE]{"contextId":7,"label":"标签"}[/CITE]',
+      '[CITE]{"contextId":"ctx-1","label":"   "}[/CITE]',
+    ];
+    for (const marker of invalid) {
+      expect(splitByMessageMarkers(`前 ${marker} 后`)).toEqual([
+        { type: 'text', content: `前 ${marker} 后` },
+      ]);
+    }
+  });
+
   it('用例3: stripPartialCiteMarker 只裁未闭合尾部', () => {
     // 半截标记（流式中途）被裁掉
     expect(stripPartialCiteMarker('回答文本 [CITE]{"doc":"a.p')).toBe('回答文本 ');

@@ -30,7 +30,7 @@ import type { TitleGeneratorConfig, TitleModelAdapterFactory } from '../agent/ti
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { OrgAgentRuntimePolicy } from '../data/orgAgents/runtimePolicy.js';
-import type { AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
+import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import type { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
 import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
@@ -168,6 +168,9 @@ export interface AppRuntime {
   agentDwsAuthFlowService?: AgentDwsAuthFlowServiceLike;
   /** DWS Personal Stream consumer supervisor。 */
   dwsPersonalEventGateway?: DwsPersonalEventGateway;
+  /** Context 范围保存后，立即把权威策略镜像到检索 Source/Collection。 */
+  agentDwsContextPolicyUpdated?: (account: AgentDwsAccountRecord) => Promise<void>;
+  agentDwsEnabledChanged?: (account: AgentDwsAccountRecord, enabled: boolean) => Promise<void>;
   /** Notion 官方 ntn 两阶段登录，成功后 token 转存用户级 Vault。 */
   notionAuthFlowService?: NotionAuthFlowServiceLike;
   getNotionConnection?: (identity: {

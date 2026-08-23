@@ -15,6 +15,7 @@ interface ContextAdminCollection {
   collectionId: string;
   displayName: string;
   status: string;
+  metadata?: Record<string, unknown>;
 }
 
 interface ContextAdminPartition {
@@ -26,6 +27,7 @@ interface ContextAdminPartition {
   coverageEnd?: string;
   truncated: boolean;
   refused: boolean;
+  lastErrorCode?: string;
   updatedAt: string;
 }
 
@@ -54,6 +56,11 @@ export interface ContextAdminStorePort {
     sourceId: string,
     collectionId: string,
   ): Promise<ContextAdminEvidence[]>;
+  countUnreadableRecords?(
+    tenantId: string,
+    sourceId: string,
+    collectionId: string,
+  ): Promise<number>;
 }
 
 export interface ContextAdminRouterOptions {
@@ -88,6 +95,19 @@ export function createContextAdminRouter(options: ContextAdminRouterOptions): Ro
         options.store.listPartitions(tenantId),
       ]);
       const sourceById = new Map(sources.map(source => [source.sourceId, source]));
+      const unreadableCounts = new Map<string, number>();
+      if (options.store.countUnreadableRecords) {
+        await Promise.all(collections.map(async collection => {
+          unreadableCounts.set(
+            collectionKey(collection.sourceId, collection.collectionId),
+            await options.store!.countUnreadableRecords!(
+              tenantId,
+              collection.sourceId,
+              collection.collectionId,
+            ),
+          );
+        }));
+      }
       const partitionsByCollection = new Map<string, ContextAdminPartition[]>();
       for (const partition of partitions) {
         const key = collectionKey(partition.sourceId, partition.collectionId);
@@ -101,6 +121,7 @@ export function createContextAdminRouter(options: ContextAdminRouterOptions): Ro
         collection,
         partitionsByCollection.get(collectionKey(collection.sourceId, collection.collectionId)) ?? [],
         now,
+        unreadableCounts.get(collectionKey(collection.sourceId, collection.collectionId)) ?? 0,
       ));
       return res.json({ generatedAt: now.toISOString(), sources: cards, consumers: [] });
     } catch {
@@ -141,6 +162,7 @@ function mapSourceCard(
   collection: ContextAdminCollection,
   partitions: ContextAdminPartition[],
   now: Date,
+  unreadableRecords: number,
 ) {
   const coverageStart = earliestIso(partitions.map(partition => partition.coverageStart));
   const coverageEnd = latestIso(partitions.map(partition => partition.coverageEnd));
@@ -148,6 +170,8 @@ function mapSourceCard(
     partitions.filter(partition => partition.status === 'complete').map(partition => partition.updatedAt),
   );
   const realtimeConfigured = partitions.some(partition => partition.watermark !== undefined && partition.watermark !== null);
+  const historicalScope = configuredScope(collection.metadata, 'historicalLearning');
+  const realtimeScope = configuredScope(collection.metadata, 'realtimeListening');
   return {
     sourceId: collection.sourceId,
     name: nonEmpty(source?.displayName) ?? '未配置',
@@ -165,18 +189,57 @@ function mapSourceCard(
     ingestOutcomes: {
       truncated: partitions.filter(partition => partition.truncated).length,
       refused: partitions.filter(partition => partition.refused || partition.status === 'refused').length,
-      unreadable: 0,
+      unreadable: unreadableRecords
+        + partitions.filter(partition => partition.lastErrorCode === 'CONTEXT_SYNC_UNREADABLE').length,
     },
     historicalLearningScope: {
-      enabled: Boolean(coverageStart || coverageEnd),
-      summary: coverageStart || coverageEnd ? '已配置' : '未配置',
+      enabled: historicalScope?.enabled ?? Boolean(coverageStart || coverageEnd),
+      summary: historicalScope?.summary ?? (coverageStart || coverageEnd ? '已配置' : '未配置'),
       from: coverageStart,
       through: coverageEnd,
     },
     realtimeListeningScope: {
-      enabled: realtimeConfigured,
-      summary: realtimeConfigured ? '已配置' : '未配置',
+      enabled: realtimeScope?.enabled ?? realtimeConfigured,
+      summary: realtimeScope?.summary ?? (realtimeConfigured ? '已配置' : '未配置'),
     },
+  };
+}
+
+function configuredScope(
+  metadata: Record<string, unknown> | undefined,
+  key: 'historicalLearning' | 'realtimeListening',
+): { enabled: boolean; summary: string } | null {
+  if (!metadata) return null;
+  const raw = metadata[key];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const scope = raw as Record<string, unknown>;
+  if (typeof scope.enabled !== 'boolean') return null;
+  const mode = scope.mode;
+  const lookbackDays = Number.isSafeInteger(scope.lookbackDays) ? Number(scope.lookbackDays) : undefined;
+  const ids = Array.isArray(scope.conversationIds)
+    ? scope.conversationIds.filter(item => typeof item === 'string' && item.trim()).length
+    : 0;
+  if (mode === 'none') return {
+    enabled: false,
+    summary: key === 'historicalLearning' ? '不采集' : '不监听',
+  };
+  if (mode === 'all') {
+    return {
+      enabled: true,
+      summary: `全部会话${lookbackDays ? ` · ${lookbackDays} 天` : ''}`,
+    };
+  }
+  if (mode === 'selected') {
+    return {
+      enabled: true,
+      summary: `${ids} 个指定会话${lookbackDays ? ` · ${lookbackDays} 天` : ''}`,
+    };
+  }
+  return {
+    enabled: scope.enabled,
+    summary: scope.enabled
+      ? `已启用${lookbackDays ? ` · ${lookbackDays} 天` : ''}`
+      : '未启用',
   };
 }
 
@@ -185,7 +248,10 @@ function mapEvidence(
   sourceId: string,
   collectionId: string,
 ) {
-  const excerpt = stringField(evidence.data, 'excerpt');
+  const excerpt = stringField(evidence.data, 'excerpt')
+    ?? (evidence.data.unreadable === true
+      ? `不可读：${stringField(evidence.data, 'unreadableReason') ?? 'content_unavailable'}`
+      : undefined);
   if (!excerpt) return [];
   return [{
     id: stringField(evidence.data, 'externalId') ?? evidence.evidenceId,

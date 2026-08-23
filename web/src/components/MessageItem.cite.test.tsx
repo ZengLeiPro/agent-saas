@@ -29,10 +29,10 @@ function textMessage(content: string, streaming: boolean): MessageItemType {
   return { id: 'line-1', type: 'text', content, streaming };
 }
 
-function renderMessage(message: MessageItemType, openPreview = vi.fn()) {
+function renderMessage(message: MessageItemType, openPreview = vi.fn(), sessionId?: string) {
   return render(
     <FilePreviewProvider value={{ openPreview }}>
-      <MessageItem message={message} index={0} />
+      <MessageItem message={message} index={0} sessionId={sessionId} />
     </FilePreviewProvider>,
   );
 }
@@ -66,6 +66,17 @@ describe('MessageItem CITE 渲染', () => {
     expect(screen.getByText('output.xlsx')).toBeTruthy();
     expect(screen.getByRole('button', { name: '下载 output.xlsx' })).toBeTruthy();
     expect(document.body.textContent).not.toContain('[FILE]');
+  });
+
+  it('Context marker 渲染独立按钮，并由 MessageItem 可信 sessionId 决定是否可用', async () => {
+    const content = '依据 [CITE]{"contextId":"ctx-42","label":"群聊证据","sessionId":"marker-session"}[/CITE]';
+    const { unmount } = renderMessage(textMessage(content, false));
+    expect((await screen.findByRole('button', { name: 'Context 引用：群聊证据' })).hasAttribute('disabled')).toBe(true);
+    unmount();
+
+    renderMessage(textMessage(content, false), vi.fn(), 'trusted-session');
+    expect((await screen.findByRole('button', { name: 'Context 引用：群聊证据' })).hasAttribute('disabled')).toBe(false);
+    expect(document.body.textContent).not.toContain('marker-session');
   });
 
   it('普通文件卡点击后使用默认弹窗预览', () => {

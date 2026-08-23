@@ -40,6 +40,7 @@ function accountStore(): AgentDwsAccountStore {
     create: vi.fn(async () => account), markAuthorizing: vi.fn(async () => account),
     markAuthorized: vi.fn(async () => ({ ...account, status: 'active' as const, revision: 8 })),
     markAuthorizationFailed: vi.fn(async () => undefined), setEnabled: vi.fn(async () => account),
+    setContextPolicy: vi.fn(async () => account),
     claimRuntimeLease: vi.fn(async () => true), renewRuntimeLease: vi.fn(async () => true),
     releaseRuntimeLease: vi.fn(async () => undefined), revokeRuntimeLease: vi.fn(async () => undefined),
     updateRuntimeStatus: vi.fn(async () => undefined), markEvent: vi.fn(async () => true),

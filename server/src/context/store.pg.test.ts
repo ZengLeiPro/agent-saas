@@ -40,8 +40,8 @@ describePg('PgContextStore PostgreSQL integration', () => {
     );
     expect(version.rows).toHaveLength(1);
 
-    await store.createSource({ tenantId: 'tenant-a', sourceId: 'source-a', kind: 'dws', displayName: 'A' });
-    await store.createSource({ tenantId: 'tenant-a', sourceId: 'source-b', kind: 'dws', displayName: 'B' });
+    await store.createSource({ tenantId: 'tenant-a', sourceId: 'source-a', kind: 'test', displayName: 'A' });
+    await store.createSource({ tenantId: 'tenant-a', sourceId: 'source-b', kind: 'test', displayName: 'B' });
     await store.createCollection({
       tenantId: 'tenant-a', sourceId: 'source-a', collectionId: 'collection-shared',
       externalKey: 'chat', displayName: '聊天',

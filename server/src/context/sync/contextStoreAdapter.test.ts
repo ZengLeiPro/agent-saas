@@ -98,7 +98,7 @@ describe('ContextStoreSyncAdapter', () => {
     await adapter.ingestPage(page({ cursor: 'cursor-2', nextCursor: undefined, truncated: true }));
 
     const pageCalls = vi.mocked(store.ingestPage).mock.calls.map(call => call[0]);
-    expect(pageCalls).toHaveLength(2);
+    expect(pageCalls).toHaveLength(1);
     expect(pageCalls.every(call => call.checkpoint.watermark === undefined)).toBe(true);
     expect(pageCalls[0]).toMatchObject({
       tenantId: 'tenant-a',
@@ -138,9 +138,9 @@ describe('ContextStoreSyncAdapter', () => {
     });
 
     expect(store.acquirePartitionLease).toHaveBeenCalledTimes(1);
-    expect(store.ingestPage).toHaveBeenCalledTimes(3);
-    expect(vi.mocked(store.ingestPage).mock.calls[2]![0]).toMatchObject({
-      records: [],
+    expect(store.ingestPage).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(store.ingestPage).mock.calls[1]![0]).toMatchObject({
+      records: [expect.objectContaining({ externalRecordId: 'dws:tenant-a:account-a:profile-a:chat:message-a' })],
       checkpoint: {
         watermark: window.to,
         complete: true,
@@ -162,6 +162,38 @@ describe('ContextStoreSyncAdapter', () => {
     expect(first.collectionId).not.toContain(key.tenantId);
     expect(first.collectionId).not.toContain(key.accountId);
     expect(first.collectionId).not.toContain(key.profileId);
+  });
+
+  it('renews an active lease during long-running upstream inventory work', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-08-22T00:00:00.000Z'));
+      const { adapter, store } = setup();
+      await adapter.getWatermark(key);
+      vi.setSystemTime(new Date('2026-08-22T00:00:21.000Z'));
+
+      await adapter.heartbeat();
+
+      expect(store.renewPartitionLease).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never reacquires a partition after a policy reset invalidates its fence', async () => {
+    const { adapter, store } = setup();
+    await adapter.getWatermark(key);
+    vi.mocked(store.renewPartitionLease).mockResolvedValue(false);
+
+    await expect(adapter.ingestPage(page())).rejects.toThrow(/invalidated/);
+    await expect(adapter.recordRetryFailure({
+      key,
+      window,
+      error: 'stale worker',
+      failedAt: window.to,
+    })).rejects.toThrow(/invalidated/);
+    expect(store.acquirePartitionLease).toHaveBeenCalledTimes(1);
+    expect(store.ingestPage).not.toHaveBeenCalled();
   });
 
   it('returns a resume cursor only for the exact durable failed window', async () => {
@@ -189,6 +221,11 @@ describe('ContextStoreSyncAdapter', () => {
         url: 'https://example.test/message-a',
       }],
     }));
+    await adapter.advanceWatermark({
+      key,
+      expected: '2026-08-21T23:00:00.000Z',
+      value: window.to,
+    });
 
     const record = vi.mocked(store.ingestPage).mock.calls[0]![0].records[0]!;
     expect(Array.from(String(record.evidence![0]!.data.excerpt))).toHaveLength(500);
@@ -213,6 +250,11 @@ describe('ContextStoreSyncAdapter', () => {
       window,
       externalRecordIds: ['dws:tenant-a:account-a:profile-a:wiki:doc-present'],
     })).resolves.toBe(1);
+    await adapter.advanceWatermark({
+      key: wikiKey,
+      expected: '2026-08-21T23:00:00.000Z',
+      value: window.to,
+    });
 
     expect(store.ingestPage).toHaveBeenCalledWith(expect.objectContaining({
       records: [expect.objectContaining({
@@ -221,11 +263,11 @@ describe('ContextStoreSyncAdapter', () => {
         content: null,
         metadata: { source: 'wiki', revocationReason: 'inventory_absent' },
       })],
-      checkpoint: expect.objectContaining({ complete: false }),
+      checkpoint: expect.objectContaining({ complete: true, watermark: window.to }),
     }));
   });
 
-  it('batches large inventory revocations below the ContextStore page limit', async () => {
+  it('commits large inventory revocations with the terminal watermark transaction', async () => {
     const { adapter, store } = setup();
     vi.mocked(store.listCurrentExternalRecordIds).mockResolvedValue(
       Array.from({ length: 1_001 }, (_, index) => `wiki-record-${index}`),
@@ -236,9 +278,14 @@ describe('ContextStoreSyncAdapter', () => {
       window,
       externalRecordIds: [],
     })).resolves.toBe(1_001);
+    await adapter.advanceWatermark({
+      key: { ...key, source: 'wiki' },
+      expected: '2026-08-21T23:00:00.000Z',
+      value: window.to,
+    });
 
     expect(vi.mocked(store.ingestPage).mock.calls.map(call => call[0].records.length))
-      .toEqual([500, 500, 1]);
+      .toEqual([1_001]);
   });
 
   it('persists the exact failed window then maps failure to failPartition without advancing watermark', async () => {
@@ -271,6 +318,35 @@ describe('ContextStoreSyncAdapter', () => {
     expect(vi.mocked(store.ingestPage).mock.calls.some(call => call[0].checkpoint.watermark !== undefined)).toBe(false);
   });
 
+  it('persists unreadable upstream pages as an explicit operational outcome', async () => {
+    const { adapter, store } = setup();
+    await adapter.getWatermark(key);
+    await adapter.recordRetryFailure({
+      key,
+      window,
+      error: 'DWS chat returned truncated upstream content',
+      failedAt: '2026-08-22T01:00:00.000Z',
+    });
+    expect(store.failPartition).toHaveBeenCalledWith(expect.objectContaining({
+      errorCode: 'CONTEXT_SYNC_UNREADABLE',
+    }));
+  });
+
+  it('marks deterministic upstream authorization failures refused instead of retrying forever', async () => {
+    const { adapter, store } = setup();
+    await adapter.getWatermark(key);
+    await adapter.recordRetryFailure({
+      key,
+      window,
+      error: 'DWS command failed: 403 forbidden',
+      failedAt: '2026-08-22T01:00:00.000Z',
+    });
+    expect(store.failPartition).toHaveBeenCalledWith(expect.objectContaining({
+      errorCode: 'CONTEXT_SYNC_REFUSED',
+      refused: true,
+    }));
+  });
+
   it('reconstructs durable retry state from the ContextStore partition', async () => {
     const { adapter } = setup({
       status: 'retry_wait',
@@ -297,6 +373,6 @@ describe('ContextStoreSyncAdapter', () => {
 
     await expect(adapter.advanceWatermark({ key, expected: null, value: window.to }))
       .rejects.toThrow(/compare-and-set/);
-    expect(vi.mocked(store.ingestPage).mock.calls).toHaveLength(1);
+    expect(vi.mocked(store.ingestPage).mock.calls).toHaveLength(0);
   });
 });

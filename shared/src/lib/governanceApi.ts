@@ -278,13 +278,19 @@ async function contextPlaneRequest<T>(path: string, schema: z.ZodType<T>, signal
 
 /** Organization-admin Context Plane read adapter. Tenant scope is resolved by the authenticated server session. */
 export const contextCenterApi = {
-  getSnapshot: (options?: { signal?: AbortSignal }) => contextPlaneRequest(
-    '/api/admin/context-plane/snapshot',
+  getSnapshot: (options?: { signal?: AbortSignal; tenantId?: string }) => contextPlaneRequest(
+    withQuery('/api/admin/context-plane/snapshot', {
+      ...(options?.tenantId ? { tenantId: options.tenantId } : {}),
+    }),
     contextCenterSnapshotSchema,
     options?.signal,
   ),
-  listEvidence: (query: ContextEvidenceQuery, options?: { signal?: AbortSignal }) => {
+  listEvidence: (
+    query: ContextEvidenceQuery,
+    options?: { signal?: AbortSignal; tenantId?: string },
+  ) => {
     const path = withQuery('/api/admin/context-plane/evidence', {
+      ...(options?.tenantId ? { tenantId: options.tenantId } : {}),
       sourceId: query.sourceId,
       collectionId: query.collectionId,
       ...(query.recordId === undefined ? {} : { recordId: query.recordId }),

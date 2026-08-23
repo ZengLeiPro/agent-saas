@@ -35,13 +35,13 @@ const BOARD: TaskBoard = {
   name: '研发事项',
   visibility: 'personal',
   ownerUserId: USER.sub,
+  role: 'owner',
   canManage: true,
   prompt: '执行看板任务',
   version: 1,
   createdAt: '2026-08-01T00:00:00.000Z',
   updatedAt: '2026-08-01T00:00:00.000Z',
 };
-
 const TASK: TaskBoardTask = {
   id: 'task-1',
   boardId: BOARD.id,

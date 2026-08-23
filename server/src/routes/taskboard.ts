@@ -22,6 +22,7 @@ import {
   type TaskBoardTask,
   type TaskBoardUploadAttachment,
 } from '../../../shared/src/types/taskboard.js';
+import { assertActiveBoard, assertBoardRole } from '../taskboard/storeHelpers.js';
 import {
   TaskboardConflictError,
   TaskboardExecutionUnavailableError,
@@ -447,15 +448,14 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   router.post('/boards/:boardId/tasks', route(async (req, res) => {
     const input = parseOrReply(taskCreateSchema, req.body, res, 'body');
     if (!input) return;
-    if (input.dispatch && !options.executionService?.startDirectExecution) {
-      throw new TaskboardExecutionUnavailableError();
-    }
+    if (input.dispatch && !options.executionService?.startDirectExecution) throw new TaskboardExecutionUnavailableError();
     const identity = identityFrom(req);
+    const board = await options.service!.getBoard(identity, req.params.boardId);
+    assertBoardRole(board.role, 'editor');
+    assertActiveBoard(board);
     const title = input.title ?? await generateTaskTitle(input.description ?? '', identity);
     const attachments = await resolveRequestAttachments(options, req, input.attachments);
-    const ownerUserId = attachments?.length
-      ? (await options.service!.getBoard(identity, req.params.boardId)).ownerUserId
-      : undefined;
+    const ownerUserId = attachments?.length ? board.ownerUserId : undefined;
     await markRequestAttachments(options, req, attachments);
     const { dispatch } = input;
     const taskInput = { ...input, title: title ?? '' };

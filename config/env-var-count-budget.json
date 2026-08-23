@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reason": "Taskboard workflow repair script requires DATABASE_URL and optional TASKBOARD_TABLE_PREFIX",
-  "updatedAt": "2026-08-18",
+  "reason": "ACS SNAT 多网段迁移需同时声明旧变量空值 tombstone 与新变量",
+  "updatedAt": "2026-08-23",
   "domains": {
     "server": {
       "budget": 48,
@@ -57,7 +57,7 @@
       ]
     },
     "acs-orchestrator": {
-      "budget": 40,
+      "budget": 41,
       "names": [
         "ACS_ALERT_WEBHOOK_BEARER_TOKEN",
         "ACS_ALERT_WEBHOOK_URL",
@@ -88,6 +88,7 @@
         "ACS_SNAT_MODE",
         "ACS_SNAT_REGION_ID",
         "ACS_SNAT_SHARED_CIDR",
+        "ACS_SNAT_SHARED_CIDRS",
         "ACS_SNAT_TABLE_ID",
         "ACS_TRAFFIC_POLICY_CRD_NAME",
         "ACS_TSX_BIN",

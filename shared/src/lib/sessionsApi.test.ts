@@ -219,3 +219,47 @@ describe('子 Agent 摘要', () => {
     expect((message as { presentation?: unknown }).presentation).toBeUndefined();
   });
 });
+
+describe('Artifact 交付历史恢复', () => {
+  it('tool metadata 缺失时从 deliver 结果恢复文件卡片', () => {
+    const messages = mapSessionDetailToMessages({
+      sessionId: 's-artifact',
+      stats: { lines: 2, parsedLines: 2, parseErrors: 0 },
+      blocks: [
+        {
+          id: 'artifact-call',
+          kind: 'tool_use',
+          title: 'Artifact',
+          defaultOpen: false,
+          content: JSON.stringify({ action: 'deliver', artifact_id: 'artifact-1' }),
+          toolName: 'Artifact',
+          toolId: 'call-artifact',
+        },
+        {
+          id: 'artifact-result',
+          kind: 'tool_result',
+          title: '结果',
+          defaultOpen: false,
+          content: JSON.stringify({
+            action: 'deliver',
+            artifactId: 'artifact-1',
+            kind: 'file',
+            fileName: '交付结果.docx',
+            sizeBytes: 2048,
+            mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          }),
+          toolName: 'Artifact',
+          toolId: 'call-artifact',
+        },
+      ],
+    });
+
+    expect(messages).toEqual([expect.objectContaining({
+      type: 'file_download',
+      artifactId: 'artifact-1',
+      artifactKind: 'file',
+      fileName: '交付结果.docx',
+      fileSize: 2048,
+    })]);
+  });
+});

@@ -72,6 +72,65 @@ describe('pickSoleReadyTenantHandId (B2)', () => {
     expect(pickSoleReadyTenantHandId([blank])).toBeUndefined();
   });
 
+  it('fails closed when a ready-looking hand still has an unresolved provision failure', () => {
+    const failed = makeHand({
+      handId: 'session-1:tenant-failed',
+      metadata: {
+        tenantRemoteHandId: 'tenant-failed',
+        provisionFailure: 'ACS SNAT managed entry quota exceeded: 28/28',
+      },
+    });
+    expect(pickSoleReadyTenantHandId([failed])).toBeUndefined();
+
+    const retryFailed = makeHand({
+      handId: 'session-1:tenant-retry-failed',
+      metadata: {
+        tenantRemoteHandId: 'tenant-retry-failed',
+        provision: { lastStatus: 'error', lastError: 'reprovision failed' },
+      },
+    });
+    expect(pickSoleReadyTenantHandId([retryFailed])).toBeUndefined();
+  });
+
+  it('blocks legacy default transport fallback when its default hand is unavailable', () => {
+    const failedDefault = makeHand({
+      handId: 'session-1:server-remote',
+      metadata: { provisionFailure: 'sandbox provision failed' },
+    });
+    expect(selectRuntimeHandRoute([failedDefault])).toEqual({
+      kind: 'blocked',
+      message: 'RUNTIME_DEFAULT_HAND_UNAVAILABLE',
+    });
+
+    const unhealthyDefault = makeHand({
+      handId: 'session-1:server-remote',
+      status: 'unhealthy',
+      metadata: {},
+    });
+    expect(selectRuntimeHandRoute([unhealthyDefault])).toEqual({
+      kind: 'blocked',
+      message: 'RUNTIME_DEFAULT_HAND_UNAVAILABLE',
+    });
+  });
+
+  it('checks only the current default execution target and supports non-remote failures', () => {
+    const failedLocal = makeHand({
+      handId: 'session-1:server-local',
+      type: 'server-local',
+      metadata: { provisionFailure: 'local provision failed' },
+    });
+    const failedRemote = makeHand({
+      handId: 'session-1:server-remote',
+      status: 'unhealthy',
+      metadata: {},
+    });
+
+    expect(selectRuntimeHandRoute([failedLocal, failedRemote], { executionTarget: 'server-local' }))
+      .toEqual({ kind: 'blocked', message: 'RUNTIME_DEFAULT_HAND_UNAVAILABLE' });
+    expect(selectRuntimeHandRoute([failedRemote], { executionTarget: 'server-local' }))
+      .toEqual({ kind: 'none' });
+  });
+
   it('routes an attested run only to its exact ready default hand even beside the sole ready tenant hand', () => {
     const runId = 'run-attested';
     const tenant = makeHand({ handId: 'session-1:tenant-legacy' });
@@ -128,6 +187,21 @@ describe('pickSoleReadyTenantHandId (B2)', () => {
     expect(selectRuntimeHandRoute([tenant], { runId, runtimeIsolationRequirement: requirement }))
       .toEqual({ kind: 'blocked', message: 'RUNTIME_ISOLATION_ATTESTED_HAND_MISSING' });
     expect(selectRuntimeHandRoute([tenant, staleDefault], { runId, runtimeIsolationRequirement: requirement }))
+      .toEqual({ kind: 'blocked', message: 'RUNTIME_ISOLATION_ATTESTED_HAND_MISSING' });
+
+    const failedAttested = makeHand({
+      handId: 'session-1:server-remote',
+      runId,
+      metadata: {
+        runtimeIsolationAttested: true,
+        runId,
+        policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST,
+        sandboxName: 'as-failed-default',
+        sandboxScopeId: 'workspace-1::session-1',
+        provisionFailure: 'session provision failed',
+      },
+    });
+    expect(selectRuntimeHandRoute([failedAttested], { runId, runtimeIsolationRequirement: requirement }))
       .toEqual({ kind: 'blocked', message: 'RUNTIME_ISOLATION_ATTESTED_HAND_MISSING' });
   });
 });

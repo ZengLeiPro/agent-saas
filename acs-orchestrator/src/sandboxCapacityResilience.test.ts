@@ -99,6 +99,48 @@ describe('ensureCapacity 失败隔离', () => {
     expect(listCalls()).toBeGreaterThan(1);
   });
 
+  it('并发创建在 Pod 可见前也会占用容量保留，禁止同时穿透上限', async () => {
+    let releaseApply!: () => void;
+    let notifyApplyStarted!: () => void;
+    const applyStarted = new Promise<void>((resolve) => { notifyApplyStarted = resolve; });
+    const applyGate = new Promise<void>((resolve) => { releaseApply = resolve; });
+    const running = new Set<string>();
+    let firstSandboxName = '';
+    const kubectl = {
+      async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
+        if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
+          return { stdout: JSON.stringify({ items: [] }), stderr: '', exitCode: 0, signal: null };
+        }
+        if (args[0] === 'get') {
+          const name = args[1]?.split('/').at(-1) ?? '';
+          return running.has(name)
+            ? { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null }
+            : { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
+        }
+        if (args[0] === 'apply') {
+          notifyApplyStarted();
+          await applyGate;
+          void options.input;
+          if (firstSandboxName) running.add(firstSandboxName);
+          return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        }
+        if (args[0] === 'patch' || args[0] === 'delete') return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      },
+    } as unknown as Kubectl;
+    const manager = new SandboxManager(
+      config({ maxRunningSandboxes: 1, lifecycleEnabled: false }), kubectl,
+      { info() {}, warn() {}, error() {} },
+    );
+    firstSandboxName = manager.ref({ workspaceId: 'ws_kaiyan__u1', sessionId: 'session-a' }).name;
+    const first = manager.ensureRunning({ workspaceId: 'ws_kaiyan__u1', sessionId: 'session-a' });
+    await applyStarted;
+    await expect(manager.ensureRunning({ workspaceId: 'ws_kaiyan__u2', sessionId: 'session-b' }))
+      .rejects.toThrow(/running quota exceeded/);
+    releaseApply();
+    await first;
+  });
+
   it('配额真的用尽时仍然拒绝创建——失败隔离不等于放弃配额约束', async () => {
     const running = Array.from({ length: 3 }, (_, i) => ({
       metadata: {

@@ -39,6 +39,7 @@ import type { ExecutionTransportRegistry } from '../executionTransport.js';
 import { LegacyTranscriptProjection } from '../legacyTranscriptProjection.js';
 import { RawAgentLoop } from '../rawAgentLoop.js';
 import { customerSafeRuntimeError } from '../runtimeFailure.js';
+import { deriveRuntimeIsolationRequirement } from '../runtimeIsolationEvidence.js';
 import {
   buildTenantRemoteHandWireEnv,
   createApprovalStoreForSession,
@@ -253,6 +254,10 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   const childSessionId = `sub-${randomUUID()}`;
   const childRunId = `${Date.now()}-${randomUUID()}`;
   const parentWorkspace = parentContext.workspace;
+  const childRuntimeIsolationRequirement = deriveRuntimeIsolationRequirement(
+    parentContext.runtimeIsolationRequirement,
+    { runId: childRunId, sessionId: childSessionId, workspaceId: parentWorkspace.id ?? childSessionId },
+  );
 
   // 硬超时与父 abort 合并；分离的 controller 让终态可区分 timeout / cancelled
   const timeoutController = new AbortController();
@@ -357,6 +362,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       topLevelSessionId: parentWorkspace.topLevelSessionId ?? parentSessionId,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
+      runtimeIsolationRequirement: childRuntimeIsolationRequirement,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: params.tenantHandResolver,
       userId,
@@ -417,6 +423,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore,
+      runtimeIsolationRequirement: childRuntimeIsolationRequirement,
       runStore: config.runStore,
     });
 

@@ -1,15 +1,12 @@
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
 import { describe, expect, it } from 'vitest';
-
 import type { AcsOrchestratorConfig } from './config.js';
 import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import type { Kubectl, KubectlResult } from './kubectl.js';
 import { SandboxManager, brokenSandboxStateReason } from './sandboxManager.js';
 import { baseConfig, noopLogger } from './sandboxManagerTestFixtures.js';
-
 describe('SandboxManager egress injection', () => {
   async function applyWithEgress(egress: AcsOrchestratorConfig['egress']) {
     const applies: Array<Record<string, unknown>> = [];
@@ -745,6 +742,9 @@ describe('SandboxManager', () => {
           };
         }
         if (args[0] === 'get') {
+          if (args[1] === 'sandbox/as-old') {
+            return { stdout: JSON.stringify({ status: { phase: oldPaused ? 'Paused' : 'Running' } }), stderr: '', exitCode: 0, signal: null };
+          }
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }

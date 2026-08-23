@@ -8,7 +8,8 @@ import {
 import { ChatTabContent } from '@/components/chat/ChatTabContent';
 import { FilePreviewDialog } from '@/components/FilePreviewPanel';
 import { FilePreviewProvider } from '@/contexts/FilePreviewContext';
-import { mapSessionDetailToMessages, type ApiSessionDetail } from '@/lib/sessionsApi';
+import type { ApiSessionDetail } from '@/lib/sessionsApi';
+import { mapSessionDetailToMessages } from '@/lib/sessionMessageMapper';
 import { authFetch } from '@/lib/authFetch';
 import { isKbPath } from '@agent/shared';
 import { QaErrorNotice } from './shared';

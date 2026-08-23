@@ -3,7 +3,6 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
 import {
   applyRuntimeConfigPatch,
   loadConfigFromEnv,
@@ -28,6 +27,8 @@ import {
   brokenSandboxStateReason,
 } from './sandboxManager.js';
 import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
+import { SnatSharedCidrCoverageError } from './snatManager.js';
+import { SnatOperations } from './snatOperations.js';
 
 const config = loadConfigFromEnv();
 
@@ -48,14 +49,12 @@ let lifecycleRunning = false;
 const lastAlertAtByEvent = new Map<string, number>();
 let staleImagePrewarmRunning = false;
 const STREAM_HEARTBEAT_MS = 25_000;
-
 // ─── Graceful drain (SIGUSR2) ────────────────────────────────────
 // 用于零停机 deploy: `kill -USR2` -> 停接新的长运行请求 (/provision, /execute,
 // /execute-stream, /invocations/*) -> 等 inflight=0 -> exit(0)。/health 期间
 // 报告 draining + inflight 供 CI 脚本轮询。SIGTERM 沿用原短路径 (5s 硬退)。
 let inflightRequests = 0;
 let draining = false;
-
 async function withInflight<T>(fn: () => Promise<T>): Promise<T> {
   inflightRequests++;
   try {
@@ -64,45 +63,73 @@ async function withInflight<T>(fn: () => Promise<T>): Promise<T> {
     inflightRequests--;
   }
 }
-
+const snatOperations = new SnatOperations({
+  sandboxManager, authorize, sendJson, emitAlert, logger,
+  drainDeadlineMs: config.drainDeadlineMs,
+  inflightRequests: () => inflightRequests,
+  lifecycleRunning: () => lifecycleRunning,
+  backgroundMutationRunning: () => staleImagePrewarmRunning,
+  ...(config.runtimeConfigPath ? { stateFile: `${config.runtimeConfigPath}.snat-operation-state.json` } : {}),
+});
 const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     void handleHealth(res);
     return;
   }
-
+  if (snatOperations.blocks(req)) {
+    return sendJson(res, 503, {
+      status: 'error',
+      error: 'SNAT rollback maintenance is active; new workspace mutations are paused',
+    });
+  }
   if (req.method === 'GET' && req.url === '/tools') {
     return sendJson(res, 200, buildToolsResponse());
   }
-
   if (req.url === '/runtime-config') {
     void handleRuntimeConfig(req, res);
     return;
   }
-
   if (req.url === '/lifecycle/cleanup') {
-    void handleLifecycleCleanup(req, res);
+    void withInflight(() => handleLifecycleCleanup(req, res));
     return;
   }
 
   if (req.url === '/network-policy/probe') {
-    void handleNetworkPolicyProbe(req, res);
+    void withInflight(() => snatOperations.handleNetworkPolicyProbe(req, res));
     return;
   }
 
   if (req.url === '/snat') {
-    void handleSnatStatus(req, res);
+    void snatOperations.handleStatus(req, res);
     return;
   }
 
   if (req.url === '/snat/cleanup-orphans') {
-    void handleSnatCleanup(req, res);
+    void withInflight(() => snatOperations.handleCleanup(req, res));
+    return;
+  }
+
+  if (req.url === '/snat/migrate-shared') {
+    if (draining) return sendJson(res, 503, { status: 'error', error: 'orchestrator draining, retry shortly' });
+    void withInflight(() => snatOperations.handleMigration(req, res));
+    return;
+  }
+
+  if (req.url === '/snat/restore-per-pod') {
+    if (draining) return sendJson(res, 503, { status: 'error', error: 'orchestrator draining, retry shortly' });
+    void withInflight(() => snatOperations.handleRestore(req, res));
+    return;
+  }
+
+  if (req.url === '/snat/restore-per-pod/cancel') {
+    if (draining) return sendJson(res, 503, { status: 'error', error: 'orchestrator draining, retry shortly' });
+    void withInflight(() => snatOperations.handleRestoreCancel(req, res));
     return;
   }
 
   const sandboxRoute = matchSandboxRoute(req.url);
   if (sandboxRoute) {
-    void handleSandboxRoute(req, res, sandboxRoute);
+    void withInflight(() => handleSandboxRoute(req, res, sandboxRoute));
     return;
   }
 
@@ -114,7 +141,7 @@ const server = createServer((req, res) => {
   }
 
   if (req.url === '/warmup') {
-    void handleWarmup(req, res);
+    void withInflight(() => handleWarmup(req, res));
     return;
   }
 
@@ -142,12 +169,12 @@ const server = createServer((req, res) => {
 
   const workspaceLifecycleMatch = req.url?.match(/^\/workspaces\/([^/?#]+)\/(archive|reset)$/);
   if (workspaceLifecycleMatch) {
-    void handleWorkspaceLifecycle(
+    void withInflight(() => handleWorkspaceLifecycle(
       req,
       res,
       decodeURIComponent(workspaceLifecycleMatch[1]!),
       workspaceLifecycleMatch[2] as 'archive' | 'reset',
-    );
+    ));
     return;
   }
 
@@ -227,7 +254,20 @@ async function computeDeepHealth(): Promise<DeepHealthSnapshot> {
     ok = false;
     checks.sandboxes = inventoryOutcome.error;
   }
-  return { at: Date.now(), ok, checks, sandboxes: inventoryOutcome.sandboxes, snat: inventoryOutcome.snat };
+  const snat = inventoryOutcome.snat;
+  if (snat?.enabled) {
+    const sharedCidrsReady = snat.mode !== 'shared-cidr'
+      || snat.sharedCidrAvailableCount === (snat.sharedCidrs?.length ?? 0);
+    const podCoverageOk = snat.uncoveredPodCidrs.length === 0;
+    const snatOk = snat.configured && !snat.error && sharedCidrsReady && podCoverageOk;
+    checks.snat = snatOk
+      ? 'ok'
+      : (snat.error ?? (podCoverageOk
+        ? 'shared CIDRs are not all Available'
+        : `uncovered Pod CIDRs: ${snat.uncoveredPodCidrs.join(',')}`));
+    if (!snatOk) ok = false;
+  }
+  return { at: Date.now(), ok, checks, sandboxes: inventoryOutcome.sandboxes, snat };
 }
 
 async function getDeepHealth(): Promise<DeepHealthSnapshot> {
@@ -248,6 +288,7 @@ async function handleHealth(res: ServerResponse): Promise<void> {
     // drain 期间 CI 脚本轮询 inflight,为 0 时才 SIGTERM
     draining,
     inflight: inflightRequests,
+    ...snatOperations.healthState(),
     backend: 'acs-agent-sandbox',
     namespace: config.namespace,
     sandboxKind: config.sandboxKind,
@@ -397,49 +438,6 @@ async function handleLifecycleCleanup(req: IncomingMessage, res: ServerResponse)
   }
 }
 
-async function handleNetworkPolicyProbe(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
-  if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
-  try {
-    const result = await sandboxManager.probeNetworkPolicy();
-    logger.warn(
-      `network_policy_probe enforcement=${result.effectivePolicy.enforcement} `
-      + `public=${result.effectivePolicy.publicEgressReachable} `
-      + `privateBlocked=${result.effectivePolicy.privateEgressBlocked} `
-      + `metadataBlocked=${result.effectivePolicy.metadataBlocked}`,
-    );
-    return sendJson(res, 200, { status: 'ok', networkPolicy: result });
-  } catch (err) {
-    return sendJson(res, 500, { status: 'error', error: err instanceof Error ? err.message : String(err) });
-  }
-}
-
-async function handleSnatStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (req.method !== 'GET') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use GET' });
-  if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
-  try {
-    const snat = await sandboxManager.snatStatus();
-    return sendJson(res, 200, { status: 'ok', snat });
-  } catch (err) {
-    return sendJson(res, 500, { status: 'error', error: err instanceof Error ? err.message : String(err) });
-  }
-}
-
-async function handleSnatCleanup(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
-  if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
-  try {
-    const report = await sandboxManager.cleanupOrphanSnat();
-    logger.warn(
-      `snat_manual_cleanup checked=${report.checked} deleted=${report.deleted.length} `
-      + `unexpected=${report.unexpected.length}`,
-    );
-    return sendJson(res, 200, { status: 'ok', report });
-  } catch (err) {
-    return sendJson(res, 500, { status: 'error', error: err instanceof Error ? err.message : String(err) });
-  }
-}
-
 type SandboxRoute =
   | { kind: 'list' }
   | { kind: 'name'; rawName: string; action?: 'pause' | 'resume' };
@@ -528,8 +526,7 @@ function sendSandboxError(res: ServerResponse, err: unknown): void {
  * 让 30s+ 冷启动与用户打字/LLM 首轮思考并行。立即返回 202，ensureRunning 在
  * 后台完成（同名并发由 SandboxManager.ensureInFlight 合流；与真实 execute 的
  * ensure 也会合流）。失败仅记日志——warmup 是纯优化路径，不影响正式链路。
- * 不计 withInflight：drain 不必等待 warmup（kubectl apply 已发出的创建由
- * ACS 侧自行完成，无中断损失）。
+ * warmup 全程计入 withInflight，确保 drain 与 SNAT 回滚维护屏障不会漏掉已接受的创建。
  */
 async function handleWarmup(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
@@ -592,7 +589,18 @@ async function handleProvision(req: IncomingMessage, res: ServerResponse): Promi
       logs: result.logs,
     });
   } catch (err) {
-    return sendJson(res, 500, { status: 'error', error: err instanceof Error ? err.message : String(err) });
+    const message = err instanceof Error ? err.message : String(err);
+    if (err instanceof SnatSharedCidrCoverageError || /ACS SNAT|CreateSnatEntry\(shared\)/.test(message)) {
+      await emitAlert({
+        event: err instanceof SnatSharedCidrCoverageError ? 'snat_shared_cidr_coverage_gap' : 'snat_provision_failed',
+        severity: 'error',
+        message,
+        metadata: err instanceof SnatSharedCidrCoverageError
+          ? { podIp: err.podIp, sharedCidrs: err.sharedCidrs }
+          : undefined,
+      });
+    }
+    return sendJson(res, 500, { status: 'error', error: message });
   }
 }
 
@@ -834,6 +842,10 @@ function startLifecycleLoop(): void {
 }
 
 async function runStaleImagePrewarmOnce(reason: string): Promise<void> {
+  if (snatOperations.isMaintenanceActive()) {
+    logger.info(`sandbox_stale_image_prewarm reason=${reason} skipped=snat_rollback_maintenance`);
+    return;
+  }
   if (staleImagePrewarmRunning) {
     logger.info(`sandbox_stale_image_prewarm reason=${reason} skipped=already_running`);
     return;
@@ -864,6 +876,10 @@ async function runStaleImagePrewarmOnce(reason: string): Promise<void> {
 }
 
 async function runLifecycleOnce(reason: string): Promise<void> {
+  if (snatOperations.isMaintenanceActive()) {
+    logger.info(`sandbox_lifecycle reason=${reason} skipped=snat_rollback_maintenance`);
+    return;
+  }
   if (lifecycleRunning) {
     logger.info(`sandbox_lifecycle reason=${reason} skipped=already_running`);
     return;

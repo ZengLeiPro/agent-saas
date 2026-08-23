@@ -32,7 +32,7 @@ import {
 import { runSubagent, type SubagentOutcome } from '../subagent/subagentRunner.js';
 import { BACKGROUND_COMMAND_MONITOR_HANDOFF_REASON } from './backgroundTaskRuntime.js';
 import {
-  metadataString,
+  deriveBackgroundRuntimeIsolationRequirement, metadataString,
   parseBackgroundTaskMetadata,
   type BackgroundCommandTaskMetadata,
 } from './backgroundTaskMetadata.js';
@@ -62,17 +62,13 @@ import {
   type BackgroundShellView,
   type StoredBackgroundResult,
 } from './backgroundTaskFormatting.js';
-
 export type { BackgroundTaskMetadata } from './backgroundTaskMetadata.js';
-
 // 结果模型与格式化函数已迁至 ./backgroundTaskFormatting.ts，这里按既有 import 路径继续对外转发。
 export { escapeXml } from './backgroundTaskFormatting.js';
-
 const logger = createLogger('BackgroundTaskService');
 const WAKE_CLAIM_STALE_MS = 60_000;
 const WAKE_BATCH_SIZE = 50;
 const CANCEL_POLL_MS = 2_000;
-
 export function resolveBackgroundSkillUsername(session: Pick<RuntimeSessionRecord, 'username' | 'orgAgentSnapshot'>): string | undefined {
   return session.orgAgentSnapshot ? undefined : session.username;
 }
@@ -214,6 +210,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         ...(context.workspace.mountSubPath ? { mountSubPath: context.workspace.mountSubPath } : {}),
         ...(context.workspace.sandboxScopeId ? { sandboxScopeId: context.workspace.sandboxScopeId } : {}),
         ...(context.workspace.sandboxPolicy ? { sandboxPolicy: context.workspace.sandboxPolicy } : {}),
+        ...(context.runtimeIsolationRequirement ? { runtimeIsolationRequirement: context.runtimeIsolationRequirement } : {}),
         ...(context.channelContext.timezone ? { timezone: context.channelContext.timezone } : {}),
         parentChannel: context.channelContext.channel,
         parentOutputTransactionMode: resolveModelOutputTransactionMode(context.channelContext),
@@ -433,6 +430,9 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         targetCwd: metadata.cwd,
         ...(metadata.timezone ? { timezone: metadata.timezone } : {}),
       };
+      const runtimeIsolationRequirement = deriveBackgroundRuntimeIsolationRequirement(
+        metadata, { runId: record.runId, sessionId: record.sessionId, workspaceId: metadata.workspaceId },
+      );
       const parentContext: ToolCallContext = {
         channelContext,
         env: connectorRunEnv,
@@ -455,6 +455,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         sessionId: record.sessionId,
         runId: record.runId,
         toolCallId: metadata.parentToolCallId,
+        ...(runtimeIsolationRequirement ? { runtimeIsolationRequirement } : {}),
         signal: abortController.signal,
       };
       const agentType = getSubagentType(metadata.agentType);
@@ -847,7 +848,6 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       signal,
     });
   }
-
   private async requireOwnedTask(context: ToolCallContext, taskId: string): Promise<RunRecord> {
     const task = await this.get(context, taskId);
     if (!task) throw new Error('后台任务不存在，或不属于当前会话/用户。');

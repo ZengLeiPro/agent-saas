@@ -1,6 +1,6 @@
 import { chmod, chown, mkdir, rename, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-
+import { CapacityReservations } from './capacityReservations.js';
 import type { AcsOrchestratorConfig } from './config.js';
 import type { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import { Kubectl } from './kubectl.js';
@@ -43,7 +43,6 @@ import type {
   SandboxResourceOverride,
   SandboxStaleImagePrewarmReport,
 } from './sandboxManagerTypes.js';
-
 // 状态模型与纯判定函数已迁至 ./sandboxState.ts，这里按既有 import 路径继续对外转发。
 export type { ManagedSandbox, ManagedSandboxInventory, SandboxStatus } from './sandboxState.js';
 export {
@@ -64,15 +63,12 @@ export type {
 export class SandboxBusyError extends Error {
   readonly statusCode = 409;
 }
-
 export class SandboxNotFoundError extends Error {
   readonly statusCode = 404;
 }
-
 export class SandboxInvalidStateError extends Error {
   readonly statusCode = 400;
 }
-
 const MANAGED_BY_LABEL = 'agent-saas-acs-orchestrator';
 const APP_LABEL = 'agent-saas-coding-hand';
 const WORKSPACE_LABEL = 'agent-saas.kaiyan.net/workspace-id';
@@ -91,7 +87,6 @@ const ACS_NETWORK_POLICY_AGENT_ANNOTATION = 'network.alibabacloud.com/enable-net
 const ACS_NETWORK_POLICY_MODE_ANNOTATION = 'network.alibabacloud.com/network-policy-mode';
 const EGRESS_FINGERPRINT_ANNOTATION = 'agent-saas.kaiyan.net/egress-fingerprint';
 const SANDBOX_TIMEZONE = 'Asia/Shanghai';
-
 /**
  * already_running 快路径缓存 TTL（2026-07-31 冷启动治理批次）。
  * ensureRunning 每次工具调用都会跑 networkPolicy reconcile（~0.5s）+ SNAT
@@ -102,16 +97,15 @@ const SANDBOX_TIMEZONE = 'Asia/Shanghai';
 const ENSURE_FAST_PATH_TTL_MS = 5 * 60_000;
 /** touch（lastActiveAt annotation patch，~0.2s）节流窗口；idle 判定为小时级，60s 精度足够。 */
 const TOUCH_THROTTLE_MS = 60_000;
-
 export class SandboxManager {
   private readonly networkPolicyManager: AcsNetworkPolicyManager;
-  private readonly snatManager: SnatManager;
+  readonly snatManager: SnatManager;
   private readonly prewarmInFlight = new Map<string, Promise<void>>();
   /** 同名 Sandbox 并发 ensureRunning 合流：后到者 join 先行者的 promise（消除 warmup/execute 并发 create 竞态与重复开销）。 */
   private readonly ensureInFlight = new Map<string, Promise<SandboxRef>>();
+  private readonly capacityReservations = new CapacityReservations();
   /** already_running 快路径缓存：完整校验（networkPolicy+SNAT）通过时间与最近 touch 时间。 */
   private readonly ensureFastPath = new Map<string, { verifiedAt: number; touchedAt: number }>();
-
   constructor(
     private readonly config: AcsOrchestratorConfig,
     private readonly kubectl: Kubectl,
@@ -122,7 +116,6 @@ export class SandboxManager {
     this.networkPolicyManager = new AcsNetworkPolicyManager(config, kubectl, logger);
     this.snatManager = new SnatManager(config, kubectl, logger, kubeApi);
   }
-
   ref(input: {
     workspaceId: string;
     sessionId: string;
@@ -143,7 +136,6 @@ export class SandboxManager {
       ...(input.resources && Object.keys(input.resources).length ? { resources: input.resources } : {}),
     };
   }
-
   async ensureRunning(
     input: {
       workspaceId: string;
@@ -170,7 +162,6 @@ export class SandboxManager {
       if (this.ensureInFlight.get(ref.name) === promise) this.ensureInFlight.delete(ref.name);
     }
   }
-
   private async ensureRunningExclusive(
     ref: SandboxRef,
     options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string } = {},
@@ -227,7 +218,7 @@ export class SandboxManager {
             `sandbox_image_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${oldImage} new=${this.config.sandboxImage}`,
           );
           if (existing.phase === 'Paused') {
-            if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.ensureCapacity(ref.name, options.busySandboxNames));
+            if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.capacityReservations.reserve(ref.name, () => this.ensureCapacity(ref.name, options.busySandboxNames)));
             await timing.step('networkPolicy', () => this.networkPolicyManager.reconcile(ref));
             await timing.step('applySandbox', () => this.applySandbox(ref));
             await this.waitForRunningAndEnsureSnat(ref, timing);
@@ -242,7 +233,7 @@ export class SandboxManager {
       }
       if (!existing) {
         path = path === 'unknown' ? 'create' : path;
-        if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.ensureCapacity(ref.name, options.busySandboxNames));
+        if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.capacityReservations.reserve(ref.name, () => this.ensureCapacity(ref.name, options.busySandboxNames)));
         await timing.step('networkPolicy', () => this.networkPolicyManager.reconcile(ref));
         await timing.step('applySandbox', () => this.applySandbox(ref));
         await this.waitForRunningAndEnsureSnat(ref, timing);
@@ -256,6 +247,7 @@ export class SandboxManager {
       // 上面已真查过 phase，Running 事实不依赖缓存。
       if (existing.phase === 'Running' && this.isEnsureFastPathFresh(ref.name)) {
         path = 'already_running_fast';
+        await timing.step('verifySnatCoverage', () => this.snatManager.assertSharedCidrCoverageForSandbox(ref));
         await timing.step('touch', () => this.touchThrottled(ref.name));
         status = 'ok';
         return ref;
@@ -263,12 +255,12 @@ export class SandboxManager {
       await timing.step('networkPolicy', () => this.networkPolicyManager.reconcile(ref));
       if (existing.phase === 'Paused') {
         path = 'resume_paused';
-        if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.ensureCapacity(ref.name, options.busySandboxNames));
+        if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.capacityReservations.reserve(ref.name, () => this.ensureCapacity(ref.name, options.busySandboxNames)));
         await timing.step('patchUnpause', () => this.patchPaused(ref.name, false));
         await this.waitForRunningAndEnsureSnat(ref, timing);
       } else if (existing.phase !== 'Running') {
         path = 'wait_non_running';
-        if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.ensureCapacity(ref.name, options.busySandboxNames));
+        if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.capacityReservations.reserve(ref.name, () => this.ensureCapacity(ref.name, options.busySandboxNames)));
         await this.waitForRunningAndEnsureSnat(ref, timing);
       } else {
         path = 'already_running';
@@ -279,6 +271,7 @@ export class SandboxManager {
       status = 'ok';
       return ref;
     } finally {
+      this.capacityReservations.release(ref.name);
       timing.finish(path, status);
     }
   }
@@ -947,7 +940,10 @@ export class SandboxManager {
     const protectedSandboxes = new Set(busySandboxNames ?? []);
     protectedSandboxes.add(currentSandboxName);
     const active = sandboxes.filter((sandbox) => sandbox.name !== currentSandboxName && isRunningCostPhase(sandbox.phase));
-    if (this.config.lifecycleEnabled && active.length >= this.config.maxRunningSandboxes) {
+    const occupied = this.capacityReservations.occupiedCount(
+      new Set(active.map((sandbox) => sandbox.name)), currentSandboxName,
+    );
+    if (this.config.lifecycleEnabled && occupied >= this.config.maxRunningSandboxes) {
       const candidates = active
         .filter((sandbox) => (
           !protectedSandboxes.has(sandbox.name)
@@ -955,17 +951,18 @@ export class SandboxManager {
           && !isBackgroundShellProtected(sandbox, Date.now())
         ))
         .sort((a, b) => (parseDateMs(a.lastActiveAt) ?? 0) - (parseDateMs(b.lastActiveAt) ?? 0));
-      const pauseCount = active.length - this.config.maxRunningSandboxes + 1;
+      const pauseCount = occupied - this.config.maxRunningSandboxes + 1;
       const paused: string[] = [];
       for (const sandbox of candidates.slice(0, pauseCount)) {
         if (this.isBusy(sandbox.name, protectedSandboxes)) continue;
         await this.patchPaused(sandbox.name, true);
+        await this.waitForPhase(sandbox.name, 'Paused');
         paused.push(sandbox.name);
       }
       if (paused.length) {
         this.logger.warn(`sandbox_capacity_forced_pause current=${currentSandboxName} paused=${paused.length}`);
-        const remainingActive = active.length - paused.length;
-        if (remainingActive < this.config.maxRunningSandboxes) return;
+        const remainingOccupied = occupied - paused.length;
+        if (remainingOccupied < this.config.maxRunningSandboxes) return;
       }
     }
     const refreshed = await this.listManagedSandboxes();
@@ -973,8 +970,11 @@ export class SandboxManager {
       sandbox.name !== currentSandboxName
       && isRunningCostPhase(sandbox.phase)
     ));
-    if (refreshedActive.length >= this.config.maxRunningSandboxes) {
-      throw new Error(`ACS Sandbox running quota exceeded: ${refreshedActive.length}/${this.config.maxRunningSandboxes}`);
+    const refreshedOccupied = this.capacityReservations.occupiedCount(
+      new Set(refreshedActive.map((sandbox) => sandbox.name)), currentSandboxName,
+    );
+    if (refreshedOccupied >= this.config.maxRunningSandboxes) {
+      throw new Error(`ACS Sandbox running quota exceeded: ${refreshedOccupied}/${this.config.maxRunningSandboxes}`);
     }
   }
 

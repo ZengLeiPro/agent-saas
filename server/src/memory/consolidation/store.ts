@@ -20,61 +20,29 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 
 import type {
   ConsolidationRunRecord,
-  ConsolidationRunStatus,
   ConsolidationState,
   MemoryTombstone,
   TombstoneScope,
 } from './types.js';
+import {
+  mapRun,
+  mapState,
+  type MemoryConsolidationCommitFenceResult,
+  type MemoryConsolidationCommitLock,
+  type PgConsolidationStoreOptions,
+  type RunUpdateInput,
+  type StateRow,
+} from './storeTypes.js';
 
-export interface PgConsolidationStoreOptions {
-  connectionString: string;
-  tablePrefix?: string;
-  logger?: { info?: (msg: string, meta?: unknown) => void; warn?: (msg: string, meta?: unknown) => void };
-}
-
-interface StateRow {
-  tenant_id: string;
-  user_id: string;
-  workspace_id: string;
-  session_id: string;
-  processed_session_sequence: string;
-  target_session_sequence: string;
-  first_pending_at: Date | null;
-  due_at: Date | null;
-  last_activity_at: Date | null;
-  active_run_ids: unknown;
-  status: string;
-  attempts: number;
-  next_attempt_at: Date | null;
-  lease_owner: string | null;
-  lease_expires_at: Date | null;
-  prompt_version: number | null;
-}
-
-function mapState(row: StateRow): ConsolidationState {
-  return {
-    tenantId: row.tenant_id,
-    userId: row.user_id,
-    workspaceId: row.workspace_id,
-    sessionId: row.session_id,
-    processedSessionSequence: Number(row.processed_session_sequence),
-    targetSessionSequence: Number(row.target_session_sequence),
-    firstPendingAt: row.first_pending_at?.toISOString() ?? null,
-    dueAt: row.due_at?.toISOString() ?? null,
-    lastActivityAt: row.last_activity_at?.toISOString() ?? null,
-    activeRunIds: Array.isArray(row.active_run_ids) ? (row.active_run_ids as string[]) : [],
-    status: row.status as ConsolidationState['status'],
-    attempts: row.attempts,
-    nextAttemptAt: row.next_attempt_at?.toISOString() ?? null,
-    leaseOwner: row.lease_owner,
-    leaseExpiresAt: row.lease_expires_at?.toISOString() ?? null,
-    promptVersion: row.prompt_version,
-  };
-}
+export type {
+  MemoryConsolidationCommitFence,
+  MemoryConsolidationCommitLock,
+  PgConsolidationStoreOptions,
+} from './storeTypes.js';
 
 export class PgMemoryConsolidationStore {
   private readonly pool: Pool;
@@ -314,7 +282,9 @@ export class PgMemoryConsolidationStore {
            FROM jsonb_array_elements_text(${this.stateTable}.active_run_ids || jsonb_build_array($5::text)) AS value
          ),
          last_activity_at = GREATEST(COALESCE(${this.stateTable}.last_activity_at, $6), $6),
-         due_at = NULL,
+         due_at = NULL, lease_owner = NULL, lease_expires_at = NULL,
+         status = CASE WHEN ${this.stateTable}.target_session_sequence > ${this.stateTable}.processed_session_sequence
+                       THEN 'pending' ELSE 'idle' END,
          last_boundary_global_sequence = $7,
          updated_at = NOW()
        WHERE ${this.stateTable}.last_boundary_global_sequence < $7`,
@@ -348,8 +318,8 @@ export class PgMemoryConsolidationStore {
            first_pending_at = COALESCE(${this.stateTable}.first_pending_at, $6),
            due_at = $6::timestamptz + make_interval(mins => $7),
            last_activity_at = GREATEST(COALESCE(${this.stateTable}.last_activity_at, $6), $6),
-           status = CASE WHEN ${this.stateTable}.status IN ('blocked', 'throttled')
-                         THEN ${this.stateTable}.status ELSE 'pending' END,
+           status = 'pending', attempts = 0, next_attempt_at = NULL,
+           lease_owner = NULL, lease_expires_at = NULL,
            last_boundary_global_sequence = $9,
            updated_at = NOW()
          WHERE ${this.stateTable}.last_boundary_global_sequence < $9`,
@@ -388,6 +358,7 @@ export class PgMemoryConsolidationStore {
              ELSE 'idle'
            END,
            last_activity_at = GREATEST(COALESCE(${this.stateTable}.last_activity_at, $6), $6),
+           lease_owner = NULL, lease_expires_at = NULL,
            last_boundary_global_sequence = $8,
            updated_at = NOW()
          WHERE ${this.stateTable}.last_boundary_global_sequence < $8`,
@@ -448,9 +419,174 @@ export class PgMemoryConsolidationStore {
     }
   }
 
+  /** 提交前续租并校验 fencing token；失败表示该 state 已被其他 worker 接管。 */
+  async renewLease(input: {
+    tenantId: string; sessionId: string; leaseOwner: string; now: string; leaseSeconds: number;
+  }): Promise<boolean> {
+    const res = await this.pool.query(
+      `UPDATE ${this.stateTable} SET
+         lease_expires_at = $4::timestamptz + make_interval(secs => $5), updated_at = NOW()
+       WHERE tenant_id = $1 AND session_id = $2 AND status = 'running'
+         AND active_run_ids = '[]'::jsonb
+         AND lease_owner = $3 AND lease_expires_at >= $4::timestamptz`,
+      [input.tenantId, input.sessionId, input.leaseOwner, input.now, input.leaseSeconds],
+    );
+    return (res.rowCount ?? 0) === 1;
+  }
+
+  /**
+   * 文件提交 fence：事务内锁住 state row，并校验 claim 的完整 boundary generation。
+   * scanner 的 run boundary 更新会等待该事务，文件 rename 与 state/run 收敛因此拥有同一串行顺序。
+   */
+  private async acquireCommitFence(client: PoolClient, input: {
+    tenantId: string; sessionId: string; leaseOwner: string; now: string;
+    fromSequence: number; toSequence: number; boundarySequence: number;
+  }): Promise<MemoryConsolidationCommitFenceResult> {
+    let closed = false;
+    const close = async (commit: boolean): Promise<void> => {
+      if (closed) return;
+      try {
+        if (commit) {
+          try {
+            await client.query('COMMIT');
+          } catch (error) {
+            await client.query('ROLLBACK').catch(() => undefined);
+            throw error;
+          }
+        } else {
+          await client.query('ROLLBACK');
+        }
+      } finally {
+        closed = true;
+      }
+    };
+    try {
+      await client.query('BEGIN');
+      const result = await client.query<StateRow>(
+        `SELECT * FROM ${this.stateTable}
+         WHERE tenant_id = $1 AND session_id = $2
+         FOR UPDATE`,
+        [input.tenantId, input.sessionId],
+      );
+      const row = result.rows[0];
+      const boundaryChanged = Boolean(row)
+        && Number(row.last_boundary_global_sequence) !== input.boundarySequence;
+      const activeRunIds = Array.isArray(row?.active_run_ids) ? row.active_run_ids : [];
+      const leaseValid = row?.lease_expires_at
+        && row.lease_expires_at.getTime() >= Date.parse(input.now);
+      const valid = row?.status === 'running'
+        && row.lease_owner === input.leaseOwner
+        && activeRunIds.length === 0
+        && Number(row.processed_session_sequence) === input.fromSequence
+        && Number(row.target_session_sequence) === input.toSequence
+        && !boundaryChanged
+        && Boolean(leaseValid);
+      if (!valid) {
+        await close(false);
+        return { fence: null, boundaryChanged };
+      }
+      return {
+        boundaryChanged: false,
+        fence: {
+          listActiveTombstoneIds: async () => {
+            const tombstones = await client.query<{ id: string }>(
+              `SELECT tombstone.id
+               FROM ${this.tombstonesTable} tombstone
+               JOIN ${this.stateTable} state
+                 ON state.tenant_id = tombstone.tenant_id AND state.user_id = tombstone.user_id
+               WHERE state.tenant_id = $1 AND state.session_id = $2
+                 AND tombstone.revoked_at IS NULL
+               ORDER BY tombstone.id`,
+              [input.tenantId, input.sessionId],
+            );
+            return tombstones.rows.map((row) => row.id);
+          },
+          finalizeApplied: async (finalInput) => {
+            try {
+              const runResult = await client.query(
+                `UPDATE ${this.runsTable} SET
+                   status = 'applied', model_actual = COALESCE($2, model_actual), usage_json = $3,
+                   error_code = NULL, error_message = NULL, applied_at = NOW(), finished_at = NOW(), updated_at = NOW()
+                 WHERE idempotency_key = $1`,
+                [finalInput.idempotencyKey, finalInput.modelActual ?? null, JSON.stringify(finalInput.usageJson)],
+              );
+              const stateResult = await client.query(
+                `UPDATE ${this.stateTable} SET
+                   processed_session_sequence = GREATEST(processed_session_sequence, $3),
+                   attempts = 0, next_attempt_at = NULL, lease_owner = NULL, lease_expires_at = NULL,
+                   status = CASE WHEN target_session_sequence > GREATEST(processed_session_sequence, $3)
+                                 THEN 'pending' ELSE 'idle' END,
+                   due_at = CASE WHEN target_session_sequence > GREATEST(processed_session_sequence, $3)
+                                 THEN $4::timestamptz + make_interval(mins => $5) ELSE NULL END,
+                   first_pending_at = CASE WHEN target_session_sequence > GREATEST(processed_session_sequence, $3)
+                                           THEN COALESCE(first_pending_at, $4::timestamptz) ELSE NULL END,
+                   updated_at = NOW()
+                 WHERE tenant_id = $1 AND session_id = $2 AND status = 'running'
+                   AND active_run_ids = '[]'::jsonb AND lease_owner = $6
+                   AND processed_session_sequence = $7 AND target_session_sequence = $3
+                   AND last_boundary_global_sequence = $8`,
+                [
+                  input.tenantId, input.sessionId, finalInput.toSequence, finalInput.now,
+                  finalInput.debounceMinutes, input.leaseOwner, input.fromSequence, input.boundarySequence,
+                ],
+              );
+              if ((runResult.rowCount ?? 0) !== 1 || (stateResult.rowCount ?? 0) !== 1) {
+                throw new Error('L2 memory commit fence lost during finalization');
+              }
+              await close(true);
+            } catch (error) {
+              await close(false).catch(() => undefined);
+              throw error;
+            }
+          },
+          retireJournalAndRequeue: async (retireInput) => {
+            try {
+              const runResult = await client.query(
+                `UPDATE ${this.runsTable} SET
+                   status = 'retryable_failed', usage_json = $2, error_code = $3, error_message = $4,
+                   finished_at = NOW(), updated_at = NOW()
+                 WHERE idempotency_key = $1`,
+                [
+                  retireInput.idempotencyKey, JSON.stringify(retireInput.usageJson),
+                  retireInput.errorCode, retireInput.errorMessage.slice(0, 2_000),
+                ],
+              );
+              const stateResult = await client.query(
+                `UPDATE ${this.stateTable} SET
+                   status = 'pending', due_at = $4::timestamptz,
+                   first_pending_at = COALESCE(first_pending_at, $4::timestamptz),
+                   next_attempt_at = NULL, lease_owner = NULL, lease_expires_at = NULL, updated_at = NOW()
+                 WHERE tenant_id = $1 AND session_id = $2 AND status = 'running'
+                   AND active_run_ids = '[]'::jsonb AND lease_owner = $3
+                   AND processed_session_sequence = $5 AND target_session_sequence = $6
+                   AND last_boundary_global_sequence = $7`,
+                [
+                  input.tenantId, input.sessionId, input.leaseOwner, retireInput.now,
+                  input.fromSequence, input.toSequence, input.boundarySequence,
+                ],
+              );
+              if ((runResult.rowCount ?? 0) !== 1 || (stateResult.rowCount ?? 0) !== 1) {
+                throw new Error('L2 memory commit fence lost while retiring journal');
+              }
+              await close(true);
+            } catch (error) {
+              await close(false).catch(() => undefined);
+              throw error;
+            }
+          },
+          release: async () => close(false),
+        },
+      };
+    } catch (error) {
+      await close(false).catch(() => undefined);
+      throw error;
+    }
+  }
+
   /** applied/noop：processed 推进到 toSequence；若 target 已超前则回到 pending，否则 idle。 */
   async markApplied(input: {
     tenantId: string; sessionId: string; toSequence: number; debounceMinutes: number; now: string;
+    leaseOwner?: string;
   }): Promise<void> {
     await this.pool.query(
       `UPDATE ${this.stateTable} SET
@@ -463,56 +599,145 @@ export class PgMemoryConsolidationStore {
          first_pending_at = CASE WHEN target_session_sequence > GREATEST(processed_session_sequence, $3)
                                  THEN COALESCE(first_pending_at, $4::timestamptz) ELSE NULL END,
          updated_at = NOW()
-       WHERE tenant_id = $1 AND session_id = $2`,
-      [input.tenantId, input.sessionId, input.toSequence, input.now, input.debounceMinutes],
+       WHERE tenant_id = $1 AND session_id = $2
+         AND ($6::text IS NULL OR lease_owner = $6)`,
+      [input.tenantId, input.sessionId, input.toSequence, input.now, input.debounceMinutes, input.leaseOwner ?? null],
     );
   }
 
   /** 会话已被政策排除：原子丢弃全部 backlog，后续新事件仍须重新通过 scanner 资格检查。 */
-  async markIneligible(input: { tenantId: string; sessionId: string }): Promise<void> {
+  async markIneligible(input: { tenantId: string; sessionId: string; leaseOwner?: string }): Promise<void> {
     await this.pool.query(
       `UPDATE ${this.stateTable} SET
          processed_session_sequence = target_session_sequence,
          attempts = 0, next_attempt_at = NULL, lease_owner = NULL, lease_expires_at = NULL,
          status = 'idle', due_at = NULL, first_pending_at = NULL, updated_at = NOW()
-       WHERE tenant_id = $1 AND session_id = $2`,
-      [input.tenantId, input.sessionId],
+       WHERE tenant_id = $1 AND session_id = $2
+         AND ($3::text IS NULL OR lease_owner = $3)`,
+      [input.tenantId, input.sessionId, input.leaseOwner ?? null],
     );
   }
 
-  /** 可重试失败：attempts+1，按退避序列排 next_attempt_at；超过 maxRetries 转 blocked。 */
+  /**
+   * Run ledger 与 state 失败转换共用同一 generation fence 和事务。
+   * 旧 worker 若已被新 boundary 撤销 lease，既不能改 state，也不能覆盖新 worker 的 ledger。
+   */
+  async failRunAndState(input: {
+    idempotencyKey: string;
+    tenantId: string; sessionId: string; leaseOwner: string;
+    toSequence: number; boundarySequence: number; now: string;
+    backoffMinutes: readonly number[]; maxRetries: number;
+    modelActual?: string; usageJson?: unknown; errorCode: string; errorMessage: string;
+  }): Promise<'retry_wait' | 'blocked' | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const stateResult = await client.query<{ attempts: number }>(
+        `UPDATE ${this.stateTable} SET
+           attempts = attempts + 1, lease_owner = NULL, lease_expires_at = NULL, updated_at = NOW()
+         WHERE tenant_id = $1 AND session_id = $2 AND status = 'running'
+           AND active_run_ids = '[]'::jsonb AND lease_owner = $3
+           AND target_session_sequence = $4 AND last_boundary_global_sequence = $5
+         RETURNING attempts`,
+        [
+          input.tenantId, input.sessionId, input.leaseOwner,
+          input.toSequence, input.boundarySequence,
+        ],
+      );
+      if (stateResult.rows.length === 0) {
+        await client.query('COMMIT');
+        return null;
+      }
+      const runResult = await client.query(
+        `UPDATE ${this.runsTable} SET
+           status = 'retryable_failed', model_actual = COALESCE($2, model_actual),
+           usage_json = COALESCE($3::jsonb, usage_json), retry_count = retry_count + 1,
+           error_code = $4, error_message = $5, finished_at = NOW(), updated_at = NOW()
+         WHERE idempotency_key = $1`,
+        [
+          input.idempotencyKey,
+          input.modelActual ?? null,
+          input.usageJson === undefined ? null : JSON.stringify(input.usageJson),
+          input.errorCode,
+          input.errorMessage.slice(0, 2_000),
+        ],
+      );
+      if ((runResult.rowCount ?? 0) !== 1) throw new Error('L2 memory failure ledger missing');
+      const attempts = stateResult.rows[0]!.attempts;
+      const blocked = attempts > input.maxRetries;
+      const backoff = input.backoffMinutes[Math.min(attempts - 1, input.backoffMinutes.length - 1)] ?? 60;
+      await client.query(
+        `UPDATE ${this.stateTable} SET
+           status = $3, next_attempt_at = CASE WHEN $3 = 'blocked' THEN NULL
+             ELSE $4::timestamptz + make_interval(mins => $5) END, updated_at = NOW()
+         WHERE tenant_id = $1 AND session_id = $2`,
+        [input.tenantId, input.sessionId, blocked ? 'blocked' : 'retry_wait', input.now, backoff],
+      );
+      await client.query('COMMIT');
+      return blocked ? 'blocked' : 'retry_wait';
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** 可重试失败：attempts+1 并按退避序列重排；耗尽预算后暂时 blocked，后续新活动会恢复。 */
   async markFailed(input: {
     tenantId: string; sessionId: string; now: string;
+    toSequence: number; boundarySequence: number;
     backoffMinutes: readonly number[]; maxRetries: number;
-    permanent?: boolean;
+    permanent?: boolean; leaseOwner?: string;
   }): Promise<'retry_wait' | 'blocked'> {
-    const res = await this.pool.query<{ attempts: number }>(
-      `UPDATE ${this.stateTable} SET
-         attempts = attempts + 1, lease_owner = NULL, lease_expires_at = NULL, updated_at = NOW()
-       WHERE tenant_id = $1 AND session_id = $2
-       RETURNING attempts`,
-      [input.tenantId, input.sessionId],
-    );
-    const attempts = res.rows[0]?.attempts ?? 1;
-    const blocked = input.permanent === true || attempts > input.maxRetries;
-    if (blocked) {
-      await this.pool.query(
-        `UPDATE ${this.stateTable} SET status = 'blocked', next_attempt_at = NULL, updated_at = NOW()
-         WHERE tenant_id = $1 AND session_id = $2`,
-        [input.tenantId, input.sessionId],
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const res = await client.query<{ attempts: number }>(
+        `UPDATE ${this.stateTable} SET
+           attempts = attempts + 1, lease_owner = NULL, lease_expires_at = NULL, updated_at = NOW()
+         WHERE tenant_id = $1 AND session_id = $2 AND status = 'running'
+           AND active_run_ids = '[]'::jsonb
+           AND target_session_sequence = $4 AND last_boundary_global_sequence = $5
+           AND ($3::text IS NULL OR lease_owner = $3)
+         RETURNING attempts`,
+        [
+          input.tenantId, input.sessionId, input.leaseOwner ?? null,
+          input.toSequence, input.boundarySequence,
+        ],
       );
-      return 'blocked';
+      if (res.rows.length === 0) {
+        await client.query('COMMIT');
+        return 'retry_wait';
+      }
+      const attempts = res.rows[0]!.attempts;
+      const blocked = input.permanent === true || attempts > input.maxRetries;
+      if (blocked) {
+        await client.query(
+          `UPDATE ${this.stateTable} SET status = 'blocked', next_attempt_at = NULL, updated_at = NOW()
+           WHERE tenant_id = $1 AND session_id = $2`,
+          [input.tenantId, input.sessionId],
+        );
+        await client.query('COMMIT');
+        return 'blocked';
+      }
+      const backoff = input.backoffMinutes[Math.min(attempts - 1, input.backoffMinutes.length - 1)] ?? 60;
+      await client.query(
+        `UPDATE ${this.stateTable} SET
+           status = 'retry_wait',
+           next_attempt_at = $3::timestamptz + make_interval(mins => $4),
+           updated_at = NOW()
+         WHERE tenant_id = $1 AND session_id = $2`,
+        [input.tenantId, input.sessionId, input.now, backoff],
+      );
+      await client.query('COMMIT');
+      return 'retry_wait';
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
     }
-    const backoff = input.backoffMinutes[Math.min(attempts - 1, input.backoffMinutes.length - 1)] ?? 60;
-    await this.pool.query(
-      `UPDATE ${this.stateTable} SET
-         status = 'retry_wait',
-         next_attempt_at = $3::timestamptz + make_interval(mins => $4),
-         updated_at = NOW()
-       WHERE tenant_id = $1 AND session_id = $2`,
-      [input.tenantId, input.sessionId, input.now, backoff],
-    );
-    return 'retry_wait';
   }
 
   /** 兼容恢复旧版本配额留下的 throttled 状态；新版本不再产生该状态。 */
@@ -520,6 +745,20 @@ export class PgMemoryConsolidationStore {
     const res = await this.pool.query(
       `UPDATE ${this.stateTable} SET status = 'pending', updated_at = NOW()
        WHERE status = 'throttled' AND target_session_sequence > processed_session_sequence`,
+    );
+    return res.rowCount ?? 0;
+  }
+
+  /**
+   * blocked 只是有界重试后的暂停态，不得永久粘住。启动时恢复 backlog，
+   * worker 会重新执行资格检查并按真实原因处理；后续新活动也会直接恢复 pending。
+   */
+  async reviveLegacyBlocked(): Promise<number> {
+    const res = await this.pool.query(
+      `UPDATE ${this.stateTable} SET
+         status = 'pending', attempts = 0, next_attempt_at = NULL,
+         lease_owner = NULL, lease_expires_at = NULL, updated_at = NOW()
+       WHERE status = 'blocked' AND target_session_sequence > processed_session_sequence`,
     );
     return res.rowCount ?? 0;
   }
@@ -533,6 +772,21 @@ export class PgMemoryConsolidationStore {
   }
 
   // ── 幂等 run ledger ──────────────────────────────────────────
+
+  async findPreparedCommitRun(
+    tenantId: string,
+    sessionId: string,
+    fromSessionSequence: number,
+  ): Promise<ConsolidationRunRecord | null> {
+    const res = await this.pool.query(
+      `SELECT * FROM ${this.runsTable}
+       WHERE tenant_id = $1 AND session_id = $2 AND from_session_sequence = $3
+         AND status IN ('prepared', 'retryable_failed') AND usage_json ? 'commitJournal'
+       ORDER BY to_session_sequence ASC, created_at ASC LIMIT 1`,
+      [tenantId, sessionId, fromSessionSequence],
+    );
+    return res.rows[0] ? mapRun(res.rows[0] as Record<string, unknown>) : null;
+  }
 
   /** INSERT；唯一冲突时返回已有 ledger 记录，避免同一范围重复创建执行记录。 */
   async insertOrGetRun(input: {
@@ -558,20 +812,10 @@ export class PgMemoryConsolidationStore {
       [input.idempotencyKey],
     );
     const row = res.rows[0] as Record<string, unknown>;
-    return { record: this.mapRun(row), created: (inserted.rowCount ?? 0) > 0 };
+    return { record: mapRun(row), created: (inserted.rowCount ?? 0) > 0 };
   }
 
-  async updateRun(input: {
-    idempotencyKey: string;
-    status?: ConsolidationRunStatus;
-    modelActual?: string;
-    usageJson?: unknown;
-    errorCode?: string;
-    errorMessage?: string;
-    incrementRetry?: boolean;
-    applied?: boolean;
-    finished?: boolean;
-  }): Promise<void> {
+  private buildRunUpdate(input: RunUpdateInput): { sql: string; params: unknown[] } {
     const sets: string[] = ['updated_at = NOW()'];
     const params: unknown[] = [input.idempotencyKey];
     const push = (sql: string, value: unknown): void => {
@@ -582,35 +826,56 @@ export class PgMemoryConsolidationStore {
     if (input.modelActual !== undefined) push('model_actual', input.modelActual);
     if (input.usageJson !== undefined) push('usage_json', JSON.stringify(input.usageJson));
     if (input.errorCode !== undefined) push('error_code', input.errorCode);
-    if (input.errorMessage !== undefined) push('error_message', input.errorMessage.slice(0, 2000));
+    if (input.errorMessage !== undefined) push('error_message', input.errorMessage.slice(0, 2_000));
     if (input.incrementRetry) sets.push('retry_count = retry_count + 1');
     if (input.applied) sets.push('applied_at = NOW()');
     if (input.finished) sets.push('finished_at = NOW()');
-    await this.pool.query(
-      `UPDATE ${this.runsTable} SET ${sets.join(', ')} WHERE idempotency_key = $1`,
+    return {
+      sql: `UPDATE ${this.runsTable} SET ${sets.join(', ')} WHERE idempotency_key = $1`,
       params,
-    );
+    };
   }
 
-  private mapRun(row: Record<string, unknown>): ConsolidationRunRecord {
-    return {
-      id: String(row.id),
-      idempotencyKey: String(row.idempotency_key),
-      tenantId: String(row.tenant_id),
-      userId: String(row.user_id),
-      workspaceId: String(row.workspace_id),
-      sessionId: String(row.session_id),
-      fromSessionSequence: Number(row.from_session_sequence),
-      toSessionSequence: Number(row.to_session_sequence),
-      status: String(row.status) as ConsolidationRunStatus,
-      modelRequested: (row.model_requested as string | null) ?? null,
-      modelActual: (row.model_actual as string | null) ?? null,
-      promptVersion: Number(row.prompt_version),
-      usageJson: row.usage_json,
-      retryCount: Number(row.retry_count ?? 0),
-      errorCode: (row.error_code as string | null) ?? null,
-      errorMessage: (row.error_message as string | null) ?? null,
-    };
+  async updateRun(input: RunUpdateInput): Promise<void> {
+    const update = this.buildRunUpdate(input);
+    await this.pool.query(update.sql, update.params);
+  }
+
+  /** 短 ledger 写同样服从 state generation；旧 worker 失去 lease 后只能 no-op。 */
+  async updateRunFenced(input: RunUpdateInput & {
+    tenantId: string; sessionId: string; leaseOwner: string;
+    fromSequence: number; toSequence: number; boundarySequence: number;
+  }): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const stateResult = await client.query(
+        `SELECT 1 FROM ${this.stateTable}
+         WHERE tenant_id = $1 AND session_id = $2 AND status = 'running'
+           AND active_run_ids = '[]'::jsonb AND lease_owner = $3
+           AND processed_session_sequence = $4 AND target_session_sequence = $5
+           AND last_boundary_global_sequence = $6
+         FOR UPDATE`,
+        [
+          input.tenantId, input.sessionId, input.leaseOwner,
+          input.fromSequence, input.toSequence, input.boundarySequence,
+        ],
+      );
+      if (stateResult.rows.length === 0) {
+        await client.query('COMMIT');
+        return false;
+      }
+      const update = this.buildRunUpdate(input);
+      const runResult = await client.query(update.sql, update.params);
+      if ((runResult.rowCount ?? 0) !== 1) throw new Error('L2 memory fenced ledger missing');
+      await client.query('COMMIT');
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // ── tombstone ────────────────────────────────────────────────
@@ -688,9 +953,11 @@ export class PgMemoryConsolidationStore {
    * releaseCommitLock。锁名 = hashtext(tenant|user|memory-write)，与进程内
    * maintenanceLock 互补（后者只剩 fast-path 作用）。
    */
-  async acquireCommitLock(tenantId: string, userId: string, timeoutMs = 15_000): Promise<
-    { release: () => Promise<void> } | null
-  > {
+  async acquireCommitLock(
+    tenantId: string,
+    userId: string,
+    timeoutMs = 15_000,
+  ): Promise<MemoryConsolidationCommitLock | null> {
     const key = `${tenantId}|${userId}|memory-write`;
     const client = await this.pool.connect();
     try {
@@ -702,12 +969,19 @@ export class PgMemoryConsolidationStore {
           [key],
         );
         if (res.rows[0]?.locked) {
+          let released = false;
           return {
+            acquireFence: async (input) => this.acquireCommitFence(client, input),
             release: async () => {
+              if (released) return;
+              released = true;
+              await client.query('ROLLBACK').catch(() => undefined);
               try {
                 await client.query('SELECT pg_advisory_unlock(hashtext($1))', [key]);
-              } finally {
                 client.release();
+              } catch (error) {
+                client.release(true);
+                throw error;
               }
             },
           };

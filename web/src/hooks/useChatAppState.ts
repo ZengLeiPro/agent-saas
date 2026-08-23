@@ -20,7 +20,6 @@ import {
   saveComposerAttachments,
   saveComposerText,
 } from "@/lib/composerDraftStorage";
-import { mapSessionDetailToMessages } from "@/lib/sessionsApi";
 import type { ApiSessionDetail } from "@/lib/sessionsApi";
 import {
   asCompactionItem,
@@ -1119,7 +1118,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         if (res.ok) {
           const data: ApiSessionDetail = await res.json();
           const sessionOwnerName = data.owner?.username;
-          const msgs = mapSessionDetailToMessages(data, sessionOwnerName);
+          const msgs = (await import("@/lib/sessionMessageMapper")).mapSessionDetailToMessages(data, sessionOwnerName);
           msg.setMessages(msgs, { scrollToBottom: false });
 
           // 设置 sessionParticipants 供 MessageList 使用

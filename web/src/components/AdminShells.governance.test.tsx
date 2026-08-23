@@ -7,17 +7,26 @@ import { PlatformAdminShell, TenantAdminShell } from "./AdminShells";
 const adminShellMocks = vi.hoisted(() => ({
   auth: { user: { tenantId: "acme" }, isPlatformAdmin: false },
   tenants: [{ id: "acme", name: "Acme" }],
+  contextSnapshot: vi.fn(),
 }));
 
 vi.mock("@agent/shared/lib/governanceApi", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@agent/shared/lib/governanceApi")>();
   return {
     ...actual,
+    contextCenterApi: {
+      getSnapshot: adminShellMocks.contextSnapshot,
+      listEvidence: vi.fn().mockResolvedValue([]),
+    },
     governanceAccessApi: {
       ...actual.governanceAccessApi,
       listMemberships: vi.fn().mockResolvedValue({ memberships: [
         { userId: "member-1", persona: "member", isOwner: false, status: "active", version: 1, allowedActions: [] },
       ] }),
+      listMemoryKnowledge: vi.fn().mockResolvedValue({
+        tenantId: "acme", authority: "governance_assignment_sets", accessMode: "inspect",
+        knowledge: [], memory: [], effective: { organizationKnowledge: false, organizationMemory: false },
+      }),
     },
     governanceResourcesApi: {
       ...actual.governanceResourcesApi,
@@ -70,6 +79,9 @@ describe("AdminShells V2 内容适配", () => {
   beforeEach(() => {
     adminShellMocks.auth = { user: { tenantId: "acme" }, isPlatformAdmin: false };
     adminShellMocks.tenants = [{ id: "acme", name: "Acme" }];
+    adminShellMocks.contextSnapshot.mockReset().mockResolvedValue({
+      generatedAt: "2026-08-22T15:40:00.000Z", sources: [], consumers: [],
+    });
   });
 
   it("新版用量页面可切换到组织预算面板", async () => {
@@ -118,6 +130,21 @@ describe("AdminShells V2 内容适配", () => {
     );
     expect(await screen.findByText("member-1")).toBeTruthy();
     expect(screen.queryByText("复用 UserManager")).toBeNull();
+  });
+
+  it("组织记忆与知识叶子在原区域内接入 Context Center，不增加顶级路由", async () => {
+    render(
+      <TenantAdminShell
+        {...commonTenantProps}
+        renderUsers={() => <div />}
+        governanceRoute={governanceRoute("organization.agents.memory-knowledge", { orgId: "acme" })}
+      />,
+    );
+
+    expect(await screen.findByRole("tab", { name: "资源治理" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("tab", { name: "Context Center" }));
+    expect(await screen.findByRole("heading", { name: "Context Center" })).toBeTruthy();
+    expect(adminShellMocks.contextSnapshot).toHaveBeenCalledTimes(1);
   });
 
   it.each([

@@ -120,7 +120,7 @@ describe('Governance Change Job', () => {
     expect(sql).toContain('UNIQUE (tenant_id, job_type, idempotency_key)');
     expect(sql).toContain('test_governance_change_jobs_active_target_unique');
     expect(sql).toContain("WHERE status IN ('pending','running','retry_wait')");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(23);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(24);
   });
 
   it('同 idempotency key 返回同一 Job，不重复建立分域', async () => {

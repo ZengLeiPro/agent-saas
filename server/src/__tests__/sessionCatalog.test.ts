@@ -102,7 +102,7 @@ describe('FileSessionCatalog', () => {
       allowedSkills: ['dws'],
       allowedKnowledge: ['company'],
       runtime: DEFAULT_ORG_AGENT_RUNTIME_POLICY,
-    });
+    }, [{ collectionId: 'collection-a', assignmentVersion: 7, resourceType: 'org_knowledge' }]);
     const record = createRuntimeSessionRecord({
       sessionId,
       userId: 'adws-1',
@@ -123,6 +123,7 @@ describe('FileSessionCatalog', () => {
         instructions: '只处理组织任务',
         allowedSkills: ['dws'],
         allowedKnowledge: ['company'],
+        collectionAssignments: [{ collectionId: 'collection-a', assignmentVersion: 7, resourceType: 'org_knowledge' }],
       },
     });
   });

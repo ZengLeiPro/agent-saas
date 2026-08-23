@@ -33,6 +33,12 @@ export function createAssignmentResourceResolver(runtime: AppRuntime) {
       if (!runtime.connectorCatalogStore) return 'unavailable';
       return (await runtime.connectorCatalogStore.get(resourceId))?.status === 'published' ? 'valid' : 'not_found';
     }
+    if (resourceType === 'org_knowledge') {
+      if (!runtime.contextStore) return 'unavailable';
+      const collection = (await runtime.contextStore.listCollections(tenantId))
+        .find(item => item.collectionId === resourceId);
+      return collection?.status === 'active' ? 'valid' : 'not_found';
+    }
     return 'unavailable';
   };
 }

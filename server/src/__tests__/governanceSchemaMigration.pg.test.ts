@@ -14,7 +14,7 @@ const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
-describePg('Governance Schema V23 PostgreSQL 升级、约束与事务回滚', () => {
+describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', () => {
   const prefix = `govv17_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   let pool: InstanceType<typeof Pool>;
 
@@ -46,7 +46,7 @@ describePg('Governance Schema V23 PostgreSQL 升级、约束与事务回滚', ()
     }
   }, 30_000);
 
-  it('V17 中途失败回滚到 V16，重试升级到 V23 并建立 DWS、租户隔离与八类 outbox trigger', async () => {
+  it('V17 中途失败回滚到 V16，重试升级到 V24 并建立 DWS、Context、租户隔离与 outbox trigger', async () => {
     let injected = false;
     const failingPool = {
       connect: async () => {
@@ -91,7 +91,7 @@ describePg('Governance Schema V23 PostgreSQL 升级、约束与事务回滚', ()
       `SELECT version FROM ${prefix}_governance_schema_versions ORDER BY version`,
     );
     expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
-      Array.from({ length: 23 }, (_, index) => index + 1),
+      Array.from({ length: 24 }, (_, index) => index + 1),
     );
     const v18Tables = await pool.query<{ name: string | null }>(
       `SELECT to_regclass($1) AS name UNION ALL SELECT to_regclass($2) UNION ALL SELECT to_regclass($3) UNION ALL SELECT to_regclass($4)`,
@@ -230,10 +230,10 @@ describePg('Governance Schema V23 PostgreSQL 升级、约束与事务回滚', ()
     expect(Number(columns.rows[0]?.count)).toBe(0);
     await new PgGovernanceMigrationRunner(pool, v22Prefix).run();
     const retried = await pool.query<{ version: number }>(`SELECT MAX(version) AS version FROM ${v22Prefix}_governance_schema_versions`);
-    expect(Number(retried.rows[0]?.version)).toBe(23);
+    expect(Number(retried.rows[0]?.version)).toBe(24);
   }, 30_000);
 
-  it('V18 遗留 org_memory 空元数据可升级，V22 已标记且旧 ledger 存在时 V23 仍幂等', async () => {
+  it('V18 遗留 org_memory 空元数据可升级，V23 已标记且旧 ledger 存在时 V24 仍幂等', async () => {
     const legacyPrefix = `${prefix}_legacy`;
     const sets = `${legacyPrefix}_resource_assignment_sets`;
     const commits = `${legacyPrefix}_credential_commits`;
@@ -305,7 +305,7 @@ describePg('Governance Schema V23 PostgreSQL 升级、约束与事务回滚', ()
       SELECT MAX(version)::integer AS version,COUNT(*) FILTER (WHERE version=23)::text AS count
       FROM ${legacyPrefix}_governance_schema_versions
     `);
-    expect(versions.rows[0]).toMatchObject({ version: 23, count: '1' });
+    expect(versions.rows[0]).toMatchObject({ version: 24, count: '1' });
     await expect(pool.query(`INSERT INTO ${commits}
       (tenant_id,operation,idempotency_key,nonce_digest,request_digest,target_id,actor_user_id,status)
       VALUES ('tenant-a','create','idem-1','nonce-2','request-2','target-2','admin-1','running')`)).rejects.toThrow();
@@ -446,7 +446,7 @@ describePg('Governance Schema V23 PostgreSQL 升级、约束与事务回滚', ()
     const retried = await pool.query<{ version: number }>(
       `SELECT MAX(version) AS version FROM ${v18Prefix}_governance_schema_versions`,
     );
-    expect(Number(retried.rows[0]?.version)).toBe(23);
+    expect(Number(retried.rows[0]?.version)).toBe(24);
     const unresolvedAfter = await pool.query<{ is_nullable: string; column_default: string }>(`
       SELECT is_nullable,column_default FROM information_schema.columns
       WHERE table_schema=current_schema() AND table_name=$1 AND column_name='unresolved_items_json'

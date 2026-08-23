@@ -71,12 +71,28 @@ export function nearestEffDays(days: number): number {
   return hit;
 }
 
-/** 最近 N 个北京时间自然日（含今天），用于让 14 天档也走 usage custom range。 */
-function recentBeijingRange(days: number): { from: string; to: string } {
-  const to = todayBeijingDate();
-  const toUtc = Date.parse(`${to}T00:00:00Z`);
-  const from = new Date(toUtc - (days - 1) * 86_400_000).toISOString().slice(0, 10);
-  return { from, to };
+/**
+ * 最近 N 个北京时间自然日（含今天）的统一请求窗口。
+ *
+ * usage trend 接口使用 inclusive 日期；efficiency 使用 ISO `[from,to)`。两组边界从同一对
+ * 北京日期派生，避免 UTC 日切与北京时间日切混用而统计到不同事件集合。
+ */
+function recentBeijingWindow(days: number): {
+  trendFrom: string;
+  trendTo: string;
+  efficiencyFrom: string;
+  efficiencyTo: string;
+} {
+  const trendTo = todayBeijingDate();
+  const trendToUtc = Date.parse(`${trendTo}T00:00:00Z`);
+  const trendFrom = new Date(trendToUtc - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+  const nextDate = new Date(trendToUtc + 86_400_000).toISOString().slice(0, 10);
+  return {
+    trendFrom,
+    trendTo,
+    efficiencyFrom: new Date(`${trendFrom}T00:00:00+08:00`).toISOString(),
+    efficiencyTo: new Date(`${nextDate}T00:00:00+08:00`).toISOString(),
+  };
 }
 
 /** 工具错误率红色高亮阈值 */
@@ -139,6 +155,7 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
     const sequence = ++loadSequence.current;
     const isLatest = () => sequence === loadSequence.current;
     const tenantArgs = tenantId ? { tenantId } : {};
+    const window = recentBeijingWindow(days);
 
     // 只有同一请求上下文的手动刷新保留已展示数据；租户或天数变化必须从空状态开始。
     setEfficiencyState((previous) => ({
@@ -154,7 +171,12 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
       error: null,
     }));
 
-    void runTraceApi.efficiency({ days, ...tenantArgs }).then(
+    void runTraceApi.efficiency({
+      days,
+      ...tenantArgs,
+      from: window.efficiencyFrom,
+      to: window.efficiencyTo,
+    }).then(
       (nextData) => {
         if (!isLatest()) return;
         setEfficiencyState({ requestKey, data: nextData, loading: false, error: null });
@@ -170,7 +192,11 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
       },
     );
 
-    void usageApi.trendByModel({ ...recentBeijingRange(days), ...tenantArgs }).then(
+    void usageApi.trendByModel({
+      from: window.trendFrom,
+      to: window.trendTo,
+      ...tenantArgs,
+    }).then(
       (nextData) => {
         if (!isLatest()) return;
         setModelTrendState({ requestKey, data: nextData, loading: false, error: null });

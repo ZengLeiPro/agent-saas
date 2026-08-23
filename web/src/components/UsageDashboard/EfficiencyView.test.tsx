@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EfficiencyReport } from "@/components/RunTraceExplorer/types";
 import type { ModelTrendResp } from "./types";
@@ -105,6 +105,55 @@ beforeEach(() => {
   vi.mocked(runTraceApi.efficiency).mockReset();
   vi.mocked(usageApi.trendByModel).mockReset();
   window.history.replaceState({}, "", "/");
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("EfficiencyView request windows", () => {
+  it.each([
+    { days: 7, trendFrom: "2026-08-18", trendTo: "2026-08-24", efficiencyFrom: "2026-08-17T16:00:00.000Z", efficiencyTo: "2026-08-24T16:00:00.000Z" },
+    { days: 14, trendFrom: "2026-08-11", trendTo: "2026-08-24", efficiencyFrom: "2026-08-10T16:00:00.000Z", efficiencyTo: "2026-08-24T16:00:00.000Z" },
+    { days: 30, trendFrom: "2026-07-26", trendTo: "2026-08-24", efficiencyFrom: "2026-07-25T16:00:00.000Z", efficiencyTo: "2026-08-24T16:00:00.000Z" },
+  ])("derives matching trend and efficiency boundaries for $days days", async ({
+    days,
+    trendFrom,
+    trendTo,
+    efficiencyFrom,
+    efficiencyTo,
+  }) => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-08-23T22:14:00.000Z"));
+    vi.mocked(runTraceApi.efficiency).mockResolvedValueOnce(efficiencyReport());
+    vi.mocked(usageApi.trendByModel).mockResolvedValueOnce(emptyTrend());
+    window.history.replaceState({}, "", `/?effDays=${days}`);
+
+    render(<EfficiencyView tenantId="tenant-a" linkEntities={false} />);
+
+    await waitFor(() => {
+      expect(runTraceApi.efficiency).toHaveBeenCalledTimes(1);
+      expect(usageApi.trendByModel).toHaveBeenCalledTimes(1);
+    });
+    expect(runTraceApi.efficiency).toHaveBeenCalledWith({
+      days,
+      tenantId: "tenant-a",
+      from: efficiencyFrom,
+      to: efficiencyTo,
+    });
+    expect(usageApi.trendByModel).toHaveBeenCalledWith({
+      from: trendFrom,
+      to: trendTo,
+      tenantId: "tenant-a",
+    });
+
+    const efficiencyRequest = vi.mocked(runTraceApi.efficiency).mock.calls[0][0];
+    const trendRequest = vi.mocked(usageApi.trendByModel).mock.calls[0][0];
+    const trendDayAfter = new Date(Date.parse(`${trendRequest.to}T00:00:00Z`) + 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    expect(efficiencyRequest.from).toBe(new Date(`${trendRequest.from}T00:00:00+08:00`).toISOString());
+    expect(efficiencyRequest.to).toBe(new Date(`${trendDayAfter}T00:00:00+08:00`).toISOString());
+  });
 });
 
 describe("EfficiencyView request states", () => {

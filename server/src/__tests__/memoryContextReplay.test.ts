@@ -113,6 +113,7 @@ describe('memory consolidation context replay', () => {
       lastResponseProfileDigest: 'profile-v1',
     }));
     const updateResponseSessionState = vi.fn(async () => undefined);
+    const evaluatedEvents: PlatformEvent[][] = [];
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore: store,
@@ -142,11 +143,21 @@ describe('memory consolidation context replay', () => {
       cwd,
       channelContext: { channel: 'web' },
       approvalPolicy: { autoApproveTools: true },
+      evaluateAutoCompaction: (events) => {
+        evaluatedEvents.push(events);
+        return { shouldCompact: true, reason: 'threshold_reached' };
+      },
     }));
 
     expect(outbound.at(-1)).toEqual({ type: 'done' });
-    expect(adapter.requests).toHaveLength(1);
+    expect(adapter.requests.length).toBeGreaterThanOrEqual(1);
     expect(adapter.requests[0]?.previousResponseId).toBeUndefined();
+    expect(evaluatedEvents).toHaveLength(1);
+    expect(evaluatedEvents[0]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sessionId: sourceSessionId, type: 'user_message' }),
+      expect.objectContaining({ sessionId: hiddenSessionId, type: 'assistant_message' }),
+    ]));
+    expect(outbound.map((event) => event.type)).toContain('compaction_start');
     expect(findLatestResponseSessionStateBySession).not.toHaveBeenCalled();
     expect(updateResponseSessionState).not.toHaveBeenCalled();
 
@@ -166,9 +177,16 @@ describe('memory consolidation context replay', () => {
     expect(await store.list(sourceSessionId)).toEqual(sourceBefore);
     const hiddenEvents = await store.list(hiddenSessionId);
     expect(hiddenEvents.map((event) => event.type)).toEqual([
-      'run_started', 'user_message', 'assistant_message', 'run_finished',
+      'run_started', 'user_message', 'assistant_message',
+      'compaction_usage', 'compaction', 'run_finished',
     ]);
     expect(hiddenEvents.find((event) => event.type === 'user_message'))
       .toEqual(expect.objectContaining({ content: '开始记忆审查' }));
+    const replayCheckpoint = hiddenEvents.find((event) => event.type === 'compaction');
+    expect(replayCheckpoint).toEqual(expect.objectContaining({
+      sessionId: hiddenSessionId,
+      inline: true,
+      coveredEventCount: expect.any(Number),
+    }));
   });
 });

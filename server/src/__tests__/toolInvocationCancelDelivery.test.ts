@@ -63,6 +63,9 @@ class MemoryHandStore implements HandStore {
     this.hands.set(handId, updated);
     return updated;
   }
+  async claimProvisionRecovery(): Promise<HandRecord | null> { return null; }
+  async completeProvisionAttempt(): Promise<HandRecord | null> { return null; }
+  async completeProvisionRecovery(): Promise<HandRecord | null> { return null; }
   async get(handId: string): Promise<HandRecord | null> { return this.hands.get(handId) ?? null; }
   async listBySession(sessionId: string): Promise<HandRecord[]> {
     return [...this.hands.values()].filter((hand) => hand.sessionId === sessionId);
@@ -357,6 +360,48 @@ describe('tool invocation cancel delivery', () => {
       cancelDeliveryOwnerWorkerId: 'worker-a',
       cancelDeliveryCurrentWorkerId: 'worker-b',
     }));
+  });
+
+  it('does not leak the global token when a tenant hand token is unavailable', async () => {
+    const store = await seedInvocation({ handId: 'tenant-hand-1' });
+    const hands = new MemoryHandStore();
+    await hands.register({
+      handId: 'tenant-hand-1',
+      sessionId: 'session-1',
+      workspaceId: 'workspace-1',
+      type: 'server-remote',
+      endpoint: 'http://tenant-hand.test',
+      metadata: { tenantRemoteHandId: 'tenant-1', authToken: 'stale-platform-token' },
+    });
+    const fetchImpl = vi.fn();
+
+    const result = await deliverToolInvocationCancel({
+      event: cancelEvent(),
+      toolInvocationStore: store,
+      handStore: hands,
+      resolveHandAuthToken: async () => undefined,
+      serverRemoteAuthToken: 'global-token',
+      fetchImpl,
+    });
+
+    expect(result.status).toBe('missing_auth_token');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the selected hand cannot be loaded', async () => {
+    const store = await seedInvocation({ handId: 'missing-tenant-hand' });
+    const fetchImpl = vi.fn();
+
+    const result = await deliverToolInvocationCancel({
+      event: cancelEvent({ handEndpoint: 'http://tenant-hand.test' }),
+      toolInvocationStore: store,
+      serverRemoteBaseUrl: 'http://platform-hand.test',
+      serverRemoteAuthToken: 'global-token',
+      fetchImpl,
+    });
+
+    expect(result.status).toBe('missing_auth_token');
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('uses per-hand auth token before global token', async () => {

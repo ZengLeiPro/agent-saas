@@ -101,9 +101,15 @@ const resourceScopeSchema = z.object({
   source: z.string().optional(), version: z.number().int().positive(), allowedActions: z.array(actionSchema).optional(),
   ...persistedMetadataShape,
 }).strict();
+const policyDefinitionSchema = z.object({
+  label: z.string(), description: z.string(), group: z.string(), groupLabel: z.string(),
+  valueType: z.enum(['boolean', 'enum']),
+  options: z.array(z.object({ value: z.string(), label: z.string() }).strict()).optional(),
+}).strict();
 const policySchema = z.object({
   tenantId: z.string().optional(), policyKey: z.string(), value: z.unknown(), source: z.string(),
-  version: z.number().int().positive(), allowedActions: z.array(actionSchema).optional(), ...persistedMetadataShape,
+  version: z.number().int().positive(), definition: policyDefinitionSchema.optional(),
+  allowedActions: z.array(actionSchema).optional(), ...persistedMetadataShape,
 }).strict();
 export const entitlementResponseSchema = z.object({
   entitlement: entitlementSchema.nullable(), scopes: z.array(resourceScopeSchema), policies: z.array(policySchema),

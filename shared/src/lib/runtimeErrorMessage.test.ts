@@ -4,6 +4,7 @@ import {
   POLICY_REJECTION_FAILURE_MESSAGE,
   formatRuntimeFailureMessage,
   isInsufficientCreditsFailure,
+  isSameRunMessage,
 } from './runtimeErrorMessage';
 
 describe('runtimeErrorMessage', () => {
@@ -19,6 +20,12 @@ describe('runtimeErrorMessage', () => {
       .toBe(POLICY_REJECTION_FAILURE_MESSAGE);
     expect(formatRuntimeFailureMessage('仅错误文本包含 cyber_policy'))
       .not.toBe(POLICY_REJECTION_FAILURE_MESSAGE);
+  });
+
+  it('实时终态只把同 run 同文案视为重复', () => {
+    const message = { runId: 'run-1', content: POLICY_REJECTION_FAILURE_MESSAGE };
+    expect(isSameRunMessage(message, 'run-1', POLICY_REJECTION_FAILURE_MESSAGE)).toBe(true);
+    expect(isSameRunMessage(message, 'run-2', POLICY_REJECTION_FAILURE_MESSAGE)).toBe(false);
   });
 
   it('不把普通运行错误误判为积分不足', () => {

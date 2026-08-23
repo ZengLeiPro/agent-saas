@@ -682,6 +682,7 @@ export {
   formatRuntimeFailureMessage,
   isInsufficientCreditsFailure,
   isModelRequestFailure,
+  isSameRunMessage,
 } from "./lib/runtimeErrorMessage";
 
 // Lib - message grouping (pure function)

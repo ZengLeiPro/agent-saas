@@ -57,7 +57,7 @@ import {
   processWsEvent,
   finalizeStreamingMessages,
   finalizeRunningSubagents,
-  formatRuntimeFailureMessage,
+  formatRuntimeFailureMessage, isSameRunMessage,
   isInsufficientCreditsFailure,
   removeRuntimeStatusMessages,
   upsertRuntimeStatusMessage,
@@ -1351,7 +1351,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (alertContent) {
       const msgs = msgRef.current.messagesRef.current;
       const last = msgs[msgs.length - 1];
-      if (!(last?.type === 'system-error' && last.content === alertContent && last.failureKind === args.failureKind && last.recoveryAction === args.recoveryAction)) {
+      if (!(last?.type === 'system-error' && isSameRunMessage(last, args.runId, alertContent) && last.failureKind === args.failureKind && last.recoveryAction === args.recoveryAction)) {
         msgRef.current.addMessage({ type: 'system-error', content: alertContent, severity, runId: args.runId, ...(args.failureKind ? { failureKind: args.failureKind } : {}), ...(args.recoveryAction ? { recoveryAction: args.recoveryAction } : {}), timestamp: Date.now() });
       }
     }
@@ -2124,7 +2124,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
             const alertSeverity = isInsufficientCreditsFailure(doneEvent.error) ? 'billing' : 'error';
             const msgs = msgRef.current.messagesRef.current;
             const last = msgs[msgs.length - 1];
-            if (!(last?.type === 'system-error' && last.content === alertContent && last.failureKind === doneEvent.failureKind && last.recoveryAction === doneEvent.recoveryAction)) {
+            if (!(last?.type === 'system-error' && isSameRunMessage(last, doneEvent.runId, alertContent) && last.failureKind === doneEvent.failureKind && last.recoveryAction === doneEvent.recoveryAction)) {
               // 扫最末 3 条找 wsEventProcessor 刚注入的同内容 text 兜底消息,就地升级
               let upgradeIdx = -1;
               for (let i = msgs.length - 1; i >= Math.max(0, msgs.length - 3); i--) {

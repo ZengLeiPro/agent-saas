@@ -16,6 +16,14 @@ export function isInsufficientCreditsFailure(error?: string | null): boolean {
   return INSUFFICIENT_CREDITS_RE.test(error);
 }
 
+export function isSameRunMessage(
+  message: { runId?: string; content?: string } | null | undefined,
+  runId: string | undefined,
+  content: string,
+): boolean {
+  return Boolean(message && message.runId === runId && message.content === content);
+}
+
 export function formatRuntimeFailureMessage(
   error?: string | null,
   failureKind?: 'policy_rejection',

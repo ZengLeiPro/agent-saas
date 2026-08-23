@@ -620,12 +620,13 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   async releaseTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<void> {
     return releaseStoredTaskCreation(this, identity, taskId, claimToken);
   }
-  async getTask(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardTask> {
-    return this.requireTask(this.pool, identity, taskId, false);
+  async getTask(identity: TaskboardIdentity, taskId: string, creationClaimToken?: string): Promise<TaskBoardTask> {
+    return this.requireTask(this.pool, identity, taskId, false, creationClaimToken);
   }
-  async updateTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskPatchInput): Promise<TaskBoardTask> {
+  async updateTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskPatchInput,
+    creationClaimToken?: string): Promise<TaskBoardTask> {
     return this.withTransaction(async (client) => {
-      const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
+      const loaded = await this.requireTaskWithBoard(client, identity, taskId, true, creationClaimToken);
       const kindMutation = resolveTaskKindMutation(loaded.task, input.kind);
       assertBoardRole(loaded.boardRole, kindMutation.requiredRole);
       assertExpectedVersion(loaded.task, input.expectedVersion);
@@ -700,7 +701,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       );
       const change = describeTaskUpdate(loaded.task, input);
       await appendTaskChange(this, client, taskId, change.type, 'user', identity.ownerUserId, change.payload);
-      return this.requireTask(client, identity, taskId, false);
+      return this.requireTask(client, identity, taskId, false, creationClaimToken);
     });
   }
   async moveTask(
@@ -1096,18 +1097,17 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     db: PgPool | PoolClient,
     identity: TaskboardIdentity,
     taskId: string,
-    forUpdate: boolean,
+    forUpdate: boolean, creationClaimToken?: string,
   ): Promise<TaskBoardTask> {
-    return (await this.requireTaskWithBoard(db, identity, taskId, forUpdate)).task;
+    return (await this.requireTaskWithBoard(db, identity, taskId, forUpdate, creationClaimToken)).task;
   }
-
   async requireTaskWithBoard(
     db: PgPool | PoolClient,
     identity: TaskboardIdentity,
     taskId: string,
-    forUpdate: boolean,
+    forUpdate: boolean, creationClaimToken?: string,
   ) {
-    return requireStoredTaskWithBoard(this, db, identity, taskId, forUpdate);
+    return requireStoredTaskWithBoard(this, db, identity, taskId, forUpdate, creationClaimToken);
   }
 
   async withTransaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {

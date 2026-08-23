@@ -440,8 +440,13 @@ export interface TaskboardService {
   createTaskWithResult(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskboardTaskCreateResult>;
   completeTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<TaskBoardTask>;
   releaseTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<void>;
-  getTask(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardTask>;
-  updateTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskPatchInput): Promise<TaskBoardTask>;
+  getTask(identity: TaskboardIdentity, taskId: string, creationClaimToken?: string): Promise<TaskBoardTask>;
+  updateTask(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input: TaskBoardTaskPatchInput,
+    creationClaimToken?: string,
+  ): Promise<TaskBoardTask>;
   moveTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskMoveInput): Promise<TaskBoardTask>;
   archiveTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask>;
   restoreTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask>;

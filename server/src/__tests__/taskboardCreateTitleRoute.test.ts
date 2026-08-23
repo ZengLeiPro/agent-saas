@@ -133,7 +133,7 @@ describe('创建任务前的标题生成保护', () => {
       await firstResponse.json();
       expect(titleGenerationCalls).toBe(1);
       expect(service.updateTask).toHaveBeenCalledTimes(1);
-      expect(startDirectExecution).toHaveBeenCalledOnce();
+      expect(startDirectExecution).toHaveBeenCalledTimes(2);
       expect(service.rollbackTaskCreation).not.toHaveBeenCalled();
 
       const rejected = await fetch(`${baseUrl}/api/taskboard/boards/owner-board/tasks`, {
@@ -172,8 +172,8 @@ describe('创建任务前的标题生成保护', () => {
       await recovered.json();
       expect(service.releaseTaskCreation).toHaveBeenCalledWith(expect.anything(), 'task-recovery', 'claim-1');
       expect(service.completeTaskCreation).toHaveBeenCalledWith(expect.anything(), 'task-recovery', 'claim-2');
-      expect(listExecutions).toHaveBeenCalledTimes(1);
-      expect(startDirectExecution).toHaveBeenCalledTimes(3);
+      expect(listExecutions).toHaveBeenCalledTimes(2);
+      expect(startDirectExecution).toHaveBeenCalledTimes(4);
 
       recoveryAttempt = 0;
       service.completeTaskCreation = vi.fn()
@@ -191,7 +191,7 @@ describe('创建任务前的标题生成保护', () => {
       });
       expect(completeRecovered.status).toBe(201);
       await completeRecovered.json();
-      expect(startDirectExecution).toHaveBeenCalledTimes(dispatchCount + 1);
+      expect(startDirectExecution).toHaveBeenCalledTimes(dispatchCount);
       expect(service.releaseTaskCreation).toHaveBeenCalledWith(expect.anything(), 'task-recovery', 'claim-1');
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));

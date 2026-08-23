@@ -447,13 +447,16 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     const retryCreate = () => options.service!.createTaskWithResult(identity, req.params.boardId, createInput);
     const initial = input.clientRequestId ? await retryCreate() : { task: await options.service!.createTask(identity, req.params.boardId, createInput), created: true };
     const result = input.clientRequestId ? await waitForTaskCreationClaim(initial, retryCreate) : initial;
-    if (!result.created && !result.creationClaimToken) { res.status(201).json(withCreatorAvatarVersion(options.userStore, identity, result.task)); return; }
+    if (!result.created && !result.creationClaimToken && !dispatch) { res.status(201).json(withCreatorAvatarVersion(options.userStore, identity, result.task)); return; }
     let task = result.task;
-    if (input.clientRequestId && input.title === undefined && !task.title.trim()) task = await generateAndApplyTaskTitle(options.service!, identity, task, input.description ?? '', generateTaskTitle);
+    const ownsCreation = result.created || Boolean(result.creationClaimToken);
+    if (ownsCreation && input.clientRequestId && input.title === undefined && !task.title.trim()) {
+      task = await generateAndApplyTaskTitle(options.service!, identity, task, input.description ?? '', generateTaskTitle, result.creationClaimToken);
+    }
     let scopedAttachments: TaskBoardUploadAttachment[] | undefined;
-    let needsAttachmentWrite = attachments !== undefined && !sameTaskAttachments(task.attachments, attachments);
+    let needsAttachmentWrite = ownsCreation && attachments !== undefined && !sameTaskAttachments(task.attachments, attachments);
     try {
-      if (input.clientRequestId) {
+      if (ownsCreation && input.clientRequestId) {
         attachments = await resolveRequestAttachments(options, req, input.attachments);
         ownerUserId = attachments?.length ? board.ownerUserId : undefined;
         needsAttachmentWrite = attachments !== undefined && !sameTaskAttachments(task.attachments, attachments);
@@ -461,10 +464,7 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       }
       if (needsAttachmentWrite) {
         scopedAttachments = await materializeRequestAttachments(options, req, identity, task.id, ownerUserId, attachments);
-        task = await options.service!.updateTask(identity, task.id, {
-          attachments: scopedAttachments,
-          expectedVersion: task.version,
-        });
+        task = await options.service!.updateTask(identity, task.id, { attachments: scopedAttachments, expectedVersion: task.version }, result.creationClaimToken);
       }
     } catch (error) {
       if (result.creationClaimToken) await releaseTaskCreationAfterFailure(
@@ -477,13 +477,13 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       });
     }
     try {
+      if (result.creationClaimToken) task = await options.service!.completeTaskCreation(identity, task.id, result.creationClaimToken);
       if (dispatch) {
         const executions = result.created ? [] : await options.executionService!.listExecutions(identity, task.id);
         task = executions.length
           ? await options.service!.getTask(identity, task.id)
           : (await options.executionService!.startDirectExecution!(identity, task.id, task.version)).task;
       }
-      if (result.creationClaimToken) task = await options.service!.completeTaskCreation(identity, task.id, result.creationClaimToken);
     } catch (error) {
       if (result.creationClaimToken) await options.service!.releaseTaskCreation(identity, task.id, result.creationClaimToken).catch(() => undefined);
       throw error;

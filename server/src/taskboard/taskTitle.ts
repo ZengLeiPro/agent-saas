@@ -60,13 +60,16 @@ export async function generateAndApplyTaskTitle(
   task: TaskBoardTask,
   description: string,
   generateTitle: (description: string, identity: TaskboardIdentity) => Promise<string | null>,
+  creationClaimToken?: string,
 ): Promise<TaskBoardTask> {
   const title = await generateTaskTitleSafely(generateTitle, description, identity);
   if (!title) return task;
   try {
-    return await service.updateTask(identity, task.id, { title, expectedVersion: task.version });
+    return await service.updateTask(
+      identity, task.id, { title, expectedVersion: task.version }, creationClaimToken,
+    );
   } catch {
-    return service.getTask(identity, task.id).catch(() => task);
+    return service.getTask(identity, task.id, creationClaimToken).catch(() => task);
   }
 }
 

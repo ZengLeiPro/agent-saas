@@ -20,7 +20,13 @@ interface TaskCreateStore {
   changesTable: string;
   withTransaction<T>(operation: (client: PoolClient) => Promise<T>): Promise<T>;
   requireBoard(client: PoolClient, identity: TaskboardIdentity, boardId: string, forUpdate: boolean): Promise<TaskBoard>;
-  requireTask(client: PoolClient, identity: TaskboardIdentity, taskId: string, forUpdate: boolean): Promise<TaskBoardTask>;
+  requireTask(
+    client: PoolClient,
+    identity: TaskboardIdentity,
+    taskId: string,
+    forUpdate: boolean,
+    creationClaimToken?: string,
+  ): Promise<TaskBoardTask>;
 }
 
 export async function createStoredTask(
@@ -96,7 +102,7 @@ export async function createStoredTaskWithResult(
       [taskId, identity.ownerUserId, JSON.stringify({ kind: input.kind ?? 'delivery', status })],
     );
     return {
-      task: await store.requireTask(client, identity, taskId, false), created: true,
+      task: await store.requireTask(client, identity, taskId, false, creation.token ?? undefined), created: true,
       ...(creation.token ? { creationClaimToken: creation.token } : {}),
     };
   });
@@ -109,7 +115,7 @@ export async function completeStoredTaskCreation(
   claimToken: string,
 ): Promise<TaskBoardTask> {
   return store.withTransaction(async (client) => {
-    await store.requireTask(client, identity, taskId, false);
+    await store.requireTask(client, identity, taskId, false, claimToken);
     const completed = await completeTaskCreationClaim(client, store.tasksTable, taskId, claimToken);
     if (!completed) {
       const state = await client.query(`SELECT creation_state FROM ${store.tasksTable} WHERE id=$1`, [taskId]);
@@ -126,7 +132,7 @@ export async function releaseStoredTaskCreation(
   claimToken: string,
 ): Promise<void> {
   await store.withTransaction(async (client) => {
-    await store.requireTask(client, identity, taskId, false);
+    await store.requireTask(client, identity, taskId, false, claimToken);
     await releaseTaskCreationClaim(client, store.tasksTable, taskId, claimToken);
   });
 }

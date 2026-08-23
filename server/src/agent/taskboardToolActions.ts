@@ -749,28 +749,32 @@ async function createExecutionTask(
   };
   const retryCreate = () => executionStore.createTaskFromExecutionWithResult(identity, execution.execution.runId, createInput);
   const createResult = await waitForTaskCreationClaim(await retryCreate(), retryCreate);
-  if (!createResult.created && !createResult.creationClaimToken) return { created: false, task: createResult.task };
+  if (!createResult.created && !createResult.creationClaimToken && !input.dispatch) {
+    return { created: false, task: createResult.task };
+  }
   let task = createResult.task;
-  if (input.title === undefined && !task.title.trim()) {
+  const ownsCreation = createResult.created || Boolean(createResult.creationClaimToken);
+  if (ownsCreation && input.title === undefined && !task.title.trim()) {
     task = await generateAndApplyTaskTitle(
       service, identity, task, input.description ?? '', options.generateTaskTitle ?? (async () => null),
+      createResult.creationClaimToken,
     );
   }
   let attachments: TaskBoardUploadAttachment[] | undefined;
   let ownerUserId: string | undefined;
   let scopedAttachments: TaskBoardUploadAttachment[] | undefined;
   try {
-    attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
-    ownerUserId = attachments?.length
-      ? (await service.getBoard(identity, execution.task.boardId)).ownerUserId
-      : undefined;
-    if (attachments !== undefined && !sameTaskAttachments(task.attachments, attachments)) {
-      await markTaskboardAttachments(options, identity, attachments, scope);
-      scopedAttachments = await materializeTaskboardAttachments(options, identity, task.id, ownerUserId, attachments);
-      task = await service.updateTask(identity, task.id, {
-        attachments: scopedAttachments,
-        expectedVersion: task.version,
-      });
+    if (ownsCreation) {
+      attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
+      ownerUserId = attachments?.length
+        ? (await service.getBoard(identity, execution.task.boardId)).ownerUserId
+        : undefined;
+      if (attachments !== undefined && !sameTaskAttachments(task.attachments, attachments)) {
+        await markTaskboardAttachments(options, identity, attachments, scope);
+        scopedAttachments = await materializeTaskboardAttachments(options, identity, task.id, ownerUserId, attachments);
+        const patch = { attachments: scopedAttachments, expectedVersion: task.version };
+        task = await service.updateTask(identity, task.id, patch, createResult.creationClaimToken);
+      }
     }
   } catch (error) {
     if (createResult.creationClaimToken) await releaseTaskCreationAfterFailure(
@@ -781,24 +785,18 @@ async function createExecutionTask(
     await rollbackCreatedTask(service, identity, task, error, () => cleanupTaskboardAttachments(options, identity, task.id, ownerUserId, scopedAttachments));
   }
   try {
-    if (kind === 'remediation' && input.sourceId) {
+    if (ownsCreation && kind === 'remediation' && input.sourceId) {
       if (!service.linkIntegrationRemediationV2) throw new Error('任务看板 remediation 关联服务未启用');
       await service.linkIntegrationRemediationV2(identity, execution.execution.runId, input.sourceId, task.id);
-      task = await service.getTask(identity, task.id);
     }
-    if (!input.dispatch) {
-      if (createResult.creationClaimToken) task = await service.completeTaskCreation(identity, task.id, createResult.creationClaimToken);
-      return { created: createResult.created, task };
+    if (createResult.creationClaimToken) {
+      task = await service.completeTaskCreation(identity, task.id, createResult.creationClaimToken);
     }
+    if (!input.dispatch) return { created: createResult.created, task };
     const existing = createResult.created ? [] : await dispatcher!.listExecutions(identity, task.id);
     const dispatched = existing.length
       ? { created: createResult.created, dispatched: true, task: await service.getTask(identity, task.id), execution: existing[0] }
       : await dispatchCreatedTask(dispatcher!, identity, task);
-    if (dispatched.dispatched !== true) {
-      if (createResult.creationClaimToken) await service.releaseTaskCreation(identity, task.id, createResult.creationClaimToken);
-      return { ...dispatched, created: createResult.created };
-    }
-    if (createResult.creationClaimToken) dispatched.task = await service.completeTaskCreation(identity, task.id, createResult.creationClaimToken);
     return { ...dispatched, created: createResult.created };
   } catch (error) {
     if (createResult.creationClaimToken) await service.releaseTaskCreation(identity, task.id, createResult.creationClaimToken).catch(() => undefined);

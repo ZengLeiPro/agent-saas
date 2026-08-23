@@ -138,7 +138,7 @@ describe('Agent 创建任务的自动标题', () => {
     expect(failed).toMatchObject({ created: true, task: { title: '' } });
     expect(generateTaskTitle).toHaveBeenCalledTimes(2);
     expect(service.updateTask).toHaveBeenCalledTimes(1);
-    expect(startDirectExecution).toHaveBeenCalledOnce();
+    expect(startDirectExecution).toHaveBeenCalledTimes(2);
     expect(createTaskFromExecutionWithResult).toHaveBeenCalledTimes(3);
 
     existingTask = null;
@@ -184,7 +184,7 @@ describe('Agent 创建任务的自动标题', () => {
     await expect(invokeTaskboardAction(options, identity, dispatchInput, scope)).rejects.toThrow('complete failed');
     await expect(invokeTaskboardAction(options, identity, dispatchInput, scope))
       .resolves.toMatchObject({ created: false, dispatched: true });
-    expect(startDirectExecution).toHaveBeenCalledTimes(dispatchCount + 1);
+    expect(startDirectExecution).toHaveBeenCalledTimes(dispatchCount);
   });
 
   it('Execution 创建幂等键区分 remediation 来源、最终 kind 与 dispatch', async () => {

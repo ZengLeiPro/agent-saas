@@ -25,6 +25,9 @@ describePg('任务标题生成的并发幂等', () => {
   let baseUrl = '';
   let boardId = '';
   let titleGenerationCalls = 0;
+  let releaseDelayedTitle: (() => void) | undefined;
+  let delayedTitleStarted: Promise<void>;
+  let markDelayedTitleStarted: (() => void) | undefined;
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: connectionString!, connectionTimeoutMillis: 5_000, max: 2 });
@@ -33,13 +36,20 @@ describePg('任务标题生成的并发幂等', () => {
     boardId = (await store.createBoard({
       tenantId: USER.tenantId!, ownerUserId: USER.sub, username: USER.username,
     }, { name: `并发幂等 ${randomUUID()}` })).id;
+    delayedTitleStarted = new Promise((resolve) => { markDelayedTitleStarted = resolve; });
+    const delayedTitleRelease = new Promise<void>((resolve) => { releaseDelayedTitle = resolve; });
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => { req.user = USER; next(); });
     app.use('/api/taskboard', createTaskboardRouter({
       service: store,
-      generateTaskTitle: async () => {
+      generateTaskTitle: async (description) => {
         titleGenerationCalls += 1;
+        if (description === 'pending 访问隔离') {
+          markDelayedTitleStarted?.();
+          await delayedTitleRelease;
+          return '隔离后的标题';
+        }
         await new Promise((resolve) => setTimeout(resolve, 25));
         return '并发唯一标题';
       },
@@ -83,6 +93,40 @@ describePg('任务标题生成的并发幂等', () => {
     await expect(store.createTaskWithResult(identity, boardId, input))
       .resolves.toMatchObject({ created: false, task: { id: first.task.id } });
   });
+
+  it('pending 任务仅创建 claim 可访问，完成后才对普通读写可见', async () => {
+    const identity = { tenantId: USER.tenantId!, ownerUserId: USER.sub, username: USER.username };
+    const responsePromise = fetch(`${baseUrl}/api/taskboard/boards/${boardId}/tasks`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ description: 'pending 访问隔离', clientRequestId: 'visibility-request' }),
+    });
+    await delayedTitleStarted;
+    const pending = await pool.query(
+      `SELECT id,creation_state FROM ${store.tasksTable} WHERE board_id=$1 AND client_request_id=$2`,
+      [boardId, 'visibility-request'],
+    );
+    const taskId = String(pending.rows[0]?.id);
+    expect(pending.rows[0]?.creation_state).toBe('pending');
+    try {
+      await expect(store.listTasks(identity, boardId)).resolves.not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: taskId })]),
+      );
+      await expect(store.searchTasks(identity, { boardId, search: 'pending 访问隔离' }))
+        .resolves.toMatchObject({ items: [] });
+      await expect(store.getTask(identity, taskId)).rejects.toThrow('Task not found');
+      await expect(store.updateTask(identity, taskId, { title: '并发覆盖', expectedVersion: 1 }))
+        .rejects.toThrow('Task not found');
+      await expect(store.moveTask(identity, taskId, { status: 'in_progress', expectedVersion: 1 }))
+        .rejects.toThrow('Task not found');
+      await expect(store.getExecutionModelContext(identity, taskId)).rejects.toThrow('Task not found');
+    } finally {
+      releaseDelayedTitle?.();
+    }
+    const response = await responsePromise;
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ id: taskId, title: '隔离后的标题' });
+    await expect(store.getTask(identity, taskId)).resolves.toMatchObject({ title: '隔离后的标题' });
+  }, 15_000);
 
   it('小连接池下并发同一 clientRequestId 不挂死且只生成一次', async () => {
     const responses = await Promise.all(Array.from({ length: 6 }, () => fetch(

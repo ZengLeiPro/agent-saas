@@ -58,6 +58,7 @@ export async function requireTaskWithBoard(
   identity: TaskboardIdentity,
   taskId: string,
   forUpdate: boolean,
+  creationClaimToken?: string,
 ): Promise<{
   task: TaskBoardTask;
   boardArchivedAt?: string;
@@ -74,8 +75,9 @@ export async function requireTaskWithBoard(
          FROM ${store.tasksTable} t
          JOIN ${store.boardsTable} b ON b.id=t.board_id
         WHERE t.id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
-          AND t.deleted_at IS NULL`,
-      [taskId, identity.tenantId, identity.ownerUserId],
+          AND t.deleted_at IS NULL
+          AND (t.creation_state='complete' OR t.creation_lease_id=$4)`,
+      [taskId, identity.tenantId, identity.ownerUserId, creationClaimToken ?? null],
     );
     if (!ownership.rows[0]) throw new TaskboardNotFoundError('Task not found');
     lockedBoard = await store.requireBoard(db, identity, String(ownership.rows[0].board_id), true);
@@ -119,8 +121,9 @@ export async function requireTaskWithBoard(
        JOIN ${store.boardsTable} b ON b.id=t.board_id LEFT JOIN ${store.membersTable} m ON m.board_id=b.id AND m.user_id=$3
       WHERE t.id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
         AND t.deleted_at IS NULL
+        AND (t.creation_state='complete' OR t.creation_lease_id=$4)
       ${forUpdate ? 'FOR UPDATE OF t' : ''}`,
-    [taskId, identity.tenantId, identity.ownerUserId],
+    [taskId, identity.tenantId, identity.ownerUserId, creationClaimToken ?? null],
   );
   if (!result.rows[0]) throw new TaskboardNotFoundError('Task not found');
   const row = result.rows[0];

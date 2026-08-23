@@ -36,7 +36,15 @@ vi.mock("@/components/TenantManager/hooks", () => ({
 vi.mock("@agent/shared/lib/governanceApi", () => ({
   contextCenterApi: {
     getSnapshot: vi.fn().mockResolvedValue({ generatedAt: "2026-08-22T15:40:00.000Z", sources: [], consumers: [] }),
-    listEvidence: vi.fn().mockResolvedValue([]),
+    getEvidence: vi.fn().mockResolvedValue([]),
+    listTimeline: vi.fn().mockResolvedValue({ items: [], nextCursor: null, degraded: false }),
+    listEntities: vi.fn().mockResolvedValue({ items: [], nextCursor: null, degraded: false }),
+    getEntity: vi.fn(),
+    getEntityProfile: vi.fn(),
+    listEntityRelations: vi.fn().mockResolvedValue({ items: [], nextCursor: null, degraded: false }),
+    listReviews: vi.fn().mockResolvedValue({ items: [], nextCursor: null, degraded: false }),
+    createCorrection: vi.fn(),
+    decideReview: vi.fn(),
   },
   governanceAccessApi: {
     listMemberships: mocks.listMemberships,
@@ -410,6 +418,18 @@ describe("OrganizationGovernancePage", () => {
     fireEvent.click(screen.getByRole("button", { name: "仅看组织覆盖" }));
     expect(screen.getByText("当前筛选条件下没有权限策略。")).toBeTruthy();
     expect(mocks.previewPolicy).not.toHaveBeenCalled();
+  });
+
+  it("记忆与知识入口扩展 Context 产品页签且不创建额外壳层", async () => {
+    mocks.listMemoryKnowledge.mockResolvedValue({ tenantId: "tenant-a", authority: "governance_assignment_sets", accessMode: "manage", knowledge: [], memory: [], effective: { organizationKnowledge: false, organizationMemory: false } });
+    render(<OrganizationMemoryKnowledgePage tenantId="tenant-a" />);
+    await screen.findByText("当前组织没有组织知识资源。");
+    const tabs = screen.getByRole("tablist", { name: "记忆与知识区域" });
+    expect(Array.from(tabs.querySelectorAll('[role="tab"]')).map(tab => tab.textContent)).toEqual(["资源治理", "Context Center", "Timeline", "实体", "待审核"]);
+    expect(tabs.className).toContain("overflow-x-auto");
+    expect(tabs.className).toContain("flex-nowrap");
+    expect(tabs.className).toContain("sm:flex-wrap");
+    for (const tab of Array.from(tabs.querySelectorAll('[role="tab"]'))) expect(tab.className).toContain("shrink-0");
   });
 
   it("记忆知识页使用组织权威元数据并可 signed preview→commit 创建 memory", async () => {

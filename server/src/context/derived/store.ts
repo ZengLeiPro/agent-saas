@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type { PoolClient, QueryResultRow } from 'pg';
 
-import { tableNames, type ContextPhase23TableNames } from '../phase23/migration.js';
+import { tableNames, type ContextPhase4TableNames } from '../phase4/migration.js';
 import { contextTableNames, contextTablePrefix, type ContextPgPool, type ContextTableNames } from '../store/migration.js';
 import type { ContextJson, ContextObject } from '../store/types.js';
 import { DeterministicContextProjector, fingerprint } from './projector.js';
@@ -19,8 +19,11 @@ import {
   type DerivedProfile,
   type DerivedProjection,
   type DerivedReview,
+  type DerivedReviewAuthorizationSnapshot,
   type ReviewRoleGate,
 } from './types.js';
+
+const RELATION_RESOLVE_LIMIT = 100;
 
 export interface DerivedStoreOptions {
   pool: ContextPgPool;
@@ -44,6 +47,16 @@ export interface ListActiveItemsInput {
   includeProposed?: boolean;
 }
 
+export interface ResolvePendingRelationCandidatesInput {
+  tenantId: string;
+  limit?: number;
+}
+
+export interface ResolvePendingRelationCandidatesResult {
+  materialized: number;
+  pending: boolean;
+}
+
 interface ItemRow extends QueryResultRow {
   generation: string | number;
   item_id: string;
@@ -63,7 +76,7 @@ interface ItemRow extends QueryResultRow {
 
 /** PostgreSQL relational store for Phase 3 derived context. */
 export class DerivedContextStore {
-  readonly tables: ContextPhase23TableNames;
+  readonly tables: ContextPhase4TableNames;
   readonly baseTables: ContextTableNames;
   private readonly now: () => Date;
 
@@ -130,6 +143,24 @@ export class DerivedContextStore {
     return result.rowCount === 1;
   }
 
+  /** Resolves one tenant-scoped, bounded batch. Concurrent workers share work via SKIP LOCKED. */
+  async resolvePendingRelationCandidates(
+    input: ResolvePendingRelationCandidatesInput,
+  ): Promise<ResolvePendingRelationCandidatesResult> {
+    assertId(input.tenantId);
+    const limit = input.limit ?? RELATION_RESOLVE_LIMIT;
+    if (!Number.isInteger(limit) || limit < 1 || limit > RELATION_RESOLVE_LIMIT) invalid();
+    return this.tx(async client => {
+      const materialized = await this.materializePendingRelations(client, input.tenantId, limit);
+      const pendingResult = await client.query(`SELECT EXISTS (
+        SELECT 1 FROM ${this.tables.relationCandidates}
+        WHERE tenant_id=$1 AND lifecycle='active' AND resolution_status='pending'
+          AND review_status<>'rejected'
+      ) AS pending`, [input.tenantId]);
+      return { materialized, pending: Boolean(pendingResult.rows[0]?.pending) };
+    });
+  }
+
   /** Projects a claimed batch and advances the cursor in the same fenced transaction. */
   async projectClaimed(
     lease: ConsumerLease,
@@ -192,8 +223,8 @@ export class DerivedContextStore {
       ORDER BY CASE i.authority WHEN 'authoritative' THEN 3 WHEN 'advisory' THEN 2 ELSE 1 END DESC,
         i.semantic_key,i.item_id`,
     [input.tenantId, input.entityId, input.includeProposed === true, input.viewerId ?? null]);
-    const items = result.rows.map(itemFromRow);
-    return this.applyReviewRejections(input, items);
+    const visibleRows = await this.applyReviewRejections(input, result.rows);
+    return visibleRows.map(itemFromRow);
   }
 
   async appendReview(input: AppendReviewInput): Promise<DerivedReview> {
@@ -202,29 +233,61 @@ export class DerivedContextStore {
     if (input.scope.type === 'person' && input.scope.personId !== input.actorId) {
       throw new DerivedStoreError('DERIVED_FORBIDDEN');
     }
-    if (input.scope.type === 'org' && !await this.options.roleGate.mayCorrectOrganization({
-      tenantId: input.tenantId, actorId: input.actorId,
-    })) throw new DerivedStoreError('DERIVED_FORBIDDEN');
     const reviewId = reviewFingerprint(input);
     return this.tx(async client => {
+      const entity = await this.currentEntity(client, input.tenantId, input.entityId, true);
+      if (!entity) throw new DerivedStoreError('DERIVED_NOT_FOUND');
+      const target = await findReviewTarget(client, this.tables, input);
+      if (!target) throw new DerivedStoreError('DERIVED_NOT_FOUND');
+      const targetEvidence = await lockTargetEvidence(
+        client, this.tables, input.tenantId, target.generation, target.item_id,
+      );
+      if (targetEvidence.length === 0 || input.evidence.some(ref => !targetEvidence.some(value => sameEvidenceRef(value, ref)))) {
+        throw new DerivedStoreError('DERIVED_EVIDENCE_INVALID');
+      }
+      if (input.scope.type === 'org') {
+        try {
+          if (!await this.options.roleGate.mayCorrectOrganization({
+            tenantId: input.tenantId,
+            actorId: input.actorId,
+          })) throw new DerivedStoreError('DERIVED_FORBIDDEN');
+        } catch {
+          throw new DerivedStoreError('DERIVED_FORBIDDEN');
+        }
+      }
+      const snapshot = immutableReviewSnapshot({
+        tenantId: input.tenantId,
+        entityId: input.entityId,
+        generation: target.generation,
+        itemId: target.item_id,
+        itemType: target.item_type,
+        semanticKey: target.semantic_key,
+        valueFingerprint: target.value_fingerprint,
+        ownerPrincipal: target.owner_principal,
+        evidence: targetEvidence,
+        scope: input.scope,
+      });
+      try {
+        if (typeof input.authorize !== 'function' || !await input.authorize(snapshot)) {
+          throw new DerivedStoreError('DERIVED_FORBIDDEN');
+        }
+      } catch {
+        throw new DerivedStoreError('DERIVED_FORBIDDEN');
+      }
+
+      // Idempotent retries are still live-authorized against the locked target snapshot.
       const existing = await client.query(`SELECT r.*,i.subject_entity_id FROM ${this.tables.reviews} r
         JOIN ${this.tables.derivedItems} i ON i.tenant_id=r.tenant_id AND i.generation=r.generation AND i.item_id=r.item_id
         WHERE r.tenant_id=$1 AND r.review_id=$2`, [input.tenantId, reviewId]);
       if (existing.rows[0]) return reviewFromRow(existing.rows[0], input.entityId);
-      const entity = await this.currentEntity(client, input.tenantId, input.entityId, true);
-      if (!entity) throw new DerivedStoreError('DERIVED_NOT_FOUND');
-      // Recheck after locking the entity so concurrent retries converge to the same review.
-      const concurrent = await client.query(`SELECT r.*,i.subject_entity_id FROM ${this.tables.reviews} r
-        JOIN ${this.tables.derivedItems} i ON i.tenant_id=r.tenant_id AND i.generation=r.generation AND i.item_id=r.item_id
-        WHERE r.tenant_id=$1 AND r.review_id=$2`, [input.tenantId, reviewId]);
-      if (concurrent.rows[0]) return reviewFromRow(concurrent.rows[0], input.entityId);
-      const revision = await reviewRevision(client, this.tables, input.tenantId, input.entityId);
+      const revision = await reviewRevision(client, this.tables, input.tenantId, input.entityId, input.scope);
       if (revision !== input.expectedRevision) throw new DerivedStoreError('DERIVED_VERSION_CONFLICT');
       const nextRevision = revision + 1;
       let itemId: string;
       let reviewGeneration = entity.generation;
       if (input.action === 'assert') {
-        if (!input.itemType || !input.semanticKey || input.value === undefined) invalid();
+        if (!input.itemType || !input.semanticKey || input.value === undefined
+          || input.itemType !== target.item_type || input.semanticKey !== target.semantic_key) invalid();
         itemId = `ctx-review-${reviewId}`;
         const envelope = itemEnvelope({
           itemId, entityId: input.entityId, itemType: input.itemType, semanticKey: input.semanticKey,
@@ -244,13 +307,12 @@ export class DerivedContextStore {
           JSON.stringify(input.scope.type === 'person' ? [input.scope.personId] : [])]);
         await insertEvidence(client, this.tables, this.baseTables, input.tenantId, entity.generation, itemId, input.evidence);
       } else {
-        const target = await findRejectTarget(client, this.tables, input.tenantId, input.entityId, input.rejectFingerprint!);
-        if (!target) throw new DerivedStoreError('DERIVED_NOT_FOUND');
         itemId = target.item_id;
         reviewGeneration = target.generation;
       }
       const comment = JSON.stringify({ scope: input.scope, action: input.action,
-        rejectFingerprint: input.rejectFingerprint ?? null, entityRevision: nextRevision });
+        targetItemId: input.targetItemId, rejectFingerprint: input.rejectFingerprint ?? null,
+        entityRevision: nextRevision });
       await client.query(`INSERT INTO ${this.tables.reviews}
         (tenant_id,generation,item_id,review_id,review_status,reviewer_principal,comment,authority)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
@@ -313,6 +375,8 @@ export class DerivedContextStore {
   }
 
   private async applyEvent(client: PoolClient, event: ClaimedContextRecord, projection: DerivedProjection): Promise<void> {
+    // Every canonical item/evidence writer serializes through the current entity row before item rows.
+    await this.lockCanonicalEntities(client, event, projection.entities.map(entity => entity.entityId));
     if (event.deleted || event.revoked || event.eventType !== 'context.record.upserted') {
       const lifecycle = event.deleted ? 'deleted' : 'revoked';
       await client.query(`UPDATE ${this.tables.entities} SET lifecycle=$6,updated_at=NOW()
@@ -323,6 +387,25 @@ export class DerivedContextStore {
           AND ie.generation=i.generation AND ie.item_id=i.item_id AND ie.source_id=$2
           AND ie.collection_id=$3 AND ie.record_id=$4 AND ie.record_revision<=$5`,
       [event.tenantId, event.sourceId, event.collectionId, event.recordId, event.recordRevision, lifecycle]);
+      await client.query(`UPDATE ${this.tables.relationCandidates} c
+        SET lifecycle=$6,resolution_status='pending',valid_to=COALESCE(valid_to,GREATEST(valid_from,NOW())),updated_at=NOW()
+        WHERE c.tenant_id=$1 AND (
+          (c.source_id=$2 AND c.collection_id=$3 AND c.record_id=$4 AND c.record_revision<=$5)
+          OR (c.evidence_source_id=$2 AND c.evidence_collection_id=$3
+            AND c.evidence_record_id=$4 AND c.evidence_revision<=$5)
+          OR EXISTS (SELECT 1 FROM ${this.tables.entities} en
+            WHERE en.tenant_id=c.tenant_id AND en.entity_id IN (c.from_entity_id,c.to_entity_id)
+              AND en.source_id=$2 AND en.collection_id=$3 AND en.record_id=$4 AND en.record_revision<=$5)
+        )`,
+      [event.tenantId, event.sourceId, event.collectionId, event.recordId, event.recordRevision, lifecycle]);
+      await client.query(`UPDATE ${this.tables.entityLinks}
+        SET revoked=TRUE,lifecycle=$6,valid_to=COALESCE(valid_to,GREATEST(valid_from,NOW())),updated_at=NOW()
+        WHERE tenant_id=$1 AND (
+          (from_source_id=$2 AND from_collection_id=$3 AND from_record_id=$4 AND from_revision<=$5)
+          OR (to_source_id=$2 AND to_collection_id=$3 AND to_record_id=$4 AND to_revision<=$5)
+          OR (evidence_source_id=$2 AND evidence_collection_id=$3 AND evidence_record_id=$4 AND evidence_revision<=$5)
+        )`,
+      [event.tenantId, event.sourceId, event.collectionId, event.recordId, event.recordRevision, lifecycle]);
       await client.query(`UPDATE ${this.tables.itemEvidence} SET revoked=TRUE,updated_at=NOW()
         WHERE tenant_id=$1 AND source_id=$2 AND collection_id=$3 AND record_id=$4 AND record_revision<=$5`,
       [event.tenantId, event.sourceId, event.collectionId, event.recordId, event.recordRevision]);
@@ -332,9 +415,33 @@ export class DerivedContextStore {
       return;
     }
     const generation = event.seq;
+    // A source revision replaces all candidates emitted by the previous revision.
+    // Stable relation IDs that are emitted again are reactivated below.
+    await client.query(`UPDATE ${this.tables.relationCandidates}
+      SET lifecycle='superseded',resolution_status='pending',valid_to=COALESCE(valid_to,GREATEST(valid_from,NOW())),updated_at=NOW()
+      WHERE tenant_id=$1 AND source_id=$2 AND collection_id=$3 AND record_id=$4
+        AND record_revision<$5 AND lifecycle='active'`,
+    [event.tenantId, event.sourceId, event.collectionId, event.recordId, event.recordRevision]);
+    await client.query(`UPDATE ${this.tables.entityLinks} l
+      SET revoked=TRUE,lifecycle='superseded',valid_to=COALESCE(l.valid_to,GREATEST(l.valid_from,NOW())),updated_at=NOW()
+      WHERE l.tenant_id=$1 AND l.lifecycle='active' AND EXISTS (
+        SELECT 1 FROM ${this.tables.relationCandidates} c
+        WHERE c.tenant_id=l.tenant_id AND c.relation_id=l.link_id
+          AND c.source_id=$2 AND c.collection_id=$3 AND c.record_id=$4 AND c.record_revision<$5
+      )`, [event.tenantId, event.sourceId, event.collectionId, event.recordId, event.recordRevision]);
+
     for (const entity of projection.entities) await this.upsertEntity(client, event.tenantId, generation, entity);
+    const changedEntityIds = [...new Set(projection.entities.map(entity => entity.entityId))];
+    if (changedEntityIds.length > 0) {
+      await client.query(`UPDATE ${this.tables.relationCandidates}
+        SET resolution_status='pending',updated_at=NOW()
+        WHERE tenant_id=$1 AND lifecycle='active'
+          AND (from_entity_id=ANY($2::text[]) OR to_entity_id=ANY($2::text[]))`,
+      [event.tenantId, changedEntityIds]);
+    }
     for (const item of projection.items) await this.upsertSourceItem(client, event.tenantId, generation, item);
-    for (const relation of projection.relations) await this.upsertRelation(client, event.tenantId, relation);
+    for (const relation of projection.relations) await this.upsertRelationCandidate(client, event.tenantId, relation);
+    await this.materializePendingRelations(client, event.tenantId, RELATION_RESOLVE_LIMIT);
   }
 
   private async upsertEntity(client: PoolClient, tenantId: string, generation: string, entity: DerivedEntityCandidate): Promise<void> {
@@ -379,47 +486,129 @@ export class DerivedContextStore {
     const conflict = await client.query(`SELECT COUNT(DISTINCT i.value_json->>'valueFingerprint')::integer count
       FROM ${this.tables.derivedItems} i
       WHERE i.tenant_id=$1 AND i.subject_entity_id=$2 AND i.item_type=$3 AND i.semantic_key=$4
-        AND i.lifecycle='active' AND i.review_status='confirmed'`,
+        AND i.lifecycle='active' AND i.review_status='confirmed' AND i.owner_principal IS NULL`,
     [tenantId, item.entityId, item.itemType, item.semanticKey]);
     if (Number(conflict.rows[0]?.count ?? 0) > 1) {
       await client.query(`UPDATE ${this.tables.derivedItems} SET conflict_status='open',updated_at=NOW()
         WHERE tenant_id=$1 AND subject_entity_id=$2 AND item_type=$3 AND semantic_key=$4
-          AND lifecycle='active' AND review_status='confirmed'`,
+          AND lifecycle='active' AND review_status='confirmed' AND owner_principal IS NULL`,
       [tenantId, item.entityId, item.itemType, item.semanticKey]);
     }
   }
 
-  private async upsertRelation(client: PoolClient, tenantId: string, relation: DerivedProjection['relations'][number]): Promise<void> {
-    const target = await client.query(`SELECT source_id,collection_id,record_id,record_revision FROM ${this.tables.entities}
-      WHERE tenant_id=$1 AND entity_id=$2 AND lifecycle='active' ORDER BY generation DESC LIMIT 1`,
-    [tenantId, relation.toEntityId]);
-    const row = target.rows[0];
-    if (!row?.source_id || (row.source_id === relation.sourceId && row.collection_id === relation.collectionId
-      && row.record_id === relation.recordId && Number(row.record_revision) === relation.recordRevision)) return;
-    await client.query(`INSERT INTO ${this.tables.entityLinks}
-      (tenant_id,link_id,from_source_id,from_collection_id,from_record_id,from_revision,
-       to_source_id,to_collection_id,to_record_id,to_revision,link_type,
-       evidence_source_id,evidence_collection_id,evidence_record_id,evidence_revision)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'task_of',$3,$4,$5,$6)
-      ON CONFLICT (tenant_id,link_id) DO UPDATE SET revoked=FALSE,updated_at=NOW()`,
-    [tenantId, relation.relationId, relation.sourceId, relation.collectionId, relation.recordId, relation.recordRevision,
-      row.source_id, row.collection_id, row.record_id, row.record_revision]);
+  private async upsertRelationCandidate(
+    client: PoolClient,
+    tenantId: string,
+    relation: DerivedProjection['relations'][number],
+  ): Promise<void> {
+    const evidence = relation.evidence[0];
+    if (!evidence) return; // all persisted relations are evidence-bound
+    await client.query(`INSERT INTO ${this.tables.relationCandidates}
+      (tenant_id,relation_id,from_entity_id,to_entity_id,relation_type,relation_class,authority,review_status,
+       source_id,collection_id,record_id,record_revision,
+       evidence_source_id,evidence_collection_id,evidence_record_id,evidence_revision,evidence_id,
+       valid_from,valid_to,lifecycle,resolution_status)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'active','pending')
+      ON CONFLICT (tenant_id,relation_id) DO UPDATE SET
+        from_entity_id=EXCLUDED.from_entity_id,to_entity_id=EXCLUDED.to_entity_id,
+        relation_type=EXCLUDED.relation_type,relation_class=EXCLUDED.relation_class,
+        authority=EXCLUDED.authority,review_status=EXCLUDED.review_status,
+        source_id=EXCLUDED.source_id,collection_id=EXCLUDED.collection_id,
+        record_id=EXCLUDED.record_id,record_revision=EXCLUDED.record_revision,
+        evidence_source_id=EXCLUDED.evidence_source_id,evidence_collection_id=EXCLUDED.evidence_collection_id,
+        evidence_record_id=EXCLUDED.evidence_record_id,evidence_revision=EXCLUDED.evidence_revision,
+        evidence_id=EXCLUDED.evidence_id,valid_from=EXCLUDED.valid_from,valid_to=EXCLUDED.valid_to,
+        lifecycle='active',resolution_status='pending',updated_at=NOW()`,
+    [tenantId, relation.relationId, relation.fromEntityId, relation.toEntityId, relation.relationType,
+      relation.relationClass, relation.authority, relation.reviewStatus,
+      relation.sourceId, relation.collectionId, relation.recordId, relation.recordRevision,
+      evidence.sourceId, evidence.collectionId, evidence.recordId, evidence.recordRevision, evidence.evidenceId,
+      relation.validFrom, relation.validTo ?? null]);
   }
 
-  private async applyReviewRejections(input: ListActiveItemsInput, items: DerivedItemCandidate[]): Promise<DerivedItemCandidate[]> {
+  /** Materializes at most limit resolvable candidates; unresolved rows remain pending. */
+  private async materializePendingRelations(client: PoolClient, tenantId: string, limit: number): Promise<number> {
+    const result = await client.query(`WITH resolvable AS (
+      SELECT c.*,
+        f.source_id AS from_source_id,f.collection_id AS from_collection_id,
+        f.record_id AS from_record_id,f.record_revision AS from_revision,
+        t.source_id AS to_source_id,t.collection_id AS to_collection_id,
+        t.record_id AS to_record_id,t.record_revision AS to_revision
+      FROM ${this.tables.relationCandidates} c
+      JOIN LATERAL (
+        SELECT en.source_id,en.collection_id,en.record_id,en.record_revision
+        FROM ${this.tables.entities} en
+        JOIN ${this.baseTables.records} r ON r.tenant_id=en.tenant_id AND r.source_id=en.source_id
+          AND r.collection_id=en.collection_id AND r.record_id=en.record_id
+          AND r.deleted=FALSE AND r.revoked=FALSE
+        WHERE en.tenant_id=c.tenant_id AND en.entity_id=c.from_entity_id AND en.lifecycle='active'
+        ORDER BY en.generation DESC LIMIT 1
+      ) f ON TRUE
+      JOIN LATERAL (
+        SELECT en.source_id,en.collection_id,en.record_id,en.record_revision
+        FROM ${this.tables.entities} en
+        JOIN ${this.baseTables.records} r ON r.tenant_id=en.tenant_id AND r.source_id=en.source_id
+          AND r.collection_id=en.collection_id AND r.record_id=en.record_id
+          AND r.deleted=FALSE AND r.revoked=FALSE
+        WHERE en.tenant_id=c.tenant_id AND en.entity_id=c.to_entity_id AND en.lifecycle='active'
+        ORDER BY en.generation DESC LIMIT 1
+      ) t ON TRUE
+      WHERE c.tenant_id=$1 AND c.lifecycle='active' AND c.resolution_status='pending'
+        AND c.review_status<>'rejected'
+        AND (f.source_id,f.collection_id,f.record_id,f.record_revision)
+          IS DISTINCT FROM (t.source_id,t.collection_id,t.record_id,t.record_revision)
+      ORDER BY c.updated_at,c.relation_id
+      LIMIT $2
+      FOR UPDATE OF c SKIP LOCKED
+    ), materialized AS (
+      INSERT INTO ${this.tables.entityLinks}
+        (tenant_id,link_id,from_source_id,from_collection_id,from_record_id,from_revision,
+         to_source_id,to_collection_id,to_record_id,to_revision,link_type,
+         evidence_source_id,evidence_collection_id,evidence_record_id,evidence_revision,
+         from_entity_id,to_entity_id,relation_class,authority,review_status,evidence_id,
+         valid_from,valid_to,lifecycle,revoked)
+      SELECT tenant_id,relation_id,from_source_id,from_collection_id,from_record_id,from_revision,
+        to_source_id,to_collection_id,to_record_id,to_revision,relation_type,
+        evidence_source_id,evidence_collection_id,evidence_record_id,evidence_revision,
+        from_entity_id,to_entity_id,relation_class,authority,review_status,evidence_id,
+        valid_from,valid_to,'active',FALSE
+      FROM resolvable
+      ON CONFLICT (tenant_id,link_id) DO UPDATE SET
+        from_source_id=EXCLUDED.from_source_id,from_collection_id=EXCLUDED.from_collection_id,
+        from_record_id=EXCLUDED.from_record_id,from_revision=EXCLUDED.from_revision,
+        to_source_id=EXCLUDED.to_source_id,to_collection_id=EXCLUDED.to_collection_id,
+        to_record_id=EXCLUDED.to_record_id,to_revision=EXCLUDED.to_revision,
+        link_type=EXCLUDED.link_type,from_entity_id=EXCLUDED.from_entity_id,to_entity_id=EXCLUDED.to_entity_id,
+        relation_class=EXCLUDED.relation_class,authority=EXCLUDED.authority,review_status=EXCLUDED.review_status,
+        evidence_source_id=EXCLUDED.evidence_source_id,evidence_collection_id=EXCLUDED.evidence_collection_id,
+        evidence_record_id=EXCLUDED.evidence_record_id,evidence_revision=EXCLUDED.evidence_revision,
+        evidence_id=EXCLUDED.evidence_id,valid_from=EXCLUDED.valid_from,valid_to=EXCLUDED.valid_to,
+        lifecycle='active',revoked=FALSE,updated_at=NOW()
+      RETURNING tenant_id,link_id
+    )
+    UPDATE ${this.tables.relationCandidates} c
+      SET resolution_status='materialized',updated_at=NOW()
+      FROM materialized m
+      WHERE c.tenant_id=m.tenant_id AND c.relation_id=m.link_id
+      RETURNING c.relation_id`, [tenantId, limit]);
+    return result.rowCount ?? 0;
+  }
+
+  private async applyReviewRejections(input: ListActiveItemsInput, items: ItemRow[]): Promise<ItemRow[]> {
     if (items.length === 0) return items;
-    const rows = await this.options.pool.query(`SELECT r.comment FROM ${this.tables.reviews} r
+    const rows = await this.options.pool.query(`SELECT r.generation,r.item_id,r.comment FROM ${this.tables.reviews} r
       JOIN ${this.tables.derivedItems} i ON i.tenant_id=r.tenant_id AND i.generation=r.generation AND i.item_id=r.item_id
-      WHERE r.tenant_id=$1 AND i.subject_entity_id=$2 AND r.review_status='rejected' AND r.revoked=FALSE`,
+      WHERE r.tenant_id=$1 AND i.subject_entity_id=$2 AND r.review_status='rejected' AND r.revoked=FALSE
+        AND r.comment->>'action'='reject'`,
     [input.tenantId, input.entityId]);
     const rejected = new Set<string>();
     for (const row of rows.rows) {
       const parsed = parseObject(row.comment);
       const scope = parseObject(parsed?.scope);
       const visible = scope?.type === 'org' || (scope?.type === 'person' && scope.personId === input.viewerId);
-      if (visible && typeof parsed?.rejectFingerprint === 'string') rejected.add(parsed.rejectFingerprint);
+      if (visible) rejected.add(`${String(row.generation)}\u0000${String(row.item_id)}`);
     }
-    return items.filter(item => !rejected.has(item.valueFingerprint));
+    return items.filter(item => !rejected.has(`${String(item.generation)}\u0000${item.item_id}`));
   }
 
   private async assertLease(client: PoolClient, lease: ConsumerLease): Promise<void> {
@@ -428,6 +617,24 @@ export class DerivedContextStore {
         AND cursor_seq=$5 AND lease_expires_at>NOW() FOR UPDATE`,
     [lease.tenantId, lease.consumerId, lease.leaseOwner, lease.leaseFence, lease.cursorSeq]);
     if (!result.rows[0]) throw new DerivedStoreError('DERIVED_LEASE_LOST');
+  }
+
+  private async lockCanonicalEntities(
+    client: PoolClient,
+    event: ClaimedContextRecord,
+    projectedEntityIds: string[],
+  ): Promise<void> {
+    await client.query(`SELECT en.generation FROM ${this.tables.entities} en
+      WHERE en.tenant_id=$1 AND en.lifecycle='active' AND (
+        en.entity_id=ANY($2::text[])
+        OR (en.source_id=$3 AND en.collection_id=$4 AND en.record_id=$5)
+        OR en.entity_id IN (SELECT i.subject_entity_id FROM ${this.tables.derivedItems} i
+          JOIN ${this.tables.itemEvidence} ie ON ie.tenant_id=i.tenant_id AND ie.generation=i.generation
+            AND ie.item_id=i.item_id
+          WHERE ie.tenant_id=$1 AND ie.source_id=$3 AND ie.collection_id=$4 AND ie.record_id=$5)
+      )
+      ORDER BY en.entity_id,en.generation FOR UPDATE OF en`,
+    [event.tenantId, [...new Set(projectedEntityIds)].sort(), event.sourceId, event.collectionId, event.recordId]);
   }
 
   private async currentEntity(
@@ -582,7 +789,7 @@ function itemFromRow(row: ItemRow): DerivedItemCandidate {
 
 async function insertEvidence(
   client: PoolClient,
-  tables: ContextPhase23TableNames,
+  tables: ContextPhase4TableNames,
   baseTables: ContextTableNames,
   tenantId: string,
   generation: string,
@@ -613,29 +820,90 @@ async function insertEvidence(
 
 async function reviewRevision(
   client: PoolClient,
-  tables: ContextPhase23TableNames,
+  tables: ContextPhase4TableNames,
   tenantId: string,
   entityId: string,
+  scope: AppendReviewInput['scope'],
 ): Promise<number> {
-  const result = await client.query(`SELECT 1+COUNT(DISTINCT r.review_id)::integer AS revision
+  const result = await client.query(`SELECT 1+COUNT(DISTINCT r.review_id) FILTER (WHERE
+      ($3='person' AND r.comment->'scope'->>'type'='person' AND r.comment->'scope'->>'personId'=$4)
+      OR ($3='org' AND r.comment->'scope'->>'type'='org')
+    )::integer AS revision
     FROM ${tables.derivedItems} i LEFT JOIN ${tables.reviews} r
       ON r.tenant_id=i.tenant_id AND r.generation=i.generation AND r.item_id=i.item_id
-    WHERE i.tenant_id=$1 AND i.subject_entity_id=$2`, [tenantId, entityId]);
+    WHERE i.tenant_id=$1 AND i.subject_entity_id=$2
+      AND r.comment->>'action' IN ('assert','reject')`,
+  [tenantId, entityId, scope.type, scope.type === 'person' ? scope.personId : null]);
   return Number(result.rows[0]?.revision ?? 1);
 }
 
-async function findRejectTarget(
+async function findReviewTarget(
   client: PoolClient,
-  tables: ContextPhase23TableNames,
+  tables: ContextPhase4TableNames,
+  input: AppendReviewInput,
+): Promise<{
+  item_id: string;
+  generation: string;
+  item_type: DerivedItemType;
+  semantic_key: string;
+  value_fingerprint: string;
+  owner_principal: string | null;
+} | null> {
+  const result = await client.query(`SELECT i.item_id,i.generation,i.item_type,i.semantic_key,
+      i.value_json->>'valueFingerprint' AS value_fingerprint,i.owner_principal
+    FROM ${tables.derivedItems} i
+    WHERE i.tenant_id=$1 AND i.subject_entity_id=$2 AND i.item_id=$3
+      AND i.lifecycle='active' AND i.review_status='confirmed'
+      AND ($4='person' AND (i.owner_principal IS NULL OR i.owner_principal=$5)
+        OR $4='org' AND i.owner_principal IS NULL)
+      AND ($6::text IS NULL OR i.value_json->>'valueFingerprint'=$6)
+      AND NOT EXISTS (SELECT 1 FROM ${tables.derivedItems} newer
+        WHERE newer.tenant_id=i.tenant_id AND newer.subject_entity_id=i.subject_entity_id
+          AND newer.item_id=i.item_id AND newer.lifecycle='active' AND newer.generation>i.generation)
+    ORDER BY i.generation DESC LIMIT 1 FOR UPDATE OF i`,
+  [input.tenantId, input.entityId, input.targetItemId, input.scope.type,
+    input.scope.type === 'person' ? input.scope.personId : null,
+    input.action === 'reject' ? input.rejectFingerprint : null]);
+  return result.rows[0] ? {
+    item_id: String(result.rows[0].item_id),
+    generation: String(result.rows[0].generation),
+    item_type: String(result.rows[0].item_type) as DerivedItemType,
+    semantic_key: String(result.rows[0].semantic_key),
+    value_fingerprint: String(result.rows[0].value_fingerprint),
+    owner_principal: result.rows[0].owner_principal == null ? null : String(result.rows[0].owner_principal),
+  } : null;
+}
+
+async function lockTargetEvidence(
+  client: PoolClient,
+  tables: ContextPhase4TableNames,
   tenantId: string,
-  entityId: string,
-  rejectFingerprint: string,
-): Promise<{ item_id: string; generation: string } | null> {
-  const result = await client.query(`SELECT item_id,generation FROM ${tables.derivedItems}
-    WHERE tenant_id=$1 AND subject_entity_id=$2 AND value_json->>'valueFingerprint'=$3
-      AND lifecycle='active' AND review_status='confirmed'
-    ORDER BY generation DESC LIMIT 1 FOR UPDATE`, [tenantId, entityId, rejectFingerprint]);
-  return result.rows[0] ? { item_id: String(result.rows[0].item_id), generation: String(result.rows[0].generation) } : null;
+  generation: string,
+  itemId: string,
+): Promise<DerivedEvidenceRef[]> {
+  const result = await client.query(`SELECT source_id,collection_id,record_id,record_revision,evidence_id,revoked
+    FROM ${tables.itemEvidence}
+    WHERE tenant_id=$1 AND generation=$2 AND item_id=$3
+    ORDER BY source_id,collection_id,record_id,record_revision,evidence_id
+    FOR UPDATE`, [tenantId, generation, itemId]);
+  return result.rows.filter(row => !Boolean(row.revoked)).map(row => ({
+    sourceId: String(row.source_id),
+    collectionId: String(row.collection_id),
+    recordId: String(row.record_id),
+    recordRevision: Number(row.record_revision),
+    evidenceId: String(row.evidence_id),
+  }));
+}
+
+function immutableReviewSnapshot(snapshot: DerivedReviewAuthorizationSnapshot): DerivedReviewAuthorizationSnapshot {
+  const evidence = snapshot.evidence.map(ref => Object.freeze({ ...ref }));
+  return Object.freeze({ ...snapshot, scope: Object.freeze({ ...snapshot.scope }), evidence: Object.freeze(evidence) });
+}
+
+function sameEvidenceRef(left: DerivedEvidenceRef, right: DerivedEvidenceRef): boolean {
+  return left.sourceId === right.sourceId && left.collectionId === right.collectionId
+    && left.recordId === right.recordId && left.recordRevision === right.recordRevision
+    && left.evidenceId === right.evidenceId;
 }
 
 function reviewFingerprint(input: AppendReviewInput): string {
@@ -646,6 +914,7 @@ function reviewFingerprint(input: AppendReviewInput): string {
     expectedRevision: input.expectedRevision,
     scope: input.scope,
     action: input.action,
+    targetItemId: input.targetItemId,
     itemType: input.itemType,
     semanticKey: input.semanticKey,
     value: input.value,
@@ -676,7 +945,7 @@ function reviewFromRow(row: QueryResultRow, entityId: string): DerivedReview {
 }
 
 function validateReview(input: AppendReviewInput): void {
-  assertId(input.tenantId); assertId(input.actorId); assertId(input.entityId);
+  assertId(input.tenantId); assertId(input.actorId); assertId(input.entityId); assertId(input.targetItemId);
   if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1 || input.evidence.length < 1) invalid();
   if (input.scope.type === 'person') assertId(input.scope.personId);
   if (input.action === 'assert') {

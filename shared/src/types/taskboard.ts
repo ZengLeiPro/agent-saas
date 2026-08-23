@@ -155,6 +155,25 @@ export interface TaskBoardCiPolicy {
   requiredChecks: TaskBoardCiRequiredCheck[];
 }
 
+export interface TaskBoardCiObservedCheck extends TaskBoardCiRequiredCheck {
+  status: "pending" | "success" | "failure";
+  appName?: string;
+}
+
+export interface TaskBoardCiPolicyDiscovery {
+  boardId: string;
+  repositoryId: string;
+  providerKnown: boolean;
+  effectiveSource: "github" | "board" | "unconfigured" | "unavailable";
+  githubRequiredChecks: TaskBoardCiRequiredCheck[];
+  boardRequiredChecks: TaskBoardCiRequiredCheck[];
+  effectiveRequiredChecks: TaskBoardCiRequiredCheck[];
+  observedChecks: TaskBoardCiObservedCheck[];
+  providerPullRequestId?: string;
+  headOid?: string;
+  providerQueriedAt: string;
+}
+
 export interface TaskBoardRepositoryConfig {
   provider: "github";
   repositoryId: string;

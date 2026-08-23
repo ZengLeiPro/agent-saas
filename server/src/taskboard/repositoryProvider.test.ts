@@ -234,7 +234,7 @@ describe('GithubRepositoryProvider', () => {
         base: { ref: 'main', sha: 'base-oid', repo: { full_name: 'acme/app' } },
       }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [
-        { name: 'board-ci', status: 'completed', conclusion: 'success', app: { id: 9 } },
+        { name: 'board-ci', status: 'completed', conclusion: 'success', app: { id: 9, name: 'CI App' } },
         { name: 'optional-job', status: 'completed', conclusion: 'success' },
       ] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ statuses: [] }), { status: 200 }))
@@ -254,6 +254,10 @@ describe('GithubRepositoryProvider', () => {
       requiredChecks: [{ name: 'board-ci', appId: 9, status: 'success' }],
     });
     expect(snapshot.requiredChecks).not.toContainEqual(expect.objectContaining({ name: 'optional-job' }));
+    expect(snapshot.observedChecks).toEqual([
+      { name: 'board-ci', appId: 9, appName: 'CI App', status: 'success' },
+      { name: 'optional-job', status: 'success' },
+    ]);
   });
 
   it('marks CI as unconfigured when neither GitHub nor the board supplies required checks', async () => {

@@ -14,6 +14,7 @@ import type {
   TaskBoardTaskPatchInput,
 } from "@agent/shared";
 import type {
+  TaskBoardCiPolicyDiscovery,
   TaskBoardIntegrationBatchCreateInput,
   TaskBoardIntegrationCandidateDetails,
   TaskBoardDirectoryUser,
@@ -79,6 +80,11 @@ export async function fetchTaskboardUsers(): Promise<TaskBoardDirectoryUser[]> {
 export async function createBoard(input: TaskBoardCreateInput): Promise<TaskBoard> {
   const response = await authFetch(`${API_BASE}/boards`, jsonRequest("POST", input));
   return parseEntity<TaskBoard>(response, "任务看板", "board");
+}
+
+export async function fetchBoardCiPolicyDiscovery(id: string): Promise<TaskBoardCiPolicyDiscovery> {
+  const response = await authFetch(`${API_BASE}/boards/${encodeURIComponent(id)}/ci-policy`);
+  return parseEntity<TaskBoardCiPolicyDiscovery>(response, "CI 门禁配置", "result");
 }
 
 export async function patchBoard(id: string, input: TaskBoardPatchInput): Promise<TaskBoard> {

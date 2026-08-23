@@ -1,9 +1,16 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TASKBOARD_DEFAULT_PROMPT } from "@agent/shared";
 import type { ModelList, TaskBoard } from "@agent/shared";
+import type { TaskBoardCiPolicyDiscovery } from "@agent/shared/types/taskboard";
 import { BoardDialog } from "./BoardDialog";
+
+const mocks = vi.hoisted(() => ({ fetchBoardCiPolicyDiscovery: vi.fn() }));
+vi.mock("./api", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./api")>(),
+  fetchBoardCiPolicyDiscovery: mocks.fetchBoardCiPolicyDiscovery,
+}));
 
 const modelList: ModelList = {
   groups: [{ id: "group-a", name: "模型组", models: [{ id: "model-a", name: "模型 A" }] }],
@@ -12,6 +19,23 @@ const modelList: ModelList = {
   showGroupNames: true,
   showContextTokens: true,
   allowContextTokenDetails: false,
+};
+
+const discovery: TaskBoardCiPolicyDiscovery = {
+  boardId: "board-1",
+  repositoryId: "github:tenant-1:acme/app",
+  providerKnown: true,
+  effectiveSource: "board",
+  githubRequiredChecks: [],
+  boardRequiredChecks: [{ name: "board-ci", appId: 9 }],
+  effectiveRequiredChecks: [{ name: "board-ci", appId: 9 }],
+  observedChecks: [
+    { name: "board-ci", appId: 9, appName: "CI App", status: "success" },
+    { name: "optional-check", appId: 7, appName: "Optional App", status: "success" },
+  ],
+  providerPullRequestId: "42",
+  headOid: "head-42",
+  providerQueriedAt: "2026-08-23T11:00:00.000Z",
 };
 
 const board: TaskBoard = {
@@ -28,6 +52,11 @@ const board: TaskBoard = {
 };
 
 describe("BoardDialog", () => {
+  beforeEach(() => {
+    mocks.fetchBoardCiPolicyDiscovery.mockReset();
+    mocks.fetchBoardCiPolicyDiscovery.mockResolvedValue(discovery);
+  });
+
   it("创建看板时展示并提交默认提示语，且允许修改", async () => {
     const user = userEvent.setup();
     const onCreate = vi.fn(async () => undefined);
@@ -303,6 +332,87 @@ describe("BoardDialog", () => {
         },
       }),
     }));
+  });
+
+  it("展示 GitHub 与 observed checks，并仅在用户勾选后写入看板 fallback", async () => {
+    const user = userEvent.setup();
+    const onUpdate = vi.fn(async () => undefined);
+    mocks.fetchBoardCiPolicyDiscovery
+      .mockResolvedValueOnce(discovery)
+      .mockResolvedValueOnce({
+        ...discovery,
+        boardRequiredChecks: [...discovery.boardRequiredChecks, { name: "optional-check", appId: 7 }],
+        effectiveRequiredChecks: [...discovery.boardRequiredChecks, { name: "optional-check", appId: 7 }],
+      });
+    const configuredBoard: TaskBoard = {
+      ...board,
+      repository: { provider: "github", repositoryId: discovery.repositoryId, owner: "acme", name: "app", baseBranch: "main", allowForkPullRequest: false },
+      integrationPolicy: {
+        schemaVersion: 1, enabled: true, revision: "r1", ciPolicy: { requiredChecks: [{ name: "board-ci", appId: 9 }] },
+        trigger: { mode: "manual", allowedRoles: ["owner"] }, batch: { maxTasks: 10, selection: "priority_then_ready_at" },
+        execution: { mergeMethod: "squash", continueIndependentSources: true, autoResolveConflicts: true, maxAutomaticRemediationRounds: 2, maxTransientRetries: 3, requireGreenChecks: true, deleteRemoteBranch: false, deploy: false },
+      },
+    };
+    render(<BoardDialog open board={configuredBoard} onOpenChange={vi.fn()} onCreate={vi.fn()} onUpdate={onUpdate} />);
+
+    expect(await screen.findByText(/当前生效来源：看板 fallback/)).toBeTruthy();
+    expect(screen.getByText("GitHub 未声明 required checks。")).toBeTruthy();
+    expect(screen.getByText(/optional-check · success · Optional App/)).toBeTruthy();
+    const optional = screen.getByRole("checkbox", { name: "选择 observed check optional-check" });
+    expect(optional.getAttribute("data-state")).toBe("unchecked");
+    await user.click(optional);
+    expect((screen.getByRole("textbox", { name: "看板 fallback required contexts" }) as HTMLTextAreaElement).value)
+      .toContain("optional-check | 7");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(onUpdate).toHaveBeenCalledWith(configuredBoard.id, expect.objectContaining({
+      integrationPolicy: expect.objectContaining({
+        ciPolicy: { requiredChecks: [{ name: "board-ci", appId: 9 }, { name: "optional-check", appId: 7 }] },
+      }),
+      expectedVersion: configuredBoard.version,
+    }));
+    expect(await screen.findByText("已保存，并按服务端最终策略回显。")).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: "看板 fallback required contexts" }) as HTMLTextAreaElement).value)
+      .toContain("optional-check | 7");
+  });
+
+  it("无策略权限时只读展示发现结果与 App 来源", async () => {
+    const readOnlyBoard: TaskBoard = {
+      ...board,
+      allowedActions: ["board.read"],
+      canManage: false,
+      repository: { provider: "github", repositoryId: discovery.repositoryId, owner: "acme", name: "app", baseBranch: "main", allowForkPullRequest: false },
+      integrationPolicy: {
+        schemaVersion: 1, enabled: true, revision: "r1", ciPolicy: { requiredChecks: [{ name: "board-ci", appId: 9 }] },
+        trigger: { mode: "manual", allowedRoles: ["owner"] }, batch: { maxTasks: 10, selection: "priority_then_ready_at" },
+        execution: { mergeMethod: "squash", continueIndependentSources: true, autoResolveConflicts: true, maxAutomaticRemediationRounds: 2, maxTransientRetries: 3, requireGreenChecks: true, deleteRemoteBranch: false, deploy: false },
+      },
+    };
+    render(<BoardDialog open board={readOnlyBoard} onOpenChange={vi.fn()} onCreate={vi.fn()} onUpdate={vi.fn()} />);
+
+    expect(await screen.findByText(/当前生效来源：看板 fallback/)).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "选择 observed check optional-check" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("textbox", { name: "看板 fallback required contexts" })).toHaveProperty("disabled", true);
+  });
+
+  it("显示 CI discovery 与保存错误，不伪装成功", async () => {
+    const user = userEvent.setup();
+    mocks.fetchBoardCiPolicyDiscovery.mockRejectedValueOnce(new Error("GitHub discovery unavailable"));
+    const onUpdate = vi.fn(async () => { throw new Error("保存 CI policy 失败"); });
+    const configuredBoard = {
+      ...board,
+      repository: { provider: "github" as const, repositoryId: discovery.repositoryId, owner: "acme", name: "app", baseBranch: "main", allowForkPullRequest: false as const },
+      integrationPolicy: {
+        schemaVersion: 1 as const, enabled: true, revision: "r1",
+        trigger: { mode: "manual" as const, allowedRoles: ["owner" as const] }, batch: { maxTasks: 10, selection: "priority_then_ready_at" as const },
+        execution: { mergeMethod: "squash" as const, continueIndependentSources: true as const, autoResolveConflicts: true as const, maxAutomaticRemediationRounds: 2, maxTransientRetries: 3, requireGreenChecks: true as const, deleteRemoteBranch: false as const, deploy: false as const },
+      },
+    };
+    render(<BoardDialog open board={configuredBoard} onOpenChange={vi.fn()} onCreate={vi.fn()} onUpdate={onUpdate} />);
+    expect(await screen.findByText("GitHub discovery unavailable")).toBeTruthy();
+    await user.type(screen.getByRole("textbox", { name: "看板 fallback required contexts" }), "manual-ci");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByText("保存 CI policy 失败")).toBeTruthy();
   });
 
   it("提交期间锁定全部表单控件，请求完成后再关闭", async () => {

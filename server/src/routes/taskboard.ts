@@ -269,7 +269,6 @@ const integrationCandidateQuerySchema = z.object({
   includeHistory: booleanQuerySchema(),
   ...pageQueryFields,
 }).strict();
-
 const boardsQuerySchema = z.object({
   includeArchived: booleanQuerySchema(),
 }).strict();
@@ -369,6 +368,10 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     res.json(await options.service!.getBoard(identityFrom(req), req.params.id));
   }));
 
+  router.get('/boards/:id/ci-policy', route(async (req, res) => {
+    if (!options.service!.getBoardCiPolicyDiscovery) throw new TaskboardExecutionUnavailableError();
+    res.json(await options.service!.getBoardCiPolicyDiscovery(identityFrom(req), req.params.id));
+  }));
   router.patch('/boards/:id', route(async (req, res) => {
     const input = parseOrReply(boardPatchSchema, req.body, res, 'body');
     if (!input) return;

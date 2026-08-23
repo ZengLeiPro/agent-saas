@@ -108,6 +108,8 @@
 
 - 看板 fallback 按看板与仓库配置隔离，可为每个 context 额外指定 GitHub App ID。
 - 只有 GitHub 已权威确认 required checks 为空时才使用 fallback；GitHub 策略不可判定、存在不支持规则或要求 merge queue 时继续 fail closed。
+- `GET /api/taskboard/boards/:id/ci-policy` 以看板访问权限返回生效来源、GitHub required checks、看板 fallback，以及最近绑定 PR 的 observed checks、App 来源与精确 head；observed checks 只用于配置候选。
+- 看板设置允许有策略权限的成员显式勾选候选或手工填写 context/App ID；无策略权限成员只读。
 - 任意 observed optional check 都不会自动成为 required check。
 - 两层均为空时返回 `TASKBOARD_CI_UNCONFIGURED`，提示配置 GitHub 门禁或看板 fallback；它不是普通 pending。
 

@@ -36,6 +36,7 @@ import { moveTaskFromReviewExecution } from './executionTaskMove.js';
 import { loadIntegrationCandidateProjection } from './integrationCandidateProjection.js';
 import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import { normalizeIntegrationPolicyCiFallback } from './ciPolicy.js';
+import { discoverBoardCiPolicy } from './ciPolicyDiscovery.js';
 import { runIntegrationV3RepositoryProbe, type IntegrationV3RepositoryProbe, type IntegrationV3RepositoryProbeInput } from './integrationV3RepositoryProbe.js';
 import { deleteStoredTask, rollbackStoredTask } from './storeTaskDelete.js';
 import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
@@ -328,11 +329,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   finishWorkflowCancellation(id: string, error?: string): Promise<void> {
     return finishStoredWorkflowCancellation(this, id, error);
   }
-
   reconcileMergeOperationsV2(limit?: number): Promise<number> {
     return reconcileUnknownMergeOperations(this, limit);
   }
-
   claimIntegrationDispatchCandidatesV2(limit?: number) {
     return claimIntegrationDispatchCandidates(this, limit);
   }
@@ -358,6 +357,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   async getBoard(identity: TaskboardIdentity, boardId: string): Promise<TaskBoard> {
     return this.requireBoard(this.pool, identity, boardId, false);
   }
+  getBoardCiPolicyDiscovery(identity: TaskboardIdentity, boardId: string) { return discoverBoardCiPolicy(this, identity, boardId); }
   async createBoard(identity: TaskboardIdentity, input: TaskBoardCreateInput): Promise<TaskBoard> {
     const integrationPolicy = input.integrationPolicy && normalizeIntegrationPolicyCiFallback(input.integrationPolicy);
     if (integrationPolicy?.enabled && integrationPolicy.workflowVersion === 3) await assertIntegrationV3RuntimeAvailable(this.pool, this.integrationSourcesTable);

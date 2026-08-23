@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { TaskBoardTask } from '../../../shared/src/types/taskboard.js';
+import { taskboardCreateRequestId } from '../agent/taskboardCreateRequestId.js';
 import { invokeTaskboardAction } from '../agent/taskboardToolActions.js';
 import type { TaskboardIdentity, TaskboardService } from '../taskboard/types.js';
 
@@ -184,5 +185,89 @@ describe('Agent 创建任务的自动标题', () => {
     await expect(invokeTaskboardAction(options, identity, dispatchInput, scope))
       .resolves.toMatchObject({ created: false, dispatched: true });
     expect(startDirectExecution).toHaveBeenCalledTimes(dispatchCount + 1);
+  });
+
+  it('Execution 创建幂等键区分 remediation 来源、最终 kind 与 dispatch', async () => {
+    const parentTask: TaskBoardTask = {
+      id: 'integration-task', boardId: board.id, identifier: 'TASK-10', title: '集成任务', description: '',
+      kind: 'integration', status: 'in_progress', priority: 'none', labels: [], sortOrder: 1024,
+      commentCount: 0, version: 1, createdAt: board.createdAt, updatedAt: board.updatedAt,
+    };
+    const tasksByRequest = new Map<string, TaskBoardTask>();
+    const createTaskFromExecutionWithResult = vi.fn(async (_identity, _runId, input) => {
+      const requestId = input.clientRequestId!;
+      const existing = tasksByRequest.get(requestId);
+      if (existing) return { task: existing, created: false };
+      const task: TaskBoardTask = {
+        ...parentTask,
+        id: `task-${tasksByRequest.size + 1}`,
+        identifier: `TASK-${tasksByRequest.size + 11}`,
+        title: input.title ?? '',
+        description: input.description ?? '',
+        kind: input.kind,
+        status: 'todo',
+      };
+      tasksByRequest.set(requestId, task);
+      return { task, created: true };
+    });
+    const getTask = vi.fn(async (_identity, taskId) =>
+      [...tasksByRequest.values()].find((task) => task.id === taskId)!);
+    const linkIntegrationRemediationV2 = vi.fn(async (
+      _identity: TaskboardIdentity,
+      _runId: string,
+      _sourceId: string,
+      _taskId: string,
+    ) => ({}));
+    const service = { getTask, linkIntegrationRemediationV2 } as unknown as TaskboardService;
+    const startDirectExecution = vi.fn(async (_identity, taskId) => ({ task: await getTask(identity, taskId), execution: {} }));
+    const options = {
+      service: () => service,
+      executionService: () => ({ listExecutions: vi.fn(async () => []), startDirectExecution } as never),
+      executionStore: () => ({ createTaskFromExecutionWithResult } as never),
+    };
+    const executionScope = {
+      execution: {
+        identity,
+        task: parentTask,
+        boardPrompt: '',
+        comments: [],
+        execution: {
+          id: 'merge-execution', taskId: parentTask.id, runId: 'merge-run', sessionId: 'merge-session',
+          status: 'running' as const, purpose: 'merge' as const, requestedBy: identity.ownerUserId,
+          createdAt: board.createdAt, updatedAt: board.updatedAt,
+        },
+      },
+    };
+
+    const sourceA = await invokeTaskboardAction(options, identity, {
+      action: 'create', boardId: board.id, title: '处理冲突', description: '相同正文', kind: 'remediation', sourceId: 'source-a',
+    }, executionScope);
+    const sourceB = await invokeTaskboardAction(options, identity, {
+      action: 'create', boardId: board.id, title: '处理冲突', description: '相同正文', kind: 'remediation', sourceId: 'source-b',
+    }, executionScope);
+    const withoutDispatch = await invokeTaskboardAction(options, identity, {
+      action: 'create', boardId: board.id, title: '后续修复', description: '相同修复', kind: 'remediation', sourceId: 'source-dispatch',
+    }, executionScope);
+    const withDispatch = await invokeTaskboardAction(options, identity, {
+      action: 'create', boardId: board.id, title: '后续修复', description: '相同修复', kind: 'remediation', sourceId: 'source-dispatch', dispatch: true,
+    }, executionScope);
+
+    const sourceATask = sourceA.task as TaskBoardTask;
+    const sourceBTask = sourceB.task as TaskBoardTask;
+    const withoutDispatchTask = withoutDispatch.task as TaskBoardTask;
+    const withDispatchTask = withDispatch.task as TaskBoardTask;
+    expect(sourceATask.id).not.toBe(sourceBTask.id);
+    expect(linkIntegrationRemediationV2.mock.calls.map((call) => [call[2], call[3]]))
+      .toEqual([
+        ['source-a', sourceATask.id],
+        ['source-b', sourceBTask.id],
+        ['source-dispatch', withoutDispatchTask.id],
+        ['source-dispatch', withDispatchTask.id],
+      ]);
+    expect(withoutDispatchTask.id).not.toBe(withDispatchTask.id);
+    expect(startDirectExecution).toHaveBeenCalledOnce();
+    expect(new Set(createTaskFromExecutionWithResult.mock.calls.map((call) => call[2].clientRequestId))).toHaveProperty('size', 4);
+    expect(taskboardCreateRequestId({ action: 'create', boardId: board.id }, executionScope, 'delivery'))
+      .not.toBe(taskboardCreateRequestId({ action: 'create', boardId: board.id }, executionScope, 'remediation'));
   });
 });

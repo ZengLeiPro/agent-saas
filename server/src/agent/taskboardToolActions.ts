@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
 import { appendTaskboardAttachments, cleanupTaskboardAttachments, materializeTaskboardAttachments, resolveTaskboardAttachments } from './taskboardAttachmentActions.js';
+import { taskboardCreateRequestId } from './taskboardCreateRequestId.js';
 import { assertTaskboardExecutionScope } from './taskboardExecutionScope.js';
 import { assertActiveBoard, assertBoardRole } from '../taskboard/storeHelpers.js';
 import { generateAndApplyTaskTitle, generateTaskTitleSafely } from '../taskboard/taskTitle.js';
@@ -514,22 +514,6 @@ export async function invokeTaskboardAction(
       throw new Error(`target=taskboard 不支持 action=${input.action}`);
   }
 }
-function taskboardCreateRequestId(input: TaskboardManageInput, scope: TaskboardActionScope): string {
-  const sourceRunId = scope.execution?.execution.runId ?? 'unknown-run';
-  const digest = createHash('sha256').update(JSON.stringify({
-    boardId: input.boardId,
-    title: input.title,
-    description: input.description,
-    branch: input.branch,
-    attachments: input.attachments?.map((attachment) => attachment.attachmentId),
-    status: input.status,
-    priority: input.priority,
-    labels: input.labels,
-    dueAt: input.dueAt,
-    model: input.model,
-  })).digest('hex').slice(0, 32);
-  return `taskboard-tool:${sourceRunId.slice(-64)}:${digest}`;
-}
 async function boardSearch(
   service: TaskboardService,
   identity: TaskboardIdentity,
@@ -749,7 +733,7 @@ async function createExecutionTask(
   const dispatcher = input.dispatch ? requireExecutionService(options.executionService?.()) : undefined;
   const service = options.service();
   if (!service) throw new Error('任务看板服务未启用');
-  const clientRequestId = taskboardCreateRequestId(input, { execution });
+  const clientRequestId = taskboardCreateRequestId(input, { execution }, kind);
   const createInput: TaskBoardTaskCreateInput = {
     title: input.title ?? '',
     kind,

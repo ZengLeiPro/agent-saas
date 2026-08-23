@@ -179,7 +179,7 @@ export function projectRuntimePlatformEvent(
         }],
       };
     case 'tool_result': {
-      const artifactDelivery = projectArtifactDelivery(event.toolName, event.metadata);
+      const artifactDelivery = projectArtifactDelivery(event.toolName, event.metadata, event.content);
       if (artifactDelivery) return { events: [artifactDelivery] };
       if (isDedicatedWebTool(event.toolName)) return { events: [] };
       const events: object[] = [{

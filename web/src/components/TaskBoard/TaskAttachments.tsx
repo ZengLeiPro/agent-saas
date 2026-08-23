@@ -1,8 +1,9 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { TaskBoardAttachment, TaskBoardUploadAttachment } from "@agent/shared";
-import { Download, Paperclip } from "lucide-react";
+import { Download, Eye, Paperclip } from "lucide-react";
 import { getFileTypeVisual, resolveImageSrc, resolveTaskAttachmentSrc } from "@agent/shared";
 import { FileUpload } from "@/components/FileUpload";
+import { ImageLightbox } from "@/components/ImageLightbox";
 import { Button } from "@/components/ui/button";
 import type { FileUploadState } from "@/hooks/useFileUpload";
 import { CATEGORY_ICON } from "@/lib/fileCategoryIcons";
@@ -69,16 +70,29 @@ export function TaskAttachmentList({
   attachments: readonly TaskBoardAttachment[];
   taskId?: string;
 }) {
+  const [preview, setPreview] = useState<{ src: string; alt: string } | null>(null);
+
   if (attachments.length === 0) return null;
 
-  const download = async (attachment: TaskBoardAttachment) => {
+  const resolveAttachmentSrc = async (attachment: TaskBoardAttachment, download: boolean) => {
     const isTaskScoped = taskId && attachment.attachmentId
       && attachment.relativePath.startsWith(`taskboard/attachments/${taskId}/`);
-    const url = isTaskScoped
-      ? await resolveTaskAttachmentSrc(taskId, attachment.attachmentId!, true)
-      : await resolveImageSrc(attachment.relativePath);
+    return isTaskScoped
+      ? resolveTaskAttachmentSrc(taskId, attachment.attachmentId!, download)
+      : resolveImageSrc(attachment.relativePath);
+  };
+
+  const open = async (attachment: TaskBoardAttachment) => {
+    if (attachment.isImage) {
+      setPreview({
+        src: await resolveAttachmentSrc(attachment, false),
+        alt: attachment.originalName,
+      });
+      return;
+    }
+
     const anchor = document.createElement("a");
-    anchor.href = url;
+    anchor.href = await resolveAttachmentSrc(attachment, true);
     anchor.download = attachment.originalName;
     document.body.appendChild(anchor);
     anchor.click();
@@ -86,25 +100,36 @@ export function TaskAttachmentList({
   };
 
   return (
-    <div className="mt-2 flex flex-wrap gap-2">
-      {attachments.map((attachment) => {
-        const TypeIcon = CATEGORY_ICON[getFileTypeVisual(attachment.originalName).category];
-        return (
-          <Button
-            key={`${attachment.attachmentId ?? attachment.relativePath}:${attachment.originalName}`}
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-auto max-w-full justify-start gap-2 py-1.5"
-            onClick={() => void download(attachment)}
-            title={`下载 ${attachment.originalName}`}
-          >
-            <TypeIcon className="size-4 shrink-0 text-muted-foreground" />
-            <span className="max-w-56 truncate">{attachment.originalName}</span>
-            <Download className="size-3.5 shrink-0 text-muted-foreground" />
-          </Button>
-        );
-      })}
-    </div>
+    <>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {attachments.map((attachment) => {
+          const TypeIcon = CATEGORY_ICON[getFileTypeVisual(attachment.originalName).category];
+          const action = attachment.isImage ? "预览图片" : "下载";
+          return (
+            <Button
+              key={`${attachment.attachmentId ?? attachment.relativePath}:${attachment.originalName}`}
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-auto max-w-full justify-start gap-2 py-1.5"
+              onClick={() => void open(attachment)}
+              title={`${action}：${attachment.originalName}`}
+              aria-label={`${action}：${attachment.originalName}`}
+            >
+              <TypeIcon className="size-4 shrink-0 text-muted-foreground" />
+              <span className="max-w-56 truncate">{attachment.originalName}</span>
+              {attachment.isImage ? (
+                <Eye className="size-3.5 shrink-0 text-muted-foreground" />
+              ) : (
+                <Download className="size-3.5 shrink-0 text-muted-foreground" />
+              )}
+            </Button>
+          );
+        })}
+      </div>
+      {preview ? (
+        <ImageLightbox src={preview.src} alt={preview.alt} onClose={() => setPreview(null)} />
+      ) : null}
+    </>
   );
 }

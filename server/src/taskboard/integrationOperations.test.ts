@@ -20,7 +20,7 @@ const contextRow = {
   integration_status: 'in_progress', tenant_id: 'tenant-1', owner_user_id: 'owner-1',
   repository: { provider: 'github', repositoryId: 'repo-1', owner: 'acme', name: 'repo', baseBranch: 'main', allowForkPullRequest: false },
   integration_policy: {
-    revision: 'policy-1', execution: {
+    revision: 'policy-1', ciPolicy: { requiredChecks: [{ name: 'board-ci', appId: 9 }] }, execution: {
       mergeMethod: 'merge', requireGreenChecks: true, maxAutomaticRemediationRounds: 3, maxTransientRetries: 3,
     },
   },
@@ -63,6 +63,30 @@ function host(client: { query: ReturnType<typeof vi.fn>; release: ReturnType<typ
 }
 
 describe('integration operation guards', () => {
+  it('injects the board CI fallback into v2 source inspection', async () => {
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) return { rows: [sourceRow] };
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => pull),
+      inspectPullRequest: vi.fn(async () => ({
+        ...pull, repositoryId: 'repo-1', providerQueriedAt: '2026-08-23T00:00:00.000Z', workflowRuns: [],
+      })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await inspectIntegrationSource(host(client, provider), identity, 'run-1', 'source-1');
+    expect(provider.inspectPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ ciPolicy: { requiredChecks: [{ name: 'board-ci', appId: 9 }] } }),
+      '101', 'owner-1',
+    );
+  });
+
   it('revalidates execution/source/authorization/lane after prepare and before provider merge', async () => {
     const statements: string[] = [];
     const client = {
@@ -92,6 +116,10 @@ describe('integration operation guards', () => {
     await expect(mergeIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
       .rejects.toMatchObject({ code: 'TASKBOARD_PROVIDER_GUARD_STALE' });
     expect(provider.mergePullRequest).not.toHaveBeenCalled();
+    expect(provider.getPullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ ciPolicy: { requiredChecks: [{ name: 'board-ci', appId: 9 }] } }),
+      '101', 'owner-1',
+    );
     expect(statements.some((sql) => sql.includes("a.revoked_at IS NULL"))).toBe(true);
     expect(statements.some((sql) => sql.includes('l.epoch=$8::bigint'))).toBe(true);
   });
@@ -338,6 +366,30 @@ describe('integration operation guards', () => {
     expect(provider.mergePullRequest).not.toHaveBeenCalled();
   });
 
+  it('maps an unconfigured v2 source inspection to the explicit CI error', async () => {
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) {
+          return { rows: [{ ...sourceRow, state: 'waiting_retry', last_error: 'CI gate is not configured' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const unconfigured = { ...pull, requiredChecksConfigured: false, requiredChecks: [] };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => unconfigured),
+      inspectPullRequest: vi.fn(async () => ({
+        ...unconfigured, repositoryId: 'repo-1', providerQueriedAt: '2026-08-23T00:00:00.000Z', workflowRuns: [],
+      })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(inspectIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_CI_UNCONFIGURED' });
+  });
+
   it('rejects merge before preparing an operation when no checks were observed', async () => {
     const statements: string[] = [];
     const client = {
@@ -358,6 +410,30 @@ describe('integration operation guards', () => {
 
     await expect(mergeIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
       .rejects.toMatchObject({ code: 'TASKBOARD_CHECKS_PENDING' });
+    expect(statements.some((sql) => sql.includes('INSERT INTO operations'))).toBe(false);
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unconfigured merge before preparing a Provider operation', async () => {
+    const statements: string[] = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) {
+          return { rows: [{ ...sourceRow, state: 'waiting_retry' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => ({ ...pull, requiredChecksConfigured: false, requiredChecks: [] })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(mergeIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_CI_UNCONFIGURED' });
     expect(statements.some((sql) => sql.includes('INSERT INTO operations'))).toBe(false);
     expect(provider.mergePullRequest).not.toHaveBeenCalled();
   });

@@ -104,6 +104,7 @@ describe('pull request CI gate', () => {
     state: 'open',
     mergeCommitOid: undefined,
     requiredChecksKnown: true,
+    requiredChecksConfigured: true,
     requiredChecks: [{ name: 'Build & Check', status: 'success' }],
   };
 
@@ -111,7 +112,7 @@ describe('pull request CI gate', () => {
     [{ ...current, requiredChecks: [{ name: 'Build & Check', status: 'pending' }] }, 'pending'],
     [{ ...current, requiredChecks: [{ name: 'Build & Check', status: 'failure' }] }, 'failure'],
     [{ ...current, requiredChecksKnown: false }, 'unavailable'],
-    [{ ...current, requiredChecks: [] }, 'pending'],
+    [{ ...current, requiredChecksConfigured: false, requiredChecks: [] }, 'unconfigured'],
     [current, 'success'],
   ];
 
@@ -136,7 +137,7 @@ describe('pull request CI gate', () => {
     [{ ...current, requiredChecks: [{ name: 'Build & Check', status: 'pending' }] }, 'TASKBOARD_CI_PENDING'],
     [{ ...current, requiredChecks: [{ name: 'Build & Check', status: 'failure' }] }, 'TASKBOARD_CI_FAILED'],
     [{ ...current, requiredChecksKnown: false }, 'TASKBOARD_CI_UNAVAILABLE'],
-    [{ ...current, requiredChecks: [] }, 'TASKBOARD_CI_PENDING'],
+    [{ ...current, requiredChecksConfigured: false, requiredChecks: [] }, 'TASKBOARD_CI_UNCONFIGURED'],
   ];
 
   it.each(rejectionCases)('rejects non-green checks with %s', (snapshot, code) => {
@@ -240,6 +241,83 @@ describe('Workflow v3 candidate PR inspection', () => {
       providerPullRequestId: '32', headOid: 'candidate-head',
     });
     expect(transactionClient.query).toHaveBeenCalledWith('COMMIT');
+  });
+
+  function recordFixture(candidatePatch: Record<string, unknown> = {}) {
+    const snapshot = {
+      ...mergedPullRequest,
+      state: 'open' as const,
+      mergeCommitOid: undefined,
+      headRef: 'integration/integration-1',
+      headOid: 'candidate-head',
+      baseOid: 'candidate-base',
+      subjectDigest: 'provider-subject',
+    };
+    const loadClient = client(async () => ({ rows: [{
+      task_id: 'integration-1', kind: 'integration', task_branch: null, provider_pull_request_id: null,
+      execution_id: 'review-1', purpose: 'review', execution_status: 'running', transitioned_at: null, superseded_at: null,
+      execution_candidate_id: 'candidate-1', execution_candidate_revision: 3,
+      execution_candidate_head_oid: 'candidate-head',
+      repository: contextRow().repository, owner_user_id: identity.ownerUserId,
+      candidate_id: 'candidate-1', candidate_revision: 3, candidate_provider_pull_request_id: '32',
+      candidate_branch: 'integration/integration-1', candidate_head_oid: 'candidate-head',
+      candidate_base_oid: 'candidate-base', candidate_subject_digest: 'candidate-subject-3',
+    }] }));
+    const reviewedTask = {
+      ...taskRow(), id: 'integration-1', identifier: 'TASK-182', kind: 'integration',
+      title: 'Integration review', status: 'in_review', provider_pull_request_id: null,
+      pull_request_number: 32, head_oid: 'candidate-head', base_oid: 'candidate-base',
+      reviewed_subject_digest: 'provider-subject', completed_at: null,
+    };
+    const transactionClient = client(async (sql) => {
+      if (sql.includes('SELECT id FROM tasks')) return { rows: [{ id: 'integration-1' }] };
+      if (sql.includes('SELECT id FROM executions')) return { rows: [{ id: 'review-1' }] };
+      if (sql.includes('FROM sources_candidates c')) return { rows: [{
+        provider_pull_request_id: '32', current_revision: 3, head_oid: 'candidate-head',
+        base_oid: 'candidate-base', subject_digest: 'candidate-subject-3', ...candidatePatch,
+      }] };
+      if (sql.includes('SET pull_request_number=')) return { rows: [reviewedTask] };
+      return { rows: [] };
+    });
+    const clients = [loadClient, transactionClient];
+    const host = {
+      ...hostWithPullRequest(mergedPullRequest).host,
+      pool: { connect: vi.fn(async () => clients.shift()!) },
+      repositoryProvider: {
+        getPullRequest: vi.fn(async () => { throw new Error('generic OAuth provider must not be used'); }),
+        mergePullRequest: vi.fn(),
+      },
+      integrationV3RepositoryProvider: {
+        getPullRequest: vi.fn(async () => snapshot),
+        mergePullRequest: vi.fn(),
+      },
+    } as unknown as IntegrationOperationHost;
+    return { host, transactionClient };
+  }
+
+  it('records the reviewed subject against the candidate PR when the integration task PR binding is empty', async () => {
+    const { host, transactionClient } = recordFixture();
+
+    await expect(recordReviewedExecutionSubject(host, identity, 'run-review-1')).resolves.toMatchObject({
+      id: 'integration-1', kind: 'integration',
+    });
+    expect(transactionClient.query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM sources_candidates c'),
+      ['candidate-1', 'integration-1'],
+    );
+    expect(transactionClient.query).toHaveBeenCalledWith(
+      expect.stringContaining('SET pull_request_number='),
+      ['integration-1', 32, 'candidate-head', 'candidate-base', 'provider-subject'],
+    );
+    expect(transactionClient.query).toHaveBeenCalledWith('COMMIT');
+  });
+
+  it('rejects recording when the candidate PR binding changed after Review context was loaded', async () => {
+    const { host, transactionClient } = recordFixture({ provider_pull_request_id: '99' });
+
+    await expect(recordReviewedExecutionSubject(host, identity, 'run-review-1'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_SUBJECT_STALE' });
+    expect(transactionClient.query).toHaveBeenCalledWith('ROLLBACK');
   });
 
   it('rejects a stale Review execution before inspecting a newer candidate revision', async () => {

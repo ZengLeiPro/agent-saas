@@ -5,6 +5,7 @@ import type {
   TaskBoardComment,
   TaskBoardCommentCreateInput,
   TaskBoardCommentPatchInput,
+  TaskBoardCiPolicyDiscovery,
   TaskBoardCreateInput,
   TaskBoardExecution,
   TaskBoardExecutionPurpose,
@@ -425,6 +426,7 @@ export interface TaskboardService {
   listBoards(identity: TaskboardIdentity, includeArchived?: boolean): Promise<TaskBoard[]>;
   searchBoards(identity: TaskboardIdentity, filter?: TaskboardBoardSearchFilter): Promise<TaskboardPage<TaskBoard>>;
   getBoard(identity: TaskboardIdentity, boardId: string): Promise<TaskBoard>;
+  getBoardCiPolicyDiscovery?(identity: TaskboardIdentity, boardId: string): Promise<TaskBoardCiPolicyDiscovery>;
   createBoard(identity: TaskboardIdentity, input: TaskBoardCreateInput): Promise<TaskBoard>;
   updateBoard(identity: TaskboardIdentity, boardId: string, input: TaskBoardPatchInput): Promise<TaskBoard>;
   archiveBoard(identity: TaskboardIdentity, boardId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoard>;

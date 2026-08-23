@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
+import type { TaskBoardCiObservedCheck, TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
 
 export type RepositoryCheckStatus = 'pending' | 'success' | 'failure';
 
@@ -58,8 +58,14 @@ export interface RepositoryPullRequestSnapshot {
   mergeable: boolean | null;
   mergeableState?: string;
   requiredChecks: RepositoryRequiredCheck[];
+  /** Observed checks remain discovery-only and are never promoted to required gates. */
+  observedChecks?: TaskBoardCiObservedCheck[];
   /** False means the provider could not authoritatively determine the required gate set. */
   requiredChecksKnown?: boolean;
+  /** False means neither GitHub nor this board's explicit fallback configured required checks. */
+  requiredChecksConfigured?: boolean;
+  /** The selected required-check policy source, when the provider can determine it. */
+  requiredChecksSource?: 'github' | 'board' | 'unconfigured';
   subjectDigest: string;
 }
 
@@ -227,15 +233,25 @@ export class GithubRepositoryProvider implements RepositoryProvider {
       this.getRequiredGateCapabilities(repository, baseRef, credentialOwnerId),
     ]);
     const capabilities = capabilitiesResult.status === 'fulfilled' ? capabilitiesResult.value : undefined;
+    const githubRequiredChecks = capabilities?.requiredChecks ?? [];
+    const boardRequiredChecks = repository.ciPolicy?.requiredChecks ?? [];
+    const selectedRequiredChecks = githubRequiredChecks.length > 0
+      ? githubRequiredChecks
+      : boardRequiredChecks;
+    const requiredChecksSource = githubRequiredChecks.length > 0
+      ? 'github'
+      : boardRequiredChecks.length > 0 ? 'board' : 'unconfigured';
+    const observedChecks = normalizeObservedChecks(
+      checksResult.status === 'fulfilled' ? checksResult.value : undefined,
+      statusesResult.status === 'fulfilled' ? statusesResult.value : undefined,
+    );
     const requiredChecks = normalizeChecks(
       checksResult.status === 'fulfilled' ? checksResult.value : undefined,
       statusesResult.status === 'fulfilled' ? statusesResult.value : undefined,
-      capabilities ? {
-        checks: capabilities.requiredChecks.map((check) => ({
-          context: check.name,
-          ...(check.appId !== undefined ? { app_id: check.appId } : {}),
-        })),
-      } : undefined,
+      { checks: selectedRequiredChecks.map((check) => ({
+        context: check.name,
+        ...(check.appId !== undefined ? { app_id: check.appId } : {}),
+      })) },
     );
     const requiredChecksKnown = capabilities?.known === true
       && capabilities.unsupportedRules.length === 0
@@ -255,7 +271,11 @@ export class GithubRepositoryProvider implements RepositoryProvider {
       ...(pullRecord.merge_commit_sha ? { mergeCommitOid: String(pullRecord.merge_commit_sha) } : {}),
       mergeable: typeof pullRecord.mergeable === 'boolean' ? pullRecord.mergeable : null,
       ...(pullRecord.mergeable_state ? { mergeableState: String(pullRecord.mergeable_state) } : {}),
-      requiredChecks, requiredChecksKnown,
+      requiredChecks, observedChecks, requiredChecksKnown,
+      ...(requiredChecksKnown ? {
+        requiredChecksConfigured: selectedRequiredChecks.length > 0,
+        requiredChecksSource,
+      } : {}),
       subjectDigest: repositorySubjectDigest({ repositoryId: repository.repositoryId, providerPullRequestId: String(number), number, headOid, baseRef, baseOid }),
     };
   }
@@ -555,6 +575,34 @@ function optionalPositiveInteger(value: unknown): number | undefined {
 }
 function checkIdentityKey(name: string, appId?: number): string { return `${name}\u0000${appId ?? '*'}`; }
 function compareChecks(a: { name: string; appId?: number }, b: { name: string; appId?: number }): number { return checkIdentityKey(a.name, a.appId).localeCompare(checkIdentityKey(b.name, b.appId)); }
+
+function normalizeObservedChecks(checksValue: unknown, statusesValue: unknown): TaskBoardCiObservedCheck[] {
+  const observed = new Map<string, TaskBoardCiObservedCheck>();
+  const runs = asRecord(checksValue).check_runs;
+  if (Array.isArray(runs)) for (const item of runs) {
+    const run = asRecord(item);
+    const name = String(run.name ?? '').trim();
+    if (!name) continue;
+    const app = asRecord(run.app);
+    const appId = optionalPositiveInteger(app.id);
+    const conclusion = String(run.conclusion ?? '');
+    observed.set(checkIdentityKey(name, appId), {
+      name,
+      status: run.status !== 'completed' ? 'pending' : ['success', 'neutral', 'skipped'].includes(conclusion) ? 'success' : 'failure',
+      ...(appId !== undefined ? { appId } : {}),
+      ...(typeof app.name === 'string' && app.name.trim() ? { appName: app.name.trim() } : {}),
+    });
+  }
+  const statuses = asRecord(statusesValue).statuses;
+  if (Array.isArray(statuses)) for (const item of statuses) {
+    const status = asRecord(item);
+    const name = String(status.context ?? '').trim();
+    if (!name || observed.has(checkIdentityKey(name))) continue;
+    const state = String(status.state ?? 'pending');
+    observed.set(checkIdentityKey(name), { name, status: state === 'success' ? 'success' : state === 'pending' ? 'pending' : 'failure' });
+  }
+  return [...observed.values()].sort(compareChecks);
+}
 
 function normalizeChecks(checksValue: unknown, statusesValue: unknown, requiredValue: unknown): RepositoryRequiredCheck[] {
   const observed = new Map<string, { status: RepositoryCheckStatus; observedAt: number }>();

@@ -114,6 +114,18 @@ describe('taskboard V2 contracts', () => {
     })).toMatchObject({ mergeEligibility: 'eligible', integrationState: 'canceled' });
   });
 
+  it('keeps reviewed deliveries selectable after the stored CI inspection becomes old', () => {
+    expect(rowToTask({
+      id: task.id, board_id: task.boardId, identifier: task.identifier, kind: 'delivery',
+      title: task.title, description: '', status: 'ready_to_merge', priority: 'none', labels: [],
+      sort_order: 1, comment_count: 0, version: 2,
+      provider_pull_request_id: '101', reviewed_subject_digest: 'digest-101', head_oid: 'head-101',
+      provider_ci_status: 'success', provider_ci_purpose: 'review', provider_ci_head_oid: 'head-101',
+      provider_ci_inspected_at: '2020-01-01T00:00:00.000Z',
+      created_at: task.createdAt, updated_at: task.updatedAt,
+    })).toMatchObject({ mergeEligibility: 'eligible' });
+  });
+
   it('installs immutable change log, repository lane, saga and durable trigger schema', async () => {
     const sql: string[] = [];
     const client = {

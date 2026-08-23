@@ -1,5 +1,6 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
+import { boardCiPolicySchema } from './taskboardCiPolicySchema.js';
 import type { UserStore } from '../data/users/store.js';
 import {
   listTaskboardDirectoryUsers,
@@ -33,7 +34,6 @@ import {
   type TaskboardIdentity,
   type TaskboardService,
 } from '../taskboard/types.js';
-
 const repositorySchema = z.object({
   provider: z.literal('github'),
   repositoryId: z.string().trim().min(1).max(256),
@@ -42,7 +42,6 @@ const repositorySchema = z.object({
   baseBranch: z.string().trim().min(1).max(256),
   allowForkPullRequest: z.literal(false),
 }).strict();
-
 const integrationTriggerSchema = z.discriminatedUnion('mode', [
   z.object({
     mode: z.literal('scheduled'),
@@ -68,6 +67,7 @@ const integrationPolicySchema = z.object({
     engineV3: z.boolean(), compose: z.boolean(), review: z.boolean(), merge: z.boolean(),
     cleanup: z.boolean(), workspaceSync: z.boolean(),
   }).strict().optional(),
+  ciPolicy: boardCiPolicySchema.optional(),
   trigger: integrationTriggerSchema,
   batch: z.object({
     maxTasks: z.number().int().min(1).max(100),
@@ -267,7 +267,6 @@ const integrationCandidateQuerySchema = z.object({
   includeHistory: booleanQuerySchema(),
   ...pageQueryFields,
 }).strict();
-
 const boardsQuerySchema = z.object({
   includeArchived: booleanQuerySchema(),
 }).strict();
@@ -370,6 +369,10 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     res.json(await options.service!.getBoard(identityFrom(req), req.params.id));
   }));
 
+  router.get('/boards/:id/ci-policy', route(async (req, res) => {
+    if (!options.service!.getBoardCiPolicyDiscovery) throw new TaskboardExecutionUnavailableError();
+    res.json(await options.service!.getBoardCiPolicyDiscovery(identityFrom(req), req.params.id));
+  }));
   router.patch('/boards/:id', route(async (req, res) => {
     const input = parseOrReply(boardPatchSchema, req.body, res, 'body');
     if (!input) return;
@@ -461,12 +464,9 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     const taskInput = { ...input, title: title ?? '' };
     delete taskInput.dispatch; delete taskInput.attachments;
     const createInput = { ...taskInput, ...(attachments !== undefined && attachments.length === 0 ? { attachments: [] } : {}) };
-    let task: TaskBoardTask;
-    if (input.clientRequestId) {
-      const result = await options.service!.createTaskWithResult(identity, req.params.boardId, createInput);
-      task = result.task;
-      if (result.created && input.title === undefined) task = await generateAndApplyTaskTitle(options.service!, identity, task, input.description ?? '', generateTaskTitle);
-    } else { task = await options.service!.createTask(identity, req.params.boardId, createInput); }
+    const result = input.clientRequestId ? await options.service!.createTaskWithResult(identity, req.params.boardId, createInput) : { task: await options.service!.createTask(identity, req.params.boardId, createInput), created: false };
+    let task = result.task;
+    if (result.created && input.title === undefined) task = await generateAndApplyTaskTitle(options.service!, identity, task, input.description ?? '', generateTaskTitle);
     let scopedAttachments: TaskBoardUploadAttachment[] | undefined;
     try {
       scopedAttachments = await materializeRequestAttachments(options, req, identity, task.id, ownerUserId, attachments);

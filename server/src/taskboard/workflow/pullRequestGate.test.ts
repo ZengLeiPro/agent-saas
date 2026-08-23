@@ -124,7 +124,7 @@ function candidateRig(input: {
         const payload = input.payload === undefined ? candidateInspectionPayload : input.payload;
         return { rows: payload ? [{ payload }] : [] };
       }
-      if (sql.includes('SELECT repository,owner_user_id')) return { rows: [board] };
+      if (sql.includes('SELECT repository')) return { rows: [board] };
       return { rows: [{
         provider_ci_inspection_id: 'inspection-1', provider_ci_execution_id: 'execution-1',
         provider_ci_purpose: 'review', provider_ci_head_oid: 'head-42', provider_ci_status: 'success',

@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
-import type { TaskBoardTask } from '../../../shared/src/types/taskboard.js';
+import type { TaskBoardIntegrationPolicy, TaskBoardTask } from '../../../shared/src/types/taskboard.js';
 import {
   finalizeMergedSource,
   type IntegrationOperationHost,
 } from './integrationOperations.js';
 import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
+import { repositoryWithBoardCiPolicy } from './ciPolicy.js';
 import type {
   RepositoryProvider,
   RepositoryPullRequestInspection,
@@ -40,7 +41,7 @@ export interface ExecutionPullRequestInspectionReceipt {
 export interface ExecutionPullRequestInspection {
   receipt: ExecutionPullRequestInspectionReceipt;
   snapshot: RepositoryPullRequestInspection;
-  gateStatus: 'success' | 'pending' | 'failure' | 'unavailable';
+  gateStatus: 'success' | 'pending' | 'failure' | 'unavailable' | 'unconfigured';
 }
 
 export async function inspectExecutionPullRequest(
@@ -197,6 +198,7 @@ export function pullRequestGateStatus(
 ): ExecutionPullRequestInspection['gateStatus'] {
   if (snapshot.state !== 'open' || snapshot.draft) return 'failure';
   if (snapshot.requiredChecksKnown !== true) return 'unavailable';
+  if (snapshot.requiredChecksConfigured === false) return 'unconfigured';
   if (snapshot.requiredChecks.some((check) => check.status === 'failure')) return 'failure';
   if (snapshot.requiredChecks.length === 0
     || snapshot.requiredChecks.some((check) => check.status !== 'success')) return 'pending';
@@ -224,6 +226,12 @@ export function assertPullRequestGate(
   }
   if (snapshot.requiredChecksKnown !== true) {
     throw new TaskboardValidationError('Provider could not authoritatively determine required checks', 'TASKBOARD_CI_UNAVAILABLE');
+  }
+  if (snapshot.requiredChecksConfigured === false) {
+    throw new TaskboardValidationError(
+      'CI gate is not configured: add GitHub required checks or this board\'s explicit CI fallback',
+      'TASKBOARD_CI_UNCONFIGURED',
+    );
   }
   const failed = snapshot.requiredChecks.filter((check) => check.status === 'failure');
   if (failed.length) {
@@ -336,12 +344,32 @@ export async function recordReviewedExecutionSubject(
   try {
     await client.query('BEGIN');
     await lockExecution(client, host, runId, context.taskId);
-    const current = await client.query(
-      `SELECT provider_pull_request_id FROM ${host.tasksTable} WHERE id=$1 FOR UPDATE`,
-      [context.taskId],
-    );
-    if (current.rows[0]?.provider_pull_request_id !== context.providerPullRequestId) {
-      throw new TaskboardValidationError('Pull request changed during review', 'TASKBOARD_SUBJECT_STALE');
+    if (context.isIntegrationV3) {
+      const tables = integrationCandidateTableNames(host.integrationSourcesTable);
+      const current = await client.query(
+        `SELECT c.provider_pull_request_id,c.current_revision,r.head_oid,r.base_oid,r.subject_digest
+           FROM ${tables.candidatesTable} c
+           JOIN ${tables.revisionsTable} r
+             ON r.candidate_id=c.id AND r.revision=c.current_revision
+          WHERE c.id=$1 AND c.integration_task_id=$2 FOR UPDATE OF c`,
+        [context.candidateId, context.taskId],
+      );
+      const row = current.rows[0];
+      if (String(row?.provider_pull_request_id ?? '') !== pullRequest.providerPullRequestId
+        || Number(row?.current_revision) !== context.candidateRevision
+        || String(row?.head_oid ?? '') !== pullRequest.headOid
+        || String(row?.base_oid ?? '') !== pullRequest.baseOid
+        || String(row?.subject_digest ?? '') !== context.candidateSubjectDigest) {
+        throw new TaskboardValidationError('Pull request changed during review', 'TASKBOARD_SUBJECT_STALE');
+      }
+    } else {
+      const current = await client.query(
+        `SELECT provider_pull_request_id FROM ${host.tasksTable} WHERE id=$1 FOR UPDATE`,
+        [context.taskId],
+      );
+      if (current.rows[0]?.provider_pull_request_id !== context.providerPullRequestId) {
+        throw new TaskboardValidationError('Pull request changed during review', 'TASKBOARD_SUBJECT_STALE');
+      }
     }
     const result = await client.query(
       `UPDATE ${host.tasksTable}
@@ -513,7 +541,7 @@ async function loadContext(
               e.id AS execution_id,e.purpose,e.status AS execution_status,e.transitioned_at,e.superseded_at,
               e.candidate_id AS execution_candidate_id,e.candidate_revision AS execution_candidate_revision,
               e.candidate_head_oid AS execution_candidate_head_oid,
-              b.repository,b.owner_user_id,
+              b.repository,b.integration_policy,b.owner_user_id,
               candidate.id AS candidate_id,candidate.current_revision AS candidate_revision,
               candidate.provider_pull_request_id AS candidate_provider_pull_request_id,
               candidate.branch AS candidate_branch,
@@ -592,10 +620,13 @@ async function loadContext(
         ? { deliveryProviderPullRequestId: String(row.delivery_provider_pull_request_id) } : {}),
       ...(row.task_branch ? { taskBranch: String(row.task_branch) } : {}),
       ...(row.delivery_branch ? { deliveryBranch: String(row.delivery_branch) } : {}),
-      repository: repository as {
-        provider: 'github'; repositoryId: string; owner: string; name: string;
-        baseBranch: string; allowForkPullRequest: false;
-      },
+      repository: repositoryWithBoardCiPolicy(
+        repository as {
+          provider: 'github'; repositoryId: string; owner: string; name: string;
+          baseBranch: string; allowForkPullRequest: false;
+        },
+        jsonObject(row.integration_policy) as TaskBoardIntegrationPolicy | undefined,
+      ),
       boardOwnerUserId: String(row.owner_user_id),
     };
   } finally {

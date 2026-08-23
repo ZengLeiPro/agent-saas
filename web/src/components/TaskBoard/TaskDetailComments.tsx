@@ -90,7 +90,7 @@ export function TaskDetailComments({
         <div className="space-y-0">
           {taskDescription !== undefined && taskDescription !== null ? (
             <article data-testid="task-description-comment" className="pb-6">
-              <div className="min-w-0 rounded-lg border bg-card p-3 shadow-sm">
+              <div className="min-w-0 rounded-2xl rounded-tr-md border border-transparent bg-user-bubble p-3 text-foreground shadow-sm ring-1 ring-[rgba(232,132,58,0.22)] shadow-[0_1px_2px_rgba(232,132,58,0.10),0_4px_12px_-4px_rgba(232,132,58,0.20)]">
                 <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                   <span className="text-xs font-medium text-foreground">任务正文</span>
                   <time className="text-xs text-muted-foreground">{new Date(currentTask.createdAt).toLocaleString("zh-CN")}</time>

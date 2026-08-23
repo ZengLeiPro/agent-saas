@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ApiSessionDetail, ApiTranscriptBlock } from "@agent/shared";
-import { mapSessionDetailToMessages } from "./sessionsApi";
+import { mapSessionDetailToMessages } from "./sessionMessageMapper";
 
 // 用真实 shared mapBlock 契约构造 detail：prompt→user、text→text，消息 id 与 block.id 同源。
 // kind 用宽 string（源码对 'compaction' 等 shared union 外的 kind 走 `as string` 分支），

@@ -391,10 +391,10 @@ const memoryConsolidationSchema = z.object({
   scanIntervalMs: z.number().int().min(1_000).max(60_000).optional(),
   scanBatchSize: z.number().int().min(10).max(5_000).optional(),
   workerConcurrency: z.number().int().min(1).max(16).optional(),
-  leaseSeconds: z.number().int().min(60).max(3_600).optional(),
-  timeoutSeconds: z.number().int().min(30).max(1_800).optional(),
+  leaseSeconds: z.number().int().min(60).max(7_200).optional(),
+  timeoutSeconds: z.number().int().min(30).max(3_600).optional(),
   maxRetries: z.number().int().min(0).max(20).optional(),
-  maxTurns: z.number().int().min(1).max(30).optional(),
+  maxTurns: z.number().int().min(1).max(1_000).optional(),
   includeInterrupted: z.boolean().optional(),
 });
 

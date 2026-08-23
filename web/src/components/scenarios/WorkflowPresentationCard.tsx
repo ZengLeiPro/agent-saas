@@ -25,7 +25,11 @@ export function WorkflowPresentationCard({
       <div className="flex flex-wrap items-center gap-1.5">
         <Badge className="gap-1 bg-brand-50 font-normal text-brand-700 hover:bg-brand-50">
           <MousePointerClick className="size-3" />
-          {isHookScenario(scenario) ? scenario.triggerBadge : replayScript?.mode === "hero" ? "完整业务闭环" : "快速体验"}
+          {isHookScenario(scenario)
+            ? scenario.triggerBadge
+            : (!replayScript || replayScript.mode === "hero")
+              ? "完整业务闭环"
+              : "快速体验"}
         </Badge>
         <Badge variant="outline" className="font-normal">业务回放</Badge>
       </div>

@@ -1,7 +1,7 @@
 import { stat } from 'fs/promises';
 import { resolve as resolvePath } from 'path';
 import type { WebSocket } from 'ws';
-import { shouldSendWebBlock, shouldSendWebToolResult } from './displayFilter.js';
+import { projectArtifactDelivery, shouldSendWebBlock, shouldSendWebToolResult } from './displayFilter.js';
 import { chatLogger } from '../../utils/logger.js';
 import { parseVoiceMarkers } from '../../utils/voiceMarkers.js';
 import { FILE_MARKER_PATTERN, MEDIA_MARKER_CLEAN_RE } from '../../integrations/dingtalk/constants.js';
@@ -396,7 +396,12 @@ export async function handleWebChannelEvents(
         }
       },
 
-      onToolResult(toolId, toolName, result, isError) {
+      onToolResult(toolId, toolName, result, isError, presentation, metadata) {
+        const artifactDelivery = projectArtifactDelivery(toolName, metadata, result);
+        if (artifactDelivery) {
+          send(artifactDelivery);
+          return;
+        }
         if (shouldSendWebToolResult(toolName, config)) {
           send({
             type: 'tool_result',
@@ -404,6 +409,8 @@ export async function handleWebChannelEvents(
             toolName,
             result,
             ...(isError ? { isError: true } : {}),
+            ...(presentation ? { presentation } : {}),
+            ...(metadata ? { metadata } : {}),
           });
         }
       },

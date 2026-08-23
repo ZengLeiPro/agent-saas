@@ -31,7 +31,7 @@ describePg('Taskboard advisory promotion', () => {
     try {
       await pool.query(`DROP TABLE IF EXISTS
         ${store.integrationTriggerOutboxTable}, ${store.blockEpisodesTable}, ${store.cancellationOutboxTable},
-        ${store.resolutionsTable}, ${store.remediationAttemptsTable}, ${store.mergeOperationsTable},
+        ${store.remediationAttemptsTable}, ${store.mergeOperationsTable},
         ${store.mergeAuthorizationsTable}, ${store.integrationSourcesTable}, ${store.integrationLanesTable},
         ${store.attemptsTable}, ${store.changesTable}, ${store.membersTable}, ${store.continuationOutboxTable},
         ${store.executionOutboxTable}, ${store.executionsTable}, ${store.commentsTable}, ${store.tasksTable},
@@ -57,7 +57,7 @@ describePg('Taskboard advisory promotion', () => {
     expect(promoted).toMatchObject({ kind: 'delivery', status: 'todo' });
     expect(promoted).not.toHaveProperty('completedAt');
     const changes = await pool.query(
-      `SELECT type, payload FROM ${store.changesTable} WHERE task_id=$1 ORDER BY seq DESC LIMIT 1`,
+      `SELECT change_type AS type, payload FROM ${store.changesTable} WHERE task_id=$1 ORDER BY seq DESC LIMIT 1`,
       [advisory.id],
     );
     expect(changes.rows[0]).toMatchObject({

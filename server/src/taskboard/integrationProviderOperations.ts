@@ -130,12 +130,23 @@ export class IntegrationProviderOperationService {
     });
     if (!executing) return this.resolveExecuteRace(operationKey);
     try {
+      await this.fences.assertCurrent(executing);
+    } catch (error) {
+      return this.transitionOrReload(executing, 'executing', 'failed', {
+        error: errorMessage(error),
+        receipt: { outcome: 'not_applied', evidence: 'pre_execution_fence_rejected' },
+      });
+    }
+    try {
       const receipt = await executor(executing);
       await this.fences.assertCurrent(executing);
       return await this.transitionOrReload(executing, 'executing', 'succeeded', { receipt });
     } catch (error) {
       const definitive = options.isDefinitiveFailure?.(error) === true;
-      return this.transitionOrReload(executing, 'executing', definitive ? 'failed' : 'unknown', { error: errorMessage(error) });
+      return this.transitionOrReload(executing, 'executing', definitive ? 'failed' : 'unknown', {
+        error: errorMessage(error),
+        ...(definitive ? { receipt: { outcome: 'not_applied', evidence: 'executor_definitive_failure' } } : {}),
+      });
     }
   }
 
@@ -165,7 +176,7 @@ export class IntegrationProviderOperationService {
       }
       return this.transitionOrReload(current, 'unknown', 'failed', {
         error: result.detail,
-        receipt: result.evidence,
+        receipt: { ...result.evidence, outcome: 'not_applied' },
       });
     }
     if (result.status === 'mismatch') {

@@ -4,15 +4,17 @@ import { RefreshCw, TriangleAlert, UserPlus } from "lucide-react";
 import { MemberDebugModeSetting, TenantDebugModeSetting } from "@/components/Governance/DebugModeSettings";
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
 import { MembershipIdentityActions } from "@/components/OrganizationGovernance/MembershipIdentityActions";
+import { ContextCenterPage } from "@/components/ContextCenter";
 import { MemoryKnowledgeGovernance } from "@/components/OrganizationGovernance/MemoryKnowledgeGovernance";
 import { UserFormDialog, type UserFormData } from "@/components/UserManager/UserFormDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/contexts/AuthContext";
 import { useGovernanceRequest } from "@/hooks/useGovernanceRequest";
 import { governanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
 import { navigateGovernance } from "@/lib/urlSync";
-import { governanceAccessApi, governanceResourcesApi } from "@agent/shared/lib/governanceApi";
+import { contextCenterApi, governanceAccessApi, governanceResourcesApi } from "@agent/shared/lib/governanceApi";
 
 interface MembershipRecord {
   userId: string;
@@ -518,7 +520,20 @@ export function OrganizationCredentialsPage({ tenantId }: { tenantId: string }) 
 }
 
 export function OrganizationMemoryKnowledgePage({ tenantId }: { tenantId: string }) {
-  return <MemoryKnowledgeGovernance tenantId={tenantId} />;
+  return (
+    <Tabs defaultValue="governance" className="min-h-0">
+      <TabsList aria-label="记忆与知识区域">
+        <TabsTrigger value="governance">资源治理</TabsTrigger>
+        <TabsTrigger value="context-center">Context Center</TabsTrigger>
+      </TabsList>
+      <TabsContent value="governance" className="mt-4">
+        <MemoryKnowledgeGovernance tenantId={tenantId} />
+      </TabsContent>
+      <TabsContent value="context-center" className="mt-4 min-h-0">
+        <ContextCenterPage api={contextCenterApi} />
+      </TabsContent>
+    </Tabs>
+  );
 }
 
 export function OrganizationEnvironmentsPage({ tenantId }: { tenantId: string }) {

@@ -13,7 +13,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildInstructions,
@@ -23,6 +23,7 @@ import {
   composeSkillFilters,
   createRawRuntimeRunDispatch,
   resolveOrgAgentOverrides,
+  resolveOrgAgentSessionSnapshot,
 } from '../runtime/rawRuntimeRunDispatch.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
@@ -47,6 +48,7 @@ function orgAgentRecord(overrides: Partial<OrgAgentRecord> = {}): OrgAgentRecord
     allowedSkills: ['wain-kb'],
     audience: { exposure: 'all', usernames: [] },
     guardrail: { enabled: true, scopeDescription: '选型', rejectionMessage: '超纲了。', strictness: 'strict' },
+    runtime: structuredClone(DEFAULT_ORG_AGENT_RUNTIME_POLICY),
     enabled: true,
     createdAt: '2026-07-10T00:00:00Z',
     createdBy: 'wain_admin',
@@ -94,6 +96,41 @@ describe('resolveOrgAgentOverrides 三态', () => {
       { orgAgentStore: fakeOrgAgentStore([orgAgentRecord()]) }, 'oa-test-1', 'wain',
     );
     expect(result && 'agent' in result && result.agent.name).toBe('产品选型助手');
+  });
+});
+
+describe('org Agent Context assignment 会话 pin', () => {
+  it('只在新会话解析一次；既有会话保留旧 pin，不吸收后续扩权', async () => {
+    const resolveAssignments = vi.fn()
+      .mockResolvedValueOnce([{ collectionId: 'collection-a', assignmentVersion: 7, resourceType: 'org_knowledge' }])
+      .mockResolvedValueOnce([{ collectionId: 'collection-a', assignmentVersion: 8, resourceType: 'org_knowledge' }]);
+    const first = await resolveOrgAgentSessionSnapshot({
+      orgAgent: orgAgentRecord(), tenantId: 'wain', userId: 'user-a', agentId: 'oa-test-1',
+      resolveAssignments,
+    });
+    const resumed = await resolveOrgAgentSessionSnapshot({
+      orgAgent: orgAgentRecord(),
+      existingSession: { orgAgentSnapshot: first } as never,
+      tenantId: 'wain', userId: 'user-a', agentId: 'oa-test-1',
+      resolveAssignments,
+    });
+
+    expect(resolveAssignments).toHaveBeenCalledTimes(1);
+    expect(resumed).toEqual(first);
+    expect(resumed?.collectionAssignments).toEqual([{
+      collectionId: 'collection-a', assignmentVersion: 7, resourceType: 'org_knowledge',
+    }]);
+  });
+
+  it('存量无 pin 会话保持兼容，不在 resume 时偷偷创建新 pin', async () => {
+    const resolveAssignments = vi.fn();
+    await expect(resolveOrgAgentSessionSnapshot({
+      orgAgent: orgAgentRecord(),
+      existingSession: {} as never,
+      tenantId: 'wain', userId: 'user-a', agentId: 'oa-test-1',
+      resolveAssignments,
+    })).resolves.toBeUndefined();
+    expect(resolveAssignments).not.toHaveBeenCalled();
   });
 });
 

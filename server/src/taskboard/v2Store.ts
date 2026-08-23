@@ -2,18 +2,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
 import type {
-  TaskBoardChange,
-  TaskBoardComment,
-  TaskBoardExecutionContextInput,
-  TaskBoardExecutionContextResponse,
-  TaskBoardIntegrationBatchCreateInput,
-  TaskBoardIntegrationSource,
-  TaskBoardMember,
-  TaskBoardMemberPatchInput,
-  TaskBoardRepositoryConfig,
-  TaskBoardTask,
+  TaskBoardChange, TaskBoardComment, TaskBoardExecutionContextInput, TaskBoardExecutionContextResponse,
+  TaskBoardIntegrationBatchCreateInput, TaskBoardIntegrationSource, TaskBoardMember, TaskBoardMemberPatchInput,
+  TaskBoardRepositoryConfig, TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import { rowToBoard } from './boardFields.js';
+import { loadExecutionIntegrationCandidate } from './executionCandidateContext.js';
+import { assertIntegrationSourcesProviderReady } from './integrationSourceCiGate.js';
+import type { RepositoryProvider } from './repositoryProvider.js';
 import { rowToIntegrationSource } from './integrationSourceMapper.js';
 import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import { assertIntegrationV3RuntimeAvailable } from './integrationV3ActivationStore.js';
@@ -55,9 +51,10 @@ export interface TaskboardV2StoreOptions {
   mergeOperationsTable: string;
   blockEpisodesTable: string;
   integrationTriggerOutboxTable: string;
-  resolutionsTable: string;
   remediationAttemptsTable: string;
   cancellationOutboxTable: string;
+  repositoryProvider?: RepositoryProvider;
+  integrationV3RepositoryProvider?: RepositoryProvider;
   /** Optional for structural v2 hosts; PgTaskboardStore always supplies a fail-closed implementation. */
   probeIntegrationV3Repository?(input: {
     tenantId: string;
@@ -252,6 +249,8 @@ export async function createIntegrationBatch(
         );
       }
     }
+    const sourceProvider = workflowVersion === 3 ? options.integrationV3RepositoryProvider : options.repositoryProvider;
+    await assertIntegrationSourcesProviderReady(sourceProvider, repository, String(board.owner_user_id), sources.rows);
     const duplicate = await client.query(
       `SELECT s.delivery_task_id,s.provider_pull_request_id
          FROM ${options.integrationSourcesTable} s
@@ -370,9 +369,9 @@ export async function createIntegrationBatch(
           policy.revision, policy.execution?.mergeMethod ?? 'squash', JSON.stringify(policySnapshot), sourceSetDigest]);
       await client.query(
         `INSERT INTO ${tables.revisionsTable}
-          (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,source_set_digest,subject_digest,
-           policy_snapshot_digest,policy_revision,merge_method,work_round)
-         VALUES ($1,1,1,$2,$3,'source_seed',NULL,$4,$5,$6,$7,$8,0)`,
+          (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,composition_complete,
+           source_set_digest,subject_digest,policy_snapshot_digest,policy_revision,merge_method,work_round)
+         VALUES ($1,1,1,$2,$3,'source_seed',NULL,FALSE,$4,$5,$6,$7,$8,0)`,
         [candidateId, bootstrapBaseOid, bootstrapHeadOid, sourceSetDigest, subjectDigest,
           policySnapshotDigest, policy.revision, policy.execution?.mergeMethod ?? 'squash']);
       for (const frozen of frozenSources) {
@@ -621,31 +620,13 @@ export async function getExecutionContextV2(
       : undefined;
     const executions = include.has('executions')
       ? await client.query(
-        `SELECT e.*,r.outcome AS resolution_outcome,r.summary AS resolution_summary,
-                r.to_status AS task_status_after,r.ignored_reason,r.historical AS resolution_historical,
-                (r.execution_id IS NOT NULL) AS has_resolution,
-                legacy.candidate_count AS legacy_resolution_count,
-                legacy.valid_count AS legacy_resolution_valid_count
-           FROM ${options.executionsTable} e
-           LEFT JOIN ${options.resolutionsTable} r ON r.execution_id=e.id
-           LEFT JOIN LATERAL (
-             SELECT count(*)::int AS candidate_count,
-                    count(*) FILTER (WHERE NULLIF(c.payload->>'outcome','') IS NOT NULL
-                      AND NULLIF(c.payload->>'summary','') IS NOT NULL)::int AS valid_count
-               FROM ${options.changesTable} c
-              WHERE c.task_id=e.task_id AND c.change_type IN ('execution.resolved','execution.resolved.v2')
-                AND (c.payload->>'executionId'=e.id
-                  OR ((c.payload->>'executionId') IS NULL AND c.payload->>'runId'=e.run_id))
-           ) legacy ON true
+        `SELECT e.* FROM ${options.executionsTable} e
           WHERE e.task_id=$1 ORDER BY e.created_at,e.id`,
         [taskId],
       )
       : undefined;
     const sources = include.has('integrationSources') && loaded.task.kind === 'integration'
-      ? await client.query(
-        `SELECT * FROM ${options.integrationSourcesTable} WHERE integration_task_id=$1 ORDER BY source_order`,
-        [taskId],
-      )
+      ? await client.query(`SELECT * FROM ${options.integrationSourcesTable} WHERE integration_task_id=$1 ORDER BY source_order`, [taskId])
       : undefined;
     const policy = jsonObject(loaded.board.integration_policy) as { revision?: string } | undefined;
     return {
@@ -654,6 +635,8 @@ export async function getExecutionContextV2(
       ...(comments ? { comments: comments.rows.map(rowToComment) } : {}),
       ...(executions ? { executions: executions.rows.map(rowToExecution) } : {}),
       ...(sources ? { integrationSources: sources.rows.map(rowToIntegrationSource) } : {}),
+      ...(include.has('integrationSources') && loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3
+        ? { integrationCandidate: await loadExecutionIntegrationCandidate(client, options.integrationSourcesTable, taskId) } : {}),
       ...(page.length ? { changes: page.map(rowToChange) } : {}),
       asOfSeq,
       ...(page.length && changeRows.rows.length > limit
@@ -661,25 +644,6 @@ export async function getExecutionContextV2(
         : {}),
       hasMore: changeRows.rows.length > limit,
       contract,
-      receipt: {
-        ...(latestExecution ? {
-          schemaVersion: 2 as const,
-          runId: latestExecution.runId,
-          executionId: latestExecution.id,
-          attemptId: latestExecution.attemptId ?? latestExecution.id,
-          purpose: latestExecution.purpose,
-          workflowEpoch: String(latestExecutionResult.rows[0]?.workflow_epoch ?? '0'),
-          fenceEpoch: latestExecution.fenceEpoch ?? '0',
-        } : {}),
-        taskId,
-        taskVersion: loaded.task.version,
-        changeSeq: asOfSeq,
-        contractDigest: contract.digest,
-        policyRevision: policy?.revision ?? 'none',
-        ...(loaded.task.reviewedSubjectDigest
-          ? { subjectDigest: loaded.task.reviewedSubjectDigest }
-          : {}),
-      },
     };
   } finally {
     client.release();
@@ -701,7 +665,7 @@ export async function createExecutionCommentV2(
          JOIN ${options.tasksTable} t ON t.id=e.task_id
          JOIN ${options.boardsTable} b ON b.id=t.board_id
         WHERE e.run_id=$1 AND e.status IN ('queued','running','waiting_user','waiting_approval')
-          AND e.resolved_at IS NULL AND e.superseded_at IS NULL
+          AND e.transitioned_at IS NULL AND e.superseded_at IS NULL
           AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
         FOR UPDATE OF e`,
       [runId, identity.tenantId, identity.ownerUserId],

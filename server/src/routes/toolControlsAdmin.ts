@@ -84,9 +84,15 @@ function hydratePreservedSearchCredential(rawConfig: unknown, webTools: unknown)
 
 function pruneUnknownToolControls(toolControls: ToolControlsConfig): ToolControlsConfig {
   if (!toolControls) return toolControls;
+  const configuredTools = toolControls.tools ?? {};
   const knownTools = Object.fromEntries(
-    Object.entries(toolControls.tools ?? {}).filter(([toolId]) => PLATFORM_TOOL_CATALOG_BY_ID.has(toolId)),
+    Object.entries(configuredTools).filter(([toolId]) => PLATFORM_TOOL_CATALOG_BY_ID.has(toolId)),
   );
+  // CreateArtifact 合并进 Artifact 后保留显式禁用态；不迁移旧 descriptionOverride，
+  // 因为其中可能仍要求模型手写已退休的 fileCardMarker。
+  if (configuredTools.CreateArtifact?.enabled === false) {
+    knownTools.Artifact = { ...knownTools.Artifact, enabled: false };
+  }
   const next = { ...toolControls };
   if (Object.keys(knownTools).length > 0) next.tools = knownTools;
   else delete next.tools;
@@ -381,15 +387,19 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
     try {
       const configText = readFileSync(configPath, 'utf-8');
       const rawConfig = parseJsonc(configText);
+      // 管理端可能运行在蓝绿切换后的旧进程中：内存 config 未必包含其他进程
+      // 已落盘的 override。单工具 patch 必须以刚读到的磁盘快照为基线，否则
+      // 随后的保存会把不在旧内存里的工具恢复默认，重启后才暴露该丢失。
+      const persistedConfig = parseAppConfig(rawConfig);
       const mergedToolControls = mergeSingleToolPatch(
-        options.config.toolControls,
+        persistedConfig.toolControls,
         toolId,
         req.body ?? {},
       );
       nextSettings = validateToolSettingsUpdate(
         rawConfig,
         mergedToolControls,
-        options.config.webTools ?? undefined,
+        persistedConfig.webTools ?? undefined,
       );
       await options.validateToolSettingsConfig?.(nextSettings);
     } catch (error) {

@@ -85,20 +85,27 @@ describe('Integration v3 worker activation', () => {
 describe('Integration v3 board repository probe wiring', () => {
   it('combines repository-specific read with PAT push permission and full identity verification', async () => {
     let probe: ((input: { tenantId: string; ownerUserId: string; repository: TaskBoardRepositoryConfig }) => Promise<boolean>) | undefined;
-    const getReference = vi.fn(async () => ({ oid: 'a'.repeat(40), treeOid: 'b'.repeat(40) }));
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-      id: 123, full_name: 'acme/widget', permissions: { push: true },
-    }), { status: 200 })));
+    let reviewProvider: unknown;
+    vi.stubGlobal('fetch', vi.fn(async (url) => new Response(JSON.stringify(
+      String(url).includes('/git/ref/heads/main')
+        ? { ref: 'refs/heads/main', object: { sha: 'a'.repeat(40) } }
+        : String(url).includes('/git/commits/')
+          ? { sha: 'a'.repeat(40), tree: { sha: 'b'.repeat(40) } }
+          : { id: 123, full_name: 'acme/widget', permissions: { push: true } },
+    ), { status: 200 })));
     configureRuntimeIntegrationV3RepositoryAccess({
-      store: { setIntegrationV3RepositoryProbe: (value: typeof probe) => { probe = value; } } as never,
-      taskboardRepositoryProvider: { getReference } as never,
+      store: {
+        setIntegrationV3RepositoryProvider: (value: unknown) => { reviewProvider = value; },
+        setIntegrationV3RepositoryProbe: (value: typeof probe) => { probe = value; },
+      } as never,
       control: { enabled: true, githubTokenMode: 'personal_access_token' },
       resolvePersonalAccessToken: async () => 'pat',
     });
     await expect(probe?.({ tenantId: 'tenant-1', ownerUserId: 'owner-1', repository: {
       ...repository, repositoryId: 'github-id:123',
     } })).resolves.toBe(true);
-    expect(getReference).toHaveBeenCalledWith(expect.objectContaining({ owner: 'acme', name: 'widget' }), 'main', 'owner-1');
+    expect(reviewProvider).toBeDefined();
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/git/ref/heads/main'), expect.any(Object));
   });
 });
 
@@ -248,6 +255,7 @@ describe('production Integration v3 cleanup host', () => {
       findActiveCapabilityIds: async () => firstAttempt ? ['cap-1', 'cap-2'] : [],
       revokeCapability: async (id) => { revoked.push(id); },
       fenceCapabilities,
+      terminalizePreparedOperations: async () => 1,
       withRepositoryBranchLock: async (_lock, operation) => operation(),
       runGit,
     });
@@ -266,6 +274,7 @@ describe('production Integration v3 cleanup host', () => {
     expect(receipt).toMatchObject({ outcome: 'succeeded', actions: [
       { action: 'revoke_capabilities', status: 'succeeded' },
       { action: 'fence_capabilities', status: 'succeeded' },
+      { action: 'terminalize_prepared_operations', status: 'succeeded', target: '1' },
       { action: 'remove_candidate_worktree', status: 'succeeded', target: worktreePath },
       { action: 'source_pull_request', status: 'skipped', target: '101', reason: expect.stringContaining('does not authorize') },
       { action: 'source_pull_request', status: 'skipped', target: '102', reason: expect.stringContaining('does not authorize') },
@@ -283,7 +292,7 @@ describe('production Integration v3 cleanup host', () => {
     expect(runGit).toHaveBeenCalledTimes(2);
   });
 
-  it('fails closed with action receipts when capability revoke and worktree inspection fail', async () => {
+  it('fails closed without deleting the worktree when a cleanup safety barrier fails', async () => {
     const root = mkdtempSync(join(tmpdir(), 'integration-v3-cleanup-host-fail-')); roots.push(root);
     const mirrorRoot = join(root, 'mirrors');
     const repositoryPath = join(mirrorRoot, 'github_acme_widget');
@@ -291,6 +300,7 @@ describe('production Integration v3 cleanup host', () => {
     mkdirSync(repositoryPath, { recursive: true });
     mkdirSync(worktreePath, { recursive: true });
     const candidate = cleanupCandidate();
+    const runGit = vi.fn(async () => ({ exitCode: 0, stdout: ' M dirty.ts\n', stderr: '' }));
     const cleanup = createRuntimeIntegrationV3CleanupHost({
       controlledMirrorRoot: mirrorRoot,
       loadCurrent: async () => ({ candidate, revision: cleanupRevision() }),
@@ -298,8 +308,9 @@ describe('production Integration v3 cleanup host', () => {
       findActiveCapabilityIds: async () => ['cap-fail'],
       revokeCapability: async () => { throw new Error('database unavailable'); },
       fenceCapabilities: async () => 0,
+      terminalizePreparedOperations: async () => { throw new Error('prepared operation remained active'); },
       withRepositoryBranchLock: async (_lock, operation) => operation(),
-      runGit: async () => ({ exitCode: 0, stdout: ' M dirty.ts\n', stderr: '' }),
+      runGit,
     });
     const receipt = await cleanup({
       id: 'cleanup-2', leaseId: 'lease-1', kind: 'cleanup', candidateId: candidate.id,
@@ -308,8 +319,10 @@ describe('production Integration v3 cleanup host', () => {
     expect(receipt).toMatchObject({ outcome: 'failed', actions: expect.arrayContaining([
       expect.objectContaining({ action: 'revoke_capabilities', status: 'failed', error: expect.stringContaining('Failed to revoke 1') }),
       expect.objectContaining({ action: 'fence_capabilities', status: 'succeeded' }),
-      expect.objectContaining({ action: 'remove_candidate_worktree', status: 'failed', error: expect.stringContaining('dirty') }),
+      expect.objectContaining({ action: 'terminalize_prepared_operations', status: 'failed', error: expect.stringContaining('remained active') }),
+      expect.objectContaining({ action: 'remove_candidate_worktree', status: 'skipped', reason: expect.stringContaining('safety barrier') }),
     ]) });
+    expect(runGit).not.toHaveBeenCalled();
   });
 });
 
@@ -326,7 +339,7 @@ function cleanupCandidate(): TaskBoardIntegrationCandidate {
 function cleanupRevision(): TaskBoardIntegrationCandidateRevision {
   return {
     candidateId: 'candidate-1', revision: 1, digestVersion: 1, baseOid: 'base', headOid: 'head', treeOid: 'tree',
-    sourceSetDigest: 'sources', subjectDigest: 'subject', policySnapshotDigest: 'policy', policyRevision: 'policy-1',
+    compositionComplete: true, sourceSetDigest: 'sources', subjectDigest: 'subject', policySnapshotDigest: 'policy', policyRevision: 'policy-1',
     mergeMethod: 'squash', workRound: 0, createdAt: '2026-08-19T00:00:00.000Z',
   };
 }

@@ -11,6 +11,7 @@ import {
 } from './integrationPushGateway.js';
 import {
   IntegrationProviderOperationService,
+  integrationProviderOperationKey,
   type IntegrationProviderOperationRecord,
   type IntegrationProviderOperationState,
   type IntegrationProviderOperationStorageHost,
@@ -18,12 +19,14 @@ import {
 
 const A = 'a'.repeat(40);
 const B = 'b'.repeat(40);
+const C = 'c'.repeat(40);
 const TOKEN = 'github-secret-never-log';
 
 const binding: IntegrationPushCapabilityBinding = {
   tenantId: 'tenant-1', repositoryId: 'github-id:123', integrationTaskId: 'task-1',
   candidateId: 'candidate-1', revision: 2, executionId: 'execution-1',
-  exactRef: 'refs/heads/integration/task-1', expectedOldOid: A, laneEpoch: 3, workflowEpoch: 4,
+  exactRef: 'refs/heads/integration/task-1', expectedOldOid: A, expectedBaseOid: C,
+  laneEpoch: 3, workflowEpoch: 4,
 };
 
 class MemoryOperations implements IntegrationProviderOperationStorageHost {
@@ -46,9 +49,11 @@ class MemoryOperations implements IntegrationProviderOperationStorageHost {
 class FakeGit implements IntegrationPushGitRunner {
   calls: Array<{ args: string[]; env?: Record<string, string> }> = [];
   parentLine = `${B} ${A}`;
+  mergeBaseLine = `${'d'.repeat(40)}\n`;
   remoteLine = `${A}\t${binding.exactRef}\n`;
   failPush = false;
   failPushCount = 0;
+  failLsRemoteCount = 0;
   remoteLineAfterFailedPush?: string;
   constructor(private readonly root: string) {}
   async run(input: { cwd: string; args: string[]; env?: Record<string, string> }): Promise<{ stdout: string }> {
@@ -57,7 +62,14 @@ class FakeGit implements IntegrationPushGitRunner {
     if (input.args[0] === 'rev-parse') return { stdout: `${this.root}\n` };
     if (input.args[0] === 'cat-file') return { stdout: 'commit\n' };
     if (input.args[0] === 'rev-list') return { stdout: `${this.parentLine}\n` };
-    if (input.args[0] === 'ls-remote') return { stdout: this.remoteLine };
+    if (input.args[0] === 'merge-base') return { stdout: this.mergeBaseLine };
+    if (input.args[0] === 'ls-remote') {
+      if (this.failLsRemoteCount > 0) {
+        this.failLsRemoteCount -= 1;
+        throw new Error(`provider echoed ${TOKEN}`);
+      }
+      return { stdout: this.remoteLine };
+    }
     if (input.args[0] === 'push') {
       if (this.failPush || this.failPushCount > 0) {
         if (this.failPushCount > 0) this.failPushCount -= 1;
@@ -106,7 +118,7 @@ async function fixture(credential: IntegrationPushCredential | null = {
     tenantId: binding.tenantId, requesterUserId: 'owner-1', executionId: binding.executionId,
     candidateId: binding.candidateId, capabilityToken, commitOid,
   });
-  return { root, host, capabilityService, gateway, git, operationStorage, issue, push, disableTarget: () => { active = false; } };
+  return { root, host, capabilityService, gateway, git, operationStorage, operationService, issue, push, disableTarget: () => { active = false; } };
 }
 
 function exactPushInput() {
@@ -182,6 +194,30 @@ describe('IntegrationPushGateway', () => {
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 
+  it('allows a controlled rebase only onto the immutable base after real base divergence', async () => {
+    const f = await fixture();
+    try {
+      f.git.parentLine = `${B} ${binding.expectedBaseOid}`;
+      const issued = await f.issue();
+      await expect(f.push(issued.capabilityToken)).resolves.toMatchObject({ pushed: true, commitOid: B });
+      expect(f.git.calls.find((call) => call.args[0] === 'push')?.args).toContain(
+        `--force-with-lease=${binding.exactRef}:${binding.expectedOldOid}`,
+      );
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it('rejects a rebase rewrite when the immutable base is already an ancestor of the old head', async () => {
+    const f = await fixture();
+    try {
+      f.git.parentLine = `${B} ${binding.expectedBaseOid}`;
+      f.git.mergeBaseLine = `${binding.expectedBaseOid}\n`;
+      const issued = await f.issue();
+      await expect(f.push(issued.capabilityToken)).rejects.toMatchObject({ code: 'parent_mismatch' });
+      await expect(f.capabilityService.verify(issued.capabilityToken)).resolves.toMatchObject({ status: 'active' });
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(0);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
   it.each([
     ['arbitrary target owner', async (f: Awaited<ReturnType<typeof fixture>>, token: string) => f.gateway.push({
       tenantId: binding.tenantId, requesterUserId: 'attacker', executionId: binding.executionId,
@@ -210,6 +246,28 @@ describe('IntegrationPushGateway', () => {
       await expect(f.capabilityService.verify(merge.capabilityToken)).resolves.toMatchObject({ status: 'active' });
       f.git.parentLine = `${B} ${'d'.repeat(40)}`;
       await expect(f.push(merge.capabilityToken)).rejects.toMatchObject({ code: 'parent_mismatch' });
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it('retries transient exact-ref reads before the controlled push', async () => {
+    const f = await fixture();
+    try {
+      const issued = await f.issue();
+      f.git.failLsRemoteCount = 2;
+      await expect(f.push(issued.capabilityToken)).resolves.toMatchObject({ pushed: true, commitOid: B });
+      expect(f.git.calls.filter((call) => call.args[0] === 'ls-remote')).toHaveLength(3);
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(1);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it('reports exhausted exact-ref reads separately without consuming the capability', async () => {
+    const f = await fixture();
+    try {
+      const issued = await f.issue();
+      f.git.failLsRemoteCount = 3;
+      await expect(f.push(issued.capabilityToken)).rejects.toMatchObject({ code: 'remote_read_failed', retryable: true });
+      await expect(f.capabilityService.verify(issued.capabilityToken)).resolves.toMatchObject({ status: 'active' });
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(0);
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 
@@ -310,6 +368,30 @@ describe('IntegrationPushGateway', () => {
         expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(1);
       } finally { await rm(f.root, { recursive: true, force: true }); }
     }
+  });
+
+  it('reconciles a durable executing intent found before replay without issuing another push', async () => {
+    const f = await fixture();
+    const input = exactPushInput();
+    try {
+      const operationKey = integrationProviderOperationKey({
+        repositoryId: input.repositoryId, candidateId: input.candidateId,
+        candidateRevision: input.revision, kind: 'push_ref', target: `${input.exactRef}@${input.newOid}`,
+      });
+      const prepared = await f.operationService.prepare({
+        operationKey, kind: 'push_ref', repositoryId: input.repositoryId, fence: input.fence,
+        expected: { ref: input.exactRef, oldOid: input.expectedOldOid, newOid: input.newOid },
+        command: { ref: input.exactRef, oldOid: input.expectedOldOid, newOid: input.newOid },
+      });
+      await f.operationStorage.compareAndSet({ id: prepared.id, expectedState: 'prepared', nextState: 'executing', patch: { attemptCount: 1 } });
+      f.git.remoteLine = `${B}\t${binding.exactRef}\n`;
+
+      await expect(f.gateway.pushExact(input)).resolves.toBeUndefined();
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(0);
+      expect([...f.operationStorage.records.values()][0]).toMatchObject({
+        state: 'succeeded', receipt: { ref: binding.exactRef, oldOid: A, newOid: B, reconciled: true },
+      });
+    } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 
   it('does not reconcile or duplicate a concurrent in-flight push that wins between get and prepare', async () => {

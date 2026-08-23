@@ -38,6 +38,7 @@ describe('attachment upload hardening', () => {
     sessionCatalog?: Pick<SessionCatalog, 'get'>,
   ): Promise<string> {
     const app = express();
+    app.use(express.json());
     app.use((req, _res, next) => {
       req.user = USER;
       next();
@@ -74,6 +75,50 @@ describe('attachment upload hardening', () => {
     const response = await fetch(`${baseUrl}/api/upload?sessionId=other-session`, { method: 'POST' });
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({ error: '上传会话不属于当前用户' });
+    expect(manager.getActiveUploadCount()).toBe(0);
+  });
+
+  it('imports selected assets as staged attachments without browser re-upload', async () => {
+    const root = await createRoot();
+    const manager = new UploadManager({ agentCwd: root });
+    const userCwd = join(root, USER.tenantId, USER.sub);
+    await mkdir(join(userCwd, 'assets', '20260822'), { recursive: true });
+    await writeFile(join(userCwd, 'assets', '20260822', '方案.pdf'), 'asset-content');
+    const baseUrl = await startUploadServer(root, manager);
+
+    const response = await fetch(`${baseUrl}/api/upload/assets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ paths: ['assets/20260822/方案.pdf'] }),
+    });
+    const body = await response.json() as any;
+
+    expect(response.status).toBe(200);
+    expect(body.files).toHaveLength(1);
+    expect(body.files[0]).toMatchObject({
+      originalName: '方案.pdf',
+      mimeType: 'application/pdf',
+      isImage: false,
+    });
+    expect(await readFile(join(userCwd, body.files[0].relativePath), 'utf8')).toBe('asset-content');
+    expect(body.files[0].relativePath).toMatch(/^uploads\//);
+  });
+
+  it('rejects paths outside assets when importing library files', async () => {
+    const root = await createRoot();
+    const manager = new UploadManager({ agentCwd: root });
+    const userCwd = join(root, USER.tenantId, USER.sub);
+    await mkdir(join(userCwd, 'assets'), { recursive: true });
+    await writeFile(join(userCwd, 'secret.txt'), 'secret');
+    const baseUrl = await startUploadServer(root, manager);
+
+    const response = await fetch(`${baseUrl}/api/upload/assets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ paths: ['assets/../secret.txt'] }),
+    });
+
+    expect(response.status).toBe(400);
     expect(manager.getActiveUploadCount()).toBe(0);
   });
 

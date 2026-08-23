@@ -17,6 +17,7 @@ export interface ArtifactRecord {
   sizeBytes?: number;
   sha256?: string;
   createdAt: string;
+  deliveredAt?: string;
   metadata: Record<string, unknown>;
 }
 
@@ -86,7 +87,7 @@ export class OssArtifactBlobStore implements ArtifactBlobStore {
     const buffer = Buffer.isBuffer(input.data) ? input.data : Buffer.from(input.data);
     const sha256 = createHash('sha256').update(buffer).digest('hex');
     const extension = sanitizeExtension(input.extension);
-    const key = path.posix.join(this.prefix, sha256.slice(0, 2), `${sha256}${extension}`);
+    const key = path.posix.join(this.prefix, sha256.slice(0, 2), `${sha256}-${randomUUID()}${extension}`);
     const headers = input.contentType ? { 'Content-Type': input.contentType } : undefined;
     await this.client.put(key, buffer, headers ? { headers } : undefined);
     return {
@@ -146,7 +147,7 @@ export class LocalArtifactBlobStore implements ArtifactBlobStore {
     const buffer = Buffer.isBuffer(input.data) ? input.data : Buffer.from(input.data);
     const sha256 = createHash('sha256').update(buffer).digest('hex');
     const extension = sanitizeExtension(input.extension);
-    const relativePath = path.posix.join(sha256.slice(0, 2), `${sha256}${extension}`);
+    const relativePath = path.posix.join(sha256.slice(0, 2), `${sha256}-${randomUUID()}${extension}`);
     const absolutePath = this.resolveUri(`local://${relativePath}`);
     await fs.mkdir(path.dirname(absolutePath), { recursive: true });
     await fs.writeFile(absolutePath, buffer, { flag: 'wx' }).catch(async (err: unknown) => {
@@ -205,6 +206,8 @@ export interface ArtifactStore {
   listForSession(sessionId: string): Promise<ArtifactRecord[]>;
   listForSessions?(sessionIds: string[]): Promise<ArtifactRecord[]>;
   delete(artifactId: string): Promise<void>;
+  markDelivered(artifactId: string, deliveredAt: string): Promise<ArtifactRecord | null>;
+  countByUri(uri: string): Promise<number>;
   listOlderThan(cutoffIso: string, limit?: number): Promise<ArtifactRecord[]>;
 }
 
@@ -251,9 +254,20 @@ export class InMemoryArtifactStore implements ArtifactStore {
     this.artifacts.delete(artifactId);
   }
 
+  async markDelivered(artifactId: string, deliveredAt: string): Promise<ArtifactRecord | null> {
+    const record = this.artifacts.get(artifactId);
+    if (!record) return null;
+    record.deliveredAt ??= deliveredAt;
+    return { ...record, metadata: { ...record.metadata } };
+  }
+
+  async countByUri(uri: string): Promise<number> {
+    return [...this.artifacts.values()].filter(artifact => artifact.uri === uri).length;
+  }
+
   async listOlderThan(cutoffIso: string, limit = 100): Promise<ArtifactRecord[]> {
     return [...this.artifacts.values()]
-      .filter((artifact) => artifact.createdAt < cutoffIso)
+      .filter((artifact) => artifact.createdAt < cutoffIso && !artifact.deliveredAt)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .slice(0, Math.max(0, limit));
   }
@@ -292,9 +306,12 @@ export class PgArtifactStore implements ArtifactStore {
         size_bytes BIGINT,
         sha256 TEXT,
         created_at TIMESTAMPTZ NOT NULL,
+        delivered_at TIMESTAMPTZ,
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb
       )
     `);
+    // Existing installations predate durable delivery references.
+    await this.pool.query(`ALTER TABLE ${this.table} ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.table}_session_idx ON ${this.table} (session_id, created_at ASC)`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.table}_workspace_idx ON ${this.table} (workspace_id) WHERE workspace_id IS NOT NULL`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.table}_hand_idx ON ${this.table} (producing_hand_id) WHERE producing_hand_id IS NOT NULL`);
@@ -354,9 +371,28 @@ export class PgArtifactStore implements ArtifactStore {
     await this.pool.query(`DELETE FROM ${this.table} WHERE artifact_id = $1`, [artifactId]);
   }
 
+  async markDelivered(artifactId: string, deliveredAt: string): Promise<ArtifactRecord | null> {
+    const result = await this.pool.query<ArtifactRow>(
+      `UPDATE ${this.table}
+       SET delivered_at = COALESCE(delivered_at, $2::timestamptz)
+       WHERE artifact_id = $1
+       RETURNING *`,
+      [artifactId, deliveredAt],
+    );
+    return result.rows[0] ? rowToArtifact(result.rows[0]) : null;
+  }
+
+  async countByUri(uri: string): Promise<number> {
+    const result = await this.pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM ${this.table} WHERE uri = $1`,
+      [uri],
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
   async listOlderThan(cutoffIso: string, limit = 100): Promise<ArtifactRecord[]> {
     const result = await this.pool.query<ArtifactRow>(
-      `SELECT * FROM ${this.table} WHERE created_at < $1 ORDER BY created_at ASC LIMIT $2`,
+      `SELECT * FROM ${this.table} WHERE created_at < $1 AND delivered_at IS NULL ORDER BY created_at ASC LIMIT $2`,
       [cutoffIso, Math.min(Math.max(limit, 1), 1000)],
     );
     return result.rows.map(rowToArtifact);
@@ -374,6 +410,7 @@ interface ArtifactRow {
   size_bytes: string | number | null;
   sha256: string | null;
   created_at: Date | string;
+  delivered_at: Date | string | null;
   metadata: Record<string, unknown> | string;
 }
 
@@ -389,6 +426,9 @@ function rowToArtifact(row: ArtifactRow): ArtifactRecord {
     ...(row.size_bytes !== null && row.size_bytes !== undefined ? { sizeBytes: Number(row.size_bytes) } : {}),
     ...(row.sha256 ? { sha256: row.sha256 } : {}),
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : new Date(row.created_at).toISOString(),
+    ...(row.delivered_at ? {
+      deliveredAt: row.delivered_at instanceof Date ? row.delivered_at.toISOString() : new Date(row.delivered_at).toISOString(),
+    } : {}),
     metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) as Record<string, unknown> : row.metadata,
   };
 }

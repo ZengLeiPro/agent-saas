@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { AppRuntime } from '../app/runtime.js';
 import {
+  createAssignmentResourceResolver,
   createEntitlementResourceCatalogResolver,
   createEntitlementResourceResolver,
 } from '../app/runtimeAssignmentResourceResolver.js';
@@ -52,5 +53,23 @@ describe('runtime entitlement model resolver', () => {
 
     await expect(createEntitlementResourceCatalogResolver(runtime)('model')).resolves.toEqual({ status: 'unavailable' });
     await expect(createEntitlementResourceResolver(runtime)('model', 'group-a/model-1')).resolves.toEqual({ status: 'unavailable' });
+  });
+
+  it('org_knowledge assignment 只接受本租户 active Context collection，依赖缺失时 fail closed', async () => {
+    const runtime = {
+      config: {},
+      contextStore: {
+        listCollections: async (tenantId: string) => [
+          { tenantId, collectionId: 'collection-a', status: 'active' },
+          { tenantId, collectionId: 'collection-disabled', status: 'disabled' },
+        ],
+      },
+    } as unknown as AppRuntime;
+    const resolve = createAssignmentResourceResolver(runtime);
+    await expect(resolve('tenant-a', 'org_knowledge', 'collection-a')).resolves.toBe('valid');
+    await expect(resolve('tenant-a', 'org_knowledge', 'collection-disabled')).resolves.toBe('not_found');
+    await expect(createAssignmentResourceResolver({ config: {} } as AppRuntime)(
+      'tenant-a', 'org_knowledge', 'collection-a',
+    )).resolves.toBe('unavailable');
   });
 });

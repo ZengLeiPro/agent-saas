@@ -16,7 +16,7 @@ const sourceRow = {
 };
 const contextRow = {
   ...sourceRow, execution_id: 'execution-1', purpose: 'merge', execution_status: 'running',
-  resolved_at: null, superseded_at: null, integration_task_id_actual: 'integration-1',
+  transitioned_at: null, superseded_at: null, integration_task_id_actual: 'integration-1',
   integration_status: 'in_progress', tenant_id: 'tenant-1', owner_user_id: 'owner-1',
   repository: { provider: 'github', repositoryId: 'repo-1', owner: 'acme', name: 'repo', baseBranch: 'main', allowForkPullRequest: false },
   integration_policy: {
@@ -30,17 +30,35 @@ const contextRow = {
 const pull: RepositoryPullRequestSnapshot = {
   providerPullRequestId: '101', number: 101, state: 'open', draft: false,
   headRef: 'feature', headOid: 'head-1', baseRef: 'main', baseOid: 'base-1',
-  mergeable: true, requiredChecks: [{ name: 'ci', status: 'success' }], subjectDigest: 'digest-reviewed',
+  mergeable: true, requiredChecks: [{ name: 'ci', status: 'success' }], requiredChecksKnown: true,
+  subjectDigest: 'digest-reviewed',
 };
 const identity = { tenantId: 'tenant-1', ownerUserId: 'owner-1', username: 'owner' };
 
 function host(client: { query: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> }, provider?: RepositoryProvider) {
+  const guardedClient = {
+    ...client,
+    query: vi.fn(async (sql: string, values?: unknown[]) => {
+      if (sql.includes("change_type='pull_request.inspected'")) {
+        return { rows: [{ payload: {
+          receipt: {
+            executionId: 'execution-1', taskId: 'integration-1', sourceId: 'source-1',
+            providerPullRequestId: '101', headOid: 'head-1',
+          },
+          snapshot: pull,
+        } }] };
+      }
+      return (client.query as unknown as (
+        text: string, parameters?: unknown[],
+      ) => Promise<{ rows: Record<string, unknown>[] }>)(sql, values);
+    }),
+  };
   return {
-    pool: { connect: vi.fn(async () => client) }, boardsTable: 'boards', tasksTable: 'tasks',
+    pool: { connect: vi.fn(async () => guardedClient) }, boardsTable: 'boards', tasksTable: 'tasks',
     commentsTable: 'comments', executionsTable: 'executions', changesTable: 'changes',
     integrationLanesTable: 'lanes', integrationSourcesTable: 'sources', mergeAuthorizationsTable: 'auths',
     mergeOperationsTable: 'operations', blockEpisodesTable: 'blocks', remediationAttemptsTable: 'attempts',
-    resolutionsTable: 'resolutions', cancellationOutboxTable: 'cancellations', repositoryProvider: provider,
+    cancellationOutboxTable: 'cancellations', repositoryProvider: provider,
   } as unknown as Parameters<typeof mergeIntegrationSource>[0];
 }
 
@@ -78,6 +96,30 @@ describe('integration operation guards', () => {
     expect(statements.some((sql) => sql.includes('l.epoch=$8::bigint'))).toBe(true);
   });
 
+  it('rejects a stale merge when the source enters conflict resolution before operation preparation', async () => {
+    const statements: string[] = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('SELECT state, reviewed_subject_digest')) {
+          return { rows: [{ state: 'resolving_conflict', reviewed_subject_digest: 'digest-reviewed' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => pull),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(mergeIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_PROVIDER_GUARD_STALE' });
+    expect(statements.some((sql) => sql.includes('INSERT INTO operations'))).toBe(false);
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
   it('does not move the source pointer when a remediation task belongs to another source', async () => {
     const statements: string[] = [];
     const client = {
@@ -94,7 +136,7 @@ describe('integration operation guards', () => {
         }] };
         if (sql.includes('SELECT id AS execution_id')) return { rows: [{
           execution_id: 'execution-1', purpose: 'merge', execution_status: 'running',
-          resolved_at: null, superseded_at: null,
+          transitioned_at: null, superseded_at: null,
         }] };
         if (sql.includes('INSERT INTO attempts')) return { rows: [] };
         if (sql.includes('FROM attempts') && sql.includes('remediation_task_id=$1')) return { rows: [{
@@ -141,6 +183,233 @@ describe('integration operation guards', () => {
     expect(guardedUpdate).toContain('provider_receipt_id IS NULL');
   });
 
+  it('does not project Provider inspection over a source that already entered merging', async () => {
+    const statements: string[] = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        if (sql.includes('e.id AS execution_id')) return { rows: [{ ...contextRow, state: 'merging' }] };
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => pull),
+      inspectPullRequest: vi.fn(async () => ({
+        ...pull, repositoryId: 'repo-1', providerQueriedAt: '2026-08-22T12:00:00.000Z', workflowRuns: [],
+      })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(inspectIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .resolves.toMatchObject({ source: { state: 'merging' } });
+    expect(statements.some((sql) => sql.includes('UPDATE sources'))).toBe(false);
+  });
+
+  it('keeps a source waiting when inspection observes no checks', async () => {
+    const statements: string[] = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) {
+          return { rows: [{ ...sourceRow, state: 'waiting_retry' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => ({ ...pull, requiredChecks: [] })),
+      inspectPullRequest: vi.fn(async () => ({
+        ...pull, requiredChecks: [], repositoryId: 'repo-1',
+        providerQueriedAt: '2026-08-22T12:00:00.000Z', workflowRuns: [],
+      })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(inspectIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .resolves.toMatchObject({ source: { state: 'waiting_retry' } });
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('keeps a source waiting when Provider mergeability is unknown', async () => {
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) {
+          return { rows: [{ ...sourceRow, state: 'waiting_retry', last_error: 'Pull request mergeability is unknown' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => ({ ...pull, mergeable: null })),
+      inspectPullRequest: vi.fn(async () => ({
+        ...pull, mergeable: null, repositoryId: 'repo-1',
+        providerQueriedAt: '2026-08-22T12:00:00.000Z', workflowRuns: [],
+      })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(inspectIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .resolves.toMatchObject({ source: { state: 'waiting_retry' } });
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unknown merge isolated from inspection-driven remediation', async () => {
+    const statements: string[] = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        if (sql.includes('e.id AS execution_id')) return { rows: [{ ...contextRow, state: 'waiting_retry' }] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) return { rows: [] };
+        if (sql.includes('SELECT * FROM sources WHERE id=')) {
+          return { rows: [{ ...sourceRow, state: 'waiting_retry', last_error: 'Provider result is unknown; reconciliation required' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const conflicted = { ...pull, mergeable: false };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => conflicted),
+      inspectPullRequest: vi.fn(async () => ({
+        ...conflicted, repositoryId: 'repo-1', providerQueriedAt: '2026-08-22T12:00:00.000Z', workflowRuns: [],
+      })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(inspectIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .resolves.toMatchObject({ source: { state: 'waiting_retry' } });
+    const projection = statements.find((sql) => sql.includes('UPDATE sources') && sql.includes('SET state=$2'));
+    expect(projection).toContain("o.state IN ('prepared','executing','unknown')");
+  });
+
+  it('does not overwrite a concurrent conflict-resolution transition from a stale inspection', async () => {
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) return { rows: [] };
+        if (sql.includes('SELECT * FROM sources WHERE id=')) {
+          return { rows: [{ ...sourceRow, state: 'resolving_conflict' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => ({ ...pull, mergeable: null })),
+      inspectPullRequest: vi.fn(async () => ({
+        ...pull, mergeable: null, repositoryId: 'repo-1',
+        providerQueriedAt: '2026-08-22T12:00:00.000Z', workflowRuns: [],
+      })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(inspectIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .resolves.toMatchObject({ source: { state: 'resolving_conflict' } });
+  });
+
+  it('keeps a source waiting instead of requesting remediation when Provider checks are unavailable', async () => {
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) {
+          return { rows: [{ ...sourceRow, state: 'waiting_retry', last_error: 'Required checks are unavailable from Provider' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const unavailable = { ...pull, requiredChecksKnown: false, requiredChecks: [] };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => unavailable),
+      inspectPullRequest: vi.fn(async () => ({
+        ...unavailable, repositoryId: 'repo-1',
+        providerQueriedAt: '2026-08-22T12:00:00.000Z', workflowRuns: [],
+      })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(inspectIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .resolves.toMatchObject({ source: { state: 'waiting_retry' } });
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects merge before preparing an operation when no checks were observed', async () => {
+    const statements: string[] = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) {
+          return { rows: [{ ...sourceRow, state: 'waiting_retry' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => ({ ...pull, requiredChecks: [] })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(mergeIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_CHECKS_PENDING' });
+    expect(statements.some((sql) => sql.includes('INSERT INTO operations'))).toBe(false);
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown mergeability before preparing an operation or calling Provider merge', async () => {
+    const statements: string[] = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) {
+          return { rows: [{ ...sourceRow, state: 'waiting_retry' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => ({ ...pull, mergeable: null })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(mergeIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_MERGEABILITY_UNKNOWN' });
+    expect(statements.some((sql) => sql.includes('INSERT INTO operations'))).toBe(false);
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects merge as unavailable without preparing an operation or requesting remediation', async () => {
+    const statements: string[] = [];
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql);
+        if (sql.includes('e.id AS execution_id')) return { rows: [contextRow] };
+        if (sql.includes('UPDATE sources') && sql.includes('SET state=$2')) {
+          return { rows: [{ ...sourceRow, state: 'waiting_retry' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const provider: RepositoryProvider = {
+      getPullRequest: vi.fn(async () => ({ ...pull, requiredChecksKnown: false, requiredChecks: [] })),
+      mergePullRequest: vi.fn(),
+    };
+
+    await expect(mergeIntegrationSource(host(client, provider), identity, 'run-1', 'source-1'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_CI_UNAVAILABLE' });
+    expect(statements.some((sql) => sql.includes('INSERT INTO operations'))).toBe(false);
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
   it('required checks failure requests remediation without consuming a round', async () => {
     const statements: string[] = [];
     const client = {
@@ -160,6 +429,8 @@ describe('integration operation guards', () => {
       .rejects.toMatchObject({ code: 'TASKBOARD_CHECKS_FAILED' });
     const conflictUpdate = statements.find((sql) => sql.includes('UPDATE sources'));
     expect(conflictUpdate).toContain("SET state=$2, remediation_task_id=NULL");
+    expect(conflictUpdate).toContain('s.state=$4');
+    expect(conflictUpdate).toContain("o.state IN ('prepared','executing','unknown')");
     expect(conflictUpdate).not.toContain('remediation_count=remediation_count+1');
     expect(provider.mergePullRequest).not.toHaveBeenCalled();
   });
@@ -187,6 +458,8 @@ describe('integration operation guards', () => {
     const sourceUpdate = statements.findIndex((sql) => sql.includes("SET state='re_reviewing'"));
     expect(taskLock).toBeGreaterThanOrEqual(0);
     expect(sourceUpdate).toBeGreaterThan(taskLock);
+    expect(statements[sourceUpdate]).toContain('s.state=$2');
+    expect(statements[sourceUpdate]).toContain("o.state IN ('prepared','executing','unknown')");
   });
 
   it('revalidates review binding in Task -> Source -> Execution lock order', async () => {

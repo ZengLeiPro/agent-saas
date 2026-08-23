@@ -14,7 +14,7 @@ import type {
 
 export const STATUS_LABELS: Record<TaskBoardStatus, string> = {
   backlog: "需求池",
-  todo: "待实施",
+  todo: "待推进",
   in_progress: "实施中",
   in_review: "复核中",
   ready_to_merge: "待合并",
@@ -66,7 +66,7 @@ function timestamp(value: string | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-/** 需求池与待实施保留手动顺序，其余状态按最近更新时间倒序展示。 */
+/** 需求池与待推进保留手动顺序，其余状态按最近更新时间倒序展示。 */
 export function taskStatusUsesUpdatedTime(status: TaskBoardStatus): boolean {
   return UPDATED_TIME_SORT_STATUSES.has(status);
 }

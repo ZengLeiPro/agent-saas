@@ -46,7 +46,6 @@ import type { TaskboardService } from '../taskboard/types.js';
 import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import { MEMORY_CONSOLIDATION_DEFAULTS, type MemoryConsolidationResolvedConfig } from '../memory/consolidation/types.js';
 import { resolveTenantMemoryFeatureStatus } from '../memory/effectiveStatus.js';
-import { MemoryCommandToolProvider } from '../agent/memoryCommandToolProvider.js';
 import {
   FileSessionReadStateStore,
   PgSessionReadStateStore,
@@ -63,6 +62,7 @@ import {
   type ArtifactStore,
 } from '../runtime/artifactStore.js';
 import { ArtifactService } from '../runtime/artifactService.js';
+import { artifactContentAudit, artifactServiceLifecycleOptions, initializeArtifactShareService, initializeArtifactShareStore, type ArtifactShareService, type ArtifactShareStore } from './artifactRuntime.js';
 import { PgImageBlobStore, setImageBlobStore } from '../runtime/imageBlobStore.js';
 import {
   InMemorySessionShareStore,
@@ -231,6 +231,8 @@ import { setSessionMetaProjectionSink } from '../data/transcripts/meta.js';
 import { createAuthMiddleware } from '../auth/middleware.js';
 import { sanitizeUserOverrides } from '../security/extraDirs.js';
 import { initializeRuntimeGovernanceStores } from './runtimeGovernanceStores.js';
+import type { ContextStore } from '../context/store/index.js';
+import { createRuntimeMemoryContextTools } from './runtimeMemoryContextTools.js';
 import { initializeRuntimeGovernanceConnectors } from './runtimeGovernanceConnectors.js';
 import {
   initializeRuntimeGovernanceCredentials,
@@ -645,6 +647,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let feishuAuthFlowService: FeishuAuthFlowService | undefined;
   let artifactStore: ArtifactStore | undefined;
   let artifactService: ArtifactService | undefined;
+  let artifactShareStore: ArtifactShareStore | undefined;
+  let artifactShareService: ArtifactShareService | undefined;
   let sessionShareStore: SessionShareStore | undefined;
   let agentRuntimeProfileStore: AgentRuntimeProfileStore | undefined;
   let connectorDictionaryStore: ConnectorDictionaryStore | undefined;
@@ -653,7 +657,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let governanceAuditStore: GovernanceAuditStore | undefined;
   let membershipStore: PgMembershipStore | undefined;
   let entitlementStore: PgEntitlementStore | undefined;
-  let directoryGroupStore: PgDirectoryGroupStore | undefined; let oauthGrantStore: PgOAuthGrantStore | undefined; let assignmentStore: PgAssignmentStore | undefined;
+  let directoryGroupStore: PgDirectoryGroupStore | undefined; let oauthGrantStore: PgOAuthGrantStore | undefined; let assignmentStore: PgAssignmentStore | undefined; let contextStore: ContextStore | undefined;
   let credentialStore: PgCredentialStore | undefined;
   let connectorCatalogStore: PgConnectorCatalogStore | undefined;
   let environmentStore: PgEnvironmentStore | undefined;
@@ -742,7 +746,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       governanceAuditStore,
       membershipStore,
       entitlementStore,
-      directoryGroupStore, oauthGrantStore, assignmentStore,
+      directoryGroupStore, oauthGrantStore, assignmentStore, contextStore,
       credentialStore,
       connectorCatalogStore,
       environmentStore,
@@ -1138,6 +1142,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       orgAgentStore?.setPostPersistObserver(undefined);
       skillConfigStore?.setPostPersistObserver(undefined);
       await flushGovernanceShadowProjections?.();
+      await artifactShareStore?.close?.();
       await pgEventStore!.close();
     };
     serverLogger.info('Runtime EventStore initialized: backend=pg; durable RunStore + HandStore + RuntimeScheduler initialized');
@@ -1233,6 +1238,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     await sessionReadStateStore.init();
   }
   sessionShareStore ??= new InMemorySessionShareStore();
+  const pgRuntimeEventStore = config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore : undefined;
+  artifactShareStore ??= await initializeArtifactShareStore(pgEventStore && pgRuntimeEventStore ? { pool: pgEventStore.pool, connectionString: pgRuntimeEventStore.connectionString, tablePrefix: pgRuntimeEventStore.tablePrefix } : undefined);
   if (!agentRuntimeProfileStore) {
     agentRuntimeProfileStore = new InMemoryAgentRuntimeProfileStore();
     await agentRuntimeProfileStore.init();
@@ -1298,29 +1305,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     signingSecret: artifactConfig?.signedUrlSecret ?? config.auth?.jwtSecret,
     defaultReadUrlTtlSeconds: artifactConfig?.readUrlTtlSeconds,
     maxBlobBytes: artifactConfig?.maxBlobBytes,
+    ...artifactServiceLifecycleOptions(artifactShareStore, sessionCatalog),
     resolveSessionTenantId: async sessionId => (await sessionCatalog.get(sessionId))?.tenantId,
     authorizeContentAccess: contentAccessGrantStore
       ? input => contentAccessGrantStore!.authorize(input)
       : undefined,
-    auditContentAccess: governanceAuditStore
-      ? async input => {
-          await governanceAuditStore!.append({
-            correlationId: `artifact-read:${input.sessionId}:${randomUUID()}`,
-            actorType: 'user',
-            actorUserId: input.subjectUserId,
-            actorPersona: 'platform_admin',
-            actorTenantId: DEFAULT_TENANT_ID,
-            action: 'session.content.session_export',
-            targetType: 'session_artifact',
-            targetId: input.sessionId,
-            targetTenantId: input.tenantId,
-            purpose: 'incident content export',
-            result: 'succeeded',
-            metadata: { scope: input.scope },
-          });
-        }
-      : undefined,
+    auditContentAccess: artifactContentAudit(governanceAuditStore),
   });
+  artifactShareService = initializeArtifactShareService(artifactShareStore, artifactService, artifactConfig?.signedUrlSecret ?? config.auth?.jwtSecret, message => serverLogger.warn(message));
   if (artifactConfig?.retentionDays && enableSingletonWorkers) {
     const runArtifactGc = async () => {
       const result = await artifactService!.pruneExpiredArtifacts(artifactConfig.retentionDays!, 200);
@@ -1515,9 +1507,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     vault: secretVault,
     onError: (error) => serverLogger.warn(`Taskboard GitHub credential resolve failed: ${error.message}`),
   });
-  const configuredIntegrationV3Access = configureRuntimeIntegrationV3RepositoryAccess({ store: rawTaskboardStore, taskboardRepositoryProvider, control: config.integrationV3ControlPlane, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, resolvePersonalAccessToken: async ({ tenantId, ownerUserId }) => {
-    const user = userStore?.findById(ownerUserId); if (!user || user.disabled || user.tenantId !== tenantId) return undefined;
-    return resolveGithubToken({ connectionStore: connectorConnectionStore, vault: secretVault, governanceCredentialStore: credentialStore, onError: (error) => serverLogger.warn(`Integration PAT resolve failed: ${error.message}`) }, { userId: user.id, username: user.username, tenantId });
+  const configuredIntegrationV3Access = configureRuntimeIntegrationV3RepositoryAccess({ store: rawTaskboardStore, control: config.integrationV3ControlPlane, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, resolvePersonalAccessToken: async ({ tenantId, ownerUserId }) => {
+    const user = userStore?.findById(ownerUserId); if (!user || user.disabled || (tenantId && user.tenantId !== tenantId)) return undefined;
+    return resolveGithubToken({ connectionStore: connectorConnectionStore, vault: secretVault, governanceCredentialStore: credentialStore, onError: (error) => serverLogger.warn(`Integration PAT resolve failed: ${error.message}`) }, { userId: user.id, username: user.username, tenantId: user.tenantId });
   } });
   integrationV3RepositoryProvider = configuredIntegrationV3Access.repositoryProvider;
   const integrationV3PersonalAccessTokenResolver = configuredIntegrationV3Access.personalAccessTokenResolver;
@@ -1664,6 +1656,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   });
   const codexDeviceAuthService = new CodexDeviceAuthService(egressFetch);
   const titleModelAdapterFactory = createTitleModelAdapterFactory(codexCredentialManager, egressFetch);
+  const memoryContextTools = createRuntimeMemoryContextTools({
+    contextStore, assignments: assignmentStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, sessionCatalog,
+    memoryStore: memoryConsolidationStore, memoryIndexService: memoryIndexServiceRef.current, logger: { info: msg => serverLogger.info(msg), warn: msg => serverLogger.warn(msg) },
+  });
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
     agentCwd,
     sharedDir,
@@ -1686,18 +1682,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     memoryWriteDelegationEnabled: (tenantId) => tenantId
       ? getTenantMemoryFeatureStatus(tenantId).memoryWriteDelegationEnabled.effective
       : false,
-    ...(memoryConsolidationStore ? {
-      memoryControlProviders: [
-        new MemoryCommandToolProvider({
-          store: memoryConsolidationStore,
-          memoryIndexService: memoryIndexServiceRef.current,
-          logger: { info: (msg) => serverLogger.info(msg), warn: (msg) => serverLogger.warn(msg) },
-        }),
-      ],
-    } : {}),
-    agentStore,
-    orgAgentStore,
-    tenantStore,
+    ...memoryContextTools, agentStore, orgAgentStore, tenantStore,
     environmentStore,
     taskboard: { service: () => taskboardService, executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, integrationPush: () => integrationV3Runtime?.integrationPush, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
@@ -2746,7 +2731,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           `Taskboard runtime event projection failed: event=${event.type} error=${err instanceof Error ? err.message : String(err)}`,
         );
       });
-      if (event.type !== 'tenant_lifecycle_changed') runtimeWebPush.deliverRuntimeEvent(event);
+      if (event.type !== 'tenant_lifecycle_changed') await runtimeWebPush.deliverRuntimeEvent(event);
       if (event.type === 'tenant_lifecycle_changed') {
         await applyTenantLifecycleChange(event, {
           tenantStore,
@@ -2894,7 +2879,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   }
 
   if (agentDwsAccountStore) agentDwsRuntime = await createAgentDwsRuntime({
-    agentCwd, accountStore: agentDwsAccountStore, messageStore: agentDwsMessageStore, pgEventStore, pgRunStore,
+    agentCwd, accountStore: agentDwsAccountStore, assignmentStore, contextStore, messageStore: agentDwsMessageStore, pgEventStore, pgRunStore,
     tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix ?? 'agent_runtime' : 'agent_runtime', dispatch: finalDispatch, resolveDefaultModel: tenantId => defaultModelResolver?.(tenantId) ?? null,
     resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured),
     enableWorker: enableSchedulerWorker, logger: serverLogger,
@@ -3097,8 +3082,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     entitlementStore,
     directoryGroupStore,
     oauthGrantStore,
-    assignmentStore,
-    credentialStore, connectorCatalogStore,
+    assignmentStore, contextStore, credentialStore, connectorCatalogStore,
     environmentStore,
     agentResourceStore,
     skillGovernanceStore,
@@ -3132,6 +3116,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentRuntimeProfileStore,
     connectorDictionaryStore,
     artifactService,
+    artifactShareService,
+    artifactShareStore,
     sessionShareStore,
     artifactShutdown,
     clientDaemonGateway,

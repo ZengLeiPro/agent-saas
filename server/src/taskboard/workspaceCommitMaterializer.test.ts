@@ -188,6 +188,48 @@ describe('withMaterializedWorkspaceCommit', () => {
     await expect(readFile(join(temporaryRoot, 'repository.git', 'HEAD'), 'utf8')).rejects.toThrow();
   });
 
+  it('materializes a controlled rebase while retaining the diverged old head for exact lease checks', async () => {
+    const source = await repository();
+    const oldHeadOid = source.newOid;
+    await git(source.root, ['checkout', '--detach', source.oldOid]);
+    await writeFile(join(source.root, 'base.txt'), 'advanced base\n');
+    await git(source.root, ['add', 'base.txt']);
+    await git(source.root, ['commit', '-m', 'advanced base']);
+    const baseOid = await git(source.root, ['rev-parse', 'HEAD']);
+    await writeFile(join(source.root, 'file.txt'), 'rebased candidate\n');
+    await git(source.root, ['commit', '-am', 'rebased candidate']);
+    const commitOid = await git(source.root, ['rev-parse', 'HEAD']);
+
+    await expect(withMaterializedWorkspaceCommit({
+      workspaceRoot: source.root,
+      repositoryName: 'repository',
+      expectedOldOid: oldHeadOid,
+      expectedBaseOid: baseOid,
+      commitOid,
+    }, async ({ repositoryPath }) => {
+      expect(await git(repositoryPath, ['rev-parse', `${commitOid}^`])).toBe(baseOid);
+      expect(await git(repositoryPath, ['rev-parse', 'refs/taskboard/expected-old'])).toBe(oldHeadOid);
+      expect(await git(repositoryPath, ['merge-base', baseOid, oldHeadOid])).toBe(source.oldOid);
+    })).resolves.toBeUndefined();
+  });
+
+  it('rejects a rebase rewrite when the immutable base already belongs to the old head history', async () => {
+    const source = await repository();
+    await git(source.root, ['checkout', '--detach', source.oldOid]);
+    await writeFile(join(source.root, 'rewrite.txt'), 'rewrite\n');
+    await git(source.root, ['add', 'rewrite.txt']);
+    await git(source.root, ['commit', '-m', 'unnecessary rewrite']);
+    const commitOid = await git(source.root, ['rev-parse', 'HEAD']);
+
+    await expect(withMaterializedWorkspaceCommit({
+      workspaceRoot: source.root,
+      repositoryName: 'repository',
+      expectedOldOid: source.newOid,
+      expectedBaseOid: source.oldOid,
+      commitOid,
+    }, async () => undefined)).rejects.toMatchObject({ code: 'parent_mismatch' });
+  });
+
   it('resolves the authoritative repository below the shared workspace root', async () => {
     const source = await repository();
     const workspace = await mkdtemp(join(tmpdir(), 'workspace-root-'));

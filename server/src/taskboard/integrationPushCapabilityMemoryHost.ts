@@ -110,6 +110,7 @@ function sameBinding(left: IntegrationPushCapabilityBinding, right: IntegrationP
     && left.executionId === right.executionId
     && left.exactRef === right.exactRef
     && left.expectedOldOid === right.expectedOldOid
+    && left.expectedBaseOid === right.expectedBaseOid
     && left.laneEpoch === right.laneEpoch
     && left.workflowEpoch === right.workflowEpoch;
 }

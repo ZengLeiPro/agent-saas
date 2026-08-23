@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import type { RepositoryProvider } from '../taskboard/repositoryProvider.js';
 import type { TaskboardExecutionClaimInput, TaskboardIdentity } from '../taskboard/types.js';
+import { seedSuccessfulReviewCi } from './taskboardCiPgTestHelpers.js';
 
 const { Pool } = pg;
 const connectionString = process.env.TEST_DATABASE_URL?.trim();
@@ -71,7 +72,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
   it('required checks failure completes remediation review and resumes merge', async () => {
     let headOid = 'head-check-901';
     let subjectDigest = 'digest-check-901';
-    let checkStatus: 'failure' | 'success' = 'failure';
+    let checkStatus: 'failure' | 'success' = 'success';
     let mergeable = true;
     let mergeCalls = 0;
     const observedChecks: string[] = [];
@@ -81,7 +82,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
         return {
           providerPullRequestId, number: Number(providerPullRequestId), state: 'open', draft: false,
           headRef: 'feature/check-901', headOid, baseRef: 'main', baseOid: 'base-check-1', mergeable,
-          requiredChecks: [{ name: 'ci', status: checkStatus }], subjectDigest,
+          requiredChecks: [{ name: 'ci', status: checkStatus }], requiredChecksKnown: true, subjectDigest,
         };
       },
       mergePullRequest: async (_repository, input) => {
@@ -120,10 +121,12 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
         WHERE id=$1`,
       [delivery.id, headOid, subjectDigest],
     );
+    await seedSuccessfulReviewCi(pool, store, delivery.id, headOid);
     const integration = await store.createIntegrationBatch(identity, board.id, {
       deliveryTaskIds: [delivery.id], expectedBoardVersion: (await store.getBoard(identity, board.id)).version,
     });
     const source = (await store.listIntegrationSources(identity, integration.id))[0]!;
+    checkStatus = 'failure';
 
     const firstMergeExecutionId = randomUUID();
     const firstMergeRunId = `checks-merge-${firstMergeExecutionId}`;
@@ -131,15 +134,17 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       identity, integration.id,
       executionClaim(integration.id, integration.version, firstMergeExecutionId, firstMergeRunId, 'merge'),
     );
-    const firstMergeContext = await store.getExecutionContextV2(identity, integration.id, { runId: firstMergeRunId });
+    await store.inspectIntegrationSourceV2(identity, firstMergeRunId, source.id);
     await expect(store.mergeIntegrationSourceV2(identity, firstMergeRunId, source.id))
-      .rejects.toMatchObject({ code: 'TASKBOARD_CHECKS_FAILED' });
+      .rejects.toMatchObject({ code: 'TASKBOARD_SOURCE_NOT_MERGEABLE' });
+    const firstMergeContext = await store.getExecutionContextV2(identity, integration.id, { runId: firstMergeRunId });
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
       state: 'resolving_conflict', remediationCount: 0,
     });
     expect(await store.claimIntegrationDispatchCandidatesV2(10)).toHaveLength(0);
-    await store.resolveExecutionV2(identity, firstMergeRunId, {
-      outcome: 'progress', summary: 'Checks failure routed to remediation', receipt: firstMergeContext.receipt,
+    await store.createExecutionCommentV2(identity, firstMergeRunId, 'Protocol delivery');
+    await store.transitionExecutionV2(identity, firstMergeRunId, {
+      status: 'in_progress',
     });
     await store.completeExecution(firstMergeRunId, { status: 'succeeded', commentBody: 'Waiting for checks remediation' });
 
@@ -155,16 +160,19 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       executionClaim(recovery!.task.id, recovery!.task.version, remediationExecutionId, remediationRunId, 'work'),
     );
     headOid = 'head-check-901-fixed';
+    subjectDigest = 'digest-check-901-fixed';
+    checkStatus = 'success';
     await pool.query(
       `UPDATE ${store.tasksTable} SET head_oid=$2,version=version+1 WHERE id=$1`,
       [recovery!.task.id, headOid],
     );
+    await store.inspectExecutionPullRequestV2(identity, remediationRunId);
     const remediationContext = await store.getExecutionContextV2(identity, recovery!.task.id, {
       runId: remediationRunId,
     });
-    const remediationResolved = await store.resolveExecutionV2(identity, remediationRunId, {
-      outcome: 'ready_for_review', summary: 'Checks fixed with a new commit', evidence: ['checks rerun'],
-      receipt: remediationContext.receipt,
+    await store.createExecutionCommentV2(identity, remediationRunId, 'Protocol delivery');
+    const remediationResolved = await store.transitionExecutionV2(identity, remediationRunId, {
+      status: 'in_review',
     });
     expect(remediationResolved.status).toBe('in_review');
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
@@ -172,19 +180,18 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
     });
     await store.completeExecution(remediationRunId, { status: 'succeeded', commentBody: 'Remediation work delivered' });
 
-    subjectDigest = 'digest-check-901-fixed';
-    checkStatus = 'success';
     const reviewExecutionId = randomUUID();
     const reviewRunId = `checks-review-${reviewExecutionId}`;
     await store.claimExecution(
       identity, recovery!.task.id,
       executionClaim(recovery!.task.id, remediationResolved.version, reviewExecutionId, reviewRunId, 'review'),
     );
+    await store.inspectExecutionPullRequestV2(identity, reviewRunId);
     await store.recordReviewedExecutionSubjectV2(identity, reviewRunId);
     const reviewContext = await store.getExecutionContextV2(identity, recovery!.task.id, { runId: reviewRunId });
-    const approved = await store.resolveExecutionV2(identity, reviewRunId, {
-      outcome: 'approved', summary: 'New PR subject and green checks reviewed', evidence: ['ci=success'],
-      receipt: reviewContext.receipt,
+    await store.createExecutionCommentV2(identity, reviewRunId, 'Protocol delivery');
+    const approved = await store.transitionExecutionV2(identity, reviewRunId, {
+      status: 'ready_to_merge',
     });
     expect(approved.status).toBe('done');
     await store.completeExecution(reviewRunId, { status: 'succeeded', commentBody: 'Checks remediation approved' });
@@ -201,6 +208,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       identity, integration.id,
       executionClaim(integration.id, resumed!.task.version, resumedExecutionId, resumedRunId, 'merge'),
     );
+    await store.inspectIntegrationSourceV2(identity, resumedRunId, source.id);
     const merged = await store.mergeIntegrationSourceV2(identity, resumedRunId, source.id);
     expect(merged.source).toMatchObject({ state: 'merged', mergedCommitOid: 'merge-check-901' });
     expect(mergeCalls).toBe(1);
@@ -211,11 +219,12 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
   it('requires two actual remediation commits before exhausting repeated checks failures', async () => {
     let headOid = 'head-check-902';
     let subjectDigest = 'digest-check-902';
+    let checkStatus: 'failure' | 'success' = 'success';
     const provider: RepositoryProvider = {
       getPullRequest: async (_repository, providerPullRequestId) => ({
         providerPullRequestId, number: Number(providerPullRequestId), state: 'open', draft: false,
         headRef: 'feature/check-902', headOid, baseRef: 'main', baseOid: 'base-check-2', mergeable: true,
-        requiredChecks: [{ name: 'ci', status: 'failure' }], subjectDigest,
+        requiredChecks: [{ name: 'ci', status: checkStatus }], requiredChecksKnown: true, subjectDigest,
       }),
       mergePullRequest: async () => { throw new Error('checks failure must block provider merge'); },
     };
@@ -247,10 +256,12 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
         WHERE id=$1`,
       [delivery.id, headOid, subjectDigest],
     );
+    await seedSuccessfulReviewCi(pool, store, delivery.id, headOid);
     const integration = await store.createIntegrationBatch(identity, board.id, {
       deliveryTaskIds: [delivery.id], expectedBoardVersion: (await store.getBoard(identity, board.id)).version,
     });
     const source = (await store.listIntegrationSources(identity, integration.id))[0]!;
+    checkStatus = 'failure';
 
     for (let round = 1; round <= 2; round += 1) {
       const mergeCandidate = (await store.claimIntegrationDispatchCandidatesV2(10))
@@ -262,14 +273,16 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
         identity, integration.id,
         executionClaim(integration.id, mergeCandidate!.task.version, mergeExecutionId, mergeRunId, 'merge'),
       );
-      const mergeContext = await store.getExecutionContextV2(identity, integration.id, { runId: mergeRunId });
+      await store.inspectIntegrationSourceV2(identity, mergeRunId, source.id);
       await expect(store.mergeIntegrationSourceV2(identity, mergeRunId, source.id))
-        .rejects.toMatchObject({ code: 'TASKBOARD_CHECKS_FAILED' });
+        .rejects.toMatchObject({ code: 'TASKBOARD_SOURCE_NOT_MERGEABLE' });
+      const mergeContext = await store.getExecutionContextV2(identity, integration.id, { runId: mergeRunId });
       expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
         state: 'resolving_conflict', remediationCount: round - 1,
       });
-      await store.resolveExecutionV2(identity, mergeRunId, {
-        outcome: 'progress', summary: `Checks failure round ${round}`, receipt: mergeContext.receipt,
+      await store.createExecutionCommentV2(identity, mergeRunId, 'Protocol delivery');
+      await store.transitionExecutionV2(identity, mergeRunId, {
+        status: 'in_progress',
       });
       await store.completeExecution(mergeRunId, { status: 'succeeded', commentBody: 'Route to remediation' });
 
@@ -285,40 +298,44 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
         executionClaim(recovery!.task.id, recovery!.task.version, remediationExecutionId, remediationRunId, 'work'),
       );
       headOid = `head-check-902-fixed-${round}`;
+      subjectDigest = `digest-check-902-fixed-${round}`;
+      checkStatus = 'success';
       await pool.query(
         `UPDATE ${store.tasksTable} SET head_oid=$2,version=version+1 WHERE id=$1`,
         [recovery!.task.id, headOid],
       );
+      await store.inspectExecutionPullRequestV2(identity, remediationRunId);
       const remediationContext = await store.getExecutionContextV2(identity, recovery!.task.id, {
         runId: remediationRunId,
       });
-      const remediationResolved = await store.resolveExecutionV2(identity, remediationRunId, {
-        outcome: 'ready_for_review', summary: `Checks remediation commit ${round}`, evidence: ['ci rerun'],
-        receipt: remediationContext.receipt,
+      await store.createExecutionCommentV2(identity, remediationRunId, 'Protocol delivery');
+      const remediationResolved = await store.transitionExecutionV2(identity, remediationRunId, {
+        status: 'in_review',
       });
       expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
         state: 'waiting_remediation', remediationCount: round,
       });
       await store.completeExecution(remediationRunId, { status: 'succeeded', commentBody: 'Work complete' });
 
-      subjectDigest = `digest-check-902-fixed-${round}`;
       const reviewExecutionId = randomUUID();
       const reviewRunId = `checks-exhaustion-review-${round}-${reviewExecutionId}`;
       await store.claimExecution(
         identity, recovery!.task.id,
         executionClaim(recovery!.task.id, remediationResolved.version, reviewExecutionId, reviewRunId, 'review'),
       );
+      await store.inspectExecutionPullRequestV2(identity, reviewRunId);
       await store.recordReviewedExecutionSubjectV2(identity, reviewRunId);
       const reviewContext = await store.getExecutionContextV2(identity, recovery!.task.id, { runId: reviewRunId });
-      const approved = await store.resolveExecutionV2(identity, reviewRunId, {
-        outcome: 'approved', summary: `Checks review ${round}`, evidence: ['subject refreshed'],
-        receipt: reviewContext.receipt,
+      await store.createExecutionCommentV2(identity, reviewRunId, 'Protocol delivery');
+      const approved = await store.transitionExecutionV2(identity, reviewRunId, {
+        status: 'ready_to_merge',
       });
       expect(approved.status).toBe('done');
       await store.completeExecution(reviewRunId, { status: 'succeeded', commentBody: 'Review complete' });
       expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
         state: 'pending', remediationCount: round,
       });
+      checkStatus = 'failure';
     }
 
     const exhaustedCandidate = (await store.claimIntegrationDispatchCandidatesV2(10))
@@ -330,14 +347,16 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       identity, integration.id,
       executionClaim(integration.id, exhaustedCandidate!.task.version, exhaustedExecutionId, exhaustedRunId, 'merge'),
     );
-    const exhaustedContext = await store.getExecutionContextV2(identity, integration.id, { runId: exhaustedRunId });
+    await store.inspectIntegrationSourceV2(identity, exhaustedRunId, source.id);
     await expect(store.mergeIntegrationSourceV2(identity, exhaustedRunId, source.id))
-      .rejects.toMatchObject({ code: 'TASKBOARD_REMEDIATION_EXHAUSTED' });
+      .rejects.toMatchObject({ code: 'TASKBOARD_SOURCE_NOT_MERGEABLE' });
+    const exhaustedContext = await store.getExecutionContextV2(identity, integration.id, { runId: exhaustedRunId });
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
       state: 'needs_human', remediationCount: 2,
     });
-    await store.resolveExecutionV2(identity, exhaustedRunId, {
-      outcome: 'needs_human', summary: 'Two actual checks remediation rounds exhausted', receipt: exhaustedContext.receipt,
+    await store.createExecutionCommentV2(identity, exhaustedRunId, 'Protocol delivery');
+    await store.transitionExecutionV2(identity, exhaustedRunId, {
+      status: 'blocked',
     });
     await store.completeExecution(exhaustedRunId, { status: 'succeeded', commentBody: 'Human intervention required' });
     const remaining = await store.claimIntegrationDispatchCandidatesV2(10);

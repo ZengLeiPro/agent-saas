@@ -15,6 +15,8 @@ import type { resolveTenantMemoryFeatureStatus } from '../memory/effectiveStatus
 import type { SessionReadStateStore } from '../data/sessionReadStateStore.js';
 import type { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import type { ArtifactService } from '../runtime/artifactService.js';
+import type { ArtifactShareService } from '../runtime/artifactShareService.js';
+import type { ArtifactShareStore } from '../runtime/artifactShareStore.js';
 import type { SessionShareStore } from '../data/sessionShares/store.js';
 import type { RuntimePerformanceWorkloadSnapshot } from '../runtime/runtimePerformanceSampler.js';
 import type { RuntimeSchedulerCapacityController } from '../runtime/runtimeSchedulerConfigStore.js';
@@ -42,6 +44,7 @@ import type { PgEntitlementStore } from '../data/entitlements/index.js';
 import type { PgDirectoryGroupStore } from '../data/directoryGroups/index.js';
 import type { PgOAuthGrantStore } from '../data/oauthGrants/index.js';
 import type { PgAssignmentStore } from '../data/assignments/index.js';
+import type { ContextStore } from '../context/store/index.js';
 import type { PgCredentialStore } from '../data/credentials/index.js';
 import type { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
 import type { PgEnvironmentStore } from '../data/environments/index.js';
@@ -282,6 +285,8 @@ export interface AppRuntime {
   oauthGrantStore?: PgOAuthGrantStore;
   /** 组织资源 Assignment 与个人 Preference 独立事实模型；M1 仅影子写与回填。 */
   assignmentStore?: PgAssignmentStore;
+  /** PostgreSQL Context Plane data store；仅 PG runtime 装配。 */
+  contextStore?: ContextStore;
   /** P2 Credential 治理事实模型；影子回填 legacy connector 连接，仅读取不拦截。 */
   credentialStore?: PgCredentialStore;
   /** 版本化 Connector Catalog；与 Tool Presentation Dictionary 严格分离。 */
@@ -365,6 +370,10 @@ export interface AppRuntime {
   connectorDictionaryStore: ConnectorDictionaryStore;
   /** Artifact metadata/blob service for runtime-produced artifacts. */
   artifactService?: ArtifactService;
+  /** Owner-managed public Artifact sharing; absent when no persistent signing secret exists. */
+  artifactShareService?: ArtifactShareService;
+  /** Share persistence also drives GC pins and session-delete revocation. */
+  artifactShareStore?: ArtifactShareStore;
   /** 会话只读分享存储。 */
   sessionShareStore: SessionShareStore;
   /** Artifact GC timer cleanup. */

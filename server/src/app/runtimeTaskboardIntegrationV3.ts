@@ -35,9 +35,10 @@ import {
 import {
   executeIntegrationV3Cleanup,
   PostgresIntegrationV3ComposeHost,
+  terminalizeIntegrationV3PreparedOperations,
   PostgresIntegrationV3WorkerHost,
 } from '../taskboard/integrationV3WorkerPostgres.js';
-import { canonicalGithubRepositoryUrl, isCanonicalGithubRepositoryRemote, type RepositoryProvider } from '../taskboard/repositoryProvider.js';
+import { canonicalGithubRepositoryUrl, GithubRepositoryProvider, isCanonicalGithubRepositoryRemote, type RepositoryProvider } from '../taskboard/repositoryProvider.js';
 import { provisionIntegrationV3RepositoryMirror } from '../taskboard/integrationV3RepositoryProvisioning.js';
 import { runSafeServerGit, runSafeServerGitOrThrow } from '../taskboard/safeServerGitRunner.js';
 import { createIntegrationV3GithubAppRepositoryProvider, RepositoryProviderIntegrationEngineV3Adapter } from '../taskboard/repositoryRuntime.js';
@@ -129,6 +130,7 @@ export interface RuntimeIntegrationV3CleanupHostOptions {
     workflowEpoch: number;
     enabled: false;
   }, reason: string): Promise<number>;
+  terminalizePreparedOperations(candidateId: string, reason: string): Promise<number>;
   withRepositoryBranchLock<T>(
     lock: { repositoryPath: string; branch: string }, operation: () => Promise<T>,
   ): Promise<T>;
@@ -217,6 +219,7 @@ export function createRuntimeIntegrationV3CleanupHost(
           enabled: false,
         }, reason);
       },
+      terminalizePreparedOperations: () => options.terminalizePreparedOperations(current.candidate.id, reason),
       applySourcePullRequest: async () => {
         throw new Error('Frozen integration policy does not authorize source pull request mutation');
       },
@@ -244,10 +247,9 @@ interface StartRuntimeTaskboardIntegrationV3Options {
 
 export function configureRuntimeIntegrationV3RepositoryAccess(input: {
   store?: PgTaskboardStore;
-  taskboardRepositoryProvider?: RepositoryProvider;
   control?: { enabled: boolean; githubTokenMode: 'github_app'|'personal_access_token'; githubAppInstallationId?: number };
   githubAppInstallationTokenProvider?: GithubAppInstallationTokenProvider;
-  resolvePersonalAccessToken(input: { tenantId: string; ownerUserId: string }): Promise<string | undefined>;
+  resolvePersonalAccessToken(input: { tenantId?: string; ownerUserId: string }): Promise<string | undefined>;
 }) {
   const personalAccessTokenResolver = createPersonalAccessTokenIntegrationPushTokenResolver({
     resolveToken: input.resolvePersonalAccessToken,
@@ -259,13 +261,17 @@ export function configureRuntimeIntegrationV3RepositoryAccess(input: {
       installationId: input.control.githubAppInstallationId,
       onError: (error) => serverLogger.warn(`Integration App repository probe failed: ${error.message}`),
     }) : undefined;
+  const personalAccessTokenRepositoryProvider = new GithubRepositoryProvider({
+    resolveToken: async (_repository, ownerUserId) => input.resolvePersonalAccessToken({ ownerUserId }),
+  });
   const repositoryProvider = input.control?.enabled !== true ? undefined
-    : input.control.githubTokenMode === 'personal_access_token' ? input.taskboardRepositoryProvider
+    : input.control.githubTokenMode === 'personal_access_token' ? personalAccessTokenRepositoryProvider
       : input.githubAppInstallationTokenProvider && input.control.githubAppInstallationId
         ? createIntegrationV3GithubAppRepositoryProvider({
           tokenProvider: input.githubAppInstallationTokenProvider, installationId: input.control.githubAppInstallationId,
         }) : undefined;
   const credentialResolver = input.control?.githubTokenMode === 'personal_access_token' ? personalAccessTokenResolver : appTokenResolver;
+  input.store?.setIntegrationV3RepositoryProvider(repositoryProvider);
   if (input.control?.enabled && input.store) input.store.setIntegrationV3RepositoryProbe(async ({ tenantId, ownerUserId, repository }) => {
     if (!repositoryProvider?.getReference || !credentialResolver || !repository.baseBranch) return false;
     await repositoryProvider.getReference(repository, repository.baseBranch, ownerUserId);
@@ -323,7 +329,8 @@ export function startRuntimeTaskboardIntegrationV3(
 
   const candidateHost = new PostgresIntegrationEngineV3CandidateHost(pgOptions);
   const operationStorage = new PostgresIntegrationProviderOperationStorage({
-    pool: store.pool, providerOperationsTable: tables.providerOperationsTable,
+    pool: store.pool, candidatesTable: tables.candidatesTable,
+    providerOperationsTable: tables.providerOperationsTable,
   });
   const operationService = new IntegrationProviderOperationService(
     operationStorage, new PostgresIntegrationProviderFenceHost(pgOptions),
@@ -480,6 +487,9 @@ export function startRuntimeTaskboardIntegrationV3(
       },
       revokeCapability: (capabilityId, reason) => capabilityService.revoke(capabilityId, reason),
       fenceCapabilities: (fence, reason) => capabilityService.fence(fence, reason),
+      terminalizePreparedOperations: (candidateId, reason) => terminalizeIntegrationV3PreparedOperations({
+        pool: store.pool, providerOperationsTable: tables.providerOperationsTable, candidateId, reason,
+      }),
       withRepositoryBranchLock: (lock, operation) => composeHost.withRepositoryBranchLock(lock, operation),
       runGit,
     }),
@@ -493,7 +503,6 @@ export function startRuntimeTaskboardIntegrationV3(
     tasksTable: store.tasksTable,
     boardsTable: store.boardsTable,
     executionsTable: store.executionsTable,
-    resolutionsTable: store.resolutionsTable,
     requestsOutboxTable: tables.requestsOutboxTable,
     providerOperationsTable: tables.providerOperationsTable,
     resolvePaths: async (repository, candidateId, identity) => {

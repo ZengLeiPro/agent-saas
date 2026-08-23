@@ -16,7 +16,6 @@ interface TaskboardV2SchemaOptions {
   mergeOperationsTable: string;
   blockEpisodesTable: string;
   integrationTriggerOutboxTable: string;
-  resolutionsTable: string;
   remediationAttemptsTable: string;
   cancellationOutboxTable: string;
 }
@@ -204,70 +203,10 @@ export async function runTaskboardV2Schema(
     ALTER TABLE ${options.tasksTable} ADD COLUMN IF NOT EXISTS workflow_epoch BIGINT NOT NULL DEFAULT 0;
     ALTER TABLE ${options.tasksTable} ADD COLUMN IF NOT EXISTS next_action TEXT;
     ALTER TABLE ${options.tasksTable} ADD COLUMN IF NOT EXISTS next_action_revision BIGINT NOT NULL DEFAULT 0;
-    ALTER TABLE ${options.executionsTable} ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+    ALTER TABLE ${options.executionsTable} ADD COLUMN IF NOT EXISTS transitioned_at TIMESTAMPTZ;
     ALTER TABLE ${options.executionsTable} ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMPTZ;
     ALTER TABLE ${options.executionsTable} ADD COLUMN IF NOT EXISTS fence_epoch BIGINT NOT NULL DEFAULT 0;
     ALTER TABLE ${options.executionsTable} ADD COLUMN IF NOT EXISTS terminal_reason_code TEXT;
-    ALTER TABLE ${options.executionsTable} ADD COLUMN IF NOT EXISTS resolution_id TEXT;
-  `);
-  await client.query(`
-    CREATE TABLE IF NOT EXISTS ${options.resolutionsTable} (
-      execution_id TEXT PRIMARY KEY REFERENCES ${options.executionsTable}(id) ON DELETE CASCADE,
-      attempt_id TEXT NOT NULL,
-      resolution_id TEXT NOT NULL UNIQUE,
-      payload_digest TEXT NOT NULL,
-      outcome TEXT NOT NULL,
-      summary TEXT NOT NULL,
-      evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
-      receipt JSONB NOT NULL,
-      subject_snapshot JSONB,
-      from_status TEXT NOT NULL,
-      to_status TEXT,
-      from_version INTEGER NOT NULL,
-      to_version INTEGER,
-      applied BOOLEAN NOT NULL,
-      ignored_reason TEXT,
-      resolved_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-  `);
-  await client.query(`
-    ALTER TABLE ${options.resolutionsTable} ADD COLUMN IF NOT EXISTS historical BOOLEAN NOT NULL DEFAULT false
-  `);
-  await client.query(`
-    WITH legacy AS (
-      SELECT e.id AS execution_id,COALESCE(e.attempt_id,e.id) AS attempt_id,
-             e.task_id,c.seq,c.payload,c.created_at,t.status,t.version,
-             count(*) OVER (PARTITION BY e.id) AS candidate_count
-        FROM ${options.executionsTable} e
-        JOIN ${options.tasksTable} t ON t.id=e.task_id
-        JOIN ${options.changesTable} c ON c.task_id=e.task_id
-       WHERE c.change_type IN ('execution.resolved','execution.resolved.v2')
-         AND (
-           c.payload->>'executionId'=e.id
-           OR ((c.payload->>'executionId') IS NULL AND c.payload->>'runId'=e.run_id)
-         )
-    ), valid AS (
-      SELECT * FROM legacy
-       WHERE candidate_count=1
-         AND NULLIF(payload->>'outcome','') IS NOT NULL
-         AND NULLIF(payload->>'summary','') IS NOT NULL
-    ), inserted AS (
-      INSERT INTO ${options.resolutionsTable}
-        (execution_id,attempt_id,resolution_id,payload_digest,outcome,summary,evidence,receipt,
-         subject_snapshot,from_status,to_status,from_version,to_version,applied,ignored_reason,resolved_at,historical)
-      SELECT execution_id,attempt_id,'historical:' || md5(execution_id || ':' || seq::text),
-             md5(payload::text),payload->>'outcome',payload->>'summary',
-             CASE WHEN jsonb_typeof(payload->'evidence')='array' THEN payload->'evidence' ELSE '[]'::jsonb END,
-             CASE WHEN jsonb_typeof(payload->'receipt')='object' THEN payload->'receipt'
-                  ELSE jsonb_build_object('schemaVersion',1,'runId',payload->>'runId','historical',true) END,
-             NULL,status,status,version,version,false,'historical_projection',created_at,true
-        FROM valid
-      ON CONFLICT DO NOTHING
-      RETURNING execution_id,resolution_id,resolved_at
-    )
-    UPDATE ${options.executionsTable} e
-       SET resolution_id=i.resolution_id,resolved_at=COALESCE(e.resolved_at,i.resolved_at)
-      FROM inserted i WHERE e.id=i.execution_id
   `);
   await client.query(`
     CREATE TABLE IF NOT EXISTS ${options.remediationAttemptsTable} (
@@ -356,4 +295,48 @@ export async function runTaskboardV2Schema(
       WHERE status IN ('pending','processing')
   `);
   await runIntegrationCandidateSchema(options, client);
+}
+
+export async function retireTaskboardResolutionSchema(
+  options: Pick<TaskboardV2SchemaOptions, 'executionsTable'>,
+  client: PoolClient,
+): Promise<void> {
+  const legacyResolutionsTable = options.executionsTable.endsWith('_taskboard_execs')
+    ? options.executionsTable.replace(/_taskboard_execs$/, '_taskboard_resolutions')
+    : options.executionsTable.endsWith('_executions')
+      ? options.executionsTable.replace(/_executions$/, '_resolutions')
+      : `${options.executionsTable}_resolutions`;
+  await client.query('BEGIN');
+  try {
+    // Preserve the terminal fence for executions completed by the retired protocol.
+    await client.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema=current_schema() AND table_name='${options.executionsTable}'
+             AND column_name='resolution_id'
+        ) AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema=current_schema() AND table_name='${options.executionsTable}'
+             AND column_name='resolved_at'
+        ) THEN
+          UPDATE ${options.executionsTable}
+             SET transitioned_at=COALESCE(transitioned_at,resolved_at),
+                 terminal_reason_code=COALESCE(terminal_reason_code,'legacy_resolution_migrated')
+           WHERE resolution_id IS NOT NULL;
+        END IF;
+      END $$
+    `);
+    // Immutable change history remains untouched.
+    await client.query(`DROP TABLE IF EXISTS ${legacyResolutionsTable}`);
+    await client.query(`
+      ALTER TABLE ${options.executionsTable} DROP COLUMN IF EXISTS resolution_id;
+      ALTER TABLE ${options.executionsTable} DROP COLUMN IF EXISTS resolved_at
+    `);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  }
 }

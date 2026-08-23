@@ -355,7 +355,7 @@ export function TaskDetail({
 
   const promoteToDelivery = async () => {
     if (!currentTask || taskKind !== "advisory" || editReadOnly || !canTransitionTask) return;
-    if (!window.confirm("确认将该答复与分析任务升级为交付任务吗？升级后将进入待实施，且不能改回 advisory。")) return;
+    if (!window.confirm("确认将该答复与分析任务升级为交付任务吗？升级后将进入待推进，且不能改回 advisory。")) return;
     const operationTask = currentTask;
     const requestId = ++detailRequestRef.current;
     setSaving(true);
@@ -750,69 +750,51 @@ export function TaskDetail({
                 />
               ) : null}
 
-              <section aria-label="业务结论" className="mb-6 space-y-2 rounded-lg border bg-muted/20 p-4 text-sm">
-                <h3 className="text-sm font-semibold">业务结论（Resolution）</h3>
-                {latestExecution?.resolutionOutcome ? (
-                  <>
-                    <p>
-                      {latestExecution.resolutionOutcome}
-                      {latestExecution.resolutionState === "historical" ? " · 历史结论（已迁移）" : ""}
-                      {latestExecution.ignoredReason && latestExecution.ignoredReason !== "historical_projection" ? ` · 已忽略（${latestExecution.ignoredReason}）` : ""}
-                    </p>
-                    {latestExecution.resolutionSummary ? <p className="whitespace-pre-wrap text-xs text-muted-foreground">{latestExecution.resolutionSummary}</p> : null}
-                    {latestExecution.taskStatusAfter ? <p className="text-xs text-muted-foreground">裁决后流程：{STATUS_LABELS[latestExecution.taskStatusAfter]}</p> : null}
-                  </>
-                ) : latestExecution?.resolutionState === "legacy_ambiguous" || latestExecution?.resolutionState === "legacy_incomplete" ? (
-                  <p role="alert" className="text-xs text-amber-700 dark:text-amber-300">
-                    历史结论（未迁移）：{latestExecution.resolutionIssue}
-                  </p>
-                ) : <p className="text-xs text-muted-foreground">尚未提交结构化业务结论。</p>}
-              </section>
-
               <form className="space-y-4" onSubmit={save}>
-                <div className="space-y-2">
-                  <Label htmlFor="task-detail-title">
-                    标题 <span className="text-destructive" aria-hidden="true">*</span>
-                  </Label>
-                  <Input
-                    id="task-detail-title"
-                    value={title}
-                    onChange={(event) => {
-                      dirtyFieldsRef.current.add("title");
-                      setTitle(event.target.value);
-                    }}
-                    disabled={contentReadOnly || saving}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="task-detail-description">正文</Label>
-                  <Textarea
-                    id="task-detail-description"
-                    value={description}
-                    onChange={(event) => {
-                      dirtyFieldsRef.current.add("description");
-                      setDescription(event.target.value);
-                    }}
-                    rows={7}
-                    disabled={contentReadOnly || saving}
-                    onPaste={(event) => {
-                      if (event.clipboardData.files.length > 0) dirtyFieldsRef.current.add("attachments");
-                      void taskAttachments.handlePaste(event);
-                    }}
-                  />
-                  {contentReadOnly ? (
-                    <TaskAttachmentList taskId={currentTask.id} attachments={taskAttachments.uploadedFiles} />
-                  ) : (
-                    <TaskAttachmentField
-                      upload={taskAttachments}
-                      disabled={saving}
-                      onFilesChanged={() => dirtyFieldsRef.current.add("attachments")}
-                    />
-                  )}
-                  {executionStarted && !editReadOnly ? (
-                    <p className="text-xs text-muted-foreground">任务首次执行后，标题和正文已锁定；后续变更请通过评论补充。</p>
-                  ) : null}
-                </div>
+                {!executionStarted ? (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="task-detail-title">
+                        标题 <span className="text-destructive" aria-hidden="true">*</span>
+                      </Label>
+                      <Input
+                        id="task-detail-title"
+                        value={title}
+                        onChange={(event) => {
+                          dirtyFieldsRef.current.add("title");
+                          setTitle(event.target.value);
+                        }}
+                        disabled={contentReadOnly || saving}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="task-detail-description">正文</Label>
+                      <Textarea
+                        id="task-detail-description"
+                        value={description}
+                        onChange={(event) => {
+                          dirtyFieldsRef.current.add("description");
+                          setDescription(event.target.value);
+                        }}
+                        rows={7}
+                        disabled={contentReadOnly || saving}
+                        onPaste={(event) => {
+                          if (event.clipboardData.files.length > 0) dirtyFieldsRef.current.add("attachments");
+                          void taskAttachments.handlePaste(event);
+                        }}
+                      />
+                      {contentReadOnly ? (
+                        <TaskAttachmentList taskId={currentTask.id} attachments={taskAttachments.uploadedFiles} />
+                      ) : (
+                        <TaskAttachmentField
+                          upload={taskAttachments}
+                          disabled={saving}
+                          onFilesChanged={() => dirtyFieldsRef.current.add("attachments")}
+                        />
+                      )}
+                    </div>
+                  </>
+                ) : null}
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>状态</Label>
@@ -924,6 +906,8 @@ export function TaskDetail({
                 commentsLoading={commentsLoading}
                 commentsError={commentsError}
                 currentTask={currentTask}
+                taskDescription={executionStarted ? description : null}
+                taskAttachments={executionStarted ? taskAttachments.uploadedFiles : []}
                 latestExecution={latestExecution}
                 latestExecutionActive={Boolean(latestExecution && ACTIVE_EXECUTION_STATUSES.has(latestExecution.status))}
                 commentReadOnly={commentReadOnly}

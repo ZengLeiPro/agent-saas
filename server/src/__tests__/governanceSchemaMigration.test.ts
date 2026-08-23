@@ -43,7 +43,7 @@ describe('Governance schema migration SQL fixtures', () => {
     expect(fixtureName).not.toContain(legacy.resourceId);
   });
 
-  it('V23 ledger DDL 可在 V22 已标记且旧表已存在时幂等升级，并保留 tenant-scoped 唯一键', async () => {
+  it('V23/V24 ledger DDL 可从 V22 幂等升级，并保留 tenant-scoped 唯一键', async () => {
     const statements = governanceV23Statements({ credentialCommits: 'safe_credential_commits' });
     expect(statements).toHaveLength(1);
     expect(statements[0]).toContain('CREATE TABLE IF NOT EXISTS safe_credential_commits');
@@ -69,10 +69,15 @@ describe('Governance schema migration SQL fixtures', () => {
     await runner.run();
 
     expect(applied.has(23)).toBe(true);
-    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(1);
+    expect(applied.has(24)).toBe(true);
+    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(2);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_credential_commits'))).toHaveLength(1);
+    expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_context_sources'))).toHaveLength(1);
     expect(queries.filter(item => item.sql.includes('INSERT INTO safe_governance_schema_versions')))
-      .toEqual([expect.objectContaining({ params: [23] })]);
+      .toEqual([
+        expect.objectContaining({ params: [23] }),
+        expect.objectContaining({ params: [24] }),
+      ]);
     expect(() => new PgGovernanceMigrationRunner(pool as never, 'unsafe-prefix')).toThrow('Invalid PostgreSQL identifier');
   });
 });

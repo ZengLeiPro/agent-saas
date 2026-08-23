@@ -642,20 +642,19 @@ describe('wsEventProcessor artifact_created', () => {
   it('renders a CreateArtifact delivery as a file_download card carrying artifactId', () => {
     const { messages, ctx } = createTestRig();
 
-    process(
-      {
-        type: 'artifact_created',
-        artifactId: 'artifact_abc123',
-        fileName: 'report.pdf',
-        kind: 'file',
-        sourcePath: 'assets/20260702/report.pdf',
-        sizeBytes: 12345,
-        mimeType: 'application/pdf',
-        sha256: 'deadbeef',
-        owner: 'alice',
-      },
-      ctx,
-    );
+    const event = {
+      type: 'artifact_created' as const,
+      artifactId: 'artifact_abc123',
+      fileName: 'report.pdf',
+      kind: 'file' as const,
+      sourcePath: 'assets/20260702/report.pdf',
+      sizeBytes: 12345,
+      mimeType: 'application/pdf',
+      sha256: 'deadbeef',
+      owner: 'alice',
+    };
+    process(event, ctx);
+    process(event, ctx); // relay/reconnect duplicate must remain idempotent
 
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({

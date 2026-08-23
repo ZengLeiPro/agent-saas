@@ -1,5 +1,6 @@
 import type { WebMessageDisplayConfig } from '../../types/index.js';
 import { isSkillTool } from '../toolNameResolver.js';
+export { projectArtifactDelivery } from './artifactDeliveryProjection.js';
 
 export type WebBlockType = 'text' | 'thinking' | 'tool_use';
 
@@ -20,6 +21,8 @@ const INTERACTIVE_TOOLS = new Set([
 const DEDICATED_WEB_TOOLS = new Set([
   ...INTERACTIVE_TOOLS,
   'Agent',
+  // create 是内部注册，deliver 由 durable tool_result 投影为独立文件卡。
+  'Artifact',
 ]);
 
 export function isDedicatedWebTool(toolName: string | undefined): boolean {

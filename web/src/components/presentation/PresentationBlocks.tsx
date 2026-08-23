@@ -306,7 +306,13 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
           </div>
         ) : null}
         {block.layout === "grid" ? (
-          <div className="inline-grid grid-cols-[repeat(2,minmax(0,max-content))] gap-x-8 gap-y-2 p-4 sm:grid-cols-[repeat(3,minmax(0,max-content))]" data-records-grid>
+          <div
+            className={cn(
+              "inline-grid grid-cols-[repeat(2,minmax(0,max-content))] gap-x-8 gap-y-2 p-4",
+              block.items.length !== 4 && "sm:grid-cols-[repeat(3,minmax(0,max-content))]",
+            )}
+            data-records-grid
+          >
             {block.items.map((item, i) => (
               <div className="max-w-64" key={i}>
                 <div className="break-words text-xs text-muted-foreground">{item.label}</div>

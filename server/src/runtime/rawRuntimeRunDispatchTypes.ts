@@ -31,7 +31,7 @@ import type { ImageUnderstandingModelConfig } from './imageUnderstanding.js';
 import type { SystemPromptId } from '../systemPrompts/types.js';
 import type { ContextReconstructionPolicy } from './contextProjection.js';
 import type { RuntimeReplayState } from './replay.js';
-import type { RuntimeSessionRecord, SessionCatalog } from './sessionCatalog.js';
+import type { OrgAgentCollectionAssignmentPin, RuntimeSessionRecord, SessionCatalog } from './sessionCatalog.js';
 import type { RunStore } from './runStore.js';
 import type { HandStore, WorkspaceRecipe } from './handStore.js';
 import type { TenantRemoteHandAuthTokenResolver } from './tenantRemoteHandResolver.js';
@@ -130,6 +130,12 @@ export interface RawRuntimeRunDispatchConfig {
   agentStore?: AgentStore;
   /** 公司级专职 Agent store。orgAgentId 会话解析限定提示语 + skill 白名单用；未配置时 orgAgentId 会话 fail-closed。 */
   orgAgentStore?: OrgAgentStore;
+  /** Resolve effective collection assignments for a new org Agent snapshot. Errors fail closed. */
+  resolveOrgAgentCollectionAssignments?: (input: {
+    tenantId: string;
+    userId: string;
+    agentId: string;
+  }) => Promise<OrgAgentCollectionAssignmentPin[]>;
   tenantStore?: TenantStore;
   environmentStore?: PgEnvironmentStore;
   authorizeEnvironmentTemplate?: (input: {
@@ -236,7 +242,7 @@ export interface RawRuntimeRunDispatchConfig {
    * safe 只读工具；未配置（file backend / 测试）时工具不挂载。
    */
   userActivityService?: UserActivityService;
-  /** Artifact service used by hand-backed CreateArtifact. */
+  /** Artifact service used by the model-facing Artifact tool and hand-backed create protocol. */
   artifactService?: ArtifactService;
   /**
    * 自动上下文压缩（/compact v2）。配置后，正常回答结束但 run 尚未终态时

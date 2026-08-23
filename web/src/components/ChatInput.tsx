@@ -1,6 +1,7 @@
-import { useMemo, useRef, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useMemo, useRef, useCallback, useEffect, useState } from 'react';
 import { Plus, ArrowUp, Square, Mic, Loader2, StopCircle } from "lucide-react";
 
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { warmupSessionSandbox } from "@/lib/sessionsApi";
 import type { ModelList } from "@/types/models";
@@ -28,6 +29,7 @@ interface ChatInputProps {
   onStop?: () => void;
   stopping?: boolean;
   onFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onAssetSelect?: (paths: string[]) => Promise<void> | void;
   onPaste?: (e: React.ClipboardEvent) => void;
   scrollContainerRef?: React.RefObject<HTMLDivElement>;
   isNearBottomRef?: React.MutableRefObject<boolean>;
@@ -49,6 +51,7 @@ interface ChatInputProps {
 const MIN_HEIGHT = 56;
 const MAX_HEIGHT = 200;
 const warmedSessionIds = new Set<string>();
+const LazyAttachmentControls = lazy(() => import("@/components/AttachmentControls"));
 
 function warmupSessionOnce(sessionId: string | null | undefined, value: string): void {
   if (!sessionId || warmedSessionIds.has(sessionId) || !value.trim()) return;
@@ -73,6 +76,7 @@ export function ChatInput({
   onStop,
   stopping,
   onFileSelect,
+  onAssetSelect,
   onPaste,
   scrollContainerRef,
   isNearBottomRef,
@@ -93,7 +97,9 @@ export function ChatInput({
   const isDisabled = disabled === true;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const localFileInputRef = useRef<HTMLInputElement>(null);
   const [tooShortTip, setTooShortTip] = useState(false);
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
 
   const voiceRecorder = useVoiceRecorder({
     onVoiceSend: async (wavBlob, durationMs) => {
@@ -189,6 +195,7 @@ export function ChatInput({
   const hasContent = !!input.trim() || hasUploadedFiles;
   const showStop = !!loading && (!hasContent || !!stopping) && !!onStop;
   const disableAttach = uploading || isDisabled;
+  const attachmentDisabled = disableAttach || voiceRecorder.isRecording;
   const showVoice = !isDisabled && !!onSendVoice && voiceRecorder.isSupported;
 
   // 会话已开始时锁定组
@@ -407,28 +414,46 @@ export function ChatInput({
             {/* 底部工具栏 */}
             <div className="flex items-center justify-between px-4 pb-3">
               <div className="flex items-center gap-0.5">
-                <label
-                  className={cn(
-                    "relative flex size-8 items-center justify-center overflow-hidden rounded-full border border-border text-foreground transition-colors",
-                    "hover:bg-muted-foreground/10 active:bg-muted-foreground/20",
-                    disableAttach || voiceRecorder.isRecording
-                      ? "cursor-not-allowed opacity-40"
-                      : "cursor-pointer",
+                <Popover open={attachmentMenuOpen} onOpenChange={setAttachmentMenuOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex size-8 items-center justify-center rounded-full border border-border text-foreground transition-colors",
+                        "hover:bg-muted-foreground/10 active:bg-muted-foreground/20",
+                        attachmentDisabled
+                          ? "cursor-not-allowed opacity-40"
+                          : "cursor-pointer",
+                      )}
+                      aria-label="添加附件"
+                      disabled={attachmentDisabled}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <Plus className="size-5" />
+                    </button>
+                  </PopoverTrigger>
+                  {attachmentMenuOpen && (
+                    <Suspense fallback={null}>
+                      <LazyAttachmentControls
+                        onLocalFile={() => {
+                          setAttachmentMenuOpen(false);
+                          localFileInputRef.current?.click();
+                        }}
+                        onMenuOpenChange={setAttachmentMenuOpen}
+                        onAssetConfirm={onAssetSelect}
+                        disabled={attachmentDisabled}
+                      />
+                    </Suspense>
                   )}
-                  title="添加附件"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <Plus className="size-5" />
-                  <input
-                    type="file"
-                    multiple
-                    className="absolute inset-0 size-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-                    onChange={onFileSelect}
-                    accept="*/*"
-                    disabled={disableAttach || voiceRecorder.isRecording}
-                    aria-label="添加附件"
-                  />
-                </label>
+                </Popover>
+                <input
+                  ref={localFileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={onFileSelect}
+                  disabled={attachmentDisabled}
+                />
               </div>
 
               <div className="flex items-center gap-1">

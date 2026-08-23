@@ -1,4 +1,5 @@
 import { isDedicatedWebTool } from './displayFilter.js';
+import { projectArtifactDelivery } from './artifactDeliveryProjection.js';
 import type { PlatformEvent } from '../../runtime/types.js';
 
 interface RuntimeStreamBlockProjectionState {
@@ -178,6 +179,8 @@ export function projectRuntimePlatformEvent(
         }],
       };
     case 'tool_result': {
+      const artifactDelivery = projectArtifactDelivery(event.toolName, event.metadata);
+      if (artifactDelivery) return { events: [artifactDelivery] };
       if (isDedicatedWebTool(event.toolName)) return { events: [] };
       const events: object[] = [{
         type: 'tool_result',

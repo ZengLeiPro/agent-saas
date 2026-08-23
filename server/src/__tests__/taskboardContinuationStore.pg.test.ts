@@ -60,24 +60,11 @@ describePg('PgTaskboardStore continuation contract', () => {
   afterAll(async () => {
     if (!pool || !store) return;
     try {
-      await pool.query(`DROP TABLE IF EXISTS ${store.integrationTriggerOutboxTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.blockEpisodesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.cancellationOutboxTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.resolutionsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.remediationAttemptsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.mergeOperationsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.mergeAuthorizationsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.integrationSourcesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.integrationLanesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.attemptsTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.changesTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.membersTable} CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.continuationOutboxTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.executionOutboxTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.executionsTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.commentsTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.tasksTable}`);
-      await pool.query(`DROP TABLE IF EXISTS ${store.boardsTable}`);
+      const result = await pool.query(
+        `SELECT tablename FROM pg_tables WHERE schemaname=current_schema() AND tablename LIKE $1`,
+        [`${prefix}%`],
+      );
+      for (const row of result.rows) await pool.query(`DROP TABLE IF EXISTS ${String(row.tablename)} CASCADE`);
     } finally {
       await pool.end();
     }
@@ -156,7 +143,7 @@ describePg('PgTaskboardStore continuation contract', () => {
     const task = await store.createTask(alice, board.id, { title: '并发释放续跑', status: 'todo' });
     await store.claimExecution(alice, task.id, {
       expectedVersion: task.version, executionId: 'execution-race', runId: 'run-race-original',
-      sessionId: 'session-race', executionOwnerUserId: alice.ownerUserId,
+      sessionId: 'session-race', executionOwnerUserId: alice.ownerUserId, protocolVersion: 1,
       dispatch: dispatch('execution-race', 'run-race-original', 'session-race'),
     });
     await store.setExecutionStatus('run-race-original', 'running');
@@ -207,8 +194,8 @@ describePg('PgTaskboardStore continuation contract', () => {
     expect(await store.getTask(alice, task.id)).toMatchObject({ status: 'in_review' });
     expect(await store.listComments(alice, task.id)).toEqual(expect.arrayContaining([
       expect.objectContaining({ authorId: alice.ownerUserId, authorType: 'user', body: '释放后独立续跑' }),
+      expect.objectContaining({ authorType: 'agent', body: 'Agent 执行已取消\n\n原执行已取消' }),
     ]));
-    expect((await store.listComments(alice, task.id)).every((comment) => comment.authorType === 'user')).toBe(true);
   });
 
   it('backfills legacy continuation rows once and blocks archive while continuation is active', async () => {

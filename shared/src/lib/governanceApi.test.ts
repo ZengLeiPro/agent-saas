@@ -4,6 +4,8 @@ vi.mock('./authFetch', () => ({ authFetch: vi.fn() }));
 
 import { authFetch } from './authFetch';
 import {
+  contextCenterApi,
+  contextSourceSchema,
   evaluateAccess,
   fetchEffectiveResources,
   fetchMyGovernanceSummary,
@@ -461,6 +463,80 @@ describe('governanceApi fail closed', () => {
     mockAuthFetch.mockResolvedValueOnce(jsonResponse({ changeId: 'change-1', auditId: 'audit-1' }));
     await governanceAccessApi.updateMemoryResource('mem-1', { ...command, previewId: preview.previewId }, 'tenant-1');
     expect(mockAuthFetch).toHaveBeenLastCalledWith('/api/governance/access/organization-resources/memory/mem-1?tenantId=tenant-1', expect.objectContaining({ method: 'PUT' }));
+  });
+
+  it('Context Center adapter 使用约定 snapshot/evidence REST，并编码三个证据筛选参数', async () => {
+    mockAuthFetch
+      .mockResolvedValueOnce(jsonResponse({
+        generatedAt: '2026-08-22T15:40:00.000Z',
+        sources: [],
+        consumers: [],
+      }))
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'evidence-1', sourceName: '钉钉', collection: '产品知识', author: null,
+        occurredAt: '2026-08-20T02:30:00.000Z', quote: '原始记录', derived: false,
+        freshness: 'fresh', freshnessAsOf: '2026-08-22T15:38:00.000Z', originalUrl: null,
+      }]));
+
+    await expect(contextCenterApi.getSnapshot()).resolves.toMatchObject({ sources: [], consumers: [] });
+    await expect(contextCenterApi.listEvidence({
+      sourceId: 'dingtalk/source', collectionId: 'product docs', recordId: 'record?1',
+    })).resolves.toHaveLength(1);
+
+    expect(mockAuthFetch).toHaveBeenNthCalledWith(1, '/api/admin/context-plane/snapshot', undefined);
+    expect(mockAuthFetch).toHaveBeenNthCalledWith(
+      2,
+      '/api/admin/context-plane/evidence?sourceId=dingtalk%2Fsource&collectionId=product+docs&recordId=record%3F1',
+      undefined,
+    );
+  });
+
+  it('Context Center DTO 漂移 fail closed，403/404/503 显示真实不可用语义', async () => {
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({
+      generatedAt: '2026-08-22T15:40:00.000Z', sources: [], consumers: [], productionDemo: true,
+    }));
+    await expect(contextCenterApi.getSnapshot()).rejects.toMatchObject({ code: 'INVALID_GOVERNANCE_RESPONSE' });
+
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ error: 'Forbidden' }, 403));
+    await expect(contextCenterApi.getSnapshot()).rejects.toMatchObject({
+      code: 'CONTEXT_PLANE_FORBIDDEN', status: 403, message: '当前账号无权查看 Context Center。',
+    });
+
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ error: 'Not found' }, 404));
+    await expect(contextCenterApi.getSnapshot()).rejects.toMatchObject({
+      code: 'CONTEXT_PLANE_UNAVAILABLE', status: 404, message: 'Context Center 服务端能力尚未提供。',
+    });
+
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ error: 'Unavailable' }, 503));
+    await expect(contextCenterApi.getSnapshot()).rejects.toMatchObject({
+      code: 'CONTEXT_PLANE_UNAVAILABLE', status: 503, message: 'Context Center 服务暂不可用，请稍后重试。',
+    });
+  });
+
+  it('Context Center schema 拒绝 covered>total 与倒序时间范围', () => {
+    const source = {
+      sourceId: 'source-a', name: '钉钉', system: 'dws', collectionId: 'collection-a', collection: '产品知识',
+      status: 'healthy', lastSyncedAt: null, watermarkLagSeconds: null,
+      ingestOutcomes: { truncated: 0, refused: 0, unreadable: 0 },
+      historicalLearningScope: { enabled: true, summary: '已配置' },
+      realtimeListeningScope: { enabled: false, summary: '未配置' },
+    };
+    expect(contextSourceSchema.safeParse({
+      ...source, backfillCoverage: { kind: 'items', coveredItems: 2, totalItems: 1 },
+    }).success).toBe(false);
+    expect(contextSourceSchema.safeParse({
+      ...source,
+      backfillCoverage: {
+        kind: 'time', coveredFrom: '2026-08-22T00:00:00.000Z', coveredThrough: '2026-08-21T00:00:00.000Z',
+      },
+    }).success).toBe(false);
+    expect(contextSourceSchema.safeParse({
+      ...source,
+      backfillCoverage: { kind: 'time', coveredFrom: null, coveredThrough: null },
+      historicalLearningScope: {
+        enabled: true, summary: '已配置', from: '2026-08-22T00:00:00.000Z', through: '2026-08-21T00:00:00.000Z',
+      },
+    }).success).toBe(false);
   });
 
   it('成功 envelope 解包 data 后再校验 schema', async () => {

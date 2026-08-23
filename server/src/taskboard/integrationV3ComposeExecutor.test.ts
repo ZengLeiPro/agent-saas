@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { TaskBoardIntegrationCandidate } from '../../../shared/src/types/taskboard.js';
+import { computeIntegrationSourceSetDigest } from './integrationCandidateDigest.js';
 import { IntegrationPushCapabilityService } from './integrationPushCapability.js';
 import { InMemoryIntegrationPushCapabilityHost } from './integrationPushCapabilityMemoryHost.js';
 import { IntegrationPushGateway, type IntegrationPushGitRunner } from './integrationPushGateway.js';
@@ -15,7 +16,7 @@ import {
   type IntegrationProviderOperationState,
   type IntegrationProviderOperationStorageHost,
 } from './integrationProviderOperations.js';
-import { DefaultIntegrationV3ComposeExecutor, IntegrationV3CandidateReloadRequiredError } from './integrationV3ComposeExecutor.js';
+import { DefaultIntegrationV3ComposeExecutor, IntegrationV3CandidateReloadRequiredError, IntegrationV3ComposeConflictError } from './integrationV3ComposeExecutor.js';
 import type { IntegrationV3WorkerCurrent } from './integrationV3Worker.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
 
@@ -76,12 +77,13 @@ function candidate(baseOid: string): TaskBoardIntegrationCandidate {
   };
 }
 
-function current(value: TaskBoardIntegrationCandidate, baseOid: string, source: any): Required<IntegrationV3WorkerCurrent> {
+function current(value: TaskBoardIntegrationCandidate, baseOid: string, source: any, sources: any[] = [source]): Required<IntegrationV3WorkerCurrent> {
+  const sourceSetDigest = computeIntegrationSourceSetDigest(sources);
   return {
-    candidate: value,
+    candidate: { ...value, sourceSetDigest },
     revision: {
       candidateId: value.id, revision: 1, digestVersion: 1, baseOid, headOid: source.frozenHeadOid,
-      subjectKind: 'source_seed', sourceSetDigest: 'seed', subjectDigest: 'seed-subject',
+      subjectKind: 'source_seed', compositionComplete: false, sourceSetDigest, subjectDigest: 'seed-subject',
       policySnapshotDigest: 'policy', policyRevision: 'policy-1', mergeMethod: 'squash', workRound: 0,
       createdAt: value.createdAt,
     },
@@ -202,6 +204,116 @@ describe('DefaultIntegrationV3ComposeExecutor push replay', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it('rejects an incomplete frozen source context before Git or provider writes', async () => {
+    const source = {
+      candidateId: 'candidate-1', revision: 1, order: 0, integrationSourceId: 'source-1',
+      deliveryTaskId: 'delivery-1', deliveryTaskVersion: 1, repositoryId: 'github-id:123',
+      providerPullRequestId: '11', frozenHeadOid: 'b'.repeat(40), frozenBaseOid: 'a'.repeat(40),
+      reviewedSubjectDigest: 'reviewed', reviewExecutionId: 'review-1', reviewReceiptDigest: 'receipt',
+      requirementDigest: 'requirement', createdAt: '2026-08-19T00:00:00.000Z',
+    };
+    const allSources = [source, { ...source, order: 1, integrationSourceId: 'source-2', providerPullRequestId: '12' }];
+    const provider = {
+      ensureIntegrationBranch: vi.fn(), ensureIntegrationPullRequest: vi.fn(), getReference: vi.fn(),
+    } as unknown as RepositoryProvider;
+    const runGit = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+    const composer = new DefaultIntegrationV3ComposeExecutor({
+      resolveContext: async () => ({
+        repository: { provider: 'github', repositoryId: 'github-id:123', owner: 'org', name: 'repo', baseBranch: 'main', allowForkPullRequest: false },
+        credentialOwnerId: 'owner-1', tenantId: 'tenant-1', repositoryPath: '/repo', worktreePath: '/missing', sources: [source],
+      }),
+      withRepositoryBranchLock: async <T>(_lock: unknown, action: () => Promise<T>) => action(),
+      validateServerOwnedRepository: async () => undefined, runGit,
+      pushIntegrationHead: vi.fn(), bindPullRequest: vi.fn(),
+    }, provider);
+
+    await expect(composer.compose(current(candidate('a'.repeat(40)), 'a'.repeat(40), source, allSources)))
+      .rejects.toThrow('complete frozen source set');
+    expect(runGit).not.toHaveBeenCalled();
+    expect(provider.ensureIntegrationBranch).not.toHaveBeenCalled();
+  });
+
+  it('publishes a deterministic incomplete subject before dispatching conflict remediation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'integration-compose-conflict-'));
+    const repositoryPath = join(root, 'repository');
+    const worktreePath = join(root, 'integration-worktree');
+    await mkdir(repositoryPath);
+    try {
+      await git(repositoryPath, ['init', '-b', 'main']);
+      await git(repositoryPath, ['config', 'user.name', 'Test']);
+      await git(repositoryPath, ['config', 'user.email', 'test@example.com']);
+      await writeFile(join(repositoryPath, 'conflict.txt'), 'base\n');
+      await git(repositoryPath, ['add', '.']); await git(repositoryPath, ['commit', '-m', 'base']);
+      const sourceBase = (await git(repositoryPath, ['rev-parse', 'HEAD'])).stdout.trim();
+      await git(repositoryPath, ['checkout', '-b', 'source-one']);
+      await writeFile(join(repositoryPath, 'success.txt'), 'source-one\n');
+      await git(repositoryPath, ['add', '.']); await git(repositoryPath, ['commit', '-m', 'source one']);
+      const sourceOneHead = (await git(repositoryPath, ['rev-parse', 'HEAD'])).stdout.trim();
+      await git(repositoryPath, ['update-ref', 'refs/pull/11/head', sourceOneHead]);
+      await git(repositoryPath, ['checkout', '-b', 'source-two', sourceBase]);
+      await writeFile(join(repositoryPath, 'conflict.txt'), 'source-two\n');
+      await git(repositoryPath, ['add', '.']); await git(repositoryPath, ['commit', '-m', 'source two']);
+      const sourceTwoHead = (await git(repositoryPath, ['rev-parse', 'HEAD'])).stdout.trim();
+      await git(repositoryPath, ['update-ref', 'refs/pull/12/head', sourceTwoHead]);
+      await git(repositoryPath, ['checkout', 'main']);
+      await writeFile(join(repositoryPath, 'conflict.txt'), 'main\n');
+      await git(repositoryPath, ['add', '.']); await git(repositoryPath, ['commit', '-m', 'main diverged']);
+      const mainOid = (await git(repositoryPath, ['rev-parse', 'HEAD'])).stdout.trim();
+      const sources = [
+        { order: 0, integrationSourceId: 'source-1', deliveryTaskId: 'delivery-1', providerPullRequestId: '11', frozenHeadOid: sourceOneHead },
+        { order: 1, integrationSourceId: 'source-2', deliveryTaskId: 'delivery-2', providerPullRequestId: '12', frozenHeadOid: sourceTwoHead },
+      ].map((source) => ({
+        candidateId: 'candidate-1', revision: 1, deliveryTaskVersion: 1, repositoryId: 'github-id:123',
+        frozenBaseOid: sourceBase, reviewedSubjectDigest: `reviewed-${source.order}`,
+        reviewExecutionId: `review-${source.order}`, reviewReceiptDigest: `receipt-${source.order}`,
+        requirementDigest: `requirement-${source.order}`, createdAt: '2026-08-19T00:00:00.000Z', ...source,
+      }));
+      let remoteOid = mainOid;
+      let bound: string | undefined;
+      const runGit = async (command: { cwd: string; args: readonly string[]; env?: Readonly<Record<string, string>> }) => {
+        const args = [...command.args];
+        const remoteIndex = args.indexOf('https://github.com/org/repo.git');
+        if (remoteIndex >= 0) args[remoteIndex] = repositoryPath;
+        return git(command.cwd, args, command.env);
+      };
+      const treeOf = async (oid: string) => (await git(repositoryPath, ['rev-parse', `${oid}^{tree}`])).stdout.trim();
+      const host = {
+        resolveContext: async () => ({
+          repository: { provider: 'github', repositoryId: 'github-id:123', owner: 'org', name: 'repo', baseBranch: 'main', allowForkPullRequest: false } as const,
+          credentialOwnerId: 'owner-1', tenantId: 'tenant-1', repositoryPath, worktreePath, sources,
+        }),
+        withRepositoryBranchLock: async <T>(_lock: unknown, action: () => Promise<T>) => action(),
+        validateServerOwnedRepository: async () => undefined, runGit,
+        pushIntegrationHead: async (input: { headOid: string }) => { remoteOid = input.headOid; },
+        bindPullRequest: async (_id: string, _version: number, id: string) => { bound = id; },
+      };
+      const provider = {
+        ensureIntegrationBranch: async () => ({ oid: remoteOid, treeOid: await treeOf(remoteOid) }),
+        ensureIntegrationPullRequest: async () => ({ providerPullRequestId: '77' }),
+        getReference: async (_repository: unknown, ref: string) => {
+          const oid = ref === 'main' ? mainOid : remoteOid;
+          return { oid, treeOid: await treeOf(oid) };
+        },
+      } as unknown as RepositoryProvider;
+      const composer = new DefaultIntegrationV3ComposeExecutor(host, provider);
+      const seed = current(candidate(sourceBase), sourceBase, sources[0], sources);
+      await expect(composer.compose(seed)).rejects.toBeInstanceOf(IntegrationV3CandidateReloadRequiredError);
+      expect(bound).toBe('77');
+      const boundCandidate = { ...seed.candidate, providerPullRequestId: '77', version: 2 };
+      const failure = await composer.compose({ ...seed, candidate: boundCandidate }).catch((error) => error);
+      expect(failure).toBeInstanceOf(IntegrationV3ComposeConflictError);
+      expect(failure.revision).toMatchObject({
+        baseOid: mainOid, headOid: remoteOid, compositionComplete: false,
+        sources: [expect.objectContaining({ integrationSourceId: 'source-1' }), expect.objectContaining({ integrationSourceId: 'source-2' })],
+      });
+      expect((await git(repositoryPath, ['show', `${remoteOid}:success.txt`])).stdout).toBe('source-one\n');
+      expect((await git(repositoryPath, ['show', `${remoteOid}:conflict.txt`])).stdout).toBe('main\n');
+      expect((await git(repositoryPath, ['rev-parse', `${remoteOid}^`])).stdout.trim()).toBe(mainOid);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('Integration v3 work completion gate', () => {
@@ -238,27 +350,36 @@ describe('Integration v3 ready work subject convergence', () => {
   const oldTree = '5'.repeat(40);
   const newTree = '6'.repeat(40);
 
-  function fixture(input: { remoteHead?: string; remoteBase?: string; receipt?: Record<string, unknown> | null } = {}) {
+  function fixture(input: { remoteHead?: string; remoteBase?: string; remoteTree?: string; receipt?: Record<string, unknown> | null } = {}) {
     const value = candidate(oldBase);
     value.state = 'working';
     value.providerPullRequestId = '77';
-    const loaded = current(value, oldBase, { frozenHeadOid: oldHead });
+    const source = {
+      candidateId: value.id, revision: 1, order: 0, integrationSourceId: 'source-1',
+      deliveryTaskId: 'delivery-1', deliveryTaskVersion: 1, repositoryId: value.repositoryId,
+      providerPullRequestId: '11', frozenHeadOid: oldHead, frozenBaseOid: oldBase,
+      reviewedSubjectDigest: 'reviewed', reviewExecutionId: 'review-1', reviewReceiptDigest: 'receipt',
+      requirementDigest: 'requirement', createdAt: value.createdAt,
+    };
+    const loaded = current(value, oldBase, source);
     loaded.revision.treeOid = oldTree;
+    loaded.revision.compositionComplete = true;
     const workPushReceipt = input.receipt === null ? undefined : {
       executionId: 'work-1', candidateId: value.id, candidateRevision: 1,
-      workflowEpoch: '4', laneEpoch: '3', oldOid: oldHead, newOid: input.remoteHead ?? oldHead,
+      workflowEpoch: '4', laneEpoch: '3', ref: `refs/heads/${value.branch}`,
+      oldOid: oldHead, newOid: input.remoteHead ?? oldHead,
       ...input.receipt,
     };
     const provider = {
       getReference: vi.fn(async (_repository: unknown, ref: string) => ref === value.branch
-        ? { oid: input.remoteHead ?? oldHead, treeOid: input.remoteHead === newHead ? newTree : oldTree }
+        ? { oid: input.remoteHead ?? oldHead, treeOid: input.remoteTree ?? (input.remoteHead === newHead ? newTree : oldTree) }
         : { oid: input.remoteBase ?? oldBase, treeOid: 'base-tree' }),
     } as unknown as RepositoryProvider;
     const composer = new DefaultIntegrationV3ComposeExecutor({
       resolveContext: async () => ({
         repository: { provider: 'github', repositoryId: value.repositoryId, owner: 'org', name: 'repo', baseBranch: 'main', allowForkPullRequest: false },
         credentialOwnerId: 'owner-1', tenantId: 'tenant-1', repositoryPath: '/repo', worktreePath: '/worktree',
-        sources: [], workExecutionId: 'work-1', ...(workPushReceipt ? { workPushReceipt } : {}),
+        sources: [source], workExecutionId: 'work-1', ...(workPushReceipt ? { workPushReceipt } : {}),
       }),
       withRepositoryBranchLock: async <T>(_lock: unknown, action: () => Promise<T>) => action(),
       validateServerOwnedRepository: async () => undefined,
@@ -273,6 +394,18 @@ describe('Integration v3 ready work subject convergence', () => {
     await expect(composer.refreshAfterWork(loaded)).resolves.toMatchObject({
       baseOid: newBase, headOid: oldHead, treeOid: oldTree, workExecutionId: 'work-1',
     });
+  });
+
+  it('rejects an incomplete composition even when only the base advances', async () => {
+    const { composer, loaded } = fixture({ remoteBase: newBase });
+    loaded.revision.compositionComplete = false;
+    await expect(composer.refreshAfterWork(loaded)).rejects.toThrow('requires an exact succeeded work push');
+  });
+
+  it('rejects an empty-commit push that leaves an incomplete composition tree unchanged', async () => {
+    const { composer, loaded } = fixture({ remoteHead: newHead, remoteTree: oldTree });
+    loaded.revision.compositionComplete = false;
+    await expect(composer.refreshAfterWork(loaded)).rejects.toThrow('did not change the candidate tree');
   });
 
   it('rejects a ready work result that changes neither head nor base', async () => {
@@ -292,6 +425,7 @@ describe('Integration v3 ready work subject convergence', () => {
     ['wrong execution', { executionId: 'work-other' }],
     ['wrong candidate', { candidateId: 'candidate-other' }],
     ['wrong revision', { candidateRevision: 2 }],
+    ['wrong ref', { ref: 'refs/heads/integration/other' }],
     ['wrong old OID', { oldOid: '7'.repeat(40) }],
     ['wrong new OID', { newOid: '8'.repeat(40) }],
     ['wrong workflow epoch', { workflowEpoch: '5' }],

@@ -16,6 +16,7 @@ import { apiUrl } from "@/lib/apiBase";
 import App from "@/App";
 
 const SessionSharePage = lazy(() => import("@/components/SessionSharePage").then(m => ({ default: m.SessionSharePage })));
+const PublicArtifactPage = lazy(() => import("@/components/artifacts/PublicArtifactPage").then(m => ({ default: m.PublicArtifactPage })));
 
 /**
  * 注册模式判定：支持 path `/signup` 与 query `?signup`（官网 CTA 两种链接形态都兼容；
@@ -28,9 +29,23 @@ function initialSignupMode(): boolean {
   );
 }
 
+function decodePathToken(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
 function currentShareToken(): string | null {
   const match = window.location.pathname.match(/^\/share\/([^/?#]+)$/);
-  return match ? decodeURIComponent(match[1]) : null;
+  return decodePathToken(match?.[1]);
+}
+
+export function currentArtifactShareToken(): string | null {
+  const match = window.location.pathname.match(/^\/public\/artifacts\/([^/?#]+)\/?$/);
+  return decodePathToken(match?.[1]);
 }
 
 function FullscreenSpinner() {
@@ -87,6 +102,7 @@ export function AuthGate() {
   const [signupMode, setSignupMode] = useState(initialSignupMode);
   const [signupEnabled, setSignupEnabled] = useState<boolean | null>(null);
   const shareToken = currentShareToken();
+  const artifactShareToken = currentArtifactShareToken();
 
   const switchToLogin = () => {
     // 清掉 /signup 路径与 utm 参数，回到干净登录页
@@ -95,7 +111,7 @@ export function AuthGate() {
   };
 
   useEffect(() => {
-    if (isLoading || !authEnabled || isAuthenticated || shareToken) return;
+    if (isLoading || !authEnabled || isAuthenticated || shareToken || artifactShareToken) return;
 
     let cancelled = false;
     fetch(apiUrl("/api/signup/status"))
@@ -109,7 +125,15 @@ export function AuthGate() {
     return () => {
       cancelled = true;
     };
-  }, [authEnabled, isAuthenticated, isLoading, shareToken]);
+  }, [artifactShareToken, authEnabled, isAuthenticated, isLoading, shareToken]);
+
+  if (artifactShareToken) {
+    return (
+      <Suspense fallback={<FullscreenSpinner />}>
+        <PublicArtifactPage token={artifactShareToken} />
+      </Suspense>
+    );
+  }
 
   if (shareToken) {
     return (

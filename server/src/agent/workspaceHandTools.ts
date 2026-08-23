@@ -37,6 +37,15 @@ export type CreateArtifactInput = {
   metadata?: Record<string, unknown>;
 };
 
+export type ArtifactInput = {
+  action: 'create' | 'deliver';
+  file_path?: string;
+  artifact_id?: string;
+  kind?: ArtifactKind;
+  mime_type?: string;
+  metadata?: Record<string, unknown>;
+};
+
 export type WorkspaceArtifactPayload = {
   sourcePath: string;
   fileName: string;
@@ -95,10 +104,14 @@ export const editToolDescriptor: ToolDescriptor<EditInput> = {
   label: '精确编辑文件',
 };
 
+/**
+ * Hand 内部协议名。brain 对模型只公示下方 Artifact；create action 会被翻译成
+ * CreateArtifact 发给 hand，避免要求已部署的 remote hand 与 brain 同步升级。
+ */
 export const artifactCreateToolDescriptor: ToolDescriptor<CreateArtifactInput> = {
   id: 'CreateArtifact',
   name: 'CreateArtifact',
-  displayName: 'Create Artifact',
+  displayName: 'Create Artifact (internal)',
   description: loadToolDescription('CreateArtifact'),
   schema: z.object({
     file_path: z.string().min(1).describe('工作区相对路径，或工作区内的绝对路径。'),
@@ -110,7 +123,27 @@ export const artifactCreateToolDescriptor: ToolDescriptor<CreateArtifactInput> =
   approvalMode: 'never',
   auditCategory: 'artifact.create',
   category: 'workspace',
-  label: '创建 Artifact',
+  label: '创建 Artifact（内部）',
+};
+
+export const artifactToolDescriptor: ToolDescriptor<ArtifactInput> = {
+  id: 'Artifact',
+  name: 'Artifact',
+  displayName: 'Artifact',
+  description: loadToolDescription('Artifact'),
+  schema: z.object({
+    action: z.enum(['create', 'deliver']),
+    file_path: z.string().min(1).optional().describe('create 必填：工作区内文件路径。'),
+    artifact_id: z.string().min(1).optional().describe('deliver 必填：create 返回的 artifactId。'),
+    kind: z.enum(['file', 'screenshot', 'patch', 'log', 'blob']).optional(),
+    mime_type: z.string().optional().describe('create 可选：MIME 类型，如 text/plain 或 image/png。'),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+  }),
+  risk: 'safe',
+  approvalMode: 'never',
+  auditCategory: 'artifact.manage',
+  category: 'workspace',
+  label: '创建与交付 Artifact',
 };
 
 export async function runWorkspaceEdit(

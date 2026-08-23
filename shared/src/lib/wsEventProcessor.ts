@@ -913,8 +913,8 @@ export function processWsEvent(
   }
 
   if (data.type === "artifact_created") {
-    // 兼容旧 artifact_created 事件：artifactId 是主 key,filePath 保留 sourcePath 作
-    // 展示辅助（下载路径实际走 /api/artifacts/:id/read-url,不依赖 filePath）。
+    if (msg.messagesRef.current.some(item => item.type === 'file_download' && item.artifactId === data.artifactId)) return;
+    // artifactId 是主 key，filePath 仅保留 sourcePath 作展示辅助；下载走签名 URL。
     msg.addMessage({
       type: "file_download",
       fileName: data.fileName,

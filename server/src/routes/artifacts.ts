@@ -2,16 +2,22 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
-import type { ArtifactKind } from '../runtime/artifactStore.js';
+import type { ArtifactKind, ArtifactRecord } from '../runtime/artifactStore.js';
+import type { ArtifactShareRecord } from '../runtime/artifactShareStore.js';
 import {
   ArtifactService,
   ArtifactServiceError,
   type RuntimeArtifactUser,
 } from '../runtime/artifactService.js';
+import {
+  ArtifactShareService,
+  ArtifactShareServiceError,
+} from '../runtime/artifactShareService.js';
 import { isValidSessionId } from '../data/transcripts/index.js';
 
 export interface ArtifactsRouterOptions {
   artifactService: ArtifactService;
+  artifactShareService?: ArtifactShareService;
   defaultReadUrlTtlSeconds?: number;
 }
 
@@ -28,7 +34,14 @@ const createArtifactSchema = z.object({
 
 const readUrlQuerySchema = z.object({
   expiresInSeconds: z.coerce.number().int().positive().max(7 * 24 * 60 * 60).optional(),
+  proxy: z.enum(['true', 'false']).optional(),
 });
+
+const upsertShareSchema = z.object({
+  confirmPublicArtifact: z.literal(true),
+  expiresAt: z.string().refine(value => Number.isFinite(Date.parse(value)), 'Invalid expiresAt').optional(),
+  allowDownload: z.boolean().optional(),
+}).strict();
 
 export function createArtifactsRouter(options: ArtifactsRouterOptions): Router {
   const router = Router();
@@ -93,6 +106,63 @@ export function createArtifactsRouter(options: ArtifactsRouterOptions): Router {
     }
   });
 
+  router.get('/artifacts/:artifactId/share', async (req: Request, res: Response) => {
+    if (!options.artifactShareService) {
+      res.status(503).json({ error: 'Artifact sharing unavailable' });
+      return;
+    }
+    try {
+      const share = await options.artifactShareService.getCurrent(
+        req.params.artifactId,
+        req.user as RuntimeArtifactUser | undefined,
+      );
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ share });
+    } catch (err) {
+      sendArtifactError(res, err);
+    }
+  });
+
+  router.post('/artifacts/:artifactId/share', async (req: Request, res: Response) => {
+    if (!options.artifactShareService) {
+      res.status(503).json({ error: 'Artifact sharing unavailable' });
+      return;
+    }
+    const parsed = upsertShareSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Explicit public sharing confirmation required', issues: parsed.error.issues });
+      return;
+    }
+    try {
+      const share = await options.artifactShareService.upsert(
+        req.params.artifactId,
+        req.user as RuntimeArtifactUser | undefined,
+        parsed.data,
+      );
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ share });
+    } catch (err) {
+      sendArtifactError(res, err);
+    }
+  });
+
+  router.delete('/artifacts/:artifactId/share', async (req: Request, res: Response) => {
+    if (!options.artifactShareService) {
+      res.status(503).json({ error: 'Artifact sharing unavailable' });
+      return;
+    }
+    try {
+      const revoked = await options.artifactShareService.revoke(
+        req.params.artifactId,
+        req.user as RuntimeArtifactUser | undefined,
+      );
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ ok: true, revoked });
+    } catch (err) {
+      sendArtifactError(res, err);
+    }
+  });
+
   router.get('/artifacts/:artifactId/read-url', async (req: Request, res: Response) => {
     const parsed = readUrlQuerySchema.safeParse(req.query);
     if (!parsed.success) {
@@ -106,6 +176,7 @@ export function createArtifactsRouter(options: ArtifactsRouterOptions): Router {
         {
           baseUrl: requestBaseUrl(req),
           expiresInSeconds: parsed.data.expiresInSeconds ?? options.defaultReadUrlTtlSeconds,
+          forceProxy: parsed.data.proxy === 'true',
         },
       );
       res.json(result);
@@ -121,11 +192,62 @@ export function createArtifactsRouter(options: ArtifactsRouterOptions): Router {
     }
     try {
       const { record, data } = await artifactService.getContentBySignedToken(req.params.artifactId, req.query.token);
-      if (record.mimeType) res.type(record.mimeType);
+      const mimeType = record.mimeType || 'application/octet-stream';
+      const activeContent = isActiveContentType(mimeType);
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Type', mimeType);
       res.setHeader('Content-Length', String(data.byteLength));
       const fileName = typeof record.metadata.fileName === 'string' ? record.metadata.fileName : `${record.artifactId}.bin`;
-      res.setHeader('Content-Disposition', buildContentDisposition('inline', fileName));
+      res.setHeader('Content-Disposition', buildContentDisposition(activeContent ? 'attachment' : 'inline', fileName));
+      if (activeContent) res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
       res.send(data);
+    } catch (err) {
+      sendArtifactError(res, err);
+    }
+  });
+
+  const servePublicContent = async (req: Request, res: Response): Promise<void> => {
+    if (!options.artifactShareService) {
+      res.status(404).json({ error: 'Artifact share not found' });
+      return;
+    }
+    try {
+      const { share, record, data } = await options.artifactShareService.getPublicContent(req.params.token);
+      setPublicContentHeaders(res, share, record, data.byteLength);
+      res.send(data);
+    } catch (err) {
+      sendArtifactError(res, err);
+    }
+  };
+
+  // Register HEAD before GET because Express otherwise treats GET as an implicit HEAD handler.
+  router.head('/share/artifacts/:token/content', async (req: Request, res: Response) => {
+    if (!options.artifactShareService) {
+      res.status(404).json({ error: 'Artifact share not found' });
+      return;
+    }
+    try {
+      const { share, record } = await options.artifactShareService.getPublicContentMetadata(req.params.token);
+      setPublicContentHeaders(res, share, record, record.sizeBytes);
+      res.end();
+    } catch (err) {
+      sendArtifactError(res, err);
+    }
+  });
+  router.get('/share/artifacts/:token/content', (req: Request, res: Response) => {
+    void servePublicContent(req, res);
+  });
+
+  router.get('/share/artifacts/:token', async (req: Request, res: Response) => {
+    if (!options.artifactShareService) {
+      res.status(404).json({ error: 'Artifact share not found' });
+      return;
+    }
+    try {
+      const metadata = await options.artifactShareService.getPublicMetadata(req.params.token);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(metadata);
     } catch (err) {
       sendArtifactError(res, err);
     }
@@ -134,12 +256,39 @@ export function createArtifactsRouter(options: ArtifactsRouterOptions): Router {
   return router;
 }
 
+function setPublicContentHeaders(
+  res: Response,
+  share: Pick<ArtifactShareRecord, 'allowDownload'>,
+  record: ArtifactRecord,
+  contentLength?: number,
+): void {
+  const mimeType = record.mimeType || 'application/octet-stream';
+  const dangerous = isActiveContentType(mimeType);
+  const rawFileName = typeof record.metadata.fileName === 'string' ? record.metadata.fileName : `${record.artifactId}.bin`;
+  const fileName = rawFileName.split(/[\\/]/).pop() || `${record.artifactId}.bin`;
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Type', mimeType);
+  if (contentLength !== undefined) res.setHeader('Content-Length', String(contentLength));
+  res.setHeader('Content-Disposition', buildContentDisposition(dangerous || share.allowDownload ? 'attachment' : 'inline', fileName));
+  if (dangerous) res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+}
+
 function sendArtifactError(res: Response, err: unknown): void {
-  if (err instanceof ArtifactServiceError) {
+  if (err instanceof ArtifactServiceError || err instanceof ArtifactShareServiceError) {
     res.status(err.statusCode).json({ error: err.message });
     return;
   }
   res.status(500).json({ error: err instanceof Error ? err.message : 'Artifact request failed' });
+}
+
+function isActiveContentType(value: string): boolean {
+  const mimeType = value.split(';', 1)[0]!.trim().toLowerCase();
+  return mimeType === 'text/html'
+    || mimeType === 'application/xhtml+xml'
+    || mimeType === 'image/svg+xml'
+    || mimeType === 'application/xml'
+    || mimeType === 'text/xml';
 }
 
 function requestBaseUrl(req: Request): string {

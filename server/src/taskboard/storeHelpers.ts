@@ -54,6 +54,16 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
       ? { pullRequestNumber: Number(row.pull_request_number) }
       : {}),
     ...(row.reviewed_subject_digest ? { reviewedSubjectDigest: String(row.reviewed_subject_digest) } : {}),
+    ...(row.provider_ci_inspection_id ? { providerCiInspectionId: String(row.provider_ci_inspection_id) } : {}),
+    ...(row.provider_ci_execution_id ? { providerCiExecutionId: String(row.provider_ci_execution_id) } : {}),
+    ...(row.provider_ci_purpose ? {
+      providerCiPurpose: String(row.provider_ci_purpose) as TaskBoardTask['providerCiPurpose'],
+    } : {}),
+    ...(row.provider_ci_head_oid ? { providerCiHeadOid: String(row.provider_ci_head_oid) } : {}),
+    ...(row.provider_ci_status ? {
+      providerCiStatus: String(row.provider_ci_status) as TaskBoardTask['providerCiStatus'],
+    } : {}),
+    ...(row.provider_ci_inspected_at ? { providerCiInspectedAt: toIso(row.provider_ci_inspected_at) } : {}),
     ...(row.merged_commit_oid ? { mergedCommitOid: String(row.merged_commit_oid) } : {}),
     ...(row.integration_task_id ? { integrationTaskId: String(row.integration_task_id) } : {}),
     ...(row.integration_task_identifier ? { integrationTaskIdentifier: String(row.integration_task_identifier) } : {}),
@@ -111,7 +121,15 @@ function taskMergeEligibility(row: Record<string, unknown>): TaskBoardTask['merg
   if (row.kind !== 'delivery') return 'not_applicable';
   if (row.integration_state === 'merged' || row.merged_commit_oid) return 'merged';
   if (row.integration_state !== 'canceled' && (row.integration_source_id || row.integration_task_id)) return 'claimed';
-  return row.status === 'ready_to_merge' && row.provider_pull_request_id && row.reviewed_subject_digest
+  const inspectedAt = row.provider_ci_inspected_at ? new Date(String(row.provider_ci_inspected_at)).getTime() : 0;
+  const inspectionFresh = Number.isFinite(inspectedAt) && Date.now() - inspectedAt <= 10 * 60 * 1000;
+  return row.status === 'ready_to_merge'
+    && row.provider_pull_request_id
+    && row.reviewed_subject_digest
+    && row.provider_ci_status === 'success'
+    && row.provider_ci_purpose === 'review'
+    && row.provider_ci_head_oid === row.head_oid
+    && inspectionFresh
     ? 'eligible'
     : 'not_applicable';
 }
@@ -171,26 +189,6 @@ export function visibleCommentPredicate(commentAlias: string, changesTable: stri
   ))`;
 }
 
-function executionResolutionProjection(row: Record<string, unknown>): Pick<TaskBoardExecution, 'resolutionState' | 'resolutionIssue'> {
-  if (row.has_resolution === true || row.resolution_id || row.resolution_outcome) {
-    return { resolutionState: row.resolution_historical === true ? 'historical' : 'canonical' };
-  }
-  const candidates = Number(row.legacy_resolution_count ?? 0);
-  const valid = Number(row.legacy_resolution_valid_count ?? 0);
-  if (candidates > 1) {
-    return {
-      resolutionState: 'legacy_ambiguous',
-      resolutionIssue: `检测到 ${candidates} 条历史结论，无法唯一迁移`,
-    };
-  }
-  if (candidates === 1 && valid !== 1) {
-    return {
-      resolutionState: 'legacy_incomplete',
-      resolutionIssue: '历史结论字段不完整，未迁移为结构化结论',
-    };
-  }
-  return { resolutionState: 'missing' };
-}
 
 export function rowToExecution(row: Record<string, unknown>): TaskBoardExecution {
   return {
@@ -207,13 +205,6 @@ export function rowToExecution(row: Record<string, unknown>): TaskBoardExecution
     ...(row.attempt_id ? { attemptId: String(row.attempt_id) } : {}),
     requestedBy: String(row.requested_by),
     ...(row.error !== null && row.error !== undefined ? { error: String(row.error) } : {}),
-    ...(row.resolution_id ? { resolutionId: String(row.resolution_id) } : {}),
-    ...(row.resolution_outcome ? { resolutionOutcome: String(row.resolution_outcome) } : {}),
-    ...(row.resolution_summary ? { resolutionSummary: String(row.resolution_summary) } : {}),
-    ...executionResolutionProjection(row),
-    ...(row.task_status_after ? { taskStatusAfter: String(row.task_status_after) as TaskBoardTask['status'] } : {}),
-    ...(row.resolved_at ? { resolvedAt: toIso(row.resolved_at) } : {}),
-    ...(row.ignored_reason ? { ignoredReason: String(row.ignored_reason) } : {}),
     ...(row.superseded_at ? { supersededAt: toIso(row.superseded_at) } : {}),
     ...(row.fence_epoch !== null && row.fence_epoch !== undefined ? { fenceEpoch: String(row.fence_epoch) } : {}),
     ...(row.started_at ? { startedAt: toIso(row.started_at) } : {}),

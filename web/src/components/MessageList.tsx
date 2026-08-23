@@ -284,6 +284,7 @@ interface MessageListProps {
   sessionParticipants?: SessionParticipants | null;
   /** 分享页等只读上下文可显式指定调试模式；未传时沿用当前登录用户设置。 */
   debugModeOverride?: boolean;
+  businessStepDisplayModeOverride?: BusinessStepDisplayMode; showBusinessStepOutcomeWhenCollapsed?: boolean;
   /**
    * 空会话槽位：会话没有任何消息且不在加载中时渲染（场景推荐卡等）。
    * 注意：本组件被 memo，上层需传入引用稳定（useMemo）的节点，避免破坏 memo。
@@ -309,7 +310,7 @@ export const MessageList = memo(function MessageList({
   ttsStateMap,
   agentProfile,
   sessionParticipants,
-  debugModeOverride,
+  debugModeOverride, businessStepDisplayModeOverride, showBusinessStepOutcomeWhenCollapsed,
   emptySlot,
 }: MessageListProps) {
   const NEAR_BOTTOM_THRESHOLD = 150;
@@ -327,8 +328,7 @@ export const MessageList = memo(function MessageList({
 
   const voicePlayer = useVoicePlayer();
   const { user } = useAuth();
-  const debugMode = debugModeOverride ?? (user?.debugMode === true && isDebugModeAvailable(user.tenantId, user.tenantFeatures));
-  const businessStepDisplayMode = user?.preferences?.businessStepDisplayMode ?? 'auto';
+  const debugMode = debugModeOverride ?? (user?.debugMode === true && isDebugModeAvailable(user.tenantId, user.tenantFeatures)); const businessStepDisplayMode = businessStepDisplayModeOverride ?? user?.preferences?.businessStepDisplayMode ?? 'auto';
   const groupedMessages = useGroupedMessages(messages, loading, { debugMode, sectioning: true });
   const bubbleItems = useMemo(() => groupIntoBubbles(groupedMessages), [groupedMessages]);
   const businessPlanIndex = useMemo(() => indexBusinessPlans(bubbleItems), [bubbleItems]);
@@ -808,9 +808,8 @@ export const MessageList = memo(function MessageList({
                     section={sub}
                     debugMode={debugMode}
                     systemActions={systemActions}
-                    open={sectionOpen}
-                    onOpenChange={(open) => setBusinessStepOpen(sub.id, open)}
-                    showOutcomeWhenCollapsed={businessStepDisplayMode !== 'collapsed'}
+                    open={sectionOpen} onOpenChange={(open) => setBusinessStepOpen(sub.id, open)}
+                    showOutcomeWhenCollapsed={showBusinessStepOutcomeWhenCollapsed}
                   >
                     {sub.items.map((child) => renderFlowItem(child))}
                   </BusinessStepSectionView>
@@ -823,11 +822,10 @@ export const MessageList = memo(function MessageList({
                 <ErrorBoundary key={sub.id} inline>
                   <BusinessStepFlow
                     event={sub}
-                    open={terminal ? isBusinessStepOpen(sub.id, true) : undefined}
-                    onOpenChange={terminal ? (open) => setBusinessStepOpen(sub.id, open) : undefined}
+                    open={terminal ? isBusinessStepOpen(sub.id, true) : undefined} onOpenChange={terminal ? (open) => setBusinessStepOpen(sub.id, open) : undefined}
+                    showOutcomeWhenCollapsed={showBusinessStepOutcomeWhenCollapsed}
                     planHasOpenStep={sub.kind === 'plan' ? planHasOpenStep(sub.id) : undefined}
                     onTogglePlan={sub.kind === 'plan' ? () => toggleBusinessPlan(sub.id) : undefined}
-                    showOutcomeWhenCollapsed={businessStepDisplayMode !== 'collapsed'}
                   />
                 </ErrorBoundary>
               );

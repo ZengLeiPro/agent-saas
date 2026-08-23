@@ -1,5 +1,8 @@
 import type { AgentRunDispatch } from '../agent/index.js';
+import { DwsContextRuntime } from '../context/sync/index.js';
+import type { ContextStore } from '../context/store/index.js';
 import type { AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
+import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import { AgentDwsAuthFlowService } from '../dws/agentAuthFlow.js';
 import { DwsDeviceLoginRunner, type DwsWorkspacePrincipal } from '../dws/authFlow.js';
@@ -30,6 +33,8 @@ export interface AgentDwsRuntimeBundle {
 export async function createAgentDwsRuntime(options: {
   agentCwd: string;
   accountStore: AgentDwsAccountStore;
+  assignmentStore?: PgAssignmentStore;
+  contextStore?: ContextStore;
   messageStore?: AgentDwsMessageStore;
   pgEventStore?: PgEventStore;
   pgRunStore?: PgRunStore;
@@ -59,6 +64,17 @@ export async function createAgentDwsRuntime(options: {
     return undefined;
   }
 
+  const contextRuntime = options.contextStore
+    ? new DwsContextRuntime({
+        agentCwd: options.agentCwd,
+        accountStore: options.accountStore,
+        contextStore: options.contextStore,
+        ...(options.assignmentStore ? { assignmentStore: options.assignmentStore } : {}),
+        resolveServerRemote: options.resolveServerRemote,
+        logger: options.logger.child('DwsContextRuntime'),
+      })
+    : undefined;
+
   const messageRouter = options.messageStore
     ? new AgentDwsMessageRouter({
         agentCwd: options.agentCwd,
@@ -83,6 +99,13 @@ export async function createAgentDwsRuntime(options: {
     onEvent: async (account, event) => {
       if (!messageRouter) throw new Error('Agent DWS durable inbox is unavailable');
       await messageRouter.ingest(account, event);
+      // Context sync is a best-effort wake after the durable inbox commit. Event
+      // content is ignored; the worker re-reads canonical messages from DWS.
+      void contextRuntime?.wake(account, event).catch(error => {
+        options.logger.warn(
+          `DWS context event wake failed account=${account.accountId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
     },
     logger: options.logger.child('DwsPersonalEventGateway'),
   });
@@ -94,12 +117,21 @@ export async function createAgentDwsRuntime(options: {
       agentCwd: options.agentCwd,
       resolveServerRemote: options.resolveServerRemote,
     }),
-    onConnected: account => options.enableWorker ? eventGateway.startAccount(account) : Promise.resolve(),
+    onConnected: async account => {
+      if (!options.enableWorker) return;
+      await eventGateway.startAccount(account);
+      void contextRuntime?.syncAccount(account).catch(error => {
+        options.logger.warn(
+          `DWS context initial backfill failed account=${account.accountId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+    },
     logger: options.logger.child('AgentDwsAuthFlow'),
   });
 
   if (options.enableWorker) {
     messageRouter?.start();
+    contextRuntime?.start();
     await eventGateway.startAll().catch(error => {
       options.logger.warn(`Agent DWS Personal Stream startup failed: ${error instanceof Error ? error.message : String(error)}`);
     });
@@ -112,6 +144,7 @@ export async function createAgentDwsRuntime(options: {
     async stop() {
       await authFlowService.stop();
       await eventGateway.stop();
+      await contextRuntime?.stop();
       await messageRouter?.stop();
     },
   };

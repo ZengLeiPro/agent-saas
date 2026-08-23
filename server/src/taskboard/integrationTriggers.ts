@@ -23,7 +23,6 @@ interface IntegrationTriggerHost {
   mergeOperationsTable: string;
   blockEpisodesTable: string;
   integrationTriggerOutboxTable: string;
-  resolutionsTable: string;
   remediationAttemptsTable: string;
   cancellationOutboxTable: string;
 }
@@ -76,7 +75,8 @@ export async function claimIntegrationDispatchCandidates(
     host,
     Math.max(0, recoveryLimit - recoveries.length),
   );
-  return [...created, ...recoveries, ...recoverable];
+  const candidates = [...created, ...recoveries, ...recoverable];
+  return candidates.filter((candidate, index) => candidates.findIndex((item) => item.task.id === candidate.task.id) === index);
 }
 
 async function enqueueScheduledTriggers(host: IntegrationTriggerHost): Promise<void> {
@@ -464,8 +464,8 @@ async function loadUnstartedIntegrationTasks(
                   OR EXISTS (
                     SELECT 1 FROM ${host.changesTable} rework_change
                      WHERE rework_change.task_id=t.id
-                       AND rework_change.change_type IN ('execution.resolved','execution.resolved.v2')
-                       AND rework_change.payload->>'outcome'='changes_requested'
+                       AND rework_change.change_type IN ('execution.transitioned','execution.transitioned.v3')
+                       AND rework_change.payload->>'status'='todo'
                        AND NOT EXISTS (
                          SELECT 1 FROM ${host.executionsTable} rework_execution
                           WHERE rework_execution.task_id=t.id AND rework_execution.purpose='work'

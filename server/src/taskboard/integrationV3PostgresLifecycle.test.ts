@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { PostgresIntegrationEngineV3CandidateHost, PostgresIntegrationEngineV3FeatureHost, PostgresIntegrationEngineV3RequestHost, PostgresIntegrationProviderFenceHost } from './integrationEngineV3Postgres.js';
+import { PostgresIntegrationEngineV3CandidateHost, PostgresIntegrationEngineV3FeatureHost, PostgresIntegrationEngineV3RequestHost, PostgresIntegrationProviderFenceHost, PostgresIntegrationProviderOperationStorage } from './integrationEngineV3Postgres.js';
 import { PostgresIntegrationV3ComposeHost, PostgresIntegrationV3WorkerHost } from './integrationV3WorkerPostgres.js';
 
 function workerHost(query: ReturnType<typeof vi.fn>, dispatchAgent = vi.fn(), syncWorkspace = vi.fn()) {
@@ -14,6 +14,27 @@ function workerHost(query: ReturnType<typeof vi.fn>, dispatchAgent = vi.fn(), sy
 }
 
 describe('Integration v3 PostgreSQL lifecycle hosts', () => {
+  it('serializes provider operation prepare against terminal candidate transitions', async () => {
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    const storage = new PostgresIntegrationProviderOperationStorage({
+      pool: { query }, candidatesTable: 'candidates', providerOperationsTable: 'operations',
+    });
+
+    await expect(storage.insertPrepared({
+      id: 'operation-1', operationKey: 'operation-key-1', intentDigest: 'digest', kind: 'push_ref',
+      repositoryId: 'github:acme/app',
+      fence: { candidateId: 'candidate-1', candidateRevision: 1, workflowEpoch: 2, laneEpoch: 3, executionId: 'execution-1' },
+      expected: {}, command: {}, state: 'prepared', attemptCount: 0,
+      createdAt: '2026-08-22T00:00:00.000Z', updatedAt: '2026-08-22T00:00:00.000Z',
+    })).rejects.toThrow('terminal candidate fence');
+
+    const sql = query.mock.calls[0]![0];
+    expect(sql).toContain("c.state NOT IN ('merged','canceled')");
+    expect(sql).toContain('FOR UPDATE');
+  });
+
   it('freezes flags to the exact candidate, including terminal cleanup', async () => {
     const query = vi.fn(async (_text: string, _values?: unknown[]) => ({ rows: [{ policy_snapshot: { workflowVersion: 3, featureFlags: { engineV3: true, cleanup: true } } }] }));
     const host = new PostgresIntegrationEngineV3FeatureHost({ pool: { query }, candidatesTable: 'candidates' } as never);
@@ -126,7 +147,7 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     const host = new PostgresIntegrationV3ComposeHost({
       pool: { query, connect: vi.fn(async () => client) },
       candidatesTable: 'candidates', sourceSnapshotsTable: 'snapshots', requestsOutboxTable: 'requests',
-      tasksTable: 'tasks', boardsTable: 'boards', executionsTable: 'executions', resolutionsTable: 'resolutions',
+      tasksTable: 'tasks', boardsTable: 'boards', executionsTable: 'executions',
       resolvePaths: vi.fn(), runGit: vi.fn(), validateServerOwnedRepository: vi.fn(),
     } as never);
     const operation = vi.fn(async () => 'done');
@@ -168,7 +189,7 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     } as never)).rejects.toMatchObject({ code: 'TASKBOARD_PROVIDER_OPERATION_FENCE_MISMATCH' });
   });
 
-  it.each(['prepared', 'executing', 'unknown', 'succeeded'] as const)(
+  it.each(['prepared', 'executing', 'unknown', 'failed', 'needs_human', 'succeeded'] as const)(
     'loads %s merge operations for crash/restart convergence',
     async (state) => {
       const query = vi.fn(async (_text: string, _values?: unknown[]) => ({
@@ -179,7 +200,8 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
         operationKey: `merge-${state}`,
         state,
       });
-      expect(query.mock.calls[0]![0]).toContain("state IN ('prepared','executing','unknown','succeeded')");
+      expect(query.mock.calls[0]![0]).toContain("o.state IN ('prepared','executing','unknown','failed','needs_human','succeeded')");
+      expect(query.mock.calls[0]![0]).toContain("o.command->>'providerPullRequestId'=c.provider_pull_request_id");
     },
   );
 
@@ -264,16 +286,17 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it('binds work completion to the request execution and canonical ready_for_review resolution', async () => {
+  it('binds work completion to the request execution and fenced in_review transition', async () => {
     const query = vi.fn(async (sql: string, _values?: unknown[]) => sql.includes('SELECT b.repository')
       ? { rows: [{ repository: { provider: 'github', repositoryId: 'github:acme/app', owner: 'acme', name: 'app', baseBranch: 'main' }, owner_user_id: 'owner', tenant_id: 'tenant',
         work_execution_id: 'work-1', push_execution_id: 'work-1', push_candidate_id: 'candidate-1', push_candidate_revision: 2,
-        push_workflow_epoch: 4, push_lane_epoch: 9, push_old_oid: 'head-2', push_new_oid: 'head-3',
+        push_workflow_epoch: 4, push_lane_epoch: 9, push_ref: 'refs/heads/integration/1',
+        push_old_oid: 'head-2', push_new_oid: 'head-3',
         trusted_integration_branch_oids: ['a'.repeat(40)] }] }
       : { rows: [] });
     const host = new PostgresIntegrationV3ComposeHost({
       pool: { query }, candidatesTable: 'candidates', sourceSnapshotsTable: 'snapshots', tasksTable: 'tasks', boardsTable: 'boards',
-      executionsTable: 'executions', resolutionsTable: 'resolutions', requestsOutboxTable: 'requests', providerOperationsTable: 'operations',
+      executionsTable: 'executions', requestsOutboxTable: 'requests', providerOperationsTable: 'operations',
       resolvePaths: async () => ({ repositoryPath: '/repo', worktreePath: '/worktree' }), runGit: vi.fn(), validateServerOwnedRepository: vi.fn(),
     } as never);
     const context = await host.resolveContext({ candidate: {
@@ -282,15 +305,18 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     }, revision: { subjectDigest: 'subject-2', headOid: 'head-2' } } as never);
     const sql = String(query.mock.calls[0]![0]);
     expect(sql).toContain("JOIN executions e ON e.id=o.payload->>'executionId'");
-    expect(sql).toContain('JOIN resolutions r ON r.execution_id=e.id');
-    expect(sql).toContain("e.status='succeeded' AND r.outcome='ready_for_review'");
-    expect(sql).toContain('r.historical=false AND r.applied=true');
+    expect(sql).toContain('e.transitioned_at IS NOT NULL');
+    expect(sql).toContain('ORDER BY e.transitioned_at DESC');
+    expect(sql).not.toContain('resolutions');
     expect(sql).toContain('o.work_round=c.work_round');
     expect(sql).toContain("o.payload->>'subjectDigest','')=$2");
     expect(sql).toContain("o.kind='push_ref' AND o.state='succeeded'");
     expect(sql).toContain("o.state IN ('executing','unknown','failed','needs_human','succeeded')");
     expect(sql).toContain("o.expected->>'ref'=('refs/heads/'||c.branch)");
-    expect(sql).toContain("CASE WHEN o.state='succeeded' THEN o.expected->>'newOid' END");
+    expect(sql).toContain("CASE WHEN o.state IN ('executing','unknown','succeeded') THEN o.expected->>'newOid' END");
+    expect(sql).toContain("o.receipt->>'ref'=o.expected->>'ref'");
+    expect(sql).toContain("o.receipt->>'oldOid'=o.expected->>'oldOid'");
+    expect(sql).toContain("o.receipt->>'newOid'=o.expected->>'newOid'");
     expect(sql).toContain('o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch');
     expect(sql).toContain('o.attempt_count>0');
     expect(sql).toContain('o.execution_id=work.execution_id');
@@ -300,7 +326,8 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(context.trustedIntegrationBranchOids).toEqual(['a'.repeat(40)]);
     expect(context.workPushReceipt).toEqual({
       executionId: 'work-1', candidateId: 'candidate-1', candidateRevision: 2,
-      workflowEpoch: '4', laneEpoch: '9', oldOid: 'head-2', newOid: 'head-3',
+      workflowEpoch: '4', laneEpoch: '9', ref: 'refs/heads/integration/1',
+      oldOid: 'head-2', newOid: 'head-3',
     });
   });
 

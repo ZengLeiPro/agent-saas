@@ -10,7 +10,7 @@ import type {
   TaskBoardExecutionPurpose,
   TaskBoardExecutionContextInput,
   TaskBoardExecutionContextResponse,
-  TaskBoardExecutionResolutionInput,
+  TaskBoardExecutionTransitionInput,
   TaskBoardIntegrationBatchCreateInput,
   TaskBoardIntegrationCandidateDetails,
   TaskBoardIntegrationSource,
@@ -31,6 +31,8 @@ import type {
 } from '../../../shared/src/types/taskboard.js';
 import type { UpsertRunInput } from '../runtime/runStore.js';
 import type { RuntimeSessionRecord } from '../runtime/sessionCatalog.js';
+import type { ExecutionPullRequestInspection } from './deliveryPullRequests.js';
+import type { RepositoryPullRequestInspection } from './repositoryProvider.js';
 
 export interface TaskboardIdentity {
   tenantId: string;
@@ -86,19 +88,16 @@ export interface TaskboardExpectedVersionInput {
 
 export interface TaskboardIntegrationSourceInspection {
   source: TaskBoardIntegrationSource;
-  pullRequest: {
+  pullRequest: RepositoryPullRequestInspection;
+  inspectionReceipt: {
+    inspectionId: string;
+    executionId: string;
+    taskId: string;
+    sourceId: string;
     providerPullRequestId: string;
-    number: number;
-    state: 'open' | 'closed' | 'merged';
-    draft: boolean;
-    headRef: string;
     headOid: string;
-    baseRef: string;
-    baseOid: string;
-    mergeable: boolean | null;
-    mergeableState?: string;
-    requiredChecks: Array<{ name: string; status: 'pending' | 'success' | 'failure' }>;
-    subjectDigest: string;
+    providerQueriedAt: string;
+    digest: string;
   };
 }
 
@@ -490,6 +489,16 @@ export interface TaskboardService {
     runId: string,
     providerPullRequestId: string,
   ): Promise<TaskBoardTask>;
+  inspectExecutionPullRequestV2?(
+    identity: TaskboardIdentity,
+    runId: string,
+  ): Promise<ExecutionPullRequestInspection>;
+  readExecutionPullRequestJobLogV2?(
+    identity: TaskboardIdentity,
+    runId: string,
+    inspectionId: string,
+    providerJobId: string,
+  ): Promise<{ inspectionId: string; providerJobId: string; log: string }>;
   recordReviewedExecutionSubjectV2?(
     identity: TaskboardIdentity,
     runId: string,
@@ -499,6 +508,13 @@ export interface TaskboardService {
     runId: string,
     sourceId: string,
   ): Promise<TaskboardIntegrationSourceInspection>;
+  readIntegrationSourceJobLogV2?(
+    identity: TaskboardIdentity,
+    runId: string,
+    sourceId: string,
+    inspectionId: string,
+    providerJobId: string,
+  ): Promise<{ inspectionId: string; providerJobId: string; log: string }>;
   mergeIntegrationSourceV2?(
     identity: TaskboardIdentity,
     runId: string,
@@ -511,10 +527,10 @@ export interface TaskboardService {
     remediationTaskId: string,
   ): Promise<TaskBoardIntegrationSource>;
   reconcileMergeOperationsV2?(limit?: number): Promise<number>;
-  resolveExecutionV2?(
+  transitionExecutionV2?(
     identity: TaskboardIdentity,
     runId: string,
-    input: TaskBoardExecutionResolutionInput,
+    input: TaskBoardExecutionTransitionInput,
   ): Promise<TaskBoardTask>;
 }
 

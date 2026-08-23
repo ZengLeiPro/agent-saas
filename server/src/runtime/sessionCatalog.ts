@@ -21,16 +21,25 @@ export type RuntimeSessionStatus = 'running' | 'idle' | 'waiting_approval' | 'fi
 export type MemoryPolicyVersion = 'v1' | 'v2';
 export type RuntimeSessionSource = 'taskboard_execution' | 'memory_consolidation';
 
+export interface OrgAgentCollectionAssignmentPin {
+  collectionId: string;
+  assignmentVersion: number;
+  resourceType: 'org_knowledge';
+}
+
 export interface OrgAgentSessionSnapshot {
   name: string;
   instructions: string;
   allowedSkills: string[];
   allowedKnowledge: string[];
   runtime: OrgAgentRuntimePolicy;
+  /** Effective org_knowledge assignment versions pinned for this in-flight snapshot. */
+  collectionAssignments?: OrgAgentCollectionAssignmentPin[];
 }
 
 export function createOrgAgentSessionSnapshot(
   agent: Pick<OrgAgentRecord, 'name' | 'instructions' | 'allowedSkills' | 'allowedKnowledge' | 'runtime'>,
+  collectionAssignments?: readonly OrgAgentCollectionAssignmentPin[],
 ): OrgAgentSessionSnapshot {
   return {
     name: agent.name,
@@ -38,6 +47,7 @@ export function createOrgAgentSessionSnapshot(
     allowedSkills: [...agent.allowedSkills],
     allowedKnowledge: [...(agent.allowedKnowledge ?? [])],
     runtime: parseOrgAgentRuntimePolicy(agent.runtime),
+    ...(collectionAssignments ? { collectionAssignments: collectionAssignments.map(item => ({ ...item })) } : {}),
   };
 }
 
@@ -49,13 +59,35 @@ function parseOrgAgentSessionSnapshot(value: unknown): OrgAgentSessionSnapshot |
   if (!Array.isArray(record.allowedKnowledge) || !record.allowedKnowledge.every(item => typeof item === 'string')) return undefined;
   const runtime = orgAgentRuntimePolicySchema.safeParse(record.runtime);
   if (!runtime.success) return undefined;
+  const collectionAssignments = parseOrgAgentCollectionAssignmentPins(record.collectionAssignments);
+  if (record.collectionAssignments !== undefined && !collectionAssignments) return undefined;
   return {
     name: record.name,
     instructions: record.instructions,
     allowedSkills: [...record.allowedSkills],
     allowedKnowledge: [...record.allowedKnowledge],
     runtime: parseOrgAgentRuntimePolicy(runtime.data),
+    ...(collectionAssignments ? { collectionAssignments } : {}),
   };
+}
+
+function parseOrgAgentCollectionAssignmentPins(value: unknown): OrgAgentCollectionAssignmentPin[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return undefined;
+  const result: OrgAgentCollectionAssignmentPin[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return undefined;
+    const record = item as Record<string, unknown>;
+    if (typeof record.collectionId !== 'string' || !record.collectionId.trim()
+      || !Number.isSafeInteger(record.assignmentVersion) || Number(record.assignmentVersion) < 1
+      || record.resourceType !== 'org_knowledge') return undefined;
+    result.push({
+      collectionId: record.collectionId,
+      assignmentVersion: Number(record.assignmentVersion),
+      resourceType: 'org_knowledge',
+    });
+  }
+  return result;
 }
 
 export interface RuntimeSessionRecord extends Partial<AgentProfileSessionBinding> {

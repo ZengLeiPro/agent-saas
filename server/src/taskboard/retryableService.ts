@@ -7,7 +7,7 @@ import type {
   TaskBoardExecution,
   TaskBoardExecutionContextInput,
   TaskBoardExecutionContextResponse,
-  TaskBoardExecutionResolutionInput,
+  TaskBoardExecutionTransitionInput,
   TaskBoardExecutionStartResult,
   TaskBoardIntegrationBatchCreateInput,
   TaskBoardIntegrationSource,
@@ -44,6 +44,7 @@ import type {
   TaskboardTaskSearchFilter,
 } from './types.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
+import type { ExecutionPullRequestInspection } from './deliveryPullRequests.js';
 
 export interface InitializableTaskboardService extends TaskboardService, TaskboardExecutionStore {
   init(): Promise<void>;
@@ -329,6 +330,26 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.attachExecutionPullRequestV2(identity, runId, providerPullRequestId);
   }
 
+  async inspectExecutionPullRequestV2(
+    identity: TaskboardIdentity,
+    runId: string,
+  ): Promise<ExecutionPullRequestInspection> {
+    await this.init();
+    if (!this.target.inspectExecutionPullRequestV2) throw new Error('Taskboard repository provider unavailable');
+    return this.target.inspectExecutionPullRequestV2(identity, runId);
+  }
+
+  async readExecutionPullRequestJobLogV2(
+    identity: TaskboardIdentity,
+    runId: string,
+    inspectionId: string,
+    providerJobId: string,
+  ): Promise<{ inspectionId: string; providerJobId: string; log: string }> {
+    await this.init();
+    if (!this.target.readExecutionPullRequestJobLogV2) throw new Error('Taskboard repository provider unavailable');
+    return this.target.readExecutionPullRequestJobLogV2(identity, runId, inspectionId, providerJobId);
+  }
+
   async recordReviewedExecutionSubjectV2(
     identity: TaskboardIdentity,
     runId: string,
@@ -346,6 +367,18 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     await this.init();
     if (!this.target.inspectIntegrationSourceV2) throw new Error('Taskboard integration provider unavailable');
     return this.target.inspectIntegrationSourceV2(identity, runId, sourceId);
+  }
+
+  async readIntegrationSourceJobLogV2(
+    identity: TaskboardIdentity,
+    runId: string,
+    sourceId: string,
+    inspectionId: string,
+    providerJobId: string,
+  ): Promise<{ inspectionId: string; providerJobId: string; log: string }> {
+    await this.init();
+    if (!this.target.readIntegrationSourceJobLogV2) throw new Error('Taskboard integration provider unavailable');
+    return this.target.readIntegrationSourceJobLogV2(identity, runId, sourceId, inspectionId, providerJobId);
   }
 
   async mergeIntegrationSourceV2(
@@ -389,14 +422,14 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return service.createExecutionCommentV2(identity, runId, body);
   }
 
-  async resolveExecutionV2(
+  async transitionExecutionV2(
     identity: TaskboardIdentity,
     runId: string,
-    input: TaskBoardExecutionResolutionInput,
+    input: TaskBoardExecutionTransitionInput,
   ): Promise<TaskBoardTask> {
     const service = await this.service();
-    if (!service.resolveExecutionV2) throw new Error('Taskboard execution resolution unavailable');
-    return service.resolveExecutionV2(identity, runId, input);
+    if (!service.transitionExecutionV2) throw new Error('Taskboard execution transition unavailable');
+    return service.transitionExecutionV2(identity, runId, input);
   }
 
   async listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {

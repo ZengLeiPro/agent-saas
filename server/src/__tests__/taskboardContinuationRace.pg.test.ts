@@ -60,7 +60,7 @@ describePg('Taskboard continuation PostgreSQL race contract', () => {
     try {
       await pool.query(`DROP TABLE IF EXISTS
         ${store.integrationTriggerOutboxTable}, ${store.blockEpisodesTable}, ${store.cancellationOutboxTable},
-        ${store.resolutionsTable}, ${store.remediationAttemptsTable}, ${store.mergeOperationsTable},
+        ${store.remediationAttemptsTable}, ${store.mergeOperationsTable},
         ${store.mergeAuthorizationsTable}, ${store.integrationSourcesTable}, ${store.integrationLanesTable},
         ${store.attemptsTable}, ${store.changesTable}, ${store.membersTable}, ${store.continuationOutboxTable},
         ${store.executionOutboxTable}, ${store.executionsTable}, ${store.commentsTable}, ${store.tasksTable},
@@ -75,7 +75,7 @@ describePg('Taskboard continuation PostgreSQL race contract', () => {
     const task = await store.createTask(alice, board.id, { title: '取消先提交', status: 'todo' });
     await store.claimExecution(alice, task.id, {
       expectedVersion: task.version, executionId: 'execution-cancel-first', runId: 'run-cancel-first-original',
-      sessionId: 'session-cancel-first', executionOwnerUserId: alice.ownerUserId,
+      sessionId: 'session-cancel-first', executionOwnerUserId: alice.ownerUserId, protocolVersion: 1,
       dispatch: dispatch('execution-cancel-first', 'run-cancel-first-original', 'session-cancel-first'),
     });
     await store.setExecutionStatus('run-cancel-first-original', 'running');

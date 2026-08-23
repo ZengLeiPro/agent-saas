@@ -124,15 +124,15 @@ export class PgContextProductStore implements ContextProductStore {
           FROM ${this.derived.reviews} rv JOIN ${this.derived.derivedItems} ri
             ON ri.tenant_id=rv.tenant_id AND ri.generation=rv.generation AND ri.item_id=rv.item_id
           WHERE ri.tenant_id=en.tenant_id AND ri.subject_entity_id=en.entity_id
-            AND rv.comment->>'action' IN ('assert','reject')
-            AND rv.comment->'scope'->>'type'='person' AND rv.comment->'scope'->>'personId'=$4
+            AND rv.comment::jsonb->>'action' IN ('assert','reject')
+            AND rv.comment::jsonb->'scope'->>'type'='person' AND rv.comment::jsonb->'scope'->>'personId'=$4
         ) AS personal_correction_revision,
         (SELECT 1+COUNT(DISTINCT rv.review_id)::integer
           FROM ${this.derived.reviews} rv JOIN ${this.derived.derivedItems} ri
             ON ri.tenant_id=rv.tenant_id AND ri.generation=rv.generation AND ri.item_id=rv.item_id
           WHERE ri.tenant_id=en.tenant_id AND ri.subject_entity_id=en.entity_id
-            AND rv.comment->>'action' IN ('assert','reject')
-            AND rv.comment->'scope'->>'type'='org'
+            AND rv.comment::jsonb->>'action' IN ('assert','reject')
+            AND rv.comment::jsonb->'scope'->>'type'='org'
         ) AS organization_correction_revision,
         EXISTS (SELECT 1 FROM ${this.base.partitions} p WHERE p.tenant_id=en.tenant_id
           AND p.source_id=en.source_id AND p.collection_id=en.collection_id
@@ -169,7 +169,7 @@ export class PgContextProductStore implements ContextProductStore {
       LEFT JOIN ${this.derived.itemEvidence} ie ON ie.tenant_id=i.tenant_id AND ie.generation=i.generation
         AND ie.item_id=i.item_id AND ie.revoked=FALSE
       WHERE r.tenant_id=$1 AND i.subject_entity_id=$2 AND r.revoked=FALSE
-        AND r.comment->>'action' IN ('assert','reject')
+        AND r.comment::jsonb->>'action' IN ('assert','reject')
         AND (i.owner_principal IS NULL OR i.owner_principal=$3)
       GROUP BY r.tenant_id,r.generation,r.item_id,r.review_id,r.review_status,r.reviewer_principal,
         r.comment,r.authority,r.revoked,r.created_at,r.updated_at,i.subject_entity_id,i.value_json,i.updated_at

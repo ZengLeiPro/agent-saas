@@ -79,8 +79,8 @@ describe('PgContextProductStore hardened candidates', () => {
     const result = await store.getEntity('tenant-a', 'entity-a', ['collection-a'], 'actor-a');
 
     const sql = String(query.mock.calls[0]![0]);
-    expect(sql).toContain("rv.comment->'scope'->>'personId'=$4");
-    expect(sql).toContain("rv.comment->'scope'->>'type'='org'");
+    expect(sql).toContain("rv.comment::jsonb->'scope'->>'personId'=$4");
+    expect(sql).toContain("rv.comment::jsonb->'scope'->>'type'='org'");
     expect(query.mock.calls[0]![1]).toEqual(['tenant-a', 'entity-a', ['collection-a'], 'actor-a']);
     expect(result).toMatchObject({ revision: 99, correctionRevisions: { personal: 3, organization: 2 } });
   });
@@ -105,7 +105,7 @@ describe('PgContextProductStore hardened candidates', () => {
     const query = vi.fn(async (_sql: string, _params?: readonly unknown[]) => ({ rows: [] }));
     const store = new PgContextProductStore({ query } as never, 'test');
     await store.listCorrections('tenant-a', 'entity-a', 'actor-a');
-    expect(String(query.mock.calls[0]![0])).toContain("r.comment->>'action' IN ('assert','reject')");
+    expect(String(query.mock.calls[0]![0])).toContain("r.comment::jsonb->>'action' IN ('assert','reject')");
   });
 
   it('loads the exact review sibling group with real entity label and confirmed original summary', async () => {

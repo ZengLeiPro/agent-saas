@@ -599,7 +599,7 @@ export class DerivedContextStore {
     const rows = await this.options.pool.query(`SELECT r.generation,r.item_id,r.comment FROM ${this.tables.reviews} r
       JOIN ${this.tables.derivedItems} i ON i.tenant_id=r.tenant_id AND i.generation=r.generation AND i.item_id=r.item_id
       WHERE r.tenant_id=$1 AND i.subject_entity_id=$2 AND r.review_status='rejected' AND r.revoked=FALSE
-        AND r.comment->>'action'='reject'`,
+        AND r.comment::jsonb->>'action'='reject'`,
     [input.tenantId, input.entityId]);
     const rejected = new Set<string>();
     for (const row of rows.rows) {
@@ -826,13 +826,13 @@ async function reviewRevision(
   scope: AppendReviewInput['scope'],
 ): Promise<number> {
   const result = await client.query(`SELECT 1+COUNT(DISTINCT r.review_id) FILTER (WHERE
-      ($3='person' AND r.comment->'scope'->>'type'='person' AND r.comment->'scope'->>'personId'=$4)
-      OR ($3='org' AND r.comment->'scope'->>'type'='org')
+      ($3='person' AND r.comment::jsonb->'scope'->>'type'='person' AND r.comment::jsonb->'scope'->>'personId'=$4)
+      OR ($3='org' AND r.comment::jsonb->'scope'->>'type'='org')
     )::integer AS revision
     FROM ${tables.derivedItems} i LEFT JOIN ${tables.reviews} r
       ON r.tenant_id=i.tenant_id AND r.generation=i.generation AND r.item_id=i.item_id
     WHERE i.tenant_id=$1 AND i.subject_entity_id=$2
-      AND r.comment->>'action' IN ('assert','reject')`,
+      AND r.comment::jsonb->>'action' IN ('assert','reject')`,
   [tenantId, entityId, scope.type, scope.type === 'person' ? scope.personId : null]);
   return Number(result.rows[0]?.revision ?? 1);
 }

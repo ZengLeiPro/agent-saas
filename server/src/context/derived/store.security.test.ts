@@ -125,6 +125,6 @@ describe('DerivedContextStore review target hardening', () => {
     await expect(store.listActiveItems({ tenantId: 'tenant-a', entityId: 'entity-a' }))
       .resolves.toEqual([expect.objectContaining({ itemId: 'item-b' })]);
     const reviews = query.mock.calls.find(call => String(call[0]).includes('SELECT r.generation'))!;
-    expect(String(reviews[0])).toContain("r.comment->>'action'='reject'");
+    expect(String(reviews[0])).toContain("r.comment::jsonb->>'action'='reject'");
   });
 });

@@ -35,6 +35,9 @@ class MemoryHandStore implements HandStore {
     this.records.set(handId, updated);
     return updated;
   }
+  async claimProvisionRecovery(): Promise<HandRecord | null> { return null; }
+  async completeProvisionAttempt(): Promise<HandRecord | null> { return null; }
+  async completeProvisionRecovery(): Promise<HandRecord | null> { return null; }
   async get(handId: string): Promise<HandRecord | null> { return this.records.get(handId) ?? null; }
   async listBySession(sessionId: string): Promise<HandRecord[]> { return [...this.records.values()].filter((r) => r.sessionId === sessionId); }
   async listByWorkspace(workspaceId: string): Promise<HandRecord[]> { return [...this.records.values()].filter((r) => r.workspaceId === workspaceId); }

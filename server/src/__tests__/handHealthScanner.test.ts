@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { HandHealthScanner } from '../runtime/handHealthScanner.js';
-import type { HandRecord, HandStatus, HandStore, RegisterHandInput } from '../runtime/handStore.js';
+import { PROVISION_RECOVERY_CLAIM_TTL_MS, type HandRecord, type HandStatus, type HandStore, type RegisterHandInput } from '../runtime/handStore.js';
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
+import { RUNTIME_ISOLATION_POLICY_DIGEST } from '../runtime/runtimeIsolationEvidence.js';
 import type { EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 
 function makeHand(overrides: Partial<HandRecord> & { handId: string }): HandRecord {
@@ -51,6 +52,54 @@ class InMemoryHandStore implements HandStore {
     };
     this.hands.set(handId, updated);
     return updated;
+  }
+
+  async claimProvisionRecovery(
+    handId: string,
+    recoveryToken: string,
+    metadataPatch: Record<string, unknown> = {},
+    expectedUpdatedAt?: string,
+    expectedProvisionGeneration?: string,
+  ): Promise<HandRecord | null> {
+    const hand = this.hands.get(handId);
+    if (!hand || !['ready', 'unhealthy'].includes(hand.status)) return null;
+    if (expectedUpdatedAt && hand.updatedAt !== expectedUpdatedAt) return null;
+    if (expectedProvisionGeneration && hand.metadata.provisionGeneration !== expectedProvisionGeneration) return null;
+    const token = hand.metadata.provisionRecoveryToken;
+    const claimedAt = hand.metadata.provisionRecoveryClaimedAtMs;
+    if (typeof token === 'string' && typeof claimedAt === 'number'
+      && claimedAt >= Date.now() - PROVISION_RECOVERY_CLAIM_TTL_MS) return null;
+    return await this.updateStatus(handId, 'unhealthy', {
+      ...metadataPatch,
+      provisionRecoveryToken: recoveryToken,
+      provisionRecoveryClaimedAtMs: Date.now(),
+    });
+  }
+
+  async completeProvisionAttempt(
+    handId: string,
+    provisionGeneration: string,
+    status: HandStatus,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<HandRecord | null> {
+    const hand = this.hands.get(handId);
+    if (hand?.status !== 'provisioning' || hand.metadata.provisionGeneration !== provisionGeneration) return null;
+    return await this.updateStatus(handId, status, metadataPatch);
+  }
+
+  async completeProvisionRecovery(
+    handId: string,
+    recoveryToken: string,
+    status: HandStatus,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<HandRecord | null> {
+    const hand = this.hands.get(handId);
+    if (hand?.status !== 'unhealthy' || hand.metadata.provisionRecoveryToken !== recoveryToken) return null;
+    return await this.updateStatus(handId, status, {
+      ...metadataPatch,
+      provisionRecoveryToken: null,
+      provisionRecoveryClaimedAtMs: null,
+    });
   }
 
   async get(handId: string): Promise<HandRecord | null> {
@@ -122,22 +171,16 @@ describe('HandHealthScanner (B4)', () => {
     });
   });
 
-  it('flips unhealthy → ready when /health recovers and writes recovered event', async () => {
+  it('keeps an unhealthy hand fail-closed when /health recovers but no session recipe exists', async () => {
     const handStore = new InMemoryHandStore();
     const eventStore = new InMemoryEventStore();
     await handStore.register({ handId: 'h-3', sessionId: 's-1', workspaceId: 'w-1', type: 'server-remote', status: 'unhealthy', endpoint: 'http://h.example' });
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
     const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, eventStore, fetchImpl });
     const result = await scanner.scanOnce();
-    expect(result.flipped).toBe(1);
-    expect(handStore.hands.get('h-3')?.status).toBe('ready');
-    expect(eventStore.events).toHaveLength(1);
-    expect(eventStore.events[0]).toMatchObject({
-      type: 'hand_health_changed',
-      handId: 'h-3',
-      status: 'ready',
-      detail: 'health_probe_recovered',
-    });
+    expect(result.flipped).toBe(0);
+    expect(handStore.hands.get('h-3')?.status).toBe('unhealthy');
+    expect(eventStore.events).toHaveLength(0);
   });
 
   it('flips to unhealthy when the fetch throws (network drop)', async () => {
@@ -189,6 +232,26 @@ describe('HandHealthScanner (B4)', () => {
     const result = await scanner.scanOnce();
     expect(result.scanned).toBe(1);
     expect(result.flipped).toBe(0);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('marks unresolved provision failures unhealthy even when endpoint is missing', async () => {
+    const handStore = new InMemoryHandStore();
+    await handStore.register({
+      handId: 'h-failed-noendpoint',
+      sessionId: 's-1',
+      workspaceId: 'w-1',
+      type: 'server-remote',
+      status: 'ready',
+      metadata: { provisionFailure: 'missing endpoint after provision failure' },
+    });
+    const fetchImpl = vi.fn(async () => new Response('should-not-be-called', { status: 200 })) as unknown as typeof fetch;
+    const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, fetchImpl });
+
+    const result = await scanner.scanOnce();
+
+    expect(result.flipped).toBe(1);
+    expect(handStore.hands.get('h-failed-noendpoint')?.status).toBe('unhealthy');
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -260,6 +323,223 @@ describe('HandHealthScanner (B4)', () => {
     expect(typeof (handStore.hands.get('h-retry')?.metadata.provision as any).nextAttemptAt).toBe('string');
   });
 
+  it('does not let global /health hide an unresolved session provision failure', async () => {
+    const handStore = new InMemoryHandStore();
+    handStore.hands.set('h-failed', makeHand({
+      handId: 'h-failed',
+      status: 'ready',
+      metadata: {
+        recipe: { workspaceId: 'workspace-1', sessionId: 'session-1' },
+        provisionFailure: 'ACS SNAT managed entry quota exceeded: 28/28',
+      },
+    }));
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href.endsWith('/health')) {
+        return new Response(JSON.stringify({ status: 'ok' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (href.endsWith('/provision')) {
+        return new Response(JSON.stringify({ status: 'error', error: 'still outside shared CIDRs' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected url ${href}`);
+    }) as unknown as typeof fetch;
+    const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, fetchImpl });
+
+    await scanner.scanOnce();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(handStore.hands.get('h-failed')?.status).toBe('unhealthy');
+    expect(handStore.hands.get('h-failed')?.metadata.provisionFailure).toBe('still outside shared CIDRs');
+  });
+
+  it('clears provisionFailure only after session-specific reprovision succeeds', async () => {
+    const handStore = new InMemoryHandStore();
+    handStore.hands.set('h-recovered', makeHand({
+      handId: 'h-recovered',
+      status: 'unhealthy',
+      metadata: {
+        recipe: { workspaceId: 'workspace-1', sessionId: 'session-1' },
+        provisionFailure: 'old failure',
+      },
+    }));
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href.endsWith('/health')) {
+        return new Response(JSON.stringify({ status: 'ok' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (href.endsWith('/provision')) {
+        return new Response(JSON.stringify({ status: 'ok', metadata: { recipeHash: 'recovered' } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected url ${href}`);
+    }) as unknown as typeof fetch;
+    const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, fetchImpl });
+
+    await scanner.scanOnce();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(handStore.hands.get('h-recovered')?.status).toBe('ready');
+    expect(handStore.hands.get('h-recovered')?.metadata.provisionFailure).toBeNull();
+  });
+
+  it('requires fresh bound isolation evidence before recovering an attested hand', async () => {
+    const requirement = {
+      tenantId: 'tenant-1',
+      taskId: 'task-1',
+      runId: 'run-1',
+      sessionId: 'session-1',
+      workspaceId: 'workspace-1',
+      policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST,
+    };
+    const handStore = new InMemoryHandStore();
+    handStore.hands.set('h-attested', makeHand({
+      handId: 'h-attested',
+      runId: 'run-1',
+      status: 'unhealthy',
+      metadata: {
+        recipe: {
+          workspaceId: 'workspace-1',
+          sessionId: 'session-1',
+          sandboxScopeId: 'workspace-1',
+          runtimeIsolationRequirement: requirement,
+        },
+        provisionFailure: 'old failure',
+        runtimeIsolationAttested: true,
+        runId: 'run-1',
+        policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST,
+        sandboxName: 'as-old-sandbox',
+        sandboxScopeId: 'workspace-1',
+      },
+    }));
+    const now = Date.now();
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).endsWith('/health')) {
+        return new Response(JSON.stringify({ status: 'ok' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({
+        status: 'ok',
+        metadata: {
+          runtimeIsolationEvidence: {
+            ...requirement,
+            sandboxName: 'as-new-sandbox',
+            sandboxScopeId: 'wrong-scope',
+            issuedAt: new Date(now).toISOString(),
+            expiresAt: new Date(now + 30_000).toISOString(),
+          },
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, fetchImpl });
+
+    await scanner.scanOnce();
+
+    expect(handStore.hands.get('h-attested')?.status).toBe('unhealthy');
+    expect(String(handStore.hands.get('h-attested')?.metadata.provisionFailure))
+      .toContain('RUNTIME_ISOLATION_EVIDENCE_BINDING_MISMATCH:sandboxScopeId');
+    expect(handStore.hands.get('h-attested')?.metadata.sandboxName).toBe('as-old-sandbox');
+  });
+
+  it('does not let a stale health failure overwrite a newer provisioning attempt', async () => {
+    const handStore = new InMemoryHandStore();
+    handStore.hands.set('h-health-race', makeHand({ handId: 'h-health-race', status: 'ready' }));
+    let probes = 0;
+    const fetchImpl = vi.fn(async () => {
+      probes += 1;
+      if (probes === 1) {
+        await handStore.updateStatus('h-health-race', 'provisioning', {
+          provisionGeneration: 'new-generation',
+          provisionFailure: null,
+        });
+      }
+      return new Response(JSON.stringify({ status: 'error' }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, fetchImpl });
+
+    await scanner.scanOnce();
+
+    expect(handStore.hands.get('h-health-race')?.status).toBe('provisioning');
+    expect(handStore.hands.get('h-health-race')?.metadata.provisionGeneration).toBe('new-generation');
+  });
+
+  it('does not duplicate reprovision while another scanner holds a fresh recovery claim', async () => {
+    const handStore = new InMemoryHandStore();
+    handStore.hands.set('h-claimed', makeHand({
+      handId: 'h-claimed',
+      status: 'unhealthy',
+      metadata: {
+        recipe: { workspaceId: 'workspace-1', sessionId: 'session-1' },
+        provisionFailure: 'old failure',
+        provisionRecoveryToken: 'other-scanner',
+        provisionRecoveryClaimedAtMs: Date.now(),
+      },
+    }));
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+    const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, fetchImpl });
+
+    await scanner.scanOnce();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(handStore.hands.get('h-claimed')?.status).toBe('unhealthy');
+    expect(handStore.hands.get('h-claimed')?.metadata.provisionRecoveryToken).toBe('other-scanner');
+  });
+
+  it('does not let a stale scanner reprovision failure overwrite a newer success', async () => {
+    const handStore = new InMemoryHandStore();
+    handStore.hands.set('h-race', makeHand({
+      handId: 'h-race',
+      status: 'unhealthy',
+      metadata: {
+        recipe: { workspaceId: 'workspace-1', sessionId: 'session-1' },
+        provisionFailure: 'old failure',
+      },
+    }));
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href.endsWith('/health')) {
+        return new Response(JSON.stringify({ status: 'ok' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      await handStore.updateStatus('h-race', 'ready', {
+        provisionFailure: null,
+        provisionRecoveryToken: null,
+        provision: { attempts: 0, lastStatus: 'ok' },
+      });
+      return new Response(JSON.stringify({ status: 'error', error: 'stale failure' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    const scanner = new HandHealthScanner({ unhealthyConfirmDelayMs: 1, handStore, fetchImpl });
+
+    await scanner.scanOnce();
+
+    expect(handStore.hands.get('h-race')?.status).toBe('ready');
+    expect(handStore.hands.get('h-race')?.metadata.provisionFailure).toBeNull();
+    expect((handStore.hands.get('h-race')?.metadata.provision as any).lastStatus).toBe('ok');
+  });
+
   it('probes a shared endpoint once and fans the result out to all hands (2026-08-03 P0b)', async () => {
     const handStore = new InMemoryHandStore();
     // 生产形态：per-session hands 全部指向同一个 orchestrator endpoint。
@@ -274,9 +554,9 @@ describe('HandHealthScanner (B4)', () => {
     // 50 条 hand 只 probe 1 次（同 endpoint + 同 token 合并）
     expect((fetchImpl as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(1);
     expect(result.scanned).toBe(50);
-    // unhealthy 的 5 条全部恢复 ready
-    expect(result.flipped).toBe(5);
-    expect([...handStore.hands.values()].every((hand) => hand.status === 'ready')).toBe(true);
+    // /health 不能替代 session-specific /provision；缺 recipe 的 5 条保持 unhealthy。
+    expect(result.flipped).toBe(0);
+    expect([...handStore.hands.values()].filter((hand) => hand.status === 'unhealthy')).toHaveLength(5);
   });
 
   it('keeps distinct endpoints/tokens in separate probe groups (2026-08-03 P0b)', async () => {
@@ -328,10 +608,8 @@ describe('HandHealthScanner (B4)', () => {
       unhealthyConfirmDelayMs: 1,
       handStore,
       fetchImpl,
-      resolveHandAuthToken: async (hand) => {
-        if (hand.handId === 'h-missing-secret') throw new Error('vault lookup failed');
-        return undefined;
-      },
+      defaultServerRemoteAuthToken: 'default-token',
+      resolveHandAuthToken: async () => undefined,
       logger: { info: () => undefined, warn, error: () => undefined },
     });
 
@@ -372,6 +650,9 @@ describe('HandHealthScanner (B4)', () => {
     const partialStore: HandStore = {
       async register() { throw new Error('unused'); },
       async updateStatus() { return null; },
+      async claimProvisionRecovery() { return null; },
+      async completeProvisionAttempt() { return null; },
+      async completeProvisionRecovery() { return null; },
       async get() { return null; },
       async listBySession() { return []; },
       async listByWorkspace() { return []; },

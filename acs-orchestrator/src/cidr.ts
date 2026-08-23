@@ -2,8 +2,8 @@
  * 极简 IPv4 CIDR 工具（2026-08-10，配套 SNAT `shared-cidr` 模式）。
  *
  * 只处理 IPv4：ACS pod 与 NAT 网关 SNAT 条目当前都是 IPv4，引入依赖不划算。
- * 用途是安全兜底——判断 pod IP 是否真的落在托管网段内，不在就回退 per-pod，
- * 避免「网段假设失效 → pod 静默断网」这一最危险的失败模式。
+ * 用途是安全兜底——判断 pod IP 是否真的落在明确允许的托管网段内；不在时
+ * fail-closed 并告警，禁止退化成 per-pod 条目风暴或让 pod 静默断网。
  */
 
 export interface Ipv4Cidr {
@@ -57,4 +57,10 @@ export function ipv4InCidr(ip: string | undefined, cidr: Ipv4Cidr | string | und
   if (value === null) return false;
   const mask = parsed.prefixLength === 0 ? 0 : (0xFFFFFFFF << (32 - parsed.prefixLength)) >>> 0;
   return ((value & mask) >>> 0) === parsed.networkInt;
+}
+
+export function ipv4CidrsOverlap(left: Ipv4Cidr, right: Ipv4Cidr): boolean {
+  const narrower = left.prefixLength >= right.prefixLength ? left : right;
+  const broader = narrower === left ? right : left;
+  return ipv4InCidr(formatIpv4(narrower.networkInt), broader);
 }

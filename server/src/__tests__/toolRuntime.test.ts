@@ -1,9 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
 import { describe, expect, it, vi } from 'vitest';
-
 import type { MemoryIndexService } from '../memory/index/service.js';
 import type { ChannelContext } from '../types/index.js';
 import {
@@ -31,7 +29,6 @@ import {
   MAX_BACKGROUND_SHELL_TIMEOUT_MS,
   MAX_SHELL_TIMEOUT_MS,
 } from '../agent/toolOutput.js';
-
 function successResponse(content: string): ToolInvocationResponse {
   return { status: 'success', content };
 }
@@ -53,6 +50,9 @@ class MemoryHandStore implements HandStore {
     hand.updatedAt = new Date().toISOString();
     return hand;
   }
+  async claimProvisionRecovery(): Promise<HandRecord | null> { return null; }
+  async completeProvisionAttempt(): Promise<HandRecord | null> { return null; }
+  async completeProvisionRecovery(): Promise<HandRecord | null> { return null; }
   async get(handId: string): Promise<HandRecord | null> { return this.hands.find((hand) => hand.handId === handId) ?? null; }
   async listBySession(sessionId: string): Promise<HandRecord[]> { return this.hands.filter((hand) => hand.sessionId === sessionId); }
   async listByWorkspace(workspaceId: string): Promise<HandRecord[]> { return this.hands.filter((hand) => hand.workspaceId === workspaceId); }

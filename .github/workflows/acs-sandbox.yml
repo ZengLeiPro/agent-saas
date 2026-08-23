@@ -550,6 +550,7 @@ jobs:
           APP_DIR="$ECS_DEPLOY_ROOT"
           ENV_FILE="/etc/agent-saas/acs-orchestrator.env"
           RELEASE_TGZ="/tmp/agent-saas-acs-release.tgz"
+          APP_BAK_TGZ="/tmp/agent-saas-acs-app.bak.${GITHUB_RUN_ID}-${GITHUB_SHA:0:7}.tgz"
           # 07-05：SMOKE_SESSION 提前定型（改进 1A）。历史残留 CI sandbox（3d8h 前那批）
           # 是因为 SMOKE_SESSION 之前在第 5 步 smoke 阶段才赋值——provision/deploy 阶段失败时
           # cleanup 走到、SMOKE_SESSION 还是空 → cleanup 什么也不删 → sandbox 残留普通 TTL。
@@ -623,13 +624,44 @@ jobs:
                   ;;
               esac
             fi
+            if [ "$deploy_status" -ne 0 ] \
+              && [ "${SNAT_ROLLBACK_PREPARED:-false}" = "true" ] \
+              && [ "${PROCESS_REPLACED:-false}" != "true" ] \
+              && [ -n "${SNAT_ROLLBACK_DIGEST:-}" ] \
+              && [ -n "${AUTH_HEADER:-}" ]; then
+              curl -fsS -m 30 -X POST http://127.0.0.1:3400/snat/restore-per-pod/cancel \
+                -H "$AUTH_HEADER" -H "X-ACS-SNAT-Rollback-Confirmed: $SNAT_ROLLBACK_DIGEST" >/dev/null \
+                || echo "failed to cancel pre-deploy SNAT maintenance; manual intervention required" >&2
+            fi
+            if [ "$deploy_status" -ne 0 ] \
+              && [ "${PROCESS_REPLACED:-false}" != "true" ] \
+              && [ -s "${APP_BAK_TGZ:-}" ]; then
+              [ -s "${ENV_BAK:-}" ] && cp "$ENV_BAK" "$ENV_FILE"
+              [ -s "${RUNTIME_CONFIG_BAK:-}" ] && cp "$RUNTIME_CONFIG_BAK" "$RUNTIME_CONFIG_FILE"
+              [ -n "${SNAT_OPERATION_STATE_FILE:-}" ] && rm -f "$SNAT_OPERATION_STATE_FILE"
+              find "$APP_DIR" -mindepth 1 -maxdepth 1 \
+                ! -name node_modules ! -name .git -exec rm -rf -- {} +
+              tar -xzf "$APP_BAK_TGZ" -C "$APP_DIR"
+              cd "$APP_DIR"
+              NODE_ENV=development pnpm install --frozen-lockfile --filter acs-orchestrator... --filter server... --filter shared... \
+                || echo "failed to restore rollback dependencies; manual intervention required" >&2
+            fi
             rm -f "$RELEASE_TGZ" "$SMOKE_CLEANUP_ERROR"
+            if [ "$deploy_status" -eq 0 ]; then
+              rm -f "$APP_BAK_TGZ"
+            else
+              echo "preserving rollback source backup for manual retry: $APP_BAK_TGZ" >&2
+            fi
             return "$deploy_status"
           }
           trap cleanup EXIT
 
           # ── 1. 更新 orchestrator 源码（旧进程还在跑, 零影响）──
           mkdir -p "$APP_DIR"
+          if [ -f "$APP_DIR/package.json" ]; then
+            tar --exclude='./node_modules' --exclude='./.git' --exclude='./tmp' \
+              -czf "$APP_BAK_TGZ" -C "$APP_DIR" .
+          fi
           tar -xzf "$RELEASE_TGZ" -C "$APP_DIR"
           cd "$APP_DIR"
           if command -v corepack >/dev/null 2>&1; then
@@ -643,6 +675,7 @@ jobs:
           pnpm -F acs-orchestrator build
           test -f "$APP_DIR/acs-orchestrator/dist/index.js"
           test -f "$APP_DIR/acs-orchestrator/dist/backgroundShellWorker.js"
+          test -f "$APP_DIR/acs-orchestrator/dist/restorePerPodCli.js"
           test -f "$APP_DIR/acs-orchestrator/descriptions/Edit.md"
 
           # ── 2. 备份并更新镜像 env（新进程拉起时生效）──
@@ -683,6 +716,56 @@ jobs:
           else
             echo "未找到声明式运行配置 $DESIRED_ENV，拒绝部署" >&2
             exit 1
+          fi
+          set -a
+          # shellcheck disable=SC1090
+          . "$ENV_FILE"
+          set +a
+          : "${ACS_ORCH_AUTH_TOKEN:?missing ACS_ORCH_AUTH_TOKEN in env file}"
+          AUTH_HEADER="Authorization: Bearer ${ACS_ORCH_AUTH_TOKEN}"
+          SNAT_OPERATION_STATE_FILE="${RUNTIME_CONFIG_FILE}.snat-operation-state.json"
+          SNAT_ROLLBACK_PREPARED=false
+          SNAT_ROLLBACK_OFFLINE_RESTORE=false
+          SNAT_ROLLBACK_DIGEST=""
+          PROCESS_REPLACED=false
+
+          prepare_snat_rollback() {
+            local health_file=/tmp/acs-rollback-health.json
+            local restore_file=/tmp/acs-rollback-restore.json
+            curl -sS -m 10 http://127.0.0.1:3400/health >"$health_file" 2>/dev/null || {
+              echo "cannot read current SNAT state; refusing deploy without rollback safety" >&2
+              return 1
+            }
+            local digest
+            digest="$(node -e "const h=require('$health_file');process.stdout.write(h?.snat?.sharedCidrConfigDigest||'')" 2>/dev/null || true)"
+            if [ -z "$digest" ]; then
+              return 2
+            fi
+            SNAT_ROLLBACK_DIGEST="$digest"
+            echo "preparing per-Pod SNAT entries before process replacement (digest=$digest)..."
+            if ! curl -fsS -m 420 -X POST http://127.0.0.1:3400/snat/restore-per-pod \
+              -H "$AUTH_HEADER" -H "X-ACS-SNAT-Rollback-Confirmed: $digest" >"$restore_file"; then
+              echo "SNAT rollback preparation failed; refusing process replacement" >&2
+              return 1
+            fi
+            node -e "const r=require('$restore_file');if(r.status!=='ok'||r.rollbackPrepared!==true)process.exit(1)"
+          }
+
+          # 旧基线没有 restore API：首轮部署若需回滚，必须先停掉失败候选并用本次
+          # release 内置的离线 CLI 恢复全部 /32；后续版本则在替换进程前在线恢复。
+          # 在线路径只删除磁盘 marker，旧进程内存维护态持续到退出。
+          if prepare_snat_rollback; then
+            SNAT_ROLLBACK_PREPARED=true
+            rm -f "$SNAT_OPERATION_STATE_FILE"
+          else
+            prepare_status=$?
+            if [ "$prepare_status" -eq 2 ] \
+              && ! tar -tzf "$APP_BAK_TGZ" | grep -q '^./acs-orchestrator/src/snatOperations.ts$'; then
+              SNAT_ROLLBACK_OFFLINE_RESTORE=true
+              echo "legacy baseline has no restore endpoint; rollback will require offline /32 restore"
+            else
+              exit "$prepare_status"
+            fi
           fi
 
           # ── 3. Drain 旧进程: SIGUSR2 → 排空 inflight 后自退 →
@@ -728,6 +811,7 @@ jobs:
           if [ "$RESTART_FALLBACK" = "1" ]; then
             systemctl restart "$ACS_SERVICE_NAME"
           fi
+          PROCESS_REPLACED=true
 
           # ── 4. 等新进程 health 且 image 已切换 ──
           HEALTH_OK=false
@@ -742,9 +826,34 @@ jobs:
           done
 
           rollback() {
-            echo "ROLLING BACK env and runtime config..."
+            echo "ROLLING BACK SNAT, source, env and runtime config..."
+            if [ ! -s "$APP_BAK_TGZ" ]; then
+              echo "source backup is unavailable; refusing rollback" >&2
+              return 1
+            fi
+            if [ "$SNAT_ROLLBACK_PREPARED" != "true" ] \
+              && [ "$SNAT_ROLLBACK_OFFLINE_RESTORE" != "true" ]; then
+              echo "per-Pod SNAT was not prepared before process replacement; refusing rollback" >&2
+              return 1
+            fi
+            if [ "$SNAT_ROLLBACK_OFFLINE_RESTORE" = "true" ]; then
+              echo "legacy rollback: stopping failed candidate and restoring every non-Paused /32 offline..."
+              systemctl stop "$ACS_SERVICE_NAME"
+              timeout 600s node "$APP_DIR/acs-orchestrator/dist/restorePerPodCli.js" \
+                >/tmp/acs-offline-snat-restore.json
+              node -e "const r=require('/tmp/acs-offline-snat-restore.json');if(r.status!=='ok'||r.rollbackPrepared!==true||r.report.available!==r.report.checked)process.exit(1)"
+              SNAT_ROLLBACK_PREPARED=true
+            fi
             cp "$ENV_BAK" "$ENV_FILE"
             cp "$RUNTIME_CONFIG_BAK" "$RUNTIME_CONFIG_FILE"
+            rm -f "$SNAT_OPERATION_STATE_FILE"
+            find "$APP_DIR" -mindepth 1 -maxdepth 1 \
+              ! -name node_modules ! -name .git -exec rm -rf -- {} +
+            tar -xzf "$APP_BAK_TGZ" -C "$APP_DIR"
+            cd "$APP_DIR"
+            NODE_ENV=development pnpm install --frozen-lockfile --filter acs-orchestrator... --filter server... --filter shared...
+            rm -rf "$APP_DIR/acs-orchestrator/dist"
+            pnpm -F acs-orchestrator build
             systemctl restart "$ACS_SERVICE_NAME"
             for _ in $(seq 1 60); do
               if curl -fsS -m 5 http://127.0.0.1:3400/health >/dev/null 2>&1; then
@@ -787,14 +896,7 @@ jobs:
           echo "runtime config gate passed: max=$EXPECTED_MAX_RUNNING warn=$EXPECTED_WARN_RUNNING"
 
           # ── 5. Smoke: provision + execute 真实拉新镜像跑通 ──
-          set -a
-          # shellcheck disable=SC1090
-          . "$ENV_FILE"
-          set +a
-          : "${ACS_ORCH_AUTH_TOKEN:?missing ACS_ORCH_AUTH_TOKEN in env file}"
-
           # SMOKE_SESSION/SMOKE_WS/SMOKE_MOUNT 已在 cleanup 定义前赋值，确保任何失败路径都能清理。
-          AUTH_HEADER="Authorization: Bearer ${ACS_ORCH_AUTH_TOKEN}"
 
           SMOKE_OK=true
           if ! curl -fsS -m 420 -X POST http://127.0.0.1:3400/provision \

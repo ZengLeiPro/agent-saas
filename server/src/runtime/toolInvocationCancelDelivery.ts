@@ -335,6 +335,14 @@ async function resolveAuthToken(
   hand: HandRecord | null | undefined,
   input: ToolInvocationCancelDeliveryOptions,
 ): Promise<string | undefined> {
+  const selectedHandId = metadata.handId ?? metadata.defaultHandId;
+  if (typeof selectedHandId === 'string' && selectedHandId.trim() && !hand) return undefined;
+  const tenantHand = typeof hand?.metadata.tenantRemoteHandId === 'string'
+    && hand.metadata.tenantRemoteHandId.trim().length > 0;
+  if (tenantHand) {
+    const resolved = await input.resolveHandAuthToken?.(hand);
+    return typeof resolved === 'string' && resolved.trim() ? resolved.trim() : undefined;
+  }
   const explicit = metadata.cancelAuthToken ?? metadata.authToken;
   if (typeof explicit === 'string' && explicit.trim()) return explicit.trim();
   if (hand && input.resolveHandAuthToken) {

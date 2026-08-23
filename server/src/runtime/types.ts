@@ -234,20 +234,8 @@ export interface ContextCheckpointMetadata {
   rawTailObservedTokens: number;
   fixedTokens: number;
   taskAnchors: CheckpointTaskAnchor[];
-  /** 生成摘要的模型与提示语审计信息；旧 checkpoint 可缺省。 */
-  summaryModel?: string;
-  summaryModelRef?: string;
-  summaryPromptDigest?: string;
-  summaryValidation?: {
-    schemaVersion: 1;
-    valid: boolean;
-    presentSectionCount: number;
-    missingSections: string[];
-    maintenanceInstructionAttributedToUser: boolean;
-  };
-  userHistoryTokenCap?: number;
+  summaryAudit?: import('./compactionSummary.js').CompactionSummaryAudit;
 }
-
 export type ModelUserContentPart =
   | { type: 'text'; text: string }
   | {

@@ -162,14 +162,16 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
       version: 1,
       trigger: 'manual',
       taskAnchors: [],
-      summaryModel: 'glm-5.2',
-      summaryPromptDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
-      summaryValidation: {
-        schemaVersion: 1,
-        valid: false,
-        maintenanceInstructionAttributedToUser: false,
+      summaryAudit: {
+        model: 'glm-5.2',
+        promptDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        validation: {
+          schemaVersion: 1,
+          valid: false,
+          maintenanceInstructionAttributedToUser: false,
+        },
+        userHistoryTokenCap: expect.any(Number),
       },
-      userHistoryTokenCap: expect.any(Number),
     });
 
     const userMessage = events.find((e) => e.type === 'user_message' && e.runId === 'run-compact-1') as any;

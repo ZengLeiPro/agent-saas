@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { HANDWRITTEN_REPLAY_SCENARIO_IDS, HOOK_REPLAY_SCENARIO_IDS } from "./availability";
-import { allReplayScripts, hookReplayScenarioIds, loadHookReplayScript } from "./registry";
+import {
+  HANDWRITTEN_REPLAY_SCENARIO_IDS,
+  HERO_REPLAY_SCENARIO_IDS,
+  HOOK_REPLAY_SCENARIO_IDS,
+} from "./availability";
+import {
+  allReplayScripts,
+  heroReplayScenarioIds,
+  hookReplayScenarioIds,
+  loadHeroReplayScript,
+  loadHookReplayScript,
+} from "./registry";
 import type { ReplayScript, ReplayStep } from "./types";
 
 /**
@@ -14,11 +24,14 @@ import type { ReplayScript, ReplayStep } from "./types";
  */
 
 const scripts = allReplayScripts();
+const heroScripts = await Promise.all(
+  heroReplayScenarioIds().map((scenarioId) => loadHeroReplayScript(scenarioId)!),
+);
 // 钩子剧本懒加载：契约门禁必须覆盖到它们，测试里全部装载
 const hookScripts = await Promise.all(
   hookReplayScenarioIds().map((scenarioId) => loadHookReplayScript(scenarioId)!),
 );
-const gatedScripts = [...scripts, ...hookScripts];
+const gatedScripts = [...scripts, ...heroScripts, ...hookScripts];
 
 function toolBlocks(step: ReplayStep) {
   return step.blocks.filter((block) => block.kind === "tool_use");
@@ -39,11 +52,19 @@ function allText(script: ReplayScript): string {
 }
 
 describe("剧本注册表", () => {
-  it("至少有 4 个手写剧本，且 scenarioId 不重复并与轻量可用性索引一致", () => {
-    expect(scripts.length).toBeGreaterThanOrEqual(4);
+  it("常驻轻量剧本 scenarioId 不重复并与可用性索引一致", () => {
+    expect(scripts.length).toBeGreaterThanOrEqual(2);
     const ids = scripts.map((script) => script.scenarioId);
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(ids)).toEqual(new Set(HANDWRITTEN_REPLAY_SCENARIO_IDS));
+  });
+
+  it("七类 Hero 剧本懒加载表与轻量可用性索引一致", () => {
+    expect(new Set(heroReplayScenarioIds())).toEqual(new Set(HERO_REPLAY_SCENARIO_IDS));
+    const ids = heroScripts.map((script) => script.scenarioId);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(new Set(ids)).toEqual(new Set(HERO_REPLAY_SCENARIO_IDS));
+    expect(heroScripts.every((script) => script.mode === "hero")).toBe(true);
   });
 
   it("钩子剧本懒加载表与轻量可用性索引一致，scenarioId 与装载键一一对应", () => {
@@ -129,7 +150,7 @@ describe.each(gatedScripts.map((script) => [script.title, script] as const))("�
 });
 
 describe.each(
-  [...scripts, ...hookScripts]
+  gatedScripts
     .filter((script) => script.mode === "hero")
     .map((script) => [script.title, script] as const),
 )("完整业务闭环剧本《%s》额外要求", (_title, script) => {

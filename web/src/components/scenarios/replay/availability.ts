@@ -2,8 +2,17 @@ import type { CatalogScenarioPublic } from "@agent/shared";
 
 export const HANDWRITTEN_REPLAY_SCENARIO_IDS = [
   "catalog-evidence-backed-communication-create",
-  "catalog-compliance-evidence-gate-loop",
   "catalog-meeting-action-record-create",
+] as const;
+
+/** 七类跨行业业务闭环主 Demo。剧本体积较大，点击时按需装载。 */
+export const HERO_REPLAY_SCENARIO_IDS = [
+  "catalog-contract-sow-to-approved-baseline-loop",
+  "catalog-compliance-evidence-gate-loop",
+  "catalog-order-delivery-defender-loop",
+  "catalog-customer-issue-resolution-loop",
+  "catalog-settlement-reconciliation-to-cash-loop",
+  "catalog-employee-lifecycle-transition-loop",
   "catalog-deadline-to-receipt-watch",
 ] as const;
 
@@ -27,8 +36,15 @@ export const HOOK_REPLAY_SCENARIO_IDS = [
 
 const HANDWRITTEN_REPLAY_SCENARIOS = new Set<string>([
   ...HANDWRITTEN_REPLAY_SCENARIO_IDS,
+  ...HERO_REPLAY_SCENARIO_IDS,
   ...HOOK_REPLAY_SCENARIO_IDS,
 ]);
+
+const HERO_REPLAY_SCENARIOS = new Set<string>(HERO_REPLAY_SCENARIO_IDS);
+
+export function isHeroReplayScenario(scenarioId: string): boolean {
+  return HERO_REPLAY_SCENARIOS.has(scenarioId);
+}
 
 export function hasReplayScript(scenario: CatalogScenarioPublic): boolean {
   return HANDWRITTEN_REPLAY_SCENARIOS.has(scenario.id) || !!scenario.presentation;

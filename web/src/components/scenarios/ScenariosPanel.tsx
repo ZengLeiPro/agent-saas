@@ -29,6 +29,7 @@ import {
 } from "./ScenarioCard";
 import {
   getReplayScript,
+  loadHeroReplayScript,
   loadHookReplayScript,
   type ReplayScript,
 } from "./replay";
@@ -126,10 +127,10 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
           });
         return;
       }
-      // 钩子剧本体积大，按需装载；失败回落到详情弹窗
-      const hookScript = loadHookReplayScript(scenario.id);
-      if (hookScript) {
-        void hookScript
+      // 七类 Hero 与钩子剧本体积大，按需装载；失败回落到详情弹窗
+      const lazyScript = loadHeroReplayScript(scenario.id) ?? loadHookReplayScript(scenario.id);
+      if (lazyScript) {
+        void lazyScript
           .then((script) => {
             if (replayRequest.current === requestId) setReplay(script);
           })

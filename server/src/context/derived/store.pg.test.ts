@@ -164,10 +164,16 @@ describePg('DerivedContextStore PostgreSQL integration', () => {
     expect((await derived.listActiveItems({ tenantId: 'tenant-a', entityId: taskId, viewerId: 'user-a' }))
       .some(item => item.authority === 'user' && (item.value as { code?: string }).code === 'accepted')).toBe(true);
 
+    const reopenedEvidence = { sourceId: 'source-a', collectionId: 'collection-a', recordId: 'task-r',
+      recordRevision: 3, evidenceId: 'task-ev-3' };
+    const reopenedTargetItemId = (await derived.listActiveItems({ tenantId: 'tenant-a', entityId: taskId }))
+      .find(item => item.itemType === 'Status' && item.evidence.some(ref => ref.recordId === reopenedEvidence.recordId
+        && ref.recordRevision === reopenedEvidence.recordRevision))!.itemId;
     await expect(derived.appendReview({
       tenantId: 'tenant-a', actorId: 'user-a', entityId: taskId, expectedRevision: 1,
-      scope: { type: 'person', personId: 'user-a' }, action: 'assert', targetItemId, itemType: 'Status', semanticKey: 'status',
-      value: { code: 'stale-write' }, evidence: [evidence], authorize: async () => true,
+      scope: { type: 'person', personId: 'user-a' }, action: 'assert', targetItemId: reopenedTargetItemId,
+      itemType: 'Status', semanticKey: 'status', value: { code: 'stale-write' }, evidence: [reopenedEvidence],
+      authorize: async () => true,
     })).rejects.toMatchObject({ code: 'DERIVED_VERSION_CONFLICT' });
 
     const proposed = await new ProposedDistillValidator(derived).validate('tenant-a', {
@@ -305,8 +311,8 @@ describePg('DerivedContextStore PostgreSQL integration', () => {
     const targetItemId = (await derived.listActiveItems({ tenantId: 'tenant-a', entityId: taskId }))
       .find(item => item.itemType === 'Status')!.itemId;
     const append = (actorId: string, expectedRevision: number, scope: { type: 'org' } | { type: 'person'; personId: string },
-      value: string, evidence = evidence1) => derived.appendReview({
-      tenantId: 'tenant-a', actorId, entityId: taskId, expectedRevision, scope, action: 'assert', targetItemId,
+      value: string, evidence = evidence1, target = targetItemId) => derived.appendReview({
+      tenantId: 'tenant-a', actorId, entityId: taskId, expectedRevision, scope, action: 'assert', targetItemId: target,
       itemType: 'Status', semanticKey: 'status', value, evidence, authorize: async () => true,
     });
 
@@ -329,9 +335,12 @@ describePg('DerivedContextStore PostgreSQL integration', () => {
     await drain();
     const evidence2 = [{ sourceId: 'source-a', collectionId: 'collection-a', recordId: 'task-scope-cas-r',
       recordRevision: 2, evidenceId: 'task-scope-cas-ev-2' }];
-    await expect(append('user-cas', 3, { type: 'person', personId: 'user-cas' }, 'personal-3', evidence2))
+    const targetItemId2 = (await derived.listActiveItems({ tenantId: 'tenant-a', entityId: taskId }))
+      .find(item => item.itemType === 'Status' && item.evidence.some(ref => ref.recordId === evidence2[0]!.recordId
+        && ref.recordRevision === evidence2[0]!.recordRevision))!.itemId;
+    await expect(append('user-cas', 3, { type: 'person', personId: 'user-cas' }, 'personal-3', evidence2, targetItemId2))
       .resolves.toMatchObject({ entityRevision: 4 });
-    await expect(append('steward-a', 3, { type: 'org' }, 'organization-3', evidence2))
+    await expect(append('steward-a', 3, { type: 'org' }, 'organization-3', evidence2, targetItemId2))
       .resolves.toMatchObject({ entityRevision: 4 });
   });
 

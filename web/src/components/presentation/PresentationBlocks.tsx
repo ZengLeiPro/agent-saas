@@ -210,8 +210,8 @@ function RecordRow({
   );
 }
 
-// 表头和数据行共用同一组比例列，避免长值以 max-content 撑开后挤压相邻列。
-const COMPARISON_COLUMNS = "sm:grid-cols-[minmax(8rem,1.2fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_auto]";
+// 首列按内容收拢并限制最大宽度，三列对照值等分剩余空间；表头与数据行共用轨道以保持对齐。
+const COMPARISON_COLUMNS = "sm:grid-cols-[fit-content(16rem)_repeat(3,minmax(8rem,1fr))_auto]";
 
 function ComparisonRow({ item }: { item: RecordItem }) {
   const [open, setOpen] = useState(false);
@@ -230,7 +230,7 @@ function ComparisonRow({ item }: { item: RecordItem }) {
         type="button"
         onClick={expandable ? () => setOpen((value) => !value) : undefined}
         className={cn(
-          "grid w-full grid-cols-1 gap-x-4 gap-y-2 text-left",
+          "grid w-full grid-cols-1 gap-x-3 gap-y-2 text-left",
           COMPARISON_COLUMNS,
           "sm:items-start",
           !expandable && "cursor-default",
@@ -262,7 +262,7 @@ function ComparisonRow({ item }: { item: RecordItem }) {
 function ComparisonView({ block }: { block: RecordsBlock }) {
   return (
     <div data-comparison-table>
-      <div className={cn("hidden gap-x-4 border-b border-border/60 px-4 py-2 text-xs font-medium text-muted-foreground sm:grid", COMPARISON_COLUMNS)}>
+      <div className={cn("hidden gap-x-3 border-b border-border/60 px-4 py-2 text-xs font-medium text-muted-foreground sm:grid", COMPARISON_COLUMNS)}>
         <span>对照项</span>
         <span>基准/之前</span>
         <span>当前/实际</span>

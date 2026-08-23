@@ -158,7 +158,7 @@ describe('records', () => {
     expect(grid?.children).toHaveLength(4);
   });
 
-  it('comparison 使用同轨比例列，移动端按单项卡片重排并突出差异', () => {
+  it('comparison 首列按内容收拢、对照列等分，移动端按单项卡片重排并突出差异', () => {
     const longValue = '这是一段需要在比较列内换行的长文本'.repeat(8);
     const { container } = render(<PresentationBlocks blocks={[{
       kind: 'records', layout: 'comparison', title: '阶段停留对照',
@@ -174,13 +174,14 @@ describe('records', () => {
     const rows = container.querySelectorAll('[data-comparison-row]');
     const header = table?.firstElementChild;
     const row = rows[0]?.querySelector('button');
-    const columns = 'sm:grid-cols-[minmax(8rem,1.2fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_minmax(8rem,1fr)_auto]';
+    const columns = 'sm:grid-cols-[fit-content(16rem)_repeat(3,minmax(8rem,1fr))_auto]';
     expect(records?.className).toContain('w-full');
     expect(records?.firstElementChild?.className).toContain('sm:min-w-[36rem]');
     expect(header?.className).toContain(columns);
-    expect(header?.className).toContain('gap-x-4');
+    expect(header?.className).toContain('gap-x-3');
     expect(row?.className).toContain(columns);
-    expect(row?.className).toContain('gap-x-4');
+    expect(row?.className).toContain('gap-x-3');
+    expect(row?.className).not.toContain('1.2fr');
     expect(row?.className).toContain('gap-y-2');
     expect(rows[0]?.className).toContain('py-2.5');
     expect(table).toBeTruthy();

@@ -52,4 +52,15 @@ describe('discoverBoardCiPolicy', () => {
     const result = await discoverBoardCiPolicy(host([]), identity, board.id);
     expect(result).toMatchObject({ effectiveSource: 'board', effectiveRequiredChecks: [{ name: 'board-ci', appId: 9 }] });
   });
+
+  it('keeps authoritative policy discovery available when optional PR observation fails', async () => {
+    const discoveryHost = host([{ name: 'github-ci' }]);
+    discoveryHost.repositoryProvider.getPullRequest.mockRejectedValueOnce(new Error('PR no longer exists'));
+
+    const result = await discoverBoardCiPolicy(discoveryHost, identity, board.id);
+    expect(result).toMatchObject({
+      effectiveSource: 'github', githubRequiredChecks: [{ name: 'github-ci' }], observedChecks: [],
+    });
+    expect(result).not.toHaveProperty('headOid');
+  });
 });

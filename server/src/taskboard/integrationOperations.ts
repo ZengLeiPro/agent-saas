@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
 import type {
+  TaskBoardIntegrationPolicy,
   TaskBoardIntegrationSource,
   TaskBoardRepositoryConfig,
 } from '../../../shared/src/types/taskboard.js';
@@ -14,6 +15,7 @@ import {
   finalizeMergedSource,
   withIntegrationTransaction as withTransaction,
 } from './integrationFinalization.js';
+import { ciUnconfiguredError, repositoryWithBoardCiPolicy } from './ciPolicy.js';
 import { rowToTask, toIso } from './storeHelpers.js';
 import {
   TaskboardNotFoundError,
@@ -86,6 +88,9 @@ export async function inspectIntegrationSource(
   }
   const unavailableChecks = loaded.requireGreenChecks
     && pullRequest.requiredChecksKnown !== true;
+  const unconfiguredChecks = loaded.requireGreenChecks
+    && pullRequest.requiredChecksKnown === true
+    && pullRequest.requiredChecksConfigured === false;
   const failedChecks = loaded.requireGreenChecks
     && pullRequest.requiredChecksKnown === true
     && pullRequest.requiredChecks.some((check) => check.status === 'failure');
@@ -99,7 +104,7 @@ export async function inspectIntegrationSource(
       ? (loaded.source.remediationCount ?? 0) >= loaded.maxAutomaticRemediationRounds
         ? 'needs_human'
         : 'resolving_conflict'
-      : pullRequest.mergeable !== true || unavailableChecks || pendingChecks
+      : pullRequest.mergeable !== true || unavailableChecks || unconfiguredChecks || pendingChecks
         ? 'waiting_retry'
         : 'ready';
   const source = nextState === 're_reviewing'
@@ -111,9 +116,11 @@ export async function inspectIntegrationSource(
       failedChecks
         ? 'Required checks failed; automatic remediation is required'
         : pullRequest.mergeable !== true ? 'Pull request mergeability is unknown'
-          : unavailableChecks ? 'Required checks are unavailable from Provider' : undefined,
+          : unavailableChecks ? 'Required checks are unavailable from Provider'
+            : unconfiguredChecks ? 'CI gate is not configured' : undefined,
       loaded.source.state,
     );
+  if (unconfiguredChecks) throw ciUnconfiguredError();
   return { source, pullRequest, inspectionReceipt };
 }
 
@@ -226,6 +233,10 @@ export async function mergeIntegrationSource(
   if (loaded.requireGreenChecks && pullRequest.requiredChecksKnown !== true) {
     await updateSourceState(host, sourceId, 'waiting_retry', 'Required checks are unavailable from Provider', loaded.source.state);
     throw new TaskboardValidationError('Required checks are unavailable from Provider', 'TASKBOARD_CI_UNAVAILABLE');
+  }
+  if (loaded.requireGreenChecks && pullRequest.requiredChecksConfigured === false) {
+    await updateSourceState(host, sourceId, 'waiting_retry', 'CI gate is not configured', loaded.source.state);
+    throw ciUnconfiguredError();
   }
   if (loaded.requireGreenChecks
     && pullRequest.requiredChecks.some((check) => check.status === 'failure')) {
@@ -653,17 +664,9 @@ async function loadOperationContext(
     if (row.active_integration_task_id !== row.integration_task_id_actual) {
       throw new TaskboardValidationError('Integration lane changed', 'TASKBOARD_INTEGRATION_LANE_STALE');
     }
-    const repository = jsonObject(row.repository) as TaskBoardRepositoryConfig | undefined;
-    const policy = jsonObject(row.integration_policy) as {
-      revision?: string;
-      execution?: {
-        mergeMethod?: string;
-        requireGreenChecks?: boolean;
-        maxAutomaticRemediationRounds?: number;
-        maxTransientRetries?: number;
-      };
-    } | undefined;
-    if (!repository || !policy?.revision || row.authorization_policy_revision !== policy.revision) {
+    const storedRepository = jsonObject(row.repository) as TaskBoardRepositoryConfig | undefined;
+    const policy = jsonObject(row.integration_policy) as TaskBoardIntegrationPolicy | undefined;
+    if (!storedRepository || !policy?.revision || row.authorization_policy_revision !== policy.revision) {
       throw new TaskboardValidationError('Integration policy changed', 'TASKBOARD_POLICY_CHANGED');
     }
     if (row.revoked_at || (row.expires_at && new Date(String(row.expires_at)).getTime() <= Date.now())) {
@@ -673,11 +676,11 @@ async function loadOperationContext(
     return {
       source: rowToSource(row),
       executionId: String(row.execution_id),
-      repository,
+      repository: repositoryWithBoardCiPolicy(storedRepository, policy),
       boardOwnerUserId: String(row.owner_user_id),
       authorizationId: String(row.authorization_id),
       mergeMethod: method === 'rebase' || method === 'squash' ? method : 'merge',
-      requireGreenChecks: policy.execution?.requireGreenChecks !== false,
+      requireGreenChecks: true,
       maxAutomaticRemediationRounds: Math.max(0, Number(policy.execution?.maxAutomaticRemediationRounds ?? 3)),
       maxTransientRetries: Math.max(0, Number(policy.execution?.maxTransientRetries ?? 3)),
       laneEpoch: String(row.epoch),

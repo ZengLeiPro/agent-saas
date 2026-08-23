@@ -36,6 +36,26 @@ export function normalizeIntegrationPolicyCiFallback<T extends TaskBoardIntegrat
   };
 }
 
+export function ciUnconfiguredError(): TaskboardValidationError {
+  return new TaskboardValidationError(
+    'CI gate is not configured: add GitHub required checks or this board\'s explicit CI fallback',
+    'TASKBOARD_CI_UNCONFIGURED',
+  );
+}
+
+export function clearBoardCiPolicyForRepositoryChange(
+  currentRepository: TaskBoardRepositoryConfig | undefined,
+  nextRepository: TaskBoardRepositoryConfig | undefined,
+  policy: TaskBoardIntegrationPolicy | undefined,
+): { policy: TaskBoardIntegrationPolicy | undefined; cleared: boolean } {
+  if (!currentRepository || currentRepository.repositoryId === nextRepository?.repositoryId || !policy?.ciPolicy) {
+    return { policy, cleared: false };
+  }
+  const policyWithoutCiFallback = { ...policy };
+  delete policyWithoutCiFallback.ciPolicy;
+  return { policy: policyWithoutCiFallback, cleared: true };
+}
+
 export function repositoryWithBoardCiPolicy(
   repository: TaskBoardRepositoryConfig,
   policy: TaskBoardIntegrationPolicy | undefined,

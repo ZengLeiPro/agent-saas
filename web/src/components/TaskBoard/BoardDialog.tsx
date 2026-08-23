@@ -153,6 +153,7 @@ export function BoardDialog({
   const [ciDiscoveryLoading, setCiDiscoveryLoading] = useState(false);
   const [ciDiscoveryError, setCiDiscoveryError] = useState<string | null>(null);
   const [ciPolicySaved, setCiPolicySaved] = useState(false);
+  const [repositoryCiPolicyReset, setRepositoryCiPolicyReset] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dirtyFieldsRef = useRef<Set<BoardDraftField>>(new Set());
@@ -198,6 +199,7 @@ export function BoardDialog({
       setMaxTransientRetries(String(policy.execution.maxTransientRetries));
       setCiRequiredChecks(formatCiRequiredChecks(policy));
       setCiPolicySaved(false);
+      setRepositoryCiPolicyReset(false);
       setError(null);
       return;
     }
@@ -262,6 +264,22 @@ export function BoardDialog({
   const canEditSettings = !board || boardAllows(board, "board.update");
   const canEditPolicy = !board || boardAllows(board, "board.policy.update");
   const canManageMembers = Boolean(board && boardAllows(board, "board.members.manage"));
+  const visibleCiDiscovery = repositoryCiPolicyReset ? null : ciDiscovery;
+
+  const changeRepositoryId = (next: string) => {
+    dirtyFieldsRef.current.add("repository");
+    const originalRepositoryId = board?.repository?.repositoryId;
+    if (originalRepositoryId && next.trim() !== originalRepositoryId) {
+      dirtyFieldsRef.current.add("integrationPolicy");
+      setCiRequiredChecks("");
+      setCiPolicySaved(false);
+      setRepositoryCiPolicyReset(true);
+    } else if (originalRepositoryId) {
+      setCiRequiredChecks(formatCiRequiredChecks(board.integrationPolicy ?? defaultPolicy()));
+      setRepositoryCiPolicyReset(false);
+    }
+    setRepositoryId(next);
+  };
 
   const setObservedCheckSelected = (name: string, appId: number | undefined, selected: boolean) => {
     dirtyFieldsRef.current.add("integrationPolicy");
@@ -396,14 +414,19 @@ export function BoardDialog({
               setCiRequiredChecks(finalPolicy.boardRequiredChecks
                 .map((check) => check.appId === undefined ? check.name : `${check.name} | ${check.appId}`).join("\n"));
               setCiDiscoveryError(null);
+              setRepositoryCiPolicyReset(false);
+              setCiPolicySaved(true);
             } catch (caught) {
-              setCiDiscoveryError(caught instanceof Error ? caught.message : "读取保存后的 CI 门禁策略失败");
+              const reason = caught instanceof Error ? caught.message : "读取保存后的 CI 门禁策略失败";
+              setCiDiscoveryError(`保存成功，但未能回读最终 CI 策略：${reason}`);
+              setCiPolicySaved(false);
             }
           } else {
             setCiDiscovery(null);
             setCiDiscoveryError(null);
+            setRepositoryCiPolicyReset(false);
+            setCiPolicySaved(true);
           }
-          setCiPolicySaved(true);
           return;
         }
       } else {
@@ -513,7 +536,7 @@ export function BoardDialog({
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="taskboard-repository-id">Repository ID</Label>
-                    <Input id="taskboard-repository-id" value={repositoryId} onChange={(event) => { dirtyFieldsRef.current.add("repository"); setRepositoryId(event.target.value); }} placeholder="GitHub App 仓库标识" disabled={submitting || !canEditPolicy} />
+                    <Input id="taskboard-repository-id" value={repositoryId} onChange={(event) => changeRepositoryId(event.target.value)} placeholder="GitHub App 仓库标识" disabled={submitting || !canEditPolicy} />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="taskboard-base-branch">基础分支</Label>
@@ -618,29 +641,30 @@ export function BoardDialog({
                 <div className="space-y-3 rounded-md border p-3" aria-label="CI 门禁策略">
                   <div>
                     <p className="text-sm font-medium">CI 门禁策略</p>
+                    {repositoryCiPolicyReset ? <p className="text-xs text-amber-700 dark:text-amber-300">Repository ID 已变更；旧仓库 fallback 已清空。保存后可基于新仓库 observed checks 重新确认。</p> : null}
                     {ciPolicySaved && !dirtyFieldsRef.current.has("integrationPolicy") && !dirtyFieldsRef.current.has("repository")
                       ? <p className="text-xs text-emerald-700 dark:text-emerald-400">已保存，并按服务端最终策略回显。</p> : null}
-                    {ciDiscoveryLoading ? <p className="text-xs text-muted-foreground">正在读取 GitHub 门禁与近期检查…</p> : null}
+                    {ciDiscoveryLoading && !repositoryCiPolicyReset ? <p className="text-xs text-muted-foreground">正在读取 GitHub 门禁与近期检查…</p> : null}
                     {ciDiscoveryError ? <p className="text-xs text-destructive">{ciDiscoveryError}</p> : null}
-                    {ciDiscovery ? (
+                    {visibleCiDiscovery ? (
                       <p className="text-xs text-muted-foreground">
-                        当前生效来源：{ciDiscovery.effectiveSource === "github" ? "GitHub required checks" : ciDiscovery.effectiveSource === "board" ? "看板 fallback" : ciDiscovery.effectiveSource === "unconfigured" ? "未配置（fail-closed）" : "Provider 不可判定"}
-                        {ciDiscovery.providerPullRequestId ? ` · 最近 PR #${ciDiscovery.providerPullRequestId}` : " · 暂无可发现的 PR 检查"}
+                        当前生效来源：{visibleCiDiscovery.effectiveSource === "github" ? "GitHub required checks" : visibleCiDiscovery.effectiveSource === "board" ? "看板 fallback" : visibleCiDiscovery.effectiveSource === "unconfigured" ? "未配置（fail-closed）" : "Provider 不可判定"}
+                        {visibleCiDiscovery.providerPullRequestId ? ` · 最近 PR #${visibleCiDiscovery.providerPullRequestId}` : " · 暂无可发现的 PR 检查"}
                       </p>
                     ) : null}
                   </div>
-                  {ciDiscovery ? (
+                  {visibleCiDiscovery ? (
                     <div className="space-y-1 text-xs">
                       <p className="font-medium">GitHub required checks</p>
-                      {ciDiscovery.githubRequiredChecks.length
-                        ? ciDiscovery.githubRequiredChecks.map((check) => <p key={`${check.name}-${check.appId ?? "any"}`}>{check.name}{check.appId ? ` · App ${check.appId}` : ""}</p>)
+                      {visibleCiDiscovery.githubRequiredChecks.length
+                        ? visibleCiDiscovery.githubRequiredChecks.map((check) => <p key={`${check.name}-${check.appId ?? "any"}`}>{check.name}{check.appId ? ` · App ${check.appId}` : ""}</p>)
                         : <p className="text-muted-foreground">GitHub 未声明 required checks。</p>}
                     </div>
                   ) : null}
-                  {ciDiscovery?.observedChecks.length ? (
+                  {visibleCiDiscovery?.observedChecks.length ? (
                     <div className="space-y-2">
                       <p className="text-xs font-medium">近期 PR observed checks（仅供选择，不会自动升级）</p>
-                      {ciDiscovery.observedChecks.map((check) => (
+                      {visibleCiDiscovery.observedChecks.map((check) => (
                         <label className="flex items-start gap-2 text-xs" key={`${check.name}-${check.appId ?? "any"}`}>
                           <Checkbox
                             aria-label={`选择 observed check ${check.name}`}

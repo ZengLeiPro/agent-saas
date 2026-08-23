@@ -415,6 +415,53 @@ describe("BoardDialog", () => {
     expect(await screen.findByText("保存 CI policy 失败")).toBeTruthy();
   });
 
+  it("切换 Repository ID 时清空旧 fallback 并明确提示重新确认", async () => {
+    const user = userEvent.setup();
+    const configuredBoard: TaskBoard = {
+      ...board,
+      repository: { provider: "github", repositoryId: discovery.repositoryId, owner: "acme", name: "app", baseBranch: "main", allowForkPullRequest: false },
+      integrationPolicy: {
+        schemaVersion: 1, enabled: true, revision: "r1", ciPolicy: { requiredChecks: [{ name: "board-ci", appId: 9 }] },
+        trigger: { mode: "manual", allowedRoles: ["owner"] }, batch: { maxTasks: 10, selection: "priority_then_ready_at" },
+        execution: { mergeMethod: "squash", continueIndependentSources: true, autoResolveConflicts: true, maxAutomaticRemediationRounds: 2, maxTransientRetries: 3, requireGreenChecks: true, deleteRemoteBranch: false, deploy: false },
+      },
+    };
+    render(<BoardDialog open board={configuredBoard} onOpenChange={vi.fn()} onCreate={vi.fn()} onUpdate={vi.fn()} />);
+    await screen.findByText(/当前生效来源：看板 fallback/);
+
+    const repositoryId = screen.getByRole("textbox", { name: "Repository ID" });
+    await user.clear(repositoryId);
+    await user.type(repositoryId, "github:tenant-1:acme/new-app");
+
+    expect(screen.getByText(/旧仓库 fallback 已清空/)).toBeTruthy();
+    expect(screen.queryByText(/optional-check · success/)).toBeNull();
+    expect((screen.getByRole("textbox", { name: "看板 fallback required contexts" }) as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("PATCH 成功但最终策略回读失败时不显示绿色回显成功", async () => {
+    const user = userEvent.setup();
+    mocks.fetchBoardCiPolicyDiscovery
+      .mockResolvedValueOnce(discovery)
+      .mockRejectedValueOnce(new Error("discovery readback failed"));
+    const onUpdate = vi.fn(async () => undefined);
+    const configuredBoard: TaskBoard = {
+      ...board,
+      repository: { provider: "github", repositoryId: discovery.repositoryId, owner: "acme", name: "app", baseBranch: "main", allowForkPullRequest: false },
+      integrationPolicy: {
+        schemaVersion: 1, enabled: true, revision: "r1", ciPolicy: { requiredChecks: [{ name: "board-ci", appId: 9 }] },
+        trigger: { mode: "manual", allowedRoles: ["owner"] }, batch: { maxTasks: 10, selection: "priority_then_ready_at" },
+        execution: { mergeMethod: "squash", continueIndependentSources: true, autoResolveConflicts: true, maxAutomaticRemediationRounds: 2, maxTransientRetries: 3, requireGreenChecks: true, deleteRemoteBranch: false, deploy: false },
+      },
+    };
+    render(<BoardDialog open board={configuredBoard} onOpenChange={vi.fn()} onCreate={vi.fn()} onUpdate={onUpdate} />);
+    await screen.findByText(/当前生效来源：看板 fallback/);
+    await user.type(screen.getByRole("textbox", { name: "看板 fallback required contexts" }), "\nmanual-ci");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(await screen.findByText(/保存成功，但未能回读最终 CI 策略：discovery readback failed/)).toBeTruthy();
+    expect(screen.queryByText("已保存，并按服务端最终策略回显。")).toBeNull();
+  });
+
   it("提交期间锁定全部表单控件，请求完成后再关闭", async () => {
     const user = userEvent.setup();
     let resolveUpdate!: () => void;

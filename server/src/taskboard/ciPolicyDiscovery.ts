@@ -43,7 +43,7 @@ export async function discoverBoardCiPolicy(
     const [gates, snapshot] = await Promise.all([
       provider.getRequiredGateCapabilities(repository, repository.baseBranch, board.ownerUserId),
       providerPullRequestId
-        ? provider.getPullRequest(repository, providerPullRequestId, board.ownerUserId)
+        ? provider.getPullRequest(repository, providerPullRequestId, board.ownerUserId).catch(() => undefined)
         : Promise.resolve(undefined),
     ]);
     const providerKnown = gates.known && gates.unsupportedRules.length === 0 && !gates.mergeQueueRequired;

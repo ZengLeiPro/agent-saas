@@ -611,7 +611,7 @@ describePg('PgTaskboardStore contract', () => {
     expect(completed?.task.status).toBe('in_review');
     expect(completed?.execution).toMatchObject({ status: 'succeeded', finishedAt: expect.any(String) });
     expect((await store.listComments(alice, task.id)).find((item) => item.authorType === 'agent')).toMatchObject({ body: 'Agent 交付\n\n实现完成', sessionId: 'session-a', executionId: 'execution-a', executionPurpose: 'work' });
-    expect((await store.listComments(alice, task.id)).at(-1)).toMatchObject({ authorType: 'user', authorName: 'Alice', body: '认领后补充的最新条件' });
+    expect((await store.listComments(alice, task.id)).find((item) => item.authorType === 'user')).toMatchObject({ authorName: 'Alice', body: '认领后补充的最新条件' });
 
     const commentCount = (await store.listComments(alice, task.id)).length;
     const duplicate = await store.completeExecution('run-a', {

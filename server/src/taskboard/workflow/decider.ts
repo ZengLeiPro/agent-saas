@@ -159,7 +159,7 @@ export function decideTransition(
     && task.workflowVersion !== 3
     && purpose === 'merge'
     && status === 'done';
-  if (TERMINAL_STATUSES.has(task.status)
+  if ((TERMINAL_STATUSES.has(task.status) && !completingMergedIntegration)
     || (isIrreversibleMerged(task, facts) && !completingMergedIntegration)) {
     throw new TaskboardValidationError('Terminal task cannot accept a transition', 'TASKBOARD_EXECUTION_FENCED');
   }

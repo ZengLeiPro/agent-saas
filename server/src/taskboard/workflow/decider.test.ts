@@ -17,6 +17,7 @@ describe('direct workflow transitions', () => {
     const integration = task({ kind: 'integration', status: 'in_progress', workflowVersion: 2 });
     expect(() => decideTransition(integration, 'merge', 'done', { hasMergeFact: false })).toThrow();
     expect(decideTransition(integration, 'merge', 'done', { hasMergeFact: true })).toEqual({ toStatus: 'done' });
+    expect(decideTransition({ ...integration, status: 'done' }, 'merge', 'done', { hasMergeFact: true })).toEqual({ toStatus: 'done' });
     expect(() => decideTransition(integration, 'merge', 'in_progress', { hasMergeFact: true })).toThrow();
   });
   it('exposes allowedStatuses without evidence fields', () => {

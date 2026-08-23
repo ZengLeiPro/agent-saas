@@ -477,9 +477,9 @@ async function completeExecutionInternal(
         WHERE task_id=$1 AND change_type='execution.comment' AND actor_id=$2 LIMIT 1`,
       [taskId, runId],
     );
-    if (executionSucceeded && (completionInput.status !== 'succeeded'
+    if (completionInput.status !== 'succeeded'
       || !existingExecutionComment.rows[0]
-      || (completionInput.attachments?.length ?? 0) > 0)) {
+      || (completionInput.attachments?.length ?? 0) > 0) {
       const deliveryComment = await client.query(
         `INSERT INTO ${store.commentsTable}
            (id,task_id,body,attachments,author_type,author_id,author_name,continuation_eligible,version)

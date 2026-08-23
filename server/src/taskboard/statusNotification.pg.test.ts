@@ -11,7 +11,7 @@ const describePg = connectionString ? describe : describe.skip;
 const { Pool } = pg;
 
 describePg('任务状态通知 PostgreSQL 快照', () => {
-  const prefix = `notify_${randomUUID().replaceAll('-', '').slice(0, 18)}`;
+  const prefix = `notify_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   const alice: TaskboardIdentity = { tenantId: 'tenant-a', ownerUserId: 'alice-id', username: 'alice' };
   const bob: TaskboardIdentity = { tenantId: 'tenant-a', ownerUserId: 'bob-id', username: 'bob' };
   let pool: InstanceType<typeof Pool>;
@@ -25,6 +25,10 @@ describePg('任务状态通知 PostgreSQL 快照', () => {
 
   afterAll(async () => {
     if (!pool) return;
+    if (!store) {
+      await pool.end();
+      return;
+    }
     const tables = await pool.query<{ tablename: string }>(
       `SELECT tablename FROM pg_tables WHERE schemaname=current_schema() AND tablename LIKE $1`,
       [`${prefix}%`],

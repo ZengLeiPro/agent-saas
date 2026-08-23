@@ -12,6 +12,7 @@ import {
 } from './types.js';
 import type { OutboundEvent } from '../types/index.js';
 import type { ToolDescriptor } from '../agent/toolRuntime.js';
+import { POLICY_REJECTION_CUSTOMER_MESSAGE, type RuntimeFailureProtocol } from './runtimeFailure.js';
 import {
   buildMcpCapabilityDescription,
   buildMcpNamespaceName,
@@ -66,6 +67,43 @@ export function getInvalidPromptRequestBlockedFailure(error: unknown): InvalidPr
   return { modelRequestId: completed.modelRequestId, attemptId: completed.attemptId };
 }
 
+export function getStructuredModelFailure(error: unknown): RuntimeFailureProtocol | undefined {
+  if (!(error instanceof ModelProviderError) || !error.failureKind || !error.recoveryAction) return undefined;
+  return { failureKind: error.failureKind, recoveryAction: error.recoveryAction };
+}
+
+export function describeRuntimeFailure(
+  error: unknown,
+  pendingTurnText: string,
+  invalidPromptCustomerMessage: string,
+): {
+  diagnosticMessage: string;
+  message: string;
+  surfacedMessage: string;
+  preservedTurnText: string;
+  failureProtocol?: RuntimeFailureProtocol;
+} {
+  const diagnosticMessage = error instanceof Error ? error.message : String(error);
+  const preservedTurnText = pendingTurnText || (error instanceof ModelProviderError ? error.partialContent ?? '' : '');
+  const failureProtocol = getStructuredModelFailure(error);
+  const message = failureProtocol?.failureKind === 'policy_rejection'
+    ? POLICY_REJECTION_CUSTOMER_MESSAGE
+    : isInvalidPromptRequestBlocked(error)
+      ? invalidPromptCustomerMessage
+      : diagnosticMessage;
+  return {
+    diagnosticMessage,
+    message,
+    preservedTurnText,
+    surfacedMessage: failureProtocol?.failureKind === 'policy_rejection'
+      ? message
+      : preservedTurnText
+        ? `${message}；已保留本次未完成正文，可发送“继续”接着完成。`
+        : message,
+    ...(failureProtocol ? { failureProtocol } : {}),
+  };
+}
+
 export function assertSuccessfulModelTerminal(completed: Extract<ModelEvent, { type: 'completed' }>): void {
   if (completed.terminalStatus && completed.terminalStatus !== 'completed') {
     if (
@@ -82,6 +120,9 @@ export function assertSuccessfulModelTerminal(completed: Extract<ModelEvent, { t
         completed.modelRequestId,
         completed.attemptId,
         completed.emittedOutputCount,
+        completed.failureKind,
+        completed.recoveryAction,
+        completed.content,
       );
     }
     throw new Error(

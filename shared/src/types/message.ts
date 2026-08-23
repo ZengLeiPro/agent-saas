@@ -2,6 +2,7 @@ import type { ToolPresentation } from '../lib/toolPresentation';
 import type { ToolResultMetadata } from '../lib/toolResultMetadata';
 import type { PresentationBlock } from '../lib/presentation/types';
 import type { BusinessStepEventItem } from '../lib/extractTodos';
+import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure';
 
 /**
  * 业务步骤节：从步骤 start 事件到其终态事件之间的所有渲染单元，
@@ -116,6 +117,8 @@ export type MessageItem =
       toolUseCount?: number;
       turnCount?: number;
       errorMessage?: string;
+      failureKind?: RuntimeFailureKind;
+      recoveryAction?: RuntimeRecoveryAction;
       resultPreview?: string;
       /** 「给人看」摘要；有值时非 debug 视图也呈现子任务 */
       presentation?: ToolPresentation;
@@ -167,6 +170,8 @@ export type MessageItem =
       content: string;
       /** UI 语义：运行异常 / 用户取消 / 积分余额不足 */
       severity?: 'error' | 'cancelled' | 'billing';
+      failureKind?: RuntimeFailureKind;
+      recoveryAction?: RuntimeRecoveryAction;
       timestamp?: number;
     };
 

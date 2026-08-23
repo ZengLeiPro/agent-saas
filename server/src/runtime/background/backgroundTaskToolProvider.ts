@@ -114,6 +114,8 @@ function toTaskView(task: RunRecord, includeFullResult: boolean): Record<string,
         ? includeFullResult ? safeResult.text : safeResult.text.slice(0, 500)
         : undefined,
       errorMessage: safeResult.errorMessage,
+      failureKind: safeResult.failureKind,
+      recoveryAction: safeResult.recoveryAction,
       spillPath: safeResult.spillPath,
       totalTokens: safeResult.totalTokens,
       toolUseCount: safeResult.toolUseCount,

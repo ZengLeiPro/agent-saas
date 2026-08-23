@@ -272,7 +272,7 @@ interface MessageListProps {
   onLoadEarlier?: () => Promise<void>;
   onPermissionResponse?: (interactionId: string, allow: boolean) => void;
   onAskUserResponse?: (interactionId: string, answers: AskUserAnswers) => void;
-  onRetry?: (message: MessageItemType) => void;
+  onRetry?: (message: MessageItemType) => void; onSwitchModel?: () => void;
   onFork?: (message: MessageItemType) => void;
   lastMessageRef?: Ref<HTMLDivElement>;
   scrollContainerRef?: Ref<HTMLDivElement>;
@@ -301,7 +301,7 @@ export const MessageList = memo(function MessageList({
   onLoadEarlier,
   onPermissionResponse,
   onAskUserResponse,
-  onRetry,
+  onRetry, onSwitchModel,
   onFork,
   lastMessageRef,
   scrollContainerRef,
@@ -982,7 +982,7 @@ export const MessageList = memo(function MessageList({
                     index={origIndex} sessionId={sessionId}
                     onPermissionResponse={onPermissionResponse}
                     onAskUserResponse={onAskUserResponse}
-                    onRetry={onRetry}
+                    onRetry={onRetry} onSwitchModel={onSwitchModel}
                     onFork={onFork}
                     isFirstUser={false}
                     isLoading={loading}

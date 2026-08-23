@@ -708,7 +708,7 @@ export function processWsEvent(
           ...(typeof data.totalTokens === "number" ? { totalTokens: data.totalTokens } : {}),
           ...(typeof data.toolUseCount === "number" ? { toolUseCount: data.toolUseCount } : {}),
           ...(typeof data.turnCount === "number" ? { turnCount: data.turnCount } : {}),
-          ...(data.errorMessage ? { errorMessage: data.errorMessage } : {}),
+          ...(data.errorMessage ? { errorMessage: data.errorMessage } : {}), ...(data.failureKind ? { failureKind: data.failureKind } : {}), ...(data.recoveryAction ? { recoveryAction: data.recoveryAction } : {}),
           ...(data.resultPreview ? { resultPreview: data.resultPreview } : {}),
         } : m
       );
@@ -725,7 +725,7 @@ export function processWsEvent(
         ...(typeof data.totalTokens === "number" ? { totalTokens: data.totalTokens } : {}),
         ...(typeof data.toolUseCount === "number" ? { toolUseCount: data.toolUseCount } : {}),
         ...(typeof data.turnCount === "number" ? { turnCount: data.turnCount } : {}),
-        ...(data.errorMessage ? { errorMessage: data.errorMessage } : {}),
+        ...(data.errorMessage ? { errorMessage: data.errorMessage } : {}), ...(data.failureKind ? { failureKind: data.failureKind } : {}), ...(data.recoveryAction ? { recoveryAction: data.recoveryAction } : {}),
         ...(data.resultPreview ? { resultPreview: data.resultPreview } : {}),
       });
     }
@@ -796,7 +796,7 @@ export function processWsEvent(
         if (current?.type === "user" || current?.type === "user-voice") idx = ctx.userMsgIndex;
       }
       // 用户侧只看通俗文案;原始 error 留在 server.log + PG runtime_events 供排查。
-      const userFacing = formatRuntimeFailureMessage(data.error);
+      const userFacing = formatRuntimeFailureMessage(data.error, data.failureKind);
       const isBillingBlock = isInsufficientCreditsFailure(data.error);
       if (isBillingBlock) {
         // 余额门禁是可预期的账户状态，消息已经成功送达，不能把用户气泡染成“发送失败”。

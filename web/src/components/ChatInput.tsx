@@ -37,6 +37,8 @@ interface ChatInputProps {
   selectedModel?: string | null;
   sessionId?: string | null;
   onModelChange?: (ref: string) => void;
+  modelSelectorOpen?: boolean;
+  onModelSelectorOpenChange?: (open: boolean) => void;
   canAutoApproveRunShell?: boolean;
   autoApproveRunShell?: boolean;
   onAutoApproveRunShellChange?: (checked: boolean) => void;
@@ -84,6 +86,8 @@ export function ChatInput({
   selectedModel,
   sessionId,
   onModelChange,
+  modelSelectorOpen,
+  onModelSelectorOpenChange,
   canAutoApproveRunShell,
   autoApproveRunShell,
   onAutoApproveRunShellChange,
@@ -483,7 +487,13 @@ export function ChatInput({
 
                 {/* 模型选择器 */}
                 {modelList && selectedModel && onModelChange && !voiceRecorder.isRecording && (
-                  <Select value={selectedModel} onValueChange={onModelChange} disabled={isDisabled}>
+                  <Select
+                    value={selectedModel}
+                    onValueChange={onModelChange}
+                    open={modelSelectorOpen}
+                    onOpenChange={onModelSelectorOpenChange}
+                    disabled={isDisabled}
+                  >
                     <SelectTrigger
                       className={cn(
                         "inline-flex h-7 w-auto items-center gap-1 rounded-md px-2",

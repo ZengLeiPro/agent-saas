@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   INSUFFICIENT_CREDITS_FAILURE_MESSAGE,
+  POLICY_REJECTION_FAILURE_MESSAGE,
   formatRuntimeFailureMessage,
   isInsufficientCreditsFailure,
 } from './runtimeErrorMessage';
@@ -11,6 +12,13 @@ describe('runtimeErrorMessage', () => {
 
     expect(isInsufficientCreditsFailure(error)).toBe(true);
     expect(formatRuntimeFailureMessage(error)).toBe(INSUFFICIENT_CREDITS_FAILURE_MESSAGE);
+  });
+
+  it('仅依据结构化 failureKind 显示策略拒绝文案', () => {
+    expect(formatRuntimeFailureMessage('Responses API HTTP 200: cyber_policy', 'policy_rejection'))
+      .toBe(POLICY_REJECTION_FAILURE_MESSAGE);
+    expect(formatRuntimeFailureMessage('仅错误文本包含 cyber_policy'))
+      .not.toBe(POLICY_REJECTION_FAILURE_MESSAGE);
   });
 
   it('不把普通运行错误误判为积分不足', () => {

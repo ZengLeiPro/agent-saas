@@ -840,7 +840,7 @@ export class WebChannel implements BaseChannel {
           streamId,
           runId: input.runId,
           client_msg_id: input.clientMsgId,
-          error: input.event.error,
+          error: input.event.error, ...(input.event.failureKind ? { failureKind: input.event.failureKind } : {}), ...(input.event.recoveryAction ? { recoveryAction: input.event.recoveryAction } : {}),
         });
         const hasDeferredErrorStream = Array.from(this.activeStreams.entries()).some(
           ([candidateStreamId, entry]) => (
@@ -862,7 +862,7 @@ export class WebChannel implements BaseChannel {
             status: 'failed',
             streamId,
             runId: input.runId,
-            reason: input.event.error,
+            reason: input.event.error, ...(input.event.failureKind ? { failureKind: input.event.failureKind } : {}), ...(input.event.recoveryAction ? { recoveryAction: input.event.recoveryAction } : {}),
           });
           // error 不一定还会补发 done；直接在失败终态补偿命名。
           void this.maybeGenerateTitleByUserId(input.sessionId, input.userId, '', true);

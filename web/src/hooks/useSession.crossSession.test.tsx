@@ -86,6 +86,38 @@ describe("useSession 跨会话详情请求隔离", () => {
     expect(authFetchMock).toHaveBeenCalledWith(expect.stringContaining("limit=200"));
   });
 
+  it("刷新失败会话时按结构化协议恢复策略拒绝提示", async () => {
+    const callbacks = makeCallbacks();
+    authFetchMock.mockImplementation((url: string) => {
+      if (url.startsWith("/api/sessions/session-policy")) {
+        return Promise.resolve(jsonResponse({
+          blocks: [{ id: "line-1", kind: "text", content: "已生成正文" }],
+          lastRunState: {
+            status: "failed",
+            error: "脱敏错误",
+            runId: "run-policy",
+            failureKind: "policy_rejection",
+            recoveryAction: "switch_model",
+          },
+        }));
+      }
+      if (url.startsWith("/api/chat/interactions/pending")) return Promise.resolve(jsonResponse([]));
+      return Promise.resolve(jsonResponse({ sessions: [], hasMore: false }));
+    });
+    const { result } = renderHook(() => useSession(callbacks));
+
+    await act(async () => { await result.current.loadSessionDetail("session-policy"); });
+
+    const messages = vi.mocked(callbacks.setMessages).mock.calls.at(-1)?.[0] ?? [];
+    expect(messages).toContainEqual(expect.objectContaining({
+      type: "system-error",
+      content: "当前模型受策略限制，请切换其他模型继续。",
+      failureKind: "policy_rejection",
+      recoveryAction: "switch_model",
+    }));
+    expect(messages).toContainEqual(expect.objectContaining({ type: "text", content: "已生成正文" }));
+  });
+
   it("首屏只取尾部一页，并能向前合并历史且去除边界重叠", async () => {
     let currentMessages: ReturnType<NonNullable<SessionCallbacks["getMessages"]>> = [];
     const callbacks = makeCallbacks();

@@ -78,6 +78,8 @@ export type {
   WsBlockType,
   WsAskUserQuestion,
   WsEvent,
+  RuntimeFailureKind,
+  RuntimeRecoveryAction,
   AuthUser,
   LoginCredentials,
   SmsLoginCredentials,

@@ -10,6 +10,7 @@ import { AskUserBlock } from './AskUserBlock';
 import { SubagentBlock } from './SubagentBlock';
 import { ExecutionHiddenPlaceholder } from './ActivityGroupBlock';
 import { RuntimeStatusBlock } from './RuntimeStatusBlock';
+import { RuntimeFailureAction } from './RuntimeFailureAction';
 import { UserVoiceMessage } from './UserVoiceMessage';
 import { cn } from '@/lib/utils';
 import { VoiceBar } from './VoiceBar';
@@ -642,6 +643,7 @@ interface MessageItemProps {
   onPermissionResponse?: (interactionId: string, allow: boolean) => void;
   onAskUserResponse?: (interactionId: string, answers: AskUserAnswers) => void;
   onRetry?: (message: MessageItemType) => void;
+  onSwitchModel?: () => void;
   onFork?: (message: MessageItemType) => void;
   /** 是否为第一条用户消息（不显示 fork） */
   isFirstUser?: boolean;
@@ -664,6 +666,7 @@ export const MessageItem = memo(function MessageItem({
   onPermissionResponse,
   onAskUserResponse,
   onRetry,
+  onSwitchModel,
   onFork,
   isFirstUser,
   isLoading,
@@ -1084,15 +1087,7 @@ export const MessageItem = memo(function MessageItem({
       return (
         <div className="flex items-center gap-2 px-1 py-1 text-xs text-muted-foreground" role="status">
           <span className="whitespace-pre-wrap break-words">{message.content}</span>
-          {onRetry && !isLoading && (
-            <button
-              type="button"
-              onClick={() => onRetry(message)}
-              className="shrink-0 rounded-md px-2 py-1 font-medium text-foreground/75 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
-            >
-              继续生成
-            </button>
-          )}
+          <RuntimeFailureAction recoveryAction={message.recoveryAction} onSwitchModel={onSwitchModel} onRetry={onRetry ? () => onRetry(message) : undefined} isLoading={isLoading} />
         </div>
       );
     }
@@ -1115,6 +1110,7 @@ export const MessageItem = memo(function MessageItem({
   prev.onPermissionResponse === next.onPermissionResponse &&
   prev.onAskUserResponse === next.onAskUserResponse &&
   prev.onRetry === next.onRetry &&
+  prev.onSwitchModel === next.onSwitchModel &&
   prev.onFork === next.onFork &&
   prev.isFirstUser === next.isFirstUser &&
   prev.isLoading === next.isLoading &&

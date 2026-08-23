@@ -47,6 +47,69 @@ describe("runtimeEventProjection", () => {
     });
   });
 
+  it("策略拒绝终态把结构化恢复协议投影到 session_status 与 done", () => {
+    const event: Extract<PlatformEvent, { type: "run_state_changed" }> = {
+      id: "event-policy-1",
+      timestamp: "2026-08-23T13:00:00.000Z",
+      type: "run_state_changed",
+      sessionId: "session-policy-1",
+      runId: "run-policy-1",
+      status: "failed",
+      reason: "当前模型受策略限制，请切换其他模型继续。",
+      failureKind: "policy_rejection",
+      recoveryAction: "switch_model",
+    };
+
+    expect(projectRuntimePlatformEvent(event).events).toEqual([
+      {
+        type: "session_status",
+        sessionId: "session-policy-1",
+        status: "failed",
+        runId: "run-policy-1",
+        reason: "当前模型受策略限制，请切换其他模型继续。",
+        failureKind: "policy_rejection",
+        recoveryAction: "switch_model",
+      },
+      {
+        type: "done",
+        sessionId: "session-policy-1",
+        runId: "run-policy-1",
+        error: "当前模型受策略限制，请切换其他模型继续。",
+        failureKind: "policy_rejection",
+        recoveryAction: "switch_model",
+      },
+    ]);
+  });
+
+  it("策略拒绝子任务投影结构化恢复协议", () => {
+    const event: Extract<PlatformEvent, { type: "subagent_finished" }> = {
+      id: "event-subagent-policy",
+      timestamp: "2026-08-23T13:00:00.000Z",
+      type: "subagent_finished",
+      sessionId: "parent-session",
+      runId: "parent-run",
+      toolCallId: "tool-policy",
+      agentType: "general",
+      description: "策略测试",
+      childSessionId: "child-session",
+      childRunId: "child-run",
+      status: "failed",
+      totalTokens: 10,
+      toolUseCount: 0,
+      durationMs: 500,
+      errorMessage: "当前模型受策略限制，请切换其他模型继续。",
+      failureKind: "policy_rejection",
+      recoveryAction: "switch_model",
+    };
+
+    expect(projectRuntimePlatformEvent(event).events).toEqual([expect.objectContaining({
+      type: "subagent_end",
+      failureKind: "policy_rejection",
+      recoveryAction: "switch_model",
+      errorMessage: "当前模型受策略限制，请切换其他模型继续。",
+    })]);
+  });
+
   it("interaction_requested 投影为实时 ask_user 事件", () => {
     const event: Extract<PlatformEvent, { type: "interaction_requested" }> = {
       id: "event-ask-1",

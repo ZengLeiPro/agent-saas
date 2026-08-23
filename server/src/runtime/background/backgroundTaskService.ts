@@ -579,7 +579,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           status: storedResult?.status ?? fallbackStatus,
           totalTokens: storedResult?.totalTokens ?? 0,
           durationMs: storedResult?.durationMs ?? 0,
-          ...(storedResult?.errorMessage ? { errorMessage: storedResult.errorMessage } : {}),
+          ...(storedResult?.errorMessage ? { errorMessage: storedResult.errorMessage } : {}), ...(storedResult?.failureKind ? { failureKind: storedResult.failureKind } : {}), ...(storedResult?.recoveryAction ? { recoveryAction: storedResult.recoveryAction } : {}),
           ...(storedResult?.text ? { resultPreview: storedResult.text.slice(0, 2_000) } : {}),
         });
         await runStore.markStatus(task.runId, task.status, task.statusReason, {
@@ -868,7 +868,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     const result: StoredBackgroundResult = {
       status: outcome.status,
       text: stored.text,
-      ...(outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {}),
+      ...(outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {}), ...(outcome.failureKind ? { failureKind: outcome.failureKind } : {}), ...(outcome.recoveryAction ? { recoveryAction: outcome.recoveryAction } : {}),
       ...(stored.spillPath ? { spillPath: stored.spillPath } : {}),
       childSessionId: outcome.childSessionId,
       childRunId: outcome.childRunId,

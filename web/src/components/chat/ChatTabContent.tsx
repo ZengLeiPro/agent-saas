@@ -1,4 +1,4 @@
-import { type Ref, type MutableRefObject, useMemo } from "react";
+import { type Ref, type MutableRefObject, useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { OrgAgentAvatarContent } from "@/components/OrgAgentAvatar";
@@ -209,6 +209,10 @@ export function ChatTabContent({
   onResendQueuedInterjection,
   onDismissQueuedInterjection,
 }: ChatTabContentProps) {
+  const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
+  const handleSwitchModel = useCallback(() => setModelSelectorOpen(true), []);
+  useEffect(() => setModelSelectorOpen(false), [sessionId]);
+
   const activeAskUser = useMemo(() => {
     if (readOnly) return null;
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -280,6 +284,7 @@ export function ChatTabContent({
           onPermissionResponse={readOnly ? undefined : onPermissionResponse}
           onAskUserResponse={readOnly ? undefined : onAskUserResponse}
           onRetry={readOnly ? undefined : onRetry}
+          onSwitchModel={readOnly ? undefined : handleSwitchModel}
           onFork={readOnly ? undefined : onFork}
           tts={tts}
           ttsStateMap={ttsStateMap}
@@ -307,6 +312,8 @@ export function ChatTabContent({
             selectedModel={selectedModel}
             sessionId={sessionId}
             onModelChange={onModelChange}
+            modelSelectorOpen={modelSelectorOpen}
+            onModelSelectorOpenChange={setModelSelectorOpen}
             canAutoApproveRunShell={canAutoApproveRunShell}
             autoApproveRunShell={autoApproveRunShell}
             onAutoApproveRunShellChange={onAutoApproveRunShellChange}
@@ -370,6 +377,8 @@ export function ChatTabContent({
               selectedModel={selectedModel}
               sessionId={sessionId}
               onModelChange={onModelChange}
+              modelSelectorOpen={modelSelectorOpen}
+              onModelSelectorOpenChange={setModelSelectorOpen}
               canAutoApproveRunShell={canAutoApproveRunShell}
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={onAutoApproveRunShellChange}

@@ -1,11 +1,14 @@
 import type { RunRecord } from '../runStore.js';
 import { SUBAGENT_RESULT_MAX_CHARS } from '../subagent/subagentLimits.js';
 import type { BackgroundTaskMetadata } from './backgroundTaskMetadata.js';
+import type { RuntimeFailureKind, RuntimeRecoveryAction } from '../../types/index.js';
 
 export interface StoredBackgroundResult {
   status: 'completed' | 'failed' | 'cancelled' | 'timeout';
   text: string;
   errorMessage?: string;
+  failureKind?: RuntimeFailureKind;
+  recoveryAction?: RuntimeRecoveryAction;
   spillPath?: string;
   childSessionId?: string;
   childRunId?: string;
@@ -99,6 +102,8 @@ export function buildTaskNotification(task: RunRecord, metadata: BackgroundTaskM
     `<task-id>${escapeXml(metadata.shortTaskId ?? task.runId)}</task-id>`,
     `<tool-use-id>${escapeXml(metadata.parentToolCallId)}</tool-use-id>`,
     `<status>${status}</status>`,
+    result?.failureKind ? `<failure-kind>${result.failureKind}</failure-kind>` : undefined,
+    result?.recoveryAction ? `<recovery-action>${result.recoveryAction}</recovery-action>` : undefined,
     `<summary>${escapeXml(metadata.description)}</summary>`,
     `<result>${escapeXml(summary + spill)}</result>`,
     metadata.taskType === 'command'

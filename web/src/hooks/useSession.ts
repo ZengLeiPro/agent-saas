@@ -418,7 +418,7 @@ export function useSession(
             let alertContent: string | null = null;
             let severity: 'error' | 'cancelled' | 'billing' = 'error';
             if (lrs.status === 'failed' || lrs.status === 'orphaned') {
-              alertContent = formatRuntimeFailureMessage(lrs.error);
+              alertContent = formatRuntimeFailureMessage(lrs.error, lrs.failureKind);
               if (isInsufficientCreditsFailure(lrs.error)) severity = 'billing';
             } else if (lrs.status === 'cancelled') {
               alertContent = '会话已停止';
@@ -426,12 +426,12 @@ export function useSession(
             }
             if (alertContent) {
               const last = msgs[msgs.length - 1];
-              if (!(last?.type === 'system-error' && last.content === alertContent)) {
+              if (!(last?.type === 'system-error' && last.content === alertContent && last.failureKind === lrs.failureKind && last.recoveryAction === lrs.recoveryAction)) {
                 msgs.push({
                   id: `system-error-${lrs.runId}`,
                   type: 'system-error',
                   content: alertContent,
-                  severity,
+                  severity, ...(lrs.failureKind ? { failureKind: lrs.failureKind } : {}), ...(lrs.recoveryAction ? { recoveryAction: lrs.recoveryAction } : {}),
                   ...(lrs.finishedAt ? { timestamp: Date.parse(lrs.finishedAt) || Date.now() } : {}),
                 });
               }

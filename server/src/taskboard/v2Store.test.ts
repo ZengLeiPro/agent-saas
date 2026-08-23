@@ -18,10 +18,12 @@ const repository = {
 };
 
 describe('createIntegrationBatch', () => {
-  it('creates integration tasks in progress', async () => {
+  it('creates integration tasks at the in-progress column tail', async () => {
+    let tailQuery = '';
     let taskInsert = '';
+    let taskInsertValues: unknown[] = [];
     const client = {
-      query: vi.fn(async (sql: string) => {
+      query: vi.fn(async (sql: string, values?: unknown[]) => {
         if (sql.includes('FROM boards')) {
           return { rows: [{
             id: 'board-1',
@@ -57,9 +59,13 @@ describe('createIntegrationBatch', () => {
         }
         if (sql.includes('WHERE s.state NOT IN')) return { rows: [] };
         if (sql.includes('SET next_task_number=next_task_number+1')) return { rows: [{ task_number: 2 }] };
-        if (sql.includes('MAX(sort_order)')) return { rows: [{ max_sort_order: 0 }] };
+        if (sql.includes('MAX(sort_order)')) {
+          tailQuery = sql;
+          return { rows: [{ max_sort_order: 4096 }] };
+        }
         if (sql.includes('INSERT INTO tasks')) {
           taskInsert = sql;
+          taskInsertValues = values ?? [];
           throw new Error('stop after task insert');
         }
         return { rows: [] };
@@ -86,6 +92,8 @@ describe('createIntegrationBatch', () => {
       deliveryTaskIds: ['delivery-1'], expectedBoardVersion: 1,
     })).rejects.toThrow('stop after task insert');
 
+    expect(tailQuery).toContain("status='in_progress'");
     expect(taskInsert).toContain("'in_progress'");
+    expect(taskInsertValues[5]).toBe(5120);
   });
 });

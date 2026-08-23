@@ -57,6 +57,8 @@ export interface CompactionOptions {
   sourceRunId?: string;
   controlSourceRunIds?: string[];
   baseFixedTokens?: number;
+  /** 当前请求已在 checkpoint 之外单独注入最新 memoryContext。 */
+  currentMemoryInjected?: boolean;
 }
 
 const CONTEXT_EMERGENCY_THRESHOLD_RATIO = 0.95;

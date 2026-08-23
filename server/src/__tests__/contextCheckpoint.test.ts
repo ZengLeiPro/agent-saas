@@ -59,8 +59,24 @@ describe('context checkpoint planner', () => {
     expect(plan.targetTokens).toBe(108_800);
     expect(plan.summaryBudgetTokens).toBe(16_384);
     expect(plan.rawTailBudgetTokens).toBe(CHECKPOINT_RAW_TAIL_TOKEN_CAP);
+    expect(plan.userHistoryTokenCap).toBe(60_000);
     // 当前消息已在 raw tail 中，不应再作为 checkpoint task anchor 重复投影。
     expect(plan.taskAnchors).toEqual([]);
+  });
+
+  it('小窗口模型按目标剩余空间下调用户历史上限，而不是固定占用 60K', () => {
+    const plan = planContextCheckpoint({
+      events: [user('u1', '长'.repeat(50_000)), assistant('a1', '处理中')],
+      contextWindow: 32_000,
+      thresholdTokens: 25_600,
+      baseFixedTokens: 4_000,
+      sourceRunId: 'run-active',
+    });
+
+    expect(plan.targetTokens).toBe(12_800);
+    expect(plan.summaryBudgetTokens).toBe(2_560);
+    expect(plan.userHistoryTokenCap).toBe(5_984);
+    expect(plan.userHistoryTokenCap).toBeLessThan(60_000);
   });
 
   it('raw tail 不会从完整工具批次中间切开', () => {
@@ -88,6 +104,40 @@ describe('context checkpoint planner', () => {
     ];
     const selected = selectAtomicRawTail(events, 100_000);
     expect(selected.startIndex).toBe(events.length);
+  });
+
+  it('完整工具范围包住未闭合调用时也不会跨过 unsafe 事件', () => {
+    const events = [
+      toolCalls('tc-complete', ['call-complete']),
+      toolCalls('tc-open', ['call-open']),
+      toolResult('tr-complete', 'call-complete'),
+    ];
+
+    expect(selectAtomicRawTail(events, 100_000).startIndex).toBe(events.length);
+  });
+
+  it('thinking 与 assistant 之间夹着 MCP 加载事件时仍作为一个原子单元', () => {
+    const events = [
+      { ...base, id: 'thinking-1', type: 'assistant_thinking', content: '关键推理' } as PlatformEvent,
+      {
+        ...base,
+        id: 'mcp-1',
+        type: 'mcp_tools_loaded',
+        execution: 'server',
+        paths: ['mcp_demo.large_tool'],
+        tools: [{
+          id: 'large_tool',
+          name: 'large_tool',
+          description: '大'.repeat(10_000),
+          parameters: { type: 'object', properties: {} },
+        }],
+      } as PlatformEvent,
+      assistant('a1', '最终回答'),
+    ];
+
+    // 预算足够单独容纳 assistant，但不足以容纳 thinking + MCP + assistant；必须全不保留。
+    expect(selectAtomicRawTail(events, 100).startIndex).toBe(events.length);
+    expect(selectAtomicRawTail(events, 20_000).startIndex).toBe(0);
   });
 
   it('单轮超长当前任务也可进入摘要段，任务锚点保留完整原文', () => {

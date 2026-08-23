@@ -57,6 +57,7 @@ import { governModelRequestMessages } from './contextGovernor.js';
 import {
   hasActiveCheckpointForRun,
   planContextCheckpoint,
+  planContinuousCheckpointInput,
 } from './contextCheckpoint.js';
 import { createCompactionSummaryAudit, formatCompactionSummaryWarning } from './compactionSummary.js';
 import {
@@ -1963,7 +1964,6 @@ export class RawAgentLoop implements AgentLoop {
     logger.error(`[compact] failed session=${context.sessionId}: ${message}`);
     yield { type: 'error', error: `上下文压缩失败: ${message}` };
   }
-
   private async *compactHistory(
     input: Pick<CompactInput, 'instructions'>,
     context: RunContext,
@@ -1971,7 +1971,6 @@ export class RawAgentLoop implements AgentLoop {
     options: CompactionOptions,
   ): AsyncGenerator<OutboundEvent, CompactionOutcome> {
     yield { type: 'compaction_start' };
-
     let totalUsage: ModelUsage | undefined;
     let summaryText = '';
     try {
@@ -2016,14 +2015,17 @@ export class RawAgentLoop implements AgentLoop {
         sourceRunId: options.sourceRunId,
         adaptUserHistoryToTarget: configuredWindow !== undefined,
       });
+      const compressedEvents = priorEvents.slice(0, plan.rawTailStartIndex);
+      const continuousInput = planContinuousCheckpointInput(compressedEvents, Math.max(0, contextWindow - estimateContextTokens([input.instructions, tools, this.compactionPrompt]) - plan.userHistoryTokenCap - plan.summaryBudgetTokens - 1_024));
       const compressedProjection = buildContextProjection(
-        priorEvents.slice(0, plan.rawTailStartIndex),
+        compressedEvents,
         {
           sessionId: context.sessionId,
           runId: context.runId,
           policy: this.contextPolicy,
           excludeMemoryContext: true,
           checkpointUserHistoryTokenCap: plan.userHistoryTokenCap,
+          checkpointSummaryTokenCap: continuousInput.summaryTokenCap, checkpointRetainedStartIndex: continuousInput.retainedStartIndex, collapseCheckpointRawTail: true,
         },
       );
       const compressedMessages = compressedProjection.messages;
@@ -2033,7 +2035,6 @@ export class RawAgentLoop implements AgentLoop {
         yield { type: 'compaction_end', compaction: { skipped: true, note, coveredEventCount: 0 } };
         return { status: 'skipped', numTurns: 0, resultText: note };
       }
-
       const requestMessages: ModelChatMessage[] = [
         { role: 'system', content: input.instructions },
         ...compressedMessages,

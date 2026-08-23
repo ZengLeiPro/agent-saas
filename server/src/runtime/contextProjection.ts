@@ -23,6 +23,12 @@ export interface ContextProjectionOptions {
   excludeMemoryContext?: boolean;
   /** 连续压缩切换到更小窗口模型时，对旧 checkpoint cap 施加更严格的当前上限。 */
   checkpointUserHistoryTokenCap?: number;
+  /** 生成下一 checkpoint 摘要时折叠旧 checkpoint 的 raw tail，避免旧预算突破当前模型窗口。 */
+  collapseCheckpointRawTail?: boolean;
+  /** 连续压缩时旧摘要在当前模型输入中的最大 Token 预算。 */
+  checkpointSummaryTokenCap?: number;
+  /** 连续压缩时旧 checkpoint 后仍按原子单元保留的后缀起点（当前切片索引）。 */
+  checkpointRetainedStartIndex?: number;
 }
 
 export interface ContextProjection {
@@ -175,7 +181,10 @@ const SYSTEM_COMMAND_MODEL_CONTENT_PREFIX = '[系统命令]';
  */
 function applyCompaction(
   events: PlatformEvent[],
-  options: Pick<ContextProjectionOptions, 'excludeMemoryContext' | 'checkpointUserHistoryTokenCap'> = {},
+  options: Pick<
+    ContextProjectionOptions,
+    'excludeMemoryContext' | 'checkpointUserHistoryTokenCap' | 'collapseCheckpointRawTail' | 'checkpointSummaryTokenCap' | 'checkpointRetainedStartIndex'
+  > = {},
 ): {
   effectiveEvents: PlatformEvent[];
   summaryMessages: ModelChatMessage[];
@@ -185,14 +194,19 @@ function applyCompaction(
     if (event.type !== 'compaction') continue;
 
     let cutIdx = i;
-    if (event.cutoffEventId) {
+    if (event.cutoffEventId && !options.collapseCheckpointRawTail) {
       const idx = events.findIndex((e) => e.id === event.cutoffEventId);
       if (idx >= 0 && idx <= i) cutIdx = idx;
     }
-    const compressed = events.slice(0, cutIdx);
+    const retainedStart = options.collapseCheckpointRawTail
+      ? Math.max(i + 1, Math.min(events.length, options.checkpointRetainedStartIndex ?? events.length))
+      : cutIdx;
+    const compressed = options.collapseCheckpointRawTail
+      ? [...events.slice(0, i), ...events.slice(i + 1, retainedStart)]
+      : events.slice(0, cutIdx);
     // 独立 /compact 的 run 只含系统命令生命周期，可整段剔除；内联压缩与业务
     // 交互共用 runId，不能按 runId 过滤，否则会把承诺保留的最近一轮一起删掉。
-    const retained = events.slice(cutIdx).filter(
+    const retained = events.slice(retainedStart).filter(
       (e) => event.inline
         ? e.id !== event.id
         : !('runId' in e) || e.runId !== event.runId,
@@ -224,8 +238,14 @@ function applyCompaction(
               checkpoint.summaryAudit?.userHistoryTokenCap ?? CHECKPOINT_USER_HISTORY_TOKEN_CAP,
               options.checkpointUserHistoryTokenCap ?? CHECKPOINT_USER_HISTORY_TOKEN_CAP,
             ),
+            options.checkpointSummaryTokenCap,
           )
-          : formatCompactionContext(event.summary, extractUserMessageTrail(compressed)),
+          : formatCompactionContext(
+            event.summary,
+            extractUserMessageTrail(compressed),
+            options.checkpointUserHistoryTokenCap,
+            options.checkpointSummaryTokenCap,
+          ),
       }],
     };
   }
@@ -470,14 +490,18 @@ function formatCheckpointContext(
   sourceRunId: string | undefined,
   memorySnapshot: string | undefined,
   userHistoryTokenCap: number,
+  summaryTokenCap: number | undefined,
 ): string {
+  const boundedSummary = summaryTokenCap === undefined
+    ? summary
+    : fitTextToBudget(summary, (candidate) => estimateContextTokens(candidate) <= summaryTokenCap) ?? '';
   const taskAnchorIds = new Set(taskAnchors.map((anchor) => anchor.eventId));
   const sourceRunAttribute = sourceRunId ? ` sourceRunId="${sourceRunId}"` : '';
   const parts = [
     '<context-summary>',
     `<context-checkpoint version="1" id="${checkpointId}" state="${state}" trigger="${trigger}"${sourceRunAttribute}>`,
     '<checkpoint-summary>',
-    summary,
+    boundedSummary,
     '</checkpoint-summary>',
   ];
   if (memorySnapshot) parts.push('', '<checkpoint-memory-snapshot>', memorySnapshot, '</checkpoint-memory-snapshot>');
@@ -511,15 +535,23 @@ function formatCheckpointContext(
 }
 
 /** 存量 compaction 保持原投影格式。 */
-function formatCompactionContext(summary: string, trail: TrailItem[]): string {
+function formatCompactionContext(
+  summary: string,
+  trail: TrailItem[],
+  userHistoryTokenCap = CHECKPOINT_USER_HISTORY_TOKEN_CAP,
+  summaryTokenCap?: number,
+): string {
+  const boundedSummary = summaryTokenCap === undefined
+    ? summary
+    : fitTextToBudget(summary, (candidate) => estimateContextTokens(candidate) <= summaryTokenCap) ?? '';
   const parts = [
     '<context-summary>',
     '以下是本会话较早历史的压缩摘要（原始消息已被压缩以节省 context）：',
     '',
-    summary,
+    boundedSummary,
     '</context-summary>',
   ];
-  const trailBlock = renderUserMessageTrail(trail);
+  const trailBlock = renderUserMessageTrail(trail, userHistoryTokenCap);
   if (trailBlock) parts.push('', trailBlock);
   parts.push(
     '',
@@ -561,6 +593,8 @@ export function buildContextProjection(allEvents: PlatformEvent[], options: Cont
     prefix: ModelChatMessage[],
     replayMessages: ModelChatMessage[],
   ): ModelChatMessage[] => {
+    // 连续压缩只需要当前请求已提供的 tools，不能从完整历史无上限恢复旧 MCP schema。
+    if (options.collapseCheckpointRawTail) return [...prefix, ...replayMessages];
     const present = new Set(
       replayMessages
         .filter((message): message is Extract<ModelChatMessage, { role: 'additional_tools' }> => (

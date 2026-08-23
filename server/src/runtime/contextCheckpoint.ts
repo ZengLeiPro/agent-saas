@@ -215,6 +215,9 @@ export function selectAtomicRawTail(
   let estimatedUpperTokens = 0;
   let cursor = events.length - 1;
   while (cursor >= 0) {
+    // 旧 checkpoint 必须进入下一次摘要投影，才能应用当前模型的更小 cap；
+    // 不能把 model-invisible compaction 当作 0 Token raw-tail 单元单独保留。
+    if (events[cursor]!.type === 'compaction') break;
     const range = rangeByIndex.get(cursor);
     let unitStart = range?.start ?? cursor;
     const first = events[unitStart]!;
@@ -263,6 +266,23 @@ export function selectAtomicRawTail(
     return { startIndex: events.length, observedTokens: 0 };
   }
   return { startIndex: selectedStart, observedTokens: selectedTokens };
+}
+
+export function planContinuousCheckpointInput(
+  events: PlatformEvent[],
+  payloadBudgetTokens: number,
+): { retainedStartIndex: number; summaryTokenCap: number } {
+  let checkpointIndex = events.length - 1;
+  while (checkpointIndex >= 0 && events[checkpointIndex]!.type !== 'compaction') checkpointIndex -= 1;
+  if (checkpointIndex < 0) {
+    return { retainedStartIndex: events.length, summaryTokenCap: Math.max(0, payloadBudgetTokens) };
+  }
+  const newerEvents = events.slice(checkpointIndex + 1);
+  const retained = selectAtomicRawTail(newerEvents, Math.floor(Math.max(0, payloadBudgetTokens) / 2));
+  return {
+    retainedStartIndex: checkpointIndex + 1 + retained.startIndex,
+    summaryTokenCap: Math.max(0, payloadBudgetTokens - retained.observedTokens),
+  };
 }
 
 export function planContextCheckpoint(input: ContextCheckpointPlanInput): ContextCheckpointPlan {

@@ -166,6 +166,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   readonly integrationTriggerOutboxTable: string;
   readonly remediationAttemptsTable: string;
   readonly cancellationOutboxTable: string;
+  readonly watchersTable: string;
+  readonly statusNotificationOutboxTable: string;
   repositoryProvider?: RepositoryProvider;
   integrationV3RepositoryProvider?: RepositoryProvider;
   private integrationV3RepositoryProbe?: IntegrationV3RepositoryProbe;
@@ -191,6 +193,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     this.integrationTriggerOutboxTable = `${prefix}_taskboard_integration_outbox`;
     this.remediationAttemptsTable = `${prefix}_taskboard_remediation_attempts`;
     this.cancellationOutboxTable = `${prefix}_taskboard_cancel_outbox`;
+    this.watchersTable = `${prefix}_taskboard_watchers`;
+    this.statusNotificationOutboxTable = `${prefix}_taskboard_status_notify_outbox`;
   }
   async init(): Promise<void> {
     await initializeTaskboardStore(this);
@@ -700,6 +704,32 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   }
   async getTask(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardTask> {
     return this.requireTask(this.pool, identity, taskId, false);
+  }
+  async isTaskWatched(identity: TaskboardIdentity, taskId: string): Promise<boolean> {
+    await this.requireTask(this.pool, identity, taskId, false);
+    const result = await this.pool.query(
+      `SELECT 1 FROM ${this.watchersTable} WHERE task_id=$1 AND user_id=$2`,
+      [taskId, identity.ownerUserId],
+    );
+    return Boolean(result.rows[0]);
+  }
+  async setTaskWatched(identity: TaskboardIdentity, taskId: string, watched: boolean): Promise<boolean> {
+    return this.withTransaction(async (client) => {
+      await this.requireTaskWithBoard(client, identity, taskId, true);
+      if (watched) {
+        await client.query(
+          `INSERT INTO ${this.watchersTable} (task_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+          [taskId, identity.ownerUserId],
+        );
+      } else {
+        await client.query(
+          `DELETE FROM ${this.watchersTable} WHERE task_id=$1 AND user_id=$2`,
+          [taskId, identity.ownerUserId],
+        );
+      }
+      await appendTaskChange(this, client, taskId, 'task.watch.updated', 'user', identity.ownerUserId, { watched });
+      return watched;
+    });
   }
   async updateTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskPatchInput): Promise<TaskBoardTask> {
     return this.withTransaction(async (client) => {

@@ -518,7 +518,22 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   }));
 
   router.get('/tasks/:id', route(async (req, res) => {
-    sendTask(req, res, await options.service!.getTask(identityFrom(req), req.params.id));
+    const identity = identityFrom(req);
+    const task = await options.service!.getTask(identity, req.params.id);
+    const watched = options.service!.isTaskWatched
+      ? await options.service!.isTaskWatched(identity, req.params.id)
+      : false;
+    res.json({ ...withCreatorAvatarVersion(options.userStore, identity, task), watched });
+  }));
+
+  router.put('/tasks/:id/watch', route(async (req, res) => {
+    if (!options.service!.setTaskWatched) throw new TaskboardExecutionUnavailableError('Task watch unavailable');
+    res.json({ watched: await options.service!.setTaskWatched(identityFrom(req), req.params.id, true) });
+  }));
+
+  router.delete('/tasks/:id/watch', route(async (req, res) => {
+    if (!options.service!.setTaskWatched) throw new TaskboardExecutionUnavailableError('Task watch unavailable');
+    res.json({ watched: await options.service!.setTaskWatched(identityFrom(req), req.params.id, false) });
   }));
 
   router.get('/tasks/:id/attachments/:attachmentId', route(async (req, res) => {

@@ -426,6 +426,8 @@ export interface TaskboardService {
   searchTasks(identity: TaskboardIdentity, filter?: TaskboardTaskSearchFilter): Promise<TaskboardPage<TaskBoardTask>>;
   createTask(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskBoardTask>;
   getTask(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardTask>;
+  isTaskWatched?(identity: TaskboardIdentity, taskId: string): Promise<boolean>;
+  setTaskWatched?(identity: TaskboardIdentity, taskId: string, watched: boolean): Promise<boolean>;
   updateTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskPatchInput): Promise<TaskBoardTask>;
   moveTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskMoveInput): Promise<TaskBoardTask>;
   archiveTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask>;

@@ -336,6 +336,8 @@ export interface TaskBoardTask {
   creatorName?: string;
   /** 提交人的头像版本，用于避免头像替换后继续命中旧缓存。 */
   creatorAvatarVersion?: number;
+  /** 当前访问者是否显式关注该任务；仅任务详情接口返回。 */
+  watched?: boolean;
   completedAt?: string;
   archivedAt?: string;
   deletedAt?: string;

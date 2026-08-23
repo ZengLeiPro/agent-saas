@@ -13,6 +13,7 @@ import {
   fetchIntegrationSources,
   patchTask,
   resumeTask,
+  setTaskWatch,
   TaskBoardConflictError,
   upsertBoardMember,
 } from "./api";
@@ -210,6 +211,21 @@ describe("任务看板 API 错误对象", () => {
     }));
     await expect(fetchIntegrationCandidate(task.id, { includeHistory: true, page: 2, pageSize: 10 })).resolves.toEqual(result);
     expect(authFetch).toHaveBeenLastCalledWith(`/api/taskboard/tasks/${task.id}/integration-candidate?includeHistory=true&page=2&pageSize=10`);
+  });
+
+  it("关注与取消关注任务使用幂等 PUT/DELETE", async () => {
+    vi.mocked(authFetch)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ watched: true }), {
+        status: 200, headers: { "content-type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ watched: false }), {
+        status: 200, headers: { "content-type": "application/json" },
+      }));
+
+    await expect(setTaskWatch(task.id, true)).resolves.toBe(true);
+    await expect(setTaskWatch(task.id, false)).resolves.toBe(false);
+    expect(authFetch).toHaveBeenNthCalledWith(1, `/api/taskboard/tasks/${task.id}/watch`, expect.objectContaining({ method: "PUT" }));
+    expect(authFetch).toHaveBeenNthCalledWith(2, `/api/taskboard/tasks/${task.id}/watch`, expect.objectContaining({ method: "DELETE" }));
   });
 
   it("删除任务使用 DELETE 并携带 CAS 版本", async () => {

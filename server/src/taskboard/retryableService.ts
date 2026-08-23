@@ -150,6 +150,18 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return (await this.service()).getTask(identity, taskId);
   }
 
+  async isTaskWatched(identity: TaskboardIdentity, taskId: string): Promise<boolean> {
+    const service = await this.service();
+    if (!service.isTaskWatched) return false;
+    return service.isTaskWatched(identity, taskId);
+  }
+
+  async setTaskWatched(identity: TaskboardIdentity, taskId: string, watched: boolean): Promise<boolean> {
+    const service = await this.service();
+    if (!service.setTaskWatched) throw new Error('Task watch unavailable');
+    return service.setTaskWatched(identity, taskId, watched);
+  }
+
   async updateTask(
     identity: TaskboardIdentity,
     taskId: string,

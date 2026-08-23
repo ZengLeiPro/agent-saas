@@ -36,6 +36,7 @@ import { MemoryConsolidationEngine } from '../memory/consolidation/engine.js';
 import { TaskboardExecutionCoordinator, createTaskboardAttachmentAccess, createTaskboardRuntimeOptions, createTaskboardTrustedWorkspaceResolver } from '../taskboard/executionService.js';
 import { RetryableTaskboardService } from '../taskboard/retryableService.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
+import { TaskboardStatusNotificationWorker } from '../taskboard/statusNotificationWorker.js';
 import { configureTaskboardGithubRepositoryProvider } from '../taskboard/repositoryRuntime.js';
 import type { RepositoryProvider } from '../taskboard/repositoryProvider.js';
 import { resolveGithubToken } from '../connectors/github.js';
@@ -619,6 +620,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let taskboardService: TaskboardService | undefined;
   let taskboardStoreService: RetryableTaskboardService | undefined;
   let rawTaskboardStore: PgTaskboardStore | undefined, taskboardExecutionCoordinator: TaskboardExecutionCoordinator | undefined, integrationV3Runtime: RuntimeTaskboardIntegrationV3 | undefined, taskboardRepositoryProvider: ReturnType<typeof configureTaskboardGithubRepositoryProvider>, integrationV3RepositoryProvider: RepositoryProvider | undefined;
+  let taskboardStatusNotificationWorker: TaskboardStatusNotificationWorker | undefined;
   let pgArtifactStore: PgArtifactStore | undefined;
   let systemMetricsStore: PgSystemMetricsStore | undefined;
   let systemMetricsCollector: SystemMetricsCollector | undefined;
@@ -784,9 +786,24 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       const retryableService = new RetryableTaskboardService(store);
       taskboardService = retryableService;
       taskboardStoreService = retryableService;
+      let taskboardInitialized = true;
       await retryableService.init().catch((err) => {
+        taskboardInitialized = false;
         serverLogger.warn(`PgTaskboardStore init failed; requests return 503 until a later init retry succeeds: ${err instanceof Error ? err.message : String(err)}`);
       });
+      if (taskboardInitialized && enableSingletonWorkers && runtimeWebPush.service) {
+        taskboardStatusNotificationWorker = new TaskboardStatusNotificationWorker({
+          pool: store.pool,
+          tasksTable: store.tasksTable,
+          boardsTable: store.boardsTable,
+          commentsTable: store.commentsTable,
+          executionsTable: store.executionsTable,
+          watchersTable: store.watchersTable,
+          outboxTable: store.statusNotificationOutboxTable,
+          service: runtimeWebPush.service,
+        });
+        taskboardStatusNotificationWorker.start();
+      }
     } catch (err) {
       taskboardService = undefined;
       taskboardStoreService = undefined;
@@ -1122,6 +1139,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       handLeaseJanitor?.stop();
       systemMetricsCollector?.stop();
       alertNotifier?.stop();
+      taskboardStatusNotificationWorker?.stop();
       await taskboardExecutionCoordinator?.stop();
       terminalEventOutboxDispatcher.stop();
       await runtimeScheduler?.stop();
@@ -2568,6 +2586,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const beginRuntimeDrain = async (): Promise<void> => {
     if (runtimeDrainStarted) return;
     runtimeDrainStarted = true;
+    taskboardStatusNotificationWorker?.stop();
     await integrationV3Runtime?.stop();
     tenantLifecycleWatcher?.stop();
     memoryPollLeadershipGeneration += 1;

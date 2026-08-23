@@ -150,11 +150,17 @@ describe('taskboard V2 contracts', () => {
       integrationTriggerOutboxTable: 'tb_trigger_outbox',
       remediationAttemptsTable: 'tb_remediation_attempts',
       cancellationOutboxTable: 'tb_cancellation_outbox',
+      watchersTable: 'tb_watchers',
+      statusNotificationOutboxTable: 'tb_status_notify_outbox',
     }, client as never);
     await retireTaskboardResolutionSchema({ executionsTable: 'tb_executions' }, client as never);
     const ddl = sql.join('\n');
 
     expect(ddl).toContain('ADD COLUMN IF NOT EXISTS resume_context JSONB');
+    expect(ddl).toContain('CREATE TABLE IF NOT EXISTS tb_watchers');
+    expect(ddl).toContain('CREATE TABLE IF NOT EXISTS tb_status_notify_outbox');
+    expect(ddl).toContain('CREATE TRIGGER tb_status_notify_outbox_trigger');
+    expect(ddl).toContain("NEW.status IN ('blocked','done','canceled')");
     expect(ddl).toContain('CREATE OR REPLACE RULE tb_changes_no_update');
     expect(ddl).toContain('CREATE OR REPLACE RULE tb_changes_no_delete');
     expect(ddl).toContain('active_integration_task_id');

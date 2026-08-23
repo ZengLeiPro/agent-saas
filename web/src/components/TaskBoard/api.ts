@@ -223,6 +223,15 @@ export async function fetchTask(id: string): Promise<TaskBoardTask> {
   return parseEntity<TaskBoardTask>(response, "看板任务", "task");
 }
 
+export async function setTaskWatch(id: string, watched: boolean): Promise<boolean> {
+  const response = await authFetch(
+    `${API_BASE}/tasks/${encodeURIComponent(id)}/watch`,
+    jsonRequest(watched ? "PUT" : "DELETE"),
+  );
+  const data = await parseJsonResponse<{ watched?: boolean }>(response, "更新任务关注状态");
+  return data.watched === true;
+}
+
 export async function patchTask(
   id: string,
   input: TaskBoardTaskPatchInput,

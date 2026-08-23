@@ -12,7 +12,7 @@ import {
   type TaskBoardTask,
   type TaskBoardTaskPatchInput,
 } from "@agent/shared";
-import { Archive, ArchiveRestore, Bot, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Settings2, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Bell, BellRing, Bot, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Settings2, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -139,6 +139,8 @@ export function TaskDetail({
   const [continueAfterComment, setContinueAfterComment] = useState(false);
   const [pendingContinuationCommentId, setPendingContinuationCommentId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [watching, setWatching] = useState(false);
+  const [watchLoading, setWatchLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedResumeSourceIds, setSelectedResumeSourceIds] = useState<Set<string>>(new Set());
   const taskAttachments = useFileUpload("taskboard");
@@ -191,6 +193,7 @@ export function TaskDetail({
     if (switchedTask) {
       detailRequestRef.current += 1;
       refreshedExecutionRef.current = null;
+      setWatching(task?.watched === true);
       setSelectedResumeSourceIds(new Set());
       setExecutionStartedTaskId(null);
       setSaving(false);
@@ -231,6 +234,7 @@ export function TaskDetail({
       .then((next) => {
         if (requestId !== detailRequestRef.current || next.id !== taskId) return;
         setCurrentTask(next);
+        setWatching(next.watched === true);
         onTaskLoaded(next);
         if (draftTaskIdRef.current !== next.id) hydrateDraft(next);
         else mergeServerDraft(next);
@@ -597,6 +601,19 @@ export function TaskDetail({
     }
   };
 
+  const toggleWatch = async () => {
+    if (!currentTask || watchLoading) return;
+    setWatchLoading(true);
+    setError(null);
+    try {
+      setWatching(await api.setTaskWatch(currentTask.id, !watching));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "更新任务关注状态失败");
+    } finally {
+      setWatchLoading(false);
+    }
+  };
+
   return (
     <Sheet
       open={active && open && !!task}
@@ -622,6 +639,18 @@ export function TaskDetail({
                   <Badge variant={taskKind === "integration" ? "default" : "secondary"} className={taskKind === "integration" ? "bg-violet-600 hover:bg-violet-600" : ""}>{TASK_KIND_LABELS[taskKind]}</Badge>
                   <Badge variant="outline">{STATUS_LABELS[currentTask.status]}</Badge>
                   {currentTask.integrationState ? <Badge variant="outline">{INTEGRATION_SOURCE_STATE_LABELS[currentTask.integrationState]}</Badge> : null}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void toggleWatch()}
+                    disabled={watchLoading}
+                    aria-label={watching ? "取消关注任务" : "关注任务"}
+                    title={watching ? "取消关注；之后不再接收该任务关键状态通知" : "关注并接收该任务关键状态通知"}
+                  >
+                    {watchLoading ? <LoaderCircle className="animate-spin" /> : watching ? <BellRing /> : <Bell />}
+                    {watching ? "已关注" : "关注"}
+                  </Button>
                   {executionActive && latestExecution?.sessionId ? (
                     <a
                       href={`/chat/${encodeURIComponent(latestExecution.sessionId)}`}

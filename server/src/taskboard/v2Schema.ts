@@ -18,6 +18,8 @@ interface TaskboardV2SchemaOptions {
   integrationTriggerOutboxTable: string;
   remediationAttemptsTable: string;
   cancellationOutboxTable: string;
+  watchersTable: string;
+  statusNotificationOutboxTable: string;
 }
 
 export async function runTaskboardV2Schema(
@@ -37,6 +39,57 @@ export async function runTaskboardV2Schema(
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (board_id, user_id)
     )
+  `);
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${options.watchersTable} (
+      task_id TEXT NOT NULL REFERENCES ${options.tasksTable}(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (task_id, user_id)
+    )
+  `);
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${options.statusNotificationOutboxTable} (
+      id BIGSERIAL PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES ${options.tasksTable}(id) ON DELETE CASCADE,
+      task_version INTEGER NOT NULL,
+      from_status TEXT NOT NULL,
+      to_status TEXT NOT NULL CHECK (to_status IN ('blocked','done','canceled')),
+      state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','processing','delivered','failed')),
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      lease_id TEXT,
+      lease_expires_at TIMESTAMPTZ,
+      last_error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      delivered_at TIMESTAMPTZ,
+      UNIQUE (task_id, task_version, to_status)
+    )
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS ${options.statusNotificationOutboxTable}_claim_idx
+      ON ${options.statusNotificationOutboxTable} (state, available_at, id)
+      WHERE state IN ('pending','processing')
+  `);
+  await client.query(`
+    CREATE OR REPLACE FUNCTION ${options.statusNotificationOutboxTable}_enqueue()
+    RETURNS trigger AS $$
+    BEGIN
+      IF OLD.status IS DISTINCT FROM NEW.status AND NEW.status IN ('blocked','done','canceled') THEN
+        INSERT INTO ${options.statusNotificationOutboxTable}
+          (task_id, task_version, from_status, to_status)
+        VALUES (NEW.id, NEW.version, OLD.status, NEW.status)
+        ON CONFLICT (task_id, task_version, to_status) DO NOTHING;
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+  await client.query(`
+    DROP TRIGGER IF EXISTS ${options.statusNotificationOutboxTable}_trigger ON ${options.tasksTable};
+    CREATE TRIGGER ${options.statusNotificationOutboxTable}_trigger
+      AFTER UPDATE OF status ON ${options.tasksTable}
+      FOR EACH ROW EXECUTE FUNCTION ${options.statusNotificationOutboxTable}_enqueue()
   `);
   await client.query(`
     CREATE TABLE IF NOT EXISTS ${options.changesTable} (

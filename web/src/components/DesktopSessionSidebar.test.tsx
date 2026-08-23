@@ -195,7 +195,7 @@ describe("桌面侧边栏会话激活态", () => {
       .every((checkbox) => checkbox.getAttribute("data-state") === "indeterminate")).toBe(true);
   });
 
-  it("新会话可选择已有手动分组且不暴露系统分组", () => {
+  it("新会话可选择已有手动分组且不暴露系统分组", async () => {
     groupsState.current = [
       { id: "manual-1", userId: "user-1", name: "项目组", kind: "manual", sessionIds: [], createdAt: 1, updatedAt: 1 },
       { id: "cron-1", userId: "user-1", name: "晨报", kind: "cron", sessionIds: [], createdAt: 1, updatedAt: 1 },
@@ -203,7 +203,7 @@ describe("桌面侧边栏会话激活态", () => {
     const { onNew } = renderSidebar("chat");
 
     fireEvent.click(screen.getByRole("button", { name: "新建到分组" }));
-    const dialog = within(screen.getByRole("dialog"));
+    const dialog = within(await screen.findByRole("dialog"));
     expect(dialog.getByRole("button", { name: /项目组/ })).toBeTruthy();
     expect(dialog.queryByRole("button", { name: /晨报/ })).toBeNull();
     fireEvent.click(dialog.getByRole("button", { name: /项目组/ }));

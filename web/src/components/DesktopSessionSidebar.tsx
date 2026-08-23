@@ -34,8 +34,8 @@ import { RenameSessionDialog } from "@/components/chat/RenameSessionDialog";
 import { DeleteGroupDialog } from "@/components/chat/DeleteGroupDialog";
 import { AddToGroupDialog } from "@/components/chat/AddToGroupDialog";
 import { AddSessionsToGroupDialog } from "@/components/chat/AddSessionsToGroupDialog";
-import { SessionShareDialog } from "@/components/chat/SessionShareDialog";
-import { NewSessionGroupDialog } from "@/components/chat/NewSessionGroupDialog";
+import { LazySessionShareDialog } from "@/components/chat/LazySessionShareDialog";
+import { LazyNewSessionGroupDialog } from "@/components/chat/LazyNewSessionGroupDialog";
 import { TrashView } from "@/components/chat/TrashView";
 import { SessionSearchResults } from "@/components/chat/SessionSearchResults";
 
@@ -846,7 +846,7 @@ function SidebarDialogs({
         />
       )}
 
-      <SessionShareDialog
+      <LazySessionShareDialog
         open={shareSessionId !== null}
         session={sessions.find((s) => s.id === shareSessionId) ?? null}
         onOpenChange={(open) => {
@@ -1897,7 +1897,7 @@ export function DesktopSessionSidebar({
           setCompactDialogOpen={setCompactDialogOpen}
           onCompact={onCompact}
         />
-        <NewSessionGroupDialog
+        <LazyNewSessionGroupDialog
           open={newSessionGroupOpen}
           onOpenChange={setNewSessionGroupOpen}
           groups={allGroups}
@@ -2431,7 +2431,7 @@ export function DesktopSessionSidebar({
         setCompactDialogOpen={setCompactDialogOpen}
         onCompact={onCompact}
       />
-      <NewSessionGroupDialog
+      <LazyNewSessionGroupDialog
         open={newSessionGroupOpen}
         onOpenChange={setNewSessionGroupOpen}
         groups={allGroups}

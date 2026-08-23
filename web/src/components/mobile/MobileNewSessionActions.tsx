@@ -1,6 +1,6 @@
 import { FolderPlus, Plus } from "lucide-react";
 
-import { NewSessionGroupDialog } from "@/components/chat/NewSessionGroupDialog";
+import { LazyNewSessionGroupDialog } from "@/components/chat/LazyNewSessionGroupDialog";
 import type { SessionGroup } from "@/types/sessionGroup";
 
 export function MobileNewSessionActions({
@@ -42,7 +42,7 @@ export function MobileNewSessionActions({
       >
         <Plus className="size-6" />
       </button>
-      <NewSessionGroupDialog
+      <LazyNewSessionGroupDialog
         open={pickerOpen}
         onOpenChange={onPickerOpenChange}
         groups={groups}

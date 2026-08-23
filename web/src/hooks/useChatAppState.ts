@@ -50,6 +50,7 @@ import { clearRunShellApprovalStorage, runShellApprovalStorageKey } from "@/lib/
 import type { AdminSettingsState, AdminSettingsTarget, PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
 import { useMessages } from "@/hooks/useMessages";
 import { usePersonalSettingsNavigation } from "@/hooks/usePersonalSettingsNavigation";
+import { usePendingNewSessionTarget } from "@/hooks/usePendingNewSessionTarget";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSession } from "@/hooks/useSession";
 import { useFileUpload } from "@/hooks/useFileUpload";
@@ -91,8 +92,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // 从 URL 解析初始状态（仅执行一次）
   const [urlState] = useState(() => parseUrl());
-
-
 
   // ---- Agent Profile ----
   const [agentProfile, setAgentProfile] = useState<AgentProfile | null>(null);
@@ -1048,19 +1047,15 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   //（会话真实建立、服务端已写 meta）后清除——ACK 只代表入队，rejected 后重发仍要带上
   //（2026-07 审查 F9）；
   // state：新会话空白态的顶部 banner 展示（会话入列表带 orgAgentId 后由列表接管）。
-  const pendingOrgAgentIdRef = useRef<string | null>(null);
-  const [pendingOrgAgentId, setPendingOrgAgentId] = useState<string | null>(null);
+  const { pendingOrgAgentIdRef, pendingNewSessionGroupIdRef, pendingOrgAgentId, setPendingOrgAgentId, clearPendingOrgAgent, assignPendingGroup } = usePendingNewSessionTarget();
   const authOwnerKey = user ? `${user.tenantId}:${user.id}` : "anonymous";
-  const clearPendingOrgAgent = useCallback(() => {
-    pendingOrgAgentIdRef.current = null;
-    setPendingOrgAgentId(null);
-  }, []);
 
   const selectSessionWithUrl = useCallback((id: string) => {
     setTrashPreviewSessionId(null); // 选择正常会话时退出回收站预览
     clearPendingOrgAgent(); // 切换既有会话 = 放弃挂起的专职 Agent 新会话
     failAllProvisionalBatches('已切换会话，请重新发送');
     pendingNewSessionClientMsgIdRef.current = null;
+    pendingNewSessionGroupIdRef.current = null;
     markSessionRead(id);
     immediateSessionIdRef.current = id;
     queuedSessionIdRef.current = id;
@@ -1072,11 +1067,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     pushUrl('chat', id);
   }, [clearPendingOrgAgent, failAllProvisionalBatches, markSessionRead, mutateQueuedInterjections, session.selectSession]);
 
-  const newSessionWithUrl = useCallback(() => {
+  const newSessionWithUrl = useCallback((groupId: string | null = null) => {
     setTrashPreviewSessionId(null);
     clearPendingOrgAgent(); // 普通新会话 = 个人 Agent 路径
     failAllProvisionalBatches('已新建会话，请重新发送');
     pendingNewSessionClientMsgIdRef.current = null;
+    pendingNewSessionGroupIdRef.current = groupId;
     immediateSessionIdRef.current = null;
     queuedSessionIdRef.current = null;
     mutateQueuedInterjections((prev) => prev);
@@ -1089,7 +1085,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
    * 企业专家新草稿：只切换前端会话目标，不制造 meta-only 空会话。
    * 首条消息沿用下方 sendChatViaWs 的 orgAgentId payload，由服务端一次性创建并绑定。
    */
-  const startOrgAgentSession = useCallback((agentId: string): void => {
+  const startOrgAgentSession = useCallback((agentId: string, groupId: string | null = null): void => {
     const normalizedAgentId = agentId.trim();
     if (!normalizedAgentId || !user || loadingRef.current) return;
     setTrashPreviewSessionId(null);
@@ -1100,6 +1096,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     wsLatestSessionIdRef.current = { value: null };
     session.newSession();
     pendingNewSessionClientMsgIdRef.current = null;
+    pendingNewSessionGroupIdRef.current = groupId;
     pendingOrgAgentIdRef.current = normalizedAgentId;
     setPendingOrgAgentId(normalizedAgentId);
     pushUrl('chat', null);
@@ -1108,6 +1105,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   useEffect(() => {
     clearPendingOrgAgent();
+    pendingNewSessionGroupIdRef.current = null;
   }, [authOwnerKey, clearPendingOrgAgent]);
 
   const previewTrashSession = useCallback(async (id: string | null) => {
@@ -2072,6 +2070,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         // 服务端已写 meta 绑定 orgAgentId，后续 resume 以 meta 为准
         pendingOrgAgentIdRef.current = null;
         pendingNewSessionClientMsgIdRef.current = null;
+        assignPendingGroup(authoritativeSessionId);
       }
 
       if (data.type === 'session_updated' && !data.isNew) {

@@ -8,6 +8,7 @@ import { RenameSessionDialog } from "@/components/chat/RenameSessionDialog";
 import { DeleteGroupDialog } from "@/components/chat/DeleteGroupDialog";
 import { AddToGroupDialog } from "@/components/chat/AddToGroupDialog";
 import { AddSessionsToGroupDialog } from "@/components/chat/AddSessionsToGroupDialog";
+import { MobileNewSessionActions } from "@/components/mobile/MobileNewSessionActions";
 import { TrashView } from "@/components/chat/TrashView";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import { refreshAll } from "@/lib/refreshBus";
@@ -30,7 +31,7 @@ interface MobileSessionListProps {
   sessions: ChatSessionIndexItem[];
   activeSessionId: string | null;
   onSelect: (sessionId: string) => void;
-  onNew: () => void;
+  onNew: (groupId?: string | null) => void;
   onDelete?: (sessionId: string) => void;
   onRename?: (sessionId: string, newTitle: string) => Promise<boolean>;
   onAutoTitle?: (sessionId: string) => Promise<boolean>;
@@ -271,6 +272,7 @@ export function MobileSessionList({
   // --- 分组操作 ---
   const [addToGroupSessionId, setAddToGroupSessionId] = useState<string | null>(null);
   const [addSessionsGroupKey, setAddSessionsGroupKey] = useState<string | null>(null);
+  const [newSessionGroupOpen, setNewSessionGroupOpen] = useState(false);
 
   // 使用 getSortedGroupItems 统一排序，与所有分组选择入口一致
   const allGroups = useMemo<SessionGroup[]>(() => {
@@ -959,15 +961,13 @@ export function MobileSessionList({
 
       {/* FAB - new session（分组详情视图时隐藏） */}
       {activeTab === "chat" && !isInGroupView && (
-        <button
-          type="button"
-          onClick={onNew}
-          disabled={isLoading}
-          className="absolute right-4 z-10 flex size-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform active:scale-95 disabled:opacity-50"
-          style={{ bottom: "env(safe-area-inset-bottom, 0px)" }}
-        >
-          <Plus className="size-6" />
-        </button>
+        <MobileNewSessionActions
+          groups={allGroups}
+          isLoading={isLoading}
+          pickerOpen={newSessionGroupOpen}
+          onPickerOpenChange={setNewSessionGroupOpen}
+          onNew={onNew}
+        />
       )}
 
       {/* 重命名弹窗 */}

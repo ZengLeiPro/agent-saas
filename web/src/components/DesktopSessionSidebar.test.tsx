@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppTab, ChatSessionIndexItem } from "@/types/sidebar";
 
@@ -23,8 +23,8 @@ vi.mock("@/hooks/useGroups", () => ({
   useGroups: () => ({
     groups: groupsState.current,
     loading: false,
-    editing: false,
-    sorting: "recent",
+    editing: null,
+    sorting: { mode: "recent", order: [] },
     addSessionsToGroup: vi.fn(),
     cancelEditing: vi.fn(),
     commitEditing: vi.fn(),
@@ -82,17 +82,21 @@ function renderSidebar(
   sessions: ChatSessionIndexItem[] = [session],
   sidebarLayout: "single" | "double" = "single",
 ) {
-  return render(
-    <DesktopSessionSidebar
-      sessions={sessions}
-      activeSessionId={session.id}
-      activeTab={activeTab}
-      sidebarLayout={sidebarLayout}
-      onSelect={vi.fn()}
-      onNew={vi.fn()}
-      onTabChange={vi.fn()}
-    />,
-  );
+  const onNew = vi.fn();
+  return {
+    ...render(
+      <DesktopSessionSidebar
+        sessions={sessions}
+        activeSessionId={session.id}
+        activeTab={activeTab}
+        sidebarLayout={sidebarLayout}
+        onSelect={vi.fn()}
+        onNew={onNew}
+        onTabChange={vi.fn()}
+      />,
+    ),
+    onNew,
+  };
 }
 
 function getSessionRow() {
@@ -172,5 +176,38 @@ describe("桌面侧边栏会话激活态", () => {
 
     const trigger = screen.getByRole("button", { name: /tester/ });
     expect(trigger.textContent).toContain("开沿科技");
+  });
+
+  it("批量选择支持全选、取消全选和部分选中的中间态", () => {
+    const sessionB = { ...session, id: "session-2", title: "会话 B", updatedAt: 2 };
+    renderSidebar("chat", [session, sessionB]);
+
+    fireEvent.click(screen.getByRole("button", { name: "选择" }));
+    const selectAll = screen.getAllByRole("checkbox", { name: "全选当前列表" })[0];
+    expect(selectAll.getAttribute("data-state")).toBe("unchecked");
+
+    fireEvent.click(selectAll);
+    expect(screen.getAllByRole("checkbox", { name: "取消全选当前列表" })
+      .every((checkbox) => checkbox.getAttribute("data-state") === "checked")).toBe(true);
+
+    fireEvent.click(screen.getByText("会话 A"));
+    expect(screen.getAllByRole("checkbox", { name: "全选当前列表" })
+      .every((checkbox) => checkbox.getAttribute("data-state") === "indeterminate")).toBe(true);
+  });
+
+  it("新会话可选择已有手动分组且不暴露系统分组", () => {
+    groupsState.current = [
+      { id: "manual-1", userId: "user-1", name: "项目组", kind: "manual", sessionIds: [], createdAt: 1, updatedAt: 1 },
+      { id: "cron-1", userId: "user-1", name: "晨报", kind: "cron", sessionIds: [], createdAt: 1, updatedAt: 1 },
+    ];
+    const { onNew } = renderSidebar("chat");
+
+    fireEvent.click(screen.getByRole("button", { name: "新建到分组" }));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByRole("button", { name: /项目组/ })).toBeTruthy();
+    expect(dialog.queryByRole("button", { name: /晨报/ })).toBeNull();
+    fireEvent.click(dialog.getByRole("button", { name: /项目组/ }));
+
+    expect(onNew).toHaveBeenCalledWith("manual-1");
   });
 });

@@ -47,4 +47,19 @@ describe('任务看板标题生成', () => {
 
     await expect(generateTitle('根据正文生成任务标题', identity)).resolves.toBeNull();
   });
+
+  it.each(['自动生成标题', null])('结算失败时不阻断任务创建（标题：%s）', async (title) => {
+    mocks.generateTitleWithFallback.mockResolvedValueOnce(title);
+    const generateTitle = createTaskboardTitleGenerator({
+      agentCwd: '/agent',
+      titleGeneratorConfigs: titleConfig,
+      billingService: {
+        beginUtilityModelRun: vi.fn().mockResolvedValue({
+          finalize: vi.fn().mockRejectedValue(new Error('结算失败')),
+        }),
+      } as never,
+    });
+
+    await expect(generateTitle('根据正文生成任务标题', identity)).resolves.toBeNull();
+  });
 });

@@ -63,7 +63,7 @@ export function createTaskboardTitleGenerator(options: TaskboardTitleGeneratorOp
             channel: 'title',
           })
         : undefined;
-      return await generateTitleWithFallback(
+      const title = await generateTitleWithFallback(
         description,
         '',
         options.titleGeneratorConfigs,
@@ -96,10 +96,14 @@ export function createTaskboardTitleGenerator(options: TaskboardTitleGeneratorOp
           },
         },
       );
+      try {
+        await utilityBilling?.finalize();
+      } catch {
+        return null;
+      }
+      return title;
     } catch {
       return null;
-    } finally {
-      await utilityBilling?.finalize();
     }
   };
 }

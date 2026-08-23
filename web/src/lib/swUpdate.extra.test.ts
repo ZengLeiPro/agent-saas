@@ -7,6 +7,7 @@ import {
   maybeReloadOnPopstate,
   registerBeforeReloadHook,
   registerUpdateGuard,
+  shouldAutoApplyPopstate,
   subscribeUpdateReady,
 } from "./swUpdate";
 
@@ -56,9 +57,22 @@ describe("未就绪时导航拦截入口短路（不跳转）", () => {
   it("maybeReloadOnPopstate 在未就绪时返回 false，不触发 reload", () => {
     expect(maybeReloadOnPopstate()).toBe(false);
   });
+});
 
-  it("应用派发的 synthetic popstate 永远不触发整页更新", () => {
-    expect(maybeReloadOnPopstate(new PopStateEvent("popstate"))).toBe(false);
+describe("pending SW update 的 popstate 判定", () => {
+  const ready = { updateReady: true, applying: false, guardActive: false };
+
+  it("synthetic popstate 不得进入 autoApply", () => {
+    expect(shouldAutoApplyPopstate(new PopStateEvent("popstate"), ready)).toBe(false);
+  });
+
+  it("trusted popstate 在 ready 且无 guard 时允许进入 autoApply", () => {
+    expect(shouldAutoApplyPopstate({ isTrusted: true }, ready)).toBe(true);
+  });
+
+  it("trusted popstate 在 applying 或 guard 生效时仍被阻止", () => {
+    expect(shouldAutoApplyPopstate({ isTrusted: true }, { ...ready, applying: true })).toBe(false);
+    expect(shouldAutoApplyPopstate({ isTrusted: true }, { ...ready, guardActive: true })).toBe(false);
   });
 });
 

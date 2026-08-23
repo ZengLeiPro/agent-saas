@@ -26,7 +26,7 @@ const board: TaskBoard = {
   id: 'board-1',
   name: '迭代任务',
   visibility: 'personal',
-  ownerUserId: identity.ownerUserId,
+  ownerUserId: identity.ownerUserId, role: 'owner',
   canManage: true,
   prompt: '',
   version: 1,

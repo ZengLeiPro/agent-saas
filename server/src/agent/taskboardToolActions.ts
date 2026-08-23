@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { appendTaskboardAttachments, cleanupTaskboardAttachments, materializeTaskboardAttachments, resolveTaskboardAttachments } from './taskboardAttachmentActions.js';
 import { assertTaskboardExecutionScope } from './taskboardExecutionScope.js';
+import { assertActiveBoard, assertBoardRole } from '../taskboard/storeHelpers.js';
 
 import type {
   TaskBoardExecutionPurpose,
@@ -139,6 +140,7 @@ export interface TaskboardManageInput {
 }
 export interface TaskboardToolOptions {
   service: () => TaskboardService | undefined;
+  generateTaskTitle?: (description: string, identity: TaskboardIdentity) => Promise<string | null>;
   executionService?: () => TaskboardExecutionService | undefined;
   integrationPush?: () => TaskboardIntegrationPushService | undefined;
   resolveTrustedWorkspace?: (
@@ -595,17 +597,19 @@ async function createTask(
 ): Promise<Record<string, unknown>> {
   const boardId = requireField(input.boardId, 'boardId');
   const dispatcher = input.dispatch ? requireExecutionService(executionService) : undefined;
+  const board = await service.getBoard(identity, boardId);
+  assertBoardRole(board.role, 'editor');
+  assertActiveBoard(board);
   if (input.dispatch) await assertCanDispatch(service, identity, boardId);
   if (input.dispatch && input.status && input.status !== 'todo') {
     throw new Error('dispatch=true 只支持创建 todo 任务');
   }
+  const title = input.title ?? await options.generateTaskTitle?.(input.description ?? '', identity);
   const attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
-  const ownerUserId = attachments?.length
-    ? (await service.getBoard(identity, boardId)).ownerUserId
-    : undefined;
+  const ownerUserId = attachments?.length ? board.ownerUserId : undefined;
   await markTaskboardAttachments(options, identity, attachments, scope);
   const createdTask = await service.createTask(identity, boardId, {
-    title: requireField(input.title, 'title'),
+    title: title ?? '',
     ...(input.kind ? { kind: input.kind } : {}),
     ...(input.description !== undefined ? { description: input.description } : {}),
     ...(typeof input.branch === 'string' ? { branch: input.branch } : {}),

@@ -24,13 +24,14 @@ const VIEWER_BOARD = {
   ownerUserId: 'owner-1',
   role: 'viewer' as const,
   canManage: false,
+  prompt: '',
   version: 1,
   createdAt: '2026-08-23T00:00:00.000Z',
   updatedAt: '2026-08-23T00:00:00.000Z',
 };
 
-describe('创建任务前的标题生成权限', () => {
-  it('viewer 或看板不存在时不调用标题生成', async () => {
+describe('创建任务前的标题生成保护', () => {
+  it('先校验权限，并在幂等重试时跳过重复标题生成', async () => {
     let titleGenerationCalls = 0;
     const service = {
       getBoard: async (_identity: unknown, boardId: string) => {
@@ -43,7 +44,7 @@ describe('创建任务前的标题生成权限', () => {
     app.use((req, _res, next) => { req.user = USER; next(); });
     app.use('/api/taskboard', createTaskboardRouter({
       service,
-      generateTaskTitle: async () => { titleGenerationCalls += 1; return '不应生成'; },
+      generateTaskTitle: async () => { titleGenerationCalls += 1; return '自动标题'; },
     }));
     const server: Server = await new Promise((resolve) => {
       const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
@@ -61,6 +62,24 @@ describe('创建任务前的标题生成权限', () => {
         expect(response.status).toBe(expectedStatus);
       }
       expect(titleGenerationCalls).toBe(0);
+
+      let existingTask: Awaited<ReturnType<TaskboardService['createTask']>> | null = null;
+      service.getBoard = async () => ({ ...VIEWER_BOARD, id: 'owner-board', role: 'owner', canManage: true });
+      service.findTaskByClientRequestId = async () => existingTask;
+      service.createTask = async (_identity, boardId, input) => existingTask ??= {
+        id: 'task-1', boardId, identifier: 'TASK-1', title: input.title ?? '',
+        description: input.description ?? '', status: 'backlog', priority: 'none', labels: [],
+        sortOrder: 1024, commentCount: 0, version: 1,
+        createdAt: VIEWER_BOARD.createdAt, updatedAt: VIEWER_BOARD.updatedAt,
+      };
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const response = await fetch(`${baseUrl}/api/taskboard/boards/owner-board/tasks`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ description: '幂等创建', clientRequestId: 'request-1' }),
+        });
+        expect(response.status).toBe(201);
+      }
+      expect(titleGenerationCalls).toBe(1);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

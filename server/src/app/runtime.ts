@@ -43,6 +43,7 @@ import { buildRuntimeTaskboardIntegrationV3Options, configureRuntimeIntegrationV
 import { createRuntimeIntegrationV3HealthProvider } from '../taskboard/integrationV3Observability.js';
 import { createIntegrationV3RequeueHandler } from '../taskboard/integrationV3Repair.js';
 import type { TaskboardService } from '../taskboard/types.js';
+import { createTaskboardTitleGenerator } from '../taskboard/taskTitle.js';
 import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import { MEMORY_CONSOLIDATION_DEFAULTS, type MemoryConsolidationResolvedConfig } from '../memory/consolidation/types.js';
 import { resolveTenantMemoryFeatureStatus } from '../memory/effectiveStatus.js';
@@ -371,7 +372,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tenantSharedEnv,
     sharedDir,
   };
-
   const titleGeneratorConfigs = resolveTitleGeneratorConfigs({
     models: config.models,
     titleGenerator: config.titleGenerator,
@@ -1683,7 +1683,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       : false,
     ...memoryContextTools, agentStore, orgAgentStore, tenantStore,
     environmentStore,
-    taskboard: { service: () => taskboardService, executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, integrationPush: () => integrationV3Runtime?.integrationPush, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
+    taskboard: { service: () => taskboardService, generateTaskTitle: (description, identity) => createTaskboardTitleGenerator({ agentCwd, titleGeneratorConfigs, titleModelAdapterFactory, refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(), getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'), tokenUsageStore, billingService })(description, identity), executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, integrationPush: () => integrationV3Runtime?.integrationPush, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
       const effectiveAgentId = agentId
         ?? (await agentResourceStore?.findPersonalByOwner(tenantId, userId))?.agentId;

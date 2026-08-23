@@ -134,6 +134,7 @@ describe('CronToolProvider', () => {
       ownerUserId: OWNER.id,
       name: '迭代看板',
       visibility: 'personal' as const,
+      role: 'owner' as const,
       canManage: true,
       prompt: '',
       version: 1,

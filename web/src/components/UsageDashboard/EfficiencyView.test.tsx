@@ -34,9 +34,18 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function efficiencyReport(totalRuns = 37, tenantId = "tenant-a"): EfficiencyReport {
+function efficiencyReport(
+  totalRuns = 37,
+  tenantId = "tenant-a",
+  range: EfficiencyReport["range"] = {
+    from: "2026-08-17T16:00:00.000Z",
+    to: "2026-08-24T16:00:00.000Z",
+    days: 7,
+    bounds: "[from,to)",
+  },
+): EfficiencyReport {
   return {
-    range: { from: "2026-08-17T00:00:00.000Z", to: "2026-08-24T00:00:00.000Z", days: 7, bounds: "[from,to)" },
+    range,
     tenantId,
     statistics: {
       version: "runtime-runs-requested-at-v1",
@@ -124,7 +133,12 @@ describe("EfficiencyView request windows", () => {
     efficiencyTo,
   }) => {
     vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-08-23T22:14:00.000Z"));
-    vi.mocked(runTraceApi.efficiency).mockResolvedValueOnce(efficiencyReport());
+    vi.mocked(runTraceApi.efficiency).mockResolvedValueOnce(efficiencyReport(37, "tenant-a", {
+      from: efficiencyFrom,
+      to: efficiencyTo,
+      days,
+      bounds: "[from,to)",
+    }));
     vi.mocked(usageApi.trendByModel).mockResolvedValueOnce(emptyTrend());
     window.history.replaceState({}, "", `/?effDays=${days}`);
 
@@ -145,6 +159,7 @@ describe("EfficiencyView request windows", () => {
       to: trendTo,
       tenantId: "tenant-a",
     });
+    expect(screen.getByText(`${trendFrom} → ${trendTo}`)).toBeTruthy();
 
     const efficiencyRequest = vi.mocked(runTraceApi.efficiency).mock.calls[0][0];
     const trendRequest = vi.mocked(usageApi.trendByModel).mock.calls[0][0];
@@ -153,6 +168,49 @@ describe("EfficiencyView request windows", () => {
       .slice(0, 10);
     expect(efficiencyRequest.from).toBe(new Date(`${trendRequest.from}T00:00:00+08:00`).toISOString());
     expect(efficiencyRequest.to).toBe(new Date(`${trendDayAfter}T00:00:00+08:00`).toISOString());
+  });
+
+  it("clears the previous natural-day window when refreshing across Beijing midnight", async () => {
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-08-24T15:59:00.000Z"));
+    const nextEfficiency = deferred<EfficiencyReport>();
+    const nextTrend = deferred<ModelTrendResp>();
+    vi.mocked(runTraceApi.efficiency)
+      .mockResolvedValueOnce(efficiencyReport(24))
+      .mockReturnValueOnce(nextEfficiency.promise);
+    vi.mocked(usageApi.trendByModel)
+      .mockResolvedValueOnce(modelTrend("before-midnight-model"))
+      .mockReturnValueOnce(nextTrend.promise);
+
+    render(<EfficiencyView tenantId="tenant-a" linkEntities={false} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "隐藏 before-midnight-model" })).toBeTruthy());
+    expect(screen.getByText("24")).toBeTruthy();
+
+    nowSpy.mockReturnValue(Date.parse("2026-08-24T16:01:00.000Z"));
+    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+
+    expect(screen.queryByRole("button", { name: "隐藏 before-midnight-model" })).toBeNull();
+    expect(screen.queryByText("24")).toBeNull();
+    expect(screen.getByText("加载效率数据...")).toBeTruthy();
+    expect(runTraceApi.efficiency).toHaveBeenLastCalledWith({
+      days: 7,
+      tenantId: "tenant-a",
+      from: "2026-08-18T16:00:00.000Z",
+      to: "2026-08-25T16:00:00.000Z",
+    });
+    expect(usageApi.trendByModel).toHaveBeenLastCalledWith({
+      from: "2026-08-19",
+      to: "2026-08-25",
+      tenantId: "tenant-a",
+    });
+
+    await act(async () => nextTrend.resolve(modelTrend("after-midnight-model", "2026-08-25")));
+    await waitFor(() => expect(screen.getByRole("button", { name: "隐藏 after-midnight-model" })).toBeTruthy());
+    expect(screen.getByText("加载效率数据...")).toBeTruthy();
+
+    await act(async () => nextEfficiency.reject(new Error("午夜后效率失败")));
+    await waitFor(() => expect(document.body.textContent).toContain("午夜后效率失败"));
+    expect(screen.queryByText("24")).toBeNull();
+    expect(screen.getByRole("button", { name: "隐藏 after-midnight-model" })).toBeTruthy();
   });
 });
 

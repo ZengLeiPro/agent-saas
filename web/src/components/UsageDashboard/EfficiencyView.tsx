@@ -42,6 +42,8 @@ const DAYS_OPTIONS: SegmentedOption<number>[] = [
 ];
 
 const DEFAULT_EFF_DAYS = 7;
+const DAY_MS = 86_400_000;
+const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 const ALLOWED_EFF_DAYS = new Set(DAYS_OPTIONS.map((option) => option.value));
 
 /**
@@ -85,14 +87,21 @@ function recentBeijingWindow(days: number): {
 } {
   const trendTo = todayBeijingDate();
   const trendToUtc = Date.parse(`${trendTo}T00:00:00Z`);
-  const trendFrom = new Date(trendToUtc - (days - 1) * 86_400_000).toISOString().slice(0, 10);
-  const nextDate = new Date(trendToUtc + 86_400_000).toISOString().slice(0, 10);
+  const trendFrom = new Date(trendToUtc - (days - 1) * DAY_MS).toISOString().slice(0, 10);
+  const nextDate = new Date(trendToUtc + DAY_MS).toISOString().slice(0, 10);
   return {
     trendFrom,
     trendTo,
     efficiencyFrom: new Date(`${trendFrom}T00:00:00+08:00`).toISOString(),
     efficiencyTo: new Date(`${nextDate}T00:00:00+08:00`).toISOString(),
   };
+}
+
+/** 将 ISO `[from,to)` 按北京时间自然日显示为 inclusive 起止日期。 */
+function formatBeijingRange(range: EfficiencyReport["range"]): string {
+  const from = new Date(Date.parse(range.from) + BEIJING_OFFSET_MS).toISOString().slice(0, 10);
+  const to = new Date(Date.parse(range.to) - 1 + BEIJING_OFFSET_MS).toISOString().slice(0, 10);
+  return `${from} → ${to}`;
 }
 
 /** 工具错误率红色高亮阈值 */
@@ -123,31 +132,40 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
     (next: number) => url.set("effDays", next === DEFAULT_EFF_DAYS ? null : next, HISTORY_PUSH),
     [url],
   );
-  const requestKey = JSON.stringify([tenantId ?? null, days]);
+  const selectionKey = JSON.stringify([tenantId ?? null, days]);
+  const initialWindow = recentBeijingWindow(days);
+  const initialRequestKey = JSON.stringify([
+    tenantId ?? null,
+    days,
+    initialWindow.efficiencyFrom,
+    initialWindow.efficiencyTo,
+  ]);
   const [efficiencyState, setEfficiencyState] = useState<{
+    selectionKey: string;
     requestKey: string;
     data: EfficiencyReport | null;
     loading: boolean;
     error: string | null;
-  }>(() => ({ requestKey, data: null, loading: true, error: null }));
+  }>(() => ({ selectionKey, requestKey: initialRequestKey, data: null, loading: true, error: null }));
   const [modelTrendState, setModelTrendState] = useState<{
+    selectionKey: string;
     requestKey: string;
     data: ModelTrendResp | null;
     loading: boolean;
     error: string | null;
-  }>(() => ({ requestKey, data: null, loading: true, error: null }));
+  }>(() => ({ selectionKey, requestKey: initialRequestKey, data: null, loading: true, error: null }));
   const loadSequence = useRef(0);
   const plain = !linkEntities;
 
   // 请求上下文变化后的首帧就隐藏旧数据，不能等 effect 清理后才切换。
-  const { data, loading, error } = efficiencyState.requestKey === requestKey
+  const { data, loading, error } = efficiencyState.selectionKey === selectionKey
     ? efficiencyState
     : { data: null, loading: true, error: null };
   const {
     data: modelTrend,
     loading: modelTrendLoading,
     error: modelTrendError,
-  } = modelTrendState.requestKey === requestKey
+  } = modelTrendState.selectionKey === selectionKey
     ? modelTrendState
     : { data: null, loading: true, error: null };
 
@@ -156,15 +174,23 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
     const isLatest = () => sequence === loadSequence.current;
     const tenantArgs = tenantId ? { tenantId } : {};
     const window = recentBeijingWindow(days);
+    const requestKey = JSON.stringify([
+      tenantId ?? null,
+      days,
+      window.efficiencyFrom,
+      window.efficiencyTo,
+    ]);
 
-    // 只有同一请求上下文的手动刷新保留已展示数据；租户或天数变化必须从空状态开始。
+    // 只有同一实际自然日窗口的手动刷新保留数据；租户、天数或北京时间日期变化均从空状态开始。
     setEfficiencyState((previous) => ({
+      selectionKey,
       requestKey,
       data: previous.requestKey === requestKey ? previous.data : null,
       loading: true,
       error: null,
     }));
     setModelTrendState((previous) => ({
+      selectionKey,
       requestKey,
       data: previous.requestKey === requestKey ? previous.data : null,
       loading: true,
@@ -179,11 +205,12 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
     }).then(
       (nextData) => {
         if (!isLatest()) return;
-        setEfficiencyState({ requestKey, data: nextData, loading: false, error: null });
+        setEfficiencyState({ selectionKey, requestKey, data: nextData, loading: false, error: null });
       },
       (reason) => {
         if (!isLatest()) return;
         setEfficiencyState((previous) => ({
+          selectionKey,
           requestKey,
           data: previous.requestKey === requestKey ? previous.data : null,
           loading: false,
@@ -199,11 +226,12 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
     }).then(
       (nextData) => {
         if (!isLatest()) return;
-        setModelTrendState({ requestKey, data: nextData, loading: false, error: null });
+        setModelTrendState({ selectionKey, requestKey, data: nextData, loading: false, error: null });
       },
       (reason) => {
         if (!isLatest()) return;
         setModelTrendState((previous) => ({
+          selectionKey,
           requestKey,
           data: previous.requestKey === requestKey ? previous.data : null,
           loading: false,
@@ -211,7 +239,7 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
         }));
       },
     );
-  }, [days, requestKey, tenantId]);
+  }, [days, selectionKey, tenantId]);
 
   useEffect(() => {
     void load();
@@ -236,7 +264,7 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
         </Button>
         {data && (
           <span className="text-xs text-muted-foreground tabular-nums">
-            {data.range.from.slice(0, 10)} → {data.range.to.slice(0, 10)}
+            {formatBeijingRange(data.range)}
           </span>
         )}
       </div>

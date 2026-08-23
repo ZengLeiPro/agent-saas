@@ -1778,12 +1778,8 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             ...(memoryContext ? { memoryContext } : {}),
             instructions,
             instructionSections,
-            // L2 replay 使用平台内部专用预算；它仍继承父会话模型/Profile/工具定义，
-            // 但不能再被普通用户或 Agent Profile 的交互轮次上限截断。
-            maxTurns: replaySourceSession && options.maxTurns
-              ? options.maxTurns
-              : boundProfile
-                ? resolveAgentProfileMaxTurns(
+            maxTurns: replaySourceSession && options.maxTurns ? options.maxTurns
+              : boundProfile ? resolveAgentProfileMaxTurns(
                     boundProfile.version.config,
                     resolveEffectiveMaxTurns(config, options.maxTurns, {
                       userId: context.user?.id ?? context.sessionOwner?.id,

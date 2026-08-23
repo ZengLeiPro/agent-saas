@@ -95,6 +95,12 @@ export interface MemoryConsolidationResolvedConfig {
   promptVersion: number;
 }
 
+export function withMemoryConsolidationLeaseBuffer(
+  config: MemoryConsolidationResolvedConfig,
+): MemoryConsolidationResolvedConfig {
+  return { ...config, leaseSeconds: Math.max(config.leaseSeconds, config.timeoutSeconds + 300) };
+}
+
 export const MEMORY_CONSOLIDATION_DEFAULTS: MemoryConsolidationResolvedConfig = {
   enabled: false,
   debounceMinutes: 30,

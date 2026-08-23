@@ -44,7 +44,7 @@ import { createRuntimeIntegrationV3HealthProvider } from '../taskboard/integrati
 import { createIntegrationV3RequeueHandler } from '../taskboard/integrationV3Repair.js';
 import type { TaskboardService } from '../taskboard/types.js';
 import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
-import { MEMORY_CONSOLIDATION_DEFAULTS, type MemoryConsolidationResolvedConfig } from '../memory/consolidation/types.js';
+import { MEMORY_CONSOLIDATION_DEFAULTS, withMemoryConsolidationLeaseBuffer, type MemoryConsolidationResolvedConfig } from '../memory/consolidation/types.js';
 import { resolveTenantMemoryFeatureStatus } from '../memory/effectiveStatus.js';
 import {
   FileSessionReadStateStore,
@@ -1623,20 +1623,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       logger: { warn: (msg) => serverLogger.warn(msg) },
     });
   }
-  const resolveMemoryConsolidationConfig = (): MemoryConsolidationResolvedConfig => {
-    const resolved = {
-      ...MEMORY_CONSOLIDATION_DEFAULTS,
-      enabled: config.memory?.consolidation?.enabled === true,
-      ...Object.fromEntries(
-        Object.entries(config.memory?.consolidation ?? {}).filter(([key, value]) => key !== 'enabled' && value !== undefined),
-      ),
-    } as MemoryConsolidationResolvedConfig;
-    // running lease 必须覆盖整个 Run，并给草稿提交/终态落库留出缓冲。
-    return {
-      ...resolved,
-      leaseSeconds: Math.max(resolved.leaseSeconds, resolved.timeoutSeconds + 300),
-    };
-  };
+  const resolveMemoryConsolidationConfig = (): MemoryConsolidationResolvedConfig => withMemoryConsolidationLeaseBuffer({
+    ...MEMORY_CONSOLIDATION_DEFAULTS,
+    enabled: config.memory?.consolidation?.enabled === true,
+    ...Object.fromEntries(
+      Object.entries(config.memory?.consolidation ?? {}).filter(([key, value]) => key !== 'enabled' && value !== undefined),
+    ),
+  } as MemoryConsolidationResolvedConfig);
   const getTenantMemoryFeatureStatus = (tenantId: string) => {
     let features;
     try {

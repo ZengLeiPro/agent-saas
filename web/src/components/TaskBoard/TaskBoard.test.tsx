@@ -458,11 +458,11 @@ describe("TaskBoardView", () => {
     expect(screen.getByRole("heading", { name: "新建任务" })).toBeTruthy();
     expect(screen.getByRole("combobox", { name: "新任务状态" }).textContent).toContain("需求池");
 
-    await user.type(screen.getByRole("textbox", { name: "标题" }), "补充需求池任务");
+    await user.type(screen.getByRole("textbox", { name: "正文" }), "补充需求池任务");
     await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(mocks.addTask).toHaveBeenCalledWith(expect.objectContaining({
-      title: "补充需求池任务",
+      description: "补充需求池任务",
       status: "backlog",
     })));
   });

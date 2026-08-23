@@ -208,6 +208,35 @@ describe('hidden memory review invocation policy', () => {
     } as never, toolContext(root))).rejects.toThrow('符号链接');
   });
 
+  it('草稿完成后目录被换成外部 symlink 时，提交不会在外部 mkdir 或写文件', async () => {
+    const root = await tempWorkspace();
+    const outside = await mkdtemp(join(tmpdir(), 'memory-review-race-'));
+    tempDirs.push(outside);
+    const runtime = applyMemoryConsolidationInvocationPolicy(fakeRuntime(), 'source-session');
+    await runtime.invoke({
+      toolId: 'Write',
+      input: { path: 'memory/race/nested.md', content: '不应越界' },
+      authorization: { source: 'policy_auto' },
+    } as never, toolContext(root));
+    await symlink(outside, join(root, 'memory/race'));
+
+    await expect(commitMemoryConsolidationDraft('hidden-session')).rejects.toThrow('符号链接');
+    await expect(stat(join(outside, 'nested.md'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('记忆区内的叶子符号链接也会被拒绝而不是被 rename 替换', async () => {
+    const root = await tempWorkspace();
+    await writeFile(join(root, 'memory/target.md'), '真实目标', 'utf8');
+    await symlink(join(root, 'memory/target.md'), join(root, 'memory/link.md'));
+    const runtime = applyMemoryConsolidationInvocationPolicy(fakeRuntime(), 'source-session');
+    await expect(runtime.invoke({
+      toolId: 'Write',
+      input: { path: 'memory/link.md', content: '不应覆盖' },
+      authorization: { source: 'policy_auto' },
+    } as never, toolContext(root))).rejects.toThrow('拒绝符号链接路径');
+    expect(await readFile(join(root, 'memory/target.md'), 'utf8')).toBe('真实目标');
+  });
+
   it('SessionContext 默认读取父会话事实源', async () => {
     const root = await tempWorkspace();
     const invoke = vi.fn(async () => ({ content: 'ok' }));

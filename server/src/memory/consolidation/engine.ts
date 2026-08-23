@@ -23,7 +23,11 @@ import {
   MemoryConsolidationDraftConflictError,
 } from './draft.js';
 import { buildConsolidationPrompt, MEMORY_CONSOLIDATION_PROMPT_VERSION } from './prompt.js';
-import { PgMemoryConsolidationStore } from './store.js';
+import {
+  PgMemoryConsolidationStore,
+  type MemoryConsolidationCommitFence,
+  type MemoryConsolidationCommitLock,
+} from './store.js';
 import {
   CONSOLIDATION_RETRY_BACKOFF_MINUTES,
   type ConsolidationState,
@@ -343,6 +347,8 @@ export class MemoryConsolidationEngine {
         await this.options.store.markFailed({
           tenantId: state.tenantId,
           sessionId: state.sessionId,
+          toSequence: state.targetSessionSequence,
+          boundarySequence: state.lastBoundaryGlobalSequence,
           ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
           now,
           backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
@@ -357,6 +363,8 @@ export class MemoryConsolidationEngine {
         await this.options.store.markFailed({
           tenantId: state.tenantId,
           sessionId: state.sessionId,
+          toSequence: state.targetSessionSequence,
+          boundarySequence: state.lastBoundaryGlobalSequence,
           ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
           now,
           backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
@@ -381,6 +389,8 @@ export class MemoryConsolidationEngine {
         await this.options.store.markFailed({
           tenantId: state.tenantId,
           sessionId: state.sessionId,
+          toSequence: state.targetSessionSequence,
+          boundarySequence: state.lastBoundaryGlobalSequence,
           ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
           now,
           backoffMinutes: [1],
@@ -394,6 +404,8 @@ export class MemoryConsolidationEngine {
         await this.options.store.markFailed({
           tenantId: state.tenantId,
           sessionId: state.sessionId,
+          toSequence: state.targetSessionSequence,
+          boundarySequence: state.lastBoundaryGlobalSequence,
           ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
           now,
           backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
@@ -407,6 +419,8 @@ export class MemoryConsolidationEngine {
         await this.options.store.markFailed({
           tenantId: state.tenantId,
           sessionId: state.sessionId,
+          toSequence: state.targetSessionSequence,
+          boundarySequence: state.lastBoundaryGlobalSequence,
           ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
           now,
           backoffMinutes: [1],
@@ -427,6 +441,8 @@ export class MemoryConsolidationEngine {
       await this.options.store.markFailed({
         tenantId: state.tenantId,
         sessionId: state.sessionId,
+        toSequence: state.targetSessionSequence,
+        boundarySequence: state.lastBoundaryGlobalSequence,
         ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
         now: new Date().toISOString(),
         backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
@@ -446,6 +462,17 @@ export class MemoryConsolidationEngine {
     const idempotencyKey = createHash('sha256')
       .update(`${state.tenantId}|${state.sessionId}|${from}|${to}`)
       .digest('hex');
+    const updateRunFenced = async (
+      input: Parameters<PgMemoryConsolidationStore['updateRun']>[0],
+    ): Promise<boolean> => state.leaseOwner ? this.options.store.updateRunFenced({
+      ...input,
+      tenantId: state.tenantId,
+      sessionId: state.sessionId,
+      leaseOwner: state.leaseOwner,
+      fromSequence: from,
+      toSequence: to,
+      boundarySequence: state.lastBoundaryGlobalSequence,
+    }) : false;
     const identity = {
       id: user.id,
       username: user.username,
@@ -466,33 +493,6 @@ export class MemoryConsolidationEngine {
     });
 
     const recordedUsage = record.usageJson as Record<string, unknown> | null;
-    if (recordedUsage?.commitJournal) {
-      let recoveryLock: { release(): Promise<void> } | null = null;
-      try {
-        recoveryLock = await this.options.store.acquireCommitLock(state.tenantId, state.userId, 5_000);
-        if (!recoveryLock) {
-          await this.options.store.markFailed({
-            tenantId: state.tenantId,
-            sessionId: state.sessionId,
-            ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
-            now: new Date().toISOString(),
-            backoffMinutes: [1],
-            maxRetries: config.maxRetries,
-          });
-          return;
-        }
-        const recovered = await recoverMemoryConsolidationPreparedCommit(
-          effectiveCwd,
-          recordedUsage?.commitJournal,
-        );
-        this.options.logger?.warn(
-          `consolidation recovered interrupted commit user=${state.userId} files=${recovered}`,
-        );
-      } finally {
-        if (recoveryLock) await recoveryLock.release().catch(() => undefined);
-      }
-    }
-
     if (record.status === 'applied' || record.status === 'noop') {
       await this.options.store.markApplied({
         tenantId: state.tenantId,
@@ -503,6 +503,94 @@ export class MemoryConsolidationEngine {
         now: new Date().toISOString(),
       });
       return;
+    }
+
+    if (recordedUsage?.commitJournal) {
+      const journalBoundarySequence = Number(recordedUsage.commitBoundarySequence);
+      if (!Number.isSafeInteger(journalBoundarySequence)
+        || journalBoundarySequence !== state.lastBoundaryGlobalSequence) {
+        const currentUsage = { ...recordedUsage };
+        delete currentUsage.commitJournal;
+        delete currentUsage.commitBoundarySequence;
+        await updateRunFenced({
+          idempotencyKey,
+          status: 'retryable_failed',
+          usageJson: currentUsage,
+          errorCode: 'recovery_boundary_superseded',
+          errorMessage: 'prepared journal belongs to an older run boundary',
+          finished: true,
+        });
+        return;
+      }
+      let recoveryLock: MemoryConsolidationCommitLock | null = null;
+      try {
+        recoveryLock = await this.options.store.acquireCommitLock(state.tenantId, state.userId, 5_000);
+        if (!recoveryLock || !state.leaseOwner) {
+          await this.options.store.markFailed({
+            tenantId: state.tenantId,
+            sessionId: state.sessionId,
+            toSequence: to,
+            boundarySequence: state.lastBoundaryGlobalSequence,
+            ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
+            now: new Date().toISOString(),
+            backoffMinutes: [1],
+            maxRetries: config.maxRetries,
+          });
+          return;
+        }
+        const fenceResult = await recoveryLock.acquireFence({
+          tenantId: state.tenantId,
+          sessionId: state.sessionId,
+          leaseOwner: state.leaseOwner,
+          now: new Date().toISOString(),
+          fromSequence: from,
+          toSequence: to,
+          boundarySequence: state.lastBoundaryGlobalSequence,
+        });
+        if (!fenceResult.fence) return;
+        try {
+          const recovered = await recoverMemoryConsolidationPreparedCommit(
+            effectiveCwd,
+            recordedUsage.commitJournal,
+          );
+          const recoveredUsage = { ...recordedUsage };
+          delete recoveredUsage.commitJournal;
+          delete recoveredUsage.commitBoundarySequence;
+          await fenceResult.fence.finalizeApplied({
+            idempotencyKey,
+            toSequence: to,
+            debounceMinutes: config.debounceMinutes,
+            now: new Date().toISOString(),
+            ...(record.modelActual ? { modelActual: record.modelActual } : {}),
+            usageJson: recoveredUsage,
+          });
+          this.options.logger?.warn(
+            `consolidation recovered interrupted commit user=${state.userId} files=${recovered}`,
+          );
+          return;
+        } catch (error) {
+          await fenceResult.fence.release().catch(() => undefined);
+          if (!(error instanceof MemoryConsolidationDraftConflictError)) throw error;
+          const currentUsage = { ...recordedUsage };
+          delete currentUsage.commitJournal;
+          delete currentUsage.commitBoundarySequence;
+          await recoveryLock.release();
+          recoveryLock = null;
+          const journalRetired = await updateRunFenced({
+            idempotencyKey,
+            status: 'started',
+            usageJson: currentUsage,
+            errorCode: 'recovery_conflict_superseded',
+            errorMessage: message(error),
+          });
+          if (!journalRetired) return;
+          this.options.logger?.warn(
+            `consolidation retired conflicting journal session=${state.sessionId}; rerunning current baseline`,
+          );
+        }
+      } finally {
+        if (recoveryLock) await recoveryLock.release().catch(() => undefined);
+      }
     }
 
     const tombstones = await this.options.store.listActiveTombstones(state.tenantId, state.userId);
@@ -602,7 +690,7 @@ export class MemoryConsolidationEngine {
     const usage = await this.readHiddenRunUsage(hiddenSessionId);
     const draftPlan = await inspectMemoryConsolidationDraft(hiddenSessionId);
     try {
-      await this.options.store.updateRun({
+      const prepared = await updateRunFenced({
         idempotencyKey,
         status: 'prepared',
         ...(usage.modelActual ? { modelActual: usage.modelActual } : {}),
@@ -613,41 +701,75 @@ export class MemoryConsolidationEngine {
           hiddenSessionId,
           changedFiles: draftPlan.changedFiles,
           commitJournal: draftPlan.commitJournal,
+          commitBoundarySequence: state.lastBoundaryGlobalSequence,
         },
       });
+      if (!prepared) {
+        discardMemoryConsolidationDraft(hiddenSessionId);
+        return;
+      }
     } catch (error) {
       discardMemoryConsolidationDraft(hiddenSessionId);
       throw error;
     }
 
-    let commitLock: { release(): Promise<void> } | null = null;
+    let commitLock: MemoryConsolidationCommitLock | null = null;
+    let commitFence: MemoryConsolidationCommitFence | null = null;
     let commitError: unknown;
+    let filesCommitted = false;
     let leaseLostBeforeCommit = false;
+    let boundaryChangedBeforeCommit = false;
     try {
       commitLock = await this.options.store.acquireCommitLock(state.tenantId, state.userId, 5_000);
       if (!commitLock) commitError = new Error('L2 memory draft commit lock unavailable');
-      else {
-        const stillOwned = await this.options.store.renewLease({
+      else if (!state.leaseOwner) {
+        leaseLostBeforeCommit = true;
+        commitError = new Error('L2 memory draft lease missing before commit');
+      } else {
+        const fenceResult = await commitLock.acquireFence({
           tenantId: state.tenantId,
           sessionId: state.sessionId,
-          leaseOwner: state.leaseOwner!,
+          leaseOwner: state.leaseOwner,
           now: new Date().toISOString(),
-          leaseSeconds: 300,
+          fromSequence: from,
+          toSequence: to,
+          boundarySequence: state.lastBoundaryGlobalSequence,
         });
-        if (!stillOwned) {
+        commitFence = fenceResult.fence;
+        boundaryChangedBeforeCommit = fenceResult.boundaryChanged;
+        if (!commitFence) {
           leaseLostBeforeCommit = true;
-          commitError = new Error('L2 memory draft lease lost before commit');
+          commitError = new Error('L2 memory draft state fence lost before commit');
         } else {
           await commitMemoryConsolidationDraft(hiddenSessionId);
+          filesCommitted = true;
+          await commitFence.finalizeApplied({
+            idempotencyKey,
+            toSequence: to,
+            debounceMinutes: config.debounceMinutes,
+            now: new Date().toISOString(),
+            ...(usage.modelActual ? { modelActual: usage.modelActual } : {}),
+            usageJson: {
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              cacheReadTokens: usage.cacheReadTokens,
+              hiddenSessionId,
+              changedFiles: draftPlan.changedFiles,
+            },
+          });
         }
       }
     } catch (error) {
       commitError = error;
     } finally {
+      if (commitFence) await commitFence.release().catch(() => undefined);
       if (commitLock) await commitLock.release().catch(() => undefined);
     }
     if (commitError) {
       discardMemoryConsolidationDraft(hiddenSessionId);
+      // 文件已全部 rename 后，COMMIT 失败可能只是确认响应丢失；保留 prepared ledger，
+      // 让下一次 claim 通过 journal 判定 DB 实际结果，绝不能把已 applied 的 ledger 回写为失败。
+      if (filesCommitted || (leaseLostBeforeCommit && !boundaryChangedBeforeCommit)) return;
       const conflict = commitError instanceof MemoryConsolidationDraftConflictError;
       await this.failRun(
         state,
@@ -656,7 +778,7 @@ export class MemoryConsolidationEngine {
         conflict
           ? 'commit_conflict'
           : leaseLostBeforeCommit
-            ? 'commit_lease_lost'
+            ? 'commit_boundary_superseded'
             : commitLock ? 'commit_error' : 'commit_lock_timeout',
         message(commitError),
         hiddenSessionId,
@@ -667,30 +789,6 @@ export class MemoryConsolidationEngine {
       return;
     }
 
-    // prepared journal 已随 ledger 持久化；此刻所有 rename 已完成。后续 DB 落库失败时，
-    // 同一范围会先校验/补齐 staged 内容，再基于已提交 Markdown 做幂等收敛。
-    await this.options.store.updateRun({
-      idempotencyKey,
-      status: 'applied',
-      ...(usage.modelActual ? { modelActual: usage.modelActual } : {}),
-      usageJson: {
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        cacheReadTokens: usage.cacheReadTokens,
-        hiddenSessionId,
-        changedFiles: draftPlan.changedFiles,
-      },
-      applied: true,
-      finished: true,
-    });
-    await this.options.store.markApplied({
-      tenantId: state.tenantId,
-      sessionId: state.sessionId,
-      ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
-      toSequence: to,
-      debounceMinutes: config.debounceMinutes,
-      now: new Date().toISOString(),
-    });
     this.options.logger?.info(
       `consolidation applied session=${state.sessionId} range=(${from},${to}] `
       + `hidden=${hiddenSessionId ?? 'unknown'} input=${usage.inputTokens} cached=${usage.cacheReadTokens}`,
@@ -707,9 +805,17 @@ export class MemoryConsolidationEngine {
     commitJournal?: unknown,
   ): Promise<void> {
     const usage = hiddenSessionId ? await this.readHiddenRunUsage(hiddenSessionId) : undefined;
-    await this.options.store.updateRun({
+    if (!state.leaseOwner) return;
+    await this.options.store.failRunAndState({
       idempotencyKey,
-      status: 'retryable_failed',
+      tenantId: state.tenantId,
+      sessionId: state.sessionId,
+      leaseOwner: state.leaseOwner,
+      toSequence: state.targetSessionSequence,
+      boundarySequence: state.lastBoundaryGlobalSequence,
+      now: new Date().toISOString(),
+      backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
+      maxRetries: config.maxRetries,
       ...(usage?.modelActual ? { modelActual: usage.modelActual } : {}),
       ...(usage ? {
         usageJson: {
@@ -717,21 +823,14 @@ export class MemoryConsolidationEngine {
           outputTokens: usage.outputTokens,
           cacheReadTokens: usage.cacheReadTokens,
           hiddenSessionId,
-          ...(commitJournal ? { commitJournal } : {}),
+          ...(commitJournal ? {
+            commitJournal,
+            commitBoundarySequence: state.lastBoundaryGlobalSequence,
+          } : {}),
         },
       } : {}),
-      incrementRetry: true,
       errorCode,
       errorMessage,
-      finished: true,
-    });
-    await this.options.store.markFailed({
-      tenantId: state.tenantId,
-      sessionId: state.sessionId,
-      ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
-      now: new Date().toISOString(),
-      backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
-      maxRetries: config.maxRetries,
     });
   }
 

@@ -183,34 +183,175 @@ describePg('PgMemoryConsolidationStore contract', () => {
   });
 
   it('运行失败耗尽预算后暂时 blocked，并可在启动恢复', async () => {
+    const boundaryAt = now();
     await store!.applyRunFinished({
-      ...BASE, runId: 'r2', sessionSequence: 50, at: now(), globalSequence: 12,
+      ...BASE, runId: 'r2', sessionSequence: 50, at: boundaryAt, globalSequence: 12,
       eligible: true, debounceMinutes: 10,
     });
+    const firstClaimAt = new Date(Date.parse(boundaryAt) + 11 * 60_000).toISOString();
+    const firstClaim = (await store!.claimDue({
+      workerId: 'failure-a', now: firstClaimAt, limit: 10, leaseSeconds: 900,
+    })).find((state) => state.sessionId === BASE.sessionId)!;
     const r1 = await store!.markFailed({
-      tenantId: BASE.tenantId, sessionId: BASE.sessionId, now: now(),
-      backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES, maxRetries: 1,
+      tenantId: BASE.tenantId, sessionId: BASE.sessionId, leaseOwner: firstClaim.leaseOwner!,
+      toSequence: firstClaim.targetSessionSequence, boundarySequence: firstClaim.lastBoundaryGlobalSequence,
+      now: firstClaimAt, backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES, maxRetries: 1,
     });
     expect(r1).toBe('retry_wait');
+    const secondClaimAt = new Date(Date.parse(firstClaimAt) + 6 * 60_000).toISOString();
+    const secondClaim = (await store!.claimDue({
+      workerId: 'failure-b', now: secondClaimAt, limit: 10, leaseSeconds: 900,
+    })).find((state) => state.sessionId === BASE.sessionId)!;
     const r2 = await store!.markFailed({
-      tenantId: BASE.tenantId, sessionId: BASE.sessionId, now: now(),
-      backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES, maxRetries: 1,
+      tenantId: BASE.tenantId, sessionId: BASE.sessionId, leaseOwner: secondClaim.leaseOwner!,
+      toSequence: secondClaim.targetSessionSequence, boundarySequence: secondClaim.lastBoundaryGlobalSequence,
+      now: secondClaimAt, backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES, maxRetries: 1,
     });
     expect(r2).toBe('blocked');
     expect((await store!.getState(BASE.tenantId, BASE.sessionId))?.status).toBe('blocked');
+    const nextBoundaryAt = new Date(Date.parse(secondClaimAt) + 60_000).toISOString();
     await store!.applyRunFinished({
-      ...BASE, runId: 'r3', sessionSequence: 60, at: now(), globalSequence: 13,
+      ...BASE, runId: 'r3', sessionSequence: 60, at: nextBoundaryAt, globalSequence: 13,
       eligible: true, debounceMinutes: 10,
     });
     expect((await store!.getState(BASE.tenantId, BASE.sessionId))?.status).toBe('pending');
+    const permanentClaimAt = new Date(Date.parse(nextBoundaryAt) + 11 * 60_000).toISOString();
+    const permanentClaim = (await store!.claimDue({
+      workerId: 'failure-c', now: permanentClaimAt, limit: 10, leaseSeconds: 900,
+    })).find((state) => state.sessionId === BASE.sessionId)!;
     await store!.markFailed({
-      tenantId: BASE.tenantId, sessionId: BASE.sessionId, now: now(),
-      backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES, maxRetries: 0, permanent: true,
+      tenantId: BASE.tenantId, sessionId: BASE.sessionId, leaseOwner: permanentClaim.leaseOwner!,
+      toSequence: permanentClaim.targetSessionSequence,
+      boundarySequence: permanentClaim.lastBoundaryGlobalSequence,
+      now: permanentClaimAt, backoffMinutes: CONSOLIDATION_RETRY_BACKOFF_MINUTES,
+      maxRetries: 0, permanent: true,
     });
     expect(await store!.reviveLegacyBlocked()).toBeGreaterThanOrEqual(1);
     const state = await store!.getState(BASE.tenantId, BASE.sessionId);
     expect(state?.status).toBe('pending');
     expect(state?.processedSessionSequence).toBe(40);
+  });
+
+  it('旧 worker 失败转换不能覆盖新 generation 的 run ledger', async () => {
+    const base = { ...BASE, sessionId: 's-stale-ledger' };
+    const boundaryAt = now();
+    await store!.applyRunFinished({
+      ...base, runId: 'r-old', sessionSequence: 40, at: boundaryAt, globalSequence: 300,
+      eligible: true, debounceMinutes: 0,
+    });
+    const claimAt = new Date(Date.parse(boundaryAt) + 1_000).toISOString();
+    const oldClaim = (await store!.claimDue({
+      workerId: 'old-worker', now: claimAt, limit: 10, leaseSeconds: 900,
+    })).find((state) => state.sessionId === base.sessionId)!;
+    const runInput = {
+      idempotencyKey: 'k-stale-ledger', ...base,
+      fromSessionSequence: oldClaim.processedSessionSequence,
+      toSessionSequence: oldClaim.targetSessionSequence,
+      promptVersion: 2,
+    };
+    await store!.insertOrGetRun(runInput);
+    await store!.updateRun({
+      idempotencyKey: runInput.idempotencyKey,
+      status: 'prepared',
+      usageJson: { commitJournal: { version: 1, entries: [] }, commitBoundarySequence: 302 },
+    });
+    await store!.applyRunStarted({
+      ...base, runId: 'r-new-error', at: now(), globalSequence: 301,
+    });
+    await store!.applyRunFinished({
+      ...base, runId: 'r-new-error', sessionSequence: 45, at: now(), globalSequence: 302,
+      eligible: false, debounceMinutes: 0,
+    });
+    expect(await store!.updateRunFenced({
+      idempotencyKey: runInput.idempotencyKey,
+      tenantId: base.tenantId,
+      sessionId: base.sessionId,
+      leaseOwner: oldClaim.leaseOwner!,
+      fromSequence: oldClaim.processedSessionSequence,
+      toSequence: oldClaim.targetSessionSequence,
+      boundarySequence: oldClaim.lastBoundaryGlobalSequence,
+      status: 'retryable_failed',
+      errorCode: 'stale-fenced-update',
+    })).toBe(false);
+    expect(await store!.failRunAndState({
+      idempotencyKey: runInput.idempotencyKey,
+      tenantId: base.tenantId,
+      sessionId: base.sessionId,
+      leaseOwner: oldClaim.leaseOwner!,
+      toSequence: oldClaim.targetSessionSequence,
+      boundarySequence: oldClaim.lastBoundaryGlobalSequence,
+      now: claimAt,
+      backoffMinutes: [1],
+      maxRetries: 1,
+      errorCode: 'stale-worker',
+      errorMessage: 'must not overwrite',
+    })).toBeNull();
+    const { record } = await store!.insertOrGetRun(runInput);
+    expect(record.status).toBe('prepared');
+    expect(record.usageJson).toEqual(expect.objectContaining({ commitBoundarySequence: 302 }));
+  });
+
+  it('commit fence 将文件提交与 run_started 串行，并阻止旧 worker 失败状态覆盖新 boundary', async () => {
+    const base = { ...BASE, sessionId: 's-commit-fence' };
+    const boundaryAt = now();
+    await store!.applyRunFinished({
+      ...base, runId: 'r-before-commit', sessionSequence: 40, at: boundaryAt, globalSequence: 200,
+      eligible: true, debounceMinutes: 0,
+    });
+    const claimAt = new Date(Date.parse(boundaryAt) + 1_000).toISOString();
+    const claimed = (await store!.claimDue({
+      workerId: 'fence-worker', now: claimAt, limit: 10, leaseSeconds: 900,
+    })).find((state) => state.sessionId === base.sessionId)!;
+    await store!.insertOrGetRun({
+      idempotencyKey: 'k-commit-fence', ...base,
+      fromSessionSequence: claimed.processedSessionSequence,
+      toSessionSequence: claimed.targetSessionSequence,
+      promptVersion: 2,
+    });
+    const commitLock = await store!.acquireCommitLock(base.tenantId, base.userId);
+    expect(commitLock).not.toBeNull();
+    const fenceResult = await commitLock!.acquireFence({
+      tenantId: base.tenantId,
+      sessionId: base.sessionId,
+      leaseOwner: claimed.leaseOwner!,
+      now: claimAt,
+      fromSequence: claimed.processedSessionSequence,
+      toSequence: claimed.targetSessionSequence,
+      boundarySequence: claimed.lastBoundaryGlobalSequence,
+    });
+    expect(fenceResult.fence).not.toBeNull();
+    let runStartedApplied = false;
+    const runStarted = store!.applyRunStarted({
+      ...base, runId: 'r-new', at: now(), globalSequence: 201,
+    }).then(() => { runStartedApplied = true; });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(runStartedApplied).toBe(false);
+    await fenceResult.fence!.finalizeApplied({
+      idempotencyKey: 'k-commit-fence',
+      toSequence: claimed.targetSessionSequence,
+      debounceMinutes: 0,
+      now: claimAt,
+      usageJson: { changedFiles: ['MEMORY.md'] },
+    });
+    await runStarted;
+    await commitLock!.release();
+    const afterBoundary = await store!.getState(base.tenantId, base.sessionId);
+    expect(afterBoundary?.processedSessionSequence).toBe(40);
+    expect(afterBoundary?.activeRunIds).toContain('r-new');
+    expect(afterBoundary?.leaseOwner).toBeNull();
+    await store!.markFailed({
+      tenantId: base.tenantId,
+      sessionId: base.sessionId,
+      leaseOwner: claimed.leaseOwner!,
+      toSequence: claimed.targetSessionSequence,
+      boundarySequence: claimed.lastBoundaryGlobalSequence,
+      now: claimAt,
+      backoffMinutes: [1],
+      maxRetries: 1,
+    });
+    const afterStaleFailure = await store!.getState(base.tenantId, base.sessionId);
+    expect(afterStaleFailure?.activeRunIds).toContain('r-new');
+    expect(afterStaleFailure?.attempts).toBe(0);
   });
 
   it('tombstone：insert/list/revoke 生命周期', async () => {

@@ -22,6 +22,7 @@ export interface ConsolidationState {
   sessionId: string;
   processedSessionSequence: number;
   targetSessionSequence: number;
+  lastBoundaryGlobalSequence: number;
   firstPendingAt: string | null;
   dueAt: string | null;
   lastActivityAt: string | null;

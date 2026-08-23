@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { constants as fsConstants } from 'node:fs';
 import {
   lstat,
   mkdir,
@@ -9,6 +10,7 @@ import {
   rename,
   rm,
   stat,
+  type FileHandle,
 } from 'node:fs/promises';
 import {
   basename,
@@ -59,6 +61,22 @@ function isMemoryRelativePath(path: string): boolean {
     || (path.startsWith('memory/') && path.endsWith('.md'));
 }
 
+async function assertNoSymlinkBelow(root: string, target: string): Promise<void> {
+  let cursor = target;
+  while (cursor !== root) {
+    try {
+      if ((await lstat(cursor)).isSymbolicLink()) {
+        throw new Error(`记忆审查工具约束：拒绝符号链接路径 ${relative(root, cursor)}。`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+}
+
 async function resolveThroughExistingAncestors(target: string): Promise<string> {
   let cursor = target;
   const suffix: string[] = [];
@@ -103,6 +121,7 @@ export async function resolveMemoryMarkdownPath(
   if (!isMemoryRelativePath(normalized)) {
     throw new Error(`记忆审查工具约束：只允许访问 MEMORY.md 或 memory/**/*.md，拒绝 ${normalized}。`);
   }
+  await assertNoSymlinkBelow(root, target);
   const [canonicalRoot, canonicalTarget] = await Promise.all([
     resolveThroughExistingAncestors(root),
     resolveThroughExistingAncestors(target),
@@ -284,26 +303,85 @@ function digest(content: DraftContent): string {
   return createHash('sha256').update(content === null ? '\u0000missing' : content).digest('hex');
 }
 
-async function atomicWrite(fullPath: string, content: string): Promise<void> {
-  await mkdir(dirname(fullPath), { recursive: true });
-  const temporary = join(dirname(fullPath), `.${basename(fullPath)}.consolidation-${randomUUID()}.tmp`);
-  const existingMode = await stat(fullPath).then((entry) => entry.mode & 0o777).catch(() => 0o600);
+async function openSafeParentDirectory(
+  root: string,
+  fullPath: string,
+  create: boolean,
+): Promise<FileHandle> {
+  const lexicalRoot = resolve(root);
+  const parentRel = relative(lexicalRoot, dirname(fullPath));
+  if (parentRel.startsWith('..') || isAbsolute(parentRel)) {
+    throw new Error(`记忆审查工具约束：提交目录越界 ${dirname(fullPath)}。`);
+  }
+  let current = await open(
+    await realpath(lexicalRoot),
+    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+  );
+  try {
+    for (const segment of parentRel.split(/[\\/]/).filter(Boolean)) {
+      const child = join(`/proc/self/fd/${current.fd}`, segment);
+      if (create) {
+        await mkdir(child, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'EEXIST') throw error;
+        });
+      }
+      let next: FileHandle;
+      try {
+        next = await open(child, fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'ELOOP' || code === 'ENOTDIR') {
+          throw new Error(`记忆审查工具约束：拒绝符号链接目录 ${segment}。`);
+        }
+        throw error;
+      }
+      await current.close();
+      current = next;
+    }
+    return current;
+  } catch (error) {
+    await current.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+async function safeRemove(root: string, fullPath: string): Promise<void> {
+  let directoryHandle: FileHandle | undefined;
+  try {
+    directoryHandle = await openSafeParentDirectory(root, fullPath, false);
+    await rm(join(`/proc/self/fd/${directoryHandle.fd}`, basename(fullPath)), { force: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  } finally {
+    await directoryHandle?.close().catch(() => undefined);
+  }
+}
+
+async function atomicWrite(root: string, fullPath: string, content: string): Promise<void> {
+  const directoryHandle = await openSafeParentDirectory(root, fullPath, true);
+  const descriptorRoot = `/proc/self/fd/${directoryHandle.fd}`;
+  const target = join(descriptorRoot, basename(fullPath));
+  const temporary = join(descriptorRoot, `.${basename(fullPath)}.consolidation-${randomUUID()}.tmp`);
   let handle;
   try {
+    const existingMode = await lstat(target).then((entry) => {
+      if (entry.isSymbolicLink()) throw new Error(`记忆审查工具约束：拒绝符号链接路径 ${fullPath}。`);
+      return entry.mode & 0o777;
+    }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return 0o600;
+      throw error;
+    });
     handle = await open(temporary, 'wx', existingMode);
     await handle.writeFile(content, 'utf8');
     await handle.sync();
     await handle.close();
     handle = undefined;
-    await rename(temporary, fullPath);
-    const directoryHandle = await open(dirname(fullPath), 'r').catch(() => undefined);
-    if (directoryHandle) {
-      await directoryHandle.sync().catch(() => undefined);
-      await directoryHandle.close().catch(() => undefined);
-    }
+    await rename(temporary, target);
+    await directoryHandle.sync();
   } finally {
     await handle?.close().catch(() => undefined);
     await rm(temporary, { force: true }).catch(() => undefined);
+    await directoryHandle.close().catch(() => undefined);
   }
 }
 
@@ -335,7 +413,7 @@ export async function recoverMemoryConsolidationPreparedCommit(
 ): Promise<number> {
   const root = resolve(rootInput);
   const journal = validateCommitJournal(rawJournal);
-  const pending: Array<{ fullPath: string; staged: string }> = [];
+  const pending: Array<{ relativePath: string; staged: string }> = [];
   for (const entry of journal.entries) {
     const resolved = await resolveMemoryMarkdownPath(root, entry.relativePath);
     const current = await readCurrent(resolved.fullPath);
@@ -343,9 +421,12 @@ export async function recoverMemoryConsolidationPreparedCommit(
     if (digest(current) !== digest(entry.baseline)) {
       throw new MemoryConsolidationDraftConflictError(entry.relativePath);
     }
-    pending.push({ fullPath: resolved.fullPath, staged: entry.staged });
+    pending.push({ relativePath: entry.relativePath, staged: entry.staged });
   }
-  for (const entry of pending) await atomicWrite(entry.fullPath, entry.staged);
+  for (const entry of pending) {
+    const resolved = await resolveMemoryMarkdownPath(root, entry.relativePath);
+    await atomicWrite(root, resolved.fullPath, entry.staged);
+  }
   return pending.length;
 }
 
@@ -393,14 +474,14 @@ export async function commitMemoryConsolidationDraft(
       for (const [relativePath, content] of changed) {
         if (content === null) continue;
         const { fullPath } = await resolveMemoryMarkdownPath(draft.root, relativePath);
-        await atomicWrite(fullPath, content);
+        await atomicWrite(draft.root, fullPath, content);
         committed.push({ path: fullPath, baseline: draft.baseline.get(relativePath) ?? null });
       }
     } catch (error) {
       for (const entry of committed.reverse()) {
         try {
-          if (entry.baseline === null) await rm(entry.path, { force: true });
-          else await atomicWrite(entry.path, entry.baseline);
+          if (entry.baseline === null) await safeRemove(draft.root, entry.path);
+          else await atomicWrite(draft.root, entry.path, entry.baseline);
         } catch {
           // durable prepared journal 会在下一次 claim 时按 baseline/staged 状态补齐。
         }

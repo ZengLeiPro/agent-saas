@@ -4,6 +4,10 @@
  * run 边界事件永久卡在空 consumer cursor，本文件专门锁住该故障形态。
  */
 
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -145,8 +149,99 @@ async function workOnce(engine: MemoryConsolidationEngine): Promise<void> {
   await testable.workOnce();
 }
 
-afterEach(() => {
+function createRecoveryHarness(input: {
+  agentCwd?: string;
+  commitJournal: unknown;
+  journalBoundarySequence?: number;
+  stateBoundarySequence?: number;
+  fenceResult?: { boundaryChanged: boolean; fence: {
+    finalizeApplied: ReturnType<typeof vi.fn>;
+    release: ReturnType<typeof vi.fn>;
+  } | null };
+  dispatch?: ReturnType<typeof vi.fn>;
+}) {
+  const state: ConsolidationState = {
+    tenantId: 't-enabled', userId: 'u1', workspaceId: 'ws1', sessionId: 'source-recovery',
+    processedSessionSequence: 10, targetSessionSequence: 42,
+    lastBoundaryGlobalSequence: input.stateBoundarySequence ?? 100,
+    firstPendingAt: '2026-08-21T00:00:00.000Z', dueAt: '2026-08-21T00:10:00.000Z',
+    lastActivityAt: '2026-08-21T00:00:00.000Z', activeRunIds: [], status: 'running', attempts: 1,
+    nextAttemptAt: null, leaseOwner: 'worker-1', leaseExpiresAt: '2026-08-21T02:00:00.000Z', promptVersion: 2,
+  };
+  const releaseCommitLock = vi.fn(async () => undefined);
+  const releaseFence = vi.fn(async () => undefined);
+  const finalizeApplied = vi.fn(async () => undefined);
+  const fenceResult = input.fenceResult ?? {
+    boundaryChanged: false,
+    fence: { finalizeApplied, release: releaseFence },
+  };
+  const dispatch = input.dispatch ?? vi.fn(() => (async function* () {})());
+  const updateRun = vi.fn(async (_runInput?: unknown) => undefined);
+  const updateRunFenced = vi.fn(async (runInput) => {
+    await updateRun(runInput);
+    return true;
+  });
+  const markFailed = vi.fn(async () => 'retry_wait' as const);
+  const failRunAndState = vi.fn(async () => 'retry_wait' as const);
+  const acquireCommitFence = vi.fn(async () => fenceResult);
+  const store = {
+    claimDue: vi.fn(async () => [state]),
+    acquireCommitLock: vi.fn(async () => ({
+      acquireFence: acquireCommitFence,
+      release: releaseCommitLock,
+    })),
+    insertOrGetRun: vi.fn(async () => ({
+      created: false,
+      record: {
+        id: 'ledger-recovery', status: 'prepared', modelActual: 'gpt-5.4',
+        usageJson: {
+          inputTokens: 100,
+          hiddenSessionId: 'old-hidden',
+          commitJournal: input.commitJournal,
+          commitBoundarySequence: input.journalBoundarySequence ?? 100,
+        },
+      },
+    })),
+    updateRun,
+    updateRunFenced,
+    markApplied: vi.fn(async () => undefined),
+    markFailed,
+    failRunAndState,
+    markIneligible: vi.fn(async () => undefined),
+    listActiveTombstones: vi.fn(async () => []),
+  } as unknown as PgMemoryConsolidationStore;
+  const engine = new MemoryConsolidationEngine({
+    store,
+    eventStore: {
+      listGlobalPage: vi.fn(async () => ({ events: [], hasMore: false })),
+      listSessionRange: vi.fn(async () => []),
+    },
+    projectionStore: { get: vi.fn(async () => ({
+      sessionId: state.sessionId, tenantId: state.tenantId, userId: state.userId, username: 'alice',
+      channel: 'web', kind: 'user' as const, model: 'gpt-5.4', workspaceId: state.workspaceId,
+      metaJson: { memoryPolicyVersion: 'v2', profileBindingKey: 'main' },
+    })) },
+    userStore: { findById: vi.fn(() => ({
+      id: 'u1', username: 'alice', role: 'user', tenantId: 't-enabled',
+    })) },
+    isTenantEnabled: () => true,
+    dispatch: dispatch as never,
+    agentCwd: input.agentCwd ?? '/tmp',
+    getConfig: () => ({ ...MEMORY_CONSOLIDATION_DEFAULTS, enabled: true }),
+  });
+  return {
+    engine, state, store, dispatch, updateRun, updateRunFenced, markFailed, failRunAndState,
+    finalizeApplied: fenceResult.fence?.finalizeApplied ?? finalizeApplied,
+    releaseFence: fenceResult.fence?.release ?? releaseFence,
+    releaseCommitLock,
+    acquireCommitFence,
+  };
+}
+
+const tempDirs: string[] = [];
+afterEach(async () => {
   vi.restoreAllMocks();
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
 describe('MemoryConsolidationEngine scanner', () => {
@@ -339,7 +434,7 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
   it('discards a previously queued TaskBoard backlog when the worker claims it', async () => {
     const state: ConsolidationState = {
       tenantId: 't-enabled', userId: 'u1', workspaceId: 'ws1', sessionId: 'taskboard-review-1',
-      processedSessionSequence: 0, targetSessionSequence: 42,
+      processedSessionSequence: 0, targetSessionSequence: 42, lastBoundaryGlobalSequence: 100,
       firstPendingAt: '2026-08-19T00:00:00.000Z', dueAt: '2026-08-19T00:10:00.000Z',
       lastActivityAt: '2026-08-19T00:00:00.000Z', activeRunIds: [], status: 'running', attempts: 0,
       nextAttemptAt: null, leaseOwner: 'worker-1', leaseExpiresAt: null, promptVersion: null,
@@ -363,19 +458,132 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
     expect(harness.dispatch).not.toHaveBeenCalled();
   });
 
+  it('prepared journal 恢复完成后原子收敛且不再次运行模型', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'memory-recovery-applied-'));
+    tempDirs.push(root);
+    const userRoot = join(root, 't-enabled', 'u1');
+    await mkdir(userRoot, { recursive: true });
+    await writeFile(join(userRoot, 'MEMORY.md'), '# staged\n', 'utf8');
+    const harness = createRecoveryHarness({
+      agentCwd: root,
+      commitJournal: {
+        version: 1,
+        entries: [{ relativePath: 'MEMORY.md', baseline: '# baseline\n', staged: '# staged\n' }],
+      },
+    });
+
+    await workOnce(harness.engine);
+
+    expect(harness.finalizeApplied).toHaveBeenCalledWith(expect.objectContaining({
+      toSequence: 42,
+      usageJson: expect.not.objectContaining({ commitJournal: expect.anything() }),
+    }));
+    expect(harness.dispatch).not.toHaveBeenCalled();
+    expect(harness.store.markApplied).not.toHaveBeenCalled();
+    expect(harness.markFailed).not.toHaveBeenCalled();
+    expect(harness.releaseCommitLock).toHaveBeenCalledOnce();
+    expect(await readFile(join(userRoot, 'MEMORY.md'), 'utf8')).toBe('# staged\n');
+  });
+
+  it('prepared journal 冲突会退休旧记录并基于当前 baseline 重新 dispatch', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'memory-recovery-conflict-'));
+    tempDirs.push(root);
+    const userRoot = join(root, 't-enabled', 'u1');
+    await mkdir(userRoot, { recursive: true });
+    await writeFile(join(userRoot, 'MEMORY.md'), '# current\n', 'utf8');
+    const dispatch = vi.fn(() => (async function* () {
+      yield { type: 'error' as const, error: 'stop after recovery conflict' };
+    })());
+    const harness = createRecoveryHarness({
+      agentCwd: root,
+      commitJournal: {
+        version: 1,
+        entries: [{ relativePath: 'MEMORY.md', baseline: '# baseline\n', staged: '# staged\n' }],
+      },
+      dispatch,
+    });
+
+    await workOnce(harness.engine);
+
+    expect(harness.updateRun).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'started',
+      errorCode: 'recovery_conflict_superseded',
+      usageJson: expect.not.objectContaining({ commitJournal: expect.anything() }),
+    }));
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(harness.releaseCommitLock.mock.invocationCallOrder[0])
+      .toBeLessThan(harness.updateRun.mock.invocationCallOrder[0]!);
+    expect(await readFile(join(userRoot, 'MEMORY.md'), 'utf8')).toBe('# current\n');
+  });
+
+  it('prepared recovery 观察到新 run boundary 时不再由旧 worker 改 ledger 或文件', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'memory-recovery-boundary-'));
+    tempDirs.push(root);
+    const userRoot = join(root, 't-enabled', 'u1');
+    await mkdir(userRoot, { recursive: true });
+    await writeFile(join(userRoot, 'MEMORY.md'), '# baseline\n', 'utf8');
+    const harness = createRecoveryHarness({
+      agentCwd: root,
+      commitJournal: {
+        version: 1,
+        entries: [{ relativePath: 'MEMORY.md', baseline: '# baseline\n', staged: '# stale staged\n' }],
+      },
+      fenceResult: { boundaryChanged: true, fence: null },
+    });
+
+    await workOnce(harness.engine);
+
+    expect(harness.updateRunFenced).not.toHaveBeenCalled();
+    expect(harness.dispatch).not.toHaveBeenCalled();
+    expect(harness.releaseCommitLock).toHaveBeenCalledOnce();
+    expect(await readFile(join(userRoot, 'MEMORY.md'), 'utf8')).toBe('# baseline\n');
+  });
+
+  it('重启重新 claim 后不会用当前 generation 恢复旧 boundary 的 journal', async () => {
+    const harness = createRecoveryHarness({
+      commitJournal: { version: 1, entries: [] },
+      journalBoundarySequence: 100,
+      stateBoundarySequence: 101,
+    });
+
+    await workOnce(harness.engine);
+
+    expect(harness.updateRun).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'retryable_failed',
+      errorCode: 'recovery_boundary_superseded',
+      usageJson: expect.not.objectContaining({ commitJournal: expect.anything() }),
+    }));
+    expect(harness.acquireCommitFence).not.toHaveBeenCalled();
+    expect(harness.dispatch).not.toHaveBeenCalled();
+  });
+
   it('inherits the parent runtime instead of selecting a separate model/profile', async () => {
     const state: ConsolidationState = {
       tenantId: 't-enabled', userId: 'u1', workspaceId: 'ws1', sessionId: 'source-session',
-      processedSessionSequence: 10, targetSessionSequence: 42,
+      processedSessionSequence: 10, targetSessionSequence: 42, lastBoundaryGlobalSequence: 100,
       firstPendingAt: '2026-08-21T00:00:00.000Z', dueAt: '2026-08-21T00:10:00.000Z',
       lastActivityAt: '2026-08-21T00:00:00.000Z', activeRunIds: [], status: 'running', attempts: 0,
       nextAttemptAt: null, leaseOwner: 'worker-1', leaseExpiresAt: null, promptVersion: null,
     };
     const release = vi.fn(async () => undefined);
-    const updateRun = vi.fn(async () => undefined);
+    const releaseFence = vi.fn(async () => undefined);
+    const finalizeApplied = vi.fn(async () => undefined);
+    const updateRun = vi.fn(async (_runInput?: unknown) => undefined);
+    const updateRunFenced = vi.fn(async (runInput) => {
+      await updateRun(runInput);
+      return true;
+    });
     const markApplied = vi.fn(async () => undefined);
     const markFailed = vi.fn(async () => 'retry_wait' as const);
-    const acquireCommitLock = vi.fn(async () => ({ release }));
+    const failRunAndState = vi.fn(async () => 'retry_wait' as const);
+    const acquireCommitFence = vi.fn(async () => ({
+      boundaryChanged: false,
+      fence: { finalizeApplied, release: releaseFence },
+    }));
+    const acquireCommitLock = vi.fn(async () => ({
+      acquireFence: acquireCommitFence,
+      release,
+    }));
     const dispatchOptions: unknown[] = [];
     const dispatch = vi.fn((_message, _context, options) => {
       dispatchOptions.push(options);
@@ -399,8 +607,10 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
       })),
       listActiveTombstones: vi.fn(async () => []),
       updateRun,
+      updateRunFenced,
       markApplied,
       markFailed,
+      failRunAndState,
       markIneligible: vi.fn(async () => undefined),
     } as unknown as PgMemoryConsolidationStore;
     const engine = new MemoryConsolidationEngine({
@@ -448,17 +658,17 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
       skipPersona: expect.anything(),
     }));
     expect(updateRun).toHaveBeenCalledWith(expect.objectContaining({ status: 'prepared' }));
-    expect(updateRun).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'applied',
+    expect(finalizeApplied).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: expect.any(String),
+      toSequence: 42,
       modelActual: 'gpt-5.4',
       usageJson: expect.objectContaining({ inputTokens: 100, cacheReadTokens: 80 }),
     }));
-    expect(markApplied).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'source-session', toSequence: 42,
-    }));
+    expect(markApplied).not.toHaveBeenCalled();
     expect(markFailed).not.toHaveBeenCalled();
     expect(acquireCommitLock).toHaveBeenCalledOnce();
     expect(dispatch.mock.invocationCallOrder[0]).toBeLessThan(acquireCommitLock.mock.invocationCallOrder[0]!);
+    expect(releaseFence).toHaveBeenCalledOnce();
     expect(release).toHaveBeenCalledOnce();
   });
 });

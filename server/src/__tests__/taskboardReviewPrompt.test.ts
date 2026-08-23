@@ -43,7 +43,7 @@ describe('taskboard execution writeback prompt', () => {
     expect(prompt).toContain('服务端硬门禁');
   });
 
-  it('Workflow v3 Integration Work 明确先受控 push、禁止 git push、后 ready_for_review', () => {
+  it('Workflow v3 Integration Work 明确先受控 push、禁止 git push、后 transition 到 in_review', () => {
     const integrationWork = context('work');
     integrationWork.task.kind = 'integration';
     integrationWork.task.workflowVersion = 3;
@@ -54,7 +54,7 @@ describe('taskboard execution writeback prompt', () => {
     expect(prompt).toContain('只传 commitOid');
     expect(prompt).toContain('基线漂移重建以冻结 base 为父');
     expect(prompt).toContain('不得执行 git push');
-    expect(prompt.indexOf('受控 push 成功')).toBeLessThan(prompt.indexOf('ready_for_review') + 1);
+    expect(prompt.indexOf('受控 push 成功')).toBeLessThan(prompt.indexOf('execution.transition({status: "in_review"})') + 1);
     expect(executionWritebackInstructions(context('review')).join('\n')).not.toContain('integration_candidate.push');
   });
 });

@@ -510,7 +510,7 @@ async function loadContext(
     const candidateTables = integrationCandidateTableNames(host.integrationSourcesTable);
     const result = await client.query(
       `SELECT t.id AS task_id,t.kind,t.branch AS task_branch,t.provider_pull_request_id,
-              e.id AS execution_id,e.purpose,e.status AS execution_status,e.resolved_at,e.superseded_at,
+              e.id AS execution_id,e.purpose,e.status AS execution_status,e.transitioned_at,e.superseded_at,
               e.candidate_id AS execution_candidate_id,e.candidate_revision AS execution_candidate_revision,
               e.candidate_head_oid AS execution_candidate_head_oid,
               b.repository,b.owner_user_id,
@@ -561,7 +561,7 @@ async function loadContext(
     if ((!['delivery', 'remediation'].includes(kind) && !isIntegrationV3) || !purposes.includes(purpose)) {
       throw new TaskboardValidationError('Execution purpose cannot inspect the current pull request');
     }
-    if (row.resolved_at || row.superseded_at
+    if (row.transitioned_at || row.superseded_at
       || !['queued', 'running', 'waiting_user', 'waiting_approval'].includes(String(row.execution_status))) {
       throw new TaskboardValidationError('Taskboard execution is no longer active');
     }
@@ -617,7 +617,7 @@ async function lockExecution(
     `SELECT id FROM ${host.executionsTable}
       WHERE run_id=$1 AND task_id=$2
         AND status IN ('queued','running','waiting_user','waiting_approval')
-        AND resolved_at IS NULL AND superseded_at IS NULL
+        AND transitioned_at IS NULL AND superseded_at IS NULL
       FOR UPDATE`,
     [runId, taskId],
   );

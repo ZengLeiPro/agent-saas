@@ -83,7 +83,7 @@ export async function finalizeMergedSource(
         `SELECT id FROM ${host.executionsTable}
           WHERE id=$1 AND task_id=$2
             AND status IN ('queued','running','waiting_user','waiting_approval')
-            AND resolved_at IS NULL AND superseded_at IS NULL
+            AND transitioned_at IS NULL AND superseded_at IS NULL
           FOR UPDATE`,
         [input.expectedReview.executionId, input.expectedReview.deliveryTaskId],
       );

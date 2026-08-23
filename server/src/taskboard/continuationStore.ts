@@ -34,7 +34,6 @@ export interface TaskboardContinuationStoreHost {
   commentsTable: string;
   changesTable: string;
   executionsTable: string;
-  resolutionsTable: string;
   integrationSourcesTable: string;
   remediationAttemptsTable: string;
   continuationOutboxTable: string;
@@ -268,7 +267,7 @@ export function completeContinuation(
     const waitingExecution = await client.query(
       `SELECT 1 FROM ${host.executionsTable}
         WHERE task_id=$1 AND status IN ('waiting_user','waiting_approval')
-          AND resolved_at IS NULL AND superseded_at IS NULL
+          AND transitioned_at IS NULL AND superseded_at IS NULL
         LIMIT 1`,
       [taskId],
     );
@@ -354,27 +353,11 @@ export async function listTaskExecutions(
 ): Promise<TaskBoardExecution[]> {
   await loadAccessibleTask(host, identity, taskId);
   const result = await host.pool.query(
-    `SELECT e.*,
-            r.outcome AS resolution_outcome,r.summary AS resolution_summary,
-            r.to_status AS task_status_after,r.ignored_reason,r.historical AS resolution_historical,
-            (r.execution_id IS NOT NULL) AS has_resolution,
-            legacy.candidate_count AS legacy_resolution_count,
-            legacy.valid_count AS legacy_resolution_valid_count,
-            EXISTS (
+    `SELECT e.*,EXISTS (
               SELECT 1 FROM ${host.continuationOutboxTable} continuation
                WHERE continuation.task_id=e.task_id AND continuation.status<>'completed'
             ) AS continuation_active
        FROM ${host.executionsTable} e
-       LEFT JOIN ${host.resolutionsTable} r ON r.execution_id=e.id
-       LEFT JOIN LATERAL (
-         SELECT count(*)::int AS candidate_count,
-                count(*) FILTER (WHERE NULLIF(c.payload->>'outcome','') IS NOT NULL
-                  AND NULLIF(c.payload->>'summary','') IS NOT NULL)::int AS valid_count
-           FROM ${host.changesTable} c
-          WHERE c.task_id=e.task_id AND c.change_type IN ('execution.resolved','execution.resolved.v2')
-            AND (c.payload->>'executionId'=e.id
-              OR ((c.payload->>'executionId') IS NULL AND c.payload->>'runId'=e.run_id))
-       ) legacy ON true
        JOIN ${host.tasksTable} t ON t.id=e.task_id
        JOIN ${host.boardsTable} b ON b.id=t.board_id
       WHERE e.task_id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')

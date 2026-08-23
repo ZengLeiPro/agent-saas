@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { TaskBoardTask } from '../../../../shared/src/types/taskboard.js';
 import type { RepositoryPullRequestSnapshot } from '../repositoryProvider.js';
-import { assertCurrentCandidatePullRequestGate, assertCurrentPullRequestGate } from './resolutionService.js';
+import { assertCurrentCandidatePullRequestGate, assertCurrentPullRequestGate } from './pullRequestGate.js';
 
 const task: TaskBoardTask = {
   id: 'task-1', boardId: 'board-1', identifier: 'TASK-1', kind: 'delivery', title: 'CI gate', description: '',

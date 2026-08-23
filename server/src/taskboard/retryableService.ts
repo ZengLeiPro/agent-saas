@@ -7,7 +7,7 @@ import type {
   TaskBoardExecution,
   TaskBoardExecutionContextInput,
   TaskBoardExecutionContextResponse,
-  TaskBoardExecutionResolutionInput,
+  TaskBoardExecutionTransitionInput,
   TaskBoardExecutionStartResult,
   TaskBoardIntegrationBatchCreateInput,
   TaskBoardIntegrationSource,
@@ -422,14 +422,14 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return service.createExecutionCommentV2(identity, runId, body);
   }
 
-  async resolveExecutionV2(
+  async transitionExecutionV2(
     identity: TaskboardIdentity,
     runId: string,
-    input: TaskBoardExecutionResolutionInput,
+    input: TaskBoardExecutionTransitionInput,
   ): Promise<TaskBoardTask> {
     const service = await this.service();
-    if (!service.resolveExecutionV2) throw new Error('Taskboard execution resolution unavailable');
-    return service.resolveExecutionV2(identity, runId, input);
+    if (!service.transitionExecutionV2) throw new Error('Taskboard execution transition unavailable');
+    return service.transitionExecutionV2(identity, runId, input);
   }
 
   async listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {

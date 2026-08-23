@@ -80,7 +80,7 @@ describePg('PgTaskboardStore contract', () => {
     try {
       await pool.query(`DROP TABLE IF EXISTS
         ${store.integrationTriggerOutboxTable}, ${store.blockEpisodesTable}, ${store.cancellationOutboxTable},
-        ${store.resolutionsTable}, ${store.remediationAttemptsTable}, ${store.mergeOperationsTable},
+        ${store.remediationAttemptsTable}, ${store.mergeOperationsTable},
         ${store.mergeAuthorizationsTable}, ${store.integrationSourcesTable}, ${store.integrationLanesTable},
         ${store.attemptsTable}, ${store.changesTable}, ${store.membersTable}, ${store.continuationOutboxTable},
         ${store.executionOutboxTable}, ${store.executionsTable}, ${store.commentsTable}, ${store.tasksTable},
@@ -610,8 +610,8 @@ describePg('PgTaskboardStore contract', () => {
     });
     expect(completed?.task.status).toBe('in_review');
     expect(completed?.execution).toMatchObject({ status: 'succeeded', finishedAt: expect.any(String) });
-    expect((await store.listComments(alice, task.id)).every((item) => item.authorType === 'user')).toBe(true);
-    expect((await store.listComments(alice, task.id)).at(-1)).toMatchObject({ authorType: 'user', authorName: 'alice', body: '认领后补充的最新条件' });
+    expect((await store.listComments(alice, task.id)).find((item) => item.authorType === 'agent')).toMatchObject({ body: 'Agent 交付\n\n实现完成', sessionId: 'session-a', executionId: 'execution-a', executionPurpose: 'work' });
+    expect((await store.listComments(alice, task.id)).find((item) => item.authorType === 'user')).toMatchObject({ authorName: 'alice', body: '认领后补充的最新条件' });
 
     const commentCount = (await store.listComments(alice, task.id)).length;
     const duplicate = await store.completeExecution('run-a', {

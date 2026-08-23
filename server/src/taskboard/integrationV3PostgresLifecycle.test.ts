@@ -147,7 +147,7 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     const host = new PostgresIntegrationV3ComposeHost({
       pool: { query, connect: vi.fn(async () => client) },
       candidatesTable: 'candidates', sourceSnapshotsTable: 'snapshots', requestsOutboxTable: 'requests',
-      tasksTable: 'tasks', boardsTable: 'boards', executionsTable: 'executions', resolutionsTable: 'resolutions',
+      tasksTable: 'tasks', boardsTable: 'boards', executionsTable: 'executions',
       resolvePaths: vi.fn(), runGit: vi.fn(), validateServerOwnedRepository: vi.fn(),
     } as never);
     const operation = vi.fn(async () => 'done');
@@ -286,7 +286,7 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it('binds work completion to the request execution and canonical ready_for_review resolution', async () => {
+  it('binds work completion to the request execution and fenced in_review transition', async () => {
     const query = vi.fn(async (sql: string, _values?: unknown[]) => sql.includes('SELECT b.repository')
       ? { rows: [{ repository: { provider: 'github', repositoryId: 'github:acme/app', owner: 'acme', name: 'app', baseBranch: 'main' }, owner_user_id: 'owner', tenant_id: 'tenant',
         work_execution_id: 'work-1', push_execution_id: 'work-1', push_candidate_id: 'candidate-1', push_candidate_revision: 2,
@@ -296,7 +296,7 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
       : { rows: [] });
     const host = new PostgresIntegrationV3ComposeHost({
       pool: { query }, candidatesTable: 'candidates', sourceSnapshotsTable: 'snapshots', tasksTable: 'tasks', boardsTable: 'boards',
-      executionsTable: 'executions', resolutionsTable: 'resolutions', requestsOutboxTable: 'requests', providerOperationsTable: 'operations',
+      executionsTable: 'executions', requestsOutboxTable: 'requests', providerOperationsTable: 'operations',
       resolvePaths: async () => ({ repositoryPath: '/repo', worktreePath: '/worktree' }), runGit: vi.fn(), validateServerOwnedRepository: vi.fn(),
     } as never);
     const context = await host.resolveContext({ candidate: {
@@ -305,9 +305,9 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     }, revision: { subjectDigest: 'subject-2', headOid: 'head-2' } } as never);
     const sql = String(query.mock.calls[0]![0]);
     expect(sql).toContain("JOIN executions e ON e.id=o.payload->>'executionId'");
-    expect(sql).toContain('JOIN resolutions r ON r.execution_id=e.id');
-    expect(sql).toContain("e.status='succeeded' AND r.outcome='ready_for_review'");
-    expect(sql).toContain('r.historical=false AND r.applied=true');
+    expect(sql).toContain('e.transitioned_at IS NOT NULL');
+    expect(sql).toContain('ORDER BY e.transitioned_at DESC');
+    expect(sql).not.toContain('resolutions');
     expect(sql).toContain('o.work_round=c.work_round');
     expect(sql).toContain("o.payload->>'subjectDigest','')=$2");
     expect(sql).toContain("o.kind='push_ref' AND o.state='succeeded'");

@@ -20,7 +20,7 @@ import { executionFieldMigrationSql, taskFieldMigrationSql } from './executionFi
 import { runExecutionOutboxMigrations } from './executionOutboxStore.js';
 import { quoteSqlLiteral } from './storeHelpers.js';
 import { taskFieldsMigrationSql, taskTableSql } from './taskFields.js';
-import { runTaskboardV2Schema } from './v2Schema.js';
+import { retireTaskboardResolutionSchema, runTaskboardV2Schema } from './v2Schema.js';
 import type { PgTaskboardStore } from './store.js';
 
 export async function initializeTaskboardStore(store: PgTaskboardStore): Promise<void> {
@@ -191,6 +191,7 @@ export async function initializeTaskboardStore(store: PgTaskboardStore): Promise
       + `ON ${store.executionsTable} (task_id) `
       + `WHERE status IN ('queued', 'running', 'waiting_user', 'waiting_approval')`,
     );
+    await retireTaskboardResolutionSchema(store, client);
   } finally {
     await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
     client.release();

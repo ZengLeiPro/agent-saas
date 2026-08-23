@@ -194,8 +194,8 @@ describePg('PgTaskboardStore continuation contract', () => {
     expect(await store.getTask(alice, task.id)).toMatchObject({ status: 'in_review' });
     expect(await store.listComments(alice, task.id)).toEqual(expect.arrayContaining([
       expect.objectContaining({ authorId: alice.ownerUserId, authorType: 'user', body: '释放后独立续跑' }),
+      expect.objectContaining({ authorType: 'agent', body: 'Agent 执行已取消\n\n原执行已取消' }),
     ]));
-    expect((await store.listComments(alice, task.id)).every((comment) => comment.authorType === 'user')).toBe(true);
   });
 
   it('backfills legacy continuation rows once and blocks archive while continuation is active', async () => {

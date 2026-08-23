@@ -370,12 +370,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     if (repository && (!repository.owner || !repository.name || !repository.baseBranch)) {
       throw new TaskboardValidationError('Repository owner, name and base branch are required');
     }
-    if (integrationPolicy && !repository) {
-      throw new TaskboardValidationError(
-        'Integration policy requires a repository',
-        'TASKBOARD_REPOSITORY_REQUIRED',
-      );
-    }
+    if (integrationPolicy && !repository) throw new TaskboardValidationError(
+      'Integration policy requires a repository', 'TASKBOARD_REPOSITORY_REQUIRED',
+    );
     if (integrationPolicy?.enabled && integrationPolicy.workflowVersion === 3 && repository) await this.probeIntegrationV3Repository({ tenantId: identity.tenantId, ownerUserId: identity.ownerUserId, repository });
     try {
       return await this.withTransaction(async (client) => {

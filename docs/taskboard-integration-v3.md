@@ -102,11 +102,20 @@
 
 所有写操作自带数据库事务；provider 写操作不应直接包在该事务中，而应由后续 operation ledger 按 prepare/execute/reconcile 协议衔接。
 
-## 7. v2 兼容
+## 7. CI 门禁解析
+
+门禁优先级固定为：GitHub branch protection / rulesets 声明的 required checks → 看板 `integrationPolicy.ciPolicy.requiredChecks` → 未配置。
+
+- 看板 fallback 按看板与仓库配置隔离，可为每个 context 额外指定 GitHub App ID。
+- 只有 GitHub 已权威确认 required checks 为空时才使用 fallback；GitHub 策略不可判定、存在不支持规则或要求 merge queue 时继续 fail closed。
+- 任意 observed optional check 都不会自动成为 required check。
+- 两层均为空时返回 `TASKBOARD_CI_UNCONFIGURED`，提示配置 GitHub 门禁或看板 fallback；它不是普通 pending。
+
+## 8. v2 兼容
 
 现有 integration source 状态、remediation、Merge Agent schema 和 execution purpose 均未删除或改义。现有批次创建路径未指定 v3，因此继续落为 workflow v2。新增表和索引采用 expand-only、`IF NOT EXISTS` / 可重复 trigger 安装，v2 读写路径不依赖 candidate 表。
 
-## 8. 生产启用条件
+## 9. 生产启用条件
 
 v3 默认关闭；只有显式配置并通过全部激活探针后才承载批次：
 

@@ -226,6 +226,88 @@ describe('GithubRepositoryProvider', () => {
     await expect(provider.getPullRequest(repository, '42', 'owner-user')).rejects.toThrow('outside the board policy');
   });
 
+  it('uses board fallback checks only when GitHub declares no required checks', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        number: 42, state: 'open', merged: false, draft: false, mergeable: true,
+        head: { ref: 'feat/x', sha: 'head-oid', repo: { full_name: 'acme/app' } },
+        base: { ref: 'main', sha: 'base-oid', repo: { full_name: 'acme/app' } },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [
+        { name: 'board-ci', status: 'completed', conclusion: 'success', app: { id: 9 } },
+        { name: 'optional-job', status: 'completed', conclusion: 'success' },
+      ] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ statuses: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ contexts: [], checks: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const snapshot = await provider.getPullRequest({
+      ...repository,
+      ciPolicy: { requiredChecks: [{ name: 'board-ci', appId: 9 }] },
+    }, '42', 'owner-user');
+
+    expect(snapshot).toMatchObject({
+      requiredChecksKnown: true,
+      requiredChecksConfigured: true,
+      requiredChecksSource: 'board',
+      requiredChecks: [{ name: 'board-ci', appId: 9, status: 'success' }],
+    });
+    expect(snapshot.requiredChecks).not.toContainEqual(expect.objectContaining({ name: 'optional-job' }));
+  });
+
+  it('marks CI as unconfigured when neither GitHub nor the board supplies required checks', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        number: 42, state: 'open', merged: false, draft: false, mergeable: true,
+        head: { ref: 'feat/x', sha: 'head-oid', repo: { full_name: 'acme/app' } },
+        base: { ref: 'main', sha: 'base-oid', repo: { full_name: 'acme/app' } },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [{ name: 'optional-job', status: 'completed', conclusion: 'success' }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ statuses: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ contexts: [], checks: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const snapshot = await provider.getPullRequest(repository, '42', 'owner-user');
+
+    expect(snapshot).toMatchObject({
+      requiredChecksKnown: true,
+      requiredChecksConfigured: false,
+      requiredChecksSource: 'unconfigured',
+      requiredChecks: [],
+    });
+  });
+
+  it('keeps GitHub required checks authoritative over board fallback checks', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        number: 42, state: 'open', merged: false, draft: false, mergeable: true,
+        head: { ref: 'feat/x', sha: 'head-oid', repo: { full_name: 'acme/app' } },
+        base: { ref: 'main', sha: 'base-oid', repo: { full_name: 'acme/app' } },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [
+        { name: 'github-ci', status: 'completed', conclusion: 'success' },
+        { name: 'board-ci', status: 'completed', conclusion: 'failure' },
+      ] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ statuses: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ contexts: ['github-ci'] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
+    const provider = new GithubRepositoryProvider({ resolveToken: async () => 'token', fetchImpl });
+
+    const snapshot = await provider.getPullRequest({
+      ...repository,
+      ciPolicy: { requiredChecks: [{ name: 'board-ci' }] },
+    }, '42', 'owner-user');
+
+    expect(snapshot).toMatchObject({
+      requiredChecksConfigured: true,
+      requiredChecksSource: 'github',
+      requiredChecks: [{ name: 'github-ci', status: 'success' }],
+    });
+    expect(snapshot.requiredChecks).not.toContainEqual(expect.objectContaining({ name: 'board-ci' }));
+  });
+
   it('uses expected head oid and idempotency key for server-side merge', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
       merged: true,

@@ -58,6 +58,20 @@ const integrationTriggerSchema = z.discriminatedUnion('mode', [
   }).strict(),
 ]);
 
+const boardCiPolicySchema = z.object({
+  requiredChecks: z.array(z.object({
+    name: z.string().trim().min(1).max(256),
+    appId: z.number().int().positive().optional(),
+  }).strict()).min(1).max(50).superRefine((checks, ctx) => {
+    const identities = new Set<string>();
+    checks.forEach((check, index) => {
+      const identity = `${check.name}\u0000${check.appId ?? '*'}`;
+      if (identities.has(identity)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [index], message: 'Required CI check must be unique' });
+      identities.add(identity);
+    });
+  }),
+}).strict();
+
 const integrationPolicySchema = z.object({
   schemaVersion: z.literal(1),
   enabled: z.boolean(),
@@ -67,6 +81,7 @@ const integrationPolicySchema = z.object({
     engineV3: z.boolean(), compose: z.boolean(), review: z.boolean(), merge: z.boolean(),
     cleanup: z.boolean(), workspaceSync: z.boolean(),
   }).strict().optional(),
+  ciPolicy: boardCiPolicySchema.optional(),
   trigger: integrationTriggerSchema,
   batch: z.object({
     maxTasks: z.number().int().min(1).max(100),

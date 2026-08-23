@@ -144,6 +144,17 @@ export type TaskBoardIntegrationCandidateDigestVersion =
   (typeof TASKBOARD_INTEGRATION_CANDIDATE_DIGEST_VERSIONS)[number];
 export type TaskBoardIntegrationMergeMethod = "merge" | "squash" | "rebase";
 
+export interface TaskBoardCiRequiredCheck {
+  name: string;
+  /** GitHub App identity; omitted only when the context is not app-specific. */
+  appId?: number;
+}
+
+/** Board-scoped CI fallback, used only when GitHub declares no required checks. */
+export interface TaskBoardCiPolicy {
+  requiredChecks: TaskBoardCiRequiredCheck[];
+}
+
 export interface TaskBoardRepositoryConfig {
   provider: "github";
   repositoryId: string;
@@ -151,6 +162,8 @@ export interface TaskBoardRepositoryConfig {
   name: string;
   baseBranch: string;
   allowForkPullRequest: false;
+  /** Runtime-only overlay from this board's integration policy; never stored in repository JSON. */
+  ciPolicy?: TaskBoardCiPolicy;
 }
 
 export type TaskBoardIntegrationTrigger =
@@ -173,6 +186,8 @@ export interface TaskBoardIntegrationPolicy {
     cleanup: boolean;
     workspaceSync: boolean;
   };
+  /** Used only when GitHub branch protection and rulesets declare no required checks. */
+  ciPolicy?: TaskBoardCiPolicy;
   trigger: TaskBoardIntegrationTrigger;
   batch: {
     maxTasks: number;
@@ -280,7 +295,7 @@ export interface TaskBoardTask {
   providerCiExecutionId?: string;
   providerCiPurpose?: TaskBoardExecutionPurpose;
   providerCiHeadOid?: string;
-  providerCiStatus?: 'success' | 'pending' | 'failure' | 'unavailable';
+  providerCiStatus?: 'success' | 'pending' | 'failure' | 'unavailable' | 'unconfigured';
   providerCiInspectedAt?: string;
   mergedCommitOid?: string;
   integrationTaskId?: string;

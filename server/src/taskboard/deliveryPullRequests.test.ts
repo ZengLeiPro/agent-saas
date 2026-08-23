@@ -104,6 +104,7 @@ describe('pull request CI gate', () => {
     state: 'open',
     mergeCommitOid: undefined,
     requiredChecksKnown: true,
+    requiredChecksConfigured: true,
     requiredChecks: [{ name: 'Build & Check', status: 'success' }],
   };
 
@@ -111,7 +112,7 @@ describe('pull request CI gate', () => {
     [{ ...current, requiredChecks: [{ name: 'Build & Check', status: 'pending' }] }, 'pending'],
     [{ ...current, requiredChecks: [{ name: 'Build & Check', status: 'failure' }] }, 'failure'],
     [{ ...current, requiredChecksKnown: false }, 'unavailable'],
-    [{ ...current, requiredChecks: [] }, 'pending'],
+    [{ ...current, requiredChecksConfigured: false, requiredChecks: [] }, 'unconfigured'],
     [current, 'success'],
   ];
 
@@ -136,7 +137,7 @@ describe('pull request CI gate', () => {
     [{ ...current, requiredChecks: [{ name: 'Build & Check', status: 'pending' }] }, 'TASKBOARD_CI_PENDING'],
     [{ ...current, requiredChecks: [{ name: 'Build & Check', status: 'failure' }] }, 'TASKBOARD_CI_FAILED'],
     [{ ...current, requiredChecksKnown: false }, 'TASKBOARD_CI_UNAVAILABLE'],
-    [{ ...current, requiredChecks: [] }, 'TASKBOARD_CI_PENDING'],
+    [{ ...current, requiredChecksConfigured: false, requiredChecks: [] }, 'TASKBOARD_CI_UNCONFIGURED'],
   ];
 
   it.each(rejectionCases)('rejects non-green checks with %s', (snapshot, code) => {

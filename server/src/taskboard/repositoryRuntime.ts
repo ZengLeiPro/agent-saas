@@ -63,7 +63,10 @@ export class RepositoryProviderIntegrationEngineV3Adapter implements Integration
         ? this.provider.getCommit(repository, pull.mergeCommitOid, credentialOwnerId)
         : Promise.resolve(undefined),
     ]);
-    const requiredCheckIdentitiesStable = sameRequiredCheckIdentities(pull.requiredChecks, gates.requiredChecks);
+    const selectedRequiredChecks = gates.requiredChecks.length > 0
+      ? gates.requiredChecks
+      : repository.ciPolicy?.requiredChecks ?? [];
+    const requiredCheckIdentitiesStable = sameRequiredCheckIdentities(pull.requiredChecks, selectedRequiredChecks);
     const unsupportedRules = requiredCheckIdentitiesStable
       ? gates.unsupportedRules
       : [...new Set([...gates.unsupportedRules, 'required-check-identities-changed'])].sort();
@@ -78,6 +81,7 @@ export class RepositoryProviderIntegrationEngineV3Adapter implements Integration
       headOid: pull.headOid,
       treeOid: head.treeOid,
       requiredChecksKnown: pull.requiredChecksKnown === true && gates.known && requiredCheckIdentitiesStable,
+      ...(pull.requiredChecksConfigured !== undefined ? { requiredChecksConfigured: pull.requiredChecksConfigured } : {}),
       requiredChecks: pull.requiredChecks,
       unsupportedRules,
       mergeQueueRequired: gates.mergeQueueRequired,

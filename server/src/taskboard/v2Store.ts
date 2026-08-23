@@ -4,9 +4,10 @@ import type { PoolClient } from 'pg';
 import type {
   TaskBoardChange, TaskBoardComment, TaskBoardExecutionContextInput, TaskBoardExecutionContextResponse,
   TaskBoardIntegrationBatchCreateInput, TaskBoardIntegrationSource, TaskBoardMember, TaskBoardMemberPatchInput,
-  TaskBoardRepositoryConfig, TaskBoardTask,
+  TaskBoardIntegrationPolicy, TaskBoardRepositoryConfig, TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import { rowToBoard } from './boardFields.js';
+import { repositoryWithBoardCiPolicy } from './ciPolicy.js';
 import { loadExecutionIntegrationCandidate } from './executionCandidateContext.js';
 import { assertIntegrationSourcesProviderReady } from './integrationSourceCiGate.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
@@ -170,6 +171,10 @@ export async function createIntegrationBatch(
       throw new TaskboardValidationError('Board integration policy is not enabled', 'TASKBOARD_INTEGRATION_DISABLED');
     }
     const workflowVersion = policy.workflowVersion ?? 2;
+    const providerRepository = repositoryWithBoardCiPolicy(
+      repository,
+      policy as unknown as TaskBoardIntegrationPolicy,
+    );
     if (workflowVersion === 3 && policy.featureFlags?.engineV3 !== true) {
       throw new TaskboardValidationError('Workflow v3 requires the engineV3 feature flag', 'TASKBOARD_INTEGRATION_V3_DISABLED');
     }
@@ -250,7 +255,7 @@ export async function createIntegrationBatch(
       }
     }
     const sourceProvider = workflowVersion === 3 ? options.integrationV3RepositoryProvider : options.repositoryProvider;
-    await assertIntegrationSourcesProviderReady(sourceProvider, repository, String(board.owner_user_id), sources.rows);
+    await assertIntegrationSourcesProviderReady(sourceProvider, providerRepository, String(board.owner_user_id), sources.rows);
     const duplicate = await client.query(
       `SELECT s.delivery_task_id,s.provider_pull_request_id
          FROM ${options.integrationSourcesTable} s

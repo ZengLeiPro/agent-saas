@@ -60,6 +60,10 @@ export interface RepositoryPullRequestSnapshot {
   requiredChecks: RepositoryRequiredCheck[];
   /** False means the provider could not authoritatively determine the required gate set. */
   requiredChecksKnown?: boolean;
+  /** False means neither GitHub nor this board's explicit fallback configured required checks. */
+  requiredChecksConfigured?: boolean;
+  /** The selected required-check policy source, when the provider can determine it. */
+  requiredChecksSource?: 'github' | 'board' | 'unconfigured';
   subjectDigest: string;
 }
 
@@ -227,15 +231,21 @@ export class GithubRepositoryProvider implements RepositoryProvider {
       this.getRequiredGateCapabilities(repository, baseRef, credentialOwnerId),
     ]);
     const capabilities = capabilitiesResult.status === 'fulfilled' ? capabilitiesResult.value : undefined;
+    const githubRequiredChecks = capabilities?.requiredChecks ?? [];
+    const boardRequiredChecks = repository.ciPolicy?.requiredChecks ?? [];
+    const selectedRequiredChecks = githubRequiredChecks.length > 0
+      ? githubRequiredChecks
+      : boardRequiredChecks;
+    const requiredChecksSource = githubRequiredChecks.length > 0
+      ? 'github'
+      : boardRequiredChecks.length > 0 ? 'board' : 'unconfigured';
     const requiredChecks = normalizeChecks(
       checksResult.status === 'fulfilled' ? checksResult.value : undefined,
       statusesResult.status === 'fulfilled' ? statusesResult.value : undefined,
-      capabilities ? {
-        checks: capabilities.requiredChecks.map((check) => ({
-          context: check.name,
-          ...(check.appId !== undefined ? { app_id: check.appId } : {}),
-        })),
-      } : undefined,
+      { checks: selectedRequiredChecks.map((check) => ({
+        context: check.name,
+        ...(check.appId !== undefined ? { app_id: check.appId } : {}),
+      })) },
     );
     const requiredChecksKnown = capabilities?.known === true
       && capabilities.unsupportedRules.length === 0
@@ -256,6 +266,10 @@ export class GithubRepositoryProvider implements RepositoryProvider {
       mergeable: typeof pullRecord.mergeable === 'boolean' ? pullRecord.mergeable : null,
       ...(pullRecord.mergeable_state ? { mergeableState: String(pullRecord.mergeable_state) } : {}),
       requiredChecks, requiredChecksKnown,
+      ...(requiredChecksKnown ? {
+        requiredChecksConfigured: selectedRequiredChecks.length > 0,
+        requiredChecksSource,
+      } : {}),
       subjectDigest: repositorySubjectDigest({ repositoryId: repository.repositoryId, providerPullRequestId: String(number), number, headOid, baseRef, baseOid }),
     };
   }

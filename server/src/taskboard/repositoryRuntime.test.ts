@@ -56,6 +56,29 @@ describe('RepositoryProviderIntegrationEngineV3Adapter', () => {
     expect(provider.getReference).toHaveBeenCalledWith(repository, 'main', 'owner-1');
   });
 
+  it('keeps board fallback identities stable when GitHub declares no required checks', async () => {
+    const fallbackRepository = { ...repository, ciPolicy: { requiredChecks: [{ name: 'Board CI', appId: 9 }] } };
+    const provider = {
+      getPullRequest: vi.fn(async () => ({
+        providerPullRequestId: '42', number: 42, state: 'open' as const, draft: false,
+        headRef: 'integration/task-1', headOid: 'head-1', baseRef: 'main', baseOid: 'base-1',
+        mergeable: true, requiredChecksKnown: true, requiredChecksConfigured: true,
+        requiredChecks: [{ name: 'Board CI', appId: 9, status: 'success' as const }], subjectDigest: 'sha256:subject',
+      })),
+      getCommit: vi.fn(async (_repository, oid: string) => ({ oid, treeOid: `${oid}-tree` })),
+      getReference: vi.fn(async (_repository, ref: string) => ({ ref, oid: 'current-main', treeOid: 'main-tree' })),
+      getRequiredGateCapabilities: vi.fn(async () => ({
+        known: true, requiredChecks: [], mergeQueueRequired: false, unsupportedRules: [],
+      })),
+      mergePullRequest: vi.fn(),
+    } as unknown as RepositoryProvider;
+    const adapter = new RepositoryProviderIntegrationEngineV3Adapter(provider);
+
+    const facts = await adapter.readFacts(fallbackRepository, '42', 'owner-1');
+
+    expect(facts).toMatchObject({ requiredChecksKnown: true, requiredChecksConfigured: true });
+  });
+
   it('fails closed when required-check identities change between Provider reads', async () => {
     const provider = {
       getPullRequest: vi.fn(async () => ({

@@ -46,6 +46,30 @@ function numberInRange(value: string, fallback: number, min: number, max: number
   return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
 }
 
+function formatCiRequiredChecks(policy: TaskBoardIntegrationPolicy): string {
+  return (policy.ciPolicy?.requiredChecks ?? [])
+    .map((check) => check.appId === undefined ? check.name : `${check.name} | ${check.appId}`)
+    .join("\n");
+}
+
+function parseCiRequiredChecks(value: string): TaskBoardIntegrationPolicy["ciPolicy"] {
+  const checks = value.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
+    const [rawName, rawAppId, ...extra] = line.split("|").map((part) => part.trim());
+    if (!rawName || extra.length > 0) throw new Error("每行填写检查名称，或“检查名称 | GitHub App ID”");
+    if (!rawAppId) return { name: rawName };
+    const appId = Number(rawAppId);
+    if (!Number.isSafeInteger(appId) || appId <= 0) throw new Error("GitHub App ID 必须是正整数");
+    return { name: rawName, appId };
+  });
+  const identities = new Set<string>();
+  for (const check of checks) {
+    const identity = `${check.name}\u0000${check.appId ?? "*"}`;
+    if (identities.has(identity)) throw new Error(`重复的 CI 检查：${check.name}`);
+    identities.add(identity);
+  }
+  return checks.length ? { requiredChecks: checks } : undefined;
+}
+
 function defaultPolicy(): TaskBoardIntegrationPolicy {
   return {
     schemaVersion: 1,
@@ -116,6 +140,7 @@ export function BoardDialog({
   const [mergeMethod, setMergeMethod] = useState<"merge" | "squash" | "rebase">("squash");
   const [maxRemediationRounds, setMaxRemediationRounds] = useState("2");
   const [maxTransientRetries, setMaxTransientRetries] = useState("3");
+  const [ciRequiredChecks, setCiRequiredChecks] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dirtyFieldsRef = useRef<Set<BoardDraftField>>(new Set());
@@ -159,6 +184,7 @@ export function BoardDialog({
       setMergeMethod(policy.execution.mergeMethod);
       setMaxRemediationRounds(String(policy.execution.maxAutomaticRemediationRounds));
       setMaxTransientRetries(String(policy.execution.maxTransientRetries));
+      setCiRequiredChecks(formatCiRequiredChecks(policy));
       setError(null);
       return;
     }
@@ -195,6 +221,7 @@ export function BoardDialog({
       setMergeMethod(policy.execution.mergeMethod);
       setMaxRemediationRounds(String(policy.execution.maxAutomaticRemediationRounds));
       setMaxTransientRetries(String(policy.execution.maxTransientRetries));
+      setCiRequiredChecks(formatCiRequiredChecks(policy));
     }
   }, [board, open]);
 
@@ -258,12 +285,20 @@ export function BoardDialog({
         return [[purpose, trimmed] as const];
       }),
     ) as TaskBoardStagePrompts;
+    let ciPolicy: TaskBoardIntegrationPolicy["ciPolicy"];
+    try {
+      ciPolicy = parseCiRequiredChecks(ciRequiredChecks);
+    } catch (parseError) {
+      setError(parseError instanceof Error ? parseError.message : "CI fallback 配置无效");
+      return;
+    }
     const integrationPolicy: TaskBoardIntegrationPolicy = {
       schemaVersion: 1,
       enabled: repositoryEnabled && policyEnabled,
       revision: previousPolicy.revision || "server",
       workflowVersion,
       ...(workflowVersion === 3 ? { featureFlags } : {}),
+      ...(ciPolicy ? { ciPolicy } : {}),
       trigger: triggerMode === "scheduled"
         ? { mode: "scheduled", cron: cron.trim(), timezone: timezone.trim() }
         : triggerMode === "on_ready"
@@ -509,6 +544,18 @@ export function BoardDialog({
                   </div>
                   <div className="space-y-2"><Label htmlFor="taskboard-remediation-rounds">自动修复轮数</Label><Input id="taskboard-remediation-rounds" type="number" min={0} max={20} value={maxRemediationRounds} onChange={(event) => { dirtyFieldsRef.current.add("integrationPolicy"); setMaxRemediationRounds(event.target.value); }} disabled={submitting || !canEditPolicy} /></div>
                   <div className="space-y-2"><Label htmlFor="taskboard-transient-retries">瞬时重试次数</Label><Input id="taskboard-transient-retries" type="number" min={0} max={20} value={maxTransientRetries} onChange={(event) => { dirtyFieldsRef.current.add("integrationPolicy"); setMaxTransientRetries(event.target.value); }} disabled={submitting || !canEditPolicy} /></div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="taskboard-ci-fallback">CI fallback required contexts</Label>
+                  <Textarea
+                    id="taskboard-ci-fallback"
+                    value={ciRequiredChecks}
+                    onChange={(event) => { dirtyFieldsRef.current.add("integrationPolicy"); setCiRequiredChecks(event.target.value); }}
+                    placeholder={"每行一个检查名称；需锁定 GitHub App 时填写：检查名称 | App ID"}
+                    rows={3}
+                    disabled={submitting || !canEditPolicy}
+                  />
+                  <p className="text-xs text-muted-foreground">仅当 GitHub branch protection / rulesets 未声明 required checks 时使用；留空会以“CI 门禁未配置”失败关闭。</p>
                 </div>
                 <p className="text-xs text-muted-foreground">固定要求绿色检查；独立来源可继续，冲突自动修复；不自动部署或删除远端分支。</p>
               </>

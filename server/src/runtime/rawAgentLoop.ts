@@ -1075,8 +1075,7 @@ export class RawAgentLoop implements AgentLoop {
                 trigger: 'manual',
                 sourceRunId: context.runId,
                 controlSourceRunIds,
-                baseFixedTokens: estimateContextTokens([input.instructions, input.memoryContext, tools]),
-                currentMemoryInjected: Boolean(input.memoryContext),
+                baseFixedTokens: estimateContextTokens([input.instructions, tools]),
               },
             );
             if (outcome.usage) totalUsage = mergeUsage(totalUsage, outcome.usage);
@@ -1168,9 +1167,8 @@ export class RawAgentLoop implements AgentLoop {
                   inline: true,
                   trigger: 'threshold',
                   sourceRunId: context.runId,
-                  baseFixedTokens: estimateContextTokens([input.instructions, input.memoryContext, tools]),
-                  currentMemoryInjected: Boolean(input.memoryContext),
-                },
+                  baseFixedTokens: estimateContextTokens([input.instructions, tools]),
+                  },
               );
               if (outcome.usage) totalUsage = mergeUsage(totalUsage, outcome.usage);
               if (outcome.status === 'aborted') {
@@ -1546,9 +1544,8 @@ export class RawAgentLoop implements AgentLoop {
                   inline: true,
                   trigger: 'threshold',
                   sourceRunId: context.runId,
-                  baseFixedTokens: estimateContextTokens([input.instructions, input.memoryContext, tools]),
-                  currentMemoryInjected: Boolean(input.memoryContext),
-                },
+                  baseFixedTokens: estimateContextTokens([input.instructions, tools]),
+                  },
               );
               if (outcome.usage) totalUsage = mergeUsage(totalUsage, outcome.usage);
               if (outcome.status === 'aborted') {
@@ -2004,7 +2001,7 @@ export class RawAgentLoop implements AgentLoop {
           sessionId: context.sessionId,
           runId: context.runId,
           policy: this.contextPolicy,
-          excludeMemoryContext: options.currentMemoryInjected === true,
+          excludeMemoryContext: true,
         }).messages,
       ]);
       const contextWindow = configuredWindow ?? Math.max(1, estimatedCurrentTokens * 2);
@@ -2025,7 +2022,8 @@ export class RawAgentLoop implements AgentLoop {
           sessionId: context.sessionId,
           runId: context.runId,
           policy: this.contextPolicy,
-          excludeMemoryContext: options.currentMemoryInjected === true,
+          excludeMemoryContext: true,
+          checkpointUserHistoryTokenCap: plan.userHistoryTokenCap,
         },
       );
       const compressedMessages = compressedProjection.messages;
@@ -2103,6 +2101,7 @@ export class RawAgentLoop implements AgentLoop {
           rawTailObservedTokens: plan.rawTailObservedTokens,
           fixedTokens: plan.fixedTokens,
           taskAnchors: plan.taskAnchors,
+          ...(plan.memorySnapshot ? { memorySnapshot: plan.memorySnapshot } : {}),
           summaryAudit,
         },
       });

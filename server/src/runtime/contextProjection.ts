@@ -19,8 +19,10 @@ export interface ContextProjectionOptions {
   sessionId: string;
   runId: string;
   policy?: ContextReconstructionPolicy;
-  /** 当前请求已单独注入最新 memoryContext 时，历史 snapshot 不再重复重放。 */
+  /** 当前请求已单独注入最新 memoryContext，或压缩会另行持久化 snapshot 时不重复重放。 */
   excludeMemoryContext?: boolean;
+  /** 连续压缩切换到更小窗口模型时，对旧 checkpoint cap 施加更严格的当前上限。 */
+  checkpointUserHistoryTokenCap?: number;
 }
 
 export interface ContextProjection {
@@ -171,7 +173,10 @@ const SYSTEM_COMMAND_MODEL_CONTENT_PREFIX = '[系统命令]';
  *   内联 checkpoint 只剔除 compaction 事件本身，原始尾部由 Token 预算决定。
  * 原始事件仍在 EventStore（SessionContext(action="search") 可查原文），这里只影响 prompt 投影。
  */
-function applyCompaction(events: PlatformEvent[]): {
+function applyCompaction(
+  events: PlatformEvent[],
+  options: Pick<ContextProjectionOptions, 'excludeMemoryContext' | 'checkpointUserHistoryTokenCap'> = {},
+): {
   effectiveEvents: PlatformEvent[];
   summaryMessages: ModelChatMessage[];
 } {
@@ -192,6 +197,9 @@ function applyCompaction(events: PlatformEvent[]): {
         ? e.id !== event.id
         : !('runId' in e) || e.runId !== event.runId,
     );
+    const retainedHasMemorySnapshot = applyContextRewinds(retained).effectiveEvents.some(
+      (candidate) => candidate.type === 'memory_context',
+    );
     const checkpoint = event.checkpoint;
     const sourceRunFinished = checkpoint?.sourceRunId
       ? events.slice(i + 1).some((candidate) => (
@@ -211,7 +219,11 @@ function applyCompaction(events: PlatformEvent[]): {
             checkpoint.trigger,
             event.id,
             checkpoint.sourceRunId,
-            checkpoint.summaryAudit?.userHistoryTokenCap ?? CHECKPOINT_USER_HISTORY_TOKEN_CAP,
+            options.excludeMemoryContext || retainedHasMemorySnapshot ? undefined : checkpoint.memorySnapshot,
+            Math.min(
+              checkpoint.summaryAudit?.userHistoryTokenCap ?? CHECKPOINT_USER_HISTORY_TOKEN_CAP,
+              options.checkpointUserHistoryTokenCap ?? CHECKPOINT_USER_HISTORY_TOKEN_CAP,
+            ),
           )
           : formatCompactionContext(event.summary, extractUserMessageTrail(compressed)),
       }],
@@ -325,7 +337,7 @@ export function renderUserMessageTrail(
   items: TrailItem[],
   tokenBudget = CHECKPOINT_USER_HISTORY_TOKEN_CAP,
 ): string {
-  if (items.length === 0) return '';
+  if (items.length === 0 || tokenBudget <= 0) return '';
   const full = renderTrailBlock(items.map((item, index) => formatTrailLine(item, index)));
   if (estimateContextTokens(full) <= tokenBudget) return full;
 
@@ -353,14 +365,15 @@ export function renderUserMessageTrail(
     }
     break;
   }
-  return renderTrailBlock(selected, omittedCount);
+  const rendered = renderTrailBlock(selected, omittedCount);
+  return estimateContextTokens(rendered) <= tokenBudget ? rendered : '';
 }
 
 function renderTaskAnchors(
   anchors: CheckpointTaskAnchor[],
   tokenBudget = CHECKPOINT_USER_HISTORY_TOKEN_CAP,
 ): string {
-  if (anchors.length === 0) return '';
+  if (anchors.length === 0 || tokenBudget <= 0) return '';
   const render = (selected: CheckpointTaskAnchor[], omittedCount = 0) => {
     const lines = selected.map((anchor, index) => (
       `${index + 1}. [eventId=${anchor.eventId}]\n${anchor.text}${formatAttachmentRefs(anchor.attachments)}`
@@ -383,16 +396,50 @@ function renderTaskAnchors(
   if (estimateContextTokens(full) <= tokenBudget) return full;
 
   const first = anchors[0]!;
-  let selected: CheckpointTaskAnchor[] = [first];
-  if (estimateContextTokens(render(selected, anchors.length - 1)) > tokenBudget) {
+  if (anchors.length === 1) {
     const fittedText = fitTextToBudget(first.text, (candidateText) => (
-      estimateContextTokens(render([{ ...first, text: candidateText }], anchors.length - 1)) <= tokenBudget
+      estimateContextTokens(render([{ ...first, text: candidateText }])) <= tokenBudget
     ));
-    selected = fittedText === null ? [] : [{ ...first, text: fittedText }];
-    return render(selected, Math.max(0, anchors.length - selected.length));
+    return fittedText === null ? '' : render([{ ...first, text: fittedText }]);
   }
 
-  for (let index = anchors.length - 1; index >= 1; index -= 1) {
+  // 超限时先确保“初始目标 + 最新纠正”都可见；最新短约束优先保留全文，
+  // 再把剩余预算分给首条和中间的最近消息。
+  const latest = anchors.at(-1)!;
+  const omittedMiddle = Math.max(0, anchors.length - 2);
+  const fittedFirstText = fitTextToBudget(first.text, (candidateText) => (
+    estimateContextTokens(render([{ ...first, text: candidateText }, latest], omittedMiddle)) <= tokenBudget
+  ));
+  let selected: CheckpointTaskAnchor[];
+  if (fittedFirstText !== null) {
+    selected = [{ ...first, text: fittedFirstText }, latest];
+  } else {
+    const firstReference = { ...first, text: excerptTextForBudget(first.text, 0) };
+    const fittedLatestText = fitTextToBudget(latest.text, (candidateText) => (
+      estimateContextTokens(render([firstReference, { ...latest, text: candidateText }], omittedMiddle)) <= tokenBudget
+    ));
+    if (fittedLatestText !== null) {
+      selected = [firstReference, { ...latest, text: fittedLatestText }];
+    } else {
+      const latestOnlyText = fitTextToBudget(latest.text, (candidateText) => (
+        estimateContextTokens(render([{ ...latest, text: candidateText }], anchors.length - 1)) <= tokenBudget
+      ));
+      if (latestOnlyText !== null) {
+        selected = [{ ...latest, text: latestOnlyText }];
+      } else {
+        const latestWithoutNotice = fitTextToBudget(latest.text, (candidateText) => (
+          estimateContextTokens(render([{ ...latest, text: candidateText }])) <= tokenBudget
+        ));
+        return latestWithoutNotice === null ? '' : render([{ ...latest, text: latestWithoutNotice }]);
+      }
+    }
+  }
+  if (selected.length < 2 || selected[0]!.text !== first.text || selected.at(-1)!.text !== latest.text) {
+    const rendered = render(selected, Math.max(0, anchors.length - selected.length));
+    return estimateContextTokens(rendered) <= tokenBudget ? rendered : '';
+  }
+
+  for (let index = anchors.length - 2; index >= 1; index -= 1) {
     const anchor = anchors[index]!;
     const candidate = [selected[0]!, anchor, ...selected.slice(1)];
     if (estimateContextTokens(render(candidate, index - 1)) <= tokenBudget) {
@@ -421,6 +468,7 @@ function formatCheckpointContext(
   trigger: 'manual' | 'threshold',
   checkpointId: string,
   sourceRunId: string | undefined,
+  memorySnapshot: string | undefined,
   userHistoryTokenCap: number,
 ): string {
   const taskAnchorIds = new Set(taskAnchors.map((anchor) => anchor.eventId));
@@ -432,6 +480,7 @@ function formatCheckpointContext(
     summary,
     '</checkpoint-summary>',
   ];
+  if (memorySnapshot) parts.push('', '<checkpoint-memory-snapshot>', memorySnapshot, '</checkpoint-memory-snapshot>');
   const trailItems = trail.filter((item) => !taskAnchorIds.has(item.eventId));
   const anchors = renderTaskAnchors(
     taskAnchors,
@@ -502,7 +551,7 @@ export function buildContextProjection(allEvents: PlatformEvent[], options: Cont
   // recovery notice 来自完整日志，但 compaction 必须先在原始事件序列上解析 cutoff：切点可能
   // 恰好是稍后被 context_rewind 排除的事件。切分后再应用 rewind，避免 raw tail 被误吞。
   const { effectiveEvents: rewoundVisibleEvents, recoveryMessages } = applyContextRewinds(visibleEvents);
-  const { effectiveEvents: compactedEvents, summaryMessages: compactionMessages } = applyCompaction(visibleEvents);
+  const { effectiveEvents: compactedEvents, summaryMessages: compactionMessages } = applyCompaction(visibleEvents, options);
   const { effectiveEvents: rewoundEvents } = applyContextRewinds(compactedEvents);
   // cutoffEventId 可能恰好指向 memory_context，必须先完成 compaction 切分再折叠 snapshot，
   // 否则找不到切点会错误退化为“压缩到 compaction 事件自身”。

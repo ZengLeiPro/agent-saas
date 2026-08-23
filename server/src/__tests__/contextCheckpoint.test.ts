@@ -64,6 +64,46 @@ describe('context checkpoint planner', () => {
     expect(plan.taskAnchors).toEqual([]);
   });
 
+  it('只按压缩前缀计费用户轨迹，当前大图文轮次可容纳时保留在 raw tail', () => {
+    const current = {
+      ...base,
+      id: 'u-current',
+      type: 'user_message',
+      content: '图像理解结果：'.repeat(2_500),
+      visionAnalysis: {
+        model: 'vision-test',
+        attachmentIds: ['attachment-current'],
+        content: '当前图片中的关键安全约束',
+      },
+    } as PlatformEvent;
+    const plan = planContextCheckpoint({
+      events: [current],
+      contextWindow: 272_000,
+      thresholdTokens: 217_600,
+      baseFixedTokens: 40_000,
+      sourceRunId: 'run-active',
+    });
+
+    expect(plan.rawTailStartIndex).toBe(0);
+    expect(plan.coveredEventCount).toBe(0);
+    expect(plan.taskAnchors).toEqual([]);
+    expect(plan.fixedTokens).toBeLessThan(50_000);
+  });
+
+  it('cutoff 覆盖 memory_context 时把最新 snapshot 持久化到 checkpoint', () => {
+    const memory = { ...base, id: 'memory-1', type: 'memory_context', content: '<memory_context>禁止部署</memory_context>' } as PlatformEvent;
+    const plan = planContextCheckpoint({
+      events: [memory, assistant('a-history', '历史输出'.repeat(12_000)), user('u-current', '当前任务'.repeat(2_000))],
+      contextWindow: 272_000,
+      thresholdTokens: 217_600,
+      baseFixedTokens: 40_000,
+      sourceRunId: 'run-active',
+    });
+
+    expect(plan.rawTailStartIndex).toBe(2);
+    expect(plan.memorySnapshot).toContain('禁止部署');
+  });
+
   it('小窗口模型按目标剩余空间下调用户历史上限，而不是固定占用 60K', () => {
     const plan = planContextCheckpoint({
       events: [user('u1', '长'.repeat(50_000)), assistant('a1', '处理中')],

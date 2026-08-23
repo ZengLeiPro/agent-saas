@@ -219,7 +219,6 @@ export interface CheckpointTaskAnchor {
     originalName: string;
   }>;
 }
-
 export interface ContextCheckpointMetadata {
   version: 1;
   trigger: 'manual' | 'threshold';
@@ -235,6 +234,7 @@ export interface ContextCheckpointMetadata {
   fixedTokens: number;
   taskAnchors: CheckpointTaskAnchor[];
   summaryAudit?: import('./compactionSummary.js').CompactionSummaryAudit;
+  memorySnapshot?: string;
 }
 export type ModelUserContentPart =
   | { type: 'text'; text: string }

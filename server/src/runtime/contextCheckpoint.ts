@@ -37,6 +37,7 @@ export interface ContextCheckpointPlan {
   rawTailBudgetTokens: number;
   fixedTokens: number;
   userHistoryTokenCap: number;
+  memorySnapshot?: string;
   rawTailObservedTokens: number;
   rawTailStartIndex: number;
   rawTailStartEventId?: string;
@@ -92,10 +93,19 @@ export function extractCheckpointTaskAnchors(
   });
 }
 
+function latestMemorySnapshot(events: PlatformEvent[]): { index: number; content: string } | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]!;
+    if (event.type === 'memory_context') return { index, content: event.content };
+  }
+  return undefined;
+}
+
 function checkpointProjectionFixedTokens(
   events: PlatformEvent[],
   taskAnchors: CheckpointTaskAnchor[],
   userHistoryTokenCap: number,
+  memorySnapshot?: string,
 ): number {
   const taskAnchorIds = new Set(taskAnchors.map((anchor) => anchor.eventId));
   const userTrajectory = events.flatMap((event) => {
@@ -116,7 +126,7 @@ function checkpointProjectionFixedTokens(
   return Math.min(
     estimateContextTokens({ taskAnchors, userTrajectory }),
     userHistoryTokenCap,
-  ) + CHECKPOINT_PROTOCOL_TOKEN_RESERVE;
+  ) + estimateContextTokens(memorySnapshot ?? '') + CHECKPOINT_PROTOCOL_TOKEN_RESERVE;
 }
 
 interface AtomicRange {
@@ -263,28 +273,51 @@ export function planContextCheckpoint(input: ContextCheckpointPlanInput): Contex
     Math.floor(contextWindow * CHECKPOINT_SUMMARY_CONTEXT_RATIO),
     CHECKPOINT_SUMMARY_TOKEN_CAP,
   );
-  const taskAnchors = extractCheckpointTaskAnchors(input.events, input.sourceRunId);
+  const allTaskAnchors = extractCheckpointTaskAnchors(input.events, input.sourceRunId);
   const baseFixedTokens = Math.max(0, Math.floor(input.baseFixedTokens ?? 0));
-  const userHistoryTokenCap = input.adaptUserHistoryToTarget === false
-    ? CHECKPOINT_USER_HISTORY_TOKEN_CAP
-    : Math.min(
-      CHECKPOINT_USER_HISTORY_TOKEN_CAP,
-      Math.max(
-        0,
-        targetTokens - baseFixedTokens - summaryBudgetTokens - CHECKPOINT_PROTOCOL_TOKEN_RESERVE,
-      ),
+  const latestMemory = latestMemorySnapshot(input.events);
+  let rawTailBudgetTokens = CHECKPOINT_RAW_TAIL_TOKEN_CAP;
+  let rawTail = selectAtomicRawTail(input.events, rawTailBudgetTokens);
+  let fixedTokens = baseFixedTokens;
+  let userHistoryTokenCap = CHECKPOINT_USER_HISTORY_TOKEN_CAP;
+  let compressedTaskAnchors: CheckpointTaskAnchor[] = [];
+  let memorySnapshot: string | undefined;
+
+  // 从乐观的最大 raw-tail 预算开始，按候选 cutoff 只计费压缩前缀的用户轨迹。
+  // cutoff 后移只会把更多内容转入 checkpoint，预算单调收紧，最终得到稳定切点。
+  for (let attempt = 0; attempt <= input.events.length + 1; attempt += 1) {
+    const compressedEvents = input.events.slice(0, rawTail.startIndex);
+    const compressedEventIds = new Set(compressedEvents.map((event) => event.id));
+    compressedTaskAnchors = allTaskAnchors.filter((anchor) => compressedEventIds.has(anchor.eventId));
+    memorySnapshot = latestMemory && latestMemory.index < rawTail.startIndex
+      ? latestMemory.content
+      : undefined;
+    const memoryTokens = estimateContextTokens(memorySnapshot ?? '');
+    userHistoryTokenCap = input.adaptUserHistoryToTarget === false
+      ? CHECKPOINT_USER_HISTORY_TOKEN_CAP
+      : Math.min(
+        CHECKPOINT_USER_HISTORY_TOKEN_CAP,
+        Math.max(
+          0,
+          targetTokens - baseFixedTokens - summaryBudgetTokens
+            - memoryTokens - CHECKPOINT_PROTOCOL_TOKEN_RESERVE,
+        ),
+      );
+    fixedTokens = baseFixedTokens + checkpointProjectionFixedTokens(
+      compressedEvents,
+      compressedTaskAnchors,
+      userHistoryTokenCap,
+      memorySnapshot,
     );
-  const fixedTokens = baseFixedTokens
-    + checkpointProjectionFixedTokens(input.events, taskAnchors, userHistoryTokenCap);
-  const rawTailBudgetTokens = Math.min(
-    CHECKPOINT_RAW_TAIL_TOKEN_CAP,
-    Math.max(0, targetTokens - fixedTokens - summaryBudgetTokens),
-  );
-  const rawTail = selectAtomicRawTail(input.events, rawTailBudgetTokens);
-  const compressedEventIds = new Set(
-    input.events.slice(0, rawTail.startIndex).map((event) => event.id),
-  );
-  const compressedTaskAnchors = taskAnchors.filter((anchor) => compressedEventIds.has(anchor.eventId));
+    const nextBudget = Math.min(
+      CHECKPOINT_RAW_TAIL_TOKEN_CAP,
+      Math.max(0, targetTokens - fixedTokens - summaryBudgetTokens),
+    );
+    if (nextBudget === rawTailBudgetTokens) break;
+    rawTailBudgetTokens = Math.min(rawTailBudgetTokens, nextBudget);
+    rawTail = selectAtomicRawTail(input.events, rawTailBudgetTokens);
+  }
+
   return {
     version: CONTEXT_CHECKPOINT_VERSION,
     targetTokens,
@@ -292,6 +325,7 @@ export function planContextCheckpoint(input: ContextCheckpointPlanInput): Contex
     rawTailBudgetTokens,
     fixedTokens,
     userHistoryTokenCap,
+    ...(memorySnapshot ? { memorySnapshot } : {}),
     rawTailObservedTokens: rawTail.observedTokens,
     rawTailStartIndex: rawTail.startIndex,
     ...(input.events[rawTail.startIndex] ? { rawTailStartEventId: input.events[rawTail.startIndex]!.id } : {}),

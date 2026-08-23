@@ -10,7 +10,6 @@ import { AskUserBlock } from './AskUserBlock';
 import { SubagentBlock } from './SubagentBlock';
 import { ExecutionHiddenPlaceholder } from './ActivityGroupBlock';
 import { RuntimeStatusBlock } from './RuntimeStatusBlock';
-import { RuntimeFailureAction } from './RuntimeFailureAction';
 import { UserVoiceMessage } from './UserVoiceMessage';
 import { cn } from '@/lib/utils';
 import { VoiceBar } from './VoiceBar';
@@ -1087,7 +1086,9 @@ export const MessageItem = memo(function MessageItem({
       return (
         <div className="flex items-center gap-2 px-1 py-1 text-xs text-muted-foreground" role="status">
           <span className="whitespace-pre-wrap break-words">{message.content}</span>
-          <RuntimeFailureAction recoveryAction={message.recoveryAction} onSwitchModel={onSwitchModel} onRetry={onRetry ? () => onRetry(message) : undefined} isLoading={isLoading} />
+          {!isLoading && (message.recoveryAction === 'switch_model' ? onSwitchModel : onRetry) && (
+            <button type="button" onClick={message.recoveryAction === 'switch_model' ? onSwitchModel : () => onRetry?.(message)} className="shrink-0 rounded-md px-2 py-1 font-medium text-foreground/75 transition-colors hover:bg-foreground/[0.06] hover:text-foreground">{message.recoveryAction === 'switch_model' ? '切换模型' : '继续生成'}</button>
+          )}
         </div>
       );
     }

@@ -61,25 +61,31 @@ beforeEach(() => {
 
 describe("useSession 跨会话详情请求隔离", () => {
   it("新建会话会作废在飞的详情请求，草稿页不会被旧会话消息占领", async () => {
-    const { release, settled } = mockPendingDetail();
+    const { release } = mockPendingDetail();
     const callbacks = makeCallbacks();
     const { result } = renderHook(() => useSession(callbacks));
 
     await act(async () => { result.current.selectSession("session-a"); });
     await act(async () => { result.current.newSession(); });
-    await act(async () => { release(FAILED_DETAIL); await settled; });
+    await act(async () => {
+      release(FAILED_DETAIL);
+      await result.current.loadDetailPromiseRef.current;
+    });
 
     expect(callbacks.setMessages).not.toHaveBeenCalled();
     expect(result.current.sessionId).toBeNull();
   });
 
   it("对照：未被打断时详情返回会正常写入当前会话", async () => {
-    const { release, settled } = mockPendingDetail();
+    const { release } = mockPendingDetail();
     const callbacks = makeCallbacks();
     const { result } = renderHook(() => useSession(callbacks));
 
     await act(async () => { result.current.selectSession("session-a"); });
-    await act(async () => { release(FAILED_DETAIL); await settled; });
+    await act(async () => {
+      release(FAILED_DETAIL);
+      await result.current.loadDetailPromiseRef.current;
+    });
 
     expect(callbacks.setMessages).toHaveBeenCalled();
     expect(result.current.sessionId).toBe("session-a");

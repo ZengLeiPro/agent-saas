@@ -78,8 +78,8 @@ export function useGoogleWorkspaceConnector(enabled = true): GoogleWorkspaceConn
     setConnecting(true);
     setError(null);
     try {
-      await disconnectGoogleWorkspace();
-      setConnection(null);
+      const result = await disconnectGoogleWorkspace();
+      setConnection(result.connection);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Google Workspace 断开失败");
     } finally {

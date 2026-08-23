@@ -8,6 +8,9 @@ const api = vi.hoisted(() => ({
   rotateCredential: vi.fn(),
   previewCredentialRevoke: vi.fn(),
   revokeCredential: vi.fn(),
+  listOAuthGrants: vi.fn(),
+  previewOAuthGrantRevocation: vi.fn(),
+  revokeOAuthGrant: vi.fn(),
 }));
 
 vi.mock('./authFetch', () => ({ authFetch: api.authFetch }));
@@ -20,6 +23,11 @@ vi.mock('./governanceApi', () => ({
     previewCredentialRevoke: api.previewCredentialRevoke,
     revokeCredential: api.revokeCredential,
   },
+  governanceAccessApi: {
+    listOAuthGrants: api.listOAuthGrants,
+    previewOAuthGrantRevocation: api.previewOAuthGrantRevocation,
+    revokeOAuthGrant: api.revokeOAuthGrant,
+  },
 }));
 
 import {
@@ -28,6 +36,7 @@ import {
   connectX,
   disconnectAliyun,
   disconnectGithub,
+  disconnectGoogleWorkspace,
   disconnectX,
 } from './connectorsApi';
 
@@ -173,6 +182,29 @@ describe('X governance connector API', () => {
       connection: { connectorId: 'github', status: 'disconnected' },
     });
     expect(api.authFetch).not.toHaveBeenCalledWith('/api/connectors/github', { method: 'DELETE' });
+  });
+
+  it('Google Workspace 断开通过 OAuth Grant 撤销，而不是已封闭的旧 Connector 写入口', async () => {
+    api.listOAuthGrants.mockResolvedValueOnce({ grants: [{
+      grantId: 'grant-google', provider: 'google', connectorId: 'google-workspace', status: 'active',
+    }] });
+    api.previewOAuthGrantRevocation.mockResolvedValueOnce({
+      previewId: 'ogpv1.google-preview', baselineDigest: 'google-baseline', expiresAt: '2026-08-20T10:05:00.000Z',
+      impact: { blockers: [] },
+    });
+    api.revokeOAuthGrant.mockResolvedValueOnce({ grantId: 'grant-google', status: 'revoked', version: 2 });
+    const result = {
+      connection: { connectorId: 'google-workspace', status: 'disconnected', runtimeEnabled: true }, available: true,
+    };
+    api.authFetch.mockResolvedValueOnce(jsonResponse(result));
+
+    await expect(disconnectGoogleWorkspace()).resolves.toEqual(result);
+    expect(api.previewOAuthGrantRevocation).toHaveBeenCalledWith('grant-google', '用户主动断开 Google Workspace');
+    expect(api.revokeOAuthGrant).toHaveBeenCalledWith('grant-google', {
+      reason: '用户主动断开 Google Workspace',
+      previewId: 'ogpv1.google-preview', baselineDigest: 'google-baseline', expiresAt: '2026-08-20T10:05:00.000Z',
+    });
+    expect(api.authFetch).not.toHaveBeenCalledWith('/api/connectors/google-workspace', { method: 'DELETE' });
   });
 
   it('阿里云连接把 AccessKey 写入治理凭据并保留地域元数据', async () => {

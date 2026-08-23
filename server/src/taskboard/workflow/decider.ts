@@ -187,6 +187,7 @@ export function decideTransition(
     if (task.kind !== 'advisory' && (status === 'in_review' || status === 'blocked')) return { toStatus: status };
   }
   if (purpose === 'review' && task.status === 'in_review') {
+    if (task.kind === 'remediation' && status === 'ready_to_merge') return { toStatus: 'done' };
     const allowed = task.kind === 'remediation'
       ? ['done', 'todo', 'in_review', 'blocked']
       : ['ready_to_merge', 'todo', 'in_review', 'blocked'];

@@ -9,7 +9,9 @@ describe('direct workflow transitions', () => {
     expect(() => decideTransition(task(), 'work', 'done', { hasMergeFact:false })).toThrow();
   });
   it('maps remediation review approval directly to done', () => {
-    expect(decideTransition(task({kind:'remediation',status:'in_review'}), 'review', 'done', {hasMergeFact:false})).toEqual({toStatus:'done'});
+    const remediation = task({kind:'remediation',status:'in_review'});
+    expect(decideTransition(remediation, 'review', 'ready_to_merge', {hasMergeFact:false})).toEqual({toStatus:'done'});
+    expect(decideTransition(remediation, 'review', 'done', {hasMergeFact:false})).toEqual({toStatus:'done'});
   });
   it('only lets legacy integration merge finish after a complete merge fact', () => {
     const integration = task({ kind: 'integration', status: 'in_progress', workflowVersion: 2 });

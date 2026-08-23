@@ -44,7 +44,8 @@ export async function transitionExecutionV2(
     // Global lock order: Task -> Source/Attempt -> Execution.
     const loaded = await loadAccessibleTaskAndBoard(options, client, identity, taskId, true);
     let remediationApproval: { sourceId: string; attemptId: string; integrationTaskId: string } | undefined;
-    if (loaded.task.kind === 'remediation' && input.status === 'done') {
+    if (loaded.task.kind === 'remediation'
+      && (input.status === 'done' || input.status === 'ready_to_merge')) {
       const relation = await client.query(
         `SELECT s.id AS source_id,s.integration_task_id,a.id AS attempt_id
          FROM ${options.remediationAttemptsTable} a
@@ -77,7 +78,8 @@ export async function transitionExecutionV2(
       && loaded.task.workflowVersion !== 3
       && execution.purpose === 'merge'
       && input.status === 'done';
-    if (loaded.task.status === 'done' || loaded.task.status === 'canceled'
+    if ((loaded.task.status === 'done' && !completingMergedIntegration)
+      || loaded.task.status === 'canceled'
       || (facts.hasMergeFact && !completingMergedIntegration)) {
       throw new TaskboardValidationError('Expired or terminal execution cannot transition the task', 'TASKBOARD_EXECUTION_FENCED');
     }

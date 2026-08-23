@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -222,6 +222,91 @@ describe('hidden memory review invocation policy', () => {
 
     await expect(commitMemoryConsolidationDraft('hidden-session')).rejects.toThrow('符号链接');
     await expect(stat(join(outside, 'nested.md'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('草稿创建后 workspace root 被替换为外部 symlink 时拒绝提交', async () => {
+    const root = await tempWorkspace();
+    const movedRoot = `${root}-moved`;
+    const outside = await mkdtemp(join(tmpdir(), 'memory-review-root-race-'));
+    tempDirs.push(movedRoot, outside);
+    const runtime = applyMemoryConsolidationInvocationPolicy(fakeRuntime(), 'source-session');
+    await runtime.invoke({
+      toolId: 'Write',
+      input: { path: 'memory/leak.md', content: '不应越界' },
+      authorization: { source: 'policy_auto' },
+    } as never, toolContext(root));
+    await rename(root, movedRoot);
+    await symlink(outside, root);
+
+    await expect(commitMemoryConsolidationDraft('hidden-session')).rejects.toThrow('workspace root');
+    await expect(stat(join(outside, 'memory/leak.md'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('同一隐藏 session 并发绑定不同 workspace root 时只允许一个 root', async () => {
+    const rootA = await tempWorkspace();
+    const rootB = await tempWorkspace();
+    const runtime = applyMemoryConsolidationInvocationPolicy(fakeRuntime(), 'source-session');
+    const calls = await Promise.allSettled([
+      runtime.invoke({
+        toolId: 'Write', input: { path: 'MEMORY.md', content: 'root A' },
+        authorization: { source: 'policy_auto' },
+      } as never, toolContext(rootA)),
+      runtime.invoke({
+        toolId: 'Write', input: { path: 'MEMORY.md', content: 'root B' },
+        authorization: { source: 'policy_auto' },
+      } as never, toolContext(rootB)),
+    ]);
+    expect(calls.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(calls.filter((result) => result.status === 'rejected')).toHaveLength(1);
+  });
+
+  it('Read 通过固定父目录句柄拒绝叶子 symlink，不读取边界外文件', async () => {
+    const root = await tempWorkspace();
+    const outside = await mkdtemp(join(tmpdir(), 'memory-review-read-race-'));
+    tempDirs.push(outside);
+    await writeFile(join(outside, 'secret.md'), '边界外秘密', 'utf8');
+    await symlink(join(outside, 'secret.md'), join(root, 'memory/link.md'));
+    const runtime = applyMemoryConsolidationInvocationPolicy(fakeRuntime(), 'source-session');
+
+    await expect(runtime.invoke({
+      toolId: 'Read',
+      input: { path: 'memory/link.md' },
+      authorization: { source: 'policy_auto' },
+    } as never, toolContext(root))).rejects.toThrow('符号链接');
+  });
+
+  it('恢复记录拒绝重复路径和超过单文件上限的内容', async () => {
+    const root = await tempWorkspace();
+    await expect(recoverMemoryConsolidationPreparedCommit(root, {
+      version: 1,
+      entries: [
+        { relativePath: 'MEMORY.md', baseline: '# Memory\n', staged: 'a' },
+        { relativePath: 'MEMORY.md', baseline: '# Memory\n', staged: 'b' },
+      ],
+    })).rejects.toThrow('无效');
+    await expect(recoverMemoryConsolidationPreparedCommit(root, {
+      version: 1,
+      entries: [{ relativePath: 'MEMORY.md', baseline: '# Memory\n', staged: 'x'.repeat(1024 * 1024 + 1) }],
+    })).rejects.toThrow('单文件');
+    await expect(recoverMemoryConsolidationPreparedCommit(root, {
+      version: 1,
+      entries: [{ relativePath: 'memory/../../escape.md', baseline: null, staged: '越界' }],
+    })).rejects.toThrow('无效');
+  });
+
+  it('inspect 拒绝 baseline 总量超限、保证生成的 journal 一定可恢复', async () => {
+    const root = await tempWorkspace();
+    const runtime = applyMemoryConsolidationInvocationPolicy(fakeRuntime(), 'source-session');
+    const baseline = 'x'.repeat(1024 * 1024);
+    for (let index = 0; index < 9; index += 1) {
+      const path = `memory/large-${index}.md`;
+      await writeFile(join(root, path), baseline, 'utf8');
+      await runtime.invoke({
+        toolId: 'Write', input: { path, content: `small-${index}` },
+        authorization: { source: 'policy_auto' },
+      } as never, toolContext(root));
+    }
+    await expect(inspectMemoryConsolidationDraft('hidden-session')).rejects.toThrow('内容超过上限');
   });
 
   it('记忆区内的叶子符号链接也会被拒绝而不是被 rename 替换', async () => {

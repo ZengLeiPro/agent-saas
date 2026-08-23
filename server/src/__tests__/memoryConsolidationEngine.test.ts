@@ -156,6 +156,7 @@ function createRecoveryHarness(input: {
   stateBoundarySequence?: number;
   fenceResult?: { boundaryChanged: boolean; fence: {
     finalizeApplied: ReturnType<typeof vi.fn>;
+    retireJournalAndRequeue: ReturnType<typeof vi.fn>;
     release: ReturnType<typeof vi.fn>;
   } | null };
   dispatch?: ReturnType<typeof vi.fn>;
@@ -171,9 +172,10 @@ function createRecoveryHarness(input: {
   const releaseCommitLock = vi.fn(async () => undefined);
   const releaseFence = vi.fn(async () => undefined);
   const finalizeApplied = vi.fn(async () => undefined);
+  const retireJournalAndRequeue = vi.fn(async () => undefined);
   const fenceResult = input.fenceResult ?? {
     boundaryChanged: false,
-    fence: { finalizeApplied, release: releaseFence },
+    fence: { finalizeApplied, retireJournalAndRequeue, release: releaseFence },
   };
   const dispatch = input.dispatch ?? vi.fn(() => (async function* () {})());
   const updateRun = vi.fn(async (_runInput?: unknown) => undefined);
@@ -190,18 +192,20 @@ function createRecoveryHarness(input: {
       acquireFence: acquireCommitFence,
       release: releaseCommitLock,
     })),
-    insertOrGetRun: vi.fn(async () => ({
-      created: false,
-      record: {
-        id: 'ledger-recovery', status: 'prepared', modelActual: 'gpt-5.4',
-        usageJson: {
-          inputTokens: 100,
-          hiddenSessionId: 'old-hidden',
-          commitJournal: input.commitJournal,
-          commitBoundarySequence: input.journalBoundarySequence ?? 100,
-        },
+    findPreparedCommitRun: vi.fn(async () => ({
+      id: 'ledger-recovery', idempotencyKey: 'recovery-key',
+      tenantId: state.tenantId, userId: state.userId, workspaceId: state.workspaceId,
+      sessionId: state.sessionId, fromSessionSequence: 10, toSessionSequence: 42,
+      status: 'prepared' as const, modelRequested: 'gpt-5.4', modelActual: 'gpt-5.4',
+      promptVersion: 2, retryCount: 0, errorCode: null, errorMessage: null,
+      usageJson: {
+        inputTokens: 100,
+        hiddenSessionId: 'old-hidden',
+        commitJournal: input.commitJournal,
+        commitBoundarySequence: input.journalBoundarySequence ?? 100,
       },
     })),
+    insertOrGetRun: vi.fn(),
     updateRun,
     updateRunFenced,
     markApplied: vi.fn(async () => undefined),
@@ -232,6 +236,7 @@ function createRecoveryHarness(input: {
   return {
     engine, state, store, dispatch, updateRun, updateRunFenced, markFailed, failRunAndState,
     finalizeApplied: fenceResult.fence?.finalizeApplied ?? finalizeApplied,
+    retireJournalAndRequeue: fenceResult.fence?.retireJournalAndRequeue ?? retireJournalAndRequeue,
     releaseFence: fenceResult.fence?.release ?? releaseFence,
     releaseCommitLock,
     acquireCommitFence,
@@ -485,15 +490,13 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
     expect(await readFile(join(userRoot, 'MEMORY.md'), 'utf8')).toBe('# staged\n');
   });
 
-  it('prepared journal 冲突会退休旧记录并基于当前 baseline 重新 dispatch', async () => {
+  it('prepared journal 冲突会原子退休旧记录并立即重排 state', async () => {
     const root = await mkdtemp(join(tmpdir(), 'memory-recovery-conflict-'));
     tempDirs.push(root);
     const userRoot = join(root, 't-enabled', 'u1');
     await mkdir(userRoot, { recursive: true });
     await writeFile(join(userRoot, 'MEMORY.md'), '# current\n', 'utf8');
-    const dispatch = vi.fn(() => (async function* () {
-      yield { type: 'error' as const, error: 'stop after recovery conflict' };
-    })());
+    const dispatch = vi.fn();
     const harness = createRecoveryHarness({
       agentCwd: root,
       commitJournal: {
@@ -505,14 +508,12 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
 
     await workOnce(harness.engine);
 
-    expect(harness.updateRun).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'started',
+    expect(harness.retireJournalAndRequeue).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: 'recovery-key',
       errorCode: 'recovery_conflict_superseded',
       usageJson: expect.not.objectContaining({ commitJournal: expect.anything() }),
     }));
-    expect(dispatch).toHaveBeenCalledOnce();
-    expect(harness.releaseCommitLock.mock.invocationCallOrder[0])
-      .toBeLessThan(harness.updateRun.mock.invocationCallOrder[0]!);
+    expect(dispatch).not.toHaveBeenCalled();
     expect(await readFile(join(userRoot, 'MEMORY.md'), 'utf8')).toBe('# current\n');
   });
 
@@ -539,22 +540,35 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
     expect(await readFile(join(userRoot, 'MEMORY.md'), 'utf8')).toBe('# baseline\n');
   });
 
-  it('重启重新 claim 后不会用当前 generation 恢复旧 boundary 的 journal', async () => {
+  it('boundary superseded 后回滚已提交文件、退休 journal 并重排 state', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'memory-recovery-superseded-'));
+    tempDirs.push(root);
+    const userRoot = join(root, 't-enabled', 'u1');
+    await mkdir(join(userRoot, 'memory'), { recursive: true });
+    await writeFile(join(userRoot, 'MEMORY.md'), '# staged root\n', 'utf8');
+    await writeFile(join(userRoot, 'memory', 'facts.md'), '# baseline facts\n', 'utf8');
     const harness = createRecoveryHarness({
-      commitJournal: { version: 1, entries: [] },
+      agentCwd: root,
+      commitJournal: {
+        version: 1,
+        entries: [
+          { relativePath: 'MEMORY.md', baseline: '# baseline root\n', staged: '# staged root\n' },
+          { relativePath: 'memory/facts.md', baseline: '# baseline facts\n', staged: '# staged facts\n' },
+        ],
+      },
       journalBoundarySequence: 100,
       stateBoundarySequence: 101,
     });
 
     await workOnce(harness.engine);
 
-    expect(harness.updateRun).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'retryable_failed',
+    expect(harness.retireJournalAndRequeue).toHaveBeenCalledWith(expect.objectContaining({
       errorCode: 'recovery_boundary_superseded',
       usageJson: expect.not.objectContaining({ commitJournal: expect.anything() }),
     }));
-    expect(harness.acquireCommitFence).not.toHaveBeenCalled();
     expect(harness.dispatch).not.toHaveBeenCalled();
+    expect(await readFile(join(userRoot, 'MEMORY.md'), 'utf8')).toBe('# baseline root\n');
+    expect(await readFile(join(userRoot, 'memory', 'facts.md'), 'utf8')).toBe('# baseline facts\n');
   });
 
   it('inherits the parent runtime instead of selecting a separate model/profile', async () => {
@@ -568,6 +582,7 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
     const release = vi.fn(async () => undefined);
     const releaseFence = vi.fn(async () => undefined);
     const finalizeApplied = vi.fn(async () => undefined);
+    const retireJournalAndRequeue = vi.fn(async () => undefined);
     const updateRun = vi.fn(async (_runInput?: unknown) => undefined);
     const updateRunFenced = vi.fn(async (runInput) => {
       await updateRun(runInput);
@@ -578,7 +593,7 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
     const failRunAndState = vi.fn(async () => 'retry_wait' as const);
     const acquireCommitFence = vi.fn(async () => ({
       boundaryChanged: false,
-      fence: { finalizeApplied, release: releaseFence },
+      fence: { finalizeApplied, retireJournalAndRequeue, release: releaseFence },
     }));
     const acquireCommitLock = vi.fn(async () => ({
       acquireFence: acquireCommitFence,
@@ -601,6 +616,7 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
       reviveThrottled: vi.fn(async () => 0),
       acquireCommitLock,
       renewLease: vi.fn(async () => true),
+      findPreparedCommitRun: vi.fn(async () => null),
       insertOrGetRun: vi.fn(async () => ({
         created: true,
         record: { id: 'ledger-1', status: 'started' },

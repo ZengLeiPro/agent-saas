@@ -354,6 +354,72 @@ describePg('PgMemoryConsolidationStore contract', () => {
     expect(afterStaleFailure?.attempts).toBe(0);
   });
 
+  it('旧 boundary prepared journal 可被新 generation 定位并原子退休、重排 state', async () => {
+    const base = { ...BASE, sessionId: 's-retire-journal' };
+    const firstAt = now();
+    await store!.applyRunFinished({
+      ...base, runId: 'r-old', sessionSequence: 40, at: firstAt, globalSequence: 400,
+      eligible: true, debounceMinutes: 0,
+    });
+    const oldClaimAt = new Date(Date.parse(firstAt) + 1_000).toISOString();
+    const oldClaim = (await store!.claimDue({
+      workerId: 'old-journal-worker', now: oldClaimAt, limit: 10, leaseSeconds: 900,
+    })).find((state) => state.sessionId === base.sessionId)!;
+    await store!.insertOrGetRun({
+      idempotencyKey: 'k-old-journal', ...base,
+      fromSessionSequence: oldClaim.processedSessionSequence,
+      toSessionSequence: oldClaim.targetSessionSequence,
+      promptVersion: 2,
+    });
+    await store!.updateRun({
+      idempotencyKey: 'k-old-journal', status: 'prepared',
+      usageJson: {
+        commitJournal: { version: 1, entries: [] },
+        commitBoundarySequence: oldClaim.lastBoundaryGlobalSequence,
+      },
+    });
+    await store!.applyRunStarted({
+      ...base, runId: 'r-new', at: now(), globalSequence: 401,
+    });
+    await store!.applyRunFinished({
+      ...base, runId: 'r-new', sessionSequence: 45, at: now(), globalSequence: 402,
+      eligible: true, debounceMinutes: 0,
+    });
+    const newClaimAt = new Date(Date.parse(oldClaimAt) + 2_000).toISOString();
+    const newClaim = (await store!.claimDue({
+      workerId: 'new-journal-worker', now: newClaimAt, limit: 10, leaseSeconds: 900,
+    })).find((state) => state.sessionId === base.sessionId)!;
+    const prepared = await store!.findPreparedCommitRun(
+      base.tenantId,
+      base.sessionId,
+      newClaim.processedSessionSequence,
+    );
+    expect(prepared?.idempotencyKey).toBe('k-old-journal');
+    const lock = await store!.acquireCommitLock(base.tenantId, base.userId);
+    const fence = await lock!.acquireFence({
+      tenantId: base.tenantId, sessionId: base.sessionId,
+      leaseOwner: newClaim.leaseOwner!, now: newClaimAt,
+      fromSequence: newClaim.processedSessionSequence,
+      toSequence: newClaim.targetSessionSequence,
+      boundarySequence: newClaim.lastBoundaryGlobalSequence,
+    });
+    await fence.fence!.retireJournalAndRequeue({
+      idempotencyKey: prepared!.idempotencyKey,
+      now: newClaimAt,
+      usageJson: {},
+      errorCode: 'recovery_boundary_superseded',
+      errorMessage: 'rolled back',
+    });
+    await lock!.release();
+    const state = await store!.getState(base.tenantId, base.sessionId);
+    expect(state).toMatchObject({ status: 'pending', leaseOwner: null, targetSessionSequence: 45 });
+    const { record } = await store!.insertOrGetRun({
+      idempotencyKey: 'k-old-journal', ...base,
+      fromSessionSequence: 0, toSessionSequence: 40, promptVersion: 2,
+    });
+    expect(record).toMatchObject({ status: 'retryable_failed', usageJson: {} });
+  });
+
   it('tombstone：insert/list/revoke 生命周期', async () => {
     const tomb = await store!.insertTombstone({
       tenantId: 't1', userId: 'u1', workspaceId: 'w1',

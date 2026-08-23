@@ -20,6 +20,7 @@ import {
   discardMemoryConsolidationDraft,
   inspectMemoryConsolidationDraft,
   recoverMemoryConsolidationPreparedCommit,
+  rollbackMemoryConsolidationPreparedCommit,
   MemoryConsolidationDraftConflictError,
 } from './draft.js';
 import { buildConsolidationPrompt, MEMORY_CONSOLIDATION_PROMPT_VERSION } from './prompt.js';
@@ -480,48 +481,13 @@ export class MemoryConsolidationEngine {
       ...(user.tenantId ? { tenantId: user.tenantId } : {}),
     };
     const effectiveCwd = resolveUserCwd(this.options.agentCwd, identity);
-    const { record } = await this.options.store.insertOrGetRun({
-      idempotencyKey,
-      tenantId: state.tenantId,
-      userId: state.userId,
-      workspaceId: state.workspaceId,
-      sessionId: state.sessionId,
-      fromSessionSequence: from,
-      toSessionSequence: to,
-      promptVersion: MEMORY_CONSOLIDATION_PROMPT_VERSION,
-      ...(sourceModelRef ? { modelRequested: sourceModelRef } : {}),
-    });
-
-    const recordedUsage = record.usageJson as Record<string, unknown> | null;
-    if (record.status === 'applied' || record.status === 'noop') {
-      await this.options.store.markApplied({
-        tenantId: state.tenantId,
-        sessionId: state.sessionId,
-        ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
-        toSequence: to,
-        debounceMinutes: config.debounceMinutes,
-        now: new Date().toISOString(),
-      });
-      return;
-    }
-
-    if (recordedUsage?.commitJournal) {
-      const journalBoundarySequence = Number(recordedUsage.commitBoundarySequence);
-      if (!Number.isSafeInteger(journalBoundarySequence)
-        || journalBoundarySequence !== state.lastBoundaryGlobalSequence) {
-        const currentUsage = { ...recordedUsage };
-        delete currentUsage.commitJournal;
-        delete currentUsage.commitBoundarySequence;
-        await updateRunFenced({
-          idempotencyKey,
-          status: 'retryable_failed',
-          usageJson: currentUsage,
-          errorCode: 'recovery_boundary_superseded',
-          errorMessage: 'prepared journal belongs to an older run boundary',
-          finished: true,
-        });
-        return;
-      }
+    const preparedRecord = await this.options.store.findPreparedCommitRun(
+      state.tenantId,
+      state.sessionId,
+      from,
+    );
+    if (preparedRecord) {
+      const preparedUsage = preparedRecord.usageJson as Record<string, unknown>;
       let recoveryLock: MemoryConsolidationCommitLock | null = null;
       try {
         recoveryLock = await this.options.store.acquireCommitLock(state.tenantId, state.userId, 5_000);
@@ -548,49 +514,85 @@ export class MemoryConsolidationEngine {
           boundarySequence: state.lastBoundaryGlobalSequence,
         });
         if (!fenceResult.fence) return;
+        const journalBoundarySequence = Number(preparedUsage.commitBoundarySequence);
+        const sameGeneration = Number.isSafeInteger(journalBoundarySequence)
+          && journalBoundarySequence === state.lastBoundaryGlobalSequence
+          && preparedRecord.toSessionSequence === to;
+        const recoveredUsage = { ...preparedUsage };
+        delete recoveredUsage.commitJournal;
+        delete recoveredUsage.commitBoundarySequence;
         try {
-          const recovered = await recoverMemoryConsolidationPreparedCommit(
+          if (sameGeneration) {
+            try {
+              const recovered = await recoverMemoryConsolidationPreparedCommit(
+                effectiveCwd,
+                preparedUsage.commitJournal,
+              );
+              await fenceResult.fence.finalizeApplied({
+                idempotencyKey: preparedRecord.idempotencyKey,
+                toSequence: to,
+                debounceMinutes: config.debounceMinutes,
+                now: new Date().toISOString(),
+                ...(preparedRecord.modelActual ? { modelActual: preparedRecord.modelActual } : {}),
+                usageJson: recoveredUsage,
+              });
+              this.options.logger?.warn(
+                `consolidation recovered interrupted commit user=${state.userId} files=${recovered}`,
+              );
+              return;
+            } catch (error) {
+              if (!(error instanceof MemoryConsolidationDraftConflictError)) throw error;
+            }
+          }
+          const rolledBack = await rollbackMemoryConsolidationPreparedCommit(
             effectiveCwd,
-            recordedUsage.commitJournal,
+            preparedUsage.commitJournal,
           );
-          const recoveredUsage = { ...recordedUsage };
-          delete recoveredUsage.commitJournal;
-          delete recoveredUsage.commitBoundarySequence;
-          await fenceResult.fence.finalizeApplied({
-            idempotencyKey,
-            toSequence: to,
-            debounceMinutes: config.debounceMinutes,
+          await fenceResult.fence.retireJournalAndRequeue({
+            idempotencyKey: preparedRecord.idempotencyKey,
             now: new Date().toISOString(),
-            ...(record.modelActual ? { modelActual: record.modelActual } : {}),
             usageJson: recoveredUsage,
+            errorCode: sameGeneration
+              ? 'recovery_conflict_superseded'
+              : 'recovery_boundary_superseded',
+            errorMessage: sameGeneration
+              ? 'prepared journal conflicts with the current Markdown baseline'
+              : 'prepared journal was rolled back after the run boundary changed',
           });
           this.options.logger?.warn(
-            `consolidation recovered interrupted commit user=${state.userId} files=${recovered}`,
+            `consolidation rolled back superseded journal session=${state.sessionId} files=${rolledBack}`,
           );
           return;
         } catch (error) {
           await fenceResult.fence.release().catch(() => undefined);
-          if (!(error instanceof MemoryConsolidationDraftConflictError)) throw error;
-          const currentUsage = { ...recordedUsage };
-          delete currentUsage.commitJournal;
-          delete currentUsage.commitBoundarySequence;
-          await recoveryLock.release();
-          recoveryLock = null;
-          const journalRetired = await updateRunFenced({
-            idempotencyKey,
-            status: 'started',
-            usageJson: currentUsage,
-            errorCode: 'recovery_conflict_superseded',
-            errorMessage: message(error),
-          });
-          if (!journalRetired) return;
-          this.options.logger?.warn(
-            `consolidation retired conflicting journal session=${state.sessionId}; rerunning current baseline`,
-          );
+          throw error;
         }
       } finally {
         if (recoveryLock) await recoveryLock.release().catch(() => undefined);
       }
+    }
+
+    const { record } = await this.options.store.insertOrGetRun({
+      idempotencyKey,
+      tenantId: state.tenantId,
+      userId: state.userId,
+      workspaceId: state.workspaceId,
+      sessionId: state.sessionId,
+      fromSessionSequence: from,
+      toSessionSequence: to,
+      promptVersion: MEMORY_CONSOLIDATION_PROMPT_VERSION,
+      ...(sourceModelRef ? { modelRequested: sourceModelRef } : {}),
+    });
+    if (record.status === 'applied' || record.status === 'noop') {
+      await this.options.store.markApplied({
+        tenantId: state.tenantId,
+        sessionId: state.sessionId,
+        ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
+        toSequence: to,
+        debounceMinutes: config.debounceMinutes,
+        now: new Date().toISOString(),
+      });
+      return;
     }
 
     const tombstones = await this.options.store.listActiveTombstones(state.tenantId, state.userId);

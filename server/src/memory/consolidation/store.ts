@@ -24,72 +24,25 @@ import { Pool, type PoolClient } from 'pg';
 
 import type {
   ConsolidationRunRecord,
-  ConsolidationRunStatus,
   ConsolidationState,
   MemoryTombstone,
   TombstoneScope,
 } from './types.js';
+import {
+  mapRun,
+  mapState,
+  type MemoryConsolidationCommitFenceResult,
+  type MemoryConsolidationCommitLock,
+  type PgConsolidationStoreOptions,
+  type RunUpdateInput,
+  type StateRow,
+} from './storeTypes.js';
 
-export interface PgConsolidationStoreOptions {
-  connectionString: string;
-  tablePrefix?: string;
-  logger?: { info?: (msg: string, meta?: unknown) => void; warn?: (msg: string, meta?: unknown) => void };
-}
-
-export interface MemoryConsolidationCommitFence {
-  finalizeApplied(input: {
-    idempotencyKey: string; toSequence: number; debounceMinutes: number; now: string;
-    modelActual?: string; usageJson: unknown;
-  }): Promise<void>;
-  release(): Promise<void>;
-}
-
-export interface MemoryConsolidationCommitFenceResult {
-  fence: MemoryConsolidationCommitFence | null; boundaryChanged: boolean;
-}
-
-export interface MemoryConsolidationCommitLock {
-  acquireFence(input: {
-    tenantId: string; sessionId: string; leaseOwner: string; now: string;
-    fromSequence: number; toSequence: number; boundarySequence: number;
-  }): Promise<MemoryConsolidationCommitFenceResult>;
-  release(): Promise<void>;
-}
-
-interface RunUpdateInput {
-  idempotencyKey: string; status?: ConsolidationRunStatus; modelActual?: string; usageJson?: unknown;
-  errorCode?: string; errorMessage?: string; incrementRetry?: boolean; applied?: boolean; finished?: boolean;
-}
-
-interface StateRow {
-  tenant_id: string; user_id: string; workspace_id: string; session_id: string;
-  processed_session_sequence: string; target_session_sequence: string; last_boundary_global_sequence: string;
-  first_pending_at: Date | null; due_at: Date | null; last_activity_at: Date | null;
-  active_run_ids: unknown; status: string; attempts: number; next_attempt_at: Date | null;
-  lease_owner: string | null; lease_expires_at: Date | null; prompt_version: number | null;
-}
-
-function mapState(row: StateRow): ConsolidationState {
-  return {
-    tenantId: row.tenant_id,
-    userId: row.user_id,
-    workspaceId: row.workspace_id,
-    sessionId: row.session_id,
-    processedSessionSequence: Number(row.processed_session_sequence),
-    targetSessionSequence: Number(row.target_session_sequence),
-    lastBoundaryGlobalSequence: Number(row.last_boundary_global_sequence),
-    firstPendingAt: row.first_pending_at?.toISOString() ?? null,
-    dueAt: row.due_at?.toISOString() ?? null,
-    lastActivityAt: row.last_activity_at?.toISOString() ?? null,
-    activeRunIds: Array.isArray(row.active_run_ids) ? (row.active_run_ids as string[]) : [],
-    status: row.status as ConsolidationState['status'],
-    attempts: row.attempts,
-    nextAttemptAt: row.next_attempt_at?.toISOString() ?? null,
-    leaseOwner: row.lease_owner,
-    leaseExpiresAt: row.lease_expires_at?.toISOString() ?? null,
-    promptVersion: row.prompt_version,
-  };
-}
+export type {
+  MemoryConsolidationCommitFence,
+  MemoryConsolidationCommitLock,
+  PgConsolidationStoreOptions,
+} from './storeTypes.js';
 
 export class PgMemoryConsolidationStore {
   private readonly pool: Pool;
@@ -573,6 +526,41 @@ export class PgMemoryConsolidationStore {
               throw error;
             }
           },
+          retireJournalAndRequeue: async (retireInput) => {
+            try {
+              const runResult = await client.query(
+                `UPDATE ${this.runsTable} SET
+                   status = 'retryable_failed', usage_json = $2, error_code = $3, error_message = $4,
+                   finished_at = NOW(), updated_at = NOW()
+                 WHERE idempotency_key = $1`,
+                [
+                  retireInput.idempotencyKey, JSON.stringify(retireInput.usageJson),
+                  retireInput.errorCode, retireInput.errorMessage.slice(0, 2_000),
+                ],
+              );
+              const stateResult = await client.query(
+                `UPDATE ${this.stateTable} SET
+                   status = 'pending', due_at = $4::timestamptz,
+                   first_pending_at = COALESCE(first_pending_at, $4::timestamptz),
+                   next_attempt_at = NULL, lease_owner = NULL, lease_expires_at = NULL, updated_at = NOW()
+                 WHERE tenant_id = $1 AND session_id = $2 AND status = 'running'
+                   AND active_run_ids = '[]'::jsonb AND lease_owner = $3
+                   AND processed_session_sequence = $5 AND target_session_sequence = $6
+                   AND last_boundary_global_sequence = $7`,
+                [
+                  input.tenantId, input.sessionId, input.leaseOwner, retireInput.now,
+                  input.fromSequence, input.toSequence, input.boundarySequence,
+                ],
+              );
+              if ((runResult.rowCount ?? 0) !== 1 || (stateResult.rowCount ?? 0) !== 1) {
+                throw new Error('L2 memory commit fence lost while retiring journal');
+              }
+              await close(true);
+            } catch (error) {
+              await close(false).catch(() => undefined);
+              throw error;
+            }
+          },
           release: async () => close(false),
         },
       };
@@ -772,6 +760,21 @@ export class PgMemoryConsolidationStore {
 
   // ── 幂等 run ledger ──────────────────────────────────────────
 
+  async findPreparedCommitRun(
+    tenantId: string,
+    sessionId: string,
+    fromSessionSequence: number,
+  ): Promise<ConsolidationRunRecord | null> {
+    const res = await this.pool.query(
+      `SELECT * FROM ${this.runsTable}
+       WHERE tenant_id = $1 AND session_id = $2 AND from_session_sequence = $3
+         AND status IN ('prepared', 'retryable_failed') AND usage_json ? 'commitJournal'
+       ORDER BY to_session_sequence ASC, created_at ASC LIMIT 1`,
+      [tenantId, sessionId, fromSessionSequence],
+    );
+    return res.rows[0] ? mapRun(res.rows[0] as Record<string, unknown>) : null;
+  }
+
   /** INSERT；唯一冲突时返回已有 ledger 记录，避免同一范围重复创建执行记录。 */
   async insertOrGetRun(input: {
     idempotencyKey: string;
@@ -796,7 +799,7 @@ export class PgMemoryConsolidationStore {
       [input.idempotencyKey],
     );
     const row = res.rows[0] as Record<string, unknown>;
-    return { record: this.mapRun(row), created: (inserted.rowCount ?? 0) > 0 };
+    return { record: mapRun(row), created: (inserted.rowCount ?? 0) > 0 };
   }
 
   private buildRunUpdate(input: RunUpdateInput): { sql: string; params: unknown[] } {
@@ -860,27 +863,6 @@ export class PgMemoryConsolidationStore {
     } finally {
       client.release();
     }
-  }
-
-  private mapRun(row: Record<string, unknown>): ConsolidationRunRecord {
-    return {
-      id: String(row.id),
-      idempotencyKey: String(row.idempotency_key),
-      tenantId: String(row.tenant_id),
-      userId: String(row.user_id),
-      workspaceId: String(row.workspace_id),
-      sessionId: String(row.session_id),
-      fromSessionSequence: Number(row.from_session_sequence),
-      toSessionSequence: Number(row.to_session_sequence),
-      status: String(row.status) as ConsolidationRunStatus,
-      modelRequested: (row.model_requested as string | null) ?? null,
-      modelActual: (row.model_actual as string | null) ?? null,
-      promptVersion: Number(row.prompt_version),
-      usageJson: row.usage_json,
-      retryCount: Number(row.retry_count ?? 0),
-      errorCode: (row.error_code as string | null) ?? null,
-      errorMessage: (row.error_message as string | null) ?? null,
-    };
   }
 
   // ── tombstone ────────────────────────────────────────────────
@@ -974,14 +956,19 @@ export class PgMemoryConsolidationStore {
           [key],
         );
         if (res.rows[0]?.locked) {
+          let released = false;
           return {
             acquireFence: async (input) => this.acquireCommitFence(client, input),
             release: async () => {
+              if (released) return;
+              released = true;
+              await client.query('ROLLBACK').catch(() => undefined);
               try {
-                await client.query('ROLLBACK').catch(() => undefined);
                 await client.query('SELECT pg_advisory_unlock(hashtext($1))', [key]);
-              } finally {
                 client.release();
+              } catch (error) {
+                client.release(true);
+                throw error;
               }
             },
           };

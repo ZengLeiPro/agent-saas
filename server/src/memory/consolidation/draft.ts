@@ -4,12 +4,10 @@ import {
   lstat,
   mkdir,
   open,
-  readFile,
   readlink,
   realpath,
   rename,
   rm,
-  stat,
   type FileHandle,
 } from 'node:fs/promises';
 import {
@@ -36,10 +34,14 @@ const MAX_DRAFT_FILES = 256;
 type DraftContent = string | null;
 
 interface MemoryDraft {
-  root: string;
+  rootPath: string;
+  rootHandle: FileHandle;
+  rootDev: number;
+  rootIno: number;
   baseline: Map<string, DraftContent>;
   staged: Map<string, DraftContent>;
   queue: Promise<void>;
+  closing: boolean;
 }
 
 export class MemoryConsolidationDraftConflictError extends Error {
@@ -50,6 +52,7 @@ export class MemoryConsolidationDraftConflictError extends Error {
 }
 
 const drafts = new Map<string, MemoryDraft>();
+const draftCreations = new Map<string, { rootPath: string; promise: Promise<MemoryDraft> }>();
 
 export interface MemoryCommitJournal {
   version: 1;
@@ -57,8 +60,11 @@ export interface MemoryCommitJournal {
 }
 
 function isMemoryRelativePath(path: string): boolean {
+  if (path.includes('\\')) return false;
+  const segments = path.split('/');
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) return false;
   return path === 'MEMORY.md'
-    || (path.startsWith('memory/') && path.endsWith('.md'));
+    || (segments.length > 1 && segments[0] === 'memory' && path.endsWith('.md'));
 }
 
 async function assertNoSymlinkBelow(root: string, target: string): Promise<void> {
@@ -133,47 +139,113 @@ export async function resolveMemoryMarkdownPath(
   return { relativePath: normalized, fullPath: target };
 }
 
-function draftFor(context: ToolCallContext): MemoryDraft {
+async function openFixedRoot(rootInput: string): Promise<{
+  rootPath: string; rootHandle: FileHandle; rootDev: number; rootIno: number;
+}> {
+  const rootPath = resolve(rootInput);
+  const before = await lstat(rootPath);
+  if (!before.isDirectory() || before.isSymbolicLink()) {
+    throw new Error('记忆审查工具约束：workspace root 必须是真实目录。');
+  }
+  const rootHandle = await open(
+    rootPath,
+    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+  );
+  try {
+    const opened = await rootHandle.stat();
+    if (!opened.isDirectory() || opened.dev !== before.dev || opened.ino !== before.ino) {
+      throw new Error('记忆审查工具约束：workspace root 在固定目录句柄时发生变化。');
+    }
+    return { rootPath, rootHandle, rootDev: opened.dev, rootIno: opened.ino };
+  } catch (error) {
+    await rootHandle.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+async function assertRootCurrent(draft: MemoryDraft): Promise<void> {
+  const current = await lstat(draft.rootPath);
+  if (!current.isDirectory() || current.isSymbolicLink()
+    || current.dev !== draft.rootDev || current.ino !== draft.rootIno) {
+    throw new Error('记忆审查工具约束：workspace root 在草稿期间发生变化。');
+  }
+}
+
+async function draftFor(context: ToolCallContext): Promise<MemoryDraft> {
   if (!context.sessionId) throw new Error('记忆审查草稿缺少 sessionId。');
-  const root = resolve(context.workspace.root);
+  const rootPath = resolve(context.workspace.root);
   const existing = drafts.get(context.sessionId);
   if (existing) {
-    if (existing.root !== root) throw new Error('记忆审查草稿 workspace 在同一会话内发生变化。');
+    if (existing.rootPath !== rootPath) throw new Error('记忆审查草稿 workspace 在同一会话内发生变化。');
+    if (existing.closing) throw new Error('记忆审查草稿正在关闭。');
     return existing;
   }
-  const created: MemoryDraft = {
-    root,
-    baseline: new Map(),
-    staged: new Map(),
-    queue: Promise.resolve(),
-  };
-  drafts.set(context.sessionId, created);
-  return created;
+  const pending = draftCreations.get(context.sessionId);
+  if (pending) {
+    if (pending.rootPath !== rootPath) throw new Error('记忆审查草稿 workspace 在同一会话内发生变化。');
+    return pending.promise;
+  }
+  const creation = (async () => {
+    const root = await openFixedRoot(rootPath);
+    const created: MemoryDraft = {
+      ...root,
+      baseline: new Map(),
+      staged: new Map(),
+      queue: Promise.resolve(),
+      closing: false,
+    };
+    drafts.set(context.sessionId!, created);
+    return created;
+  })();
+  draftCreations.set(context.sessionId, { rootPath, promise: creation });
+  try {
+    return await creation;
+  } finally {
+    draftCreations.delete(context.sessionId);
+  }
 }
 
 async function withDraft<T>(draft: MemoryDraft, action: () => Promise<T>): Promise<T> {
+  if (draft.closing) throw new Error('记忆审查草稿正在关闭。');
   const previous = draft.queue;
   let release!: () => void;
   draft.queue = new Promise<void>((resolveQueue) => { release = resolveQueue; });
   await previous;
   try {
+    if (draft.closing) throw new Error('记忆审查草稿正在关闭。');
     return await action();
   } finally {
     release();
   }
 }
 
-async function readCurrent(path: string): Promise<DraftContent> {
+async function readCurrent(rootHandle: FileHandle, relativePath: string): Promise<DraftContent> {
+  let directoryHandle: FileHandle | undefined;
+  let fileHandle: FileHandle | undefined;
   try {
-    const entry = await stat(path);
-    if (!entry.isFile()) throw new Error(`Read: path is not a file (${path})`);
-    if (entry.size > MAX_DRAFT_FILE_BYTES) {
-      throw new Error(`记忆审查草稿拒绝超过 ${MAX_DRAFT_FILE_BYTES} 字节的文件：${path}`);
+    directoryHandle = await openSafeParentDirectory(rootHandle, relativePath, false);
+    const target = join(`/proc/self/fd/${directoryHandle.fd}`, basename(relativePath));
+    try {
+      fileHandle = await open(target, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ELOOP') {
+        throw new Error(`记忆审查工具约束：拒绝符号链接文件 ${relativePath}。`);
+      }
+      throw error;
     }
-    return await readFile(path, 'utf8');
+    const entry = await fileHandle.stat();
+    if (!entry.isFile()) throw new Error(`Read: path is not a file (${relativePath})`);
+    if (entry.size > MAX_DRAFT_FILE_BYTES) {
+      throw new Error(`记忆审查草稿拒绝超过 ${MAX_DRAFT_FILE_BYTES} 字节的文件：${relativePath}`);
+    }
+    return await fileHandle.readFile('utf8');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
+  } finally {
+    await fileHandle?.close().catch(() => undefined);
+    await directoryHandle?.close().catch(() => undefined);
   }
 }
 
@@ -203,7 +275,7 @@ function assertDraftCapacity(draft: MemoryDraft, relativePath: string, content: 
 
 async function ensureLoaded(draft: MemoryDraft, relativePath: string): Promise<DraftContent> {
   if (draft.staged.has(relativePath)) return draft.staged.get(relativePath) ?? null;
-  const content = await readCurrent(join(draft.root, relativePath));
+  const content = await readCurrent(draft.rootHandle, relativePath);
   assertDraftCapacity(draft, relativePath, content);
   draft.baseline.set(relativePath, content);
   draft.staged.set(relativePath, content);
@@ -248,8 +320,9 @@ export async function invokeMemoryConsolidationDraftTool(
   relativePath: string,
 ): Promise<ToolResult> {
   if (context.signal?.aborted) throw new Error(String(context.signal.reason ?? 'run aborted'));
-  const draft = draftFor(context);
+  const draft = await draftFor(context);
   return withDraft(draft, async () => {
+    await assertRootCurrent(draft);
     const input = (call.input ?? {}) as Record<string, unknown>;
     const current = await ensureLoaded(draft, relativePath);
     if (call.toolId === 'Read') {
@@ -304,21 +377,20 @@ function digest(content: DraftContent): string {
 }
 
 async function openSafeParentDirectory(
-  root: string,
-  fullPath: string,
+  rootHandle: FileHandle,
+  relativePath: string,
   create: boolean,
 ): Promise<FileHandle> {
-  const lexicalRoot = resolve(root);
-  const parentRel = relative(lexicalRoot, dirname(fullPath));
-  if (parentRel.startsWith('..') || isAbsolute(parentRel)) {
-    throw new Error(`记忆审查工具约束：提交目录越界 ${dirname(fullPath)}。`);
+  if (!isMemoryRelativePath(relativePath)) {
+    throw new Error(`记忆审查工具约束：提交路径越界 ${relativePath}。`);
   }
+  const parentRel = dirname(relativePath);
   let current = await open(
-    await realpath(lexicalRoot),
-    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+    `/proc/self/fd/${rootHandle.fd}`,
+    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY,
   );
   try {
-    for (const segment of parentRel.split(/[\\/]/).filter(Boolean)) {
+    for (const segment of parentRel === '.' ? [] : parentRel.split('/')) {
       const child = join(`/proc/self/fd/${current.fd}`, segment);
       if (create) {
         await mkdir(child, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
@@ -345,11 +417,17 @@ async function openSafeParentDirectory(
   }
 }
 
-async function safeRemove(root: string, fullPath: string): Promise<void> {
+async function safeRemove(rootHandle: FileHandle, relativePath: string): Promise<void> {
   let directoryHandle: FileHandle | undefined;
   try {
-    directoryHandle = await openSafeParentDirectory(root, fullPath, false);
-    await rm(join(`/proc/self/fd/${directoryHandle.fd}`, basename(fullPath)), { force: true });
+    directoryHandle = await openSafeParentDirectory(rootHandle, relativePath, false);
+    const target = join(`/proc/self/fd/${directoryHandle.fd}`, basename(relativePath));
+    const entry = await lstat(target);
+    if (entry.isSymbolicLink()) {
+      throw new Error(`记忆审查工具约束：拒绝符号链接文件 ${relativePath}。`);
+    }
+    await rm(target);
+    await directoryHandle.sync();
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   } finally {
@@ -357,15 +435,16 @@ async function safeRemove(root: string, fullPath: string): Promise<void> {
   }
 }
 
-async function atomicWrite(root: string, fullPath: string, content: string): Promise<void> {
-  const directoryHandle = await openSafeParentDirectory(root, fullPath, true);
+async function atomicWrite(rootHandle: FileHandle, relativePath: string, content: string): Promise<void> {
+  const directoryHandle = await openSafeParentDirectory(rootHandle, relativePath, true);
   const descriptorRoot = `/proc/self/fd/${directoryHandle.fd}`;
-  const target = join(descriptorRoot, basename(fullPath));
-  const temporary = join(descriptorRoot, `.${basename(fullPath)}.consolidation-${randomUUID()}.tmp`);
-  let handle;
+  const target = join(descriptorRoot, basename(relativePath));
+  const temporary = join(descriptorRoot, `.${basename(relativePath)}.consolidation-${randomUUID()}.tmp`);
+  let handle: FileHandle | undefined;
   try {
     const existingMode = await lstat(target).then((entry) => {
-      if (entry.isSymbolicLink()) throw new Error(`记忆审查工具约束：拒绝符号链接路径 ${fullPath}。`);
+      if (entry.isSymbolicLink()) throw new Error(`记忆审查工具约束：拒绝符号链接文件 ${relativePath}。`);
+      if (!entry.isFile()) throw new Error(`记忆审查工具约束：目标不是文件 ${relativePath}。`);
       return entry.mode & 0o777;
     }).catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') return 0o600;
@@ -391,16 +470,25 @@ function validateCommitJournal(raw: unknown): MemoryCommitJournal {
     || parsed.entries.length > MAX_DRAFT_FILES) {
     throw new Error('无效的记忆提交恢复记录。');
   }
-  let totalBytes = 0;
+  let stagedTotalBytes = 0;
+  let baselineTotalBytes = 0;
+  const paths = new Set<string>();
   for (const entry of parsed.entries) {
-    if (typeof entry?.relativePath !== 'string'
+    if (typeof entry?.relativePath !== 'string' || !isMemoryRelativePath(entry.relativePath)
+      || paths.has(entry.relativePath)
       || (entry.baseline !== null && typeof entry.baseline !== 'string')
       || typeof entry.staged !== 'string') {
       throw new Error('无效的记忆提交恢复记录条目。');
     }
-    totalBytes += Buffer.byteLength(entry.staged)
-      + (entry.baseline === null ? 0 : Buffer.byteLength(entry.baseline));
-    if (totalBytes > MAX_DRAFT_TOTAL_BYTES * 2) {
+    paths.add(entry.relativePath);
+    const stagedBytes = Buffer.byteLength(entry.staged);
+    const baselineBytes = entry.baseline === null ? 0 : Buffer.byteLength(entry.baseline);
+    if (stagedBytes > MAX_DRAFT_FILE_BYTES || baselineBytes > MAX_DRAFT_FILE_BYTES) {
+      throw new Error('记忆提交恢复记录单文件内容超过上限。');
+    }
+    stagedTotalBytes += stagedBytes;
+    baselineTotalBytes += baselineBytes;
+    if (stagedTotalBytes > MAX_DRAFT_TOTAL_BYTES || baselineTotalBytes > MAX_DRAFT_TOTAL_BYTES) {
       throw new Error('记忆提交恢复记录内容超过上限。');
     }
   }
@@ -411,77 +499,108 @@ export async function recoverMemoryConsolidationPreparedCommit(
   rootInput: string,
   rawJournal: unknown,
 ): Promise<number> {
-  const root = resolve(rootInput);
-  const journal = validateCommitJournal(rawJournal);
-  const pending: Array<{ relativePath: string; staged: string }> = [];
-  for (const entry of journal.entries) {
-    const resolved = await resolveMemoryMarkdownPath(root, entry.relativePath);
-    const current = await readCurrent(resolved.fullPath);
-    if (digest(current) === digest(entry.staged)) continue;
-    if (digest(current) !== digest(entry.baseline)) {
-      throw new MemoryConsolidationDraftConflictError(entry.relativePath);
+  const root = await openFixedRoot(rootInput);
+  try {
+    const journal = validateCommitJournal(rawJournal);
+    const pending: Array<{ relativePath: string; staged: string }> = [];
+    for (const entry of journal.entries) {
+      const current = await readCurrent(root.rootHandle, entry.relativePath);
+      if (digest(current) === digest(entry.staged)) continue;
+      if (digest(current) !== digest(entry.baseline)) {
+        throw new MemoryConsolidationDraftConflictError(entry.relativePath);
+      }
+      pending.push({ relativePath: entry.relativePath, staged: entry.staged });
     }
-    pending.push({ relativePath: entry.relativePath, staged: entry.staged });
+    for (const entry of pending) {
+      await atomicWrite(root.rootHandle, entry.relativePath, entry.staged);
+    }
+    return pending.length;
+  } finally {
+    await root.rootHandle.close().catch(() => undefined);
   }
-  for (const entry of pending) {
-    const resolved = await resolveMemoryMarkdownPath(root, entry.relativePath);
-    await atomicWrite(root, resolved.fullPath, entry.staged);
+}
+
+export async function rollbackMemoryConsolidationPreparedCommit(
+  rootInput: string,
+  rawJournal: unknown,
+): Promise<number> {
+  const root = await openFixedRoot(rootInput);
+  try {
+    const journal = validateCommitJournal(rawJournal);
+    const pending: Array<{ relativePath: string; baseline: DraftContent }> = [];
+    for (const entry of journal.entries) {
+      const current = await readCurrent(root.rootHandle, entry.relativePath);
+      if (digest(current) === digest(entry.staged)) {
+        pending.push({ relativePath: entry.relativePath, baseline: entry.baseline });
+      }
+    }
+    for (const entry of pending) {
+      if (entry.baseline === null) await safeRemove(root.rootHandle, entry.relativePath);
+      else await atomicWrite(root.rootHandle, entry.relativePath, entry.baseline);
+    }
+    return pending.length;
+  } finally {
+    await root.rootHandle.close().catch(() => undefined);
   }
-  return pending.length;
+}
+
+async function draftBySession(sessionId: string): Promise<MemoryDraft | undefined> {
+  const draft = drafts.get(sessionId);
+  if (draft) return draft;
+  return draftCreations.get(sessionId)?.promise;
 }
 
 export async function inspectMemoryConsolidationDraft(
   sessionId: string,
 ): Promise<{ changedFiles: string[]; commitJournal: MemoryCommitJournal }> {
-  const draft = drafts.get(sessionId);
+  const draft = await draftBySession(sessionId);
   if (!draft) return { changedFiles: [], commitJournal: { version: 1, entries: [] } };
   return withDraft(draft, async () => {
+    await assertRootCurrent(draft);
     const changed = [...draft.staged.entries()].filter(([path, content]) => (
       digest(content) !== digest(draft.baseline.get(path) ?? null)
     ));
-    return {
-      changedFiles: changed.map(([path]) => path),
-      commitJournal: {
-        version: 1,
-        entries: changed.flatMap(([relativePath, staged]) => staged === null ? [] : [{
-          relativePath,
-          baseline: draft.baseline.get(relativePath) ?? null,
-          staged,
-        }]),
-      },
+    const commitJournal: MemoryCommitJournal = {
+      version: 1,
+      entries: changed.flatMap(([relativePath, staged]) => staged === null ? [] : [{
+        relativePath,
+        baseline: draft.baseline.get(relativePath) ?? null,
+        staged,
+      }]),
     };
+    validateCommitJournal(commitJournal);
+    return { changedFiles: changed.map(([path]) => path), commitJournal };
   });
 }
 
 export async function commitMemoryConsolidationDraft(
   sessionId: string,
 ): Promise<{ changedFiles: string[] }> {
-  const draft = drafts.get(sessionId);
+  const draft = await draftBySession(sessionId);
   if (!draft) return { changedFiles: [] };
   return withDraft(draft, async () => {
+    await assertRootCurrent(draft);
     const changed = [...draft.staged.entries()].filter(([path, content]) => (
       digest(content) !== digest(draft.baseline.get(path) ?? null)
     ));
     for (const [relativePath] of changed) {
-      const { fullPath } = await resolveMemoryMarkdownPath(draft.root, relativePath);
-      const current = await readCurrent(fullPath);
+      const current = await readCurrent(draft.rootHandle, relativePath);
       if (digest(current) !== digest(draft.baseline.get(relativePath) ?? null)) {
         throw new MemoryConsolidationDraftConflictError(relativePath);
       }
     }
-    const committed: Array<{ path: string; baseline: DraftContent }> = [];
+    const committed: Array<{ relativePath: string; baseline: DraftContent }> = [];
     try {
       for (const [relativePath, content] of changed) {
         if (content === null) continue;
-        const { fullPath } = await resolveMemoryMarkdownPath(draft.root, relativePath);
-        await atomicWrite(draft.root, fullPath, content);
-        committed.push({ path: fullPath, baseline: draft.baseline.get(relativePath) ?? null });
+        await atomicWrite(draft.rootHandle, relativePath, content);
+        committed.push({ relativePath, baseline: draft.baseline.get(relativePath) ?? null });
       }
     } catch (error) {
       for (const entry of committed.reverse()) {
         try {
-          if (entry.baseline === null) await safeRemove(draft.root, entry.path);
-          else await atomicWrite(draft.root, entry.path, entry.baseline);
+          if (entry.baseline === null) await safeRemove(draft.rootHandle, entry.relativePath);
+          else await atomicWrite(draft.rootHandle, entry.relativePath, entry.baseline);
         } catch {
           // durable prepared journal 会在下一次 claim 时按 baseline/staged 状态补齐。
         }
@@ -489,10 +608,28 @@ export async function commitMemoryConsolidationDraft(
       throw error;
     }
     drafts.delete(sessionId);
+    disposeDraft(draft);
     return { changedFiles: changed.map(([path]) => path) };
   });
 }
 
+function disposeDraft(draft: MemoryDraft): void {
+  if (draft.closing) return;
+  draft.closing = true;
+  const drained = draft.queue;
+  void drained.then(() => draft.rootHandle.close()).catch(() => undefined);
+}
+
 export function discardMemoryConsolidationDraft(sessionId: string | undefined): void {
-  if (sessionId) drafts.delete(sessionId);
+  if (!sessionId) return;
+  const draft = drafts.get(sessionId);
+  drafts.delete(sessionId);
+  if (draft) disposeDraft(draft);
+  const pending = draftCreations.get(sessionId);
+  if (pending) {
+    void pending.promise.then((created) => {
+      if (drafts.get(sessionId) === created) drafts.delete(sessionId);
+      disposeDraft(created);
+    }).catch(() => undefined);
+  }
 }

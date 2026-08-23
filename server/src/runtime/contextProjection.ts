@@ -211,7 +211,7 @@ function applyCompaction(events: PlatformEvent[]): {
             checkpoint.trigger,
             event.id,
             checkpoint.sourceRunId,
-            checkpoint.userHistoryTokenCap ?? CHECKPOINT_USER_HISTORY_TOKEN_CAP,
+            checkpoint.summaryAudit?.userHistoryTokenCap ?? CHECKPOINT_USER_HISTORY_TOKEN_CAP,
           )
           : formatCompactionContext(event.summary, extractUserMessageTrail(compressed)),
       }],

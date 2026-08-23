@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 export const COMPACTION_SUMMARY_SCHEMA_VERSION = 1;
 
 export const REQUIRED_COMPACTION_SUMMARY_SECTIONS = [
@@ -18,10 +20,38 @@ export interface CompactionSummaryValidation {
   maintenanceInstructionAttributedToUser: boolean;
 }
 
+export interface CompactionSummaryAudit {
+  model: string;
+  modelRef?: string;
+  promptDigest: string;
+  validation: CompactionSummaryValidation;
+  userHistoryTokenCap: number;
+}
+
 /**
  * 压缩结果的轻量结构校验。自定义 prompt 仍可输出其它格式，因此校验结果只入审计，
  * 不阻断 checkpoint；默认 prompt 的缺节或维护指令误归因会留下明确观测信号。
  */
+export function createCompactionSummaryAudit(input: {
+  summary: string;
+  prompt: string;
+  model: string;
+  modelRef?: string;
+  userHistoryTokenCap: number;
+}): CompactionSummaryAudit {
+  return {
+    model: input.model,
+    ...(input.modelRef ? { modelRef: input.modelRef } : {}),
+    promptDigest: createHash('sha256').update(input.prompt).digest('hex'),
+    validation: validateCompactionSummary(input.summary),
+    userHistoryTokenCap: input.userHistoryTokenCap,
+  };
+}
+
+export function formatCompactionSummaryWarning(validation: CompactionSummaryValidation): string {
+  return `missing=${validation.missingSections.join(',') || 'none'} maintenanceAttribution=${validation.maintenanceInstructionAttributedToUser}`;
+}
+
 export function validateCompactionSummary(summary: string): CompactionSummaryValidation {
   const missingSections = REQUIRED_COMPACTION_SUMMARY_SECTIONS.filter((section) => {
     const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

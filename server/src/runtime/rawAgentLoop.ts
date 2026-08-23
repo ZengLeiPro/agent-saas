@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type {
   InteractionEvent,
   InteractionResponse,
@@ -58,7 +58,7 @@ import {
   hasActiveCheckpointForRun,
   planContextCheckpoint,
 } from './contextCheckpoint.js';
-import { validateCompactionSummary } from './compactionSummary.js';
+import { createCompactionSummaryAudit, formatCompactionSummaryWarning } from './compactionSummary.js';
 import {
   getModelAutoCompactThreshold,
   getModelContextWindow,
@@ -1075,11 +1075,7 @@ export class RawAgentLoop implements AgentLoop {
                 trigger: 'manual',
                 sourceRunId: context.runId,
                 controlSourceRunIds,
-                baseFixedTokens: estimateContextTokens([
-                  input.instructions,
-                  input.memoryContext,
-                  tools,
-                ]),
+                baseFixedTokens: estimateContextTokens([input.instructions, input.memoryContext, tools]),
                 currentMemoryInjected: Boolean(input.memoryContext),
               },
             );
@@ -1172,11 +1168,7 @@ export class RawAgentLoop implements AgentLoop {
                   inline: true,
                   trigger: 'threshold',
                   sourceRunId: context.runId,
-                  baseFixedTokens: estimateContextTokens([
-                    input.instructions,
-                    input.memoryContext,
-                    tools,
-                  ]),
+                  baseFixedTokens: estimateContextTokens([input.instructions, input.memoryContext, tools]),
                   currentMemoryInjected: Boolean(input.memoryContext),
                 },
               );
@@ -1554,11 +1546,7 @@ export class RawAgentLoop implements AgentLoop {
                   inline: true,
                   trigger: 'threshold',
                   sourceRunId: context.runId,
-                  baseFixedTokens: estimateContextTokens([
-                    input.instructions,
-                    input.memoryContext,
-                    tools,
-                  ]),
+                  baseFixedTokens: estimateContextTokens([input.instructions, input.memoryContext, tools]),
                   currentMemoryInjected: Boolean(input.memoryContext),
                 },
               );
@@ -2027,8 +2015,7 @@ export class RawAgentLoop implements AgentLoop {
         events: priorEvents,
         contextWindow,
         thresholdTokens,
-        baseFixedTokens: options.baseFixedTokens
-          ?? estimateContextTokens([input.instructions, tools]),
+        baseFixedTokens: options.baseFixedTokens ?? estimateContextTokens([input.instructions, tools]),
         sourceRunId: options.sourceRunId,
         adaptUserHistoryToTarget: configuredWindow !== undefined,
       });
@@ -2089,21 +2076,12 @@ export class RawAgentLoop implements AgentLoop {
       if (!summaryText && completed.content) summaryText = completed.content;
       const summary = summaryText.trim();
       if (!summary) throw new Error('compaction failed: model returned empty summary');
-      const summaryValidation = validateCompactionSummary(summary);
-      if (!summaryValidation.valid) {
-        logger.warn(
-          `[compact] summary validation warning session=${context.sessionId} run=${context.runId} `
-          + `missing=${summaryValidation.missingSections.join(',') || 'none'} `
-          + `maintenanceAttribution=${summaryValidation.maintenanceInstructionAttributedToUser}`,
-        );
-      }
-      const summaryPromptDigest = createHash('sha256').update(this.compactionPrompt).digest('hex');
+      const summaryAudit = createCompactionSummaryAudit({ summary, prompt: this.compactionPrompt, model: context.model, ...(context.modelRef ? { modelRef: context.modelRef } : {}), userHistoryTokenCap: plan.userHistoryTokenCap });
+      if (!summaryAudit.validation.valid) logger.warn(`[compact] summary validation warning session=${context.sessionId} run=${context.runId} ${formatCompactionSummaryWarning(summaryAudit.validation)}`);
 
       if (this.runStore?.clearResponseSessionStateBySession) {
         const cleared = await this.runStore.clearResponseSessionStateBySession(context.sessionId);
-        if (cleared > 0) {
-          logger.info(`[compact] cleared ${cleared} response relay state(s) session=${context.sessionId}`);
-        }
+        if (cleared > 0) logger.info(`[compact] cleared ${cleared} response relay state(s) session=${context.sessionId}`);
       }
       await this.append({
         type: 'compaction',
@@ -2117,9 +2095,7 @@ export class RawAgentLoop implements AgentLoop {
           version: plan.version,
           trigger: options.trigger,
           ...(options.sourceRunId ? { sourceRunId: options.sourceRunId } : {}),
-          ...(options.controlSourceRunIds?.length
-            ? { controlSourceRunIds: options.controlSourceRunIds }
-            : {}),
+          ...(options.controlSourceRunIds?.length ? { controlSourceRunIds: options.controlSourceRunIds } : {}),
           targetTokens: plan.targetTokens,
           summaryBudgetTokens: plan.summaryBudgetTokens,
           summaryObservedTokens: estimateContextTokens(summary),
@@ -2127,19 +2103,12 @@ export class RawAgentLoop implements AgentLoop {
           rawTailObservedTokens: plan.rawTailObservedTokens,
           fixedTokens: plan.fixedTokens,
           taskAnchors: plan.taskAnchors,
-          summaryModel: context.model,
-          ...(context.modelRef ? { summaryModelRef: context.modelRef } : {}),
-          summaryPromptDigest,
-          summaryValidation,
-          userHistoryTokenCap: plan.userHistoryTokenCap,
+          summaryAudit,
         },
       });
 
-      logger.info(
-        `[compact] checkpoint finished session=${context.sessionId} covered=${plan.coveredEventCount} `
-        + `retained=${priorEvents.length - plan.coveredEventCount} `
-        + `cutoff=${plan.rawTailStartEventId ?? 'compaction'} inline=${options.inline} trigger=${options.trigger}`,
-      );
+      logger.info(`[compact] checkpoint finished session=${context.sessionId} covered=${plan.coveredEventCount} `
+        + `retained=${priorEvents.length - plan.coveredEventCount} cutoff=${plan.rawTailStartEventId ?? 'compaction'} inline=${options.inline} trigger=${options.trigger}`);
       const resultText = `✅ 上下文已压缩：${plan.coveredEventCount} 条较早事件已归纳，保留 ${priorEvents.length - plan.coveredEventCount} 条最近原始事件（完整记录仍可检索）。`;
       yield {
         type: 'compaction_end',

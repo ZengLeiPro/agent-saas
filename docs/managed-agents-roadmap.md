@@ -411,7 +411,7 @@ Abort / approval / AskUserQuestion resume 也已经 durable 化到 command event
 - [x] 新增 4 个 chaos mode：`renew-failure` / `abort-states` / `notify-drop` / `db-unavailable`（详见 §13.5），覆盖"DB 短暂不可用 / PG NOTIFY 丢通知 / worker renew 失败不重复 wake / 全状态 abort + terminal 幂等"。
 - [x] 修两个被新场景暴露的真实生产缺陷：A=`markStatus`/`releaseLease` 无 terminal 守卫（terminal 可被改回活跃态）；B=`subscribeAppended` 无重连/catch-up/水位（丢 NOTIFY = silent loss）。顺手修既有 `init()` 并发竞态（advisory lock）。
 - [x] 聚合门禁 runner `chaos-gate.mts`（`verify:chaos:gate`）：跑完全部 12 mode + 可追溯报告（JSON/MD）+ 退出码门禁语义。当前 12/12 全绿。
-- [x] CI 接入：`.github/workflows/chaos-gate.yml`，发版 tag + 手动 dispatch 触发，失败阻断发版（曾磊定：只在发版时跑，不每次 push）。
+- [x] 聚合门禁 runner 曾以独立 CI workflow 运行；该 workflow 已于 2026-08-23 删除，后续将整合进整体测试发布流程。
 
 #### Phase 2（4 chaos 落地，剩 staging 决策）：端到端真实 server 多进程拓扑
 
@@ -1255,7 +1255,7 @@ Hand    = replaceable execution environment/tool endpoint
 
 `server/scripts/verify-runtime-chaos.mts` 已全部为真实 PG / 子进程断言（不再是 plan-only），共 **12 个 mode**。package script：`pnpm -F server verify:chaos`（=all）、以及逐 mode 的 `verify:chaos:<mode>`。
 
-**聚合门禁 runner**：`server/scripts/chaos-gate.mts`（`pnpm -F server verify:chaos:gate`）串行跑全部 mode（每个 mode 独立子进程，互不污染），产出可追溯报告（JSON + Markdown，落 `server/.chaos-reports/`，已 gitignore），退出码即门禁结论（全过 0 / 任一失败 1）。与 `--mode=all`（fail-fast、只 console.log）区别：跑完所有 mode + 完整报告，适合发布前门禁。CI：`.github/workflows/chaos-gate.yml`，发版 tag（`v*`）+ 手动 dispatch 触发，失败阻断发版。
+**聚合门禁 runner**：`server/scripts/chaos-gate.mts`（`pnpm -F server verify:chaos:gate`）串行跑全部 mode（每个 mode 独立子进程，互不污染），产出可追溯报告（JSON + Markdown，落 `server/.chaos-reports/`，已 gitignore），退出码即门禁结论（全过 0 / 任一失败 1）。与 `--mode=all`（fail-fast、只 console.log）区别：跑完所有 mode + 完整报告，适合发布前门禁。原独立 CI workflow 已于 2026-08-23 删除，后续将整合进整体测试发布流程。
 
 覆盖断言：
 - `hand-cancel` / `hand-kill`：local hand-server cancel + terminal stream 收敛。

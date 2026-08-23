@@ -205,12 +205,20 @@ export function maybeNavigateWithUpdate(targetUrl: string): boolean {
   return autoApply(targetUrl);
 }
 
+export function shouldAutoApplyPopstate(
+  event: Pick<Event, "isTrusted"> | undefined,
+  state: { updateReady: boolean; applying: boolean; guardActive: boolean },
+): boolean {
+  return event?.isTrusted !== false && state.updateReady && !state.applying && !state.guardActive;
+}
+
 /**
  * popstate 拦截入口（URL 已变，直接原地 reload 即到新版）。
  * 返回 true 表示已接管刷新，调用方应跳过本次 SPA 状态同步。
  */
-export function maybeReloadOnPopstate(): boolean {
-  if (!updateReady || applying || hasGuardActive()) return false;
+export function maybeReloadOnPopstate(event?: Pick<Event, "isTrusted">): boolean {
+  // pushState 后由应用派发的合成 popstate 只是 SPA 状态同步，绝不能被当成浏览器导航强刷。
+  if (!shouldAutoApplyPopstate(event, { updateReady, applying, guardActive: hasGuardActive() })) return false;
   return autoApply();
 }
 

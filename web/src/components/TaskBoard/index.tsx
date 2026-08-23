@@ -498,6 +498,10 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         modelList={modelList}
         onOpenChange={setDetailOpen}
         onTaskLoaded={syncTask}
+        onConfigureCiPolicy={() => {
+          setDetailOpen(false);
+          setBoardDialogMode("edit");
+        }}
         onNavigateTask={(taskId) => {
           if (!tasks.some((candidate) => candidate.id === taskId)) {
             setNotice("关联任务不可见或已归档，无法打开详情");

@@ -20,7 +20,6 @@ import {
   saveComposerAttachments,
   saveComposerText,
 } from "@/lib/composerDraftStorage";
-import { mapSessionDetailToMessages } from "@/lib/sessionsApi";
 import type { ApiSessionDetail } from "@/lib/sessionsApi";
 import {
   asCompactionItem,
@@ -1119,7 +1118,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         if (res.ok) {
           const data: ApiSessionDetail = await res.json();
           const sessionOwnerName = data.owner?.username;
-          const msgs = mapSessionDetailToMessages(data, sessionOwnerName);
+          const msgs = (await import("@/lib/sessionMessageMapper")).mapSessionDetailToMessages(data, sessionOwnerName);
           msg.setMessages(msgs, { scrollToBottom: false });
 
           // 设置 sessionParticipants 供 MessageList 使用
@@ -1155,10 +1154,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // 浏览器前进/后退 → 解析 URL → 更新状态（不操作 URL）
   useEffect(() => {
-    const handler = () => {
-      // update-on-navigation：popstate 时 URL 已变，有 pending SW 更新且无守门
-      // 条件直接原地 reload 到新版本，跳过本次 SPA 状态同步
-      if (maybeReloadOnPopstate()) return;
+    const handler = (event: PopStateEvent) => {
+      // 只有用户真实触发的前进/后退才允许借导航应用 SW 更新；应用内部派发的
+      // synthetic popstate 只是让 SPA 重读 URL，强刷会造成管理菜单随机闪屏。
+      if (maybeReloadOnPopstate(event)) return;
       const {
         tab,
         sessionId: urlSessionId,

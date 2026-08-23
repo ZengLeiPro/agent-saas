@@ -12,7 +12,7 @@ import {
   publicSessionShareFileUrl,
   type PublicSessionShareResponse,
 } from "@/lib/sessionShareApi";
-import { mapSessionDetailToMessages } from "@/lib/sessionsApi";
+import { mapSessionDetailToMessages } from "@/lib/sessionMessageMapper";
 import { getPreviewFileType } from "@agent/shared";
 
 interface SessionSharePageProps {

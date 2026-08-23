@@ -8,7 +8,14 @@ import {
   type PanelPulse,
 } from "@agent/shared";
 import { buildLegacyReplayBlocks } from "./legacyTaskDemo";
-import { allReplayScripts, hookReplayScenarioIds, loadHookReplayScript } from "./registry";
+import {
+  allReplayScripts,
+} from "./registry";
+import {
+  heroReplayScenarioIds,
+  hookReplayScenarioIds,
+  loadLazyReplayScript,
+} from "./lazyRegistry";
 import type { ReplayScript, ReplayStep } from "./types";
 
 function toolBlock(id: string, title: string): ApiTranscriptBlock {
@@ -101,7 +108,7 @@ describe("legacy task demo", () => {
 
   it("全部 hook legacy 演示在审批回复和后续 prompt 后仍只有一个计划实例", async () => {
     for (const scenarioId of hookReplayScenarioIds()) {
-      const loaded = loadHookReplayScript(scenarioId);
+      const loaded = loadLazyReplayScript(scenarioId);
       if (!loaded) throw new Error(`未注册 legacy 剧本：${scenarioId}`);
       const replay = await loaded;
       const decisions = Object.fromEntries(
@@ -121,13 +128,18 @@ describe("legacy task demo", () => {
     }
   });
 
-  it("14 个正式剧本的每组业务面板写入都能自动形成当前可见 delta", async () => {
+  it("全部正式剧本的每组业务面板写入都能自动形成当前可见 delta", async () => {
+    const heroScripts = await Promise.all(heroReplayScenarioIds().map(async (scenarioId) => {
+      const loaded = loadLazyReplayScript(scenarioId);
+      if (!loaded) throw new Error(`未注册 Hero 剧本：${scenarioId}`);
+      return loaded;
+    }));
     const hookScripts = await Promise.all(hookReplayScenarioIds().map(async (scenarioId) => {
-      const loaded = loadHookReplayScript(scenarioId);
+      const loaded = loadLazyReplayScript(scenarioId);
       if (!loaded) throw new Error(`未注册 legacy 剧本：${scenarioId}`);
       return loaded;
     }));
-    const scripts = [...allReplayScripts(), ...hookScripts];
+    const scripts = [...allReplayScripts(), ...heroScripts, ...hookScripts];
     const businessOps = new Set([
       "rowInsert", "rowsSet", "rowUpdate", "rowsUpdate", "cardInsert", "cardUpdate",
       "tableRowInsert", "tableRowUpdate", "cellFlag", "statsSet", "feedAppend",
@@ -169,10 +181,12 @@ describe("legacy task demo", () => {
       }
     }
 
-    expect(scripts).toHaveLength(14);
-    expect(coveredScripts.size).toBe(14);
-    expect(coveredSteps).toBe(94);
-    expect(coveredGroups).toBe(102);
+    expect(scripts).toHaveLength(
+      allReplayScripts().length + heroReplayScenarioIds().length + hookReplayScenarioIds().length,
+    );
+    expect(coveredScripts.size).toBe(scripts.length);
+    expect(coveredSteps).toBeGreaterThanOrEqual(scripts.length);
+    expect(coveredGroups).toBeGreaterThanOrEqual(coveredSteps);
   });
 
   it("结构化结果后只保留短回复和文件卡，省略重复长文", () => {

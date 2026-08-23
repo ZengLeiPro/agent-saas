@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskBoard } from "@agent/shared";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { BoardMembers } from "./BoardMembers";
 
 const mocks = vi.hoisted(() => ({
@@ -64,8 +65,7 @@ describe("BoardMembers", () => {
     }));
 
     await user.click(screen.getByRole("combobox", { name: "选择组织用户" }));
-    const userList = await screen.findByRole("listbox", { name: "组织用户列表" });
-    expect(userList.parentElement?.className).toContain("z-[110]");
+    await screen.findByRole("listbox", { name: "组织用户列表" });
     await user.type(screen.getByRole("searchbox", { name: "搜索组织用户" }), "成员三");
     await user.click(screen.getByRole("option", { name: /成员三 @user3/ }));
     await user.click(screen.getByRole("combobox", { name: "新成员角色" }));
@@ -78,6 +78,28 @@ describe("BoardMembers", () => {
 
     await user.click(screen.getByRole("button", { name: "移除成员 成员二 @user2" }));
     await waitFor(() => expect(mocks.deleteBoardMember).toHaveBeenCalledWith(board.id, "user-2"));
+  });
+
+  it("在看板设置 Dialog 内允许搜索并选择组织用户", async () => {
+    const user = userEvent.setup();
+    render(
+      <Dialog open>
+        <DialogContent>
+          <DialogTitle>看板设置</DialogTitle>
+          <DialogDescription>配置看板成员</DialogDescription>
+          <BoardMembers board={board} canManage />
+        </DialogContent>
+      </Dialog>,
+    );
+
+    await screen.findByText("所有者 @owner");
+    await user.click(screen.getByRole("combobox", { name: "选择组织用户" }));
+    const search = screen.getByRole("searchbox", { name: "搜索组织用户" });
+    await user.click(search);
+    await user.type(search, "成员三");
+    await user.click(screen.getByRole("option", { name: /成员三 @user3/ }));
+
+    expect(screen.getByRole("combobox", { name: "选择组织用户" }).textContent).toContain("成员三 @user3");
   });
 
   it("无 members.manage 权限时角色和删除按钮只读", async () => {

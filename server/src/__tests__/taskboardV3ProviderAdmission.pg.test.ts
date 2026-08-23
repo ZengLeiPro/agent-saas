@@ -90,6 +90,7 @@ describePg('Workflow v3 Provider admission (PostgreSQL)', () => {
     });
 
     expect(integration.workflowVersion).toBe(3);
+    expect(integration.status).toBe('in_progress');
     expect(v3GetPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({ owner: 'acme', name: 'v3-provider' }), '99', identity.ownerUserId,
     );

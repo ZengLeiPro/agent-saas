@@ -1,9 +1,10 @@
-import { useEffect, useMemo, type ReactNode } from "react";
+import { Suspense, useEffect, useMemo, type ReactNode } from "react";
 import {
   Activity,
   ChevronLeft,
   CircleGauge,
   Database,
+  Loader2,
   LockKeyhole,
   Settings2,
   type LucideIcon,
@@ -48,6 +49,15 @@ function routeForDefinition(definition: GovernanceRouteDefinition, current: Gove
   return governanceRoute(definition.id, {
     orgId: definition.area === "organization" ? current.orgId : null,
   });
+}
+
+function GovernancePageFallback() {
+  return (
+    <div className="flex min-h-[320px] items-center justify-center text-sm text-muted-foreground" data-testid="governance-page-loading">
+      <Loader2 className="mr-2 size-4 animate-spin" />
+      正在加载页面
+    </div>
+  );
 }
 
 export function GovernanceCapabilityNotice({
@@ -200,7 +210,9 @@ export function GovernanceConsole({
           })}
         </nav>
 
-        <main className="min-h-0 flex-1 overflow-auto">{children}</main>
+        <main className="min-h-0 flex-1 overflow-auto">
+          <Suspense fallback={<GovernancePageFallback />}>{children}</Suspense>
+        </main>
       </section>
     </div>
   );

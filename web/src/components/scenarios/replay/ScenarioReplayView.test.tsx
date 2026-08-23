@@ -116,14 +116,14 @@ describe('ScenarioReplayView', () => {
     expect(screen.getByText('订单 1').closest('tr')?.hasAttribute('data-panel-delta')).toBe(false);
   });
 
-  it('定时工作流首屏显示触发事件，推进后才展示执行动作', () => {
+  it('义务巡检首屏先显示员工的简单问题，推进后才扫描企业台账', () => {
     render(<ScenarioReplayView script={deadlineWatchScript} onExit={vi.fn()} typewriterIntervalMs={0} />);
-    expect(screen.getByText(/07:00 到期事项巡检/)).toBeTruthy();
+    expect(screen.getByText('本月哪些义务还没到权威终态？先处理会错过窗口的。')).toBeTruthy();
     expect(screen.queryByText('扫描到期事项台账')).toBeNull();
 
     clickNext(1);
-    expect(screen.getByText('07:00 排程自己起手已完成并形成可回读结果')).toBeTruthy();
-    expect(screen.queryByText('扫描到期事项台账')).toBeNull();
+    expect(screen.getByText('一句话问清本月未结义务已完成并形成可回读结果')).toBeTruthy();
+    expect(screen.getByText('企业系统实况')).toBeTruthy();
   });
 
   it('回放控制位于会话列底部，替代输入框而非横跨右侧面板', () => {

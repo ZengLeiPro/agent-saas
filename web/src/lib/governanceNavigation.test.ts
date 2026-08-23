@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/swUpdate", () => ({ maybeNavigateWithUpdate: () => false }));
+const swUpdateMocks = vi.hoisted(() => ({ maybeNavigateWithUpdate: vi.fn(() => false) }));
+vi.mock("@/lib/swUpdate", () => swUpdateMocks);
 
 import {
   GOVERNANCE_NAVIGATION,
@@ -224,6 +225,7 @@ describe("history compatibility adapters", () => {
     navigateGovernance(governanceRoute("organization.governance.qa", { orgId: "acme" }));
     expect(window.location.href).toContain("/tenant-admin/governance/qa?org=acme");
     expect(popstates).toBe(1);
+    expect(swUpdateMocks.maybeNavigateWithUpdate).not.toHaveBeenCalled();
     window.removeEventListener("popstate", onPopstate);
   });
 });

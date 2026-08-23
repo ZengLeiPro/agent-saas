@@ -83,6 +83,7 @@ describe("TaskDetailComments", () => {
     const taskDescription = screen.getByTestId("task-description-comment");
     expect(taskDescription.textContent).toContain("任务正文");
     expect(taskDescription.textContent).toContain("任务背景说明");
+    expect(taskDescription.firstElementChild?.className).toContain("bg-user-bubble");
     expect(taskDescription.compareDocumentPosition(screen.getByText("已完成实施。")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByText("暂无评论")).toBeNull();
   });

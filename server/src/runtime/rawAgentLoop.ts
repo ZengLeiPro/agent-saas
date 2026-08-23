@@ -661,6 +661,9 @@ export class RawAgentLoop implements AgentLoop {
     const combineReplayEvents = (currentEvents: PlatformEvent[]) => (
       context.replaySourceSessionId ? [...sourceEvents, ...currentEvents] : currentEvents
     );
+    // replay 父事件始终是只读快照；压缩 checkpoint 只写当前隐藏会话，
+    // 但评估和投影必须基于“父快照 + 隐藏增量”，否则无法缓解 replay 上下文压力。
+    const loadEffectiveEvents = async () => combineReplayEvents(await loadCurrentEvents());
     let currentEvents = await loadCurrentEvents();
     const priorEvents = combineReplayEvents(currentEvents);
     const { tools, descriptorsByName } = await this.prepareSessionTools(descriptors, priorEvents, context);
@@ -1053,10 +1056,7 @@ export class RawAgentLoop implements AgentLoop {
         await this.assertNoOpenToolCallBatchesBeforeModel(context.sessionId);
         if (manualCheckpointSourceRunIds.size > 0) {
           const controlSourceRunIds = [...manualCheckpointSourceRunIds];
-          const checkpointEvents = await this.eventStore.list(context.sessionId, {
-            excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
-            replayMode: 'bounded',
-          });
+          const checkpointEvents = await loadEffectiveEvents();
           const alreadyCheckpointed = controlSourceRunIds.every((sourceRunId) => (
             checkpointEvents.some((event) => (
               event.type === 'compaction'
@@ -1086,14 +1086,11 @@ export class RawAgentLoop implements AgentLoop {
               throw reason instanceof Error ? reason : new Error(String(reason ?? 'run aborted'));
             }
             if (outcome.status === 'compacted') {
-              const compactedEvents = await this.eventStore.list(context.sessionId, {
-                excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
-                replayMode: 'bounded',
-              });
+              const compactedEvents = await loadEffectiveEvents();
               const compactedProjection = buildContextProjection(compactedEvents, {
-                sessionId: context.sessionId,
+                sessionId: context.replaySourceSessionId ?? context.sessionId,
                 runId: context.runId,
-                policy: this.contextPolicy,
+                policy: context.replaySourceSessionId ? { type: 'full_replay' } : this.contextPolicy,
               });
               messages.splice(
                 0,
@@ -1150,10 +1147,7 @@ export class RawAgentLoop implements AgentLoop {
 
           let checkpointSucceeded = false;
           if (context.evaluateAutoCompaction && !autoCompactionSuppressed) {
-            const checkpointEvents = await this.eventStore.list(context.sessionId, {
-              excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
-              replayMode: 'bounded',
-            });
+            const checkpointEvents = await loadEffectiveEvents();
             const evaluation = context.evaluateAutoCompaction(checkpointEvents, pressure.reason);
             if (evaluation.shouldCompact) {
               logger.info(
@@ -1181,14 +1175,11 @@ export class RawAgentLoop implements AgentLoop {
                 throw reason instanceof Error ? reason : new Error(String(reason ?? 'run aborted'));
               }
               if (outcome.status === 'compacted') {
-                const compactedEvents = await this.eventStore.list(context.sessionId, {
-                  excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
-                  replayMode: 'bounded',
-                });
+                const compactedEvents = await loadEffectiveEvents();
                 const compactedProjection = buildContextProjection(compactedEvents, {
-                  sessionId: context.sessionId,
+                  sessionId: context.replaySourceSessionId ?? context.sessionId,
                   runId: context.runId,
-                  policy: this.contextPolicy,
+                  policy: context.replaySourceSessionId ? { type: 'full_replay' } : this.contextPolicy,
                 });
                 messages.splice(
                   0,
@@ -1524,10 +1515,7 @@ export class RawAgentLoop implements AgentLoop {
               : {}),
           });
           if (context.evaluateAutoCompaction && !autoCompactionSuppressed) {
-            const compactionEvents = await this.eventStore.list(context.sessionId, {
-              excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
-              replayMode: 'bounded',
-            });
+            const compactionEvents = await loadEffectiveEvents();
             const evaluation = context.evaluateAutoCompaction(
               compactionEvents,
               contextPressureForceReason,
@@ -1556,14 +1544,11 @@ export class RawAgentLoop implements AgentLoop {
                 throw reason instanceof Error ? reason : new Error(String(reason ?? 'run aborted'));
               }
               if (outcome.status === 'compacted') {
-                const compactedEvents = await this.eventStore.list(context.sessionId, {
-                  excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
-                  replayMode: 'bounded',
-                });
+                const compactedEvents = await loadEffectiveEvents();
                 const compactedProjection = buildContextProjection(compactedEvents, {
-                  sessionId: context.sessionId,
+                  sessionId: context.replaySourceSessionId ?? context.sessionId,
                   runId: context.runId,
-                  policy: this.contextPolicy,
+                  policy: context.replaySourceSessionId ? { type: 'full_replay' } : this.contextPolicy,
                 });
                 messages.splice(
                   0,
@@ -2000,9 +1985,9 @@ export class RawAgentLoop implements AgentLoop {
         input.instructions,
         tools,
         buildContextProjection(priorEvents, {
-          sessionId: context.sessionId,
+          sessionId: context.replaySourceSessionId ?? context.sessionId,
           runId: context.runId,
-          policy: this.contextPolicy,
+          policy: context.replaySourceSessionId ? { type: 'full_replay' } : this.contextPolicy,
         }).messages,
       ]);
       const contextWindow = configuredWindow ?? Math.max(1, estimatedCurrentTokens * 2);
@@ -2020,9 +2005,9 @@ export class RawAgentLoop implements AgentLoop {
       const compressedProjection = buildContextProjection(
         priorEvents.slice(0, plan.rawTailStartIndex),
         {
-          sessionId: context.sessionId,
+          sessionId: context.replaySourceSessionId ?? context.sessionId,
           runId: context.runId,
-          policy: this.contextPolicy,
+          policy: context.replaySourceSessionId ? { type: 'full_replay' } : this.contextPolicy,
         },
       );
       const compressedMessages = compressedProjection.messages;

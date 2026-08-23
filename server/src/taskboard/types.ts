@@ -319,6 +319,7 @@ export interface TaskboardExecutionStore {
     identity: TaskboardIdentity,
     runId: string,
     input: TaskBoardTaskCreateInput,
+    requestDigest?: string,
   ): Promise<TaskboardTaskCreateResult>;
   moveTaskFromExecution(
     identity: TaskboardIdentity,
@@ -437,7 +438,9 @@ export interface TaskboardService {
   listTasks(identity: TaskboardIdentity, boardId: string, filter?: TaskboardTaskListFilter): Promise<TaskBoardTask[]>;
   searchTasks(identity: TaskboardIdentity, filter?: TaskboardTaskSearchFilter): Promise<TaskboardPage<TaskBoardTask>>;
   createTask(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskBoardTask>;
-  createTaskWithResult(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskboardTaskCreateResult>;
+  createTaskWithResult(
+    identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput, requestDigest?: string,
+  ): Promise<TaskboardTaskCreateResult>;
   completeTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<TaskBoardTask>;
   releaseTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<void>;
   getTask(identity: TaskboardIdentity, taskId: string, creationClaimToken?: string): Promise<TaskBoardTask>;

@@ -614,7 +614,7 @@ describe("TaskBoardView", () => {
     await user.click(await screen.findByRole("button", { name: "查看已归档任务（1）" }));
     expect(screen.getByRole("heading", { name: "已归档任务（1）" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "打开已归档任务 TASK-ARCHIVED" })).toBeTruthy();
-    expect(screen.getAllByText("TASK-ARCHIVED")).toHaveLength(2);
+    expect(screen.getAllByText("TASK-ARCHIVED")).toHaveLength(1);
 
     await user.type(screen.getByRole("textbox", { name: "搜索已归档任务" }), "不存在");
     expect(screen.getByText("没有符合筛选条件的归档任务")).toBeTruthy();

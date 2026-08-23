@@ -480,7 +480,7 @@ describe('CronManage taskboard actions', () => {
         title: '合并分支',
         status: 'todo',
         clientRequestId: expect.stringMatching(/^taskboard-tool:/),
-      }),
+      }), expect.stringMatching(/^[a-f0-9]{64}$/),
     );
     expect(executionService.startDirectExecution).toHaveBeenCalledWith(identity, 'task-new', 1);
   });

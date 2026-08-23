@@ -13,7 +13,7 @@ import {
   rowToTask,
   visibleCommentPredicate,
 } from './storeHelpers.js';
-import { claimExistingTaskCreation, completeTaskCreationClaim, newTaskCreationClaim, waitForTaskCreationClaim } from './taskCreationLifecycle.js';
+import { claimExistingTaskCreation, completeTaskCreationClaim, newTaskCreationClaim, taskCreationRequestDigest, waitForTaskCreationClaim } from './taskCreationLifecycle.js';
 import {
   TaskboardNotFoundError,
   TaskboardValidationError,
@@ -83,6 +83,7 @@ export async function createTaskFromExecutionWithResult(
   identity: TaskboardIdentity,
   runId: string,
   input: TaskBoardTaskCreateInput,
+  requestDigest?: string,
 ): Promise<TaskboardTaskCreateResult> {
   assertTaskContent(input.title, input.description);
   return withActiveExecutionTask(options, identity, runId, async (client, currentTask) => {
@@ -96,11 +97,16 @@ export async function createTaskFromExecutionWithResult(
       throw new TaskboardValidationError('Taskboard Execution may only create todo follow-up tasks');
     }
     const kind = input.kind ?? (currentTask.kind === 'integration' ? 'remediation' : 'delivery');
+    const creationDigest = requestDigest ?? taskCreationRequestDigest({
+      boardId: currentTask.boardId, ...input, kind,
+    });
     if (kind === 'integration') {
       throw new TaskboardValidationError('Integration tasks require an integration batch');
     }
     if (input.clientRequestId) {
-      const existing = await claimExistingTaskCreation(client, options, currentTask.boardId, input.clientRequestId);
+      const existing = await claimExistingTaskCreation(
+        client, options, currentTask.boardId, input.clientRequestId, creationDigest,
+      );
       if (existing) return existing;
     }
     const numberResult = await client.query(
@@ -124,9 +130,9 @@ export async function createTaskFromExecutionWithResult(
       `INSERT INTO ${options.tasksTable}
          (id, board_id, identifier, title, description, kind, branch, attachments, status, priority, labels,
           sort_order, due_at, model, creator_user_id, creator_name, completed_at, client_request_id,
-          creation_state, creation_lease_id, creation_lease_expires_at, version)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,'todo',$9,$10,$11,$12,$13,$14,$15,NULL,$16,$17,$18,
-               CASE WHEN $17='pending' THEN now()+interval '5 minutes' END,1)`,
+          creation_request_digest,creation_state,creation_lease_id,creation_lease_expires_at,version)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,'todo',$9,$10,$11,$12,$13,$14,$15,NULL,$16,$17,$18,$19,
+               CASE WHEN $18='pending' THEN now()+interval '5 minutes' END,1)`,
       [
         taskId,
         currentTask.boardId,
@@ -144,6 +150,7 @@ export async function createTaskFromExecutionWithResult(
         identity.ownerUserId,
         identity.displayName?.trim() || identity.username,
         optionalText(input.clientRequestId),
+        input.clientRequestId ? creationDigest : null,
         creation.state,
         creation.token,
       ],

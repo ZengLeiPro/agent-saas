@@ -1,10 +1,23 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
 import { rowToTask, visibleCommentPredicate } from './storeHelpers.js';
-import type { TaskboardTaskCreateResult } from './types.js';
+import { TaskboardValidationError, type TaskboardTaskCreateResult } from './types.js';
 
 const CREATION_POLL_MS = 50;
+
+export function taskCreationRequestDigest(input: Record<string, unknown>): string {
+  const { clientRequestId: _clientRequestId, ...payload } = input;
+  return createHash('sha256').update(canonicalJson(payload)).digest('hex');
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).filter((key) => record[key] !== undefined).sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`;
+}
 
 export function newTaskCreationClaim(clientRequestId: string | undefined): {
   state: 'pending' | 'complete'; token: string | null;
@@ -18,6 +31,7 @@ export async function claimExistingTaskCreation(
   tables: { tasksTable: string; commentsTable: string; changesTable: string },
   boardId: string,
   clientRequestId: string,
+  creationRequestDigest: string,
 ): Promise<TaskboardTaskCreateResult | null> {
   const existing = await client.query(
     `SELECT t.*, (t.creation_lease_expires_at > now()) AS creation_lease_active,
@@ -29,6 +43,18 @@ export async function claimExistingTaskCreation(
   );
   const row = existing.rows[0];
   if (!row) return null;
+  if (row.creation_request_digest !== null && row.creation_request_digest !== creationRequestDigest) {
+    throw new TaskboardValidationError(
+      'Task creation idempotency key was already used with a different request',
+      'TASKBOARD_CREATE_IDEMPOTENCY_CONFLICT',
+    );
+  }
+  if (row.creation_request_digest === null && row.creation_state === 'pending') {
+    throw new TaskboardValidationError(
+      'Pending legacy task creation cannot be safely resumed',
+      'TASKBOARD_CREATE_IDEMPOTENCY_CONFLICT',
+    );
+  }
   if (row.creation_state === 'complete') return { task: rowToTask(row), created: false };
   if (row.creation_lease_active === true) return { task: rowToTask(row), created: false, creationPending: true };
   const creationClaimToken = randomUUID();

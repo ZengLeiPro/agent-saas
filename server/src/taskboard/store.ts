@@ -611,8 +611,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   async createTask(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskBoardTask> {
     return createStoredTask(this, identity, boardId, input);
   }
-  async createTaskWithResult(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskboardTaskCreateResult> {
-    return createStoredTaskWithResult(this, identity, boardId, input);
+  async createTaskWithResult(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput, requestDigest?: string): Promise<TaskboardTaskCreateResult> {
+    return createStoredTaskWithResult(this, identity, boardId, input, requestDigest);
   }
   async completeTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<TaskBoardTask> {
     return completeStoredTaskCreation(this, identity, taskId, claimToken);
@@ -909,8 +909,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   async createTaskFromExecution(
     identity: TaskboardIdentity, runId: string, input: TaskBoardTaskCreateInput,
   ): Promise<TaskBoardTask> { return createStoredTaskFromExecution(this, identity, runId, input); }
-  async createTaskFromExecutionWithResult(identity: TaskboardIdentity, runId: string, input: TaskBoardTaskCreateInput) {
-    return createStoredTaskFromExecutionWithResult(this, identity, runId, input);
+  async createTaskFromExecutionWithResult(identity: TaskboardIdentity, runId: string, input: TaskBoardTaskCreateInput, requestDigest?: string) {
+    return createStoredTaskFromExecutionWithResult(this, identity, runId, input, requestDigest);
   }
   enqueueContinuation(
     taskId: string,

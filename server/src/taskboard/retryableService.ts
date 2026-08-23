@@ -146,8 +146,9 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return (await this.service()).createTask(identity, boardId, input);
   }
 
-  async createTaskWithResult(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput) {
-    return (await this.service()).createTaskWithResult(identity, boardId, input);
+  async createTaskWithResult(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput,
+    requestDigest?: string) {
+    return (await this.service()).createTaskWithResult(identity, boardId, input, requestDigest);
   }
 
   async completeTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string) {
@@ -590,9 +591,10 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.createTaskFromExecution(identity, runId, input);
   }
 
-  async createTaskFromExecutionWithResult(identity: TaskboardIdentity, runId: string, input: TaskBoardTaskCreateInput) {
+  async createTaskFromExecutionWithResult(identity: TaskboardIdentity, runId: string, input: TaskBoardTaskCreateInput,
+    requestDigest?: string) {
     await this.init();
-    return this.target.createTaskFromExecutionWithResult(identity, runId, input);
+    return this.target.createTaskFromExecutionWithResult(identity, runId, input, requestDigest);
   }
 
   async moveTaskFromExecution(

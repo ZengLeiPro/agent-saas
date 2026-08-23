@@ -103,7 +103,7 @@ export function ArchivedTasksSheet({
                 }}
               >
                 <span className="block text-xs text-muted-foreground">{task.identifier}</span>
-                <span className="mt-1 block font-medium hover:underline">{task.title || task.identifier}</span>
+                {task.title && <span className="mt-1 block font-medium hover:underline">{task.title}</span>}
               </button>
               <div className="mt-3 flex items-center justify-between gap-2 border-t pt-3">
                 <span className="text-xs text-muted-foreground">{PRIORITY_LABELS[task.priority]}优先级</span>

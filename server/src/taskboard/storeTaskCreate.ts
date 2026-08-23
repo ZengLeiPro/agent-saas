@@ -8,6 +8,7 @@ import {
   completeTaskCreationClaim,
   newTaskCreationClaim,
   releaseTaskCreationClaim,
+  taskCreationRequestDigest,
   waitForTaskCreationClaim,
 } from './taskCreationLifecycle.js';
 import { assertActiveBoard, assertBoardRole, assertTaskContent, normalizeAttachments, normalizeLabels, optionalText } from './storeHelpers.js';
@@ -47,6 +48,7 @@ export async function createStoredTaskWithResult(
   identity: TaskboardIdentity,
   boardId: string,
   input: TaskBoardTaskCreateInput,
+  requestDigest = taskCreationRequestDigest({ boardId, ...input }),
 ): Promise<TaskboardTaskCreateResult> {
   return store.withTransaction(async (client) => {
     const board = await store.requireBoard(client, identity, boardId, true);
@@ -54,7 +56,9 @@ export async function createStoredTaskWithResult(
     assertActiveBoard(board);
     validateTaskCreateInput(input);
     if (input.clientRequestId) {
-      const existing = await claimExistingTaskCreation(client, store, boardId, input.clientRequestId);
+      const existing = await claimExistingTaskCreation(
+        client, store, boardId, input.clientRequestId, requestDigest,
+      );
       if (existing) return existing;
     }
     const numberResult = await client.query(
@@ -78,11 +82,11 @@ export async function createStoredTaskWithResult(
       `INSERT INTO ${store.tasksTable}
          (id,board_id,identifier,kind,title,description,branch,attachments,status,priority,labels,sort_order,
           due_at,model,stage_models,provider_pull_request_id,pull_request_number,reviewed_subject_digest,
-          creator_user_id,creator_name,completed_at,client_request_id,creation_state,creation_lease_id,
-          creation_lease_expires_at,version)
+          creator_user_id,creator_name,completed_at,client_request_id,creation_request_digest,creation_state,
+          creation_lease_id,creation_lease_expires_at,version)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20,
-               CASE WHEN $9='done' THEN now() END,$21,$22,$23,
-               CASE WHEN $22='pending' THEN now()+interval '5 minutes' END,1)`,
+               CASE WHEN $9='done' THEN now() END,$21,$22,$23,$24,
+               CASE WHEN $23='pending' THEN now()+interval '5 minutes' END,1)`,
       [
         taskId, boardId, `TASK-${Number(numberResult.rows[0]?.task_number)}`, input.kind ?? 'delivery',
         input.title ?? '', input.description ?? '', optionalText(input.branch),
@@ -91,8 +95,8 @@ export async function createStoredTaskWithResult(
         input.dueAt ?? null, normalizeModel(input.stageModels !== undefined ? undefined : input.model),
         stageModelsToJson(input.stageModels), optionalText(input.providerPullRequestId),
         input.pullRequestNumber ?? null, optionalText(input.reviewedSubjectDigest), identity.ownerUserId,
-        identity.displayName?.trim() || identity.username, optionalText(input.clientRequestId), creation.state,
-        creation.token,
+        identity.displayName?.trim() || identity.username, optionalText(input.clientRequestId),
+        input.clientRequestId ? requestDigest : null, creation.state, creation.token,
       ],
     );
     await client.query(

@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { JwtPayload } from '../auth/types.js';
 import { createTaskboardRouter } from '../routes/taskboard.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
+import { taskCreationRequestDigest } from '../taskboard/taskCreationLifecycle.js';
 
 const { Pool } = pg;
 const connectionString = process.env.TEST_DATABASE_URL?.trim();
@@ -92,6 +93,35 @@ describePg('任务标题生成的并发幂等', () => {
     await store.completeTaskCreation(identity, takeover.task.id, takeover.creationClaimToken!);
     await expect(store.createTaskWithResult(identity, boardId, input))
       .resolves.toMatchObject({ created: false, task: { id: first.task.id } });
+  });
+
+  it('同一 clientRequestId 的正文、附件或 dispatch 变化会明确冲突', async () => {
+    const identity = { tenantId: USER.tenantId!, ownerUserId: USER.sub, username: USER.username };
+    const attachment = {
+      attachmentId: randomUUID(), originalName: '需求.txt', relativePath: 'uploads/需求.txt',
+      size: 12, mimeType: 'text/plain', isImage: false,
+    };
+    const input = {
+      description: '原始正文', attachments: [attachment], dispatch: false,
+      clientRequestId: 'payload-conflict-request',
+    };
+    const digest = taskCreationRequestDigest({ boardId, ...input });
+    const first = await store.createTaskWithResult(identity, boardId, input, digest);
+    await store.releaseTaskCreation(identity, first.task.id, first.creationClaimToken!);
+
+    for (const changed of [
+      { ...input, description: '修改后的正文' },
+      { ...input, attachments: [{ ...attachment, attachmentId: randomUUID() }] },
+      { ...input, dispatch: true },
+    ]) {
+      await expect(store.createTaskWithResult(
+        identity, boardId, changed, taskCreationRequestDigest({ boardId, ...changed }),
+      )).rejects.toMatchObject({ code: 'TASKBOARD_CREATE_IDEMPOTENCY_CONFLICT' });
+    }
+
+    const resumed = await store.createTaskWithResult(identity, boardId, input, digest);
+    expect(resumed).toMatchObject({ created: false, creationClaimToken: expect.any(String) });
+    await store.completeTaskCreation(identity, resumed.task.id, resumed.creationClaimToken!);
   });
 
   it('pending 任务仅创建 claim 可访问，完成后才对普通读写可见', async () => {

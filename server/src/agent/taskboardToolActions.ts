@@ -1,5 +1,5 @@
 import { appendTaskboardAttachments, cleanupTaskboardAttachments, materializeTaskboardAttachments, resolveTaskboardAttachments } from './taskboardAttachmentActions.js';
-import { taskboardCreateRequestId } from './taskboardCreateRequestId.js';
+import { taskboardCreateRequestDigest, taskboardCreateRequestId } from './taskboardCreateRequestId.js';
 import { assertTaskboardExecutionScope } from './taskboardExecutionScope.js';
 import { assertActiveBoard, assertBoardRole } from '../taskboard/storeHelpers.js';
 import { generateAndApplyTaskTitle, generateTaskTitleSafely } from '../taskboard/taskTitle.js';
@@ -734,6 +734,7 @@ async function createExecutionTask(
   const service = options.service();
   if (!service) throw new Error('任务看板服务未启用');
   const clientRequestId = taskboardCreateRequestId(input, { execution }, kind);
+  const requestDigest = taskboardCreateRequestDigest(input, kind);
   const createInput: TaskBoardTaskCreateInput = {
     title: input.title ?? '',
     kind,
@@ -747,7 +748,9 @@ async function createExecutionTask(
     ...(typeof input.model === 'string' ? { model: input.model } : {}),
     clientRequestId,
   };
-  const retryCreate = () => executionStore.createTaskFromExecutionWithResult(identity, execution.execution.runId, createInput);
+  const retryCreate = () => executionStore.createTaskFromExecutionWithResult(
+    identity, execution.execution.runId, createInput, requestDigest,
+  );
   const createResult = await waitForTaskCreationClaim(await retryCreate(), retryCreate);
   if (!createResult.created && !createResult.creationClaimToken && !input.dispatch) {
     return { created: false, task: createResult.task };

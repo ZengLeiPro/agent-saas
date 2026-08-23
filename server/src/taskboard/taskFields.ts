@@ -37,6 +37,7 @@ export function taskTableSql(tasksTable: string, boardsTable: string): string {
       merged_commit_oid TEXT,
       completed_at TIMESTAMPTZ,
       client_request_id TEXT,
+      creation_request_digest TEXT,
       creation_state TEXT NOT NULL DEFAULT 'complete' CHECK (creation_state IN ('pending', 'complete')),
       creation_lease_id TEXT,
       creation_lease_expires_at TIMESTAMPTZ,
@@ -72,6 +73,7 @@ export function taskFieldsMigrationSql(tasksTable: string): string {
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS merged_commit_oid TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS client_request_id TEXT;
+    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS creation_request_digest TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS creation_state TEXT NOT NULL DEFAULT 'complete';
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS creation_lease_id TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS creation_lease_expires_at TIMESTAMPTZ;

@@ -24,7 +24,7 @@ import {
 } from '../../../shared/src/types/taskboard.js';
 import { assertActiveBoard, assertBoardRole } from '../taskboard/storeHelpers.js';
 import { generateAndApplyTaskTitle, generateTaskTitleSafely } from '../taskboard/taskTitle.js';
-import { releaseTaskCreationAfterFailure, waitForTaskCreationClaim } from '../taskboard/taskCreationLifecycle.js';
+import { releaseTaskCreationAfterFailure, taskCreationRequestDigest, waitForTaskCreationClaim } from '../taskboard/taskCreationLifecycle.js';
 import { sameTaskAttachments } from '../taskboard/taskAttachmentMatch.js';
 import {
   TaskboardConflictError,
@@ -444,7 +444,7 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     const taskInput = { ...input, title: title ?? '' };
     delete taskInput.dispatch; delete taskInput.attachments;
     const createInput = { ...taskInput, ...(input.attachments !== undefined && input.attachments.length === 0 ? { attachments: [] } : {}) };
-    const retryCreate = () => options.service!.createTaskWithResult(identity, req.params.boardId, createInput);
+    const retryCreate = () => options.service!.createTaskWithResult(identity, req.params.boardId, createInput, taskCreationRequestDigest({ boardId: req.params.boardId, ...input }));
     const initial = input.clientRequestId ? await retryCreate() : { task: await options.service!.createTask(identity, req.params.boardId, createInput), created: true };
     const result = input.clientRequestId ? await waitForTaskCreationClaim(initial, retryCreate) : initial;
     if (!result.created && !result.creationClaimToken && !dispatch) { res.status(201).json(withCreatorAvatarVersion(options.userStore, identity, result.task)); return; }

@@ -3,13 +3,11 @@ import { createHash } from 'node:crypto';
 import type { TaskBoardTaskKind } from '../../../shared/src/types/taskboard.js';
 import type { TaskboardActionScope, TaskboardManageInput } from './taskboardToolActions.js';
 
-export function taskboardCreateRequestId(
+export function taskboardCreateRequestDigest(
   input: TaskboardManageInput,
-  scope: TaskboardActionScope,
   kind: TaskBoardTaskKind,
 ): string {
-  const sourceRunId = scope.execution?.execution.runId ?? 'unknown-run';
-  const digest = createHash('sha256').update(JSON.stringify({
+  return createHash('sha256').update(JSON.stringify({
     boardId: input.boardId,
     title: input.title,
     description: input.description,
@@ -23,6 +21,14 @@ export function taskboardCreateRequestId(
     labels: input.labels,
     dueAt: input.dueAt,
     model: input.model,
-  })).digest('hex').slice(0, 32);
-  return `taskboard-tool:${sourceRunId.slice(-64)}:${digest}`;
+  })).digest('hex');
+}
+
+export function taskboardCreateRequestId(
+  input: TaskboardManageInput,
+  scope: TaskboardActionScope,
+  kind: TaskBoardTaskKind,
+): string {
+  const sourceRunId = scope.execution?.execution.runId ?? 'unknown-run';
+  return `taskboard-tool:${sourceRunId.slice(-64)}:${taskboardCreateRequestDigest(input, kind).slice(0, 32)}`;
 }

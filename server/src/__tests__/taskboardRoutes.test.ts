@@ -1,8 +1,6 @@
 import type { Server } from 'node:http';
-
 import express from 'express';
 import { afterEach, describe, expect, it } from 'vitest';
-
 import type {
   TaskBoard,
   TaskBoardComment,
@@ -715,6 +713,8 @@ function makeService(captured: Captured): TaskboardService {
     },
     async getBoard(identity) { remember(identity); return BOARD; },
     async createTaskWithResult(identity) { remember(identity); return { task: TASK, created: true }; },
+    async completeTaskCreation(identity) { remember(identity); return TASK; },
+    async releaseTaskCreation(identity) { remember(identity); },
     async createBoard(identity, input) { remember(identity); captured.createBoards.push(input); return BOARD; },
     async updateBoard(identity) { remember(identity); return BOARD; },
     async archiveBoard(identity) { remember(identity); return { ...BOARD, version: 2, archivedAt: BOARD.updatedAt }; },

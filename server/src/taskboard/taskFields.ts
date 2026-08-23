@@ -37,6 +37,9 @@ export function taskTableSql(tasksTable: string, boardsTable: string): string {
       merged_commit_oid TEXT,
       completed_at TIMESTAMPTZ,
       client_request_id TEXT,
+      creation_state TEXT NOT NULL DEFAULT 'complete' CHECK (creation_state IN ('pending', 'complete')),
+      creation_lease_id TEXT,
+      creation_lease_expires_at TIMESTAMPTZ,
       version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
       archived_at TIMESTAMPTZ,
       deleted_at TIMESTAMPTZ,
@@ -69,7 +72,13 @@ export function taskFieldsMigrationSql(tasksTable: string): string {
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS merged_commit_oid TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS client_request_id TEXT;
+    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS creation_state TEXT NOT NULL DEFAULT 'complete';
+    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS creation_lease_id TEXT;
+    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS creation_lease_expires_at TIMESTAMPTZ;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    ALTER TABLE ${tasksTable} DROP CONSTRAINT IF EXISTS ${tasksTable}_creation_state_check;
+    ALTER TABLE ${tasksTable} ADD CONSTRAINT ${tasksTable}_creation_state_check
+      CHECK (creation_state IN ('pending', 'complete'));
     ALTER TABLE ${tasksTable} DROP CONSTRAINT IF EXISTS ${tasksTable}_kind_check;
     ALTER TABLE ${tasksTable} ADD CONSTRAINT ${tasksTable}_kind_check
       CHECK (kind IN (${TASKBOARD_TASK_KINDS.map(quoteSqlLiteral).join(', ')}));

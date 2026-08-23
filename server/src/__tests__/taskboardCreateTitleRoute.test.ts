@@ -38,6 +38,7 @@ describe('创建任务前的标题生成保护', () => {
     let releaseTitle!: () => void;
     const titleStarted = new Promise<void>((resolve) => { notifyTitleStarted = resolve; });
     const titleGate = new Promise<void>((resolve) => { releaseTitle = resolve; });
+    const listExecutions = vi.fn(async () => [] as Record<string, unknown>[]);
     const startDirectExecution = vi.fn(async () => ({
       task: { ...existingTask!, version: existingTask!.version + 1 }, execution: {},
     }));
@@ -52,7 +53,7 @@ describe('创建任务前的标题生成保护', () => {
     app.use((req, _res, next) => { req.user = USER; next(); });
     app.use('/api/taskboard', createTaskboardRouter({
       service,
-      executionService: { startDirectExecution } as never,
+      executionService: { listExecutions, startDirectExecution } as never,
       generateTaskTitle: async (description) => {
         titleGenerationCalls += 1;
         if (description === '生成器拒绝') throw new Error('生成器拒绝');
@@ -80,6 +81,11 @@ describe('创建任务前的标题生成保护', () => {
       expect(titleGenerationCalls).toBe(0);
 
       service.getBoard = async () => ({ ...VIEWER_BOARD, id: 'owner-board', role: 'owner', canManage: true });
+      const empty = await fetch(`${baseUrl}/api/taskboard/boards/owner-board/tasks`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+      });
+      expect(empty.status).toBe(400);
+      await empty.json();
       let createTail = Promise.resolve();
       service.createTaskWithResult = async (_identity, boardId, input) => {
         const previous = createTail;
@@ -126,7 +132,7 @@ describe('创建任务前的标题生成保护', () => {
       expect(firstResponse.status).toBe(201);
       await firstResponse.json();
       expect(titleGenerationCalls).toBe(1);
-      expect(service.updateTask).toHaveBeenCalledTimes(2);
+      expect(service.updateTask).toHaveBeenCalledTimes(1);
       expect(startDirectExecution).toHaveBeenCalledOnce();
       expect(service.rollbackTaskCreation).not.toHaveBeenCalled();
 
@@ -136,6 +142,57 @@ describe('创建任务前的标题生成保护', () => {
       });
       expect(rejected.status).toBe(201);
       expect((await rejected.json()).title).toBe('');
+
+      existingTask = {
+        id: 'task-recovery', boardId: 'owner-board', identifier: 'TASK-3', title: '',
+        description: '恢复 dispatch', status: 'in_progress', priority: 'none', labels: [],
+        sortOrder: 3072, commentCount: 0, version: 1,
+        createdAt: VIEWER_BOARD.createdAt, updatedAt: VIEWER_BOARD.updatedAt,
+      };
+      let recoveryAttempt = 0;
+      service.createTaskWithResult = vi.fn(async () => ({
+        task: existingTask!, created: recoveryAttempt++ === 0,
+        creationClaimToken: recoveryAttempt === 1 ? 'claim-1' : 'claim-2',
+      }));
+      service.releaseTaskCreation = vi.fn(async () => undefined);
+      service.completeTaskCreation = vi.fn(async () => existingTask!);
+      startDirectExecution.mockRejectedValueOnce(new Error('dispatch failed'));
+      const recoveryBody = JSON.stringify({
+        description: '恢复 dispatch', clientRequestId: 'request-recovery', status: 'in_progress', dispatch: true,
+      });
+      const failedDispatch = await fetch(`${baseUrl}/api/taskboard/boards/owner-board/tasks`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: recoveryBody,
+      });
+      expect(failedDispatch.status).toBe(503);
+      await failedDispatch.json();
+      const recovered = await fetch(`${baseUrl}/api/taskboard/boards/owner-board/tasks`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: recoveryBody,
+      });
+      expect(recovered.status).toBe(201);
+      await recovered.json();
+      expect(service.releaseTaskCreation).toHaveBeenCalledWith(expect.anything(), 'task-recovery', 'claim-1');
+      expect(service.completeTaskCreation).toHaveBeenCalledWith(expect.anything(), 'task-recovery', 'claim-2');
+      expect(listExecutions).toHaveBeenCalledTimes(1);
+      expect(startDirectExecution).toHaveBeenCalledTimes(3);
+
+      recoveryAttempt = 0;
+      service.completeTaskCreation = vi.fn()
+        .mockRejectedValueOnce(new Error('complete failed'))
+        .mockResolvedValue(existingTask!);
+      listExecutions.mockResolvedValueOnce([{}]);
+      const dispatchCount = startDirectExecution.mock.calls.length;
+      const failedComplete = await fetch(`${baseUrl}/api/taskboard/boards/owner-board/tasks`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: recoveryBody,
+      });
+      expect(failedComplete.status).toBe(503);
+      await failedComplete.json();
+      const completeRecovered = await fetch(`${baseUrl}/api/taskboard/boards/owner-board/tasks`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: recoveryBody,
+      });
+      expect(completeRecovered.status).toBe(201);
+      await completeRecovered.json();
+      expect(startDirectExecution).toHaveBeenCalledTimes(dispatchCount + 1);
+      expect(service.releaseTaskCreation).toHaveBeenCalledWith(expect.anything(), 'task-recovery', 'claim-1');
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

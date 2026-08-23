@@ -101,6 +101,7 @@ describe("TaskDialog 交互", () => {
     const onCreate = vi.fn(async () => undefined);
     render(<TaskDialog open onOpenChange={vi.fn()} onCreate={onCreate} />);
 
+    await user.type(screen.getByRole("textbox", { name: "正文" }), "立即执行任务");
     await user.click(screen.getByRole("combobox", { name: "新任务状态" }));
     expect(screen.getByRole("option", { name: "需求池" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "待推进" })).toBeTruthy();
@@ -187,6 +188,16 @@ describe("TaskDialog 交互", () => {
     expect((body as HTMLTextAreaElement).value).toBe("");
   });
 
+  it("正文为空时不提交", async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn();
+    render(<TaskDialog open onOpenChange={vi.fn()} onCreate={onCreate} />);
+
+    expect(screen.getByRole("textbox", { name: "正文" })).toHaveProperty("required", true);
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
   it("提交期间锁定全部表单控件，请求完成后再关闭", async () => {
     const user = userEvent.setup();
     let resolveCreate!: () => void;
@@ -202,6 +213,7 @@ describe("TaskDialog 交互", () => {
       />,
     );
 
+    await user.type(screen.getByRole("textbox", { name: "正文" }), "提交锁定测试");
     await user.click(screen.getByRole("button", { name: "创建任务" }));
     await waitFor(() => expect(onCreate).toHaveBeenCalledOnce());
 

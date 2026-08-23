@@ -76,6 +76,7 @@ import {
   assertActiveBoard,
   assertBoardRole,
   assertExpectedVersion,
+  assertTaskContent,
   assertWritableTask,
   mapActiveBoardNameError,
   normalizeAttachments,
@@ -88,6 +89,7 @@ import {
   validateMoveNeighbors, visibleCommentPredicate,
 } from './storeHelpers.js';
 import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns, assertTaskHasNoExecutionHistory } from './archiveGuard.js';
+import { completeStoredTaskCreation, createStoredTask, createStoredTaskWithResult, releaseStoredTaskCreation } from './storeTaskCreate.js';
 import { deleteComment as deleteStoredComment, updateComment as updateStoredComment } from './storeComments.js';
 import { getExecutionContextBySessionId as getStoredExecutionContextBySessionId, searchExecutions as searchStoredExecutions } from './storeExecutions.js';
 import {
@@ -134,13 +136,11 @@ import {
   type TaskboardTaskListFilter,
   type TaskboardTaskSearchFilter,
 } from './types.js';
-
 const { Pool } = pg;
 type PgPool = InstanceType<typeof Pool>;
 const DEFAULT_SORT_GAP = 1024;
 const MIN_SORT_GAP = 1e-7;
 export { TASKBOARD_TABLE_PREFIX_MAX_LENGTH } from './storeHelpers.js';
-
 export interface PgTaskboardStoreOptions {
   pool: PgPool;
   tablePrefix?: string;
@@ -608,96 +608,17 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<TaskboardPage<TaskBoardTask>> {
     return searchStoredTasks(this, identity, filter);
   }
-  async createTask(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskBoardTask> { return (await this.createTaskWithResult(identity, boardId, input)).task; }
+  async createTask(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskBoardTask> {
+    return createStoredTask(this, identity, boardId, input);
+  }
   async createTaskWithResult(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskboardTaskCreateResult> {
-    return this.withTransaction(async (client) => {
-      const board = await this.requireBoard(client, identity, boardId, true);
-      assertBoardRole(board.role, 'editor');
-      assertActiveBoard(board);
-      if (input.kind === 'integration' || input.kind === 'remediation') {
-        throw new TaskboardValidationError(
-          'Integration and remediation tasks must be created by their dedicated workflow',
-          'TASKBOARD_INTERNAL_TASK_CREATE_REQUIRES_WORKFLOW',
-        );
-      }
-      if (input.kind === 'advisory' && (
-        input.branch || input.providerPullRequestId || input.pullRequestNumber || input.reviewedSubjectDigest
-      )) {
-        throw new TaskboardValidationError(
-          'Advisory tasks cannot carry repository or pull request fields',
-          'TASKBOARD_ADVISORY_REPOSITORY_FORBIDDEN',
-        );
-      }
-      if (input.status && !['backlog', 'todo', 'in_progress'].includes(input.status)) {
-        throw new TaskboardValidationError(
-          'Initial task status is controlled by the taskboard workflow',
-          'TASKBOARD_PROTECTED_TRANSITION',
-        );
-      }
-      if (input.clientRequestId) {
-        const existing = await client.query(
-          `SELECT t.*, (SELECT count(*)::int FROM ${this.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', this.changesTable)}) AS comment_count FROM ${this.tasksTable} t WHERE t.board_id=$1 AND t.client_request_id=$2 AND t.deleted_at IS NULL`,
-          [boardId, input.clientRequestId],
-        );
-        if (existing.rows[0]) return { task: rowToTask(existing.rows[0]), created: false };
-      }
-      const numberResult = await client.query(
-        `UPDATE ${this.boardsTable}
-            SET next_task_number=next_task_number+1
-          WHERE id=$1 AND tenant_id=$2
-            AND (owner_user_id=$3 OR visibility='organization')
-          RETURNING next_task_number-1 AS task_number`,
-        [boardId, identity.tenantId, identity.ownerUserId],
-      );
-      const taskNumber = Number(numberResult.rows[0]?.task_number);
-      const status = input.status ?? 'backlog';
-      const tailResult = await client.query(
-        `SELECT COALESCE(MAX(t.sort_order), 0) AS max_sort_order
-           FROM ${this.tasksTable} t
-           JOIN ${this.boardsTable} b ON b.id=t.board_id
-          WHERE t.board_id=$1 AND t.status=$2 AND t.archived_at IS NULL
-            AND b.tenant_id=$3 AND (b.owner_user_id=$4 OR b.visibility='organization')`,
-        [boardId, status, identity.tenantId, identity.ownerUserId],
-      );
-      const sortOrder = Number(tailResult.rows[0]?.max_sort_order ?? 0) + DEFAULT_SORT_GAP;
-      const taskId = randomUUID();
-      await client.query(
-        `INSERT INTO ${this.tasksTable}
-           (id, board_id, identifier, kind, title, description, branch, attachments, status, priority, labels,
-            sort_order, due_at, model, stage_models, provider_pull_request_id, pull_request_number,
-            reviewed_subject_digest, creator_user_id, creator_name, completed_at, client_request_id, version)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20,
-                 CASE WHEN $9='done' THEN now() END,$21,1)`,
-        [
-          taskId,
-          boardId,
-          `TASK-${taskNumber}`,
-          input.kind ?? 'delivery',
-          input.title ?? '',
-          input.description ?? '',
-          optionalText(input.branch),
-          JSON.stringify(normalizeAttachments(input.attachments)),
-          status,
-          input.priority ?? 'none',
-          normalizeLabels(input.labels),
-          sortOrder,
-          input.dueAt ?? null,
-          normalizeModel(input.stageModels !== undefined ? undefined : input.model),
-          stageModelsToJson(input.stageModels),
-          optionalText(input.providerPullRequestId),
-          input.pullRequestNumber ?? null,
-          optionalText(input.reviewedSubjectDigest),
-          identity.ownerUserId,
-          identity.displayName?.trim() || identity.username,
-          optionalText(input.clientRequestId),
-        ],
-      );
-      await appendTaskChange(this, client, taskId, 'task.created', 'user', identity.ownerUserId, {
-        kind: input.kind ?? 'delivery',
-        status,
-      });
-      return { task: await this.requireTask(client, identity, taskId, false), created: true };
-    });
+    return createStoredTaskWithResult(this, identity, boardId, input);
+  }
+  async completeTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<TaskBoardTask> {
+    return completeStoredTaskCreation(this, identity, taskId, claimToken);
+  }
+  async releaseTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<void> {
+    return releaseStoredTaskCreation(this, identity, taskId, claimToken);
   }
   async getTask(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardTask> {
     return this.requireTask(this.pool, identity, taskId, false);
@@ -712,6 +633,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       if (input.title !== undefined || input.description !== undefined || input.attachments !== undefined) {
         await assertTaskHasNoExecutionHistory(this, client, taskId);
       }
+      if (input.title !== undefined || input.description !== undefined) assertTaskContent(input.title ?? loaded.task.title, input.description ?? loaded.task.description);
       if (kindMutation.promoting) await assertTaskHasNoActiveRuns(this, client, taskId);
       if (loaded.task.kind === 'advisory' && !kindMutation.promoting && input.branch !== undefined) {
         throw new TaskboardValidationError(

@@ -766,14 +766,16 @@ describe("TaskDetail 草稿隔离", () => {
   it("确认后删除任务并关闭详情", async () => {
     const user = userEvent.setup();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    const deleted = { ...taskOne, version: taskOne.version + 1, deletedAt: taskOne.updatedAt };
+    const emptyTitleTask = { ...taskOne, title: "" };
+    const deleted = { ...emptyTitleTask, version: taskOne.version + 1, deletedAt: taskOne.updatedAt };
+    mocks.fetchTask.mockResolvedValue(emptyTitleTask);
     const onDeleteTask = vi.fn(async () => deleted);
     const onOpenChange = vi.fn();
-    render(<TaskDetail {...props({ task: taskOne, onDeleteTask, onOpenChange })} />);
+    render(<TaskDetail {...props({ task: emptyTitleTask, onDeleteTask, onOpenChange })} />);
 
     await user.click(await screen.findByRole("button", { name: "删除任务" }));
-    await waitFor(() => expect(onDeleteTask).toHaveBeenCalledWith(taskOne));
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("确认删除任务"));
+    await waitFor(() => expect(onDeleteTask).toHaveBeenCalledWith(emptyTitleTask));
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining(taskOne.identifier));
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     confirmSpy.mockRestore();
   });

@@ -97,10 +97,11 @@ describe('Agent 创建任务的自动标题', () => {
       getTask: vi.fn(async () => existingTask!),
     } as unknown as TaskboardService;
     const startDirectExecution = vi.fn(async () => ({ task: existingTask!, execution: {} }));
+    const listExecutions = vi.fn(async () => [] as Record<string, unknown>[]);
     const options = {
       service: () => service,
       generateTaskTitle,
-      executionService: () => ({ startDirectExecution } as never),
+      executionService: () => ({ listExecutions, startDirectExecution } as never),
       executionStore: () => ({ createTaskFromExecutionWithResult } as never),
     };
     const scope = {
@@ -135,8 +136,53 @@ describe('Agent 创建任务的自动标题', () => {
     expect(replay).toMatchObject({ created: false, task: { title: '' } });
     expect(failed).toMatchObject({ created: true, task: { title: '' } });
     expect(generateTaskTitle).toHaveBeenCalledTimes(2);
-    expect(service.updateTask).toHaveBeenCalledTimes(2);
+    expect(service.updateTask).toHaveBeenCalledTimes(1);
     expect(startDirectExecution).toHaveBeenCalledOnce();
     expect(createTaskFromExecutionWithResult).toHaveBeenCalledTimes(3);
+
+    existingTask = null;
+    let recoveryAttempt = 0;
+    createTaskFromExecutionWithResult.mockImplementation(async (_identity, _runId, input) => {
+      existingTask ??= {
+        ...parentTask, id: 'task-remediation', identifier: 'TASK-3', kind: 'remediation',
+        title: '', description: input.description ?? '', status: 'todo' as const,
+      };
+      const created = recoveryAttempt++ === 0;
+      return { task: existingTask, created, creationClaimToken: created ? 'claim-1' : 'claim-2' };
+    });
+    service.linkIntegrationRemediationV2 = vi.fn()
+      .mockRejectedValueOnce(new Error('link failed'))
+      .mockResolvedValueOnce({});
+    service.releaseTaskCreation = vi.fn(async () => undefined);
+    service.completeTaskCreation = vi.fn(async () => existingTask!);
+    const integrationScope = {
+      ...scope,
+      execution: { ...scope.execution, task: { ...parentTask, kind: 'integration' as const } },
+    };
+    const remediationInput = {
+      action: 'create' as const, boardId: board.id, description: '修复冲突', sourceId: 'source-1',
+    };
+    await expect(invokeTaskboardAction(options, identity, remediationInput, integrationScope))
+      .rejects.toThrow('link failed');
+    await expect(invokeTaskboardAction(options, identity, remediationInput, integrationScope))
+      .resolves.toMatchObject({ created: false, task: { id: 'task-remediation' } });
+    expect(service.linkIntegrationRemediationV2).toHaveBeenCalledTimes(2);
+    expect(service.releaseTaskCreation).toHaveBeenCalledWith(identity, 'task-remediation', 'claim-1');
+    expect(service.completeTaskCreation).toHaveBeenCalledWith(identity, 'task-remediation', 'claim-2');
+
+    existingTask = null;
+    recoveryAttempt = 0;
+    service.completeTaskCreation = vi.fn()
+      .mockRejectedValueOnce(new Error('complete failed'))
+      .mockImplementation(async () => existingTask!);
+    listExecutions.mockResolvedValueOnce([{}]);
+    const dispatchInput = {
+      action: 'create' as const, boardId: board.id, description: '派发后恢复', dispatch: true,
+    };
+    const dispatchCount = startDirectExecution.mock.calls.length;
+    await expect(invokeTaskboardAction(options, identity, dispatchInput, scope)).rejects.toThrow('complete failed');
+    await expect(invokeTaskboardAction(options, identity, dispatchInput, scope))
+      .resolves.toMatchObject({ created: false, dispatched: true });
+    expect(startDirectExecution).toHaveBeenCalledTimes(dispatchCount + 1);
   });
 });

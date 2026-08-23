@@ -24,6 +24,8 @@ import {
 } from '../../../shared/src/types/taskboard.js';
 import { assertActiveBoard, assertBoardRole } from '../taskboard/storeHelpers.js';
 import { generateAndApplyTaskTitle, generateTaskTitleSafely } from '../taskboard/taskTitle.js';
+import { releaseTaskCreationAfterFailure, waitForTaskCreationClaim } from '../taskboard/taskCreationLifecycle.js';
+import { sameTaskAttachments } from '../taskboard/taskAttachmentMatch.js';
 import {
   TaskboardConflictError,
   TaskboardExecutionUnavailableError,
@@ -156,6 +158,9 @@ const taskCreateSchema = z.object({
   clientRequestId: z.string().trim().min(1).max(128).optional(),
   dispatch: z.boolean().optional(),
 }).strict().superRefine((input, context) => {
+  if (!input.title && !input.description?.trim()) {
+    context.addIssue({ code: 'custom', message: 'description is required when title is omitted', path: ['description'] });
+  }
   if (input.dispatch && input.status !== 'in_progress') {
     context.addIssue({ code: 'custom', message: 'dispatch requires in_progress status', path: ['dispatch'] });
   }
@@ -166,7 +171,6 @@ const taskCreateSchema = z.object({
     context.addIssue({ code: 'custom', message: 'dispatch requires clientRequestId', path: ['clientRequestId'] });
   }
 });
-
 const taskPatchSchema = z.object({
   title: z.string().trim().min(1).max(240).optional(),
   description: z.string().max(20_000).optional(),
@@ -192,14 +196,12 @@ const taskPatchSchema = z.object({
     || input.stageModels !== undefined,
   { message: 'At least one task field is required' },
 );
-
 const taskMoveSchema = z.object({
   status: z.enum(TASKBOARD_STATUSES),
   previousTaskId: z.string().min(1).max(128).optional(),
   nextTaskId: z.string().min(1).max(128).optional(),
   expectedVersion: z.number().int().min(1),
 }).strict();
-
 const commentCreateSchema = z.object({
   body: z.string().trim().max(20_000).default(''),
   attachments: attachmentsSchema.optional(),
@@ -207,37 +209,30 @@ const commentCreateSchema = z.object({
   (input) => input.body.length > 0 || Boolean(input.attachments?.length),
   { message: 'Comment body or attachment is required' },
 );
-
 const commentPatchSchema = z.object({
   body: z.string().trim().max(20_000),
   expectedVersion: z.number().int().min(1),
 }).strict();
-
 const memberPatchSchema = z.object({
   userId: z.string().trim().min(1).max(128),
   role: z.enum(['viewer', 'editor', 'maintainer'] as const),
 }).strict();
-
 const integrationCandidateRequeueSchema = z.object({
   reason: z.string().trim().min(3).max(1000),
 }).strict();
-
 const integrationBatchSchema = z.object({
   deliveryTaskIds: z.array(z.string().trim().min(1).max(128)).min(1).max(100),
   expectedBoardVersion: z.number().int().min(1),
 }).strict();
-
 const integrationCancelSchema = z.object({
   expectedVersion: z.number().int().min(1),
   reason: z.string().trim().min(1).max(2_000).optional(),
 }).strict();
-
 const taskResumeSchema = z.object({
   expectedVersion: z.number().int().min(1),
   decision: z.string().trim().min(1).max(2_000),
   sourceIds: z.array(z.string().trim().min(1).max(128)).max(100).optional(),
 }).strict();
-
 const executionContextSchema = z.object({
   include: z.array(z.enum(['task', 'board', 'comments', 'executions', 'activity', 'integrationSources'] as const))
     .max(6).optional(),
@@ -247,12 +242,10 @@ const executionContextSchema = z.object({
     limit: z.number().int().min(1).max(500).optional(),
   }).strict().optional(),
 }).strict();
-
 const pageQueryFields = {
   page: numberQuerySchema(1, 1_000_000, 1),
   pageSize: numberQuerySchema(1, 100, 20),
 };
-
 const paginationQuerySchema = z.object(pageQueryFields).strict();
 const integrationCandidateQuerySchema = z.object({
   includeHistory: booleanQuerySchema(),
@@ -261,13 +254,11 @@ const integrationCandidateQuerySchema = z.object({
 const boardsQuerySchema = z.object({
   includeArchived: booleanQuerySchema(),
 }).strict();
-
 const boardSearchQuerySchema = z.object({
   includeArchived: booleanQuerySchema(),
   search: z.string().trim().max(240).optional(),
   ...pageQueryFields,
 }).strict();
-
 const tasksQuerySchema = z.object({
   includeArchived: booleanQuerySchema(),
   search: z.string().trim().max(500).optional(),
@@ -275,7 +266,6 @@ const tasksQuerySchema = z.object({
   kind: enumListQuerySchema(TASKBOARD_TASK_KINDS),
   priority: enumListQuerySchema(TASKBOARD_PRIORITIES),
 }).strict();
-
 const taskSearchQuerySchema = z.object({
   boardId: z.string().trim().min(1).max(128).optional(),
   boardName: z.string().trim().max(120).optional(),
@@ -294,7 +284,6 @@ const taskSearchQuerySchema = z.object({
   dueBefore: dueAtSchema.optional(),
   ...pageQueryFields,
 }).strict();
-
 export interface TaskboardRouterOptions {
   service?: TaskboardService;
   executionService?: TaskboardExecutionService;
@@ -312,14 +301,12 @@ export interface TaskboardRouterOptions {
     reason: string;
   }) => Promise<{ candidateId: string; taskId: string; previousError: string; status: 'idle' } | undefined>;
 }
-
 export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   const router = Router();
   const identityFrom = identityFactory(options);
   const generateTaskTitle = options.generateTaskTitle ?? (async () => null);
   const sendTask = (req: Request, res: Response, task: TaskBoardTask) =>
     res.json(withCreatorAvatarVersion(options.userStore, identityFrom(req), task));
-
   router.use((req, res, next) => {
     if (!req.user) {
       res.status(401).json({ error: 'Authentication required', code: 'TASKBOARD_AUTH_REQUIRED' });
@@ -331,7 +318,6 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     }
     next();
   });
-
   router.get('/users', route(async (req, res) => {
     if (!options.userStore) throw new TaskboardExecutionUnavailableError();
     const users = listTaskboardDirectoryUsers(options.userStore, req.user!.tenantId);
@@ -458,35 +444,49 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     const taskInput = { ...input, title: title ?? '' };
     delete taskInput.dispatch; delete taskInput.attachments;
     const createInput = { ...taskInput, ...(input.attachments !== undefined && input.attachments.length === 0 ? { attachments: [] } : {}) };
-    const result = input.clientRequestId ? await options.service!.createTaskWithResult(identity, req.params.boardId, createInput) : { task: await options.service!.createTask(identity, req.params.boardId, createInput), created: true };
-    if (!result.created) { res.status(201).json(withCreatorAvatarVersion(options.userStore, identity, result.task)); return; }
+    const retryCreate = () => options.service!.createTaskWithResult(identity, req.params.boardId, createInput);
+    const initial = input.clientRequestId ? await retryCreate() : { task: await options.service!.createTask(identity, req.params.boardId, createInput), created: true };
+    const result = input.clientRequestId ? await waitForTaskCreationClaim(initial, retryCreate) : initial;
+    if (!result.created && !result.creationClaimToken) { res.status(201).json(withCreatorAvatarVersion(options.userStore, identity, result.task)); return; }
     let task = result.task;
-    if (input.clientRequestId && input.title === undefined) task = await generateAndApplyTaskTitle(options.service!, identity, task, input.description ?? '', generateTaskTitle);
+    if (input.clientRequestId && input.title === undefined && !task.title.trim()) task = await generateAndApplyTaskTitle(options.service!, identity, task, input.description ?? '', generateTaskTitle);
     let scopedAttachments: TaskBoardUploadAttachment[] | undefined;
+    let needsAttachmentWrite = attachments !== undefined && !sameTaskAttachments(task.attachments, attachments);
     try {
       if (input.clientRequestId) {
         attachments = await resolveRequestAttachments(options, req, input.attachments);
         ownerUserId = attachments?.length ? board.ownerUserId : undefined;
-        await markRequestAttachments(options, req, attachments);
+        needsAttachmentWrite = attachments !== undefined && !sameTaskAttachments(task.attachments, attachments);
+        if (needsAttachmentWrite) await markRequestAttachments(options, req, attachments);
       }
-      scopedAttachments = await materializeRequestAttachments(options, req, identity, task.id, ownerUserId, attachments);
-      if (scopedAttachments) {
+      if (needsAttachmentWrite) {
+        scopedAttachments = await materializeRequestAttachments(options, req, identity, task.id, ownerUserId, attachments);
         task = await options.service!.updateTask(identity, task.id, {
           attachments: scopedAttachments,
           expectedVersion: task.version,
         });
       }
     } catch (error) {
+      if (result.creationClaimToken) await releaseTaskCreationAfterFailure(
+        error,
+        () => cleanupRequestAttachments(options, identity, task.id, ownerUserId, scopedAttachments),
+        () => options.service!.releaseTaskCreation(identity, task.id, result.creationClaimToken!),
+      );
       await rollbackCreatedTask(options.service!, identity, task, error, async () => {
         await cleanupRequestAttachments(options, identity, task.id, ownerUserId, scopedAttachments);
       });
     }
-    if (dispatch) {
-      task = (await options.executionService!.startDirectExecution!(
-        identityFrom(req),
-        task.id,
-        task.version,
-      )).task;
+    try {
+      if (dispatch) {
+        const executions = result.created ? [] : await options.executionService!.listExecutions(identity, task.id);
+        task = executions.length
+          ? await options.service!.getTask(identity, task.id)
+          : (await options.executionService!.startDirectExecution!(identity, task.id, task.version)).task;
+      }
+      if (result.creationClaimToken) task = await options.service!.completeTaskCreation(identity, task.id, result.creationClaimToken);
+    } catch (error) {
+      if (result.creationClaimToken) await options.service!.releaseTaskCreation(identity, task.id, result.creationClaimToken).catch(() => undefined);
+      throw error;
     }
     res.status(201).json(withCreatorAvatarVersion(options.userStore, identity, task));
   }));

@@ -90,6 +90,10 @@ export function TaskDialog({
       setError("请等待附件上传完成");
       return;
     }
+    if (!description.trim()) {
+      setError("请填写任务正文");
+      return;
+    }
     if (status === "in_progress" && !dispatch) {
       setError("创建为实施中时必须勾选“直接执行”");
       return;
@@ -155,6 +159,7 @@ export function TaskDialog({
               onChange={(event) => setDescription(event.target.value)}
               placeholder="补充上下文和验收信息"
               rows={5}
+              required
               disabled={submitting}
               autoFocus
               onPaste={(event) => void attachments.handlePaste(event)}

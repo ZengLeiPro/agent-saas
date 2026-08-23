@@ -393,7 +393,7 @@ export function TaskDetail({
     if (!currentTask || boardReadOnly || !canArchiveTask) return;
     const operationTask = currentTask;
     const nextArchived = !Boolean(operationTask.archivedAt);
-    if (nextArchived && !window.confirm(`确认归档任务“${operationTask.title}”吗？`)) return;
+    if (nextArchived && !window.confirm(`确认归档任务“${operationTask.title || operationTask.identifier}”吗？`)) return;
     const requestId = ++detailRequestRef.current;
     setSaving(true);
     setError(null);
@@ -414,7 +414,7 @@ export function TaskDetail({
   const deleteCurrentTask = async () => {
     if (!currentTask || boardReadOnly || !canDeleteTask || !onDeleteTask) return;
     const operationTask = currentTask;
-    if (!window.confirm(`确认删除任务“${operationTask.title}”吗？删除后任务将不再显示，且无法恢复。`)) return;
+    if (!window.confirm(`确认删除任务“${operationTask.title || operationTask.identifier}”吗？删除后任务将不再显示，且无法恢复。`)) return;
     setSaving(true);
     setError(null);
     try {

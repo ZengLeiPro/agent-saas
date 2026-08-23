@@ -200,9 +200,14 @@ describe('token usage aggregation', () => {
   });
 
   describe('getTrendByModel', () => {
-    it('按有数据的北京日期与模型聚合，并按日期升序、模型 token 降序', () => {
+    it('补齐请求的北京日期，并按日期升序、模型 token 降序', () => {
       const points = store.getTrendByModel('2026-05-14', '2026-05-17');
-      expect(points.map(p => p.date)).toEqual(['2026-05-14', '2026-05-15', '2026-05-16']);
+      expect(points.map(p => p.date)).toEqual([
+        '2026-05-14',
+        '2026-05-15',
+        '2026-05-16',
+        '2026-05-17',
+      ]);
       expect(points[1].models.map(m => m.model)).toEqual([
         'claude-opus-4-7',
         'claude-haiku-4-5',
@@ -215,6 +220,30 @@ describe('token usage aggregation', () => {
         totalTokens: 26950,
         totalTurns: 2,
       });
+      expect(points[3]).toEqual({ date: '2026-05-17', models: [] });
+    });
+
+    it('补齐带时间范围内的中间空日', () => {
+      store.upsertRaw({
+        date: '2026-05-18', username: 'admin', tenantId: 'kaiyan', model: 'claude-opus-4-7', channel: 'web',
+        inputTokens: 400, outputTokens: 100, cacheReadTokens: 0, cacheCreationTokens: 0,
+        costUsdMicro: 1000, turnDelta: 1,
+        occurredAtMs: Date.parse('2026-05-18T12:00:00+08:00'),
+      });
+
+      const points = store.getTrendByModel('2026-05-16T00:00', '2026-05-18T23:59');
+      expect(points.map(p => p.date)).toEqual(['2026-05-16', '2026-05-17', '2026-05-18']);
+      expect(points[0].models).not.toHaveLength(0);
+      expect(points[1]).toEqual({ date: '2026-05-17', models: [] });
+      expect(points[2].models).not.toHaveLength(0);
+    });
+
+    it('全空区间仍返回每天的空模型列表', () => {
+      expect(store.getTrendByModel('2026-06-01', '2026-06-03')).toEqual([
+        { date: '2026-06-01', models: [] },
+        { date: '2026-06-02', models: [] },
+        { date: '2026-06-03', models: [] },
+      ]);
     });
 
     it('沿用 username / family / tenant 条件与模型 token 口径', () => {
@@ -240,7 +269,7 @@ describe('token usage aggregation', () => {
       })]);
       expect(store.getTrendByModel(
         '2026-05-15', '2026-05-15', undefined, 'gpt', 'other-tenant',
-      )).toEqual([]);
+      )).toEqual([{ date: '2026-05-15', models: [] }]);
     });
   });
 

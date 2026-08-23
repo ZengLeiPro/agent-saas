@@ -107,40 +107,85 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
     (next: number) => url.set("effDays", next === DEFAULT_EFF_DAYS ? null : next, HISTORY_PUSH),
     [url],
   );
-  const [data, setData] = useState<EfficiencyReport | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [modelTrend, setModelTrend] = useState<ModelTrendResp | null>(null);
-  const [modelTrendLoading, setModelTrendLoading] = useState(true);
-  const [modelTrendError, setModelTrendError] = useState<string | null>(null);
+  const tenantKey = tenantId ?? null;
+  const [efficiencyState, setEfficiencyState] = useState<{
+    tenantKey: string | null;
+    data: EfficiencyReport | null;
+    loading: boolean;
+    error: string | null;
+  }>(() => ({ tenantKey, data: null, loading: true, error: null }));
+  const [modelTrendState, setModelTrendState] = useState<{
+    tenantKey: string | null;
+    data: ModelTrendResp | null;
+    loading: boolean;
+    error: string | null;
+  }>(() => ({ tenantKey, data: null, loading: true, error: null }));
   const loadSequence = useRef(0);
   const plain = !linkEntities;
 
-  const load = useCallback(async () => {
+  // prop 切换后的首帧也按当前租户取值，不能等 effect 清理后才隐藏旧租户数据。
+  const { data, loading, error } = efficiencyState.tenantKey === tenantKey
+    ? efficiencyState
+    : { data: null, loading: true, error: null };
+  const {
+    data: modelTrend,
+    loading: modelTrendLoading,
+    error: modelTrendError,
+  } = modelTrendState.tenantKey === tenantKey
+    ? modelTrendState
+    : { data: null, loading: true, error: null };
+
+  const load = useCallback(() => {
     const sequence = ++loadSequence.current;
-    setLoading(true);
-    setModelTrendLoading(true);
-    setData(null);
-    setModelTrend(null);
-    setError(null);
-    setModelTrendError(null);
-
+    const isLatest = () => sequence === loadSequence.current;
     const tenantArgs = tenantId ? { tenantId } : {};
-    const [efficiencyResult, trendResult] = await Promise.allSettled([
-      runTraceApi.efficiency({ days, ...tenantArgs }),
-      usageApi.trendByModel({ ...recentBeijingRange(days), ...tenantArgs }),
-    ]);
-    if (sequence !== loadSequence.current) return;
 
-    if (efficiencyResult.status === "fulfilled") setData(efficiencyResult.value);
-    else setError(efficiencyResult.reason instanceof Error ? efficiencyResult.reason.message : String(efficiencyResult.reason));
+    // 同租户刷新保留已展示的数据；真正切租户则从空状态开始。
+    setEfficiencyState((previous) => ({
+      tenantKey,
+      data: previous.tenantKey === tenantKey ? previous.data : null,
+      loading: true,
+      error: null,
+    }));
+    setModelTrendState((previous) => ({
+      tenantKey,
+      data: previous.tenantKey === tenantKey ? previous.data : null,
+      loading: true,
+      error: null,
+    }));
 
-    if (trendResult.status === "fulfilled") setModelTrend(trendResult.value);
-    else setModelTrendError(trendResult.reason instanceof Error ? trendResult.reason.message : String(trendResult.reason));
+    void runTraceApi.efficiency({ days, ...tenantArgs }).then(
+      (nextData) => {
+        if (!isLatest()) return;
+        setEfficiencyState({ tenantKey, data: nextData, loading: false, error: null });
+      },
+      (reason) => {
+        if (!isLatest()) return;
+        setEfficiencyState((previous) => ({
+          tenantKey,
+          data: previous.tenantKey === tenantKey ? previous.data : null,
+          loading: false,
+          error: reason instanceof Error ? reason.message : String(reason),
+        }));
+      },
+    );
 
-    setLoading(false);
-    setModelTrendLoading(false);
-  }, [days, tenantId]);
+    void usageApi.trendByModel({ ...recentBeijingRange(days), ...tenantArgs }).then(
+      (nextData) => {
+        if (!isLatest()) return;
+        setModelTrendState({ tenantKey, data: nextData, loading: false, error: null });
+      },
+      (reason) => {
+        if (!isLatest()) return;
+        setModelTrendState((previous) => ({
+          tenantKey,
+          data: previous.tenantKey === tenantKey ? previous.data : null,
+          loading: false,
+          error: reason instanceof Error ? reason.message : String(reason),
+        }));
+      },
+    );
+  }, [days, tenantId, tenantKey]);
 
   useEffect(() => {
     void load();
@@ -159,7 +204,7 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
           value={days}
           onChange={setDays}
         />
-        <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading || modelTrendLoading}>
+        <Button variant="outline" size="sm" onClick={load} disabled={loading}>
           <RefreshCw className={cn("mr-1 size-3.5", (loading || modelTrendLoading) && "animate-spin")} />
           刷新
         </Button>

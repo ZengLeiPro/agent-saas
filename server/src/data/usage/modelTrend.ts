@@ -38,6 +38,38 @@ type AggregateSqlRow = (row: Record<string, unknown>) => {
   turns: number;
 };
 
+const DATE_OR_MINUTE_RE = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?$/;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function beijingDateStartMs(value: string): number | null {
+  const match = DATE_OR_MINUTE_RE.exec(value);
+  if (!match) return null;
+  const [, yearText, monthText, dayText, hourText, minuteText] = match;
+  const [year, month, day, hour, minute] = [yearText, monthText, dayText, hourText, minuteText]
+    .map(part => Number(part ?? 0));
+  if (hour > 23 || minute > 59) return null;
+
+  const date = new Date(0);
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCFullYear(year, month - 1, day);
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    return null;
+  }
+  return date.getTime();
+}
+
+function enumerateBeijingDates(from: string, to: string): string[] {
+  const fromMs = beijingDateStartMs(from);
+  const toMs = beijingDateStartMs(to);
+  if (fromMs === null || toMs === null || fromMs > toMs) return [];
+
+  const dates: string[] = [];
+  for (let dateMs = fromMs; dateMs <= toMs; dateMs += DAY_MS) {
+    dates.push(new Date(dateMs).toISOString().slice(0, 10));
+  }
+  return dates;
+}
+
 export function createModelTrendQuery(
   db: DatabaseSync,
   rangeSource: RangeSource,
@@ -97,9 +129,9 @@ export function createModelTrendQuery(
       byDate.set(date, models);
     }
 
-    return Array.from(byDate, ([date, models]) => ({
+    return enumerateBeijingDates(fromDate, toDate).map(date => ({
       date,
-      models: models.sort((a, b) => b.totalTokens - a.totalTokens),
-    })).sort((a, b) => a.date.localeCompare(b.date));
+      models: (byDate.get(date) ?? []).sort((a, b) => b.totalTokens - a.totalTokens),
+    }));
   };
 }

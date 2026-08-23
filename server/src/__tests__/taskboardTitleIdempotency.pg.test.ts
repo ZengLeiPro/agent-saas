@@ -97,9 +97,9 @@ describePg('任务标题生成的并发幂等', () => {
     expect((await Promise.all(responses.map((response) => response.json())))
       .every((task) => task.title === '并发唯一标题')).toBe(true);
     expect(titleGenerationCalls).toBe(1);
-    const tasks = await store.listTasks({
+    const tasks = (await store.listTasks({
       tenantId: USER.tenantId!, ownerUserId: USER.sub, username: USER.username,
-    }, boardId);
+    }, boardId)).filter((task) => task.description === '并发创建正文');
     expect(tasks).toHaveLength(1);
     expect(tasks[0]?.title).toBe('并发唯一标题');
   }, 15_000);

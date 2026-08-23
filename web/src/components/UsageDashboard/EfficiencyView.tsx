@@ -107,31 +107,31 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
     (next: number) => url.set("effDays", next === DEFAULT_EFF_DAYS ? null : next, HISTORY_PUSH),
     [url],
   );
-  const tenantKey = tenantId ?? null;
+  const requestKey = JSON.stringify([tenantId ?? null, days]);
   const [efficiencyState, setEfficiencyState] = useState<{
-    tenantKey: string | null;
+    requestKey: string;
     data: EfficiencyReport | null;
     loading: boolean;
     error: string | null;
-  }>(() => ({ tenantKey, data: null, loading: true, error: null }));
+  }>(() => ({ requestKey, data: null, loading: true, error: null }));
   const [modelTrendState, setModelTrendState] = useState<{
-    tenantKey: string | null;
+    requestKey: string;
     data: ModelTrendResp | null;
     loading: boolean;
     error: string | null;
-  }>(() => ({ tenantKey, data: null, loading: true, error: null }));
+  }>(() => ({ requestKey, data: null, loading: true, error: null }));
   const loadSequence = useRef(0);
   const plain = !linkEntities;
 
-  // prop 切换后的首帧也按当前租户取值，不能等 effect 清理后才隐藏旧租户数据。
-  const { data, loading, error } = efficiencyState.tenantKey === tenantKey
+  // 请求上下文变化后的首帧就隐藏旧数据，不能等 effect 清理后才切换。
+  const { data, loading, error } = efficiencyState.requestKey === requestKey
     ? efficiencyState
     : { data: null, loading: true, error: null };
   const {
     data: modelTrend,
     loading: modelTrendLoading,
     error: modelTrendError,
-  } = modelTrendState.tenantKey === tenantKey
+  } = modelTrendState.requestKey === requestKey
     ? modelTrendState
     : { data: null, loading: true, error: null };
 
@@ -140,16 +140,16 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
     const isLatest = () => sequence === loadSequence.current;
     const tenantArgs = tenantId ? { tenantId } : {};
 
-    // 同租户刷新保留已展示的数据；真正切租户则从空状态开始。
+    // 只有同一请求上下文的手动刷新保留已展示数据；租户或天数变化必须从空状态开始。
     setEfficiencyState((previous) => ({
-      tenantKey,
-      data: previous.tenantKey === tenantKey ? previous.data : null,
+      requestKey,
+      data: previous.requestKey === requestKey ? previous.data : null,
       loading: true,
       error: null,
     }));
     setModelTrendState((previous) => ({
-      tenantKey,
-      data: previous.tenantKey === tenantKey ? previous.data : null,
+      requestKey,
+      data: previous.requestKey === requestKey ? previous.data : null,
       loading: true,
       error: null,
     }));
@@ -157,13 +157,13 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
     void runTraceApi.efficiency({ days, ...tenantArgs }).then(
       (nextData) => {
         if (!isLatest()) return;
-        setEfficiencyState({ tenantKey, data: nextData, loading: false, error: null });
+        setEfficiencyState({ requestKey, data: nextData, loading: false, error: null });
       },
       (reason) => {
         if (!isLatest()) return;
         setEfficiencyState((previous) => ({
-          tenantKey,
-          data: previous.tenantKey === tenantKey ? previous.data : null,
+          requestKey,
+          data: previous.requestKey === requestKey ? previous.data : null,
           loading: false,
           error: reason instanceof Error ? reason.message : String(reason),
         }));
@@ -173,19 +173,19 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
     void usageApi.trendByModel({ ...recentBeijingRange(days), ...tenantArgs }).then(
       (nextData) => {
         if (!isLatest()) return;
-        setModelTrendState({ tenantKey, data: nextData, loading: false, error: null });
+        setModelTrendState({ requestKey, data: nextData, loading: false, error: null });
       },
       (reason) => {
         if (!isLatest()) return;
         setModelTrendState((previous) => ({
-          tenantKey,
-          data: previous.tenantKey === tenantKey ? previous.data : null,
+          requestKey,
+          data: previous.requestKey === requestKey ? previous.data : null,
           loading: false,
           error: reason instanceof Error ? reason.message : String(reason),
         }));
       },
     );
-  }, [days, tenantId, tenantKey]);
+  }, [days, requestKey, tenantId]);
 
   useEffect(() => {
     void load();
@@ -204,7 +204,7 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
           value={days}
           onChange={setDays}
         />
-        <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+        <Button variant="outline" size="sm" onClick={load} disabled={loading || modelTrendLoading}>
           <RefreshCw className={cn("mr-1 size-3.5", (loading || modelTrendLoading) && "animate-spin")} />
           刷新
         </Button>
@@ -216,6 +216,13 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
       </div>
 
       {error && <AdminErrorAlert error={error} />}
+
+      <ModelTokenTrendCard
+        response={modelTrend}
+        loading={modelTrendLoading}
+        error={modelTrendError}
+        labelFor={labelFor}
+      />
 
       {loading && !data ? (
         <div className="flex h-40 items-center justify-center rounded-2xl border bg-card text-sm text-muted-foreground">
@@ -303,13 +310,6 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
                     <MetricCard title="缓存命中率" value={formatRate(data.cost.cacheHitRate)} />
                   </div>
                 )}
-
-                <ModelTokenTrendCard
-                  response={modelTrend}
-                  loading={modelTrendLoading}
-                  error={modelTrendError}
-                  labelFor={labelFor}
-                />
 
                 <Card>
                   <CardHeader className="pb-2">

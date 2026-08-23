@@ -103,6 +103,25 @@ function resolveQueryTenant(req: Request, queryTenantId: string | undefined):
 type RangePreset = 'today' | '7d' | '30d' | 'mtd' | 'all';
 
 const DATE_OR_MINUTE_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$/;
+const MODEL_TREND_MAX_BEIJING_DAYS = 366;
+
+function beijingDayStartMs(value: string): number | null {
+  const [datePart, timePart] = value.split('T');
+  const [year, month, day] = datePart.split('-').map(Number);
+  const [hour, minute] = timePart?.split(':').map(Number) ?? [0, 0];
+  if (hour > 23 || minute > 59) return null;
+  const result = Date.UTC(year, month - 1, day);
+  const parsed = new Date(result);
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day
+    ? result
+    : null;
+}
+
+function countBeijingNaturalDays(fromDate: string, toDate: string): number | null {
+  const fromMs = beijingDayStartMs(fromDate);
+  const toMs = beijingDayStartMs(toDate);
+  return fromMs === null || toMs === null ? null : (toMs - fromMs) / 86_400_000 + 1;
+}
 
 const querySchema = z.object({
   range: z.enum(['today', '7d', '30d', 'mtd', 'all']).optional(),
@@ -361,6 +380,15 @@ export function createUsageRouter(opts: UsageRouterOptions): Router {
     const { fromDate, toDate, range } = resolveStoreRange(parsed.data, store, tenant.tenantId);
     if (!rangeIsValid(fromDate, toDate)) {
       res.status(400).json({ error: 'Invalid range: from must be before or equal to to' });
+      return;
+    }
+    const naturalDays = countBeijingNaturalDays(fromDate, toDate);
+    if (naturalDays === null) {
+      res.status(400).json({ error: 'Invalid range: expected real Beijing calendar dates and times' });
+      return;
+    }
+    if (naturalDays > MODEL_TREND_MAX_BEIJING_DAYS) {
+      res.status(400).json({ error: 'Range too large: trend-by-model supports at most 366 Beijing calendar days' });
       return;
     }
     const family = parsed.data.family as ModelFamily | undefined;

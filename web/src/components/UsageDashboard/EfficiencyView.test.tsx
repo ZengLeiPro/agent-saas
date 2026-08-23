@@ -81,6 +81,26 @@ function emptyTrend(): ModelTrendResp {
   };
 }
 
+function modelTrend(model: string, date = "2026-08-24"): ModelTrendResp {
+  return {
+    ...emptyTrend(),
+    fromDate: date,
+    toDate: date,
+    points: [{
+      date,
+      models: [{
+        model,
+        totalTokens: 1234,
+        totalTurns: 1,
+        inputTokens: 1000,
+        outputTokens: 234,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      }],
+    }],
+  };
+}
+
 beforeEach(() => {
   vi.mocked(runTraceApi.efficiency).mockReset();
   vi.mocked(usageApi.trendByModel).mockReset();
@@ -101,6 +121,7 @@ describe("EfficiencyView request states", () => {
     await waitFor(() => expect(screen.getByText("37")).toBeTruthy());
     expect(screen.queryByText("加载效率数据...")).toBeNull();
     expect(screen.getByText("正在加载模型趋势…")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "刷新" }) as HTMLButtonElement).disabled).toBe(true);
 
     await act(async () => trend.resolve(emptyTrend()));
 
@@ -175,5 +196,95 @@ describe("EfficiencyView request states", () => {
     expect(screen.queryByText("37")).toBeNull();
 
     await act(async () => tenantBTrend.resolve(emptyTrend()));
+  });
+
+  it("shows the model trend as soon as it resolves while efficiency is still pending", async () => {
+    const efficiency = deferred<EfficiencyReport>();
+    const trend = deferred<ModelTrendResp>();
+    vi.mocked(runTraceApi.efficiency).mockReturnValueOnce(efficiency.promise);
+    vi.mocked(usageApi.trendByModel).mockReturnValueOnce(trend.promise);
+
+    render(<EfficiencyView tenantId="tenant-a" linkEntities={false} />);
+    await act(async () => trend.resolve(modelTrend("trend-before-efficiency")));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "隐藏 trend-before-efficiency" })).toBeTruthy());
+    expect(screen.getByText("加载效率数据...")).toBeTruthy();
+
+    await act(async () => efficiency.resolve(efficiencyReport()));
+  });
+
+  it.each([
+    ["404", "/trend-by-model → 404", "模型趋势数据源未启用"],
+    ["failure", "趋势服务失败", "模型趋势加载失败：趋势服务失败"],
+  ])("keeps the trend %s state visible when efficiency also fails", async (_kind, trendReason, expectedTrendText) => {
+    vi.mocked(runTraceApi.efficiency).mockRejectedValueOnce(new Error("效率服务失败"));
+    vi.mocked(usageApi.trendByModel).mockRejectedValueOnce(new Error(trendReason));
+
+    render(<EfficiencyView tenantId="tenant-a" linkEntities={false} />);
+
+    await waitFor(() => expect(screen.getByText(expectedTrendText)).toBeTruthy());
+    expect(document.body.textContent).toContain("效率服务失败");
+    expect(screen.queryByText("加载效率数据...")).toBeNull();
+  });
+
+  it("hides 7-day data immediately on a 30-day switch and ignores late 7-day refreshes", async () => {
+    vi.mocked(runTraceApi.efficiency).mockResolvedValueOnce(efficiencyReport(7));
+    vi.mocked(usageApi.trendByModel).mockResolvedValueOnce(modelTrend("seven-day-model"));
+    const refreshedSevenEfficiency = deferred<EfficiencyReport>();
+    const refreshedSevenTrend = deferred<ModelTrendResp>();
+    const thirtyEfficiency = deferred<EfficiencyReport>();
+    const thirtyTrend = deferred<ModelTrendResp>();
+    vi.mocked(runTraceApi.efficiency)
+      .mockReturnValueOnce(refreshedSevenEfficiency.promise)
+      .mockReturnValueOnce(thirtyEfficiency.promise);
+    vi.mocked(usageApi.trendByModel)
+      .mockReturnValueOnce(refreshedSevenTrend.promise)
+      .mockReturnValueOnce(thirtyTrend.promise);
+
+    render(<EfficiencyView tenantId="tenant-a" linkEntities={false} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "隐藏 seven-day-model" })).toBeTruthy());
+    expect(screen.getByText("7")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+    expect(screen.getByRole("button", { name: "隐藏 seven-day-model" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "30 天" }));
+
+    expect(screen.queryByRole("button", { name: "隐藏 seven-day-model" })).toBeNull();
+    expect(screen.queryByText("7")).toBeNull();
+    expect(screen.getByText("加载效率数据...")).toBeTruthy();
+
+    await act(async () => thirtyTrend.resolve(modelTrend("thirty-day-model", "2026-08-01")));
+    await waitFor(() => expect(screen.getByRole("button", { name: "隐藏 thirty-day-model" })).toBeTruthy());
+    expect(screen.getByText("加载效率数据...")).toBeTruthy();
+
+    await act(async () => {
+      refreshedSevenEfficiency.resolve(efficiencyReport(17));
+      refreshedSevenTrend.resolve(modelTrend("late-seven-day-model"));
+    });
+    expect(screen.queryByText("17")).toBeNull();
+    expect(screen.queryByRole("button", { name: "隐藏 late-seven-day-model" })).toBeNull();
+    expect(screen.getByRole("button", { name: "隐藏 thirty-day-model" })).toBeTruthy();
+
+    await act(async () => thirtyEfficiency.resolve(efficiencyReport(30)));
+    await waitFor(() => expect(screen.getByText("30")).toBeTruthy());
+  });
+
+  it("does not retain the 7-day trend when the 30-day trend request fails", async () => {
+    vi.mocked(runTraceApi.efficiency)
+      .mockResolvedValueOnce(efficiencyReport(7))
+      .mockResolvedValueOnce(efficiencyReport(30));
+    vi.mocked(usageApi.trendByModel)
+      .mockResolvedValueOnce(modelTrend("seven-day-only"))
+      .mockRejectedValueOnce(new Error("30 天趋势失败"));
+
+    render(<EfficiencyView tenantId="tenant-a" linkEntities={false} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "隐藏 seven-day-only" })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("radio", { name: "30 天" }));
+
+    await waitFor(() => expect(screen.getByText("模型趋势加载失败：30 天趋势失败")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "隐藏 seven-day-only" })).toBeNull();
+    expect(screen.getByText("30")).toBeTruthy();
+    expect(screen.queryByText("7")).toBeNull();
   });
 });

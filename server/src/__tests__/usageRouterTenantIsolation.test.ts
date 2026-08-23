@@ -12,7 +12,7 @@
  *   8. 组织 admin 显式 ?tenantId=<other> → 403
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import type { Server } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -363,9 +363,44 @@ describe('Usage 路由组织隔离', () => {
       expect(platformBody.points[0].models[0].inputTokens).toBe(100);
     });
 
-    it('组织 admin 不能通过 tenantId 查询其他组织', async () => {
+    it.each([
+      ['YYYY-MM-DD', '2025-01-01', '2026-01-01', '2024-01-01', '2025-01-01'],
+      ['YYYY-MM-DDTHH:mm', '2025-01-01T23:59', '2026-01-01T00:00', '2024-01-01T23:59', '2025-01-01T00:00'],
+    ])('允许 366 个北京时间自然日、拒绝 367 个（%s）', async (_format, allowedFrom, allowedTo, rejectedFrom, rejectedTo) => {
+      const getTrendByModel = vi.spyOn(h.store, 'getTrendByModel');
+
+      const allowed = await h.request(`/api/admin/usage/trend-by-model?from=${allowedFrom}&to=${allowedTo}`);
+      expect(allowed.status).toBe(200);
+      expect((await allowed.json()).points).toHaveLength(366);
+      expect(getTrendByModel).toHaveBeenCalledOnce();
+
+      getTrendByModel.mockClear();
+      const rejected = await h.request(`/api/admin/usage/trend-by-model?from=${rejectedFrom}&to=${rejectedTo}`);
+      expect(rejected.status).toBe(400);
+      expect(await rejected.json()).toEqual({
+        error: 'Range too large: trend-by-model supports at most 366 Beijing calendar days',
+      });
+      expect(getTrendByModel).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['非法日期', '2025-13-01', '2025-13-02'],
+      ['非法时间', '2025-01-01T24:00', '2025-01-02T00:00'],
+    ])('%s 返回 400 且不调用 store', async (_label, from, to) => {
+      const getTrendByModel = vi.spyOn(h.store, 'getTrendByModel');
+      const res = await h.request(`/api/admin/usage/trend-by-model?from=${from}&to=${to}`);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: 'Invalid range: expected real Beijing calendar dates and times',
+      });
+      expect(getTrendByModel).not.toHaveBeenCalled();
+    });
+
+    it('组织 admin 不能通过 tenantId 查询其他组织，且权限校验先于区间上限', async () => {
       h.setCaller(WAIN_ADMIN);
-      const res = await h.request('/api/admin/usage/trend-by-model?range=today&tenantId=kaiyan');
+      const res = await h.request(
+        '/api/admin/usage/trend-by-model?from=2024-01-01&to=2025-01-01&tenantId=kaiyan',
+      );
       expect(res.status).toBe(403);
     });
   });

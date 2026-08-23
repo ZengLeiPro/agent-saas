@@ -12,7 +12,7 @@ import {
   type TaskBoardTask,
   type TaskBoardTaskPatchInput,
 } from "@agent/shared";
-import { Archive, ArchiveRestore, Bot, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Bot, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Settings2, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +35,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import * as api from "./api";
 import {
+  boardAllows,
   canUserTransitionTask,
   EXECUTION_STATUS_LABELS,
   INTEGRATION_SOURCE_STATE_LABELS,
@@ -88,6 +89,7 @@ interface TaskDetailProps {
   onOpenChange: (open: boolean) => void;
   onTaskLoaded: (task: TaskBoardTask) => void;
   onNavigateTask?: (taskId: string) => void;
+  onConfigureCiPolicy?: () => void;
   onUpdate: (
     task: TaskBoardTask,
     input: Omit<TaskBoardTaskPatchInput, "expectedVersion">,
@@ -119,6 +121,7 @@ export function TaskDetail({
   onOpenChange,
   onTaskLoaded,
   onNavigateTask,
+  onConfigureCiPolicy,
   onUpdate,
   onMove,
   onSetArchived,
@@ -433,7 +436,7 @@ export function TaskDetail({
     }
   };
 
-  const resumeBlocked = async () => {
+  const resumeBlocked = async (preset?: { decision: string; startAfterResume?: boolean }) => {
     if (!currentTask || currentTask.status !== "blocked" || !canTransitionTask || executionActive) return;
     const sourceIds = taskKind === "integration" && !isIntegrationV3
       ? integrationSourcesState.sources
@@ -444,7 +447,7 @@ export function TaskDetail({
       setError("请先勾选至少一个要恢复的 needs_human 集成来源");
       return;
     }
-    const decision = window.prompt(
+    const decision = preset?.decision ?? window.prompt(
       isIntegrationV3
         ? "请填写恢复 Workflow v3 Candidate 的决策与后续要求"
         : taskKind === "integration"
@@ -457,7 +460,9 @@ export function TaskDetail({
     setSaving(true);
     setError(null);
     try {
-      const next = await api.resumeTask(operationTask.id, operationTask.version, decision, sourceIds);
+      const resumed = await api.resumeTask(operationTask.id, operationTask.version, decision, sourceIds);
+      if (!isCurrentOperation(requestId, operationTask.id)) return;
+      const next = preset?.startAfterResume ? (await onExecute(resumed, "work")).task : resumed;
       if (!isCurrentOperation(requestId, operationTask.id)) return;
       setCurrentTask(next);
       mergeServerDraft(next);
@@ -679,7 +684,28 @@ export function TaskDetail({
                 {currentTask.providerPullRequestId ? <p>PR：<span className="font-mono">{currentTask.providerPullRequestId}</span>{currentTask.pullRequestNumber ? `（#${currentTask.pullRequestNumber}）` : ""}</p> : null}
                 {currentTask.reviewedSubjectDigest ? <p className="break-all text-xs text-muted-foreground">已复核对象：<span className="font-mono">{currentTask.reviewedSubjectDigest}</span></p> : null}
                 {currentTask.mergedCommitOid ? <p className="flex items-center gap-1 break-all text-xs text-emerald-700 dark:text-emerald-400"><GitCommitHorizontal className="size-3.5 shrink-0" />merged commit {currentTask.mergedCommitOid}</p> : null}
-                {currentTask.status === "blocked" ? (
+                {currentTask.providerCiStatus === "unconfigured" ? (
+                  <div aria-label="CI 门禁未配置" className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+                    <p className="font-medium">CI 门禁未配置</p>
+                    <p className="text-xs">GitHub required checks 与看板 fallback 均为空；系统已 fail-closed，不会把 observed optional checks 自动视为门禁。</p>
+                    {boardAllows(board, "board.policy.update") && onConfigureCiPolicy ? (
+                      <Button type="button" size="sm" variant="outline" onClick={onConfigureCiPolicy} disabled={saving}>
+                        <Settings2 />前往配置
+                      </Button>
+                    ) : <p className="text-xs">你没有修改看板策略的权限，请联系看板所有者配置 CI fallback 或 GitHub required checks。</p>}
+                    {currentTask.status === "blocked" && canTransitionTask ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => void resumeBlocked({ decision: "CI 门禁已配置，恢复实施并重新检查当前精确 PR head", startAfterResume: true })}
+                        disabled={saving || executionActive}
+                      >
+                        {saving ? <LoaderCircle className="animate-spin" /> : <Bot />}恢复任务并重新检查
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+                {currentTask.status === "blocked" && currentTask.providerCiStatus !== "unconfigured" ? (
                   <div className="space-y-2 text-amber-700 dark:text-amber-300">
                     <p>任务已阻塞；请查看最新执行错误或评论中的解除条件。</p>
                     {canTransitionTask ? (

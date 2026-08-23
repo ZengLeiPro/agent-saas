@@ -1,6 +1,8 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
 
+import { boardCiPolicySchema } from './taskboardCiPolicySchema.js';
+
 import type { UserStore } from '../data/users/store.js';
 import {
   listTaskboardDirectoryUsers,
@@ -67,6 +69,7 @@ const integrationPolicySchema = z.object({
     engineV3: z.boolean(), compose: z.boolean(), review: z.boolean(), merge: z.boolean(),
     cleanup: z.boolean(), workspaceSync: z.boolean(),
   }).strict().optional(),
+  ciPolicy: boardCiPolicySchema.optional(),
   trigger: integrationTriggerSchema,
   batch: z.object({
     maxTasks: z.number().int().min(1).max(100),
@@ -266,7 +269,6 @@ const integrationCandidateQuerySchema = z.object({
   includeHistory: booleanQuerySchema(),
   ...pageQueryFields,
 }).strict();
-
 const boardsQuerySchema = z.object({
   includeArchived: booleanQuerySchema(),
 }).strict();
@@ -366,6 +368,10 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     res.json(await options.service!.getBoard(identityFrom(req), req.params.id));
   }));
 
+  router.get('/boards/:id/ci-policy', route(async (req, res) => {
+    if (!options.service!.getBoardCiPolicyDiscovery) throw new TaskboardExecutionUnavailableError();
+    res.json(await options.service!.getBoardCiPolicyDiscovery(identityFrom(req), req.params.id));
+  }));
   router.patch('/boards/:id', route(async (req, res) => {
     const input = parseOrReply(boardPatchSchema, req.body, res, 'body');
     if (!input) return;

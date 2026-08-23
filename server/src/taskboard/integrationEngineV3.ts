@@ -60,6 +60,8 @@ export interface IntegrationEngineV3ProviderFacts {
   headOid: string;
   treeOid: string;
   requiredChecksKnown: boolean;
+  /** False distinguishes a missing CI policy from checks still running. */
+  requiredChecksConfigured?: boolean;
   requiredChecks: Array<{ name: string; status: 'pending' | 'success' | 'failure'; appId?: number }>;
   unsupportedRules: string[];
   mergeQueueRequired: boolean;
@@ -255,6 +257,9 @@ export class IntegrationEngineV3 {
     if (!facts.requiredChecksKnown || facts.unsupportedRules.length || facts.mergeQueueRequired) {
       const reason = `Required GitHub gates are not authoritative or supported: ${facts.unsupportedRules.join(',') || 'unknown'}`;
       return applied(await this.transition(current, 'blocked', reason));
+    }
+    if (facts.requiredChecksConfigured === false) {
+      return applied(await this.transition(current, 'blocked', 'CI gate is not configured: add GitHub required checks or this board\'s explicit CI fallback'));
     }
     if (facts.requiredChecks.some((check) => check.status === 'failure')) return applied(await this.transition(current, 'needs_work', 'Required checks failed'));
     if (facts.requiredChecks.length === 0 || facts.requiredChecks.some((check) => check.status === 'pending')) {
@@ -462,6 +467,12 @@ export class IntegrationEngineV3 {
       throw failClosed(
         `Required GitHub gates are not authoritative or supported: ${facts.unsupportedRules.join(',') || 'unknown'}`,
         'TASKBOARD_INTEGRATION_REQUIRED_CHECKS_UNKNOWN',
+      );
+    }
+    if (facts.requiredChecksConfigured === false) {
+      throw failClosed(
+        'CI gate is not configured: add GitHub required checks or this board\'s explicit CI fallback',
+        'TASKBOARD_CI_UNCONFIGURED',
       );
     }
     const failed = facts.requiredChecks.filter((check) => check.status === 'failure');

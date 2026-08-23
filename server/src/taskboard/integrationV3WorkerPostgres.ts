@@ -3,8 +3,9 @@ import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, normalize, relative, resolve, sep } from 'node:path';
 import type { PoolClient } from 'pg';
 
-import type { TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
+import type { TaskBoardIntegrationPolicy, TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
 import { rowToIntegrationCandidate, rowToIntegrationCandidateRevision, rowToIntegrationCandidateSourceSnapshot } from './integrationCandidateMapper.js';
+import { repositoryWithBoardCiPolicy } from './ciPolicy.js';
 import type { IntegrationV3ComposeContext, IntegrationV3ComposeHost } from './integrationV3ComposeExecutor.js';
 import type {
   IntegrationV3CandidateLease,
@@ -401,13 +402,19 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
 
   async resolveEngineContext(candidateId: string): Promise<{ repository: TaskBoardRepositoryConfig; credentialOwnerId: string }> {
     const result = await this.options.pool.query(
-      `SELECT b.repository,b.owner_user_id FROM ${this.options.candidatesTable} c
+      `SELECT b.repository,b.owner_user_id,c.policy_snapshot FROM ${this.options.candidatesTable} c
         JOIN ${this.options.tasksTable} t ON t.id=c.integration_task_id
         JOIN ${this.options.boardsTable} b ON b.id=t.board_id WHERE c.id=$1`, [candidateId]);
     const row = result.rows[0];
     const repository = record(row?.repository) as unknown as TaskBoardRepositoryConfig;
     if (!row || repository.provider !== 'github') throw new Error('Repository provider is unsupported or unknown');
-    return { repository, credentialOwnerId: String(row.owner_user_id) };
+    return {
+      repository: repositoryWithBoardCiPolicy(
+        repository,
+        record(row.policy_snapshot) as unknown as TaskBoardIntegrationPolicy,
+      ),
+      credentialOwnerId: String(row.owner_user_id),
+    };
   }
 
   async findRecoverableMergeOperation(candidateId: string, revision: number) {

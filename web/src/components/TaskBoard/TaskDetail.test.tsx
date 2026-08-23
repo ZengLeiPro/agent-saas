@@ -166,7 +166,7 @@ describe("TaskDetail 草稿隔离", () => {
     expect(container.querySelector("[aria-label='任务评论'] .size-8")).toBeNull();
   });
 
-  it("执行开始后隐藏左侧标题和正文，并将正文作为评论区首条消息", async () => {
+  it("执行开始后隐藏正文，并将正文作为评论区首条消息", async () => {
     const runningTask = { ...taskOne, status: "in_progress" as const };
     const execution: TaskBoardExecution = {
       id: "execution-lock",
@@ -190,35 +190,35 @@ describe("TaskDetail 草稿隔离", () => {
     mocks.executions = [];
     mocks.fetchTask.mockResolvedValue(taskTwo);
     rerender(<TaskDetail {...props({ task: taskTwo })} />);
-    await waitFor(() => expect((screen.getByRole("textbox", { name: "标题" }) as HTMLInputElement).value).toBe("任务二"));
+    await waitFor(() => expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("任务二正文"));
     expect(screen.queryByTestId("task-description-comment")).toBeNull();
   });
 
-  it("改变状态不会重置未保存字段，切换任务会清空评论草稿", async () => {
+  it("改变状态不会重置未保存正文，切换任务会清空评论草稿", async () => {
     const user = userEvent.setup();
     const initialProps = props();
     const { rerender } = render(<TaskDetail {...initialProps} />);
     await waitFor(() => expect(initialProps.onTaskLoaded).toHaveBeenCalledWith(taskOne));
 
-    const title = screen.getByRole("textbox", { name: "标题" }) as HTMLInputElement;
+    const description = screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement;
     const comment = screen.getByRole("textbox", { name: "发表评论" }) as HTMLTextAreaElement;
-    fireEvent.change(title, { target: { value: "未保存的新标题" } });
+    fireEvent.change(description, { target: { value: "未保存的新正文" } });
     fireEvent.change(comment, { target: { value: "任务一评论草稿" } });
 
     await user.click(screen.getByRole("combobox", { name: "任务状态" }));
     await user.click(screen.getByRole("option", { name: "待推进" }));
     await waitFor(() => expect(initialProps.onMove).toHaveBeenCalled());
-    expect(title.value).toBe("未保存的新标题");
+    expect(description.value).toBe("未保存的新正文");
     expect(comment.value).toBe("任务一评论草稿");
 
     rerender(<TaskDetail {...initialProps} active={false} />);
-    await waitFor(() => expect(screen.queryByRole("textbox", { name: "标题" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "正文" })).toBeNull());
     rerender(<TaskDetail {...initialProps} active />);
-    expect((await screen.findByRole("textbox", { name: "标题" }) as HTMLInputElement).value).toBe("未保存的新标题");
+    expect((await screen.findByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("未保存的新正文");
     expect((screen.getByRole("textbox", { name: "发表评论" }) as HTMLTextAreaElement).value).toBe("任务一评论草稿");
 
     rerender(<TaskDetail {...initialProps} task={taskTwo} />);
-    await waitFor(() => expect((screen.getByRole("textbox", { name: "标题" }) as HTMLInputElement).value).toBe("任务二"));
+    await waitFor(() => expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("任务二正文"));
     expect((screen.getByRole("textbox", { name: "发表评论" }) as HTMLTextAreaElement).value).toBe("");
   }, 10_000);
 
@@ -230,51 +230,49 @@ describe("TaskDetail 草稿隔离", () => {
     const { rerender } = render(<TaskDetail {...initialProps} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
-    const title = screen.getByRole("textbox", { name: "标题" }) as HTMLInputElement;
-    await user.clear(title);
-    await user.type(title, "任务一待保存标题");
+    const description = screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement;
+    await user.clear(description);
+    await user.type(description, "任务一待保存正文");
     await user.click(screen.getByRole("button", { name: "保存任务" }));
     await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1));
 
     rerender(<TaskDetail {...initialProps} task={taskTwo} />);
-    await waitFor(() => expect((screen.getByRole("textbox", { name: "标题" }) as HTMLInputElement).value).toBe("任务二"));
+    await waitFor(() => expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("任务二正文"));
     await act(async () => {
-      pending.resolve({ ...taskOne, title: "任务一已保存", version: 4 });
+      pending.resolve({ ...taskOne, description: "任务一已保存正文", version: 4 });
       await pending.promise;
     });
 
-    expect((screen.getByRole("textbox", { name: "标题" }) as HTMLInputElement).value).toBe("任务二");
+    expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("任务二正文");
   });
 
-  it("409 后采用服务端 current 版本，但保留用户草稿供再次提交", async () => {
+  it("409 后采用服务端 current 版本，但保留用户正文草稿供再次提交", async () => {
     const user = userEvent.setup();
     const current = {
       ...taskOne,
-      title: "其他窗口标题",
       description: "其他窗口新正文",
       priority: "high" as const,
       version: 8,
     };
-    const saved = { ...current, title: "我的最终标题", version: 9 };
+    const saved = { ...current, description: "我的最终正文", version: 9 };
     const onUpdate = vi.fn()
       .mockRejectedValueOnce(new TaskBoardConflictError("版本冲突", current))
       .mockResolvedValueOnce(saved);
     render(<TaskDetail {...props({ onUpdate })} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
-    const title = screen.getByRole("textbox", { name: "标题" }) as HTMLInputElement;
-    await user.clear(title);
-    await user.type(title, saved.title);
+    const description = screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement;
+    await user.clear(description);
+    await user.type(description, saved.description);
     await user.click(screen.getByRole("button", { name: "保存任务" }));
     expect((await screen.findByRole("alert")).textContent).toContain("版本冲突");
-    expect(title.value).toBe(saved.title);
-    expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("其他窗口新正文");
+    expect(description.value).toBe(saved.description);
     expect(screen.getByRole("combobox", { name: "任务优先级" }).textContent).toContain("高");
 
     await user.click(screen.getByRole("button", { name: "保存任务" }));
     await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(2));
     expect(onUpdate.mock.calls[1]?.[0]).toMatchObject({ id: taskOne.id, version: 8 });
-    expect(onUpdate.mock.calls[1]?.[1]).toEqual({ title: saved.title });
+    expect(onUpdate.mock.calls[1]?.[1]).toEqual({ description: saved.description });
   });
 
   it("任务详情可按实施与复核阶段指定模型并保存任务级覆盖，但不提供集成阶段选择", async () => {
@@ -531,7 +529,7 @@ describe("TaskDetail 草稿隔离", () => {
     expect(onTaskLoaded).toHaveBeenCalledWith(finalTask);
   });
 
-  it("启动 Agent 失败时不锁定标题和正文", async () => {
+  it("启动 Agent 失败时不锁定正文", async () => {
     const user = userEvent.setup();
     const todoTask = { ...taskOne, status: "todo" as const };
     mocks.fetchTask.mockResolvedValue(todoTask);
@@ -541,7 +539,7 @@ describe("TaskDetail 草稿隔离", () => {
 
     await user.click(screen.getByRole("button", { name: "开始实施" }));
     expect(await screen.findByText("模型不存在")).toBeTruthy();
-    expect((screen.getByRole("textbox", { name: "标题" }) as HTMLInputElement).disabled).toBe(false);
+    expect(screen.queryByRole("textbox", { name: "标题" })).toBeNull();
     expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).disabled).toBe(false);
   });
 

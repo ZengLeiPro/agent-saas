@@ -15,7 +15,6 @@ import {
 import { Archive, ArchiveRestore, Bot, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -49,7 +48,7 @@ import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from 
 import { TaskDetailComments, EXECUTION_PURPOSE_LABELS } from "./TaskDetailComments";
 import { useTaskComments, useTaskExecutions } from "./hooks";
 
-type TaskDraftField = "title" | "description" | "attachments" | "priority" | "stageModels";
+type TaskDraftField = "description" | "attachments" | "priority" | "stageModels";
 
 const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review"];
 const ACTIVE_EXECUTION_STATUSES = new Set(["queued", "running", "waiting_user", "waiting_approval"]);
@@ -127,7 +126,6 @@ export function TaskDetail({
   onCommentsChanged,
 }: TaskDetailProps) {
   const [currentTask, setCurrentTask] = useState<TaskBoardTask | null>(task);
-  const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<TaskBoardPriority>("none");
   const [stageModels, setStageModels] = useState<TaskBoardStageModels>({});
@@ -166,7 +164,6 @@ export function TaskDetail({
   const hydrateDraft = useCallback((next: TaskBoardTask) => {
     draftTaskIdRef.current = next.id;
     dirtyFieldsRef.current.clear();
-    setTitle(next.title);
     setDescription(next.description);
     taskAttachments.replaceFiles(next.attachments ?? []);
     setPriority(next.priority);
@@ -175,7 +172,6 @@ export function TaskDetail({
 
   const mergeServerDraft = useCallback((next: TaskBoardTask) => {
     const dirty = dirtyFieldsRef.current;
-    if (!dirty.has("title")) setTitle(next.title);
     if (!dirty.has("description")) setDescription(next.description);
     if (!dirty.has("attachments")) taskAttachments.replaceFiles(next.attachments ?? []);
     if (!dirty.has("priority")) setPriority(next.priority);
@@ -322,14 +318,9 @@ export function TaskDetail({
       setError("请等待附件上传完成");
       return;
     }
-    if (!title.trim()) {
-      setError("请输入任务标题");
-      return;
-    }
     const dirty = dirtyFieldsRef.current;
     if (dirty.size === 0) return;
     const input: Omit<TaskBoardTaskPatchInput, "expectedVersion"> = {};
-    if (dirty.has("title")) input.title = title.trim();
     if (dirty.has("description")) input.description = description.trim();
     if (dirty.has("attachments")) input.attachments = toTaskBoardAttachments(taskAttachments.uploadedFiles);
     if (dirty.has("priority")) input.priority = priority;
@@ -604,7 +595,7 @@ export function TaskDetail({
         {currentTask ? (
           <>
             <SheetHeader className="pr-12">
-              <SheetTitle className="truncate">{currentTask.identifier} · {currentTask.title}</SheetTitle>
+              <SheetTitle className="truncate">{currentTask.title ? `${currentTask.identifier} · ${currentTask.title}` : currentTask.identifier}</SheetTitle>
               <SheetDescription>
                 {boardReadOnly ? "归档看板只读" : archived ? "该任务已归档，可恢复后继续编辑" : "编辑任务并补充评论"}
               </SheetDescription>
@@ -753,20 +744,6 @@ export function TaskDetail({
               <form className="space-y-4" onSubmit={save}>
                 {!executionStarted ? (
                   <>
-                    <div className="space-y-2">
-                      <Label htmlFor="task-detail-title">
-                        标题 <span className="text-destructive" aria-hidden="true">*</span>
-                      </Label>
-                      <Input
-                        id="task-detail-title"
-                        value={title}
-                        onChange={(event) => {
-                          dirtyFieldsRef.current.add("title");
-                          setTitle(event.target.value);
-                        }}
-                        disabled={contentReadOnly || saving}
-                      />
-                    </div>
                     <div className="space-y-2">
                       <Label htmlFor="task-detail-description">正文</Label>
                       <Textarea

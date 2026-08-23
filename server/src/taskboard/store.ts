@@ -672,7 +672,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           boardId,
           `TASK-${taskNumber}`,
           input.kind ?? 'delivery',
-          requireText(input.title, 'Task title'),
+          input.title ?? '',
           input.description ?? '',
           optionalText(input.branch),
           JSON.stringify(normalizeAttachments(input.attachments)),

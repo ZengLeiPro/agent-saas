@@ -9,7 +9,6 @@ import {
   normalizeAttachments,
   normalizeLabels,
   optionalText,
-  requireText,
   rowToTask,
   visibleCommentPredicate,
 } from './storeHelpers.js';
@@ -115,7 +114,7 @@ export async function createTaskFromExecution(
         taskId,
         currentTask.boardId,
         `TASK-${Number(numberResult.rows[0].task_number)}`,
-        requireText(input.title, 'Task title'),
+        input.title ?? '',
         input.description ?? '',
         kind,
         optionalText(input.branch),

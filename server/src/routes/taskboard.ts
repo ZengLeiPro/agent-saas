@@ -11,6 +11,13 @@ import {
 } from './taskboardAvatar.js';
 import type { UploadManager } from '../uploads/manager.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
+import type {
+  TitleGeneratorConfig,
+  TitleModelAdapterFactory,
+} from '../agent/titleGenerator.js';
+import type { BillingService } from '../data/billing/service.js';
+import type { TokenUsageStore } from '../data/usage/store.js';
+import { createTaskboardTitleGenerator } from '../taskboard/taskTitle.js';
 import {
   TASKBOARD_EXECUTION_PURPOSES,
   TASKBOARD_PRIORITIES,
@@ -150,7 +157,7 @@ const attachmentSchema = z.object({
 const attachmentsSchema = z.array(attachmentSchema).max(50);
 
 const taskCreateSchema = z.object({
-  title: z.string().trim().min(1).max(240),
+  title: z.string().trim().min(1).max(240).optional(),
   description: z.string().max(20_000).optional(),
   kind: z.enum(['delivery', 'advisory']).optional(),
   branch: z.string().trim().min(1).max(512).optional(),
@@ -312,6 +319,15 @@ export interface TaskboardRouterOptions {
   /** 将上传暂存附件解析为当前用户工作区中的可信附件。 */
   agentCwd?: string;
   uploadManager?: UploadManager;
+  /** 平台管理的会话标题模型链；任务标题生成直接复用这套配置。 */
+  titleGeneratorConfigs?: TitleGeneratorConfig[];
+  titleModelAdapterFactory?: TitleModelAdapterFactory;
+  refreshSharedConfig?: () => void;
+  getTitleSystemPrompt?: () => string;
+  tokenUsageStore?: TokenUsageStore;
+  billingService?: BillingService;
+  /** 测试或特殊部署可替换标题生成；返回 null 时创建空标题。 */
+  generateTaskTitle?: (description: string, identity: TaskboardIdentity) => Promise<string | null>;
   /** Maintainer-only, audited operator recovery for a permanently failed v3 candidate worker. */
   requeueIntegrationV3Candidate?: (input: {
     identity: TaskboardIdentity;
@@ -323,6 +339,7 @@ export interface TaskboardRouterOptions {
 export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
   const router = Router();
   const identityFrom = identityFactory(options);
+  const generateTaskTitle = options.generateTaskTitle ?? createTaskboardTitleGenerator(options);
   const sendTask = (req: Request, res: Response, task: TaskBoardTask) =>
     res.json(withCreatorAvatarVersion(options.userStore, identityFrom(req), task));
 
@@ -448,13 +465,14 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       throw new TaskboardExecutionUnavailableError();
     }
     const identity = identityFrom(req);
+    const title = input.title ?? await generateTaskTitle(input.description ?? '', identity);
     const attachments = await resolveRequestAttachments(options, req, input.attachments);
     const ownerUserId = attachments?.length
       ? (await options.service!.getBoard(identity, req.params.boardId)).ownerUserId
       : undefined;
     await markRequestAttachments(options, req, attachments);
     const { dispatch } = input;
-    const taskInput = { ...input };
+    const taskInput = { ...input, title: title ?? '' };
     delete taskInput.dispatch;
     delete taskInput.attachments;
     let task = await options.service!.createTask(identity, req.params.boardId, {

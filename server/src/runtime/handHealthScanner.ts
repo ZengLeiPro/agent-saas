@@ -1,4 +1,13 @@
-import type { HandRecord, HandStore, HandStatus, WorkspaceRecipe } from './handStore.js';
+import { randomUUID } from 'node:crypto';
+
+import {
+  hasUnresolvedHandProvisionFailure,
+  type HandRecord,
+  type HandStore,
+  type HandStatus,
+  type WorkspaceRecipe,
+} from './handStore.js';
+import { assertRuntimeIsolationEvidence } from './runtimeIsolationEvidence.js';
 import type { EventStore } from './types.js';
 
 /**
@@ -107,8 +116,33 @@ export class HandHealthScanner {
       // 探测结果可能不同（401 → unhealthy）。resolveToken 对非 tenant hand 是
       // 纯内存短路（metadata 无 tenantRemoteHandId → default token），无额外开销。
       const groups = new Map<string, { endpoint: string; authToken?: string; hands: HandRecord[] }>();
-      for (const hand of candidates) {
-        if (!hand.endpoint) continue; // 无 endpoint 的 hand 保持原状（与旧行为一致）
+      let flipped = 0;
+      for (const scannedHand of candidates) {
+        let hand = scannedHand;
+        if (hand.status === 'ready' && hasUnresolvedHandProvisionFailure(hand)) {
+          // endpoint/token 即使不可用，数据库状态也必须先收敛为 unhealthy。PG 实现
+          // 用 unresolved marker 条件原子 claim，避免与正常 provision 成功互相覆盖。
+          const recoveryToken = randomUUID();
+          const claimed = await this.claimProvisionRecovery(hand, recoveryToken, {
+            lastHealthCheckAt: new Date().toISOString(),
+          });
+          if (claimed) {
+            const converged = await this.completeProvisionRecovery(
+              claimed,
+              recoveryToken,
+              'unhealthy',
+              { lastHealthCheckAt: new Date().toISOString() },
+            );
+            hand = converged ?? await store.get(hand.handId) ?? hand;
+            if (converged) {
+              await this.appendHealthEvent(scannedHand, 'unhealthy', 'provision_failure_pending');
+              flipped += 1;
+            }
+          } else {
+            hand = await store.get(hand.handId) ?? hand;
+          }
+        }
+        if (!hand.endpoint) continue;
         let authToken: string | undefined;
         try {
           authToken = await this.resolveToken(hand);
@@ -122,7 +156,6 @@ export class HandHealthScanner {
         else groups.set(key, { endpoint: hand.endpoint, authToken, hands: [hand] });
       }
 
-      let flipped = 0;
       for (const group of groups.values()) {
         let targetStatus = await this.probeEndpoint(group.endpoint, group.authToken);
         if (targetStatus === 'unhealthy' && group.hands.some((hand) => hand.status === 'ready')) {
@@ -134,11 +167,34 @@ export class HandHealthScanner {
           targetStatus = await this.probeEndpoint(group.endpoint, group.authToken);
         }
         for (const hand of group.hands) {
+          // /health 只证明共享 orchestrator 活着，不能证明这个 Session/Sandbox 的
+          // /provision 成功。存在 unresolved failure 时必须执行 session-specific
+          // reprovision，成功前一律保持 unhealthy，禁止全局健康 fan-out 假恢复。
+          if (targetStatus === 'ready' && (
+            hand.status === 'unhealthy' || hasUnresolvedHandProvisionFailure(hand)
+          )) {
+            let recoveryHand = hand;
+            if (hand.status !== 'unhealthy') {
+              const updated = await this.transitionHandStatus(hand, 'unhealthy', {
+                lastHealthCheckAt: new Date().toISOString(),
+              });
+              if (!updated) continue;
+              recoveryHand = updated;
+              await this.appendHealthEvent(hand, 'unhealthy', 'provision_failure_pending');
+              flipped += 1;
+            }
+            // 共享 /health 仅证明进程存活；unhealthy Hand 必须通过绑定当前
+            // session/workspace 的 /provision 才能恢复，缺 recipe 时保持 fail-closed。
+            const reprovisioned = await this.reprovisionIfDue(recoveryHand);
+            if (reprovisioned) flipped += 1;
+            continue;
+          }
           if (targetStatus !== hand.status) {
-            await store.updateStatus(hand.handId, targetStatus, {
+            const updated = await this.transitionHandStatus(hand, targetStatus, {
               lastHealthCheckAt: new Date().toISOString(),
               ...(targetStatus === 'unhealthy' ? {} : { recoveredAt: new Date().toISOString() }),
             });
+            if (!updated) continue;
             await this.appendHealthEvent(hand, targetStatus);
             flipped += 1;
             this.options.logger?.info(
@@ -180,7 +236,13 @@ export class HandHealthScanner {
 
   private async reprovisionIfDue(hand: HandRecord): Promise<boolean> {
     if (this.options.enableReprovision === false) return false;
+    const latest = await this.options.handStore.get(hand.handId);
+    if (latest) {
+      if (latest.status === 'ready' && !hasUnresolvedHandProvisionFailure(latest)) return false;
+      hand = latest;
+    }
     if (!hand.endpoint) return false;
+    const endpoint = hand.endpoint;
     const recipe = parseCachedRecipe(hand.metadata?.recipe, hand.workspaceId);
     if (!recipe) return false;
     const provision = parseProvisionMetadata(hand.metadata?.provision);
@@ -196,11 +258,17 @@ export class HandHealthScanner {
       this.options.logger?.warn(`HandHealthScanner: auth token unavailable for handId=${hand.handId}; skipping reprovision`);
       return false;
     }
+    const recoveryToken = randomUUID();
+    const claimed = await this.claimProvisionRecovery(hand, recoveryToken, {
+      lastHealthCheckAt: new Date().toISOString(),
+    });
+    if (!claimed) return false;
+    hand = claimed;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.healthTimeoutMs);
     timer.unref?.();
     try {
-      const response = await this.fetchImpl(`${hand.endpoint.replace(/\/$/, '')}/provision`, {
+      const response = await this.fetchImpl(`${endpoint.replace(/\/$/, '')}/provision`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -211,58 +279,159 @@ export class HandHealthScanner {
       });
       const body = await response.json().catch(() => ({} as Record<string, unknown>)) as Record<string, unknown>;
       if (response.ok && body.status === 'ok') {
-        await this.options.handStore.updateStatus(hand.handId, 'ready', {
+        const responseMetadata = recordValue(body.metadata);
+        let attestationPatch: Record<string, unknown> = {};
+        if (recipe.runtimeIsolationRequirement || hand.metadata?.runtimeIsolationAttested === true) {
+          if (!recipe.runtimeIsolationRequirement) {
+            await this.recordReprovisionFailure(hand, recoveryToken, attempt, 'RUNTIME_ISOLATION_REQUIREMENT_MISSING', responseMetadata);
+            return false;
+          }
+          const nestedMetadata = responseMetadata.metadata;
+          const provisionMetadata = nestedMetadata && typeof nestedMetadata === 'object' && !Array.isArray(nestedMetadata)
+            ? nestedMetadata as Record<string, unknown>
+            : responseMetadata;
+          const verification = {
+            requirement: recipe.runtimeIsolationRequirement,
+            evidence: provisionMetadata.runtimeIsolationEvidence,
+            sandboxScopeId: recipe.sandboxScopeId ?? recipe.workspaceId,
+          };
+          try {
+            assertRuntimeIsolationEvidence(verification);
+          } catch (err) {
+            await this.recordReprovisionFailure(
+              hand,
+              recoveryToken,
+              attempt,
+              err instanceof Error ? err.message : String(err),
+              responseMetadata,
+            );
+            return false;
+          }
+          attestationPatch = {
+            runtimeIsolationAttested: true,
+            runId: verification.evidence.runId,
+            policyDigest: verification.evidence.policyDigest,
+            sandboxName: verification.evidence.sandboxName,
+            sandboxScopeId: verification.evidence.sandboxScopeId,
+          };
+        }
+        const completed = await this.completeProvisionRecovery(hand, recoveryToken, 'ready', {
+          provisionFailure: null,
+          ...attestationPatch,
           provision: {
             attempts: 0,
             lastStatus: 'ok',
             lastAttemptAt: new Date(now).toISOString(),
             lastSucceededAt: new Date().toISOString(),
-            ...(body.metadata && typeof body.metadata === 'object' ? body.metadata as Record<string, unknown> : {}),
+            ...responseMetadata,
           },
         });
+        if (!completed) {
+          this.options.logger?.info(`HandHealthScanner: discard stale reprovision success handId=${hand.handId}`);
+          return false;
+        }
         await this.appendHealthEvent(hand, 'ready', 'reprovision_succeeded');
         this.options.logger?.info(`HandHealthScanner: reprovision succeeded handId=${hand.handId}`);
         return true;
       }
-      await this.recordReprovisionFailure(hand, attempt, body.error, body.metadata);
+      await this.recordReprovisionFailure(hand, recoveryToken, attempt, body.error, body.metadata);
       return false;
     } catch (err) {
-      await this.recordReprovisionFailure(hand, attempt, controller.signal.aborted ? `provision timeout (${this.healthTimeoutMs}ms)` : err instanceof Error ? err.message : String(err));
+      await this.recordReprovisionFailure(hand, recoveryToken, attempt, controller.signal.aborted ? `provision timeout (${this.healthTimeoutMs}ms)` : err instanceof Error ? err.message : String(err));
       return false;
     } finally {
       clearTimeout(timer);
     }
   }
 
-  private async recordReprovisionFailure(hand: HandRecord, attempt: number, error: unknown, metadata?: unknown): Promise<void> {
+  private async recordReprovisionFailure(
+    hand: HandRecord,
+    recoveryToken: string,
+    attempt: number,
+    error: unknown,
+    metadata?: unknown,
+  ): Promise<void> {
     const base = parseProvisionMetadata(hand.metadata?.provision);
     const retryPolicy = parseRetryPolicy(metadata) ?? { maxAttempts: base.maxAttempts, backoffMs: base.backoffMs };
     const delayMs = retryPolicy.backoffMs[Math.min(attempt - 1, retryPolicy.backoffMs.length - 1)] ?? 15_000;
-    await this.options.handStore.updateStatus(hand.handId, 'unhealthy', {
+    const failure = typeof error === 'string' ? error : 'hand reprovision failed';
+    const completed = await this.completeProvisionRecovery(hand, recoveryToken, 'unhealthy', {
+      provisionFailure: failure,
       provision: {
         attempts: attempt,
         lastStatus: 'error',
         lastAttemptAt: new Date().toISOString(),
-        lastError: typeof error === 'string' ? error : 'hand reprovision failed',
+        lastError: failure,
         nextAttemptAt: attempt >= retryPolicy.maxAttempts ? undefined : new Date(Date.now() + delayMs).toISOString(),
         retryPolicy,
       },
     });
+    if (!completed) {
+      this.options.logger?.info(`HandHealthScanner: discard stale reprovision failure handId=${hand.handId}`);
+      return;
+    }
     if (hand.sessionId) {
       await this.options.eventStore?.append({
         type: 'hand_failure',
         sessionId: hand.sessionId,
         workspaceId: hand.workspaceId,
         handId: hand.handId,
-        error: typeof error === 'string' ? error : 'hand reprovision failed',
+        error: failure,
         classifiedAs: 'unhealthy',
       }).catch(() => undefined);
     }
   }
 
+  private async transitionHandStatus(
+    hand: HandRecord,
+    status: HandStatus,
+    metadataPatch: Record<string, unknown>,
+  ): Promise<HandRecord | null> {
+    const recoveryToken = randomUUID();
+    const claimed = await this.claimProvisionRecovery(hand, recoveryToken, {
+      lastHealthCheckAt: new Date().toISOString(),
+    });
+    if (!claimed) return null;
+    return await this.completeProvisionRecovery(claimed, recoveryToken, status, metadataPatch);
+  }
+
+  private async claimProvisionRecovery(
+    hand: HandRecord,
+    recoveryToken: string,
+    metadataPatch: Record<string, unknown>,
+  ): Promise<HandRecord | null> {
+    const store = this.options.handStore;
+    const provisionGeneration = hand.metadata.provisionGeneration;
+    return await store.claimProvisionRecovery(
+      hand.handId,
+      recoveryToken,
+      metadataPatch,
+      hand.updatedAt,
+      typeof provisionGeneration === 'string' ? provisionGeneration : undefined,
+    );
+  }
+
+  private async completeProvisionRecovery(
+    hand: HandRecord,
+    recoveryToken: string,
+    status: HandStatus,
+    metadataPatch: Record<string, unknown>,
+  ): Promise<HandRecord | null> {
+    return await this.options.handStore.completeProvisionRecovery(
+      hand.handId,
+      recoveryToken,
+      status,
+      metadataPatch,
+    );
+  }
+
   private async resolveToken(hand: HandRecord): Promise<string | undefined> {
-    const tenantToken = await this.options.resolveHandAuthToken?.(hand);
-    if (tenantToken) return tenantToken;
+    const tenantRemoteHandId = hand.metadata?.tenantRemoteHandId;
+    if (typeof tenantRemoteHandId === 'string' && tenantRemoteHandId.trim()) {
+      const tenantToken = await this.options.resolveHandAuthToken?.(hand);
+      if (!tenantToken) throw new Error(`tenant hand auth token unavailable: ${tenantRemoteHandId}`);
+      return tenantToken;
+    }
     return this.options.defaultServerRemoteAuthToken;
   }
 
@@ -281,6 +450,12 @@ export class HandHealthScanner {
   }
 }
 
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
 
 function parseCachedRecipe(value: unknown, expectedWorkspaceId: string): WorkspaceRecipe | null {
   if (!value || typeof value !== 'object') return null;

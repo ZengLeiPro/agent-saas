@@ -36,7 +36,7 @@ import { loadIntegrationCandidateProjection } from './integrationCandidateProjec
 import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import { runIntegrationV3RepositoryProbe, type IntegrationV3RepositoryProbe, type IntegrationV3RepositoryProbeInput } from './integrationV3RepositoryProbe.js';
 import { deleteStoredTask, rollbackStoredTask } from './storeTaskDelete.js';
-import { findTaskByClientRequestId as findStoredTaskByClientRequestId } from './taskClientRequests.js';
+import { acquireTaskClientRequestLock as acquireStoredTaskClientRequestLock, findTaskByClientRequestId as findStoredTaskByClientRequestId } from './taskClientRequests.js';
 import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
 import {
   allowedActionsForRole,
@@ -131,7 +131,6 @@ import {
   type TaskboardTaskListFilter,
   type TaskboardTaskSearchFilter,
 } from './types.js';
-
 const { Pool } = pg;
 type PgPool = InstanceType<typeof Pool>;
 const DEFAULT_SORT_GAP = 1024;
@@ -697,6 +696,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       return this.requireTask(client, identity, taskId, false);
     });
   }
+  async acquireTaskClientRequestLock(identity: TaskboardIdentity, boardId: string, clientRequestId: string) { return acquireStoredTaskClientRequestLock(this, identity, boardId, clientRequestId); }
   async findTaskByClientRequestId(identity: TaskboardIdentity, boardId: string, clientRequestId: string) { return findStoredTaskByClientRequestId(this, identity, boardId, clientRequestId); }
   async getTask(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardTask> {
     return this.requireTask(this.pool, identity, taskId, false);

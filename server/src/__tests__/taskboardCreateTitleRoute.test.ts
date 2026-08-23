@@ -44,7 +44,11 @@ describe('创建任务前的标题生成保护', () => {
     app.use((req, _res, next) => { req.user = USER; next(); });
     app.use('/api/taskboard', createTaskboardRouter({
       service,
-      generateTaskTitle: async () => { titleGenerationCalls += 1; return '自动标题'; },
+      generateTaskTitle: async () => {
+        titleGenerationCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return '自动标题';
+      },
     }));
     const server: Server = await new Promise((resolve) => {
       const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
@@ -65,6 +69,14 @@ describe('创建任务前的标题生成保护', () => {
 
       let existingTask: Awaited<ReturnType<TaskboardService['createTask']>> | null = null;
       service.getBoard = async () => ({ ...VIEWER_BOARD, id: 'owner-board', role: 'owner', canManage: true });
+      let lockTail = Promise.resolve();
+      service.acquireTaskClientRequestLock = async () => {
+        const previous = lockTail;
+        let release!: () => void;
+        lockTail = new Promise<void>((resolve) => { release = resolve; });
+        await previous;
+        return async () => release();
+      };
       service.findTaskByClientRequestId = async () => existingTask;
       service.createTask = async (_identity, boardId, input) => existingTask ??= {
         id: 'task-1', boardId, identifier: 'TASK-1', title: input.title ?? '',
@@ -72,13 +84,14 @@ describe('创建任务前的标题生成保护', () => {
         sortOrder: 1024, commentCount: 0, version: 1,
         createdAt: VIEWER_BOARD.createdAt, updatedAt: VIEWER_BOARD.updatedAt,
       };
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const response = await fetch(`${baseUrl}/api/taskboard/boards/owner-board/tasks`, {
+      const responses = await Promise.all(Array.from({ length: 2 }, () => fetch(
+        `${baseUrl}/api/taskboard/boards/owner-board/tasks`,
+        {
           method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ description: '幂等创建', clientRequestId: 'request-1' }),
-        });
-        expect(response.status).toBe(201);
-      }
+        },
+      )));
+      expect(responses.map((response) => response.status)).toEqual([201, 201]);
       expect(titleGenerationCalls).toBe(1);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));

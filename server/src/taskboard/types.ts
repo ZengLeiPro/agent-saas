@@ -423,7 +423,8 @@ export interface TaskboardService {
   listTasks(identity: TaskboardIdentity, boardId: string, filter?: TaskboardTaskListFilter): Promise<TaskBoardTask[]>;
   searchTasks(identity: TaskboardIdentity, filter?: TaskboardTaskSearchFilter): Promise<TaskboardPage<TaskBoardTask>>;
   createTask(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput): Promise<TaskBoardTask>;
-  findTaskByClientRequestId?(identity: TaskboardIdentity, boardId: string, clientRequestId: string): Promise<TaskBoardTask | null>;
+  acquireTaskClientRequestLock(identity: TaskboardIdentity, boardId: string, clientRequestId: string): Promise<() => Promise<void>>;
+  findTaskByClientRequestId(identity: TaskboardIdentity, boardId: string, clientRequestId: string): Promise<TaskBoardTask | null>;
   getTask(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardTask>;
   updateTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskPatchInput): Promise<TaskBoardTask>;
   moveTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskMoveInput): Promise<TaskBoardTask>;

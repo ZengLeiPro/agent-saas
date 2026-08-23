@@ -752,13 +752,14 @@ async function createExecutionTask(
   const dispatcher = input.dispatch ? requireExecutionService(options.executionService?.()) : undefined;
   const service = options.service();
   if (!service) throw new Error('任务看板服务未启用');
+  const title = input.title ?? await options.generateTaskTitle?.(input.description ?? '', identity);
   const attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
   const ownerUserId = attachments?.length
     ? (await service.getBoard(identity, execution.task.boardId)).ownerUserId
     : undefined;
   await markTaskboardAttachments(options, identity, attachments, scope);
   let task = await executionStore.createTaskFromExecution(identity, execution.execution.runId, {
-    title: requireField(input.title, 'title'),
+    title: title ?? '',
     kind,
     ...(input.description !== undefined ? { description: input.description } : {}),
     ...(typeof input.branch === 'string' ? { branch: input.branch } : {}),

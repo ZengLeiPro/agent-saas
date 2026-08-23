@@ -57,4 +57,52 @@ describe('Agent 创建任务的自动标题', () => {
     expect(generateTaskTitle).toHaveBeenNthCalledWith(2, '第二条正文', identity);
     expect(createTask.mock.calls.map((call) => call[2].title)).toEqual(['自动生成标题', '']);
   });
+
+  it('Execution action=create 仅传正文时生成标题，失败时保存空标题', async () => {
+    const parentTask: TaskBoardTask = {
+      id: 'task-parent', boardId: board.id, identifier: 'TASK-1', title: '父任务', description: '',
+      kind: 'delivery', status: 'in_progress', priority: 'none', labels: [], sortOrder: 1024,
+      commentCount: 0, version: 1, createdAt: board.createdAt, updatedAt: board.updatedAt,
+    };
+    const createTaskFromExecution = vi.fn(async (_identity, _runId, input) => ({
+      ...parentTask,
+      id: `task-${createTaskFromExecution.mock.calls.length + 1}`,
+      identifier: `TASK-${createTaskFromExecution.mock.calls.length + 2}`,
+      title: input.title ?? '',
+      description: input.description ?? '',
+      status: 'todo' as const,
+    }));
+    const generateTaskTitle = vi.fn()
+      .mockResolvedValueOnce('Execution 自动标题')
+      .mockResolvedValueOnce(null);
+    const service = {} as TaskboardService;
+    const options = {
+      service: () => service,
+      generateTaskTitle,
+      executionStore: () => ({ createTaskFromExecution } as never),
+    };
+    const scope = {
+      execution: {
+        identity,
+        task: parentTask,
+        boardPrompt: '',
+        comments: [],
+        execution: {
+          id: 'execution-1', taskId: parentTask.id, runId: 'run-1', sessionId: 'session-1',
+          status: 'running' as const, purpose: 'work' as const, requestedBy: identity.ownerUserId,
+          createdAt: board.createdAt, updatedAt: board.updatedAt,
+        },
+      },
+    };
+
+    await invokeTaskboardAction(options, identity, {
+      action: 'create', boardId: board.id, description: 'Execution 第一条正文',
+    }, scope);
+    await invokeTaskboardAction(options, identity, {
+      action: 'create', boardId: board.id, description: 'Execution 第二条正文',
+    }, scope);
+
+    expect(createTaskFromExecution.mock.calls.map((call) => call[2].title))
+      .toEqual(['Execution 自动标题', '']);
+  });
 });

@@ -453,19 +453,19 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     const board = await options.service!.getBoard(identity, req.params.boardId);
     assertBoardRole(board.role, 'editor');
     assertActiveBoard(board);
-    const existingTask = input.clientRequestId ? await options.service!.findTaskByClientRequestId?.(identity, req.params.boardId, input.clientRequestId) : null;
-    const title = existingTask?.title ?? input.title ?? await generateTaskTitle(input.description ?? '', identity);
     const attachments = await resolveRequestAttachments(options, req, input.attachments);
     const ownerUserId = attachments?.length ? board.ownerUserId : undefined;
     await markRequestAttachments(options, req, attachments);
+    const releaseClientRequestLock = input.clientRequestId ? await options.service!.acquireTaskClientRequestLock(identity, req.params.boardId, input.clientRequestId) : undefined;
     const { dispatch } = input;
-    const taskInput = { ...input, title: title ?? '' };
-    delete taskInput.dispatch;
-    delete taskInput.attachments;
-    let task = await options.service!.createTask(identity, req.params.boardId, {
-      ...taskInput,
-      ...(attachments !== undefined && attachments.length === 0 ? { attachments: [] } : {}),
-    });
+    let task: TaskBoardTask;
+    try {
+      const existingTask = input.clientRequestId ? await options.service!.findTaskByClientRequestId(identity, req.params.boardId, input.clientRequestId) : null;
+      const title = existingTask?.title ?? input.title ?? await generateTaskTitle(input.description ?? '', identity);
+      const taskInput = { ...input, title: title ?? '' };
+      delete taskInput.dispatch; delete taskInput.attachments;
+      task = await options.service!.createTask(identity, req.params.boardId, { ...taskInput, ...(attachments !== undefined && attachments.length === 0 ? { attachments: [] } : {}) });
+    } finally { await releaseClientRequestLock?.(); }
     let scopedAttachments: TaskBoardUploadAttachment[] | undefined;
     try {
       scopedAttachments = await materializeRequestAttachments(options, req, identity, task.id, ownerUserId, attachments);

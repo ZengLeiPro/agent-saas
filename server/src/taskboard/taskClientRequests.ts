@@ -15,6 +15,35 @@ export interface TaskClientRequestStore {
   getBoard(identity: TaskboardIdentity, boardId: string): Promise<TaskBoard>;
 }
 
+export async function acquireTaskClientRequestLock(
+  store: TaskClientRequestStore,
+  identity: TaskboardIdentity,
+  boardId: string,
+  clientRequestId: string,
+): Promise<() => Promise<void>> {
+  const board = await store.getBoard(identity, boardId);
+  assertBoardRole(board.role, 'editor');
+  assertActiveBoard(board);
+  const client = await store.pool.connect();
+  const key = [`${store.tasksTable}:client-request:${boardId}`, clientRequestId];
+  try {
+    await client.query('SELECT pg_advisory_lock(hashtext($1),hashtext($2))', key);
+  } catch (error) {
+    client.release();
+    throw error;
+  }
+  let released = false;
+  return async () => {
+    if (released) return;
+    released = true;
+    try {
+      await client.query('SELECT pg_advisory_unlock(hashtext($1),hashtext($2))', key);
+    } finally {
+      client.release();
+    }
+  };
+}
+
 export async function findTaskByClientRequestId(
   store: TaskClientRequestStore,
   identity: TaskboardIdentity,

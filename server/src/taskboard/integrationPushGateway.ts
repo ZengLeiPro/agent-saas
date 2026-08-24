@@ -1,6 +1,7 @@
 import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import type { IntegrationCandidateMutationFence } from './integrationCandidateStore.js';
 import {
   IntegrationPushCapabilityService,
   type IntegrationPushCapabilityBinding,
@@ -354,7 +355,10 @@ export class IntegrationPushGateway {
     /** Server compose may re-parent a deterministic candidate when the authoritative base advanced. */
     rebaseParentOid?: string;
     fence: IntegrationProviderOperationFence;
+    mutationFence?: IntegrationCandidateMutationFence;
+    assertCurrent?: () => Promise<void>;
   }): Promise<void> {
+    await input.assertCurrent?.();
     await this.assertHealthy();
     if (!OID.test(input.expectedOldOid) || !OID.test(input.newOid)) throw new IntegrationPushGatewayError('invalid_commit', false);
     const repository = await this.options.resolveRepository({
@@ -375,6 +379,7 @@ export class IntegrationPushGateway {
     }, this.options.githubAppInstallationId)) {
       throw new IntegrationPushGatewayError('credential_unavailable', false);
     }
+    await input.assertCurrent?.();
     // The composed OID is part of the semantic key. A candidate revision can be reloaded
     // after PR binding, but a different deterministic head must never collide with (or
     // silently reuse) the ledger row for the first head.
@@ -409,8 +414,12 @@ export class IntegrationPushGateway {
       let completed: IntegrationProviderOperationRecord;
       try {
         completed = await service.execute(operationKey, async () => {
+          await input.assertCurrent?.();
           await this.runExactPush(cwd, repository.remoteUrl, input.exactRef, input.expectedOldOid, input.newOid, env);
           return { ref: input.exactRef, oldOid: input.expectedOldOid, newOid: input.newOid };
+        }, {
+          assertAttemptCurrent: input.assertCurrent,
+          ...(input.mutationFence ? { mutationFence: input.mutationFence } : {}),
         });
       } catch (error) {
         if (!(error instanceof ProviderOperationReconcileRequiredError)) throw error;
@@ -421,7 +430,14 @@ export class IntegrationPushGateway {
       }
       if (completed.state === 'executing') throw new IntegrationPushGatewayError('push_failed_unknown', true);
       if (completed.state === 'unknown') {
-        completed = await service.reconcile(operationKey, (record) => this.reconcileExactRef(record, cwd, repository.remoteUrl, env));
+        completed = await service.reconcile(
+          operationKey,
+          (record) => this.reconcileExactRef(record, cwd, repository.remoteUrl, env),
+          {
+            assertAttemptCurrent: input.assertCurrent,
+            ...(input.mutationFence ? { mutationFence: input.mutationFence } : {}),
+          },
+        );
       }
       if (completed.state === 'succeeded') return;
       if (this.isVerifiedNotApplied(completed, input.exactRef, input.expectedOldOid, input.newOid)) {
@@ -457,6 +473,8 @@ export class IntegrationPushGateway {
     input: {
       repositoryId: string; candidateId: string; revision: number; exactRef: string; newOid: string;
       rebaseParentOid?: string; fence: IntegrationProviderOperationFence;
+      mutationFence?: IntegrationCandidateMutationFence;
+      assertCurrent?: () => Promise<void>;
     },
     cwd: string,
     remoteUrl: string,
@@ -479,6 +497,10 @@ export class IntegrationPushGateway {
       durable = await this.options.operationService!.reconcile(
         durable.operationKey,
         (record) => this.reconcileExactRef(record, cwd, remoteUrl, env),
+        {
+          assertAttemptCurrent: input.assertCurrent,
+          ...(input.mutationFence ? { mutationFence: input.mutationFence } : {}),
+        },
       );
     }
     if (durable.state === 'succeeded'
@@ -501,6 +523,8 @@ export class IntegrationPushGateway {
     input: {
       repositoryId: string; candidateId: string; revision: number; exactRef: string; newOid: string;
       fence: IntegrationProviderOperationFence;
+      mutationFence?: IntegrationCandidateMutationFence;
+      assertCurrent?: () => Promise<void>;
     },
     cwd: string,
     remoteUrl: string,
@@ -521,7 +545,14 @@ export class IntegrationPushGateway {
     let durable = operation;
     if (durable.state === 'executing') throw new IntegrationPushGatewayError('push_failed_unknown', true);
     if (durable.state === 'unknown') {
-      durable = await service.reconcile(operationKey, (record) => this.reconcileExactRef(record, cwd, remoteUrl, env));
+      durable = await service.reconcile(
+        operationKey,
+        (record) => this.reconcileExactRef(record, cwd, remoteUrl, env),
+        {
+          assertAttemptCurrent: input.assertCurrent,
+          ...(input.mutationFence ? { mutationFence: input.mutationFence } : {}),
+        },
+      );
     }
     if (durable.state === 'succeeded') {
       const actual = await this.readExactRemoteRef(cwd, remoteUrl, input.exactRef, env);
@@ -533,9 +564,13 @@ export class IntegrationPushGateway {
     if (remoteOld !== oldOid) throw new IntegrationPushGatewayError('remote_old_mismatch', false);
     try {
       durable = await service.execute(operationKey, async () => {
+        await input.assertCurrent?.();
         await this.runExactPush(cwd, remoteUrl, input.exactRef, oldOid, input.newOid, env);
         return { ref: input.exactRef, oldOid, newOid: input.newOid,
           recoveryOf: original.operationKey, recoveredAfterVerifiedOld: true };
+      }, {
+        assertAttemptCurrent: input.assertCurrent,
+        ...(input.mutationFence ? { mutationFence: input.mutationFence } : {}),
       });
     } catch (error) {
       if (!(error instanceof ProviderOperationReconcileRequiredError)) throw error;
@@ -543,7 +578,14 @@ export class IntegrationPushGateway {
     }
     if (durable.state === 'executing') throw new IntegrationPushGatewayError('push_failed_unknown', true);
     if (durable.state === 'unknown') {
-      durable = await service.reconcile(operationKey, (record) => this.reconcileExactRef(record, cwd, remoteUrl, env));
+      durable = await service.reconcile(
+        operationKey,
+        (record) => this.reconcileExactRef(record, cwd, remoteUrl, env),
+        {
+          assertAttemptCurrent: input.assertCurrent,
+          ...(input.mutationFence ? { mutationFence: input.mutationFence } : {}),
+        },
+      );
     }
     if (durable.state !== 'succeeded') throw new IntegrationPushGatewayError('push_failed_unknown', false);
     const actual = await this.readExactRemoteRef(cwd, remoteUrl, input.exactRef, env);

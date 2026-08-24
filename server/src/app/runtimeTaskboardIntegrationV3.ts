@@ -1,5 +1,5 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 
 import type { TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
 import type { GithubAppInstallationTokenProvider, RuntimeIsolationAttestationProvider } from './runtimeContracts.js';
@@ -30,6 +30,7 @@ import {
   IntegrationV3Worker,
   type IntegrationV3CleanupReceipt,
   type IntegrationV3RequestLease,
+  type IntegrationV3RequestLeaseGuard,
   type IntegrationV3WorkerCurrent,
 } from '../taskboard/integrationV3Worker.js';
 import {
@@ -45,6 +46,7 @@ import { createIntegrationV3GithubAppRepositoryProvider, RepositoryProviderInteg
 import {
   syncCandidateRevisionObjects,
   syncRepositoryWorkspace,
+  withRepositoryScopeLock,
   type RepositoryWorkspaceGitCommand,
   type RepositoryWorkspaceGitResult,
 } from '../taskboard/repositoryWorkspaceSync.js';
@@ -175,8 +177,9 @@ export async function resolveRuntimeIntegrationV3CleanupContext(
 
 export function createRuntimeIntegrationV3CleanupHost(
   options: RuntimeIntegrationV3CleanupHostOptions,
-): (request: IntegrationV3RequestLease) => Promise<IntegrationV3CleanupReceipt> {
-  return async (request) => {
+): (request: IntegrationV3RequestLease, guard: IntegrationV3RequestLeaseGuard) => Promise<IntegrationV3CleanupReceipt> {
+  return async (request, guard) => {
+    await guard.assertCurrent();
     if (!options.controlledMirrorRoot) throw new Error('Controlled mirror root is unavailable for cleanup');
     const current = await options.loadCurrent(request.candidateId);
     if (!current.revision || current.candidate.currentRevision !== request.candidateRevision) {
@@ -185,6 +188,7 @@ export function createRuntimeIntegrationV3CleanupHost(
     const laneEpoch = strictEpoch(current.candidate.laneEpoch, 'lane');
     const workflowEpoch = strictEpoch(current.candidate.workflowEpoch, 'workflow');
     const context = await options.resolveContext({ candidate: current.candidate, revision: current.revision });
+    await guard.assertCurrent();
     const reason = typeof request.payload.reason === 'string' && request.payload.reason
       ? request.payload.reason
       : `candidate_${current.candidate.state}`;
@@ -199,15 +203,29 @@ export function createRuntimeIntegrationV3CleanupHost(
         action: 'skip' as const,
         policyReason: 'frozen integration policy does not authorize source pull request mutation',
       })),
-      withRepositoryBranchLock: options.withRepositoryBranchLock,
-      runGit: options.runGit,
+      withRepositoryBranchLock: async (lock, operation) => {
+        await guard.assertCurrent();
+        return options.withRepositoryBranchLock(lock, async () => {
+          await guard.assertCurrent();
+          return operation();
+        });
+      },
+      runGit: async (command) => {
+        await guard.assertCurrent();
+        return options.runGit(command);
+      },
       revokeCapabilities: async () => {
+        await guard.assertCurrent();
         const ids = await options.findActiveCapabilityIds(current.candidate.id);
-        const results = await Promise.allSettled(ids.map((id) => options.revokeCapability(id, reason)));
+        const results = await Promise.allSettled(ids.map(async (id) => {
+          await guard.assertCurrent();
+          return options.revokeCapability(id, reason);
+        }));
         const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
         if (failures.length) throw new Error(`Failed to revoke ${failures.length} integration push capability(s)`);
       },
       fenceCapabilities: async () => {
+        await guard.assertCurrent();
         await options.fenceCapabilities({
           tenantId: context.tenantId,
           repositoryId: current.candidate.repositoryId,
@@ -219,7 +237,10 @@ export function createRuntimeIntegrationV3CleanupHost(
           enabled: false,
         }, reason);
       },
-      terminalizePreparedOperations: () => options.terminalizePreparedOperations(current.candidate.id, reason),
+      terminalizePreparedOperations: async () => {
+        await guard.assertCurrent();
+        return options.terminalizePreparedOperations(current.candidate.id, reason);
+      },
       applySourcePullRequest: async () => {
         throw new Error('Frozen integration policy does not authorize source pull request mutation');
       },
@@ -312,6 +333,14 @@ export function startRuntimeTaskboardIntegrationV3(
   options: StartRuntimeTaskboardIntegrationV3Options,
 ): RuntimeTaskboardIntegrationV3 {
   const { store, executionCoordinator, repositoryProvider, processCwd, agentCwd } = options;
+  let filesystemIsolationError: string | undefined;
+  if (options.controlledMirrorRoot) {
+    try {
+      assertIntegrationV3FilesystemIsolation({ processCwd, agentCwd, controlledMirrorRoot: options.controlledMirrorRoot });
+    } catch (error) {
+      filesystemIsolationError = error instanceof Error ? error.message : String(error);
+    }
+  }
   const tables = integrationCandidateTableNames(store.integrationSourcesTable);
   const pgOptions = {
     pool: store.pool,
@@ -346,6 +375,7 @@ export function startRuntimeTaskboardIntegrationV3(
   const capabilityService = new IntegrationPushCapabilityService(capabilityHost);
   const pushGateway = new IntegrationPushGateway({
     enabled: options.enabled === true
+      && !filesystemIsolationError
       && !!options.runtimeIsolationAttestationProvider
       && !!options.resolveGithubToken
       && (options.githubTokenMode === 'personal_access_token' || Number.isSafeInteger(options.githubAppInstallationId)),
@@ -451,7 +481,8 @@ export function startRuntimeTaskboardIntegrationV3(
       );
       return { executionId: started.execution.id };
     },
-    syncWorkspace: async (request) => {
+    syncWorkspace: async (request, guard) => {
+      await guard.assertCurrent();
       const current = await workerHost.loadCurrent(request.candidateId);
       if (!current.revision) throw new Error('Workspace sync requires a current candidate revision');
       const context = await composeHost.resolveContext({ candidate: current.candidate, revision: current.revision });
@@ -464,7 +495,7 @@ export function startRuntimeTaskboardIntegrationV3(
           controlledRemoteUrl: canonicalGithubRepositoryUrl(context.repository),
           fetchEnvironment,
           integrationWorktreeMode: 'reset_to_base',
-        })
+        }, guard.assertCurrent)
       ));
     },
     cleanup: createRuntimeIntegrationV3CleanupHost({
@@ -490,7 +521,7 @@ export function startRuntimeTaskboardIntegrationV3(
       terminalizePreparedOperations: (candidateId, reason) => terminalizeIntegrationV3PreparedOperations({
         pool: store.pool, providerOperationsTable: tables.providerOperationsTable, candidateId, reason,
       }),
-      withRepositoryBranchLock: (lock, operation) => composeHost.withRepositoryBranchLock(lock, operation),
+      withRepositoryBranchLock: (lock, operation) => withRepositoryScopeLock(composeHost, lock.repositoryPath, operation),
       runGit,
     }),
     logger: serverLogger.child('IntegrationV3Worker'),
@@ -545,6 +576,8 @@ export function startRuntimeTaskboardIntegrationV3(
         candidateId: input.candidateId, candidateRevision: input.revision,
         executionId: input.context.workExecutionId ?? `compose:${input.candidateId}:r${input.revision}`,
       },
+      mutationFence: input.mutationFence,
+      assertCurrent: input.assertCurrent,
     }),
   });
   const requestHost = new PostgresIntegrationEngineV3RequestHost(pgOptions);
@@ -552,7 +585,7 @@ export function startRuntimeTaskboardIntegrationV3(
   const providerAdapter = new RepositoryProviderIntegrationEngineV3Adapter(repositoryProvider);
   const worker = new IntegrationV3Worker({
     host: workerHost,
-    composer: new DefaultIntegrationV3ComposeExecutor(composeHost, repositoryProvider),
+    composer: new DefaultIntegrationV3ComposeExecutor(composeHost, repositoryProvider, operationService),
     engineFor: async (current) => {
       const context = await workerHost.resolveEngineContext(current.candidate.id);
       return new IntegrationEngineV3({
@@ -588,6 +621,7 @@ export function startRuntimeTaskboardIntegrationV3(
   });
   const activation = startIntegrationV3ActivationRetry({
     check: async () => {
+      if (filesystemIsolationError) return { healthy: false, reason: 'filesystem_isolation_path_overlap' };
       const [health, attestation] = await Promise.all([
         pushGateway.health(),
         options.runtimeIsolationAttestationProvider?.attest({ admission: 'integration_v3_worker' }),
@@ -646,6 +680,30 @@ function createServerOwnedRepositoryValidator(controlledMirrorRoot: string | und
   };
 }
 
+export function assertIntegrationV3FilesystemIsolation(roots: {
+  processCwd: string;
+  agentCwd: string;
+  controlledMirrorRoot: string;
+}): void {
+  const controlled = realpathSync(roots.controlledMirrorRoot);
+  if (controlled === parse(controlled).root) throw new Error('controlled mirror root must not be the filesystem root');
+  const processRoot = realpathSync(roots.processCwd);
+  const agentRoot = realpathSync(roots.agentCwd);
+  for (const [label, workspace] of [['processCwd', processRoot], ['agentCwd', agentRoot]] as const) {
+    if (pathsOverlap(controlled, workspace)) {
+      throw new Error(`controlled mirror root overlaps ${label}`);
+    }
+  }
+}
+
+export function pathsOverlap(left: string, right: string): boolean {
+  const contains = (parent: string, child: string) => {
+    const childPath = relative(parent, child);
+    return childPath === '' || (childPath !== '..' && !childPath.startsWith(`..${sep}`) && !isAbsolute(childPath));
+  };
+  return contains(left, right) || contains(right, left);
+}
+
 interface RepositoryPathRoots {
   processCwd: string;
   agentCwd: string;
@@ -661,6 +719,13 @@ export async function resolveIntegrationV3RepositoryPaths(
   // Never consume an Agent checkout/common-dir. A deployment must provision a
   // server-owned mirror root that is not mounted writable into Agent runtimes.
   if (!roots.controlledMirrorRoot) return undefined;
+  try {
+    assertIntegrationV3FilesystemIsolation({
+      processCwd: roots.processCwd,
+      agentCwd: roots.agentCwd,
+      controlledMirrorRoot: roots.controlledMirrorRoot,
+    });
+  } catch { return undefined; }
   const repositoryPath = resolve(roots.controlledMirrorRoot, repository.repositoryId.replace(/[^A-Za-z0-9._-]/g, '_'));
   if (!existsSync(join(repositoryPath, '.git'))) return undefined;
   try {

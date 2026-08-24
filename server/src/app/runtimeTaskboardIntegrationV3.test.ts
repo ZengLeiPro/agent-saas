@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -11,8 +11,10 @@ import type {
   TaskBoardRepositoryConfig,
 } from '../../../shared/src/types/taskboard.js';
 import {
+  assertIntegrationV3FilesystemIsolation,
   buildRuntimeTaskboardIntegrationV3Options,
   configureRuntimeIntegrationV3RepositoryAccess,
+  pathsOverlap,
   createRuntimeIntegrationV3CleanupHost,
   resolveIntegrationV3RepositoryPaths,
   resolveRuntimeIntegrationV3CleanupContext,
@@ -24,6 +26,10 @@ const repository: TaskBoardRepositoryConfig = {
   baseBranch: 'main', allowForkPullRequest: false,
 };
 const roots: string[] = [];
+const requestGuard = (request: { id: string; leaseId: string; kind: 'work'|'review'|'cleanup'|'workspace_sync'; candidateId: string; candidateRevision: number; payload: Record<string, unknown> }) => ({
+  request,
+  assertCurrent: vi.fn(async () => undefined),
+});
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -109,6 +115,14 @@ describe('Integration v3 board repository probe wiring', () => {
   });
 });
 
+describe('Integration v3 deployment preflight', () => {
+  it('rejects enabled=false instead of accepting any boolean', () => {
+    const workflow = readFileSync(new URL('../../../.github/workflows/integration-v3-preflight.yml', import.meta.url), 'utf8');
+    expect(workflow).toContain("check('enabled_boolean', control.get('enabled') is True");
+    expect(workflow).not.toContain("check('enabled_boolean', isinstance(control.get('enabled'), bool)");
+  });
+});
+
 describe('buildRuntimeTaskboardIntegrationV3Options', () => {
   const base = {
     store: {} as any, executionCoordinator: {} as any, repositoryProvider: {} as any,
@@ -171,8 +185,9 @@ describe('resolveIntegrationV3RepositoryPaths', () => {
     const mirrorRoot = join(root, 'mirrors');
     const repositoryPath = createRepository(join(mirrorRoot, 'github_acme_widget'), 'https://github.com/acme/widget.git');
     createRepository(join(root, 'agent/projects/widget'), 'https://github.com/acme/widget.git');
+    mkdirSync(join(root, 'process'));
     await expect(resolveIntegrationV3RepositoryPaths(repository, 'candidate-1', {
-      processCwd: root, agentCwd: join(root, 'agent'), controlledMirrorRoot: mirrorRoot,
+      processCwd: join(root, 'process'), agentCwd: join(root, 'agent'), controlledMirrorRoot: mirrorRoot,
     })).resolves.toEqual({
       repositoryPath, worktreePath: resolve(mirrorRoot, '.worktrees', 'candidate-1'),
     });
@@ -187,8 +202,9 @@ describe('resolveIntegrationV3RepositoryPaths', () => {
     const root = mkdtempSync(join(tmpdir(), 'integration-v3-runtime-')); roots.push(root);
     const mirrorRoot = join(root, 'mirrors');
     createRepository(join(mirrorRoot, 'github_acme_widget'), origin);
+    mkdirSync(join(root, 'process')); mkdirSync(join(root, 'agent'));
     await expect(resolveIntegrationV3RepositoryPaths(repository, 'candidate-2', {
-      processCwd: root, agentCwd: join(root, 'agent'), controlledMirrorRoot: mirrorRoot,
+      processCwd: join(root, 'process'), agentCwd: join(root, 'agent'), controlledMirrorRoot: mirrorRoot,
     })).resolves.toBeUndefined();
   });
 
@@ -197,9 +213,41 @@ describe('resolveIntegrationV3RepositoryPaths', () => {
     const mirrorRoot = join(root, 'mirrors');
     const repositoryPath = createRepository(join(mirrorRoot, 'github_acme_widget'), 'https://github.com/acme/widget.git');
     chmodSync(join(repositoryPath, '.git'), 0o777);
+    mkdirSync(join(root, 'process')); mkdirSync(join(root, 'agent'));
     await expect(resolveIntegrationV3RepositoryPaths(repository, 'candidate-corrupt', {
-      processCwd: root, agentCwd: join(root, 'agent'), controlledMirrorRoot: mirrorRoot,
+      processCwd: join(root, 'process'), agentCwd: join(root, 'agent'), controlledMirrorRoot: mirrorRoot,
     })).resolves.toBeUndefined();
+  });
+
+  it('rejects controlled mirror containment and realpath aliases with processCwd or agentCwd', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'integration-v3-runtime-overlap-')); roots.push(root);
+    const processCwd = join(root, 'process');
+    const mirrorRoot = join(processCwd, 'mirrors');
+    const agentCwd = join(root, 'agent');
+    mkdirSync(agentCwd, { recursive: true });
+    createRepository(join(mirrorRoot, 'github_acme_widget'), 'https://github.com/acme/widget.git');
+    await expect(resolveIntegrationV3RepositoryPaths(repository, 'candidate-overlap', {
+      processCwd, agentCwd, controlledMirrorRoot: mirrorRoot,
+    })).resolves.toBeUndefined();
+
+    const isolatedProcess = join(root, 'isolated-process');
+    const mirrorAlias = join(root, 'mirror-alias');
+    mkdirSync(isolatedProcess);
+    symlinkSync(mirrorRoot, mirrorAlias);
+    await expect(resolveIntegrationV3RepositoryPaths(repository, 'candidate-alias', {
+      processCwd: isolatedProcess, agentCwd: mirrorAlias, controlledMirrorRoot: mirrorRoot,
+    })).resolves.toBeUndefined();
+  });
+
+  it('treats filesystem root, equal paths, parents, and children as overlaps without prefix false positives', () => {
+    expect(pathsOverlap('/', '/srv/integration-mirrors')).toBe(true);
+    expect(pathsOverlap('/srv/integration-mirrors', '/')).toBe(true);
+    expect(pathsOverlap('/srv/integration-mirrors', '/srv/integration-mirrors')).toBe(true);
+    expect(pathsOverlap('/srv/integration-mirrors', '/srv/integration-mirrors/repository')).toBe(true);
+    expect(pathsOverlap('/srv/integration-mirrors', '/srv/integration-mirrors-old')).toBe(false);
+    expect(() => assertIntegrationV3FilesystemIsolation({
+      processCwd: '/tmp', agentCwd: '/var', controlledMirrorRoot: '/',
+    })).toThrow('filesystem root');
   });
 
   it('fails closed when no controlled mirror capability is configured', async () => {
@@ -264,7 +312,7 @@ describe('production Integration v3 cleanup host', () => {
       candidateId: candidate.id, candidateRevision: 1, payload: { reason: 'candidate_merged' },
     };
 
-    const receipt = await cleanup(request);
+    const receipt = await cleanup(request, requestGuard(request));
     expect(revoked).toEqual(['cap-1', 'cap-2']);
     expect(fenceCapabilities).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-1', repositoryId: candidate.repositoryId,
@@ -285,7 +333,8 @@ describe('production Integration v3 cleanup host', () => {
     ]);
 
     firstAttempt = false;
-    const retried = await cleanup({ ...request, leaseId: 'lease-2' });
+    const retryRequest = { ...request, leaseId: 'lease-2' };
+    const retried = await cleanup(retryRequest, requestGuard(retryRequest));
     expect(retried).toMatchObject({ outcome: 'succeeded', actions: expect.arrayContaining([
       { action: 'remove_candidate_worktree', status: 'skipped', target: worktreePath, reason: 'candidate worktree is already absent' },
     ]) });
@@ -312,10 +361,11 @@ describe('production Integration v3 cleanup host', () => {
       withRepositoryBranchLock: async (_lock, operation) => operation(),
       runGit,
     });
-    const receipt = await cleanup({
-      id: 'cleanup-2', leaseId: 'lease-1', kind: 'cleanup', candidateId: candidate.id,
+    const failedRequest = {
+      id: 'cleanup-2', leaseId: 'lease-1', kind: 'cleanup' as const, candidateId: candidate.id,
       candidateRevision: 1, payload: {},
-    });
+    };
+    const receipt = await cleanup(failedRequest, requestGuard(failedRequest));
     expect(receipt).toMatchObject({ outcome: 'failed', actions: expect.arrayContaining([
       expect.objectContaining({ action: 'revoke_capabilities', status: 'failed', error: expect.stringContaining('Failed to revoke 1') }),
       expect.objectContaining({ action: 'fence_capabilities', status: 'succeeded' }),

@@ -11,7 +11,7 @@ import {
   PostgresIntegrationEngineV3RequestHost,
 } from '../taskboard/integrationEngineV3Postgres.js';
 import { requeueFailedIntegrationV3Candidate } from '../taskboard/integrationV3Repair.js';
-import { IntegrationV3Worker } from '../taskboard/integrationV3Worker.js';
+import { expectedSubject, IntegrationV3Worker } from '../taskboard/integrationV3Worker.js';
 import { PostgresIntegrationV3WorkerHost } from '../taskboard/integrationV3WorkerPostgres.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import type { TaskboardIdentity } from '../taskboard/types.js';
@@ -47,7 +47,7 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
   }, 30_000);
 
   async function seedCandidate(input: {
-    state: 'waiting_checks' | 'working' | 'blocked';
+    state: 'preparing' | 'composing' | 'waiting_checks' | 'needs_work' | 'working' | 'in_review' | 'blocked';
     taskStatus: 'todo' | 'in_progress';
     checkpoint?: Record<string, unknown>;
     revision?: {
@@ -74,7 +74,7 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
           policy_revision,merge_method,policy_snapshot,source_set_digest,worker_status,worker_checkpoint)
        VALUES($1,$2,$3,'main',$4,$5,1,1,1,'p1','squash',$6::jsonb,'sources','idle',$7::jsonb)`,
       [candidateId, taskId, repositoryId, `integration/${candidateId}`, input.state,
-        JSON.stringify({ workflowVersion: 3, featureFlags: { engineV3: true, cleanup: true } }),
+        JSON.stringify({ workflowVersion: 3, featureFlags: { engineV3: true, compose: true, review: true, merge: true, cleanup: true, workspaceSync: true } }),
         JSON.stringify(input.checkpoint ?? {})],
     );
     await pool.query(
@@ -256,6 +256,133 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
     )).rows[0].closed_at).toBeInstanceOf(Date);
   });
 
+  it.each([
+    { label: 'non-retryable', attempts: 0, retryable: false },
+    { label: 'tenth retryable', attempts: 9, retryable: true },
+  ])('atomically blocks a $label Worker failure and requires explicit resume before a new release can claim', async ({ attempts, retryable }) => {
+    const seed = await seedCandidate({ state: 'waiting_checks', taskStatus: 'todo' });
+    await pool.query(
+      `UPDATE ${seed.tables.candidatesTable}
+          SET worker_status='failed'
+        WHERE id<>$1`,
+      [seed.candidateId],
+    );
+    await pool.query(
+      `UPDATE ${seed.tables.candidatesTable}
+          SET worker_status='processing',worker_attempts=$2,worker_lease_id='lease-old',
+              worker_lease_epoch=7,worker_release_identity='release-old',
+              worker_lease_expires_at=now()+interval '1 hour',worker_error=NULL
+        WHERE id=$1`,
+      [seed.candidateId, attempts],
+    );
+    const options = pgOptions(seed);
+    const oldHost = new PostgresIntegrationV3WorkerHost({
+      ...options, releaseIdentity: 'release-old', dispatchAgent: async () => ({ executionId: 'unused' }),
+      syncWorkspace: async () => undefined, cleanup: async () => undefined,
+    });
+    const failure = retryable ? 'retry budget exhausted' : 'deterministic ownership failure';
+    await oldHost.releaseCandidate({
+      candidateId: seed.candidateId, leaseId: 'lease-old', leaseEpoch: '7', releaseIdentity: 'release-old',
+    }, failure, retryable, { cause: retryable ? 'attempt_10' : 'non_retryable' });
+
+    const blocked = (await pool.query(
+      `SELECT state,worker_status,worker_attempts,worker_error,last_error,
+              worker_checkpoint->'failureEvidence' AS failure_evidence
+         FROM ${seed.tables.candidatesTable} WHERE id=$1`,
+      [seed.candidateId],
+    )).rows[0];
+    expect(blocked).toMatchObject({
+      state: 'blocked', worker_status: 'failed', worker_attempts: attempts + 1,
+      worker_error: failure, last_error: failure,
+      failure_evidence: { cause: retryable ? 'attempt_10' : 'non_retryable' },
+    });
+    expect((await store.getTask(identity, seed.taskId)).status).toBe('blocked');
+    expect((await pool.query(
+      `SELECT purpose,reason_code,reason,closed_at FROM ${store.blockEpisodesTable} WHERE task_id=$1`,
+      [seed.taskId],
+    )).rows).toEqual([{
+      purpose: 'work', reason_code: 'integration_candidate_worker_failed', reason: failure, closed_at: null,
+    }]);
+
+    const newHost = new PostgresIntegrationV3WorkerHost({
+      ...options, releaseIdentity: 'release-new', dispatchAgent: async () => ({ executionId: 'unused' }),
+      syncWorkspace: async () => undefined, cleanup: async () => undefined,
+    });
+    await expect(newHost.claimCandidate(30_000)).resolves.toBeUndefined();
+
+    await newHost.syncWorkspace({
+      id: randomUUID(), leaseId: 'request-lease', kind: 'workspace_sync',
+      candidateId: seed.candidateId, candidateRevision: 1,
+      payload: { reason: 'resume_reconcile', resumeState: 'needs_work', workflowEpoch: '1', laneEpoch: '1' },
+    });
+    const resumed = (await pool.query(
+      `SELECT state,worker_status,worker_attempts,worker_error,worker_lease_id,
+              worker_lease_expires_at,worker_release_identity
+         FROM ${seed.tables.candidatesTable} WHERE id=$1`,
+      [seed.candidateId],
+    )).rows[0];
+    expect(resumed).toEqual({
+      state: 'needs_work', worker_status: 'idle', worker_attempts: 0, worker_error: null,
+      worker_lease_id: null, worker_lease_expires_at: null, worker_release_identity: null,
+    });
+    expect((await store.getTask(identity, seed.taskId)).status).toBe('in_progress');
+    expect((await pool.query(
+      `SELECT closed_at FROM ${store.blockEpisodesTable} WHERE task_id=$1`, [seed.taskId],
+    )).rows[0].closed_at).toBeInstanceOf(Date);
+    await expect(newHost.claimCandidate(30_000)).resolves.toMatchObject({
+      candidateId: seed.candidateId, releaseIdentity: 'release-new',
+    });
+  });
+
+  it('rolls back compose_persisted when the Worker loses its lease after assertion but before Candidate SQL', async () => {
+    const seed = await seedCandidate({
+      state: 'composing', taskStatus: 'in_progress',
+      revision: { subjectKind: 'source_seed', treeOid: null, compositionComplete: false },
+    });
+    await pool.query(
+      `UPDATE ${seed.tables.candidatesTable}
+          SET worker_status='processing',worker_lease_id='lease-old',worker_lease_epoch=11,
+              worker_release_identity='release-old',worker_lease_expires_at=now()+interval '1 hour'
+        WHERE id=$1`,
+      [seed.candidateId],
+    );
+    const options = pgOptions(seed);
+    const workerHost = new PostgresIntegrationV3WorkerHost({
+      ...options, releaseIdentity: 'release-old', dispatchAgent: async () => ({ executionId: 'unused' }),
+      syncWorkspace: async () => undefined, cleanup: async () => undefined,
+    });
+    const lease = {
+      candidateId: seed.candidateId, leaseId: 'lease-old', leaseEpoch: '11', releaseIdentity: 'release-old',
+    };
+    await workerHost.assertCandidateLease(lease);
+    const current = await workerHost.loadCurrent(seed.candidateId);
+    await pool.query(
+      `UPDATE ${seed.tables.candidatesTable}
+          SET worker_lease_id='lease-new',worker_lease_epoch=12,worker_release_identity='release-new',
+              worker_lease_expires_at=now()+interval '1 hour'
+        WHERE id=$1`,
+      [seed.candidateId],
+    );
+    const engine = new IntegrationEngineV3({
+      candidates: new PostgresIntegrationEngineV3CandidateHost(options),
+      features: new PostgresIntegrationEngineV3FeatureHost(options),
+      requests: new PostgresIntegrationEngineV3RequestHost(options),
+      providerOperations: {} as never, provider: {} as never,
+      credentialOwnerId: identity.ownerUserId, resolveRepository: async () => undefined,
+    });
+    await expect(engine.execute({
+      type: 'compose_persisted', candidateId: seed.candidateId, expected: expectedSubject(current),
+      workerBinding: { mutationFence: lease, assertCurrent: () => workerHost.assertCandidateLease(lease) },
+      revision: { baseOid: 'base-2', headOid: 'head-2', treeOid: 'tree-2', compositionComplete: true, sources: [] },
+    })).rejects.toMatchObject({ code: 'TASKBOARD_CANDIDATE_CAS_MISMATCH' });
+    expect((await pool.query(
+      `SELECT state,current_revision,version FROM ${seed.tables.candidatesTable} WHERE id=$1`, [seed.candidateId],
+    )).rows[0]).toMatchObject({ state: 'composing', current_revision: 1 });
+    expect((await pool.query(
+      `SELECT count(*)::int AS count FROM ${seed.tables.revisionsTable} WHERE candidate_id=$1`, [seed.candidateId],
+    )).rows).toEqual([{ count: 1 }]);
+  });
+
   it('terminalizes unexecuted operations on terminal transition, rejects late inserts, and permits archive', async () => {
     const seed = await seedCandidate({ state: 'waiting_checks', taskStatus: 'todo' });
     const insertOperation = (id: string) => pool.query(
@@ -321,7 +448,7 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
       credentialOwnerId: identity.ownerUserId, resolveRepository: async () => undefined,
     });
     const worker = new IntegrationV3Worker({
-      host, engine, composer: { compose: vi.fn(), refreshAfterWork: vi.fn() },
+      host, engine, composer: { publish: vi.fn(), compose: vi.fn(), refreshAfterWork: vi.fn() },
     });
     await worker.runOnce();
     const candidate = (await pool.query(
@@ -337,6 +464,39 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
       [seed.candidateId],
     );
     expect(cleanup.rows).toEqual([{ kind: 'cleanup', status: 'pending' }]);
+  });
+
+  it('upgrades an existing v7 candidate table with Worker lease fence columns', async () => {
+    const seed = await seedCandidate({ state: 'waiting_checks', taskStatus: 'todo' });
+    const root = store.integrationSourcesTable.slice(0, -'_sources'.length);
+    const migrationsTable = `${root}_candidate_schema_migrations_v3`;
+    const client = await pool.connect();
+    try {
+      await client.query(`ALTER TABLE ${seed.tables.candidatesTable}
+        DROP COLUMN worker_release_identity,
+        DROP COLUMN worker_lease_epoch`);
+      await client.query(`DELETE FROM ${migrationsTable} WHERE version=8`);
+
+      await runIntegrationCandidateSchema({
+        tasksTable: store.tasksTable,
+        executionsTable: store.executionsTable,
+        integrationSourcesTable: store.integrationSourcesTable,
+      }, client);
+
+      expect((await client.query(
+        `SELECT column_name FROM information_schema.columns
+          WHERE table_schema=current_schema() AND table_name=$1
+            AND column_name IN ('worker_lease_epoch','worker_release_identity') ORDER BY column_name`,
+        [seed.tables.candidatesTable],
+      )).rows).toEqual([
+        { column_name: 'worker_lease_epoch' },
+        { column_name: 'worker_release_identity' },
+      ]);
+      expect((await client.query(`SELECT version,name FROM ${migrationsTable} WHERE version=8`)).rows)
+        .toEqual([{ version: 8, name: 'expand_candidate_worker_lease_fence' }]);
+    } finally {
+      client.release();
+    }
   });
 
   it('upgrades existing v5 source seeds without weakening revision immutability', async () => {

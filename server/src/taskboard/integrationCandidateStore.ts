@@ -79,6 +79,13 @@ export interface TransitionCandidateInput {
   lastError?: string;
 }
 
+/** Ephemeral Worker ownership fence. It is checked atomically by the Candidate mutation SQL. */
+export interface IntegrationCandidateMutationFence {
+  leaseId: string;
+  leaseEpoch: string;
+  releaseIdentity: string;
+}
+
 const transitions: Readonly<Record<TaskBoardIntegrationCandidateState, readonly TaskBoardIntegrationCandidateState[]>> = {
   preparing: ['composing', 'blocked', 'needs_human', 'canceled'],
   composing: ['waiting_checks', 'needs_work', 'blocked', 'needs_human', 'canceled'],
@@ -188,6 +195,7 @@ export class IntegrationCandidateStore {
   async appendRevision(
     candidateId: string,
     input: AppendCandidateRevisionInput,
+    mutationFence?: IntegrationCandidateMutationFence,
   ): Promise<TaskBoardIntegrationCandidate> {
     return this.withTransaction(async (client) => {
       const candidate = await this.loadForUpdate(client, candidateId);
@@ -300,9 +308,16 @@ export class IntegrationCandidateStore {
             SET current_revision=$4,source_set_digest=$5,state=COALESCE($6,state),approved_revision=NULL,
                 approved_review_execution_id=NULL,last_error=$8,version=version+1,updated_at=now()
           WHERE id=$1 AND version=$2 AND current_revision=$3 AND state=$7
+            AND ($9::text IS NULL OR (
+              worker_lease_id=$9 AND worker_lease_epoch=$10::bigint
+              AND worker_release_identity=$11 AND worker_status='processing'
+              AND worker_lease_expires_at>clock_timestamp()
+            ))
           RETURNING *`,
         [candidate.id, input.expectedVersion, input.expectedCurrentRevision, revision, sourceSetDigest,
-          input.nextState ?? null, candidate.state, input.lastError ?? null],
+          input.nextState ?? null, candidate.state, input.lastError ?? null,
+          mutationFence?.leaseId ?? null, mutationFence?.leaseEpoch ?? null,
+          mutationFence?.releaseIdentity ?? null],
       );
       if (!updated.rows[0]) throw staleCandidate();
       return rowToIntegrationCandidate(updated.rows[0]);
@@ -313,6 +328,7 @@ export class IntegrationCandidateStore {
     candidateId: string,
     expectedVersion: number,
     expectedRevision: number,
+    mutationFence?: IntegrationCandidateMutationFence,
   ): Promise<TaskBoardIntegrationCandidate> {
     return this.withTransaction(async (client) => {
       const candidate = await this.loadForUpdate(client, candidateId);
@@ -324,15 +340,26 @@ export class IntegrationCandidateStore {
         `UPDATE ${this.candidatesTable}
             SET state='working',work_round=work_round+1,version=version+1,updated_at=now()
           WHERE id=$1 AND version=$2 AND current_revision=$3 AND state='needs_work'
+            AND ($4::text IS NULL OR (
+              worker_lease_id=$4 AND worker_lease_epoch=$5::bigint
+              AND worker_release_identity=$6 AND worker_status='processing'
+              AND worker_lease_expires_at>clock_timestamp()
+            ))
           RETURNING *`,
-        [candidateId, expectedVersion, expectedRevision],
+        [candidateId, expectedVersion, expectedRevision,
+          mutationFence?.leaseId ?? null, mutationFence?.leaseEpoch ?? null,
+          mutationFence?.releaseIdentity ?? null],
       );
       if (!result.rows[0]) throw staleCandidate();
       return rowToIntegrationCandidate(result.rows[0]);
     });
   }
 
-  async transition(candidateId: string, input: TransitionCandidateInput): Promise<TaskBoardIntegrationCandidate> {
+  async transition(
+    candidateId: string,
+    input: TransitionCandidateInput,
+    mutationFence?: IntegrationCandidateMutationFence,
+  ): Promise<TaskBoardIntegrationCandidate> {
     return this.withTransaction(async (client) => {
       const candidate = await this.loadForUpdate(client, candidateId);
       assertCandidateCas(candidate, input.expectedVersion, input.expectedRevision);
@@ -348,11 +375,18 @@ export class IntegrationCandidateStore {
                 merged_commit_oid=COALESCE($7,merged_commit_oid),last_error=$8,
                 version=version+1,updated_at=now()
           WHERE id=$1 AND version=$2 AND current_revision=$3 AND state=$9
+            AND ($10::text IS NULL OR (
+              worker_lease_id=$10 AND worker_lease_epoch=$11::bigint
+              AND worker_release_identity=$12 AND worker_status='processing'
+              AND worker_lease_expires_at>clock_timestamp()
+            ))
           RETURNING *`,
         [
           candidateId, input.expectedVersion, input.expectedRevision, input.to, approved,
           input.approvedReviewExecutionId ?? null, input.mergedCommitOid ?? null,
           input.lastError ?? null, candidate.state,
+          mutationFence?.leaseId ?? null, mutationFence?.leaseEpoch ?? null,
+          mutationFence?.releaseIdentity ?? null,
         ],
       );
       if (!result.rows[0]) throw staleCandidate();

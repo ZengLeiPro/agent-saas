@@ -33,23 +33,50 @@ function facts(overrides: Partial<IntegrationEngineV3ProviderFacts> = {}): Integ
 
 class MemoryCandidateHost implements IntegrationEngineV3CandidateHost {
   lastAppend?: Parameters<IntegrationEngineV3CandidateHost['appendRevision']>[1];
+  lastAppendFence?: Parameters<IntegrationEngineV3CandidateHost['appendRevision']>[2];
+  lastWorkFence?: Parameters<IntegrationEngineV3CandidateHost['beginNextWorkRound']>[3];
+  lastTransitionFence?: Parameters<IntegrationEngineV3CandidateHost['transition']>[2];
+  lastCommitFence?: Parameters<IntegrationEngineV3CandidateHost['commitMerged']>[0]['mutationFence'];
   revisionValue = structuredClone(revision);
   constructor(public value: TaskBoardIntegrationCandidate) {}
   async getCurrent() { return { candidate: structuredClone(this.value), revision: structuredClone(this.revisionValue) }; }
-  async appendRevision(_candidateId: string, input: Parameters<IntegrationEngineV3CandidateHost['appendRevision']>[1]) {
+  async appendRevision(
+    _candidateId: string,
+    input: Parameters<IntegrationEngineV3CandidateHost['appendRevision']>[1],
+    mutationFence?: Parameters<IntegrationEngineV3CandidateHost['appendRevision']>[2],
+  ) {
     this.lastAppend = structuredClone(input);
+    this.lastAppendFence = mutationFence && structuredClone(mutationFence);
     this.value = {
       ...this.value, currentRevision: this.value.currentRevision + 1, version: this.value.version + 1,
       state: input.nextState ?? this.value.state, ...(input.lastError ? { lastError: input.lastError } : {}),
     };
     return structuredClone(this.value);
   }
-  async beginNextWorkRound(): Promise<TaskBoardIntegrationCandidate> { this.value = { ...this.value, state: 'working', workRound: this.value.workRound + 1, version: this.value.version + 1 }; return structuredClone(this.value); }
-  async transition(_id: string, input: { to: TaskBoardIntegrationCandidate['state']; approvedReviewExecutionId?: string; mergedCommitOid?: string; lastError?: string }): Promise<TaskBoardIntegrationCandidate> {
+  async beginNextWorkRound(
+    _candidateId: string,
+    _expectedVersion: number,
+    _expectedRevision: number,
+    mutationFence?: Parameters<IntegrationEngineV3CandidateHost['beginNextWorkRound']>[3],
+  ): Promise<TaskBoardIntegrationCandidate> {
+    this.lastWorkFence = mutationFence && structuredClone(mutationFence);
+    this.value = { ...this.value, state: 'working', workRound: this.value.workRound + 1, version: this.value.version + 1 };
+    return structuredClone(this.value);
+  }
+  async transition(
+    _id: string,
+    input: { to: TaskBoardIntegrationCandidate['state']; approvedReviewExecutionId?: string; mergedCommitOid?: string; lastError?: string },
+    mutationFence?: Parameters<IntegrationEngineV3CandidateHost['transition']>[2],
+  ): Promise<TaskBoardIntegrationCandidate> {
+    this.lastTransitionFence = mutationFence && structuredClone(mutationFence);
     this.value = { ...this.value, state: input.to, version: this.value.version + 1, ...(input.approvedReviewExecutionId ? { approvedRevision: 1, approvedReviewExecutionId: input.approvedReviewExecutionId } : {}), ...(input.lastError ? { lastError: input.lastError } : {}) };
     return structuredClone(this.value);
   }
-  async commitMerged(input: { mergedCommitOid: string }): Promise<TaskBoardIntegrationCandidate> { this.value = { ...this.value, state: 'merged', mergedCommitOid: input.mergedCommitOid, version: this.value.version + 1 }; return structuredClone(this.value); }
+  async commitMerged(input: Parameters<IntegrationEngineV3CandidateHost['commitMerged']>[0]): Promise<TaskBoardIntegrationCandidate> {
+    this.lastCommitFence = input.mutationFence && structuredClone(input.mutationFence);
+    this.value = { ...this.value, state: 'merged', mergedCommitOid: input.mergedCommitOid, version: this.value.version + 1 };
+    return structuredClone(this.value);
+  }
 }
 class MemoryOperations implements IntegrationProviderOperationStorageHost {
   records = new Map<string, IntegrationProviderOperationRecord>();
@@ -98,6 +125,30 @@ describe('IntegrationEngineV3', () => {
     const { engine, getFlags } = setup('waiting_checks');
     await engine.execute({ type: 'request_review', candidateId: value.id, expected: expected(value) });
     expect(getFlags).toHaveBeenCalledWith('candidate-1');
+  });
+
+  it('carries one Worker lease fence through transition, append, and work-round Candidate mutations', async () => {
+    const mutationFence = { leaseId: 'lease-1', leaseEpoch: '8', releaseIdentity: 'release-1' };
+    const workerBinding = { mutationFence, assertCurrent: vi.fn(async () => undefined) };
+
+    const preparing = setup('preparing');
+    await preparing.engine.execute({
+      type: 'start_compose', candidateId: 'candidate-1', expected: expected(candidate('preparing')), workerBinding,
+    });
+    expect(preparing.candidates.lastTransitionFence).toEqual(mutationFence);
+
+    const composing = setup('composing');
+    await composing.engine.execute({
+      type: 'compose_persisted', candidateId: 'candidate-1', expected: expected(candidate('composing')), workerBinding,
+      revision: { baseOid: 'base-2', headOid: 'head-2', treeOid: 'tree-2', sources: [] },
+    });
+    expect(composing.candidates.lastAppendFence).toEqual(mutationFence);
+
+    const needsWork = setup('needs_work');
+    await needsWork.engine.execute({
+      type: 'request_work', candidateId: 'candidate-1', expected: expected(candidate('needs_work')), workerBinding,
+    });
+    expect(needsWork.candidates.lastWorkFence).toEqual(mutationFence);
   });
 
   it('rejects a stale subject fence before dispatching any side effect', async () => {

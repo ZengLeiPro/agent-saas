@@ -4,7 +4,11 @@ import type {
   TaskBoardIntegrationCandidateSourceSnapshot,
   TaskBoardRepositoryConfig,
 } from '../../../shared/src/types/taskboard.js';
-import type { AppendCandidateRevisionInput, TransitionCandidateInput } from './integrationCandidateStore.js';
+import type {
+  AppendCandidateRevisionInput,
+  IntegrationCandidateMutationFence,
+  TransitionCandidateInput,
+} from './integrationCandidateStore.js';
 import {
   IntegrationProviderOperationService,
   integrationProviderOperationKey,
@@ -29,16 +33,27 @@ export interface IntegrationEngineV3ExpectedSubject {
   subjectDigest?: string;
 }
 
+export interface IntegrationEngineV3WorkerBinding {
+  mutationFence: IntegrationCandidateMutationFence;
+  assertCurrent(): Promise<void>;
+}
+
 export interface IntegrationEngineV3Current {
   candidate: TaskBoardIntegrationCandidate;
   revision?: TaskBoardIntegrationCandidateRevision;
+  /** Present only for Worker-owned execution; never persisted as command intent. */
+  workerBinding?: IntegrationEngineV3WorkerBinding;
 }
+
+type IntegrationEngineV3ResolvedCurrent = IntegrationEngineV3Current & {
+  revision: TaskBoardIntegrationCandidateRevision;
+};
 
 export interface IntegrationEngineV3CandidateHost {
   getCurrent(candidateId: string): Promise<IntegrationEngineV3Current>;
-  appendRevision(candidateId: string, input: AppendCandidateRevisionInput): Promise<TaskBoardIntegrationCandidate>;
-  beginNextWorkRound(candidateId: string, expectedVersion: number, expectedRevision: number): Promise<TaskBoardIntegrationCandidate>;
-  transition(candidateId: string, input: TransitionCandidateInput): Promise<TaskBoardIntegrationCandidate>;
+  appendRevision(candidateId: string, input: AppendCandidateRevisionInput, mutationFence?: IntegrationCandidateMutationFence): Promise<TaskBoardIntegrationCandidate>;
+  beginNextWorkRound(candidateId: string, expectedVersion: number, expectedRevision: number, mutationFence?: IntegrationCandidateMutationFence): Promise<TaskBoardIntegrationCandidate>;
+  transition(candidateId: string, input: TransitionCandidateInput, mutationFence?: IntegrationCandidateMutationFence): Promise<TaskBoardIntegrationCandidate>;
   /** Must atomically mark candidate merged and converge task/source/lane projections. */
   commitMerged(input: {
     candidateId: string;
@@ -46,6 +61,7 @@ export interface IntegrationEngineV3CandidateHost {
     expectedRevision: number;
     mergedCommitOid: string;
     providerOperationId: string;
+    mutationFence?: IntegrationCandidateMutationFence;
   }): Promise<TaskBoardIntegrationCandidate>;
 }
 
@@ -101,9 +117,18 @@ export interface IntegrationEngineV3RequestHost {
   requestCleanup(input: { candidateId: string; branch: string; providerPullRequestId?: string; reason: string }): Promise<{ requestId: string }>;
 }
 
-interface CommandBase { candidateId: string; expected: IntegrationEngineV3ExpectedSubject; }
+interface CommandBase {
+  candidateId: string;
+  expected: IntegrationEngineV3ExpectedSubject;
+  /** Ephemeral ownership, supplied only by IntegrationV3Worker. */
+  workerBinding?: IntegrationEngineV3WorkerBinding;
+}
 export type IntegrationEngineV3Command =
   | (CommandBase & { type: 'start_compose' })
+  /** Durable boundary: append the immutable subject before any remote publication. */
+  | (CommandBase & { type: 'compose_persisted'; evidence?: string; revision: Omit<AppendCandidateRevisionInput, 'expectedVersion' | 'expectedCurrentRevision' | 'nextState'> })
+  /** Publishing is replayable from the current provider_subject revision. */
+  | (CommandBase & { type: 'publish_complete'; evidence?: string })
   | (CommandBase & { type: 'compose_clean'; revision: Omit<AppendCandidateRevisionInput, 'expectedVersion' | 'expectedCurrentRevision' | 'nextState'> })
   | (CommandBase & { type: 'compose_conflict'; evidence: string; revision: Omit<AppendCandidateRevisionInput, 'expectedVersion' | 'expectedCurrentRevision' | 'nextState'> })
   | (CommandBase & { type: 'observe_checks' })
@@ -149,7 +174,11 @@ export class IntegrationEngineV3 {
   constructor(private readonly options: IntegrationEngineV3Options) {}
 
   async execute(command: IntegrationEngineV3Command): Promise<IntegrationEngineV3Result> {
-    const current = await this.options.candidates.getCurrent(command.candidateId);
+    const loaded = await this.options.candidates.getCurrent(command.candidateId);
+    const current: IntegrationEngineV3Current = {
+      ...loaded,
+      ...(command.workerBinding ? { workerBinding: command.workerBinding } : {}),
+    };
     assertExpected(current, command.expected);
     const flags = await this.options.features.getFlags(current.candidate.id);
     // A global freeze stops new work/provider writes, but must never prevent reconciliation or cancellation.
@@ -161,6 +190,22 @@ export class IntegrationEngineV3 {
       case 'start_compose':
         assertFlag(flags.composeEnabled, 'compose');
         return applied(await this.transition(current, 'composing'));
+      case 'compose_persisted':
+        assertFlag(flags.composeEnabled, 'compose');
+        return applied(await this.appendPersistedSubject(current, command.revision, command.evidence));
+      case 'publish_complete': {
+        assertFlag(flags.composeEnabled, 'compose');
+        const revision = requireRevision(current);
+        if (current.candidate.state !== 'composing' || revision.subjectKind !== 'provider_subject'
+          || !current.candidate.providerPullRequestId) {
+          throw failClosed('Only a durable published subject with a bound PR can finish composition', 'TASKBOARD_INTEGRATION_PUBLISH_STATE_INVALID');
+        }
+        return applied(await this.transition(
+          current,
+          revision.compositionComplete ? 'waiting_checks' : 'needs_work',
+          revision.compositionComplete ? undefined : command.evidence ?? 'Deterministic composition requires conflict remediation',
+        ));
+      }
       case 'compose_clean':
         assertFlag(flags.composeEnabled, 'compose');
         return applied(await this.appendAndTransition(current, command.revision, 'waiting_checks'));
@@ -188,7 +233,12 @@ export class IntegrationEngineV3 {
           throw failClosed('Work request exhausted retries and requires operator recovery', 'TASKBOARD_CANDIDATE_REQUEST_FAILED');
         }
         const candidate = current.candidate.state === 'needs_work'
-          ? await this.options.candidates.beginNextWorkRound(current.candidate.id, current.candidate.version, current.candidate.currentRevision)
+          ? await this.options.candidates.beginNextWorkRound(
+            current.candidate.id,
+            current.candidate.version,
+            current.candidate.currentRevision,
+            current.workerBinding?.mutationFence,
+          )
           : current.candidate;
         return { candidate, status: 'requested', requestId: request.requestId };
       }
@@ -342,23 +392,29 @@ export class IntegrationEngineV3 {
         }
         const receipt = await this.options.provider.merge(repository, { providerPullRequestId: requiredPr(current.candidate), expectedHeadOid: revision.headOid, method: current.candidate.mergeMethod, operationKey }, this.options.credentialOwnerId);
         return { ...receipt, providerPullRequestId: requiredPr(current.candidate) };
-      }, { isDefinitiveFailure: (error) => error === finalGateError });
+      }, {
+        isDefinitiveFailure: (error) => error === finalGateError,
+        ...(current.workerBinding ? {
+          assertAttemptCurrent: current.workerBinding.assertCurrent,
+          mutationFence: current.workerBinding.mutationFence,
+        } : {}),
+      });
     } catch (error) {
       if (error instanceof TaskboardValidationError) {
-        await this.transition({ candidate: merging, revision }, 'needs_human', errorMessage(error));
+        await this.transition({ ...current, candidate: merging, revision }, 'needs_human', errorMessage(error));
       }
       throw error;
     }
     if (finalGateError) {
-      await this.transition({ candidate: merging, revision }, 'needs_human', errorMessage(finalGateError));
+      await this.transition({ ...current, candidate: merging, revision }, 'needs_human', errorMessage(finalGateError));
       throw finalGateError;
     }
     if (completed.state === 'failed' || completed.state === 'needs_human') {
-      const candidate = await this.transition({ candidate: merging, revision }, 'needs_human', completed.error ?? 'Provider operation fence rejected the merge');
+      const candidate = await this.transition({ ...current, candidate: merging, revision }, 'needs_human', completed.error ?? 'Provider operation fence rejected the merge');
       return { candidate, status: 'applied', operation: completed };
     }
     if (completed.state !== 'succeeded') return { candidate: merging, status: 'provider_unknown', operation: completed };
-    return this.finishMerge({ candidate: merging, revision }, completed);
+    return this.finishMerge({ ...current, candidate: merging, revision }, completed);
   }
 
   private async reconcileMerge(current: IntegrationEngineV3Current, operationKey: string): Promise<IntegrationEngineV3Result> {
@@ -384,7 +440,14 @@ export class IntegrationEngineV3 {
       return { candidate, status: 'applied', operation: existingOperation };
     }
     const repository = await this.repository(current.candidate.repositoryId);
-    const operation = await this.options.providerOperations.reconcile(operationKey, (record) => this.options.provider.reconcileMerge(record, repository, this.options.credentialOwnerId));
+    const operation = await this.options.providerOperations.reconcile(
+      operationKey,
+      (record) => this.options.provider.reconcileMerge(record, repository, this.options.credentialOwnerId),
+      current.workerBinding ? {
+        assertAttemptCurrent: current.workerBinding.assertCurrent,
+        mutationFence: current.workerBinding.mutationFence,
+      } : {},
+    );
     if (operation.state === 'failed' || operation.state === 'needs_human') {
       const candidate = current.candidate.state === 'needs_human'
         ? current.candidate
@@ -392,10 +455,10 @@ export class IntegrationEngineV3 {
       return { candidate, status: 'applied', operation };
     }
     if (operation.state !== 'succeeded') return { candidate: current.candidate, status: 'provider_unknown', operation };
-    return this.finishMerge(current as Required<IntegrationEngineV3Current>, operation);
+    return this.finishMerge(current as IntegrationEngineV3ResolvedCurrent, operation);
   }
 
-  private async finishMerge(current: Required<IntegrationEngineV3Current>, operation: IntegrationProviderOperationRecord): Promise<IntegrationEngineV3Result> {
+  private async finishMerge(current: IntegrationEngineV3ResolvedCurrent, operation: IntegrationProviderOperationRecord): Promise<IntegrationEngineV3Result> {
     const facts = await this.readAndValidateFacts(current, true);
     const receipt = operation.receipt ?? {};
     const receiptCommitOid = typeof receipt.mergedCommitOid === 'string' ? receipt.mergedCommitOid : undefined;
@@ -409,7 +472,14 @@ export class IntegrationEngineV3 {
         : await this.transition(current, 'needs_human', 'Merged provider facts do not match the controlled operation receipt');
       return { candidate, status: 'provider_unknown', operation };
     }
-    const candidate = await this.options.candidates.commitMerged({ candidateId: current.candidate.id, expectedVersion: current.candidate.version, expectedRevision: current.revision.revision, mergedCommitOid: facts.mergeCommitOid, providerOperationId: operation.id });
+    const candidate = await this.options.candidates.commitMerged({
+      candidateId: current.candidate.id,
+      expectedVersion: current.candidate.version,
+      expectedRevision: current.revision.revision,
+      mergedCommitOid: facts.mergeCommitOid,
+      providerOperationId: operation.id,
+      ...(current.workerBinding ? { mutationFence: current.workerBinding.mutationFence } : {}),
+    });
     return { candidate, status: 'applied', operation };
   }
 
@@ -487,17 +557,37 @@ export class IntegrationEngineV3 {
     }
   }
 
+  private async appendPersistedSubject(
+    current: IntegrationEngineV3Current,
+    revision: Omit<AppendCandidateRevisionInput, 'expectedVersion' | 'expectedCurrentRevision' | 'nextState'>,
+    evidence?: string,
+  ): Promise<TaskBoardIntegrationCandidate> {
+    if (current.candidate.state !== 'composing' || requireRevision(current).subjectKind === 'provider_subject') {
+      throw failClosed('A composed subject can only replace the current source seed once', 'TASKBOARD_INTEGRATION_COMPOSE_DURABILITY_INVALID');
+    }
+    return this.options.candidates.appendRevision(current.candidate.id, {
+      ...revision,
+      expectedVersion: current.candidate.version,
+      expectedCurrentRevision: current.candidate.currentRevision,
+      ...(evidence ? { lastError: evidence } : {}),
+    }, current.workerBinding?.mutationFence);
+  }
+
   private async appendAndTransition(current: IntegrationEngineV3Current, revision: Omit<AppendCandidateRevisionInput, 'expectedVersion' | 'expectedCurrentRevision' | 'nextState'>, to: 'needs_work' | 'waiting_checks'): Promise<TaskBoardIntegrationCandidate> {
     return this.options.candidates.appendRevision(current.candidate.id, {
       ...revision,
       expectedVersion: current.candidate.version,
       expectedCurrentRevision: current.candidate.currentRevision,
       nextState: to,
-    });
+    }, current.workerBinding?.mutationFence);
   }
 
   private transition(current: IntegrationEngineV3Current, to: TransitionCandidateInput['to'], lastError?: string, approvedReviewExecutionId?: string): Promise<TaskBoardIntegrationCandidate> {
-    return this.options.candidates.transition(current.candidate.id, { expectedVersion: current.candidate.version, expectedRevision: current.candidate.currentRevision, to, lastError, approvedReviewExecutionId });
+    return this.options.candidates.transition(
+      current.candidate.id,
+      { expectedVersion: current.candidate.version, expectedRevision: current.candidate.currentRevision, to, lastError, approvedReviewExecutionId },
+      current.workerBinding?.mutationFence,
+    );
   }
 
   private async repository(repositoryId: string): Promise<TaskBoardRepositoryConfig> {

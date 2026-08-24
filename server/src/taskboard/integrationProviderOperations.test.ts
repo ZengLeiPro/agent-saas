@@ -13,6 +13,7 @@ import {
 
 class MemoryStorage implements IntegrationProviderOperationStorageHost {
   readonly records = new Map<string, IntegrationProviderOperationRecord>();
+  readonly casInputs: Array<{ mutationFence?: { leaseId: string; leaseEpoch: string; releaseIdentity: string } }> = [];
 
   async getByOperationKey(key: string): Promise<IntegrationProviderOperationRecord | undefined> {
     return clone(this.records.get(key));
@@ -30,7 +31,9 @@ class MemoryStorage implements IntegrationProviderOperationStorageHost {
     expectedState: IntegrationProviderOperationState;
     nextState: IntegrationProviderOperationState;
     patch: Pick<IntegrationProviderOperationRecord, 'attemptCount' | 'updatedAt'> & { receipt?: Record<string, unknown>; error?: string };
+    mutationFence?: { leaseId: string; leaseEpoch: string; releaseIdentity: string };
   }): Promise<IntegrationProviderOperationRecord | undefined> {
+    this.casInputs.push(input);
     const current = [...this.records.values()].find((record) => record.id === input.id);
     if (!current || current.state !== input.expectedState) return undefined;
     const updated = { ...current, ...input.patch, state: input.nextState };
@@ -187,6 +190,59 @@ describe('IntegrationProviderOperationService', () => {
       error: 'candidate cleanup fenced provider calls',
       receipt: { outcome: 'not_applied', evidence: 'pre_execution_fence_rejected' } });
     expect(executor).not.toHaveBeenCalled();
+  });
+
+  it('leaves an applied provider attempt executing when the Worker loses its lease before receipt persistence', async () => {
+    const { service, storage } = setup();
+    await service.prepare(intent);
+    let leaseCurrent = true;
+    const assertAttemptCurrent = vi.fn(async () => {
+      if (!leaseCurrent) throw new Error('candidate lease lost');
+    });
+    const providerWrite = vi.fn(async () => {
+      leaseCurrent = false;
+      return { ref: 'integration/task-1', oid: 'base-oid' };
+    });
+
+    await expect(service.execute(operationKey, providerWrite, { assertAttemptCurrent }))
+      .rejects.toThrow('candidate lease lost');
+    expect(providerWrite).toHaveBeenCalledOnce();
+    const durable = await storage.getByOperationKey(operationKey);
+    expect(durable).toMatchObject({ state: 'executing', attemptCount: 1 });
+    expect(durable).not.toHaveProperty('receipt');
+  });
+
+  it('does not mark an operation definitively failed when the Worker loses its lease with the provider error', async () => {
+    const { service, storage } = setup();
+    await service.prepare(intent);
+    let leaseCurrent = true;
+    const assertAttemptCurrent = vi.fn(async () => {
+      if (!leaseCurrent) throw new Error('candidate lease lost');
+    });
+    const providerWrite = vi.fn(async () => {
+      leaseCurrent = false;
+      throw new Error('provider rejected request');
+    });
+
+    await expect(service.execute(operationKey, providerWrite, {
+      assertAttemptCurrent,
+      isDefinitiveFailure: () => true,
+    })).rejects.toThrow('candidate lease lost');
+    expect(providerWrite).toHaveBeenCalledOnce();
+    const durable = await storage.getByOperationKey(operationKey);
+    expect(durable).toMatchObject({ state: 'executing', attemptCount: 1 });
+    expect(durable).not.toHaveProperty('receipt');
+    expect(durable).not.toHaveProperty('error');
+  });
+
+  it('passes the Worker mutation fence to every ledger CAS in an execute attempt', async () => {
+    const { service, storage } = setup();
+    const mutationFence = { leaseId: 'lease-1', leaseEpoch: '4', releaseIdentity: 'release-1' };
+    await service.prepare(intent);
+    await service.execute(operationKey, async () => ({ ok: true }), { mutationFence });
+
+    expect(storage.casInputs).toHaveLength(2);
+    expect(storage.casInputs.every((input) => input.mutationFence === mutationFence)).toBe(true);
   });
 
   it('fails before a write when durable fences are stale', async () => {

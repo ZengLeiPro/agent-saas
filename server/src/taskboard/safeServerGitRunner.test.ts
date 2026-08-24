@@ -107,6 +107,7 @@ describe('safe server Git runner', () => {
     expect(args).toContain('http.proxy=');
     expect(safeServerGitEnvironment()).toMatchObject({
       GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_ALLOW_PROTOCOL: 'https',
+      GIT_OPTIONAL_LOCKS: '0',
     });
     expect(safeServerGitEnvironment()).not.toHaveProperty('GIT_CONFIG_LOCAL');
   });

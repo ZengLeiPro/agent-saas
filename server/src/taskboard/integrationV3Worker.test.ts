@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TaskBoardIntegrationCandidate, TaskBoardIntegrationCandidateRevision } from '../../../shared/src/types/taskboard.js';
 import type { IntegrationEngineV3, IntegrationEngineV3Command } from './integrationEngineV3.js';
 import { IntegrationV3CandidateReloadRequiredError, IntegrationV3ComposeConflictError } from './integrationV3ComposeExecutor.js';
-import { IntegrationV3Worker, type IntegrationV3RequestLease, type IntegrationV3WorkerHost } from './integrationV3Worker.js';
+import { IntegrationV3Worker, type IntegrationV3RequestLease, type IntegrationV3RequestLeaseGuard, type IntegrationV3WorkerHost } from './integrationV3Worker.js';
 import { executeIntegrationV3Cleanup, terminalizeIntegrationV3PreparedOperations } from './integrationV3WorkerPostgres.js';
 
 const revision: TaskBoardIntegrationCandidateRevision = {
@@ -35,14 +35,18 @@ class MemoryHost implements IntegrationV3WorkerHost {
   mergeOperation?: { operationKey: string; state: 'prepared' | 'executing' | 'unknown' | 'failed' | 'needs_human' | 'succeeded' };
   async claimCandidate() {
     if (['merged', 'canceled'].includes(this.current.candidate.state) && this.checkpoints.at(-1)?.status === 'requested') return undefined;
-    return { candidateId: 'candidate-1', leaseId: 'candidate-lease' };
+    return { candidateId: 'candidate-1', leaseId: 'candidate-lease', leaseEpoch: '1', releaseIdentity: 'test-release' };
   }
+  async renewCandidate() {}
+  async assertCandidateLease() {}
   async loadCurrent() { return structuredClone(this.current); }
   async checkpointCandidate(_lease: unknown, value: Record<string, unknown>) { this.checkpoints.push(value); }
   async releaseCandidate(_lease: unknown, error?: string, _retryable?: boolean) { this.errors.push(error); }
   async claimRequest() { return this.requests.shift(); }
+  async renewRequest() {}
+  async assertRequestLease() {}
   async dispatchAgent(request: IntegrationV3RequestLease) { this.dispatched.push(request); }
-  async syncWorkspace() {}
+  async syncWorkspace(_request: IntegrationV3RequestLease, _guard: IntegrationV3RequestLeaseGuard) {}
   async cleanup(request: IntegrationV3RequestLease) {
     this.cleanupCalls.push(request);
     return { version: 1 as const, outcome: 'succeeded' as const, completedAt: new Date().toISOString(), actions: [
@@ -58,11 +62,44 @@ class MemoryHost implements IntegrationV3WorkerHost {
   async findRecoverableMergeOperation() { return this.mergeOperation; }
 }
 
-function request(kind: 'work'|'review'|'cleanup'): IntegrationV3RequestLease {
-  return { id: `${kind}-request`, leaseId: `${kind}-lease`, kind, candidateId: 'candidate-1', candidateRevision: 1, payload: { candidateId: 'candidate-1', revision: 1 } };
+function request(kind: 'work'|'review'|'cleanup'|'workspace_sync', candidateRevision = 1): IntegrationV3RequestLease {
+  return { id: `${kind}-request`, leaseId: `${kind}-lease`, kind, candidateId: 'candidate-1', candidateRevision, payload: { candidateId: 'candidate-1', revision: candidateRevision } };
 }
 
 describe('IntegrationV3Worker pure mock flow', () => {
+  it('renews a long-running request lease until the guarded workspace sync completes', async () => {
+    vi.useFakeTimers();
+    const host = new MemoryHost();
+    host.current.candidate = candidate('merged');
+    host.checkpoints.push({ status: 'requested' });
+    host.requests.push(request('workspace_sync'));
+    let entered!: () => void;
+    let release!: () => void;
+    const syncEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const syncBlocked = new Promise<void>((resolve) => { release = resolve; });
+    const renewRequest = vi.spyOn(host, 'renewRequest');
+    host.syncWorkspace = vi.fn(async (_request, guard) => {
+      entered();
+      await syncBlocked;
+      await guard.assertCurrent();
+    });
+    const worker = new IntegrationV3Worker({
+      host,
+      composer: { publish: vi.fn(), compose: vi.fn(), refreshAfterWork: vi.fn() },
+      intervalMs: 100,
+      leaseMs: 300,
+    });
+
+    const running = worker.runOnce();
+    await syncEntered;
+    await vi.advanceTimersByTimeAsync(110);
+    expect(renewRequest).toHaveBeenCalledWith(expect.objectContaining({ id: 'workspace_sync-request' }), 300);
+    release();
+    await running;
+    expect(host.completedRequests).toHaveLength(1);
+    vi.useRealTimers();
+  });
+
   it('advances compose/checks/review/merge/cleanup and never dispatches a Merge Agent', async () => {
     const host = new MemoryHost();
     const commands: string[] = [];
@@ -70,38 +107,53 @@ describe('IntegrationV3Worker pure mock flow', () => {
       execute: vi.fn(async (command: IntegrationEngineV3Command) => {
         commands.push(command.type);
         const next: Record<string, TaskBoardIntegrationCandidate['state']> = {
-          start_compose: 'composing', compose_clean: 'waiting_checks', request_review: 'in_review',
-          merge_approved: 'merging', reconcile_merge: 'merged', cleanup: host.current.candidate.state,
+          start_compose: 'composing', compose_persisted: 'composing', publish_complete: 'waiting_checks',
+          request_review: 'in_review', merge_approved: 'merging', reconcile_merge: 'merged',
+          cleanup: host.current.candidate.state,
         };
+        if (command.type === 'compose_persisted') {
+          host.current.revision = {
+            ...host.current.revision, ...command.revision, revision: 2, subjectKind: 'provider_subject',
+            candidateId: host.current.candidate.id, digestVersion: 1, subjectDigest: 'subject-2',
+            policySnapshotDigest: 'policy', policyRevision: 'p1', mergeMethod: 'squash', workRound: 0,
+            createdAt: host.current.candidate.createdAt,
+          };
+          host.current.candidate.currentRevision = 2;
+        }
         host.current.candidate = { ...host.current.candidate, state: next[command.type] ?? host.current.candidate.state, version: host.current.candidate.version + 1 };
-        if (command.type === 'request_review') host.requests.push(request('review'));
+        if (command.type === 'request_review') host.requests.push(request('review', host.current.candidate.currentRevision));
         if (command.type === 'merge_approved') {
           host.mergeOperation = { operationKey: 'merge-op', state: 'unknown' };
         }
-        if (command.type === 'cleanup') host.requests.push(request('cleanup'));
+        if (command.type === 'cleanup') host.requests.push(request('cleanup', host.current.candidate.currentRevision));
         return { candidate: structuredClone(host.current.candidate), status: command.type === 'merge_approved' ? 'provider_unknown' : command.type === 'cleanup' ? 'requested' : 'applied' };
       }),
     } as unknown as IntegrationEngineV3;
     const composer = {
+      publish: vi.fn(async () => undefined),
       compose: vi.fn(async () => ({ baseOid: 'base', headOid: 'composed', treeOid: 'composed-tree', sources: [] })),
       refreshAfterWork: vi.fn(async () => undefined),
     };
     const worker = new IntegrationV3Worker({ host, engine, composer, maxRequestsPerTick: 10 });
 
     await worker.runOnce(); // preparing -> composing
-    await worker.runOnce(); // compose -> checks
+    await worker.runOnce(); // compose -> durable provider_subject
+    await worker.runOnce(); // publish -> checks
     await worker.runOnce(); // checks -> in_review + review outbox
     await worker.runOnce(); // dispatch review; in_review waits
     expect(host.dispatched.map((item) => item.kind)).toEqual(['review']);
-    expect(host.dispatched[0]).toMatchObject({ candidateId: 'candidate-1', candidateRevision: 1 });
+    expect(host.dispatched[0]).toMatchObject({ candidateId: 'candidate-1', candidateRevision: 2 });
 
-    host.current.candidate = { ...host.current.candidate, state: 'approved', approvedRevision: 1, approvedReviewExecutionId: 'review-exec' };
+    host.current.candidate = { ...host.current.candidate, state: 'approved', approvedRevision: 2, approvedReviewExecutionId: 'review-exec' };
     await worker.runOnce(); // provider result unknown
     await worker.runOnce(); // reconcile -> merged
     await worker.runOnce(); // enqueue cleanup
     await worker.runOnce(); // consume cleanup
 
-    expect(commands).toEqual(['start_compose', 'compose_clean', 'request_review', 'request_review', 'merge_approved', 'reconcile_merge', 'cleanup']);
+    expect(commands).toEqual([
+      'start_compose', 'compose_persisted', 'publish_complete', 'request_review', 'request_review',
+      'merge_approved', 'reconcile_merge', 'cleanup',
+    ]);
     expect(host.cleanupCalls).toHaveLength(1);
     expect(host.completedRequests.at(-1)).toMatchObject({ request: { kind: 'cleanup' }, receipt: { outcome: 'succeeded' } });
     expect(host.dispatched.every((item) => item.kind === 'work' || item.kind === 'review')).toBe(true);
@@ -116,12 +168,13 @@ describe('IntegrationV3Worker pure mock flow', () => {
       compositionComplete: false, sources: [],
     };
     const execute = vi.fn(async () => ({
-      candidate: { ...host.current.candidate, state: 'needs_work' as const, currentRevision: 2 },
+      candidate: { ...host.current.candidate, state: 'composing' as const, currentRevision: 2 },
       status: 'applied' as const,
     }));
     const worker = new IntegrationV3Worker({
       host, engine: { execute } as unknown as IntegrationEngineV3,
       composer: {
+        publish: vi.fn(),
         compose: vi.fn(async () => { throw new IntegrationV3ComposeConflictError('source conflict', partial); }),
         refreshAfterWork: vi.fn(),
       },
@@ -130,7 +183,13 @@ describe('IntegrationV3Worker pure mock flow', () => {
     await worker.runOnce();
 
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'compose_conflict', evidence: 'source conflict', revision: partial,
+      type: 'compose_persisted', evidence: 'source conflict', revision: partial,
+      workerBinding: expect.objectContaining({
+        mutationFence: {
+          candidateId: 'candidate-1', leaseId: 'candidate-lease', leaseEpoch: '1', releaseIdentity: 'test-release',
+        },
+        assertCurrent: expect.any(Function),
+      }),
     }));
     expect(host.errors.at(-1)).toBeUndefined();
   });
@@ -151,7 +210,7 @@ describe('IntegrationV3Worker pure mock flow', () => {
     const worker = new IntegrationV3Worker({
       host,
       engine: { execute } as unknown as IntegrationEngineV3,
-      composer: { compose: vi.fn(), refreshAfterWork: vi.fn() },
+      composer: { publish: vi.fn(), compose: vi.fn(), refreshAfterWork: vi.fn() },
     });
 
     await worker.runOnce();
@@ -172,12 +231,132 @@ describe('IntegrationV3Worker pure mock flow', () => {
       host,
       engine: { execute: vi.fn() } as unknown as IntegrationEngineV3,
       composer: {
+        publish: vi.fn(),
         compose: async () => { throw new Error('temporary workspace outage'); },
         refreshAfterWork: async () => undefined,
       },
     });
     await worker.runOnce();
     expect(releases.at(-1)).toEqual({ error: 'temporary workspace outage', retryable: true });
+  });
+
+  it('renews a short lease so a second Worker cannot take over a long Compose', async () => {
+    vi.useFakeTimers();
+    const shared: {
+      lease?: { candidateId: string; leaseId: string; leaseEpoch: string; releaseIdentity: string };
+      expiresAt: number;
+      epoch: number;
+      renewals: number;
+    } = { expiresAt: 0, epoch: 0, renewals: 0 };
+    const current = { candidate: candidate('composing'), revision: { ...revision, subjectKind: 'source_seed' as const } };
+    const assertLease = async (lease: NonNullable<typeof shared.lease>) => {
+      if (!shared.lease || shared.lease.leaseId !== lease.leaseId
+        || shared.lease.leaseEpoch !== lease.leaseEpoch || shared.expiresAt <= Date.now()) {
+        throw new Error('stale lease');
+      }
+    };
+    const createHost = (releaseIdentity: string): IntegrationV3WorkerHost => ({
+      claimCandidate: async (leaseMs) => {
+        if (shared.lease && shared.expiresAt > Date.now()) return undefined;
+        shared.epoch += 1;
+        shared.lease = {
+          candidateId: 'candidate-1', leaseId: `${releaseIdentity}-${shared.epoch}`,
+          leaseEpoch: String(shared.epoch), releaseIdentity,
+        };
+        shared.expiresAt = Date.now() + leaseMs;
+        return { ...shared.lease };
+      },
+      renewCandidate: async (lease, leaseMs) => {
+        await assertLease(lease);
+        shared.renewals += 1;
+        shared.expiresAt = Date.now() + leaseMs;
+      },
+      assertCandidateLease: assertLease,
+      loadCurrent: async () => structuredClone(current),
+      checkpointCandidate: async (lease) => assertLease(lease),
+      releaseCandidate: async (lease) => { await assertLease(lease); shared.lease = undefined; },
+      claimRequest: async () => undefined,
+      renewRequest: async () => undefined,
+      assertRequestLease: async () => undefined,
+      dispatchAgent: async () => undefined,
+      syncWorkspace: async () => undefined,
+      cleanup: async () => undefined,
+      completeRequest: async () => undefined,
+      releaseRequest: async () => undefined,
+      findRecoverableMergeOperation: async () => undefined,
+    });
+    const composeA = vi.fn(async () => new Promise<any>((resolve) => setTimeout(() => resolve({
+      baseOid: 'base', headOid: 'head-2', treeOid: 'tree-2', compositionComplete: true, sources: [],
+    }), 650)));
+    const composeB = vi.fn();
+    const engine = { execute: vi.fn(async () => ({ candidate: current.candidate, status: 'applied' as const })) } as unknown as IntegrationEngineV3;
+    const workerA = new IntegrationV3Worker({
+      host: createHost('release-a'), engine, leaseMs: 300, intervalMs: 100,
+      composer: { compose: composeA, publish: vi.fn(), refreshAfterWork: vi.fn() },
+    });
+    const workerB = new IntegrationV3Worker({
+      host: createHost('release-b'), engine, leaseMs: 300, intervalMs: 100,
+      composer: { compose: composeB, publish: vi.fn(), refreshAfterWork: vi.fn() },
+    });
+
+    const active = workerA.runOnce();
+    await vi.advanceTimersByTimeAsync(350);
+    await workerB.runOnce();
+    expect(composeB).not.toHaveBeenCalled();
+    expect(shared.renewals).toBeGreaterThanOrEqual(3);
+    await vi.advanceTimersByTimeAsync(400);
+    await active;
+    expect(composeA).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
+  it('stops an old Worker before Git, provider, or Engine mutation after renewal loses the lease', async () => {
+    vi.useFakeTimers();
+    try {
+      const host = new MemoryHost();
+      host.current = {
+        candidate: candidate('composing'),
+        revision: { ...revision, subjectKind: 'source_seed' as const },
+      };
+      let leaseCurrent = true;
+      host.renewCandidate = async () => {
+        leaseCurrent = false;
+        throw new Error('candidate lease lost');
+      };
+      host.assertCandidateLease = async () => {
+        if (!leaseCurrent) throw new Error('candidate lease lost');
+      };
+      host.releaseCandidate = vi.fn(async () => undefined);
+      const gitMutation = vi.fn();
+      const providerMutation = vi.fn();
+      const engineMutation = vi.fn();
+      const worker = new IntegrationV3Worker({
+        host,
+        engine: { execute: engineMutation } as unknown as IntegrationEngineV3,
+        leaseMs: 300,
+        intervalMs: 100,
+        composer: {
+          publish: vi.fn(),
+          compose: vi.fn(async (_current, guard) => {
+            await new Promise((resolve) => setTimeout(resolve, 150));
+            await guard.assertCurrent();
+            gitMutation();
+            providerMutation();
+            return { baseOid: 'base', headOid: 'head-2', treeOid: 'tree-2', compositionComplete: true, sources: [] };
+          }),
+          refreshAfterWork: vi.fn(),
+        },
+      });
+
+      const active = worker.runOnce();
+      await vi.advanceTimersByTimeAsync(200);
+      await active;
+      expect(gitMutation).not.toHaveBeenCalled();
+      expect(providerMutation).not.toHaveBeenCalled();
+      expect(engineMutation).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reloads after PR binding advances without persisting a worker error', async () => {
@@ -189,6 +368,7 @@ describe('IntegrationV3Worker pure mock flow', () => {
       host,
       engine: { execute: vi.fn() } as unknown as IntegrationEngineV3,
       composer: {
+        publish: vi.fn(),
         compose: async () => { throw new IntegrationV3CandidateReloadRequiredError(); },
         refreshAfterWork: async () => undefined,
       },
@@ -196,7 +376,7 @@ describe('IntegrationV3Worker pure mock flow', () => {
 
     await worker.runOnce();
 
-    expect(releaseCandidate).toHaveBeenCalledWith({ candidateId: 'candidate-1', leaseId: 'candidate-lease' });
+    expect(releaseCandidate).toHaveBeenCalledWith({ candidateId: 'candidate-1', leaseId: 'candidate-lease', leaseEpoch: '1', releaseIdentity: 'test-release' });
   });
 
   it('converges an invalid ready work result to needs_human without failing the worker lease', async () => {
@@ -210,7 +390,7 @@ describe('IntegrationV3Worker pure mock flow', () => {
     const worker = new IntegrationV3Worker({
       host,
       engine: { execute } as unknown as IntegrationEngineV3,
-      composer: { compose: vi.fn(), refreshAfterWork: async () => { throw invalid; } },
+      composer: { publish: vi.fn(), compose: vi.fn(), refreshAfterWork: async () => { throw invalid; } },
     });
     await worker.runOnce();
     expect(execute.mock.calls.map(([command]) => command.type)).toEqual(['request_work', 'needs_human']);
@@ -224,7 +404,7 @@ describe('IntegrationV3Worker pure mock flow', () => {
     const worker = new IntegrationV3Worker({
       host,
       engine: { execute: vi.fn() } as unknown as IntegrationEngineV3,
-      composer: { compose: vi.fn(), refreshAfterWork: vi.fn() },
+      composer: { publish: vi.fn(), compose: vi.fn(), refreshAfterWork: vi.fn() },
     });
     expect(worker.health()).toEqual({ healthy: false, reason: 'worker_tick_pending' });
     await worker.runOnce();
@@ -240,7 +420,7 @@ describe('IntegrationV3Worker pure mock flow', () => {
     const worker = new IntegrationV3Worker({
       host,
       engine: { execute: vi.fn() } as unknown as IntegrationEngineV3,
-      composer: { compose: vi.fn(), refreshAfterWork: vi.fn() },
+      composer: { publish: vi.fn(), compose: vi.fn(), refreshAfterWork: vi.fn() },
       maxActiveTickMs: 30_000,
     });
     await worker.runOnce();
@@ -266,7 +446,7 @@ describe('IntegrationV3Worker pure mock flow', () => {
       })) } as unknown as IntegrationEngineV3;
       const worker = new IntegrationV3Worker({
         host, engine,
-        composer: { compose: vi.fn(), refreshAfterWork: vi.fn() },
+        composer: { publish: vi.fn(), compose: vi.fn(), refreshAfterWork: vi.fn() },
       });
 
       await worker.runOnce();
@@ -287,7 +467,7 @@ describe('IntegrationV3Worker pure mock flow', () => {
       const engine = { execute: vi.fn(async (_command: IntegrationEngineV3Command) => ({ candidate: { ...host.current.candidate, state: 'merged' }, status: 'applied' })) } as unknown as IntegrationEngineV3;
       const worker = new IntegrationV3Worker({
         host, engine,
-        composer: { compose: vi.fn(), refreshAfterWork: vi.fn() },
+        composer: { publish: vi.fn(), compose: vi.fn(), refreshAfterWork: vi.fn() },
       });
       await worker.runOnce();
       expect(engine.execute).toHaveBeenCalledWith(expect.objectContaining({ type: 'reconcile_merge', operationKey: 'succeeded-merge-op' }));

@@ -55,12 +55,13 @@ jobs:
           check('control_plane_section', isinstance(control, dict), 'present' if isinstance(control, dict) else 'missing')
           if not isinstance(control, dict):
               control = {}
-          check('enabled_boolean', isinstance(control.get('enabled'), bool), 'configured' if isinstance(control.get('enabled'), bool) else 'missing')
+          check('enabled_boolean', control.get('enabled') is True, 'enabled' if control.get('enabled') is True else 'missing_or_disabled')
           root = control.get('controlledMirrorRoot')
           root_ok = isinstance(root, str) and os.path.isabs(root) and os.path.isdir(root)
           if root_ok:
-              mode = stat.S_IMODE(os.stat(root).st_mode)
-              root_ok = mode & 0o022 == 0
+              resolved_root = os.path.realpath(root)
+              mode = stat.S_IMODE(os.stat(resolved_root).st_mode)
+              root_ok = resolved_root != os.path.sep and mode & 0o022 == 0
           check('controlled_mirror_root', root_ok, 'safe_directory' if root_ok else 'missing_or_unsafe')
           token_mode = control.get('githubTokenMode')
           check('github_token_mode', token_mode in ('github_app', 'personal_access_token'), token_mode if token_mode in ('github_app', 'personal_access_token') else 'missing_or_invalid')

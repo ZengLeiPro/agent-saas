@@ -94,6 +94,9 @@ async function installIntegrationCandidateSchemaV1(
       ADD COLUMN IF NOT EXISTS worker_status TEXT NOT NULL DEFAULT 'idle'
         CHECK (worker_status IN ('idle','processing','failed'));
     ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_lease_id TEXT;
+    ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_lease_epoch BIGINT NOT NULL DEFAULT 0
+      CHECK (worker_lease_epoch >= 0);
+    ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_release_identity TEXT;
     ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_lease_expires_at TIMESTAMPTZ;
     ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_checkpoint JSONB NOT NULL DEFAULT '{}'::jsonb;
     ALTER TABLE ${candidatesTable} ADD COLUMN IF NOT EXISTS worker_error TEXT;
@@ -437,6 +440,20 @@ const INTEGRATION_CANDIDATE_SCHEMA_MIGRATIONS = [
     run: async (options: IntegrationCandidateSchemaOptions, client: Pick<PoolClient, 'query'>) => {
       const { revisionsTable } = integrationCandidateTableNames(options.integrationSourcesTable);
       await installCompositionCompletenessGuards(revisionsTable, client);
+    },
+  },
+  {
+    version: 8,
+    name: 'expand_candidate_worker_lease_fence',
+    run: async (options: IntegrationCandidateSchemaOptions, client: Pick<PoolClient, 'query'>) => {
+      const { candidatesTable } = integrationCandidateTableNames(options.integrationSourcesTable);
+      await client.query(`
+        ALTER TABLE ${candidatesTable}
+          ADD COLUMN IF NOT EXISTS worker_lease_epoch BIGINT NOT NULL DEFAULT 0
+            CHECK (worker_lease_epoch >= 0);
+        ALTER TABLE ${candidatesTable}
+          ADD COLUMN IF NOT EXISTS worker_release_identity TEXT
+      `);
     },
   },
 ] as const;

@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
+import type { IntegrationCandidateMutationFence } from './integrationCandidateStore.js';
+
 /**
  * Provider operation ledger core. This module deliberately knows nothing about SQL;
  * an integration layer must implement the CAS storage host and its transaction/fences.
@@ -63,12 +65,22 @@ export interface IntegrationProviderOperationStorageHost {
       receipt?: Record<string, unknown>;
       error?: string;
     };
+    /** When present, the operation state transition and Candidate Worker lease check are one CAS. */
+    mutationFence?: IntegrationCandidateMutationFence;
   }): Promise<IntegrationProviderOperationRecord | undefined>;
 }
 
 export interface IntegrationProviderOperationFenceHost {
   /** Re-read durable workflow/lane/candidate/execution fences immediately before a provider write or reconcile commit. */
   assertCurrent(operation: IntegrationProviderOperationRecord): Promise<void>;
+}
+
+export interface IntegrationProviderAttemptOptions {
+  isDefinitiveFailure?: (error: unknown) => boolean;
+  /** Ephemeral Worker lease guard; deliberately excluded from the durable semantic intent. */
+  assertAttemptCurrent?: () => Promise<void>;
+  /** Atomically fences every provider-operation ledger CAS to the current Candidate Worker lease. */
+  mutationFence?: IntegrationCandidateMutationFence;
 }
 
 export type IntegrationProviderReconcileResult =
@@ -115,41 +127,59 @@ export class IntegrationProviderOperationService {
   async execute(
     operationKey: string,
     executor: (operation: IntegrationProviderOperationRecord) => Promise<Record<string, unknown>>,
-    options: { isDefinitiveFailure?: (error: unknown) => boolean } = {},
+    options: IntegrationProviderAttemptOptions = {},
   ): Promise<IntegrationProviderOperationRecord> {
     const current = await this.require(operationKey);
     if (current.state === 'succeeded') return current;
     if (current.state === 'unknown' || current.state === 'executing') throw new ProviderOperationReconcileRequiredError(operationKey, current.state);
     if (current.state !== 'prepared') throw new ProviderOperationTerminalError(operationKey, current.state);
+    await options.assertAttemptCurrent?.();
     await this.fences.assertCurrent(current);
+    await options.assertAttemptCurrent?.();
     const executing = await this.storage.compareAndSet({
       id: current.id,
       expectedState: 'prepared',
       nextState: 'executing',
       patch: { attemptCount: current.attemptCount + 1, updatedAt: this.now().toISOString() },
+      ...(options.mutationFence ? { mutationFence: options.mutationFence } : {}),
     });
     if (!executing) return this.resolveExecuteRace(operationKey);
     try {
+      await options.assertAttemptCurrent?.();
       await this.fences.assertCurrent(executing);
     } catch (error) {
+      await options.assertAttemptCurrent?.();
       return this.transitionOrReload(executing, 'executing', 'failed', {
         error: errorMessage(error),
         receipt: { outcome: 'not_applied', evidence: 'pre_execution_fence_rejected' },
-      });
+      }, options.mutationFence);
     }
+
+    let receipt: Record<string, unknown>;
     try {
-      const receipt = await executor(executing);
-      await this.fences.assertCurrent(executing);
-      return await this.transitionOrReload(executing, 'executing', 'succeeded', { receipt });
+      await options.assertAttemptCurrent?.();
+      receipt = await executor(executing);
     } catch (error) {
+      await options.assertAttemptCurrent?.();
       const definitive = options.isDefinitiveFailure?.(error) === true;
       return this.transitionOrReload(executing, 'executing', definitive ? 'failed' : 'unknown', {
         error: errorMessage(error),
         ...(definitive ? { receipt: { outcome: 'not_applied', evidence: 'executor_definitive_failure' } } : {}),
-      });
+      }, options.mutationFence);
     }
-  }
 
+    // If the attempt lost its lease while the provider call was in flight, leave the
+    // durable operation executing. The new owner must reconcile the remote fact.
+    await options.assertAttemptCurrent?.();
+    try {
+      await this.fences.assertCurrent(executing);
+    } catch (error) {
+      await options.assertAttemptCurrent?.();
+      return this.transitionOrReload(executing, 'executing', 'unknown', { error: errorMessage(error) }, options.mutationFence);
+    }
+    await options.assertAttemptCurrent?.();
+    return this.transitionOrReload(executing, 'executing', 'succeeded', { receipt }, options.mutationFence);
+  }
   /**
    * Reconcile is read-only at the provider. not_found/indeterminate remain unknown;
    * not_applied is a terminal, evidence-backed no-effect result. Any later retry must
@@ -158,17 +188,23 @@ export class IntegrationProviderOperationService {
   async reconcile(
     operationKey: string,
     reconciler: (operation: IntegrationProviderOperationRecord) => Promise<IntegrationProviderReconcileResult>,
+    options: Pick<IntegrationProviderAttemptOptions, 'assertAttemptCurrent' | 'mutationFence'> = {},
   ): Promise<IntegrationProviderOperationRecord> {
     const current = await this.require(operationKey);
     if (current.state === 'succeeded' || current.state === 'needs_human') return current;
     if (current.state !== 'unknown' && current.state !== 'executing') throw new ProviderOperationTerminalError(operationKey, current.state);
+    await options.assertAttemptCurrent?.();
     await this.fences.assertCurrent(current);
     let result: IntegrationProviderReconcileResult;
-    try { result = await reconciler(current); }
-    catch (error) { result = { status: 'indeterminate', detail: errorMessage(error) }; }
+    try {
+      await options.assertAttemptCurrent?.();
+      result = await reconciler(current);
+    } catch (error) { result = { status: 'indeterminate', detail: errorMessage(error) }; }
+    await options.assertAttemptCurrent?.();
     await this.fences.assertCurrent(current);
+    await options.assertAttemptCurrent?.();
     if (result.status === 'succeeded') {
-      return this.transitionOrReload(current, current.state, 'succeeded', { receipt: result.receipt });
+      return this.transitionOrReload(current, current.state, 'succeeded', { receipt: result.receipt }, options.mutationFence);
     }
     if (result.status === 'not_applied') {
       if (current.state !== 'unknown') {
@@ -177,17 +213,17 @@ export class IntegrationProviderOperationService {
       return this.transitionOrReload(current, 'unknown', 'failed', {
         error: result.detail,
         receipt: { ...result.evidence, outcome: 'not_applied' },
-      });
+      }, options.mutationFence);
     }
     if (result.status === 'mismatch') {
       return this.transitionOrReload(current, current.state, 'needs_human', {
         error: result.detail,
         ...(result.evidence ? { receipt: result.evidence } : {}),
-      });
+      }, options.mutationFence);
     }
     return this.transitionOrReload(current, current.state, 'unknown', {
       error: result.detail ?? 'Provider operation outcome is still unknown',
-    });
+    }, options.mutationFence);
   }
 
   private async require(operationKey: string): Promise<IntegrationProviderOperationRecord> {
@@ -207,6 +243,7 @@ export class IntegrationProviderOperationService {
     expectedState: IntegrationProviderOperationState,
     nextState: IntegrationProviderOperationState,
     values: { receipt?: Record<string, unknown>; error?: string },
+    mutationFence?: IntegrationCandidateMutationFence,
   ): Promise<IntegrationProviderOperationRecord> {
     const updated = await this.storage.compareAndSet({
       id: operation.id,
@@ -217,6 +254,7 @@ export class IntegrationProviderOperationService {
         updatedAt: this.now().toISOString(),
         ...values,
       },
+      ...(mutationFence ? { mutationFence } : {}),
     });
     return updated ?? this.require(operation.operationKey);
   }

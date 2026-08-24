@@ -77,6 +77,7 @@ export function safeServerGitEnvironment(overrides: Readonly<Record<string, stri
     GIT_TERMINAL_PROMPT: '0',
     GIT_PROTOCOL_FROM_USER: '0',
     GIT_ALLOW_PROTOCOL: 'https',
+    GIT_OPTIONAL_LOCKS: '0',
   };
 }
 

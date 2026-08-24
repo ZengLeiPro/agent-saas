@@ -237,8 +237,18 @@ describe('integration candidate v3 mapper and invariants', () => {
     } as never);
     await store.transition(candidate.id, {
       expectedVersion: 4, expectedRevision: 1, to: 'needs_human', lastError: 'invalid work receipt',
-    });
+    }, { leaseId: 'lease-1', leaseEpoch: '7', releaseIdentity: 'release-1' });
     const sql = query.mock.calls.map(([text]) => String(text));
+    const candidateMutation = query.mock.calls.find(([text]) => String(text).includes('UPDATE ky_taskboard_integration_candidates'))!;
+    expect(String(candidateMutation[0])).toContain('worker_lease_id=$10');
+    expect(String(candidateMutation[0])).toContain('worker_lease_epoch=$11::bigint');
+    expect(String(candidateMutation[0])).toContain('worker_release_identity=$12');
+    expect(String(candidateMutation[0])).toContain("worker_status='processing'");
+    expect(String(candidateMutation[0])).toContain('worker_lease_expires_at>clock_timestamp()');
+    expect(candidateMutation[1]).toEqual([
+      candidate.id, 4, 1, 'needs_human', false, null, null, 'invalid work receipt', 'in_review',
+      'lease-1', '7', 'release-1',
+    ]);
     expect(sql).toContainEqual(expect.stringContaining("SET status='blocked'"));
     const episode = sql.find((text) => text.includes('INSERT INTO blocks'))!;
     expect(episode).toContain('WHERE NOT EXISTS');
@@ -256,7 +266,7 @@ describe('integration candidate v3 mapper and invariants', () => {
       source_set_digest: candidate.sourceSetDigest, approved_revision: 1, approved_review_execution_id: 'review-1',
       created_at: candidate.createdAt, updated_at: candidate.updatedAt,
     };
-    const query = vi.fn(async (sql: string) => {
+    const query = vi.fn(async (sql: string, _values?: unknown[]) => {
       if (sql.includes('SELECT * FROM') && sql.includes('FOR UPDATE')) return { rows: [candidateRow] };
       if (sql.includes('UPDATE ky_taskboard_integration_candidates')) {
         return { rows: [{ ...candidateRow, state: 'composing', version: 5, approved_revision: null, approved_review_execution_id: null }] };
@@ -275,6 +285,8 @@ describe('integration candidate v3 mapper and invariants', () => {
 
     expect(result.state).toBe('composing');
     expect(result.approvedRevision).toBeUndefined();
+    const candidateMutation = query.mock.calls.find(([text]) => String(text).includes('UPDATE ky_taskboard_integration_candidates'))!;
+    expect(candidateMutation[1]?.slice(-3)).toEqual([null, null, null]);
     expect(query.mock.calls.map(([text]) => String(text))).toContainEqual(expect.stringContaining("SET status='in_progress'"));
   });
 
@@ -301,6 +313,29 @@ describe('integration candidate v3 mapper and invariants', () => {
 });
 
 describe('integration candidate v3 schema', () => {
+  it('upgrades a v1-v7 installation with the idempotent v8 Worker lease fence columns', async () => {
+    const sql: string[] = [];
+    const client = { query: vi.fn(async (text: string, values?: unknown[]) => {
+      sql.push(text);
+      if (text.includes('SELECT version FROM') && Number(values?.[0]) <= 7) return { rows: [{ version: values?.[0] }] };
+      return { rows: [] };
+    }) };
+    await runIntegrationCandidateSchema({
+      tasksTable: 'ky_taskboard_tasks',
+      executionsTable: 'ky_taskboard_executions',
+      integrationSourcesTable: 'ky_taskboard_integration_sources',
+    }, client as never);
+
+    const ddl = sql.join('\n');
+    expect(ddl).toContain('ADD COLUMN IF NOT EXISTS worker_lease_epoch BIGINT NOT NULL DEFAULT 0');
+    expect(ddl).toContain('ADD COLUMN IF NOT EXISTS worker_release_identity TEXT');
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO ky_taskboard_integration_candidate_schema_migrations_v3'),
+      [8, 'expand_candidate_worker_lease_fence'],
+    );
+    expect(ddl).not.toContain('CREATE TABLE IF NOT EXISTS ky_taskboard_integration_candidates (');
+  });
+
   it('is expand-only and can be installed repeatedly with stable table names', async () => {
     const sql: string[] = [];
     const client = { query: vi.fn(async (text: string) => {

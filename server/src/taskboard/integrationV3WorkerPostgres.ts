@@ -11,6 +11,7 @@ import type {
   IntegrationV3CandidateLease,
   IntegrationV3CleanupReceipt,
   IntegrationV3RequestLease,
+  IntegrationV3RequestLeaseGuard,
   IntegrationV3WorkerCurrent,
   IntegrationV3WorkerHost,
 } from './integrationV3Worker.js';
@@ -164,10 +165,22 @@ export interface IntegrationV3WorkerPostgresOptions {
     candidateRevision: number;
     assertCurrent(): Promise<void>;
   }): Promise<{ executionId: string }>;
-  syncWorkspace(request: IntegrationV3RequestLease): Promise<void>;
-  cleanup(request: IntegrationV3RequestLease): Promise<IntegrationV3CleanupReceipt | void>;
+  syncWorkspace(request: IntegrationV3RequestLease, guard: IntegrationV3RequestLeaseGuard): Promise<void>;
+  cleanup(request: IntegrationV3RequestLease, guard: IntegrationV3RequestLeaseGuard): Promise<IntegrationV3CleanupReceipt | void>;
   releaseIdentity: string;
   logger?: IntegrationV3WorkerHost['logger'];
+}
+
+export class IntegrationV3CandidateLeaseLostError extends Error {
+  readonly retryable = false;
+  readonly code = 'INTEGRATION_V3_CANDIDATE_LEASE_LOST';
+  constructor(message: string) { super(message); this.name = 'IntegrationV3CandidateLeaseLostError'; }
+}
+
+export class IntegrationV3RequestLeaseLostError extends Error {
+  readonly retryable = false;
+  readonly code = 'INTEGRATION_V3_REQUEST_LEASE_LOST';
+  constructor(message: string) { super(message); this.name = 'IntegrationV3RequestLeaseLostError'; }
 }
 
 export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost {
@@ -182,9 +195,9 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
           WHERE COALESCE(NULLIF(current_setting('agent_saas.integration_v3_enabled',true),'')::boolean,true)
             AND COALESCE((c.policy_snapshot->>'workflowVersion')::int,2)=3
             AND COALESCE((c.policy_snapshot->'featureFlags'->>'engineV3')::boolean,false)
-            AND (c.worker_status<>'failed' OR c.worker_checkpoint->>'releaseIdentity' IS DISTINCT FROM $3)
+            AND c.worker_status<>'failed'
             AND c.worker_available_at<=now()
-            AND (c.worker_status IN ('idle','failed') OR c.worker_lease_expires_at<now())
+            AND (c.worker_status='idle' OR c.worker_lease_expires_at<now())
             AND (c.state IN ('preparing','composing','waiting_checks','needs_work','working','in_review','approved','merging')
               OR (c.state='needs_human'
                 AND c.worker_checkpoint->>'releaseIdentity' IS DISTINCT FROM $3
@@ -199,13 +212,40 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
        )
        UPDATE ${this.options.candidatesTable} c
           SET worker_status='processing',worker_lease_id=$1,
+              worker_lease_epoch=c.worker_lease_epoch+1,worker_release_identity=$3,
               worker_lease_expires_at=now()+($2::bigint*interval '1 millisecond'),worker_error=NULL,
-              worker_attempts=CASE WHEN c.worker_checkpoint->>'releaseIdentity' IS DISTINCT FROM $3 THEN 0 ELSE c.worker_attempts END,
               worker_checkpoint=c.worker_checkpoint||jsonb_build_object('releaseIdentity',$3::text)
-         FROM claim WHERE c.id=claim.id RETURNING c.id`,
+         FROM claim WHERE c.id=claim.id RETURNING c.id,c.worker_lease_epoch`,
       [leaseId, leaseMs, this.options.releaseIdentity],
     );
-    return result.rows[0] ? { candidateId: String(result.rows[0].id), leaseId } : undefined;
+    return result.rows[0] ? {
+      candidateId: String(result.rows[0].id), leaseId,
+      leaseEpoch: String(result.rows[0].worker_lease_epoch),
+      releaseIdentity: this.options.releaseIdentity,
+    } : undefined;
+  }
+
+  async renewCandidate(lease: IntegrationV3CandidateLease, leaseMs: number): Promise<void> {
+    const result = await this.options.pool.query(
+      `UPDATE ${this.options.candidatesTable}
+          SET worker_lease_expires_at=now()+($5::bigint*interval '1 millisecond')
+        WHERE id=$1 AND worker_lease_id=$2 AND worker_lease_epoch=$3::bigint
+          AND worker_release_identity=$4 AND worker_status='processing'
+          AND worker_lease_expires_at>now() RETURNING id`,
+      [lease.candidateId, lease.leaseId, lease.leaseEpoch, lease.releaseIdentity, leaseMs],
+    );
+    if (!result.rows[0]) throw new IntegrationV3CandidateLeaseLostError('Candidate lease renewal fence is stale');
+  }
+
+  async assertCandidateLease(lease: IntegrationV3CandidateLease): Promise<void> {
+    const result = await this.options.pool.query(
+      `SELECT id FROM ${this.options.candidatesTable}
+        WHERE id=$1 AND worker_lease_id=$2 AND worker_lease_epoch=$3::bigint
+          AND worker_release_identity=$4 AND worker_status='processing'
+          AND worker_lease_expires_at>now()`,
+      [lease.candidateId, lease.leaseId, lease.leaseEpoch, lease.releaseIdentity],
+    );
+    if (!result.rows[0]) throw new IntegrationV3CandidateLeaseLostError('Candidate lease fence is stale');
   }
 
   async loadCurrent(candidateId: string): Promise<IntegrationV3WorkerCurrent> {
@@ -238,30 +278,78 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
   }
 
   async checkpointCandidate(lease: IntegrationV3CandidateLease, checkpoint: Record<string, unknown>): Promise<void> {
-    await this.options.pool.query(
+    const result = await this.options.pool.query(
       `UPDATE ${this.options.candidatesTable}
-          SET worker_checkpoint=$3::jsonb||jsonb_build_object('releaseIdentity',$4::text),updated_at=updated_at
-        WHERE id=$1 AND worker_lease_id=$2 AND worker_status='processing'`,
-      [lease.candidateId, lease.leaseId, JSON.stringify(checkpoint), this.options.releaseIdentity],
+          SET worker_checkpoint=$5::jsonb||jsonb_build_object('releaseIdentity',$4::text),updated_at=updated_at
+        WHERE id=$1 AND worker_lease_id=$2 AND worker_lease_epoch=$3::bigint
+          AND worker_release_identity=$4 AND worker_status='processing'
+          AND worker_lease_expires_at>now() RETURNING id`,
+      [lease.candidateId, lease.leaseId, lease.leaseEpoch, lease.releaseIdentity, JSON.stringify(checkpoint)],
     );
+    if (!result.rows[0]) throw new IntegrationV3CandidateLeaseLostError('Candidate checkpoint fence is stale');
   }
 
-  async releaseCandidate(lease: IntegrationV3CandidateLease, error?: string, retryable = false): Promise<void> {
-    await this.options.pool.query(
-      `UPDATE ${this.options.candidatesTable}
-          SET worker_status=CASE
-                WHEN $3::text IS NULL THEN 'idle'
-                WHEN $4::boolean AND worker_attempts<9 THEN 'idle'
-                ELSE 'failed' END,
-              worker_attempts=CASE WHEN $3::text IS NULL THEN 0 ELSE worker_attempts+1 END,
-              worker_available_at=CASE
-                WHEN $3::text IS NULL THEN now()
-                WHEN $4::boolean THEN now()+(LEAST(worker_attempts+1,10)*interval '5 seconds')
-                ELSE worker_available_at END,
-              worker_lease_id=NULL,worker_lease_expires_at=NULL,worker_error=$3
-        WHERE id=$1 AND worker_lease_id=$2`,
-      [lease.candidateId, lease.leaseId, error ?? null, retryable],
+  async releaseCandidate(
+    lease: IntegrationV3CandidateLease,
+    error?: string,
+    retryable = false,
+    evidence?: Record<string, unknown>,
+  ): Promise<void> {
+    const result = await this.options.pool.query(
+      `WITH released AS (
+         UPDATE ${this.options.candidatesTable} c
+            SET worker_status=CASE
+                  WHEN $5::text IS NULL THEN 'idle'
+                  WHEN $6::boolean AND c.worker_attempts<9 THEN 'idle'
+                  ELSE 'failed' END,
+                worker_attempts=CASE WHEN $5::text IS NULL THEN 0 ELSE c.worker_attempts+1 END,
+                worker_available_at=CASE
+                  WHEN $5::text IS NULL THEN now()
+                  WHEN $6::boolean AND c.worker_attempts<9
+                    THEN now()+(LEAST(c.worker_attempts+1,10)*interval '5 seconds')
+                  ELSE c.worker_available_at END,
+                state=CASE
+                  WHEN $5::text IS NOT NULL AND (NOT $6::boolean OR c.worker_attempts>=9)
+                    AND c.state NOT IN ('merged','canceled') THEN 'blocked'
+                  ELSE c.state END,
+                last_error=CASE
+                  WHEN $5::text IS NOT NULL AND (NOT $6::boolean OR c.worker_attempts>=9)
+                    AND c.state NOT IN ('merged','canceled') THEN $5
+                  ELSE c.last_error END,
+                worker_checkpoint=CASE WHEN $7::jsonb IS NULL THEN c.worker_checkpoint ELSE
+                  c.worker_checkpoint||jsonb_build_object('failureEvidence',$7::jsonb) END,
+                worker_lease_id=NULL,worker_lease_expires_at=NULL,worker_error=$5,
+                version=CASE
+                  WHEN $5::text IS NOT NULL AND (NOT $6::boolean OR c.worker_attempts>=9)
+                    AND c.state NOT IN ('merged','canceled') THEN c.version+1 ELSE c.version END,
+                updated_at=CASE
+                  WHEN $5::text IS NOT NULL AND (NOT $6::boolean OR c.worker_attempts>=9)
+                    AND c.state NOT IN ('merged','canceled') THEN now() ELSE c.updated_at END
+          WHERE c.id=$1 AND c.worker_lease_id=$2 AND c.worker_lease_epoch=$3::bigint
+            AND c.worker_release_identity=$4 AND c.worker_status='processing'
+            AND c.worker_lease_expires_at>now()
+          RETURNING c.integration_task_id,c.state,
+            ($5::text IS NOT NULL AND (NOT $6::boolean OR c.worker_attempts>=10)
+              AND c.state='blocked') AS blocked
+       ), task_blocked AS (
+         UPDATE ${this.options.tasksTable} t
+            SET status='blocked',completed_at=NULL,version=version+1,updated_at=now()
+           FROM released r WHERE r.blocked AND t.id=r.integration_task_id
+             AND t.status NOT IN ('done','canceled') RETURNING t.id
+       ), episode AS (
+         INSERT INTO ${this.options.blockEpisodesTable}(id,task_id,purpose,reason_code,reason)
+         SELECT $8,t.id,'work','integration_candidate_worker_failed',$5
+           FROM task_blocked t
+          WHERE NOT EXISTS (
+            SELECT 1 FROM ${this.options.blockEpisodesTable} b
+             WHERE b.task_id=t.id AND b.closed_at IS NULL
+          ) RETURNING id
+       )
+       SELECT integration_task_id FROM released`,
+      [lease.candidateId, lease.leaseId, lease.leaseEpoch, lease.releaseIdentity,
+        error ?? null, retryable, evidence ? JSON.stringify(evidence) : null, randomUUID()],
     );
+    if (!result.rows[0]) throw new IntegrationV3CandidateLeaseLostError('Candidate release fence is stale');
   }
 
   async claimRequest(leaseMs: number): Promise<IntegrationV3RequestLease | undefined> {
@@ -302,7 +390,30 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
     } : undefined;
   }
 
-  async dispatchAgent(request: IntegrationV3RequestLease): Promise<void> {
+  async renewRequest(request: IntegrationV3RequestLease, leaseMs: number): Promise<void> {
+    const result = await this.options.pool.query(
+      `UPDATE ${this.options.requestsOutboxTable}
+          SET lease_expires_at=GREATEST(lease_expires_at,clock_timestamp()+($3::bigint*interval '1 millisecond')),
+              updated_at=now()
+        WHERE id=$1 AND lease_id=$2 AND status='processing'
+          AND lease_expires_at>clock_timestamp() RETURNING id`,
+      [request.id, request.leaseId, leaseMs],
+    );
+    if (!result.rows[0]) throw new IntegrationV3RequestLeaseLostError('Request lease renewal fence is stale');
+  }
+
+  async assertRequestLease(request: IntegrationV3RequestLease): Promise<void> {
+    const result = await this.options.pool.query(
+      `SELECT id FROM ${this.options.requestsOutboxTable}
+        WHERE id=$1 AND lease_id=$2 AND status='processing'
+          AND lease_expires_at>clock_timestamp()`,
+      [request.id, request.leaseId],
+    );
+    if (!result.rows[0]) throw new IntegrationV3RequestLeaseLostError('Request lease fence is stale');
+  }
+
+  async dispatchAgent(request: IntegrationV3RequestLease, requestGuard?: IntegrationV3RequestLeaseGuard): Promise<void> {
+    const guard = requestGuard ?? { request, assertCurrent: () => this.assertRequestLease(request) };
     if (typeof request.payload.executionId === 'string' && request.payload.executionId) return;
     const loadDispatchFence = () => this.options.pool.query(
       `SELECT t.id,t.version,b.tenant_id,b.owner_user_id
@@ -311,6 +422,7 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
          JOIN ${this.options.requestsOutboxTable} o ON o.id=$3
         WHERE c.id=$1 AND c.current_revision=$2
           AND o.lease_id=$4 AND o.status='processing'
+          AND o.lease_expires_at>clock_timestamp()
           AND o.candidate_id=c.id AND o.candidate_revision=c.current_revision
           AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch`,
       [request.candidateId, request.candidateRevision, request.id, request.leaseId],
@@ -320,17 +432,20 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
     if (!row) throw new Error('Candidate execution dispatch fence is stale');
     const renewed = await this.options.pool.query(
       `UPDATE ${this.options.requestsOutboxTable}
-          SET lease_expires_at=now()+interval '5 minutes',updated_at=now()
-        WHERE id=$1 AND lease_id=$2 AND status='processing' RETURNING id`,
+          SET lease_expires_at=GREATEST(lease_expires_at,clock_timestamp()+interval '5 minutes'),updated_at=now()
+        WHERE id=$1 AND lease_id=$2 AND status='processing'
+          AND lease_expires_at>clock_timestamp() RETURNING id`,
       [request.id, request.leaseId],
     );
     if (!renewed.rows[0]) throw new Error('Candidate execution request lease changed before workspace preparation');
     const executionId = `integration-v3-request-${request.id}`;
+    await guard.assertCurrent();
     await this.options.dispatchAgent({
       identity: { tenantId: String(row.tenant_id), ownerUserId: String(row.owner_user_id), username: 'board-owner' },
       taskId: String(row.id), expectedVersion: Number(row.version), purpose: request.kind as 'work'|'review', executionId,
       candidateId: request.candidateId, candidateRevision: request.candidateRevision,
       assertCurrent: async () => {
+        await guard.assertCurrent();
         const verified = (await loadDispatchFence()).rows[0];
         if (!verified || Number(verified.version) !== Number(row.version)) {
           throw new Error('Candidate execution dispatch fence changed during workspace preparation');
@@ -340,55 +455,75 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
     const bound = await this.options.pool.query(
       `UPDATE ${this.options.requestsOutboxTable}
           SET payload=payload||jsonb_build_object('executionId',$3::text),updated_at=now()
-        WHERE id=$1 AND lease_id=$2 AND status='processing' RETURNING id`,
+        WHERE id=$1 AND lease_id=$2 AND status='processing'
+          AND lease_expires_at>clock_timestamp() RETURNING id`,
       [request.id, request.leaseId, executionId],
     );
     if (!bound.rows[0]) throw new Error('Candidate execution request lease changed before binding');
   }
-  async syncWorkspace(request: IntegrationV3RequestLease): Promise<void> {
-    await this.options.syncWorkspace(request);
+  async syncWorkspace(request: IntegrationV3RequestLease, requestGuard?: IntegrationV3RequestLeaseGuard): Promise<void> {
+    const guard = requestGuard ?? { request, assertCurrent: () => this.assertRequestLease(request) };
+    await guard.assertCurrent();
+    await this.options.syncWorkspace(request, guard);
+    await guard.assertCurrent();
     if (request.payload.reason !== 'resume_reconcile') return;
     const resumeState = request.payload.resumeState;
     if (resumeState !== 'needs_work' && resumeState !== 'in_review') {
       throw new Error('Workspace resume state is invalid');
     }
     const result = await this.options.pool.query(
-      `WITH resumed AS (
-         UPDATE ${this.options.candidatesTable}
-            SET state=$3,last_error=NULL,version=version+1,updated_at=now()
-          WHERE id=$1 AND current_revision=$2
-            AND workflow_epoch=$4::bigint AND lane_epoch=$5::bigint
-            AND state IN ('blocked','needs_human')
-          RETURNING integration_task_id
+      `WITH request_lease AS MATERIALIZED (
+         SELECT o.id,o.candidate_id,o.candidate_revision,o.workflow_epoch,o.lane_epoch
+           FROM ${this.options.requestsOutboxTable} o
+          WHERE o.id=$4 AND o.lease_id=$5 AND o.status='processing'
+            AND o.lease_expires_at>clock_timestamp()
+          FOR UPDATE
+       ), resumed AS (
+         UPDATE ${this.options.candidatesTable} c
+            SET state=$3,last_error=NULL,
+                worker_status='idle',worker_attempts=0,worker_available_at=now(),
+                worker_lease_id=NULL,worker_lease_expires_at=NULL,
+                worker_release_identity=NULL,worker_error=NULL,
+                version=c.version+1,updated_at=now()
+           FROM request_lease o
+          WHERE c.id=$1 AND c.current_revision=$2
+            AND o.candidate_id=c.id AND o.candidate_revision=c.current_revision
+            AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch
+            AND c.state IN ('blocked','needs_human')
+          RETURNING c.integration_task_id
        ), task_resumed AS (
          UPDATE ${this.options.tasksTable} t
             SET status=CASE WHEN $3='in_review' THEN 'in_review' ELSE 'in_progress' END,
-                version=version+1,updated_at=now()
+                version=t.version+1,updated_at=now()
            FROM resumed WHERE t.id=resumed.integration_task_id RETURNING t.id
        ), closed AS (
          UPDATE ${this.options.blockEpisodesTable} b SET closed_at=COALESCE(b.closed_at,now())
            FROM task_resumed WHERE b.task_id=task_resumed.id AND b.closed_at IS NULL RETURNING b.id
        )
        SELECT id FROM task_resumed`,
-      [request.candidateId, request.candidateRevision, resumeState,
-        String(request.payload.workflowEpoch ?? ''), String(request.payload.laneEpoch ?? '')],
+      [request.candidateId, request.candidateRevision, resumeState, request.id, request.leaseId],
     );
-    if (!result.rows[0]) throw new Error('Workspace resume fence is stale');
+    if (!result.rows[0]) throw new IntegrationV3RequestLeaseLostError('Workspace resume request or Candidate fence is stale');
   }
-  cleanup(request: IntegrationV3RequestLease) { return this.options.cleanup(request); }
+  cleanup(request: IntegrationV3RequestLease, requestGuard?: IntegrationV3RequestLeaseGuard) {
+    const guard = requestGuard ?? { request, assertCurrent: () => this.assertRequestLease(request) };
+    return this.options.cleanup(request, guard);
+  }
 
   async completeRequest(request: IntegrationV3RequestLease, receipt?: IntegrationV3CleanupReceipt): Promise<void> {
     const failed = receipt?.outcome === 'failed';
     const failure = failed
       ? receipt.actions.filter((action) => action.status === 'failed').map((action) => `${action.action}: ${action.error}`).join('; ')
       : null;
-    await this.options.pool.query(
+    const result = await this.options.pool.query(
       `UPDATE ${this.options.requestsOutboxTable}
           SET status=CASE WHEN $3::boolean AND attempts<5 THEN 'pending' WHEN $3::boolean THEN 'failed' ELSE 'completed' END,
               available_at=CASE WHEN $3::boolean AND attempts<5 THEN now()+(LEAST(attempts,5)*interval '5 seconds') ELSE available_at END,
               receipt=$4::jsonb,lease_id=NULL,lease_expires_at=NULL,last_error=$5,updated_at=now()
-        WHERE id=$1 AND lease_id=$2 AND status='processing'`,
+        WHERE id=$1 AND lease_id=$2 AND status='processing'
+          AND lease_expires_at>clock_timestamp() RETURNING id`,
       [request.id, request.leaseId, failed, receipt ? JSON.stringify(receipt) : null, failure]);
+    if (!result.rows[0]) throw new IntegrationV3RequestLeaseLostError('Request completion lease fence is stale');
   }
 
   async releaseRequest(request: IntegrationV3RequestLease, error: string, retryable: boolean): Promise<void> {
@@ -397,7 +532,8 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
           SET status=CASE WHEN $4::boolean AND attempts<5 THEN 'pending' ELSE 'failed' END,
               available_at=CASE WHEN $4::boolean THEN now()+(LEAST(attempts,5)*interval '5 seconds') ELSE available_at END,
               lease_id=NULL,lease_expires_at=NULL,last_error=$3,updated_at=now()
-        WHERE id=$1 AND lease_id=$2`, [request.id, request.leaseId, error, retryable]);
+        WHERE id=$1 AND lease_id=$2 AND status='processing'
+          AND lease_expires_at>clock_timestamp()`, [request.id, request.leaseId, error, retryable]);
   }
 
   async resolveEngineContext(candidateId: string): Promise<{ repository: TaskBoardRepositoryConfig; credentialOwnerId: string }> {
@@ -550,17 +686,37 @@ export class PostgresIntegrationV3ComposeHost implements IntegrationV3ComposeHos
     };
   }
 
-  async bindPullRequest(candidateId: string, expectedVersion: number, providerPullRequestId: string): Promise<void> {
+  async bindPullRequest(
+    candidateId: string,
+    expectedVersion: number,
+    providerPullRequestId: string,
+    lease: IntegrationV3CandidateLease,
+  ): Promise<void> {
     const result = await this.options.pool.query(
       `UPDATE ${this.options.candidatesTable} SET provider_pull_request_id=$3,version=version+1,updated_at=now()
-        WHERE id=$1 AND version=$2 AND provider_pull_request_id IS NULL RETURNING id`,
-      [candidateId, expectedVersion, providerPullRequestId]);
-    if (!result.rows[0]) throw new Error('Candidate changed before pull request binding');
+        WHERE id=$1 AND version=$2 AND provider_pull_request_id IS NULL
+          AND worker_lease_id=$4 AND worker_lease_epoch=$5::bigint
+          AND worker_release_identity=$6 AND worker_status='processing'
+          AND worker_lease_expires_at>now() RETURNING id`,
+      [candidateId, expectedVersion, providerPullRequestId,
+        lease.leaseId, lease.leaseEpoch, lease.releaseIdentity]);
+    if (!result.rows[0]) throw new IntegrationV3CandidateLeaseLostError('Candidate or lease changed before pull request binding');
+  }
+
+  async resolveRepositoryLockScope(repositoryPath: string): Promise<string> {
+    const repository = realpathSync(repositoryPath);
+    const result = await this.options.runGit({
+      cwd: repository,
+      args: ['rev-parse', '--git-common-dir'],
+      env: { GIT_OPTIONAL_LOCKS: '0' },
+    });
+    if (result.exitCode !== 0 || !result.stdout.trim()) throw new Error('Repository common-dir is unavailable');
+    return realpathSync(resolve(repository, result.stdout.trim()));
   }
 
   async withRepositoryBranchLock<T>(lock: RepositoryWorkspaceSyncLock, operation: () => Promise<T>): Promise<T> {
     const client = await this.options.pool.connect();
-    const key = [lock.repositoryPath, lock.branch];
+    const key = ['integration-v3-repository', lock.repositoryPath];
     try {
       await client.query('SELECT pg_advisory_lock(hashtext($1),hashtext($2))', key);
       return await operation();

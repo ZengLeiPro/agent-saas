@@ -9,6 +9,7 @@ import type { JwtPayload } from '../auth/types.js';
 import { createTaskboardRouter } from '../routes/taskboard.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import { taskCreationRequestDigest } from '../taskboard/taskCreationLifecycle.js';
+import type { TaskboardIdentity } from '../taskboard/types.js';
 
 const { Pool } = pg;
 const connectionString = process.env.TEST_DATABASE_URL?.trim();
@@ -44,6 +45,18 @@ describePg('任务标题生成的并发幂等', () => {
     app.use((req, _res, next) => { req.user = USER; next(); });
     app.use('/api/taskboard', createTaskboardRouter({
       service: store,
+      executionService: {
+        listExecutions: (identity: TaskboardIdentity, taskId: string) => store.listExecutions(identity, taskId),
+        startDirectExecution: async (identity: TaskboardIdentity, taskId: string) => {
+          await pool.query(
+            `INSERT INTO ${store.executionsTable}
+               (id,task_id,run_id,session_id,status,purpose,trigger,protocol_version,requested_by)
+             VALUES ($1,$2,$3,$4,'queued','work','initial',2,$5)`,
+            [randomUUID(), taskId, randomUUID(), randomUUID(), identity.ownerUserId],
+          );
+          return { task: await store.getTask(identity, taskId), execution: {} };
+        },
+      } as never,
       generateTaskTitle: async (description) => {
         if (description === 'pending 访问隔离') {
           markDelayedTitleStarted?.();
@@ -128,7 +141,7 @@ describePg('任务标题生成的并发幂等', () => {
     const identity = { tenantId: USER.tenantId!, ownerUserId: USER.sub, username: USER.username };
     const response = await fetch(`${baseUrl}/api/taskboard/boards/${boardId}/tasks`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ description: 'pending 访问隔离', clientRequestId: 'visibility-request' }),
+      body: JSON.stringify({ description: 'pending 访问隔离', clientRequestId: 'visibility-request', status: 'in_progress', dispatch: true }),
     });
     expect(response.status).toBe(201);
     const task = await response.json();

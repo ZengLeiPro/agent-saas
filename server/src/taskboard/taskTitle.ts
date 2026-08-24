@@ -65,6 +65,9 @@ export async function generateAndApplyTaskTitle(
   const title = await generateTaskTitleSafely(generateTitle, description, identity);
   if (!title) return task;
   try {
+    if (service.applyGeneratedTaskTitle) {
+      return await service.applyGeneratedTaskTitle(identity, task.id, title);
+    }
     return await service.updateTask(
       identity, task.id, { title, expectedVersion: task.version }, creationClaimToken,
     );

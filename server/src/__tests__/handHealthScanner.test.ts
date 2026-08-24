@@ -323,6 +323,104 @@ describe('HandHealthScanner (B4)', () => {
     expect(typeof (handStore.hands.get('h-retry')?.metadata.provision as any).nextAttemptAt).toBe('string');
   });
 
+  it('keeps exhausted reprovision fail-closed through cooldown and rearms it on success', async () => {
+    const now = Date.parse('2026-08-24T00:00:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    try {
+      const handStore = new InMemoryHandStore();
+      handStore.hands.set('h-rearmed', makeHand({
+        handId: 'h-rearmed',
+        status: 'unhealthy',
+        metadata: {
+          recipe: { workspaceId: 'workspace-1', sessionId: 'session-1' },
+          provisionFailure: 'old failure',
+          provision: { retryPolicy: { maxAttempts: 1, backoffMs: [1000] } },
+        },
+      }));
+      let provisionCalls = 0;
+      const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+        if (String(url).endsWith('/health')) return new Response('down', { status: 503 });
+        provisionCalls += 1;
+        const body = provisionCalls === 1
+          ? { status: 'error', error: 'still down' }
+          : { status: 'ok', metadata: { recipeHash: 'rearmed' } };
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as unknown as typeof fetch;
+      const scanner = new HandHealthScanner({
+        unhealthyConfirmDelayMs: 1,
+        exhaustedRetryCooldownMs: 60_000,
+        handStore,
+        fetchImpl,
+      });
+
+      expect(await scanner.scanOnce()).toEqual({ scanned: 1, flipped: 0 });
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect(provisionCalls).toBe(1);
+      expect(handStore.hands.get('h-rearmed')?.status).toBe('unhealthy');
+      expect(handStore.hands.get('h-rearmed')?.metadata.provisionFailure).toBe('still down');
+      expect(handStore.hands.get('h-rearmed')?.metadata.provision).toMatchObject({
+        attempts: 1,
+        nextAttemptAt: new Date(now + 60_000).toISOString(),
+      });
+
+      expect(await scanner.scanOnce()).toEqual({ scanned: 1, flipped: 0 });
+      expect(fetchImpl).toHaveBeenCalledTimes(3);
+      expect(provisionCalls).toBe(1);
+      expect(handStore.hands.get('h-rearmed')?.status).toBe('unhealthy');
+      expect(handStore.hands.get('h-rearmed')?.metadata.provisionFailure).toBe('still down');
+
+      vi.advanceTimersByTime(60_000);
+      expect(await scanner.scanOnce()).toEqual({ scanned: 1, flipped: 1 });
+      expect(fetchImpl).toHaveBeenCalledTimes(5);
+      expect(provisionCalls).toBe(2);
+      expect(handStore.hands.get('h-rearmed')?.status).toBe('ready');
+      expect(handStore.hands.get('h-rearmed')?.metadata.provisionFailure).toBeNull();
+      expect(handStore.hands.get('h-rearmed')?.metadata.provision).toMatchObject({
+        attempts: 0,
+        lastStatus: 'ok',
+        recipeHash: 'rearmed',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('limits session-specific reprovision attempts per scan and resets the budget next scan', async () => {
+    const handStore = new InMemoryHandStore();
+    for (let i = 0; i < 3; i += 1) {
+      handStore.hands.set(`h-budget-${i}`, makeHand({
+        handId: `h-budget-${i}`,
+        status: 'unhealthy',
+        metadata: {
+          recipe: { workspaceId: 'workspace-1', sessionId: `session-${i}` },
+          provisionFailure: 'old failure',
+        },
+      }));
+    }
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+    const scanner = new HandHealthScanner({
+      unhealthyConfirmDelayMs: 1,
+      maxReprovisionAttemptsPerScan: 2,
+      handStore,
+      fetchImpl,
+    });
+
+    expect(await scanner.scanOnce()).toEqual({ scanned: 3, flipped: 2 });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect([...handStore.hands.values()].filter((hand) => hand.status === 'unhealthy')).toHaveLength(1);
+
+    expect(await scanner.scanOnce()).toEqual({ scanned: 3, flipped: 1 });
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+    expect([...handStore.hands.values()].filter((hand) => hand.status === 'unhealthy')).toHaveLength(0);
+  });
+
   it('does not let global /health hide an unresolved session provision failure', async () => {
     const handStore = new InMemoryHandStore();
     handStore.hands.set('h-failed', makeHand({

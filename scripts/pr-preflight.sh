@@ -6,6 +6,7 @@ export MEMORY_CONSOLIDATION_TEST_PG_URL="${MEMORY_CONSOLIDATION_TEST_PG_URL:-$TE
 
 pnpm check:ratchets
 pnpm -F server typecheck
+pnpm -F server context:relation-eval:baseline
 pnpm -F server build
 pnpm test:coverage
 

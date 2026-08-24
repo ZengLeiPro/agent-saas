@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type {
   ContextCollection,
@@ -135,6 +135,18 @@ class FakeStore implements TaskboardContextStore {
     this.partitions.set(key, partition);
     return { partition, created, revised, unchanged, outbox: [] };
   }
+  async failPartition(input: Parameters<TaskboardContextStore['failPartition']>[0]) {
+    const key = partitionKey(input.tenantId, input.collectionId);
+    const current = this.partitions.get(key)!;
+    if (current.leaseOwner !== input.leaseOwner || current.leaseFence !== input.leaseFence) throw new Error('lease lost');
+    const failed = {
+      ...current, status: 'retry_wait', retryCount: current.retryCount + 1,
+      nextRetryAt: input.retryAt, lastErrorCode: input.errorCode,
+      leaseOwner: undefined, leaseExpiresAt: undefined,
+    } as ContextSyncPartition;
+    this.partitions.set(key, failed);
+    return failed;
+  }
 }
 
 describe('TaskboardContextSyncWorker', () => {
@@ -181,6 +193,22 @@ describe('TaskboardContextSyncWorker', () => {
     expect(record(store, 'taskboard-tasks', 'missing-deleted')).toMatchObject({ deleted: true });
   });
 
+  it('does not advance a fixed change window across an empty page and persists retry state', async () => {
+    const reader = seededReader();
+    reader.changes.push(change('1', 'task', 'task-a', 'task.updated'));
+    vi.spyOn(reader, 'listChanges').mockResolvedValue({ items: [] });
+    const store = new FakeStore();
+
+    await expect(createWorker(reader, store, 2).runTenant('tenant-a'))
+      .rejects.toThrow('empty page before the fixed upper bound');
+    expect([...store.partitions.values()]).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        status: 'retry_wait', lastErrorCode: 'TASKBOARD_SYNC_FAILED',
+        nextRetryAt: '2026-08-23T06:01:00.000Z',
+      }),
+    ]));
+  });
+
   it('runOnce isolates every source, collection, watermark, owner and ACL by tenant', async () => {
     const reader = seededReader();
     reader.boards.push(board({ id: 'board-b', tenantId: 'tenant-b', ownerUserId: 'owner-b', visibility: 'organization' }));
@@ -201,6 +229,30 @@ describe('TaskboardContextSyncWorker', () => {
     });
     expect(store.records.has('tenant-a/taskboard-tasks/task-b')).toBe(false);
     expect(store.records.has('tenant-b/taskboard-tasks/task-a')).toBe(false);
+  });
+
+  it('continues with later tenants and reports a tenant-scoped failure', async () => {
+    const reader = seededReader();
+    reader.boards.push(board({ id: 'board-b', tenantId: 'tenant-b' }));
+    const onTenantError = vi.fn();
+    const worker = new TaskboardContextSyncWorker({
+      reader,
+      store: new FakeStore(),
+      workerId: 'test-worker',
+      onTenantError,
+    });
+    vi.spyOn(worker, 'runTenant')
+      .mockRejectedValueOnce(new Error('tenant-a unavailable'))
+      .mockResolvedValueOnce({
+        tenantId: 'tenant-b', skipped: false, inventoryBoards: 1, inventoryTasks: 0,
+        changes: 0, snapshots: 0, events: 0, watermark: '0',
+      });
+
+    await expect(worker.runOnce()).resolves.toEqual([
+      expect.objectContaining({ tenantId: 'tenant-b' }),
+    ]);
+    expect(onTenantError).toHaveBeenCalledWith('tenant-a', expect.objectContaining({ message: 'tenant-a unavailable' }));
+    expect(worker.runTenant).toHaveBeenCalledWith('tenant-b');
   });
 });
 

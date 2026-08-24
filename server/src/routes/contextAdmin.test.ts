@@ -80,7 +80,7 @@ describe('Context Plane admin HTTP contract', () => {
           coveredThrough: '2026-08-22T15:58:00.000Z',
         },
         watermarkLagSeconds: 120,
-        ingestOutcomes: { truncated: 1, refused: 0, unreadable: 0 },
+        ingestOutcomes: { truncated: 1, refused: 0, unreadable: 0, retrying: 0, nextRetryAt: null },
         historicalLearningScope: {
           enabled: true, summary: '2 个指定会话 · 30 天', from: '2026-01-01T00:00:00.000Z',
           through: '2026-08-22T15:58:00.000Z',
@@ -101,12 +101,31 @@ describe('Context Plane admin HTTP contract', () => {
       listPartitions: vi.fn(async () => [{
         sourceId: 'source-a', collectionId: 'collection-a', status: 'retry_wait',
         truncated: true, refused: false, lastErrorCode: 'CONTEXT_SYNC_UNREADABLE',
-        updatedAt: '2026-08-22T15:59:00.000Z',
+        nextRetryAt: '2026-08-22T16:05:00.000Z', updatedAt: '2026-08-22T15:59:00.000Z',
       }]),
     });
     const base = await start(orgAdmin, store);
     const snapshot = contextCenterSnapshotSchema.parse(await (await fetch(`${base}/snapshot`)).json());
-    expect(snapshot.sources[0]?.ingestOutcomes.unreadable).toBe(3);
+    expect(snapshot.sources[0]?.ingestOutcomes).toMatchObject({
+      unreadable: 3, retrying: 1, nextRetryAt: '2026-08-22T16:05:00.000Z',
+    });
+  });
+
+  it('does not report a stale completed partition as healthy', async () => {
+    const base = await start(orgAdmin, createStore({
+      listPartitions: vi.fn(async () => [{
+        sourceId: 'source-a', collectionId: 'collection-a', status: 'complete',
+        watermark: { inventoryObservedAt: '2026-08-22T12:00:00.000Z' },
+        truncated: false, refused: false, updatedAt: '2026-08-22T12:00:00.000Z',
+      }, {
+        sourceId: 'source-a', collectionId: 'collection-a', status: 'complete',
+        watermark: { inventoryObservedAt: '2026-08-22T15:59:00.000Z' },
+        truncated: false, refused: false, updatedAt: '2026-08-22T15:59:00.000Z',
+      }]),
+    }));
+
+    const snapshot = contextCenterSnapshotSchema.parse(await (await fetch(`${base}/snapshot`)).json());
+    expect(snapshot.sources[0]).toMatchObject({ status: 'attention', watermarkLagSeconds: 14_400 });
   });
 
   it('uses 未配置/unknown when collection source or sync metadata is absent', async () => {

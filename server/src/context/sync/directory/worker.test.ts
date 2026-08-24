@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type {
   ContextCollection,
@@ -18,6 +18,7 @@ class FakeStore implements DirectoryContextStore {
   collection?: ContextCollection;
   currentIds: string[] = [];
   ingested: ContextIngestRecordInput[] = [];
+  failed?: Parameters<DirectoryContextStore['failPartition']>[0];
 
   async getSource() { return this.source ?? null; }
   async createSource(input: { tenantId: string; sourceId: string; kind: string; displayName: string; config?: object }) {
@@ -39,6 +40,10 @@ class FakeStore implements DirectoryContextStore {
   async ingestPage(input: IngestContextPageInput) {
     this.ingested.push(...input.records);
     return { partition: partition(input.tenantId, input.sourceId, input.collectionId, input.partitionKey), created: input.records.length, revised: 0, unchanged: 0, outbox: [] };
+  }
+  async failPartition(input: Parameters<DirectoryContextStore['failPartition']>[0]) {
+    this.failed = input;
+    return { ...partition(input.tenantId, input.sourceId, input.collectionId, input.partitionKey), status: 'retry_wait' as const };
   }
 }
 
@@ -71,10 +76,33 @@ describe('DirectoryContextSyncWorker', () => {
   });
 
   it('fails closed when a reader crosses tenants', async () => {
-    const worker = new DirectoryContextSyncWorker(new FakeStore(), new FakeReader([
+    const store = new FakeStore();
+    const worker = new DirectoryContextSyncWorker(store, new FakeReader([
       { tenantId: 'tenant-b', userId: 'wrong', username: 'wrong', status: 'active', updatedAt: now },
-    ]), { leaseOwner: 'worker' });
+    ]), { leaseOwner: 'worker', now: () => new Date(now) });
     await expect(worker.runTenant('tenant-a')).rejects.toThrow('DIRECTORY_TENANT_SCOPE_MISMATCH');
+    expect(store.ingested).toEqual([]);
+    expect(store.failed).toMatchObject({
+      tenantId: 'tenant-a', errorCode: 'DIRECTORY_SYNC_FAILED', retryAt: '2026-08-23T01:03:03.000Z',
+    });
+  });
+
+  it('continues with later tenants and reports a tenant-scoped failure', async () => {
+    const onTenantError = vi.fn();
+    const reader: DirectoryContextReader = {
+      listTenantIds: vi.fn().mockResolvedValue(['tenant-a', 'tenant-b']),
+      listPeople: vi.fn().mockResolvedValue([]),
+    };
+    const worker = new DirectoryContextSyncWorker(new FakeStore(), reader, { onTenantError });
+    vi.spyOn(worker, 'runTenant')
+      .mockRejectedValueOnce(new Error('tenant-a unavailable'))
+      .mockResolvedValueOnce({ tenantId: 'tenant-b', people: 1, revoked: 0, skipped: false });
+
+    await expect(worker.runOnce()).resolves.toEqual([
+      { tenantId: 'tenant-b', people: 1, revoked: 0, skipped: false },
+    ]);
+    expect(onTenantError).toHaveBeenCalledWith('tenant-a', expect.objectContaining({ message: 'tenant-a unavailable' }));
+    expect(worker.runTenant).toHaveBeenCalledWith('tenant-b');
   });
 });
 

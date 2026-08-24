@@ -74,6 +74,13 @@ import {
 } from "./chatRuntimeHelpers";
 
 export type { ChatAppState, ChatAppStateOptions } from "./useChatAppStateTypes";
+
+interface InteractionResponseWaiter {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 import type {
   ChatAppState, ChatAppStateOptions, OutboxEntry, ProvisionalSubmission,
   SessionRuntime, SessionRuntimePatch,
@@ -223,6 +230,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const provisionalSubmissionsRef = useRef<ProvisionalSubmission[]>([]);
   /** 每个 inflight 消息的 ACK 超时定时器（收到 ack 清除） */
   const ackTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const interactionResponseWaitersRef = useRef<Map<string, InteractionResponseWaiter>>(new Map());
   const messageSubmissionGateRef = useRef(false);
   const ACK_TIMEOUT_MS = 15_000;
   /** cancel_queued 请求的等待器：sourceRunId → resolve(ok)（2026-08-04 终态设计） */
@@ -1534,8 +1542,16 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         }
       }
 
-      // 忽略控制消息
+      // 表单回答必须以服务端回执为准：此前这里直接忽略回执，而提交端会先乐观
+      // 标记“已回答/排队”。当服务端拒绝或恢复失败时，UI 就会永久伪装成排队。
       if (data.type === 'respond_ok' || data.type === 'respond_error') {
+        const waiter = interactionResponseWaitersRef.current.get(data.interactionId);
+        if (waiter) {
+          clearTimeout(waiter.timer);
+          interactionResponseWaitersRef.current.delete(data.interactionId);
+          if (data.type === 'respond_ok') waiter.resolve();
+          else waiter.reject(new Error(data.error || '提交回答失败'));
+        }
         return;
       }
 
@@ -2937,11 +2953,36 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     interactionId: string,
     response: Record<string, unknown>,
   ) => {
-    await wsClient.ensureConnectedSend({
-      action: 'respond',
-      interactionId,
-      sessionId: sessionIdRef.current,
-      ...response,
+    if (interactionResponseWaitersRef.current.has(interactionId)) {
+      throw new Error('回答正在提交，请勿重复操作');
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        interactionResponseWaitersRef.current.delete(interactionId);
+        reject(new Error('提交回答超时，请重试'));
+      }, 15_000);
+      interactionResponseWaitersRef.current.set(interactionId, { resolve, reject, timer });
+
+      void wsClient.ensureConnectedSend({
+        action: 'respond',
+        interactionId,
+        sessionId: sessionIdRef.current,
+        ...response,
+      }).then((sent) => {
+        if (sent) return;
+        const waiter = interactionResponseWaitersRef.current.get(interactionId);
+        if (!waiter) return;
+        clearTimeout(waiter.timer);
+        interactionResponseWaitersRef.current.delete(interactionId);
+        reject(new Error('连接未建立，回答未提交'));
+      }).catch((error: unknown) => {
+        const waiter = interactionResponseWaitersRef.current.get(interactionId);
+        if (!waiter) return;
+        clearTimeout(waiter.timer);
+        interactionResponseWaitersRef.current.delete(interactionId);
+        reject(error instanceof Error ? error : new Error('提交回答失败'));
+      });
     });
   }, []);
 
@@ -2969,7 +3010,17 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     interactionId: string,
     answers: AskUserAnswers,
   ) => {
-    await respondToInteraction(interactionId, { answers });
+    try {
+      await respondToInteraction(interactionId, { answers });
+    } catch (error) {
+      pushNotification({
+        key: `interaction_response_failed:${interactionId}`,
+        text: error instanceof Error ? error.message : '提交回答失败，请重试',
+        priority: 'high',
+        timeoutMs: 8_000,
+      });
+      return;
+    }
 
     const idx = msg.messagesRef.current.findIndex(
       (m) => m.type === "ask_user" && m.interactionId === interactionId
@@ -2983,7 +3034,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
     upsertRuntimeStatusMessage(msg, 'queued');
     markSessionRead(sessionIdRef.current);
-  }, [respondToInteraction, msg.messagesRef, msg.updateMessageAt, markSessionRead]);
+  }, [respondToInteraction, msg.messagesRef, msg.updateMessageAt, markSessionRead, pushNotification]);
 
   // ---- 会话切换时恢复模型选择 ----
   // 仅在 sessionId 实际切换时才重置/恢复，避免 sessions 列表刷新（WS 重连、
@@ -3028,6 +3079,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     return () => {
       for (const t of ackTimersRef.current.values()) clearTimeout(t);
       ackTimersRef.current.clear();
+      for (const waiter of interactionResponseWaitersRef.current.values()) clearTimeout(waiter.timer);
+      interactionResponseWaitersRef.current.clear();
       wsClient.disconnect();
     };
   }, []);

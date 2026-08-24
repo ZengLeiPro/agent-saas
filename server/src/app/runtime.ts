@@ -175,7 +175,8 @@ import { createDefaultExecutionTransportRegistry } from '../agent/toolRuntime.js
 import { buildTenantScopedEnv } from '../agent/tenantEnv.js';
 import { ClientDaemonTransport } from '../runtime/clientDaemonTransport.js';
 import { ClientDaemonGateway } from '../runtime/clientDaemonGateway.js';
-import { HandHealthScanner } from '../runtime/handHealthScanner.js';
+import { createHandHealthScanner } from '../runtime/createHandHealthScanner.js';
+import type { HandHealthScanner } from '../runtime/handHealthScanner.js';
 import { HandLeaseJanitor } from '../runtime/handLeaseJanitor.js';
 import { PgSystemMetricsStore } from '../runtime/systemMetricsStore.js';
 import { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
@@ -2933,11 +2934,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
 
   // B4: Server-remote hands 健康 scanner（仅 PG runtime）。默认开启；显式 false 关闭。
   if (enableSingletonWorkers && pgHandStore && pgEventStore && config.runtimeHandHealthScanner?.enabled !== false) {
-    handHealthScanner = new HandHealthScanner({
+    handHealthScanner = createHandHealthScanner({
+      config: config.runtimeHandHealthScanner,
       handStore: pgHandStore,
       eventStore: pgEventStore,
-      intervalMs: config.runtimeHandHealthScanner?.intervalMs,
-      healthTimeoutMs: config.runtimeHandHealthScanner?.healthTimeoutMs,
       resolveHandAuthToken: (hand) => tenantRemoteHandResolver.resolveForHand(hand),
       defaultServerRemoteAuthToken: resolvedServerRemote?.authToken,
       logger: serverLogger.child('HandHealth'),

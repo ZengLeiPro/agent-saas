@@ -18,11 +18,13 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
     pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 4 });
     store = new PgHandStore({ pool, tablePrefix: prefix });
     await store.init();
+    await pool.query(`CREATE TABLE ${prefix}_runs (run_id TEXT PRIMARY KEY, session_id TEXT, status TEXT, updated_at TIMESTAMPTZ)`);
   }, 30_000);
 
   afterAll(async () => {
     if (!pool) return;
     try {
+      await pool.query(`DROP TABLE IF EXISTS ${prefix}_runs`);
       await pool.query(`DROP TABLE IF EXISTS ${prefix}_hands`);
     } finally {
       await pool.end();
@@ -34,10 +36,11 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
     leaseExpiresAt?: string | null;
     updatedAt?: string;
     type?: string;
+    sessionId?: string;
   } = {}): Promise<void> {
     await pool.query(
-      `INSERT INTO ${prefix}_hands (hand_id, workspace_id, type, status, endpoint, lease_expires_at, created_at, updated_at)
-       VALUES ($1, 'ws_t__u', $2, $3, 'http://127.0.0.1:3400', $4, $5, $5)
+      `INSERT INTO ${prefix}_hands (hand_id, session_id, workspace_id, type, status, endpoint, lease_expires_at, created_at, updated_at)
+       VALUES ($1, $6, 'ws_t__u', $2, $3, 'http://127.0.0.1:3400', $4, $5, $5)
        ON CONFLICT (hand_id) DO UPDATE SET status = EXCLUDED.status, lease_expires_at = EXCLUDED.lease_expires_at, updated_at = EXCLUDED.updated_at`,
       [
         handId,
@@ -45,6 +48,7 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
         opts.status ?? 'ready',
         opts.leaseExpiresAt === undefined ? null : opts.leaseExpiresAt,
         opts.updatedAt ?? new Date().toISOString(),
+        opts.sessionId ?? null,
       ],
     );
   }
@@ -143,5 +147,21 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
     const revived = await store.get('revive-me');
     expect(revived?.status).toBe('ready');
     expect(Date.parse(revived!.leaseExpiresAt!)).toBeGreaterThan(Date.now());
+  });
+
+  it('unhealthy 恢复队列优先活跃会话并排除 waiting_user', async () => {
+    await seed('history-new', { status: 'unhealthy', sessionId: 'session-history' });
+    await seed('active-old', { status: 'unhealthy', sessionId: 'session-active', updatedAt: '2026-01-01T00:00:00.000Z' });
+    await seed('waiting-new', { status: 'unhealthy', sessionId: 'session-waiting' });
+    await pool.query(
+      `INSERT INTO ${prefix}_runs (run_id, session_id, status, updated_at) VALUES
+       ('run-active', 'session-active', 'running', now()),
+       ('run-waiting', 'session-waiting', 'waiting_user', now())`,
+    );
+
+    const ids = (await store.listByType('server-remote', { status: 'unhealthy' })).map((hand) => hand.handId);
+    expect(ids[0]).toBe('active-old');
+    expect(ids).toContain('history-new');
+    expect(ids).not.toContain('waiting-new');
   });
 });

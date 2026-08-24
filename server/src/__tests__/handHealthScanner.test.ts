@@ -421,6 +421,33 @@ describe('HandHealthScanner (B4)', () => {
     expect([...handStore.hands.values()].filter((hand) => hand.status === 'unhealthy')).toHaveLength(0);
   });
 
+  it('pauses historical recovery behind Pending sandboxes and gives /provision its own timeout', async () => {
+    const handStore = new InMemoryHandStore();
+    handStore.hands.set('h-capacity', makeHand({
+      handId: 'h-capacity',
+      status: 'unhealthy',
+      metadata: { recipe: { workspaceId: 'workspace-1', sessionId: 'session-1' }, provisionFailure: 'old failure' },
+    }));
+    let pending = 1;
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const href = String(url);
+      if (href.endsWith('/health')) return new Response(JSON.stringify({ status: 'ok' }));
+      if (href.endsWith('/sandboxes')) return new Response(JSON.stringify({ sandboxes: pending ? [{ phase: 'Pending' }] : [] }));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return new Response(JSON.stringify({ status: 'ok' }));
+    }) as unknown as typeof fetch;
+    const scanner = new HandHealthScanner({
+      handStore, fetchImpl, healthTimeoutMs: 2, provisionTimeoutMs: 100, maxPendingSandboxesForReprovision: 0,
+    });
+
+    expect(await scanner.scanOnce()).toEqual({ scanned: 1, flipped: 0 });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    pending = 0;
+    expect(await scanner.scanOnce()).toEqual({ scanned: 1, flipped: 1 });
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+    expect(handStore.hands.get('h-capacity')?.status).toBe('ready');
+  });
+
   it('does not let global /health hide an unresolved session provision failure', async () => {
     const handStore = new InMemoryHandStore();
     handStore.hands.set('h-failed', makeHand({

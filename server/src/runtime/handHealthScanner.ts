@@ -34,6 +34,8 @@ export interface HandHealthScannerOptions {
   intervalMs?: number;
   /** 单次 /health 请求超时。默认 5s。 */
   healthTimeoutMs?: number;
+  /** 单次 session-specific /provision 请求超时。默认 4min，与健康探针分离。 */
+  provisionTimeoutMs?: number;
   fetchImpl?: typeof fetch;
   /**
    * Resolve a hand record's bearer token (tenant hand) or fall back to the
@@ -50,6 +52,11 @@ export interface HandHealthScannerOptions {
   /** 单次 scan 最多发起多少个 session-specific /provision，避免恢复风暴。默认 10。 */
   maxReprovisionAttemptsPerScan?: number;
   /**
+   * 历史恢复允许 ACS 已存在的 Pending Sandbox 上限。未配置时不探测容量；
+   * 生产设为 0，确保任何新会话正在启动时都不会继续注入历史恢复请求。
+   */
+  maxPendingSandboxesForReprovision?: number;
+  /**
    * ready→unhealthy 翻转前的二次确认间隔（毫秒），默认 5s。
    * 2026-07-15 零停机部署批次：orchestrator drain 重启有 5-15s 连接拒绝空窗，
    * 单次探测失败即翻 unhealthy 会触发 fail-closed，把空窗放大成最长 30s+
@@ -63,20 +70,25 @@ export class HandHealthScanner {
   private timer: ReturnType<typeof setInterval> | undefined;
   private readonly intervalMs: number;
   private readonly healthTimeoutMs: number;
+  private readonly provisionTimeoutMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly unhealthyConfirmDelayMs: number;
   private readonly exhaustedRetryCooldownMs: number;
   private readonly maxReprovisionAttemptsPerScan: number;
+  private readonly maxPendingSandboxesForReprovision: number | undefined;
   private inFlight = false;
   private reprovisionAttemptsThisScan = 0;
+  private readonly recoveryCapacityBlocksThisScan = new Set<string>();
 
   constructor(private readonly options: HandHealthScannerOptions) {
     this.intervalMs = options.intervalMs ?? 30_000;
     this.healthTimeoutMs = options.healthTimeoutMs ?? 5_000;
+    this.provisionTimeoutMs = options.provisionTimeoutMs ?? 4 * 60_000;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.unhealthyConfirmDelayMs = options.unhealthyConfirmDelayMs ?? 5_000;
     this.exhaustedRetryCooldownMs = options.exhaustedRetryCooldownMs ?? 10 * 60_000;
     this.maxReprovisionAttemptsPerScan = options.maxReprovisionAttemptsPerScan ?? 10;
+    this.maxPendingSandboxesForReprovision = options.maxPendingSandboxesForReprovision;
   }
 
   start(): void {
@@ -87,7 +99,9 @@ export class HandHealthScanner {
       });
     }, this.intervalMs);
     this.timer.unref?.();
-    this.options.logger?.info(`HandHealthScanner started: intervalMs=${this.intervalMs} healthTimeoutMs=${this.healthTimeoutMs}`);
+    this.options.logger?.info(
+      `HandHealthScanner started: intervalMs=${this.intervalMs} healthTimeoutMs=${this.healthTimeoutMs} provisionTimeoutMs=${this.provisionTimeoutMs}`,
+    );
   }
 
   stop(): void {
@@ -113,6 +127,7 @@ export class HandHealthScanner {
     if (this.inFlight) return { scanned: 0, flipped: 0 };
     this.inFlight = true;
     this.reprovisionAttemptsThisScan = 0;
+    this.recoveryCapacityBlocksThisScan.clear();
     try {
       const store = this.options.handStore;
       if (!store.listByType) {
@@ -244,9 +259,47 @@ export class HandHealthScanner {
     }
   }
 
+  private async hasRecoveryCapacity(endpoint: string, authToken: string | undefined): Promise<boolean> {
+    const limit = this.maxPendingSandboxesForReprovision;
+    if (limit === undefined) return true;
+    const key = `${endpoint}\u0000${authToken ?? ''}`;
+    if (this.recoveryCapacityBlocksThisScan.has(key)) return false;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.healthTimeoutMs);
+    timer.unref?.();
+    try {
+      const response = await this.fetchImpl(`${endpoint.replace(/\/$/, '')}/sandboxes`, {
+        headers: authToken ? { authorization: `Bearer ${authToken}` } : {},
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const body = await response.json().catch(() => null) as { sandboxes?: Array<{ phase?: unknown }> } | null;
+      if (!Array.isArray(body?.sandboxes)) throw new Error('sandboxes payload missing');
+      const pending = body.sandboxes.filter((sandbox) => sandbox.phase === 'Pending').length;
+      if (pending <= limit) return true;
+      this.recoveryCapacityBlocksThisScan.add(key);
+      this.options.logger?.info(
+        `HandHealthScanner: reprovision capacity blocked pending=${pending} limit=${limit}`,
+      );
+      return false;
+    } catch (error) {
+      this.recoveryCapacityBlocksThisScan.add(key);
+      this.options.logger?.warn(
+        `HandHealthScanner: reprovision capacity probe failed; fail-closed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
 
   private async reprovisionIfDue(hand: HandRecord): Promise<boolean> {
     if (this.options.enableReprovision === false) return false;
+    if (hand.endpoint && typeof hand.metadata?.tenantRemoteHandId !== 'string') {
+      const capacityKey = `${hand.endpoint}\u0000${this.options.defaultServerRemoteAuthToken ?? ''}`;
+      if (this.recoveryCapacityBlocksThisScan.has(capacityKey)) return false;
+    }
     const latest = await this.options.handStore.get(hand.handId);
     if (latest) {
       if (latest.status === 'ready' && !hasUnresolvedHandProvisionFailure(latest)) return false;
@@ -274,6 +327,8 @@ export class HandHealthScanner {
       this.options.logger?.warn(`HandHealthScanner: auth token unavailable for handId=${hand.handId}; skipping reprovision`);
       return false;
     }
+    if (typeof hand.metadata?.tenantRemoteHandId !== 'string'
+      && !await this.hasRecoveryCapacity(endpoint, authToken)) return false;
     const recoveryToken = randomUUID();
     const claimed = await this.claimProvisionRecovery(hand, recoveryToken, {
       lastHealthCheckAt: new Date().toISOString(),
@@ -282,7 +337,7 @@ export class HandHealthScanner {
     this.reprovisionAttemptsThisScan += 1;
     hand = claimed;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.healthTimeoutMs);
+    const timer = setTimeout(() => controller.abort(), this.provisionTimeoutMs);
     timer.unref?.();
     try {
       const response = await this.fetchImpl(`${endpoint.replace(/\/$/, '')}/provision`, {
@@ -354,7 +409,7 @@ export class HandHealthScanner {
       await this.recordReprovisionFailure(hand, recoveryToken, attempt, body.error, body.metadata);
       return false;
     } catch (err) {
-      await this.recordReprovisionFailure(hand, recoveryToken, attempt, controller.signal.aborted ? `provision timeout (${this.healthTimeoutMs}ms)` : err instanceof Error ? err.message : String(err));
+      await this.recordReprovisionFailure(hand, recoveryToken, attempt, controller.signal.aborted ? `provision timeout (${this.provisionTimeoutMs}ms)` : err instanceof Error ? err.message : String(err));
       return false;
     } finally {
       clearTimeout(timer);

@@ -258,12 +258,14 @@ export interface PgHandStoreOptions {
 export class PgHandStore implements HandStore {
   readonly pool: PgPool;
   readonly handsTable: string;
+  readonly runsTable: string;
   private readonly ownsPool: boolean;
 
   constructor(options: PgHandStoreOptions) {
     if (!options.pool && !options.connectionString) throw new Error('PgHandStore requires either pool or connectionString');
     const prefix = sanitizeIdentifier(options.tablePrefix ?? 'runtime');
     this.handsTable = `${prefix}_hands`;
+    this.runsTable = `${prefix}_runs`;
     this.pool = options.pool ?? new Pool({ connectionString: options.connectionString! });
     this.ownsPool = !options.pool;
   }
@@ -478,6 +480,26 @@ export class PgHandStore implements HandStore {
 
   async listByType(type: ExecutionTargetKind, opts?: { status?: HandStatus }): Promise<HandRecord[]> {
     if (opts?.status) {
+      if (opts.status === 'unhealthy') {
+        const result = await this.pool.query<{ row_json: unknown }>(`
+          SELECT row_to_json(hand.*) AS row_json
+          FROM ${this.handsTable} hand
+          WHERE hand.type = $1
+            AND hand.status = $2
+            AND NOT EXISTS (
+              SELECT 1 FROM ${this.runsTable} run
+              WHERE run.session_id = hand.session_id AND run.status = 'waiting_user'
+            )
+          ORDER BY
+            CASE WHEN EXISTS (
+              SELECT 1 FROM ${this.runsTable} run
+              WHERE run.session_id = hand.session_id
+                AND run.status IN ('pending', 'running', 'waiting_hand')
+            ) THEN 0 ELSE 1 END,
+            hand.updated_at DESC
+        `, [type, opts.status]);
+        return result.rows.map((r) => normalizeHandRecord(r.row_json));
+      }
       const result = await this.pool.query<{ row_json: unknown }>(
         `SELECT row_to_json(${this.handsTable}.*) AS row_json FROM ${this.handsTable} WHERE type = $1 AND status = $2 ORDER BY updated_at ASC`,
         [type, opts.status],

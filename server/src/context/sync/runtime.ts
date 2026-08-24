@@ -6,7 +6,7 @@ import type { UserStore } from '../../data/users/store.js';
 import { listAzerothTokenBindings } from '../../integrations/azeroth/tokens.js';
 import type { PgTaskboardStore } from '../../taskboard/store.js';
 import type { ContextStore } from '../store/index.js';
-import type { DerivedContextStore } from '../derived/index.js';
+import { DerivedStoreError, type DerivedContextStore } from '../derived/index.js';
 import { AZEROTH_ENTITIES, ConfigAzerothContextPorts, AzerothInventoryWorker, identityFor } from './azeroth/index.js';
 import { DIRECTORY_COLLECTION_ID, DirectoryContextSyncWorker, GovernanceDirectoryContextReader } from './directory/index.js';
 import { PgTaskboardContextReader, TASKBOARD_COLLECTIONS, TaskboardContextSyncWorker } from './taskboard/index.js';
@@ -172,7 +172,7 @@ export class ContextPlanePhase2Runtime {
       try {
         await store.projectClaimed(lease);
       } catch (error) {
-        await store.failConsumerLease(lease, 'DERIVED_PROJECTION_FAILED').catch(() => false);
+        await store.failConsumerLease(lease, derivedProjectionFailureCode(error)).catch(() => false);
         throw error;
       }
       if (lease.events.length < DERIVED_OUTBOX_PAGE_SIZE) { outboxCapped = false; break; }
@@ -216,6 +216,23 @@ export class ContextPlanePhase2Runtime {
         if (!await this.options.assignmentStore.getAssignmentSet(tenantId, 'org_knowledge', resource.id)) throw error;
       }
     }
+  }
+}
+
+export function derivedProjectionFailureCode(error: unknown): string {
+  if (error instanceof DerivedStoreError) return error.code;
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code ?? '') : '';
+  switch (code) {
+    case '23503': return 'DERIVED_REFERENCE_MISSING';
+    case '23505': return 'DERIVED_UNIQUE_CONFLICT';
+    case '23514': return 'DERIVED_CONSTRAINT_VIOLATION';
+    case '22007':
+    case '22008': return 'DERIVED_TIMESTAMP_INVALID';
+    case '22P02': return 'DERIVED_VALUE_INVALID';
+    case '42P01':
+    case '42703': return 'DERIVED_SCHEMA_MISMATCH';
+    default: return 'DERIVED_PROJECTION_FAILED';
   }
 }
 

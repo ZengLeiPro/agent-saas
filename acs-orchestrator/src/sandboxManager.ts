@@ -7,6 +7,7 @@ import { Kubectl } from './kubectl.js';
 import type { KubeApi } from './kubeApi.js';
 import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './networkPolicyManager.js';
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
+import { SingleflightCleanup } from './singleflightCleanup.js';
 import {
   type ManagedSandbox,
   type ManagedSandboxInventory,
@@ -103,6 +104,8 @@ export class SandboxManager {
   private readonly prewarmInFlight = new Map<string, Promise<void>>();
   /** 同名 Sandbox 并发 ensureRunning 合流：后到者 join 先行者的 promise（消除 warmup/execute 并发 create 竞态与重复开销）。 */
   private readonly ensureInFlight = new Map<string, Promise<SandboxRef>>();
+  /** Attestation 超时后服务端仍会继续；整段 probe 合流，避免重试持续创建临时 Sandbox。 */
+  private readonly networkPolicyProbe = new SingleflightCleanup<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }>();
   private readonly capacityReservations = new CapacityReservations();
   /** already_running 快路径缓存：完整校验（networkPolicy+SNAT）通过时间与最近 touch 时间。 */
   private readonly ensureFastPath = new Map<string, { verifiedAt: number; touchedAt: number }>();
@@ -312,28 +315,23 @@ export class SandboxManager {
 
   async probeNetworkPolicy(): Promise<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }> {
     const probeId = `probe-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-    const input = {
-      workspaceId: 'network-probe',
-      sessionId: probeId,
-      sandboxScopeId: `network-probe-${probeId}`,
-    };
+    const input = { workspaceId: 'network-probe', sessionId: probeId, sandboxScopeId: `network-probe-${probeId}` };
     const plannedRef = this.ref(input);
     const activeKey = `probe:${probeId}`;
-    const releaseActive = this.activeRegistry?.acquire(plannedRef.name, activeKey);
-    try {
-      const ref = await this.ensureRunning(input, {
-        skipCapacityManagement: true,
-        activeKey,
-      });
+    let releaseActive: (() => void) | undefined;
+    return await this.networkPolicyProbe.run(async () => {
+      releaseActive = this.activeRegistry?.acquire(plannedRef.name, activeKey);
+      const ref = await this.ensureRunning(input, { skipCapacityManagement: true, activeKey });
+      await this.snatManager.ensureForProbe(ref);
+      return await this.networkPolicyManager.probe(ref);
+    }, async () => {
       try {
-        await this.snatManager.ensureForProbe(ref);
-        return await this.networkPolicyManager.probe(ref);
+        // ensureRunning 失败时也删 plannedRef；此前只清理成功 ref，会泄漏 Pending probe。
+        await this.delete(plannedRef, { activeKey });
       } finally {
-        await this.delete(ref, { activeKey });
+        releaseActive?.();
       }
-    } finally {
-      releaseActive?.();
-    }
+    });
   }
 
   private snatStatusCache: { at: number; value: SnatStatus } | null = null;

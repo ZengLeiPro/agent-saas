@@ -41,11 +41,22 @@ describe('production integration v3 adapters', () => {
       expect(init?.headers).toMatchObject({ authorization: 'Bearer test-token' });
       return new Response(JSON.stringify(probeBody()), { status: 200, headers: { 'content-type': 'application/json' } });
     }) as unknown as typeof fetch;
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
     const provider = createAcsRuntimeIsolationAttestationProvider({ config: acsConfig(), fetchImpl, now: () => NOW });
     await expect(provider.attest({ admission: 'integration_v3_worker' })).resolves.toMatchObject({
       runtimeAdapterId: 'acs-orchestrator/network-policy-probe', isolationBoundaryId: 'acs-sandbox/as-network-probe-abc',
     });
     expect(fetchImpl).toHaveBeenCalledWith('http://acs:3400/network-policy/probe', expect.objectContaining({ method: 'POST' }));
+    expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 240_000);
+    timeoutSpy.mockRestore();
+  });
+
+  it('keeps evidence freshness at two minutes even though the request may wait four minutes', async () => {
+    const body = probeBody();
+    body.networkPolicy.effectivePolicy.checkedAt = new Date(NOW - 120_001).toISOString();
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+    const provider = createAcsRuntimeIsolationAttestationProvider({ config: acsConfig(), fetchImpl, now: () => NOW });
+    await expect(provider.attest({ admission: 'integration_v3_worker' })).resolves.toBeUndefined();
   });
 
   it.each([

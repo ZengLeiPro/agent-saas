@@ -39,7 +39,9 @@ export function selectAttentionSystemIncidents(items: AttentionItem[]): Attentio
 export function selectExternalSystemIncidents(source: string, items: AttentionItem[]): AttentionItem[] {
   if (source !== 'agent-saas-acs-orchestrator') return [];
   return items.filter((item) => (
-    (item.kind === 'acs_sandbox_lifecycle_failed' || item.kind === 'acs_sandbox_running_near_quota')
+    (item.kind === 'acs_sandbox_lifecycle_failed'
+      || item.kind === 'acs_sandbox_running_near_quota'
+      || item.kind === 'acs_sandbox_allocated_near_quota')
     && (item.severity === 'high' || item.severity === 'critical')
   ));
 }

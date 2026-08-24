@@ -207,6 +207,31 @@ describe('HttpTransport.invoke', () => {
     expect(calls).toBe(2);
   });
 
+  it('fails fast on structured ACS capacity 503 instead of retrying', async () => {
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls++;
+      return new Response(JSON.stringify({
+        status: 'error', code: 'ACS_CAPACITY_EXHAUSTED', error: 'capacity exhausted',
+      }), {
+        status: 503,
+        headers: {
+          'content-type': 'application/json',
+          'retry-after': '30',
+          'x-acs-error-code': 'ACS_CAPACITY_EXHAUSTED',
+        },
+      });
+    }) as unknown as typeof fetch;
+    const transport = new HttpTransport({
+      baseUrl: 'http://h', authToken: 'secret-token-12345', fetchImpl,
+      connectRetryBackoffMs: [5, 5],
+    });
+    const response = await transport.invoke(buildRequest());
+    expect(response.status).toBe('error');
+    expect(response.status === 'error' ? response.error : '').toContain('ACS_CAPACITY_EXHAUSTED');
+    expect(calls).toBe(1);
+  });
+
   it('exhausts retries and surfaces the original network error', async () => {
     let calls = 0;
     const fetchImpl = vi.fn(async () => { calls++; throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch;

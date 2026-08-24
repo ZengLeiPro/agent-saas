@@ -495,6 +495,11 @@ function baseConfig(aliyunCliPath: string): AcsOrchestratorConfig {
     sandboxBrokenRecycleGraceMs: 300_000,
     maxRunningSandboxes: 8,
     warnRunningSandboxes: 6,
+    maxAllocatedCpuMillicores: 0,
+    warnAllocatedCpuMillicores: 0,
+    maxAllocatedMemoryMib: 0,
+    warnAllocatedMemoryMib: 0,
+    executionMaintenance: false,
     drainDeadlineMs: 120_000,
     networkPolicy: { mode: 'public-egress', denyPrivateNetworks: true },
     snat: {

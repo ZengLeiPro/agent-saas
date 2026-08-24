@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { parseEventLine } from '../dws/personalEventGateway.js';
+import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
+import { DwsPersonalEventGateway, parseEventLine } from '../dws/personalEventGateway.js';
 
 const event = {
   type: 'user_im_message_receive_at',
@@ -30,5 +31,56 @@ describe('DWS Personal Stream event parser', () => {
     expect(parseEventLine('[event] ready')).toBeNull();
     expect(parseEventLine('{bad')).toBeNull();
     expect(parseEventLine(JSON.stringify({ type: event.type }))).toBeNull();
+  });
+});
+
+const account: AgentDwsAccountRecord = {
+  accountId: 'account-1', tenantId: 'tenant-1', agentId: 'agent-1', displayName: '销售数字员工', loginId: 'login-1',
+  profileId: 'profile-1', status: 'active', runtimeStatus: 'stopped', eventKinds: ['at_me'], revision: 1,
+  createdAt: '2026-08-24T00:00:00Z', createdBy: 'admin', updatedAt: '2026-08-24T00:00:00Z', updatedBy: 'admin',
+};
+
+describe('DWS Personal Stream retry circuit', () => {
+  it('backs off repeated failures and opens the circuit after five attempts', async () => {
+    let now = Date.parse('2026-08-24T14:00:00Z');
+    const claimRuntimeLease = vi.fn(async () => true);
+    const store = {
+      claimRuntimeLease,
+      renewRuntimeLease: vi.fn(async () => true),
+      releaseRuntimeLease: vi.fn(async () => undefined),
+      updateRuntimeStatus: vi.fn(async () => undefined),
+    } as unknown as AgentDwsAccountStore;
+    const gateway = new DwsPersonalEventGateway({
+      agentCwd: '/tmp/agent', accountStore: store, now: () => now,
+      resolveServerRemote: async () => { throw new Error('remote unavailable'); },
+    });
+
+    await gateway.startAccount(account);
+    await vi.waitFor(() => expect(gateway.getRetrySnapshot()['account-1']?.failures).toBe(1));
+    await gateway.startAccount(account);
+    expect(claimRuntimeLease).toHaveBeenCalledTimes(1);
+
+    for (let attempt = 2; attempt <= 5; attempt += 1) {
+      now = gateway.getRetrySnapshot()['account-1']!.nextAttemptAt;
+      await gateway.startAccount(account);
+      await vi.waitFor(() => expect(gateway.getRetrySnapshot()['account-1']?.failures).toBe(attempt));
+    }
+    const retry = gateway.getRetrySnapshot()['account-1']!;
+    expect(retry.circuitOpenUntil).toBe(now + 60 * 60_000);
+    expect(retry.nextAttemptAt).toBe(retry.circuitOpenUntil);
+    await gateway.stop();
+  });
+
+  it('does not claim a stream while unified execution maintenance is active', async () => {
+    const claimRuntimeLease = vi.fn(async () => true);
+    const gateway = new DwsPersonalEventGateway({
+      agentCwd: '/tmp/agent',
+      accountStore: { claimRuntimeLease } as unknown as AgentDwsAccountStore,
+      resolveServerRemote: async () => ({ baseUrl: 'http://acs', authToken: 'token' }),
+      isExecutionEnabled: () => false,
+    });
+    await gateway.startAccount(account);
+    expect(claimRuntimeLease).not.toHaveBeenCalled();
+    await gateway.stop();
   });
 });

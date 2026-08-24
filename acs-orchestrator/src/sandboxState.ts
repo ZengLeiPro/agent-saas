@@ -35,6 +35,10 @@ export interface ManagedSandbox {
    * 当前 sandbox spec 里 podTemplate 主容器的 image tag，用于 image drift 判定。
    */
   image?: string;
+  cpuRequest?: string;
+  cpuLimit?: string;
+  memoryRequest?: string;
+  memoryLimit?: string;
 }
 
 export interface ManagedSandboxInventory extends ManagedSandbox {
@@ -175,10 +179,6 @@ export function pausedConditionLastTransition(item: Record<string, unknown>): st
     && (condition as Record<string, unknown>).type === 'SandboxPaused'
   ));
   return stringValue(pausedCondition?.lastTransitionTime);
-}
-
-export function isRunningCostPhase(phase: string | undefined): boolean {
-  return phase !== 'Paused';
 }
 
 export function acsNetworkPolicyMode(mode: string): string {

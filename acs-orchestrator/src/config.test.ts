@@ -58,6 +58,57 @@ describe('ACS runtime config', () => {
     });
   });
 
+  it('persists weighted capacity and execution maintenance and can clear the reason', () => {
+    const root = mkdtempSync(join(tmpdir(), 'acs-runtime-config-weighted-'));
+    const runtimeConfigPath = join(root, 'runtime.json');
+    const config = {
+      maxRunningSandboxes: 140,
+      warnRunningSandboxes: 120,
+      maxAllocatedCpuMillicores: 280_000,
+      warnAllocatedCpuMillicores: 240_000,
+      maxAllocatedMemoryMib: 573_440,
+      warnAllocatedMemoryMib: 491_520,
+      executionMaintenance: false,
+      drainDeadlineMs: 120_000,
+      runtimeConfigPath,
+    } as AcsOrchestratorConfig;
+
+    expect(applyRuntimeConfigPatch(config, {
+      maxAllocatedCpuMillicores: 260_000,
+      warnAllocatedCpuMillicores: 220_000,
+      maxAllocatedMemoryMib: 532_480,
+      warnAllocatedMemoryMib: 450_560,
+      executionMaintenance: true,
+      executionMaintenanceReason: 'planned maintenance',
+    })).toMatchObject({
+      maxAllocatedCpuMillicores: 260_000,
+      warnAllocatedCpuMillicores: 220_000,
+      maxAllocatedMemoryMib: 532_480,
+      warnAllocatedMemoryMib: 450_560,
+      executionMaintenance: true,
+      executionMaintenanceReason: 'planned maintenance',
+      persisted: true,
+    });
+
+    const persisted = JSON.parse(readFileSync(runtimeConfigPath, 'utf-8')) as Record<string, unknown>;
+    expect(persisted).toMatchObject({
+      maxAllocatedCpuMillicores: 260_000,
+      warnAllocatedCpuMillicores: 220_000,
+      maxAllocatedMemoryMib: 532_480,
+      warnAllocatedMemoryMib: 450_560,
+      executionMaintenance: true,
+      executionMaintenanceReason: 'planned maintenance',
+    });
+
+    const cleared = applyRuntimeConfigPatch(config, {
+      executionMaintenance: false,
+      executionMaintenanceReason: undefined,
+    });
+    expect(cleared.executionMaintenance).toBe(false);
+    expect(cleared).not.toHaveProperty('executionMaintenanceReason');
+    expect(JSON.parse(readFileSync(runtimeConfigPath, 'utf-8'))).not.toHaveProperty('executionMaintenanceReason');
+  });
+
   it('rejects invalid runtime config values', () => {
     expect(() => parseRuntimeConfigPatch({ maxRunningSandboxes: 2, warnRunningSandboxes: 3 }))
       .toThrow(/warnRunningSandboxes/);
@@ -65,6 +116,18 @@ describe('ACS runtime config', () => {
       .toThrow(/integer/);
     expect(() => parseRuntimeConfigPatch({ drainDeadlineMs: 999 }))
       .toThrow(/drainDeadlineMs/);
+    expect(() => parseRuntimeConfigPatch({
+      maxAllocatedCpuMillicores: 10_000,
+      warnAllocatedCpuMillicores: 10_001,
+    })).toThrow(/warnAllocatedCpuMillicores/);
+    expect(() => parseRuntimeConfigPatch({
+      maxAllocatedMemoryMib: 10_000,
+      warnAllocatedMemoryMib: 10_001,
+    })).toThrow(/warnAllocatedMemoryMib/);
+    expect(() => parseRuntimeConfigPatch({ executionMaintenance: 'yes' }))
+      .toThrow(/executionMaintenance/);
+    expect(() => parseRuntimeConfigPatch({ executionMaintenanceReason: 'x'.repeat(501) }))
+      .toThrow(/at most 500/);
   });
 
   it('rejects a hot running limit above shared-cidr rollback capacity', () => {

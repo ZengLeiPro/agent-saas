@@ -9,19 +9,20 @@ interface CreateHandHealthScannerOptions {
   eventStore: EventStore;
   resolveHandAuthToken: (hand: HandRecord) => string | undefined | Promise<string | undefined>;
   defaultServerRemoteAuthToken?: string;
+  isExecutionEnabled?: () => boolean | Promise<boolean>;
   logger: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
 }
 
-/** 生产默认给新会话绝对优先级：ACS 只要还有 Pending，就暂停历史 Hand 恢复。 */
+/** 只有 HandStore 选出的 active-run Hand 才会恢复；容量由 Orchestrator 权威门禁。 */
 export function createHandHealthScanner(options: CreateHandHealthScannerOptions): HandHealthScanner {
   return new HandHealthScanner({
     handStore: options.handStore,
     eventStore: options.eventStore,
     intervalMs: options.config?.intervalMs,
     healthTimeoutMs: options.config?.healthTimeoutMs,
-    maxPendingSandboxesForReprovision: 0,
     resolveHandAuthToken: options.resolveHandAuthToken,
     defaultServerRemoteAuthToken: options.defaultServerRemoteAuthToken,
+    isExecutionEnabled: options.isExecutionEnabled,
     logger: options.logger,
   });
 }

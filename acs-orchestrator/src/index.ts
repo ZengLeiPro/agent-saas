@@ -20,15 +20,22 @@ import {
 } from './protocol.js';
 import { Provisioner } from './provision.js';
 import {
-  SandboxBusyError,
-  SandboxInvalidStateError,
+  SandboxCapacityError,
   SandboxManager,
-  SandboxNotFoundError,
   brokenSandboxStateReason,
 } from './sandboxManager.js';
 import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import { SnatSharedCidrCoverageError } from './snatManager.js';
 import { SnatOperations } from './snatOperations.js';
+import {
+  allowsExecutionMaintenanceBypass,
+  decodeSandboxName,
+  matchSandboxRoute,
+  sendCapacityError,
+  sendExecutionMaintenance,
+  sendSandboxError,
+  type SandboxRoute,
+} from './sandboxHttp.js';
 
 const config = loadConfigFromEnv();
 
@@ -139,7 +146,6 @@ const server = createServer((req, res) => {
     res.end(JSON.stringify({ status: 'error', error: 'orchestrator draining, retry shortly' }));
     return;
   }
-
   if (req.url === '/warmup') {
     void withInflight(() => handleWarmup(req, res));
     return;
@@ -254,6 +260,10 @@ async function computeDeepHealth(): Promise<DeepHealthSnapshot> {
     ok = false;
     checks.sandboxes = inventoryOutcome.error;
   }
+  if (inventoryOutcome.sandboxes) {
+    checks.executionCapacity = inventoryOutcome.sandboxes.executionReady ? 'ok' : 'exhausted';
+    if (!inventoryOutcome.sandboxes.executionReady) ok = false;
+  }
   const snat = inventoryOutcome.snat;
   if (snat?.enabled) {
     const sharedCidrsReady = snat.mode !== 'shared-cidr'
@@ -315,6 +325,12 @@ async function handleHealth(res: ServerResponse): Promise<void> {
       drainDeadlineMs: config.drainDeadlineMs,
       maxRunningSandboxes: config.maxRunningSandboxes,
       warnRunningSandboxes: config.warnRunningSandboxes,
+      maxAllocatedCpuMillicores: config.maxAllocatedCpuMillicores,
+      warnAllocatedCpuMillicores: config.warnAllocatedCpuMillicores,
+      maxAllocatedMemoryMib: config.maxAllocatedMemoryMib,
+      warnAllocatedMemoryMib: config.warnAllocatedMemoryMib,
+      executionMaintenance: config.executionMaintenance,
+      executionMaintenanceReason: config.executionMaintenanceReason ?? null,
       brokenRecycleGraceMs: config.sandboxBrokenRecycleGraceMs,
       alertWebhookConfigured: config.alertWebhookUrls.length > 0,
     },
@@ -438,35 +454,12 @@ async function handleLifecycleCleanup(req: IncomingMessage, res: ServerResponse)
   }
 }
 
-type SandboxRoute =
-  | { kind: 'list' }
-  | { kind: 'name'; rawName: string; action?: 'pause' | 'resume' };
-
-const SANDBOX_NAME_PATTERN = /^as-[a-z0-9-]{1,60}$/;
-
-function matchSandboxRoute(rawUrl: string | undefined): SandboxRoute | null {
-  const path = (rawUrl ?? '').split(/[?#]/)[0] ?? '';
-  if (path === '/sandboxes') return { kind: 'list' };
-  const match = /^\/sandboxes\/([^/]+)(?:\/(pause|resume))?$/.exec(path);
-  if (!match) return null;
-  return {
-    kind: 'name',
-    rawName: match[1]!,
-    ...(match[2] ? { action: match[2] as 'pause' | 'resume' } : {}),
-  };
-}
-
-function decodeSandboxName(rawName: string): string | null {
-  try {
-    const name = decodeURIComponent(rawName);
-    return SANDBOX_NAME_PATTERN.test(name) ? name : null;
-  } catch {
-    return null;
-  }
-}
-
 async function handleSandboxRoute(req: IncomingMessage, res: ServerResponse, route: SandboxRoute): Promise<void> {
   if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
+  if (config.executionMaintenance && !allowsExecutionMaintenanceBypass(req)
+    && route.kind === 'name' && route.action === 'resume') {
+    return sendExecutionMaintenance(res, config.executionMaintenanceReason);
+  }
   if (route.kind === 'list') {
     if (req.method !== 'GET') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use GET' });
     try {
@@ -512,13 +505,6 @@ async function handleSandboxRoute(req: IncomingMessage, res: ServerResponse, rou
   }
 }
 
-function sendSandboxError(res: ServerResponse, err: unknown): void {
-  if (err instanceof SandboxBusyError) return sendJson(res, 409, { status: 'error', error: err.message });
-  if (err instanceof SandboxNotFoundError) return sendJson(res, 404, { status: 'error', error: err.message });
-  if (err instanceof SandboxInvalidStateError) return sendJson(res, 400, { status: 'error', error: err.message });
-  return sendJson(res, 500, { status: 'error', error: err instanceof Error ? err.message : String(err) });
-}
-
 /**
  * POST /warmup（2026-07-31 冷启动治理批次）。
  *
@@ -531,6 +517,9 @@ function sendSandboxError(res: ServerResponse, err: unknown): void {
 async function handleWarmup(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
   if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
+  if (config.executionMaintenance && !allowsExecutionMaintenanceBypass(req)) {
+    return sendExecutionMaintenance(res, config.executionMaintenanceReason);
+  }
   if (draining) {
     res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '5' });
     res.end(JSON.stringify({ status: 'error', error: 'orchestrator draining' }));
@@ -572,6 +561,9 @@ async function handleWarmup(req: IncomingMessage, res: ServerResponse): Promise<
 async function handleProvision(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
   if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
+  if (config.executionMaintenance && !allowsExecutionMaintenanceBypass(req)) {
+    return sendExecutionMaintenance(res, config.executionMaintenanceReason);
+  }
   const body = await readJson(req, res);
   if (!body.ok) return;
   const parsed = parseProvisionRecipe(body.value);
@@ -589,6 +581,7 @@ async function handleProvision(req: IncomingMessage, res: ServerResponse): Promi
       logs: result.logs,
     });
   } catch (err) {
+    if (err instanceof SandboxCapacityError) return sendCapacityError(res, err);
     const message = err instanceof Error ? err.message : String(err);
     if (err instanceof SnatSharedCidrCoverageError || /ACS SNAT|CreateSnatEntry\(shared\)/.test(message)) {
       await emitAlert({
@@ -607,6 +600,9 @@ async function handleProvision(req: IncomingMessage, res: ServerResponse): Promi
 async function handleExecute(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
   if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
+  if (config.executionMaintenance && !allowsExecutionMaintenanceBypass(req)) {
+    return sendExecutionMaintenance(res, config.executionMaintenanceReason);
+  }
   const body = await readJson(req, res);
   if (!body.ok) return;
   const parsed = parseWireRequest(body.value);
@@ -615,13 +611,16 @@ async function handleExecute(req: IncomingMessage, res: ServerResponse): Promise
     const response = await executor.execute(parsed.value);
     return sendJson(res, 200, response);
   } catch (err) {
-    return sendJson(res, 500, { status: 'error', error: err instanceof Error ? err.message : String(err) });
+    return sendSandboxError(res, err);
   }
 }
 
 async function handleExecuteStream(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
   if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
+  if (config.executionMaintenance && !allowsExecutionMaintenanceBypass(req)) {
+    return sendExecutionMaintenance(res, config.executionMaintenanceReason);
+  }
   const body = await readJson(req, res);
   if (!body.ok) return;
   const parsed = parseWireRequest(body.value);
@@ -921,17 +920,18 @@ async function runLifecycleOnce(reason: string): Promise<void> {
         },
       });
     }
-    if (config.warnRunningSandboxes > 0 && report.runningCount >= config.warnRunningSandboxes) {
+    const inventory = await sandboxManager.inventorySummary();
+    const nearCount = config.warnRunningSandboxes > 0 && inventory.allocatedCount >= config.warnRunningSandboxes;
+    const nearCpu = config.warnAllocatedCpuMillicores > 0
+      && inventory.allocatedCpuMillicores >= config.warnAllocatedCpuMillicores;
+    const nearMemory = config.warnAllocatedMemoryMib > 0
+      && inventory.allocatedMemoryBytes >= config.warnAllocatedMemoryMib * 1024 * 1024;
+    if (nearCount || nearCpu || nearMemory) {
       await emitAlert({
-        event: 'sandbox_running_near_quota',
-        severity: report.runningCount >= config.maxRunningSandboxes && config.maxRunningSandboxes > 0 ? 'error' : 'warning',
-        message: `ACS Sandbox running count is ${report.runningCount}`,
-        metadata: {
-          runningCount: report.runningCount,
-          totalCount: report.totalCount,
-          maxRunningSandboxes: config.maxRunningSandboxes,
-          warnRunningSandboxes: config.warnRunningSandboxes,
-        },
+        event: 'sandbox_allocated_near_quota',
+        severity: inventory.executionReady ? 'warning' : 'error',
+        message: `ACS allocated capacity count=${inventory.allocatedCount} cpu=${inventory.allocatedCpuMillicores}m`,
+        metadata: inventory,
       });
     }
   } catch (err) {

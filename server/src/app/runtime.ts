@@ -184,6 +184,7 @@ import { PgAlertStateStore } from '../runtime/alertStateStore.js';
 import { AlertNotifier } from '../runtime/alertNotifier.js';
 import { notifyBillingAuditAlerts, registerSearchProviderAlerts } from './registerSearchProviderAlerts.js';
 import { createToolSettingsUpdater, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js';
+import { createRuntimeSchedulerCapacityController } from './runtimeSchedulerCapacityAssembly.js';
 import { PgDwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
@@ -697,6 +698,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let runtimeScheduler: RuntimeScheduler | undefined;
   let runtimeSchedulerConfigStore: PgRuntimeSchedulerConfigStore | undefined;
   let runtimeSchedulerCapacity: RuntimeSchedulerCapacityController | undefined;
+  const isRuntimeExecutionEnabled = async (): Promise<boolean> => (
+    runtimeSchedulerConfigStore ? (await runtimeSchedulerConfigStore.get()).executionEnabled : true
+  );
   let runtimeAdmissionGuard: RuntimeAdmissionGuard | undefined;
   let runtimeEventSubscriptionShutdown: (() => Promise<void>) | undefined;
   let tenantLifecycleWatcher: TenantLifecycleWatcher | undefined;
@@ -1530,6 +1534,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     sessionCatalog,
     tenantRemoteHands: () => config.tenantRemoteHands?.hands,
     tenantRemoteHandResolver,
+    isExecutionEnabled: isRuntimeExecutionEnabled,
     logger: serverLogger.child('SandboxWarmup'),
   });
   // A4: serverRemote 凭证在装配层解析为 plaintext，下游 dispatch / cancel delivery
@@ -1916,10 +1921,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         schedulerConfig.maxConcurrentRuns,
         sessionLockMode,
       ),
+      foregroundReservedRuns: config.runtimeScheduler?.foregroundReservedRuns ?? 10,
+      executionEnabled: schedulerConfig.executionEnabled,
       resolveMaxConcurrentRuns: async () => effectiveMaxConcurrentRuns(
         (await runtimeSchedulerConfigStore!.get()).maxConcurrentRuns,
         sessionLockMode,
       ),
+      resolveExecutionEnabled: isRuntimeExecutionEnabled,
       admissionGuard: memoryPressureGuard,
       approvalTimeoutMs: config.runtimeScheduler?.approvalTimeoutMs,
       canWake: sessionLock
@@ -2050,37 +2058,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     }
     if (enableSingletonWorkers && rawTaskboardStore && taskboardExecutionCoordinator && config.integrationV3ControlPlane?.enabled === true && integrationV3RepositoryProvider)
       integrationV3Runtime = startRuntimeTaskboardIntegrationV3(buildRuntimeTaskboardIntegrationV3Options({ store: rawTaskboardStore, executionCoordinator: taskboardExecutionCoordinator, repositoryProvider: integrationV3RepositoryProvider, processCwd, agentCwd, processRole: processRole === 'all' ? 'all' : 'runtime-worker', releaseIdentity: skillSourceRevision, runtimeIsolationAttestationProvider: integrationV3Adapters.runtimeIsolationAttestationProvider, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, personalAccessTokenResolver: integrationV3PersonalAccessTokenResolver, control: config.integrationV3ControlPlane }));
-    const getRuntimeSchedulerCapacitySnapshot = async () => {
-      const persisted = await runtimeSchedulerConfigStore!.get();
-      const effective = effectiveMaxConcurrentRuns(
-        persisted.maxConcurrentRuns,
-        sessionLockMode,
-      );
-      // 读取管理页时也同步当前 HTTP 实例；其他蓝绿实例在下一次 scheduler tick 拉取。
-      runtimeScheduler!.updateMaxConcurrentRuns(effective);
-      const local = runtimeScheduler!.getCapacitySnapshot();
-      return {
-        status: 'ok' as const,
-        ...persisted,
-        sessionLockMode,
-        effectiveMaxConcurrentRuns: effective,
-        maxConfigurableConcurrentRuns: runtimeSchedulerConfigStore!.maxConfigurableConcurrentRuns,
-        editable: sessionLockMode === 'lease',
-        inFlightRuns: local.inFlightRuns,
-        inFlightBackgroundRuns: local.inFlightBackgroundRuns,
-      };
-    };
-    runtimeSchedulerCapacity = {
-      getSnapshot: getRuntimeSchedulerCapacitySnapshot,
-      updateMaxConcurrentRuns: async (value, actor) => {
-        if (sessionLockMode !== 'lease') {
-          throw new Error('dual 迁移阶段固定为 4；切换到 lease 后才能修改并发');
-        }
-        const persisted = await runtimeSchedulerConfigStore!.update(value, actor);
-        runtimeScheduler!.updateMaxConcurrentRuns(persisted.maxConcurrentRuns);
-        return getRuntimeSchedulerCapacitySnapshot();
-      },
-    };
+    runtimeSchedulerCapacity = createRuntimeSchedulerCapacityController({
+      store: runtimeSchedulerConfigStore!, scheduler: runtimeScheduler, sessionLockMode,
+    });
   }
 
   // Runtime audit 读 API：
@@ -2844,6 +2824,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       connectionStore: dwsConnectionStore,
       runner: new DwsAuthStatusRunner({ agentCwd, resolveServerRemote: resolveConnectorServerRemote }),
       logger: serverLogger.child('DwsKeepalive'),
+      isExecutionEnabled: isRuntimeExecutionEnabled,
     });
     if (enableSchedulerWorker) {
       dwsAuthKeepaliveService.start();
@@ -2876,7 +2857,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     agentCwd, accountStore: agentDwsAccountStore, assignmentStore, contextStore, messageStore: agentDwsMessageStore, pgEventStore, pgRunStore,
     tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix ?? 'agent_runtime' : 'agent_runtime', dispatch: finalDispatch, resolveDefaultModel: tenantId => defaultModelResolver?.(tenantId) ?? null,
     resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured),
-    enableWorker: enableSchedulerWorker, logger: serverLogger,
+    enableWorker: enableSchedulerWorker, isExecutionEnabled: isRuntimeExecutionEnabled, logger: serverLogger,
   });
 
   if (feishuConnectionStore && userStore && resolvedFeishuConnector && feishuConnectorScopes) {
@@ -2897,6 +2878,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       connectionStore: feishuConnectionStore,
       runner: new FeishuTokenBrokerStatusRunner(feishuTokenBroker),
       logger: serverLogger.child('FeishuKeepalive'),
+      isExecutionEnabled: isRuntimeExecutionEnabled,
     });
     if (enableSchedulerWorker) {
       feishuAuthKeepaliveService.start();
@@ -2932,7 +2914,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     serverLogger.warn('Feishu Token Broker unavailable: PG store, app credentials, or business scopes are not configured');
   }
 
-  // B4: Server-remote hands 健康 scanner（仅 PG runtime）。默认开启；显式 false 关闭。
+  // Hand lease 老化不能与主动恢复共用开关：事故止血关闭 scanner 时，janitor 仍须运行。
+  if (enableSingletonWorkers && pgHandStore) {
+    handLeaseJanitor = new HandLeaseJanitor({
+      handStore: pgHandStore,
+      logger: serverLogger.child('HandLeaseJanitor'),
+    });
+    handLeaseJanitor.start();
+  }
+  // B4: 仅恢复关联 active run 的 Server-remote Hand；历史会话由下一条真实消息按需复活。
   if (enableSingletonWorkers && pgHandStore && pgEventStore && config.runtimeHandHealthScanner?.enabled !== false) {
     handHealthScanner = createHandHealthScanner({
       config: config.runtimeHandHealthScanner,
@@ -2941,14 +2931,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       resolveHandAuthToken: (hand) => tenantRemoteHandResolver.resolveForHand(hand),
       defaultServerRemoteAuthToken: resolvedServerRemote?.authToken,
       logger: serverLogger.child('HandHealth'),
+      isExecutionEnabled: isRuntimeExecutionEnabled,
     });
     handHealthScanner.start();
-    // 2026-08-03 P1：hands 租约巡检与 scanner 同门槛（仅 runtime-worker 单例）。
-    handLeaseJanitor = new HandLeaseJanitor({
-      handStore: pgHandStore,
-      logger: serverLogger.child('HandLeaseJanitor'),
-    });
-    handLeaseJanitor.start();
   }
 
   if (config.dingtalk?.enabled) {

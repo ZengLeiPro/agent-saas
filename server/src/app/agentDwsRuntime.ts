@@ -46,6 +46,7 @@ export async function createAgentDwsRuntime(options: {
   resolveServerRemote: ConnectorServerRemoteResolver;
   remoteAvailable: boolean;
   enableWorker: boolean;
+  isExecutionEnabled?: () => boolean | Promise<boolean>;
   logger: Logger;
 }): Promise<AgentDwsRuntimeBundle | undefined> {
   if (!options.pgEventStore || !options.remoteAvailable) {
@@ -98,6 +99,7 @@ export async function createAgentDwsRuntime(options: {
     agentCwd: options.agentCwd,
     accountStore: options.accountStore,
     resolveServerRemote: options.resolveServerRemote,
+    isExecutionEnabled: options.isExecutionEnabled,
     onEvent: async (account, event) => {
       if (!messageRouter) throw new Error('Agent DWS durable inbox is unavailable');
       await messageRouter.ingest(account, event);

@@ -22,6 +22,7 @@ import {
 import { looksLikeSecret } from '../security/secretHeuristics.js';
 import { SYSTEM_PROMPT_IDS } from '../systemPrompts/types.js';
 import { sttConfigSchema, sttPricingSchema } from './sttConfigSchema.js';
+import { runtimeSchedulerConfigSchema } from './runtimeSchedulerConfigSchema.js';
 
 const agentPermissionModeSchema = z.enum([
   'default',
@@ -1166,25 +1167,6 @@ const systemPromptsConfigSchema = z.partialRecord(
 ).optional();
 
 export type ToolDescriptionOverride = z.infer<typeof toolDescriptionOverrideSchema>;
-
-const runtimeSchedulerConfigSchema = z.object({
-  /** 默认 true：PG Web chat 默认 enqueue-only，并由 scheduler 调用 wakeRuntimeSession 执行。 */
-  autoWake: z.boolean().optional(),
-  pollIntervalMs: z.number().int().positive().optional(),
-  leaseMs: z.number().int().positive().optional(),
-  renewIntervalMs: z.number().int().positive().optional(),
-  /** 顶层 run 全局并发；lease 模式默认 16，dual 迁移态强制不超过 4。 */
-  maxConcurrentRuns: z.number().int().positive().optional(),
-  /** 平台管理员热调并发的部署级安全上限；默认 64，提升需显式改部署配置。 */
-  maxConfigurableConcurrentRuns: z.number().int().positive().max(10_000).optional(),
-  /**
-   * session single-writer 迁移模式。首次发布保持 dual 兼容旧 advisory-lock
-   * 实例；确认全量升级后切 lease，取消每个活跃会话的常驻 PG connection。
-   */
-  sessionLockMode: z.enum(['dual', 'lease']).optional(),
-  /** waiting_approval 超过该时间自动 rejected + cancelled。默认 24h；设 0 关闭。 */
-  approvalTimeoutMs: z.number().int().nonnegative().optional(),
-});
 
 /** B4: Server-remote hands 健康检查 scanner（仅 PG runtime）。 */
 const runtimeHandHealthScannerConfigSchema = z.object({

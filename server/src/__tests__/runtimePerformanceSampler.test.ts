@@ -58,8 +58,10 @@ describe('RuntimePerformanceSampler configuration', () => {
     const info = vi.fn();
     const sampler = new RuntimePerformanceSampler({
       getWorkloadSnapshot: async () => ({
-        scheduler: {
-          maxConcurrentRuns: 16,
+      scheduler: {
+        maxConcurrentRuns: 16,
+        foregroundReservedRuns: 4,
+        executionEnabled: true,
           inFlightRuns: 2,
           inFlightBackgroundRuns: 1,
           oldestInFlightAgeMs: 500,

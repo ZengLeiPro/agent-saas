@@ -4,8 +4,8 @@
 # Format: repo-relative-path max-lines scope
 # Existing over-threshold files are grandfathered; entries may only shrink or be pruned.
 
-acs-orchestrator/src/sandboxManager.test.ts	1738	test
-acs-orchestrator/src/sandboxManager.ts	1212	production
+acs-orchestrator/src/sandboxManager.test.ts	1723	test
+acs-orchestrator/src/sandboxManager.ts	1187	production
 server/src/__tests__/appConfig.test.ts	894	test
 server/src/__tests__/billingRouterEndpoints.test.ts	822	test
 server/src/__tests__/feishuTokenBroker.test.ts	809	test
@@ -24,8 +24,8 @@ server/src/__tests__/webChannelReconnect.test.ts	890	test
 server/src/__tests__/workflowLibraryV3.test.ts	1062	test
 server/src/__tests__/wsEventProcessor.test.ts	830	test
 server/src/agent/toolRuntime.ts	1560	production
-server/src/app/config.ts	1451	production
-server/src/app/runtime.ts	3151	production
+server/src/app/config.ts	1433	production
+server/src/app/runtime.ts	3136	production
 server/src/channels/web/channel.ts	4383	production
 server/src/cron/service.ts	1084	production
 server/src/data/billing/pgBillingStore.ts	2319	production

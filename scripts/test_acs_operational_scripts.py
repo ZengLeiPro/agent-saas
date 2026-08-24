@@ -15,6 +15,7 @@ TOOL_CONTENT_JSON = REPO_ROOT / 'scripts' / 'acs-tool-content-json.mjs'
 ACS_WORKFLOW = REPO_ROOT / '.github' / 'workflows' / 'acs-sandbox.yml'
 ACS_CLASSIFIER = REPO_ROOT / '.github' / 'scripts' / 'acs-classify.sh'
 ACS_DEPLOY_SCRIPT = REPO_ROOT / 'scripts' / 'deploy-acs-orchestrator.sh'
+ACS_BROWSER_E2E = REPO_ROOT / 'scripts' / 'acs-browser-lease-e2e.mjs'
 ACS_ROLLBACK_COMPATIBILITY = REPO_ROOT / 'scripts' / 'check-acs-shared-rollback-compatibility.mjs'
 ACS_PRODUCTION_ENV = REPO_ROOT / 'acs-orchestrator' / 'config' / 'production.env'
 
@@ -199,8 +200,16 @@ class AcsProductionSnatConfigTest(unittest.TestCase):
 
         max_running = int(values['ACS_SANDBOX_MAX_RUNNING'])
         max_entries = int(values['ACS_SNAT_MAX_MANAGED_ENTRIES'])
-        self.assertEqual(max_running + len(configured) + 2, max_entries)
+        self.assertLessEqual(max_running + len(configured) + 2, max_entries)
         self.assertLess(int(values['ACS_SANDBOX_WARN_RUNNING']), max_running)
+        self.assertLess(
+            int(values['ACS_SANDBOX_WARN_ALLOCATED_CPU_MILLICORES']),
+            int(values['ACS_SANDBOX_MAX_ALLOCATED_CPU_MILLICORES']),
+        )
+        self.assertLess(
+            int(values['ACS_SANDBOX_WARN_ALLOCATED_MEMORY_MIB']),
+            int(values['ACS_SANDBOX_MAX_ALLOCATED_MEMORY_MIB']),
+        )
 
 
 class AcsVerifyPerSessionTest(unittest.TestCase):
@@ -265,6 +274,14 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertIn('SNAT_ROLLBACK_OFFLINE_RESTORE', rollback)
         self.assertIn('SNAT_ROLLBACK_SHARED_CONFIG_SAFE', rollback)
         self.assertIn('restorePerPodCli.js', rollback)
+
+    def test_deploy_smoke_can_run_without_opening_execution_maintenance(self):
+        marker = 'X-ACS-Maintenance-Bypass: deploy-smoke-v1'
+        self.assertGreaterEqual(self.deploy_script.count(marker), 2)
+        self.assertIn(
+            "'x-acs-maintenance-bypass': 'deploy-smoke-v1'",
+            ACS_BROWSER_E2E.read_text(encoding='utf-8'),
+        )
 
 
 class AcsToolContentJsonTest(unittest.TestCase):

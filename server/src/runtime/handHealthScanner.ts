@@ -56,6 +56,7 @@ export interface HandHealthScannerOptions {
    * 生产设为 0，确保任何新会话正在启动时都不会继续注入历史恢复请求。
    */
   maxPendingSandboxesForReprovision?: number;
+  isExecutionEnabled?: () => boolean | Promise<boolean>;
   /**
    * ready→unhealthy 翻转前的二次确认间隔（毫秒），默认 5s。
    * 2026-07-15 零停机部署批次：orchestrator drain 重启有 5-15s 连接拒绝空窗，
@@ -125,6 +126,7 @@ export class HandHealthScanner {
    */
   async scanOnce(): Promise<{ scanned: number; flipped: number }> {
     if (this.inFlight) return { scanned: 0, flipped: 0 };
+    if (this.options.isExecutionEnabled && !await this.options.isExecutionEnabled()) return { scanned: 0, flipped: 0 };
     this.inFlight = true;
     this.reprovisionAttemptsThisScan = 0;
     this.recoveryCapacityBlocksThisScan.clear();
@@ -296,7 +298,7 @@ export class HandHealthScanner {
 
   private async reprovisionIfDue(hand: HandRecord): Promise<boolean> {
     if (this.options.enableReprovision === false) return false;
-    if (hand.endpoint && typeof hand.metadata?.tenantRemoteHandId !== 'string') {
+    if (hand.endpoint) {
       const capacityKey = `${hand.endpoint}\u0000${this.options.defaultServerRemoteAuthToken ?? ''}`;
       if (this.recoveryCapacityBlocksThisScan.has(capacityKey)) return false;
     }
@@ -327,8 +329,7 @@ export class HandHealthScanner {
       this.options.logger?.warn(`HandHealthScanner: auth token unavailable for handId=${hand.handId}; skipping reprovision`);
       return false;
     }
-    if (typeof hand.metadata?.tenantRemoteHandId !== 'string'
-      && !await this.hasRecoveryCapacity(endpoint, authToken)) return false;
+    if (!await this.hasRecoveryCapacity(endpoint, authToken)) return false;
     const recoveryToken = randomUUID();
     const claimed = await this.claimProvisionRecovery(hand, recoveryToken, {
       lastHealthCheckAt: new Date().toISOString(),

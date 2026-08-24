@@ -38,7 +38,7 @@ export type LoginEvent =
   // 租户级词典覆盖（2026-08-04 任务 E）：组织管理员按 binary 整条覆盖平台条目
   | 'connector_dictionary_tenant_updated' | 'connector_dictionary_tenant_deleted'
   // 顶层 Agent 调度并发：直接改变全平台瞬时负载与排队行为
-  | 'runtime_scheduler_capacity_updated';
+  | 'runtime_scheduler_capacity_updated' | 'runtime_execution_maintenance_updated';
 
 export interface LoginLogEntry {
   timestamp: string;

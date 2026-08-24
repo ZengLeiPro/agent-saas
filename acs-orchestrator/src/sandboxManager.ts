@@ -1,7 +1,11 @@
 import { chmod, chown, mkdir, rename, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CapacityReservations } from './capacityReservations.js';
+import {
+  summarizeSandboxCapacity,
+} from './sandboxCapacity.js';
 import type { AcsOrchestratorConfig } from './config.js';
+import { reserveSandboxCapacity } from './sandboxCapacityAdmission.js';
 import type { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import { Kubectl } from './kubectl.js';
 import type { KubeApi } from './kubeApi.js';
@@ -22,7 +26,6 @@ import {
   brokenSandboxStateReason,
   isBackgroundShellProtected,
   isCiSandboxName,
-  isRunningCostPhase,
   labelValue,
   nodeHeapLimitMb,
   normalizeMountSubPath,
@@ -71,6 +74,7 @@ export class SandboxNotFoundError extends Error {
 export class SandboxInvalidStateError extends Error {
   readonly statusCode = 400;
 }
+export { SandboxCapacityError } from './sandboxCapacity.js';
 const MANAGED_BY_LABEL = 'agent-saas-acs-orchestrator';
 const APP_LABEL = 'agent-saas-coding-hand';
 const WORKSPACE_LABEL = 'agent-saas.kaiyan.net/workspace-id';
@@ -222,7 +226,7 @@ export class SandboxManager {
             `sandbox_image_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${oldImage} new=${this.config.sandboxImage}`,
           );
           if (existing.phase === 'Paused') {
-            if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.capacityReservations.reserve(ref.name, () => this.ensureCapacity(ref.name, options.busySandboxNames)));
+            await timing.step('ensureCapacity', () => this.reserveCapacity(ref, options));
             await timing.step('networkPolicy', () => this.networkPolicyManager.reconcile(ref));
             await timing.step('applySandbox', () => this.applySandbox(ref));
             await this.waitForRunningAndEnsureSnat(ref, timing);
@@ -237,7 +241,7 @@ export class SandboxManager {
       }
       if (!existing) {
         path = path === 'unknown' ? 'create' : path;
-        if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.capacityReservations.reserve(ref.name, () => this.ensureCapacity(ref.name, options.busySandboxNames)));
+        await timing.step('ensureCapacity', () => this.reserveCapacity(ref, options));
         await timing.step('networkPolicy', () => this.networkPolicyManager.reconcile(ref));
         await timing.step('applySandbox', () => this.applySandbox(ref));
         await this.waitForRunningAndEnsureSnat(ref, timing);
@@ -259,12 +263,12 @@ export class SandboxManager {
       await timing.step('networkPolicy', () => this.networkPolicyManager.reconcile(ref));
       if (existing.phase === 'Paused') {
         path = 'resume_paused';
-        if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.capacityReservations.reserve(ref.name, () => this.ensureCapacity(ref.name, options.busySandboxNames)));
+        await timing.step('ensureCapacity', () => this.reserveCapacity(ref, options));
         await timing.step('patchUnpause', () => this.patchPaused(ref.name, false));
         await this.waitForRunningAndEnsureSnat(ref, timing);
       } else if (existing.phase !== 'Running') {
         path = 'wait_non_running';
-        if (!options.skipCapacityManagement) await timing.step('ensureCapacity', () => this.capacityReservations.reserve(ref.name, () => this.ensureCapacity(ref.name, options.busySandboxNames)));
+        await timing.step('ensureCapacity', () => this.reserveCapacity(ref, options));
         await this.waitForRunningAndEnsureSnat(ref, timing);
       } else {
         path = 'already_running';
@@ -392,6 +396,12 @@ export class SandboxManager {
         && typeof c === 'object'
         && (!('name' in c) || c.name === this.config.sandboxContainerName)
       ));
+      const resources = primaryContainer?.resources && typeof primaryContainer.resources === 'object'
+        ? primaryContainer.resources as Record<string, unknown> : {};
+      const requests = resources.requests && typeof resources.requests === 'object'
+        ? resources.requests as Record<string, unknown> : {};
+      const limits = resources.limits && typeof resources.limits === 'object'
+        ? resources.limits as Record<string, unknown> : {};
       return {
         name: typeof metadata.name === 'string' ? metadata.name : '',
         workspaceId: stringValue(annotations[WORKSPACE_ANNOTATION]) ?? stringValue(labels[WORKSPACE_LABEL]),
@@ -405,6 +415,10 @@ export class SandboxManager {
         lastActiveAt: stringValue(annotations[LAST_ACTIVE_AT_ANNOTATION]) ?? stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
         backgroundShellProtectedUntil: stringValue(annotations[BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION]),
         image: primaryContainer ? stringValue(primaryContainer.image) : undefined,
+        cpuRequest: stringValue(requests.cpu),
+        cpuLimit: stringValue(limits.cpu),
+        memoryRequest: stringValue(requests.memory),
+        memoryLimit: stringValue(limits.memory),
       };
     }).filter((sandbox) => sandbox.name);
   }
@@ -548,11 +562,25 @@ export class SandboxManager {
         newestLastActiveAt = sandbox.lastActiveAt;
       }
     }
+    const pendingUsage = this.capacityReservations.pendingUsage(new Set(sandboxes.map((sandbox) => sandbox.name)), '');
+    const capacity = summarizeSandboxCapacity({
+      sandboxes, pendingUsage, config: this.config,
+      canEvict: (sandbox) => !this.isBusy(sandbox.name) && !isBackgroundShellProtected(sandbox, Date.now()),
+    });
     return {
       totalCount: sandboxes.length,
       phaseCounts,
-      runningCount: sandboxes.filter((sandbox) => isRunningCostPhase(sandbox.phase)).length,
+      runningCount: phaseCounts.Running ?? 0,
       pausedCount: phaseCounts.Paused ?? 0,
+      allocatedCount: capacity.snapshot.count,
+      pendingReservationCount: pendingUsage.count,
+      evictablePausedCount: capacity.evictablePausedCount,
+      executionReady: capacity.executionReady,
+      allocatedCpuMillicores: capacity.snapshot.cpuMillicores,
+      allocatedMemoryBytes: capacity.snapshot.memoryBytes,
+      availableCount: capacity.snapshot.availableCount,
+      availableCpuMillicores: capacity.snapshot.availableCpuMillicores,
+      availableMemoryBytes: capacity.snapshot.availableMemoryBytes,
       ...(oldestCreatedAt ? { oldestCreatedAt } : {}),
       ...(newestLastActiveAt ? { newestLastActiveAt } : {}),
     };
@@ -646,7 +674,7 @@ export class SandboxManager {
       runningCount: sandboxes.filter((sandbox) => (
         !removedSet.has(sandbox.name)
         && !pausedSet.has(sandbox.name)
-        && isRunningCostPhase(sandbox.phase)
+        && sandbox.phase === 'Running'
       )).length,
       totalCount: sandboxes.length,
     };
@@ -884,72 +912,19 @@ export class SandboxManager {
     }
   }
 
-  private async ensureCapacity(currentSandboxName: string, busySandboxNames?: Set<string>): Promise<void> {
-    if (this.config.maxRunningSandboxes <= 0) return;
-    if (this.config.lifecycleEnabled) {
-      const protectedSandboxes = new Set(busySandboxNames ?? []);
-      protectedSandboxes.add(currentSandboxName);
-      // 2026-08-11：回收是「尽力而为的维护动作」，绝不能让用户的 provision 陪葬。
-      // 生产实证（ACS run 31440440098）：发布瞬间 startup 的 stale-image 退休流程
-      // 与本次 provision 并发操作同一批 Sandbox / 同一张 SNAT 表，回收链路里任意
-      // 一次 kubectl / 阿里云调用失败就会顺着 ensureCapacity 冒泡，把整个 provision
-      // 打成 500——恰好每次发布都撞上，表现为「只有部署时才失败」。
-      // 回收失败的真实后果只是配额没腾出来，而配额是否足够由下面的硬检查负责；
-      // 因此这里吞掉异常并留证，把判定权交给唯一有资格阻断的那道检查。
-      try {
-        const report = await this.cleanupSandboxes({ busySandboxNames: protectedSandboxes });
-        if (report.paused.length || report.deleted.length) {
-          this.logger.warn(
-            `sandbox_capacity_reclaimed current=${currentSandboxName} paused=${report.paused.length} deleted=${report.deleted.length}`,
-          );
-        }
-      } catch (err) {
-        this.logger.warn(
-          `sandbox_capacity_cleanup_failed current=${currentSandboxName} `
-          + `reason=${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-    const sandboxes = await this.listManagedSandboxes();
-    const protectedSandboxes = new Set(busySandboxNames ?? []);
-    protectedSandboxes.add(currentSandboxName);
-    const active = sandboxes.filter((sandbox) => sandbox.name !== currentSandboxName && isRunningCostPhase(sandbox.phase));
-    const occupied = this.capacityReservations.occupiedCount(
-      new Set(active.map((sandbox) => sandbox.name)), currentSandboxName,
-    );
-    if (this.config.lifecycleEnabled && occupied >= this.config.maxRunningSandboxes) {
-      const candidates = active
-        .filter((sandbox) => (
-          !protectedSandboxes.has(sandbox.name)
-          && sandbox.phase === 'Running'
-          && !isBackgroundShellProtected(sandbox, Date.now())
-        ))
-        .sort((a, b) => (parseDateMs(a.lastActiveAt) ?? 0) - (parseDateMs(b.lastActiveAt) ?? 0));
-      const pauseCount = occupied - this.config.maxRunningSandboxes + 1;
-      const paused: string[] = [];
-      for (const sandbox of candidates.slice(0, pauseCount)) {
-        if (this.isBusy(sandbox.name, protectedSandboxes)) continue;
-        await this.patchPaused(sandbox.name, true);
-        await this.waitForPhase(sandbox.name, 'Paused');
-        paused.push(sandbox.name);
-      }
-      if (paused.length) {
-        this.logger.warn(`sandbox_capacity_forced_pause current=${currentSandboxName} paused=${paused.length}`);
-        const remainingOccupied = occupied - paused.length;
-        if (remainingOccupied < this.config.maxRunningSandboxes) return;
-      }
-    }
-    const refreshed = await this.listManagedSandboxes();
-    const refreshedActive = refreshed.filter((sandbox) => (
-      sandbox.name !== currentSandboxName
-      && isRunningCostPhase(sandbox.phase)
-    ));
-    const refreshedOccupied = this.capacityReservations.occupiedCount(
-      new Set(refreshedActive.map((sandbox) => sandbox.name)), currentSandboxName,
-    );
-    if (refreshedOccupied >= this.config.maxRunningSandboxes) {
-      throw new Error(`ACS Sandbox running quota exceeded: ${refreshedOccupied}/${this.config.maxRunningSandboxes}`);
-    }
+  private async reserveCapacity(
+    ref: SandboxRef,
+    options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean },
+  ): Promise<void> {
+    await reserveSandboxCapacity({
+      ref, config: this.config, reservations: this.capacityReservations,
+      busySandboxNames: options.busySandboxNames,
+      skipCapacityManagement: options.skipCapacityManagement,
+      listSandboxes: () => this.listManagedSandboxes(),
+      isBusy: (name, busy) => this.isBusy(name, busy),
+      evict: async (name) => { await this.deleteSandboxAndReclaimNetwork(name); },
+      warn: (message) => this.logger.warn(message),
+    });
   }
 
   private assertNotBusyForRecreate(

@@ -60,6 +60,15 @@ export interface SandboxInventorySummary {
   phaseCounts: Record<string, number>;
   runningCount: number;
   pausedCount: number;
+  allocatedCount: number;
+  pendingReservationCount: number;
+  evictablePausedCount: number;
+  executionReady: boolean;
+  allocatedCpuMillicores: number;
+  allocatedMemoryBytes: number;
+  availableCount: number | null;
+  availableCpuMillicores: number | null;
+  availableMemoryBytes: number | null;
   oldestCreatedAt?: string;
   newestLastActiveAt?: string;
 }

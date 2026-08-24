@@ -102,6 +102,8 @@ describe('runtime operations admin router', () => {
       status: 'ok' as const,
       sessionLockMode: 'lease' as const,
       maxConcurrentRuns: 16,
+      executionEnabled: true,
+      foregroundReservedRuns: 10,
       effectiveMaxConcurrentRuns: 16,
       maxConfigurableConcurrentRuns: 64,
       editable: true,
@@ -118,6 +120,7 @@ describe('runtime operations admin router', () => {
         effectiveMaxConcurrentRuns: value,
         updatedBy: actor,
       })),
+      updateExecutionMaintenance: vi.fn(async () => snapshot),
     };
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), {
       status: 200,
@@ -161,6 +164,8 @@ describe('runtime operations admin router', () => {
         status: 'ok' as const,
         sessionLockMode: 'dual' as const,
         maxConcurrentRuns: 16,
+        executionEnabled: true,
+        foregroundReservedRuns: 3,
         effectiveMaxConcurrentRuns: 4,
         maxConfigurableConcurrentRuns: 64,
         editable: false,
@@ -169,6 +174,7 @@ describe('runtime operations admin router', () => {
         updatedAt: '2026-07-27T14:00:00.000Z',
       })),
       updateMaxConcurrentRuns: vi.fn(),
+      updateExecutionMaintenance: vi.fn(),
     };
 
     await withApp(async ({ baseUrl }) => {
@@ -186,6 +192,45 @@ describe('runtime operations admin router', () => {
       });
       expect(runtimeSchedulerCapacity.updateMaxConcurrentRuns).not.toHaveBeenCalled();
     }, { runtimeSchedulerCapacity });
+  });
+
+  it('applies unified maintenance to ACS before pausing Server execution', async () => {
+    const snapshot = {
+      status: 'ok' as const, sessionLockMode: 'lease' as const, maxConcurrentRuns: 50,
+      executionEnabled: true, foregroundReservedRuns: 10, effectiveMaxConcurrentRuns: 50,
+      maxConfigurableConcurrentRuns: 64, editable: true, inFlightRuns: 2, inFlightBackgroundRuns: 1,
+      updatedAt: '2026-08-24T14:00:00.000Z', updatedBy: 'bootstrap',
+    };
+    const runtimeSchedulerCapacity = {
+      getSnapshot: vi.fn(async () => snapshot),
+      updateMaxConcurrentRuns: vi.fn(async () => snapshot),
+      updateExecutionMaintenance: vi.fn(async (enabled: boolean, reason: string | undefined, actor: string) => ({
+        ...snapshot, executionEnabled: enabled, maintenanceReason: reason, updatedBy: actor,
+      })),
+    };
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        executionMaintenance: true,
+        executionMaintenanceReason: '紧急止血',
+      });
+      return new Response(JSON.stringify({ status: 'ok', runtimeConfig: { executionMaintenance: true } }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    await withApp(async ({ baseUrl }) => {
+      const response = await fetch(`${baseUrl}/api/admin/runtime-operations/execution-maintenance`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true, reason: '紧急止血' }),
+      });
+      expect(response.status).toBe(200);
+      await expect(readJson(response)).resolves.toMatchObject({
+        maintenanceEnabled: true,
+        runtimeScheduler: { executionEnabled: false, maintenanceReason: '紧急止血' },
+        acs: { runtimeConfig: { executionMaintenance: true } },
+      });
+      expect(runtimeSchedulerCapacity.updateExecutionMaintenance).toHaveBeenCalledWith(false, '紧急止血', 'admin');
+    }, { fetchImpl, runtimeSchedulerCapacity });
   });
 
   it('proxies ACS runtime config updates without exposing hand token to the browser', async () => {

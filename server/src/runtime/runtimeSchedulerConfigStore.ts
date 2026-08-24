@@ -22,6 +22,8 @@ export type RuntimeSessionLockMode = 'dual' | 'lease';
 
 export interface RuntimeSchedulerConfigRecord {
   maxConcurrentRuns: number;
+  executionEnabled: boolean;
+  maintenanceReason?: string;
   updatedAt: string;
   updatedBy?: string;
 }
@@ -34,11 +36,13 @@ export interface RuntimeSchedulerCapacitySnapshot extends RuntimeSchedulerConfig
   editable: boolean;
   inFlightRuns: number;
   inFlightBackgroundRuns: number;
+  foregroundReservedRuns: number;
 }
 
 export interface RuntimeSchedulerCapacityController {
   getSnapshot(): Promise<RuntimeSchedulerCapacitySnapshot>;
   updateMaxConcurrentRuns(value: number, actor: string): Promise<RuntimeSchedulerCapacitySnapshot>;
+  updateExecutionMaintenance(enabled: boolean, reason: string | undefined, actor: string): Promise<RuntimeSchedulerCapacitySnapshot>;
 }
 
 export function effectiveMaxConcurrentRuns(
@@ -82,10 +86,14 @@ export class PgRuntimeSchedulerConfigStore {
         CREATE TABLE IF NOT EXISTS ${this.table} (
           id SMALLINT PRIMARY KEY CHECK (id = 1),
           max_concurrent_runs INTEGER NOT NULL CHECK (max_concurrent_runs > 0),
+          execution_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+          maintenance_reason TEXT,
           updated_at TIMESTAMPTZ NOT NULL,
           updated_by TEXT
         )
       `);
+      await client.query(`ALTER TABLE ${this.table} ADD COLUMN IF NOT EXISTS execution_enabled BOOLEAN NOT NULL DEFAULT TRUE`);
+      await client.query(`ALTER TABLE ${this.table} ADD COLUMN IF NOT EXISTS maintenance_reason TEXT`);
       await client.query(
         `INSERT INTO ${this.table} (id, max_concurrent_runs, updated_at, updated_by)
          VALUES (1, $1, NOW(), 'bootstrap')
@@ -101,10 +109,12 @@ export class PgRuntimeSchedulerConfigStore {
   async get(): Promise<RuntimeSchedulerConfigRecord> {
     const result = await this.pool.query<{
       max_concurrent_runs: number;
+      execution_enabled: boolean;
+      maintenance_reason: string | null;
       updated_at: Date | string;
       updated_by: string | null;
     }>(
-      `SELECT max_concurrent_runs, updated_at, updated_by
+      `SELECT max_concurrent_runs, execution_enabled, maintenance_reason, updated_at, updated_by
        FROM ${this.table}
        WHERE id = 1`,
     );
@@ -121,6 +131,8 @@ export class PgRuntimeSchedulerConfigStore {
     }
     return {
       maxConcurrentRuns,
+      executionEnabled: row.execution_enabled !== false,
+      ...(row.maintenance_reason ? { maintenanceReason: row.maintenance_reason } : {}),
       updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
       ...(row.updated_by ? { updatedBy: row.updated_by } : {}),
     };
@@ -133,6 +145,8 @@ export class PgRuntimeSchedulerConfigStore {
     }
     const result = await this.pool.query<{
       max_concurrent_runs: number;
+      execution_enabled: boolean;
+      maintenance_reason: string | null;
       updated_at: Date | string;
       updated_by: string | null;
     }>(
@@ -141,13 +155,49 @@ export class PgRuntimeSchedulerConfigStore {
            updated_at = NOW(),
            updated_by = $2
        WHERE id = 1
-       RETURNING max_concurrent_runs, updated_at, updated_by`,
+       RETURNING max_concurrent_runs, execution_enabled, maintenance_reason, updated_at, updated_by`,
       [next, actor],
     );
     const row = result.rows[0];
     if (!row) throw new Error('Runtime scheduler config is not initialized');
     return {
       maxConcurrentRuns: Number(row.max_concurrent_runs),
+      executionEnabled: row.execution_enabled !== false,
+      ...(row.maintenance_reason ? { maintenanceReason: row.maintenance_reason } : {}),
+      updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
+      ...(row.updated_by ? { updatedBy: row.updated_by } : {}),
+    };
+  }
+
+  async updateExecutionMaintenance(
+    enabled: boolean,
+    reason: string | undefined,
+    actor: string,
+  ): Promise<RuntimeSchedulerConfigRecord> {
+    const normalizedReason = reason?.trim();
+    if (normalizedReason && normalizedReason.length > 500) throw new Error('maintenanceReason 不能超过 500 个字符');
+    const result = await this.pool.query<{
+      max_concurrent_runs: number;
+      execution_enabled: boolean;
+      maintenance_reason: string | null;
+      updated_at: Date | string;
+      updated_by: string | null;
+    }>(
+      `UPDATE ${this.table}
+       SET execution_enabled = $1,
+           maintenance_reason = $2,
+           updated_at = NOW(),
+           updated_by = $3
+       WHERE id = 1
+       RETURNING max_concurrent_runs, execution_enabled, maintenance_reason, updated_at, updated_by`,
+      [enabled, enabled ? null : normalizedReason || '平台运行时维护', actor],
+    );
+    const row = result.rows[0];
+    if (!row) throw new Error('Runtime scheduler config is not initialized');
+    return {
+      maxConcurrentRuns: Number(row.max_concurrent_runs),
+      executionEnabled: row.execution_enabled !== false,
+      ...(row.maintenance_reason ? { maintenanceReason: row.maintenance_reason } : {}),
       updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
       ...(row.updated_by ? { updatedBy: row.updated_by } : {}),
     };

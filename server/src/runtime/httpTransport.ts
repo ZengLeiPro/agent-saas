@@ -138,7 +138,7 @@ export class HttpTransport implements ExecutionTransport {
    * 连接类瞬时失败重试（2026-07-15 零停机部署批次）。
    * 只对两类失败重试，语义安全（请求未被对端执行）：
    * - fetch 建连抛错（ECONNREFUSED 等网络错误，请求未到达对端）
-   * - HTTP 503（orchestrator drain 期间拒新请求返回 503+retry-after，handler 未执行）
+   * - 无结构化错误码的 HTTP 503（orchestrator drain 期间拒新请求，handler 未执行）
    * 其余（超时 abort / 调用方 abort / 4xx / 其他 5xx / 流中途断开）一律不重试，
    * 避免重复副作用。等待期间 signal abort → 抛 AbortError，走外层既有 aborted 分支。
    */
@@ -153,7 +153,8 @@ export class HttpTransport implements ExecutionTransport {
         await sleepAbortable(backoffs[attempt]!, signal);
         continue;
       }
-      if (response.status === 503 && attempt < backoffs.length && !signal?.aborted) {
+      if (response.status === 503 && !response.headers.has('x-acs-error-code')
+        && attempt < backoffs.length && !signal?.aborted) {
         // 释放未消费的连接，再按 retry-after（不超过本档退避）等待重试
         void response.body?.cancel().catch(() => undefined);
         const retryAfterSec = Number(response.headers.get('retry-after'));

@@ -33,9 +33,11 @@ describe('platformIncidentPolicy', () => {
     expect(selectExternalSystemIncidents('agent-saas-acs-orchestrator', [
       { kind: 'acs_sandbox_stale_image_prewarm', severity: 'medium', title: 'prewarm failed' },
       { kind: 'acs_sandbox_running_near_quota', severity: 'high', title: 'capacity exhausted' },
+      { kind: 'acs_sandbox_allocated_near_quota', severity: 'high', title: 'weighted capacity exhausted' },
       { kind: 'acs_sandbox_lifecycle_failed', severity: 'high', title: 'lifecycle failed' },
     ])).toEqual([
       { kind: 'acs_sandbox_running_near_quota', severity: 'high', title: 'capacity exhausted' },
+      { kind: 'acs_sandbox_allocated_near_quota', severity: 'high', title: 'weighted capacity exhausted' },
       { kind: 'acs_sandbox_lifecycle_failed', severity: 'high', title: 'lifecycle failed' },
     ]);
   });

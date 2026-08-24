@@ -486,17 +486,12 @@ export class PgHandStore implements HandStore {
           FROM ${this.handsTable} hand
           WHERE hand.type = $1
             AND hand.status = $2
-            AND NOT EXISTS (
-              SELECT 1 FROM ${this.runsTable} run
-              WHERE run.session_id = hand.session_id AND run.status = 'waiting_user'
-            )
-          ORDER BY
-            CASE WHEN EXISTS (
+            AND EXISTS (
               SELECT 1 FROM ${this.runsTable} run
               WHERE run.session_id = hand.session_id
                 AND run.status IN ('pending', 'running', 'waiting_hand')
-            ) THEN 0 ELSE 1 END,
-            hand.updated_at DESC
+            )
+          ORDER BY hand.updated_at DESC
         `, [type, opts.status]);
         return result.rows.map((r) => normalizeHandRecord(r.row_json));
       }

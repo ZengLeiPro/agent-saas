@@ -14,7 +14,7 @@ const { Pool } = pg;
 type PgPoolClient = pg.PoolClient;
 export * from './runStoreTypes.js';
 import { BackgroundTaskLimitError, RunCreateConflictError } from './runStoreTypes.js';
-import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunRecord, RunStatus, RunStore, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, UpsertRunInput } from './runStoreTypes.js';
+import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunLeaseAdmission, RunRecord, RunStatus, RunStore, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, UpsertRunInput } from './runStoreTypes.js';
 
 export class PgRunStore implements RunStore {
   readonly pool: PgPool;
@@ -1330,8 +1330,8 @@ export class PgRunStore implements RunStore {
   async cancelStaleWaitingApproval(runId: string, cutoff: Date, reason: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
     return this.queries.cancelStaleWaitingApproval(runId, cutoff, reason, metadataPatch);
   }
-  async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date(), maxConcurrentRuns?: number): Promise<RunRecord | null> {
-    return this.queries.acquireLease(runId, workerId, leaseMs, now, maxConcurrentRuns);
+  async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date(), maxConcurrentRuns?: number, admission?: RunLeaseAdmission): Promise<RunRecord | null> {
+    return this.queries.acquireLease(runId, workerId, leaseMs, now, maxConcurrentRuns, admission);
   }
   async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date()): Promise<RunRecord | null> {
     return this.queries.renewLease(runId, workerId, leaseMs, now);

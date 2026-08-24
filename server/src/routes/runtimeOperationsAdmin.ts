@@ -360,6 +360,54 @@ export function createRuntimeOperationsAdminRouter(
     }
   });
 
+  router.patch('/execution-maintenance', requireSuperAdmin, async (req, res) => {
+    if (!options.runtimeSchedulerCapacity) {
+      res.status(503).json({ error: 'Runtime execution maintenance control is unavailable' });
+      return;
+    }
+    const maintenanceEnabled = req.body?.enabled;
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : undefined;
+    if (typeof maintenanceEnabled !== 'boolean' || (reason?.length ?? 0) > 500) {
+      res.status(400).json({ error: 'enabled 必须是 boolean，reason 最多 500 个字符' });
+      return;
+    }
+    const acs = await requestAcsOrchestrator({
+      config: options.config,
+      secretVault: options.secretVault,
+      fetchImpl,
+      timeoutMs: healthTimeoutMs,
+      path: '/runtime-config',
+      method: 'PATCH',
+      body: {
+        executionMaintenance: maintenanceEnabled,
+        executionMaintenanceReason: maintenanceEnabled ? reason || '平台运行时维护' : '',
+      },
+    });
+    if (acs.status < 200 || acs.status >= 300) {
+      res.status(acs.status).json({ error: 'ACS maintenance update failed', acs: acs.body });
+      return;
+    }
+    try {
+      const actor = req.user?.username || req.user?.sub || 'unknown';
+      const runtimeScheduler = await options.runtimeSchedulerCapacity.updateExecutionMaintenance(
+        !maintenanceEnabled,
+        maintenanceEnabled ? reason : undefined,
+        actor,
+      );
+      auditLog(req, 'runtime_execution_maintenance_updated', JSON.stringify({
+        maintenanceEnabled,
+        reason: maintenanceEnabled ? reason ?? null : null,
+      }));
+      res.json({ status: 'ok', maintenanceEnabled, runtimeScheduler, acs: acs.body });
+    } catch (error) {
+      res.status(500).json({
+        error: error instanceof Error ? error.message : String(error),
+        acsApplied: true,
+        safeState: maintenanceEnabled ? 'ACS remains in maintenance' : 'Server scheduler remains in maintenance',
+      });
+    }
+  });
+
   router.get('/acs/runtime-config', async (_req, res) => {
     const result = await requestAcsOrchestrator({
       config: options.config,

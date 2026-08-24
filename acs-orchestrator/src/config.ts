@@ -77,6 +77,12 @@ export interface AcsOrchestratorConfig {
   sandboxBrokenRecycleGraceMs: number;
   maxRunningSandboxes: number;
   warnRunningSandboxes: number;
+  maxAllocatedCpuMillicores: number;
+  warnAllocatedCpuMillicores: number;
+  maxAllocatedMemoryMib: number;
+  warnAllocatedMemoryMib: number;
+  executionMaintenance: boolean;
+  executionMaintenanceReason?: string;
   drainDeadlineMs: number;
   networkPolicy: NetworkPolicyConfig;
   snat: AcsSnatConfig;
@@ -154,6 +160,12 @@ export interface AcsEgressConfig {
 export interface AcsRuntimeConfigSnapshot {
   maxRunningSandboxes: number;
   warnRunningSandboxes: number;
+  maxAllocatedCpuMillicores: number;
+  warnAllocatedCpuMillicores: number;
+  maxAllocatedMemoryMib: number;
+  warnAllocatedMemoryMib: number;
+  executionMaintenance: boolean;
+  executionMaintenanceReason?: string;
   drainDeadlineMs: number;
   egress: AcsEgressConfig;
   runtimeConfigPath?: string;
@@ -163,6 +175,12 @@ export interface AcsRuntimeConfigSnapshot {
 export interface AcsRuntimeConfigPatch {
   maxRunningSandboxes?: number;
   warnRunningSandboxes?: number;
+  maxAllocatedCpuMillicores?: number;
+  warnAllocatedCpuMillicores?: number;
+  maxAllocatedMemoryMib?: number;
+  warnAllocatedMemoryMib?: number;
+  executionMaintenance?: boolean;
+  executionMaintenanceReason?: string;
   drainDeadlineMs?: number;
   egress?: AcsEgressConfig;
 }
@@ -247,6 +265,23 @@ export function parseRuntimeConfigPatch(input: unknown): AcsRuntimeConfigPatch {
   if ('warnRunningSandboxes' in raw) {
     patch.warnRunningSandboxes = parseRuntimeConfigInt('warnRunningSandboxes', raw.warnRunningSandboxes);
   }
+  for (const key of [
+    'maxAllocatedCpuMillicores',
+    'warnAllocatedCpuMillicores',
+    'maxAllocatedMemoryMib',
+    'warnAllocatedMemoryMib',
+  ] as const) {
+    if (key in raw) patch[key] = parseRuntimeConfigInt(key, raw[key], 10_000_000);
+  }
+  if ('executionMaintenance' in raw) patch.executionMaintenance = parseBool('executionMaintenance', raw.executionMaintenance);
+  if ('executionMaintenanceReason' in raw) {
+    if (raw.executionMaintenanceReason !== undefined && typeof raw.executionMaintenanceReason !== 'string') {
+      throw new Error('executionMaintenanceReason must be a string');
+    }
+    const reason = typeof raw.executionMaintenanceReason === 'string' ? raw.executionMaintenanceReason.trim() : '';
+    if (reason.length > 500) throw new Error('executionMaintenanceReason must be at most 500 characters');
+    patch.executionMaintenanceReason = reason || undefined;
+  }
   if ('drainDeadlineMs' in raw) {
     patch.drainDeadlineMs = parseRuntimeConfigDuration('drainDeadlineMs', raw.drainDeadlineMs);
   }
@@ -257,9 +292,9 @@ export function parseRuntimeConfigPatch(input: unknown): AcsRuntimeConfigPatch {
   return patch;
 }
 
-function parseRuntimeConfigInt(name: string, value: unknown): number {
+function parseRuntimeConfigInt(name: string, value: unknown, max = 1_000): number {
   if (typeof value !== 'number' || !Number.isInteger(value)) throw new Error(`${name} must be an integer`);
-  if (value < 0 || value > 1_000) throw new Error(`${name} must be between 0 and 1000`);
+  if (value < 0 || value > max) throw new Error(`${name} must be between 0 and ${max}`);
   return value;
 }
 
@@ -347,12 +382,30 @@ function validateRuntimeConfigValues(values: AcsRuntimeConfigPatch): void {
   ) {
     throw new Error('warnRunningSandboxes must be <= maxRunningSandboxes');
   }
+  if (
+    values.maxAllocatedCpuMillicores !== undefined
+    && values.warnAllocatedCpuMillicores !== undefined
+    && values.maxAllocatedCpuMillicores > 0
+    && values.warnAllocatedCpuMillicores > values.maxAllocatedCpuMillicores
+  ) throw new Error('warnAllocatedCpuMillicores must be <= maxAllocatedCpuMillicores');
+  if (
+    values.maxAllocatedMemoryMib !== undefined
+    && values.warnAllocatedMemoryMib !== undefined
+    && values.maxAllocatedMemoryMib > 0
+    && values.warnAllocatedMemoryMib > values.maxAllocatedMemoryMib
+  ) throw new Error('warnAllocatedMemoryMib must be <= maxAllocatedMemoryMib');
 }
 
 export function runtimeConfigSnapshot(config: AcsOrchestratorConfig): AcsRuntimeConfigSnapshot {
   return {
     maxRunningSandboxes: config.maxRunningSandboxes,
     warnRunningSandboxes: config.warnRunningSandboxes,
+    maxAllocatedCpuMillicores: config.maxAllocatedCpuMillicores,
+    warnAllocatedCpuMillicores: config.warnAllocatedCpuMillicores,
+    maxAllocatedMemoryMib: config.maxAllocatedMemoryMib,
+    warnAllocatedMemoryMib: config.warnAllocatedMemoryMib,
+    executionMaintenance: config.executionMaintenance,
+    ...(config.executionMaintenanceReason ? { executionMaintenanceReason: config.executionMaintenanceReason } : {}),
     drainDeadlineMs: config.drainDeadlineMs,
     // 容错 undefined：生产上已存在的 runtime-config.json 是旧格式（只有三个配额字段），
     // 启动回灌时 config.egress 可能还没被赋值。
@@ -369,6 +422,14 @@ export function applyRuntimeConfigPatch(
   const next = {
     maxRunningSandboxes: patch.maxRunningSandboxes ?? config.maxRunningSandboxes,
     warnRunningSandboxes: patch.warnRunningSandboxes ?? config.warnRunningSandboxes,
+    maxAllocatedCpuMillicores: patch.maxAllocatedCpuMillicores ?? config.maxAllocatedCpuMillicores,
+    warnAllocatedCpuMillicores: patch.warnAllocatedCpuMillicores ?? config.warnAllocatedCpuMillicores,
+    maxAllocatedMemoryMib: patch.maxAllocatedMemoryMib ?? config.maxAllocatedMemoryMib,
+    warnAllocatedMemoryMib: patch.warnAllocatedMemoryMib ?? config.warnAllocatedMemoryMib,
+    executionMaintenance: patch.executionMaintenance ?? config.executionMaintenance,
+    executionMaintenanceReason: Object.prototype.hasOwnProperty.call(patch, 'executionMaintenanceReason')
+      ? patch.executionMaintenanceReason
+      : config.executionMaintenanceReason,
     drainDeadlineMs: patch.drainDeadlineMs ?? config.drainDeadlineMs,
     egress: cloneEgressConfig(patch.egress ?? config.egress),
   };
@@ -383,6 +444,12 @@ export function applyRuntimeConfigPatch(
   }
   config.maxRunningSandboxes = next.maxRunningSandboxes;
   config.warnRunningSandboxes = next.warnRunningSandboxes;
+  config.maxAllocatedCpuMillicores = next.maxAllocatedCpuMillicores;
+  config.warnAllocatedCpuMillicores = next.warnAllocatedCpuMillicores;
+  config.maxAllocatedMemoryMib = next.maxAllocatedMemoryMib;
+  config.warnAllocatedMemoryMib = next.warnAllocatedMemoryMib;
+  config.executionMaintenance = next.executionMaintenance;
+  config.executionMaintenanceReason = next.executionMaintenanceReason;
   config.drainDeadlineMs = next.drainDeadlineMs;
   config.egress = next.egress;
   if (config.runtimeConfigPath) {
@@ -509,10 +576,15 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     //
     // ⚠️ 前置条件：该值必须与 SNAT 能力匹配。`per-sandbox` 模式下每 pod 一条
     // SNAT 条目、超限直接 throw 且无降级，故高位安全阀只在 `shared-cidr`
-    // （条目数由明确允许的网段数决定，与 pod 数解耦）下才真正可用。maxRunning 超限走 LRU pause 腾位、
-    // 有优雅降级，是应该先撞上的那道墙。
+    // （条目数由明确允许的网段数决定，与 pod 数解耦）下才真正可用。三维容量门禁
+    // 只淘汰安全 Paused CR，绝不强停 Running；无安全候选时以结构化 503 fail closed。
     maxRunningSandboxes: readIntEnv('ACS_SANDBOX_MAX_RUNNING', 200, { min: 0, max: 1_000 }),
     warnRunningSandboxes: readIntEnv('ACS_SANDBOX_WARN_RUNNING', 150, { min: 0, max: 1_000 }),
+    maxAllocatedCpuMillicores: readIntEnv('ACS_SANDBOX_MAX_ALLOCATED_CPU_MILLICORES', 0, { min: 0, max: 10_000_000 }),
+    warnAllocatedCpuMillicores: readIntEnv('ACS_SANDBOX_WARN_ALLOCATED_CPU_MILLICORES', 0, { min: 0, max: 10_000_000 }),
+    maxAllocatedMemoryMib: readIntEnv('ACS_SANDBOX_MAX_ALLOCATED_MEMORY_MIB', 0, { min: 0, max: 10_000_000 }),
+    warnAllocatedMemoryMib: readIntEnv('ACS_SANDBOX_WARN_ALLOCATED_MEMORY_MIB', 0, { min: 0, max: 10_000_000 }),
+    executionMaintenance: false,
     drainDeadlineMs: readIntEnv('ACS_ORCH_DRAIN_DEADLINE_MS', 120_000, { min: 1_000, max: 24 * 60 * 60_000 }),
     networkPolicy: parseNetworkPolicyFromEnv(process.env, 'ACS_NETWORK_POLICY', DEFAULT_CODING_HAND_NETWORK_POLICY),
     snat: {

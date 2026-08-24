@@ -124,6 +124,7 @@ export interface DwsAuthKeepaliveServiceOptions {
   scanIntervalMs?: number;
   initialDelayMs?: number;
   maxChecksPerRun?: number;
+  isExecutionEnabled?: () => boolean | Promise<boolean>;
   logger?: {
     info(message: string): void;
     warn(message: string): void;
@@ -170,6 +171,7 @@ export class DwsAuthKeepaliveService {
 
   async runOnce(now = new Date()): Promise<void> {
     if (this.running || this.stopped) return;
+    if (this.options.isExecutionEnabled && !await this.options.isExecutionEnabled()) return;
     this.running = true;
     try {
       await this.syncProfileMetadata(now);

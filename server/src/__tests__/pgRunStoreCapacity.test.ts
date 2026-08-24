@@ -130,4 +130,20 @@ describe('PgRunStore global scheduler capacity', () => {
     expect(pool.queries).toContain('COMMIT');
     expect(pool.releaseCalls).toBe(1);
   });
+
+  it('reserves global capacity for foreground runs', async () => {
+    const lowPriorityPool = new CapacityPool(1);
+    const lowPriorityStore = new PgRunStore({ pool: lowPriorityPool as unknown as pg.Pool });
+    await expect(lowPriorityStore.acquireLease(
+      'run-taskboard', 'worker-background', 60_000, new Date('2026-08-24T14:00:00.000Z'), 2,
+      { foreground: false, foregroundReservedRuns: 1 },
+    )).resolves.toBeNull();
+
+    const foregroundPool = new CapacityPool(1);
+    const foregroundStore = new PgRunStore({ pool: foregroundPool as unknown as pg.Pool });
+    await expect(foregroundStore.acquireLease(
+      'run-user-message', 'worker-foreground', 60_000, new Date('2026-08-24T14:00:00.000Z'), 2,
+      { foreground: true, foregroundReservedRuns: 1 },
+    )).resolves.toMatchObject({ runId: 'run-user-message', status: 'running' });
+  });
 });

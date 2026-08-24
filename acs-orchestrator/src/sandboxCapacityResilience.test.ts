@@ -80,23 +80,21 @@ function kubectlFailingFirstList(): { kubectl: Kubectl; listCalls: () => number 
   return { kubectl, listCalls: () => listCount };
 }
 
-describe('ensureCapacity 失败隔离', () => {
-  it('回收链路抛错时 provision 照常完成，并留下可检索的告警', async () => {
+describe('ensureCapacity 硬门禁', () => {
+  it('权威 inventory 读取失败时 fail closed，不在未知容量下继续 provision', async () => {
     const warnings: string[] = [];
     const logger = { info() {}, warn(message: string) { warnings.push(message); }, error() {} };
     const { kubectl, listCalls } = kubectlFailingFirstList();
     const manager = new SandboxManager(config(), kubectl, logger);
 
-    const ref = await manager.ensureRunning({
+    await expect(manager.ensureRunning({
       workspaceId: 'ws_kaiyan__u1',
       sessionId: 'session-abc',
       mountSubPath: 'workspaces/kaiyan/u1',
-    });
+    })).rejects.toThrow(/kubectl list failed/);
 
-    expect(ref.name).toContain('as-ws-');
-    expect(warnings.some((m) => m.includes('sandbox_capacity_cleanup_failed'))).toBe(true);
-    // 回收失败后主链路必须自己重新清点，否则配额判断就成了睁眼瞎
-    expect(listCalls()).toBeGreaterThan(1);
+    expect(warnings.some((m) => m.includes('sandbox_ensure_step_failed'))).toBe(true);
+    expect(listCalls()).toBe(1);
   });
 
   it('并发创建在 Pod 可见前也会占用容量保留，禁止同时穿透上限', async () => {
@@ -136,7 +134,7 @@ describe('ensureCapacity 失败隔离', () => {
     const first = manager.ensureRunning({ workspaceId: 'ws_kaiyan__u1', sessionId: 'session-a' });
     await applyStarted;
     await expect(manager.ensureRunning({ workspaceId: 'ws_kaiyan__u2', sessionId: 'session-b' }))
-      .rejects.toThrow(/running quota exceeded/);
+      .rejects.toThrow(/capacity exhausted/);
     releaseApply();
     await first;
   });
@@ -174,6 +172,6 @@ describe('ensureCapacity 失败隔离', () => {
       workspaceId: 'ws_kaiyan__u1',
       sessionId: 'session-abc',
       mountSubPath: 'workspaces/kaiyan/u1',
-    })).rejects.toThrow(/running quota exceeded/);
+    })).rejects.toThrow(/capacity exhausted/);
   });
 });

@@ -13,6 +13,17 @@ const MAX_SEEN_EVENTS = 10_000;
 const RUNTIME_LEASE_TTL_MS = 60_000;
 const RUNTIME_LEASE_RENEW_MS = 20_000;
 const RUNTIME_RECONCILE_MS = 30_000;
+const RETRY_BASE_MS = 30_000;
+const RETRY_MAX_MS = 30 * 60_000;
+const CIRCUIT_FAILURE_THRESHOLD = 5;
+const CIRCUIT_OPEN_MS = 60 * 60_000;
+
+export interface DwsRetryState {
+  failures: number;
+  nextAttemptAt: number;
+  circuitOpenUntil?: number;
+  lastError: string;
+}
 
 export interface DwsPersonalEvent {
   type: string;
@@ -28,6 +39,7 @@ export interface DwsPersonalEvent {
 export class DwsPersonalEventGateway {
   private readonly active = new Map<string, { controller: AbortController; leaseOwner: string; task: Promise<void> }>();
   private reconcileTimer?: NodeJS.Timeout;
+  private readonly retryByAccount = new Map<string, DwsRetryState>();
   private stopped = false;
 
   constructor(private readonly options: {
@@ -39,6 +51,8 @@ export class DwsPersonalEventGateway {
       invokeTimeoutMs?: number;
     }>;
     onEvent?: (account: AgentDwsAccountRecord, event: DwsPersonalEvent) => Promise<void>;
+    isExecutionEnabled?: () => boolean | Promise<boolean>;
+    now?: () => number;
     logger?: { info(message: string): void; warn(message: string): void };
   }) {}
 
@@ -56,13 +70,22 @@ export class DwsPersonalEventGateway {
 
   private async reconcile(): Promise<void> {
     if (this.stopped) return;
+    if (this.options.isExecutionEnabled && !await this.options.isExecutionEnabled()) {
+      const entries = [...this.active.values()];
+      for (const active of entries) active.controller.abort();
+      await Promise.all(entries.map(active => active.task.catch(() => undefined)));
+      return;
+    }
     const accounts = await this.options.accountStore.listRunnable();
     await Promise.all(accounts.map(account => this.startAccount(account)));
   }
 
   async startAccount(account: AgentDwsAccountRecord): Promise<void> {
     if (this.stopped || account.status !== 'active' || !account.profileId) return;
+    if (this.options.isExecutionEnabled && !await this.options.isExecutionEnabled()) return;
     if (this.active.has(account.accountId)) return;
+    const retry = this.retryByAccount.get(account.accountId);
+    if (retry && Math.max(retry.nextAttemptAt, retry.circuitOpenUntil ?? 0) > this.now()) return;
     const leaseOwner = `agent-dws-stream:${randomUUID()}`;
     const controller = new AbortController();
     const task = (async () => {
@@ -109,6 +132,7 @@ export class DwsPersonalEventGateway {
       active?.controller.abort();
       await active?.task.catch(() => undefined);
       this.active.delete(accountId);
+      this.retryByAccount.delete(accountId);
     }
   }
 
@@ -196,6 +220,7 @@ export class DwsPersonalEventGateway {
       })) {
         if (chunk.type === 'output' && chunk.channel === 'stderr') {
           if (chunk.content.includes('[event] ready')) {
+            this.retryByAccount.delete(account.accountId);
             await this.options.accountStore.updateRuntimeStatus(account.accountId, 'ready', undefined, leaseOwner);
             this.options.logger?.info(`Agent DWS event stream ready account=${account.accountId}`);
           }
@@ -228,6 +253,7 @@ export class DwsPersonalEventGateway {
     } catch (error) {
       if (controller.signal.aborted) return;
       const message = compactError(error);
+      const retry = this.recordFailure(account.accountId, message);
       await this.options.accountStore.updateRuntimeStatus(
         account.accountId,
         'error',
@@ -238,10 +264,37 @@ export class DwsPersonalEventGateway {
           `Agent DWS runtime status update failed account=${account.accountId}: ${compactError(statusError)}`,
         );
       });
-      this.options.logger?.warn(`Agent DWS event stream failed account=${account.accountId}: ${message}`);
+      this.options.logger?.warn(
+        `Agent DWS event stream failed account=${account.accountId}: ${message}; failures=${retry.failures} `
+        + `nextAttemptAt=${new Date(retry.nextAttemptAt).toISOString()}`
+        + (retry.circuitOpenUntil ? ` circuitOpenUntil=${new Date(retry.circuitOpenUntil).toISOString()}` : ''),
+      );
     } finally {
       clearInterval(heartbeat);
     }
+  }
+
+  getRetrySnapshot(): Record<string, DwsRetryState> {
+    return Object.fromEntries([...this.retryByAccount.entries()].map(([accountId, state]) => [accountId, { ...state }]));
+  }
+
+  private recordFailure(accountId: string, message: string): DwsRetryState {
+    const failures = (this.retryByAccount.get(accountId)?.failures ?? 0) + 1;
+    const delayMs = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.max(0, failures - 1));
+    const now = this.now();
+    const circuitOpenUntil = failures >= CIRCUIT_FAILURE_THRESHOLD ? now + CIRCUIT_OPEN_MS : undefined;
+    const state: DwsRetryState = {
+      failures,
+      nextAttemptAt: circuitOpenUntil ?? now + delayMs,
+      ...(circuitOpenUntil ? { circuitOpenUntil } : {}),
+      lastError: message,
+    };
+    this.retryByAccount.set(accountId, state);
+    return state;
+  }
+
+  private now(): number {
+    return this.options.now?.() ?? Date.now();
   }
 }
 

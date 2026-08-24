@@ -1,29 +1,31 @@
+import { addUsage, zeroUsage, type SandboxResourceUsage } from './sandboxCapacity.js';
+
 export class CapacityReservations {
   private gate: Promise<void> = Promise.resolve();
-  private readonly names = new Set<string>();
+  private readonly reservations = new Map<string, SandboxResourceUsage>();
 
-  async reserve(name: string, check: () => Promise<void>): Promise<void> {
+  async reserve(name: string, usage: SandboxResourceUsage, check: () => Promise<void>): Promise<void> {
     let unlock!: () => void;
     const predecessor = this.gate;
     this.gate = new Promise<void>((resolve) => { unlock = resolve; });
     await predecessor;
     try {
       await check();
-      this.names.add(name);
+      this.reservations.set(name, usage);
     } finally {
       unlock();
     }
   }
 
   release(name: string): void {
-    this.names.delete(name);
+    this.reservations.delete(name);
   }
 
-  occupiedCount(activeNames: Set<string>, currentName: string): number {
-    let pending = 0;
-    for (const name of this.names) {
-      if (name !== currentName && !activeNames.has(name)) pending += 1;
+  pendingUsage(existingNames: Set<string>, currentName: string): SandboxResourceUsage {
+    let pending = zeroUsage();
+    for (const [name, usage] of this.reservations) {
+      if (name !== currentName && !existingNames.has(name)) pending = addUsage(pending, usage);
     }
-    return activeNames.size + pending;
+    return pending;
   }
 }

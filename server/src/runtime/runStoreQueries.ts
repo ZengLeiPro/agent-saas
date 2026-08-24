@@ -1,6 +1,6 @@
 import { cancelActiveRunsByUser } from './runTerminalLifecycle.js';
 import { markRunStatusIfCurrent } from './runStatusCas.js';
-import type { ActiveRunCounts, LatestResponseSessionState, ListBackgroundTasksOptions, PgPool, ResponseSessionStatePatch, RunRecord, RunStatus } from './runStoreTypes.js';
+import type { ActiveRunCounts, LatestResponseSessionState, ListBackgroundTasksOptions, PgPool, ResponseSessionStatePatch, RunLeaseAdmission, RunRecord, RunStatus } from './runStoreTypes.js';
 import { normalizeRunRecord, parseCount } from './runStoreRecordHelpers.js';
 
 export class PgRunStoreQueries {
@@ -417,6 +417,7 @@ export class PgRunStoreQueries {
     leaseMs: number,
     now = new Date(),
     maxConcurrentRuns?: number,
+    admission?: RunLeaseAdmission,
   ): Promise<RunRecord | null> {
     if (maxConcurrentRuns !== undefined && (!Number.isInteger(maxConcurrentRuns) || maxConcurrentRuns < 1)) {
       throw new Error('maxConcurrentRuns must be a positive integer');
@@ -436,7 +437,10 @@ export class PgRunStoreQueries {
           FROM ${this.runsTable}
           WHERE status = 'running' AND lease_expires_at > $1::timestamptz
         `, [nowIso]);
-        if (parseCount(countResult.rows[0]?.active_count) >= maxConcurrentRuns) {
+        const reserved = admission?.foreground
+          ? 0
+          : Math.min(Math.max(0, admission?.foregroundReservedRuns ?? 0), Math.max(0, maxConcurrentRuns - 1));
+        if (parseCount(countResult.rows[0]?.active_count) >= maxConcurrentRuns - reserved) {
           await client.query('ROLLBACK');
           return null;
         }

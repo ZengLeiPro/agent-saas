@@ -113,6 +113,7 @@ export class FeishuAuthKeepaliveService {
     scanIntervalMs?: number;
     initialDelayMs?: number;
     maxChecksPerRun?: number;
+    isExecutionEnabled?: () => boolean | Promise<boolean>;
     logger?: { info(message: string): void; warn(message: string): void };
   }) {
     this.scanIntervalMs = options.scanIntervalMs ?? DEFAULT_SCAN_INTERVAL_MS;
@@ -143,6 +144,7 @@ export class FeishuAuthKeepaliveService {
 
   async runOnce(now = new Date()): Promise<void> {
     if (this.running || this.stopped) return;
+    if (this.options.isExecutionEnabled && !await this.options.isExecutionEnabled()) return;
     this.running = true;
     try {
       for (let index = 0; index < this.maxChecksPerRun && !this.stopped; index += 1) {

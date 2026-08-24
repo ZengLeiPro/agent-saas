@@ -37,6 +37,10 @@ FORBIDDEN = {
 RUNTIME_CONFIG_FIELDS = {
     'ACS_SANDBOX_MAX_RUNNING': 'maxRunningSandboxes',
     'ACS_SANDBOX_WARN_RUNNING': 'warnRunningSandboxes',
+    'ACS_SANDBOX_MAX_ALLOCATED_CPU_MILLICORES': 'maxAllocatedCpuMillicores',
+    'ACS_SANDBOX_WARN_ALLOCATED_CPU_MILLICORES': 'warnAllocatedCpuMillicores',
+    'ACS_SANDBOX_MAX_ALLOCATED_MEMORY_MIB': 'maxAllocatedMemoryMib',
+    'ACS_SANDBOX_WARN_ALLOCATED_MEMORY_MIB': 'warnAllocatedMemoryMib',
     'ACS_ORCH_DRAIN_DEADLINE_MS': 'drainDeadlineMs',
 }
 
@@ -66,13 +70,21 @@ def desired_runtime_values(desired: dict[str, str]) -> dict[str, int]:
         if runtime_key == 'drainDeadlineMs':
             if value < 1_000 or value > 24 * 60 * 60_000:
                 raise ValueError(f'{env_key} 必须在 1000..86400000 之间')
-        elif value < 0 or value > 1_000:
-            raise ValueError(f'{env_key} 必须在 0..1000 之间')
+        elif value < 0 or value > (10_000_000 if 'ALLOCATED' in env_key else 1_000):
+            raise ValueError(f'{env_key} 超出允许范围')
         values[runtime_key] = value
     maximum = values.get('maxRunningSandboxes')
     warning = values.get('warnRunningSandboxes')
     if maximum is not None and maximum > 0 and warning is not None and warning > maximum:
         raise ValueError('ACS_SANDBOX_WARN_RUNNING 不得大于 ACS_SANDBOX_MAX_RUNNING')
+    for maximum_key, warning_key in (
+        ('maxAllocatedCpuMillicores', 'warnAllocatedCpuMillicores'),
+        ('maxAllocatedMemoryMib', 'warnAllocatedMemoryMib'),
+    ):
+        maximum = values.get(maximum_key)
+        warning = values.get(warning_key)
+        if maximum is not None and maximum > 0 and warning is not None and warning > maximum:
+            raise ValueError(f'{warning_key} 不得大于 {maximum_key}')
     return values
 
 

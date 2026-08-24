@@ -184,6 +184,11 @@ export interface SteeringApplyResult {
   events: PlatformEvent[];
 }
 
+export interface RunLeaseAdmission {
+  foreground: boolean;
+  foregroundReservedRuns: number;
+}
+
 export interface RunStore {
   init?(): Promise<void>;
   upsertPending(input: UpsertRunInput): Promise<RunRecord>;
@@ -290,6 +295,7 @@ export interface RunStore {
     leaseMs: number,
     now?: Date,
     maxConcurrentRuns?: number,
+    admission?: RunLeaseAdmission,
   ): Promise<RunRecord | null>;
   renewLease?(runId: string, workerId: string, leaseMs: number, now?: Date): Promise<RunRecord | null>;
   releaseLease?(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string): Promise<RunRecord | null>;

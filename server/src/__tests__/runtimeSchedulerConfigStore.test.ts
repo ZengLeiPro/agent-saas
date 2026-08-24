@@ -10,6 +10,8 @@ class FakePool {
   maxConcurrentRuns: number | null = null;
   updatedAt = new Date('2026-07-27T14:00:00.000Z');
   updatedBy: string | null = null;
+  executionEnabled = true;
+  maintenanceReason: string | null = null;
   queries: string[] = [];
   released = 0;
 
@@ -32,8 +34,14 @@ class FakePool {
   async query<T>(sql: string, params: unknown[] = []): Promise<{ rows: T[] }> {
     this.queries.push(sql);
     if (sql.includes('UPDATE')) {
-      this.maxConcurrentRuns = Number(params[0]);
-      this.updatedBy = String(params[1]);
+      if (sql.includes('SET execution_enabled')) {
+        this.executionEnabled = Boolean(params[0]);
+        this.maintenanceReason = params[1] ? String(params[1]) : null;
+        this.updatedBy = String(params[2]);
+      } else {
+        this.maxConcurrentRuns = Number(params[0]);
+        this.updatedBy = String(params[1]);
+      }
       this.updatedAt = new Date('2026-07-27T14:30:00.000Z');
     }
     if (sql.includes('SELECT') || sql.includes('RETURNING')) {
@@ -41,6 +49,8 @@ class FakePool {
       return {
         rows: [{
           max_concurrent_runs: this.maxConcurrentRuns,
+          execution_enabled: this.executionEnabled,
+          maintenance_reason: this.maintenanceReason,
           updated_at: this.updatedAt,
           updated_by: this.updatedBy,
         }] as T[],
@@ -79,6 +89,7 @@ describe('PgRuntimeSchedulerConfigStore', () => {
 
     await expect(store.update(24, 'admin')).resolves.toEqual({
       maxConcurrentRuns: 24,
+      executionEnabled: true,
       updatedAt: '2026-07-27T14:30:00.000Z',
       updatedBy: 'admin',
     });
@@ -87,6 +98,23 @@ describe('PgRuntimeSchedulerConfigStore', () => {
 
     pool.maxConcurrentRuns = 33;
     await expect(store.get()).rejects.toThrow('PG 中的 maxConcurrentRuns 33 超过部署安全上限 32');
+  });
+
+  it('persists the shared execution maintenance switch', async () => {
+    const pool = new FakePool();
+    const store = new PgRuntimeSchedulerConfigStore(pool as unknown as pg.Pool);
+    await store.init(16);
+
+    await expect(store.updateExecutionMaintenance(false, 'ACS emergency maintenance', 'admin')).resolves.toMatchObject({
+      executionEnabled: false,
+      maintenanceReason: 'ACS emergency maintenance',
+      updatedBy: 'admin',
+    });
+    await expect(store.updateExecutionMaintenance(true, undefined, 'admin')).resolves.toMatchObject({
+      executionEnabled: true,
+      updatedBy: 'admin',
+    });
+    await expect(store.get()).resolves.not.toHaveProperty('maintenanceReason');
   });
 
   it('dual 只钳制有效值，不覆盖 PG 中的期望值', () => {

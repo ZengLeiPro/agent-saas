@@ -34,8 +34,11 @@ export interface RuntimeSchedulerOptions {
   pollIntervalMs?: number;
   leaseMs?: number;
   maxConcurrentRuns?: number;
+  foregroundReservedRuns?: number;
+  executionEnabled?: boolean;
   /** 从共享配置源刷新顶层并发；失败时保留当前值，不阻断调度。 */
   resolveMaxConcurrentRuns?: () => Promise<number>;
+  resolveExecutionEnabled?: () => Promise<boolean>;
   /** 仅按真实资源压力暂停领取新 run；不区分用户、租户或任务类型。 */
   admissionGuard?: RuntimeAdmissionGuard;
   approvalTimeoutMs?: number;
@@ -60,6 +63,8 @@ export interface RuntimeSchedulerOptions {
 
 export interface RuntimeSchedulerPerformanceSnapshot {
   maxConcurrentRuns: number;
+  foregroundReservedRuns: number;
+  executionEnabled: boolean;
   inFlightRuns: number;
   inFlightBackgroundRuns: number;
   oldestInFlightAgeMs: number;
@@ -74,6 +79,8 @@ export class RuntimeScheduler {
   private readonly pollIntervalMs: number;
   private readonly leaseMs: number;
   private maxConcurrentRuns: number;
+  private readonly foregroundReservedRuns: number;
+  private executionEnabled: boolean;
   private readonly approvalTimeoutMs: number;
   private timer: NodeJS.Timeout | null = null;
   private stopped = true;
@@ -93,16 +100,22 @@ export class RuntimeScheduler {
       1,
       Math.floor(options.maxConcurrentRuns ?? DEFAULT_MAX_CONCURRENT_RUNS),
     );
+    this.foregroundReservedRuns = Math.max(0, Math.floor(options.foregroundReservedRuns ?? 10));
+    this.executionEnabled = options.executionEnabled ?? true;
     this.approvalTimeoutMs = Math.max(0, Math.floor(options.approvalTimeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS));
   }
 
   getCapacitySnapshot(): {
     maxConcurrentRuns: number;
+    foregroundReservedRuns: number;
+    executionEnabled: boolean;
     inFlightRuns: number;
     inFlightBackgroundRuns: number;
   } {
     return {
       maxConcurrentRuns: this.maxConcurrentRuns,
+      foregroundReservedRuns: Math.min(this.foregroundReservedRuns, Math.max(0, this.maxConcurrentRuns - 1)),
+      executionEnabled: this.executionEnabled,
       inFlightRuns: this.inFlightRuns.size,
       inFlightBackgroundRuns: [...this.inFlightRunRecords.values()]
         .filter((record) => isBackgroundTaskRun(record)).length,
@@ -117,6 +130,8 @@ export class RuntimeScheduler {
     });
     return {
       maxConcurrentRuns: this.maxConcurrentRuns,
+      foregroundReservedRuns: Math.min(this.foregroundReservedRuns, Math.max(0, this.maxConcurrentRuns - 1)),
+      executionEnabled: this.executionEnabled,
       inFlightRuns: this.inFlightRuns.size,
       inFlightBackgroundRuns: records.filter((record) => isBackgroundTaskRun(record)).length,
       oldestInFlightAgeMs: ages.length > 0 ? Math.max(...ages) : 0,
@@ -135,6 +150,13 @@ export class RuntimeScheduler {
     this.maxConcurrentRuns = value;
     this.options.logger?.info(`Runtime scheduler concurrency updated: maxConcurrentRuns=${value}`);
     this.scheduleImmediateTick('capacity-updated');
+  }
+
+  updateExecutionEnabled(enabled: boolean): void {
+    if (enabled === this.executionEnabled) return;
+    this.executionEnabled = enabled;
+    this.options.logger?.info(`Runtime scheduler execution updated: enabled=${enabled}`);
+    if (enabled) this.scheduleImmediateTick('maintenance-ended');
   }
 
   async enqueue(
@@ -265,6 +287,16 @@ export class RuntimeScheduler {
         const message = err instanceof Error ? err.message : String(err);
         this.options.logger?.warn(`Runtime scheduler capacity refresh failed; keeping current value: ${message}`);
       }
+
+      try {
+        const executionEnabled = await this.options.resolveExecutionEnabled?.();
+        if (executionEnabled !== undefined) this.executionEnabled = executionEnabled;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.options.logger?.warn(`Runtime scheduler maintenance refresh failed; keeping current value: ${message}`);
+      }
+
+      if (!this.executionEnabled) return;
 
       if (this.options.admissionGuard && !this.options.admissionGuard.canAcquire()) return;
 
@@ -441,6 +473,10 @@ export class RuntimeScheduler {
   }
 
   private async tryHandle(record: RunRecord): Promise<void> {
+    if (!this.executionEnabled) {
+      this.deferRun(record.runId);
+      return;
+    }
     if (this.options.admissionGuard && !this.options.admissionGuard.canAcquire()) {
       this.deferRun(record.runId);
       return;
@@ -461,6 +497,10 @@ export class RuntimeScheduler {
       this.leaseMs,
       new Date(),
       this.maxConcurrentRuns,
+      {
+        foreground: classifyRun(record) === 'foreground',
+        foregroundReservedRuns: this.foregroundReservedRuns,
+      },
     );
     if (!acquired) {
       this.deferRun(record.runId);
@@ -569,6 +609,7 @@ function classifyRun(record: RunRecord): string {
   const toolProfile = record.metadata?.toolProfile;
   if (toolProfile === 'memory_poll' || toolProfile === 'memory_consolidate') return String(toolProfile);
   if (record.channel === 'cron') return 'cron';
+  if (record.metadata?.taskboardExecution === true || record.metadata?.taskboardContinuation === true) return 'taskboard';
   return 'foreground';
 }
 

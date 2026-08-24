@@ -389,16 +389,28 @@ fi
 
 EXPECTED_MAX_RUNNING="$(grep '^ACS_SANDBOX_MAX_RUNNING=' "$DESIRED_ENV" | head -n1 | cut -d= -f2-)"
 EXPECTED_WARN_RUNNING="$(grep '^ACS_SANDBOX_WARN_RUNNING=' "$DESIRED_ENV" | head -n1 | cut -d= -f2-)"
-if ! EXPECTED_MAX_RUNNING="$EXPECTED_MAX_RUNNING" EXPECTED_WARN_RUNNING="$EXPECTED_WARN_RUNNING" node <<'NODE'
+EXPECTED_MAX_CPU="$(grep '^ACS_SANDBOX_MAX_ALLOCATED_CPU_MILLICORES=' "$DESIRED_ENV" | head -n1 | cut -d= -f2-)"
+EXPECTED_WARN_CPU="$(grep '^ACS_SANDBOX_WARN_ALLOCATED_CPU_MILLICORES=' "$DESIRED_ENV" | head -n1 | cut -d= -f2-)"
+EXPECTED_MAX_MEMORY="$(grep '^ACS_SANDBOX_MAX_ALLOCATED_MEMORY_MIB=' "$DESIRED_ENV" | head -n1 | cut -d= -f2-)"
+EXPECTED_WARN_MEMORY="$(grep '^ACS_SANDBOX_WARN_ALLOCATED_MEMORY_MIB=' "$DESIRED_ENV" | head -n1 | cut -d= -f2-)"
+if ! EXPECTED_MAX_RUNNING="$EXPECTED_MAX_RUNNING" EXPECTED_WARN_RUNNING="$EXPECTED_WARN_RUNNING" \
+  EXPECTED_MAX_CPU="$EXPECTED_MAX_CPU" EXPECTED_WARN_CPU="$EXPECTED_WARN_CPU" \
+  EXPECTED_MAX_MEMORY="$EXPECTED_MAX_MEMORY" EXPECTED_WARN_MEMORY="$EXPECTED_WARN_MEMORY" node <<'NODE'
 const fs = require('node:fs');
 const health = JSON.parse(fs.readFileSync('/tmp/acs-health.json', 'utf8'));
 const actual = health.runtimeConfig || {};
-const expectedMax = Number(process.env.EXPECTED_MAX_RUNNING);
-const expectedWarn = Number(process.env.EXPECTED_WARN_RUNNING);
-if (actual.maxRunningSandboxes !== expectedMax || actual.warnRunningSandboxes !== expectedWarn) {
+const expected = {
+  maxRunningSandboxes: Number(process.env.EXPECTED_MAX_RUNNING),
+  warnRunningSandboxes: Number(process.env.EXPECTED_WARN_RUNNING),
+  maxAllocatedCpuMillicores: Number(process.env.EXPECTED_MAX_CPU),
+  warnAllocatedCpuMillicores: Number(process.env.EXPECTED_WARN_CPU),
+  maxAllocatedMemoryMib: Number(process.env.EXPECTED_MAX_MEMORY),
+  warnAllocatedMemoryMib: Number(process.env.EXPECTED_WARN_MEMORY),
+};
+const mismatch = Object.entries(expected).filter(([key, value]) => actual[key] !== value);
+if (mismatch.length > 0) {
   console.error(
-    `runtime config mismatch: expected=${expectedMax}/${expectedWarn} `
-    + `actual=${actual.maxRunningSandboxes}/${actual.warnRunningSandboxes}`,
+    `runtime config mismatch: ${mismatch.map(([key, value]) => `${key} expected=${value} actual=${actual[key]}`).join(', ')}`,
   );
   process.exit(1);
 }
@@ -414,7 +426,7 @@ echo "runtime config gate passed: max=$EXPECTED_MAX_RUNNING warn=$EXPECTED_WARN_
 
 SMOKE_OK=true
 if ! curl -fsS -m 420 -X POST http://127.0.0.1:3400/provision \
-  -H "$AUTH_HEADER" -H 'Content-Type: application/json' \
+  -H "$AUTH_HEADER" -H 'X-ACS-Maintenance-Bypass: deploy-smoke-v1' -H 'Content-Type: application/json' \
   -d "{\"workspaceId\":\"${SMOKE_WS}\",\"recipe\":{\"workspaceId\":\"${SMOKE_WS}\",\"sessionId\":\"${SMOKE_SESSION}\",\"mountSubPath\":\"${SMOKE_MOUNT}\"}}" \
   >/tmp/acs-provision.json; then
   SMOKE_OK=false
@@ -425,7 +437,7 @@ fi
 if [ "$SMOKE_OK" = "true" ]; then
   printf '%s' "{\"toolName\":\"Shell\",\"input\":{\"command\":\"set -eu; test \\\"\$(id -u)\\\" = 501; test \\\"\$(pwd)\\\" = /workspace; command -v aliyun; aliyun version; command -v gh; gh --version; command -v ntn; ntn --version; command -v gws; gws --version; command -v dws; dws --version; command -v lark-cli; lark-cli --version; echo ACR_BUILD_DEPLOY_SMOKE_OK\",\"timeoutMs\":120000},\"context\":{\"workspace\":{\"id\":\"${SMOKE_WS}\",\"sessionId\":\"${SMOKE_SESSION}\",\"mountSubPath\":\"${SMOKE_MOUNT}\"}}}" >/tmp/acs-execute-payload.json
   if ! curl -fsS -m 420 -X POST http://127.0.0.1:3400/execute \
-    -H "$AUTH_HEADER" -H 'Content-Type: application/json' \
+    -H "$AUTH_HEADER" -H 'X-ACS-Maintenance-Bypass: deploy-smoke-v1' -H 'Content-Type: application/json' \
     --data-binary @/tmp/acs-execute-payload.json >/tmp/acs-execute.json; then
     SMOKE_OK=false
   elif ! grep -F 'ACR_BUILD_DEPLOY_SMOKE_OK' /tmp/acs-execute.json >/dev/null; then

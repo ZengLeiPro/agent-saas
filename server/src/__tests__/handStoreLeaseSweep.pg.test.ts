@@ -149,7 +149,7 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
     expect(Date.parse(revived!.leaseExpiresAt!)).toBeGreaterThan(Date.now());
   });
 
-  it('unhealthy 恢复队列优先活跃会话并排除 waiting_user', async () => {
+  it('unhealthy 恢复队列只包含活跃会话并排除历史与 waiting_user', async () => {
     await seed('history-new', { status: 'unhealthy', sessionId: 'session-history' });
     await seed('active-old', { status: 'unhealthy', sessionId: 'session-active', updatedAt: '2026-01-01T00:00:00.000Z' });
     await seed('waiting-new', { status: 'unhealthy', sessionId: 'session-waiting' });
@@ -160,8 +160,6 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
     );
 
     const ids = (await store.listByType('server-remote', { status: 'unhealthy' })).map((hand) => hand.handId);
-    expect(ids[0]).toBe('active-old');
-    expect(ids).toContain('history-new');
-    expect(ids).not.toContain('waiting-new');
+    expect(ids).toEqual(['active-old']);
   });
 });

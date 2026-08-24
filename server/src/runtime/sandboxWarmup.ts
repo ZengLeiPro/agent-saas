@@ -38,6 +38,7 @@ export interface SandboxWarmupServiceOptions {
   throttleMs?: number;
   /** warmup HTTP 超时，默认 5s（orchestrator 秒回 202，超时即视为失败记日志）。 */
   requestTimeoutMs?: number;
+  isExecutionEnabled?: () => boolean | Promise<boolean>;
 }
 
 const DEFAULT_THROTTLE_MS = 60_000;
@@ -71,6 +72,7 @@ export class SandboxWarmupService {
 
   /** 供测试与需要等待结果的调用方使用；正常业务路径用 fireForSession。 */
   async fireForSessionAsync(sessionId: string): Promise<'fired' | 'skipped'> {
+    if (this.options.isExecutionEnabled && !await this.options.isExecutionEnabled()) return 'skipped';
     const record = await this.options.sessionCatalog.get(sessionId);
     if (!record) return 'skipped';
     if (record.kind === 'subagent') return 'skipped';

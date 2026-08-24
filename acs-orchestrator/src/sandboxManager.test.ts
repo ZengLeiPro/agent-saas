@@ -609,7 +609,7 @@ describe('SandboxManager', () => {
     expect(appliedSandbox).toBe(true);
   });
 
-  it('rejects creating a new Sandbox when running quota is exhausted', async () => {
+  it('rejects creating a new Sandbox when allocated quota is exhausted', async () => {
     const kubectl = {
       async run(args: string[]): Promise<KubectlResult> {
         if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
@@ -643,12 +643,11 @@ describe('SandboxManager', () => {
     }, kubectl, noopLogger);
 
     await expect(manager.ensureRunning({ workspaceId: 'ws_kaiyan__test', sessionId: 'session-123' }))
-      .rejects.toThrow(/running quota exceeded/);
+      .rejects.toThrow(/capacity exhausted/);
   });
 
-  it('reclaims idle Sandboxes before enforcing running quota', async () => {
+  it('evicts the oldest safe Paused Sandbox before enforcing allocated quota', async () => {
     const calls: string[][] = [];
-    let idlePaused = false;
     let created = false;
     let applied: Record<string, unknown> | undefined;
     const kubectl = {
@@ -665,7 +664,7 @@ describe('SandboxManager', () => {
                     'agent-saas.kaiyan.net/last-active-at': '2026-06-27T00:00:00.000Z',
                   },
                 },
-                status: { phase: idlePaused ? 'Paused' : 'Running' },
+                status: { phase: 'Paused' },
               }],
             }),
             stderr: '',
@@ -677,10 +676,7 @@ describe('SandboxManager', () => {
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }
-        if (args[0] === 'patch') {
-          if (args[1] === 'sandbox/as-idle') idlePaused = true;
-          return { stdout: '', stderr: '', exitCode: 0, signal: null };
-        }
+        if (args[0] === 'patch' || args[0] === 'delete') return { stdout: '', stderr: '', exitCode: 0, signal: null };
         if (args[0] === 'apply') {
           applied = JSON.parse(options.input ?? '{}') as Record<string, unknown>;
           created = true;
@@ -700,13 +696,11 @@ describe('SandboxManager', () => {
     await manager.ensureRunning({ workspaceId: 'ws_kaiyan__test', sessionId: 'session-123' });
 
     expect(applied).toBeTruthy();
-    expect(calls.some((args) => args[0] === 'patch' && args[1] === 'sandbox/as-idle')).toBe(true);
+    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-idle')).toBe(true);
   });
 
-  it('force-pauses the oldest non-busy Sandbox when quota is still exhausted', async () => {
+  it('never force-pauses a Running Sandbox to make room', async () => {
     const calls: string[][] = [];
-    let oldPaused = false;
-    let created = false;
     const kubectl = {
       async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
         calls.push(args);
@@ -722,7 +716,7 @@ describe('SandboxManager', () => {
                       'agent-saas.kaiyan.net/last-active-at': '2099-06-27T00:01:00.000Z',
                     },
                   },
-                  status: { phase: oldPaused ? 'Paused' : 'Running' },
+                  status: { phase: 'Running' },
                 },
                 {
                   metadata: {
@@ -742,20 +736,10 @@ describe('SandboxManager', () => {
           };
         }
         if (args[0] === 'get') {
-          if (args[1] === 'sandbox/as-old') return { stdout: JSON.stringify({ status: { phase: oldPaused ? 'Paused' : 'Running' } }), stderr: '', exitCode: 0, signal: null };
           if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
-          if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
-          return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
+          return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
         }
-        if (args[0] === 'patch') {
-          if (args[1] === 'sandbox/as-old') oldPaused = true;
-          return { stdout: '', stderr: '', exitCode: 0, signal: null };
-        }
-        if (args[0] === 'apply') {
-          JSON.parse(options.input ?? '{}') as Record<string, unknown>;
-          created = true;
-          return { stdout: '', stderr: '', exitCode: 0, signal: null };
-        }
+        if (args[0] === 'patch' || args[0] === 'delete' || args[0] === 'apply') return { stdout: '', stderr: '', exitCode: 0, signal: null };
         throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
       },
     } as unknown as Kubectl;
@@ -767,12 +751,13 @@ describe('SandboxManager', () => {
       sandboxTtlMs: 0,
     }, kubectl, noopLogger);
 
-    await manager.ensureRunning(
+    await expect(manager.ensureRunning(
       { workspaceId: 'ws_kaiyan__test', sessionId: 'session-123' },
       { busySandboxNames: new Set(['as-busy']) },
-    );
+    )).rejects.toThrow(/capacity exhausted/);
 
-    expect(calls.some((args) => args[0] === 'patch' && args[1] === 'sandbox/as-old')).toBe(true);
+    expect(calls.some((args) => args[0] === 'patch' && args[1] === 'sandbox/as-old')).toBe(false);
+    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-old')).toBe(false);
     expect(calls.some((args) => args[0] === 'patch' && args[1] === 'sandbox/as-busy')).toBe(false);
   });
 

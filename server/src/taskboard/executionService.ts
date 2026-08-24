@@ -562,6 +562,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
           }
         }
         const activated = await this.options.scheduler.activateCreatedRun(run.runId);
+        if (!activated) throw new Error(`Taskboard run activation lost: ${run.runId}`);
         assertDispatchedRun(activated, dispatch, canonical.run);
       }
       const marked = await this.options.store.markExecutionDispatchSucceeded(dispatch.runId, dispatch.leaseId);

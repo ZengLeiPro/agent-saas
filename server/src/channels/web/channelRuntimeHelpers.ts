@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import { Semaphore } from '../../runtime/fileReadCoalesce.js';
 import type { InteractionResponse } from '../../agent/types.js';
@@ -17,11 +18,17 @@ export const INTERACTIVE_PERMISSION_TOOLS = new Set([
 export const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'orphaned']);
 
 type PersistedInteractionType = 'ask_user' | 'approval';
-type PersistedInteractionClaimMetadata = {
+/** A crashed staged claimant may be recovered after this bounded lease. */
+export const PERSISTED_INTERACTION_CLAIM_LEASE_MS = 30_000;
+export type PersistedInteractionClaimMetadata = {
   persistedInteractionResumeClaim: {
     sessionId: string;
     interactionId: string;
     interactionType: PersistedInteractionType;
+    /** Per-attempt token prevents a stale claimant rolling back a newer retry. */
+    claimId: string;
+    /** ISO timestamp used to distinguish a live claimant from a crashed one. */
+    claimedAt: string;
   };
   resumeInteraction?: { interactionId: string; response: InteractionResponse };
   resumeApproval?: { approvalId: string; response: InteractionResponse };
@@ -34,7 +41,7 @@ export type PersistedInteractionResumeClaim =
 
 /** Atomically fence a persisted interaction resume across web workers. */
 export async function claimPersistedInteractionResume(input: {
-  runStore: Pick<RunStore, 'markStatusIfCurrent'>;
+  runStore: Pick<RunStore, 'claimPersistedInteractionResume'>;
   runId: string;
   expectedStatus: RunStatus;
   reason: string;
@@ -49,6 +56,8 @@ export async function claimPersistedInteractionResume(input: {
       sessionId: input.sessionId,
       interactionId: input.interactionId,
       interactionType: input.interactionType,
+      claimId: randomUUID(),
+      claimedAt: new Date().toISOString(),
     },
     ...(input.interactionType === 'ask_user'
       ? { resumeInteraction: { interactionId: input.interactionId, response: input.response } }
@@ -61,13 +70,12 @@ export async function claimPersistedInteractionResume(input: {
       : { resumeApprovalConsumedAt: null, resumeApprovalConsumedId: null }),
     ...metadata,
   };
-  const markStatusIfCurrent = input.runStore.markStatusIfCurrent;
-  if (!markStatusIfCurrent) return { outcome: 'unsupported' };
-  const run = await markStatusIfCurrent.call(
+  const claimPersistedInteractionResume = input.runStore.claimPersistedInteractionResume;
+  if (!claimPersistedInteractionResume) return { outcome: 'unsupported' };
+  const run = await claimPersistedInteractionResume.call(
     input.runStore,
     input.runId,
     [input.expectedStatus],
-    'pending',
     input.reason,
     metadataPatch,
   );
@@ -85,6 +93,23 @@ export function hasPersistedInteractionResumeClaim(
     && (claim as Record<string, unknown>).sessionId === sessionId
     && (claim as Record<string, unknown>).interactionId === interactionId,
   );
+}
+
+export function isPersistedInteractionClaim(value: unknown, sessionId: string, interactionId: string): value is PersistedInteractionClaimMetadata['persistedInteractionResumeClaim'] {
+  return Boolean(value && typeof value === 'object' && typeof (value as Record<string, unknown>).claimId === 'string' && (value as Record<string, unknown>).sessionId === sessionId && (value as Record<string, unknown>).interactionId === interactionId);
+}
+
+export function claimsMatch(actual: unknown, expected: PersistedInteractionClaimMetadata['persistedInteractionResumeClaim']): boolean {
+  return isPersistedInteractionClaim(actual, expected.sessionId, expected.interactionId)
+    && (actual as Record<string, unknown>).claimId === expected.claimId
+    && (actual as Record<string, unknown>).claimedAt === expected.claimedAt;
+}
+
+export function isPersistedInteractionClaimExpired(claim: PersistedInteractionClaimMetadata['persistedInteractionResumeClaim']): boolean {
+  const claimedAt = (claim as Record<string, unknown>).claimedAt;
+  if (typeof claimedAt !== 'string') return true; // pre-lease claims are recoverable legacy state
+  const claimedAtMs = Date.parse(claimedAt);
+  return !Number.isFinite(claimedAtMs) || Date.now() - claimedAtMs >= PERSISTED_INTERACTION_CLAIM_LEASE_MS;
 }
 
 /** 语音转写前缀标记（STT 注入 / 门禁判定前剥离共用） */

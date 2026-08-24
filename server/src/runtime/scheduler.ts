@@ -185,11 +185,27 @@ export class RuntimeScheduler {
    * Makes a create-only staged pending run visible to recovery/lease scans.
    * The RunStore CAS must return the current record when another worker already advanced it.
    */
-  async activateCreatedRun(runId: string): Promise<RunRecord> {
-    const activateStagedRun = this.options.runStore.activateStagedRun?.bind(this.options.runStore);
-    if (!activateStagedRun) throw new Error('RunStore staged activation unavailable');
-    const activated = await activateStagedRun(runId);
-    if (!activated) throw new Error(`Runtime Run not found during activation: ${runId}`);
+  async activateCreatedRun(
+    runId: string,
+    interactionClaim?: Record<string, unknown>,
+  ): Promise<RunRecord | null> {
+    let activated: RunRecord | null;
+    if (interactionClaim) {
+      const activate = this.options.runStore.activatePersistedInteractionResume?.bind(this.options.runStore);
+      if (!activate) throw new Error('RunStore staged interaction activation unavailable');
+      activated = await activate(runId, interactionClaim);
+    } else {
+      const activate = this.options.runStore.activateStagedRun?.bind(this.options.runStore);
+      if (!activate) throw new Error('RunStore staged activation unavailable');
+      activated = await activate(runId);
+    }
+    // Interaction activation is strict: null means another claimant owns (or
+    // rolled back) the staged record. Do not accidentally schedule a generic
+    // Taskboard staged run in that case.
+    if (!activated) {
+      if (interactionClaim) return null;
+      throw new Error(`Runtime Run not found during activation: ${runId}`);
+    }
     if (
       activated.status === 'pending'
       && activated.metadata?.[SCHEDULER_STATE_METADATA_KEY] === SCHEDULER_STATE_READY

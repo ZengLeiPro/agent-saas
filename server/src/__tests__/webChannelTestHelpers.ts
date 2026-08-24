@@ -58,6 +58,77 @@ export class MemoryRunStore implements RunStore {
     return updated;
   }
 
+  async claimPersistedInteractionResume(
+    runId: string,
+    expectedStatuses: readonly RunStatus[],
+    reason: string,
+    metadataPatch: Record<string, unknown>,
+  ): Promise<RunRecord | null> {
+    const record = this.records.get(runId);
+    if (!record || !expectedStatuses.includes(record.status)) return null;
+    const updated = {
+      ...record,
+      status: 'pending' as const,
+      statusReason: reason,
+      workerId: undefined,
+      leaseExpiresAt: undefined,
+      updatedAt: new Date().toISOString(),
+      metadata: { ...record.metadata, ...metadataPatch, schedulerState: 'staged' },
+    };
+    this.records.set(runId, updated);
+    return updated;
+  }
+
+  async activatePersistedInteractionResume(runId: string, claim: Record<string, unknown>): Promise<RunRecord | null> {
+    const record = this.records.get(runId);
+    if (
+      !record || record.status !== 'pending' || record.metadata?.schedulerState !== 'staged'
+      || !claimMatches(record.metadata?.persistedInteractionResumeClaim, claim)
+    ) return null;
+    const updated = {
+      ...record,
+      updatedAt: new Date().toISOString(),
+      metadata: { ...record.metadata, schedulerState: 'ready' },
+    };
+    this.records.set(runId, updated);
+    return updated;
+  }
+
+  async rollbackPersistedInteractionResume(
+    runId: string,
+    claim: Record<string, unknown>,
+    waitingStatus: 'waiting_user' | 'waiting_approval',
+    reason?: string,
+  ): Promise<RunRecord | null> {
+    const record = this.records.get(runId);
+    if (
+      !record || record.status !== 'pending' || record.metadata?.schedulerState !== 'staged'
+      || !claimMatches(record.metadata?.persistedInteractionResumeClaim, claim)
+    ) return null;
+    const {
+      schedulerState: _schedulerState,
+      persistedInteractionResumeClaim: _claim,
+      resumeInteraction: _resumeInteraction,
+      resumeApproval: _resumeApproval,
+      resumeInteractionConsumedAt: _resumeInteractionConsumedAt,
+      resumeInteractionConsumedId: _resumeInteractionConsumedId,
+      resumeApprovalConsumedAt: _resumeApprovalConsumedAt,
+      resumeApprovalConsumedId: _resumeApprovalConsumedId,
+      ...metadata
+    } = record.metadata ?? {};
+    const updated = {
+      ...record,
+      status: waitingStatus,
+      statusReason: reason,
+      workerId: undefined,
+      leaseExpiresAt: undefined,
+      updatedAt: new Date().toISOString(),
+      metadata,
+    };
+    this.records.set(runId, updated);
+    return updated;
+  }
+
   async markStatusIfCurrent(
     runId: string,
     expectedStatuses: readonly RunStatus[],
@@ -91,7 +162,10 @@ export class MemoryRunStore implements RunStore {
   }
 
   async listRecoverable(): Promise<RunRecord[]> {
-    return [];
+    return [...this.records.values()].filter((record) => (
+      (record.status === 'pending' || record.status === 'running')
+      && !(record.status === 'pending' && record.metadata?.schedulerState === 'staged')
+    ));
   }
 
   async getActiveBySession(sessionId: string): Promise<RunRecord | null> {
@@ -100,6 +174,11 @@ export class MemoryRunStore implements RunStore {
       && ['pending', 'running', 'waiting_approval', 'waiting_user', 'waiting_hand'].includes(record.status),
     ) ?? null;
   }
+}
+
+function claimMatches(actual: unknown, expected: Record<string, unknown>): boolean {
+  if (!actual || typeof actual !== 'object') return false;
+  return Object.entries(expected).every(([key, value]) => (actual as Record<string, unknown>)[key] === value);
 }
 
 export function wsClient(

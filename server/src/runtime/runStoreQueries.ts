@@ -94,6 +94,81 @@ export class PgRunStoreQueries {
     return this.updateSchedulerState(runId, "metadata->>'schedulerState' = 'staged'", 'ready', false);
   }
 
+  /**
+   * Interaction responses are deliberately staged before their durable event is
+   * appended. Unlike generic Taskboard staging, these transitions are fenced by
+   * the persisted interaction key (including its per-attempt claimId).
+   */
+  async claimPersistedInteractionResume(
+    runId: string,
+    expectedStatuses: readonly RunStatus[],
+    reason: string,
+    metadataPatch: Record<string, unknown>,
+  ): Promise<RunRecord | null> {
+    const now = new Date().toISOString();
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      UPDATE ${this.runsTable}
+      SET status = 'pending',
+          status_reason = $3,
+          worker_id = NULL,
+          lease_expires_at = NULL,
+          updated_at = $4,
+          metadata = jsonb_set(metadata || $5::jsonb, '{schedulerState}', '"staged"'::jsonb, true)
+      WHERE run_id = $1
+        AND status = ANY($2::text[])
+      RETURNING row_to_json(${this.runsTable}.*) AS row_json
+    `, [runId, expectedStatuses, reason, now, JSON.stringify(metadataPatch)]);
+    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+  }
+
+  async activatePersistedInteractionResume(
+    runId: string,
+    claim: Record<string, unknown>,
+  ): Promise<RunRecord | null> {
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      UPDATE ${this.runsTable}
+      SET metadata = jsonb_set(metadata, '{schedulerState}', '"ready"'::jsonb, true),
+          updated_at = clock_timestamp()
+      WHERE run_id = $1
+        AND status = 'pending'
+        AND metadata->>'schedulerState' = 'staged'
+        AND metadata->'persistedInteractionResumeClaim' @> $2::jsonb
+      RETURNING row_to_json(${this.runsTable}.*) AS row_json
+    `, [runId, JSON.stringify(claim)]);
+    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+  }
+
+  async rollbackPersistedInteractionResume(
+    runId: string,
+    claim: Record<string, unknown>,
+    waitingStatus: 'waiting_user' | 'waiting_approval',
+    reason?: string,
+  ): Promise<RunRecord | null> {
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      UPDATE ${this.runsTable}
+      SET status = $3,
+          status_reason = $4,
+          worker_id = NULL,
+          lease_expires_at = NULL,
+          updated_at = clock_timestamp(),
+          metadata = metadata
+            - 'schedulerState'
+            - 'persistedInteractionResumeClaim'
+            - 'resumeInteraction'
+            - 'resumeApproval'
+            - 'resumeInteractionConsumedAt'
+            - 'resumeInteractionConsumedId'
+            - 'resumeApprovalConsumedAt'
+            - 'resumeApprovalConsumedId'
+      WHERE run_id = $1
+        AND status = 'pending'
+        AND metadata->>'schedulerState' = 'staged'
+        AND metadata->'persistedInteractionResumeClaim' @> $2::jsonb
+      RETURNING row_to_json(${this.runsTable}.*) AS row_json
+    `, [runId, JSON.stringify(claim), waitingStatus, reason ?? null]);
+    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+  }
+
   async stagePendingRun(runId: string): Promise<RunRecord | null> {
     return this.updateSchedulerState(runId, "NOT (metadata ? 'schedulerState')", 'staged', true);
   }

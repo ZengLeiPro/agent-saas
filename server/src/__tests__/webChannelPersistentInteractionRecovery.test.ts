@@ -10,7 +10,6 @@ import type { OutboundEvent } from '../types/index.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
 import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
-import type { UpsertRunInput } from '../runtime/runStore.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { getTranscriptPath } from '../data/transcripts/index.js';
 import { AGENT_LEGACY_TRANSCRIPTS_ROOT } from '../data/transcripts/projectKey.js';
@@ -83,15 +82,16 @@ describe('WebChannel persistent interaction recovery', () => {
     await rm(join(AGENT_LEGACY_TRANSCRIPTS_ROOT, TENANT), { recursive: true, force: true });
   });
   describe('持久化交互恢复', () => {
-    function resumeRig(runStore: MemoryRunStore, tmp: string, enqueued: UpsertRunInput[]): Rig {
+    function resumeRig(runStore: MemoryRunStore, tmp: string, activations: string[]): Rig {
       return makeRig({
         agentCwd: tmp,
         runtimeEventStoreFor: (tp) => new FileEventStore(getRuntimeEventLogPath(tp), TENANT),
         enqueueRuntime: {
           scheduler: {
-            enqueue: async (input: UpsertRunInput) => {
-              enqueued.push(input);
-              return runStore.upsertPending(input);
+            activateCreatedRun: async (runId: string, claim: Record<string, unknown>) => {
+              const activated = await runStore.activatePersistedInteractionResume(runId, claim);
+              if (activated) activations.push(runId);
+              return activated;
             },
           } as any,
           runStore,
@@ -101,7 +101,7 @@ describe('WebChannel persistent interaction recovery', () => {
       });
     }
 
-    it('ask_user 并发恢复：CAS 只允许一次 event append/enqueue，重复请求均 receive respond_ok', async () => {
+    it('ask_user 并发恢复：CAS 只允许一次 event append/enqueue，live claim 拒绝竞争重试', async () => {
       const tmp = await makeTmp('cov-askresume-');
       const { sessionId, eventStore } = await seedRuntimeSession(USER, {
         model: 'm-ask', executionTarget: 'server-local', workspaceId: 'ws-ask',
@@ -114,26 +114,19 @@ describe('WebChannel persistent interaction recovery', () => {
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({ runId: 'run-ask-1', sessionId, userId: USER.sub, model: 'm-ask', channel: 'web' });
       await runStore.markStatus('run-ask-1', 'waiting_user');
-      const claimSpy = vi.spyOn(runStore, 'markStatusIfCurrent');
-      const enqueued: UpsertRunInput[] = [];
-      const rig = resumeRig(runStore, tmp, enqueued);
+      const claimSpy = vi.spyOn(runStore, 'claimPersistedInteractionResume');
+      const activations: string[] = [];
+      const rig = resumeRig(runStore, tmp, activations);
 
       await Promise.all([
         (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'ask-int-1', { answers: { q1: '红色' } }, sessionId, 'attempt-persisted-1'),
         (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'ask-int-1', { answers: { q1: '红色' } }, sessionId, 'attempt-persisted-2'),
       ]);
 
-      // Both concurrent retries are acknowledged, while only the durable CAS winner resumes.
-      expect(rig.ws.sent.map((message) => message.data)).toEqual(expect.arrayContaining([
-        { type: 'respond_ok', interactionId: 'ask-int-1', clientAttemptId: 'attempt-persisted-1' },
-        { type: 'respond_ok', interactionId: 'ask-int-1', clientAttemptId: 'attempt-persisted-2' },
-      ]));
-      expect(enqueued).toHaveLength(1);
-      expect(enqueued[0]).toMatchObject({
-        runId: 'run-ask-1', sessionId, userId: USER.sub, tenantId: TENANT,
-        model: 'm-ask', executionTarget: 'server-local', workspaceId: 'ws-ask', channel: 'web',
-        metadata: { resumeInteraction: { interactionId: 'ask-int-1', response: { answers: { q1: '红色' } } } },
-      });
+      const askReplies = rig.ws.sent.map((message) => message.data);
+      expect(askReplies.filter((reply) => reply.type === 'respond_ok')).toHaveLength(1);
+      expect(askReplies.filter((reply) => reply.type === 'respond_error')).toHaveLength(1);
+      expect(activations).toEqual(['run-ask-1']);
       // durable 日志追加 interaction_resolved（归一化应答）
       const events = await eventStore.list(TENANT, sessionId);
       expect(events.at(-1)).toMatchObject({
@@ -142,17 +135,13 @@ describe('WebChannel persistent interaction recovery', () => {
         response: { answers: { q1: '红色' } },
       });
       expect(events.filter((event) => event.type === 'interaction_resolved' && event.interactionId === 'ask-int-1')).toHaveLength(1);
-      // waiting_user → pending 的 durable CAS 是跨进程的 interaction claim。
-      expect(claimSpy).toHaveBeenCalledWith('run-ask-1', ['waiting_user'], 'pending', 'ask_user_resolved_enqueue_resume', {
-        resumeInteractionConsumedAt: null,
-        resumeInteractionConsumedId: null,
-        persistedInteractionResumeClaim: {
-          sessionId,
-          interactionId: 'ask-int-1',
-          interactionType: 'ask_user',
-        },
+      // waiting_user → pending + staged is the durable cross-process claim.
+      expect(claimSpy).toHaveBeenCalledWith('run-ask-1', ['waiting_user'], 'ask_user_resolved_enqueue_resume', expect.objectContaining({
+        persistedInteractionResumeClaim: expect.objectContaining({
+          sessionId, interactionId: 'ask-int-1', interactionType: 'ask_user', claimId: expect.any(String), claimedAt: expect.any(String),
+        }),
         resumeInteraction: { interactionId: 'ask-int-1', response: { answers: { q1: '红色' } } },
-      });
+      }));
       expect((await runStore.get('run-ask-1'))?.metadata?.resumeInteraction).toEqual({
         interactionId: 'ask-int-1', response: { answers: { q1: '红色' } },
       });
@@ -160,7 +149,7 @@ describe('WebChannel persistent interaction recovery', () => {
       expect(rig.userEvents).toContainEqual({ type: 'session_status', sessionId, status: 'queued', runId: 'run-ask-1' });
     });
 
-    it('approval 并发恢复：CAS 只允许一次 event append/enqueue，后续重试幂等 ACK', async () => {
+    it('approval 并发恢复：CAS 只允许一次 event append/enqueue，live claim 拒绝竞争重试', async () => {
       const tmp = await makeTmp('cov-apprresume-');
       const { sessionId, eventStore } = await seedRuntimeSession(USER, {
         model: 'm-appr', executionTarget: 'server-local', workspaceId: 'ws-appr',
@@ -177,22 +166,17 @@ describe('WebChannel persistent interaction recovery', () => {
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({ runId: 'run-appr-1', sessionId, userId: USER.sub, model: 'm-appr', channel: 'web' });
       await runStore.markStatus('run-appr-1', 'waiting_approval');
-      const enqueued: UpsertRunInput[] = [];
-      const rig = resumeRig(runStore, tmp, enqueued);
+      const activations: string[] = [];
+      const rig = resumeRig(runStore, tmp, activations);
 
       await Promise.all([
         (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: true, message: '可以执行' }, sessionId, 'approval-attempt-1'),
         (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: true, message: '可以执行' }, sessionId, 'approval-attempt-2'),
       ]);
-      expect(rig.ws.sent.map((message) => message.data)).toEqual(expect.arrayContaining([
-        { type: 'respond_ok', interactionId: 'appr-1', clientAttemptId: 'approval-attempt-1' },
-        { type: 'respond_ok', interactionId: 'appr-1', clientAttemptId: 'approval-attempt-2' },
-      ]));
-      expect(enqueued).toHaveLength(1);
-      expect(enqueued[0]).toMatchObject({
-        runId: 'run-appr-1', sessionId, workspaceId: 'ws-appr',
-        metadata: { resumeApproval: { approvalId: 'appr-1', response: { allow: true, message: '可以执行' } } },
-      });
+      const approvalReplies = rig.ws.sent.map((message) => message.data);
+      expect(approvalReplies.filter((reply) => reply.type === 'respond_ok')).toHaveLength(1);
+      expect(approvalReplies.filter((reply) => reply.type === 'respond_error')).toHaveLength(1);
+      expect(activations).toEqual(['run-appr-1']);
       const events = await eventStore.list(TENANT, sessionId);
       expect(events.at(-1)).toMatchObject({
         type: 'interaction_resolved', interactionId: 'appr-1', interactionType: 'approval',
@@ -204,7 +188,7 @@ describe('WebChannel persistent interaction recovery', () => {
       rig.ws.sent.length = 0;
       await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: true }, sessionId);
       expect(rig.ws.sent.map((m) => m.data.type)).toEqual(['respond_ok']);
-      expect(enqueued).toHaveLength(1);
+      expect(activations).toEqual(['run-appr-1']);
     });
 
     it('approval 指向终态 run → 拒绝遗留审批并 respond_ok，不恢复旧 run', async () => {
@@ -221,14 +205,14 @@ describe('WebChannel persistent interaction recovery', () => {
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({ runId: 'run-appr-t', sessionId, userId: USER.sub, model: 'm', channel: 'web' });
       await runStore.markStatus('run-appr-t', 'completed');
-      const enqueued: UpsertRunInput[] = [];
-      const rig = resumeRig(runStore, tmp, enqueued);
+      const activations: string[] = [];
+      const rig = resumeRig(runStore, tmp, activations);
 
       await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-t-1', { allow: true }, sessionId);
       expect(rig.ws.sent.at(-1)?.data).toEqual({
         type: 'respond_ok', interactionId: 'appr-t-1',
       });
-      expect(enqueued).toHaveLength(0);
+      expect(activations).toHaveLength(0);
       const events = await eventStore.list(TENANT, sessionId);
       expect(events.at(-1)).toMatchObject({
         type: 'approval_resolved',

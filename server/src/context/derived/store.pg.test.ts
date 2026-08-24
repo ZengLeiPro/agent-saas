@@ -132,7 +132,7 @@ describePg('DerivedContextStore PostgreSQL integration', () => {
   });
 
   it('rewinds one idle tenant consumer with cursor CAS while preserving derived rows for idempotent replay', async () => {
-    const beforeCursor = await pool.query(`SELECT cursor_seq,lease_fence FROM ${derived.tables.consumers}
+    const beforeCursor = await pool.query(`SELECT cursor_seq FROM ${derived.tables.consumers}
       WHERE tenant_id='tenant-a' AND consumer_id='projector'`);
     const cursorSeq = String(beforeCursor.rows[0].cursor_seq);
     const itemCount = await pool.query(`SELECT COUNT(*)::integer count FROM ${derived.tables.derivedItems}
@@ -145,10 +145,9 @@ describePg('DerivedContextStore PostgreSQL integration', () => {
       tenantId: 'tenant-a', consumerId: 'projector', expectedCursorSeq: cursorSeq,
     })).rejects.toMatchObject({ code: 'DERIVED_VERSION_CONFLICT' });
     await expect(derived.failConsumerLease(activeLease!, 'DERIVED_PROJECTION_FAILED')).resolves.toBe(true);
-    expect((await pool.query(`SELECT status,last_error_code FROM ${derived.tables.consumers}
-      WHERE tenant_id='tenant-a' AND consumer_id='projector'`)).rows[0]).toMatchObject({
-      status: 'retry_wait', last_error_code: 'DERIVED_PROJECTION_FAILED',
-    });
+    const failedLease = (await pool.query(`SELECT status,last_error_code,lease_fence FROM ${derived.tables.consumers}
+      WHERE tenant_id='tenant-a' AND consumer_id='projector'`)).rows[0];
+    expect(failedLease).toMatchObject({ status: 'retry_wait', last_error_code: 'DERIVED_PROJECTION_FAILED' });
     await expect(derived.resetConsumerForReplay({
       tenantId: 'tenant-a', consumerId: 'projector', expectedCursorSeq: `${cursorSeq}0`,
     })).rejects.toMatchObject({ code: 'DERIVED_VERSION_CONFLICT' });
@@ -159,7 +158,7 @@ describePg('DerivedContextStore PostgreSQL integration', () => {
     const reset = await pool.query(`SELECT cursor_seq,status,lease_owner,lease_fence
       FROM ${derived.tables.consumers} WHERE tenant_id='tenant-a' AND consumer_id='projector'`);
     expect(reset.rows[0]).toMatchObject({ cursor_seq: '0', status: 'idle', lease_owner: null });
-    expect(BigInt(reset.rows[0].lease_fence)).toBe(BigInt(beforeCursor.rows[0].lease_fence) + 1n);
+    expect(BigInt(reset.rows[0].lease_fence)).toBe(BigInt(failedLease.lease_fence) + 1n);
     expect((await pool.query(`SELECT COUNT(*)::integer count FROM ${derived.tables.derivedItems}
       WHERE tenant_id='tenant-a'`)).rows[0].count).toBe(itemCount.rows[0].count);
     await drain();

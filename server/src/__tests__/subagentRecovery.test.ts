@@ -77,6 +77,35 @@ async function seedInterruptedAgentCall(eventStore: MemoryEventStore, includeSta
 }
 
 describe('reconcileInterruptedForegroundToolCalls', () => {
+  it('uses the authenticated run tenant when the process-local session catalog has no record', async () => {
+    const eventStore = new MemoryEventStore();
+    const list = vi.spyOn(eventStore, 'list');
+
+    await expect(reconcileInterruptedForegroundToolCalls({
+      eventStore,
+      sessionCatalog: {
+        get: vi.fn(async () => null),
+        markStatus: vi.fn(),
+      } as unknown as SessionCatalog,
+      parentSessionId: 'parent-session-1',
+      tenantId: 'tenant-from-run',
+    })).resolves.toBe(0);
+
+    expect(list).toHaveBeenCalledWith('tenant-from-run', 'parent-session-1');
+  });
+
+  it('rejects a mismatch between the authenticated run and session catalog tenants', async () => {
+    await expect(reconcileInterruptedForegroundToolCalls({
+      eventStore: new MemoryEventStore(),
+      sessionCatalog: {
+        get: vi.fn(async () => ({ tenantId: 'tenant-from-catalog' })),
+        markStatus: vi.fn(),
+      } as unknown as SessionCatalog,
+      parentSessionId: 'parent-session-1',
+      tenantId: 'tenant-from-run',
+    })).rejects.toThrow('Foreground tool recovery tenant mismatch');
+  });
+
   it('orphans the child and durably closes the parent Agent invocation without duplicates', async () => {
     const eventStore = new MemoryEventStore();
     await seedInterruptedAgentCall(eventStore);

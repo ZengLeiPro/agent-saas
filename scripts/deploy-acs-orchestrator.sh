@@ -24,13 +24,16 @@ cleanup() {
   # EXIT trap 只做资源回收，不能用清理竞态覆盖真实部署结果。
   local deploy_status=$?
   set +e
+  local sandbox_cleanup_safe=true
   if [ -n "${SMOKE_SESSION:-}" ] && command -v kubectl >/dev/null 2>&1; then
     if [ -n "${ACS_KUBECONFIG:-}" ]; then KCFG_ARGS="--kubeconfig ${ACS_KUBECONFIG}"; else KCFG_ARGS=""; fi
     # shellcheck disable=SC2086
-    kubectl $KCFG_ARGS -n "${ACS_NAMESPACE:-agent-saas-coding}" get sandbox \
+    if ! kubectl $KCFG_ARGS -n "${ACS_NAMESPACE:-agent-saas-coding}" get sandbox \
       -l "app.kubernetes.io/managed-by=agent-saas-acs-orchestrator" \
-      -o json >/tmp/acs-cleanup-sandboxes.json 2>/dev/null || true
-    if [ -s /tmp/acs-cleanup-sandboxes.json ] && command -v node >/dev/null 2>&1; then
+      -o json >/tmp/acs-cleanup-sandboxes.json 2>/dev/null; then
+      sandbox_cleanup_safe=false
+      echo "::warning::cannot list smoke sandboxes; cleanup fails closed" >&2
+    elif [ -s /tmp/acs-cleanup-sandboxes.json ] && command -v node >/dev/null 2>&1; then
       sandbox_names="$(
         SMOKE_SESSION="$SMOKE_SESSION" SMOKE_MOUNT="$SMOKE_MOUNT" node <<'NODE'
 const fs = require('node:fs');
@@ -49,17 +52,54 @@ for (const item of items) {
 }
 NODE
       )"
-      if [ -n "$sandbox_names" ]; then
-        printf '%s\n' "$sandbox_names" | while IFS= read -r sandbox_name; do
-          [ -n "$sandbox_name" ] || continue
-          # shellcheck disable=SC2086
-          kubectl $KCFG_ARGS -n "${ACS_NAMESPACE:-agent-saas-coding}" delete sandbox "$sandbox_name" \
-            --ignore-not-found=true >/dev/null 2>&1 || true
-        done
+      sandbox_parse_status=$?
+      if [ "$sandbox_parse_status" -ne 0 ]; then
+        sandbox_cleanup_safe=false
+        echo "::warning::cannot parse smoke sandbox inventory; cleanup fails closed" >&2
       fi
+      safe_delete_api_ready=false
+      if [ -n "${ACS_ORCH_AUTH_TOKEN:-}" ] \
+        && command -v curl >/dev/null 2>&1 \
+        && curl -fsS -m 5 http://127.0.0.1:3400/health >/tmp/acs-cleanup-health.json 2>/dev/null \
+        && grep -F "$IMAGE" /tmp/acs-cleanup-health.json >/dev/null; then
+        # health 中的新镜像证明当前进程由本次发布代码启动；rollback 后的旧进程
+        # 不得接管安全删除，否则会重新落回旧的裸删语义。
+        safe_delete_api_ready=true
+      fi
+      if [ -n "$sandbox_names" ]; then
+        while IFS= read -r sandbox_name; do
+          [ -n "$sandbox_name" ] || continue
+          # 禁止在 trap 里裸删 Sandbox 后遗留无主体网络策略。只有新 orchestrator
+          # 的安全 DELETE 链成功，且 kubectl 二次确认 CR 不存在，才允许清 workspace。
+          if [ "$safe_delete_api_ready" != "true" ] \
+            || ! curl -fsS -m 30 -X DELETE \
+              -H "Authorization: Bearer ${ACS_ORCH_AUTH_TOKEN}" \
+              "http://127.0.0.1:3400/sandboxes/${sandbox_name}" >/dev/null; then
+            sandbox_cleanup_safe=false
+            echo "::warning::safe smoke sandbox delete failed: $sandbox_name; retaining network policy and workspace" >&2
+            continue
+          fi
+          # shellcheck disable=SC2086
+          confirmed_name="$(kubectl $KCFG_ARGS -n "${ACS_NAMESPACE:-agent-saas-coding}" get \
+            "sandbox/${sandbox_name}" --ignore-not-found=true -o name 2>/dev/null)"
+          confirm_status=$?
+          if [ "$confirm_status" -ne 0 ] || [ -n "$confirmed_name" ]; then
+            sandbox_cleanup_safe=false
+            echo "::warning::smoke sandbox absence not confirmed: $sandbox_name; retaining workspace" >&2
+          fi
+        done <<EOF
+$sandbox_names
+EOF
+      fi
+    else
+      sandbox_cleanup_safe=false
+      echo "::warning::cannot parse smoke sandbox inventory; cleanup fails closed" >&2
     fi
+  elif [ -n "${SMOKE_SESSION:-}" ]; then
+    sandbox_cleanup_safe=false
+    echo "::warning::kubectl unavailable; smoke cleanup fails closed" >&2
   fi
-  if [ -n "${SMOKE_WORKSPACE_DIR:-}" ]; then
+  if [ "$sandbox_cleanup_safe" = "true" ] && [ -n "${SMOKE_WORKSPACE_DIR:-}" ]; then
     case "$SMOKE_WORKSPACE_DIR" in
       /mnt/agent-saas/workspaces/_ci/ws_ci_acr_*|/mnt/agent-saas/workspaces/_ci/ws_ci_acs_*)
         # Sandbox CR 删除后 Pod/NFS 写入可能短暂滞后；单次 rm -rf 会因
@@ -82,6 +122,8 @@ NODE
         echo "skip smoke workspace cleanup: unexpected path $SMOKE_WORKSPACE_DIR" >&2
         ;;
     esac
+  elif [ "$sandbox_cleanup_safe" != "true" ]; then
+    echo "::warning::skip smoke workspace cleanup until Sandbox absence is confirmed: ${SMOKE_WORKSPACE_DIR:-unknown}" >&2
   fi
   if [ "$deploy_status" -ne 0 ] \
     && [ "${SNAT_ROLLBACK_PREPARED:-false}" = "true" ] \
@@ -105,7 +147,7 @@ NODE
     NODE_ENV=development pnpm install --frozen-lockfile --filter acs-orchestrator... --filter server... --filter shared... \
       || echo "failed to restore rollback dependencies; manual intervention required" >&2
   fi
-  rm -f "$RELEASE_TGZ" "$SMOKE_CLEANUP_ERROR"
+  rm -f "$RELEASE_TGZ" "$SMOKE_CLEANUP_ERROR" /tmp/acs-cleanup-sandboxes.json /tmp/acs-cleanup-health.json
   if [ "$deploy_status" -eq 0 ]; then
     rm -f "$APP_BAK_TGZ"
   else
@@ -185,6 +227,7 @@ AUTH_HEADER="Authorization: Bearer ${ACS_ORCH_AUTH_TOKEN}"
 SNAT_OPERATION_STATE_FILE="${RUNTIME_CONFIG_FILE}.snat-operation-state.json"
 SNAT_ROLLBACK_PREPARED=false
 SNAT_ROLLBACK_OFFLINE_RESTORE=false
+SNAT_ROLLBACK_SHARED_CONFIG_SAFE=false
 SNAT_ROLLBACK_DIGEST=""
 PROCESS_REPLACED=false
 
@@ -201,6 +244,12 @@ prepare_snat_rollback() {
     return 2
   fi
   SNAT_ROLLBACK_DIGEST="$digest"
+  if node "$APP_DIR/scripts/check-acs-shared-rollback-compatibility.mjs" \
+    "$health_file" "$ENV_BAK" "$ENV_FILE"; then
+    SNAT_ROLLBACK_SHARED_CONFIG_SAFE=true
+    echo "shared SNAT config is identical across running/candidate/rollback; per-Pod restore is unnecessary"
+    return 0
+  fi
   echo "preparing per-Pod SNAT entries before process replacement (digest=$digest)..."
   if ! curl -fsS -m 420 -X POST http://127.0.0.1:3400/snat/restore-per-pod \
     -H "$AUTH_HEADER" -H "X-ACS-SNAT-Rollback-Confirmed: $digest" >"$restore_file"; then
@@ -214,8 +263,10 @@ prepare_snat_rollback() {
 # release 内置的离线 CLI 恢复全部 /32；后续版本则在替换进程前在线恢复。
 # 在线路径只删除磁盘 marker，旧进程内存维护态持续到退出。
 if prepare_snat_rollback; then
-  SNAT_ROLLBACK_PREPARED=true
-  rm -f "$SNAT_OPERATION_STATE_FILE"
+  if [ "$SNAT_ROLLBACK_SHARED_CONFIG_SAFE" != "true" ]; then
+    SNAT_ROLLBACK_PREPARED=true
+    rm -f "$SNAT_OPERATION_STATE_FILE"
+  fi
 else
   prepare_status=$?
   if [ "$prepare_status" -eq 2 ] \
@@ -291,9 +342,13 @@ rollback() {
     return 1
   fi
   if [ "$SNAT_ROLLBACK_PREPARED" != "true" ] \
-    && [ "$SNAT_ROLLBACK_OFFLINE_RESTORE" != "true" ]; then
-    echo "per-Pod SNAT was not prepared before process replacement; refusing rollback" >&2
+    && [ "$SNAT_ROLLBACK_OFFLINE_RESTORE" != "true" ] \
+    && [ "$SNAT_ROLLBACK_SHARED_CONFIG_SAFE" != "true" ]; then
+    echo "neither per-Pod SNAT nor an identical shared rollback config was verified; refusing rollback" >&2
     return 1
+  fi
+  if [ "$SNAT_ROLLBACK_SHARED_CONFIG_SAFE" = "true" ]; then
+    echo "rollback retains the verified identical shared SNAT config (digest=$SNAT_ROLLBACK_DIGEST)"
   fi
   if [ "$SNAT_ROLLBACK_OFFLINE_RESTORE" = "true" ]; then
     echo "legacy rollback: stopping failed candidate and restoring every non-Paused /32 offline..."

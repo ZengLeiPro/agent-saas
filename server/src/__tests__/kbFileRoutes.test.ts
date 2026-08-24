@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import express from 'express';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Server } from 'node:http';
@@ -194,6 +194,33 @@ describe('/api/kb/file routes', () => {
     // 存在性探测口径：本租户内不存在的文件 → 404
     const missing = await fetch(`${baseUrl}/api/kb/file?path=${encodeURIComponent('docs/nope.pdf')}`);
     expect(missing.status).toBe(404);
+  });
+
+  it('源文件、manifest 与 page 的 ancestor symlink 均 fail-closed', async () => {
+    const outsideDocs = join(kbRoot, 'outside-docs');
+    await mkdir(outsideDocs);
+    await writeFile(join(outsideDocs, 'secret.pdf'), PDF_BYTES);
+    await symlink(outsideDocs, join(kbRoot, 'tenant-a', 'linked-docs'), 'dir');
+    const { version } = await seedPreview(kbRoot);
+
+    ({ server, baseUrl } = await startServer(kbRoot, userA));
+    const source = await fetch(`${baseUrl}/api/kb/file?path=${encodeURIComponent('linked-docs/secret.pdf')}`);
+    expect(source.status).toBe(403);
+
+    const contentDir = previewContentDir(join(kbRoot, 'tenant-a'), version);
+    const displacedContent = join(kbRoot, 'displaced-content');
+    await rename(contentDir, displacedContent);
+    await symlink(displacedContent, contentDir, 'dir');
+    const page = await fetch(`${baseUrl}/api/kb/preview?path=${encodeURIComponent('docs/manual.pdf')}&page=1&version=${version}`);
+    expect(page.status).toBe(403);
+
+    const manifestPath = previewManifestPath(join(kbRoot, 'tenant-a'), 'docs/manual.pdf');
+    const manifestDir = dirname(manifestPath);
+    const displacedIndex = join(kbRoot, 'displaced-index');
+    await rename(manifestDir, displacedIndex);
+    await symlink(displacedIndex, manifestDir, 'dir');
+    const manifest = await fetch(`${baseUrl}/api/kb/preview-manifest?path=${encodeURIComponent('docs/manual.pdf')}`);
+    expect(manifest.status).toBe(403);
   });
 
   it('返回 ETag/Last-Modified/私有缓存，并正确处理两个条件请求', async () => {

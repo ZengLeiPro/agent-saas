@@ -24,7 +24,8 @@
  *     query: status?（逗号分隔，白名单校验）/ hours?（默认 24，上限 720）
  *            / limit?（默认 50，上限 200）/ tenantId?
  *   GET /efficiency           → 时间窗内效率聚合（结局/工具/成本/长尾/审批/浪费）
- *     query: days?（默认 7，上限 30）/ tenantId?
+ *     query: days?（默认 7，上限 30）/ from? + to?（成对 ISO-8601，[from,to)，
+ *            跨度必须等于 days × 24h）/ tenantId?
  *
  * 设计取舍：
  * - 仅 PG runtime backend 可用；file backend / billing 未启用时 routes.ts 不挂载。
@@ -100,9 +101,40 @@ const recentRunsQuerySchema = z.object({
   tenantId: z.string().regex(TENANT_SLUG_RE).optional(),
 });
 
+const EFFICIENCY_DAY_MS = 24 * 60 * 60 * 1000;
+
 const efficiencyQuerySchema = z.object({
   days: z.coerce.number().int().min(1).max(30).optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
   tenantId: z.string().regex(TENANT_SLUG_RE).optional(),
+}).superRefine((query, ctx) => {
+  const hasFrom = query.from !== undefined;
+  const hasTo = query.to !== undefined;
+  if (hasFrom !== hasTo) {
+    ctx.addIssue({
+      code: 'custom',
+      path: hasFrom ? ['to'] : ['from'],
+      message: 'from and to must be provided together',
+    });
+    return;
+  }
+  if (!query.from || !query.to) return;
+
+  const fromMs = Date.parse(query.from);
+  const toMs = Date.parse(query.to);
+  if (fromMs >= toMs) {
+    ctx.addIssue({ code: 'custom', path: ['to'], message: 'from must be earlier than to' });
+    return;
+  }
+  const days = query.days ?? 7;
+  if (toMs - fromMs !== days * EFFICIENCY_DAY_MS) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['to'],
+      message: 'from/to span must equal days × 24 hours',
+    });
+  }
 });
 
 /**
@@ -611,6 +643,9 @@ export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Route
       const [report, redactCost] = await Promise.all([
         efficiencyQuery.getEfficiency({
           days: parsed.data.days ?? 7,
+          ...(parsed.data.from !== undefined && parsed.data.to !== undefined
+            ? { from: parsed.data.from, to: parsed.data.to }
+            : {}),
           ...(scope.tenantId !== undefined ? { tenantId: scope.tenantId } : {}),
         }),
         shouldRedactCost(scope.platform, scope.tenantId),

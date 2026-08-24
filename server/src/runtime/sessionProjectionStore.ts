@@ -1,10 +1,12 @@
-import { readFile, readdir, stat } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
+import { readdir, type FileHandle } from 'node:fs/promises';
 import { basename, join, relative, resolve } from 'node:path';
 
 import pg from 'pg';
 
 import type { SessionMeta } from '../data/transcripts/meta.js';
 import { AGENT_LEGACY_TRANSCRIPTS_ROOT, isValidSessionId } from '../data/transcripts/projectKey.js';
+import { openTrustedDirectory, openTrustedFile } from '../security/trustedFile.js';
 import { LEGACY_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
 
 const { Pool } = pg;
@@ -431,17 +433,26 @@ export async function scanRuntimeSessionMetaFiles(root = AGENT_LEGACY_TRANSCRIPT
   let scannedMetaFiles = 0;
   let skippedInvalidBasename = 0;
 
-  async function walk(dir: string): Promise<void> {
-    let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
+  async function walk(dir: string, directoryHandle: FileHandle): Promise<void> {
+    let entries: Dirent[];
     try {
-      entries = await readdir(dir, { withFileTypes: true });
+      entries = await readdir(`/proc/self/fd/${directoryHandle.fd}`, { withFileTypes: true });
     } catch {
       return;
     }
     for (const entry of entries) {
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
-        await walk(fullPath);
+        try {
+          const child = await openTrustedDirectory(root, relative(root, fullPath));
+          try {
+            await walk(fullPath, child.handle);
+          } finally {
+            await child.handle.close();
+          }
+        } catch {
+          // A swapped/symlinked ancestor is never followed.
+        }
         continue;
       }
       if (!entry.isFile() || !entry.name.endsWith('.meta.json')) continue;
@@ -452,23 +463,36 @@ export async function scanRuntimeSessionMetaFiles(root = AGENT_LEGACY_TRANSCRIPT
         continue;
       }
       try {
-        const raw = await readFile(fullPath, 'utf-8');
-        const meta = JSON.parse(raw) as SessionMeta;
-        const fileStat = await stat(fullPath);
-        files.push({
-          sessionId,
-          metaPath: fullPath,
-          transcriptPath: fullPath.replace(/\.meta\.json$/, '.jsonl'),
-          meta,
-          mtimeIso: new Date(fileStat.mtimeMs).toISOString(),
-        });
+        const file = await openTrustedFile(root, relative(root, fullPath));
+        try {
+          const raw = await file.handle.readFile({ encoding: 'utf-8' });
+          const meta = JSON.parse(raw) as SessionMeta;
+          files.push({
+            sessionId,
+            metaPath: fullPath,
+            transcriptPath: fullPath.replace(/\.meta\.json$/, '.jsonl'),
+            meta,
+            mtimeIso: new Date(file.stats.mtimeMs).toISOString(),
+          });
+        } finally {
+          await file.handle.close();
+        }
       } catch {
         skippedInvalidBasename++;
       }
     }
   }
 
-  await walk(root);
+  try {
+    const directory = await openTrustedDirectory(root);
+    try {
+      await walk(root, directory.handle);
+    } finally {
+      await directory.handle.close();
+    }
+  } catch {
+    // Missing/unsafe roots preserve the backfill scanner's best-effort behavior.
+  }
   return { scannedMetaFiles, skippedInvalidBasename, files };
 }
 

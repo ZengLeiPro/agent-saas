@@ -4,7 +4,7 @@ import { RefreshCw, TriangleAlert, UserPlus } from "lucide-react";
 import { MemberDebugModeSetting } from "@/components/Governance/DebugModeSettings";
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
 import { MembershipIdentityActions } from "@/components/OrganizationGovernance/MembershipIdentityActions";
-import { ContextCenterPage, type ContextCenterApiPort } from "@/components/ContextCenter";
+import { ContextCenterPage, ContextEntitiesPanel, ContextReviewsPanel, ContextTimelinePanel, type ContextCenterApiPort } from "@/components/ContextCenter";
 import { MemoryKnowledgeGovernance } from "@/components/OrganizationGovernance/MemoryKnowledgeGovernance";
 import { UserFormDialog, type UserFormData } from "@/components/UserManager/UserFormDialog";
 import { Badge } from "@/components/ui/badge";
@@ -479,20 +479,30 @@ export function OrganizationCredentialsPage({ tenantId }: { tenantId: string }) 
 export function OrganizationMemoryKnowledgePage({ tenantId }: { tenantId: string }) {
   const scopedContextApi = useMemo<ContextCenterApiPort>(() => ({
     getSnapshot: options => contextCenterApi.getSnapshot({ ...options, tenantId }),
-    listEvidence: (query, options) => contextCenterApi.listEvidence(query, { ...options, tenantId }),
+    getEvidence: (id, options) => contextCenterApi.getEvidence(id, { ...options, tenantId }),
+    listTimeline: (query, options) => contextCenterApi.listTimeline(query, { ...options, tenantId }),
+    listEntities: (query, options) => contextCenterApi.listEntities(query, { ...options, tenantId }),
+    getEntity: (entityId, options) => contextCenterApi.getEntity(entityId, { ...options, tenantId }),
+    getEntityProfile: (entityId, options) => contextCenterApi.getEntityProfile(entityId, { ...options, tenantId }),
+    listEntityRelations: (entityId, query, options) => contextCenterApi.listEntityRelations(entityId, query, { ...options, tenantId }),
+    listReviews: (query, options) => contextCenterApi.listReviews(query, { ...options, tenantId }),
+    createCorrection: (entityId, command, options) => contextCenterApi.createCorrection(entityId, command, { ...options, tenantId }),
+    decideReview: (itemId, command, options) => contextCenterApi.decideReview(itemId, command, { ...options, tenantId }),
   }), [tenantId]);
   return (
     <Tabs defaultValue="governance" className="min-h-0">
-      <TabsList aria-label="记忆与知识区域">
-        <TabsTrigger value="governance">资源治理</TabsTrigger>
-        <TabsTrigger value="context-center">Context Center</TabsTrigger>
+      <TabsList aria-label="记忆与知识区域" className="h-auto w-full flex-nowrap justify-start overflow-x-auto sm:flex-wrap">
+        <TabsTrigger value="governance" className="shrink-0">资源治理</TabsTrigger>
+        <TabsTrigger value="context-center" className="shrink-0">Context Center</TabsTrigger>
+        <TabsTrigger value="timeline" className="shrink-0">Timeline</TabsTrigger>
+        <TabsTrigger value="entities" className="shrink-0">实体</TabsTrigger>
+        <TabsTrigger value="reviews" className="shrink-0">待审核</TabsTrigger>
       </TabsList>
-      <TabsContent value="governance" className="mt-4">
-        <MemoryKnowledgeGovernance tenantId={tenantId} />
-      </TabsContent>
-      <TabsContent value="context-center" className="mt-4 min-h-0">
-        <ContextCenterPage api={scopedContextApi} />
-      </TabsContent>
+      <TabsContent value="governance" className="mt-4"><MemoryKnowledgeGovernance tenantId={tenantId} /></TabsContent>
+      <TabsContent value="context-center" className="mt-4 min-h-0"><ContextCenterPage api={scopedContextApi} /></TabsContent>
+      <TabsContent value="timeline" className="mt-4"><ContextTimelinePanel api={scopedContextApi} /></TabsContent>
+      <TabsContent value="entities" className="mt-4"><ContextEntitiesPanel api={scopedContextApi} /></TabsContent>
+      <TabsContent value="reviews" className="mt-4"><ContextReviewsPanel api={scopedContextApi} /></TabsContent>
     </Tabs>
   );
 }

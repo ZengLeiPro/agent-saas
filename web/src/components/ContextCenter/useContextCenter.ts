@@ -1,11 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type {
-  ContextCenterApiPort,
-  ContextCenterSnapshot,
-  ContextEvidence,
-  ContextSource,
-} from "./types";
+import type { ContextCenterApiPort, ContextCenterSnapshot } from "./types";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : "请求失败，请稍后重试";
@@ -16,12 +11,6 @@ export function useContextCenter(api: ContextCenterApiPort) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const snapshotRequest = useRef<AbortController | null>(null);
-
-  const [evidenceSource, setEvidenceSource] = useState<ContextSource | null>(null);
-  const [evidence, setEvidence] = useState<ContextEvidence[]>([]);
-  const [evidenceLoading, setEvidenceLoading] = useState(false);
-  const [evidenceError, setEvidenceError] = useState<string | null>(null);
-  const evidenceRequest = useRef<AbortController | null>(null);
 
   const reload = useCallback(async () => {
     snapshotRequest.current?.abort();
@@ -44,47 +33,5 @@ export function useContextCenter(api: ContextCenterApiPort) {
     return () => snapshotRequest.current?.abort();
   }, [reload]);
 
-  const loadEvidence = useCallback(async (source: ContextSource) => {
-    evidenceRequest.current?.abort();
-    const controller = new AbortController();
-    evidenceRequest.current = controller;
-    setEvidenceSource(source);
-    setEvidence([]);
-    setEvidenceLoading(true);
-    setEvidenceError(null);
-    try {
-      const items = await api.listEvidence(
-        { sourceId: source.sourceId, collectionId: source.collectionId },
-        { signal: controller.signal },
-      );
-      if (!controller.signal.aborted) setEvidence(items);
-    } catch (requestError) {
-      if (!controller.signal.aborted) setEvidenceError(errorMessage(requestError));
-    } finally {
-      if (!controller.signal.aborted) setEvidenceLoading(false);
-    }
-  }, [api]);
-
-  const closeEvidence = useCallback(() => {
-    evidenceRequest.current?.abort();
-    setEvidenceSource(null);
-    setEvidence([]);
-    setEvidenceError(null);
-    setEvidenceLoading(false);
-  }, []);
-
-  useEffect(() => () => evidenceRequest.current?.abort(), []);
-
-  return {
-    snapshot,
-    loading,
-    error,
-    reload,
-    evidenceSource,
-    evidence,
-    evidenceLoading,
-    evidenceError,
-    loadEvidence,
-    closeEvidence,
-  };
+  return { snapshot, loading, error, reload };
 }

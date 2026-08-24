@@ -13,12 +13,12 @@
  */
 
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 
 import { z } from 'zod';
 
 import { checkMemoryTextSafety, normalizeFingerprint } from '../memory/consolidation/safety.js';
+import { readTrustedFile, relativeToTrustedRoot, writeTrustedFile } from '../security/trustedFile.js';
 import type { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
 import { loadToolDescription } from './tools/descriptionLoader.js';
@@ -283,13 +283,13 @@ export class MemoryCommandToolProvider implements ToolProvider {
     if (!lock) return reply({ status: 'busy', reason: '记忆写入锁忙' }, true);
     try {
       const date = formatDate();
-      const filePath = join(context.workspace.root, 'memory', 'questions.md');
-      const existing = await readFile(filePath, 'utf8').catch(() => '# 提问记录\n');
+      const relativePath = assertMemoryPath(context.workspace.root, 'memory/questions.md');
+      const existing = await readMemoryFileIfPresent(context.workspace.root, relativePath) ?? '# 提问记录\n';
       const line = input.action === 'question_answered'
         ? `- [已回答 ${date}] ${input.subject}：${input.value ?? input.userQuote}`
         : `- [拒绝回答 ${date}] ${input.subject}`;
       const next = `${existing.replace(/\n*$/, '\n')}${line}\n`;
-      await atomicWrite(filePath, next);
+      await writeTrustedFile(context.workspace.root, relativePath, next, { encoding: 'utf8', createParents: true });
       this.options.memoryIndexService?.enqueueSync(context.workspace.root, 'memory-command-question');
       return reply({ status: 'applied', detail: '提问状态已更新' });
     } finally {
@@ -322,26 +322,34 @@ export class MemoryCommandToolProvider implements ToolProvider {
   }
 }
 
-// ── 文件操作（原子写；路径守卫防越界）────────────────────────────
+// ── 文件操作（受信 FD；路径守卫防越界与 symlink/rename 竞态）──────
 
 function assertMemoryPath(workspaceRoot: string, candidatePath: string): string {
   const root = resolve(workspaceRoot);
-  const target = isAbsolute(candidatePath) ? resolve(candidatePath) : resolve(join(root, candidatePath));
-  const rel = relative(root, target).split('\\').join('/');
-  const allowed = rel === 'MEMORY.md' || (rel.startsWith('memory/') && rel.endsWith('.md'));
-  if (rel.startsWith('..') || isAbsolute(rel) || !allowed) {
-    throw new Error(`MemoryCommand 路径越界: ${candidatePath}`);
+  const target = isAbsolute(candidatePath) ? resolve(candidatePath) : resolve(root, candidatePath);
+  const relativePath = relativeToTrustedRoot(root, target).split('\\').join('/');
+  const allowed = relativePath === 'MEMORY.md'
+    || (relativePath.startsWith('memory/') && relativePath.endsWith('.md'));
+  if (!allowed) throw new Error(`MemoryCommand 路径越界: ${candidatePath}`);
+  return relativePath;
+}
+
+async function readMemoryFileIfPresent(workspaceRoot: string, relativePath: string): Promise<string | null> {
+  try {
+    return await readTrustedFile(workspaceRoot, relativePath, 'utf8') as string;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
   }
-  return target;
 }
 
 async function appendToDailyFile(workspaceRoot: string, date: string, line: string): Promise<void> {
-  const filePath = assertMemoryPath(workspaceRoot, `memory/${date}.md`);
-  const existing = await readFile(filePath, 'utf8').catch(() => '');
+  const relativePath = assertMemoryPath(workspaceRoot, `memory/${date}.md`);
+  const existing = await readMemoryFileIfPresent(workspaceRoot, relativePath) ?? '';
   const next = existing.length > 0
     ? `${existing.replace(/\n*$/, '\n')}${line}\n`
     : `# ${date}\n\n${line}\n`;
-  await atomicWrite(filePath, next);
+  await writeTrustedFile(workspaceRoot, relativePath, next, { encoding: 'utf8', createParents: true });
 }
 
 /** 读候选行区间原文；文件不存在或区间越界返回 null。 */
@@ -349,13 +357,13 @@ async function readLineRange(
   workspaceRoot: string,
   candidate: { path: string; startLine: number; endLine: number },
 ): Promise<string | null> {
-  let filePath: string;
+  let relativePath: string;
   try {
-    filePath = assertMemoryPath(workspaceRoot, candidate.path);
+    relativePath = assertMemoryPath(workspaceRoot, candidate.path);
   } catch {
     return null;
   }
-  const existing = await readFile(filePath, 'utf8').catch(() => null);
+  const existing = await readMemoryFileIfPresent(workspaceRoot, relativePath);
   if (existing === null) return null;
   const lines = existing.split('\n');
   const start = Math.max(0, candidate.startLine - 1);
@@ -366,23 +374,16 @@ async function readLineRange(
 
 /** 删除候选的行区间；返回被删除的文本（tombstone 指纹用）。 */
 async function removeLineRange(workspaceRoot: string, candidate: MatchCandidate): Promise<string> {
-  const filePath = assertMemoryPath(workspaceRoot, candidate.path);
-  const existing = await readFile(filePath, 'utf8').catch(() => '');
+  const relativePath = assertMemoryPath(workspaceRoot, candidate.path);
+  const existing = await readMemoryFileIfPresent(workspaceRoot, relativePath) ?? '';
   if (!existing) return '';
   const lines = existing.split('\n');
   const start = Math.max(0, candidate.startLine - 1);
   const end = Math.min(lines.length, candidate.endLine);
   const removed = lines.slice(start, end).join('\n');
   const next = [...lines.slice(0, start), ...lines.slice(end)].join('\n');
-  await atomicWrite(filePath, next);
+  await writeTrustedFile(workspaceRoot, relativePath, next, { encoding: 'utf8' });
   return removed;
-}
-
-async function atomicWrite(filePath: string, content: string): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-  await writeFile(tmpPath, content, 'utf8');
-  await rename(tmpPath, filePath);
 }
 
 function reply(payload: Record<string, unknown>, _isError = false): ToolResult {

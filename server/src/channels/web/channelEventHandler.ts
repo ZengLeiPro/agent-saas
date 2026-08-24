@@ -130,7 +130,7 @@ export async function handleWebChannelEvents(
 
     const agentCwd = dependencies.agentCwd;
     const handler: EventHandler = {
-      onSessionInit(sessionId) {
+      async onSessionInit(sessionId) {
         if (bufferCtx && sessionId) {
           bufferCtx.sessionId = sessionId;
           sessionCtx.sessionId = sessionId;
@@ -151,9 +151,6 @@ export async function handleWebChannelEvents(
             markRealContent();
           }
         }
-        send({ type: 'session', sessionId, ...(titleCtx?.clientMsgId ? { client_msg_id: titleCtx.clientMsgId } : {}) });
-        // 新会话创建后立即清除缓存，确保客户端 loadSessions() 能发现新会话
-        clearSessionsListCache();
         if (context.user && agentCwd && sessionId) {
           // Admin 代操作其他用户会话时，meta 必须写回原会话 owner 的目录，
           // 否则会在 admin 自己的 projectKey 下产生孤儿 meta，污染 owner 展示。
@@ -164,38 +161,48 @@ export async function handleWebChannelEvents(
             tenantId: context.user.tenantId,
           });
           const transcriptPath = getTranscriptPath(metaCwd, sessionId, { tenantId: context.user.tenantId, userId: context.user.id });
-          readSessionMeta(transcriptPath).then((existing) => {
+          try {
+            const existing = await readSessionMeta(transcriptPath);
             if (existing) {
               // 续对话：只更新 model，保留已有的所有字段（customTitle、generatedTitle、createdAt 等）
-              const ownerRole = context.sessionOwner?.role ?? context.user!.role;
+              const ownerRole = context.sessionOwner?.role ?? context.user.role;
               const updated: SessionMeta = {
                 ...existing,
                 userRole: existing.userRole ?? ownerRole,
                 ...(modelRef ? { model: modelRef } : {}),
               };
-              return writeSessionMeta(transcriptPath, updated);
+              await writeSessionMeta(transcriptPath, updated);
+            } else {
+              // 新会话：写完整初始 meta
+              const meta: SessionMeta = {
+                userId: context.user.id,
+                username: context.user.username,
+                userRole: context.user.role,
+                tenantId: context.user.tenantId,
+                channel: 'web',
+                createdAt: new Date().toISOString(),
+                ...(modelRef ? { model: modelRef } : {}),
+              };
+              await writeSessionMeta(transcriptPath, meta);
             }
-            // 新会话：写完整初始 meta
-            const meta: SessionMeta = {
-              userId: context.user!.id,
-              username: context.user!.username,
-              userRole: context.user!.role,
-              tenantId: context.user!.tenantId,
-              channel: 'web',
-              createdAt: new Date().toISOString(),
-              ...(modelRef ? { model: modelRef } : {}),
-            };
-            return writeSessionMeta(transcriptPath, meta);
-          }).then(() => {
-            if (
-              isNewSession
-              && titleCtx?.userMessage
-              && shouldGenerateTitleFromFirstMessage(titleCtx.userMessage)
-            ) {
-              return dependencies.generateTitle(sessionId, context, titleCtx.userMessage, '');
-            }
-          }).catch((err) => {
-            chatLogger.warn(`[meta] Failed to write session meta: sessionId=${sessionId} user=${context.user?.username} error=${err}`);
+          } catch (err) {
+            chatLogger.warn(`[meta] Failed to write session meta before session event: sessionId=${sessionId} user=${context.user.username} error=${err}`);
+            throw err;
+          }
+        }
+        // 分组写入会同步校验 owner meta；必须在 meta 落盘后再把权威 sessionId 发给客户端。
+        send({ type: 'session', sessionId, ...(titleCtx?.clientMsgId ? { client_msg_id: titleCtx.clientMsgId } : {}) });
+        // 新会话创建后立即清除缓存，确保客户端 loadSessions() 能发现新会话
+        clearSessionsListCache();
+        if (
+          context.user
+          && agentCwd
+          && isNewSession
+          && titleCtx?.userMessage
+          && shouldGenerateTitleFromFirstMessage(titleCtx.userMessage)
+        ) {
+          void dependencies.generateTitle(sessionId, context, titleCtx.userMessage, '').catch((err) => {
+            chatLogger.warn(`[title] Failed to generate session title: sessionId=${sessionId} user=${context.user?.username} error=${err}`);
           });
         }
         // 新会话场景：广播 stream_started + session_status + session_updated 到同用户的其他连接

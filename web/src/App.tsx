@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppLifecycle } from "@/hooks/useAppLifecycle";
 import { useActivityReporter } from "@/hooks/useActivityReporter";
 
@@ -141,24 +141,28 @@ function App() {
     && !activeOrgAgent
     && (orgAgentsLoading || isLoadingSessions);
   const [orgAgentPickerOpen, setOrgAgentPickerOpen] = useState(false);
-  const newSession = useCallback(() => {
+  const pendingPickerGroupIdRef = useRef<string | null>(null);
+  const newSession = useCallback((groupId: string | null = null) => {
     const target = resolveNewSessionTarget({
       activeOrgAgentId: activeOrgAgent?.id,
       availableOrgAgentIds: myOrgAgents.map((agent) => agent.id),
       personalAgentEnabled,
     });
     if (target.kind === "personal") {
-      newPersonalSession();
+      newPersonalSession(groupId);
     } else if (target.kind === "org-agent") {
-      startOrgAgentSession(target.agentId);
+      startOrgAgentSession(target.agentId, groupId);
     } else {
+      pendingPickerGroupIdRef.current = groupId;
       setOrgAgentPickerOpen(true);
     }
   }, [activeOrgAgent?.id, myOrgAgents, newPersonalSession, personalAgentEnabled, startOrgAgentSession]);
 
   const handleOrgAgentPickerSelect = useCallback((agentId: string) => {
     setOrgAgentPickerOpen(false);
-    startOrgAgentSession(agentId);
+    const groupId = pendingPickerGroupIdRef.current;
+    pendingPickerGroupIdRef.current = null;
+    startOrgAgentSession(agentId, groupId);
   }, [startOrgAgentSession]);
 
   // 关闭个人 Agent 且只有一位企业专家：空首页直接进入专家草稿，不创建服务端会话。

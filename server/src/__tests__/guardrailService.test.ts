@@ -7,12 +7,12 @@
  *   - onUsage 回调收到 usage（记账 channel='guardrail' 的数据源）
  */
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { AGENT_LEGACY_TRANSCRIPTS_ROOT } from '../data/transcripts/projectKey.js';
 import {
   checkTopicScope,
   extractRecentUserMessages,
@@ -245,7 +245,8 @@ describe('checkTopicScope', () => {
 
 describe('extractRecentUserMessages', () => {
   it('只读取最后两条真实用户消息，忽略 assistant、thinking、tool_use 和 tool_result', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'guardrail-user-messages-'));
+    await mkdir(AGENT_LEGACY_TRANSCRIPTS_ROOT, { recursive: true });
+    const dir = await mkdtemp(join(AGENT_LEGACY_TRANSCRIPTS_ROOT, 'guardrail-user-messages-'));
     const transcriptPath = join(dir, 'session.jsonl');
     const lines = [
       { type: 'user', message: { role: 'user', content: '[2026/07/13 周一 19:00] 第一条用户问题' } },

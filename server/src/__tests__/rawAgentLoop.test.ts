@@ -4519,7 +4519,7 @@ describe('RawAgentLoop', () => {
 
   it('达到阈值时先建立 checkpoint，再以完整业务工具继续同一 run', async () => {
     configureModelPricing({
-      groups: [{ models: [{ value: 'checkpoint-small', context_window: 1_000, auto_compact_threshold: 0.5 }] }],
+      groups: [{ models: [{ value: 'checkpoint-small', context_window: 16_000, auto_compact_threshold: 0.5 }] }],
     });
     try {
       const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-pre-request-checkpoint-'));
@@ -4535,9 +4535,9 @@ describe('RawAgentLoop', () => {
         type: 'assistant_message',
         runId: 'run-old',
         sessionId: 'session-checkpoint',
-        content: '先前进度',
+        content: `先前进度${'历史上下文'.repeat(5_000)}`,
         model: 'checkpoint-small',
-        usage: { inputTokens: 600, outputTokens: 1 },
+        usage: { inputTokens: 10_000, outputTokens: 1 },
         responseMode: 'full',
         responseChained: false,
       });

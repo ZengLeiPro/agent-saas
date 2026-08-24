@@ -6,8 +6,9 @@
  *   - getEfficiency：时间窗内的任务健康/工具/成本/长尾/审批/浪费六组聚合
  *
  * 设计取舍：
- * - 所有 SQL 使用同一份 [from,to) 固定时间窗；任务健康与最耗时任务只以
- *   runtime_runs.run_id/requested_at 为权威口径，事件重复不会放大任务数。tenant_id
+ * - 所有 SQL 使用同一份 [from,to) 固定统计窗；任务健康与最耗时任务只以
+ *   runtime_runs.run_id/requested_at 为权威口径，事件重复不会放大任务数。长运行
+ *   时长仅观测到 min(to, now)，不会把未来统计上界当作已发生时间。tenant_id
  *   可选过滤；全参数化，绝不拼接用户输入。
  * - 表名来自现有 store 实例（PgEventStore.eventsTable / PgRunStore.runsTable /
  *   PgBillingStore.usageEventsTable），构造时再做一次 identifier 白名单校验兜底。
@@ -66,6 +67,9 @@ export interface RecentRunSummary {
 export interface EfficiencyQueryOptions {
   /** 回看天数（路由层保证 1..30）。 */
   days: number;
+  /** 可选显式 [from,to) 边界；查询层独立校验成对、可解析、递增且跨度等于 days × 24h。 */
+  from?: string;
+  to?: string;
   tenantId?: string;
 }
 
@@ -194,15 +198,45 @@ export class RuntimeEfficiencyQuery {
   }
 
   async getEfficiency(opts: EfficiencyQueryOptions): Promise<EfficiencyReport> {
-    const to = new Date();
-    const from = new Date(to.getTime() - opts.days * 24 * 60 * 60 * 1000);
-    const params = [from.toISOString(), opts.tenantId ?? null, to.toISOString()];
+    const dayMs = 24 * 60 * 60 * 1000;
+    const nowMs = Date.now();
+    const hasExplicitBoundary = opts.from !== undefined || opts.to !== undefined;
+    if (hasExplicitBoundary && (opts.from === undefined || opts.to === undefined)) {
+      throw new Error('Efficiency query explicit boundaries must include both from and to');
+    }
+
+    let from: string;
+    let to: string;
+    let toMs: number;
+    if (opts.from !== undefined && opts.to !== undefined) {
+      const fromMs = Date.parse(opts.from);
+      toMs = Date.parse(opts.to);
+      if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) {
+        throw new Error('Efficiency query explicit boundaries must be parseable dates');
+      }
+      if (fromMs >= toMs) {
+        throw new Error('Efficiency query explicit from must be earlier than to');
+      }
+      if (toMs - fromMs !== opts.days * dayMs) {
+        throw new Error('Efficiency query explicit boundary span must equal days × 24 hours');
+      }
+      from = opts.from;
+      to = opts.to;
+    } else {
+      toMs = nowMs;
+      to = new Date(toMs).toISOString();
+      from = new Date(toMs - opts.days * dayMs).toISOString();
+    }
+
+    const observedAt = new Date(Math.min(toMs, nowMs)).toISOString();
+    const params = [from, opts.tenantId ?? null, to];
+    const longRunningParams = [...params, observedAt];
     const E = this.eventsTable;
     const U = this.usageTable;
     const R = this.runsTable;
 
     // ── task health：runtime_runs 是唯一权威源；按 run_id/requested_at 统计发起与当前终态。
-    // 上界固定为本次 dataAsOf，避免查询过程中跨日或后续事件追加改变同一快照。
+    // 统计上界固定为请求的 to；长运行观测时刻另用 observedAt，避免未来自然日上界放大时长。
     const outcomeRows = (await this.pool.query(`/* eff:outcome */
       WITH scoped_runs AS (
         SELECT run_id, status
@@ -319,16 +353,16 @@ export class RuntimeEfficiencyQuery {
 
     const longRunningRows = (await this.pool.query(`/* eff:long_running_runs */
       SELECT run_id, session_id, tenant_id, status, model,
-             (EXTRACT(EPOCH FROM ($3::timestamptz - COALESCE(started_at, requested_at))) * 1000)::bigint AS duration_ms
+             (EXTRACT(EPOCH FROM ($4::timestamptz - COALESCE(started_at, requested_at))) * 1000)::bigint AS duration_ms
       FROM ${R}
       WHERE status NOT IN ('completed', 'failed', 'cancelled', 'orphaned')
-        AND COALESCE(started_at, requested_at) <= $3::timestamptz - interval '24 hours'
+        AND COALESCE(started_at, requested_at) <= $4::timestamptz - interval '24 hours'
         AND requested_at >= $1::timestamptz
         AND requested_at < $3::timestamptz
         AND ($2::text IS NULL OR tenant_id = $2)
       ORDER BY 6 DESC
       LIMIT 10
-    `, params)).rows;
+    `, longRunningParams)).rows;
 
     const mostTurnsRows = (await this.pool.query(`/* eff:most_turns */
       SELECT run_id, session_id, tenant_id,
@@ -511,14 +545,14 @@ export class RuntimeEfficiencyQuery {
     `, params)).rows[0];
 
     return {
-      range: { from: from.toISOString(), to: to.toISOString(), days: opts.days, bounds: '[from,to)' },
+      range: { from, to, days: opts.days, bounds: '[from,to)' },
       tenantId: opts.tenantId ?? null,
       statistics: {
         version: 'runtime-runs-requested-at-v1',
         source: 'runtime_runs',
         identity: 'run_id',
         initiatedAt: 'requested_at',
-        dataAsOf: to.toISOString(),
+        dataAsOf: observedAt,
         completionDefinition: 'completed / initiated',
         longRunningDefinition: 'non_terminal_started_for_24h',
       },

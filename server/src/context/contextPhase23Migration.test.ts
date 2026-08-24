@@ -79,7 +79,7 @@ describe('Context Plane Phase 2/3 governance migration', () => {
     expect(sql).not.toMatch(/DROP\s+TABLE/i);
   });
 
-  it('registers v25 after monotonically increasing governance versions', async () => {
+  it('registers v25 before the additive v26 migration in monotonically increasing governance versions', async () => {
     const insertedVersions: number[] = [];
     const query = vi.fn(async (sql: string, params?: readonly unknown[]) => {
       if (sql.includes('SELECT version FROM test_governance_schema_versions')) {
@@ -95,7 +95,7 @@ describe('Context Plane Phase 2/3 governance migration', () => {
 
     await runner.run();
 
-    expect(insertedVersions.at(-1)).toBe(25);
+    expect(insertedVersions.slice(-2)).toEqual([25, 26]);
     expect(insertedVersions).toEqual([...insertedVersions].sort((left, right) => left - right));
     expect(new Set(insertedVersions).size).toBe(insertedVersions.length);
     expect(query.mock.calls.some(([sql]) => String(sql).includes(

@@ -7,9 +7,11 @@
 
 import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 
 import OpenAI from 'openai';
+import { openTrustedTranscript } from '../data/transcripts/trusted.js';
 import type { SdkResultModelUsage } from './types.js';
 import type { ModelProviderOptions } from '../types/index.js';
 import type { ModelAdapter, RunContext } from '../runtime/types.js';
@@ -26,18 +28,24 @@ const titleLogger = createLogger('Title');
  * - 每条文本截到 1000 字符
  */
 export async function extractTitleContext(
-  transcriptPath: string,
+  transcript: string | FileHandle,
   rounds = 2,
 ): Promise<{ userMessages: string[]; assistantReplies: string[] }> {
   const userMessages: string[] = [];
   const assistantReplies: string[] = [];
+  const callerOwnsHandle = typeof transcript !== 'string';
+  let ownedHandle: FileHandle | undefined;
+  const input = typeof transcript !== 'string'
+    ? transcript.createReadStream({ encoding: 'utf-8', autoClose: false })
+    : /^\/proc\/self\/fd\/\d+$/.test(transcript)
+      // The caller owns and keeps this descriptor open (sessions route compatibility).
+      ? createReadStream(transcript, { encoding: 'utf-8' })
+      : (ownedHandle = (await openTrustedTranscript(transcript)).handle)
+        .createReadStream({ encoding: 'utf-8', autoClose: false });
+  const rl = createInterface({ input, crlfDelay: Infinity });
 
-  const rl = createInterface({
-    input: createReadStream(transcriptPath, { encoding: 'utf-8' }),
-    crlfDelay: Infinity,
-  });
-
-  for await (const line of rl) {
+  try {
+    for await (const line of rl) {
     if (!line.trim()) continue;
     let obj: any;
     try {
@@ -76,7 +84,13 @@ export async function extractTitleContext(
       if (text) assistantReplies.push(text.slice(0, 1000));
     }
 
-    if (userMessages.length >= rounds && assistantReplies.length >= rounds) break;
+      if (userMessages.length >= rounds && assistantReplies.length >= rounds) break;
+    }
+  } finally {
+    rl.close();
+    if (callerOwnsHandle) input.pause();
+    else input.destroy();
+    await ownedHandle?.close().catch(() => undefined);
   }
 
   return { userMessages, assistantReplies };

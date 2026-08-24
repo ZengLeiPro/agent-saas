@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskBoard, TaskBoardTask } from "@agent/shared";
@@ -151,6 +151,27 @@ describe("TaskBoardView", () => {
 
     await waitFor(() => expect(mocks.refreshBoards).toHaveBeenCalledOnce());
     expect(mocks.refreshTasks).toHaveBeenCalledOnce();
+  });
+
+  it("停留在任务看板时持续刷新任务，离开后停止", async () => {
+    vi.useFakeTimers();
+    try {
+      const { rerender } = render(<TaskBoardView active />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(mocks.refreshTasks).toHaveBeenCalledOnce();
+      expect(mocks.refreshBoards).not.toHaveBeenCalled();
+
+      rerender(<TaskBoardView active={false} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6_000);
+      });
+      expect(mocks.refreshTasks).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("支持多看板、固定八列、关键词与优先级筛选", async () => {
@@ -458,11 +479,11 @@ describe("TaskBoardView", () => {
     expect(screen.getByRole("heading", { name: "新建任务" })).toBeTruthy();
     expect(screen.getByRole("combobox", { name: "新任务状态" }).textContent).toContain("需求池");
 
-    await user.type(screen.getByRole("textbox", { name: "标题" }), "补充需求池任务");
+    await user.type(screen.getByRole("textbox", { name: "正文" }), "补充需求池任务");
     await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(mocks.addTask).toHaveBeenCalledWith(expect.objectContaining({
-      title: "补充需求池任务",
+      description: "补充需求池任务",
       status: "backlog",
     })));
   });
@@ -604,6 +625,7 @@ describe("TaskBoardView", () => {
       ...taskTwo,
       id: "archived-task",
       identifier: "TASK-ARCHIVED",
+      title: "",
       archivedAt: "2026-08-18T00:00:00.000Z",
     };
     mocks.tasks = [taskOne, archivedTask];
@@ -613,6 +635,7 @@ describe("TaskBoardView", () => {
     await user.click(await screen.findByRole("button", { name: "查看已归档任务（1）" }));
     expect(screen.getByRole("heading", { name: "已归档任务（1）" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "打开已归档任务 TASK-ARCHIVED" })).toBeTruthy();
+    expect(screen.getAllByText("TASK-ARCHIVED")).toHaveLength(1);
 
     await user.type(screen.getByRole("textbox", { name: "搜索已归档任务" }), "不存在");
     expect(screen.getByText("没有符合筛选条件的归档任务")).toBeTruthy();

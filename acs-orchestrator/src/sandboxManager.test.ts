@@ -16,7 +16,7 @@ describe('SandboxManager egress injection', () => {
         if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
           return { stdout: JSON.stringify({ items: [] }), stderr: '', exitCode: 0, signal: null };
         }
-        if (args[0] === 'get') {
+        if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }
@@ -118,7 +118,7 @@ describe('SandboxManager', () => {
         if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
           return { stdout: JSON.stringify({ items: [] }), stderr: '', exitCode: 0, signal: null };
         }
-        if (args[0] === 'get') {
+        if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }
@@ -213,7 +213,7 @@ describe('SandboxManager', () => {
         if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
           return { stdout: JSON.stringify({ items: [] }), stderr: '', exitCode: 0, signal: null };
         }
-        if (args[0] === 'get') {
+        if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }
@@ -270,7 +270,7 @@ describe('SandboxManager', () => {
         if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
           return { stdout: JSON.stringify({ items: [] }), stderr: '', exitCode: 0, signal: null };
         }
-        if (args[0] === 'get') {
+        if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (!sandboxApplied) {
             return {
               stdout: JSON.stringify({
@@ -343,7 +343,7 @@ describe('SandboxManager', () => {
         if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
           return { stdout: JSON.stringify({ items: [] }), stderr: '', exitCode: 0, signal: null };
         }
-        if (args[0] === 'get') {
+        if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (state === 'missing') return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           const image = state === 'old'
             ? 'registry.example.com/agent-saas/acs-sandbox:old'
@@ -420,7 +420,7 @@ describe('SandboxManager', () => {
         if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
           return { stdout: JSON.stringify({ items: [] }), stderr: '', exitCode: 0, signal: null };
         }
-        if (args[0] === 'get') {
+        if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (state === 'broken') {
             return {
               stdout: JSON.stringify({
@@ -525,7 +525,7 @@ describe('SandboxManager', () => {
         if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
           return { stdout: JSON.stringify({ items: [] }), stderr: '', exitCode: 0, signal: null };
         }
-        if (args[0] === 'get') {
+        if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (state === 'failed') {
             return {
               stdout: JSON.stringify({
@@ -673,7 +673,7 @@ describe('SandboxManager', () => {
             signal: null,
           };
         }
-        if (args[0] === 'get') {
+        if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }
@@ -742,9 +742,8 @@ describe('SandboxManager', () => {
           };
         }
         if (args[0] === 'get') {
-          if (args[1] === 'sandbox/as-old') {
-            return { stdout: JSON.stringify({ status: { phase: oldPaused ? 'Paused' : 'Running' } }), stderr: '', exitCode: 0, signal: null };
-          }
+          if (args[1] === 'sandbox/as-old') return { stdout: JSON.stringify({ status: { phase: oldPaused ? 'Paused' : 'Running' } }), stderr: '', exitCode: 0, signal: null };
+          if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }
@@ -823,7 +822,7 @@ describe('SandboxManager', () => {
             signal: null,
           };
         }
-        if (args[0] === 'patch' || args[0] === 'delete') {
+        if ((args[0] === 'get' && args.includes('--ignore-not-found=true')) || args[0] === 'patch' || args[0] === 'delete') {
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
         }
         throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
@@ -1182,7 +1181,7 @@ describe('SandboxManager', () => {
             stderr: '', exitCode: 0, signal: null,
           };
         }
-        if (args[0] === 'get' && args[1] === `sandbox/${oldPausedName}`) {
+        if (args[0] === 'get' && args[1] === `sandbox/${oldPausedName}` && !args.includes('--ignore-not-found=true')) {
           return {
             stdout: JSON.stringify({
               spec: { template: { spec: { containers: [{ name: 'sandbox', image: 'registry.example.com/agent-saas/acs-sandbox:old-tag' }] } } },
@@ -1191,7 +1190,7 @@ describe('SandboxManager', () => {
             stderr: '', exitCode: 0, signal: null,
           };
         }
-        if (args[0] === 'delete') return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        if ((args[0] === 'get' && args.includes('--ignore-not-found=true')) || args[0] === 'delete') return { stdout: '', stderr: '', exitCode: 0, signal: null };
         throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
       },
     } as unknown as Kubectl;
@@ -1283,7 +1282,7 @@ describe('SandboxManager', () => {
             stderr: '', exitCode: 0, signal: null,
           };
         }
-        if (args[0] === 'delete') return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        if ((args[0] === 'get' && args.includes('--ignore-not-found=true')) || args[0] === 'delete') return { stdout: '', stderr: '', exitCode: 0, signal: null };
         throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
       },
     } as unknown as Kubectl;
@@ -1353,7 +1352,7 @@ describe('SandboxManager', () => {
             stderr: '', exitCode: 0, signal: null,
           };
         }
-        if (args[0] === 'delete' || args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        if ((args[0] === 'get' && args.includes('--ignore-not-found=true')) || args[0] === 'delete' || args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
         throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
       },
     } as unknown as Kubectl;
@@ -1545,7 +1544,7 @@ describe('SandboxManager ensure fast path & coalescing', () => {
     const kubectl = {
       async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
         if (args[0] === 'get' && args.includes('-l')) return ok(JSON.stringify({ items: [] }));
-        if (args[0] === 'get') {
+        if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return ok(runningSandboxJson(config, input));
         }
@@ -1672,7 +1671,7 @@ describe('resume 快路径与 Failed fail-fast', () => {
     const kubectl = {
       async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
         if (args[0] === 'get' && args.includes('-l')) return ok(JSON.stringify({ items: [] }));
-        if (args[0] === 'get') {
+        if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return ok(JSON.stringify({ status: { phase: 'Failed', message: 'image pull backoff' } }));
         }
@@ -1699,7 +1698,7 @@ describe('ImageCache 注解（2026-07-31 方案3-P0）', () => {
     const kubectl = {
       async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
         if (args[0] === 'get' && args.includes('-l')) return ok(JSON.stringify({ items: [] }));
-        if (args[0] === 'get') {
+        if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return ok(JSON.stringify({ status: { phase: 'Running' } }));
         }

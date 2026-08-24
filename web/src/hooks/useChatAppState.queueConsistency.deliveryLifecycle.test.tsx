@@ -11,6 +11,9 @@ const harness = vi.hoisted(() => {
     stateHandlers,
     sends: vi.fn(async (_payload: unknown) => true),
     authFetch: vi.fn(async (_url: string, _init?: unknown): Promise<Response> => new Response("{}", { status: 404 })),
+    pendingOrgAgentIdRef: { current: null as string | null },
+    pendingNewSessionGroupIdRef: { current: null as string | null },
+    assignPendingGroup: vi.fn(),
     currentFiles: [] as UploadedFile[],
     replaceFiles: vi.fn((files: UploadedFile[]) => {
       harness.currentFiles = files;
@@ -90,6 +93,16 @@ vi.mock("@/hooks/useFileUpload", () => ({
 vi.mock("@/lib/authFetch", () => ({
   authFetch: (url: string, init?: unknown) => harness.authFetch(url, init),
 }));
+vi.mock("@/hooks/usePendingNewSessionTarget", () => ({
+  usePendingNewSessionTarget: () => ({
+    pendingOrgAgentIdRef: harness.pendingOrgAgentIdRef,
+    pendingNewSessionGroupIdRef: harness.pendingNewSessionGroupIdRef,
+    pendingOrgAgentId: null,
+    setPendingOrgAgentId: vi.fn(),
+    clearPendingOrgAgent: vi.fn(),
+    assignPendingGroup: harness.assignPendingGroup,
+  }),
+}));
 vi.mock("@/lib/wsClient", () => ({
   wsClient: {
     currentState: "connected",
@@ -151,6 +164,9 @@ beforeEach(() => {
   harness.messageHandlers.clear();
   harness.stateHandlers.clear();
   harness.sends.mockClear();
+  harness.assignPendingGroup.mockClear();
+  harness.pendingOrgAgentIdRef.current = null;
+  harness.pendingNewSessionGroupIdRef.current = null;
   harness.replaceFiles.mockClear();
   harness.currentFiles = [];
   harness.session.sessionId = null;
@@ -169,6 +185,21 @@ afterEach(() => {
 });
 
 describe("useChatAppState queue delivery lifecycle", () => {
+  it("assigns an authoritative new session to the pending group", async () => {
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => result.current.newSession("group-1"));
+    act(() => result.current.setInput("grouped conversation"));
+    await act(async () => { await result.current.sendMessage(); });
+    act(() => emit({
+      type: "session",
+      sessionId: "session-grouped",
+      client_msg_id: chatPayloads()[0].client_msg_id,
+    }));
+
+    expect(harness.assignPendingGroup).toHaveBeenCalledWith("session-grouped");
+  });
+
   it("keeps failed ACK and cancelled authoritative lookup out of sent projection", async () => {
     vi.useFakeTimers();
     const cancelledId = "00000000-0000-4000-8000-000000000003";

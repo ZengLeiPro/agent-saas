@@ -13,6 +13,10 @@ import { PgTaskboardContextReader, TASKBOARD_COLLECTIONS, TaskboardContextSyncWo
 
 const FAST_INTERVAL_MS = 60_000;
 const AZEROTH_INTERVAL_MS = 60 * 60_000;
+const DERIVED_OUTBOX_PAGE_SIZE = 100;
+const DERIVED_OUTBOX_PAGE_CAP = 100;
+const RELATION_RESOLVE_PAGE_SIZE = 100;
+const RELATION_RESOLVE_PAGE_CAP = 100;
 
 export interface ContextPlanePhase2RuntimeOptions {
   contextStore: ContextStore;
@@ -128,23 +132,37 @@ export class ContextPlanePhase2Runtime {
   private async projectDerived(tenantId: string): Promise<void> {
     const store = this.options.derivedStore;
     if (!store) return;
-    for (let page = 0; page < 100; page += 1) {
+    let outboxCapped = true;
+    for (let page = 0; page < DERIVED_OUTBOX_PAGE_CAP; page += 1) {
       const lease = await store.claimContextOutbox({
         tenantId,
         consumerId: 'context-deterministic-projector-v1',
         leaseOwner: this.derivedLeaseOwner,
         leaseMs: 60_000,
-        limit: 100,
+        limit: DERIVED_OUTBOX_PAGE_SIZE,
       });
-      if (!lease) return;
+      if (!lease) { outboxCapped = false; break; }
       if (lease.events.length === 0) {
         await store.releaseConsumerLease(lease);
-        return;
+        outboxCapped = false;
+        break;
       }
       await store.projectClaimed(lease);
-      if (lease.events.length < 100) return;
+      if (lease.events.length < DERIVED_OUTBOX_PAGE_SIZE) { outboxCapped = false; break; }
     }
-    this.logger.warn(`Context derived projector page cap reached for tenant ${tenantId}`);
+    if (outboxCapped) this.logger.warn(`Context derived projector page cap reached for tenant ${tenantId}`);
+    await this.drainPendingRelations(tenantId, store);
+  }
+
+  private async drainPendingRelations(tenantId: string, store: DerivedContextStore): Promise<void> {
+    for (let page = 0; page < RELATION_RESOLVE_PAGE_CAP; page += 1) {
+      const result = await store.resolvePendingRelationCandidates({
+        tenantId,
+        limit: RELATION_RESOLVE_PAGE_SIZE,
+      });
+      if (!result.pending || result.materialized < RELATION_RESOLVE_PAGE_SIZE) return;
+    }
+    this.logger.warn(`Context relation resolver page cap reached with pending candidates for tenant ${tenantId}`);
   }
 
   private async ensurePhase2Assignments(tenantId: string, includeAzeroth: boolean): Promise<void> {

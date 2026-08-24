@@ -58,7 +58,7 @@ export function computeIntegrationReviewReceiptDigest(
 
 export function computeIntegrationRequirementDigest(title: string, description: string): string {
   return versionedDigest('taskboard.integration-requirement', INTEGRATION_CANDIDATE_DIGEST_VERSION, {
-    title: required(title, 'title'),
+    title,
     description,
   });
 }

@@ -1,7 +1,7 @@
 import { exec as execCb, spawn } from 'child_process';
 import { createReadStream, existsSync } from 'fs';
-import { mkdir, open, stat, writeFile } from 'fs/promises';
-import { dirname, isAbsolute, relative, resolve } from 'path';
+import { open } from 'fs/promises';
+import { isAbsolute, relative, resolve } from 'path';
 import { createInterface } from 'readline';
 import { promisify } from 'util';
 import { z } from 'zod';
@@ -13,6 +13,7 @@ import {
   type ToolPresentation,
 } from './toolPresentationBuilder.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
+import { withTrustedFile, writeTrustedFile } from '../security/trustedFile.js';
 import type {
   ToolInvocationRequest,
   ToolInvocationResponse,
@@ -691,13 +692,12 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
   ): Promise<{ content: string; metadata: Record<string, unknown> }> {
     const fullPath = resolveWorkspacePath(workspace.root, path);
     assertSandboxReadAllowed(workspace, fullPath);
-    const fileStat = await stat(fullPath);
-    if (!fileStat.isFile()) throw new Error(`Read: path is not a file (${path})`);
-    const relPath = relativeWorkspacePath(workspace.root, fullPath);
-    const countLines = (text: string): number => (text ? text.split('\n').length : 0);
-    const imageResult = await tryReadWorkspaceImage({ fullPath, relPath, fileSize: fileStat.size, ...options }); if (imageResult) return imageResult;
+    const relPath = relativeWorkspacePath(workspace.root, fullPath); return await withTrustedFile(workspace.root, relPath, async (trusted) => {
+      const fileStat = trusted.stats; const stablePath = trusted.fdPath;
+      const countLines = (text: string): number => (text ? text.split('\n').length : 0);
+      const imageResult = await tryReadWorkspaceImage({ fullPath: stablePath, relPath, fileSize: fileStat.size, ...options }); if (imageResult) return imageResult;
     if (options.offset !== undefined || options.limit !== undefined) {
-      const content = await readLineRange(fullPath, relPath, {
+      const content = await readLineRange(stablePath, relPath, {
         offset: options.offset ?? 1,
         limit: options.limit ?? MAX_READ_LINES,
       });
@@ -707,7 +707,7 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
       };
     }
     if (fileStat.size <= MAX_FILE_BYTES) {
-      const handle = await open(fullPath, 'r');
+      const handle = await open(stablePath, 'r');
       try {
         const buffer = Buffer.alloc(fileStat.size);
         const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
@@ -720,24 +720,24 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
         await handle.close();
       }
     }
-    const prefix = await readFilePrefix(fullPath, MAX_FILE_BYTES);
-    return {
-      content: `${prefix}\n...[truncated: file ${relPath} is ${fileStat.size} bytes; showing first ${MAX_FILE_BYTES} bytes. Use Read with {"path":"${relPath}","offset":1,"limit":${MAX_READ_LINES}} to continue by line chunks.]`,
-      metadata: {
-        path: relPath,
-        fileBytes: fileStat.size,
-        linesRead: countLines(prefix),
-        truncated: true,
-        shownBytes: MAX_FILE_BYTES,
-      },
-    };
+      const prefix = await readFilePrefix(stablePath, MAX_FILE_BYTES);
+      return {
+        content: `${prefix}\n...[truncated: file ${relPath} is ${fileStat.size} bytes; showing first ${MAX_FILE_BYTES} bytes. Use Read with {"path":"${relPath}","offset":1,"limit":${MAX_READ_LINES}} to continue by line chunks.]`,
+        metadata: {
+          path: relPath,
+          fileBytes: fileStat.size,
+          linesRead: countLines(prefix),
+          truncated: true,
+          shownBytes: MAX_FILE_BYTES,
+        },
+      };
+    });
   }
 
   private async _writeFile(workspace: WorkspaceRef, path: string, content: string): Promise<string> {
     const fullPath = resolveWorkspacePath(workspace.root, path);
     assertSandboxReadAllowed(workspace, fullPath);
-    await mkdir(dirname(fullPath), { recursive: true });
-    await writeFile(fullPath, content, 'utf-8');
+    await writeTrustedFile(workspace.root, relativeWorkspacePath(workspace.root, fullPath), content, { encoding: 'utf-8', createParents: true });
     return relativeWorkspacePath(workspace.root, fullPath);
   }
 

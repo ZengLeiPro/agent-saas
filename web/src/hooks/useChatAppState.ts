@@ -1512,7 +1512,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       // 无 sessionId 的流事件则归属当前已 attach 的会话。
       const eventSessionId = 'sessionId' in data && typeof data.sessionId === 'string'
         ? data.sessionId
-        : wsLatestSessionIdRef.current.value ?? sessionIdRef.current;
+        : wsLatestSessionIdRef.current?.value ?? sessionIdRef.current;
       if (envelope.eventId != null && eventSessionId) {
         const existing = activeRunsBySession.current.get(eventSessionId);
         activeRunsBySession.current.set(eventSessionId, {

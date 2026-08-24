@@ -2,6 +2,7 @@ import type { TaskBoardIntegrationCandidate, TaskBoardIntegrationCandidateRevisi
 import type { AppendCandidateRevisionInput } from './integrationCandidateStore.js';
 import type { IntegrationEngineV3, IntegrationEngineV3ExpectedSubject, IntegrationEngineV3Result } from './integrationEngineV3.js';
 import { IntegrationV3CandidateReloadRequiredError, IntegrationV3ComposeConflictError } from './integrationV3ComposeExecutor.js';
+import { redactDurableSecrets } from './durableSecretRedaction.js';
 import { RepositoryWorkspaceSyncError } from './repositoryWorkspaceSync.js';
 
 export type IntegrationV3RequestKind = 'work' | 'review' | 'cleanup' | 'workspace_sync';
@@ -168,7 +169,7 @@ export class IntegrationV3Worker {
     if (this.stopped) return;
     this.timer = setTimeout(() => {
       this.running = this.runOnce().catch((error) => {
-        this.options.host.logger?.warn(`Integration v3 worker tick failed: ${message(error)}`);
+        this.options.host.logger?.warn(`Integration v3 worker tick failed: ${boundedMessage(error)}`);
       }).finally(() => {
         this.running = undefined;
         this.schedule(this.intervalMs);
@@ -210,7 +211,7 @@ export class IntegrationV3Worker {
       await guard.assertCurrent();
       await this.options.host.completeRequest(request, cleanupReceipt);
     } catch (error) {
-      await this.options.host.releaseRequest(request, message(error), isRetryable(error));
+      await this.options.host.releaseRequest(request, boundedMessage(error), isRetryable(error));
     } finally {
       clearInterval(timer);
     }
@@ -430,7 +431,9 @@ function assertCleanupReceipt(receipt: IntegrationV3CleanupReceipt): void {
 }
 
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-function boundedMessage(error: unknown): string { return message(error).replace(/[\r\n\t]+/g, ' ').slice(0, 2_000); }
+function boundedMessage(error: unknown): string {
+  return redactDurableSecrets(message(error).replace(/[\r\n\t]+/g, ' ')).slice(0, 2_000);
+}
 function failureEvidence(error: unknown, lease: IntegrationV3CandidateLease): Record<string, unknown> {
   const workspace = error instanceof RepositoryWorkspaceSyncError ? error.evidence : undefined;
   return {

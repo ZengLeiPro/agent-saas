@@ -188,6 +188,13 @@ export class PostgresIntegrationEngineV3CandidateHost implements IntegrationEngi
   ) {
     return this.candidates.beginNextWorkRound(candidateId, expectedVersion, expectedRevision, mutationFence);
   }
+  restartComposition(
+    candidateId: string,
+    input: Parameters<IntegrationCandidateStore['restartComposition']>[1],
+    mutationFence?: Parameters<IntegrationCandidateStore['restartComposition']>[2],
+  ) {
+    return this.candidates.restartComposition(candidateId, input, mutationFence);
+  }
   transition(
     candidateId: string,
     input: Parameters<IntegrationCandidateStore['transition']>[1],

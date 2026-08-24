@@ -128,16 +128,26 @@ describe('IntegrationProviderOperationService', () => {
       receipt: { outcome: 'not_applied', actualOid: 'base-oid', verifiedNotApplied: true } });
   });
 
-  it('does not classify an in-flight executing operation as not applied', async () => {
+  it('requires two exact no-effect observations before classifying an executing operation as not applied', async () => {
     const { service, storage } = setup();
     const prepared = await service.prepare(intent);
     await storage.compareAndSet({ id: prepared.id, expectedState: 'prepared', nextState: 'executing',
       patch: { attemptCount: 1, updatedAt: prepared.updatedAt } });
+    const reconcile = vi.fn(async () => ({
+      status: 'not_applied' as const, detail: 'ref still old', evidence: { verifiedNotApplied: true },
+    }));
 
-    await expect(service.reconcile(operationKey, async () => ({
-      status: 'not_applied', detail: 'ref still old', evidence: { verifiedNotApplied: true },
-    }))).rejects.toBeInstanceOf(ProviderOperationReconcileRequiredError);
-    expect(await storage.getByOperationKey(operationKey)).toMatchObject({ state: 'executing', attemptCount: 1 });
+    const quiescing = await service.reconcile(operationKey, reconcile);
+    expect(quiescing).toMatchObject({
+      state: 'unknown', attemptCount: 1,
+      receipt: { outcome: 'quiescence_observed', verifiedNotApplied: true },
+    });
+    const terminal = await service.reconcile(operationKey, reconcile);
+    expect(terminal).toMatchObject({
+      state: 'failed', attemptCount: 1,
+      receipt: { outcome: 'not_applied', verifiedNotApplied: true },
+    });
+    expect(reconcile).toHaveBeenCalledTimes(2);
   });
 
   it('moves a reconciled mismatch to needs_human', async () => {
@@ -150,6 +160,21 @@ describe('IntegrationProviderOperationService', () => {
     }));
 
     expect(result).toMatchObject({ state: 'needs_human', error: 'branch points to a different base', receipt: { actualOid: 'other-oid' } });
+  });
+
+  it('redacts provider errors and reconciliation evidence before durable CAS', async () => {
+    const { service } = setup();
+    await service.prepare(intent);
+    await service.execute(operationKey, async () => { throw new Error('timeout ghs_serverinstallationtoken'); });
+
+    const result = await service.reconcile(operationKey, async () => ({
+      status: 'mismatch',
+      detail: 'remote https://user:url-password@github.com/acme/repo.git differs',
+      evidence: { diagnostic: 'github_pat_11AA_secretvalue' },
+    }));
+
+    expect(result.error).toBe('remote https://[REDACTED]@github.com/acme/repo.git differs');
+    expect(result.receipt).toEqual({ diagnostic: '[REDACTED_GITHUB_TOKEN]' });
   });
 
   it('rejects reuse of a semantic key with a different expected state', async () => {

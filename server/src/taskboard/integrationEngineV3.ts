@@ -7,6 +7,7 @@ import type {
 import type {
   AppendCandidateRevisionInput,
   IntegrationCandidateMutationFence,
+  RestartCandidateCompositionInput,
   TransitionCandidateInput,
 } from './integrationCandidateStore.js';
 import {
@@ -53,6 +54,7 @@ export interface IntegrationEngineV3CandidateHost {
   getCurrent(candidateId: string): Promise<IntegrationEngineV3Current>;
   appendRevision(candidateId: string, input: AppendCandidateRevisionInput, mutationFence?: IntegrationCandidateMutationFence): Promise<TaskBoardIntegrationCandidate>;
   beginNextWorkRound(candidateId: string, expectedVersion: number, expectedRevision: number, mutationFence?: IntegrationCandidateMutationFence): Promise<TaskBoardIntegrationCandidate>;
+  restartComposition(candidateId: string, input: RestartCandidateCompositionInput, mutationFence?: IntegrationCandidateMutationFence): Promise<TaskBoardIntegrationCandidate>;
   transition(candidateId: string, input: TransitionCandidateInput, mutationFence?: IntegrationCandidateMutationFence): Promise<TaskBoardIntegrationCandidate>;
   /** Must atomically mark candidate merged and converge task/source/lane projections. */
   commitMerged(input: {
@@ -360,7 +362,16 @@ export class IntegrationEngineV3 {
         ? await this.options.providerOperations.get(operationKey)
         : undefined;
       if (current.candidate.state === 'approved' || prepared?.state === 'prepared') {
-        return applied(await this.transition(current, 'composing'));
+        return applied(await this.options.candidates.restartComposition(
+          current.candidate.id,
+          {
+            expectedVersion: current.candidate.version,
+            expectedRevision: current.candidate.currentRevision,
+            baseOid: facts.baseOid,
+            lastError: 'Approved subject base drifted; deterministic recomposition is required',
+          },
+          current.workerBinding?.mutationFence,
+        ));
       }
     }
     this.assertProviderFacts(current, facts);

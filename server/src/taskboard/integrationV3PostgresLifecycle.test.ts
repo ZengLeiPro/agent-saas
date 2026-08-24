@@ -110,6 +110,24 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     ]);
   });
 
+  it('binds request renewal and assertion to the exact Candidate revision and epochs', async () => {
+    const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [{ id: 'request-1' }] }));
+    const host = workerHost(query);
+    const request = {
+      id: 'request-1', leaseId: 'lease-1', kind: 'workspace_sync' as const,
+      candidateId: 'candidate-1', candidateRevision: 2, payload: {},
+    };
+
+    await host.renewRequest(request, 30_000);
+    await host.assertRequestLease(request);
+
+    for (const [sql, values] of query.mock.calls) {
+      expect(String(sql)).toContain('c.current_revision=o.candidate_revision');
+      expect(String(sql)).toContain('o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch');
+      expect(values).toEqual(expect.arrayContaining(['request-1', 'lease-1', 'candidate-1', 2]));
+    }
+  });
+
   it('resumes a fenced blocked candidate only after workspace sync succeeds', async () => {
     const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [{ id: 'task-1' }] }));
     const syncWorkspace = vi.fn(async () => undefined);
@@ -172,7 +190,7 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
         }] : [] };
       }
       if (text.includes("clock_timestamp()+interval '5 minutes'")) return { rows: [{ id: 'request-1' }] };
-      if (text.includes('SELECT id FROM requests')) return { rows: [{ id: 'request-1' }] };
+      if (text.includes('SELECT o.id FROM requests')) return { rows: [{ id: 'request-1' }] };
       return { rows: [] };
     });
     let started = false;

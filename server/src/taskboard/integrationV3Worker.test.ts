@@ -232,12 +232,15 @@ describe('IntegrationV3Worker pure mock flow', () => {
       engine: { execute: vi.fn() } as unknown as IntegrationEngineV3,
       composer: {
         publish: vi.fn(),
-        compose: async () => { throw new Error('temporary workspace outage'); },
+        compose: async () => { throw new Error('temporary workspace outage ghs_serverinstallationtoken https://user:url-password@github.com/acme/repo.git'); },
         refreshAfterWork: async () => undefined,
       },
     });
     await worker.runOnce();
-    expect(releases.at(-1)).toEqual({ error: 'temporary workspace outage', retryable: true });
+    expect(releases.at(-1)).toEqual({
+      error: 'temporary workspace outage [REDACTED_GITHUB_TOKEN] https://[REDACTED]@github.com/acme/repo.git',
+      retryable: true,
+    });
   });
 
   it('renews a short lease so a second Worker cannot take over a long Compose', async () => {

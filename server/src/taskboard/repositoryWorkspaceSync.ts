@@ -1,5 +1,7 @@
-import { lstat, realpath } from 'node:fs/promises';
-import { isAbsolute, normalize, relative, resolve, sep } from 'node:path';
+import { lstat, realpath, stat } from 'node:fs/promises';
+import { dirname, isAbsolute, normalize, relative, resolve, sep } from 'node:path';
+
+import { redactDurableSecrets } from './durableSecretRedaction.js';
 
 export interface RepositoryWorkspaceGitCommand {
   cwd: string;
@@ -36,6 +38,8 @@ export interface RepositoryWorkspaceSyncHost {
   realpath?(path: string): Promise<string>;
   /** Testable lstat boundary used to reject symlinks and pre-existing foreign paths before fetch. */
   lstat?(path: string): Promise<{ isSymbolicLink(): boolean }>;
+  /** Testable ownership/mode boundary for the controlled worktree parent. */
+  stat?(path: string): Promise<{ uid: number; mode: number; isDirectory(): boolean }>;
 }
 
 export interface RepositoryWorkspaceSyncInput {
@@ -269,6 +273,8 @@ async function syncLocked(
     });
   }
   await assertRequestedWorktreeOwnership(host, input, integrationRef, worktrees, baseEvidence);
+  const baseRef = `refs/heads/${input.baseBranch}`;
+  await assertBaseWorktreeOwnership(host, input, baseRef, worktrees, baseEvidence);
 
   const remoteBaseRef = `refs/remotes/origin/${input.baseBranch}`;
   const frozenHeads = input.frozenPullRequestHeads ?? [];
@@ -295,7 +301,6 @@ async function syncLocked(
     }
   }
 
-  const baseRef = `refs/heads/${input.baseBranch}`;
   const baseOid = singleOid(await git(host, input.repositoryPath, ['rev-parse', '--verify', remoteBaseRef]), remoteBaseRef);
   const localBase = await refreshLocalBase(host, input.repositoryPath, baseRef, remoteBaseRef, worktrees, beforeMutation);
   const integrationWorktree = await prepareIntegrationWorktree(
@@ -338,31 +343,67 @@ async function assertRequestedWorktreeOwnership(
     return;
   }
 
-  const pathInfo = await (host.lstat ? host.lstat(input.worktreePath) : lstat(input.worktreePath)).catch(() => undefined);
-  if (!pathInfo || pathInfo.isSymbolicLink()) {
+  await assertOwnedWorktreeRecord(host, input, atRequestedPath, integrationRef, base, true);
+}
+
+async function assertBaseWorktreeOwnership(
+  host: RepositoryWorkspaceSyncHost,
+  input: RepositoryWorkspaceSyncInput,
+  baseRef: string,
+  worktrees: WorktreeRecord[],
+  base: RepositoryWorkspaceEvidence,
+): Promise<void> {
+  const atRepositoryPath = worktrees.find((entry) => entry.path === input.repositoryPath);
+  const forBranch = worktrees.find((entry) => entry.branch === baseRef);
+  if (atRepositoryPath && atRepositoryPath.branch !== baseRef) {
+    const evidence = await collectWorktreeEvidence(host, input, atRepositoryPath, {
+      ...base, worktreePath: atRepositoryPath.path, expectedBranch: baseRef,
+    });
     throw new RepositoryWorkspaceSyncError(
-      'Requested worktree path is missing, aliased, or symbolic despite Git ownership',
-      'WORKTREE_UNKNOWN', undefined, evidenceForRecord(base, atRequestedPath),
-    );
-  }
-  const evidence = await collectWorktreeEvidence(host, input, atRequestedPath, base);
-  const expectedCommon = evidence.commonDir;
-  const gitDirChild = expectedCommon && evidence.gitDir ? relative(expectedCommon, evidence.gitDir) : '';
-  const invalidGitDir = !gitDirChild || gitDirChild === '..' || gitDirChild.startsWith(`..${sep}`)
-    || !gitDirChild.startsWith(`worktrees${sep}`);
-  if (atRequestedPath.detached || atRequestedPath.branch !== integrationRef
-    || evidence.symbolicHead !== integrationRef
-    || evidence.headOid !== atRequestedPath.head
-    || evidence.repositoryRealpath !== input.repositoryPath
-    || evidence.worktreeRealpath !== input.worktreePath
-    || !evidence.gitDir || !evidence.commonDir || invalidGitDir
-    || Boolean(evidence.statusPorcelain)) {
-    const state = atRequestedPath.detached ? 'detached' : atRequestedPath.branch ?? 'branchless';
-    throw new RepositoryWorkspaceSyncError(
-      `Requested worktree ownership validation failed (${state})`,
+      'Repository root worktree does not own the configured base branch',
       evidence.statusPorcelain ? 'WORKTREE_DIRTY' : 'WORKTREE_UNKNOWN', undefined, evidence,
     );
   }
+  if (!forBranch) return;
+  await assertOwnedWorktreeRecord(host, input, forBranch, baseRef, {
+    ...base, worktreePath: forBranch.path, expectedBranch: baseRef,
+  }, forBranch.path !== input.repositoryPath);
+}
+
+async function assertOwnedWorktreeRecord(
+  host: RepositoryWorkspaceSyncHost,
+  input: RepositoryWorkspaceSyncInput,
+  record: WorktreeRecord,
+  expectedRef: string,
+  base: RepositoryWorkspaceEvidence,
+  linked: boolean,
+): Promise<RepositoryWorkspaceEvidence> {
+  const pathInfo = await (host.lstat ? host.lstat(record.path) : lstat(record.path)).catch(() => undefined);
+  if (!pathInfo || pathInfo.isSymbolicLink()) {
+    throw new RepositoryWorkspaceSyncError(
+      'Worktree path is missing, aliased, or symbolic despite Git ownership',
+      'WORKTREE_UNKNOWN', undefined, evidenceForRecord(base, record),
+    );
+  }
+  const evidence = await collectWorktreeEvidence(host, input, record, base);
+  const gitDirChild = evidence.commonDir && evidence.gitDir ? relative(evidence.commonDir, evidence.gitDir) : '';
+  const invalidGitDir = linked
+    ? !gitDirChild || gitDirChild === '..' || gitDirChild.startsWith(`..${sep}`) || !gitDirChild.startsWith(`worktrees${sep}`)
+    : gitDirChild !== '';
+  if (record.detached || record.branch !== expectedRef
+    || evidence.symbolicHead !== expectedRef
+    || evidence.headOid !== record.head
+    || evidence.repositoryRealpath !== input.repositoryPath
+    || evidence.worktreeRealpath !== record.path
+    || !evidence.gitDir || !evidence.commonDir || invalidGitDir
+    || Boolean(evidence.statusPorcelain)) {
+    const state = record.detached ? 'detached' : record.branch ?? 'branchless';
+    throw new RepositoryWorkspaceSyncError(
+      `Worktree ownership validation failed (${state})`,
+      evidence.statusPorcelain ? 'WORKTREE_DIRTY' : 'WORKTREE_UNKNOWN', undefined, evidence,
+    );
+  }
+  return evidence;
 }
 
 async function assertRequestedPathAbsent(
@@ -372,14 +413,32 @@ async function assertRequestedPathAbsent(
 ): Promise<void> {
   try {
     await (host.lstat ? host.lstat(worktreePath) : lstat(worktreePath));
+    throw new RepositoryWorkspaceSyncError(
+      'Requested worktree path already exists without exact Git worktree ownership',
+      'WORKTREE_UNKNOWN', undefined, evidence,
+    );
   } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && (error as { code?: unknown }).code === 'ENOENT') return;
-    throw new RepositoryWorkspaceSyncError('Requested worktree path cannot be admitted safely', 'WORKTREE_UNKNOWN', undefined, evidence);
+    if (!(error && typeof error === 'object' && 'code' in error && (error as { code?: unknown }).code === 'ENOENT')) {
+      if (error instanceof RepositoryWorkspaceSyncError) throw error;
+      throw new RepositoryWorkspaceSyncError('Requested worktree path cannot be admitted safely', 'WORKTREE_UNKNOWN', undefined, evidence);
+    }
   }
-  throw new RepositoryWorkspaceSyncError(
-    'Requested worktree path already exists without exact Git worktree ownership',
-    'WORKTREE_UNKNOWN', undefined, evidence,
-  );
+  const parent = dirname(worktreePath);
+  try {
+    const parentLink = await (host.lstat ? host.lstat(parent) : lstat(parent));
+    const canonicalParent = await (host.realpath ?? realpath)(parent);
+    const parentInfo = await (host.stat ? host.stat(parent) : stat(parent));
+    const ownerMismatch = typeof process.getuid === 'function' && parentInfo.uid !== process.getuid();
+    if (parentLink.isSymbolicLink() || canonicalParent !== parent || !parentInfo.isDirectory()
+      || ownerMismatch || (parentInfo.mode & 0o022) !== 0) {
+      throw new Error('controlled worktree parent is aliased or unsafe');
+    }
+  } catch (error) {
+    throw new RepositoryWorkspaceSyncError(
+      `Requested worktree parent cannot be admitted safely: ${error instanceof Error ? error.message : String(error)}`,
+      'WORKTREE_UNKNOWN', undefined, evidence,
+    );
+  }
 }
 
 async function collectWorktreeEvidence(
@@ -434,15 +493,7 @@ function attachEvidence(error: unknown, evidence: RepositoryWorkspaceEvidence): 
 }
 
 function bounded(value: string, maximum: number): string {
-  return redactCredentials(value.replace(/\0/g, '')).slice(0, maximum);
-}
-
-function redactCredentials(value: string): string {
-  return value
-    .replace(/\bghp_[A-Za-z0-9_]+\b/g, '[REDACTED_GITHUB_TOKEN]')
-    .replace(/\bgithub_pat_[A-Za-z0-9_]+\b/g, '[REDACTED_GITHUB_TOKEN]')
-    .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [REDACTED]')
-    .replace(/\b(token|password)\s*=\s*[^\s&;"']+/gi, (_match, name: string) => `${name}=[REDACTED]`);
+  return redactDurableSecrets(value.replace(/\0/g, '')).slice(0, maximum);
 }
 
 async function refreshLocalBase(
@@ -510,6 +561,7 @@ async function prepareIntegrationWorktree(
     }
     await beforeMutation?.();
     await git(host, input.repositoryPath, ['worktree', 'add', '--', input.worktreePath, integrationRef]);
+    await assertCreatedWorktreeOwnership(host, input, integrationRef);
     if (input.integrationWorktreeMode === 'reset_to_base') {
       await beforeMutation?.();
       await git(host, input.worktreePath, ['reset', '--hard', remoteBaseRef]);
@@ -525,7 +577,50 @@ async function prepareIntegrationWorktree(
   await git(host, input.repositoryPath, [
     'worktree', 'add', '-b', input.integrationBranch, '--no-track', '--', input.worktreePath, remoteBaseRef,
   ]);
+  await assertCreatedWorktreeOwnership(host, input, integrationRef);
   return 'created';
+}
+
+async function assertCreatedWorktreeOwnership(
+  host: RepositoryWorkspaceSyncHost,
+  input: RepositoryWorkspaceSyncInput,
+  integrationRef: string,
+): Promise<void> {
+  let raw = '';
+  try {
+    raw = (await git(host, input.repositoryPath, ['worktree', 'list', '--porcelain'], READ_ONLY_GIT_ENV)).stdout;
+    const records = parseWorktrees(raw);
+    assertUniqueWorktreePathsAndBranches(records);
+    const created = records.find((record) => record.path === input.worktreePath);
+    if (!created || created.branch !== integrationRef
+      || records.some((record) => record.branch === integrationRef && record.path !== input.worktreePath)) {
+      throw new RepositoryWorkspaceSyncError(
+        'Created worktree is not attached to the exact requested path and branch',
+        'WORKTREE_UNKNOWN', undefined, {
+          version: 1,
+          repositoryPath: input.repositoryPath,
+          worktreePath: input.worktreePath,
+          expectedBranch: integrationRef,
+          porcelainRecord: bounded(raw, 8_192),
+        },
+      );
+    }
+    await assertOwnedWorktreeRecord(host, input, created, integrationRef, {
+      version: 1,
+      repositoryPath: input.repositoryPath,
+      worktreePath: input.worktreePath,
+      expectedBranch: integrationRef,
+      porcelainRecord: bounded(raw, 8_192),
+    }, true);
+  } catch (error) {
+    throw attachEvidence(error, {
+      version: 1,
+      repositoryPath: input.repositoryPath,
+      worktreePath: input.worktreePath,
+      expectedBranch: integrationRef,
+      ...(raw ? { porcelainRecord: bounded(raw, 8_192) } : {}),
+    });
+  }
 }
 
 async function fastForwardWorktree(
@@ -607,7 +702,7 @@ async function runGit(
     return await host.runGit(command);
   } catch (error) {
     throw new RepositoryWorkspaceSyncError(
-      `Git command could not be executed: ${error instanceof Error ? error.message : String(error)}`,
+      `Git command could not be executed: ${redactDurableSecrets(error instanceof Error ? error.message : String(error))}`,
       'GIT_COMMAND_FAILED',
       diagnosticCommand(command),
     );
@@ -618,7 +713,7 @@ function commandFailure(
   command: RepositoryWorkspaceGitCommand,
   result: RepositoryWorkspaceGitResult,
 ): RepositoryWorkspaceSyncError {
-  const detail = result.stderr.trim() || `exit code ${result.exitCode}`;
+  const detail = redactDurableSecrets(result.stderr.trim()) || `exit code ${result.exitCode}`;
   const operation = /^[a-z][a-z-]*$/.test(command.args[0] ?? '') ? command.args[0] : 'command';
   return new RepositoryWorkspaceSyncError(
     `Git ${operation} failed: ${detail}`,

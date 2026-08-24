@@ -290,6 +290,60 @@ describe('integration candidate v3 mapper and invariants', () => {
     expect(query.mock.calls.map(([text]) => String(text))).toContainEqual(expect.stringContaining("SET status='in_progress'"));
   });
 
+  it('atomically restarts base-drift composition on a new source_seed revision', async () => {
+    const candidateRow = {
+      id: candidate.id, integration_task_id: candidate.integrationTaskId, repository_id: candidate.repositoryId,
+      base_branch: candidate.baseBranch, branch: candidate.branch, provider_pull_request_id: '42', state: 'approved',
+      current_revision: 1, work_round: 1, version: 4, workflow_epoch: 2, lane_epoch: 3,
+      policy_revision: candidate.policyRevision, merge_method: candidate.mergeMethod, policy_snapshot: candidate.policySnapshot,
+      source_set_digest: candidate.sourceSetDigest, approved_revision: 1, approved_review_execution_id: 'review-1',
+      created_at: candidate.createdAt, updated_at: candidate.updatedAt,
+    };
+    const revisionRow = {
+      candidate_id: candidate.id, revision: 2, digest_version: 1, base_oid: 'base-2', head_oid: null,
+      subject_kind: 'source_seed', tree_oid: null, composition_complete: false,
+      source_set_digest: 'sha256:new-source-seed', subject_digest: 'sha256:new-source-seed',
+      policy_snapshot_digest: 'sha256:policy', policy_revision: candidate.policyRevision,
+      merge_method: candidate.mergeMethod, work_round: 1, created_at: candidate.updatedAt,
+    };
+    const query = vi.fn(async (sql: string, _values?: unknown[]) => {
+      if (sql.includes('SELECT * FROM') && sql.includes('FOR UPDATE')) return { rows: [candidateRow] };
+      if (sql.includes('SELECT * FROM ky_taskboard_integration_candidate_source_snapshots')) return { rows: [{
+        delivery_task_id: source.deliveryTaskId, delivery_task_version: source.deliveryTaskVersion,
+        integration_source_id: source.integrationSourceId, repository_id: source.repositoryId,
+        provider_pull_request_id: source.providerPullRequestId, frozen_head_oid: source.frozenHeadOid,
+        frozen_base_oid: source.frozenBaseOid, reviewed_subject_digest: source.reviewedSubjectDigest,
+        review_execution_id: source.reviewExecutionId, review_receipt_digest: source.reviewReceiptDigest,
+        requirement_digest: source.requirementDigest, source_order: source.order,
+      }] };
+      if (sql.includes('INSERT INTO') && sql.includes('subject_kind') && sql.includes('RETURNING *')) return { rows: [revisionRow] };
+      if (sql.includes('UPDATE ky_taskboard_integration_candidates')) {
+        return { rows: [{ ...candidateRow, state: 'composing', current_revision: 2, version: 5,
+          approved_revision: null, approved_review_execution_id: null }] };
+      }
+      return { rows: [] };
+    });
+    const client = { query, release: vi.fn() };
+    const store = new IntegrationCandidateStore({
+      pool: { connect: vi.fn(async () => client) }, tasksTable: 'tasks', executionsTable: 'executions',
+      integrationSourcesTable: 'ky_taskboard_integration_sources', blockEpisodesTable: 'blocks',
+    } as never);
+
+    const result = await store.restartComposition(candidate.id, {
+      expectedVersion: 4, expectedRevision: 1, baseOid: 'base-2', lastError: 'base drift',
+    }, { leaseId: 'lease-1', leaseEpoch: '7', releaseIdentity: 'release-1' });
+
+    expect(result).toMatchObject({ state: 'composing', currentRevision: 2 });
+    const sql = query.mock.calls.map(([text]) => String(text));
+    expect(sql).toContainEqual(expect.stringContaining('INSERT INTO ky_taskboard_integration_candidate_source_snapshots'));
+    expect(sql).toContainEqual(expect.stringContaining("SET state='failed'"));
+    expect(sql).toContainEqual(expect.stringContaining("state='prepared' AND attempt_count=0"));
+    expect(sql).toContainEqual(expect.stringContaining("SET status='in_progress'"));
+    const candidateMutation = query.mock.calls.find(([text]) => String(text).includes('UPDATE ky_taskboard_integration_candidates'))!;
+    expect(String(candidateMutation[0])).toContain('worker_lease_id=$6');
+    expect(candidateMutation[1]).toEqual([candidate.id, 4, 1, 2, 'base drift', 'lease-1', '7', 'release-1']);
+  });
+
   it('requires current revision approval before merging and a receipt before merged', () => {
     expect(() => assertCandidateTransition(candidate, {
       expectedVersion: 4, expectedRevision: 1, to: 'approved',

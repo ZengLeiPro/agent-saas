@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import type { RepositoryWorkspaceGitCommand, RepositoryWorkspaceGitResult } from './repositoryWorkspaceSync.js';
 
 const DEFAULT_GIT_TIMEOUT_MS = 30_000;
+const PUSH_GIT_TIMEOUT_MS = 20_000;
 const FETCH_GIT_TIMEOUT_MS = 120_000;
 
 const SAFE_GIT_CONFIG = [
@@ -55,9 +56,11 @@ const FORBIDDEN_CALLER_GLOBAL_OPTIONS = [
 /** The only child-process Git boundary for server-owned v3 repositories. */
 export function safeServerGitArgs(args: readonly string[]): string[] {
   for (const arg of args) {
-    const forbidden = FORBIDDEN_CALLER_GLOBAL_OPTIONS.find((option) => (
-      arg === option || (option.startsWith('--') && arg.startsWith(`${option}=`))
-    ));
+    const forbidden = arg.startsWith('-c') && arg.length > 2
+      ? '-c'
+      : FORBIDDEN_CALLER_GLOBAL_OPTIONS.find((option) => (
+        arg === option || (option.startsWith('--') && arg.startsWith(`${option}=`))
+      ));
     if (forbidden) throw new Error(`unsafe Git global option is forbidden: ${forbidden}`);
   }
   return [...SAFE_GIT_CONFIG.flatMap((entry) => ['-c', entry]), ...args];
@@ -82,7 +85,9 @@ export function safeServerGitEnvironment(overrides: Readonly<Record<string, stri
 }
 
 export function safeServerGitTimeoutMs(args: readonly string[]): number {
-  return args[0] === 'fetch' ? FETCH_GIT_TIMEOUT_MS : DEFAULT_GIT_TIMEOUT_MS;
+  if (args[0] === 'fetch') return FETCH_GIT_TIMEOUT_MS;
+  if (args[0] === 'push') return PUSH_GIT_TIMEOUT_MS;
+  return DEFAULT_GIT_TIMEOUT_MS;
 }
 
 export function runSafeServerGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult> {

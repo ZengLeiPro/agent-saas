@@ -20,6 +20,7 @@ import {
 const exec = promisify(execFile);
 const REPOSITORY = '/srv/cache/acme-widget';
 const WORKTREE = '/srv/cache/worktrees/acme-widget/integration-42';
+const WORKTREE_PARENT = '/srv/cache/worktrees/acme-widget';
 const MAIN_OID = '1'.repeat(40);
 const REMOTE_OID = '2'.repeat(40);
 const INTEGRATION_OID = '3'.repeat(40);
@@ -42,6 +43,8 @@ class ScriptedHost implements RepositoryWorkspaceSyncHost {
   readonly commands: RepositoryWorkspaceGitCommand[] = [];
   readonly locks: RepositoryWorkspaceSyncLock[] = [];
   private readonly ownedPaths = new Set<string>();
+  private readonly ownedHeads = new Map<string, string>();
+  private mutationStarted = false;
 
   constructor(private readonly steps: Step[]) {}
 
@@ -53,19 +56,42 @@ class ScriptedHost implements RepositoryWorkspaceSyncHost {
   async validateServerOwnedRepository(_repositoryPath: string): Promise<void> {}
   async realpath(path: string): Promise<string> { return path; }
   async lstat(path: string) {
-    if (this.ownedPaths.has(path)) return { isSymbolicLink: () => false };
+    if (this.ownedPaths.has(path) || path === WORKTREE_PARENT) return { isSymbolicLink: () => false };
     throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+  }
+  async stat(path: string) {
+    if (path !== WORKTREE_PARENT) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+    return { uid: process.getuid?.() ?? 0, mode: 0o700, isDirectory: () => true };
   }
 
   async runGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult> {
     this.commands.push(command);
+    const expected = this.steps[0];
+    const expectedCommand = expected && { cwd: expected.cwd, args: expected.args, ...(expected.env ? { env: expected.env } : {}) };
+    const matchesExpected = expectedCommand && JSON.stringify(command) === JSON.stringify(expectedCommand);
+    if (!this.mutationStarted && command.cwd === REPOSITORY && !matchesExpected) {
+      if (command.args[0] === 'rev-parse' && command.args[1] === '--verify' && command.args[2] === 'HEAD') {
+        return { exitCode: 0, stdout: `${this.ownedHeads.get(REPOSITORY) ?? MAIN_OID}\n`, stderr: '' };
+      }
+      if (command.args[0] === 'symbolic-ref') return { exitCode: 0, stdout: 'refs/heads/main\n', stderr: '' };
+      if (command.args[0] === 'status') return { exitCode: 0, stdout: '', stderr: '' };
+      if (command.args[0] === 'rev-parse' && command.args[1] === '--git-dir') return { exitCode: 0, stdout: `${REPOSITORY}/.git\n`, stderr: '' };
+      if (command.args[0] === 'rev-parse' && command.args[1] === '--git-common-dir') return { exitCode: 0, stdout: `${REPOSITORY}/.git\n`, stderr: '' };
+    }
     const step = this.steps.shift();
     expect(command).toEqual(step && { cwd: step.cwd, args: step.args, ...(step.env ? { env: step.env } : {}) });
     if (!step) throw new Error('Unexpected Git command');
     const result = { exitCode: 0, stdout: '', stderr: '', ...step.result };
     if (command.args[0] === 'worktree' && command.args[1] === 'list') {
-      for (const match of result.stdout.matchAll(/^worktree (.+)$/gm)) this.ownedPaths.add(match[1]!);
+      const records = result.stdout.split(/\n\n/);
+      for (const record of records) {
+        const path = record.match(/^worktree (.+)$/m)?.[1];
+        const head = record.match(/^HEAD ([0-9a-f]+)$/m)?.[1];
+        if (path) this.ownedPaths.add(path);
+        if (path && head) this.ownedHeads.set(path, head);
+      }
     }
+    if (command.args[0] === 'fetch') this.mutationStarted = true;
     return result;
   }
 
@@ -265,6 +291,8 @@ describe('syncRepositoryWorkspace', () => {
         cwd: REPOSITORY,
         args: ['worktree', 'add', '-b', 'integration/42', '--no-track', '--', WORKTREE, 'refs/remotes/origin/main'],
       },
+      listStep(`${mainRecord(REMOTE_OID)}\n${integrationRecord(REMOTE_OID)}`),
+      ...ownershipSteps(REMOTE_OID),
     ]);
 
     await expect(syncRepositoryWorkspace(host, input)).resolves.toMatchObject({
@@ -273,6 +301,22 @@ describe('syncRepositoryWorkspace', () => {
       integrationWorktree: 'created',
     });
     expect(host.locks).toEqual([{ repositoryPath: REPOSITORY, branch: '*' }]);
+    host.assertConsumed();
+  });
+
+  it('fails closed when post-create Git ownership does not expose the exact worktree', async () => {
+    const host = new ScriptedHost([
+      listStep(mainRecord()), fetchStep(), remoteOidStep(), statusStep(REPOSITORY),
+      ancestorStep('refs/heads/main', 'refs/remotes/origin/main', true),
+      ancestorStep('refs/remotes/origin/main', 'refs/heads/main', false),
+      { cwd: REPOSITORY, args: ['merge', '--ff-only', 'refs/remotes/origin/main'] },
+      { cwd: REPOSITORY, args: ['show-ref', '--verify', '--quiet', 'refs/heads/integration/42'], result: { exitCode: 1 } },
+      { cwd: REPOSITORY, args: ['worktree', 'add', '-b', 'integration/42', '--no-track', '--', WORKTREE, 'refs/remotes/origin/main'] },
+      listStep(mainRecord(REMOTE_OID)),
+    ]);
+
+    await expect(syncRepositoryWorkspace(host, input)).rejects.toMatchObject({ code: 'WORKTREE_UNKNOWN' });
+    expect(host.commands.some((command) => command.args[0] === 'worktree' && command.args[1] === 'add')).toBe(true);
     host.assertConsumed();
   });
 
@@ -333,14 +377,23 @@ describe('syncRepositoryWorkspace', () => {
     host.assertConsumed();
   });
 
-  it('fails closed on a dirty main without merge, reset, delete, or worktree mutation', async () => {
+  it('fails closed on a dirty main with evidence and zero Git writes', async () => {
     const host = new ScriptedHost([
-      listStep(mainRecord()), fetchStep(), remoteOidStep(), statusStep(REPOSITORY, ' M src/index.ts\n'),
+      listStep(mainRecord()), statusStep(REPOSITORY, ' M src/index.ts\n'),
     ]);
 
-    await expect(syncRepositoryWorkspace(host, input)).rejects.toMatchObject({ code: 'WORKTREE_DIRTY' });
+    const error = await syncRepositoryWorkspace(host, input).catch((cause) => cause);
+    expect(error).toMatchObject({
+      code: 'WORKTREE_DIRTY',
+      evidence: {
+        worktreePath: REPOSITORY,
+        expectedBranch: 'refs/heads/main',
+        statusPorcelain: ' M src/index.ts\n',
+        commonDir: `${REPOSITORY}/.git`,
+      },
+    });
+    expect(host.commands.flatMap((command) => command.args)).not.toContain('fetch');
     expect(host.commands.flatMap((command) => command.args)).not.toContain('reset');
-    expect(host.commands.flatMap((command) => command.args)).not.toContain('remove');
     host.assertConsumed();
   });
 
@@ -370,7 +423,8 @@ describe('syncRepositoryWorkspace', () => {
       code: 'GIT_COMMAND_FAILED',
       command: { cwd: REPOSITORY, args: fetchStep().args },
     });
-    expect(host.commands).toHaveLength(2);
+    expect(host.commands).toHaveLength(7);
+    expect(host.commands.at(-1)).toMatchObject({ args: fetchStep().args });
     host.assertConsumed();
   });
 
@@ -399,10 +453,12 @@ describe('syncRepositoryWorkspace', () => {
       validateServerOwnedRepository: vi.fn(async () => undefined),
       realpath: async (path) => path,
       lstat: async () => ({ isSymbolicLink: () => false }),
-      runGit: vi.fn(async ({ args }: RepositoryWorkspaceGitCommand) => {
+      runGit: vi.fn(async ({ cwd, args }: RepositoryWorkspaceGitCommand) => {
         if (args[0] === 'worktree' && args[1] === 'list') return ok(`${mainRecord(REMOTE_OID)}\n${integrationRecord(REMOTE_OID)}`);
-        if (args[0] === 'symbolic-ref') return ok('refs/heads/integration/42\n');
-        if (args[0] === 'rev-parse' && args[1] === '--git-dir') return ok(`${REPOSITORY}/.git/worktrees/integration-42\n`);
+        if (args[0] === 'symbolic-ref') return ok(cwd === REPOSITORY ? 'refs/heads/main\n' : 'refs/heads/integration/42\n');
+        if (args[0] === 'rev-parse' && args[1] === '--git-dir') {
+          return ok(cwd === REPOSITORY ? `${REPOSITORY}/.git\n` : `${REPOSITORY}/.git/worktrees/integration-42\n`);
+        }
         if (args[0] === 'rev-parse' && args[1] === '--git-common-dir') return ok(`${REPOSITORY}/.git\n`);
         if (args[0] === 'rev-parse') return ok(`${REMOTE_OID}\n`);
         if (args[0] === 'merge-base') return ok();
@@ -450,7 +506,8 @@ describe('syncRepositoryWorkspace', () => {
 
     await expect(syncRepositoryWorkspace(host, input, guard)).rejects.toThrow('request lease lost');
     expect(guard).toHaveBeenCalledOnce();
-    expect(host.commands).toEqual([{ cwd: REPOSITORY, args: ['worktree', 'list', '--porcelain'], env: readOnlyEnv }]);
+    expect(host.commands[0]).toEqual({ cwd: REPOSITORY, args: ['worktree', 'list', '--porcelain'], env: readOnlyEnv });
+    expect(host.commands.flatMap((command) => command.args)).not.toContain('fetch');
     host.assertConsumed();
   });
 
@@ -466,15 +523,40 @@ describe('syncRepositoryWorkspace', () => {
     host.assertConsumed();
   });
 
+  it('rejects a symlinked controlled worktree parent before fetch', async () => {
+    const host = new ScriptedHost([listStep(mainRecord())]);
+    vi.spyOn(host, 'lstat').mockImplementation(async (path: string) => {
+      if (path === WORKTREE) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+      if (path === WORKTREE_PARENT) return { isSymbolicLink: () => true };
+      return { isSymbolicLink: () => false };
+    });
+
+    await expect(syncRepositoryWorkspace(host, input)).rejects.toMatchObject({ code: 'WORKTREE_UNKNOWN' });
+    expect(host.commands.flatMap((command) => command.args)).not.toContain('fetch');
+    host.assertConsumed();
+  });
+
+  it.each([
+    ['foreign owner', (process.getuid?.() ?? 0) + 1, 0o700],
+    ['group-writable mode', process.getuid?.() ?? 0, 0o720],
+  ])('rejects a controlled worktree parent with unsafe %s before fetch', async (_case, uid, mode) => {
+    const host = new ScriptedHost([listStep(mainRecord())]);
+    vi.spyOn(host, 'stat').mockResolvedValue({ uid, mode, isDirectory: () => true });
+
+    await expect(syncRepositoryWorkspace(host, input)).rejects.toMatchObject({ code: 'WORKTREE_UNKNOWN' });
+    expect(host.commands.flatMap((command) => command.args)).not.toContain('fetch');
+    host.assertConsumed();
+  });
+
   it('redacts credential-shaped values from durable raw porcelain evidence', async () => {
-    const secret = 'github_pat_11AA_secretvalue';
-    const raw = `worktree ${WORKTREE}\nHEAD ${INTEGRATION_OID}\nunknown token=${secret}\n`;
+    const secrets = ['github_pat_11AA_secretvalue', 'ghs_serverinstallationtoken', 'url-password'];
+    const raw = `worktree ${WORKTREE}\nHEAD ${INTEGRATION_OID}\nunknown token=${secrets[0]} bearer=${secrets[1]} https://user:${secrets[2]}@github.com/acme/widget.git\n`;
     const host = new ScriptedHost([listStep(raw)]);
 
     const error = await syncRepositoryWorkspace(host, input).catch((cause) => cause);
     expect(error).toMatchObject({ code: 'WORKTREE_UNKNOWN' });
     expect(error.evidence.porcelainRecord).toContain('[REDACTED]');
-    expect(error.evidence.porcelainRecord).not.toContain(secret);
+    for (const secret of secrets) expect(error.evidence.porcelainRecord).not.toContain(secret);
     host.assertConsumed();
   });
 

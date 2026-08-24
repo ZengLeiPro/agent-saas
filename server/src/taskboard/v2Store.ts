@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
 import type {
@@ -15,8 +15,8 @@ import { rowToIntegrationSource } from './integrationSourceMapper.js';
 import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import { assertIntegrationV3RuntimeAvailable } from './integrationV3ActivationStore.js';
 import {
-  canonicalJson,
   computeIntegrationPolicySnapshotDigest,
+  computeIntegrationSourceSeedDigest,
   computeIntegrationRequirementDigest,
   computeIntegrationReviewReceiptDigest,
   computeIntegrationSourceSetDigest,
@@ -354,7 +354,7 @@ export async function createIntegrationBatch(
       // revision 2 before checks/review; it never treats this source-bound seed as a PR fact.
       const bootstrapBaseOid = frozenSources[0]!.frozenBaseOid;
       const bootstrapHeadOid = frozenSources[0]!.frozenHeadOid;
-      const subjectDigest = snapshotDigest('taskboard.integration-candidate-source-seed', {
+      const subjectDigest = computeIntegrationSourceSeedDigest({
         repositoryId: repository.repositoryId,
         baseBranch: repository.baseBranch!,
         baseOid: bootstrapBaseOid,
@@ -944,10 +944,6 @@ function jsonObject(value: unknown): Record<string, unknown> | undefined {
   } catch {
     return undefined;
   }
-}
-
-function snapshotDigest(domain: string, payload: Record<string, unknown>): string {
-  return `sha256:${createHash('sha256').update(canonicalJson({ domain, version: 1, payload })).digest('hex')}`;
 }
 
 function roleRank(role: string): number {

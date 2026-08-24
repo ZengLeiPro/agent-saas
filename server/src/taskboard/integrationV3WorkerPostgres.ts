@@ -15,7 +15,17 @@ import type {
   IntegrationV3WorkerCurrent,
   IntegrationV3WorkerHost,
 } from './integrationV3Worker.js';
-import type { RepositoryWorkspaceGitCommand, RepositoryWorkspaceGitResult, RepositoryWorkspaceSyncLock } from './repositoryWorkspaceSync.js';
+import { redactDurableSecrets } from './durableSecretRedaction.js';
+import {
+  type RepositoryWorkspaceGitCommand,
+  type RepositoryWorkspaceGitResult,
+  type RepositoryWorkspaceSyncLock,
+} from './repositoryWorkspaceSync.js';
+
+function cleanupError(error: unknown): string {
+  const value = error instanceof Error ? error.message : String(error);
+  return redactDurableSecrets(value.replace(/[\r\n\t]+/g, ' ')).slice(0, 2_000);
+}
 
 export interface IntegrationV3CleanupExecutorOptions {
   candidateId: string;
@@ -51,7 +61,7 @@ export async function terminalizeIntegrationV3PreparedOperations(options: {
             (SELECT count(*) FROM ${options.providerOperationsTable} o
               WHERE o.candidate_id=$1 AND o.state IN ('prepared','executing','unknown')
                 AND NOT EXISTS (SELECT 1 FROM terminalized t WHERE t.id=o.id))::int AS remaining_count`,
-    [options.candidateId, `Candidate cleanup terminalized unexecuted provider operation: ${options.reason}`],
+    [options.candidateId, cleanupError(`Candidate cleanup terminalized unexecuted provider operation: ${options.reason}`)],
   );
   const terminalizedCount = Number(result.rows[0]?.terminalized_count ?? 0);
   const remainingCount = Number(result.rows[0]?.remaining_count ?? 0);
@@ -64,7 +74,7 @@ export async function executeIntegrationV3Cleanup(options: IntegrationV3CleanupE
   const actions: IntegrationV3CleanupReceipt['actions'] = [];
   const perform = async (action: IntegrationV3CleanupReceipt['actions'][number]['action'], operation: () => Promise<void>, target?: string) => {
     try { await operation(); actions.push({ action, status: 'succeeded', ...(target ? { target } : {}) }); }
-    catch (error) { actions.push({ action, status: 'failed', error: error instanceof Error ? error.message : String(error), ...(target ? { target } : {}) }); }
+    catch (error) { actions.push({ action, status: 'failed', error: cleanupError(error), ...(target ? { target } : {}) }); }
   };
   await perform('revoke_capabilities', options.revokeCapabilities);
   await perform('fence_capabilities', options.fenceCapabilities);
@@ -74,7 +84,7 @@ export async function executeIntegrationV3Cleanup(options: IntegrationV3CleanupE
   } catch (error) {
     actions.push({
       action: 'terminalize_prepared_operations', status: 'failed',
-      error: error instanceof Error ? error.message : String(error),
+      error: cleanupError(error),
     });
   }
   if (actions.some((action) => action.status === 'failed')) {
@@ -103,7 +113,7 @@ export async function executeIntegrationV3Cleanup(options: IntegrationV3CleanupE
   } catch (error) {
     actions.push({
       action: 'remove_candidate_worktree', status: 'failed', target: options.worktreePath,
-      error: error instanceof Error ? error.message : String(error),
+      error: cleanupError(error),
     });
   }
   for (const source of options.sourcePullRequests) {
@@ -392,22 +402,31 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
 
   async renewRequest(request: IntegrationV3RequestLease, leaseMs: number): Promise<void> {
     const result = await this.options.pool.query(
-      `UPDATE ${this.options.requestsOutboxTable}
-          SET lease_expires_at=GREATEST(lease_expires_at,clock_timestamp()+($3::bigint*interval '1 millisecond')),
+      `UPDATE ${this.options.requestsOutboxTable} o
+          SET lease_expires_at=GREATEST(o.lease_expires_at,clock_timestamp()+($3::bigint*interval '1 millisecond')),
               updated_at=now()
-        WHERE id=$1 AND lease_id=$2 AND status='processing'
-          AND lease_expires_at>clock_timestamp() RETURNING id`,
-      [request.id, request.leaseId, leaseMs],
+         FROM ${this.options.candidatesTable} c
+        WHERE o.id=$1 AND o.lease_id=$2 AND o.status='processing'
+          AND o.lease_expires_at>clock_timestamp()
+          AND o.candidate_id=$4 AND o.candidate_revision=$5
+          AND c.id=o.candidate_id AND c.current_revision=o.candidate_revision
+          AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch
+        RETURNING o.id`,
+      [request.id, request.leaseId, leaseMs, request.candidateId, request.candidateRevision],
     );
     if (!result.rows[0]) throw new IntegrationV3RequestLeaseLostError('Request lease renewal fence is stale');
   }
 
   async assertRequestLease(request: IntegrationV3RequestLease): Promise<void> {
     const result = await this.options.pool.query(
-      `SELECT id FROM ${this.options.requestsOutboxTable}
-        WHERE id=$1 AND lease_id=$2 AND status='processing'
-          AND lease_expires_at>clock_timestamp()`,
-      [request.id, request.leaseId],
+      `SELECT o.id FROM ${this.options.requestsOutboxTable} o
+        JOIN ${this.options.candidatesTable} c ON c.id=o.candidate_id
+        WHERE o.id=$1 AND o.lease_id=$2 AND o.status='processing'
+          AND o.lease_expires_at>clock_timestamp()
+          AND o.candidate_id=$3 AND o.candidate_revision=$4
+          AND c.current_revision=o.candidate_revision
+          AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch`,
+      [request.id, request.leaseId, request.candidateId, request.candidateRevision],
     );
     if (!result.rows[0]) throw new IntegrationV3RequestLeaseLostError('Request lease fence is stale');
   }
@@ -516,24 +535,37 @@ export class PostgresIntegrationV3WorkerHost implements IntegrationV3WorkerHost 
       ? receipt.actions.filter((action) => action.status === 'failed').map((action) => `${action.action}: ${action.error}`).join('; ')
       : null;
     const result = await this.options.pool.query(
-      `UPDATE ${this.options.requestsOutboxTable}
-          SET status=CASE WHEN $3::boolean AND attempts<5 THEN 'pending' WHEN $3::boolean THEN 'failed' ELSE 'completed' END,
-              available_at=CASE WHEN $3::boolean AND attempts<5 THEN now()+(LEAST(attempts,5)*interval '5 seconds') ELSE available_at END,
+      `UPDATE ${this.options.requestsOutboxTable} o
+          SET status=CASE WHEN $3::boolean AND o.attempts<5 THEN 'pending' WHEN $3::boolean THEN 'failed' ELSE 'completed' END,
+              available_at=CASE WHEN $3::boolean AND o.attempts<5 THEN now()+(LEAST(o.attempts,5)*interval '5 seconds') ELSE o.available_at END,
               receipt=$4::jsonb,lease_id=NULL,lease_expires_at=NULL,last_error=$5,updated_at=now()
-        WHERE id=$1 AND lease_id=$2 AND status='processing'
-          AND lease_expires_at>clock_timestamp() RETURNING id`,
-      [request.id, request.leaseId, failed, receipt ? JSON.stringify(receipt) : null, failure]);
+         FROM ${this.options.candidatesTable} c
+        WHERE o.id=$1 AND o.lease_id=$2 AND o.status='processing'
+          AND o.lease_expires_at>clock_timestamp()
+          AND o.candidate_id=$6 AND o.candidate_revision=$7
+          AND c.id=o.candidate_id AND c.current_revision=o.candidate_revision
+          AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch
+        RETURNING o.id`,
+      [request.id, request.leaseId, failed, receipt ? JSON.stringify(receipt) : null, failure,
+        request.candidateId, request.candidateRevision]);
     if (!result.rows[0]) throw new IntegrationV3RequestLeaseLostError('Request completion lease fence is stale');
   }
 
   async releaseRequest(request: IntegrationV3RequestLease, error: string, retryable: boolean): Promise<void> {
-    await this.options.pool.query(
-      `UPDATE ${this.options.requestsOutboxTable}
-          SET status=CASE WHEN $4::boolean AND attempts<5 THEN 'pending' ELSE 'failed' END,
-              available_at=CASE WHEN $4::boolean THEN now()+(LEAST(attempts,5)*interval '5 seconds') ELSE available_at END,
+    const result = await this.options.pool.query(
+      `UPDATE ${this.options.requestsOutboxTable} o
+          SET status=CASE WHEN $4::boolean AND o.attempts<5 THEN 'pending' ELSE 'failed' END,
+              available_at=CASE WHEN $4::boolean THEN now()+(LEAST(o.attempts,5)*interval '5 seconds') ELSE o.available_at END,
               lease_id=NULL,lease_expires_at=NULL,last_error=$3,updated_at=now()
-        WHERE id=$1 AND lease_id=$2 AND status='processing'
-          AND lease_expires_at>clock_timestamp()`, [request.id, request.leaseId, error, retryable]);
+         FROM ${this.options.candidatesTable} c
+        WHERE o.id=$1 AND o.lease_id=$2 AND o.status='processing'
+          AND o.lease_expires_at>clock_timestamp()
+          AND o.candidate_id=$5 AND o.candidate_revision=$6
+          AND c.id=o.candidate_id AND c.current_revision=o.candidate_revision
+          AND o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch
+        RETURNING o.id`,
+      [request.id, request.leaseId, error, retryable, request.candidateId, request.candidateRevision]);
+    if (!result.rows[0]) throw new IntegrationV3RequestLeaseLostError('Request release lease fence is stale');
   }
 
   async resolveEngineContext(candidateId: string): Promise<{ repository: TaskBoardRepositoryConfig; credentialOwnerId: string }> {

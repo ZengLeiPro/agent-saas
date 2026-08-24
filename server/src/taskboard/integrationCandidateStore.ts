@@ -13,6 +13,7 @@ import {
   computeIntegrationPolicySnapshotDigest,
   computeIntegrationRequirementDigest,
   computeIntegrationReviewReceiptDigest,
+  computeIntegrationSourceSeedDigest,
   computeIntegrationSourceSetDigest,
   INTEGRATION_CANDIDATE_DIGEST_VERSION,
 } from './integrationCandidateDigest.js';
@@ -79,6 +80,13 @@ export interface TransitionCandidateInput {
   lastError?: string;
 }
 
+export interface RestartCandidateCompositionInput {
+  expectedVersion: number;
+  expectedRevision: number;
+  baseOid: string;
+  lastError?: string;
+}
+
 /** Ephemeral Worker ownership fence. It is checked atomically by the Candidate mutation SQL. */
 export interface IntegrationCandidateMutationFence {
   leaseId: string;
@@ -105,12 +113,14 @@ export class IntegrationCandidateStore {
   readonly candidatesTable: string;
   readonly revisionsTable: string;
   readonly sourceSnapshotsTable: string;
+  readonly providerOperationsTable: string;
 
   constructor(private readonly options: IntegrationCandidateStoreOptions) {
     const tables = integrationCandidateTableNames(options.integrationSourcesTable);
     this.candidatesTable = tables.candidatesTable;
     this.revisionsTable = tables.revisionsTable;
     this.sourceSnapshotsTable = tables.sourceSnapshotsTable;
+    this.providerOperationsTable = tables.providerOperationsTable;
   }
 
   async create(input: CreateIntegrationCandidateInput): Promise<TaskBoardIntegrationCandidate> {
@@ -320,6 +330,93 @@ export class IntegrationCandidateStore {
           mutationFence?.releaseIdentity ?? null],
       );
       if (!updated.rows[0]) throw staleCandidate();
+      return rowToIntegrationCandidate(updated.rows[0]);
+    });
+  }
+
+  async restartComposition(
+    candidateId: string,
+    input: RestartCandidateCompositionInput,
+    mutationFence?: IntegrationCandidateMutationFence,
+  ): Promise<TaskBoardIntegrationCandidate> {
+    return this.withTransaction(async (client) => {
+      const candidate = await this.loadForUpdate(client, candidateId);
+      assertCandidateCas(candidate, input.expectedVersion, input.expectedRevision);
+      if (!['approved', 'merging'].includes(candidate.state)) {
+        throw new TaskboardValidationError('Candidate is not eligible for deterministic recomposition', 'TASKBOARD_CANDIDATE_RECOMPOSE_STATE_INVALID');
+      }
+      const sources = await client.query(
+        `SELECT * FROM ${this.sourceSnapshotsTable}
+          WHERE candidate_id=$1 AND revision=$2 ORDER BY source_order FOR SHARE`,
+        [candidate.id, candidate.currentRevision],
+      );
+      const firstHeadOid = String(sources.rows[0]?.frozen_head_oid ?? '');
+      if (!firstHeadOid) {
+        throw new TaskboardValidationError('Candidate source snapshots are unavailable for recomposition', 'TASKBOARD_CANDIDATE_SOURCE_SNAPSHOT_MISSING');
+      }
+      const revision = candidate.currentRevision + 1;
+      const policySnapshotDigest = computeIntegrationPolicySnapshotDigest(candidate.policySnapshot);
+      const subjectDigest = computeIntegrationSourceSeedDigest({
+        repositoryId: candidate.repositoryId,
+        baseBranch: candidate.baseBranch,
+        baseOid: required(input.baseOid, 'baseOid'),
+        headOid: firstHeadOid,
+        sourceSetDigest: candidate.sourceSetDigest ?? '',
+        mergeMethod: candidate.mergeMethod,
+        policyRevision: candidate.policyRevision,
+        policySnapshotDigest,
+        recomposeRevision: revision,
+      });
+      await client.query(
+        `INSERT INTO ${this.revisionsTable}
+          (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,composition_complete,
+           source_set_digest,subject_digest,policy_snapshot_digest,policy_revision,merge_method,work_round)
+         VALUES ($1,$2,$3,$4,$5,'source_seed',NULL,FALSE,$6,$7,$8,$9,$10,$11)`,
+        [candidate.id, revision, INTEGRATION_CANDIDATE_DIGEST_VERSION, input.baseOid, firstHeadOid,
+          candidate.sourceSetDigest, subjectDigest, policySnapshotDigest, candidate.policyRevision,
+          candidate.mergeMethod, candidate.workRound],
+      );
+      await client.query(
+        `INSERT INTO ${this.sourceSnapshotsTable}
+          (candidate_id,revision,source_order,integration_source_id,delivery_task_id,delivery_task_version,
+           repository_id,provider_pull_request_id,frozen_head_oid,frozen_base_oid,reviewed_subject_digest,
+           review_execution_id,review_receipt_digest,requirement_digest)
+         SELECT candidate_id,$3,source_order,integration_source_id,delivery_task_id,delivery_task_version,
+                repository_id,provider_pull_request_id,frozen_head_oid,frozen_base_oid,reviewed_subject_digest,
+                review_execution_id,review_receipt_digest,requirement_digest
+           FROM ${this.sourceSnapshotsTable}
+          WHERE candidate_id=$1 AND revision=$2 ORDER BY source_order`,
+        [candidate.id, candidate.currentRevision, revision],
+      );
+      const updated = await client.query(
+        `UPDATE ${this.candidatesTable}
+            SET current_revision=$4,state='composing',approved_revision=NULL,
+                approved_review_execution_id=NULL,last_error=$5,version=version+1,updated_at=now()
+          WHERE id=$1 AND version=$2 AND current_revision=$3 AND state IN ('approved','merging')
+            AND ($6::text IS NULL OR (
+              worker_lease_id=$6 AND worker_lease_epoch=$7::bigint
+              AND worker_release_identity=$8 AND worker_status='processing'
+              AND worker_lease_expires_at>clock_timestamp()
+            ))
+          RETURNING *`,
+        [candidate.id, input.expectedVersion, input.expectedRevision, revision, input.lastError ?? null,
+          mutationFence?.leaseId ?? null, mutationFence?.leaseEpoch ?? null,
+          mutationFence?.releaseIdentity ?? null],
+      );
+      if (!updated.rows[0]) throw staleCandidate();
+      await client.query(
+        `UPDATE ${this.providerOperationsTable}
+            SET state='failed',error='Approved subject base drifted before provider execution',
+                receipt=jsonb_build_object('outcome','not_applied','evidence','attempt_count=0_base_drift'),updated_at=now()
+          WHERE candidate_id=$1 AND candidate_revision=$2 AND state='prepared' AND attempt_count=0`,
+        [candidate.id, candidate.currentRevision],
+      );
+      await client.query(
+        `UPDATE ${this.options.tasksTable}
+            SET status='in_progress',completed_at=NULL,version=version+1,updated_at=now()
+          WHERE id=$1 AND status NOT IN ('done','canceled')`,
+        [candidate.integrationTaskId],
+      );
       return rowToIntegrationCandidate(updated.rows[0]);
     });
   }

@@ -35,6 +35,8 @@ class MemoryCandidateHost implements IntegrationEngineV3CandidateHost {
   lastAppend?: Parameters<IntegrationEngineV3CandidateHost['appendRevision']>[1];
   lastAppendFence?: Parameters<IntegrationEngineV3CandidateHost['appendRevision']>[2];
   lastWorkFence?: Parameters<IntegrationEngineV3CandidateHost['beginNextWorkRound']>[3];
+  lastRestart?: Parameters<IntegrationEngineV3CandidateHost['restartComposition']>[1];
+  lastRestartFence?: Parameters<IntegrationEngineV3CandidateHost['restartComposition']>[2];
   lastTransitionFence?: Parameters<IntegrationEngineV3CandidateHost['transition']>[2];
   lastCommitFence?: Parameters<IntegrationEngineV3CandidateHost['commitMerged']>[0]['mutationFence'];
   revisionValue = structuredClone(revision);
@@ -61,6 +63,32 @@ class MemoryCandidateHost implements IntegrationEngineV3CandidateHost {
   ): Promise<TaskBoardIntegrationCandidate> {
     this.lastWorkFence = mutationFence && structuredClone(mutationFence);
     this.value = { ...this.value, state: 'working', workRound: this.value.workRound + 1, version: this.value.version + 1 };
+    return structuredClone(this.value);
+  }
+  async restartComposition(
+    _candidateId: string,
+    input: Parameters<IntegrationEngineV3CandidateHost['restartComposition']>[1],
+    mutationFence?: Parameters<IntegrationEngineV3CandidateHost['restartComposition']>[2],
+  ): Promise<TaskBoardIntegrationCandidate> {
+    this.lastRestart = structuredClone(input);
+    this.lastRestartFence = mutationFence && structuredClone(mutationFence);
+    this.value = {
+      ...this.value,
+      state: 'composing',
+      currentRevision: this.value.currentRevision + 1,
+      version: this.value.version + 1,
+      approvedRevision: undefined,
+      approvedReviewExecutionId: undefined,
+      ...(input.lastError ? { lastError: input.lastError } : {}),
+    };
+    this.revisionValue = {
+      ...this.revisionValue,
+      revision: this.value.currentRevision,
+      baseOid: input.baseOid,
+      subjectKind: 'source_seed',
+      treeOid: undefined,
+      compositionComplete: false,
+    };
     return structuredClone(this.value);
   }
   async transition(
@@ -460,7 +488,12 @@ describe('IntegrationEngineV3', () => {
       type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
     });
 
-    expect(result).toMatchObject({ status: 'applied', candidate: { state: 'composing' } });
+    expect(result).toMatchObject({ status: 'applied', candidate: { state: 'composing', currentRevision: 2 } });
+    expect(context.candidates.lastRestart).toMatchObject({
+      expectedVersion: value.version,
+      expectedRevision: value.currentRevision,
+      baseOid: 'new-main',
+    });
     expect(context.merge).not.toHaveBeenCalled();
     expect(context.operations.records.size).toBe(0);
   });
@@ -486,7 +519,8 @@ describe('IntegrationEngineV3', () => {
       type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
     });
 
-    expect(result).toMatchObject({ status: 'applied', candidate: { state: 'composing' } });
+    expect(result).toMatchObject({ status: 'applied', candidate: { state: 'composing', currentRevision: 2 } });
+    expect(context.candidates.lastRestart).toMatchObject({ baseOid: 'new-main' });
     expect(context.merge).not.toHaveBeenCalled();
     expect(context.operations.records.get(operationKey)?.state).toBe('prepared');
   });

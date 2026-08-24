@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { IntegrationCandidateMutationFence } from './integrationCandidateStore.js';
+import { redactDurableSecrets } from './durableSecretRedaction.js';
 
 /**
  * Provider operation ledger core. This module deliberately knows nothing about SQL;
@@ -207,22 +208,27 @@ export class IntegrationProviderOperationService {
       return this.transitionOrReload(current, current.state, 'succeeded', { receipt: result.receipt }, options.mutationFence);
     }
     if (result.status === 'not_applied') {
-      if (current.state !== 'unknown') {
-        throw new ProviderOperationReconcileRequiredError(operationKey, current.state);
+      if (current.state === 'executing') {
+        // One exact no-effect observation only establishes quiescence. A later owner must
+        // repeat the read from unknown before any bounded replacement operation is allowed.
+        return this.transitionOrReload(current, 'executing', 'unknown', {
+          error: safeProviderDetail(result.detail),
+          receipt: { ...result.evidence, outcome: 'quiescence_observed' },
+        }, options.mutationFence);
       }
       return this.transitionOrReload(current, 'unknown', 'failed', {
-        error: result.detail,
+        error: safeProviderDetail(result.detail),
         receipt: { ...result.evidence, outcome: 'not_applied' },
       }, options.mutationFence);
     }
     if (result.status === 'mismatch') {
       return this.transitionOrReload(current, current.state, 'needs_human', {
-        error: result.detail,
+        error: safeProviderDetail(result.detail),
         ...(result.evidence ? { receipt: result.evidence } : {}),
       }, options.mutationFence);
     }
     return this.transitionOrReload(current, current.state, 'unknown', {
-      error: result.detail ?? 'Provider operation outcome is still unknown',
+      error: safeProviderDetail(result.detail ?? 'Provider operation outcome is still unknown'),
     }, options.mutationFence);
   }
 
@@ -252,7 +258,8 @@ export class IntegrationProviderOperationService {
       patch: {
         attemptCount: operation.attemptCount,
         updatedAt: this.now().toISOString(),
-        ...values,
+        ...(values.receipt === undefined ? {} : { receipt: redactProviderRecord(values.receipt) }),
+        ...(values.error === undefined ? {} : { error: safeProviderDetail(values.error) }),
       },
       ...(mutationFence ? { mutationFence } : {}),
     });
@@ -294,7 +301,17 @@ function validateIntent(intent: IntegrationProviderOperationIntent): void {
   if (!Number.isSafeInteger(intent.fence.workflowEpoch) || intent.fence.workflowEpoch < 0 || !Number.isSafeInteger(intent.fence.laneEpoch) || intent.fence.laneEpoch < 0 || !Number.isSafeInteger(intent.fence.candidateRevision) || intent.fence.candidateRevision < 1) throw new Error('Provider operation fence is invalid');
 }
 function assertSameIntent(record: IntegrationProviderOperationRecord, digest: string): IntegrationProviderOperationRecord { if (record.intentDigest !== digest) throw new ProviderOperationKeyCollisionError(record.operationKey); return record; }
-function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+function errorMessage(error: unknown): string {
+  return safeProviderDetail(error instanceof Error ? error.message : String(error));
+}
+function safeProviderDetail(value: string): string {
+  return redactDurableSecrets(value.replace(/[\r\n\t]+/g, ' ')).slice(0, 2_000);
+}
+function redactProviderRecord(value: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(value, (_key, item: unknown) => (
+    typeof item === 'string' ? redactDurableSecrets(item) : item
+  ))) as Record<string, unknown>;
+}
 function deepClone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);

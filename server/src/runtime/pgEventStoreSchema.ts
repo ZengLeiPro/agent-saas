@@ -164,7 +164,7 @@ async function ensureUniqueIndexByColumns(
         AND index_row.indpred IS NULL
         AND index_row.indexprs IS NULL
         AND ARRAY(
-          SELECT attribute.attname
+          SELECT attribute.attname::text
           FROM unnest(index_row.indkey) WITH ORDINALITY AS key(attnum, position)
           JOIN pg_attribute attribute
             ON attribute.attrelid = index_row.indrelid

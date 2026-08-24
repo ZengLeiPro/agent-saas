@@ -80,6 +80,15 @@ function buildReport(tenant: TenantRecord): TenantDeletionReport {
     mcp: { serversRemoved: 0, usersRemoved: 0 },
     tokenUsageRowsDeleted: 0,
     billing: { usageEvents: 0, creditLedger: 0, creditAccounts: 0, tenantPolicies: 0 },
+    context: {
+      enabled: false,
+      deletion: {
+        relationCandidatesDeleted: 0, entityLinksDeleted: 0, itemEvidenceDeleted: 0, profileFacetEvidenceDeleted: 0,
+        reviewsDeleted: 0, derivedItemsDeleted: 0, profileFacetsDeleted: 0, entitiesDeleted: 0, consumersDeleted: 0,
+        derivedOutboxDeleted: 0, outboxDeleted: 0, evidenceDeleted: 0, revisionsDeleted: 0, recordsDeleted: 0,
+        partitionsDeleted: 0, collectionsDeleted: 0, sourcesDeleted: 0, totalDeleted: 0,
+      },
+    },
     runtime: {
       sessionIds: 0,
       eventsDeleted: 0,

@@ -110,7 +110,7 @@ describe('materializeCandidateObjects', () => {
       baseOid: source.newOid,
       headOid,
       treeOid,
-    })).rejects.toMatchObject({ code: 'materialization_failed', stage: 'pack_index' });
+    })).rejects.toMatchObject({ code: 'materialization_failed', stage: 'target_unpack' });
   });
 
   it('imports both exact tips when the authoritative base advanced beyond the PR head', async () => {
@@ -147,6 +147,36 @@ describe('materializeCandidateObjects', () => {
     expect(await git(target, ['cat-file', '-t', baseOid])).toBe('commit');
     expect(await git(target, ['cat-file', '-t', headOid])).toBe('commit');
     await expect(git(target, ['fsck', '--connectivity-only', '--no-dangling', baseOid, headOid])).resolves.toBe('');
+  });
+
+  it('uses the trusted candidate snapshot after a source symlink replacement', async () => {
+    const source = await repository();
+    const replacement = await repository();
+    const treeOid = await git(source.root, ['rev-parse', `${source.newOid}^{tree}`]);
+    const workspace = await mkdtemp(join(tmpdir(), 'candidate-workspace-'));
+    roots.push(workspace);
+    const target = join(workspace, 'agent-saas');
+    await mkdir(target);
+    await git(target, ['init']);
+    const movedSource = `${source.root}-trusted-snapshot`;
+
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root,
+      workspaceRoot: workspace,
+      repositoryName: 'agent-saas',
+      baseOid: source.oldOid,
+      headOid: source.newOid,
+      treeOid,
+      onTrustedCandidateMaterialized: async (trustedRepositoryPath) => {
+        expect((await stat(trustedRepositoryPath)).mode & 0o777).toBe(0o700);
+        await rename(source.root, movedSource);
+        roots.push(movedSource);
+        await symlink(replacement.root, source.root);
+      },
+    })).resolves.toMatchObject({ baseOid: source.oldOid, headOid: source.newOid, treeOid });
+
+    expect(await git(target, ['cat-file', '-t', source.oldOid])).toBe('commit');
+    expect(await git(target, ['cat-file', '-t', source.newOid])).toBe('commit');
   });
 
   it('rejects an unverified candidate tree before dispatch', async () => {

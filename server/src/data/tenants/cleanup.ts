@@ -25,6 +25,7 @@ import { resolveTenantCwd } from '../../workspace/resolver.js';
 import { DEFAULT_TENANT_ID, TENANT_SLUG_PATTERN, type TenantRecord } from './types.js';
 import type { TenantStore } from './store.js';
 import type { McpOAuthService } from '../../mcp/oauthService.js';
+import { ContextStore, type ContextTenantDeletionReport } from '../../context/store/store.js';
 
 export interface TenantDeletionReport {
   tenantId: string;
@@ -48,6 +49,10 @@ export interface TenantDeletionReport {
     creditLedger: number;
     creditAccounts: number;
     tenantPolicies: number;
+  };
+  context: {
+    enabled: boolean;
+    deletion: ContextTenantDeletionReport;
   };
   runtime: {
     sessionIds: number;
@@ -93,6 +98,29 @@ export interface DeleteTenantResourcesOptions {
   sharedDir: string;
   tenantSkillsRootDir?: string;
   avatarsDir: string;
+}
+
+function emptyContextDeletionReport(): ContextTenantDeletionReport {
+  return {
+    relationCandidatesDeleted: 0,
+    entityLinksDeleted: 0,
+    itemEvidenceDeleted: 0,
+    profileFacetEvidenceDeleted: 0,
+    reviewsDeleted: 0,
+    derivedItemsDeleted: 0,
+    profileFacetsDeleted: 0,
+    entitiesDeleted: 0,
+    consumersDeleted: 0,
+    derivedOutboxDeleted: 0,
+    outboxDeleted: 0,
+    evidenceDeleted: 0,
+    revisionsDeleted: 0,
+    recordsDeleted: 0,
+    partitionsDeleted: 0,
+    collectionsDeleted: 0,
+    sourcesDeleted: 0,
+    totalDeleted: 0,
+  };
 }
 
 function isInside(baseDir: string, candidate: string): boolean {
@@ -160,6 +188,19 @@ export async function deleteTenantResources(options: DeleteTenantResourcesOption
 
   const tenant = options.tenantStore.findById(tenantId);
   if (!tenant) throw new Error('Tenant not found');
+
+  // Context uses the same pool/prefix as the durable runtime event store. Clear
+  // it before non-transactional resource deletion so a failed Context transaction
+  // leaves the tenant available for an auditable retry.
+  const context = options.runtimePgEventStore
+    ? {
+        enabled: true,
+        deletion: await new ContextStore({
+          pool: options.runtimePgEventStore.pool,
+          tablePrefix: options.runtimePgEventStore.eventsTable.replace(/_events$/, ''),
+        }).hardDeleteTenant(tenantId),
+      }
+    : { enabled: false, deletion: emptyContextDeletionReport() };
 
   const users = options.userStore.listAll().filter(user => user.tenantId === tenantId);
   const usernames = users.map(user => user.username);
@@ -254,6 +295,7 @@ export async function deleteTenantResources(options: DeleteTenantResourcesOption
     mcp,
     tokenUsageRowsDeleted,
     billing,
+    context,
     runtime: {
       sessionIds: sessionIds.size,
       eventsDeleted: runtimeEvents.events,

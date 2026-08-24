@@ -619,7 +619,7 @@ describe('IntegrationEngineV3', () => {
     expect(context.reconcileMerge).toHaveBeenCalledTimes(1);
   });
 
-  it('accepts an exact direct controlled receipt when a squash merge tree includes an advanced base', async () => {
+  it('keeps a direct controlled squash receipt out of merged when Provider facts have a different tree', async () => {
     const value = candidate('approved');
     const context = setup('approved');
     context.merge.mockImplementationOnce(async (_repository: TaskBoardRepositoryConfig, input: { operationKey: string }) => {
@@ -637,10 +637,31 @@ describe('IntegrationEngineV3', () => {
       type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
     });
 
+    expect(result).toMatchObject({ status: 'provider_unknown', candidate: { state: 'needs_human' } });
+  });
+
+  it('accepts a direct controlled receipt only when Provider facts have the approved revision tree', async () => {
+    const value = candidate('approved');
+    const context = setup('approved');
+    context.merge.mockImplementationOnce(async (_repository: TaskBoardRepositoryConfig, input: { operationKey: string }) => {
+      context.setFacts(facts({
+        state: 'merged', baseOid: 'merged-main', mergeCommitOid: 'commit-1', mergedTreeOid: 'tree-1',
+      }));
+      return {
+        providerRequestId: input.operationKey,
+        providerPullRequestId: '42',
+        mergedCommitOid: 'commit-1',
+      };
+    });
+
+    const result = await context.engine.execute({
+      type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
+    });
+
     expect(result).toMatchObject({ status: 'applied', candidate: { state: 'merged', mergedCommitOid: 'commit-1' } });
   });
 
-  it('recovers a needs_human candidate only from its exact succeeded controlled receipt', async () => {
+  it('does not recover a needs_human candidate from a succeeded controlled receipt when Provider facts have a different tree', async () => {
     const value = candidate('needs_human');
     const context = setup('needs_human', facts({
       state: 'merged', baseOid: 'merged-main', mergeCommitOid: 'commit-1', mergedTreeOid: 'squash-result-tree',
@@ -664,7 +685,7 @@ describe('IntegrationEngineV3', () => {
       type: 'reconcile_merge', candidateId: value.id, expected: expected(value), operationKey,
     });
 
-    expect(result).toMatchObject({ status: 'applied', candidate: { state: 'merged', mergedCommitOid: 'commit-1' } });
+    expect(result).toMatchObject({ status: 'provider_unknown', candidate: { state: 'needs_human' } });
     expect(context.reconcileMerge).not.toHaveBeenCalled();
   });
 

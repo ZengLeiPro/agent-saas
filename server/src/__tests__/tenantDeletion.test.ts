@@ -145,5 +145,38 @@ describe('deleteTenantResources', () => {
     expect(existsSync(join(sharedDir, 'tenants', tenantId))).toBe(false);
     expect(existsSync(join(tenantSkillsRootDir, tenantId))).toBe(false);
     expect(existsSync(join(avatarsDir, `${deletedUser.id}.png`))).toBe(false);
+    expect(report.context).toMatchObject({ enabled: false, deletion: { totalDeleted: 0 } });
+  });
+
+  it('hard-deletes Context data through the durable runtime database before deleting the tenant', async () => {
+    const tenantStore = new TenantStore(join(root, 'tenants.json'));
+    await tenantStore.ensureDefaultTenant();
+    await tenantStore.create({ id: tenantId, name: '待删组织', createdBy: 'admin' });
+    const userStore = new UserStore(join(root, 'users.json'));
+    const query = vi.fn(async (sql: string, _params?: unknown[]) => ({ rows: [], rowCount: sql.startsWith('DELETE FROM') ? 1 : 0 }));
+    const client = { query, release: vi.fn() };
+    const runtimePgEventStore = {
+      pool: { connect: vi.fn(async () => client) },
+      eventsTable: 'test_events',
+      listSessionIdsByTenant: vi.fn(async () => []),
+      deleteByTenant: vi.fn(async () => ({ events: 0, cursors: 0 })),
+    };
+
+    const report = await deleteTenantResources({
+      tenantId,
+      tenantStore,
+      userStore,
+      runtimePgEventStore: runtimePgEventStore as never,
+      agentCwd,
+      sharedDir,
+      tenantSkillsRootDir,
+      avatarsDir,
+    });
+
+    expect(report.context).toMatchObject({ enabled: true, deletion: { totalDeleted: 17, sourcesDeleted: 1 } });
+    expect(query.mock.calls[0]?.[0]).toBe('BEGIN');
+    expect(query.mock.calls.at(-1)?.[0]).toBe('COMMIT');
+    expect(query.mock.calls.filter(([sql]) => String(sql).startsWith('DELETE FROM')).every(([, params]) => params?.[0] === tenantId)).toBe(true);
+    expect(tenantStore.findById(tenantId)).toBeUndefined();
   });
 });

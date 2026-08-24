@@ -192,6 +192,53 @@ describe('ContextStore PostgreSQL data layer', () => {
     expect(contextTableNames(prefix).partitions).toBe(`${prefix}_context_sync_partitions`);
   });
 
+  it('hard-deletes every Context phase in one tenant-scoped reverse-FK transaction', async () => {
+    let deleted = 0;
+    const query = vi.fn(async (sql: string, _params?: unknown[]) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [], rowCount: 0 };
+      deleted++;
+      return { rows: [], rowCount: deleted };
+    });
+    const client = { query, release: vi.fn() };
+    const connect = vi.fn(async () => client);
+    const store = new ContextStore({ pool: { connect } as never, tablePrefix: 'test' });
+
+    await expect(store.hardDeleteTenant('tenant-a')).resolves.toMatchObject({
+      relationCandidatesDeleted: 1,
+      entityLinksDeleted: 2,
+      evidenceDeleted: 12,
+      sourcesDeleted: 17,
+      totalDeleted: 153,
+    });
+    const deletes = query.mock.calls.filter(([sql]) => String(sql).startsWith('DELETE FROM'));
+    expect(deletes.map(([sql]) => String(sql).match(/DELETE FROM (\S+)/)?.[1])).toEqual([
+      'test_context_relation_candidates', 'test_context_entity_links', 'test_context_derived_item_evidence',
+      'test_context_profile_facet_evidence', 'test_context_derived_item_reviews', 'test_context_derived_items',
+      'test_context_profile_facets', 'test_context_entities', 'test_context_consumers', 'test_context_derived_outbox',
+      'test_context_outbox', 'test_context_evidence', 'test_context_record_revisions', 'test_context_source_records',
+      'test_context_sync_partitions', 'test_context_collections', 'test_context_sources',
+    ]);
+    expect(deletes.every(([, params]) => params?.[0] === 'tenant-a')).toBe(true);
+    expect(query.mock.calls.map(([sql]) => sql)).toEqual(expect.arrayContaining(['BEGIN', 'COMMIT']));
+    expect(connect).toHaveBeenCalledOnce();
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('rolls back Context tenant cleanup with the failed phase in the audit error', async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('test_context_evidence')) throw new Error('foreign key violation');
+      return { rows: [], rowCount: 0 };
+    });
+    const client = { query, release: vi.fn() };
+    const store = new ContextStore({ pool: { connect: vi.fn(async () => client) } as never, tablePrefix: 'test' });
+
+    await expect(store.hardDeleteTenant('tenant-a')).rejects.toThrow(
+      'CONTEXT_TENANT_HARD_DELETE_FAILED tenant=tenant-a step=evidenceDeleted: foreign key violation',
+    );
+    expect(query.mock.calls.map(([sql]) => sql)).toContain('ROLLBACK');
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
   it('maps tenant-wide collection unique violations to the stable identity conflict code', async () => {
     const duplicate = Object.assign(new Error('duplicate key'), { code: '23505' });
     const store = new ContextStore({

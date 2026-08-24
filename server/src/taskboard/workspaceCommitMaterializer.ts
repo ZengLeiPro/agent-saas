@@ -91,7 +91,8 @@ export interface MaterializedCandidateObjects {
 
 /**
  * Copies an exact, server-validated candidate subject into a bound workspace object store.
- * It never reads workspace Git config and never changes refs, HEAD, index or worktree files.
+ * Candidate closure is first unpacked and verified in a server-owned temporary repository.
+ * Workspace objects are never used to validate or construct that trusted snapshot.
  */
 export async function materializeCandidateObjects(input: {
   sourceRepositoryPath: string;
@@ -100,7 +101,8 @@ export async function materializeCandidateObjects(input: {
   baseOid: string;
   headOid: string;
   treeOid: string;
-  tempRoot?: string;
+  /** Test synchronization point after the candidate closure is isolated from its source path. */
+  onTrustedCandidateMaterialized?: (repositoryPath: string) => Promise<void> | void;
 }): Promise<MaterializedCandidateObjects> {
   if (![input.baseOid, input.headOid, input.treeOid].every((value) => OID.test(value))) {
     throw new WorkspaceCommitMaterializationError('object_missing');
@@ -110,62 +112,56 @@ export async function materializeCandidateObjects(input: {
     throw new WorkspaceCommitMaterializationError('materialization_failed');
   }
   const sourceRepositoryPath = await realpath(input.sourceRepositoryPath);
-  const objectDirectory = await resolveWorkspaceObjectDirectory(input.workspaceRoot, input.repositoryName);
-  const temporaryRoot = await mkdtemp(join(input.tempRoot ?? tmpdir(), 'taskboard-candidate-objects-'));
+  // Deliberately use the server process temporary directory, never a caller-selected path.
+  const temporaryRoot = await mkdtemp(join(tmpdir(), 'taskboard-candidate-objects-'));
   let stage = 'temporary_repository';
   try {
     await chmod(temporaryRoot, 0o700);
+    const trustedRepositoryPath = join(temporaryRoot, 'trusted.git');
+    await runGit(temporaryRoot, ['init', '--bare', 'trusted.git']);
+    await chmod(trustedRepositoryPath, 0o700);
+
+    // Read the source path once to make a self-contained candidate-only pack. Any later
+    // workspace rename or symlink substitution cannot affect the trusted repository.
     stage = 'source_connectivity';
     await assertCandidateObjects(sourceRepositoryPath, input.baseOid, input.headOid, input.treeOid, {});
+    const sourcePackPath = join(temporaryRoot, 'source-candidate.pack');
+    stage = 'source_pack';
+    await runGitWithInputToFile(
+      sourceRepositoryPath,
+      ['pack-objects', '--stdout', '--revs'],
+      `${input.headOid}\n${input.baseOid}\n`,
+      sourcePackPath,
+      {},
+      120_000,
+    );
+    stage = 'trusted_unpack';
+    await indexPack(trustedRepositoryPath, sourcePackPath);
+    stage = 'trusted_connectivity';
+    await assertCandidateObjects(trustedRepositoryPath, input.baseOid, input.headOid, input.treeOid, {});
+    await input.onTrustedCandidateMaterialized?.(trustedRepositoryPath);
+
+    // Always transfer from the trusted snapshot, even when the workspace already claims
+    // to have the requested objects. This keeps target contents out of the trust decision.
+    const objectDirectory = await resolveWorkspaceObjectDirectory(input.workspaceRoot, input.repositoryName);
     stage = 'target_binding';
     await assertWorkspaceObjectDirectoryBinding(input.workspaceRoot, input.repositoryName, objectDirectory);
-    const targetEnv = { GIT_OBJECT_DIRECTORY: objectDirectory };
+    const trustedPackPath = join(temporaryRoot, 'trusted-candidate.pack');
+    stage = 'trusted_pack';
+    await runGitWithInputToFile(
+      trustedRepositoryPath,
+      ['pack-objects', '--stdout', '--revs'],
+      `${input.headOid}\n${input.baseOid}\n`,
+      trustedPackPath,
+      {},
+      120_000,
+    );
     const sinkRepositoryPath = join(temporaryRoot, 'sink.git');
     await runGit(temporaryRoot, ['init', '--bare', 'sink.git']);
-    stage = 'target_probe';
-    if (!await hasCandidateObjects(sinkRepositoryPath, input.baseOid, input.headOid, input.treeOid, targetEnv)) {
-      const packPath = join(temporaryRoot, 'candidate.pack');
-      stage = 'target_ancestor';
-      const targetAncestor = await findNearestCompleteTargetAncestor(
-        sourceRepositoryPath,
-        sinkRepositoryPath,
-        input.baseOid,
-        targetEnv,
-      );
-      stage = 'pack_objects';
-      await runGitWithInputToFile(
-        sourceRepositoryPath,
-        ['pack-objects', '--stdout', '--revs'],
-        `${input.headOid}\n${input.baseOid}\n${targetAncestor ? `^${targetAncestor}\n` : ''}`,
-        packPath,
-        {},
-        120_000,
-      );
-      stage = 'pack_index_binding';
-      await assertWorkspaceObjectDirectoryBinding(input.workspaceRoot, input.repositoryName, objectDirectory);
-      stage = 'pack_index';
-      const hash = await runGitWithFileInput(
-        sinkRepositoryPath,
-        ['index-pack', '--stdin'],
-        packPath,
-        targetEnv,
-        120_000,
-      );
-      if (!/^(?:pack\t)?(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(hash)) throw new Error('invalid pack hash');
-    }
+    stage = 'target_unpack';
+    await indexPack(sinkRepositoryPath, trustedPackPath, { GIT_OBJECT_DIRECTORY: objectDirectory });
     stage = 'final_binding';
     await assertWorkspaceObjectDirectoryBinding(input.workspaceRoot, input.repositoryName, objectDirectory);
-    stage = 'final_connectivity';
-    await assertCandidateObjects(sinkRepositoryPath, input.baseOid, input.headOid, input.treeOid, targetEnv);
-    stage = 'final_hash_verification';
-    await verifyCandidateObjectHashes(
-      sinkRepositoryPath,
-      temporaryRoot,
-      input.baseOid,
-      input.headOid,
-      input.treeOid,
-      targetEnv,
-    );
     return {
       repositoryName: input.repositoryName,
       baseOid: input.baseOid,
@@ -314,62 +310,6 @@ async function assertCommitGraph(
   }
 }
 
-async function findNearestCompleteTargetAncestor(
-  sourceRepositoryPath: string,
-  targetRepositoryPath: string,
-  baseOid: string,
-  targetEnv: Record<string, string>,
-): Promise<string | undefined> {
-  const candidates = (await runGit(
-    sourceRepositoryPath,
-    ['rev-list', '--first-parent', '--max-count=128', baseOid],
-  )).trim().split(/\s+/).filter((oid) => OID.test(oid));
-  for (const candidate of candidates) {
-    try {
-      await runGit(targetRepositoryPath, ['cat-file', '-e', `${candidate}^{commit}`], targetEnv);
-      await runGit(
-        targetRepositoryPath,
-        ['fsck', '--connectivity-only', '--no-dangling', candidate],
-        targetEnv,
-        30_000,
-      );
-      return candidate;
-    } catch {
-      // Try an older first-parent boundary; without one the pack remains self-contained.
-    }
-  }
-  return undefined;
-}
-
-async function verifyCandidateObjectHashes(
-  sourceRepositoryPath: string,
-  temporaryRoot: string,
-  baseOid: string,
-  headOid: string,
-  treeOid: string,
-  sourceEnv: Record<string, string>,
-): Promise<void> {
-  const verificationRepositoryPath = join(temporaryRoot, 'verification.git');
-  const verificationPackPath = join(temporaryRoot, 'verification.pack');
-  await runGit(temporaryRoot, ['init', '--bare', 'verification.git']);
-  await runGitWithInputToFile(
-    sourceRepositoryPath,
-    ['pack-objects', '--stdout', '--revs'],
-    `${headOid}\n${baseOid}\n`,
-    verificationPackPath,
-    sourceEnv,
-    120_000,
-  );
-  const hash = await runGitWithFileInput(
-    verificationRepositoryPath,
-    ['index-pack', '--stdin'],
-    verificationPackPath,
-    {},
-    120_000,
-  );
-  if (!/^(?:pack\t)?(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(hash)) throw new Error('invalid verification pack hash');
-  await assertCandidateObjects(verificationRepositoryPath, baseOid, headOid, treeOid, {});
-}
 
 async function assertCandidateObjects(
   cwd: string,
@@ -389,20 +329,19 @@ async function assertCandidateObjects(
   }
 }
 
-async function hasCandidateObjects(
-  cwd: string,
-  baseOid: string,
-  headOid: string,
-  treeOid: string,
-  env: Record<string, string>,
-): Promise<boolean> {
-  try {
-    await assertCandidateObjects(cwd, baseOid, headOid, treeOid, env);
-    return true;
-  } catch (error) {
-    if (error instanceof WorkspaceCommitMaterializationError && error.code === 'object_missing') return false;
-    throw error;
-  }
+async function indexPack(
+  repositoryPath: string,
+  packPath: string,
+  env: Record<string, string> = {},
+): Promise<void> {
+  const hash = await runGitWithFileInput(
+    repositoryPath,
+    ['index-pack', '--stdin'],
+    packPath,
+    env,
+    120_000,
+  );
+  if (!/^(?:pack\t)?(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(hash)) throw new Error('invalid pack hash');
 }
 
 async function runGitWithInput(

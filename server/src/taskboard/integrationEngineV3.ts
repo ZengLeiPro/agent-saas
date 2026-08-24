@@ -474,10 +474,11 @@ export class IntegrationEngineV3 {
     const receipt = operation.receipt ?? {};
     const receiptCommitOid = typeof receipt.mergedCommitOid === 'string' ? receipt.mergedCommitOid : undefined;
     const directControlledReceipt = receipt.providerRequestId === operation.operationKey;
+    const exactProviderMergedTree = facts.mergedTreeOid === current.revision.treeOid;
     const exactReconciledTree = receipt.mergedTreeOid === current.revision.treeOid
-      && facts.mergedTreeOid === current.revision.treeOid;
+      && exactProviderMergedTree;
     if (facts.state !== 'merged' || !facts.mergeCommitOid || receiptCommitOid !== facts.mergeCommitOid
-      || (!directControlledReceipt && !exactReconciledTree)) {
+      || !exactProviderMergedTree || (!directControlledReceipt && !exactReconciledTree)) {
       const candidate = current.candidate.state === 'needs_human'
         ? current.candidate
         : await this.transition(current, 'needs_human', 'Merged provider facts do not match the controlled operation receipt');

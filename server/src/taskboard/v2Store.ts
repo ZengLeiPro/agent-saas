@@ -22,6 +22,7 @@ import {
   computeIntegrationSourceSetDigest,
 } from './integrationCandidateDigest.js';
 import { resolveExecutionContextWorkflowContract } from './executionContextContract.js';
+import { fenceTaskExecutions } from './workflow/commandService.js';
 import {
   commentExecutionJoin,
   rowToComment,
@@ -428,17 +429,10 @@ export async function cancelIntegrationTask(
     if (loaded.task.kind !== 'integration') {
       throw new TaskboardValidationError('Only integration tasks can be canceled');
     }
+    if (loaded.task.status === 'canceled') return loaded.task;
     if (loaded.task.version !== input.expectedVersion) throw new TaskboardConflictError(loaded.task);
-    if (['done', 'canceled'].includes(loaded.task.status)) {
+    if (loaded.task.status === 'done') {
       throw new TaskboardValidationError('Integration task is already terminal');
-    }
-    const active = await client.query(
-      `SELECT 1 FROM ${options.executionsTable}
-        WHERE task_id=$1 AND status IN ('queued','running','waiting_user','waiting_approval') LIMIT 1`,
-      [taskId],
-    );
-    if (active.rows[0]) {
-      throw new TaskboardValidationError('Stop the active merge execution before canceling');
     }
     if ((loaded.task.workflowVersion ?? 2) === 3) {
       const tables = integrationCandidateTableNames(options.integrationSourcesTable);
@@ -456,6 +450,7 @@ export async function cancelIntegrationTask(
           WHERE candidate_id=$1 AND kind='merge_pull_request' AND state IN ('executing','unknown','succeeded') LIMIT 1`, [row.id]);
       if (uncertainV3.rows[0]) throw new TaskboardValidationError(
         'Provider result must be reconciled before cancellation', 'TASKBOARD_PROVIDER_RESULT_UNKNOWN');
+      await fenceTaskExecutions(options, client, [taskId], 'integration_canceled');
       const reason = input.reason?.trim() || 'Integration task canceled by user';
       const changed = await client.query(
         `UPDATE ${tables.candidatesTable}
@@ -504,6 +499,7 @@ export async function cancelIntegrationTask(
         'TASKBOARD_PROVIDER_RESULT_UNKNOWN',
       );
     }
+    await fenceTaskExecutions(options, client, [taskId], 'integration_canceled');
     await client.query(
       `UPDATE ${options.tasksTable}
           SET status='canceled', completed_at=NULL, version=version+1, updated_at=now()

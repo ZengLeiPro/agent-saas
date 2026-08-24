@@ -221,6 +221,23 @@ describe('子 Agent 摘要', () => {
 });
 
 describe('Artifact 交付历史恢复', () => {
+  const deliveryResult = {
+    id: 'artifact-result',
+    kind: 'tool_result' as const,
+    title: '结果',
+    defaultOpen: false,
+    content: JSON.stringify({
+      action: 'deliver',
+      artifactId: 'artifact-1',
+      kind: 'file',
+      fileName: '交付结果.docx',
+      sizeBytes: 2048,
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    }),
+    toolName: 'Artifact',
+    toolId: 'call-artifact',
+  };
+
   it('tool metadata 缺失时从 deliver 结果恢复文件卡片', () => {
     const messages = mapSessionDetailToMessages({
       sessionId: 's-artifact',
@@ -235,22 +252,7 @@ describe('Artifact 交付历史恢复', () => {
           toolName: 'Artifact',
           toolId: 'call-artifact',
         },
-        {
-          id: 'artifact-result',
-          kind: 'tool_result',
-          title: '结果',
-          defaultOpen: false,
-          content: JSON.stringify({
-            action: 'deliver',
-            artifactId: 'artifact-1',
-            kind: 'file',
-            fileName: '交付结果.docx',
-            sizeBytes: 2048,
-            mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          }),
-          toolName: 'Artifact',
-          toolId: 'call-artifact',
-        },
+        deliveryResult,
       ],
     });
 
@@ -260,6 +262,21 @@ describe('Artifact 交付历史恢复', () => {
       artifactKind: 'file',
       fileName: '交付结果.docx',
       fileSize: 2048,
+    })]);
+  });
+
+  it('分页历史缺少 tool_use 时仍从孤儿 deliver 结果恢复文件卡片', () => {
+    const messages = mapSessionDetailToMessages({
+      sessionId: 's-artifact',
+      stats: { lines: 1, parsedLines: 1, parseErrors: 0 },
+      mode: 'before',
+      blocks: [deliveryResult],
+    });
+
+    expect(messages).toEqual([expect.objectContaining({
+      type: 'file_download',
+      artifactId: 'artifact-1',
+      fileName: '交付结果.docx',
     })]);
   });
 });

@@ -10,6 +10,7 @@ import { resolveDisplayToolName } from './toolDisplay';
 import { normalizeToolPresentation, type DetailLine, type ToolPresentation } from './toolPresentation';
 import { normalizeToolResultMetadata } from './toolResultMetadata';
 import { normalizeDisplay } from './presentation/registry';
+import { artifactDeliveryMessage } from './artifactDeliveryMessage';
 
 // -- Interactive tool history restore --
 
@@ -20,48 +21,6 @@ const INTERACTIVE_RESULT_TOOLS = new Set([
   "Agent",
   "Artifact",
 ]);
-
-function parseArtifactDeliveryPayload(resultText: string | undefined): Record<string, unknown> | null {
-  if (!resultText || resultText.length > 32_768) return null;
-  try {
-    const parsed = JSON.parse(resultText) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const payload = parsed as Record<string, unknown>;
-    return payload.action === 'deliver' ? payload : null;
-  } catch {
-    return null;
-  }
-}
-
-function artifactDeliveryMessage(
-  id: string,
-  toolName: string | undefined,
-  metadata: ReturnType<typeof normalizeToolResultMetadata>,
-  resultText?: string,
-): MessageItem | null {
-  if (toolName !== 'Artifact') return null;
-  const payload = parseArtifactDeliveryPayload(resultText);
-  if (metadata?.artifactAction !== 'deliver' && !payload) return null;
-  const artifactId = metadata?.artifactId ?? payload?.artifactId;
-  const fileName = metadata?.fileName ?? payload?.fileName;
-  const artifactKind = metadata?.artifactKind ?? payload?.kind;
-  if (typeof artifactId !== 'string' || typeof fileName !== 'string') return null;
-  if (artifactKind !== 'file' && artifactKind !== 'screenshot' && artifactKind !== 'patch'
-    && artifactKind !== 'log' && artifactKind !== 'blob') return null;
-  const mimeType = metadata?.mimeType ?? payload?.mimeType;
-  const sizeBytes = metadata?.sizeBytes ?? payload?.sizeBytes;
-  return {
-    id: `${id}-artifact-${artifactId}`,
-    type: 'file_download',
-    fileName,
-    fileType: typeof mimeType === 'string' ? mimeType : '',
-    filePath: fileName,
-    fileSize: typeof sizeBytes === 'number' && Number.isFinite(sizeBytes) && sizeBytes >= 0 ? sizeBytes : 0,
-    artifactId,
-    artifactKind,
-    ...(typeof mimeType === 'string' ? { mimeType } : {}),
-  };
-}
 
 function parseSubagentDescription(content: string): string {
   try {
@@ -449,6 +408,15 @@ function mapBlock(
     }
 
     case "tool_result": {
+      // 分页/增量历史可能只包含 Artifact(deliver) 的结果行，配对的 tool_use 在前一页。
+      // 交付结果本身已包含完整卡片事实，必须先恢复；否则下面的专用工具隐藏规则会把它吞掉。
+      const deliveredArtifact = artifactDeliveryMessage(
+        id,
+        block.toolName,
+        normalizeToolResultMetadata(block.toolMetadata),
+        block.content,
+      );
+      if (deliveredArtifact) return deliveredArtifact;
       if (INTERACTIVE_RESULT_TOOLS.has(block.toolName || "")) return null;
       if (block.toolId && toolResultMap.has(block.toolId)) return null;
       // 仅对「孤儿」tool_result 生效：已与 tool_use 配对的在上一行就 return null 了。

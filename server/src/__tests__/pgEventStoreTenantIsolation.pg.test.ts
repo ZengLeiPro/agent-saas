@@ -154,6 +154,7 @@ describePg('PgEventStore tenant isolation PostgreSQL contract', () => {
       `);
 
       await store.init();
+      await pool.query(`ALTER TABLE ${prefix}_event_cursors ALTER COLUMN tenant_id DROP DEFAULT`);
       await store.init();
 
       const preserved = await pool.query<{ present: boolean }>(`

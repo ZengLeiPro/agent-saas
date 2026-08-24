@@ -61,6 +61,29 @@ export async function applyPgEventStoreSchema(
       ALTER TABLE ${cursorsTable}
       ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'
     `);
+  } else {
+    const tenantDefault = await client.query<{ matches: boolean }>(`
+      SELECT COALESCE(
+        pg_get_expr(default_row.adbin, default_row.adrelid) = quote_literal($2) || '::text',
+        false
+      ) AS matches
+      FROM pg_attribute attribute
+      LEFT JOIN pg_attrdef default_row
+        ON default_row.adrelid = attribute.attrelid
+       AND default_row.adnum = attribute.attnum
+      WHERE attribute.attrelid = $1::regclass
+        AND attribute.attname = 'tenant_id'
+        AND attribute.attnum > 0
+        AND NOT attribute.attisdropped
+    `, [cursorsTable, LEGACY_TENANT_ID]);
+    // 必须在下面的 cursor 去重/回填产生行锁之前完成强表锁迁移。否则 rolling deploy
+    // 会形成“init 持行锁等 AccessExclusive、旧 writer 持表锁等 cursor 行”的死锁环。
+    if (!tenantDefault.rows[0]?.matches) {
+      await client.query(`
+        ALTER TABLE ${cursorsTable}
+        ALTER COLUMN tenant_id SET DEFAULT '${LEGACY_TENANT_ID}'
+      `);
+    }
   }
 
   // 旧 schema 的 event_id 全局唯一、(session_id, sequence) 唯一及 cursor
@@ -116,13 +139,6 @@ export async function applyPgEventStoreSchema(
     ON CONFLICT (tenant_id, session_id) DO UPDATE
     SET next_sequence = GREATEST(${cursorsTable}.next_sequence, EXCLUDED.next_sequence)
   `);
-  // 保留 LEGACY default：rolling deploy 中旧 writer 仍可能省略 tenant_id。新代码
-  // 始终显式写 tenant_id；default 只承接旧进程/旧数据，绝不作为新 API fallback。
-  await client.query(`
-    ALTER TABLE ${cursorsTable}
-    ALTER COLUMN tenant_id SET DEFAULT '${LEGACY_TENANT_ID}'
-  `);
-
   // tenant-scoped sequence 唯一索引已覆盖 session 顺序读取；event_json GIN
   // 历史上 idx_scan=0，也不再创建。
   // 旧库可能仍有 legacy ${eventsTable}_run_idx（早期为 run_id 单列），

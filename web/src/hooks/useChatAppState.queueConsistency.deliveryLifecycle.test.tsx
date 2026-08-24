@@ -161,6 +161,7 @@ const fileB: UploadedFile = {
 };
 
 beforeEach(() => {
+  window.history.replaceState(null, "", "/chat");
   harness.messageHandlers.clear();
   harness.stateHandlers.clear();
   harness.sends.mockClear();
@@ -188,6 +189,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
   it("仅在表单回答得到服务端确认后才标记已回答和排队", async () => {
     harness.session.sessionId = "session-ask";
     harness.session.isNewSession = false;
+    window.history.replaceState(null, "", "/chat/session-ask");
     const { result } = renderHook(() => useChatAppState());
 
     act(() => emit({

@@ -179,6 +179,79 @@ describe('materializeCandidateObjects', () => {
     expect(await git(target, ['cat-file', '-t', source.newOid])).toBe('commit');
   });
 
+  it('does not import objects outside the requested base/head closure', async () => {
+    const source = await repository();
+    await git(source.root, ['checkout', '-b', 'outside', source.oldOid]);
+    await writeFile(join(source.root, 'outside.txt'), 'outside closure\n');
+    await git(source.root, ['add', 'outside.txt']);
+    await git(source.root, ['commit', '-m', 'outside candidate closure']);
+    const outsideOid = await git(source.root, ['rev-parse', 'HEAD']);
+    const treeOid = await git(source.root, ['rev-parse', `${source.newOid}^{tree}`]);
+    const workspace = await mkdtemp(join(tmpdir(), 'closure-candidate-workspace-'));
+    roots.push(workspace);
+    const target = join(workspace, 'agent-saas');
+    await mkdir(target);
+    await git(target, ['init']);
+
+    await materializeCandidateObjects({
+      sourceRepositoryPath: source.root,
+      workspaceRoot: workspace,
+      repositoryName: 'agent-saas',
+      baseOid: source.oldOid,
+      headOid: source.newOid,
+      treeOid,
+    });
+
+    await expect(git(target, ['cat-file', '-e', `${outsideOid}^{commit}`])).rejects.toThrow();
+  });
+
+  it('keeps a replacement sentinel out of descriptor-bound target unpacking', async () => {
+    const source = await repository();
+    const treeOid = await git(source.root, ['rev-parse', `${source.newOid}^{tree}`]);
+    const workspace = await mkdtemp(join(tmpdir(), 'raced-candidate-workspace-'));
+    const sentinel = await mkdtemp(join(tmpdir(), 'candidate-object-sentinel-'));
+    roots.push(workspace, sentinel);
+    const target = join(workspace, 'agent-saas');
+    await mkdir(target);
+    await git(target, ['init']);
+    await git(sentinel, ['init']);
+    const sentinelMarker = join(sentinel, '.git', 'sentinel');
+    await writeFile(sentinelMarker, 'must stay untouched\n');
+
+    // A corrupt object at the requested OID makes pathname-based index-pack consume the
+    // sentinel. The descriptor-bound path instead reaches final_binding without doing so.
+    const commit = `${await git(source.root, ['cat-file', 'commit', source.newOid])}\npoison\n`;
+    const raw = Buffer.concat([
+      Buffer.from(`commit ${Buffer.byteLength(commit)}\0`),
+      Buffer.from(commit),
+    ]);
+    const sentinelObjectDirectory = join(sentinel, '.git', 'objects', source.newOid.slice(0, 2));
+    await mkdir(sentinelObjectDirectory, { recursive: true });
+    await writeFile(join(sentinelObjectDirectory, source.newOid.slice(2)), deflateSync(raw));
+
+    const objectDirectory = join(target, '.git', 'objects');
+    const movedObjectDirectory = join(target, '.git', 'objects-before-race');
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root,
+      workspaceRoot: workspace,
+      repositoryName: 'agent-saas',
+      baseOid: source.oldOid,
+      headOid: source.newOid,
+      treeOid,
+      onWorkspaceObjectDirectoryBound: async (boundPath) => {
+        expect(boundPath).toBe(objectDirectory);
+        await rename(objectDirectory, movedObjectDirectory);
+        await symlink(join(sentinel, '.git', 'objects'), objectDirectory);
+      },
+    })).rejects.toMatchObject({ code: 'unsafe_git_metadata', stage: 'final_binding' });
+
+    expect(await readFile(sentinelMarker, 'utf8')).toBe('must stay untouched\n');
+    expect(await git(sentinel, ['cat-file', 'commit', source.newOid]))
+      .not.toBe(await git(source.root, ['cat-file', 'commit', source.newOid]));
+    await rm(objectDirectory);
+    await rename(movedObjectDirectory, objectDirectory);
+  });
+
   it('rejects an unverified candidate tree before dispatch', async () => {
     const source = await repository();
     const workspace = await mkdtemp(join(tmpdir(), 'candidate-workspace-'));

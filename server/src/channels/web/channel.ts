@@ -1147,15 +1147,17 @@ export class WebChannel implements BaseChannel {
   }
 
   /** 处理 respond 消息（替代 POST /api/chat/respond） */
+  private sendRespond(client: WsClient, interactionId: string, clientAttemptId?: string, error?: string): void { this.wsSend(client.ws, { type: error ? 'respond_error' : 'respond_ok', interactionId, ...(error ? { error } : {}), ...(typeof clientAttemptId === 'string' ? { clientAttemptId } : {}) }); }
+
   private handleRespond(client: WsClient, msg: WsRespondMessage): void {
-    const { interactionId, sessionId, action: _, ...response } = msg;
+    const { interactionId, sessionId, clientAttemptId, action: _, ...response } = msg;
     if (!interactionId) {
-      this.wsSend(client.ws, { type: 'respond_error', interactionId: '', error: 'interactionId is required' });
+      this.sendRespond(client, '', clientAttemptId, 'interactionId is required');
       return;
     }
     const tenantAccessError = this.tenantAccessErrorForClient(client);
     if (tenantAccessError) {
-      this.wsSend(client.ws, { type: 'respond_error', interactionId, error: tenantAccessError });
+      this.sendRespond(client, interactionId, clientAttemptId, tenantAccessError);
       return;
     }
 
@@ -1164,25 +1166,20 @@ export class WebChannel implements BaseChannel {
       ? this.sensitiveActionAccessError(client, { ownerUserId: pendingInteraction.userId })
       : this.anonymousBindingAccessError(client, pendingInteraction?.boundWebSocket);
     if (actionAccessError) {
-      this.wsSend(client.ws, { type: 'respond_error', interactionId, error: actionAccessError });
+      this.sendRespond(client, interactionId, clientAttemptId, actionAccessError);
       return;
     }
 
-    void this.resolveInteraction(client, interactionId, response, typeof sessionId === 'string' ? sessionId : undefined);
+    void this.resolveInteraction(client, interactionId, response, typeof sessionId === 'string' ? sessionId : undefined, clientAttemptId);
   }
 
-  private async resolveInteraction(
-    client: WsClient,
-    interactionId: string,
-    response: Record<string, unknown>,
-    fallbackSessionId?: string,
-  ): Promise<void> {
+  private async resolveInteraction(client: WsClient, interactionId: string, response: Record<string, unknown>, fallbackSessionId?: string, clientAttemptId?: string): Promise<void> {
     // 在 resolve 之前获取 sessionId（resolve 会删除 entry）
     const pendingInteraction = interactionStore.get(interactionId);
     const sessionId = pendingInteraction?.sessionId ?? interactionStore.getSessionId(interactionId);
     const orgAgentAccessError = this.orgAgentActionAccessError(client, pendingInteraction?.orgAgentId);
     if (orgAgentAccessError) {
-      this.wsSend(client.ws, { type: 'respond_error', interactionId, error: orgAgentAccessError });
+      this.sendRespond(client, interactionId, clientAttemptId, orgAgentAccessError);
       return;
     }
     if (
@@ -1193,19 +1190,19 @@ export class WebChannel implements BaseChannel {
       const sourceRun = await this.config.enqueueRuntime.runStore.get(pendingInteraction.runId);
       if (!sourceRun || TERMINAL_RUN_STATUSES.has(sourceRun.status)) {
         const reason = `源 run 不可恢复（${sourceRun?.status ?? 'missing'}），拒绝遗留审批`;
-        const closed = await this.tryResumePersistedInteraction(client, interactionId, { allow: false }, sessionId);
+        const closed = await this.tryResumePersistedInteraction(client, interactionId, { allow: false }, sessionId, clientAttemptId);
         interactionStore.discard(interactionId, reason);
         if (!closed) {
-          this.wsSend(client.ws, { type: 'respond_error', interactionId, error: '终态 Run 的遗留审批关闭失败' });
+          this.sendRespond(client, interactionId, clientAttemptId, '终态 Run 的遗留审批关闭失败');
         }
         return;
       }
     }
     const resolved = interactionStore.resolve(interactionId, response);
     if (!resolved) {
-      const resumed = await this.tryResumePersistedInteraction(client, interactionId, response, fallbackSessionId);
+      const resumed = await this.tryResumePersistedInteraction(client, interactionId, response, fallbackSessionId, clientAttemptId);
       if (!resumed) {
-        this.wsSend(client.ws, { type: 'respond_error', interactionId, error: 'Interaction not found or expired' });
+        this.sendRespond(client, interactionId, clientAttemptId, 'Interaction not found or expired');
       }
       return;
     }
@@ -1222,7 +1219,7 @@ export class WebChannel implements BaseChannel {
         response: normalizeInteractionResponse(response),
       }, this.eventStoreTenantForClient(client, undefined, pendingInteraction.userId) ?? undefined);
     }
-    this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+    this.sendRespond(client, interactionId, clientAttemptId);
 
     // 广播到同用户其他连接，让它们关闭弹窗
     if (sessionId && this.eventBus) {
@@ -1244,6 +1241,7 @@ export class WebChannel implements BaseChannel {
     interactionId: string,
     response: Record<string, unknown>,
     sessionId?: string,
+    clientAttemptId?: string,
   ): Promise<boolean> {
     if (!sessionId) return false;
     const transcriptPath = this.config.agentCwd ? await findTranscriptOrMetaPathBySessionId(sessionId) : null;
@@ -1255,7 +1253,7 @@ export class WebChannel implements BaseChannel {
     const persistedTenants = new Set([durableRun?.tenantId, sessionRecord?.tenantId, meta?.tenantId].filter((id): id is string => Boolean(id)));
     const ownerUserId = durableRun?.userId || sessionRecord?.userId || meta?.userId || undefined;
     const tenantId = persistedTenants.size <= 1 ? this.eventStoreTenantForClient(client, persistedTenants.values().next().value, ownerUserId) : null;
-    if (!tenantId) { this.wsSend(client.ws, { type: 'respond_error', interactionId, error: 'Access denied' }); return true; }
+    if (!tenantId) { this.sendRespond(client, interactionId, clientAttemptId, 'Access denied'); return true; }
     const release = await approvalResumeSemaphore.acquire();
     let eventStore: EventStore;
     let approvalStore: EventBackedApprovalStore;
@@ -1290,7 +1288,7 @@ export class WebChannel implements BaseChannel {
       orgAgentAccessError: (orgAgentId, tenantId, username) => this.orgAgentActionAccessError(client, orgAgentId, tenantId, username),
     });
     if (accessError) {
-      this.wsSend(client.ws, { type: 'respond_error', interactionId, error: accessError });
+      this.sendRespond(client, interactionId, clientAttemptId, accessError);
       return true;
     }
     const userRecord = client.user ? this.userStore?.findById(client.user.sub) : undefined;
@@ -1305,7 +1303,7 @@ export class WebChannel implements BaseChannel {
 
     if (pendingAskUser) {
       if (!enqueueRuntime) {
-        this.wsSend(client.ws, { type: 'respond_error', interactionId, error: 'AskUserQuestion resume requires runtime scheduler' });
+        this.sendRespond(client, interactionId, clientAttemptId, 'AskUserQuestion resume requires runtime scheduler');
         return true;
       }
       if (!meta || !pendingAskUser.runId || !pendingAskUser.toolCallId) {
@@ -1318,7 +1316,7 @@ export class WebChannel implements BaseChannel {
           `ask_user resume enqueue ignored unavailable run=${pendingAskUser.runId} `
           + `status=${currentRun?.status ?? 'missing'}`,
         );
-        this.wsSend(client.ws, { type: 'respond_error', interactionId, error: 'Run unavailable' });
+        this.sendRespond(client, interactionId, clientAttemptId, 'Run unavailable');
         return true;
       }
       const normalizedResponse = normalizeInteractionResponse(response);
@@ -1359,7 +1357,7 @@ export class WebChannel implements BaseChannel {
           },
         },
       });
-      this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+      this.sendRespond(client, interactionId, clientAttemptId);
       if (client.user?.sub && this.eventBus) {
         this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws);
         this.eventBus.emitUser(client.user.sub, { type: 'session_status', sessionId, status: 'queued', runId: pendingAskUser.runId });
@@ -1373,7 +1371,7 @@ export class WebChannel implements BaseChannel {
         'rejected',
         '持久审批恢复需要 Runtime Scheduler；已安全拒绝，未恢复旧 Run',
       );
-      this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+      this.sendRespond(client, interactionId, clientAttemptId);
       if (client.user?.sub && this.eventBus) {
         this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws);
       }
@@ -1409,14 +1407,14 @@ export class WebChannel implements BaseChannel {
           `approval resume closed unavailable run=${pendingApprovalRunId} status=${sourceStatus} `
           + `approval=${interactionId} resolved=${Boolean(resolved)}`,
         );
-        this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+        this.sendRespond(client, interactionId, clientAttemptId);
         if (client.user?.sub && this.eventBus) {
           this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws);
         }
         return true;
       }
       if (alreadyAccepted || alreadyApplied) {
-        this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+        this.sendRespond(client, interactionId, clientAttemptId);
         return true;
       }
       if (!meta || !transcriptPath) {
@@ -1425,7 +1423,7 @@ export class WebChannel implements BaseChannel {
           'rejected',
           '缺少可恢复的会话元数据，已安全拒绝审批',
         );
-        this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+        this.sendRespond(client, interactionId, clientAttemptId);
         return true;
       }
       const acceptedResponse = acceptedEvent?.type === 'interaction_resolved'
@@ -1454,7 +1452,7 @@ export class WebChannel implements BaseChannel {
           'rejected',
           `源 run 不可恢复（${resumedRun?.status ?? 'missing'}），拒绝遗留审批`,
         );
-        this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+        this.sendRespond(client, interactionId, clientAttemptId);
         return true;
       }
       if (!alreadyAccepted) await eventStore.append({
@@ -1484,7 +1482,7 @@ export class WebChannel implements BaseChannel {
           },
         },
       });
-      this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+      this.sendRespond(client, interactionId, clientAttemptId);
       if (client.user?.sub && this.eventBus) {
         this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws);
         this.eventBus.emitUser(client.user.sub, { type: 'session_status', sessionId, status: 'queued', runId: pendingApprovalRunId });

@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { createReadStream } from 'node:fs';
+import { constants, createReadStream } from 'node:fs';
 import { chmod, lstat, mkdtemp, open, opendir, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
@@ -44,30 +44,47 @@ export async function withMaterializedWorkspaceCommit<T>(input: {
   expectedBaseOid?: string;
   tempRoot?: string;
   onTemporaryDirectory?: (path: string) => void;
+  /** Test synchronization point after the workspace object directory is descriptor-bound. */
+  onWorkspaceObjectDirectoryBound?: (objectDirectory: string) => Promise<void> | void;
 }, action: (materialized: MaterializedWorkspaceCommit) => Promise<T>): Promise<T> {
   if (!OID.test(input.commitOid) || !OID.test(input.expectedOldOid)
     || (input.expectedBaseOid !== undefined && !OID.test(input.expectedBaseOid))) {
     throw new WorkspaceCommitMaterializationError('object_missing');
   }
-  const objectDirectory = await resolveWorkspaceObjectDirectory(input.workspaceRoot, input.repositoryName);
   const temporaryRoot = await mkdtemp(join(input.tempRoot ?? tmpdir(), 'taskboard-work-push-'));
   const repositoryPath = join(temporaryRoot, 'repository.git');
   let materialized = false;
+  let workspaceObjectDirectory: BoundWorkspaceObjectDirectory | undefined;
   try {
+    workspaceObjectDirectory = await bindWorkspaceObjectDirectory(input.workspaceRoot, input.repositoryName);
     input.onTemporaryDirectory?.(temporaryRoot);
     await chmod(temporaryRoot, 0o700);
     await runGit(temporaryRoot, ['init', '--bare', 'repository.git']);
     await chmod(repositoryPath, 0o700);
-    const alternateEnv = { GIT_ALTERNATE_OBJECT_DIRECTORIES: objectDirectory };
+    // Never pass the mutable workspace pathname to Git. The child inherits the fstat-checked
+    // directory at descriptor 3, so /proc/self/fd/3 remains the bound object store after rename.
+    const alternateEnv = { GIT_ALTERNATE_OBJECT_DIRECTORIES: '/proc/self/fd/3' };
+    await input.onWorkspaceObjectDirectoryBound?.(workspaceObjectDirectory.path);
     await assertCommitGraph(
-      repositoryPath, input.expectedOldOid, input.commitOid, input.expectedBaseOid, alternateEnv,
+      repositoryPath, input.expectedOldOid, input.commitOid, input.expectedBaseOid,
+      alternateEnv, workspaceObjectDirectory.handle.fd,
     );
-    await runGit(repositoryPath, ['update-ref', 'refs/heads/candidate', input.commitOid], alternateEnv);
-    await runGit(repositoryPath, ['update-ref', 'refs/taskboard/expected-old', input.expectedOldOid], alternateEnv);
+    await runGit(
+      repositoryPath, ['update-ref', 'refs/heads/candidate', input.commitOid], alternateEnv, 15_000,
+      workspaceObjectDirectory.handle.fd,
+    );
+    await runGit(
+      repositoryPath, ['update-ref', 'refs/taskboard/expected-old', input.expectedOldOid], alternateEnv, 15_000,
+      workspaceObjectDirectory.handle.fd,
+    );
     if (input.expectedBaseOid) {
-      await runGit(repositoryPath, ['update-ref', 'refs/taskboard/expected-base', input.expectedBaseOid], alternateEnv);
+      await runGit(
+        repositoryPath, ['update-ref', 'refs/taskboard/expected-base', input.expectedBaseOid], alternateEnv, 15_000,
+        workspaceObjectDirectory.handle.fd,
+      );
     }
-    await runGit(repositoryPath, ['repack', '-a', '-d'], alternateEnv, 30_000);
+    await runGit(repositoryPath, ['repack', '-a', '-d'], alternateEnv, 30_000, workspaceObjectDirectory.handle.fd);
+    await assertWorkspaceObjectDirectoryBinding(input.workspaceRoot, input.repositoryName, workspaceObjectDirectory);
     await assertCommitGraph(
       repositoryPath, input.expectedOldOid, input.commitOid, input.expectedBaseOid, {},
     );
@@ -78,6 +95,7 @@ export async function withMaterializedWorkspaceCommit<T>(input: {
     if (materialized || error instanceof WorkspaceCommitMaterializationError) throw error;
     throw new WorkspaceCommitMaterializationError('materialization_failed');
   } finally {
+    await workspaceObjectDirectory?.handle.close();
     await rm(temporaryRoot, { recursive: true, force: true });
   }
 }
@@ -103,6 +121,8 @@ export async function materializeCandidateObjects(input: {
   treeOid: string;
   /** Test synchronization point after the candidate closure is isolated from its source path. */
   onTrustedCandidateMaterialized?: (repositoryPath: string) => Promise<void> | void;
+  /** Test synchronization point after the target directory is bound by file descriptor. */
+  onWorkspaceObjectDirectoryBound?: (objectDirectory: string) => Promise<void> | void;
 }): Promise<MaterializedCandidateObjects> {
   if (![input.baseOid, input.headOid, input.treeOid].every((value) => OID.test(value))) {
     throw new WorkspaceCommitMaterializationError('object_missing');
@@ -143,25 +163,37 @@ export async function materializeCandidateObjects(input: {
 
     // Always transfer from the trusted snapshot, even when the workspace already claims
     // to have the requested objects. This keeps target contents out of the trust decision.
-    const objectDirectory = await resolveWorkspaceObjectDirectory(input.workspaceRoot, input.repositoryName);
     stage = 'target_binding';
-    await assertWorkspaceObjectDirectoryBinding(input.workspaceRoot, input.repositoryName, objectDirectory);
-    const trustedPackPath = join(temporaryRoot, 'trusted-candidate.pack');
-    stage = 'trusted_pack';
-    await runGitWithInputToFile(
-      trustedRepositoryPath,
-      ['pack-objects', '--stdout', '--revs'],
-      `${input.headOid}\n${input.baseOid}\n`,
-      trustedPackPath,
-      {},
-      120_000,
-    );
-    const sinkRepositoryPath = join(temporaryRoot, 'sink.git');
-    await runGit(temporaryRoot, ['init', '--bare', 'sink.git']);
-    stage = 'target_unpack';
-    await indexPack(sinkRepositoryPath, trustedPackPath, { GIT_OBJECT_DIRECTORY: objectDirectory });
-    stage = 'final_binding';
-    await assertWorkspaceObjectDirectoryBinding(input.workspaceRoot, input.repositoryName, objectDirectory);
+    const targetObjectDirectory = await bindWorkspaceObjectDirectory(input.workspaceRoot, input.repositoryName);
+    try {
+      await input.onWorkspaceObjectDirectoryBound?.(targetObjectDirectory.path);
+      const trustedPackPath = join(temporaryRoot, 'trusted-candidate.pack');
+      stage = 'trusted_pack';
+      await runGitWithInputToFile(
+        trustedRepositoryPath,
+        ['pack-objects', '--stdout', '--revs'],
+        `${input.headOid}\n${input.baseOid}\n`,
+        trustedPackPath,
+        {},
+        120_000,
+      );
+      const sinkRepositoryPath = join(temporaryRoot, 'sink.git');
+      await runGit(temporaryRoot, ['init', '--bare', 'sink.git']);
+      stage = 'target_unpack';
+      // The child receives an inherited descriptor, not a workspace pathname. On Linux
+      // /proc/self/fd/3 resolves in the child to exactly the directory fstat-checked above,
+      // even if an attacker renames it or replaces its path with a symlink meanwhile.
+      await indexPack(
+        sinkRepositoryPath,
+        trustedPackPath,
+        { GIT_OBJECT_DIRECTORY: '/proc/self/fd/3' },
+        targetObjectDirectory.handle.fd,
+      );
+      stage = 'final_binding';
+      await assertWorkspaceObjectDirectoryBinding(input.workspaceRoot, input.repositoryName, targetObjectDirectory);
+    } finally {
+      await targetObjectDirectory.handle.close();
+    }
     return {
       repositoryName: input.repositoryName,
       baseOid: input.baseOid,
@@ -178,12 +210,48 @@ export async function materializeCandidateObjects(input: {
   }
 }
 
+interface BoundWorkspaceObjectDirectory {
+  path: string;
+  device: number;
+  inode: number;
+  handle: Awaited<ReturnType<typeof open>>;
+}
+
+/**
+ * Binds the validated object directory to an open directory descriptor. The inode comparison
+ * catches a substitution between metadata validation and open(); subsequent Git runs receive
+ * only the inherited descriptor through /proc/self/fd/3, never this mutable pathname.
+ */
+async function bindWorkspaceObjectDirectory(
+  workspaceRoot: string,
+  repositoryName: string,
+): Promise<BoundWorkspaceObjectDirectory> {
+  if (process.platform !== 'linux') throw new Error('descriptor-bound object directories require Linux');
+  const path = await resolveWorkspaceObjectDirectory(workspaceRoot, repositoryName);
+  const expected = await lstat(path);
+  if (!expected.isDirectory() || expected.isSymbolicLink()) throw new Error('unsafe object directory');
+  const handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY);
+  try {
+    const actual = await handle.stat();
+    if (!actual.isDirectory() || actual.dev !== expected.dev || actual.ino !== expected.ino) {
+      throw new Error('object directory changed during binding');
+    }
+    return { path, device: actual.dev, inode: actual.ino, handle };
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+}
+
 async function assertWorkspaceObjectDirectoryBinding(
   workspaceRoot: string,
   repositoryName: string,
-  expectedObjectDirectory: string,
+  expected: BoundWorkspaceObjectDirectory,
 ): Promise<void> {
-  if (await resolveWorkspaceObjectDirectory(workspaceRoot, repositoryName) !== expectedObjectDirectory) {
+  const path = await resolveWorkspaceObjectDirectory(workspaceRoot, repositoryName);
+  const actual = await lstat(path);
+  if (!actual.isDirectory() || actual.isSymbolicLink()
+    || path !== expected.path || actual.dev !== expected.device || actual.ino !== expected.inode) {
     throw new WorkspaceCommitMaterializationError('unsafe_git_metadata');
   }
 }
@@ -273,12 +341,13 @@ async function assertCommitGraph(
   commitOid: string,
   expectedBaseOid: string | undefined,
   env: Record<string, string>,
+  inheritedDirectoryFd?: number,
 ): Promise<void> {
   try {
-    const oldType = (await runGit(repositoryPath, ['cat-file', '-t', expectedOldOid], env)).trim();
-    const newType = (await runGit(repositoryPath, ['cat-file', '-t', commitOid], env)).trim();
+    const oldType = (await runGit(repositoryPath, ['cat-file', '-t', expectedOldOid], env, 15_000, inheritedDirectoryFd)).trim();
+    const newType = (await runGit(repositoryPath, ['cat-file', '-t', commitOid], env, 15_000, inheritedDirectoryFd)).trim();
     const baseType = expectedBaseOid
-      ? (await runGit(repositoryPath, ['cat-file', '-t', expectedBaseOid], env)).trim()
+      ? (await runGit(repositoryPath, ['cat-file', '-t', expectedBaseOid], env, 15_000, inheritedDirectoryFd)).trim()
       : 'commit';
     if (oldType !== 'commit' || newType !== 'commit' || baseType !== 'commit') throw new Error('not commit');
   } catch {
@@ -286,7 +355,9 @@ async function assertCommitGraph(
   }
   let fields: string[];
   try {
-    fields = (await runGit(repositoryPath, ['rev-list', '--parents', '-n', '1', commitOid], env)).trim().split(/\s+/);
+    fields = (await runGit(
+      repositoryPath, ['rev-list', '--parents', '-n', '1', commitOid], env, 15_000, inheritedDirectoryFd,
+    )).trim().split(/\s+/);
   } catch {
     throw new WorkspaceCommitMaterializationError('object_missing');
   }
@@ -299,7 +370,7 @@ async function assertCommitGraph(
   }
   try {
     const mergeBase = (await runGit(
-      repositoryPath, ['merge-base', expectedBaseOid, expectedOldOid], env,
+      repositoryPath, ['merge-base', expectedBaseOid, expectedOldOid], env, 15_000, inheritedDirectoryFd,
     )).trim();
     if (!OID.test(mergeBase) || mergeBase === expectedBaseOid) {
       throw new WorkspaceCommitMaterializationError('parent_mismatch');
@@ -333,6 +404,7 @@ async function indexPack(
   repositoryPath: string,
   packPath: string,
   env: Record<string, string> = {},
+  inheritedDirectoryFd?: number,
 ): Promise<void> {
   const hash = await runGitWithFileInput(
     repositoryPath,
@@ -340,6 +412,7 @@ async function indexPack(
     packPath,
     env,
     120_000,
+    inheritedDirectoryFd,
   );
   if (!/^(?:pack\t)?(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(hash)) throw new Error('invalid pack hash');
 }
@@ -400,8 +473,11 @@ async function runGitWithFileInput(
   inputPath: string,
   extraEnv: Record<string, string> = {},
   timeout = 30_000,
+  inheritedDirectoryFd?: number,
 ): Promise<string> {
-  return runSpawnedGit(cwd, args, extraEnv, timeout, (child) => createReadStream(inputPath).pipe(child.stdin!));
+  return runSpawnedGit(
+    cwd, args, extraEnv, timeout, (child) => createReadStream(inputPath).pipe(child.stdin!), inheritedDirectoryFd,
+  );
 }
 
 async function runSpawnedGit(
@@ -410,20 +486,30 @@ async function runSpawnedGit(
   extraEnv: Record<string, string>,
   timeout: number,
   provideInput: (child: ReturnType<typeof spawn>) => void,
+  inheritedDirectoryFd?: number,
 ): Promise<string> {
+  if (inheritedDirectoryFd !== undefined
+    && (process.platform !== 'linux' || !Number.isSafeInteger(inheritedDirectoryFd) || inheritedDirectoryFd < 0)) {
+    throw new Error('invalid descriptor-bound Git object directory');
+  }
   const child = spawn('git', args, {
     cwd,
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdio: inheritedDirectoryFd === undefined
+      ? ['pipe', 'pipe', 'pipe']
+      : ['pipe', 'pipe', 'pipe', inheritedDirectoryFd],
     env: safeGitEnvironment(cwd, extraEnv),
   });
+  const stdoutStream = child.stdout;
+  const stderrStream = child.stderr;
+  if (!stdoutStream || !stderrStream) throw new Error('controlled git command missing output streams');
   let stdout = '';
   let stderr = '';
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (chunk: string) => {
+  stdoutStream.setEncoding('utf8');
+  stderrStream.setEncoding('utf8');
+  stdoutStream.on('data', (chunk: string) => {
     if (stdout.length < MAX_GIT_OUTPUT) stdout += chunk.slice(0, MAX_GIT_OUTPUT - stdout.length);
   });
-  child.stderr.on('data', (chunk: string) => {
+  stderrStream.on('data', (chunk: string) => {
     if (stderr.length < MAX_GIT_OUTPUT) stderr += chunk.slice(0, MAX_GIT_OUTPUT - stderr.length);
   });
   const timer = setTimeout(() => child.kill('SIGKILL'), timeout);
@@ -455,7 +541,11 @@ async function runGit(
   args: string[],
   extraEnv: Record<string, string> = {},
   timeout = 15_000,
+  inheritedDirectoryFd?: number,
 ): Promise<string> {
+  if (inheritedDirectoryFd !== undefined) {
+    return runSpawnedGit(cwd, args, extraEnv, timeout, (child) => child.stdin!.end(), inheritedDirectoryFd);
+  }
   try {
     const result = await execFileAsync('git', args, {
       cwd,

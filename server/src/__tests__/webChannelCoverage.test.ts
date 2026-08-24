@@ -614,8 +614,8 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
   describe('handleRespond / resolveInteraction（内存交互）', () => {
     it('缺 interactionId → respond_error；禁用租户 → respond_error', async () => {
       const rig = makeRig();
-      (rig.channel as any).handleRespond(wsClient(rig.ws, USER), { action: 'respond', interactionId: '' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_error', interactionId: '', error: 'interactionId is required' });
+      (rig.channel as any).handleRespond(wsClient(rig.ws, USER), { action: 'respond', interactionId: '', clientAttemptId: 'attempt-invalid' });
+      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_error', interactionId: '', error: 'interactionId is required', clientAttemptId: 'attempt-invalid' });
 
       const disabledRig = makeRig({
         tenantStore: {
@@ -650,14 +650,10 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       (rig.channel as any).activeStreams.set('st-r', {
         controller: new AbortController(), userId: USER.sub, ws: rig.ws, sessionId,
       });
-      (rig.channel as any).handleRespond(wsClient(rig.ws, USER), {
-        action: 'respond', interactionId: id, allow: true, message: '同意执行',
-      });
+      (rig.channel as any).handleRespond(wsClient(rig.ws, USER), { action: 'respond', interactionId: id, clientAttemptId: 'attempt-success', allow: true, message: '同意执行' });
       await expect(pending).resolves.toEqual({ allow: true, message: '同意执行' });
       // respond_ok 在 appendDurableWebCommand（真实 fs 扫描）之后发出 → 等宏任务
-      await vi.waitFor(() => {
-        expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: id });
-      }, { timeout: 5_000 });
+      await vi.waitFor(() => { expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: id, clientAttemptId: 'attempt-success' }); }, { timeout: 5_000 });
       expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: id });
       expect(interactionStore.get(id)).toBeUndefined();
     });
@@ -1537,11 +1533,9 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const enqueued: UpsertRunInput[] = [];
       const rig = resumeRig(runStore, tmp, enqueued);
 
-      await (rig.channel as any).resolveInteraction(
-        wsClient(rig.ws, USER), 'ask-int-1', { answers: { q1: '红色' } }, sessionId,
-      );
+      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'ask-int-1', { answers: { q1: '红色' } }, sessionId, 'attempt-persisted');
 
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'ask-int-1' });
+      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'ask-int-1', clientAttemptId: 'attempt-persisted' });
       expect(enqueued).toHaveLength(1);
       expect(enqueued[0]).toMatchObject({
         runId: 'run-ask-1', sessionId, userId: USER.sub, tenantId: TENANT,

@@ -36,6 +36,17 @@ import { useAuth } from "../contexts/AuthContext";
 import { isCompactionStatusEvent } from "../lib/compaction";
 import type { MessageItemInput } from "@agent/shared";
 
+/** A response write is not an ACK; expire it so the interaction remains retryable. */
+const INTERACTION_RESPONSE_ACK_TIMEOUT_MS = 15_000;
+
+type PendingInteractionResponse = {
+  type: "permission_request" | "ask_user";
+  response: Record<string, unknown>;
+  generation: number;
+  attemptId: string;
+  ackTimer?: ReturnType<typeof setTimeout>;
+};
+
 export interface ChatAppState {
   messages: MessageItem[];
   input: string;
@@ -333,11 +344,27 @@ export function useChatAppStateCore(): ChatAppState {
   const msgRef = useRef(msg);
   msgRef.current = msg;
   // 交互回复以服务端 ACK 为准；同一 interaction 在 ACK 到达前只允许一次提交。
-  const pendingInteractionResponsesRef = useRef(new Map<string, {
-    type: "permission_request" | "ask_user";
-    response: Record<string, unknown>;
-  }>());
+  const pendingInteractionResponsesRef = useRef(new Map<string, PendingInteractionResponse>());
+  const interactionResponseGenerationRef = useRef(0);
   const sessionIdRef = useRef<string | null>(null);
+  const releaseInteractionResponse = useCallback((interactionId: string, generation: number, error: string) => {
+    const pending = pendingInteractionResponsesRef.current.get(interactionId);
+    if (!pending || pending.generation !== generation) return;
+    if (pending.ackTimer) clearTimeout(pending.ackTimer);
+    pendingInteractionResponsesRef.current.delete(interactionId);
+    // Keep the card pending, so its normal UI is immediately retryable.
+    msgRef.current.addMessage({
+      type: "system-error",
+      severity: "error",
+      content: `回复未确认：${error}。请重试。`,
+      timestamp: Date.now(),
+    });
+  }, []);
+  const releaseAllInteractionResponses = useCallback((error: string) => {
+    for (const [interactionId, pending] of [...pendingInteractionResponsesRef.current]) {
+      releaseInteractionResponse(interactionId, pending.generation, error);
+    }
+  }, [releaseInteractionResponse]);
   // 同步更新的 sessionId ref（解决 React 批量更新时 sessionIdRef 延迟问题）
   const immediateSessionIdRef = useRef<string | null>(null);
   const refreshTokenUsageRef = useRef<() => void>(() => {});
@@ -720,10 +747,12 @@ export function useChatAppStateCore(): ChatAppState {
             sessionRef.current.refreshCurrentSession();
           }
         }
-      } else if (state === "reconnecting" && loadingRef.current) {
-        dispatchConnection("drop");
-      } else if (state === "disconnected" && loadingRef.current) {
-        dispatchConnection("reconnect_fail");
+      } else if (state === "reconnecting") {
+        releaseAllInteractionResponses("连接已断开");
+        if (loadingRef.current) dispatchConnection("drop");
+      } else if (state === "disconnected") {
+        releaseAllInteractionResponses("连接已断开");
+        if (loadingRef.current) dispatchConnection("reconnect_fail");
       }
     });
     return () => {
@@ -733,8 +762,12 @@ export function useChatAppStateCore(): ChatAppState {
       // 清 ACK 超时定时器
       for (const t of ackTimersRef.current.values()) clearTimeout(t);
       ackTimersRef.current.clear();
+      for (const pending of pendingInteractionResponsesRef.current.values()) {
+        if (pending.ackTimer) clearTimeout(pending.ackTimer);
+      }
+      pendingInteractionResponsesRef.current.clear();
     };
-  }, [dispatchConnection, makeResumeMessage]);
+  }, [dispatchConnection, makeResumeMessage, releaseAllInteractionResponses]);
 
   /** 按 clientMsgId 或 fallbackIndex 把 bubble 翻 failed */
   const markBubbleFailed = useCallback(
@@ -923,6 +956,13 @@ export function useChatAppStateCore(): ChatAppState {
     const pending = pendingInteractionResponsesRef.current.get(data.interactionId);
     // ACK 必须对应当前仍在等待的交互提交；重放或其他交互的 ACK 不得改变 UI。
     if (!pending) return;
+    // Retry ACKs must echo the attempt token. This fences a delayed ACK from a
+    // timed-out submission from settling the newer response.
+    const ackAttemptId = (data as unknown as { clientAttemptId?: unknown }).clientAttemptId;
+    if (typeof ackAttemptId === "string" && ackAttemptId !== pending.attemptId) return;
+    if (ackAttemptId === undefined && pending.generation > 1) return;
+
+    if (pending.ackTimer) clearTimeout(pending.ackTimer);
     pendingInteractionResponsesRef.current.delete(data.interactionId);
 
     const idx = msgRef.current.messagesRef.current.findIndex((m) =>
@@ -1686,27 +1726,35 @@ export function useChatAppStateCore(): ChatAppState {
       type: "permission_request" | "ask_user",
       response: Record<string, unknown>,
     ) => {
-      // UI remains retryable while the request is in flight; this guard prevents duplicate submits.
+      // A live attempt owns the submit slot; timeout/disconnect/error releases it.
       if (pendingInteractionResponsesRef.current.has(interactionId)) return;
-      pendingInteractionResponsesRef.current.set(interactionId, { type, response });
+      const generation = ++interactionResponseGenerationRef.current;
+      const attemptId = `${interactionId}:${generation}:${Date.now()}`;
+      pendingInteractionResponsesRef.current.set(interactionId, { type, response, generation, attemptId });
 
       let ok = false;
       try {
         ok = await wsClient.ensureConnectedSend({
           action: "respond",
           interactionId,
+          sessionId: sessionIdRef.current,
+          clientAttemptId: attemptId,
           ...response,
         });
       } catch {
         // A transport exception has the same retry semantics as a negative ACK.
       }
-      if (!ok) resolveInteractionResponse({
-        type: "respond_error",
-        interactionId,
-        error: "网络连接失败",
-      });
+      const pending = pendingInteractionResponsesRef.current.get(interactionId);
+      if (!pending || pending.generation !== generation) return;
+      if (!ok) {
+        releaseInteractionResponse(interactionId, generation, "网络连接失败");
+        return;
+      }
+      pending.ackTimer = setTimeout(() => {
+        releaseInteractionResponse(interactionId, generation, "等待服务端确认超时");
+      }, INTERACTION_RESPONSE_ACK_TIMEOUT_MS);
     },
-    [resolveInteractionResponse],
+    [releaseInteractionResponse],
   );
 
   const handlePermissionResponse = useCallback(

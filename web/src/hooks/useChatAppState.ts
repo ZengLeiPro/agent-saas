@@ -84,6 +84,9 @@ import {
 } from "./useChatAppStateQueueConsistency";
 import { useChatNotificationState, useChatStreamCorrelation } from "./useChatRuntimeState";
 
+/** A response write is not an ACK; expire it so the interaction remains retryable. */
+const INTERACTION_RESPONSE_ACK_TIMEOUT_MS = 15_000;
+type PendingInteractionResponse = { type: "permission_request" | "ask_user"; response: Record<string, unknown>; generation: number; attemptId: string; ackTimer?: ReturnType<typeof setTimeout> };
 export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const { user } = useAuth();
   // 授权模式对所有用户生效（2026-07-02 起），用户在账户设置中自行切换。
@@ -342,8 +345,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const selectedModelRef = useRef(selectedModel); selectedModelRef.current = selectedModel;
   const autoApproveRunShellRef = useRef(effectiveAutoApproveRunShell); autoApproveRunShellRef.current = effectiveAutoApproveRunShell;
   const msgRef = useRef(msg); msgRef.current = msg;
-  const pendingInteractionResponsesRef = useRef(new Map<string, { type: "permission_request" | "ask_user"; response: Record<string, unknown> }>());
+  const pendingInteractionResponsesRef = useRef(new Map<string, PendingInteractionResponse>());
+  const interactionResponseGenerationRef = useRef(0);
   const sessionIdRef = useRef<string | null>(null);
+  const releaseInteractionResponse = useCallback((id: string, generation: number, error: string) => { const pending = pendingInteractionResponsesRef.current.get(id); if (!pending || pending.generation !== generation) return; if (pending.ackTimer) clearTimeout(pending.ackTimer); pendingInteractionResponsesRef.current.delete(id); msgRef.current.addMessage({ type: "system-error", severity: "error", content: `回复未确认：${error}。请重试。`, timestamp: Date.now() }); }, []);
+  const releaseAllInteractionResponses = useCallback((error: string) => { for (const [id, { generation }] of pendingInteractionResponsesRef.current) releaseInteractionResponse(id, generation, error); }, [releaseInteractionResponse]);
   // 同步更新的 sessionId ref（解决 React 批量更新时 sessionIdRef 延迟问题）
   const immediateSessionIdRef = useRef<string | null>(urlState.sessionId);
   const trashPreviewSessionIdRef = useRef<string | null>(trashPreviewSessionId);
@@ -1485,11 +1491,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           }
           break;
         case 'reconnecting':
+          releaseAllInteractionResponses('连接已断开');
           if (loadingRef.current) {
             dispatchConnection('drop');
           }
           break;
         case 'disconnected':
+          releaseAllInteractionResponses('连接已断开');
           if (loadingRef.current) {
             dispatchConnection('reconnect_fail');
           }
@@ -1501,11 +1509,15 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       unsubState();
       wsClient.disconnect();
     };
-  }, [dispatchConnection]);
-
+  }, [dispatchConnection, releaseAllInteractionResponses]);
+  useEffect(() => () => { for (const { ackTimer } of pendingInteractionResponsesRef.current.values()) if (ackTimer) clearTimeout(ackTimer); pendingInteractionResponsesRef.current.clear(); }, []);
   const resolveInteractionResponse = useCallback((data: Extract<WsEvent, { type: 'respond_ok' | 'respond_error' }>) => {
     const pending = pendingInteractionResponsesRef.current.get(data.interactionId);
     if (!pending) return;
+    // ACKs without a token are only valid for the initial submission; tokens fence stale retries.
+    const ackAttemptId = (data as { clientAttemptId?: unknown }).clientAttemptId;
+    if ((typeof ackAttemptId === 'string' && ackAttemptId !== pending.attemptId) || (ackAttemptId === undefined && pending.generation > 1)) return;
+    if (pending.ackTimer) clearTimeout(pending.ackTimer);
     pendingInteractionResponsesRef.current.delete(data.interactionId);
     const idx = msgRef.current.messagesRef.current.findIndex((m) => m.type === pending.type && m.interactionId === data.interactionId);
     if (idx < 0) return;
@@ -2955,27 +2967,15 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   // ---- Interaction responses (via WS) ----
   const respondToInteraction = useCallback(async (interactionId: string, type: 'permission_request' | 'ask_user', response: Record<string, unknown>) => {
     if (pendingInteractionResponsesRef.current.has(interactionId)) return;
-    pendingInteractionResponsesRef.current.set(interactionId, { type, response });
-    const ok = await wsClient.ensureConnectedSend({ action: 'respond', interactionId, sessionId: sessionIdRef.current, ...response }).catch(() => false);
-    if (!ok) resolveInteractionResponse({ type: 'respond_error', interactionId, error: '网络连接失败' });
-  }, [resolveInteractionResponse]);
-
-  const handlePermissionResponse = useCallback(async (
-    interactionId: string,
-    allow: boolean,
-  ) => {
-    await respondToInteraction(interactionId, 'permission_request', {
-      allow,
-      message: allow ? undefined : 'User denied',
-    });
-  }, [respondToInteraction]);
-
-  const handleAskUserResponse = useCallback(async (
-    interactionId: string,
-    answers: AskUserAnswers,
-  ) => {
-    await respondToInteraction(interactionId, 'ask_user', { answers });
-  }, [respondToInteraction]);
+    const generation = ++interactionResponseGenerationRef.current, attemptId = `${interactionId}:${generation}:${Date.now()}`;
+    const pending: PendingInteractionResponse = { type, response, generation, attemptId };
+    pendingInteractionResponsesRef.current.set(interactionId, pending);
+    if (!await wsClient.ensureConnectedSend({ action: 'respond', interactionId, sessionId: sessionIdRef.current, clientAttemptId: attemptId, ...response }).catch(() => false)) return releaseInteractionResponse(interactionId, generation, '网络连接失败');
+    if (pendingInteractionResponsesRef.current.get(interactionId) !== pending) return;
+    pending.ackTimer = setTimeout(() => releaseInteractionResponse(interactionId, generation, '等待服务端确认超时'), INTERACTION_RESPONSE_ACK_TIMEOUT_MS);
+  }, [releaseInteractionResponse]);
+  const handlePermissionResponse = useCallback((interactionId: string, allow: boolean) => respondToInteraction(interactionId, 'permission_request', { allow, message: allow ? undefined : 'User denied' }), [respondToInteraction]);
+  const handleAskUserResponse = useCallback((interactionId: string, answers: AskUserAnswers) => respondToInteraction(interactionId, 'ask_user', { answers }), [respondToInteraction]);
 
   // ---- 会话切换时恢复模型选择 ----
   // 仅在 sessionId 实际切换时才重置/恢复，避免 sessions 列表刷新（WS 重连、

@@ -139,12 +139,14 @@ export async function openTrustedFile(root: string, relativePath: string): Promi
     } catch (error) {
       asUnsafe(error);
     }
-    const stats = await handle.stat();
-    if (!stats.isFile()) {
-      await handle.close();
-      throw Object.assign(new Error('Not a file'), { code: 'EISDIR' });
+    try {
+      const stats = await handle.stat();
+      if (!stats.isFile()) throw Object.assign(new Error('Not a file'), { code: 'EISDIR' });
+      return { handle, stats, fdPath: procPath(handle) };
+    } catch (error) {
+      await handle.close().catch(() => undefined);
+      throw error;
     }
-    return { handle, stats, fdPath: procPath(handle) };
   } finally {
     await parent.close();
   }
@@ -375,9 +377,12 @@ async function removeEntry(parent: FileHandle, leaf: string): Promise<void> {
     if (code === 'ENOTDIR') {
       try {
         const file = await open(procPath(parent, leaf), READ_FLAGS);
-        const stats = await file.stat();
-        await file.close();
-        if (!stats.isFile()) throw new UnsafeFilePathError();
+        try {
+          const stats = await file.stat();
+          if (!stats.isFile()) throw new UnsafeFilePathError();
+        } finally {
+          await file.close().catch(() => undefined);
+        }
         await unlink(procPath(parent, leaf));
         return;
       } catch (fileError) {

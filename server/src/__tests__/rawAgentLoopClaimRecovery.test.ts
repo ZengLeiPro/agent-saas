@@ -5,6 +5,7 @@ import { join } from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createBuiltinTools } from '../agent/builtinTools.js';
 import { PlatformToolRuntime } from '../agent/toolRuntime.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
@@ -107,7 +108,7 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
     const sessionId = 'session-lease-loser';
     const runId = 'run-lease-loser';
     const toolCallId = 'call_lease_loser_read';
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const toolInvocationStore = new InMemoryToolInvocationStore();
     const runStore = {
       get: async () => ({
@@ -126,7 +127,7 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
         { id: toolCallId, name: 'Read', arguments: JSON.stringify({ path: 'seed.txt' }) },
       ]),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime({ providers: [createBuiltinTools()] }),
       toolInvocationStore,
@@ -145,11 +146,11 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
       model: 'gpt-5.5',
       cwd,
       workerId: 'worker-loser',
-      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID } },
     }));
 
     expect(outbound.some((event) => event.type === 'error')).toBe(false);
-    const lifecycle = await eventStore.list(sessionId);
+    const lifecycle = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
     expectNoClaimLoserLifecycle(lifecycle, toolCallId);
     expect(lifecycle.some((event) => event.type === 'run_finished')).toBe(false);
     await expect(toolInvocationStore.get(`${runId}:${toolCallId}`)).resolves.toMatchObject({
@@ -166,7 +167,7 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
     const runId = 'run-claimed';
     const toolCallId = 'call_claimed_read';
     const invocationId = `${runId}:${toolCallId}`;
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const toolInvocationStore = new InMemoryToolInvocationStore();
     await claimInvocation({ store: toolInvocationStore, invocationId, runId, sessionId, toolCallId });
     const loop = new RawAgentLoop({
@@ -174,7 +175,7 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
         { id: toolCallId, name: 'Read', arguments: JSON.stringify({ path: 'seed.txt' }) },
       ]),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime({ providers: [createBuiltinTools()] }),
       toolInvocationStore,
@@ -189,12 +190,12 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
       connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
     }, {
       runId, sessionId, model: 'gpt-5.5', cwd, workerId: 'worker-after-crash',
-      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID } },
     }));
 
     const claimFailure = `tool invocation already claimed by another worker: ${invocationId}`;
     expect(outbound.at(-1)).toEqual({ type: 'error', error: claimFailure });
-    const lifecycle = await eventStore.list(sessionId);
+    const lifecycle = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
     expectNoClaimLoserLifecycle(lifecycle, toolCallId);
     expect(lifecycle).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'run_finished', subtype: 'error', error: claimFailure }),
@@ -209,10 +210,10 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
     const runId = 'run-approval-resume-claimed';
     const claimedToolCallId = 'call_claimed_read_after_approval';
     const invocationId = `${runId}:${claimedToolCallId}`;
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const transcriptPath = join(cwd, 'session.jsonl');
     const toolInvocationStore = new InMemoryToolInvocationStore();
-    const approvalStore = new EventBackedApprovalStore(eventStore, sessionId);
+    const approvalStore = new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID);
     const firstLoop = new RawAgentLoop({
       modelAdapter: new StaticToolCallsAdapter([
         { id: 'call_approved_write', name: 'Write', arguments: JSON.stringify({ path: 'approved.txt', content: 'APPROVED_OK' }) },
@@ -230,7 +231,7 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
         connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
       }, {
         runId, sessionId, model: 'gpt-5.5', cwd,
-        channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+        channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID } },
         hooks: { onInteraction: async (event) => {
           approvalId = event.interactionId; resolve(); return new Promise(() => {});
         } },
@@ -250,14 +251,14 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
       approvalId, response: { allow: true, message: 'ok' }, instructions: '继续。', maxTurns: 4,
     }, {
       runId, sessionId, model: 'gpt-5.5', cwd, workerId: 'worker-after-crash',
-      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID } },
     }));
 
     const claimFailure = `tool invocation already claimed by another worker: ${invocationId}`;
     expect(readFileSync(join(cwd, 'approved.txt'), 'utf-8')).toBe('APPROVED_OK');
     expect(outbound.at(-1)).toEqual({ type: 'error', error: claimFailure });
     await expect(toolInvocationStore.get(invocationId)).resolves.toMatchObject({ status: 'running' });
-    const lifecycle = await eventStore.list(sessionId);
+    const lifecycle = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
     expectNoClaimLoserLifecycle(lifecycle, claimedToolCallId);
     expect(lifecycle).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'run_finished', subtype: 'error', error: claimFailure }),
@@ -272,12 +273,12 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
     const runId = 'run-interaction-resume-claimed';
     const claimedToolCallId = 'call_ask_read';
     const invocationId = `${runId}:${claimedToolCallId}`;
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const transcriptPath = join(cwd, 'session.jsonl');
     const toolInvocationStore = new InMemoryToolInvocationStore();
     const firstLoop = new RawAgentLoop({
       modelAdapter: new AskUserAndReadAdapter(), eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime({ providers: [createBuiltinTools()] }), toolInvocationStore,
     });
@@ -290,7 +291,7 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
         connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
       }, {
         runId, sessionId, model: 'gpt-5.5', cwd,
-        channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+        channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID } },
         hooks: { onInteraction: async (event) => {
           interactionId = event.interactionId;
           await eventStore.append({
@@ -298,7 +299,7 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
             toolCallId: event.toolCallId, invocationId: event.invocationId, interactionId,
             interactionType: 'ask_user', userId: 'admin-1', toolId: event.toolId,
             toolName: event.toolName, displayName: event.displayName, questions: event.questions,
-          });
+          }, { tenantId: DEFAULT_TENANT_ID });
           resolve(); return new Promise(() => {});
         } },
       })[Symbol.asyncIterator]();
@@ -309,12 +310,12 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
       type: 'interaction_resolved', sessionId, runId, toolCallId: 'call_ask_batch',
       invocationId: `${runId}:call_ask_batch`, interactionId, interactionType: 'ask_user',
       userId: 'admin-1', response: { answers: { branch: 'main' }, message: 'Use main' },
-    });
+    }, { tenantId: DEFAULT_TENANT_ID });
     await claimInvocation({ store: toolInvocationStore, invocationId, runId, sessionId, toolCallId: claimedToolCallId });
 
     const rebuiltLoop = new RawAgentLoop({
       modelAdapter: new UnexpectedModelAdapter(), eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime({ providers: [createBuiltinTools()] }), toolInvocationStore,
       runStore: staleClaimRunStore(runId, sessionId),
@@ -324,13 +325,13 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
       instructions: '继续。', maxTurns: 4,
     }, {
       runId, sessionId, model: 'gpt-5.5', cwd, workerId: 'worker-after-crash',
-      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID } },
     }));
 
     const claimFailure = `tool invocation already claimed by another worker: ${invocationId}`;
     expect(outbound.at(-1)).toEqual({ type: 'error', error: claimFailure });
     await expect(toolInvocationStore.get(invocationId)).resolves.toMatchObject({ status: 'running' });
-    const lifecycle = await eventStore.list(sessionId);
+    const lifecycle = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
     expectNoClaimLoserLifecycle(lifecycle, claimedToolCallId);
     expect(lifecycle).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'run_finished', subtype: 'error', error: claimFailure }),

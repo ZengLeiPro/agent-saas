@@ -32,7 +32,7 @@ describe('RawAgentLoop taskboard retry transaction', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-taskboard-retry-tool-'));
     cleanupDirs.add(cwd);
     const sessionId = 'session-taskboard-retry-tool';
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const encoder = new TextEncoder();
     const response = (chunks: string[], error?: Error) => {
       let index = 0;
@@ -99,7 +99,7 @@ describe('RawAgentLoop taskboard retry transaction', () => {
         { protocol: 'responses', preStreamRetryDelaysMs: [0] },
       ),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       toolInvocationStore: new InMemoryToolInvocationStore(),
@@ -127,7 +127,7 @@ describe('RawAgentLoop taskboard retry transaction', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(outbound.at(-1)).toEqual({ type: 'done' });
     expect(readFileSync(join(cwd, 'retry-once.txt'), 'utf-8')).toBe('ONCE');
-    const durable = await eventStore.list(sessionId);
+    const durable = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
     expect(durable.filter((event) => event.type === 'assistant_tool_calls')).toHaveLength(1);
     expect(durable.filter((event) => event.type === 'tool_result')).toHaveLength(1);
     expect(durable.filter((event) => event.type === 'tool_result')).toMatchObject([

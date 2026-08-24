@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import { PgEventStore } from '../runtime/pgEventStore.js';
 import { PgRunStore } from '../runtime/runStore.js';
 import { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
@@ -339,7 +340,7 @@ describePg('PgToolInvocationStore terminal run gate', () => {
     const event = { type: 'run_cancel_requested' as const, sessionId, runId, reason: 'web_abort' };
 
     const first = await runStore.cancelSteeringBeforeDispatchBySessionWithEvent(
-      sessionId, 'web_abort', runId, event,
+      sessionId, 'web_abort', runId, event, LEGACY_TENANT_ID,
     );
     const firstStopped = await pool.query<{ stopped_at: Date }>(`
       SELECT stopped_at FROM ${prefix}_steering_sessions WHERE session_id = $1
@@ -354,14 +355,14 @@ describePg('PgToolInvocationStore terminal run gate', () => {
       metadata: { wakeMessage: { channel: 'web', chatId: sessionId, content: 'stop 后新消息' } },
     });
     const duplicate = await runStore.cancelSteeringBeforeDispatchBySessionWithEvent(
-      sessionId, 'web_abort', runId, event,
+      sessionId, 'web_abort', runId, event, LEGACY_TENANT_ID,
     );
 
     expect(first.eventCreated).toBe(true);
     expect(duplicate.eventCreated).toBe(false);
     await expect(runStore.get('source-stop-idempotency-next')).resolves.toMatchObject({ status: 'pending' });
     const [events, secondStopped, steering] = await Promise.all([
-      eventStore.list(sessionId),
+      eventStore.list(LEGACY_TENANT_ID, sessionId),
       pool.query<{ stopped_at: Date }>(`
         SELECT stopped_at FROM ${prefix}_steering_sessions WHERE session_id = $1
       `, [sessionId]),
@@ -402,6 +403,7 @@ describePg('PgToolInvocationStore terminal run gate', () => {
         'web_abort',
         runId,
         { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' },
+        LEGACY_TENANT_ID,
       );
 
       let waitingOnTargetLock = false;
@@ -431,7 +433,7 @@ describePg('PgToolInvocationStore terminal run gate', () => {
           SELECT state FROM ${prefix}_steering_inputs WHERE source_run_id = $1
         `, [sourceRunId]),
         pool.query(`SELECT stopped_at FROM ${prefix}_steering_sessions WHERE session_id = $1`, [sessionId]),
-        eventStore.list(sessionId),
+        eventStore.list(LEGACY_TENANT_ID, sessionId),
       ]);
       expect(input.rows[0]?.state).toBe('pending');
       expect(stopped.rows).toHaveLength(0);

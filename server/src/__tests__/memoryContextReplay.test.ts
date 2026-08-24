@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
 import { RawAgentLoop } from '../runtime/rawAgentLoop.js';
-import type { EventListOptions, EventStore, PlatformEventInput } from '../runtime/runtimeEventStoreTypes.js';
+import type { EventAppendContext, EventListOptions, EventStore, PlatformEventInput } from '../runtime/runtimeEventStoreTypes.js';
 import type {
   ModelAdapter,
   ModelEvent,
@@ -18,23 +18,27 @@ import type {
 } from '../runtime/types.js';
 import type { OutboundEvent } from '../types/index.js';
 
-class SessionMapEventStore implements EventStore {
-  private readonly events: PlatformEvent[] = [];
+const TENANT_ID = 'tenant-memory-context';
 
-  async append(input: PlatformEventInput): Promise<PlatformEvent> {
+class SessionMapEventStore implements EventStore {
+  private readonly eventsByTenant = new Map<string, PlatformEvent[]>();
+
+  async append(input: PlatformEventInput, ctx: EventAppendContext): Promise<PlatformEvent> {
     const event = {
       id: randomUUID(),
       timestamp: new Date().toISOString(),
       ...input,
     } as PlatformEvent;
-    this.events.push(event);
+    const events = this.eventsByTenant.get(ctx.tenantId) ?? [];
+    events.push(event);
+    this.eventsByTenant.set(ctx.tenantId, events);
     return event;
   }
 
-  async list(sessionId: string, options: EventListOptions = {}): Promise<PlatformEvent[]> {
+  async list(tenantId: string, sessionId: string, options: EventListOptions = {}): Promise<PlatformEvent[]> {
     const excluded = new Set(options.excludeTypes ?? []);
     const included = options.includeTypes?.length ? new Set(options.includeTypes) : null;
-    return this.events.filter((event) => (
+    return (this.eventsByTenant.get(tenantId) ?? []).filter((event) => (
       event.sessionId === sessionId
       && !excluded.has(event.type)
       && (!included || included.has(event.type))
@@ -85,25 +89,29 @@ describe('memory consolidation context replay', () => {
     await store.append({
       type: 'run_started', runId: 'source-run', sessionId: sourceSessionId,
       model: 'gpt-5.4', channel: 'web',
-    });
+    }, { tenantId: TENANT_ID });
     await store.append({
       type: 'user_message', runId: 'source-run', sessionId: sourceSessionId,
       content: '父会话里的稳定事实',
-    });
+    }, { tenantId: TENANT_ID });
     await store.append({
       type: 'assistant_message', runId: 'source-run', sessionId: sourceSessionId,
       content: '父会话回答', model: 'gpt-5.4',
-    });
+    }, { tenantId: TENANT_ID });
     await store.append({
       type: 'assistant_tool_calls', runId: 'source-run', sessionId: sourceSessionId,
       content: '',
       toolCalls: [{ id: 'unfinished-call', name: 'Read', arguments: '{"path":"missing.md"}' }],
-    });
+    }, { tenantId: TENANT_ID });
     await store.append({
       type: 'run_finished', runId: 'source-run', sessionId: sourceSessionId,
       subtype: 'success', numTurns: 1,
-    });
-    const sourceBefore = await store.list(sourceSessionId);
+    }, { tenantId: TENANT_ID });
+    await store.append({
+      type: 'user_message', runId: 'other-tenant-run', sessionId: sourceSessionId,
+      content: '其他租户不可见事实',
+    }, { tenantId: 'other-tenant' });
+    const sourceBefore = await store.list(TENANT_ID, sourceSessionId);
 
     const adapter = new CapturingStoredAdapter();
     const findLatestResponseSessionStateBySession = vi.fn(async () => ({
@@ -117,7 +125,7 @@ describe('memory consolidation context replay', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore: store,
-      approvalStore: new EventBackedApprovalStore(store, hiddenSessionId),
+      approvalStore: new EventBackedApprovalStore(store, hiddenSessionId, TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'hidden.jsonl')),
       runStore: {
         findLatestResponseSessionStateBySession,
@@ -134,6 +142,7 @@ describe('memory consolidation context replay', () => {
     }, {
       runId: 'hidden-run',
       sessionId: hiddenSessionId,
+      tenantId: TENANT_ID,
       replaySourceSessionId: sourceSessionId,
       disableResponseRelay: true,
       memoryMaintenanceMode: 'consolidation',
@@ -174,8 +183,9 @@ describe('memory consolidation context replay', () => {
       && message.tool_call_id === 'unfinished-call'
       && message.content.includes('未形成完整结果'))).toBe(true);
 
-    expect(await store.list(sourceSessionId)).toEqual(sourceBefore);
-    const hiddenEvents = await store.list(hiddenSessionId);
+    expect(messages).not.toContainEqual(expect.objectContaining({ content: '其他租户不可见事实' }));
+    expect(await store.list(TENANT_ID, sourceSessionId)).toEqual(sourceBefore);
+    const hiddenEvents = await store.list(TENANT_ID, hiddenSessionId);
     expect(hiddenEvents.map((event) => event.type)).toEqual([
       'run_started', 'user_message', 'assistant_message',
       'compaction_usage', 'compaction', 'run_finished',

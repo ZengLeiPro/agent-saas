@@ -45,7 +45,7 @@ async function startServer(
   agentCwd: string,
   user: WorkspaceUser,
   runtimeEventStoreFor: (transcriptPath: string) => EventStore = (transcriptPath) => (
-    new FileEventStore(getRuntimeEventLogPath(transcriptPath))
+    new FileEventStore(getRuntimeEventLogPath(transcriptPath), user.tenantId!)
   ),
 ): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
@@ -260,7 +260,7 @@ describe('GET /chat/interactions/pending owner-self access guard', () => {
       const { status, body } = await fetchPending(baseUrl, sessionId);
       expect(status).toBe(200);
       expect(list).toHaveBeenCalledTimes(1);
-      expect(list).toHaveBeenCalledWith(sessionId, {
+      expect(list).toHaveBeenCalledWith(OWNER.tenantId, sessionId, {
         includeTypes: [
           'interaction_requested',
           'interaction_resolved',

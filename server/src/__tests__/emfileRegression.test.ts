@@ -165,6 +165,7 @@ describe('Semaphore', () => {
 });
 
 describe('end-to-end EMFILE regression', () => {
+  const tenantId = 'tenant-emfile-regression';
   it('30 session × concurrent (eventStore.list + approvalStore.list) does not throw', async () => {
     const dir = await makeTrustedRuntimeDir('emfile-e2e-');
     const N = 30;
@@ -204,9 +205,9 @@ describe('end-to-end EMFILE regression', () => {
     const tasks: Array<Promise<unknown>> = [];
     for (const { sessionId, eventPath, approvalPath } of sessions) {
       for (let k = 0; k < FAN_OUT_PER_SESSION; k++) {
-        const eventStore = new FileEventStore(eventPath);
+        const eventStore = new FileEventStore(eventPath, tenantId);
         const approvalStore = new FileApprovalStore(approvalPath);
-        tasks.push(eventStore.list(sessionId));
+        tasks.push(eventStore.list(tenantId, sessionId));
         tasks.push(approvalStore.list(sessionId));
       }
     }
@@ -225,7 +226,7 @@ describe('end-to-end EMFILE regression', () => {
     }
 
     // 抽样校验内容也都读到了。
-    const sampleEvents = await new FileEventStore(sessions[0].eventPath).list(sessions[0].sessionId);
+    const sampleEvents = await new FileEventStore(sessions[0].eventPath, tenantId).list(tenantId, sessions[0].sessionId);
     expect(sampleEvents.length).toBe(50);
 
     await rm(dir, { recursive: true, force: true });
@@ -248,10 +249,10 @@ describe('end-to-end EMFILE regression', () => {
       'utf-8',
     );
 
-    const store = new FileEventStore(eventPath);
+    const store = new FileEventStore(eventPath, tenantId);
     const concurrent = 40;
     const results = await Promise.all(
-      Array.from({ length: concurrent }, () => store.list('session-x')),
+      Array.from({ length: concurrent }, () => store.list(tenantId, 'session-x')),
     );
 
     expect(results.length).toBe(concurrent);

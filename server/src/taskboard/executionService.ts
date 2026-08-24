@@ -38,6 +38,7 @@ import {
   InvalidTaskboardDispatchPayloadError,
 } from './executionDispatchValidation.js';
 import { resolveExecutionModelRef } from './executionFields.js';
+import { dispatchRetryDelayMs, limitComment, limitError } from './executionHelpers.js';
 import { buildExecutionPrompt } from './executionPrompt.js';
 export { executionWritebackInstructions } from './executionPrompt.js';
 import {
@@ -788,8 +789,8 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       return;
     }
     const events = this.options.eventStore.listByRun
-      ? await this.options.eventStore.listByRun(run.sessionId, run.runId)
-      : await this.options.eventStore.list(run.sessionId);
+      ? await this.options.eventStore.listByRun(requireTenantId(run.tenantId), run.sessionId, run.runId)
+      : await this.options.eventStore.list(requireTenantId(run.tenantId), run.sessionId);
     const output = finalAssistantText(events, run.runId, run.sessionId)
       || 'Agent 继续执行完成，但没有返回文本交付。';
     const attachments = await extractContinuationAttachments(output, run, this.options.agentCwd);
@@ -809,8 +810,8 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     if (!context || isTerminalExecution(context.execution)) return;
     assertExecutionSession(context.execution, sessionId);
     const events = this.options.eventStore.listByRun
-      ? await this.options.eventStore.listByRun(sessionId, runId)
-      : await this.options.eventStore.list(sessionId);
+      ? await this.options.eventStore.listByRun(context.identity.tenantId, sessionId, runId)
+      : await this.options.eventStore.list(context.identity.tenantId, sessionId);
     const output = finalAssistantText(events, runId, sessionId)
       || 'Agent 执行完成，但没有返回文本交付。';
     const userCwd = resolveUserCwd(this.options.agentCwd, {
@@ -945,21 +946,6 @@ function continuationPurpose(task: TaskBoardTask): TaskBoardExecutionPurpose {
   throw new TaskboardValidationError('当前任务状态不允许从评论创建新执行', 'TASKBOARD_EXECUTION_STATUS_INVALID');
 }
 
-function limitComment(value: string): string {
-  const normalized = value.trim();
-  if (normalized.length <= 20_000) return normalized;
-  return `${normalized.slice(0, 19_950)}\n\n[回执内容过长，已截断]`;
-}
-
-function limitError(value: string): string {
-  const normalized = value.trim();
-  return normalized.length <= 2_000 ? normalized : `${normalized.slice(0, 1_980)}…`;
-}
-
-function dispatchRetryDelayMs(attemptCount: number): number {
-  return Math.min(60_000, 1_000 * (2 ** Math.min(Math.max(attemptCount - 1, 0), 6)));
-}
-
 function matchesReconcileCandidate(
   run: RunRecord,
   candidate: TaskboardExecutionReconcileCandidate,
@@ -990,6 +976,11 @@ function isTerminalRun(run: RunRecord): boolean {
     || run.status === 'failed'
     || run.status === 'cancelled'
     || run.status === 'orphaned';
+}
+
+function requireTenantId(tenantId: string | undefined): string {
+  if (!tenantId?.trim()) throw new Error('Runtime event tenantId is required');
+  return tenantId;
 }
 
 function isTerminalExecution(execution: TaskBoardExecution): boolean {

@@ -189,7 +189,7 @@ describe('UserActivityService', () => {
     };
     const eventStore = {
       append: vi.fn(),
-      list: vi.fn(async (sessionId: string) => eventsBySession[sessionId] ?? []),
+      list: vi.fn(async (_tenantId: string, sessionId: string) => eventsBySession[sessionId] ?? []),
     };
     return new UserActivityService({
       sessionProjection: projection as never,

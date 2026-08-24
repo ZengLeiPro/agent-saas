@@ -280,7 +280,7 @@ describe('WebChannel executionTarget gating', () => {
       const sessionCatalog = new FileSessionCatalog({ agentCwd: tmp });
       const { channel } = createChannel({
         agentCwd: tmp,
-        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath), 'wain-test'),
         enqueueRuntime: {
           scheduler: {
             enqueue: async (input: UpsertRunInput) => {
@@ -330,7 +330,7 @@ describe('WebChannel executionTarget gating', () => {
       const sessionCatalog = new FileSessionCatalog({ agentCwd: tmp });
       const { channel } = createChannel({
         agentCwd: tmp,
-        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath), 'wain-test'),
         enqueueRuntime: {
           scheduler: {
             enqueue: async (input: UpsertRunInput) => {
@@ -361,8 +361,8 @@ describe('WebChannel executionTarget gating', () => {
 
       const transcriptPath = (enqueued[1]?.metadata as any)?.transcriptPath as string;
       expect(transcriptPath).toBeTruthy();
-      const store = new FileEventStore(getRuntimeEventLogPath(transcriptPath));
-      const events = await store.list(sessionId);
+      const store = new FileEventStore(getRuntimeEventLogPath(transcriptPath), 'wain-test');
+      const events = await store.list('wain-test', sessionId);
       const submitted = events.filter((event: any) => (
         event.type === 'user_message_submitted' && event.content === 'second message'
       ));
@@ -548,7 +548,7 @@ describe('WebChannel executionTarget gating', () => {
       const sessionCatalog = new FileSessionCatalog({ agentCwd: tmp });
       const { channel, calls } = createChannel({
         agentCwd: tmp,
-        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath), PLATFORM_ADMIN_USER.tenantId),
         enqueueRuntime: {
           scheduler: {
             enqueue: async (input: UpsertRunInput) => {
@@ -621,7 +621,7 @@ describe('WebChannel executionTarget gating', () => {
       let schedulerCalls = 0;
       const { channel } = createChannel({
         agentCwd: tmp,
-        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath), PLATFORM_ADMIN_USER.tenantId),
         enqueueRuntime: {
           scheduler: {
             enqueue: async (input: UpsertRunInput) => {
@@ -684,7 +684,7 @@ describe('WebChannel executionTarget gating', () => {
       const ws = new FakeWebSocket();
       const { channel } = createChannel({
         agentCwd: tmp,
-        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath), PLATFORM_ADMIN_USER.tenantId),
         enqueueRuntime: {
           scheduler: {
             enqueue: async (input: UpsertRunInput, options: unknown) => {
@@ -747,7 +747,7 @@ describe('WebChannel executionTarget gating', () => {
       let enqueueCalls = 0;
       const { channel } = createChannel({
         agentCwd: tmp,
-        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath), PLATFORM_ADMIN_USER.tenantId),
         enqueueRuntime: {
           scheduler: {
             enqueue: async (input: UpsertRunInput, options: { deliveryMode: 'queue' | 'steer' }) => {

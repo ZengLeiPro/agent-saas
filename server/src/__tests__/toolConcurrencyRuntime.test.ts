@@ -136,11 +136,11 @@ describe('drainToolCalls 通用并行窗', () => {
   ): Promise<OutboundEvent[]> {
     const cwd = await mkdtemp(join(tmpdir(), 'subagent-loop-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), 'kaiyan');
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-par'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-par', 'kaiyan'),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime,
     });
@@ -254,7 +254,7 @@ describe('drainToolCalls 通用并行窗', () => {
     cleanupDirs.add(cwd);
     const sessionId = 'session-par-duplicate';
     const runId = 'run-par-duplicate';
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), 'kaiyan');
     const toolInvocationStore = new InMemoryToolInvocationStore();
     const toolRuntime = new BarrierToolRuntime(2);
     const runStore = {
@@ -267,7 +267,7 @@ describe('drainToolCalls 通用并行窗', () => {
     const createLoop = (suffix: string) => new RawAgentLoop({
       modelAdapter: new BatchAdapter(calls),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId, 'kaiyan'),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, `session-${suffix}.jsonl`)),
       toolRuntime,
       toolInvocationStore,
@@ -297,7 +297,7 @@ describe('drainToolCalls 通用并行窗', () => {
     await expect(toolInvocationStore.get(`${runId}:c1`)).resolves.toMatchObject({ status: 'completed' });
     await expect(toolInvocationStore.get(`${runId}:c2`)).resolves.toMatchObject({ status: 'completed' });
     expect([...first, ...second].some((event) => event.type === 'error')).toBe(false);
-    const lifecycle = await eventStore.list(sessionId);
+    const lifecycle = await eventStore.list('kaiyan', sessionId);
     expect(lifecycle.filter((event) => event.type === 'tool_invocation_started')).toHaveLength(2);
     expect(lifecycle.filter((event) => event.type === 'tool_invocation_completed')).toHaveLength(2);
     expect(lifecycle.some((event) => event.type === 'run_finished' && event.subtype === 'error')).toBe(false);

@@ -318,7 +318,10 @@ export class AgentDwsMessageRouter {
     }
     const listByRun = this.options.eventStore?.listByRun;
     if (!listByRun) throw new Error('Agent DWS completed run output recovery is unavailable');
-    const events = await listByRun.call(this.options.eventStore, sessionId, runId);
+    if (existing.tenantId && existing.tenantId !== account.tenantId) {
+      throw new Error('Agent DWS run/account tenant binding mismatch');
+    }
+    const events = await listByRun.call(this.options.eventStore, account.tenantId, sessionId, runId);
     const recovered = collectAssistantText(events);
     if (!recovered.trim()) throw new Error('Agent DWS completed run has no recoverable reply');
     return recovered;

@@ -39,6 +39,7 @@ import { z } from 'zod';
 
 import { isPlatformAdmin } from '../auth/types.js';
 import { hasPlatformCapability } from '../auth/platformGovernance.js';
+import { LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import type { PlatformEvent } from '../runtime/types.js';
 import type { RunRecord } from '../runtime/runStore.js';
 import type { BillingUsageEvent } from '../data/billing/types.js';
@@ -54,7 +55,7 @@ import type {
 
 export interface RuntimeTraceRouterOptions {
   runStore: { get(runId: string): Promise<RunRecord | null> };
-  eventStore: { listByRun(sessionId: string, runId: string): Promise<PlatformEvent[]> };
+  eventStore: { listByRun(tenantId: string, sessionId: string, runId: string): Promise<PlatformEvent[]> };
   billingStore: {
     listUsageEvents(query: { runId?: string; limit?: number }): Promise<BillingUsageEvent[]>;
   };
@@ -539,7 +540,7 @@ export function createRuntimeTraceRouter(opts: RuntimeTraceRouterOptions): Route
         return;
       }
       const [events, usageEvents, orgCostRedacted] = await Promise.all([
-        eventStore.listByRun(run.sessionId, runId),
+        eventStore.listByRun(run.tenantId ?? LEGACY_TENANT_ID, run.sessionId, runId),
         billingStore.listUsageEvents({ runId, limit: 1000 }),
         shouldRedactCost(scope.platform, scope.tenantId),
       ]);

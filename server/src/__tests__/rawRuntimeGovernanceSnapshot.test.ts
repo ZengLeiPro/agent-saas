@@ -57,7 +57,7 @@ describe('Raw Runtime governance snapshot fail-closed', () => {
       }) as never,
       eventStore: { append: vi.fn().mockImplementation(async event => { events.push(event); }) } as never,
       executionTransportRegistry: { has: () => true, get: () => transport } as never,
-      executionTarget: 'server-local', sessionId: 'session-1', runId: 'run-1', workspaceId: 'workspace-1',
+      tenantId: 'tenant-a', executionTarget: 'server-local', sessionId: 'session-1', runId: 'run-1', workspaceId: 'workspace-1',
     })).rejects.toThrow('HAND_PROVISION_FAILED:image unavailable');
     expect(registered.at(-1)).toMatchObject({
       status: 'unhealthy',
@@ -95,7 +95,7 @@ describe('Raw Runtime governance snapshot fail-closed', () => {
       handStore: { register, completeProvisionAttempt } as never,
       eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
       executionTransportRegistry: { has: () => false } as never,
-      executionTarget: 'server-local', sessionId: 'session-1', runId: 'run-1', workspaceId: 'workspace-1',
+      tenantId: 'tenant-a', executionTarget: 'server-local', sessionId: 'session-1', runId: 'run-1', workspaceId: 'workspace-1',
     });
 
     expect(register).toHaveBeenCalledWith(expect.objectContaining({
@@ -130,7 +130,7 @@ describe('Raw Runtime governance snapshot fail-closed', () => {
         has: () => true,
         get: () => ({ listInternalTools: () => [], provision }),
       } as never,
-      executionTarget: 'server-local', sessionId: 'session-1', runId: 'run-1', workspaceId: 'workspace-1',
+      tenantId: 'tenant-a', executionTarget: 'server-local', sessionId: 'session-1', runId: 'run-1', workspaceId: 'workspace-1',
       userId: 'user-1', userTenantId: 'tenant-a', agentId: 'agent-1',
       environmentTemplateVersionId: 'env-v1', authorizeEnvironmentTemplate,
       environmentStore: {
@@ -168,7 +168,7 @@ describe('Raw Runtime governance snapshot fail-closed', () => {
         has: () => true,
         get: () => ({ listInternalTools: () => [], provision }),
       } as never,
-      executionTarget: 'server-local', sessionId: 'session-1', workspaceId: 'workspace-1',
+      tenantId: 'tenant-a', executionTarget: 'server-local', sessionId: 'session-1', workspaceId: 'workspace-1',
       userId: 'user-1', userTenantId: 'tenant-a', authorizeEnvironmentTemplate: vi.fn().mockResolvedValue(true),
       environmentStore: {
         getInstance: vi.fn().mockResolvedValue({
@@ -199,7 +199,7 @@ describe('Raw Runtime governance snapshot fail-closed', () => {
         has: () => true,
         get: () => ({ listInternalTools: () => [], provision }),
       } as never,
-      executionTarget: 'server-local', sessionId: 'session-1', workspaceId: 'workspace-1',
+      tenantId: 'tenant-a', executionTarget: 'server-local', sessionId: 'session-1', workspaceId: 'workspace-1',
       userId: 'user-1', userTenantId: 'tenant-a', environmentTemplateVersionId: 'env-v1',
       authorizeEnvironmentTemplate: vi.fn().mockResolvedValue(false),
       environmentStore: {
@@ -235,7 +235,7 @@ describe('Raw Runtime governance snapshot fail-closed', () => {
           provision: vi.fn().mockResolvedValue({ status: 'error', error: 'SNAT coverage gap' }),
         }),
       } as never,
-      executionTarget: 'server-remote', sessionId: 'session-1', runId: 'run-1', workspaceId: 'workspace-1',
+      tenantId: 'tenant-a', executionTarget: 'server-remote', sessionId: 'session-1', runId: 'run-1', workspaceId: 'workspace-1',
       runtimeIsolationRequirement: requirement,
     })).rejects.toThrow('HAND_PROVISION_FAILED:SNAT coverage gap');
 
@@ -269,7 +269,7 @@ describe('Raw Runtime governance snapshot fail-closed', () => {
       handStore: casHandStore(register) as never,
       eventStore: { append: vi.fn() } as never,
       executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [], provision }) } as never,
-      executionTarget: 'server-remote', sessionId: 'session-1', runId: 'run-1', workspaceId: 'workspace-1',
+      tenantId: 'tenant-a', executionTarget: 'server-remote', sessionId: 'session-1', runId: 'run-1', workspaceId: 'workspace-1',
       runtimeIsolationRequirement: requirement,
       tenantRemoteHands: [{ id: 'tenant-ecs', baseUrl: 'http://tenant-ecs-hand:3300', invokeTimeoutMs: 60_000 }],
       tenantRemoteHandResolver: { resolveForRegister } as never,
@@ -314,7 +314,7 @@ describe('Raw Runtime governance snapshot fail-closed', () => {
         has: () => true,
         get: () => ({ listInternalTools: () => [], provision: vi.fn().mockResolvedValue({ status: 'ok', metadata: { metadata: { runtimeIsolationEvidence: evidence } } }) }),
       } as never,
-      executionTarget: 'server-remote', sessionId: 'session-1', runId: 'run-1', workspaceId: 'workspace-1',
+      tenantId: 'tenant-a', executionTarget: 'server-remote', sessionId: 'session-1', runId: 'run-1', workspaceId: 'workspace-1',
       runtimeIsolationRequirement: requirement,
     })).rejects.toThrow(/RUNTIME_ISOLATION_EVIDENCE_/);
     expect(register).toHaveBeenCalledWith(expect.objectContaining({

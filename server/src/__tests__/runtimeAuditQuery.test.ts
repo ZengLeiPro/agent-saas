@@ -22,7 +22,7 @@ describe('EventStoreRuntimeAuditQuery', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'audit-query-'));
     cleanupDirs.add(cwd);
     const transcriptPath = join(cwd, 'session-A.jsonl');
-    const eventStore = new FileEventStore(getRuntimeEventLogPath(transcriptPath));
+    const eventStore = new FileEventStore(getRuntimeEventLogPath(transcriptPath), tenantId);
     // 与 audit 无关的 noise，证明 query 会忽略非 tool_audit 事件
     await eventStore.append({
       type: 'run_started',
@@ -30,13 +30,13 @@ describe('EventStoreRuntimeAuditQuery', () => {
       sessionId: 'session-A',
       model: 'gpt-5.5',
       channel: 'web',
-    });
+    }, { tenantId });
     await eventStore.append({
       type: 'assistant_message',
       runId: 'run-1',
       sessionId: 'session-A',
       content: 'hi',
-    });
+    }, { tenantId });
     // run-1: MemorySearch 自动放行 + Write 走人工审批
     await eventStore.append({
       type: 'tool_audit',
@@ -50,7 +50,7 @@ describe('EventStoreRuntimeAuditQuery', () => {
       executionTarget: 'server-local',
       status: 'success',
       durationMs: 12,
-    });
+    }, { tenantId });
     await eventStore.append({
       type: 'tool_audit',
       runId: 'run-1',
@@ -72,7 +72,7 @@ describe('EventStoreRuntimeAuditQuery', () => {
         stdoutBytes: 0,
         stderrBytes: 0,
       }],
-    });
+    }, { tenantId });
     // run-2: 同一 session 后续 run 的 Read，确保按 runId 过滤生效
     await eventStore.append({
       type: 'tool_audit',
@@ -87,7 +87,7 @@ describe('EventStoreRuntimeAuditQuery', () => {
       status: 'error',
       durationMs: 7,
       error: 'ENOENT',
-    });
+    }, { tenantId });
     return { transcriptPath, sessionId: 'session-A' };
   }
 
@@ -126,7 +126,7 @@ describe('EventStoreRuntimeAuditQuery', () => {
     cleanupDirs.add(cwd);
     const transcriptPath = join(cwd, 'session-P.jsonl');
     const eventLogPath = getRuntimeEventLogPath(transcriptPath);
-    const eventStore = new FileEventStore(eventLogPath);
+    const eventStore = new FileEventStore(eventLogPath, tenantId);
     // 显式 timestamp 让 since 边界确定（绕过 FileEventStore 自动盖戳）
     const base = Date.UTC(2026, 5, 7, 9, 0, 0);
     const events: PlatformEvent[] = Array.from({ length: 5 }, (_, i) => ({
@@ -180,13 +180,13 @@ describe('EventStoreRuntimeAuditQuery', () => {
     for (const [tenant, call] of [['kaiyan', 'call-a'], ['wain', 'call-b']] as const) {
       const transcriptPath = join(cwd, `${tenant}.jsonl`);
       paths.set(tenant, transcriptPath);
-      const store = new FileEventStore(getRuntimeEventLogPath(transcriptPath));
+      const store = new FileEventStore(getRuntimeEventLogPath(transcriptPath), tenant);
       await store.append({
         type: 'tool_audit', tenantId: tenant, sessionId, runId: 'run-collision',
         toolCallId: call, toolId: 'Read', toolName: 'Read', risk: 'safe',
         authorization: { approved: true, source: 'policy_auto' },
         executionTarget: 'server-local', status: 'success', durationMs: 1,
-      });
+      }, { tenantId: tenant });
     }
     const query = new EventStoreRuntimeAuditQuery(async (tenant) => paths.get(tenant) ?? null);
 

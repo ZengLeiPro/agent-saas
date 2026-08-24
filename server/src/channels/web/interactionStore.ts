@@ -1,3 +1,4 @@
+import type { WebSocket } from 'ws';
 import type { InteractionResponse } from '../../agent/types.js';
 import type { AskUserQuestion } from '../../types/index.js';
 
@@ -11,8 +12,9 @@ export interface PendingInteraction {
   runId?: string;
   toolCallId?: string;
   invocationId?: string;
-  /** 创建者的 userId，用于归属校验 */
+  /** 创建者的 userId，或免认证匿名交互绑定的原始连接。 */
   userId?: string;
+  boundWebSocket?: WebSocket;
   /** 企业专家会话在交互恢复时重新鉴权；缺省表示个人 Agent。 */
   orgAgentId?: string;
   /** ask_user 专用：存储问题列表 */
@@ -51,6 +53,7 @@ class InteractionStore {
       toolCallId?: string;
       invocationId?: string;
       userId?: string;
+      boundWebSocket?: WebSocket;
       orgAgentId?: string;
       questions?: AskUserQuestion[];
       toolId?: string;
@@ -78,6 +81,7 @@ class InteractionStore {
         toolCallId: options?.toolCallId,
         invocationId: options?.invocationId,
         userId: options?.userId,
+        boundWebSocket: options?.boundWebSocket,
         orgAgentId: options?.orgAgentId,
         questions: options?.questions,
         toolId: options?.toolId,
@@ -92,11 +96,6 @@ class InteractionStore {
   /** 获取指定交互所属的 sessionId（用于归属校验） */
   getSessionId(interactionId: string): string | undefined {
     return this.pending.get(interactionId)?.sessionId;
-  }
-
-  /** 获取指定交互的创建者 userId */
-  getUserId(interactionId: string): string | undefined {
-    return this.pending.get(interactionId)?.userId;
   }
 
   get(interactionId: string): PendingInteraction | undefined {

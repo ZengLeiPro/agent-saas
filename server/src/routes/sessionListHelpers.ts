@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import type { EventStore, PlatformEvent } from "../runtime/types.js";
 
 /** Build an agent session id -> DingTalk sender nickname index. */
 export async function buildDingtalkSessionIndex(
@@ -110,4 +111,39 @@ export function stripMarkdown(text: string): string {
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .replace(/\n{2,}/g, " ")
     .trim();
+}
+
+/**
+ * Return queued source run ids whose durable user_message projection already exists.
+ * Steering messages are projected under their target run, so both source and target are checked.
+ */
+export async function listDurablyProjectedQueuedRunIds(
+  eventStore: EventStore,
+  tenantId: string,
+  sessionId: string,
+  pending: Array<{ runId?: string; sourceRunId?: string; targetRunId?: string; metadata?: Record<string, unknown> }>,
+  blocks: Array<{ interjectionSourceRunId?: string }> = [],
+): Promise<string[]> {
+  if (pending.length === 0) return [];
+  const wanted = new Set(pending.map((input) => input.runId ?? input.sourceRunId!));
+  const projected = new Set<string>();
+  for (const block of blocks) if (block.interjectionSourceRunId) projected.add(block.interjectionSourceRunId);
+  const collect = (events: PlatformEvent[]) => {
+    for (const event of events) {
+      if (event.type !== "user_message") continue;
+      if (event.runId && wanted.has(event.runId)) projected.add(event.runId);
+      if (event.interjectionSourceRunId && wanted.has(event.interjectionSourceRunId)) projected.add(event.interjectionSourceRunId);
+    }
+  };
+  if (eventStore.listByRun) {
+    for (const input of pending) {
+      const sourceRunId = input.runId ?? input.sourceRunId!;
+      collect(await eventStore.listByRun(tenantId, sessionId, sourceRunId));
+      const targetRunId = input.targetRunId ?? (typeof input.metadata?.steeringTargetRunId === "string" ? input.metadata.steeringTargetRunId : undefined);
+      if (targetRunId && targetRunId !== sourceRunId) collect(await eventStore.listByRun(tenantId, sessionId, targetRunId));
+    }
+  } else {
+    collect(await eventStore.list(tenantId, sessionId, { includeTypes: ["user_message"] }));
+  }
+  return [...projected];
 }

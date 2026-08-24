@@ -92,7 +92,7 @@ describe('WebChannel active stream reconnect', () => {
     (channel as any).handleResume(
       {
         ws: newWs,
-        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
         alive: true,
         lastActivityAt: Date.now(),
       },
@@ -145,7 +145,7 @@ describe('WebChannel active stream reconnect', () => {
     (channel as any).handleResume(
       {
         ws,
-        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
         alive: true,
         lastActivityAt: Date.now(),
       },
@@ -160,7 +160,7 @@ describe('WebChannel active stream reconnect', () => {
       },
     });
     // durable 增量：从客户端 cursor 之后取，而不是 buffer 全量
-    expect(listPage).toHaveBeenCalledWith('session-dc', {
+    expect(listPage).toHaveBeenCalledWith(DEFAULT_TENANT_ID, 'session-dc', {
       afterCursor: '4321',
       limit: 200,
     });
@@ -192,7 +192,7 @@ describe('WebChannel active stream reconnect', () => {
     (channel as any).handleResume(
       {
         ws,
-        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
         alive: true,
         lastActivityAt: Date.now(),
       },
@@ -225,7 +225,7 @@ describe('WebChannel active stream reconnect', () => {
     (channel as any).handleResume(
       {
         ws,
-        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
         alive: true,
         lastActivityAt: Date.now(),
       },
@@ -261,7 +261,7 @@ describe('WebChannel active stream reconnect', () => {
     (channel as any).handleResume(
       {
         ws,
-        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
         alive: true,
         lastActivityAt: Date.now(),
       },
@@ -728,7 +728,7 @@ describe('WebChannel active stream reconnect', () => {
     await (channel as any).handleResumeAsync(
       {
         ws,
-        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
         alive: true,
         lastActivityAt: Date.now(),
       },
@@ -764,7 +764,7 @@ describe('WebChannel active stream reconnect', () => {
     await (channel as any).handleResumeAsync(
       {
         ws,
-        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
         alive: true,
         lastActivityAt: Date.now(),
       },
@@ -818,7 +818,7 @@ describe('WebChannel active stream reconnect', () => {
     await (channel as any).handleResumeAsync(
       {
         ws,
-        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
         alive: true,
         lastActivityAt: Date.now(),
       },
@@ -861,7 +861,7 @@ describe('WebChannel active stream reconnect', () => {
         streamed: true,
       },
     ];
-    const listPage = vi.fn(async (_sessionId: string, options: { runId?: string }) => ({
+    const listPage = vi.fn(async (_tenantId: string, _sessionId: string, options: { runId?: string }) => ({
       events: options.runId ? events.filter((event) => event.runId === options.runId) : events,
       hasMore: false,
     }));
@@ -869,7 +869,7 @@ describe('WebChannel active stream reconnect', () => {
     await (channel as any).replayDurableRuntimeEvents(
       {
         ws,
-        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
         alive: true,
         lastActivityAt: Date.now(),
       },
@@ -878,7 +878,7 @@ describe('WebChannel active stream reconnect', () => {
       { lastEventId: 0, activeRunId: 'run-current' },
     );
 
-    expect(listPage).toHaveBeenCalledWith('session-durable', {
+    expect(listPage).toHaveBeenCalledWith(DEFAULT_TENANT_ID, 'session-durable', {
       afterCursor: undefined,
       limit: 200,
       runId: 'run-current',

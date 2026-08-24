@@ -19,8 +19,8 @@ export async function reconcileTerminalContinuation(input: {
   const { store, eventStore, taskId, run, agentCwd } = input;
   if (run.status === 'completed') {
     const events = eventStore.listByRun
-      ? await eventStore.listByRun(run.sessionId, run.runId)
-      : await eventStore.list(run.sessionId);
+      ? await eventStore.listByRun(requireTenantId(run.tenantId), run.sessionId, run.runId)
+      : await eventStore.list(requireTenantId(run.tenantId), run.sessionId);
     const output = finalAssistantText(events, run.runId, run.sessionId)
       || 'Agent 继续执行完成，但没有返回文本交付。';
     const attachments = await extractContinuationAttachments(output, run, agentCwd);
@@ -38,6 +38,11 @@ export async function reconcileTerminalContinuation(input: {
     error: reason,
     commentBody: limitComment(`Agent 继续执行${cancelled ? '已取消' : '失败'}\n\n${reason}`),
   });
+}
+
+function requireTenantId(tenantId: string | undefined): string {
+  if (!tenantId?.trim()) throw new Error('Runtime event tenantId is required');
+  return tenantId;
 }
 
 export function extractContinuationAttachments(

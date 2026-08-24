@@ -24,8 +24,7 @@ import {
 import { createAuditProjection } from '../runtime/auditProjection.js';
 import { closeAuditDuckDb, getAuditDuckDb } from '../runtime/auditDuckDb.js';
 import { PgEventStore } from '../runtime/pgEventStore.js';
-import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
-import type { EventStore } from '../runtime/types.js';
+import { appendTenantPlatformEvent, createRuntimeEventStoreFactory } from './runtimeEventStore.js';
 import { RuntimeEventRetention } from '../runtime/runtimeEventRetention.js';
 import { PgRuntimeAuditQuery } from '../runtime/pgAuditQuery.js';
 import { PgSessionLock } from '../runtime/pgSessionLock.js';
@@ -1157,9 +1156,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 任何"按 sessionId 读事件流"的读路径都应通过这个 factory 拿 store，
   // 避免硬编码 FileEventStore 导致 PG backend 读到空 jsonl。
   // 注入到 WebChannel.runtimeEventStoreFor + createSessionsRouter.runtimeEventStoreFor。
-  const runtimeEventStoreFor: (transcriptPath: string) => EventStore = pgEventStore
-    ? (_transcriptPath) => pgEventStore!  // PG backend：共享 pool，按 session_id 过滤
-    : (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath));
+  const runtimeEventStoreFor = createRuntimeEventStoreFactory(pgEventStore);
   const resolveTenantSkillHistoricalProvenance = (tenantId: string) => skillGovernanceStore?.listTenantSkillHistoricalProvenance(tenantId) ?? Promise.resolve(new Map());
   const resolveUserPersonalSkillIds = (user: { id: string; tenantId?: string }) => resolvePersonalSkillIds(user, skillGovernanceStore);
   if (skillConfigStore && userStore) {
@@ -1812,10 +1809,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ...(resolvedSttRuntimeConfig.audioTranscribeConfig ? { audioTranscribeTools: resolvedSttRuntimeConfig.audioTranscribeConfig } : {}),
     // PG 直写按次计费事件；file backend 不配置时工具跳过扣费事件。
     ...(pgEventStore ? {
-      appendPlatformEvent: (
-        event: import('../runtime/types.js').PlatformEventInput,
-        ctx?: import('../runtime/types.js').EventAppendContext,
-      ) => pgEventStore.append(event, ctx),
+      appendPlatformEvent: (event, ctx) => appendTenantPlatformEvent(pgEventStore, event, ctx),
     } : {}),
     tenantRemoteHands: () => config.tenantRemoteHands?.hands,
     secretVault,
@@ -2281,12 +2275,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         groupId: string;
       }) => {
         const tenantId = userStore?.findById(event.userId)?.tenantId;
+        if (!tenantId) throw new Error(`Cron session grouping tenant is missing for user ${event.userId}`);
         await pgEventStore.append({
           type: 'session_group_changed',
           sessionId: event.sessionId,
           userId: event.userId,
           groupId: event.groupId,
-        }, tenantId ? { tenantId } : undefined);
+        }, { tenantId });
       },
     } : {}),
     userStore,

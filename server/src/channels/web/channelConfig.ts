@@ -65,7 +65,7 @@ export interface WebChannelRuntimeConfig {
   /** Runtime-level execution config；未传时使用 server-local 默认策略。 */
   executionConfig?: ExecutionConfig;
   /** Runtime EventStore 解析函数，用于 WS 重连恢复持久化 approval。 */
-  runtimeEventStoreFor?: (transcriptPath: string) => EventStore;
+  runtimeEventStoreFor?: (transcriptPath: string, tenantId: string) => EventStore;
   /** 仅共享 PG EventStore 可在缺少 transcriptPath 时按 sessionId 读取。 */
   runtimeEventStoreSupportsPathless?: boolean;
   /** 新普通会话记忆写入职责 resolver；enqueue 首落库必须显式 pin。 */

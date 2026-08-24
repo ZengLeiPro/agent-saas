@@ -6,6 +6,8 @@ import {
 } from '../runtime/scheduler.js';
 import type { EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 
+const TEST_TENANT_ID = 'test-tenant';
+
 export class MemoryRunStore implements RunStore {
   records = new Map<string, RunRecord>();
 
@@ -15,7 +17,7 @@ export class MemoryRunStore implements RunStore {
       runId: input.runId,
       sessionId: input.sessionId,
       userId: input.userId,
-      tenantId: input.tenantId,
+      tenantId: input.tenantId ?? TEST_TENANT_ID,
       status: 'pending',
       model: input.model,
       channel: input.channel,
@@ -205,14 +207,20 @@ export class MemoryRunStore implements RunStore {
 
 export class MemoryEventStore implements EventStore {
   events: PlatformEvent[] = [];
+  private readonly eventsByTenant = new Map<string, PlatformEvent[]>();
   appendContexts: Array<Parameters<EventStore['append']>[1]> = [];
-  async append(event: PlatformEventInput, ctx?: Parameters<EventStore['append']>[1]): Promise<PlatformEvent> {
+  async append(event: PlatformEventInput, ctx: Parameters<EventStore['append']>[1]): Promise<PlatformEvent> {
     const full = { ...event, id: `e${this.events.length + 1}`, timestamp: new Date().toISOString() } as PlatformEvent;
     this.appendContexts.push(ctx);
     this.events.push(full);
+    const tenantEvents = this.eventsByTenant.get(ctx.tenantId) ?? [];
+    tenantEvents.push(full);
+    this.eventsByTenant.set(ctx.tenantId, tenantEvents);
     return full;
   }
-  async list(sessionId: string): Promise<PlatformEvent[]> { return this.events.filter((event) => event.sessionId === sessionId); }
+  async list(tenantId: string, sessionId: string): Promise<PlatformEvent[]> {
+    return (this.eventsByTenant.get(tenantId) ?? []).filter((event) => event.sessionId === sessionId);
+  }
 }
 
 export function deferred(): { promise: Promise<void>; resolve: () => void } {

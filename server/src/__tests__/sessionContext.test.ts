@@ -7,9 +7,11 @@ import { FileEventStore } from '../runtime/fileEventStore.js';
 import { SessionContextService, SessionToolProvider } from '../runtime/sessionContext.js';
 import type { ToolCallContext } from '../agent/toolRuntime.js';
 
+const TENANT_ID = 'tenant-session-context';
+
 async function seedStore() {
   const cwd = await mkdtemp(join(tmpdir(), 'session-context-'));
-  const store = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+  const store = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), TENANT_ID);
   await store.appendBatch?.([
     { type: 'run_started', runId: 'run-1', sessionId: 'session-1', model: 'gpt-5.5', channel: 'web' },
     { type: 'user_message', runId: 'run-1', sessionId: 'session-1', content: 'please inspect package.json' },
@@ -23,7 +25,7 @@ async function seedStore() {
     { type: 'tool_result', runId: 'run-1', sessionId: 'session-1', toolCallId: 'call-1', toolName: 'Read', content: 'package content' },
     { type: 'run_finished', runId: 'run-1', sessionId: 'session-1', subtype: 'success', numTurns: 1 },
     { type: 'run_started', runId: 'run-2', sessionId: 'session-1', model: 'gpt-5.5', channel: 'web' },
-  ]);
+  ], { tenantId: TENANT_ID });
   return { cwd, store };
 }
 
@@ -38,7 +40,7 @@ describe('SessionContextService', () => {
   it('returns paginated and filtered raw events without replacing the source log', async () => {
     const { cwd, store } = await seedStore();
     cleanupDirs.add(cwd);
-    const service = new SessionContextService(store);
+    const service = new SessionContextService(store, TENANT_ID);
 
     const first = await service.getEvents('session-1', { limit: 2 });
     expect(first.events.map((event) => event.type)).toEqual(['run_started', 'user_message']);
@@ -48,13 +50,13 @@ describe('SessionContextService', () => {
     expect(runTwo.events).toHaveLength(1);
     expect(runTwo.events[0]?.type).toBe('run_started');
 
-    expect(await store.list('session-1')).toHaveLength(6);
+    expect(await store.list(TENANT_ID, 'session-1')).toHaveLength(6);
   });
 
   it('can retrieve tool traces and text search matches', async () => {
     const { cwd, store } = await seedStore();
     cleanupDirs.add(cwd);
-    const service = new SessionContextService(store);
+    const service = new SessionContextService(store, TENANT_ID);
 
     expect((await service.getToolTrace('session-1', 'call-1')).map((event) => event.type)).toEqual([
       'assistant_tool_calls',
@@ -84,8 +86,8 @@ describe('SessionContextService', () => {
       toolCallId: 'call-long',
       toolName: 'Shell',
       content,
-    });
-    const service = new SessionContextService(store);
+    }, { tenantId: TENANT_ID });
+    const service = new SessionContextService(store, TENANT_ID);
 
     const lines = await service.readToolTrace('session-1', 'call-long', { startLine: 2, lineCount: 2 });
     expect(lines).toMatchObject({
@@ -132,8 +134,8 @@ describe('SessionContextService', () => {
       toolCallId: 'call-single-line',
       toolName: 'Shell',
       content: '🙂'.repeat(20_000),
-    });
-    const service = new SessionContextService(store);
+    }, { tenantId: TENANT_ID });
+    const service = new SessionContextService(store, TENANT_ID);
 
     const first = await service.readToolTrace('session-1', 'call-single-line');
     expect(first).toMatchObject({
@@ -174,8 +176,8 @@ describe('SessionContextService', () => {
         durationMs: 100,
         errorCode: 'MODEL_SSE_EOF_WITHOUT_TERMINAL',
       },
-    });
-    const service = new SessionContextService(store);
+    }, { tenantId: TENANT_ID });
+    const service = new SessionContextService(store, TENANT_ID);
 
     expect((await service.getRunEvents('session-1', 'run-1')).map((event) => event.type))
       .not.toContain('model_request_finished');
@@ -189,7 +191,7 @@ describe('SessionContextService', () => {
     const store = {
       append: async () => { throw new Error('not used'); },
       list: async () => { throw new Error('list should not be used for pushed-down queries'); },
-      listPage: async (_sessionId: string, opts: unknown) => {
+      listPage: async (_tenantId: string, _sessionId: string, opts: unknown) => {
         calls.push(`listPage:${JSON.stringify(opts)}`);
         return { events: [], hasMore: false };
       },
@@ -205,12 +207,12 @@ describe('SessionContextService', () => {
         calls.push('listByToolCall');
         return [];
       },
-      search: async (_sessionId: string, _query: string, opts: unknown) => {
+      search: async (_tenantId: string, _sessionId: string, _query: string, opts: unknown) => {
         calls.push(`search:${JSON.stringify(opts)}`);
         return [];
       },
     } as unknown as import('../runtime/types.js').EventStore;
-    const service = new SessionContextService(store);
+    const service = new SessionContextService(store, TENANT_ID);
 
     await service.getEvents('session-1', { runId: 'run-1', type: 'tool_result', limit: 5 });
     await service.getEventsAround('session-1', 'event-1', 1, 2);
@@ -230,7 +232,7 @@ describe('SessionContextService', () => {
   it('exposes safe session tools for the current workspace session', async () => {
     const { cwd, store } = await seedStore();
     cleanupDirs.add(cwd);
-    const provider = new SessionToolProvider(new SessionContextService(store));
+    const provider = new SessionToolProvider(new SessionContextService(store, TENANT_ID));
     const context = {
       channelContext: { channel: 'web' },
       workspace: { root: cwd, sessionId: 'session-1', executionTarget: 'server-local' },

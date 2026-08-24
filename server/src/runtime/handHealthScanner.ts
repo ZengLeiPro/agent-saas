@@ -67,6 +67,12 @@ export interface HandHealthScannerOptions {
   logger?: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
 }
 
+function requireHandTenantId(hand: HandRecord): string {
+  const tenantId = hand.tenantId?.trim();
+  if (!tenantId) throw new Error(`Hand health event tenant is missing for ${hand.handId}`);
+  return tenantId;
+}
+
 export class HandHealthScanner {
   private timer: ReturnType<typeof setInterval> | undefined;
   private readonly intervalMs: number;
@@ -453,7 +459,7 @@ export class HandHealthScanner {
         handId: hand.handId,
         error: failure,
         classifiedAs: 'unhealthy',
-      }).catch(() => undefined);
+      }, { tenantId: requireHandTenantId(hand) }).catch(() => undefined);
     }
   }
 
@@ -521,7 +527,7 @@ export class HandHealthScanner {
       workspaceId: hand.workspaceId,
       status: newStatus,
       detail: detail ?? (newStatus === 'unhealthy' ? 'health_probe_failed' : 'health_probe_recovered'),
-    }).catch(() => undefined);
+    }, { tenantId: requireHandTenantId(hand) }).catch(() => undefined);
   }
 }
 

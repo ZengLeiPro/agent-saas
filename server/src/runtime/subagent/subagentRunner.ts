@@ -34,7 +34,6 @@ import {
 } from '../../agent/toolRuntime.js';
 import { readTenantCompanyInfoSync } from '../../data/tenants/companyInfo.js';
 import { mergeOrgAgentWorkerRuntimePolicy } from '../../data/orgAgents/runtimePolicy.js';
-import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
 import type { ExecutionTransportRegistry } from '../executionTransport.js';
 import { LegacyTranscriptProjection } from '../legacyTranscriptProjection.js';
 import { RawAgentLoop } from '../rawAgentLoop.js';
@@ -179,9 +178,16 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   const sessionCatalog = resolveSessionCatalog(config);
   const parentSession = await sessionCatalog.get(parentSessionId).catch(() => null);
   const identity = parentContext.channelContext.sessionOwner ?? parentContext.channelContext.user;
-  const tenantId = parentSession?.tenantId
-    ?? identity?.tenantId
-    ?? parentContext.workspace.tenantId;
+  const tenantCandidates = [
+    parentSession?.tenantId,
+    identity?.tenantId,
+    parentContext.workspace.tenantId,
+  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+  const tenantId = tenantCandidates[0]?.trim();
+  if (!tenantId) throw new Error(`无法确定子 agent tenant：父会话 ${parentSessionId} 缺少租户上下文。`);
+  if (tenantCandidates.some((candidate) => candidate.trim() !== tenantId)) {
+    throw new Error(`子 agent 父会话 tenant 上下文不一致：${parentSessionId}`);
+  }
   const username = parentSession?.username || identity?.username || parentContext.workspace.username;
   const userId = parentSession?.userId || identity?.id || parentContext.workspace.userId;
   const executionTarget = parentContext.workspace.executionTarget;
@@ -334,7 +340,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       });
       if (!decision.ok) {
         const reason = `[${decision.code}] ${decision.reason}`;
-        await markRunState(config.runStore, eventStore, childSessionId, childRunId, 'failed', reason).catch(() => undefined);
+        await markRunState(config.runStore, eventStore, childSessionId, childRunId, 'failed', reason, undefined, { tenantId }).catch(() => undefined);
         await sessionCatalog.markStatus(childSessionId, 'error').catch(() => undefined);
         throw new Error(reason);
       }
@@ -345,7 +351,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     // 守卫直接判 orphaned（见 rawRuntimeRunDispatch.ts）。
     await config.runStore?.acquireLease?.(childRunId, `subagent:${parentRunId.slice(0, 16)}`, hardTimeoutMs + 60_000)
       .catch(() => null);
-    await markRunState(config.runStore, eventStore, childSessionId, childRunId, 'running');
+    await markRunState(config.runStore, eventStore, childSessionId, childRunId, 'running', undefined, undefined, { tenantId });
 
     // ── hand 注册（复用父的 workspaceId/mountSubPath → warm sandbox / tenant hand 路由对子生效） ──
     await ensureRuntimeHandRegistered({
@@ -353,6 +359,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       eventStore,
       executionTransportRegistry: params.executionTransportRegistry,
       executionTarget,
+      tenantId,
       sessionId: childSessionId,
       runId: childRunId,
       workspaceId: parentWorkspace.id ?? childSessionId,
@@ -386,6 +393,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       tenantHandResolver: params.tenantHandResolver,
       parentProviders: params.parentProviders,
       childEventStore: eventStore,
+      childTenantId: tenantId,
       agentType,
       boundProfile,
       memoryPolicyVersion: childRecord.memoryPolicyVersion ?? 'v1',
@@ -570,7 +578,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       try {
         config.tokenUsageStore?.()?.recordResult({
           username,
-          tenantId: tenantId ?? DEFAULT_TENANT_ID,
+          tenantId,
           channel: 'subagent',
           modelUsage,
           occurredAtMs: Date.now(),
@@ -587,6 +595,8 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       childRunId,
       finalRunStatus,
       status === 'timeout' ? 'subagent_timeout' : errorMessage,
+      undefined,
+      { tenantId },
     ).catch(() => undefined);
     await sessionCatalog.markStatus(childSessionId, status === 'completed' ? 'finished' : 'error').catch(() => undefined);
 
@@ -637,6 +647,7 @@ function buildSubagentToolRuntime(args: {
   tenantHandResolver: TenantRemoteHandAuthTokenResolver;
   parentProviders: ToolProvider[];
   childEventStore: import('../types.js').EventStore;
+  childTenantId: string;
   agentType: SubagentTypeDefinition;
   boundProfile?: BoundAgentRuntimeProfile;
   memoryPolicyVersion: MemoryPolicyVersion;
@@ -658,7 +669,7 @@ function buildSubagentToolRuntime(args: {
     resolveWireEnv: buildTenantRemoteHandWireEnv,
     artifactService: args.config.artifactService,
     // Session 工具绑定子 session 自己的 event store：子 agent 只能检索自己的事件历史
-    providers: [...parentProviders, new SessionToolProvider(new SessionContextService(args.childEventStore))],
+    providers: [...parentProviders, new SessionToolProvider(new SessionContextService(args.childEventStore, args.childTenantId))],
     toolControls: args.config.toolControls,
   });
   const allowlist = args.agentType.toolAllowlist ? new Set(args.agentType.toolAllowlist) : null;

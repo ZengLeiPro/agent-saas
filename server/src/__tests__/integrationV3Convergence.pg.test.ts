@@ -3,6 +3,10 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import {
+  computeIntegrationRequirementDigest,
+  computeIntegrationReviewReceiptDigest,
+} from '../taskboard/integrationCandidateDigest.js';
 import { integrationCandidateTableNames, runIntegrationCandidateSchema } from '../taskboard/integrationCandidateSchema.js';
 import { IntegrationEngineV3 } from '../taskboard/integrationEngineV3.js';
 import {
@@ -246,10 +250,12 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
       ...pgOptions(seed), releaseIdentity: 'test-release', dispatchAgent: async () => ({ executionId: 'unused' }),
       syncWorkspace: async () => undefined, cleanup: async () => undefined,
     });
-    await host.syncWorkspace({
-      id: String(queued.rows[0].id), leaseId: 'lease-1', kind: 'workspace_sync',
-      candidateId: seed.candidateId, candidateRevision: 1, payload: queued.rows[0].payload,
+    const request = await host.claimRequest(30_000);
+    expect(request).toMatchObject({
+      id: String(queued.rows[0].id), kind: 'workspace_sync',
+      candidateId: seed.candidateId, candidateRevision: 1,
     });
+    await host.syncWorkspace(request!);
     expect((await store.getTask(identity, seed.taskId)).status).toBe('in_progress');
     expect((await pool.query(
       `SELECT closed_at FROM ${store.blockEpisodesTable} WHERE id=$1`, [episodeId],
@@ -310,11 +316,16 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
     });
     await expect(newHost.claimCandidate(30_000)).resolves.toBeUndefined();
 
-    await newHost.syncWorkspace({
-      id: randomUUID(), leaseId: 'request-lease', kind: 'workspace_sync',
-      candidateId: seed.candidateId, candidateRevision: 1,
-      payload: { reason: 'resume_reconcile', resumeState: 'needs_work', workflowEpoch: '1', laneEpoch: '1' },
+    const blockedTask = await store.getTask(identity, seed.taskId);
+    await store.resumeBlockedTask(identity, seed.taskId, {
+      expectedVersion: blockedTask.version, decision: 'retry after operator review',
     });
+    const request = await newHost.claimRequest(30_000);
+    expect(request).toMatchObject({
+      kind: 'workspace_sync', candidateId: seed.candidateId, candidateRevision: 1,
+      payload: { reason: 'resume_reconcile', resumeState: 'needs_work' },
+    });
+    await newHost.syncWorkspace(request!);
     const resumed = (await pool.query(
       `SELECT state,worker_status,worker_attempts,worker_error,worker_lease_id,
               worker_lease_expires_at,worker_release_identity
@@ -339,6 +350,37 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
       state: 'composing', taskStatus: 'in_progress',
       revision: { subjectKind: 'source_seed', treeOid: null, compositionComplete: false },
     });
+    const deliveryTaskId = randomUUID();
+    const integrationSourceId = randomUUID();
+    const reviewExecutionId = randomUUID();
+    await pool.query(
+      `INSERT INTO ${store.tasksTable}
+         (id,board_id,identifier,kind,title,status,sort_order,head_oid,base_oid)
+       VALUES($1,$2,$3,'delivery','Frozen source','ready_to_merge',2,'frozen-head','frozen-base')`,
+      [deliveryTaskId, seed.board.id, `SRC-${deliveryTaskId.slice(0, 8)}`],
+    );
+    await pool.query(
+      `INSERT INTO ${store.executionsTable}
+         (id,task_id,run_id,session_id,status,purpose,trigger,protocol_version,attempt_id,requested_by,finished_at)
+       VALUES($1,$2,$3,$4,'succeeded','review','initial',2,$5,$6,now())`,
+      [reviewExecutionId, deliveryTaskId, `run-${reviewExecutionId}`, `session-${reviewExecutionId}`,
+        `attempt-${reviewExecutionId}`, identity.ownerUserId],
+    );
+    await pool.query(
+      `INSERT INTO ${store.integrationSourcesTable}
+         (id,integration_task_id,delivery_task_id,repository_id,provider_pull_request_id,
+          reviewed_subject_digest,source_order,state)
+       VALUES($1,$2,$3,$4,'77','reviewed',0,'ready')`,
+      [integrationSourceId, seed.taskId, deliveryTaskId, seed.repositoryId],
+    );
+    const source = {
+      order: 0, integrationSourceId, deliveryTaskId, deliveryTaskVersion: 1,
+      repositoryId: seed.repositoryId, providerPullRequestId: '77',
+      frozenHeadOid: 'frozen-head', frozenBaseOid: 'frozen-base', reviewedSubjectDigest: 'reviewed',
+      reviewExecutionId,
+      reviewReceiptDigest: computeIntegrationReviewReceiptDigest(reviewExecutionId, 'reviewed'),
+      requirementDigest: computeIntegrationRequirementDigest('Frozen source', ''),
+    };
     await pool.query(
       `UPDATE ${seed.tables.candidatesTable}
           SET worker_status='processing',worker_lease_id='lease-old',worker_lease_epoch=11,
@@ -373,7 +415,7 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
     await expect(engine.execute({
       type: 'compose_persisted', candidateId: seed.candidateId, expected: expectedSubject(current),
       workerBinding: { mutationFence: lease, assertCurrent: () => workerHost.assertCandidateLease(lease) },
-      revision: { baseOid: 'base-2', headOid: 'head-2', treeOid: 'tree-2', compositionComplete: true, sources: [] },
+      revision: { baseOid: 'base-2', headOid: 'head-2', treeOid: 'tree-2', compositionComplete: true, sources: [source] },
     })).rejects.toMatchObject({ code: 'TASKBOARD_CANDIDATE_CAS_MISMATCH' });
     expect((await pool.query(
       `SELECT state,current_revision,version FROM ${seed.tables.candidatesTable} WHERE id=$1`, [seed.candidateId],

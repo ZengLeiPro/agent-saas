@@ -7,6 +7,8 @@ import { FileApprovalStore } from '../runtime/approvalStore.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
 import { buildRuntimeReplayState } from '../runtime/replay.js';
 
+const TENANT_ID = 'tenant-runtime-replay';
+
 describe('runtime replay state', () => {
   const cleanupDirs = new Set<string>();
 
@@ -20,7 +22,7 @@ describe('runtime replay state', () => {
   it('derives pending approvals and closed tool calls from event and approval logs', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'runtime-replay-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), TENANT_ID);
     const approvalStore = new FileApprovalStore(join(cwd, 'session.approvals.jsonl'));
 
     await eventStore.append({
@@ -29,7 +31,7 @@ describe('runtime replay state', () => {
       sessionId: 'session-1',
       model: 'gpt-5.5',
       channel: 'web',
-    });
+    }, { tenantId: TENANT_ID });
     await eventStore.append({
       type: 'assistant_tool_calls',
       runId: 'run-1',
@@ -39,7 +41,7 @@ describe('runtime replay state', () => {
         { id: 'call-write', name: 'Write', arguments: JSON.stringify({ path: 'a.txt', content: 'A' }) },
         { id: 'call-read', name: 'Read', arguments: JSON.stringify({ path: 'a.txt' }) },
       ],
-    });
+    }, { tenantId: TENANT_ID });
     const approval = await approvalStore.create({
       sessionId: 'session-1',
       runId: 'run-1',
@@ -59,7 +61,7 @@ describe('runtime replay state', () => {
       toolName: 'Write',
       displayName: 'Write File',
       input: { path: 'a.txt', content: 'A' },
-    });
+    }, { tenantId: TENANT_ID });
     await eventStore.append({
       type: 'tool_result',
       runId: 'run-1',
@@ -67,10 +69,10 @@ describe('runtime replay state', () => {
       toolCallId: 'call-read',
       toolName: 'Read',
       content: 'A',
-    });
+    }, { tenantId: TENANT_ID });
 
     const state = buildRuntimeReplayState(
-      await eventStore.list('session-1'),
+      await eventStore.list(TENANT_ID, 'session-1'),
       await approvalStore.list('session-1'),
       'session-1',
     );

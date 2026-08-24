@@ -20,9 +20,9 @@ import {
   type ToolExecutionOutcome,
   type ToolPolicy,
   type PlatformEvent,
-  type PlatformEventInput,
 } from './types.js';
 import { canonicalToolInputDigest } from './canonicalToolInput.js';
+import { requireEventTenantId, TenantProjectingEventSink } from './rawAgentLoopEventSink.js';
 import { buildFailurePresentation, ToolExecutionError, type ToolPresentation } from '../agent/toolPresentationBuilder.js';
 export { canonicalToolInputDigest } from './canonicalToolInput.js';
 import type { InboundMessage, OutboundEvent } from '../types/index.js';
@@ -230,11 +230,13 @@ export interface ResumeInteractionInput {
   maxTurns: number;
 }
 
+
 export class RawAgentLoop implements AgentLoop {
   private readonly modelAdapter: ModelAdapter;
   private readonly eventStore: EventStore;
   private readonly approvalStore: ApprovalStore;
   private readonly transcriptProjection: LegacyTranscriptProjection;
+  private readonly eventSink: TenantProjectingEventSink;
   private readonly toolRuntime: ToolRuntime;
   private readonly workspaceProvider: WorkspaceProvider;
   private readonly toolPolicy: ToolPolicy;
@@ -255,12 +257,14 @@ export class RawAgentLoop implements AgentLoop {
   private forcedSynthesisPrompt = CONTEXT_SYNTHESIS_PROMPT;
   private forcedSynthesisPromptAppended = false;
   private forcedSynthesisAllowsSessionRecovery = false;
+  private activeTenantId?: string;
 
   constructor(options: RawAgentLoopOptions) {
     this.modelAdapter = options.modelAdapter;
     this.eventStore = options.eventStore;
     this.approvalStore = options.approvalStore;
     this.transcriptProjection = options.transcriptProjection;
+    this.eventSink = new TenantProjectingEventSink(options.eventStore, options.transcriptProjection, () => this.activeTenantId);
     this.toolRuntime = options.toolRuntime ?? new PlatformToolRuntime();
     this.workspaceProvider = options.workspaceProvider ?? new LocalWorkspaceProvider();
     this.toolPolicy = options.toolPolicy ?? new DefaultToolPolicy();
@@ -284,7 +288,7 @@ export class RawAgentLoop implements AgentLoop {
     errorCode: string,
   ): Promise<void> {
     if (!usage) return;
-    await this.append({
+    await this.eventSink.append({
       type: 'model_request_finished',
       runId: context.runId,
       sessionId: context.sessionId,
@@ -307,21 +311,21 @@ export class RawAgentLoop implements AgentLoop {
       recordModelRequestDiagnostic: async (diagnostic: ModelRequestDiagnostic) => {
         try {
           if (diagnostic.type === 'started') {
-            await this.append({
+            await this.eventSink.append({
               type: 'model_request_started',
               runId: context.runId,
               sessionId: context.sessionId,
               diagnostic,
             });
           } else if (diagnostic.type === 'checkpoint') {
-            await this.append({
+            await this.eventSink.append({
               type: 'model_request_checkpoint',
               runId: context.runId,
               sessionId: context.sessionId,
               diagnostic,
             });
           } else {
-            await this.append({
+            await this.eventSink.append({
               type: 'model_request_finished',
               runId: context.runId,
               sessionId: context.sessionId,
@@ -523,7 +527,7 @@ export class RawAgentLoop implements AgentLoop {
       loadingMode: this.mcpLoadingMode,
     });
     if (resolved.needsSnapshot) {
-      await this.append({
+      await this.eventSink.append({
         type: 'mcp_tool_catalog_snapshot',
         runId: context.runId,
         sessionId: context.sessionId,
@@ -561,7 +565,7 @@ export class RawAgentLoop implements AgentLoop {
         .filter((tool) => !previouslyLoaded.has(tool.name));
       if (tools.length === 0) continue;
       for (const tool of tools) previouslyLoaded.add(tool.name);
-      await this.append({
+      await this.eventSink.append({
         type: 'mcp_tools_loaded',
         runId: context.runId,
         sessionId: context.sessionId,
@@ -628,6 +632,7 @@ export class RawAgentLoop implements AgentLoop {
 
   async *run(input: RunInput, context: RunContext): AsyncIterable<OutboundEvent> {
     context = withDurableRunCancellation(context, this.runStore);
+    this.activeTenantId = requireEventTenantId(context);
     const workspace = this.workspaceProvider.resolve(context.channelContext, {
       cwd: context.cwd,
       sessionId: context.sessionId,
@@ -656,11 +661,11 @@ export class RawAgentLoop implements AgentLoop {
     };
     const sourceEvents = context.replaySourceSessionId
       ? closeUnfinishedReplayToolCalls(
-          await this.eventStore.list(context.replaySourceSessionId, replayListOptions),
+          await this.eventStore.list(requireEventTenantId(context), context.replaySourceSessionId, replayListOptions),
           context.replaySourceSessionId,
         )
       : [];
-    const loadCurrentEvents = () => this.eventStore.list(context.sessionId, replayListOptions);
+    const loadCurrentEvents = () => this.eventStore.list(requireEventTenantId(context), context.sessionId, replayListOptions);
     const combineReplayEvents = (currentEvents: PlatformEvent[]) => (
       context.replaySourceSessionId ? [...sourceEvents, ...currentEvents] : currentEvents
     );
@@ -826,7 +831,7 @@ export class RawAgentLoop implements AgentLoop {
             buildAtomicSteeringInputs(
               reservedInterjections, durableInterjectionSourceRunIds, context.runId, context.sessionId,
             ),
-            context.tenantId,
+            this.eventSink.requireTenantId(),
           );
           const appliedSourceRunIdSet = new Set(atomic.appliedSourceRunIds);
           appliedInterjections = reservedInterjections.filter((interjection) => (
@@ -873,7 +878,7 @@ export class RawAgentLoop implements AgentLoop {
               ...(interjection.visionAnalysis ? { visionAnalysis: interjection.visionAnalysis } : {}),
               interjectionSourceRunId: interjection.sourceRunId,
               ...(interjection.clientMsgId ? { clientMsgId: interjection.clientMsgId } : {}),
-            });
+            }, { tenantId: requireEventTenantId(context) });
           } catch (error) {
             requestSteeringRecoveryHandoff('steering_reserved_event_append_failed');
             logger.warn(
@@ -944,22 +949,22 @@ export class RawAgentLoop implements AgentLoop {
       durableSourceRunIds: durableInterjectionAnnouncementSourceRunIds,
       runId: context.runId,
       sessionId: context.sessionId,
-      append: (event) => this.append(event),
+      append: (event) => this.eventSink.append(event),
       warn: (message) => logger.warn(message),
     });
 
     if (contextProjection.summaryEvent && !context.replaySourceSessionId) {
-      await this.append(contextProjection.summaryEvent);
+      await this.eventSink.append(contextProjection.summaryEvent);
     }
     if (input.memoryContext) {
-      await this.append({
+      await this.eventSink.append({
         type: 'memory_context',
         runId: context.runId,
         sessionId: context.sessionId,
         content: formatMemoryContext(input.memoryContext),
       });
     }
-    await this.append({
+    await this.eventSink.append({
       type: 'run_started',
       runId: context.runId,
       sessionId: context.sessionId,
@@ -971,7 +976,7 @@ export class RawAgentLoop implements AgentLoop {
     });
     logger.info(`[run] start session=${context.sessionId} model=${context.model} channel=${context.channelContext.channel}`);
     if (input.recordUserMessage !== false) {
-      await this.append({
+      await this.eventSink.append({
         type: 'user_message',
         runId: context.runId,
         sessionId: context.sessionId,
@@ -1407,7 +1412,7 @@ export class RawAgentLoop implements AgentLoop {
           );
         }
         if (turnThinking) {
-          await this.append({
+          await this.eventSink.append({
             type: 'assistant_thinking',
             runId: context.runId,
             sessionId: context.sessionId,
@@ -1458,7 +1463,7 @@ export class RawAgentLoop implements AgentLoop {
               }${turnThinking ? ', thinking-only' : ''})`,
             );
           }
-          await this.append({
+          await this.eventSink.append({
             type: 'assistant_message',
             runId: context.runId,
             sessionId: context.sessionId,
@@ -1647,7 +1652,7 @@ export class RawAgentLoop implements AgentLoop {
             }
           }
           const modelUsage = buildModelUsage(context.model, totalUsage);
-          await this.append({
+          await this.eventSink.append({
             type: 'run_finished',
             runId: context.runId,
             sessionId: context.sessionId,
@@ -1681,7 +1686,7 @@ export class RawAgentLoop implements AgentLoop {
           yield { type: 'text_end' };
         }
 
-        await this.append({
+        await this.eventSink.append({
           type: 'assistant_tool_calls',
           runId: context.runId,
           sessionId: context.sessionId,
@@ -1778,7 +1783,7 @@ export class RawAgentLoop implements AgentLoop {
       }
       if (err instanceof ToolInvocationClaimLostError) {
         const failure = await handleInvocationClaimLoss(
-          err, context, this.runStore, (event) => this.append(event), 'run',
+          err, context, this.runStore, (event) => this.eventSink.append(event), 'run',
         );
         if (failure) yield failure;
         else {
@@ -1812,7 +1817,7 @@ export class RawAgentLoop implements AgentLoop {
       const { diagnosticMessage, message, surfacedMessage, preservedTurnText, failureProtocol } = describeRuntimeFailure(err, pendingTurnText, INVALID_PROMPT_CUSTOMER_ERROR);
       const modelUsage = buildModelUsage(context.model, totalUsage);
       if (preservedTurnText) {
-        await this.append({
+        await this.eventSink.append({
           type: 'assistant_message',
           runId: context.runId,
           sessionId: context.sessionId,
@@ -1828,7 +1833,7 @@ export class RawAgentLoop implements AgentLoop {
         );
         return;
       }
-      await this.append({
+      await this.eventSink.append({
         type: 'run_finished',
         runId: context.runId,
         sessionId: context.sessionId,
@@ -1862,11 +1867,12 @@ export class RawAgentLoop implements AgentLoop {
    * 文本通道由 resultText 收到简短确认。若清接力链失败，checkpoint 不落库。
    */
   async *compact(input: CompactInput, context: RunContext): AsyncIterable<OutboundEvent> {
-    const priorEvents = await this.eventStore.list(context.sessionId, {
+    this.activeTenantId = requireEventTenantId(context);
+    const priorEvents = await this.eventStore.list(requireEventTenantId(context), context.sessionId, {
       excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
       replayMode: 'bounded',
     });
-    await this.append({
+    await this.eventSink.append({
       type: 'run_started',
       runId: context.runId,
       sessionId: context.sessionId,
@@ -1877,7 +1883,7 @@ export class RawAgentLoop implements AgentLoop {
       ...(context.profileConfigDigest ? { profileConfigDigest: context.profileConfigDigest } : {}),
     });
     logger.info(`[compact] start session=${context.sessionId} model=${context.model} events=${priorEvents.length}`);
-    await this.append({
+    await this.eventSink.append({
       type: 'user_message',
       runId: context.runId,
       sessionId: context.sessionId,
@@ -1891,7 +1897,7 @@ export class RawAgentLoop implements AgentLoop {
     });
     const modelUsage = buildModelUsage(context.model, outcome.usage);
     if (outcome.status === 'compacted' || outcome.status === 'skipped') {
-      await this.append({
+      await this.eventSink.append({
         type: 'run_finished',
         runId: context.runId,
         sessionId: context.sessionId,
@@ -1909,7 +1915,7 @@ export class RawAgentLoop implements AgentLoop {
       return;
     }
     if (outcome.status === 'aborted') {
-      await this.append({
+      await this.eventSink.append({
         type: 'run_finished',
         runId: context.runId,
         sessionId: context.sessionId,
@@ -1928,7 +1934,7 @@ export class RawAgentLoop implements AgentLoop {
       return;
     }
     const message = outcome.error ?? 'unknown error';
-    await this.append({
+    await this.eventSink.append({
       type: 'run_finished',
       runId: context.runId,
       sessionId: context.sessionId,
@@ -2043,7 +2049,7 @@ export class RawAgentLoop implements AgentLoop {
       assertSuccessfulModelTerminal(completed);
       if (completed.usage) {
         // 先落 usage 再做摘要语义校验：空摘要同样已产生上游成本。
-        await this.append({
+        await this.eventSink.append({
           type: 'compaction_usage',
           runId: context.runId,
           sessionId: context.sessionId,
@@ -2061,7 +2067,7 @@ export class RawAgentLoop implements AgentLoop {
         const cleared = await this.runStore.clearResponseSessionStateBySession(context.sessionId);
         if (cleared > 0) logger.info(`[compact] cleared ${cleared} response relay state(s) session=${context.sessionId}`);
       }
-      await this.append({
+      await this.eventSink.append({
         type: 'compaction',
         runId: context.runId,
         sessionId: context.sessionId,
@@ -2118,7 +2124,7 @@ export class RawAgentLoop implements AgentLoop {
       if (blocking) return { blocking: true, message: blocking };
 
       const content = buildSyntheticToolResultContent(state);
-      await this.append({
+      await this.eventSink.append({
         type: 'tool_result',
         runId: state.runId,
         sessionId: state.sessionId,
@@ -2134,7 +2140,7 @@ export class RawAgentLoop implements AgentLoop {
 
   private async assertNoOpenToolCallBatchesBeforeModel(sessionId: string): Promise<void> {
     const replayState = buildRuntimeReplayState(
-      await this.eventStore.list(sessionId, {
+      await this.eventStore.list(this.eventSink.requireTenantId(), sessionId, {
         excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
         replayMode: 'bounded',
       }),
@@ -2331,7 +2337,7 @@ export class RawAgentLoop implements AgentLoop {
       ...(args.presentation ? { toolPresentation: args.presentation } : {}),
       ...(args.metadata ? { toolResultMetadata: args.metadata } : {}),
     };
-    await this.append({
+    await this.eventSink.append({
       type: 'tool_result',
       runId: args.context.runId,
       sessionId: args.context.sessionId,
@@ -2353,13 +2359,14 @@ export class RawAgentLoop implements AgentLoop {
 
   async *resumeApproval(input: ResumeApprovalInput, context: RunContext): AsyncIterable<OutboundEvent> {
     context = withDurableRunCancellation(context, this.runStore);
+    this.activeTenantId = requireEventTenantId(context);
     const approval = await this.approvalStore.get(input.approvalId);
     if (!approval) {
       yield { type: 'error', error: `approval not found: ${input.approvalId}` };
       return;
     }
 
-    const priorEvents = await this.eventStore.list(approval.sessionId, { replayMode: 'bounded' });
+    const priorEvents = await this.eventStore.list(requireEventTenantId(context), approval.sessionId, { replayMode: 'bounded' });
     const approvals = await this.approvalStore.list(approval.sessionId);
     const replayState = buildRuntimeReplayState(priorEvents, approvals, approval.sessionId);
     const toolCallState = replayState.toolCallsById.get(approval.toolCallId);
@@ -2434,7 +2441,7 @@ export class RawAgentLoop implements AgentLoop {
       if (err instanceof RunLeaseLostError) return;
       if (err instanceof ToolInvocationClaimLostError) {
         const failure = await handleInvocationClaimLoss(
-          err, resumeContext, this.runStore, (event) => this.append(event), 'approval_resume',
+          err, resumeContext, this.runStore, (event) => this.eventSink.append(event), 'approval_resume',
         );
         if (failure) yield failure;
         return;
@@ -2463,7 +2470,7 @@ export class RawAgentLoop implements AgentLoop {
       if (err instanceof RunLeaseLostError) return;
       if (err instanceof ToolInvocationClaimLostError) {
         const failure = await handleInvocationClaimLoss(
-          err, resumeContext, this.runStore, (event) => this.append(event), 'approval_resume',
+          err, resumeContext, this.runStore, (event) => this.eventSink.append(event), 'approval_resume',
         );
         if (failure) yield failure;
         return;
@@ -2476,7 +2483,7 @@ export class RawAgentLoop implements AgentLoop {
       throw err;
     }
 
-    const replayEvents = await this.eventStore.list(approval.sessionId, { replayMode: 'bounded' });
+    const replayEvents = await this.eventStore.list(requireEventTenantId(context), approval.sessionId, { replayMode: 'bounded' });
     const contextProjection = buildContextProjection(replayEvents, {
       sessionId: approval.sessionId,
       runId: resumeContext.runId,
@@ -2486,7 +2493,7 @@ export class RawAgentLoop implements AgentLoop {
       { role: 'system', content: input.instructions },
       ...this.filterLoadedToolMessages(contextProjection.messages, tools),
     ];
-    if (contextProjection.summaryEvent) await this.append(contextProjection.summaryEvent);
+    if (contextProjection.summaryEvent) await this.eventSink.append(contextProjection.summaryEvent);
 
     logger.info(`[resume-approval] start session=${resumeContext.sessionId} model=${resumeContext.model}`);
     yield* this.continueModelTurns({
@@ -2503,7 +2510,8 @@ export class RawAgentLoop implements AgentLoop {
 
   async *resumeInteraction(input: ResumeInteractionInput, context: RunContext): AsyncIterable<OutboundEvent> {
     context = withDurableRunCancellation(context, this.runStore);
-    const priorEvents = await this.eventStore.list(context.sessionId, { replayMode: 'bounded' });
+    this.activeTenantId = requireEventTenantId(context);
+    const priorEvents = await this.eventStore.list(requireEventTenantId(context), context.sessionId, { replayMode: 'bounded' });
     const request = [...priorEvents].reverse().find((event): event is Extract<PlatformEvent, { type: 'interaction_requested' }> => (
       event.type === 'interaction_requested'
       && event.sessionId === context.sessionId
@@ -2581,7 +2589,7 @@ export class RawAgentLoop implements AgentLoop {
 
     if (request.invocationId) {
       await this.toolInvocationStore?.complete(request.invocationId, 'completed').catch(() => undefined);
-      await this.append({
+      await this.eventSink.append({
         type: 'tool_invocation_completed',
         runId: context.runId,
         sessionId: context.sessionId,
@@ -2610,7 +2618,7 @@ export class RawAgentLoop implements AgentLoop {
       if (err instanceof RunLeaseLostError) return;
       if (err instanceof ToolInvocationClaimLostError) {
         const failure = await handleInvocationClaimLoss(
-          err, context, this.runStore, (event) => this.append(event), 'interaction_resume',
+          err, context, this.runStore, (event) => this.eventSink.append(event), 'interaction_resume',
         );
         if (failure) yield failure;
         return;
@@ -2623,7 +2631,7 @@ export class RawAgentLoop implements AgentLoop {
       throw err;
     }
 
-    const replayEvents = await this.eventStore.list(context.sessionId, { replayMode: 'bounded' });
+    const replayEvents = await this.eventStore.list(requireEventTenantId(context), context.sessionId, { replayMode: 'bounded' });
     const contextProjection = buildContextProjection(replayEvents, {
       sessionId: context.sessionId,
       runId: context.runId,
@@ -2633,7 +2641,7 @@ export class RawAgentLoop implements AgentLoop {
       { role: 'system', content: input.instructions },
       ...this.filterLoadedToolMessages(contextProjection.messages, tools),
     ];
-    if (contextProjection.summaryEvent) await this.append(contextProjection.summaryEvent);
+    if (contextProjection.summaryEvent) await this.eventSink.append(contextProjection.summaryEvent);
 
     logger.info(`[resume-interaction] start session=${context.sessionId} model=${context.model}`);
     yield* this.continueModelTurns({
@@ -2901,14 +2909,14 @@ export class RawAgentLoop implements AgentLoop {
     const startedAt = Date.now();
     const invocationId = `${args.context.runId}:${args.call.id}`;
     const executionAudit = createExecutionAuditRecorder();
-    const streamBatcher = new StreamEventBatcher(this.eventStore, this.streamEventBatch);
+    const streamBatcher = new StreamEventBatcher(this.eventStore, this.streamEventBatch, requireEventTenantId(args.context));
     const streamSummary = new ToolStreamSummaryBuilder();
     const hooks = args.baseToolContext.hooks?.onInteraction || args.descriptor.name !== 'AskUserQuestion'
       ? args.baseToolContext.hooks
       : {
           ...(args.baseToolContext.hooks ?? {}),
           onInteraction: async (event: InteractionEvent): Promise<InteractionResponse> => {
-            await this.append({
+            await this.eventSink.append({
               type: 'interaction_requested',
               runId: args.context.runId,
               sessionId: args.context.sessionId,
@@ -3020,7 +3028,7 @@ export class RawAgentLoop implements AgentLoop {
       }
       if (blockedBeforeInvoke) {
         if (cancellation && shouldAppendCancelEvent) {
-          await this.append({
+          await this.eventSink.append({
             type: 'tool_invocation_cancel_requested',
             runId: args.context.runId,
             sessionId: args.context.sessionId,
@@ -3044,7 +3052,7 @@ export class RawAgentLoop implements AgentLoop {
           parallelGate.onClaimed();
           await parallelGate.waitForRelease;
         }
-        await this.append({
+        await this.eventSink.append({
           type: 'tool_invocation_started',
           runId: args.context.runId,
           sessionId: args.context.sessionId,
@@ -3091,7 +3099,7 @@ export class RawAgentLoop implements AgentLoop {
       const result = guarded?.invoked ? guarded.result : await invokeTool();
       await streamBatcher.flush();
       await this.toolInvocationStore?.complete(invocationId, 'completed').catch(() => undefined);
-      await this.append({
+      await this.eventSink.append({
         type: 'tool_invocation_completed',
         runId: args.context.runId,
         sessionId: args.context.sessionId,
@@ -3109,7 +3117,7 @@ export class RawAgentLoop implements AgentLoop {
         toolName: args.descriptor.name,
         status: 'success',
       }).catch(() => undefined);
-      await this.append({
+      await this.eventSink.append({
         type: 'tool_audit',
         runId: args.context.runId,
         sessionId: args.context.sessionId,
@@ -3141,7 +3149,7 @@ export class RawAgentLoop implements AgentLoop {
       const invocationCancelled = cancelledBeforeInvoke || args.context.signal?.aborted;
       const completionStatus = invocationCancelled ? 'cancelled' : 'failed';
       await this.toolInvocationStore?.complete(invocationId, completionStatus, message).catch(() => undefined);
-      await this.append({
+      await this.eventSink.append({
         type: 'tool_invocation_completed',
         runId: args.context.runId,
         sessionId: args.context.sessionId,
@@ -3160,7 +3168,7 @@ export class RawAgentLoop implements AgentLoop {
         toolName: args.descriptor.name,
         status: invocationCancelled ? 'cancelled' : 'error',
       }).catch(() => undefined);
-      await this.append({
+      await this.eventSink.append({
         type: 'tool_audit',
         runId: args.context.runId,
         sessionId: args.context.sessionId,
@@ -3180,7 +3188,7 @@ export class RawAgentLoop implements AgentLoop {
         error: message,
       });
       if (args.baseToolContext.workspace.executionTarget === 'server-remote') {
-        await this.append({
+        await this.eventSink.append({
           type: 'hand_failure',
           runId: args.context.runId,
           sessionId: args.context.sessionId,
@@ -3207,7 +3215,7 @@ export class RawAgentLoop implements AgentLoop {
   ): Promise<void> {
     const event = builder.build(args);
     if (event) {
-      await this.append(event);
+      await this.eventSink.append(event);
     }
   }
 
@@ -3324,7 +3332,7 @@ export class RawAgentLoop implements AgentLoop {
         if (preflight.shouldCompactBeforeRequest) {
           let checkpointSucceeded = false;
           if (args.context.evaluateAutoCompaction && !autoCompactionSuppressed) {
-            const checkpointEvents = await this.eventStore.list(args.context.sessionId, {
+            const checkpointEvents = await this.eventStore.list(requireEventTenantId(args.context), args.context.sessionId, {
               excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
               replayMode: 'bounded',
             });
@@ -3347,7 +3355,7 @@ export class RawAgentLoop implements AgentLoop {
                 throw reason instanceof Error ? reason : new Error(String(reason ?? 'run aborted'));
               }
               if (outcome.status === 'compacted') {
-                const compactedEvents = await this.eventStore.list(args.context.sessionId, {
+                const compactedEvents = await this.eventStore.list(requireEventTenantId(args.context), args.context.sessionId, {
                   excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
                   replayMode: 'bounded',
                 });
@@ -3574,7 +3582,7 @@ export class RawAgentLoop implements AgentLoop {
           );
         }
         if (turnThinking) {
-          await this.append({
+          await this.eventSink.append({
             type: 'assistant_thinking',
             runId: args.context.runId,
             sessionId: args.context.sessionId,
@@ -3629,7 +3637,7 @@ export class RawAgentLoop implements AgentLoop {
               }${turnThinking ? ', thinking-only' : ''})`,
             );
           }
-          await this.append({
+          await this.eventSink.append({
             type: 'assistant_message',
             runId: args.context.runId,
             sessionId: args.context.sessionId,
@@ -3676,7 +3684,7 @@ export class RawAgentLoop implements AgentLoop {
           }
           if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
           const modelUsage = buildModelUsage(args.context.model, totalUsage);
-          await this.append({
+          await this.eventSink.append({
             type: 'run_finished',
             runId: args.context.runId,
             sessionId: args.context.sessionId,
@@ -3710,7 +3718,7 @@ export class RawAgentLoop implements AgentLoop {
           yield { type: 'text_end' };
         }
 
-        await this.append({
+        await this.eventSink.append({
           type: 'assistant_tool_calls',
           runId: args.context.runId,
           sessionId: args.context.sessionId,
@@ -3791,7 +3799,7 @@ export class RawAgentLoop implements AgentLoop {
       }
       if (err instanceof ToolInvocationClaimLostError) {
         const failure = await handleInvocationClaimLoss(
-          err, args.context, this.runStore, (event) => this.append(event), 'resume',
+          err, args.context, this.runStore, (event) => this.eventSink.append(event), 'resume',
         );
         if (failure) yield failure;
         else {
@@ -3825,7 +3833,7 @@ export class RawAgentLoop implements AgentLoop {
       const { diagnosticMessage, message, surfacedMessage, preservedTurnText, failureProtocol } = describeRuntimeFailure(err, pendingTurnText, INVALID_PROMPT_CUSTOMER_ERROR);
       const modelUsage = buildModelUsage(args.context.model, totalUsage);
       if (preservedTurnText) {
-        await this.append({
+        await this.eventSink.append({
           type: 'assistant_message',
           runId: args.context.runId,
           sessionId: args.context.sessionId,
@@ -3841,7 +3849,7 @@ export class RawAgentLoop implements AgentLoop {
         );
         return;
       }
-      await this.append({
+      await this.eventSink.append({
         type: 'run_finished',
         runId: args.context.runId,
         sessionId: args.context.sessionId,
@@ -3885,7 +3893,7 @@ export class RawAgentLoop implements AgentLoop {
     instructions: string;
     tools: ReturnType<typeof toModelToolDefinition>[];
   }): Promise<{ messages: ModelChatMessage[]; replayEvents: PlatformEvent[] } | null> {
-    const allEvents = await this.eventStore.list(args.context.sessionId, { replayMode: 'bounded' });
+    const allEvents = await this.eventStore.list(requireEventTenantId(args.context), args.context.sessionId, { replayMode: 'bounded' });
     if (allEvents.some((event) => event.type === 'context_rewind' && event.runId === args.context.runId)) {
       return null;
     }
@@ -3898,7 +3906,7 @@ export class RawAgentLoop implements AgentLoop {
     if (!unit) return null;
 
     const createdAt = new Date().toISOString();
-    await this.appendBatch([
+    await this.eventSink.appendBatch([
       {
         type: 'context_rewind',
         runId: args.context.runId,
@@ -3927,7 +3935,7 @@ export class RawAgentLoop implements AgentLoop {
     ]);
     await this.clearResponseRelayState(args.context.sessionId, 'context rewind');
 
-    const replayEvents = await this.eventStore.list(args.context.sessionId, {
+    const replayEvents = await this.eventStore.list(requireEventTenantId(args.context), args.context.sessionId, {
       excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
       replayMode: 'bounded',
     });
@@ -3947,21 +3955,5 @@ export class RawAgentLoop implements AgentLoop {
       + `toolCalls=${unit.excludedToolCallIds.join(',')}`,
     );
     return { messages, replayEvents };
-  }
-
-  private async appendBatch(events: PlatformEventInput[]): Promise<void> {
-    let storedEvents: PlatformEvent[];
-    if (this.eventStore.appendBatch) {
-      storedEvents = await this.eventStore.appendBatch(events);
-    } else {
-      storedEvents = [];
-      for (const event of events) storedEvents.push(await this.eventStore.append(event));
-    }
-    for (const stored of storedEvents) await this.transcriptProjection.project(stored);
-  }
-
-  private async append(event: Parameters<EventStore['append']>[0]): Promise<void> {
-    const stored = await this.eventStore.append(event);
-    await this.transcriptProjection.project(stored);
   }
 }

@@ -209,7 +209,7 @@ export interface RunStore {
   applySteeringInputsAtomically?(
     targetRunId: string,
     inputs: SteeringApplyInput[],
-    tenantId?: string,
+    tenantId: string,
   ): Promise<SteeringApplyResult>;
   /** 仅当没有待注入消息时封口；false 表示调用方应先消费刚到达的消息。 */
   trySealSteeringInputWindow?(targetRunId: string): Promise<boolean>;
@@ -236,7 +236,7 @@ export interface RunStore {
     reason: string,
     targetRunId: string | undefined,
     event: PlatformEventInput,
-    tenantId?: string,
+    tenantId: string,
   ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }>;
   /** 会话内仍可由用户单条撤回的 pending 插话（供 detail API 恢复队列区）。 */
   listPendingSteeringBySession?(sessionId: string): Promise<SteeringInputRecord[]>;

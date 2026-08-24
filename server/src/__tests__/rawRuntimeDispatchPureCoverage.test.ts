@@ -24,7 +24,14 @@ import { FileEventStore } from '../runtime/fileEventStore.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import type { WorkspaceRef } from '../agent/toolRuntime.js';
 import type { RuntimeSessionRecord } from '../runtime/sessionCatalog.js';
-import type { ApprovalStore, EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
+import type {
+  ApprovalStore,
+  EventAppendContext,
+  EventListOptions,
+  EventStore,
+  PlatformEvent,
+  PlatformEventInput,
+} from '../runtime/types.js';
 import type { RunRecord } from '../runtime/runStore.js';
 import { InMemoryToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import type { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
@@ -181,7 +188,7 @@ describe('resolveSessionCatalog / createEventStoreForSession / createApprovalSto
   });
 
   it('createApprovalStoreForSession 优先用 approvalStoreFactory（可见 eventStore 入参），缺省时构造 EventBackedApprovalStore', () => {
-    const eventStore = new FileEventStore(session.transcriptPath);
+    const eventStore = new FileEventStore(session.transcriptPath, DEFAULT_TENANT_ID);
     const custom = { get: async () => null } as unknown as ApprovalStore;
     const seenEventStores: EventStore[] = [];
     const withFactory = createApprovalStoreForSession(
@@ -281,26 +288,36 @@ describe('buildTenantRemoteHandWireEnv', () => {
 describe('resolveWakePrompt（metadata.wakeMessage 优先分支）', () => {
   class MemoryEventStore implements EventStore {
     events: PlatformEvent[] = [];
-    async append(event: PlatformEventInput): Promise<PlatformEvent> {
+
+    constructor(private readonly tenantId: string) {}
+
+    async append(event: PlatformEventInput, ctx: EventAppendContext): Promise<PlatformEvent> {
+      this.assertTenant(ctx.tenantId);
       const full = { ...event, id: `e${this.events.length + 1}`, timestamp: new Date().toISOString() } as PlatformEvent;
       this.events.push(full);
       return full;
     }
-    async list(sessionId: string): Promise<PlatformEvent[]> {
+
+    async list(tenantId: string, sessionId: string, _options?: EventListOptions): Promise<PlatformEvent[]> {
+      this.assertTenant(tenantId);
       return this.events.filter((event) => !('sessionId' in event) || event.sessionId === sessionId);
+    }
+
+    private assertTenant(tenantId: string): void {
+      if (tenantId !== this.tenantId) throw new Error('MemoryEventStore tenant scope mismatch');
     }
   }
 
   it('run user_message 尚未落库时，优先用 metadata.wakeMessage 的 chatId/senderName/metadata 复原原始消息', async () => {
     const session = makeSession({ sessionId: 'session-wake', userId: 'user-1', username: 'alice' });
-    const store = new MemoryEventStore();
+    const store = new MemoryEventStore(DEFAULT_TENANT_ID);
     // 只放一条 user_message_submitted（不同 runId），确保走 restore 分支而非 hidden-continue
     await store.append({
       type: 'user_message_submitted',
       sessionId: 'session-wake',
       runId: 'run-other',
       content: 'stale submitted content',
-    });
+    }, { tenantId: DEFAULT_TENANT_ID });
     const run: RunRecord = {
       runId: 'run-wake',
       sessionId: 'session-wake',
@@ -323,7 +340,7 @@ describe('resolveWakePrompt（metadata.wakeMessage 优先分支）', () => {
       },
     };
 
-    const decision = resolveWakePrompt(run, await store.list('session-wake'), session);
+    const decision = resolveWakePrompt(run, await store.list(DEFAULT_TENANT_ID, 'session-wake'), session);
 
     expect(decision.recordUserMessage).toBe(true);
     // metadata.wakeMessage 优先于事件里的 submitted content

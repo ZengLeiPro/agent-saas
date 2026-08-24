@@ -20,7 +20,7 @@ class MemoryEventStore implements EventStore {
     return event;
   }
 
-  async list(sessionId: string): Promise<PlatformEvent[]> {
+  async list(_tenantId: string, sessionId: string): Promise<PlatformEvent[]> {
     return this.events.filter((event) => event.sessionId === sessionId);
   }
 }
@@ -44,6 +44,7 @@ async function seedInvocation(store: InMemoryToolInvocationStore): Promise<void>
     invocationId: 'invocation-1',
     runId: 'run-1',
     sessionId: 'session-1',
+    tenantId: 'tenant-tool-invocation-recovery',
     toolCallId: 'tool-call-1',
     toolName: 'Shell',
     executionTarget: 'server-remote',

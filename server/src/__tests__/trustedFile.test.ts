@@ -91,6 +91,51 @@ describe('trusted descriptor-relative file operations', () => {
     await expect(readFile(join(outside, 'new.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('closes the opened descriptor when openTrustedFile stat fails', async () => {
+    const { root } = await fixture();
+    const target = join(root, 'safe', 'nested', 'inside.txt');
+    const probe = await open(target, 'r');
+    const fileHandlePrototype = Object.getPrototypeOf(probe);
+    await probe.close();
+    const statError = Object.assign(new Error('stat failed'), { code: 'EIO' });
+    const statSpy = vi.spyOn(fileHandlePrototype, 'stat').mockRejectedValue(statError);
+    const descriptorCount = async () => (await readdir('/proc/self/fd')).length;
+    const before = await descriptorCount();
+
+    try {
+      for (let attempt = 0; attempt < 32; attempt += 1) {
+        await expect(openTrustedFile(root, 'safe/nested/inside.txt')).rejects.toBe(statError);
+      }
+    } finally {
+      statSpy.mockRestore();
+    }
+
+    expect(await descriptorCount()).toBe(before);
+  });
+
+  it('closes the opened descriptor when removeTrustedPath file stat fails', async () => {
+    const { root } = await fixture();
+    const target = join(root, 'safe', 'nested', 'inside.txt');
+    const probe = await open(target, 'r');
+    const fileHandlePrototype = Object.getPrototypeOf(probe);
+    await probe.close();
+    const statError = Object.assign(new Error('stat failed'), { code: 'EIO' });
+    const statSpy = vi.spyOn(fileHandlePrototype, 'stat').mockRejectedValue(statError);
+    const descriptorCount = async () => (await readdir('/proc/self/fd')).length;
+    const before = await descriptorCount();
+
+    try {
+      for (let attempt = 0; attempt < 32; attempt += 1) {
+        await expect(removeTrustedPath(root, 'safe/nested/inside.txt')).rejects.toBe(statError);
+      }
+    } finally {
+      statSpy.mockRestore();
+    }
+
+    expect(await descriptorCount()).toBe(before);
+    await expect(readFile(target, 'utf8')).resolves.toBe('inside');
+  });
+
   it('closes the source descriptor when destination-root binding fails', async () => {
     const { root, outside } = await fixture();
     const destinationAlias = join(root, '..', 'destination-alias');

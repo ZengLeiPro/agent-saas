@@ -6,8 +6,11 @@ import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
 import { RUNTIME_ISOLATION_POLICY_DIGEST } from '../runtime/runtimeIsolationEvidence.js';
 import type { EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 
+const TEST_TENANT_ID = 'tenant-hand-health';
+
 function makeHand(overrides: Partial<HandRecord> & { handId: string }): HandRecord {
   return {
+    tenantId: TEST_TENANT_ID,
     sessionId: 'session-1',
     workspaceId: 'workspace-1',
     type: 'server-remote',
@@ -27,6 +30,7 @@ class InMemoryHandStore implements HandStore {
   async register(input: RegisterHandInput): Promise<HandRecord> {
     const record: HandRecord = {
       handId: input.handId,
+      tenantId: TEST_TENANT_ID,
       sessionId: input.sessionId,
       workspaceId: input.workspaceId,
       type: input.type,
@@ -134,7 +138,7 @@ class InMemoryEventStore implements EventStore {
     return stamped;
   }
 
-  async list(sessionId: string): Promise<PlatformEvent[]> {
+  async list(_tenantId: string, sessionId: string): Promise<PlatformEvent[]> {
     return this.events.filter((e) => 'sessionId' in e && e.sessionId === sessionId);
   }
 }

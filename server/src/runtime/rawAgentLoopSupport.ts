@@ -164,6 +164,7 @@ export class StreamEventBatcher {
   constructor(
     private readonly eventStore: EventStore,
     private readonly options: Required<StreamEventBatchOptions>,
+    private readonly tenantId: string,
   ) {}
 
   async push(event: PlatformEventInput): Promise<void> {
@@ -190,10 +191,12 @@ export class StreamEventBatcher {
     const events = this.buffer.splice(0, this.buffer.length);
     this.bufferedBytes = 0;
     this.flushing = this.flushing.then(async () => {
+      if (!this.tenantId) throw new Error('StreamEventBatcher tenant context is missing');
+      const ctx = { tenantId: this.tenantId };
       if (this.eventStore.appendBatch) {
-        await this.eventStore.appendBatch(events);
+        await this.eventStore.appendBatch(events, ctx);
       } else {
-        for (const event of events) await this.eventStore.append(event);
+        for (const event of events) await this.eventStore.append(event, ctx);
       }
     });
     await this.flushing;

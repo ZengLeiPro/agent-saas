@@ -397,7 +397,7 @@ export interface AppRuntime {
    * - PG backend：返回共享 pgEventStore（按 session_id 过滤）
    * - file backend：`new FileEventStore(getRuntimeEventLogPath(transcriptPath))`
    */
-  runtimeEventStoreFor: (transcriptPath: string) => EventStore;
+  runtimeEventStoreFor: (transcriptPath: string, tenantId: string) => EventStore;
   /**
    * 零停机部署（2026-07-15）：listen 后执行的后台启动任务（skills warmup 等）。
    * index.ts 在 app.listen 回调里调用；无 HTTP listener 的 worker 进程在 createRuntime 后调用。

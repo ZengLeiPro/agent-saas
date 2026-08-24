@@ -5,7 +5,8 @@ import {
   type PlatformEventInput,
 } from './types.js';
 import { buildChatMessagesFromEvents } from './legacyTranscriptProjection.js';
-import { truncateCheckpointUserText } from './contextCheckpoint.js';
+import { estimateContextTokens } from './contextBreakdown.js';
+import { CHECKPOINT_USER_HISTORY_TOKEN_CAP } from './contextCheckpoint.js';
 import type { CheckpointTaskAnchor } from './types.js';
 
 export type ContextReconstructionPolicy =
@@ -18,6 +19,16 @@ export interface ContextProjectionOptions {
   sessionId: string;
   runId: string;
   policy?: ContextReconstructionPolicy;
+  /** 当前请求已单独注入最新 memoryContext，或压缩会另行持久化 snapshot 时不重复重放。 */
+  excludeMemoryContext?: boolean;
+  /** 连续压缩切换到更小窗口模型时，对旧 checkpoint cap 施加更严格的当前上限。 */
+  checkpointUserHistoryTokenCap?: number;
+  /** 生成下一 checkpoint 摘要时折叠旧 checkpoint 的 raw tail，避免旧预算突破当前模型窗口。 */
+  collapseCheckpointRawTail?: boolean;
+  /** 连续压缩时旧摘要在当前模型输入中的最大 Token 预算。 */
+  checkpointSummaryTokenCap?: number;
+  /** 连续压缩时旧 checkpoint 后仍按原子单元保留的后缀起点（当前切片索引）。 */
+  checkpointRetainedStartIndex?: number;
 }
 
 export interface ContextProjection {
@@ -152,12 +163,8 @@ function applyContextRewinds(events: PlatformEvent[]): {
   };
 }
 
-/** 用户消息轨迹：单条上限（头 + 尾，超出中间省略） */
-const TRAIL_ITEM_MAX_CHARS = 500;
-const TRAIL_ITEM_HEAD_CHARS = 400;
-const TRAIL_ITEM_TAIL_CHARS = 100;
-/** 用户消息轨迹：总预算。超限降级为「首条 + 最近若干条」 */
-const TRAIL_TOTAL_MAX_CHARS = 8000;
+/** 用户轨迹超限时按头 75% + 尾 25% 利用剩余预算截取边界消息。 */
+const BUDGET_EXCERPT_HEAD_RATIO = 0.75;
 
 /** 平台系统命令替身（如 /compact 的 modelContent）前缀，抽取用户消息轨迹时剔除 */
 const SYSTEM_COMMAND_MODEL_CONTENT_PREFIX = '[系统命令]';
@@ -172,7 +179,13 @@ const SYSTEM_COMMAND_MODEL_CONTENT_PREFIX = '[系统命令]';
  *   内联 checkpoint 只剔除 compaction 事件本身，原始尾部由 Token 预算决定。
  * 原始事件仍在 EventStore（SessionContext(action="search") 可查原文），这里只影响 prompt 投影。
  */
-function applyCompaction(events: PlatformEvent[]): {
+function applyCompaction(
+  events: PlatformEvent[],
+  options: Pick<
+    ContextProjectionOptions,
+    'excludeMemoryContext' | 'checkpointUserHistoryTokenCap' | 'collapseCheckpointRawTail' | 'checkpointSummaryTokenCap' | 'checkpointRetainedStartIndex'
+  > = {},
+): {
   effectiveEvents: PlatformEvent[];
   summaryMessages: ModelChatMessage[];
 } {
@@ -181,17 +194,25 @@ function applyCompaction(events: PlatformEvent[]): {
     if (event.type !== 'compaction') continue;
 
     let cutIdx = i;
-    if (event.cutoffEventId) {
+    if (event.cutoffEventId && !options.collapseCheckpointRawTail) {
       const idx = events.findIndex((e) => e.id === event.cutoffEventId);
       if (idx >= 0 && idx <= i) cutIdx = idx;
     }
-    const compressed = events.slice(0, cutIdx);
+    const retainedStart = options.collapseCheckpointRawTail
+      ? Math.max(i + 1, Math.min(events.length, options.checkpointRetainedStartIndex ?? events.length))
+      : cutIdx;
+    const compressed = options.collapseCheckpointRawTail
+      ? [...events.slice(0, i), ...events.slice(i + 1, retainedStart)]
+      : events.slice(0, cutIdx);
     // 独立 /compact 的 run 只含系统命令生命周期，可整段剔除；内联压缩与业务
     // 交互共用 runId，不能按 runId 过滤，否则会把承诺保留的最近一轮一起删掉。
-    const retained = events.slice(cutIdx).filter(
+    const retained = events.slice(retainedStart).filter(
       (e) => event.inline
         ? e.id !== event.id
         : !('runId' in e) || e.runId !== event.runId,
+    );
+    const retainedHasMemorySnapshot = applyContextRewinds(retained).effectiveEvents.some(
+      (candidate) => candidate.type === 'memory_context',
     );
     const checkpoint = event.checkpoint;
     const sourceRunFinished = checkpoint?.sourceRunId
@@ -212,8 +233,19 @@ function applyCompaction(events: PlatformEvent[]): {
             checkpoint.trigger,
             event.id,
             checkpoint.sourceRunId,
+            options.excludeMemoryContext || retainedHasMemorySnapshot ? undefined : checkpoint.memorySnapshot,
+            Math.min(
+              checkpoint.summaryAudit?.userHistoryTokenCap ?? CHECKPOINT_USER_HISTORY_TOKEN_CAP,
+              options.checkpointUserHistoryTokenCap ?? CHECKPOINT_USER_HISTORY_TOKEN_CAP,
+            ),
+            options.checkpointSummaryTokenCap,
           )
-          : formatCompactionContext(event.summary, extractUserMessageTrail(compressed)),
+          : formatCompactionContext(
+            event.summary,
+            extractUserMessageTrail(compressed),
+            options.checkpointUserHistoryTokenCap,
+            options.checkpointSummaryTokenCap,
+          ),
       }],
     };
   }
@@ -230,8 +262,8 @@ interface TrailItem {
 }
 
 /**
- * 从压缩段原始事件中抽取全部真实用户消息。每条消息都保留 eventId；附件仅保留
- * 稳定引用，不把附件正文或 visionAnalysis 写入 checkpoint。
+ * 从压缩段原始事件中抽取全部真实用户消息。每条消息都保留 eventId；总量未超过
+ * 60K Token 时正文不截取。附件仅保留稳定引用，不把附件正文或 visionAnalysis 写入 checkpoint。
  */
 export function extractUserMessageTrail(compressed: PlatformEvent[]): TrailItem[] {
   const items: TrailItem[] = [];
@@ -241,13 +273,12 @@ export function extractUserMessageTrail(compressed: PlatformEvent[]): TrailItem[
     if (event.modelContent?.startsWith(SYSTEM_COMMAND_MODEL_CONTENT_PREFIX)) continue;
     const content = event.content.trim();
     if (!content) continue;
-    const excerpt = truncateCheckpointUserText(content);
     items.push({
       eventId: event.id,
       timestamp: event.timestamp,
-      content: excerpt.text,
-      originalChars: excerpt.originalChars,
-      truncated: excerpt.truncated,
+      content,
+      originalChars: content.length,
+      truncated: false,
       ...(event.attachments?.length ? {
         attachments: event.attachments.map((attachment) => ({
           attachmentId: attachment.attachmentId,
@@ -275,34 +306,177 @@ function formatAttachmentRefs(
   )).join('、')}`;
 }
 
-/** 每条用户消息都列出；长消息只截单条，不再按总字符预算省略中间条目。 */
-export function renderUserMessageTrail(items: TrailItem[]): string {
-  if (items.length === 0) return '';
-  const lines = items.map((item, i) => {
-    const ts = formatTrailTimestamp(item.timestamp);
-    const truncation = item.truncated
-      ? ` [原文 ${item.originalChars} 字；可按 eventId 检索完整内容]`
-      : '';
-    return `${i + 1}. ${ts ? `[${ts}] ` : ''}[eventId=${item.eventId}]${truncation}\n${item.content}${formatAttachmentRefs(item.attachments)}`;
-  });
+function excerptTextForBudget(content: string, keptChars: number): string {
+  if (keptChars >= content.length) return content;
+  const bounded = Math.max(0, keptChars);
+  const headChars = Math.ceil(bounded * BUDGET_EXCERPT_HEAD_RATIO);
+  const tailChars = bounded - headChars;
+  const omitted = content.length - bounded;
+  return `${content.slice(0, headChars)}\n……[因 60K Token 用户历史上限省略 ${omitted} 字；原文可按 eventId 检索]……\n${tailChars > 0 ? content.slice(-tailChars) : ''}`;
+}
+
+function fitTextToBudget(content: string, fits: (candidate: string) => boolean): string | null {
+  let low = 0;
+  let high = content.length;
+  let best: string | null = null;
+  while (low <= high) {
+    const keptChars = Math.floor((low + high) / 2);
+    const candidate = excerptTextForBudget(content, keptChars);
+    if (fits(candidate)) {
+      best = candidate;
+      low = keptChars + 1;
+    } else {
+      high = keptChars - 1;
+    }
+  }
+  return best;
+}
+
+function formatTrailLine(item: TrailItem, index: number, content = item.content): string {
+  const ts = formatTrailTimestamp(item.timestamp);
+  const truncation = item.truncated || content !== item.content
+    ? ` [原文 ${item.originalChars} 字；可按 eventId 检索完整内容]`
+    : '';
+  return `${index + 1}. ${ts ? `[${ts}] ` : ''}[eventId=${item.eventId}]${truncation}\n${content}${formatAttachmentRefs(item.attachments)}`;
+}
+
+function renderTrailBlock(lines: string[], omittedCount = 0): string {
   return [
     '<user-message-trail>',
-    '以下逐条列出被压缩段中的全部真实用户文本消息；长消息保留头尾，附件只保留引用：',
+    '以下逐条列出被压缩段中的真实用户文本消息；60K Token 预算内保留原文，超限边界消息保留头尾，附件只保留引用：',
+    ...(omittedCount > 0
+      ? [`……（最早 ${omittedCount} 条用户消息超过 60K Token 轨迹上限；原文仍可用 SessionContext 检索）……`]
+      : []),
     ...lines,
     '</user-message-trail>',
   ].join('\n');
 }
 
-function renderTaskAnchors(anchors: CheckpointTaskAnchor[]): string {
-  if (anchors.length === 0) return '';
-  return [
-    '<active-task-messages>',
-    '以下为当前业务 run 中被压缩的用户任务消息原文：',
-    ...anchors.map((anchor, index) => (
+/** 60K Token 内保持全部轨迹；仅超限时从最早消息开始缩短、再省略。 */
+export function renderUserMessageTrail(
+  items: TrailItem[],
+  tokenBudget = CHECKPOINT_USER_HISTORY_TOKEN_CAP,
+): string {
+  if (items.length === 0 || tokenBudget <= 0) return '';
+  const full = renderTrailBlock(items.map((item, index) => formatTrailLine(item, index)));
+  if (estimateContextTokens(full) <= tokenBudget) return full;
+
+  const selected: string[] = [];
+  let omittedCount = 0;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]!;
+    const fullLine = formatTrailLine(item, index);
+    const fullCandidate = renderTrailBlock([fullLine, ...selected], index);
+    if (estimateContextTokens(fullCandidate) <= tokenBudget) {
+      selected.unshift(fullLine);
+      continue;
+    }
+    const fittedContent = fitTextToBudget(item.content, (candidateContent) => (
+      estimateContextTokens(renderTrailBlock([
+        formatTrailLine(item, index, candidateContent),
+        ...selected,
+      ], index)) <= tokenBudget
+    ));
+    if (fittedContent !== null) {
+      selected.unshift(formatTrailLine(item, index, fittedContent));
+      omittedCount = index;
+    } else {
+      omittedCount = index + 1;
+    }
+    break;
+  }
+  const rendered = renderTrailBlock(selected, omittedCount);
+  return estimateContextTokens(rendered) <= tokenBudget ? rendered : '';
+}
+
+function renderTaskAnchors(
+  anchors: CheckpointTaskAnchor[],
+  tokenBudget = CHECKPOINT_USER_HISTORY_TOKEN_CAP,
+): string {
+  if (anchors.length === 0 || tokenBudget <= 0) return '';
+  const render = (selected: CheckpointTaskAnchor[], omittedCount = 0) => {
+    const lines = selected.map((anchor, index) => (
       `${index + 1}. [eventId=${anchor.eventId}]\n${anchor.text}${formatAttachmentRefs(anchor.attachments)}`
-    )),
-    '</active-task-messages>',
-  ].join('\n');
+    ));
+    if (omittedCount > 0) {
+      lines.splice(
+        Math.min(1, lines.length),
+        0,
+        `……（中间 ${omittedCount} 条任务消息超过 60K Token 上限；原文可按 eventId 检索）……`,
+      );
+    }
+    return [
+      '<active-task-messages>',
+      '以下为当前业务 run 中被压缩的用户任务消息原文：',
+      ...lines,
+      '</active-task-messages>',
+    ].join('\n');
+  };
+  const full = render(anchors);
+  if (estimateContextTokens(full) <= tokenBudget) return full;
+
+  const first = anchors[0]!;
+  if (anchors.length === 1) {
+    const fittedText = fitTextToBudget(first.text, (candidateText) => (
+      estimateContextTokens(render([{ ...first, text: candidateText }])) <= tokenBudget
+    ));
+    return fittedText === null ? '' : render([{ ...first, text: fittedText }]);
+  }
+
+  // 超限时先确保“初始目标 + 最新纠正”都可见；最新短约束优先保留全文，
+  // 再把剩余预算分给首条和中间的最近消息。
+  const latest = anchors.at(-1)!;
+  const omittedMiddle = Math.max(0, anchors.length - 2);
+  const fittedFirstText = fitTextToBudget(first.text, (candidateText) => (
+    estimateContextTokens(render([{ ...first, text: candidateText }, latest], omittedMiddle)) <= tokenBudget
+  ));
+  let selected: CheckpointTaskAnchor[];
+  if (fittedFirstText !== null) {
+    selected = [{ ...first, text: fittedFirstText }, latest];
+  } else {
+    const firstReference = { ...first, text: excerptTextForBudget(first.text, 0) };
+    const fittedLatestText = fitTextToBudget(latest.text, (candidateText) => (
+      estimateContextTokens(render([firstReference, { ...latest, text: candidateText }], omittedMiddle)) <= tokenBudget
+    ));
+    if (fittedLatestText !== null) {
+      selected = [firstReference, { ...latest, text: fittedLatestText }];
+    } else {
+      const latestOnlyText = fitTextToBudget(latest.text, (candidateText) => (
+        estimateContextTokens(render([{ ...latest, text: candidateText }], anchors.length - 1)) <= tokenBudget
+      ));
+      if (latestOnlyText !== null) {
+        selected = [{ ...latest, text: latestOnlyText }];
+      } else {
+        const latestWithoutNotice = fitTextToBudget(latest.text, (candidateText) => (
+          estimateContextTokens(render([{ ...latest, text: candidateText }])) <= tokenBudget
+        ));
+        return latestWithoutNotice === null ? '' : render([{ ...latest, text: latestWithoutNotice }]);
+      }
+    }
+  }
+  if (selected.length < 2 || selected[0]!.text !== first.text || selected.at(-1)!.text !== latest.text) {
+    const rendered = render(selected, Math.max(0, anchors.length - selected.length));
+    return estimateContextTokens(rendered) <= tokenBudget ? rendered : '';
+  }
+
+  for (let index = anchors.length - 2; index >= 1; index -= 1) {
+    const anchor = anchors[index]!;
+    const candidate = [selected[0]!, anchor, ...selected.slice(1)];
+    if (estimateContextTokens(render(candidate, index - 1)) <= tokenBudget) {
+      selected = candidate;
+      continue;
+    }
+    const fittedText = fitTextToBudget(anchor.text, (candidateText) => (
+      estimateContextTokens(render([
+        selected[0]!,
+        { ...anchor, text: candidateText },
+        ...selected.slice(1),
+      ], index - 1)) <= tokenBudget
+    ));
+    if (fittedText !== null) selected.splice(1, 0, { ...anchor, text: fittedText });
+    break;
+  }
+  return render(selected, Math.max(0, anchors.length - selected.length));
 }
 
 /** 新 checkpoint 永久保留因果；只有未终态 source run 才激活续跑协议。 */
@@ -314,25 +488,40 @@ function formatCheckpointContext(
   trigger: 'manual' | 'threshold',
   checkpointId: string,
   sourceRunId: string | undefined,
+  memorySnapshot: string | undefined,
+  userHistoryTokenCap: number,
+  summaryTokenCap: number | undefined,
 ): string {
+  const boundedSummary = summaryTokenCap === undefined
+    ? summary
+    : fitTextToBudget(summary, (candidate) => estimateContextTokens(candidate) <= summaryTokenCap) ?? '';
   const taskAnchorIds = new Set(taskAnchors.map((anchor) => anchor.eventId));
   const sourceRunAttribute = sourceRunId ? ` sourceRunId="${sourceRunId}"` : '';
   const parts = [
     '<context-summary>',
     `<context-checkpoint version="1" id="${checkpointId}" state="${state}" trigger="${trigger}"${sourceRunAttribute}>`,
     '<checkpoint-summary>',
-    summary,
+    boundedSummary,
     '</checkpoint-summary>',
   ];
-  const anchors = renderTaskAnchors(taskAnchors);
+  if (memorySnapshot) parts.push('', '<checkpoint-memory-snapshot>', memorySnapshot, '</checkpoint-memory-snapshot>');
+  const trailItems = trail.filter((item) => !taskAnchorIds.has(item.eventId));
+  const anchors = renderTaskAnchors(
+    taskAnchors,
+    Math.max(0, userHistoryTokenCap - (trailItems.length > 0 ? 256 : 0)),
+  );
   if (anchors) parts.push('', anchors);
-  const trailBlock = renderUserMessageTrail(trail.filter((item) => !taskAnchorIds.has(item.eventId)));
+  const trailBudget = Math.max(
+    0,
+    userHistoryTokenCap - estimateContextTokens(anchors),
+  );
+  const trailBlock = renderUserMessageTrail(trailItems, trailBudget);
   if (trailBlock) parts.push('', trailBlock);
   if (state === 'active') {
     parts.push(
       '',
       '<resume-policy>',
-      '这是上下文维护检查点，不是新的用户请求。继续执行 source run 中尚未完成的任务，保留已完成操作和外部副作用，避免重复执行。恢复正常工具使用；不要向用户解释压缩、阈值或本协议，也不要要求用户发送“继续”。只有任务真正完成、确需用户输入或遇到不可恢复阻塞时才输出用户可见答复。',
+      '这是上下文维护检查点，不是新的用户请求。继续执行 source run 中尚未完成的任务，保留已完成操作和外部副作用，避免重复执行。恢复正常工具使用；若任务使用 TodoWrite 跟踪，优先依据摘要中的未完成事项重新调用 TodoWrite 同步业务步骤。不要向用户解释压缩、阈值或本协议，也不要要求用户发送“继续”。只有任务真正完成、确需用户输入或遇到不可恢复阻塞时才输出用户可见答复。',
       '</resume-policy>',
     );
   }
@@ -346,21 +535,41 @@ function formatCheckpointContext(
 }
 
 /** 存量 compaction 保持原投影格式。 */
-function formatCompactionContext(summary: string, trail: TrailItem[]): string {
+function formatCompactionContext(
+  summary: string,
+  trail: TrailItem[],
+  userHistoryTokenCap = CHECKPOINT_USER_HISTORY_TOKEN_CAP,
+  summaryTokenCap?: number,
+): string {
+  const boundedSummary = summaryTokenCap === undefined
+    ? summary
+    : fitTextToBudget(summary, (candidate) => estimateContextTokens(candidate) <= summaryTokenCap) ?? '';
   const parts = [
     '<context-summary>',
     '以下是本会话较早历史的压缩摘要（原始消息已被压缩以节省 context）：',
     '',
-    summary,
+    boundedSummary,
     '</context-summary>',
   ];
-  const trailBlock = renderUserMessageTrail(trail);
+  const trailBlock = renderUserMessageTrail(trail, userHistoryTokenCap);
   if (trailBlock) parts.push('', trailBlock);
   parts.push(
     '',
     '提示：本会话完整历史（含每次工具调用的原始输入输出）仍完整保留。仅当以上摘要与消息摘录不足时再检索：SessionContext(action="search") 按关键词搜索历史事件；SessionContext(action="trace") 按 toolCallId 获取某次工具调用的完整记录。',
   );
   return parts.join('\n');
+}
+
+function collapseMemoryContexts(events: PlatformEvent[], excludeMemoryContext: boolean): PlatformEvent[] {
+  if (excludeMemoryContext) return events.filter((event) => event.type !== 'memory_context');
+  let latestMemoryIndex = -1;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (events[index]!.type === 'memory_context') {
+      latestMemoryIndex = index;
+      break;
+    }
+  }
+  return events.filter((event, index) => event.type !== 'memory_context' || index === latestMemoryIndex);
 }
 
 /**
@@ -370,49 +579,105 @@ function formatCompactionContext(summary: string, trail: TrailItem[]): string {
  */
 export function buildContextProjection(allEvents: PlatformEvent[], options: ContextProjectionOptions): ContextProjection {
   const policy = options.policy ?? { type: 'full_replay' };
-  const {
-    effectiveEvents: contextEvents,
-    recoveryMessages,
-  } = applyContextRewinds(allEvents.filter((event) => !isInternalModelDiagnosticEvent(event)));
-  const { effectiveEvents: events, summaryMessages: compactionMessages } = applyCompaction(contextEvents);
+  const visibleEvents = allEvents.filter((event) => !isInternalModelDiagnosticEvent(event));
+  // recovery notice 来自完整日志，但 compaction 必须先在原始事件序列上解析 cutoff：切点可能
+  // 恰好是稍后被 context_rewind 排除的事件。切分后再应用 rewind，避免 raw tail 被误吞。
+  const { effectiveEvents: rewoundVisibleEvents, recoveryMessages } = applyContextRewinds(visibleEvents);
+  const { effectiveEvents: compactedEvents, summaryMessages: compactionMessages } = applyCompaction(visibleEvents, options);
+  const { effectiveEvents: rewoundEvents } = applyContextRewinds(compactedEvents);
+  // cutoffEventId 可能恰好指向 memory_context，必须先完成 compaction 切分再折叠 snapshot，
+  // 否则找不到切点会错误退化为“压缩到 compaction 事件自身”。
+  const events = collapseMemoryContexts(rewoundEvents, options.excludeMemoryContext === true);
   const summaryMessages = [...recoveryMessages, ...compactionMessages];
   const withRestoredMcpTools = (
     prefix: ModelChatMessage[],
     replayMessages: ModelChatMessage[],
+    selectedEvents: PlatformEvent[],
   ): ModelChatMessage[] => {
-    const present = new Set(
-      replayMessages
-        .filter((message): message is Extract<ModelChatMessage, { role: 'additional_tools' }> => (
-          message.role === 'additional_tools'
-        ))
-        .flatMap((message) => message.tools.map((tool) => tool.name)),
-    );
+    // 连续压缩只需要当前请求已提供的 tools，不能从完整历史无上限恢复旧 MCP schema。
+    if (options.collapseCheckpointRawTail) return [...prefix, ...replayMessages];
+    const selectedToolResultIds = new Set(selectedEvents.flatMap((event) => (
+      event.type === 'tool_result' ? [event.toolCallId] : []
+    )));
+    const mcpNames = new Set(rewoundVisibleEvents.flatMap((event) => (
+      event.type === 'mcp_tools_loaded' ? event.tools.map((tool) => tool.name) : []
+    )));
+    const requiredNames = new Set(rewoundVisibleEvents.flatMap((event) => (
+      event.type === 'assistant_tool_calls'
+        ? event.toolCalls.filter((call) => mcpNames.has(call.name) && (
+          selectedEvents.includes(event) || selectedToolResultIds.has(call.id)
+        )).map((call) => call.name)
+        : []
+    )));
+    const replayWithoutMcpSchemas = replayMessages.filter((message) => message.role !== 'additional_tools');
     const restored = new Map<string, Extract<ModelChatMessage, { role: 'additional_tools' }>['tools'][number]>();
-    for (const event of contextEvents) {
+    for (const event of rewoundVisibleEvents) {
       if (event.type !== 'mcp_tools_loaded') continue;
       for (const tool of event.tools) {
-        if (!present.has(tool.name)) restored.set(tool.name, tool);
+        if (requiredNames.has(tool.name)) restored.set(tool.name, tool);
       }
     }
-    return restored.size > 0
-      ? [...prefix, { role: 'additional_tools', tools: [...restored.values()] }, ...replayMessages]
-      : [...prefix, ...replayMessages];
+    const checkpointTarget = visibleEvents.slice().reverse().find((event) => (
+      event.type === 'compaction' && event.checkpoint
+    ));
+    const checkpointBudget = checkpointTarget?.type === 'compaction'
+      ? checkpointTarget.checkpoint
+      : undefined;
+    let remainingTokens = checkpointBudget === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.max(
+        0,
+        checkpointBudget.targetTokens - checkpointBudget.fixedTokens
+          - estimateContextTokens([prefix, replayWithoutMcpSchemas]) - 64,
+      );
+    const selectedSchemaNames = new Set<string>();
+    for (const message of replayWithoutMcpSchemas) {
+      if (message.role !== 'assistant' || !message.tool_calls) continue;
+      const batchNames = [...new Set(message.tool_calls.map((call) => call.function.name).filter((name) => (
+        requiredNames.has(name) && !selectedSchemaNames.has(name)
+      )))];
+      const batchTools = batchNames.map((name) => restored.get(name)).filter((tool) => tool !== undefined);
+      if (batchTools.length !== batchNames.length) continue;
+      const batchTokens = estimateContextTokens(batchTools);
+      if (batchTokens > remainingTokens) continue;
+      remainingTokens -= batchTokens;
+      for (const name of batchNames) selectedSchemaNames.add(name);
+    }
+    const boundedTools = [...selectedSchemaNames].map((name) => restored.get(name)!);
+    const availableNames = new Set(boundedTools.map((tool) => tool.name));
+    const omittedNames = new Set([...requiredNames].filter((name) => !availableNames.has(name)));
+    const omittedCallIds = new Set<string>();
+    const boundedReplay = replayWithoutMcpSchemas.filter((message) => {
+      if (message.role === 'assistant' && message.tool_calls?.some((call) => (
+        omittedNames.has(call.function.name)
+      ))) {
+        for (const call of message.tool_calls) omittedCallIds.add(call.id);
+        return false;
+      }
+      return message.role !== 'tool' || !omittedCallIds.has(message.tool_call_id);
+    });
+    return boundedTools.length > 0
+      ? [...prefix, { role: 'additional_tools', tools: boundedTools }, ...boundedReplay]
+      : [...prefix, ...boundedReplay];
   };
   switch (policy.type) {
     case 'full_replay':
       {
         const replayMessages = buildChatMessagesFromEvents(events);
       return {
-        messages: withRestoredMcpTools(summaryMessages, replayMessages),
+        messages: withRestoredMcpTools(summaryMessages, replayMessages, events),
         policy: policy.type,
         selectedEvents: events,
       };
       }
     case 'recent_window': {
-      const selectedEvents = lastN(events, policy.recentEvents ?? DEFAULT_RECENT_EVENTS);
+      const selectedEvents = expandToolInteractionSelection(
+        lastN(events, policy.recentEvents ?? DEFAULT_RECENT_EVENTS),
+        events,
+      );
       const replayMessages = buildChatMessagesFromEvents(selectedEvents);
       return {
-        messages: withRestoredMcpTools(summaryMessages, replayMessages),
+        messages: withRestoredMcpTools(summaryMessages, replayMessages, selectedEvents),
         policy: policy.type,
         selectedEvents,
       };
@@ -420,10 +685,13 @@ export function buildContextProjection(allEvents: PlatformEvent[], options: Cont
     case 'manual_slice': {
       const start = clampIndex(policy.start ?? 0, events.length);
       const end = clampIndex(policy.end ?? events.length, events.length);
-      const selectedEvents = events.slice(Math.min(start, end), Math.max(start, end));
+      const selectedEvents = expandToolInteractionSelection(
+        events.slice(Math.min(start, end), Math.max(start, end)),
+        events,
+      );
       const replayMessages = buildChatMessagesFromEvents(selectedEvents);
       return {
-        messages: withRestoredMcpTools(summaryMessages, replayMessages),
+        messages: withRestoredMcpTools(summaryMessages, replayMessages, selectedEvents),
         policy: policy.type,
         selectedEvents,
       };
@@ -431,18 +699,51 @@ export function buildContextProjection(allEvents: PlatformEvent[], options: Cont
     case 'retrieval_augmented': {
       const matches = searchEvents(events, policy.query, policy.maxMatches ?? DEFAULT_MAX_MATCHES);
       const recent = lastN(events, policy.recentEvents ?? DEFAULT_RECENT_EVENTS);
-      const selectedEvents = uniqueEvents([...matches, ...recent]);
+      const selectedEvents = expandToolInteractionSelection(
+        uniqueEvents([...matches, ...recent]),
+        events,
+      );
       const retrievalMessage = matches.length > 0
         ? [{ role: 'user' as const, content: formatRetrievalMessage(policy.query, matches) }]
         : [];
       const replayMessages = buildChatMessagesFromEvents(selectedEvents);
       return {
-        messages: withRestoredMcpTools([...summaryMessages, ...retrievalMessage], replayMessages),
+        messages: withRestoredMcpTools([...summaryMessages, ...retrievalMessage], replayMessages, selectedEvents),
         policy: policy.type,
         selectedEvents,
       };
     }
   }
+}
+
+function expandToolInteractionSelection(
+  selectedEvents: PlatformEvent[],
+  allEvents: PlatformEvent[],
+): PlatformEvent[] {
+  const selectedIds = new Set(selectedEvents.map((event) => event.id));
+  const selectedCallIds = new Set(selectedEvents.flatMap((event) => (
+    event.type === 'tool_result'
+      ? [event.toolCallId]
+      : event.type === 'assistant_tool_calls' ? event.toolCalls.map((call) => call.id) : []
+  )));
+  for (const [index, event] of allEvents.entries()) {
+    if (event.type !== 'assistant_tool_calls') continue;
+    const callIds = event.toolCalls.map((call) => call.id);
+    if (!callIds.some((id) => selectedCallIds.has(id))) continue;
+    selectedIds.add(event.id);
+    for (const candidate of allEvents) {
+      if (candidate.type === 'tool_result' && callIds.includes(candidate.toolCallId)) {
+        selectedIds.add(candidate.id);
+      }
+    }
+    for (let thinkingIndex = index - 1; thinkingIndex >= 0; thinkingIndex -= 1) {
+      const candidate = allEvents[thinkingIndex]!;
+      if (candidate.type === 'mcp_tools_loaded' && candidate.runId === event.runId) continue;
+      if (candidate.type !== 'assistant_thinking' || candidate.runId !== event.runId) break;
+      selectedIds.add(candidate.id);
+    }
+  }
+  return allEvents.filter((event) => selectedIds.has(event.id));
 }
 
 function formatRetrievalMessage(query: string, matches: PlatformEvent[]): string {

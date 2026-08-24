@@ -18,6 +18,8 @@ import type { RuntimeSessionRecord, SessionCatalog } from '../runtime/sessionCat
 import type { PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 import { MemoryEventStore, MemorySessionCatalog } from './runtimeWake.testHelpers.js';
 
+const TENANT_ID = 'pantheon';
+
 describe('wakeRuntimeSession', () => {
   it('replays the original user message when it was not persisted as user_message yet', async () => {
     const session: RuntimeSessionRecord = {
@@ -53,9 +55,9 @@ describe('wakeRuntimeSession', () => {
       sessionId: 'session-replay-original',
       runId: 'run-replay-original',
       content: 'inspect disk usage',
-    });
+    }, { tenantId: TENANT_ID });
 
-    const decision = resolveWakePrompt(run, await eventStore.list(session.sessionId), session);
+    const decision = resolveWakePrompt(run, await eventStore.list(TENANT_ID, session.sessionId), session);
 
     expect(decision.recordUserMessage).toBe(true);
     expect(decision.message.content).toBe('inspect disk usage');
@@ -95,9 +97,9 @@ describe('wakeRuntimeSession', () => {
       sessionId: 'session-hidden-continue',
       runId: 'run-hidden-continue',
       content: 'inspect container boundary',
-    });
+    }, { tenantId: TENANT_ID });
 
-    const decision = resolveWakePrompt(run, await eventStore.list(session.sessionId), session);
+    const decision = resolveWakePrompt(run, await eventStore.list(TENANT_ID, session.sessionId), session);
 
     expect(decision.recordUserMessage).toBe(false);
     expect(decision.message.content).toBe(HIDDEN_WAKE_CONTINUE_PROMPT);
@@ -142,13 +144,13 @@ describe('wakeRuntimeSession', () => {
       sessionId: session.sessionId,
       runId: run.runId,
       content: '继续处理长会话优化',
-    });
+    }, { tenantId: TENANT_ID });
     await eventStore.append({
       type: 'user_message',
       sessionId: session.sessionId,
       runId: run.runId,
       content: '继续处理长会话优化',
-    });
+    }, { tenantId: TENANT_ID });
     // 一个体积大、与 wake 判断无关的事件：includeTypes 过滤应把它挡在 Node 之外
     await eventStore.append({
       type: 'tool_result',
@@ -156,10 +158,10 @@ describe('wakeRuntimeSession', () => {
       runId: run.runId,
       toolCallId: 'call-big',
       content: 'x'.repeat(1024),
-    } as PlatformEventInput);
+    } as PlatformEventInput, { tenantId: TENANT_ID });
 
     // 与生产 wake 路径完全一致的加载方式（带 includeTypes 过滤）
-    const events = await eventStore.list(session.sessionId, { includeTypes: [...WAKE_EVENT_LIST_TYPES] });
+    const events = await eventStore.list(TENANT_ID, session.sessionId, { includeTypes: [...WAKE_EVENT_LIST_TYPES] });
 
     expect(events.some((event) => event.type === 'tool_result')).toBe(false);
     // resolveWakePrompt 必须仍能看到已持久化的 user_message，否则 drain handoff 后会重复重放
@@ -206,9 +208,9 @@ describe('wakeRuntimeSession', () => {
       runId: 'target-run',
       content: '插话消息',
       interjectionSourceRunId: run.runId,
-    });
+    }, { tenantId: TENANT_ID });
 
-    const decision = resolveWakePrompt(run, await eventStore.list(session.sessionId), session);
+    const decision = resolveWakePrompt(run, await eventStore.list(TENANT_ID, session.sessionId), session);
 
     expect(decision.recordUserMessage).toBe(false);
     // 2026-08-04 BUG-4：插话回退 run（user_message 已 drain 但未 claim）不再用
@@ -229,6 +231,7 @@ describe('wakeRuntimeSession', () => {
     let current: RunRecord = {
       runId: 'target-steering-retry',
       sessionId: 'session-steering-retry',
+      tenantId: TENANT_ID,
       status: 'running',
       requestedAt: now,
       updatedAt: now,
@@ -273,6 +276,7 @@ describe('wakeRuntimeSession', () => {
       runId: 'target-steering-recovery',
       sessionId: 'session-steering-recovery',
       userId: 'user-1',
+      tenantId: TENANT_ID,
       status: 'running',
       requestedAt: now,
       updatedAt: now,
@@ -292,7 +296,7 @@ describe('wakeRuntimeSession', () => {
       }),
     } as unknown as RunStore;
     const innerEventStore = new MemoryEventStore();
-    const eventStore = new RunStateTrackingEventStore(innerEventStore, runStore, 'tenant-1');
+    const eventStore = new RunStateTrackingEventStore(innerEventStore, runStore, TENANT_ID);
     const markSessionStatus = vi.fn(async () => undefined);
     const releases: Array<{ status?: RunStatus; reason?: string }> = [];
     const outbound: string[] = [];
@@ -357,7 +361,7 @@ describe('wakeRuntimeSession', () => {
       sessionId: 'session-1',
       runId: 'run-1',
       reason: 'test_cancel',
-    });
+    }, { tenantId: 'wain-test' });
     const releases: Array<{ status?: RunStatus; reason?: string }> = [];
     const lease: RuntimeWakeLease = {
       runId: 'run-1',
@@ -394,7 +398,7 @@ describe('wakeRuntimeSession', () => {
       'run_state_changed',
     ]);
     expect(eventStore.appendContexts.map((ctx) => ctx?.tenantId)).toEqual([
-      undefined,
+      'wain-test',
       'wain-test',
     ]);
   });
@@ -492,7 +496,7 @@ describe('wakeRuntimeSession', () => {
       sessionId: 'session-cancel-prov',
       runId: 'run-cancel',
       reason: 'test_cancel',
-    });
+    }, { tenantId: TENANT_ID });
     const lease: RuntimeWakeLease = {
       runId: 'run-cancel',
       renew: async () => {},
@@ -555,7 +559,7 @@ describe('wakeRuntimeSession', () => {
       toolId: 'AskUserQuestion',
       toolName: 'AskUserQuestion',
       questions: [{ question: 'Pick one', header: 'Choice', options: [], multiSelect: false }],
-    });
+    }, { tenantId: TENANT_ID });
     const releases: Array<{ status?: RunStatus; reason?: string }> = [];
     const lease: RuntimeWakeLease = {
       runId: 'run-ask',
@@ -615,7 +619,7 @@ describe('wakeRuntimeSession', () => {
       displayName: 'Run Shell',
       input: { command: 'pwd' },
       executionTarget: 'server-local',
-    });
+    }, { tenantId: TENANT_ID });
     await eventStore.append({
       type: 'interaction_resolved',
       sessionId: 'session-approval-2',
@@ -624,7 +628,7 @@ describe('wakeRuntimeSession', () => {
       interactionType: 'approval',
       userId: 'user-1',
       response: { allow: true },
-    });
+    }, { tenantId: TENANT_ID });
     const releases: Array<{ status?: RunStatus; reason?: string }> = [];
     const lease: RuntimeWakeLease = {
       runId: 'run-approval-2',

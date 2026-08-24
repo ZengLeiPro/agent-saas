@@ -35,7 +35,13 @@ export interface ForegroundToolRecoveryOptions {
 export async function reconcileInterruptedForegroundToolCalls(
   options: ForegroundToolRecoveryOptions,
 ): Promise<number> {
-  const events = await options.eventStore.list(options.parentSessionId);
+  const parentSession = await options.sessionCatalog.get(options.parentSessionId);
+  const tenantId = parentSession?.tenantId?.trim();
+  if (!tenantId) {
+    throw new Error(`Foreground tool recovery tenant is missing for session ${options.parentSessionId}`);
+  }
+  const eventContext = { tenantId };
+  const events = await options.eventStore.list(tenantId, options.parentSessionId);
   const replay = buildRuntimeReplayState(events, [], options.parentSessionId);
   let recovered = 0;
 
@@ -51,7 +57,7 @@ export async function reconcileInterruptedForegroundToolCalls(
           approvalId,
           decision: 'rejected',
           message: `源 run 已终止（${sourceRun.status}），自动拒绝遗留审批`,
-        });
+        }, eventContext);
         options.logger?.warn(`Rejected stale approval ${approvalId} from terminal run ${state.runId}`);
         recovered += 1;
         continue;
@@ -141,9 +147,9 @@ export async function reconcileInterruptedForegroundToolCalls(
     });
 
     if (options.eventStore.appendBatch) {
-      await options.eventStore.appendBatch(terminalEvents);
+      await options.eventStore.appendBatch(terminalEvents, eventContext);
     } else {
-      for (const event of terminalEvents) await options.eventStore.append(event);
+      for (const event of terminalEvents) await options.eventStore.append(event, eventContext);
     }
     options.logger?.warn(
       `Recovered interrupted foreground ${state.toolName} call ${state.toolCallId}`

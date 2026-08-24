@@ -12,6 +12,7 @@ import {
   type ToolResult,
   type ToolRuntime,
 } from '../agent/toolRuntime.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
@@ -100,11 +101,11 @@ describe('RawAgentLoop server-remote hand_failure 分类', () => {
     const cwd = await mkdtemp(join(tmpdir(), `raw-loop-hand-${sessionSuffix}-`));
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const loop = new RawAgentLoop({
       modelAdapter: new WriteThenTextAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, `session-hand-${sessionSuffix}`),
+      approvalStore: new EventBackedApprovalStore(eventStore, `session-hand-${sessionSuffix}`, DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new ThrowingToolRuntime(message),
     });
@@ -161,11 +162,11 @@ describe('RawAgentLoop server-remote hand_failure 分类', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-hand-unknown-'));
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const loop = new RawAgentLoop({
       modelAdapter: new WriteThenTextAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-hand-unknown'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-hand-unknown', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new ThrowingToolRuntime('some opaque backend explosion'),
     });
@@ -199,11 +200,11 @@ describe('RawAgentLoop server-remote hand_failure 分类', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-hand-local-'));
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const loop = new RawAgentLoop({
       modelAdapter: new WriteThenTextAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-hand-local'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-hand-local', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new ThrowingToolRuntime('unauthorized 401'),
     });
@@ -242,12 +243,12 @@ describe('RawAgentLoop maxTurns 上限', () => {
     const { writeFile } = await import('node:fs/promises');
     await writeFile(join(cwd, 'x.txt'), 'seed', 'utf-8');
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const { PlatformToolRuntime } = await import('../agent/toolRuntime.js');
     const loop = new RawAgentLoop({
       modelAdapter: new AlwaysToolCallAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-maxturns'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-maxturns', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
     });

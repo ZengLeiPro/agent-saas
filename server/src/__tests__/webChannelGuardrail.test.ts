@@ -176,7 +176,7 @@ describe('WebChannel 专职 Agent 门禁', () => {
     const channel = new WebChannel({
       agentCwd: tmp,
       executionConfig: createExecutionConfig(),
-      runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+      runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath), WAIN_USER.tenantId),
       orgAgentStore,
       guardrailEventStore,
       getGuardrailModelConfigs: () => [{ model: 'guard-main', connection: { apiKey: 'test-key' } }],

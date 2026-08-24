@@ -230,6 +230,20 @@ export interface ResumeInteractionInput {
   maxTurns: number;
 }
 
+function requireEventTenantId(context: RunContext): string {
+  const candidates = [
+    context.tenantId,
+    context.channelContext.sessionOwner?.tenantId,
+    context.channelContext.user?.tenantId,
+  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+  const tenantId = candidates[0]?.trim();
+  if (!tenantId) throw new Error(`RawAgentLoop tenant context is missing for session ${context.sessionId}`);
+  if (candidates.some((candidate) => candidate.trim() !== tenantId)) {
+    throw new Error(`RawAgentLoop tenant context mismatch for session ${context.sessionId}`);
+  }
+  return tenantId;
+}
+
 export class RawAgentLoop implements AgentLoop {
   private readonly modelAdapter: ModelAdapter;
   private readonly eventStore: EventStore;
@@ -255,6 +269,7 @@ export class RawAgentLoop implements AgentLoop {
   private forcedSynthesisPrompt = CONTEXT_SYNTHESIS_PROMPT;
   private forcedSynthesisPromptAppended = false;
   private forcedSynthesisAllowsSessionRecovery = false;
+  private activeTenantId?: string;
 
   constructor(options: RawAgentLoopOptions) {
     this.modelAdapter = options.modelAdapter;
@@ -628,6 +643,7 @@ export class RawAgentLoop implements AgentLoop {
 
   async *run(input: RunInput, context: RunContext): AsyncIterable<OutboundEvent> {
     context = withDurableRunCancellation(context, this.runStore);
+    this.activeTenantId = requireEventTenantId(context);
     const workspace = this.workspaceProvider.resolve(context.channelContext, {
       cwd: context.cwd,
       sessionId: context.sessionId,
@@ -656,11 +672,11 @@ export class RawAgentLoop implements AgentLoop {
     };
     const sourceEvents = context.replaySourceSessionId
       ? closeUnfinishedReplayToolCalls(
-          await this.eventStore.list(context.replaySourceSessionId, replayListOptions),
+          await this.eventStore.list(requireEventTenantId(context), context.replaySourceSessionId, replayListOptions),
           context.replaySourceSessionId,
         )
       : [];
-    const loadCurrentEvents = () => this.eventStore.list(context.sessionId, replayListOptions);
+    const loadCurrentEvents = () => this.eventStore.list(requireEventTenantId(context), context.sessionId, replayListOptions);
     const combineReplayEvents = (currentEvents: PlatformEvent[]) => (
       context.replaySourceSessionId ? [...sourceEvents, ...currentEvents] : currentEvents
     );
@@ -873,7 +889,7 @@ export class RawAgentLoop implements AgentLoop {
               ...(interjection.visionAnalysis ? { visionAnalysis: interjection.visionAnalysis } : {}),
               interjectionSourceRunId: interjection.sourceRunId,
               ...(interjection.clientMsgId ? { clientMsgId: interjection.clientMsgId } : {}),
-            });
+            }, { tenantId: requireEventTenantId(context) });
           } catch (error) {
             requestSteeringRecoveryHandoff('steering_reserved_event_append_failed');
             logger.warn(
@@ -1862,7 +1878,8 @@ export class RawAgentLoop implements AgentLoop {
    * 文本通道由 resultText 收到简短确认。若清接力链失败，checkpoint 不落库。
    */
   async *compact(input: CompactInput, context: RunContext): AsyncIterable<OutboundEvent> {
-    const priorEvents = await this.eventStore.list(context.sessionId, {
+    this.activeTenantId = requireEventTenantId(context);
+    const priorEvents = await this.eventStore.list(requireEventTenantId(context), context.sessionId, {
       excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
       replayMode: 'bounded',
     });
@@ -2134,7 +2151,7 @@ export class RawAgentLoop implements AgentLoop {
 
   private async assertNoOpenToolCallBatchesBeforeModel(sessionId: string): Promise<void> {
     const replayState = buildRuntimeReplayState(
-      await this.eventStore.list(sessionId, {
+      await this.eventStore.list(this.requireActiveTenantId(), sessionId, {
         excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
         replayMode: 'bounded',
       }),
@@ -2353,13 +2370,14 @@ export class RawAgentLoop implements AgentLoop {
 
   async *resumeApproval(input: ResumeApprovalInput, context: RunContext): AsyncIterable<OutboundEvent> {
     context = withDurableRunCancellation(context, this.runStore);
+    this.activeTenantId = requireEventTenantId(context);
     const approval = await this.approvalStore.get(input.approvalId);
     if (!approval) {
       yield { type: 'error', error: `approval not found: ${input.approvalId}` };
       return;
     }
 
-    const priorEvents = await this.eventStore.list(approval.sessionId, { replayMode: 'bounded' });
+    const priorEvents = await this.eventStore.list(requireEventTenantId(context), approval.sessionId, { replayMode: 'bounded' });
     const approvals = await this.approvalStore.list(approval.sessionId);
     const replayState = buildRuntimeReplayState(priorEvents, approvals, approval.sessionId);
     const toolCallState = replayState.toolCallsById.get(approval.toolCallId);
@@ -2476,7 +2494,7 @@ export class RawAgentLoop implements AgentLoop {
       throw err;
     }
 
-    const replayEvents = await this.eventStore.list(approval.sessionId, { replayMode: 'bounded' });
+    const replayEvents = await this.eventStore.list(requireEventTenantId(context), approval.sessionId, { replayMode: 'bounded' });
     const contextProjection = buildContextProjection(replayEvents, {
       sessionId: approval.sessionId,
       runId: resumeContext.runId,
@@ -2503,7 +2521,8 @@ export class RawAgentLoop implements AgentLoop {
 
   async *resumeInteraction(input: ResumeInteractionInput, context: RunContext): AsyncIterable<OutboundEvent> {
     context = withDurableRunCancellation(context, this.runStore);
-    const priorEvents = await this.eventStore.list(context.sessionId, { replayMode: 'bounded' });
+    this.activeTenantId = requireEventTenantId(context);
+    const priorEvents = await this.eventStore.list(requireEventTenantId(context), context.sessionId, { replayMode: 'bounded' });
     const request = [...priorEvents].reverse().find((event): event is Extract<PlatformEvent, { type: 'interaction_requested' }> => (
       event.type === 'interaction_requested'
       && event.sessionId === context.sessionId
@@ -2623,7 +2642,7 @@ export class RawAgentLoop implements AgentLoop {
       throw err;
     }
 
-    const replayEvents = await this.eventStore.list(context.sessionId, { replayMode: 'bounded' });
+    const replayEvents = await this.eventStore.list(requireEventTenantId(context), context.sessionId, { replayMode: 'bounded' });
     const contextProjection = buildContextProjection(replayEvents, {
       sessionId: context.sessionId,
       runId: context.runId,
@@ -2901,7 +2920,7 @@ export class RawAgentLoop implements AgentLoop {
     const startedAt = Date.now();
     const invocationId = `${args.context.runId}:${args.call.id}`;
     const executionAudit = createExecutionAuditRecorder();
-    const streamBatcher = new StreamEventBatcher(this.eventStore, this.streamEventBatch);
+    const streamBatcher = new StreamEventBatcher(this.eventStore, this.streamEventBatch, requireEventTenantId(args.context));
     const streamSummary = new ToolStreamSummaryBuilder();
     const hooks = args.baseToolContext.hooks?.onInteraction || args.descriptor.name !== 'AskUserQuestion'
       ? args.baseToolContext.hooks
@@ -3324,7 +3343,7 @@ export class RawAgentLoop implements AgentLoop {
         if (preflight.shouldCompactBeforeRequest) {
           let checkpointSucceeded = false;
           if (args.context.evaluateAutoCompaction && !autoCompactionSuppressed) {
-            const checkpointEvents = await this.eventStore.list(args.context.sessionId, {
+            const checkpointEvents = await this.eventStore.list(requireEventTenantId(args.context), args.context.sessionId, {
               excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
               replayMode: 'bounded',
             });
@@ -3347,7 +3366,7 @@ export class RawAgentLoop implements AgentLoop {
                 throw reason instanceof Error ? reason : new Error(String(reason ?? 'run aborted'));
               }
               if (outcome.status === 'compacted') {
-                const compactedEvents = await this.eventStore.list(args.context.sessionId, {
+                const compactedEvents = await this.eventStore.list(requireEventTenantId(args.context), args.context.sessionId, {
                   excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
                   replayMode: 'bounded',
                 });
@@ -3885,7 +3904,7 @@ export class RawAgentLoop implements AgentLoop {
     instructions: string;
     tools: ReturnType<typeof toModelToolDefinition>[];
   }): Promise<{ messages: ModelChatMessage[]; replayEvents: PlatformEvent[] } | null> {
-    const allEvents = await this.eventStore.list(args.context.sessionId, { replayMode: 'bounded' });
+    const allEvents = await this.eventStore.list(requireEventTenantId(args.context), args.context.sessionId, { replayMode: 'bounded' });
     if (allEvents.some((event) => event.type === 'context_rewind' && event.runId === args.context.runId)) {
       return null;
     }
@@ -3927,7 +3946,7 @@ export class RawAgentLoop implements AgentLoop {
     ]);
     await this.clearResponseRelayState(args.context.sessionId, 'context rewind');
 
-    const replayEvents = await this.eventStore.list(args.context.sessionId, {
+    const replayEvents = await this.eventStore.list(requireEventTenantId(args.context), args.context.sessionId, {
       excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
       replayMode: 'bounded',
     });
@@ -3951,17 +3970,23 @@ export class RawAgentLoop implements AgentLoop {
 
   private async appendBatch(events: PlatformEventInput[]): Promise<void> {
     let storedEvents: PlatformEvent[];
+    const ctx = { tenantId: this.requireActiveTenantId() };
     if (this.eventStore.appendBatch) {
-      storedEvents = await this.eventStore.appendBatch(events);
+      storedEvents = await this.eventStore.appendBatch(events, ctx);
     } else {
       storedEvents = [];
-      for (const event of events) storedEvents.push(await this.eventStore.append(event));
+      for (const event of events) storedEvents.push(await this.eventStore.append(event, ctx));
     }
     for (const stored of storedEvents) await this.transcriptProjection.project(stored);
   }
 
   private async append(event: Parameters<EventStore['append']>[0]): Promise<void> {
-    const stored = await this.eventStore.append(event);
+    const stored = await this.eventStore.append(event, { tenantId: this.requireActiveTenantId() });
     await this.transcriptProjection.project(stored);
+  }
+
+  private requireActiveTenantId(): string {
+    if (!this.activeTenantId) throw new Error('RawAgentLoop tenant context is not active');
+    return this.activeTenantId;
   }
 }

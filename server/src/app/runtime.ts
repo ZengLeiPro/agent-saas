@@ -1810,7 +1810,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       appendPlatformEvent: (
         event: import('../runtime/types.js').PlatformEventInput,
         ctx?: import('../runtime/types.js').EventAppendContext,
-      ) => pgEventStore.append(event, ctx),
+      ) => {
+        if (!ctx?.tenantId) throw new Error(`PG platform event tenant is missing for session ${event.sessionId}`);
+        return pgEventStore.append(event, ctx);
+      },
     } : {}),
     tenantRemoteHands: () => config.tenantRemoteHands?.hands,
     secretVault,
@@ -2301,12 +2304,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         groupId: string;
       }) => {
         const tenantId = userStore?.findById(event.userId)?.tenantId;
+        if (!tenantId) throw new Error(`Cron session grouping tenant is missing for user ${event.userId}`);
         await pgEventStore.append({
           type: 'session_group_changed',
           sessionId: event.sessionId,
           userId: event.userId,
           groupId: event.groupId,
-        }, tenantId ? { tenantId } : undefined);
+        }, { tenantId });
       },
     } : {}),
     userStore,

@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ToolExecutionError } from '../agent/toolPresentationBuilder.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import {
   runShellToolDescriptor,
   type AuthorizedToolCall,
@@ -94,11 +95,11 @@ async function runFailing(error: unknown, suffix: string): Promise<{
   const cwd = await mkdtemp(join(tmpdir(), `tool-failure-${suffix}-`));
   const eventPath = join(cwd, 'session.runtime-events.jsonl');
   const transcriptPath = join(cwd, 'session.jsonl');
-  const eventStore = new FileEventStore(eventPath);
+  const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
   const loop = new RawAgentLoop({
     modelAdapter: new ShellThenTextAdapter(),
     eventStore,
-    approvalStore: new EventBackedApprovalStore(eventStore, `session-fail-${suffix}`),
+    approvalStore: new EventBackedApprovalStore(eventStore, `session-fail-${suffix}`, DEFAULT_TENANT_ID),
     transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
     toolRuntime: new FailingToolRuntime(error),
   });

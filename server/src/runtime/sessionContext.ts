@@ -54,13 +54,16 @@ export interface ToolTraceReadOptions {
  * every method reads the append-only EventStore source of truth and returns raw PlatformEvents.
  */
 export class SessionContextService {
-  constructor(private readonly eventStore: EventStore) {}
+  constructor(
+    private readonly eventStore: EventStore,
+    private readonly tenantId: string,
+  ) {}
 
   async getEvents(sessionId: string, opts: EventQuery = {}): Promise<EventListPage> {
     if (isInternalDiagnosticType(opts.type)) return { events: [], hasMore: false };
     const limit = clampLimit(opts.limit, DEFAULT_LIMIT, MAX_LIMIT);
     if (this.eventStore.listPage) {
-      const page = await this.eventStore.listPage(sessionId, {
+      const page = await this.eventStore.listPage(this.tenantId, sessionId, {
         afterCursor: opts.afterCursor,
         limit,
         ...(opts.runId ? { runId: opts.runId } : {}),
@@ -70,17 +73,17 @@ export class SessionContextService {
       return { ...page, events: page.events.filter((event) => !isInternalModelDiagnosticEvent(event)) };
     }
 
-    const all = await this.eventStore.list(sessionId);
+    const all = await this.eventStore.list(this.tenantId, sessionId);
     const filtered = filterEvents(all, opts).filter((event) => !isInternalModelDiagnosticEvent(event));
     return fallbackPage(filtered, opts.afterCursor, limit);
   }
 
   async getEventsAround(sessionId: string, eventId: string, before: number, after: number): Promise<PlatformEvent[]> {
     if (this.eventStore.listAround) {
-      return (await this.eventStore.listAround(sessionId, eventId, { before, after }))
+      return (await this.eventStore.listAround(this.tenantId, sessionId, eventId, { before, after }))
         .filter((event) => !isInternalModelDiagnosticEvent(event));
     }
-    const events = await this.eventStore.list(sessionId);
+    const events = await this.eventStore.list(this.tenantId, sessionId);
     const index = events.findIndex((event) => event.id === eventId);
     if (index < 0) return [];
     const start = Math.max(0, index - Math.max(0, before));
@@ -90,17 +93,17 @@ export class SessionContextService {
 
   async getRunEvents(sessionId: string, runId: string): Promise<PlatformEvent[]> {
     if (this.eventStore.listByRun) {
-      return (await this.eventStore.listByRun(sessionId, runId))
+      return (await this.eventStore.listByRun(this.tenantId, sessionId, runId))
         .filter((event) => !isInternalModelDiagnosticEvent(event));
     }
-    return (await this.eventStore.list(sessionId)).filter((event) => (
+    return (await this.eventStore.list(this.tenantId, sessionId)).filter((event) => (
       !isInternalModelDiagnosticEvent(event) && 'runId' in event && event.runId === runId
     ));
   }
 
   async getToolTrace(sessionId: string, toolCallId: string): Promise<PlatformEvent[]> {
-    if (this.eventStore.listByToolCall) return this.eventStore.listByToolCall(sessionId, toolCallId);
-    return (await this.eventStore.list(sessionId)).filter((event) => eventReferencesToolCall(event, toolCallId));
+    if (this.eventStore.listByToolCall) return this.eventStore.listByToolCall(this.tenantId, sessionId, toolCallId);
+    return (await this.eventStore.list(this.tenantId, sessionId)).filter((event) => eventReferencesToolCall(event, toolCallId));
   }
 
   async readToolTrace(
@@ -170,14 +173,14 @@ export class SessionContextService {
     if (!needle) return [];
     const limit = clampLimit(opts.limit, DEFAULT_LIMIT, MAX_SEARCH_RESULTS);
     if (this.eventStore.search) {
-      return (await this.eventStore.search(sessionId, query, {
+      return (await this.eventStore.search(this.tenantId, sessionId, query, {
         limit,
         ...(opts.runId ? { runId: opts.runId } : {}),
         ...(opts.type ? { type: opts.type } : {}),
         excludeTypes: [...INTERNAL_MODEL_DIAGNOSTIC_EVENT_TYPES],
       })).filter((event) => !isInternalModelDiagnosticEvent(event));
     }
-    const filtered = filterEvents(await this.eventStore.list(sessionId), opts);
+    const filtered = filterEvents(await this.eventStore.list(this.tenantId, sessionId), opts);
     return filtered
       .filter((event) => !isInternalModelDiagnosticEvent(event))
       .filter((event) => JSON.stringify(event).toLowerCase().includes(needle))

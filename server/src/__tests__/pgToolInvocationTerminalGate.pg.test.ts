@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import { PgEventStore } from '../runtime/pgEventStore.js';
 import { PgRunStore } from '../runtime/runStore.js';
 import { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
@@ -361,7 +362,7 @@ describePg('PgToolInvocationStore terminal run gate', () => {
     expect(duplicate.eventCreated).toBe(false);
     await expect(runStore.get('source-stop-idempotency-next')).resolves.toMatchObject({ status: 'pending' });
     const [events, secondStopped, steering] = await Promise.all([
-      eventStore.list(sessionId),
+      eventStore.list(LEGACY_TENANT_ID, sessionId),
       pool.query<{ stopped_at: Date }>(`
         SELECT stopped_at FROM ${prefix}_steering_sessions WHERE session_id = $1
       `, [sessionId]),
@@ -431,7 +432,7 @@ describePg('PgToolInvocationStore terminal run gate', () => {
           SELECT state FROM ${prefix}_steering_inputs WHERE source_run_id = $1
         `, [sourceRunId]),
         pool.query(`SELECT stopped_at FROM ${prefix}_steering_sessions WHERE session_id = $1`, [sessionId]),
-        eventStore.list(sessionId),
+        eventStore.list(LEGACY_TENANT_ID, sessionId),
       ]);
       expect(input.rows[0]?.state).toBe('pending');
       expect(stopped.rows).toHaveLength(0);

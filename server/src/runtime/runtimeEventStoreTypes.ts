@@ -17,16 +17,11 @@ export interface EventListPage {
 }
 
 /**
- * 多组织改造 PR 3：所有 append 路径可选携带 tenantId（不进 PlatformEvent union
- * 类型，避免 18 个分支的 invasive 改动）。PG backend 写入 tenant_id 列；File
- * backend 忽略（jsonl 旁路文件物理隔离）。未传时 fallback 平台根组织。
- *
- * 调用方接通节奏：
- *   - PR 3 仅 store 层接口扩；调用方暂不强制传，旧数据迁移统一按 legacy tenant 回填
- *   - PR 4 dispatch/channel 把 user.tenantId 一路传到 append（真正按组织落库）
+ * EventStore 的强制租户写入边界。tenantId 不进入 PlatformEvent union，而由
+ * store 行级元数据保存；调用方必须显式提供，禁止 backend 静默回退默认租户。
  */
 export interface EventAppendContext {
-  tenantId?: string;
+  tenantId: string;
 }
 
 export interface EventListOptions {
@@ -50,10 +45,10 @@ export interface EventListOptions {
 }
 
 export interface EventStore {
-  append(event: PlatformEventInput, ctx?: EventAppendContext): Promise<PlatformEvent>;
-  appendBatch?(events: PlatformEventInput[], ctx?: EventAppendContext): Promise<PlatformEvent[]>;
-  list(sessionId: string, options?: EventListOptions): Promise<PlatformEvent[]>;
-  listPage?(sessionId: string, options?: {
+  append(event: PlatformEventInput, ctx: EventAppendContext): Promise<PlatformEvent>;
+  appendBatch?(events: PlatformEventInput[], ctx: EventAppendContext): Promise<PlatformEvent[]>;
+  list(tenantId: string, sessionId: string, options?: EventListOptions): Promise<PlatformEvent[]>;
+  listPage?(tenantId: string, sessionId: string, options?: {
     afterCursor?: string;
     limit?: number;
     runId?: string;
@@ -61,14 +56,14 @@ export interface EventStore {
     excludeTypes?: PlatformEvent['type'][];
     projection?: 'usage';
   }): Promise<EventListPage>;
-  listAround?(sessionId: string, eventId: string, options?: { before?: number; after?: number }): Promise<PlatformEvent[]>;
-  listByRun?(sessionId: string, runId: string): Promise<PlatformEvent[]>;
-  listByToolCall?(sessionId: string, toolCallId: string): Promise<PlatformEvent[]>;
-  search?(sessionId: string, query: string, options?: {
+  listAround?(tenantId: string, sessionId: string, eventId: string, options?: { before?: number; after?: number }): Promise<PlatformEvent[]>;
+  listByRun?(tenantId: string, sessionId: string, runId: string): Promise<PlatformEvent[]>;
+  listByToolCall?(tenantId: string, sessionId: string, toolCallId: string): Promise<PlatformEvent[]>;
+  search?(tenantId: string, sessionId: string, query: string, options?: {
     limit?: number;
     runId?: string;
     type?: PlatformEvent['type'];
     excludeTypes?: PlatformEvent['type'][];
   }): Promise<PlatformEvent[]>;
-  getById?(eventId: string): Promise<PlatformEvent | null>;
+  getById?(tenantId: string, eventId: string): Promise<PlatformEvent | null>;
 }

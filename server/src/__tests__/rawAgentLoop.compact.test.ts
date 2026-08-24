@@ -3,6 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PlatformToolRuntime } from '../agent/toolRuntime.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { configureModelPricing } from '../data/usage/pricing.js';
 import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
 import { estimateContextTokens } from '../runtime/contextBreakdown.js';
@@ -63,7 +64,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
   ) {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-compact-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const clearedSessions: string[] = [];
     const runStore = {
       upsertPending: vi.fn(),
@@ -81,7 +82,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-compact'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-compact', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime,
       runStore,
@@ -102,14 +103,14 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
 
   /** 4 轮真实交互：统一 checkpoint planner 根据 Token 预算选择原始尾部，不再固定保留 1 轮。 */
   async function seedHistory(eventStore: FileEventStore) {
-    await eventStore.append({ type: 'user_message', runId: 'run-old-1', sessionId: 'session-compact', content: '帮我分析 A 方案' });
-    await eventStore.append({ type: 'assistant_message', runId: 'run-old-1', sessionId: 'session-compact', content: 'A 方案的结论是 X=42。' });
-    await eventStore.append({ type: 'user_message', runId: 'run-old-2', sessionId: 'session-compact', content: '再对比 B 方案' });
-    await eventStore.append({ type: 'assistant_message', runId: 'run-old-2', sessionId: 'session-compact', content: 'B 方案成本更低，推荐 B。' });
-    await eventStore.append({ type: 'user_message', runId: 'run-old-3', sessionId: 'session-compact', content: '那 C 方案呢' });
-    await eventStore.append({ type: 'assistant_message', runId: 'run-old-3', sessionId: 'session-compact', content: 'C 方案不可行。' });
-    await eventStore.append({ type: 'user_message', runId: 'run-old-4', sessionId: 'session-compact', content: '最后看下 D 方案' });
-    await eventStore.append({ type: 'assistant_message', runId: 'run-old-4', sessionId: 'session-compact', content: 'D 方案与 B 接近，仍推荐 B。' });
+    await eventStore.append({ type: 'user_message', runId: 'run-old-1', sessionId: 'session-compact', content: '帮我分析 A 方案' }, { tenantId: DEFAULT_TENANT_ID });
+    await eventStore.append({ type: 'assistant_message', runId: 'run-old-1', sessionId: 'session-compact', content: 'A 方案的结论是 X=42。' }, { tenantId: DEFAULT_TENANT_ID });
+    await eventStore.append({ type: 'user_message', runId: 'run-old-2', sessionId: 'session-compact', content: '再对比 B 方案' }, { tenantId: DEFAULT_TENANT_ID });
+    await eventStore.append({ type: 'assistant_message', runId: 'run-old-2', sessionId: 'session-compact', content: 'B 方案成本更低，推荐 B。' }, { tenantId: DEFAULT_TENANT_ID });
+    await eventStore.append({ type: 'user_message', runId: 'run-old-3', sessionId: 'session-compact', content: '那 C 方案呢' }, { tenantId: DEFAULT_TENANT_ID });
+    await eventStore.append({ type: 'assistant_message', runId: 'run-old-3', sessionId: 'session-compact', content: 'C 方案不可行。' }, { tenantId: DEFAULT_TENANT_ID });
+    await eventStore.append({ type: 'user_message', runId: 'run-old-4', sessionId: 'session-compact', content: '最后看下 D 方案' }, { tenantId: DEFAULT_TENANT_ID });
+    await eventStore.append({ type: 'assistant_message', runId: 'run-old-4', sessionId: 'session-compact', content: 'D 方案与 B 接近，仍推荐 B。' }, { tenantId: DEFAULT_TENANT_ID });
   }
 
   it('首次 checkpoint 的超大单事件在发流前降级到真实窗口 hard budget', async () => {
@@ -248,7 +249,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
 
     // 事件落库：run_started → user_message(替身) → compaction_usage → compaction → run_finished；
     // v2 起摘要不再落 assistant_message，usage 仍需独立进入 Billing 投影。
-    const events = await eventStore.list('session-compact');
+    const events = await eventStore.list(DEFAULT_TENANT_ID, 'session-compact');
     const compactRunEvents = events.filter((e) => 'runId' in e && e.runId === 'run-compact-1');
     expect(compactRunEvents.map((e) => e.type)).toEqual([
       'run_started', 'user_message', 'compaction_usage', 'compaction', 'run_finished',
@@ -290,7 +291,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     expect(clearedSessions).toEqual(['session-compact']);
 
     // 闭环：下一个 run 的投影 = checkpoint summary + 全量用户轨迹；compact run 自身事件不出现
-    const projection = buildContextProjection(await eventStore.list('session-compact'), {
+    const projection = buildContextProjection(await eventStore.list(DEFAULT_TENANT_ID, 'session-compact'), {
       sessionId: 'session-compact',
       runId: 'run-next',
     });
@@ -361,7 +362,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     const end = outbound.find((e) => e.type === 'compaction_end') as any;
     expect(end.compaction.skipped).toBe(true);
     expect(end.compaction.note).toContain('无需压缩');
-    const events = await eventStore.list('session-compact');
+    const events = await eventStore.list(DEFAULT_TENANT_ID, 'session-compact');
     expect(events.some((e) => e.type === 'compaction')).toBe(false);
     expect((events.find((e) => e.type === 'run_finished') as any)?.subtype).toBe('success');
   });
@@ -369,10 +370,10 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
   it('仅 2 轮真实交互也使用统一 planner 建立 checkpoint', async () => {
     const adapter = new SummaryAdapter(['两轮历史摘要。']);
     const { eventStore, loop, context } = await makeCompactHarness(adapter);
-    await eventStore.append({ type: 'user_message', runId: 'run-old-1', sessionId: 'session-compact', content: '帮我分析 A 方案' });
-    await eventStore.append({ type: 'assistant_message', runId: 'run-old-1', sessionId: 'session-compact', content: 'A 方案的结论是 X=42。' });
-    await eventStore.append({ type: 'user_message', runId: 'run-old-2', sessionId: 'session-compact', content: '再对比 B 方案' });
-    await eventStore.append({ type: 'assistant_message', runId: 'run-old-2', sessionId: 'session-compact', content: 'B 方案成本更低，推荐 B。' });
+    await eventStore.append({ type: 'user_message', runId: 'run-old-1', sessionId: 'session-compact', content: '帮我分析 A 方案' }, { tenantId: DEFAULT_TENANT_ID });
+    await eventStore.append({ type: 'assistant_message', runId: 'run-old-1', sessionId: 'session-compact', content: 'A 方案的结论是 X=42。' }, { tenantId: DEFAULT_TENANT_ID });
+    await eventStore.append({ type: 'user_message', runId: 'run-old-2', sessionId: 'session-compact', content: '再对比 B 方案' }, { tenantId: DEFAULT_TENANT_ID });
+    await eventStore.append({ type: 'assistant_message', runId: 'run-old-2', sessionId: 'session-compact', content: 'B 方案成本更低，推荐 B。' }, { tenantId: DEFAULT_TENANT_ID });
 
     const outbound = await collect(loop.compact(
       { message: { channel: 'web', chatId: 'chat-1', content: '/compact' }, instructions: '正常指令' },
@@ -382,7 +383,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     expect(adapter.requests).toHaveLength(1);
     const end = outbound.find((e) => e.type === 'compaction_end') as any;
     expect(end.compaction.skipped).toBeUndefined();
-    const checkpoint = (await eventStore.list('session-compact')).find((e) => e.type === 'compaction') as any;
+    const checkpoint = (await eventStore.list(DEFAULT_TENANT_ID, 'session-compact')).find((e) => e.type === 'compaction') as any;
     expect(checkpoint.checkpoint).toMatchObject({ version: 1, trigger: 'manual' });
   });
 
@@ -402,7 +403,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
 
     expect(outbound.at(-1)).toMatchObject({ type: 'error' });
     expect((outbound.at(-1) as any).error).toContain('压缩失败');
-    const events = await eventStore.list('session-compact');
+    const events = await eventStore.list(DEFAULT_TENANT_ID, 'session-compact');
     expect(events.some((e) => e.type === 'compaction')).toBe(false);
     expect((events.find((e) => e.type === 'run_finished') as any)?.subtype).toBe('error');
     expect(clearedSessions).toEqual([]); // 失败时不清接力链
@@ -417,20 +418,20 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
   it('自动压缩作为同一 run 尾阶段执行，压缩期间到达的用户消息以插话继续 loop', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-inline-auto-compact-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     for (let i = 1; i <= 3; i++) {
       await eventStore.append({
         type: 'user_message',
         runId: `run-old-${i}`,
         sessionId: 'session-inline-auto',
         content: `历史问题 ${i}`,
-      });
+      }, { tenantId: DEFAULT_TENANT_ID });
       await eventStore.append({
         type: 'assistant_message',
         runId: `run-old-${i}`,
         sessionId: 'session-inline-auto',
         content: `历史回答 ${i}`,
-      });
+      }, { tenantId: DEFAULT_TENANT_ID });
     }
 
     const compactionPrompt = '请按自定义自动压缩格式输出摘要。';
@@ -500,7 +501,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-inline-auto'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-inline-auto', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore,
@@ -550,7 +551,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     expect(outbound.map((event) => event.type)).toContain('compaction_end');
     expect(outbound.at(-1)).toEqual({ type: 'done' });
 
-    const events = await eventStore.list('session-inline-auto');
+    const events = await eventStore.list(DEFAULT_TENANT_ID, 'session-inline-auto');
     expect(events.filter((event) => event.type === 'run_started')).toHaveLength(1);
     expect(events.filter((event) => event.type === 'run_finished')).toHaveLength(1);
     const compactionIndex = events.findIndex((event) => event.type === 'compaction');
@@ -569,20 +570,20 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
   it('内联自动压缩失败时不终止 run，压缩期间的插话仍继续处理', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-inline-auto-compact-failure-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     for (let i = 1; i <= 3; i++) {
       await eventStore.append({
         type: 'user_message',
         runId: `run-old-${i}`,
         sessionId: 'session-inline-auto-failure',
         content: `历史问题 ${i}`,
-      });
+      }, { tenantId: DEFAULT_TENANT_ID });
       await eventStore.append({
         type: 'assistant_message',
         runId: `run-old-${i}`,
         sessionId: 'session-inline-auto-failure',
         content: `历史回答 ${i}`,
-      });
+      }, { tenantId: DEFAULT_TENANT_ID });
     }
 
     let queued: QueuedInterjection[] = [];
@@ -625,7 +626,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-inline-auto-failure'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-inline-auto-failure', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore,
@@ -667,7 +668,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     });
     expect(outbound.at(-1)).toEqual({ type: 'done' });
 
-    const events = await eventStore.list('session-inline-auto-failure');
+    const events = await eventStore.list(DEFAULT_TENANT_ID, 'session-inline-auto-failure');
     expect(events.some((event) => event.type === 'compaction')).toBe(false);
     expect(events.filter((event) => event.type === 'run_started')).toHaveLength(1);
     expect(events.filter((event) => event.type === 'run_finished')).toHaveLength(1);

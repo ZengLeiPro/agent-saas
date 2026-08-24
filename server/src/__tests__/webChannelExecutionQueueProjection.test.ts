@@ -163,7 +163,7 @@ describe('WebChannel queued execution projection', () => {
       let acceptedRunId = '';
       const { channel } = createChannel({
         agentCwd: tmp,
-        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath), PLATFORM_ADMIN_USER.tenantId),
         enqueueRuntime: {
           scheduler: {
             enqueue: async (input: UpsertRunInput) => {
@@ -201,7 +201,7 @@ describe('WebChannel queued execution projection', () => {
       const enqueueCalls: Array<{ input: UpsertRunInput; options: unknown }> = [];
       const { channel } = createChannel({
         agentCwd: tmp,
-        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath), PLATFORM_ADMIN_USER.tenantId),
         enqueueRuntime: {
           scheduler: {
             enqueue: async (input: UpsertRunInput, options: unknown) => {
@@ -419,7 +419,7 @@ describe('WebChannel queued execution projection', () => {
       const sessionCatalog = new FileSessionCatalog({ agentCwd: tmp });
       const { channel, calls } = createChannel({
         agentCwd: tmp,
-        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath), PLATFORM_ADMIN_USER.tenantId),
         enqueueRuntime: {
           scheduler: {
             enqueue: async () => {
@@ -459,7 +459,7 @@ describe('WebChannel queued execution projection', () => {
       const { channel } = createChannel({
         agentCwd: tmp,
         memoryWriteDelegationEnabled: () => resolverEnabled,
-        runtimeEventStoreFor: transcriptPath => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+        runtimeEventStoreFor: transcriptPath => new FileEventStore(getRuntimeEventLogPath(transcriptPath), 'kaiyan'),
         enqueueRuntime: {
           scheduler: { enqueue: async (input: UpsertRunInput) => runStore.upsertPending(input) } as any,
           runStore, sessionCatalog, enabled: true,

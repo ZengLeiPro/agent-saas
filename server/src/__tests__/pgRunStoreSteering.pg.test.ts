@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import { PgEventStore } from '../runtime/pgEventStore.js';
 import { PgRunStore } from '../runtime/runStore.js';
 import { recoverRunningToolInvocations } from '../runtime/toolInvocationRecovery.js';
@@ -466,7 +467,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     const retry = await store.applySteeringInputsAtomically('target-atomic-idempotency', [input]);
     expect(first.events.map((event) => event.type)).toEqual(['user_message', 'interjection_applied']);
     expect(retry).toEqual({ appliedSourceRunIds: [], events: [] });
-    const events = await eventStore.list(sessionId);
+    const events = await eventStore.list(LEGACY_TENANT_ID, sessionId);
     expect(events.filter((event) => event.type === 'user_message')).toHaveLength(1);
     expect(events.filter((event) => event.type === 'interjection_applied')).toEqual([
       expect.objectContaining({
@@ -492,7 +493,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     await eventStore.append({
       type: 'user_message', runId: targetRunId, sessionId, content: '旧版已追加内容',
       interjectionSourceRunId: sourceRunId,
-    });
+    }, { tenantId: LEGACY_TENANT_ID });
 
     const recovered = await store.applySteeringInputsAtomically(targetRunId, [{
       sourceRunId,
@@ -511,7 +512,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       }),
     ]);
     await expect(store.get(sourceRunId)).resolves.toMatchObject({ status: 'completed' });
-    const events = await eventStore.list(sessionId);
+    const events = await eventStore.list(LEGACY_TENANT_ID, sessionId);
     expect(events.filter((event) => (
       event.type === 'user_message' && event.interjectionSourceRunId === sourceRunId
     ))).toHaveLength(1);
@@ -548,7 +549,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     ]);
 
     const source = await store.get(sourceRunId);
-    const events = await eventStore.list(sessionId);
+    const events = await eventStore.list(LEGACY_TENANT_ID, sessionId);
     const contentEvents = events.filter((event) => (
       event.type === 'user_message' && event.interjectionSourceRunId === sourceRunId
     ));
@@ -610,7 +611,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       metadata: expect.objectContaining({ terminalRunStatus: 'completed' }),
     });
     expect((await toolInvocationStore.get('invocation-stop-terminal-race'))?.cancelRequestedAt).toBeUndefined();
-    const events = await eventStore.list(sessionId);
+    const events = await eventStore.list(LEGACY_TENANT_ID, sessionId);
     expect(events.some((event) => event.type === 'run_cancel_requested')).toBe(false);
     expect(events.some((event) => event.type === 'tool_invocation_cancel_requested')).toBe(false);
   });

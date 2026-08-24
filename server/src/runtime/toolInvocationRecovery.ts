@@ -23,6 +23,14 @@ export async function recoverRunningToolInvocations(options: RecoverRunningToolI
   const now = Date.now();
   for (const record of records) {
     const run = await options.runStore?.get(record.runId).catch(() => null);
+    const invocationTenantId = record.tenantId?.trim();
+    const runTenantId = run?.tenantId?.trim();
+    if (invocationTenantId && runTenantId && invocationTenantId !== runTenantId) {
+      throw new Error(`Tool invocation recovery tenant mismatch for invocation ${record.invocationId}`);
+    }
+    const tenantId = runTenantId ?? invocationTenantId;
+    if (!tenantId) throw new Error(`Tool invocation recovery tenant is missing for invocation ${record.invocationId}`);
+    const eventContext = { tenantId };
     const stale = typeof staleAfterMs === 'number' && now - new Date(record.updatedAt).getTime() >= staleAfterMs;
     const terminalRun = run && ['completed', 'failed', 'cancelled', 'orphaned'].includes(run.status);
     const activeLeasedRun = run?.status === 'running' && typeof run.leaseExpiresAt === 'string' && new Date(run.leaseExpiresAt).getTime() > now;
@@ -59,7 +67,7 @@ export async function recoverRunningToolInvocations(options: RecoverRunningToolI
           toolName: record.toolName,
           reason: 'recovered_after_cancelled_run',
           metadata: cancelRequest.record.metadata,
-        });
+        }, eventContext);
       }
     }
     // 已终态 invocation 只补 durable cancel outbox，保留原执行结果；running 才需要恢复收尾。
@@ -80,7 +88,7 @@ export async function recoverRunningToolInvocations(options: RecoverRunningToolI
       status: 'error',
       durationMs: Math.max(0, now - new Date(record.startedAt).getTime()),
       error,
-    });
+    }, eventContext);
   }
   options.logger?.info?.(`ToolInvocationRecovery scanned=${records.length} recovered=${recovered}`);
   return { scanned: records.length, recovered };

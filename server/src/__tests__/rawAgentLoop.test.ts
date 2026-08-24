@@ -689,7 +689,7 @@ describe('RawAgentLoop', () => {
     const runId = 'run-context-rewind';
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const originals = await seedCompleteParallelToolUnit(eventStore, sessionId);
     const originalSnapshot = JSON.stringify(originals);
     const adapter = new InvalidPromptRecoveryAdapter(1, {}, true);
@@ -706,7 +706,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       runStore,
     });
@@ -740,7 +740,7 @@ describe('RawAgentLoop', () => {
     expect(replay.some((message) => message.role === 'tool')).toBe(false);
     expect(replay.some((message) => message.role === 'assistant' && message.provider_continuation)).toBe(false);
 
-    const durable = await eventStore.list(sessionId);
+    const durable = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
     expect(JSON.stringify(durable.slice(0, originals.length))).toBe(originalSnapshot);
     const rewind = durable.find((item): item is Extract<PlatformEvent, { type: 'context_rewind' }> => (
       item.type === 'context_rewind'
@@ -764,7 +764,7 @@ describe('RawAgentLoop', () => {
     expect(durable.filter((item) => item.type === 'run_finished')).toEqual([
       expect.objectContaining({ subtype: 'success' }),
     ]);
-    const sessionContextPage = await new SessionContextService(eventStore).getEvents(sessionId, { limit: 100 });
+    const sessionContextPage = await new SessionContextService(eventStore, DEFAULT_TENANT_ID).getEvents(sessionId, { limit: 100 });
     expect(sessionContextPage.events.slice(0, originals.length).map((item) => item.id))
       .toEqual(originals.map((item) => item.id));
     expect(await readFile(transcriptPath, 'utf-8')).not.toContain('"content":"继续"');
@@ -774,13 +774,13 @@ describe('RawAgentLoop', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-context-rewind-once-'));
     cleanupDirs.add(cwd);
     const sessionId = 'session-context-rewind-once';
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     await seedCompleteParallelToolUnit(eventStore, sessionId);
     const adapter = new InvalidPromptRecoveryAdapter(2);
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
     });
 
@@ -801,7 +801,7 @@ describe('RawAgentLoop', () => {
 
     expect(adapter.requests).toHaveLength(2);
     expect(outbound.at(-1)).toEqual({ type: 'error', error: 'Agent 开小差了，请发送「继续」' });
-    const durable = await eventStore.list(sessionId);
+    const durable = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
     expect(durable.filter((item) => item.type === 'context_rewind')).toHaveLength(1);
     expect(durable.filter((item) => item.type === 'user_message' && item.systemGenerated)).toHaveLength(1);
     expect(durable.filter((item) => item.type === 'run_finished')).toEqual([
@@ -814,7 +814,7 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const sessionId = 'session-context-rewind-wake';
     const runId = 'run-context-rewind-wake';
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const originals = await seedCompleteParallelToolUnit(eventStore, sessionId);
     await eventStore.appendBatch([
       {
@@ -842,12 +842,12 @@ describe('RawAgentLoop', () => {
         recoveryKind: 'invalid_prompt_rewind',
         hiddenFromUserTranscript: true,
       },
-    ]);
+    ], { tenantId: DEFAULT_TENANT_ID });
     const adapter = new InvalidPromptRecoveryAdapter(0);
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
     });
 
@@ -873,7 +873,7 @@ describe('RawAgentLoop', () => {
       message.role === 'user' && message.content === '继续'
     ))).toHaveLength(1);
     expect(JSON.stringify(adapter.requests[0]!.messages)).not.toContain('hidden scheduler wake');
-    const durable = await eventStore.list(sessionId);
+    const durable = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
     expect(durable.filter((item) => item.type === 'context_rewind')).toHaveLength(1);
     expect(durable.filter((item) => item.type === 'user_message' && item.systemGenerated)).toHaveLength(1);
   });
@@ -884,8 +884,8 @@ describe('RawAgentLoop', () => {
     await writeFile(join(cwd, 'seed.txt'), 'SEED_OK', 'utf-8');
     const sessionId = 'session-context-rewind-resume';
     const runId = 'run-context-rewind-resume';
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
-    const approvalStore = new EventBackedApprovalStore(eventStore, sessionId);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
+    const approvalStore = new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID);
     await eventStore.appendBatch([
       { type: 'user_message', runId, sessionId, content: '读取 seed.txt' },
       {
@@ -895,7 +895,7 @@ describe('RawAgentLoop', () => {
         content: '',
         toolCalls: [{ id: 'call-resume-read', name: 'Read', arguments: '{"path":"seed.txt"}' }],
       },
-    ]);
+    ], { tenantId: DEFAULT_TENANT_ID });
     const approval = await approvalStore.create({
       sessionId,
       runId,
@@ -930,7 +930,7 @@ describe('RawAgentLoop', () => {
     expect(adapter.requests).toHaveLength(2);
     expect(adapter.requests[1]!.messages.at(-1)).toEqual({ role: 'user', content: '继续' });
     expect(outbound.at(-1)).toEqual({ type: 'done' });
-    const durable = await eventStore.list(sessionId);
+    const durable = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
     expect(durable.filter((item) => item.type === 'context_rewind')).toHaveLength(1);
     expect(durable.filter((item) => item.type === 'run_finished')).toEqual([
       expect.objectContaining({ subtype: 'success' }),
@@ -947,20 +947,20 @@ describe('RawAgentLoop', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-context-rewind-negative-'));
     cleanupDirs.add(cwd);
     const sessionId = `session-negative-${cleanupDirs.size}`;
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     if (completeHistory) {
       await seedCompleteParallelToolUnit(eventStore, sessionId);
     } else {
       await eventStore.appendBatch([
         { type: 'user_message', runId: 'run-history', sessionId, content: '检查状态' },
         { type: 'assistant_message', runId: 'run-history', sessionId, content: '已检查' },
-      ]);
+      ], { tenantId: DEFAULT_TENANT_ID });
     }
     const adapter = new InvalidPromptRecoveryAdapter(1, failure, false, outputBeforeFailure);
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
     });
     const outbound = await collect(loop.run({
@@ -978,7 +978,7 @@ describe('RawAgentLoop', () => {
       approvalPolicy: { autoApproveTools: true },
     }));
     expect(adapter.requests).toHaveLength(1);
-    const durable = await eventStore.list(sessionId);
+    const durable = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
     expect(durable.some((item) => item.type === 'context_rewind')).toBe(false);
     if (outputBeforeFailure === 'text') {
       expect(durable).toContainEqual(expect.objectContaining({
@@ -999,13 +999,13 @@ describe('RawAgentLoop', () => {
   it('工具结果原文持久化，但模型投影固定且不会随新结果追加而改写', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-stable-tool-prefix-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const adapter = new RepeatedLongToolAdapter();
     const toolRuntime = new LongResultToolRuntime();
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-stable-tool-prefix'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-stable-tool-prefix', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime,
     });
@@ -1043,7 +1043,7 @@ describe('RawAgentLoop', () => {
     expect(firstToolContents[0]).toContain('startChar=2001');
     expect(firstToolContents[0]).toContain('query="关键字"');
 
-    const durableToolResults = (await eventStore.list('session-stable-tool-prefix'))
+    const durableToolResults = (await eventStore.list(DEFAULT_TENANT_ID, 'session-stable-tool-prefix'))
       .filter((event): event is Extract<PlatformEvent, { type: 'tool_result' }> => event.type === 'tool_result');
     expect(durableToolResults).toHaveLength(10);
     expect(durableToolResults.every((event) => event.content === toolRuntime.content)).toBe(true);
@@ -1054,13 +1054,13 @@ describe('RawAgentLoop', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-drain-handoff-'));
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const drainHandoff = { requested: false };
     const adapter = new DrainAfterToolCallAdapter(drainHandoff);
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-drain-handoff'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-drain-handoff', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -1091,20 +1091,20 @@ describe('RawAgentLoop', () => {
     expect(adapter.calls).toBe(1);
     expect(events.map((event) => event.type)).toContain('tool_result');
     expect(events.map((event) => event.type)).not.toContain('done');
-    const storedEvents = await eventStore.list('session-drain-handoff');
+    const storedEvents = await eventStore.list(DEFAULT_TENANT_ID, 'session-drain-handoff');
     expect(storedEvents.map((event) => event.type)).not.toContain('run_finished');
   });
 
   it('does not terminalize a run when the drain deadline forces a handoff', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-forced-drain-handoff-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const abortController = new AbortController();
     const drainHandoff = { requested: false };
     const loop = new RawAgentLoop({
       modelAdapter: new ForcedDrainAdapter(abortController, drainHandoff),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-forced-drain-handoff'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-forced-drain-handoff', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -1130,7 +1130,7 @@ describe('RawAgentLoop', () => {
 
     expect(events.map((event) => event.type)).not.toContain('error');
     expect(events.map((event) => event.type)).not.toContain('done');
-    const storedEvents = await eventStore.list('session-forced-drain-handoff');
+    const storedEvents = await eventStore.list(DEFAULT_TENANT_ID, 'session-forced-drain-handoff');
     expect(storedEvents).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'assistant_message',
@@ -1144,7 +1144,7 @@ describe('RawAgentLoop', () => {
   it('forces a no-tool synthesis turn after the WebFetch failure circuit opens', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-web-fetch-circuit-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const adapter = new WebFetchUntilForcedSynthesisAdapter();
     const fetchImpl = vi.fn(async () => new Response('missing', {
       status: 404,
@@ -1158,7 +1158,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-web-fetch-circuit'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-web-fetch-circuit', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime({ providers: [webProvider] }),
     });
@@ -1195,8 +1195,8 @@ describe('RawAgentLoop', () => {
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
     const adapter = new FakeToolCallingAdapter();
-    const eventStore = new FileEventStore(eventPath);
-    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-1');
+    const eventStore = new FileEventStore(eventPath, 'wain-test');
+    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-1', 'wain-test');
     const toolInvocationStore = new InMemoryToolInvocationStore();
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
@@ -1325,8 +1325,8 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath);
-    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-write-auto');
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
+    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-write-auto', DEFAULT_TENANT_ID);
     const loop = new RawAgentLoop({
       modelAdapter: new FakeToolCallingAdapter(),
       eventStore,
@@ -1388,8 +1388,8 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath);
-    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-write-auto-user');
+    const eventStore = new FileEventStore(eventPath, 'wain-test');
+    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-write-auto-user', 'wain-test');
     const loop = new RawAgentLoop({
       modelAdapter: new FakeToolCallingAdapter(),
       eventStore,
@@ -1452,8 +1452,8 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath);
-    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-shell-auto');
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
+    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-shell-auto', DEFAULT_TENANT_ID);
     const invoke = vi.fn(async () => ({ status: 'success' as const, content: 'shell ok' }));
     const loop = new RawAgentLoop({
       modelAdapter: new ShellThenTextAdapter(),
@@ -1522,12 +1522,12 @@ describe('RawAgentLoop', () => {
     await writeFile(join(cwd, 'seed.txt'), 'seed content', 'utf-8');
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const authorizeModelTurn = vi.fn(async () => undefined);
     const loop = new RawAgentLoop({
       modelAdapter: new TextThenToolThenTextAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-text-tool-text'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-text-tool-text', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -1569,7 +1569,7 @@ describe('RawAgentLoop', () => {
       'done',
     ]);
 
-    const runtimeEvents = await eventStore.list('session-text-tool-text');
+    const runtimeEvents = await eventStore.list(DEFAULT_TENANT_ID, 'session-text-tool-text');
     const toolCallEvent = runtimeEvents.find((event) => event.type === 'assistant_tool_calls');
     expect(toolCallEvent).toMatchObject({
       content: '先读取文件。',
@@ -1584,7 +1584,7 @@ describe('RawAgentLoop', () => {
   it('starts another model turn when an interjection arrives during a final text response', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-final-interjection-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const adapter = new InterjectionAfterFinalAdapter();
     let queued: QueuedInterjection[] = [{
       inputId: 'input-final',
@@ -1601,7 +1601,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-final-interjection'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-final-interjection', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore: {
@@ -1648,7 +1648,7 @@ describe('RawAgentLoop', () => {
   it('does not start an extra model turn when steering reservation permanently fails', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-steering-reserve-failure-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const adapter = new InterjectionAfterFinalAdapter();
     const queued: QueuedInterjection[] = [{
       inputId: 'input-reserve-failure',
@@ -1666,7 +1666,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-steering-reserve-failure'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-steering-reserve-failure', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore: {
@@ -1706,7 +1706,7 @@ describe('RawAgentLoop', () => {
     expect(reserve).toHaveBeenCalledTimes(1);
     expect(markApplied).not.toHaveBeenCalled();
     expect(events.some((event) => event.type === 'interjection_applied')).toBe(false);
-    const durableEvents = await eventStore.list('session-steering-reserve-failure');
+    const durableEvents = await eventStore.list(DEFAULT_TENANT_ID, 'session-steering-reserve-failure');
     expect(durableEvents.some((event) => (
       event.type === 'user_message' && event.interjectionSourceRunId === 'source-reserve-failure'
     ))).toBe(false);
@@ -1716,7 +1716,7 @@ describe('RawAgentLoop', () => {
   it('uses atomic steering append/apply and projects the returned durable event exactly once', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-steering-atomic-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const transcriptPath = join(cwd, 'session.jsonl');
     const adapter = new InterjectionAfterFinalAdapter();
     let queued: QueuedInterjection[] = [{
@@ -1750,7 +1750,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-steering-atomic'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-steering-atomic', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
       runStore: {
@@ -1782,7 +1782,7 @@ describe('RawAgentLoop', () => {
     ));
 
     expect(atomicApply).toHaveBeenCalledTimes(1);
-    const durableEvents = await eventStore.list('session-steering-atomic');
+    const durableEvents = await eventStore.list(DEFAULT_TENANT_ID, 'session-steering-atomic');
     expect(durableEvents.filter((event) => (
       event.type === 'user_message' && event.interjectionSourceRunId === 'source-atomic'
     ))).toHaveLength(0);
@@ -1799,7 +1799,7 @@ describe('RawAgentLoop', () => {
   it('announces the applied subset before handing off a partial steering apply', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-steering-partial-apply-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const adapter = new InterjectionAfterFinalAdapter();
     const queued: QueuedInterjection[] = [
       {
@@ -1822,7 +1822,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-steering-partial-apply'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-steering-partial-apply', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore: {
@@ -1864,14 +1864,14 @@ describe('RawAgentLoop', () => {
       sourceRunIds: ['source-partial-1'],
       clientMsgIds: ['client-partial-1'],
     }]);
-    const durableEvents = await eventStore.list('session-steering-partial-apply');
+    const durableEvents = await eventStore.list(DEFAULT_TENANT_ID, 'session-steering-partial-apply');
     expect(durableEvents.some((event) => event.type === 'run_finished')).toBe(false);
   });
 
   it('hands off the target without another model turn when apply fails after reserve', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-steering-apply-failure-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const adapter = new InterjectionAfterFinalAdapter();
     const queued: QueuedInterjection[] = [{
       inputId: 'input-apply-failure',
@@ -1884,7 +1884,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-steering-apply-failure'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-steering-apply-failure', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore: {
@@ -1923,7 +1923,7 @@ describe('RawAgentLoop', () => {
       requested: true,
       reason: 'steering_reserved_apply_failed',
     });
-    const durableEvents = await eventStore.list('session-steering-apply-failure');
+    const durableEvents = await eventStore.list(DEFAULT_TENANT_ID, 'session-steering-apply-failure');
     expect(durableEvents).toContainEqual(expect.objectContaining({
       type: 'user_message',
       interjectionSourceRunId: 'source-apply-failure',
@@ -1934,7 +1934,7 @@ describe('RawAgentLoop', () => {
   it('owns the source before a model request that aborts before its first event', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-interjection-cancel-boundary-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const controller = new AbortController();
     const adapter = new AbortBeforeInterjectionEventAdapter(controller);
     const queued: QueuedInterjection[] = [{
@@ -1949,7 +1949,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-interjection-cancel-boundary'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-interjection-cancel-boundary', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore: {
@@ -1999,7 +1999,7 @@ describe('RawAgentLoop', () => {
   it('owns the source before a model request that fails before producing content', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-interjection-failed-boundary-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const adapter = new FailedBeforeInterjectionEventAdapter();
     const queued: QueuedInterjection[] = [{
       inputId: 'input-failed-boundary',
@@ -2013,7 +2013,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-interjection-failed-boundary'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-interjection-failed-boundary', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore: {
@@ -2062,7 +2062,7 @@ describe('RawAgentLoop', () => {
   it('leaves a final-turn interjection pending for durable fallback when no next model turn exists', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-final-interjection-fallback-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const adapter = new InterjectionAfterFinalAdapter();
     const queued: QueuedInterjection[] = [{
       inputId: 'input-final-fallback',
@@ -2077,7 +2077,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-final-interjection-fallback'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-final-interjection-fallback', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore: {
@@ -2123,7 +2123,7 @@ describe('RawAgentLoop', () => {
   it('leaves interjections pending when the target aborts while loading them', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-aborted-interjection-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const adapter = new InterjectionAfterFinalAdapter();
     const controller = new AbortController();
     const queued: QueuedInterjection[] = [{
@@ -2138,7 +2138,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-aborted-interjection'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-aborted-interjection', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore: {
@@ -2180,7 +2180,7 @@ describe('RawAgentLoop', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-interjection-'));
     cleanupDirs.add(cwd);
     await writeFile(join(cwd, 'seed.txt'), 'seed content', 'utf-8');
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const adapter = new InterjectionAfterToolAdapter();
     let loadCalls = 0;
     let queued: QueuedInterjection[] = [
@@ -2209,7 +2209,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-interjection'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-interjection', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore,
@@ -2250,7 +2250,7 @@ describe('RawAgentLoop', () => {
       { role: 'user', content: '[2026/08/05 周三 12:50] 补充条件一' },
       { role: 'user', content: '[2026/08/05 周三 12:51] 补充条件二' },
     ]);
-    const runtimeEvents = await eventStore.list('session-interjection');
+    const runtimeEvents = await eventStore.list(DEFAULT_TENANT_ID, 'session-interjection');
     expect(runtimeEvents.filter((event) => event.type === 'user_message')).toEqual(expect.arrayContaining([
       expect.objectContaining({
         content: '补充条件一',
@@ -2273,11 +2273,11 @@ describe('RawAgentLoop', () => {
     await writeFile(join(cwd, 'seed.txt'), 'seed content', 'utf-8');
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const loop = new RawAgentLoop({
       modelAdapter: new StaticContentToolThenTextAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-static-tool-content'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-static-tool-content', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -2311,7 +2311,7 @@ describe('RawAgentLoop', () => {
     expect(events).toContainEqual({ type: 'text_delta', content: '我要先读文件。' });
     expect(events).toContainEqual({ type: 'text_delta', content: '读完了。' });
 
-    const runtimeEvents = await eventStore.list('session-static-tool-content');
+    const runtimeEvents = await eventStore.list(DEFAULT_TENANT_ID, 'session-static-tool-content');
     const toolCallEvent = runtimeEvents.find((event) => event.type === 'assistant_tool_calls');
     expect(toolCallEvent).toMatchObject({
       content: '我要先读文件。',
@@ -2324,12 +2324,12 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const onResult = vi.fn();
     const loop = new RawAgentLoop({
       modelAdapter: new EmptyUsageAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-error-usage'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-error-usage', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -2389,11 +2389,11 @@ describe('RawAgentLoop', () => {
   it('persists partial assistant text when the provider fails after output', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-partial-error-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const loop = new RawAgentLoop({
       modelAdapter: new PartialFailureAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-partial-error'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-partial-error', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -2411,7 +2411,7 @@ describe('RawAgentLoop', () => {
       channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
     }));
     expect(events.at(-1)).toMatchObject({ type: 'error', error: expect.stringContaining('可发送“继续”') });
-    const persisted = await eventStore.list('session-partial-error');
+    const persisted = await eventStore.list(DEFAULT_TENANT_ID, 'session-partial-error');
     expect(persisted.find((event) => event.type === 'assistant_message')).toMatchObject({
       content: '已经生成但尚未完成',
       streamed: true,
@@ -2422,7 +2422,7 @@ describe('RawAgentLoop', () => {
   it('incomplete 终态即使带 tool call 也不保存 responseId、不落工具调用、不执行工具', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-incomplete-tool-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const patches: ResponseSessionStatePatch[] = [];
     const runStore = {
       findLatestResponseSessionStateBySession: async () => null,
@@ -2434,7 +2434,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: new IncompleteToolCallAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-incomplete-tool'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-incomplete-tool', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore,
@@ -2463,7 +2463,7 @@ describe('RawAgentLoop', () => {
     expect(outbound.at(-1)).toMatchObject({ type: 'error' });
     expect(outbound.at(-1)?.error).toContain('status=incomplete');
     expect(patches).toEqual([]);
-    const runtimeEvents = await eventStore.list('session-incomplete-tool');
+    const runtimeEvents = await eventStore.list(DEFAULT_TENANT_ID, 'session-incomplete-tool');
     expect(runtimeEvents.some((event) => event.type === 'assistant_tool_calls')).toBe(false);
     expect(runtimeEvents.some((event) => event.type === 'approval_requested')).toBe(false);
     expect(runtimeEvents.find((event) => event.type === 'run_finished')).toMatchObject({
@@ -2484,12 +2484,12 @@ describe('RawAgentLoop', () => {
   it('模型 attempt 诊断经独立旁路持久化，但不投影到对话 transcript', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-model-diagnostic-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const transcriptPath = join(cwd, 'session.jsonl');
     const loop = new RawAgentLoop({
       modelAdapter: new DiagnosticTextAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-model-diagnostic'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-model-diagnostic', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -2514,7 +2514,7 @@ describe('RawAgentLoop', () => {
       },
     ));
 
-    const runtimeEvents = await eventStore.list('session-model-diagnostic');
+    const runtimeEvents = await eventStore.list(DEFAULT_TENANT_ID, 'session-model-diagnostic');
     expect(runtimeEvents.filter((event) => event.type.startsWith('model_request_')).map((event) => event.type))
       .toEqual(['model_request_started', 'model_request_checkpoint', 'model_request_finished']);
     const transcript = await readFile(transcriptPath, 'utf-8');
@@ -2528,11 +2528,11 @@ describe('RawAgentLoop', () => {
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
     const adapter = new FinalTextAdapter();
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-hidden-continue'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-hidden-continue', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -2575,11 +2575,11 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const loop = new RawAgentLoop({
       modelAdapter: new ThinkingTextAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-thinking-1'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-thinking-1', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -2616,7 +2616,7 @@ describe('RawAgentLoop', () => {
       'done',
     ]);
 
-    const runtimeEvents = (await eventStore.list('session-thinking-1'));
+    const runtimeEvents = (await eventStore.list(DEFAULT_TENANT_ID, 'session-thinking-1'));
     const thinkingEvent = runtimeEvents.find((event) => event.type === 'assistant_thinking');
     expect(thinkingEvent).toMatchObject({
       content: '先判断需求。再给结论。',
@@ -2636,12 +2636,12 @@ describe('RawAgentLoop', () => {
   it('replaces a failed Web draft in-place and persists only the successful attempt', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-replaceable-draft-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const transcriptPath = join(cwd, 'session.jsonl');
     const loop = new RawAgentLoop({
       modelAdapter: new ReplaceableDraftAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-replaceable-draft'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-replaceable-draft', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -2700,7 +2700,7 @@ describe('RawAgentLoop', () => {
       draftId,
     });
 
-    const runtimeEvents = await eventStore.list('session-replaceable-draft');
+    const runtimeEvents = await eventStore.list(DEFAULT_TENANT_ID, 'session-replaceable-draft');
     expect(runtimeEvents.filter((event) => event.type === 'assistant_thinking')).toEqual([
       expect.objectContaining({ content: '成功轮思考', streamed: true }),
     ]);
@@ -2719,7 +2719,7 @@ describe('RawAgentLoop', () => {
   it('restores an uncommitted draft from durable run metadata and consumes the single recovery chance', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-restored-draft-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const adapter = new RestartedDraftAdapter();
     let metadata: Record<string, unknown> = {
       replaceableDraftState: {
@@ -2741,7 +2741,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-restored-draft'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-restored-draft', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore,
@@ -2787,12 +2787,12 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const adapter = new ThinkingOnlyThenTextAdapter();
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-thinking-only'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-thinking-only', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -2824,7 +2824,7 @@ describe('RawAgentLoop', () => {
       content: expect.stringContaining('hidden reasoning only'),
     });
 
-    const runtimeEvents = await eventStore.list('session-thinking-only');
+    const runtimeEvents = await eventStore.list(DEFAULT_TENANT_ID, 'session-thinking-only');
     expect(runtimeEvents.filter((event) => event.type === 'assistant_thinking')).toHaveLength(1);
     expect(runtimeEvents.filter((event) => event.type === 'assistant_message')).toHaveLength(1);
     expect(runtimeEvents.find((event) => event.type === 'assistant_message')).toMatchObject({
@@ -2838,8 +2838,8 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const firstEventStore = new FileEventStore(eventPath);
-    const approvalStore = new EventBackedApprovalStore(firstEventStore, 'session-resume-1');
+    const firstEventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
+    const approvalStore = new EventBackedApprovalStore(firstEventStore, 'session-resume-1', DEFAULT_TENANT_ID);
     const firstLoop = new RawAgentLoop({
       modelAdapter: new ToolCallOnlyAdapter(),
       eventStore: firstEventStore,
@@ -2891,11 +2891,11 @@ describe('RawAgentLoop', () => {
     expect((await approvalStore.get(interactionId))?.status).toBe('pending');
 
     const finalAdapter = new FinalTextAdapter();
-    const rebuiltEventStore = new FileEventStore(eventPath);
+    const rebuiltEventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const rebuiltLoop = new RawAgentLoop({
       modelAdapter: finalAdapter,
       eventStore: rebuiltEventStore,
-      approvalStore: new EventBackedApprovalStore(rebuiltEventStore, 'session-resume-1'),
+      approvalStore: new EventBackedApprovalStore(rebuiltEventStore, 'session-resume-1', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -2928,7 +2928,7 @@ describe('RawAgentLoop', () => {
       content: 'wrote resumed.txt (10 chars)',
     });
 
-    expect((await new EventBackedApprovalStore(rebuiltEventStore, 'session-resume-1').get(interactionId))?.status)
+    expect((await new EventBackedApprovalStore(rebuiltEventStore, 'session-resume-1', DEFAULT_TENANT_ID).get(interactionId))?.status)
       .toBe('approved');
 
     const eventLog = await readFile(eventPath, 'utf-8');
@@ -2943,8 +2943,8 @@ describe('RawAgentLoop', () => {
     await writeFile(join(cwd, 'seed.txt'), 'SEED_OK', 'utf-8');
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const firstEventStore = new FileEventStore(eventPath);
-    const approvalStore = new EventBackedApprovalStore(firstEventStore, 'session-resume-batch-1');
+    const firstEventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
+    const approvalStore = new EventBackedApprovalStore(firstEventStore, 'session-resume-batch-1', DEFAULT_TENANT_ID);
     const firstLoop = new RawAgentLoop({
       modelAdapter: new StaticToolCallsAdapter([
         {
@@ -2999,11 +2999,11 @@ describe('RawAgentLoop', () => {
     expect(existsSync(join(cwd, 'approved.txt'))).toBe(false);
 
     const finalAdapter = new FinalTextAdapter();
-    const rebuiltEventStore = new FileEventStore(eventPath);
+    const rebuiltEventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const rebuiltLoop = new RawAgentLoop({
       modelAdapter: finalAdapter,
       eventStore: rebuiltEventStore,
-      approvalStore: new EventBackedApprovalStore(rebuiltEventStore, 'session-resume-batch-1'),
+      approvalStore: new EventBackedApprovalStore(rebuiltEventStore, 'session-resume-batch-1', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -3041,8 +3041,8 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const firstEventStore = new FileEventStore(eventPath);
-    const approvalStore = new EventBackedApprovalStore(firstEventStore, 'session-two-approvals-1');
+    const firstEventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
+    const approvalStore = new EventBackedApprovalStore(firstEventStore, 'session-two-approvals-1', DEFAULT_TENANT_ID);
     const firstLoop = new RawAgentLoop({
       modelAdapter: new StaticToolCallsAdapter([
         {
@@ -3086,8 +3086,8 @@ describe('RawAgentLoop', () => {
     expect(firstApproval).toMatchObject({ status: 'pending', toolCallId: 'call_write_a' });
 
     const finalAdapter = new FinalTextAdapter();
-    const secondEventStore = new FileEventStore(eventPath);
-    const secondApprovalStore = new EventBackedApprovalStore(secondEventStore, 'session-two-approvals-1');
+    const secondEventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
+    const secondApprovalStore = new EventBackedApprovalStore(secondEventStore, 'session-two-approvals-1', DEFAULT_TENANT_ID);
     const secondLoop = new RawAgentLoop({
       modelAdapter: finalAdapter,
       eventStore: secondEventStore,
@@ -3159,8 +3159,8 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath);
-    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-no-hook');
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
+    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-no-hook', DEFAULT_TENANT_ID);
     const loop = new RawAgentLoop({
       modelAdapter: new ToolCallOnlyAdapter(),
       eventStore,
@@ -3200,7 +3200,7 @@ describe('RawAgentLoop', () => {
       toolCallId: 'call_resume_write',
     });
 
-    const runtimeEvents = await eventStore.list('session-no-hook');
+    const runtimeEvents = await eventStore.list(DEFAULT_TENANT_ID, 'session-no-hook');
     expect(runtimeEvents.map((event) => event.type)).toContain('approval_requested');
     expect(runtimeEvents.map((event) => event.type)).not.toContain('approval_resolved');
     expect(runtimeEvents.map((event) => event.type)).not.toContain('tool_result');
@@ -3212,12 +3212,12 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const firstEventStore = new FileEventStore(eventPath);
+    const firstEventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const toolInvocationStore = new InMemoryToolInvocationStore();
     const firstLoop = new RawAgentLoop({
       modelAdapter: new AskUserOnlyAdapter(),
       eventStore: firstEventStore,
-      approvalStore: new EventBackedApprovalStore(firstEventStore, 'session-ask-resume-1'),
+      approvalStore: new EventBackedApprovalStore(firstEventStore, 'session-ask-resume-1', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime({ providers: [createBuiltinTools()] }),
       toolInvocationStore,
@@ -3266,7 +3266,7 @@ describe('RawAgentLoop', () => {
                 toolName: event.toolName,
                 displayName: event.displayName,
                 questions: event.questions,
-              });
+              }, { tenantId: DEFAULT_TENANT_ID });
               resolve();
               return new Promise(() => {});
             },
@@ -3288,14 +3288,14 @@ describe('RawAgentLoop', () => {
       interactionType: 'ask_user',
       userId: 'admin-1',
       response: { answers: { branch: 'main' }, message: 'Use main' },
-    });
+    }, { tenantId: DEFAULT_TENANT_ID });
 
     const finalAdapter = new FinalTextAdapter();
-    const rebuiltEventStore = new FileEventStore(eventPath);
+    const rebuiltEventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const rebuiltLoop = new RawAgentLoop({
       modelAdapter: finalAdapter,
       eventStore: rebuiltEventStore,
-      approvalStore: new EventBackedApprovalStore(rebuiltEventStore, 'session-ask-resume-1'),
+      approvalStore: new EventBackedApprovalStore(rebuiltEventStore, 'session-ask-resume-1', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime({ providers: [createBuiltinTools()] }),
       toolInvocationStore,
@@ -3342,12 +3342,12 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const toolInvocationStore = new InMemoryToolInvocationStore();
     const loop = new RawAgentLoop({
       modelAdapter: new AskUserOnlyAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-ask-no-hook-1'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-ask-no-hook-1', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime({ providers: [createBuiltinTools()] }),
       toolInvocationStore,
@@ -3400,12 +3400,12 @@ describe('RawAgentLoop', () => {
     await writeFile(join(cwd, 'seed.txt'), 'SEED_OK', 'utf-8');
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const firstEventStore = new FileEventStore(eventPath);
+    const firstEventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const toolInvocationStore = new InMemoryToolInvocationStore();
     const firstLoop = new RawAgentLoop({
       modelAdapter: new AskUserAndReadAdapter(),
       eventStore: firstEventStore,
-      approvalStore: new EventBackedApprovalStore(firstEventStore, 'session-ask-batch-1'),
+      approvalStore: new EventBackedApprovalStore(firstEventStore, 'session-ask-batch-1', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime({ providers: [createBuiltinTools()] }),
       toolInvocationStore,
@@ -3454,7 +3454,7 @@ describe('RawAgentLoop', () => {
                 toolName: event.toolName,
                 displayName: event.displayName,
                 questions: event.questions,
-              });
+              }, { tenantId: DEFAULT_TENANT_ID });
               resolve();
               return new Promise(() => {});
             },
@@ -3476,14 +3476,14 @@ describe('RawAgentLoop', () => {
       interactionType: 'ask_user',
       userId: 'admin-1',
       response: { answers: { branch: 'main' }, message: 'Use main' },
-    });
+    }, { tenantId: DEFAULT_TENANT_ID });
 
     const finalAdapter = new FinalTextAdapter();
-    const rebuiltEventStore = new FileEventStore(eventPath);
+    const rebuiltEventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const rebuiltLoop = new RawAgentLoop({
       modelAdapter: finalAdapter,
       eventStore: rebuiltEventStore,
-      approvalStore: new EventBackedApprovalStore(rebuiltEventStore, 'session-ask-batch-1'),
+      approvalStore: new EventBackedApprovalStore(rebuiltEventStore, 'session-ask-batch-1', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime({ providers: [createBuiltinTools()] }),
       toolInvocationStore,
@@ -3528,12 +3528,12 @@ describe('RawAgentLoop', () => {
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
     const adapter = new FakeToolCallingAdapter();
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const toolInvocationStore = new InMemoryToolInvocationStore();
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-audit-error'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-audit-error', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new FailingAuditToolRuntime(),
     });
@@ -3593,7 +3593,7 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const toolInvocationStore = new InMemoryToolInvocationStore();
     const toolRuntime = new CountingToolRuntime();
     const runStore = {
@@ -3609,7 +3609,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: new FakeToolCallingAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-cancelled-late-tool'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-cancelled-late-tool', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime,
       toolInvocationStore,
@@ -3644,7 +3644,7 @@ describe('RawAgentLoop', () => {
       cancelReason: 'run_already_cancelled_before_tool_start',
     });
     expect(events.map((event) => event.type)).toContain('done');
-    await expect(eventStore.list('session-cancelled-late-tool')).resolves.toEqual(expect.arrayContaining([
+    await expect(eventStore.list(DEFAULT_TENANT_ID, 'session-cancelled-late-tool')).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'tool_invocation_cancel_requested' }),
       expect.objectContaining({ type: 'tool_invocation_completed', status: 'cancelled' }),
     ]));
@@ -3655,7 +3655,7 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const sessionId = 'session-terminal-between-get-invoke';
     const runId = 'run-terminal-between-get-invoke';
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const toolInvocationStore = new InMemoryToolInvocationStore();
     const toolRuntime = new CountingToolRuntime();
     let reads = 0;
@@ -3671,7 +3671,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: new FakeToolCallingAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime,
       toolInvocationStore,
@@ -3713,7 +3713,7 @@ describe('RawAgentLoop', () => {
     const sessionId = 'session-duplicate-claim-loser';
     const runId = 'run-duplicate-claim-loser';
     const invocationId = `${runId}:call_write_1`;
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const toolInvocationStore = new InMemoryToolInvocationStore();
     await toolInvocationStore.start({
       invocationId,
@@ -3730,7 +3730,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: new FakeToolCallingAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime,
       toolInvocationStore,
@@ -3758,7 +3758,7 @@ describe('RawAgentLoop', () => {
     expect(toolRuntime.invocations).toBe(0);
     expect(outbound.some((event) => event.type === 'error')).toBe(false);
     await expect(toolInvocationStore.get(invocationId)).resolves.toMatchObject({ status: 'running' });
-    const lifecycle = await eventStore.list(sessionId);
+    const lifecycle = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
     expect(lifecycle.some((event) => event.type === 'tool_invocation_started')).toBe(false);
     expect(lifecycle.some((event) => event.type === 'tool_invocation_completed')).toBe(false);
     expect(lifecycle.some((event) => event.type === 'run_finished' && event.subtype === 'error')).toBe(false);
@@ -3771,7 +3771,7 @@ describe('RawAgentLoop', () => {
       cleanupDirs.add(cwd);
       const sessionId = `session-${terminalStatus}-late-tool`;
       const runId = `run-${terminalStatus}-late-tool`;
-      const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+      const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
       const toolInvocationStore = new InMemoryToolInvocationStore();
       const toolRuntime = new CountingToolRuntime();
       const runStore = {
@@ -3787,7 +3787,7 @@ describe('RawAgentLoop', () => {
       const loop = new RawAgentLoop({
         modelAdapter: new FakeToolCallingAdapter(),
         eventStore,
-        approvalStore: new EventBackedApprovalStore(eventStore, sessionId),
+        approvalStore: new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID),
         transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
         toolRuntime,
         toolInvocationStore,
@@ -3821,7 +3821,7 @@ describe('RawAgentLoop', () => {
         error: `tool invocation blocked because run is already terminal status=${terminalStatus}: ${runId}:call_write_1`,
       });
       expect((await toolInvocationStore.get(`${runId}:call_write_1`))?.cancelRequestedAt).toBeUndefined();
-      const events = await eventStore.list(sessionId);
+      const events = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
       expect(events.some((event) => event.type === 'tool_invocation_cancel_requested')).toBe(false);
     },
   );
@@ -3829,7 +3829,7 @@ describe('RawAgentLoop', () => {
   it('does not replay lifecycle events or side effects for an already-terminal invocation', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-terminal-invocation-replay-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const toolInvocationStore = new InMemoryToolInvocationStore();
     await toolInvocationStore.start({
       invocationId: 'run-terminal-replay:call_write_1',
@@ -3844,7 +3844,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: new FakeToolCallingAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-terminal-replay'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-terminal-replay', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime,
       toolInvocationStore,
@@ -3870,7 +3870,7 @@ describe('RawAgentLoop', () => {
     ));
 
     expect(toolRuntime.invocations).toBe(0);
-    const events = await eventStore.list('session-terminal-replay');
+    const events = await eventStore.list(DEFAULT_TENANT_ID, 'session-terminal-replay');
     expect(events.some((event) => event.type === 'tool_invocation_started')).toBe(false);
     expect(events.some((event) => event.type === 'tool_invocation_completed')).toBe(false);
   });
@@ -3878,13 +3878,13 @@ describe('RawAgentLoop', () => {
   it('fails closed before tool execution when authoritative run lookup fails', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-run-lookup-failure-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const toolInvocationStore = new InMemoryToolInvocationStore();
     const toolRuntime = new CountingToolRuntime();
     const loop = new RawAgentLoop({
       modelAdapter: new FakeToolCallingAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-run-lookup-failure'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-run-lookup-failure', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime,
       toolInvocationStore,
@@ -3923,13 +3923,13 @@ describe('RawAgentLoop', () => {
   it('fails closed before tool execution when the authoritative run is missing', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-run-missing-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const toolInvocationStore = new InMemoryToolInvocationStore();
     const toolRuntime = new CountingToolRuntime();
     const loop = new RawAgentLoop({
       modelAdapter: new FakeToolCallingAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-run-missing'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-run-missing', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime,
       toolInvocationStore,
@@ -3970,8 +3970,8 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const firstEventStore = new FileEventStore(eventPath);
-    const approvalStore = new EventBackedApprovalStore(firstEventStore, 'session-pending-1');
+    const firstEventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
+    const approvalStore = new EventBackedApprovalStore(firstEventStore, 'session-pending-1', DEFAULT_TENANT_ID);
     const firstLoop = new RawAgentLoop({
       modelAdapter: new ToolCallOnlyAdapter(),
       eventStore: firstEventStore,
@@ -4010,11 +4010,11 @@ describe('RawAgentLoop', () => {
     });
 
     const finalAdapter = new FinalTextAdapter();
-    const secondEventStore = new FileEventStore(eventPath);
+    const secondEventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     const secondLoop = new RawAgentLoop({
       modelAdapter: finalAdapter,
       eventStore: secondEventStore,
-      approvalStore: new EventBackedApprovalStore(secondEventStore, 'session-pending-1'),
+      approvalStore: new EventBackedApprovalStore(secondEventStore, 'session-pending-1', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -4050,7 +4050,7 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     await eventStore.append({
       type: 'assistant_tool_calls',
       runId: 'run-orphan-1',
@@ -4061,13 +4061,13 @@ describe('RawAgentLoop', () => {
         name: 'Read',
         arguments: JSON.stringify({ path: 'missing.txt' }),
       }],
-    });
+    }, { tenantId: DEFAULT_TENANT_ID });
 
     const adapter = new FinalTextAdapter();
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-orphan-1'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-orphan-1', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -4104,7 +4104,7 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     await eventStore.append({
       type: 'assistant_tool_calls',
       runId: 'run-running-1',
@@ -4115,7 +4115,7 @@ describe('RawAgentLoop', () => {
         name: 'Shell',
         arguments: JSON.stringify({ command: 'sleep 30' }),
       }],
-    });
+    }, { tenantId: DEFAULT_TENANT_ID });
     await eventStore.append({
       type: 'tool_invocation_started',
       runId: 'run-running-1',
@@ -4124,13 +4124,13 @@ describe('RawAgentLoop', () => {
       toolCallId: 'call_running_1',
       toolName: 'Shell',
       executionTarget: 'server-local',
-    });
+    }, { tenantId: DEFAULT_TENANT_ID });
 
     const adapter = new FinalTextAdapter();
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-running-1'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-running-1', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -4169,7 +4169,7 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     await eventStore.append({
       type: 'assistant_tool_calls',
       runId: 'run-zombie-1',
@@ -4180,7 +4180,7 @@ describe('RawAgentLoop', () => {
         name: 'Shell',
         arguments: JSON.stringify({ command: 'sleep 30' }),
       }],
-    });
+    }, { tenantId: DEFAULT_TENANT_ID });
     await eventStore.append({
       type: 'tool_invocation_started',
       runId: 'run-zombie-1',
@@ -4189,13 +4189,13 @@ describe('RawAgentLoop', () => {
       toolCallId: 'call_zombie_1',
       toolName: 'Shell',
       executionTarget: 'server-local',
-    });
+    }, { tenantId: DEFAULT_TENANT_ID });
 
     const adapter = new FinalTextAdapter();
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-zombie-1'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-zombie-1', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
       // 阈值 0 = invocationStarted 已存在即视为 zombie（仅测试用）。
@@ -4237,7 +4237,7 @@ describe('RawAgentLoop', () => {
     cleanupDirs.add(cwd);
     const eventPath = join(cwd, 'session.runtime-events.jsonl');
     const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath);
+    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
     await eventStore.append({
       type: 'assistant_tool_calls',
       runId: 'run-fresh-1',
@@ -4248,7 +4248,7 @@ describe('RawAgentLoop', () => {
         name: 'Shell',
         arguments: JSON.stringify({ command: 'sleep 1' }),
       }],
-    });
+    }, { tenantId: DEFAULT_TENANT_ID });
     await eventStore.append({
       type: 'tool_invocation_started',
       runId: 'run-fresh-1',
@@ -4257,13 +4257,13 @@ describe('RawAgentLoop', () => {
       toolCallId: 'call_fresh_1',
       toolName: 'Shell',
       executionTarget: 'server-local',
-    });
+    }, { tenantId: DEFAULT_TENANT_ID });
 
     const adapter = new FinalTextAdapter();
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-fresh-1'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-fresh-1', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
       toolRuntime: new PlatformToolRuntime(),
       zombieToolCallTimeoutMs: 5 * 60_000,
@@ -4335,7 +4335,7 @@ describe('RawAgentLoop', () => {
   ): Promise<{ adapter: ResponseIdTextAdapter; patches: Array<{ runId: string; patch: ResponseSessionStatePatch }> }> {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-relay-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     if (priorContextTokens) {
       await eventStore.append({
         type: 'assistant_message',
@@ -4346,17 +4346,17 @@ describe('RawAgentLoop', () => {
         usage: { inputTokens: priorContextTokens, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
         responseMode: 'full',
         responseChained: false,
-      });
+      }, { tenantId: DEFAULT_TENANT_ID });
     }
     const adapter = new ResponseIdTextAdapter('resp_new_run');
     const { runStore, patches } = relayFixtures(state);
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-relay-1'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-relay-1', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime({
-        providers: [new SessionToolProvider(new SessionContextService(eventStore))],
+        providers: [new SessionToolProvider(new SessionContextService(eventStore, DEFAULT_TENANT_ID))],
       }),
       runStore,
     });
@@ -4455,7 +4455,7 @@ describe('RawAgentLoop', () => {
     try {
       const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-context-pressure-'));
       cleanupDirs.add(cwd);
-      const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+      const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
       await eventStore.append({
         type: 'assistant_message',
         runId: 'run-pressure-old',
@@ -4465,7 +4465,7 @@ describe('RawAgentLoop', () => {
         usage: { inputTokens: 600, outputTokens: 1 },
         responseMode: 'full',
         responseChained: false,
-      });
+      }, { tenantId: DEFAULT_TENANT_ID });
       const patchMetadata = vi.fn(async () => null);
       const runStore = {
         get: vi.fn(async () => ({ status: 'running', metadata: {} })),
@@ -4477,7 +4477,7 @@ describe('RawAgentLoop', () => {
       const loop = new RawAgentLoop({
         modelAdapter: adapter,
         eventStore,
-        approvalStore: new EventBackedApprovalStore(eventStore, 'session-pressure'),
+        approvalStore: new EventBackedApprovalStore(eventStore, 'session-pressure', DEFAULT_TENANT_ID),
         transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
         toolRuntime: new PlatformToolRuntime(),
         runStore,
@@ -4524,13 +4524,13 @@ describe('RawAgentLoop', () => {
     try {
       const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-pre-request-checkpoint-'));
       cleanupDirs.add(cwd);
-      const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+      const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
       await eventStore.append({
         type: 'user_message',
         runId: 'run-old',
         sessionId: 'session-checkpoint',
         content: '先前任务',
-      });
+      }, { tenantId: DEFAULT_TENANT_ID });
       await eventStore.append({
         type: 'assistant_message',
         runId: 'run-old',
@@ -4540,7 +4540,7 @@ describe('RawAgentLoop', () => {
         usage: { inputTokens: 10_000, outputTokens: 1 },
         responseMode: 'full',
         responseChained: false,
-      });
+      }, { tenantId: DEFAULT_TENANT_ID });
       class CheckpointThenContinueAdapter implements ModelAdapter {
         requests: ModelRequest[] = [];
         async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
@@ -4561,7 +4561,7 @@ describe('RawAgentLoop', () => {
       const loop = new RawAgentLoop({
         modelAdapter: adapter,
         eventStore,
-        approvalStore: new EventBackedApprovalStore(eventStore, 'session-checkpoint'),
+        approvalStore: new EventBackedApprovalStore(eventStore, 'session-checkpoint', DEFAULT_TENANT_ID),
         transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
         toolRuntime: new PlatformToolRuntime(),
         runStore: {
@@ -4602,7 +4602,7 @@ describe('RawAgentLoop', () => {
       expect(JSON.stringify(continued.messages)).not.toContain('[平台收束指令]');
       expect(outbound.map((event) => event.type)).toContain('compaction_start');
       expect(outbound.map((event) => event.type)).toContain('compaction_end');
-      const events = await eventStore.list('session-checkpoint');
+      const events = await eventStore.list(DEFAULT_TENANT_ID, 'session-checkpoint');
       expect(events.filter((event) => event.type === 'run_finished')).toHaveLength(1);
       expect(events.filter((event) => (
         event.type === 'assistant_message' && event.runId === 'run-checkpoint'
@@ -4618,20 +4618,20 @@ describe('RawAgentLoop', () => {
   it('运行中的 /compact 作为控制信号在安全边界压缩，不进入模型业务消息', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-manual-checkpoint-interjection-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     for (let i = 1; i <= 2; i++) {
       await eventStore.append({
         type: 'user_message',
         runId: `run-old-${i}`,
         sessionId: 'session-manual-control',
         content: `历史问题 ${i}`,
-      });
+      }, { tenantId: DEFAULT_TENANT_ID });
       await eventStore.append({
         type: 'assistant_message',
         runId: `run-old-${i}`,
         sessionId: 'session-manual-control',
         content: `历史回答 ${i}`,
-      });
+      }, { tenantId: DEFAULT_TENANT_ID });
     }
     let queued: QueuedInterjection[] = [{
       inputId: 'input-compact',
@@ -4663,7 +4663,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-manual-control'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-manual-control', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore: {
@@ -4700,7 +4700,7 @@ describe('RawAgentLoop', () => {
     expect(JSON.stringify(adapter.requests[1]?.messages)).not.toContain('/compact');
     expect(JSON.stringify(adapter.requests[1]?.messages)).toContain('完成原任务');
     expect(markApplied).toHaveBeenCalledWith('run-manual-control', ['source-compact']);
-    const events = await eventStore.list('session-manual-control');
+    const events = await eventStore.list(DEFAULT_TENANT_ID, 'session-manual-control');
     expect(events.find((event) => event.type === 'compaction')).toMatchObject({
       checkpoint: {
         trigger: 'manual',
@@ -4714,19 +4714,19 @@ describe('RawAgentLoop', () => {
   it('崩溃恢复时复用 active checkpoint 自动续跑，不重复压缩或重复追加用户消息', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-checkpoint-recovery-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const userEvent = await eventStore.append({
       type: 'user_message',
       runId: 'run-recover',
       sessionId: 'session-recover',
       content: '继续修复故障',
-    });
+    }, { tenantId: DEFAULT_TENANT_ID });
     await eventStore.append({
       type: 'assistant_message',
       runId: 'run-recover',
       sessionId: 'session-recover',
       content: '已经定位根因，尚未完成修复。',
-    });
+    }, { tenantId: DEFAULT_TENANT_ID });
     await eventStore.append({
       type: 'compaction',
       runId: 'run-recover',
@@ -4751,7 +4751,7 @@ describe('RawAgentLoop', () => {
           originalChars: 6,
         }],
       },
-    });
+    }, { tenantId: DEFAULT_TENANT_ID });
     class RecoveryAdapter implements ModelAdapter {
       requests: ModelRequest[] = [];
       async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
@@ -4764,7 +4764,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-recover'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-recover', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore: {
@@ -4795,7 +4795,7 @@ describe('RawAgentLoop', () => {
     const serialized = JSON.stringify(adapter.requests[0]?.messages);
     expect(serialized).toContain('state=\\"active\\"');
     expect(serialized.match(/继续修复故障/g)).toHaveLength(1);
-    const events = await eventStore.list('session-recover');
+    const events = await eventStore.list(DEFAULT_TENANT_ID, 'session-recover');
     expect(events.filter((event) => event.type === 'compaction')).toHaveLength(1);
     expect(events.filter((event) => event.type === 'user_message')).toHaveLength(1);
     expect(events.filter((event) => event.type === 'run_finished')).toHaveLength(1);
@@ -4829,7 +4829,7 @@ describe('RawAgentLoop', () => {
   it('local repaired call invalidates stale provider response state before the next turn', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-repair-reset-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const requests: ModelRequest[] = [];
     const clearedSessions: string[] = [];
     const adapter: ModelAdapter = {
@@ -4859,7 +4859,7 @@ describe('RawAgentLoop', () => {
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-repair-reset'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-repair-reset', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
       runStore,

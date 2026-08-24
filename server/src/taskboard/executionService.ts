@@ -788,8 +788,8 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       return;
     }
     const events = this.options.eventStore.listByRun
-      ? await this.options.eventStore.listByRun(run.sessionId, run.runId)
-      : await this.options.eventStore.list(run.sessionId);
+      ? await this.options.eventStore.listByRun(requireTenantId(run.tenantId), run.sessionId, run.runId)
+      : await this.options.eventStore.list(requireTenantId(run.tenantId), run.sessionId);
     const output = finalAssistantText(events, run.runId, run.sessionId)
       || 'Agent 继续执行完成，但没有返回文本交付。';
     const attachments = await extractContinuationAttachments(output, run, this.options.agentCwd);
@@ -809,8 +809,8 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     if (!context || isTerminalExecution(context.execution)) return;
     assertExecutionSession(context.execution, sessionId);
     const events = this.options.eventStore.listByRun
-      ? await this.options.eventStore.listByRun(sessionId, runId)
-      : await this.options.eventStore.list(sessionId);
+      ? await this.options.eventStore.listByRun(context.identity.tenantId, sessionId, runId)
+      : await this.options.eventStore.list(context.identity.tenantId, sessionId);
     const output = finalAssistantText(events, runId, sessionId)
       || 'Agent 执行完成，但没有返回文本交付。';
     const userCwd = resolveUserCwd(this.options.agentCwd, {
@@ -990,6 +990,11 @@ function isTerminalRun(run: RunRecord): boolean {
     || run.status === 'failed'
     || run.status === 'cancelled'
     || run.status === 'orphaned';
+}
+
+function requireTenantId(tenantId: string | undefined): string {
+  if (!tenantId?.trim()) throw new Error('Runtime event tenantId is required');
+  return tenantId;
 }
 
 function isTerminalExecution(execution: TaskBoardExecution): boolean {

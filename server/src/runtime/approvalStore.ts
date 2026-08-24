@@ -275,7 +275,7 @@ export class EventBackedApprovalStore implements ApprovalStore {
   }
 
   async list(sessionId = this.sessionId): Promise<ApprovalRecord[]> {
-    const events = await this.eventStore.list(sessionId, {
+    const events = await this.eventStore.list(this.requireTenantId(), sessionId, {
       includeTypes: ['approval_requested', 'approval_resolved'],
     });
     return buildApprovalRecordsFromEvents(events, sessionId);
@@ -286,7 +286,12 @@ export class EventBackedApprovalStore implements ApprovalStore {
   }
 
   private append(event: Parameters<EventStore['append']>[0]): ReturnType<EventStore['append']> {
-    return this.eventStore.append(event, this.tenantId ? { tenantId: this.tenantId } : undefined);
+    return this.eventStore.append(event, { tenantId: this.requireTenantId() });
+  }
+
+  private requireTenantId(): string {
+    if (!this.tenantId) throw new Error('EventBackedApprovalStore tenantId is required');
+    return this.tenantId;
   }
 
   private async withApprovalLock<T>(id: string, fn: () => Promise<T>): Promise<T> {

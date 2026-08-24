@@ -13,6 +13,7 @@ import { FileEventStore } from '../runtime/fileEventStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
 import { scanRuntimeSessionMetaFiles } from '../runtime/sessionProjectionStore.js';
 
+const TENANT_ID = 'tenant-runtime-fd';
 const SESSION_ID = '19819819-8198-4198-8198-198198198198';
 const cleanup = new Set<string>();
 
@@ -51,14 +52,14 @@ describe('runtime transcript FD boundaries', () => {
       id: 'event-1', type: 'user_message', sessionId: SESSION_ID, runId: 'run-1',
       timestamp: new Date(0).toISOString(), content: 'inside only',
     } as any)).rejects.toBeInstanceOf(UnsafeFilePathError);
-    await expect(new FileEventStore(eventPath).append({
+    await expect(new FileEventStore(eventPath, TENANT_ID).append({
       type: 'user_message', sessionId: SESSION_ID, runId: 'run-1', content: 'inside only',
-    })).rejects.toBeInstanceOf(UnsafeFilePathError);
+    }, { tenantId: TENANT_ID })).rejects.toBeInstanceOf(UnsafeFilePathError);
     await expect(new FileApprovalStore(approvalPath).create({
       sessionId: SESSION_ID, runId: 'run-1', toolCallId: 'tool-1', toolId: 'Shell',
       toolName: 'Shell', displayName: 'Shell', input: {},
     })).rejects.toBeInstanceOf(UnsafeFilePathError);
-    await expect(new FileEventStore(eventPath).list(SESSION_ID)).rejects.toBeInstanceOf(UnsafeFilePathError);
+    await expect(new FileEventStore(eventPath, TENANT_ID).list(TENANT_ID, SESSION_ID)).rejects.toBeInstanceOf(UnsafeFilePathError);
     await expect(extractTitleContext(transcriptPath)).rejects.toBeInstanceOf(UnsafeFilePathError);
     await expect(extractRecentUserMessages(transcriptPath)).resolves.toEqual([]);
 
@@ -72,7 +73,7 @@ describe('runtime transcript FD boundaries', () => {
 
     expect(() => relativeToTrustedRoot(AGENT_LEGACY_TRANSCRIPTS_ROOT, eventPath))
       .toThrow(UnsafeFilePathError);
-    expect(() => new FileEventStore(eventPath, outsideDir)).not.toThrow();
+    expect(() => new FileEventStore(eventPath, TENANT_ID, outsideDir)).not.toThrow();
     expect(() => new FileApprovalStore(approvalPath, outsideDir)).not.toThrow();
     expect(() => new LegacyTranscriptProjection(transcriptPath, outsideDir)).not.toThrow();
     expect(() => new LegacyTranscriptProjection('/dev/null')).not.toThrow();

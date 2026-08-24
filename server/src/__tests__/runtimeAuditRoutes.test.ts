@@ -79,7 +79,7 @@ describe('/api/admin/runtime/audit/:sessionId', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'audit-route-'));
     cleanupDirs.add(cwd);
     transcriptPath = join(cwd, `${SESSION_OK}.jsonl`);
-    const eventStore = new FileEventStore(getRuntimeEventLogPath(transcriptPath));
+    const eventStore = new FileEventStore(getRuntimeEventLogPath(transcriptPath), 'kaiyan');
     await eventStore.append({
       type: 'tool_audit',
       runId: 'run-1',
@@ -92,7 +92,7 @@ describe('/api/admin/runtime/audit/:sessionId', () => {
       executionTarget: 'server-local',
       status: 'success',
       durationMs: 11,
-    });
+    }, { tenantId: 'kaiyan' });
     await eventStore.append({
       type: 'tool_audit',
       runId: 'run-1',
@@ -112,7 +112,7 @@ describe('/api/admin/runtime/audit/:sessionId', () => {
         containerName: 'sess-ok',
         status: 'success',
       }],
-    });
+    }, { tenantId: 'kaiyan' });
     await eventStore.append({
       type: 'tool_audit',
       runId: 'run-2',
@@ -126,7 +126,7 @@ describe('/api/admin/runtime/audit/:sessionId', () => {
       status: 'error',
       durationMs: 5,
       error: 'ENOENT',
-    });
+    }, { tenantId: 'kaiyan' });
   });
 
   afterEach(async () => {

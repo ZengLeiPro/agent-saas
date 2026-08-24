@@ -55,7 +55,7 @@ async function startServer(agentCwd: string): Promise<{ server: Server; baseUrl:
   });
   app.use('/api', deps.createSessionsRouter({
     agentCwd,
-    runtimeEventStoreFor: (transcriptPath) => new deps.FileEventStore(deps.getRuntimeEventLogPath(transcriptPath)),
+    runtimeEventStoreFor: (transcriptPath) => new deps.FileEventStore(deps.getRuntimeEventLogPath(transcriptPath), TEST_USER.tenantId),
     sessionShareStore: store,
   }));
 

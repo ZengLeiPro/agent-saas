@@ -38,20 +38,27 @@ export class FileEventStore implements EventStore {
   private readonly trustedRoot: string;
   private readonly relativePath: string;
   private readonly cacheKey: string;
+  private readonly tenantId: string;
 
-  constructor(filePath: string, trustedRoot = defaultTrustedRoot(filePath)) {
+  constructor(
+    filePath: string,
+    tenantId: string,
+    trustedRoot = defaultTrustedRoot(filePath),
+  ) {
+    this.tenantId = requireTenantId(tenantId);
     this.trustedRoot = trustedRoot;
     this.relativePath = relativeToTrustedRoot(trustedRoot, filePath);
     this.cacheKey = resolve(trustedRoot, this.relativePath);
   }
 
-  async append(event: PlatformEventInput, ctx?: EventAppendContext): Promise<PlatformEvent> {
+  async append(event: PlatformEventInput, ctx: EventAppendContext): Promise<PlatformEvent> {
     return (await this.appendBatch([event], ctx))[0]!;
   }
 
-  async appendBatch(events: PlatformEventInput[], _ctx?: EventAppendContext): Promise<PlatformEvent[]> {
-    // File backend 不存 tenantId（jsonl 旁路文件物理路径隔离已足够）；ctx 仅为
-    // 满足 EventStore 接口形态，便于调用方统一签名。
+  async appendBatch(events: PlatformEventInput[], ctx: EventAppendContext): Promise<PlatformEvent[]> {
+    // JSONL 路径由 session record 物理隔离；同时把 store 绑定 tenant，并在每次
+    // 操作显式校验 scope，避免错误 tenant 复用同一路径时读写成功。
+    this.assertTenant(ctx.tenantId);
     if (events.length === 0) return [];
     const timestamp = new Date().toISOString();
     const fullEvents = events.map((event) => ({
@@ -68,7 +75,8 @@ export class FileEventStore implements EventStore {
     return fullEvents;
   }
 
-  async list(_sessionId: string, options: EventListOptions = {}): Promise<PlatformEvent[]> {
+  async list(tenantId: string, _sessionId: string, options: EventListOptions = {}): Promise<PlatformEvent[]> {
+    this.assertTenant(tenantId);
     const events = await this.readAll();
     const excluded = new Set(options.excludeTypes);
     const included = options.includeTypes?.length ? new Set(options.includeTypes) : null;
@@ -77,7 +85,7 @@ export class FileEventStore implements EventStore {
     return options.replayMode === 'bounded' ? boundReplayToolResultEvents(selected) : selected;
   }
 
-  async listPage(_sessionId: string, options: {
+  async listPage(tenantId: string, _sessionId: string, options: {
     afterCursor?: string;
     limit?: number;
     runId?: string;
@@ -85,6 +93,7 @@ export class FileEventStore implements EventStore {
     excludeTypes?: PlatformEvent['type'][];
     projection?: 'usage';
   } = {}) {
+    this.assertTenant(tenantId);
     const excluded = new Set(options.excludeTypes ?? []);
     const all = (await this.readAll()).filter((event) => {
       if (options.runId && (!('runId' in event) || event.runId !== options.runId)) return false;
@@ -107,6 +116,12 @@ export class FileEventStore implements EventStore {
       ...(nextOffset < all.length ? { nextCursor: String(nextOffset) } : {}),
       hasMore: nextOffset < all.length,
     };
+  }
+
+  private assertTenant(tenantId: string): void {
+    if (requireTenantId(tenantId) !== this.tenantId) {
+      throw new Error('FileEventStore tenant scope mismatch');
+    }
   }
 
   private async readAll(): Promise<PlatformEvent[]> {
@@ -135,6 +150,12 @@ export class FileEventStore implements EventStore {
     }
     return events;
   }
+}
+
+function requireTenantId(tenantId: string): string {
+  const normalized = tenantId.trim();
+  if (!normalized) throw new Error('EventStore tenantId is required');
+  return normalized;
 }
 
 function parseFileCursor(cursor?: string): number {

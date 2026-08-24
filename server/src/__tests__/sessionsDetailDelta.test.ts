@@ -58,6 +58,7 @@ describe('filterProjectedQueuedMessages', () => {
 
     const durableProjected = await listDurablyProjectedQueuedRunIds(
       eventStore,
+      'kaiyan',
       'session-1',
       pending.map((input) => ({ sourceRunId: input.sourceRunId, targetRunId: input.targetRunId })),
     );
@@ -87,7 +88,7 @@ describe('listDurablyProjectedQueuedRunIds', () => {
   it('普通 queue 消息已由 source run 自身投影 user_message 时，不再属于排队区', async () => {
     const eventStore = {
       list: async () => [],
-      listByRun: async (_sessionId: string, runId: string) => [
+      listByRun: async (_tenantId: string, _sessionId: string, runId: string) => [
         runId === 'queue-run-consumed'
           ? {
               id: 'event-1',
@@ -102,7 +103,7 @@ describe('listDurablyProjectedQueuedRunIds', () => {
       ],
     } as unknown as EventStore;
 
-    const projected = await listDurablyProjectedQueuedRunIds(eventStore, 'session-1', pending);
+    const projected = await listDurablyProjectedQueuedRunIds(eventStore, 'kaiyan', 'session-1', pending);
 
     expect(projected).toContain('queue-run-consumed');
     expect(projected).not.toContain('queue-run-pending');
@@ -112,7 +113,7 @@ describe('listDurablyProjectedQueuedRunIds', () => {
   it('steering source 的 target run 已投影 user_message（interjectionSourceRunId 匹配）时不再排队', async () => {
     const eventStore = {
       list: async () => [],
-      listByRun: async (_sessionId: string, runId: string) => [
+      listByRun: async (_tenantId: string, _sessionId: string, runId: string) => [
         runId === 'target-run'
           ? {
               id: 'event-2',
@@ -128,7 +129,7 @@ describe('listDurablyProjectedQueuedRunIds', () => {
       ],
     } as unknown as EventStore;
 
-    const projected = await listDurablyProjectedQueuedRunIds(eventStore, 'session-1', pending);
+    const projected = await listDurablyProjectedQueuedRunIds(eventStore, 'kaiyan', 'session-1', pending);
 
     expect(projected).toContain('steer-source-consumed');
     expect(projected).not.toContain('queue-run-pending');
@@ -157,7 +158,7 @@ describe('listDurablyProjectedQueuedRunIds', () => {
       }],
     } as unknown as EventStore;
 
-    const projected = await listDurablyProjectedQueuedRunIds(eventStore, 'session-1', pending);
+    const projected = await listDurablyProjectedQueuedRunIds(eventStore, 'kaiyan', 'session-1', pending);
 
     expect(projected).toContain('queue-run-consumed');
     expect(projected).toContain('steer-source-consumed');
@@ -170,7 +171,7 @@ describe('listDurablyProjectedQueuedRunIds', () => {
       list: async () => { reads += 1; return []; },
     } as unknown as EventStore;
 
-    const projected = await listDurablyProjectedQueuedRunIds(eventStore, 'session-1', []);
+    const projected = await listDurablyProjectedQueuedRunIds(eventStore, 'kaiyan', 'session-1', []);
 
     expect(projected).toEqual([]);
     expect(reads).toBe(0);

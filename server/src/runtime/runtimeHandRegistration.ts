@@ -106,6 +106,8 @@ export async function ensureRuntimeHandRegistered(params: {
    * Combined with `users`: independently permissive (any match attaches).
    */
   userTenantId?: string;
+  /** Authoritative tenant from the persisted runtime session/run boundary. */
+  tenantId?: string;
   /** Server-derived Integration Work/Review identity; never accepted from clients. */
   runtimeIsolationRequirement?: RuntimeIsolationRequirement;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
@@ -114,6 +116,13 @@ export async function ensureRuntimeHandRegistered(params: {
     if (params.runtimeIsolationRequirement) throw new Error('RUNTIME_ISOLATION_EVIDENCE_MISSING:handStore');
     return;
   }
+  const persistedTenantId = params.tenantId?.trim();
+  const resolvedUserTenantId = params.userTenantId?.trim();
+  if (persistedTenantId && resolvedUserTenantId && persistedTenantId !== resolvedUserTenantId) {
+    throw new Error(`Runtime hand tenant mismatch for session ${params.sessionId}`);
+  }
+  const eventTenantId = persistedTenantId ?? resolvedUserTenantId;
+  if (!eventTenantId) throw new Error(`Runtime hand tenant is missing for session ${params.sessionId}`);
   const transport = params.executionTransportRegistry.has(params.executionTarget)
     ? params.executionTransportRegistry.get(params.executionTarget)
     : undefined;
@@ -129,6 +138,7 @@ export async function ensureRuntimeHandRegistered(params: {
     handStore: params.handStore,
     transportRegistry: params.executionTransportRegistry,
     eventStore: params.eventStore,
+    tenantId: eventTenantId,
   });
   const defaultHandId = `${params.sessionId}:${params.executionTarget}`;
   const currentEnvironmentInstance = params.environmentStore && params.userTenantId
@@ -232,6 +242,7 @@ export async function ensureRuntimeHandRegistered(params: {
       // repo+artifact placeholders) emitted by hand-server so audit can correlate.
       await appendProvisioningLogs({
         eventStore: params.eventStore,
+        tenantId: eventTenantId,
         sessionId: params.sessionId,
         handId: defaultHandId,
         workspaceId: params.workspaceId,
@@ -301,7 +312,7 @@ export async function ensureRuntimeHandRegistered(params: {
         handId: defaultHandId,
         error: defaultProvisionFailure,
         classifiedAs: 'unhealthy',
-      });
+      }, { tenantId: eventTenantId });
     } catch {
       // Hand 状态落库优先；审计事件故障不得掩盖 provisionFailure。
     }
@@ -375,7 +386,7 @@ export async function ensureRuntimeHandRegistered(params: {
         handId,
         error: failure,
         classifiedAs: 'unhealthy',
-      });
+      }, { tenantId: eventTenantId });
     }
 
     if (!resolvedToken && !failure) {
@@ -388,7 +399,7 @@ export async function ensureRuntimeHandRegistered(params: {
         handId,
         error: failure,
         classifiedAs: 'auth',
-      });
+      }, { tenantId: eventTenantId });
     }
 
     const tenantRecipe = buildWorkspaceRecipe(
@@ -444,6 +455,7 @@ export async function ensureRuntimeHandRegistered(params: {
       void provisionTenantRemoteHand({
         handStore: params.handStore,
         eventStore: params.eventStore,
+        tenantId: eventTenantId,
         transport: tenantTransport,
         recipe: tenantRecipe,
         provisionGeneration: tenantProvisionGeneration,
@@ -527,6 +539,7 @@ function tenantRemoteHandCapabilities(
  */
 async function appendProvisioningLogs(args: {
   eventStore: EventStore;
+  tenantId: string;
   sessionId: string;
   handId: string;
   workspaceId: string;
@@ -555,13 +568,14 @@ async function appendProvisioningLogs(args: {
       ...(typeof log.exitCode === 'number' ? { exitCode: log.exitCode } : {}),
       ...(typeof log.durationMs === 'number' ? { durationMs: log.durationMs } : {}),
       ...(typeof log.note === 'string' ? { note: log.note } : {}),
-    }).catch(() => undefined);
+    }, { tenantId: args.tenantId }).catch(() => undefined);
   }
 }
 
 async function provisionTenantRemoteHand(args: {
   handStore: HandStore;
   eventStore: EventStore;
+  tenantId: string;
   transport: HttpTransport;
   recipe: WorkspaceRecipe;
   provisionGeneration: string;
@@ -582,6 +596,7 @@ async function provisionTenantRemoteHand(args: {
     const result = await args.transport.provision(args.recipe);
     await appendProvisioningLogs({
       eventStore: args.eventStore,
+      tenantId: args.tenantId,
       sessionId: args.sessionId,
       handId: args.handId,
       workspaceId: args.workspaceId,
@@ -610,7 +625,7 @@ async function provisionTenantRemoteHand(args: {
         handId: args.handId,
         error,
         classifiedAs: 'unhealthy',
-      });
+      }, { tenantId: args.tenantId });
       await args.eventStore.append({
         type: 'hand_health_changed',
         sessionId: args.sessionId,
@@ -618,7 +633,7 @@ async function provisionTenantRemoteHand(args: {
         handId: args.handId,
         status: 'unhealthy',
         detail: error,
-      });
+      }, { tenantId: args.tenantId });
       return;
     }
 
@@ -643,7 +658,7 @@ async function provisionTenantRemoteHand(args: {
       handId: args.handId,
       status: 'ready',
       detail: 'provisioned',
-    });
+    }, { tenantId: args.tenantId });
     args.logger?.info(`tenant_hand_ready handId=${args.handId}`);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
@@ -667,7 +682,7 @@ async function provisionTenantRemoteHand(args: {
       handId: args.handId,
       error,
       classifiedAs: 'unknown',
-    }).catch(() => undefined);
+    }, { tenantId: args.tenantId }).catch(() => undefined);
     await args.eventStore.append({
       type: 'hand_health_changed',
       sessionId: args.sessionId,
@@ -675,7 +690,7 @@ async function provisionTenantRemoteHand(args: {
       handId: args.handId,
       status: 'unhealthy',
       detail: error,
-    }).catch(() => undefined);
+    }, { tenantId: args.tenantId }).catch(() => undefined);
     args.logger?.warn(`tenant_hand_provision_failed handId=${args.handId}: ${error}`);
   }
 }

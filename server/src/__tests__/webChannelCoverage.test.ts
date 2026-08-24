@@ -129,7 +129,7 @@ async function seedRuntimeSession(
     createdAt: new Date().toISOString(),
     ...metaExtra,
   });
-  return { sessionId, transcriptPath, eventStore: new FileEventStore(getRuntimeEventLogPath(transcriptPath)) };
+  return { sessionId, transcriptPath, eventStore: new FileEventStore(getRuntimeEventLogPath(transcriptPath), user.tenantId) };
 }
 
 describe('WebChannel channel.ts 覆盖补齐', () => {
@@ -418,7 +418,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       };
       const rig = makeRig({
         agentCwd: tmp,
-        runtimeEventStoreFor: (tp) => new FileEventStore(getRuntimeEventLogPath(tp)),
+        runtimeEventStoreFor: (tp) => new FileEventStore(getRuntimeEventLogPath(tp), TENANT),
         enqueueRuntime: {
           scheduler: {} as any, runStore, sessionCatalog: {} as any,
           toolInvocationStore: toolInvocationStore as any, enabled: true,
@@ -445,7 +445,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(toolInvocationStore.requestCancelOnce).toHaveBeenCalledTimes(1);
       expect(toolInvocationStore.requestCancelOnce).toHaveBeenCalledWith('inv-1', 'web_abort', { requestedBy: USER.sub });
       // durable 事件日志：run_cancel_requested + tool_invocation_cancel_requested
-      const events = await eventStore.list(sessionId);
+      const events = await eventStore.list(TENANT, sessionId);
       expect(events.map((e) => e.type)).toEqual(['run_cancel_requested', 'tool_invocation_cancel_requested']);
       expect(events[0]).toMatchObject({ runId: 'run-ab-1', userId: USER.sub, reason: 'web_abort', streamId: 'st-d' });
       expect(events[1]).toMatchObject({
@@ -1505,7 +1505,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
     function resumeRig(runStore: MemoryRunStore, tmp: string, enqueued: UpsertRunInput[]): Rig {
       return makeRig({
         agentCwd: tmp,
-        runtimeEventStoreFor: (tp) => new FileEventStore(getRuntimeEventLogPath(tp)),
+        runtimeEventStoreFor: (tp) => new FileEventStore(getRuntimeEventLogPath(tp), TENANT),
         enqueueRuntime: {
           scheduler: {
             enqueue: async (input: UpsertRunInput) => {
@@ -1529,7 +1529,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         type: 'interaction_requested', sessionId, runId: 'run-ask-1', toolCallId: 'call-ask-1',
         interactionId: 'ask-int-1', interactionType: 'ask_user', userId: USER.sub,
         questions: [{ question: '选哪个颜色?', header: '颜色', options: [{ label: '红', description: '' }], multiSelect: false }],
-      });
+      }, { tenantId: TENANT });
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({ runId: 'run-ask-1', sessionId, userId: USER.sub, model: 'm-ask', channel: 'web' });
       await runStore.markStatus('run-ask-1', 'waiting_user');
@@ -1549,7 +1549,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         metadata: { resumeInteraction: { interactionId: 'ask-int-1', response: { answers: { q1: '红色' } } } },
       });
       // durable 日志追加 interaction_resolved（归一化应答）
-      const events = await eventStore.list(sessionId);
+      const events = await eventStore.list(TENANT, sessionId);
       expect(events.at(-1)).toMatchObject({
         type: 'interaction_resolved', interactionId: 'ask-int-1', interactionType: 'ask_user',
         runId: 'run-ask-1', toolCallId: 'call-ask-1', userId: USER.sub,
@@ -1576,12 +1576,12 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await eventStore.append({
         type: 'assistant_tool_calls', sessionId, runId: 'run-appr-1', content: '',
         toolCalls: [{ id: 'call-appr-1', name: 'Shell', arguments: '{"command":"ls"}' }],
-      } as any);
+      } as any, { tenantId: TENANT });
       await eventStore.append({
         type: 'approval_requested', sessionId, runId: 'run-appr-1', approvalId: 'appr-1',
         toolCallId: 'call-appr-1', toolId: 'Shell', toolName: 'Shell',
         executionTarget: 'server-local', input: { command: 'ls' },
-      } as any);
+      } as any, { tenantId: TENANT });
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({ runId: 'run-appr-1', sessionId, userId: USER.sub, model: 'm-appr', channel: 'web' });
       await runStore.markStatus('run-appr-1', 'waiting_approval');
@@ -1595,7 +1595,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         runId: 'run-appr-1', sessionId, workspaceId: 'ws-appr',
         metadata: { resumeApproval: { approvalId: 'appr-1', response: { allow: true, message: '可以执行' } } },
       });
-      const events = await eventStore.list(sessionId);
+      const events = await eventStore.list(TENANT, sessionId);
       expect(events.at(-1)).toMatchObject({
         type: 'interaction_resolved', interactionId: 'appr-1', interactionType: 'approval',
         response: { allow: true, message: '可以执行' },
@@ -1614,11 +1614,11 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await eventStore.append({
         type: 'assistant_tool_calls', sessionId, runId: 'run-appr-t', content: '',
         toolCalls: [{ id: 'call-t-1', name: 'Shell', arguments: '{}' }],
-      } as any);
+      } as any, { tenantId: TENANT });
       await eventStore.append({
         type: 'approval_requested', sessionId, runId: 'run-appr-t', approvalId: 'appr-t-1',
         toolCallId: 'call-t-1', toolId: 'Shell', toolName: 'Shell', input: {},
-      } as any);
+      } as any, { tenantId: TENANT });
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({ runId: 'run-appr-t', sessionId, userId: USER.sub, model: 'm', channel: 'web' });
       await runStore.markStatus('run-appr-t', 'completed');
@@ -1630,7 +1630,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         type: 'respond_ok', interactionId: 'appr-t-1',
       });
       expect(enqueued).toHaveLength(0);
-      const events = await eventStore.list(sessionId);
+      const events = await eventStore.list(TENANT, sessionId);
       expect(events.at(-1)).toMatchObject({
         type: 'approval_resolved',
         approvalId: 'appr-t-1',
@@ -1645,15 +1645,15 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await eventStore.append({
         type: 'assistant_tool_calls', sessionId, runId: 'run-appr-l', content: '',
         toolCalls: [{ id: 'call-l-1', name: 'Shell', arguments: '{}' }],
-      } as any);
+      } as any, { tenantId: TENANT });
       await eventStore.append({
         type: 'approval_requested', sessionId, runId: 'run-appr-l', approvalId: 'appr-l-1',
         toolCallId: 'call-l-1', toolId: 'Shell', toolName: 'Shell', input: {},
-      } as any);
+      } as any, { tenantId: TENANT });
       const resumeCalls: any[] = [];
       const rig = makeRig({
         agentCwd: tmp,
-        runtimeEventStoreFor: (tp) => new FileEventStore(getRuntimeEventLogPath(tp)),
+        runtimeEventStoreFor: (tp) => new FileEventStore(getRuntimeEventLogPath(tp), TENANT),
         resumeApprovalDispatch: ((request: any) => {
           resumeCalls.push(request);
           return (async function* (): AsyncGenerator<OutboundEvent> { yield { type: 'done' }; })();
@@ -1665,7 +1665,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       );
       expect(rig.ws.sent.some((m) => m.data.type === 'respond_ok')).toBe(true);
       expect(resumeCalls).toHaveLength(0);
-      const events = await eventStore.list(sessionId);
+      const events = await eventStore.list(TENANT, sessionId);
       expect(events.at(-1)).toMatchObject({
         type: 'approval_resolved',
         approvalId: 'appr-l-1',

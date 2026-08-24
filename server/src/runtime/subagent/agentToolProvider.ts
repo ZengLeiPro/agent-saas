@@ -96,6 +96,11 @@ export interface AgentToolProviderOptions {
   modePolicy?: 'any' | 'background_only';
 }
 
+interface ParentEventStoreBinding {
+  eventStore: EventStore;
+  tenantId: string;
+}
+
 export class AgentToolProvider implements ToolProvider {
   private readonly descriptor: ToolDescriptor<AgentToolInput>;
   private readonly resultMaxChars: number;
@@ -166,13 +171,11 @@ export class AgentToolProvider implements ToolProvider {
     // 父 session event store：durable subagent_started/finished 的落点。
     // 解析失败（file backend 测试 fixture 等）不阻断执行，只丢观测事件。
     const parentEventStore = await this.resolveParentEventStore(context);
-    const parentTenantId = (context.channelContext.sessionOwner ?? context.channelContext.user)?.tenantId
-      ?? context.workspace.tenantId;
 
     let startedInfo: { childSessionId: string; childRunId: string; model: string } | null = null;
     const appendStarted = async (info: { childSessionId: string; childRunId: string; model: string }): Promise<void> => {
       startedInfo = info;
-      await this.appendParentEvent(parentEventStore, parentTenantId, {
+      await this.appendParentEvent(parentEventStore, {
         type: 'subagent_started',
         runId: context.runId!,
         sessionId: context.sessionId!,
@@ -210,7 +213,7 @@ export class AgentToolProvider implements ToolProvider {
       // 由 invokeAuthorizedTool 转成标准化工具错误文本。
       const info = startedInfo as { childSessionId: string; childRunId: string; model: string } | null;
       if (info) {
-        await this.appendParentEvent(parentEventStore, parentTenantId, {
+        await this.appendParentEvent(parentEventStore, {
           type: 'subagent_finished',
           runId: context.runId!,
           sessionId: context.sessionId!,
@@ -231,7 +234,7 @@ export class AgentToolProvider implements ToolProvider {
       throw err;
     }
 
-    await this.appendParentEvent(parentEventStore, parentTenantId, {
+    await this.appendParentEvent(parentEventStore, {
       type: 'subagent_finished',
       runId: context.runId!,
       sessionId: context.sessionId!,
@@ -300,26 +303,33 @@ export class AgentToolProvider implements ToolProvider {
     });
   }
 
-  private async resolveParentEventStore(context: ToolCallContext): Promise<EventStore | null> {
+  private async resolveParentEventStore(context: ToolCallContext): Promise<ParentEventStoreBinding | null> {
     const sessionId = context.sessionId ?? context.workspace.sessionId;
     if (!sessionId) return null;
     try {
       const record = await resolveSessionCatalog(this.options.config).get(sessionId);
       if (!record) return null;
-      return createEventStoreForSession(this.options.config, record);
+      const sessionTenantId = record.tenantId?.trim();
+      const contextTenantId = ((context.channelContext.sessionOwner ?? context.channelContext.user)?.tenantId
+        ?? context.workspace.tenantId)?.trim();
+      if (sessionTenantId && contextTenantId && sessionTenantId !== contextTenantId) {
+        throw new Error(`Subagent parent tenant mismatch for session ${sessionId}`);
+      }
+      const tenantId = sessionTenantId ?? contextTenantId;
+      if (!tenantId) throw new Error(`Subagent parent tenant is missing for session ${sessionId}`);
+      return { eventStore: createEventStoreForSession(this.options.config, record), tenantId };
     } catch {
       return null;
     }
   }
 
   private async appendParentEvent(
-    eventStore: EventStore | null,
-    tenantId: string | undefined,
+    binding: ParentEventStoreBinding | null,
     event: Parameters<EventStore['append']>[0],
   ): Promise<void> {
-    if (!eventStore) return;
+    if (!binding) return;
     try {
-      await eventStore.append(event, tenantId ? { tenantId } : undefined);
+      await binding.eventStore.append(event, { tenantId: binding.tenantId });
     } catch (err) {
       // 观测事件写失败不阻断工具结果回传
       logger.warn(`[subagent] durable 事件写入失败: ${err instanceof Error ? err.message : String(err)}`);

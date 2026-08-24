@@ -54,12 +54,13 @@ export function notifyCrossProcessInteractionResume(
  */
 export async function loadResolvedInteractionIds(
   store: EventStore | null,
+  tenantId: string,
   sessionId: string,
 ): Promise<Set<string>> {
   const resolvedIds = new Set<string>();
   if (!store) return resolvedIds;
   try {
-    const events = await store.list(sessionId, {
+    const events = await store.list(tenantId, sessionId, {
       includeTypes: ['interaction_resolved', 'approval_resolved'],
     });
     for (const event of events) {

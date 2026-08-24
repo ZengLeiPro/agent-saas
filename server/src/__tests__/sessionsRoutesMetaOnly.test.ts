@@ -70,7 +70,7 @@ async function startServer(
   app.use('/api', createSessionsRouter({
     agentCwd,
     runtimeEventStoreFor: options.runtimeEventStoreFor
-      ?? ((transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath))),
+      ?? ((transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath), TEST_USER.tenantId)),
     resolveContextAccounting: options.resolveContextAccounting,
     orgAgentStore: options.orgAgentStore,
     sessionProjectionStore: options.sessionProjectionStore,
@@ -141,7 +141,7 @@ describe('sessions routes for meta-only runtime sessions', () => {
     }
 
     if (options.content) {
-      const eventStore = new FileEventStore(getRuntimeEventLogPath(transcriptPath));
+      const eventStore = new FileEventStore(getRuntimeEventLogPath(transcriptPath), TEST_USER.tenantId);
       await eventStore.append({
         type: 'user_message_submitted',
         sessionId,
@@ -149,7 +149,7 @@ describe('sessions routes for meta-only runtime sessions', () => {
         userId: options.userId ?? TEST_USER.id,
         clientMsgId: randomUUID(),
         content: options.content,
-      });
+      }, { tenantId: TEST_USER.tenantId });
     }
 
     return { sessionId, transcriptPath };
@@ -526,11 +526,11 @@ describe('sessions routes for meta-only runtime sessions', () => {
     try {
       const stats = await fetch(`${baseUrl}/api/sessions/${sessionId}/stats`);
       expect(stats.status).toBe(200);
-      expect(list).toHaveBeenCalledWith(sessionId, {
+      expect(list).toHaveBeenCalledWith(TEST_USER.tenantId, sessionId, {
         includeTypes: ['assistant_message', 'assistant_tool_calls', 'compaction'],
         projection: 'usage',
       });
-      expect(listPage).toHaveBeenCalledWith(sessionId, {
+      expect(listPage).toHaveBeenCalledWith(TEST_USER.tenantId, sessionId, {
         limit: 500,
         type: 'subagent_finished',
         projection: 'usage',
@@ -598,7 +598,7 @@ describe('sessions routes for meta-only runtime sessions', () => {
     });
     await writeFile(childTranscriptPath, '');
 
-    const parentEvents = new FileEventStore(getRuntimeEventLogPath(transcriptPath));
+    const parentEvents = new FileEventStore(getRuntimeEventLogPath(transcriptPath), TEST_USER.tenantId);
     await parentEvents.append({
       type: 'subagent_finished',
       runId: `${Date.now()}-${randomUUID()}`,
@@ -614,9 +614,9 @@ describe('sessions routes for meta-only runtime sessions', () => {
       toolUseCount: 1,
       turnCount: 2,
       durationMs: 1000,
-    });
+    }, { tenantId: TEST_USER.tenantId });
 
-    const childEvents = new FileEventStore(getRuntimeEventLogPath(childTranscriptPath));
+    const childEvents = new FileEventStore(getRuntimeEventLogPath(childTranscriptPath), TEST_USER.tenantId);
     await childEvents.append({
       type: 'assistant_tool_calls',
       runId: childRunId,
@@ -631,7 +631,7 @@ describe('sessions routes for meta-only runtime sessions', () => {
         apiRequestCount: 1,
       },
       toolCalls: [{ id: 'tool-1', name: 'Read', arguments: '{}' }],
-    });
+    }, { tenantId: TEST_USER.tenantId });
     await childEvents.append({
       type: 'assistant_message',
       runId: childRunId,
@@ -645,7 +645,7 @@ describe('sessions routes for meta-only runtime sessions', () => {
         cacheCreationInputTokens: 0,
         apiRequestCount: 1,
       },
-    });
+    }, { tenantId: TEST_USER.tenantId });
 
     const { server, baseUrl } = await startServer(agentCwd, {
       resolveContextAccounting: () => ({

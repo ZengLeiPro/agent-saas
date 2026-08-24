@@ -172,8 +172,8 @@ export class UserActivityService {
       let userMessages: PlatformEvent[];
       try {
         [runChannels, userMessages] = await Promise.all([
-          this.collectRunChannels(eventStore, candidate.sessionId),
-          this.collectEvents(eventStore, candidate.sessionId, 'user_message'),
+          this.collectRunChannels(eventStore, query.tenantId, candidate.sessionId),
+          this.collectEvents(eventStore, query.tenantId, candidate.sessionId, 'user_message'),
         ]);
       } catch (err) {
         this.options.logger?.warn(
@@ -222,9 +222,9 @@ export class UserActivityService {
     return base;
   }
 
-  private async collectRunChannels(eventStore: EventStore, sessionId: string): Promise<Map<string, string>> {
+  private async collectRunChannels(eventStore: EventStore, tenantId: string, sessionId: string): Promise<Map<string, string>> {
     const map = new Map<string, string>();
-    for (const event of await this.collectEvents(eventStore, sessionId, 'run_started')) {
+    for (const event of await this.collectEvents(eventStore, tenantId, sessionId, 'run_started')) {
       if (event.type === 'run_started') map.set(event.runId, event.channel);
     }
     return map;
@@ -232,6 +232,7 @@ export class UserActivityService {
 
   private async collectEvents(
     eventStore: EventStore,
+    tenantId: string,
     sessionId: string,
     type: PlatformEvent['type'],
   ): Promise<PlatformEvent[]> {
@@ -241,7 +242,7 @@ export class UserActivityService {
       let afterCursor: string | undefined;
       // 一个会话的 run_started/user_message 数量有限；防御性给个页数上限
       for (let page = 0; page < 50; page++) {
-        const result = await eventStore.listPage(sessionId, {
+        const result = await eventStore.listPage(tenantId, sessionId, {
           type,
           limit: EVENT_PAGE_LIMIT,
           ...(afterCursor ? { afterCursor } : {}),
@@ -252,7 +253,7 @@ export class UserActivityService {
       }
       return events;
     }
-    const all = await eventStore.list(sessionId);
+    const all = await eventStore.list(tenantId, sessionId);
     return all.filter((event) => event.type === type);
   }
 }

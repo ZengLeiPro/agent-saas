@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 
 import type { EventAppendContext, EventListOptions, EventListPage, EventStore, PlatformEvent, PlatformEventInput } from './types.js';
-import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
+import { LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import {
   projectToolResultSourceForModel,
   TOOL_RESULT_PROJECTION_PREFIX_CHARS,
@@ -124,10 +124,13 @@ export class PgEventStore implements EventStore {
     const client = await this.pool.connect();
     try {
       await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
+      await client.query('BEGIN');
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.cursorsTable} (
-          session_id TEXT PRIMARY KEY,
-          next_sequence BIGINT NOT NULL DEFAULT 1
+          tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}',
+          session_id TEXT NOT NULL,
+          next_sequence BIGINT NOT NULL DEFAULT 1,
+          PRIMARY KEY (tenant_id, session_id)
         )
       `);
       await client.query(`
@@ -135,13 +138,14 @@ export class PgEventStore implements EventStore {
           global_sequence BIGSERIAL PRIMARY KEY,
           session_id TEXT NOT NULL,
           session_sequence BIGINT NOT NULL,
-          event_id TEXT NOT NULL UNIQUE,
+          event_id TEXT NOT NULL,
           event_type TEXT NOT NULL,
           run_id TEXT,
           tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}', /* 旧事件缺 tenant 时回填 legacy tenant */
           timestamp TIMESTAMPTZ NOT NULL,
           event_json JSONB NOT NULL,
-          UNIQUE(session_id, session_sequence)
+          UNIQUE(tenant_id, event_id),
+          UNIQUE(tenant_id, session_id, session_sequence)
         )
       `);
       // PR 3 迁移：兼容旧库。不要在每次进程启动时无条件跑 ALTER TABLE；即使
@@ -160,22 +164,98 @@ export class PgEventStore implements EventStore {
           ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'
         `);
       }
-      // UNIQUE(session_id, session_sequence) 已自带同序 btree，不再创建
-      // ${this.eventsTable}_session_idx；event_json GIN 历史上 idx_scan=0，也不再创建。
+
+      const cursorColumns = new Set((await client.query<{ column_name: string }>(`
+        SELECT attname AS column_name
+        FROM pg_attribute
+        WHERE attrelid = $1::regclass
+          AND attnum > 0
+          AND NOT attisdropped
+      `, [this.cursorsTable])).rows.map((row) => row.column_name));
+      if (!cursorColumns.has('tenant_id')) {
+        await client.query(`
+          ALTER TABLE ${this.cursorsTable}
+          ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'
+        `);
+      }
+
+      // 旧 schema 的 event_id 全局唯一、(session_id, sequence) 唯一及 cursor
+      // session_id 主键都会阻断两个 tenant 使用相同业务 ID。按约束列精确识别并删除，
+      // 避免依赖 PostgreSQL 自动生成且可能被截断的 constraint 名称；其他业务约束不动。
+      await dropConstraintByColumns(client, this.eventsTable, ['event_id']);
+      await dropConstraintByColumns(client, this.eventsTable, ['session_id', 'session_sequence']);
+      await dropConstraintByColumns(client, this.cursorsTable, ['session_id']);
+
+      // 兼容曾中断在“已删旧 PK、未建新唯一索引”的迁移：同一 tenant/session
+      // 只保留一行，并保留最大的 next_sequence，避免 init 产生或放大重复 cursor。
+      await client.query(`
+        WITH ranked AS (
+          SELECT ctid,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY tenant_id, session_id
+                   ORDER BY next_sequence DESC, ctid
+                 ) AS row_number
+          FROM ${this.cursorsTable}
+        )
+        DELETE FROM ${this.cursorsTable} cursor_row
+        USING ranked
+        WHERE cursor_row.ctid = ranked.ctid
+          AND ranked.row_number > 1
+      `);
+
+      await ensureUniqueIndexByColumns(
+        client,
+        this.eventsTable,
+        `${this.eventsTable}_tenant_event_id_key`,
+        ['tenant_id', 'event_id'],
+      );
+      await ensureUniqueIndexByColumns(
+        client,
+        this.eventsTable,
+        `${this.eventsTable}_tenant_session_sequence_key`,
+        ['tenant_id', 'session_id', 'session_sequence'],
+      );
+      await ensureUniqueIndexByColumns(
+        client,
+        this.cursorsTable,
+        `${this.cursorsTable}_tenant_session_key`,
+        ['tenant_id', 'session_id'],
+      );
+
+      // 省略 tenant_id 的旧 writer 和历史 cursor 永远属于 LEGACY_TENANT_ID，不能根据
+      // 同 session 的新事件“猜归属”。再按事件事实源为每个 tenant/session 独立补齐
+      // cursor；重复 init 只会单调修正 next_sequence，不会插入重复行。
+      await client.query(`
+        INSERT INTO ${this.cursorsTable} (tenant_id, session_id, next_sequence)
+        SELECT tenant_id, session_id, COALESCE(MAX(session_sequence), 0) + 1
+        FROM ${this.eventsTable}
+        GROUP BY tenant_id, session_id
+        ON CONFLICT (tenant_id, session_id) DO UPDATE
+        SET next_sequence = GREATEST(${this.cursorsTable}.next_sequence, EXCLUDED.next_sequence)
+      `);
+      // 保留 LEGACY default：rolling deploy 中旧 writer 仍可能省略 tenant_id。新代码
+      // 始终显式写 tenant_id；default 只承接旧进程/旧数据，绝不作为新 API fallback。
+      await client.query(`
+        ALTER TABLE ${this.cursorsTable}
+        ALTER COLUMN tenant_id SET DEFAULT '${LEGACY_TENANT_ID}'
+      `);
+
+      // tenant-scoped sequence 唯一索引已覆盖 session 顺序读取；event_json GIN
+      // 历史上 idx_scan=0，也不再创建。
       // 旧库可能仍有 legacy ${this.eventsTable}_run_idx（早期为 run_id 单列），
       // init 阶段不碰它；新库只创建当前查询下推使用的 session_run_idx。
       await client.query(`
         CREATE INDEX IF NOT EXISTS ${this.eventsTable}_session_run_idx
-        ON ${this.eventsTable} (session_id, run_id, session_sequence)
+        ON ${this.eventsTable} (tenant_id, session_id, run_id, session_sequence)
         WHERE run_id IS NOT NULL
       `);
       await client.query(`
         CREATE INDEX IF NOT EXISTS ${this.eventsTable}_type_idx
-        ON ${this.eventsTable} (session_id, event_type, session_sequence)
+        ON ${this.eventsTable} (tenant_id, session_id, event_type, session_sequence)
       `);
       await client.query(`
         CREATE INDEX IF NOT EXISTS ${this.eventsTable}_tool_call_idx
-        ON ${this.eventsTable} ((event_json->>'toolCallId'), session_id, session_sequence)
+        ON ${this.eventsTable} (tenant_id, (event_json->>'toolCallId'), session_id, session_sequence)
         WHERE event_json ? 'toolCallId'
       `);
       // PR 3：tenant_id 索引（按组织分页 / 计费 / 审计聚合时用）
@@ -183,6 +263,10 @@ export class PgEventStore implements EventStore {
         CREATE INDEX IF NOT EXISTS ${this.eventsTable}_tenant_idx
         ON ${this.eventsTable} (tenant_id, timestamp DESC)
       `);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
     } finally {
       await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
       client.release();
@@ -193,11 +277,12 @@ export class PgEventStore implements EventStore {
     await this.pool.end();
   }
 
-  async append(event: PlatformEventInput, ctx?: EventAppendContext): Promise<PlatformEvent> {
+  async append(event: PlatformEventInput, ctx: EventAppendContext): Promise<PlatformEvent> {
     return (await this.appendBatch([event], ctx))[0]!;
   }
 
-  async appendBatch(events: PlatformEventInput[], ctx?: EventAppendContext): Promise<PlatformEvent[]> {
+  async appendBatch(events: PlatformEventInput[], ctx: EventAppendContext): Promise<PlatformEvent[]> {
+    const tenantId = requireTenantId(ctx.tenantId);
     if (events.length === 0) return [];
     const sessionIds = new Set(events.map((event) => event.sessionId));
     if (sessionIds.size > 1) {
@@ -207,7 +292,6 @@ export class PgEventStore implements EventStore {
     }
 
     const sessionId = events[0]!.sessionId;
-    const tenantId = ctx?.tenantId || DEFAULT_TENANT_ID;
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -215,17 +299,17 @@ export class PgEventStore implements EventStore {
       // compatibility guarantee for rolling-deploy writers that do not take this advisory lock.
       await lockPgEventGlobalSequence(client, this.eventsTable);
       await client.query(
-        `INSERT INTO ${this.cursorsTable} (session_id, next_sequence)
-         VALUES ($1, 1)
-         ON CONFLICT (session_id) DO NOTHING`,
-        [sessionId],
+        `INSERT INTO ${this.cursorsTable} (tenant_id, session_id, next_sequence)
+         VALUES ($1, $2, 1)
+         ON CONFLICT (tenant_id, session_id) DO NOTHING`,
+        [tenantId, sessionId],
       );
       const cursor = await client.query<{ start_sequence: string }>(
         `UPDATE ${this.cursorsTable}
          SET next_sequence = next_sequence + $2
-         WHERE session_id = $1
+         WHERE tenant_id = $1 AND session_id = $3
          RETURNING next_sequence - $2 AS start_sequence`,
-        [sessionId, events.length],
+        [tenantId, events.length, sessionId],
       );
       const startSequence = Number(cursor.rows[0]?.start_sequence ?? 1);
       const timestamp = new Date().toISOString();
@@ -272,7 +356,8 @@ export class PgEventStore implements EventStore {
     }
   }
 
-  async list(sessionId: string, options: EventListOptions = {}): Promise<PlatformEvent[]> {
+  async list(tenantId: string, sessionId: string, options: EventListOptions = {}): Promise<PlatformEvent[]> {
+    tenantId = requireTenantId(tenantId);
     const excludeTypes = [...new Set(options.excludeTypes ?? [])];
     const includeTypes = [...new Set(options.includeTypes ?? [])];
     if (options.projection === 'usage') {
@@ -280,10 +365,11 @@ export class PgEventStore implements EventStore {
         `SELECT event_json - 'content' - 'modelContent' AS event_json
          FROM ${this.eventsTable}
          WHERE session_id = $1
+           AND tenant_id = $5
            AND ($2::boolean = false OR event_type = ANY($3::text[]))
            AND event_type <> ALL($4::text[])
          ORDER BY session_sequence ASC`,
-        [sessionId, includeTypes.length > 0, includeTypes, excludeTypes],
+        [sessionId, includeTypes.length > 0, includeTypes, excludeTypes, tenantId],
       );
       return result.rows.map((row) => normalizeEventJson(row.event_json));
     }
@@ -328,6 +414,7 @@ export class PgEventStore implements EventStore {
                 END AS tool_content_lines
          FROM ${this.eventsTable}
          WHERE session_id = $1
+           AND tenant_id = $7
            AND ($2::boolean = false OR event_type = ANY($3::text[]))
            AND event_type <> ALL($4::text[])
          ORDER BY session_sequence ASC`,
@@ -338,6 +425,7 @@ export class PgEventStore implements EventStore {
           excludeTypes,
           TOOL_RESULT_PROJECTION_PREFIX_CHARS,
           TOOL_RESULT_PROJECTION_SUFFIX_CHARS,
+          tenantId,
         ],
       );
       return result.rows.map((row) => {
@@ -367,10 +455,11 @@ export class PgEventStore implements EventStore {
         `SELECT event_json
          FROM ${this.eventsTable}
          WHERE session_id = $1
+           AND tenant_id = $4
            AND event_type = ANY($2::text[])
            AND event_type <> ALL($3::text[])
          ORDER BY session_sequence ASC`,
-        [sessionId, includeTypes, excludeTypes],
+        [sessionId, includeTypes, excludeTypes, tenantId],
       );
       return result.rows.map((row) => normalizeEventJson(row.event_json));
     }
@@ -379,23 +468,25 @@ export class PgEventStore implements EventStore {
         `SELECT event_json
          FROM ${this.eventsTable}
          WHERE session_id = $1
+           AND tenant_id = $3
            AND event_type <> ALL($2::text[])
          ORDER BY session_sequence ASC`,
-        [sessionId, excludeTypes],
+        [sessionId, excludeTypes, tenantId],
       );
       return result.rows.map((row) => normalizeEventJson(row.event_json));
     }
     const result = await this.pool.query<{ event_json: PlatformEvent }>(
       `SELECT event_json
        FROM ${this.eventsTable}
-       WHERE session_id = $1
+       WHERE session_id = $1 AND tenant_id = $2
        ORDER BY session_sequence ASC`,
-      [sessionId],
+      [sessionId, tenantId],
     );
     return result.rows.map((row) => normalizeEventJson(row.event_json));
   }
 
   async listPage(
+    tenantId: string,
     sessionId: string,
     options: {
       afterCursor?: string;
@@ -406,6 +497,7 @@ export class PgEventStore implements EventStore {
       projection?: 'usage';
     } = {},
   ): Promise<EventListPage> {
+    tenantId = requireTenantId(tenantId);
     const afterSequence = parsePgCursor(options.afterCursor);
     const limit = options.limit && options.limit > 0 ? options.limit : 100;
     const excludeTypes = [...new Set(options.excludeTypes ?? [])];
@@ -416,13 +508,14 @@ export class PgEventStore implements EventStore {
       `SELECT ${eventJsonProjection} AS event_json, session_sequence
        FROM ${this.eventsTable}
        WHERE session_id = $1
+         AND tenant_id = $7
          AND session_sequence > $2
          AND ($4::text IS NULL OR run_id = $4::text)
          AND ($5::text IS NULL OR event_type = $5::text)
          AND event_type <> ALL($6::text[])
        ORDER BY session_sequence ASC
        LIMIT $3`,
-      [sessionId, afterSequence, limit + 1, options.runId ?? null, options.type ?? null, excludeTypes],
+      [sessionId, afterSequence, limit + 1, options.runId ?? null, options.type ?? null, excludeTypes, tenantId],
     );
     const rows = result.rows.slice(0, limit);
     const last = rows.at(-1);
@@ -433,14 +526,15 @@ export class PgEventStore implements EventStore {
     };
   }
 
-  async listAround(sessionId: string, eventId: string, options: { before?: number; after?: number } = {}): Promise<PlatformEvent[]> {
+  async listAround(tenantId: string, sessionId: string, eventId: string, options: { before?: number; after?: number } = {}): Promise<PlatformEvent[]> {
+    tenantId = requireTenantId(tenantId);
     const before = Math.max(0, options.before ?? 0);
     const after = Math.max(0, options.after ?? 0);
     const anchor = await this.pool.query<{ session_sequence: string }>(
       `SELECT session_sequence FROM ${this.eventsTable}
-       WHERE session_id = $1 AND event_id = $2
+       WHERE session_id = $1 AND event_id = $2 AND tenant_id = $3
        LIMIT 1`,
-      [sessionId, eventId],
+      [sessionId, eventId, tenantId],
     );
     const sequence = Number(anchor.rows[0]?.session_sequence);
     if (!Number.isFinite(sequence)) return [];
@@ -448,10 +542,11 @@ export class PgEventStore implements EventStore {
       `SELECT event_json
        FROM ${this.eventsTable}
        WHERE session_id = $1
+         AND tenant_id = $4
          AND session_sequence >= $2
          AND session_sequence <= $3
        ORDER BY session_sequence ASC`,
-      [sessionId, Math.max(1, sequence - before), sequence + after],
+      [sessionId, Math.max(1, sequence - before), sequence + after, tenantId],
     );
     return result.rows.map((row) => normalizeEventJson(row.event_json));
   }
@@ -510,24 +605,26 @@ export class PgEventStore implements EventStore {
    * （2026-07-29 L2 记忆整合批次：digest 证据链需要精确 sequence，listPage 不
    * 暴露逐行序号）。
    */
-  async listSessionRange(sessionId: string, options: {
+  async listSessionRange(tenantId: string, sessionId: string, options: {
     fromExclusive: number;
     toInclusive: number;
     excludeTypes?: ReadonlyArray<PlatformEvent['type']>;
     limit?: number;
   }): Promise<Array<{ sessionSequence: number; event: PlatformEvent }>> {
+    tenantId = requireTenantId(tenantId);
     const excludeTypes = [...new Set(options.excludeTypes ?? [])];
     const limit = options.limit && options.limit > 0 ? options.limit : 2_000;
     const result = await this.pool.query<{ session_sequence: string; event_json: PlatformEvent }>(
       `SELECT session_sequence, event_json
        FROM ${this.eventsTable}
        WHERE session_id = $1
+         AND tenant_id = $6
          AND session_sequence > $2
          AND session_sequence <= $3
          AND event_type <> ALL($4::text[])
        ORDER BY session_sequence ASC
        LIMIT $5`,
-      [sessionId, options.fromExclusive, options.toInclusive, excludeTypes, limit],
+      [sessionId, options.fromExclusive, options.toInclusive, excludeTypes, limit, tenantId],
     );
     return result.rows.map((row) => ({
       sessionSequence: Number(row.session_sequence),
@@ -535,22 +632,25 @@ export class PgEventStore implements EventStore {
     }));
   }
 
-  async listByRun(sessionId: string, runId: string): Promise<PlatformEvent[]> {
+  async listByRun(tenantId: string, sessionId: string, runId: string): Promise<PlatformEvent[]> {
+    tenantId = requireTenantId(tenantId);
     const result = await this.pool.query<{ event_json: PlatformEvent }>(
       `SELECT event_json
        FROM ${this.eventsTable}
-       WHERE session_id = $1 AND run_id = $2
+       WHERE session_id = $1 AND run_id = $2 AND tenant_id = $3
        ORDER BY session_sequence ASC`,
-      [sessionId, runId],
+      [sessionId, runId, tenantId],
     );
     return result.rows.map((row) => normalizeEventJson(row.event_json));
   }
 
-  async listByToolCall(sessionId: string, toolCallId: string): Promise<PlatformEvent[]> {
+  async listByToolCall(tenantId: string, sessionId: string, toolCallId: string): Promise<PlatformEvent[]> {
+    tenantId = requireTenantId(tenantId);
     const result = await this.pool.query<{ event_json: PlatformEvent }>(
       `SELECT event_json
        FROM ${this.eventsTable}
        WHERE session_id = $1
+         AND tenant_id = $3
          AND (
            event_json->>'toolCallId' = $2
            OR EXISTS (
@@ -563,12 +663,13 @@ export class PgEventStore implements EventStore {
            )
          )
        ORDER BY session_sequence ASC`,
-      [sessionId, toolCallId],
+      [sessionId, toolCallId, tenantId],
     );
     return result.rows.map((row) => normalizeEventJson(row.event_json));
   }
 
   async search(
+    tenantId: string,
     sessionId: string,
     query: string,
     options: {
@@ -578,6 +679,7 @@ export class PgEventStore implements EventStore {
       excludeTypes?: PlatformEvent['type'][];
     } = {},
   ): Promise<PlatformEvent[]> {
+    tenantId = requireTenantId(tenantId);
     const needle = query.trim();
     if (!needle) return [];
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 50);
@@ -586,21 +688,23 @@ export class PgEventStore implements EventStore {
       `SELECT event_json
        FROM ${this.eventsTable}
        WHERE session_id = $1
+         AND tenant_id = $7
          AND ($3::text IS NULL OR run_id = $3::text)
          AND ($4::text IS NULL OR event_type = $4::text)
          AND event_type <> ALL($6::text[])
          AND event_json::text ILIKE '%' || $2 || '%'
        ORDER BY session_sequence ASC
        LIMIT $5`,
-      [sessionId, needle, options.runId ?? null, options.type ?? null, limit, excludeTypes],
+      [sessionId, needle, options.runId ?? null, options.type ?? null, limit, excludeTypes, tenantId],
     );
     return result.rows.map((row) => normalizeEventJson(row.event_json));
   }
 
-  async getById(eventId: string): Promise<PlatformEvent | null> {
+  async getById(tenantId: string, eventId: string): Promise<PlatformEvent | null> {
+    tenantId = requireTenantId(tenantId);
     const result = await this.pool.query<{ event_json: PlatformEvent }>(
-      `SELECT event_json FROM ${this.eventsTable} WHERE event_id = $1 LIMIT 1`,
-      [eventId],
+      `SELECT event_json FROM ${this.eventsTable} WHERE event_id = $1 AND tenant_id = $2 LIMIT 1`,
+      [eventId, tenantId],
     );
     return result.rows[0] ? normalizeEventJson(result.rows[0].event_json) : null;
   }
@@ -626,8 +730,8 @@ export class PgEventStore implements EventStore {
       let cursorCount = 0;
       if (sessionIds.length > 0) {
         const cursors = await client.query(
-          `DELETE FROM ${this.cursorsTable} WHERE session_id = ANY($1::text[])`,
-          [sessionIds],
+          `DELETE FROM ${this.cursorsTable} WHERE tenant_id = $1 AND session_id = ANY($2::text[])`,
+          [tenantId, sessionIds],
         );
         cursorCount = cursors.rowCount ?? 0;
       }
@@ -899,6 +1003,68 @@ export class PgEventStore implements EventStore {
       await drainPromise;
     };
   }
+}
+
+async function ensureUniqueIndexByColumns(
+  client: PgPoolClient,
+  table: string,
+  indexName: string,
+  columns: string[],
+): Promise<void> {
+  const result = await client.query<{ present: boolean }>(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM pg_index index_row
+      WHERE index_row.indrelid = $1::regclass
+        AND index_row.indisunique
+        AND index_row.indpred IS NULL
+        AND index_row.indexprs IS NULL
+        AND ARRAY(
+          SELECT attribute.attname
+          FROM unnest(index_row.indkey) WITH ORDINALITY AS key(attnum, position)
+          JOIN pg_attribute attribute
+            ON attribute.attrelid = index_row.indrelid
+           AND attribute.attnum = key.attnum
+          WHERE key.position <= index_row.indnkeyatts
+          ORDER BY key.position
+        ) = $2::text[]
+    ) AS present
+  `, [table, columns]);
+  if (result.rows[0]?.present) return;
+  const quotedIndex = `"${indexName.replaceAll('"', '""')}"`;
+  await client.query(`CREATE UNIQUE INDEX ${quotedIndex} ON ${table} (${columns.join(', ')})`);
+}
+
+async function dropConstraintByColumns(
+  client: PgPoolClient,
+  table: string,
+  columns: string[],
+): Promise<void> {
+  const result = await client.query<{ conname: string; columns: string[] }>(`
+    SELECT constraint_row.conname,
+           ARRAY(
+             SELECT attribute.attname
+             FROM unnest(constraint_row.conkey) WITH ORDINALITY AS key(attnum, position)
+             JOIN pg_attribute attribute
+               ON attribute.attrelid = constraint_row.conrelid
+              AND attribute.attnum = key.attnum
+             ORDER BY key.position
+           ) AS columns
+    FROM pg_constraint constraint_row
+    WHERE constraint_row.conrelid = $1::regclass
+      AND constraint_row.contype IN ('p', 'u')
+  `, [table]);
+  for (const row of result.rows) {
+    if (row.columns.length !== columns.length || row.columns.some((column, index) => column !== columns[index])) continue;
+    const constraint = `"${row.conname.replaceAll('"', '""')}"`;
+    await client.query(`ALTER TABLE ${table} DROP CONSTRAINT ${constraint}`);
+  }
+}
+
+function requireTenantId(tenantId: string): string {
+  const normalized = tenantId.trim();
+  if (!normalized) throw new Error('EventStore tenantId is required');
+  return normalized;
 }
 
 function sanitizeIdentifier(value: string): string {

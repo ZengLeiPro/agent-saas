@@ -14,7 +14,6 @@ import {
   type TaskboardIdentity,
   type TaskboardService,
 } from '../taskboard/types.js';
-
 const identity: TaskboardIdentity = {
   tenantId: 'tenant-a',
   ownerUserId: 'user-1',
@@ -26,7 +25,7 @@ const board: TaskBoard = {
   id: 'board-1',
   name: '迭代任务',
   visibility: 'personal',
-  ownerUserId: identity.ownerUserId,
+  ownerUserId: identity.ownerUserId, role: 'owner',
   canManage: true,
   prompt: '',
   version: 1,
@@ -163,6 +162,7 @@ function rig() {
       ...task, id: 'task-new', identifier: 'TASK-2', title: input.title,
       status: 'todo' as const, version: 1,
     })),
+    createTaskFromExecutionWithResult: vi.fn(async (_identity, _runId, input) => ({ task: { ...task, id: 'task-new', identifier: 'TASK-2', title: input.title, status: 'todo' as const, version: 1 }, created: true })),
     moveTaskFromExecution: vi.fn(async (_identity, _runId, status) => ({
       ...task,
       status,
@@ -473,14 +473,14 @@ describe('CronManage taskboard actions', () => {
     expect(executionStore.updateTaskBranchFromExecution).toHaveBeenCalledWith(
       identity, execution.runId, 'task/TASK-1-updated',
     );
-    expect(executionStore.createTaskFromExecution).toHaveBeenCalledWith(
+    expect(executionStore.createTaskFromExecutionWithResult).toHaveBeenCalledWith(
       identity,
       execution.runId,
       expect.objectContaining({
         title: '合并分支',
         status: 'todo',
         clientRequestId: expect.stringMatching(/^taskboard-tool:/),
-      }),
+      }), expect.stringMatching(/^[a-f0-9]{64}$/),
     );
     expect(executionService.startDirectExecution).toHaveBeenCalledWith(identity, 'task-new', 1);
   });
@@ -671,7 +671,7 @@ describe('CronManage taskboard actions', () => {
     await expect(invokeTaskboardAction(attachmentOptions, identity, {
       action: 'create', boardId: board.id, title: '兼容复制失败', attachments: [{ attachmentId }],
     }, scope)).rejects.toThrow('execution create update failed');
-    expect(executionStore.createTaskFromExecution).toHaveBeenCalledTimes(1);
+    expect(executionStore.createTaskFromExecutionWithResult).toHaveBeenCalledTimes(1);
     expect(service.rollbackTaskCreation).toHaveBeenCalledWith(identity, 'task-new', { expectedVersion: 1 });
     expect(cleanupTaskAttachments).toHaveBeenCalledWith(identity, 'task-new', identity.ownerUserId, [scoped]);
   });

@@ -146,16 +146,30 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return (await this.service()).createTask(identity, boardId, input);
   }
 
-  async getTask(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardTask> {
-    return (await this.service()).getTask(identity, taskId);
+  async createTaskWithResult(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput,
+    requestDigest?: string) {
+    return (await this.service()).createTaskWithResult(identity, boardId, input, requestDigest);
+  }
+
+  async completeTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string) {
+    return (await this.service()).completeTaskCreation(identity, taskId, claimToken);
+  }
+
+  async releaseTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string) {
+    return (await this.service()).releaseTaskCreation(identity, taskId, claimToken);
+  }
+
+  async getTask(identity: TaskboardIdentity, taskId: string, creationClaimToken?: string): Promise<TaskBoardTask> {
+    return (await this.service()).getTask(identity, taskId, creationClaimToken);
   }
 
   async updateTask(
     identity: TaskboardIdentity,
     taskId: string,
     input: TaskBoardTaskPatchInput,
+    creationClaimToken?: string,
   ): Promise<TaskBoardTask> {
-    return (await this.service()).updateTask(identity, taskId, input);
+    return (await this.service()).updateTask(identity, taskId, input, creationClaimToken);
   }
 
   async moveTask(
@@ -575,6 +589,12 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
   ): Promise<TaskBoardTask> {
     await this.init();
     return this.target.createTaskFromExecution(identity, runId, input);
+  }
+
+  async createTaskFromExecutionWithResult(identity: TaskboardIdentity, runId: string, input: TaskBoardTaskCreateInput,
+    requestDigest?: string) {
+    await this.init();
+    return this.target.createTaskFromExecutionWithResult(identity, runId, input, requestDigest);
   }
 
   async moveTaskFromExecution(

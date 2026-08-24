@@ -1,8 +1,6 @@
 import type { Server } from 'node:http';
-
 import express from 'express';
 import { afterEach, describe, expect, it } from 'vitest';
-
 import type {
   TaskBoard,
   TaskBoardComment,
@@ -36,13 +34,13 @@ const BOARD: TaskBoard = {
   name: '研发事项',
   visibility: 'personal',
   ownerUserId: USER.sub,
+  role: 'owner',
   canManage: true,
   prompt: '执行看板任务',
   version: 1,
   createdAt: '2026-08-01T00:00:00.000Z',
   updatedAt: '2026-08-01T00:00:00.000Z',
 };
-
 const TASK: TaskBoardTask = {
   id: 'task-1',
   boardId: BOARD.id,
@@ -82,7 +80,6 @@ const EXECUTION: TaskBoardExecution = {
   createdAt: BOARD.createdAt,
   updatedAt: BOARD.updatedAt,
 };
-
 interface Captured {
   identities: TaskboardIdentity[];
   taskFilters: TaskboardTaskListFilter[];
@@ -715,6 +712,9 @@ function makeService(captured: Captured): TaskboardService {
       return { items: [BOARD], page: filter.page ?? 1, pageSize: filter.pageSize ?? 20, total: 1, hasMore: false };
     },
     async getBoard(identity) { remember(identity); return BOARD; },
+    async createTaskWithResult(identity) { remember(identity); return { task: TASK, created: true }; },
+    async completeTaskCreation(identity) { remember(identity); return TASK; },
+    async releaseTaskCreation(identity) { remember(identity); },
     async createBoard(identity, input) { remember(identity); captured.createBoards.push(input); return BOARD; },
     async updateBoard(identity) { remember(identity); return BOARD; },
     async archiveBoard(identity) { remember(identity); return { ...BOARD, version: 2, archivedAt: BOARD.updatedAt }; },

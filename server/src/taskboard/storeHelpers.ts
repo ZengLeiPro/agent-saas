@@ -17,6 +17,12 @@ import {
 } from './types.js';
 import { parseJsonObject, parseStageModels } from './boardFields.js';
 
+export function assertTaskContent(title: string | undefined, description: string | undefined): void {
+  if (!title?.trim() && !description?.trim()) {
+    throw new TaskboardValidationError('Task title and description cannot both be empty');
+  }
+}
+
 export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
   if (row.kind !== null && row.kind !== undefined
     && !['delivery', 'advisory', 'integration', 'remediation'].includes(String(row.kind))) {

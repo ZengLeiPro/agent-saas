@@ -14,6 +14,7 @@ import { getPublicModelList, getUserPublicModelList, resolveContextAccountingFro
 import { applyModelsHotUpdate } from "./modelsHotUpdate.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import { enforcePlatformWritePolicy } from "../auth/platformGovernance.js";
+import { createRuntimeTaskboardTitleGenerator } from "../taskboard/taskTitle.js";
 
 import {
   createHealthRouter,
@@ -482,6 +483,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       userStore: runtime.userStore,
       agentCwd,
       uploadManager: runtime.uploadManager,
+      generateTaskTitle: createRuntimeTaskboardTitleGenerator(agentCwd, runtime),
       requeueIntegrationV3Candidate: runtime.requeueIntegrationV3Candidate,
     }),
   );

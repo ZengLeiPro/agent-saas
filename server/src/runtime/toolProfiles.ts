@@ -26,6 +26,10 @@ import type {
   ToolResult,
   ToolRuntime,
 } from '../agent/toolRuntime.js';
+import {
+  invokeMemoryConsolidationDraftTool,
+  resolveMemoryMarkdownPath,
+} from '../memory/consolidation/draft.js';
 
 export type ToolProfileId = 'memory_poll' | 'memory_consolidate';
 
@@ -132,7 +136,12 @@ class MemoryConsolidationInvocationRuntime implements ToolRuntime {
       throw new Error(`记忆审查阶段禁止调用 ${call.toolId}；只允许读取、检索和编辑记忆 Markdown。`);
     }
     if (names.some((name) => name === 'Read' || name === 'Write' || name === 'Edit')) {
-      await guardMemoryMarkdownPath(call as AuthorizedToolCall, context);
+      const relativePath = await guardMemoryMarkdownPath(call as AuthorizedToolCall, context);
+      return invokeMemoryConsolidationDraftTool(
+        call as AuthorizedToolCall,
+        { ...context, memoryMaintenanceMode: 'consolidation' },
+        relativePath,
+      );
     }
     const sourceContext = names.some((name) => name === 'SessionContext')
       ? {
@@ -274,7 +283,10 @@ async function resolveThroughExistingAncestors(target: string): Promise<string> 
 }
 
 /** 隐藏记忆审查的 Read/Write/Edit 路径边界。 */
-async function guardMemoryMarkdownPath(call: AuthorizedToolCall, context: ToolCallContext): Promise<void> {
+async function guardMemoryMarkdownPath(
+  call: AuthorizedToolCall,
+  context: ToolCallContext,
+): Promise<string> {
   const paramName = call.toolId === 'Read' ? 'path' : WRITE_PATH_PARAM[call.toolId];
   const input = call.input as Record<string, unknown> | undefined;
   const rawPath = paramName && typeof input?.[paramName] === 'string'
@@ -283,26 +295,8 @@ async function guardMemoryMarkdownPath(call: AuthorizedToolCall, context: ToolCa
   if (!paramName || !rawPath) {
     throw new Error(`记忆审查工具约束：${call.toolId} 缺少路径参数。`);
   }
-  const root = resolve(context.workspace.root);
-  const target = isAbsolute(rawPath) ? resolve(rawPath) : resolve(join(root, rawPath));
-  const rel = relative(root, target);
-  if (rel.startsWith('..') || isAbsolute(rel)) {
-    throw new Error(`记忆审查工具约束：${call.toolId} 目标越界 workspace（${rawPath}）。`);
-  }
-  const normalized = rel.split('\\').join('/');
-  const allowed = normalized === 'MEMORY.md'
-    || (normalized.startsWith('memory/') && normalized.endsWith('.md'));
-  if (!allowed) {
-    throw new Error(`记忆审查工具约束：只允许访问 MEMORY.md 或 memory/**/*.md，拒绝 ${normalized}。`);
-  }
-  const [canonicalRoot, canonicalTarget] = await Promise.all([
-    resolveThroughExistingAncestors(root),
-    resolveThroughExistingAncestors(target),
-  ]);
-  const canonicalRel = relative(canonicalRoot, canonicalTarget).split('\\').join('/');
-  if (canonicalRel.startsWith('..') || isAbsolute(canonicalRel) || !isMemoryRelativePath(canonicalRel)) {
-    throw new Error(`记忆审查工具约束：${rawPath} 经符号链接越出记忆 Markdown 边界。`);
-  }
+  const resolved = await resolveMemoryMarkdownPath(context.workspace.root, rawPath);
+  return resolved.relativePath;
 }
 
 /**

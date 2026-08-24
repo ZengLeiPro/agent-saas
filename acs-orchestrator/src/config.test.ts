@@ -67,6 +67,25 @@ describe('ACS runtime config', () => {
       .toThrow(/drainDeadlineMs/);
   });
 
+  it('rejects a hot running limit above shared-cidr rollback capacity', () => {
+    const config = {
+      maxRunningSandboxes: 190,
+      warnRunningSandboxes: 150,
+      drainDeadlineMs: 120_000,
+      snat: {
+        mode: 'shared-cidr',
+        maxManagedEntries: 200,
+        sharedCidrs: Array.from({ length: 8 }, (_, index) => `172.16.${index}.0/24`),
+      },
+    } as AcsOrchestratorConfig;
+
+    expect(() => applyRuntimeConfigPatch(config, { maxRunningSandboxes: 191 }))
+      .toThrow(/rollback capacity 1\.\.190/);
+    expect(() => applyRuntimeConfigPatch(config, { maxRunningSandboxes: 0 }))
+      .toThrow(/rollback capacity 1\.\.190/);
+    expect(applyRuntimeConfigPatch(config, { maxRunningSandboxes: 190 }).maxRunningSandboxes).toBe(190);
+  });
+
   it('loads desired network policy from env without claiming enforcement', () => {
     const originalEnv = { ...process.env };
     process.env.ACS_ORCH_AUTH_TOKEN = 'orchestrator-token';
@@ -113,6 +132,63 @@ describe('ACS runtime config', () => {
         snatIp: '120.77.218.94',
         stabilizeAfterCreateMs: 8_000,
       });
+    } finally {
+      process.env = originalEnv;
+    }
+  });
+
+  it('loads multiple shared SNAT CIDRs, canonicalizes them, and keeps the legacy variable compatible', () => {
+    const originalEnv = { ...process.env };
+    process.env.ACS_ORCH_AUTH_TOKEN = 'orchestrator-token';
+    process.env.ACS_SANDBOX_IMAGE = 'registry.example.com/agent-saas/acs-sandbox:test';
+    process.env.ACS_SNAT_MODE = 'shared-cidr';
+    process.env.ACS_SNAT_REGION_ID = 'cn-shenzhen';
+    process.env.ACS_SNAT_TABLE_ID = 'stb-test';
+    process.env.ACS_SNAT_IP = '120.77.218.94';
+    process.env.ACS_SANDBOX_MAX_RUNNING = '8';
+    process.env.ACS_SANDBOX_WARN_RUNNING = '6';
+    delete process.env.ACS_SNAT_SHARED_CIDR;
+    try {
+      process.env.ACS_SNAT_SHARED_CIDRS = '172.16.179.9/24, 172.16.180.0/24\n172.16.179.0/24';
+      expect(loadConfigFromEnv().snat.sharedCidrs).toEqual([
+        '172.16.179.0/24',
+        '172.16.180.0/24',
+      ]);
+
+      delete process.env.ACS_SNAT_SHARED_CIDRS;
+      process.env.ACS_SNAT_SHARED_CIDR = '172.16.181.7/24';
+      expect(loadConfigFromEnv().snat.sharedCidrs).toEqual(['172.16.181.0/24']);
+    } finally {
+      process.env = originalEnv;
+    }
+  });
+
+  it('rejects ambiguous or invalid shared SNAT CIDR configuration', () => {
+    const originalEnv = { ...process.env };
+    process.env.ACS_ORCH_AUTH_TOKEN = 'orchestrator-token';
+    process.env.ACS_SANDBOX_IMAGE = 'registry.example.com/agent-saas/acs-sandbox:test';
+    process.env.ACS_SNAT_MODE = 'shared-cidr';
+    process.env.ACS_SNAT_REGION_ID = 'cn-shenzhen';
+    process.env.ACS_SNAT_TABLE_ID = 'stb-test';
+    process.env.ACS_SNAT_IP = '120.77.218.94';
+    try {
+      process.env.ACS_SNAT_SHARED_CIDR = '172.16.179.0/24';
+      process.env.ACS_SNAT_SHARED_CIDRS = '172.16.180.0/24';
+      expect(() => loadConfigFromEnv()).toThrow(/ACS_SNAT_SHARED_CIDR.*ACS_SNAT_SHARED_CIDRS/);
+
+      delete process.env.ACS_SNAT_SHARED_CIDR;
+      process.env.ACS_SNAT_SHARED_CIDRS = '172.16.180.0/24,not-a-cidr';
+      expect(() => loadConfigFromEnv()).toThrow(/ACS_SNAT_SHARED_CIDRS/);
+
+      process.env.ACS_SNAT_SHARED_CIDRS = '172.16.0.0/16';
+      expect(() => loadConfigFromEnv()).toThrow(/过宽网段/);
+
+      process.env.ACS_SNAT_SHARED_CIDRS = '172.16.180.0/24,172.16.180.128/25';
+      expect(() => loadConfigFromEnv()).toThrow(/存在重叠/);
+
+      process.env.ACS_SNAT_SHARED_CIDRS = '172.16.180.0/24,172.16.181.0/24';
+      process.env.ACS_SNAT_MAX_MANAGED_ENTRIES = '1';
+      expect(() => loadConfigFromEnv()).toThrow(/小于共享网段数/);
     } finally {
       process.env = originalEnv;
     }

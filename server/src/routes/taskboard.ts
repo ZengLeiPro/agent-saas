@@ -12,7 +12,9 @@ import {
   withCreatorAvatarVersionsPage,
 } from './taskboardAvatar.js';
 import type { UploadManager } from '../uploads/manager.js';
+import type { TrustedFile } from '../security/trustedFile.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
+import { sendTaskAttachment } from './taskboardAttachmentResponse.js';
 import {
   TASKBOARD_EXECUTION_PURPOSES,
   TASKBOARD_PRIORITIES,
@@ -535,9 +537,9 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     if (!attachment?.attachmentId) throw new TaskboardNotFoundError('Task attachment not found');
     const board = await options.service!.getBoard(identity, task.boardId);
     const ownerCwd = resolveTaskOwnerCwd(options, identity, board.ownerUserId);
-    let absolutePath: string;
+    let opened: TrustedFile;
     try {
-      absolutePath = await options.uploadManager.resolveTaskAttachment(ownerCwd, task.id, attachment);
+      opened = await options.uploadManager.resolveTaskAttachment(ownerCwd, task.id, attachment);
     } catch {
       throw new TaskboardNotFoundError('Task attachment not found');
     }
@@ -548,7 +550,7 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     res.setHeader('Content-Type', attachment.mimeType);
     res.setHeader('Content-Disposition', `${forceDownload || !inline ? 'attachment' : 'inline'}; filename="${encodeURIComponent(attachment.originalName)}"`);
     res.setHeader('Cache-Control', 'private, no-cache');
-    await sendTaskAttachment(res, absolutePath);
+    await sendTaskAttachment(req, res, opened);
   }));
 
   router.patch('/tasks/:id', route(async (req, res) => {
@@ -909,15 +911,6 @@ function identityFactory(options: TaskboardRouterOptions): (req: Request) => Tas
       userRole: user.role,
     };
   };
-}
-
-function sendTaskAttachment(res: Response, absolutePath: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    res.sendFile(absolutePath, { acceptRanges: true }, (error) => {
-      if (error) reject(error);
-      else resolve();
-    });
-  });
 }
 
 function route(handler: (req: Request, res: Response) => Promise<void>): RequestHandler {

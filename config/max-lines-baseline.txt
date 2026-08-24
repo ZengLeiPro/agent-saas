@@ -4,9 +4,9 @@
 # Format: repo-relative-path max-lines scope
 # Existing over-threshold files are grandfathered; entries may only shrink or be pruned.
 
-acs-orchestrator/src/sandboxManager.test.ts	1739	test
-acs-orchestrator/src/sandboxManager.ts	1230	production
-server/src/__tests__/appConfig.test.ts	928	test
+acs-orchestrator/src/sandboxManager.test.ts	1738	test
+acs-orchestrator/src/sandboxManager.ts	1212	production
+server/src/__tests__/appConfig.test.ts	894	test
 server/src/__tests__/billingRouterEndpoints.test.ts	822	test
 server/src/__tests__/feishuTokenBroker.test.ts	809	test
 server/src/__tests__/memoryPoll.test.ts	970	test
@@ -24,17 +24,17 @@ server/src/__tests__/webChannelReconnect.test.ts	890	test
 server/src/__tests__/workflowLibraryV3.test.ts	1062	test
 server/src/__tests__/wsEventProcessor.test.ts	830	test
 server/src/agent/toolRuntime.ts	1560	production
-server/src/app/config.ts	1487	production
-server/src/app/runtime.ts	3157	production
-server/src/channels/web/channel.ts	4384	production
+server/src/app/config.ts	1451	production
+server/src/app/runtime.ts	3151	production
+server/src/channels/web/channel.ts	4383	production
 server/src/cron/service.ts	1084	production
 server/src/data/billing/pgBillingStore.ts	2319	production
-server/src/data/transcripts/parse.ts	2042	production
+server/src/data/transcripts/parse.ts	2019	production
 server/src/routes/auth.ts	1793	production
 server/src/routes/platformObservability.ts	1276	production
 server/src/routes/sessions.ts	3359	production
 server/src/routes/skills.ts	1403	production
-server/src/runtime/rawAgentLoop.ts	3992	production
+server/src/runtime/rawAgentLoop.ts	3977	production
 server/src/runtime/rawRuntimeRunDispatch.ts	3240	production
 server/src/runtime/responsesApiAdapter.ts	2013	production
 server/src/runtime/runStore.ts	1417	production
@@ -52,5 +52,5 @@ web/src/components/ModelManager/index.tsx	1366	production
 web/src/components/RuntimeOperationsManager/index.tsx	1219	production
 web/src/components/SettingsCenter/SettingsModal.tsx	1092	production
 web/src/components/TenantManager/index.tsx	1222	production
-web/src/hooks/useChatAppState.ts	3189	production
+web/src/hooks/useChatAppState.ts	3188	production
 web/src/hooks/useSession.ts	1075	production

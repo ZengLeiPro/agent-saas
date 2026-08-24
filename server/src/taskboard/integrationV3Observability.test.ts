@@ -70,7 +70,7 @@ describe('integration v3 observability and release gate', () => {
       status: 'degraded', releaseReady: false,
       reasons: ['control_plane_disabled_with_durable_v3_work'],
     });
-    expect(String(db.query.mock.calls[0]![0])).toContain("status IN ('pending','processing','failed')");
+    expect(String(db.query.mock.calls[0]![0])).toContain("status IN ('pending','processing') OR (kind='cleanup' AND status='failed')");
     expect(String(db.query.mock.calls[0]![0])).toContain("state IN ('executing','unknown')");
   });
 

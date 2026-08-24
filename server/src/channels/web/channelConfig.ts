@@ -23,6 +23,8 @@ import type { UploadManager } from '../../uploads/manager.js';
 export type ModelResolver = (ref: string, tenantId?: string) => ResolvedModel | null;
 
 export interface WebChannelRuntimeConfig {
+  /** 是否启用 WebSocket 身份认证；直连测试缺省为 false。 */
+  authEnabled?: boolean;
   /** 主 + fallback 链；主返回空或异常时按顺序回落，全部失败再 return null。 */
   titleGeneratorConfigs?: TitleGeneratorConfig[];
   titleModelAdapterFactory?: TitleModelAdapterFactory;

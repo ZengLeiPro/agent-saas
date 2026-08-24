@@ -73,7 +73,7 @@ is_publish_path() {
       ;;
   esac
   case "$1" in
-    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/workflows/acs-sandbox.yml|.github/scripts/acs-classify.sh|.github/scripts/redeliver_acr_webhook.py|scripts/apply-orchestrator-env.py|scripts/acs-browser-lease-e2e.mjs)
+    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/workflows/acs-sandbox.yml|.github/scripts/acs-classify.sh|.github/scripts/redeliver_acr_webhook.py|scripts/apply-orchestrator-env.py|scripts/deploy-acs-orchestrator.sh|scripts/acs-browser-lease-e2e.mjs)
       return 0
       ;;
     acs-orchestrator/*|patches/*|server/package.json|server/src/data/tenants/types.ts)

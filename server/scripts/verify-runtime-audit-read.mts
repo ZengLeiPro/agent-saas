@@ -33,7 +33,7 @@ type Config = {
   auth?: { enabled?: boolean; jwtSecret?: string; usersFile?: string };
   models?: { default?: string };
 };
-type UserRecord = { id: string; username: string; role: 'admin' | 'user'; disabled?: boolean };
+type UserRecord = { id: string; username: string; role: 'admin' | 'user'; tenantId: string; disabled?: boolean };
 type DownstreamEvent = Record<string, unknown> & { type?: string };
 
 function argValue(name: string): string | undefined {
@@ -65,7 +65,7 @@ function loadAdminUser(cfg: Config): UserRecord {
 
 function signToken(cfg: Config, user: UserRecord): string {
   return jwt.sign(
-    { sub: user.id, username: user.username, role: user.role },
+    { sub: user.id, username: user.username, role: user.role, tenantId: user.tenantId },
     cfg.auth!.jwtSecret!,
     { expiresIn: '15m' },
   );
@@ -204,8 +204,15 @@ interface AuditResponse {
   };
 }
 
-async function fetchAudit(baseUrl: string, token: string, sessionId: string, qs = ''): Promise<AuditResponse> {
-  const url = `${baseUrl}/api/admin/runtime/audit/${sessionId}${qs}`;
+async function fetchAudit(
+  baseUrl: string,
+  token: string,
+  tenantId: string,
+  sessionId: string,
+  qs = '',
+): Promise<AuditResponse> {
+  const url = new URL(`${baseUrl}/api/admin/runtime/audit/${sessionId}${qs}`);
+  url.searchParams.set('tenantId', tenantId);
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   if (res.status === 404) {
     throw new Error(`audit API 404 — server 可能仍跑在旧 binary，需要 commit 7ffdcb27 之后的代码。URL=${url}`);
@@ -243,9 +250,11 @@ interface CrossSessionAuditResponse {
 async function fetchCrossSessionAudit(
   baseUrl: string,
   token: string,
+  tenantId: string,
   runId: string,
 ): Promise<{ kind: 'ok'; body: CrossSessionAuditResponse } | { kind: 'unsupported' }> {
-  const url = `${baseUrl}/api/admin/runtime/audit/runs/${encodeURIComponent(runId)}`;
+  const url = new URL(`${baseUrl}/api/admin/runtime/audit/runs/${encodeURIComponent(runId)}`);
+  url.searchParams.set('tenantId', tenantId);
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   if (res.status === 503) return { kind: 'unsupported' };
   if (!res.ok) {
@@ -323,7 +332,7 @@ async function main(): Promise<void> {
   }
 
   console.log(`[step] 调 GET /api/admin/runtime/audit/${sessionId}`);
-  const audit = await fetchAudit(baseUrl, token, sessionId);
+  const audit = await fetchAudit(baseUrl, token, admin.tenantId, sessionId);
   if (audit.sessionId !== sessionId) throw new Error(`audit.sessionId 不匹配`);
 
   const memEntry = audit.entries.find((e) => e.toolName === 'MemorySearch');
@@ -372,7 +381,7 @@ async function main(): Promise<void> {
   }
 
   // runId 过滤：取 MemorySearch 的 runId（与 Write 同一 run），断言条目数 >= 2
-  const filteredByRun = await fetchAudit(baseUrl, token, sessionId, `?runId=${encodeURIComponent(memEntry.runId)}`);
+  const filteredByRun = await fetchAudit(baseUrl, token, admin.tenantId, sessionId, `?runId=${encodeURIComponent(memEntry.runId)}`);
   if (filteredByRun.runId !== memEntry.runId) {
     throw new Error(`runId filter 响应 runId 错位: expected=${memEntry.runId} actual=${filteredByRun.runId}`);
   }
@@ -382,7 +391,7 @@ async function main(): Promise<void> {
 
   // 非 admin 应被拒（403）—— 用伪 token（非 admin role）
   const userToken = jwt.sign(
-    { sub: 'nobody', username: 'nobody', role: 'user' },
+    { sub: 'nobody', username: 'nobody', role: 'user', tenantId: admin.tenantId },
     config.auth!.jwtSecret!,
     { expiresIn: '5m' },
   );
@@ -396,7 +405,7 @@ async function main(): Promise<void> {
   // Cross-session audit search：仅 audit.projection=duckdb 才支持。
   // file backend 返回 503 → log + skip；duckdb backend 返回 200 → 额外断言。
   console.log(`[step] 调 GET /api/admin/runtime/audit/runs/${memEntry.runId}（dual-backend）`);
-  const cross = await fetchCrossSessionAudit(baseUrl, token, memEntry.runId);
+  const cross = await fetchCrossSessionAudit(baseUrl, token, admin.tenantId, memEntry.runId);
   let backend: 'file' | 'duckdb';
   if (cross.kind === 'unsupported') {
     backend = 'file';
@@ -425,7 +434,7 @@ async function main(): Promise<void> {
 
     // 非 admin 应 403
     const userToken2 = jwt.sign(
-      { sub: 'nobody', username: 'nobody', role: 'user' },
+      { sub: 'nobody', username: 'nobody', role: 'user', tenantId: admin.tenantId },
       config.auth!.jwtSecret!,
       { expiresIn: '5m' },
     );

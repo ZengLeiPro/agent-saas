@@ -2,6 +2,7 @@ import { Router, type Request } from 'express';
 import { z } from 'zod';
 
 import { isPlatformAdmin } from '../auth/types.js';
+import { ContextProductError, type ContextProductService } from '../context/product/index.js';
 
 interface ContextAdminSource {
   sourceId: string;
@@ -31,31 +32,11 @@ interface ContextAdminPartition {
   updatedAt: string;
 }
 
-interface ContextAdminEvidence {
-  sourceId: string;
-  collectionId: string;
-  evidenceId: string;
-  kind: string;
-  data: Record<string, unknown>;
-  createdAt: string;
-}
-
-/** Structural port so the read router can adopt listEvidence before the concrete Store type catches up. */
+/** Metadata-only administration port; source content/evidence is intentionally excluded. */
 export interface ContextAdminStorePort {
   listSources(tenantId: string): Promise<ContextAdminSource[]>;
   listCollections(tenantId: string, sourceId?: string): Promise<ContextAdminCollection[]>;
   listPartitions(tenantId: string, sourceId?: string, collectionId?: string): Promise<ContextAdminPartition[]>;
-  getEvidence(
-    tenantId: string,
-    sourceId: string,
-    collectionId: string,
-    recordId: string,
-  ): Promise<ContextAdminEvidence[]>;
-  listEvidence?(
-    tenantId: string,
-    sourceId: string,
-    collectionId: string,
-  ): Promise<ContextAdminEvidence[]>;
   countUnreadableRecords?(
     tenantId: string,
     sourceId: string,
@@ -78,6 +59,7 @@ export interface ContextAdminConsumerStorePort {
 export interface ContextAdminRouterOptions {
   store?: ContextAdminStorePort;
   consumers?: ContextAdminConsumerStorePort;
+  product?: ContextProductService;
   now?: () => Date;
 }
 
@@ -85,10 +67,38 @@ const tenantQuerySchema = z.object({
   tenantId: z.string().trim().min(1).max(128).optional(),
 }).strict();
 const evidenceQuerySchema = tenantQuerySchema.extend({
-  sourceId: z.string().trim().min(1).max(128),
-  collectionId: z.string().trim().min(1).max(128),
-  recordId: z.string().trim().min(1).max(128).optional(),
+  id: z.string().min(1).max(2_000),
 }).strict();
+const productListQuerySchema = tenantQuerySchema.extend({
+  cursor: z.string().min(1).max(2_000).optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  filter: z.string().trim().min(1).max(200).optional(),
+  type: z.string().trim().min(1).max(80).optional(),
+}).strict();
+const timelineQuerySchema = productListQuerySchema.extend({
+  entityId: z.string().trim().min(1).max(500).optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  through: z.string().datetime({ offset: true }).optional(),
+}).strict().refine(value => !value.from || !value.through || Date.parse(value.from) <= Date.parse(value.through), {
+  message: 'from must not be after through', path: ['through'],
+});
+const relationQuerySchema = productListQuerySchema.extend({
+  depth: z.coerce.number().int().min(1).max(2).optional(),
+}).strict();
+const correctionBodySchema = z.object({
+  action: z.enum(['assert', 'reject']), scope: z.enum(['personal', 'organization']),
+  expectedRevision: z.number().int().positive(), targetItemId: z.string().trim().min(1).max(500),
+  summary: z.string().trim().min(1).max(500).optional(),
+  evidenceIds: z.array(z.string().min(1).max(2_000)).min(1).max(50),
+}).strict().superRefine((value, context) => {
+  if (value.action === 'assert' && !value.summary) context.addIssue({ code: 'custom', path: ['summary'], message: 'summary is required for assert' });
+});
+const reviewDecisionBodySchema = z.object({
+  decision: z.enum(['confirm', 'reject', 'confirmed', 'rejected']),
+  expectedRevision: z.number().int().positive(),
+}).strict();
+const entityParamsSchema = z.object({ entityId: z.string().trim().min(1).max(500) }).strict();
+const reviewParamsSchema = z.object({ itemId: z.string().trim().min(1).max(500) }).strict();
 
 /** Read-only Context Plane administration endpoints. Authentication/admin role is mounted by app. */
 export function createContextAdminRouter(options: ContextAdminRouterOptions): Router {
@@ -144,31 +154,107 @@ export function createContextAdminRouter(options: ContextAdminRouterOptions): Ro
   });
 
   router.get('/evidence', async (req, res) => {
-    if (!options.store) return unavailable(res);
     const query = evidenceQuerySchema.safeParse(req.query);
-    if (!query.success) return res.status(400).json({ code: 'CONTEXT_ADMIN_INVALID_QUERY' });
-    const tenantId = resolveTenant(req, query.data.tenantId);
-    if (!tenantId) return res.status(403).json({ code: 'CONTEXT_ADMIN_TENANT_FORBIDDEN' });
+    if (!query.success) return res.status(400).json({ code: 'CONTEXT_PRODUCT_EVIDENCE_INVALID' });
+    return productCall(req, res, options, query.data.tenantId,
+      (product, subject) => product.getEvidence(subject, query.data.id));
+  });
 
-    try {
-      const evidence = query.data.recordId
-        ? await options.store.getEvidence(
-          tenantId,
-          query.data.sourceId,
-          query.data.collectionId,
-          query.data.recordId,
-        )
-        : options.store.listEvidence
-          ? await options.store.listEvidence(tenantId, query.data.sourceId, query.data.collectionId)
-          : null;
-      if (evidence === null) return unavailable(res);
-      return res.json(evidence.flatMap(item => mapEvidence(item, query.data.sourceId, query.data.collectionId)));
-    } catch {
-      return res.status(503).json({ code: 'CONTEXT_ADMIN_READ_UNAVAILABLE' });
-    }
+  router.get('/timeline', async (req, res) => productRead(req, res, options, timelineQuerySchema,
+    (product, subject, query) => product.listTimeline(subject, query)));
+  router.get('/entities', async (req, res) => productRead(req, res, options, productListQuerySchema,
+    (product, subject, query) => product.listEntities(subject, query)));
+  router.get('/entities/:entityId', async (req, res) => {
+    const params = entityParamsSchema.safeParse(req.params);
+    const query = tenantQuerySchema.safeParse(req.query);
+    if (!params.success || !query.success) return res.status(400).json({ code: 'CONTEXT_PRODUCT_INVALID' });
+    return productCall(req, res, options, query.data.tenantId,
+      (product, subject) => product.getEntity(subject, params.data.entityId));
+  });
+  router.get('/entities/:entityId/profile', async (req, res) => {
+    const params = entityParamsSchema.safeParse(req.params);
+    const query = tenantQuerySchema.safeParse(req.query);
+    if (!params.success || !query.success) return res.status(400).json({ code: 'CONTEXT_PRODUCT_INVALID' });
+    return productCall(req, res, options, query.data.tenantId,
+      (product, subject) => product.getProfile(subject, params.data.entityId));
+  });
+  router.get('/entities/:entityId/relations', async (req, res) => {
+    const params = entityParamsSchema.safeParse(req.params);
+    const query = relationQuerySchema.safeParse(req.query);
+    if (!params.success || !query.success) return res.status(400).json({ code: 'CONTEXT_PRODUCT_INVALID' });
+    const { tenantId: requested, ...data } = query.data;
+    return productCall(req, res, options, requested,
+      (product, subject) => product.listRelations(subject, params.data.entityId, data));
+  });
+  router.get('/reviews', async (req, res) => productRead(req, res, options, productListQuerySchema,
+    (product, subject, query) => product.listReviews(subject, query)));
+
+  router.post('/entities/:entityId/corrections', async (req, res) => {
+    const params = entityParamsSchema.safeParse(req.params);
+    const query = tenantQuerySchema.safeParse(req.query);
+    if (!params.success || !query.success) return res.status(400).json({ code: 'CONTEXT_PRODUCT_INVALID' });
+    if (req.body?.expectedRevision === undefined) return res.status(428).json({ code: 'CONTEXT_PRODUCT_PRECONDITION_REQUIRED' });
+    const body = correctionBodySchema.safeParse(req.body);
+    if (!body.success) return res.status(400).json({ code: 'CONTEXT_PRODUCT_INVALID' });
+    return productCall(req, res, options, query.data.tenantId,
+      (product, subject) => product.correct(subject, params.data.entityId, body.data));
+  });
+
+  router.post('/reviews/:itemId/decision', async (req, res) => {
+    const params = reviewParamsSchema.safeParse(req.params);
+    const query = tenantQuerySchema.safeParse(req.query);
+    if (!params.success || !query.success) return res.status(400).json({ code: 'CONTEXT_PRODUCT_INVALID' });
+    if (req.body?.expectedRevision === undefined) return res.status(428).json({ code: 'CONTEXT_PRODUCT_PRECONDITION_REQUIRED' });
+    const body = reviewDecisionBodySchema.safeParse(req.body);
+    if (!body.success) return res.status(400).json({ code: 'CONTEXT_PRODUCT_INVALID' });
+    const decision = body.data.decision === 'confirm' ? 'confirmed'
+      : body.data.decision === 'reject' ? 'rejected' : body.data.decision;
+    return productCall(req, res, options, query.data.tenantId,
+      (product, subject) => product.decideReview(subject, params.data.itemId,
+        { decision, expectedRevision: body.data.expectedRevision }));
   });
 
   return router;
+}
+
+async function productRead<T extends { tenantId?: string }>(
+  req: Request,
+  res: import('express').Response,
+  options: ContextAdminRouterOptions,
+  schema: z.ZodType<T>,
+  run: (product: ContextProductService, subject: { tenantId: string; actorId: string }, query: Omit<T, 'tenantId'>) => Promise<unknown>,
+) {
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ code: 'CONTEXT_PRODUCT_INVALID' });
+  const { tenantId: requested, ...query } = parsed.data;
+  return productCall(req, res, options, requested,
+    (product, subject) => run(product, subject, query as Omit<T, 'tenantId'>));
+}
+
+async function productCall(
+  req: Request,
+  res: import('express').Response,
+  options: ContextAdminRouterOptions,
+  requestedTenantId: string | undefined,
+  run: (product: ContextProductService, subject: { tenantId: string; actorId: string }) => Promise<unknown>,
+) {
+  if (!options.product) return res.status(503).json({ code: 'CONTEXT_PRODUCT_UNAVAILABLE' });
+  const tenantId = resolveTenant(req, requestedTenantId);
+  if (!tenantId || !req.user?.sub) return res.status(403).json({ code: 'CONTEXT_PRODUCT_FORBIDDEN' });
+  try {
+    return res.json(await run(options.product, { tenantId, actorId: req.user.sub }));
+  } catch (error) {
+    if (!(error instanceof ContextProductError)) {
+      return res.status(503).json({ code: 'CONTEXT_PRODUCT_UNAVAILABLE' });
+    }
+    const status = error.code === 'CONTEXT_PRODUCT_INVALID' || error.code === 'CONTEXT_PRODUCT_CURSOR_INVALID'
+      || error.code === 'CONTEXT_PRODUCT_EVIDENCE_INVALID' ? 400
+      : error.code === 'CONTEXT_PRODUCT_FORBIDDEN' ? 403
+        : error.code === 'CONTEXT_PRODUCT_NOT_FOUND' ? 404
+          : error.code === 'CONTEXT_PRODUCT_CONFLICT' ? 409
+            : error.code === 'CONTEXT_PRODUCT_PRECONDITION_REQUIRED' ? 428 : 503;
+    return res.status(status).json({ code: error.code });
+  }
 }
 
 function mapSourceCard(
@@ -255,30 +341,6 @@ function configuredScope(
       ? `已启用${lookbackDays ? ` · ${lookbackDays} 天` : ''}`
       : '未启用',
   };
-}
-
-function mapEvidence(
-  evidence: ContextAdminEvidence,
-  sourceId: string,
-  collectionId: string,
-) {
-  const excerpt = stringField(evidence.data, 'excerpt')
-    ?? (evidence.data.unreadable === true
-      ? `不可读：${stringField(evidence.data, 'unreadableReason') ?? 'content_unavailable'}`
-      : undefined);
-  if (!excerpt) return [];
-  return [{
-    id: stringField(evidence.data, 'externalId') ?? evidence.evidenceId,
-    sourceName: sourceId,
-    collection: collectionId,
-    author: stringField(evidence.data, 'author') ?? null,
-    occurredAt: validIso(stringField(evidence.data, 'occurredAt')) ?? evidence.createdAt,
-    quote: excerpt,
-    derived: evidence.data.derived === true || evidence.kind === 'derived',
-    freshness: 'unknown' as const,
-    freshnessAsOf: null,
-    originalUrl: stringField(evidence.data, 'url') ?? null,
-  }];
 }
 
 function sourceStatus(

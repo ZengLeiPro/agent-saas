@@ -55,9 +55,10 @@ class FakeWebSocket {
 
   // ── 测试驱动辅助 ──
   /** 模拟服务端接受连接 */
-  simulateOpen(): void {
+  simulateOpen(completeAuth = true): void {
     this.readyState = FAKE_OPEN;
     this.onopen?.();
+    if (completeAuth) this.simulateMessage({ data: { type: 'auth_ok' } });
   }
   /** 模拟收到一帧（envelope JSON） */
   simulateMessage(envelope: unknown): void {
@@ -71,7 +72,7 @@ class FakeWebSocket {
 }
 
 // ── 最小 platform：secureStorage 提供 token，platformConfig 提供 URL ──
-function makePlatform(token: string | null = 'tok'): PlatformDeps {
+function makePlatform(token: string | null = 'tok', authEnabled = true): PlatformDeps {
   const store = new Map<string, string>();
   if (token) store.set(TOKEN_KEY, token);
   return {
@@ -84,7 +85,8 @@ function makePlatform(token: string | null = 'tok'): PlatformDeps {
     messageCache: {} as PlatformDeps['messageCache'],
     platformConfig: {
       getBaseUrl: () => 'https://api.example.com',
-      getWsUrl: (t: string | null) => `wss://api.example.com/ws?token=${t ?? ''}`,
+      getWsUrl: () => 'wss://api.example.com/ws',
+      isAuthEnabled: () => authEnabled,
       platform: 'web' as const,
     },
     scheduleFlush: () => 0,
@@ -129,17 +131,61 @@ describe('wsClient - 建立连接', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     const ws = latestWs();
-    expect(ws.url).toContain('wss://api.example.com/ws?token=tok');
+    expect(ws.url).toBe('wss://api.example.com/ws');
+    expect(ws.url).not.toContain('tok');
     // 首连状态 connecting
     expect(states).toContain('connecting');
 
     ws.simulateOpen();
+    expect(JSON.parse(ws.sent[0])).toEqual({ action: 'auth', token: 'tok' });
     await p;
 
     expect(wsClient.isConnected).toBe(true);
     expect(wsClient.currentState).toBe('connected');
     expect(states).toContain('connected');
     off();
+  });
+
+  it('认证确认前禁止业务发送，且连接状态保持 connecting', async () => {
+    const p = wsClient.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = latestWs();
+    ws.simulateOpen(false);
+    expect(wsClient.currentState).toBe('connecting');
+    expect(wsClient.send({ action: 'detach' })).toBe(false);
+    expect(ws.sent.map((frame) => JSON.parse(frame))).toEqual([{ action: 'auth', token: 'tok' }]);
+    ws.simulateMessage({ data: { type: 'auth_ok' } });
+    await p;
+    expect(wsClient.currentState).toBe('connected');
+  });
+
+  it('免认证模式不读取 token、不发送 auth，等待服务端 auth_ok 后连接', async () => {
+    const platform = makePlatform(null, false);
+    const tokenRead = vi.spyOn(platform.secureStorage, 'getItem');
+    initPlatform(platform);
+
+    const p = wsClient.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = latestWs();
+    ws.simulateOpen(false);
+
+    expect(tokenRead).not.toHaveBeenCalled();
+    expect(ws.sent).toEqual([]);
+    expect(wsClient.currentState).toBe('connecting');
+    ws.simulateMessage({ data: { type: 'auth_ok' } });
+    await p;
+    expect(wsClient.isConnected).toBe(true);
+  });
+
+  it('免认证模式即使残留 token 也不会在 auth_ok 前后发送 auth', async () => {
+    initPlatform(makePlatform('stale-token', false));
+    const p = wsClient.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = latestWs();
+    ws.simulateOpen(false);
+    ws.simulateMessage({ data: { type: 'auth_ok' } });
+    await p;
+    expect(ws.sent).toEqual([]);
   });
 
   it('connect() 已连接时直接返回，不重复建连', async () => {
@@ -264,6 +310,25 @@ describe('wsClient - 重连', () => {
     await vi.advanceTimersByTimeAsync(1000);
     await vi.advanceTimersByTimeAsync(0);
     expect(FakeWebSocket.instances.length).toBe(countBefore + 1);
+  });
+
+  it('免认证模式断线重连仍不要求或发送 token', async () => {
+    initPlatform(makePlatform(null, false));
+    const p = wsClient.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    const first = latestWs();
+    first.simulateOpen(false);
+    first.simulateMessage({ data: { type: 'auth_ok' } });
+    await p;
+
+    first.simulateClose(1006, 'network');
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(0);
+    const second = latestWs();
+    second.simulateOpen(false);
+    expect(second.sent).toEqual([]);
+    second.simulateMessage({ data: { type: 'auth_ok' } });
+    expect(wsClient.isConnected).toBe(true);
   });
 
   it('pong 后、overflow 前断线时重连 sync 仍携带旧 epoch/seq', async () => {

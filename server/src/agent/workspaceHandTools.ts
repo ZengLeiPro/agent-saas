@@ -1,9 +1,9 @@
-import { lstat, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { z } from 'zod';
 
 import type { ArtifactKind } from '../runtime/artifactStore.js';
+import { openTrustedFile, writeTrustedFile } from '../security/trustedFile.js';
 import { loadToolDescription } from './tools/descriptionLoader.js';
 import type { ToolDescriptor, ToolResult, WorkspaceRef } from './toolRuntime.js';
 
@@ -157,18 +157,17 @@ export async function runWorkspaceEdit(
   assertNotDenied(relPath, EDIT_DENY_PATTERNS, (path) =>
     `Edit: path "${path}" is in the deny list (sensitive config / credentials). Ask the admin via console if a change is genuinely required.`);
 
-  let st;
-  try {
-    st = await stat(fullPath);
-  } catch (err) {
-    throw new Error(`Edit: cannot stat ${relPath} (${err instanceof Error ? err.message : String(err)})`);
-  }
-  if (st.size > MAX_EDIT_FILE_BYTES) {
-    throw new Error(`Edit: file too large (${st.size}B > ${MAX_EDIT_FILE_BYTES}B); use Write to rewrite.`);
-  }
   let content: string;
   try {
-    content = await readFile(fullPath, 'utf-8');
+    const opened = await openTrustedFile(workspace.root, relPath);
+    try {
+      if (opened.stats.size > MAX_EDIT_FILE_BYTES) {
+        throw new Error(`Edit: file too large (${opened.stats.size}B > ${MAX_EDIT_FILE_BYTES}B); use Write to rewrite.`);
+      }
+      content = await opened.handle.readFile('utf-8');
+    } finally {
+      await opened.handle.close();
+    }
   } catch (err) {
     throw new Error(`Edit: cannot read ${relPath} (${err instanceof Error ? err.message : String(err)})`);
   }
@@ -190,7 +189,7 @@ export async function runWorkspaceEdit(
   const updated = parts.join(input.new_string);
   const replacements = input.replace_all ? occurrences : 1;
 
-  await writeFile(fullPath, updated, 'utf-8');
+  await writeTrustedFile(workspace.root, relPath, updated, { encoding: 'utf-8' });
   return {
     content: `Edited ${relPath} (${replacements} replacement${replacements === 1 ? '' : 's'}, ${updated.length} bytes).`,
     // 摘要要说清「实际替换了几处」——replace_all 时 1 处与 37 处在审计上完全不同
@@ -213,18 +212,16 @@ export async function createWorkspaceArtifactPayload(
   guard?.(fullPath);
   const relPath = relativeWorkspacePath(workspace.root, fullPath);
   assertNotDenied(relPath, ARTIFACT_DENY_PATTERNS, (path) => `CreateArtifact: refused sensitive path ${path}`);
-  const lst = await lstat(fullPath);
-  if (lst.isSymbolicLink()) {
-    throw new Error(`CreateArtifact: refused symlink ${relPath}`);
+  const opened = await openTrustedFile(workspace.root, relPath);
+  let data: Buffer;
+  try {
+    if (opened.stats.size > MAX_ARTIFACT_PAYLOAD_BYTES) {
+      throw new Error(`CreateArtifact: file too large (${opened.stats.size}B > ${MAX_ARTIFACT_PAYLOAD_BYTES}B)`);
+    }
+    data = await opened.handle.readFile();
+  } finally {
+    await opened.handle.close();
   }
-  const st = await stat(fullPath);
-  if (!st.isFile()) {
-    throw new Error('CreateArtifact: source must be a file');
-  }
-  if (st.size > MAX_ARTIFACT_PAYLOAD_BYTES) {
-    throw new Error(`CreateArtifact: file too large (${st.size}B > ${MAX_ARTIFACT_PAYLOAD_BYTES}B)`);
-  }
-  const data = await readFile(fullPath);
   return {
     sourcePath: normalizePath(relPath),
     fileName: basename(fullPath),

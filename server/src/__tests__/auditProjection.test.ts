@@ -27,6 +27,8 @@ import type { PlatformEvent } from '../runtime/types.js';
 
 const SESSION_A = '11111111-aaaa-4bbb-8ccc-dddddddddddd';
 const SESSION_B = '22222222-aaaa-4bbb-8ccc-dddddddddddd';
+const TENANT_A = 'tenant-a';
+const TENANT_B = 'tenant-b';
 
 function toolAuditLine(overrides: Partial<Extract<PlatformEvent, { type: 'tool_audit' }>>): string {
   const base = {
@@ -109,6 +111,52 @@ describe('AuditProjection (DuckDB)', () => {
     expect(await rowCount('projection_watermark')).toBe(0);
   });
 
+  it('旧 schema 无 provenance 时清空投影与 watermark，全量重建且迁移幂等', async () => {
+    const filePath = await seedFile(SESSION_A, [toolAuditLine({
+      id: 'rebuilt-event', tenantId: TENANT_A, sessionId: SESSION_A,
+    })]);
+    await db.run('DROP TABLE tool_audit;');
+    await db.run(`CREATE TABLE tool_audit (
+      id VARCHAR PRIMARY KEY, timestamp TIMESTAMP NOT NULL, session_id VARCHAR NOT NULL,
+      run_id VARCHAR NOT NULL, tenant_id VARCHAR NOT NULL DEFAULT 'legacy',
+      tool_call_id VARCHAR NOT NULL, tool_id VARCHAR NOT NULL, tool_name VARCHAR NOT NULL,
+      skill_name VARCHAR, risk VARCHAR NOT NULL, approval_id VARCHAR,
+      authorization_source VARCHAR NOT NULL, authorization_json VARCHAR NOT NULL,
+      execution_target VARCHAR NOT NULL, status VARCHAR NOT NULL, duration_ms BIGINT NOT NULL,
+      execution_invocations_json VARCHAR, error VARCHAR
+    );`);
+    await db.run(`INSERT INTO tool_audit VALUES (
+      'unattributed-event', CAST('2026-06-07T10:00:00Z' AS TIMESTAMP), '${SESSION_A}', 'run-legacy',
+      '${TENANT_A}', 'call-legacy', 'Read', 'Read', NULL, 'safe', NULL,
+      'policy_auto', '{"approved":true,"source":"policy_auto"}', 'server-local',
+      'success', 1, NULL, NULL
+    );`);
+    await db.run(
+      `INSERT INTO projection_watermark (file_path, byte_offset, updated_at, tenant_ids_json)
+       VALUES ($1, 999, current_timestamp, $2);`,
+      [filePath, JSON.stringify([TENANT_A])],
+    );
+
+    await projection.initialize();
+    expect(await rowCount('tool_audit')).toBe(0);
+    expect(await rowCount('projection_watermark')).toBe(0);
+    await projection.initialize();
+    expect(await rowCount('tool_audit')).toBe(0);
+
+    const info = (await db.runAndReadAll(`PRAGMA table_info('tool_audit');`)).getRowObjects();
+    expect(info.filter((row) => row.pk).map((row) => row.name).sort()).toEqual(['id', 'tenant_id']);
+    expect(info.find((row) => row.name === 'source_file_path')?.notnull).toBe(true);
+
+    const result = await projection.tickFile(filePath);
+    expect(result.eventsInserted).toBe(1);
+    const rows = (await db.runAndReadAll(
+      `SELECT id, source_file_path FROM tool_audit;`,
+    )).getRowObjects();
+    expect(rows.map((row) => [row.id, row.source_file_path])).toEqual([
+      ['rebuilt-event', filePath],
+    ]);
+  });
+
   it('tickFile 投影 tool_audit、过滤非 tool_audit、字段映射正确', async () => {
     const evtId = 'evt-fix-001';
     const filePath = await seedFile(SESSION_A, [
@@ -137,7 +185,7 @@ describe('AuditProjection (DuckDB)', () => {
     expect(r.bytesRead).toBeGreaterThan(0);
 
     const rows = (await db.runAndReadAll(
-      `SELECT id, session_id, run_id, tool_call_id, tool_id, tool_name, risk,
+      `SELECT id, session_id, run_id, source_file_path, tool_call_id, tool_id, tool_name, risk,
               approval_id, authorization_source, authorization_json,
               execution_target, status, duration_ms, execution_invocations_json, error
        FROM tool_audit WHERE id = $1;`,
@@ -147,6 +195,7 @@ describe('AuditProjection (DuckDB)', () => {
     const row = rows[0]!;
     expect(row.id).toBe(evtId);
     expect(row.session_id).toBe(SESSION_A);
+    expect(row.source_file_path).toBe(filePath);
     expect(row.tool_name).toBe('Write');
     expect(row.risk).toBe('workspace_write');
     expect(row.approval_id).toBe('apv-9');
@@ -159,6 +208,35 @@ describe('AuditProjection (DuckDB)', () => {
     expect(Number(row.duration_ms)).toBe(240);
     expect(JSON.parse(String(row.execution_invocations_json))[0].operation).toBe('writeFile');
     expect(row.error).toBeNull();
+  });
+
+  it('相同 event id 在不同 tenant 下均保留', async () => {
+    const sharedEventId = 'evt-cross-tenant';
+    const fileA = await seedFile(SESSION_A, [toolAuditLine({
+      id: sharedEventId,
+      tenantId: TENANT_A,
+      sessionId: SESSION_A,
+      toolCallId: 'call-tenant-a',
+    })]);
+    const fileB = await seedFile(SESSION_B, [toolAuditLine({
+      id: sharedEventId,
+      tenantId: TENANT_B,
+      sessionId: SESSION_B,
+      toolCallId: 'call-tenant-b',
+    })]);
+
+    await projection.tickFile(fileA);
+    await projection.tickFile(fileB);
+
+    const rows = (await db.runAndReadAll(
+      `SELECT tenant_id, id, tool_call_id FROM tool_audit WHERE id = $1 ORDER BY tenant_id;`,
+      [sharedEventId],
+    )).getRowObjects();
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => [row.tenant_id, row.tool_call_id])).toEqual([
+      [TENANT_A, 'call-tenant-a'],
+      [TENANT_B, 'call-tenant-b'],
+    ]);
   });
 
   it('tickFile 增量：第二次 tick 只插入新增事件', async () => {
@@ -185,7 +263,7 @@ describe('AuditProjection (DuckDB)', () => {
     expect(r3.bytesRead).toBe(0);
   });
 
-  it('tickFile 文件回退（size < watermark）→ clear 该 session + 全量重投 + reset=true', async () => {
+  it('tickFile 文件回退（size < watermark）→ clear 该源文件 + 全量重投 + reset=true', async () => {
     const filePath = await seedFile(SESSION_A, [
       toolAuditLine({ id: 'evt-pre-1' }),
       toolAuditLine({ id: 'evt-pre-2' }),
@@ -205,6 +283,44 @@ describe('AuditProjection (DuckDB)', () => {
       `SELECT id FROM tool_audit ORDER BY id;`,
     )).getRowObjects();
     expect(rows.map((row) => row.id)).toEqual(['evt-post-1']);
+  });
+
+  it('同 tenant + sessionId 的不同目录文件：A reset 不删 B，B 无需重投', async () => {
+    const sharedSession = '33333333-aaaa-4bbb-8ccc-dddddddddddd';
+    const dirA = join(root, 'source-a');
+    const dirB = join(root, 'source-b');
+    await mkdir(dirA, { recursive: true });
+    await mkdir(dirB, { recursive: true });
+    const fileA = join(dirA, `${sharedSession}${RUNTIME_EVENTS_SUFFIX}`);
+    const fileB = join(dirB, `${sharedSession}${RUNTIME_EVENTS_SUFFIX}`);
+    await writeFile(fileA, [
+      toolAuditLine({ id: 'a-old-1', tenantId: TENANT_A, sessionId: sharedSession }),
+      toolAuditLine({ id: 'a-old-2', tenantId: TENANT_A, sessionId: sharedSession }),
+    ].join(''));
+    await writeFile(fileB, toolAuditLine({
+      id: 'b-keep', tenantId: TENANT_A, sessionId: sharedSession,
+    }));
+    await projection.tickFile(fileA);
+    await projection.tickFile(fileB);
+
+    await truncate(fileA, 0);
+    await writeFile(fileA, toolAuditLine({
+      id: 'a-new', tenantId: TENANT_A, sessionId: sharedSession,
+    }));
+    const resultA = await projection.tickFile(fileA);
+    const resultB = await projection.tickFile(fileB);
+
+    expect(resultA.reset).toBe(true);
+    expect(resultB).toEqual({ bytesRead: 0, eventsInserted: 0, reset: false });
+    const rows = (await db.runAndReadAll(
+      `SELECT id, source_file_path FROM tool_audit
+        WHERE tenant_id = $1 AND session_id = $2 ORDER BY id;`,
+      [TENANT_A, sharedSession],
+    )).getRowObjects();
+    expect(rows.map((row) => [row.id, row.source_file_path])).toEqual([
+      ['a-new', fileA],
+      ['b-keep', fileB],
+    ]);
   });
 
   it('tickFile 文件不存在 → bytesRead=0、eventsInserted=0、不抛错', async () => {

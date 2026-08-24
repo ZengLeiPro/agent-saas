@@ -436,6 +436,29 @@ describe('session share routes', () => {
     }
   });
 
+  it('冻结分享文件时拒绝工作区内的祖先符号链接', async () => {
+    const imagePath = 'assets/generated/20260729/result.png';
+    const { sessionId } = await writeSharedSession({ inlineMediaPath: imagePath });
+    const userCwd = deps.resolveUserCwd(agentCwd, TEST_USER);
+    const outsideDir = join(agentCwd, 'outside-share-files');
+    await mkdir(join(outsideDir, 'generated/20260729'), { recursive: true });
+    await mkdir(userCwd, { recursive: true });
+    await writeFile(join(outsideDir, 'generated/20260729/result.png'), 'OUTSIDE_BYTES');
+    await symlink(outsideDir, join(userCwd, 'assets'));
+
+    const { server, baseUrl } = await startServer(agentCwd);
+    try {
+      const created = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmPublicText: true, filePaths: [imagePath] }),
+      });
+      expect(created.status).toBe(422);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
   it('只允许读取快照显式引用且未越出工作区的文件', async () => {
     const { sessionId } = await writeSharedSession({ includeFileMarkers: true });
     const userCwd = deps.resolveUserCwd(agentCwd, TEST_USER);

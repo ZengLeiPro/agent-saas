@@ -1,12 +1,20 @@
 import { createHash, randomUUID } from 'crypto';
 import { constants } from 'fs';
-import { copyFile, lstat, mkdir, open, readdir, realpath, stat, writeFile } from 'fs/promises';
-import { basename, dirname, isAbsolute, relative, resolve, sep } from 'path';
+import { open, readdir } from 'fs/promises';
+import { basename, dirname, isAbsolute } from 'path';
 
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 
 import { getImageBlobStore } from './imageBlobStore.js';
 import { createLogger } from '../utils/logger.js';
+import {
+  openTrustedDirectory,
+  openTrustedFile,
+  removeTrustedPath,
+  type TrustedFile,
+  writeTrustedFile,
+  writeTrustedFileIfAbsent,
+} from '../security/trustedFile.js';
 import type { InboundMessage, UploadedFileInfo } from '../types/index.js';
 import type {
   ModelAttachmentRef,
@@ -48,73 +56,83 @@ export async function resolveInboundAttachments(
     throw new Error(`UPLOAD_REJECTED: 单条消息最多 ${MAX_ATTACHMENTS_PER_TURN} 个附件`);
   }
 
-  const uploadsRoot = resolve(options.cwd, 'uploads');
-  await mkdir(uploadsRoot, { recursive: true, mode: 0o700 });
-  const canonicalCwd = await realpath(options.cwd);
-  const canonicalUploadsRoot = await realpath(uploadsRoot);
+  const initRelative = `uploads/.attachment-init-${randomUUID()}`;
+  await writeTrustedFile(options.cwd, initRelative, '', { createParents: true, exclusive: true, mode: 0o600 });
+  await removeTrustedPath(options.cwd, initRelative);
+  const uploads = await openTrustedDirectory(options.cwd, 'uploads');
   const resolved: ModelAttachmentRef[] = [];
   let totalImageBytes = 0;
 
-  for (const inbound of attachments) {
-    const attachmentId = normalizeAttachmentId(inbound.attachmentId);
-    let sourcePath = await resolveInboundSourcePath(inbound, {
-      ...options,
-      uploadsRoot: canonicalUploadsRoot,
-    });
-    if (!isPathInside(canonicalUploadsRoot, sourcePath)) {
-      const stagedName = `${attachmentId}_${safeDisplayName(inbound.originalName || basename(sourcePath))}`;
-      const stagedPath = resolve(canonicalUploadsRoot, stagedName);
-      await copyFile(sourcePath, stagedPath);
-      sourcePath = stagedPath;
-    }
-    const claimedImage = inbound.isImage || String(inbound.mimeType || '').startsWith('image/');
-    const source = await readRegularFileNoFollow(sourcePath, MAX_IMAGE_SOURCE_BYTES);
-    if (claimedImage && source.size > MAX_IMAGE_SOURCE_BYTES) {
-      throw new Error('UPLOAD_REJECTED: 图片大小超过平台限制（单图 20MB、单条消息合计 40MB）');
-    }
-    const sourceBytes = source.bytes;
-    const detectedMime = sourceBytes ? detectImageMime(sourceBytes) : undefined;
-    if (claimedImage && !detectedMime) {
-      throw new Error(`UPLOAD_REJECTED: ${safeDisplayName(inbound.originalName)} 不是有效的受支持图片`);
-    }
+  try {
+    for (const inbound of attachments) {
+      const attachmentId = normalizeAttachmentId(inbound.attachmentId);
+      let source = await openInboundSource(inbound, options, uploads.fdPath);
+      try {
+        if (!source.workspaceRelativePath) {
+          const stagedName = `${attachmentId}_${safeDisplayName(inbound.originalName || source.relativePath)}`;
+          await copyOpenedToPinnedDirectory(source.file, uploads.fdPath, stagedName);
+          await source.close();
+          const stagedFile = await openPinnedTrustedFile(uploads.fdPath, stagedName);
+          source = {
+            relativePath: stagedName,
+            workspaceRelativePath: `uploads/${stagedName}`,
+            file: stagedFile,
+            close: async () => { await stagedFile.handle.close(); },
+          };
+        }
+        const claimedImage = inbound.isImage || String(inbound.mimeType || '').startsWith('image/');
+        const sourceData = await readOpenedRegularFile(source.file, MAX_IMAGE_SOURCE_BYTES);
+        if (claimedImage && sourceData.size > MAX_IMAGE_SOURCE_BYTES) {
+          throw new Error('UPLOAD_REJECTED: 图片大小超过平台限制（单图 20MB、单条消息合计 40MB）');
+        }
+        const sourceBytes = sourceData.bytes;
+        const detectedMime = sourceBytes ? detectImageMime(sourceBytes) : undefined;
+        if (claimedImage && !detectedMime) {
+          throw new Error(`UPLOAD_REJECTED: ${safeDisplayName(inbound.originalName)} 不是有效的受支持图片`);
+        }
 
-    const originalName = safeDisplayName(inbound.originalName || basename(sourcePath));
-    if (!detectedMime) {
-      resolved.push({
-        attachmentId,
-        originalName,
-        relativePath: workspaceRelativePath(canonicalCwd, sourcePath),
-        sizeBytes: source.size,
-        mimeType: safeNonImageMime(inbound.mimeType),
-        isImage: false,
-      });
-      continue;
-    }
+        const originalName = safeDisplayName(inbound.originalName || basename(source.relativePath));
+        if (!detectedMime) {
+          resolved.push({
+            attachmentId,
+            originalName,
+            relativePath: source.workspaceRelativePath!,
+            sizeBytes: sourceData.size,
+            mimeType: safeNonImageMime(inbound.mimeType),
+            isImage: false,
+          });
+          continue;
+        }
 
-    totalImageBytes += source.size;
-    if (source.size > MAX_IMAGE_SOURCE_BYTES || totalImageBytes > MAX_IMAGE_TOTAL_BYTES) {
-      throw new Error('UPLOAD_REJECTED: 图片大小超过平台限制（单图 20MB、单条消息合计 40MB）');
-    }
-    if (!sourceBytes) throw new Error('UPLOAD_REJECTED: 图片读取失败');
+        totalImageBytes += sourceData.size;
+        if (sourceData.size > MAX_IMAGE_SOURCE_BYTES || totalImageBytes > MAX_IMAGE_TOTAL_BYTES) {
+          throw new Error('UPLOAD_REJECTED: 图片大小超过平台限制（单图 20MB、单条消息合计 40MB）');
+        }
+        if (!sourceBytes) throw new Error('UPLOAD_REJECTED: 图片读取失败');
 
-    const normalized = await normalizeImage(sourceBytes, detectedMime, options.cwd);
-    resolved.push({
-      attachmentId,
-      originalName,
-      relativePath: workspaceRelativePath(canonicalCwd, sourcePath),
-      sizeBytes: source.size,
-      mimeType: detectedMime,
-      isImage: true,
-      sha256: normalized.sha256,
-      width: normalized.width,
-      height: normalized.height,
-      modelRelativePath: normalized.relativePath,
-      modelMimeType: normalized.mimeType,
-      modelSizeBytes: normalized.sizeBytes,
-    });
+        const normalized = await normalizeImage(sourceBytes, detectedMime, options.cwd);
+        resolved.push({
+          attachmentId,
+          originalName,
+          relativePath: source.workspaceRelativePath!,
+          sizeBytes: sourceData.size,
+          mimeType: detectedMime,
+          isImage: true,
+          sha256: normalized.sha256,
+          width: normalized.width,
+          height: normalized.height,
+          modelRelativePath: normalized.relativePath,
+          modelMimeType: normalized.mimeType,
+          modelSizeBytes: normalized.sizeBytes,
+        });
+      } finally {
+        await source.close().catch(() => undefined);
+      }
+    }
+    return resolved;
+  } finally {
+    await uploads.handle.close();
   }
-
-  return resolved;
 }
 
 export function buildModelUserContent(
@@ -213,8 +231,12 @@ export async function readModelImageDataUrl(
 ): Promise<string> {
   let file: Buffer;
   try {
-    const absolutePath = await resolveTrustedWorkspaceFile(cwd, part.relativePath);
-    file = (await readRegularFileNoFollow(absolutePath)).bytes!;
+    const opened = await openTrustedWorkspaceFile(cwd, part.relativePath);
+    try {
+      file = await opened.handle.readFile();
+    } finally {
+      await opened.handle.close();
+    }
     // 懒回填：blob 副本上线前就存在的图片，只要还被读到就补一份，无需一次性迁移脚本。
     void backfillModelImageBlob(cwd, part.relativePath, part.mimeType, file);
   } catch (error) {
@@ -332,50 +354,80 @@ export function toTextOnlyContent(content: ModelUserContent): string {
   return textParts.join('\n\n');
 }
 
-async function resolveInboundSourcePath(
+interface OpenedInboundSource {
+  relativePath: string;
+  workspaceRelativePath?: string;
+  file: TrustedFile;
+  close: () => Promise<void>;
+}
+
+async function openInboundSource(
   inbound: UploadedFileInfo,
-  options: ResolveAttachmentOptions & { uploadsRoot: string },
-): Promise<string> {
+  options: ResolveAttachmentOptions,
+  uploadsRoot: string,
+): Promise<OpenedInboundSource> {
   if (options.channel === 'web') {
     if (inbound.attachmentId && UUID_PATTERN.test(inbound.attachmentId)) {
-      const matches = (await readdir(options.uploadsRoot))
+      const matches = (await readdir(uploadsRoot))
         .filter((name) => name.startsWith(`${inbound.attachmentId}_`));
       if (matches.length !== 1) {
         throw new Error('ATTACHMENT_FORBIDDEN: 附件标识无效或不属于当前工作区');
       }
-      return await resolveTrustedWorkspaceFile(options.cwd, `uploads/${matches[0]}`);
+      const file = await openPinnedTrustedFile(uploadsRoot, matches[0]);
+      return {
+        relativePath: matches[0],
+        workspaceRelativePath: `uploads/${matches[0]}`,
+        file,
+        close: async () => { await file.handle.close(); },
+      };
     }
-    return await resolveTrustedWorkspaceFile(options.cwd, inbound.relativePath);
+    return openTrustedWorkspaceSource(options.cwd, inbound.relativePath);
   }
 
   if (options.channel === 'dingtalk' && inbound.savedPath && isAbsolute(inbound.savedPath)) {
-    const canonical = await realpath(inbound.savedPath);
-    const fileStat = await stat(canonical);
-    if (!fileStat.isFile()) throw new Error('UPLOAD_REJECTED: 钉钉附件不是普通文件');
-    return canonical;
+    const parent = await openTrustedDirectory(dirname(inbound.savedPath));
+    try {
+      const leaf = basename(inbound.savedPath);
+      const file = await openPinnedTrustedFile(parent.fdPath, leaf);
+      return {
+        relativePath: leaf,
+        file,
+        close: async () => {
+          await file.handle.close().catch(() => undefined);
+          await parent.handle.close().catch(() => undefined);
+        },
+      };
+    } catch (error) {
+      await parent.handle.close().catch(() => undefined);
+      throw error;
+    }
   }
-  return await resolveTrustedWorkspaceFile(options.cwd, inbound.relativePath);
+  return openTrustedWorkspaceSource(options.cwd, inbound.relativePath);
 }
 
-async function resolveTrustedWorkspaceFile(cwd: string, relativePath: string): Promise<string> {
-  if (!relativePath || isAbsolute(relativePath) || relativePath.includes('\0') || relativePath.includes('\\')) {
-    throw new Error('ATTACHMENT_FORBIDDEN: 附件路径格式非法');
+async function openTrustedWorkspaceSource(cwd: string, relativePath: string): Promise<OpenedInboundSource> {
+  const file = await openTrustedWorkspaceFile(cwd, relativePath);
+  return {
+    relativePath,
+    workspaceRelativePath: relativePath,
+    file,
+    close: async () => { await file.handle.close(); },
+  };
+}
+
+async function openTrustedWorkspaceFile(cwd: string, relativePath: string): Promise<TrustedFile> {
+  if (!relativePath || isAbsolute(relativePath) || relativePath.includes('\0') || relativePath.includes('\\')
+    || !relativePath.startsWith('uploads/') || relativePath.split('/').includes('..')) {
+    throw new Error('ATTACHMENT_FORBIDDEN: 附件路径格式非法或不在当前用户 uploads 目录');
   }
-  const uploadsPath = resolve(cwd, 'uploads');
-  const candidate = resolve(cwd, relativePath);
-  if (!isPathInside(uploadsPath, candidate)) {
-    throw new Error('ATTACHMENT_FORBIDDEN: 附件不在当前用户 uploads 目录');
+  try {
+    return await openTrustedFile(cwd, relativePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP' || (error as Error).name === 'UnsafeFilePathError') {
+      throw new Error('ATTACHMENT_FORBIDDEN: 附件路径包含符号链接');
+    }
+    throw error;
   }
-  const fileInfo = await lstat(candidate);
-  if (fileInfo.isSymbolicLink() || !fileInfo.isFile()) {
-    throw new Error('ATTACHMENT_FORBIDDEN: 附件不是普通文件');
-  }
-  const uploadsRoot = await realpath(uploadsPath);
-  const canonical = await realpath(candidate);
-  if (!isPathInside(uploadsRoot, canonical)) {
-    throw new Error('ATTACHMENT_FORBIDDEN: 附件真实路径越出当前用户 uploads 目录');
-  }
-  return canonical;
 }
 
 async function normalizeImage(
@@ -445,13 +497,7 @@ async function normalizeImage(
 
   const extension = mimeType === 'image/jpeg' ? 'jpg' : 'png';
   const relativePath = `uploads/.model-images/${sourceSha}-${NORMALIZATION_VERSION}.${extension}`;
-  const absolutePath = resolve(cwd, relativePath);
-  await mkdir(dirname(absolutePath), { recursive: true, mode: 0o700 });
-  try {
-    await writeFile(absolutePath, encoded, { flag: 'wx', mode: 0o600 });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-  }
+  await writeTrustedFileIfAbsent(cwd, relativePath, encoded, { createParents: true, mode: 0o600 });
   // blob 副本是历史重放的持久事实源：`uploads/` 允许用户一键清空，文件随时可能消失。
   // 写失败不阻断上传——本轮仍能从文件读到图，只是失去未来的兜底。
   await getImageBlobStore()?.put({
@@ -558,39 +604,58 @@ function readWebpDimensions(bytes: Buffer): ImageDimensions | undefined {
   return undefined;
 }
 
-function isPathInside(root: string, candidate: string): boolean {
-  const rel = relative(root, candidate);
-  return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
+async function openPinnedTrustedFile(directoryFdPath: string, leaf: string): Promise<TrustedFile> {
+  const handle = await open(
+    `${directoryFdPath}/${leaf}`,
+    constants.O_RDONLY | constants.O_NOFOLLOW,
+  );
+  const stats = await handle.stat();
+  if (!stats.isFile()) {
+    await handle.close();
+    throw Object.assign(new Error('Not a file'), { code: 'EISDIR' });
+  }
+  return { handle, stats, fdPath: `/proc/self/fd/${handle.fd}` };
 }
 
-async function readRegularFileNoFollow(
-  path: string,
-  readBytesUpTo = Number.POSITIVE_INFINITY,
-): Promise<{ size: number; bytes?: Buffer }> {
-  let handle;
+async function copyOpenedToPinnedDirectory(
+  source: TrustedFile,
+  destinationDirectoryFdPath: string,
+  leaf: string,
+): Promise<void> {
+  const destination = await open(
+    `${destinationDirectoryFdPath}/${leaf}`,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+    0o664,
+  );
   try {
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const fileStat = await handle.stat();
-    if (!fileStat.isFile()) {
-      throw new Error('UPLOAD_REJECTED: 附件必须是普通文件，不能是目录或符号链接');
+    const buffer = Buffer.allocUnsafe(Math.min(1024 * 1024, Math.max(1, source.stats.size)));
+    let position = 0;
+    while (position < source.stats.size) {
+      const { bytesRead } = await source.handle.read(buffer, 0, Math.min(buffer.length, source.stats.size - position), position);
+      if (bytesRead === 0) break;
+      let written = 0;
+      while (written < bytesRead) {
+        const result = await destination.write(buffer, written, bytesRead - written, position + written);
+        written += result.bytesWritten;
+      }
+      position += bytesRead;
     }
-    return {
-      size: fileStat.size,
-      ...(fileStat.size <= readBytesUpTo ? { bytes: await handle.readFile() } : {}),
-    };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ELOOP') {
-      throw new Error('UPLOAD_REJECTED: 附件不能是符号链接');
-    }
-    throw error;
   } finally {
-    await handle?.close().catch(() => undefined);
+    await destination.close();
   }
 }
 
-function workspaceRelativePath(cwd: string, absolutePath: string): string {
-  const rel = relative(cwd, absolutePath).split(sep).join('/');
-  return isAbsolute(rel) || rel.startsWith('../') ? `uploads/external-${randomUUID()}` : rel;
+async function readOpenedRegularFile(
+  file: TrustedFile,
+  readBytesUpTo = Number.POSITIVE_INFINITY,
+): Promise<{ size: number; bytes?: Buffer }> {
+  if (!file.stats.isFile()) {
+    throw new Error('UPLOAD_REJECTED: 附件必须是普通文件，不能是目录或符号链接');
+  }
+  return {
+    size: file.stats.size,
+    ...(file.stats.size <= readBytesUpTo ? { bytes: await file.handle.readFile() } : {}),
+  };
 }
 
 function normalizeAttachmentId(value: string | undefined): string {

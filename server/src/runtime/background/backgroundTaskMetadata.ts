@@ -1,6 +1,7 @@
 import type { ChannelContext } from '../../types/index.js';
 import { isModelOutputTransactionMode, resolveModelOutputTransactionMode } from '../modelOutputTransaction.js';
 import type { RunRecord } from '../runStore.js';
+import { deriveRuntimeIsolationRequirement, type RuntimeIsolationRequirement } from '../runtimeIsolationEvidence.js';
 
 export interface BackgroundTaskDwsCompletionRoute {
   accountId: string;
@@ -36,6 +37,7 @@ interface CommonBackgroundTaskMetadata {
   timezone?: string;
   parentChannel: ChannelContext['channel'];
   parentOutputTransactionMode: NonNullable<ChannelContext['outputTransactionMode']>;
+  runtimeIsolationRequirement?: RuntimeIsolationRequirement;
 }
 
 export interface BackgroundAgentTaskMetadata extends CommonBackgroundTaskMetadata {
@@ -75,6 +77,7 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
   }
 
   const sandboxPolicy = isSandboxPolicy(value.sandboxPolicy) ? value.sandboxPolicy : undefined;
+  const runtimeIsolationRequirement = parseRuntimeIsolationRequirement(value.runtimeIsolationRequirement);
   const dwsCompletionRoute = parseDwsCompletionRoute(value.dwsCompletionRoute);
   const executionMode = value.executionMode === 'dispatcher' ? 'dispatcher' as const
     : value.executionMode === 'direct' ? 'direct' as const
@@ -103,6 +106,7 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
     ...(metadataString(value, 'sandboxScopeId') ? { sandboxScopeId: metadataString(value, 'sandboxScopeId') } : {}),
     ...(metadataString(value, 'timezone') ? { timezone: metadataString(value, 'timezone') } : {}),
     ...(sandboxPolicy ? { sandboxPolicy } : {}),
+    ...(runtimeIsolationRequirement ? { runtimeIsolationRequirement } : {}),
   };
 
   if (value.backgroundTaskType === 'command') {
@@ -135,9 +139,24 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
   };
 }
 
+export function deriveBackgroundRuntimeIsolationRequirement(
+  metadata: BackgroundTaskMetadata,
+  child: { runId: string; sessionId: string; workspaceId: string },
+): RuntimeIsolationRequirement | undefined {
+  return deriveRuntimeIsolationRequirement(metadata.runtimeIsolationRequirement, child);
+}
+
 export function metadataString(metadata: Record<string, unknown>, key: string): string | undefined {
   const value = metadata[key];
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function parseRuntimeIsolationRequirement(value: unknown): RuntimeIsolationRequirement | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const fields = ['tenantId', 'taskId', 'runId', 'sessionId', 'workspaceId', 'policyDigest'] as const;
+  if (fields.some((field) => !metadataString(record, field))) return undefined;
+  return Object.fromEntries(fields.map((field) => [field, metadataString(record, field)!])) as unknown as RuntimeIsolationRequirement;
 }
 
 function parseDwsCompletionRoute(value: unknown): BackgroundTaskDwsCompletionRoute | undefined {

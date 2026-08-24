@@ -12,7 +12,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -731,7 +731,17 @@ describe('AgentToolProvider', () => {
     const spilled = await readFile(join(fixture.tmp, 'assets', 'subagents', `${outcome.childRunId}.md`), 'utf-8');
     expect(spilled).toBe(longText);
   });
-
+  it('spill 拒绝 workspace 内的祖先符号链接且不写出根外文件', async () => {
+    const fixture = await makeFixture({ cleanupDirs });
+    const outside = await mkdtemp(join(tmpdir(), 'subagent-spill-outside-')); cleanupDirs.add(outside);
+    await mkdir(fixture.tmp, { recursive: true }); await symlink(outside, join(fixture.tmp, 'assets'));
+    const outcome = fakeOutcome(fixture, { text: Array.from({ length: 300 }, (_, i) => `第 ${i + 1} 行：外溢防护`).join('\n') });
+    const result = await makeProvider(fixture, { outcome, resultMaxChars: 800 }).invoke(
+      { toolId: 'Agent', input: { description: 't', prompt: 'p' }, authorization: { approved: true, source: 'policy_auto' } }, fixture.parentContext,
+    );
+    expect(result!.content).toContain('spill 落盘失败');
+    await expect(readFile(join(outside, 'subagents', `${outcome.childRunId}.md`), 'utf-8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
   it('异常终态：status 与错误说明进正文头部，部分文本明确标注不可当结论', async () => {
     const fixture = await makeFixture({ cleanupDirs });
     const outcome = fakeOutcome(fixture, {

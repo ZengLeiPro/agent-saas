@@ -61,11 +61,17 @@ describe('tenant lifecycle effects', () => {
 
   async function connectClient(port: number, userId: string): Promise<WebSocket> {
     const token = jwt.sign({ sub: userId, username: userId, role: 'user', tenantId: 'acme' }, JWT_SECRET);
-    const client = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(token)}`);
+    const client = new WebSocket(`ws://127.0.0.1:${port}/ws`);
     clients.push(client);
     await new Promise<void>((resolve, reject) => {
-      client.once('open', resolve);
+      client.once('open', () => client.send(JSON.stringify({ action: 'auth', token })));
       client.once('error', reject);
+      client.on('message', function onAuth(raw) {
+        const envelope = JSON.parse(raw.toString()) as { data?: { type?: string } };
+        if (envelope.data?.type !== 'auth_ok') return;
+        client.off('message', onAuth);
+        resolve();
+      });
     });
     return client;
   }

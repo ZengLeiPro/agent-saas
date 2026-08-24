@@ -1,4 +1,5 @@
 import importlib.util
+import ipaddress
 import json
 import subprocess
 import sys
@@ -11,6 +12,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 APPLY_SCRIPT = REPO_ROOT / 'scripts' / 'apply-orchestrator-env.py'
 VERIFY_SCRIPT = REPO_ROOT / 'scripts' / 'acs-verify-per-session.py'
 TOOL_CONTENT_JSON = REPO_ROOT / 'scripts' / 'acs-tool-content-json.mjs'
+ACS_WORKFLOW = REPO_ROOT / '.github' / 'workflows' / 'acs-sandbox.yml'
+ACS_CLASSIFIER = REPO_ROOT / '.github' / 'scripts' / 'acs-classify.sh'
+ACS_DEPLOY_SCRIPT = REPO_ROOT / 'scripts' / 'deploy-acs-orchestrator.sh'
+ACS_ROLLBACK_COMPATIBILITY = REPO_ROOT / 'scripts' / 'check-acs-shared-rollback-compatibility.mjs'
+ACS_PRODUCTION_ENV = REPO_ROOT / 'acs-orchestrator' / 'config' / 'production.env'
 
 
 def load_script(path: Path, module_name: str):
@@ -80,6 +86,122 @@ class ApplyOrchestratorEnvTest(unittest.TestCase):
             self.assertEqual(second.returncode, 0, second.stderr)
             self.assertIn('均已与声明一致', second.stdout)
 
+    def test_blank_tombstone_clears_renamed_env_without_deleting_runtime_secrets(self):
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            desired = root_path / 'desired.env'
+            target = root_path / 'production.env'
+            desired.write_text(
+                'ACS_SNAT_SHARED_CIDR=\n'
+                'ACS_SNAT_SHARED_CIDRS=172.16.179.0/24,172.16.180.0/24\n',
+                encoding='utf-8',
+            )
+            target.write_text(
+                'ACS_ORCH_AUTH_TOKEN=secret-token\n'
+                'ACS_SNAT_SHARED_CIDR=172.16.179.0/24\n',
+                encoding='utf-8',
+            )
+
+            result = subprocess.run(
+                [sys.executable, str(APPLY_SCRIPT), '--desired', str(desired), '--target', str(target)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            target_text = target.read_text(encoding='utf-8')
+            self.assertIn('ACS_ORCH_AUTH_TOKEN=secret-token', target_text)
+            self.assertIn('ACS_SNAT_SHARED_CIDR=\n', target_text)
+            self.assertIn('ACS_SNAT_SHARED_CIDRS=172.16.179.0/24,172.16.180.0/24', target_text)
+            self.assertNotIn('ACS_SNAT_SHARED_CIDR=172.16.179.0/24', target_text)
+
+
+class AcsSharedRollbackCompatibilityTest(unittest.TestCase):
+    CIDRS = ['172.16.176.0/24', '172.18.191.0/24']
+
+    def check(self, health_overrides=None, candidate_cidrs=None):
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            env = '\n'.join([
+                'ACS_SNAT_MODE=shared-cidr',
+                'ACS_SNAT_REGION_ID=cn-shenzhen',
+                'ACS_SNAT_TABLE_ID=stb-test',
+                'ACS_SNAT_IP=120.77.218.94',
+                f"ACS_SNAT_SHARED_CIDRS={','.join(self.CIDRS)}",
+            ]) + '\n'
+            candidate = env if candidate_cidrs is None else env.replace(
+                ','.join(self.CIDRS), ','.join(candidate_cidrs))
+            rollback_path = root_path / 'rollback.env'
+            candidate_path = root_path / 'candidate.env'
+            health_path = root_path / 'health.json'
+            rollback_path.write_text(env, encoding='utf-8')
+            candidate_path.write_text(candidate, encoding='utf-8')
+            health = {
+                'status': 'ok',
+                'checks': {'snat': 'ok'},
+                'snat': {
+                    'mode': 'shared-cidr',
+                    'regionId': 'cn-shenzhen',
+                    'snatTableId': 'stb-test',
+                    'snatIp': '120.77.218.94',
+                    'sharedCidrs': self.CIDRS,
+                    'sharedCidrAvailableCount': len(self.CIDRS),
+                    'uncoveredPodCidrs': [],
+                    'unexpectedCount': 0,
+                    'sharedCidrConfigDigest': 'digest-1',
+                },
+            }
+            for key, value in (health_overrides or {}).items():
+                health['snat'][key] = value
+            health_path.write_text(json.dumps(health), encoding='utf-8')
+            return subprocess.run(
+                ['node', str(ACS_ROLLBACK_COMPATIBILITY), str(health_path),
+                 str(rollback_path), str(candidate_path)],
+                text=True, capture_output=True, check=False,
+            )
+
+    def test_accepts_only_identical_healthy_shared_config(self):
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['sharedCidrCount'], 2)
+
+    def test_rejects_candidate_drift_or_incomplete_running_coverage(self):
+        cases = [
+            self.check(candidate_cidrs=['172.16.176.0/24']),
+            self.check({'sharedCidrAvailableCount': 1}),
+            self.check({'uncoveredPodCidrs': ['172.16.187.0/24']}),
+            self.check({'unexpectedCount': 1}),
+        ]
+        for result in cases:
+            self.assertEqual(result.returncode, 1)
+            self.assertFalse(json.loads(result.stderr)['compatible'])
+
+
+class AcsProductionSnatConfigTest(unittest.TestCase):
+    def test_covers_complete_vswitch_pools_and_preserves_rollback_capacity(self):
+        values = {}
+        for line in ACS_PRODUCTION_ENV.read_text(encoding='utf-8').splitlines():
+            if line and not line.startswith('#') and '=' in line:
+                key, value = line.split('=', 1)
+                values[key] = value
+
+        expected = {
+            str(subnet)
+            for pool in ('172.16.176.0/20', '172.18.176.0/20')
+            for subnet in ipaddress.ip_network(pool).subnets(new_prefix=24)
+        }
+        configured_list = values['ACS_SNAT_SHARED_CIDRS'].split(',')
+        configured = set(configured_list)
+        self.assertEqual(len(configured_list), len(configured), '生产 shared CIDR 不得重复')
+        self.assertEqual(configured, expected)
+        self.assertEqual(len(configured), 32)
+
+        max_running = int(values['ACS_SANDBOX_MAX_RUNNING'])
+        max_entries = int(values['ACS_SNAT_MAX_MANAGED_ENTRIES'])
+        self.assertEqual(max_running + len(configured) + 2, max_entries)
+        self.assertLess(int(values['ACS_SANDBOX_WARN_RUNNING']), max_running)
+
 
 class AcsVerifyPerSessionTest(unittest.TestCase):
     @classmethod
@@ -94,6 +216,55 @@ class AcsVerifyPerSessionTest(unittest.TestCase):
     def test_formal_acceptance_requires_one_hundred_concurrent_samples(self):
         self.assertFalse(self.module.acceptance_sample_ready([1] * 5, [1] * 99))
         self.assertTrue(self.module.acceptance_sample_ready([1] * 5, [1] * 100))
+
+
+class AcsWorkflowRollbackTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = ACS_WORKFLOW.read_text(encoding='utf-8')
+        cls.deploy_script = ACS_DEPLOY_SCRIPT.read_text(encoding='utf-8')
+
+    def test_externalizes_remote_deploy_script_below_github_expression_limit(self):
+        self.assertIn('< scripts/deploy-acs-orchestrator.sh', self.workflow)
+        self.assertNotIn("<<'REMOTE'", self.workflow)
+        syntax = subprocess.run(
+            ['bash', '-n', str(ACS_DEPLOY_SCRIPT)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
+            changed.write('scripts/deploy-acs-orchestrator.sh\n')
+            changed.flush()
+            classified = subprocess.run(
+                ['bash', str(ACS_CLASSIFIER), changed.name],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(classified.returncode, 0, classified.stderr)
+        self.assertIn('publish=true', classified.stdout)
+
+    def test_verifies_per_pod_or_identical_shared_snat_before_process_replacement(self):
+        prepare = self.deploy_script.index('if prepare_snat_rollback; then')
+        replaced = self.deploy_script.index('PROCESS_REPLACED=true')
+        self.assertLess(prepare, replaced)
+        before_replacement = self.deploy_script[:replaced]
+        self.assertIn('check-acs-shared-rollback-compatibility.mjs', before_replacement)
+        self.assertIn('SNAT_ROLLBACK_SHARED_CONFIG_SAFE=true', before_replacement)
+        self.assertIn('/snat/restore-per-pod', before_replacement)
+        self.assertIn('rm -f "$SNAT_OPERATION_STATE_FILE"', self.deploy_script[prepare:replaced])
+
+    def test_code_rollback_does_not_depend_on_candidate_health(self):
+        rollback = self.deploy_script.split('\nrollback() {\n', 1)[1].split('\n}', 1)[0]
+        self.assertNotIn('prepare_snat_rollback', rollback)
+        self.assertIn('SNAT_ROLLBACK_PREPARED', rollback)
+        self.assertIn('SNAT_ROLLBACK_OFFLINE_RESTORE', rollback)
+        self.assertIn('SNAT_ROLLBACK_SHARED_CONFIG_SAFE', rollback)
+        self.assertIn('restorePerPodCli.js', rollback)
 
 
 class AcsToolContentJsonTest(unittest.TestCase):

@@ -2,12 +2,12 @@ import type { SystemPanelSnapshot } from "@agent/shared";
 import type { ReplayScript } from "./types";
 
 /**
- * 剧本三：到期事项追到提交回执。
+ * 剧本三：到期事项追到权威终态。
  *
  * 骨架照 complianceGateScript 抄，但换了一条更难演的主线——无人值守：
- *   ① 起手不是用户提问，是每天 07:00 的排程自己发起；
- *   ② 主动停下——提交成功不等于办成，没有权威回执就死活不写「已完成」；
- *   ③ 需要人拍板的那一项走审批门禁，人可以改掉 AI 拟的对外口径；
+ *   ① 普通员工只问一句，Agent 自动读取义务对象、规则版本、证据、审批与外部门户；
+ *   ② 主动停下——点击提交、平台受理都不等于办成，没有权威终态就不写「已完成」；
+ *   ③ 提交前由专业责任人审批，AI 不自行推断法律或监管义务；
  *   ④ 可下载产物——到期事项台账 / 巡检日报，回执单独占一列。
  * 外加升级动作：临期未回执的指派到人 + 写死下次复查时间，不是发条消息就算完。
  *
@@ -42,14 +42,14 @@ const WATCH_REPORT_HTML = `<!doctype html>
   .box li { margin-bottom: 4px; }
   .foot { margin-top: 14px; color: var(--muted); font-size: 12px; }
 </style></head><body>
-<div class="bar"><span class="tag">无人值守</span><span>每日 07:00 到期事项巡检 · 批次 WATCH-2026-0726 · 本轮无人工发起</span></div>
+<div class="bar"><span class="tag">一句话发起</span><span>本月义务终态巡检 · 批次 WATCH-2026-0726 · 无需上传表格</span></div>
 
 <h1>到期事项台账 · 巡检日报</h1>
 <p class="sub">生成时间 2026-07-26 09:42 · 覆盖 5 项在办事项 · 下一轮巡检 2026-07-27 07:00</p>
 
 <div class="stats">
   <div class="stat"><b class="ok">2</b><span>已确认办结</span></div>
-  <div class="stat"><b class="warn">2</b><span>已提交 · 未确认</span></div>
+  <div class="stat"><b class="warn">2</b><span>已提交 · 非终态</span></div>
   <div class="stat"><b class="deny">1</b><span>未提交 · 缺件</span></div>
   <div class="stat"><b>2</b><span>已升级到人</span></div>
 </div>
@@ -59,12 +59,12 @@ const WATCH_REPORT_HTML = `<!doctype html>
   <tr>
     <td>社保公积金申报<br><span style="color:#64748b">SI-2026-07 · 87 人 · 318,470.26 元</span></td>
     <td>2026-07-28（剩 2 天）</td><td class="ok">齐套</td>
-    <td class="ok">已提交 07:02</td><td class="ok">已受理 SI-20260726-004173</td>
+    <td class="ok">已提交 07:02</td><td class="ok">缴费完成凭证 SI-PAY-20260726-004173</td>
   </tr>
   <tr>
     <td>专利年费（第 7 年）<br><span style="color:#64748b">ZL201820447153 · 2,000 元</span></td>
     <td>2026-08-03（剩 8 天）</td><td class="ok">齐套</td>
-    <td class="ok">已提交 07:02</td><td class="ok">缴费通知书 CN-2026-0726-0083</td>
+    <td class="ok">已提交 07:02</td><td class="ok">年费缴纳完成回执 CN-PAY-2026-0726-0083</td>
   </tr>
   <tr>
     <td>出口退税申报<br><span style="color:#64748b">TR-2026-06 · 12 票 · 486,230.50 元</span></td>
@@ -84,9 +84,9 @@ const WATCH_REPORT_HTML = `<!doctype html>
 </table>
 
 <div class="box">
-  <h2>升级与复查（未确认 / 未提交项）</h2>
+  <h2>升级与复查（非终态 / 未提交项）</h2>
   <ul>
-    <li><b>出口退税 TR-2026-06</b> — 已升级关务主管、财务负责人。复查点 07-26 14:00、07-27 07:00；07-28 17:00 仍无《出口退税申报受理通知书》即转人工到办税服务厅当面确认，为 07-31 申报期截止预留 3 天重报窗口。</li>
+    <li><b>出口退税 TR-2026-06</b> — 已升级关务主管、财务负责人。复查点 07-26 14:00、07-27 07:00；07-28 17:00 仍无最终审核结果或补正通知即转人工到办税服务厅确认，为 07-31 申报期截止预留处理窗口。</li>
     <li><b>客户框架合同续签 HT-2023-0918</b> — 用印口径经有权人修改后发出（账期 60 天、额度 200 万元、新增汇率条款）。对方签回前不计入办结，复查点 07-29 07:00。</li>
     <li><b>高新企业年度报表 GR202435001188</b> — 已升级研发管理岗、财务共享中心，要求 07-29 前提供 2026 上半年研发费用辅助账。复查点 07-29 07:00；材料到位当轮巡检自动续办。</li>
   </ul>
@@ -97,12 +97,12 @@ const WATCH_REPORT_HTML = `<!doctype html>
 
 const WATCH_REPORT_SIZE_BYTES = new TextEncoder().encode(WATCH_REPORT_HTML).length;
 
-/** 面板底稿：到期台账 / 提交与回执 / 协同通知 / 操作留痕 */
+/** 面板底稿：到期台账 / 规则依据 / 提交与回执 / 协同通知 / 操作留痕 */
 const PANEL_BASE: SystemPanelSnapshot = {
   title: "企业系统实况",
   live: true,
   activeView: "ledger",
-  foot: "已连接：到期事项台账 · 申报平台 · OA 用印 · 协同通知（演示）",
+  foot: "已连接：义务台账 · 规则库 · OA 审批 · 外部门户 · 协同通知（演示）",
   views: [
     {
       key: "ledger",
@@ -119,6 +119,23 @@ const PANEL_BASE: SystemPanelSnapshot = {
         ],
         rows: [],
         empty: { title: "尚未开始巡检" },
+      },
+    },
+    {
+      key: "rules",
+      label: "规则依据",
+      winTitle: "义务规则库 · 已批准版本",
+      toolbar: { title: "规则依据与终态凭据", sub: "等待读取" },
+      widget: {
+        kind: "table",
+        cols: [
+          { key: "item", label: "义务对象" },
+          { key: "version", label: "规则版本" },
+          { key: "source", label: "权威来源" },
+          { key: "terminal", label: "终态凭据", align: "right" },
+        ],
+        rows: [],
+        empty: { title: "尚未读取规则版本" },
       },
     },
     {
@@ -157,24 +174,21 @@ const PANEL_BASE: SystemPanelSnapshot = {
 
 export const deadlineWatchScript: ReplayScript = {
   scenarioId: "catalog-deadline-to-receipt-watch",
-  title: "到期事项追到提交回执",
+  title: "截止期限与义务追到权威回执",
   mode: "hero",
   artifacts: { [WATCH_REPORT_PATH]: WATCH_REPORT_HTML },
 
   steps: [
     {
-      caption: "07:00 排程自己起手",
+      caption: "一句话问清本月未结义务",
       blocks: [
         {
-          id: "d1-trigger",
-          kind: "text",
-          title: "定时任务触发",
+          id: "d1-prompt",
+          kind: "prompt",
+          title: "用户消息",
           defaultOpen: true,
           replayInstant: true,
-          content: [
-            "07:00 到期事项巡检已启动，批次 WATCH-2026-0726。",
-            "这一轮没有人提问、没有人点开对话框。排程到点自己发起：扫全部带法定或合同时限的在办事项 → 逐项核材料是否齐套 → 齐套的按批准渠道提交 → 然后一直盯回执。",
-          ].join("\n"),
+          content: "本月哪些义务还没到权威终态？先处理会错过窗口的。",
         },
         {
           id: "d1-tool",
@@ -183,17 +197,17 @@ export const deadlineWatchScript: ReplayScript = {
           defaultOpen: true,
           toolName: "DeadlineScan",
           toolId: "t-scan",
-          content: JSON.stringify({ batch: "WATCH-2026-0726", trigger: "cron 0 7 * * *" }),
+          content: JSON.stringify({ batch: "WATCH-2026-0726", window: "2026-07", goal: "authoritative-terminal-state" }),
           executionStatus: "completed",
           durationMs: 1320,
           presentation: {
             title: "扫描到期事项台账",
             detail: [
-              { k: "触发方式", v: "每日 07:00 排程 · 无人工介入" },
+              { k: "触发方式", v: "员工一句话 · 无需上传台账或材料" },
               { k: "在办事项", v: "5 项（法定时限 4 · 合同时限 1）" },
               { k: "进入预警区", v: "3 项 · 剩余不足 10 天" },
               { tree: "├", k: "最紧迫", v: "社保公积金申报 · 2026-07-28 · 剩 2 天" },
-              { tree: "└", k: "上轮遗留", v: "0 项（07-25 批次已全部闭环）" },
+              { tree: "└", k: "判断依据", v: "义务对象 + 已批准规则版本 + 证据 + 审批 + 外部门户状态" },
             ],
             status: "ok",
             panelBase: PANEL_BASE,
@@ -206,7 +220,13 @@ export const deadlineWatchScript: ReplayScript = {
               { op: "tableRowInsert", view: "ledger", row: { id: "it-patent", cells: { item: "专利年费（第 7 年） · ZL201820447153", due: "2026-08-03", left: "8 天", state: "待核材料" } } },
               { op: "tableRowInsert", view: "ledger", row: { id: "it-hitech", cells: { item: "高新企业年度发展情况报表 · GR202435001188", due: "2026-08-31", left: "36 天", state: "待核材料" } } },
               { op: "pulse", view: "ledger", ids: ["it-social", "it-tax", "it-contract"], kind: "scan" },
-              { op: "feedAppend", view: "audit", item: { id: "aw-1", from: "AI 同事", time: "07:00:02", text: "排程触发巡检批次 WATCH-2026-0726，读取到期事项台账 5 项（只读）" } },
+              { op: "toolbar", view: "rules", title: "规则依据与终态凭据", sub: "5 项义务 · 5 个已批准版本" },
+              { op: "tableRowInsert", view: "rules", row: { id: "rule-social", cells: { item: "社保公积金申报", version: "SOCIAL-2026.07-v3", source: "主管机关规则页归档", terminal: "缴费完成凭证" }, tone: "pass" } },
+              { op: "tableRowInsert", view: "rules", row: { id: "rule-tax", cells: { item: "出口退税申报", version: "REBATE-2026Q3-v2", source: "税务规则库已批准快照", terminal: "最终审核结果" }, tone: "pass" } },
+              { op: "tableRowInsert", view: "rules", row: { id: "rule-contract", cells: { item: "客户框架合同续签", version: "HT-2023-0918-v4", source: "已签合同条款", terminal: "双方签署件" }, tone: "pass" } },
+              { op: "tableRowInsert", view: "rules", row: { id: "rule-patent", cells: { item: "专利年费", version: "IP-FEE-2026-v2", source: "代理机构规则库已批准快照", terminal: "缴费完成回执" }, tone: "pass" } },
+              { op: "tableRowInsert", view: "rules", row: { id: "rule-hitech", cells: { item: "高新企业年度报表", version: "HICH-2026-v1", source: "主管机关规则页归档", terminal: "最终审核结果" }, tone: "pass" } },
+              { op: "feedAppend", view: "audit", item: { id: "aw-1", from: "AI 同事", time: "07:00:02", text: "按员工一句话读取义务对象、已批准规则版本、证据、审批与外部门户状态（只读）" } },
               { op: "toolbar", view: "audit", title: "本轮巡检的系统动作", sub: "1 条" },
             ],
           },
@@ -218,20 +238,20 @@ export const deadlineWatchScript: ReplayScript = {
           defaultOpen: false,
           toolName: "DeadlineScan",
           toolId: "t-scan",
-          content: "batch=WATCH-2026-0726 items=5 warning=3 carryover=0",
+          content: "batch=WATCH-2026-0726 items=5 warning=3 approved_rule_versions=5",
         },
         {
           id: "d1-text",
           kind: "text",
           title: "业务进展",
           defaultOpen: true,
-          content: "台账拉齐了：5 项在办，3 项掉进 10 天预警区，最紧的社保申报只剩 2 天。接下来我先逐项看材料齐不齐——**缺件的绝不硬提交**，报错退回比压着不报更难收拾，尤其是征期内只能报一次的那几项。",
+          content: "不用上传表格，我已经从义务台账、规则库、OA 审批记录和外部门户拉齐 5 项在办义务，3 项进入 10 天预警区。期限、材料要求和终态凭据都来自带版本号的已批准来源；我不会临场推断法律或监管义务。接下来只按这些版本逐项核材料，缺件的不进入提交队列。",
         },
       ],
     },
 
     {
-      caption: "逐项核材料齐套",
+      caption: "按已批准规则版本核材料",
       blocks: [
         {
           id: "d2-tool",
@@ -240,22 +260,23 @@ export const deadlineWatchScript: ReplayScript = {
           defaultOpen: true,
           toolName: "MaterialCheck",
           toolId: "t-material",
-          content: JSON.stringify({ batch: "WATCH-2026-0726", items: 5 }),
+          content: JSON.stringify({ batch: "WATCH-2026-0726", items: 5, ruleMode: "approved-version-only" }),
           executionStatus: "completed",
           durationMs: 2260,
           presentation: {
-            title: "按各事项的必备件清单核对齐套",
+            title: "按已批准规则版本核对齐套",
             detail: [
               { verdict: "pass", text: "社保公积金申报", note: "人员增减表（3 增 1 减）、缴费基数表已复核 → 齐套" },
               { verdict: "pass", text: "出口退税申报", note: "报关单 12 票、增值税专票 9 张、收汇核销 12 笔逐笔匹配 → 齐套" },
               { verdict: "pass", text: "专利年费 ZL201820447153", note: "缴费信息表、专利登记簿副本齐备 → 齐套" },
               { verdict: "warn", text: "客户框架合同续签", note: "材料齐套，但续签口径与用印须有权人拍板 → 转审批门禁" },
               { verdict: "fail", text: "高新企业年度报表", note: "2026 上半年研发费用辅助账尚未结转，导不出 → 缺件，不提交" },
-              { insight: "齐套 3 项直接提交；1 项转人审；1 项宁可挂着也不用估算数凑报表", label: "结论" },
+              { insight: "齐套 3 项转专业责任人确认；1 项转商务审批；1 项缺件不提交", label: "结论" },
             ],
             status: "warn",
             panel: [
-              { op: "focus", view: "ledger" },
+              { op: "focus", view: "rules" },
+              { op: "toolbar", view: "rules", title: "规则依据与终态凭据", sub: "5 个版本均在有效期 · 无临场推断" },
               { op: "toolbar", view: "ledger", title: "到期事项台账 · 材料齐套核验", sub: "齐套 3 · 转审批 1 · 缺件 1" },
               { op: "tableRowUpdate", view: "ledger", id: "it-social", set: { cells: { item: "社保公积金申报 · SI-2026-07", due: "2026-07-28", left: "2 天", state: "齐套" }, tone: "pass" } },
               { op: "cellFlag", view: "ledger", rowId: "it-social", colKey: "state", tone: "pass", flag: "可提交" },
@@ -278,82 +299,112 @@ export const deadlineWatchScript: ReplayScript = {
           title: "业务进展",
           defaultOpen: true,
           content: [
-            "3 项可以直接走提交，另外两项卡在完全不同的地方：",
+            "3 项材料齐套，但不会由我直接提交：财税与知识产权责任人还要核对规则版本、所属期、金额和终态凭据。另两项卡在完全不同的地方：",
             "",
             "1. 合同续签卡在**人**——账期怎么谈、章由谁用，这不是材料问题，我不替你定；",
             "2. 高新年报卡在**上游数据**——财务共享中心 6 月还没结转，辅助账系统里根本导不出来，凑一份估算数交上去比晚交更危险。",
             "",
-            "这两项我都不往前推，后面单独安排人和复查时间。",
+            "这两项我都不往前推；齐套的 3 项先交专业责任人确认，另外两项后面分别安排商务审批与补件复查。",
           ].join("\n"),
         },
       ],
     },
 
     {
-      caption: "齐套项按批准渠道提交",
-      blocks: [
-        {
-          id: "d3-tool",
-          kind: "tool_use",
-          title: "FilingSubmit",
-          defaultOpen: true,
-          toolName: "FilingSubmit",
-          toolId: "t-submit",
-          content: JSON.stringify({ batch: "WATCH-2026-0726", items: ["SI-2026-07", "ZL201820447153", "TR-2026-06"] }),
-          executionStatus: "completed",
-          durationMs: 4180,
-          presentation: {
-            title: "提交 3 项齐套事项",
-            detail: [
-              { k: "提交项", v: "3 项 · 各走本事项的既定报送渠道" },
-              { tree: "├", k: "社保公积金", v: "电子税务局社保模块 · 受理号 SI-20260726-004173 · 318,470.26 元" },
-              { tree: "├", k: "专利年费", v: "专利事务代理缴费通道 · 缴费通知书 CN-2026-0726-0083 · 2,000 元" },
-              { tree: "└", k: "出口退税", v: "电子税务局退税申报 · 流水号 SB2026072600317 · 受理回执待返" },
-            ],
-            status: "ok",
-            receipt: { id: "SI-20260726-004173", system: "电子税务局 · 社保申报", readBack: true },
-            panel: [
-              { op: "focus", view: "filing" },
-              { op: "toolbar", view: "filing", title: "提交与回执追踪 · WATCH-2026-0726", sub: "已提交 3 · 已回执 2" },
-              { op: "tableRowInsert", view: "filing", row: { id: "fl-social", cells: { item: "社保公积金申报", channel: "电子税务局 · 社保模块", ticket: "SI-20260726-004173", receipt: "已受理" }, tone: "pass", flags: { receipt: { tone: "pass", flag: "已回执" } } } },
-              { op: "tableRowInsert", view: "filing", row: { id: "fl-patent", cells: { item: "专利年费（第 7 年）", channel: "专利事务代理缴费通道", ticket: "CN-2026-0726-0083", receipt: "缴费通知书已出" }, tone: "pass", flags: { receipt: { tone: "pass", flag: "已回执" } } } },
-              { op: "tableRowInsert", view: "filing", row: { id: "fl-tax", cells: { item: "出口退税申报", channel: "电子税务局 · 退税申报", ticket: "SB2026072600317", receipt: "待返" }, tone: "pending", flags: { receipt: { tone: "pending", flag: "待回执" } } } },
-              { op: "tableRowUpdate", view: "ledger", id: "it-social", set: { cells: { item: "社保公积金申报 · SI-2026-07", due: "2026-07-28", left: "2 天", state: "已办结" }, tone: "pass" } },
-              { op: "cellFlag", view: "ledger", rowId: "it-social", colKey: "state", tone: "pass", flag: "凭回执" },
-              { op: "tableRowUpdate", view: "ledger", id: "it-patent", set: { cells: { item: "专利年费（第 7 年） · ZL201820447153", due: "2026-08-03", left: "8 天", state: "已办结" }, tone: "pass" } },
-              { op: "cellFlag", view: "ledger", rowId: "it-patent", colKey: "state", tone: "pass", flag: "凭回执" },
-              { op: "tableRowUpdate", view: "ledger", id: "it-tax", set: { cells: { item: "出口退税申报 · TR-2026-06", due: "2026-07-31", left: "5 天", state: "已提交" }, tone: "pending" } },
-              { op: "cellFlag", view: "ledger", rowId: "it-tax", colKey: "state", tone: "pending", flag: "未确认" },
-              { op: "feedAppend", view: "audit", item: { id: "aw-3", from: "AI 同事", time: "07:02:14", text: "提交 3 项申报；社保与专利年费回读受理编号与金额一致，出口退税仅返回流水号" } },
-              { op: "toolbar", view: "audit", title: "本轮巡检的系统动作", sub: "3 条" },
-            ],
+      caption: "专业责任人核准后再提交",
+      blocks: [],
+      approval: {
+        title: "3 项齐套义务 · 专业责任人提交前确认",
+        description: "确认规则版本、所属期、金额和报送渠道后才会提交。AI 只整理证据，不自行认定义务，也不越过专业责任人对外报送。",
+        facts: [
+          { label: "财务负责人", value: "社保公积金 SI-2026-07 · 318,470.26 元" },
+          { label: "关务主管", value: "出口退税 TR-2026-06 · 12 票 · 486,230.50 元" },
+          { label: "知识产权负责人", value: "专利年费 ZL201820447153 · 第 7 年 · 2,000 元" },
+          { label: "规则依据", value: "SOCIAL-2026.07-v3 / REBATE-2026Q3-v2 / IP-FEE-2026-v2" },
+          { label: "待确认取舍", value: "现在提交，或退回补证据并保留窗口" },
+        ],
+        approveLabel: "专业核对通过并提交",
+        rejectLabel: "退回补证据",
+        approvedBlocks: [
+          {
+            id: "d3-human",
+            kind: "prompt",
+            title: "专业责任人审批",
+            defaultOpen: true,
+            content: "三位责任人已分别核对规则版本、所属期、金额与报送渠道，证据齐全，同意提交。",
           },
-        },
-        {
-          id: "d3-result",
-          kind: "tool_result",
-          title: "FilingSubmit 结果",
-          defaultOpen: false,
-          toolName: "FilingSubmit",
-          toolId: "t-submit",
-          content: "submitted=3 accepted=2 pending_receipt=1\nSI-2026-07 -> SI-20260726-004173 (accepted)\nZL201820447153 -> CN-2026-0726-0083 (accepted)\nTR-2026-06 -> SB2026072600317 (submitted, no receipt)",
-        },
-        {
-          id: "d3-text",
-          kind: "text",
-          title: "业务进展",
-          defaultOpen: true,
-          content: [
-            "社保和专利年费这两项，平台当场就把受理编号返回来了，我按编号回查了一遍，人数、金额、所属期都对得上，可以算办结。",
-            "",
-            "出口退税那一笔不一样：它只回了 **SB2026072600317**，这是申报流水号，只证明报文送达了。能证明税局受理的是《出口退税申报受理通知书》，那份还没出。486,230.50 元、12 票报关单，这一项我先不动它的状态。",
-          ].join("\n"),
-        },
-      ],
+          {
+            id: "d3-tool",
+            kind: "tool_use",
+            title: "FilingSubmit",
+            defaultOpen: true,
+            toolName: "FilingSubmit",
+            toolId: "t-submit",
+            content: JSON.stringify({ batch: "WATCH-2026-0726", approval: "PRO-APPROVAL-20260726-031", items: ["SI-2026-07", "ZL201820447153", "TR-2026-06"] }),
+            executionStatus: "completed",
+            durationMs: 4180,
+            presentation: {
+              title: "专业审批后提交 3 项齐套义务",
+              detail: [
+                { k: "审批记录", v: "PRO-APPROVAL-20260726-031 · 3 位专业责任人已确认" },
+                { tree: "├", k: "社保公积金", v: "缴费完成凭证 SI-PAY-20260726-004173 · 318,470.26 元" },
+                { tree: "├", k: "专利年费", v: "年费缴纳完成回执 CN-PAY-2026-0726-0083 · 2,000 元" },
+                { tree: "└", k: "出口退税", v: "申报流水号 SB2026072600317 · 尚无最终审核结果" },
+              ],
+              status: "ok",
+              receipt: { id: "SI-PAY-20260726-004173", system: "电子税务局 · 社保申报", readBack: true },
+              panel: [
+                { op: "focus", view: "filing" },
+                { op: "toolbar", view: "filing", title: "提交与回执追踪 · WATCH-2026-0726", sub: "已提交 3 · 权威终态 2 · 等待 1" },
+                { op: "tableRowInsert", view: "filing", row: { id: "fl-social", cells: { item: "社保公积金申报", channel: "电子税务局 · 社保模块", ticket: "SI-PAY-20260726-004173", receipt: "缴费完成凭证" }, tone: "pass", flags: { receipt: { tone: "pass", flag: "权威终态" } } } },
+                { op: "tableRowInsert", view: "filing", row: { id: "fl-patent", cells: { item: "专利年费（第 7 年）", channel: "专利事务代理缴费通道", ticket: "CN-PAY-2026-0726-0083", receipt: "年费缴纳完成回执" }, tone: "pass", flags: { receipt: { tone: "pass", flag: "权威终态" } } } },
+                { op: "tableRowInsert", view: "filing", row: { id: "fl-tax", cells: { item: "出口退税申报", channel: "电子税务局 · 退税申报", ticket: "SB2026072600317", receipt: "最终审核结果待返" }, tone: "pending", flags: { receipt: { tone: "pending", flag: "非终态" } } } },
+                { op: "tableRowUpdate", view: "ledger", id: "it-social", set: { cells: { item: "社保公积金申报 · SI-2026-07", due: "2026-07-28", left: "2 天", state: "已办结" }, tone: "pass" } },
+                { op: "cellFlag", view: "ledger", rowId: "it-social", colKey: "state", tone: "pass", flag: "凭终态凭证" },
+                { op: "tableRowUpdate", view: "ledger", id: "it-patent", set: { cells: { item: "专利年费（第 7 年） · ZL201820447153", due: "2026-08-03", left: "8 天", state: "已办结" }, tone: "pass" } },
+                { op: "cellFlag", view: "ledger", rowId: "it-patent", colKey: "state", tone: "pass", flag: "凭终态凭证" },
+                { op: "tableRowUpdate", view: "ledger", id: "it-tax", set: { cells: { item: "出口退税申报 · TR-2026-06", due: "2026-07-31", left: "5 天", state: "已提交 · 非终态" }, tone: "pending" } },
+                { op: "cellFlag", view: "ledger", rowId: "it-tax", colKey: "state", tone: "pending", flag: "继续等待" },
+                { op: "feedAppend", view: "audit", item: { id: "aw-3", from: "AI 同事", time: "07:02:14", text: "按专业审批提交 3 项；社保与专利年费回读终态凭证，出口退税仅返回申报流水号" } },
+                { op: "toolbar", view: "audit", title: "本轮巡检的系统动作", sub: "3 条" },
+              ],
+            },
+          },
+          {
+            id: "d3-result",
+            kind: "tool_result",
+            title: "FilingSubmit 结果",
+            defaultOpen: false,
+            toolName: "FilingSubmit",
+            toolId: "t-submit",
+            content: "submitted=3 authoritative_terminal=2 pending_final_status=1\nSI-2026-07 -> SI-PAY-20260726-004173 (final)\nZL201820447153 -> CN-PAY-2026-0726-0083 (final)\nTR-2026-06 -> SB2026072600317 (submitted, not final)",
+          },
+          {
+            id: "d3-text",
+            kind: "text",
+            title: "业务进展",
+            defaultOpen: true,
+            content: [
+              "社保和专利年费都取得了规则版本指定的终态凭据：缴费完成凭证与年费缴纳完成回执。我按编号回查人数、金额、所属期一致后，才把两项记为办结。",
+              "",
+              "出口退税只回了 **SB2026072600317**。不论页面写‘提交成功’还是‘已受理’，这都不是规则版本要求的最终审核结果，所以仍记「已提交 · 非终态」，继续等待最终结果或补正通知。",
+            ].join("\n"),
+          },
+        ],
+        rejectedBlocks: [
+          {
+            id: "d3-rejected-text",
+            kind: "text",
+            title: "退回说明",
+            defaultOpen: true,
+            content: "已停在外部提交前：3 个门户都没有收到报文，台账仍是「待专业确认」。缺失的证据会回到对应责任人，补齐后必须重新走本次专业审批；不会因为临近期限而绕过门禁。",
+          },
+        ],
+      },
     },
 
     {
-      caption: "回执没到就不写完成",
+      caption: "外部门户没到终态就继续等",
       blocks: [
         {
           id: "d4-tool",
@@ -366,28 +417,28 @@ export const deadlineWatchScript: ReplayScript = {
           executionStatus: "completed",
           durationMs: 1560,
           presentation: {
-            title: "追踪出口退税受理回执",
+            title: "追踪出口退税最终审核状态",
             detail: [
               { k: "追踪事项", v: "出口退税申报 TR-2026-06 · 486,230.50 元" },
               { k: "已提交", v: "07:02:14 · 流水号 SB2026072600317" },
-              { k: "轮询", v: "3 次（07:12 / 08:00 / 09:00）· 均未取得受理通知书" },
-              { tree: "├", k: "平台状态", v: "批量核定中，《出口退税申报受理通知书》未生成" },
-              { tree: "└", k: "本项判定", v: "已提交 · 未确认 —— 不计入已办结，不写入台账完成态" },
+              { k: "轮询", v: "3 次（07:12 / 08:00 / 09:00）· 尚无最终审核结果或补正通知" },
+              { tree: "├", k: "平台状态", v: "页面已受理 · 批量核定中（中间态）" },
+              { tree: "└", k: "本项判定", v: "已提交 · 非终态 —— 不计入已办结，不写入台账完成态" },
             ],
             status: "waiting",
             panel: [
               { op: "focus", view: "filing" },
-              { op: "toolbar", view: "filing", title: "提交与回执追踪 · WATCH-2026-0726", sub: "已提交 3 · 已回执 2 · 等待 1" },
-              { op: "tableRowUpdate", view: "filing", id: "fl-tax", set: { cells: { item: "出口退税申报", channel: "电子税务局 · 退税申报", ticket: "SB2026072600317", receipt: "轮询 3 次 · 仍未返回" }, tone: "pending", flags: { receipt: { tone: "warn", flag: "已提交·未确认" } } } },
+              { op: "toolbar", view: "filing", title: "提交与回执追踪 · WATCH-2026-0726", sub: "已提交 3 · 权威终态 2 · 等待 1" },
+              { op: "tableRowUpdate", view: "filing", id: "fl-tax", set: { cells: { item: "出口退税申报", channel: "电子税务局 · 退税申报", ticket: "SB2026072600317", receipt: "页面已受理 · 最终状态待返" }, tone: "pending", flags: { receipt: { tone: "warn", flag: "非终态" } } } },
               { op: "pulse", view: "filing", ids: ["fl-tax"], kind: "hit" },
-              { op: "tableRowUpdate", view: "ledger", id: "it-tax", set: { cells: { item: "出口退税申报 · TR-2026-06", due: "2026-07-31", left: "5 天", state: "已提交 · 未确认" }, tone: "warn" } },
+              { op: "tableRowUpdate", view: "ledger", id: "it-tax", set: { cells: { item: "出口退税申报 · TR-2026-06", due: "2026-07-31", left: "5 天", state: "已提交 · 非终态" }, tone: "warn" } },
               { op: "cellFlag", view: "ledger", rowId: "it-tax", colKey: "state", tone: "warn", flag: "不计办结" },
               { op: "feedAppend", view: "audit", item: {
                 id: "aw-4",
                 from: "AI 同事",
                 time: "09:00:06",
-                text: "出口退税回执第 3 次轮询仍为空，状态保持「已提交 · 未确认」，未写入任何完成标记",
-                card: { title: "拒绝把提交写成办结", body: "证据只有申报流水号，缺《出口退税申报受理通知书》；复查已排 14:00 与次日 07:00", meta: [{ text: "未标完成", tone: "pass" }, { text: "已挂复查", tone: "info" }] },
+                text: "出口退税第 3 次轮询仍未到最终状态，保持「已提交 · 非终态」，未写入任何完成标记",
+                card: { title: "拒绝把受理写成办结", body: "页面已受理，但缺最终审核结果或补正通知；复查已排 14:00 与次日 07:00", meta: [{ text: "未标完成", tone: "pass" }, { text: "已挂复查", tone: "info" }] },
               } },
               { op: "toolbar", view: "audit", title: "本轮巡检的系统动作", sub: "4 条" },
             ],
@@ -401,9 +452,9 @@ export const deadlineWatchScript: ReplayScript = {
           content: [
             "这一项我停住，不往下写。",
             "",
-            "**提交成功不等于办成**。我手上只有报文送达的流水号，主管机关那份受理通知书没出来，我就没有任何凭据说这笔退税报进去了。**没有回执，我不会把它标成已完成**——台账上它就是「已提交 · 未确认」，右侧那一行也不会变绿。",
+            "**提交成功或页面已受理都不等于办成**。规则版本要求的是最终审核结果；现在只有申报流水号和中间态，我就不会把它标成已完成——台账上它仍是「已提交 · 非终态」，右侧那一行也不会变绿。若门户返回补正通知，我会转入补正，不会误写失败或办结。",
             "",
-            "距申报期截止只剩 5 天（2026-07-31）。复查我已经排进去了：今天 14:00、明天 07:00 各查一次；到 07-28 17:00 还拿不到回执，我不再等系统，直接转人工去办税服务厅当面确认——留 3 天足够重报一次。",
+            "距申报期截止只剩 5 天（2026-07-31）。复查我已经排进去了：今天 14:00、明天 07:00 各查一次；到 07-28 17:00 还没有最终结果或补正通知，我不再等系统，直接转人工去办税服务厅确认，给后续补正保留窗口。",
           ].join("\n"),
         },
       ],
@@ -457,7 +508,7 @@ export const deadlineWatchScript: ReplayScript = {
                 { op: "focus", view: "ledger" },
                 { op: "tableRowUpdate", view: "ledger", id: "it-contract", set: { cells: { item: "客户框架合同续签 · HT-2023-0918", due: "2026-08-01 前发函", left: "6 天", state: "已用印 · 待签回" }, tone: "pending" } },
                 { op: "cellFlag", view: "ledger", rowId: "it-contract", colKey: "state", tone: "warn", flag: "待对方签回" },
-                { op: "tableRowInsert", view: "filing", row: { id: "fl-contract", cells: { item: "客户框架合同续签函", channel: "OA 用印 → EMS 寄出", ticket: "OA-SEAL-2026-0774 / EA283916477CN", receipt: "待对方签回" }, tone: "pending", flags: { receipt: { tone: "warn", flag: "已提交·未确认" } } } },
+                { op: "tableRowInsert", view: "filing", row: { id: "fl-contract", cells: { item: "客户框架合同续签函", channel: "OA 用印 → EMS 寄出", ticket: "OA-SEAL-2026-0774 / EA283916477CN", receipt: "待对方签回" }, tone: "pending", flags: { receipt: { tone: "warn", flag: "非终态" } } } },
                 { op: "toolbar", view: "filing", title: "提交与回执追踪 · WATCH-2026-0726", sub: "已提交 4 · 已回执 2 · 等待 2" },
                 { op: "feedAppend", view: "audit", item: {
                   id: "aw-5",
@@ -546,7 +597,7 @@ export const deadlineWatchScript: ReplayScript = {
               { k: "升级项", v: "2 项 · 均已指派到人并锁定复查时间" },
               { tree: "├", k: "出口退税 TR-2026-06", v: "关务主管 + 财务负责人 · 复查 14:00 与次日 07:00" },
               { tree: "├", k: "高新年报 GR202435001188", v: "研发管理岗 + 财务共享中心 · 07-29 前提供辅助账" },
-              { tree: "└", k: "兜底动作", v: "07-28 17:00 无退税回执转办税服务厅人工确认" },
+              { tree: "└", k: "兜底动作", v: "07-28 17:00 仍无最终结果或补正通知，转办税服务厅人工确认" },
             ],
             status: "warn",
             panel: [
@@ -556,8 +607,8 @@ export const deadlineWatchScript: ReplayScript = {
                 id: "nt-tax",
                 from: "AI 同事",
                 time: "09:41:20",
-                text: "@关务主管 @财务负责人 出口退税 TR-2026-06 已提交但未取得受理回执，申报期 07-31 截止。",
-                card: { title: "出口退税 · 已提交未确认", body: "流水号 SB2026072600317 · 486,230.50 元 · 12 票报关单；复查 07-26 14:00 / 07-27 07:00；07-28 17:00 仍无回执转人工窗口", meta: [{ text: "剩 5 天", tone: "warn" }, { text: "已指派", tone: "info" }] },
+                text: "@关务主管 @财务负责人 出口退税 TR-2026-06 页面已受理但尚无最终审核结果，申报期 07-31 截止。",
+                card: { title: "出口退税 · 已提交非终态", body: "流水号 SB2026072600317 · 486,230.50 元 · 12 票报关单；复查 07-26 14:00 / 07-27 07:00；07-28 17:00 仍无最终结果转人工窗口", meta: [{ text: "剩 5 天", tone: "warn" }, { text: "已指派", tone: "info" }] },
               } },
               { op: "feedAppend", view: "notify", item: {
                 id: "nt-hitech",
@@ -582,7 +633,7 @@ export const deadlineWatchScript: ReplayScript = {
           content: [
             "两项都指了人、定了时间，不是发条消息就算交待过去了。",
             "",
-            "退税那笔的兜底写死在排程里：07-28 17:00 我再查一次，还拿不到受理通知书就不再等系统，直接提醒关务主管去窗口当面确认。高新年报的辅助账卡在 6 月结转，复查点定在 07-29 07:00——时限 08-31 看着还远，但辅助账补不齐，8 月底照样交不上。",
+            "退税那笔的兜底写死在排程里：07-28 17:00 我再查一次，还没有最终结果或补正通知就不再等系统，直接提醒关务主管去窗口确认。高新年报的辅助账卡在 6 月结转，复查点定在 07-29 07:00——时限 08-31 看着还远，但辅助账补不齐，8 月底照样交不上。",
           ].join("\n"),
         },
       ],
@@ -607,7 +658,7 @@ export const deadlineWatchScript: ReplayScript = {
               { k: "产物", v: "到期事项巡检日报（HTML · 自包含）" },
               { k: "覆盖事项", v: "5 项 · 材料 / 提交 / 回执三段状态分列" },
               { tree: "├", k: "已确认办结", v: "2 项，均凭主管机关编号" },
-              { tree: "└", k: "未确认或未提交", v: "3 项，逐项写明卡点与下次动作" },
+              { tree: "└", k: "非终态或未提交", v: "3 项，逐项写明卡点与下次动作" },
             ],
             status: "ok",
             panel: [
@@ -617,7 +668,7 @@ export const deadlineWatchScript: ReplayScript = {
                 from: "AI 同事",
                 time: "09:42:05",
                 text: "生成巡检日报并抄送财务负责人、关务主管",
-                card: { title: "巡检日报已生成", body: "回执状态独立成列：已提交 ≠ 已办结，两者在台账、日报、通知三处口径一致", meta: [{ text: "办结 2", tone: "pass" }, { text: "未确认 2", tone: "warn" }, { text: "未提交 1", tone: "deny" }] },
+                card: { title: "巡检日报已生成", body: "终态凭据独立成列：已提交 / 已受理 ≠ 已办结，台账、日报、通知三处口径一致", meta: [{ text: "办结 2", tone: "pass" }, { text: "非终态 2", tone: "warn" }, { text: "未提交 1", tone: "deny" }] },
               } },
               { op: "toolbar", view: "audit", title: "本轮巡检的系统动作", sub: "7 条" },
               { op: "feedAppend", view: "notify", item: { id: "nt-report", from: "AI 同事", time: "09:42:08", text: "巡检日报已抄送财务负责人、关务主管；明早 07:00 在同一份台账上续写" } },
@@ -655,19 +706,19 @@ export const deadlineWatchScript: ReplayScript = {
           executionStatus: "completed",
           durationMs: 1220,
           presentation: {
-            title: "回读四处记录，核对口径是否一致",
+            title: "回读规则、审批、外部门户与台账终态",
             detail: [
-              { k: "回读范围", v: "到期台账 / 申报平台 / OA 用印 / 通知记录" },
-              { verdict: "pass", text: "已确认办结 2 项", note: "均按受理编号回查金额与所属期一致" },
-              { verdict: "pending", text: "已提交未确认 2 项", note: "出口退税受理回执、续签函对方签回" },
+              { k: "回读范围", v: "规则库 / 专业审批 / 外部门户 / 义务台账 / 通知记录" },
+              { verdict: "pass", text: "已确认办结 2 项", note: "均取得规则版本指定的终态凭据并回查一致" },
+              { verdict: "pending", text: "已提交非终态 2 项", note: "出口退税最终审核结果、续签函双方签署件" },
               { verdict: "fail", text: "未提交 1 项", note: "高新年报缺件，已指派并排定复查" },
               { verdict: "pass", text: "口径一致性", note: "台账 / 日报 / 通知三处对未结项的表述完全一致" },
-              { insight: "已提交 ≠ 已办结：没有回执的一律不记完成", label: "结论" },
+              { insight: "提交成功 / 页面已受理 ≠ 已办结：不满足规则版本定义的终态，一律继续追踪", label: "结论" },
             ],
             status: "warn",
             panel: [
               { op: "focus", view: "ledger" },
-              { op: "toolbar", view: "ledger", title: "到期事项台账 · 批次终态", sub: "办结 2 · 未确认 2 · 未提交 1" },
+              { op: "toolbar", view: "ledger", title: "到期事项台账 · 批次终态", sub: "办结 2 · 非终态 2 · 未提交 1" },
               { op: "feedAppend", view: "audit", item: { id: "aw-8", from: "AI 同事", time: "09:42:30", text: "回读台账 / 申报平台 / OA 用印 / 通知记录，四处状态一致；批次 WATCH-2026-0726 结束，3 项转入明日续办" } },
               { op: "toolbar", view: "audit", title: "本轮巡检的系统动作", sub: "8 条" },
             ],
@@ -681,17 +732,18 @@ export const deadlineWatchScript: ReplayScript = {
           content: [
             "## 本次巡检改变了什么",
             "",
-            "| 事项 | 终态 | 依据 |",
-            "| --- | --- | --- |",
-            "| 社保公积金申报 SI-2026-07 | 已办结 | 受理号 SI-20260726-004173，318,470.26 元回读一致 |",
-            "| 专利年费 ZL201820447153 | 已办结 | 缴费通知书 CN-2026-0726-0083，第 7 年 2,000 元已缴 |",
-            "| 出口退税申报 TR-2026-06 | 已提交 · 未确认 | 仅有流水号 SB2026072600317，受理通知书未出 |",
-            "| 客户框架合同续签 HT-2023-0918 | 已用印 · 待对方签回 | 用印单 OA-SEAL-2026-0774，EMS EA283916477CN |",
-            "| 高新企业年度报表 GR202435001188 | 未提交 · 缺件 | 研发费用辅助账未结转，已指派并排 07-29 复查 |",
+            "| 义务对象 | 规则版本 | 专业审批 | 外部门户 / 权威凭据 | 义务台账终态 |",
+            "| --- | --- | --- | --- | --- |",
+            "| 社保公积金 SI-2026-07 | SOCIAL-2026.07-v3 | 财务负责人已确认 | 缴费完成凭证 SI-PAY-20260726-004173 | 已办结 |",
+            "| 专利年费 ZL201820447153 | IP-FEE-2026-v2 | 知识产权负责人已确认 | 年费缴纳完成回执 CN-PAY-2026-0726-0083 | 已办结 |",
+            "| 出口退税 TR-2026-06 | REBATE-2026Q3-v2 | 关务主管已确认 | 页面已受理，仅有流水号 SB2026072600317 | 已提交 · 非终态 |",
+            "| 客户框架合同续签 HT-2023-0918 | HT-2023-0918-v4 | 外贸负责人已确认并用印 | EMS 已寄出，双方签署件未回 | 已发出 · 非终态 |",
+            "| 高新企业年度报表 GR202435001188 | HICH-2026-v1 | 未进入提交审批 | 研发费用辅助账未结转，门户未提交 | 未提交 · 缺件 |",
             "",
             "## 本次巡检没有做什么",
             "",
-            "- 没有把未回执的写成已完成：出口退税和续签函都只记「已提交」，台账、日报、通知三处口径一致；",
+            "- 没有把提交成功或页面已受理写成已完成：出口退税和续签函都保持非终态，台账、日报、通知三处口径一致；",
+            "- 没有自行推断法律或监管义务：期限、材料和终态凭据全部来自带版本号的已批准来源；",
             "- 没有替人用印：合同专用章由有权人在 OA 里确认后才动，AI 全程不持章、不代发函；",
             "- 没有越权提交：高新年报缺研发费用辅助账，宁可挂着也不用估算数凑一份报表报上去；",
             "- 没有改动人拍板的口径：账期 60 天、额度 200 万、汇率条款三处以人的原话为准，我原拟的版本只作留痕对照；",
@@ -706,22 +758,16 @@ export const deadlineWatchScript: ReplayScript = {
   // 这条场景最贵的不是巡检逻辑，而是对外提交与回执抓取——那一段今天完全不存在。
   sources: [
     {
-      blockRef: "step1.trigger.CronJob",
-      producer: "定时任务调度器（server/src/cron）",
-      state: "needs-change",
-      gap: "按 cron 表达式定点发起 Agent 会话的能力已经有（executor 直接 runAgent），但定时会话不产出 presentation / panelBase，右侧面板全空；且没有「批次事项」这种跨轮次状态载体——等回执、超时升级、明日续办目前只能靠 Agent 每轮重读上下文自己推断",
-    },
-    {
       blockRef: "step1.tool.DeadlineScan",
-      producer: "到期事项台账连接器",
+      producer: "义务对象与版本化规则连接器",
       state: "missing",
-      gap: "到期台账本身不在产品内，事项散在 ERP、合同系统、知识产权代理平台、税务台账各处；今天只能读客户手工导出的表格，且没有「法定时限 / 剩余天数 / 预警区」的结构化字段",
+      gap: "义务对象、规则版本、审批证据和外部门户状态散在多个系统；缺统一连接器与结构化的规则版本、终态凭据、剩余窗口字段",
     },
     {
       blockRef: "step2.tool.MaterialCheck",
       producer: "必备件清单校验器",
       state: "missing",
-      gap: "每类事项要哪些附件、附件由哪个系统出、什么算「齐套」，没有可版本化的清单，现在全靠 Agent 临场推理；判断「6 月研发费用是否已结转」还要读财务共享中心，无连接器",
+      gap: "每类义务的材料清单与终态定义尚无可批准、可生效、可追溯的版本载体；真实执行不能让 Agent 临场推断规则",
     },
     {
       blockRef: "step3.tool.FilingSubmit",
@@ -733,7 +779,7 @@ export const deadlineWatchScript: ReplayScript = {
       blockRef: "step4.tool.ReceiptPoll",
       producer: "回执抓取与轮询器",
       state: "missing",
-      gap: "受理通知书 / 缴费通知书的抓取没有连接器；更要紧的是 ToolReceipt 只有 id / system / readBack，缺「已提交但未确认」这个中间态字段，waiting 状态今天只能靠 status 表达，无法结构化落库供下一轮巡检续查",
+      gap: "最终审核结果、补正通知、缴费完成凭证的抓取没有连接器；ToolReceipt 也缺「已受理但非终态 / 待补正 / 最终办结」等结构化状态，无法供下一轮持续追踪",
     },
     {
       blockRef: "step5.tool.Approval",

@@ -14,6 +14,7 @@ class FakePool {
   billingWatermark = '0';
   maxGlobalSequence = '0';
   deleteBatches: Partial<Record<RetentionCategory, number[]>> = {};
+  dryRunCandidates: Partial<Record<RetentionCategory, number>> = {};
   categoryParams: Partial<Record<RetentionCategory, unknown[][]>> = {};
   queries: string[] = [];
 
@@ -30,6 +31,9 @@ class FakePool {
       const calls = this.categoryParams[category] ?? [];
       calls.push(params ?? []);
       this.categoryParams[category] = calls;
+      if (text.includes('SELECT COUNT(*)::text AS eligible FROM candidates')) {
+        return { rows: [{ eligible: String(this.dryRunCandidates[category] ?? 0) }], rowCount: 1 };
+      }
       return { rows: [], rowCount: this.deleteBatches[category]?.shift() ?? 0 };
     }
     return { rows: [], rowCount: 0 };
@@ -54,11 +58,56 @@ describe('RuntimeEventRetention', () => {
 
     const enabled = new RuntimeEventRetention({ ...baseOptions, enabled: true });
     enabled.start();
-    expect(info).toHaveBeenCalledWith('RuntimeEventRetention started: interval=10m batchLimit=10000');
+    expect(info).toHaveBeenCalledWith(
+      'RuntimeEventRetention started: mode=dry-run interval=10m batchLimit=10000 maxBatchesPerCategory=10 legalWatermark=0',
+    );
     enabled.stop();
   });
 
-  it('bounds every delete by the current billing watermark instead of requiring a moving target catch-up', async () => {
+  it('defaults runOnce to read-only dry-run and reports the next bounded batch', async () => {
+    const pool = new FakePool();
+    pool.billingWatermark = '80';
+    pool.maxGlobalSequence = '100';
+    pool.dryRunCandidates['tool-delta'] = 7;
+    const project = vi.fn();
+    const retention = new RuntimeEventRetention({
+      pool: pool as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      legalDeleteThroughGlobalSequence: '75',
+      projectBillingRuntimeEvents: project,
+    });
+
+    const result = await retention.runOnce();
+
+    expect(result).toMatchObject({
+      mode: 'dry-run',
+      deleted: 0,
+      legalWatermark: '75',
+      billingWatermark: '80',
+      effectiveDeleteThrough: '75',
+    });
+    expect(result.eligibleByCategory['tool-delta']).toBe(7);
+    expect(project).not.toHaveBeenCalled();
+    expect(pool.queries.some((query) => /DELETE FROM runtime_events/.test(query))).toBe(false);
+  });
+
+  it('rejects execute mode without both a positive legal watermark and authorization reference', () => {
+    const pool = new FakePool();
+    const options = {
+      pool: pool as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      executionMode: 'execute' as const,
+    };
+
+    expect(() => new RuntimeEventRetention(options)).toThrow(/authorizationRef/);
+    expect(() => new RuntimeEventRetention({ ...options, authorizationRef: 'CHG-1' })).toThrow(/legalDeleteThrough/);
+  });
+
+  it('bounds every delete by both legal and billing watermarks instead of requiring a moving target catch-up', async () => {
     const pool = new FakePool();
     pool.billingWatermark = '10';
     pool.maxGlobalSequence = '11';
@@ -67,6 +116,8 @@ describe('RuntimeEventRetention', () => {
     const result = await retention.runOnce();
 
     expect(result.billingWatermark).toBe('10');
+    expect(result.legalWatermark).toBe('999999999999');
+    expect(result.effectiveDeleteThrough).toBe('10');
     expect(result.maxGlobalSequence).toBe('11');
     expect(pool.categoryParams['tool-delta']?.[0]?.[1]).toBe('10');
     expect(pool.categoryParams['assistant-stream']?.[0]?.[0]).toBe('10');
@@ -76,7 +127,7 @@ describe('RuntimeEventRetention', () => {
     expect(pool.categoryParams['hand-events']?.[0]?.[1]).toBe('10');
   });
 
-  it('only deletes tool deltas after both terminal invocation and durable tool_result with a 10 minute grace', async () => {
+  it('requires same-tenant invocation and result so colliding invocation/toolCall IDs cannot delete another tenant delta', async () => {
     const pool = new FakePool();
     pool.billingWatermark = '99';
     pool.maxGlobalSequence = '99';
@@ -85,7 +136,10 @@ describe('RuntimeEventRetention', () => {
     await retention.runOnce();
 
     const sql = pool.queries.find((query) => query.includes('retention:tool-delta')) ?? '';
+    expect(sql).toContain('ON invocation.tenant_id = e.tenant_id');
+    expect(sql).toContain("AND invocation.invocation_id = e.event_json->>'invocationId'");
     expect(sql).toContain("invocation.status IN ('completed', 'failed', 'cancelled')");
+    expect(sql).toContain('WHERE result.tenant_id = e.tenant_id');
     expect(sql).toContain("result.event_type = 'tool_result'");
     expect(sql).toContain("result.event_json ? 'toolCallId'");
     expect(sql).toContain("result.event_json->>'toolCallId' = e.event_json->>'toolCallId'");
@@ -98,7 +152,7 @@ describe('RuntimeEventRetention', () => {
     ]);
   });
 
-  it('keeps assistant stream batches only through the terminal replay grace window', async () => {
+  it('requires a same-tenant run_finished so colliding session/run IDs cannot delete another tenant stream', async () => {
     const pool = new FakePool();
     pool.billingWatermark = '99';
     pool.maxGlobalSequence = '99';
@@ -108,6 +162,9 @@ describe('RuntimeEventRetention', () => {
 
     const sql = pool.queries.find((query) => query.includes('retention:assistant-stream')) ?? '';
     expect(sql).toContain("e.event_type = 'assistant_stream_event'");
+    expect(sql).toContain('WHERE terminal.tenant_id = e.tenant_id');
+    expect(sql).toContain('terminal.session_id = e.session_id');
+    expect(sql).toContain('terminal.run_id IS NOT DISTINCT FROM e.run_id');
     expect(sql).toContain("terminal.event_type = 'run_finished'");
     expect(sql).toContain('FOR UPDATE OF e SKIP LOCKED');
     expect(pool.categoryParams['assistant-stream']?.[0]).toEqual(['99', 10, 10_000]);
@@ -162,6 +219,19 @@ describe('RuntimeEventRetention', () => {
     expect(pool.categoryParams['tool-delta']).toHaveLength(2);
   });
 
+  it('caps each category per run even when every delete returns a full batch', async () => {
+    const pool = new FakePool();
+    pool.billingWatermark = '99';
+    pool.maxGlobalSequence = '99';
+    pool.deleteBatches['tool-delta'] = [2, 2, 1];
+    const retention = createRetention(pool, { batchLimit: 2, maxBatchesPerCategory: 2 });
+
+    const result = await retention.runOnce();
+
+    expect(result.deletedByCategory['tool-delta']).toBe(4);
+    expect(pool.categoryParams['tool-delta']).toHaveLength(2);
+  });
+
   it('advances billing projection when possible before fixing the cleanup watermark', async () => {
     const pool = new FakePool();
     pool.billingWatermark = '10';
@@ -189,6 +259,9 @@ function createRetention(
     eventsTable: 'runtime_events',
     toolInvocationsTable: 'runtime_tool_invocations',
     billingProjectionStateTable: 'runtime_billing_projection_state',
+    executionMode: 'execute',
+    legalDeleteThroughGlobalSequence: '999999999999',
+    authorizationRef: 'CHG-test',
     logger: { warn: vi.fn(), info: vi.fn() },
     ...overrides,
   });

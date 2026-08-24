@@ -82,8 +82,18 @@ export function isDebugModeTenantPolicyKey(policyKey: string): boolean {
   return DEBUG_MODE_TENANT_POLICY_KEYS.includes(policyKey as TenantPolicyKey);
 }
 
+export const NON_BOOLEAN_TENANT_POLICY_KEYS: readonly TenantPolicyKey[] = [
+  'runtime.high_risk_tool.mode',
+];
+
+export function isBooleanTenantPolicyKey(policyKey: string): policyKey is TenantPolicyKey {
+  return (TENANT_POLICY_KEYS as readonly string[]).includes(policyKey)
+    && !NON_BOOLEAN_TENANT_POLICY_KEYS.includes(policyKey as TenantPolicyKey);
+}
+
+/** 当前组织策略写接口只接受 boolean；非 boolean 策略保持只读，避免值类型被错误改写。 */
 export const ORGANIZATION_EDITABLE_TENANT_POLICY_KEYS: readonly TenantPolicyKey[] = TENANT_POLICY_KEYS
-  .filter(policyKey => !isDebugModeTenantPolicyKey(policyKey));
+  .filter(policyKey => !isDebugModeTenantPolicyKey(policyKey) && isBooleanTenantPolicyKey(policyKey));
 
 export function isOrganizationEditableTenantPolicyKey(policyKey: string): policyKey is TenantPolicyKey {
   return ORGANIZATION_EDITABLE_TENANT_POLICY_KEYS.includes(policyKey as TenantPolicyKey);

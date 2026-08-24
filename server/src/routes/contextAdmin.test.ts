@@ -80,7 +80,7 @@ describe('Context Plane admin HTTP contract', () => {
           coveredThrough: '2026-08-22T15:58:00.000Z',
         },
         watermarkLagSeconds: 120,
-        ingestOutcomes: { truncated: 1, refused: 0, unreadable: 0, retrying: 0, nextRetryAt: null },
+        ingestOutcomes: { truncated: 1, refused: 0, unreadable: 0, retrying: 0, lastErrorCodes: [], nextRetryAt: null },
         historicalLearningScope: {
           enabled: true, summary: '2 个指定会话 · 30 天', from: '2026-01-01T00:00:00.000Z',
           through: '2026-08-22T15:58:00.000Z',
@@ -107,7 +107,8 @@ describe('Context Plane admin HTTP contract', () => {
     const base = await start(orgAdmin, store);
     const snapshot = contextCenterSnapshotSchema.parse(await (await fetch(`${base}/snapshot`)).json());
     expect(snapshot.sources[0]?.ingestOutcomes).toMatchObject({
-      unreadable: 3, retrying: 1, nextRetryAt: '2026-08-22T16:05:00.000Z',
+      unreadable: 3, retrying: 1, lastErrorCodes: ['CONTEXT_SYNC_UNREADABLE'],
+      nextRetryAt: '2026-08-22T16:05:00.000Z',
     });
   });
 

@@ -220,6 +220,7 @@ export const contextSourceSchema = z.object({
     refused: z.number().int().nonnegative(),
     unreadable: z.number().int().nonnegative(),
     retrying: z.number().int().nonnegative(),
+    lastErrorCodes: z.array(z.string().regex(/^[A-Z][A-Z0-9_]{1,119}$/)).max(16),
     nextRetryAt: z.string().datetime({ offset: true }).nullable(),
   }).strict(),
   historicalLearningScope: contextScopeSchema,

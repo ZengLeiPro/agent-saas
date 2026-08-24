@@ -94,8 +94,8 @@ export class TaskboardContextSyncWorker {
         if (page.items.length === 0) {
           throw new Error('Taskboard change reader returned an empty page before the fixed upper bound');
         }
-        const projectRecords: ContextIngestRecordInput[] = [];
-        const taskRecords: ContextIngestRecordInput[] = [];
+        const projectRecords = new Map<string, ContextIngestRecordInput>();
+        const taskRecords = new Map<string, ContextIngestRecordInput>();
         const eventRecords: ContextIngestRecordInput[] = [];
         for (const change of page.items) {
           failureCode = 'TASKBOARD_CHANGE_NORMALIZE_FAILED';
@@ -111,7 +111,8 @@ export class TaskboardContextSyncWorker {
             if (board) {
               failureCode = 'TASKBOARD_BOARD_NORMALIZE_FAILED';
               assertTenant(tenantId, board.tenantId);
-              projectRecords.push(normalizeTaskboardBoard(board, observedAt).record);
+              const record = normalizeTaskboardBoard(board, observedAt).record;
+              projectRecords.set(record.externalRecordId, record);
             }
           } else {
             failureCode = 'TASKBOARD_TASK_LOOKUP_FAILED';
@@ -119,18 +120,22 @@ export class TaskboardContextSyncWorker {
             if (task) {
               failureCode = 'TASKBOARD_TASK_NORMALIZE_FAILED';
               assertTenant(tenantId, task.tenantId);
-              taskRecords.push(normalizeTaskboardTask(task, observedAt).record);
+              const record = normalizeTaskboardTask(task, observedAt).record;
+              taskRecords.set(record.externalRecordId, record);
             } else if (change.changeType === 'task.deleted') {
               failureCode = 'TASKBOARD_DELETE_NORMALIZE_FAILED';
-              taskRecords.push(normalizeDeletedTaskFallback(change, observedAt));
+              const record = normalizeDeletedTaskFallback(change, observedAt);
+              taskRecords.set(record.externalRecordId, record);
             }
           }
         }
 
+        const projectBatch = [...projectRecords.values()];
+        const taskBatch = [...taskRecords.values()];
         failureCode = 'TASKBOARD_PROJECT_INGEST_FAILED';
-        if (projectRecords.length) await this.ingest(tenantId, leases.projects, projectRecords, {});
+        if (projectBatch.length) await this.ingest(tenantId, leases.projects, projectBatch, {});
         failureCode = 'TASKBOARD_TASK_INGEST_FAILED';
-        if (taskRecords.length) await this.ingest(tenantId, leases.tasks, taskRecords, {});
+        if (taskBatch.length) await this.ingest(tenantId, leases.tasks, taskBatch, {});
         const lastSeq = page.items[page.items.length - 1]!.seq;
         failureCode = 'TASKBOARD_EVENT_INGEST_FAILED';
         await this.ingest(tenantId, leases.events, eventRecords, {
@@ -138,7 +143,7 @@ export class TaskboardContextSyncWorker {
           ...(page.nextCursor ? { pageCursor: page.nextCursor } : {}),
         });
         result.changes += page.items.length;
-        result.snapshots += projectRecords.length + taskRecords.length;
+        result.snapshots += projectBatch.length + taskBatch.length;
         result.events += eventRecords.length;
         afterSeq = lastSeq;
       }

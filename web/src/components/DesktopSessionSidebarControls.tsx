@@ -1,4 +1,4 @@
-import { Bot, Clock, FolderPlus, Minus, Plus, Settings2 } from "lucide-react";
+import { Bot, Clock, Minus, Plus, Settings2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -19,7 +19,6 @@ interface SidebarNavProps {
   isNewSessionActive: boolean;
   isLoading: boolean;
   onNew: (groupId?: string | null) => void;
-  onChooseGroup: () => void;
   onTabChange?: (tab: AppTab) => void;
   beforeNavigate?: () => void;
   constrainNewButton?: boolean;
@@ -34,7 +33,7 @@ function getNavIcon(tab: AppTab) {
   return null;
 }
 
-export function SidebarNav({ navItems, activeTab, isNewSessionActive, isLoading, onNew, onChooseGroup, onTabChange, beforeNavigate, constrainNewButton = true }: SidebarNavProps) {
+export function SidebarNav({ navItems, activeTab, isNewSessionActive, isLoading, onNew, onTabChange, beforeNavigate, constrainNewButton = true }: SidebarNavProps) {
   if (!onTabChange) return null;
   return (
     <nav className="flex flex-col gap-1 px-2 pb-3">
@@ -55,19 +54,6 @@ export function SidebarNav({ navItems, activeTab, isNewSessionActive, isLoading,
         >
           <Plus className="size-4" />
           <span>新建会话</span>
-        </button>
-        <button
-          type="button"
-          aria-label="新建到分组"
-          title="新建到分组"
-          disabled={isLoading}
-          className="flex w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-          onClick={() => {
-            beforeNavigate?.();
-            onChooseGroup();
-          }}
-        >
-          <FolderPlus className="size-4" />
         </button>
       </div>
       {navItems.map(({ tab, label }) => {

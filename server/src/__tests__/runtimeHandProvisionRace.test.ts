@@ -81,6 +81,7 @@ describe('runtime Hand normal provision generation CAS', () => {
       sessionId: 'session-1',
       workspaceId: 'workspace-1',
       runId: 'run-1',
+      tenantId: 'tenant-runtime-hand-race',
     };
 
     const first = ensureRuntimeHandRegistered({

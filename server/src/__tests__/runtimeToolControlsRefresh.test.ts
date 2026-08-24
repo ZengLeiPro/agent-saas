@@ -75,9 +75,10 @@ describe('runtime toolControls shared refresh', () => {
     const dispatch = createRawRuntimeRunDispatch(dispatchConfig);
     const run = (chatId: string) => consume(dispatch(
       { channel: 'web', chatId, content: '检查工具描述' },
-      { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: 'tenant-tool-controls' } },
       {
         modelConnection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid' },
+        executionTarget: 'server-local',
         skipSystemPrompt: true,
         maxTurns: 1,
       },

@@ -1,3 +1,4 @@
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import type { FileEventStore } from '../runtime/fileEventStore.js';
 
 export async function seedCompleteParallelToolUnit(eventStore: FileEventStore, sessionId: string) {
@@ -22,5 +23,5 @@ export async function seedCompleteParallelToolUnit(eventStore: FileEventStore, s
     },
     { type: 'tool_result', runId: 'run-history', sessionId, toolCallId: 'call-read', toolName: 'Read', content: 'read-ok' },
     { type: 'tool_result', runId: 'run-history', sessionId, toolCallId: 'call-shell', toolName: 'Shell', content: 'shell-ok' },
-  ]);
+  ], { tenantId: DEFAULT_TENANT_ID });
 }

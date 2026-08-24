@@ -12,6 +12,8 @@ import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
 import { RawAgentLoop } from '../runtime/rawAgentLoop.js';
 import type {
+  EventAppendContext,
+  EventListOptions,
   EventStore,
   ModelAdapter,
   ModelEvent,
@@ -25,7 +27,10 @@ import type { OutboundEvent } from '../types/index.js';
 class MemoryEventStore implements EventStore {
   readonly events: PlatformEvent[] = [];
 
-  async append(event: PlatformEventInput): Promise<PlatformEvent> {
+  constructor(private readonly tenantId: string) {}
+
+  async append(event: PlatformEventInput, ctx: EventAppendContext): Promise<PlatformEvent> {
+    this.assertTenant(ctx.tenantId);
     const stored = {
       ...event,
       id: `event-${this.events.length + 1}`,
@@ -35,9 +40,14 @@ class MemoryEventStore implements EventStore {
     return stored;
   }
 
-  async list(sessionId: string, options?: { excludeTypes?: PlatformEvent['type'][] }): Promise<PlatformEvent[]> {
+  async list(tenantId: string, sessionId: string, options?: EventListOptions): Promise<PlatformEvent[]> {
+    this.assertTenant(tenantId);
     const excluded = new Set(options?.excludeTypes ?? []);
     return this.events.filter((event) => event.sessionId === sessionId && !excluded.has(event.type));
+  }
+
+  private assertTenant(tenantId: string): void {
+    if (tenantId !== this.tenantId) throw new Error('MemoryEventStore tenant scope mismatch');
   }
 }
 
@@ -161,8 +171,8 @@ function context(runId: string): RunContext {
 
 describe('RawAgentLoop MCP deferred 真实工具身份与审批恢复', () => {
   it('Search 只加载命中的 Server 工具，审批恢复后仍直接调用真实 mcp__server__tool', async () => {
-    const eventStore = new MemoryEventStore();
-    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-mcp-deferred');
+    const eventStore = new MemoryEventStore('tenant-1');
+    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-mcp-deferred', 'tenant-1');
     const runtime = new ControlledMcpRuntime();
     const searchAdapter = new SearchThenCallAdapter();
     const firstLoop = new RawAgentLoop({
@@ -248,8 +258,8 @@ describe('RawAgentLoop MCP deferred 真实工具身份与审批恢复', () => {
   });
 
   it('即使 provider 绕过 Search 直接生成真实工具名，runtime 也拒绝执行', async () => {
-    const eventStore = new MemoryEventStore();
-    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-mcp-deferred');
+    const eventStore = new MemoryEventStore('tenant-1');
+    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-mcp-deferred', 'tenant-1');
     const runtime = new ControlledMcpRuntime();
     const adapter = new BoundaryAdapter({
       type: 'completed',
@@ -289,8 +299,8 @@ describe('RawAgentLoop MCP deferred 真实工具身份与审批恢复', () => {
   });
 
   it('Search 已加载工具但 function_call namespace 不匹配时拒绝执行', async () => {
-    const eventStore = new MemoryEventStore();
-    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-mcp-deferred');
+    const eventStore = new MemoryEventStore('tenant-1');
+    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-mcp-deferred', 'tenant-1');
     const runtime = new ControlledMcpRuntime();
     const adapter = new BoundaryAdapter({
       type: 'completed',

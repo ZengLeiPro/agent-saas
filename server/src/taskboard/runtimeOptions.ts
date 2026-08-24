@@ -154,12 +154,13 @@ export function createTaskboardRuntimeOptions(params: {
       params.onSessionsChanged?.();
       if (!params.eventStore) return;
       const tenantId = loadUser(event.userId)?.tenantId;
+      if (!tenantId) throw new Error(`Taskboard session grouping tenant is missing for user ${event.userId}`);
       await params.eventStore.append({
         type: 'session_group_changed',
         sessionId: event.sessionId,
         userId: event.userId,
         groupId: event.groupId,
-      }, tenantId ? { tenantId } : undefined);
+      }, { tenantId });
     } : undefined,
     timezone: params.timezone,
   };

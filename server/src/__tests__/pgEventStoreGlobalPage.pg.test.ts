@@ -1,7 +1,7 @@
 /**
  * PgEventStore.listGlobalPage / listSessionRange 真 PG 合同
  * （2026-07-29 L2 记忆整合批次新增查询）。
- * 设置 MEMORY_CONSOLIDATION_TEST_PG_URL 启用，否则 skip。
+ * 设置 TEST_DATABASE_URL（或 MEMORY_CONSOLIDATION_TEST_PG_URL）启用，否则 skip。
  */
 
 import { randomUUID } from 'node:crypto';
@@ -10,7 +10,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { PgEventStore } from '../runtime/pgEventStore.js';
 
-const connectionString = process.env.MEMORY_CONSOLIDATION_TEST_PG_URL;
+const connectionString = process.env.TEST_DATABASE_URL?.trim()
+  || process.env.MEMORY_CONSOLIDATION_TEST_PG_URL?.trim();
 const describePg = connectionString ? describe : describe.skip;
 const prefix = `evt_test_${randomUUID().replaceAll('-', '_').slice(0, 12)}`;
 const store = connectionString
@@ -30,7 +31,10 @@ describePg('PgEventStore listGlobalPage/listSessionRange contract', () => {
   });
 
   afterAll(async () => {
-    await store?.close();
+    if (!store) return;
+    await store.pool.query(`DROP TABLE IF EXISTS ${prefix}_events`);
+    await store.pool.query(`DROP TABLE IF EXISTS ${prefix}_event_cursors`);
+    await store.close();
   });
 
   it('listGlobalPage 只返回指定类型、带行级 envelope、按 global_sequence 升序', async () => {
@@ -51,7 +55,7 @@ describePg('PgEventStore listGlobalPage/listSessionRange contract', () => {
   });
 
   it('listSessionRange 返回精确 sessionSequence 并按 excludeTypes 过滤', async () => {
-    const rows = await store!.listSessionRange(SESSION, {
+    const rows = await store!.listSessionRange('t1', SESSION, {
       fromExclusive: 0,
       toInclusive: 5,
       excludeTypes: ['assistant_thinking'],
@@ -61,12 +65,12 @@ describePg('PgEventStore listGlobalPage/listSessionRange contract', () => {
   });
 
   it('listSessionRange 半开区间 (from, to]', async () => {
-    const rows = await store!.listSessionRange(SESSION, { fromExclusive: 2, toInclusive: 4 });
+    const rows = await store!.listSessionRange('t1', SESSION, { fromExclusive: 2, toInclusive: 4 });
     expect(rows.map((r) => r.sessionSequence)).toEqual([3, 4]);
   });
 
   it('context_rewind 与隐藏恢复输入以同一 appendBatch 连续追加且原事件不变', async () => {
-    const before = await store!.list(SESSION);
+    const before = await store!.list('t1', SESSION);
     const appended = await store!.appendBatch([
       {
         type: 'context_rewind',
@@ -94,7 +98,7 @@ describePg('PgEventStore listGlobalPage/listSessionRange contract', () => {
         hiddenFromUserTranscript: true,
       },
     ], { tenantId: 't1' });
-    const after = await store!.list(SESSION);
+    const after = await store!.list('t1', SESSION);
 
     expect(after.slice(0, before.length)).toEqual(before);
     expect(appended.map((event) => event.type)).toEqual(['context_rewind', 'user_message']);

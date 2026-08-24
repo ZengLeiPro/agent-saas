@@ -39,6 +39,7 @@ import {
 import { deliverDwsBackgroundCompletion, resolveDwsCompletionRoute } from './backgroundTaskDwsCompletion.js';
 import { markBackgroundTaskTerminal } from './backgroundTaskTerminal.js';
 import { findBackgroundTasksByIdentifier } from './backgroundTaskLookup.js';
+import { sleepAbortable } from './backgroundTaskTiming.js';
 import {
   assertAgentProfileExecutionTarget,
   profileRunMetadata,
@@ -910,8 +911,15 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     event: Parameters<ReturnType<typeof createEventStoreForSession>['append']>[0],
   ): Promise<void> {
     try {
+      const sessionTenantId = parentSession.tenantId?.trim();
+      const runTenantId = tenantId?.trim();
+      if (sessionTenantId && runTenantId && sessionTenantId !== runTenantId) {
+        throw new Error(`Background task parent tenant mismatch for session ${parentSession.sessionId}`);
+      }
+      const eventTenantId = sessionTenantId ?? runTenantId;
+      if (!eventTenantId) throw new Error(`Background task parent tenant is missing for session ${parentSession.sessionId}`);
       await createEventStoreForSession(this.config, parentSession)
-        .append(event, tenantId ? { tenantId } : undefined);
+        .append(event, { tenantId: eventTenantId });
     } catch (err) {
       logger.warn(`后台任务生命周期事件写入失败: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -961,22 +969,6 @@ function failureResult(status: 'failed' | 'cancelled', message: string): StoredB
     turnCount: 0,
     durationMs: 0,
   };
-}
-
-async function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) throw signal.reason ?? new Error('aborted');
-  await new Promise<void>((resolve, reject) => {
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(signal.reason ?? new Error('aborted'));
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    timer.unref?.();
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
 }
 
 async function persistResultText(

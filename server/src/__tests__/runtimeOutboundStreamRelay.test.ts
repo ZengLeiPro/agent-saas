@@ -48,7 +48,7 @@ describe('RuntimeOutboundStreamRelay', () => {
         return { ...event, id: `evt-${appended.length}`, timestamp: new Date().toISOString() } as any;
       }),
     } as any, { flushIntervalMs: 1_000 });
-    const context = { runId: 'run-2', sessionId: 'session-2' };
+    const context = { runId: 'run-2', sessionId: 'session-2', tenantId: 'tenant-1' };
 
     await relay.publish({ type: 'text_start' }, context);
     await relay.publish({ type: 'text_delta', content: 'tail' }, context);

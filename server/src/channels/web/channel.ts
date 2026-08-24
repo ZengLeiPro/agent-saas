@@ -141,7 +141,7 @@ export { buildChatMessageActivityDetail } from './channelHelpers.js';
 
 interface ActiveStreamEntry {
   controller: AbortController;
-  userId?: string;
+  userId?: string; tenantId?: string;
   ws: WebSocket;
   sessionId?: string;
   runId?: string;
@@ -202,6 +202,19 @@ export class WebChannel implements BaseChannel {
   }
 
   private sensitiveActionAccessError(client: WsClient, target: SensitiveActionTarget): string | null { return sensitiveActionAccessError(client, target, this.wsServer, this.userStore); }
+  private anonymousBindingAccessError(client: WsClient, boundWebSocket?: WebSocket): string | null {
+    return !(this.config.authEnabled ?? Boolean(this.config.jwtSecret)) && !client.user && boundWebSocket === client.ws
+      ? null : 'Access denied';
+  }
+  private eventStoreTenantForClient(client: WsClient, targetTenantId?: string, ownerUserId?: string): string | null {
+    const anonymous = !(this.config.authEnabled ?? Boolean(this.config.jwtSecret)) && !client.user;
+    if (anonymous) return !ownerUserId && (!targetTenantId || targetTenantId === DEFAULT_TENANT_ID) ? DEFAULT_TENANT_ID : null;
+    if (!client.user) return null;
+    const ownerTenantId = ownerUserId ? this.userStore?.findById(ownerUserId)?.tenantId : undefined;
+    if (ownerUserId && ownerUserId !== client.user.sub && !targetTenantId && !ownerTenantId) return null;
+    const tenantId = targetTenantId ?? ownerTenantId ?? this.userStore?.findById(client.user.sub)?.tenantId ?? client.user.tenantId;
+    return tenantId && !this.sensitiveActionAccessError(client, { tenantId, ownerUserId }) ? tenantId : null;
+  }
   private findActiveStreamIdBySession(sessionId: string): string | undefined {
     for (const [streamId, entry] of this.activeStreams) {
       if (entry.sessionId === sessionId) return streamId;
@@ -1146,11 +1159,10 @@ export class WebChannel implements BaseChannel {
       return;
     }
 
-    // 交互归属 fail-closed：敏感响应必须绑定权威 owner/tenant，不能信握手角色快照。
-    const storedUserId = interactionStore.getUserId(interactionId);
-    const actionAccessError = storedUserId
-      ? this.sensitiveActionAccessError(client, { ownerUserId: storedUserId })
-      : 'Access denied';
+    const pendingInteraction = interactionStore.get(interactionId);
+    const actionAccessError = pendingInteraction?.userId
+      ? this.sensitiveActionAccessError(client, { ownerUserId: pendingInteraction.userId })
+      : this.anonymousBindingAccessError(client, pendingInteraction?.boundWebSocket);
     if (actionAccessError) {
       this.wsSend(client.ws, { type: 'respond_error', interactionId, error: actionAccessError });
       return;
@@ -1208,7 +1220,7 @@ export class WebChannel implements BaseChannel {
         interactionType: pendingInteraction.type,
         userId: client.user?.sub,
         response: normalizeInteractionResponse(response),
-      });
+      }, this.eventStoreTenantForClient(client, undefined, pendingInteraction.userId) ?? undefined);
     }
     this.wsSend(client.ws, { type: 'respond_ok', interactionId });
 
@@ -1236,8 +1248,14 @@ export class WebChannel implements BaseChannel {
     if (!sessionId) return false;
     const transcriptPath = this.config.agentCwd ? await findTranscriptOrMetaPathBySessionId(sessionId) : null;
     if (!transcriptPath && !this.config.runtimeEventStoreSupportsPathless) return false;
-    // 跨 session 并发兜底：限制同时进入的 jsonl 读路径并发数，遏制 EMFILE 突发。
-    // 仅保护读路径（list + buildRuntimeReplayState）；dispatch 流不持锁。
+    const meta = transcriptPath ? (await readSessionMeta(transcriptPath) ?? undefined) : undefined;
+    const enqueueRuntime = this.config.enqueueRuntime?.enabled === false ? undefined : this.config.enqueueRuntime;
+    const sessionRecord = enqueueRuntime ? await enqueueRuntime.sessionCatalog.get(sessionId).catch(() => null) : null;
+    const durableRun = enqueueRuntime ? await enqueueRuntime.runStore.getActiveBySession?.(sessionId).catch(() => null) : null;
+    const persistedTenants = new Set([durableRun?.tenantId, sessionRecord?.tenantId, meta?.tenantId].filter((id): id is string => Boolean(id)));
+    const ownerUserId = durableRun?.userId || sessionRecord?.userId || meta?.userId || undefined;
+    const tenantId = persistedTenants.size <= 1 ? this.eventStoreTenantForClient(client, persistedTenants.values().next().value, ownerUserId) : null;
+    if (!tenantId) { this.wsSend(client.ws, { type: 'respond_error', interactionId, error: 'Access denied' }); return true; }
     const release = await approvalResumeSemaphore.acquire();
     let eventStore: EventStore;
     let approvalStore: EventBackedApprovalStore;
@@ -1247,14 +1265,10 @@ export class WebChannel implements BaseChannel {
     let hasPendingApproval: boolean;
     try {
       eventStore = this.config.runtimeEventStoreFor
-        ? this.config.runtimeEventStoreFor(transcriptPath ?? '') : new FileEventStore(getRuntimeEventLogPath(transcriptPath!));
-      approvalStore = new EventBackedApprovalStore(eventStore, sessionId);
-      existingEvents = await eventStore.list(sessionId);
-      const replayState = buildRuntimeReplayState(
-        existingEvents,
-        await approvalStore.list(sessionId),
-        sessionId,
-      );
+        ? this.config.runtimeEventStoreFor(transcriptPath ?? '', tenantId) : new FileEventStore(getRuntimeEventLogPath(transcriptPath!), tenantId);
+      approvalStore = new EventBackedApprovalStore(eventStore, sessionId, tenantId);
+      existingEvents = await eventStore.list(tenantId, sessionId);
+      const replayState = buildRuntimeReplayState(existingEvents, await approvalStore.list(sessionId), sessionId);
       const pendingState = replayState.pendingApprovals.find(
         (state) => state.approval?.id === interactionId,
       );
@@ -1266,12 +1280,9 @@ export class WebChannel implements BaseChannel {
       release();
     }
     if (!hasPendingApproval && !pendingAskUser) return false;
-    const meta = transcriptPath ? (await readSessionMeta(transcriptPath) ?? undefined) : undefined;
-    const enqueueRuntime = this.config.enqueueRuntime?.enabled === false ? undefined : this.config.enqueueRuntime;
     const sourceRunId = pendingApprovalRunId ?? pendingAskUser?.runId;
-    const sourceRun = sourceRunId && enqueueRuntime ? await enqueueRuntime.runStore.get(sourceRunId) : null;
-    if (sourceRun?.tenantId) approvalStore = new EventBackedApprovalStore(eventStore, sessionId, sourceRun.tenantId);
-    const accessError = persistedInteractionAccessError({
+    const sourceRun = sourceRunId && enqueueRuntime ? durableRun?.runId === sourceRunId ? durableRun : await enqueueRuntime.runStore.get(sourceRunId) : null;
+    const accessError = sourceRun?.tenantId && sourceRun.tenantId !== tenantId ? 'Access denied' : persistedInteractionAccessError({
       sessionId, user: client.user,
       meta,
       sourceRun,
@@ -1321,7 +1332,7 @@ export class WebChannel implements BaseChannel {
         interactionType: 'ask_user',
         userId: client.user?.sub,
         response: normalizedResponse,
-      }, { tenantId: meta.tenantId });
+      }, { tenantId });
       await enqueueRuntime.runStore.markStatus(pendingAskUser.runId, 'pending', 'ask_user_resolved_enqueue_resume', {
         resumeInteractionConsumedAt: null,
         resumeInteractionConsumedId: null,
@@ -1335,7 +1346,7 @@ export class WebChannel implements BaseChannel {
         runId: pendingAskUser.runId,
         sessionId,
         userId: meta.userId,
-        tenantId: meta.tenantId,
+        tenantId,
         model: meta.model,
         channel: 'web',
         executionTarget: meta.executionTarget as any,
@@ -1454,13 +1465,13 @@ export class WebChannel implements BaseChannel {
         interactionType: 'approval',
         userId: client.user?.sub,
         response: resumeResponse,
-      }, { tenantId: meta.tenantId });
+      }, { tenantId });
       const workspaceId = meta.workspaceId ?? sessionId;
       await enqueueRuntime.scheduler.enqueue({
         runId: pendingApprovalRunId,
         sessionId,
         userId: meta.userId,
-        tenantId: meta.tenantId,
+        tenantId,
         model: meta.model,
         channel: 'web',
         executionTarget: meta.executionTarget as any,
@@ -1483,9 +1494,7 @@ export class WebChannel implements BaseChannel {
 
     return false;
   }
-  /** 处理 abort 消息（runId-first；streamId 仅兼容旧客户端）。
-   * 与同连接 chat 共用串行链，确保先收到的 chat 完成 durable enqueue 后再执行 stop-all。
-   */
+  /** 处理 abort；与同连接 chat 串行，runId 优先、streamId 兼容旧客户端。 */
   private handleAbort(client: WsClient, msg: WsAbortMessage): void {
     // legacy 直连路径的 chat tail 覆盖整段模型流，abort 必须立即执行，不能排队到流结束。
     if (!this.config.enqueueRuntime) {
@@ -1530,20 +1539,21 @@ export class WebChannel implements BaseChannel {
     }
     const entry = active?.entry ?? legacyEntry;
     const resolvedStreamId = active?.streamId ?? (!runId ? streamId : undefined);
-    let sessionId = entry?.sessionId;
+    let sessionId = entry?.sessionId; let targetTenantId = entry?.tenantId;
     let resolvedRunId = runId ?? entry?.runId;
     let resolvedRunStatus: string | undefined;
     let resolvedRunStatusReason: string | undefined;
+    let hasSensitiveTarget = false;
 
     if (resolvedRunId && this.config.enqueueRuntime?.runStore) {
       const record = await this.config.enqueueRuntime.runStore.get(resolvedRunId);
       if (record) {
-        sessionId = record.sessionId;
+        sessionId = record.sessionId; targetTenantId = record.tenantId ?? targetTenantId;
         resolvedRunStatus = record.status;
         resolvedRunStatusReason = record.statusReason;
-        if (this.sensitiveActionAccessError(client, {
-          tenantId: record.tenantId,
-          ownerUserId: record.userId,
+        hasSensitiveTarget = Boolean(record.userId || (record.tenantId && record.tenantId !== DEFAULT_TENANT_ID));
+        if (hasSensitiveTarget && this.sensitiveActionAccessError(client, {
+          tenantId: record.tenantId, ownerUserId: record.userId,
         })) {
           this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
           return;
@@ -1551,7 +1561,14 @@ export class WebChannel implements BaseChannel {
       }
     }
 
-    if (entry?.userId && this.sensitiveActionAccessError(client, { ownerUserId: entry.userId })) {
+    if (entry?.userId) {
+      hasSensitiveTarget = true;
+      if (this.sensitiveActionAccessError(client, { ownerUserId: entry.userId })) {
+        this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+        return;
+      }
+    }
+    if (!hasSensitiveTarget && this.anonymousBindingAccessError(client, entry?.ws)) {
       this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
       return;
     }
@@ -1592,8 +1609,7 @@ export class WebChannel implements BaseChannel {
         sessionId,
         'aborted',
         resolvedRunId,
-        cancelEvent,
-        client.user?.tenantId,
+        cancelEvent, targetTenantId ?? client.user?.tenantId,
       )
       : { targetCancelled: false, eventAppended: false, newCancellation: true };
     if (resolvedRunId && this.config.enqueueRuntime?.runStore) {
@@ -1724,7 +1740,7 @@ export class WebChannel implements BaseChannel {
   ): Promise<{ targetCancelled: boolean; eventAppended: boolean; newCancellation: boolean }> {
     const runStore = this.config.enqueueRuntime?.runStore;
     if (!runStore) return { targetCancelled: false, eventAppended: false, newCancellation: true };
-    if (cancelEvent && runStore.cancelSteeringBeforeDispatchBySessionWithEvent) {
+    if (cancelEvent && runStore.cancelSteeringBeforeDispatchBySessionWithEvent) { if (!tenantId) throw new Error(`Missing tenant context for session ${sessionId} cancellation`);
       const { cancelled, targetCancelled, event, eventCreated } = await runStore.cancelSteeringBeforeDispatchBySessionWithEvent(
         sessionId,
         reason,
@@ -1896,15 +1912,11 @@ export class WebChannel implements BaseChannel {
       const transcriptPath = await findTranscriptOrMetaPathBySessionId(sessionId);
       const resolvedTenantId = tenantId
         ?? (transcriptPath ? (await readSessionMeta(transcriptPath))?.tenantId : undefined);
+      if (!resolvedTenantId) throw new Error('EventStore tenantId is required');
       const eventStore = this.config.runtimeEventStoreFor && transcriptPath
-        ? this.config.runtimeEventStoreFor(transcriptPath)
-        : transcriptPath
-          ? new FileEventStore(getRuntimeEventLogPath(transcriptPath))
-          : null;
-      await eventStore?.append(
-        event,
-        resolvedTenantId ? { tenantId: resolvedTenantId } : undefined,
-      );
+        ? this.config.runtimeEventStoreFor(transcriptPath, resolvedTenantId)
+        : transcriptPath ? new FileEventStore(getRuntimeEventLogPath(transcriptPath), resolvedTenantId) : null;
+      await eventStore?.append(event, { tenantId: resolvedTenantId });
     } catch (err) {
       chatLogger.warn(`Failed to append durable web command event: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1915,10 +1927,11 @@ export class WebChannel implements BaseChannel {
     event: Parameters<EventStore['append']>[0],
     tenantId?: string,
   ): Promise<void> {
+    if (!tenantId) throw new Error('EventStore tenantId is required');
     const eventStore = this.config.runtimeEventStoreFor
-      ? this.config.runtimeEventStoreFor(transcriptPath)
-      : new FileEventStore(getRuntimeEventLogPath(transcriptPath));
-    await eventStore.append(event, tenantId ? { tenantId } : undefined);
+      ? this.config.runtimeEventStoreFor(transcriptPath, tenantId)
+      : new FileEventStore(getRuntimeEventLogPath(transcriptPath), tenantId);
+    await eventStore.append(event, { tenantId });
   }
 
   /** 处理 resume 消息（替代 GET /api/chat/stream/:sessionId） */
@@ -1940,7 +1953,6 @@ export class WebChannel implements BaseChannel {
     const { sessionId: sid, requestId, lastEventId, lastEventCursor, skipReplay } = msg;
     this.wsSessionAffinity.set(client.ws, sid);
 
-    // 总是先清理旧订阅（防止切换会话后旧事件继续推送到新会话）
     const prevUnsub = this.resumeSubscriptions.get(client.ws);
     if (prevUnsub) {
       prevUnsub();
@@ -1948,15 +1960,14 @@ export class WebChannel implements BaseChannel {
     }
 
     const bufferEntry = this.eventBufferStore.get(sid);
-    // Capture before the first async status/replay decision. If the run terminates while
-    // either await is in flight, subscribeFrom must still include that terminal window.
+    const activeStreamId = this.findActiveStreamIdBySession(sid);
+    const activeEntry = activeStreamId ? this.activeStreams.get(activeStreamId) : undefined;
     const resumeBufferBoundary = bufferEntry ? bufferEntry.nextId - 1 : 0;
-    // 判活口径与 getStreamStatus() 统一：durable runStore 是 run 是否活着的唯一真相,
-    // 内存 buffer 只是传输缓存。buffer active 但 runStore 明确说没有活跃 run 时,
-    // 这是幽灵 buffer(背景事件误建/complete 丢失),就地收口并按 inactive 处理。
-    // 否则前端 resume 永远收到 active:true,会话永久卡在"正在思考"。
+    // durable runStore 是判活真源；buffer 只负责传输与同进程 WS 绑定。
     let bufferActive = Boolean(bufferEntry && this.eventBufferStore.isActive(sid));
     let durableStatus: string | undefined;
+    let durableTenantId: string | undefined;
+    let durableAccessError: string | null = null;
     if (bufferActive) {
       try {
         const runStore = this.config.enqueueRuntime?.runStore;
@@ -1967,50 +1978,43 @@ export class WebChannel implements BaseChannel {
             bufferActive = false;
           } else {
             durableStatus = activeRun.status;
+            durableTenantId = this.eventStoreTenantForClient(client, activeRun.tenantId, activeRun.userId) ?? undefined;
+            if (!durableTenantId) durableAccessError = 'Access denied';
           }
         }
       } catch (err) {
-        // runStore 异常时退化信 buffer(与 getStreamStatus 的降级方向一致)
         chatLogger.warn(`[resume] runStore.getActiveBySession 异常,降级信 buffer: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    // buffer 不存在 OR 已完成/被收口 → 返回 inactive
     if (!bufferEntry || !bufferActive) {
       const durableActive = await this.tryReplayDurableRuntimeEvents(client, sid, {
-        requestId,
-        lastEventId,
-        lastEventCursor,
-        skipReplay: skipReplay === true,
+        requestId, lastEventId, lastEventCursor, skipReplay: skipReplay === true,
       });
-      if (!durableActive) {
-        this.wsSend(client.ws, {
-          type: 'active_stream', sessionId: sid, active: false,
-          ...(requestId ? { requestId } : {}),
-        });
-      }
-      // 已完成的 buffer：推送 pending 交互（须先通过归属校验，防止把他人交互内容暴露给非本人用户）
-      if (bufferEntry?.userId && !this.sensitiveActionAccessError(client, { ownerUserId: bufferEntry.userId })) {
-        await this.pushPendingInteractions(client, sid);
-      }
+      if (!durableActive) this.wsSend(client.ws, {
+        type: 'active_stream', sessionId: sid, active: false,
+        ...(requestId ? { requestId } : {}),
+      });
+      const pendingAccessError = bufferEntry?.userId
+        ? this.sensitiveActionAccessError(client, { ownerUserId: bufferEntry.userId })
+        : this.anonymousBindingAccessError(client, activeEntry?.ws);
+      if (bufferEntry && !pendingAccessError) await this.pushPendingInteractions(client, sid);
       return;
     }
 
-    // 重新读取 actor，并按权威 owner 的当前租户校验归属。
-    if (!bufferEntry.userId || this.sensitiveActionAccessError(client, { ownerUserId: bufferEntry.userId })) {
+    const bufferAccessError = bufferEntry.userId
+      ? this.sensitiveActionAccessError(client, { ownerUserId: bufferEntry.userId })
+      : this.anonymousBindingAccessError(client, activeEntry?.ws);
+    if (durableAccessError || bufferAccessError) {
       this.wsSend(client.ws, {
         type: 'active_stream', sessionId: sid, active: false,
         ...(requestId ? { requestId } : {}),
       });
       return;
     }
-
-    const activeStreamId = this.findActiveStreamIdBySession(sid);
-    const activeEntry = activeStreamId ? this.activeStreams.get(activeStreamId) : undefined;
     if (activeStreamId) {
       this.wsActiveStream.set(client.ws, activeStreamId);
     }
 
-    // 通知客户端有活跃流（附带 runId/streamId；runId 是控制面事实源）
     this.wsSend(client.ws, {
       type: 'active_stream',
       sessionId: sid,
@@ -2027,21 +2031,12 @@ export class WebChannel implements BaseChannel {
       && this.wsActiveStream.get(client.ws) === activeStreamId,
     );
     if (alreadyDirectBound) {
-      await this.pushPendingInteractions(client, sid);
+      await this.pushPendingInteractions(client, sid, durableTenantId);
       return;
     }
 
-    // 回放错过的事件（skipReplay 模式下跳过）。
-    // 2026-08-04 P1：buffer 的 lastEventId 是本 buffer 实例的内存自增 id，buffer 重建
-    // （run 交替/幽灵收口/进程重启）后与客户端持有值错位。客户端没有有效 buffer id、
-    // 只有 durable cursor 时（典型：刷新后 transcript 快照已含历史，随后断线重连），
-    // 走 durable 增量重放；此时 getEventsAfter(sid, 0) 会把整个 buffer 全量重放，
-    // 叠加到 transcript 快照上形成整段重复（实证 fc3bf95a）。
-    // 无任何游标（buffer id 与 durable cursor 皆无）时，"重放"没有起点可言，
-    // 全量重放必然与客户端已持有的 transcript 快照重叠 —— 这是内容重复的服务端
-    // 侧根因，必须在此收口而不能只依赖客户端自觉（旧版本前端、mobile/shared store
-    // 都可能发出 lastEventId=0 + skipReplay:false）。此时只发 active_stream，
-    // 由客户端刷新 transcript 补齐，与 Web 前端无游标时的策略一致。
+    // buffer id 只在当前实例有效；durable cursor 用于跨实例增量回放。
+    // 无游标时跳过全量回放，避免与客户端 transcript 快照重复。
     const hasBufferCursor = typeof lastEventId === 'number' && lastEventId > 0;
     const hasAnyCursor = hasBufferCursor || Boolean(lastEventCursor);
     if (!skipReplay && !hasAnyCursor) {
@@ -2053,11 +2048,11 @@ export class WebChannel implements BaseChannel {
       if (!hasBufferCursor && lastEventCursor) {
         // The boundary was captured before async status lookup. Events pushed while either
         // status lookup or durable replay is in flight are recovered by subscribeFrom below.
-        const store = await this.getRuntimeEventStoreForSession(sid);
+        const tenantId = durableTenantId ?? this.eventStoreTenantForClient(client, undefined, bufferEntry.userId) ?? undefined;
+        const store = tenantId ? await this.getRuntimeEventStoreForSession(sid, tenantId) : null;
         if (store) {
           durableReplayCursor = await this.replayDurableRuntimeEvents(client, sid, store, {
-            lastEventCursor,
-            activeRunId: activeEntry?.runId ?? '',
+            lastEventCursor, activeRunId: activeEntry?.runId ?? '', tenantId,
           });
         }
       } else {
@@ -2112,8 +2107,7 @@ export class WebChannel implements BaseChannel {
       });
     }
 
-    // 推送 pending 交互
-    await this.pushPendingInteractions(client, sid);
+    await this.pushPendingInteractions(client, sid, durableTenantId);
   }
 
   private async tryReplayDurableRuntimeEvents(
@@ -2125,12 +2119,13 @@ export class WebChannel implements BaseChannel {
     if (!runStore) return false;
     const activeRun = await runStore.getActiveBySession?.(sessionId);
     if (!activeRun) return false;
-    if (!activeRun.userId || this.sensitiveActionAccessError(client, {
-      tenantId: activeRun.tenantId,
-      ownerUserId: activeRun.userId,
-    })) {
-      return false;
-    }
+    const active = this.findActiveStreamByRunId(activeRun.runId);
+    const accessError = activeRun.userId || (activeRun.tenantId && activeRun.tenantId !== DEFAULT_TENANT_ID)
+      ? this.sensitiveActionAccessError(client, { tenantId: activeRun.tenantId, ownerUserId: activeRun.userId })
+      : this.anonymousBindingAccessError(client, active?.entry.sessionId === sessionId ? active.entry.ws : undefined);
+    if (accessError) return false;
+    const tenantId = this.eventStoreTenantForClient(client, activeRun.tenantId, activeRun.userId);
+    if (!tenantId) return false;
     const streamId = typeof activeRun.metadata?.streamId === 'string' ? activeRun.metadata.streamId : activeRun.runId;
     this.eventBufferStore.create(sessionId, activeRun.userId);
     this.wsActiveStream.set(client.ws, streamId);
@@ -2143,16 +2138,14 @@ export class WebChannel implements BaseChannel {
       status: activeRun.status,
       ...(options.requestId ? { requestId: options.requestId } : {}),
     });
-    // Capture before either durable-store await. subscribeFrom recovers every buffered
-    // event produced while store lookup/replay is in flight, including terminal events.
+    // Capture before durable awaits so subscribeFrom recovers the replay window.
     const subscribeAfterId = this.eventBufferStore.get(sessionId)!.nextId - 1;
     let durableReplayCursor: string | undefined;
     if (!options.skipReplay) {
-      const store = await this.getRuntimeEventStoreForSession(sessionId);
+      const store = await this.getRuntimeEventStoreForSession(sessionId, tenantId);
       if (store) {
         durableReplayCursor = await this.replayDurableRuntimeEvents(client, sessionId, store, {
-          ...options,
-          activeRunId: activeRun.runId,
+          ...options, activeRunId: activeRun.runId, tenantId,
         });
       }
     }
@@ -2179,30 +2172,29 @@ export class WebChannel implements BaseChannel {
       const closeSub = this.resumeSubscriptions.get(client.ws);
       if (closeSub) { closeSub(); this.resumeSubscriptions.delete(client.ws); }
     });
-    await this.pushPendingInteractions(client, sessionId);
+    await this.pushPendingInteractions(client, sessionId, tenantId);
     return true;
   }
 
-  private async getRuntimeEventStoreForSession(sessionId: string): Promise<EventStore | null> {
+  private async getRuntimeEventStoreForSession(sessionId: string, tenantId: string): Promise<EventStore | null> {
     if (!this.config.runtimeEventStoreFor) return null;
     const transcriptPath = await findTranscriptOrMetaPathBySessionId(sessionId);
-    return this.config.runtimeEventStoreFor(transcriptPath ?? '');
+    return this.config.runtimeEventStoreFor(transcriptPath ?? '', tenantId);
   }
 
   private async replayDurableRuntimeEvents(
     client: WsClient,
-    sessionId: string,
-    store: EventStore,
-    options: { lastEventId?: number; lastEventCursor?: string; activeRunId: string },
+    sessionId: string, store: EventStore,
+    options: { lastEventId?: number; lastEventCursor?: string; activeRunId: string; tenantId?: string },
   ): Promise<string | undefined> {
+    const tenantId = options.tenantId ?? this.eventStoreTenantForClient(client); if (!tenantId) return undefined;
     let replayId = options.lastEventId ?? 0;
     let replayedCursor = options.lastEventCursor;
     const hasDurableCursor = Boolean(options.lastEventCursor);
     const streamStates = new Map<string, RuntimeStreamProjectionState>();
-    // 新 ws-only 实例可能在流进行到一半时接管：浏览器 cursor 之前的 batch 已在 DOM，
-    // 但本进程没有内存状态。只预热投影状态、不重发事件，后续聚合全文才能正确补差。
+    // ws-only 接管时预热 cursor 前的投影状态，但不重发已在 DOM 的 batch。
     if (hasDurableCursor && options.lastEventCursor && store.listByRun) {
-      const priorRunEvents = await store.listByRun(sessionId, options.activeRunId);
+      const priorRunEvents = await store.listByRun(tenantId, sessionId, options.activeRunId);
       for (const event of priorRunEvents) {
         if (event.type !== 'assistant_stream_event') continue;
         const eventCursor = getDurableEventCursor(event);
@@ -2213,7 +2205,7 @@ export class WebChannel implements BaseChannel {
     if (store.listPage) {
       let cursor: string | undefined = hasDurableCursor ? options.lastEventCursor : undefined;
       while (true) {
-        const page = await store.listPage(sessionId, {
+        const page = await store.listPage(tenantId, sessionId, {
           afterCursor: cursor,
           limit: 200,
           // durable cursor 是会话级游标；没有游标时绝不能从会话开头回放，
@@ -2241,8 +2233,8 @@ export class WebChannel implements BaseChannel {
     }
     // 兼容没有分页能力的自定义 EventStore，同样把最坏影响限制在当前 run。
     const events = store.listByRun
-      ? await store.listByRun(sessionId, options.activeRunId)
-      : (await store.list(sessionId)).filter(
+      ? await store.listByRun(tenantId, sessionId, options.activeRunId)
+      : (await store.list(tenantId, sessionId)).filter(
           (event) => 'runId' in event && event.runId === options.activeRunId,
         );
     for (const event of events) {
@@ -2298,14 +2290,20 @@ export class WebChannel implements BaseChannel {
     }
   }
 
-  private async pushPendingInteractions(client: WsClient, sessionId: string): Promise<void> {
-    const resolvedIds = this.config.runtimeEventStoreFor ? await loadResolvedInteractionIds(await this.getRuntimeEventStoreForSession(sessionId), sessionId) : new Set<string>();
-    const pending = interactionStore.getPendingInteractions(sessionId).filter((entry) => !resolvedIds.has(entry.interactionId));
-    const excluded = new Set([...resolvedIds, ...pending.map((entry) => entry.interactionId)]);
+  private async pushPendingInteractions(client: WsClient, sessionId: string, tenantId?: string): Promise<void> {
+    const pending = interactionStore.getPendingInteractions(sessionId);
+    const ownerIds = new Set(pending.map((entry) => interactionStore.get(entry.interactionId)?.userId).filter((id): id is string => Boolean(id)));
+    if (ownerIds.size > 1) return;
+    const ownerUserId = this.eventBufferStore.get(sessionId)?.userId ?? ownerIds.values().next().value;
+    const scopedTenantId = tenantId ?? this.eventStoreTenantForClient(client, undefined, ownerUserId) ?? undefined;
+    if (this.config.runtimeEventStoreFor && !scopedTenantId) return;
+    const resolvedIds = this.config.runtimeEventStoreFor ? await loadResolvedInteractionIds(await this.getRuntimeEventStoreForSession(sessionId, scopedTenantId!), scopedTenantId!, sessionId) : new Set<string>();
+    const unresolved = pending.filter((entry) => !resolvedIds.has(entry.interactionId));
+    const excluded = new Set([...resolvedIds, ...unresolved.map((entry) => entry.interactionId)]);
 
     const recovered = scanBufferForPendingInteractions(this.eventBufferStore.getEventsAfter(sessionId, 0)?.events, excluded);
-    if (recovered.length > 0) pending.push(...recovered);
-    if (pending.length > 0) this.wsSend(client.ws, { type: 'pending_interactions', interactions: pending });
+    if (recovered.length > 0) unresolved.push(...recovered);
+    if (unresolved.length > 0) this.wsSend(client.ws, { type: 'pending_interactions', interactions: unresolved });
   }
 
   // ── 核心聊天处理逻辑 ──────────────────────────────────
@@ -3168,7 +3166,7 @@ export class WebChannel implements BaseChannel {
 
         this.activeStreams.set(acceptedStreamId, {
           controller,
-          userId: user?.sub,
+          userId: user?.sub, tenantId: sessionRecord.tenantId ?? user?.tenantId ?? DEFAULT_TENANT_ID,
           ws,
           sessionId: acceptedSessionId,
           runId: acceptedRunId,
@@ -3403,7 +3401,8 @@ export class WebChannel implements BaseChannel {
     // 用户级 controller：仅在用户主动点击"停止"时触发，用于终止 Agent
     const userAbortController = new AbortController();
     const streamId = String(++this.streamIdCounter);
-    this.activeStreams.set(streamId, { controller: userAbortController, userId: user?.sub, ws, sessionId: validSessionId, clientMsgId });
+    this.activeStreams.set(streamId, { controller: userAbortController,
+      userId: user?.sub, tenantId: user?.tenantId ?? DEFAULT_TENANT_ID, ws, sessionId: validSessionId, clientMsgId });
     this.wsActiveStream.set(ws, streamId);
     // 回填幂等记录的真实 streamId（之前占位为空）
     this.idempotencySet(user?.sub, clientMsgId, 'in_flight', streamId);
@@ -3683,7 +3682,7 @@ export class WebChannel implements BaseChannel {
             displayName: event.displayName,
             questions: event.questions,
             toolInput: event.toolInput,
-          }).catch((err: unknown) => {
+          }, this.eventStoreTenantForClient(client, undefined, user?.sub) ?? undefined).catch((err: unknown) => {
             chatLogger.warn(`failed to persist interaction_requested: ${err instanceof Error ? err.message : String(err)}`);
           });
         }
@@ -3709,6 +3708,7 @@ export class WebChannel implements BaseChannel {
             toolCallId: event.toolCallId,
             invocationId: event.invocationId,
             userId: user?.sub,
+            boundWebSocket: ws,
             orgAgentId,
             questions: event.questions,
             toolId: event.toolId,

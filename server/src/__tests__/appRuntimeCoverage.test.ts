@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 
 import { createRuntime } from '../app/runtime.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
 
 async function createFixture(config: unknown): Promise<{ rootDir: string; processCwd: string }> {
@@ -123,10 +124,16 @@ describe('createRuntime 运行时装配（补充分支）', () => {
     cleanupRoots.add(rootDir);
     const runtime = await createRuntime({ processCwd });
 
-    const store = runtime.runtimeEventStoreFor(join(processCwd, 'workspace', 'alice', 'session.jsonl'));
+    const store = (runtime.runtimeEventStoreFor as unknown as (
+      transcriptPath: string,
+      tenantId: string,
+    ) => FileEventStore)(
+      join(processCwd, 'workspace', 'alice', 'session.jsonl'),
+      DEFAULT_TENANT_ID,
+    );
     expect(store).toBeInstanceOf(FileEventStore);
     // 空 session 读回空列表（验证是可用的真实 store，不是占位对象）
-    await expect(store.list('nonexistent-session')).resolves.toEqual([]);
+    await expect(store.list(DEFAULT_TENANT_ID, 'nonexistent-session')).resolves.toEqual([]);
   });
 
   it('memory 缺省启用：getMemoryIndexService 存在且当前无 PG backend 时返回 null（file backend 不建索引服务）', async () => {

@@ -674,6 +674,7 @@ describe('PgRunStore steering inbox', () => {
       'web_abort',
       'waiting-run',
       { type: 'run_cancel_requested', sessionId: 'session-waiting', runId: 'waiting-run', reason: 'web_abort' },
+      'tenant-waiting',
     );
 
     expect(result.targetCancelled).toBe(true);
@@ -688,6 +689,12 @@ describe('PgRunStore steering inbox', () => {
     expect(eventLockIndex).toBeGreaterThan(-1);
     expect(eventLockIndex).toBeLessThan(firstEventInsertIndex);
     expect(queryCalls[eventLockIndex]?.params).toEqual(['runtime_events:global-sequence-commit-order']);
+    const cursorInsert = queryCalls.find(({ sql }) => sql.includes('INSERT INTO runtime_event_cursors'));
+    const cursorUpdate = queryCalls.find(({ sql }) => sql.includes('UPDATE runtime_event_cursors'));
+    expect(cursorInsert?.sql).toContain('ON CONFLICT (tenant_id, session_id)');
+    expect(cursorInsert?.params).toEqual(['tenant-waiting', 'session-waiting']);
+    expect(cursorUpdate?.sql).toContain('WHERE tenant_id = $1 AND session_id = $2');
+    expect(cursorUpdate?.params.slice(0, 2)).toEqual(['tenant-waiting', 'session-waiting']);
     expect(queries.filter((sql) => sql.includes('INSERT INTO runtime_events'))).toHaveLength(2);
   });
 
@@ -710,6 +717,7 @@ describe('PgRunStore steering inbox', () => {
       'web_abort',
       'completed-run',
       { type: 'run_cancel_requested', sessionId: 'session-terminal-race', runId: 'completed-run', reason: 'web_abort' },
+      'tenant-terminal-race',
     );
 
     expect(result).toMatchObject({ targetCancelled: false, eventCreated: false });

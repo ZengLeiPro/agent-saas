@@ -382,7 +382,7 @@ export class RuntimeScheduler {
     const cutoff = new Date(Date.now() - this.approvalTimeoutMs);
     const staleRuns = await listStale(cutoff, STALE_APPROVAL_BATCH_SIZE);
     for (const record of staleRuns) {
-      const events = await this.options.eventStore.list(record.sessionId, {
+      const events = await this.options.eventStore.list(requireTenantId(record.tenantId), record.sessionId, {
         includeTypes: ['approval_requested', 'approval_resolved'],
       });
       const pendingApprovals = buildApprovalRecordsFromEvents(events, record.sessionId)
@@ -401,7 +401,7 @@ export class RuntimeScheduler {
           approvalId: approval.id,
           decision: 'rejected',
           message: STALE_APPROVAL_REASON,
-        }, { tenantId: record.tenantId });
+        }, { tenantId: requireTenantId(record.tenantId) });
       }
       await this.options.eventStore.append({
         type: 'run_cancel_requested',
@@ -409,7 +409,7 @@ export class RuntimeScheduler {
         runId: record.runId,
         ...(record.userId ? { userId: record.userId } : {}),
         reason: STALE_APPROVAL_REASON,
-      }, { tenantId: record.tenantId });
+      }, { tenantId: requireTenantId(record.tenantId) });
       await this.options.eventStore.append({
         type: 'run_state_changed',
         runId: record.runId,
@@ -417,7 +417,7 @@ export class RuntimeScheduler {
         status: 'cancelled',
         previousStatus: record.status,
         reason: STALE_APPROVAL_REASON,
-      }, { tenantId: record.tenantId });
+      }, { tenantId: requireTenantId(record.tenantId) });
       this.options.logger?.warn(`Cancelled stale waiting_approval run ${record.runId}`);
     }
   }
@@ -473,7 +473,7 @@ export class RuntimeScheduler {
       sessionId: acquired.sessionId,
       workerId: this.workerId,
       leaseExpiresAt: lease.expiresAt,
-    }, { tenantId: acquired.tenantId });
+    }, { tenantId: requireTenantId(acquired.tenantId) });
 
     if (!this.options.autoWake || !this.options.wake) {
       await lease.release('orphaned', 'scheduler_recovery_scan');
@@ -484,7 +484,7 @@ export class RuntimeScheduler {
         status: 'orphaned',
         previousStatus: acquired.status,
         reason: 'scheduler_recovery_scan',
-      }, { tenantId: acquired.tenantId });
+      }, { tenantId: requireTenantId(acquired.tenantId) });
       this.options.logger?.warn(`Marked recoverable run ${acquired.runId} as orphaned`);
       return;
     }
@@ -526,7 +526,7 @@ export class RuntimeScheduler {
         status: 'failed',
         previousStatus: acquired.status,
         reason: message,
-      }, { tenantId: acquired.tenantId });
+      }, { tenantId: requireTenantId(acquired.tenantId) });
       this.deferredUntilByRun.delete(acquired.runId);
       this.options.logger?.error(`Runtime scheduler wake failed for ${acquired.runId}: ${message}`);
     }
@@ -561,6 +561,11 @@ export class RuntimeScheduler {
       },
     };
   }
+}
+
+function requireTenantId(tenantId: string | undefined): string {
+  if (!tenantId?.trim()) throw new Error('Runtime event tenantId is required');
+  return tenantId;
 }
 
 function classifyRun(record: RunRecord): string {

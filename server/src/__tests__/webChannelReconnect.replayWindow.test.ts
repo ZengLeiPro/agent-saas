@@ -43,16 +43,16 @@ describe('WebChannel active stream reconnect', () => {
     await (channel as any).replayDurableRuntimeEvents(
       {
         ws,
-        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
         alive: true,
         lastActivityAt: Date.now(),
       },
       'session-durable',
       { listPage },
-      { lastEventId: 12, lastEventCursor: '1581', activeRunId: 'run-current' },
+      { lastEventId: 12, lastEventCursor: '1581', activeRunId: 'run-current', tenantId: DEFAULT_TENANT_ID },
     );
 
-    expect(listPage).toHaveBeenCalledWith('session-durable', {
+    expect(listPage).toHaveBeenCalledWith(DEFAULT_TENANT_ID, 'session-durable', {
       afterCursor: '1581',
       limit: 200,
     });
@@ -80,13 +80,13 @@ describe('WebChannel active stream reconnect', () => {
     await (channel as any).replayDurableRuntimeEvents(
       {
         ws,
-        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
         alive: true,
         lastActivityAt: Date.now(),
       },
       'session-cursor-stream',
       store,
-      { lastEventId: 9, lastEventCursor: '101', activeRunId: 'run-cursor-stream' },
+      { lastEventId: 9, lastEventCursor: '101', activeRunId: 'run-cursor-stream', tenantId: DEFAULT_TENANT_ID },
     );
 
     expect(ws.sent).toEqual([
@@ -123,7 +123,7 @@ describe('WebChannel active stream reconnect', () => {
     const ws = new FakeWebSocket();
     const client = {
       ws,
-      user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+      user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
       alive: true,
       lastActivityAt: Date.now(),
     };
@@ -189,7 +189,7 @@ describe('WebChannel active stream reconnect', () => {
     await (channel as any).handleResumeAsync(
       {
         ws,
-        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
         alive: true,
         lastActivityAt: Date.now(),
       },
@@ -235,7 +235,7 @@ describe('WebChannel active stream reconnect', () => {
     await (channel as any).handleResumeAsync(
       {
         ws,
-        user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+        user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
         alive: true,
         lastActivityAt: Date.now(),
       },
@@ -275,7 +275,7 @@ describe('WebChannel active stream reconnect', () => {
 
     const client = {
       ws,
-      user: { sub: 'admin-1', username: 'admin', role: 'admin' },
+      user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
       alive: true,
       lastActivityAt: Date.now(),
     };

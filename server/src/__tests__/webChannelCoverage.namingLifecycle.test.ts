@@ -129,7 +129,7 @@ async function seedRuntimeSession(
     createdAt: new Date().toISOString(),
     ...metaExtra,
   });
-  return { sessionId, transcriptPath, eventStore: new FileEventStore(getRuntimeEventLogPath(transcriptPath)) };
+  return { sessionId, transcriptPath, eventStore: new FileEventStore(getRuntimeEventLogPath(transcriptPath), user.tenantId) };
 }
 
 describe('WebChannel channel.ts 生命周期', () => {

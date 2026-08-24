@@ -743,7 +743,7 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
       store,
       eventStore: {
         listGlobalPage: vi.fn(async () => ({ events: [], hasMore: false })),
-        listSessionRange: vi.fn(async (sessionId: string) => sessionId === 'hidden-session' ? [{
+        listSessionRange: vi.fn(async (_tenantId: string, sessionId: string) => sessionId === 'hidden-session' ? [{
           sessionSequence: 4,
           event: {
             id: 'assistant-1', type: 'assistant_message', model: 'gpt-5.4',

@@ -13,7 +13,20 @@ export interface HandManagerOptions {
   handStore: HandStore;
   transportRegistry: ExecutionTransportRegistry;
   eventStore?: EventStore;
+  /** Authoritative session tenant supplied by runtime dispatch. */
+  tenantId?: string;
   healthCheck?: (hand: HandRecord) => Promise<HandHealth>;
+}
+
+function requireHandEventTenant(hand: HandRecord, configuredTenantId?: string): string {
+  const recordTenantId = hand.tenantId?.trim();
+  const expectedTenantId = configuredTenantId?.trim();
+  if (recordTenantId && expectedTenantId && recordTenantId !== expectedTenantId) {
+    throw new Error(`Hand tenant mismatch for ${hand.handId}`);
+  }
+  const tenantId = recordTenantId ?? expectedTenantId;
+  if (!tenantId) throw new Error(`Hand tenant is missing for ${hand.handId}`);
+  return tenantId;
 }
 
 export class HandManager {
@@ -32,7 +45,7 @@ export class HandManager {
         workspaceId: record.workspaceId,
         handType: record.type,
         status: record.status,
-      });
+      }, { tenantId: requireHandEventTenant(record, this.options.tenantId) });
     }
     return record;
   }
@@ -58,7 +71,7 @@ export class HandManager {
           workspaceId: hand.workspaceId,
           status: nextStatus,
           detail: health.detail,
-        });
+        }, { tenantId: requireHandEventTenant(hand, this.options.tenantId) });
       }
     }
     return health;
@@ -74,7 +87,7 @@ export class HandManager {
           handId: record.handId,
           workspaceId: record.workspaceId,
           reason,
-        });
+        }, { tenantId: requireHandEventTenant(record, this.options.tenantId) });
       }
     }
     return record;

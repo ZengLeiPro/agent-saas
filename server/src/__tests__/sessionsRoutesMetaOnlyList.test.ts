@@ -50,7 +50,7 @@ async function startServer(
   });
   app.use('/api', createSessionsRouter({
     agentCwd,
-    runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath)),
+    runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath), TEST_USER.tenantId),
     sessionProjectionStore,
   }));
 
@@ -112,7 +112,7 @@ describe('meta-only session list merging and projection', () => {
       await utimes(transcriptPath.replace(/\.jsonl$/, '.meta.json'), date, date);
     }
     if (options.content) {
-      const eventStore = new FileEventStore(getRuntimeEventLogPath(transcriptPath));
+      const eventStore = new FileEventStore(getRuntimeEventLogPath(transcriptPath), TEST_USER.tenantId);
       await eventStore.append({
         type: 'user_message_submitted',
         sessionId,
@@ -120,7 +120,7 @@ describe('meta-only session list merging and projection', () => {
         userId: TEST_USER.id,
         clientMsgId: randomUUID(),
         content: options.content,
-      });
+      }, { tenantId: TEST_USER.tenantId });
     }
     return { sessionId, transcriptPath };
   }

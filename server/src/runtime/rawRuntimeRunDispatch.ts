@@ -81,11 +81,12 @@ import type { McpClientManager } from '../mcp/clientManager.js';
 import type { McpProxy } from '../mcp/proxy.js';
 import type { ToolProvider } from '../agent/toolRuntime.js';
 import type { ExecutionTransportRegistry } from './executionTransport.js';
-import { EventBackedApprovalStore } from './approvalStore.js';
 import { ChatCompletionsModelAdapter } from './chatCompletionsAdapter.js';
 import { ResponsesApiAdapter } from './responsesApiAdapter.js';
 import { resolveModelOutputTransactionMode } from './modelOutputTransaction.js';
 import type { ModelAdapter } from './types.js';
+import { createApprovalStoreForSession, createEventStoreForSession, resolveEventTenantId } from './rawRuntimeEventStores.js';
+export { createApprovalStoreForSession, createEventStoreForSession, resolveEventTenantId } from './rawRuntimeEventStores.js';
 import { CodexSubscriptionResponsesTransport } from './responses/codexSubscriptionResponsesTransport.js';
 import type { CodexResponsesWebSocketPool } from './responses/codexResponsesWebSocketPool.js';
 import type { CodexCredentialManager } from './responses/codexCredentialManager.js';
@@ -94,7 +95,6 @@ import {
   resolveExecutionTarget,
   type ExecutionConfig,
 } from './executionConfig.js';
-import { FileEventStore, getRuntimeEventLogPath } from './fileEventStore.js';
 import { HttpTransport } from './httpTransport.js';
 import { LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
 import { createLogger } from '../utils/logger.js';
@@ -144,7 +144,7 @@ import {
 } from './sessionCatalog.js';
 import { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgAgentSessionResolution.js';
 export { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgAgentSessionResolution.js';
-import type { ApprovalRecord, ApprovalStore, EventStore, ModelAttachmentRef, PlatformEvent, QueuedInterjection, RunContext } from './types.js';
+import type { ApprovalRecord, EventStore, ModelAttachmentRef, PlatformEvent, QueuedInterjection, RunContext } from './types.js';
 import type { RunRecord, RunStore } from './runStore.js';
 import type { HandRecord, HandStore, WorkspaceRecipe } from './handStore.js';
 import {
@@ -285,25 +285,6 @@ const noopLogger = { info: () => {}, warn: () => {}, error: () => {} };
 export function resolveSessionCatalog(config: RawRuntimeRunDispatchConfig): SessionCatalog {
   return config.sessionCatalog ?? new FileSessionCatalog({ agentCwd: config.agentCwd });
 }
-
-export function createEventStoreForSession(
-  config: RawRuntimeRunDispatchConfig,
-  session: RuntimeSessionRecord,
-): EventStore {
-  return config.eventStoreFactory
-    ? config.eventStoreFactory(session)
-    : new FileEventStore(getRuntimeEventLogPath(session.transcriptPath));
-}
-export function createApprovalStoreForSession(
-  config: RawRuntimeRunDispatchConfig,
-  session: RuntimeSessionRecord,
-  eventStore: EventStore,
-): ApprovalStore {
-  return config.approvalStoreFactory
-    ? config.approvalStoreFactory(session, eventStore)
-    : new EventBackedApprovalStore(eventStore, session.sessionId);
-}
-
 // cron/web fallback 直跑路径也会写 runtime_runs；不占 lease 时，scheduler 会把
 // 正在跑的 run 误判为可恢复并二次 wake。
 const DIRECT_RUNTIME_LEASE_MS = 120_000;
@@ -438,12 +419,12 @@ export class RunStateTrackingEventStore implements EventStore {
   constructor(
     private readonly inner: EventStore,
     private readonly runStore: RunStore | undefined,
-    private readonly tenantId?: string,
+    private readonly tenantId: string,
     private readonly terminalEventLogger?: TerminalEventLogger,
   ) {}
   async append(
     event: Parameters<EventStore['append']>[0],
-    ctx?: Parameters<EventStore['append']>[1],
+    ctx: Parameters<EventStore['append']>[1],
   ): ReturnType<EventStore['append']> {
     const tenantContext = this.withTenant(ctx);
     // runtime_runs CAS is the sole terminal verdict; only its winner publishes.
@@ -464,7 +445,7 @@ export class RunStateTrackingEventStore implements EventStore {
 
   async appendBatch(
     events: Parameters<NonNullable<EventStore['appendBatch']>>[0],
-    ctx?: Parameters<NonNullable<EventStore['appendBatch']>>[1],
+    ctx: Parameters<NonNullable<EventStore['appendBatch']>>[1],
   ) {
     // Never let an inner appendBatch place run_finished ahead of its durable CAS.
     if (events.some((event) => event.type === 'run_finished')) {
@@ -479,22 +460,22 @@ export class RunStateTrackingEventStore implements EventStore {
     for (const event of stored) await this.afterAppend(event);
     return stored;
   }
-  list(sessionId: string, options?: Parameters<EventStore['list']>[1]) {
-    return this.inner.list(sessionId, options);
+  list(tenantId: string, sessionId: string, options?: Parameters<EventStore['list']>[2]) {
+    return this.inner.list(tenantId, sessionId, options);
   }
-  listPage(sessionId: string, options?: Parameters<NonNullable<EventStore['listPage']>>[1]) {
-    return this.inner.listPage?.(sessionId, options) ?? Promise.resolve({ events: [], hasMore: false });
+  listPage(tenantId: string, sessionId: string, options?: Parameters<NonNullable<EventStore['listPage']>>[2]) {
+    return this.inner.listPage?.(tenantId, sessionId, options) ?? Promise.resolve({ events: [], hasMore: false });
   }
   private withTenant(ctx: Parameters<EventStore['append']>[1]): Parameters<EventStore['append']>[1] {
-    if (ctx?.tenantId || !this.tenantId) return ctx;
-    return { ...(ctx ?? {}), tenantId: this.tenantId };
+    if (ctx.tenantId !== this.tenantId) throw new Error('RunStateTrackingEventStore tenant scope mismatch');
+    return ctx;
   }
   private async afterAppend(event: PlatformEvent): Promise<void> {
     await trackRunStateAfterEvent({
       runStore: this.runStore,
       eventStore: this.inner,
       event,
-      ctx: this.withTenant(undefined),
+      ctx: { tenantId: this.tenantId },
     });
   }
 }
@@ -1265,6 +1246,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       return;
     }
     let eventStore: RunStateTrackingEventStore | null = null;
+    let eventTenantId: string | undefined;
     let directRuntimeLease: DirectRuntimeLeaseHandle | null = null;
     try {
     const agentProfile = identitySource && config.agentStore
@@ -1433,10 +1415,12 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         },
       },
     });
+    const tenantIdForRun = resolveEventTenantId(config, sessionRecord.tenantId, undefined, `run ${runId}`);
+    eventTenantId = tenantIdForRun;
     eventStore = new RunStateTrackingEventStore(
       baseEventStore,
       config.runStore,
-      sessionRecord.tenantId,
+      tenantIdForRun,
       config.logger ?? logger,
     );
     try {
@@ -1454,7 +1438,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       }
       throw err;
     }
-    await markRunState(config.runStore, eventStore, sessionId, runId, 'running');
+    await markRunState(config.runStore, eventStore, sessionId, runId, 'running', undefined, undefined, { tenantId: tenantIdForRun });
     await reconcileInterruptedForegroundToolCalls({
       eventStore,
       runStore: config.runStore,
@@ -1468,6 +1452,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       eventStore,
       executionTransportRegistry,
       executionTarget,
+      tenantId: tenantIdForRun,
       sessionId,
       runId,
       workspaceId: sessionRecord.workspaceId ?? sessionId,
@@ -1556,7 +1541,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         providers: [
           ...tooling.providers,
           ...(config.memoryControlProviders ?? []),
-          new SessionToolProvider(new SessionContextService(eventStore)),
+          new SessionToolProvider(new SessionContextService(eventStore, tenantIdForRun)),
         ],
         toolControls: config.toolControls,
         backgroundTasks: config.backgroundTasks,
@@ -1678,11 +1663,11 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
                         status: attempt.status,
                         ...(attempt.usage ? { usage: attempt.usage } : {}),
                         ...(attempt.error ? { error: attempt.error } : {}),
-                      });
+                      }, { tenantId: tenantIdForRun });
                       if (attempt.usage && identitySource?.username) {
                         config.tokenUsageStore?.()?.recordResult({
                           username: identitySource.username,
-                          tenantId: sessionRecord.tenantId ?? DEFAULT_TENANT_ID,
+                          tenantId: tenantIdForRun,
                           channel: 'vision',
                           modelUsage: { [attempt.model]: attempt.usage },
                           occurredAtMs: Date.now(),
@@ -1743,11 +1728,11 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
                 status: attempt.status,
                 ...(attempt.usage ? { usage: attempt.usage } : {}),
                 ...(attempt.error ? { error: attempt.error } : {}),
-              });
+              }, { tenantId: tenantIdForRun });
               if (attempt.usage && identitySource?.username) {
                 config.tokenUsageStore?.()?.recordResult({
                   username: identitySource.username,
-                  tenantId: sessionRecord.tenantId ?? DEFAULT_TENANT_ID,
+                  tenantId: tenantIdForRun,
                   channel: 'vision',
                   modelUsage: { [attempt.model]: attempt.usage },
                   occurredAtMs: Date.now(),
@@ -1819,7 +1804,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         return;
       }
       const msg = failure instanceof Error ? failure.message : String(failure);
-      if (eventStore) await markRunState(config.runStore, eventStore, sessionId, runId, 'failed', msg).catch(() => undefined);
+      if (eventStore && eventTenantId) await markRunState(config.runStore, eventStore, sessionId, runId, 'failed', msg, undefined, { tenantId: eventTenantId }).catch(() => undefined);
       await sessionCatalog.markStatus(sessionId, 'error');
       logger.error(`Raw runtime run 失败: ${msg}`);
       yield { type: 'error', error: `Raw runtime 运行失败: ${msg}` };
@@ -2024,7 +2009,8 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       topLevelSessionId: request.sessionId,
     });
     const baseEventStore = createEventStoreForSession(config, sessionRecord);
-    const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId, config.logger ?? logger);
+    const eventTenantId = resolveEventTenantId(config, sessionRecord.tenantId, undefined, `approval resume ${request.sessionId}`);
+    const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, eventTenantId, config.logger ?? logger);
     const approvalStore = createApprovalStoreForSession(config, sessionRecord, eventStore);
     const pendingApproval = await approvalStore.get(request.approvalId);
     const resumeRunId = pendingApproval?.runId ?? `resume-${Date.now()}-${randomUUID()}`;
@@ -2063,13 +2049,14 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       }
       throw err;
     }
-    await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'running');
+    await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'running', undefined, undefined, { tenantId: eventTenantId });
     const runtimeIsolationRequirement = integrationRuntimeIsolationRequirement(request.runtimeIsolationMetadata, { tenantId: sessionRecord.tenantId, runId: resumeRunId, sessionId: request.sessionId, workspaceId: sessionRecord.workspaceId ?? request.sessionId });
     await ensureRuntimeHandRegistered({
       handStore: config.handStore,
       eventStore,
       executionTransportRegistry,
       executionTarget,
+      tenantId: eventTenantId,
       sessionId: request.sessionId,
       runId: resumeRunId,
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
@@ -2186,7 +2173,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
           resolveWireEnv: buildTenantRemoteHandWireEnv,
           artifactService: config.artifactService,
-          providers: [...resumeTooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
+          providers: [...resumeTooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore, eventTenantId))],
           toolControls: config.toolControls,
           backgroundTasks: config.backgroundTasks,
         },
@@ -2290,7 +2277,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
         return;
       }
       const msg = failure instanceof Error ? failure.message : String(failure);
-      await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'failed', msg).catch(() => undefined);
+      await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'failed', msg, undefined, { tenantId: eventTenantId }).catch(() => undefined);
       await sessionCatalog.markStatus(request.sessionId, 'error');
       logger.error(`Raw approval resume 失败: ${msg}`);
       yield { type: 'error', error: `Raw approval resume 失败: ${msg}` };
@@ -2486,8 +2473,9 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       topLevelSessionId: request.sessionId,
     });
     const baseEventStore = createEventStoreForSession(config, sessionRecord);
-    const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, sessionRecord.tenantId, config.logger ?? logger);
-    const priorEvents = await eventStore.list(request.sessionId);
+    const eventTenantId = resolveEventTenantId(config, sessionRecord.tenantId, undefined, `interaction resume ${request.sessionId}`);
+    const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, eventTenantId, config.logger ?? logger);
+    const priorEvents = await eventStore.list(eventTenantId, request.sessionId);
     const requestEvent = [...priorEvents].reverse().find((event): event is Extract<PlatformEvent, { type: 'interaction_requested' }> => (
       event.type === 'interaction_requested'
       && event.sessionId === request.sessionId
@@ -2541,13 +2529,14 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       }
       throw err;
     }
-    await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'running');
+    await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'running', undefined, undefined, { tenantId: eventTenantId });
     const runtimeIsolationRequirement = integrationRuntimeIsolationRequirement(request.runtimeIsolationMetadata, { tenantId: sessionRecord.tenantId, runId: resumeRunId, sessionId: request.sessionId, workspaceId: sessionRecord.workspaceId ?? request.sessionId });
     await ensureRuntimeHandRegistered({
       handStore: config.handStore,
       eventStore,
       executionTransportRegistry,
       executionTarget,
+      tenantId: eventTenantId,
       sessionId: request.sessionId,
       runId: resumeRunId,
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
@@ -2664,7 +2653,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
           resolveWireEnv: buildTenantRemoteHandWireEnv,
           artifactService: config.artifactService,
-          providers: [...resumeTooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore))],
+          providers: [...resumeTooling.providers, ...(config.memoryControlProviders ?? []), new SessionToolProvider(new SessionContextService(eventStore, eventTenantId))],
           toolControls: config.toolControls,
           backgroundTasks: config.backgroundTasks,
         },
@@ -2769,7 +2758,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
         return;
       }
       const msg = failure instanceof Error ? failure.message : String(failure);
-      await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'failed', msg).catch(() => undefined);
+      await markRunState(config.runStore, eventStore, request.sessionId, resumeRunId, 'failed', msg, undefined, { tenantId: eventTenantId }).catch(() => undefined);
       await sessionCatalog.markStatus(request.sessionId, 'error');
       logger.error(`Raw interaction resume 失败: ${msg}`);
       yield { type: 'error', error: `Raw interaction resume 失败: ${msg}` };
@@ -2788,8 +2777,9 @@ export async function loadRawRuntimeWakeState(
   const session = await sessionCatalog.get(sessionId);
   if (!session) return null;
   const eventStore = createEventStoreForSession(config, session);
+  const eventTenantId = resolveEventTenantId(config, session.tenantId, undefined, `wake state ${sessionId}`);
   const approvalStore = createApprovalStoreForSession(config, session, eventStore);
-  const events = await eventStore.list(sessionId, { replayMode: 'bounded' });
+  const events = await eventStore.list(eventTenantId, sessionId, { replayMode: 'bounded' });
   const approvals = await approvalStore.list(sessionId);
   const replayState = buildRuntimeReplayState(events, approvals, sessionId);
   return { session, events, approvals, replayState };
@@ -2806,6 +2796,7 @@ export async function wakeRuntimeSession(
   if (!session) {
     throw new Error(`wake context restore failed: session metadata not found for ${run.sessionId}`);
   }
+  const eventTenantId = resolveEventTenantId(config, session.tenantId, run.tenantId, `wake run ${run.runId}`);
   // durable 后台 Agent 走独立子 loop；仅 pending 首跑 execute，过期 running 由 scheduler 先冻结。
   if (run.metadata?.backgroundTask === true) {
     if (!config.backgroundTasks) throw new Error('background task runtime is not configured');
@@ -2823,13 +2814,15 @@ export async function wakeRuntimeSession(
       new RunStateTrackingEventStore(
         createEventStoreForSession(config, session),
         config.runStore,
-        session.tenantId ?? run.tenantId,
+        eventTenantId,
         config.logger ?? logger,
       ),
       run.sessionId,
       run.runId,
       'orphaned',
       'subagent_run_not_recoverable',
+      undefined,
+      { tenantId: eventTenantId },
     ).catch(() => undefined);
     return;
   }
@@ -2837,10 +2830,10 @@ export async function wakeRuntimeSession(
   const eventStore = new RunStateTrackingEventStore(
     baseEventStore,
     config.runStore,
-    session.tenantId ?? run.tenantId,
+    eventTenantId,
     config.logger ?? logger,
   );
-  const events = await eventStore.list(run.sessionId, {
+  const events = await eventStore.list(eventTenantId, run.sessionId, {
     includeTypes: [...WAKE_EVENT_LIST_TYPES],
   });
   const cancelRequested = events.some((event) => (
@@ -2859,7 +2852,7 @@ export async function wakeRuntimeSession(
   ));
   if (cancelRequested) {
     await options.lease?.release('cancelled', 'cancel_requested_before_wake');
-    await appendRunStateChanged(eventStore, run.sessionId, run.runId, 'cancelled', run.status, 'cancel_requested_before_wake');
+    await appendRunStateChanged(eventStore, run.sessionId, run.runId, 'cancelled', run.status, 'cancel_requested_before_wake', { tenantId: eventTenantId });
     return;
   }
   // 隐藏记忆审查由 engine 持有写锁与状态；通用 scheduler 不得跨崩溃重放。
@@ -2940,7 +2933,7 @@ export async function wakeRuntimeSession(
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       await options.lease?.release('failed', `workspace_provision_failed:${reason}`);
-      await appendRunStateChanged(eventStore, run.sessionId, run.runId, 'failed', run.status, `workspace_provision_failed:${reason}`);
+      await appendRunStateChanged(eventStore, run.sessionId, run.runId, 'failed', run.status, `workspace_provision_failed:${reason}`, { tenantId: eventTenantId });
       return;
     }
   }
@@ -3186,6 +3179,12 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
     || isTerminalRunStatus(current.status)
     || (current.workerId && input.lease.workerId && current.workerId !== input.lease.workerId)
   ) return false;
+  const eventTenantId = resolveEventTenantId(
+    input.config,
+    current.tenantId,
+    input.run.tenantId,
+    `drain handoff ${input.run.runId}`,
+  );
   const reason = input.drainHandoff.reason ?? 'server_drain_handoff';
   const handedOffAt = new Date().toISOString();
   // steering 的 durable user_message 可安全重放，但恢复必须有上限；否则同一故障会让
@@ -3208,6 +3207,7 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
     'running',
     current.status,
     reason,
+    { tenantId: eventTenantId },
   );
 
   if (isSteeringRecovery && handoffAttempts >= STEERING_RECOVERY_MAX_HANDOFFS) {
@@ -3218,7 +3218,7 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
       subtype: 'error',
       numTurns: 0,
       error: STEERING_RECOVERY_FAILURE_MESSAGE,
-    });
+    }, { tenantId: eventTenantId });
     await input.sessionCatalog.markStatus(input.run.sessionId, 'error');
     await input.onOutboundEvent?.(
       { type: 'error', error: STEERING_RECOVERY_FAILURE_MESSAGE },

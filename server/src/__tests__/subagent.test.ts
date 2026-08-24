@@ -80,7 +80,7 @@ async function makeFixture(options: {
   const eventStoreFor = (sessionId: string): FileEventStore => {
     let store = eventStores.get(sessionId);
     if (!store) {
-      store = new FileEventStore(join(tmp, 'events', `${sessionId}.jsonl`));
+      store = new FileEventStore(join(tmp, 'events', `${sessionId}.jsonl`), tenantId);
       eventStores.set(sessionId, store);
     }
     return store;
@@ -279,10 +279,10 @@ describe('runSubagent', () => {
     );
 
     // 关键不变量 1：父 session event store 零事件（runner 只写 childSessionId）
-    await expect(fixture.parentEventStore.list(fixture.parentSessionId)).resolves.toEqual([]);
+    await expect(fixture.parentEventStore.list(fixture.tenantId, fixture.parentSessionId)).resolves.toEqual([]);
     const childEvents = await fixture.config.eventStoreFactory!(
       createRuntimeSessionRecord({ sessionId: outcome.childSessionId, channel: 'web', cwd: fixture.tmp }),
-    ).list(outcome.childSessionId);
+    ).list(fixture.tenantId, outcome.childSessionId);
     expect(childEvents.some((event) => event.type === 'run_started')).toBe(true);
     expect(childEvents.some((event) => event.type === 'run_finished' && event.subtype === 'success')).toBe(true);
     expect(childEvents.find((event) => event.type === 'user_message')).toMatchObject({
@@ -659,7 +659,7 @@ describe('AgentToolProvider', () => {
     );
     expect(result!.content).toContain('结论文本');
 
-    const parentEvents = await fixture.parentEventStore.list(fixture.parentSessionId);
+    const parentEvents = await fixture.parentEventStore.list(fixture.tenantId, fixture.parentSessionId);
     const started = parentEvents.find((event) => event.type === 'subagent_started');
     const finished = parentEvents.find((event) => event.type === 'subagent_finished');
     expect(started).toMatchObject({
@@ -711,7 +711,7 @@ describe('AgentToolProvider', () => {
       expect.objectContaining({ description: '长时调研', agentType: 'explore' }),
     );
     expect(foreground).not.toHaveBeenCalled();
-    const parentEvents = await fixture.parentEventStore.list(fixture.parentSessionId);
+    const parentEvents = await fixture.parentEventStore.list(fixture.tenantId, fixture.parentSessionId);
     expect(parentEvents.filter((event) => event.type.startsWith('subagent_'))).toEqual([]);
   });
 
@@ -768,7 +768,7 @@ describe('AgentToolProvider', () => {
       { toolId: 'Agent', input: { description: 't', prompt: 'p' }, authorization: { approved: true, source: 'policy_auto' } },
       fixture.parentContext,
     )).rejects.toThrow(/积分余额不足/);
-    const parentEvents = await fixture.parentEventStore.list(fixture.parentSessionId);
+    const parentEvents = await fixture.parentEventStore.list(fixture.tenantId, fixture.parentSessionId);
     expect(parentEvents.filter((event) => event.type.startsWith('subagent_'))).toEqual([]);
   });
 });

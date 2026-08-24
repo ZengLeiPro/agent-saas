@@ -156,8 +156,8 @@ function makeEventStore(failures = 0) {
         await appendBatch([input], ctx)
       )[0]!),
       appendBatch,
-      list: vi.fn(async (sessionId: string) => events.filter((event) => event.sessionId === sessionId)),
-      listByRun: vi.fn(async (sessionId: string, runId: string) => events.filter((event) => (
+      list: vi.fn(async (_tenantId: string, sessionId: string) => events.filter((event) => event.sessionId === sessionId)),
+      listByRun: vi.fn(async (_tenantId: string, sessionId: string, runId: string) => events.filter((event) => (
         event.sessionId === sessionId && 'runId' in event && event.runId === runId
       ))),
     } as EventStore,

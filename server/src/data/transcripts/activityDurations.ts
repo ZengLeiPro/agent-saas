@@ -33,17 +33,18 @@ function isActivityEvent(event: PlatformEvent): boolean {
 
 async function listEventsByType(
   eventStore: EventStore,
+  tenantId: string,
   sessionId: string,
   type: PlatformEvent["type"],
 ): Promise<PlatformEvent[]> {
   if (!eventStore.listPage) {
-    return (await eventStore.list(sessionId)).filter((event) => event.type === type);
+    return (await eventStore.list(tenantId, sessionId)).filter((event) => event.type === type);
   }
 
   const events: PlatformEvent[] = [];
   let cursor: string | undefined;
   for (let guard = 0; guard < 1000; guard++) {
-    const page = await eventStore.listPage(sessionId, {
+    const page = await eventStore.listPage(tenantId, sessionId, {
       type,
       limit: 500,
       afterCursor: cursor,
@@ -57,21 +58,22 @@ async function listEventsByType(
 
 export async function listActivityDurationEvents(
   eventStore: EventStore,
+  tenantId: string,
   sessionId: string,
 ): Promise<PlatformEvent[]> {
   if (!eventStore.listPage) {
-    return (await eventStore.list(sessionId)).filter(isActivityEvent);
+    return (await eventStore.list(tenantId, sessionId)).filter(isActivityEvent);
   }
 
   const [thinkingEvents, streamEvents, toolStartEvents, toolCompletionEvents, runStateEvents, subagentStartEvents, subagentFinishEvents] = await Promise.all([
-    listEventsByType(eventStore, sessionId, "assistant_thinking"),
+    listEventsByType(eventStore, tenantId, sessionId, "assistant_thinking"),
     // 存量 fallback：2026-07-03 前的历史数据无 durationMs，靠 delta start/end 配对
-    listEventsByType(eventStore, sessionId, "assistant_stream_event"),
-    listEventsByType(eventStore, sessionId, "tool_invocation_started"),
-    listEventsByType(eventStore, sessionId, "tool_invocation_completed"),
-    listEventsByType(eventStore, sessionId, "run_state_changed"),
-    listEventsByType(eventStore, sessionId, "subagent_started"),
-    listEventsByType(eventStore, sessionId, "subagent_finished"),
+    listEventsByType(eventStore, tenantId, sessionId, "assistant_stream_event"),
+    listEventsByType(eventStore, tenantId, sessionId, "tool_invocation_started"),
+    listEventsByType(eventStore, tenantId, sessionId, "tool_invocation_completed"),
+    listEventsByType(eventStore, tenantId, sessionId, "run_state_changed"),
+    listEventsByType(eventStore, tenantId, sessionId, "subagent_started"),
+    listEventsByType(eventStore, tenantId, sessionId, "subagent_finished"),
   ]);
   return [...thinkingEvents, ...streamEvents, ...toolStartEvents, ...toolCompletionEvents, ...runStateEvents, ...subagentStartEvents, ...subagentFinishEvents].sort(
     (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),

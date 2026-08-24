@@ -60,7 +60,7 @@ describe('PgEventStore notify coalescing', () => {
     const pool = pgMock.MockPool.instances[0]!;
     pool.connection.startSequence = '10';
 
-    await store.appendBatch?.([input('a'), input('b'), input('c')]);
+    await store.appendBatch?.([input('a'), input('b'), input('c')], { tenantId: 'tenant-1' });
 
     expect(pool.connection.insertedEvents).toHaveLength(3);
     const appendLockIndex = pool.connection.queries.findIndex((call) => call.text.includes('pg_advisory_xact_lock'));
@@ -90,7 +90,7 @@ describe('PgEventStore notify coalescing', () => {
     pool.blockNotifyQueries = true;
 
     const outcome = await Promise.race([
-      store.appendBatch?.([input('no-nested-pool-acquire')]).then(() => 'completed'),
+      store.appendBatch?.([input('no-nested-pool-acquire')], { tenantId: 'tenant-1' }).then(() => 'completed'),
       new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 100)),
     ]);
 
@@ -107,7 +107,7 @@ describe('PgEventStore notify coalescing', () => {
     await store.appendBatch?.([
       input('before\u0000after'),
       input('literal\\u0000text'),
-    ]);
+    ], { tenantId: 'tenant-1' });
 
     expect(pool.connection.insertedEvents[0]).toMatchObject({ content: 'before\\u0000after' });
     expect(pool.connection.insertedEvents[1]).toMatchObject({ content: 'literal\\u0000text' });
@@ -165,12 +165,12 @@ describe('PgEventStore notify coalescing', () => {
       } as PlatformEvent & { sequence: number }),
     ];
 
-    const events = await store.list('session-1', { excludeTypes: ['tool_output_delta'] });
+    const events = await store.list('tenant-1', 'session-1', { excludeTypes: ['tool_output_delta'] });
 
     expect(events.map((item) => item.id)).toEqual(['event-2']);
     const lastQuery = pool.queries.at(-1);
     expect(lastQuery?.text).toContain('event_type <> ALL($2::text[])');
-    expect(lastQuery?.params).toEqual(['session-1', ['tool_output_delta']]);
+    expect(lastQuery?.params).toEqual(['session-1', ['tool_output_delta'], 'tenant-1']);
   });
 
   it('bounds tool_result content inside PostgreSQL before replay rows enter Node', async () => {
@@ -189,7 +189,7 @@ describe('PgEventStore notify coalescing', () => {
       content: longContent,
     } as PlatformEvent & { sequence: number })];
 
-    const events = await store.list('session-1', {
+    const events = await store.list('tenant-1', 'session-1', {
       replayMode: 'bounded',
       excludeTypes: ['tool_output_delta'],
     });
@@ -214,7 +214,7 @@ describe('PgEventStore notify coalescing', () => {
     const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
     const pool = pgMock.MockPool.instances[0]!;
 
-    await store.list('session-1', {
+    await store.list('tenant-1', 'session-1', {
       includeTypes: ['approval_requested', 'approval_resolved'],
     });
 
@@ -224,6 +224,7 @@ describe('PgEventStore notify coalescing', () => {
       'session-1',
       ['approval_requested', 'approval_resolved'],
       [],
+      'tenant-1',
     ]);
   });
 
@@ -231,7 +232,7 @@ describe('PgEventStore notify coalescing', () => {
     const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
     const pool = pgMock.MockPool.instances[0]!;
 
-    await store.list('session-1', {
+    await store.list('tenant-1', 'session-1', {
       includeTypes: ['assistant_message', 'assistant_tool_calls', 'compaction'],
       projection: 'usage',
     });
@@ -244,9 +245,10 @@ describe('PgEventStore notify coalescing', () => {
       true,
       ['assistant_message', 'assistant_tool_calls', 'compaction'],
       [],
+      'tenant-1',
     ]);
 
-    await store.listPage?.('session-1', {
+    await store.listPage?.('tenant-1', 'session-1', {
       limit: 500,
       type: 'assistant_message',
       projection: 'usage',
@@ -293,7 +295,7 @@ describe('PgEventStore notify coalescing', () => {
       } as PlatformEvent & { sequence: number }),
     ];
 
-    const page = await store.listPage?.('session-1', {
+    const page = await store.listPage?.('tenant-1', 'session-1', {
       limit: 10,
       excludeTypes: ['model_request_started'],
     });

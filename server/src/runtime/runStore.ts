@@ -581,7 +581,7 @@ export class PgRunStore implements RunStore {
   async applySteeringInputsAtomically(
     targetRunId: string,
     inputs: SteeringApplyInput[],
-    tenantId = DEFAULT_TENANT_ID,
+    tenantId: string,
   ): Promise<SteeringApplyResult> {
     if (inputs.length === 0) return { appliedSourceRunIds: [], events: [] };
     const sourceRunIds = [...new Set(inputs.map((input) => input.sourceRunId))];
@@ -849,7 +849,7 @@ export class PgRunStore implements RunStore {
     reason: string,
     targetRunId?: string,
   ): Promise<SteeringInputRecord[]> {
-    const result = await this.cancelSteeringBeforeDispatchInternal(sessionId, reason, targetRunId);
+    const result = await this.cancelSteeringBeforeDispatchInternal(sessionId, reason, targetRunId, undefined, DEFAULT_TENANT_ID);
     return result.cancelled;
   }
 
@@ -858,7 +858,7 @@ export class PgRunStore implements RunStore {
     reason: string,
     targetRunId: string | undefined,
     event: PlatformEventInput,
-    tenantId = DEFAULT_TENANT_ID,
+    tenantId: string,
   ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
     const result = await this.cancelSteeringBeforeDispatchInternal(
       sessionId,
@@ -878,9 +878,9 @@ export class PgRunStore implements RunStore {
   private async cancelSteeringBeforeDispatchInternal(
     sessionId: string,
     reason: string,
-    targetRunId?: string,
-    event?: PlatformEventInput,
-    tenantId = DEFAULT_TENANT_ID,
+    targetRunId: string | undefined,
+    event: PlatformEventInput | undefined,
+    tenantId: string,
   ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
     const client = await this.pool.connect();
     let appended: Array<PlatformEvent & { sequence: number }> = [];
@@ -1359,16 +1359,16 @@ export class PgRunStore implements RunStore {
     // allocation order cannot diverge from durable commit order across the two writers.
     await lockPgEventGlobalSequence(client, this.eventsTable);
     await client.query(`
-      INSERT INTO ${this.eventCursorsTable} (session_id, next_sequence)
-      VALUES ($1, 1)
-      ON CONFLICT (session_id) DO NOTHING
-    `, [sessionId]);
+      INSERT INTO ${this.eventCursorsTable} (tenant_id, session_id, next_sequence)
+      VALUES ($1, $2, 1)
+      ON CONFLICT (tenant_id, session_id) DO NOTHING
+    `, [tenantId, sessionId]);
     const cursor = await client.query<{ start_sequence: string }>(`
       UPDATE ${this.eventCursorsTable}
-      SET next_sequence = next_sequence + $2
-      WHERE session_id = $1
-      RETURNING next_sequence - $2 AS start_sequence
-    `, [sessionId, events.length]);
+      SET next_sequence = next_sequence + $3
+      WHERE tenant_id = $1 AND session_id = $2
+      RETURNING next_sequence - $3 AS start_sequence
+    `, [tenantId, sessionId, events.length]);
     const startSequence = Number(cursor.rows[0]?.start_sequence ?? 1);
     const timestamp = new Date().toISOString();
     const fullEvents = events.map((event, index) => ({

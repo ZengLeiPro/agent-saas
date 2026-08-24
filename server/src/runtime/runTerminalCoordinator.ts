@@ -93,6 +93,15 @@ function resolveTerminalTenantId(input: {
   return authoritativeTenantId;
 }
 
+function requireTerminalAppendContext(
+  runId: string,
+  ctx?: Parameters<EventStore['append']>[1],
+): Parameters<EventStore['append']>[1] {
+  const tenantId = normalizedTenantId(ctx?.tenantId);
+  if (!tenantId) throw new TerminalOutboxTenantResolutionError(runId, 'append tenant context is missing');
+  return { tenantId };
+}
+
 export async function appendRunStateChanged(
   eventStore: EventStore,
   sessionId: string,
@@ -109,7 +118,7 @@ export async function appendRunStateChanged(
     status,
     ...(previousStatus ? { previousStatus } : {}),
     ...(reason ? { reason } : {}),
-  }, ctx);
+  }, requireTerminalAppendContext(runId, ctx));
 }
 
 export async function persistRunStatus(
@@ -228,7 +237,7 @@ async function finishClaimedOutboxBestEffort(
 async function appendTerminalEvents(
   eventStore: EventStore,
   events: PlatformEventInput[],
-  ctx?: Parameters<EventStore['append']>[1],
+  ctx: Parameters<EventStore['append']>[1],
 ): Promise<PlatformEvent[]> {
   if (events.length > 1 && eventStore.appendBatch) return eventStore.appendBatch(events, ctx);
   const stored: PlatformEvent[] = [];
@@ -243,7 +252,9 @@ async function terminalEventsAlreadyAppended(
   if (!eventStore.listByRun || outbox.events.length === 0) return false;
   const first = outbox.events[0];
   if (!first || typeof first.sessionId !== 'string' || !('runId' in first) || typeof first.runId !== 'string') return false;
-  const existing = await eventStore.listByRun(first.sessionId, first.runId);
+  const tenantId = normalizedTenantId(outbox.tenantId);
+  if (!tenantId) throw new TerminalOutboxTenantResolutionError(first.runId, 'durable terminal tenant is missing');
+  const existing = await eventStore.listByRun(tenantId, first.sessionId, first.runId);
   const indexes = new Set(existing.flatMap((event) => {
     const marked = event as PlatformEvent & { terminalDeliveryId?: string; terminalDeliveryIndex?: number };
     return marked.terminalDeliveryId === outbox.deliveryId && Number.isInteger(marked.terminalDeliveryIndex)
@@ -457,7 +468,11 @@ export async function trackRunStateAfterEvent(input: {
     status,
     before?.status,
     reason,
-    input.ctx,
+    { tenantId: resolveTerminalTenantId({
+      runId: event.runId,
+      runTenantId: before?.tenantId,
+      contextTenantId: input.ctx?.tenantId,
+    }) },
   );
 }
 
@@ -562,10 +577,17 @@ export async function markRunState(
   status: RunStatus,
   reason?: string,
   logger?: TerminalEventLogger,
+  ctx?: Parameters<EventStore['append']>[1],
 ): Promise<void> {
   const before = runStore ? await runStore.get(runId) : null;
+  const tenantId = resolveTerminalTenantId({
+    runId,
+    runTenantId: before?.tenantId,
+    contextTenantId: ctx?.tenantId,
+  });
+  const appendContext = { tenantId };
   if (!runStore) {
-    await appendRunStateChanged(eventStore, sessionId, runId, status, before?.status, reason);
+    await appendRunStateChanged(eventStore, sessionId, runId, status, before?.status, reason, appendContext);
     return;
   }
   if (isTerminalRunStatus(status)) {
@@ -583,6 +605,7 @@ export async function markRunState(
         ...(before?.status ? { previousStatus: before.status } : {}),
         ...(reason ? { reason } : {}),
       }],
+      ctx: appendContext,
       logger,
     });
     return;
@@ -591,7 +614,7 @@ export async function markRunState(
   const updated = await persistRunStatus(runStore, runId, status, reason);
   // A terminal sink cannot be reactivated by a stale approval/user resume path.
   if (!updated || updated.status !== status) return;
-  await appendRunStateChanged(eventStore, sessionId, runId, status, before?.status, reason);
+  await appendRunStateChanged(eventStore, sessionId, runId, status, before?.status, reason, appendContext);
 }
 
 export async function failRunningRunForWallClock(input: {

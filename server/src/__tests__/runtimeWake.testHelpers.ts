@@ -20,16 +20,20 @@ export class MemorySessionCatalog implements SessionCatalog {
 
 export class MemoryEventStore implements EventStore {
   events: PlatformEvent[] = [];
+  private readonly eventsByTenant = new Map<string, PlatformEvent[]>();
   appendContexts: Array<Parameters<EventStore['append']>[1]> = [];
-  async append(event: PlatformEventInput, ctx?: Parameters<EventStore['append']>[1]): Promise<PlatformEvent> {
+  async append(event: PlatformEventInput, ctx: Parameters<EventStore['append']>[1]): Promise<PlatformEvent> {
     const full = { ...event, id: `e${this.events.length + 1}`, timestamp: new Date().toISOString() } as PlatformEvent;
     this.appendContexts.push(ctx);
     this.events.push(full);
+    const tenantEvents = this.eventsByTenant.get(ctx.tenantId) ?? [];
+    tenantEvents.push(full);
+    this.eventsByTenant.set(ctx.tenantId, tenantEvents);
     return full;
   }
-  async list(sessionId: string, options?: Parameters<EventStore['list']>[1]): Promise<PlatformEvent[]> {
+  async list(tenantId: string, sessionId: string, options?: Parameters<EventStore['list']>[2]): Promise<PlatformEvent[]> {
     const includedTypes = options?.includeTypes ? new Set(options.includeTypes) : null;
-    return this.events.filter((event) => (
+    return (this.eventsByTenant.get(tenantId) ?? []).filter((event) => (
       (!('sessionId' in event) || event.sessionId === sessionId)
       && (!includedTypes || includedTypes.has(event.type))
     ));

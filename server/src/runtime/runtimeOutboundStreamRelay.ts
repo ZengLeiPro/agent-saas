@@ -43,7 +43,10 @@ export class RuntimeOutboundStreamRelay {
 
   async publish(event: OutboundEvent, context: RelayRunContext): Promise<void> {
     if (!isStreamRelayEvent(event)) return;
-    const state = this.getState(context);
+    if (!context.tenantId?.trim()) {
+      throw new Error(`Runtime outbound stream relay tenant is missing for run ${context.runId}`);
+    }
+    const state = this.getState({ ...context, tenantId: context.tenantId.trim() });
 
     if (event.type === 'thinking_delta' || event.type === 'text_delta') {
       const content = event.content ?? '';
@@ -83,7 +86,12 @@ export class RuntimeOutboundStreamRelay {
 
   private getState(context: RelayRunContext): RelayState {
     const current = this.states.get(context.runId);
-    if (current) return current;
+    if (current) {
+      if (current.sessionId !== context.sessionId || current.tenantId !== context.tenantId) {
+        throw new Error(`Runtime outbound stream relay scope mismatch for run ${context.runId}`);
+      }
+      return current;
+    }
     const created: RelayState = {
       ...context,
       pendingContent: '',
@@ -124,7 +132,8 @@ export class RuntimeOutboundStreamRelay {
 
   private async enqueueAppend(state: RelayState, event: PlatformEventInput): Promise<void> {
     const append = state.appendChain.then(async () => {
-      await this.eventStore.append(event, state.tenantId ? { tenantId: state.tenantId } : undefined);
+      if (!state.tenantId) throw new Error(`Runtime outbound stream relay tenant is missing for run ${state.runId}`);
+      await this.eventStore.append(event, { tenantId: state.tenantId });
     });
     state.appendChain = append.catch((error) => {
       this.options.logger?.warn(

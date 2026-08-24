@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 // 指向真实 workspace-shared/prompts/，避免每个 tmp cwd 都要拷模板
-const SHARED_DIR = resolve(process.cwd(), '../workspace-shared');
+const SHARED_DIR = resolve(process.cwd(), '../workspace-shared'); const TENANT_ID = 'tenant-test';
 
 import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
@@ -201,21 +201,21 @@ describe('runtime stage 2 primitives', () => {
   it('FileEventStore supports appendBatch and cursor pages without changing list()', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'eventstore-v2-'));
     cleanupDirs.add(cwd);
-    const store = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const store = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), TENANT_ID);
 
     await store.appendBatch?.([
       { type: 'run_started', runId: 'run-1', sessionId: 'session-1', model: 'gpt-5.5', channel: 'web' },
       { type: 'user_message', runId: 'run-1', sessionId: 'session-1', content: 'A' },
       { type: 'assistant_message', runId: 'run-1', sessionId: 'session-1', content: 'B' },
-    ]);
+    ], { tenantId: TENANT_ID });
 
-    expect((await store.list('session-1')).map((event) => event.type)).toEqual([
+    expect((await store.list(TENANT_ID, 'session-1')).map((event) => event.type)).toEqual([
       'run_started',
       'user_message',
       'assistant_message',
     ]);
 
-    const first = await store.listPage?.('session-1', { limit: 2 });
+    const first = await store.listPage?.(TENANT_ID, 'session-1', { limit: 2 });
     expect(first?.events.map((event) => event.type)).toEqual(['run_started', 'user_message']);
     expect(first?.events.map((event) => (event as typeof event & { sequence?: number }).sequence)).toEqual([1, 2]);
     expect(first?.nextCursor).toBe('2');
@@ -225,7 +225,7 @@ describe('runtime stage 2 primitives', () => {
     // UUID event id (which parseFileCursor would degrade to offset 0 and replay in full).
     const reconnectCursor = String((first?.events.at(-1) as PlatformEvent & { sequence: number }).sequence);
     expect(reconnectCursor).not.toBe(first?.events.at(-1)?.id);
-    const second = await store.listPage?.('session-1', { afterCursor: reconnectCursor, limit: 2 });
+    const second = await store.listPage?.(TENANT_ID, 'session-1', { afterCursor: reconnectCursor, limit: 2 });
     expect(second?.events.map((event) => event.type)).toEqual(['assistant_message']);
     expect(second?.events.map((event) => (event as typeof event & { sequence?: number }).sequence)).toEqual([3]);
     expect(second?.nextCursor).toBeUndefined();
@@ -235,7 +235,7 @@ describe('runtime stage 2 primitives', () => {
   it('FileEventStore.list can exclude replay-heavy event types without changing the default list', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'eventstore-exclude-'));
     cleanupDirs.add(cwd);
-    const store = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const store = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), TENANT_ID);
 
     await store.appendBatch?.([
       { type: 'run_started', runId: 'run-1', sessionId: 'session-1', model: 'gpt-5.5', channel: 'web' },
@@ -243,16 +243,16 @@ describe('runtime stage 2 primitives', () => {
       { type: 'tool_progress', runId: 'run-1', sessionId: 'session-1', invocationId: 'inv-1', toolCallId: 'call-1', content: '50%' },
       { type: 'assistant_stream_event', runId: 'run-1', sessionId: 'session-1', blockType: 'text', phase: 'delta', content: 'legacy' },
       { type: 'assistant_message', runId: 'run-1', sessionId: 'session-1', content: 'done' },
-    ]);
+    ], { tenantId: TENANT_ID });
 
-    expect((await store.list('session-1')).map((event) => event.type)).toEqual([
+    expect((await store.list(TENANT_ID, 'session-1')).map((event) => event.type)).toEqual([
       'run_started',
       'tool_output_delta',
       'tool_progress',
       'assistant_stream_event',
       'assistant_message',
     ]);
-    expect((await store.list('session-1', {
+    expect((await store.list(TENANT_ID, 'session-1', {
       excludeTypes: ['tool_output_delta', 'tool_progress', 'assistant_stream_event'],
     })).map((event) => event.type)).toEqual([
       'run_started',
@@ -263,7 +263,7 @@ describe('runtime stage 2 primitives', () => {
   it('FileEventStore usage projection excludes full tool content', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'eventstore-usage-projection-'));
     cleanupDirs.add(cwd);
-    const store = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const store = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), TENANT_ID);
     await store.append({
       type: 'tool_result',
       runId: 'run-1',
@@ -271,9 +271,9 @@ describe('runtime stage 2 primitives', () => {
       toolCallId: 'call-1',
       toolName: 'Shell',
       content: 'full-content',
-    });
+    }, { tenantId: TENANT_ID });
 
-    const [projected] = await store.list('session-1', { projection: 'usage' });
+    const [projected] = await store.list(TENANT_ID, 'session-1', { projection: 'usage' });
     expect(projected).not.toHaveProperty('content');
     expect(projected).not.toHaveProperty('modelContent');
   });
@@ -286,15 +286,15 @@ describe('runtime stage 2 primitives', () => {
       list,
       listPage,
     } as unknown as EventStore;
-    const store = new RunStateTrackingEventStore(inner, undefined);
+    const store = new RunStateTrackingEventStore(inner, undefined, TENANT_ID);
     const listOptions = { excludeTypes: ['model_request_started' as const] };
     const pageOptions = { afterCursor: 'cursor-1', limit: 20, runId: 'run-1', type: 'model_request_finished' as const };
 
-    await store.list('session-1', listOptions);
-    await store.listPage?.('session-1', pageOptions);
+    await store.list(TENANT_ID, 'session-1', listOptions);
+    await store.listPage?.(TENANT_ID, 'session-1', pageOptions);
 
-    expect(list).toHaveBeenCalledWith('session-1', listOptions);
-    expect(listPage).toHaveBeenCalledWith('session-1', pageOptions);
+    expect(list).toHaveBeenCalledWith(TENANT_ID, 'session-1', listOptions);
+    expect(listPage).toHaveBeenCalledWith(TENANT_ID, 'session-1', pageOptions);
   });
 
   it('RunStateTrackingEventStore 先 CAS 再发布 success/failed/cancelled 终态及原因', async () => {
@@ -327,15 +327,15 @@ describe('runtime stage 2 primitives', () => {
       markStatusIfCurrent,
       patchMetadata: vi.fn(async () => null),
     } as unknown as RunStore;
-    const store = new RunStateTrackingEventStore(inner, runStore);
+    const store = new RunStateTrackingEventStore(inner, runStore, TENANT_ID);
 
-    await store.append({ type: 'run_finished', runId: 'run-success', sessionId: 'session-1', subtype: 'success', numTurns: 1 });
+    await store.append({ type: 'run_finished', runId: 'run-success', sessionId: 'session-1', subtype: 'success', numTurns: 1 }, { tenantId: TENANT_ID });
     await store.append({
       type: 'run_finished', runId: 'run-error', sessionId: 'session-1', subtype: 'error', error: 'model error', numTurns: 1,
-    });
+    }, { tenantId: TENANT_ID });
     await store.append({
       type: 'run_finished', runId: 'run-cancelled', sessionId: 'session-1', subtype: 'interrupted', numTurns: 1,
-    });
+    }, { tenantId: TENANT_ID });
 
     expect(markStatusIfCurrent).toHaveBeenNthCalledWith(
       1, 'run-success', expect.arrayContaining(['running']), 'completed', undefined, expect.any(Object),
@@ -364,7 +364,7 @@ describe('runtime stage 2 primitives', () => {
     } as unknown as EventStore, {
       get: vi.fn(async () => ({ status: 'cancelled' })),
       markStatus,
-    } as unknown as RunStore);
+    } as unknown as RunStore, TENANT_ID);
 
     await store.append({
       type: 'approval_resolved',
@@ -372,7 +372,7 @@ describe('runtime stage 2 primitives', () => {
       sessionId: 'session-1',
       approvalId: 'approval-1',
       decision: 'rejected',
-    });
+    }, { tenantId: TENANT_ID });
     expect(append).toHaveBeenCalledTimes(1);
     expect(markStatus).not.toHaveBeenCalled();
   });
@@ -390,7 +390,7 @@ describe('runtime stage 2 primitives', () => {
     } as unknown as EventStore, {
       get: vi.fn(async () => ({ status: 'running' })),
       markStatus,
-    } as unknown as RunStore);
+    } as unknown as RunStore, TENANT_ID);
 
     await store.append({
       type: 'approval_resolved',
@@ -398,7 +398,7 @@ describe('runtime stage 2 primitives', () => {
       sessionId: 'session-1',
       approvalId: 'approval-1',
       decision: 'rejected',
-    });
+    }, { tenantId: TENANT_ID });
 
     expect(markStatus).toHaveBeenCalledWith('racing-run', 'running', 'approval_resolved:approval-1');
     expect(append).toHaveBeenCalledTimes(1);
@@ -553,11 +553,11 @@ describe('runtime stage 2 primitives', () => {
           return { runId: 'run-race', tenantId: 'tenant-test', status, metadata };
         }),
       } as unknown as RunStore;
-      const store = new RunStateTrackingEventStore(inner, runStore);
+      const store = new RunStateTrackingEventStore(inner, runStore, TENANT_ID);
       const abortController = new AbortController();
       const finish = () => store.append({
         type: 'run_finished', runId: 'run-race', sessionId: 'session-race', subtype: 'success', numTurns: 1,
-      });
+      }, { tenantId: TENANT_ID });
       const timeout = () => failRunningRunForWallClock({
         runStore, eventStore: inner, sessionId: 'session-race', runId: 'run-race', abortController,
       });
@@ -582,8 +582,8 @@ describe('runtime stage 2 primitives', () => {
   it('EventBackedApprovalStore persists approval state inside runtime events', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'approval-events-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
-    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-1');
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), TENANT_ID);
+    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-1', TENANT_ID);
     const approval = await approvalStore.create({
       sessionId: 'session-1',
       runId: 'run-1',
@@ -601,7 +601,7 @@ describe('runtime stage 2 primitives', () => {
     ]);
     expect([first, second].filter(Boolean)).toHaveLength(1);
     expect((await approvalStore.get(approval.id))?.status).toBe('approved');
-    expect((await eventStore.list('session-1')).map((event) => event.type)).toEqual([
+    expect((await eventStore.list(TENANT_ID, 'session-1')).map((event) => event.type)).toEqual([
       'approval_requested',
       'approval_resolved',
     ]);
@@ -611,10 +611,11 @@ describe('runtime stage 2 primitives', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'wake-state-'));
     cleanupDirs.add(cwd);
     const sessionCatalog = new MemorySessionCatalog();
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), TENANT_ID);
     const session: RuntimeSessionRecord = {
       sessionId: 'session-wake',
       userId: 'admin-1',
+      tenantId: TENANT_ID,
       username: 'admin',
       channel: 'web',
       cwd,
@@ -637,8 +638,8 @@ describe('runtime stage 2 primitives', () => {
         name: 'Write',
         arguments: JSON.stringify({ path: 'a.txt', content: 'A' }),
       }],
-    });
-    await new EventBackedApprovalStore(eventStore, 'session-wake').create({
+    }, { tenantId: TENANT_ID });
+    await new EventBackedApprovalStore(eventStore, 'session-wake', TENANT_ID).create({
       sessionId: 'session-wake',
       runId: 'run-1',
       toolCallId: 'call-write',

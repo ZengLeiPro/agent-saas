@@ -4,6 +4,7 @@ import { join } from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { PlatformToolRuntime, type ToolProvider } from '../agent/toolRuntime.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
@@ -98,13 +99,13 @@ describe('RawAgentLoop policy failure', () => {
   it('保留部分正文并输出结构化换模恢复动作', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-policy-error-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const adapter = new PartialPolicyFailureAdapter();
     const onResult = vi.fn();
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-policy-error'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-policy-error', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -120,7 +121,7 @@ describe('RawAgentLoop policy failure', () => {
       sessionId: 'session-policy-error',
       model: 'gpt-5.6-sol',
       cwd,
-      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID } },
       hooks: { onResult },
     }));
 
@@ -135,7 +136,7 @@ describe('RawAgentLoop policy failure', () => {
     expect(onResult).toHaveBeenCalledWith(expect.objectContaining({
       subtype: 'error', failureKind: 'policy_rejection', recoveryAction: 'switch_model',
     }));
-    const persisted = await eventStore.list('session-policy-error');
+    const persisted = await eventStore.list(DEFAULT_TENANT_ID, 'session-policy-error');
     expect(persisted.find((event) => event.type === 'assistant_message')).toMatchObject({
       content: '已生成的策略报告正文', incomplete: true,
     });
@@ -148,13 +149,13 @@ describe('RawAgentLoop policy failure', () => {
   it('多轮工具调用后的策略拒绝向子任务结果保留前轮正文与当前 partial', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-policy-multi-turn-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const adapter = new MultiTurnPolicyFailureAdapter();
     const onResult = vi.fn();
     const loop = new RawAgentLoop({
       modelAdapter: adapter,
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-policy-multi-turn'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-policy-multi-turn', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime({ providers: [checkToolProvider] }),
     });
@@ -165,7 +166,7 @@ describe('RawAgentLoop policy failure', () => {
       connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
     }, {
       runId: 'run-policy-multi-turn', sessionId: 'session-policy-multi-turn', model: 'gpt-5.6-sol', cwd,
-      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID } },
       hooks: { onResult },
     }));
 
@@ -176,7 +177,7 @@ describe('RawAgentLoop policy failure', () => {
       failureKind: 'policy_rejection',
       recoveryAction: 'switch_model',
     }));
-    const persisted = await eventStore.list('session-policy-multi-turn');
+    const persisted = await eventStore.list(DEFAULT_TENANT_ID, 'session-policy-multi-turn');
     expect(persisted.some((event) => event.type === 'tool_result' && event.content === '检查完成')).toBe(true);
     expect(persisted.find((event) => event.type === 'assistant_message')).toMatchObject({
       content: '当前轮部分正文', incomplete: true,
@@ -186,11 +187,11 @@ describe('RawAgentLoop policy failure', () => {
   it('terminal_buffered 普通失败不提交候选正文且维持原提示', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-ordinary-error-'));
     cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'));
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
     const loop = new RawAgentLoop({
       modelAdapter: new PartialOrdinaryFailureAdapter(),
       eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-ordinary-error'),
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-ordinary-error', DEFAULT_TENANT_ID),
       transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
       toolRuntime: new PlatformToolRuntime(),
     });
@@ -201,14 +202,14 @@ describe('RawAgentLoop policy failure', () => {
       connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
     }, {
       runId: 'run-ordinary-error', sessionId: 'session-ordinary-error', model: 'gpt-5.6-sol', cwd,
-      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID } },
     }));
 
     expect(events.at(-1)).toEqual({
       type: 'error',
       error: 'ordinary permanent failure',
     });
-    const persisted = await eventStore.list('session-ordinary-error');
+    const persisted = await eventStore.list(DEFAULT_TENANT_ID, 'session-ordinary-error');
     expect(persisted.some((event) => event.type === 'assistant_message')).toBe(false);
     expect(persisted.find((event) => event.type === 'run_finished')).toMatchObject({ error: 'ordinary permanent failure' });
   });

@@ -217,10 +217,12 @@ export class EventStoreRuntimeAuditQuery implements RuntimeAuditQuery {
     const transcriptPath = await this.transcriptResolver(tenantId, sessionId);
     if (!transcriptPath) return [];
     const eventLogPath = getRuntimeEventLogPath(transcriptPath);
+    // transcriptResolver 已按 tenantId 定位到 tenant 物理目录；FileEventStore 仍显式绑定
+    // 同一 tenant，避免未来切换到共享 backend 时把物理隔离误当作隐式默认租户。
     const store = this.options.createEventStore
       ? this.options.createEventStore(eventLogPath)
-      : new FileEventStore(eventLogPath);
-    const events = await store.list(sessionId);
+      : new FileEventStore(eventLogPath, tenantId);
+    const events = await store.list(tenantId, sessionId);
     const entries: RuntimeAuditEntry[] = [];
     for (const event of events) {
       if (event.type !== 'tool_audit') continue;

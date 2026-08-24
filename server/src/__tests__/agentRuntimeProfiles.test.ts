@@ -34,6 +34,7 @@ import {
   resolveAgentProfileBindingKey,
 } from '../runtime/agentProfiles.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
 import { RawAgentLoop } from '../runtime/rawAgentLoop.js';
 import type { RuntimeSessionRecord } from '../runtime/sessionCatalog.js';
@@ -332,7 +333,7 @@ describe('real RawAgentLoop Profile scenarios', () => {
     expect(events.at(-1)).toEqual({ type: 'done' });
     expect(inner.calls).toEqual(['Read']);
     expect(adapter.calls).toBe(2);
-    const started = (await eventStore.list('session-test')).find((event) => event.type === 'run_started');
+    const started = (await eventStore.list(DEFAULT_TENANT_ID, 'session-test')).find((event) => event.type === 'run_started');
     expect(started).toMatchObject({ profileVersionId: main.version.profileVersionId, profileConfigDigest: main.version.configDigest });
   });
 
@@ -445,11 +446,11 @@ function boundFromBuiltin(key: AgentProfileBindingKey) {
 async function loopHarness(adapter: ModelAdapter, runtime: ToolRuntime, runStore?: object) {
   const root = await mkdtemp(join(tmpdir(), 'agent-profile-loop-'));
   cleanupDirs.add(root);
-  const eventStore = new FileEventStore(join(root, 'events.jsonl'));
+  const eventStore = new FileEventStore(join(root, 'events.jsonl'), DEFAULT_TENANT_ID);
   const loop = new RawAgentLoop({
     modelAdapter: adapter,
     eventStore,
-    approvalStore: new EventBackedApprovalStore(eventStore, 'session-test'),
+    approvalStore: new EventBackedApprovalStore(eventStore, 'session-test', DEFAULT_TENANT_ID),
     transcriptProjection: new LegacyTranscriptProjection(join(root, 'transcript.jsonl')),
     toolRuntime: runtime,
     runStore: runStore as never,
@@ -471,6 +472,7 @@ function runContext(bound: ReturnType<typeof boundFromBuiltin> | Awaited<ReturnT
   return {
     runId: `run-${Math.random()}`,
     sessionId: 'session-test',
+    tenantId: DEFAULT_TENANT_ID,
     model: 'test-model',
     cwd: '/tmp',
     channelContext: { channel: 'web', user: { id: 'u1', username: 'admin', role: 'admin' } },

@@ -3,7 +3,7 @@ import type { Server } from 'node:http';
 
 import express from 'express';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { JwtPayload } from '../auth/types.js';
 import { createTaskboardRouter } from '../routes/taskboard.js';
@@ -124,38 +124,26 @@ describePg('任务标题生成的并发幂等', () => {
     await store.completeTaskCreation(identity, resumed.task.id, resumed.creationClaimToken!);
   });
 
-  it('pending 任务仅创建 claim 可访问，完成后才对普通读写可见', async () => {
+  it('标题生成不阻塞任务创建，完成后异步回填标题', async () => {
     const identity = { tenantId: USER.tenantId!, ownerUserId: USER.sub, username: USER.username };
-    const responsePromise = fetch(`${baseUrl}/api/taskboard/boards/${boardId}/tasks`, {
+    const response = await fetch(`${baseUrl}/api/taskboard/boards/${boardId}/tasks`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ description: 'pending 访问隔离', clientRequestId: 'visibility-request' }),
     });
-    await delayedTitleStarted;
-    const pending = await pool.query(
-      `SELECT id,creation_state FROM ${store.tasksTable} WHERE board_id=$1 AND client_request_id=$2`,
-      [boardId, 'visibility-request'],
-    );
-    const taskId = String(pending.rows[0]?.id);
-    expect(pending.rows[0]?.creation_state).toBe('pending');
-    try {
-      await expect(store.listTasks(identity, boardId)).resolves.not.toEqual(
-        expect.arrayContaining([expect.objectContaining({ id: taskId })]),
-      );
-      await expect(store.searchTasks(identity, { boardId, search: 'pending 访问隔离' }))
-        .resolves.toMatchObject({ items: [] });
-      await expect(store.getTask(identity, taskId)).rejects.toThrow('Task not found');
-      await expect(store.updateTask(identity, taskId, { title: '并发覆盖', expectedVersion: 1 }))
-        .rejects.toThrow('Task not found');
-      await expect(store.moveTask(identity, taskId, { status: 'in_progress', expectedVersion: 1 }))
-        .rejects.toThrow('Task not found');
-      await expect(store.getExecutionModelContext(identity, taskId)).rejects.toThrow('Task not found');
-    } finally {
-      releaseDelayedTitle?.();
-    }
-    const response = await responsePromise;
     expect(response.status).toBe(201);
-    expect(await response.json()).toMatchObject({ id: taskId, title: '隔离后的标题' });
-    await expect(store.getTask(identity, taskId)).resolves.toMatchObject({ title: '隔离后的标题' });
+    const task = await response.json();
+    expect(task.title).toBe('');
+    await delayedTitleStarted;
+    const created = await pool.query(
+      `SELECT creation_state FROM ${store.tasksTable} WHERE id=$1`,
+      [task.id],
+    );
+    expect(created.rows[0]?.creation_state).toBe('complete');
+    await expect(store.getTask(identity, task.id)).resolves.toMatchObject({ title: '' });
+    releaseDelayedTitle?.();
+    await vi.waitFor(async () => {
+      await expect(store.getTask(identity, task.id)).resolves.toMatchObject({ title: '隔离后的标题' });
+    });
   }, 15_000);
 
   it('小连接池下并发同一 clientRequestId 不挂死且只生成一次', async () => {
@@ -168,13 +156,15 @@ describePg('任务标题生成的并发幂等', () => {
     )));
 
     expect(responses.map((response) => response.status)).toEqual(Array(6).fill(201));
-    expect((await Promise.all(responses.map((response) => response.json())))
-      .every((task) => task.title === '并发唯一标题')).toBe(true);
+    const created = await Promise.all(responses.map((response) => response.json()));
+    expect(new Set(created.map((task) => task.id)).size).toBe(1);
+    await vi.waitFor(async () => {
+      const tasks = (await store.listTasks({
+        tenantId: USER.tenantId!, ownerUserId: USER.sub, username: USER.username,
+      }, boardId)).filter((task) => task.description === '并发创建正文');
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]?.title).toBe('并发唯一标题');
+    });
     expect(titleGenerationCalls).toBe(1);
-    const tasks = (await store.listTasks({
-      tenantId: USER.tenantId!, ownerUserId: USER.sub, username: USER.username,
-    }, boardId)).filter((task) => task.description === '并发创建正文');
-    expect(tasks).toHaveLength(1);
-    expect(tasks[0]?.title).toBe('并发唯一标题');
   }, 15_000);
 });

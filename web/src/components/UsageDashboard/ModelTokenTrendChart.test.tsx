@@ -47,7 +47,7 @@ const POINTS: ModelTrendPoint[] = [
 ];
 
 describe("prepareModelTrend", () => {
-  it("keeps the interval Top 6 and conserves every day's tokens in 其他", () => {
+  it("keeps the interval Top 6 and conserves every day's tokens in 其他模型（聚合）", () => {
     const result = prepareModelTrend(POINTS);
 
     expect(result.series.map((series) => series.label)).toEqual([
@@ -57,7 +57,7 @@ describe("prepareModelTrend", () => {
       "model-d",
       "model-e",
       "model-f",
-      "其他",
+      "其他模型（聚合）",
     ]);
     expect(result.points.map((point) => point.totalTokens)).toEqual([220, 24]);
     expect(result.points[0].segments.find((segment) => segment.key === "other")?.tokens).toBe(10);
@@ -144,6 +144,60 @@ describe("ModelTokenTrendCard", () => {
     expect(within(chart).getByRole("button", { name: "显示 Alpha" }).getAttribute("aria-pressed")).toBe("false");
     expect(within(details).queryByRole("listitem", { name: alphaDescription })).toBeNull();
     expect(within(details).getAllByRole("listitem")).toHaveLength(1);
+  });
+
+  it("distinguishes a real model label from the aggregate series in legends and details", () => {
+    const response: ModelTrendResp = {
+      fromDate: "2026-08-24",
+      toDate: "2026-08-24",
+      range: "custom",
+      username: null,
+      tenantId: null,
+      family: null,
+      points: [{
+        date: "2026-08-24",
+        models: [
+          model("model-other", 70),
+          model("model-a", 60),
+          model("model-b", 50),
+          model("model-c", 40),
+          model("model-d", 30),
+          model("model-e", 20),
+          model("model-f", 10),
+        ],
+      }],
+    };
+
+    render(
+      <ModelTokenTrendCard
+        response={response}
+        loading={false}
+        error={null}
+        labelFor={(name) => name === "model-other" ? "其他模型（聚合）" : name}
+      />,
+    );
+
+    const chart = screen.getByRole("group", { name: "按北京时间自然日统计的模型 Token 用量趋势" });
+    const details = within(chart).getByRole("list", { name: "模型 Token 用量明细" });
+    const detailText = within(details).getAllByRole("listitem").map((item) => item.textContent);
+    const tooltipText = [...chart.querySelectorAll("title")].map((title) => title.textContent);
+
+    expect(within(chart).getByRole("button", { name: "隐藏 其他模型（聚合）（单一模型）" })).toBeTruthy();
+    const aggregateLegend = within(chart).getByRole("button", { name: "隐藏 其他模型（聚合）" });
+    expect(detailText.some((text) => text?.includes("其他模型（聚合）（单一模型） · Token 70"))).toBe(true);
+    expect(detailText.some((text) => text?.includes("其他模型（聚合） · Token 10"))).toBe(true);
+    expect(tooltipText.some((text) => text?.includes("其他模型（聚合）（单一模型） · Token 70"))).toBe(true);
+    expect(tooltipText.some((text) => text?.includes("其他模型（聚合） · Token 10"))).toBe(true);
+
+    fireEvent.click(aggregateLegend);
+
+    expect(within(chart).getByRole("button", { name: "显示 其他模型（聚合）" })).toBeTruthy();
+    const remainingDetails = within(details).getAllByRole("listitem").map((item) => item.textContent);
+    const remainingTooltips = [...chart.querySelectorAll("title")].map((title) => title.textContent);
+    expect(remainingDetails.some((text) => text?.includes("其他模型（聚合）（单一模型） · Token 70"))).toBe(true);
+    expect(remainingDetails.some((text) => text?.includes("其他模型（聚合） · Token 10"))).toBe(false);
+    expect(remainingTooltips.some((text) => text?.includes("其他模型（聚合）（单一模型） · Token 70"))).toBe(true);
+    expect(remainingTooltips.some((text) => text?.includes("其他模型（聚合） · Token 10"))).toBe(false);
   });
 
   it("renders explicit empty and error states", () => {

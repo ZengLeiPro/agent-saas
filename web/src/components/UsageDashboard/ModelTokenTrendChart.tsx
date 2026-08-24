@@ -11,6 +11,8 @@ import type { ModelTrendPoint, ModelTrendResp } from "./types";
 const TOP_MODEL_COUNT = 6;
 const MODEL_KEY_PREFIX = "model:";
 const OTHER_KEY = "other";
+const OTHER_LABEL = "其他模型（聚合）";
+const SINGLE_MODEL_SUFFIX = "（单一模型）";
 
 function modelKey(model: string): string {
   return `${MODEL_KEY_PREFIX}${model}`;
@@ -67,7 +69,7 @@ function safePositive(value: number): number {
 }
 
 /**
- * 按整个区间选 Top 6；逐日把剩余模型合并到“其他”。
+ * 按整个区间选 Top 6；逐日把剩余模型合并到“其他模型（聚合）”。
  * series 只生成一次并被所有日期复用，因此同一模型跨日期颜色稳定。
  */
 export function prepareModelTrend(points: ModelTrendPoint[]): PreparedModelTrend {
@@ -93,7 +95,7 @@ export function prepareModelTrend(points: ModelTrendPoint[]): PreparedModelTrend
     isOther: false,
   }));
   if (hasOther) {
-    series.push({ key: OTHER_KEY, label: "其他", color: OTHER_COLOR, isOther: true });
+    series.push({ key: OTHER_KEY, label: OTHER_LABEL, color: OTHER_COLOR, isOther: true });
   }
 
   const preparedPoints = points.map((point) => {
@@ -195,10 +197,11 @@ function ModelTokenTrendChart({
   const chartBarWidth = barWidth({ innerWidth, count: prepared.points.length, gap: BAR_GAP });
   const yTicks = buildYTicks({ max: maxTotal, innerHeight, padTop: PAD_T });
   const labelIndexes = pickXLabelIndexes({ count: prepared.points.length, innerWidth });
-  const labels = new Map(prepared.series.map((series) => [
-    series.key,
-    series.isOther ? series.label : labelFor(series.label),
-  ]));
+  const labels = new Map(prepared.series.map((series): [string, string] => {
+    if (series.isOther) return [series.key, series.label];
+    const label = labelFor(series.label);
+    return [series.key, label === OTHER_LABEL ? `${label}${SINGLE_MODEL_SUFFIX}` : label];
+  }));
 
   const toggleSeries = (key: string) => {
     setHidden((current) => {

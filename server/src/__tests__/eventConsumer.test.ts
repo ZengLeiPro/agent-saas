@@ -73,6 +73,28 @@ describe('EventConsumer tool name resolver', () => {
     );
   });
 
+  it('forwards the runtime failure protocol and run identity to error handlers', async () => {
+    const consumer = new EventConsumer();
+    const onError = vi.fn();
+    const onDone = vi.fn();
+
+    await consumer.consume(createEvents([
+      { type: 'session_init', sessionId: 'session-1', runId: 'run-1' },
+      {
+        type: 'error',
+        error: '当前模型受策略限制，请切换其他模型继续。',
+        failureKind: 'policy_rejection',
+        recoveryAction: 'switch_model',
+      },
+    ]), { onError, onDone });
+
+    expect(onError).toHaveBeenCalledWith(
+      '当前模型受策略限制，请切换其他模型继续。',
+      { runId: 'run-1', failureKind: 'policy_rejection', recoveryAction: 'switch_model' },
+    );
+    expect(onDone).toHaveBeenCalledOnce();
+  });
+
   it('formats MCP tool name from tool_start', async () => {
     const consumer = new EventConsumer({ resolveToolName: resolveDisplayToolName });
     const onToolStart = vi.fn();

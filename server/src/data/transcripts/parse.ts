@@ -43,9 +43,9 @@ export interface TranscriptSubagentActivity {
   toolUseCount?: number;
   turnCount?: number;
   errorMessage?: string;
+  failureKind?: 'policy_rejection'; recoveryAction?: 'switch_model';
   resultPreview?: string;
 }
-
 export interface TranscriptBlock {
   id: string;
   tsMs?: number;

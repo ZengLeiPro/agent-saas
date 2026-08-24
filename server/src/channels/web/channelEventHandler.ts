@@ -6,7 +6,7 @@ import { chatLogger } from '../../utils/logger.js';
 import { parseVoiceMarkers } from '../../utils/voiceMarkers.js';
 import { FILE_MARKER_PATTERN, MEDIA_MARKER_CLEAN_RE } from '../../integrations/dingtalk/constants.js';
 import type { ChannelContext, OutboundEvent, WebMessageDisplayConfig } from '../../types/index.js';
-import { createEventConsumer, type EventHandler } from '../eventConsumer.js';
+import { createEventConsumer, type EventHandler, type RuntimeErrorEventMetadata } from '../eventConsumer.js';
 import { canViewContextUsageDetails, redactContextUsageDetails } from './channelHelpers.js';
 import { getTranscriptPath, deleteSession } from '../../data/transcripts/index.js';
 import { readSessionMeta, writeSessionMeta, type SessionMeta } from '../../data/transcripts/meta.js';
@@ -118,6 +118,7 @@ export async function handleWebChannelEvents(
     const draftCollectedTextStarts = new Map<string, number>();
     // SDK 错误透传：onError 记录，onDone 合并进 done 事件
     let lastError: string | undefined;
+    let lastErrorMetadata: RuntimeErrorEventMetadata | undefined;
 
     // ---- 幽灵会话检测 ----
     // 新会话必须至少产生过一次"真实内容"事件（text/thinking/tool），
@@ -431,6 +432,9 @@ export async function handleWebChannelEvents(
           ...(clientMsgId ? { client_msg_id: clientMsgId } : {}),
           ...(!lastError && collectedAssistantText.trim() ? { finalOutput: true } : {}),
           ...(lastError ? { error: lastError } : {}),
+          ...(lastErrorMetadata?.runId ? { runId: lastErrorMetadata.runId } : {}),
+          ...(lastErrorMetadata?.failureKind ? { failureKind: lastErrorMetadata.failureKind } : {}),
+          ...(lastErrorMetadata?.recoveryAction ? { recoveryAction: lastErrorMetadata.recoveryAction } : {}),
         });
         // 更新幂等记录终态
         if (clientMsgId) {
@@ -457,7 +461,7 @@ export async function handleWebChannelEvents(
           }
         }
       },
-      onError(error) {
+      onError(error, metadata) {
         // 用户主动停止后 SDK 通常仍会产出 AbortError；这是正常取消，不是运行失败。
         // 不写入 lastError，避免 onDone 把用户消息标红并显示错误卡。
         if (signal?.aborted && signal.reason === 'web_abort') {
@@ -467,6 +471,7 @@ export async function handleWebChannelEvents(
         // SDK 错误：记录 error 供 onDone 合并到 done 事件，不再单发 error
         // （客户端收到 done + error 后会清理 loading 状态 + 显示错误文案，无需靠 watchdog 兜底）
         lastError = error;
+        lastErrorMetadata = metadata;
         chatLogger.error(`[chat] SDK error for client_msg_id=${clientMsgId}: ${error}`);
       },
       // SDK 0.2.112+ 新事件透传

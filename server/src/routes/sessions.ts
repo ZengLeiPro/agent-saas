@@ -587,7 +587,7 @@ export interface LastRunState {
   runId: string;
   status: string;
   /** run_state_changed.reason —— failed/cancelled 时通常是 model error message */
-  error?: string;
+  error?: string; failureKind?: 'policy_rejection'; recoveryAction?: 'switch_model';
   /** 该 run_state_changed 事件的 ISO timestamp */
   finishedAt?: string;
 }
@@ -632,7 +632,7 @@ async function getLastRunState(
     return {
       runId: last.runId,
       status: last.status,
-      ...(last.reason ? { error: last.reason } : {}),
+      ...(last.reason ? { error: last.reason } : {}), ...(last.failureKind ? { failureKind: last.failureKind } : {}), ...(last.recoveryAction ? { recoveryAction: last.recoveryAction } : {}),
       ...(last.timestamp ? { finishedAt: last.timestamp } : {}),
     };
   } catch {

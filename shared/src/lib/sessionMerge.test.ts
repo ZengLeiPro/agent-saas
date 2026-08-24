@@ -21,6 +21,15 @@ const user = (id: string, content: string): MessageItem => ({ id, type: 'user', 
 const file = (id: string): MessageItem => ({
   id, type: 'file_download', fileName: 'a.pdf', fileType: '', filePath: 'a.pdf', fileSize: 0,
 });
+const policyError = (id: string, runId: string): MessageItem => ({
+  id,
+  type: 'system-error',
+  content: '当前模型受策略限制，请切换其他模型继续。',
+  severity: 'error',
+  failureKind: 'policy_rejection',
+  recoveryAction: 'switch_model',
+  runId,
+});
 const compaction = (id: string, summary: string, coveredEventCount: number): MessageItem => ({
   id,
   type: 'compaction',
@@ -86,6 +95,20 @@ describe('mergeServerMessagesWithLocalTail', () => {
     ];
 
     expect(mergeServerMessagesWithLocalTail(server, local)).toBe(server);
+  });
+
+  it('服务端已投影同一 run 的策略拒绝时不再追加本地 live banner', () => {
+    const server = [user('line-1', '问题'), text('line-2', '部分正文'), policyError('system-error-run-policy', 'run-policy')];
+    const local = [user('msg-1', '问题'), text('msg-2', '部分正文'), policyError('live-policy', 'run-policy')];
+
+    expect(mergeServerMessagesWithLocalTail(server, local)).toBe(server);
+  });
+
+  it('不同 run 的策略拒绝仍保留，不能按相同文案误吞', () => {
+    const server = [user('line-1', '问题'), text('line-2', '部分正文'), policyError('server-policy', 'run-old')];
+    const local = [user('msg-1', '问题'), text('msg-2', '部分正文'), policyError('live-policy', 'run-new')];
+
+    expect(mergeServerMessagesWithLocalTail(server, local)).toEqual([...server, local[2]]);
   });
 
   it('不同的压缩分界线仍作为尚未投影的本地尾部保留', () => {

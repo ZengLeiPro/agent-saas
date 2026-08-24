@@ -397,6 +397,8 @@ export async function coordinateRunFinishedEvent(input: {
     status,
     ...(before?.status ? { previousStatus: before.status } : {}),
     ...(reason ? { reason } : {}),
+    ...(input.event.failureKind ? { failureKind: input.event.failureKind } : {}),
+    ...(input.event.recoveryAction ? { recoveryAction: input.event.recoveryAction } : {}),
   };
   const result = await finalizeTerminalRun({
     runStore: input.runStore,

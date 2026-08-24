@@ -78,6 +78,8 @@ export type {
   WsBlockType,
   WsAskUserQuestion,
   WsEvent,
+  RuntimeFailureKind,
+  RuntimeRecoveryAction,
   AuthUser,
   LoginCredentials,
   SmsLoginCredentials,
@@ -675,10 +677,12 @@ export type { FileTypeCategory, FileTypeVisual } from "./lib/fileTypeVisual";
 export {
   DEFAULT_RUNTIME_FAILURE_MESSAGE,
   MODEL_REQUEST_FAILURE_MESSAGE,
+  POLICY_REJECTION_FAILURE_MESSAGE,
   INSUFFICIENT_CREDITS_FAILURE_MESSAGE,
   formatRuntimeFailureMessage,
   isInsufficientCreditsFailure,
   isModelRequestFailure,
+  isSameRunMessage,
 } from "./lib/runtimeErrorMessage";
 
 // Lib - message grouping (pure function)

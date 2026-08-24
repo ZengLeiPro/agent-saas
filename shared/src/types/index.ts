@@ -39,6 +39,7 @@ export type {
 } from "./search";
 
 export type { WsBlockType, WsAskUserQuestion, WsEvent } from "./ws";
+export type { RuntimeFailureKind, RuntimeRecoveryAction } from "./runtimeFailure";
 
 export type {
   AuthUser,

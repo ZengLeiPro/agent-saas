@@ -315,8 +315,8 @@ describe("transcript activity durations", () => {
         runId: "parent-run", sessionId: "session-agent-failed", toolCallId: "call-agent-failed",
         agentType: "general", description: "调研金球奖", childSessionId: "sub-child",
         childRunId: "child-run", model: "gpt-5.6", status: "failed", totalTokens: 123_456,
-        toolUseCount: 67, turnCount: 42, durationMs: 600_000, errorMessage: "upstream EOF",
-        resultPreview: "部分材料",
+        toolUseCount: 67, turnCount: 42, durationMs: 600_000, errorMessage: "当前模型受策略限制，请切换其他模型继续。",
+        failureKind: "policy_rejection", recoveryAction: "switch_model", resultPreview: "部分材料",
       },
     ];
 
@@ -337,7 +337,9 @@ describe("transcript activity durations", () => {
       toolUseCount: 67,
       turnCount: 42,
       durationMs: 600_000,
-      errorMessage: "upstream EOF",
+      errorMessage: "当前模型受策略限制，请切换其他模型继续。",
+      failureKind: "policy_rejection",
+      recoveryAction: "switch_model",
       resultPreview: "部分材料",
     })]);
   });

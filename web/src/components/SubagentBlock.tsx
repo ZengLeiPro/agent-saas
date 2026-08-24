@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { PanelRight } from 'lucide-react';
-import { formatTokenCount, type SubagentStatus } from '@agent/shared';
+import { formatTokenCount, type RuntimeFailureKind, type RuntimeRecoveryAction, type SubagentStatus } from '@agent/shared';
 import { formatActivityDuration } from './activityStatusStyles';
 import { AgentActivityShell, type AgentActivityState } from './AgentActivityShell';
 import { useSubagentTranscript } from '@/contexts/SubagentTranscriptContext';
@@ -16,7 +16,10 @@ export interface SubagentBlockProps {
   toolUseCount?: number;
   turnCount?: number;
   errorMessage?: string;
+  failureKind?: RuntimeFailureKind;
+  recoveryAction?: RuntimeRecoveryAction;
   resultPreview?: string;
+  onSwitchModel?: () => void;
 }
 
 function activityState(status: SubagentStatus): AgentActivityState {
@@ -47,15 +50,15 @@ export function SubagentBlock(props: SubagentBlockProps) {
       meta={meta || undefined}
       expanded={expanded}
       onToggle={() => setExpanded((value) => !value)}
-      actions={props.childSessionId && transcriptPanel ? (
-        <button
-          type="button"
-          title="查看完整过程"
-          onClick={showTranscript}
-          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <PanelRight className="size-3.5" />
-        </button>
+      actions={props.recoveryAction === 'switch_model' && props.onSwitchModel || props.childSessionId && transcriptPanel ? (
+        <div className="flex items-center gap-1">
+          {props.recoveryAction === 'switch_model' && props.onSwitchModel && (
+            <button type="button" onClick={props.onSwitchModel} className="rounded-md px-2 py-1 text-xs font-medium text-foreground/75 transition-colors hover:bg-muted hover:text-foreground">切换模型</button>
+          )}
+          {props.childSessionId && transcriptPanel && (
+            <button type="button" title="查看完整过程" onClick={showTranscript} className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"><PanelRight className="size-3.5" /></button>
+          )}
+        </div>
       ) : undefined}
     >
       <div className="space-y-2 text-xs">

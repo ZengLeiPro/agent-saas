@@ -48,6 +48,8 @@ import {
   type SubagentLimiter,
 } from './subagentLimits.js';
 import { runSubagent, type SubagentOutcome } from './subagentRunner.js';
+import { customerSafeRuntimeError } from '../runtimeFailure.js';
+import { formatSubagentFailureHeader } from './subagentFailureFormatting.js';
 
 const logger = createLogger('AgentToolProvider');
 const SUBAGENT_RESULT_PREVIEW_CHARS = 2_000;
@@ -244,7 +246,11 @@ export class AgentToolProvider implements ToolProvider {
       toolUseCount: outcome.toolUseCount,
       turnCount: outcome.turnCount,
       durationMs: outcome.durationMs,
-      ...(outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {}),
+      ...(outcome.errorMessage ? {
+        errorMessage: customerSafeRuntimeError(outcome.errorMessage, outcome.failureKind),
+      } : {}),
+      ...(outcome.failureKind ? { failureKind: outcome.failureKind } : {}),
+      ...(outcome.recoveryAction ? { recoveryAction: outcome.recoveryAction } : {}),
       ...(outcome.text.trim()
         ? { resultPreview: outcome.text.trim().slice(0, SUBAGENT_RESULT_PREVIEW_CHARS) }
         : {}),
@@ -261,8 +267,9 @@ export class AgentToolProvider implements ToolProvider {
     const meta = outcomeAgentMeta(outcome);
     if (outcome.status !== 'completed') {
       const partial = outcome.text.trim();
+      const failureHeader = formatSubagentFailureHeader(outcome, meta);
       return [
-        `[子 agent 异常终止] status=${outcome.status}｜${outcome.errorMessage ?? '未知错误'}｜${meta}`,
+        failureHeader,
         partial
           ? `以下为终止前已产出的部分文本（不完整，不可当作最终结论）：\n---\n${await this.truncateWithSpill(partial, outcome, context)}`
           : '（终止前未产出任何文本）',

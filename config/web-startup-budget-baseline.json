@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 304119,
-    "startupCssGzipBytes": 32881,
-    "startupJsBrotliBytes": 242580,
-    "startupCssBrotliBytes": 26236,
-    "largestJsGzipBytes": 304119,
-    "largestCssGzipBytes": 32881,
-    "largestJsBrotliBytes": 242580,
-    "largestCssBrotliBytes": 26236,
-    "largestJs": "assets/index-BDG0cvbe.js",
-    "largestCss": "assets/index-6iyioGYH.css"
+    "startupJsGzipBytes": 305507,
+    "startupCssGzipBytes": 33120,
+    "startupJsBrotliBytes": 243472,
+    "startupCssBrotliBytes": 26393,
+    "largestJsGzipBytes": 305507,
+    "largestCssGzipBytes": 33120,
+    "largestJsBrotliBytes": 243472,
+    "largestCssBrotliBytes": 26393,
+    "largestJs": "assets/index-B4hbVEzV.js",
+    "largestCss": "assets/index-Bf0LijaX.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "业务步骤展示新增 comparison/list/checklist 语义渲染与状态样式；生产构建启动 JS 增加 1450 B gzip、1148 B brotli，仍低于 450000 B 单包绝对上限",
-  "updatedAt": "2026-08-20"
+  "reason": "结构化策略拒绝恢复新增 failureKind/recoveryAction 协议处理、换模按钮与受控模型选择器；生产构建启动 JS 增加 1388 B gzip，仍低于 450000 B 单包绝对上限",
+  "updatedAt": "2026-08-23"
 }

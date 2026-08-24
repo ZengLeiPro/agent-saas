@@ -95,11 +95,13 @@ import {
   buildModelUsage,
   classifyHandFailure,
   clearProviderContinuations,
+  describeRuntimeFailure,
   formatAskUserQuestionResult,
   formatMemoryContext,
   getInvalidPromptRequestBlockedFailure,
   isForcedDrainHandoff,
   isInvalidPromptRequestBlocked,
+  mergeRuntimeFailureResultText,
   mergeUsage,
   parseToolArguments,
   resolveZombieToolCallTimeoutMs,
@@ -108,7 +110,6 @@ import {
   unavailableToolMessage,
   type InvalidPromptRequestBlockedFailure,
 } from './rawAgentLoopHelpers.js';
-
 import { ApprovalAlreadyResolvedError, ApprovalPendingWithoutInteractionHook, InteractionPendingWithoutInteractionHook, RunLeaseLostError, ToolInvocationClaimLostError, captureModelStreamError, handleInvocationClaimLoss, readRunLeaseState, resolveClaimedWorkerId } from './rawAgentLoopControlErrors.js';
 import { collectParallelToolCallSegment, type PreparedParallelToolCall } from './toolParallelism.js';
 import { announceAppliedInterjections as announceInterjections, buildAtomicSteeringInputs, collectDurableInterjectionAnnouncementSourceRunIds, projectAtomicInterjectionEvents } from './rawAgentLoopInterjections.js';
@@ -1808,17 +1809,14 @@ export class RawAgentLoop implements AgentLoop {
         textStarted = false;
         yield { type: 'text_end' };
       }
-      const diagnosticMessage = err instanceof Error ? err.message : String(err);
-      const message = isInvalidPromptRequestBlocked(err)
-        ? INVALID_PROMPT_CUSTOMER_ERROR
-        : diagnosticMessage;
+      const { diagnosticMessage, message, surfacedMessage, preservedTurnText, failureProtocol } = describeRuntimeFailure(err, pendingTurnText, INVALID_PROMPT_CUSTOMER_ERROR);
       const modelUsage = buildModelUsage(context.model, totalUsage);
-      if (pendingTurnText) {
+      if (preservedTurnText) {
         await this.append({
           type: 'assistant_message',
           runId: context.runId,
           sessionId: context.sessionId,
-          content: pendingTurnText,
+          content: preservedTurnText,
           model: context.model,
           streamed: true,
           incomplete: true,
@@ -1830,9 +1828,6 @@ export class RawAgentLoop implements AgentLoop {
         );
         return;
       }
-      const surfacedMessage = pendingTurnText
-        ? `${message}；已保留本次未完成正文，可发送“继续”接着完成。`
-        : message;
       await this.append({
         type: 'run_finished',
         runId: context.runId,
@@ -1841,18 +1836,20 @@ export class RawAgentLoop implements AgentLoop {
         numTurns: turn,
         ...(modelUsage ? { modelUsage } : {}),
         error: surfacedMessage,
+        ...(failureProtocol ?? {}),
       });
       await context.hooks?.onResult?.({
         subtype: 'error',
         numTurns: turn,
-        resultText: finalText,
+        resultText: mergeRuntimeFailureResultText(finalText, preservedTurnText),
         ...(modelUsage ? { modelUsage } : {}),
+        ...(failureProtocol ?? {}),
       });
       logger.error(
         `[run] failed session=${context.sessionId} turns=${turn}: ${diagnosticMessage}`
         + `${message !== diagnosticMessage ? ` (client=${message})` : ''}`,
       );
-      yield { type: 'error', error: surfacedMessage };
+      yield { type: 'error', error: surfacedMessage, ...(failureProtocol ? { runId: context.runId, ...failureProtocol } : {}) };
     }
   }
 
@@ -3825,17 +3822,14 @@ export class RawAgentLoop implements AgentLoop {
         textStarted = false;
         yield { type: 'text_end' };
       }
-      const diagnosticMessage = err instanceof Error ? err.message : String(err);
-      const message = isInvalidPromptRequestBlocked(err)
-        ? INVALID_PROMPT_CUSTOMER_ERROR
-        : diagnosticMessage;
+      const { diagnosticMessage, message, surfacedMessage, preservedTurnText, failureProtocol } = describeRuntimeFailure(err, pendingTurnText, INVALID_PROMPT_CUSTOMER_ERROR);
       const modelUsage = buildModelUsage(args.context.model, totalUsage);
-      if (pendingTurnText) {
+      if (preservedTurnText) {
         await this.append({
           type: 'assistant_message',
           runId: args.context.runId,
           sessionId: args.context.sessionId,
-          content: pendingTurnText,
+          content: preservedTurnText,
           model: args.context.model,
           streamed: true,
           incomplete: true,
@@ -3847,9 +3841,6 @@ export class RawAgentLoop implements AgentLoop {
         );
         return;
       }
-      const surfacedMessage = pendingTurnText
-        ? `${message}；已保留本次未完成正文，可发送“继续”接着完成。`
-        : message;
       await this.append({
         type: 'run_finished',
         runId: args.context.runId,
@@ -3858,18 +3849,20 @@ export class RawAgentLoop implements AgentLoop {
         numTurns: turn,
         ...(modelUsage ? { modelUsage } : {}),
         error: surfacedMessage,
+        ...(failureProtocol ?? {}),
       });
       await args.context.hooks?.onResult?.({
         subtype: 'error',
         numTurns: turn,
-        resultText: finalText,
+        resultText: mergeRuntimeFailureResultText(finalText, preservedTurnText),
         ...(modelUsage ? { modelUsage } : {}),
+        ...(failureProtocol ?? {}),
       });
       logger.error(
         `[resume] failed session=${args.context.sessionId} turns=${turn}: ${diagnosticMessage}`
         + `${message !== diagnosticMessage ? ` (client=${message})` : ''}`,
       );
-      yield { type: 'error', error: surfacedMessage };
+      yield { type: 'error', error: surfacedMessage, ...(failureProtocol ? { runId: args.context.runId, ...failureProtocol } : {}) };
     }
   }
 

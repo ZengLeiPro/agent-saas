@@ -11,6 +11,8 @@ import type {
   OutboundEvent,
   AskUserQuestion,
   ModelProviderOptions,
+  RuntimeFailureKind,
+  RuntimeRecoveryAction,
 } from '../types/index.js';
 import type { ExecutionTargetKind } from './toolRuntime.js';
 
@@ -48,6 +50,8 @@ export interface AgentRunResultMeta {
   modelUsage?: Record<string, SdkResultModelUsage>;
   /** SDK 上报的 API 耗时（ms） */
   durationApiMs?: number;
+  failureKind?: RuntimeFailureKind;
+  recoveryAction?: RuntimeRecoveryAction;
 }
 
 export interface InteractionEvent {

@@ -307,6 +307,8 @@ describe('IntegrationPushGateway', () => {
     const f = await fixture();
     try {
       f.git.failPushCount = 1;
+      await expect(f.gateway.pushExact(exactPushInput())).rejects.toMatchObject({ code: 'push_failed_unknown' });
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(1);
       await expect(f.gateway.pushExact(exactPushInput())).resolves.toBeUndefined();
       expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(2);
       expect([...f.operationStorage.records.values()]).toEqual(expect.arrayContaining([
@@ -323,10 +325,16 @@ describe('IntegrationPushGateway', () => {
     try {
       f.git.failPushCount = 2;
       await expect(f.gateway.pushExact(exactPushInput())).rejects.toMatchObject({ code: 'push_failed_unknown' });
+      expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(1);
+      await expect(f.gateway.pushExact(exactPushInput())).rejects.toMatchObject({ code: 'push_failed_unknown' });
       expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(2);
       expect([...f.operationStorage.records.values()]).toHaveLength(2);
-      expect([...f.operationStorage.records.values()].every((operation) => operation.state === 'failed')).toBe(true);
+      expect([...f.operationStorage.records.values()]).toEqual(expect.arrayContaining([
+        expect.objectContaining({ state: 'failed' }),
+        expect.objectContaining({ state: 'unknown', receipt: expect.objectContaining({ outcome: 'quiescence_observed' }) }),
+      ]));
       await expect(f.gateway.pushExact(exactPushInput())).rejects.toMatchObject({ code: 'push_failed_unknown' });
+      expect([...f.operationStorage.records.values()].every((operation) => operation.state === 'failed')).toBe(true);
       expect(f.git.calls.filter((call) => call.args[0] === 'push')).toHaveLength(2);
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });

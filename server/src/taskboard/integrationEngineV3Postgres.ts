@@ -3,7 +3,7 @@ import type { Pool, PoolClient } from 'pg';
 
 import type { TaskBoardIntegrationCandidate } from '../../../shared/src/types/taskboard.js';
 import { rowToIntegrationCandidate, rowToIntegrationCandidateRevision } from './integrationCandidateMapper.js';
-import { IntegrationCandidateStore } from './integrationCandidateStore.js';
+import { IntegrationCandidateStore, type IntegrationCandidateMutationFence } from './integrationCandidateStore.js';
 import type { IntegrationEngineV3CandidateHost, IntegrationEngineV3Current, IntegrationEngineV3FeatureHost, IntegrationEngineV3RequestHost } from './integrationEngineV3.js';
 import { TaskboardNotFoundError, TaskboardValidationError } from './types.js';
 import type {
@@ -64,16 +64,27 @@ export class PostgresIntegrationProviderOperationStorage implements IntegrationP
       receipt?: Record<string, unknown>;
       error?: string;
     };
+    mutationFence?: IntegrationCandidateMutationFence;
   }): Promise<IntegrationProviderOperationRecord | undefined> {
     const result = await this.options.pool.query(
-      `UPDATE ${this.options.providerOperationsTable}
+      `UPDATE ${this.options.providerOperationsTable} o
           SET state=$3,attempt_count=$4,updated_at=$5,
-              receipt=CASE WHEN $6::boolean THEN $7::jsonb ELSE receipt END,
-              error=CASE WHEN $8::boolean THEN $9 ELSE error END
-        WHERE id=$1 AND state=$2 RETURNING *`,
+              receipt=CASE WHEN $6::boolean THEN $7::jsonb ELSE o.receipt END,
+              error=CASE WHEN $8::boolean THEN $9 ELSE o.error END
+        WHERE o.id=$1 AND o.state=$2
+          AND ($10::text IS NULL OR EXISTS (
+            SELECT 1 FROM ${this.options.candidatesTable} c
+             WHERE c.id=o.candidate_id
+               AND c.worker_lease_id=$10 AND c.worker_lease_epoch=$11::bigint
+               AND c.worker_release_identity=$12 AND c.worker_status='processing'
+               AND c.worker_lease_expires_at>clock_timestamp()
+          ))
+        RETURNING o.*`,
       [input.id, input.expectedState, input.nextState, input.patch.attemptCount, input.patch.updatedAt,
         input.patch.receipt !== undefined, input.patch.receipt === undefined ? null : JSON.stringify(input.patch.receipt),
-        input.patch.error !== undefined, input.patch.error ?? null],
+        input.patch.error !== undefined, input.patch.error ?? null,
+        input.mutationFence?.leaseId ?? null, input.mutationFence?.leaseEpoch ?? null,
+        input.mutationFence?.releaseIdentity ?? null],
     );
     return result.rows[0] ? rowToProviderOperation(result.rows[0]) : undefined;
   }
@@ -162,17 +173,44 @@ export class PostgresIntegrationEngineV3CandidateHost implements IntegrationEngi
     };
   }
 
-  appendRevision(candidateId: string, input: Parameters<IntegrationCandidateStore['appendRevision']>[1]) {
-    return this.candidates.appendRevision(candidateId, input);
+  appendRevision(
+    candidateId: string,
+    input: Parameters<IntegrationCandidateStore['appendRevision']>[1],
+    mutationFence?: Parameters<IntegrationCandidateStore['appendRevision']>[2],
+  ) {
+    return this.candidates.appendRevision(candidateId, input, mutationFence);
   }
-  beginNextWorkRound(candidateId: string, expectedVersion: number, expectedRevision: number) {
-    return this.candidates.beginNextWorkRound(candidateId, expectedVersion, expectedRevision);
+  beginNextWorkRound(
+    candidateId: string,
+    expectedVersion: number,
+    expectedRevision: number,
+    mutationFence?: Parameters<IntegrationCandidateStore['beginNextWorkRound']>[3],
+  ) {
+    return this.candidates.beginNextWorkRound(candidateId, expectedVersion, expectedRevision, mutationFence);
   }
-  transition(candidateId: string, input: Parameters<IntegrationCandidateStore['transition']>[1]) {
-    return this.candidates.transition(candidateId, input);
+  restartComposition(
+    candidateId: string,
+    input: Parameters<IntegrationCandidateStore['restartComposition']>[1],
+    mutationFence?: Parameters<IntegrationCandidateStore['restartComposition']>[2],
+  ) {
+    return this.candidates.restartComposition(candidateId, input, mutationFence);
+  }
+  transition(
+    candidateId: string,
+    input: Parameters<IntegrationCandidateStore['transition']>[1],
+    mutationFence?: Parameters<IntegrationCandidateStore['transition']>[2],
+  ) {
+    return this.candidates.transition(candidateId, input, mutationFence);
   }
 
-  async commitMerged(input: { candidateId: string; expectedVersion: number; expectedRevision: number; mergedCommitOid: string; providerOperationId: string }): Promise<TaskBoardIntegrationCandidate> {
+  async commitMerged(input: {
+    candidateId: string;
+    expectedVersion: number;
+    expectedRevision: number;
+    mergedCommitOid: string;
+    providerOperationId: string;
+    mutationFence?: IntegrationCandidateMutationFence;
+  }): Promise<TaskBoardIntegrationCandidate> {
     const client = await this.options.pool.connect();
     try {
       await client.query('BEGIN');
@@ -225,8 +263,16 @@ export class PostgresIntegrationEngineV3CandidateHost implements IntegrationEngi
       const updated = await client.query(
         `UPDATE ${this.options.candidatesTable}
             SET state='merged',merged_commit_oid=$4,last_error=NULL,version=version+1,updated_at=now()
-          WHERE id=$1 AND version=$2 AND current_revision=$3 AND state IN ('merging','needs_human') RETURNING *`,
-        [candidate.id, input.expectedVersion, input.expectedRevision, input.mergedCommitOid]);
+          WHERE id=$1 AND version=$2 AND current_revision=$3 AND state IN ('merging','needs_human')
+            AND ($5::text IS NULL OR (
+              worker_lease_id=$5 AND worker_lease_epoch=$6::bigint
+              AND worker_release_identity=$7 AND worker_status='processing'
+              AND worker_lease_expires_at>clock_timestamp()
+            ))
+          RETURNING *`,
+        [candidate.id, input.expectedVersion, input.expectedRevision, input.mergedCommitOid,
+          input.mutationFence?.leaseId ?? null, input.mutationFence?.leaseEpoch ?? null,
+          input.mutationFence?.releaseIdentity ?? null]);
       if (!updated.rows[0]) throw new TaskboardValidationError('Candidate changed; reload before retrying', 'TASKBOARD_CANDIDATE_CAS_MISMATCH');
       await client.query(
         `UPDATE ${this.options.integrationSourcesTable}

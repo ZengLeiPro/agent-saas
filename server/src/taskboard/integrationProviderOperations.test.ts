@@ -13,6 +13,7 @@ import {
 
 class MemoryStorage implements IntegrationProviderOperationStorageHost {
   readonly records = new Map<string, IntegrationProviderOperationRecord>();
+  readonly casInputs: Array<{ mutationFence?: { leaseId: string; leaseEpoch: string; releaseIdentity: string } }> = [];
 
   async getByOperationKey(key: string): Promise<IntegrationProviderOperationRecord | undefined> {
     return clone(this.records.get(key));
@@ -30,7 +31,9 @@ class MemoryStorage implements IntegrationProviderOperationStorageHost {
     expectedState: IntegrationProviderOperationState;
     nextState: IntegrationProviderOperationState;
     patch: Pick<IntegrationProviderOperationRecord, 'attemptCount' | 'updatedAt'> & { receipt?: Record<string, unknown>; error?: string };
+    mutationFence?: { leaseId: string; leaseEpoch: string; releaseIdentity: string };
   }): Promise<IntegrationProviderOperationRecord | undefined> {
+    this.casInputs.push(input);
     const current = [...this.records.values()].find((record) => record.id === input.id);
     if (!current || current.state !== input.expectedState) return undefined;
     const updated = { ...current, ...input.patch, state: input.nextState };
@@ -110,31 +113,47 @@ describe('IntegrationProviderOperationService', () => {
     expect(result).toMatchObject({ state: 'unknown', error: 'ref is not visible yet', attemptCount: 1 });
   });
 
-  it('terminalizes an evidence-backed not-applied result without resending the operation', async () => {
+  it('requires two exact no-effect observations after an ambiguous timeout before terminalizing', async () => {
     const { service } = setup();
     await service.prepare(intent);
-    await service.execute(operationKey, async () => { throw new Error('transport failed'); });
-
-    const result = await service.reconcile(operationKey, async () => ({
-      status: 'not_applied', detail: 'exact ref remains at the expected old OID',
+    const executor = vi.fn(async () => { throw new Error('transport failed'); });
+    await service.execute(operationKey, executor);
+    const reconcile = vi.fn(async () => ({
+      status: 'not_applied' as const, detail: 'exact ref remains at the expected old OID',
       evidence: { actualOid: 'base-oid', verifiedNotApplied: true },
     }));
 
-    expect(result).toMatchObject({ state: 'failed', attemptCount: 1,
+    const quiescing = await service.reconcile(operationKey, reconcile);
+    expect(quiescing).toMatchObject({ state: 'unknown', attemptCount: 1,
+      receipt: { outcome: 'quiescence_observed', actualOid: 'base-oid', verifiedNotApplied: true } });
+    const terminal = await service.reconcile(operationKey, reconcile);
+    expect(terminal).toMatchObject({ state: 'failed', attemptCount: 1,
       error: 'exact ref remains at the expected old OID',
       receipt: { outcome: 'not_applied', actualOid: 'base-oid', verifiedNotApplied: true } });
+    expect(executor).toHaveBeenCalledOnce();
+    expect(reconcile).toHaveBeenCalledTimes(2);
   });
 
-  it('does not classify an in-flight executing operation as not applied', async () => {
+  it('requires two exact no-effect observations before classifying an executing operation as not applied', async () => {
     const { service, storage } = setup();
     const prepared = await service.prepare(intent);
     await storage.compareAndSet({ id: prepared.id, expectedState: 'prepared', nextState: 'executing',
       patch: { attemptCount: 1, updatedAt: prepared.updatedAt } });
+    const reconcile = vi.fn(async () => ({
+      status: 'not_applied' as const, detail: 'ref still old', evidence: { verifiedNotApplied: true },
+    }));
 
-    await expect(service.reconcile(operationKey, async () => ({
-      status: 'not_applied', detail: 'ref still old', evidence: { verifiedNotApplied: true },
-    }))).rejects.toBeInstanceOf(ProviderOperationReconcileRequiredError);
-    expect(await storage.getByOperationKey(operationKey)).toMatchObject({ state: 'executing', attemptCount: 1 });
+    const quiescing = await service.reconcile(operationKey, reconcile);
+    expect(quiescing).toMatchObject({
+      state: 'unknown', attemptCount: 1,
+      receipt: { outcome: 'quiescence_observed', verifiedNotApplied: true },
+    });
+    const terminal = await service.reconcile(operationKey, reconcile);
+    expect(terminal).toMatchObject({
+      state: 'failed', attemptCount: 1,
+      receipt: { outcome: 'not_applied', verifiedNotApplied: true },
+    });
+    expect(reconcile).toHaveBeenCalledTimes(2);
   });
 
   it('moves a reconciled mismatch to needs_human', async () => {
@@ -147,6 +166,21 @@ describe('IntegrationProviderOperationService', () => {
     }));
 
     expect(result).toMatchObject({ state: 'needs_human', error: 'branch points to a different base', receipt: { actualOid: 'other-oid' } });
+  });
+
+  it('redacts provider errors and reconciliation evidence before durable CAS', async () => {
+    const { service } = setup();
+    await service.prepare(intent);
+    await service.execute(operationKey, async () => { throw new Error('timeout ghs_serverinstallationtoken'); });
+
+    const result = await service.reconcile(operationKey, async () => ({
+      status: 'mismatch',
+      detail: 'remote https://user:url-password@github.com/acme/repo.git differs',
+      evidence: { diagnostic: 'github_pat_11AA_secretvalue' },
+    }));
+
+    expect(result.error).toBe('remote https://[REDACTED]@github.com/acme/repo.git differs');
+    expect(result.receipt).toEqual({ diagnostic: '[REDACTED_GITHUB_TOKEN]' });
   });
 
   it('rejects reuse of a semantic key with a different expected state', async () => {
@@ -187,6 +221,59 @@ describe('IntegrationProviderOperationService', () => {
       error: 'candidate cleanup fenced provider calls',
       receipt: { outcome: 'not_applied', evidence: 'pre_execution_fence_rejected' } });
     expect(executor).not.toHaveBeenCalled();
+  });
+
+  it('leaves an applied provider attempt executing when the Worker loses its lease before receipt persistence', async () => {
+    const { service, storage } = setup();
+    await service.prepare(intent);
+    let leaseCurrent = true;
+    const assertAttemptCurrent = vi.fn(async () => {
+      if (!leaseCurrent) throw new Error('candidate lease lost');
+    });
+    const providerWrite = vi.fn(async () => {
+      leaseCurrent = false;
+      return { ref: 'integration/task-1', oid: 'base-oid' };
+    });
+
+    await expect(service.execute(operationKey, providerWrite, { assertAttemptCurrent }))
+      .rejects.toThrow('candidate lease lost');
+    expect(providerWrite).toHaveBeenCalledOnce();
+    const durable = await storage.getByOperationKey(operationKey);
+    expect(durable).toMatchObject({ state: 'executing', attemptCount: 1 });
+    expect(durable).not.toHaveProperty('receipt');
+  });
+
+  it('does not mark an operation definitively failed when the Worker loses its lease with the provider error', async () => {
+    const { service, storage } = setup();
+    await service.prepare(intent);
+    let leaseCurrent = true;
+    const assertAttemptCurrent = vi.fn(async () => {
+      if (!leaseCurrent) throw new Error('candidate lease lost');
+    });
+    const providerWrite = vi.fn(async () => {
+      leaseCurrent = false;
+      throw new Error('provider rejected request');
+    });
+
+    await expect(service.execute(operationKey, providerWrite, {
+      assertAttemptCurrent,
+      isDefinitiveFailure: () => true,
+    })).rejects.toThrow('candidate lease lost');
+    expect(providerWrite).toHaveBeenCalledOnce();
+    const durable = await storage.getByOperationKey(operationKey);
+    expect(durable).toMatchObject({ state: 'executing', attemptCount: 1 });
+    expect(durable).not.toHaveProperty('receipt');
+    expect(durable).not.toHaveProperty('error');
+  });
+
+  it('passes the Worker mutation fence to every ledger CAS in an execute attempt', async () => {
+    const { service, storage } = setup();
+    const mutationFence = { leaseId: 'lease-1', leaseEpoch: '4', releaseIdentity: 'release-1' };
+    await service.prepare(intent);
+    await service.execute(operationKey, async () => ({ ok: true }), { mutationFence });
+
+    expect(storage.casInputs).toHaveLength(2);
+    expect(storage.casInputs.every((input) => input.mutationFence === mutationFence)).toBe(true);
   });
 
   it('fails before a write when durable fences are stale', async () => {

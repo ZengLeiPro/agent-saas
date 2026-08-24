@@ -1,5 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 
+import type { IntegrationCandidateMutationFence } from './integrationCandidateStore.js';
+import { redactDurableJson, redactDurableSecrets } from './durableSecretRedaction.js';
+
 /**
  * Provider operation ledger core. This module deliberately knows nothing about SQL;
  * an integration layer must implement the CAS storage host and its transaction/fences.
@@ -63,12 +66,22 @@ export interface IntegrationProviderOperationStorageHost {
       receipt?: Record<string, unknown>;
       error?: string;
     };
+    /** When present, the operation state transition and Candidate Worker lease check are one CAS. */
+    mutationFence?: IntegrationCandidateMutationFence;
   }): Promise<IntegrationProviderOperationRecord | undefined>;
 }
 
 export interface IntegrationProviderOperationFenceHost {
   /** Re-read durable workflow/lane/candidate/execution fences immediately before a provider write or reconcile commit. */
   assertCurrent(operation: IntegrationProviderOperationRecord): Promise<void>;
+}
+
+export interface IntegrationProviderAttemptOptions {
+  isDefinitiveFailure?: (error: unknown) => boolean;
+  /** Ephemeral Worker lease guard; deliberately excluded from the durable semantic intent. */
+  assertAttemptCurrent?: () => Promise<void>;
+  /** Atomically fences every provider-operation ledger CAS to the current Candidate Worker lease. */
+  mutationFence?: IntegrationCandidateMutationFence;
 }
 
 export type IntegrationProviderReconcileResult =
@@ -110,46 +123,66 @@ export class IntegrationProviderOperationService {
   /**
    * Executes only a prepared intent. Any ambiguous transport/provider exception is
    * recorded as unknown. An unknown operation can never be executed again; callers
-   * must use reconcile.
+   * must use reconcile. Concrete executors must cancel their transport at a hard
+   * deadline; this layer deliberately does not Promise.race an uncancelled write,
+   * because doing so would let the old write outlive its durable executing state.
    */
   async execute(
     operationKey: string,
     executor: (operation: IntegrationProviderOperationRecord) => Promise<Record<string, unknown>>,
-    options: { isDefinitiveFailure?: (error: unknown) => boolean } = {},
+    options: IntegrationProviderAttemptOptions = {},
   ): Promise<IntegrationProviderOperationRecord> {
     const current = await this.require(operationKey);
     if (current.state === 'succeeded') return current;
     if (current.state === 'unknown' || current.state === 'executing') throw new ProviderOperationReconcileRequiredError(operationKey, current.state);
     if (current.state !== 'prepared') throw new ProviderOperationTerminalError(operationKey, current.state);
+    await options.assertAttemptCurrent?.();
     await this.fences.assertCurrent(current);
+    await options.assertAttemptCurrent?.();
     const executing = await this.storage.compareAndSet({
       id: current.id,
       expectedState: 'prepared',
       nextState: 'executing',
       patch: { attemptCount: current.attemptCount + 1, updatedAt: this.now().toISOString() },
+      ...(options.mutationFence ? { mutationFence: options.mutationFence } : {}),
     });
     if (!executing) return this.resolveExecuteRace(operationKey);
     try {
+      await options.assertAttemptCurrent?.();
       await this.fences.assertCurrent(executing);
     } catch (error) {
+      await options.assertAttemptCurrent?.();
       return this.transitionOrReload(executing, 'executing', 'failed', {
         error: errorMessage(error),
         receipt: { outcome: 'not_applied', evidence: 'pre_execution_fence_rejected' },
-      });
+      }, options.mutationFence);
     }
+
+    let receipt: Record<string, unknown>;
     try {
-      const receipt = await executor(executing);
-      await this.fences.assertCurrent(executing);
-      return await this.transitionOrReload(executing, 'executing', 'succeeded', { receipt });
+      await options.assertAttemptCurrent?.();
+      receipt = await executor(executing);
     } catch (error) {
+      await options.assertAttemptCurrent?.();
       const definitive = options.isDefinitiveFailure?.(error) === true;
       return this.transitionOrReload(executing, 'executing', definitive ? 'failed' : 'unknown', {
         error: errorMessage(error),
         ...(definitive ? { receipt: { outcome: 'not_applied', evidence: 'executor_definitive_failure' } } : {}),
-      });
+      }, options.mutationFence);
     }
-  }
 
+    // If the attempt lost its lease while the provider call was in flight, leave the
+    // durable operation executing. The new owner must reconcile the remote fact.
+    await options.assertAttemptCurrent?.();
+    try {
+      await this.fences.assertCurrent(executing);
+    } catch (error) {
+      await options.assertAttemptCurrent?.();
+      return this.transitionOrReload(executing, 'executing', 'unknown', { error: errorMessage(error) }, options.mutationFence);
+    }
+    await options.assertAttemptCurrent?.();
+    return this.transitionOrReload(executing, 'executing', 'succeeded', { receipt }, options.mutationFence);
+  }
   /**
    * Reconcile is read-only at the provider. not_found/indeterminate remain unknown;
    * not_applied is a terminal, evidence-backed no-effect result. Any later retry must
@@ -158,36 +191,49 @@ export class IntegrationProviderOperationService {
   async reconcile(
     operationKey: string,
     reconciler: (operation: IntegrationProviderOperationRecord) => Promise<IntegrationProviderReconcileResult>,
+    options: Pick<IntegrationProviderAttemptOptions, 'assertAttemptCurrent' | 'mutationFence'> = {},
   ): Promise<IntegrationProviderOperationRecord> {
     const current = await this.require(operationKey);
     if (current.state === 'succeeded' || current.state === 'needs_human') return current;
     if (current.state !== 'unknown' && current.state !== 'executing') throw new ProviderOperationTerminalError(operationKey, current.state);
+    await options.assertAttemptCurrent?.();
     await this.fences.assertCurrent(current);
     let result: IntegrationProviderReconcileResult;
-    try { result = await reconciler(current); }
-    catch (error) { result = { status: 'indeterminate', detail: errorMessage(error) }; }
+    try {
+      await options.assertAttemptCurrent?.();
+      result = await reconciler(current);
+    } catch (error) { result = { status: 'indeterminate', detail: errorMessage(error) }; }
+    await options.assertAttemptCurrent?.();
     await this.fences.assertCurrent(current);
+    await options.assertAttemptCurrent?.();
     if (result.status === 'succeeded') {
-      return this.transitionOrReload(current, current.state, 'succeeded', { receipt: result.receipt });
+      return this.transitionOrReload(current, current.state, 'succeeded', { receipt: result.receipt }, options.mutationFence);
     }
     if (result.status === 'not_applied') {
-      if (current.state !== 'unknown') {
-        throw new ProviderOperationReconcileRequiredError(operationKey, current.state);
+      const quiescenceAlreadyObserved = current.state === 'unknown'
+        && current.receipt?.outcome === 'quiescence_observed';
+      if (!quiescenceAlreadyObserved) {
+        // Entering unknown because the write timed out is not itself a no-effect observation.
+        // Persist one exact observation, then require a later reconcile call before replacement.
+        return this.transitionOrReload(current, current.state, 'unknown', {
+          error: safeProviderDetail(result.detail),
+          receipt: { ...result.evidence, outcome: 'quiescence_observed' },
+        }, options.mutationFence);
       }
       return this.transitionOrReload(current, 'unknown', 'failed', {
-        error: result.detail,
+        error: safeProviderDetail(result.detail),
         receipt: { ...result.evidence, outcome: 'not_applied' },
-      });
+      }, options.mutationFence);
     }
     if (result.status === 'mismatch') {
       return this.transitionOrReload(current, current.state, 'needs_human', {
-        error: result.detail,
+        error: safeProviderDetail(result.detail),
         ...(result.evidence ? { receipt: result.evidence } : {}),
-      });
+      }, options.mutationFence);
     }
     return this.transitionOrReload(current, current.state, 'unknown', {
-      error: result.detail ?? 'Provider operation outcome is still unknown',
-    });
+      error: safeProviderDetail(result.detail ?? 'Provider operation outcome is still unknown'),
+    }, options.mutationFence);
   }
 
   private async require(operationKey: string): Promise<IntegrationProviderOperationRecord> {
@@ -207,6 +253,7 @@ export class IntegrationProviderOperationService {
     expectedState: IntegrationProviderOperationState,
     nextState: IntegrationProviderOperationState,
     values: { receipt?: Record<string, unknown>; error?: string },
+    mutationFence?: IntegrationCandidateMutationFence,
   ): Promise<IntegrationProviderOperationRecord> {
     const updated = await this.storage.compareAndSet({
       id: operation.id,
@@ -215,8 +262,10 @@ export class IntegrationProviderOperationService {
       patch: {
         attemptCount: operation.attemptCount,
         updatedAt: this.now().toISOString(),
-        ...values,
+        ...(values.receipt === undefined ? {} : { receipt: redactDurableJson(values.receipt) }),
+        ...(values.error === undefined ? {} : { error: safeProviderDetail(values.error) }),
       },
+      ...(mutationFence ? { mutationFence } : {}),
     });
     return updated ?? this.require(operation.operationKey);
   }
@@ -256,7 +305,12 @@ function validateIntent(intent: IntegrationProviderOperationIntent): void {
   if (!Number.isSafeInteger(intent.fence.workflowEpoch) || intent.fence.workflowEpoch < 0 || !Number.isSafeInteger(intent.fence.laneEpoch) || intent.fence.laneEpoch < 0 || !Number.isSafeInteger(intent.fence.candidateRevision) || intent.fence.candidateRevision < 1) throw new Error('Provider operation fence is invalid');
 }
 function assertSameIntent(record: IntegrationProviderOperationRecord, digest: string): IntegrationProviderOperationRecord { if (record.intentDigest !== digest) throw new ProviderOperationKeyCollisionError(record.operationKey); return record; }
-function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+function errorMessage(error: unknown): string {
+  return safeProviderDetail(error instanceof Error ? error.message : String(error));
+}
+function safeProviderDetail(value: string): string {
+  return redactDurableSecrets(value.replace(/[\r\n\t]+/g, ' ')).slice(0, 2_000);
+}
 function deepClone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);

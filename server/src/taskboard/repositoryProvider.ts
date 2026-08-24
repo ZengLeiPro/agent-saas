@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 
 import type { TaskBoardCiObservedCheck, TaskBoardRepositoryConfig } from '../../../shared/src/types/taskboard.js';
 
+const PROVIDER_REQUEST_TIMEOUT_MS = 20_000;
+
 export type RepositoryCheckStatus = 'pending' | 'success' | 'failure';
 
 /** Canonical GitHub identity parser. Deliberately rejects URL suffix matching, ports,
@@ -528,6 +530,7 @@ export class GithubRepositoryProvider implements RepositoryProvider {
     const token = await this.options.resolveToken(repository, credentialOwnerId);
     if (!token) throw new Error('GitHub repository credential is unavailable');
     const response = await this.fetchImpl(`${this.apiBaseUrl}${path}`, {
+      signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS),
       headers: {
         Accept: 'application/vnd.github+json',
         Authorization: `Bearer ${token}`,
@@ -543,7 +546,11 @@ export class GithubRepositoryProvider implements RepositoryProvider {
   private async request(repository: TaskBoardRepositoryConfig, credentialOwnerId: string, path: string, init: RequestInit = {}): Promise<unknown> {
     const token = await this.options.resolveToken(repository, credentialOwnerId);
     if (!token) throw new Error('GitHub repository credential is unavailable');
-    const response = await this.fetchImpl(`${this.apiBaseUrl}${path}`, { ...init, headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'agent-saas-taskboard-provider', ...init.headers } });
+    const response = await this.fetchImpl(`${this.apiBaseUrl}${path}`, {
+      ...init,
+      signal: init.signal ?? AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS),
+      headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'agent-saas-taskboard-provider', ...init.headers },
+    });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new GithubApiError(response.status, payload && typeof payload === 'object' && 'message' in payload ? String((payload as { message: unknown }).message) : `GitHub API ${response.status}`);
     return payload;

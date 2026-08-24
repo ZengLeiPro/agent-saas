@@ -63,6 +63,30 @@ export function computeIntegrationRequirementDigest(title: string, description: 
   });
 }
 
+export function computeIntegrationSourceSeedDigest(input: {
+  repositoryId: string;
+  baseBranch: string;
+  baseOid: string;
+  headOid: string;
+  sourceSetDigest: string;
+  mergeMethod: TaskBoardIntegrationMergeMethod;
+  policyRevision: string;
+  policySnapshotDigest: string;
+  recomposeRevision?: number;
+}): string {
+  return versionedDigest('taskboard.integration-candidate-source-seed', INTEGRATION_CANDIDATE_DIGEST_VERSION, {
+    repositoryId: required(input.repositoryId, 'repositoryId'),
+    baseBranch: required(input.baseBranch, 'baseBranch'),
+    baseOid: required(input.baseOid, 'baseOid'),
+    headOid: required(input.headOid, 'headOid'),
+    sourceSetDigest: required(input.sourceSetDigest, 'sourceSetDigest'),
+    mergeMethod: input.mergeMethod,
+    policyRevision: required(input.policyRevision, 'policyRevision'),
+    policySnapshotDigest: required(input.policySnapshotDigest, 'policySnapshotDigest'),
+    ...(input.recomposeRevision === undefined ? {} : { recomposeRevision: positiveInteger(input.recomposeRevision, 'recomposeRevision') }),
+  });
+}
+
 export function computeIntegrationPolicySnapshotDigest(
   policySnapshot: Record<string, unknown>,
   digestVersion: TaskBoardIntegrationCandidateDigestVersion = INTEGRATION_CANDIDATE_DIGEST_VERSION,

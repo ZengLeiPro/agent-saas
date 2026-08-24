@@ -88,7 +88,7 @@ describe('safe server Git runner', () => {
   it('allows controlled fetches to complete without relaxing other Git command timeouts', () => {
     expect(safeServerGitTimeoutMs(['fetch', '--no-tags'])).toBe(120_000);
     expect(safeServerGitTimeoutMs(['status', '--porcelain=v1'])).toBe(30_000);
-    expect(safeServerGitTimeoutMs(['push', '--porcelain'])).toBe(30_000);
+    expect(safeServerGitTimeoutMs(['push', '--porcelain'])).toBe(20_000);
   });
 
   it('preserves Git stderr while always identifying timeout termination', () => {
@@ -107,12 +107,16 @@ describe('safe server Git runner', () => {
     expect(args).toContain('http.proxy=');
     expect(safeServerGitEnvironment()).toMatchObject({
       GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_ALLOW_PROTOCOL: 'https',
+      GIT_OPTIONAL_LOCKS: '0',
     });
     expect(safeServerGitEnvironment()).not.toHaveProperty('GIT_CONFIG_LOCAL');
   });
 
   it.each([
+    ['-C', ['-C', '/tmp/attacker', 'status']],
+    ['compact -C', ['-C/tmp/attacker', 'status']],
     ['-c', ['status', '-c', 'http.sslVerify=false']],
+    ['compact -c', ['-ccore.hooksPath=/tmp/attacker', 'status']],
     ['--config-env', ['--config-env=http.sslVerify=ATTACKER', 'status']],
     ['--exec-path', ['status', '--exec-path=/tmp/attacker']],
     ['--git-dir', ['--git-dir', '/tmp/attacker', 'status']],

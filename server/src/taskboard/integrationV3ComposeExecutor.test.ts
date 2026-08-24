@@ -22,6 +22,10 @@ import type { RepositoryProvider } from './repositoryProvider.js';
 
 const run = promisify(execFile);
 const exactRef = 'refs/heads/integration/integration-1';
+const leaseGuard = {
+  lease: { candidateId: 'candidate-1', leaseId: 'lease-1', leaseEpoch: '1', releaseIdentity: 'test-release' },
+  assertCurrent: vi.fn(async () => undefined),
+};
 
 class MemoryOperations implements IntegrationProviderOperationStorageHost {
   records = new Map<string, IntegrationProviderOperationRecord>();
@@ -39,6 +43,10 @@ class MemoryOperations implements IntegrationProviderOperationStorageHost {
     this.records.set(updated.operationKey, updated);
     return updated;
   }
+}
+
+function createOperationService(storage = new MemoryOperations()) {
+  return new IntegrationProviderOperationService(storage, { assertCurrent: async () => undefined });
 }
 
 async function git(cwd: string, args: readonly string[], env?: Readonly<Record<string, string>>) {
@@ -154,6 +162,7 @@ describe('DefaultIntegrationV3ComposeExecutor push replay', () => {
           exactRef, expectedOldOid: input.expectedOldOid, newOid: input.headOid,
           fence: { workflowEpoch: input.workflowEpoch, laneEpoch: input.laneEpoch,
             candidateId: input.candidateId, candidateRevision: input.revision, executionId: 'compose-1' },
+          assertCurrent: input.assertCurrent,
         }),
         bindPullRequest: async (_id: string, _version: number, providerPullRequestId: string) => { bound = providerPullRequestId; },
       };
@@ -169,37 +178,46 @@ describe('DefaultIntegrationV3ComposeExecutor push replay', () => {
         },
         ensureIntegrationPullRequest: async () => ({ providerPullRequestId: '77' }),
       } as unknown as RepositoryProvider;
-      const composer = new DefaultIntegrationV3ComposeExecutor(host, provider);
+      const composer = new DefaultIntegrationV3ComposeExecutor(host, provider, operationService);
       const firstCandidate = candidate(baseOid);
-      try {
-        await composer.compose(current(firstCandidate, baseOid, source));
-        throw new Error('expected reload');
-      } catch (error: any) {
-        if (!(error instanceof IntegrationV3CandidateReloadRequiredError)) {
-          throw new Error(`unexpected compose error: ${error.message}; code=${error.code}; stderr=${error.command?.args?.join(' ')}`);
-        }
-      }
+      const seed = current(firstCandidate, baseOid, source);
+      const composed = await composer.compose(seed, leaseGuard);
+      expect(bound).toBeUndefined();
+      expect(runner.pushes).toBe(0);
+      expect(composed).toMatchObject({ baseOid, compositionComplete: true });
+      expect((await git(repositoryPath, ['show', '-s', '--format=%s', composed.headOid])).stdout.trim())
+        .toBe('Integration candidate candidate-1 revision 2');
+
+      const persisted = {
+        candidate: { ...firstCandidate, currentRevision: 2, version: 2 },
+        revision: {
+          ...seed.revision, ...composed, revision: 2, subjectKind: 'provider_subject' as const,
+          subjectDigest: 'persisted-subject-2', treeOid: composed.treeOid,
+        },
+      };
+      await expect(composer.publish(persisted, leaseGuard)).rejects.toBeInstanceOf(IntegrationV3CandidateReloadRequiredError);
       expect(bound).toBe('77');
-      expect(ensureIntegrationBranch.mock.calls[0]?.[1]).toMatchObject({ trustedExistingOids: ['f'.repeat(40)] });
+      expect(ensureIntegrationBranch.mock.calls[0]?.[1]).toMatchObject({
+        operationKey: expect.stringMatching(/^integration:create_branch:candidate-1:r2:/),
+        trustedExistingOids: ['f'.repeat(40)],
+      });
       const remoteAfterFirst = runner.current();
-      bound = undefined;
-      try {
-        await composer.compose(current(firstCandidate, baseOid, source));
-        throw new Error('expected reload');
-      } catch (error: any) {
-        if (!(error instanceof IntegrationV3CandidateReloadRequiredError)) {
-          throw new Error(`unexpected pre-bind replay error: ${error.message}; code=${error.code}; stderr=${error.command?.args?.join(' ')}`);
-        }
-      }
-      expect(bound).toBe('77');
-      const secondCandidate = { ...firstCandidate, providerPullRequestId: '77', version: 2 };
-      const result = await composer.compose(current(secondCandidate, baseOid, source));
-      expect(ensureIntegrationBranch.mock.calls[2]?.[1]).toMatchObject({ existingRequired: true,
-        trustedExistingOids: ['f'.repeat(40)] });
-      expect(result.headOid).toBe(remoteAfterFirst);
+      expect(remoteAfterFirst).toBe(composed.headOid);
       expect(runner.pushes).toBe(1);
-      expect(storage.records.size).toBe(1);
-      expect([...storage.records.values()][0]).toMatchObject({ state: 'succeeded', receipt: { newOid: remoteAfterFirst } });
+
+      bound = undefined;
+      const rebound = {
+        ...persisted,
+        candidate: { ...persisted.candidate, providerPullRequestId: '77', version: 3 },
+      };
+      await expect(composer.publish(rebound, leaseGuard)).resolves.toBeUndefined();
+      expect(bound).toBeUndefined();
+      expect(ensureIntegrationBranch).toHaveBeenCalledOnce();
+      expect(runner.pushes).toBe(1);
+      expect(storage.records.size).toBe(3);
+      expect([...storage.records.values()].find((record) => record.kind === 'push_ref')).toMatchObject({
+        state: 'succeeded', fence: { candidateRevision: 2 }, receipt: { newOid: remoteAfterFirst },
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -226,9 +244,9 @@ describe('DefaultIntegrationV3ComposeExecutor push replay', () => {
       withRepositoryBranchLock: async <T>(_lock: unknown, action: () => Promise<T>) => action(),
       validateServerOwnedRepository: async () => undefined, runGit,
       pushIntegrationHead: vi.fn(), bindPullRequest: vi.fn(),
-    }, provider);
+    }, provider, createOperationService());
 
-    await expect(composer.compose(current(candidate('a'.repeat(40)), 'a'.repeat(40), source, allSources)))
+    await expect(composer.compose(current(candidate('a'.repeat(40)), 'a'.repeat(40), source, allSources), leaseGuard))
       .rejects.toThrow('complete frozen source set');
     expect(runGit).not.toHaveBeenCalled();
     expect(provider.ensureIntegrationBranch).not.toHaveBeenCalled();
@@ -296,17 +314,26 @@ describe('DefaultIntegrationV3ComposeExecutor push replay', () => {
           return { oid, treeOid: await treeOf(oid) };
         },
       } as unknown as RepositoryProvider;
-      const composer = new DefaultIntegrationV3ComposeExecutor(host, provider);
+      const composer = new DefaultIntegrationV3ComposeExecutor(host, provider, createOperationService());
       const seed = current(candidate(sourceBase), sourceBase, sources[0], sources);
-      await expect(composer.compose(seed)).rejects.toBeInstanceOf(IntegrationV3CandidateReloadRequiredError);
-      expect(bound).toBe('77');
-      const boundCandidate = { ...seed.candidate, providerPullRequestId: '77', version: 2 };
-      const failure = await composer.compose({ ...seed, candidate: boundCandidate }).catch((error) => error);
+      const failure = await composer.compose(seed, leaseGuard).catch((error) => error);
       expect(failure).toBeInstanceOf(IntegrationV3ComposeConflictError);
+      expect(bound).toBeUndefined();
+      expect(remoteOid).toBe(mainOid);
       expect(failure.revision).toMatchObject({
-        baseOid: mainOid, headOid: remoteOid, compositionComplete: false,
+        baseOid: mainOid, compositionComplete: false,
         sources: [expect.objectContaining({ integrationSourceId: 'source-1' }), expect.objectContaining({ integrationSourceId: 'source-2' })],
       });
+      const persisted = {
+        candidate: { ...seed.candidate, currentRevision: 2, version: 2 },
+        revision: {
+          ...seed.revision, ...failure.revision, revision: 2, subjectKind: 'provider_subject' as const,
+          subjectDigest: 'persisted-conflict-2', treeOid: failure.revision.treeOid,
+        },
+      };
+      await expect(composer.publish(persisted, leaseGuard)).rejects.toBeInstanceOf(IntegrationV3CandidateReloadRequiredError);
+      expect(bound).toBe('77');
+      expect(remoteOid).toBe(failure.revision.headOid);
       expect((await git(repositoryPath, ['show', `${remoteOid}:success.txt`])).stdout).toBe('source-one\n');
       expect((await git(repositoryPath, ['show', `${remoteOid}:conflict.txt`])).stdout).toBe('main\n');
       expect((await git(repositoryPath, ['rev-parse', `${remoteOid}^`])).stdout.trim()).toBe(mainOid);
@@ -328,7 +355,7 @@ describe('Integration v3 work completion gate', () => {
       validateServerOwnedRepository: async () => undefined,
       runGit: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
       bindPullRequest: async () => undefined,
-    }, provider);
+    }, provider, createOperationService());
     const value = candidate('a'.repeat(40));
     value.providerPullRequestId = '77';
     const result = await composer.refreshAfterWork(current(value, 'a'.repeat(40), {
@@ -385,7 +412,7 @@ describe('Integration v3 ready work subject convergence', () => {
       validateServerOwnedRepository: async () => undefined,
       runGit: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
       bindPullRequest: async () => undefined,
-    }, provider);
+    }, provider, createOperationService());
     return { composer, loaded };
   }
 

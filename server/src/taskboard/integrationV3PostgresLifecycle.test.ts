@@ -43,6 +43,37 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(query.mock.calls[0]![0]).not.toContain('repository_id');
   });
 
+  it('atomically fences provider-operation CAS with the Candidate Worker lease when supplied', async () => {
+    const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [] as Record<string, unknown>[] }));
+    const storage = new PostgresIntegrationProviderOperationStorage({
+      pool: { query } as never, candidatesTable: 'candidates', providerOperationsTable: 'operations',
+    });
+    await storage.compareAndSet({
+      id: 'operation-1', expectedState: 'prepared', nextState: 'executing',
+      patch: { attemptCount: 1, updatedAt: '2026-08-24T00:00:00.000Z' },
+      mutationFence: { leaseId: 'lease-1', leaseEpoch: '9', releaseIdentity: 'release-2' },
+    });
+    const sql = String(query.mock.calls[0]![0]);
+    expect(sql).toContain('UPDATE operations o');
+    expect(sql).toContain('c.id=o.candidate_id');
+    expect(sql).toContain('c.worker_lease_id=$10 AND c.worker_lease_epoch=$11::bigint');
+    expect(sql).toContain("c.worker_release_identity=$12 AND c.worker_status='processing'");
+    expect(sql).toContain('c.worker_lease_expires_at>clock_timestamp()');
+    expect(query.mock.calls[0]![1]?.slice(9)).toEqual(['lease-1', '9', 'release-2']);
+  });
+
+  it('keeps provider-operation CAS available to review/merge callers without a Worker fence', async () => {
+    const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [] as Record<string, unknown>[] }));
+    const storage = new PostgresIntegrationProviderOperationStorage({
+      pool: { query } as never, candidatesTable: 'candidates', providerOperationsTable: 'operations',
+    });
+    await storage.compareAndSet({
+      id: 'operation-1', expectedState: 'prepared', nextState: 'executing',
+      patch: { attemptCount: 1, updatedAt: '2026-08-24T00:00:00.000Z' },
+    });
+    expect(query.mock.calls[0]![1]?.slice(9)).toEqual([null, null, null]);
+  });
+
   it('claims against the frozen candidate v3 policy while retaining the database global kill switch', async () => {
     const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [] }));
     await workerHost(query).claimCandidate(30_000);
@@ -56,7 +87,9 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(sql).toContain("o.state='succeeded'");
     expect(sql).toContain("o.receipt->>'providerRequestId'=o.operation_key");
     expect(sql).toContain("c.worker_checkpoint->>'releaseIdentity' IS DISTINCT FROM $3");
-    expect(sql).toContain("c.worker_status<>'failed' OR c.worker_checkpoint->>'releaseIdentity' IS DISTINCT FROM $3");
+    expect(sql).toContain("c.worker_status<>'failed'");
+    expect(sql).toContain("worker_lease_epoch=c.worker_lease_epoch+1");
+    expect(sql).toContain("worker_release_identity=$3");
     expect(sql).toContain("jsonb_build_object('releaseIdentity',$3::text)");
     expect(query.mock.calls[0]![1]).toEqual([expect.any(String), 30_000, 'release-2']);
     expect(sql).not.toContain("'blocked','needs_human'");
@@ -64,16 +97,35 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(sql).not.toContain('JOIN boards');
   });
 
-  it('preserves the claiming release identity in every worker checkpoint without a schema dependency', async () => {
-    const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [] }));
+  it('fences every worker checkpoint by lease id, epoch, release, and expiry', async () => {
+    const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [{ id: 'candidate-1' }] }));
     await workerHost(query).checkpointCandidate(
-      { candidateId: 'candidate-1', leaseId: 'lease-1' },
+      { candidateId: 'candidate-1', leaseId: 'lease-1', leaseEpoch: '7', releaseIdentity: 'release-2' },
       { state: 'merging', status: 'idle' },
     );
     expect(query.mock.calls[0]![0]).toContain("jsonb_build_object('releaseIdentity',$4::text)");
+    expect(query.mock.calls[0]![0]).toContain('worker_lease_expires_at>now() RETURNING id');
     expect(query.mock.calls[0]![1]).toEqual([
-      'candidate-1', 'lease-1', JSON.stringify({ state: 'merging', status: 'idle' }), 'release-2',
+      'candidate-1', 'lease-1', '7', 'release-2', JSON.stringify({ state: 'merging', status: 'idle' }),
     ]);
+  });
+
+  it('binds request renewal and assertion to the exact Candidate revision and epochs', async () => {
+    const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [{ id: 'request-1' }] }));
+    const host = workerHost(query);
+    const request = {
+      id: 'request-1', leaseId: 'lease-1', kind: 'workspace_sync' as const,
+      candidateId: 'candidate-1', candidateRevision: 2, payload: {},
+    };
+
+    await host.renewRequest(request, 30_000);
+    await host.assertRequestLease(request);
+
+    for (const [sql, values] of query.mock.calls) {
+      expect(String(sql)).toContain('c.current_revision=o.candidate_revision');
+      expect(String(sql)).toContain('o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch');
+      expect(values).toEqual(expect.arrayContaining(['request-1', 'lease-1', 'candidate-1', 2]));
+    }
   });
 
   it('resumes a fenced blocked candidate only after workspace sync succeeds', async () => {
@@ -86,10 +138,22 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
       payload: { reason: 'resume_reconcile', resumeState: 'needs_work', workflowEpoch: '3', laneEpoch: '4' },
     });
     expect(syncWorkspace).toHaveBeenCalledOnce();
-    expect(query).toHaveBeenCalledWith(expect.stringContaining("state IN ('blocked','needs_human')"), [
-      'candidate-1', 2, 'needs_work', '3', '4',
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("c.state IN ('blocked','needs_human')"), [
+      'candidate-1', 2, 'needs_work', 'request-1', 'lease-1',
     ]);
-    expect(String(query.mock.calls[0]![0])).toContain('UPDATE blocks b SET closed_at=COALESCE');
+    const resumeSql = String(query.mock.calls[2]![0]);
+    expect(resumeSql).toContain('WITH request_lease AS MATERIALIZED');
+    expect(resumeSql).toContain("o.id=$4 AND o.lease_id=$5 AND o.status='processing'");
+    expect(resumeSql).toContain('o.lease_expires_at>clock_timestamp()');
+    expect(resumeSql).toContain('o.candidate_id=c.id AND o.candidate_revision=c.current_revision');
+    expect(resumeSql).toContain("worker_status='idle'");
+    expect(resumeSql).toContain('worker_attempts=0');
+    expect(resumeSql).toContain('worker_available_at=now()');
+    expect(resumeSql).toContain('worker_lease_id=NULL');
+    expect(resumeSql).toContain('worker_lease_expires_at=NULL');
+    expect(resumeSql).toContain('worker_release_identity=NULL');
+    expect(resumeSql).toContain('worker_error=NULL');
+    expect(resumeSql).toContain('UPDATE blocks b SET closed_at=COALESCE');
   });
 
   it('rechecks the durable request fence and carries the exact candidate binding into pre-dispatch preparation', async () => {
@@ -109,7 +173,7 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     expect(sql).toContain("o.lease_id=$4 AND o.status='processing'");
     expect(sql).toContain('o.workflow_epoch=c.workflow_epoch AND o.lane_epoch=c.lane_epoch');
     expect(query.mock.calls[0]![1]).toEqual(['candidate-1', 2, 'request-1', 'lease-1']);
-    expect(String(query.mock.calls[1]![0])).toContain("lease_expires_at=now()+interval '5 minutes'");
+    expect(String(query.mock.calls[1]![0])).toContain("GREATEST(lease_expires_at,clock_timestamp()+interval '5 minutes')");
     expect(dispatchAgent).toHaveBeenCalledWith(expect.objectContaining({
       candidateId: 'candidate-1', candidateRevision: 2,
       taskId: 'task-1', expectedVersion: 7, purpose: 'work',
@@ -125,7 +189,8 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
           id: 'task-1', version: 7, tenant_id: 'tenant-1', owner_user_id: 'owner-1',
         }] : [] };
       }
-      if (text.includes("SET lease_expires_at=now()+interval '5 minutes'")) return { rows: [{ id: 'request-1' }] };
+      if (text.includes("clock_timestamp()+interval '5 minutes'")) return { rows: [{ id: 'request-1' }] };
+      if (text.includes('SELECT o.id FROM requests')) return { rows: [{ id: 'request-1' }] };
       return { rows: [] };
     });
     let started = false;
@@ -153,8 +218,8 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
     const operation = vi.fn(async () => 'done');
     await expect(host.withRepositoryBranchLock({ repositoryPath: '/srv/mirror', branch: 'integration/task-1' }, operation)).resolves.toBe('done');
     expect(query.mock.calls).toEqual([
-      ['SELECT pg_advisory_lock(hashtext($1),hashtext($2))', ['/srv/mirror', 'integration/task-1']],
-      ['SELECT pg_advisory_unlock(hashtext($1),hashtext($2))', ['/srv/mirror', 'integration/task-1']],
+      ['SELECT pg_advisory_lock(hashtext($1),hashtext($2))', ['integration-v3-repository', '/srv/mirror']],
+      ['SELECT pg_advisory_unlock(hashtext($1),hashtext($2))', ['integration-v3-repository', '/srv/mirror']],
     ]);
     expect(client.release).toHaveBeenCalledOnce();
   });
@@ -230,12 +295,20 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
   });
 
   it('persists bounded retry/backoff instead of converting transient failure to terminal immediately', async () => {
-    const query = vi.fn(async (_text: string, _values?: unknown[]) => ({ rows: [] }));
+    const query = vi.fn(async (_text: string, _values?: unknown[]) => ({ rows: [{ integration_task_id: 'task-1' }] }));
     const host = workerHost(query);
-    await host.releaseCandidate({ candidateId: 'candidate-1', leaseId: 'lease-1' }, 'temporary network failure', true);
-    expect(query.mock.calls[0]![0]).toContain('worker_attempts<9');
-    expect(query.mock.calls[0]![0]).toContain('worker_available_at');
-    expect(query.mock.calls[0]![1]).toEqual(['candidate-1', 'lease-1', 'temporary network failure', true]);
+    await host.releaseCandidate({ candidateId: 'candidate-1', leaseId: 'lease-1', leaseEpoch: '7', releaseIdentity: 'release-2' }, 'temporary network failure', true);
+    const releaseSql = String(query.mock.calls[0]![0]);
+    expect(releaseSql).toContain('c.worker_attempts<9');
+    expect(releaseSql).toContain('c.worker_attempts>=9');
+    expect(releaseSql).toContain('c.worker_attempts>=10');
+    expect(releaseSql).toContain('worker_attempts=CASE WHEN $5::text IS NULL THEN 0 ELSE c.worker_attempts+1 END');
+    expect(releaseSql).toContain('worker_available_at');
+    expect(releaseSql).toContain("THEN 'blocked'");
+    expect(releaseSql).toContain("SET status='blocked'");
+    expect(query.mock.calls[0]![1]).toEqual([
+      'candidate-1', 'lease-1', '7', 'release-2', 'temporary network failure', true, null, expect.any(String),
+    ]);
   });
 
   it('preserves a failed idempotent request and claims only the exact candidate subject fence', async () => {
@@ -332,16 +405,19 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
   });
 
   it('persists failed cleanup receipts and requeues them with bounded backoff', async () => {
-    const query = vi.fn(async (_text: string, _values?: unknown[]) => ({ rows: [] }));
+    const query = vi.fn(async (_text: string, _values?: unknown[]) => ({ rows: [{ id: 'cleanup-1' }] }));
     const host = workerHost(query);
     await host.completeRequest({
       id: 'cleanup-1', leaseId: 'lease-1', kind: 'cleanup', candidateId: 'candidate-1', candidateRevision: 1, payload: {},
     }, {
       version: 1, outcome: 'failed', completedAt: '2026-08-19T00:00:00.000Z',
-      actions: [{ action: 'remove_candidate_worktree', status: 'failed', error: 'dirty worktree' }],
+      actions: [{ action: 'remove_candidate_worktree', status: 'failed', error: 'dirty worktree ghs_serverinstallationtoken' }],
     });
     expect(query.mock.calls[0]![0]).toContain("attempts<5 THEN 'pending'");
     expect(query.mock.calls[0]![0]).toContain('available_at=CASE');
-    expect(query.mock.calls[0]![1]).toEqual(expect.arrayContaining(['cleanup-1', 'lease-1', true, 'remove_candidate_worktree: dirty worktree']));
+    expect(query.mock.calls[0]![1]).toEqual(expect.arrayContaining([
+      'cleanup-1', 'lease-1', true, 'remove_candidate_worktree: dirty worktree [REDACTED_GITHUB_TOKEN]',
+    ]));
+    expect(String(query.mock.calls[0]![1]?.[3])).not.toContain('ghs_serverinstallationtoken');
   });
 });

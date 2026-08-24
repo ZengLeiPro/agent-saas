@@ -2,12 +2,22 @@ import type { TaskBoardIntegrationCandidate, TaskBoardIntegrationCandidateRevisi
 import type { AppendCandidateRevisionInput } from './integrationCandidateStore.js';
 import type { IntegrationEngineV3, IntegrationEngineV3ExpectedSubject, IntegrationEngineV3Result } from './integrationEngineV3.js';
 import { IntegrationV3CandidateReloadRequiredError, IntegrationV3ComposeConflictError } from './integrationV3ComposeExecutor.js';
+import { redactDurableSecrets } from './durableSecretRedaction.js';
+import { RepositoryWorkspaceSyncError } from './repositoryWorkspaceSync.js';
 
 export type IntegrationV3RequestKind = 'work' | 'review' | 'cleanup' | 'workspace_sync';
 
 export interface IntegrationV3CandidateLease {
   candidateId: string;
   leaseId: string;
+  /** Monotonic fencing token. A new claim always advances it. */
+  leaseEpoch: string;
+  releaseIdentity: string;
+}
+
+export interface IntegrationV3LeaseGuard {
+  lease: IntegrationV3CandidateLease;
+  assertCurrent(): Promise<void>;
 }
 
 export interface IntegrationV3RequestLease {
@@ -17,6 +27,11 @@ export interface IntegrationV3RequestLease {
   candidateId: string;
   candidateRevision: number;
   payload: Record<string, unknown>;
+}
+
+export interface IntegrationV3RequestLeaseGuard {
+  request: IntegrationV3RequestLease;
+  assertCurrent(): Promise<void>;
 }
 
 export interface IntegrationV3WorkerCurrent {
@@ -49,13 +64,17 @@ export interface IntegrationV3RecoverableMergeOperation {
 
 export interface IntegrationV3WorkerHost {
   claimCandidate(leaseMs: number): Promise<IntegrationV3CandidateLease | undefined>;
+  renewCandidate(lease: IntegrationV3CandidateLease, leaseMs: number): Promise<void>;
+  assertCandidateLease(lease: IntegrationV3CandidateLease): Promise<void>;
   loadCurrent(candidateId: string): Promise<IntegrationV3WorkerCurrent>;
   checkpointCandidate(lease: IntegrationV3CandidateLease, checkpoint: Record<string, unknown>): Promise<void>;
-  releaseCandidate(lease: IntegrationV3CandidateLease, error?: string, retryable?: boolean): Promise<void>;
+  releaseCandidate(lease: IntegrationV3CandidateLease, error?: string, retryable?: boolean, evidence?: Record<string, unknown>): Promise<void>;
   claimRequest(leaseMs: number): Promise<IntegrationV3RequestLease | undefined>;
-  dispatchAgent(request: IntegrationV3RequestLease): Promise<void>;
-  syncWorkspace(request: IntegrationV3RequestLease): Promise<void>;
-  cleanup(request: IntegrationV3RequestLease): Promise<IntegrationV3CleanupReceipt | void>;
+  renewRequest(request: IntegrationV3RequestLease, leaseMs: number): Promise<void>;
+  assertRequestLease(request: IntegrationV3RequestLease): Promise<void>;
+  dispatchAgent(request: IntegrationV3RequestLease, guard: IntegrationV3RequestLeaseGuard): Promise<void>;
+  syncWorkspace(request: IntegrationV3RequestLease, guard: IntegrationV3RequestLeaseGuard): Promise<void>;
+  cleanup(request: IntegrationV3RequestLease, guard: IntegrationV3RequestLeaseGuard): Promise<IntegrationV3CleanupReceipt | void>;
   completeRequest(request: IntegrationV3RequestLease, receipt?: IntegrationV3CleanupReceipt): Promise<void>;
   releaseRequest(request: IntegrationV3RequestLease, error: string, retryable: boolean): Promise<void>;
   findRecoverableMergeOperation(candidateId: string, revision: number): Promise<IntegrationV3RecoverableMergeOperation | undefined>;
@@ -63,7 +82,10 @@ export interface IntegrationV3WorkerHost {
 }
 
 export interface IntegrationV3ComposeExecutor {
-  compose(current: Required<IntegrationV3WorkerCurrent>): Promise<Omit<AppendCandidateRevisionInput, 'expectedVersion' | 'expectedCurrentRevision' | 'nextState'>>;
+  /** Produces only the deterministic local subject. The Worker persists it before publication. */
+  compose(current: Required<IntegrationV3WorkerCurrent>, guard: IntegrationV3LeaseGuard): Promise<Omit<AppendCandidateRevisionInput, 'expectedVersion' | 'expectedCurrentRevision' | 'nextState'>>;
+  /** Publishes and reconciles an already persisted provider_subject revision. */
+  publish(current: Required<IntegrationV3WorkerCurrent>, guard: IntegrationV3LeaseGuard): Promise<void>;
   refreshAfterWork(current: Required<IntegrationV3WorkerCurrent>): Promise<Omit<AppendCandidateRevisionInput, 'expectedVersion' | 'expectedCurrentRevision' | 'nextState'> | undefined>;
 }
 
@@ -147,7 +169,7 @@ export class IntegrationV3Worker {
     if (this.stopped) return;
     this.timer = setTimeout(() => {
       this.running = this.runOnce().catch((error) => {
-        this.options.host.logger?.warn(`Integration v3 worker tick failed: ${message(error)}`);
+        this.options.host.logger?.warn(`Integration v3 worker tick failed: ${boundedMessage(error)}`);
       }).finally(() => {
         this.running = undefined;
         this.schedule(this.intervalMs);
@@ -157,73 +179,129 @@ export class IntegrationV3Worker {
   }
 
   private async processRequest(request: IntegrationV3RequestLease): Promise<void> {
+    let lost: unknown;
+    let renewing = false;
+    const renew = async () => {
+      if (renewing || lost) return;
+      renewing = true;
+      try { await this.options.host.renewRequest(request, this.leaseMs); }
+      catch (error) { lost = error; }
+      finally { renewing = false; }
+    };
+    const timer = setInterval(() => { void renew(); }, Math.max(10, Math.floor(this.leaseMs / 3)));
+    timer.unref?.();
+    const guard: IntegrationV3RequestLeaseGuard = {
+      request,
+      assertCurrent: async () => {
+        if (lost) throw lost;
+        await this.options.host.assertRequestLease(request);
+        if (lost) throw lost;
+      },
+    };
     try {
+      await guard.assertCurrent();
       let cleanupReceipt: IntegrationV3CleanupReceipt | undefined;
-      if (request.kind === 'work' || request.kind === 'review') await this.options.host.dispatchAgent(request);
-      else if (request.kind === 'workspace_sync') await this.options.host.syncWorkspace(request);
+      if (request.kind === 'work' || request.kind === 'review') await this.options.host.dispatchAgent(request, guard);
+      else if (request.kind === 'workspace_sync') await this.options.host.syncWorkspace(request, guard);
       else {
-        cleanupReceipt = await this.options.host.cleanup(request) || undefined;
+        cleanupReceipt = await this.options.host.cleanup(request, guard) || undefined;
         if (!cleanupReceipt) throw new Error('Cleanup host returned no action receipt');
         assertCleanupReceipt(cleanupReceipt);
       }
+      await guard.assertCurrent();
       await this.options.host.completeRequest(request, cleanupReceipt);
     } catch (error) {
-      await this.options.host.releaseRequest(request, message(error), isRetryable(error));
+      await this.options.host.releaseRequest(request, boundedMessage(error), isRetryable(error));
+    } finally {
+      clearInterval(timer);
     }
   }
 
   private async processCandidate(lease: IntegrationV3CandidateLease): Promise<void> {
+    let lost: unknown;
+    let renewing = false;
+    const renew = async () => {
+      if (renewing || lost) return;
+      renewing = true;
+      try { await this.options.host.renewCandidate(lease, this.leaseMs); }
+      catch (error) { lost = error; }
+      finally { renewing = false; }
+    };
+    const timer = setInterval(() => { void renew(); }, Math.max(10, Math.floor(this.leaseMs / 3)));
+    timer.unref?.();
+    const guard: IntegrationV3LeaseGuard = {
+      lease,
+      assertCurrent: async () => {
+        if (lost) throw lost;
+        await this.options.host.assertCandidateLease(lease);
+        if (lost) throw lost;
+      },
+    };
     try {
+      await guard.assertCurrent();
       const current = await this.options.host.loadCurrent(lease.candidateId);
       const engine = this.options.engine ?? await this.options.engineFor?.(current);
       if (!engine) throw new Error('Integration v3 engine is unavailable');
       const expected = expectedSubject(current);
       let result: IntegrationEngineV3Result | undefined;
+      const execute = async (command: Parameters<IntegrationEngineV3['execute']>[0]) => {
+        await guard.assertCurrent();
+        return engine.execute({
+          ...command,
+          workerBinding: { mutationFence: lease, assertCurrent: guard.assertCurrent },
+        });
+      };
       switch (current.candidate.state) {
         case 'preparing':
-          result = await engine.execute({ type: 'start_compose', candidateId: lease.candidateId, expected });
+          result = await execute({ type: 'start_compose', candidateId: lease.candidateId, expected });
           break;
         case 'composing': {
           const revision = requireRevision(current);
-          try {
-            const composed = await this.options.composer.compose({ candidate: current.candidate, revision });
-            result = await engine.execute({ type: 'compose_clean', candidateId: lease.candidateId, expected, revision: composed });
-          } catch (error) {
-            if (error instanceof IntegrationV3ComposeConflictError) {
-              result = await engine.execute({
-                type: 'compose_conflict', candidateId: lease.candidateId, expected,
-                evidence: error.message, revision: error.revision,
-              });
-            } else throw error;
+          if (revision.subjectKind === 'provider_subject') {
+            await this.options.composer.publish({ candidate: current.candidate, revision }, guard);
+            result = await execute({
+              type: 'publish_complete', candidateId: lease.candidateId, expected,
+              ...(current.candidate.lastError ? { evidence: current.candidate.lastError } : {}),
+            });
+          } else {
+            try {
+              const composed = await this.options.composer.compose({ candidate: current.candidate, revision }, guard);
+              result = await execute({ type: 'compose_persisted', candidateId: lease.candidateId, expected, revision: composed });
+            } catch (error) {
+              if (error instanceof IntegrationV3ComposeConflictError) {
+                result = await execute({
+                  type: 'compose_persisted', candidateId: lease.candidateId, expected,
+                  evidence: error.message, revision: error.revision,
+                });
+              } else throw error;
+            }
           }
           break;
         }
         case 'waiting_checks':
-          result = await engine.execute({ type: 'request_review', candidateId: lease.candidateId, expected });
+          result = await execute({ type: 'request_review', candidateId: lease.candidateId, expected });
           break;
         case 'needs_work':
-          result = await engine.execute({ type: 'request_work', candidateId: lease.candidateId, expected });
+          result = await execute({ type: 'request_work', candidateId: lease.candidateId, expected });
           break;
         case 'working': {
-          // Reconcile the durable request before inspecting work output. This repairs the
-          // non-atomic outbox/candidate transition and revives a bounded-failure row.
-          result = await engine.execute({ type: 'request_work', candidateId: lease.candidateId, expected });
+          result = await execute({ type: 'request_work', candidateId: lease.candidateId, expected });
           const revision = requireRevision(current);
           try {
             const refreshed = await this.options.composer.refreshAfterWork({ candidate: current.candidate, revision });
-            if (refreshed) result = await engine.execute({ type: 'subject_refreshed', candidateId: lease.candidateId, expected, revision: refreshed });
+            if (refreshed) result = await execute({ type: 'subject_refreshed', candidateId: lease.candidateId, expected, revision: refreshed });
           } catch (error) {
             if (error instanceof Error && error.name === 'IntegrationV3InvalidWorkResultError') {
-              result = await engine.execute({ type: 'needs_human', candidateId: lease.candidateId, expected, reason: error.message });
+              result = await execute({ type: 'needs_human', candidateId: lease.candidateId, expected, reason: error.message });
             } else throw error;
           }
           break;
         }
         case 'in_review':
-          result = await engine.execute({ type: 'request_review', candidateId: lease.candidateId, expected });
+          result = await execute({ type: 'request_review', candidateId: lease.candidateId, expected });
           break;
         case 'approved':
-          result = await engine.execute({ type: 'merge_approved', candidateId: lease.candidateId, expected, executionId: `integration-v3-worker:${lease.candidateId}:r${current.candidate.currentRevision}` });
+          result = await execute({ type: 'merge_approved', candidateId: lease.candidateId, expected, executionId: `integration-v3-worker:${lease.candidateId}:r${current.candidate.currentRevision}` });
           break;
         case 'merging': {
           const operation = await this.options.host.findRecoverableMergeOperation(
@@ -231,14 +309,14 @@ export class IntegrationV3Worker {
             current.candidate.currentRevision,
           );
           if (operation?.state === 'prepared') {
-            result = await engine.execute({
+            result = await execute({
               type: 'merge_approved',
               candidateId: lease.candidateId,
               expected,
               executionId: `integration-v3-worker:${lease.candidateId}:r${current.candidate.currentRevision}`,
             });
           } else if (operation) {
-            result = await engine.execute({
+            result = await execute({
               type: 'reconcile_merge',
               candidateId: lease.candidateId,
               expected,
@@ -253,7 +331,7 @@ export class IntegrationV3Worker {
             current.candidate.currentRevision,
           );
           if (operation?.state === 'succeeded') {
-            result = await engine.execute({
+            result = await execute({
               type: 'reconcile_merge',
               candidateId: lease.candidateId,
               expected,
@@ -264,11 +342,12 @@ export class IntegrationV3Worker {
         }
         case 'merged':
         case 'canceled':
-          result = await engine.execute({ type: 'cleanup', candidateId: lease.candidateId, expected, reason: `candidate_${current.candidate.state}` });
+          result = await execute({ type: 'cleanup', candidateId: lease.candidateId, expected, reason: `candidate_${current.candidate.state}` });
           break;
         default:
           break;
       }
+      await guard.assertCurrent();
       await this.options.host.checkpointCandidate(lease, {
         state: result?.candidate.state ?? current.candidate.state,
         revision: result?.candidate.currentRevision ?? current.candidate.currentRevision,
@@ -285,7 +364,9 @@ export class IntegrationV3Worker {
         await this.options.host.releaseCandidate(lease);
         return;
       }
-      await this.options.host.releaseCandidate(lease, message(error), isRetryable(error));
+      await this.options.host.releaseCandidate(lease, boundedMessage(error), isRetryable(error), failureEvidence(error, lease));
+    } finally {
+      clearInterval(timer);
     }
   }
 }
@@ -327,6 +408,12 @@ function isRetryable(error: unknown): boolean {
     'TASKBOARD_CANDIDATE_SOURCE_OWNERSHIP_MISMATCH',
     'TASKBOARD_CANDIDATE_SOURCE_REPOSITORY_MISMATCH',
     'TASKBOARD_CANDIDATE_TRANSITION_INVALID',
+    'WORKTREE_UNKNOWN',
+    'WORKTREE_DIRTY',
+    'WORKTREE_DIVERGED',
+    'MIRROR_UNSAFE',
+    'INVALID_PATH',
+    'INVALID_REF',
   ]);
   return !deterministic.has(code);
 }
@@ -344,3 +431,19 @@ function assertCleanupReceipt(receipt: IntegrationV3CleanupReceipt): void {
 }
 
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+function boundedMessage(error: unknown): string {
+  return redactDurableSecrets(message(error).replace(/[\r\n\t]+/g, ' ')).slice(0, 2_000);
+}
+function failureEvidence(error: unknown, lease: IntegrationV3CandidateLease): Record<string, unknown> {
+  const workspace = error instanceof RepositoryWorkspaceSyncError ? error.evidence : undefined;
+  return {
+    version: 1,
+    capturedAt: new Date().toISOString(),
+    lease: { id: lease.leaseId, epoch: lease.leaseEpoch, releaseIdentity: lease.releaseIdentity },
+    error: { name: error instanceof Error ? error.name : 'Error', code: errorCode(error), message: boundedMessage(error) },
+    ...(workspace ? { workspace } : {}),
+  };
+}
+function errorCode(error: unknown): string | undefined {
+  return error && typeof error === 'object' && 'code' in error ? String((error as { code?: unknown }).code) : undefined;
+}

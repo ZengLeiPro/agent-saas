@@ -336,6 +336,7 @@ describe('GithubRepositoryProvider', () => {
       merge_method: 'squash',
     });
     expect(fetchImpl.mock.calls[0]?.[1]?.headers).toMatchObject({ 'Idempotency-Key': 'operation-1' });
+    expect(fetchImpl.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('fails closed when an empty required-check response cannot be confirmed by rulesets', async () => {

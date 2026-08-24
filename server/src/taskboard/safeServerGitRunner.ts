@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import type { RepositoryWorkspaceGitCommand, RepositoryWorkspaceGitResult } from './repositoryWorkspaceSync.js';
 
 const DEFAULT_GIT_TIMEOUT_MS = 30_000;
+const PUSH_GIT_TIMEOUT_MS = 20_000;
 const FETCH_GIT_TIMEOUT_MS = 120_000;
 
 const SAFE_GIT_CONFIG = [
@@ -44,6 +45,7 @@ const ALLOWED_ORIGIN_FETCH = new Set([
 const CANONICAL_GITHUB_ORIGIN = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/;
 
 const FORBIDDEN_CALLER_GLOBAL_OPTIONS = [
+  '-C',
   '-c',
   '--config-env',
   '--exec-path',
@@ -55,9 +57,12 @@ const FORBIDDEN_CALLER_GLOBAL_OPTIONS = [
 /** The only child-process Git boundary for server-owned v3 repositories. */
 export function safeServerGitArgs(args: readonly string[]): string[] {
   for (const arg of args) {
-    const forbidden = FORBIDDEN_CALLER_GLOBAL_OPTIONS.find((option) => (
-      arg === option || (option.startsWith('--') && arg.startsWith(`${option}=`))
-    ));
+    const compactCwd = arg.startsWith('-C') && arg.length > 2;
+    const compactConfig = arg.startsWith('-c') && arg.length > 2;
+    const forbidden = compactCwd ? '-C' : compactConfig ? '-c'
+      : FORBIDDEN_CALLER_GLOBAL_OPTIONS.find((option) => (
+        arg === option || (option.startsWith('--') && arg.startsWith(`${option}=`))
+      ));
     if (forbidden) throw new Error(`unsafe Git global option is forbidden: ${forbidden}`);
   }
   return [...SAFE_GIT_CONFIG.flatMap((entry) => ['-c', entry]), ...args];
@@ -77,11 +82,14 @@ export function safeServerGitEnvironment(overrides: Readonly<Record<string, stri
     GIT_TERMINAL_PROMPT: '0',
     GIT_PROTOCOL_FROM_USER: '0',
     GIT_ALLOW_PROTOCOL: 'https',
+    GIT_OPTIONAL_LOCKS: '0',
   };
 }
 
 export function safeServerGitTimeoutMs(args: readonly string[]): number {
-  return args[0] === 'fetch' ? FETCH_GIT_TIMEOUT_MS : DEFAULT_GIT_TIMEOUT_MS;
+  if (args[0] === 'fetch') return FETCH_GIT_TIMEOUT_MS;
+  if (args[0] === 'push') return PUSH_GIT_TIMEOUT_MS;
+  return DEFAULT_GIT_TIMEOUT_MS;
 }
 
 export function runSafeServerGit(command: RepositoryWorkspaceGitCommand): Promise<RepositoryWorkspaceGitResult> {

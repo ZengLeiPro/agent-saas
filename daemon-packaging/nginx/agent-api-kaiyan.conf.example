@@ -8,10 +8,17 @@ map $http_origin $agent_api_cors_origin {
     "https://agent.kaiyan.net" $http_origin;
 }
 
+# Security: log only the normalized path, never $request/$request_uri/$args.
+# WebSocket JWT is carried in the auth first frame and must never enter proxy logs.
+log_format agent_api_safe '$remote_addr - $remote_user [$time_local] '
+                          '"$request_method $uri $server_protocol" $status $body_bytes_sent '
+                          '"$http_referer" "$http_user_agent"';
+
 server {
     listen 80;
     listen [::]:80;
     server_name api.agent.kaiyan.net;
+    access_log /var/log/nginx/agent-api-access.log agent_api_safe;
 
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
@@ -26,6 +33,7 @@ server {
     listen 443 ssl;
     listen [::]:443 ssl;
     server_name api.agent.kaiyan.net;
+    access_log /var/log/nginx/agent-api-access.log agent_api_safe;
 
     ssl_certificate /etc/letsencrypt/live/api.agent.kaiyan.net/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/api.agent.kaiyan.net/privkey.pem;

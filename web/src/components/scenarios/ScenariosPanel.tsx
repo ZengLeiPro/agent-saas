@@ -29,9 +29,9 @@ import {
 } from "./ScenarioCard";
 import {
   getReplayScript,
-  loadHookReplayScript,
   type ReplayScript,
 } from "./replay";
+import { hasLazyReplayScript } from "./replay/availability";
 import { TECHNICAL_INQUIRY_TRACE_SCENARIO_ID } from './replay/technicalInquiryTraceMeta';
 import { matchRoleIdByPosition, useScenarioLibrary } from "./useScenarioLibrary";
 import { RoleKitDetailPage } from "./RoleKitDetailPage";
@@ -99,7 +99,6 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
     props.onReplayOpenChange?.(replay !== null);
   }, [props.onReplayOpenChange, replay]);
   useEffect(() => () => props.onReplayOpenChange?.(false), [props.onReplayOpenChange]);
-  useEffect(() => () => { replayRequest.current += 1; }, []);
 
   const workflowLibrary = result.workflowLibrary ?? null;
   const roles = workflowLibrary?.roles ?? result.library?.roles ?? [];
@@ -126,12 +125,14 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
           });
         return;
       }
-      // 钩子剧本体积大，按需装载；失败回落到详情弹窗
-      const hookScript = loadHookReplayScript(scenario.id);
-      if (hookScript) {
-        void hookScript
+      // 七类 Hero 与钩子剧本体积大，按需装载；失败回落到详情弹窗
+      if (hasLazyReplayScript(scenario.id)) {
+        void import("./replay/lazyRegistry")
+          .then(({ loadLazyReplayScript }) => loadLazyReplayScript(scenario.id))
           .then((script) => {
-            if (replayRequest.current === requestId) setReplay(script);
+            if (replayRequest.current !== requestId) return;
+            if (script) setReplay(script);
+            else setDetail({ scenario });
           })
           .catch(() => {
             if (replayRequest.current === requestId) setDetail({ scenario });

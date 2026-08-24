@@ -29,7 +29,8 @@ describe('DeterministicContextProjector', () => {
     expect(projection.relations).toEqual([expect.objectContaining({
       fromEntityId: taskId,
       toEntityId: entityId('tenant-a', 'Project', 'project-1', 'source-a'),
-      relationType: 'TaskProject',
+      relationType: 'task_of', relationClass: 'explicit', authority: 'informational', reviewStatus: 'confirmed',
+      evidence: [expect.objectContaining({ evidenceId: 'evidence-a' })],
     })]);
   });
 
@@ -62,6 +63,27 @@ describe('DeterministicContextProjector', () => {
       entityType: undefined, nativeId: undefined,
       content: { text: 'hello' }, metadata: { source: 'chat', senderId: 'ding-user-9', name: 'Alice' },
     })).entities).toEqual([expect.objectContaining({ entityType: 'Person', stableKey: 'ding-user-9' })]);
+  });
+
+  it('keeps generic explicit relation contracts stable-ID-only across typed entity kinds', () => {
+    const projector = new DeterministicContextProjector();
+    expect(projector.project(record({
+      entityType: 'project', nativeId: 'project-1',
+      content: { title: 'Apollo', customerId: 'customer-1', ownerId: 'person-1' },
+    })).relations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ relationType: 'project_of', toEntityId: entityId('tenant-a', 'Customer', 'customer-1', 'source-a') }),
+      expect.objectContaining({ relationType: 'mentions', toEntityId: entityId('tenant-a', 'Person', 'person-1', 'source-a') }),
+    ]));
+    expect(projector.project(record({
+      entityType: 'meeting', nativeId: 'meeting-1',
+      content: { title: 'Weekly', projectId: 'project-1', organizerId: 'person-1', phone: '13800000000' },
+    })).relations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ relationType: 'meeting_of', toEntityId: entityId('tenant-a', 'Project', 'project-1', 'source-a') }),
+      expect.objectContaining({ relationType: 'mentions', toEntityId: entityId('tenant-a', 'Person', 'person-1', 'source-a') }),
+    ]));
+    expect(projector.project(record({
+      entityType: 'customer', nativeId: 'customer-1', content: { name: 'Alice', phone: '13800000000' },
+    })).relations).toEqual([]);
   });
 
   it('does not emit evidence-free items and treats revoked/deleted revisions as no positive projection', () => {

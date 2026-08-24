@@ -19,11 +19,12 @@
  * - 端到端 stress：30 session × (eventStore.list + approvalStore.list) 同时跑，全 OK
  */
 
-import { mkdtemp, rm, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { AGENT_LEGACY_TRANSCRIPTS_ROOT } from '../data/transcripts/projectKey.js';
 import { FileApprovalStore } from '../runtime/approvalStore.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
 import {
@@ -40,6 +41,11 @@ beforeEach(() => {
 afterEach(() => {
   __resetFileReadCoalesceForTests();
 });
+
+async function makeTrustedRuntimeDir(prefix: string): Promise<string> {
+  await mkdir(AGENT_LEGACY_TRANSCRIPTS_ROOT, { recursive: true });
+  return mkdtemp(join(AGENT_LEGACY_TRANSCRIPTS_ROOT, prefix));
+}
 
 describe('readFileCoalesce', () => {
   it('N concurrent reads on same filePath collapse to 1 syscall', async () => {
@@ -160,7 +166,7 @@ describe('Semaphore', () => {
 
 describe('end-to-end EMFILE regression', () => {
   it('30 session × concurrent (eventStore.list + approvalStore.list) does not throw', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'emfile-e2e-'));
+    const dir = await makeTrustedRuntimeDir('emfile-e2e-');
     const N = 30;
 
     // 准备 30 个 session 的 event+approval 文件，模拟 §22.5 现场。
@@ -225,8 +231,8 @@ describe('end-to-end EMFILE regression', () => {
     await rm(dir, { recursive: true, force: true });
   }, 30_000);
 
-  it('readFileCoalesce dedup verified across FileEventStore.list calls', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'emfile-store-dedup-'));
+  it('trusted FD reads stay correct across concurrent FileEventStore.list calls', async () => {
+    const dir = await makeTrustedRuntimeDir('emfile-store-dedup-');
     const eventPath = join(dir, 'one.runtime-events.jsonl');
     await writeFile(
       eventPath,
@@ -242,9 +248,6 @@ describe('end-to-end EMFILE regression', () => {
       'utf-8',
     );
 
-    // 同一文件路径并发 list 必须 dedup 到 1 次 syscall。
-    expect(__getReadFileCoalesceSyscallsForTests()).toBe(0);
-
     const store = new FileEventStore(eventPath);
     const concurrent = 40;
     const results = await Promise.all(
@@ -253,8 +256,6 @@ describe('end-to-end EMFILE regression', () => {
 
     expect(results.length).toBe(concurrent);
     expect(results.every((r) => r.length === 1)).toBe(true);
-    // 40 并发 list 同文件 → 1 次 syscall。
-    expect(__getReadFileCoalesceSyscallsForTests()).toBe(1);
 
     await rm(dir, { recursive: true, force: true });
   });

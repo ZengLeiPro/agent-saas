@@ -22,6 +22,14 @@ export interface RuntimeIsolationEvidence extends RuntimeIsolationRequirement {
   expiresAt: string;
 }
 
+export function deriveRuntimeIsolationRequirement(
+  parent: RuntimeIsolationRequirement | undefined,
+  child: { runId: string; sessionId: string; workspaceId: string },
+): RuntimeIsolationRequirement | undefined {
+  if (!parent) return undefined;
+  return { ...parent, ...child };
+}
+
 export function integrationRuntimeIsolationRequirement(
   metadata: Record<string, unknown> | undefined,
   input: { tenantId?: string; runId: string; sessionId: string; workspaceId: string },

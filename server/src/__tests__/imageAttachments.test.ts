@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -113,6 +113,14 @@ describe('图片附件 P1', () => {
     });
     expect(attachment.modelRelativePath).toMatch(/^uploads\/\.model-images\/[a-f0-9]{64}-v1\.png$/);
     expect(attachment.modelSizeBytes).toBeGreaterThan(0);
+  });
+
+  it('拒绝 model-images 祖先目录符号链接', async () => {
+    const fixture = await createUploadedPng();
+    const outside = await mkdtemp(join(tmpdir(), 'agent-saas-model-images-outside-'));
+    await symlink(outside, join(fixture.cwd, 'uploads', '.model-images'));
+
+    await expect(resolveFixtureAttachments(fixture)).rejects.toThrow();
   });
 
   it('拒绝只有 image 声明、没有有效图片魔数的伪造附件', async () => {

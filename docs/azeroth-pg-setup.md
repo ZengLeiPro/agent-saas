@@ -1,7 +1,7 @@
 # Azeroth RDS 上建独立 database 给 agent-saas 用
 
 > 路径：在 Azeroth RDS（同实例）建独立 database `agent_runtime` + 独立 role `agent_runtime_app`。
-> 不跟 Azeroth 业务 schema 混在一起，物理隔离写入、连接池、备份恢复。
+> 不跟 Azeroth 业务 schema 混在一起，提供 database/role/连接池的逻辑隔离；同实例仍共享存储、IOPS、WAL 与备份故障域。
 >
 > 关联：
 > - 路线规划 `assets/20260607/Managed-Agents架构-完整路线规划.md` Stage 2 EventStore 外部化
@@ -13,8 +13,8 @@
 曾磊 06-14 拍板：**用 Azeroth RDS 同实例新建一个 database**（不是 schema 隔离）。
 理由：
 
-- 比 schema 隔离物理隔离强：runtime 跑垮自己的 db 不影响 azeroth 主 db 的 query 计划缓存、WAL 段、autovacuum
-- 比单独跑一个 RDS 省运维：共用一个实例的备份/快照/监控/补丁
+- 比 schema 隔离强化 database/role/连接治理，但**不能**隔离实例级 IOPS、WAL、存储耗尽或故障
+- 比单独跑一个 RDS 少一套实例运维，但备份/PITR 是否覆盖新 database 必须单独取证，不能由拓扑推断
 - 比起公网另建 RDS 省钱
 
 风险已知（已在路线 §14 进度日志声明）：
@@ -152,19 +152,17 @@ PGPASSWORD="$APP_PW" /opt/homebrew/opt/libpq/bin/psql \
 
 ---
 
-## 6. retention 策略（后续，不在初始化阶段做）
+## 6. retention 与容量维护
 
-`runtime_events` 表会无限增长（每个 tool call / approval / model response 几行）。后续要加 retention：
+禁止按 timestamp 做“90 天全表 DELETE”，也禁止启用旧的 `runtime_events_prune_older_than(90)` 草案；它会绕过事件类别 TTL、legal watermark 和 billing watermark。
 
-- **手动**：每月跑一次 `DELETE FROM runtime_events WHERE timestamp < NOW() - INTERVAL '90 days';`
-- **自动**：等 PG 切默认稳定后启用 SQL 文件第 5 节里的 `runtime_events_prune_older_than(90)` 函数 + 系统 cron / pg_cron 调用
-
-保留多久看真实使用密度。第一个月先看曲线，再定 30/60/90 天。
+受支持入口是 `pnpm -C server maintenance:runtime-events -- ...`，默认严格只读 dry-run；显式删除参数、retention 矩阵、分批上限、容量余量、VACUUM/索引回收与恢复演练门禁统一见 [`runtime-eventstore-retention-runbook.md`](runtime-eventstore-retention-runbook.md)。
 
 ---
 
-## 7. 监控 / 容灾（β 阶段补）
+## 7. 监控 / 容灾事实门禁
 
-- **PG 慢/挂时应用熔断**：当前 `PgEventStore` 没有 fallback，PG 卡顿会拖死 agent loop。β 阶段加超时 + 断路器，超时切到本地 file backend 临时挡一阵（接受短期数据写两份）
-- **dump 备份**：Azeroth 主备份策略已经覆盖整个实例（包括 `agent_runtime` db），不需要单独配；但要确认快照 retention 跟 azeroth 一致
-- **连接数监控**：通过 RDS 控制台看 `agent_runtime_app` 的活跃连接数；触发 CONNECTION LIMIT 20 时报警（暂不接告警通道，曾磊明示）
+- **生产容量**：当前代码仓库无法证明 RDS 已分配容量、实时可用空间或增长率；上线 retention 前按 runbook 从 RDS 控制台/监控取证。
+- **备份/PITR**：当前代码仓库无法证明 `agent_runtime` 已被备份、PITR 窗口或最近恢复成功；取得策略截图、成功任务 ID 和隔离恢复演练记录前，删除门禁保持关闭。
+- **隔离边界**：独立 database/role 不等于独立实例；恢复演练必须恢复到隔离实例，禁止覆盖生产。
+- **连接数监控**：通过 RDS 控制台监控 `agent_runtime_app` 活跃连接数，并为接近 `CONNECTION LIMIT 20` 配置告警；是否已配置需以控制台证据为准。

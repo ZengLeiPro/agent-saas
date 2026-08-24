@@ -4,6 +4,7 @@ import { parse as parseJsonc } from 'jsonc-parser';
 import { z } from 'zod';
 import { buildWebToolsSchemas } from './webToolsSchema.js';
 import { integrationV3ControlPlaneConfigSchema } from './integrationV3ControlPlaneConfig.js';
+import { runtimeEventRetentionConfigSchema } from './runtimeEventRetentionConfig.js';
 import {
   DEFAULT_CODING_HAND_NETWORK_POLICY,
   NETWORK_POLICY_MODES,
@@ -391,10 +392,10 @@ const memoryConsolidationSchema = z.object({
   scanIntervalMs: z.number().int().min(1_000).max(60_000).optional(),
   scanBatchSize: z.number().int().min(10).max(5_000).optional(),
   workerConcurrency: z.number().int().min(1).max(16).optional(),
-  leaseSeconds: z.number().int().min(60).max(3_600).optional(),
-  timeoutSeconds: z.number().int().min(30).max(1_800).optional(),
+  leaseSeconds: z.number().int().min(60).max(7_200).optional(),
+  timeoutSeconds: z.number().int().min(30).max(3_600).optional(),
   maxRetries: z.number().int().min(0).max(20).optional(),
-  maxTurns: z.number().int().min(1).max(30).optional(),
+  maxTurns: z.number().int().min(1).max(1_000).optional(),
   includeInterrupted: z.boolean().optional(),
 });
 
@@ -1193,43 +1194,6 @@ const runtimeHandHealthScannerConfigSchema = z.object({
   intervalMs: z.number().int().min(1_000).max(10 * 60_000).optional(),
   /** 单次 /health 请求超时。默认 5_000；最小 500。 */
   healthTimeoutMs: z.number().int().min(500).max(60_000).optional(),
-});
-
-const runtimeEventRetentionConfigSchema = z.object({
-  /** 默认 false：PG runtime 下显式开启后清理 runtime_events 短期过程事件。 */
-  enabled: z.boolean().optional(),
-  /** 清理周期分钟数，默认 10。 */
-  sweepIntervalMinutes: z.number().int().min(1).max(24 * 60).optional(),
-  /** 单批原子 DELETE 上限，默认 10000。 */
-  batchLimit: z.number().int().min(1).max(100_000).optional(),
-  /** 工具终态且 tool_result 已落库后，原始 delta 的断线重放宽限分钟数，默认 10。 */
-  terminalDeltaGraceMinutes: z.number().int().min(1).max(24 * 60).optional(),
-  /** 成功工具 stream summary 保留小时数，默认 24。 */
-  successfulSummaryRetentionHours: z.number().int().min(1).max(365 * 24).optional(),
-  /** 失败/取消工具 stream summary 保留天数，默认 7。 */
-  failedSummaryRetentionDays: z.number().int().min(1).max(3650).optional(),
-  /** model_request_started/checkpoint 保留天数，默认 7。 */
-  modelDiagnosticRetentionDays: z.number().int().min(1).max(3650).optional(),
-  /** model_request_finished 保留天数，默认 30，且不得短于普通模型诊断。 */
-  modelRequestFinishedRetentionDays: z.number().int().min(1).max(3650).optional(),
-  /** hand_provisioning_log/hand_health_changed/hand_failure 保留天数，默认 30。 */
-  handEventRetentionDays: z.number().int().min(1).max(3650).optional(),
-  /** 清理前推进 billing projection 的单批扫描上限，默认 10000。 */
-  billingCatchupBatchLimit: z.number().int().min(1).max(100_000).optional(),
-  /** 清理前最多推进 billing projection 批数，默认 100。 */
-  billingCatchupMaxBatches: z.number().int().min(1).max(10_000).optional(),
-}).superRefine((value, ctx) => {
-  if (
-    value.modelDiagnosticRetentionDays !== undefined
-    && value.modelRequestFinishedRetentionDays !== undefined
-    && value.modelRequestFinishedRetentionDays < value.modelDiagnosticRetentionDays
-  ) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['modelRequestFinishedRetentionDays'],
-      message: 'modelRequestFinishedRetentionDays 不得短于 modelDiagnosticRetentionDays',
-    });
-  }
 });
 
 /**

@@ -92,6 +92,42 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
     expect((await store.get('leased-hand'))?.status).toBe('ready');
   });
 
+  it('provision recovery claim/complete 只允许当前 token 原子更新', async () => {
+    await seed('recover-race', { status: 'unhealthy' });
+    await pool.query(
+      `UPDATE ${prefix}_hands SET metadata = $2::jsonb WHERE hand_id = $1`,
+      ['recover-race', JSON.stringify({ provisionFailure: 'old failure' })],
+    );
+
+    expect(await store.claimProvisionRecovery('recover-race', 'token-1')).not.toBeNull();
+    expect(await store.claimProvisionRecovery('recover-race', 'token-2')).toBeNull();
+    expect(await store.completeProvisionRecovery('recover-race', 'wrong-token', 'ready')).toBeNull();
+    expect(await store.completeProvisionRecovery('recover-race', 'token-1', 'ready', {
+      provisionFailure: null,
+      provision: { lastStatus: 'ok' },
+    })).not.toBeNull();
+
+    const recovered = await store.get('recover-race');
+    expect(recovered?.status).toBe('ready');
+    expect(recovered?.metadata.provisionRecoveryToken).toBeNull();
+    expect(recovered?.metadata.provisionFailure).toBeNull();
+
+    await seed('recover-destroyed', { status: 'destroyed' });
+    await pool.query(
+      `UPDATE ${prefix}_hands SET metadata = $2::jsonb WHERE hand_id = $1`,
+      ['recover-destroyed', JSON.stringify({ provisionFailure: 'stale failure' })],
+    );
+    expect(await store.claimProvisionRecovery('recover-destroyed', 'token-destroyed')).toBeNull();
+
+    await seed('normal-generation', { status: 'ready' });
+    await pool.query(
+      `UPDATE ${prefix}_hands SET status = 'provisioning', metadata = $2::jsonb WHERE hand_id = $1`,
+      ['normal-generation', JSON.stringify({ provisionGeneration: 'generation-2' })],
+    );
+    expect(await store.completeProvisionAttempt('normal-generation', 'generation-1', 'unhealthy')).toBeNull();
+    expect(await store.completeProvisionAttempt('normal-generation', 'generation-2', 'ready')).not.toBeNull();
+  });
+
   it('register upsert 可复活 destroyed 记录（lease 治理无永久误杀）', async () => {
     await seed('revive-me', { status: 'destroyed', leaseExpiresAt: new Date(Date.now() - 1000).toISOString() });
 

@@ -67,15 +67,15 @@ export interface TickStats {
   errors: number;
 }
 
-const SCHEMA_TOOL_AUDIT = `
-CREATE TABLE IF NOT EXISTS tool_audit (
-  id            VARCHAR PRIMARY KEY,
+function createToolAuditTableSql(tableName: string, ifNotExists = false): string {
+  return `
+CREATE TABLE ${ifNotExists ? 'IF NOT EXISTS ' : ''}${tableName} (
+  id            VARCHAR   NOT NULL,
   timestamp     TIMESTAMP NOT NULL,
   session_id    VARCHAR   NOT NULL,
   run_id        VARCHAR   NOT NULL,
-  -- PR 10：跨组织隔离投影列。新建表默认含本列；旧表升级走 ALTER TABLE
-  -- IF NOT EXISTS（DuckDB 0.10+ 支持）。投影时若 event.tenantId 缺失（旧 jsonl）回填 legacy tenant。
   tenant_id     VARCHAR   NOT NULL DEFAULT '${LEGACY_TENANT_ID}',
+  source_file_path VARCHAR NOT NULL,
   tool_call_id  VARCHAR   NOT NULL,
   tool_id       VARCHAR   NOT NULL,
   tool_name     VARCHAR   NOT NULL,
@@ -88,25 +88,42 @@ CREATE TABLE IF NOT EXISTS tool_audit (
   status                     VARCHAR NOT NULL,
   duration_ms                BIGINT  NOT NULL,
   execution_invocations_json VARCHAR,
-  error                      VARCHAR
+  error                      VARCHAR,
+  PRIMARY KEY (tenant_id, id)
 );
 `;
+}
 
-/** PR 10：旧 DuckDB 文件升级路径——idempotent ALTER TABLE。DuckDB 0.10+ 支持 IF NOT EXISTS。 */
+const SCHEMA_TOOL_AUDIT = createToolAuditTableSql('tool_audit', true);
+const TOOL_AUDIT_MIGRATION_TABLE = 'tool_audit__tenant_pk_migration';
+
+/** 旧 DuckDB 文件升级路径。任何 DDL/拷贝失败都必须阻断初始化，不能带旧主键继续服务。 */
 const ALTER_TOOL_AUDIT_TENANT = `
-ALTER TABLE tool_audit ADD COLUMN IF NOT EXISTS tenant_id VARCHAR NOT NULL DEFAULT '${LEGACY_TENANT_ID}';
+ALTER TABLE tool_audit ADD COLUMN tenant_id VARCHAR DEFAULT '${LEGACY_TENANT_ID}';
 `;
 
 const ALTER_TOOL_AUDIT_SKILL = `
-ALTER TABLE tool_audit ADD COLUMN IF NOT EXISTS skill_name VARCHAR;
+ALTER TABLE tool_audit ADD COLUMN skill_name VARCHAR;
 `;
 
 const SCHEMA_WATERMARK = `
 CREATE TABLE IF NOT EXISTS projection_watermark (
-  file_path   VARCHAR PRIMARY KEY,
-  byte_offset BIGINT  NOT NULL,
-  updated_at  TIMESTAMP NOT NULL
+  file_path       VARCHAR PRIMARY KEY,
+  byte_offset     BIGINT  NOT NULL,
+  updated_at      TIMESTAMP NOT NULL,
+  tenant_ids_json VARCHAR NOT NULL DEFAULT '[]'
 );
+`;
+
+const ALTER_WATERMARK_TENANTS = `
+ALTER TABLE projection_watermark ADD COLUMN tenant_ids_json VARCHAR DEFAULT '[]';
+`;
+
+const TOOL_AUDIT_COLUMNS = `
+  id, timestamp, session_id, run_id, tenant_id, source_file_path,
+  tool_call_id, tool_id, tool_name, skill_name, risk, approval_id,
+  authorization_source, authorization_json, execution_target, status,
+  duration_ms, execution_invocations_json, error
 `;
 
 const SCHEMA_INDEXES = [
@@ -115,6 +132,7 @@ const SCHEMA_INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_tool_audit_ts          ON tool_audit(timestamp);`,
   `CREATE INDEX IF NOT EXISTS idx_tool_audit_tool        ON tool_audit(tool_name, timestamp);`,
   `CREATE INDEX IF NOT EXISTS idx_tool_audit_skill       ON tool_audit(skill_name, timestamp);`,
+  `CREATE INDEX IF NOT EXISTS idx_tool_audit_source      ON tool_audit(source_file_path);`,
   // PR 10：(tenant, *) 复合索引为 admin 跨 session / 跨 runId 加 tenantId where 提速
   `CREATE INDEX IF NOT EXISTS idx_tool_audit_tenant_run  ON tool_audit(tenant_id, run_id);`,
   `CREATE INDEX IF NOT EXISTS idx_tool_audit_tenant_sess ON tool_audit(tenant_id, session_id);`,
@@ -127,29 +145,123 @@ export class AuditProjection {
     private readonly logger: AuditProjectionLogger,
   ) {}
 
-  /** 创建 schema + 索引；调用多次安全。 */
+  /** 创建 schema + 索引；调用多次安全。旧的 id-only 主键以事务方式 fail-closed 迁移。 */
   async initialize(): Promise<void> {
+    const toolAuditHadTenant = await this.tableHasColumn('tool_audit', 'tenant_id');
+    const toolAuditHadSkill = await this.tableHasColumn('tool_audit', 'skill_name');
+    const watermarkHadTenantBoundary = await this.tableHasColumn('projection_watermark', 'tenant_ids_json');
     await this.db.run(SCHEMA_TOOL_AUDIT);
     await this.db.run(SCHEMA_WATERMARK);
-    // PR 10：升级路径——旧 DuckDB 文件没有 tenant_id 列。CREATE TABLE IF NOT EXISTS
-    // 只对新建生效；旧表需要 ALTER TABLE ADD COLUMN IF NOT EXISTS 兜底。
-    try {
+    if (!toolAuditHadTenant && !await this.tableHasColumn('tool_audit', 'tenant_id')) {
+      // DuckDB 不支持 ADD COLUMN ... NOT NULL；事务重建会在新表恢复 NOT NULL。
       await this.db.run(ALTER_TOOL_AUDIT_TENANT);
-    } catch (err) {
-      // ALTER 失败（不太可能）记录但不阻塞——SCHEMA_TOOL_AUDIT 已保证新建表有该列
-      this.logger.warn?.('[audit projection] ALTER tool_audit ADD tenant_id failed', {
-        error: err instanceof Error ? err.message : String(err),
-      });
     }
-    try {
+    if (!toolAuditHadSkill && !await this.tableHasColumn('tool_audit', 'skill_name')) {
       await this.db.run(ALTER_TOOL_AUDIT_SKILL);
-    } catch (err) {
-      this.logger.warn?.('[audit projection] ALTER tool_audit ADD skill_name failed', {
-        error: err instanceof Error ? err.message : String(err),
-      });
     }
+    if (!watermarkHadTenantBoundary) {
+      if (!await this.tableHasColumn('projection_watermark', 'tenant_ids_json')) {
+        await this.db.run(ALTER_WATERMARK_TENANTS);
+      }
+      // 旧 watermark 无租户来源信息，不能安全用于 reset；由事实源全量重建。
+      await this.db.run('DELETE FROM projection_watermark;');
+    }
+
+    await this.ensureSourceFileProvenance();
+    await this.ensureTenantScopedPrimaryKey();
     for (const ddl of SCHEMA_INDEXES) {
       await this.db.run(ddl);
+    }
+  }
+
+  private async tableHasColumn(tableName: string, columnName: string): Promise<boolean> {
+    const result = await this.db.runAndReadAll(
+      `SELECT COUNT(*) AS c
+         FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = $1
+          AND column_name = $2;`,
+      [tableName, columnName],
+    );
+    const value = result.getRowObjects()[0]?.c;
+    return Number(value ?? 0) > 0;
+  }
+
+  /**
+   * source_file_path 是 reset 的唯一归属边界。旧表没有该列时，历史行无法安全
+   * 回填来源，必须在同一事务内清空投影与 watermark，随后由 JSONL 全量重建。
+   * 迁移失败直接拒绝 initialize（fail-closed）；成功后重复调用不再改动数据。
+   */
+  private async ensureSourceFileProvenance(): Promise<void> {
+    const info = (await this.db.runAndReadAll(`PRAGMA table_info('tool_audit');`)).getRowObjects();
+    const sourceColumn = info.find((row) => String(row.name) === 'source_file_path');
+    const sourceIsNotNull = sourceColumn?.notnull === true
+      || sourceColumn?.notnull === 1
+      || sourceColumn?.notnull === 1n;
+
+    let preserveAttributedRows = sourceColumn !== undefined;
+    if (sourceColumn) {
+      const result = await this.db.runAndReadAll(
+        `SELECT COUNT(*) AS c FROM tool_audit
+          WHERE source_file_path IS NULL OR source_file_path = '';`,
+      );
+      preserveAttributedRows = Number(result.getRowObjects()[0]?.c ?? 0) === 0;
+    }
+    if (sourceColumn && sourceIsNotNull && preserveAttributedRows) return;
+
+    await this.db.run('BEGIN TRANSACTION;');
+    try {
+      await this.db.run(`DROP TABLE IF EXISTS ${TOOL_AUDIT_MIGRATION_TABLE};`);
+      await this.db.run(createToolAuditTableSql(TOOL_AUDIT_MIGRATION_TABLE));
+      if (preserveAttributedRows) {
+        await this.db.run(
+          `INSERT INTO ${TOOL_AUDIT_MIGRATION_TABLE} (${TOOL_AUDIT_COLUMNS})
+           SELECT ${TOOL_AUDIT_COLUMNS} FROM tool_audit;`,
+        );
+      }
+      // 无 provenance 的行不可归属；任何 provenance schema 升级都清 watermark，
+      // 确保后续 tick 从 JSONL 全量校准，而不是信任旧 offset。
+      await this.db.run('DELETE FROM projection_watermark;');
+      await this.db.run('DROP TABLE tool_audit;');
+      await this.db.run(`ALTER TABLE ${TOOL_AUDIT_MIGRATION_TABLE} RENAME TO tool_audit;`);
+      await this.db.run('COMMIT;');
+    } catch (err) {
+      await this.db.run('ROLLBACK;').catch(() => undefined);
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Failed to migrate tool_audit source provenance: ${message}`);
+    }
+  }
+
+  private async ensureTenantScopedPrimaryKey(): Promise<void> {
+    const info = (await this.db.runAndReadAll(`PRAGMA table_info('tool_audit');`)).getRowObjects();
+    const primaryKeyColumns = info
+      .filter((row) => row.pk === true || row.pk === 1 || row.pk === 1n)
+      .map((row) => String(row.name))
+      .sort();
+
+    if (primaryKeyColumns.length === 2
+      && primaryKeyColumns[0] === 'id'
+      && primaryKeyColumns[1] === 'tenant_id') {
+      return;
+    }
+    if (primaryKeyColumns.length !== 1 || primaryKeyColumns[0] !== 'id') {
+      throw new Error(`Unsupported tool_audit primary key: ${primaryKeyColumns.join(',') || '(none)'}`);
+    }
+
+    await this.db.run('BEGIN TRANSACTION;');
+    try {
+      await this.db.run(createToolAuditTableSql(TOOL_AUDIT_MIGRATION_TABLE));
+      await this.db.run(
+        `INSERT INTO ${TOOL_AUDIT_MIGRATION_TABLE} (${TOOL_AUDIT_COLUMNS})
+         SELECT ${TOOL_AUDIT_COLUMNS} FROM tool_audit;`,
+      );
+      await this.db.run('DROP TABLE tool_audit;');
+      await this.db.run(`ALTER TABLE ${TOOL_AUDIT_MIGRATION_TABLE} RENAME TO tool_audit;`);
+      await this.db.run('COMMIT;');
+    } catch (err) {
+      await this.db.run('ROLLBACK;').catch(() => undefined);
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Failed to migrate tool_audit to tenant-scoped primary key: ${message}`);
     }
   }
 
@@ -196,8 +308,8 @@ export class AuditProjection {
    * 单文件增量投影。
    *
    * - 文件不存在 → `bytesRead=0`，不报错（其它 session 还没产生 runtime-events 的常态）。
-   * - `file.size < watermark.byte_offset` → 视为文件被截断/重置，clear 该文件对应
-   *   session 的历史 audit + reset watermark + 从 0 重读。
+   * - `file.size < watermark.byte_offset` → 视为文件被截断/重置，仅 clear 该源文件
+   *   的历史 audit + reset watermark + 从 0 重读。
    */
   async tickFile(filePath: string): Promise<TickFileResult> {
     let size: number;
@@ -212,9 +324,10 @@ export class AuditProjection {
     }
 
     const watermark = await this.readWatermark(filePath);
-    let startOffset = watermark;
+    let startOffset = watermark.byteOffset;
     let reset = false;
-    if (size < watermark) {
+    if (size < watermark.byteOffset) {
+      // provenance 是唯一删除边界；同 tenant/session 的其它源文件不受影响。
       await this.clearByFile(filePath);
       startOffset = 0;
       reset = true;
@@ -229,10 +342,12 @@ export class AuditProjection {
 
     let inserted = 0;
     if (events.length > 0) {
-      inserted = await this.insertEvents(events);
+      inserted = await this.insertEvents(events, filePath);
     }
 
-    await this.writeWatermark(filePath, size);
+    const tenantIds = new Set(reset ? [] : watermark.tenantIds);
+    for (const event of events) tenantIds.add(event.tenantId ?? LEGACY_TENANT_ID);
+    await this.writeWatermark(filePath, size, [...tenantIds].sort());
     return { bytesRead, eventsInserted: inserted, reset };
   }
 
@@ -262,27 +377,38 @@ export class AuditProjection {
     }
   }
 
-  private async readWatermark(filePath: string): Promise<number> {
+  private async readWatermark(filePath: string): Promise<{ byteOffset: number; tenantIds: string[] }> {
     const result = await this.db.runAndReadAll(
-      `SELECT byte_offset FROM projection_watermark WHERE file_path = $1;`,
+      `SELECT byte_offset, tenant_ids_json FROM projection_watermark WHERE file_path = $1;`,
       [filePath],
     );
-    const rows = result.getRowObjects();
-    if (rows.length === 0) return 0;
-    const v = rows[0]?.byte_offset;
-    if (typeof v === 'bigint') return Number(v);
-    if (typeof v === 'number') return v;
-    return 0;
+    const row = result.getRowObjects()[0];
+    if (!row) return { byteOffset: 0, tenantIds: [] };
+    const rawOffset = row.byte_offset;
+    const byteOffset = typeof rawOffset === 'bigint' || typeof rawOffset === 'number'
+      ? Number(rawOffset)
+      : 0;
+    let tenantIds: string[] = [];
+    try {
+      const parsed = JSON.parse(String(row.tenant_ids_json ?? '[]')) as unknown;
+      if (Array.isArray(parsed) && parsed.every((value) => typeof value === 'string' && value.length > 0)) {
+        tenantIds = [...new Set(parsed)];
+      }
+    } catch {
+      throw new Error(`Invalid tenant boundary watermark for ${filePath}`);
+    }
+    return { byteOffset, tenantIds };
   }
 
-  private async writeWatermark(filePath: string, byteOffset: number): Promise<void> {
+  private async writeWatermark(filePath: string, byteOffset: number, tenantIds: string[]): Promise<void> {
     await this.db.run(
-      `INSERT INTO projection_watermark (file_path, byte_offset, updated_at)
-       VALUES ($1, $2, CAST($3 AS TIMESTAMP))
+      `INSERT INTO projection_watermark (file_path, byte_offset, updated_at, tenant_ids_json)
+       VALUES ($1, $2, CAST($3 AS TIMESTAMP), $4)
        ON CONFLICT (file_path) DO UPDATE SET
-         byte_offset = excluded.byte_offset,
-         updated_at  = excluded.updated_at;`,
-      [filePath, BigInt(byteOffset), new Date().toISOString()],
+         byte_offset     = excluded.byte_offset,
+         updated_at      = excluded.updated_at,
+         tenant_ids_json = excluded.tenant_ids_json;`,
+      [filePath, BigInt(byteOffset), new Date().toISOString(), JSON.stringify(tenantIds)],
     );
   }
 
@@ -316,22 +442,22 @@ export class AuditProjection {
     }
   }
 
-  private async insertEvents(events: ToolAuditEvent[]): Promise<number> {
+  private async insertEvents(events: ToolAuditEvent[], sourceFilePath: string): Promise<number> {
     let inserted = 0;
     for (const e of events) {
       try {
         await this.db.run(
           `INSERT INTO tool_audit (
-             id, timestamp, session_id, run_id, tenant_id, tool_call_id, tool_id, tool_name, skill_name,
-             risk, approval_id, authorization_source, authorization_json,
-             execution_target, status, duration_ms,
-             execution_invocations_json, error
+             id, timestamp, session_id, run_id, tenant_id, source_file_path,
+             tool_call_id, tool_id, tool_name, skill_name, risk, approval_id,
+             authorization_source, authorization_json, execution_target, status,
+             duration_ms, execution_invocations_json, error
            ) VALUES (
-             $1, CAST($2 AS TIMESTAMP), $3, $4, $5, $6, $7, $8,
-             $9, $10, $11, $12, $13,
-             $14, $15, $16,
-             $17, $18
-           ) ON CONFLICT (id) DO NOTHING;`,
+             $1, CAST($2 AS TIMESTAMP), $3, $4, $5, $6,
+             $7, $8, $9, $10, $11, $12,
+             $13, $14, $15, $16,
+             $17, $18, $19
+           ) ON CONFLICT (tenant_id, id) DO NOTHING;`,
           [
             e.id,
             e.timestamp,
@@ -339,6 +465,7 @@ export class AuditProjection {
             e.runId,
             // PR 10：旧 jsonl 行没有 tenantId 字段 → 兜底 legacy tenant（写入路径已是必填）
             e.tenantId ?? LEGACY_TENANT_ID,
+            sourceFilePath,
             e.toolCallId,
             e.toolId,
             e.toolName,
@@ -365,19 +492,12 @@ export class AuditProjection {
     return inserted;
   }
 
-  /**
-   * 文件回退时清掉该文件对应 session 的 audit 历史。
-   *
-   * 当前 schema 没记 `file_path` 维度，所以按 "文件名 = `<sessionId>.runtime-events.jsonl`"
-   * 反推 sessionId 做条件 delete。FileEventStore 现有约定保证 1 file ↔ 1 session。
-   */
+  /** 文件回退时仅清理该 JSONL 源文件产生的投影。 */
   private async clearByFile(filePath: string): Promise<void> {
-    const base = filePath.split('/').pop() ?? '';
-    const sid = base.endsWith(RUNTIME_EVENTS_SUFFIX)
-      ? base.slice(0, -RUNTIME_EVENTS_SUFFIX.length)
-      : '';
-    if (!sid) return;
-    await this.db.run('DELETE FROM tool_audit WHERE session_id = $1;', [sid]);
+    await this.db.run(
+      'DELETE FROM tool_audit WHERE source_file_path = $1;',
+      [filePath],
+    );
   }
 }
 

@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
-import { basename, extname, join, posix } from 'node:path';
+import { basename, extname, posix } from 'node:path';
 import { z } from 'zod';
 
 import type { BillingService } from '../data/billing/service.js';
@@ -8,7 +7,13 @@ import { buildToolPresentation } from './toolPresentationBuilder.js';
 import { CREDIT_MICRO, YUAN_MICRO } from '../data/billing/types.js';
 import { getImageGenEnginePricing } from '../data/usage/imageGenPricing.js';
 import type { EventAppendContext, PlatformEventInput } from '../runtime/types.js';
-import { isPathWithinDirectory, resolveAuthorizedPath } from '../security/extraDirs.js';
+import { resolveAuthorizedPath } from '../security/extraDirs.js';
+import {
+  UnsafeFilePathError,
+  openTrustedFile,
+  relativeToTrustedRoot,
+  writeTrustedFile,
+} from '../security/trustedFile.js';
 import { loadToolDescription } from './tools/descriptionLoader.js';
 import type {
   AuthorizedToolCall,
@@ -737,7 +742,7 @@ export class ImageGenToolProvider implements ToolProvider {
     return { content: JSON.stringify(payload, null, 2), ...(presentation ? { presentation } : {}) };
   }
 
-  /** refImages 只收 workspace 相对路径；resolveAuthorizedPath + realpath 双重校验，拒 symlink 逃逸。 */
+  /** refImages 只收 workspace 内路径；校验与读取必须绑定同一个受信文件句柄。 */
   private async loadRefImages(
     paths: readonly string[],
     context: ToolCallContext,
@@ -751,24 +756,36 @@ export class ImageGenToolProvider implements ToolProvider {
       if (!resolved) {
         throw new Error(`参考图路径越界：${rel}（只允许当前工作区内的相对路径，如 uploads/xxx.jpg）`);
       }
-      let realPath: string;
-      let realRoot: string;
+      const relativePath = relativeToTrustedRoot(workspaceRoot, resolved);
+      let source: Awaited<ReturnType<typeof openTrustedFile>>;
       try {
-        realPath = await realpath(resolved);
-        realRoot = await realpath(workspaceRoot);
-      } catch {
-        throw new Error(`参考图不存在：${rel}`);
+        source = await openTrustedFile(workspaceRoot, relativePath);
+      } catch (error) {
+        if (error instanceof UnsafeFilePathError) {
+          throw new Error(`参考图路径越界（不允许符号链接）：${rel}`);
+        }
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+          throw new Error(`参考图不存在：${rel}`);
+        }
+        throw error;
       }
-      if (realPath !== realRoot && !isPathWithinDirectory(realPath, realRoot)) {
-        throw new Error(`参考图路径越界（symlink 指向工作区外）：${rel}`);
+      try {
+        if (source.stats.size > engine.maxRefImageBytes) {
+          throw new Error(
+            `参考图 ${rel} 超过 ${engine.id} 引擎单张上限 ${Math.round(engine.maxRefImageBytes / 1024 / 1024)}MB。`,
+          );
+        }
+        // Never reopen `resolved`: the descriptor remains bound if an ancestor is renamed.
+        const data = await source.handle.readFile();
+        if (data.byteLength > engine.maxRefImageBytes) {
+          throw new Error(
+            `参考图 ${rel} 超过 ${engine.id} 引擎单张上限 ${Math.round(engine.maxRefImageBytes / 1024 / 1024)}MB。`,
+          );
+        }
+        out.push({ name: basename(relativePath), mime: guessImageMime(relativePath), data });
+      } finally {
+        await source.handle.close();
       }
-      const data = await readFile(realPath);
-      if (data.byteLength > engine.maxRefImageBytes) {
-        throw new Error(
-          `参考图 ${rel} 超过 ${engine.id} 引擎单张上限 ${Math.round(engine.maxRefImageBytes / 1024 / 1024)}MB。`,
-        );
-      }
-      out.push({ name: basename(realPath), mime: guessImageMime(realPath), data });
     }
     return out;
   }
@@ -777,14 +794,14 @@ export class ImageGenToolProvider implements ToolProvider {
     const now = new Date();
     const dateDir = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     const relDir = posix.join('assets', 'generated', dateDir);
-    const absDir = join(workspaceRoot, 'assets', 'generated', dateDir);
-    await mkdir(absDir, { recursive: true });
     const relPaths: string[] = [];
     for (const image of images) {
       const fileName = `img-${randomUUID().slice(0, 8)}${detectImageExtension(image)}`;
-      // 'wx'：文件已存在直接失败，绝不覆盖 workspace 既有文件。
-      await writeFile(join(absDir, fileName), image, { flag: 'wx' });
-      relPaths.push(posix.join(relDir, fileName));
+      const relPath = posix.join(relDir, fileName);
+      // Descriptor-relative create pins every ancestor and O_NOFOLLOW|O_EXCL refuses
+      // symlink/rename escapes as well as collisions with existing workspace files.
+      await writeTrustedFile(workspaceRoot, relPath, image, { createParents: true, exclusive: true });
+      relPaths.push(relPath);
     }
     return relPaths;
   }

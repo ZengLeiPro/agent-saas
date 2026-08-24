@@ -25,8 +25,6 @@ import {
 import { applyTenantLifecycleChange, type TenantLifecycleChange } from './tenantLifecycleEffects.js';
 import { resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import type { MembershipCreateInput } from '../routes/governanceAccessValidation.js';
-import { requireAdmin } from '../auth/middleware.js';
-import { createContextAdminRouter } from '../routes/contextAdmin.js';
 
 const scheduledOffboardingRuntimes = new WeakSet<AppRuntime>();
 
@@ -62,7 +60,6 @@ export function registerGovernanceRoutes(
   options: { webChannel?: WebChannel; executeUserOffboarding?: ExecuteUserOffboarding },
 ): void {
   const previewSecret = runtime.config.auth?.jwtSecret;
-  app.use('/api/admin/context-plane', requireAdmin, createContextAdminRouter({ store: runtime.contextStore }));
   const applyLifecycleChange = async (change: TenantLifecycleChange): Promise<'applied' | 'pending'> => {
     let broadcastApplied = !runtime.runtimePgEventStore;
     if (runtime.runtimePgEventStore) {

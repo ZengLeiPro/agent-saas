@@ -58,7 +58,14 @@ export interface EventHandler {
   onToolStart?(toolId: string, toolName: string, tracker: ToolTracker, runId?: string): void | Promise<void>;
   onToolInputDelta?(partialJson: string, toolId: string, toolName: string): void | Promise<void>;
   onToolEnd?(toolId: string, resolvedToolName: string, toolInput: string): void | Promise<void>;
-  onToolResult?(toolId: string, toolName: string, result: string, isError?: boolean): void | Promise<void>;
+  onToolResult?(
+    toolId: string,
+    toolName: string,
+    result: string,
+    isError?: boolean,
+    presentation?: OutboundEvent['toolPresentation'],
+    metadata?: OutboundEvent['toolResultMetadata'],
+  ): void | Promise<void>;
   // SDK 0.2.112+ 新事件透传
   onContextUsage?(usage: ContextUsageData): void | Promise<void>;
   onPluginInstall?(data: PluginInstallData): void | Promise<void>;
@@ -237,10 +244,20 @@ export class EventConsumer implements ToolTracker {
           case 'tool_result': {
             const toolId = event.toolId || '';
             const toolName = this._toolNameMap.get(toolId) || event.toolName || 'unknown';
-            if (event.isError) {
-              await handler.onToolResult?.(toolId, toolName, event.toolResult || '', true);
+            const result = event.toolResult || '';
+            if (event.toolPresentation || event.toolResultMetadata) {
+              await handler.onToolResult?.(
+                toolId,
+                toolName,
+                result,
+                event.isError ? true : undefined,
+                event.toolPresentation,
+                event.toolResultMetadata,
+              );
+            } else if (event.isError) {
+              await handler.onToolResult?.(toolId, toolName, result, true);
             } else {
-              await handler.onToolResult?.(toolId, toolName, event.toolResult || '');
+              await handler.onToolResult?.(toolId, toolName, result);
             }
             break;
           }

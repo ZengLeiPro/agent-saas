@@ -41,29 +41,68 @@ export class DeterministicContextProjector {
         items.set(item.itemId, item);
       }
 
-      if (entity.entityType === 'Task') {
-        const projectStableId = stableString(descriptor.projectId)
-          ?? stableString(asMap(descriptor.project)?.id)
-          ?? stableString(asMap(descriptor.project)?.stableId);
-        if (projectStableId) {
-          const projectId = entityId(record.tenantId, 'Project', projectStableId, record.sourceId);
-          const relationId = digest(['relation', record.tenantId, entity.entityId, projectId, 'TaskProject'].join('\0'));
-          relations.set(relationId, {
-            relationId,
-            fromEntityId: entity.entityId,
-            toEntityId: projectId,
-            relationType: 'TaskProject',
-            sourceId: record.sourceId,
-            collectionId: record.collectionId,
-            recordId: record.recordId,
-            recordRevision: record.recordRevision,
-            evidence,
-          });
-        }
+      for (const relation of explicitRelations(record, descriptor, entity, evidence)) {
+        relations.set(relation.relationId, relation);
       }
     }
     return { entities: [...entities.values()], relations: [...relations.values()], items: [...items.values()] };
   }
+}
+
+function explicitRelations(
+  record: ClaimedContextRecord,
+  descriptor: JsonMap,
+  from: DerivedEntityCandidate,
+  evidence: DerivedEvidenceRef[],
+): DerivedRelationCandidate[] {
+  const refs: Array<{ type: DerivedEntityType; stableId?: string; relationType: DerivedRelationCandidate['relationType'] }> = [];
+  const nestedStableId = (key: string): string | undefined => {
+    const value = asMap(descriptor[key]);
+    return stableString(value?.id) ?? stableString(value?.stableId) ?? stableString(value?.externalId);
+  };
+  if (from.entityType === 'Task') {
+    refs.push({ type: 'Project', stableId: stableString(descriptor.projectId) ?? nestedStableId('project'), relationType: 'task_of' });
+    refs.push({ type: 'Person', stableId: stableString(descriptor.assigneeId), relationType: 'mentions' });
+    refs.push({ type: 'Person', stableId: stableString(descriptor.ownerId), relationType: 'mentions' });
+  } else if (from.entityType === 'Project') {
+    refs.push({ type: 'Customer', stableId: stableString(descriptor.customerId) ?? nestedStableId('customer'), relationType: 'project_of' });
+    refs.push({ type: 'Person', stableId: stableString(descriptor.ownerId), relationType: 'mentions' });
+  } else if (from.entityType === 'Meeting') {
+    refs.push({ type: 'Project', stableId: stableString(descriptor.projectId) ?? nestedStableId('project'), relationType: 'meeting_of' });
+    refs.push({ type: 'Person', stableId: stableString(descriptor.organizerId), relationType: 'mentions' });
+  } else if (from.entityType === 'Customer') {
+    refs.push({ type: 'Person', stableId: stableString(descriptor.ownerId), relationType: 'mentions' });
+  }
+
+  const validFrom = dateString(descriptor.validFrom) ?? dateString(descriptor.occurredAt)
+    ?? record.occurredAt ?? record.sourceUpdatedAt ?? record.observedAt;
+  const validTo = dateString(descriptor.validTo);
+  const result: DerivedRelationCandidate[] = [];
+  const seen = new Set<string>();
+  for (const ref of refs) {
+    if (!ref.stableId) continue;
+    const toEntityId = entityId(record.tenantId, ref.type, ref.stableId, record.sourceId);
+    const relationId = digest(['relation', record.tenantId, from.entityId, toEntityId, ref.relationType].join('\0'));
+    if (seen.has(relationId)) continue;
+    seen.add(relationId);
+    result.push({
+      relationId,
+      fromEntityId: from.entityId,
+      toEntityId,
+      relationType: ref.relationType,
+      relationClass: 'explicit',
+      authority: 'informational',
+      reviewStatus: 'confirmed',
+      sourceId: record.sourceId,
+      collectionId: record.collectionId,
+      recordId: record.recordId,
+      recordRevision: record.recordRevision,
+      validFrom,
+      ...(validTo ? { validTo } : {}),
+      evidence,
+    });
+  }
+  return result;
 }
 
 function explicitDescriptors(record: ClaimedContextRecord): JsonMap[] {

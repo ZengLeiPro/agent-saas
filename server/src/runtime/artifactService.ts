@@ -1,8 +1,8 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { readFile, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { getTranscriptPath } from '../data/transcripts/store.js';
+import { openTrustedFile } from '../security/trustedFile.js';
 import { readSessionMeta } from '../data/transcripts/meta.js';
 import { hidesMemoryPollFrom } from '../data/sessions/access.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
@@ -191,11 +191,21 @@ export class ArtifactService {
   }
 
   async createFromWorkspaceFile(input: CreateArtifactFromWorkspaceFileInput): Promise<ArtifactRecord> {
-    const fullPath = resolveInsideWorkspace(input.workspaceRoot, input.filePath);
-    const st = await stat(fullPath);
-    if (!st.isFile()) throw new ArtifactServiceError(400, 'Artifact source must be a file');
-    this.assertSizeAllowed(st.size);
-    const data = await readFile(fullPath);
+    const workspaceRoot = input.workspaceRoot;
+    const fullPath = resolveInsideWorkspace(workspaceRoot, input.filePath);
+    const sourcePath = relative(workspaceRoot, fullPath);
+    const source = await openTrustedFile(workspaceRoot, sourcePath);
+    let data: Buffer;
+    try {
+      if (!source.stats.isFile()) throw new ArtifactServiceError(400, 'Artifact source must be a file');
+      this.assertSizeAllowed(source.stats.size);
+      // Read through the descriptor that passed every ancestor/no-follow check. Reopening the
+      // caller-controlled pathname here would reintroduce a rename/symlink swap window.
+      data = await source.handle.readFile();
+      this.assertSizeAllowed(data.byteLength);
+    } finally {
+      await source.handle.close();
+    }
     return this.createFromBytes({
       sessionId: input.sessionId,
       workspaceId: input.workspaceId,
@@ -206,7 +216,7 @@ export class ArtifactService {
       mimeType: input.mimeType,
       metadata: {
         source: 'workspace_file',
-        sourcePath: relative(input.workspaceRoot, fullPath).split(sep).join('/'),
+        sourcePath: sourcePath.split(sep).join('/'),
         ...(input.metadata ?? {}),
       },
     });

@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -13,13 +12,18 @@ import {
   writeSessionMeta,
   type SessionMeta,
 } from '../data/transcripts/meta.js';
-import { getAgentTranscriptDir } from '../data/transcripts/projectKey.js';
+import { AGENT_LEGACY_TRANSCRIPTS_ROOT, getAgentTranscriptDir } from '../data/transcripts/projectKey.js';
 import { deleteSession } from '../data/transcripts/store.js';
 import {
   buildRuntimeSessionProjectionRecord,
   scanRuntimeSessionMetaFiles,
   type RuntimeSessionProjectionRecord,
 } from '../runtime/sessionProjectionStore.js';
+
+async function makeProjectionDir(prefix: string): Promise<string> {
+  await mkdir(AGENT_LEGACY_TRANSCRIPTS_ROOT, { recursive: true });
+  return mkdtemp(join(AGENT_LEGACY_TRANSCRIPTS_ROOT, prefix));
+}
 
 describe('runtime session projection hook', () => {
   const cleanupDirs = new Set<string>();
@@ -101,7 +105,7 @@ describe('runtime session projection hook', () => {
   });
 
   it('handles startup-style bulk meta writes', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'runtime-session-bulk-'));
+    const dir = await makeProjectionDir('runtime-session-bulk-');
     cleanupDirs.add(dir);
 
     for (let i = 0; i < 1000; i++) {
@@ -114,7 +118,7 @@ describe('runtime session projection hook', () => {
   });
 
   it('skips invalid basenames but keeps subagent session ids', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'runtime-session-invalid-'));
+    const dir = await makeProjectionDir('runtime-session-invalid-');
     cleanupDirs.add(dir);
 
     await writeSessionMeta(join(dir, 'agent-deadbeef.jsonl'), baseMeta({ tenantId: 'kaiyan' }));
@@ -145,7 +149,7 @@ describe('runtime session projection scanner', () => {
   });
 
   it('counts valid, subagent and invalid meta files during backfill scans', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'runtime-session-scan-'));
+    const root = await makeProjectionDir('runtime-session-scan-');
     cleanupDirs.add(root);
     const userDir = join(root, 'kaiyan', 'kyu1');
     await mkdir(userDir, { recursive: true });
@@ -164,7 +168,7 @@ describe('runtime session projection scanner', () => {
 });
 
 async function makeTempTranscript(): Promise<{ sessionId: string; transcriptPath: string; dir: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'runtime-session-projection-'));
+  const dir = await makeProjectionDir('runtime-session-projection-');
   const sessionId = randomUUID();
   return { sessionId, transcriptPath: join(dir, `${sessionId}.jsonl`), dir };
 }

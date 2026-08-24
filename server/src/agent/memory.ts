@@ -6,8 +6,7 @@
  * - agents.md：per-user Agent 指令（替代 SDK 自动加载的 CLAUDE.md）
  */
 
-import { readFile } from 'fs/promises';
-import { join } from 'path';
+import { readTrustedFile } from '../security/trustedFile.js';
 
 /**
  * 将 PERSONA.md 拆分为编辑器注释（hints）和实际人格定义（body）。
@@ -40,9 +39,8 @@ export async function loadMemoryContext(
   agentCwd: string,
   maxLines: number = DEFAULT_MAX_LINES,
 ): Promise<string | null> {
-  const memoryPath = join(agentCwd, 'MEMORY.md');
   try {
-    const content = await readFile(memoryPath, 'utf-8');
+    const content = await readTrustedFile(agentCwd, 'MEMORY.md', 'utf-8') as string;
     const trimmed = content.trim();
     if (!trimmed) return null;
 
@@ -64,9 +62,8 @@ export async function loadPersona(
   agentCwd: string,
   maxLines: number = PERSONA_MAX_LINES,
 ): Promise<string | null> {
-  const personaPath = join(agentCwd, 'PERSONA.md');
   try {
-    const content = await readFile(personaPath, 'utf-8');
+    const content = await readTrustedFile(agentCwd, 'PERSONA.md', 'utf-8') as string;
     const trimmed = content.trim();
     if (!trimmed) return null;
 

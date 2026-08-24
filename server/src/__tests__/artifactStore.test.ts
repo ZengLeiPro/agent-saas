@@ -1,12 +1,37 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const trustedFileHooks = vi.hoisted(() => ({
+  afterOpen: undefined as undefined | (() => Promise<void>),
+}));
+
+vi.mock('../security/trustedFile.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../security/trustedFile.js')>();
+  return {
+    ...actual,
+    openTrustedFile: async (...args: Parameters<typeof actual.openTrustedFile>) => {
+      const opened = await actual.openTrustedFile(...args);
+      try {
+        await trustedFileHooks.afterOpen?.();
+        return opened;
+      } catch (error) {
+        await opened.handle.close();
+        throw error;
+      }
+    },
+  };
+});
 
 import { InMemoryArtifactStore, LocalArtifactBlobStore } from '../runtime/artifactStore.js';
 import { InMemoryArtifactShareStore } from '../runtime/artifactShareStore.js';
 import { ArtifactService } from '../runtime/artifactService.js';
 import { PlatformToolRuntime } from '../agent/toolRuntime.js';
+
+afterEach(() => {
+  trustedFileHooks.afterOpen = undefined;
+});
 
 describe('LocalArtifactBlobStore', () => {
   it('stores immutable blobs under unique keys and returns checksum metadata', async () => {
@@ -52,6 +77,88 @@ describe('LocalArtifactBlobStore', () => {
       await expect(store.get('local://../secret')).rejects.toThrow(/unsafe local artifact uri/);
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('createFromWorkspaceFile rejects an ancestor symlink instead of reading outside the workspace', async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), 'artifact-boundary-'));
+    const root = path.join(base, 'workspace');
+    const outside = path.join(base, 'outside');
+    const blobRoot = path.join(base, 'blobs');
+    try {
+      await mkdir(root, { recursive: true });
+      await mkdir(outside);
+      await writeFile(path.join(outside, 'secret.txt'), 'outside secret');
+      await symlink(outside, path.join(root, 'linked'));
+      const service = new ArtifactService({
+        artifactStore: new InMemoryArtifactStore(),
+        blobStore: new LocalArtifactBlobStore({ rootDir: blobRoot }),
+        agentCwd: root,
+      });
+
+      await expect(service.createFromWorkspaceFile({
+        sessionId: 'session-1', workspaceRoot: root, filePath: 'linked/secret.txt',
+      })).rejects.toThrow(/Symbolic links|trusted root/);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it('createFromWorkspaceFile keeps reading the trusted inode across an ancestor rename swap', async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), 'artifact-swap-'));
+    const root = path.join(base, 'workspace');
+    const outside = path.join(base, 'outside');
+    const blobRoot = path.join(base, 'blobs');
+    try {
+      await mkdir(path.join(root, 'active'), { recursive: true });
+      await mkdir(outside);
+      await writeFile(path.join(root, 'active', 'result.txt'), 'trusted result');
+      await writeFile(path.join(outside, 'result.txt'), 'outside replacement');
+      const blobStore = new LocalArtifactBlobStore({ rootDir: blobRoot });
+      const service = new ArtifactService({
+        artifactStore: new InMemoryArtifactStore(),
+        blobStore,
+        agentCwd: root,
+      });
+      const afterOpen = vi.fn(async () => {
+        await rename(path.join(root, 'active'), path.join(root, 'active-pinned'));
+        await symlink(outside, path.join(root, 'active'));
+      });
+      trustedFileHooks.afterOpen = afterOpen;
+
+      const artifact = await service.createFromWorkspaceFile({
+        sessionId: 'session-1', workspaceRoot: root, filePath: 'active/result.txt',
+      });
+
+      expect(afterOpen).toHaveBeenCalledOnce();
+      await expect(blobStore.get(artifact.uri)).resolves.toEqual(Buffer.from('trusted result'));
+      await expect(readFile(path.join(root, 'active', 'result.txt'), 'utf8')).resolves.toBe('outside replacement');
+    } finally {
+      trustedFileHooks.afterOpen = undefined;
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it('createFromWorkspaceFile rejects an absolute path in a different root', async () => {
+    const base = await mkdtemp(path.join(os.tmpdir(), 'artifact-cross-root-'));
+    const root = path.join(base, 'workspace');
+    const outside = path.join(base, 'outside');
+    try {
+      await mkdir(root, { recursive: true });
+      await mkdir(outside);
+      const secret = path.join(outside, 'secret.txt');
+      await writeFile(secret, 'outside secret');
+      const service = new ArtifactService({
+        artifactStore: new InMemoryArtifactStore(),
+        blobStore: new LocalArtifactBlobStore({ rootDir: path.join(base, 'blobs') }),
+        agentCwd: root,
+      });
+
+      await expect(service.createFromWorkspaceFile({
+        sessionId: 'session-1', workspaceRoot: root, filePath: secret,
+      })).rejects.toThrow(/outside workspace/);
+    } finally {
+      await rm(base, { recursive: true, force: true });
     }
   });
 

@@ -142,18 +142,44 @@ describe('governance organization access routes', () => {
     expect(updatePolicy).not.toHaveBeenCalled();
   });
 
-  it('组织策略列表不向组织管理员开放平台专属授权动作', async () => {
+  it('boolean 策略的异常持久化值不能被开关接口覆盖', async () => {
+    const policies = [
+      { tenantId: 'tenant-a', policyKey: 'knowledge.org.enabled', value: 'legacy-on', source: 'legacy_projection', version: 1, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' },
+    ];
+    const updatePolicy = vi.fn();
+    const test = await rig({ getPolicies: vi.fn().mockResolvedValue(policies), updatePolicy });
+
+    const response = await test.request('/api/governance/access/policies/knowledge.org.enabled/preview?tenantId=tenant-a', json('POST', {
+      expectedVersion: 1, value: false, reason: '验证类型保护',
+    }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ code: 'POLICY_VALUE_TYPE_MISMATCH' });
+    expect(updatePolicy).not.toHaveBeenCalled();
+  });
+
+  it('组织策略列表返回业务定义，且只向 boolean 策略开放编辑动作', async () => {
     const policies = [
       { tenantId: 'tenant-a', policyKey: 'runtime.debug_mode.allowed', value: false, source: 'legacy_projection', version: 1, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' },
       { tenantId: 'tenant-a', policyKey: 'runtime.debug_mode.enabled', value: false, source: 'legacy_projection', version: 1, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' },
+      { tenantId: 'tenant-a', policyKey: 'knowledge.org.enabled', value: true, source: 'legacy_projection', version: 1, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' },
+      { tenantId: 'tenant-a', policyKey: 'runtime.high_risk_tool.mode', value: 'approval', source: 'governance', version: 2, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' },
     ];
     const test = await rig({ getPolicies: vi.fn().mockResolvedValue(policies) });
 
     const response = await test.request('/api/governance/access/entitlements?tenantId=tenant-a');
     expect(response.status).toBe(200);
-    const body = await response.json() as { policies: Array<{ policyKey: string; allowedActions: unknown[] }> };
+    const body = await response.json() as { policies: Array<{ policyKey: string; definition: { label: string; valueType: string }; allowedActions: unknown[] }> };
     expect(body.policies.find(policy => policy.policyKey === 'runtime.debug_mode.allowed')?.allowedActions).toEqual([]);
     expect(body.policies.find(policy => policy.policyKey === 'runtime.debug_mode.enabled')?.allowedActions).toEqual([]);
+    expect(body.policies.find(policy => policy.policyKey === 'knowledge.org.enabled')).toMatchObject({
+      definition: { label: '组织知识库', valueType: 'boolean' },
+      allowedActions: [{ id: 'edit_policy' }],
+    });
+    expect(body.policies.find(policy => policy.policyKey === 'runtime.high_risk_tool.mode')).toMatchObject({
+      definition: { label: '高风险工具审批', valueType: 'enum' },
+      allowedActions: [],
+    });
   });
 
   it('记忆与知识资源端点只返回组织 Assignment 权威元数据，不含个人记忆正文', async () => {

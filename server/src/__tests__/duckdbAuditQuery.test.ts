@@ -26,9 +26,11 @@ import { DuckDBRuntimeAuditQuery } from '../runtime/auditQuery.js';
 import type { PlatformEvent } from '../runtime/types.js';
 
 const SESSION_A = '11111111-aaaa-4bbb-8ccc-dddddddddddd';
+const TENANT_A = 'kaiyan';
 
 interface SeedToolAuditOverrides {
   id?: string;
+  tenantId?: string;
   timestamp?: string;
   runId?: string;
   sessionId?: string;
@@ -52,6 +54,7 @@ function toolAuditLine(o: SeedToolAuditOverrides): string {
     type: 'tool_audit' as const,
     runId: o.runId ?? 'run-1',
     sessionId: o.sessionId ?? SESSION_A,
+    tenantId: o.tenantId ?? TENANT_A,
     toolCallId: o.toolCallId ?? 'call-1',
     toolId: o.toolId ?? 'MemorySearch',
     toolName: o.toolName ?? 'MemorySearch',
@@ -156,7 +159,7 @@ describe('DuckDBRuntimeAuditQuery', () => {
 
   it('listBySessionId 返回顶层化字段（与 EventStore 行为一致）', async () => {
     await seedSessionA();
-    const entries = await query.listBySessionId(SESSION_A);
+    const entries = await query.listBySessionId(SESSION_A, { tenantId: TENANT_A });
     expect(entries).toHaveLength(3);
     expect(entries.map((e) => [e.toolName, e.runId, e.authorizationSource, e.executionTarget, e.status])).toEqual([
       ['MemorySearch', 'run-1', 'policy_auto', 'server-local', 'success'],
@@ -173,11 +176,11 @@ describe('DuckDBRuntimeAuditQuery', () => {
 
   it('listByRunId 在 session 内按 runId 过滤', async () => {
     await seedSessionA();
-    const run1 = await query.listByRunId(SESSION_A, 'run-1');
+    const run1 = await query.listByRunId(SESSION_A, 'run-1', { tenantId: TENANT_A });
     expect(run1.map((e) => e.toolName)).toEqual(['MemorySearch', 'Write']);
-    const run2 = await query.listByRunId(SESSION_A, 'run-2');
+    const run2 = await query.listByRunId(SESSION_A, 'run-2', { tenantId: TENANT_A });
     expect(run2.map((e) => e.toolName)).toEqual(['Read']);
-    const missing = await query.listByRunId(SESSION_A, 'run-nope');
+    const missing = await query.listByRunId(SESSION_A, 'run-nope', { tenantId: TENANT_A });
     expect(missing).toEqual([]);
   });
 
@@ -185,24 +188,24 @@ describe('DuckDBRuntimeAuditQuery', () => {
     await seedSessionA();
     const base = Date.UTC(2026, 5, 7, 9, 0, 0);
 
-    const sinceOnly = await query.listBySessionId(SESSION_A, { since: new Date(base + 1000).toISOString() });
+    const sinceOnly = await query.listBySessionId(SESSION_A, { tenantId: TENANT_A, since: new Date(base + 1000).toISOString() });
     expect(sinceOnly.map((e) => e.toolName)).toEqual(['Write', 'Read']);
 
-    const limited = await query.listBySessionId(SESSION_A, { limit: 2 });
+    const limited = await query.listBySessionId(SESSION_A, { tenantId: TENANT_A, limit: 2 });
     expect(limited.map((e) => e.toolName)).toEqual(['MemorySearch', 'Write']);
 
-    const offset = await query.listBySessionId(SESSION_A, { offset: 2 });
+    const offset = await query.listBySessionId(SESSION_A, { tenantId: TENANT_A, offset: 2 });
     expect(offset.map((e) => e.toolName)).toEqual(['Read']);
 
     const combined = await query.listBySessionId(SESSION_A, {
-      offset: 1, limit: 1, since: new Date(base).toISOString(),
+      tenantId: TENANT_A, offset: 1, limit: 1, since: new Date(base).toISOString(),
     });
     expect(combined.map((e) => e.toolName)).toEqual(['Write']);
   });
 
   it('summarize 给出 executionTarget / status / authorizationSource 分布', async () => {
     await seedSessionA();
-    const summary = await query.summarize(SESSION_A);
+    const summary = await query.summarize(SESSION_A, { tenantId: TENANT_A });
     expect(summary).toEqual({
       total: 3,
       filteredTotal: 3,
@@ -215,16 +218,16 @@ describe('DuckDBRuntimeAuditQuery', () => {
   it('summarize 的 filteredTotal 受 since 约束，total 仍是全 session', async () => {
     await seedSessionA();
     const base = Date.UTC(2026, 5, 7, 9, 0, 0);
-    const summary = await query.summarize(SESSION_A, { since: new Date(base + 1000).toISOString() });
+    const summary = await query.summarize(SESSION_A, { tenantId: TENANT_A, since: new Date(base + 1000).toISOString() });
     expect(summary.total).toBe(3);
     expect(summary.filteredTotal).toBe(2);
     expect(summary.byExecutionTarget).toEqual({ 'server-container': 1, 'server-local': 1 });
   });
 
   it('session 不存在 → 空数组 / 空 summary', async () => {
-    const entries = await query.listBySessionId('00000000-0000-4000-8000-000000000000');
+    const entries = await query.listBySessionId('00000000-0000-4000-8000-000000000000', { tenantId: TENANT_A });
     expect(entries).toEqual([]);
-    const summary = await query.summarize('00000000-0000-4000-8000-000000000000');
+    const summary = await query.summarize('00000000-0000-4000-8000-000000000000', { tenantId: TENANT_A });
     expect(summary).toEqual({
       total: 0,
       filteredTotal: 0,
@@ -251,15 +254,15 @@ describe('DuckDBRuntimeAuditQuery', () => {
       }),
     );
 
-    const r1 = await query.listByRunIdGlobal('run-1');
+    const r1 = await query.listByRunIdGlobal('run-1', { tenantId: TENANT_A });
     expect(r1).toHaveLength(3);  // session A 两条 + session B 一条
     expect(r1.map((e) => e.sessionId).sort()).toEqual([SESSION_A, SESSION_A, SESSION_B].sort());
 
-    const r2 = await query.listByRunIdGlobal('run-2');
+    const r2 = await query.listByRunIdGlobal('run-2', { tenantId: TENANT_A });
     expect(r2).toHaveLength(1);
     expect(r2[0]!.sessionId).toBe(SESSION_A);
 
-    const empty = await query.listByRunIdGlobal('run-nope');
+    const empty = await query.listByRunIdGlobal('run-nope', { tenantId: TENANT_A });
     expect(empty).toEqual([]);
   });
 
@@ -285,7 +288,7 @@ describe('DuckDBRuntimeAuditQuery', () => {
       }),
     );
 
-    const summary = await query.summarizeByRunIdGlobal('run-1');
+    const summary = await query.summarizeByRunIdGlobal('run-1', { tenantId: TENANT_A });
     expect(summary.total).toBe(3);
     expect(summary.filteredTotal).toBe(3);
     expect(summary.sessionIds.sort()).toEqual([SESSION_A, SESSION_B].sort());
@@ -294,10 +297,40 @@ describe('DuckDBRuntimeAuditQuery', () => {
     expect(summary.byAuthorizationSource).toEqual({ policy_auto: 1, human_approval: 2 });
   });
 
+  it('同 sessionId/runId 双租户碰撞时仅返回显式 tenant，未知 tenant 为空', async () => {
+    const collisionSession = '33333333-aaaa-4bbb-8ccc-dddddddddddd';
+    const collisionRun = 'run-collision';
+    const dirA = join(root, 'tenant-a');
+    const dirB = join(root, 'tenant-b');
+    await mkdir(dirA, { recursive: true });
+    await mkdir(dirB, { recursive: true });
+    await writeFile(join(dirA, `${collisionSession}${RUNTIME_EVENTS_SUFFIX}`), toolAuditLine({
+      id: 'evt-collision-a', tenantId: TENANT_A, sessionId: collisionSession,
+      runId: collisionRun, toolCallId: 'call-a', toolName: 'Read',
+    }));
+    await writeFile(join(dirB, `${collisionSession}${RUNTIME_EVENTS_SUFFIX}`), toolAuditLine({
+      id: 'evt-collision-b', tenantId: 'wain', sessionId: collisionSession,
+      runId: collisionRun, toolCallId: 'call-b', toolName: 'Write',
+    }));
+
+    expect((await query.listBySessionId(collisionSession, { tenantId: TENANT_A })).map(e => e.toolCallId))
+      .toEqual(['call-a']);
+    expect((await query.listByRunIdGlobal(collisionRun, { tenantId: 'wain' })).map(e => e.toolCallId))
+      .toEqual(['call-b']);
+    expect(await query.listByRunId(collisionSession, collisionRun, { tenantId: 'other' })).toEqual([]);
+    expect(await query.summarizeByRunIdGlobal(collisionRun, { tenantId: 'wain' })).toMatchObject({
+      total: 1, filteredTotal: 1, sessionIds: [collisionSession],
+    });
+  });
+
+  it('缺失 tenantId 的直接调用运行时拒绝（fail-closed）', async () => {
+    await expect(query.listBySessionId(SESSION_A, {} as never)).rejects.toThrow('requires tenantId');
+  });
+
   it('tickBeforeQuery=true（默认）：后写入的事件下次 query 能看到', async () => {
     const filePath = await seedSessionA();
     // 第一次 query 触发 tick，3 条入库
-    expect(await query.listBySessionId(SESSION_A)).toHaveLength(3);
+    expect(await query.listBySessionId(SESSION_A, { tenantId: TENANT_A })).toHaveLength(3);
 
     // 在 server 之外追加新事件 → 不手动 tick，依赖 query 自动 tick
     await appendFile(filePath, toolAuditLine({
@@ -309,7 +342,7 @@ describe('DuckDBRuntimeAuditQuery', () => {
       toolId: 'MemorySearch',
     }));
 
-    const entries = await query.listBySessionId(SESSION_A);
+    const entries = await query.listBySessionId(SESSION_A, { tenantId: TENANT_A });
     expect(entries.map((e) => e.id)).toContain('evt-late');
     expect(entries).toHaveLength(4);
   });

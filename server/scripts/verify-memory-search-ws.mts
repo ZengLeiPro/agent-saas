@@ -141,11 +141,12 @@ async function runChatRound(prompt: string, resumeSessionId: string | null, mode
   const secret = loadJwtSecret();
   const user = loadAdminUser();
   const token = jwt.sign({ sub: user.id, username: user.username, role: 'admin' }, secret, { expiresIn: '5m' });
-  const ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent(token)}`);
+  const ws = new WebSocket(WS_URL);
   const round: Round = { sessionId: resumeSessionId, events: [], toolCalls: [], finalText: '', errors: [] };
 
   const toolById = new Map<string, { name: string; input: string; result?: string }>();
   let textBuf = '';
+  let chatSent = false;
 
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -155,15 +156,7 @@ async function runChatRound(prompt: string, resumeSessionId: string | null, mode
     }, TURN_TIMEOUT_MS);
 
     ws.on('open', () => {
-      const clientMsgId = randomUUID();
-      const payload: Record<string, unknown> = {
-        action: 'chat',
-        client_msg_id: clientMsgId,
-        message: prompt,
-        model: modelRef,
-      };
-      if (resumeSessionId) payload.sessionId = resumeSessionId;
-      ws.send(JSON.stringify(payload));
+      ws.send(JSON.stringify({ action: 'auth', token }));
     });
 
     ws.on('error', (err) => {
@@ -183,7 +176,17 @@ async function runChatRound(prompt: string, resumeSessionId: string | null, mode
       round.events.push(env);
       const data = env.data as Record<string, unknown>;
       const type = data?.type as string | undefined;
-      if (type === 'session') {
+      if (type === 'auth_ok' && !chatSent) {
+        chatSent = true;
+        const payload: Record<string, unknown> = {
+          action: 'chat',
+          client_msg_id: randomUUID(),
+          message: prompt,
+          model: modelRef,
+        };
+        if (resumeSessionId) payload.sessionId = resumeSessionId;
+        ws.send(JSON.stringify(payload));
+      } else if (type === 'session') {
         round.sessionId = data.sessionId as string;
       } else if (type === 'block_start') {
         if (data.blockType === 'tool_use' && typeof data.toolId === 'string' && typeof data.toolName === 'string') {

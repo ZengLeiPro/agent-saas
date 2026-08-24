@@ -1,12 +1,10 @@
 import { exec as execCb, spawn } from 'child_process';
 import { createReadStream, existsSync } from 'fs';
-import { mkdir, open, stat, writeFile } from 'fs/promises';
-import { dirname, isAbsolute, relative, resolve } from 'path';
+import { open } from 'fs/promises';
+import { isAbsolute, relative, resolve } from 'path';
 import { createInterface } from 'readline';
 import { promisify } from 'util';
-
 import { z } from 'zod';
-
 import type { AgentRunHooks } from './types.js';
 import {
   buildToolPresentation,
@@ -15,6 +13,7 @@ import {
   type ToolPresentation,
 } from './toolPresentationBuilder.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
+import { withTrustedFile, writeTrustedFile } from '../security/trustedFile.js';
 import type {
   ToolInvocationRequest,
   ToolInvocationResponse,
@@ -74,7 +73,6 @@ import { materializeReadToolImage, tryReadWorkspaceImage } from './readImageTool
 import { createdArtifactToolResult, prepareArtifactInvocation } from './artifactToolRuntime.js';
 import { resolveShellConcurrency, shellToolSchema, type ShellToolInput } from './shellToolSchema.js';
 const exec = promisify(execCb);
-
 const MEMORY_SHELL_MAYBE_CHANGED_INTERVAL_MS = 120_000;
 const MEMORY_SHELL_MAYBE_CHANGED_DEBOUNCE_MS = 30_000;
 
@@ -694,13 +692,12 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
   ): Promise<{ content: string; metadata: Record<string, unknown> }> {
     const fullPath = resolveWorkspacePath(workspace.root, path);
     assertSandboxReadAllowed(workspace, fullPath);
-    const fileStat = await stat(fullPath);
-    if (!fileStat.isFile()) throw new Error(`Read: path is not a file (${path})`);
-    const relPath = relativeWorkspacePath(workspace.root, fullPath);
-    const countLines = (text: string): number => (text ? text.split('\n').length : 0);
-    const imageResult = await tryReadWorkspaceImage({ fullPath, relPath, fileSize: fileStat.size, ...options }); if (imageResult) return imageResult;
+    const relPath = relativeWorkspacePath(workspace.root, fullPath); return await withTrustedFile(workspace.root, relPath, async (trusted) => {
+      const fileStat = trusted.stats; const stablePath = trusted.fdPath;
+      const countLines = (text: string): number => (text ? text.split('\n').length : 0);
+      const imageResult = await tryReadWorkspaceImage({ fullPath: stablePath, relPath, fileSize: fileStat.size, ...options }); if (imageResult) return imageResult;
     if (options.offset !== undefined || options.limit !== undefined) {
-      const content = await readLineRange(fullPath, relPath, {
+      const content = await readLineRange(stablePath, relPath, {
         offset: options.offset ?? 1,
         limit: options.limit ?? MAX_READ_LINES,
       });
@@ -710,7 +707,7 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
       };
     }
     if (fileStat.size <= MAX_FILE_BYTES) {
-      const handle = await open(fullPath, 'r');
+      const handle = await open(stablePath, 'r');
       try {
         const buffer = Buffer.alloc(fileStat.size);
         const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
@@ -723,24 +720,24 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
         await handle.close();
       }
     }
-    const prefix = await readFilePrefix(fullPath, MAX_FILE_BYTES);
-    return {
-      content: `${prefix}\n...[truncated: file ${relPath} is ${fileStat.size} bytes; showing first ${MAX_FILE_BYTES} bytes. Use Read with {"path":"${relPath}","offset":1,"limit":${MAX_READ_LINES}} to continue by line chunks.]`,
-      metadata: {
-        path: relPath,
-        fileBytes: fileStat.size,
-        linesRead: countLines(prefix),
-        truncated: true,
-        shownBytes: MAX_FILE_BYTES,
-      },
-    };
+      const prefix = await readFilePrefix(stablePath, MAX_FILE_BYTES);
+      return {
+        content: `${prefix}\n...[truncated: file ${relPath} is ${fileStat.size} bytes; showing first ${MAX_FILE_BYTES} bytes. Use Read with {"path":"${relPath}","offset":1,"limit":${MAX_READ_LINES}} to continue by line chunks.]`,
+        metadata: {
+          path: relPath,
+          fileBytes: fileStat.size,
+          linesRead: countLines(prefix),
+          truncated: true,
+          shownBytes: MAX_FILE_BYTES,
+        },
+      };
+    });
   }
 
   private async _writeFile(workspace: WorkspaceRef, path: string, content: string): Promise<string> {
     const fullPath = resolveWorkspacePath(workspace.root, path);
     assertSandboxReadAllowed(workspace, fullPath);
-    await mkdir(dirname(fullPath), { recursive: true });
-    await writeFile(fullPath, content, 'utf-8');
+    await writeTrustedFile(workspace.root, relativeWorkspacePath(workspace.root, fullPath), content, { encoding: 'utf-8', createParents: true });
     return relativeWorkspacePath(workspace.root, fullPath);
   }
 
@@ -1239,7 +1236,7 @@ class WorkspaceToolProvider implements ToolProvider {
     if (!sessionId) return { kind: 'none' };
     try {
       const hands = await this.handStore.listBySession(sessionId);
-      const decision = selectRuntimeHandRoute(hands, { runId: context.runId, runtimeIsolationRequirement: context.runtimeIsolationRequirement });
+      const decision = selectRuntimeHandRoute(hands, { runId: context.runId, executionTarget: context.workspace.executionTarget, runtimeIsolationRequirement: context.runtimeIsolationRequirement });
       if (decision.kind === 'ready') return { kind: 'ready', handId: decision.handId };
       if (decision.kind === 'blocked') return decision;
       const tenantHands = hands.filter(isTenantRemoteHand);
@@ -1292,7 +1289,7 @@ class WorkspaceToolProvider implements ToolProvider {
         });
       }
       const tenantHands = lastHands.filter(isTenantRemoteHand);
-      const decision = selectRuntimeHandRoute(lastHands, { runId: context.runId, runtimeIsolationRequirement: context.runtimeIsolationRequirement });
+      const decision = selectRuntimeHandRoute(lastHands, { runId: context.runId, executionTarget: context.workspace.executionTarget, runtimeIsolationRequirement: context.runtimeIsolationRequirement });
       if (decision.kind === 'ready') {
         const hand = lastHands.find((candidate) => candidate.handId === decision.handId);
         return workspaceReadyStatusResponse({
@@ -1302,7 +1299,7 @@ class WorkspaceToolProvider implements ToolProvider {
           message: 'Current workspace runtime is ready. Workspace tools can now be used.',
         });
       }
-      if (decision.kind === 'blocked' && context.runtimeIsolationRequirement) return workspaceReadyStatusResponse({
+      if (decision.kind === 'blocked') return workspaceReadyStatusResponse({
         status: 'failed', executionTarget: context.workspace.executionTarget, message: decision.message,
       });
       if (tenantHands.length === 0) {
@@ -1384,7 +1381,10 @@ class WorkspaceToolProvider implements ToolProvider {
         && this.executionTransportRegistry.has('server-remote'))
         return { transport: this.executionTransportRegistry.get('server-remote'), workspace };
       if (hand.type === 'server-remote' && hand.endpoint) {
-        const authToken = await this.resolveHandAuthToken?.(hand) ?? resolveRemoteHandAuthToken(hand.metadata);
+        const tenantHand = typeof hand.metadata?.tenantRemoteHandId === 'string'
+          && hand.metadata.tenantRemoteHandId.trim().length > 0;
+        const resolvedToken = await this.resolveHandAuthToken?.(hand);
+        const authToken = resolvedToken ?? (tenantHand ? undefined : resolveRemoteHandAuthToken(hand.metadata));
         if (!authToken) {
           throw new Error(`server-remote hand ${handId} is missing an auth token`);
         }

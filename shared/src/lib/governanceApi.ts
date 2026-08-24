@@ -253,21 +253,179 @@ const contextEvidenceListSchema = z.array(contextEvidenceSchema);
 
 export type ContextCenterSnapshotDto = z.infer<typeof contextCenterSnapshotSchema>;
 export type ContextEvidenceDto = z.infer<typeof contextEvidenceSchema>;
-export interface ContextEvidenceQuery {
-  sourceId: string;
-  collectionId: string;
-  recordId?: string;
-}
 
-async function contextPlaneRequest<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
+const contextAuthoritySchema = z.object({
+  scope: z.enum(['personal', 'organization']),
+  label: z.string().min(1),
+}).strict();
+export const contextEvidenceRefSchema = z.object({
+  id: z.string().min(1),
+  type: z.string().min(1),
+  label: z.string().min(1),
+  summary: z.string().min(1).nullable(),
+  occurredAt: z.string().datetime({ offset: true }),
+}).strict();
+const contextReviewStateSchema = z.enum(['proposed', 'conflicted', 'confirmed', 'rejected']);
+export const contextDerivedItemTypeSchema = z.enum(['Decision', 'Status', 'Task', 'Risk', 'Commitment']);
+export const contextProfileFacetTypeSchema = z.enum(['role', 'tasks', 'workflow', 'artifacts', 'knowhow']);
+const contextCommonShape = {
+  id: z.string().min(1),
+  type: z.string().min(1),
+  label: z.string().min(1),
+  summary: z.string().min(1).nullable(),
+  revision: z.number().int().nonnegative(),
+  updatedAt: z.string().datetime({ offset: true }),
+  degraded: z.boolean(),
+};
+export const contextTimelineItemSchema = z.object({
+  ...contextCommonShape,
+  occurredAt: z.string().datetime({ offset: true }),
+  entityId: z.string().min(1).nullable(),
+  entityLabel: z.string().min(1).nullable(),
+  authority: contextAuthoritySchema,
+  evidence: z.array(contextEvidenceRefSchema),
+}).strict();
+export const contextCorrectionRecordSchema = z.object({
+  ...contextCommonShape,
+  action: z.enum(['assert', 'reject']),
+  authority: contextAuthoritySchema,
+  evidence: z.array(contextEvidenceRefSchema),
+}).strict();
+export const contextEntitySchema = z.object({ ...contextCommonShape }).strict();
+export const contextDerivedItemSchema = z.object({
+  ...contextCommonShape,
+  type: contextDerivedItemTypeSchema,
+  authority: contextAuthoritySchema,
+  evidence: z.array(contextEvidenceRefSchema),
+}).strict();
+export const contextProfileAttributeSchema = z.object({
+  ...contextCommonShape,
+  type: contextProfileFacetTypeSchema,
+  authority: contextAuthoritySchema,
+  evidence: z.array(contextEvidenceRefSchema),
+  conflict: z.string().min(1).nullable(),
+  review: contextReviewStateSchema.nullable(),
+}).strict();
+export const contextEntityDetailSchema = z.object({
+  ...contextCommonShape,
+  correctionRevisions: z.object({
+    personal: z.number().int().nonnegative(),
+    organization: z.number().int().nonnegative(),
+  }).strict(),
+  evidence: z.array(contextEvidenceRefSchema),
+  items: z.array(contextDerivedItemSchema),
+  corrections: z.array(contextCorrectionRecordSchema),
+}).strict();
+export const contextEntityProfileSchema = z.object({
+  entityId: z.string().min(1),
+  label: z.string().min(1),
+  summary: z.string().min(1).nullable(),
+  revision: z.number().int().nonnegative(),
+  updatedAt: z.string().datetime({ offset: true }),
+  attributes: z.array(contextProfileAttributeSchema),
+  degraded: z.boolean(),
+}).strict();
+const contextRelationEntitySchema = z.object({
+  id: z.string().min(1),
+  type: z.string().min(1),
+  label: z.string().min(1),
+  summary: z.string().min(1).nullable(),
+}).strict();
+export const contextRelationSchema = z.object({
+  ...contextCommonShape,
+  depth: z.union([z.literal(1), z.literal(2)]),
+  level: z.enum(['explicit', 'cooccurrence', 'inferred']),
+  reviewStatus: z.enum(['proposed', 'confirmed', 'rejected']),
+  fromEntity: contextRelationEntitySchema,
+  targetEntity: contextRelationEntitySchema,
+  authority: contextAuthoritySchema,
+  evidence: z.array(contextEvidenceRefSchema),
+}).strict();
+export const contextReviewItemSchema = z.object({
+  ...contextCommonShape,
+  entityId: z.string().min(1),
+  entityLabel: z.string().min(1),
+  status: contextReviewStateSchema,
+  originalSummary: z.string().min(1).nullable(),
+  proposedSummary: z.string().min(1),
+  conflict: z.string().min(1).nullable(),
+  authority: contextAuthoritySchema,
+  evidence: z.array(contextEvidenceRefSchema),
+}).strict();
+export const contextReviewDecisionResponseSchema = z.object({
+  status: z.enum(['confirmed', 'rejected']),
+}).strict();
+const pageOf = <T extends z.ZodTypeAny>(item: T) => z.object({
+  items: z.array(item),
+  nextCursor: z.string().min(1).nullable(),
+  degraded: z.boolean(),
+}).strict();
+export const contextTimelinePageSchema = pageOf(contextTimelineItemSchema);
+export const contextEntityPageSchema = pageOf(contextEntitySchema);
+export const contextRelationPageSchema = pageOf(contextRelationSchema);
+export const contextReviewPageSchema = pageOf(contextReviewItemSchema);
+
+export type ContextEvidenceRefDto = z.infer<typeof contextEvidenceRefSchema>;
+export type ContextTimelinePageDto = z.infer<typeof contextTimelinePageSchema>;
+export type ContextEntityPageDto = z.infer<typeof contextEntityPageSchema>;
+export type ContextDerivedItemDto = z.infer<typeof contextDerivedItemSchema>;
+export type ContextProfileAttributeDto = z.infer<typeof contextProfileAttributeSchema>;
+export type ContextEntityDetailDto = z.infer<typeof contextEntityDetailSchema>;
+export type ContextEntityProfileDto = z.infer<typeof contextEntityProfileSchema>;
+export type ContextRelationPageDto = z.infer<typeof contextRelationPageSchema>;
+export type ContextReviewPageDto = z.infer<typeof contextReviewPageSchema>;
+export type ContextCorrectionRecordDto = z.infer<typeof contextCorrectionRecordSchema>;
+export type ContextReviewItemDto = z.infer<typeof contextReviewItemSchema>;
+export type ContextReviewDecisionResponseDto = z.infer<typeof contextReviewDecisionResponseSchema>;
+
+export interface ContextListQuery { cursor?: string; filter?: string; type?: string }
+export interface ContextTimelineQuery extends ContextListQuery { entityId?: string; from?: string; through?: string }
+export interface ContextRelationQuery extends ContextListQuery { depth?: 1 | 2 }
+export type ContextCorrectionCommand = {
+  action: 'assert';
+  scope: 'personal' | 'organization';
+  expectedRevision: number;
+  targetItemId: string;
+  summary: string;
+  evidenceIds: string[];
+} | {
+  action: 'reject';
+  scope: 'personal' | 'organization';
+  expectedRevision: number;
+  targetItemId: string;
+  summary?: string;
+  evidenceIds: string[];
+};
+export interface ContextReviewDecisionCommand {
+  decision: 'confirm' | 'reject';
+  expectedRevision: number;
+}
+const contextCorrectionBaseShape = {
+  scope: z.enum(['personal', 'organization']),
+  expectedRevision: z.number().int().positive(),
+  targetItemId: z.string().trim().min(1).max(500),
+  evidenceIds: z.array(z.string().min(1).max(2_000)).min(1).max(50),
+};
+const contextCorrectionCommandSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('assert'), ...contextCorrectionBaseShape, summary: z.string().trim().min(1).max(500) }).strict(),
+  z.object({ action: z.literal('reject'), ...contextCorrectionBaseShape, summary: z.string().trim().min(1).max(500).optional() }).strict(),
+]);
+const contextReviewDecisionCommandSchema = z.object({
+  decision: z.enum(['confirm', 'reject']), expectedRevision: z.number().int().positive(),
+}).strict();
+
+async function contextPlaneRequest<T>(path: string, schema: z.ZodType<T>, init?: RequestInit): Promise<T> {
   try {
-    return await request(path, signal ? { signal } : undefined, schema);
+    return await request(path, init, schema);
   } catch (cause) {
     if (cause instanceof GovernanceApiError && cause.status === 403) {
       throw new GovernanceApiError('CONTEXT_PLANE_FORBIDDEN', '当前账号无权查看 Context Center。', 403);
     }
     if (cause instanceof GovernanceApiError && cause.status === 404) {
       throw new GovernanceApiError('CONTEXT_PLANE_UNAVAILABLE', 'Context Center 服务端能力尚未提供。', 404);
+    }
+    if (cause instanceof GovernanceApiError && cause.status === 409) {
+      throw new GovernanceApiError('CONTEXT_REVISION_CONFLICT', '内容版本已变化，请刷新实体详情后重试。', 409);
     }
     if (cause instanceof GovernanceApiError && cause.status === 503) {
       throw new GovernanceApiError('CONTEXT_PLANE_UNAVAILABLE', 'Context Center 服务暂不可用，请稍后重试。', 503);
@@ -276,27 +434,57 @@ async function contextPlaneRequest<T>(path: string, schema: z.ZodType<T>, signal
   }
 }
 
-/** Organization-admin Context Plane read adapter. Tenant scope is resolved by the authenticated server session. */
+const contextQuery = (tenantId: string | undefined, query?: ContextListQuery) => ({
+  tenantId, cursor: query?.cursor, filter: query?.filter, type: query?.type,
+});
+
+/** Organization-admin Context Plane adapter. Every response is parsed by a strict UI-safe schema. */
 export const contextCenterApi = {
   getSnapshot: (options?: { signal?: AbortSignal; tenantId?: string }) => contextPlaneRequest(
-    withQuery('/api/admin/context-plane/snapshot', {
-      ...(options?.tenantId ? { tenantId: options.tenantId } : {}),
-    }),
-    contextCenterSnapshotSchema,
-    options?.signal,
+    withQuery('/api/admin/context-plane/snapshot', { tenantId: options?.tenantId }),
+    contextCenterSnapshotSchema, options?.signal ? { signal: options.signal } : undefined,
   ),
-  listEvidence: (
-    query: ContextEvidenceQuery,
-    options?: { signal?: AbortSignal; tenantId?: string },
-  ) => {
-    const path = withQuery('/api/admin/context-plane/evidence', {
-      ...(options?.tenantId ? { tenantId: options.tenantId } : {}),
-      sourceId: query.sourceId,
-      collectionId: query.collectionId,
-      ...(query.recordId === undefined ? {} : { recordId: query.recordId }),
-    });
-    return contextPlaneRequest(path, contextEvidenceListSchema, options?.signal);
-  },
+  getEvidence: (evidenceId: string, options?: { signal?: AbortSignal; tenantId?: string }) => contextPlaneRequest(
+    withQuery('/api/admin/context-plane/evidence', { id: evidenceId, tenantId: options?.tenantId }),
+    contextEvidenceListSchema, options?.signal ? { signal: options.signal } : undefined,
+  ),
+  listTimeline: (query: ContextTimelineQuery = {}, options?: { signal?: AbortSignal; tenantId?: string }) => contextPlaneRequest(
+    withQuery('/api/admin/context-plane/timeline', {
+      ...contextQuery(options?.tenantId, query), entityId: query.entityId, from: query.from, through: query.through,
+    }), contextTimelinePageSchema, options?.signal ? { signal: options.signal } : undefined,
+  ),
+  listEntities: (query: ContextListQuery = {}, options?: { signal?: AbortSignal; tenantId?: string }) => contextPlaneRequest(
+    withQuery('/api/admin/context-plane/entities', contextQuery(options?.tenantId, query)),
+    contextEntityPageSchema, options?.signal ? { signal: options.signal } : undefined,
+  ),
+  getEntity: (entityId: string, options?: { signal?: AbortSignal; tenantId?: string }) => contextPlaneRequest(
+    withQuery(`/api/admin/context-plane/entities/${id(entityId)}`, { tenantId: options?.tenantId }),
+    contextEntityDetailSchema, options?.signal ? { signal: options.signal } : undefined,
+  ),
+  getEntityProfile: (entityId: string, options?: { signal?: AbortSignal; tenantId?: string }) => contextPlaneRequest(
+    withQuery(`/api/admin/context-plane/entities/${id(entityId)}/profile`, { tenantId: options?.tenantId }),
+    contextEntityProfileSchema, options?.signal ? { signal: options.signal } : undefined,
+  ),
+  listEntityRelations: (entityId: string, query: ContextRelationQuery = {}, options?: { signal?: AbortSignal; tenantId?: string }) => contextPlaneRequest(
+    withQuery(`/api/admin/context-plane/entities/${id(entityId)}/relations`, {
+      ...contextQuery(options?.tenantId, query), depth: query.depth,
+    }),
+    contextRelationPageSchema, options?.signal ? { signal: options.signal } : undefined,
+  ),
+  listReviews: (query: ContextListQuery = {}, options?: { signal?: AbortSignal; tenantId?: string }) => contextPlaneRequest(
+    withQuery('/api/admin/context-plane/reviews', contextQuery(options?.tenantId, query)),
+    contextReviewPageSchema, options?.signal ? { signal: options.signal } : undefined,
+  ),
+  createCorrection: (entityId: string, command: ContextCorrectionCommand, options?: { signal?: AbortSignal; tenantId?: string }) => contextPlaneRequest(
+    withQuery(`/api/admin/context-plane/entities/${id(entityId)}/corrections`, { tenantId: options?.tenantId }),
+    contextCorrectionRecordSchema,
+    { ...body('POST', contextCorrectionCommandSchema.parse(command)), ...(options?.signal ? { signal: options.signal } : {}) },
+  ),
+  decideReview: (itemId: string, command: ContextReviewDecisionCommand, options?: { signal?: AbortSignal; tenantId?: string }) => contextPlaneRequest(
+    withQuery(`/api/admin/context-plane/reviews/${id(itemId)}/decision`, { tenantId: options?.tenantId }),
+    contextReviewDecisionResponseSchema,
+    { ...body('POST', contextReviewDecisionCommandSchema.parse(command)), ...(options?.signal ? { signal: options.signal } : {}) },
+  ),
 };
 
 /** Existing /api/governance/access endpoints. Raw records remain fail-closed and UI-safe. */

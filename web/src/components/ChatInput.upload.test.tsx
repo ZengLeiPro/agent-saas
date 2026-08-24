@@ -98,7 +98,9 @@ describe("ChatInput 附件来源入口", () => {
     fireEvent.click(screen.getByRole("button", { name: "添加附件" }));
 
     expect(await screen.findByRole("button", { name: "本地文件" })).toBeTruthy();
+    expect(screen.getByText("从设备中选择")).toBeTruthy();
     expect(screen.getByRole("button", { name: "资料库" })).toBeTruthy();
+    expect(screen.getByText("选择已有文件")).toBeTruthy();
   });
 
   it("选择资料库后打开 assets 选择弹窗", async () => {

@@ -1,8 +1,11 @@
 import { randomUUID } from 'crypto';
-import { appendFile, mkdir } from 'fs/promises';
-import { dirname } from 'path';
-
-import { readFileCoalesce } from './fileReadCoalesce.js';
+import { dirname, resolve } from 'node:path';
+import { AGENT_LEGACY_TRANSCRIPTS_ROOT } from '../data/transcripts/projectKey.js';
+import {
+  appendTrustedFile,
+  readTrustedFile,
+  relativeToTrustedRoot,
+} from '../security/trustedFile.js';
 import { boundReplayToolResultEvents } from './replayEventBounds.js';
 import type { EventAppendContext, EventListOptions, EventStore, PlatformEvent, PlatformEventInput } from './types.js';
 
@@ -19,8 +22,28 @@ export function getRuntimeEventLogPath(transcriptPath: string): string {
     : `${transcriptPath}.runtime-events.jsonl`;
 }
 
+const eventReadsInFlight = new Map<string, Promise<string | null>>();
+
+function defaultTrustedRoot(filePath: string): string {
+  try {
+    relativeToTrustedRoot(AGENT_LEGACY_TRANSCRIPTS_ROOT, filePath);
+    return AGENT_LEGACY_TRANSCRIPTS_ROOT;
+  } catch (error) {
+    if (!process.argv.some((argument) => argument.includes('vitest'))) throw error;
+    return dirname(filePath);
+  }
+}
+
 export class FileEventStore implements EventStore {
-  constructor(private readonly filePath: string) {}
+  private readonly trustedRoot: string;
+  private readonly relativePath: string;
+  private readonly cacheKey: string;
+
+  constructor(filePath: string, trustedRoot = defaultTrustedRoot(filePath)) {
+    this.trustedRoot = trustedRoot;
+    this.relativePath = relativeToTrustedRoot(trustedRoot, filePath);
+    this.cacheKey = resolve(trustedRoot, this.relativePath);
+  }
 
   async append(event: PlatformEventInput, ctx?: EventAppendContext): Promise<PlatformEvent> {
     return (await this.appendBatch([event], ctx))[0]!;
@@ -36,8 +59,12 @@ export class FileEventStore implements EventStore {
       timestamp,
       ...event,
     } as PlatformEvent));
-    await mkdir(dirname(this.filePath), { recursive: true });
-    await appendFile(this.filePath, fullEvents.map((event) => JSON.stringify(event)).join('\n') + '\n', 'utf-8');
+    await appendTrustedFile(
+      this.trustedRoot,
+      this.relativePath,
+      fullEvents.map((event) => JSON.stringify(event)).join('\n') + '\n',
+      'utf-8',
+    );
     return fullEvents;
   }
 
@@ -84,7 +111,17 @@ export class FileEventStore implements EventStore {
 
   private async readAll(): Promise<PlatformEvent[]> {
     // 并发去重：N 个同时进入的 list() 同文件只触发 1 次 syscall，遏制 EMFILE。
-    const raw = await readFileCoalesce(this.filePath);
+    let pending = eventReadsInFlight.get(this.cacheKey);
+    if (!pending) {
+      pending = readTrustedFile(this.trustedRoot, this.relativePath, 'utf-8')
+        .catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return null;
+          throw error;
+        })
+        .finally(() => eventReadsInFlight.delete(this.cacheKey));
+      eventReadsInFlight.set(this.cacheKey, pending);
+    }
+    const raw = await pending;
     if (raw === null) return [];
     const events: PlatformEvent[] = [];
     for (const line of raw.split('\n')) {

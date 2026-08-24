@@ -1,6 +1,6 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -98,7 +98,8 @@ describe('transcripts/meta persistence', () => {
   };
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'transcript-meta-'));
+    mkdirSync(AGENT_LEGACY_TRANSCRIPTS_ROOT, { recursive: true });
+    dir = mkdtempSync(join(AGENT_LEGACY_TRANSCRIPTS_ROOT, 'transcript-meta-'));
     transcriptPath = join(dir, '12345678-1234-1234-1234-123456789abc.jsonl');
   });
 

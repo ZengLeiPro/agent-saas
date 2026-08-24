@@ -6,7 +6,6 @@ import type {
 } from "@/lib/sessionsApi";
 import type { AgentProfile, ContextUsageData } from "@agent/shared";
 import { formatRuntimeFailureMessage, isInsufficientCreditsFailure } from "@agent/shared";
-import { mapSessionDetailToMessages } from "@/lib/sessionsApi";
 import {
   mergeServerMessagesWithLocalTail,
   mergeSessionMessageDelta,
@@ -314,6 +313,7 @@ export function useSession(
     ) => {
       const nonce = ++loadNonceRef.current;
       const isStale = () => loadNonceRef.current !== nonce;
+      const mapperPromise = import("@/lib/sessionMessageMapper");
 
       // silent 模式（后台恢复、WS 重连等）不显示 loading 指示器
       if (!opts?.silent) setIsLoadingMessages(true);
@@ -392,7 +392,7 @@ export function useSession(
             data.owner?.username ??
             sessionsRef.current.find((s) => s.sessionId === id)?.owner
               ?.username;
-          const incomingMsgs = mapSessionDetailToMessages(data, sessionOwner);
+          const incomingMsgs = (await mapperPromise).mapSessionDetailToMessages(data, sessionOwner);
           let msgs = data.mode === "delta" && baseMessages
             ? mergeSessionMessageDelta(baseMessages, incomingMsgs)
             : incomingMsgs;
@@ -542,7 +542,7 @@ export function useSession(
       if (sessionIdRef.current !== id) return;
 
       const owner = data.owner?.username ?? sessionOwner?.username;
-      const incoming = mapSessionDetailToMessages(data, owner);
+      const incoming = (await import("@/lib/sessionMessageMapper")).mapSessionDetailToMessages(data, owner);
       const current = cbRef.current.getMessages?.() ?? [];
       const merged = data.mode === "before"
         ? mergeSessionMessagePage(current, incoming)

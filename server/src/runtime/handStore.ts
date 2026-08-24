@@ -95,7 +95,21 @@ export type RuntimeHandRoute =
 
 export interface RuntimeHandRouteContext {
   runId?: string;
+  executionTarget?: ExecutionTargetKind;
   runtimeIsolationRequirement?: import('./runtimeIsolationEvidence.js').RuntimeIsolationRequirement;
+}
+
+export function hasUnresolvedHandProvisionFailure(hand: Pick<HandRecord, 'metadata'>): boolean {
+  const metadata = hand.metadata ?? {};
+  const directFailure = metadata.provisionFailure;
+  if (typeof directFailure === 'string' ? directFailure.trim().length > 0 : Boolean(directFailure)) return true;
+  const provision = metadata.provision;
+  return Boolean(
+    provision
+    && typeof provision === 'object'
+    && !Array.isArray(provision)
+    && (provision as Record<string, unknown>).lastStatus === 'error',
+  );
 }
 
 function isReadyAttestedDefaultHand(hand: HandRecord, context: RuntimeHandRouteContext): boolean {
@@ -103,6 +117,7 @@ function isReadyAttestedDefaultHand(hand: HandRecord, context: RuntimeHandRouteC
   if (!runId) return false;
   const metadata = hand.metadata ?? {};
   return hand.status === 'ready'
+    && !hasUnresolvedHandProvisionFailure(hand)
     && hand.type === 'server-remote'
     && typeof metadata.tenantRemoteHandId !== 'string'
     && metadata.runtimeIsolationAttested === true
@@ -143,12 +158,25 @@ export function selectRuntimeHandRoute(
 
   const tenantCandidates = hands.filter((hand) =>
     hand.status === 'ready'
+    && !hasUnresolvedHandProvisionFailure(hand)
     && hand.type === 'server-remote'
     && typeof hand.metadata?.tenantRemoteHandId === 'string'
     && (hand.metadata.tenantRemoteHandId as string).length > 0,
   );
-  return tenantCandidates.length === 1
-    ? { kind: 'ready', handId: tenantCandidates[0]!.handId, attested: false }
+  if (tenantCandidates.length === 1) {
+    return { kind: 'ready', handId: tenantCandidates[0]!.handId, attested: false };
+  }
+  if (tenantCandidates.length > 1) return { kind: 'none' };
+
+  // 非 attested legacy 流程仍由默认 transport 执行，但已有 default hand 明确失败时
+  // 必须阻止 fallback 绕过其状态；ready default 保持旧的 kind:none 兼容语义。
+  const unavailableDefault = hands.some((hand) => (
+    (!context.executionTarget || hand.type === context.executionTarget)
+    && typeof hand.metadata?.tenantRemoteHandId !== 'string'
+    && (hand.status !== 'ready' || hasUnresolvedHandProvisionFailure(hand))
+  ));
+  return unavailableDefault
+    ? { kind: 'blocked', message: 'RUNTIME_DEFAULT_HAND_UNAVAILABLE' }
     : { kind: 'none' };
 }
 
@@ -175,10 +203,34 @@ export interface RegisterHandInput {
   metadata?: Record<string, unknown>;
 }
 
+export const PROVISION_RECOVERY_CLAIM_TTL_MS = 5 * 60_000;
+
 export interface HandStore {
   init?(): Promise<void>;
   register(input: RegisterHandInput): Promise<HandRecord>;
   updateStatus(handId: string, status: HandStatus, metadataPatch?: Record<string, unknown>): Promise<HandRecord | null>;
+  /** Atomically claims an unresolved provision failure for one scanner recovery attempt. */
+  claimProvisionRecovery(
+    handId: string,
+    recoveryToken: string,
+    metadataPatch?: Record<string, unknown>,
+    expectedUpdatedAt?: string,
+    expectedProvisionGeneration?: string,
+  ): Promise<HandRecord | null>;
+  /** Completes a normal provision attempt only while its generation still owns the Hand. */
+  completeProvisionAttempt(
+    handId: string,
+    provisionGeneration: string,
+    status: HandStatus,
+    metadataPatch?: Record<string, unknown>,
+  ): Promise<HandRecord | null>;
+  /** Applies a scanner recovery result only while its claim token is still current. */
+  completeProvisionRecovery(
+    handId: string,
+    recoveryToken: string,
+    status: HandStatus,
+    metadataPatch?: Record<string, unknown>,
+  ): Promise<HandRecord | null>;
   get(handId: string): Promise<HandRecord | null>;
   listBySession(sessionId: string): Promise<HandRecord[]>;
   listByWorkspace(workspaceId: string): Promise<HandRecord[]>;
@@ -316,6 +368,87 @@ export class PgHandStore implements HandStore {
       WHERE hand_id = $1
       RETURNING row_to_json(${this.handsTable}.*) AS row_json
     `, [handId, status, JSON.stringify(metadataPatch)]);
+    return result.rows[0] ? normalizeHandRecord(result.rows[0].row_json) : null;
+  }
+
+  async claimProvisionRecovery(
+    handId: string,
+    recoveryToken: string,
+    metadataPatch: Record<string, unknown> = {},
+    expectedUpdatedAt?: string,
+    expectedProvisionGeneration?: string,
+  ): Promise<HandRecord | null> {
+    const patch = { ...metadataPatch, provisionRecoveryToken: recoveryToken };
+    const result = await this.pool.query<{ row_json: unknown }>(`
+      UPDATE ${this.handsTable}
+      SET status = 'unhealthy',
+          metadata = metadata || $2::jsonb || jsonb_build_object(
+            'provisionRecoveryClaimedAtMs', floor(extract(epoch FROM now()) * 1000)::bigint
+          ),
+          updated_at = now()
+      WHERE hand_id = $1
+        AND status IN ('ready', 'unhealthy')
+        AND (lease_expires_at IS NULL OR lease_expires_at > now())
+        AND ($4::timestamptz IS NULL OR date_trunc('milliseconds', updated_at) = $4::timestamptz)
+        AND ($5::text IS NULL OR metadata->>'provisionGeneration' = $5)
+        AND (
+          COALESCE(metadata->>'provisionRecoveryToken', '') = ''
+          OR CASE
+            WHEN jsonb_typeof(metadata->'provisionRecoveryClaimedAtMs') = 'number'
+              THEN (metadata->>'provisionRecoveryClaimedAtMs')::numeric
+                < floor(extract(epoch FROM now()) * 1000)::numeric - $3::numeric
+            ELSE TRUE
+          END
+        )
+      RETURNING row_to_json(${this.handsTable}.*) AS row_json
+    `, [
+      handId,
+      JSON.stringify(patch),
+      PROVISION_RECOVERY_CLAIM_TTL_MS,
+      expectedUpdatedAt ?? null,
+      expectedProvisionGeneration ?? null,
+    ]);
+    return result.rows[0] ? normalizeHandRecord(result.rows[0].row_json) : null;
+  }
+
+  async completeProvisionAttempt(
+    handId: string,
+    provisionGeneration: string,
+    status: HandStatus,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<HandRecord | null> {
+    const result = await this.pool.query<{ row_json: unknown }>(`
+      UPDATE ${this.handsTable}
+      SET status = $3, metadata = metadata || $4::jsonb, updated_at = now()
+      WHERE hand_id = $1
+        AND status <> 'destroyed'
+        AND (lease_expires_at IS NULL OR lease_expires_at > now())
+        AND metadata->>'provisionGeneration' = $2
+      RETURNING row_to_json(${this.handsTable}.*) AS row_json
+    `, [handId, provisionGeneration, status, JSON.stringify(metadataPatch)]);
+    return result.rows[0] ? normalizeHandRecord(result.rows[0].row_json) : null;
+  }
+
+  async completeProvisionRecovery(
+    handId: string,
+    recoveryToken: string,
+    status: HandStatus,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<HandRecord | null> {
+    const patch = {
+      ...metadataPatch,
+      provisionRecoveryToken: null,
+      provisionRecoveryClaimedAtMs: null,
+    };
+    const result = await this.pool.query<{ row_json: unknown }>(`
+      UPDATE ${this.handsTable}
+      SET status = $3, metadata = metadata || $4::jsonb, updated_at = now()
+      WHERE hand_id = $1
+        AND status = 'unhealthy'
+        AND (lease_expires_at IS NULL OR lease_expires_at > now())
+        AND metadata->>'provisionRecoveryToken' = $2
+      RETURNING row_to_json(${this.handsTable}.*) AS row_json
+    `, [handId, recoveryToken, status, JSON.stringify(patch)]);
     return result.rows[0] ? normalizeHandRecord(result.rows[0].row_json) : null;
   }
 

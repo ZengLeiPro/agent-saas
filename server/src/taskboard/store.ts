@@ -614,12 +614,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   async createTaskWithResult(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput, requestDigest?: string): Promise<TaskboardTaskCreateResult> {
     return createStoredTaskWithResult(this, identity, boardId, input, requestDigest);
   }
-  async completeTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<TaskBoardTask> {
-    return completeStoredTaskCreation(this, identity, taskId, claimToken);
-  }
-  async releaseTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<void> {
-    return releaseStoredTaskCreation(this, identity, taskId, claimToken);
-  }
+  async completeTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<TaskBoardTask> { return completeStoredTaskCreation(this, identity, taskId, claimToken); }
+  async releaseTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<void> { return releaseStoredTaskCreation(this, identity, taskId, claimToken); }
   async getTask(identity: TaskboardIdentity, taskId: string, creationClaimToken?: string): Promise<TaskBoardTask> {
     return this.requireTask(this.pool, identity, taskId, false, creationClaimToken);
   }

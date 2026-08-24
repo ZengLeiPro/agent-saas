@@ -345,7 +345,7 @@ export function useChatAppStateCore(): ChatAppState {
   msgRef.current = msg;
   // 交互回复以服务端 ACK 为准；同一 interaction 在 ACK 到达前只允许一次提交。
   const pendingInteractionResponsesRef = useRef(new Map<string, PendingInteractionResponse>());
-  const interactionResponseGenerationRef = useRef(0);
+  const interactionResponseGenerationRef = useRef(new Map<string, number>());
   const sessionIdRef = useRef<string | null>(null);
   const releaseInteractionResponse = useCallback((interactionId: string, generation: number, error: string) => {
     const pending = pendingInteractionResponsesRef.current.get(interactionId);
@@ -1728,7 +1728,8 @@ export function useChatAppStateCore(): ChatAppState {
     ) => {
       // A live attempt owns the submit slot; timeout/disconnect/error releases it.
       if (pendingInteractionResponsesRef.current.has(interactionId)) return;
-      const generation = ++interactionResponseGenerationRef.current;
+      const generation = (interactionResponseGenerationRef.current.get(interactionId) ?? 0) + 1;
+      interactionResponseGenerationRef.current.set(interactionId, generation);
       const attemptId = `${interactionId}:${generation}:${Date.now()}`;
       pendingInteractionResponsesRef.current.set(interactionId, { type, response, generation, attemptId });
 

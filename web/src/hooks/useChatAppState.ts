@@ -346,7 +346,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const autoApproveRunShellRef = useRef(effectiveAutoApproveRunShell); autoApproveRunShellRef.current = effectiveAutoApproveRunShell;
   const msgRef = useRef(msg); msgRef.current = msg;
   const pendingInteractionResponsesRef = useRef(new Map<string, PendingInteractionResponse>());
-  const interactionResponseGenerationRef = useRef(0);
+  const interactionResponseGenerationRef = useRef(new Map<string, number>());
   const sessionIdRef = useRef<string | null>(null);
   const releaseInteractionResponse = useCallback((id: string, generation: number, error: string) => { const pending = pendingInteractionResponsesRef.current.get(id); if (!pending || pending.generation !== generation) return; if (pending.ackTimer) clearTimeout(pending.ackTimer); pendingInteractionResponsesRef.current.delete(id); msgRef.current.addMessage({ type: "system-error", severity: "error", content: `回复未确认：${error}。请重试。`, timestamp: Date.now() }); }, []);
   const releaseAllInteractionResponses = useCallback((error: string) => { for (const [id, { generation }] of pendingInteractionResponsesRef.current) releaseInteractionResponse(id, generation, error); }, [releaseInteractionResponse]);
@@ -2967,7 +2967,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   // ---- Interaction responses (via WS) ----
   const respondToInteraction = useCallback(async (interactionId: string, type: 'permission_request' | 'ask_user', response: Record<string, unknown>) => {
     if (pendingInteractionResponsesRef.current.has(interactionId)) return;
-    const generation = ++interactionResponseGenerationRef.current, attemptId = `${interactionId}:${generation}:${Date.now()}`;
+    const generation = (interactionResponseGenerationRef.current.get(interactionId) ?? 0) + 1, attemptId = `${interactionId}:${generation}:${Date.now()}`; interactionResponseGenerationRef.current.set(interactionId, generation);
     const pending: PendingInteractionResponse = { type, response, generation, attemptId };
     pendingInteractionResponsesRef.current.set(interactionId, pending);
     if (!await wsClient.ensureConnectedSend({ action: 'respond', interactionId, sessionId: sessionIdRef.current, clientAttemptId: attemptId, ...response }).catch(() => false)) return releaseInteractionResponse(interactionId, generation, '网络连接失败');

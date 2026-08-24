@@ -527,7 +527,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
 
     await act(async () => { await result.current.handleAskUserResponse("ask-1", answers); });
     expect(interactionPayloads()).toHaveLength(2);
-    act(() => emit({ type: "respond_ok", interactionId: "ask-1", sessionId: "s1" }));
+    act(() => emit({ type: "respond_ok", interactionId: "ask-1", sessionId: "s1", clientAttemptId: interactionPayloads()[1]!.clientAttemptId }));
     await waitFor(() => expect(result.current.messages.find((m) => m.type === "ask_user" && m.interactionId === "ask-1")).toMatchObject({
       status: "answered", answers,
     }));

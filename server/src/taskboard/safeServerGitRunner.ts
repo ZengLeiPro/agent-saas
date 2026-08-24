@@ -45,6 +45,7 @@ const ALLOWED_ORIGIN_FETCH = new Set([
 const CANONICAL_GITHUB_ORIGIN = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/;
 
 const FORBIDDEN_CALLER_GLOBAL_OPTIONS = [
+  '-C',
   '-c',
   '--config-env',
   '--exec-path',
@@ -56,8 +57,9 @@ const FORBIDDEN_CALLER_GLOBAL_OPTIONS = [
 /** The only child-process Git boundary for server-owned v3 repositories. */
 export function safeServerGitArgs(args: readonly string[]): string[] {
   for (const arg of args) {
-    const forbidden = arg.startsWith('-c') && arg.length > 2
-      ? '-c'
+    const compactCwd = arg.startsWith('-C') && arg.length > 2;
+    const compactConfig = arg.startsWith('-c') && arg.length > 2;
+    const forbidden = compactCwd ? '-C' : compactConfig ? '-c'
       : FORBIDDEN_CALLER_GLOBAL_OPTIONS.find((option) => (
         arg === option || (option.startsWith('--') && arg.startsWith(`${option}=`))
       ));

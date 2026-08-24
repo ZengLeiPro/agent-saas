@@ -378,6 +378,7 @@ async function assertOwnedWorktreeRecord(
   base: RepositoryWorkspaceEvidence,
   linked: boolean,
 ): Promise<RepositoryWorkspaceEvidence> {
+  if (linked) await assertControlledWorktreeParent(host, record.path, base);
   const pathInfo = await (host.lstat ? host.lstat(record.path) : lstat(record.path)).catch(() => undefined);
   if (!pathInfo || pathInfo.isSymbolicLink()) {
     throw new RepositoryWorkspaceSyncError(
@@ -423,6 +424,14 @@ async function assertRequestedPathAbsent(
       throw new RepositoryWorkspaceSyncError('Requested worktree path cannot be admitted safely', 'WORKTREE_UNKNOWN', undefined, evidence);
     }
   }
+  await assertControlledWorktreeParent(host, worktreePath, evidence);
+}
+
+async function assertControlledWorktreeParent(
+  host: RepositoryWorkspaceSyncHost,
+  worktreePath: string,
+  evidence: RepositoryWorkspaceEvidence,
+): Promise<void> {
   const parent = dirname(worktreePath);
   try {
     const parentLink = await (host.lstat ? host.lstat(parent) : lstat(parent));
@@ -530,6 +539,15 @@ async function prepareIntegrationWorktree(
 ): Promise<RepositoryWorkspaceSyncResult['integrationWorktree']> {
   const atRequestedPath = worktrees.find((entry) => entry.path === input.worktreePath);
   const forBranch = worktrees.find((entry) => entry.branch === integrationRef);
+  const beforeWorktreeMutation = async () => {
+    await beforeMutation?.();
+    await assertControlledWorktreeParent(host, input.worktreePath, {
+      version: 1,
+      repositoryPath: input.repositoryPath,
+      worktreePath: input.worktreePath,
+      expectedBranch: integrationRef,
+    });
+  };
 
   if (atRequestedPath && atRequestedPath.branch !== integrationRef) {
     throw new RepositoryWorkspaceSyncError(
@@ -547,11 +565,11 @@ async function prepareIntegrationWorktree(
   if (atRequestedPath) {
     await assertClean(host, atRequestedPath);
     if (input.integrationWorktreeMode === 'reset_to_base') {
-      await beforeMutation?.();
+      await beforeWorktreeMutation();
       await git(host, atRequestedPath.path, ['reset', '--hard', remoteBaseRef]);
       return 'reset_to_base';
     }
-    return fastForwardWorktree(host, input.repositoryPath, atRequestedPath.path, integrationRef, remoteBaseRef, beforeMutation);
+    return fastForwardWorktree(host, input.repositoryPath, atRequestedPath.path, integrationRef, remoteBaseRef, beforeWorktreeMutation);
   }
 
   const branchExists = await refExists(host, input.repositoryPath, integrationRef);
@@ -559,21 +577,21 @@ async function prepareIntegrationWorktree(
     if (input.integrationWorktreeMode !== 'reset_to_base') {
       await assertFastForwardable(host, input.repositoryPath, integrationRef, remoteBaseRef);
     }
-    await beforeMutation?.();
+    await beforeWorktreeMutation();
     await git(host, input.repositoryPath, ['worktree', 'add', '--', input.worktreePath, integrationRef]);
     await assertCreatedWorktreeOwnership(host, input, integrationRef);
     if (input.integrationWorktreeMode === 'reset_to_base') {
-      await beforeMutation?.();
+      await beforeWorktreeMutation();
       await git(host, input.worktreePath, ['reset', '--hard', remoteBaseRef]);
       return 'reset_to_base';
     }
     if (await isAncestor(host, input.repositoryPath, remoteBaseRef, integrationRef)) return 'created';
-    await beforeMutation?.();
+    await beforeWorktreeMutation();
     await git(host, input.worktreePath, ['merge', '--ff-only', remoteBaseRef]);
     return 'fast_forwarded';
   }
 
-  await beforeMutation?.();
+  await beforeWorktreeMutation();
   await git(host, input.repositoryPath, [
     'worktree', 'add', '-b', input.integrationBranch, '--no-track', '--', input.worktreePath, remoteBaseRef,
   ]);

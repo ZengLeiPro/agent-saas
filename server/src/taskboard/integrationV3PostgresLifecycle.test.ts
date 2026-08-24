@@ -411,10 +411,13 @@ describe('Integration v3 PostgreSQL lifecycle hosts', () => {
       id: 'cleanup-1', leaseId: 'lease-1', kind: 'cleanup', candidateId: 'candidate-1', candidateRevision: 1, payload: {},
     }, {
       version: 1, outcome: 'failed', completedAt: '2026-08-19T00:00:00.000Z',
-      actions: [{ action: 'remove_candidate_worktree', status: 'failed', error: 'dirty worktree' }],
+      actions: [{ action: 'remove_candidate_worktree', status: 'failed', error: 'dirty worktree ghs_serverinstallationtoken' }],
     });
     expect(query.mock.calls[0]![0]).toContain("attempts<5 THEN 'pending'");
     expect(query.mock.calls[0]![0]).toContain('available_at=CASE');
-    expect(query.mock.calls[0]![1]).toEqual(expect.arrayContaining(['cleanup-1', 'lease-1', true, 'remove_candidate_worktree: dirty worktree']));
+    expect(query.mock.calls[0]![1]).toEqual(expect.arrayContaining([
+      'cleanup-1', 'lease-1', true, 'remove_candidate_worktree: dirty worktree [REDACTED_GITHUB_TOKEN]',
+    ]));
+    expect(String(query.mock.calls[0]![1]?.[3])).not.toContain('ghs_serverinstallationtoken');
   });
 });

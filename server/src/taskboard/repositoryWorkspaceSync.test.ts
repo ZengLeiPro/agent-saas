@@ -453,6 +453,7 @@ describe('syncRepositoryWorkspace', () => {
       validateServerOwnedRepository: vi.fn(async () => undefined),
       realpath: async (path) => path,
       lstat: async () => ({ isSymbolicLink: () => false }),
+      stat: async () => ({ uid: process.getuid?.() ?? 0, mode: 0o700, isDirectory: () => true }),
       runGit: vi.fn(async ({ cwd, args }: RepositoryWorkspaceGitCommand) => {
         if (args[0] === 'worktree' && args[1] === 'list') return ok(`${mainRecord(REMOTE_OID)}\n${integrationRecord(REMOTE_OID)}`);
         if (args[0] === 'symbolic-ref') return ok(cwd === REPOSITORY ? 'refs/heads/main\n' : 'refs/heads/integration/42\n');
@@ -542,6 +543,19 @@ describe('syncRepositoryWorkspace', () => {
   ])('rejects a controlled worktree parent with unsafe %s before fetch', async (_case, uid, mode) => {
     const host = new ScriptedHost([listStep(mainRecord())]);
     vi.spyOn(host, 'stat').mockResolvedValue({ uid, mode, isDirectory: () => true });
+
+    await expect(syncRepositoryWorkspace(host, input)).rejects.toMatchObject({ code: 'WORKTREE_UNKNOWN' });
+    expect(host.commands.flatMap((command) => command.args)).not.toContain('fetch');
+    host.assertConsumed();
+  });
+
+  it('rejects an existing Git-owned worktree under an unsafe parent before fetch', async () => {
+    const host = new ScriptedHost([listStep(`${mainRecord()}\n${integrationRecord()}`)]);
+    vi.spyOn(host, 'stat').mockResolvedValue({
+      uid: process.getuid?.() ?? 0,
+      mode: 0o720,
+      isDirectory: () => true,
+    });
 
     await expect(syncRepositoryWorkspace(host, input)).rejects.toMatchObject({ code: 'WORKTREE_UNKNOWN' });
     expect(host.commands.flatMap((command) => command.args)).not.toContain('fetch');

@@ -552,9 +552,16 @@ describe('IntegrationEngineV3', () => {
     const first = await context.engine.execute({
       type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
     });
-    context.reconcileMerge.mockResolvedValueOnce({
+    context.reconcileMerge.mockResolvedValue({
       status: 'not_applied', detail: 'Provider confirms the pull request stayed open',
       evidence: { verifiedNotApplied: true },
+    });
+    const quiescing = await context.engine.execute({
+      type: 'reconcile_merge', candidateId: value.id, expected: expected(context.candidates.value),
+      operationKey: first.operation!.operationKey,
+    });
+    expect(quiescing).toMatchObject({
+      status: 'provider_unknown', operation: { state: 'unknown', receipt: { outcome: 'quiescence_observed' } },
     });
     vi.spyOn(context.candidates, 'transition')
       .mockRejectedValueOnce(new Error('candidate convergence temporarily unavailable'));
@@ -579,7 +586,7 @@ describe('IntegrationEngineV3', () => {
     expect(recovered).toMatchObject({
       status: 'applied', candidate: { state: 'needs_human' }, operation: { state: 'failed' },
     });
-    expect(context.reconcileMerge).toHaveBeenCalledTimes(1);
+    expect(context.reconcileMerge).toHaveBeenCalledTimes(2);
     expect(context.merge).toHaveBeenCalledTimes(1);
   });
 

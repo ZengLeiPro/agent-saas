@@ -113,19 +113,25 @@ describe('IntegrationProviderOperationService', () => {
     expect(result).toMatchObject({ state: 'unknown', error: 'ref is not visible yet', attemptCount: 1 });
   });
 
-  it('terminalizes an evidence-backed not-applied result without resending the operation', async () => {
+  it('requires two exact no-effect observations after an ambiguous timeout before terminalizing', async () => {
     const { service } = setup();
     await service.prepare(intent);
-    await service.execute(operationKey, async () => { throw new Error('transport failed'); });
-
-    const result = await service.reconcile(operationKey, async () => ({
-      status: 'not_applied', detail: 'exact ref remains at the expected old OID',
+    const executor = vi.fn(async () => { throw new Error('transport failed'); });
+    await service.execute(operationKey, executor);
+    const reconcile = vi.fn(async () => ({
+      status: 'not_applied' as const, detail: 'exact ref remains at the expected old OID',
       evidence: { actualOid: 'base-oid', verifiedNotApplied: true },
     }));
 
-    expect(result).toMatchObject({ state: 'failed', attemptCount: 1,
+    const quiescing = await service.reconcile(operationKey, reconcile);
+    expect(quiescing).toMatchObject({ state: 'unknown', attemptCount: 1,
+      receipt: { outcome: 'quiescence_observed', actualOid: 'base-oid', verifiedNotApplied: true } });
+    const terminal = await service.reconcile(operationKey, reconcile);
+    expect(terminal).toMatchObject({ state: 'failed', attemptCount: 1,
       error: 'exact ref remains at the expected old OID',
       receipt: { outcome: 'not_applied', actualOid: 'base-oid', verifiedNotApplied: true } });
+    expect(executor).toHaveBeenCalledOnce();
+    expect(reconcile).toHaveBeenCalledTimes(2);
   });
 
   it('requires two exact no-effect observations before classifying an executing operation as not applied', async () => {

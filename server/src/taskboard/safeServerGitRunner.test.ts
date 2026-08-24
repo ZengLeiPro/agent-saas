@@ -113,6 +113,8 @@ describe('safe server Git runner', () => {
   });
 
   it.each([
+    ['-C', ['-C', '/tmp/attacker', 'status']],
+    ['compact -C', ['-C/tmp/attacker', 'status']],
     ['-c', ['status', '-c', 'http.sslVerify=false']],
     ['compact -c', ['-ccore.hooksPath=/tmp/attacker', 'status']],
     ['--config-env', ['--config-env=http.sslVerify=ATTACKER', 'status']],

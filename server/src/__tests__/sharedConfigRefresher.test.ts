@@ -11,6 +11,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSharedConfigRefresher } from '../app/sharedConfigRefresher.js';
 import type { AppConfig } from '../app/config.js';
+import { InMemorySecretVault } from '../security/secretVault.js';
+import { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
 
 const BASE_GROUP = {
   id: 'ark-agents',
@@ -42,6 +44,19 @@ function writeConfig(
     ...(titleGenerator ? { titleGenerator } : {}),
   };
   writeFileSync(join(dir, 'config.json'), JSON.stringify(cfg, null, 2), 'utf-8');
+}
+
+function writeCodexConfig(
+  dir: string,
+  codexSubscription: AppConfig['codexSubscription'],
+  groups: unknown[] = [BASE_GROUP],
+): void {
+  writeFileSync(join(dir, 'config.json'), JSON.stringify({
+    agent: { cwd: '.' },
+    server: { port: 3200 },
+    models: { groups, default: 'ark-agents/glm-5.2' },
+    ...(codexSubscription ? { codexSubscription } : {}),
+  }, null, 2), 'utf-8');
 }
 
 describe('createSharedConfigRefresher', () => {
@@ -81,6 +96,124 @@ describe('createSharedConfigRefresher', () => {
     const qwen = config.models!.groups.find((g) => g.id === 'qwen');
     // 关键断言：apiKey 必须一并进来，否则 dispatch 仍会报缺少 apiKey
     expect(qwen?.apiKey).toBe('sk-qwen-key');
+  });
+
+  it('跨进程热更新完整 Codex 配置，并让同一个 CredentialManager 立即读取新账号顺序', () => {
+    const initial = {
+      enabled: true,
+      websocketEnabled: true,
+      credentialRef: 'credential-old-primary',
+      credentialRefs: ['credential-old-primary', 'credential-old-secondary'],
+      endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+      originator: 'codex-tui',
+    } satisfies NonNullable<AppConfig['codexSubscription']>;
+    const replacement = {
+      enabled: false,
+      websocketEnabled: false,
+      credentialRef: 'credential-new-primary',
+      credentialRefs: ['credential-new-primary', 'credential-old-primary'],
+      endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+      originator: 'kaiyan-agent',
+    } satisfies NonNullable<AppConfig['codexSubscription']>;
+    writeCodexConfig(dir, initial);
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      codexSubscription: structuredClone(initial),
+    } as unknown as AppConfig;
+    const manager = new CodexCredentialManager({
+      vault: new InMemorySecretVault(),
+      getConfig: () => config.codexSubscription,
+    });
+    const logs: string[] = [];
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      logger: { info: (message) => logs.push(message), warn: () => {} },
+      now: () => clock,
+    });
+
+    expect(manager.getCredentialRefs()).toEqual(initial.credentialRefs);
+    writeCodexConfig(dir, replacement);
+    clock += 5_000;
+    refresher.refreshIfChanged();
+
+    expect(config.codexSubscription).toEqual(replacement);
+    expect(config.codexSubscription?.credentialRef).toBe(replacement.credentialRefs[0]);
+    expect(manager.getCredentialRefs()).toEqual(replacement.credentialRefs);
+    expect(manager.getConfiguration()).toMatchObject({
+      enabled: false,
+      websocketEnabled: false,
+      endpoint: replacement.endpoint,
+      originator: replacement.originator,
+    });
+    expect(logs.filter((message) => message.includes('Codex 订阅配置'))).toEqual([
+      '[SharedConfig] 已从磁盘热更新 Codex 订阅配置：enabled=false / websocketEnabled=false / credentialCount=2',
+    ]);
+    expect(logs.join('\n')).not.toContain('credential-new-primary');
+  });
+
+  it('同步 Codex 开关、账号删除与 section 清理，非相关配置变化不产生 Codex 副作用', () => {
+    const initial = {
+      enabled: true,
+      websocketEnabled: true,
+      credentialRef: 'credential-a',
+      credentialRefs: ['credential-a', 'credential-b'],
+      endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+      originator: 'codex-tui',
+    } satisfies NonNullable<AppConfig['codexSubscription']>;
+    const disabled = {
+      ...initial,
+      enabled: false,
+      websocketEnabled: false,
+      credentialRef: 'credential-b',
+      credentialRefs: ['credential-b'],
+    } satisfies NonNullable<AppConfig['codexSubscription']>;
+    writeCodexConfig(dir, initial);
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      codexSubscription: structuredClone(initial),
+    } as unknown as AppConfig;
+    const logs: string[] = [];
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      logger: { info: (message) => logs.push(message), warn: () => {} },
+      now: () => clock,
+    });
+
+    writeCodexConfig(dir, disabled);
+    clock += 5_000;
+    refresher.refreshIfChanged();
+    expect(config.codexSubscription).toEqual(disabled);
+    expect(config.codexSubscription?.credentialRefs).not.toContain('credential-a');
+
+    const reenabled = { ...disabled, enabled: true, websocketEnabled: true };
+    writeCodexConfig(dir, reenabled);
+    clock += 5_000;
+    refresher.refreshIfChanged();
+    expect(config.codexSubscription).toMatchObject({ enabled: true, websocketEnabled: true });
+
+    const codexConfigAfterToggle = config.codexSubscription;
+    const codexLogCountAfterToggle = logs.filter((message) => message.includes('Codex 订阅配置')).length;
+    writeCodexConfig(dir, reenabled, [BASE_GROUP, QWEN_GROUP]);
+    clock += 5_000;
+    refresher.refreshIfChanged();
+    refresher.refreshIfChanged();
+    expect(config.codexSubscription).toBe(codexConfigAfterToggle);
+    expect(logs.filter((message) => message.includes('Codex 订阅配置')))
+      .toHaveLength(codexLogCountAfterToggle);
+
+    writeCodexConfig(dir, undefined, [BASE_GROUP, QWEN_GROUP]);
+    clock += 5_000;
+    refresher.refreshIfChanged();
+    expect(config.codexSubscription).toBeUndefined();
+    expect(logs.at(-1)).toBe(
+      '[SharedConfig] 已从磁盘热更新 Codex 订阅配置：enabled=false / websocketEnabled=false / credentialCount=0',
+    );
   });
 
   it('文件未变化时不重复解析（节流 + 指纹双重保护）', () => {

@@ -207,7 +207,8 @@ export class RuntimeEventRetention {
             SELECT e.global_sequence
             FROM ${this.eventsTable} e
             INNER JOIN ${this.toolInvocationsTable} invocation
-              ON invocation.invocation_id = e.event_json->>'invocationId'
+              ON invocation.tenant_id = e.tenant_id
+             AND invocation.invocation_id = e.event_json->>'invocationId'
             WHERE e.event_type = ANY($1::text[])
               AND e.global_sequence <= $2::bigint
               AND invocation.status IN ('completed', 'failed', 'cancelled')
@@ -216,7 +217,8 @@ export class RuntimeEventRetention {
               AND EXISTS (
                 SELECT 1
                 FROM ${this.eventsTable} result
-                WHERE result.session_id = e.session_id
+                WHERE result.tenant_id = e.tenant_id
+                  AND result.session_id = e.session_id
                   AND result.run_id IS NOT DISTINCT FROM e.run_id
                   AND result.event_type = 'tool_result'
                   AND result.event_json ? 'toolCallId'
@@ -246,7 +248,8 @@ export class RuntimeEventRetention {
               AND EXISTS (
                 SELECT 1
                 FROM ${this.eventsTable} terminal
-                WHERE terminal.session_id = e.session_id
+                WHERE terminal.tenant_id = e.tenant_id
+                  AND terminal.session_id = e.session_id
                   AND terminal.run_id IS NOT DISTINCT FROM e.run_id
                   AND terminal.event_type = 'run_finished'
                   AND terminal.timestamp < NOW() - ($2::int * INTERVAL '1 minute')

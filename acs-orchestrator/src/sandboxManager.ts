@@ -348,9 +348,9 @@ export class SandboxManager {
     if (!this.snatManager.isEnabled()) {
       return { enabled: false, checked: 0, deleted: [], orphanCidrs: [], unexpected: [] };
     }
+    // phase 不代表资源消失；只要受管 Sandbox CR 仍在就保留 SNAT，清单失败则 fail-closed。
     const retainedEntryNames = new Set(
       (await this.listManagedSandboxes())
-        .filter((sandbox) => ['Running', 'Paused'].includes(sandbox.phase ?? ''))
         .map((sandbox) => this.snatManager.entryNameForSandboxName(sandbox.name)),
     );
     const activeCidrs = await this.snatManager.activeManagedPodCidrs();

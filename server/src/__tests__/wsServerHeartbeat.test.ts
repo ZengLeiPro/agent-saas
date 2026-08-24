@@ -57,6 +57,7 @@ async function withWsServer<T>(
   const tenantStore = { findById: (id: string) => id === tenant.id ? { ...tenant } : undefined };
   const server = http.createServer((_req, res) => res.end('ok'));
   const wsServer = new WsServer({
+    authEnabled: options.authEnabled !== false,
     jwtSecret: options.authEnabled === false ? undefined : 'test-secret',
     pingIntervalMs: options.pingIntervalMs ?? 60_000,
     authTimeoutMs: options.authTimeoutMs ?? 200,

@@ -2641,7 +2641,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
     getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'),
     sttConfig: resolvedSttRuntimeConfig.sttConfig,
-    jwtSecret: config.auth?.enabled ? config.auth.jwtSecret : undefined,
+    ...(config.auth?.enabled ? { authEnabled: true, jwtSecret: config.auth.jwtSecret } : { authEnabled: false }),
     userOverrides: config.agent.userOverrides,
     getIsDraining: () => channelManager.draining,
     uploadManager,

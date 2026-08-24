@@ -132,7 +132,7 @@ export interface WebChannelConfig extends WebChannelRuntimeConfig {
   modelResolver?: ModelResolver;
   /** User lookup used for channel identity and preferences. */
   userStore?: UserStore;
-  /** Secret used to authenticate WebSocket connections. */
+  /** Secret used to authenticate WebSocket connections when authEnabled is true. */
   jwtSecret?: string;
   /** Reports whether shutdown draining has begun. */
   getIsDraining?: () => boolean;
@@ -455,8 +455,8 @@ export class WebChannel implements BaseChannel {
 
   /** 创建 WS server 并注册消息处理器 */
   async start(app: Express): Promise<void> {
-    // 创建 WS server（noServer 模式，需要在 index.ts 中调用 attachToServer）
     this.wsServer = new WsServer({
+      authEnabled: (this.config.authEnabled ?? Boolean(this.config.jwtSecret)) === true,
       jwtSecret: this.config.jwtSecret,
       userStore: this.userStore,
       tenantStore: this.config.tenantStore,
@@ -2332,7 +2332,7 @@ export class WebChannel implements BaseChannel {
 
     const principalAccessError = user
       ? this.sensitiveActionAccessError(client, { tenantId: user.tenantId, ownerUserId: user.sub })
-      : 'Access denied';
+      : (this.config.authEnabled ?? Boolean(this.config.jwtSecret)) === true ? 'Access denied' : null;
     const tenantAccessError = principalAccessError ?? this.tenantAccessErrorForClient(client);
     if (tenantAccessError) {
       this.sendChatRejected(ws, clientMsgId, 'access_denied', tenantAccessError);
@@ -2343,10 +2343,10 @@ export class WebChannel implements BaseChannel {
     // 不能因本次传输载荷缺失或实例正在排水而改写为 rejected。
     const durableRun = await this.config.enqueueRuntime?.runStore.findByIdempotencyKey(user?.sub, clientMsgId);
     if (durableRun) {
-      if (!durableRun.userId || this.sensitiveActionAccessError(client, {
-        tenantId: durableRun.tenantId,
-        ownerUserId: durableRun.userId,
-      })) {
+      if (durableRun.userId
+        ? this.sensitiveActionAccessError(client, { tenantId: durableRun.tenantId, ownerUserId: durableRun.userId })
+        : (this.config.authEnabled ?? Boolean(this.config.jwtSecret)) === true
+          || (durableRun.tenantId !== undefined && durableRun.tenantId !== DEFAULT_TENANT_ID)) {
         this.sendChatRejected(ws, clientMsgId, 'access_denied', '无权访问该会话');
         return;
       }

@@ -5,7 +5,9 @@ import {
   evaluateDropRecheck,
   evaluateObservationWindow,
   evaluateZeroScanEvidence,
+  formatExecuteDropAuthorizationAudit,
   isSessionReplacementIndex,
+  normalizeAuthorizationRef,
   parseArgs,
   sameIndexDefinitionIgnoringName,
 } from '../scripts/runtime-events-maintenance.mjs';
@@ -73,20 +75,49 @@ describe('runtime events maintenance DROP gates', () => {
     expect(isSessionReplacementIndex({ ...valid, accessMethod: 'hash' })).toBe(false);
   });
 
-  it('keeps authorization and observation evidence mandatory for execute-drop', () => {
+  it('keeps trimmed authorization and observation evidence mandatory for execute-drop', () => {
     expect(() => parseArgs(['--execute-drop', '--index-observed-from', '2026-08-01T00:00:00Z'], '/tmp'))
       .toThrow('--authorization-ref');
+    expect(() => parseArgs([
+      '--execute-drop',
+      '--authorization-ref', '',
+      '--index-observed-from', '2026-08-01T00:00:00Z',
+    ], '/tmp')).toThrow('--authorization-ref');
+    expect(() => parseArgs([
+      '--execute-drop',
+      '--authorization-ref', '   ',
+      '--index-observed-from', '2026-08-01T00:00:00Z',
+    ], '/tmp')).toThrow('--authorization-ref');
     expect(() => parseArgs(['--execute-drop', '--authorization-ref', 'CHG-198'], '/tmp'))
       .toThrow('--index-observed-from');
     expect(parseArgs([
       '--execute-drop',
-      '--authorization-ref', 'CHG-198',
+      '--authorization-ref', '  CHG-198  ',
       '--index-observed-from', '2026-08-01T00:00:00Z',
     ], '/tmp')).toMatchObject({
       executeDrop: true,
       authorizationRef: 'CHG-198',
       indexObservedFrom: '2026-08-01T00:00:00Z',
     });
+  });
+
+  it('normalizes authorization references before execute-drop audit output and rejects blank values', () => {
+    expect(normalizeAuthorizationRef('  CHG-198  ')).toBe('CHG-198');
+    expect(normalizeAuthorizationRef(' \t ')).toBeUndefined();
+    expect(formatExecuteDropAuthorizationAudit('  CHG-198  '))
+      .toBe('[authorization] execute-drop authorizationRef=CHG-198');
+    expect(() => formatExecuteDropAuthorizationAudit(' \n ')).toThrow('trim 后非空');
+  });
+
+  it('fails execute-drop before any database call when authorization is blank', async () => {
+    const query = vi.fn();
+    const target = { query } as unknown as Parameters<typeof dropDeadIndexes>[0];
+    await expect(dropDeadIndexes(target, 'runtime_events', {
+      dropRunIdx: false,
+      indexObservedFrom: '2026-08-01T00:00:00Z',
+      authorizationRef: '   ',
+    })).rejects.toThrow('trim 后非空');
+    expect(query).not.toHaveBeenCalled();
   });
 
   it('requires an actually equivalent replacement before optional run index removal', () => {
@@ -191,6 +222,7 @@ describe('runtime events maintenance DROP gates', () => {
     await expect(dropDeadIndexes(target, 'runtime_events', {
       dropRunIdx: false,
       indexObservedFrom: reset,
+      authorizationRef: 'CHG-198',
     })).rejects.toThrow('stats_reset 自整批初次取证后发生变化');
 
     expect(sqlCalls.filter((sql) => sql.startsWith('DROP INDEX CONCURRENTLY'))).toHaveLength(1);

@@ -45,15 +45,24 @@ function procPath(handle: FileHandle, child?: string): string {
 
 async function openRoot(root: string, create = false): Promise<FileHandle> {
   const absoluteRoot = resolve(root);
+  const components = absoluteRoot.split(sep).filter(Boolean);
+  let current = await open(sep, DIRECTORY_FLAGS);
   try {
-    if (create) await mkdir(absoluteRoot, { recursive: true, mode: 0o775 });
-    return await open(absoluteRoot, DIRECTORY_FLAGS);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOTDIR') {
-      const stats = await lstat(absoluteRoot).catch(() => undefined);
-      if (stats?.isSymbolicLink()) throw new UnsafeFilePathError();
+    for (const component of components) {
+      let next: FileHandle;
+      try {
+        next = await openChildDirectory(current, component);
+      } catch (error) {
+        if (!create || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        next = await createAndOpenChildDirectory(current, component);
+      }
+      await current.close();
+      current = next;
     }
-    asUnsafe(error);
+    return current;
+  } catch (error) {
+    await current.close().catch(() => undefined);
+    throw error;
   }
 }
 
@@ -70,6 +79,15 @@ async function openChildDirectory(parent: FileHandle, name: string): Promise<Fil
   }
 }
 
+async function createAndOpenChildDirectory(parent: FileHandle, name: string): Promise<FileHandle> {
+  try {
+    await mkdir(procPath(parent, name), { mode: 0o775 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  }
+  return openChildDirectory(parent, name);
+}
+
 async function bindParent(root: string, relativePath: string, createParents = false): Promise<{ parent: FileHandle; leaf: string }> {
   const components = componentsOf(relativePath);
   const leaf = components.pop()!;
@@ -81,8 +99,7 @@ async function bindParent(root: string, relativePath: string, createParents = fa
         next = await openChildDirectory(current, component);
       } catch (error) {
         if (!createParents || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        await mkdir(procPath(current, component), { mode: 0o775 });
-        next = await openChildDirectory(current, component);
+        next = await createAndOpenChildDirectory(current, component);
       }
       await current.close();
       current = next;
@@ -303,14 +320,20 @@ export async function copyTrustedFile(
   options: { maxBytes?: number } = {},
 ): Promise<Stats> {
   const source = await openTrustedFile(sourceRoot, sourceRelativePath);
-  if (options.maxBytes !== undefined && source.stats.size > options.maxBytes) {
-    await source.handle.close();
-    throw Object.assign(new Error(`File exceeds ${options.maxBytes} bytes`), { code: 'EFBIG' });
-  }
-  const { parent, leaf } = await bindParent(destinationRoot, destinationRelativePath, true);
+  let parent: FileHandle | undefined;
   let destination: FileHandle | undefined;
+  let destinationLeaf: string | undefined;
+  let destinationCreated = false;
+  let copied = false;
   try {
-    destination = await open(procPath(parent, leaf), WRITE_FLAGS | constants.O_EXCL, 0o664);
+    if (options.maxBytes !== undefined && source.stats.size > options.maxBytes) {
+      throw Object.assign(new Error(`File exceeds ${options.maxBytes} bytes`), { code: 'EFBIG' });
+    }
+    const bound = await bindParent(destinationRoot, destinationRelativePath, true);
+    parent = bound.parent;
+    destinationLeaf = bound.leaf;
+    destination = await open(procPath(parent, destinationLeaf), WRITE_FLAGS | constants.O_EXCL, 0o664);
+    destinationCreated = true;
     const buffer = Buffer.allocUnsafe(Math.min(1024 * 1024, Math.max(1, source.stats.size)));
     let position = 0;
     while (position < source.stats.size) {
@@ -320,17 +343,25 @@ export async function copyTrustedFile(
       let written = 0;
       while (written < bytesRead) {
         const result = await destination.write(buffer, written, bytesRead - written, position + written);
+        if (result.bytesWritten === 0) throw Object.assign(new Error('Destination write made no progress'), { code: 'EIO' });
         written += result.bytesWritten;
       }
       position += bytesRead;
     }
+    if (position !== source.stats.size) {
+      throw Object.assign(new Error('Source file changed during copy'), { code: 'EIO' });
+    }
+    copied = true;
     return source.stats;
   } catch (error) {
     return asUnsafe(error);
   } finally {
     await source.handle.close().catch(() => undefined);
     await destination?.close().catch(() => undefined);
-    await parent.close();
+    if (destinationCreated && !copied && parent && destinationLeaf) {
+      await unlink(procPath(parent, destinationLeaf)).catch(() => undefined);
+    }
+    await parent?.close().catch(() => undefined);
   }
 }
 

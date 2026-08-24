@@ -6,8 +6,8 @@
 
 | 类别 | event_type / 条件 | 默认 TTL | 可删前置 |
 |---|---|---:|---|
-| 工具过程 delta | `tool_output_delta`,`tool_progress` | 工具终态后 10 分钟 | invocation 为 completed/failed/cancelled，`tool_result` 已持久化且过宽限期 |
-| Assistant 流片段 | `assistant_stream_event` | run 终态后 10 分钟 | 同 run 已有 `run_finished` 且过宽限期 |
+| 工具过程 delta | `tool_output_delta`,`tool_progress` | 工具终态后 10 分钟 | **同 tenant** 的 invocation 为 completed/failed/cancelled，且同 tenant/session/run/toolCall 的 `tool_result` 已持久化并过宽限期 |
+| Assistant 流片段 | `assistant_stream_event` | run 终态后 10 分钟 | 同 tenant/session/run 已有 `run_finished` 且过宽限期 |
 | 成功工具摘要 | `tool_stream_summary` 且 status=success | 24 小时 | 双水位通过 |
 | 失败/取消工具摘要 | `tool_stream_summary` 其他状态 | 7 天 | 双水位通过 |
 | 模型诊断过程 | `model_request_started`,`model_request_checkpoint` | 7 天 | 双水位通过 |
@@ -78,7 +78,7 @@ pnpm -C server maintenance:runtime-events -- \
 3. `VACUUM FULL` 会强锁并重写表，默认禁止；只有独立审批、容量预算、停机窗口与已验证恢复方案齐备时另案处理。
 4. 旧索引 DROP 默认 fail-closed。先记录开始持续观测的 UTC 时间；执行时 CLI 以数据库 `now()` 为终点、以 `max(stats_reset, --index-observed-from)` 为有效起点，必须形成至少连续 7 天窗口。`stats_reset` 缺失/无效/晚于当前时间、参数缺失、有效窗口不足，均阻断整批且不得执行任何 DROP；不得把空统计或缺失统计当作 `idx_scan=0`。
 5. 每个待删索引都必须在同一有效窗口内取得明确的 `idx_scan=0`：legacy event JSON GIN 依此证明零扫描；legacy `session_idx` 还必须存在 valid、ready、非 partial、首键为 `session_id` 的 btree 替代索引（例如表的 `UNIQUE(session_id, session_sequence)` 索引），不得无条件删除；可选 legacy `run_idx` 还必须与 `session_run_idx` 定义等价，否则阻断整批。任一候选证据失败时先完整停止，不允许先删已通过的索引。
-6. 不可逆 DROP 继续要求已批准的 `--authorization-ref`。核对保存的只读快照、`stats_reset`、逐索引定义/扫描计数及替代索引定义后，才可在审批窗口执行：
+6. 不可逆 DROP 继续要求已批准的 `--authorization-ref`；CLI 会先 trim，空串或纯空白均 fail-closed，审计输出只记录 trim 后的值。核对保存的只读快照、`stats_reset`、逐索引定义/扫描计数及替代索引定义后，才可在审批窗口执行：
 
 ```bash
 pnpm -C server maintenance:runtime-events -- \

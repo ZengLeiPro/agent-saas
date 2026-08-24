@@ -127,7 +127,7 @@ describe('RuntimeEventRetention', () => {
     expect(pool.categoryParams['hand-events']?.[0]?.[1]).toBe('10');
   });
 
-  it('only deletes tool deltas after both terminal invocation and durable tool_result with a 10 minute grace', async () => {
+  it('requires same-tenant invocation and result so colliding invocation/toolCall IDs cannot delete another tenant delta', async () => {
     const pool = new FakePool();
     pool.billingWatermark = '99';
     pool.maxGlobalSequence = '99';
@@ -136,7 +136,10 @@ describe('RuntimeEventRetention', () => {
     await retention.runOnce();
 
     const sql = pool.queries.find((query) => query.includes('retention:tool-delta')) ?? '';
+    expect(sql).toContain('ON invocation.tenant_id = e.tenant_id');
+    expect(sql).toContain("AND invocation.invocation_id = e.event_json->>'invocationId'");
     expect(sql).toContain("invocation.status IN ('completed', 'failed', 'cancelled')");
+    expect(sql).toContain('WHERE result.tenant_id = e.tenant_id');
     expect(sql).toContain("result.event_type = 'tool_result'");
     expect(sql).toContain("result.event_json ? 'toolCallId'");
     expect(sql).toContain("result.event_json->>'toolCallId' = e.event_json->>'toolCallId'");
@@ -149,7 +152,7 @@ describe('RuntimeEventRetention', () => {
     ]);
   });
 
-  it('keeps assistant stream batches only through the terminal replay grace window', async () => {
+  it('requires a same-tenant run_finished so colliding session/run IDs cannot delete another tenant stream', async () => {
     const pool = new FakePool();
     pool.billingWatermark = '99';
     pool.maxGlobalSequence = '99';
@@ -159,6 +162,9 @@ describe('RuntimeEventRetention', () => {
 
     const sql = pool.queries.find((query) => query.includes('retention:assistant-stream')) ?? '';
     expect(sql).toContain("e.event_type = 'assistant_stream_event'");
+    expect(sql).toContain('WHERE terminal.tenant_id = e.tenant_id');
+    expect(sql).toContain('terminal.session_id = e.session_id');
+    expect(sql).toContain('terminal.run_id IS NOT DISTINCT FROM e.run_id');
     expect(sql).toContain("terminal.event_type = 'run_finished'");
     expect(sql).toContain('FOR UPDATE OF e SKIP LOCKED');
     expect(pool.categoryParams['assistant-stream']?.[0]).toEqual(['99', 10, 10_000]);

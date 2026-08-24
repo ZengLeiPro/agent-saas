@@ -169,6 +169,18 @@ export function evaluateDropRecheck(input: {
   return blockers;
 }
 
+export function normalizeAuthorizationRef(value: string | undefined): string | undefined {
+  return value?.trim() || undefined;
+}
+
+export function formatExecuteDropAuthorizationAudit(value: string | undefined): string {
+  const authorizationRef = normalizeAuthorizationRef(value);
+  if (!authorizationRef) {
+    throw new Error('--execute-drop 必须提供 trim 后非空的 --authorization-ref <变更/审批单号>');
+  }
+  return `[authorization] execute-drop authorizationRef=${authorizationRef}`;
+}
+
 export function parseArgs(args: string[], processCwd = process.cwd()): CliOptions {
   const parsed: CliOptions = {
     processCwd,
@@ -189,7 +201,7 @@ export function parseArgs(args: string[], processCwd = process.cwd()): CliOption
       continue;
     }
     if (arg === '--authorization-ref') {
-      parsed.authorizationRef = requireValue(args, ++i, arg);
+      parsed.authorizationRef = normalizeAuthorizationRef(requireValue(args, ++i, arg));
       continue;
     }
     if (arg === '--batch-limit') {
@@ -280,6 +292,7 @@ async function main(): Promise<void> {
         await dropDeadIndexes(client, eventsTable, {
           dropRunIdx: options.dropRunIdx,
           indexObservedFrom: options.indexObservedFrom!,
+          authorizationRef: options.authorizationRef!,
         });
       } finally {
         client.release();
@@ -356,7 +369,7 @@ async function printReadOnlyChecks(target: pg.Pool, table: string, projectionTab
 export async function dropDeadIndexes(
   target: Pick<pg.PoolClient, 'query'>,
   table: string,
-  options: { dropRunIdx: boolean; indexObservedFrom: string },
+  options: { dropRunIdx: boolean; indexObservedFrom: string; authorizationRef: string },
 ): Promise<void> {
   const ginIdx = `${table}_event_json_gin_idx`;
   const sessionIdx = `${table}_session_idx`;
@@ -364,6 +377,7 @@ export async function dropDeadIndexes(
   const sessionRunIdx = `${table}_session_run_idx`;
   const lockName = `runtime-events-maintenance:drop:${table}`;
 
+  console.log(formatExecuteDropAuthorizationAudit(options.authorizationRef));
   await target.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [lockName]);
   try {
     const clock = await readDatabaseClock(target);

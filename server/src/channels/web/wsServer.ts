@@ -45,7 +45,9 @@ export type WsCloseHandler = (client: WsClient) => void;
 export const DEFAULT_WS_MAX_PAYLOAD_BYTES = 1024 * 1024;
 
 export interface WsServerConfig {
-    /** JWT secret for authentication (undefined = no auth) */
+    /** Whether WebSocket authentication is enabled. Kept explicit instead of inferred from the principal. */
+    authEnabled: boolean;
+    /** JWT secret used when authentication is enabled. */
     jwtSecret?: string;
     /** Maximum accepted WebSocket message payload in bytes, default 1 MiB. */
     maxPayloadBytes?: number;
@@ -76,7 +78,7 @@ export class WsServer {
     private readonly config: Required<Pick<WsServerConfig, 'pingIntervalMs' | 'authTimeoutMs' | 'maxPayloadBytes'>> & WsServerConfig;
     readonly userEventLog = new UserEventLog();
 
-    constructor(config: WsServerConfig = {}) {
+    constructor(config: WsServerConfig) {
         this.config = {
             ...config,
             pingIntervalMs: config.pingIntervalMs ?? 30_000,
@@ -165,14 +167,14 @@ export class WsServer {
             const client: WsClient = {
                 ws,
                 alive: true,
-                authenticated: !this.config.jwtSecret,
+                authenticated: !this.config.authEnabled,
                 connectedAt,
                 lastActivityAt: connectedAt,
                 ip: this.resolveClientIp(request),
                 userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : undefined,
             };
             this.clients.add(client);
-            if (this.config.jwtSecret) {
+            if (this.config.authEnabled) {
                 client.authenticationTimer = setTimeout(() => {
                     if (!client.authenticated && ws.readyState === ws.OPEN) ws.close(4401, 'Authentication timeout');
                 }, this.config.authTimeoutMs);
@@ -438,7 +440,7 @@ export class WsServer {
     /** Re-read the authoritative principal; close on disable/tenant change and refresh role. */
     refreshAuthoritativeUser(client: WsClient): boolean {
         const snapshot = client.user;
-        if (!snapshot) return !this.config.jwtSecret;
+        if (!snapshot) return !this.config.authEnabled;
         if (this.config.userStore) {
             const record = this.config.userStore.findById(snapshot.sub);
             if (!record || record.disabled) {
@@ -462,7 +464,7 @@ export class WsServer {
     }
 
     private authenticateToken(token: string): WsUser | undefined {
-        if (!this.config.jwtSecret) return undefined;
+        if (!this.config.authEnabled || !this.config.jwtSecret) return undefined;
         try {
             const decoded = jwt.verify(token, this.config.jwtSecret) as { sub: string; username: string; role: string; tenantId?: string; exp?: number };
             let role = decoded.role;

@@ -24,7 +24,10 @@ import {
   computeCostMicro,
   computeUsageTotalTokens,
 } from './pricing.js';
+import { createModelTrendQuery, type ModelAggregate, type ModelTrendPoint } from './modelTrend.js';
 import { LEGACY_TENANT_ID } from '../tenants/types.js';
+
+export type { ModelAggregate, ModelTrendPoint };
 
 /**
  * runner 上报的 ModelUsage 按模型拆分后的 usage 字段。
@@ -138,6 +141,12 @@ export interface TokenUsageStore {
     tenantId?: string,
   ) => ModelAggregate[];
 
+  /** 北京时间自然日 × 模型趋势（可选 username / family / tenant 过滤） */
+  getTrendByModel: (
+    fromDate: string, toDate: string,
+    username?: string, family?: ModelFamily, tenantId?: string,
+  ) => ModelTrendPoint[];
+
   /** 单用户日趋势（每天一行，含全部 token 类别） */
   getTrend: (
     username: string,
@@ -200,18 +209,6 @@ export interface ChannelAggregate {
   totalTokens: number;
   totalCostUsd: number;
   totalTurns: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-}
-
-export interface ModelAggregate {
-  model: string;
-  totalTokens: number;
-  totalCostUsd: number;
-  totalTurns: number;
-  // 各分量（便于前端做堆叠柱）
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -477,6 +474,8 @@ export function createTokenUsageStore(db: DatabaseSync): TokenUsageStore {
       updatedAtMs: r.updated_at_ms as number,
     };
   }
+
+  const getTrendByModel = createModelTrendQuery(db, rangeSource, familyClause, tenantClause, aggregateSqlRow);
 
   return {
     recordResult(params: RecordResultParams): void {
@@ -796,6 +795,8 @@ export function createTokenUsageStore(db: DatabaseSync): TokenUsageStore {
         };
       }).sort((a, b) => b.totalTokens - a.totalTokens);
     },
+
+    getTrendByModel,
 
     getTrend(
       username: string,

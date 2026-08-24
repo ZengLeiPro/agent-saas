@@ -26,6 +26,14 @@ export interface RecentRunsQuery {
   tenantId?: string;
 }
 
+export interface EfficiencyQuery {
+  days: number;
+  tenantId?: string;
+  /** ISO 时间边界，后端按 `[from,to)` 统计。 */
+  from: string;
+  to: string;
+}
+
 export const runTraceApi = {
   recentRuns: (q: RecentRunsQuery = {}): Promise<RecentRunsResponse> => {
     const sp = new URLSearchParams();
@@ -44,11 +52,12 @@ export const runTraceApi = {
     return getJson<RunEventsResponse>(`${BASE}/runs/${encodeURIComponent(runId)}/events${s ? `?${s}` : ""}`);
   },
 
-  efficiency: (q: { days?: number; tenantId?: string } = {}): Promise<EfficiencyReport> => {
+  efficiency: (q: EfficiencyQuery): Promise<EfficiencyReport> => {
     const sp = new URLSearchParams();
-    if (q.days != null) sp.set("days", String(q.days));
+    sp.set("days", String(q.days));
     if (q.tenantId) sp.set("tenantId", q.tenantId);
-    const s = sp.toString();
-    return getJson<EfficiencyReport>(`${BASE}/efficiency${s ? `?${s}` : ""}`);
+    sp.set("from", q.from);
+    sp.set("to", q.to);
+    return getJson<EfficiencyReport>(`${BASE}/efficiency?${sp.toString()}`);
   },
 };

@@ -100,6 +100,24 @@ export interface ByModelResp {
   costRedacted?: boolean;
 }
 
+export interface ModelTrendPoint {
+  /** 北京时间自然日，YYYY-MM-DD */
+  date: string;
+  models: ModelAggregate[];
+}
+
+export interface ModelTrendResp {
+  fromDate: string;
+  toDate: string;
+  range: RangePreset;
+  username: string | null;
+  tenantId: string | null;
+  family: ModelFamily | null;
+  points: ModelTrendPoint[];
+  /** 后端成本脱敏标记 */
+  costRedacted?: boolean;
+}
+
 export interface DailyTrendRow {
   date: string;
   inputTokens: number;

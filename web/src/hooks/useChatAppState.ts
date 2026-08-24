@@ -2939,7 +2939,17 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     interactionId: string,
     allow: boolean,
   ) => {
-    await respondToInteraction(interactionId, sessionIdRef.current, { allow, message: allow ? undefined : "User denied" });
+    try {
+      await respondToInteraction(interactionId, sessionIdRef.current, { allow, message: allow ? undefined : "User denied" });
+    } catch (error) {
+      pushNotification({
+        key: `interaction_response_failed:${interactionId}`,
+        text: error instanceof Error ? error.message : '提交审批失败，请重试',
+        priority: 'high',
+        timeoutMs: 8_000,
+      });
+      return;
+    }
 
     const idx = msg.messagesRef.current.findIndex(
       (m) => m.type === "permission_request" && m.interactionId === interactionId

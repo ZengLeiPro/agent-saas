@@ -1850,11 +1850,7 @@ export class RawAgentLoop implements AgentLoop {
         `[run] failed session=${context.sessionId} turns=${turn}: ${diagnosticMessage}`
         + `${message !== diagnosticMessage ? ` (client=${message})` : ''}`,
       );
-      yield {
-        type: 'error',
-        error: surfacedMessage,
-        ...(failureProtocol ? { runId: context.runId, ...failureProtocol } : {}),
-      };
+      yield { type: 'error', error: surfacedMessage, ...(failureProtocol ? { runId: context.runId, ...failureProtocol } : {}) };
     }
   }
 
@@ -3869,11 +3865,7 @@ export class RawAgentLoop implements AgentLoop {
         `[resume] failed session=${args.context.sessionId} turns=${turn}: ${diagnosticMessage}`
         + `${message !== diagnosticMessage ? ` (client=${message})` : ''}`,
       );
-      yield {
-        type: 'error',
-        error: surfacedMessage,
-        ...(failureProtocol ? { runId: args.context.runId, ...failureProtocol } : {}),
-      };
+      yield { type: 'error', error: surfacedMessage, ...(failureProtocol ? { runId: args.context.runId, ...failureProtocol } : {}) };
     }
   }
 

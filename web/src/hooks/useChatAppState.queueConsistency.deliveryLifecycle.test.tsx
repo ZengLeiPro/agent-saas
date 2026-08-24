@@ -191,6 +191,12 @@ describe("useChatAppState queue delivery lifecycle", () => {
     const { result } = renderHook(() => useChatAppState());
 
     act(() => emit({
+      type: "active_stream",
+      sessionId: "session-ask",
+      active: true,
+      status: "waiting_user",
+    }));
+    act(() => emit({
       type: "ask_user",
       interactionId: "ask-1",
       questions: [{ question: "继续吗？", header: "确认", options: [{ label: "继续", description: "" }], multiSelect: false }],

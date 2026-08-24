@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const harness = vi.hoisted(() => ({
-  send: vi.fn(async () => true),
+  send: vi.fn<(payload: unknown) => Promise<boolean>>(async () => true),
 }));
 
 vi.mock("@/lib/wsClient", () => ({

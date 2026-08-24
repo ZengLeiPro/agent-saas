@@ -91,6 +91,7 @@ import type {
 import {
   buildCronSessionIndex,
   buildDingtalkSessionIndex,
+  listDurablyProjectedQueuedRunIds,
   projectQueuedMessageAttachments,
   stripMarkdown,
   type CronSessionInfo,
@@ -319,10 +320,10 @@ async function getDurableSubagentUsage(
   tenantId: string,
   sessionId: string,
   transcriptPath: string,
-  runtimeEventStoreFor?: (transcriptPath: string) => EventStore,
+  runtimeEventStoreFor?: (transcriptPath: string, tenantId: string) => EventStore,
 ): Promise<DurableSubagentUsage | null> {
   const parentEventStore = runtimeEventStoreFor
-    ? runtimeEventStoreFor(transcriptPath)
+    ? runtimeEventStoreFor(transcriptPath, tenantId)
     : new FileEventStore(getRuntimeEventLogPath(transcriptPath), tenantId);
   const finishedEvents = await listRuntimeEventsByType(
     parentEventStore,
@@ -354,7 +355,7 @@ async function getDurableSubagentUsage(
     const childTranscriptPath = await findTranscriptPathBySessionId(childSessionId);
     const childEventStore = childTranscriptPath
       ? runtimeEventStoreFor
-        ? runtimeEventStoreFor(childTranscriptPath)
+        ? runtimeEventStoreFor(childTranscriptPath, tenantId)
         : new FileEventStore(getRuntimeEventLogPath(childTranscriptPath), tenantId)
       : parentEventStore;
     const [toolCallEvents, messageEvents] = await Promise.all([
@@ -436,7 +437,7 @@ export interface SessionsRouterOptions {
    * - file backend / 缺省：`new FileEventStore(getRuntimeEventLogPath(transcriptPath))`
    * 注入路径见 app/runtime.ts → routes.ts。
    */
-  runtimeEventStoreFor?: (transcriptPath: string) => EventStore;
+  runtimeEventStoreFor?: (transcriptPath: string, tenantId: string) => EventStore;
   /**
    * Resolve whether transcript-derived `contextTokens` is an exact current
    * context count for this session's model. Stateful Responses chaining keeps
@@ -511,41 +512,7 @@ export function filterProjectedQueuedMessages<T extends { sourceRunId: string }>
   return pending.filter((input) => !projectedSourceRunIds.has(input.sourceRunId));
 }
 
-/**
- * durable user_message 投影对账（TASK-70）：过滤「已投影但 source run 尚未转出 pending」的
- * 消息，防止 detail 刷新/切回时复活到队列区。普通 queue 匹配 event.runId，steering 匹配
- * event.interjectionSourceRunId（投影落在 target run 下）；blocks 一并并入已投影集合。
- */
-export async function listDurablyProjectedQueuedRunIds(
-  eventStore: EventStore,
-  tenantId: string,
-  sessionId: string,
-  pending: Array<{ runId?: string; sourceRunId?: string; targetRunId?: string; metadata?: Record<string, unknown> }>,
-  blocks: Array<{ interjectionSourceRunId?: string }> = [],
-): Promise<string[]> {
-  if (pending.length === 0) return [];
-  const wanted = new Set(pending.map((input) => input.runId ?? input.sourceRunId!));
-  const projected = new Set<string>();
-  for (const block of blocks) if (block.interjectionSourceRunId) projected.add(block.interjectionSourceRunId);
-  const collect = (events: PlatformEvent[]) => {
-    for (const event of events) {
-      if (event.type !== "user_message") continue;
-      if (event.runId && wanted.has(event.runId)) projected.add(event.runId);
-      if (event.interjectionSourceRunId && wanted.has(event.interjectionSourceRunId)) projected.add(event.interjectionSourceRunId);
-    }
-  };
-  if (eventStore.listByRun) {
-    for (const input of pending) {
-      const sourceRunId = input.runId ?? input.sourceRunId!;
-      collect(await eventStore.listByRun(tenantId, sessionId, sourceRunId));
-      const targetRunId = input.targetRunId ?? (typeof input.metadata?.steeringTargetRunId === "string" ? input.metadata.steeringTargetRunId : undefined);
-      if (targetRunId && targetRunId !== sourceRunId) collect(await eventStore.listByRun(tenantId, sessionId, targetRunId));
-    }
-  } else {
-    collect(await eventStore.list(tenantId, sessionId, { includeTypes: ["user_message"] }));
-  }
-  return [...projected];
-}
+export { listDurablyProjectedQueuedRunIds } from './sessionListHelpers.js';
 
 function reqTranscriptOwner(reqUser: Request["user"] | undefined): { tenantId?: string; userId?: string } | undefined {
   return reqUser ? { tenantId: reqUser.tenantId, userId: reqUser.sub } : undefined;
@@ -649,12 +616,12 @@ async function buildMetaOnlyTranscript(
   tenantId: string,
   sessionId: string,
   transcriptPath: string,
-  runtimeEventStoreFor?: (transcriptPath: string) => EventStore,
+  runtimeEventStoreFor?: (transcriptPath: string, tenantId: string) => EventStore,
 ): Promise<ParsedTranscript> {
   let events: PlatformEvent[] = [];
   try {
     const eventStore = runtimeEventStoreFor
-      ? runtimeEventStoreFor(transcriptPath)
+      ? runtimeEventStoreFor(transcriptPath, tenantId)
       : new FileEventStore(getRuntimeEventLogPath(transcriptPath), tenantId);
     events = await eventStore.list(tenantId, sessionId);
   } catch {
@@ -883,7 +850,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
 
     const tenantId = meta?.tenantId ?? req.user?.tenantId ?? DEFAULT_TENANT_ID;
     const detailEventStore = runtimeEventStoreFor
-      ? runtimeEventStoreFor(transcriptPath)
+      ? runtimeEventStoreFor(transcriptPath, tenantId)
       : new FileEventStore(getRuntimeEventLogPath(transcriptPath), tenantId);
     const parseStartedAt = Date.now();
     const parsedWindow = hasTranscript && optionsForBuild.transcriptWindow
@@ -2247,7 +2214,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       });
       if (changed) {
         const store = resolved
-          ? options.runtimeEventStoreFor?.(resolved.transcriptPath)
+          ? options.runtimeEventStoreFor?.(resolved.transcriptPath, req.user.tenantId)
           : undefined;
         if (store) {
           await store.append({
@@ -2834,6 +2801,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           return;
         }
 
+        const eventTenantId = meta?.tenantId ?? req.user?.tenantId ?? DEFAULT_TENANT_ID;
         const contextAccounting = options.resolveContextAccounting?.(meta?.model)
           ?? unknownContextAccounting();
         const legacyResponseMode = contextAccounting.kind === 'exact_current'
@@ -2847,7 +2815,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         if (rawTokenUsage) {
           try {
             const subagentUsage = await getDurableSubagentUsage(
-              meta?.tenantId ?? req.user?.tenantId ?? DEFAULT_TENANT_ID,
+              eventTenantId,
               sessionId,
               transcriptPath,
               runtimeEventStoreFor,
@@ -2875,7 +2843,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         let contextUsage = null;
         try {
           const runtimeEvents = runtimeEventStoreFor
-            ? await runtimeEventStoreFor(transcriptPath).list(meta?.tenantId ?? req.user?.tenantId ?? DEFAULT_TENANT_ID, sessionId, {
+            ? await runtimeEventStoreFor(transcriptPath, eventTenantId).list(eventTenantId, sessionId, {
                 includeTypes: ["assistant_message", "assistant_tool_calls", "compaction"],
                 projection: "usage",
               })
@@ -3035,7 +3003,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             ?? req.user?.tenantId
             ?? DEFAULT_TENANT_ID;
           const eventStore = runtimeEventStoreFor
-            ? runtimeEventStoreFor(transcriptPath)
+            ? runtimeEventStoreFor(transcriptPath, eventTenantId)
             : new FileEventStore(getRuntimeEventLogPath(transcriptPath), eventTenantId);
           const durableInteractionEvents = await eventStore.list(eventTenantId, sessionId, {
             includeTypes: [

@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StreamEventBatcher, ToolStreamSummaryBuilder } from '../runtime/rawAgentLoop.js';
 import type { EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 
+const TEST_TENANT_ID = 'tenant-stream-batcher';
+
 class FakeEventStore implements EventStore {
   readonly batches: PlatformEventInput[][] = [];
   async append(event: PlatformEventInput): Promise<PlatformEvent> {
@@ -44,7 +46,7 @@ describe('StreamEventBatcher', () => {
   });
   it('coalesces high-frequency stream deltas into appendBatch calls', async () => {
     const store = new FakeEventStore();
-    const batcher = new StreamEventBatcher(store, { maxEvents: 3, maxBytes: 1000, flushIntervalMs: 0 });
+    const batcher = new StreamEventBatcher(store, { maxEvents: 3, maxBytes: 1000, flushIntervalMs: 0 }, TEST_TENANT_ID);
 
     await batcher.push(delta('a'));
     await batcher.push(delta('b'));
@@ -59,7 +61,7 @@ describe('StreamEventBatcher', () => {
 
   it('flushes by buffered content size before maxEvents', async () => {
     const store = new FakeEventStore();
-    const batcher = new StreamEventBatcher(store, { maxEvents: 10, maxBytes: 4, flushIntervalMs: 0 });
+    const batcher = new StreamEventBatcher(store, { maxEvents: 10, maxBytes: 4, flushIntervalMs: 0 }, TEST_TENANT_ID);
 
     await batcher.push(delta('ab'));
     await batcher.push(delta('cd'));
@@ -70,7 +72,7 @@ describe('StreamEventBatcher', () => {
   it('flushes slow streams on the timer interval', async () => {
     vi.useFakeTimers();
     const store = new FakeEventStore();
-    const batcher = new StreamEventBatcher(store, { maxEvents: 10, maxBytes: 1000, flushIntervalMs: 50 });
+    const batcher = new StreamEventBatcher(store, { maxEvents: 10, maxBytes: 1000, flushIntervalMs: 50 }, TEST_TENANT_ID);
 
     await batcher.push(delta('slow'));
     expect(store.batches).toHaveLength(0);
@@ -81,7 +83,7 @@ describe('StreamEventBatcher', () => {
 
   it('falls back to append when appendBatch is unavailable', async () => {
     const store = new AppendOnlyEventStore();
-    const batcher = new StreamEventBatcher(store, { maxEvents: 2, maxBytes: 1000, flushIntervalMs: 0 });
+    const batcher = new StreamEventBatcher(store, { maxEvents: 2, maxBytes: 1000, flushIntervalMs: 0 }, TEST_TENANT_ID);
 
     await batcher.push(delta('a'));
     await batcher.push(delta('b'));

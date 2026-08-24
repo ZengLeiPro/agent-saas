@@ -81,11 +81,12 @@ import type { McpClientManager } from '../mcp/clientManager.js';
 import type { McpProxy } from '../mcp/proxy.js';
 import type { ToolProvider } from '../agent/toolRuntime.js';
 import type { ExecutionTransportRegistry } from './executionTransport.js';
-import { EventBackedApprovalStore } from './approvalStore.js';
 import { ChatCompletionsModelAdapter } from './chatCompletionsAdapter.js';
 import { ResponsesApiAdapter } from './responsesApiAdapter.js';
 import { resolveModelOutputTransactionMode } from './modelOutputTransaction.js';
 import type { ModelAdapter } from './types.js';
+import { createApprovalStoreForSession, createEventStoreForSession, resolveEventTenantId } from './rawRuntimeEventStores.js';
+export { createApprovalStoreForSession, createEventStoreForSession, resolveEventTenantId } from './rawRuntimeEventStores.js';
 import { CodexSubscriptionResponsesTransport } from './responses/codexSubscriptionResponsesTransport.js';
 import type { CodexResponsesWebSocketPool } from './responses/codexResponsesWebSocketPool.js';
 import type { CodexCredentialManager } from './responses/codexCredentialManager.js';
@@ -94,7 +95,6 @@ import {
   resolveExecutionTarget,
   type ExecutionConfig,
 } from './executionConfig.js';
-import { FileEventStore, getRuntimeEventLogPath } from './fileEventStore.js';
 import { HttpTransport } from './httpTransport.js';
 import { LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
 import { createLogger } from '../utils/logger.js';
@@ -144,7 +144,7 @@ import {
 } from './sessionCatalog.js';
 import { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgAgentSessionResolution.js';
 export { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgAgentSessionResolution.js';
-import type { ApprovalRecord, ApprovalStore, EventStore, ModelAttachmentRef, PlatformEvent, QueuedInterjection, RunContext } from './types.js';
+import type { ApprovalRecord, EventStore, ModelAttachmentRef, PlatformEvent, QueuedInterjection, RunContext } from './types.js';
 import type { RunRecord, RunStore } from './runStore.js';
 import type { HandRecord, HandStore, WorkspaceRecipe } from './handStore.js';
 import {
@@ -285,51 +285,6 @@ const noopLogger = { info: () => {}, warn: () => {}, error: () => {} };
 export function resolveSessionCatalog(config: RawRuntimeRunDispatchConfig): SessionCatalog {
   return config.sessionCatalog ?? new FileSessionCatalog({ agentCwd: config.agentCwd });
 }
-
-function resolveEventTenantId(
-  config: RawRuntimeRunDispatchConfig,
-  sessionTenantId: string | undefined,
-  runTenantId?: string,
-  scope = 'runtime session',
-): string {
-  const sessionTenant = sessionTenantId?.trim();
-  const runTenant = runTenantId?.trim();
-  if (sessionTenant && runTenant && sessionTenant !== runTenant) {
-    throw new Error(`${scope} tenant mismatch`);
-  }
-  const tenantId = sessionTenant ?? runTenant;
-  if (tenantId) return tenantId;
-  // The fallback store is a per-session JSONL file. Its tenant binding is only a
-  // compatibility label over an already physically isolated legacy path.
-  if (!config.eventStoreFactory) return DEFAULT_TENANT_ID;
-  throw new Error(`${scope} tenant is missing for shared EventStore`);
-}
-
-export function createEventStoreForSession(
-  config: RawRuntimeRunDispatchConfig,
-  session: RuntimeSessionRecord,
-): EventStore {
-  return config.eventStoreFactory
-    ? config.eventStoreFactory(session)
-    : new FileEventStore(
-        getRuntimeEventLogPath(session.transcriptPath),
-        resolveEventTenantId(config, session.tenantId, undefined, `session ${session.sessionId}`),
-      );
-}
-export function createApprovalStoreForSession(
-  config: RawRuntimeRunDispatchConfig,
-  session: RuntimeSessionRecord,
-  eventStore: EventStore,
-): ApprovalStore {
-  return config.approvalStoreFactory
-    ? config.approvalStoreFactory(session, eventStore)
-    : new EventBackedApprovalStore(
-        eventStore,
-        session.sessionId,
-        resolveEventTenantId(config, session.tenantId, undefined, `approval session ${session.sessionId}`),
-      );
-}
-
 // cron/web fallback 直跑路径也会写 runtime_runs；不占 lease 时，scheduler 会把
 // 正在跑的 run 误判为可恢复并二次 wake。
 const DIRECT_RUNTIME_LEASE_MS = 120_000;

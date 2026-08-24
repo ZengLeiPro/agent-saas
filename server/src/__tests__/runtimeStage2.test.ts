@@ -3,8 +3,7 @@ import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 // 指向真实 workspace-shared/prompts/，避免每个 tmp cwd 都要拷模板
-const SHARED_DIR = resolve(process.cwd(), '../workspace-shared');
-const TENANT_ID = 'tenant-test';
+const SHARED_DIR = resolve(process.cwd(), '../workspace-shared'); const TENANT_ID = 'tenant-test';
 
 import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';

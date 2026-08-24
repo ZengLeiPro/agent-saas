@@ -38,6 +38,7 @@ import {
   InvalidTaskboardDispatchPayloadError,
 } from './executionDispatchValidation.js';
 import { resolveExecutionModelRef } from './executionFields.js';
+import { dispatchRetryDelayMs, limitComment, limitError } from './executionHelpers.js';
 import { buildExecutionPrompt } from './executionPrompt.js';
 export { executionWritebackInstructions } from './executionPrompt.js';
 import {
@@ -943,21 +944,6 @@ function continuationPurpose(task: TaskBoardTask): TaskBoardExecutionPurpose {
   if (task.status === 'in_review') return 'review';
   if (task.status === 'todo') return 'work';
   throw new TaskboardValidationError('当前任务状态不允许从评论创建新执行', 'TASKBOARD_EXECUTION_STATUS_INVALID');
-}
-
-function limitComment(value: string): string {
-  const normalized = value.trim();
-  if (normalized.length <= 20_000) return normalized;
-  return `${normalized.slice(0, 19_950)}\n\n[回执内容过长，已截断]`;
-}
-
-function limitError(value: string): string {
-  const normalized = value.trim();
-  return normalized.length <= 2_000 ? normalized : `${normalized.slice(0, 1_980)}…`;
-}
-
-function dispatchRetryDelayMs(attemptCount: number): number {
-  return Math.min(60_000, 1_000 * (2 ** Math.min(Math.max(attemptCount - 1, 0), 6)));
 }
 
 function matchesReconcileCandidate(

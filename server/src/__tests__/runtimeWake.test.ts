@@ -414,7 +414,7 @@ describe('wakeRuntimeSession', () => {
   //   (b) 早返回分支（cancel）不调 provisioner — 它放在 cancel/waiting 早返回**之后**。
   it('releases run as failed when workspaceProvisioner throws', async () => {
     const session: RuntimeSessionRecord = {
-      sessionId: 'session-prov-fail',
+      sessionId: 'session-prov-fail', tenantId: TENANT_ID,
       userId: 'user-1',
       username: 'alice',
       channel: 'web',
@@ -438,7 +438,7 @@ describe('wakeRuntimeSession', () => {
     };
     const run: RunRecord = {
       runId: 'run-prov',
-      sessionId: 'session-prov-fail',
+      sessionId: 'session-prov-fail', tenantId: TENANT_ID,
       userId: 'user-1',
       status: 'pending',
       model: 'gpt-5.4-mini',
@@ -478,6 +478,7 @@ describe('wakeRuntimeSession', () => {
   it('skips workspaceProvisioner on early-return branches (cancel)', async () => {
     const session: RuntimeSessionRecord = {
       sessionId: 'session-cancel-prov',
+      tenantId: TENANT_ID,
       userId: 'user-1',
       username: 'alice',
       channel: 'web',
@@ -505,6 +506,7 @@ describe('wakeRuntimeSession', () => {
     const run: RunRecord = {
       runId: 'run-cancel',
       sessionId: 'session-cancel-prov',
+      tenantId: TENANT_ID,
       userId: 'user-1',
       status: 'running',
       model: 'gpt-5.4-mini',
@@ -534,6 +536,7 @@ describe('wakeRuntimeSession', () => {
   it('defers wake when durable AskUserQuestion is still pending', async () => {
     const session: RuntimeSessionRecord = {
       sessionId: 'session-ask',
+      tenantId: TENANT_ID,
       userId: 'user-1',
       username: 'alice',
       channel: 'web',
@@ -571,6 +574,7 @@ describe('wakeRuntimeSession', () => {
     const run: RunRecord = {
       runId: 'run-ask',
       sessionId: 'session-ask',
+      tenantId: TENANT_ID,
       userId: 'user-1',
       status: 'running',
       model: 'gpt-5.4-mini',
@@ -595,6 +599,7 @@ describe('wakeRuntimeSession', () => {
   it('does not treat a later approval resume as consumed by an earlier approval in the same run', async () => {
     const session: RuntimeSessionRecord = {
       sessionId: 'session-approval-2',
+      tenantId: TENANT_ID,
       userId: 'user-1',
       username: 'alice',
       channel: 'web',
@@ -640,6 +645,7 @@ describe('wakeRuntimeSession', () => {
     const run: RunRecord = {
       runId: 'run-approval-2',
       sessionId: 'session-approval-2',
+      tenantId: TENANT_ID,
       userId: 'user-1',
       status: 'pending',
       model: 'gpt-5.4-mini',

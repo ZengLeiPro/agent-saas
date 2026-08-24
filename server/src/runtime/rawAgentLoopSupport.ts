@@ -164,7 +164,7 @@ export class StreamEventBatcher {
   constructor(
     private readonly eventStore: EventStore,
     private readonly options: Required<StreamEventBatchOptions>,
-    private readonly tenantId?: string,
+    private readonly tenantId: string,
   ) {}
 
   async push(event: PlatformEventInput): Promise<void> {

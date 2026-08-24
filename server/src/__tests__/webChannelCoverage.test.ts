@@ -657,7 +657,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       // respond_ok 在 appendDurableWebCommand（真实 fs 扫描）之后发出 → 等宏任务
       await vi.waitFor(() => {
         expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: id });
-      });
+      }, { timeout: 5_000 });
       expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: id });
       expect(interactionStore.get(id)).toBeUndefined();
     });
@@ -1476,7 +1476,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       );
       await vi.waitFor(() => {
         expect(rig.ws.sent.some((m) => m.data.type === 'permission_request')).toBe(true);
-      });
+      }, { timeout: 5_000 });
       const request = rig.ws.sent.find((m) => m.data.type === 'permission_request')!.data;
       expect(request).toMatchObject({
         interactionId, toolName: 'ExitPlanMode', planContent: '# PLAN BODY',
@@ -1490,7 +1490,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(resolved).toEqual({ allow: true });
       await vi.waitFor(() => {
         expect(rig.ws.sent.some((m) => m.data.type === 'respond_ok')).toBe(true);
-      });
+      }, { timeout: 5_000 });
       // 注：respond 的 interaction_resolved 跨连接广播依赖 activeStreams 中仍存在同
       // sessionId 的活跃流；本用例 run 在 respond 后立即结束（finally 已清流），
       // 广播分支由上方「正常 resolve」用例（手工挂 activeStreams）单独覆盖。

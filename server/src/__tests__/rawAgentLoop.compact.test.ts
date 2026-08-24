@@ -91,6 +91,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     const context: RunContext = {
       runId: 'run-compact-1',
       sessionId: 'session-compact',
+      tenantId: DEFAULT_TENANT_ID,
       model: 'glm-5.2',
       cwd,
       channelContext: {
@@ -119,14 +120,14 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
       const adapter = new SummaryAdapter(['## 摘要\n已提取超长输出的首尾关键结论。']);
       const { eventStore, loop, context } = await makeCompactHarness(adapter);
       context.model = 'compact-small';
-      await eventStore.append({ type: 'user_message', runId: 'run-old', sessionId: 'session-compact', content: '请分析超长资料' });
-      await eventStore.append({ type: 'assistant_message', runId: 'run-old', sessionId: 'session-compact', content: '先确认分析范围。' });
-      await eventStore.append({ type: 'user_message', runId: 'run-old', sessionId: 'session-compact', content: '分析全部章节。' });
+      await eventStore.append({ type: 'user_message', runId: 'run-old', sessionId: 'session-compact', content: '请分析超长资料' }, { tenantId: DEFAULT_TENANT_ID });
+      await eventStore.append({ type: 'assistant_message', runId: 'run-old', sessionId: 'session-compact', content: '先确认分析范围。' }, { tenantId: DEFAULT_TENANT_ID });
+      await eventStore.append({ type: 'user_message', runId: 'run-old', sessionId: 'session-compact', content: '分析全部章节。' }, { tenantId: DEFAULT_TENANT_ID });
       await eventStore.append({
         type: 'assistant_message', runId: 'run-old', sessionId: 'session-compact',
         content: `超长输出开头：${'关键资料'.repeat(120_000)}：超长输出结尾`,
-      });
-      await eventStore.append({ type: 'user_message', runId: 'run-old', sessionId: 'session-compact', content: '最新纠正：聚焦结论' });
+      }, { tenantId: DEFAULT_TENANT_ID });
+      await eventStore.append({ type: 'user_message', runId: 'run-old', sessionId: 'session-compact', content: '最新纠正：聚焦结论' }, { tenantId: DEFAULT_TENANT_ID });
 
       const outbound = await collect(loop.compact(
         { message: { channel: 'web', chatId: 'chat-1', content: '/compact' }, instructions: '系统指令。' },
@@ -158,7 +159,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
 
       expect(adapter.requests).toHaveLength(0);
       expect(outbound.some((event) => event.type === 'compaction_end')).toBe(true);
-      expect((await eventStore.list('session-compact')).some((event) => event.type === 'compaction')).toBe(false);
+      expect((await eventStore.list(DEFAULT_TENANT_ID, 'session-compact')).some((event) => event.type === 'compaction')).toBe(false);
     } finally {
       configureModelPricing(undefined);
     }
@@ -175,7 +176,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
       sessionId: context.sessionId,
       runId: context.runId,
     }).map(toModelToolDefinition);
-    const priorEvents = await eventStore.list(context.sessionId);
+    const priorEvents = await eventStore.list(DEFAULT_TENANT_ID, context.sessionId);
     const fixedRequestTokens = estimateContextTokens([instructions, tools, DEFAULT_COMPACTION_REQUEST_PROMPT]);
     const baseFixedTokens = estimateContextTokens([instructions, tools]);
     const wrapperOnlyTokens = estimateContextTokens('<context-compaction-source>\n这是首次 checkpoint 的有界历史摘录；被省略的原始事件仍可通过 SessionContext 检索。\n\n\n</context-compaction-source>');
@@ -205,7 +206,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
 
       expect(adapter.requests).toHaveLength(0);
       expect(outbound.some((event) => event.type === 'compaction_end')).toBe(true);
-      expect((await eventStore.list(context.sessionId)).some((event) => event.type === 'compaction')).toBe(false);
+      expect((await eventStore.list(DEFAULT_TENANT_ID, context.sessionId)).some((event) => event.type === 'compaction')).toBe(false);
     } finally {
       configureModelPricing(undefined);
     }
@@ -520,6 +521,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
       {
         runId: 'run-inline-auto',
         sessionId: 'session-inline-auto',
+        tenantId: DEFAULT_TENANT_ID,
         model: 'glm-5.2',
         cwd,
         channelContext: { channel: 'web' },
@@ -643,6 +645,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
       {
         runId: 'run-inline-auto-failure',
         sessionId: 'session-inline-auto-failure',
+        tenantId: DEFAULT_TENANT_ID,
         model: 'glm-5.2',
         cwd,
         channelContext: { channel: 'web' },

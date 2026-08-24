@@ -722,7 +722,7 @@ describe('RawAgentLoop', () => {
       sessionId,
       model: 'gpt-5.6-sol',
       profileConfigDigest: 'profile-digest',
-      cwd,
+      cwd, tenantId: DEFAULT_TENANT_ID,
       channelContext: { channel: 'web' },
       approvalPolicy: { autoApproveTools: true },
     }));
@@ -794,7 +794,7 @@ describe('RawAgentLoop', () => {
       runId: 'run-context-rewind-once',
       sessionId,
       model: 'gpt-5.6-sol',
-      cwd,
+      cwd, tenantId: DEFAULT_TENANT_ID,
       channelContext: { channel: 'web' },
       approvalPolicy: { autoApproveTools: true },
     }));
@@ -862,7 +862,7 @@ describe('RawAgentLoop', () => {
       runId,
       sessionId,
       model: 'gpt-5.6-sol',
-      cwd,
+      cwd, tenantId: DEFAULT_TENANT_ID,
       channelContext: { channel: 'web' },
       approvalPolicy: { autoApproveTools: true },
     }));
@@ -922,7 +922,7 @@ describe('RawAgentLoop', () => {
       runId,
       sessionId,
       model: 'gpt-5.6-sol',
-      cwd,
+      cwd, tenantId: DEFAULT_TENANT_ID,
       channelContext: { channel: 'web' },
       approvalPolicy: { autoApproveTools: true },
     }));
@@ -973,7 +973,7 @@ describe('RawAgentLoop', () => {
       runId: `run-${sessionId}`,
       sessionId,
       model: 'gpt-5.6-sol',
-      cwd,
+      cwd, tenantId: DEFAULT_TENANT_ID,
       channelContext: { channel: 'web' },
       approvalPolicy: { autoApproveTools: true },
     }));
@@ -1123,7 +1123,7 @@ describe('RawAgentLoop', () => {
         model: 'gpt-5.5',
         cwd,
         signal: abortController.signal,
-        drainHandoff,
+        drainHandoff, tenantId: DEFAULT_TENANT_ID,
         channelContext: { channel: 'web' },
       },
     ));
@@ -1175,7 +1175,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-web-fetch-circuit',
         sessionId: 'session-web-fetch-circuit',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
       },
     ));
@@ -1544,7 +1544,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-text-tool-text',
         sessionId: 'session-text-tool-text',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -1622,7 +1622,7 @@ describe('RawAgentLoop', () => {
         runId: 'target-final',
         sessionId: 'session-final-interjection',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -1689,7 +1689,7 @@ describe('RawAgentLoop', () => {
         sessionId: 'session-steering-reserve-failure',
         model: 'gpt-5.5',
         cwd,
-        drainHandoff,
+        drainHandoff, tenantId: DEFAULT_TENANT_ID,
         channelContext: { channel: 'web' },
         loadQueuedInterjections: async () => {
           loadCalls += 1;
@@ -1772,7 +1772,7 @@ describe('RawAgentLoop', () => {
         runId: 'target-atomic',
         sessionId: 'session-steering-atomic',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: { channel: 'web' },
         loadQueuedInterjections: async () => {
           loadCalls += 1;
@@ -1845,7 +1845,7 @@ describe('RawAgentLoop', () => {
         sessionId: 'session-steering-partial-apply',
         model: 'gpt-5.5',
         cwd,
-        drainHandoff,
+        drainHandoff, tenantId: DEFAULT_TENANT_ID,
         channelContext: { channel: 'web' },
         loadQueuedInterjections: async () => {
           loadCalls += 1;
@@ -1909,7 +1909,7 @@ describe('RawAgentLoop', () => {
         sessionId: 'session-steering-apply-failure',
         model: 'gpt-5.5',
         cwd,
-        drainHandoff,
+        drainHandoff, tenantId: DEFAULT_TENANT_ID,
         channelContext: { channel: 'web' },
         loadQueuedInterjections: async () => {
           loadCalls += 1;
@@ -1971,7 +1971,7 @@ describe('RawAgentLoop', () => {
         sessionId: 'session-interjection-cancel-boundary',
         model: 'gpt-5.5',
         cwd,
-        signal: controller.signal,
+        signal: controller.signal, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -2034,7 +2034,7 @@ describe('RawAgentLoop', () => {
         runId: 'target-failed-boundary',
         sessionId: 'session-interjection-failed-boundary',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -2098,7 +2098,7 @@ describe('RawAgentLoop', () => {
         runId: 'target-final-fallback',
         sessionId: 'session-final-interjection-fallback',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -2160,7 +2160,7 @@ describe('RawAgentLoop', () => {
         sessionId: 'session-aborted-interjection',
         model: 'gpt-5.5',
         cwd,
-        signal: controller.signal,
+        signal: controller.signal, tenantId: DEFAULT_TENANT_ID,
         channelContext: { channel: 'web' },
         loadQueuedInterjections: async () => {
           loadCalls += 1;
@@ -2227,7 +2227,7 @@ describe('RawAgentLoop', () => {
         runId: 'target-run',
         sessionId: 'session-interjection',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -2294,7 +2294,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-static-tool-content',
         sessionId: 'session-static-tool-content',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -2346,7 +2346,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-error-usage',
         sessionId: 'session-error-usage',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -2407,7 +2407,7 @@ describe('RawAgentLoop', () => {
       runId: 'run-partial-error',
       sessionId: 'session-partial-error',
       model: 'gpt-5.5',
-      cwd,
+      cwd, tenantId: DEFAULT_TENANT_ID,
       channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
     }));
     expect(events.at(-1)).toMatchObject({ type: 'error', error: expect.stringContaining('可发送“继续”') });
@@ -2452,7 +2452,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-incomplete-tool',
         sessionId: 'session-incomplete-tool',
         model: 'gpt-5.6-sol',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -2506,7 +2506,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-model-diagnostic',
         sessionId: 'session-model-diagnostic',
         model: 'gpt-5.6-sol',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -2550,7 +2550,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-hidden-continue',
         sessionId: 'session-hidden-continue',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -2596,7 +2596,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-thinking-1',
         sessionId: 'session-thinking-1',
         model: 'glm-5.2',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -2658,7 +2658,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-replaceable-draft',
         sessionId: 'session-replaceable-draft',
         model: 'gpt-5.6-sol',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           replaceableDrafts: true,
@@ -2759,7 +2759,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-restored-draft',
         sessionId: 'session-restored-draft',
         model: 'gpt-5.6-sol',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           replaceableDrafts: true,
@@ -2809,7 +2809,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-thinking-only',
         sessionId: 'session-thinking-only',
         model: 'glm-5.2',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -2863,7 +2863,7 @@ describe('RawAgentLoop', () => {
           runId: 'run-resume-1',
           sessionId: 'session-resume-1',
           model: 'gpt-5.5',
-          cwd,
+          cwd, tenantId: DEFAULT_TENANT_ID,
           channelContext: {
             channel: 'web',
             user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -2911,7 +2911,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-after-rebuild',
         sessionId: 'session-resume-1',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -2978,7 +2978,7 @@ describe('RawAgentLoop', () => {
           runId: 'run-resume-batch-1',
           sessionId: 'session-resume-batch-1',
           model: 'gpt-5.5',
-          cwd,
+          cwd, tenantId: DEFAULT_TENANT_ID,
           channelContext: {
             channel: 'web',
             user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -3019,7 +3019,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-resume-batch-1',
         sessionId: 'session-resume-batch-1',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -3074,7 +3074,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-two-approvals-1',
         sessionId: 'session-two-approvals-1',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           sessionOwner: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -3107,7 +3107,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-two-approvals-1',
         sessionId: 'session-two-approvals-1',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           sessionOwner: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -3137,7 +3137,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-two-approvals-1',
         sessionId: 'session-two-approvals-1',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           sessionOwner: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -3181,7 +3181,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-no-hook',
         sessionId: 'session-no-hook',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           sessionOwner: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -3237,7 +3237,7 @@ describe('RawAgentLoop', () => {
           runId: 'run-ask-resume-1',
           sessionId: 'session-ask-resume-1',
           model: 'gpt-5.5',
-          cwd,
+          cwd, tenantId: DEFAULT_TENANT_ID,
           channelContext: {
             channel: 'web',
             user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -3312,7 +3312,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-ask-resume-1',
         sessionId: 'session-ask-resume-1',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -3365,7 +3365,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-ask-no-hook-1',
         sessionId: 'session-ask-no-hook-1',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           sessionOwner: { id: 'user-1', username: 'alice', role: 'user' },
@@ -3425,7 +3425,7 @@ describe('RawAgentLoop', () => {
           runId: 'run-ask-batch-1',
           sessionId: 'session-ask-batch-1',
           model: 'gpt-5.5',
-          cwd,
+          cwd, tenantId: DEFAULT_TENANT_ID,
           channelContext: {
             channel: 'web',
             user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -3500,7 +3500,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-ask-batch-1',
         sessionId: 'session-ask-batch-1',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -3551,7 +3551,7 @@ describe('RawAgentLoop', () => {
         sessionId: 'session-audit-error',
         model: 'gpt-5.5',
         cwd,
-        executionTarget: 'server-container',
+        executionTarget: 'server-container', tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -3628,7 +3628,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-cancelled-late-tool',
         sessionId: 'session-cancelled-late-tool',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -3690,7 +3690,7 @@ describe('RawAgentLoop', () => {
         runId,
         sessionId,
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -3749,7 +3749,7 @@ describe('RawAgentLoop', () => {
         runId,
         sessionId,
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
         hooks: { onInteraction: async () => ({ allow: true, message: 'ok' }) },
       },
@@ -3806,7 +3806,7 @@ describe('RawAgentLoop', () => {
           runId,
           sessionId,
           model: 'gpt-5.5',
-          cwd,
+          cwd, tenantId: DEFAULT_TENANT_ID,
           channelContext: {
             channel: 'web',
             user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -3863,7 +3863,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-terminal-replay',
         sessionId: 'session-terminal-replay',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
         hooks: { onInteraction: async () => ({ allow: true, message: 'ok' }) },
       },
@@ -3903,7 +3903,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-lookup-failure',
         sessionId: 'session-run-lookup-failure',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -3948,7 +3948,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-missing',
         sessionId: 'session-run-missing',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -3993,7 +3993,7 @@ describe('RawAgentLoop', () => {
           runId: 'run-pending-1',
           sessionId: 'session-pending-1',
           model: 'gpt-5.5',
-          cwd,
+          cwd, tenantId: DEFAULT_TENANT_ID,
           channelContext: {
             channel: 'web',
             user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -4031,7 +4031,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-pending-2',
         sessionId: 'session-pending-1',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -4084,7 +4084,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-orphan-2',
         sessionId: 'session-orphan-1',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -4147,7 +4147,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-running-2',
         sessionId: 'session-running-1',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -4214,7 +4214,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-zombie-2',
         sessionId: 'session-zombie-1',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -4281,7 +4281,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-fresh-2',
         sessionId: 'session-fresh-1',
         model: 'gpt-5.5',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -4372,7 +4372,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-relay-2',
         sessionId: 'session-relay-1',
         model: currentModel,
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: {
           channel: 'web',
           user: { id: 'admin-1', username: 'admin', role: 'admin' },
@@ -4495,7 +4495,7 @@ describe('RawAgentLoop', () => {
           runId: 'run-pressure',
           sessionId: 'session-pressure',
           model: 'pressure-small',
-          cwd,
+          cwd, tenantId: DEFAULT_TENANT_ID,
           channelContext: { channel: 'web' },
           evaluateAutoCompaction: (_events, forceReason) => {
             forceReasons.push(forceReason);
@@ -4584,7 +4584,7 @@ describe('RawAgentLoop', () => {
           runId: 'run-checkpoint',
           sessionId: 'session-checkpoint',
           model: 'checkpoint-small',
-          cwd,
+          cwd, tenantId: DEFAULT_TENANT_ID,
           channelContext: { channel: 'web' },
           evaluateAutoCompaction: () => ({
             shouldCompact: evaluations++ === 0,
@@ -4688,7 +4688,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-manual-control',
         sessionId: 'session-manual-control',
         model: 'unconfigured-model',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: { channel: 'web' },
         loadQueuedInterjections: async () => queued,
       },
@@ -4786,7 +4786,7 @@ describe('RawAgentLoop', () => {
         runId: 'run-recover',
         sessionId: 'session-recover',
         model: 'unconfigured-model',
-        cwd,
+        cwd, tenantId: DEFAULT_TENANT_ID,
         channelContext: { channel: 'web' },
       },
     ));
@@ -4875,7 +4875,7 @@ describe('RawAgentLoop', () => {
       runId: 'run-repair-reset',
       sessionId: 'session-repair-reset',
       model: 'glm-5.2',
-      cwd,
+      cwd, tenantId: DEFAULT_TENANT_ID,
       channelContext: { channel: 'web' },
     }));
 

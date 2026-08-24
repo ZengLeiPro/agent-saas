@@ -283,7 +283,7 @@ describe('任务看板评论续跑', () => {
   it('steering source 已应用终态不提前写任务回执', async () => {
     const steeringRun = {
       runId: `taskboard-comment-${comments[1]!.id}`,
-      sessionId: activeExecution.sessionId,
+      sessionId: activeExecution.sessionId, tenantId: identity.tenantId,
       status: 'completed' as const,
       requestedAt: '2026-08-01T01:02:00.000Z',
       updatedAt: '2026-08-01T01:03:00.000Z',
@@ -352,7 +352,7 @@ describe('任务看板评论续跑', () => {
   it('重复请求遇到终态续跑 Run 时补写遗漏的任务回执', async () => {
     const terminalRun = {
       runId: `taskboard-comment-${comments[1]!.id}`,
-      sessionId: activeExecution.sessionId,
+      sessionId: activeExecution.sessionId, tenantId: identity.tenantId,
       status: 'completed' as const,
       requestedAt: '2026-08-01T01:02:00.000Z',
       updatedAt: '2026-08-01T01:03:00.000Z',

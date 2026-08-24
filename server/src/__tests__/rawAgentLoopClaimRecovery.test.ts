@@ -146,7 +146,7 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
       model: 'gpt-5.5',
       cwd,
       workerId: 'worker-loser',
-      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID } },
     }));
 
     expect(outbound.some((event) => event.type === 'error')).toBe(false);
@@ -190,7 +190,7 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
       connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
     }, {
       runId, sessionId, model: 'gpt-5.5', cwd, workerId: 'worker-after-crash',
-      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID } },
     }));
 
     const claimFailure = `tool invocation already claimed by another worker: ${invocationId}`;
@@ -231,7 +231,7 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
         connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
       }, {
         runId, sessionId, model: 'gpt-5.5', cwd,
-        channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+        channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID } },
         hooks: { onInteraction: async (event) => {
           approvalId = event.interactionId; resolve(); return new Promise(() => {});
         } },
@@ -251,7 +251,7 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
       approvalId, response: { allow: true, message: 'ok' }, instructions: '继续。', maxTurns: 4,
     }, {
       runId, sessionId, model: 'gpt-5.5', cwd, workerId: 'worker-after-crash',
-      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID } },
     }));
 
     const claimFailure = `tool invocation already claimed by another worker: ${invocationId}`;
@@ -291,7 +291,7 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
         connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
       }, {
         runId, sessionId, model: 'gpt-5.5', cwd,
-        channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+        channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID } },
         hooks: { onInteraction: async (event) => {
           interactionId = event.interactionId;
           await eventStore.append({
@@ -325,7 +325,7 @@ describe('RawAgentLoop claimed invocation resume recovery', () => {
       instructions: '继续。', maxTurns: 4,
     }, {
       runId, sessionId, model: 'gpt-5.5', cwd, workerId: 'worker-after-crash',
-      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
+      channelContext: { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID } },
     }));
 
     const claimFailure = `tool invocation already claimed by another worker: ${invocationId}`;

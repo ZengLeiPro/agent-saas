@@ -72,6 +72,7 @@ function baseContext(cwd: string, suffix: string): RunContext {
   return {
     runId: `run-fail-${suffix}`,
     sessionId: `session-fail-${suffix}`,
+    tenantId: DEFAULT_TENANT_ID,
     model: 'gpt-5.5',
     cwd,
     executionTarget: 'server-local',

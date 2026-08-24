@@ -78,6 +78,7 @@ function baseContext(cwd: string, overrides: Partial<RunContext> = {}): RunConte
   return {
     runId: 'run-hand',
     sessionId: 'session-hand',
+    tenantId: DEFAULT_TENANT_ID,
     model: 'gpt-5.5',
     cwd,
     executionTarget: 'server-remote',

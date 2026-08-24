@@ -211,7 +211,7 @@ export class EventBackedApprovalStore implements ApprovalStore {
   constructor(
     private readonly eventStore: EventStore,
     private readonly sessionId: string,
-    private readonly tenantId?: string,
+    private readonly tenantId: string,
   ) {}
 
   async create(request: ApprovalRequest): Promise<ApprovalRecord> {

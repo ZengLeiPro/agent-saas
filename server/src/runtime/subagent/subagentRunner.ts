@@ -393,7 +393,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       tenantHandResolver: params.tenantHandResolver,
       parentProviders: params.parentProviders,
       childEventStore: eventStore,
-      childTenantId: childRecord.tenantId,
+      childTenantId: tenantId,
       agentType,
       boundProfile,
       memoryPolicyVersion: childRecord.memoryPolicyVersion ?? 'v1',

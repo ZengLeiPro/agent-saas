@@ -39,6 +39,7 @@ import {
 import { deliverDwsBackgroundCompletion, resolveDwsCompletionRoute } from './backgroundTaskDwsCompletion.js';
 import { markBackgroundTaskTerminal } from './backgroundTaskTerminal.js';
 import { findBackgroundTasksByIdentifier } from './backgroundTaskLookup.js';
+import { sleepAbortable } from './backgroundTaskTiming.js';
 import {
   assertAgentProfileExecutionTarget,
   profileRunMetadata,
@@ -968,22 +969,6 @@ function failureResult(status: 'failed' | 'cancelled', message: string): StoredB
     turnCount: 0,
     durationMs: 0,
   };
-}
-
-async function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) throw signal.reason ?? new Error('aborted');
-  await new Promise<void>((resolve, reject) => {
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(signal.reason ?? new Error('aborted'));
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    timer.unref?.();
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
 }
 
 async function persistResultText(

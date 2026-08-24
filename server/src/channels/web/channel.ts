@@ -1265,7 +1265,7 @@ export class WebChannel implements BaseChannel {
     let hasPendingApproval: boolean;
     try {
       eventStore = this.config.runtimeEventStoreFor
-        ? this.config.runtimeEventStoreFor(transcriptPath ?? '') : new FileEventStore(getRuntimeEventLogPath(transcriptPath!), tenantId);
+        ? this.config.runtimeEventStoreFor(transcriptPath ?? '', tenantId) : new FileEventStore(getRuntimeEventLogPath(transcriptPath!), tenantId);
       approvalStore = new EventBackedApprovalStore(eventStore, sessionId, tenantId);
       existingEvents = await eventStore.list(tenantId, sessionId);
       const replayState = buildRuntimeReplayState(existingEvents, await approvalStore.list(sessionId), sessionId);
@@ -1915,7 +1915,7 @@ export class WebChannel implements BaseChannel {
         ?? (transcriptPath ? (await readSessionMeta(transcriptPath))?.tenantId : undefined);
       if (!resolvedTenantId) throw new Error('EventStore tenantId is required');
       const eventStore = this.config.runtimeEventStoreFor && transcriptPath
-        ? this.config.runtimeEventStoreFor(transcriptPath)
+        ? this.config.runtimeEventStoreFor(transcriptPath, resolvedTenantId)
         : transcriptPath ? new FileEventStore(getRuntimeEventLogPath(transcriptPath), resolvedTenantId) : null;
       await eventStore?.append(event, { tenantId: resolvedTenantId });
     } catch (err) {
@@ -1930,7 +1930,7 @@ export class WebChannel implements BaseChannel {
   ): Promise<void> {
     if (!tenantId) throw new Error('EventStore tenantId is required');
     const eventStore = this.config.runtimeEventStoreFor
-      ? this.config.runtimeEventStoreFor(transcriptPath)
+      ? this.config.runtimeEventStoreFor(transcriptPath, tenantId)
       : new FileEventStore(getRuntimeEventLogPath(transcriptPath), tenantId);
     await eventStore.append(event, { tenantId });
   }
@@ -2049,9 +2049,9 @@ export class WebChannel implements BaseChannel {
       if (!hasBufferCursor && lastEventCursor) {
         // The boundary was captured before async status lookup. Events pushed while either
         // status lookup or durable replay is in flight are recovered by subscribeFrom below.
-        const store = await this.getRuntimeEventStoreForSession(sid);
         const tenantId = durableTenantId ?? this.eventStoreTenantForClient(client, undefined, bufferEntry.userId) ?? undefined;
-        if (store && tenantId) {
+        const store = tenantId ? await this.getRuntimeEventStoreForSession(sid, tenantId) : null;
+        if (store) {
           durableReplayCursor = await this.replayDurableRuntimeEvents(client, sid, store, {
             lastEventCursor, activeRunId: activeEntry?.runId ?? '', tenantId,
           });
@@ -2143,7 +2143,7 @@ export class WebChannel implements BaseChannel {
     const subscribeAfterId = this.eventBufferStore.get(sessionId)!.nextId - 1;
     let durableReplayCursor: string | undefined;
     if (!options.skipReplay) {
-      const store = await this.getRuntimeEventStoreForSession(sessionId);
+      const store = await this.getRuntimeEventStoreForSession(sessionId, tenantId);
       if (store) {
         durableReplayCursor = await this.replayDurableRuntimeEvents(client, sessionId, store, {
           ...options, activeRunId: activeRun.runId, tenantId,
@@ -2177,10 +2177,10 @@ export class WebChannel implements BaseChannel {
     return true;
   }
 
-  private async getRuntimeEventStoreForSession(sessionId: string): Promise<EventStore | null> {
+  private async getRuntimeEventStoreForSession(sessionId: string, tenantId: string): Promise<EventStore | null> {
     if (!this.config.runtimeEventStoreFor) return null;
     const transcriptPath = await findTranscriptOrMetaPathBySessionId(sessionId);
-    return this.config.runtimeEventStoreFor(transcriptPath ?? '');
+    return this.config.runtimeEventStoreFor(transcriptPath ?? '', tenantId);
   }
 
   private async replayDurableRuntimeEvents(
@@ -2298,7 +2298,7 @@ export class WebChannel implements BaseChannel {
     const ownerUserId = this.eventBufferStore.get(sessionId)?.userId ?? ownerIds.values().next().value;
     const scopedTenantId = tenantId ?? this.eventStoreTenantForClient(client, undefined, ownerUserId) ?? undefined;
     if (this.config.runtimeEventStoreFor && !scopedTenantId) return;
-    const resolvedIds = this.config.runtimeEventStoreFor ? await loadResolvedInteractionIds(await this.getRuntimeEventStoreForSession(sessionId), scopedTenantId!, sessionId) : new Set<string>();
+    const resolvedIds = this.config.runtimeEventStoreFor ? await loadResolvedInteractionIds(await this.getRuntimeEventStoreForSession(sessionId, scopedTenantId!), scopedTenantId!, sessionId) : new Set<string>();
     const unresolved = pending.filter((entry) => !resolvedIds.has(entry.interactionId));
     const excluded = new Set([...resolvedIds, ...unresolved.map((entry) => entry.interactionId)]);
 

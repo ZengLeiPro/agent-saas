@@ -54,7 +54,7 @@ describe('UserActivityService internal memory session exclusion', () => {
       } as never,
       eventStore: {
         append: vi.fn(),
-        list: vi.fn(async (sessionId: string) => events[sessionId] ?? []),
+        list: vi.fn(async (_tenantId: string, sessionId: string) => events[sessionId] ?? []),
       } as never,
     });
 

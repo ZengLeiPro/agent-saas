@@ -24,7 +24,7 @@ class MemoryEventStore implements EventStore {
     return stored;
   }
 
-  async list(sessionId: string): Promise<PlatformEvent[]> {
+  async list(_tenantId: string, sessionId: string): Promise<PlatformEvent[]> {
     return this.events.filter((event) => !('sessionId' in event) || event.sessionId === sessionId);
   }
 }
@@ -91,6 +91,7 @@ describe('reconcileInterruptedForegroundToolCalls', () => {
       markStatus,
     } as unknown as RunStore;
     const sessionCatalog = {
+      get: vi.fn(async () => ({ tenantId: 'tenant-subagent-recovery' })),
       markStatus: vi.fn(async () => undefined),
     } as unknown as SessionCatalog;
 
@@ -137,6 +138,7 @@ describe('reconcileInterruptedForegroundToolCalls', () => {
       markStatus: vi.fn(),
     } as unknown as RunStore;
     const sessionCatalog = {
+      get: vi.fn(async () => ({ tenantId: 'tenant-subagent-recovery' })),
       markStatus: vi.fn(),
     } as unknown as SessionCatalog;
 
@@ -177,7 +179,10 @@ describe('reconcileInterruptedForegroundToolCalls', () => {
 
     const recovered = await reconcileInterruptedForegroundToolCalls({
       eventStore,
-      sessionCatalog: { markStatus: vi.fn() } as unknown as SessionCatalog,
+      sessionCatalog: {
+        get: vi.fn(async () => ({ tenantId: 'tenant-subagent-recovery' })),
+        markStatus: vi.fn(),
+      } as unknown as SessionCatalog,
       parentSessionId: 'parent-session-1',
     });
 
@@ -215,7 +220,10 @@ describe('reconcileInterruptedForegroundToolCalls', () => {
     const options = {
       eventStore,
       runStore,
-      sessionCatalog: { markStatus: vi.fn() } as unknown as SessionCatalog,
+      sessionCatalog: {
+        get: vi.fn(async () => ({ tenantId: 'tenant-subagent-recovery' })),
+        markStatus: vi.fn(),
+      } as unknown as SessionCatalog,
       parentSessionId: 'parent-session-1',
     };
 
@@ -249,7 +257,10 @@ describe('reconcileInterruptedForegroundToolCalls', () => {
     expect(await reconcileInterruptedForegroundToolCalls({
       eventStore,
       runStore: { get: vi.fn(async () => ({ ...childRun(), runId: 'parent-run-1' })) } as unknown as RunStore,
-      sessionCatalog: { markStatus: vi.fn() } as unknown as SessionCatalog,
+      sessionCatalog: {
+        get: vi.fn(async () => ({ tenantId: 'tenant-subagent-recovery' })),
+        markStatus: vi.fn(),
+      } as unknown as SessionCatalog,
       parentSessionId: 'parent-session-1',
     })).toBe(0);
     expect(eventStore.events.filter((event) => event.type === 'approval_resolved')).toHaveLength(0);
@@ -285,7 +296,10 @@ describe('reconcileInterruptedForegroundToolCalls', () => {
 
     expect(await reconcileInterruptedForegroundToolCalls({
       eventStore,
-      sessionCatalog: { markStatus: vi.fn() } as unknown as SessionCatalog,
+      sessionCatalog: {
+        get: vi.fn(async () => ({ tenantId: 'tenant-subagent-recovery' })),
+        markStatus: vi.fn(),
+      } as unknown as SessionCatalog,
       parentSessionId: 'parent-session-1',
     })).toBe(0);
     expect(eventStore.events.filter((event) => event.type === 'tool_invocation_completed')).toHaveLength(0);

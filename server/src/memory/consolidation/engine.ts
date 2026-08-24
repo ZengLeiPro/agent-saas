@@ -50,7 +50,7 @@ interface EventStoreForConsolidation {
     }>;
     hasMore: boolean;
   }>;
-  listSessionRange(sessionId: string, options: {
+  listSessionRange(tenantId: string, sessionId: string, options: {
     fromExclusive: number;
     toInclusive: number;
     excludeTypes?: ReadonlyArray<string>;
@@ -707,7 +707,7 @@ export class MemoryConsolidationEngine {
 
     const preparedDraft = await (async () => {
       try {
-        const usage = await this.readHiddenRunUsage(hiddenSessionId);
+        const usage = await this.readHiddenRunUsage(state.tenantId, hiddenSessionId);
         const draftPlan = await inspectMemoryConsolidationDraft(hiddenSessionId);
         const preparedUsage = {
           inputTokens: usage.inputTokens,
@@ -889,7 +889,7 @@ export class MemoryConsolidationEngine {
     commitJournal?: unknown,
     tombstoneIds?: string[],
   ): Promise<void> {
-    const usage = hiddenSessionId ? await this.readHiddenRunUsage(hiddenSessionId) : undefined;
+    const usage = hiddenSessionId ? await this.readHiddenRunUsage(state.tenantId, hiddenSessionId) : undefined;
     if (!state.leaseOwner) return;
     await this.options.store.failRunAndState({
       idempotencyKey,
@@ -920,13 +920,13 @@ export class MemoryConsolidationEngine {
     });
   }
 
-  private async readHiddenRunUsage(hiddenSessionId: string): Promise<{
+  private async readHiddenRunUsage(tenantId: string, hiddenSessionId: string): Promise<{
     inputTokens: number;
     outputTokens: number;
     cacheReadTokens: number;
     modelActual?: string;
   }> {
-    const rows = await this.options.eventStore.listSessionRange(hiddenSessionId, {
+    const rows = await this.options.eventStore.listSessionRange(tenantId, hiddenSessionId, {
       fromExclusive: 0,
       toInclusive: Number.MAX_SAFE_INTEGER,
       limit: 2_000,

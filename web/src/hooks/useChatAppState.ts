@@ -342,11 +342,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const selectedModelRef = useRef(selectedModel); selectedModelRef.current = selectedModel;
   const autoApproveRunShellRef = useRef(effectiveAutoApproveRunShell); autoApproveRunShellRef.current = effectiveAutoApproveRunShell;
   const msgRef = useRef(msg); msgRef.current = msg;
-  // 交互回复以服务端 ACK 为准；同一 interaction 在 ACK 到达前只允许一次提交。
-  const pendingInteractionResponsesRef = useRef(new Map<string, {
-    type: "permission_request" | "ask_user";
-    response: Record<string, unknown>;
-  }>());
+  const pendingInteractionResponsesRef = useRef(new Map<string, { type: "permission_request" | "ask_user"; response: Record<string, unknown> }>());
   const sessionIdRef = useRef<string | null>(null);
   // 同步更新的 sessionId ref（解决 React 批量更新时 sessionIdRef 延迟问题）
   const immediateSessionIdRef = useRef<string | null>(urlState.sessionId);
@@ -1509,39 +1505,21 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   const resolveInteractionResponse = useCallback((data: Extract<WsEvent, { type: 'respond_ok' | 'respond_error' }>) => {
     const pending = pendingInteractionResponsesRef.current.get(data.interactionId);
-    // ACK 必须对应当前仍在等待的交互提交；重放或其他交互的 ACK 不得改变 UI。
     if (!pending) return;
     pendingInteractionResponsesRef.current.delete(data.interactionId);
-
-    const idx = msgRef.current.messagesRef.current.findIndex((m) =>
-      m.type === pending.type && m.interactionId === data.interactionId,
-    );
+    const idx = msgRef.current.messagesRef.current.findIndex((m) => m.type === pending.type && m.interactionId === data.interactionId);
     if (idx < 0) return;
-
     if (data.type === 'respond_ok') {
       msgRef.current.updateMessageAt(idx, (m) => {
         if (m.type !== pending.type || m.interactionId !== data.interactionId || m.status !== 'pending') return m;
-        return m.type === 'permission_request'
-          ? { ...m, status: pending.response.allow ? 'allowed' as const : 'denied' as const }
-          : { ...m, status: 'answered' as const, answers: pending.response.answers as AskUserAnswers };
+        return m.type === 'permission_request' ? { ...m, status: pending.response.allow ? 'allowed' as const : 'denied' as const } : { ...m, status: 'answered' as const, answers: pending.response.answers as AskUserAnswers };
       });
       if (pending.type === 'permission_request') upsertRuntimeStatusMessage(msgRef.current, 'queued');
       markSessionRead(sessionIdRef.current);
       return;
     }
-
-    // 失败时卡片始终保持 pending，用户可直接重试；错误另以系统消息可见地呈现。
-    msgRef.current.updateMessageAt(idx, (m) =>
-      m.type === pending.type && m.interactionId === data.interactionId
-        ? { ...m, status: 'pending' as const }
-        : m,
-    );
-    msgRef.current.addMessage({
-      type: 'system-error',
-      severity: 'error',
-      content: `回复未提交：${data.error || '服务端拒绝了该回复'}。请重试。`,
-      timestamp: Date.now(),
-    });
+    msgRef.current.updateMessageAt(idx, (m) => m.type === pending.type && m.interactionId === data.interactionId ? { ...m, status: 'pending' as const } : m);
+    msgRef.current.addMessage({ type: 'system-error', severity: 'error', content: `回复未提交：${data.error || '服务端拒绝了该回复'}。请重试。`, timestamp: Date.now() });
   }, [markSessionRead]);
 
   // ---- WS 消息处理 ----
@@ -2975,31 +2953,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   }, [setInput, selectSessionWithUrl]);
 
   // ---- Interaction responses (via WS) ----
-  const respondToInteraction = useCallback(async (
-    interactionId: string,
-    type: 'permission_request' | 'ask_user',
-    response: Record<string, unknown>,
-  ) => {
-    // UI remains retryable while the request is in flight; this guard prevents duplicate submits.
+  const respondToInteraction = useCallback(async (interactionId: string, type: 'permission_request' | 'ask_user', response: Record<string, unknown>) => {
     if (pendingInteractionResponsesRef.current.has(interactionId)) return;
     pendingInteractionResponsesRef.current.set(interactionId, { type, response });
-
-    let ok = false;
-    try {
-      ok = await wsClient.ensureConnectedSend({
-        action: 'respond',
-        interactionId,
-        sessionId: sessionIdRef.current,
-        ...response,
-      });
-    } catch {
-      // A transport exception has the same retry semantics as a negative ACK.
-    }
-    if (!ok) resolveInteractionResponse({
-      type: 'respond_error',
-      interactionId,
-      error: '网络连接失败',
-    });
+    const ok = await wsClient.ensureConnectedSend({ action: 'respond', interactionId, sessionId: sessionIdRef.current, ...response }).catch(() => false);
+    if (!ok) resolveInteractionResponse({ type: 'respond_error', interactionId, error: '网络连接失败' });
   }, [resolveInteractionResponse]);
 
   const handlePermissionResponse = useCallback(async (

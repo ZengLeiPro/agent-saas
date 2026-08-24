@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { ModelTokenTrendCard, prepareModelTrend } from "./ModelTokenTrendChart";
@@ -60,11 +60,34 @@ describe("prepareModelTrend", () => {
       "其他",
     ]);
     expect(result.points.map((point) => point.totalTokens)).toEqual([220, 24]);
-    expect(result.points[0].segments.find((segment) => segment.key === "__other_models__")?.tokens).toBe(10);
-    expect(result.points[1].segments.find((segment) => segment.key === "__other_models__")?.tokens).toBe(3);
+    expect(result.points[0].segments.find((segment) => segment.key === "other")?.tokens).toBe(10);
+    expect(result.points[1].segments.find((segment) => segment.key === "other")?.tokens).toBe(3);
     expect(result.points.every((point) => (
       point.segments.reduce((sum, segment) => sum + segment.tokens, 0) === point.totalTokens
     ))).toBe(true);
+  });
+
+  it("keeps colliding model and other keys unique while conserving tokens", () => {
+    const result = prepareModelTrend([{
+      date: "2026-08-24",
+      models: [
+        model("__other_models__", 70),
+        model("model-a", 60),
+        model("model-b", 50),
+        model("model-c", 40),
+        model("model-d", 30),
+        model("model-e", 20),
+        model("model-f", 10),
+      ],
+    }]);
+    const keys = result.series.map((series) => series.key);
+    const segments = result.points[0].segments;
+
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(new Set(segments.map((segment) => segment.key)).size).toBe(segments.length);
+    expect(segments.reduce((sum, segment) => sum + segment.tokens, 0)).toBe(280);
+    expect(segments.find((segment) => segment.key === "model:__other_models__")?.tokens).toBe(70);
+    expect(segments.find((segment) => segment.key === "other")?.tokens).toBe(10);
   });
 
   it("assigns each interval model the same deterministic color regardless of date order", () => {
@@ -100,14 +123,27 @@ describe("ModelTokenTrendCard", () => {
       />,
     );
 
-    expect(screen.getByRole("img", { name: /2026-08-23 · Alpha · Token 75 · 占比 75.0% · 输入 75 · 输出 0 · 缓存读 0 · 缓存写 0 · 轮次 1 · 成本 \$0.1000/ })).toBeTruthy();
-    const legend = screen.getByRole("button", { name: "隐藏 Alpha" });
+    const chart = screen.getByRole("group", { name: "按北京时间自然日统计的模型 Token 用量趋势" });
+    const svg = chart.querySelector("svg");
+    expect(svg?.getAttribute("aria-hidden")).toBe("true");
+    expect(svg?.getAttribute("focusable")).toBe("false");
+    expect(within(chart).queryByRole("img")).toBeNull();
+    const details = within(chart).getByRole("list", { name: "模型 Token 用量明细" });
+    expect(details.className).toContain("focus-within:not-sr-only");
+    const alphaDescription = "2026-08-23 · Alpha · Token 75 · 占比 75.0% · 输入 75 · 输出 0 · 缓存读 0 · 缓存写 0 · 轮次 1 · 成本 $0.1000";
+    const alphaItem = within(details).getByRole("listitem", { name: alphaDescription });
+    expect(alphaItem.textContent).toBe(alphaDescription);
+    expect(alphaItem.getAttribute("tabindex")).toBe("0");
+    expect(within(details).getAllByRole("listitem")).toHaveLength(2);
+
+    const legend = within(chart).getByRole("button", { name: "隐藏 Alpha" });
     expect(legend.getAttribute("aria-pressed")).toBe("true");
 
     fireEvent.click(legend);
 
-    expect(screen.getByRole("button", { name: "显示 Alpha" }).getAttribute("aria-pressed")).toBe("false");
-    expect(screen.queryByRole("img", { name: /2026-08-23 · Alpha/ })).toBeNull();
+    expect(within(chart).getByRole("button", { name: "显示 Alpha" }).getAttribute("aria-pressed")).toBe("false");
+    expect(within(details).queryByRole("listitem", { name: alphaDescription })).toBeNull();
+    expect(within(details).getAllByRole("listitem")).toHaveLength(1);
   });
 
   it("renders explicit empty and error states", () => {

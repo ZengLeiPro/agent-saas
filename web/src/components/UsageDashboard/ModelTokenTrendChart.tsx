@@ -9,7 +9,12 @@ import { formatTokens, formatUsd } from "./format";
 import type { ModelTrendPoint, ModelTrendResp } from "./types";
 
 const TOP_MODEL_COUNT = 6;
-const OTHER_KEY = "__other_models__";
+const MODEL_KEY_PREFIX = "model:";
+const OTHER_KEY = "other";
+
+function modelKey(model: string): string {
+  return `${MODEL_KEY_PREFIX}${model}`;
+}
 const MODEL_COLORS = [
   "hsl(var(--chart-1))",
   "hsl(var(--chart-2))",
@@ -82,7 +87,7 @@ export function prepareModelTrend(points: ModelTrendPoint[]): PreparedModelTrend
   const hasOther = [...intervalTotals.entries()].some(([model, total]) => !topSet.has(model) && total > 0);
 
   const series: ModelTrendSeries[] = topModels.map((model, index) => ({
-    key: model,
+    key: modelKey(model),
     label: model,
     color: MODEL_COLORS[index],
     isOther: false,
@@ -94,7 +99,7 @@ export function prepareModelTrend(points: ModelTrendPoint[]): PreparedModelTrend
   const preparedPoints = points.map((point) => {
     const daily = new Map<string, Omit<ModelTrendSegment, "key">>();
     for (const model of point.models) {
-      const key = topSet.has(model.model) ? model.model : OTHER_KEY;
+      const key = topSet.has(model.model) ? modelKey(model.model) : OTHER_KEY;
       const current = daily.get(key) ?? {
         tokens: 0,
         inputTokens: 0,
@@ -205,8 +210,13 @@ function ModelTokenTrendChart({
   };
 
   return (
-    <div ref={containerRef} className="relative w-full overflow-hidden">
-      <svg width={width} height={HEIGHT} className="block" role="img" aria-label="按北京时间自然日统计的模型 Token 用量堆叠柱状图">
+    <div
+      ref={containerRef}
+      className="relative w-full overflow-hidden"
+      role="group"
+      aria-label="按北京时间自然日统计的模型 Token 用量趋势"
+    >
+      <svg width={width} height={HEIGHT} className="block" aria-hidden="true" focusable="false">
         {yTicks.map((tick) => (
           <g key={tick.value}>
             <line
@@ -254,9 +264,6 @@ function ModelTokenTrendChart({
                     width={chartBarWidth}
                     height={segmentHeight}
                     fill={series.color}
-                    role="img"
-                    aria-label={description}
-                    tabIndex={0}
                   >
                     <title>{description}</title>
                   </rect>
@@ -279,6 +286,33 @@ function ModelTokenTrendChart({
           </text>
         ))}
       </svg>
+
+      <ul
+        className="sr-only focus-within:not-sr-only focus-within:mt-2 focus-within:space-y-1 focus-within:rounded-md focus-within:border focus-within:bg-background focus-within:p-3 focus-within:text-xs"
+        aria-label="模型 Token 用量明细"
+      >
+        {prepared.points.flatMap((point) => point.segments.map((segment) => {
+          if (!visibleKeys.has(segment.key) || segment.tokens <= 0) return null;
+          const series = prepared.series.find((item) => item.key === segment.key);
+          if (!series) return null;
+          const description = segmentDescription(
+            point,
+            segment,
+            labels.get(segment.key) ?? series.label,
+            !costRedacted,
+          );
+          return (
+            <li
+              key={`${point.date}:${segment.key}`}
+              tabIndex={0}
+              aria-label={description}
+              className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {description}
+            </li>
+          );
+        }))}
+      </ul>
 
       {visibleSeries.length === 0 && (
         <div className="pointer-events-none absolute inset-x-0 top-24 text-center text-xs text-muted-foreground">

@@ -53,7 +53,8 @@ interface ChatInputProps {
 const MIN_HEIGHT = 56;
 const MAX_HEIGHT = 200;
 const warmedSessionIds = new Set<string>();
-const LazyAttachmentControls = lazy(() => import("@/components/AttachmentControls"));
+const loadAttachmentControls = () => import("@/components/AttachmentControls");
+const LazyAttachmentControls = lazy(loadAttachmentControls);
 
 function warmupSessionOnce(sessionId: string | null | undefined, value: string): void {
   if (!sessionId || warmedSessionIds.has(sessionId) || !value.trim()) return;
@@ -104,6 +105,10 @@ export function ChatInput({
   const localFileInputRef = useRef<HTMLInputElement>(null);
   const [tooShortTip, setTooShortTip] = useState(false);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+
+  useEffect(() => {
+    void loadAttachmentControls();
+  }, []);
 
   const voiceRecorder = useVoiceRecorder({
     onVoiceSend: async (wavBlob, durationMs) => {
@@ -431,6 +436,8 @@ export function ChatInput({
                       )}
                       aria-label="添加附件"
                       disabled={attachmentDisabled}
+                      onPointerEnter={() => { void loadAttachmentControls(); }}
+                      onFocus={() => { void loadAttachmentControls(); }}
                       onClick={(event) => event.stopPropagation()}
                     >
                       <Plus className="size-5" />

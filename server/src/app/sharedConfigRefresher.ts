@@ -181,6 +181,23 @@ export function createSharedConfigRefresher(params: {
       );
     }
 
+    const codexSubscriptionChanged = JSON.stringify(config.codexSubscription ?? null)
+      !== JSON.stringify(nextConfig.codexSubscription ?? null);
+    if (codexSubscriptionChanged) {
+      if (nextConfig.codexSubscription) config.codexSubscription = nextConfig.codexSubscription;
+      else delete config.codexSubscription;
+      const refs = nextConfig.codexSubscription?.credentialRefs?.length
+        ? nextConfig.codexSubscription.credentialRefs
+        : nextConfig.codexSubscription?.credentialRef
+          ? [nextConfig.codexSubscription.credentialRef]
+          : [];
+      logger?.info(
+        `[SharedConfig] 已从磁盘热更新 Codex 订阅配置：enabled=${nextConfig.codexSubscription?.enabled === true} / `
+          + `websocketEnabled=${nextConfig.codexSubscription?.websocketEnabled === true} / `
+          + `credentialCount=${new Set(refs).size}`,
+      );
+    }
+
     appliedConfigStamp = stamp;
   }
 

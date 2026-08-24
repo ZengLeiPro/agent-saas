@@ -275,6 +275,46 @@ describe('CodexResponsesWebSocketPool', () => {
     pool.close();
   });
 
+  it('账号绑定或 originator 变化时使用新连接，旧连接保持可用并自然过期', async () => {
+    const originalSocket = new FakeWebSocket();
+    const changedAccountSocket = new FakeWebSocket();
+    const changedOriginatorSocket = new FakeWebSocket();
+    const connector = connectorFor(originalSocket, changedAccountSocket, changedOriginatorSocket);
+    const pool = new CodexResponsesWebSocketPool(connector);
+    const input = [{ type: 'message', role: 'user', content: 'same request' }];
+    await establish(pool, originalSocket, input, 'resp-original');
+
+    const changedAccountPending = pool.execute({
+      ...request(body(input)),
+      accessToken: 'access-token-2',
+      accountId: 'acct-2',
+      accountBindingHash: 'binding-2',
+    });
+    await waitForSend(changedAccountSocket);
+    changedAccountSocket.emit({ type: 'response.created', response: { id: 'resp-account' } });
+    const changedAccountResult = await changedAccountPending;
+    complete(changedAccountSocket, 'resp-account');
+    await changedAccountResult.response.text();
+
+    const changedOriginatorPending = pool.execute({
+      ...request(body(input)),
+      originator: 'kaiyan-agent',
+    });
+    await waitForSend(changedOriginatorSocket);
+    changedOriginatorSocket.emit({ type: 'response.created', response: { id: 'resp-originator' } });
+    const changedOriginatorResult = await changedOriginatorPending;
+    complete(changedOriginatorSocket, 'resp-originator');
+    await changedOriginatorResult.response.text();
+
+    expect(connector).toHaveBeenCalledTimes(3);
+    expect(connector.mock.calls[2]?.[0]).toEqual(expect.objectContaining({
+      headers: expect.objectContaining({ originator: 'kaiyan-agent' }),
+    }));
+    expect(originalSocket.readyState).toBe(1);
+    expect(changedAccountSocket.readyState).toBe(1);
+    pool.close();
+  });
+
   it('模型请求属性变化时不猜测接力，直接在现有 socket 发完整历史重新锚定', async () => {
     const socket = new FakeWebSocket();
     const pool = new CodexResponsesWebSocketPool(connectorFor(socket));

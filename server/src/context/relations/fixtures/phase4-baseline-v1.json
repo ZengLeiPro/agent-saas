@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "maxCandidatesPerVariant": 20,
+  "thresholds": {
+    "minRecallGain": 0.05,
+    "minFollowupReduction": 0.1,
+    "maxCitationPrecisionDrop": 0.01
+  },
+  "cases": [
+    {
+      "caseId": "task-to-project-owner",
+      "relevantEntityIds": ["project-apollo", "person-owner"],
+      "candidates": {
+        "A": [],
+        "B": ["project-apollo"],
+        "C": ["project-apollo", "person-owner"]
+      },
+      "observations": {
+        "A": { "citationValid": 1, "citationTotal": 1, "followupRequired": true, "latencyMs": 8, "aclLeaks": 0 },
+        "B": { "citationValid": 1, "citationTotal": 1, "followupRequired": true, "latencyMs": 12, "aclLeaks": 0 },
+        "C": { "citationValid": 2, "citationTotal": 2, "followupRequired": false, "latencyMs": 17, "aclLeaks": 0 }
+      }
+    },
+    {
+      "caseId": "meeting-to-project-customer",
+      "relevantEntityIds": ["project-orion", "customer-acme"],
+      "candidates": {
+        "A": ["meeting-review"],
+        "B": ["project-orion"],
+        "C": ["project-orion", "customer-acme"]
+      },
+      "observations": {
+        "A": { "citationValid": 1, "citationTotal": 1, "followupRequired": true, "latencyMs": 9, "aclLeaks": 0 },
+        "B": { "citationValid": 1, "citationTotal": 1, "followupRequired": true, "latencyMs": 13, "aclLeaks": 0 },
+        "C": { "citationValid": 2, "citationTotal": 2, "followupRequired": false, "latencyMs": 19, "aclLeaks": 0 }
+      }
+    },
+    {
+      "caseId": "task-to-project-customer",
+      "relevantEntityIds": ["project-atlas", "customer-beta"],
+      "candidates": {
+        "A": [],
+        "B": ["project-atlas"],
+        "C": ["project-atlas", "customer-beta"]
+      },
+      "observations": {
+        "A": { "citationValid": 1, "citationTotal": 1, "followupRequired": true, "latencyMs": 7, "aclLeaks": 0 },
+        "B": { "citationValid": 1, "citationTotal": 1, "followupRequired": true, "latencyMs": 11, "aclLeaks": 0 },
+        "C": { "citationValid": 2, "citationTotal": 2, "followupRequired": false, "latencyMs": 16, "aclLeaks": 0 }
+      }
+    }
+  ]
+}

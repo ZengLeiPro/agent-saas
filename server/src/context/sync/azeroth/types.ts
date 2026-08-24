@@ -139,6 +139,9 @@ export interface AzerothInventoryResult {
   pages: number;
   records: number;
   revoked: number;
+  complete: boolean;
+  degraded?: boolean;
+  degradedReason?: 'authoritative_count_missing';
   completedAt: string;
 }
 

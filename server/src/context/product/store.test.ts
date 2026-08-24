@@ -101,6 +101,23 @@ describe('PgContextProductStore hardened candidates', () => {
     expect(result.map(item => item.itemId)).toEqual([`${state}-item`]);
   });
 
+  it('loads correction candidates with an explicit caller limit instead of a fixed 200-row cap', async () => {
+    const query = vi.fn(async (_sql: string, _params?: readonly unknown[]) => ({ rows: [] }));
+    const store = new PgContextProductStore({ query } as never, 'test');
+    await store.listCorrections('tenant-a', 'entity-a', 'actor-a', 201);
+    expect(String(query.mock.calls[0]![0])).toContain('LIMIT $4');
+    expect(query.mock.calls[0]![1]).toEqual(['tenant-a', 'entity-a', 'actor-a', 201]);
+  });
+
+  it('gets an item with an exact SQL predicate rather than scanning a bounded entity list', async () => {
+    const query = vi.fn(async (_sql: string, _params?: readonly unknown[]) => ({ rows: [reviewRow('item-250', 'confirmed', 'none')] }));
+    const store = new PgContextProductStore({ query } as never, 'test');
+    await expect(store.getItem('tenant-a', 'entity-a', 'item-250')).resolves.toMatchObject({ itemId: 'item-250' });
+    expect(String(query.mock.calls[0]![0])).toContain('i.item_id=$12');
+    expect(query.mock.calls[0]![1]![11]).toBe('item-250');
+    expect(query.mock.calls[0]![1]![8]).toBe(1);
+  });
+
   it('keeps review_decision audit rows out of correction SQL', async () => {
     const query = vi.fn(async (_sql: string, _params?: readonly unknown[]) => ({ rows: [] }));
     const store = new PgContextProductStore({ query } as never, 'test');

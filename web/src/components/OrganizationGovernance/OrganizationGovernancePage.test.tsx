@@ -40,6 +40,8 @@ vi.mock("@agent/shared/lib/governanceApi", () => ({
     listTimeline: vi.fn().mockResolvedValue({ items: [], nextCursor: null, degraded: false }),
     listEntities: vi.fn().mockResolvedValue({ items: [], nextCursor: null, degraded: false }),
     getEntity: vi.fn(),
+    listEntityItems: vi.fn().mockResolvedValue({ items: [], nextCursor: null, degraded: false }),
+    listEntityCorrections: vi.fn().mockResolvedValue({ items: [], nextCursor: null, degraded: false }),
     getEntityProfile: vi.fn(),
     listEntityRelations: vi.fn().mockResolvedValue({ items: [], nextCursor: null, degraded: false }),
     listReviews: vi.fn().mockResolvedValue({ items: [], nextCursor: null, degraded: false }),

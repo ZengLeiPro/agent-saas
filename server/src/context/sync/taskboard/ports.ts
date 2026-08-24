@@ -5,6 +5,7 @@ import type {
   CreateContextCollectionInput,
   CreateContextSourceInput,
   EnsureContextPartitionInput,
+  FailContextPartitionInput,
   IngestContextPageInput,
   IngestContextPageResult,
 } from '../../store/index.js';
@@ -47,6 +48,7 @@ export interface TaskboardContextStore {
     leaseMs: number;
   }): Promise<ContextSyncPartition | null>;
   ingestPage(input: IngestContextPageInput): Promise<IngestContextPageResult>;
+  failPartition(input: FailContextPartitionInput): Promise<ContextSyncPartition>;
 }
 
 export interface TaskboardClock {

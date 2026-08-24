@@ -16,9 +16,19 @@ import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { ToolProvider } from '../agent/toolRuntime.js';
 export { createRuntimeContextPlane } from './runtimeContextPlane.js';
 
+interface ContextMembershipAuthority {
+  getMembership(tenantId: string, userId: string): Promise<{ status: string } | null>;
+}
+
+interface ContextEntitlementAuthority {
+  getPolicies(tenantId: string): Promise<ReadonlyArray<{ policyKey: string; value: unknown }>>;
+}
+
 interface RuntimeMemoryContextToolsOptions {
   contextStore?: ContextStore;
   assignments?: ContextCollectionAssignmentReader;
+  memberships?: ContextMembershipAuthority;
+  entitlements?: ContextEntitlementAuthority;
   pool?: ContextPgPool;
   tablePrefix?: string;
   recallIdSigningKey?: string;
@@ -42,9 +52,11 @@ export interface ContextRecallRuntime {
 /** Shared construction keeps model tools and the user-facing citation API on one ACL path. */
 export function createContextRecallRuntime(
   options: Pick<RuntimeMemoryContextToolsOptions,
-    'contextStore' | 'assignments' | 'pool' | 'tablePrefix' | 'recallIdSigningKey' | 'sessionCatalog' | 'sourceAuthorizationRegistry'>,
+    'contextStore' | 'assignments' | 'memberships' | 'entitlements' | 'pool' | 'tablePrefix'
+    | 'recallIdSigningKey' | 'sessionCatalog' | 'sourceAuthorizationRegistry'>,
 ): ContextRecallRuntime | undefined {
-  if (!options.contextStore || !options.assignments || !options.pool) return undefined;
+  if (!options.contextStore || !options.assignments || !options.memberships
+    || !options.entitlements || !options.pool) return undefined;
   return {
     recall: new PgContextRecallService({
       pool: options.pool,
@@ -54,6 +66,18 @@ export function createContextRecallRuntime(
     }),
     scopes: new AssignmentContextRecallScopeResolver(options.assignments, {
       resourceTypes: ['org_knowledge'],
+      resolveAccess: async subject => {
+        const [membership, policies] = await Promise.all([
+          options.memberships!.getMembership(subject.tenantId, subject.userId),
+          options.entitlements!.getPolicies(subject.tenantId),
+        ]);
+        return {
+          activeMembership: membership?.status === 'active',
+          organizationKnowledgeEnabled: policies.some(policy => (
+            policy.policyKey === 'knowledge.org.enabled' && policy.value === true
+          )),
+        };
+      },
       resolveSessionPin: async subject => {
         if (!subject.sessionId) return null;
         const session = await options.sessionCatalog.get(subject.sessionId);

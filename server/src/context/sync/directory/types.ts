@@ -6,6 +6,7 @@ import type {
   CreateContextCollectionInput,
   CreateContextSourceInput,
   EnsureContextPartitionInput,
+  FailContextPartitionInput,
   IngestContextPageInput,
   IngestContextPageResult,
   ContextPartitionLeaseInput,
@@ -36,12 +37,14 @@ export interface DirectoryContextStore {
   acquirePartitionLease(input: ContextPartitionLeaseInput): Promise<ContextSyncPartition | null>;
   listCurrentExternalRecordIds(tenantId: string, sourceId: string, collectionId: string): Promise<string[]>;
   ingestPage(input: IngestContextPageInput): Promise<IngestContextPageResult>;
+  failPartition(input: FailContextPartitionInput): Promise<ContextSyncPartition>;
 }
 
 export interface DirectoryContextSyncOptions {
   leaseOwner?: string;
   leaseMs?: number;
   now?: () => Date;
+  onTenantError?: (tenantId: string, error: unknown) => void;
 }
 
 export interface DirectoryContextSyncResult {

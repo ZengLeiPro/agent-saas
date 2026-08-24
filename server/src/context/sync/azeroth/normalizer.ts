@@ -106,13 +106,18 @@ export function shouldIngestAzerothRow(entity: AzerothEntity, row: Record<string
   return row.isBot !== true && typeof row.event === 'string' && WEBSITE_SIGNAL_EVENTS.has(row.event);
 }
 
+export function azerothNativeId(entity: AzerothEntity, row: Record<string, unknown>): string {
+  const mapping = MAPPINGS[entity];
+  return requiredString(row[mapping.idField], `${entity}.${mapping.idField}`);
+}
+
 export function normalizeAzerothRecord(
   entity: AzerothEntity,
   row: Record<string, unknown>,
   observedAt: string,
 ): ContextIngestRecordInput {
   const mapping = MAPPINGS[entity];
-  const nativeId = requiredString(row[mapping.idField], `${entity}.${mapping.idField}`);
+  const nativeId = azerothNativeId(entity, row);
   const externalRecordId = externalId(entity, nativeId);
   const sourceUpdatedAt = firstDate(row.updatedAt, row.syncedAt, row.createdAt, ...mapping.occurredFields.map(field => row[field]));
   const occurredAt = firstDate(...mapping.occurredFields.map(field => row[field]));

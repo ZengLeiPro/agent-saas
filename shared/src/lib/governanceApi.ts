@@ -219,6 +219,8 @@ export const contextSourceSchema = z.object({
     truncated: z.number().int().nonnegative(),
     refused: z.number().int().nonnegative(),
     unreadable: z.number().int().nonnegative(),
+    retrying: z.number().int().nonnegative(),
+    nextRetryAt: z.string().datetime({ offset: true }).nullable(),
   }).strict(),
   historicalLearningScope: contextScopeSchema,
   realtimeListeningScope: contextScopeSchema,
@@ -297,7 +299,19 @@ export const contextDerivedItemSchema = z.object({
   type: contextDerivedItemTypeSchema,
   authority: contextAuthoritySchema,
   evidence: z.array(contextEvidenceRefSchema),
-}).strict();
+  review: z.enum(['proposed', 'conflicted', 'confirmed']),
+  correctable: z.boolean(),
+  correctionDisabledReason: z.enum(['pending_review', 'conflicted']).nullable(),
+}).strict().superRefine((value, context) => {
+  if (value.correctable !== (value.review === 'confirmed')) {
+    context.addIssue({ code: 'custom', message: 'only confirmed items are correctable', path: ['correctable'] });
+  }
+  const expectedReason = value.review === 'confirmed' ? null
+    : value.review === 'conflicted' ? 'conflicted' : 'pending_review';
+  if (value.correctionDisabledReason !== expectedReason) {
+    context.addIssue({ code: 'custom', message: 'correctionDisabledReason does not match review', path: ['correctionDisabledReason'] });
+  }
+});
 export const contextProfileAttributeSchema = z.object({
   ...contextCommonShape,
   type: contextProfileFacetTypeSchema,
@@ -362,12 +376,16 @@ const pageOf = <T extends z.ZodTypeAny>(item: T) => z.object({
 }).strict();
 export const contextTimelinePageSchema = pageOf(contextTimelineItemSchema);
 export const contextEntityPageSchema = pageOf(contextEntitySchema);
+export const contextEntityItemPageSchema = pageOf(contextDerivedItemSchema);
+export const contextCorrectionPageSchema = pageOf(contextCorrectionRecordSchema);
 export const contextRelationPageSchema = pageOf(contextRelationSchema);
 export const contextReviewPageSchema = pageOf(contextReviewItemSchema);
 
 export type ContextEvidenceRefDto = z.infer<typeof contextEvidenceRefSchema>;
 export type ContextTimelinePageDto = z.infer<typeof contextTimelinePageSchema>;
 export type ContextEntityPageDto = z.infer<typeof contextEntityPageSchema>;
+export type ContextEntityItemPageDto = z.infer<typeof contextEntityItemPageSchema>;
+export type ContextCorrectionPageDto = z.infer<typeof contextCorrectionPageSchema>;
 export type ContextDerivedItemDto = z.infer<typeof contextDerivedItemSchema>;
 export type ContextProfileAttributeDto = z.infer<typeof contextProfileAttributeSchema>;
 export type ContextEntityDetailDto = z.infer<typeof contextEntityDetailSchema>;
@@ -460,6 +478,14 @@ export const contextCenterApi = {
   getEntity: (entityId: string, options?: { signal?: AbortSignal; tenantId?: string }) => contextPlaneRequest(
     withQuery(`/api/admin/context-plane/entities/${id(entityId)}`, { tenantId: options?.tenantId }),
     contextEntityDetailSchema, options?.signal ? { signal: options.signal } : undefined,
+  ),
+  listEntityItems: (entityId: string, query: ContextListQuery = {}, options?: { signal?: AbortSignal; tenantId?: string }) => contextPlaneRequest(
+    withQuery(`/api/admin/context-plane/entities/${id(entityId)}/items`, contextQuery(options?.tenantId, query)),
+    contextEntityItemPageSchema, options?.signal ? { signal: options.signal } : undefined,
+  ),
+  listEntityCorrections: (entityId: string, query: ContextListQuery = {}, options?: { signal?: AbortSignal; tenantId?: string }) => contextPlaneRequest(
+    withQuery(`/api/admin/context-plane/entities/${id(entityId)}/corrections`, contextQuery(options?.tenantId, query)),
+    contextCorrectionPageSchema, options?.signal ? { signal: options.signal } : undefined,
   ),
   getEntityProfile: (entityId: string, options?: { signal?: AbortSignal; tenantId?: string }) => contextPlaneRequest(
     withQuery(`/api/admin/context-plane/entities/${id(entityId)}/profile`, { tenantId: options?.tenantId }),

@@ -203,7 +203,7 @@ export function assessRelationWalkIncrement(
     > thresholds.maxCitationPrecisionDrop + METRIC_EPSILON) {
     reasons.push('CITATION_PRECISION_DROP_ABOVE_THRESHOLD');
   }
-  if (relationWalk.aclLeaks !== 0) reasons.push('ACL_LEAKS_DETECTED');
+  if (oneHop.aclLeaks !== 0 || relationWalk.aclLeaks !== 0) reasons.push('ACL_LEAKS_DETECTED');
   return { eligible: reasons.length === 0, reasons };
 }
 

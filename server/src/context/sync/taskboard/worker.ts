@@ -19,6 +19,7 @@ import {
 
 const DEFAULT_PAGE_SIZE = 100;
 const DEFAULT_LEASE_MS = 10 * 60 * 1000;
+const DEFAULT_RETRY_MS = 60_000;
 const INVENTORY_WATERMARK = 'inventory-v1';
 
 export interface TaskboardContextSyncWorkerOptions {
@@ -28,6 +29,7 @@ export interface TaskboardContextSyncWorkerOptions {
   pageSize?: number;
   leaseMs?: number;
   workerId?: string;
+  onTenantError?: (tenantId: string, error: unknown) => void;
 }
 
 interface HeldLease {
@@ -51,7 +53,13 @@ export class TaskboardContextSyncWorker {
   async runOnce(): Promise<TaskboardRunResult[]> {
     const tenantIds = await this.options.reader.listTenantIds();
     const results: TaskboardRunResult[] = [];
-    for (const tenantId of tenantIds) results.push(await this.runTenant(tenantId));
+    for (const tenantId of tenantIds) {
+      try {
+        results.push(await this.runTenant(tenantId));
+      } catch (error) {
+        this.options.onTenantError?.(tenantId, error);
+      }
+    }
     return results;
   }
 
@@ -78,7 +86,9 @@ export class TaskboardContextSyncWorker {
       assertSeq(afterSeq);
       while (BigInt(afterSeq) < BigInt(throughSeq)) {
         const page = await this.options.reader.listChanges(tenantId, afterSeq, throughSeq, this.pageSize);
-        if (page.items.length === 0) break;
+        if (page.items.length === 0) {
+          throw new Error('Taskboard change reader returned an empty page before the fixed upper bound');
+        }
         const projectRecords: ContextIngestRecordInput[] = [];
         const taskRecords: ContextIngestRecordInput[] = [];
         const eventRecords: ContextIngestRecordInput[] = [];
@@ -137,7 +147,7 @@ export class TaskboardContextSyncWorker {
       result.watermark = throughSeq;
       return result;
     } catch (error) {
-      await this.releaseLeases(tenantId, Object.values(leases));
+      await this.failLeases(tenantId, Object.values(leases));
       throw error;
     }
   }
@@ -275,6 +285,20 @@ export class TaskboardContextSyncWorker {
       records,
       checkpoint,
     });
+  }
+
+  private async failLeases(tenantId: string, partitions: ContextSyncPartition[]): Promise<void> {
+    const retryAt = new Date(this.clock.now().getTime() + DEFAULT_RETRY_MS).toISOString();
+    await Promise.all(partitions.map(partition => this.options.store.failPartition({
+      tenantId,
+      sourceId: TASKBOARD_SOURCE_ID,
+      collectionId: partition.collectionId,
+      partitionKey: TASKBOARD_PARTITION_KEY,
+      leaseOwner: this.workerId,
+      leaseFence: partition.leaseFence,
+      errorCode: 'TASKBOARD_SYNC_FAILED',
+      retryAt,
+    }).catch(() => undefined)));
   }
 
   private async releaseLeases(tenantId: string, partitions: ContextSyncPartition[]): Promise<void> {

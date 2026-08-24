@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { recomputeOrganizationConflicts } from './conflictLifecycle.js';
 import { DerivedContextStore } from './store.js';
 
 const ref = {
@@ -108,6 +109,45 @@ describe('DerivedContextStore review target hardening', () => {
     expect(query.mock.calls.some(call => String(call[0]).includes('INSERT INTO test_context_derived_item_reviews'))).toBe(false);
     release(true);
     await expect(pending).resolves.toMatchObject({ action: 'reject' });
+  });
+
+  it('keeps canonical entity locking and conflict-group recomputation in deterministic order', async () => {
+    const query = vi.fn(async (sql: string, _params?: readonly unknown[]) => {
+      if (sql.includes('COUNT(DISTINCT')) return { rows: [{ count: 1 }], rowCount: 1 };
+      return { rows: [], rowCount: 1 };
+    });
+    const client = { query };
+    const store = new DerivedContextStore({
+      pool: { query: vi.fn() } as never, tablePrefix: 'test',
+      roleGate: { mayCorrectOrganization: vi.fn(async () => true) },
+    });
+    const internals = store as unknown as {
+      lockCanonicalEntities(clientValue: typeof client, event: Record<string, unknown>, entityIds: string[]): Promise<void>;
+    };
+
+    await internals.lockCanonicalEntities(client, {
+      tenantId: 'tenant-a', sourceId: 'source-a', collectionId: 'collection-a', recordId: 'record-a',
+    }, ['entity-b', 'entity-a', 'entity-b']);
+    const entityLock = query.mock.calls[0]!;
+    expect(String(entityLock[0])).toContain('ORDER BY en.entity_id,en.generation FOR UPDATE OF en');
+    expect(entityLock[1]).toEqual(['tenant-a', ['entity-a', 'entity-b'], 'source-a', 'collection-a', 'record-a']);
+
+    await recomputeOrganizationConflicts(client as never, store.tables, 'tenant-a', [
+      { subjectEntityId: 'entity-b', itemType: 'Status', semanticKey: 'status' },
+      { subjectEntityId: 'entity-a', itemType: 'Task', semanticKey: 'task' },
+      { subjectEntityId: 'entity-b', itemType: 'Status', semanticKey: 'status' },
+    ]);
+    const counts = query.mock.calls.filter(call => String(call[0]).includes('COUNT(DISTINCT'));
+    expect(counts.map(call => call[1])).toEqual([
+      ['tenant-a', 'entity-a', 'Task', 'task'],
+      ['tenant-a', 'entity-b', 'Status', 'status'],
+    ]);
+    const updates = query.mock.calls.filter(call => String(call[0]).includes('SET conflict_status=$5'));
+    expect(updates.map(call => call[1])).toEqual([
+      ['tenant-a', 'entity-a', 'Task', 'task', 'none'],
+      ['tenant-a', 'entity-b', 'Status', 'status', 'none'],
+    ]);
+    expect(String(updates[0]![0])).toContain('owner_principal IS NULL');
   });
 
   it('suppresses only the exact reviewed generation/item and ignores review_decision rows', async () => {

@@ -113,6 +113,8 @@ export interface ProductStoreListInput {
   entityId?: string;
   from?: string;
   through?: string;
+  /** Exact derived-item lookup; never implemented as a scan of a bounded list. */
+  itemId?: string;
 }
 
 export interface ProductRelationCandidate {
@@ -147,9 +149,9 @@ export interface ContextProductStore {
   listTimeline(input: ProductStoreListInput): Promise<ProductTimelineCandidate[]>;
   listEntities(input: ProductStoreListInput): Promise<ProductEntityCandidate[]>;
   getEntity(tenantId: string, entityId: string, collectionIds: string[], actorId: string): Promise<ProductEntityCandidate | null>;
-  listItems(tenantId: string, entityId: string): Promise<ProductItemCandidate[]>;
+  listItems(tenantId: string, entityId: string, limit?: number): Promise<ProductItemCandidate[]>;
   getItem(tenantId: string, entityId: string, itemId: string): Promise<ProductItemCandidate | null>;
-  listCorrections(tenantId: string, entityId: string, actorId: string): Promise<ProductCorrectionCandidate[]>;
+  listCorrections(tenantId: string, entityId: string, actorId: string, limit?: number): Promise<ProductCorrectionCandidate[]>;
   listReviews(input: ProductStoreListInput): Promise<ProductReviewCandidate[]>;
   getReviewGroup(tenantId: string, itemId: string, limit: number): Promise<ProductReviewCandidate[]>;
   getCorrectionAuthorizationSnapshot(input: {

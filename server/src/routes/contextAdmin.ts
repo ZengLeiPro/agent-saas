@@ -28,6 +28,7 @@ interface ContextAdminPartition {
   coverageEnd?: string;
   truncated: boolean;
   refused: boolean;
+  nextRetryAt?: string;
   lastErrorCode?: string;
   updatedAt: string;
 }
@@ -171,6 +172,22 @@ export function createContextAdminRouter(options: ContextAdminRouterOptions): Ro
     return productCall(req, res, options, query.data.tenantId,
       (product, subject) => product.getEntity(subject, params.data.entityId));
   });
+  router.get('/entities/:entityId/items', async (req, res) => {
+    const params = entityParamsSchema.safeParse(req.params);
+    const query = productListQuerySchema.safeParse(req.query);
+    if (!params.success || !query.success) return res.status(400).json({ code: 'CONTEXT_PRODUCT_INVALID' });
+    const { tenantId: requested, ...data } = query.data;
+    return productCall(req, res, options, requested,
+      (product, subject) => product.listEntityItems(subject, params.data.entityId, data));
+  });
+  router.get('/entities/:entityId/corrections', async (req, res) => {
+    const params = entityParamsSchema.safeParse(req.params);
+    const query = productListQuerySchema.safeParse(req.query);
+    if (!params.success || !query.success) return res.status(400).json({ code: 'CONTEXT_PRODUCT_INVALID' });
+    const { tenantId: requested, ...data } = query.data;
+    return productCall(req, res, options, requested,
+      (product, subject) => product.listEntityCorrections(subject, params.data.entityId, data));
+  });
   router.get('/entities/:entityId/profile', async (req, res) => {
     const params = entityParamsSchema.safeParse(req.params);
     const query = tenantQuerySchema.safeParse(req.query);
@@ -278,7 +295,7 @@ function mapSourceCard(
     system: nonEmpty(source?.kind) ?? 'unknown',
     collectionId: collection.collectionId,
     collection: nonEmpty(collection.displayName) ?? '未配置',
-    status: sourceStatus(source?.status, collection.status, partitions),
+    status: sourceStatus(source?.status, source?.kind, collection.status, partitions, now),
     lastSyncedAt: completedAt,
     backfillCoverage: {
       kind: 'time' as const,
@@ -291,6 +308,8 @@ function mapSourceCard(
       refused: partitions.filter(partition => partition.refused || partition.status === 'refused').length,
       unreadable: unreadableRecords
         + partitions.filter(partition => partition.lastErrorCode === 'CONTEXT_SYNC_UNREADABLE').length,
+      retrying: partitions.filter(partition => partition.status === 'retry_wait').length,
+      nextRetryAt: earliestIso(partitions.map(partition => partition.nextRetryAt)),
     },
     historicalLearningScope: {
       enabled: historicalScope?.enabled ?? Boolean(coverageStart || coverageEnd),
@@ -345,28 +364,50 @@ function configuredScope(
 
 function sourceStatus(
   sourceStatusValue: string | undefined,
+  sourceKind: string | undefined,
   collectionStatus: string,
   partitions: ContextAdminPartition[],
+  now: Date,
 ): 'healthy' | 'syncing' | 'attention' | 'paused' {
   if (sourceStatusValue !== 'active' || collectionStatus !== 'active') return 'paused';
   if (partitions.some(partition => partition.status === 'retry_wait'
     || partition.status === 'refused' || partition.refused)) return 'attention';
   if (partitions.some(partition => partition.status === 'syncing')) return 'syncing';
-  if (partitions.length > 0 && partitions.every(partition => partition.status === 'complete')) return 'healthy';
+  if (partitions.length > 0 && partitions.every(partition => partition.status === 'complete')) {
+    const threshold = staleAfterMs(sourceKind);
+    if (!partitions.every(partition => {
+      const heartbeat = validIso(partition.updatedAt);
+      return heartbeat && now.getTime() - Date.parse(heartbeat) <= threshold;
+    })) return 'attention';
+    return 'healthy';
+  }
   return 'attention';
 }
 
+function staleAfterMs(sourceKind: string | undefined): number {
+  if (sourceKind === 'taskboard' || sourceKind === 'directory') return 5 * 60_000;
+  if (sourceKind === 'azeroth') return 3 * 60 * 60_000;
+  if (sourceKind === 'dws') return 2 * 60 * 60_000;
+  return 24 * 60 * 60_000;
+}
+
 function watermarkLag(partitions: ContextAdminPartition[], now: Date): number | null {
-  const latest = latestIso(partitions.map(partition => watermarkTimestamp(partition.watermark)));
-  if (!latest) return null;
-  return Math.max(0, Math.floor((now.getTime() - Date.parse(latest)) / 1_000));
+  const oldest = earliestIso(partitions.map(partition =>
+    watermarkTimestamp(partition.watermark) ?? validIso(partition.updatedAt)));
+  if (!oldest) return null;
+  return Math.max(0, Math.floor((now.getTime() - Date.parse(oldest)) / 1_000));
 }
 
 function watermarkTimestamp(value: unknown): string | undefined {
   if (typeof value === 'string') return validIso(value);
   if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const candidate = (value as Record<string, unknown>).value;
-    if (typeof candidate === 'string') return validIso(candidate);
+    const fields = value as Record<string, unknown>;
+    for (const key of ['value', 'inventoryObservedAt', 'completedAt', 'observedAt', 'through']) {
+      if (typeof fields[key] === 'string') {
+        const timestamp = validIso(fields[key]);
+        if (timestamp) return timestamp;
+      }
+    }
   }
   return undefined;
 }

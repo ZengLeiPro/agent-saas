@@ -28,9 +28,16 @@ export interface ContextRecallSessionPin {
   collectionAssignments?: readonly ContextRecallCollectionScope[];
 }
 
+export interface ContextRecallAccessDecision {
+  activeMembership: boolean;
+  organizationKnowledgeEnabled: boolean;
+}
+
 export interface AssignmentContextRecallScopeResolverOptions {
   resourceTypes?: readonly ContextCollectionAssignmentResourceType[];
   now?: () => Date;
+  /** Trusted, live membership/policy lookup. It must not derive tenant identity from client input. */
+  resolveAccess?: (subject: ContextRecallSubject) => Promise<ContextRecallAccessDecision>;
   /** Trusted session lookup. When configured, a missing/mismatched session fails closed. */
   resolveSessionPin?: (subject: ContextRecallSubject) => Promise<ContextRecallSessionPin | null>;
 }
@@ -39,6 +46,7 @@ export class ContextRecallScopeDriftError extends Error {
   constructor(readonly code:
     | 'CONTEXT_RECALL_SESSION_UNAVAILABLE'
     | 'CONTEXT_RECALL_SESSION_SUBJECT_MISMATCH'
+    | 'CONTEXT_RECALL_MEMBERSHIP_INACTIVE'
     | 'CONTEXT_RECALL_ASSIGNMENT_PIN_DRIFT') {
     super(code);
     this.name = 'ContextRecallScopeDriftError';
@@ -66,6 +74,16 @@ export class AssignmentContextRecallScopeResolver implements ContextRecallScopeR
     subject: ContextRecallSubject,
     _request: ContextRecallScopeRequest,
   ): Promise<ContextRecallResolvedScope> {
+    if (this.options.resolveAccess) {
+      const access = await this.options.resolveAccess(subject);
+      if (!access.activeMembership) {
+        throw new ContextRecallScopeDriftError('CONTEXT_RECALL_MEMBERSHIP_INACTIVE');
+      }
+      // Policy is deliberately evaluated before session pins and assignments. A live
+      // disable therefore reduces even an old pinned session to an empty current scope.
+      if (!access.organizationKnowledgeEnabled) return this.emptyScope();
+    }
+
     let agentId = subject.orgAgentId;
     let pin: readonly ContextRecallCollectionScope[] | undefined;
     if (this.options.resolveSessionPin) {
@@ -102,6 +120,15 @@ export class AssignmentContextRecallScopeResolver implements ContextRecallScopeR
 
     return {
       collections,
+      resolvedAt: this.now().toISOString(),
+      degraded: false,
+      degradationReasons: [],
+    };
+  }
+
+  private emptyScope(): ContextRecallResolvedScope {
+    return {
+      collections: [],
       resolvedAt: this.now().toISOString(),
       degraded: false,
       degradationReasons: [],

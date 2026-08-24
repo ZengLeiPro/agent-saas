@@ -252,8 +252,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   app.use("/api/contentops", createContentOpsRouter());
   const contextRecall = runtime.sessionCatalog
     ? createContextRecallRuntime({
-        contextStore: runtime.contextStore,
-        assignments: runtime.assignmentStore,
+        contextStore: runtime.contextStore, assignments: runtime.assignmentStore,
+        memberships: runtime.membershipStore, entitlements: runtime.entitlementStore,
         pool: runtime.runtimePgEventStore?.pool,
         tablePrefix: config.runtimeEventStore?.backend === 'pg'
           ? config.runtimeEventStore.tablePrefix

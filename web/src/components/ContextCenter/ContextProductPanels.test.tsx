@@ -15,11 +15,11 @@ const entity = {
 };
 const item = {
   ...entity, id: "item-1", type: "Status" as const, label: "负责人", summary: "王五",
-  authority, evidence,
+  authority, evidence, review: "confirmed" as const, correctable: true, correctionDisabledReason: null,
 };
 const secondItem = {
   ...entity, id: "item-2", type: "Task" as const, label: "交付排期", summary: "下周",
-  authority, evidence: secondEvidence,
+  authority, evidence: secondEvidence, review: "confirmed" as const, correctable: true, correctionDisabledReason: null,
 };
 const profileAttribute = {
   ...entity, id: "facet-1", type: "role" as const, label: "负责人", summary: "王五",
@@ -43,7 +43,8 @@ function api(overrides: Partial<ContextCenterApiPort> = {}): ContextCenterApiPor
     getSnapshot: vi.fn(), getEvidence: vi.fn().mockResolvedValue([]),
     listTimeline: vi.fn().mockResolvedValue(emptyPage),
     listEntities: vi.fn().mockResolvedValue(emptyPage),
-    getEntity: vi.fn(), getEntityProfile: vi.fn(),
+    getEntity: vi.fn(), listEntityItems: vi.fn().mockResolvedValue({ items: detail.items, nextCursor: null, degraded: false }),
+    listEntityCorrections: vi.fn().mockResolvedValue({ items: detail.corrections, nextCursor: null, degraded: false }), getEntityProfile: vi.fn(),
     listEntityRelations: vi.fn().mockResolvedValue(emptyPage),
     listReviews: vi.fn().mockResolvedValue(emptyPage),
     createCorrection: vi.fn(), decideReview: vi.fn(),
@@ -296,6 +297,59 @@ describe("Context 产品面板", () => {
       expect(getEntity).toHaveBeenCalledTimes(2);
       expect(getEntityProfile).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it("实体画像项和纠正记录分别消费 cursor、追加去重并保留降级提示", async () => {
+    const user = userEvent.setup();
+    const correctionOne = { ...entity, id: "correction-1", type: "correction", label: "负责人纠正", summary: "王五", action: "reject" as const, authority, evidence, revision: 8 };
+    const correctionTwo = { ...correctionOne, id: "correction-2", label: "排期纠正", summary: "下周" };
+    const listEntityItems = vi.fn().mockImplementation((_id: string, query?: { cursor?: string }) => Promise.resolve(query?.cursor
+      ? { items: [item, secondItem], nextCursor: null, degraded: true }
+      : { items: [item], nextCursor: "item-cursor", degraded: false }));
+    const listEntityCorrections = vi.fn().mockImplementation((_id: string, query?: { cursor?: string }) => Promise.resolve(query?.cursor
+      ? { items: [correctionOne, correctionTwo], nextCursor: null, degraded: false }
+      : { items: [correctionOne], nextCursor: "correction-cursor", degraded: false }));
+    render(<ContextEntitiesPanel api={api({
+      listEntities: vi.fn().mockResolvedValue({ items: [entity], nextCursor: null, degraded: false }),
+      getEntity: vi.fn().mockResolvedValue(detail), getEntityProfile: vi.fn().mockResolvedValue(profile),
+      listEntityItems, listEntityCorrections,
+    })} />);
+
+    await user.click(await screen.findByRole("button", { name: /项目甲/ }));
+    await user.click(await screen.findByRole("tab", { name: "纠正记录" }));
+    expect(within(screen.getByLabelText("纠正目标")).queryByRole("option", { name: /交付排期/ })).toBeNull();
+    expect(screen.getByText("负责人纠正")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "加载更多可纠正画像项" }));
+    expect(within(screen.getByLabelText("纠正目标")).getByRole("option", { name: /交付排期/ })).toBeTruthy();
+    expect(within(screen.getByLabelText("纠正目标")).getAllByRole("option", { name: /负责人/ })).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "加载更多纠正记录" }));
+    expect(await screen.findByText("排期纠正")).toBeTruthy();
+    expect(screen.getAllByText("负责人纠正")).toHaveLength(1);
+    expect(screen.getByText(/当前结果为降级数据/)).toBeTruthy();
+    expect(listEntityItems).toHaveBeenCalledWith("entity-1", { cursor: "item-cursor" });
+    expect(listEntityCorrections).toHaveBeenCalledWith("entity-1", { cursor: "correction-cursor" });
+  });
+
+  it("proposed/conflicted 纠正目标可见但禁选并说明原因", async () => {
+    const user = userEvent.setup();
+    const proposed = { ...item, id: "item-proposed", label: "待审核负责人", review: "proposed" as const,
+      correctable: false, correctionDisabledReason: "pending_review" as const };
+    const conflicted = { ...secondItem, id: "item-conflicted", label: "冲突排期", review: "conflicted" as const,
+      correctable: false, correctionDisabledReason: "conflicted" as const };
+    render(<ContextEntitiesPanel api={api({
+      listEntities: vi.fn().mockResolvedValue({ items: [entity], nextCursor: null, degraded: false }),
+      getEntity: vi.fn().mockResolvedValue({ ...detail, items: [item, proposed, conflicted] }),
+      listEntityItems: vi.fn().mockResolvedValue({ items: [item, proposed, conflicted], nextCursor: null, degraded: false }),
+      getEntityProfile: vi.fn().mockResolvedValue(profile),
+    })} />);
+    fireEvent.click(await screen.findByRole("button", { name: /项目甲/ }));
+    await user.click(await screen.findByRole("tab", { name: "纠正记录" }));
+    const select = screen.getByLabelText("纠正目标");
+    const proposedOption = within(select).getByRole("option", { name: /待审核负责人.*建议值待审核，不可纠正/ }) as HTMLOptionElement;
+    const conflictedOption = within(select).getByRole("option", { name: /冲突排期.*冲突待审核，不可纠正/ }) as HTMLOptionElement;
+    expect(proposedOption.disabled).toBe(true);
+    expect(conflictedOption.disabled).toBe(true);
+    expect(screen.getByText(/仅已确认且当前有效的画像项可作为纠正目标/)).toBeTruthy();
   });
 
   it("assert 必填新值；409 提供刷新实体详情动作", async () => {

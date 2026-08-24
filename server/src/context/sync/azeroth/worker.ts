@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
-import { createAzerothRevocation, normalizeAzerothRecord, shouldIngestAzerothRow } from './normalizer.js';
-import { parseAzerothPage } from './schemas.js';
+import { azerothNativeId, createAzerothRevocation, normalizeAzerothRecord, shouldIngestAzerothRow } from './normalizer.js';
+import { parseAzerothPage, type PaginationFacts } from './schemas.js';
 import {
   AZEROTH_ENTITIES,
   AzerothAuthorizationError,
@@ -101,7 +101,11 @@ export class AzerothInventoryWorker {
     let leaseValid = true;
     let pages = 0;
     let records = 0;
+    let rawRecords = 0;
+    let baselineTotal: number | undefined;
+    let baselineTotalPages: number | undefined;
     const inventoryIds = new Set<string>();
+    const rawIds = new Set<string>();
     try {
       for (let page = 1; ; page += 1) {
         if (page > this.maxPages) throw new Error(`Azeroth ${entity} exceeded maximum page count`);
@@ -122,6 +126,29 @@ export class AzerothInventoryWorker {
           ...(signal ? { signal } : {}),
         });
         const parsed = parseAzerothPage(entity, raw, page, this.pageSize);
+        if (page === 1) {
+          baselineTotal = parsed.pagination.total;
+          baselineTotalPages = parsed.pagination.totalPages;
+        } else {
+          assertStablePaginationFact(entity, 'total', baselineTotal, parsed.pagination.total);
+          assertStablePaginationFact(entity, 'totalPages', baselineTotalPages, parsed.pagination.totalPages);
+        }
+        const hasMore = validatePageCompleteness(
+          entity,
+          page,
+          this.pageSize,
+          parsed.items.length,
+          parsed.hasMore,
+          parsed.pagination,
+          baselineTotal,
+          baselineTotalPages,
+        );
+        for (const row of parsed.items) {
+          const id = azerothNativeId(entity, row);
+          if (rawIds.has(id)) throw new Error(`Azeroth ${entity} inventory repeated id ${id} across pages`);
+          rawIds.add(id);
+        }
+        rawRecords += parsed.items.length;
         const observedAt = this.clock().toISOString();
         const normalized = parsed.items
           .filter(row => shouldIngestAzerothRow(entity, row))
@@ -133,11 +160,11 @@ export class AzerothInventoryWorker {
           leaseOwner: this.leaseOwner,
           leaseFence: lease.leaseFence,
           records: normalized,
-          checkpoint: { pageCursor: parsed.hasMore ? String(page + 1) : String(page), complete: false },
+          checkpoint: { pageCursor: hasMore ? String(page + 1) : String(page), complete: false },
         });
         pages += 1;
         records += normalized.length;
-        if (!parsed.hasMore) break;
+        if (!hasMore) break;
       }
 
       leaseValid = await this.options.store.renewPartitionLease({
@@ -149,13 +176,54 @@ export class AzerothInventoryWorker {
       });
       if (!leaseValid) throw new Error(`Azeroth ${entity} inventory lease was lost`);
 
-      // Reconciliation is intentionally delayed until every page validates and ingests.
+      const completedAt = this.clock().toISOString();
+      if (baselineTotal === undefined) {
+        // Page-number traversal without an authoritative record count cannot prove
+        // that concurrent inserts/deletes did not shift unseen rows between pages.
+        await this.options.store.ingestPage({
+          tenantId,
+          ...identity,
+          leaseOwner: this.leaseOwner,
+          leaseFence: lease.leaseFence,
+          records: [],
+          checkpoint: {
+            watermark: {
+              mode: 'full_inventory',
+              status: 'degraded',
+              reason: 'authoritative_count_missing',
+              completedAt,
+              pages,
+              records,
+              rawRecords,
+            },
+            complete: false,
+            releaseLease: true,
+          },
+        });
+        return {
+          tenantId,
+          entity,
+          sourceId: identity.sourceId,
+          collectionId: identity.collectionId,
+          pages,
+          records,
+          revoked: 0,
+          complete: false,
+          degraded: true,
+          degradedReason: 'authoritative_count_missing',
+          completedAt,
+        };
+      }
+      if (rawRecords !== baselineTotal) {
+        throw new Error(`Azeroth ${entity} authoritative total expected ${baselineTotal} records but observed ${rawRecords}`);
+      }
+
+      // Reconciliation is intentionally delayed until every authoritative page validates and ingests.
       const currentIds = await this.options.store.listCurrentExternalRecordIds(
         tenantId,
         identity.sourceId,
         identity.collectionId,
       );
-      const completedAt = this.clock().toISOString();
       const revocations = currentIds
         .filter(externalRecordId => !inventoryIds.has(externalRecordId))
         .map(externalRecordId => createAzerothRevocation(entity, externalRecordId, completedAt));
@@ -186,6 +254,7 @@ export class AzerothInventoryWorker {
         pages,
         records,
         revoked: revocations.length,
+        complete: true,
         completedAt,
       };
     } catch (error) {
@@ -285,6 +354,58 @@ export function selectAuthoritativeAzerothBinding(
   );
   if (authoritative.length !== 1) throw new AzerothAuthorizationError();
   return authoritative[0]!;
+}
+
+function assertStablePaginationFact(
+  entity: AzerothEntity,
+  fact: 'total' | 'totalPages',
+  expected: number | undefined,
+  actual: number | undefined,
+): void {
+  if (actual !== expected) {
+    throw new Error(`Azeroth ${entity} pagination ${fact} drifted from ${String(expected)} to ${String(actual)}`);
+  }
+}
+
+function validatePageCompleteness(
+  entity: AzerothEntity,
+  page: number,
+  pageSize: number,
+  itemCount: number,
+  fallbackHasMore: boolean,
+  pagination: PaginationFacts,
+  total: number | undefined,
+  totalPages: number | undefined,
+): boolean {
+  if (pagination.page !== undefined && pagination.page !== page) {
+    throw new Error(`Azeroth ${entity} pagination returned page ${pagination.page} while requesting page ${page}`);
+  }
+  if (total !== undefined) {
+    const expectedPages = Math.max(1, Math.ceil(total / pageSize));
+    if (totalPages !== undefined && totalPages !== expectedPages) {
+      throw new Error(`Azeroth ${entity} pagination totalPages ${totalPages} disagrees with total ${total}`);
+    }
+    if (page > expectedPages) throw new Error(`Azeroth ${entity} returned an unexpected page ${page}`);
+    const expectedItems = page < expectedPages ? pageSize : total - pageSize * (expectedPages - 1);
+    if (itemCount !== expectedItems) {
+      throw new Error(`Azeroth ${entity} page ${page} expected ${expectedItems} records but received ${itemCount}`);
+    }
+    const expectedHasMore = page < expectedPages;
+    if (pagination.hasNext !== undefined && pagination.hasNext !== expectedHasMore) {
+      throw new Error(`Azeroth ${entity} page ${page} hasNext disagrees with authoritative count`);
+    }
+    if (pagination.nextPage !== undefined) {
+      const expectedNextPage = expectedHasMore ? page + 1 : null;
+      if (pagination.nextPage !== expectedNextPage) {
+        throw new Error(`Azeroth ${entity} page ${page} nextPage disagrees with authoritative count`);
+      }
+    }
+    return expectedHasMore;
+  }
+  if (fallbackHasMore && itemCount !== pageSize) {
+    throw new Error(`Azeroth ${entity} non-terminal page ${page} is not full`);
+  }
+  return fallbackHasMore;
 }
 
 export function identityFor(entity: AzerothEntity) {

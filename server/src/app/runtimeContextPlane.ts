@@ -62,11 +62,11 @@ export function createRuntimeContextPlane(options: RuntimeContextPlaneOptions): 
       })
     : undefined;
 
-  const syncRuntime = options.contextStore && options.taskboardStore && options.membershipStore
+  const syncRuntime = options.contextStore && options.membershipStore
     && options.assignmentStore && options.userStore
     ? new ContextPlanePhase2Runtime({
         contextStore: options.contextStore,
-        taskboardStore: options.taskboardStore,
+        ...(options.taskboardStore ? { taskboardStore: options.taskboardStore } : {}),
         membershipStore: options.membershipStore,
         assignmentStore: options.assignmentStore,
         userStore: options.userStore,

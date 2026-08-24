@@ -82,8 +82,8 @@ describe('AzerothInventoryWorker', () => {
   it('paginates the documented GET request and commits only one complete inventory watermark', async () => {
     const { worker, store, http } = setup();
     vi.mocked(http.get)
-      .mockResolvedValueOnce({ data: [customer('a'), customer('b')], pagination: { page: 1, totalPages: 2 } })
-      .mockResolvedValueOnce({ data: [customer('c')], pagination: { page: 2, totalPages: 2 } });
+      .mockResolvedValueOnce({ data: [customer('a'), customer('b')], pagination: { page: 1, total: 3, totalPages: 2 } })
+      .mockResolvedValueOnce({ data: [customer('c')], pagination: { page: 2, total: 3, totalPages: 2 } });
 
     await expect(worker.syncEntity(tenantId, 'customers')).resolves.toMatchObject({
       pages: 2,
@@ -165,6 +165,87 @@ describe('AzerothInventoryWorker', () => {
     expect(store.failPartition).toHaveBeenCalledWith(expect.objectContaining({
       errorCode: 'AZEROTH_SYNC_FAILED',
     }));
+  });
+
+  it('ingests but marks the inventory degraded and never sweeps without an authoritative total', async () => {
+    const { worker, store, http } = setup();
+    vi.mocked(http.get).mockResolvedValueOnce({ items: [customer('present')], totalPages: 1 });
+    vi.mocked(store.listCurrentExternalRecordIds).mockResolvedValueOnce(['azeroth:customers:missing']);
+
+    await expect(worker.syncEntity(tenantId, 'customers')).resolves.toMatchObject({
+      records: 1,
+      revoked: 0,
+      complete: false,
+      degraded: true,
+      degradedReason: 'authoritative_count_missing',
+    });
+
+    expect(store.listCurrentExternalRecordIds).not.toHaveBeenCalled();
+    const terminal = vi.mocked(store.ingestPage).mock.calls.at(-1)?.[0];
+    expect(terminal?.records).toEqual([]);
+    expect(terminal?.checkpoint).toMatchObject({
+      complete: false,
+      releaseLease: true,
+      watermark: { status: 'degraded', reason: 'authoritative_count_missing' },
+    });
+  });
+
+  it('fails incomplete when a page-number inventory repeats an id across pages', async () => {
+    const { worker, store, http } = setup();
+    vi.mocked(http.get)
+      .mockResolvedValueOnce({ items: [customer('a'), customer('b')], total: 3, totalPages: 2 })
+      .mockResolvedValueOnce({ items: [customer('b')], total: 3, totalPages: 2 });
+
+    await expect(worker.syncEntity(tenantId, 'customers')).rejects.toThrow('repeated id b across pages');
+    expect(store.listCurrentExternalRecordIds).not.toHaveBeenCalled();
+    expect(vi.mocked(store.ingestPage).mock.calls.flatMap(call => call[0].records).some(record => record.revoked)).toBe(false);
+  });
+
+  it('uses each entity native id field when checking cross-page inventory uniqueness', async () => {
+    const { worker, store, http } = setup();
+    vi.mocked(http.get).mockResolvedValueOnce({
+      items: [
+        { reportId: 'report-a', updatedAt: '2026-08-22T06:00:00.000Z' },
+        { reportId: 'report-b', updatedAt: '2026-08-22T06:00:00.000Z' },
+      ], total: 2, totalPages: 1,
+    });
+
+    await expect(worker.syncEntity(tenantId, 'dingtalk-logs')).resolves.toMatchObject({
+      records: 2, revoked: 0, complete: true,
+    });
+    expect(vi.mocked(store.ingestPage).mock.calls.flatMap(call => call[0].records)
+      .map(record => record.externalRecordId)).toEqual(expect.arrayContaining([
+      'azeroth:dingtalk-logs:report-a', 'azeroth:dingtalk-logs:report-b',
+    ]));
+  });
+
+  it('fails incomplete when authoritative pagination counts drift while data changes', async () => {
+    const { worker, store, http } = setup();
+    vi.mocked(http.get)
+      .mockResolvedValueOnce({ items: [customer('a'), customer('b')], total: 4, totalPages: 2 })
+      .mockResolvedValueOnce({ items: [customer('c')], total: 3, totalPages: 2 });
+
+    await expect(worker.syncEntity(tenantId, 'customers')).rejects.toThrow('pagination total drifted from 4 to 3');
+    expect(store.listCurrentExternalRecordIds).not.toHaveBeenCalled();
+  });
+
+  it('fails incomplete when totalPages drifts despite a stable total', async () => {
+    const { worker, store, http } = setup();
+    vi.mocked(http.get)
+      .mockResolvedValueOnce({ items: [customer('a'), customer('b')], total: 4, totalPages: 2 })
+      .mockResolvedValueOnce({ items: [customer('c'), customer('d')], total: 4, totalPages: 3 });
+
+    await expect(worker.syncEntity(tenantId, 'customers')).rejects.toThrow('pagination totalPages drifted from 2 to 3');
+    expect(store.listCurrentExternalRecordIds).not.toHaveBeenCalled();
+  });
+
+  it('fails incomplete when a non-terminal authoritative page is short', async () => {
+    const { worker, store, http } = setup();
+    vi.mocked(http.get).mockResolvedValueOnce({ items: [customer('a')], total: 3, totalPages: 2 });
+
+    await expect(worker.syncEntity(tenantId, 'customers')).rejects.toThrow('page 1 expected 2 records but received 1');
+    expect(http.get).toHaveBeenCalledTimes(1);
+    expect(store.listCurrentExternalRecordIds).not.toHaveBeenCalled();
   });
 
   it('fails closed before creating a source when there is no unique ADMIN server binding', async () => {

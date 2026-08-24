@@ -233,7 +233,11 @@ async function revokeGoogleWorkspaceOAuthGrants(reason: string): Promise<void> {
 
 export async function disconnectGoogleWorkspace(): Promise<GoogleWorkspaceConnectionResponse> {
   await revokeGoogleWorkspaceOAuthGrants('用户主动断开 Google Workspace');
-  return fetchGoogleWorkspaceConnection();
+  const result = await fetchGoogleWorkspaceConnection();
+  if (result.connection?.status === 'connected') {
+    throw new Error('Google Workspace 授权仍在撤销中，请稍后刷新后重试');
+  }
+  return result;
 }
 
 function normalizeAliyunInput(input: AliyunConnectInput): AliyunConnectInput {

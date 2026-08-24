@@ -207,6 +207,22 @@ describe('X governance connector API', () => {
     expect(api.authFetch).not.toHaveBeenCalledWith('/api/connectors/google-workspace', { method: 'DELETE' });
   });
 
+  it('Google Workspace 撤销后仍保持连接时明确提示仍在处理', async () => {
+    api.listOAuthGrants.mockResolvedValueOnce({ grants: [{
+      grantId: 'grant-google', provider: 'google', connectorId: 'google-workspace', status: 'active',
+    }] });
+    api.previewOAuthGrantRevocation.mockResolvedValueOnce({
+      previewId: 'ogpv1.google-preview', baselineDigest: 'google-baseline', expiresAt: '2026-08-20T10:05:00.000Z',
+      impact: { blockers: [] },
+    });
+    api.revokeOAuthGrant.mockResolvedValueOnce({ grantId: 'grant-google', status: 'error', version: 2 });
+    api.authFetch.mockResolvedValueOnce(jsonResponse({
+      connection: { connectorId: 'google-workspace', status: 'connected', runtimeEnabled: true }, available: true,
+    }));
+
+    await expect(disconnectGoogleWorkspace()).rejects.toThrow('授权仍在撤销中');
+  });
+
   it('阿里云连接把 AccessKey 写入治理凭据并保留地域元数据', async () => {
     api.authFetch.mockResolvedValueOnce(jsonResponse({
       connection: { connectorId: 'aliyun', status: 'connected', runtimeEnabled: true, regionId: 'cn-shenzhen' },

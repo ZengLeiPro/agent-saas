@@ -14,8 +14,7 @@ export async function applyPgEventStoreSchema(
       tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}',
       session_id TEXT NOT NULL,
       next_sequence BIGINT NOT NULL DEFAULT 1,
-      PRIMARY KEY (tenant_id, session_id),
-      UNIQUE(session_id)
+      PRIMARY KEY (tenant_id, session_id)
     )
   `);
   await client.query(`
@@ -29,8 +28,6 @@ export async function applyPgEventStoreSchema(
       tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}', /* 旧事件缺 tenant 时回填 legacy tenant */
       timestamp TIMESTAMPTZ NOT NULL,
       event_json JSONB NOT NULL,
-      UNIQUE(event_id),
-      UNIQUE(session_id, session_sequence),
       UNIQUE(tenant_id, event_id),
       UNIQUE(tenant_id, session_id, session_sequence)
     )
@@ -64,12 +61,37 @@ export async function applyPgEventStoreSchema(
       ALTER TABLE ${cursorsTable}
       ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'
     `);
+  } else {
+    const tenantDefault = await client.query<{ matches: boolean }>(`
+      SELECT COALESCE(
+        pg_get_expr(default_row.adbin, default_row.adrelid) = quote_literal($2) || '::text',
+        false
+      ) AS matches
+      FROM pg_attribute attribute
+      LEFT JOIN pg_attrdef default_row
+        ON default_row.adrelid = attribute.attrelid
+       AND default_row.adnum = attribute.attnum
+      WHERE attribute.attrelid = $1::regclass
+        AND attribute.attname = 'tenant_id'
+        AND attribute.attnum > 0
+        AND NOT attribute.attisdropped
+    `, [cursorsTable, LEGACY_TENANT_ID]);
+    // 必须在下面的 cursor 去重/回填产生行锁之前完成强表锁迁移。否则 rolling deploy
+    // 会形成“init 持行锁等 AccessExclusive、旧 writer 持表锁等 cursor 行”的死锁环。
+    if (!tenantDefault.rows[0]?.matches) {
+      await client.query(`
+        ALTER TABLE ${cursorsTable}
+        ALTER COLUMN tenant_id SET DEFAULT '${LEGACY_TENANT_ID}'
+      `);
+    }
   }
 
-  // session/event ID 由平台生成且保持全局唯一。除了碰撞时 fail-closed，这三条
-  // legacy 唯一性还是蓝绿 N/N+1 合约：旧 Worker 的 cursor INSERT 使用
-  // ON CONFLICT(session_id)，若在候选启动时删除它，旧色会立即以 42P10 崩溃。
-  // tenant-scoped 索引与查询负责隔离；不能在同一个 release 内 expand+contract。
+  // 旧 schema 的 event_id 全局唯一、(session_id, sequence) 唯一及 cursor
+  // session_id 主键都会阻断两个 tenant 使用相同业务 ID。按约束列精确识别并删除，
+  // 避免依赖 PostgreSQL 自动生成且可能被截断的 constraint 名称；其他业务约束不动。
+  await dropConstraintByColumns(client, eventsTable, ['event_id']);
+  await dropConstraintByColumns(client, eventsTable, ['session_id', 'session_sequence']);
+  await dropConstraintByColumns(client, cursorsTable, ['session_id']);
 
   // 兼容曾中断在“已删旧 PK、未建新唯一索引”的迁移：同一 tenant/session
   // 只保留一行，并保留最大的 next_sequence，避免 init 产生或放大重复 cursor。
@@ -106,25 +128,6 @@ export async function applyPgEventStoreSchema(
     `${cursorsTable}_tenant_session_key`,
     ['tenant_id', 'session_id'],
   );
-  await ensureUniqueIndexByColumns(
-    client,
-    eventsTable,
-    `${eventsTable}_rolling_event_id_key`,
-    ['event_id'],
-  );
-  await ensureUniqueIndexByColumns(
-    client,
-    eventsTable,
-    `${eventsTable}_rolling_session_sequence_key`,
-    ['session_id', 'session_sequence'],
-  );
-  await ensureUniqueIndexByColumns(
-    client,
-    cursorsTable,
-    `${cursorsTable}_rolling_session_key`,
-    ['session_id'],
-  );
-
   // 省略 tenant_id 的旧 writer 和历史 cursor 永远属于 LEGACY_TENANT_ID，不能根据
   // 同 session 的新事件“猜归属”。再按事件事实源为每个 tenant/session 独立补齐
   // cursor；重复 init 只会单调修正 next_sequence，不会插入重复行。
@@ -136,13 +139,6 @@ export async function applyPgEventStoreSchema(
     ON CONFLICT (tenant_id, session_id) DO UPDATE
     SET next_sequence = GREATEST(${cursorsTable}.next_sequence, EXCLUDED.next_sequence)
   `);
-  // 保留 LEGACY default：rolling deploy 中旧 writer 仍可能省略 tenant_id。新代码
-  // 始终显式写 tenant_id；default 只承接旧进程/旧数据，绝不作为新 API fallback。
-  await client.query(`
-    ALTER TABLE ${cursorsTable}
-    ALTER COLUMN tenant_id SET DEFAULT '${LEGACY_TENANT_ID}'
-  `);
-
   // tenant-scoped sequence 唯一索引已覆盖 session 顺序读取；event_json GIN
   // 历史上 idx_scan=0，也不再创建。
   // 旧库可能仍有 legacy ${eventsTable}_run_idx（早期为 run_id 单列），
@@ -196,4 +192,30 @@ async function ensureUniqueIndexByColumns(
   if (result.rows[0]?.present) return;
   const quotedIndex = `"${indexName.replaceAll('"', '""')}"`;
   await client.query(`CREATE UNIQUE INDEX ${quotedIndex} ON ${table} (${columns.join(', ')})`);
+}
+
+async function dropConstraintByColumns(
+  client: PgPoolClient,
+  table: string,
+  columns: string[],
+): Promise<void> {
+  const result = await client.query<{ conname: string; columns: string[] }>(`
+    SELECT constraint_row.conname,
+           ARRAY(
+             SELECT attribute.attname::text
+             FROM unnest(constraint_row.conkey) WITH ORDINALITY AS key(attnum, position)
+             JOIN pg_attribute attribute
+               ON attribute.attrelid = constraint_row.conrelid
+              AND attribute.attnum = key.attnum
+             ORDER BY key.position
+           ) AS columns
+    FROM pg_constraint constraint_row
+    WHERE constraint_row.conrelid = $1::regclass
+      AND constraint_row.contype IN ('p', 'u')
+  `, [table]);
+  for (const row of result.rows) {
+    if (row.columns.length !== columns.length || row.columns.some((column, index) => column !== columns[index])) continue;
+    const constraint = `"${row.conname.replaceAll('"', '""')}"`;
+    await client.query(`ALTER TABLE ${table} DROP CONSTRAINT ${constraint}`);
+  }
 }

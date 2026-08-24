@@ -3,7 +3,11 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
 import { DerivedStoreError, type DerivedEvidenceRef } from '../derived/index.js';
-import { ContextSourceAuthorizationRegistry } from '../retrieval/index.js';
+import {
+  AssignmentContextRecallScopeResolver,
+  ContextSourceAuthorizationRegistry,
+  type ContextRecallScopeResolver,
+} from '../retrieval/index.js';
 import { ContextProductAuthorization } from './authorization.js';
 import { ContextProductService } from './service.js';
 import {
@@ -82,8 +86,9 @@ function store(overrides: Partial<ContextProductStore> = {}): ContextProductStor
     ...overrides,
   };
 }
-function harness(overrides: { store?: ContextProductStore; assigned?: string[]; authorize?: (recordId: string) => boolean | Promise<boolean>;
-  role?: boolean; appendReview?: ReturnType<typeof vi.fn>; getProfile?: ReturnType<typeof vi.fn> } = {}) {
+function harness(overrides: { store?: ContextProductStore; scopes?: ContextRecallScopeResolver; assigned?: string[];
+  authorize?: (recordId: string) => boolean | Promise<boolean>; role?: boolean;
+  appendReview?: ReturnType<typeof vi.fn>; getProfile?: ReturnType<typeof vi.fn> } = {}) {
   const registry = new ContextSourceAuthorizationRegistry({
     taskboard: { authorize: async (_subject, value) => overrides.authorize ? overrides.authorize(value.recordId) : true },
   });
@@ -95,7 +100,7 @@ function harness(overrides: { store?: ContextProductStore; assigned?: string[]; 
   }));
   const service = new ContextProductService({
     store: overrides.store ?? store(),
-    scopes: { resolve: vi.fn(async () => ({ collections: (overrides.assigned ?? ['collection-a']).map(collectionId => ({
+    scopes: overrides.scopes ?? { resolve: vi.fn(async () => ({ collections: (overrides.assigned ?? ['collection-a']).map(collectionId => ({
       collectionId, assignmentVersion: 1, resourceType: 'org_knowledge' as const,
     })), resolvedAt: '2026-08-23T11:00:00.000Z', degraded: false, degradationReasons: [] })) },
     authorization, derived: {
@@ -137,6 +142,62 @@ describe('ContextProductService authorization boundary', () => {
   ])('fails closed for %s', async (_name, options) => {
     const page = await harness(options).service.listTimeline(subject, {});
     expect(page.items).toEqual([]);
+  });
+
+  it('denies a platform admin without tenant-b membership before everyone Assignment or organization Taskboard ACL', async () => {
+    const listEffectiveResourceIds = vi.fn(async () => [{
+      resourceId: 'collection-a', assignmentVersion: 1,
+    }]);
+    const scopes = new AssignmentContextRecallScopeResolver({ listEffectiveResourceIds }, {
+      resolveAccess: async current => ({
+        activeMembership: current.tenantId === 'tenant-b' && current.userId === 'platform-actor' ? false : true,
+        organizationKnowledgeEnabled: true,
+      }),
+    });
+    const nativeTaskboardAuthorization = vi.fn(async () => true);
+    const productStore = store();
+    const { service, authorization, appendReview } = harness({
+      scopes, store: productStore, authorize: nativeTaskboardAuthorization,
+    });
+    const platformInTenantB = { tenantId: 'tenant-b', actorId: 'platform-actor' };
+    const handle = authorization.evidenceHandle('tenant-b', evidenceRef);
+
+    await expect(service.getEvidence(platformInTenantB, handle))
+      .rejects.toThrowError('CONTEXT_PRODUCT_FORBIDDEN');
+    await expect(service.correct(platformInTenantB, 'entity-a', {
+      action: 'reject', scope: 'personal', expectedRevision: 1,
+      targetItemId: 'item-a', evidenceIds: [handle],
+    })).rejects.toThrowError('CONTEXT_PRODUCT_FORBIDDEN');
+    expect(listEffectiveResourceIds).not.toHaveBeenCalled();
+    expect(nativeTaskboardAuthorization).not.toHaveBeenCalled();
+    expect(productStore.getEvidence).not.toHaveBeenCalled();
+    expect(appendReview).not.toHaveBeenCalled();
+  });
+
+  it('re-evaluates knowledge.org.enabled for every Context Product call', async () => {
+    let knowledgeEnabled = true;
+    const listEffectiveResourceIds = vi.fn(async () => [{
+      resourceId: 'collection-a', assignmentVersion: 1,
+    }]);
+    const scopes = new AssignmentContextRecallScopeResolver({ listEffectiveResourceIds }, {
+      resolveAccess: async () => ({
+        activeMembership: true,
+        organizationKnowledgeEnabled: knowledgeEnabled,
+      }),
+    });
+    const productStore = store();
+    const { service, authorization } = harness({ scopes, store: productStore });
+    const handle = authorization.evidenceHandle('tenant-a', evidenceRef);
+
+    await expect(service.getEvidence(subject, handle)).resolves.toHaveLength(1);
+    knowledgeEnabled = false;
+    await expect(service.getEvidence(subject, handle)).rejects.toThrowError('CONTEXT_PRODUCT_NOT_FOUND');
+    await expect(service.correct(subject, 'entity-a', {
+      action: 'reject', scope: 'personal', expectedRevision: 1,
+      targetItemId: 'item-a', evidenceIds: [handle],
+    })).rejects.toThrowError('CONTEXT_PRODUCT_FORBIDDEN');
+    expect(listEffectiveResourceIds).toHaveBeenCalledTimes(1);
+    expect(productStore.getEvidence).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -210,6 +271,28 @@ describe('ContextProductService authorization boundary', () => {
     ]);
   });
 
+  it('outputs parallel relation/evidence edges while expanding their shared neighbor only once', async () => {
+    const entities = [entity(), entity('middle'), entity('leaf')];
+    const secondEvidence = { ...evidenceRef, evidenceId: 'evidence-b' };
+    const listAdjacent = vi.fn(async (_tenant: string, ids: string[]) => ({
+      items: ids.includes('entity-a') ? [
+        relation({ relationId: 'edge-a', relationType: 'mentions', to: { entityId: 'middle', sourceId: 'source-a', collectionId: 'collection-a', recordId: 'record-middle', recordRevision: 1 } }),
+        relation({ relationId: 'edge-b', relationType: 'project_of', evidence: secondEvidence, to: { entityId: 'middle', sourceId: 'source-a', collectionId: 'collection-a', recordId: 'record-middle', recordRevision: 1 } }),
+      ] : [relation({ relationId: 'edge-leaf', from: { entityId: 'middle', sourceId: 'source-a', collectionId: 'collection-a', recordId: 'record-middle', recordRevision: 1 },
+        to: { entityId: 'leaf', sourceId: 'source-a', collectionId: 'collection-a', recordId: 'record-leaf', recordRevision: 1 } })],
+      degraded: false,
+    }));
+    const productStore = store({
+      getEntity: vi.fn(async (_tenant, id) => entities.find(value => value.entityId === id) ?? null),
+      getEvidence: vi.fn(async (_tenant, ref) => evidence(ref)),
+      listAdjacent,
+    });
+
+    const page = await harness({ store: productStore }).service.listRelations(subject, 'entity-a', { depth: 2 });
+    expect(page.items.map(value => value.id)).toEqual(['edge-a', 'edge-b', 'edge-leaf']);
+    expect(listAdjacent.mock.calls[1]![1]).toEqual(['middle']);
+  });
+
   it.each([
     ['future', { validFrom: '2026-08-23T12:00:00.000Z' }],
     ['expired', { validTo: '2026-08-23T11:00:00.000Z' }],
@@ -255,6 +338,37 @@ describe('ContextProductService authorization boundary', () => {
       const candidateCall = endpoint === 'timeline' ? listTimeline : endpoint === 'entities' ? listEntities : listReviews;
       expect(candidateCall).toHaveBeenCalledWith(expect.objectContaining({ limit: 200 }));
     });
+
+  it('provides signed load-more pages for entity items and marks the candidate ceiling degraded', async () => {
+    const candidates = Array.from({ length: 201 }, (_, index) => item({ itemId: `item-${index}` }));
+    const listItems = vi.fn(async () => candidates);
+    const service = harness({ store: store({ listItems }) }).service;
+    const first = await service.listEntityItems(subject, 'entity-a', { limit: 2 });
+    expect(first.items.map(value => value.id)).toEqual(['item-0', 'item-1']);
+    expect(first.nextCursor).toMatch(/^cp1\./);
+    expect(first.degraded).toBe(true);
+    const second = await service.listEntityItems(subject, 'entity-a', { limit: 2, cursor: first.nextCursor! });
+    expect(second.items.map(value => value.id)).toEqual(['item-2', 'item-3']);
+    expect(listItems).toHaveBeenCalledWith('tenant-a', 'entity-a', 201);
+  });
+
+  it('exposes review/correctable state and refuses non-confirmed correction targets', async () => {
+    const proposed = item({ itemId: 'item-proposed', state: 'proposed' });
+    const productStore = store({
+      listItems: vi.fn(async () => [item(), proposed]),
+      getItem: vi.fn(async () => proposed),
+    });
+    const { service, authorization, appendReview } = harness({ store: productStore });
+    const detail = await service.getEntity(subject, 'entity-a');
+    expect(detail.items).toEqual([
+      expect.objectContaining({ id: 'item-a', review: 'confirmed', correctable: true, correctionDisabledReason: null }),
+      expect.objectContaining({ id: 'item-proposed', review: 'proposed', correctable: false, correctionDisabledReason: 'pending_review' }),
+    ]);
+    await expect(service.correct(subject, 'entity-a', { action: 'reject', scope: 'personal', expectedRevision: 1,
+      targetItemId: 'item-proposed', evidenceIds: [authorization.evidenceHandle('tenant-a', evidenceRef)] }))
+      .rejects.toThrowError('CONTEXT_PRODUCT_NOT_FOUND');
+    expect(appendReview).not.toHaveBeenCalled();
+  });
 
   it('re-authorizes encrypted evidence and derives correction semantics from the target item', async () => {
     const { service, authorization, appendReview } = harness();

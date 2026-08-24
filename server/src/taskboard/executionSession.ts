@@ -58,6 +58,7 @@ export async function reuseTaskboardSession(input: {
     ...existing,
     username: existing.username || executionIdentity.username,
     userRole: executionIdentity.userRole,
+    tenantId: executionIdentity.tenantId,
     modelRef,
     executionTarget,
     workspaceId: existing.workspaceId ?? deriveStableWorkspaceId(workspaceUser, sessionId),

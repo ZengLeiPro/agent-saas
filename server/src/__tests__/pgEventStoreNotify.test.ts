@@ -139,6 +139,36 @@ describe('PgEventStore notify coalescing', () => {
     expect(ddl).not.toContain('ALTER TABLE test_events');
   });
 
+  it('checks the cursor tenant default before row backfill and skips the strong lock when it already matches', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+    pool.connection.existingColumns.add('tenant_id');
+
+    await store.init();
+
+    const queries = pool.connection.queries.map((call) => call.text);
+    const defaultCheck = queries.findIndex((text) => text.includes('pg_attrdef'));
+    const cursorBackfill = queries.findIndex((text) => text.includes('INSERT INTO test_event_cursors'));
+    expect(defaultCheck).toBeGreaterThanOrEqual(0);
+    expect(defaultCheck).toBeLessThan(cursorBackfill);
+    expect(queries.join('\n')).not.toContain('ALTER COLUMN tenant_id SET DEFAULT');
+  });
+
+  it('repairs a drifted cursor tenant default before taking cursor row locks', async () => {
+    const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
+    const pool = pgMock.MockPool.instances[0]!;
+    pool.connection.existingColumns.add('tenant_id');
+    pool.connection.cursorTenantDefaultMatches = false;
+
+    await store.init();
+
+    const queries = pool.connection.queries.map((call) => call.text);
+    const defaultRepair = queries.findIndex((text) => text.includes('ALTER COLUMN tenant_id SET DEFAULT'));
+    const cursorBackfill = queries.findIndex((text) => text.includes('INSERT INTO test_event_cursors'));
+    expect(defaultRepair).toBeGreaterThanOrEqual(0);
+    expect(defaultRepair).toBeLessThan(cursorBackfill);
+  });
+
   it('list excludes replay-heavy event types when requested', async () => {
     const store = new PgEventStore({ connectionString: 'postgresql://unit-test', tablePrefix: 'test' });
     const pool = pgMock.MockPool.instances[0]!;

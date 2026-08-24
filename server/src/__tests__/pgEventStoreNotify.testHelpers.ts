@@ -15,6 +15,7 @@ export const pgMock = (() => {
     readonly queries: QueryCall[] = [];
     readonly insertedEvents: PlatformEvent[] = [];
     readonly existingColumns = new Set<string>();
+    cursorTenantDefaultMatches = true;
     startSequence = '1';
     boundarySequence = '0';
     rangeRows: RangeRow[] = [];
@@ -23,10 +24,13 @@ export const pgMock = (() => {
 
     async query(text: string, params?: unknown[]): Promise<QueryResult> {
       this.queries.push({ text, params });
+      if (text.includes('pg_attrdef')) {
+        return { rows: [{ matches: this.cursorTenantDefaultMatches }] };
+      }
       if (text.includes('FROM pg_attribute')) {
         return { rows: [...this.existingColumns].map((column_name) => ({ column_name })) };
       }
-      if (text.includes('RETURNING next_sequence - $2 AS start_sequence')) {
+      if (text.includes('RETURNING next_sequence - $3 AS start_sequence')) {
         return { rows: [{ start_sequence: this.startSequence }] };
       }
       if (text.includes('LOCK TABLE') && text.includes('IN SHARE MODE')) {

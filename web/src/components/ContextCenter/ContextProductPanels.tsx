@@ -11,6 +11,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { EvidenceReferenceDrawer } from "./EvidenceReferenceDrawer";
 import type {
   ContextCenterApiPort,
+  ContextCorrectionRecord,
+  ContextDerivedItem,
   ContextEntity,
   ContextEntityDetail,
   ContextEntityProfile,
@@ -78,10 +80,10 @@ function appendPage<T extends { id: string }>(current: ContextPage<T>, next: Con
   };
 }
 
-function LoadMore({ cursor, busy, error, onLoad }: { cursor: string | null | undefined; busy: boolean; error: string | null; onLoad: (cursor: string) => void }) {
+function LoadMore({ cursor, busy, error, onLoad, label = "加载更多" }: { cursor: string | null | undefined; busy: boolean; error: string | null; onLoad: (cursor: string) => void; label?: string }) {
   if (!cursor && !error) return null;
   return <div className="mt-3 flex flex-wrap items-center gap-3">
-    {cursor && <Button variant="outline" disabled={busy} onClick={() => onLoad(cursor)}>{busy ? <><Loader2 className="mr-1.5 size-4 animate-spin" />加载中</> : "加载更多"}</Button>}
+    {cursor && <Button variant="outline" disabled={busy} onClick={() => onLoad(cursor)}>{busy ? <><Loader2 className="mr-1.5 size-4 animate-spin" />加载中</> : label}</Button>}
     {error && <span role="alert" className="flex items-center gap-2 text-sm text-danger-ink">加载更多失败：{error}{cursor && <Button variant="ghost" size="sm" disabled={busy} onClick={() => onLoad(cursor)}>重试</Button>}</span>}
   </div>;
 }
@@ -196,9 +198,10 @@ function CorrectionView({ api, detail, onUpdated, openEvidence }: { api: Context
   const conflict = Boolean(error && (error.includes("版本") || error.includes("刷新")));
 
   const selectTarget = (itemId: string) => {
-    setTargetItemId(itemId);
     const item = detail.items.find(candidate => candidate.id === itemId);
-    setEvidenceIds(item?.evidence.map(evidence => evidence.id) || []);
+    const nextId = item?.correctable ? itemId : "";
+    setTargetItemId(nextId);
+    setEvidenceIds(item?.correctable ? item.evidence.map(evidence => evidence.id) : []);
     setError(null);
   };
 
@@ -221,13 +224,13 @@ function CorrectionView({ api, detail, onUpdated, openEvidence }: { api: Context
     }
   };
 
-  const canSubmit = Boolean(target && evidenceIds.length > 0 && (action === "reject" || summary.trim()));
+  const canSubmit = Boolean(target?.correctable && evidenceIds.length > 0 && (action === "reject" || summary.trim()));
   return <div className="space-y-4">
     <div className="rounded-xl border p-4">
       <h3 className="font-medium">提交属性纠正</h3>
       <p className="mt-1 text-xs text-muted-foreground">选择一个具体画像项作为目标，按当前范围使用纠正基线 v{expectedRevision} 提交。</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <label className="text-sm">目标画像项<select aria-label="纠正目标" className="mt-1 w-full rounded-md border bg-background px-3 py-2" value={targetItemId} onChange={event => selectTarget(event.target.value)}><option value="">请选择具体目标</option>{detail.items.map(item => <option key={item.id} value={item.id}>{item.type} · {item.label}：{item.summary || "未提供摘要"}</option>)}</select></label>
+        <label className="text-sm">目标画像项<select aria-label="纠正目标" className="mt-1 w-full rounded-md border bg-background px-3 py-2" value={targetItemId} onChange={event => selectTarget(event.target.value)}><option value="">请选择具体目标</option>{detail.items.map(item => <option key={item.id} value={item.id} disabled={!item.correctable}>{item.type} · {item.label}：{item.summary || "未提供摘要"}{item.correctable ? "" : item.correctionDisabledReason === "conflicted" ? "（冲突待审核，不可纠正）" : "（建议值待审核，不可纠正）"}</option>)}</select><span className="mt-1 block text-xs text-muted-foreground">仅已确认且当前有效的画像项可作为纠正目标；待审核与冲突项仍展示但不可选择。</span></label>
         <label className="text-sm">动作<select aria-label="纠正动作" className="mt-1 w-full rounded-md border bg-background px-3 py-2" value={action} onChange={event => { setAction(event.target.value as typeof action); setError(null); }}><option value="assert">assert · 为该项主张新值</option><option value="reject">reject · 拒绝该项当前值</option></select></label>
         <label className="text-sm">范围<select aria-label="纠正范围" className="mt-1 w-full rounded-md border bg-background px-3 py-2" value={scope} onChange={event => setScope(event.target.value as typeof scope)}><option value="personal">个人</option><option value="organization">组织</option></select></label>
       </div>
@@ -246,6 +249,12 @@ function CorrectionView({ api, detail, onUpdated, openEvidence }: { api: Context
 function EntityDetailView({ api, entityId, onBack }: { api: ContextCenterApiPort; entityId: string; onBack: () => void }) {
   const [detail, setDetail] = useState<ContextEntityDetail | null>(null);
   const [profile, setProfile] = useState<ContextEntityProfile | null>(null);
+  const [itemPage, setItemPage] = useState<ContextPage<ContextDerivedItem> | null>(null);
+  const [correctionPage, setCorrectionPage] = useState<ContextPage<ContextCorrectionRecord> | null>(null);
+  const [itemsMoreLoading, setItemsMoreLoading] = useState(false);
+  const [itemsMoreError, setItemsMoreError] = useState<string | null>(null);
+  const [correctionsMoreLoading, setCorrectionsMoreLoading] = useState(false);
+  const [correctionsMoreError, setCorrectionsMoreError] = useState<string | null>(null);
   const [timeline, setTimeline] = useState<ContextPage<ContextTimelineItem> | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
@@ -264,9 +273,14 @@ function EntityDetailView({ api, entityId, onBack }: { api: ContextCenterApiPort
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [nextDetail, nextProfile] = await Promise.all([api.getEntity(entityId), api.getEntityProfile(entityId)]);
+      const [nextDetail, nextProfile, nextItems, nextCorrections] = await Promise.all([
+        api.getEntity(entityId), api.getEntityProfile(entityId),
+        api.listEntityItems(entityId), api.listEntityCorrections(entityId),
+      ]);
       setDetail(nextDetail);
       setProfile(nextProfile);
+      setItemPage(nextItems);
+      setCorrectionPage(nextCorrections);
     } catch (cause) {
       setError(errorMessage(cause));
     }
@@ -274,6 +288,10 @@ function EntityDetailView({ api, entityId, onBack }: { api: ContextCenterApiPort
   useEffect(() => {
     setDetail(null);
     setProfile(null);
+    setItemPage(null);
+    setCorrectionPage(null);
+    setItemsMoreError(null);
+    setCorrectionsMoreError(null);
     setTimeline(null);
     setTimelineError(null);
     setTimelineMoreError(null);
@@ -285,6 +303,30 @@ function EntityDetailView({ api, entityId, onBack }: { api: ContextCenterApiPort
     relationsRequest.current += 1;
     void load();
   }, [entityId, load]);
+  const loadMoreItems = async (cursor: string) => {
+    setItemsMoreLoading(true);
+    setItemsMoreError(null);
+    try {
+      const next = await api.listEntityItems(entityId, { cursor });
+      setItemPage(current => current ? appendPage(current, next) : next);
+    } catch (cause) {
+      setItemsMoreError(errorMessage(cause));
+    } finally {
+      setItemsMoreLoading(false);
+    }
+  };
+  const loadMoreCorrections = async (cursor: string) => {
+    setCorrectionsMoreLoading(true);
+    setCorrectionsMoreError(null);
+    try {
+      const next = await api.listEntityCorrections(entityId, { cursor });
+      setCorrectionPage(current => current ? appendPage(current, next) : next);
+    } catch (cause) {
+      setCorrectionsMoreError(errorMessage(cause));
+    } finally {
+      setCorrectionsMoreLoading(false);
+    }
+  };
   const loadTimeline = async (cursor?: string) => {
     const requestId = ++timelineRequest.current;
     if (cursor) {
@@ -329,6 +371,13 @@ function EntityDetailView({ api, entityId, onBack }: { api: ContextCenterApiPort
       if (relationsRequest.current === requestId) (cursor ? setRelationsMoreLoading : setRelationsLoading)(false);
     }
   };
+
+  const pagedDetail = detail ? {
+    ...detail,
+    items: itemPage?.items ?? detail.items,
+    corrections: correctionPage?.items ?? detail.corrections,
+    degraded: detail.degraded || Boolean(itemPage?.degraded) || Boolean(correctionPage?.degraded),
+  } : null;
 
   return <div>
     <Button variant="ghost" className="mb-3" onClick={onBack}><ArrowLeft className="mr-1.5 size-4" />返回实体列表</Button>
@@ -386,7 +435,12 @@ function EntityDetailView({ api, entityId, onBack }: { api: ContextCenterApiPort
             <LoadMore cursor={relations?.nextCursor} busy={relationsMoreLoading} error={relationsMoreError} onLoad={cursor => void loadRelations(relationDepth, cursor)} />
           </StateFrame>
         </TabsContent>
-        <TabsContent value="corrections" className="mt-4"><CorrectionView api={api} detail={detail} onUpdated={load} openEvidence={openEvidence} /></TabsContent>
+        <TabsContent value="corrections" className="mt-4">
+          <Degraded show={Boolean(pagedDetail?.degraded)} exhausted={Boolean(pagedDetail?.degraded && !itemPage?.nextCursor && !correctionPage?.nextCursor)} />
+          {pagedDetail && <CorrectionView api={api} detail={pagedDetail} onUpdated={load} openEvidence={openEvidence} />}
+          <LoadMore label="加载更多可纠正画像项" cursor={itemPage?.nextCursor} busy={itemsMoreLoading} error={itemsMoreError} onLoad={cursor => void loadMoreItems(cursor)} />
+          <LoadMore label="加载更多纠正记录" cursor={correctionPage?.nextCursor} busy={correctionsMoreLoading} error={correctionsMoreError} onLoad={cursor => void loadMoreCorrections(cursor)} />
+        </TabsContent>
       </Tabs>
     </>}
     {drawer}

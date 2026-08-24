@@ -188,6 +188,19 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return (await this.service()).updateTask(identity, taskId, input, creationClaimToken);
   }
 
+  async applyGeneratedTaskTitle(
+    identity: TaskboardIdentity,
+    taskId: string,
+    title: string,
+  ): Promise<TaskBoardTask> {
+    const service = await this.service();
+    if (service.applyGeneratedTaskTitle) {
+      return service.applyGeneratedTaskTitle(identity, taskId, title);
+    }
+    const task = await service.getTask(identity, taskId);
+    return service.updateTask(identity, taskId, { title, expectedVersion: task.version });
+  }
+
   async moveTask(
     identity: TaskboardIdentity,
     taskId: string,

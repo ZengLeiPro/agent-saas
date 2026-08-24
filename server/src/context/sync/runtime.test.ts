@@ -2,6 +2,62 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ContextPlanePhase2Runtime } from './runtime.js';
 
+describe('ContextPlanePhase2Runtime fast sync isolation', () => {
+  it('continues successful tenant projection after another tenant projector fails', async () => {
+    const { runtime, warn } = makeRuntime({});
+    const internals = runtime as unknown as RuntimeInternals;
+    internals.taskboard = { runOnce: vi.fn().mockResolvedValue([{ tenantId: 'tenant-a' }, { tenantId: 'tenant-b' }]) };
+    internals.directory = { runOnce: vi.fn().mockResolvedValue([{ tenantId: 'tenant-a' }, { tenantId: 'tenant-b' }]) };
+    internals.ensurePhase2Assignments = vi.fn().mockResolvedValue(undefined);
+    internals.projectDerived = vi.fn()
+      .mockRejectedValueOnce(new Error('projector unavailable'))
+      .mockResolvedValueOnce(undefined);
+
+    await runtime.runFastOnce();
+
+    expect(internals.projectDerived).toHaveBeenNthCalledWith(1, 'tenant-a');
+    expect(internals.projectDerived).toHaveBeenNthCalledWith(2, 'tenant-b');
+    expect(warn).toHaveBeenCalledWith(
+      'Context fast projection failed for tenant tenant-a: projector unavailable',
+    );
+  });
+
+  it('keeps Directory and projection running when the Taskboard coordinator is unavailable', async () => {
+    const { runtime, warn } = makeRuntime({});
+    const internals = runtime as unknown as RuntimeInternals;
+    internals.taskboard = { runOnce: vi.fn().mockRejectedValue(new Error('taskboard offline')) };
+    internals.directory = { runOnce: vi.fn().mockResolvedValue([{ tenantId: 'tenant-b' }]) };
+    internals.ensurePhase2Assignments = vi.fn().mockResolvedValue(undefined);
+    internals.projectDerived = vi.fn().mockResolvedValue(undefined);
+
+    await runtime.runFastOnce();
+
+    expect(internals.projectDerived).toHaveBeenCalledWith('tenant-b');
+    expect(warn).toHaveBeenCalledWith('Context Taskboard coordinator failed: taskboard offline');
+  });
+
+  it('supports a runtime with no Taskboard worker', async () => {
+    const warn = vi.fn();
+    const runtime = new ContextPlanePhase2Runtime({
+      contextStore: {} as never,
+      membershipStore: {} as never,
+      assignmentStore: {} as never,
+      userStore: {} as never,
+      logger: { info: vi.fn(), warn },
+    });
+    const internals = runtime as unknown as RuntimeInternals;
+    internals.directory = { runOnce: vi.fn().mockResolvedValue([{ tenantId: 'tenant-directory' }]) };
+    internals.ensurePhase2Assignments = vi.fn().mockResolvedValue(undefined);
+    internals.projectDerived = vi.fn().mockResolvedValue(undefined);
+
+    await runtime.runFastOnce();
+
+    expect(internals.taskboard).toBeUndefined();
+    expect(internals.projectDerived).toHaveBeenCalledWith('tenant-directory');
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
 describe('ContextPlanePhase2Runtime relation draining', () => {
   it.each([
     { name: 'no projector lease', claims: [null], released: 0, projected: 0 },
@@ -22,6 +78,23 @@ describe('ContextPlanePhase2Runtime relation draining', () => {
     expect(derivedStore.resolvePendingRelationCandidates).toHaveBeenCalledWith({ tenantId: 'tenant-a', limit: 100 });
     expect(derivedStore.releaseConsumerLease).toHaveBeenCalledTimes(released);
     expect(derivedStore.projectClaimed).toHaveBeenCalledTimes(projected);
+  });
+
+  it('persists a structured retry state when deterministic projection fails', async () => {
+    const projectionError = new Error('projection failed');
+    const claimed = lease([{}]);
+    const derivedStore = {
+      claimContextOutbox: vi.fn().mockResolvedValue(claimed),
+      releaseConsumerLease: vi.fn(),
+      projectClaimed: vi.fn().mockRejectedValue(projectionError),
+      failConsumerLease: vi.fn().mockResolvedValue(true),
+      resolvePendingRelationCandidates: vi.fn(),
+    };
+    const { runtime } = makeRuntime(derivedStore);
+
+    await expect(projectDerived(runtime, 'tenant-a')).rejects.toThrow('projection failed');
+    expect(derivedStore.failConsumerLease).toHaveBeenCalledWith(claimed, 'DERIVED_PROJECTION_FAILED');
+    expect(derivedStore.resolvePendingRelationCandidates).not.toHaveBeenCalled();
   });
 
   it('drains more than one 100-candidate batch without a busy loop', async () => {
@@ -79,6 +152,13 @@ function makeRuntime(derivedStore: object): { runtime: ContextPlanePhase2Runtime
 
 async function projectDerived(runtime: ContextPlanePhase2Runtime, tenantId: string): Promise<void> {
   await (runtime as unknown as { projectDerived(id: string): Promise<void> }).projectDerived(tenantId);
+}
+
+interface RuntimeInternals {
+  taskboard?: { runOnce(): Promise<Array<{ tenantId: string }>> };
+  directory: { runOnce(): Promise<Array<{ tenantId: string }>> };
+  ensurePhase2Assignments(tenantId: string, includeAzeroth: boolean): Promise<void>;
+  projectDerived(tenantId: string): Promise<void>;
 }
 
 function lease(events: unknown[]): object {

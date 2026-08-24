@@ -22,7 +22,7 @@ export interface ContextSource {
   lastSyncedAt: string | null;
   backfillCoverage: BackfillCoverage;
   watermarkLagSeconds: number | null;
-  ingestOutcomes: { truncated: number; refused: number; unreadable: number };
+  ingestOutcomes: { truncated: number; refused: number; unreadable: number; retrying: number; nextRetryAt: string | null };
   historicalLearningScope: ContextScope;
   realtimeListeningScope: ContextScope;
 }
@@ -94,6 +94,9 @@ export interface ContextDerivedItem extends ContextRecord {
   type: ContextDerivedItemType;
   authority: ContextAuthority;
   evidence: ContextEvidenceRef[];
+  review: "proposed" | "conflicted" | "confirmed";
+  correctable: boolean;
+  correctionDisabledReason: "pending_review" | "conflicted" | null;
 }
 export interface ContextProfileAttribute extends ContextRecord {
   type: ContextProfileFacetType;
@@ -166,6 +169,8 @@ export interface ContextCenterApiPort {
   listTimeline(query?: ContextTimelineQuery, options?: ContextRequestOptions): Promise<ContextPage<ContextTimelineItem>>;
   listEntities(query?: ContextListQuery, options?: ContextRequestOptions): Promise<ContextPage<ContextEntity>>;
   getEntity(entityId: string, options?: ContextRequestOptions): Promise<ContextEntityDetail>;
+  listEntityItems(entityId: string, query?: ContextListQuery, options?: ContextRequestOptions): Promise<ContextPage<ContextDerivedItem>>;
+  listEntityCorrections(entityId: string, query?: ContextListQuery, options?: ContextRequestOptions): Promise<ContextPage<ContextCorrectionRecord>>;
   getEntityProfile(entityId: string, options?: ContextRequestOptions): Promise<ContextEntityProfile>;
   listEntityRelations(entityId: string, query?: ContextRelationQuery, options?: ContextRequestOptions): Promise<ContextPage<ContextRelation>>;
   listReviews(query?: ContextListQuery, options?: ContextRequestOptions): Promise<ContextPage<ContextReviewItem>>;

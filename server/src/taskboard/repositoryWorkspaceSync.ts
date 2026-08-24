@@ -466,7 +466,7 @@ async function collectWorktreeEvidence(
   if (symbolic.exitCode === 0) evidence.symbolicHead = bounded(symbolic.stdout.trim(), 300);
   const status = await runGit(host, { cwd: record.path, args: ['status', '--porcelain=v1', '--untracked-files=all'], env: READ_ONLY_GIT_ENV });
   if (status.exitCode === 0) evidence.statusPorcelain = bounded(status.stdout, 8_192);
-  const gitDir = await runGit(host, { cwd: record.path, args: ['rev-parse', '--git-dir'], env: READ_ONLY_GIT_ENV });
+  const gitDir = await runGit(host, { cwd: record.path, args: ['rev-parse', '--absolute-git-dir'], env: READ_ONLY_GIT_ENV });
   const commonDir = await runGit(host, { cwd: record.path, args: ['rev-parse', '--git-common-dir'], env: READ_ONLY_GIT_ENV });
   if (gitDir.exitCode === 0) {
     try { evidence.gitDir = await canonical(resolve(record.path, gitDir.stdout.trim())); } catch { /* retained as missing */ }

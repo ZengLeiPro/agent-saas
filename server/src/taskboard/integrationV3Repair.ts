@@ -266,13 +266,17 @@ export async function applyIntegrationV3Repair(
  */
 export async function requeueFailedIntegrationV3Candidate(
   db: Queryable,
-  tables: Pick<IntegrationV3RepairTables, 'candidates' | 'requestsOutbox'> & { revisions: string; changes: string },
+  tables: Pick<IntegrationV3RepairTables, 'tasks' | 'candidates' | 'requestsOutbox'> & {
+    revisions: string;
+    changes: string;
+    blockEpisodes: string;
+  },
   input: { taskId: string; actorId: string; reason: string },
 ): Promise<IntegrationV3RequeueResult | undefined> {
   const result = await db.query(
     `WITH current_candidate AS (
        SELECT c.id,c.integration_task_id,c.current_revision,c.work_round,c.workflow_epoch,c.lane_epoch,c.state,
-              c.provider_pull_request_id,c.worker_status,c.worker_error,c.worker_lease_id,
+              c.provider_pull_request_id,c.worker_status,c.worker_error,c.worker_lease_id,c.worker_checkpoint,
               r.subject_kind,r.tree_oid,r.composition_complete
          FROM ${tables.candidates} c
          JOIN ${tables.revisions} r ON r.candidate_id=c.id AND r.revision=c.current_revision
@@ -295,12 +299,18 @@ export async function requeueFailedIntegrationV3Candidate(
      ), composition_requeued AS (
        UPDATE ${tables.candidates} c
           SET state='composing',worker_status='idle',worker_error=NULL,worker_attempts=0,
+              last_error=NULL,version=c.version+1,
               worker_available_at=now(),worker_lease_id=NULL,worker_lease_expires_at=NULL,
               worker_checkpoint=COALESCE(c.worker_checkpoint,'{}'::jsonb)||jsonb_build_object(
                 'requeuedAt',now(),'requeuedBy',$2::text,'requeueReason',$3::text,
                 'recoveryKind','composition'),updated_at=now()
-         FROM current_candidate current,legacy_failed_work failed
-        WHERE c.id=current.id AND c.id=failed.candidate_id
+         FROM current_candidate current
+         LEFT JOIN legacy_failed_work failed ON failed.candidate_id=current.id
+        WHERE c.id=current.id AND (failed.candidate_id IS NOT NULL OR (
+          current.worker_status='failed' AND current.worker_lease_id IS NULL
+          AND current.state='blocked' AND current.provider_pull_request_id IS NULL
+          AND current.subject_kind='source_seed' AND current.composition_complete=FALSE AND current.tree_oid IS NULL
+          AND current.worker_checkpoint->>'state'='composing'))
         RETURNING c.id,c.integration_task_id,current.worker_error AS previous_error,failed.outbox_id
      ), worker_requeued AS (
        UPDATE ${tables.candidates} c
@@ -310,7 +320,7 @@ export async function requeueFailedIntegrationV3Candidate(
          FROM current_candidate current
         WHERE NOT EXISTS (SELECT 1 FROM composition_requeued)
           AND c.id=current.id AND current.worker_status='failed'
-          AND current.worker_lease_id IS NULL AND current.state NOT IN ('merged','canceled')
+          AND current.worker_lease_id IS NULL AND current.state NOT IN ('blocked','merged','canceled')
         RETURNING c.id,c.integration_task_id,current.worker_error AS previous_error
      ), failed_request AS (
        SELECT o.id
@@ -328,8 +338,19 @@ export async function requeueFailedIntegrationV3Candidate(
        UPDATE ${tables.requestsOutbox} o
           SET status='pending',attempts=0,available_at=now(),lease_id=NULL,lease_expires_at=NULL,
               last_error=NULL,updated_at=now()
-         FROM failed_request failed WHERE o.id=failed.id
+        FROM failed_request failed WHERE o.id=failed.id
         RETURNING o.id AS outbox_id
+     ), composition_task_requeued AS (
+       UPDATE ${tables.tasks} t
+          SET status='in_progress',completed_at=NULL,version=t.version+1,updated_at=now()
+         FROM composition_requeued composition
+        WHERE t.id=composition.integration_task_id AND t.status='blocked'
+        RETURNING t.id
+     ), composition_blocks_closed AS (
+       UPDATE ${tables.blockEpisodes} block SET closed_at=COALESCE(block.closed_at,now())
+         FROM composition_task_requeued task
+        WHERE block.task_id=task.id AND block.closed_at IS NULL
+        RETURNING block.id
      ), failed_cleanup AS (
        SELECT o.id,o.candidate_id,o.last_error
          FROM ${tables.requestsOutbox} o
@@ -385,6 +406,8 @@ export function createIntegrationV3RequeueHandler(store: {
   pool: { connect(): Promise<PoolClient> };
   integrationSourcesTable: string;
   changesTable: string;
+  tasksTable: string;
+  blockEpisodesTable: string;
 }) {
   const { candidatesTable: candidates, revisionsTable: revisions, requestsOutboxTable: requestsOutbox }
     = integrationCandidateTableNames(store.integrationSourcesTable);
@@ -392,7 +415,10 @@ export function createIntegrationV3RequeueHandler(store: {
     const client = await store.pool.connect();
     try {
       await client.query('BEGIN');
-      const result = await requeueFailedIntegrationV3Candidate(client, { candidates, revisions, requestsOutbox, changes: store.changesTable }, {
+      const result = await requeueFailedIntegrationV3Candidate(client, {
+        tasks: store.tasksTable, candidates, revisions, requestsOutbox,
+        changes: store.changesTable, blockEpisodes: store.blockEpisodesTable,
+      }, {
         taskId: input.taskId, actorId: input.identity.ownerUserId, reason: input.reason,
       });
       await client.query('COMMIT');

@@ -483,6 +483,8 @@ export function OrganizationMemoryKnowledgePage({ tenantId }: { tenantId: string
     listTimeline: (query, options) => contextCenterApi.listTimeline(query, { ...options, tenantId }),
     listEntities: (query, options) => contextCenterApi.listEntities(query, { ...options, tenantId }),
     getEntity: (entityId, options) => contextCenterApi.getEntity(entityId, { ...options, tenantId }),
+    listEntityItems: (entityId, query, options) => contextCenterApi.listEntityItems(entityId, query, { ...options, tenantId }),
+    listEntityCorrections: (entityId, query, options) => contextCenterApi.listEntityCorrections(entityId, query, { ...options, tenantId }),
     getEntityProfile: (entityId, options) => contextCenterApi.getEntityProfile(entityId, { ...options, tenantId }),
     listEntityRelations: (entityId, query, options) => contextCenterApi.listEntityRelations(entityId, query, { ...options, tenantId }),
     listReviews: (query, options) => contextCenterApi.listReviews(query, { ...options, tenantId }),

@@ -10,6 +10,7 @@ import {
   type ReviewRoleGate,
 } from '../derived/index.js';
 import type { ContextRecallScopeResolver } from '../retrieval/ports.js';
+import { ContextRecallScopeDriftError } from '../retrieval/assignmentScopeResolver.js';
 import type { ContextRecallResolvedScope } from '../retrieval/types.js';
 import type { RelationEdgeCandidate } from '../relations/types.js';
 import { ContextProductAuthorization } from './authorization.js';
@@ -47,6 +48,7 @@ export class ContextProductService {
 
   async getEvidence(subject: ContextProductSubject, handle: string): Promise<Record<string, unknown>[]> {
     const scope = await this.scope(subject);
+    if (assigned(scope).length === 0) throw new ContextProductError('CONTEXT_PRODUCT_NOT_FOUND');
     const ref = this.options.authorization.parseEvidenceHandle(subject.tenantId, handle);
     const candidate = await this.options.store.getEvidence(subject.tenantId, ref);
     if (!candidate || !sameRef(candidate.ref, ref)
@@ -115,10 +117,12 @@ export class ContextProductService {
     const scope = await this.scope(subject);
     const entity = await this.visibleEntity(subject, scope, entityId);
     if (!entity) throw new ContextProductError('CONTEXT_PRODUCT_NOT_FOUND');
-    const items = await this.options.store.listItems(subject.tenantId, entityId);
+    const itemCandidates = await this.options.store.listItems(subject.tenantId, entityId, CANDIDATE_LIMIT + 1);
+    const itemCapped = itemCandidates.length > CANDIDATE_LIMIT;
+    const items = itemCandidates.slice(0, CANDIDATE_LIMIT);
     const evidence: Record<string, unknown>[] = [];
     const visibleItems: Record<string, unknown>[] = [];
-    let degraded = false;
+    let degraded = itemCapped;
     for (const item of items) {
       if (!personalVisible(item, subject.actorId)) continue;
       const visible = await this.visibleEvidence(subject, scope, item.evidence);
@@ -127,7 +131,11 @@ export class ContextProductService {
       visibleItems.push(itemDto(item, visible));
     }
     const corrections = [];
-    for (const correction of await this.options.store.listCorrections(subject.tenantId, entityId, subject.actorId)) {
+    const correctionCandidates = await this.options.store.listCorrections(
+      subject.tenantId, entityId, subject.actorId, CANDIDATE_LIMIT + 1,
+    );
+    if (correctionCandidates.length > CANDIDATE_LIMIT) degraded = true;
+    for (const correction of correctionCandidates.slice(0, CANDIDATE_LIMIT)) {
       if (correction.scope.type === 'person' && correction.scope.personId !== subject.actorId) continue;
       const visible = await this.visibleEvidence(subject, scope, correction.evidence);
       if (!visible) { degraded = true; continue; }
@@ -143,6 +151,50 @@ export class ContextProductService {
       ...entityDto(entity, degraded), correctionRevisions: entity.correctionRevisions,
       evidence: dedupeEvidence(evidence), items: visibleItems, corrections,
     };
+  }
+
+  /** Cursor contract for the GET /entities/:entityId/items route mounted by the admin router. */
+  async listEntityItems(subject: ContextProductSubject, entityId: string, query: ListQuery): Promise<ProductPage<Record<string, unknown>>> {
+    const scope = await this.scope(subject);
+    if (!await this.visibleEntity(subject, scope, entityId)) throw new ContextProductError('CONTEXT_PRODUCT_NOT_FOUND');
+    const { limit, offset, fingerprint } = this.page(subject, `entity-items:${entityId}`, query);
+    const candidates = await this.options.store.listItems(subject.tenantId, entityId, CANDIDATE_LIMIT + 1);
+    const capped = candidates.length > CANDIDATE_LIMIT;
+    const visible: Record<string, unknown>[] = [];
+    let denied = false;
+    for (const item of candidates.slice(0, CANDIDATE_LIMIT)) {
+      if (!personalVisible(item, subject.actorId)) continue;
+      const evidence = await this.visibleEvidence(subject, scope, item.evidence);
+      if (!evidence) { denied = true; continue; }
+      visible.push(itemDto(item, evidence));
+    }
+    return this.slice(subject, fingerprint, visible, offset, limit, denied || capped);
+  }
+
+  /** Cursor contract for GET on the existing /entities/:entityId/corrections path. */
+  async listEntityCorrections(subject: ContextProductSubject, entityId: string, query: ListQuery): Promise<ProductPage<Record<string, unknown>>> {
+    const scope = await this.scope(subject);
+    if (!await this.visibleEntity(subject, scope, entityId)) throw new ContextProductError('CONTEXT_PRODUCT_NOT_FOUND');
+    const { limit, offset, fingerprint } = this.page(subject, `entity-corrections:${entityId}`, query);
+    const candidates = await this.options.store.listCorrections(
+      subject.tenantId, entityId, subject.actorId, CANDIDATE_LIMIT + 1,
+    );
+    const capped = candidates.length > CANDIDATE_LIMIT;
+    const visible: Record<string, unknown>[] = [];
+    let denied = false;
+    for (const correction of candidates.slice(0, CANDIDATE_LIMIT)) {
+      if (correction.scope.type === 'person' && correction.scope.personId !== subject.actorId) continue;
+      const evidence = await this.visibleEvidence(subject, scope, correction.evidence);
+      if (!evidence) { denied = true; continue; }
+      visible.push({
+        ...common(correction.reviewId, 'correction', correction.action, correction.summary,
+          correction.revision, correction.createdAt, false),
+        action: correction.action,
+        authority: authority(correction.scope.type === 'person' ? 'personal' : 'organization', correction.authority),
+        evidence,
+      });
+    }
+    return this.slice(subject, fingerprint, visible, offset, limit, denied || capped);
   }
 
   async getProfile(subject: ContextProductSubject, entityId: string): Promise<Record<string, unknown>> {
@@ -177,7 +229,10 @@ export class ContextProductService {
     const depth = query.depth ?? 1;
     if (depth !== 1 && depth !== 2) throw new ContextProductError('CONTEXT_PRODUCT_INVALID');
     const { limit, offset, fingerprint } = this.page(subject, 'relations', { ...query, depth });
-    const seen = new Set([entityId]);
+    // A node is expanded once, while distinct edges remain independently visible.
+    // Conflating these sets drops parallel relations/evidence between the same entities.
+    const visitedNodes = new Set([entityId]);
+    const seenEdges = new Set<string>();
     let frontier = new Map([[entityId, center]]);
     const output: Record<string, unknown>[] = [];
     let scanned = 0;
@@ -193,7 +248,10 @@ export class ContextProductService {
         const edge = candidate.edge;
         if (!relationActive(edge, this.now())) { denied = true; continue; }
         const step = relationStep(edge, frontier);
-        if (!step || seen.has(step.neighborId)) continue;
+        if (!step) continue;
+        const edgeKey = relationEdgeKey(edge);
+        if (seenEdges.has(edgeKey)) continue;
+        seenEdges.add(edgeKey);
         const [fromLocator, toLocator] = await Promise.all([
           this.options.store.getCurrentRecordLocator(subject.tenantId, edge.from),
           this.options.store.getCurrentRecordLocator(subject.tenantId, edge.to),
@@ -209,8 +267,10 @@ export class ContextProductService {
         const evidence = await this.visibleEvidence(subject, scope, [edge.evidence]);
         if (!from || !await this.options.authorization.authorizeRecord(subject, scope, candidate.locator)
           || !neighbor || !evidence) { denied = true; continue; }
-        seen.add(step.neighborId);
-        next.set(step.neighborId, neighbor);
+        if (!visitedNodes.has(step.neighborId)) {
+          visitedNodes.add(step.neighborId);
+          next.set(step.neighborId, neighbor);
+        }
         output.push({
           ...common(edge.relationId, edge.relationType, edge.relationType, null, 1, edge.validFrom, false),
           level: edge.relationClass,
@@ -256,7 +316,7 @@ export class ContextProductService {
     const entity = await this.visibleEntity(subject, scope, entityId);
     if (!entity) throw new ContextProductError('CONTEXT_PRODUCT_NOT_FOUND');
     const target = await this.options.store.getItem(subject.tenantId, entityId, command.targetItemId);
-    if (!target || !personalVisible(target, subject.actorId)
+    if (!target || target.state !== 'confirmed' || !personalVisible(target, subject.actorId)
       || !await this.visibleEvidence(subject, scope, target.evidence)) {
       throw new ContextProductError('CONTEXT_PRODUCT_NOT_FOUND');
     }
@@ -385,7 +445,11 @@ export class ContextProductService {
         { tenantId: subject.tenantId, userId: subject.actorId },
         { operation: 'get', recallId: 'context-product' },
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof ContextRecallScopeDriftError
+        && error.code === 'CONTEXT_RECALL_MEMBERSHIP_INACTIVE') {
+        throw new ContextProductError('CONTEXT_PRODUCT_FORBIDDEN');
+      }
       throw new ContextProductError('CONTEXT_PRODUCT_UNAVAILABLE');
     }
   }
@@ -464,9 +528,13 @@ function entityDto(entity: ProductEntityCandidate, degraded: boolean): Record<st
   return common(entity.entityId, entity.entityType, entity.label, entity.summary, entity.revision, entity.updatedAt, degraded);
 }
 function itemDto(item: ProductItemCandidate, evidence: Record<string, unknown>[]): Record<string, unknown> {
+  const correctable = item.state === 'confirmed';
   return {
     ...common(item.itemId, item.itemType, item.semanticKey, summary(item.value), item.revision, item.updatedAt, false),
     authority: authority(item.scope.type === 'person' ? 'personal' : 'organization', item.authority), evidence,
+    review: item.state,
+    correctable,
+    correctionDisabledReason: correctable ? null : item.state === 'conflicted' ? 'conflicted' : 'pending_review',
   };
 }
 
@@ -542,6 +610,11 @@ function relationStep(edge: RelationEdgeCandidate, frontier: Map<string, Product
   if (frontier.has(edge.from.entityId)) return { fromId: edge.from.entityId, neighborId: edge.to.entityId };
   if (frontier.has(edge.to.entityId)) return { fromId: edge.to.entityId, neighborId: edge.from.entityId };
   return null;
+}
+function relationEdgeKey(edge: RelationEdgeCandidate): string {
+  const evidence = edge.evidence;
+  return [edge.relationId, edge.relationType, edge.from.entityId, edge.to.entityId,
+    evidence.sourceId, evidence.collectionId, evidence.recordId, evidence.recordRevision, evidence.evidenceId].join('\u0000');
 }
 function relationActive(edge: RelationEdgeCandidate, now: Date): boolean {
   const validFrom = Date.parse(edge.validFrom);

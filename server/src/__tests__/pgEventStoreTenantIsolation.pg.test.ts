@@ -24,22 +24,22 @@ function createStore(label: string): { store: PgEventStore; prefix: string } {
   return { store, prefix };
 }
 
-function message(id: string, tenantMarker: string, sessionId = 'shared-session') {
+function message(id: string, tenantMarker: string) {
   return {
     id,
     type: 'user_message',
     runId: 'shared-run',
-    sessionId,
+    sessionId: 'shared-session',
     content: `shared-needle ${tenantMarker}`,
   } as never;
 }
 
-function toolResult(id: string, tenantMarker: string, sessionId = 'shared-session') {
+function toolResult(id: string, tenantMarker: string) {
   return {
     id,
     type: 'tool_result',
     runId: 'shared-run',
-    sessionId,
+    sessionId: 'shared-session',
     toolCallId: 'shared-tool-call',
     toolName: 'Read',
     content: `tool-result ${tenantMarker}`,
@@ -57,78 +57,63 @@ describePg('PgEventStore tenant isolation PostgreSQL contract', () => {
     }
   }, 30_000);
 
-  it('tenant 查询边界不混读相同 runId/toolCallId 的事件', async () => {
+  it('同 sessionId/runId/eventId 的两个 tenant 独立编号且所有读取边界不混读', async () => {
     const { store } = createStore('event_tenant_scope');
     await store.init();
 
-    const messageIdA = 'tenant-a-message';
-    const toolResultIdA = 'tenant-a-tool-result';
-    const messageIdB = 'tenant-b-message';
-    const toolResultIdB = 'tenant-b-tool-result';
-    const sessionA = 'tenant-a-session';
-    const sessionB = 'tenant-b-session';
+    const sharedMessageId = 'same-event-id-message';
+    const sharedToolResultId = 'same-event-id-tool-result';
     const tenantA = 'tenant-a';
     const tenantB = 'tenant-b';
     const wrongTenant = 'tenant-c';
 
     const appendedA = await store.appendBatch([
-      message(messageIdA, 'only-a', sessionA),
-      toolResult(toolResultIdA, 'only-a', sessionA),
+      message(sharedMessageId, 'only-a'),
+      toolResult(sharedToolResultId, 'only-a'),
     ], { tenantId: tenantA });
     const appendedB = await store.appendBatch([
-      message(messageIdB, 'only-b', sessionB),
-      toolResult(toolResultIdB, 'only-b', sessionB),
+      message(sharedMessageId, 'only-b'),
+      toolResult(sharedToolResultId, 'only-b'),
     ], { tenantId: tenantB });
 
     expect(appendedA.map((event) => (event as unknown as { sequence: number }).sequence)).toEqual([1, 2]);
     expect(appendedB.map((event) => (event as unknown as { sequence: number }).sequence)).toEqual([1, 2]);
-    expect(appendedA.map((event) => event.id)).toEqual([messageIdA, toolResultIdA]);
-    expect(appendedB.map((event) => event.id)).toEqual([messageIdB, toolResultIdB]);
+    expect(appendedA.map((event) => event.id)).toEqual([sharedMessageId, sharedToolResultId]);
+    expect(appendedB.map((event) => event.id)).toEqual([sharedMessageId, sharedToolResultId]);
 
-    expect((await store.list(tenantA, sessionA)).map((event) => event.id)).toEqual([messageIdA, toolResultIdA]);
-    expect((await store.list(tenantB, sessionB)).map((event) => event.id)).toEqual([messageIdB, toolResultIdB]);
-    await expect(store.list(wrongTenant, sessionA)).resolves.toEqual([]);
+    expect((await store.list(tenantA, 'shared-session')).map((event) => event.id))
+      .toEqual([sharedMessageId, sharedToolResultId]);
+    expect((await store.list(tenantB, 'shared-session')).map((event) => event.id))
+      .toEqual([sharedMessageId, sharedToolResultId]);
+    await expect(store.list(wrongTenant, 'shared-session')).resolves.toEqual([]);
 
-    const firstPageA = await store.listPage(tenantA, sessionA, { limit: 1 });
-    expect(firstPageA.events).toMatchObject([{ id: messageIdA, content: 'shared-needle only-a', sequence: 1 }]);
+    const firstPageA = await store.listPage(tenantA, 'shared-session', { limit: 1 });
+    expect(firstPageA.events).toMatchObject([{ id: sharedMessageId, content: 'shared-needle only-a', sequence: 1 }]);
     expect(firstPageA).toMatchObject({ nextCursor: '1', hasMore: true });
-    const secondPageB = await store.listPage(tenantB, sessionB, { afterCursor: '1', limit: 1 });
-    expect(secondPageB.events).toMatchObject([{ id: toolResultIdB, content: 'tool-result only-b', sequence: 2 }]);
-    await expect(store.listPage(wrongTenant, sessionA, { limit: 10 }))
+    const secondPageB = await store.listPage(tenantB, 'shared-session', { afterCursor: '1', limit: 1 });
+    expect(secondPageB.events).toMatchObject([{ id: sharedToolResultId, content: 'tool-result only-b', sequence: 2 }]);
+    await expect(store.listPage(wrongTenant, 'shared-session', { limit: 10 }))
       .resolves.toMatchObject({ events: [], hasMore: false });
 
-    await expect(store.getById(tenantA, messageIdA)).resolves.toMatchObject({ content: 'shared-needle only-a' });
-    await expect(store.getById(tenantB, messageIdB)).resolves.toMatchObject({ content: 'shared-needle only-b' });
-    await expect(store.getById(wrongTenant, messageIdA)).resolves.toBeNull();
+    await expect(store.getById(tenantA, sharedMessageId)).resolves.toMatchObject({ content: 'shared-needle only-a' });
+    await expect(store.getById(tenantB, sharedMessageId)).resolves.toMatchObject({ content: 'shared-needle only-b' });
+    await expect(store.getById(wrongTenant, sharedMessageId)).resolves.toBeNull();
 
-    await expect(store.search(tenantA, sessionA, 'shared-needle')).resolves.toMatchObject([
-      { id: messageIdA, content: 'shared-needle only-a' },
+    await expect(store.search(tenantA, 'shared-session', 'shared-needle')).resolves.toMatchObject([
+      { id: sharedMessageId, content: 'shared-needle only-a' },
     ]);
-    await expect(store.search(tenantB, sessionB, 'only-a')).resolves.toEqual([]);
-    await expect(store.search(wrongTenant, sessionA, 'shared-needle')).resolves.toEqual([]);
+    await expect(store.search(tenantB, 'shared-session', 'only-a')).resolves.toEqual([]);
+    await expect(store.search(wrongTenant, 'shared-session', 'shared-needle')).resolves.toEqual([]);
 
-    await expect(store.listAround(tenantA, sessionA, messageIdA, { before: 0, after: 1 }))
+    await expect(store.listAround(tenantA, 'shared-session', sharedMessageId, { before: 0, after: 1 }))
       .resolves.toMatchObject([{ content: 'shared-needle only-a' }, { content: 'tool-result only-a' }]);
-    await expect(store.listAround(wrongTenant, sessionA, messageIdA)).resolves.toEqual([]);
-    await expect(store.listByRun(tenantB, sessionB, 'shared-run'))
+    await expect(store.listAround(wrongTenant, 'shared-session', sharedMessageId)).resolves.toEqual([]);
+    await expect(store.listByRun(tenantB, 'shared-session', 'shared-run'))
       .resolves.toMatchObject([{ content: 'shared-needle only-b' }, { content: 'tool-result only-b' }]);
-    await expect(store.listByRun(wrongTenant, sessionB, 'shared-run')).resolves.toEqual([]);
-    await expect(store.listByToolCall(tenantA, sessionA, 'shared-tool-call'))
+    await expect(store.listByRun(wrongTenant, 'shared-session', 'shared-run')).resolves.toEqual([]);
+    await expect(store.listByToolCall(tenantA, 'shared-session', 'shared-tool-call'))
       .resolves.toMatchObject([{ content: 'tool-result only-a' }]);
-    await expect(store.listByToolCall(wrongTenant, sessionA, 'shared-tool-call')).resolves.toEqual([]);
-  });
-
-  it('跨 tenant 的全局 ID 碰撞 fail-closed 且不泄露已有事件', async () => {
-    const { store } = createStore('event_global_identity');
-    await store.init();
-
-    await store.append(message('collision-event', 'only-a', 'collision-session'), { tenantId: 'tenant-a' });
-    await expect(store.append(message('collision-event', 'only-b', 'collision-session'), { tenantId: 'tenant-b' }))
-      .rejects.toMatchObject({ code: '23505' });
-
-    await expect(store.list('tenant-a', 'collision-session'))
-      .resolves.toMatchObject([{ id: 'collision-event', content: 'shared-needle only-a' }]);
-    await expect(store.list('tenant-b', 'collision-session')).resolves.toEqual([]);
+    await expect(store.listByToolCall(wrongTenant, 'shared-session', 'shared-tool-call')).resolves.toEqual([]);
   });
 
   it('旧 schema 幂等迁移为 LEGACY，保留非目标约束并且不产生重复 cursor', async () => {
@@ -169,6 +154,7 @@ describePg('PgEventStore tenant isolation PostgreSQL contract', () => {
       `);
 
       await store.init();
+      await pool.query(`ALTER TABLE ${prefix}_event_cursors ALTER COLUMN tenant_id DROP DEFAULT`);
       await store.init();
 
       const preserved = await pool.query<{ present: boolean }>(`
@@ -208,7 +194,6 @@ describePg('PgEventStore tenant isolation PostgreSQL contract', () => {
       await pool.query(`
         INSERT INTO ${prefix}_event_cursors (session_id, next_sequence)
         VALUES ('rolling-legacy-session', 2)
-        ON CONFLICT (session_id) DO NOTHING
       `);
       await pool.query(`
         INSERT INTO ${prefix}_events
@@ -227,9 +212,9 @@ describePg('PgEventStore tenant isolation PostgreSQL contract', () => {
       ]);
       await expect(store.list('tenant-new', 'rolling-legacy-session')).resolves.toEqual([]);
 
-      await expect(store.append(message('legacy-event', 'new-tenant'), { tenantId: 'tenant-new' }))
-        .rejects.toMatchObject({ code: '23505' });
-      await expect(store.getById('tenant-new', 'legacy-event')).resolves.toBeNull();
+      const sameIdInNewTenant = await store.append(message('legacy-event', 'new-tenant'), { tenantId: 'tenant-new' });
+      expect((sameIdInNewTenant as unknown as { sequence: number }).sequence).toBe(1);
+      await expect(store.getById('tenant-new', 'legacy-event')).resolves.toMatchObject({ content: 'shared-needle new-tenant' });
       await expect(store.getById(LEGACY_TENANT_ID, 'legacy-event')).resolves.toMatchObject({ content: 'legacy-only' });
     } finally {
       await pool.end();

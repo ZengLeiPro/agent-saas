@@ -452,6 +452,12 @@ export interface TaskboardService {
     input: TaskBoardTaskPatchInput,
     creationClaimToken?: string,
   ): Promise<TaskBoardTask>;
+  /** 自动标题专用：仅在任务标题仍为空时回填，避免绕过普通内容修改保护。 */
+  applyGeneratedTaskTitle?(
+    identity: TaskboardIdentity,
+    taskId: string,
+    title: string,
+  ): Promise<TaskBoardTask>;
   moveTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskMoveInput): Promise<TaskBoardTask>;
   archiveTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask>;
   restoreTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask>;

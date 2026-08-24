@@ -185,6 +185,46 @@ afterEach(() => {
 });
 
 describe("useChatAppState queue delivery lifecycle", () => {
+  it("仅在表单回答得到服务端确认后才标记已回答和排队", async () => {
+    harness.session.sessionId = "session-ask";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => emit({
+      type: "ask_user",
+      interactionId: "ask-1",
+      questions: [{ question: "继续吗？", header: "确认", options: [{ label: "继续", description: "" }], multiSelect: false }],
+    }));
+    expect(result.current.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "ask_user", interactionId: "ask-1", status: "pending" }),
+    ]));
+
+    const rejected = result.current.handleAskUserResponse("ask-1", { "继续吗？": "继续" });
+    await waitFor(() => expect(harness.sends).toHaveBeenCalledWith(expect.objectContaining({
+      action: "respond", interactionId: "ask-1",
+    })));
+    expect(result.current.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "ask_user", interactionId: "ask-1", status: "pending" }),
+    ]));
+
+    act(() => emit({ type: "respond_error", interactionId: "ask-1", error: "Run unavailable" }));
+    await act(async () => { await rejected; });
+    expect(result.current.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "ask_user", interactionId: "ask-1", status: "pending" }),
+    ]));
+
+    const accepted = result.current.handleAskUserResponse("ask-1", { "继续吗？": "继续" });
+    await waitFor(() => expect(harness.sends.mock.calls.filter(([payload]) => (
+      (payload as { action?: string }).action === "respond"
+    ))).toHaveLength(2));
+    act(() => emit({ type: "respond_ok", interactionId: "ask-1" }));
+    await accepted;
+    expect(result.current.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "ask_user", interactionId: "ask-1", status: "answered" }),
+      expect.objectContaining({ type: "runtime_status", status: "queued" }),
+    ]));
+  });
+
   it("assigns an authoritative new session to the pending group", async () => {
     const { result } = renderHook(() => useChatAppState());
 

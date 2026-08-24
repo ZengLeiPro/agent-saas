@@ -74,13 +74,6 @@ import {
 } from "./chatRuntimeHelpers";
 
 export type { ChatAppState, ChatAppStateOptions } from "./useChatAppStateTypes";
-
-interface InteractionResponseWaiter {
-  resolve: () => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
 import type {
   ChatAppState, ChatAppStateOptions, OutboxEntry, ProvisionalSubmission,
   SessionRuntime, SessionRuntimePatch,
@@ -90,12 +83,11 @@ import {
   resendQueuedEntry, restoreQueuedEntryForEdit,
 } from "./useChatAppStateQueueConsistency";
 import { useChatNotificationState, useChatStreamCorrelation } from "./useChatRuntimeState";
-
+import { useInteractionResponseWaiters } from "./useInteractionResponseWaiters";
 export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const { user } = useAuth();
   // 授权模式对所有用户生效（2026-07-02 起），用户在账户设置中自行切换。
   const authorizationModeEnabled = user?.preferences?.authorizationModeEnabled === true;
-
   // 从 URL 解析初始状态（仅执行一次）
   const [urlState] = useState(() => parseUrl());
 
@@ -230,7 +222,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const provisionalSubmissionsRef = useRef<ProvisionalSubmission[]>([]);
   /** 每个 inflight 消息的 ACK 超时定时器（收到 ack 清除） */
   const ackTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const interactionResponseWaitersRef = useRef<Map<string, InteractionResponseWaiter>>(new Map());
   const messageSubmissionGateRef = useRef(false);
   const ACK_TIMEOUT_MS = 15_000;
   /** cancel_queued 请求的等待器：sourceRunId → resolve(ok)（2026-08-04 终态设计） */
@@ -337,6 +328,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // ---- Sub-hooks ----
   const msg = useMessages();
+  const { respondToInteraction, settleInteractionResponse } = useInteractionResponseWaiters();
   const uploadSessionIdRef = useRef<string | null>(urlState.sessionId); const getUploadSessionId = useCallback(() => uploadSessionIdRef.current, []);
   const fileUpload = useFileUpload(activeTab, getUploadSessionId);
   const { connectionState, dispatchConnection } = useConnectionState();
@@ -1545,13 +1537,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       // 表单回答必须以服务端回执为准：此前这里直接忽略回执，而提交端会先乐观
       // 标记“已回答/排队”。当服务端拒绝或恢复失败时，UI 就会永久伪装成排队。
       if (data.type === 'respond_ok' || data.type === 'respond_error') {
-        const waiter = interactionResponseWaitersRef.current.get(data.interactionId);
-        if (waiter) {
-          clearTimeout(waiter.timer);
-          interactionResponseWaitersRef.current.delete(data.interactionId);
-          if (data.type === 'respond_ok') waiter.resolve();
-          else waiter.reject(new Error(data.error || '提交回答失败'));
-        }
+        settleInteractionResponse(data);
         return;
       }
 
@@ -2949,48 +2935,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   }, [setInput, selectSessionWithUrl]);
 
   // ---- Interaction responses (via WS) ----
-  const respondToInteraction = useCallback(async (
-    interactionId: string,
-    response: Record<string, unknown>,
-  ) => {
-    if (interactionResponseWaitersRef.current.has(interactionId)) {
-      throw new Error('回答正在提交，请勿重复操作');
-    }
-
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        interactionResponseWaitersRef.current.delete(interactionId);
-        reject(new Error('提交回答超时，请重试'));
-      }, 15_000);
-      interactionResponseWaitersRef.current.set(interactionId, { resolve, reject, timer });
-
-      void wsClient.ensureConnectedSend({
-        action: 'respond',
-        interactionId,
-        sessionId: sessionIdRef.current,
-        ...response,
-      }).then((sent) => {
-        if (sent) return;
-        const waiter = interactionResponseWaitersRef.current.get(interactionId);
-        if (!waiter) return;
-        clearTimeout(waiter.timer);
-        interactionResponseWaitersRef.current.delete(interactionId);
-        reject(new Error('连接未建立，回答未提交'));
-      }).catch((error: unknown) => {
-        const waiter = interactionResponseWaitersRef.current.get(interactionId);
-        if (!waiter) return;
-        clearTimeout(waiter.timer);
-        interactionResponseWaitersRef.current.delete(interactionId);
-        reject(error instanceof Error ? error : new Error('提交回答失败'));
-      });
-    });
-  }, []);
-
   const handlePermissionResponse = useCallback(async (
     interactionId: string,
     allow: boolean,
   ) => {
-    await respondToInteraction(interactionId, { allow, message: allow ? undefined : "User denied" });
+    await respondToInteraction(interactionId, sessionIdRef.current, { allow, message: allow ? undefined : "User denied" });
 
     const idx = msg.messagesRef.current.findIndex(
       (m) => m.type === "permission_request" && m.interactionId === interactionId
@@ -3011,7 +2960,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     answers: AskUserAnswers,
   ) => {
     try {
-      await respondToInteraction(interactionId, { answers });
+      await respondToInteraction(interactionId, sessionIdRef.current, { answers });
     } catch (error) {
       pushNotification({
         key: `interaction_response_failed:${interactionId}`,
@@ -3079,8 +3028,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     return () => {
       for (const t of ackTimersRef.current.values()) clearTimeout(t);
       ackTimersRef.current.clear();
-      for (const waiter of interactionResponseWaitersRef.current.values()) clearTimeout(waiter.timer);
-      interactionResponseWaitersRef.current.clear();
       wsClient.disconnect();
     };
   }, []);

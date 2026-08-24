@@ -692,8 +692,7 @@ describe('PgRunStore steering inbox', () => {
     expect(eventLockIndex).toBeLessThan(firstEventInsertIndex);
     expect(queryCalls[eventLockIndex]?.params).toEqual(['runtime_events:global-sequence-commit-order']);
     const cursorInsert = queryCalls.find(({ sql }) => sql.includes('INSERT INTO runtime_event_cursors'));
-    expect(cursorInsert?.sql).toContain('ON CONFLICT (session_id)');
-    expect(cursorInsert?.sql).toContain('WHERE runtime_event_cursors.tenant_id = EXCLUDED.tenant_id');
+    expect(cursorInsert?.sql).toContain('ON CONFLICT (tenant_id, session_id)');
     expect(cursorInsert?.params).toEqual(['tenant-waiting', 'session-waiting', 2]);
     expect(queries.filter((sql) => sql.includes('INSERT INTO runtime_events'))).toHaveLength(2);
   });

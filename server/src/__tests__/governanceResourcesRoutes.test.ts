@@ -45,6 +45,7 @@ async function rig(input: {
   updateCredential?: ReturnType<typeof vi.fn>;
   connectorUpdateStatus?: ReturnType<typeof vi.fn>;
   environmentRetire?: ReturnType<typeof vi.fn>;
+  environmentListTemplates?: ReturnType<typeof vi.fn>;
   listOwnedAgents?: ReturnType<typeof vi.fn>;
   listOwnedSkills?: ReturnType<typeof vi.fn>;
   credentialCreate?: ReturnType<typeof vi.fn>;
@@ -161,7 +162,7 @@ async function rig(input: {
       listForCustodian: vi.fn().mockResolvedValue([]),
     } as never,
     environments: {
-      listTemplates: vi.fn().mockResolvedValue([{ templateId: 'env-1', name: 'Node', status: 'published', revision: 2 }]),
+      listTemplates: input.environmentListTemplates ?? vi.fn().mockResolvedValue([{ templateId: 'env-1', name: 'Node', status: 'published', revision: 2 }]),
       retireTemplate: environmentRetire,
     } as never,
     changeJobs: {
@@ -399,6 +400,29 @@ describe('typed governance resource routes', () => {
     const environments = await test.request('/api/governance/resources/environment/templates');
     expect(environments.status).toBe(200);
     expect(await environments.json()).toMatchObject({ templates: [{ templateId: 'env-1', revision: 2 }] });
+  });
+
+  it('组织管理员可读取已发布环境模板，普通成员仍被拒绝', async () => {
+    const environmentListTemplates = vi.fn().mockResolvedValue([
+      { templateId: 'env-1', name: 'Node', status: 'published', revision: 2 },
+      { templateId: 'env-retired', name: 'Legacy', status: 'retired', revision: 3 },
+    ]);
+    const admin = await rig({
+      user: { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' },
+      environmentListTemplates,
+    });
+    const adminResponse = await admin.request('/api/governance/resources/environment/templates');
+    expect(adminResponse.status).toBe(200);
+    await expect(adminResponse.json()).resolves.toEqual({
+      templates: [{ templateId: 'env-1', name: 'Node', status: 'published', revision: 2 }],
+    });
+
+    const member = await rig({
+      user: { sub: 'member-1', username: 'member', tenantId: 'tenant-a', role: 'user' },
+    });
+    const memberResponse = await member.request('/api/governance/resources/environment/templates');
+    expect(memberResponse.status).toBe(403);
+    await expect(memberResponse.json()).resolves.toMatchObject({ error: 'Governance admin required' });
   });
 
   it('组织管理员可通过 HTTP 创建 durable user offboarding Change Job', async () => {

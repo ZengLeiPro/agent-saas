@@ -454,8 +454,11 @@ export function createGovernanceResourcesRouter(deps: {
   });
 
   router.get('/environment/templates', async (req, res) => {
-    if (personas.get(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
-    return res.json({ templates: await deps.environments.listTemplates() });
+    if (!canManageTenant(req)) return res.status(403).json({ error: 'Governance admin required' });
+    const templates = await deps.environments.listTemplates();
+    return res.json({ templates: personas.get(req) === 'platform_admin'
+      ? templates
+      : templates.filter(template => template.status === 'published') });
   });
 
   registerGovernanceResourceCatalogRoutes({ router,

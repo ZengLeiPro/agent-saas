@@ -207,7 +207,6 @@ describe('RawAgentLoop policy failure', () => {
     expect(events.at(-1)).toEqual({
       type: 'error',
       error: 'ordinary permanent failure',
-      runId: 'run-ordinary-error',
     });
     const persisted = await eventStore.list('session-ordinary-error');
     expect(persisted.some((event) => event.type === 'assistant_message')).toBe(false);

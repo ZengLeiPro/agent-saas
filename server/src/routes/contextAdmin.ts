@@ -309,6 +309,10 @@ function mapSourceCard(
       unreadable: unreadableRecords
         + partitions.filter(partition => partition.lastErrorCode === 'CONTEXT_SYNC_UNREADABLE').length,
       retrying: partitions.filter(partition => partition.status === 'retry_wait').length,
+      lastErrorCodes: [...new Set(partitions
+        .filter(partition => partition.status === 'retry_wait')
+        .map(partition => nonEmpty(partition.lastErrorCode))
+        .filter((value): value is string => Boolean(value)))].sort(),
       nextRetryAt: earliestIso(partitions.map(partition => partition.nextRetryAt)),
     },
     historicalLearningScope: {

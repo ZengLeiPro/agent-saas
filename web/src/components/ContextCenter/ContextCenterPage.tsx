@@ -127,6 +127,11 @@ function OutcomeSummary({ source }: { source: ContextSource }) {
             ))
           : <Badge variant="success">无截断、拒绝、不可读或重试</Badge>}
       </div>
+      {source.ingestOutcomes.lastErrorCodes.length > 0 && (
+        <div className="mt-1 break-words font-mono text-xs text-destructive">
+          错误分类：{source.ingestOutcomes.lastErrorCodes.join("、")}
+        </div>
+      )}
       {source.ingestOutcomes.nextRetryAt && <div className="mt-1 text-xs text-muted-foreground">下次重试：{formatDateTime(source.ingestOutcomes.nextRetryAt)}</div>}
     </div>
   );

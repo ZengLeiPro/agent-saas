@@ -22,7 +22,14 @@ export interface ContextSource {
   lastSyncedAt: string | null;
   backfillCoverage: BackfillCoverage;
   watermarkLagSeconds: number | null;
-  ingestOutcomes: { truncated: number; refused: number; unreadable: number; retrying: number; nextRetryAt: string | null };
+  ingestOutcomes: {
+    truncated: number;
+    refused: number;
+    unreadable: number;
+    retrying: number;
+    lastErrorCodes: string[];
+    nextRetryAt: string | null;
+  };
   historicalLearningScope: ContextScope;
   realtimeListeningScope: ContextScope;
 }

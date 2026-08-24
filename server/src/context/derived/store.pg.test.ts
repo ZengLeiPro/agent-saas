@@ -289,6 +289,27 @@ describePg('DerivedContextStore PostgreSQL integration', () => {
     expect(revokedLinks.rows.every(row => row.lifecycle === 'revoked' && row.revoked === true)).toBe(true);
   });
 
+  it('advances past an upsert already revoked before projection without materializing stale evidence', async () => {
+    const nativeId = 'task-revoked-before-project';
+    const recordId = 'task-revoked-before-project-r';
+    await ingest([{
+      recordId, externalRecordId: recordId, entityType: 'task', recordKind: 'snapshot', nativeId,
+      content: { title: 'Transient', status: { code: 'open' } }, observedAt: '2026-08-23T07:00:00Z',
+      evidence: [{ evidenceId: 'task-revoked-before-project-ev-1', kind: 'quote', data: { quote: 'Transient open' } }],
+    }]);
+    await ingest([{
+      recordId, externalRecordId: recordId, entityType: 'task', recordKind: 'snapshot', nativeId,
+      content: { title: 'Transient', status: { code: 'closed' } }, revoked: true,
+      observedAt: '2026-08-23T07:01:00Z',
+      evidence: [{ evidenceId: 'task-revoked-before-project-ev-2', kind: 'quote', data: { quote: 'Transient revoked' } }],
+    }]);
+
+    await expect(drain()).resolves.toBeUndefined();
+    const projected = await pool.query(`SELECT lifecycle FROM ${derived.tables.entities}
+      WHERE tenant_id='tenant-a' AND entity_id=$1`, [entityId('tenant-a', 'Task', nativeId, 'source-a')]);
+    expect(projected.rows).toEqual([]);
+  });
+
   it('durably resolves Task before Project, refreshes incoming target revisions, revokes and replays idempotently', async () => {
     const taskId = entityId('tenant-a', 'Task', 'task-late', 'source-a');
     const projectId = entityId('tenant-a', 'Project', 'project-late', 'source-a');

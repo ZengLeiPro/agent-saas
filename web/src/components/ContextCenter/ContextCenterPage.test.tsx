@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ContextCenterPage } from "./ContextCenterPage";
-import type { ContextCenterApiPort, ContextCenterSnapshot, ContextEvidence } from "./types";
+import type { ContextCenterApiPort, ContextCenterSnapshot } from "./types";
 
 const snapshot: ContextCenterSnapshot = {
   generatedAt: "2026-08-22T15:40:00.000Z",
@@ -65,26 +65,22 @@ const snapshot: ContextCenterSnapshot = {
   ],
 };
 
-const evidence: ContextEvidence[] = [
-  {
-    id: "ev-1",
-    sourceName: "钉钉知识库",
-    collection: "产品与交付",
-    author: "王小明",
-    occurredAt: "2026-08-20T02:30:00.000Z",
-    quote: "交付验收前必须完成生产环境回归。",
-    derived: true,
-    freshness: "fresh",
-    freshnessAsOf: "2026-08-22T15:38:00.000Z",
-    originalUrl: "https://example.test/docs/acceptance",
-  },
-];
-
 function createApi(nextSnapshot: ContextCenterSnapshot = snapshot) {
   const getSnapshot = vi.fn().mockResolvedValue(nextSnapshot);
-  const listEvidence = vi.fn().mockResolvedValue(evidence);
-  const api: ContextCenterApiPort = { getSnapshot, listEvidence };
-  return { api, getSnapshot, listEvidence };
+  const emptyPage = { items: [], nextCursor: null, degraded: false };
+  const api: ContextCenterApiPort = {
+    getSnapshot,
+    getEvidence: vi.fn(),
+    listTimeline: vi.fn().mockResolvedValue(emptyPage),
+    listEntities: vi.fn().mockResolvedValue(emptyPage),
+    getEntity: vi.fn(),
+    getEntityProfile: vi.fn(),
+    listEntityRelations: vi.fn().mockResolvedValue(emptyPage),
+    listReviews: vi.fn().mockResolvedValue(emptyPage),
+    createCorrection: vi.fn(),
+    decideReview: vi.fn(),
+  };
+  return { api, getSnapshot };
 }
 
 describe("ContextCenterPage", () => {
@@ -106,32 +102,18 @@ describe("ContextCenterPage", () => {
     expect(document.body.textContent).not.toContain("%");
   });
 
-  it("按来源从注入的 API 加载 Evidence Drawer，并展示完整溯源字段", async () => {
-    const { api, listEvidence } = createApi();
+  it("来源页只展示元数据与同步状态，不提供原始 Evidence 枚举入口", async () => {
+    const { api } = createApi();
     render(<ContextCenterPage api={api} />);
 
-    const evidenceButton = await screen.findByRole("button", { name: "查看 钉钉知识库 的 Evidence" });
-    fireEvent.click(evidenceButton);
-
-    await waitFor(() => expect(listEvidence).toHaveBeenCalledWith(
-      { sourceId: "dingtalk-kb", collectionId: "product-delivery" },
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    ));
-    const drawer = await screen.findByRole("dialog");
-    expect(within(drawer).getByText("王小明")).toBeTruthy();
-    expect(within(drawer).getByText(/交付验收前必须完成生产环境回归/)).toBeTruthy();
-    expect(within(drawer).getByText("派生证据")).toBeTruthy();
-    expect(within(drawer).getByText("新鲜度：新鲜")).toBeTruthy();
-    expect(within(drawer).getByText(/经原始记录加工/)).toBeTruthy();
-    const originalLink = within(drawer).getByRole("link", { name: /在原系统中打开/ });
-    expect(originalLink.getAttribute("href")).toBe("https://example.test/docs/acceptance");
-    expect(originalLink.getAttribute("target")).toBe("_blank");
-    expect(originalLink.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(await screen.findByRole("heading", { name: "钉钉知识库" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Evidence/ })).toBeNull();
+    expect(api.getEvidence).not.toHaveBeenCalled();
   });
 
   it("无权限或服务端未挂载时诚实显示不可用，不注入回退数据", async () => {
     const getSnapshot = vi.fn().mockRejectedValue(new Error("当前账号无权查看 Context Center。"));
-    const api: ContextCenterApiPort = { getSnapshot, listEvidence: vi.fn() };
+    const api: ContextCenterApiPort = { ...createApi().api, getSnapshot };
     render(<ContextCenterPage api={api} />);
 
     expect(await screen.findByText("Context Center 暂不可用")).toBeTruthy();

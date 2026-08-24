@@ -20,11 +20,11 @@ export interface LayoutProps {
   sidebarSessions: ChatSessionIndexItem[];
   sessionId: string | null;
   selectSession: (id: string) => void;
-  newSession: () => void;
+  newSession: (groupId?: string | null) => void;
   /** 明确开始个人通用 Agent 草稿（任务模板只走此路径） */
   newPersonalSession: () => void;
   /** 企业专家新草稿：首条消息才创建会话并绑定 orgAgentId */
-  startOrgAgentSession: (agentId: string) => void;
+  startOrgAgentSession: (agentId: string, groupId?: string | null) => void;
   /** 当前会话绑定的企业专家（含草稿态）；null = 个人通用 Agent 会话 */
   activeOrgAgent: OrgAgentSummary | null;
   /** 当前企业专家会话已停用、删除或取消指派，输入区应只读 */

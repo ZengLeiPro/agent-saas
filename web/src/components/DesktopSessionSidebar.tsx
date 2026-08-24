@@ -16,7 +16,6 @@ import {
   ChevronRight,
   FolderMinus,
   Check,
-  Clock,
   Minimize2,
   Settings2,
   GripVertical,
@@ -35,7 +34,8 @@ import { RenameSessionDialog } from "@/components/chat/RenameSessionDialog";
 import { DeleteGroupDialog } from "@/components/chat/DeleteGroupDialog";
 import { AddToGroupDialog } from "@/components/chat/AddToGroupDialog";
 import { AddSessionsToGroupDialog } from "@/components/chat/AddSessionsToGroupDialog";
-import { SessionShareDialog } from "@/components/chat/SessionShareDialog";
+import { LazySessionShareDialog } from "@/components/chat/LazySessionShareDialog";
+import { LazyNewSessionGroupDialog } from "@/components/chat/LazyNewSessionGroupDialog";
 import { TrashView } from "@/components/chat/TrashView";
 import { SessionSearchResults } from "@/components/chat/SessionSearchResults";
 
@@ -73,12 +73,18 @@ import {
   SessionGroupLeadingIcon,
   sessionGroupKindLabel,
 } from "./sessionGroupPresentation";
+import {
+  NAV_ITEM_SELECTED,
+  NAV_ITEM_UNSELECTED,
+  SessionSelectionActions,
+  SidebarNav,
+} from "./DesktopSessionSidebarControls";
 
 interface DesktopSessionSidebarProps {
   sessions: ChatSessionIndexItem[];
   activeSessionId: string | null;
   onSelect: (sessionId: string) => void;
-  onNew: () => void;
+  onNew: (groupId?: string | null) => void;
   onDelete?: (sessionId: string) => void;
   onDeleteMany?: (sessionIds: string[]) => void;
   onRename?: (sessionId: string, newTitle: string) => Promise<boolean>;
@@ -109,14 +115,6 @@ interface DesktopSessionSidebarProps {
   personalAgentEnabled?: boolean;
 }
 
-
-// 侧边栏导航/分组的选中态：左侧 brand-accent rail + 暖橙浅底 + 字加粗。
-const NAV_ITEM_SELECTED =
-  "relative bg-brand-accent-soft text-foreground font-semibold " +
-  "before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2 " +
-  "before:h-5 before:w-[3px] before:rounded-r-full before:bg-brand-accent";
-const NAV_ITEM_UNSELECTED =
-  "text-muted-foreground hover:bg-muted/60 hover:text-foreground";
 
 const USER_MENU_ITEM =
   "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] text-foreground transition-colors hover:bg-accent";
@@ -497,72 +495,6 @@ function SidebarBrandHeader({ className, onCollapse }: SidebarBrandHeaderProps) 
   );
 }
 
-interface SidebarNavProps {
-  navItems: Array<{ tab: AppTab; label: string }>;
-  activeTab: AppTab;
-  isNewSessionActive: boolean;
-  isLoading: boolean;
-  onNew: () => void;
-  onTabChange?: (tab: AppTab) => void;
-  beforeNavigate?: () => void;
-  constrainNewButton?: boolean;
-}
-
-function getNavIcon(tab: AppTab) {
-  if (tab === "profile") return Bot;
-  if (tab === "capabilities") return EntityIcons.capabilityCenter;
-  if (tab === "settings") return Settings2;
-  if (tab === "cron") return Clock;
-  if (tab === "mcp") return EntityIcons.connector;
-  return null;
-}
-
-function SidebarNav({ navItems, activeTab, isNewSessionActive, isLoading, onNew, onTabChange, beforeNavigate, constrainNewButton = true }: SidebarNavProps) {
-  if (!onTabChange) return null;
-  return (
-    <nav className="flex flex-col gap-1 px-2 pb-3">
-      <button
-        type="button"
-        onClick={() => {
-          beforeNavigate?.();
-          onNew();
-          if (activeTab !== "chat") onTabChange("chat");
-        }}
-        disabled={isLoading}
-        className={cn(
-          "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium transition-colors",
-          isNewSessionActive ? NAV_ITEM_SELECTED : NAV_ITEM_UNSELECTED,
-          "disabled:pointer-events-none disabled:opacity-50",
-          constrainNewButton && "max-w-[200px]",
-        )}
-      >
-        <Plus className="size-4" />
-        <span>新建会话</span>
-      </button>
-      {navItems.map(({ tab, label }) => {
-        const Icon = getNavIcon(tab);
-        return (
-          <button
-            key={tab}
-            type="button"
-            className={cn(
-              "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium transition-colors",
-              activeTab === tab ? NAV_ITEM_SELECTED : NAV_ITEM_UNSELECTED,
-            )}
-            onClick={() => {
-              beforeNavigate?.();
-              onTabChange(tab);
-            }}
-          >
-            {Icon && <Icon className="size-4" />}
-            {label}
-          </button>
-        );
-      })}
-    </nav>
-  );
-}
-
 interface SidebarUserMenuFooterProps {
   authUser: AuthUser | null;
   authEnabled: boolean;
@@ -914,7 +846,7 @@ function SidebarDialogs({
         />
       )}
 
-      <SessionShareDialog
+      <LazySessionShareDialog
         open={shareSessionId !== null}
         session={sessions.find((s) => s.id === shareSessionId) ?? null}
         onOpenChange={(open) => {
@@ -1083,6 +1015,7 @@ export function DesktopSessionSidebar({
   const highlightedSessionId = activeTab === "chat" ? activeSessionId : null;
   // 分组重命名/删除状态
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
+  const [newSessionGroupOpen, setNewSessionGroupOpen] = useState(false);
   const [renameGroupId, setRenameGroupId] = useState<string | null>(null);
   const [deleteGroupId, setDeleteGroupId] = useState<string | null>(null);
   const [singleExpandedGroupKey, setSingleExpandedGroupKey] = useState<string | null>(null);
@@ -1307,6 +1240,12 @@ export function DesktopSessionSidebar({
   const singleListCount = singleExpandedGroup
     ? singleExpandedGroup.children.length
     : singleColumnEntries.length;
+  const singleSelectableSessionIds = useMemo(
+    () => singleExpandedGroup
+      ? singleExpandedGroup.children.map((session) => session.id)
+      : singleColumnEntries.flatMap((entry) => entry.type === "session" ? [entry.session.id] : []),
+    [singleColumnEntries, singleExpandedGroup],
+  );
 
   // 左主栏分组列表排序：
   // - 编辑态：按 editing.draft 顺序
@@ -1481,6 +1420,7 @@ export function DesktopSessionSidebar({
 
   const beginSingleSelection = useCallback(() => {
     setActionMenuId(null);
+    setSessionSearchQuery("");
     setSelectedSingleSessionIds(new Set());
     setBatchMoveSessionIds(null);
     setSingleSelectionMode(true);
@@ -1496,6 +1436,24 @@ export function DesktopSessionSidebar({
   }, []);
 
   const selectedSingleCount = selectedSingleSessionIds.size;
+  const selectedVisibleSessionCount = singleSelectableSessionIds.filter((id) => selectedSingleSessionIds.has(id)).length;
+  const selectAllState: boolean | "indeterminate" = selectedVisibleSessionCount === 0
+    ? false
+    : selectedVisibleSessionCount === singleSelectableSessionIds.length
+      ? true
+      : "indeterminate";
+  const toggleSelectAll = useCallback(() => {
+    setSelectedSingleSessionIds((previous) => {
+      const next = new Set(previous);
+      const allSelected = singleSelectableSessionIds.length > 0
+        && singleSelectableSessionIds.every((id) => next.has(id));
+      for (const id of singleSelectableSessionIds) {
+        if (allSelected) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  }, [singleSelectableSessionIds]);
 
   // 选择会话
   const handleSelect = useCallback(
@@ -1724,6 +1682,7 @@ export function DesktopSessionSidebar({
           isNewSessionActive={activeTab === "chat" && activeSessionId === null}
           isLoading={isLoading}
           onNew={onNew}
+          onChooseGroup={() => setNewSessionGroupOpen(true)}
           onTabChange={onTabChange}
           beforeNavigate={() => setSingleExpandedGroupKey(null)}
           constrainNewButton={false}
@@ -1736,11 +1695,16 @@ export function DesktopSessionSidebar({
                 <div className="truncate text-sm font-semibold">全部会话<span className="ml-1 font-normal text-muted-foreground">({singleColumnEntries.length})</span></div>
               </div>
               {singleSelectionMode ? (
-                <div className="flex shrink-0 items-center gap-1">
-                  <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={clearSingleSelection}>取消</Button>
-                  <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs text-destructive hover:text-destructive" disabled={!(onDeleteMany || onDelete) || selectedSingleCount === 0} onClick={handleBatchDeleteSelected}>删除</Button>
-                  <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs" disabled={isReadOnlyGroups || selectedSingleCount === 0} onClick={() => setBatchMoveSessionIds(Array.from(selectedSingleSessionIds))}>移动</Button>
-                </div>
+                <SessionSelectionActions
+                  selectAllState={selectAllState}
+                  selectedCount={selectedSingleCount}
+                  canDelete={Boolean(onDeleteMany || onDelete)}
+                  canMove={!isReadOnlyGroups}
+                  onToggleAll={toggleSelectAll}
+                  onCancel={clearSingleSelection}
+                  onDelete={handleBatchDeleteSelected}
+                  onMove={() => setBatchMoveSessionIds(Array.from(selectedSingleSessionIds))}
+                />
               ) : (
                 <div className="flex shrink-0 items-center gap-1">
                   <Button
@@ -1831,11 +1795,16 @@ export function DesktopSessionSidebar({
               </button>
               <div className="min-w-0 flex-1" aria-hidden="true" />
               {singleSelectionMode ? (
-                <div className="flex shrink-0 items-center gap-1">
-                  <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={clearSingleSelection}>取消</Button>
-                  <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs text-destructive hover:text-destructive" disabled={!(onDeleteMany || onDelete) || selectedSingleCount === 0} onClick={handleBatchDeleteSelected}>删除</Button>
-                  <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs" disabled={isReadOnlyGroups || selectedSingleCount === 0} onClick={() => setBatchMoveSessionIds(Array.from(selectedSingleSessionIds))}>移动</Button>
-                </div>
+                <SessionSelectionActions
+                  selectAllState={selectAllState}
+                  selectedCount={selectedSingleCount}
+                  canDelete={Boolean(onDeleteMany || onDelete)}
+                  canMove={!isReadOnlyGroups}
+                  onToggleAll={toggleSelectAll}
+                  onCancel={clearSingleSelection}
+                  onDelete={handleBatchDeleteSelected}
+                  onMove={() => setBatchMoveSessionIds(Array.from(selectedSingleSessionIds))}
+                />
               ) : (
                 <div className="relative shrink-0">
                   {singleExpandedGroup && !isReadOnlyGroups && (
@@ -1928,6 +1897,15 @@ export function DesktopSessionSidebar({
           setCompactDialogOpen={setCompactDialogOpen}
           onCompact={onCompact}
         />
+        <LazyNewSessionGroupDialog
+          open={newSessionGroupOpen}
+          onOpenChange={setNewSessionGroupOpen}
+          groups={allGroups}
+          onSelect={(groupId) => {
+            onNew(groupId);
+            if (activeTab !== "chat") onTabChange?.("chat");
+          }}
+        />
       </aside>
     );
   }
@@ -1964,6 +1942,7 @@ export function DesktopSessionSidebar({
             isNewSessionActive={activeTab === "chat" && activeSessionId === null}
             isLoading={isLoading}
             onNew={onNew}
+            onChooseGroup={() => setNewSessionGroupOpen(true)}
             onTabChange={onTabChange}
           />
           {/* 导航与分组之间的分隔线 */}
@@ -2451,6 +2430,15 @@ export function DesktopSessionSidebar({
         compactDialogOpen={compactDialogOpen}
         setCompactDialogOpen={setCompactDialogOpen}
         onCompact={onCompact}
+      />
+      <LazyNewSessionGroupDialog
+        open={newSessionGroupOpen}
+        onOpenChange={setNewSessionGroupOpen}
+        groups={allGroups}
+        onSelect={(groupId) => {
+          onNew(groupId);
+          if (activeTab !== "chat") onTabChange?.("chat");
+        }}
       />
     </aside>
   );

@@ -1359,16 +1359,16 @@ export class PgRunStore implements RunStore {
     // allocation order cannot diverge from durable commit order across the two writers.
     await lockPgEventGlobalSequence(client, this.eventsTable);
     await client.query(`
-      INSERT INTO ${this.eventCursorsTable} (session_id, next_sequence)
-      VALUES ($1, 1)
-      ON CONFLICT (session_id) DO NOTHING
-    `, [sessionId]);
+      INSERT INTO ${this.eventCursorsTable} (tenant_id, session_id, next_sequence)
+      VALUES ($1, $2, 1)
+      ON CONFLICT (tenant_id, session_id) DO NOTHING
+    `, [tenantId, sessionId]);
     const cursor = await client.query<{ start_sequence: string }>(`
       UPDATE ${this.eventCursorsTable}
-      SET next_sequence = next_sequence + $2
-      WHERE session_id = $1
-      RETURNING next_sequence - $2 AS start_sequence
-    `, [sessionId, events.length]);
+      SET next_sequence = next_sequence + $3
+      WHERE tenant_id = $1 AND session_id = $2
+      RETURNING next_sequence - $3 AS start_sequence
+    `, [tenantId, sessionId, events.length]);
     const startSequence = Number(cursor.rows[0]?.start_sequence ?? 1);
     const timestamp = new Date().toISOString();
     const fullEvents = events.map((event, index) => ({

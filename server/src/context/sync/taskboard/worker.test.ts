@@ -102,6 +102,9 @@ class FakeStore implements TaskboardContextStore {
     return leased;
   }
   async ingestPage(input: IngestContextPageInput): Promise<IngestContextPageResult> {
+    if (new Set(input.records.map(record => record.externalRecordId)).size !== input.records.length) {
+      throw new Error('duplicate external record IDs');
+    }
     const key = partitionKey(input.tenantId, input.collectionId);
     const current = this.partitions.get(key)!;
     if (current.leaseOwner !== input.leaseOwner || current.leaseFence !== input.leaseFence) throw new Error('lease lost');
@@ -172,6 +175,24 @@ describe('TaskboardContextSyncWorker', () => {
     expect(reader.changeCalls).toEqual([]);
     expect([...store.records.values()].reduce((sum, item) => sum + item.revision, 0)).toBe(revisions);
     expect(store.outboxCount).toBe(outbox);
+  });
+
+  it('deduplicates repeated resource snapshots within a change page while preserving every event', async () => {
+    const reader = seededReader();
+    reader.changes.push(
+      change('1', 'board', 'board-a', 'board.updated'),
+      change('2', 'board', 'board-a', 'board.updated'),
+      change('3', 'task', 'task-a', 'task.updated'),
+      change('4', 'task', 'task-a', 'task.transitioned'),
+    );
+    const store = new FakeStore();
+
+    const result = await createWorker(reader, store, 10).runTenant('tenant-a');
+
+    expect(result).toMatchObject({ changes: 4, events: 4, snapshots: 2, watermark: '4' });
+    expect(record(store, 'taskboard-projects', 'board-a')).toBeDefined();
+    expect(record(store, 'taskboard-tasks', 'task-a')).toBeDefined();
+    expect([...store.records.keys()].filter(key => key.includes('taskboard-events'))).toHaveLength(4);
   });
 
   it('creates a tombstone only for explicit task deletion and treats archive as a normal snapshot update', async () => {

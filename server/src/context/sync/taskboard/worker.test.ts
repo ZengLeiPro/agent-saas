@@ -209,6 +209,18 @@ describe('TaskboardContextSyncWorker', () => {
     ]));
   });
 
+  it('persists a precise change-apply stage without exposing the upstream error', async () => {
+    const reader = seededReader();
+    reader.changes.push(change('1', 'task', 'task-a', 'task.updated'));
+    vi.spyOn(reader, 'getTask').mockRejectedValue(new Error('private database detail'));
+    const store = new FakeStore();
+
+    await expect(createWorker(reader, store, 2).runTenant('tenant-a')).rejects.toThrow('private database detail');
+    expect([...store.partitions.values()]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'retry_wait', lastErrorCode: 'TASKBOARD_TASK_LOOKUP_FAILED' }),
+    ]));
+  });
+
   it.each([
     ['board inventory', 'listBoards', 'TASKBOARD_BOARD_INVENTORY_FAILED'],
     ['task inventory', 'listTasks', 'TASKBOARD_TASK_INVENTORY_FAILED'],

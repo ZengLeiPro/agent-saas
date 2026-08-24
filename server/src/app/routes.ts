@@ -60,8 +60,7 @@ import { createGovernanceMigrationRouter } from '../routes/governanceMigration.j
 import { createMcpRouter } from "../routes/mcp.js";
 import { createConnectorsRouter } from "../routes/connectors.js";
 import { createNotionRouter } from "../routes/notion.js";
-import { createGoogleWorkspaceRouter } from "../routes/googleWorkspace.js";
-import { buildGoogleWorkspaceOAuthGrantProjection } from './runtimeOAuthGrantReconciler.js';
+import { createGoogleWorkspaceRouter } from "../routes/googleWorkspace.js"; import { buildGoogleWorkspaceOAuthGrantProjection } from './runtimeOAuthGrantReconciler.js';
 import { revokeAllUserConnectorCredentials } from "../connectors/lifecycle.js";
 import { createNativeOAuthHandoffRouter, NativeOAuthHandoffStore } from '../connectors/nativeOAuthHandoff.js';
 import { runtimeRunController } from "../runtime/runController.js";
@@ -933,16 +932,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       app.use(
         "/api/connectors",
         createGoogleWorkspaceRouter({
-          oauthService: runtime.googleWorkspaceOAuthService,
-          ...(runtime.oauthGrantStore ? {
-            recordOAuthGrant: (input: Parameters<typeof runtime.oauthGrantStore.recordProjection>[0]) => runtime.oauthGrantStore!.recordProjection(input),
-            revokeOAuthGrant: (input: Parameters<typeof runtime.oauthGrantStore.recordRevocation>[0]) => runtime.oauthGrantStore!.recordRevocation(input),
-            ensureOAuthGrant: async (identity: { userId: string; username: string; tenantId: string }) => {
-              const projection = buildGoogleWorkspaceOAuthGrantProjection(runtime.connectorConnectionStore, identity);
-              if (!projection) return undefined;
-              return await runtime.oauthGrantStore!.ensureProjection(projection);
-            },
-          } : {}),
+          oauthService: runtime.googleWorkspaceOAuthService, ...(runtime.oauthGrantStore ? { recordOAuthGrant: (input: Parameters<typeof runtime.oauthGrantStore.recordProjection>[0]) => runtime.oauthGrantStore!.recordProjection(input), revokeOAuthGrant: (input: Parameters<typeof runtime.oauthGrantStore.recordRevocation>[0]) => runtime.oauthGrantStore!.recordRevocation(input), ensureOAuthGrant: async (identity: { userId: string; username: string; tenantId: string }) => { const projection = buildGoogleWorkspaceOAuthGrantProjection(runtime.connectorConnectionStore, identity); return projection ? await runtime.oauthGrantStore!.ensureProjection(projection) : undefined; } } : {}),
           userStore: runtime.userStore,
           webBaseUrl: config.server?.webBaseUrl,
           nativeOAuthHandoff,

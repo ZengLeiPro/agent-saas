@@ -471,6 +471,7 @@ async function runVerify(connectionString: string): Promise<void> {
   assert(wakeState.session.executionTarget === 'server-container', 'wake state executionTarget mismatch');
 
   console.log('[step] PgRuntimeAuditQuery list/summarize + cross-session runId');
+  const auditTenant = 'kaiyan';
   const auditSessionA = `session-audit-a-${randomUUID()}`;
   const auditSessionB = `session-audit-b-${randomUUID()}`;
   const runX = `run-x-${randomUUID()}`;
@@ -485,13 +486,13 @@ async function runVerify(connectionString: string): Promise<void> {
     buildAuditEvent(auditSessionB, runY, 'call-b2', 'Read', 'safe', 'server-remote', 'policy_auto', 'success', 3),
   ];
   for (const event of auditEvents) {
-    await reopened.append(event);
+    await reopened.append({ ...event, tenantId: auditTenant }, { tenantId: auditTenant });
   }
 
   const auditQuery = new PgRuntimeAuditQuery({ pool: reopened.pool, eventsTable: reopened.eventsTable });
 
   // listBySessionId：仅 sessionA 的 2 条，按 append 顺序
-  const aEntries = await auditQuery.listBySessionId(auditSessionA);
+  const aEntries = await auditQuery.listBySessionId(auditSessionA, { tenantId: auditTenant });
   assert(aEntries.length === 2, `expected 2 audit entries for sessionA, got ${aEntries.length}`);
   assert(
     aEntries.map((e) => e.toolName).join(',') === 'Read,Write',
@@ -499,7 +500,7 @@ async function runVerify(connectionString: string): Promise<void> {
   );
 
   // listByRunId：sessionA + runX 只有 Read
-  const runXInA = await auditQuery.listByRunId(auditSessionA, runX);
+  const runXInA = await auditQuery.listByRunId(auditSessionA, runX, { tenantId: auditTenant });
   assert(
     runXInA.length === 1 && runXInA[0]?.toolName === 'Read',
     `runX-in-sessionA mismatch: ${JSON.stringify(runXInA.map((e) => e.toolName))}`,
@@ -507,7 +508,7 @@ async function runVerify(connectionString: string): Promise<void> {
 
   // listByRunIdGlobal：runX 跨 2 个 session
   assert(auditQuery.listByRunIdGlobal, 'listByRunIdGlobal must be implemented');
-  const runXGlobal = await auditQuery.listByRunIdGlobal(runX);
+  const runXGlobal = await auditQuery.listByRunIdGlobal(runX, { tenantId: auditTenant });
   assert(runXGlobal.length === 2, `expected runX global=2, got ${runXGlobal.length}`);
   assert(
     new Set(runXGlobal.map((e) => e.sessionId)).size === 2,
@@ -515,7 +516,7 @@ async function runVerify(connectionString: string): Promise<void> {
   );
 
   // summarize（单 session）
-  const summaryA = await auditQuery.summarize(auditSessionA);
+  const summaryA = await auditQuery.summarize(auditSessionA, { tenantId: auditTenant });
   assert(summaryA.total === 2, `summary.total mismatch: ${summaryA.total}`);
   assert(summaryA.filteredTotal === 2, `summary.filteredTotal mismatch: ${summaryA.filteredTotal}`);
   assert(summaryA.byStatus.success === 2 && summaryA.byStatus.error === 0, 'summaryA.byStatus mismatch');
@@ -532,7 +533,7 @@ async function runVerify(connectionString: string): Promise<void> {
 
   // summarizeByRunIdGlobal：runX 跨 session，含 success + error 分布
   assert(auditQuery.summarizeByRunIdGlobal, 'summarizeByRunIdGlobal must be implemented');
-  const runXSummary = await auditQuery.summarizeByRunIdGlobal(runX);
+  const runXSummary = await auditQuery.summarizeByRunIdGlobal(runX, { tenantId: auditTenant });
   assert(
     runXSummary.sessionIds.slice().sort().join(',') === [auditSessionA, auditSessionB].slice().sort().join(','),
     `runX sessionIds mismatch: ${JSON.stringify(runXSummary.sessionIds)}`,
@@ -544,21 +545,54 @@ async function runVerify(connectionString: string): Promise<void> {
 
   // since 过滤：未来时间应当返回空
   const sinceFuture = new Date(Date.now() + 60_000).toISOString();
-  const futureEntries = await auditQuery.listBySessionId(auditSessionA, { since: sinceFuture });
+  const futureEntries = await auditQuery.listBySessionId(auditSessionA, { tenantId: auditTenant, since: sinceFuture });
   assert(futureEntries.length === 0, `since future should return empty, got ${futureEntries.length}`);
-  const summaryAFuture = await auditQuery.summarize(auditSessionA, { since: sinceFuture });
+  const summaryAFuture = await auditQuery.summarize(auditSessionA, { tenantId: auditTenant, since: sinceFuture });
   assert(
     summaryAFuture.total === 2 && summaryAFuture.filteredTotal === 0,
     `summaryAFuture total/filteredTotal mismatch: ${JSON.stringify(summaryAFuture)}`,
   );
 
   // limit / offset
-  const limited = await auditQuery.listBySessionId(auditSessionA, { limit: 1 });
+  const limited = await auditQuery.listBySessionId(auditSessionA, { tenantId: auditTenant, limit: 1 });
   assert(limited.length === 1 && limited[0]?.toolName === 'Read', `limit=1 mismatch`);
-  const skipped = await auditQuery.listBySessionId(auditSessionA, { offset: 1 });
+  const skipped = await auditQuery.listBySessionId(auditSessionA, { tenantId: auditTenant, offset: 1 });
   assert(
     skipped.length === 1 && skipped[0]?.toolName === 'Write',
     `offset=1 mismatch: ${JSON.stringify(skipped.map((e) => e.toolName))}`,
+  );
+
+  // 双租户故意复用同一 sessionId + runId；每个查询必须只命中显式 tenant。
+  console.log('[step] PgRuntimeAuditQuery tenant collision isolation');
+  const collisionSession = `session-audit-collision-${randomUUID()}`;
+  const collisionRun = `run-audit-collision-${randomUUID()}`;
+  const otherTenant = 'wain';
+  await reopened.append({
+    ...buildAuditEvent(collisionSession, collisionRun, 'call-kaiyan', 'Read', 'safe', 'server-local', 'policy_auto', 'success', 1),
+    tenantId: auditTenant,
+  }, { tenantId: auditTenant });
+  await reopened.append({
+    ...buildAuditEvent(collisionSession, collisionRun, 'call-wain', 'Write', 'workspace_write', 'server-container', 'human_approval', 'success', 2, 'appr-wain'),
+    tenantId: otherTenant,
+  }, { tenantId: otherTenant });
+  const kaiyanCollision = await auditQuery.listByRunId(collisionSession, collisionRun, { tenantId: auditTenant });
+  const wainCollision = await auditQuery.listByRunId(collisionSession, collisionRun, { tenantId: otherTenant });
+  const missingTenantCollision = await auditQuery.listByRunId(collisionSession, collisionRun, { tenantId: 'missing-tenant' });
+  assert(
+    kaiyanCollision.length === 1 && kaiyanCollision[0]?.toolCallId === 'call-kaiyan',
+    `kaiyan collision leaked: ${JSON.stringify(kaiyanCollision.map((e) => e.toolCallId))}`,
+  );
+  assert(
+    wainCollision.length === 1 && wainCollision[0]?.toolCallId === 'call-wain',
+    `wain collision leaked: ${JSON.stringify(wainCollision.map((e) => e.toolCallId))}`,
+  );
+  assert(missingTenantCollision.length === 0, 'unknown tenant collision query must fail closed');
+  const wainRunSummary = await auditQuery.summarizeByRunIdGlobal(collisionRun, { tenantId: otherTenant });
+  assert(
+    wainRunSummary.total === 1
+    && wainRunSummary.sessionIds.length === 1
+    && wainRunSummary.sessionIds[0] === collisionSession,
+    `tenant-scoped collision summary mismatch: ${JSON.stringify(wainRunSummary)}`,
   );
 
   console.log('[step] PgEventStore stream notify coalescing under burst load');

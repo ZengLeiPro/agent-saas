@@ -12,6 +12,7 @@ import type {
 import type { JwtPayload } from '../auth/types.js';
 import type { UserStore } from '../data/users/store.js';
 import { createTaskboardRouter, type TaskboardRouterOptions } from '../routes/taskboard.js';
+import { openTrustedFile } from '../security/trustedFile.js';
 import {
   TaskboardConflictError,
   TaskboardNotFoundError,
@@ -460,7 +461,7 @@ describe('Taskboard routes', () => {
       resolveTaskAttachment: async (_ownerCwd: string, taskId: string, attachment: typeof canonical) => {
         expect(taskId).toBe(TASK.id);
         expect(attachment.attachmentId).toBe(attachmentId);
-        return `${process.cwd()}/package.json`;
+        return openTrustedFile(process.cwd(), 'package.json');
       },
       markReferenced: async () => undefined,
     } as unknown as TaskboardRouterOptions['uploadManager'];
@@ -501,7 +502,6 @@ describe('Taskboard routes', () => {
     expect(download.status).toBe(200);
     expect(download.headers.get('content-type')).toContain('application/json');
     expect(await download.text()).toContain('"name"');
-
     service.getTask = async (identity, taskId) => {
       if (identity.ownerUserId !== USER.sub) throw new TaskboardPermissionError();
       expect(taskId).toBe(TASK.id);

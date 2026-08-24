@@ -7,6 +7,7 @@ import { Kubectl } from './kubectl.js';
 import type { KubeApi } from './kubeApi.js';
 import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './networkPolicyManager.js';
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
+import { deleteSandboxAndReclaimNetwork } from './sandboxDeletion.js';
 import { SingleflightCleanup } from './singleflightCleanup.js';
 import {
   type ManagedSandbox,
@@ -282,11 +283,7 @@ export class SandboxManager {
   async delete(ref: SandboxRef, options: { activeKey?: string } = {}): Promise<void> {
     this.assertIdle(ref.name, 'delete', options.activeKey);
     this.invalidateEnsureFastPath(ref.name);
-    await this.kubectl.run(['delete', this.resourceName(ref.name), '--ignore-not-found=true'], {
-      timeoutMs: this.config.sandboxWaitTimeoutMs,
-    });
-    await this.networkPolicyManager.deleteForSandboxName(ref.name);
-    await this.snatManager.deleteForSandboxName(ref.name);
+    await this.deleteSandboxAndReclaimNetwork(ref.name);
   }
 
   async deleteByWorkspaceId(workspaceId: string, input: { busySandboxNames?: Set<string> } = {}): Promise<{ names: string[]; skippedBusy: string[] }> {
@@ -300,11 +297,7 @@ export class SandboxManager {
         skippedBusy.push(sandbox.name);
         continue;
       }
-      await this.kubectl.run(['delete', this.resourceName(sandbox.name), '--ignore-not-found=true'], {
-        timeoutMs: this.config.sandboxWaitTimeoutMs,
-      });
-      await this.networkPolicyManager.deleteForSandboxName(sandbox.name);
-      await this.snatManager.deleteForSandboxName(sandbox.name);
+      await this.deleteSandboxAndReclaimNetwork(sandbox.name);
     }
     return { names: names.filter((name) => !skippedBusy.includes(name)), skippedBusy };
   }
@@ -355,9 +348,9 @@ export class SandboxManager {
     if (!this.snatManager.isEnabled()) {
       return { enabled: false, checked: 0, deleted: [], orphanCidrs: [], unexpected: [] };
     }
+    // phase 不代表资源消失；只要受管 Sandbox CR 仍在就保留 SNAT，清单失败则 fail-closed。
     const retainedEntryNames = new Set(
       (await this.listManagedSandboxes())
-        .filter((sandbox) => ['Running', 'Paused'].includes(sandbox.phase ?? ''))
         .map((sandbox) => this.snatManager.entryNameForSandboxName(sandbox.name)),
     );
     const activeCidrs = await this.snatManager.activeManagedPodCidrs();
@@ -462,11 +455,7 @@ export class SandboxManager {
     this.assertIdleByName(name, 'delete', input.busySandboxNames);
     await this.assertNotBackgroundShellProtected(name, 'delete');
     this.invalidateEnsureFastPath(name);
-    await this.kubectl.run(['delete', this.resourceName(name), '--ignore-not-found=true'], {
-      timeoutMs: this.config.sandboxWaitTimeoutMs,
-    });
-    await this.networkPolicyManager.deleteForSandboxName(name);
-    await this.snatManager.deleteForSandboxName(name);
+    await this.deleteSandboxAndReclaimNetwork(name);
   }
 
   async prewarmStaleImagePausedSandboxes(input: {
@@ -607,11 +596,7 @@ export class SandboxManager {
             + `brokenForMs=${nowMs - brokenSinceMs}`,
           );
           this.invalidateEnsureFastPath(sandbox.name);
-          await this.kubectl.run(['delete', this.resourceName(sandbox.name), '--ignore-not-found=true'], {
-            timeoutMs: this.config.sandboxWaitTimeoutMs,
-          });
-          await this.networkPolicyManager.deleteForSandboxName(sandbox.name);
-          snatDeleted.push(...await this.snatManager.deleteForSandboxName(sandbox.name));
+          snatDeleted.push(...await this.deleteSandboxAndReclaimNetwork(sandbox.name));
           brokenRecycled.push(sandbox.name);
           continue;
         }
@@ -632,11 +617,7 @@ export class SandboxManager {
           continue;
         }
         this.invalidateEnsureFastPath(sandbox.name);
-        await this.kubectl.run(['delete', this.resourceName(sandbox.name), '--ignore-not-found=true'], {
-          timeoutMs: this.config.sandboxWaitTimeoutMs,
-        });
-        await this.networkPolicyManager.deleteForSandboxName(sandbox.name);
-        snatDeleted.push(...await this.snatManager.deleteForSandboxName(sandbox.name));
+        snatDeleted.push(...await this.deleteSandboxAndReclaimNetwork(sandbox.name));
         deleted.push(sandbox.name);
         continue;
       }
@@ -870,12 +851,7 @@ export class SandboxManager {
 
       this.logger.warn(`sandbox_stale_image_paused_retire name=${ref.name} old=${oldImage} new=${this.config.sandboxImage}`);
       this.invalidateEnsureFastPath(ref.name);
-      const result = await this.kubectl.run(['delete', this.resourceName(ref.name), '--ignore-not-found=true'], {
-        timeoutMs: this.config.sandboxWaitTimeoutMs,
-      });
-      if (result.exitCode !== 0) throw new Error(`delete stale paused sandbox 失败: ${result.stderr || result.stdout}`);
-      await this.networkPolicyManager.deleteForSandboxName(ref.name);
-      await this.snatManager.deleteForSandboxName(ref.name);
+      await this.deleteSandboxAndReclaimNetwork(ref.name);
       this.logger.info(`sandbox_stale_image_retired name=${ref.name}`);
       return 'retired';
     } finally {
@@ -1198,6 +1174,14 @@ export class SandboxManager {
         },
       },
     };
+  }
+
+  /** Sandbox 消失后才允许回收 TrafficPolicy/SNAT；任何 kubectl 异常都 fail-closed。 */
+  private async deleteSandboxAndReclaimNetwork(name: string): Promise<string[]> {
+    return await deleteSandboxAndReclaimNetwork({
+      name, resource: this.resourceName(name), timeoutMs: this.config.sandboxWaitTimeoutMs,
+      kubectl: this.kubectl, networkPolicyManager: this.networkPolicyManager, snatManager: this.snatManager,
+    });
   }
 
   private resourceName(name: string): string {

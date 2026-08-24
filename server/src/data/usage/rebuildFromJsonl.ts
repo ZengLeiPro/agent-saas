@@ -171,8 +171,8 @@ async function listJsonlFilesRecursive(dir: string): Promise<string[]> {
  *             向上找父 session 的 meta（{parentSessionId}.meta.json 与该子目录同级）
  * - 缺失：默认 'web'
  */
-async function inferChannel(jsonlPath: string): Promise<string> {
-  const direct = await readSessionMeta(jsonlPath).catch(() => null);
+async function inferChannel(jsonlPath: string, trustedRoot: string): Promise<string> {
+  const direct = await readSessionMeta(jsonlPath, trustedRoot).catch(() => null);
   if (direct?.channel) return direct.channel;
 
   // subagent 路径检测：.../<parent>/subagents/agent-xxx.jsonl
@@ -182,7 +182,7 @@ async function inferChannel(jsonlPath: string): Promise<string> {
     const parentSessionId = parentDir.split(/[/\\]/).pop() ?? '';
     if (parentSessionId) {
       const parentJsonl = join(dirname(parentDir), `${parentSessionId}.jsonl`);
-      const parentMeta = await readSessionMeta(parentJsonl).catch(() => null);
+      const parentMeta = await readSessionMeta(parentJsonl, trustedRoot).catch(() => null);
       if (parentMeta?.channel) return parentMeta.channel;
     }
   }
@@ -235,7 +235,7 @@ export async function rebuildTokenUsageFromJsonl(
     const tenantIdFromPath = parts[0];
     const fallbackUsername = parts[1]; // <tenantId>/<userId>/... — meta 缺失时以 userId 兜底
     if (parts.length < 3 || !fallbackUsername || !tenantIdFromPath) continue;
-    const meta = await readSessionMeta(file).catch(() => null);
+    const meta = await readSessionMeta(file, projectsRoot).catch(() => null);
     const username = meta?.username || fallbackUsername;
     const tenantId = meta?.tenantId || tenantIdFromPath;
     let userMap = acc.get(username);
@@ -252,7 +252,7 @@ export async function rebuildTokenUsageFromJsonl(
       log(`[token-usage] WARN username ${username} appears under multiple tenants: ${existing} vs ${tenantId} (keeping ${existing})`);
     }
     filesScanned++;
-    const channel = meta?.channel || await inferChannel(file);
+    const channel = meta?.channel || await inferChannel(file, projectsRoot);
     const r = await processJsonl(file, channel, userMap);
     linesProcessed += r.lines;
     if (r.mtimeMs > maxMtimeMs) maxMtimeMs = r.mtimeMs;

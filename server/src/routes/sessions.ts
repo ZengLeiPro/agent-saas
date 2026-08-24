@@ -8,7 +8,6 @@
 import { Router, type Request, type Response } from "express";
 import { createHash, randomUUID } from "node:crypto";
 import * as path from "node:path";
-import * as fs from "node:fs/promises";
 import {
   listSessions,
   getTranscriptPath,
@@ -26,6 +25,8 @@ import {
   isValidSessionId,
   forkSession,
   getAgentTranscriptDir,
+  statTrustedTranscript,
+  withTrustedTranscript,
   type SessionListItem,
 } from "../data/transcripts/index.js";
 import { readSessionMeta, writeSessionMeta, updateSessionMeta, type SessionMeta } from "../data/transcripts/meta.js";
@@ -80,7 +81,7 @@ import {
   projectSessionShareSnapshot,
   SessionShareProjectionError,
 } from "../data/sessionShares/publicProjection.js";
-import { resolveAuthorizedPath } from "../security/extraDirs.js";
+import { openTrustedFile } from "../security/trustedFile.js";
 import type {
   RuntimeSessionListQuery,
   RuntimeSessionListResult,
@@ -553,7 +554,7 @@ async function resolveSessionPathForRead(
 ): Promise<ResolvedSessionPath | null> {
   let transcriptPath = getTranscriptPath(userCwd, sessionId, owner);
   try {
-    await fs.access(transcriptPath);
+    await statTrustedTranscript(transcriptPath);
     return { transcriptPath, hasTranscript: true };
   } catch {
     const foundTranscript = await findTranscriptPathBySessionId(sessionId);
@@ -1154,36 +1155,37 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     const frozen: NonNullable<SessionShareSnapshot['allowedFiles']> = [];
     if (selectedFilePaths.length === 0) return frozen;
     let totalBytes = 0;
-    const realUserCwd = await fs.realpath(userCwd);
     for (const requestedPath of selectedFilePaths) {
       const normalizedPath = normalizeSessionShareFilePath(requestedPath);
       if (!normalizedPath || !candidateFilePaths.has(normalizedPath)) {
         throw new SessionShareProjectionError('所选文件不在本次会话的可分享清单中');
       }
-      const absolutePath = resolveAuthorizedPath(normalizedPath, userCwd, []);
-      if (!absolutePath) throw new SessionShareProjectionError('所选文件超出工作区边界');
-      const realAbsolutePath = await fs.realpath(absolutePath);
-      const realRelativePath = path.relative(realUserCwd, realAbsolutePath);
-      if (!realRelativePath || realRelativePath.startsWith(`..${path.sep}`) || path.isAbsolute(realRelativePath)) {
+      let trustedFile;
+      try {
+        trustedFile = await openTrustedFile(userCwd, normalizedPath);
+      } catch {
         throw new SessionShareProjectionError('所选文件超出工作区边界');
       }
-      const stat = await fs.lstat(realAbsolutePath);
-      if (!stat.isFile() || stat.size > MAX_SESSION_SHARE_FILE_BYTES) {
-        throw new SessionShareProjectionError('所选文件不是普通文件或超过 20MB');
+      try {
+        if (!trustedFile.stats.isFile() || trustedFile.stats.size > MAX_SESSION_SHARE_FILE_BYTES) {
+          throw new SessionShareProjectionError('所选文件不是普通文件或超过 20MB');
+        }
+        totalBytes += trustedFile.stats.size;
+        if (totalBytes > MAX_SESSION_SHARE_TOTAL_BYTES) {
+          throw new SessionShareProjectionError('本次分享文件总量超过 50MB');
+        }
+        const content = await trustedFile.handle.readFile();
+        frozen.push({
+          relativePath: normalizedPath,
+          fileName: path.basename(normalizedPath),
+          sha256: createHash('sha256').update(content).digest('hex'),
+          bytes: content.byteLength,
+          contentType: shareFileContentType(normalizedPath),
+          contentBase64: content.toString('base64'),
+        });
+      } finally {
+        await trustedFile.handle.close();
       }
-      totalBytes += stat.size;
-      if (totalBytes > MAX_SESSION_SHARE_TOTAL_BYTES) {
-        throw new SessionShareProjectionError('本次分享文件总量超过 50MB');
-      }
-      const content = await fs.readFile(realAbsolutePath);
-      frozen.push({
-        relativePath: normalizedPath,
-        fileName: path.basename(normalizedPath),
-        sha256: createHash('sha256').update(content).digest('hex'),
-        bytes: content.byteLength,
-        contentType: shareFileContentType(normalizedPath),
-        contentBase64: content.toString('base64'),
-      });
     }
     return frozen;
   }
@@ -1356,7 +1358,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             const transcriptPath = getTranscriptPath(userCwd, record.sessionId, transcriptOwner);
             let hasTranscript = false;
             try {
-              hasTranscript = (await fs.stat(transcriptPath)).size > 0;
+              hasTranscript = (await statTrustedTranscript(transcriptPath)).size > 0;
             } catch {
               // enqueue-only 会话尚未生成 transcript，后续从 runtime events 补 prompt。
             }
@@ -2583,10 +2585,8 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           return;
         }
 
-        // 从 transcript 提取前两轮用户消息和助手回复
-        const { userMessages, assistantReplies } =
-          await extractTitleContext(transcriptPath);
-
+        // 从已绑定 inode 的 /proc 路径提取上下文，避免校验后按原字符串路径重开。
+        const { userMessages, assistantReplies } = await withTrustedTranscript(transcriptPath, transcript => extractTitleContext(transcript.fdPath));
         if (userMessages.length === 0) {
           res
             .status(400)
@@ -2711,7 +2711,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         // 定位源 transcript
         let transcriptPath = getTranscriptPath(userCwd, sessionId, reqTranscriptOwner(req.user));
         try {
-          await fs.access(transcriptPath);
+          await statTrustedTranscript(transcriptPath);
         } catch {
           const found = await findTranscriptPathBySessionId(sessionId);
           if (!found) {
@@ -3245,7 +3245,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       let transcriptPath = getTranscriptPath(delUserCwd, sessionId, reqTranscriptOwner(req.user));
       // 先检查 .jsonl 是否真的在当前用户目录下
       try {
-        await fs.access(transcriptPath);
+        await statTrustedTranscript(transcriptPath);
       } catch {
         // .jsonl 不在当前用户目录，全局扫描
         const found = await findTranscriptPathBySessionId(sessionId);
@@ -3256,7 +3256,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       // transcript 存在但缺少 meta：补建 meta 以支持软删除
       if (!meta) {
         try {
-          await fs.access(transcriptPath);
+          await statTrustedTranscript(transcriptPath);
         } catch {
           // transcript 也不存在，真正的 404
           res.status(404).json({ error: "Session not found" });

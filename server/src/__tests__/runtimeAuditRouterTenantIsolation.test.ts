@@ -95,12 +95,12 @@ describe('Runtime Audit 路由组织隔离', () => {
   afterEach(async () => { await h.close(); });
 
   describe('GET /:sessionId', () => {
-    it('平台 admin 不传 tenantId → 透传 undefined（跨组织）', async () => {
+    it('平台 admin 不传 tenantId → 400，且不触发查询', async () => {
       h.setCaller(PLATFORM_ADMIN);
       const res = await h.request(`/api/admin/runtime/audit/${SESSION}`);
-      expect(res.status).toBe(200);
-      expect(h.captured.listBySessionId[0]?.options?.tenantId).toBeUndefined();
-      expect(h.captured.summarize[0]?.options?.tenantId).toBeUndefined();
+      expect(res.status).toBe(400);
+      expect(h.captured.listBySessionId).toHaveLength(0);
+      expect(h.captured.summarize).toHaveLength(0);
     });
 
     it('平台 admin 显式 ?tenantId=wain → 透传 wain', async () => {
@@ -119,10 +119,11 @@ describe('Runtime Audit 路由组织隔离', () => {
       expect(h.captured.summarize[0]?.options?.tenantId).toBe('wain');
     });
 
-    it('组织 admin (wain) ?tenantId=kaiyan → 403', async () => {
+    it('组织 admin (wain) ?tenantId=kaiyan → 404，且不触发查询', async () => {
       h.setCaller(WAIN_ADMIN);
       const res = await h.request(`/api/admin/runtime/audit/${SESSION}?tenantId=kaiyan`);
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
+      expect(h.captured.listBySessionId).toHaveLength(0);
     });
 
     it('tenantId 非法格式 (大写) → 400', async () => {
@@ -133,12 +134,12 @@ describe('Runtime Audit 路由组织隔离', () => {
   });
 
   describe('GET /runs/:runId (cross-session)', () => {
-    it('平台 admin 不传 tenantId → 透传 undefined', async () => {
+    it('平台 admin 不传 tenantId → 400，且不触发查询', async () => {
       h.setCaller(PLATFORM_ADMIN);
       const res = await h.request(`/api/admin/runtime/audit/runs/${RUN_ID}`);
-      expect(res.status).toBe(200);
-      expect(h.captured.listByRunIdGlobal[0]?.options?.tenantId).toBeUndefined();
-      expect(h.captured.summarizeByRunIdGlobal[0]?.options?.tenantId).toBeUndefined();
+      expect(res.status).toBe(400);
+      expect(h.captured.listByRunIdGlobal).toHaveLength(0);
+      expect(h.captured.summarizeByRunIdGlobal).toHaveLength(0);
     });
 
     it('组织 admin (wain) → 自动注入 wain（限本组织视野）', async () => {
@@ -149,10 +150,11 @@ describe('Runtime Audit 路由组织隔离', () => {
       expect(h.captured.summarizeByRunIdGlobal[0]?.options?.tenantId).toBe('wain');
     });
 
-    it('组织 admin (wain) ?tenantId=kaiyan → 403', async () => {
+    it('组织 admin (wain) ?tenantId=kaiyan → 404，且不触发查询', async () => {
       h.setCaller(WAIN_ADMIN);
       const res = await h.request(`/api/admin/runtime/audit/runs/${RUN_ID}?tenantId=kaiyan`);
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
+      expect(h.captured.listByRunIdGlobal).toHaveLength(0);
     });
 
     it('平台 admin 显式 ?tenantId=wain → 透传 wain', async () => {

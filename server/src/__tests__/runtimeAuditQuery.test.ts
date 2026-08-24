@@ -8,6 +8,7 @@ import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStor
 import type { PlatformEvent } from '../runtime/types.js';
 
 describe('EventStoreRuntimeAuditQuery', () => {
+  const tenantId = 'kaiyan';
   const cleanupDirs = new Set<string>();
 
   afterEach(async () => {
@@ -93,7 +94,7 @@ describe('EventStoreRuntimeAuditQuery', () => {
   it('listBySessionId 返回顶层化字段，跳过非 tool_audit 事件', async () => {
     const { transcriptPath, sessionId } = await seedSession();
     const query = new EventStoreRuntimeAuditQuery(async () => transcriptPath);
-    const entries = await query.listBySessionId(sessionId);
+    const entries = await query.listBySessionId(sessionId, { tenantId });
     expect(entries).toHaveLength(3);
     expect(entries.map((e) => [e.toolName, e.runId, e.authorizationSource, e.executionTarget, e.status])).toEqual([
       ['MemorySearch', 'run-1', 'policy_auto', 'server-local', 'success'],
@@ -112,11 +113,11 @@ describe('EventStoreRuntimeAuditQuery', () => {
   it('listByRunId 在 session 内按 runId 过滤', async () => {
     const { transcriptPath, sessionId } = await seedSession();
     const query = new EventStoreRuntimeAuditQuery(async () => transcriptPath);
-    const run1 = await query.listByRunId(sessionId, 'run-1');
+    const run1 = await query.listByRunId(sessionId, 'run-1', { tenantId });
     expect(run1.map((e) => e.toolName)).toEqual(['MemorySearch', 'Write']);
-    const run2 = await query.listByRunId(sessionId, 'run-2');
+    const run2 = await query.listByRunId(sessionId, 'run-2', { tenantId });
     expect(run2.map((e) => e.toolName)).toEqual(['Read']);
-    const missing = await query.listByRunId(sessionId, 'run-nope');
+    const missing = await query.listByRunId(sessionId, 'run-nope', { tenantId });
     expect(missing).toEqual([]);
   });
 
@@ -147,13 +148,13 @@ describe('EventStoreRuntimeAuditQuery', () => {
     await writeFile(eventLogPath, events.map((e) => JSON.stringify(e)).join('\n') + '\n');
 
     const query = new EventStoreRuntimeAuditQuery(async () => transcriptPath);
-    const sinceOnly = await query.listBySessionId('session-P', { since: new Date(base + 2000).toISOString() });
+    const sinceOnly = await query.listBySessionId('session-P', { tenantId, since: new Date(base + 2000).toISOString() });
     expect(sinceOnly.map((e) => e.toolCallId)).toEqual(['call-2', 'call-3', 'call-4']);
-    const limited = await query.listBySessionId('session-P', { limit: 2 });
+    const limited = await query.listBySessionId('session-P', { tenantId, limit: 2 });
     expect(limited.map((e) => e.toolCallId)).toEqual(['call-0', 'call-1']);
-    const offset = await query.listBySessionId('session-P', { offset: 3 });
+    const offset = await query.listBySessionId('session-P', { tenantId, offset: 3 });
     expect(offset.map((e) => e.toolCallId)).toEqual(['call-3', 'call-4']);
-    const combined = await query.listBySessionId('session-P', { offset: 1, limit: 2, since: new Date(base + 1000).toISOString() });
+    const combined = await query.listBySessionId('session-P', { tenantId, offset: 1, limit: 2, since: new Date(base + 1000).toISOString() });
     // since 后剩 call-1..call-4；offset=1 → call-2..call-4；limit=2 → call-2/call-3
     expect(combined.map((e) => e.toolCallId)).toEqual(['call-2', 'call-3']);
   });
@@ -161,7 +162,7 @@ describe('EventStoreRuntimeAuditQuery', () => {
   it('summarize 给出 executionTarget / status / authorizationSource 分布', async () => {
     const { transcriptPath, sessionId } = await seedSession();
     const query = new EventStoreRuntimeAuditQuery(async () => transcriptPath);
-    const summary = await query.summarize(sessionId);
+    const summary = await query.summarize(sessionId, { tenantId });
     expect(summary).toEqual({
       total: 3,
       filteredTotal: 3,
@@ -171,17 +172,47 @@ describe('EventStoreRuntimeAuditQuery', () => {
     });
   });
 
+  it('同 sessionId/runId 双租户碰撞时 resolver 与事件过滤均按 tenant fail-closed', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'audit-query-collision-'));
+    cleanupDirs.add(cwd);
+    const sessionId = 'session-collision';
+    const paths = new Map<string, string>();
+    for (const [tenant, call] of [['kaiyan', 'call-a'], ['wain', 'call-b']] as const) {
+      const transcriptPath = join(cwd, `${tenant}.jsonl`);
+      paths.set(tenant, transcriptPath);
+      const store = new FileEventStore(getRuntimeEventLogPath(transcriptPath));
+      await store.append({
+        type: 'tool_audit', tenantId: tenant, sessionId, runId: 'run-collision',
+        toolCallId: call, toolId: 'Read', toolName: 'Read', risk: 'safe',
+        authorization: { approved: true, source: 'policy_auto' },
+        executionTarget: 'server-local', status: 'success', durationMs: 1,
+      });
+    }
+    const query = new EventStoreRuntimeAuditQuery(async (tenant) => paths.get(tenant) ?? null);
+
+    expect((await query.listByRunId(sessionId, 'run-collision', { tenantId: 'kaiyan' })).map(e => e.toolCallId))
+      .toEqual(['call-a']);
+    expect((await query.listBySessionId(sessionId, { tenantId: 'wain' })).map(e => e.toolCallId))
+      .toEqual(['call-b']);
+    expect(await query.listBySessionId(sessionId, { tenantId: 'other' })).toEqual([]);
+  });
+
+  it('缺失 tenantId 的直接调用运行时拒绝（fail-closed）', async () => {
+    const query = new EventStoreRuntimeAuditQuery(async () => null);
+    await expect(query.listBySessionId('session-X', {} as never)).rejects.toThrow('requires tenantId');
+  });
+
   it('transcript 不存在或没有 runtime-events 文件时返回空数组，不抛错', async () => {
     const missingResolver = new EventStoreRuntimeAuditQuery(async () => null);
-    expect(await missingResolver.listBySessionId('session-X')).toEqual([]);
-    expect(await missingResolver.listByRunId('session-X', 'run-X')).toEqual([]);
+    expect(await missingResolver.listBySessionId('session-X', { tenantId })).toEqual([]);
+    expect(await missingResolver.listByRunId('session-X', 'run-X', { tenantId })).toEqual([]);
 
     const cwd = await mkdtemp(join(tmpdir(), 'audit-query-empty-'));
     cleanupDirs.add(cwd);
     const transcriptPath = join(cwd, 'absent.jsonl');
     const query = new EventStoreRuntimeAuditQuery(async () => transcriptPath);
-    expect(await query.listBySessionId('absent')).toEqual([]);
-    expect(await query.summarize('absent')).toEqual({
+    expect(await query.listBySessionId('absent', { tenantId })).toEqual([]);
+    expect(await query.summarize('absent', { tenantId })).toEqual({
       total: 0,
       filteredTotal: 0,
       byExecutionTarget: {},

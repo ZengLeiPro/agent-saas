@@ -15,6 +15,11 @@ import type {
 
 // ── 上行消息（客户端 → 服务端）──────────────────────────────
 
+export interface WsAuthMessage {
+    action: 'auth';
+    token: string;
+}
+
 /**
  * 聊天消息拒绝原因码
  * 客户端据此展示友好文案并决定是否允许重试
@@ -133,6 +138,7 @@ export interface WsSyncMessage {
 }
 
 export type WsInboundMessage =
+    | WsAuthMessage
     | WsChatMessage
     | WsRespondMessage
     | WsAbortMessage
@@ -168,6 +174,7 @@ export interface WsAskUserQuestion {
 }
 
 export type WsDownstreamEvent =
+    | { type: 'auth_ok' }
     | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string; queued?: boolean; deliveryMode?: ChatDeliveryMode; targetRunId?: string; sessionId?: string; queuePosition?: number }
     | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number; sessionId?: string; runId?: string; status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; deliveryMode?: ChatDeliveryMode; queuePosition?: number }
     | { type: 'message_queued'; sessionId: string; runId: string; clientMsgId: string; deliveryMode: ChatDeliveryMode; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number; queuePosition?: number; targetRunId?: string }

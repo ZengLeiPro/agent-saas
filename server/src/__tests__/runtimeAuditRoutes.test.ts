@@ -35,19 +35,19 @@ const SESSION_OK = '11111111-2222-4333-8444-555555555555';
 const SESSION_OTHER = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 
 interface StartOptions {
-  user?: { sub: string; role: 'admin' | 'user' };
+  user?: { sub: string; username: string; role: 'admin' | 'user'; tenantId: string };
   /** 显式覆盖 auditQuery，用于 cross-session mock */
   query?: RuntimeAuditQuery;
 }
 
 async function startServer(
-  resolver: (sessionId: string) => Promise<string | null>,
+  resolver: (tenantId: string, sessionId: string) => Promise<string | null>,
   options: StartOptions = {},
 ): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
   app.use((req, _res, next) => {
     (req as unknown as { user: { sub: string; role: 'admin' | 'user' } }).user =
-      options.user ?? { sub: 'admin', role: 'admin' };
+      options.user ?? { sub: 'admin', username: 'admin', role: 'admin', tenantId: 'kaiyan' };
     next();
   });
   const auditQuery = options.query ?? new EventStoreRuntimeAuditQuery(resolver);
@@ -141,7 +141,8 @@ describe('/api/admin/runtime/audit/:sessionId', () => {
   });
 
   async function startWithSession() {
-    const resolver = async (sid: string) => (sid === SESSION_OK ? transcriptPath : null);
+    const resolver = async (tenantId: string, sid: string) =>
+      (tenantId === 'kaiyan' && sid === SESSION_OK ? transcriptPath : null);
     return await startServer(resolver);
   }
 
@@ -255,8 +256,9 @@ describe('/api/admin/runtime/audit/:sessionId', () => {
   });
 
   it('非 admin → 403', async () => {
-    const resolver = async (sid: string) => (sid === SESSION_OK ? transcriptPath : null);
-    ({ server, baseUrl } = await startServer(resolver, { user: { sub: 'user', role: 'user' } }));
+    const resolver = async (tenantId: string, sid: string) =>
+      (tenantId === 'kaiyan' && sid === SESSION_OK ? transcriptPath : null);
+    ({ server, baseUrl } = await startServer(resolver, { user: { sub: 'user', username: 'user', role: 'user', tenantId: 'kaiyan' } }));
     const res = await fetch(`${baseUrl}/api/admin/runtime/audit/${SESSION_OK}`);
     expect(res.status).toBe(403);
   });
@@ -375,7 +377,7 @@ describe('/api/admin/runtime/audit/:sessionId', () => {
 
     it('cross-session：非 admin → 403', async () => {
       ({ server, baseUrl } = await startServer(async () => null, {
-        user: { sub: 'user', role: 'user' },
+        user: { sub: 'user', username: 'user', role: 'user', tenantId: 'kaiyan' },
       }));
       const res = await fetch(`${baseUrl}/api/admin/runtime/audit/runs/run-X`);
       expect(res.status).toBe(403);

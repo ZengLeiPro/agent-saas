@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, realpath, stat, unlink, writeFile } from 'node:fs/promises';
-import { basename, extname, isAbsolute, join, posix } from 'node:path';
+import { basename, extname, isAbsolute, posix } from 'node:path';
 import { z } from 'zod';
 
 import type { BillingService } from '../data/billing/service.js';
@@ -13,7 +12,7 @@ import {
   type SttResult,
 } from '../integrations/stt/sttClient.js';
 import type { EventAppendContext, PlatformEventInput } from '../runtime/types.js';
-import { isPathWithinDirectory, resolveAuthorizedPath } from '../security/extraDirs.js';
+import { openTrustedFile, removeTrustedPath, writeTrustedFile } from '../security/trustedFile.js';
 import { loadToolDescription } from './tools/descriptionLoader.js';
 import type {
   AuthorizedToolCall,
@@ -170,18 +169,23 @@ export class AudioTranscribeToolProvider implements ToolProvider {
     }
 
     // 失败（包括取消）不会写计费事件，也不会走直接扣费 fallback。
-    const transcribed = await this.transcribe(
-      resolvedInput.value,
-      this.options.config.sttConfig,
-      {
-        speaker: input.speaker,
-        timestamps: input.timestamps,
-        signal: context.signal,
-        onCleanupError: (error) => this.options.logger?.warn?.(
-          `AudioTranscribe OSS cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
-        ),
-      },
-    );
+    let transcribed: SttResult;
+    try {
+      transcribed = await this.transcribe(
+        resolvedInput.value,
+        this.options.config.sttConfig,
+        {
+          speaker: input.speaker,
+          timestamps: input.timestamps,
+          signal: context.signal,
+          onCleanupError: (error) => this.options.logger?.warn?.(
+            `AudioTranscribe OSS cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        },
+      );
+    } finally {
+      await resolvedInput.close?.();
+    }
 
     throwIfAborted(context.signal);
     const persisted = await this.persistTranscript(
@@ -194,7 +198,7 @@ export class AudioTranscribeToolProvider implements ToolProvider {
       throwIfAborted(context.signal);
     } catch (error) {
       // 取消恰好发生在落盘期间时撤回刚写入的结果，且不进入计费阶段。
-      await unlink(persisted.absolutePath).catch(() => undefined);
+      await removeTrustedPath(context.workspace.root, persisted.outputPath).catch(() => undefined);
       throw error;
     }
 
@@ -263,64 +267,47 @@ export class AudioTranscribeToolProvider implements ToolProvider {
   private async resolveInput(
     input: string,
     workspaceRoot: string,
-  ): Promise<{ value: string; url?: URL }> {
+  ): Promise<{ value: string; url?: URL; close?: () => Promise<void> }> {
     const url = parseHttpUrl(input);
     if (url) return { value: url.toString(), url };
-    if (isAbsolute(input) || /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(input)) {
+    if (
+      isAbsolute(input)
+      || /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(input)
+      || input.split(/[\\/]+/).includes('..')
+    ) {
       throw new Error(`转写输入路径越界：${input}（只允许工作区内相对路径或 http/https URL）`);
     }
 
-    const resolved = resolveAuthorizedPath(input, workspaceRoot, []);
-    if (!resolved) {
-      throw new Error(`转写输入路径越界：${input}（只允许工作区内相对路径）`);
-    }
-
-    let realRoot: string;
-    let realInput: string;
+    let opened;
     try {
-      [realRoot, realInput] = await Promise.all([realpath(workspaceRoot), realpath(resolved)]);
+      opened = await openTrustedFile(workspaceRoot, input);
     } catch {
-      throw new Error(`转写输入文件不存在：${input}`);
+      throw new Error(`转写输入路径越界：symlink 不允许且可能指向工作区外，或文件不存在：${input}`);
     }
-    if (realInput !== realRoot && !isPathWithinDirectory(realInput, realRoot)) {
-      throw new Error(`转写输入路径越界（symlink 指向工作区外）：${input}`);
-    }
-    const fileStat = await stat(realInput);
-    if (!fileStat.isFile()) throw new Error(`转写输入不是文件：${input}`);
-    return { value: realInput };
+    return {
+      value: opened.fdPath,
+      close: async () => { await opened.handle.close(); },
+    };
   }
 
   private async persistTranscript(
     text: string,
     originalStem: string,
     workspaceRoot: string,
-  ): Promise<{ outputPath: string; absolutePath: string }> {
-    const dateDir = dateDirectory();
-    const relativeDir = posix.join('assets', dateDir);
-    const assetsDir = join(workspaceRoot, 'assets');
-    const absoluteDir = join(assetsDir, dateDir);
-    const realRoot = await realpath(workspaceRoot);
-
-    // 分级创建并逐级 realpath 校验，避免预置 assets/日期目录 symlink 把结果写出工作区。
-    await mkdir(assetsDir, { recursive: true });
-    const realAssetsDir = await realpath(assetsDir);
-    if (realAssetsDir !== realRoot && !isPathWithinDirectory(realAssetsDir, realRoot)) {
-      throw new Error('转写输出目录越界：assets 指向工作区外');
-    }
-    try {
-      await mkdir(absoluteDir);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    }
-    const realOutputDir = await realpath(absoluteDir);
-    if (realOutputDir !== realRoot && !isPathWithinDirectory(realOutputDir, realRoot)) {
-      throw new Error(`转写输出目录越界：assets/${dateDir} 指向工作区外`);
-    }
-
+  ): Promise<{ outputPath: string }> {
+    const relativeDir = posix.join('assets', dateDirectory());
     const fileName = `${originalStem}-转写-${randomUUID().slice(0, 8)}.txt`;
-    const absolutePath = join(realOutputDir, fileName);
-    await writeFile(absolutePath, text, { encoding: 'utf8', flag: 'wx' });
-    return { outputPath: posix.join(relativeDir, fileName), absolutePath };
+    const outputPath = posix.join(relativeDir, fileName);
+    try {
+      await writeTrustedFile(workspaceRoot, outputPath, text, {
+        encoding: 'utf8',
+        createParents: true,
+        exclusive: true,
+      });
+    } catch (error) {
+      throw new Error(`转写输出目录越界或不可写：${error instanceof Error ? error.message : String(error)}`);
+    }
+    return { outputPath };
   }
 
   private async chargeDirectly(

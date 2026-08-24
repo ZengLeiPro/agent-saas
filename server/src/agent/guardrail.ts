@@ -8,9 +8,10 @@
  * 门禁是产品体验增强而非安全边界，不允许上游抖动打断正常问答。
  */
 
-import { open } from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 
 import OpenAI from 'openai';
+import { openTrustedTranscript } from '../data/transcripts/trusted.js';
 import type { SdkResultModelUsage } from './types.js';
 import { createLogger } from '../utils/logger.js';
 
@@ -71,30 +72,31 @@ export const GUARDRAIL_SYSTEM_PROMPT = '你是一个话题范围审查器。你�
  * 文件缺失/解析失败一律返回空数组（门禁降级为无上下文判定，不抛错）。
  */
 export async function extractRecentUserMessages(
-  transcriptPath: string,
+  transcript: string | FileHandle,
   messageCount = 2,
 ): Promise<string[]> {
   const TAIL_BYTES = 64 * 1024;
   let content: string;
+  let ownedHandle: FileHandle | undefined;
   try {
-    const handle = await open(transcriptPath, 'r');
-    try {
-      const { size } = await handle.stat();
-      if (size === 0) return [];
-      const readSize = Math.min(size, TAIL_BYTES);
-      const buffer = Buffer.alloc(readSize);
-      await handle.read(buffer, 0, readSize, size - readSize);
-      content = buffer.toString('utf-8');
-      // 尾部截断读时第一行可能是半截 JSON，直接丢弃
-      if (size > readSize) {
-        const firstNewline = content.indexOf('\n');
-        content = firstNewline >= 0 ? content.slice(firstNewline + 1) : '';
-      }
-    } finally {
-      await handle.close();
+    const handle = typeof transcript === 'string'
+      ? (ownedHandle = (await openTrustedTranscript(transcript)).handle)
+      : transcript;
+    const { size } = await handle.stat();
+    if (size === 0) return [];
+    const readSize = Math.min(size, TAIL_BYTES);
+    const buffer = Buffer.alloc(readSize);
+    await handle.read(buffer, 0, readSize, size - readSize);
+    content = buffer.toString('utf-8');
+    // 尾部截断读时第一行可能是半截 JSON，直接丢弃
+    if (size > readSize) {
+      const firstNewline = content.indexOf('\n');
+      content = firstNewline >= 0 ? content.slice(firstNewline + 1) : '';
     }
   } catch {
     return [];
+  } finally {
+    await ownedHandle?.close().catch(() => undefined);
   }
 
   const reversed: string[] = [];

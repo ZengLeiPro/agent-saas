@@ -36,19 +36,22 @@ export interface RuntimeAuditRouterOptions {
 }
 
 /**
- * PR 10：解析 caller 应看到哪个 tenantId 切片。
- *   - 未认证 → 401
- *   - 平台 admin：query.tenantId 透传；未传 → undefined（跨组织）
- *   - 组织 admin：强制 caller.tenantId；query 指定别的 → 403
+ * 解析唯一允许的 tenant 切片。平台管理员也没有无租户全局路径；组织管理员
+ * 指定外租户时返回 404，避免暴露租户是否存在。
  */
 function resolveAuditTenant(
   req: Request,
   queryTenantId: string | undefined,
-): { ok: true; tenantId: string | undefined } | { ok: false; status: 401 | 403; error: string } {
+): { ok: true; tenantId: string } | { ok: false; status: 400 | 401 | 404; error: string } {
   if (!req.user) return { ok: false, status: 401, error: 'Authentication required' };
-  if (isPlatformAdmin(req.user)) return { ok: true, tenantId: queryTenantId };
+  if (isPlatformAdmin(req.user)) {
+    if (!queryTenantId) {
+      return { ok: false, status: 400, error: 'tenantId is required' };
+    }
+    return { ok: true, tenantId: queryTenantId };
+  }
   if (queryTenantId !== undefined && queryTenantId !== req.user.tenantId) {
-    return { ok: false, status: 403, error: '跨组织访问被拒绝' };
+    return { ok: false, status: 404, error: 'Not found' };
   }
   return { ok: true, tenantId: req.user.tenantId };
 }
@@ -84,15 +87,6 @@ export function createRuntimeAuditRouter(opts: RuntimeAuditRouterOptions): Route
       return;
     }
 
-    // 仅 DuckDB backend 实现这两个 optional 接口
-    if (typeof auditQuery.listByRunIdGlobal !== 'function'
-        || typeof auditQuery.summarizeByRunIdGlobal !== 'function') {
-      res.status(503).json({
-        error: 'Cross-session audit search requires audit.projection=duckdb',
-      });
-      return;
-    }
-
     const parsed = crossSessionQuerySchema.safeParse(req.query);
     if (!parsed.success) {
       res.status(400).json({ error: 'Invalid query', issues: parsed.error.issues });
@@ -103,32 +97,40 @@ export function createRuntimeAuditRouter(opts: RuntimeAuditRouterOptions): Route
       res.status(400).json({ error: 'Invalid since (expect ISO timestamp)' });
       return;
     }
-    // PR 10：tenantId 解析 — 组织 admin 强制本组织；平台 admin 可任意。
     const tenant = resolveAuditTenant(req, tenantId);
     if (!tenant.ok) {
       res.status(tenant.status).json({ error: tenant.error });
       return;
     }
 
+    // tenant 边界校验优先于 backend capability，避免任何无 tenantId 的路径。
+    if (typeof auditQuery.listByRunIdGlobal !== 'function'
+        || typeof auditQuery.summarizeByRunIdGlobal !== 'function') {
+      res.status(503).json({
+        error: 'Cross-session audit search requires audit.projection=duckdb',
+      });
+      return;
+    }
+
     const queryOpts = {
+      tenantId: tenant.tenantId,
       ...(limit !== undefined ? { limit } : { limit: 100 }),
       ...(offset !== undefined ? { offset } : {}),
       ...(since !== undefined ? { since } : {}),
-      ...(tenant.tenantId !== undefined ? { tenantId: tenant.tenantId } : {}),
     };
 
     try {
       const [entries, summary] = await Promise.all([
         auditQuery.listByRunIdGlobal(runId, queryOpts),
         auditQuery.summarizeByRunIdGlobal(runId, {
+          tenantId: tenant.tenantId,
           ...(since !== undefined ? { since } : {}),
-          ...(tenant.tenantId !== undefined ? { tenantId: tenant.tenantId } : {}),
         }),
       ]);
       res.json({
         runId,
         ...(since !== undefined ? { since } : {}),
-        tenantId: tenant.tenantId ?? null,
+        tenantId: tenant.tenantId,
         limit: queryOpts.limit,
         offset: queryOpts.offset ?? 0,
         entries,
@@ -165,10 +167,10 @@ export function createRuntimeAuditRouter(opts: RuntimeAuditRouterOptions): Route
     }
 
     const queryOpts = {
+      tenantId: tenant.tenantId,
       ...(limit !== undefined ? { limit } : { limit: 100 }),
       ...(offset !== undefined ? { offset } : {}),
       ...(since !== undefined ? { since } : {}),
-      ...(tenant.tenantId !== undefined ? { tenantId: tenant.tenantId } : {}),
     };
 
     try {
@@ -177,8 +179,8 @@ export function createRuntimeAuditRouter(opts: RuntimeAuditRouterOptions): Route
           ? auditQuery.listByRunId(sessionId, runId, queryOpts)
           : auditQuery.listBySessionId(sessionId, queryOpts),
         auditQuery.summarize(sessionId, {
+          tenantId: tenant.tenantId,
           ...(since !== undefined ? { since } : {}),
-          ...(tenant.tenantId !== undefined ? { tenantId: tenant.tenantId } : {}),
         }),
       ]);
 
@@ -186,7 +188,7 @@ export function createRuntimeAuditRouter(opts: RuntimeAuditRouterOptions): Route
         sessionId,
         runId: runId ?? null,
         ...(since !== undefined ? { since } : {}),
-        tenantId: tenant.tenantId ?? null,
+        tenantId: tenant.tenantId,
         limit: queryOpts.limit,
         offset: queryOpts.offset ?? 0,
         entries,

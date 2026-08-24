@@ -1,7 +1,38 @@
-import { mkdtempSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const trustedFileHooks = vi.hoisted(() => ({
+  afterOpen: undefined as undefined | (() => void | Promise<void>),
+}));
+
+vi.mock('../security/trustedFile.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../security/trustedFile.js')>();
+  return {
+    ...actual,
+    openTrustedFile: async (...args: Parameters<typeof actual.openTrustedFile>) => {
+      const opened = await actual.openTrustedFile(...args);
+      try {
+        await trustedFileHooks.afterOpen?.();
+        return opened;
+      } catch (error) {
+        await opened.handle.close();
+        throw error;
+      }
+    },
+  };
+});
 
 import {
   ImageGenToolProvider,
@@ -101,8 +132,10 @@ describe('ImageGenToolProvider', () => {
   });
 
   afterEach(() => {
+    trustedFileHooks.afterOpen = undefined;
     configureImageGenPricing(undefined);
     vi.restoreAllMocks();
+    rmSync(workspaceRoot, { recursive: true, force: true });
   });
 
   it('exposes the descriptor with server-generated output path guarantees', () => {
@@ -423,6 +456,76 @@ describe('ImageGenToolProvider', () => {
       makeContext(workspaceRoot),
     );
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a reference image bound to its trusted inode across an ancestor rename swap', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'image-gen-ref-swap-'));
+    try {
+      mkdirSync(join(workspaceRoot, 'uploads'), { recursive: true });
+      writeFileSync(join(workspaceRoot, 'uploads', 'ref.png'), Buffer.from('trusted-ref'));
+      writeFileSync(join(outside, 'ref.png'), Buffer.from('outside-ref'));
+      const afterOpen = vi.fn(() => {
+        renameSync(join(workspaceRoot, 'uploads'), join(workspaceRoot, 'uploads-pinned'));
+        symlinkSync(outside, join(workspaceRoot, 'uploads'));
+      });
+      trustedFileHooks.afterOpen = afterOpen;
+      const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body.image).toEqual([
+          `data:image/png;base64,${Buffer.from('trusted-ref').toString('base64')}`,
+        ]);
+        return okImageResponse();
+      }) as unknown as typeof fetch;
+      const { provider } = makeProvider({ fetchImpl });
+
+      await provider.invoke(
+        invokeInput({ prompt: '参考图改造', model: 'seedream', refImages: ['uploads/ref.png'] }),
+        makeContext(workspaceRoot),
+      );
+
+      expect(afterOpen).toHaveBeenCalledOnce();
+      expect(readFileSync(join(workspaceRoot, 'uploads', 'ref.png'), 'utf8')).toBe('outside-ref');
+    } finally {
+      trustedFileHooks.afterOpen = undefined;
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects reference images through ancestor symlinks and absolute cross-root paths', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'image-gen-ref-outside-'));
+    try {
+      writeFileSync(join(outside, 'ref.png'), Buffer.from('outside-ref'));
+      symlinkSync(outside, join(workspaceRoot, 'linked'));
+      const { provider, fetchImpl } = makeProvider();
+
+      await expect(provider.invoke(
+        invokeInput({ prompt: 'edit', refImages: ['linked/ref.png'] }),
+        makeContext(workspaceRoot),
+      )).rejects.toThrow(/越界|符号链接/);
+      await expect(provider.invoke(
+        invokeInput({ prompt: 'edit', refImages: [join(outside, 'ref.png')] }),
+        makeContext(workspaceRoot),
+      )).rejects.toThrow(/越界/);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses generated output when assets is an ancestor symlink', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'image-gen-output-outside-'));
+    try {
+      symlinkSync(outside, join(workspaceRoot, 'assets'));
+      const { provider } = makeProvider();
+
+      await expect(provider.invoke(
+        invokeInput({ prompt: 'do not escape' }),
+        makeContext(workspaceRoot),
+      )).rejects.toThrow(/Symbolic links|trusted root/);
+      expect(existsSync(join(outside, 'generated'))).toBe(false);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it('uses the generated image magic bytes for the output extension', async () => {

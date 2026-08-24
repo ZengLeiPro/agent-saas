@@ -1,5 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +8,7 @@ import {
   generateTitleWithFallback,
   shouldGenerateTitleFromFirstMessage,
 } from '../agent/titleGenerator.js';
+import { AGENT_LEGACY_TRANSCRIPTS_ROOT } from '../data/transcripts/projectKey.js';
 
 // 用 mock 隔离上游：直接拦截 OpenAI client，不真打网。
 vi.mock('openai', () => {
@@ -59,8 +59,13 @@ function resetResponses() {
  * 写一个 transcript jsonl 临时文件，逐行 JSON.stringify。
  * transcript 的真实格式与 Claude Code SDK 一致：`{type:'user'|'assistant', message:{content}}`.
  */
+async function makeTranscriptDir(): Promise<string> {
+  await mkdir(AGENT_LEGACY_TRANSCRIPTS_ROOT, { recursive: true });
+  return mkdtemp(join(AGENT_LEGACY_TRANSCRIPTS_ROOT, 'title-ctx-'));
+}
+
 async function writeTranscript(lines: Array<Record<string, unknown>>): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'title-ctx-'));
+  const dir = await makeTranscriptDir();
   const path = join(dir, 'transcript.jsonl');
   await writeFile(path, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
   return path;
@@ -174,7 +179,7 @@ describe('extractTitleContext', () => {
   });
 
   it('跳过无法 JSON.parse 的行 + 空行', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'title-ctx-'));
+    const dir = await makeTranscriptDir();
     const path = join(dir, 'transcript.jsonl');
     created.push(dir);
     await writeFile(
@@ -194,7 +199,7 @@ describe('extractTitleContext', () => {
   });
 
   it('空 transcript 返回空数组', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'title-ctx-'));
+    const dir = await makeTranscriptDir();
     const path = join(dir, 'transcript.jsonl');
     created.push(dir);
     await writeFile(path, '');

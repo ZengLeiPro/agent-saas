@@ -3,7 +3,7 @@
  */
 import { Router } from "express";
 import type { Request, Response } from "express";
-import * as fs from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import type { GroupStore } from "../data/groups/index.js";
 import type { UserStore } from "../data/users/store.js";
 import type { GroupSortingPref } from "../data/users/types.js";
@@ -13,7 +13,8 @@ import {
   getTranscriptPath,
 } from "../data/transcripts/store.js";
 import { readSessionMeta } from "../data/transcripts/meta.js";
-import { summarizeTranscript } from "../data/transcripts/parse.js";
+import type { TranscriptSummary } from "../data/transcripts/parse.js";
+import { openTrustedTranscript } from "../data/transcripts/trusted.js";
 import { auditLog } from "../data/login-logs/index.js";
 import type { EventBus } from "../channels/web/eventBus.js";
 import type { AgentStore } from "../data/agents/store.js";
@@ -33,6 +34,73 @@ function getUserId(req: Request): string {
 function canAccessGroup(req: Request, group: { userId: string }): boolean {
   if (!req.user) return true; // auth disabled
   return group.userId === getUserId(req);
+}
+
+function transcriptText(content: unknown): string | undefined {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return undefined;
+  const block = content.find((item: any) => item?.type === "text");
+  return typeof block?.text === "string" ? block.text : undefined;
+}
+
+function transcriptTitle(content: string): string {
+  let text = content.replace(/^<memory-context>[\s\S]*?<\/memory-context>\s*/, "");
+  const marker = "[用户消息]";
+  const markerIndex = text.indexOf(marker);
+  if (markerIndex >= 0) text = text.slice(markerIndex + marker.length).trim();
+  return text
+    .replace(/^\[\d{4}\/\d{2}\/\d{2}\s+(?:周[一二三四五六日]\s+)?\d{2}:\d{2}\]\s*/, "")
+    .slice(0, 100);
+}
+
+/** Builds the group-list summary from the already opened transcript inode. */
+async function summarizeOpenedTranscript(handle: FileHandle, size: number): Promise<TranscriptSummary> {
+  const LARGE_THRESHOLD = 128 * 1024;
+  let lines: string[];
+  if (size <= LARGE_THRESHOLD) {
+    lines = (await handle.readFile({ encoding: "utf-8" })).split("\n");
+  } else {
+    const headSize = Math.min(8192, size);
+    const tailSize = Math.min(64 * 1024, size);
+    const head = Buffer.alloc(headSize);
+    const tail = Buffer.alloc(tailSize);
+    await Promise.all([
+      handle.read(head, 0, headSize, 0),
+      handle.read(tail, 0, tailSize, size - tailSize),
+    ]);
+    const headLines = head.toString("utf-8").split("\n");
+    if (headSize < size) headLines.pop();
+    const tailLines = tail.toString("utf-8").split("\n");
+    if (tailSize < size) tailLines.shift();
+    lines = [...headLines, ...tailLines];
+  }
+
+  let title: string | undefined;
+  let preview: string | undefined;
+  let createdAtMs: number | undefined;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    let record: any;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (createdAtMs === undefined) {
+      const value = record?.timestamp ?? record?.ts ?? record?.startedAtMs;
+      const parsed = typeof value === "number" ? value : Date.parse(value);
+      if (Number.isFinite(parsed)) createdAtMs = parsed;
+    }
+    if (title === undefined && record?.type === "user") {
+      const text = transcriptText(record?.message?.content);
+      if (text && !text.trimStart().startsWith("<skill-context")) title = transcriptTitle(text);
+    }
+    if (record?.type === "assistant") {
+      const text = transcriptText(record?.message?.content);
+      if (text) preview = text.slice(0, 200);
+    }
+  }
+  return { ...(title ? { title } : {}), ...(preview ? { preview } : {}), ...(createdAtMs !== undefined ? { createdAtMs } : {}) };
 }
 
 /**
@@ -510,19 +578,24 @@ export function createGroupsRouter(options: GroupsRouterOptions): Router {
           // Try per-user dir first, fallback to global dir
           const primaryPath = getTranscriptPath(ownerCwd, sessionId, ownerUser ? { tenantId: ownerUser.tenantId, userId: ownerUser.id } : undefined);
           let transcriptPath = primaryPath;
-          if (ownerCwd !== agentCwd) {
+          let transcript;
+          try {
+            transcript = await openTrustedTranscript(primaryPath);
+          } catch (error) {
+            if (ownerCwd === agentCwd || (error as NodeJS.ErrnoException).code !== "ENOENT") return null;
+            transcriptPath = getTranscriptPath(agentCwd, sessionId);
             try {
-              await fs.access(primaryPath);
+              transcript = await openTrustedTranscript(transcriptPath);
             } catch {
-              transcriptPath = getTranscriptPath(agentCwd, sessionId);
+              return null;
             }
           }
 
           try {
-            const stat = await fs.stat(transcriptPath);
+            const stat = transcript.stats;
             const [meta, summary] = await Promise.all([
               readSessionMeta(transcriptPath),
-              summarizeTranscript(transcriptPath),
+              summarizeOpenedTranscript(transcript.handle, stat.size),
             ]);
             if (meta?.deletedAt) return null;
             if (hidesMemoryPollFrom(req.user, meta)) {
@@ -570,6 +643,8 @@ export function createGroupsRouter(options: GroupsRouterOptions): Router {
             };
           } catch {
             return null; // session file missing or unreadable
+          } finally {
+            await transcript.handle.close().catch(() => undefined);
           }
         }),
       );

@@ -75,7 +75,7 @@ class ScriptedHost implements RepositoryWorkspaceSyncHost {
       }
       if (command.args[0] === 'symbolic-ref') return { exitCode: 0, stdout: 'refs/heads/main\n', stderr: '' };
       if (command.args[0] === 'status') return { exitCode: 0, stdout: '', stderr: '' };
-      if (command.args[0] === 'rev-parse' && command.args[1] === '--git-dir') return { exitCode: 0, stdout: `${REPOSITORY}/.git\n`, stderr: '' };
+      if (command.args[0] === 'rev-parse' && command.args[1] === '--absolute-git-dir') return { exitCode: 0, stdout: `${REPOSITORY}/.git\n`, stderr: '' };
       if (command.args[0] === 'rev-parse' && command.args[1] === '--git-common-dir') return { exitCode: 0, stdout: `${REPOSITORY}/.git\n`, stderr: '' };
     }
     const step = this.steps.shift();
@@ -132,7 +132,7 @@ function ownershipSteps(head = INTEGRATION_OID): Step[] {
     { cwd: WORKTREE, args: ['rev-parse', '--verify', 'HEAD'], env: readOnlyEnv, result: { stdout: `${head}\n` } },
     { cwd: WORKTREE, args: ['symbolic-ref', '-q', 'HEAD'], env: readOnlyEnv, result: { stdout: 'refs/heads/integration/42\n' } },
     statusStep(WORKTREE),
-    { cwd: WORKTREE, args: ['rev-parse', '--git-dir'], env: readOnlyEnv, result: { stdout: `${REPOSITORY}/.git/worktrees/integration-42\n` } },
+    { cwd: WORKTREE, args: ['rev-parse', '--absolute-git-dir'], env: readOnlyEnv, result: { stdout: `${REPOSITORY}/.git/worktrees/integration-42\n` } },
     { cwd: WORKTREE, args: ['rev-parse', '--git-common-dir'], env: readOnlyEnv, result: { stdout: `${REPOSITORY}/.git\n` } },
   ];
 }
@@ -457,7 +457,7 @@ describe('syncRepositoryWorkspace', () => {
       runGit: vi.fn(async ({ cwd, args }: RepositoryWorkspaceGitCommand) => {
         if (args[0] === 'worktree' && args[1] === 'list') return ok(`${mainRecord(REMOTE_OID)}\n${integrationRecord(REMOTE_OID)}`);
         if (args[0] === 'symbolic-ref') return ok(cwd === REPOSITORY ? 'refs/heads/main\n' : 'refs/heads/integration/42\n');
-        if (args[0] === 'rev-parse' && args[1] === '--git-dir') {
+        if (args[0] === 'rev-parse' && args[1] === '--absolute-git-dir') {
           return ok(cwd === REPOSITORY ? `${REPOSITORY}/.git\n` : `${REPOSITORY}/.git/worktrees/integration-42\n`);
         }
         if (args[0] === 'rev-parse' && args[1] === '--git-common-dir') return ok(`${REPOSITORY}/.git\n`);

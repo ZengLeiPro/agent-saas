@@ -1,5 +1,7 @@
 import { readdir } from 'node:fs/promises';
 import { Semaphore } from '../../runtime/fileReadCoalesce.js';
+import type { InteractionResponse } from '../../agent/types.js';
+import type { RunRecord, RunStatus, RunStore } from '../../runtime/runStore.js';
 import { openTrustedDirectory, withTrustedFile } from '../../security/trustedFile.js';
 
 /** Bounds cross-session approval resume work while per-file reads are coalesced. */
@@ -13,6 +15,77 @@ export const INTERACTIVE_PERMISSION_TOOLS = new Set([
 ]);
 
 export const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'orphaned']);
+
+type PersistedInteractionType = 'ask_user' | 'approval';
+type PersistedInteractionClaimMetadata = {
+  persistedInteractionResumeClaim: {
+    sessionId: string;
+    interactionId: string;
+    interactionType: PersistedInteractionType;
+  };
+  resumeInteraction?: { interactionId: string; response: InteractionResponse };
+  resumeApproval?: { approvalId: string; response: InteractionResponse };
+};
+
+export type PersistedInteractionResumeClaim =
+  | { outcome: 'claimed'; run: RunRecord; metadata: PersistedInteractionClaimMetadata }
+  | { outcome: 'rejected' }
+  | { outcome: 'unsupported' };
+
+/** Atomically fence a persisted interaction resume across web workers. */
+export async function claimPersistedInteractionResume(input: {
+  runStore: Pick<RunStore, 'markStatusIfCurrent'>;
+  runId: string;
+  expectedStatus: RunStatus;
+  reason: string;
+  sessionId: string;
+  interactionId: string;
+  interactionType: PersistedInteractionType;
+  response: InteractionResponse;
+  transcriptPath?: string;
+}): Promise<PersistedInteractionResumeClaim> {
+  const metadata: PersistedInteractionClaimMetadata = {
+    persistedInteractionResumeClaim: {
+      sessionId: input.sessionId,
+      interactionId: input.interactionId,
+      interactionType: input.interactionType,
+    },
+    ...(input.interactionType === 'ask_user'
+      ? { resumeInteraction: { interactionId: input.interactionId, response: input.response } }
+      : { resumeApproval: { approvalId: input.interactionId, response: input.response } }),
+  };
+  const metadataPatch = {
+    ...(input.transcriptPath ? { transcriptPath: input.transcriptPath } : {}),
+    ...(input.interactionType === 'ask_user'
+      ? { resumeInteractionConsumedAt: null, resumeInteractionConsumedId: null }
+      : { resumeApprovalConsumedAt: null, resumeApprovalConsumedId: null }),
+    ...metadata,
+  };
+  const markStatusIfCurrent = input.runStore.markStatusIfCurrent;
+  if (!markStatusIfCurrent) return { outcome: 'unsupported' };
+  const run = await markStatusIfCurrent.call(
+    input.runStore,
+    input.runId,
+    [input.expectedStatus],
+    'pending',
+    input.reason,
+    metadataPatch,
+  );
+  return run ? { outcome: 'claimed', run, metadata } : { outcome: 'rejected' };
+}
+
+export function hasPersistedInteractionResumeClaim(
+  metadata: Record<string, unknown> | undefined,
+  sessionId: string,
+  interactionId: string,
+): boolean {
+  const claim = metadata?.persistedInteractionResumeClaim;
+  return Boolean(
+    claim && typeof claim === 'object'
+    && (claim as Record<string, unknown>).sessionId === sessionId
+    && (claim as Record<string, unknown>).interactionId === interactionId,
+  );
+}
 
 /** 语音转写前缀标记（STT 注入 / 门禁判定前剥离共用） */
 export const VOICE_STT_TAG = '[这是一条语音转文字的消息，可能存在识别准确度问题] ';

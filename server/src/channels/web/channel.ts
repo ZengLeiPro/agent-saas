@@ -94,6 +94,8 @@ import {
 // These helpers retain the existing policy constants and filesystem behavior.
 import {
   approvalResumeSemaphore,
+  claimPersistedInteractionResume,
+  hasPersistedInteractionResumeClaim,
   INTERACTIVE_PERMISSION_TOOLS,
   readLatestPlanContent,
   TERMINAL_RUN_STATUSES,
@@ -1320,6 +1322,22 @@ export class WebChannel implements BaseChannel {
         return true;
       }
       const normalizedResponse = normalizeInteractionResponse(response);
+      const claim = await claimPersistedInteractionResume({
+        runStore: enqueueRuntime.runStore, runId: pendingAskUser.runId, expectedStatus: 'waiting_user',
+        reason: 'ask_user_resolved_enqueue_resume', sessionId, interactionId,
+        interactionType: 'ask_user', response: normalizedResponse,
+      });
+      if (claim.outcome === 'unsupported') {
+        chatLogger.error(`ask_user resume rejected: RunStore lacks atomic CAS run=${pendingAskUser.runId} interaction=${interactionId}`);
+        this.sendRespond(client, interactionId, clientAttemptId, 'Runtime store does not support atomic interaction resume');
+        return true;
+      }
+      // The durable waiting_user → pending CAS is the cross-process fence. A
+      // concurrent retry that lost it is already safely acknowledged below.
+      if (claim.outcome === 'rejected') {
+        this.sendRespond(client, interactionId, clientAttemptId);
+        return true;
+      }
       await eventStore!.append({
         type: 'interaction_resolved',
         sessionId,
@@ -1331,14 +1349,6 @@ export class WebChannel implements BaseChannel {
         userId: client.user?.sub,
         response: normalizedResponse,
       }, { tenantId });
-      await enqueueRuntime.runStore.markStatus(pendingAskUser.runId, 'pending', 'ask_user_resolved_enqueue_resume', {
-        resumeInteractionConsumedAt: null,
-        resumeInteractionConsumedId: null,
-        resumeInteraction: {
-          interactionId,
-          response: normalizedResponse,
-        },
-      });
       const workspaceId = meta.workspaceId ?? sessionId;
       await enqueueRuntime.scheduler.enqueue({
         runId: pendingAskUser.runId,
@@ -1351,10 +1361,7 @@ export class WebChannel implements BaseChannel {
         workspaceId,
         metadata: {
           transcriptPath,
-          resumeInteraction: {
-            interactionId,
-            response: normalizedResponse,
-          },
+          ...claim.metadata,
         },
       });
       this.sendRespond(client, interactionId, clientAttemptId);
@@ -1394,8 +1401,9 @@ export class WebChannel implements BaseChannel {
         && event.approvalId === interactionId
       ));
       const currentRun = sourceRun?.runId === pendingApprovalRunId ? sourceRun : await enqueueRuntime.runStore.get(pendingApprovalRunId);
+      const alreadyClaimed = hasPersistedInteractionResumeClaim(currentRun?.metadata, sessionId, interactionId);
       const cannotResume = !currentRun || TERMINAL_RUN_STATUSES.has(currentRun.status)
-        || (!alreadyAccepted && !alreadyApplied && currentRun.status !== 'waiting_approval');
+        || (!alreadyAccepted && !alreadyApplied && !alreadyClaimed && currentRun.status !== 'waiting_approval');
       if (cannotResume) {
         const sourceStatus = currentRun?.status ?? 'missing';
         const resolved = await approvalStore.resolvePending(
@@ -1413,7 +1421,7 @@ export class WebChannel implements BaseChannel {
         }
         return true;
       }
-      if (alreadyAccepted || alreadyApplied) {
+      if (alreadyAccepted || alreadyApplied || alreadyClaimed) {
         this.sendRespond(client, interactionId, clientAttemptId);
         return true;
       }
@@ -1432,26 +1440,19 @@ export class WebChannel implements BaseChannel {
       const resumeResponse = acceptedResponse && typeof acceptedResponse === 'object'
         ? normalizeInteractionResponse(acceptedResponse as Record<string, unknown>)
         : normalizeInteractionResponse(response);
-      const resumedRun = await enqueueRuntime.runStore.markStatus(
-        pendingApprovalRunId,
-        'pending',
-        'approval_resolved_enqueue_resume',
-        {
-          transcriptPath,
-          resumeApprovalConsumedAt: null,
-          resumeApprovalConsumedId: null,
-          resumeApproval: {
-            approvalId: interactionId,
-            response: resumeResponse,
-          },
-        },
-      );
-      if (!resumedRun || TERMINAL_RUN_STATUSES.has(resumedRun.status)) {
-        await approvalStore.resolvePending(
-          interactionId,
-          'rejected',
-          `源 run 不可恢复（${resumedRun?.status ?? 'missing'}），拒绝遗留审批`,
-        );
+      const claim = await claimPersistedInteractionResume({
+        runStore: enqueueRuntime.runStore, runId: pendingApprovalRunId, expectedStatus: 'waiting_approval',
+        reason: 'approval_resolved_enqueue_resume', sessionId, interactionId,
+        interactionType: 'approval', response: resumeResponse, transcriptPath,
+      });
+      if (claim.outcome === 'unsupported') {
+        chatLogger.error(`approval resume rejected: RunStore lacks atomic CAS run=${pendingApprovalRunId} approval=${interactionId}`);
+        this.sendRespond(client, interactionId, clientAttemptId, 'Runtime store does not support atomic interaction resume');
+        return true;
+      }
+      // A rejected CAS means another request has already claimed this durable
+      // interaction. Do not append or enqueue a second time.
+      if (claim.outcome === 'rejected') {
         this.sendRespond(client, interactionId, clientAttemptId);
         return true;
       }
@@ -1476,10 +1477,7 @@ export class WebChannel implements BaseChannel {
         workspaceId,
         metadata: {
           transcriptPath,
-          resumeApproval: {
-            approvalId: interactionId,
-            response: resumeResponse,
-          },
+          ...claim.metadata,
         },
       });
       this.sendRespond(client, interactionId, clientAttemptId);

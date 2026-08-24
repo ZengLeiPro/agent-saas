@@ -58,6 +58,26 @@ export class MemoryRunStore implements RunStore {
     return updated;
   }
 
+  async markStatusIfCurrent(
+    runId: string,
+    expectedStatuses: readonly RunStatus[],
+    status: RunStatus,
+    reason?: string,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<RunRecord | null> {
+    const record = this.records.get(runId);
+    if (!record || !expectedStatuses.includes(record.status)) return null;
+    const updated = {
+      ...record,
+      status,
+      statusReason: reason,
+      updatedAt: new Date().toISOString(),
+      metadata: { ...record.metadata, ...metadataPatch },
+    };
+    this.records.set(runId, updated);
+    return updated;
+  }
+
   async get(runId: string): Promise<RunRecord | null> {
     return this.records.get(runId) ?? null;
   }

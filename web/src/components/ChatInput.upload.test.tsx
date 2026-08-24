@@ -92,22 +92,22 @@ describe("ChatInput 布局", () => {
 });
 
 describe("ChatInput 附件来源入口", () => {
-  it("点击添加附件后先显示本地文件和资料库选项", async () => {
+  it("点击添加附件后显示紧凑的本地和云端文件选项", async () => {
     renderInput({ onAssetSelect: vi.fn() });
 
     fireEvent.click(screen.getByRole("button", { name: "添加附件" }));
 
     expect(await screen.findByRole("button", { name: "本地文件" })).toBeTruthy();
-    expect(screen.getByText("从设备中选择")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "资料库" })).toBeTruthy();
-    expect(screen.getByText("选择已有文件")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "云端文件" })).toBeTruthy();
+    expect(screen.queryByText("从设备中选择")).toBeNull();
+    expect(screen.queryByText("选择已有文件")).toBeNull();
   });
 
   it("选择资料库后打开 assets 选择弹窗", async () => {
     renderInput({ onAssetSelect: vi.fn() });
 
     fireEvent.click(screen.getByRole("button", { name: "添加附件" }));
-    fireEvent.click(await screen.findByRole("button", { name: "资料库" }));
+    fireEvent.click(await screen.findByRole("button", { name: "云端文件" }));
 
     expect(await screen.findByText("从资料库添加")).toBeTruthy();
   });

@@ -59,13 +59,17 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
   private ready = false;
   private initializing: Promise<void> | undefined;
 
-  constructor(private readonly target: InitializableTaskboardService) {}
+  constructor(
+    private readonly target: InitializableTaskboardService,
+    private readonly options: { onReady?: () => void | Promise<void> } = {},
+  ) {}
 
   async init(): Promise<void> {
     if (this.ready) return;
     if (!this.initializing) {
       this.initializing = this.target.init()
-        .then(() => {
+        .then(async () => {
+          await this.options.onReady?.();
           this.ready = true;
         })
         .finally(() => {
@@ -161,6 +165,18 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
 
   async getTask(identity: TaskboardIdentity, taskId: string, creationClaimToken?: string): Promise<TaskBoardTask> {
     return (await this.service()).getTask(identity, taskId, creationClaimToken);
+  }
+
+  async isTaskWatched(identity: TaskboardIdentity, taskId: string): Promise<boolean> {
+    const service = await this.service();
+    if (!service.isTaskWatched) return false;
+    return service.isTaskWatched(identity, taskId);
+  }
+
+  async setTaskWatched(identity: TaskboardIdentity, taskId: string, watched: boolean): Promise<boolean> {
+    const service = await this.service();
+    if (!service.setTaskWatched) throw new Error('Task watch unavailable');
+    return service.setTaskWatched(identity, taskId, watched);
   }
 
   async updateTask(

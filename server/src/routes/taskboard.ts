@@ -1,6 +1,8 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
 import { boardCiPolicySchema } from './taskboardCiPolicySchema.js';
+import { registerTaskboardWatchRoutes } from './taskboardWatch.js';
+
 import type { UserStore } from '../data/users/store.js';
 import {
   listTaskboardDirectoryUsers,
@@ -519,9 +521,7 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     res.json(withCreatorAvatarVersionsPage(options.userStore, identity, page));
   }));
 
-  router.get('/tasks/:id', route(async (req, res) => {
-    sendTask(req, res, await options.service!.getTask(identityFrom(req), req.params.id));
-  }));
+  registerTaskboardWatchRoutes(router, options, identityFrom, route);
 
   router.get('/tasks/:id/attachments/:attachmentId', route(async (req, res) => {
     if (!options.agentCwd || !options.uploadManager) throw new TaskboardExecutionUnavailableError();

@@ -444,6 +444,8 @@ export interface TaskboardService {
   completeTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<TaskBoardTask>;
   releaseTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<void>;
   getTask(identity: TaskboardIdentity, taskId: string, creationClaimToken?: string): Promise<TaskBoardTask>;
+  isTaskWatched?(identity: TaskboardIdentity, taskId: string): Promise<boolean>;
+  setTaskWatched?(identity: TaskboardIdentity, taskId: string, watched: boolean): Promise<boolean>;
   updateTask(
     identity: TaskboardIdentity,
     taskId: string,

@@ -103,6 +103,7 @@ import {
 import { initializeTaskboardStore } from './storeSchema.js';
 import { assertIntegrationV3RuntimeAvailable } from './integrationV3ActivationStore.js';
 import { loadBoard as loadStoredBoard, requireTaskWithBoard as requireStoredTaskWithBoard } from './storeTaskAccess.js';
+import { isStoredTaskWatched, setStoredTaskWatched } from './taskWatchStore.js';
 import {
   claimWorkflowCancellations as claimStoredWorkflowCancellations,
   finishWorkflowCancellation as finishStoredWorkflowCancellation,
@@ -165,9 +166,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   readonly blockEpisodesTable: string;
   readonly integrationTriggerOutboxTable: string;
   readonly remediationAttemptsTable: string;
-  readonly cancellationOutboxTable: string;
-  repositoryProvider?: RepositoryProvider;
-  integrationV3RepositoryProvider?: RepositoryProvider;
+  readonly cancellationOutboxTable: string; readonly watchersTable: string; readonly statusNotificationOutboxTable: string;
+  repositoryProvider?: RepositoryProvider; integrationV3RepositoryProvider?: RepositoryProvider;
   private integrationV3RepositoryProbe?: IntegrationV3RepositoryProbe;
   constructor(options: PgTaskboardStoreOptions) {
     const prefix = sanitizeIdentifier(options.tablePrefix ?? 'runtime');
@@ -190,7 +190,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     this.blockEpisodesTable = `${prefix}_taskboard_block_episodes`;
     this.integrationTriggerOutboxTable = `${prefix}_taskboard_integration_outbox`;
     this.remediationAttemptsTable = `${prefix}_taskboard_remediation_attempts`;
-    this.cancellationOutboxTable = `${prefix}_taskboard_cancel_outbox`;
+    this.cancellationOutboxTable = `${prefix}_taskboard_cancel_outbox`; this.watchersTable = `${prefix}_taskboard_watchers`; this.statusNotificationOutboxTable = `${prefix}_taskboard_status_notify_outbox`;
   }
   async init(): Promise<void> {
     await initializeTaskboardStore(this);
@@ -614,15 +614,13 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   async createTaskWithResult(identity: TaskboardIdentity, boardId: string, input: TaskBoardTaskCreateInput, requestDigest?: string): Promise<TaskboardTaskCreateResult> {
     return createStoredTaskWithResult(this, identity, boardId, input, requestDigest);
   }
-  async completeTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<TaskBoardTask> {
-    return completeStoredTaskCreation(this, identity, taskId, claimToken);
-  }
-  async releaseTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<void> {
-    return releaseStoredTaskCreation(this, identity, taskId, claimToken);
-  }
+  async completeTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<TaskBoardTask> { return completeStoredTaskCreation(this, identity, taskId, claimToken); }
+  async releaseTaskCreation(identity: TaskboardIdentity, taskId: string, claimToken: string): Promise<void> { return releaseStoredTaskCreation(this, identity, taskId, claimToken); }
   async getTask(identity: TaskboardIdentity, taskId: string, creationClaimToken?: string): Promise<TaskBoardTask> {
     return this.requireTask(this.pool, identity, taskId, false, creationClaimToken);
   }
+  isTaskWatched(identity: TaskboardIdentity, taskId: string): Promise<boolean> { return isStoredTaskWatched(this, identity, taskId); }
+  setTaskWatched(identity: TaskboardIdentity, taskId: string, watched: boolean): Promise<boolean> { return setStoredTaskWatched(this, identity, taskId, watched); }
   async updateTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskPatchInput,
     creationClaimToken?: string): Promise<TaskBoardTask> {
     return this.withTransaction(async (client) => {

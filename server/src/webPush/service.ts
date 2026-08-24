@@ -53,14 +53,18 @@ export class WebPushService {
     return await this.store.delete(owner, subscriptionId);
   }
 
-  async send(message: WebPushMessage): Promise<{ sent: number; failed: number; skipped: number }> {
+  async send(message: WebPushMessage): Promise<{ sent: number; failed: number; skipped: number; deferred: number }> {
     const subscriptions = await this.store.list(message);
-    const counters = { sent: 0, failed: 0, skipped: 0 };
+    const counters = { sent: 0, failed: 0, skipped: 0, deferred: 0 };
 
     await forEachConcurrent(subscriptions, 4, async (listedSubscription) => {
       const claim = await this.store.claimDelivery(message, listedSubscription, message.eventKey);
       if (!claim) {
         counters.skipped += 1;
+        return;
+      }
+      if ('deferred' in claim) {
+        counters.deferred += 1;
         return;
       }
       const subscription = claim.subscription;

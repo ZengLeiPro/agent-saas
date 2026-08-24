@@ -108,7 +108,8 @@ describe('Taskboard service hardening', () => {
       });
     const listBoards = vi.fn().mockResolvedValue([board]);
     const target = { init, listBoards } as unknown as InitializableTaskboardService;
-    const service = new RetryableTaskboardService(target);
+    const onReady = vi.fn();
+    const service = new RetryableTaskboardService(target, { onReady });
 
     await expect(service.init()).rejects.toThrow('database starting');
     const [first, second] = await Promise.all([
@@ -118,7 +119,9 @@ describe('Taskboard service hardening', () => {
 
     expect(first).toEqual([board]);
     expect(second).toEqual([board]);
+    await service.init();
     expect(init).toHaveBeenCalledTimes(2);
+    expect(onReady).toHaveBeenCalledTimes(1);
     expect(listBoards).toHaveBeenCalledTimes(2);
   });
 

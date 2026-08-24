@@ -662,7 +662,9 @@ describe('PgRunStore steering inbox', () => {
             rowCount: 1,
           };
         }
-        if (sql.includes('UPDATE runtime_event_cursors')) return { rows: [{ start_sequence: '1' }] };
+        if (sql.includes('RETURNING next_sequence - $3 AS start_sequence')) {
+          return { rows: [{ start_sequence: '1' }] };
+        }
         return { rows: [], rowCount: 0 };
       },
       release: vi.fn(),
@@ -690,11 +692,9 @@ describe('PgRunStore steering inbox', () => {
     expect(eventLockIndex).toBeLessThan(firstEventInsertIndex);
     expect(queryCalls[eventLockIndex]?.params).toEqual(['runtime_events:global-sequence-commit-order']);
     const cursorInsert = queryCalls.find(({ sql }) => sql.includes('INSERT INTO runtime_event_cursors'));
-    const cursorUpdate = queryCalls.find(({ sql }) => sql.includes('UPDATE runtime_event_cursors'));
-    expect(cursorInsert?.sql).toContain('ON CONFLICT (tenant_id, session_id)');
-    expect(cursorInsert?.params).toEqual(['tenant-waiting', 'session-waiting']);
-    expect(cursorUpdate?.sql).toContain('WHERE tenant_id = $1 AND session_id = $2');
-    expect(cursorUpdate?.params.slice(0, 2)).toEqual(['tenant-waiting', 'session-waiting']);
+    expect(cursorInsert?.sql).toContain('ON CONFLICT (session_id)');
+    expect(cursorInsert?.sql).toContain('WHERE runtime_event_cursors.tenant_id = EXCLUDED.tenant_id');
+    expect(cursorInsert?.params).toEqual(['tenant-waiting', 'session-waiting', 2]);
     expect(queries.filter((sql) => sql.includes('INSERT INTO runtime_events'))).toHaveLength(2);
   });
 

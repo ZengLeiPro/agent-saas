@@ -26,7 +26,7 @@ export const pgMock = (() => {
       if (text.includes('FROM pg_attribute')) {
         return { rows: [...this.existingColumns].map((column_name) => ({ column_name })) };
       }
-      if (text.includes('RETURNING next_sequence - $2 AS start_sequence')) {
+      if (text.includes('RETURNING next_sequence - $3 AS start_sequence')) {
         return { rows: [{ start_sequence: this.startSequence }] };
       }
       if (text.includes('LOCK TABLE') && text.includes('IN SHARE MODE')) {

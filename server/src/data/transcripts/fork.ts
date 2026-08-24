@@ -4,12 +4,10 @@
  * 从已有会话的指定用户消息处"分叉"：截取之前的对话历史到新 JSONL，
  * 并提取该消息文本供客户端预填输入框。
  */
-import { createReadStream } from "node:fs";
-import * as fs from "node:fs/promises";
 import * as readline from "node:readline";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
-import { assertAllowedTranscriptPath } from "./projectKey.js";
+import { openTrustedTranscript, writeTrustedTranscript } from "./trusted.js";
 import { writeSessionMeta, type SessionMeta } from "./meta.js";
 import {
   stripMemoryContext,
@@ -55,35 +53,37 @@ export async function forkSession(opts: ForkOptions): Promise<ForkResult> {
   }
 
   // 2. 流式读取源 JSONL
-  const resolved = assertAllowedTranscriptPath(sourceTranscriptPath);
-  await fs.access(resolved);
-
-  const rl = readline.createInterface({
-    input: createReadStream(resolved, { encoding: "utf-8" }),
-    crlfDelay: Infinity,
-  });
+  const source = await openTrustedTranscript(sourceTranscriptPath);
+  const input = source.handle.createReadStream({ encoding: "utf-8", autoClose: false });
+  const rl = readline.createInterface({ input, crlfDelay: Infinity });
 
   const truncatedLines: string[] = [];
   let forkMessage = "";
   let currentLine = 0;
 
-  for await (const line of rl) {
-    currentLine += 1;
-    if (!line.trim()) continue;
+  try {
+    for await (const line of rl) {
+      currentLine += 1;
+      if (!line.trim()) continue;
 
-    if (currentLine < targetLineNumber) {
-      // 收集目标行之前的所有行
-      truncatedLines.push(line);
-    } else if (currentLine === targetLineNumber) {
-      // 提取用户消息文本，验证目标行确实是用户消息
-      forkMessage = extractUserText(line);
-      if (forkMessage === "" && !isUserMessageLine(line)) {
-        throw new Error(
-          `Line ${targetLineNumber} is not a user message`,
-        );
+      if (currentLine < targetLineNumber) {
+        // 收集目标行之前的所有行
+        truncatedLines.push(line);
+      } else if (currentLine === targetLineNumber) {
+        // 提取用户消息文本，验证目标行确实是用户消息
+        forkMessage = extractUserText(line);
+        if (forkMessage === "" && !isUserMessageLine(line)) {
+          throw new Error(
+            `Line ${targetLineNumber} is not a user message`,
+          );
+        }
+        break; // 不需要继续读取
       }
-      break; // 不需要继续读取
     }
+  } finally {
+    rl.close();
+    input.destroy();
+    await source.handle.close().catch(() => undefined);
   }
 
   if (currentLine < targetLineNumber) {
@@ -99,11 +99,12 @@ export async function forkSession(opts: ForkOptions): Promise<ForkResult> {
     `${newSessionId}.jsonl`,
   );
 
-  // 确保目标目录存在
-  await fs.mkdir(targetProjectDir, { recursive: true });
-
   // 写入截断的 JSONL（空历史也合法 — 表示从第一条消息 fork）
-  await fs.writeFile(newTranscriptPath, truncatedLines.join("\n") + (truncatedLines.length > 0 ? "\n" : ""));
+  await writeTrustedTranscript(
+    newTranscriptPath,
+    truncatedLines.join("\n") + (truncatedLines.length > 0 ? "\n" : ""),
+    { createParents: true, exclusive: true },
+  );
 
   // 4. 写入 meta（使用请求者身份，而非源会话身份）
   if (sourceMeta || requestUser) {

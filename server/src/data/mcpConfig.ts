@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { writeFile, rename, unlink, readFile } from 'node:fs/promises';
+import { writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { McpServerConfig, McpServersFileShape } from '../mcp/clientManager.js';
 import { LEGACY_TENANT_ID } from './tenants/types.js';
-import { agentSettingsPath } from '../workspace/namespace.js';
+import { readTrustedFile } from '../security/trustedFile.js';
 
 export type McpRiskLevel = 'read_only' | 'workspace_write' | 'external_write' | 'credentialed_external_write';
 export type McpSecretScope = 'user' | 'tenant' | 'global';
@@ -613,7 +613,7 @@ export class McpConfigStore {
 
 async function loadWorkspaceMcpServers(workspaceRoot: string): Promise<McpServersFileShape> {
   try {
-    const raw = await readFile(agentSettingsPath(workspaceRoot), 'utf-8');
+    const raw = await readTrustedFile(workspaceRoot, '.ky-agent/settings.json', 'utf-8') as string;
     const parsed = JSON.parse(raw) as McpServersFileShape;
     return {
       mcpServers: parsed.mcpServers ?? {},

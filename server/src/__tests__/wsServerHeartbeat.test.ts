@@ -1,6 +1,6 @@
 import http from 'http';
 import jwt from 'jsonwebtoken';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 
 import { WsServer } from '../channels/web/wsServer.js';
@@ -49,7 +49,7 @@ async function withWsServer<T>(
     user: AuthoritativeUser;
     tenant: { id: string; disabled?: boolean };
   }) => Promise<T>,
-  options: { pingIntervalMs?: number; authTimeoutMs?: number } = {},
+  options: { pingIntervalMs?: number; authTimeoutMs?: number; authEnabled?: boolean; maxPayloadBytes?: number } = {},
 ): Promise<T> {
   const user: AuthoritativeUser = { id: 'user-1', username: 'alice', role: 'admin', tenantId: 'tenant-1' };
   const tenant = { id: 'tenant-1', disabled: false };
@@ -57,9 +57,10 @@ async function withWsServer<T>(
   const tenantStore = { findById: (id: string) => id === tenant.id ? { ...tenant } : undefined };
   const server = http.createServer((_req, res) => res.end('ok'));
   const wsServer = new WsServer({
-    jwtSecret: 'test-secret',
+    jwtSecret: options.authEnabled === false ? undefined : 'test-secret',
     pingIntervalMs: options.pingIntervalMs ?? 60_000,
     authTimeoutMs: options.authTimeoutMs ?? 200,
+    maxPayloadBytes: options.maxPayloadBytes,
     userStore: userStore as any,
     tenantStore: tenantStore as any,
   });
@@ -98,6 +99,41 @@ describe('WsServer authenticated lifecycle and heartbeat', () => {
       });
       expect(wsServer.clientCount).toBe(0);
     });
+  });
+
+  it('免认证模式主动确认 auth_ok，客户端无需 token 或 auth 首帧即可收发', async () => {
+    await withWsServer(async ({ url, wsServer }) => {
+      const ws = new WebSocket(url);
+      const authReply = waitMessage(ws);
+      await waitOpen(ws);
+      await expect(authReply).resolves.toEqual({ data: { type: 'auth_ok' } });
+      expect(wsServer.getClients().size).toBe(1);
+      const client = [...wsServer.getClients()][0];
+      expect(client.authenticated).toBe(true);
+      expect(client.user).toBeUndefined();
+
+      const pong = waitMessage(ws);
+      ws.send(JSON.stringify({ action: 'ping' }));
+      await expect(pong).resolves.toMatchObject({ data: { type: 'pong' } });
+      expect(ws.readyState).toBe(WebSocket.OPEN);
+      ws.close();
+    }, { authEnabled: false });
+  });
+
+  it('认证前超大首帧由 maxPayload 拒绝且不进入 JSON.parse', async () => {
+    await withWsServer(async ({ url }) => {
+      const ws = new WebSocket(url);
+      const closed = waitClose(ws);
+      await waitOpen(ws);
+      const parse = vi.spyOn(JSON, 'parse');
+      try {
+        ws.send(JSON.stringify({ action: 'auth', token: 'x'.repeat(1024) }));
+        await expect(closed).resolves.toMatchObject({ code: 1009 });
+        expect(parse).not.toHaveBeenCalled();
+      } finally {
+        parse.mockRestore();
+      }
+    }, { maxPayloadBytes: 128 });
   });
 
   it('rejects legacy JWT query URLs and allows only a controlled auth first frame', async () => {

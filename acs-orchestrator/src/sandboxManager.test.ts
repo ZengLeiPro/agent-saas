@@ -742,12 +742,8 @@ describe('SandboxManager', () => {
           };
         }
         if (args[0] === 'get') {
-          if (args[1] === 'sandbox/as-old') {
-            return { stdout: JSON.stringify({ status: { phase: oldPaused ? 'Paused' : 'Running' } }), stderr: '', exitCode: 0, signal: null };
-          }
-          if (args.includes('--ignore-not-found=true')) {
-            return { stdout: '', stderr: '', exitCode: 0, signal: null };
-          }
+          if (args[1] === 'sandbox/as-old') return { stdout: JSON.stringify({ status: { phase: oldPaused ? 'Paused' : 'Running' } }), stderr: '', exitCode: 0, signal: null };
+          if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }

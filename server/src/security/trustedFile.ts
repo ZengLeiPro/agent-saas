@@ -1,6 +1,6 @@
 import { constants, type Stats } from 'node:fs';
-import { open, mkdir, readdir, rmdir, unlink, lstat, type FileHandle } from 'node:fs/promises';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { open, mkdir, readdir, rmdir, unlink, lstat, link, rename, type FileHandle } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 const DIRECTORY_FLAGS = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
 const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW;
@@ -43,10 +43,16 @@ function procPath(handle: FileHandle, child?: string): string {
   return `/proc/self/fd/${handle.fd}${child ? `/${child}` : ''}`;
 }
 
-async function openRoot(root: string): Promise<FileHandle> {
+async function openRoot(root: string, create = false): Promise<FileHandle> {
+  const absoluteRoot = resolve(root);
   try {
-    return await open(resolve(root), DIRECTORY_FLAGS);
+    if (create) await mkdir(absoluteRoot, { recursive: true, mode: 0o775 });
+    return await open(absoluteRoot, DIRECTORY_FLAGS);
   } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOTDIR') {
+      const stats = await lstat(absoluteRoot).catch(() => undefined);
+      if (stats?.isSymbolicLink()) throw new UnsafeFilePathError();
+    }
     asUnsafe(error);
   }
 }
@@ -67,7 +73,7 @@ async function openChildDirectory(parent: FileHandle, name: string): Promise<Fil
 async function bindParent(root: string, relativePath: string, createParents = false): Promise<{ parent: FileHandle; leaf: string }> {
   const components = componentsOf(relativePath);
   const leaf = components.pop()!;
-  let current = await openRoot(root);
+  let current = await openRoot(root, createParents);
   try {
     for (const component of components) {
       let next: FileHandle;
@@ -161,6 +167,8 @@ export async function openTrustedDirectory(root: string, relativePath = ''): Pro
   }
 }
 
+export function readTrustedFile(root: string, relativePath: string, encoding: BufferEncoding): Promise<string>;
+export function readTrustedFile(root: string, relativePath: string): Promise<Buffer>;
 export async function readTrustedFile(root: string, relativePath: string, encoding?: BufferEncoding): Promise<Buffer | string> {
   const file = await openTrustedFile(root, relativePath);
   try {
@@ -188,6 +196,101 @@ export async function writeTrustedFile(
     await handle.writeFile(data, options.encoding ? { encoding: options.encoding } : undefined);
   } finally {
     await handle?.close().catch(() => undefined);
+    await parent.close();
+  }
+}
+
+/** Appends through a descriptor-pinned parent, creating the file and parents on first use. */
+export async function appendTrustedFile(
+  root: string,
+  relativePath: string,
+  data: string | Uint8Array,
+  encoding?: BufferEncoding,
+): Promise<void> {
+  const relativeParent = dirname(relativePath);
+  let directory: Awaited<ReturnType<typeof openTrustedDirectory>> | undefined;
+  let handle: FileHandle | undefined;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      directory = await openTrustedDirectory(root, relativeParent === '.' ? '' : relativeParent);
+      handle = await open(procPath(directory.handle, basename(relativePath)), constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW);
+      break;
+    } catch (error) {
+      await handle?.close().catch(() => undefined);
+      handle = undefined;
+      await directory?.handle.close().catch(() => undefined);
+      directory = undefined;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ELOOP') throw new UnsafeFilePathError();
+      if (code !== 'ENOENT' || attempt > 0) throw error;
+      await writeTrustedFileIfAbsent(root, relativePath, '', { createParents: true });
+    }
+  }
+  if (!directory || !handle) throw Object.assign(new Error('Unable to open append target'), { code: 'ENOENT' });
+  try {
+    if (!(await handle.stat()).isFile()) throw new UnsafeFilePathError('Append target is not a regular file');
+    await handle.writeFile(data, encoding ? { encoding } : undefined);
+  } finally {
+    await handle.close().catch(() => undefined);
+    await directory.handle.close();
+  }
+}
+
+/** Atomically replaces a file inside a parent directory pinned by descriptor. */
+export async function atomicWriteTrustedFile(
+  root: string,
+  relativePath: string,
+  data: string | Uint8Array,
+  options: { encoding?: BufferEncoding; createParents?: boolean; mode?: number; tempSuffix?: string } = {},
+): Promise<void> {
+  const { parent, leaf } = await bindParent(root, relativePath, options.createParents === true);
+  const tempLeaf = `${leaf}.${options.tempSuffix ?? `tmp.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`}`;
+  let handle: FileHandle | undefined;
+  let published = false;
+  try {
+    handle = await open(procPath(parent, tempLeaf), WRITE_FLAGS | constants.O_EXCL, options.mode ?? 0o664);
+    await handle.writeFile(data, options.encoding ? { encoding: options.encoding } : undefined);
+    await handle.close();
+    handle = undefined;
+    await rename(procPath(parent, tempLeaf), procPath(parent, leaf));
+    published = true;
+  } catch (error) {
+    asUnsafe(error);
+  } finally {
+    await handle?.close().catch(() => undefined);
+    if (!published) await unlink(procPath(parent, tempLeaf)).catch(() => undefined);
+    await parent.close();
+  }
+}
+
+/** Publishes complete content only when the destination does not already exist. */
+export async function writeTrustedFileIfAbsent(
+  root: string,
+  relativePath: string,
+  data: string | Uint8Array,
+  options: { encoding?: BufferEncoding; createParents?: boolean; mode?: number; tempSuffix?: string } = {},
+): Promise<boolean> {
+  const { parent, leaf } = await bindParent(root, relativePath, options.createParents === true);
+  const tempLeaf = `${leaf}.${options.tempSuffix ?? `create.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`}`;
+  let handle: FileHandle | undefined;
+  let created = false;
+  try {
+    handle = await open(procPath(parent, tempLeaf), WRITE_FLAGS | constants.O_EXCL, options.mode ?? 0o664);
+    await handle.writeFile(data, options.encoding ? { encoding: options.encoding } : undefined);
+    await handle.close();
+    handle = undefined;
+    try {
+      await link(procPath(parent, tempLeaf), procPath(parent, leaf));
+      created = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') asUnsafe(error);
+    }
+    return created;
+  } catch (error) {
+    return asUnsafe(error);
+  } finally {
+    await handle?.close().catch(() => undefined);
+    await unlink(procPath(parent, tempLeaf)).catch(() => undefined);
     await parent.close();
   }
 }

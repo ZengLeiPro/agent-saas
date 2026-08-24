@@ -7,10 +7,9 @@
  * WS 消息协议见 wsTypes.ts。
  */
 
-import { appendFile, mkdir } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { homedir } from 'os';
-import { dirname, resolve as resolvePath } from 'path';
+import { resolve as resolvePath } from 'path';
 import type { Express } from 'express';
 import type { WebSocket } from 'ws';
 import { getWebDisplayConfig, isDedicatedWebTool, projectArtifactDelivery } from './displayFilter.js';
@@ -44,6 +43,7 @@ import {
   type RuntimeStreamProjectionState,
 } from './runtimeEventProjection.js';
 import { getTranscriptPath, sessionExists, findTranscriptOrMetaPathBySessionId } from '../../data/transcripts/index.js';
+import { appendTrustedTranscript } from '../../data/transcripts/trusted.js';
 import { readSessionMeta, writeSessionMeta, updateSessionMeta, addSessionCost, type SessionMeta } from '../../data/transcripts/meta.js';
 import { resolveUserCwd } from '../../workspace/resolver.js';
 import { resolveAgentPath } from '../../workspace/namespace.js';
@@ -4081,8 +4081,7 @@ export class WebChannel implements BaseChannel {
       ...(guardrailEventId ? { guardrailEventId } : {}),
       timestamp: new Date().toISOString(),
     }) + '\n';
-    await mkdir(dirname(transcriptPath), { recursive: true });
-    await appendFile(transcriptPath, lines, 'utf-8');
+    await appendTrustedTranscript(transcriptPath, lines, 'utf-8');
   }
 
   /**

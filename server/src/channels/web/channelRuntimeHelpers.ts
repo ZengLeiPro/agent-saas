@@ -1,7 +1,6 @@
-import { readdir, readFile, stat } from 'fs/promises';
-import { join } from 'path';
-import { agentPath } from '../../workspace/namespace.js';
+import { readdir } from 'node:fs/promises';
 import { Semaphore } from '../../runtime/fileReadCoalesce.js';
+import { openTrustedDirectory, withTrustedFile } from '../../security/trustedFile.js';
 
 /** Bounds cross-session approval resume work while per-file reads are coalesced. */
 export const approvalResumeSemaphore = new Semaphore(8);
@@ -27,26 +26,36 @@ export function wantsToolAutoApproval(
 /** 读取用户 workspace 内最近生成的 plan 文件内容。 */
 export async function readLatestPlanContent(userCwd?: string): Promise<string | null> {
   if (!userCwd) return null;
-  const candidates = [agentPath(userCwd, 'plans')];
+  const plansRelativePath = '.ky-agent/plans';
 
   try {
-    const now = Date.now();
-    let latest = { name: '', mtime: 0, dir: '' };
-
-    for (const plansDir of candidates) {
-      let files: string[];
-      try { files = await readdir(plansDir); } catch { continue; }
-      const mdFiles = files.filter(f => f.endsWith('.md'));
-      for (const f of mdFiles) {
-        const s = await stat(join(plansDir, f));
-        if (s.mtimeMs > latest.mtime && (now - s.mtimeMs) < 60_000) {
-          latest = { name: f, mtime: s.mtimeMs, dir: plansDir };
+    const plans = await openTrustedDirectory(userCwd, plansRelativePath);
+    try {
+      const now = Date.now();
+      let latest: { mtime: number; content: string } | null = null;
+      const files = await readdir(plans.fdPath);
+      for (const name of files) {
+        if (!name.endsWith('.md')) continue;
+        try {
+          const candidate = await withTrustedFile(
+            userCwd,
+            `${plansRelativePath}/${name}`,
+            async file => ({
+              mtime: file.stats.mtimeMs,
+              content: await file.handle.readFile({ encoding: 'utf-8' }),
+            }),
+          );
+          if (candidate.mtime > (latest?.mtime ?? 0) && (now - candidate.mtime) < 60_000) {
+            latest = candidate;
+          }
+        } catch {
+          // Ignore files that disappear or become unsafe while the directory is scanned.
         }
       }
+      return latest?.content ?? null;
+    } finally {
+      await plans.handle.close();
     }
-
-    if (!latest.name) return null;
-    return await readFile(join(latest.dir, latest.name), 'utf-8');
   } catch {
     return null;
   }

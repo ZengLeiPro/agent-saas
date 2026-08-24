@@ -1,9 +1,17 @@
-import { readFile, writeFile, rename, mkdir, link, unlink, open, stat } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
-import { isValidSessionId } from './projectKey.js';
+import { AGENT_LEGACY_TRANSCRIPTS_ROOT, isValidSessionId } from './projectKey.js';
 import type { AgentProfileSessionBinding } from '../agentProfiles/types.js';
+import {
+  atomicWriteTrustedFile,
+  openTrustedFile,
+  readTrustedFile,
+  relativeToTrustedRoot,
+  removeTrustedPath,
+  writeTrustedFile,
+  writeTrustedFileIfAbsent,
+} from '../../security/trustedFile.js';
 
 export interface SessionMeta extends Partial<AgentProfileSessionBinding> {
   userId: string;
@@ -75,9 +83,20 @@ export function getMetaPath(transcriptPath: string): string {
   return join(dir, `${sessionId}.meta.json`);
 }
 
-export async function readSessionMeta(transcriptPath: string): Promise<SessionMeta | null> {
+function trustedMetaLocation(
+  filePath: string,
+  trustedRoot = AGENT_LEGACY_TRANSCRIPTS_ROOT,
+): { root: string; relativePath: string } {
+  return { root: trustedRoot, relativePath: relativeToTrustedRoot(trustedRoot, filePath) };
+}
+
+export async function readSessionMeta(
+  transcriptPath: string,
+  trustedRoot = AGENT_LEGACY_TRANSCRIPTS_ROOT,
+): Promise<SessionMeta | null> {
   try {
-    const raw = await readFile(getMetaPath(transcriptPath), 'utf-8');
+    const location = trustedMetaLocation(getMetaPath(transcriptPath), trustedRoot);
+    const raw = await readTrustedFile(location.root, location.relativePath, 'utf-8');
     return JSON.parse(raw);
   } catch {
     return null;
@@ -86,12 +105,11 @@ export async function readSessionMeta(transcriptPath: string): Promise<SessionMe
 
 /** 原子写入：write-to-temp → rename（POSIX 同文件系统下 rename 是原子操作） */
 async function atomicWriteJson(filePath: string, data: object): Promise<void> {
-  // 确保目录存在（SDK 的 system/init 事件可能在 CLI 创建 transcript 目录之前就 emit，
-  // 此时目录尚不存在，writeFile 会抛出 ENOENT）
-  await mkdir(dirname(filePath), { recursive: true });
-  const tmpPath = filePath + '.tmp.' + randomBytes(4).toString('hex');
-  await writeFile(tmpPath, JSON.stringify(data, null, 2));
-  await rename(tmpPath, filePath);
+  const location = trustedMetaLocation(filePath);
+  await atomicWriteTrustedFile(location.root, location.relativePath, JSON.stringify(data, null, 2), {
+    createParents: true,
+    tempSuffix: `tmp.${randomBytes(4).toString('hex')}`,
+  });
 }
 
 /** Per-file 进程级互斥锁，序列化同一文件的 read-modify-write 操作 */
@@ -135,23 +153,26 @@ const META_LOCK_TIMEOUT_MS = 10_000;
 
 async function acquireCrossProcessMetaLock(metaPath: string): Promise<() => Promise<void>> {
   const lockPath = `${metaPath}.lock`;
-  await mkdir(dirname(metaPath), { recursive: true });
+  const location = trustedMetaLocation(lockPath);
   const deadline = Date.now() + META_LOCK_TIMEOUT_MS;
   while (true) {
     try {
-      const handle = await open(lockPath, 'wx');
-      await handle.writeFile(`${process.pid} ${Date.now()}\n`);
+      await writeTrustedFile(location.root, location.relativePath, `${process.pid} ${Date.now()}\n`, {
+        createParents: true,
+        exclusive: true,
+      });
       return async () => {
-        await handle.close().catch(() => undefined);
-        await unlink(lockPath).catch(() => undefined);
+        await removeTrustedPath(location.root, location.relativePath).catch(() => undefined);
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      const lockStat = await stat(lockPath).catch(() => null);
-      if (lockStat && Date.now() - lockStat.mtimeMs > META_LOCK_STALE_MS) {
-        await unlink(lockPath).catch(() => undefined);
+      const lockStat = await openTrustedFile(location.root, location.relativePath).catch(() => null);
+      if (lockStat && Date.now() - lockStat.stats.mtimeMs > META_LOCK_STALE_MS) {
+        await lockStat.handle.close();
+        await removeTrustedPath(location.root, location.relativePath).catch(() => undefined);
         continue;
       }
+      await lockStat?.handle.close().catch(() => undefined);
       if (Date.now() >= deadline) throw new Error(`session meta lock timeout: ${metaPath}`);
       await delay(10 + Math.floor(Math.random() * 20));
     }
@@ -200,18 +221,15 @@ export async function writeSessionMetaIfAbsent(
 ): Promise<boolean> {
   const metaPath = getMetaPath(transcriptPath);
   return withMetaLock(metaPath, async () => {
-    const tmpPath = `${metaPath}.create.${randomBytes(4).toString('hex')}`;
-    await writeFile(tmpPath, JSON.stringify(meta, null, 2));
-    try {
-      await link(tmpPath, metaPath);
-      notifySessionMetaPersisted(transcriptPath, meta);
-      return true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
-      throw error;
-    } finally {
-      await unlink(tmpPath).catch(() => undefined);
-    }
+    const location = trustedMetaLocation(metaPath);
+    const created = await writeTrustedFileIfAbsent(
+      location.root,
+      location.relativePath,
+      JSON.stringify(meta, null, 2),
+      { createParents: true, tempSuffix: `create.${randomBytes(4).toString('hex')}` },
+    );
+    if (created) notifySessionMetaPersisted(transcriptPath, meta);
+    return created;
   });
 }
 

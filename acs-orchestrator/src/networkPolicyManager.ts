@@ -192,40 +192,43 @@ function buildTrafficPolicyRules(
   policy: NetworkPolicyConfig,
   extraAllowCidrs: readonly string[] = [],
 ): Array<Record<string, unknown>> {
+  const metadataDenyRule = denyRule([cidrPeer(METADATA_CIDR)]);
   if (policy.mode === 'isolated') {
-    // isolated 语义就是「什么都不许出」，代理也不例外，否则等于开了后门
-    return [denyRule([cidrPeer(IPV4_ALL)])];
+    // isolated 语义就是「什么都不许出」，代理也不例外，否则等于开了后门。
+    // metadata 仍单独列出，确保所有模式都有可审计的硬阻断规则。
+    return [metadataDenyRule, denyRule([cidrPeer(IPV4_ALL)])];
   }
 
   if (policy.mode === 'public-egress') {
-    const denyCidrs = policy.denyPrivateNetworks === false
+    const denyCidrs = withoutExactMetadata(policy.denyPrivateNetworks === false
       ? ipv4Cidrs(policy.denyCidrs ?? [])
-      : ipv4Cidrs([...DEFAULT_DENY_PRIVATE_CIDRS, ...(policy.denyCidrs ?? [])]);
-    // 明确放行项必须排在 deny 之前：规则数组有序、先匹配先生效。
-    // 但元数据服务永远不放行——把 allow 提前后，一个误配的 100.100.100.200/32
-    // 就能绕过下面的 deny 拿到 ECS 临时凭据，这里硬性剔除。
+      : ipv4Cidrs([...DEFAULT_DENY_PRIVATE_CIDRS, ...(policy.denyCidrs ?? [])]));
+    // metadata deny 必须在所有用户/代理 allow 与最终公网 allow 之前；代理 allow
+    // 则必须在其余私网 deny 之前，规则数组有序、先匹配先生效。
     const allowPeers = [
       ...withoutMetadata(ipv4Cidrs([...(policy.allowCidrs ?? []), ...extraAllowCidrs])).map(cidrPeer),
       ...(policy.allowDomains ?? []).map((fqdn) => ({ fqdn })),
     ];
     return [
       allowRule(DNS_ALLOW_PEERS),
+      metadataDenyRule,
       ...(allowPeers.length ? [allowRule(allowPeers)] : []),
       ...(denyCidrs.length ? [denyRule(denyCidrs.map(cidrPeer))] : []),
       allowRule([cidrPeer(IPV4_ALL)]),
     ];
   }
 
-  const explicitDenyCidrs = ipv4Cidrs([METADATA_CIDR, ...(policy.denyCidrs ?? [])]);
+  const explicitDenyCidrs = withoutExactMetadata(ipv4Cidrs(policy.denyCidrs ?? []));
   const allowPeers = [
     ...withoutMetadata(ipv4Cidrs([...(policy.allowCidrs ?? []), ...extraAllowCidrs])).map(cidrPeer),
     ...(policy.allowDomains ?? []).map((fqdn) => ({ fqdn })),
   ];
   const privateDenyCidrs = policy.denyPrivateNetworks === false
     ? []
-    : ipv4Cidrs(DEFAULT_DENY_PRIVATE_CIDRS);
+    : withoutExactMetadata(ipv4Cidrs(DEFAULT_DENY_PRIVATE_CIDRS));
   return [
     allowRule(DNS_ALLOW_PEERS),
+    metadataDenyRule,
     ...(explicitDenyCidrs.length ? [denyRule(explicitDenyCidrs.map(cidrPeer))] : []),
     ...(allowPeers.length ? [allowRule(allowPeers)] : []),
     ...(privateDenyCidrs.length ? [denyRule(privateDenyCidrs.map(cidrPeer))] : []),
@@ -248,6 +251,10 @@ function cidrPeer(cidr: string): TrafficPeer {
 /** 元数据服务不接受任何形式的显式放行（含裸 IP、/32 与更宽的包含段） */
 function withoutMetadata(cidrs: readonly string[]): string[] {
   return cidrs.filter((cidr) => cidr !== METADATA_IP && !ipv4InCidr(METADATA_IP, cidr));
+}
+
+function withoutExactMetadata(cidrs: readonly string[]): string[] {
+  return cidrs.filter((cidr) => cidr !== METADATA_CIDR && cidr !== METADATA_IP);
 }
 
 function ipv4Cidrs(values: readonly string[]): string[] {

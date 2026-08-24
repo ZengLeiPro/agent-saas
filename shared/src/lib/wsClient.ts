@@ -170,10 +170,14 @@ class WsClient {
     private onAuthFailureFn: (() => void) | null = null;
 
     /** Resolve endpoint and credential separately so JWT never enters URLs/logs. */
-    private async getConnectionParams(): Promise<{ url: string; token: string }> {
-        const token = await getPlatform().secureStorage.getItem(TOKEN_KEY);
+    private async getConnectionParams(): Promise<{ url: string; token?: string }> {
+        const platform = getPlatform();
+        const authEnabled = await platform.platformConfig.isAuthEnabled?.() ?? true;
+        const url = platform.platformConfig.getWsUrl();
+        if (!authEnabled) return { url };
+        const token = await platform.secureStorage.getItem(TOKEN_KEY);
         if (!token) throw new Error('Missing authentication token');
-        return { url: getPlatform().platformConfig.getWsUrl(), token };
+        return { url, token };
     }
 
     /** Reference-counted connect. Returns a release function. */
@@ -273,7 +277,7 @@ class WsClient {
         return connectPromise;
     }
 
-    private doConnect(url: string, token: string): void {
+    private doConnect(url: string, token?: string): void {
         const isReconnect = this.retryAttempt > 0;
         this.setState(isReconnect ? 'reconnecting' : 'connecting');
 
@@ -288,7 +292,9 @@ class WsClient {
 
         ws.onopen = () => {
             if (this.ws !== ws) return; // stale — a newer connection has replaced us
-            ws.send(JSON.stringify({ action: 'auth', token }));
+            // Auth-enabled deployments require auth as the first client frame. In no-auth
+            // mode the server sends auth_ok immediately, so the client must stay silent.
+            if (token) ws.send(JSON.stringify({ action: 'auth', token }));
         };
 
         ws.onmessage = (event: MessageEvent) => {
@@ -393,9 +399,12 @@ class WsClient {
     /** Probe /api/auth/me to distinguish auth failure from network issues */
     private async checkAuthStatus(): Promise<void> {
         try {
-            const token = await getPlatform().secureStorage.getItem(TOKEN_KEY);
+            const platform = getPlatform();
+            const authEnabled = await platform.platformConfig.isAuthEnabled?.() ?? true;
+            if (!authEnabled) return;
+            const token = await platform.secureStorage.getItem(TOKEN_KEY);
             if (!token) { this.triggerAuthFailure(); return; }
-            const baseUrl = getPlatform().platformConfig.getBaseUrl();
+            const baseUrl = platform.platformConfig.getBaseUrl();
             const res = await fetch(`${baseUrl}/api/auth/me`, {
                 headers: { 'Authorization': `Bearer ${token}` },
             });

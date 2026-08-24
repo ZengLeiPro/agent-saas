@@ -22,6 +22,8 @@ export interface IPlatformConfig {
   getBaseUrl(): string;
   /** Bare endpoint; credentials are sent only in the auth first frame. */
   getWsUrl(): string;
+  /** Whether this deployment requires authentication. Defaults to true for older adapters. */
+  isAuthEnabled?(): boolean | Promise<boolean>;
   platform: 'web' | 'mobile';
 }
 

@@ -42,9 +42,13 @@ export interface WsClient {
 export type WsMessageHandler = (client: WsClient, msg: WsInboundMessage) => void;
 export type WsCloseHandler = (client: WsClient) => void;
 
+export const DEFAULT_WS_MAX_PAYLOAD_BYTES = 1024 * 1024;
+
 export interface WsServerConfig {
     /** JWT secret for authentication (undefined = no auth) */
     jwtSecret?: string;
+    /** Maximum accepted WebSocket message payload in bytes, default 1 MiB. */
+    maxPayloadBytes?: number;
     /** Ping interval (ms), default 30000 */
     pingIntervalMs?: number;
     /** Authentication first-frame timeout (ms), default 5000 */
@@ -69,7 +73,7 @@ export class WsServer {
     private pingTimer?: ReturnType<typeof setInterval>;
     private messageHandler?: WsMessageHandler;
     private closeHandler?: WsCloseHandler;
-    private readonly config: Required<Pick<WsServerConfig, 'pingIntervalMs' | 'authTimeoutMs'>> & WsServerConfig;
+    private readonly config: Required<Pick<WsServerConfig, 'pingIntervalMs' | 'authTimeoutMs' | 'maxPayloadBytes'>> & WsServerConfig;
     readonly userEventLog = new UserEventLog();
 
     constructor(config: WsServerConfig = {}) {
@@ -77,8 +81,12 @@ export class WsServer {
             ...config,
             pingIntervalMs: config.pingIntervalMs ?? 30_000,
             authTimeoutMs: config.authTimeoutMs ?? 5_000,
+            maxPayloadBytes: config.maxPayloadBytes ?? DEFAULT_WS_MAX_PAYLOAD_BYTES,
         };
-        this.wss = new WebSocketServer({ noServer: true });
+        this.wss = new WebSocketServer({
+            noServer: true,
+            maxPayload: this.config.maxPayloadBytes,
+        });
     }
 
     /** Set the message handler for incoming WS messages */

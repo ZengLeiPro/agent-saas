@@ -3,12 +3,11 @@
  *
  * 提供会话列表、定位、删除等操作。
  */
-import * as fs from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { Dirent } from "node:fs";
 import * as path from "node:path";
 import {
   AGENT_LEGACY_TRANSCRIPTS_ROOT,
-  assertAllowedTranscriptPath,
   deriveProjectKey,
   getAnonymousAgentTranscriptDir,
   getAgentTranscriptDir,
@@ -18,6 +17,12 @@ import {
 } from "./projectKey.js";
 import { notifySessionMetaDeleted } from "./meta.js";
 import { TENANT_SLUG_PATTERN } from "../tenants/types.js";
+import {
+  openTrustedTranscript,
+  openTrustedTranscriptDirectory,
+  removeTrustedTranscriptPath,
+  statTrustedTranscript,
+} from "./trusted.js";
 
 export interface SessionListItem {
   sessionId: string;
@@ -54,7 +59,8 @@ export function getTranscriptPath(
 
 async function pathExists(filePath: string): Promise<boolean> {
   try {
-    await fs.access(filePath);
+    const file = await openTrustedTranscript(filePath);
+    await file.handle.close();
     return true;
   } catch {
     return false;
@@ -64,7 +70,12 @@ async function pathExists(filePath: string): Promise<boolean> {
 async function listTranscriptFilesRecursive(dir: string): Promise<string[]> {
   let entries: Dirent[];
   try {
-    entries = await fs.readdir(dir, { withFileTypes: true });
+    const directory = await openTrustedTranscriptDirectory(dir);
+    try {
+      entries = await readdir(directory.fdPath, { withFileTypes: true });
+    } finally {
+      await directory.handle.close();
+    }
   } catch {
     return [];
   }
@@ -84,7 +95,12 @@ async function listTranscriptFilesRecursive(dir: string): Promise<string[]> {
 async function listMetaFilesRecursive(dir: string): Promise<string[]> {
   let entries: Dirent[];
   try {
-    entries = await fs.readdir(dir, { withFileTypes: true });
+    const directory = await openTrustedTranscriptDirectory(dir);
+    try {
+      entries = await readdir(directory.fdPath, { withFileTypes: true });
+    } finally {
+      await directory.handle.close();
+    }
   } catch {
     return [];
   }
@@ -150,11 +166,11 @@ export async function findTranscriptOrMetaPathBySessionId(
  * 返回 null 表示读取失败或首行为空
  */
 async function readFirstLine(fullPath: string): Promise<string | null> {
-  let handle: fs.FileHandle | undefined;
+  let file: Awaited<ReturnType<typeof openTrustedTranscript>> | undefined;
   try {
-    handle = await fs.open(fullPath, 'r');
+    file = await openTrustedTranscript(fullPath);
     const buf = Buffer.alloc(1024);
-    const { bytesRead } = await handle.read(buf, 0, 1024, 0);
+    const { bytesRead } = await file.handle.read(buf, 0, 1024, 0);
     if (bytesRead === 0) return null;
     const text = buf.slice(0, bytesRead).toString('utf-8');
     const nl = text.indexOf('\n');
@@ -162,7 +178,7 @@ async function readFirstLine(fullPath: string): Promise<string | null> {
   } catch {
     return null;
   } finally {
-    if (handle) await handle.close().catch(() => { /* noop */ });
+    if (file) await file.handle.close().catch(() => { /* noop */ });
   }
 }
 
@@ -181,7 +197,12 @@ async function listSessionsInDir(
 ): Promise<SessionListItem[]> {
   let entries: Dirent[];
   try {
-    entries = await fs.readdir(dir, { withFileTypes: true });
+    const directory = await openTrustedTranscriptDirectory(dir);
+    try {
+      entries = await readdir(directory.fdPath, { withFileTypes: true });
+    } finally {
+      await directory.handle.close();
+    }
   } catch {
     return [];
   }
@@ -196,7 +217,7 @@ async function listSessionsInDir(
 
   const statResults = await Promise.all(
     candidates.map(async ({ sessionId, fullPath }) => {
-      const stat = await fs.stat(fullPath);
+      const stat = await statTrustedTranscript(fullPath);
       if (stat.size === 0) return null;
       if (stat.size < 4096) {
         const isGhost = await isAiTitleOnlyTranscript(fullPath);
@@ -261,17 +282,18 @@ export async function deleteSession(
   const transcriptPath = await findTranscriptPathBySessionId(sessionId);
   if (!transcriptPath) return { deleted: false };
 
-  assertAllowedTranscriptPath(transcriptPath);
-  await fs.unlink(transcriptPath);
+  await removeTrustedTranscriptPath(transcriptPath);
 
   let sidecarPath: string | undefined;
   if (options?.deleteSidecarDir && !options.preserveMeta) {
     sidecarPath = path.join(path.dirname(transcriptPath), sessionId);
-    await fs.rm(sidecarPath, { recursive: true, force: true });
+    await removeTrustedTranscriptPath(sidecarPath).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    });
   }
   if (!options?.preserveMeta) {
     const metaPath = transcriptPath.replace(/\.jsonl$/, '.meta.json');
-    try { await fs.unlink(metaPath); } catch { /* meta may not exist */ }
+    try { await removeTrustedTranscriptPath(metaPath); } catch { /* meta may not exist */ }
     notifySessionMetaDeleted(sessionId);
   }
 
@@ -316,13 +338,13 @@ export async function deleteSessionMetaOnly(
   if (!metaPath) return { deleted: false };
 
   const actualMetaPath = metaPath.replace(/\.jsonl$/, '.meta.json');
-  assertAllowedTranscriptPath(actualMetaPath);
-
   if (options?.deleteSidecarDir) {
     const sidecarPath = path.join(path.dirname(actualMetaPath), sessionId);
-    await fs.rm(sidecarPath, { recursive: true, force: true });
+    await removeTrustedTranscriptPath(sidecarPath).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    });
   }
-  try { await fs.unlink(actualMetaPath); } catch { return { deleted: false }; }
+  try { await removeTrustedTranscriptPath(actualMetaPath); } catch { return { deleted: false }; }
   notifySessionMetaDeleted(sessionId);
   return { deleted: true };
 }
@@ -340,7 +362,11 @@ async function listSessionMetasInDir(
   projectKey: string,
 ): Promise<DeletedSessionMetaItem[]> {
   let entries: string[];
-  try { entries = await fs.readdir(dir); } catch { return []; }
+  try {
+    const directory = await openTrustedTranscriptDirectory(dir);
+    try { entries = await readdir(directory.fdPath); }
+    finally { await directory.handle.close(); }
+  } catch { return []; }
 
   const candidates: { sessionId: string; metaFullPath: string }[] = [];
   for (const name of entries) {
@@ -352,11 +378,11 @@ async function listSessionMetasInDir(
 
   const results = await Promise.all(candidates.map(async ({ sessionId, metaFullPath }) => {
     try {
-      const stat = await fs.stat(metaFullPath);
+      const stat = await statTrustedTranscript(metaFullPath);
       const jsonlPath = path.join(dir, `${sessionId}.jsonl`);
       let hasTranscript = false;
       try {
-        const jsonlStat = await fs.stat(jsonlPath);
+        const jsonlStat = await statTrustedTranscript(jsonlPath);
         hasTranscript = jsonlStat.size > 0;
       } catch { /* no .jsonl */ }
       return { sessionId, projectKey, metaPath: jsonlPath, hasTranscript, updatedAtMs: stat.mtimeMs };

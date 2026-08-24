@@ -3,10 +3,8 @@
  *
  * tenantId 只取 JWT；所有源文件和预览都先按源 PDF 做相同的租户、路径与符号链接校验。
  */
-import { createReadStream } from 'node:fs';
 import type { Stats } from 'node:fs';
-import { lstat, readFile, realpath, stat } from 'node:fs/promises';
-import { basename, extname, relative, resolve, sep } from 'node:path';
+import { basename, extname, relative, resolve } from 'node:path';
 import type { Request, Response } from 'express';
 import { Router } from 'express';
 import { auditLog } from '../data/login-logs/index.js';
@@ -19,6 +17,7 @@ import {
   previewPagePath,
 } from '../kb/previewGenerator.js';
 import { isPathWithinDirectory } from '../security/extraDirs.js';
+import { openTrustedFile, relativeToTrustedRoot, type TrustedFile } from '../security/trustedFile.js';
 
 const KB_ALLOWED_EXTS = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.md', '.txt']);
 const KB_MIME_MAP: Record<string, string> = {
@@ -38,24 +37,14 @@ export interface KbFilesRouterOptions {
 
 interface AuthorizedFile {
   tenantRoot: string;
-  absolutePath: string;
   relativePath: string;
-  stats: Stats;
+  trusted: TrustedFile;
   ext: string;
 }
 
 function readStringQuery(req: Request, name: string): string | null {
   const value = req.query[name];
   return typeof value === 'string' ? value : null;
-}
-
-async function assertNoSymlinkComponents(tenantRoot: string, absolutePath: string): Promise<void> {
-  const components = relative(tenantRoot, absolutePath).split(sep).filter(Boolean);
-  let current = tenantRoot;
-  for (const component of components) {
-    current = resolve(current, component);
-    if ((await lstat(current)).isSymbolicLink()) throw Object.assign(new Error('Symbolic links are not allowed'), { code: 'EACCES' });
-  }
 }
 
 async function authorizeFile(kbRootDir: string, req: Request, allowedExts = KB_ALLOWED_EXTS): Promise<AuthorizedFile> {
@@ -79,17 +68,17 @@ async function authorizeFile(kbRootDir: string, req: Request, allowedExts = KB_A
   const tenantRoot = resolve(kbRootDir, tenantId);
   const absolutePath = resolve(tenantRoot, filePath);
   if (!isPathWithinDirectory(absolutePath, tenantRoot)) throw Object.assign(new Error('Access denied'), { status: 403 });
-  await assertNoSymlinkComponents(tenantRoot, absolutePath);
-  const [realTenantRoot, realFilePath, stats] = await Promise.all([realpath(tenantRoot), realpath(absolutePath), stat(absolutePath)]);
-  if (!isPathWithinDirectory(realFilePath, realTenantRoot)) throw Object.assign(new Error('Access denied'), { status: 403 });
-  if (!stats.isFile()) throw Object.assign(new Error('Not a file'), { status: 400 });
-  return {
-    tenantRoot,
-    absolutePath,
-    relativePath: normalizeKbRelativePath(relative(tenantRoot, absolutePath)),
-    stats,
-    ext,
-  };
+  const relativePath = normalizeKbRelativePath(relative(tenantRoot, absolutePath));
+  let trusted: TrustedFile;
+  try {
+    trusted = await openTrustedFile(tenantRoot, relativePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EISDIR') {
+      throw Object.assign(new Error('Not a file'), { status: 400 });
+    }
+    throw error;
+  }
+  return { tenantRoot, relativePath, trusted, ext };
 }
 
 function fileEtag(size: number, mtimeMs: number): string {
@@ -145,8 +134,8 @@ function disposition(filename: string, mode: 'inline' | 'attachment'): string {
 }
 
 async function sendFile(req: Request, res: Response, options: {
-  absolutePath: string;
-  stats: AuthorizedFile['stats'];
+  trusted: TrustedFile;
+  stats: Stats;
   contentType: string;
   contentDisposition?: string;
   cacheControl: string;
@@ -175,7 +164,7 @@ async function sendFile(req: Request, res: Response, options: {
       res.end();
       return;
     }
-    await pipeFile(res, options.absolutePath, { start, end });
+    await pipeFile(res, options.trusted, { start, end });
     return;
   }
   res.setHeader('Content-Length', options.stats.size);
@@ -183,12 +172,12 @@ async function sendFile(req: Request, res: Response, options: {
     res.end();
     return;
   }
-  await pipeFile(res, options.absolutePath);
+  await pipeFile(res, options.trusted);
 }
 
-function pipeFile(res: Response, absolutePath: string, range?: { start: number; end: number }): Promise<void> {
+function pipeFile(res: Response, file: TrustedFile, range?: { start: number; end: number }): Promise<void> {
   return new Promise((resolvePromise) => {
-    const stream = createReadStream(absolutePath, range);
+    const stream = file.handle.createReadStream({ autoClose: false, start: range?.start ?? 0, end: range?.end });
     stream.on('error', () => {
       if (!res.headersSent) res.status(500).json({ error: 'Failed to read file' });
       else res.destroy();
@@ -214,12 +203,23 @@ function isManifest(value: unknown): value is KbPreviewManifest {
 
 async function loadCurrentManifest(file: AuthorizedFile): Promise<KbPreviewManifest | null> {
   try {
-    const parsed: unknown = JSON.parse(await readFile(previewManifestPath(file.tenantRoot, file.relativePath), 'utf8'));
+    const manifestRelativePath = relativeToTrustedRoot(
+      file.tenantRoot,
+      previewManifestPath(file.tenantRoot, file.relativePath),
+    );
+    const manifestFile = await openTrustedFile(file.tenantRoot, manifestRelativePath);
+    let raw: string;
+    try {
+      raw = await manifestFile.handle.readFile({ encoding: 'utf8' });
+    } finally {
+      await manifestFile.handle.close();
+    }
+    const parsed: unknown = JSON.parse(raw);
     if (!isManifest(parsed)) return null;
     if (
       parsed.sourcePath !== file.relativePath
-      || parsed.sourceSize !== file.stats.size
-      || parsed.sourceMtimeMs !== file.stats.mtimeMs
+      || parsed.sourceSize !== file.trusted.stats.size
+      || parsed.sourceMtimeMs !== file.trusted.stats.mtimeMs
     ) return null;
     return parsed;
   } catch (error) {
@@ -250,29 +250,33 @@ export function createKbFilesRouter(options: KbFilesRouterOptions): Router {
   const router = Router();
 
   const fileHandler = async (req: Request, res: Response) => {
+    let file: AuthorizedFile | undefined;
     try {
-      const file = await authorizeFile(kbRootDir, req);
+      file = await authorizeFile(kbRootDir, req);
       const contentType = KB_MIME_MAP[file.ext] ?? 'application/octet-stream';
       const mode = contentType.startsWith('image/') || contentType === 'application/pdf' ? 'inline' : 'attachment';
       if (req.method === 'GET' && req.headers.authorization) {
         auditLog(req, 'kb_file_read', `${file.relativePath} (${file.ext})`);
       }
       await sendFile(req, res, {
-        absolutePath: file.absolutePath,
-        stats: file.stats,
+        trusted: file.trusted,
+        stats: file.trusted.stats,
         contentType,
-        contentDisposition: disposition(basename(file.absolutePath), mode),
+        contentDisposition: disposition(basename(file.relativePath), mode),
         cacheControl: 'private, max-age=0, must-revalidate',
       });
     } catch (error) {
       handleRouteError(res, error);
+    } finally {
+      await file?.trusted.handle.close().catch(() => undefined);
     }
   };
   router.route('/file').get(fileHandler).head(fileHandler);
 
   const manifestHandler = async (req: Request, res: Response) => {
+    let file: AuthorizedFile | undefined;
     try {
-      const file = await authorizeFile(kbRootDir, req, new Set(['.pdf']));
+      file = await authorizeFile(kbRootDir, req, new Set(['.pdf']));
       const manifest = await loadCurrentManifest(file);
       if (!manifest) {
         res.status(404).json({ error: '该文档预览暂未生成' });
@@ -284,9 +288,9 @@ export function createKbFilesRouter(options: KbFilesRouterOptions): Router {
         contentType: 'application/json; charset=utf-8',
         cacheControl: 'private, max-age=0, must-revalidate',
         etag,
-        mtime: file.stats.mtime,
+        mtime: file.trusted.stats.mtime,
       });
-      if (isNotModified(req, etag, file.stats.mtime)) {
+      if (isNotModified(req, etag, file.trusted.stats.mtime)) {
         res.status(304).end();
         return;
       }
@@ -295,13 +299,17 @@ export function createKbFilesRouter(options: KbFilesRouterOptions): Router {
       else res.send(body);
     } catch (error) {
       handleRouteError(res, error);
+    } finally {
+      await file?.trusted.handle.close().catch(() => undefined);
     }
   };
   router.route('/preview-manifest').get(manifestHandler).head(manifestHandler);
 
   const previewHandler = async (req: Request, res: Response) => {
+    let file: AuthorizedFile | undefined;
+    let previewFile: TrustedFile | undefined;
     try {
-      const file = await authorizeFile(kbRootDir, req, new Set(['.pdf']));
+      file = await authorizeFile(kbRootDir, req, new Set(['.pdf']));
       const manifest = await loadCurrentManifest(file);
       if (!manifest) {
         res.status(404).json({ error: '该页预览暂未生成' });
@@ -322,14 +330,14 @@ export function createKbFilesRouter(options: KbFilesRouterOptions): Router {
         res.status(416).json({ error: `页码超出范围，共 ${manifest.pageCount} 页` });
         return;
       }
-      const absolutePath = previewPagePath(previewContentDir(file.tenantRoot, version), page);
-      const previewStats = await stat(absolutePath);
-      if (!previewStats.isFile()) {
-        res.status(404).json({ error: '该页预览暂未生成' });
-        return;
-      }
+      const previewRelativePath = relativeToTrustedRoot(
+        file.tenantRoot,
+        previewPagePath(previewContentDir(file.tenantRoot, version), page),
+      );
+      previewFile = await openTrustedFile(file.tenantRoot, previewRelativePath);
+      const previewStats = previewFile.stats;
       await sendFile(req, res, {
-        absolutePath,
+        trusted: previewFile,
         stats: previewStats,
         contentType: 'image/webp',
         cacheControl: 'private, max-age=31536000, immutable',
@@ -337,6 +345,9 @@ export function createKbFilesRouter(options: KbFilesRouterOptions): Router {
       });
     } catch (error) {
       handleRouteError(res, error);
+    } finally {
+      await previewFile?.handle.close().catch(() => undefined);
+      await file?.trusted.handle.close().catch(() => undefined);
     }
   };
   router.route('/preview').get(previewHandler).head(previewHandler);

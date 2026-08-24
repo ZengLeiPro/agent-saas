@@ -18,6 +18,7 @@ export interface ForegroundToolRecoveryOptions {
   runStore?: RunStore;
   sessionCatalog: SessionCatalog;
   parentSessionId: string;
+  tenantId?: string;
   logger?: { warn(message: string): void };
 }
 
@@ -36,7 +37,12 @@ export async function reconcileInterruptedForegroundToolCalls(
   options: ForegroundToolRecoveryOptions,
 ): Promise<number> {
   const parentSession = await options.sessionCatalog.get(options.parentSessionId);
-  const tenantId = parentSession?.tenantId?.trim();
+  const requestedTenantId = options.tenantId?.trim();
+  const catalogTenantId = parentSession?.tenantId?.trim();
+  if (requestedTenantId && catalogTenantId && requestedTenantId !== catalogTenantId) {
+    throw new Error(`Foreground tool recovery tenant mismatch for session ${options.parentSessionId}`);
+  }
+  const tenantId = requestedTenantId ?? catalogTenantId;
   if (!tenantId) {
     throw new Error(`Foreground tool recovery tenant is missing for session ${options.parentSessionId}`);
   }

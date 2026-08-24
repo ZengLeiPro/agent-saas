@@ -581,7 +581,7 @@ export class PgRunStore implements RunStore {
   async applySteeringInputsAtomically(
     targetRunId: string,
     inputs: SteeringApplyInput[],
-    tenantId = DEFAULT_TENANT_ID,
+    tenantId: string,
   ): Promise<SteeringApplyResult> {
     if (inputs.length === 0) return { appliedSourceRunIds: [], events: [] };
     const sourceRunIds = [...new Set(inputs.map((input) => input.sourceRunId))];
@@ -849,7 +849,7 @@ export class PgRunStore implements RunStore {
     reason: string,
     targetRunId?: string,
   ): Promise<SteeringInputRecord[]> {
-    const result = await this.cancelSteeringBeforeDispatchInternal(sessionId, reason, targetRunId);
+    const result = await this.cancelSteeringBeforeDispatchInternal(sessionId, reason, targetRunId, undefined, DEFAULT_TENANT_ID);
     return result.cancelled;
   }
 
@@ -858,7 +858,7 @@ export class PgRunStore implements RunStore {
     reason: string,
     targetRunId: string | undefined,
     event: PlatformEventInput,
-    tenantId = DEFAULT_TENANT_ID,
+    tenantId: string,
   ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
     const result = await this.cancelSteeringBeforeDispatchInternal(
       sessionId,
@@ -878,9 +878,9 @@ export class PgRunStore implements RunStore {
   private async cancelSteeringBeforeDispatchInternal(
     sessionId: string,
     reason: string,
-    targetRunId?: string,
-    event?: PlatformEventInput,
-    tenantId = DEFAULT_TENANT_ID,
+    targetRunId: string | undefined,
+    event: PlatformEventInput | undefined,
+    tenantId: string,
   ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
     const client = await this.pool.connect();
     let appended: Array<PlatformEvent & { sequence: number }> = [];

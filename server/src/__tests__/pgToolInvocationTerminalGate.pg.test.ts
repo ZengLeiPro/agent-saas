@@ -340,7 +340,7 @@ describePg('PgToolInvocationStore terminal run gate', () => {
     const event = { type: 'run_cancel_requested' as const, sessionId, runId, reason: 'web_abort' };
 
     const first = await runStore.cancelSteeringBeforeDispatchBySessionWithEvent(
-      sessionId, 'web_abort', runId, event,
+      sessionId, 'web_abort', runId, event, LEGACY_TENANT_ID,
     );
     const firstStopped = await pool.query<{ stopped_at: Date }>(`
       SELECT stopped_at FROM ${prefix}_steering_sessions WHERE session_id = $1
@@ -355,7 +355,7 @@ describePg('PgToolInvocationStore terminal run gate', () => {
       metadata: { wakeMessage: { channel: 'web', chatId: sessionId, content: 'stop 后新消息' } },
     });
     const duplicate = await runStore.cancelSteeringBeforeDispatchBySessionWithEvent(
-      sessionId, 'web_abort', runId, event,
+      sessionId, 'web_abort', runId, event, LEGACY_TENANT_ID,
     );
 
     expect(first.eventCreated).toBe(true);
@@ -403,6 +403,7 @@ describePg('PgToolInvocationStore terminal run gate', () => {
         'web_abort',
         runId,
         { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' },
+        LEGACY_TENANT_ID,
       );
 
       let waitingOnTargetLock = false;

@@ -187,7 +187,7 @@ async function dropConstraintByColumns(
   const result = await client.query<{ conname: string; columns: string[] }>(`
     SELECT constraint_row.conname,
            ARRAY(
-             SELECT attribute.attname
+             SELECT attribute.attname::text
              FROM unnest(constraint_row.conkey) WITH ORDINALITY AS key(attnum, position)
              JOIN pg_attribute attribute
                ON attribute.attrelid = constraint_row.conrelid

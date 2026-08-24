@@ -463,8 +463,8 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       },
     };
 
-    const first = await store.applySteeringInputsAtomically('target-atomic-idempotency', [input]);
-    const retry = await store.applySteeringInputsAtomically('target-atomic-idempotency', [input]);
+    const first = await store.applySteeringInputsAtomically('target-atomic-idempotency', [input], LEGACY_TENANT_ID);
+    const retry = await store.applySteeringInputsAtomically('target-atomic-idempotency', [input], LEGACY_TENANT_ID);
     expect(first.events.map((event) => event.type)).toEqual(['user_message', 'interjection_applied']);
     expect(retry).toEqual({ appliedSourceRunIds: [], events: [] });
     const events = await eventStore.list(LEGACY_TENANT_ID, sessionId);
@@ -501,7 +501,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
         type: 'user_message', runId: targetRunId, sessionId, content: '旧版已追加内容',
         interjectionSourceRunId: sourceRunId,
       },
-    }]);
+    }], LEGACY_TENANT_ID);
 
     expect(recovered.appliedSourceRunIds).toEqual([sourceRunId]);
     expect(recovered.events).toEqual([
@@ -539,12 +539,12 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
           type: 'user_message', runId: targetRunId, sessionId, content: '竞态内容',
           interjectionSourceRunId: sourceRunId,
         },
-      }]),
+      }], LEGACY_TENANT_ID),
       store.cancelSteeringBeforeDispatchBySessionWithEvent(
         sessionId,
         'web_abort',
         targetRunId,
-        { type: 'run_cancel_requested', sessionId, runId: targetRunId, reason: 'web_abort' },
+        { type: 'run_cancel_requested', sessionId, runId: targetRunId, reason: 'web_abort' }, LEGACY_TENANT_ID,
       ),
     ]);
 
@@ -573,7 +573,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
         sessionId,
         'web_abort',
         runId,
-        { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' },
+        { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' }, LEGACY_TENANT_ID,
       );
 
       expect(result.targetCancelled).toBe(true);
@@ -599,7 +599,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       sessionId,
       'web_abort',
       runId,
-      { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' },
+      { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' }, LEGACY_TENANT_ID,
     );
 
     expect(result).toMatchObject({ targetCancelled: false, eventCreated: false });
@@ -628,7 +628,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
         sessionId,
         'web_abort',
         runId,
-        { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' },
+        { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' }, LEGACY_TENANT_ID,
       );
       const start = () => toolInvocationStore.start({
         invocationId,
@@ -677,7 +677,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
         sessionId,
         'web_abort',
         runId,
-        { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' },
+        { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' }, LEGACY_TENANT_ID,
       ),
       toolInvocationStore.complete(invocationId, 'completed'),
     ]);

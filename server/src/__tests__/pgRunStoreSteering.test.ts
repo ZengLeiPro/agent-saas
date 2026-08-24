@@ -717,6 +717,7 @@ describe('PgRunStore steering inbox', () => {
       'web_abort',
       'completed-run',
       { type: 'run_cancel_requested', sessionId: 'session-terminal-race', runId: 'completed-run', reason: 'web_abort' },
+      'tenant-terminal-race',
     );
 
     expect(result).toMatchObject({ targetCancelled: false, eventCreated: false });

@@ -831,7 +831,7 @@ export class RawAgentLoop implements AgentLoop {
             buildAtomicSteeringInputs(
               reservedInterjections, durableInterjectionSourceRunIds, context.runId, context.sessionId,
             ),
-            context.tenantId,
+            this.eventSink.requireTenantId(),
           );
           const appliedSourceRunIdSet = new Set(atomic.appliedSourceRunIds);
           appliedInterjections = reservedInterjections.filter((interjection) => (

@@ -141,7 +141,7 @@ export { buildChatMessageActivityDetail } from './channelHelpers.js';
 
 interface ActiveStreamEntry {
   controller: AbortController;
-  userId?: string;
+  userId?: string; tenantId?: string;
   ws: WebSocket;
   sessionId?: string;
   runId?: string;
@@ -1539,7 +1539,7 @@ export class WebChannel implements BaseChannel {
     }
     const entry = active?.entry ?? legacyEntry;
     const resolvedStreamId = active?.streamId ?? (!runId ? streamId : undefined);
-    let sessionId = entry?.sessionId;
+    let sessionId = entry?.sessionId; let targetTenantId = entry?.tenantId;
     let resolvedRunId = runId ?? entry?.runId;
     let resolvedRunStatus: string | undefined;
     let resolvedRunStatusReason: string | undefined;
@@ -1548,7 +1548,7 @@ export class WebChannel implements BaseChannel {
     if (resolvedRunId && this.config.enqueueRuntime?.runStore) {
       const record = await this.config.enqueueRuntime.runStore.get(resolvedRunId);
       if (record) {
-        sessionId = record.sessionId;
+        sessionId = record.sessionId; targetTenantId = record.tenantId ?? targetTenantId;
         resolvedRunStatus = record.status;
         resolvedRunStatusReason = record.statusReason;
         hasSensitiveTarget = Boolean(record.userId || (record.tenantId && record.tenantId !== DEFAULT_TENANT_ID));
@@ -1609,8 +1609,7 @@ export class WebChannel implements BaseChannel {
         sessionId,
         'aborted',
         resolvedRunId,
-        cancelEvent,
-        client.user?.tenantId,
+        cancelEvent, targetTenantId ?? client.user?.tenantId,
       )
       : { targetCancelled: false, eventAppended: false, newCancellation: true };
     if (resolvedRunId && this.config.enqueueRuntime?.runStore) {
@@ -1741,7 +1740,7 @@ export class WebChannel implements BaseChannel {
   ): Promise<{ targetCancelled: boolean; eventAppended: boolean; newCancellation: boolean }> {
     const runStore = this.config.enqueueRuntime?.runStore;
     if (!runStore) return { targetCancelled: false, eventAppended: false, newCancellation: true };
-    if (cancelEvent && runStore.cancelSteeringBeforeDispatchBySessionWithEvent) {
+    if (cancelEvent && runStore.cancelSteeringBeforeDispatchBySessionWithEvent) { if (!tenantId) throw new Error(`Missing tenant context for session ${sessionId} cancellation`);
       const { cancelled, targetCancelled, event, eventCreated } = await runStore.cancelSteeringBeforeDispatchBySessionWithEvent(
         sessionId,
         reason,
@@ -3167,7 +3166,7 @@ export class WebChannel implements BaseChannel {
 
         this.activeStreams.set(acceptedStreamId, {
           controller,
-          userId: user?.sub,
+          userId: user?.sub, tenantId: sessionRecord.tenantId ?? user?.tenantId ?? DEFAULT_TENANT_ID,
           ws,
           sessionId: acceptedSessionId,
           runId: acceptedRunId,
@@ -3402,7 +3401,8 @@ export class WebChannel implements BaseChannel {
     // 用户级 controller：仅在用户主动点击"停止"时触发，用于终止 Agent
     const userAbortController = new AbortController();
     const streamId = String(++this.streamIdCounter);
-    this.activeStreams.set(streamId, { controller: userAbortController, userId: user?.sub, ws, sessionId: validSessionId, clientMsgId });
+    this.activeStreams.set(streamId, { controller: userAbortController,
+      userId: user?.sub, tenantId: user?.tenantId ?? DEFAULT_TENANT_ID, ws, sessionId: validSessionId, clientMsgId });
     this.wsActiveStream.set(ws, streamId);
     // 回填幂等记录的真实 streamId（之前占位为空）
     this.idempotencySet(user?.sub, clientMsgId, 'in_flight', streamId);

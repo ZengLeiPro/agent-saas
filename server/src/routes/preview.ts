@@ -13,8 +13,6 @@
  */
 
 import { Router } from "express";
-import { createReadStream } from "fs";
-import { readFile, lstat } from "fs/promises";
 import { resolve, extname } from "path";
 import { randomUUID } from "crypto";
 import { resolveUserCwd } from "../workspace/resolver.js";
@@ -24,6 +22,7 @@ import {
   resolveAuthorizedPath,
   type UserOverrides,
 } from "../security/extraDirs.js";
+import { UnsafeFilePathError, openTrustedFileFromPath } from "../security/trustedFile.js";
 
 // ── Preview token store ──────────────────────────────────────────
 
@@ -172,12 +171,11 @@ export function createPreviewRoutes(options: PreviewRouterOptions) {
         return;
       }
 
-      // Check file exists, is not a symlink, and is a regular file
-      const fileStat = await lstat(absolutePath).catch(() => null);
-      if (!fileStat || fileStat.isSymbolicLink() || !fileStat.isFile()) {
-        res.status(404).end();
-        return;
-      }
+      const opened = await openTrustedFileFromPath(
+        absolutePath,
+        [session.userCwd, ...session.extraDirs],
+      );
+      const fileStat = opened.stats;
 
       const ext = extname(absolutePath).toLowerCase();
       const mimeType = MIME_MAP[ext] || "application/octet-stream";
@@ -185,7 +183,12 @@ export function createPreviewRoutes(options: PreviewRouterOptions) {
 
       if (isHtml) {
         // HTML: inject <base> tag for relative path resolution + CSP header
-        const content = await readFile(absolutePath, "utf-8");
+        let content: string;
+        try {
+          content = await opened.handle.readFile("utf-8");
+        } finally {
+          await opened.handle.close();
+        }
 
         // Build <base> href from the raw (encoded) URL to preserve non-ASCII encoding
         const urlWithoutQuery = req.originalUrl.split("?")[0];
@@ -227,7 +230,7 @@ export function createPreviewRoutes(options: PreviewRouterOptions) {
         );
         res.setHeader("Content-Length", fileStat.size);
 
-        const stream = createReadStream(absolutePath);
+        const stream = opened.handle.createReadStream({ autoClose: true });
         stream.pipe(res);
         stream.on("error", () => {
           if (!res.headersSent) res.status(500).end();
@@ -235,7 +238,11 @@ export function createPreviewRoutes(options: PreviewRouterOptions) {
       }
     } catch (error) {
       serverLogger.error("[preview] serve error:", error);
-      if (!res.headersSent) res.status(500).end();
+      if (!res.headersSent) {
+        if (error instanceof UnsafeFilePathError) res.status(403).end();
+        else if ((error as NodeJS.ErrnoException).code === "ENOENT") res.status(404).end();
+        else res.status(500).end();
+      }
     }
   });
 

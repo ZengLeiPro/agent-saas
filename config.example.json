@@ -438,6 +438,17 @@
   //   "connectionString": "postgresql://agent_runtime_app:<PG_PWD>@<RDS 域名>:5432/agent_runtime?sslmode=disable",
   //   "tablePrefix": "runtime"
   // },
+  // Runtime retention 默认关闭；即使 enabled=true，缺省仍为只读 dry-run。
+  // execute 必须同时填写法务授权水位（十进制 global_sequence）和审批/变更单号。
+  // TTL 矩阵、billing/legal watermark 语义和生产门禁见 docs/runtime-eventstore-retention-runbook.md。
+  // "runtimeEventRetention": {
+  //   "enabled": false,
+  //   "executionMode": "dry-run",
+  //   "legalDeleteThroughGlobalSequence": "0",
+  //   "batchLimit": 10000,
+  //   "maxBatchesPerCategory": 10
+  //   // "authorizationRef": "CHG-000000" // 仅经批准切 execute 时填写
+  // },
 
 
   // ── Client daemon reverse WebSocket（Many-hands 客户侧 hand）──────────────

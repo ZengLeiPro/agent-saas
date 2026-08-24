@@ -40,9 +40,11 @@ import { configureTaskboardGithubRepositoryProvider } from '../taskboard/reposit
 import type { RepositoryProvider } from '../taskboard/repositoryProvider.js';
 import { resolveGithubToken } from '../connectors/github.js';
 import { buildRuntimeTaskboardIntegrationV3Options, configureRuntimeIntegrationV3RepositoryAccess, startRuntimeTaskboardIntegrationV3, type RuntimeTaskboardIntegrationV3 } from './runtimeTaskboardIntegrationV3.js';
+import { retentionWorkerOptions } from './runtimeEventRetentionConfig.js';
 import { createRuntimeIntegrationV3HealthProvider } from '../taskboard/integrationV3Observability.js';
 import { createIntegrationV3RequeueHandler } from '../taskboard/integrationV3Repair.js';
 import type { TaskboardService } from '../taskboard/types.js';
+import { createTaskboardTitleGenerator } from '../taskboard/taskTitle.js';
 import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import { MEMORY_CONSOLIDATION_DEFAULTS, withMemoryConsolidationLeaseBuffer, type MemoryConsolidationResolvedConfig } from '../memory/consolidation/types.js';
 import { resolveTenantMemoryFeatureStatus } from '../memory/effectiveStatus.js';
@@ -215,7 +217,10 @@ import {
 import { setConnectorDictionary, setTenantConnectorDictionaries } from '../agent/toolPresentationBuilder.js';
 import { UploadManager } from '../uploads/manager.js';
 import { migrateCronGroups } from '../data/groups/migrate.js';
-import { findTranscriptPathBySessionId } from '../data/transcripts/store.js';
+import {
+  findTranscriptPathBySessionId,
+  findTranscriptPathByTenantAndSessionId,
+} from '../data/transcripts/store.js';
 import { runStartupMigrations } from '../data/migrations/startup.js';
 import { getBusinessDb } from '../data/db/business.js';
 import { runBusinessMigrations } from '../data/db/migrations.js';
@@ -371,7 +376,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tenantSharedEnv,
     sharedDir,
   };
-
   const titleGeneratorConfigs = resolveTitleGeneratorConfigs({
     models: config.models,
     titleGenerator: config.titleGenerator,
@@ -1084,17 +1088,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       eventsTable: pgEventStore.eventsTable,
       toolInvocationsTable: pgToolInvocationStore.toolInvocationsTable,
       billingProjectionStateTable: pgBillingStore.projectionStateTable,
-      enabled: retentionConfig?.enabled,
-      sweepIntervalMinutes: retentionConfig?.sweepIntervalMinutes,
-      batchLimit: retentionConfig?.batchLimit,
-      terminalDeltaGraceMinutes: retentionConfig?.terminalDeltaGraceMinutes,
-      successfulSummaryRetentionHours: retentionConfig?.successfulSummaryRetentionHours,
-      failedSummaryRetentionDays: retentionConfig?.failedSummaryRetentionDays,
-      modelDiagnosticRetentionDays: retentionConfig?.modelDiagnosticRetentionDays,
-      modelRequestFinishedRetentionDays: retentionConfig?.modelRequestFinishedRetentionDays,
-      handEventRetentionDays: retentionConfig?.handEventRetentionDays,
-      billingCatchupBatchLimit: retentionConfig?.billingCatchupBatchLimit,
-      billingCatchupMaxBatches: retentionConfig?.billingCatchupMaxBatches,
+      ...retentionWorkerOptions(retentionConfig),
       projectBillingRuntimeEvents: (limit) => billingService!.projectRuntimeEvents(limit),
       logger: serverLogger.child('RuntimeEventRetention'),
     });
@@ -1683,7 +1677,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       : false,
     ...memoryContextTools, agentStore, orgAgentStore, tenantStore,
     environmentStore,
-    taskboard: { service: () => taskboardService, executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, integrationPush: () => integrationV3Runtime?.integrationPush, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
+    taskboard: { service: () => taskboardService, generateTaskTitle: (description, identity) => createTaskboardTitleGenerator({ agentCwd, titleGeneratorConfigs, titleModelAdapterFactory, refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(), getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'), tokenUsageStore, billingService })(description, identity), executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, integrationPush: () => integrationV3Runtime?.integrationPush, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
       const effectiveAgentId = agentId
         ?? (await agentResourceStore?.findPersonalByOwner(tenantId, userId))?.agentId;
@@ -2131,10 +2125,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         `Audit projection (duckdb) init failed, falling back to file backend: `
         + `${err instanceof Error ? err.message : String(err)}`,
       );
-      runtimeAuditQuery = new EventStoreRuntimeAuditQuery(findTranscriptPathBySessionId);
+      runtimeAuditQuery = new EventStoreRuntimeAuditQuery(findTranscriptPathByTenantAndSessionId);
     }
   } else {
-    runtimeAuditQuery = new EventStoreRuntimeAuditQuery(findTranscriptPathBySessionId);
+    runtimeAuditQuery = new EventStoreRuntimeAuditQuery(findTranscriptPathByTenantAndSessionId);
   }
 
   const dispatchMetricsStore = new DispatchMetricsStore();
@@ -2647,7 +2641,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
     getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'),
     sttConfig: resolvedSttRuntimeConfig.sttConfig,
-    jwtSecret: config.auth?.jwtSecret,
+    ...(config.auth?.enabled ? { authEnabled: true, jwtSecret: config.auth.jwtSecret } : { authEnabled: false }),
     userOverrides: config.agent.userOverrides,
     getIsDraining: () => channelManager.draining,
     uploadManager,

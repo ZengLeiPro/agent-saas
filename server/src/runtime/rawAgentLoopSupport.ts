@@ -1,9 +1,17 @@
 import { getModelContextWindow } from '../data/usage/pricing.js';
+import { estimateContextTokens } from './contextBreakdown.js';
+import {
+  buildBoundedInitialCompactionMessages,
+  planContinuousCheckpointInput,
+  type ContextCheckpointPlan,
+} from './contextCheckpoint.js';
+import { buildContextProjection, type ContextReconstructionPolicy } from './contextProjection.js';
 import type { ToolInvocationStreamChunk } from './handProtocol.js';
 import type {
   EventStore,
   ModelChatMessage,
   ModelUsage,
+  PlatformEvent,
   PlatformEventInput,
 } from './types.js';
 
@@ -57,6 +65,42 @@ export interface CompactionOptions {
   sourceRunId?: string;
   controlSourceRunIds?: string[];
   baseFixedTokens?: number;
+}
+
+export function prepareCompactionInputMessages(input: {
+  compressedEvents: PlatformEvent[];
+  plan: ContextCheckpointPlan;
+  contextWindow: number;
+  fixedRequestTokens: number;
+  sessionId: string;
+  runId: string;
+  policy?: ContextReconstructionPolicy;
+}): { messages: ModelChatMessage[]; projectedMessageCount: number } {
+  const hasPriorCheckpoint = input.compressedEvents.some((event) => event.type === 'compaction');
+  const sourceInputBudget = Math.max(
+    0,
+    input.contextWindow - input.fixedRequestTokens - input.plan.summaryBudgetTokens - 1_024,
+  );
+  const continuousInput = planContinuousCheckpointInput(
+    input.compressedEvents,
+    Math.max(0, sourceInputBudget - (hasPriorCheckpoint ? input.plan.userHistoryTokenCap : 0)),
+  );
+  const projection = buildContextProjection(input.compressedEvents, {
+    sessionId: input.sessionId,
+    runId: input.runId,
+    policy: input.policy,
+    excludeMemoryContext: true,
+    checkpointUserHistoryTokenCap: input.plan.userHistoryTokenCap,
+    checkpointSummaryTokenCap: continuousInput.summaryTokenCap,
+    checkpointRetainedStartIndex: continuousInput.retainedStartIndex,
+    collapseCheckpointRawTail: true,
+  });
+  return {
+    messages: !hasPriorCheckpoint && estimateContextTokens(projection.messages) > sourceInputBudget
+      ? buildBoundedInitialCompactionMessages(projection.selectedEvents, sourceInputBudget)
+      : projection.messages,
+    projectedMessageCount: projection.messages.length,
+  };
 }
 
 const CONTEXT_EMERGENCY_THRESHOLD_RATIO = 0.95;

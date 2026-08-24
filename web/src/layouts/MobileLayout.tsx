@@ -398,7 +398,7 @@ export function MobileLayout(props: LayoutProps) {
                 closeDrawer();
                 setTimeout(() => { selectSession(id); }, 370);
               }}
-              onNew={() => { newSession(); closeDrawer(); }}
+              onNew={(groupId) => { newSession(groupId); closeDrawer(); }}
               onDelete={confirmDeleteSession}
               onRename={renameSession}
               onAutoTitle={autoTitleSession}

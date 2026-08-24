@@ -9,7 +9,7 @@
  * - 后端按 policy.showCost 脱敏 ¥ 字段（costRedacted）→ 成本区退化为 token 口径；
  * - EntityLink 走 plain 模式（不渲染 platform-admin 跳转），组织列隐藏。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,6 +22,7 @@ import { AdminErrorAlert, EntityLink, MetricCard } from "@/components/PlatformAd
 import { RUN_LABEL, formatToolName } from "@/components/PlatformAdmin/displayText";
 import { classifyFailureReason } from "@/components/PlatformAdmin/errorText";
 import { useModelDisplayMap } from "@/components/TenantAnalytics/hooks";
+import { todayBeijingDate } from "@/components/TenantAnalytics/metrics";
 import { ToolAnalysisPanel } from "@/components/PlatformAdmin/ToolAnalysisPanel";
 
 import { runTraceApi } from "@/components/RunTraceExplorer/api";
@@ -29,7 +30,10 @@ import { formatCount, formatMs, formatRate, formatYuan } from "@/components/RunT
 import { RunStatusBadge } from "@/components/RunTraceExplorer/StatusBadge";
 import type { EfficiencyReport } from "@/components/RunTraceExplorer/types";
 
+import { usageApi } from "./api";
 import { formatTokens } from "./format";
+import { ModelTokenTrendCard } from "./ModelTokenTrendChart";
+import type { ModelTrendResp } from "./types";
 
 const DAYS_OPTIONS: SegmentedOption<number>[] = [
   { value: 7, label: "7 天" },
@@ -38,6 +42,8 @@ const DAYS_OPTIONS: SegmentedOption<number>[] = [
 ];
 
 const DEFAULT_EFF_DAYS = 7;
+const DAY_MS = 86_400_000;
+const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 const ALLOWED_EFF_DAYS = new Set(DAYS_OPTIONS.map((option) => option.value));
 
 /**
@@ -65,6 +71,37 @@ export function nearestEffDays(days: number): number {
     if (option <= days) hit = option;
   }
   return hit;
+}
+
+/**
+ * 最近 N 个北京时间自然日（含今天）的统一请求窗口。
+ *
+ * usage trend 接口使用 inclusive 日期；efficiency 使用 ISO `[from,to)`。两组边界从同一对
+ * 北京日期派生，避免 UTC 日切与北京时间日切混用而统计到不同事件集合。
+ */
+function recentBeijingWindow(days: number): {
+  trendFrom: string;
+  trendTo: string;
+  efficiencyFrom: string;
+  efficiencyTo: string;
+} {
+  const trendTo = todayBeijingDate();
+  const trendToUtc = Date.parse(`${trendTo}T00:00:00Z`);
+  const trendFrom = new Date(trendToUtc - (days - 1) * DAY_MS).toISOString().slice(0, 10);
+  const nextDate = new Date(trendToUtc + DAY_MS).toISOString().slice(0, 10);
+  return {
+    trendFrom,
+    trendTo,
+    efficiencyFrom: new Date(`${trendFrom}T00:00:00+08:00`).toISOString(),
+    efficiencyTo: new Date(`${nextDate}T00:00:00+08:00`).toISOString(),
+  };
+}
+
+/** 将 ISO `[from,to)` 按北京时间自然日显示为 inclusive 起止日期。 */
+function formatBeijingRange(range: EfficiencyReport["range"]): string {
+  const from = new Date(Date.parse(range.from) + BEIJING_OFFSET_MS).toISOString().slice(0, 10);
+  const to = new Date(Date.parse(range.to) - 1 + BEIJING_OFFSET_MS).toISOString().slice(0, 10);
+  return `${from} → ${to}`;
 }
 
 /** 工具错误率红色高亮阈值 */
@@ -95,26 +132,120 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
     (next: number) => url.set("effDays", next === DEFAULT_EFF_DAYS ? null : next, HISTORY_PUSH),
     [url],
   );
-  const [data, setData] = useState<EfficiencyReport | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const selectionKey = JSON.stringify([tenantId ?? null, days]);
+  const initialWindow = recentBeijingWindow(days);
+  const initialRequestKey = JSON.stringify([
+    tenantId ?? null,
+    days,
+    initialWindow.efficiencyFrom,
+    initialWindow.efficiencyTo,
+  ]);
+  const [efficiencyState, setEfficiencyState] = useState<{
+    selectionKey: string;
+    requestKey: string;
+    data: EfficiencyReport | null;
+    loading: boolean;
+    error: string | null;
+  }>(() => ({ selectionKey, requestKey: initialRequestKey, data: null, loading: true, error: null }));
+  const [modelTrendState, setModelTrendState] = useState<{
+    selectionKey: string;
+    requestKey: string;
+    data: ModelTrendResp | null;
+    loading: boolean;
+    error: string | null;
+  }>(() => ({ selectionKey, requestKey: initialRequestKey, data: null, loading: true, error: null }));
+  const loadSequence = useRef(0);
   const plain = !linkEntities;
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const resp = await runTraceApi.efficiency({ days, ...(tenantId ? { tenantId } : {}) });
-      setData(resp);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [days, tenantId]);
+  // 请求上下文变化后的首帧就隐藏旧数据，不能等 effect 清理后才切换。
+  const { data, loading, error } = efficiencyState.selectionKey === selectionKey
+    ? efficiencyState
+    : { data: null, loading: true, error: null };
+  const {
+    data: modelTrend,
+    loading: modelTrendLoading,
+    error: modelTrendError,
+  } = modelTrendState.selectionKey === selectionKey
+    ? modelTrendState
+    : { data: null, loading: true, error: null };
+
+  const load = useCallback(() => {
+    const sequence = ++loadSequence.current;
+    const isLatest = () => sequence === loadSequence.current;
+    const tenantArgs = tenantId ? { tenantId } : {};
+    const window = recentBeijingWindow(days);
+    const requestKey = JSON.stringify([
+      tenantId ?? null,
+      days,
+      window.efficiencyFrom,
+      window.efficiencyTo,
+    ]);
+
+    // 只有同一实际自然日窗口的手动刷新保留数据；租户、天数或北京时间日期变化均从空状态开始。
+    setEfficiencyState((previous) => ({
+      selectionKey,
+      requestKey,
+      data: previous.requestKey === requestKey ? previous.data : null,
+      loading: true,
+      error: null,
+    }));
+    setModelTrendState((previous) => ({
+      selectionKey,
+      requestKey,
+      data: previous.requestKey === requestKey ? previous.data : null,
+      loading: true,
+      error: null,
+    }));
+
+    void runTraceApi.efficiency({
+      days,
+      ...tenantArgs,
+      from: window.efficiencyFrom,
+      to: window.efficiencyTo,
+    }).then(
+      (nextData) => {
+        if (!isLatest()) return;
+        setEfficiencyState({ selectionKey, requestKey, data: nextData, loading: false, error: null });
+      },
+      (reason) => {
+        if (!isLatest()) return;
+        setEfficiencyState((previous) => ({
+          selectionKey,
+          requestKey,
+          data: previous.requestKey === requestKey ? previous.data : null,
+          loading: false,
+          error: reason instanceof Error ? reason.message : String(reason),
+        }));
+      },
+    );
+
+    void usageApi.trendByModel({
+      from: window.trendFrom,
+      to: window.trendTo,
+      ...tenantArgs,
+    }).then(
+      (nextData) => {
+        if (!isLatest()) return;
+        setModelTrendState({ selectionKey, requestKey, data: nextData, loading: false, error: null });
+      },
+      (reason) => {
+        if (!isLatest()) return;
+        setModelTrendState((previous) => ({
+          selectionKey,
+          requestKey,
+          data: previous.requestKey === requestKey ? previous.data : null,
+          loading: false,
+          error: reason instanceof Error ? reason.message : String(reason),
+        }));
+      },
+    );
+  }, [days, selectionKey, tenantId]);
 
   useEffect(() => {
     void load();
+    return () => {
+      loadSequence.current += 1;
+    };
   }, [load]);
 
   return (
@@ -127,18 +258,25 @@ export function EfficiencyView({ tenantId, linkEntities = true, inheritedDays }:
           value={days}
           onChange={setDays}
         />
-        <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-          <RefreshCw className={cn("mr-1 size-3.5", loading && "animate-spin")} />
+        <Button variant="outline" size="sm" onClick={load} disabled={loading || modelTrendLoading}>
+          <RefreshCw className={cn("mr-1 size-3.5", (loading || modelTrendLoading) && "animate-spin")} />
           刷新
         </Button>
         {data && (
           <span className="text-xs text-muted-foreground tabular-nums">
-            {data.range.from.slice(0, 10)} → {data.range.to.slice(0, 10)}
+            {formatBeijingRange(data.range)}
           </span>
         )}
       </div>
 
       {error && <AdminErrorAlert error={error} />}
+
+      <ModelTokenTrendCard
+        response={modelTrend}
+        loading={modelTrendLoading}
+        error={modelTrendError}
+        labelFor={labelFor}
+      />
 
       {loading && !data ? (
         <div className="flex h-40 items-center justify-center rounded-2xl border bg-card text-sm text-muted-foreground">

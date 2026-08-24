@@ -1,12 +1,16 @@
-import { createHash } from 'node:crypto';
 import { appendTaskboardAttachments, cleanupTaskboardAttachments, materializeTaskboardAttachments, resolveTaskboardAttachments } from './taskboardAttachmentActions.js';
+import { taskboardCreateRequestDigest, taskboardCreateRequestId } from './taskboardCreateRequestId.js';
 import { assertTaskboardExecutionScope } from './taskboardExecutionScope.js';
-
+import { assertActiveBoard, assertBoardRole } from '../taskboard/storeHelpers.js';
+import { generateAndApplyTaskTitle, generateTaskTitleSafely } from '../taskboard/taskTitle.js';
+import { releaseTaskCreationAfterFailure, waitForTaskCreationClaim } from '../taskboard/taskCreationLifecycle.js';
+import { sameTaskAttachments } from '../taskboard/taskAttachmentMatch.js';
 import type {
   TaskBoardExecutionPurpose,
   TaskBoardPriority,
   TaskBoardStatus,
   TaskBoardTask,
+  TaskBoardTaskCreateInput,
   TaskBoardTaskKind,
   TaskBoardTaskPatchInput,
   TaskBoardUploadAttachment,
@@ -22,7 +26,6 @@ import type {
   TaskboardService,
   TaskboardTaskSearchFilter,
 } from '../taskboard/types.js';
-
 export const TASKBOARD_LEGACY_ACTIONS = ['list', 'create', 'update', 'move', 'execute'] as const;
 export const TASKBOARD_RESOURCE_ACTIONS = [
   'board.list',
@@ -139,6 +142,7 @@ export interface TaskboardManageInput {
 }
 export interface TaskboardToolOptions {
   service: () => TaskboardService | undefined;
+  generateTaskTitle?: (description: string, identity: TaskboardIdentity) => Promise<string | null>;
   executionService?: () => TaskboardExecutionService | undefined;
   integrationPush?: () => TaskboardIntegrationPushService | undefined;
   resolveTrustedWorkspace?: (
@@ -176,6 +180,7 @@ export interface TaskboardToolOptions {
     | 'getExecutionContextBySessionId'
     | 'updateTaskBranchFromExecution'
     | 'createTaskFromExecution'
+    | 'createTaskFromExecutionWithResult'
     | 'moveTaskFromExecution'
   > | undefined;
 }
@@ -509,24 +514,6 @@ export async function invokeTaskboardAction(
       throw new Error(`target=taskboard 不支持 action=${input.action}`);
   }
 }
-
-function taskboardCreateRequestId(input: TaskboardManageInput, scope: TaskboardActionScope): string {
-  const sourceRunId = scope.execution?.execution.runId ?? 'unknown-run';
-  const digest = createHash('sha256').update(JSON.stringify({
-    boardId: input.boardId,
-    title: input.title,
-    description: input.description,
-    branch: input.branch,
-    attachments: input.attachments?.map((attachment) => attachment.attachmentId),
-    status: input.status,
-    priority: input.priority,
-    labels: input.labels,
-    dueAt: input.dueAt,
-    model: input.model,
-  })).digest('hex').slice(0, 32);
-  return `taskboard-tool:${sourceRunId.slice(-64)}:${digest}`;
-}
-
 async function boardSearch(
   service: TaskboardService,
   identity: TaskboardIdentity,
@@ -547,7 +534,6 @@ async function boardSearch(
     boards: result.items,
   };
 }
-
 async function taskSearch(
   service: TaskboardService,
   identity: TaskboardIdentity,
@@ -584,7 +570,6 @@ async function taskSearch(
     tasks: result.items,
   };
 }
-
 async function createTask(
   options: TaskboardToolOptions,
   service: TaskboardService,
@@ -595,17 +580,19 @@ async function createTask(
 ): Promise<Record<string, unknown>> {
   const boardId = requireField(input.boardId, 'boardId');
   const dispatcher = input.dispatch ? requireExecutionService(executionService) : undefined;
+  const board = await service.getBoard(identity, boardId);
+  assertBoardRole(board.role, 'editor');
+  assertActiveBoard(board);
   if (input.dispatch) await assertCanDispatch(service, identity, boardId);
   if (input.dispatch && input.status && input.status !== 'todo') {
     throw new Error('dispatch=true 只支持创建 todo 任务');
   }
+  const title = input.title ?? await generateTaskTitleSafely(options.generateTaskTitle ?? (async () => null), input.description ?? '', identity);
   const attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
-  const ownerUserId = attachments?.length
-    ? (await service.getBoard(identity, boardId)).ownerUserId
-    : undefined;
+  const ownerUserId = attachments?.length ? board.ownerUserId : undefined;
   await markTaskboardAttachments(options, identity, attachments, scope);
   const createdTask = await service.createTask(identity, boardId, {
-    title: requireField(input.title, 'title'),
+    title: title ?? '',
     ...(input.kind ? { kind: input.kind } : {}),
     ...(input.description !== undefined ? { description: input.description } : {}),
     ...(typeof input.branch === 'string' ? { branch: input.branch } : {}),
@@ -635,7 +622,6 @@ async function createTask(
   if (!input.dispatch) return { created: true, task };
   return dispatchCreatedTask(dispatcher!, identity, task);
 }
-
 async function rollbackCreatedTask(service: TaskboardService, identity: TaskboardIdentity, task: TaskBoardTask, error: unknown, cleanup?: () => Promise<void>): Promise<never> {
   try {
     await service.rollbackTaskCreation(identity, task.id, { expectedVersion: task.version }); await cleanup?.();
@@ -647,7 +633,6 @@ async function rollbackCreatedTask(service: TaskboardService, identity: Taskboar
   }
   throw error;
 }
-
 async function dispatchCreatedTask(
   executionService: TaskboardExecutionService,
   identity: TaskboardIdentity,
@@ -748,50 +733,78 @@ async function createExecutionTask(
   const dispatcher = input.dispatch ? requireExecutionService(options.executionService?.()) : undefined;
   const service = options.service();
   if (!service) throw new Error('任务看板服务未启用');
-  const attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
-  const ownerUserId = attachments?.length
-    ? (await service.getBoard(identity, execution.task.boardId)).ownerUserId
-    : undefined;
-  await markTaskboardAttachments(options, identity, attachments, scope);
-  let task = await executionStore.createTaskFromExecution(identity, execution.execution.runId, {
-    title: requireField(input.title, 'title'),
+  const clientRequestId = taskboardCreateRequestId(input, { execution }, kind);
+  const requestDigest = taskboardCreateRequestDigest(input, kind);
+  const createInput: TaskBoardTaskCreateInput = {
+    title: input.title ?? '',
     kind,
     ...(input.description !== undefined ? { description: input.description } : {}),
     ...(typeof input.branch === 'string' ? { branch: input.branch } : {}),
-    ...(attachments !== undefined && attachments.length === 0 ? { attachments: [] } : {}),
+    ...(input.attachments !== undefined && input.attachments.length === 0 ? { attachments: [] } : {}),
     status: 'todo',
     ...(input.priority ? { priority: input.priority } : {}),
     ...(input.labels ? { labels: input.labels } : {}),
     ...(typeof input.dueAt === 'string' ? { dueAt: input.dueAt } : {}),
     ...(typeof input.model === 'string' ? { model: input.model } : {}),
-    clientRequestId: taskboardCreateRequestId(input, { execution }),
-  });
+    clientRequestId,
+  };
+  const retryCreate = () => executionStore.createTaskFromExecutionWithResult(
+    identity, execution.execution.runId, createInput, requestDigest,
+  );
+  const createResult = await waitForTaskCreationClaim(await retryCreate(), retryCreate);
+  if (!createResult.created && !createResult.creationClaimToken && !input.dispatch) {
+    return { created: false, task: createResult.task };
+  }
+  let task = createResult.task;
+  const ownsCreation = createResult.created || Boolean(createResult.creationClaimToken);
+  if (ownsCreation && input.title === undefined && !task.title.trim()) {
+    task = await generateAndApplyTaskTitle(
+      service, identity, task, input.description ?? '', options.generateTaskTitle ?? (async () => null),
+      createResult.creationClaimToken,
+    );
+  }
+  let attachments: TaskBoardUploadAttachment[] | undefined;
+  let ownerUserId: string | undefined;
   let scopedAttachments: TaskBoardUploadAttachment[] | undefined;
   try {
-    scopedAttachments = await materializeTaskboardAttachments(options, identity, task.id, ownerUserId, attachments);
-    if (scopedAttachments) {
-      task = await service.updateTask(identity, task.id, {
-        attachments: scopedAttachments,
-        expectedVersion: task.version,
-      });
+    if (ownsCreation) {
+      attachments = await resolveTaskboardAttachments(options, identity, input.attachments, scope);
+      ownerUserId = attachments?.length
+        ? (await service.getBoard(identity, execution.task.boardId)).ownerUserId
+        : undefined;
+      if (attachments !== undefined && !sameTaskAttachments(task.attachments, attachments)) {
+        await markTaskboardAttachments(options, identity, attachments, scope);
+        scopedAttachments = await materializeTaskboardAttachments(options, identity, task.id, ownerUserId, attachments);
+        const patch = { attachments: scopedAttachments, expectedVersion: task.version };
+        task = await service.updateTask(identity, task.id, patch, createResult.creationClaimToken);
+      }
     }
   } catch (error) {
+    if (createResult.creationClaimToken) await releaseTaskCreationAfterFailure(
+      error,
+      () => cleanupTaskboardAttachments(options, identity, task.id, ownerUserId, scopedAttachments),
+      () => service.releaseTaskCreation(identity, task.id, createResult.creationClaimToken!),
+    );
     await rollbackCreatedTask(service, identity, task, error, () => cleanupTaskboardAttachments(options, identity, task.id, ownerUserId, scopedAttachments));
   }
-  if (kind === 'remediation' && input.sourceId) {
-    if (!service.linkIntegrationRemediationV2) {
-      throw new Error('任务看板 remediation 关联服务未启用');
+  try {
+    if (ownsCreation && kind === 'remediation' && input.sourceId) {
+      if (!service.linkIntegrationRemediationV2) throw new Error('任务看板 remediation 关联服务未启用');
+      await service.linkIntegrationRemediationV2(identity, execution.execution.runId, input.sourceId, task.id);
     }
-    await service.linkIntegrationRemediationV2(
-      identity,
-      execution.execution.runId,
-      input.sourceId,
-      task.id,
-    );
-    task = await service.getTask(identity, task.id);
+    if (createResult.creationClaimToken) {
+      task = await service.completeTaskCreation(identity, task.id, createResult.creationClaimToken);
+    }
+    if (!input.dispatch) return { created: createResult.created, task };
+    const existing = createResult.created ? [] : await dispatcher!.listExecutions(identity, task.id);
+    const dispatched = existing.length
+      ? { created: createResult.created, dispatched: true, task: await service.getTask(identity, task.id), execution: existing[0] }
+      : await dispatchCreatedTask(dispatcher!, identity, task);
+    return { ...dispatched, created: createResult.created };
+  } catch (error) {
+    if (createResult.creationClaimToken) await service.releaseTaskCreation(identity, task.id, createResult.creationClaimToken).catch(() => undefined);
+    throw error;
   }
-  if (!input.dispatch) return { created: true, task };
-  return dispatchCreatedTask(dispatcher!, identity, task);
 }
 
 async function updateExecutionTask(

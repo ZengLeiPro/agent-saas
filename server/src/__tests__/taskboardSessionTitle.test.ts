@@ -1,13 +1,13 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   readSessionMeta,
   writeSessionMeta,
 } from '../data/transcripts/meta.js';
+import { AGENT_LEGACY_TRANSCRIPTS_ROOT } from '../data/transcripts/projectKey.js';
 import {
   formatTaskboardSessionTitle,
   TASKBOARD_PURPOSE_LABELS,
@@ -15,6 +15,10 @@ import {
 } from '../taskboard/sessionTitle.js';
 
 const cleanup: string[] = [];
+
+beforeEach(async () => {
+  await mkdir(AGENT_LEGACY_TRANSCRIPTS_ROOT, { recursive: true });
+});
 
 afterEach(async () => {
   await Promise.all(cleanup.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -44,7 +48,7 @@ describe('任务看板会话标题', () => {
   });
 
   it('写入 generatedTitle 且保留人工 customTitle', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'taskboard-title-'));
+    const dir = await mkdtemp(join(AGENT_LEGACY_TRANSCRIPTS_ROOT, 'taskboard-title-'));
     cleanup.push(dir);
     const transcriptPath = join(dir, 'taskboard-session.meta-source.jsonl');
     await writeSessionMeta(transcriptPath, {
@@ -81,7 +85,7 @@ describe('任务看板会话标题', () => {
   });
 
   it('相同标题已存在时保持幂等', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'taskboard-title-idempotent-'));
+    const dir = await mkdtemp(join(AGENT_LEGACY_TRANSCRIPTS_ROOT, 'taskboard-title-idempotent-'));
     cleanup.push(dir);
     const transcriptPath = join(dir, 'taskboard-session.jsonl');
     await writeSessionMeta(transcriptPath, {

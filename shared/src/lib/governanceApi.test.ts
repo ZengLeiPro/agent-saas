@@ -467,7 +467,7 @@ describe('governanceApi fail closed', () => {
     expect(mockAuthFetch).toHaveBeenLastCalledWith('/api/governance/access/organization-resources/memory/mem-1?tenantId=tenant-1', expect.objectContaining({ method: 'PUT' }));
   });
 
-  it('Context Center adapter 使用约定 snapshot/evidence REST，并编码三个证据筛选参数', async () => {
+  it('Context Center adapter 仅通过签名 handle 获取 Evidence，不接受来源枚举参数', async () => {
     mockAuthFetch
       .mockResolvedValueOnce(jsonResponse({
         generatedAt: '2026-08-22T15:40:00.000Z',
@@ -482,9 +482,7 @@ describe('governanceApi fail closed', () => {
 
     await expect(contextCenterApi.getSnapshot({ tenantId: 'tenant target' }))
       .resolves.toMatchObject({ sources: [], consumers: [] });
-    await expect(contextCenterApi.listEvidence({
-      sourceId: 'dingtalk/source', collectionId: 'product docs', recordId: 'record?1',
-    }, { tenantId: 'tenant target' })).resolves.toHaveLength(1);
+    await expect(contextCenterApi.getEvidence('ce1.payload/signature?x', { tenantId: 'tenant target' })).resolves.toHaveLength(1);
 
     expect(mockAuthFetch).toHaveBeenNthCalledWith(
       1,
@@ -493,7 +491,7 @@ describe('governanceApi fail closed', () => {
     );
     expect(mockAuthFetch).toHaveBeenNthCalledWith(
       2,
-      '/api/admin/context-plane/evidence?tenantId=tenant+target&sourceId=dingtalk%2Fsource&collectionId=product+docs&recordId=record%3F1',
+      '/api/admin/context-plane/evidence?id=ce1.payload%2Fsignature%3Fx&tenantId=tenant+target',
       undefined,
     );
   });
@@ -554,4 +552,134 @@ describe('governanceApi fail closed', () => {
       undefined,
     );
   });
+
+  it('Context 产品 adapter 使用固定 REST、query tenant/cursor/filter，并编码实体 ID', async () => {
+    const page = { items: [], nextCursor: null, degraded: false };
+    const detail = {
+      id: 'entity/1', type: 'person', label: '张三', summary: null, revision: 4,
+      updatedAt: '2026-08-23T08:00:00.000Z', degraded: false,
+      correctionRevisions: { personal: 3, organization: 4 }, evidence: [], items: [], corrections: [],
+    };
+    const profile = {
+      entityId: 'entity/1', label: '张三', summary: null, revision: 4,
+      updatedAt: '2026-08-23T08:00:00.000Z', attributes: [], degraded: false,
+    };
+    mockAuthFetch
+      .mockResolvedValueOnce(jsonResponse(page))
+      .mockResolvedValueOnce(jsonResponse(page))
+      .mockResolvedValueOnce(jsonResponse(detail))
+      .mockResolvedValueOnce(jsonResponse(profile))
+      .mockResolvedValueOnce(jsonResponse(page))
+      .mockResolvedValueOnce(jsonResponse(page));
+
+    await contextCenterApi.listTimeline({ cursor: 'next token', filter: '交付', entityId: 'entity/1' }, { tenantId: 'tenant a' });
+    await contextCenterApi.listEntities({ type: 'person', filter: '张三' }, { tenantId: 'tenant a' });
+    await contextCenterApi.getEntity('entity/1', { tenantId: 'tenant a' });
+    await contextCenterApi.getEntityProfile('entity/1', { tenantId: 'tenant a' });
+    await contextCenterApi.listEntityRelations('entity/1', { cursor: 'r2', depth: 2 }, { tenantId: 'tenant a' });
+    await contextCenterApi.listReviews({ filter: 'conflicted' }, { tenantId: 'tenant a' });
+
+    expect(mockAuthFetch.mock.calls.map(call => call[0])).toEqual([
+      '/api/admin/context-plane/timeline?tenantId=tenant+a&cursor=next+token&filter=%E4%BA%A4%E4%BB%98&entityId=entity%2F1',
+      '/api/admin/context-plane/entities?tenantId=tenant+a&filter=%E5%BC%A0%E4%B8%89&type=person',
+      '/api/admin/context-plane/entities/entity%2F1?tenantId=tenant+a',
+      '/api/admin/context-plane/entities/entity%2F1/profile?tenantId=tenant+a',
+      '/api/admin/context-plane/entities/entity%2F1/relations?tenantId=tenant+a&cursor=r2&depth=2',
+      '/api/admin/context-plane/reviews?tenantId=tenant+a&filter=conflicted',
+    ]);
+  });
+
+  it('纠正与审核 mutation 强制 expectedRevision，409 映射为刷新提示', async () => {
+    const correction = {
+      id: 'correction-1', type: 'correction', label: '修正称谓', summary: '应为负责人', revision: 5,
+      updatedAt: '2026-08-23T08:00:00.000Z', degraded: false, action: 'assert',
+      authority: { scope: 'organization', label: '组织管理员' }, evidence: [],
+    };
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse(correction)).mockResolvedValueOnce(jsonResponse({ status: 'confirmed' }));
+    await contextCenterApi.createCorrection('entity-1', {
+      action: 'assert', scope: 'organization', expectedRevision: 4, targetItemId: 'item-1', summary: '应为负责人', evidenceIds: ['ce1.x.y'],
+    }, { tenantId: 'tenant-1' });
+    await contextCenterApi.decideReview('review-1', { decision: 'confirm', expectedRevision: 2 }, { tenantId: 'tenant-1' });
+    expect(mockAuthFetch).toHaveBeenNthCalledWith(1, '/api/admin/context-plane/entities/entity-1/corrections?tenantId=tenant-1', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ action: 'assert', scope: 'organization', expectedRevision: 4, targetItemId: 'item-1', evidenceIds: ['ce1.x.y'], summary: '应为负责人' }),
+    }));
+    expect(mockAuthFetch).toHaveBeenNthCalledWith(2, '/api/admin/context-plane/reviews/review-1/decision?tenantId=tenant-1', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'confirm', expectedRevision: 2 }),
+    }));
+    expect(() => contextCenterApi.createCorrection('entity-1', {
+      action: 'assert', scope: 'personal', expectedRevision: 4, summary: '缺少 target', evidenceIds: ['ce1.x.y'],
+    } as never)).toThrow();
+    expect(() => contextCenterApi.createCorrection('entity-1', {
+      action: 'reject', scope: 'personal', expectedRevision: 4, targetItemId: 'item-1', evidenceIds: ['ce1.x.y'], extra: true,
+    } as never)).toThrow();
+
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ status: 'rejected' }));
+    await expect(contextCenterApi.decideReview('review-1', { decision: 'reject', expectedRevision: 3 }))
+      .resolves.toEqual({ status: 'rejected' });
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ status: 'confirmed', revision: 3 }));
+    await expect(contextCenterApi.decideReview('review-1', { decision: 'confirm', expectedRevision: 3 }))
+      .rejects.toMatchObject({ code: 'INVALID_GOVERNANCE_RESPONSE' });
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ status: 'proposed' }));
+    await expect(contextCenterApi.decideReview('review-1', { decision: 'confirm', expectedRevision: 3 }))
+      .rejects.toMatchObject({ code: 'INVALID_GOVERNANCE_RESPONSE' });
+
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ code: 'REVISION_CONFLICT', message: 'stale' }, 409));
+    await expect(contextCenterApi.createCorrection('entity-1', {
+      action: 'reject', scope: 'personal', expectedRevision: 4, targetItemId: 'item-1', evidenceIds: ['ce1.x.y'],
+    })).rejects.toMatchObject({ code: 'CONTEXT_REVISION_CONFLICT', status: 409, message: '内容版本已变化，请刷新实体详情后重试。' });
+  });
+
+  it('strict 跨层 fixture 匹配 scope revision、relation 路径与各层 item 类型', async () => {
+    const common = {
+      label: '负责人', summary: '王五', revision: 2,
+      updatedAt: '2026-08-23T08:00:00.000Z', degraded: false,
+    };
+    const authority = { scope: 'organization', label: '来源事实' };
+    const derivedItem = { ...common, id: 'item-1', type: 'Decision', authority, evidence: [] };
+    const profileAttribute = {
+      ...common, id: 'facet-1', type: 'role', authority, evidence: [], conflict: null, review: null,
+    };
+    const detail = {
+      ...common, id: 'entity-1', type: 'Project', correctionRevisions: { personal: 1, organization: 2 },
+      evidence: [], items: [derivedItem], corrections: [],
+    };
+    const profile = {
+      entityId: 'entity-1', label: '项目甲', summary: null, revision: 2,
+      updatedAt: common.updatedAt, attributes: [profileAttribute], degraded: false,
+    };
+    const relation = {
+      ...common, id: 'relation-1', type: 'reports_to', depth: 2, level: 'explicit', reviewStatus: 'confirmed',
+      fromEntity: { id: 'person-1', type: 'Person', label: '王五', summary: null },
+      targetEntity: { id: 'task-1', type: 'Task', label: '上线验收', summary: '本周上线' },
+      authority, evidence: [],
+    };
+    const relationPage = { items: [relation], nextCursor: null, degraded: false };
+    mockAuthFetch
+      .mockResolvedValueOnce(jsonResponse(detail))
+      .mockResolvedValueOnce(jsonResponse(profile))
+      .mockResolvedValueOnce(jsonResponse(relationPage))
+      .mockResolvedValueOnce(jsonResponse({ ...detail, items: [{ ...derivedItem, type: 'role' }] }))
+      .mockResolvedValueOnce(jsonResponse({ ...profile, attributes: [{ ...profileAttribute, type: 'Decision' }] }))
+      .mockResolvedValueOnce(jsonResponse({ ...detail, correctionRevisions: undefined }))
+      .mockResolvedValueOnce(jsonResponse({ ...relationPage, items: [{ ...relation, fromEntity: undefined }] }));
+
+    await expect(contextCenterApi.getEntity('entity-1')).resolves.toEqual(detail);
+    await expect(contextCenterApi.getEntityProfile('entity-1')).resolves.toEqual(profile);
+    await expect(contextCenterApi.listEntityRelations('entity-1', { depth: 2 })).resolves.toEqual(relationPage);
+    await expect(contextCenterApi.getEntity('entity-1')).rejects.toMatchObject({ code: 'INVALID_GOVERNANCE_RESPONSE' });
+    await expect(contextCenterApi.getEntityProfile('entity-1')).rejects.toMatchObject({ code: 'INVALID_GOVERNANCE_RESPONSE' });
+    await expect(contextCenterApi.getEntity('entity-1')).rejects.toMatchObject({ code: 'INVALID_GOVERNANCE_RESPONSE' });
+    await expect(contextCenterApi.listEntityRelations('entity-1', { depth: 2 })).rejects.toMatchObject({ code: 'INVALID_GOVERNANCE_RESPONSE' });
+  });
+
+  it('Context 产品 DTO 严格拒绝额外 tenant/ACL 字段', async () => {
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({
+      items: [{
+        id: 'entity-1', type: 'person', label: '张三', summary: null, revision: 1,
+        updatedAt: '2026-08-23T08:00:00.000Z', degraded: false, tenantId: 'should-not-cross-boundary',
+      }], nextCursor: null, degraded: false,
+    }));
+    await expect(contextCenterApi.listEntities()).rejects.toMatchObject({ code: 'INVALID_GOVERNANCE_RESPONSE' });
+  });
+
 });

@@ -12,7 +12,7 @@
  *     - 默认排除 assistant_stream_event；types 白名单可显式包含
  *     - maxContentLength 截断生效且事件对象标 truncated: true
  *   - GET /recent-runs：status 白名单外值 → 400；过滤参数正确透传
- *   - GET /efficiency：days 超上限 → 400；正常透传 days/tenantId（fake query）
+ *   - GET /efficiency：days/from/to 时间窗口校验与 tenantId 透传（fake query）
  *   - RuntimeEfficiencyQuery：mock pool 断言关键 SQL 参数 + rows→response 纯转换
  *
  * 模式：仿 runtimeAuditRoutes.test.ts —— 手工 express + 注入 fake req.user +
@@ -571,15 +571,15 @@ describe('/api/admin/runtime/trace', () => {
   });
 
   describe('GET /efficiency', () => {
-    it('days 超上限 → 400', async () => {
+    it.each([['days 超上限', 'days=31'], ['缺少 to', 'from=2026-07-01T00%3A00%3A00Z'], ['缺少 from', 'to=2026-07-08T00%3A00%3A00Z'], ['边界反向', 'from=2026-07-08T00%3A00%3A00Z&to=2026-07-01T00%3A00%3A00Z'], ['跨度与 days 不一致', 'days=7&from=2026-07-01T00%3A00%3A00Z&to=2026-07-09T00%3A00%3A00Z']])('%s → 400 且不调用 query', async (_label, query) => {
       let calls: RecordedCalls;
       ({ server, baseUrl, calls } = await startServer());
-      const res = await fetch(`${baseUrl}/api/admin/runtime/trace/efficiency?days=31`);
+      const res = await fetch(`${baseUrl}/api/admin/runtime/trace/efficiency?${query}`);
       expect(res.status).toBe(400);
       expect(calls.efficiency).toHaveLength(0);
     });
 
-    it('正常返回：days 缺省 7，tenantId 透传', async () => {
+    it('正常返回：days 缺省 7，并透传 days/from/to/tenantId', async () => {
       let calls: RecordedCalls;
       ({ server, baseUrl, calls } = await startServer());
 
@@ -590,11 +590,11 @@ describe('/api/admin/runtime/trace', () => {
       expect(body1.tenantId).toBeNull();
       expect(calls.efficiency[0]).toEqual({ days: 7 });
 
-      const res2 = await fetch(`${baseUrl}/api/admin/runtime/trace/efficiency?days=30&tenantId=kaiyan`);
+      const res2 = await fetch(`${baseUrl}/api/admin/runtime/trace/efficiency?days=7&from=2026-07-01T00%3A00%3A00%2B08%3A00&to=2026-07-08T00%3A00%3A00%2B08%3A00&tenantId=kaiyan`);
       const body2 = await res2.json();
-      expect(body2.range.days).toBe(30);
+      expect(body2.range.days).toBe(7);
       expect(body2.tenantId).toBe('kaiyan');
-      expect(calls.efficiency[1]).toEqual({ days: 30, tenantId: 'kaiyan' });
+      expect(calls.efficiency[1]).toEqual({ days: 7, from: '2026-07-01T00:00:00+08:00', to: '2026-07-08T00:00:00+08:00', tenantId: 'kaiyan' });
     });
   });
 });
@@ -940,10 +940,10 @@ describe('RuntimeEfficiencyQuery（mock pool）', () => {
     const before = Date.now();
     const report = await makeQuery(pool).getEfficiency({ days: 7, tenantId: 'kaiyan' });
 
-    // 每条 SQL 都共享固定 [fromIso, tenantId, toIso]；from ≈ dataAsOf - 7d
+    // 每条 SQL 都共享固定 [fromIso, tenantId, toIso]；long_running 另带 observedAt。
     expect(pool.calls.length).toBe(15);
     for (const call of pool.calls) {
-      expect(call.params).toHaveLength(3);
+      if (!call.text.includes('eff:long_running_runs')) expect(call.params).toHaveLength(3);
       expect(call.params?.[1]).toBe('kaiyan');
       const fromMs = Date.parse(String(call.params?.[0]));
       const toMs = Date.parse(String(call.params?.[2]));

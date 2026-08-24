@@ -6,6 +6,7 @@ import { governanceV23Statements } from './v23Migration.js';
 import { governanceV18Statements } from './v18Migration.js';
 import { buildContextMigrationSql } from '../../context/store/migration.js';
 import { buildContextPhase23MigrationSql } from '../../context/phase23/migration.js';
+import { buildContextPhase4MigrationSql } from '../../context/phase4/migration.js';
 
 export type GovernancePgPool = pg.Pool;
 
@@ -912,6 +913,10 @@ function migrations(prefix: string): GovernanceMigration[] {
     {
       version: 25,
       statements: buildContextPhase23MigrationSql(prefix),
+    },
+    {
+      version: 26,
+      statements: buildContextPhase4MigrationSql(prefix),
     },
   ];
 }

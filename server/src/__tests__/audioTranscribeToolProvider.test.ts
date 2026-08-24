@@ -147,7 +147,7 @@ describe('AudioTranscribeToolProvider', () => {
     expect(readFileSync(join(workspaceRoot, payload.outputPath), 'utf8')).toBe('第一句\n第二句');
     expect(result!.presentation?.title).toBe('语音转文字');
     expect(transcribe).toHaveBeenCalledWith(
-      join(workspaceRoot, 'uploads', 'meeting.wav'),
+      expect.stringMatching(/^\/proc\/self\/fd\/\d+$/),
       expect.objectContaining({ model: 'fun-asr' }),
       expect.objectContaining({ speaker: true, timestamps: true }),
     );

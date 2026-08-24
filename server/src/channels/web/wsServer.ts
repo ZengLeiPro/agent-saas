@@ -10,7 +10,7 @@ import type { Server as HttpServer, IncomingMessage } from 'http';
 import { URL } from 'url';
 import jwt from 'jsonwebtoken';
 import { chatLogger } from '../../utils/logger.js';
-import type { WsInboundMessage, WsPingMessage } from './wsTypes.js';
+import type { WsAuthMessage, WsInboundMessage, WsPingMessage } from './wsTypes.js';
 import type { UserStore } from '../../data/users/store.js';
 import type { TenantStore } from '../../data/tenants/store.js';
 import { checkTenantAccess } from '../../data/tenants/access.js';
@@ -33,6 +33,8 @@ export interface WsClient {
     lastActivityAt: number;
     ip?: string;
     userAgent?: string;
+    authenticated?: boolean;
+    authenticationTimer?: ReturnType<typeof setTimeout>;
     /** 旧客户端不发送 epoch；记录本 socket 已经 overflow 接受过的用户日志代际。 */
     acceptedLegacyUserEventEpoch?: string;
 }
@@ -40,11 +42,19 @@ export interface WsClient {
 export type WsMessageHandler = (client: WsClient, msg: WsInboundMessage) => void;
 export type WsCloseHandler = (client: WsClient) => void;
 
+export const DEFAULT_WS_MAX_PAYLOAD_BYTES = 1024 * 1024;
+
 export interface WsServerConfig {
-    /** JWT secret for authentication (undefined = no auth) */
+    /** Whether WebSocket authentication is enabled. Kept explicit instead of inferred from the principal. */
+    authEnabled: boolean;
+    /** JWT secret used when authentication is enabled. */
     jwtSecret?: string;
+    /** Maximum accepted WebSocket message payload in bytes, default 1 MiB. */
+    maxPayloadBytes?: number;
     /** Ping interval (ms), default 30000 */
     pingIntervalMs?: number;
+    /** Authentication first-frame timeout (ms), default 5000 */
+    authTimeoutMs?: number;
     /** UserStore for disabled-user checks */
     userStore?: UserStore;
     /** TenantStore for disabled-tenant hard-stop checks */
@@ -65,15 +75,20 @@ export class WsServer {
     private pingTimer?: ReturnType<typeof setInterval>;
     private messageHandler?: WsMessageHandler;
     private closeHandler?: WsCloseHandler;
-    private readonly config: Required<Pick<WsServerConfig, 'pingIntervalMs'>> & WsServerConfig;
+    private readonly config: Required<Pick<WsServerConfig, 'pingIntervalMs' | 'authTimeoutMs' | 'maxPayloadBytes'>> & WsServerConfig;
     readonly userEventLog = new UserEventLog();
 
-    constructor(config: WsServerConfig = {}) {
+    constructor(config: WsServerConfig) {
         this.config = {
             ...config,
             pingIntervalMs: config.pingIntervalMs ?? 30_000,
+            authTimeoutMs: config.authTimeoutMs ?? 5_000,
+            maxPayloadBytes: config.maxPayloadBytes ?? DEFAULT_WS_MAX_PAYLOAD_BYTES,
         };
-        this.wss = new WebSocketServer({ noServer: true });
+        this.wss = new WebSocketServer({
+            noServer: true,
+            maxPayload: this.config.maxPayloadBytes,
+        });
     }
 
     /** Set the message handler for incoming WS messages */
@@ -120,6 +135,13 @@ export class WsServer {
                 return;
             }
 
+            // Query-string credentials leak through proxy logs and are forbidden, including probes.
+            if (this.hasLegacyTokenQuery(request)) {
+                socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+                socket.destroy();
+                return;
+            }
+
             // The deployment gate performs a real WebSocket upgrade without
             // registering a user connection or touching session state.
             if (this.isDeploymentProbe(request)) {
@@ -135,41 +157,32 @@ export class WsServer {
                 return;
             }
 
-            // Authenticate
-            const user = this.authenticate(request);
-            // If auth is configured but failed, reject
-            if (this.config.jwtSecret && !user) {
-                socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-                socket.destroy();
-                return;
-            }
-
             this.wss.handleUpgrade(request, socket, head, (ws) => {
-                this.wss.emit('connection', ws, request, user);
+                this.wss.emit('connection', ws, request);
             });
         });
 
-        this.wss.on('connection', (ws: WebSocket, request: IncomingMessage, user?: WsUser) => {
+        this.wss.on('connection', (ws: WebSocket, request: IncomingMessage) => {
             const connectedAt = Date.now();
             const client: WsClient = {
                 ws,
-                user,
                 alive: true,
+                authenticated: !this.config.authEnabled,
                 connectedAt,
                 lastActivityAt: connectedAt,
                 ip: this.resolveClientIp(request),
                 userAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : undefined,
             };
             this.clients.add(client);
-            if (user) {
-                let userClients = this.clientsByUser.get(user.sub);
-                if (!userClients) {
-                    userClients = new Set();
-                    this.clientsByUser.set(user.sub, userClients);
-                }
-                userClients.add(client);
+            if (this.config.authEnabled) {
+                client.authenticationTimer = setTimeout(() => {
+                    if (!client.authenticated && ws.readyState === ws.OPEN) ws.close(4401, 'Authentication timeout');
+                }, this.config.authTimeoutMs);
+                client.authenticationTimer.unref?.();
+            } else {
+                this.sendTo(ws, { data: { type: 'auth_ok' } });
             }
-            chatLogger.info(`WS connected: ${user?.username ?? 'anonymous'} (total: ${this.clients.size})`);
+            chatLogger.info(`WS transport connected: unauthenticated (total: ${this.clients.size})`);
 
             ws.on('pong', () => {
                 client.alive = true;
@@ -180,15 +193,35 @@ export class WsServer {
                 client.lastActivityAt = Date.now();
                 try {
                     const msg = JSON.parse(rawData.toString()) as WsInboundMessage;
-                    // Application-level heartbeat. Keep liveness separate from
-                    // metadata sync so sync payloads cannot delay pong delivery.
+                    if (!client.authenticated) {
+                        if (!this.isAuthMessage(msg)) {
+                            ws.close(4401, 'Authentication required');
+                            return;
+                        }
+                        const user = this.authenticateToken(msg.token);
+                        if (!user) {
+                            ws.close(4401, 'Authentication failed');
+                            return;
+                        }
+                        client.user = user;
+                        client.authenticated = true;
+                        if (client.authenticationTimer) clearTimeout(client.authenticationTimer);
+                        client.authenticationTimer = undefined;
+                        this.addAuthenticatedClient(client);
+                        chatLogger.info(`WS authenticated: ${user.username} (total: ${this.clients.size})`);
+                        this.sendTo(ws, { data: { type: 'auth_ok' } });
+                        return;
+                    }
+                    if (msg.action === 'auth') {
+                        ws.close(4401, 'Authentication already completed');
+                        return;
+                    }
+                    if (!this.refreshAuthoritativeUser(client)) return;
                     if (msg.action === 'ping') {
                         client.alive = true;
                         const { lastSeq, epoch: clientEpoch, clientTs } = msg as WsPingMessage;
                         const userId = client.user?.sub;
-                        const serverEpoch = userId
-                            ? this.userEventLog.getEpoch(userId)
-                            : this.userEventLog.epoch;
+                        const serverEpoch = userId ? this.userEventLog.getEpoch(userId) : this.userEventLog.epoch;
                         const heartbeatRttMs = typeof clientTs === 'number' ? Date.now() - clientTs : undefined;
                         if (typeof heartbeatRttMs === 'number' && heartbeatRttMs >= 3000) {
                             chatLogger.warn(`WS heartbeat slow: user=${client.user?.username ?? 'anonymous'} rtt=${heartbeatRttMs}ms lastSeq=${typeof lastSeq === 'number' ? lastSeq : 'n/a'}`);
@@ -196,7 +229,6 @@ export class WsServer {
                         if (userId) {
                             const currentSeq = this.userEventLog.getCurrentSeq(userId);
                             this.sendTo(ws, { data: { type: 'pong', seq: currentSeq, epoch: serverEpoch } });
-                            // 如果客户端报告了 lastSeq，另发 sync 回放漏掉的元数据事件。
                             if (typeof lastSeq === 'number') {
                                 if (this.hasUserEventEpochMismatch(client, userId, clientEpoch, lastSeq)) {
                                     this.sendTo(ws, { data: { type: 'sync_overflow', seq: currentSeq, epoch: serverEpoch } });
@@ -217,12 +249,14 @@ export class WsServer {
                     this.messageHandler?.(client, msg);
                 } catch (err) {
                     chatLogger.warn('WS invalid message:', err);
-                    this.sendTo(ws, { data: { type: 'error', message: 'Invalid message format' } });
+                    if (!client.authenticated) ws.close(4401, 'Authentication required');
+                    else this.sendTo(ws, { data: { type: 'error', message: 'Invalid message format' } });
                 }
             });
 
             ws.on('close', (code, reasonBuffer) => {
                 this.clients.delete(client);
+                if (client.authenticationTimer) clearTimeout(client.authenticationTimer);
                 if (client.user) {
                     const userClients = this.clientsByUser.get(client.user.sub);
                     if (userClients) {
@@ -237,12 +271,12 @@ export class WsServer {
                 const idleMs = now - client.lastActivityAt;
                 const reason = reasonBuffer.toString('utf-8');
                 const reasonLog = reason ? JSON.stringify(reason) : 'none';
-                chatLogger.info(`WS disconnected: ${user?.username ?? 'anonymous'} code=${code} reason=${reasonLog} age=${ageMs}ms idle=${idleMs}ms ip=${client.ip ?? 'unknown'} (total: ${this.clients.size})`);
+                chatLogger.info(`WS disconnected: ${client.user?.username ?? 'anonymous'} code=${code} reason=${reasonLog} age=${ageMs}ms idle=${idleMs}ms ip=${client.ip ?? 'unknown'} (total: ${this.clients.size})`);
                 this.closeHandler?.(client);
             });
 
             ws.on('error', (err) => {
-                chatLogger.warn(`WS error (${user?.username ?? 'anonymous'}):`, err.message);
+                chatLogger.warn(`WS error (${client.user?.username ?? 'unauthenticated'}):`, err.message);
             });
         });
 
@@ -254,6 +288,7 @@ export class WsServer {
             const nowSec = Math.floor(now / 1000);
             const timeout = this.config.pingIntervalMs * 3; // default 90s (frp 穿透场景需要更长超时)
             for (const client of this.clients) {
+                if (!client.authenticated || !this.refreshAuthoritativeUser(client)) continue;
                 // Token 过期检查
                 if (client.user?.tokenExp && nowSec > client.user.tokenExp) {
                     chatLogger.warn(`WS token expired, closing: ${client.user.username}`);
@@ -342,6 +377,7 @@ export class WsServer {
         }
         this.userEventLog.stop();
         for (const client of this.clients) {
+            if (client.authenticationTimer) clearTimeout(client.authenticationTimer);
             client.ws.close(1001, 'Server shutting down');
         }
         this.clients.clear();
@@ -378,36 +414,72 @@ export class WsServer {
         return rawRealIp?.trim() || request.socket.remoteAddress;
     }
 
-    private authenticate(request: IncomingMessage): WsUser | undefined {
-        if (!this.config.jwtSecret) return undefined;
-
+    private hasLegacyTokenQuery(request: IncomingMessage): boolean {
         try {
             const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
-            const token = url.searchParams.get('token');
-            if (!token) return undefined;
+            return url.searchParams.has('token');
+        } catch {
+            return false;
+        }
+    }
 
+    private isAuthMessage(msg: WsInboundMessage): msg is WsAuthMessage {
+        return msg?.action === 'auth' && typeof (msg as WsAuthMessage).token === 'string';
+    }
+
+    private addAuthenticatedClient(client: WsClient): void {
+        if (!client.user) return;
+        let userClients = this.clientsByUser.get(client.user.sub);
+        if (!userClients) {
+            userClients = new Set();
+            this.clientsByUser.set(client.user.sub, userClients);
+        }
+        userClients.add(client);
+    }
+
+    /** Re-read the authoritative principal; close on disable/tenant change and refresh role. */
+    refreshAuthoritativeUser(client: WsClient): boolean {
+        const snapshot = client.user;
+        if (!snapshot) return !this.config.authEnabled;
+        if (this.config.userStore) {
+            const record = this.config.userStore.findById(snapshot.sub);
+            if (!record || record.disabled) {
+                client.ws.close(4003, 'Account disabled');
+                return false;
+            }
+            if (record.tenantId !== snapshot.tenantId) {
+                client.ws.close(4003, 'Tenant membership changed');
+                return false;
+            }
+            snapshot.username = record.username;
+            snapshot.role = record.role;
+            snapshot.tenantId = record.tenantId;
+        }
+        const tenantAccess = checkTenantAccess(this.config.tenantStore, snapshot.tenantId);
+        if (!tenantAccess.ok) {
+            client.ws.close(4003, tenantAccess.message);
+            return false;
+        }
+        return true;
+    }
+
+    private authenticateToken(token: string): WsUser | undefined {
+        if (!this.config.authEnabled || !this.config.jwtSecret) return undefined;
+        try {
             const decoded = jwt.verify(token, this.config.jwtSecret) as { sub: string; username: string; role: string; tenantId?: string; exp?: number };
             let role = decoded.role;
             let username = decoded.username;
             let tenantId: string | undefined = decoded.tenantId;
-            let tokenExp: number | undefined = decoded.exp;
             if (this.config.userStore) {
                 const record = this.config.userStore.findById(decoded.sub);
                 if (!record || record.disabled) return undefined;
-                // 使用数据库中的真实角色、用户名、tenantId，而非 token 中可能过期的声明
                 role = record.role;
                 username = record.username;
-                tenantId = record.tenantId || tenantId;
+                tenantId = record.tenantId;
             }
             const tenantAccess = checkTenantAccess(this.config.tenantStore, tenantId);
             if (!tenantAccess.ok) return undefined;
-            return {
-                sub: decoded.sub,
-                username,
-                role: role as 'admin' | 'user',
-                tenantId,
-                tokenExp,
-            };
+            return { sub: decoded.sub, username, role: role as 'admin' | 'user', tenantId, tokenExp: decoded.exp };
         } catch {
             return undefined;
         }

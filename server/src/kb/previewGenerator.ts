@@ -1,9 +1,18 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
-import { dirname, extname, join, relative, resolve, sep } from 'node:path';
+import type { Dirent } from 'node:fs';
+import { readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { createCanvas } from '@napi-rs/canvas';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
+import {
+  atomicWriteTrustedFile,
+  openTrustedDirectory,
+  openTrustedFile,
+  relativeToTrustedRoot,
+  removeTrustedPath,
+  writeTrustedFile,
+  type TrustedFile,
+} from '../security/trustedFile.js';
 
 export const KB_PREVIEW_SCHEMA_VERSION = 1 as const;
 export const KB_PREVIEW_WIDTH = 1600;
@@ -44,7 +53,9 @@ export interface PreviewGenerationReport {
 }
 
 export type PdfPreviewRenderer = (options: {
+  /** Descriptor-bound source path; safe if an ancestor is renamed after validation. */
   sourcePath: string;
+  /** Descriptor-bound output directory. */
   outputDir: string;
   width: number;
   quality: number;
@@ -71,10 +82,10 @@ export function previewPagePath(contentDir: string, page: number): string {
   return join(contentDir, `page-${String(page).padStart(4, '0')}.webp`);
 }
 
-async function sha256File(filePath: string): Promise<string> {
+async function sha256File(file: TrustedFile): Promise<string> {
   const hash = createHash('sha256');
   await new Promise<void>((resolvePromise, reject) => {
-    const stream = createReadStream(filePath);
+    const stream = file.handle.createReadStream({ autoClose: false, start: 0 });
     stream.on('data', (chunk) => hash.update(chunk));
     stream.on('error', reject);
     stream.on('end', resolvePromise);
@@ -82,23 +93,23 @@ async function sha256File(filePath: string): Promise<string> {
   return hash.digest('hex');
 }
 
+/** outputDir is a descriptor-bound /proc path opened by generateDocumentPreview. */
 async function atomicWrite(filePath: string, data: string | Uint8Array): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
-  await writeFile(temporaryPath, data);
-  await rename(temporaryPath, filePath);
+  try {
+    await writeFile(temporaryPath, data, { flag: 'wx' });
+    await rename(temporaryPath, filePath);
+  } finally {
+    await unlink(temporaryPath).catch(() => undefined);
+  }
 }
 
-async function existingPreviewPages(outputDir: string): Promise<Set<number>> {
+async function existingPreviewPages(outputDirFdPath: string): Promise<Set<number>> {
   const pages = new Set<number>();
-  try {
-    for (const entry of await readdir(outputDir, { withFileTypes: true })) {
-      if (!entry.isFile()) continue;
-      const match = /^page-(\d{4})\.webp$/.exec(entry.name);
-      if (match) pages.add(Number(match[1]));
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  for (const entry of await readdir(outputDirFdPath, { withFileTypes: true })) {
+    if (!entry.isFile() || entry.isSymbolicLink()) continue;
+    const match = /^page-(\d{4})\.webp$/.exec(entry.name);
+    if (match) pages.add(Number(match[1]));
   }
   return pages;
 }
@@ -136,7 +147,6 @@ export const renderPdfToWebp: PdfPreviewRenderer = async ({
     if (document.numPages > KB_PREVIEW_MAX_PAGES) {
       throw new Error(`PDF page count ${document.numPages} exceeds limit ${KB_PREVIEW_MAX_PAGES}`);
     }
-    await mkdir(outputDir, { recursive: true });
     let generatedPages = 0;
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
       if (existingPages.has(pageNumber)) continue;
@@ -166,25 +176,48 @@ export const renderPdfToWebp: PdfPreviewRenderer = async ({
   }
 };
 
-async function readManifest(manifestPath: string): Promise<KbPreviewManifest | null> {
+async function readManifest(tenantRoot: string, manifestRelativePath: string): Promise<KbPreviewManifest | null> {
   try {
-    const parsed = JSON.parse(await readFile(manifestPath, 'utf8')) as KbPreviewManifest;
-    return parsed.schemaVersion === KB_PREVIEW_SCHEMA_VERSION ? parsed : null;
+    const manifest = await openTrustedFile(tenantRoot, manifestRelativePath);
+    try {
+      const parsed = JSON.parse(await manifest.handle.readFile({ encoding: 'utf8' })) as KbPreviewManifest;
+      return parsed.schemaVersion === KB_PREVIEW_SCHEMA_VERSION ? parsed : null;
+    } finally {
+      await manifest.handle.close();
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError) return null;
     throw error;
   }
 }
 
-async function listPdfFiles(directory: string): Promise<string[]> {
+async function listPdfFiles(tenantRoot: string, directoryRelativePath = ''): Promise<string[]> {
+  const directory = await openTrustedDirectory(tenantRoot, directoryRelativePath);
+  let entries;
+  try {
+    entries = await readdir(directory.fdPath, { withFileTypes: true });
+  } finally {
+    await directory.handle.close();
+  }
+
   const files: string[] = [];
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
+  for (const entry of entries) {
     if (entry.name === '.previews' || entry.isSymbolicLink()) continue;
-    const entryPath = join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...await listPdfFiles(entryPath));
-    if (entry.isFile() && extname(entry.name).toLowerCase() === '.pdf') files.push(entryPath);
+    const entryRelativePath = join(directoryRelativePath, entry.name);
+    if (entry.isDirectory()) files.push(...await listPdfFiles(tenantRoot, entryRelativePath));
+    if (entry.isFile() && entry.name.toLowerCase().endsWith('.pdf')) files.push(entryRelativePath);
   }
   return files;
+}
+
+async function openPreviewOutputDirectory(tenantRoot: string, relativePath: string) {
+  const marker = join(relativePath, `.init-${randomUUID()}`);
+  await writeTrustedFile(tenantRoot, marker, '', { createParents: true, exclusive: true });
+  try {
+    return await openTrustedDirectory(tenantRoot, relativePath);
+  } finally {
+    await removeTrustedPath(tenantRoot, marker).catch(() => undefined);
+  }
 }
 
 export async function generateDocumentPreview(options: {
@@ -196,18 +229,25 @@ export async function generateDocumentPreview(options: {
 }): Promise<PreviewGenerationResult> {
   const { tenantId, tenantRoot, sourceAbsolutePath } = options;
   const renderer = options.renderer ?? renderPdfToWebp;
-  const sourcePath = normalizeKbRelativePath(relative(tenantRoot, sourceAbsolutePath));
+  let sourcePath = normalizeKbRelativePath(relative(tenantRoot, sourceAbsolutePath));
+  let source: TrustedFile | undefined;
+  let outputDirectory: Awaited<ReturnType<typeof openTrustedDirectory>> | undefined;
   try {
-    const before = await stat(sourceAbsolutePath);
-    if (!before.isFile()) throw new Error('Source is not a file');
+    sourcePath = normalizeKbRelativePath(relativeToTrustedRoot(tenantRoot, sourceAbsolutePath));
+    source = await openTrustedFile(tenantRoot, sourcePath);
+    const before = source.stats;
     if (before.size > KB_PREVIEW_MAX_SOURCE_BYTES) {
       throw new Error(`PDF size ${before.size} exceeds limit ${KB_PREVIEW_MAX_SOURCE_BYTES}`);
     }
-    const sourceSha256 = await sha256File(sourceAbsolutePath);
-    const manifestPath = previewManifestPath(tenantRoot, sourcePath);
-    const currentManifest = await readManifest(manifestPath);
-    const outputDir = previewContentDir(tenantRoot, sourceSha256);
-    const existingPages = await existingPreviewPages(outputDir);
+    const sourceSha256 = await sha256File(source);
+    const manifestRelativePath = relativeToTrustedRoot(
+      tenantRoot,
+      previewManifestPath(tenantRoot, sourcePath),
+    );
+    const currentManifest = await readManifest(tenantRoot, manifestRelativePath);
+    const outputRelativeDir = relativeToTrustedRoot(tenantRoot, previewContentDir(tenantRoot, sourceSha256));
+    outputDirectory = await openPreviewOutputDirectory(tenantRoot, outputRelativeDir);
+    const existingPages = await existingPreviewPages(outputDirectory.fdPath);
     if (
       currentManifest?.sourceSha256 === sourceSha256
       && currentManifest.sourceSize === before.size
@@ -219,14 +259,14 @@ export async function generateDocumentPreview(options: {
     }
 
     const rendered = await renderer({
-      sourcePath: sourceAbsolutePath,
-      outputDir,
+      sourcePath: source.fdPath,
+      outputDir: outputDirectory.fdPath,
       width: KB_PREVIEW_WIDTH,
       quality: KB_PREVIEW_QUALITY,
       existingPages,
       pageTimeoutMs: options.pageTimeoutMs ?? 90_000,
     });
-    const after = await stat(sourceAbsolutePath);
+    const after = await source.handle.stat();
     if (after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
       throw new Error('PDF changed while preview was being generated; retry required');
     }
@@ -242,7 +282,9 @@ export async function generateDocumentPreview(options: {
       quality: KB_PREVIEW_QUALITY,
       generatedAt: new Date().toISOString(),
     };
-    await atomicWrite(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    await atomicWriteTrustedFile(tenantRoot, manifestRelativePath, `${JSON.stringify(manifest, null, 2)}\n`, {
+      createParents: true,
+    });
     return {
       tenantId,
       sourcePath,
@@ -253,6 +295,9 @@ export async function generateDocumentPreview(options: {
     };
   } catch (error) {
     return { tenantId, sourcePath, status: 'failed', error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    await outputDirectory?.handle.close().catch(() => undefined);
+    await source?.handle.close().catch(() => undefined);
   }
 }
 
@@ -264,10 +309,17 @@ export async function generateKbPreviews(options: {
 }): Promise<PreviewGenerationReport> {
   const startedAt = new Date().toISOString();
   const root = resolve(options.kbRootDir);
-  const tenantEntries = await readdir(root, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === 'ENOENT') return [];
-    throw error;
-  });
+  let rootDirectory: Awaited<ReturnType<typeof openTrustedDirectory>> | undefined;
+  let tenantEntries: Dirent[];
+  try {
+    rootDirectory = await openTrustedDirectory(root);
+    tenantEntries = await readdir(rootDirectory.fdPath, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') tenantEntries = [];
+    else throw error;
+  } finally {
+    await rootDirectory?.handle.close().catch(() => undefined);
+  }
   const tenants = tenantEntries
     .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
     .map((entry) => entry.name)
@@ -276,11 +328,11 @@ export async function generateKbPreviews(options: {
   const results: PreviewGenerationResult[] = [];
   for (const tenantId of tenants) {
     const tenantRoot = join(root, tenantId);
-    for (const sourceAbsolutePath of (await listPdfFiles(tenantRoot)).sort()) {
+    for (const sourceRelativePath of (await listPdfFiles(tenantRoot)).sort()) {
       results.push(await generateDocumentPreview({
         tenantId,
         tenantRoot,
-        sourceAbsolutePath,
+        sourceAbsolutePath: join(tenantRoot, sourceRelativePath),
         renderer: options.renderer,
         pageTimeoutMs: options.pageTimeoutMs,
       }));

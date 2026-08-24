@@ -58,6 +58,13 @@ describe('Workflow v3 integration cancellation convergence', () => {
       candidate.id,
       'Candidate canceled before provider execution: operator canceled',
     ]);
+    const outboxCancellationCall = query.mock.calls.find(([sql]) => String(sql).includes('UPDATE integration_requests_outbox_v3'));
+    expect(String(outboxCancellationCall?.[0])).toContain("kind<>'cleanup'");
+    expect(String(outboxCancellationCall?.[0])).toContain("status IN ('pending','processing')");
+    expect(outboxCancellationCall?.[1]).toEqual([
+      candidate.id,
+      'Candidate canceled before request execution: operator canceled',
+    ]);
     expect(String(query.mock.calls.at(-1)?.[0])).toBe('COMMIT');
   });
 });

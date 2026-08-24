@@ -339,6 +339,7 @@ describe('registerRoutes', () => {
       userStore: undefined,
       agentCwd: '/agent',
       uploadManager: runtime.uploadManager,
+      generateTaskTitle: expect.any(Function),
     });
     expect(app.use).toHaveBeenCalledWith(
       '/api/taskboard',

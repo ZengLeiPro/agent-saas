@@ -1,8 +1,8 @@
 -- Agent Runtime PG 初始化 DDL（在 Azeroth RDS 同实例上建独立 database）
 --
 -- 用途：把 3200 agent-saas 的 runtime event log 跟 Azeroth 业务数据
--- 物理隔离（独立 database + 独立 role + 独立连接池上限），避免互相挤连接、
--- 共用 WAL 带宽、运维耦合。
+-- 逻辑隔离（独立 database + 独立 role + 独立连接池上限）。注意：同一 RDS
+-- 实例仍共用存储、IOPS、WAL 与备份故障域，不得表述为物理隔离。
 --
 -- 执行方式：
 --   1. 以 RDS 高权限账号（创建 db / role 的权限）登录
@@ -32,7 +32,7 @@ CREATE DATABASE agent_runtime
     ENCODING 'UTF8';
 
 COMMENT ON DATABASE agent_runtime IS
-    'Runtime event log for agent-saas (3200). Physically isolated from azeroth business data.';
+    'Runtime event log for agent-saas (3200). Logically isolated database/role; shares the RDS instance failure domain.';
 
 -- ─────────────────────────────────────────────────────────────────
 -- 第 2 节：建独立应用 role
@@ -89,21 +89,14 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 -- ─────────────────────────────────────────────────────────────────
 
 -- ─────────────────────────────────────────────────────────────────
--- 第 5 节（后续可单独跑，不在初始化必跑）：retention 清理函数
+-- 第 5 节：retention 明确不由初始化 SQL 执行
 -- ─────────────────────────────────────────────────────────────────
--- 暂留作 90 天 retention 草案。等 PG default 切换稳定后再启用，并由 cron 调用。
--- 不在初始化阶段执行，避免在没有数据时给出空函数。
+-- 禁止按 timestamp 对 runtime_events 做全表 90 天 DELETE：该做法会误删消息、
+-- tool_result、工具生命周期以及尚未被 billing projection 消费/尚无法务授权的事实。
 --
--- CREATE OR REPLACE FUNCTION runtime_events_prune_older_than(retain_days INTEGER)
--- RETURNS TABLE(deleted_events BIGINT, oldest_kept TIMESTAMPTZ) AS $$
--- DECLARE
---     v_deleted BIGINT;
---     v_oldest  TIMESTAMPTZ;
--- BEGIN
---     DELETE FROM runtime_events
---     WHERE timestamp < (NOW() - (retain_days || ' days')::INTERVAL);
---     GET DIAGNOSTICS v_deleted = ROW_COUNT;
---     SELECT MIN(timestamp) INTO v_oldest FROM runtime_events;
---     RETURN QUERY SELECT v_deleted, v_oldest;
--- END;
--- $$ LANGUAGE plpgsql;
+-- 唯一受支持路径：
+--   pnpm -C server maintenance:runtime-events -- --legal-delete-through <seq>
+-- 默认严格只读 dry-run；只有审批后同时传 --execute-retention、
+-- --legal-delete-through、--authorization-ref 才按事件类别/TTL/双水位分批删除。
+-- retention 矩阵、容量门禁、VACUUM/索引回收与恢复演练见：
+--   docs/runtime-eventstore-retention-runbook.md

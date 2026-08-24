@@ -1,5 +1,5 @@
-import { readFile, readdir, lstat, realpath, unlink, rm } from "fs/promises";
-import { createReadStream, type Stats } from "fs";
+import { readdir, lstat } from "fs/promises";
+import { type Stats } from "fs";
 import { resolve, extname, basename, dirname, join, relative, sep } from "path";
 import { Router, type Request } from "express";
 import { resolveUserCwd } from "../workspace/resolver.js";
@@ -10,6 +10,13 @@ import {
   resolveAuthorizedPath,
   type UserOverrides,
 } from "../security/extraDirs.js";
+import {
+  UnsafeFilePathError,
+  openTrustedDirectory,
+  openTrustedFileFromPath,
+  relativeToTrustedRoot,
+  removeTrustedPath,
+} from "../security/trustedFile.js";
 
 /** /api/file/read 允许预览读取的扩展名（文本/代码/标记类，须 ⊇ 前端可预览集合） */
 const PREVIEW_READ_EXTS = new Set([
@@ -173,6 +180,10 @@ export function createFileRouter(options: FileRouterOptions): Router {
     );
   }
 
+  function trustedRoots(userCwd: string, effectiveUsername: string | undefined): string[] {
+    return [userCwd, ...getUserExtraDirs(userOverrides, effectiveUsername)];
+  }
+
   function rejectCrossUserParams(req: any, res: any): boolean {
     const ownerParam = req.query.owner as string | undefined;
     if (ownerParam && ownerParam !== req.user?.username) {
@@ -227,36 +238,30 @@ export function createFileRouter(options: FileRouterOptions): Router {
         return;
       }
 
-      let fileStat = await lstat(absolutePath);
-      if (fileStat.isSymbolicLink()) {
-        res
-          .status(403)
-          .json({ error: "Access denied: symbolic links not allowed" });
-        return;
+      const opened = await openTrustedFileFromPath(
+        absolutePath,
+        trustedRoots(userCwd, user?.username),
+      );
+      let content: string;
+      try {
+        if (opened.stats.size > MAX_PREVIEW_BYTES) {
+          res.status(413).json({ error: "文件过大，无法预览，请下载查看" });
+          return;
+        }
+        content = await opened.handle.readFile("utf-8");
+      } finally {
+        await opened.handle.close();
       }
-      const realPath = await realpath(absolutePath);
-      if (!resolveFileRoutePath(realPath, userCwd, user?.username)) {
-        res.status(403).json({ error: "Access denied: symbolic link escapes authorized directories" });
-        return;
-      }
-      absolutePath = realPath;
-      fileStat = await lstat(absolutePath);
-      if (!fileStat.isFile()) {
-        res.status(400).json({ error: "Not a file" });
-        return;
-      }
-      if (fileStat.size > MAX_PREVIEW_BYTES) {
-        res.status(413).json({ error: "文件过大，无法预览，请下载查看" });
-        return;
-      }
-
-      const content = await readFile(absolutePath, "utf-8");
-      const filename = absolutePath.split("/").pop() || filePath;
+      const filename = basename(absolutePath) || filePath;
 
       auditLog(req as any, "file_previewed", filePath);
       res.json({ content, filename });
     } catch (error: any) {
-      if (error.code === "ENOENT") {
+      if (error instanceof UnsafeFilePathError || error.code === "EACCES") {
+        res.status(403).json({ error: "Access denied: symbolic links not allowed" });
+      } else if (error.code === "EISDIR") {
+        res.status(400).json({ error: "Not a file" });
+      } else if (error.code === "ENOENT") {
         serverLogger.warn(
           `[file/read] NOT_FOUND user=${user?.username} path=${filePath} resolved=${absolutePath} cwd=${userCwd}`,
         );
@@ -303,9 +308,12 @@ export function createFileRouter(options: FileRouterOptions): Router {
       // 当按工作区根解析后 ENOENT 且 query 带 referrer（md 文件路径）时，
       // 使用 dirname(referrer) 作为 base 重新解析一次。
       // 兜底必须复用 resolveFileRoutePath，保留普通用户的 resolveAuthorizedPath 边界检查。
-      let stats;
+      let opened;
       try {
-        stats = await lstat(absolutePath);
+        opened = await openTrustedFileFromPath(
+          absolutePath,
+          trustedRoots(userCwd, effectiveUsername),
+        );
       } catch (e: any) {
         const referrerRaw = req.query.referrer as string | undefined;
         if (e?.code === "ENOENT" && referrerRaw && userCwd) {
@@ -316,41 +324,23 @@ export function createFileRouter(options: FileRouterOptions): Router {
           } catch {
             /* 保持原样 */
           }
-          const referrerDir = dirname(decodedReferrer);
-          const fallbackInput = join(referrerDir, filePath);
-          const fallbackAbs = resolveFileRoutePath(
-            fallbackInput,
-            userCwd,
-            effectiveUsername,
-          );
-          if (!fallbackAbs) throw e; // 越界 → 维持 404
+          const fallbackInput = join(dirname(decodedReferrer), filePath);
+          const fallbackAbs = resolveFileRoutePath(fallbackInput, userCwd, effectiveUsername);
+          if (!fallbackAbs) throw e;
           try {
-            stats = await lstat(fallbackAbs);
+            opened = await openTrustedFileFromPath(
+              fallbackAbs,
+              trustedRoots(userCwd, effectiveUsername),
+            );
             absolutePath = fallbackAbs;
           } catch {
-            throw e; // 兜底也 ENOENT → 维持 404
+            throw e;
           }
         } else {
           throw e;
         }
       }
-      if (stats.isSymbolicLink()) {
-        res
-          .status(403)
-          .json({ error: "Access denied: symbolic links not allowed" });
-        return;
-      }
-      const realPath = await realpath(absolutePath);
-      if (!resolveFileRoutePath(realPath, userCwd, effectiveUsername)) {
-        res.status(403).json({ error: "Access denied: symbolic link escapes authorized directories" });
-        return;
-      }
-      absolutePath = realPath;
-      stats = await lstat(absolutePath);
-      if (!stats.isFile()) {
-        res.status(400).json({ error: "Not a file" });
-        return;
-      }
+      const stats = opened.stats;
 
       const filename = basename(absolutePath);
       const ext = extname(filename).toLowerCase();
@@ -406,6 +396,7 @@ export function createFileRouter(options: FileRouterOptions): Router {
       res.setHeader("Last-Modified", stats.mtime.toUTCString());
 
       if (isNotModified(req, etag, stats.mtime)) {
+        await opened.handle.close();
         res.status(304).end();
         return;
       }
@@ -421,6 +412,7 @@ export function createFileRouter(options: FileRouterOptions): Router {
         ? parseByteRange(range, stats.size)
         : null;
       if (parsedRange?.kind === "unsatisfiable") {
+        await opened.handle.close();
         res.status(416).setHeader("Content-Range", `bytes */${stats.size}`).end();
         return;
       }
@@ -429,7 +421,7 @@ export function createFileRouter(options: FileRouterOptions): Router {
         res.status(206);
         res.setHeader("Content-Range", `bytes ${start}-${end}/${stats.size}`);
         res.setHeader("Content-Length", end - start + 1);
-        const stream = createReadStream(absolutePath, { start, end });
+        const stream = opened.handle.createReadStream({ start, end, autoClose: true });
         stream.pipe(res);
         stream.on("error", () => {
           if (!res.headersSent) res.status(500).end();
@@ -440,11 +432,12 @@ export function createFileRouter(options: FileRouterOptions): Router {
 
       res.setHeader("Content-Length", stats.size);
       if (req.method === "HEAD") {
+        await opened.handle.close();
         res.end();
         return;
       }
 
-      const stream = createReadStream(absolutePath);
+      const stream = opened.handle.createReadStream({ autoClose: true });
       stream.pipe(res);
       stream.on("error", () => {
         if (!res.headersSent) {
@@ -452,7 +445,11 @@ export function createFileRouter(options: FileRouterOptions): Router {
         } else res.destroy();
       });
     } catch (error: any) {
-      if (error.code === "ENOENT") {
+      if (error instanceof UnsafeFilePathError || error.code === "EACCES") {
+        res.status(403).json({ error: "Access denied: symbolic links not allowed" });
+      } else if (error.code === "EISDIR") {
+        res.status(400).json({ error: "Not a file" });
+      } else if (error.code === "ENOENT") {
         const u = (req as any).user;
         const p = req.query.path as string;
         serverLogger.warn(
@@ -510,34 +507,30 @@ export function createFileRouter(options: FileRouterOptions): Router {
         return;
       }
 
-      // 检查目录是否存在
-      let dirStat;
+      const selectedRoot = inAssets ? assetsRoot : memoryRoot;
+      const selectedRelative = relative(selectedRoot, absolutePath);
       try {
-        dirStat = await lstat(absolutePath);
+        const directory = await openTrustedDirectory(selectedRoot, selectedRelative);
+        await directory.handle.close();
       } catch (e: any) {
         if (e.code === "ENOENT") {
-          // 目录不存在，返回空列表
           const response: FileListResponse = {
             entries: [],
             currentPath: requestedPath,
-            parentPath:
-              requestedPath === "assets" ? null : dirname(requestedPath),
+            parentPath: requestedPath === "assets" ? null : dirname(requestedPath),
           };
           res.json(response);
           return;
         }
+        if (e instanceof UnsafeFilePathError) {
+          res.status(403).json({ error: "Access denied: symbolic links not allowed" });
+          return;
+        }
+        if (e.code === "ENOTDIR") {
+          res.status(400).json({ error: "Not a directory" });
+          return;
+        }
         throw e;
-      }
-
-      if (dirStat.isSymbolicLink()) {
-        res
-          .status(403)
-          .json({ error: "Access denied: symbolic links not allowed" });
-        return;
-      }
-      if (!dirStat.isDirectory()) {
-        res.status(400).json({ error: "Not a directory" });
-        return;
       }
 
       const recursive = req.query.recursive === "true";
@@ -548,34 +541,39 @@ export function createFileRouter(options: FileRouterOptions): Router {
         dirRelPath: string,
         result: FileEntry[],
       ): Promise<void> {
-        const names = await readdir(dirAbsPath);
-        await Promise.all(
-          names.map(async (name) => {
-            if (name.startsWith(".")) return;
-            try {
-              const entryAbsPath = join(dirAbsPath, name);
-              const entryStat = await lstat(entryAbsPath);
-              if (entryStat.isSymbolicLink()) return;
-              const isDir = entryStat.isDirectory();
-              const entryRelPath = join(dirRelPath, name);
-              if (recursive && isDir) {
-                // 递归模式：只收集文件，跳过目录条目
-                await scanDir(entryAbsPath, entryRelPath, result);
-              } else {
-                result.push({
-                  name,
-                  path: entryRelPath,
-                  isDirectory: isDir,
-                  size: isDir ? 0 : entryStat.size,
-                  modifiedAt: entryStat.mtimeMs,
-                  extension: isDir ? "" : extname(name).toLowerCase(),
-                });
+        const relativeDirectory = relative(selectedRoot, dirAbsPath);
+        const pinned = await openTrustedDirectory(selectedRoot, relativeDirectory);
+        try {
+          const names = await readdir(pinned.fdPath);
+          await Promise.all(
+            names.map(async (name) => {
+              if (name.startsWith(".")) return;
+              try {
+                const entryAbsPath = join(dirAbsPath, name);
+                const entryStat = await lstat(join(pinned.fdPath, name));
+                if (entryStat.isSymbolicLink()) return;
+                const isDir = entryStat.isDirectory();
+                const entryRelPath = join(dirRelPath, name);
+                if (recursive && isDir) {
+                  await scanDir(entryAbsPath, entryRelPath, result);
+                } else {
+                  result.push({
+                    name,
+                    path: entryRelPath,
+                    isDirectory: isDir,
+                    size: isDir ? 0 : entryStat.size,
+                    modifiedAt: entryStat.mtimeMs,
+                    extension: isDir ? "" : extname(name).toLowerCase(),
+                  });
+                }
+              } catch {
+                // Entries that race or are symlinks are omitted.
               }
-            } catch {
-              // 无法 stat 的条目跳过
-            }
-          }),
-        );
+            }),
+          );
+        } finally {
+          await pinned.handle.close();
+        }
       }
 
       const entries: FileEntry[] = [];
@@ -650,41 +648,28 @@ export function createFileRouter(options: FileRouterOptions): Router {
         return;
       }
 
-      // 检查文件/目录是否存在
-      const targetStat = await lstat(absolutePath).catch((e: any) => {
-        if (e.code === "ENOENT") return null;
-        throw e;
-      });
-
-      if (!targetStat) {
-        res.status(404).json({ error: "File or directory not found" });
-        return;
+      try {
+        await removeTrustedPath(assetsRoot, relativeToTrustedRoot(assetsRoot, absolutePath));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          res.status(404).json({ error: "File or directory not found" });
+          return;
+        }
+        throw error;
       }
-
-      if (targetStat.isSymbolicLink()) {
-        res
-          .status(403)
-          .json({ error: "Access denied: symbolic links not allowed" });
-        return;
-      }
-
-      if (targetStat.isDirectory()) {
-        await rm(absolutePath, { recursive: true, force: true });
-        serverLogger.info(
-          `[file/delete] DIR user=${user?.username} path=${filePath}`,
-        );
-      } else {
-        await unlink(absolutePath);
-        serverLogger.info(
-          `[file/delete] FILE user=${user?.username} path=${filePath}`,
-        );
-      }
+      serverLogger.info(
+        `[file/delete] TARGET user=${user?.username} path=${filePath}`,
+      );
 
       auditLog(req as any, "file_deleted", filePath);
       res.json({ success: true });
     } catch (error) {
       serverLogger.error(`[file/delete] ERROR user=${user?.username}`, error);
-      res.status(500).json({ error: "Failed to delete" });
+      if (error instanceof UnsafeFilePathError || (error as NodeJS.ErrnoException).code === "EACCES") {
+        res.status(403).json({ error: "Access denied: symbolic links not allowed" });
+      } else {
+        res.status(500).json({ error: "Failed to delete" });
+      }
     }
   });
 

@@ -56,6 +56,13 @@ const candidate: TaskBoardIntegrationCandidate = {
 };
 
 describe('integration candidate v3 digest', () => {
+  it('为空标题交付生成确定性 requirement digest', () => {
+    expect(computeIntegrationRequirementDigest('', '正文'))
+      .toBe(computeIntegrationRequirementDigest('', '正文'));
+    expect(computeIntegrationRequirementDigest('', '正文'))
+      .not.toBe(computeIntegrationRequirementDigest('', '另一正文'));
+  });
+
   it('is canonical across object key insertion order and sensitive to every merge subject boundary', () => {
     expect(canonicalJson({ z: 1, a: { y: 2, x: 3 } }))
       .toBe(canonicalJson({ a: { x: 3, y: 2 }, z: 1 }));

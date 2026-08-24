@@ -6,17 +6,19 @@ import type {
   TaskBoardTaskCreateInput,
 } from '../../../shared/src/types/taskboard.js';
 import {
+  assertTaskContent,
   normalizeAttachments,
   normalizeLabels,
   optionalText,
-  requireText,
   rowToTask,
   visibleCommentPredicate,
 } from './storeHelpers.js';
+import { claimExistingTaskCreation, completeTaskCreationClaim, newTaskCreationClaim, taskCreationRequestDigest, waitForTaskCreationClaim } from './taskCreationLifecycle.js';
 import {
   TaskboardNotFoundError,
   TaskboardValidationError,
   type TaskboardIdentity,
+  type TaskboardTaskCreateResult,
 } from './types.js';
 
 interface ExecutionTaskActionOptions {
@@ -66,6 +68,24 @@ export async function createTaskFromExecution(
   runId: string,
   input: TaskBoardTaskCreateInput,
 ): Promise<TaskBoardTask> {
+  const initial = await createTaskFromExecutionWithResult(options, identity, runId, input);
+  const result = await waitForTaskCreationClaim(initial, () => createTaskFromExecutionWithResult(options, identity, runId, input));
+  if (result.creationClaimToken) {
+    const client = await options.pool.connect();
+    try { await completeTaskCreationClaim(client, options.tasksTable, result.task.id, result.creationClaimToken); }
+    finally { client.release(); }
+  }
+  return result.task;
+}
+
+export async function createTaskFromExecutionWithResult(
+  options: ExecutionTaskActionOptions,
+  identity: TaskboardIdentity,
+  runId: string,
+  input: TaskBoardTaskCreateInput,
+  requestDigest?: string,
+): Promise<TaskboardTaskCreateResult> {
+  assertTaskContent(input.title, input.description);
   return withActiveExecutionTask(options, identity, runId, async (client, currentTask) => {
     if (currentTask.kind === 'advisory') {
       throw new TaskboardValidationError(
@@ -77,18 +97,17 @@ export async function createTaskFromExecution(
       throw new TaskboardValidationError('Taskboard Execution may only create todo follow-up tasks');
     }
     const kind = input.kind ?? (currentTask.kind === 'integration' ? 'remediation' : 'delivery');
+    const creationDigest = requestDigest ?? taskCreationRequestDigest({
+      boardId: currentTask.boardId, ...input, kind,
+    });
     if (kind === 'integration') {
       throw new TaskboardValidationError('Integration tasks require an integration batch');
     }
     if (input.clientRequestId) {
-      const existing = await client.query(
-        `SELECT t.*,
-                (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', options.changesTable)}) AS comment_count
-           FROM ${options.tasksTable} t
-          WHERE t.board_id=$1 AND t.client_request_id=$2 AND t.deleted_at IS NULL`,
-        [currentTask.boardId, input.clientRequestId],
+      const existing = await claimExistingTaskCreation(
+        client, options, currentTask.boardId, input.clientRequestId, creationDigest,
       );
-      if (existing.rows[0]) return rowToTask(existing.rows[0]);
+      if (existing) return existing;
     }
     const numberResult = await client.query(
       `UPDATE ${options.boardsTable}
@@ -106,16 +125,19 @@ export async function createTaskFromExecution(
       [currentTask.boardId],
     );
     const taskId = randomUUID();
+    const creation = newTaskCreationClaim(input.clientRequestId);
     await client.query(
       `INSERT INTO ${options.tasksTable}
          (id, board_id, identifier, title, description, kind, branch, attachments, status, priority, labels,
-          sort_order, due_at, model, creator_user_id, creator_name, completed_at, client_request_id, version)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,'todo',$9,$10,$11,$12,$13,$14,$15,NULL,$16,1)`,
+          sort_order, due_at, model, creator_user_id, creator_name, completed_at, client_request_id,
+          creation_request_digest,creation_state,creation_lease_id,creation_lease_expires_at,version)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,'todo',$9,$10,$11,$12,$13,$14,$15,NULL,$16,$17,$18,$19,
+               CASE WHEN $18='pending' THEN now()+interval '5 minutes' END,1)`,
       [
         taskId,
         currentTask.boardId,
         `TASK-${Number(numberResult.rows[0].task_number)}`,
-        requireText(input.title, 'Task title'),
+        input.title ?? '',
         input.description ?? '',
         kind,
         optionalText(input.branch),
@@ -128,6 +150,9 @@ export async function createTaskFromExecution(
         identity.ownerUserId,
         identity.displayName?.trim() || identity.username,
         optionalText(input.clientRequestId),
+        input.clientRequestId ? creationDigest : null,
+        creation.state,
+        creation.token,
       ],
     );
     await client.query(
@@ -136,7 +161,11 @@ export async function createTaskFromExecution(
        VALUES ($1,'task.created_from_execution','agent',$2,$3::jsonb)`,
       [taskId, runId, JSON.stringify({ sourceTaskId: currentTask.id, kind })],
     );
-    return loadTask(options, client, taskId);
+    return {
+      task: await loadTask(options, client, taskId),
+      created: true,
+      ...(creation.token ? { creationClaimToken: creation.token } : {}),
+    };
   });
 }
 

@@ -7,6 +7,8 @@ import { Kubectl } from './kubectl.js';
 import type { KubeApi } from './kubeApi.js';
 import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './networkPolicyManager.js';
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
+import { deleteSandboxAndReclaimNetwork } from './sandboxDeletion.js';
+import { SingleflightCleanup } from './singleflightCleanup.js';
 import {
   type ManagedSandbox,
   type ManagedSandboxInventory,
@@ -103,6 +105,8 @@ export class SandboxManager {
   private readonly prewarmInFlight = new Map<string, Promise<void>>();
   /** 同名 Sandbox 并发 ensureRunning 合流：后到者 join 先行者的 promise（消除 warmup/execute 并发 create 竞态与重复开销）。 */
   private readonly ensureInFlight = new Map<string, Promise<SandboxRef>>();
+  /** Attestation 超时后服务端仍会继续；整段 probe 合流，避免重试持续创建临时 Sandbox。 */
+  private readonly networkPolicyProbe = new SingleflightCleanup<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }>();
   private readonly capacityReservations = new CapacityReservations();
   /** already_running 快路径缓存：完整校验（networkPolicy+SNAT）通过时间与最近 touch 时间。 */
   private readonly ensureFastPath = new Map<string, { verifiedAt: number; touchedAt: number }>();
@@ -279,11 +283,7 @@ export class SandboxManager {
   async delete(ref: SandboxRef, options: { activeKey?: string } = {}): Promise<void> {
     this.assertIdle(ref.name, 'delete', options.activeKey);
     this.invalidateEnsureFastPath(ref.name);
-    await this.kubectl.run(['delete', this.resourceName(ref.name), '--ignore-not-found=true'], {
-      timeoutMs: this.config.sandboxWaitTimeoutMs,
-    });
-    await this.networkPolicyManager.deleteForSandboxName(ref.name);
-    await this.snatManager.deleteForSandboxName(ref.name);
+    await this.deleteSandboxAndReclaimNetwork(ref.name);
   }
 
   async deleteByWorkspaceId(workspaceId: string, input: { busySandboxNames?: Set<string> } = {}): Promise<{ names: string[]; skippedBusy: string[] }> {
@@ -297,11 +297,7 @@ export class SandboxManager {
         skippedBusy.push(sandbox.name);
         continue;
       }
-      await this.kubectl.run(['delete', this.resourceName(sandbox.name), '--ignore-not-found=true'], {
-        timeoutMs: this.config.sandboxWaitTimeoutMs,
-      });
-      await this.networkPolicyManager.deleteForSandboxName(sandbox.name);
-      await this.snatManager.deleteForSandboxName(sandbox.name);
+      await this.deleteSandboxAndReclaimNetwork(sandbox.name);
     }
     return { names: names.filter((name) => !skippedBusy.includes(name)), skippedBusy };
   }
@@ -312,28 +308,23 @@ export class SandboxManager {
 
   async probeNetworkPolicy(): Promise<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }> {
     const probeId = `probe-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-    const input = {
-      workspaceId: 'network-probe',
-      sessionId: probeId,
-      sandboxScopeId: `network-probe-${probeId}`,
-    };
+    const input = { workspaceId: 'network-probe', sessionId: probeId, sandboxScopeId: `network-probe-${probeId}` };
     const plannedRef = this.ref(input);
     const activeKey = `probe:${probeId}`;
-    const releaseActive = this.activeRegistry?.acquire(plannedRef.name, activeKey);
-    try {
-      const ref = await this.ensureRunning(input, {
-        skipCapacityManagement: true,
-        activeKey,
-      });
+    let releaseActive: (() => void) | undefined;
+    return await this.networkPolicyProbe.run(async () => {
+      releaseActive = this.activeRegistry?.acquire(plannedRef.name, activeKey);
+      const ref = await this.ensureRunning(input, { skipCapacityManagement: true, activeKey });
+      await this.snatManager.ensureForProbe(ref);
+      return await this.networkPolicyManager.probe(ref);
+    }, async () => {
       try {
-        await this.snatManager.ensureForProbe(ref);
-        return await this.networkPolicyManager.probe(ref);
+        // ensureRunning 失败时也删 plannedRef；此前只清理成功 ref，会泄漏 Pending probe。
+        await this.delete(plannedRef, { activeKey });
       } finally {
-        await this.delete(ref, { activeKey });
+        releaseActive?.();
       }
-    } finally {
-      releaseActive?.();
-    }
+    });
   }
 
   private snatStatusCache: { at: number; value: SnatStatus } | null = null;
@@ -357,9 +348,9 @@ export class SandboxManager {
     if (!this.snatManager.isEnabled()) {
       return { enabled: false, checked: 0, deleted: [], orphanCidrs: [], unexpected: [] };
     }
+    // phase 不代表资源消失；只要受管 Sandbox CR 仍在就保留 SNAT，清单失败则 fail-closed。
     const retainedEntryNames = new Set(
       (await this.listManagedSandboxes())
-        .filter((sandbox) => ['Running', 'Paused'].includes(sandbox.phase ?? ''))
         .map((sandbox) => this.snatManager.entryNameForSandboxName(sandbox.name)),
     );
     const activeCidrs = await this.snatManager.activeManagedPodCidrs();
@@ -464,11 +455,7 @@ export class SandboxManager {
     this.assertIdleByName(name, 'delete', input.busySandboxNames);
     await this.assertNotBackgroundShellProtected(name, 'delete');
     this.invalidateEnsureFastPath(name);
-    await this.kubectl.run(['delete', this.resourceName(name), '--ignore-not-found=true'], {
-      timeoutMs: this.config.sandboxWaitTimeoutMs,
-    });
-    await this.networkPolicyManager.deleteForSandboxName(name);
-    await this.snatManager.deleteForSandboxName(name);
+    await this.deleteSandboxAndReclaimNetwork(name);
   }
 
   async prewarmStaleImagePausedSandboxes(input: {
@@ -609,11 +596,7 @@ export class SandboxManager {
             + `brokenForMs=${nowMs - brokenSinceMs}`,
           );
           this.invalidateEnsureFastPath(sandbox.name);
-          await this.kubectl.run(['delete', this.resourceName(sandbox.name), '--ignore-not-found=true'], {
-            timeoutMs: this.config.sandboxWaitTimeoutMs,
-          });
-          await this.networkPolicyManager.deleteForSandboxName(sandbox.name);
-          snatDeleted.push(...await this.snatManager.deleteForSandboxName(sandbox.name));
+          snatDeleted.push(...await this.deleteSandboxAndReclaimNetwork(sandbox.name));
           brokenRecycled.push(sandbox.name);
           continue;
         }
@@ -634,11 +617,7 @@ export class SandboxManager {
           continue;
         }
         this.invalidateEnsureFastPath(sandbox.name);
-        await this.kubectl.run(['delete', this.resourceName(sandbox.name), '--ignore-not-found=true'], {
-          timeoutMs: this.config.sandboxWaitTimeoutMs,
-        });
-        await this.networkPolicyManager.deleteForSandboxName(sandbox.name);
-        snatDeleted.push(...await this.snatManager.deleteForSandboxName(sandbox.name));
+        snatDeleted.push(...await this.deleteSandboxAndReclaimNetwork(sandbox.name));
         deleted.push(sandbox.name);
         continue;
       }
@@ -872,12 +851,7 @@ export class SandboxManager {
 
       this.logger.warn(`sandbox_stale_image_paused_retire name=${ref.name} old=${oldImage} new=${this.config.sandboxImage}`);
       this.invalidateEnsureFastPath(ref.name);
-      const result = await this.kubectl.run(['delete', this.resourceName(ref.name), '--ignore-not-found=true'], {
-        timeoutMs: this.config.sandboxWaitTimeoutMs,
-      });
-      if (result.exitCode !== 0) throw new Error(`delete stale paused sandbox 失败: ${result.stderr || result.stdout}`);
-      await this.networkPolicyManager.deleteForSandboxName(ref.name);
-      await this.snatManager.deleteForSandboxName(ref.name);
+      await this.deleteSandboxAndReclaimNetwork(ref.name);
       this.logger.info(`sandbox_stale_image_retired name=${ref.name}`);
       return 'retired';
     } finally {
@@ -1200,6 +1174,14 @@ export class SandboxManager {
         },
       },
     };
+  }
+
+  /** Sandbox 消失后才允许回收 TrafficPolicy/SNAT；任何 kubectl 异常都 fail-closed。 */
+  private async deleteSandboxAndReclaimNetwork(name: string): Promise<string[]> {
+    return await deleteSandboxAndReclaimNetwork({
+      name, resource: this.resourceName(name), timeoutMs: this.config.sandboxWaitTimeoutMs,
+      kubectl: this.kubectl, networkPolicyManager: this.networkPolicyManager, snatManager: this.snatManager,
+    });
   }
 
   private resourceName(name: string): string {

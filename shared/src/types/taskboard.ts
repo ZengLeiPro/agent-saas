@@ -639,7 +639,8 @@ export interface TaskBoardPatchInput {
 }
 
 export interface TaskBoardTaskCreateInput {
-  title: string;
+  /** 缺省时由任务看板根据正文生成；生成失败则保留空标题。 */
+  title?: string;
   description?: string;
   kind?: TaskBoardTaskKind;
   branch?: string;

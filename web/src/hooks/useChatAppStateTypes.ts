@@ -60,10 +60,10 @@ export interface ChatAppState {
   closeAdminSettings: () => void;
   /** 切换 admin settings modal 内的 section（侧栏点击时调用） */
   setAdminSettingsSection: (section: string) => void;
-  newSession: () => void;
+  newSession: (groupId?: string | null) => void;
   selectSession: (id: string) => void;
   /** 企业专家新草稿：不创建服务端会话，首条消息 WS payload 才带上 orgAgentId */
-  startOrgAgentSession: (agentId: string) => void;
+  startOrgAgentSession: (agentId: string, groupId?: string | null) => void;
   /** 草稿中的企业专家 id；缺省 null */
   pendingOrgAgentId: string | null;
   confirmDeleteSession: (id: string) => void;

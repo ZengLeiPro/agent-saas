@@ -650,6 +650,7 @@ function poolKey(input: CodexWebSocketExecuteInput): string {
     input.cacheAffinityId,
     input.endpoint,
     input.accountBindingHash,
+    input.originator,
   ]));
 }
 

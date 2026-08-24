@@ -128,6 +128,7 @@ describe('RawAgentLoop policy failure', () => {
     expect(events.at(-1)).toEqual({
       type: 'error',
       error: '当前模型受策略限制，请切换其他模型继续。',
+      runId: 'run-policy-error',
       failureKind: 'policy_rejection',
       recoveryAction: 'switch_model',
     });
@@ -203,7 +204,11 @@ describe('RawAgentLoop policy failure', () => {
       channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered', user: { id: 'admin-1', username: 'admin', role: 'admin' } },
     }));
 
-    expect(events.at(-1)).toEqual({ type: 'error', error: 'ordinary permanent failure' });
+    expect(events.at(-1)).toEqual({
+      type: 'error',
+      error: 'ordinary permanent failure',
+      runId: 'run-ordinary-error',
+    });
     const persisted = await eventStore.list('session-ordinary-error');
     expect(persisted.some((event) => event.type === 'assistant_message')).toBe(false);
     expect(persisted.find((event) => event.type === 'run_finished')).toMatchObject({ error: 'ordinary permanent failure' });

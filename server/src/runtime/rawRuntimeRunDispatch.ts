@@ -1394,7 +1394,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     // fire-and-forget：内部自带 per-scope 节流与失败静默，不阻塞、不影响本次 run。
     config.sandboxWarmup?.(sessionId);
     await hooks?.onSessionStart?.(sessionId, transcriptPath);
-    yield { type: 'session_init', sessionId };
+    yield { type: 'session_init', sessionId, runId };
 
     const baseEventStore = createEventStoreForSession(config, sessionRecord);
     await config.runStore?.upsertPending({

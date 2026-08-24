@@ -186,7 +186,7 @@ function RecordRow({
         type="button"
         onClick={expandable ? () => setOpen((v) => !v) : undefined}
         className={cn(
-          "col-span-full grid grid-cols-[subgrid] items-start text-left",
+          "col-span-full grid grid-cols-[subgrid] items-start text-left select-text",
           !expandable && "cursor-default",
         )}
       >
@@ -230,7 +230,7 @@ function ComparisonRow({ item }: { item: RecordItem }) {
         type="button"
         onClick={expandable ? () => setOpen((value) => !value) : undefined}
         className={cn(
-          "grid w-full grid-cols-1 gap-x-3 gap-y-2 text-left",
+          "grid w-full grid-cols-1 gap-x-3 gap-y-2 text-left select-text",
           COMPARISON_COLUMNS,
           "sm:items-start",
           !expandable && "cursor-default",

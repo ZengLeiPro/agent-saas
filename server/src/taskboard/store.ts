@@ -91,6 +91,7 @@ import {
 import { assertBoardHasNoActiveRuns, assertTaskHasNoActiveRuns, assertTaskHasNoExecutionHistory } from './archiveGuard.js';
 import { completeStoredTaskCreation, createStoredTask, createStoredTaskWithResult, releaseStoredTaskCreation } from './storeTaskCreate.js';
 import { deleteComment as deleteStoredComment, updateComment as updateStoredComment } from './storeComments.js';
+import { applyGeneratedTaskTitle } from './storeGeneratedTaskTitle.js';
 import { getExecutionContextBySessionId as getStoredExecutionContextBySessionId, searchExecutions as searchStoredExecutions } from './storeExecutions.js';
 import {
   listBoards as listStoredBoards,
@@ -139,8 +140,7 @@ import {
 } from './types.js';
 const { Pool } = pg;
 type PgPool = InstanceType<typeof Pool>;
-const DEFAULT_SORT_GAP = 1024;
-const MIN_SORT_GAP = 1e-7;
+const DEFAULT_SORT_GAP = 1024; const MIN_SORT_GAP = 1e-7;
 export { TASKBOARD_TABLE_PREFIX_MAX_LENGTH } from './storeHelpers.js';
 export interface PgTaskboardStoreOptions {
   pool: PgPool;
@@ -621,8 +621,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   }
   isTaskWatched(identity: TaskboardIdentity, taskId: string): Promise<boolean> { return isStoredTaskWatched(this, identity, taskId); }
   setTaskWatched(identity: TaskboardIdentity, taskId: string, watched: boolean): Promise<boolean> { return setStoredTaskWatched(this, identity, taskId, watched); }
-  async updateTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskPatchInput,
-    creationClaimToken?: string): Promise<TaskBoardTask> {
+  async updateTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskPatchInput, creationClaimToken?: string): Promise<TaskBoardTask> {
     return this.withTransaction(async (client) => {
       const loaded = await this.requireTaskWithBoard(client, identity, taskId, true, creationClaimToken);
       const kindMutation = resolveTaskKindMutation(loaded.task, input.kind);
@@ -702,35 +701,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       return this.requireTask(client, identity, taskId, false, creationClaimToken);
     });
   }
-  async applyGeneratedTaskTitle(
-    identity: TaskboardIdentity,
-    taskId: string,
-    title: string,
-  ): Promise<TaskBoardTask> {
-    const generatedTitle = requireText(title, 'Generated task title');
-    return this.withTransaction(async (client) => {
-      const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
-      assertBoardRole(loaded.boardRole, 'editor');
-      assertWritableTask(loaded.task, loaded.boardArchivedAt);
-      if (loaded.task.title.trim()) return loaded.task;
-      const updated = await client.query(
-        `UPDATE ${this.tasksTable} t
-            SET title=$4, version=t.version+1, updated_at=now()
-           FROM ${this.boardsTable} b
-          WHERE t.id=$1 AND t.board_id=b.id
-            AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
-            AND t.title=''
-          RETURNING t.id`,
-        [taskId, identity.tenantId, identity.ownerUserId, generatedTitle],
-      );
-      if (!updated.rows[0]) return this.requireTask(client, identity, taskId, false);
-      await appendTaskChange(
-        this, client, taskId, 'task.updated', 'system', 'task-title-generator',
-        { fields: ['title'], automated: true },
-      );
-      return this.requireTask(client, identity, taskId, false);
-    });
-  }
+  async applyGeneratedTaskTitle(identity: TaskboardIdentity, taskId: string, title: string): Promise<TaskBoardTask> { return applyGeneratedTaskTitle(this, identity, taskId, title); }
   async moveTask(
     identity: TaskboardIdentity,
     taskId: string,

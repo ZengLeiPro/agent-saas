@@ -33,6 +33,7 @@ describe('Artifact 交付实时降级', () => {
     expect(handleArtifactDeliveryToolResult(event, state.controller)).toBe(true);
     expect(state.messages).toHaveLength(1);
     expect(state.messages[0]).toMatchObject({
+      id: 'artifact-delivery-artifact-1',
       type: 'file_download', artifactId: 'artifact-1', fileName: '交付结果.docx', fileSize: 2048,
     });
   });

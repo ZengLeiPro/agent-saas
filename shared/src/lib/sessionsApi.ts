@@ -333,7 +333,7 @@ function mapBlock(
       const presentation = normalizeToolPresentation(block.presentation);
       // 结构化执行事实同一条通道、同一条不可信边界规则
       const toolMetadata = normalizeToolResultMetadata(block.toolMetadata);
-      const deliveredArtifact = artifactDeliveryMessage(id, block.toolName, toolMetadata, resultText);
+      const deliveredArtifact = artifactDeliveryMessage(block.toolName, toolMetadata, resultText);
       if (deliveredArtifact) return deliveredArtifact;
       if (block.toolName === "AskUserQuestion" && !block.publicActivityOnly) {
         return tryConvertAskUser(block, resultText);
@@ -411,7 +411,6 @@ function mapBlock(
       // 分页/增量历史可能只包含 Artifact(deliver) 的结果行，配对的 tool_use 在前一页。
       // 交付结果本身已包含完整卡片事实，必须先恢复；否则下面的专用工具隐藏规则会把它吞掉。
       const deliveredArtifact = artifactDeliveryMessage(
-        id,
         block.toolName,
         normalizeToolResultMetadata(block.toolMetadata),
         block.content,

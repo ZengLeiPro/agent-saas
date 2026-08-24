@@ -17,7 +17,6 @@ function deliveryPayload(resultText: string | undefined): Record<string, unknown
 }
 
 export function artifactDeliveryMessage(
-  id: string,
   toolName: string | undefined,
   rawMetadata: unknown,
   resultText?: string,
@@ -34,7 +33,7 @@ export function artifactDeliveryMessage(
   const mimeType = metadata?.mimeType ?? payload?.mimeType;
   const sizeBytes = metadata?.sizeBytes ?? payload?.sizeBytes;
   return {
-    id: `${id}-artifact-${artifactId}`,
+    id: `artifact-delivery-${artifactId}`,
     type: 'file_download',
     fileName,
     fileType: typeof mimeType === 'string' ? mimeType : '',
@@ -51,7 +50,7 @@ export function handleArtifactDeliveryToolResult(
   data: { toolName?: string; result?: string; metadata?: unknown },
   messages: MessagesController,
 ): boolean {
-  const artifact = artifactDeliveryMessage('live', data.toolName, data.metadata, data.result);
+  const artifact = artifactDeliveryMessage(data.toolName, data.metadata, data.result);
   if (!artifact) return false;
   if (!messages.messagesRef.current.some(item => item.type === 'file_download' && item.artifactId === artifact.artifactId)) {
     messages.addMessage(artifact);

@@ -17,8 +17,7 @@
  */
 
 import { randomUUID } from 'crypto';
-import { mkdir, writeFile } from 'fs/promises';
-import { dirname, join } from 'path';
+import { join } from 'path';
 
 import { z } from 'zod';
 
@@ -39,6 +38,7 @@ import {
 import type { TenantRemoteHandAuthTokenResolver } from '../tenantRemoteHandResolver.js';
 import type { EventStore } from '../types.js';
 import { createLogger } from '../../utils/logger.js';
+import { writeTrustedFile } from '../../security/trustedFile.js';
 import { getSubagentType, SUBAGENT_TYPES } from './agentTypes.js';
 import {
   SUBAGENT_HARD_TIMEOUT_MS,
@@ -48,6 +48,8 @@ import {
   type SubagentLimiter,
 } from './subagentLimits.js';
 import { runSubagent, type SubagentOutcome } from './subagentRunner.js';
+import { customerSafeRuntimeError } from '../runtimeFailure.js';
+import { formatSubagentFailureHeader } from './subagentFailureFormatting.js';
 
 const logger = createLogger('AgentToolProvider');
 const SUBAGENT_RESULT_PREVIEW_CHARS = 2_000;
@@ -244,7 +246,11 @@ export class AgentToolProvider implements ToolProvider {
       toolUseCount: outcome.toolUseCount,
       turnCount: outcome.turnCount,
       durationMs: outcome.durationMs,
-      ...(outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {}),
+      ...(outcome.errorMessage ? {
+        errorMessage: customerSafeRuntimeError(outcome.errorMessage, outcome.failureKind),
+      } : {}),
+      ...(outcome.failureKind ? { failureKind: outcome.failureKind } : {}),
+      ...(outcome.recoveryAction ? { recoveryAction: outcome.recoveryAction } : {}),
       ...(outcome.text.trim()
         ? { resultPreview: outcome.text.trim().slice(0, SUBAGENT_RESULT_PREVIEW_CHARS) }
         : {}),
@@ -261,8 +267,9 @@ export class AgentToolProvider implements ToolProvider {
     const meta = outcomeAgentMeta(outcome);
     if (outcome.status !== 'completed') {
       const partial = outcome.text.trim();
+      const failureHeader = formatSubagentFailureHeader(outcome, meta);
       return [
-        `[子 agent 异常终止] status=${outcome.status}｜${outcome.errorMessage ?? '未知错误'}｜${meta}`,
+        failureHeader,
         partial
           ? `以下为终止前已产出的部分文本（不完整，不可当作最终结论）：\n---\n${await this.truncateWithSpill(partial, outcome, context)}`
           : '（终止前未产出任何文本）',
@@ -287,9 +294,10 @@ export class AgentToolProvider implements ToolProvider {
   }
 
   private async spillFullText(text: string, relPath: string, context: ToolCallContext): Promise<void> {
-    const fullPath = join(context.workspace.root, relPath);
-    await mkdir(dirname(fullPath), { recursive: true });
-    await writeFile(fullPath, text, 'utf-8');
+    await writeTrustedFile(context.workspace.root, relPath, text, {
+      encoding: 'utf-8',
+      createParents: true,
+    });
   }
 
   private async resolveParentEventStore(context: ToolCallContext): Promise<EventStore | null> {

@@ -63,6 +63,9 @@ export function registerGovernanceOrganizationAccessRoutes(options: {
     if (!current || current.version !== parsed.data.expectedVersion) {
       return res.status(409).json({ error: 'Policy baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
     }
+    if (typeof current.value !== 'boolean') {
+      return res.status(409).json({ error: 'Policy value type is not editable here', code: 'POLICY_VALUE_TYPE_MISMATCH' });
+    }
     const baselineDigest = governanceDigest(current);
     const expiresAt = new Date(options.now().getTime() + options.previewTtlMs).toISOString();
     const signature = {
@@ -112,6 +115,9 @@ export function registerGovernanceOrganizationAccessRoutes(options: {
     }
     if (!current || current.version !== mutation.expectedVersion || governanceDigest(current) !== baselineDigest) {
       return res.status(409).json({ error: 'Governance baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
+    }
+    if (typeof current.value !== 'boolean') {
+      return res.status(409).json({ error: 'Policy value type is not editable here', code: 'POLICY_VALUE_TYPE_MISMATCH' });
     }
     try {
       const policy = await options.entitlements.updatePolicy(

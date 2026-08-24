@@ -19,7 +19,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -59,7 +58,6 @@ export function TaskDialog({
   onOpenChange,
   onCreate,
 }: TaskDialogProps) {
-  const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<Extract<TaskBoardTaskKind, "delivery" | "advisory">>("delivery");
   const [status, setStatus] = useState<TaskBoardStatus>("backlog");
@@ -73,7 +71,6 @@ export function TaskDialog({
 
   useEffect(() => {
     if (!open) return;
-    setTitle("");
     setDescription("");
     setKind("delivery");
     setStatus(CREATE_TASK_STATUSES.includes(initialStatus as (typeof CREATE_TASK_STATUSES)[number])
@@ -89,13 +86,12 @@ export function TaskDialog({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    const normalizedTitle = title.trim();
     if (attachments.uploading) {
       setError("请等待附件上传完成");
       return;
     }
-    if (!normalizedTitle) {
-      setError("请输入任务标题");
+    if (!description.trim()) {
+      setError("请填写任务正文");
       return;
     }
     if (status === "in_progress" && !dispatch) {
@@ -106,7 +102,6 @@ export function TaskDialog({
     setError(null);
     try {
       await onCreate({
-        title: normalizedTitle,
         description: description.trim(),
         kind,
         ...(attachments.uploadedFiles.length
@@ -157,19 +152,6 @@ export function TaskDialog({
             </Select>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="taskboard-task-title">
-              标题 <span className="text-destructive" aria-hidden="true">*</span>
-            </Label>
-            <Input
-              id="taskboard-task-title"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="要完成什么？"
-              disabled={submitting}
-              autoFocus
-            />
-          </div>
-          <div className="space-y-2">
             <Label htmlFor="taskboard-task-description">正文</Label>
             <Textarea
               id="taskboard-task-description"
@@ -177,7 +159,9 @@ export function TaskDialog({
               onChange={(event) => setDescription(event.target.value)}
               placeholder="补充上下文和验收信息"
               rows={5}
+              required
               disabled={submitting}
+              autoFocus
               onPaste={(event) => void attachments.handlePaste(event)}
             />
             <TaskAttachmentField upload={attachments} disabled={submitting} />

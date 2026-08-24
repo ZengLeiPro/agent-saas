@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatCompletionsModelAdapter } from '../runtime/chatCompletionsAdapter.js';
-import type { ModelEvent } from '../runtime/types.js';
+import { ModelProviderError, type ModelEvent } from '../runtime/types.js';
 
 function sse(payload: unknown): string {
   return `data: ${typeof payload === 'string' ? payload : JSON.stringify(payload)}\n\n`;
@@ -171,6 +171,86 @@ describe('ChatCompletionsModelAdapter', () => {
       responseChained: false,
       responseMode: 'full',
      });
+  });
+
+  it('classifies a trusted Chat Completions error.code=cyber_policy as a policy rejection', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      error: { code: 'cyber_policy', message: 'blocked by provider policy' },
+    }), { status: 400, headers: { 'content-type': 'application/json' } }));
+    const diagnostics: Array<Record<string, unknown>> = [];
+    const adapter = new ChatCompletionsModelAdapter({
+      apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1',
+    }, {});
+
+    const result = collect(adapter.stream({
+      model: 'glm-5.2', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      runId: 'run-policy', sessionId: 'session-policy', model: 'glm-5.2', cwd: '/tmp',
+      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered' },
+      recordModelRequestDiagnostic: async (event) => { diagnostics.push(event); },
+    }));
+
+    await expect(result).rejects.toMatchObject({
+      name: 'ModelProviderError',
+      status: 400,
+      code: 'cyber_policy',
+      failureKind: 'policy_rejection',
+      recoveryAction: 'switch_model',
+    } satisfies Partial<ModelProviderError>);
+    expect(diagnostics.filter((event) => event.type === 'finished')).toMatchObject([{
+      errorCode: 'cyber_policy',
+      retryBlockedReason: 'permanent_error',
+    }]);
+  });
+
+  it('preserves a non-allowlisted JSON error.code without classifying its message text', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      error: { code: 'invalid_prompt', message: 'blocked by cyber_policy' },
+    }), { status: 400, headers: { 'content-type': 'application/json' } }));
+    const adapter = new ChatCompletionsModelAdapter({
+      apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1',
+    }, {});
+
+    const result = collect(adapter.stream({
+      model: 'glm-5.2', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      runId: 'run-invalid-prompt', sessionId: 'session-invalid-prompt', model: 'glm-5.2', cwd: '/tmp',
+      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered' },
+    }));
+
+    await expect(result).rejects.toBeInstanceOf(ModelProviderError);
+    await expect(result).rejects.toMatchObject({
+      name: 'ModelProviderError',
+      status: 400,
+      code: 'invalid_prompt',
+      failureKind: undefined,
+      recoveryAction: undefined,
+    } satisfies Partial<ModelProviderError>);
+  });
+
+  it('does not classify an unstructured Chat Completions error body by matching its text', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
+      'Request blocked: cyber_policy',
+      { status: 400 },
+    ));
+    const adapter = new ChatCompletionsModelAdapter({
+      apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1',
+    }, {});
+
+    const result = collect(adapter.stream({
+      model: 'glm-5.2', messages: [{ role: 'user', content: 'go' }], tools: [],
+    }, {
+      runId: 'run-text-only', sessionId: 'session-text-only', model: 'glm-5.2', cwd: '/tmp',
+      channelContext: { channel: 'web', outputTransactionMode: 'terminal_buffered' },
+    }));
+
+    await expect(result).rejects.toMatchObject({
+      name: 'ModelProviderError',
+      status: 400,
+      code: 'HTTP_400',
+      failureKind: undefined,
+      recoveryAction: undefined,
+    } satisfies Partial<ModelProviderError>);
   });
 
   it('Chat Completions 永久 transport 配置错误不消耗重试预算', async () => {

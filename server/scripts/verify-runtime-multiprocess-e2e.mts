@@ -483,11 +483,24 @@ async function login(port: number): Promise<string> {
 }
 
 async function openWs(port: number, token: string): Promise<WebSocket> {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(token)}`);
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('ws open timeout')), 5_000);
-    ws.once('open', () => { clearTimeout(timer); resolve(); });
-    ws.once('error', reject);
+    const timer = setTimeout(() => reject(new Error('ws auth timeout')), 5_000);
+    const fail = (error: Error) => {
+      clearTimeout(timer);
+      reject(error);
+    };
+    ws.once('open', () => ws.send(JSON.stringify({ action: 'auth', token })));
+    ws.once('error', fail);
+    ws.on('message', function onAuth(raw) {
+      const envelope = JSON.parse(raw.toString()) as WsEnvelope;
+      if (envelope.data?.type !== 'auth_ok') return;
+      clearTimeout(timer);
+      ws.off('message', onAuth);
+      ws.off('error', fail);
+      resolve();
+    });
+    ws.once('close', () => fail(new Error('websocket closed before auth_ok')));
   });
   return ws;
 }

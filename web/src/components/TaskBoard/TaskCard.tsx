@@ -108,9 +108,11 @@ export function TaskCard({
             ) : null}
           </span>
         </div>
-        <div className="mt-2 line-clamp-2 text-sm font-medium leading-5 text-foreground">
-          {task.title}
-        </div>
+        {task.title ? (
+          <div className="mt-2 line-clamp-2 text-sm font-medium leading-5 text-foreground">
+            {task.title}
+          </div>
+        ) : null}
         {task.providerPullRequestId ? (
           <div className="mt-2 text-xs text-muted-foreground">
             PR <span className="font-mono">{task.providerPullRequestId}</span>

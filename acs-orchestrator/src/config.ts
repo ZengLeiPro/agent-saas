@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { parseIpv4Cidr } from './cidr.js';
+import { ipv4CidrsOverlap, parseIpv4Cidr } from './cidr.js';
 import {
   DEFAULT_CODING_HAND_NETWORK_POLICY,
   parseNetworkPolicyFromEnv,
@@ -123,8 +123,10 @@ export interface AcsSnatConfig {
   /**
    * `shared-cidr` 模式下托管的 pod 网段（如 `172.16.179.0/24`）。
    * 必须只覆盖 ACS pod，不能把 ECS 等自带公网 IP 的资源圈进来。
+   * `sharedCidr` 仅保留给旧配置对象兼容；新代码统一读取 `sharedCidrs`。
    */
   sharedCidr?: string;
+  sharedCidrs?: string[];
   maxManagedEntries: number;
   requestTimeoutMs: number;
   stabilizeAfterCreateMs: number;
@@ -371,6 +373,14 @@ export function applyRuntimeConfigPatch(
     egress: cloneEgressConfig(patch.egress ?? config.egress),
   };
   validateRuntimeConfigValues(next);
+  if (config.snat?.mode === 'shared-cidr') {
+    const rollbackCapacity = config.snat.maxManagedEntries - (config.snat.sharedCidrs?.length ?? 0) - 2;
+    if (next.maxRunningSandboxes <= 0 || next.maxRunningSandboxes > rollbackCapacity) {
+      throw new Error(
+        `maxRunningSandboxes ${next.maxRunningSandboxes} must be within shared-cidr rollback capacity 1..${rollbackCapacity}`,
+      );
+    }
+  }
   config.maxRunningSandboxes = next.maxRunningSandboxes;
   config.warnRunningSandboxes = next.warnRunningSandboxes;
   config.drainDeadlineMs = next.drainDeadlineMs;
@@ -391,13 +401,50 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
   const snatRegionId = process.env.ACS_SNAT_REGION_ID?.trim() || undefined;
   const snatTableId = process.env.ACS_SNAT_TABLE_ID?.trim() || undefined;
   const snatIp = process.env.ACS_SNAT_IP?.trim() || undefined;
-  const snatSharedCidr = process.env.ACS_SNAT_SHARED_CIDR?.trim() || undefined;
+  const legacySnatSharedCidr = process.env.ACS_SNAT_SHARED_CIDR?.trim() || undefined;
+  const snatSharedCidrsRaw = process.env.ACS_SNAT_SHARED_CIDRS?.trim() || undefined;
+  if (legacySnatSharedCidr && snatSharedCidrsRaw) {
+    throw new Error('ACS_SNAT_SHARED_CIDR 与 ACS_SNAT_SHARED_CIDRS 不能同时配置');
+  }
+  const snatSharedCidrs = (snatSharedCidrsRaw ?? legacySnatSharedCidr ?? '')
+    .split(/[\s,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => {
+      const parsed = parseIpv4Cidr(value);
+      if (!parsed) {
+        const variable = snatSharedCidrsRaw ? 'ACS_SNAT_SHARED_CIDRS' : 'ACS_SNAT_SHARED_CIDR';
+        throw new Error(`${variable} 非法: ${value}`);
+      }
+      return parsed.canonical;
+    })
+    .filter((value, index, values) => values.indexOf(value) === index);
+  const snatMaxManagedEntries = readIntEnv('ACS_SNAT_MAX_MANAGED_ENTRIES', 12, { min: 1, max: 200 });
   if (snatMode !== 'disabled' && (!snatRegionId || !snatTableId || !snatIp)) {
     throw new Error('ACS_SNAT_MODE 启用时必须配置 ACS_SNAT_REGION_ID / ACS_SNAT_TABLE_ID / ACS_SNAT_IP');
   }
   if (snatMode === 'shared-cidr') {
-    if (!snatSharedCidr) throw new Error('ACS_SNAT_MODE=shared-cidr 时必须配置 ACS_SNAT_SHARED_CIDR');
-    if (!parseIpv4Cidr(snatSharedCidr)) throw new Error(`ACS_SNAT_SHARED_CIDR 非法: ${snatSharedCidr}`);
+    if (snatSharedCidrs.length === 0) {
+      throw new Error('ACS_SNAT_MODE=shared-cidr 时必须配置 ACS_SNAT_SHARED_CIDRS（或旧变量 ACS_SNAT_SHARED_CIDR）');
+    }
+    const parsedCidrs = snatSharedCidrs.map((value) => parseIpv4Cidr(value)!);
+    for (const cidr of parsedCidrs) {
+      if (cidr.prefixLength < 24) {
+        throw new Error(`ACS_SNAT_SHARED_CIDRS 拒绝过宽网段（最宽 /24）: ${cidr.canonical}`);
+      }
+    }
+    for (let left = 0; left < parsedCidrs.length; left++) {
+      for (let right = left + 1; right < parsedCidrs.length; right++) {
+        if (ipv4CidrsOverlap(parsedCidrs[left]!, parsedCidrs[right]!)) {
+          throw new Error(`ACS_SNAT_SHARED_CIDRS 存在重叠: ${parsedCidrs[left]!.canonical},${parsedCidrs[right]!.canonical}`);
+        }
+      }
+    }
+    if (snatMaxManagedEntries < snatSharedCidrs.length) {
+      throw new Error(
+        `ACS_SNAT_MAX_MANAGED_ENTRIES=${snatMaxManagedEntries} 小于共享网段数 ${snatSharedCidrs.length}`,
+      );
+    }
   }
   const base: AcsOrchestratorConfig = {
     port: readIntEnv('ACS_ORCH_PORT', 3300, { min: 1, max: 65_535 }),
@@ -462,7 +509,7 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     //
     // ⚠️ 前置条件：该值必须与 SNAT 能力匹配。`per-sandbox` 模式下每 pod 一条
     // SNAT 条目、超限直接 throw 且无降级，故高位安全阀只在 `shared-cidr`
-    // （条目恒为 1~2 条）下才真正可用。maxRunning 超限走 LRU pause 腾位、
+    // （条目数由明确允许的网段数决定，与 pod 数解耦）下才真正可用。maxRunning 超限走 LRU pause 腾位、
     // 有优雅降级，是应该先撞上的那道墙。
     maxRunningSandboxes: readIntEnv('ACS_SANDBOX_MAX_RUNNING', 200, { min: 0, max: 1_000 }),
     warnRunningSandboxes: readIntEnv('ACS_SANDBOX_WARN_RUNNING', 150, { min: 0, max: 1_000 }),
@@ -474,9 +521,12 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
       ...(snatRegionId ? { regionId: snatRegionId } : {}),
       ...(snatTableId ? { snatTableId } : {}),
       ...(snatIp ? { snatIp } : {}),
-      ...(snatSharedCidr ? { sharedCidr: parseIpv4Cidr(snatSharedCidr)!.canonical } : {}),
+      ...(snatSharedCidrs.length > 0 ? {
+        sharedCidr: snatSharedCidrs[0],
+        sharedCidrs: snatSharedCidrs,
+      } : {}),
       entryNamePrefix: process.env.ACS_SNAT_ENTRY_NAME_PREFIX?.trim() || 'agent-saas-acs',
-      maxManagedEntries: readIntEnv('ACS_SNAT_MAX_MANAGED_ENTRIES', 12, { min: 1, max: 200 }),
+      maxManagedEntries: snatMaxManagedEntries,
       requestTimeoutMs: readIntEnv('ACS_SNAT_REQUEST_TIMEOUT_MS', 20_000, { min: 1_000, max: 120_000 }),
       stabilizeAfterCreateMs: readIntEnv('ACS_SNAT_STABILIZE_AFTER_CREATE_MS', 8_000, { min: 0, max: 60_000 }),
       statusCacheMs: readIntEnv('ACS_SNAT_STATUS_CACHE_MS', 20_000, { min: 0, max: 300_000 }),

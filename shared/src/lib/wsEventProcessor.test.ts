@@ -714,20 +714,20 @@ describe('processWsEvent - subagent', () => {
     expect(ctrl.messages[0]).toMatchObject({ type: 'subagent', toolId: 't1', agentType: 'coder', status: 'running' });
   });
 
-  it('subagent_end：命中既有 subagent 时写终态与统计字段', () => {
+  it('subagent_end：live 链路保留策略拒绝恢复字段，与刷新结构一致', () => {
     const ctrl = makeController([
       { id: 's', type: 'subagent', toolId: 't1', agentType: 'coder', status: 'running' },
     ]);
     const { ctx } = makeCtx(ctrl);
     dispatch(
-      { type: 'subagent_end', toolId: 't1', status: 'completed', durationMs: 500, totalTokens: 1200, toolUseCount: 3 },
+      { type: 'subagent_end', toolId: 't1', status: 'failed', durationMs: 500, totalTokens: 1200, toolUseCount: 3, failureKind: 'policy_rejection', recoveryAction: 'switch_model' },
       ctx,
     );
     const sub = ctrl.messages[0] as Extract<MessageItem, { type: 'subagent' }>;
-    expect(sub.status).toBe('completed');
+    expect(sub.status).toBe('failed');
     expect(sub.durationMs).toBe(500);
     expect(sub.totalTokens).toBe(1200);
-    expect(sub.toolUseCount).toBe(3);
+    expect(sub.toolUseCount).toBe(3); expect(sub).toMatchObject({ failureKind: 'policy_rejection', recoveryAction: 'switch_model' });
   });
 
   it('subagent_end：无既有 subagent 但带 agentType 时补一条终态', () => {

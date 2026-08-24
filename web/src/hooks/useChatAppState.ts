@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { ApiSessionListItem } from "@/lib/sessionsApi";
-import type { AskUserAnswers, MemoryRecallData, NotificationData, PluginInstallData, SessionRuntimeStatus } from "@agent/shared";
+import type { AskUserAnswers, MemoryRecallData, NotificationData, PluginInstallData, RuntimeFailureKind, RuntimeRecoveryAction, SessionRuntimeStatus } from "@agent/shared";
 import type { ModelList } from "@/types/models";
 import type { AppTab } from "@/types/sidebar";
 import type { CanonicalSettingsSectionId } from "@/types/settings";
@@ -20,7 +20,6 @@ import {
   saveComposerAttachments,
   saveComposerText,
 } from "@/lib/composerDraftStorage";
-import { mapSessionDetailToMessages } from "@/lib/sessionsApi";
 import type { ApiSessionDetail } from "@/lib/sessionsApi";
 import {
   asCompactionItem,
@@ -50,6 +49,7 @@ import { clearRunShellApprovalStorage, runShellApprovalStorageKey } from "@/lib/
 import type { AdminSettingsState, AdminSettingsTarget, PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
 import { useMessages } from "@/hooks/useMessages";
 import { usePersonalSettingsNavigation } from "@/hooks/usePersonalSettingsNavigation";
+import { usePendingNewSessionTarget } from "@/hooks/usePendingNewSessionTarget";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSession } from "@/hooks/useSession";
 import { useFileUpload } from "@/hooks/useFileUpload";
@@ -58,7 +58,7 @@ import {
   processWsEvent,
   finalizeStreamingMessages,
   finalizeRunningSubagents,
-  formatRuntimeFailureMessage,
+  formatRuntimeFailureMessage, isSameRunMessage,
   isInsufficientCreditsFailure,
   removeRuntimeStatusMessages,
   upsertRuntimeStatusMessage,
@@ -91,8 +91,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // 从 URL 解析初始状态（仅执行一次）
   const [urlState] = useState(() => parseUrl());
-
-
 
   // ---- Agent Profile ----
   const [agentProfile, setAgentProfile] = useState<AgentProfile | null>(null);
@@ -1048,19 +1046,15 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   //（会话真实建立、服务端已写 meta）后清除——ACK 只代表入队，rejected 后重发仍要带上
   //（2026-07 审查 F9）；
   // state：新会话空白态的顶部 banner 展示（会话入列表带 orgAgentId 后由列表接管）。
-  const pendingOrgAgentIdRef = useRef<string | null>(null);
-  const [pendingOrgAgentId, setPendingOrgAgentId] = useState<string | null>(null);
+  const { pendingOrgAgentIdRef, pendingNewSessionGroupIdRef, pendingOrgAgentId, setPendingOrgAgentId, clearPendingOrgAgent, assignPendingGroup } = usePendingNewSessionTarget();
   const authOwnerKey = user ? `${user.tenantId}:${user.id}` : "anonymous";
-  const clearPendingOrgAgent = useCallback(() => {
-    pendingOrgAgentIdRef.current = null;
-    setPendingOrgAgentId(null);
-  }, []);
 
   const selectSessionWithUrl = useCallback((id: string) => {
     setTrashPreviewSessionId(null); // 选择正常会话时退出回收站预览
     clearPendingOrgAgent(); // 切换既有会话 = 放弃挂起的专职 Agent 新会话
     failAllProvisionalBatches('已切换会话，请重新发送');
     pendingNewSessionClientMsgIdRef.current = null;
+    pendingNewSessionGroupIdRef.current = null;
     markSessionRead(id);
     immediateSessionIdRef.current = id;
     queuedSessionIdRef.current = id;
@@ -1072,11 +1066,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     pushUrl('chat', id);
   }, [clearPendingOrgAgent, failAllProvisionalBatches, markSessionRead, mutateQueuedInterjections, session.selectSession]);
 
-  const newSessionWithUrl = useCallback(() => {
+  const newSessionWithUrl = useCallback((groupId: string | null = null) => {
     setTrashPreviewSessionId(null);
     clearPendingOrgAgent(); // 普通新会话 = 个人 Agent 路径
     failAllProvisionalBatches('已新建会话，请重新发送');
     pendingNewSessionClientMsgIdRef.current = null;
+    pendingNewSessionGroupIdRef.current = groupId;
     immediateSessionIdRef.current = null;
     queuedSessionIdRef.current = null;
     mutateQueuedInterjections((prev) => prev);
@@ -1089,7 +1084,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
    * 企业专家新草稿：只切换前端会话目标，不制造 meta-only 空会话。
    * 首条消息沿用下方 sendChatViaWs 的 orgAgentId payload，由服务端一次性创建并绑定。
    */
-  const startOrgAgentSession = useCallback((agentId: string): void => {
+  const startOrgAgentSession = useCallback((agentId: string, groupId: string | null = null): void => {
     const normalizedAgentId = agentId.trim();
     if (!normalizedAgentId || !user || loadingRef.current) return;
     setTrashPreviewSessionId(null);
@@ -1100,6 +1095,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     wsLatestSessionIdRef.current = { value: null };
     session.newSession();
     pendingNewSessionClientMsgIdRef.current = null;
+    pendingNewSessionGroupIdRef.current = groupId;
     pendingOrgAgentIdRef.current = normalizedAgentId;
     setPendingOrgAgentId(normalizedAgentId);
     pushUrl('chat', null);
@@ -1108,6 +1104,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   useEffect(() => {
     clearPendingOrgAgent();
+    pendingNewSessionGroupIdRef.current = null;
   }, [authOwnerKey, clearPendingOrgAgent]);
 
   const previewTrashSession = useCallback(async (id: string | null) => {
@@ -1119,7 +1116,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         if (res.ok) {
           const data: ApiSessionDetail = await res.json();
           const sessionOwnerName = data.owner?.username;
-          const msgs = mapSessionDetailToMessages(data, sessionOwnerName);
+          const msgs = (await import("@/lib/sessionMessageMapper")).mapSessionDetailToMessages(data, sessionOwnerName);
           msg.setMessages(msgs, { scrollToBottom: false });
 
           // 设置 sessionParticipants 供 MessageList 使用
@@ -1323,7 +1320,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     status: TerminalRuntimeStatus;
     runId?: string;
     streamId?: string;
-    reason?: string;
+    reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction;
     refresh?: boolean;
   }) => {
     patchSessionRuntime(args.sessionId, {
@@ -1343,7 +1340,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     let alertContent: string | null = null;
     let severity: 'error' | 'cancelled' | 'billing' = 'error';
     if (args.status === 'failed' || args.status === 'orphaned') {
-      alertContent = formatRuntimeFailureMessage(args.reason);
+      alertContent = formatRuntimeFailureMessage(args.reason, args.failureKind);
       if (isInsufficientCreditsFailure(args.reason)) severity = 'billing';
     } else if (args.status === 'cancelled') {
       alertContent = '会话已停止';
@@ -1352,8 +1349,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (alertContent) {
       const msgs = msgRef.current.messagesRef.current;
       const last = msgs[msgs.length - 1];
-      if (!(last?.type === 'system-error' && last.content === alertContent)) {
-        msgRef.current.addMessage({ type: 'system-error', content: alertContent, severity, timestamp: Date.now() });
+      if (!(last?.type === 'system-error' && isSameRunMessage(last, args.runId, alertContent) && last.failureKind === args.failureKind && last.recoveryAction === args.recoveryAction)) {
+        msgRef.current.addMessage({ type: 'system-error', content: alertContent, severity, runId: args.runId, ...(args.failureKind ? { failureKind: args.failureKind } : {}), ...(args.recoveryAction ? { recoveryAction: args.recoveryAction } : {}), timestamp: Date.now() });
       }
     }
 
@@ -1396,7 +1393,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       sessionId,
       status: lastRunState.status,
       runId: lastRunState.runId,
-      reason: lastRunState.error,
+      reason: lastRunState.error, failureKind: lastRunState.failureKind, recoveryAction: lastRunState.recoveryAction,
       refresh: false,
     });
   }, [finalizeTerminalRuntime, patchSessionRuntime]);
@@ -1823,7 +1820,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                 status: terminalStatus,
                 ...(statusRunId ? { runId: statusRunId } : {}),
                 ...(statusStreamId ? { streamId: statusStreamId } : {}),
-                ...(d.reason ? { reason: d.reason } : {}),
+                ...(d.reason ? { reason: d.reason } : {}), ...(d.failureKind ? { failureKind: d.failureKind } : {}), ...(d.recoveryAction ? { recoveryAction: d.recoveryAction } : {}),
               });
             })();
           }, 750);
@@ -2072,6 +2069,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         // 服务端已写 meta 绑定 orgAgentId，后续 resume 以 meta 为准
         pendingOrgAgentIdRef.current = null;
         pendingNewSessionClientMsgIdRef.current = null;
+        assignPendingGroup(authoritativeSessionId);
       }
 
       if (data.type === 'session_updated' && !data.isNew) {
@@ -2121,11 +2119,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
             //   通俗的 text 兜底（mobile 等不支持 system-error 的客户端也能看到）。
             //   web 端要升级成红边 system-error,所以扫尾 N 条找那条 text,有则就地替换、无则追加。
             // dedupe：若最末已是相同 content 的 system-error（重复 done 事件）则跳过。
-            const alertContent = formatRuntimeFailureMessage(doneEvent.error);
+            const alertContent = formatRuntimeFailureMessage(doneEvent.error, doneEvent.failureKind);
             const alertSeverity = isInsufficientCreditsFailure(doneEvent.error) ? 'billing' : 'error';
             const msgs = msgRef.current.messagesRef.current;
             const last = msgs[msgs.length - 1];
-            if (!(last?.type === 'system-error' && last.content === alertContent)) {
+            if (!(last?.type === 'system-error' && isSameRunMessage(last, doneEvent.runId, alertContent) && last.failureKind === doneEvent.failureKind && last.recoveryAction === doneEvent.recoveryAction)) {
               // 扫最末 3 条找 wsEventProcessor 刚注入的同内容 text 兜底消息,就地升级
               let upgradeIdx = -1;
               for (let i = msgs.length - 1; i >= Math.max(0, msgs.length - 3); i--) {
@@ -2140,14 +2138,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                   id: m.id,
                   type: 'system-error',
                   content: alertContent,
-                  severity: alertSeverity,
+                  severity: alertSeverity, runId: doneEvent.runId, ...(doneEvent.failureKind ? { failureKind: doneEvent.failureKind } : {}), ...(doneEvent.recoveryAction ? { recoveryAction: doneEvent.recoveryAction } : {}),
                   timestamp: Date.now(),
                 }));
               } else {
                 msgRef.current.addMessage({
                   type: 'system-error',
                   content: alertContent,
-                  severity: alertSeverity,
+                  severity: alertSeverity, runId: doneEvent.runId, ...(doneEvent.failureKind ? { failureKind: doneEvent.failureKind } : {}), ...(doneEvent.recoveryAction ? { recoveryAction: doneEvent.recoveryAction } : {}),
                   timestamp: Date.now(),
                 });
               }

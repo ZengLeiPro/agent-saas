@@ -36,7 +36,15 @@ vi.mock("@/components/TenantManager/hooks", () => ({
 vi.mock("@agent/shared/lib/governanceApi", () => ({
   contextCenterApi: {
     getSnapshot: vi.fn().mockResolvedValue({ generatedAt: "2026-08-22T15:40:00.000Z", sources: [], consumers: [] }),
-    listEvidence: vi.fn().mockResolvedValue([]),
+    getEvidence: vi.fn().mockResolvedValue([]),
+    listTimeline: vi.fn().mockResolvedValue({ items: [], nextCursor: null, degraded: false }),
+    listEntities: vi.fn().mockResolvedValue({ items: [], nextCursor: null, degraded: false }),
+    getEntity: vi.fn(),
+    getEntityProfile: vi.fn(),
+    listEntityRelations: vi.fn().mockResolvedValue({ items: [], nextCursor: null, degraded: false }),
+    listReviews: vi.fn().mockResolvedValue({ items: [], nextCursor: null, degraded: false }),
+    createCorrection: vi.fn(),
+    decideReview: vi.fn(),
   },
   governanceAccessApi: {
     listMemberships: mocks.listMemberships,
@@ -365,17 +373,63 @@ describe("OrganizationGovernancePage", () => {
     expect(screen.queryByLabelText("runtime.debug_mode.allowed 策略")).toBeNull();
   });
 
-  it("组织策略明确显示继承状态并执行 preview→commit", async () => {
-    mocks.getEntitlements.mockResolvedValue({ entitlement: { source: "plan_default", status: "active", limits: {}, version: 1 }, scopes: [], policies: [{ policyKey: "knowledge.org.enabled", value: true, source: "legacy_projection", version: 3 }] });
-    mocks.previewPolicy.mockResolvedValue({ previewId: `gpv1.${"a".repeat(64)}`, baselineDigest: "b".repeat(64), expiresAt: "2099-01-01T00:00:00.000Z", impact: {}, changeId: "intent-1" });
+  it("组织策略以业务语义展示，并按需展开 preview→commit", async () => {
+    mocks.getEntitlements.mockResolvedValue({ entitlement: { source: "plan_default", status: "active", limits: {}, version: 1 }, scopes: [], policies: [{
+      policyKey: "knowledge.org.enabled", value: true, source: "legacy_projection", version: 3,
+      definition: { label: "组织知识库", description: "允许成员访问组织知识。", group: "knowledge_memory", groupLabel: "知识与记忆", valueType: "boolean" },
+      allowedActions: [{ id: "edit_policy" }],
+    }] });
+    mocks.previewPolicy.mockResolvedValue({ previewId: `gpv1.${"a".repeat(64)}`, baselineDigest: "b".repeat(64), expiresAt: "2099-01-01T00:00:00.000Z", impact: { from: "allow", to: "deny" }, changeId: "intent-1" });
     mocks.updatePolicy.mockResolvedValue({ changeId: "change-1", auditId: "audit-1", effectiveAt: "2026-08-14T00:00:00.000Z" });
     render(<OrganizationPoliciesPage tenantId="tenant-a" />);
-    expect(await screen.findByText(/v3 · 继承（当前允许）/)).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("knowledge.org.enabled 策略"), { target: { value: "deny" } });
+
+    expect(await screen.findByText("组织知识库")).toBeTruthy();
+    expect(screen.getAllByText("知识与记忆").length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText("knowledge.org.enabled 变更原因")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "修改组织知识库" }));
+    fireEvent.click(screen.getByRole("button", { name: "禁止" }));
     fireEvent.change(screen.getByLabelText("knowledge.org.enabled 变更原因"), { target: { value: "安全收敛" } });
-    fireEvent.click(screen.getByRole("button", { name: "预览" }));
-    fireEvent.click(await screen.findByRole("button", { name: "提交" }));
+    fireEvent.click(screen.getByRole("button", { name: "预览变更" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认应用" }));
     await waitFor(() => expect(mocks.updatePolicy).toHaveBeenCalledWith("knowledge.org.enabled", expect.objectContaining({ expectedVersion: 3, value: false, previewId: `gpv1.${"a".repeat(64)}` }), "tenant-a"));
+  });
+
+  it("非 boolean 策略保持只读，并可按名称搜索和来源筛选", async () => {
+    mocks.getEntitlements.mockResolvedValue({ entitlement: null, scopes: [], policies: [{
+      policyKey: "runtime.high_risk_tool.mode", value: "approval", source: "governance", version: 2,
+      definition: { label: "高风险工具审批", description: "高风险工具必须审批。", group: "security_session", groupLabel: "安全与会话", valueType: "enum", options: [{ value: "approval", label: "要求审批" }] },
+      allowedActions: [{ id: "edit_policy" }],
+    }, {
+      policyKey: "skill.custom.enabled", value: true, source: "legacy_projection", version: 1,
+      definition: { label: "自定义技能", description: "允许组织创建 Skill。", group: "models_tools", groupLabel: "模型与工具", valueType: "boolean" },
+      allowedActions: [{ id: "edit_policy" }],
+    }] });
+    render(<OrganizationPoliciesPage tenantId="tenant-a" />);
+
+    expect(await screen.findByText("高风险工具审批")).toBeTruthy();
+    expect(screen.getByText("要求审批")).toBeTruthy();
+    expect(screen.getByText(/当前页面只读/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "修改高风险工具审批" })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("搜索权限策略"), { target: { value: "自定义技能" } });
+    expect(screen.getByText("自定义技能")).toBeTruthy();
+    expect(screen.queryByText("高风险工具审批")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "仅看组织覆盖" }));
+    expect(screen.getByText("当前筛选条件下没有权限策略。")).toBeTruthy();
+    expect(mocks.previewPolicy).not.toHaveBeenCalled();
+  });
+
+  it("记忆与知识入口扩展 Context 产品页签且不创建额外壳层", async () => {
+    mocks.listMemoryKnowledge.mockResolvedValue({ tenantId: "tenant-a", authority: "governance_assignment_sets", accessMode: "manage", knowledge: [], memory: [], effective: { organizationKnowledge: false, organizationMemory: false } });
+    render(<OrganizationMemoryKnowledgePage tenantId="tenant-a" />);
+    await screen.findByText("当前组织没有组织知识资源。");
+    const tabs = screen.getByRole("tablist", { name: "记忆与知识区域" });
+    expect(Array.from(tabs.querySelectorAll('[role="tab"]')).map(tab => tab.textContent)).toEqual(["资源治理", "Context Center", "Timeline", "实体", "待审核"]);
+    expect(tabs.className).toContain("overflow-x-auto");
+    expect(tabs.className).toContain("flex-nowrap");
+    expect(tabs.className).toContain("sm:flex-wrap");
+    for (const tab of Array.from(tabs.querySelectorAll('[role="tab"]'))) expect(tab.className).toContain("shrink-0");
   });
 
   it("记忆知识页使用组织权威元数据并可 signed preview→commit 创建 memory", async () => {

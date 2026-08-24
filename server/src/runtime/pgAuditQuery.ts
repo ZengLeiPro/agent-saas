@@ -33,6 +33,7 @@ import type {
 } from './auditQuery.js';
 import { toRuntimeAuditEntry } from './auditQuery.js';
 import type { PlatformEvent } from './types.js';
+import { LEGACY_TENANT_ID } from '../data/tenants/types.js';
 
 type ToolAuditEvent = Extract<PlatformEvent, { type: 'tool_audit' }>;
 
@@ -51,40 +52,45 @@ export class PgRuntimeAuditQuery implements RuntimeAuditQuery {
     this.eventsTable = options.eventsTable;
   }
 
-  async listBySessionId(sessionId: string, options?: AuditQueryOptions): Promise<RuntimeAuditEntry[]> {
-    const where = ['session_id = $1', `event_type = 'tool_audit'`];
-    const params: unknown[] = [sessionId];
-    appendSinceParam(where, params, options?.since);
+  async listBySessionId(sessionId: string, options: AuditQueryOptions): Promise<RuntimeAuditEntry[]> {
+    const tenantId = requireAuditTenant(options);
+    const where = ['session_id = $1', 'tenant_id = $2', `event_type = 'tool_audit'`];
+    const params: unknown[] = [sessionId, tenantId];
+    appendSinceParam(where, params, options.since);
     return await this.runList(where, params, options);
   }
 
-  async listByRunId(sessionId: string, runId: string, options?: AuditQueryOptions): Promise<RuntimeAuditEntry[]> {
-    const where = ['session_id = $1', 'run_id = $2', `event_type = 'tool_audit'`];
-    const params: unknown[] = [sessionId, runId];
-    appendSinceParam(where, params, options?.since);
+  async listByRunId(sessionId: string, runId: string, options: AuditQueryOptions): Promise<RuntimeAuditEntry[]> {
+    const tenantId = requireAuditTenant(options);
+    const where = ['session_id = $1', 'run_id = $2', 'tenant_id = $3', `event_type = 'tool_audit'`];
+    const params: unknown[] = [sessionId, runId, tenantId];
+    appendSinceParam(where, params, options.since);
     return await this.runList(where, params, options);
   }
 
-  async listByRunIdGlobal(runId: string, options?: AuditQueryOptions): Promise<RuntimeAuditEntry[]> {
-    const where = ['run_id = $1', `event_type = 'tool_audit'`];
-    const params: unknown[] = [runId];
-    appendSinceParam(where, params, options?.since);
+  async listByRunIdGlobal(runId: string, options: AuditQueryOptions): Promise<RuntimeAuditEntry[]> {
+    const tenantId = requireAuditTenant(options);
+    const where = ['run_id = $1', 'tenant_id = $2', `event_type = 'tool_audit'`];
+    const params: unknown[] = [runId, tenantId];
+    appendSinceParam(where, params, options.since);
     return await this.runList(where, params, options);
   }
 
-  async summarize(sessionId: string, options?: AuditQueryOptions): Promise<AuditSummary> {
-    return await this.runSummarize(['session_id = $1'], [sessionId], options);
+  async summarize(sessionId: string, options: AuditQueryOptions): Promise<AuditSummary> {
+    const tenantId = requireAuditTenant(options);
+    return await this.runSummarize(['session_id = $1', 'tenant_id = $2'], [sessionId, tenantId], options);
   }
 
-  async summarizeByRunIdGlobal(runId: string, options?: AuditQueryOptions): Promise<AuditSummaryByRun> {
-    const summary = await this.runSummarize(['run_id = $1'], [runId], options);
+  async summarizeByRunIdGlobal(runId: string, options: AuditQueryOptions): Promise<AuditSummaryByRun> {
+    const tenantId = requireAuditTenant(options);
+    const summary = await this.runSummarize(['run_id = $1', 'tenant_id = $2'], [runId, tenantId], options);
     // sessionIds 用不带 since 的 run_id 集合（admin 想看 "这个 run 跨了哪些
     // session" 不希望被 since 切掉），与 DuckDB 实现语义对齐。
     const sessionRows = await this.pool.query<{ session_id: string }>(
       `SELECT DISTINCT session_id FROM ${this.eventsTable}
-        WHERE run_id = $1 AND event_type = 'tool_audit'
+        WHERE run_id = $1 AND tenant_id = $2 AND event_type = 'tool_audit'
         ORDER BY session_id ASC`,
-      [runId],
+      [runId, tenantId],
     );
     return {
       ...summary,
@@ -97,9 +103,9 @@ export class PgRuntimeAuditQuery implements RuntimeAuditQuery {
   private async runList(
     where: string[],
     params: unknown[],
-    options: AuditQueryOptions | undefined,
+    options: AuditQueryOptions,
   ): Promise<RuntimeAuditEntry[]> {
-    let sql = `SELECT event_json FROM ${this.eventsTable}
+    let sql = `SELECT tenant_id, event_json FROM ${this.eventsTable}
       WHERE ${where.join(' AND ')}
       ORDER BY timestamp ASC, global_sequence ASC`;
     const offset = options?.offset && options.offset > 0 ? Math.floor(options.offset) : 0;
@@ -107,11 +113,13 @@ export class PgRuntimeAuditQuery implements RuntimeAuditQuery {
     if (options?.limit !== undefined && options.limit >= 0) {
       sql += ` LIMIT ${Math.floor(options.limit)}`;
     }
-    const result = await this.pool.query<{ event_json: unknown }>(sql, params);
+    const result = await this.pool.query<{ tenant_id: string; event_json: unknown }>(sql, params);
     const out: RuntimeAuditEntry[] = [];
     for (const row of result.rows) {
       const evt = normalizeToolAuditJson(row.event_json);
       if (!evt) continue;
+      // tenant_id 是 SQL 边界；JSON 与行级租户不一致说明数据损坏，拒绝返回。
+      if ((evt.tenantId ?? LEGACY_TENANT_ID) !== row.tenant_id) continue;
       out.push(toRuntimeAuditEntry(evt));
     }
     return out;
@@ -120,7 +128,7 @@ export class PgRuntimeAuditQuery implements RuntimeAuditQuery {
   private async runSummarize(
     keyClauses: string[],
     keyParams: unknown[],
-    options: AuditQueryOptions | undefined,
+    options: AuditQueryOptions,
   ): Promise<AuditSummary> {
     const base = keyClauses.concat([`event_type = 'tool_audit'`]);
     const baseWhereSql = base.join(' AND ');
@@ -191,6 +199,12 @@ export class PgRuntimeAuditQuery implements RuntimeAuditQuery {
 
     return summary;
   }
+}
+
+function requireAuditTenant(options: AuditQueryOptions): string {
+  const tenantId = options?.tenantId?.trim();
+  if (!tenantId) throw new Error('Runtime Audit query requires tenantId');
+  return tenantId;
 }
 
 function appendSinceParam(where: string[], params: unknown[], since: string | undefined): void {

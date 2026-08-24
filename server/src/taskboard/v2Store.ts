@@ -469,6 +469,11 @@ export async function cancelIntegrationTask(
         `UPDATE ${tables.providerOperationsTable} SET state='failed',error=$2,updated_at=now()
           WHERE candidate_id=$1 AND state='prepared'`, [row.id, `Candidate canceled before provider execution: ${reason}`]);
       await client.query(
+        `UPDATE ${tables.requestsOutboxTable}
+            SET status='failed',lease_id=NULL,lease_expires_at=NULL,last_error=$2,updated_at=now()
+          WHERE candidate_id=$1 AND kind<>'cleanup' AND status IN ('pending','processing')`,
+        [row.id, `Candidate canceled before request execution: ${reason}`]);
+      await client.query(
         `UPDATE ${options.tasksTable}
             SET status='canceled',completed_at=NULL,workflow_epoch=workflow_epoch+1,next_action='none',
                 next_action_revision=next_action_revision+1,version=version+1,updated_at=now()

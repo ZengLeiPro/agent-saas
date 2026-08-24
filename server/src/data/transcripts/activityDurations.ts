@@ -145,7 +145,7 @@ export function buildActivityMetadataFromEvents(
         totalTokens: event.totalTokens,
         toolUseCount: event.toolUseCount,
         turnCount: event.turnCount,
-        ...(event.errorMessage ? { errorMessage: event.errorMessage } : {}),
+        ...(event.errorMessage ? { errorMessage: event.errorMessage } : {}), ...(event.failureKind ? { failureKind: event.failureKind } : {}), ...(event.recoveryAction ? { recoveryAction: event.recoveryAction } : {}),
         ...(event.resultPreview ? { resultPreview: event.resultPreview } : {}),
       });
       continue;

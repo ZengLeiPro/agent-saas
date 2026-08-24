@@ -1,8 +1,6 @@
 import type { Server } from 'node:http';
-
 import express from 'express';
 import { afterEach, describe, expect, it } from 'vitest';
-
 import type {
   TaskBoard,
   TaskBoardComment,
@@ -12,6 +10,7 @@ import type {
 import type { JwtPayload } from '../auth/types.js';
 import type { UserStore } from '../data/users/store.js';
 import { createTaskboardRouter, type TaskboardRouterOptions } from '../routes/taskboard.js';
+import { openTrustedFile } from '../security/trustedFile.js';
 import {
   TaskboardConflictError,
   TaskboardNotFoundError,
@@ -35,13 +34,13 @@ const BOARD: TaskBoard = {
   name: '研发事项',
   visibility: 'personal',
   ownerUserId: USER.sub,
+  role: 'owner',
   canManage: true,
   prompt: '执行看板任务',
   version: 1,
   createdAt: '2026-08-01T00:00:00.000Z',
   updatedAt: '2026-08-01T00:00:00.000Z',
 };
-
 const TASK: TaskBoardTask = {
   id: 'task-1',
   boardId: BOARD.id,
@@ -81,7 +80,6 @@ const EXECUTION: TaskBoardExecution = {
   createdAt: BOARD.createdAt,
   updatedAt: BOARD.updatedAt,
 };
-
 interface Captured {
   identities: TaskboardIdentity[];
   taskFilters: TaskboardTaskListFilter[];
@@ -460,7 +458,7 @@ describe('Taskboard routes', () => {
       resolveTaskAttachment: async (_ownerCwd: string, taskId: string, attachment: typeof canonical) => {
         expect(taskId).toBe(TASK.id);
         expect(attachment.attachmentId).toBe(attachmentId);
-        return `${process.cwd()}/package.json`;
+        return openTrustedFile(process.cwd(), 'package.json');
       },
       markReferenced: async () => undefined,
     } as unknown as TaskboardRouterOptions['uploadManager'];
@@ -501,7 +499,6 @@ describe('Taskboard routes', () => {
     expect(download.status).toBe(200);
     expect(download.headers.get('content-type')).toContain('application/json');
     expect(await download.text()).toContain('"name"');
-
     service.getTask = async (identity, taskId) => {
       if (identity.ownerUserId !== USER.sub) throw new TaskboardPermissionError();
       expect(taskId).toBe(TASK.id);
@@ -715,6 +712,9 @@ function makeService(captured: Captured): TaskboardService {
       return { items: [BOARD], page: filter.page ?? 1, pageSize: filter.pageSize ?? 20, total: 1, hasMore: false };
     },
     async getBoard(identity) { remember(identity); return BOARD; },
+    async createTaskWithResult(identity) { remember(identity); return { task: TASK, created: true }; },
+    async completeTaskCreation(identity) { remember(identity); return TASK; },
+    async releaseTaskCreation(identity) { remember(identity); },
     async createBoard(identity, input) { remember(identity); captured.createBoards.push(input); return BOARD; },
     async updateBoard(identity) { remember(identity); return BOARD; },
     async archiveBoard(identity) { remember(identity); return { ...BOARD, version: 2, archivedAt: BOARD.updatedAt }; },

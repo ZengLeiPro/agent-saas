@@ -122,15 +122,39 @@ function resolveBaseUrl(): string {
   return _lanUrl && _lanReachable ? _lanUrl : _baseUrl;
 }
 
+const authEnabledByBaseUrl = new Map<string, Promise<boolean>>();
+
+function isAuthEnabled(): Promise<boolean> {
+  const baseUrl = resolveBaseUrl();
+  let result = authEnabledByBaseUrl.get(baseUrl);
+  if (!result) {
+    const request: Promise<boolean> = fetch(`${baseUrl}/api/auth/me`)
+      .then((response) => {
+        const enabled = response.status !== 404;
+        if (!enabled && authEnabledByBaseUrl.get(baseUrl) === request) {
+          authEnabledByBaseUrl.delete(baseUrl);
+        }
+        return enabled;
+      })
+      .catch(() => {
+        if (authEnabledByBaseUrl.get(baseUrl) === request) authEnabledByBaseUrl.delete(baseUrl);
+        return true;
+      });
+    authEnabledByBaseUrl.set(baseUrl, request);
+    result = request;
+  }
+  return result;
+}
+
 export const mobileConfig: IPlatformConfig = {
   platform: "mobile",
   getBaseUrl(): string {
     return resolveBaseUrl();
   },
-  getWsUrl(token: string | null): string {
+  getWsUrl(): string {
     const httpUrl = resolveBaseUrl();
     const wsUrl = httpUrl.replace(/^http/, "ws");
-    const params = token ? `?token=${encodeURIComponent(token)}` : "";
-    return `${wsUrl}/ws${params}`;
+    return `${wsUrl}/ws`;
   },
+  isAuthEnabled,
 };

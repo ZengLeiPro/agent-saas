@@ -2,10 +2,7 @@ import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  contextCenterSnapshotSchema,
-  contextEvidenceSchema,
-} from '../../../shared/src/lib/governanceApi.js';
+import { contextCenterSnapshotSchema } from '../../../shared/src/lib/governanceApi.js';
 import {
   createContextAdminRouter,
   type ContextAdminConsumerStorePort,
@@ -57,8 +54,6 @@ function createStore(overrides: Partial<ContextAdminStorePort> = {}): ContextAdm
       coverageEnd: '2026-08-22T15:58:00.000Z', truncated: true, refused: false,
       updatedAt: '2026-08-22T15:59:00.000Z',
     }]),
-    getEvidence: vi.fn(async () => []),
-    listEvidence: vi.fn(async () => []),
     countUnreadableRecords: vi.fn(async () => 0),
     ...overrides,
   };
@@ -133,52 +128,10 @@ describe('Context Plane admin HTTP contract', () => {
     });
   });
 
-  it('requires sourceId+collectionId, lists collection evidence, maps stored fields and skips missing excerpts', async () => {
-    const listEvidence = vi.fn(async () => [{
-      sourceId: 'source-a', collectionId: 'collection-a', evidenceId: 'stored-evidence', kind: 'source_locator',
-      data: {
-        excerpt: '交付验收前必须完成生产回归。', externalId: 'external-1',
-        occurredAt: '2026-08-20T02:30:00.000Z', url: 'https://example.test/doc', author: '王小明',
-      },
-      createdAt: '2026-08-22T15:00:00.000Z',
-    }, {
-      sourceId: 'source-a', collectionId: 'collection-a', evidenceId: 'missing-excerpt', kind: 'source_locator',
-      data: { externalId: 'external-2' }, createdAt: '2026-08-22T15:00:00.000Z',
-    }, {
-      sourceId: 'source-a', collectionId: 'collection-a', evidenceId: 'unreadable', kind: 'source_locator',
-      data: { externalId: 'external-3', unreadable: true, unreadableReason: 'unsupported_format' },
-      createdAt: '2026-08-22T15:00:00.000Z',
-    }]);
-    const base = await start(orgAdmin, createStore({ listEvidence }));
-
-    expect((await fetch(`${base}/evidence?sourceId=source-a`)).status).toBe(400);
-    const response = await fetch(`${base}/evidence?sourceId=source-a&collectionId=collection-a`);
-    expect(response.status).toBe(200);
-    const items = contextEvidenceSchema.array().parse(await response.json());
-    expect(items).toEqual([{
-      id: 'external-1', sourceName: 'source-a', collection: 'collection-a', author: '王小明',
-      occurredAt: '2026-08-20T02:30:00.000Z', quote: '交付验收前必须完成生产回归。',
-      derived: false, freshness: 'unknown', freshnessAsOf: null, originalUrl: 'https://example.test/doc',
-    }, {
-      id: 'external-3', sourceName: 'source-a', collection: 'collection-a', author: null,
-      occurredAt: '2026-08-22T15:00:00.000Z', quote: '不可读：unsupported_format',
-      derived: false, freshness: 'unknown', freshnessAsOf: null, originalUrl: null,
-    }]);
-    expect(listEvidence).toHaveBeenCalledWith('tenant-a', 'source-a', 'collection-a');
-  });
-
-  it('uses getEvidence only when recordId is present', async () => {
-    const getEvidence = vi.fn(async () => [{
-      sourceId: 'source-a', collectionId: 'collection-a', evidenceId: 'evidence-1', kind: 'derived',
-      data: { excerpt: '摘要' }, createdAt: '2026-08-22T15:00:00.000Z',
-    }]);
-    const listEvidence = vi.fn(async () => []);
-    const base = await start(orgAdmin, createStore({ getEvidence, listEvidence }));
-
-    const response = await fetch(`${base}/evidence?sourceId=source-a&collectionId=collection-a&recordId=record-a`);
-    expect(contextEvidenceSchema.array().parse(await response.json())).toHaveLength(1);
-    expect(getEvidence).toHaveBeenCalledWith('tenant-a', 'source-a', 'collection-a', 'record-a');
-    expect(listEvidence).not.toHaveBeenCalled();
+  it('rejects legacy raw evidence locators and fails closed without the product authorization service', async () => {
+    const base = await start(orgAdmin, createStore());
+    expect((await fetch(`${base}/evidence?sourceId=source-a&collectionId=collection-a`)).status).toBe(400);
+    expect((await fetch(`${base}/evidence?id=ce1.payload.signature`)).status).toBe(503);
   });
 
   it('reports durable derived consumers and fails closed when their read model is unavailable', async () => {

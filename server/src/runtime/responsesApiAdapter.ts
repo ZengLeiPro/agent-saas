@@ -41,6 +41,7 @@ import {
   unescapeDeepseekArguments,
 } from './agentPlanDefense.js';
 import { resolveModelOutputTransactionMode } from './modelOutputTransaction.js';
+import { classifyModelFailure } from './runtimeFailure.js';
 import type { FinishedOutcome, FinishedPatch } from './responsesAttemptDiagnostics.js';
 import {
   ResponsesAttemptDiagnostics,
@@ -499,18 +500,13 @@ export class ResponsesApiAdapter implements ModelAdapter {
       );
       const retryDelayMs = retryableHttp ? retryDelaysMs[transientRetryIndex] : undefined;
       const willRetry = retryDelayMs !== undefined && !requestSignal?.aborted;
+      const retryBlockedReason = requestSignal?.aborted ? 'aborted' : retryableHttp ? 'retry_budget_exhausted' : 'permanent_error';
       await attemptDiagnostics.finished('http_error', {
         errorCode: providerError.code ?? `HTTP_${attemptResponse.status}`,
         errorMessage: providerDiagnosticMessage,
         ...(willRetry
           ? { willRetry: true, retryReason: 'transient_http_error' }
-          : {
-            retryBlockedReason: requestSignal?.aborted
-              ? 'aborted'
-              : retryableHttp
-                ? 'retry_budget_exhausted'
-                : 'permanent_error',
-          }),
+          : { retryBlockedReason }),
       });
       if (willRetry) {
         transientRetryIndex += 1;
@@ -522,13 +518,14 @@ export class ResponsesApiAdapter implements ModelAdapter {
         await waitForRetry(retryDelayMs, requestSignal);
         continue;
       }
+      const failureProtocol = classifyModelFailure(providerError.code, retryBlockedReason);
       throw new ModelProviderError(
         providerDiagnosticMessage,
         attemptResponse.status,
         providerError.code ?? `HTTP_${attemptResponse.status}`,
         modelRequestId,
         attemptDiagnostics.attemptId,
-        0,
+        0, failureProtocol?.failureKind, failureProtocol?.recoveryAction,
       );
     }
     if (!response || !activeAttempt) {
@@ -1094,20 +1091,16 @@ export class ResponsesApiAdapter implements ModelAdapter {
         });
         return;
       }
+      const retryBlockedReason = requestSignal?.aborted ? 'aborted' : !transientTerminal ? 'permanent_error' : !replaySafe ? 'irreversible_output_delivered' : 'retry_budget_exhausted';
       await activeAttempt.finished(outcome, {
         errorCode,
         errorMessage,
         usage,
         hasDeliveredOutput,
         officialTerminalReceived: true,
-        retryBlockedReason: requestSignal?.aborted
-          ? 'aborted'
-          : !transientTerminal
-            ? 'permanent_error'
-            : !replaySafe
-              ? 'irreversible_output_delivered'
-              : 'retry_budget_exhausted',
+        retryBlockedReason,
       });
+      const failureProtocol = classifyModelFailure(errorCode, retryBlockedReason);
       yield {
         type: 'completed',
         content,
@@ -1118,6 +1111,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         ...(incompleteReason ? { incompleteReason } : {}),
         errorCode,
         errorMessage,
+        ...(failureProtocol ?? {}),
         modelRequestId,
         attemptId: activeAttempt.attemptId,
         emittedOutputCount,

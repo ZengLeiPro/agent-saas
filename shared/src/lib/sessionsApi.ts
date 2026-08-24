@@ -21,28 +21,45 @@ const INTERACTIVE_RESULT_TOOLS = new Set([
   "Artifact",
 ]);
 
+function parseArtifactDeliveryPayload(resultText: string | undefined): Record<string, unknown> | null {
+  if (!resultText || resultText.length > 32_768) return null;
+  try {
+    const parsed = JSON.parse(resultText) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const payload = parsed as Record<string, unknown>;
+    return payload.action === 'deliver' ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
 function artifactDeliveryMessage(
   id: string,
   toolName: string | undefined,
   metadata: ReturnType<typeof normalizeToolResultMetadata>,
+  resultText?: string,
 ): MessageItem | null {
-  if (toolName !== 'Artifact' || metadata?.artifactAction !== 'deliver') return null;
-  const artifactId = metadata.artifactId;
-  const fileName = metadata.fileName;
-  const artifactKind = metadata.artifactKind;
+  if (toolName !== 'Artifact') return null;
+  const payload = parseArtifactDeliveryPayload(resultText);
+  if (metadata?.artifactAction !== 'deliver' && !payload) return null;
+  const artifactId = metadata?.artifactId ?? payload?.artifactId;
+  const fileName = metadata?.fileName ?? payload?.fileName;
+  const artifactKind = metadata?.artifactKind ?? payload?.kind;
   if (typeof artifactId !== 'string' || typeof fileName !== 'string') return null;
   if (artifactKind !== 'file' && artifactKind !== 'screenshot' && artifactKind !== 'patch'
     && artifactKind !== 'log' && artifactKind !== 'blob') return null;
+  const mimeType = metadata?.mimeType ?? payload?.mimeType;
+  const sizeBytes = metadata?.sizeBytes ?? payload?.sizeBytes;
   return {
     id: `${id}-artifact-${artifactId}`,
     type: 'file_download',
     fileName,
-    fileType: typeof metadata.mimeType === 'string' ? metadata.mimeType : '',
+    fileType: typeof mimeType === 'string' ? mimeType : '',
     filePath: fileName,
-    fileSize: typeof metadata.sizeBytes === 'number' ? metadata.sizeBytes : 0,
+    fileSize: typeof sizeBytes === 'number' && Number.isFinite(sizeBytes) && sizeBytes >= 0 ? sizeBytes : 0,
     artifactId,
     artifactKind,
-    ...(typeof metadata.mimeType === 'string' ? { mimeType: metadata.mimeType } : {}),
+    ...(typeof mimeType === 'string' ? { mimeType } : {}),
   };
 }
 
@@ -357,7 +374,7 @@ function mapBlock(
       const presentation = normalizeToolPresentation(block.presentation);
       // 结构化执行事实同一条通道、同一条不可信边界规则
       const toolMetadata = normalizeToolResultMetadata(block.toolMetadata);
-      const deliveredArtifact = artifactDeliveryMessage(id, block.toolName, toolMetadata);
+      const deliveredArtifact = artifactDeliveryMessage(id, block.toolName, toolMetadata, resultText);
       if (deliveredArtifact) return deliveredArtifact;
       if (block.toolName === "AskUserQuestion" && !block.publicActivityOnly) {
         return tryConvertAskUser(block, resultText);
@@ -399,7 +416,7 @@ function mapBlock(
           ...(typeof block.subagent?.totalTokens === "number" ? { totalTokens: block.subagent.totalTokens } : {}),
           ...(typeof block.subagent?.toolUseCount === "number" ? { toolUseCount: block.subagent.toolUseCount } : {}),
           ...(typeof block.subagent?.turnCount === "number" ? { turnCount: block.subagent.turnCount } : {}),
-          ...(block.subagent?.errorMessage ? { errorMessage: block.subagent.errorMessage } : {}),
+          ...(block.subagent?.errorMessage ? { errorMessage: block.subagent.errorMessage } : {}), ...(block.subagent?.failureKind ? { failureKind: block.subagent.failureKind } : {}), ...(block.subagent?.recoveryAction ? { recoveryAction: block.subagent.recoveryAction } : {}),
           ...(resultPreview ? { resultPreview } : {}),
         };
       }

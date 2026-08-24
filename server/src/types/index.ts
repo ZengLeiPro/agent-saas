@@ -15,6 +15,9 @@ import type { ToolPresentation } from "../agent/toolPresentationBuilder.js";
 
 export type ChannelType = "web" | "dingtalk" | "cron";
 
+export type RuntimeFailureKind = 'policy_rejection';
+export type RuntimeRecoveryAction = 'switch_model';
+
 export interface UploadedFileInfo {
   /** 服务端生成的不可猜附件标识；旧客户端/钉钉存量消息可能缺失。 */
   attachmentId?: string;
@@ -270,6 +273,8 @@ export interface OutboundEvent {
   status?: "success" | "error" | "cancelled";
   durationMs?: number;
   error?: string;
+  failureKind?: RuntimeFailureKind;
+  recoveryAction?: RuntimeRecoveryAction;
   interactionId?: string;
   displayName?: string;
   toolInput?: Record<string, unknown>;

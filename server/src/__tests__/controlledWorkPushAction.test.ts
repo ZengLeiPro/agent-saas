@@ -72,7 +72,7 @@ function provider(execution: TaskboardExecutionContext, pushCandidate = vi.fn(as
         executionStore: () => ({
           getExecutionContextByRunId: vi.fn(async () => execution),
           getExecutionContextBySessionId: vi.fn(async () => execution),
-          updateTaskBranchFromExecution: vi.fn(), createTaskFromExecution: vi.fn(), moveTaskFromExecution: vi.fn(),
+          updateTaskBranchFromExecution: vi.fn(), createTaskFromExecution: vi.fn(), createTaskFromExecutionWithResult: vi.fn(), moveTaskFromExecution: vi.fn(),
         }),
       },
     }),

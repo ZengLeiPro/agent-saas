@@ -33,7 +33,8 @@ describe("TaskDialog 交互", () => {
       />,
     );
 
-    await user.type(screen.getByRole("textbox", { name: "标题" }), "修复任务看板交互");
+    await user.type(screen.getByRole("textbox", { name: "正文" }), "修复任务看板交互");
+    expect(screen.queryByRole("textbox", { name: "标题" })).toBeNull();
     expect(screen.queryByRole("textbox", { name: "工作分支" })).toBeNull();
     await user.click(screen.getByRole("combobox", { name: "新任务状态" }));
     expect(screen.getByRole("listbox").className).toContain("z-[110]");
@@ -48,7 +49,7 @@ describe("TaskDialog 交互", () => {
     await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
-      title: "修复任务看板交互",
+      description: "修复任务看板交互",
       status: "todo",
       priority: "urgent",
       stageModels: {
@@ -65,12 +66,12 @@ describe("TaskDialog 交互", () => {
 
     await user.click(screen.getByRole("combobox", { name: "任务类型" }));
     await user.click(screen.getByRole("option", { name: "答复与分析（不实施变更）" }));
-    await user.type(screen.getByRole("textbox", { name: "标题" }), "仅回答部署风险");
+    await user.type(screen.getByRole("textbox", { name: "正文" }), "仅回答部署风险");
     expect(screen.queryByRole("textbox", { name: "工作分支" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
-      title: "仅回答部署风险",
+      description: "仅回答部署风险",
       kind: "advisory",
     })));
     expect(onCreate.mock.calls[0]?.[0]).not.toHaveProperty("branch");
@@ -82,14 +83,14 @@ describe("TaskDialog 交互", () => {
     render(<TaskDialog open onOpenChange={vi.fn()} onCreate={onCreate} />);
 
     expect(screen.queryByRole("checkbox", { name: "直接执行" })).toBeNull();
-    await user.type(screen.getByRole("textbox", { name: "标题" }), "立即处理异常");
+    await user.type(screen.getByRole("textbox", { name: "正文" }), "立即处理异常");
     await user.click(screen.getByRole("combobox", { name: "新任务状态" }));
     await user.click(screen.getByRole("option", { name: "实施中" }));
     await user.click(screen.getByRole("checkbox", { name: "直接执行" }));
     await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
-      title: "立即处理异常",
+      description: "立即处理异常",
       status: "in_progress",
       dispatch: true,
     })));
@@ -100,7 +101,7 @@ describe("TaskDialog 交互", () => {
     const onCreate = vi.fn(async () => undefined);
     render(<TaskDialog open onOpenChange={vi.fn()} onCreate={onCreate} />);
 
-    await user.type(screen.getByRole("textbox", { name: "标题" }), "契约校验");
+    await user.type(screen.getByRole("textbox", { name: "正文" }), "立即执行任务");
     await user.click(screen.getByRole("combobox", { name: "新任务状态" }));
     expect(screen.getByRole("option", { name: "需求池" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "待推进" })).toBeTruthy();
@@ -140,7 +141,7 @@ describe("TaskDialog 交互", () => {
     }), { status: 200, headers: { "content-type": "application/json" } }));
     render(<TaskDialog open onOpenChange={vi.fn()} onCreate={onCreate} />);
 
-    await user.type(screen.getByRole("textbox", { name: "标题" }), "带附件任务");
+    await user.type(screen.getByRole("textbox", { name: "正文" }), "带附件任务");
     const files = [
       new File(["png"], "需求图.png", { type: "image/png" }),
       new File(["video"], "演示.mp4", { type: "video/mp4" }),
@@ -187,6 +188,16 @@ describe("TaskDialog 交互", () => {
     expect((body as HTMLTextAreaElement).value).toBe("");
   });
 
+  it("正文为空时不提交", async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn();
+    render(<TaskDialog open onOpenChange={vi.fn()} onCreate={onCreate} />);
+
+    expect(screen.getByRole("textbox", { name: "正文" })).toHaveProperty("required", true);
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
   it("提交期间锁定全部表单控件，请求完成后再关闭", async () => {
     const user = userEvent.setup();
     let resolveCreate!: () => void;
@@ -202,11 +213,11 @@ describe("TaskDialog 交互", () => {
       />,
     );
 
-    await user.type(screen.getByRole("textbox", { name: "标题" }), "检查提交锁定");
+    await user.type(screen.getByRole("textbox", { name: "正文" }), "提交锁定测试");
     await user.click(screen.getByRole("button", { name: "创建任务" }));
     await waitFor(() => expect(onCreate).toHaveBeenCalledOnce());
 
-    expect(screen.getByRole("textbox", { name: "标题" })).toHaveProperty("disabled", true);
+    expect(screen.queryByRole("textbox", { name: "标题" })).toBeNull();
     expect(screen.getByRole("textbox", { name: "正文" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("combobox", { name: "新任务状态" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("combobox", { name: "新任务优先级" })).toHaveProperty("disabled", true);

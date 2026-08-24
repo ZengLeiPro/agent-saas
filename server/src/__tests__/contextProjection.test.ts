@@ -6,6 +6,8 @@ import {
   findLastCompleteToolInteractionUnit,
   renderUserMessageTrail,
 } from '../runtime/contextProjection.js';
+import { estimateContextTokens } from '../runtime/contextBreakdown.js';
+import { CHECKPOINT_USER_HISTORY_TOKEN_CAP } from '../runtime/contextCheckpoint.js';
 import { MODEL_TOOL_RESULT_MAX_CHARS } from '../runtime/replayEventBounds.js';
 import type { PlatformEvent } from '../runtime/types.js';
 
@@ -62,6 +64,66 @@ describe('context projection', () => {
 
     expect(projection.messages[0]).toEqual({ role: 'user', content: '<memory-context>\n[长期记忆]\n记住 A\n</memory-context>' });
     expect(projection.messages[1]).toMatchObject({ role: 'user', content: 'user_message-1' });
+  });
+
+  it('历史 memory_context 只重放最新 snapshot，当前请求另行注入记忆时全部剔除', () => {
+    const memory = (id: string, content: string) => ({
+      id,
+      timestamp: new Date(2026, 0, 1, 0, 0, Number(id.at(-1))).toISOString(),
+      type: 'memory_context',
+      runId: `run-${id}`,
+      sessionId: 'session-1',
+      content: `<memory-context>${content}</memory-context>`,
+    } as PlatformEvent);
+    const events = [memory('memory-1', '旧记忆'), event(1), memory('memory-2', '新记忆'), event(2)];
+
+    const latestOnly = buildContextProjection(events, { sessionId: 'session-1', runId: 'run-x' });
+    expect(JSON.stringify(latestOnly.messages)).not.toContain('旧记忆');
+    expect(JSON.stringify(latestOnly.messages)).toContain('新记忆');
+
+    const currentInjected = buildContextProjection(events, {
+      sessionId: 'session-1',
+      runId: 'run-x',
+      excludeMemoryContext: true,
+    });
+    expect(JSON.stringify(currentInjected.messages)).not.toContain('旧记忆');
+    expect(JSON.stringify(currentInjected.messages)).not.toContain('新记忆');
+  });
+
+  it('memory_context 作为 cutoff 时先完成压缩切分，再剔除重复记忆', () => {
+    const cutoffMemory = {
+      id: 'memory-cutoff',
+      timestamp: new Date(2026, 0, 1, 0, 0, 1).toISOString(),
+      type: 'memory_context',
+      runId: 'run-memory',
+      sessionId: 'session-1',
+      content: '<memory-context>最新记忆</memory-context>',
+    } as PlatformEvent;
+    const compaction = {
+      id: 'compaction-1',
+      timestamp: new Date(2026, 0, 1, 0, 0, 3).toISOString(),
+      type: 'compaction',
+      runId: 'run-compact',
+      sessionId: 'session-1',
+      summary: '较早历史摘要',
+      coveredEventCount: 1,
+      cutoffEventId: cutoffMemory.id,
+      inline: true,
+    } as PlatformEvent;
+    const projection = buildContextProjection([
+      event(0),
+      cutoffMemory,
+      event(2),
+      compaction,
+    ], {
+      sessionId: 'session-1',
+      runId: 'run-next',
+      excludeMemoryContext: true,
+    });
+
+    expect(projection.messages[0]?.content).toContain('较早历史摘要');
+    expect(projection.messages[1]).toMatchObject({ role: 'user', content: 'user_message-2' });
+    expect(JSON.stringify(projection.messages)).not.toContain('最新记忆');
   });
 
   it('defaults to full replay without creating a summary system message', () => {
@@ -211,55 +273,57 @@ describe('context projection', () => {
     expect(projection.selectedEvents.map((e) => e.id)).toEqual(['event-2', 'event-3']);
   });
 
-  it('在 compaction/recent window 丢弃历史位置后恢复已加载 MCP 真实工具定义', () => {
+  it('只为 retained tool interaction 恢复 MCP schema，不恢复未使用的压缩前工具', () => {
     const loaded = {
-      id: 'loaded-1',
-      timestamp: '2026-01-01T00:00:01.000Z',
-      type: 'mcp_tools_loaded',
-      runId: 'run-1',
-      sessionId: 'session-1',
-      execution: 'server',
+      id: 'loaded-1', timestamp: '2026-01-01T00:00:01.000Z', type: 'mcp_tools_loaded',
+      runId: 'run-1', sessionId: 'session-1', execution: 'server',
       paths: ['mcp_github.mcp__github__get_issue'],
       tools: [{
-        id: 'mcp__github__get_issue',
-        name: 'mcp__github__get_issue',
-        description: '读取 issue',
-        parameters: { type: 'object', properties: {} },
-        deferLoading: true,
-        mcpServer: {
-          serverName: 'github', namespace: 'mcp_github', displayName: 'GitHub', description: 'GitHub',
-        },
+        id: 'mcp__github__get_issue', name: 'mcp__github__get_issue', description: '读取 issue',
+        parameters: { type: 'object', properties: {} }, deferLoading: true,
+        mcpServer: { serverName: 'github', namespace: 'mcp_github', displayName: 'GitHub', description: 'GitHub' },
       }],
     } as PlatformEvent;
     const compacted = {
-      id: 'compaction-mcp',
-      timestamp: '2026-01-01T00:00:02.000Z',
-      type: 'compaction',
-      runId: 'run-compact',
-      sessionId: 'session-1',
-      summary: '已读取过 GitHub issue。',
-      coveredEventCount: 1,
+      id: 'compaction-mcp', timestamp: '2026-01-01T00:00:02.000Z', type: 'compaction',
+      runId: 'run-compact', sessionId: 'session-1', summary: '已读取过 GitHub issue。', coveredEventCount: 1,
     } as PlatformEvent;
     const after = { ...event(3), content: '继续处理这个 issue' };
+    const call = {
+      id: 'call-event', timestamp: '2026-01-01T00:00:04.000Z', type: 'assistant_tool_calls',
+      runId: 'run-next', sessionId: 'session-1', content: '',
+      toolCalls: [{ id: 'call-1', name: 'mcp__github__get_issue', arguments: '{}' }],
+    } as PlatformEvent;
+    const result = {
+      id: 'result-event', timestamp: '2026-01-01T00:00:05.000Z', type: 'tool_result',
+      runId: 'run-next', sessionId: 'session-1', toolCallId: 'call-1', toolName: 'mcp__github__get_issue', content: 'issue 内容',
+    } as PlatformEvent;
 
-    const projection = buildContextProjection([loaded, compacted, after], {
-      sessionId: 'session-1',
-      runId: 'run-next',
+    const unused = buildContextProjection([loaded, compacted, after], {
+      sessionId: 'session-1', runId: 'run-next',
+    });
+    expect(unused.messages.map((message) => message.role)).toEqual(['user', 'user']);
+
+    const projection = buildContextProjection([loaded, compacted, after, call, result], {
+      sessionId: 'session-1', runId: 'run-next',
     });
     expect(projection.messages.map((message) => message.role)).toEqual([
-      'user', 'additional_tools', 'user',
+      'user', 'additional_tools', 'user', 'assistant', 'tool',
     ]);
     expect(projection.messages[1]).toMatchObject({
-      role: 'additional_tools',
-      tools: [expect.objectContaining({ name: 'mcp__github__get_issue' })],
+      role: 'additional_tools', tools: [expect.objectContaining({ name: 'mcp__github__get_issue' })],
     });
 
-    const recent = buildContextProjection([loaded, event(2), after], {
-      sessionId: 'session-1',
-      runId: 'run-next',
-      policy: { type: 'recent_window', recentEvents: 1 },
+    const thinking = {
+      id: 'thinking-event', timestamp: '2026-01-01T00:00:00.000Z', type: 'assistant_thinking',
+      runId: 'run-next', sessionId: 'session-1', content: '先读取 issue',
+    } as PlatformEvent;
+    const recentLoaded = { ...loaded, runId: 'run-next' } as PlatformEvent;
+    const recent = buildContextProjection([thinking, recentLoaded, call, result], {
+      sessionId: 'session-1', runId: 'run-next', policy: { type: 'recent_window', recentEvents: 1 },
     });
-    expect(recent.messages.map((message) => message.role)).toEqual(['additional_tools', 'user']);
+    expect(recent.messages.map((message) => message.role)).toEqual(['additional_tools', 'assistant', 'tool']);
+    expect(recent.messages[1]).toMatchObject({ reasoning_content: '先读取 issue' });
   });
 });
 
@@ -445,6 +509,7 @@ describe('compaction 切分（/compact 真实现）', () => {
     ], { sessionId: 'session-1', runId: 'run-active' });
     expect(active.messages[0]?.content).toContain('state="active"');
     expect(active.messages[0]?.content).toContain('<resume-policy>');
+    expect(active.messages[0]?.content).toContain('优先依据摘要中的未完成事项重新调用 TodoWrite');
     expect(active.messages[0]?.content).toContain('修复配置问题');
 
     const historical = buildContextProjection([
@@ -463,6 +528,54 @@ describe('compaction 切分（/compact 真实现）', () => {
     ], { sessionId: 'session-1', runId: 'run-next' });
     expect(historical.messages[0]?.content).toContain('state="historical"');
     expect(historical.messages[0]?.content).not.toContain('<resume-policy>');
+  });
+
+  it('active task anchor 在 60K 内保留全文，超限时尽量利用预算而非固定截成 500 字', () => {
+    const projectAnchor = (text: string) => {
+      const checkpoint = {
+        id: 'checkpoint-anchor',
+        timestamp: '2026-08-07T05:00:03.000Z',
+        type: 'compaction',
+        runId: 'run-active',
+        sessionId: 'session-1',
+        summary: '任务仍在进行',
+        coveredEventCount: 1,
+        inline: true,
+        checkpoint: {
+          version: 1,
+          trigger: 'threshold',
+          sourceRunId: 'run-active',
+          targetTokens: 40_000,
+          summaryBudgetTokens: 8_000,
+          summaryObservedTokens: 10,
+          rawTailBudgetTokens: 0,
+          rawTailObservedTokens: 0,
+          fixedTokens: 10_000,
+          taskAnchors: [{
+            eventId: 'anchor-event',
+            timestamp: '2026-08-07T05:00:00.000Z',
+            text,
+            originalChars: text.length,
+          }],
+        },
+      } as PlatformEvent;
+      const projection = buildContextProjection([
+        { ...event(0), id: 'anchor-event', runId: 'run-active', content: text } as PlatformEvent,
+        checkpoint,
+      ], { sessionId: 'session-1', runId: 'run-active' });
+      const content = String(projection.messages[0]?.content ?? '');
+      return content.match(/<active-task-messages>[\s\S]*?<\/active-task-messages>/u)?.[0] ?? '';
+    };
+
+    const withinBudget = `目标：${'完整约束'.repeat(1_000)}`;
+    expect(projectAnchor(withinBudget)).toContain(withinBudget);
+
+    const overBudget = `目标：${'超长约束'.repeat(20_000)}`;
+    const rendered = projectAnchor(overBudget);
+    expect(estimateContextTokens(rendered)).toBeLessThanOrEqual(CHECKPOINT_USER_HISTORY_TOKEN_CAP);
+    expect(rendered.length).toBeGreaterThan(10_000);
+    expect(rendered).not.toContain(overBudget);
+    expect(rendered).toContain('原文可按 eventId 检索');
   });
 
   it('cutoffEventId 指向不存在的事件时退化为以 compaction 自身为切分点', () => {
@@ -549,6 +662,53 @@ describe('context_rewind 工具交互单元', () => {
     expect(JSON.stringify(originals)).toBe(snapshot);
   });
 
+  it('compaction cutoff 指向被 rewind 排除的事件时仍保留切点后的有效 raw tail', () => {
+    const events = [
+      event(0),
+      ...toolUnit(),
+      {
+        ...event(5),
+        type: 'context_rewind',
+        runId: 'run-recovery',
+        reason: 'invalid_prompt_request_blocked',
+        message: '自动回退上一工具交互并继续',
+        excludedEventIds: ['event-1', 'event-2', 'event-3', 'event-4'],
+        excludedToolCallIds: ['call-a', 'call-b'],
+        excludedStartSequence: 2,
+        excludedEndSequence: 5,
+        createdAt: '2026-01-01T00:00:05.000Z',
+        recoveryAttempt: 1,
+      } as PlatformEvent,
+      { ...event(6), runId: 'run-recovery', content: '切点后的有效消息' } as PlatformEvent,
+      {
+        ...event(7),
+        type: 'compaction',
+        runId: 'run-recovery',
+        summary: '更早历史摘要',
+        coveredEventCount: 1,
+        cutoffEventId: 'event-1',
+        inline: true,
+        checkpoint: {
+          version: 1,
+          trigger: 'threshold',
+          sourceRunId: 'run-recovery',
+          targetTokens: 40_000,
+          summaryBudgetTokens: 8_000,
+          summaryObservedTokens: 10,
+          rawTailBudgetTokens: 8_000,
+          rawTailObservedTokens: 100,
+          fixedTokens: 1_000,
+          taskAnchors: [],
+        },
+      } as PlatformEvent,
+    ];
+
+    const projection = buildContextProjection(events, { sessionId: 'session-1', runId: 'run-recovery' });
+    expect(projection.selectedEvents.map((item) => item.id)).toEqual(['event-6']);
+    expect(projection.messages).toContainEqual({ role: 'user', content: '切点后的有效消息' });
+    expect(projection.messages[0]).toMatchObject({ role: 'system' });
+  });
+
   it.each([
     ['缺少并行结果', toolUnit().filter((item) => item.id !== 'event-4')],
     ['重复 toolCallId', toolUnit().map((item) => item.id === 'event-4'
@@ -576,18 +736,17 @@ describe('用户消息轨迹（抽取式，非 LLM 转述）', () => {
     expect(trail.map((t) => t.content)).toEqual(['user_message-0', 'user_message-4']);
   });
 
-  it('单条超长保头保尾截断，并保留 eventId、原文字数和检索说明', () => {
-    const long = `${'头'.repeat(450)}${'尾'.repeat(150)}`; // 600 字符
+  it('单条 60K Token 内长消息保持完整原文', () => {
+    const long = `${'头'.repeat(450)}${'尾'.repeat(150)}`;
     const trail = extractUserMessageTrail([{ ...event(9), content: long } as PlatformEvent]);
     const rendered = renderUserMessageTrail(trail);
     expect(rendered).toContain('<user-message-trail>');
     expect(rendered).toContain('eventId=event-9');
-    expect(rendered).toContain('原文 600 字');
-    expect(rendered).toContain('已省略 100 字');
-    expect(rendered).toContain('尾尾尾');
+    expect(rendered).toContain(long);
+    expect(rendered).not.toContain('省略');
   });
 
-  it('消息总量很大时仍逐条列出，不静默省略中间用户消息', () => {
+  it('60K Token 内仍逐条列出，不改变正常长会话', () => {
     const events = Array.from({ length: 40 }, (_, i) => ({
       ...event(i),
       content: `消息${i}-${'x'.repeat(300)}`,
@@ -597,7 +756,21 @@ describe('用户消息轨迹（抽取式，非 LLM 转述）', () => {
       expect(rendered).toContain(`eventId=event-${i}`);
       expect(rendered).toContain(`消息${i}-`);
     }
-    expect(rendered).not.toContain('中间省略');
+    expect(rendered).not.toContain('轨迹上限');
+  });
+
+  it('超过 60K Token 后只从最早消息退化，并保证最终轨迹不超预算', () => {
+    const events = Array.from({ length: 150 }, (_, i) => ({
+      ...event(i),
+      content: `消息${i}-${'中'.repeat(500)}`,
+    } as PlatformEvent));
+    const rendered = renderUserMessageTrail(extractUserMessageTrail(events));
+
+    expect(estimateContextTokens(rendered)).toBeLessThanOrEqual(CHECKPOINT_USER_HISTORY_TOKEN_CAP);
+    expect(rendered).toContain('轨迹上限');
+    expect(rendered).not.toContain('eventId=event-0]');
+    expect(rendered).toContain('eventId=event-149]');
+    expect(rendered).toContain(`消息149-${'中'.repeat(100)}`);
   });
 
   it('空轨迹渲染为空字符串（摘要块不出现空 trail 段）', () => {

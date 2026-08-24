@@ -1394,7 +1394,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     // fire-and-forget：内部自带 per-scope 节流与失败静默，不阻塞、不影响本次 run。
     config.sandboxWarmup?.(sessionId);
     await hooks?.onSessionStart?.(sessionId, transcriptPath);
-    yield { type: 'session_init', sessionId };
+    yield { type: 'session_init', sessionId, runId };
 
     const baseEventStore = createEventStoreForSession(config, sessionRecord);
     await config.runStore?.upsertPending({
@@ -1707,7 +1707,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             return prepared;
           },
         } : {}),
-        ...(!replaySourceSession && !isCompactCommand(message.content) && config.autoCompaction ? {
+        ...(!isCompactCommand(message.content) && config.autoCompaction ? {
           evaluateAutoCompaction: (events: PlatformEvent[], forceReason?: string) => (
             config.autoCompaction!.evaluate({
               modelRef: sessionModelRef,
@@ -1778,18 +1778,18 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             ...(memoryContext ? { memoryContext } : {}),
             instructions,
             instructionSections,
-            maxTurns: boundProfile
-              ? resolveAgentProfileMaxTurns(
-                  boundProfile.version.config,
-                  resolveEffectiveMaxTurns(config, options.maxTurns, {
+            maxTurns: replaySourceSession && options.maxTurns ? options.maxTurns
+              : boundProfile ? resolveAgentProfileMaxTurns(
+                    boundProfile.version.config,
+                    resolveEffectiveMaxTurns(config, options.maxTurns, {
+                      userId: context.user?.id ?? context.sessionOwner?.id,
+                      username: context.user?.username ?? context.sessionOwner?.username,
+                    }),
+                  )!
+                : resolveEffectiveMaxTurns(config, options.maxTurns, {
                     userId: context.user?.id ?? context.sessionOwner?.id,
                     username: context.user?.username ?? context.sessionOwner?.username,
                   }),
-                )!
-              : resolveEffectiveMaxTurns(config, options.maxTurns, {
-                userId: context.user?.id ?? context.sessionOwner?.id,
-                username: context.user?.username ?? context.sessionOwner?.username,
-              }),
             connection: { apiKey: apiKey ?? '', baseUrl },
           },
           runContext,

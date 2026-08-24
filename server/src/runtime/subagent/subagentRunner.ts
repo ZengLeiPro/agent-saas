@@ -38,6 +38,8 @@ import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
 import type { ExecutionTransportRegistry } from '../executionTransport.js';
 import { LegacyTranscriptProjection } from '../legacyTranscriptProjection.js';
 import { RawAgentLoop } from '../rawAgentLoop.js';
+import { customerSafeRuntimeError } from '../runtimeFailure.js';
+import { deriveRuntimeIsolationRequirement } from '../runtimeIsolationEvidence.js';
 import {
   buildTenantRemoteHandWireEnv,
   createApprovalStoreForSession,
@@ -58,6 +60,7 @@ import { applyMainSessionToolFilter } from '../toolProfiles.js';
 import { SessionContextService, SessionToolProvider } from '../sessionContext.js';
 import type { TenantRemoteHandAuthTokenResolver } from '../tenantRemoteHandResolver.js';
 import type { RunContext } from '../types.js';
+import type { RuntimeFailureKind, RuntimeRecoveryAction } from '../../types/index.js';
 import { createLogger } from '../../utils/logger.js';
 import { addTimestampPrefix } from '../../utils/timestamp.js';
 import type { SubagentTypeDefinition } from './agentTypes.js';
@@ -112,6 +115,8 @@ export interface SubagentOutcome {
   text: string;
   /** status !== 'completed' 时的错误说明（错误名 + message，与结论文本严格分离）。 */
   errorMessage?: string;
+  failureKind?: RuntimeFailureKind;
+  recoveryAction?: RuntimeRecoveryAction;
   totalTokens: number;
   toolUseCount: number;
   turnCount: number;
@@ -249,6 +254,10 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   const childSessionId = `sub-${randomUUID()}`;
   const childRunId = `${Date.now()}-${randomUUID()}`;
   const parentWorkspace = parentContext.workspace;
+  const childRuntimeIsolationRequirement = deriveRuntimeIsolationRequirement(
+    parentContext.runtimeIsolationRequirement,
+    { runId: childRunId, sessionId: childSessionId, workspaceId: parentWorkspace.id ?? childSessionId },
+  );
 
   // 硬超时与父 abort 合并；分离的 controller 让终态可区分 timeout / cancelled
   const timeoutController = new AbortController();
@@ -353,6 +362,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       topLevelSessionId: parentWorkspace.topLevelSessionId ?? parentSessionId,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
+      runtimeIsolationRequirement: childRuntimeIsolationRequirement,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: params.tenantHandResolver,
       userId,
@@ -413,6 +423,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore,
+      runtimeIsolationRequirement: childRuntimeIsolationRequirement,
       runStore: config.runStore,
     });
 
@@ -425,7 +436,14 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     //     ApprovalPendingWithoutInteractionHook 静默挂起子 run，绝不允许）。
     //   - onResult：捕获 runtime outcome（subtype/resultText/modelUsage），
     //     终态判定唯一依据，不解析模型文本。
-    let resultMeta: { subtype?: string; resultText?: string; numTurns?: number; modelUsage?: Record<string, SdkResultModelUsage> } | null = null;
+    let resultMeta: {
+      subtype?: string;
+      resultText?: string;
+      numTurns?: number;
+      modelUsage?: Record<string, SdkResultModelUsage>;
+      failureKind?: RuntimeFailureKind;
+      recoveryAction?: RuntimeRecoveryAction;
+    } | null = null;
     const childHooks: AgentRunHooks = {
       onResult: (meta) => {
         resultMeta = {
@@ -433,6 +451,8 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
           resultText: meta.resultText,
           numTurns: meta.numTurns,
           ...(meta.modelUsage ? { modelUsage: meta.modelUsage } : {}),
+          ...(meta.failureKind ? { failureKind: meta.failureKind } : {}),
+          ...(meta.recoveryAction ? { recoveryAction: meta.recoveryAction } : {}),
         };
       },
       onInteraction: async (event) => {
@@ -517,7 +537,14 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
 
     // ── 终态判定（关键不变量 4）：信号状态 > onResult subtype，绝不读模型文本 ──
     const durationMs = Date.now() - startedAt;
-    const meta = resultMeta as { subtype?: string; resultText?: string; numTurns?: number; modelUsage?: Record<string, SdkResultModelUsage> } | null;
+    const meta = resultMeta as {
+      subtype?: string;
+      resultText?: string;
+      numTurns?: number;
+      modelUsage?: Record<string, SdkResultModelUsage>;
+      failureKind?: RuntimeFailureKind;
+      recoveryAction?: RuntimeRecoveryAction;
+    } | null;
     let status: SubagentStatus;
     let errorMessage: string | undefined;
     if (timeoutController.signal.aborted) {
@@ -532,6 +559,8 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       status = 'failed';
       errorMessage = streamError ?? `子 agent 异常终止（subtype=${meta?.subtype ?? 'unknown'}）`;
     }
+
+    errorMessage = customerSafeRuntimeError(errorMessage, meta?.failureKind);
 
     const modelUsage = meta?.modelUsage;
     const totalTokens = sumUsageTokens(modelUsage);
@@ -570,6 +599,8 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       status,
       text: meta?.resultText ?? '',
       ...(errorMessage ? { errorMessage } : {}),
+      ...(meta?.failureKind ? { failureKind: meta.failureKind } : {}),
+      ...(meta?.recoveryAction ? { recoveryAction: meta.recoveryAction } : {}),
       totalTokens,
       toolUseCount,
       turnCount: meta?.numTurns ?? 0,

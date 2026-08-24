@@ -5,7 +5,7 @@
 
 import type { MessageItem } from '../types/message';
 import type { WsEvent } from '../types/ws';
-import { formatRuntimeFailureMessage, isInsufficientCreditsFailure } from './runtimeErrorMessage';
+import { formatRuntimeFailureMessage, isInsufficientCreditsFailure, isSameRunMessage } from './runtimeErrorMessage';
 import { resolveRuntimeStatusPatch, type RuntimeStatus, type RuntimeStatusOptions } from './runtimeStatusTransition';
 import { normalizeToolPresentation } from './toolPresentation';
 import { normalizeToolResultMetadata } from './toolResultMetadata';
@@ -708,7 +708,7 @@ export function processWsEvent(
           ...(typeof data.totalTokens === "number" ? { totalTokens: data.totalTokens } : {}),
           ...(typeof data.toolUseCount === "number" ? { toolUseCount: data.toolUseCount } : {}),
           ...(typeof data.turnCount === "number" ? { turnCount: data.turnCount } : {}),
-          ...(data.errorMessage ? { errorMessage: data.errorMessage } : {}),
+          ...(data.errorMessage ? { errorMessage: data.errorMessage } : {}), ...(data.failureKind ? { failureKind: data.failureKind } : {}), ...(data.recoveryAction ? { recoveryAction: data.recoveryAction } : {}),
           ...(data.resultPreview ? { resultPreview: data.resultPreview } : {}),
         } : m
       );
@@ -725,7 +725,7 @@ export function processWsEvent(
         ...(typeof data.totalTokens === "number" ? { totalTokens: data.totalTokens } : {}),
         ...(typeof data.toolUseCount === "number" ? { toolUseCount: data.toolUseCount } : {}),
         ...(typeof data.turnCount === "number" ? { turnCount: data.turnCount } : {}),
-        ...(data.errorMessage ? { errorMessage: data.errorMessage } : {}),
+        ...(data.errorMessage ? { errorMessage: data.errorMessage } : {}), ...(data.failureKind ? { failureKind: data.failureKind } : {}), ...(data.recoveryAction ? { recoveryAction: data.recoveryAction } : {}),
         ...(data.resultPreview ? { resultPreview: data.resultPreview } : {}),
       });
     }
@@ -796,7 +796,7 @@ export function processWsEvent(
         if (current?.type === "user" || current?.type === "user-voice") idx = ctx.userMsgIndex;
       }
       // 用户侧只看通俗文案;原始 error 留在 server.log + PG runtime_events 供排查。
-      const userFacing = formatRuntimeFailureMessage(data.error);
+      const userFacing = formatRuntimeFailureMessage(data.error, data.failureKind);
       const isBillingBlock = isInsufficientCreditsFailure(data.error);
       if (isBillingBlock) {
         // 余额门禁是可预期的账户状态，消息已经成功送达，不能把用户气泡染成“发送失败”。
@@ -812,9 +812,9 @@ export function processWsEvent(
         }
         // 平台无关层保留文本兜底；Web 随后会把它升级为独立的积分提示卡。
         const last = msg.messagesRef.current[msg.messagesRef.current.length - 1];
-        if (!((last?.type === "text" || last?.type === "system-error") && last.content === userFacing)) {
+        if (!((last?.type === "text" || last?.type === "system-error") && isSameRunMessage(last, data.runId, userFacing))) {
           const owner = ctx.sessionOwnerRef?.current;
-          msg.addMessage({ type: "text", content: userFacing, ...(owner ? { owner } : {}), timestamp: Date.now() });
+          msg.addMessage({ type: "text", content: userFacing, runId: data.runId, ...(owner ? { owner } : {}), timestamp: Date.now() });
         }
       } else {
         // run 已接收用户消息，只是回复在自动恢复耗尽后中断；不要把用户气泡误标成“发送失败”。
@@ -830,9 +830,9 @@ export function processWsEvent(
         }
         // 平台无关层只留一条简短文本兜底；Web 会升级为带“继续生成”的低干扰提示。
         const last = msg.messagesRef.current[msg.messagesRef.current.length - 1];
-        if (!((last?.type === "text" || last?.type === "system-error") && last.content === userFacing)) {
+        if (!((last?.type === "text" || last?.type === "system-error") && isSameRunMessage(last, data.runId, userFacing))) {
           const owner = ctx.sessionOwnerRef?.current;
-          msg.addMessage({ type: "text", content: userFacing, ...(owner ? { owner } : {}), timestamp: Date.now() });
+          msg.addMessage({ type: "text", content: userFacing, runId: data.runId, ...(owner ? { owner } : {}), timestamp: Date.now() });
         }
       }
     }

@@ -11,9 +11,16 @@ import type {
     PluginInstallData,
     NotificationData,
     MemoryRecallData,
+    RuntimeFailureKind,
+    RuntimeRecoveryAction,
 } from '../../types/index.js';
 
 // ── 上行消息（客户端 → 服务端）──────────────────────────────
+
+export interface WsAuthMessage {
+    action: 'auth';
+    token: string;
+}
 
 /**
  * 聊天消息拒绝原因码
@@ -133,6 +140,7 @@ export interface WsSyncMessage {
 }
 
 export type WsInboundMessage =
+    | WsAuthMessage
     | WsChatMessage
     | WsRespondMessage
     | WsAbortMessage
@@ -168,6 +176,7 @@ export interface WsAskUserQuestion {
 }
 
 export type WsDownstreamEvent =
+    | { type: 'auth_ok' }
     | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string; queued?: boolean; deliveryMode?: ChatDeliveryMode; targetRunId?: string; sessionId?: string; queuePosition?: number }
     | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number; sessionId?: string; runId?: string; status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; deliveryMode?: ChatDeliveryMode; queuePosition?: number }
     | { type: 'message_queued'; sessionId: string; runId: string; clientMsgId: string; deliveryMode: ChatDeliveryMode; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number; queuePosition?: number; targetRunId?: string }
@@ -185,7 +194,7 @@ export type WsDownstreamEvent =
     | { type: 'permission_request'; interactionId: string; toolName: string; toolInput: Record<string, unknown>; toolId?: string; displayName?: string; planContent?: string }
     | { type: 'ask_user'; interactionId: string; questions: WsAskUserQuestion[] }
     | { type: 'subagent_start'; toolId: string; agentType: string; childSessionId?: string; childRunId?: string; model?: string }
-    | { type: 'subagent_end'; toolId: string; agentType?: string; status?: 'completed' | 'failed' | 'cancelled' | 'timeout'; childSessionId?: string; childRunId?: string; model?: string; durationMs?: number; totalTokens?: number; toolUseCount?: number; turnCount?: number; errorMessage?: string; resultPreview?: string }
+    | { type: 'subagent_end'; toolId: string; agentType?: string; status?: 'completed' | 'failed' | 'cancelled' | 'timeout'; childSessionId?: string; childRunId?: string; model?: string; durationMs?: number; totalTokens?: number; toolUseCount?: number; turnCount?: number; errorMessage?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; resultPreview?: string }
     | { type: 'file_download'; fileName: string; fileType: string; filePath: string; fileSize: number; owner?: string }
     | { type: 'artifact_created'; artifactId: string; fileName: string; kind: 'file' | 'screenshot' | 'patch' | 'log' | 'blob'; sourcePath?: string; sizeBytes?: number; mimeType?: string; sha256?: string; owner?: string }
     | { type: 'voice'; text: string; voice?: string; speed?: number; standalone?: boolean }
@@ -193,7 +202,7 @@ export type WsDownstreamEvent =
     | { type: 'title_updated'; sessionId: string; title: string }
     | { type: 'session_updated'; sessionId: string; preview?: string; updatedAtMs: number; title?: string; model?: string; username?: string; isNew?: boolean }
     | { type: 'buffer_overflow' }
-    | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string; finalOutput?: boolean }
+    | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; finalOutput?: boolean }
     | { type: 'error'; message: string }
     | { type: 'respond_error'; interactionId: string; error: string }
     | { type: 'respond_ok'; interactionId: string }
@@ -204,7 +213,7 @@ export type WsDownstreamEvent =
     | { type: 'interaction_resolved'; sessionId: string; interactionId: string }
     | { type: 'session_deleted'; sessionId: string }
     | { type: 'user_message'; content: string; timestamp: number; client_msg_id?: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }> }
-    | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; reason?: string }
+    | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction }
     | { type: 'groups_changed' }
     // ── SDK 0.2.112+ 新增系统事件 ──
     | { type: 'context_usage'; contextUsage: ContextUsageData }

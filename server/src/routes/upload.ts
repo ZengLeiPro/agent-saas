@@ -1,6 +1,5 @@
 import { randomUUID } from 'crypto';
-import { copyFile, lstat, realpath } from 'fs/promises';
-import { basename, extname, join, resolve, sep } from 'path';
+import { basename, extname, join, resolve } from 'path';
 import multer from 'multer';
 import { Router, type Request } from 'express';
 import { resolveUserCwd } from '../workspace/resolver.js';
@@ -13,6 +12,7 @@ import {
   type UploadManager,
 } from '../uploads/manager.js';
 import type { SessionCatalog } from '../runtime/sessionCatalog.js';
+import { copyTrustedFile, relativeToTrustedRoot } from '../security/trustedFile.js';
 
 /**
  * 修复 multer 中文文件名编码问题（浏览器发送 UTF-8，multer 默认用 latin1 解析）
@@ -52,10 +52,6 @@ function mimeTypeForAsset(path: string): string {
     '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   };
   return types[extension] ?? 'application/octet-stream';
-}
-
-function isWithin(path: string, root: string): boolean {
-  return path === root || path.startsWith(`${root}${sep}`);
 }
 
 export interface UploadRouterOptions {
@@ -153,7 +149,6 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
       const userCwd = resolveRequestUserCwd(agentCwd, req);
       ensureWorkspaceRuntimeLayout(userCwd);
       const assetsRoot = resolve(userCwd, 'assets');
-      const realAssetsRoot = await realpath(assetsRoot);
       const partialDir = await uploadManager.beginRequest(userCwd, requestId);
       requestStarted = true;
       const supportedImageTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
@@ -165,18 +160,10 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
           throw Object.assign(new Error('Invalid asset path'), { statusCode: 400 });
         }
         const sourcePath = resolve(userCwd, requestedPath);
-        if (!isWithin(sourcePath, assetsRoot)) {
-          throw Object.assign(new Error('Asset path escaped assets directory'), { statusCode: 400 });
-        }
-        const sourceStats = await lstat(sourcePath);
-        if (sourceStats.isSymbolicLink() || !sourceStats.isFile()) {
-          throw Object.assign(new Error('Selected asset is not a regular file'), { statusCode: 400 });
-        }
-        if (sourceStats.size > MAX_UPLOAD_FILE_BYTES) {
-          throw Object.assign(new Error('单文件不能超过 2 GiB'), { statusCode: 413 });
-        }
-        const realSourcePath = await realpath(sourcePath);
-        if (!isWithin(realSourcePath, realAssetsRoot)) {
+        let sourceRelative: string;
+        try {
+          sourceRelative = relativeToTrustedRoot(assetsRoot, sourcePath);
+        } catch {
           throw Object.assign(new Error('Asset path escaped assets directory'), { statusCode: 400 });
         }
 
@@ -185,7 +172,18 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
         const attachmentId = filename.slice(0, filename.indexOf('_'));
         const partialPath = join(partialDir, filename);
         const mimeType = mimeTypeForAsset(originalName);
-        await copyFile(realSourcePath, partialPath);
+        const sourceStats = await copyTrustedFile(
+          assetsRoot,
+          sourceRelative,
+          partialDir,
+          filename,
+          { maxBytes: MAX_UPLOAD_FILE_BYTES },
+        ).catch((error) => {
+          if ((error as NodeJS.ErrnoException).code === 'EFBIG') {
+            throw Object.assign(new Error('单文件不能超过 2 GiB'), { statusCode: 413 });
+          }
+          throw error;
+        });
         prepared.push({
           attachmentId,
           filename,

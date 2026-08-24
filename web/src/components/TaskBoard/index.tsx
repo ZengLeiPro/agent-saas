@@ -31,6 +31,8 @@ interface TaskBoardViewProps {
 
 type BoardDialogMode = "create" | "edit" | null;
 
+const TASKS_REFRESH_INTERVAL_MS = 3_000;
+
 function sortedInStatus(tasks: TaskBoardTask[], status: TaskBoardStatus, excludedId?: string) {
   return sortTaskBoardTasks(tasks, status).filter((task) => task.id !== excludedId);
 }
@@ -233,6 +235,21 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     if (active && !wasActiveRef.current) void refresh();
     wasActiveRef.current = active;
   }, [active, refresh]);
+
+  useEffect(() => {
+    if (!active || !selectedBoard) return;
+    let disposed = false;
+    let timer: number | undefined;
+    const pollTasks = async () => {
+      await refreshTasks();
+      if (!disposed) timer = window.setTimeout(() => void pollTasks(), TASKS_REFRESH_INTERVAL_MS);
+    };
+    timer = window.setTimeout(() => void pollTasks(), TASKS_REFRESH_INTERVAL_MS);
+    return () => {
+      disposed = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [active, refreshTasks, selectedBoard]);
 
   const reportMoveError = useCallback((caught: unknown) => {
     if (caught instanceof TaskBoardConflictError) {

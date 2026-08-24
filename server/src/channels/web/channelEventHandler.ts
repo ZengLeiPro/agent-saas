@@ -1,12 +1,12 @@
 import { stat } from 'fs/promises';
 import { resolve as resolvePath } from 'path';
 import type { WebSocket } from 'ws';
-import { shouldSendWebBlock, shouldSendWebToolResult } from './displayFilter.js';
+import { projectArtifactDelivery, shouldSendWebBlock, shouldSendWebToolResult } from './displayFilter.js';
 import { chatLogger } from '../../utils/logger.js';
 import { parseVoiceMarkers } from '../../utils/voiceMarkers.js';
 import { FILE_MARKER_PATTERN, MEDIA_MARKER_CLEAN_RE } from '../../integrations/dingtalk/constants.js';
 import type { ChannelContext, OutboundEvent, WebMessageDisplayConfig } from '../../types/index.js';
-import { createEventConsumer, type EventHandler } from '../eventConsumer.js';
+import { createEventConsumer, type EventHandler, type RuntimeErrorEventMetadata } from '../eventConsumer.js';
 import { canViewContextUsageDetails, redactContextUsageDetails } from './channelHelpers.js';
 import { getTranscriptPath, deleteSession } from '../../data/transcripts/index.js';
 import { readSessionMeta, writeSessionMeta, type SessionMeta } from '../../data/transcripts/meta.js';
@@ -118,6 +118,7 @@ export async function handleWebChannelEvents(
     const draftCollectedTextStarts = new Map<string, number>();
     // SDK 错误透传：onError 记录，onDone 合并进 done 事件
     let lastError: string | undefined;
+    let lastErrorMetadata: RuntimeErrorEventMetadata | undefined;
 
     // ---- 幽灵会话检测 ----
     // 新会话必须至少产生过一次"真实内容"事件（text/thinking/tool），
@@ -129,7 +130,7 @@ export async function handleWebChannelEvents(
 
     const agentCwd = dependencies.agentCwd;
     const handler: EventHandler = {
-      onSessionInit(sessionId) {
+      async onSessionInit(sessionId) {
         if (bufferCtx && sessionId) {
           bufferCtx.sessionId = sessionId;
           sessionCtx.sessionId = sessionId;
@@ -150,9 +151,6 @@ export async function handleWebChannelEvents(
             markRealContent();
           }
         }
-        send({ type: 'session', sessionId, ...(titleCtx?.clientMsgId ? { client_msg_id: titleCtx.clientMsgId } : {}) });
-        // 新会话创建后立即清除缓存，确保客户端 loadSessions() 能发现新会话
-        clearSessionsListCache();
         if (context.user && agentCwd && sessionId) {
           // Admin 代操作其他用户会话时，meta 必须写回原会话 owner 的目录，
           // 否则会在 admin 自己的 projectKey 下产生孤儿 meta，污染 owner 展示。
@@ -163,38 +161,48 @@ export async function handleWebChannelEvents(
             tenantId: context.user.tenantId,
           });
           const transcriptPath = getTranscriptPath(metaCwd, sessionId, { tenantId: context.user.tenantId, userId: context.user.id });
-          readSessionMeta(transcriptPath).then((existing) => {
+          try {
+            const existing = await readSessionMeta(transcriptPath);
             if (existing) {
               // 续对话：只更新 model，保留已有的所有字段（customTitle、generatedTitle、createdAt 等）
-              const ownerRole = context.sessionOwner?.role ?? context.user!.role;
+              const ownerRole = context.sessionOwner?.role ?? context.user.role;
               const updated: SessionMeta = {
                 ...existing,
                 userRole: existing.userRole ?? ownerRole,
                 ...(modelRef ? { model: modelRef } : {}),
               };
-              return writeSessionMeta(transcriptPath, updated);
+              await writeSessionMeta(transcriptPath, updated);
+            } else {
+              // 新会话：写完整初始 meta
+              const meta: SessionMeta = {
+                userId: context.user.id,
+                username: context.user.username,
+                userRole: context.user.role,
+                tenantId: context.user.tenantId,
+                channel: 'web',
+                createdAt: new Date().toISOString(),
+                ...(modelRef ? { model: modelRef } : {}),
+              };
+              await writeSessionMeta(transcriptPath, meta);
             }
-            // 新会话：写完整初始 meta
-            const meta: SessionMeta = {
-              userId: context.user!.id,
-              username: context.user!.username,
-              userRole: context.user!.role,
-              tenantId: context.user!.tenantId,
-              channel: 'web',
-              createdAt: new Date().toISOString(),
-              ...(modelRef ? { model: modelRef } : {}),
-            };
-            return writeSessionMeta(transcriptPath, meta);
-          }).then(() => {
-            if (
-              isNewSession
-              && titleCtx?.userMessage
-              && shouldGenerateTitleFromFirstMessage(titleCtx.userMessage)
-            ) {
-              return dependencies.generateTitle(sessionId, context, titleCtx.userMessage, '');
-            }
-          }).catch((err) => {
-            chatLogger.warn(`[meta] Failed to write session meta: sessionId=${sessionId} user=${context.user?.username} error=${err}`);
+          } catch (err) {
+            chatLogger.warn(`[meta] Failed to write session meta before session event: sessionId=${sessionId} user=${context.user.username} error=${err}`);
+            throw err;
+          }
+        }
+        // 分组写入会同步校验 owner meta；必须在 meta 落盘后再把权威 sessionId 发给客户端。
+        send({ type: 'session', sessionId, ...(titleCtx?.clientMsgId ? { client_msg_id: titleCtx.clientMsgId } : {}) });
+        // 新会话创建后立即清除缓存，确保客户端 loadSessions() 能发现新会话
+        clearSessionsListCache();
+        if (
+          context.user
+          && agentCwd
+          && isNewSession
+          && titleCtx?.userMessage
+          && shouldGenerateTitleFromFirstMessage(titleCtx.userMessage)
+        ) {
+          void dependencies.generateTitle(sessionId, context, titleCtx.userMessage, '').catch((err) => {
+            chatLogger.warn(`[title] Failed to generate session title: sessionId=${sessionId} user=${context.user?.username} error=${err}`);
           });
         }
         // 新会话场景：广播 stream_started + session_status + session_updated 到同用户的其他连接
@@ -396,7 +404,12 @@ export async function handleWebChannelEvents(
         }
       },
 
-      onToolResult(toolId, toolName, result, isError) {
+      onToolResult(toolId, toolName, result, isError, presentation, metadata) {
+        const artifactDelivery = projectArtifactDelivery(toolName, metadata, result);
+        if (artifactDelivery) {
+          send(artifactDelivery);
+          return;
+        }
         if (shouldSendWebToolResult(toolName, config)) {
           send({
             type: 'tool_result',
@@ -404,6 +417,8 @@ export async function handleWebChannelEvents(
             toolName,
             result,
             ...(isError ? { isError: true } : {}),
+            ...(presentation ? { presentation } : {}),
+            ...(metadata ? { metadata } : {}),
           });
         }
       },
@@ -417,6 +432,9 @@ export async function handleWebChannelEvents(
           ...(clientMsgId ? { client_msg_id: clientMsgId } : {}),
           ...(!lastError && collectedAssistantText.trim() ? { finalOutput: true } : {}),
           ...(lastError ? { error: lastError } : {}),
+          ...(lastErrorMetadata?.runId ? { runId: lastErrorMetadata.runId } : {}),
+          ...(lastErrorMetadata?.failureKind ? { failureKind: lastErrorMetadata.failureKind } : {}),
+          ...(lastErrorMetadata?.recoveryAction ? { recoveryAction: lastErrorMetadata.recoveryAction } : {}),
         });
         // 更新幂等记录终态
         if (clientMsgId) {
@@ -443,7 +461,7 @@ export async function handleWebChannelEvents(
           }
         }
       },
-      onError(error) {
+      onError(error, metadata) {
         // 用户主动停止后 SDK 通常仍会产出 AbortError；这是正常取消，不是运行失败。
         // 不写入 lastError，避免 onDone 把用户消息标红并显示错误卡。
         if (signal?.aborted && signal.reason === 'web_abort') {
@@ -453,6 +471,7 @@ export async function handleWebChannelEvents(
         // SDK 错误：记录 error 供 onDone 合并到 done 事件，不再单发 error
         // （客户端收到 done + error 后会清理 loading 状态 + 显示错误文案，无需靠 watchdog 兜底）
         lastError = error;
+        lastErrorMetadata = metadata;
         chatLogger.error(`[chat] SDK error for client_msg_id=${clientMsgId}: ${error}`);
       },
       // SDK 0.2.112+ 新事件透传

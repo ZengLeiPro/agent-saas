@@ -4,6 +4,7 @@ import type {
   ByUserResp,
   ByModelResp,
   ByChannelResp,
+  ModelTrendResp,
   TrendResp,
   DataRangeResp,
   RangePreset,
@@ -53,6 +54,7 @@ export const usageApi = {
   byUser: (q: RangeQuery) => getJson<ByUserResp>(`${BASE}/by-user${buildQuery(q)}`),
   byModel: (q: RangeQuery) => getJson<ByModelResp>(`${BASE}/by-model${buildQuery(q)}`),
   byChannel: (q: RangeQuery) => getJson<ByChannelResp>(`${BASE}/by-channel${buildQuery(q)}`),
+  trendByModel: (q: RangeQuery) => getJson<ModelTrendResp>(`${BASE}/trend-by-model${buildQuery(q)}`),
   /** 不传 username → 全公司日合计；传 username → 该用户日序列 */
   trend: (q: RangeQuery) => getJson<TrendResp>(`${BASE}/trend${buildQuery(q)}`),
   dataRange: (q: Pick<RangeQuery, "tenantId"> = {}) => getJson<DataRangeResp>(`${BASE}/data-range${buildQuery(q)}`),

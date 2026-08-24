@@ -17,6 +17,16 @@ function compactionIdentity(message: MessageItem): string | null {
   return JSON.stringify([summary, coveredEventCount]);
 }
 
+function runtimeFailureIdentity(message: MessageItem): string | null {
+  if (message.type !== 'system-error' || !message.failureKind || !message.recoveryAction) return null;
+  return JSON.stringify([
+    message.runId ?? null,
+    message.failureKind,
+    message.recoveryAction,
+    message.content,
+  ]);
+}
+
 function appendUnprojectedLocalTail(server: MessageItem[], tail: MessageItem[]): MessageItem[] {
   if (tail.length === 0) return server;
 
@@ -32,10 +42,15 @@ function appendUnprojectedLocalTail(server: MessageItem[], tail: MessageItem[]):
   const projectedCompactions = new Set(
     server.map(compactionIdentity).filter((identity): identity is string => identity !== null),
   );
+  const projectedRuntimeFailures = new Set(
+    server.map(runtimeFailureIdentity).filter((identity): identity is string => identity !== null),
+  );
   const unprojectedTail = tail.filter((message) => {
     if (serverIds.has(message.id)) return false;
-    const identity = compactionIdentity(message);
-    return identity === null || !projectedCompactions.has(identity);
+    const compaction = compactionIdentity(message);
+    if (compaction !== null && projectedCompactions.has(compaction)) return false;
+    const runtimeFailure = runtimeFailureIdentity(message);
+    return runtimeFailure === null || !projectedRuntimeFailures.has(runtimeFailure);
   });
   return unprojectedTail.length === 0 ? server : [...server, ...unprojectedTail];
 }

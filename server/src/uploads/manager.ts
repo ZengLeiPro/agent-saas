@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { constants } from 'node:fs';
+import { open, readdir, rename, rmdir, unlink } from 'node:fs/promises';
+import { basename, isAbsolute, join, resolve } from 'node:path';
+import type { FileHandle } from 'node:fs/promises';
 import {
   MAX_UPLOAD_FILE_SIZE,
   MAX_UPLOAD_FILES_PER_REQUEST as SHARED_MAX_UPLOAD_FILES_PER_REQUEST,
@@ -8,8 +10,18 @@ import {
 
 import type { UploadedFileInfo } from '../types/index.js';
 import type { TaskBoardAttachment, TaskBoardUploadAttachment } from '../../../shared/src/types/taskboard.js';
-import { repairWorkspacePath } from '../workspace/permissions.js';
 import { uploadLogger } from '../utils/logger.js';
+import {
+  atomicWriteTrustedFile,
+  openTrustedDirectory,
+  openTrustedFile,
+  readTrustedFile,
+  relativeToTrustedRoot,
+  removeTrustedPath,
+  type TrustedFile,
+  UnsafeFilePathError,
+  writeTrustedFile,
+} from '../security/trustedFile.js';
 
 export const MAX_UPLOAD_FILE_BYTES = MAX_UPLOAD_FILE_SIZE;
 export const MAX_UPLOAD_FILES_PER_REQUEST = SHARED_MAX_UPLOAD_FILES_PER_REQUEST;
@@ -93,7 +105,12 @@ export interface UploadCleanupResult {
 
 interface ActiveUploadRequest {
   userCwd: string;
+  /** Descriptor-bound paths; callers write through partialDir while these handles stay open. */
+  uploadsHandle: FileHandle;
+  uploadsDir: string;
+  partialHandle: FileHandle;
   partialDir: string;
+  partialFdPath: string;
   startedAtMs: number;
 }
 
@@ -199,15 +216,30 @@ export class UploadManager {
     if (this.draining) throw new UploadDrainingError();
     if (this.activeRequests.has(requestId)) throw new Error(`Duplicate upload request: ${requestId}`);
 
-    const uploadsDir = join(userCwd, 'uploads');
-    const partialDir = join(uploadsDir, '.partial', requestId);
-    await mkdir(partialDir, { recursive: true });
-    await mkdir(join(uploadsDir, '.state'), { recursive: true });
-    repairWorkspacePath(partialDir, 0o775);
-    repairWorkspacePath(join(uploadsDir, '.state'), 0o775);
+    if (!isSafeTaskScopeSegment(requestId)) throw new Error('Invalid upload request id');
+    const initRelative = `uploads/.partial/${requestId}/.upload-init-${randomUUID()}`;
+    await writeTrustedFile(userCwd, initRelative, '', { createParents: true, exclusive: true, mode: 0o600 });
+    await removeTrustedPath(userCwd, initRelative);
+
+    const uploads = await openTrustedDirectory(userCwd, 'uploads');
+    let partial;
+    try {
+      partial = await openTrustedDirectory(userCwd, `uploads/.partial/${requestId}`);
+    } catch (error) {
+      await uploads.handle.close().catch(() => undefined);
+      throw error;
+    }
     this.knownUserCwds.add(userCwd);
-    this.activeRequests.set(requestId, { userCwd, partialDir, startedAtMs: this.now() });
-    return partialDir;
+    this.activeRequests.set(requestId, {
+      userCwd,
+      uploadsHandle: uploads.handle,
+      uploadsDir: uploads.fdPath,
+      partialHandle: partial.handle,
+      partialDir: join(userCwd, 'uploads', '.partial', requestId),
+      partialFdPath: partial.fdPath,
+      startedAtMs: this.now(),
+    });
+    return join(userCwd, 'uploads', '.partial', requestId);
   }
 
   async completeRequest(
@@ -227,22 +259,21 @@ export class UploadManager {
     files: UploadFinalizeFile[],
     refs: UploadReference,
   ): Promise<FinalizedUpload[]> {
-    const uploadsDir = join(active.userCwd, 'uploads');
-    const completed: Array<{ path: string; statePath: string }> = [];
+    const completed: Array<{ filename: string; attachmentId: string }> = [];
     const finalized: FinalizedUpload[] = [];
     try {
       for (const file of files) {
         if (!ATTACHMENT_ID_RE.test(file.attachmentId) || basename(file.filename) !== file.filename) {
           throw new Error('Invalid generated upload filename');
         }
-        if (!isWithin(file.partialPath, active.partialDir)) {
+        if (file.partialPath !== join(active.partialDir, file.filename)) {
           throw new Error('Upload partial path escaped request directory');
         }
 
-        const finalPath = join(uploadsDir, file.filename);
-        const relativePath = relative(active.userCwd, finalPath).split(sep).join('/');
-        await rename(file.partialPath, finalPath);
-        repairWorkspacePath(finalPath, 0o664);
+        const finalFdPath = join(active.uploadsDir, file.filename);
+        const finalPath = join(active.userCwd, 'uploads', file.filename);
+        const relativePath = `uploads/${file.filename}`;
+        await rename(join(active.partialFdPath, file.filename), finalFdPath);
 
         const state: AttachmentState = {
           version: 1,
@@ -257,9 +288,8 @@ export class UploadManager {
           ...(refs.sessionId ? { sessionIds: [refs.sessionId] } : {}),
           ...(refs.clientMessageId ? { clientMessageIds: [refs.clientMessageId] } : {}),
         };
-        const statePath = this.statePath(active.userCwd, file.attachmentId);
-        completed.push({ path: finalPath, statePath });
-        await this.writeState(statePath, state);
+        completed.push({ filename: file.filename, attachmentId: file.attachmentId });
+        await this.writeState(active.userCwd, state, 'uploads/.state');
         finalized.push({
           absolutePath: finalPath,
           info: {
@@ -274,15 +304,17 @@ export class UploadManager {
         });
       }
 
-      await rm(active.partialDir, { recursive: true, force: true });
-      this.activeRequests.delete(requestId);
+      await this.closeActiveRequest(requestId, active, true);
       this.metrics.completedRequests += 1;
       this.metrics.uploadedBytes += files.reduce((sum, file) => sum + file.size, 0);
       this.metrics.lastUploadDurationMs = Math.max(0, this.now() - active.startedAtMs);
       this.metrics.lastCompletedAt = new Date(this.now()).toISOString();
       return finalized;
     } catch (error) {
-      await Promise.allSettled(completed.flatMap((entry) => [unlink(entry.path), unlink(entry.statePath)]));
+      await Promise.allSettled(completed.flatMap((entry) => [
+        removePinnedPath(active.uploadsDir, entry.filename),
+        removeTrustedPath(active.userCwd, `uploads/.state/${entry.attachmentId}.json`),
+      ]));
       await this.finishFailedRequest(requestId, 'failed');
       throw error;
     }
@@ -291,10 +323,26 @@ export class UploadManager {
   async finishFailedRequest(requestId: string, outcome: Exclude<UploadRequestOutcome, 'success'>): Promise<void> {
     const active = this.activeRequests.get(requestId);
     if (!active) return;
-    this.activeRequests.delete(requestId);
-    await rm(active.partialDir, { recursive: true, force: true }).catch(() => undefined);
     if (outcome === 'aborted') this.metrics.abortedRequests += 1;
     else this.metrics.failedRequests += 1;
+    await this.closeActiveRequest(requestId, active, true).catch(() => undefined);
+  }
+
+  private async closeActiveRequest(requestId: string, active: ActiveUploadRequest, removePartial: boolean): Promise<void> {
+    this.activeRequests.delete(requestId);
+    try {
+      await active.partialHandle.close().catch(() => undefined);
+      if (removePartial) {
+        await removePinnedPath(active.uploadsDir, `.partial/${requestId}`).catch((error) => {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        });
+      }
+    } finally {
+      await Promise.allSettled([
+        active.partialHandle.close(),
+        active.uploadsHandle.close(),
+      ]);
+    }
   }
 
   async resolveAttachments(
@@ -307,23 +355,24 @@ export class UploadManager {
       const resolved: UploadedFileInfo[] = [];
       for (const attachmentId of attachmentIds) {
         if (!ATTACHMENT_ID_RE.test(attachmentId)) throw new Error('Invalid attachment id');
-        const statePath = this.statePath(userCwd, attachmentId);
         let state: AttachmentState;
         try {
-          state = JSON.parse(await readFile(statePath, 'utf8')) as AttachmentState;
+          state = JSON.parse(await readTrustedFile(userCwd, `uploads/.state/${attachmentId}.json`, 'utf8') as string) as AttachmentState;
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
             throw new Error(`Attachment not found: ${attachmentId}`);
           }
           throw error;
         }
-        if (state.attachmentId !== attachmentId || basename(state.filename) !== state.filename) {
+        if (state.attachmentId !== attachmentId || basename(state.filename) !== state.filename
+          || state.relativePath !== `uploads/${state.filename}`) {
           throw new Error(`Invalid attachment state: ${attachmentId}`);
         }
         if (refs.sessionId && !state.sessionIds?.includes(refs.sessionId)) {
           throw new Error(`Attachment does not belong to session: ${attachmentId}`);
         }
-        await stat(join(userCwd, state.relativePath));
+        const opened = await openTrustedFile(userCwd, state.relativePath);
+        await opened.handle.close();
         resolved.push({
           attachmentId,
           originalName: state.originalName,
@@ -348,67 +397,46 @@ export class UploadManager {
     this.knownUserCwds.add(sourceCwd);
     this.knownUserCwds.add(targetCwd);
     return this.withUserMutation(sourceCwd, async () => {
-      const sourceRoot = await realpath(sourceCwd);
-      await mkdir(targetCwd, { recursive: true });
-      const targetWorkspaceRoot = await realpath(targetCwd);
-      const targetRoot = join(targetCwd, 'taskboard', 'attachments', taskId);
-      await mkdir(targetRoot, { recursive: true });
-      const targetRealRoot = await realpath(targetRoot);
-      if (!isWithin(targetRealRoot, targetWorkspaceRoot)) {
-        throw new Error('Task attachment scope escaped workspace');
-      }
-      repairWorkspacePath(targetRoot, 0o775);
-      const materialized: TaskBoardUploadAttachment[] = [];
-      const createdPaths: string[] = [];
+      const targetDirectoryRelative = `taskboard/attachments/${taskId}`;
+      const initRelative = `${targetDirectoryRelative}/.init-${randomUUID()}`;
+      await writeTrustedFile(targetCwd, initRelative, '', { createParents: true, exclusive: true, mode: 0o600 });
+      await removeTrustedPath(targetCwd, initRelative);
+      const targetDirectory = await openTrustedDirectory(targetCwd, targetDirectoryRelative);
+      const created: string[] = [];
       try {
+        const materialized: TaskBoardUploadAttachment[] = [];
         for (const attachment of attachments) {
           if (!ATTACHMENT_ID_RE.test(attachment.attachmentId)) {
             throw new Error(`Invalid attachment id: ${attachment.attachmentId}`);
           }
-          const sourcePath = resolve(sourceCwd, attachment.relativePath);
-          const sourceRealPath = await realpath(sourcePath);
-          if (!isWithin(sourceRealPath, sourceRoot)) {
-            throw new Error(`Attachment source escaped workspace: ${attachment.attachmentId}`);
-          }
-          const sourceStats = await stat(sourceRealPath);
-          if (!sourceStats.isFile() || sourceStats.size !== attachment.size) {
-            throw new Error(`Attachment source changed: ${attachment.attachmentId}`);
-          }
-          const targetName = taskAttachmentFilename(attachment);
-          let targetPath = join(targetRoot, targetName);
+          const sourceRelative = trustedRelative(sourceCwd, attachment.relativePath);
+          const source = await openTrustedFile(sourceCwd, sourceRelative);
           try {
-            await lstat(targetPath);
-            targetPath = join(
-              targetRoot,
-              `${attachment.attachmentId}-${randomUUID()}-${targetName.slice(attachment.attachmentId.length + 1)}`,
-            );
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-          }
-          if (!isWithin(targetPath, targetRoot)) throw new Error('Task attachment path escaped scope');
-          const tempTargetPath = `${targetPath}.${process.pid}.${randomUUID()}.tmp`;
-          try {
-            await copyFile(sourceRealPath, tempTargetPath);
-            repairWorkspacePath(tempTargetPath, 0o664);
-            await rename(tempTargetPath, targetPath);
-            createdPaths.push(targetPath);
+            if (source.stats.size !== attachment.size) {
+              throw new Error(`Attachment source changed: ${attachment.attachmentId}`);
+            }
+            let targetName = taskAttachmentFilename(attachment);
+            for (;;) {
+              try {
+                await copyOpenedFile(source, targetDirectory.fdPath, targetName);
+                break;
+              } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+                targetName = `${attachment.attachmentId}-${randomUUID()}-${taskAttachmentFilename(attachment).slice(attachment.attachmentId.length + 1)}`;
+              }
+            }
+            created.push(targetName);
+            materialized.push({ ...attachment, relativePath: `${targetDirectoryRelative}/${targetName}` });
           } finally {
-            await rm(tempTargetPath, { force: true }).catch(() => undefined);
+            await source.handle.close();
           }
-          const copiedRealPath = await realpath(targetPath);
-          if (!isWithin(copiedRealPath, targetRealRoot)) {
-            throw new Error('Task attachment path escaped scope');
-          }
-          repairWorkspacePath(targetPath, 0o664);
-          materialized.push({
-            ...attachment,
-            relativePath: relative(targetCwd, targetPath).split(sep).join('/'),
-          });
         }
         return materialized;
       } catch (error) {
-        await Promise.allSettled(createdPaths.map((path) => rm(path, { force: true })));
+        await Promise.allSettled(created.map((name) => removePinnedPath(targetDirectory.fdPath, name)));
         throw error;
+      } finally {
+        await targetDirectory.handle.close();
       }
     });
   }
@@ -421,34 +449,13 @@ export class UploadManager {
     if (!isSafeTaskScopeSegment(taskId) || attachments.length === 0) return;
     this.knownUserCwds.add(targetCwd);
     await this.withUserMutation(targetCwd, async () => {
-      const targetRoot = join(targetCwd, 'taskboard', 'attachments', taskId);
-      let targetRealRoot: string;
-      try {
-        targetRealRoot = await realpath(targetRoot);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-        throw error;
-      }
-      const workspaceRoot = await realpath(targetCwd);
-      if (!isWithin(targetRealRoot, workspaceRoot)) throw new Error('Task attachment scope escaped workspace');
       for (const attachment of attachments) {
-        if (!attachment.attachmentId || !ATTACHMENT_ID_RE.test(attachment.attachmentId)) {
-          throw new Error('Invalid task attachment id');
-        }
-        const absolutePath = resolve(targetCwd, attachment.relativePath);
-        if (!isWithin(absolutePath, targetRoot)
-          || !basename(absolutePath).startsWith(`${attachment.attachmentId}-`)) {
-          throw new Error('Task attachment is not in its task scope');
-        }
-        let realPath: string;
+        const relativePath = this.validateTaskAttachmentPath(taskId, attachment);
         try {
-          realPath = await realpath(absolutePath);
+          await removeTrustedPath(targetCwd, relativePath);
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-          throw error;
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         }
-        if (!isWithin(realPath, targetRealRoot)) throw new Error('Task attachment escaped its scope');
-        await rm(realPath, { force: true });
       }
     });
   }
@@ -457,26 +464,28 @@ export class UploadManager {
     userCwd: string,
     taskId: string,
     attachment: Pick<TaskBoardAttachment, 'attachmentId' | 'relativePath'>,
-  ): Promise<string> {
+  ): Promise<TrustedFile> {
+    return openTrustedFile(userCwd, this.validateTaskAttachmentPath(taskId, attachment));
+  }
+
+  private validateTaskAttachmentPath(
+    taskId: string,
+    attachment: Pick<TaskBoardAttachment, 'attachmentId' | 'relativePath'>,
+  ): string {
     if (!attachment.attachmentId || !ATTACHMENT_ID_RE.test(attachment.attachmentId)) {
       throw new Error('Invalid task attachment id');
     }
     if (!isSafeTaskScopeSegment(taskId)) throw new Error('Invalid task attachment scope');
-    const taskRoot = join(userCwd, 'taskboard', 'attachments', taskId);
-    const absolutePath = resolve(userCwd, attachment.relativePath);
-    if (!isWithin(absolutePath, taskRoot)
-      || !basename(absolutePath).startsWith(`${attachment.attachmentId}-`)) {
+    const normalized = attachment.relativePath.split('\\').join('/');
+    const prefix = `taskboard/attachments/${taskId}/`;
+    const leaf = normalized.slice(prefix.length);
+    if (!normalized.startsWith(prefix) || !leaf || leaf.includes('/')
+      || !leaf.startsWith(`${attachment.attachmentId}-`)) {
       throw new Error('Task attachment is not in its task scope');
     }
-    const workspaceRoot = await realpath(userCwd);
-    const realRoot = await realpath(taskRoot);
-    if (!isWithin(realRoot, workspaceRoot)) throw new Error('Task attachment scope escaped workspace');
-    const realPath = await realpath(absolutePath);
-    if (!isWithin(realPath, realRoot)) throw new Error('Task attachment escaped its scope');
-    const fileStats = await stat(realPath);
-    if (!fileStats.isFile()) throw new Error('Task attachment is not a file');
-    return realPath;
+    return normalized;
   }
+
 
   async markReferenced(
     userCwd: string,
@@ -485,42 +494,42 @@ export class UploadManager {
   ): Promise<void> {
     this.knownUserCwds.add(userCwd);
     await this.withUserMutation(userCwd, async () => {
-      const updates: Array<{ statePath: string; state: AttachmentState }> = [];
+      const updates: AttachmentState[] = [];
       for (const attachment of attachments) {
         const attachmentId = attachment.attachmentId;
         if (!attachmentId || !ATTACHMENT_ID_RE.test(attachmentId)) continue;
-        const statePath = this.statePath(userCwd, attachmentId);
         let state: AttachmentState;
         try {
-          state = JSON.parse(await readFile(statePath, 'utf8')) as AttachmentState;
+          state = JSON.parse(await readTrustedFile(userCwd, `uploads/.state/${attachmentId}.json`, 'utf8') as string) as AttachmentState;
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
           throw error;
         }
-        if (state.attachmentId !== attachmentId || basename(state.filename) !== state.filename) {
+        if (state.attachmentId !== attachmentId || basename(state.filename) !== state.filename
+          || state.relativePath !== `uploads/${state.filename}`) {
           throw new Error(`Invalid attachment state: ${attachmentId}`);
         }
         if (refs.sessionId && state.sessionIds?.some((sessionId) => sessionId !== refs.sessionId)) {
           throw new Error(`Attachment is already bound to another session: ${attachmentId}`);
         }
-        await stat(join(userCwd, state.relativePath));
+        const opened = await openTrustedFile(userCwd, state.relativePath);
+        await opened.handle.close();
         state.status = 'referenced';
         state.referencedAt ??= new Date(this.now()).toISOString();
         if (refs.sessionId) state.sessionIds = appendUnique(state.sessionIds, refs.sessionId);
         if (refs.clientMessageId) state.clientMessageIds = appendUnique(state.clientMessageIds, refs.clientMessageId);
-        updates.push({ statePath, state });
+        updates.push(state);
       }
-      for (const update of updates) await this.writeState(update.statePath, update.state);
+      for (const state of updates) await this.writeState(userCwd, state, 'uploads/.state');
     });
   }
 
   async getUsage(userCwd: string): Promise<UploadUsageSnapshot> {
     this.knownUserCwds.add(userCwd);
-    const uploadsDir = join(userCwd, 'uploads');
     const states = await this.readStates(userCwd);
     const statusByFilename = new Map(states.map((state) => [state.filename, state.status]));
-    const regularFiles = await listFilesRecursive(uploadsDir, new Set(['.partial', '.state']));
-    const partialFiles = await listFilesRecursive(join(uploadsDir, '.partial'));
+    const regularFiles = await listFilesRecursive(userCwd, 'uploads', new Set(['.partial', '.state']));
+    const partialFiles = await listFilesRecursive(userCwd, 'uploads/.partial');
 
     let stagedBytes = 0;
     let stagedFiles = 0;
@@ -575,18 +584,19 @@ export class UploadManager {
       if (!Number.isFinite(createdAt) || createdAt > cutoff) continue;
       if (!ATTACHMENT_ID_RE.test(state.attachmentId) || basename(state.filename) !== state.filename) continue;
 
-      const filePath = join(userCwd, 'uploads', state.filename);
-      if (!isWithin(filePath, join(userCwd, 'uploads'))) continue;
+      if (state.relativePath !== `uploads/${state.filename}`) continue;
       let size = state.size;
       try {
-        size = (await stat(filePath)).size;
-        await unlink(filePath);
+        const opened = await openTrustedFile(userCwd, state.relativePath);
+        size = opened.stats.size;
+        await opened.handle.close();
+        await removeTrustedPath(userCwd, state.relativePath);
         deletedFiles += 1;
         deletedBytes += size;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
-      await unlink(this.statePath(userCwd, state.attachmentId)).catch((error: NodeJS.ErrnoException) => {
+      await removeTrustedPath(userCwd, `uploads/.state/${state.attachmentId}.json`).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error;
       });
     }
@@ -602,24 +612,21 @@ export class UploadManager {
   async purgeUserUploads(userCwd: string): Promise<UploadCleanupResult> {
     this.knownUserCwds.add(userCwd);
     return this.withUserMutation(userCwd, async () => {
-      const uploadsDir = join(userCwd, 'uploads');
-      const files = await listFilesRecursive(uploadsDir, new Set(['.partial', '.state']));
+      const files = await listFilesRecursive(userCwd, 'uploads', new Set(['.partial', '.state']));
       let deletedFiles = 0;
       let deletedBytes = 0;
-
       for (const file of files) {
-        if (!isWithin(file.path, uploadsDir)) continue;
         try {
-          await unlink(file.path);
+          await removeTrustedPath(userCwd, file.path);
           deletedFiles += 1;
           deletedBytes += file.size;
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         }
       }
-
-      // 状态目录整体移除；readStates 遇 ENOENT 返回空，writeState 会按需重建
-      await rm(join(uploadsDir, '.state'), { recursive: true, force: true });
+      await removeTrustedPath(userCwd, 'uploads/.state').catch((error) => {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      });
       return { deletedFiles, deletedBytes };
     });
   }
@@ -648,29 +655,47 @@ export class UploadManager {
   }
 
   private async cleanupStalePartialRequests(userCwd: string): Promise<{ deletedRequests: number; deletedBytes: number }> {
-    const partialRoot = join(userCwd, 'uploads', '.partial');
-    let entries;
+    let partialRoot: Awaited<ReturnType<typeof openTrustedDirectory>>;
     try {
-      entries = await readdir(partialRoot, { withFileTypes: true });
+      partialRoot = await openTrustedDirectory(userCwd, 'uploads/.partial');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { deletedRequests: 0, deletedBytes: 0 };
       throw error;
     }
-    const cutoff = this.now() - this.stagedRetentionMs;
-    let deletedRequests = 0;
-    let deletedBytes = 0;
-    for (const entry of entries) {
-      if (!entry.isDirectory() || this.activeRequests.has(entry.name)) continue;
-      const requestDir = join(partialRoot, entry.name);
-      const requestStat = await lstat(requestDir);
-      if (requestStat.mtimeMs > cutoff) continue;
-      const files = await listFilesRecursive(requestDir);
-      if (files.some((file) => file.mtimeMs > cutoff)) continue;
-      deletedBytes += files.reduce((sum, file) => sum + file.size, 0);
-      await rm(requestDir, { recursive: true, force: true });
-      deletedRequests += 1;
+    try {
+      const entries = await readdir(partialRoot.fdPath, { withFileTypes: true });
+      const cutoff = this.now() - this.stagedRetentionMs;
+      let deletedRequests = 0;
+      let deletedBytes = 0;
+      for (const entry of entries) {
+        if (!entry.isDirectory() || this.activeRequests.has(entry.name)) continue;
+        let requestDirectory: FileHandle;
+        try {
+          requestDirectory = await open(
+            join(partialRoot.fdPath, entry.name),
+            constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+          );
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+          throw error;
+        }
+        let requestStats;
+        let files;
+        try {
+          requestStats = await requestDirectory.stat();
+          files = await listFilesRecursive(userCwd, `uploads/.partial/${entry.name}`);
+        } finally {
+          await requestDirectory.close();
+        }
+        if (requestStats.mtimeMs > cutoff || files.some((file) => file.mtimeMs > cutoff)) continue;
+        deletedBytes += files.reduce((sum, file) => sum + file.size, 0);
+        await removeTrustedPath(userCwd, `uploads/.partial/${entry.name}`);
+        deletedRequests += 1;
+      }
+      return { deletedRequests, deletedBytes };
+    } finally {
+      await partialRoot.handle.close();
     }
-    return { deletedRequests, deletedBytes };
   }
 
   private async discoverUserWorkspaces(): Promise<void> {
@@ -699,38 +724,39 @@ export class UploadManager {
     }
   }
 
-  private statePath(userCwd: string, attachmentId: string): string {
-    return join(userCwd, 'uploads', '.state', `${attachmentId}.json`);
-  }
-
-  private async writeState(statePath: string, state: AttachmentState): Promise<void> {
-    await mkdir(dirname(statePath), { recursive: true });
-    const tempPath = `${statePath}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(tempPath, `${JSON.stringify(state)}\n`, { encoding: 'utf8', mode: 0o664 });
-    await rename(tempPath, statePath);
-    repairWorkspacePath(statePath, 0o664);
+  private async writeState(root: string, state: AttachmentState, stateDirectory = '.state'): Promise<void> {
+    await atomicWriteTrustedFile(
+      root,
+      `${stateDirectory}/${state.attachmentId}.json`,
+      `${JSON.stringify(state)}\n`,
+      { encoding: 'utf8', createParents: true, mode: 0o664 },
+    );
   }
 
   private async readStates(userCwd: string): Promise<AttachmentState[]> {
-    const stateDir = join(userCwd, 'uploads', '.state');
-    let entries;
+    let stateDirectory: Awaited<ReturnType<typeof openTrustedDirectory>>;
     try {
-      entries = await readdir(stateDir, { withFileTypes: true });
+      stateDirectory = await openTrustedDirectory(userCwd, 'uploads/.state');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;
     }
-    const states: AttachmentState[] = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-      try {
-        const parsed = JSON.parse(await readFile(join(stateDir, entry.name), 'utf8')) as AttachmentState;
-        if (parsed.version === 1 && ATTACHMENT_ID_RE.test(parsed.attachmentId)) states.push(parsed);
-      } catch (error) {
-        uploadLogger.warn(`Skip invalid attachment state ${join(stateDir, entry.name)}: ${error instanceof Error ? error.message : String(error)}`);
+    try {
+      const entries = await readdir(stateDirectory.fdPath, { withFileTypes: true });
+      const states: AttachmentState[] = [];
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+        try {
+          const parsed = JSON.parse(await readPinnedFile(stateDirectory.fdPath, entry.name, 'utf8') as string) as AttachmentState;
+          if (parsed.version === 1 && ATTACHMENT_ID_RE.test(parsed.attachmentId)) states.push(parsed);
+        } catch (error) {
+          uploadLogger.warn(`Skip invalid attachment state ${entry.name}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
+      return states;
+    } finally {
+      await stateDirectory.handle.close();
     }
-    return states;
   }
 
   private async withUserMutation<T>(userCwd: string, task: () => Promise<T>): Promise<T> {
@@ -770,14 +796,18 @@ function isSupportedImage(mimeType: string): boolean {
     || mimeType === 'image/webp';
 }
 
-function isWithin(candidate: string, root: string): boolean {
-  const rel = relative(resolve(root), resolve(candidate));
-  return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
+function trustedRelative(root: string, relativePath: string): string {
+  if (!relativePath || isAbsolute(relativePath) || relativePath.includes('\0') || relativePath.includes('\\')) {
+    throw new UnsafeFilePathError('Invalid trusted relative path');
+  }
+  return relativeToTrustedRoot(root, resolve(root, relativePath));
 }
 
 async function isDirectory(path: string): Promise<boolean> {
   try {
-    return (await lstat(path)).isDirectory();
+    const opened = await openTrustedDirectory(path);
+    await opened.handle.close();
+    return true;
   } catch {
     return false;
   }
@@ -785,24 +815,121 @@ async function isDirectory(path: string): Promise<boolean> {
 
 async function listFilesRecursive(
   root: string,
+  relativePath = '',
   skipNames = new Set<string>(),
 ): Promise<Array<{ path: string; size: number; mtimeMs: number }>> {
-  let entries;
+  let directory: Awaited<ReturnType<typeof openTrustedDirectory>>;
   try {
-    entries = await readdir(root, { withFileTypes: true });
+    directory = await openTrustedDirectory(root, relativePath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw error;
   }
-  const files: Array<{ path: string; size: number; mtimeMs: number }> = [];
-  for (const entry of entries) {
-    if (skipNames.has(entry.name) || entry.isSymbolicLink()) continue;
-    const path = join(root, entry.name);
-    if (entry.isDirectory()) files.push(...await listFilesRecursive(path, skipNames));
-    else if (entry.isFile()) {
-      const fileStat = await stat(path);
-      files.push({ path, size: fileStat.size, mtimeMs: fileStat.mtimeMs });
+  try {
+    const entries = await readdir(directory.fdPath, { withFileTypes: true });
+    const files: Array<{ path: string; size: number; mtimeMs: number }> = [];
+    for (const entry of entries) {
+      if (skipNames.has(entry.name) || entry.isSymbolicLink()) continue;
+      const path = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        files.push(...await listFilesRecursive(root, path, skipNames));
+      } else if (entry.isFile()) {
+        const file = await openTrustedFile(root, path);
+        files.push({ path, size: file.stats.size, mtimeMs: file.stats.mtimeMs });
+        await file.handle.close();
+      }
     }
+    return files;
+  } finally {
+    await directory.handle.close();
   }
-  return files;
+}
+
+async function readPinnedFile(
+  directoryFdPath: string,
+  leaf: string,
+  encoding?: BufferEncoding,
+): Promise<Buffer | string> {
+  const handle = await open(join(directoryFdPath, leaf), constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stats = await handle.stat();
+    if (!stats.isFile()) throw Object.assign(new Error('Not a file'), { code: 'EISDIR' });
+    return encoding ? await handle.readFile({ encoding }) : await handle.readFile();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function copyOpenedFile(source: TrustedFile, destinationDirectoryFdPath: string, leaf: string): Promise<void> {
+  const destination = await open(
+    join(destinationDirectoryFdPath, leaf),
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+    0o664,
+  );
+  try {
+    const buffer = Buffer.allocUnsafe(Math.min(1024 * 1024, Math.max(1, source.stats.size)));
+    let position = 0;
+    while (position < source.stats.size) {
+      const { bytesRead } = await source.handle.read(buffer, 0, Math.min(buffer.length, source.stats.size - position), position);
+      if (bytesRead === 0) break;
+      let written = 0;
+      while (written < bytesRead) {
+        const result = await destination.write(buffer, written, bytesRead - written, position + written);
+        written += result.bytesWritten;
+      }
+      position += bytesRead;
+    }
+  } finally {
+    await destination.close();
+  }
+}
+
+async function removePinnedPath(directoryFdPath: string, relativePath: string): Promise<void> {
+  const components = relativePath.split('/').filter(Boolean);
+  if (components.length === 0 || components.some((component) => component === '.' || component === '..')) {
+    throw new UnsafeFilePathError();
+  }
+  const parents: FileHandle[] = [];
+  let currentPath = directoryFdPath;
+  try {
+    for (const component of components.slice(0, -1)) {
+      const parent = await open(
+        join(currentPath, component),
+        constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+      );
+      parents.push(parent);
+      currentPath = `/proc/self/fd/${parent.fd}`;
+    }
+    await removePinnedEntry(currentPath, components.at(-1)!);
+  } finally {
+    await Promise.allSettled(parents.map((handle) => handle.close()));
+  }
+}
+
+async function removePinnedEntry(directoryFdPath: string, leaf: string): Promise<void> {
+  const path = join(directoryFdPath, leaf);
+  let child: FileHandle | undefined;
+  try {
+    child = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOTDIR') {
+      const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const stats = await file.stat();
+      await file.close();
+      if (!stats.isFile()) throw new UnsafeFilePathError();
+      await unlink(path);
+      return;
+    }
+    throw error;
+  }
+  const childFdPath = `/proc/self/fd/${child.fd}`;
+  try {
+    for (const entry of await readdir(childFdPath)) {
+      await removePinnedEntry(childFdPath, entry);
+    }
+  } finally {
+    await child.close();
+  }
+  await rmdir(path);
 }

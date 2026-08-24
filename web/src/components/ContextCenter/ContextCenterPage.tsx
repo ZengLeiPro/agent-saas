@@ -2,7 +2,6 @@ import {
   Activity,
   BookOpenCheck,
   Database,
-  FileSearch,
   History,
   Loader2,
   Radio,
@@ -15,7 +14,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-import { EvidenceDrawer } from "./EvidenceDrawer";
 import type {
   BackfillCoverage,
   ConsumerStatus,
@@ -132,7 +130,7 @@ function OutcomeSummary({ source }: { source: ContextSource }) {
   );
 }
 
-function SourceCard({ source, onEvidence }: { source: ContextSource; onEvidence: (source: ContextSource) => void }) {
+function SourceCard({ source }: { source: ContextSource }) {
   const status = SOURCE_STATUS[source.status];
   const coverage = formatCoverage(source.backfillCoverage);
   return (
@@ -145,9 +143,6 @@ function SourceCard({ source, onEvidence }: { source: ContextSource; onEvidence:
           </div>
           <p className="mt-1 text-xs text-muted-foreground">{source.system} · Collection：{source.collection}</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => onEvidence(source)} aria-label={`查看 ${source.name} 的 Evidence`}>
-          <FileSearch className="mr-1.5 size-3.5" />查看 Evidence
-        </Button>
       </div>
 
       <div className="mt-4 grid gap-4 border-y py-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -256,7 +251,7 @@ export function ContextCenterPage({ api }: { api: ContextCenterApiPort }) {
                 ) : (
                   <div className="space-y-3" aria-label="来源与 Collection 列表">
                     {state.snapshot.sources.map((source) => (
-                      <SourceCard key={`${source.sourceId}:${source.collectionId}`} source={source} onEvidence={(item) => void state.loadEvidence(item)} />
+                      <SourceCard key={`${source.sourceId}:${source.collectionId}`} source={source} />
                     ))}
                   </div>
                 )}
@@ -281,14 +276,6 @@ export function ContextCenterPage({ api }: { api: ContextCenterApiPort }) {
         )}
       </div>
 
-      <EvidenceDrawer
-        source={state.evidenceSource}
-        items={state.evidence}
-        loading={state.evidenceLoading}
-        error={state.evidenceError}
-        onClose={state.closeEvidence}
-        onRetry={(source) => void state.loadEvidence(source)}
-      />
     </div>
   );
 }

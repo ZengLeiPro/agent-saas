@@ -1,3 +1,4 @@
+import type { RelationAuthority, RelationClass, RelationReviewStatus, RelationType } from '../relations/types.js';
 import type { ContextJson, ContextObject } from '../store/types.js';
 
 export const DERIVED_ENTITY_TYPES = ['Project', 'Task', 'Person', 'Meeting', 'Customer'] as const;
@@ -61,11 +62,16 @@ export interface DerivedRelationCandidate {
   relationId: string;
   fromEntityId: string;
   toEntityId: string;
-  relationType: 'TaskProject';
+  relationType: RelationType;
+  relationClass: RelationClass;
+  authority: RelationAuthority;
+  reviewStatus: RelationReviewStatus;
   sourceId: string;
   collectionId: string;
   recordId: string;
   recordRevision: number;
+  validFrom: string;
+  validTo?: string;
   evidence: DerivedEvidenceRef[];
 }
 
@@ -114,6 +120,21 @@ export interface ReviewRoleGate {
   mayCorrectOrganization(input: { tenantId: string; actorId: string }): Promise<boolean>;
 }
 
+export interface DerivedReviewAuthorizationSnapshot {
+  readonly tenantId: string;
+  readonly entityId: string;
+  readonly generation: string;
+  readonly itemId: string;
+  readonly itemType: DerivedItemType;
+  readonly semanticKey: string;
+  readonly valueFingerprint: string;
+  readonly ownerPrincipal: string | null;
+  readonly evidence: readonly Readonly<DerivedEvidenceRef>[];
+  readonly scope: Readonly<DerivedScope>;
+}
+
+export type DerivedReviewAuthorizer = (snapshot: DerivedReviewAuthorizationSnapshot) => Promise<boolean>;
+
 export interface AppendReviewInput {
   tenantId: string;
   actorId: string;
@@ -121,6 +142,10 @@ export interface AppendReviewInput {
   expectedRevision: number;
   scope: DerivedScope;
   action: 'assert' | 'reject';
+  /** Mandatory live authorization performed against the locked target snapshot. */
+  authorize: DerivedReviewAuthorizer;
+  /** Exact active item being corrected; never infer a reject target from its fingerprint. */
+  targetItemId: string;
   itemType?: DerivedItemType;
   semanticKey?: string;
   value?: ContextJson;

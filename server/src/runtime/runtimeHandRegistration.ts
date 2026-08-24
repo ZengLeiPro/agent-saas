@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 
 import type { PgEnvironmentStore } from '../data/environments/index.js';
 import type { ExecutionTargetKind, ToolDescriptor } from '../agent/toolRuntime.js';
@@ -190,33 +190,62 @@ export async function ensureRuntimeHandRegistered(params: {
   }
   const recipeDigest = environmentVersion?.digest
     ?? createHash('sha256').update(JSON.stringify(recipe)).digest('hex');
+  const defaultHandRegistration = {
+    handId: defaultHandId,
+    sessionId: params.sessionId,
+    workspaceId: params.workspaceId,
+    type: params.executionTarget,
+    endpoint: params.endpoint,
+    capabilities,
+    recipe,
+    providerId: params.executionTarget,
+    ...(environmentVersion ? { templateVersionId: environmentVersion.versionId } : {}),
+    ...(params.runId ? { runId: params.runId } : {}),
+    recipeDigest,
+    ...(params.executionTarget === 'server-remote'
+      ? { leaseExpiresAt: new Date(Date.now() + SERVER_REMOTE_HAND_LEASE_MS) }
+      : {}),
+  };
+  let defaultProvisionAttempted = false;
   let defaultProvisionFailure: string | undefined;
   let defaultProvisionMetadata: Record<string, unknown> | undefined;
+  const defaultProvisionGeneration = randomUUID();
+  const initialProvisionMetadata = {
+    registeredBy: 'rawRuntimeRunDispatch',
+    provisionFailure: null,
+    provisionRecoveryToken: null,
+    provisionRecoveryClaimedAtMs: null,
+    provisionGeneration: defaultProvisionGeneration,
+    provision: { attempts: 0, lastStatus: 'provisioning', lastAttemptAt: new Date().toISOString() },
+  };
+  await manager.provision({
+    ...defaultHandRegistration,
+    status: 'provisioning',
+    metadata: initialProvisionMetadata,
+  });
   if (transport && typeof (transport as { provision?: unknown }).provision === 'function') {
-    const result = await (transport as unknown as { provision(recipe: { workspaceId: string }): Promise<{ status: 'ok' | 'error'; error?: string; metadata?: Record<string, unknown> }> }).provision(recipe);
-    defaultProvisionMetadata = result.metadata;
-    // B3: persist provisioning logs (workspace_ensure / setup_command#N / skipped
-    // repo+artifact placeholders) emitted by hand-server so audit can correlate.
-    await appendProvisioningLogs({
-      eventStore: params.eventStore,
-      sessionId: params.sessionId,
-      handId: defaultHandId,
-      workspaceId: params.workspaceId,
-      metadata: result.metadata,
-    });
-    if (result.status === 'error') {
-      defaultProvisionFailure = result.error ?? 'hand provision failed';
-      await params.eventStore.append({
-        type: 'hand_failure',
+    defaultProvisionAttempted = true;
+    try {
+      const result = await (transport as unknown as { provision(recipe: { workspaceId: string }): Promise<{ status: 'ok' | 'error'; error?: string; metadata?: Record<string, unknown> }> }).provision(recipe);
+      defaultProvisionMetadata = result.metadata;
+      // B3: persist provisioning logs (workspace_ensure / setup_command#N / skipped
+      // repo+artifact placeholders) emitted by hand-server so audit can correlate.
+      await appendProvisioningLogs({
+        eventStore: params.eventStore,
         sessionId: params.sessionId,
+        handId: defaultHandId,
         workspaceId: params.workspaceId,
-        error: defaultProvisionFailure,
-        classifiedAs: 'unhealthy',
+        metadata: result.metadata,
+      }).catch((err) => {
+        params.logger?.warn(`default hand provisioning log append failed: ${err instanceof Error ? err.message : String(err)}`);
       });
+      if (result.status === 'error') defaultProvisionFailure = result.error ?? 'hand provision failed';
+    } catch (err) {
+      defaultProvisionFailure = err instanceof Error ? err.message : String(err);
     }
   }
   let verifiedRuntimeIsolationEvidence: RuntimeIsolationEvidence | undefined;
-  if (params.runtimeIsolationRequirement) {
+  if (params.runtimeIsolationRequirement && !defaultProvisionFailure) {
     const provisionMetadata = isRecord(defaultProvisionMetadata?.metadata)
       ? defaultProvisionMetadata.metadata
       : defaultProvisionMetadata;
@@ -226,38 +255,57 @@ export async function ensureRuntimeHandRegistered(params: {
       evidence,
       sandboxScopeId: recipe.sandboxScopeId ?? recipe.workspaceId,
     };
-    assertRuntimeIsolationEvidence(verification);
-    verifiedRuntimeIsolationEvidence = verification.evidence;
+    try {
+      assertRuntimeIsolationEvidence(verification);
+      verifiedRuntimeIsolationEvidence = verification.evidence;
+    } catch (err) {
+      defaultProvisionFailure = err instanceof Error ? err.message : String(err);
+    }
   }
-  await manager.provision({
-    handId: defaultHandId,
-    sessionId: params.sessionId,
-    workspaceId: params.workspaceId,
-    type: params.executionTarget,
-    status: defaultProvisionFailure ? 'unhealthy' : 'ready',
-    endpoint: params.endpoint,
-    capabilities,
-    recipe,
-    providerId: params.executionTarget,
-    ...(environmentVersion ? { templateVersionId: environmentVersion.versionId } : {}),
-    ...(params.runId ? { runId: params.runId } : {}),
-    recipeDigest,
-    // 2026-08-03 P1：per-session hand 记录挂租约。register 是 upsert，活跃
-    // session 每次 dispatch 自动续期；到期由 janitor 收敛（见 handStore.sweepLeases）。
-    ...(params.executionTarget === 'server-remote'
-      ? { leaseExpiresAt: new Date(Date.now() + SERVER_REMOTE_HAND_LEASE_MS) }
-      : {}),
-    metadata: {
-      registeredBy: 'rawRuntimeRunDispatch',
-      ...(verifiedRuntimeIsolationEvidence ? {
-        runtimeIsolationAttested: true,
-        runId: verifiedRuntimeIsolationEvidence.runId,
-        policyDigest: verifiedRuntimeIsolationEvidence.policyDigest,
-        sandboxName: verifiedRuntimeIsolationEvidence.sandboxName,
-        sandboxScopeId: verifiedRuntimeIsolationEvidence.sandboxScopeId,
-      } : {}),
-    },
-  });
+  const defaultFinalStatus = defaultProvisionFailure ? 'unhealthy' : 'ready';
+  const defaultFinalMetadata = {
+    registeredBy: 'rawRuntimeRunDispatch',
+    provisionGeneration: defaultProvisionGeneration,
+    provisionFailure: defaultProvisionFailure ?? null,
+    provisionRecoveryToken: null,
+    provisionRecoveryClaimedAtMs: null,
+    ...(defaultProvisionAttempted ? {
+      provision: {
+        attempts: 0,
+        lastStatus: defaultProvisionFailure ? 'error' : 'ok',
+        lastAttemptAt: new Date().toISOString(),
+        ...(defaultProvisionFailure ? { lastError: defaultProvisionFailure } : {}),
+      },
+    } : {}),
+    ...(verifiedRuntimeIsolationEvidence ? {
+      runtimeIsolationAttested: true,
+      runId: verifiedRuntimeIsolationEvidence.runId,
+      policyDigest: verifiedRuntimeIsolationEvidence.policyDigest,
+      sandboxName: verifiedRuntimeIsolationEvidence.sandboxName,
+      sandboxScopeId: verifiedRuntimeIsolationEvidence.sandboxScopeId,
+    } : {}),
+  };
+  const completedDefaultHand = await params.handStore.completeProvisionAttempt(
+    defaultHandId,
+    defaultProvisionGeneration,
+    defaultFinalStatus,
+    defaultFinalMetadata,
+  );
+  if (!completedDefaultHand) return;
+  if (defaultProvisionFailure) {
+    try {
+      await params.eventStore.append({
+        type: 'hand_failure',
+        sessionId: params.sessionId,
+        workspaceId: params.workspaceId,
+        handId: defaultHandId,
+        error: defaultProvisionFailure,
+        classifiedAs: 'unhealthy',
+      });
+    } catch {
+      // Hand 状态落库优先；审计事件故障不得掩盖 provisionFailure。
+    }
+  }
   if (params.environmentStore && environmentVersion && params.userTenantId) {
     const version = environmentVersion;
     const leaseExpiresAt = new Date(Date.now() + SERVER_REMOTE_HAND_LEASE_MS).toISOString();
@@ -351,6 +399,7 @@ export async function ensureRuntimeHandRegistered(params: {
       params.topLevelSessionId,
     );
     const tenantRecipeDigest = createHash('sha256').update(JSON.stringify(tenantRecipe)).digest('hex');
+    const tenantProvisionGeneration = randomUUID();
     await manager.provision({
       handId,
       sessionId: params.sessionId,
@@ -370,10 +419,19 @@ export async function ensureRuntimeHandRegistered(params: {
         registeredBy: 'tenantRemoteHands',
         tenantRemoteHandId: hand.id,
         tenantRemoteHandTokenSource: tokenSource,
+        provisionGeneration: tenantProvisionGeneration,
+        provisionFailure: failure ?? null,
+        provisionRecoveryToken: null,
+        provisionRecoveryClaimedAtMs: null,
+        provision: {
+          attempts: 0,
+          lastStatus: failure ? 'error' : 'provisioning',
+          lastAttemptAt: new Date().toISOString(),
+          ...(failure ? { lastError: failure } : {}),
+        },
         ...(tokenRef ? { authTokenRef: tokenRef } : {}),
         ...(hand.invokeTimeoutMs ? { invokeTimeoutMs: hand.invokeTimeoutMs } : {}),
         ...(hand.networkPolicy ? { networkPolicy: hand.networkPolicy } : {}),
-        ...(failure ? { provisionFailure: failure } : {}),
       },
     });
 
@@ -388,6 +446,7 @@ export async function ensureRuntimeHandRegistered(params: {
         eventStore: params.eventStore,
         transport: tenantTransport,
         recipe: tenantRecipe,
+        provisionGeneration: tenantProvisionGeneration,
         sessionId: params.sessionId,
         handId,
         workspaceId: remoteWorkspaceId,
@@ -501,15 +560,24 @@ async function appendProvisioningLogs(args: {
 }
 
 async function provisionTenantRemoteHand(args: {
-  handStore?: HandStore;
+  handStore: HandStore;
   eventStore: EventStore;
   transport: HttpTransport;
   recipe: WorkspaceRecipe;
+  provisionGeneration: string;
   sessionId: string;
   handId: string;
   workspaceId: string;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
 }): Promise<void> {
+  const complete = async (status: 'ready' | 'unhealthy', metadata: Record<string, unknown>) => {
+    return await args.handStore.completeProvisionAttempt(
+      args.handId,
+      args.provisionGeneration,
+      status,
+      metadata,
+    );
+  };
   try {
     const result = await args.transport.provision(args.recipe);
     await appendProvisioningLogs({
@@ -522,10 +590,19 @@ async function provisionTenantRemoteHand(args: {
 
     if (result.status === 'error') {
       const error = result.error ?? 'tenant remote hand provision failed';
-      await args.handStore?.updateStatus(args.handId, 'unhealthy', {
+      const completed = await complete('unhealthy', {
         provisionFailure: error,
+        provisionRecoveryToken: null,
+        provisionRecoveryClaimedAtMs: null,
+        provision: {
+          attempts: 0,
+          lastStatus: 'error',
+          lastAttemptAt: new Date().toISOString(),
+          lastError: error,
+        },
         lastProvisionedAt: new Date().toISOString(),
       });
+      if (!completed) return;
       await args.eventStore.append({
         type: 'hand_failure',
         sessionId: args.sessionId,
@@ -545,11 +622,20 @@ async function provisionTenantRemoteHand(args: {
       return;
     }
 
-    await args.handStore?.updateStatus(args.handId, 'ready', {
+    const completed = await complete('ready', {
       provisionFailure: null,
+      provisionRecoveryToken: null,
+      provisionRecoveryClaimedAtMs: null,
+      provision: {
+        attempts: 0,
+        lastStatus: 'ok',
+        lastAttemptAt: new Date().toISOString(),
+        lastSucceededAt: new Date().toISOString(),
+      },
       lastProvisionedAt: new Date().toISOString(),
       ...(result.metadata ? { lastProvisionMetadata: result.metadata } : {}),
     });
+    if (!completed) return;
     await args.eventStore.append({
       type: 'hand_health_changed',
       sessionId: args.sessionId,
@@ -561,10 +647,19 @@ async function provisionTenantRemoteHand(args: {
     args.logger?.info(`tenant_hand_ready handId=${args.handId}`);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    await args.handStore?.updateStatus(args.handId, 'unhealthy', {
+    const completed = await complete('unhealthy', {
       provisionFailure: error,
+      provisionRecoveryToken: null,
+      provisionRecoveryClaimedAtMs: null,
+      provision: {
+        attempts: 0,
+        lastStatus: 'error',
+        lastAttemptAt: new Date().toISOString(),
+        lastError: error,
+      },
       lastProvisionedAt: new Date().toISOString(),
     }).catch(() => undefined);
+    if (!completed) return;
     await args.eventStore.append({
       type: 'hand_failure',
       sessionId: args.sessionId,

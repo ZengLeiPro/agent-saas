@@ -39,11 +39,24 @@ describe('AcsNetworkPolicyManager helpers', () => {
         { cidr: '100.100.2.138/32' },
       ],
     });
-    expect(rules[1].action).toBe('deny');
-    expect(rules[1].to).toContainEqual({ cidr: '100.100.100.200/32' });
-    expect(rules[1].to).toContainEqual({ cidr: '172.16.0.0/12' });
-    expect(rules[1].to).toContainEqual({ cidr: '100.64.0.0/10' });
+    expect(rules[1]).toEqual({ action: 'deny', to: [{ cidr: '100.100.100.200/32' }] });
+    expect(rules[2].action).toBe('deny');
+    expect(rules[2].to).toContainEqual({ cidr: '172.16.0.0/12' });
+    expect(rules[2].to).toContainEqual({ cidr: '100.64.0.0/10' });
     expect(rules.at(-1)).toEqual({ action: 'allow', to: [{ cidr: '0.0.0.0/0' }] });
+  });
+
+  it('public-egress 即使关闭私网阻断且没有 denyCidrs 也先阻断 metadata', () => {
+    const manifest = buildTrafficPolicyManifest({
+      namespace: 'agent-saas-coding',
+      ref: { name: 'as-session-abcdef', workspaceId: 'ws_kaiyan__test', sandboxScopeId: 'ws_kaiyan__test', sessionId: 'session-123', mountSubPath: 'workspaces/kaiyan/u-1' },
+      policy: { mode: 'public-egress', denyPrivateNetworks: false },
+    });
+    const rules = ((manifest.spec as any).egress.rules ?? []) as any[];
+
+    expect(rules[1]).toEqual({ action: 'deny', to: [{ cidr: '100.100.100.200/32' }] });
+    expect(rules[2]).toEqual({ action: 'allow', to: [{ cidr: '0.0.0.0/0' }] });
+    expect(rules).toHaveLength(3);
   });
 
   it('builds private-egress TrafficPolicy as allow-list plus deny-all fallback', () => {
@@ -91,9 +104,10 @@ describe('AcsNetworkPolicyManager helpers', () => {
     const rules = ((manifest.spec as any).egress.rules ?? []) as any[];
     expect(rules[0].action).toBe('allow');
     expect(rules[0].to).toContainEqual({ service: { namespace: 'kube-system', name: 'kube-dns' } });
-    expect(rules[1]).toEqual({ action: 'allow', to: [{ cidr: '172.16.177.77/32' }] });
-    expect(rules[2].action).toBe('deny');
-    expect(rules[2].to).toContainEqual({ cidr: '172.16.0.0/12' });
+    expect(rules[1]).toEqual({ action: 'deny', to: [{ cidr: '100.100.100.200/32' }] });
+    expect(rules[2]).toEqual({ action: 'allow', to: [{ cidr: '172.16.177.77/32' }] });
+    expect(rules[3].action).toBe('deny');
+    expect(rules[3].to).toContainEqual({ cidr: '172.16.0.0/12' });
     expect(rules.at(-1)).toEqual({ action: 'allow', to: [{ cidr: '0.0.0.0/0' }] });
   });
 
@@ -128,8 +142,58 @@ describe('AcsNetworkPolicyManager helpers', () => {
     for (const rule of allowRules) {
       expect(rule.to).not.toContainEqual({ cidr: '100.100.100.200/32' });
     }
-    // 正常代理地址仍然放行
-    expect(rules[1]).toEqual({ action: 'allow', to: [{ cidr: '172.16.177.77/32' }] });
+    expect(rules[1]).toEqual({ action: 'deny', to: [{ cidr: '100.100.100.200/32' }] });
+    // 正常代理地址仍然放行，但排在 metadata deny 之后
+    expect(rules[2]).toEqual({ action: 'allow', to: [{ cidr: '172.16.177.77/32' }] });
+  });
+
+  it('public-egress 的宽 CIDR 不能越过前置 metadata deny', () => {
+    const manifest = buildTrafficPolicyManifest({
+      namespace: 'agent-saas-coding',
+      ref: REF,
+      policy: { mode: 'public-egress', denyPrivateNetworks: false },
+      extraAllowCidrs: [
+        '100.100.100.0/24',
+        '100.100.96.0/20',
+        '0.0.0.0/0',
+        '172.16.177.77/32',
+      ],
+    });
+    const rules = ((manifest.spec as any).egress.rules ?? []) as any[];
+
+    expect(rules[1]).toEqual({ action: 'deny', to: [{ cidr: '100.100.100.200/32' }] });
+    expect(rules[2]).toEqual({ action: 'allow', to: [{ cidr: '172.16.177.77/32' }] });
+    expect(rules[3]).toEqual({ action: 'allow', to: [{ cidr: '0.0.0.0/0' }] });
+  });
+
+  it('按 CIDR 包含关系拒绝可覆盖 metadata IP 的宽网段放行', () => {
+    const manifest = buildTrafficPolicyManifest({
+      namespace: 'agent-saas-coding',
+      ref: REF,
+      policy: {
+        mode: 'private-egress',
+        denyPrivateNetworks: false,
+        allowCidrs: [
+          '100.100.100.0/24',
+          '100.100.0.0/16',
+          '0.0.0.0/0',
+          '100.100.101.0/24',
+        ],
+      },
+      extraAllowCidrs: ['100.100.96.0/20'],
+    });
+    const rules = ((manifest.spec as any).egress.rules ?? []) as any[];
+    const explicitAllows = rules
+      .filter((rule) => rule.action === 'allow')
+      .flatMap((rule) => rule.to ?? [])
+      .filter((peer: any) => typeof peer.cidr === 'string')
+      .map((peer: any) => peer.cidr);
+
+    expect(explicitAllows).toContain('100.100.101.0/24');
+    expect(explicitAllows).not.toContain('100.100.100.0/24');
+    expect(explicitAllows).not.toContain('100.100.0.0/16');
+    expect(explicitAllows).not.toContain('100.100.96.0/20');
+    expect(explicitAllows).not.toContain('0.0.0.0/0');
   });
 
   it('isolated 模式下代理也不放行（隔离语义不留后门）', () => {
@@ -140,6 +204,7 @@ describe('AcsNetworkPolicyManager helpers', () => {
       extraAllowCidrs: ['172.16.177.77/32'],
     });
     expect((manifest.spec as any).egress.rules).toEqual([
+      { action: 'deny', to: [{ cidr: '100.100.100.200/32' }] },
       { action: 'deny', to: [{ cidr: '0.0.0.0/0' }] },
     ]);
   });

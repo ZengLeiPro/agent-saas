@@ -1,6 +1,6 @@
 import express from 'express';
 import { request as httpRequest, type Server } from 'node:http';
-import { mkdtemp, mkdir, readFile, readdir, stat, writeFile, rm } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, readdir, rename, stat, symlink, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -220,15 +220,70 @@ describe('attachment upload hardening', () => {
     const [scoped] = await manager.materializeTaskAttachments(sourceCwd, targetCwd, 'task-1', [sourceAttachment]);
     expect(scoped.relativePath).toBe(`taskboard/attachments/task-1/${attachmentId}-evidence.pdf`);
     expect(await readFile(join(targetCwd, scoped.relativePath), 'utf8')).toBe('evidence');
-    await expect(manager.resolveTaskAttachment(targetCwd, 'task-1', scoped)).resolves.toBe(
-      join(targetCwd, scoped.relativePath),
-    );
+    const opened = await manager.resolveTaskAttachment(targetCwd, 'task-1', scoped);
+    await expect(opened.handle.readFile('utf8')).resolves.toBe('evidence');
+    await opened.handle.close();
 
     await manager.markReferenced(sourceCwd, [sourceAttachment], { sessionId: 'session-a' });
     await expect(manager.markReferenced(sourceCwd, [sourceAttachment], { sessionId: 'session-b' }))
       .rejects.toThrow('already bound to another session');
     const state = JSON.parse(await readFile(join(sourceCwd, 'uploads', '.state', `${attachmentId}.json`), 'utf8'));
     expect(state.sessionIds).toEqual(['session-a']);
+  });
+
+  it('keeps a task download bound to the opened inode across directory replacement', async () => {
+    const root = await createRoot();
+    const manager = new UploadManager({ agentCwd: root });
+    const userCwd = join(root, 'tenant-a', 'user-1');
+    const attachmentId = 'abababab-abab-4bab-8bab-abababababab';
+    await mkdir(join(userCwd, 'uploads'), { recursive: true });
+    await writeFile(join(userCwd, 'uploads', 'evidence.txt'), 'trusted');
+    const [scoped] = await manager.materializeTaskAttachments(userCwd, userCwd, 'task-race', [{
+      attachmentId,
+      originalName: 'evidence.txt',
+      relativePath: 'uploads/evidence.txt',
+      size: 7,
+      mimeType: 'text/plain',
+      isImage: false,
+    }]);
+
+    const opened = await manager.resolveTaskAttachment(userCwd, 'task-race', scoped);
+    const taskDirectory = join(userCwd, 'taskboard', 'attachments', 'task-race');
+    await rename(taskDirectory, `${taskDirectory}-old`);
+    await mkdir(taskDirectory, { recursive: true });
+    await writeFile(join(userCwd, scoped.relativePath), 'attacker');
+
+    await expect(opened.handle.readFile('utf8')).resolves.toBe('trusted');
+    await opened.handle.close();
+  });
+
+  it('rejects ancestor symlinks and cross-root task attachment deletion', async () => {
+    const root = await createRoot();
+    const manager = new UploadManager({ agentCwd: root });
+    const userCwd = join(root, 'tenant-a', 'user-1');
+    const outside = join(root, 'outside');
+    const attachmentId = 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd';
+    await mkdir(userCwd, { recursive: true });
+    await mkdir(outside, { recursive: true });
+    await writeFile(join(outside, 'source.txt'), 'outside');
+    await symlink(outside, join(userCwd, 'uploads'));
+
+    await expect(manager.materializeTaskAttachments(userCwd, userCwd, 'task-safe', [{
+      attachmentId,
+      originalName: 'source.txt',
+      relativePath: 'uploads/source.txt',
+      size: 7,
+      mimeType: 'text/plain',
+      isImage: false,
+    }])).rejects.toThrow();
+
+    const protectedPath = join(outside, `${attachmentId}-protected.txt`);
+    await writeFile(protectedPath, 'keep');
+    await expect(manager.cleanupTaskAttachments(userCwd, 'task-safe', [{
+      attachmentId,
+      relativePath: `taskboard/attachments/task-safe/../../../../outside/${attachmentId}-protected.txt`,
+    }])).rejects.toThrow('not in its task scope');
+    await expect(readFile(protectedPath, 'utf8')).resolves.toBe('keep');
   });
 
   it('removes an aborted request from .partial and releases the drain counter', async () => {
@@ -259,6 +314,30 @@ describe('attachment upload hardening', () => {
     const partialRoot = join(root, USER.tenantId, USER.sub, 'uploads', '.partial');
     await waitFor(async () => (await readdir(partialRoot)).length === 0);
     expect(manager.getMetricsSnapshot().abortedRequests).toBe(1);
+  });
+
+  it('closes pinned request handles and drops active state when partial removal fails', async () => {
+    const root = await createRoot();
+    const manager = new UploadManager({ agentCwd: root });
+    const userCwd = join(root, USER.tenantId, USER.sub);
+    const requestId = 'request-remove-error';
+    const partialDir = await manager.beginRequest(userCwd, requestId);
+    const active = (manager as unknown as {
+      activeRequests: Map<string, {
+        partialHandle: { fd: number };
+        uploadsHandle: { fd: number };
+      }>;
+    }).activeRequests.get(requestId)!;
+    const movedPartialDir = `${partialDir}-moved`;
+    await rename(partialDir, movedPartialDir);
+    await symlink(movedPartialDir, partialDir, 'dir');
+
+    await expect(manager.finishFailedRequest(requestId, 'aborted')).resolves.toBeUndefined();
+
+    expect(manager.getActiveUploadCount()).toBe(0);
+    expect(active.partialHandle.fd).toBe(-1);
+    expect(active.uploadsHandle.fd).toBe(-1);
+    expect((await lstat(partialDir)).isSymbolicLink()).toBe(true);
   });
 
   it('cleans expired staged files but never deletes referenced or legacy files', async () => {

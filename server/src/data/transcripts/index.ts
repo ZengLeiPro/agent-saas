@@ -5,3 +5,4 @@ export * from './projectKey.js';
 export * from './store.js';
 export * from './parse.js';
 export * from './fork.js';
+export * from './trusted.js';

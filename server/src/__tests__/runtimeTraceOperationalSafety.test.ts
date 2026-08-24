@@ -177,7 +177,14 @@ describe('runtime trace 任务口径与脱敏', () => {
     const taskHealthCalls = pool.calls.filter((call) => /eff:(outcome|error_reasons|slowest_runs|long_running_runs)/.test(call.text));
     expect(taskHealthCalls).toHaveLength(4);
     for (const call of taskHealthCalls) {
-      expect(call.params).toEqual(['2026-08-07T00:05:00.000Z', 'kaiyan', '2026-08-14T00:05:00.000Z']);
+      expect(call.params?.slice(0, 3)).toEqual([
+        '2026-08-07T00:05:00.000Z', 'kaiyan', '2026-08-14T00:05:00.000Z',
+      ]);
+      if (call.text.includes('eff:long_running_runs')) {
+        expect(call.params?.[3]).toBe('2026-08-14T00:05:00.000Z');
+      } else {
+        expect(call.params).toHaveLength(3);
+      }
       expect(call.text).toContain('requested_at >= $1::timestamptz');
       expect(call.text).toContain('requested_at < $3::timestamptz');
       expect(call.text).not.toContain('run_finished');

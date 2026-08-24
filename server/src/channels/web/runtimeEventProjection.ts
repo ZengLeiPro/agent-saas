@@ -179,7 +179,7 @@ export function projectRuntimePlatformEvent(
         }],
       };
     case 'tool_result': {
-      const artifactDelivery = projectArtifactDelivery(event.toolName, event.metadata);
+      const artifactDelivery = projectArtifactDelivery(event.toolName, event.metadata, event.content);
       if (artifactDelivery) return { events: [artifactDelivery] };
       if (isDedicatedWebTool(event.toolName)) return { events: [] };
       const events: object[] = [{
@@ -359,6 +359,8 @@ export function projectRuntimePlatformEvent(
           toolUseCount: event.toolUseCount,
           turnCount: event.turnCount,
           errorMessage: event.errorMessage,
+          failureKind: event.failureKind,
+          recoveryAction: event.recoveryAction,
           resultPreview: event.resultPreview,
         }],
       };
@@ -385,6 +387,8 @@ export function projectRuntimePlatformEvent(
               status: event.status,
               runId: event.runId,
               ...(event.reason ? { reason: event.reason } : {}),
+              ...(event.failureKind ? { failureKind: event.failureKind } : {}),
+              ...(event.recoveryAction ? { recoveryAction: event.recoveryAction } : {}),
             },
             {
               type: 'done',
@@ -393,6 +397,8 @@ export function projectRuntimePlatformEvent(
               ...(options.clientMsgId ? { client_msg_id: options.clientMsgId } : {}),
               ...(event.status === 'completed' ? { finalOutput: true } : {}),
               ...(terminalError ? { error: terminalError } : {}),
+              ...(event.failureKind ? { failureKind: event.failureKind } : {}),
+              ...(event.recoveryAction ? { recoveryAction: event.recoveryAction } : {}),
             },
           ],
           terminal: true,
@@ -409,6 +415,8 @@ export function projectRuntimePlatformEvent(
           status: event.status,
           runId: event.runId,
           ...(event.reason ? { reason: event.reason } : {}),
+          ...(event.failureKind ? { failureKind: event.failureKind } : {}),
+          ...(event.recoveryAction ? { recoveryAction: event.recoveryAction } : {}),
         }],
       };
     case 'run_finished': {
@@ -427,6 +435,8 @@ export function projectRuntimePlatformEvent(
             runId: event.runId,
             ...(options.clientMsgId ? { client_msg_id: options.clientMsgId } : {}),
             error: terminalError,
+            ...(event.failureKind ? { failureKind: event.failureKind } : {}),
+            ...(event.recoveryAction ? { recoveryAction: event.recoveryAction } : {}),
           }],
           terminal: true,
           sessionStatus: 'failed',

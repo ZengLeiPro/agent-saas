@@ -61,29 +61,122 @@ beforeEach(() => {
 
 describe("useSession 跨会话详情请求隔离", () => {
   it("新建会话会作废在飞的详情请求，草稿页不会被旧会话消息占领", async () => {
-    const { release, settled } = mockPendingDetail();
+    const { release } = mockPendingDetail();
     const callbacks = makeCallbacks();
     const { result } = renderHook(() => useSession(callbacks));
 
     await act(async () => { result.current.selectSession("session-a"); });
     await act(async () => { result.current.newSession(); });
-    await act(async () => { release(FAILED_DETAIL); await settled; });
+    await act(async () => {
+      release(FAILED_DETAIL);
+      await result.current.loadDetailPromiseRef.current;
+    });
 
     expect(callbacks.setMessages).not.toHaveBeenCalled();
     expect(result.current.sessionId).toBeNull();
   });
 
   it("对照：未被打断时详情返回会正常写入当前会话", async () => {
-    const { release, settled } = mockPendingDetail();
+    const { release } = mockPendingDetail();
     const callbacks = makeCallbacks();
     const { result } = renderHook(() => useSession(callbacks));
 
     await act(async () => { result.current.selectSession("session-a"); });
-    await act(async () => { release(FAILED_DETAIL); await settled; });
+    await act(async () => {
+      release(FAILED_DETAIL);
+      await result.current.loadDetailPromiseRef.current;
+    });
 
     expect(callbacks.setMessages).toHaveBeenCalled();
     expect(result.current.sessionId).toBe("session-a");
     expect(authFetchMock).toHaveBeenCalledWith(expect.stringContaining("limit=200"));
+  });
+
+  it("刷新失败会话时按结构化协议恢复策略拒绝提示", async () => {
+    const callbacks = makeCallbacks();
+    authFetchMock.mockImplementation((url: string) => {
+      if (url.startsWith("/api/sessions/session-policy")) {
+        return Promise.resolve(jsonResponse({
+          blocks: [{ id: "line-1", kind: "text", content: "已生成正文" }],
+          lastRunState: {
+            status: "failed",
+            error: "脱敏错误",
+            runId: "run-policy",
+            failureKind: "policy_rejection",
+            recoveryAction: "switch_model",
+          },
+        }));
+      }
+      if (url.startsWith("/api/chat/interactions/pending")) return Promise.resolve(jsonResponse([]));
+      return Promise.resolve(jsonResponse({ sessions: [], hasMore: false }));
+    });
+    const { result } = renderHook(() => useSession(callbacks));
+
+    await act(async () => { await result.current.loadSessionDetail("session-policy"); });
+
+    const messages = vi.mocked(callbacks.setMessages).mock.calls.at(-1)?.[0] ?? [];
+    expect(messages).toContainEqual(expect.objectContaining({
+      type: "system-error",
+      content: "当前模型受策略限制，请切换其他模型继续。",
+      failureKind: "policy_rejection",
+      recoveryAction: "switch_model",
+    }));
+    expect(messages).toContainEqual(expect.objectContaining({ type: "text", content: "已生成正文" }));
+  });
+
+  it("done 后 preserveTail 刷新不会重复同一 run 的策略提示", async () => {
+    let currentMessages: ReturnType<NonNullable<SessionCallbacks["getMessages"]>> = [];
+    const callbacks = makeCallbacks();
+    callbacks.getMessages = () => currentMessages;
+    callbacks.setMessages = vi.fn((messages) => { currentMessages = messages; });
+    let detailCalls = 0;
+    authFetchMock.mockImplementation((url: string) => {
+      if (url.startsWith("/api/sessions/session-policy")) {
+        detailCalls += 1;
+        if (detailCalls === 1) {
+          return Promise.resolve(jsonResponse({
+            mode: "full",
+            blocks: [{ id: "line-1", kind: "text", content: "已生成正文" }],
+            cursor: "line-1",
+            historyComplete: true,
+          }));
+        }
+        return Promise.resolve(jsonResponse({
+          mode: "delta",
+          blocks: [],
+          cursor: "line-2",
+          lastRunState: {
+            status: "failed",
+            error: "脱敏错误",
+            runId: "run-policy",
+            failureKind: "policy_rejection",
+            recoveryAction: "switch_model",
+          },
+        }));
+      }
+      if (url.startsWith("/api/chat/interactions/pending")) return Promise.resolve(jsonResponse([]));
+      return Promise.resolve(jsonResponse({ sessions: [], hasMore: false }));
+    });
+    const { result } = renderHook(() => useSession(callbacks));
+    await act(async () => { await result.current.loadSessionDetail("session-policy"); });
+    currentMessages = [
+      { id: "live-text", type: "text", content: "已生成正文" },
+      {
+        id: "live-policy", type: "system-error", content: "当前模型受策略限制，请切换其他模型继续。",
+        severity: "error", failureKind: "policy_rejection", recoveryAction: "switch_model", runId: "run-policy",
+      },
+    ];
+
+    await act(async () => {
+      await result.current.loadSessionDetail("session-policy", { preserveTail: true });
+    });
+
+    expect(currentMessages.filter((message) => (
+      message.type === "system-error" && message.failureKind === "policy_rejection"
+    ))).toHaveLength(1);
+    expect(currentMessages).toContainEqual(expect.objectContaining({
+      id: "system-error-run-policy", runId: "run-policy", recoveryAction: "switch_model",
+    }));
   });
 
   it("首屏只取尾部一页，并能向前合并历史且去除边界重叠", async () => {

@@ -1,5 +1,6 @@
 import type { AgentProfile } from './agent';
 import type { ToolPresentation } from '../lib/toolPresentation';
+import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure';
 
 /** 丰富的 owner 信息（含显示所需的头像、名字） */
 export interface SessionOwnerInfo {
@@ -52,6 +53,8 @@ export interface ApiLastRunState {
   status: string;
   /** run_state_changed.reason —— failed/cancelled 时通常带 model error message */
   error?: string;
+  failureKind?: RuntimeFailureKind;
+  recoveryAction?: RuntimeRecoveryAction;
   /** 该 run_state_changed 事件的 ISO timestamp */
   finishedAt?: string;
 }
@@ -272,6 +275,8 @@ export interface ApiSubagentActivity {
   toolUseCount?: number;
   turnCount?: number;
   errorMessage?: string;
+  failureKind?: RuntimeFailureKind;
+  recoveryAction?: RuntimeRecoveryAction;
   resultPreview?: string;
 }
 

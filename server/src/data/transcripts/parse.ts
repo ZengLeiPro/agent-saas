@@ -4,15 +4,23 @@
  * 将 JSONL 格式的 transcript 解析为结构化的 blocks。
  */
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import * as fs from "node:fs/promises";
+import type { Stats } from "node:fs";
+import type { FileHandle } from "node:fs/promises";
 import * as readline from "node:readline";
 import { apiLogger } from "../../utils/logger.js";
 import { ContextTokenAccumulator } from "../../runtime/contextAccounting.js";
 import { truncateReplayToolResultContent } from "../../runtime/replayEventBounds.js";
 import type { ModelResponseMode } from "../../runtime/types.js";
 import { computeCacheHitDenominatorTokens, computeUsageTotalTokens } from "../usage/pricing.js";
-import { assertAllowedTranscriptPath } from "./projectKey.js";
+import {
+  openTrustedTranscript,
+  statTrustedTranscript,
+  trustedTranscriptLocation,
+} from "./trusted.js";
+import {
+  readTrustedTranscriptHeadLines,
+  readTrustedTranscriptTailLines,
+} from "./trustedSummaryRead.js";
 
 export type TranscriptBlockKind =
   | "prompt"
@@ -35,9 +43,9 @@ export interface TranscriptSubagentActivity {
   toolUseCount?: number;
   turnCount?: number;
   errorMessage?: string;
+  failureKind?: 'policy_rejection'; recoveryAction?: 'switch_model';
   resultPreview?: string;
 }
-
 export interface TranscriptBlock {
   id: string;
   tsMs?: number;
@@ -209,7 +217,7 @@ const transcriptWindowProcessSeed = createHash('sha256')
   .slice(0, 12);
 let transcriptWindowGenerationSequence = 0;
 
-function createTranscriptWindowGeneration(stat: Awaited<ReturnType<typeof fs.stat>>): string {
+function createTranscriptWindowGeneration(stat: Stats): string {
   transcriptWindowGenerationSequence += 1;
   return `${transcriptWindowProcessSeed}:${stat.dev}:${stat.ino}:${transcriptWindowGenerationSequence}`;
 }
@@ -269,7 +277,7 @@ function rememberTranscriptLineIndex(path: string, index: TranscriptLineIndex): 
 }
 
 async function readFileRange(
-  handle: fs.FileHandle,
+  handle: FileHandle,
   start: number,
   end: number,
 ): Promise<Buffer> {
@@ -290,7 +298,7 @@ function hashAnchor(buffer: Buffer): string {
 }
 
 async function readTailAnchor(
-  handle: fs.FileHandle,
+  handle: FileHandle,
   snapshotSize: number,
 ): Promise<string> {
   const start = Math.max(0, snapshotSize - TRANSCRIPT_LINE_INDEX_ANCHOR_BYTES);
@@ -298,7 +306,7 @@ async function readTailAnchor(
 }
 
 async function anchorMatches(
-  handle: fs.FileHandle,
+  handle: FileHandle,
   cached: TranscriptLineIndex,
 ): Promise<boolean> {
   if (cached.size === 0) return true;
@@ -306,7 +314,7 @@ async function anchorMatches(
 }
 
 async function scanLineStarts(
-  handle: fs.FileHandle,
+  handle: FileHandle,
   start: number,
   end: number,
   lineStarts: number[],
@@ -332,9 +340,10 @@ async function scanLineStarts(
 }
 
 async function buildTranscriptLineIndexUncached(resolved: string): Promise<TranscriptLineIndex> {
-  const handle = await fs.open(resolved, "r");
+  const file = await openTrustedTranscript(resolved);
+  const handle = file.handle;
   try {
-    const stat = await handle.stat();
+    const stat = file.stats;
     const dev = Number(stat.dev);
     const ino = Number(stat.ino);
     const size = stat.size;
@@ -425,8 +434,10 @@ export async function* readTranscriptLinesBounded(
   const start = Math.max(0, Math.floor(options.start ?? 0));
   const end = options.end === undefined ? undefined : Math.max(start, Math.floor(options.end));
   if (end !== undefined && end <= start) return;
-  const input = createReadStream(filePath, {
+  const file = await openTrustedTranscript(filePath);
+  const input = file.handle.createReadStream({
     encoding: "utf-8",
+    autoClose: false,
     highWaterMark: 64 * 1024,
     start,
     ...(end === undefined ? {} : { end: end - 1 }),
@@ -476,22 +487,27 @@ export async function* readTranscriptLinesBounded(
     tail = "";
   };
 
-  for await (const chunk of input) {
-    let cursor = 0;
-    while (cursor < chunk.length) {
-      const newline = chunk.indexOf("\n", cursor);
-      if (newline < 0) {
-        consume(chunk.slice(cursor));
-        break;
+  try {
+    for await (const chunk of input) {
+      let cursor = 0;
+      while (cursor < chunk.length) {
+        const newline = chunk.indexOf("\n", cursor);
+        if (newline < 0) {
+          consume(chunk.slice(cursor));
+          break;
+        }
+        consume(chunk.slice(cursor, newline));
+        yield finish();
+        reset();
+        cursor = newline + 1;
       }
-      consume(chunk.slice(cursor, newline));
-      yield finish();
-      reset();
-      cursor = newline + 1;
     }
-  }
 
-  if (sourceChars > 0 || parts.length > 0 || oversized) yield finish();
+    if (sourceChars > 0 || parts.length > 0 || oversized) yield finish();
+  } finally {
+    input.destroy();
+    await file.handle.close().catch(() => undefined);
+  }
 }
 
 function hasJsonStringField(source: string, name: string, value: string): boolean {
@@ -708,8 +724,6 @@ async function parseTranscriptFileUncached(
   resolved: string,
   options: ParseTranscriptRangeOptions = {},
 ): Promise<ParsedTranscript> {
-  await fs.access(resolved);
-
   const blocks: TranscriptBlock[] = [];
   let lineNumber = options.physicalLineOffset ?? 0;
   let scannedLines = 0;
@@ -1317,8 +1331,8 @@ export async function getTokenUsage(
   transcriptPath: string,
   options: { legacyResponseMode?: ModelResponseMode } = {},
 ): Promise<TokenUsage | null> {
-  const resolved = assertAllowedTranscriptPath(transcriptPath);
-  const stat = await fs.stat(resolved);
+  const { cacheKey: resolved } = trustedTranscriptLocation(transcriptPath);
+  const stat = await statTrustedTranscript(resolved);
   const key = tokenUsageCacheKey(resolved, options.legacyResponseMode);
   const cached = getCachedTokenUsage(key, stat.mtimeMs, stat.size);
   if (cached !== undefined) return cached;
@@ -1514,49 +1528,6 @@ const HEAD_BYTES = 8192; // 8KB
 const TAIL_BYTES = 64 * 1024; // 64KB
 
 /**
- * 从文件头部读取若干字节，返回完整行数组（丢弃最后一行可能的截断行）。
- */
-async function readHeadLines(filePath: string, byteCount: number): Promise<string[]> {
-  const fh = await fs.open(filePath, "r");
-  try {
-    const buf = Buffer.alloc(byteCount);
-    const { bytesRead } = await fh.read(buf, 0, byteCount, 0);
-    if (bytesRead === 0) return [];
-    const text = buf.subarray(0, bytesRead).toString("utf-8");
-    const lines = text.split("\n");
-    // 没读到文件末尾时，最后一行可能被截断 — 丢弃
-    if (bytesRead === byteCount) lines.pop();
-    return lines.filter((l) => l.trim() !== "");
-  } finally {
-    await fh.close();
-  }
-}
-
-/**
- * 从文件尾部读取若干字节，返回完整行数组（丢弃第一行可能的截断行）。
- * 行顺序与文件中的原始顺序一致。
- */
-async function readTailLines(filePath: string, fileSize: number, byteCount: number): Promise<string[]> {
-  if (fileSize === 0) return [];
-  const readSize = Math.min(byteCount, fileSize);
-  const offset = fileSize - readSize;
-
-  const fh = await fs.open(filePath, "r");
-  try {
-    const buf = Buffer.alloc(readSize);
-    const { bytesRead } = await fh.read(buf, 0, readSize, offset);
-    if (bytesRead === 0) return [];
-    const text = buf.subarray(0, bytesRead).toString("utf-8");
-    const lines = text.split("\n");
-    // 不是从文件头开始读的，第一行可能被截断 — 丢弃
-    if (offset > 0) lines.shift();
-    return lines.filter((l) => l.trim() !== "");
-  } finally {
-    await fh.close();
-  }
-}
-
-/**
  * 从头部行中提取 title 和 createdAtMs。
  */
 function extractHeadFields(headLines: string[]): { title?: string; createdAtMs?: number } {
@@ -1632,8 +1603,8 @@ function extractLastAssistantPreview(tailLines: string[]): string | undefined {
 /** 大文件：并行读取头部和尾部 */
 async function summarizeLargeFile(filePath: string, fileSize: number): Promise<TranscriptSummary> {
   const [headLines, tailLines] = await Promise.all([
-    readHeadLines(filePath, HEAD_BYTES),
-    readTailLines(filePath, fileSize, TAIL_BYTES),
+    readTrustedTranscriptHeadLines(filePath, HEAD_BYTES),
+    readTrustedTranscriptTailLines(filePath, fileSize, TAIL_BYTES),
   ]);
 
   const { title, createdAtMs } = extractHeadFields(headLines);
@@ -1649,12 +1620,12 @@ async function summarizeFullScan(filePath: string): Promise<TranscriptSummary> {
   let lastAssistantText: string | undefined;
   let isFirstUserPrompt = true;
 
-  const rl = readline.createInterface({
-    input: createReadStream(filePath, { encoding: "utf-8" }),
-    crlfDelay: Infinity,
-  });
+  const file = await openTrustedTranscript(filePath);
+  const input = file.handle.createReadStream({ encoding: "utf-8", autoClose: false });
+  const rl = readline.createInterface({ input, crlfDelay: Infinity });
 
-  for await (const line of rl) {
+  try {
+    for await (const line of rl) {
     if (!line.trim()) continue;
 
     let obj: any;
@@ -1692,6 +1663,11 @@ async function summarizeFullScan(filePath: string): Promise<TranscriptSummary> {
         }
       }
     }
+  }
+  } finally {
+    rl.close();
+    input.destroy();
+    await file.handle.close().catch(() => undefined);
   }
 
   const preview = lastAssistantText?.slice(0, 200);
@@ -1783,8 +1759,8 @@ function setCachedTranscript(resolved: string, mtimeMs: number, parsed: ParsedTr
 export async function summarizeTranscript(
   transcriptPath: string,
 ): Promise<TranscriptSummary> {
-  const resolved = assertAllowedTranscriptPath(transcriptPath);
-  const stat = await fs.stat(resolved);
+  const { cacheKey: resolved } = trustedTranscriptLocation(transcriptPath);
+  const stat = await statTrustedTranscript(resolved);
 
   // 命中缓存：mtime 未变则直接返回
   const cached = summaryCache.get(resolved);
@@ -1812,9 +1788,10 @@ async function transcriptIndexSnapshotStillValid(
   resolved: string,
   index: TranscriptLineIndex,
 ): Promise<boolean> {
-  const handle = await fs.open(resolved, "r");
+  const file = await openTrustedTranscript(resolved);
+  const handle = file.handle;
   try {
-    const stat = await handle.stat();
+    const stat = file.stats;
     if (Number(stat.dev) !== index.dev || Number(stat.ino) !== index.ino) return false;
     if (stat.size < index.size) return false;
     if (stat.size === index.size) return stat.mtimeMs === index.mtimeMs;
@@ -1832,7 +1809,7 @@ export async function parseTranscriptWindow(
   transcriptPath: string,
   options: ParseTranscriptWindowOptions,
 ): Promise<ParsedTranscriptWindow> {
-  const resolved = assertAllowedTranscriptPath(transcriptPath);
+  const { cacheKey: resolved } = trustedTranscriptLocation(transcriptPath);
   const limit = Math.max(1, Math.floor(options.limit));
 
   // 路径在建索引和范围读取之间被 replace/compact 时重试一次；游标失效本身不抛错。
@@ -2010,8 +1987,8 @@ export async function parseTranscriptWindow(
 export async function parseTranscriptFile(
   transcriptPath: string,
 ): Promise<ParsedTranscript> {
-  const resolved = assertAllowedTranscriptPath(transcriptPath);
-  const stat = await fs.stat(resolved);
+  const { cacheKey: resolved } = trustedTranscriptLocation(transcriptPath);
+  const stat = await statTrustedTranscript(resolved);
 
   const cached = getCachedTranscript(resolved, stat.mtimeMs);
   if (cached) {

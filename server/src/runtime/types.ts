@@ -1,4 +1,4 @@
-import type { ContextUsageBreakdown } from '../types/index.js';
+import type { ContextUsageBreakdown, RuntimeFailureKind, RuntimeRecoveryAction } from '../types/index.js';
 import type { ApprovalDecision } from './approvalTypes.js';
 import type {
   ModelRequestDiagnostic,
@@ -219,7 +219,6 @@ export interface CheckpointTaskAnchor {
     originalName: string;
   }>;
 }
-
 export interface ContextCheckpointMetadata {
   version: 1;
   trigger: 'manual' | 'threshold';
@@ -234,8 +233,9 @@ export interface ContextCheckpointMetadata {
   rawTailObservedTokens: number;
   fixedTokens: number;
   taskAnchors: CheckpointTaskAnchor[];
+  summaryAudit?: import('./compactionSummary.js').CompactionSummaryAudit;
+  memorySnapshot?: string;
 }
-
 export type ModelUserContentPart =
   | { type: 'text'; text: string }
   | {
@@ -325,7 +325,7 @@ export type ModelEvent =
     /** 仅明确 completed 的终态才允许 RawAgentLoop 接受输出、执行工具或保存接力状态。 */
     terminalStatus?: ModelTerminalStatus;
     incompleteReason?: string;
-    errorCode?: string;
+    errorCode?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction;
     /** Provider 结构化失败消息；只用于恢复判定和后台诊断，不直接展示给客户。 */
     errorMessage?: string;
     /** 本次 provider 请求与 attempt 的诊断关联键。 */
@@ -396,7 +396,7 @@ export class ModelProviderError extends Error {
     readonly code: string,
     readonly modelRequestId: string,
     readonly attemptId: string,
-    readonly emittedOutputCount: number,
+    readonly emittedOutputCount: number, readonly failureKind?: RuntimeFailureKind, readonly recoveryAction?: RuntimeRecoveryAction, readonly partialContent?: string,
   ) {
     super(message);
   }
@@ -725,7 +725,7 @@ export type PlatformEvent =
      * 此前模型/loop 错误只 yield 到前端 + 进 server.log,不入 EventStore,
      * 导致仅凭 sessionId 无法在审计中复盘失败原因。本字段补齐这条断链。
      */
-    error?: string;
+    error?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction;
   }
   | {
     id: string;
@@ -797,7 +797,7 @@ export type PlatformEvent =
     sessionId: string;
     status: RunStatus;
     previousStatus?: RunStatus;
-    reason?: string;
+    reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction;
   }
   | {
     id: string;
@@ -1077,8 +1077,8 @@ export type PlatformEvent =
     /** 存量事件可能缺失；新事件始终写入。 */
     turnCount?: number;
     durationMs: number;
-    /** 运行时错误的原始摘要；成功时缺省。 */
-    errorMessage?: string;
+    /** 面向调用方的脱敏错误摘要；成功时缺省。 */
+    errorMessage?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction;
     /** 子任务最终文本的短预览；完整过程仍读取 childSessionId。 */
     resultPreview?: string;
   }
@@ -1110,7 +1110,7 @@ export type PlatformEvent =
     status: 'completed' | 'failed' | 'cancelled' | 'timeout';
     totalTokens: number;
     durationMs: number;
-    errorMessage?: string;
+    errorMessage?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction;
     resultPreview?: string;
   };
 

@@ -54,6 +54,37 @@ describe('BackgroundTaskToolProvider（单工具 action 分发）', () => {
     expect(JSON.parse(result!.content).tasks).toHaveLength(1);
   });
 
+  it('策略拒绝状态视图不泄露 provider 错误', async () => {
+    const rawError = 'Responses API HTTP 400: cyber_policy request_id=req-secret';
+    const runtime = makeRuntime({
+      get: vi.fn(async () => record({
+        status: 'failed',
+        statusReason: rawError,
+        metadata: {
+          backgroundTask: true,
+          backgroundTaskType: 'agent',
+          description: 'policy task',
+          backgroundResult: {
+            status: 'failed',
+            text: '已保留正文',
+            errorMessage: rawError,
+            failureKind: 'policy_rejection',
+            recoveryAction: 'switch_model',
+          },
+        },
+      })),
+    });
+    const result = await new BackgroundTaskToolProvider(runtime)
+      .invoke(call({ action: 'status', task_id: 'task-1' }), context);
+    const view = JSON.parse(result!.content);
+
+    expect(view.statusReason).toBe('当前模型受策略限制，请切换其他模型继续。');
+    expect(view.result.errorMessage).toBe('当前模型受策略限制，请切换其他模型继续。');
+    expect(result!.content).toContain('已保留正文');
+    expect(result!.content).not.toContain('cyber_policy');
+    expect(result!.content).not.toContain('req-secret');
+  });
+
   it('status/output/cancel 缺 task_id 时给明确错误', async () => {
     const provider = new BackgroundTaskToolProvider(makeRuntime());
     for (const action of ['status', 'output', 'cancel']) {

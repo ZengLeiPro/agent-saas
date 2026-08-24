@@ -148,18 +148,22 @@ describe('mapSessionDetailToMessages - Agent → subagent', () => {
       content: '{"description":"研究任务"}',
       subagent: {
         agentType: 'Explore', description: '深入研究', childSessionId: 'cs1', childRunId: 'cr1',
-        status: 'completed', durationMs: 2000, totalTokens: 100, resultPreview: '结论',
+        status: 'failed', durationMs: 2000, totalTokens: 100, errorMessage: '当前模型受策略限制，请切换其他模型继续。',
+        failureKind: 'policy_rejection', recoveryAction: 'switch_model', resultPreview: '结论',
       },
     });
     const [msg] = mapSessionDetailToMessages(detail([b]));
     expect(msg).toEqual(expect.objectContaining({
       type: 'subagent',
       agentType: '深入研究',
-      status: 'completed',
+      status: 'failed',
       childSessionId: 'cs1',
       childRunId: 'cr1',
       durationMs: 2000,
       totalTokens: 100,
+      errorMessage: '当前模型受策略限制，请切换其他模型继续。',
+      failureKind: 'policy_rejection',
+      recoveryAction: 'switch_model',
       resultPreview: '结论',
     }));
   });

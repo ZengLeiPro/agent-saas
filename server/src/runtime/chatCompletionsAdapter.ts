@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'crypto';
 
+import { ModelProviderError } from './types.js';
 import type {
   ModelAdapter,
   ModelChatMessage,
@@ -23,13 +24,18 @@ import {
 } from './agentPlanDefense.js';
 import { modelSupportsImage, readImagePartOrPlaceholder, toTextOnlyContent } from './imageAttachments.js';
 import { ToolCallRepairStreamGate, toolCallRepairProviderLabel } from './toolCallRepair.js';
+import { classifyModelFailure } from './runtimeFailure.js';
 
 const logger = createLogger('Cache');
 const CHAT_COMPLETIONS_RETRY_DELAYS_MS = [250, 1_000] as const;
 const RETRYABLE_CHAT_COMPLETIONS_HTTP_STATUSES = new Set([408, 409, 429, 500, 502, 503, 504]);
 
 class ChatCompletionsHttpError extends Error {
-  constructor(readonly status: number, readonly retryable: boolean) {
+  constructor(
+    readonly status: number,
+    readonly retryable: boolean,
+    readonly code?: string,
+  ) {
     super(`Chat Completions HTTP ${status}`);
     this.name = 'ChatCompletionsHttpError';
   }
@@ -161,6 +167,15 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
           ? retryDelaysMs[transientRetryIndex]
           : undefined;
         const willRetry = retryDelayMs !== undefined;
+        const retryBlockedReason = willRetry
+          ? undefined
+          : aborted
+            ? 'aborted' as const
+            : !retryable
+              ? 'permanent_error' as const
+              : !replaySafe
+                ? 'irreversible_output_delivered' as const
+                : 'retry_budget_exhausted' as const;
         const usage = error instanceof ChatCompletionsAttemptError ? error.usage : undefined;
         const recorded = await context.recordModelRequestDiagnostic?.({
           type: 'finished',
@@ -181,7 +196,7 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
           errorCode: aborted
             ? 'MODEL_REQUEST_ABORTED'
             : error instanceof ChatCompletionsHttpError
-              ? `HTTP_${error.status}`
+              ? error.code ?? `HTTP_${error.status}`
               : error instanceof ChatCompletionsAttemptError && error.outcome === 'parse_error'
                 ? 'MODEL_STREAM_PARSE_ERROR'
                 : 'MODEL_STREAM_READ_ERROR',
@@ -189,20 +204,27 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
           ...(usage ? { usage } : {}),
           ...(willRetry
             ? { willRetry: true, retryReason: chatRetryReason(error) }
-            : {
-              retryBlockedReason: aborted
-                ? 'aborted'
-                : !retryable
-                  ? 'permanent_error'
-                  : !replaySafe
-                    ? 'irreversible_output_delivered'
-                    : 'retry_budget_exhausted',
-            }),
+            : { retryBlockedReason }),
         });
         if (recorded === false && usage) {
           throw new Error('MODEL_USAGE_DIAGNOSTIC_PERSIST_FAILED');
         }
-        if (!willRetry) throw error;
+        if (!willRetry) {
+          if (error instanceof ChatCompletionsHttpError) {
+            const failureProtocol = classifyModelFailure(error.code, retryBlockedReason);
+            throw new ModelProviderError(
+              error.message,
+              error.status,
+              error.code ?? `HTTP_${error.status}`,
+              modelRequestId,
+              attemptId,
+              0,
+              failureProtocol?.failureKind,
+              failureProtocol?.recoveryAction,
+            );
+          }
+          throw error;
+        }
         transientRetryIndex += 1;
         logger.warn(
           `Chat Completions transient failure; retry ${transientRetryIndex}/${retryDelaysMs.length} `
@@ -517,6 +539,19 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
   }
 }
 
+function parseChatCompletionsErrorCode(text: string): string | undefined {
+  try {
+    const body = JSON.parse(text) as unknown;
+    if (!body || typeof body !== 'object') return undefined;
+    const error = (body as { error?: unknown }).error;
+    if (!error || typeof error !== 'object') return undefined;
+    const code = (error as { code?: unknown }).code;
+    return typeof code === 'string' && code.trim() ? code.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function fetchChatCompletions(
   url: string,
   init: RequestInit,
@@ -531,6 +566,7 @@ async function fetchChatCompletions(
   throw new ChatCompletionsHttpError(
     response.status,
     RETRYABLE_CHAT_COMPLETIONS_HTTP_STATUSES.has(response.status) && !quotaExhausted,
+    parseChatCompletionsErrorCode(text),
   );
 }
 

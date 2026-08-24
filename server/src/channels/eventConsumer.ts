@@ -45,6 +45,12 @@ export interface EventConsumerOptions {
 }
 
 /** 通道实现的回调接口（全部可选） */
+export interface RuntimeErrorEventMetadata {
+  runId?: OutboundEvent['runId'];
+  failureKind?: OutboundEvent['failureKind'];
+  recoveryAction?: OutboundEvent['recoveryAction'];
+}
+
 export interface EventHandler {
   onSessionInit?(sessionId: string): void | Promise<void>;
   onThinkingStart?(draftId?: string): void | Promise<void>;
@@ -58,7 +64,14 @@ export interface EventHandler {
   onToolStart?(toolId: string, toolName: string, tracker: ToolTracker, runId?: string): void | Promise<void>;
   onToolInputDelta?(partialJson: string, toolId: string, toolName: string): void | Promise<void>;
   onToolEnd?(toolId: string, resolvedToolName: string, toolInput: string): void | Promise<void>;
-  onToolResult?(toolId: string, toolName: string, result: string, isError?: boolean): void | Promise<void>;
+  onToolResult?(
+    toolId: string,
+    toolName: string,
+    result: string,
+    isError?: boolean,
+    presentation?: OutboundEvent['toolPresentation'],
+    metadata?: OutboundEvent['toolResultMetadata'],
+  ): void | Promise<void>;
   // SDK 0.2.112+ 新事件透传
   onContextUsage?(usage: ContextUsageData): void | Promise<void>;
   onPluginInstall?(data: PluginInstallData): void | Promise<void>;
@@ -68,7 +81,7 @@ export interface EventHandler {
   onCompactionStart?(): void | Promise<void>;
   onCompactionEnd?(data: CompactionOutboundData | undefined): void | Promise<void>;
   onDone?(): void | Promise<void>;
-  onError?(error: string): void | Promise<void>;
+  onError?(error: string, metadata?: RuntimeErrorEventMetadata): void | Promise<void>;
   onFinally?(result: ConsumeResult): void | Promise<void>;
 }
 
@@ -81,6 +94,7 @@ export class EventConsumer implements ToolTracker {
 
   // 会话 & 文本状态
   private sessionId: string | undefined;
+  private runId: string | undefined;
   private finalText = '';
   private currentTextBlock = '';
   private hasError = false;
@@ -125,6 +139,7 @@ export class EventConsumer implements ToolTracker {
   ): Promise<ConsumeResult> {
     try {
       for await (const event of events) {
+        if (event.runId) this.runId = event.runId;
         if (signal?.aborted) {
           await handler.onDone?.();
           break;
@@ -237,10 +252,20 @@ export class EventConsumer implements ToolTracker {
           case 'tool_result': {
             const toolId = event.toolId || '';
             const toolName = this._toolNameMap.get(toolId) || event.toolName || 'unknown';
-            if (event.isError) {
-              await handler.onToolResult?.(toolId, toolName, event.toolResult || '', true);
+            const result = event.toolResult || '';
+            if (event.toolPresentation || event.toolResultMetadata) {
+              await handler.onToolResult?.(
+                toolId,
+                toolName,
+                result,
+                event.isError ? true : undefined,
+                event.toolPresentation,
+                event.toolResultMetadata,
+              );
+            } else if (event.isError) {
+              await handler.onToolResult?.(toolId, toolName, result, true);
             } else {
-              await handler.onToolResult?.(toolId, toolName, event.toolResult || '');
+              await handler.onToolResult?.(toolId, toolName, result);
             }
             break;
           }
@@ -277,7 +302,13 @@ export class EventConsumer implements ToolTracker {
             // 消息可靠性：SDK 错误事件后必发 onDone（让通道能统一发 done 事件）
             // 防止 loading 永久锁住靠 watchdog 兜底
             this.hasError = true;
-            try { await handler.onError?.(event.error || ''); } catch (e) { logger.warn('handler.onError failed:', e); }
+            try {
+              await handler.onError?.(event.error || '', {
+                ...(this.runId ? { runId: this.runId } : {}),
+                ...(event.failureKind ? { failureKind: event.failureKind } : {}),
+                ...(event.recoveryAction ? { recoveryAction: event.recoveryAction } : {}),
+              });
+            } catch (e) { logger.warn('handler.onError failed:', e); }
             try { await handler.onDone?.(); } catch (e) { logger.warn('handler.onDone after error failed:', e); }
             break;
         }
@@ -286,7 +317,9 @@ export class EventConsumer implements ToolTracker {
       this.hasError = true;
       const errorMessage = err instanceof Error ? err.message : String(err);
       logger.error('Stream error:', err);
-      try { await handler.onError?.(errorMessage); } catch (e) { logger.warn('handler.onError failed:', e); }
+      try {
+        await handler.onError?.(errorMessage, this.runId ? { runId: this.runId } : undefined);
+      } catch (e) { logger.warn('handler.onError failed:', e); }
       try { await handler.onDone?.(); } catch (e) { logger.warn('handler.onDone failed:', e); }
     } finally {
       const result: ConsumeResult = {

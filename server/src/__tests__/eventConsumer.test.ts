@@ -46,6 +46,55 @@ describe('EventConsumer tool name resolver', () => {
     expect(onToolResult).toHaveBeenCalledWith('tool-1', '技能：commit', 'ok');
   });
 
+  it('forwards tool presentation and metadata to channel handlers', async () => {
+    const consumer = new EventConsumer();
+    const onToolResult = vi.fn();
+    const presentation = { title: 'Artifact', status: 'ok' as const };
+    const metadata = {
+      artifactAction: 'deliver',
+      artifactId: 'artifact-1',
+      artifactKind: 'file',
+      fileName: '结果.txt',
+    };
+
+    await consumer.consume(createEvents([
+      { type: 'tool_start', toolId: 'tool-artifact', toolName: 'Artifact' },
+      { type: 'tool_result', toolId: 'tool-artifact', toolResult: '{}', toolPresentation: presentation, toolResultMetadata: metadata },
+      { type: 'done' },
+    ]), { onToolResult });
+
+    expect(onToolResult).toHaveBeenCalledWith(
+      'tool-artifact',
+      'Artifact',
+      '{}',
+      undefined,
+      presentation,
+      metadata,
+    );
+  });
+
+  it('forwards the runtime failure protocol and run identity to error handlers', async () => {
+    const consumer = new EventConsumer();
+    const onError = vi.fn();
+    const onDone = vi.fn();
+
+    await consumer.consume(createEvents([
+      { type: 'session_init', sessionId: 'session-1', runId: 'run-1' },
+      {
+        type: 'error',
+        error: '当前模型受策略限制，请切换其他模型继续。',
+        failureKind: 'policy_rejection',
+        recoveryAction: 'switch_model',
+      },
+    ]), { onError, onDone });
+
+    expect(onError).toHaveBeenCalledWith(
+      '当前模型受策略限制，请切换其他模型继续。',
+      { runId: 'run-1', failureKind: 'policy_rejection', recoveryAction: 'switch_model' },
+    );
+    expect(onDone).toHaveBeenCalledOnce();
+  });
+
   it('formats MCP tool name from tool_start', async () => {
     const consumer = new EventConsumer({ resolveToolName: resolveDisplayToolName });
     const onToolStart = vi.fn();

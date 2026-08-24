@@ -28,7 +28,6 @@ import { requestOpenBillingBadge } from '@/lib/billingBadgeBus';
 import { publicSessionShareFileUrl } from '@/lib/sessionShareApi';
 import { ImageLightbox } from './ImageLightbox';
 const LazyArtifactPreviewDialog = lazy(() => import('@/components/artifacts/ArtifactPreviewDialog').then(module => ({ default: module.ArtifactPreviewDialog })));
-
 // react-markdown 懒加载：不阻塞首屏渲染，模块加载后立即可用
 const markdownPromise = import("react-markdown");
 const remarkGfmPromise = import("remark-gfm");
@@ -642,6 +641,7 @@ interface MessageItemProps {
   onPermissionResponse?: (interactionId: string, allow: boolean) => void;
   onAskUserResponse?: (interactionId: string, answers: AskUserAnswers) => void;
   onRetry?: (message: MessageItemType) => void;
+  onSwitchModel?: () => void;
   onFork?: (message: MessageItemType) => void;
   /** 是否为第一条用户消息（不显示 fork） */
   isFirstUser?: boolean;
@@ -664,6 +664,7 @@ export const MessageItem = memo(function MessageItem({
   onPermissionResponse,
   onAskUserResponse,
   onRetry,
+  onSwitchModel,
   onFork,
   isFirstUser,
   isLoading,
@@ -1031,6 +1032,7 @@ export const MessageItem = memo(function MessageItem({
     return (
       <SubagentBlock
         {...message}
+        onSwitchModel={onSwitchModel}
       />
     );
   }
@@ -1084,14 +1086,8 @@ export const MessageItem = memo(function MessageItem({
       return (
         <div className="flex items-center gap-2 px-1 py-1 text-xs text-muted-foreground" role="status">
           <span className="whitespace-pre-wrap break-words">{message.content}</span>
-          {onRetry && !isLoading && (
-            <button
-              type="button"
-              onClick={() => onRetry(message)}
-              className="shrink-0 rounded-md px-2 py-1 font-medium text-foreground/75 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
-            >
-              继续生成
-            </button>
+          {!isLoading && (message.recoveryAction === 'switch_model' ? onSwitchModel : onRetry) && (
+            <button type="button" onClick={message.recoveryAction === 'switch_model' ? onSwitchModel : () => onRetry?.(message)} className="shrink-0 rounded-md px-2 py-1 font-medium text-foreground/75 transition-colors hover:bg-foreground/[0.06] hover:text-foreground">{message.recoveryAction === 'switch_model' ? '切换模型' : '继续生成'}</button>
           )}
         </div>
       );
@@ -1115,6 +1111,7 @@ export const MessageItem = memo(function MessageItem({
   prev.onPermissionResponse === next.onPermissionResponse &&
   prev.onAskUserResponse === next.onAskUserResponse &&
   prev.onRetry === next.onRetry &&
+  prev.onSwitchModel === next.onSwitchModel &&
   prev.onFork === next.onFork &&
   prev.isFirstUser === next.isFirstUser &&
   prev.isLoading === next.isLoading &&

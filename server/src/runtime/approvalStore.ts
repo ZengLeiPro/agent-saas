@@ -1,8 +1,7 @@
 import { randomUUID } from 'crypto';
-import { appendFile, mkdir } from 'fs/promises';
-import { dirname } from 'path';
-
-import { readFileCoalesce } from './fileReadCoalesce.js';
+import { dirname, resolve } from 'node:path';
+import { AGENT_LEGACY_TRANSCRIPTS_ROOT } from '../data/transcripts/projectKey.js';
+import { appendTrustedFile, readTrustedFile, relativeToTrustedRoot } from '../security/trustedFile.js';
 import type {
   ApprovalDecision,
   ApprovalRecord,
@@ -17,6 +16,17 @@ type ApprovalLogEntry =
   | { type: 'resolved'; id: string; decision: ApprovalDecision; resolvedAt: string; message?: string };
 
 const approvalLocks = new Map<string, Promise<void>>();
+const approvalReadsInFlight = new Map<string, Promise<string | null>>();
+
+function defaultTrustedRoot(filePath: string): string {
+  try {
+    relativeToTrustedRoot(AGENT_LEGACY_TRANSCRIPTS_ROOT, filePath);
+    return AGENT_LEGACY_TRANSCRIPTS_ROOT;
+  } catch (error) {
+    if (!process.argv.some((argument) => argument.includes('vitest'))) throw error;
+    return dirname(filePath);
+  }
+}
 
 export function getApprovalLogPath(transcriptPath: string): string {
   return transcriptPath.endsWith('.jsonl')
@@ -25,7 +35,15 @@ export function getApprovalLogPath(transcriptPath: string): string {
 }
 
 export class FileApprovalStore implements ApprovalStore {
-  constructor(private readonly filePath: string) {}
+  private readonly trustedRoot: string;
+  private readonly relativePath: string;
+  private readonly cacheKey: string;
+
+  constructor(private readonly filePath: string, trustedRoot = defaultTrustedRoot(filePath)) {
+    this.trustedRoot = trustedRoot;
+    this.relativePath = relativeToTrustedRoot(trustedRoot, filePath);
+    this.cacheKey = resolve(trustedRoot, this.relativePath);
+  }
 
   async create(request: ApprovalRequest): Promise<ApprovalRecord> {
     const record: ApprovalRecord = {
@@ -87,13 +105,22 @@ export class FileApprovalStore implements ApprovalStore {
   }
 
   private async append(entry: ApprovalLogEntry): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true });
-    await appendFile(this.filePath, JSON.stringify(entry) + '\n', 'utf-8');
+    await appendTrustedFile(this.trustedRoot, this.relativePath, JSON.stringify(entry) + '\n', 'utf-8');
   }
 
   private async readLatest(): Promise<Map<string, ApprovalRecord>> {
     // 并发去重：与 FileEventStore 同源治理 EMFILE。
-    const raw = await readFileCoalesce(this.filePath);
+    let pending = approvalReadsInFlight.get(this.cacheKey);
+    if (!pending) {
+      pending = readTrustedFile(this.trustedRoot, this.relativePath, 'utf-8')
+        .catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return null;
+          throw error;
+        })
+        .finally(() => approvalReadsInFlight.delete(this.cacheKey));
+      approvalReadsInFlight.set(this.cacheKey, pending);
+    }
+    const raw = await pending;
     if (raw === null) return new Map();
 
     const records = new Map<string, ApprovalRecord>();

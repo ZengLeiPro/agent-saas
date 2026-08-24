@@ -7,10 +7,9 @@
  * WS 消息协议见 wsTypes.ts。
  */
 
-import { appendFile, mkdir } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { homedir } from 'os';
-import { dirname, resolve as resolvePath } from 'path';
+import { resolve as resolvePath } from 'path';
 import type { Express } from 'express';
 import type { WebSocket } from 'ws';
 import { getWebDisplayConfig, isDedicatedWebTool, projectArtifactDelivery } from './displayFilter.js';
@@ -44,6 +43,7 @@ import {
   type RuntimeStreamProjectionState,
 } from './runtimeEventProjection.js';
 import { getTranscriptPath, sessionExists, findTranscriptOrMetaPathBySessionId } from '../../data/transcripts/index.js';
+import { appendTrustedTranscript } from '../../data/transcripts/trusted.js';
 import { readSessionMeta, writeSessionMeta, updateSessionMeta, addSessionCost, type SessionMeta } from '../../data/transcripts/meta.js';
 import { resolveUserCwd } from '../../workspace/resolver.js';
 import { resolveAgentPath } from '../../workspace/namespace.js';
@@ -64,6 +64,7 @@ import type { OrgAgentGuardrailMode, OrgAgentRecord } from '../../data/orgAgents
 import { normalizeGuardrailConfig } from '../../data/orgAgents/types.js';
 import type { GuardrailEventVerdict } from '../../data/guardrail/pgGuardrailEventStore.js';
 import { WsServer, type WsClient } from './wsServer.js';
+import { sensitiveActionAccessError, type SensitiveActionTarget } from './wsAuthorization.js';
 import { EventBus, type SessionContext } from './eventBus.js';
 import type { WsChatMessage, WsRespondMessage, WsAbortMessage, WsRunStatusMessage, WsResumeMessage, WsSyncMessage, WsInboundMessage, ChatRejectReasonCode } from './wsTypes.js';
 import { appendLoginLog, detectLoginChannel } from '../../data/login-logs/index.js';
@@ -131,7 +132,7 @@ export interface WebChannelConfig extends WebChannelRuntimeConfig {
   modelResolver?: ModelResolver;
   /** User lookup used for channel identity and preferences. */
   userStore?: UserStore;
-  /** Secret used to authenticate WebSocket connections. */
+  /** Secret used to authenticate WebSocket connections when authEnabled is true. */
   jwtSecret?: string;
   /** Reports whether shutdown draining has begun. */
   getIsDraining?: () => boolean;
@@ -200,6 +201,7 @@ export class WebChannel implements BaseChannel {
     return tenantAccessErrorMessage(this.config.tenantStore, record?.tenantId || user.tenantId);
   }
 
+  private sensitiveActionAccessError(client: WsClient, target: SensitiveActionTarget): string | null { return sensitiveActionAccessError(client, target, this.wsServer, this.userStore); }
   private findActiveStreamIdBySession(sessionId: string): string | undefined {
     for (const [streamId, entry] of this.activeStreams) {
       if (entry.sessionId === sessionId) return streamId;
@@ -453,8 +455,8 @@ export class WebChannel implements BaseChannel {
 
   /** 创建 WS server 并注册消息处理器 */
   async start(app: Express): Promise<void> {
-    // 创建 WS server（noServer 模式，需要在 index.ts 中调用 attachToServer）
     this.wsServer = new WsServer({
+      authEnabled: (this.config.authEnabled ?? Boolean(this.config.jwtSecret)) === true,
       jwtSecret: this.config.jwtSecret,
       userStore: this.userStore,
       tenantStore: this.config.tenantStore,
@@ -732,7 +734,7 @@ export class WebChannel implements BaseChannel {
         });
         break;
       case 'tool_result': {
-        const artifactDelivery = projectArtifactDelivery(input.event.toolName, input.event.toolResultMetadata);
+        const artifactDelivery = projectArtifactDelivery(input.event.toolName, input.event.toolResultMetadata, input.event.toolResult);
         if (artifactDelivery) emitSession(artifactDelivery);
         if (isDedicatedWebTool(input.event.toolName)) break;
         emitSession({
@@ -840,7 +842,7 @@ export class WebChannel implements BaseChannel {
           streamId,
           runId: input.runId,
           client_msg_id: input.clientMsgId,
-          error: input.event.error,
+          error: input.event.error, ...(input.event.failureKind ? { failureKind: input.event.failureKind } : {}), ...(input.event.recoveryAction ? { recoveryAction: input.event.recoveryAction } : {}),
         });
         const hasDeferredErrorStream = Array.from(this.activeStreams.entries()).some(
           ([candidateStreamId, entry]) => (
@@ -862,7 +864,7 @@ export class WebChannel implements BaseChannel {
             status: 'failed',
             streamId,
             runId: input.runId,
-            reason: input.event.error,
+            reason: input.event.error, ...(input.event.failureKind ? { failureKind: input.event.failureKind } : {}), ...(input.event.recoveryAction ? { recoveryAction: input.event.recoveryAction } : {}),
           });
           // error 不一定还会补发 done；直接在失败终态补偿命名。
           void this.maybeGenerateTitleByUserId(input.sessionId, input.userId, '', true);
@@ -1144,15 +1146,14 @@ export class WebChannel implements BaseChannel {
       return;
     }
 
-    // 会话归属校验（fail-closed：无法验证时拒绝）
-    if (client.user && client.user.role !== 'admin') {
-      // 优先使用 interactionStore 中存储的 userId 做归属校验（创建时记录，无 TOCTOU 风险）
-      const storedUserId = interactionStore.getUserId(interactionId);
-      if (storedUserId && storedUserId !== client.user.sub) {
-        this.wsSend(client.ws, { type: 'respond_error', interactionId, error: 'Access denied' });
-        return;
-      }
-      // storedUserId 匹配或未设置（兼容旧 interaction）时放行
+    // 交互归属 fail-closed：敏感响应必须绑定权威 owner/tenant，不能信握手角色快照。
+    const storedUserId = interactionStore.getUserId(interactionId);
+    const actionAccessError = storedUserId
+      ? this.sensitiveActionAccessError(client, { ownerUserId: storedUserId })
+      : 'Access denied';
+    if (actionAccessError) {
+      this.wsSend(client.ws, { type: 'respond_error', interactionId, error: actionAccessError });
+      return;
     }
 
     void this.resolveInteraction(client, interactionId, response, typeof sessionId === 'string' ? sessionId : undefined);
@@ -1540,20 +1541,17 @@ export class WebChannel implements BaseChannel {
         sessionId = record.sessionId;
         resolvedRunStatus = record.status;
         resolvedRunStatusReason = record.statusReason;
-        if (
-          client.user
-          && (
-            (record.tenantId && client.user.tenantId !== record.tenantId)
-            || (client.user.role !== 'admin' && record.userId && record.userId !== client.user.sub)
-          )
-        ) {
+        if (this.sensitiveActionAccessError(client, {
+          tenantId: record.tenantId,
+          ownerUserId: record.userId,
+        })) {
           this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
           return;
         }
       }
     }
 
-    if (entry && client.user && entry.userId && entry.userId !== client.user.sub) {
+    if (entry?.userId && this.sensitiveActionAccessError(client, { ownerUserId: entry.userId })) {
       this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
       return;
     }
@@ -1689,13 +1687,10 @@ export class WebChannel implements BaseChannel {
       this.wsSend(client.ws, { type: 'cancel_queued_result', ok: false, sourceRunId, reason: 'not_found' });
       return;
     }
-    if (
-      client.user
-      && (
-        (record.tenantId && client.user.tenantId !== record.tenantId)
-        || (client.user.role !== 'admin' && record.userId && record.userId !== client.user.sub)
-      )
-    ) {
+    if (this.sensitiveActionAccessError(client, {
+      tenantId: record.tenantId,
+      ownerUserId: record.userId,
+    })) {
       this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
       return;
     }
@@ -1839,9 +1834,12 @@ export class WebChannel implements BaseChannel {
       this.wsSend(client.ws, { type: 'error', message: 'Run not found' });
       return;
     }
-    // 归属校验：平台 admin 可操作任意 run；其他用户（含组织 admin）只能改自己的 run。
-    const isPlatformAdmin = client.user.role === 'admin' && client.user.tenantId === DEFAULT_TENANT_ID;
-    if (!isPlatformAdmin && record.userId !== client.user.sub) {
+    // 归属校验：重新读取 actor；平台 admin 可跨租户，其他用户只能改自己的 run。
+    if (this.sensitiveActionAccessError(client, {
+      tenantId: record.tenantId,
+      ownerUserId: record.userId,
+      ownerOnly: true,
+    })) {
       this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
       return;
     }
@@ -1871,7 +1869,10 @@ export class WebChannel implements BaseChannel {
       this.wsSend(client.ws, { type: 'error', message: 'Run not found' });
       return;
     }
-    if (client.user && client.user.role !== 'admin' && record.userId && record.userId !== client.user.sub) {
+    if (this.sensitiveActionAccessError(client, {
+      tenantId: record.tenantId,
+      ownerUserId: record.userId,
+    })) {
       this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
       return;
     }
@@ -1988,14 +1989,14 @@ export class WebChannel implements BaseChannel {
         });
       }
       // 已完成的 buffer：推送 pending 交互（须先通过归属校验，防止把他人交互内容暴露给非本人用户）
-      if (bufferEntry && (client.user?.role === 'admin' || !bufferEntry.userId || bufferEntry.userId === client.user?.sub)) {
+      if (bufferEntry?.userId && !this.sensitiveActionAccessError(client, { ownerUserId: bufferEntry.userId })) {
         await this.pushPendingInteractions(client, sid);
       }
       return;
     }
 
-    // 用户归属校验
-    if (client.user?.role !== 'admin' && bufferEntry.userId && bufferEntry.userId !== client.user?.sub) {
+    // 重新读取 actor，并按权威 owner 的当前租户校验归属。
+    if (!bufferEntry.userId || this.sensitiveActionAccessError(client, { ownerUserId: bufferEntry.userId })) {
       this.wsSend(client.ws, {
         type: 'active_stream', sessionId: sid, active: false,
         ...(requestId ? { requestId } : {}),
@@ -2124,7 +2125,10 @@ export class WebChannel implements BaseChannel {
     if (!runStore) return false;
     const activeRun = await runStore.getActiveBySession?.(sessionId);
     if (!activeRun) return false;
-    if (client.user && client.user.role !== 'admin' && activeRun.userId && activeRun.userId !== client.user.sub) {
+    if (!activeRun.userId || this.sensitiveActionAccessError(client, {
+      tenantId: activeRun.tenantId,
+      ownerUserId: activeRun.userId,
+    })) {
       return false;
     }
     const streamId = typeof activeRun.metadata?.streamId === 'string' ? activeRun.metadata.streamId : activeRun.runId;
@@ -2326,7 +2330,10 @@ export class WebChannel implements BaseChannel {
       chatLogger.warn(`[chat] Legacy client without client_msg_id, generated ${clientMsgId}`);
     }
 
-    const tenantAccessError = this.tenantAccessErrorForClient(client);
+    const principalAccessError = user
+      ? this.sensitiveActionAccessError(client, { tenantId: user.tenantId, ownerUserId: user.sub })
+      : (this.config.authEnabled ?? Boolean(this.config.jwtSecret)) === true ? 'Access denied' : null;
+    const tenantAccessError = principalAccessError ?? this.tenantAccessErrorForClient(client);
     if (tenantAccessError) {
       this.sendChatRejected(ws, clientMsgId, 'access_denied', tenantAccessError);
       return;
@@ -2336,17 +2343,10 @@ export class WebChannel implements BaseChannel {
     // 不能因本次传输载荷缺失或实例正在排水而改写为 rejected。
     const durableRun = await this.config.enqueueRuntime?.runStore.findByIdempotencyKey(user?.sub, clientMsgId);
     if (durableRun) {
-      const tenantMismatch = Boolean(
-        user
-        && !isPlatformAdminUser(user)
-        && durableRun.tenantId
-        && durableRun.tenantId !== user.tenantId,
-      );
-      const ownerMismatch = Boolean(
-        durableRun.userId
-        && (!user || (user.role !== 'admin' && durableRun.userId !== user.sub)),
-      );
-      if (tenantMismatch || ownerMismatch) {
+      if (durableRun.userId
+        ? this.sensitiveActionAccessError(client, { tenantId: durableRun.tenantId, ownerUserId: durableRun.userId })
+        : (this.config.authEnabled ?? Boolean(this.config.jwtSecret)) === true
+          || (durableRun.tenantId !== undefined && durableRun.tenantId !== DEFAULT_TENANT_ID)) {
         this.sendChatRejected(ws, clientMsgId, 'access_denied', '无权访问该会话');
         return;
       }
@@ -4081,8 +4081,7 @@ export class WebChannel implements BaseChannel {
       ...(guardrailEventId ? { guardrailEventId } : {}),
       timestamp: new Date().toISOString(),
     }) + '\n';
-    await mkdir(dirname(transcriptPath), { recursive: true });
-    await appendFile(transcriptPath, lines, 'utf-8');
+    await appendTrustedTranscript(transcriptPath, lines, 'utf-8');
   }
 
   /**

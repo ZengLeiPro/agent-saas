@@ -101,9 +101,14 @@ function classifyBirdProbeFailure(output: string): XCredentialProbeKind {
  * Bird 使用 Node 原生 fetch。探针只在服务端内部传入 cookie，且永不返回命令输出，
  * 避免把 cookie 或代理凭据写进 API 响应、日志与任务记录。
  */
-export function createBirdWhoamiProbe(): XValidateCredentials {
+export function createBirdWhoamiProbe(options: {
+  spawnImpl?: typeof spawn;
+  timeoutMs?: number;
+} = {}): XValidateCredentials {
+  const spawnImpl = options.spawnImpl ?? spawn;
+  const timeoutMs = options.timeoutMs ?? 15_000;
   return async credentials => await new Promise<void>((resolve, reject) => {
-    const child = spawn('bird', ['whoami'], {
+    const child = spawnImpl('bird', ['whoami'], {
       env: {
         ...process.env,
         NODE_USE_ENV_PROXY: '1',
@@ -115,19 +120,43 @@ export function createBirdWhoamiProbe(): XValidateCredentials {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let output = '';
+    let timedOut = false;
+    let settled = false;
+    let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
     const capture = (chunk: Buffer) => { output = `${output}${chunk.toString('utf8')}`.slice(-8_192); };
+    const cleanup = () => {
+      clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+    };
+    const fail = (kind: XCredentialProbeKind) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new XCredentialProbeError(kind));
+    };
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
     child.stdout.on('data', capture);
     child.stderr.on('data', capture);
-    const timer = setTimeout(() => child.kill('SIGTERM'), 15_000);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      forceKillTimer = setTimeout(() => {
+        child.kill('SIGKILL');
+        fail('network');
+      }, 2_000);
+      forceKillTimer.unref?.();
+    }, timeoutMs);
     timer.unref?.();
-    child.once('error', error => {
-      clearTimeout(timer);
-      reject(new XCredentialProbeError(classifyBirdProbeFailure(error.message)));
-    });
+    child.once('error', error => fail(classifyBirdProbeFailure(error.message)));
     child.once('close', code => {
-      clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(new XCredentialProbeError(classifyBirdProbeFailure(output)));
+      if (timedOut) return fail('network');
+      if (code === 0) succeed();
+      else fail(classifyBirdProbeFailure(output));
     });
   });
 }

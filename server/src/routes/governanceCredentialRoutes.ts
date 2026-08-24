@@ -96,8 +96,8 @@ export function registerGovernanceCredentialRoutes(options: {
   const hasActiveOffboarding = async (tenantId: string, userId: string): Promise<boolean> => Boolean(
     await options.changeJobs.findActiveForTarget(tenantId, 'user_offboarding', 'user', userId),
   );
-  const validateAliyunPersonalSecret = async (connectorId: string | null | undefined, secret: string) => {
-    if (connectorId !== 'aliyun' || !options.credentialHealthCheck) return undefined;
+  const validatePersonalSecret = async (connectorId: string | null | undefined, secret: string) => {
+    if ((connectorId !== 'aliyun' && connectorId !== 'x') || !options.credentialHealthCheck) return undefined;
     try {
       return await options.credentialHealthCheck(connectorId, secret);
     } catch {
@@ -338,7 +338,7 @@ export function registerGovernanceCredentialRoutes(options: {
     }
     let healthMetadata: Record<string, string> | undefined;
     if (parsed.data.kind === 'personal_grant') {
-      const health = await validateAliyunPersonalSecret(parsed.data.connectorId, parsed.data.secret);
+      const health = await validatePersonalSecret(parsed.data.connectorId, parsed.data.secret);
       if (health && !health.healthy) return res.status(422).json({ error: 'Credential validation failed', code: health.code });
       healthMetadata = health?.metadata;
     }
@@ -693,7 +693,7 @@ export function registerGovernanceCredentialRoutes(options: {
       ? { ...target.credential.scopeSummary, ...mutation.scopeSummary }
       : undefined;
     if (target.credential.kind === 'personal_grant') {
-      const health = await validateAliyunPersonalSecret(target.credential.connectorId, mutation.secret);
+      const health = await validatePersonalSecret(target.credential.connectorId, mutation.secret);
       if (health && !health.healthy) {
         if (!await finishOrCritical(res, {
           tenantId: target.tenantId, operation: 'rotate', idempotencyKey,

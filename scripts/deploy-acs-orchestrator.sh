@@ -185,6 +185,7 @@ AUTH_HEADER="Authorization: Bearer ${ACS_ORCH_AUTH_TOKEN}"
 SNAT_OPERATION_STATE_FILE="${RUNTIME_CONFIG_FILE}.snat-operation-state.json"
 SNAT_ROLLBACK_PREPARED=false
 SNAT_ROLLBACK_OFFLINE_RESTORE=false
+SNAT_ROLLBACK_SHARED_CONFIG_SAFE=false
 SNAT_ROLLBACK_DIGEST=""
 PROCESS_REPLACED=false
 
@@ -201,6 +202,12 @@ prepare_snat_rollback() {
     return 2
   fi
   SNAT_ROLLBACK_DIGEST="$digest"
+  if node "$APP_DIR/scripts/check-acs-shared-rollback-compatibility.mjs" \
+    "$health_file" "$ENV_BAK" "$ENV_FILE"; then
+    SNAT_ROLLBACK_SHARED_CONFIG_SAFE=true
+    echo "shared SNAT config is identical across running/candidate/rollback; per-Pod restore is unnecessary"
+    return 0
+  fi
   echo "preparing per-Pod SNAT entries before process replacement (digest=$digest)..."
   if ! curl -fsS -m 420 -X POST http://127.0.0.1:3400/snat/restore-per-pod \
     -H "$AUTH_HEADER" -H "X-ACS-SNAT-Rollback-Confirmed: $digest" >"$restore_file"; then
@@ -214,8 +221,10 @@ prepare_snat_rollback() {
 # release 内置的离线 CLI 恢复全部 /32；后续版本则在替换进程前在线恢复。
 # 在线路径只删除磁盘 marker，旧进程内存维护态持续到退出。
 if prepare_snat_rollback; then
-  SNAT_ROLLBACK_PREPARED=true
-  rm -f "$SNAT_OPERATION_STATE_FILE"
+  if [ "$SNAT_ROLLBACK_SHARED_CONFIG_SAFE" != "true" ]; then
+    SNAT_ROLLBACK_PREPARED=true
+    rm -f "$SNAT_OPERATION_STATE_FILE"
+  fi
 else
   prepare_status=$?
   if [ "$prepare_status" -eq 2 ] \
@@ -291,9 +300,13 @@ rollback() {
     return 1
   fi
   if [ "$SNAT_ROLLBACK_PREPARED" != "true" ] \
-    && [ "$SNAT_ROLLBACK_OFFLINE_RESTORE" != "true" ]; then
-    echo "per-Pod SNAT was not prepared before process replacement; refusing rollback" >&2
+    && [ "$SNAT_ROLLBACK_OFFLINE_RESTORE" != "true" ] \
+    && [ "$SNAT_ROLLBACK_SHARED_CONFIG_SAFE" != "true" ]; then
+    echo "neither per-Pod SNAT nor an identical shared rollback config was verified; refusing rollback" >&2
     return 1
+  fi
+  if [ "$SNAT_ROLLBACK_SHARED_CONFIG_SAFE" = "true" ]; then
+    echo "rollback retains the verified identical shared SNAT config (digest=$SNAT_ROLLBACK_DIGEST)"
   fi
   if [ "$SNAT_ROLLBACK_OFFLINE_RESTORE" = "true" ]; then
     echo "legacy rollback: stopping failed candidate and restoring every non-Paused /32 offline..."

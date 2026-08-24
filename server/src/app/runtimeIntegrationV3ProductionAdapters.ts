@@ -10,7 +10,10 @@ import type {
 import { requestAcsOrchestrator } from '../routes/runtimeOperationsAdmin.js';
 import type { SecretVault } from '../security/secretVault.js';
 
-const ACS_PROBE_TIMEOUT_MS = 90_000;
+// ACS 生产 Sandbox 等待上限为 180s；需覆盖排队、四项真实网络探测及临时 Sandbox 清理。
+const ACS_PROBE_TIMEOUT_MS = 240_000;
+// 请求等待变长不应自动放宽证明新鲜度；checkedAt 距消费仍最多 2 分钟。
+const ACS_PROBE_EVIDENCE_MAX_AGE_MS = 120_000;
 const GITHUB_API_VERSION = '2022-11-28';
 const MAX_GITHUB_TOKEN_TTL_MS = 65 * 60_000;
 
@@ -121,7 +124,7 @@ function parseAcsAttestation(body: unknown, nowMs: number): RuntimeIsolationAtte
   if (typeof effective.probeSandboxName !== 'string' || !/^as-[a-z0-9-]{1,60}$/.test(effective.probeSandboxName)
     || typeof effective.checkedAt !== 'string') return undefined;
   const issuedAtMs = Date.parse(effective.checkedAt);
-  if (!Number.isFinite(issuedAtMs) || issuedAtMs > nowMs + 30_000 || nowMs - issuedAtMs > ACS_PROBE_TIMEOUT_MS + 30_000) return undefined;
+  if (!Number.isFinite(issuedAtMs) || issuedAtMs > nowMs + 30_000 || nowMs - issuedAtMs > ACS_PROBE_EVIDENCE_MAX_AGE_MS) return undefined;
   return {
     runtimeAdapterId: 'acs-orchestrator/network-policy-probe',
     isolationBoundaryId: `acs-sandbox/${effective.probeSandboxName}`,

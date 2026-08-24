@@ -91,7 +91,8 @@ export function createRuntimeIntegrationV3HealthProvider(
     return async () => {
       const active = await store.pool.query(
         `SELECT ((SELECT count(*) FROM ${tables.candidatesTable} WHERE state NOT IN ('merged','canceled'))
-          +(SELECT count(*) FROM ${tables.requestsOutboxTable} WHERE status IN ('pending','processing','failed'))
+          +(SELECT count(*) FROM ${tables.requestsOutboxTable}
+             WHERE status IN ('pending','processing') OR (kind='cleanup' AND status='failed'))
           +(SELECT count(*) FROM ${tables.providerOperationsTable} WHERE state IN ('executing','unknown')))::int AS count`,
       );
       if (Number(active.rows[0]?.count ?? 0) === 0) {

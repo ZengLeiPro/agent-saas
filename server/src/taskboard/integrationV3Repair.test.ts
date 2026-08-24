@@ -66,7 +66,8 @@ describe('integration v3 invariant repair', () => {
     }], []);
 
     await expect(requeueFailedIntegrationV3Candidate(db, {
-      candidates: 'candidates', revisions: 'revisions', requestsOutbox: 'outbox', changes: 'changes',
+      tasks: 'tasks', candidates: 'candidates', revisions: 'revisions', requestsOutbox: 'outbox',
+      changes: 'changes', blockEpisodes: 'block_episodes',
     }, {
       taskId: 'task-1', actorId: 'maintainer-1', reason: 'partial composition support deployed',
     })).resolves.toEqual({
@@ -80,6 +81,8 @@ describe('integration v3 invariant repair', () => {
     expect(recoverySql).toContain("c.subject_kind='source_seed' AND c.composition_complete=FALSE AND c.tree_oid IS NULL");
     expect(recoverySql).toContain("o.last_error='Candidate execution workspace binding is stale'");
     expect(recoverySql).toContain("SET state='composing',worker_status='idle',worker_error=NULL,worker_attempts=0");
+    expect(recoverySql).toContain("SET status='in_progress'");
+    expect(recoverySql).toContain('block.closed_at IS NULL');
     expect(recoverySql).toContain('NOT EXISTS (SELECT 1 FROM composition_requeued)');
     expect(db.query).toHaveBeenNthCalledWith(2, expect.stringContaining('integration.v3.worker_requeued'), [
       'task-1', 'maintainer-1', JSON.stringify({
@@ -90,6 +93,27 @@ describe('integration v3 invariant repair', () => {
     ]);
   });
 
+  it('resumes a blocked pre-provider composition only from its durable composing checkpoint', async () => {
+    const db = dbWithRows([{
+      id: 'candidate-pre-provider', integration_task_id: 'task-1', previous_error: 'safe Git inspection rejected',
+      recovery_kind: 'composition', outbox_id: null, status: 'idle',
+    }], []);
+
+    await expect(requeueFailedIntegrationV3Candidate(db, {
+      tasks: 'tasks', candidates: 'candidates', revisions: 'revisions', requestsOutbox: 'outbox',
+      changes: 'changes', blockEpisodes: 'block_episodes',
+    }, {
+      taskId: 'task-1', actorId: 'maintainer-1', reason: 'safe inspection fix deployed',
+    })).resolves.toMatchObject({
+      candidateId: 'candidate-pre-provider', taskId: 'task-1', recoveryKind: 'composition', status: 'idle',
+    });
+
+    const recoverySql = String(db.query.mock.calls[0]![0]);
+    expect(recoverySql).toContain("current.state='blocked' AND current.provider_pull_request_id IS NULL");
+    expect(recoverySql).toContain("current.worker_checkpoint->>'state'='composing'");
+    expect(recoverySql).toContain("current.state NOT IN ('blocked','merged','canceled')");
+  });
+
   it('requeues only a permanently failed nonterminal worker and writes the operator audit payload', async () => {
     const db = dbWithRows([{
       id: 'candidate-1', integration_task_id: 'task-1', previous_error: 'provider denied',
@@ -97,7 +121,8 @@ describe('integration v3 invariant repair', () => {
     }], []);
 
     await expect(requeueFailedIntegrationV3Candidate(db, {
-      candidates: 'candidates', revisions: 'revisions', requestsOutbox: 'outbox', changes: 'changes',
+      tasks: 'tasks', candidates: 'candidates', revisions: 'revisions', requestsOutbox: 'outbox',
+      changes: 'changes', blockEpisodes: 'block_episodes',
     }, {
       taskId: 'task-1', actorId: 'maintainer-1', reason: 'credentials repaired',
     })).resolves.toEqual({
@@ -107,7 +132,7 @@ describe('integration v3 invariant repair', () => {
 
     const recoverySql = String(db.query.mock.calls[0]![0]);
     expect(recoverySql).toContain("current.worker_status='failed'");
-    expect(recoverySql).toContain("current.state NOT IN ('merged','canceled')");
+    expect(recoverySql).toContain("current.state NOT IN ('blocked','merged','canceled')");
     expect(recoverySql).toContain("o.status='failed' AND o.lease_id IS NULL");
     expect(recoverySql).toContain("o.kind='work' AND c.state='working'");
     expect(recoverySql).toContain("o.kind='review' AND c.state='in_review'");
@@ -126,7 +151,8 @@ describe('integration v3 invariant repair', () => {
     }], []);
 
     await expect(requeueFailedIntegrationV3Candidate(db, {
-      candidates: 'candidates', revisions: 'revisions', requestsOutbox: 'outbox', changes: 'changes',
+      tasks: 'tasks', candidates: 'candidates', revisions: 'revisions', requestsOutbox: 'outbox',
+      changes: 'changes', blockEpisodes: 'block_episodes',
     }, {
       taskId: 'task-1', actorId: 'maintainer-1', reason: 'worktree repaired',
     })).resolves.toEqual({

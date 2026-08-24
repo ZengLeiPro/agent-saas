@@ -137,6 +137,16 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
         WHERE id=$1`,
       [seed.candidateId, workerError],
     );
+    await pool.query(
+      `UPDATE ${store.tasksTable} SET status='blocked' WHERE id=$1`,
+      [seed.taskId],
+    );
+    const blockEpisodeId = randomUUID();
+    await pool.query(
+      `INSERT INTO ${store.blockEpisodesTable}(id,task_id,purpose,reason_code,reason)
+       VALUES($1,$2,'work','integration_candidate_worker_failed',$3)`,
+      [blockEpisodeId, seed.taskId, workerError],
+    );
     const outboxId = randomUUID();
     await pool.query(
       `INSERT INTO ${seed.tables.requestsOutboxTable}
@@ -147,8 +157,9 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
     );
 
     await expect(requeueFailedIntegrationV3Candidate(pool, {
-      candidates: seed.tables.candidatesTable, revisions: seed.tables.revisionsTable,
+      tasks: store.tasksTable, candidates: seed.tables.candidatesTable, revisions: seed.tables.revisionsTable,
       requestsOutbox: seed.tables.requestsOutboxTable, changes: store.changesTable,
+      blockEpisodes: store.blockEpisodesTable,
     }, {
       taskId: seed.taskId, actorId: identity.ownerUserId, reason: 'partial composition support deployed',
     })).resolves.toEqual({
@@ -164,10 +175,64 @@ describePg('Workflow v3 convergence invariants (PostgreSQL)', () => {
       state: 'composing', worker_status: 'idle', worker_error: null, worker_attempts: 0,
       provider_pull_request_id: null,
     }]);
+    const resumedTask = await pool.query(
+      `SELECT status FROM ${store.tasksTable} WHERE id=$1`, [seed.taskId],
+    );
+    expect(resumedTask.rows).toEqual([{ status: 'in_progress' }]);
+    const closedBlock = await pool.query(
+      `SELECT closed_at IS NOT NULL AS closed FROM ${store.blockEpisodesTable} WHERE id=$1`, [blockEpisodeId],
+    );
+    expect(closedBlock.rows).toEqual([{ closed: true }]);
     const outbox = await pool.query(
       `SELECT status,attempts,last_error FROM ${seed.tables.requestsOutboxTable} WHERE id=$1`, [outboxId],
     );
     expect(outbox.rows).toEqual([{ status: 'failed', attempts: 5, last_error: requestError }]);
+  });
+
+  it('resumes a blocked pre-provider composition from its durable composing checkpoint', async () => {
+    const seed = await seedCandidate({
+      state: 'blocked', taskStatus: 'in_progress', checkpoint: { state: 'composing' },
+      revision: { subjectKind: 'source_seed', treeOid: null, compositionComplete: false },
+    });
+    const workerError = 'safe Git inspection rejected';
+    await pool.query(
+      `UPDATE ${seed.tables.candidatesTable}
+          SET worker_status='failed',worker_error=$2,worker_attempts=10,worker_lease_id=NULL
+        WHERE id=$1`,
+      [seed.candidateId, workerError],
+    );
+    await pool.query(`UPDATE ${store.tasksTable} SET status='blocked' WHERE id=$1`, [seed.taskId]);
+    const blockEpisodeId = randomUUID();
+    await pool.query(
+      `INSERT INTO ${store.blockEpisodesTable}(id,task_id,purpose,reason_code,reason)
+       VALUES($1,$2,'work','integration_candidate_worker_failed',$3)`,
+      [blockEpisodeId, seed.taskId, workerError],
+    );
+
+    await expect(requeueFailedIntegrationV3Candidate(pool, {
+      tasks: store.tasksTable, candidates: seed.tables.candidatesTable, revisions: seed.tables.revisionsTable,
+      requestsOutbox: seed.tables.requestsOutboxTable, changes: store.changesTable,
+      blockEpisodes: store.blockEpisodesTable,
+    }, {
+      taskId: seed.taskId, actorId: identity.ownerUserId, reason: 'safe inspection fix deployed',
+    })).resolves.toEqual({
+      candidateId: seed.candidateId, taskId: seed.taskId, previousError: workerError,
+      recoveryKind: 'composition', status: 'idle',
+    });
+
+    const recovered = await pool.query(
+      `SELECT c.state,c.worker_status,c.worker_error,c.worker_attempts,t.status,
+              block.closed_at IS NOT NULL AS block_closed
+         FROM ${seed.tables.candidatesTable} c
+         JOIN ${store.tasksTable} t ON t.id=c.integration_task_id
+         JOIN ${store.blockEpisodesTable} block ON block.task_id=t.id
+        WHERE c.id=$1 AND block.id=$2`,
+      [seed.candidateId, blockEpisodeId],
+    );
+    expect(recovered.rows).toEqual([{
+      state: 'composing', worker_status: 'idle', worker_error: null, worker_attempts: 0,
+      status: 'in_progress', block_closed: true,
+    }]);
   });
 
   it('exposes the current candidate revision and complete frozen snapshots to Work context', async () => {

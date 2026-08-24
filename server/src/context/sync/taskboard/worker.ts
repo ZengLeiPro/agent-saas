@@ -94,11 +94,11 @@ export class TaskboardContextSyncWorker {
         if (page.items.length === 0) {
           throw new Error('Taskboard change reader returned an empty page before the fixed upper bound');
         }
-        failureCode = 'TASKBOARD_CHANGE_APPLY_FAILED';
         const projectRecords: ContextIngestRecordInput[] = [];
         const taskRecords: ContextIngestRecordInput[] = [];
         const eventRecords: ContextIngestRecordInput[] = [];
         for (const change of page.items) {
+          failureCode = 'TASKBOARD_CHANGE_NORMALIZE_FAILED';
           assertTenant(tenantId, change.tenantId);
           assertSeq(change.seq);
           if (BigInt(change.seq) <= BigInt(afterSeq) || BigInt(change.seq) > BigInt(throughSeq)) {
@@ -106,25 +106,33 @@ export class TaskboardContextSyncWorker {
           }
           eventRecords.push(normalizeTaskboardChange(change, observedAt).record);
           if (change.resourceType === 'board') {
+            failureCode = 'TASKBOARD_BOARD_LOOKUP_FAILED';
             const board = await this.options.reader.getBoard(tenantId, change.resourceId);
             if (board) {
+              failureCode = 'TASKBOARD_BOARD_NORMALIZE_FAILED';
               assertTenant(tenantId, board.tenantId);
               projectRecords.push(normalizeTaskboardBoard(board, observedAt).record);
             }
           } else {
+            failureCode = 'TASKBOARD_TASK_LOOKUP_FAILED';
             const task = await this.options.reader.getTask(tenantId, change.resourceId);
             if (task) {
+              failureCode = 'TASKBOARD_TASK_NORMALIZE_FAILED';
               assertTenant(tenantId, task.tenantId);
               taskRecords.push(normalizeTaskboardTask(task, observedAt).record);
             } else if (change.changeType === 'task.deleted') {
+              failureCode = 'TASKBOARD_DELETE_NORMALIZE_FAILED';
               taskRecords.push(normalizeDeletedTaskFallback(change, observedAt));
             }
           }
         }
 
+        failureCode = 'TASKBOARD_PROJECT_INGEST_FAILED';
         if (projectRecords.length) await this.ingest(tenantId, leases.projects, projectRecords, {});
+        failureCode = 'TASKBOARD_TASK_INGEST_FAILED';
         if (taskRecords.length) await this.ingest(tenantId, leases.tasks, taskRecords, {});
         const lastSeq = page.items[page.items.length - 1]!.seq;
+        failureCode = 'TASKBOARD_EVENT_INGEST_FAILED';
         await this.ingest(tenantId, leases.events, eventRecords, {
           watermark: lastSeq,
           ...(page.nextCursor ? { pageCursor: page.nextCursor } : {}),

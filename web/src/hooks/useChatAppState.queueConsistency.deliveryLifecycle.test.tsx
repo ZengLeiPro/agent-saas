@@ -187,15 +187,18 @@ afterEach(() => {
 
 describe("useChatAppState queue delivery lifecycle", () => {
   it("仅在表单回答得到服务端确认后才标记已回答和排队", async () => {
+    const { result, rerender } = renderHook(() => useChatAppState());
+
+    act(() => result.current.selectSession("session-ask"));
     harness.session.sessionId = "session-ask";
     harness.session.isNewSession = false;
-    window.history.replaceState(null, "", "/chat/session-ask");
-    const { result } = renderHook(() => useChatAppState());
-
+    rerender();
     act(() => emit({
       type: "active_stream",
       sessionId: "session-ask",
       active: true,
+      streamId: "stream-ask",
+      runId: "run-ask",
       status: "waiting_user",
     }));
     act(() => emit({

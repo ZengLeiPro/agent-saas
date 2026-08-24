@@ -203,9 +203,23 @@ describe('TaskboardContextSyncWorker', () => {
       .rejects.toThrow('empty page before the fixed upper bound');
     expect([...store.partitions.values()]).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        status: 'retry_wait', lastErrorCode: 'TASKBOARD_SYNC_FAILED',
+        status: 'retry_wait', lastErrorCode: 'TASKBOARD_CHANGE_PAGE_FAILED',
         nextRetryAt: '2026-08-23T06:01:00.000Z',
       }),
+    ]));
+  });
+
+  it.each([
+    ['board inventory', 'listBoards', 'TASKBOARD_BOARD_INVENTORY_FAILED'],
+    ['task inventory', 'listTasks', 'TASKBOARD_TASK_INVENTORY_FAILED'],
+  ] as const)('persists the failing %s stage without exposing source data', async (_name, method, errorCode) => {
+    const reader = seededReader();
+    vi.spyOn(reader, method).mockRejectedValue(new Error('upstream detail'));
+    const store = new FakeStore();
+
+    await expect(createWorker(reader, store, 2).runTenant('tenant-a')).rejects.toThrow('upstream detail');
+    expect([...store.partitions.values()]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'retry_wait', lastErrorCode: errorCode }),
     ]));
   });
 

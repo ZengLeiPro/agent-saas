@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { ContextPlanePhase2Runtime } from './runtime.js';
+import { DerivedStoreError } from '../derived/index.js';
+import { ContextPlanePhase2Runtime, derivedProjectionFailureCode } from './runtime.js';
 
 describe('ContextPlanePhase2Runtime fast sync isolation', () => {
   it('continues successful tenant projection after another tenant projector fails', async () => {
@@ -95,6 +96,17 @@ describe('ContextPlanePhase2Runtime relation draining', () => {
     await expect(projectDerived(runtime, 'tenant-a')).rejects.toThrow('projection failed');
     expect(derivedStore.failConsumerLease).toHaveBeenCalledWith(claimed, 'DERIVED_PROJECTION_FAILED');
     expect(derivedStore.resolvePendingRelationCandidates).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [new DerivedStoreError('DERIVED_EVIDENCE_INVALID'), 'DERIVED_EVIDENCE_INVALID'],
+    [Object.assign(new Error('foreign key'), { code: '23503' }), 'DERIVED_REFERENCE_MISSING'],
+    [Object.assign(new Error('unique'), { code: '23505' }), 'DERIVED_UNIQUE_CONFLICT'],
+    [Object.assign(new Error('check'), { code: '23514' }), 'DERIVED_CONSTRAINT_VIOLATION'],
+    [Object.assign(new Error('column'), { code: '42703' }), 'DERIVED_SCHEMA_MISMATCH'],
+    [new Error('unknown'), 'DERIVED_PROJECTION_FAILED'],
+  ])('classifies projection failures without persisting raw database messages', (error, expected) => {
+    expect(derivedProjectionFailureCode(error)).toBe(expected);
   });
 
   it('drains more than one 100-candidate batch without a busy loop', async () => {

@@ -27,7 +27,7 @@ import {
   type TaskBoardUploadAttachment,
 } from '../../../shared/src/types/taskboard.js';
 import { assertActiveBoard, assertBoardRole } from '../taskboard/storeHelpers.js';
-import { generateAndApplyTaskTitle, generateTaskTitleSafely } from '../taskboard/taskTitle.js';
+import { generateAndApplyTaskTitle } from '../taskboard/taskTitle.js';
 import { releaseTaskCreationAfterFailure, taskCreationRequestDigest, waitForTaskCreationClaim } from '../taskboard/taskCreationLifecycle.js';
 import { sameTaskAttachments } from '../taskboard/taskAttachmentMatch.js';
 import {
@@ -438,7 +438,7 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     assertBoardRole(board.role, 'editor');
     assertActiveBoard(board);
     const { dispatch } = input;
-    const title = input.title ?? (input.clientRequestId ? null : await generateTaskTitleSafely(generateTaskTitle, input.description ?? '', identity));
+    const title = input.title ?? '';
     let attachments: TaskBoardUploadAttachment[] | undefined; let ownerUserId: string | undefined;
     if (!input.clientRequestId) {
       attachments = await resolveRequestAttachments(options, req, input.attachments);
@@ -454,9 +454,6 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     if (!result.created && !result.creationClaimToken && !dispatch) { res.status(201).json(withCreatorAvatarVersion(options.userStore, identity, result.task)); return; }
     let task = result.task;
     const ownsCreation = result.created || Boolean(result.creationClaimToken);
-    if (ownsCreation && input.clientRequestId && input.title === undefined && !task.title.trim()) {
-      task = await generateAndApplyTaskTitle(options.service!, identity, task, input.description ?? '', generateTaskTitle, result.creationClaimToken);
-    }
     let scopedAttachments: TaskBoardUploadAttachment[] | undefined;
     let needsAttachmentWrite = ownsCreation && attachments !== undefined && !sameTaskAttachments(task.attachments, attachments);
     try {
@@ -492,7 +489,11 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       if (result.creationClaimToken) await options.service!.releaseTaskCreation(identity, task.id, result.creationClaimToken).catch(() => undefined);
       throw error;
     }
+    const shouldGenerateTitle = ownsCreation && input.title === undefined && !task.title.trim();
     res.status(201).json(withCreatorAvatarVersion(options.userStore, identity, task));
+    if (shouldGenerateTitle) {
+      void generateAndApplyTaskTitle(options.service!, identity, task, input.description ?? '', generateTaskTitle);
+    }
   }));
 
   router.get('/tasks/search', route(async (req, res) => {

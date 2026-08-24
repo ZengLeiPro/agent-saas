@@ -30,8 +30,8 @@ const VIEWER_BOARD = {
   updatedAt: '2026-08-23T00:00:00.000Z',
 };
 
-describe('创建任务前的标题生成保护', () => {
-  it('先校验权限，并在幂等重试时跳过重复标题生成', async () => {
+describe('创建任务的标题生成保护', () => {
+  it('先校验权限，异步生成标题，并在幂等重试时跳过重复生成', async () => {
     let titleGenerationCalls = 0;
     let existingTask: Awaited<ReturnType<TaskboardService['createTask']>> | null = null;
     let notifyTitleStarted!: () => void;
@@ -116,10 +116,12 @@ describe('创建任务前的标题生成保护', () => {
         createdAt: VIEWER_BOARD.createdAt, updatedAt: VIEWER_BOARD.updatedAt,
       });
       service.rollbackTaskCreation = vi.fn();
-      const first = fetch(`${baseUrl}/api/taskboard/boards/owner-board/tasks`, {
+      const firstResponse = await fetch(`${baseUrl}/api/taskboard/boards/owner-board/tasks`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ description: '幂等创建', clientRequestId: 'request-1', attachments: [], status: 'in_progress', dispatch: true }),
       });
+      expect(firstResponse.status).toBe(201);
+      expect((await firstResponse.json()).title).toBe('');
       await titleStarted;
       const replay = await fetch(`${baseUrl}/api/taskboard/boards/owner-board/tasks`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -128,11 +130,8 @@ describe('创建任务前的标题生成保护', () => {
       expect(replay.status).toBe(201);
       await replay.json();
       releaseTitle();
-      const firstResponse = await first;
-      expect(firstResponse.status).toBe(201);
-      await firstResponse.json();
+      await vi.waitFor(() => expect(service.updateTask).toHaveBeenCalledTimes(1));
       expect(titleGenerationCalls).toBe(1);
-      expect(service.updateTask).toHaveBeenCalledTimes(1);
       expect(startDirectExecution).toHaveBeenCalledTimes(2);
       expect(service.rollbackTaskCreation).not.toHaveBeenCalled();
 

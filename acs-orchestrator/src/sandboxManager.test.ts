@@ -69,6 +69,7 @@ describe('SandboxManager egress injection', () => {
     expect(byName.http_proxy).toBe('http://172.16.177.77:7890');
     expect(byName.HTTPS_PROXY).toBe('http://172.16.177.77:7890');
     expect(byName.https_proxy).toBe('http://172.16.177.77:7890');
+    expect(byName.NODE_USE_ENV_PROXY).toBe('1');
     // VPC DNS 必须在 NO_PROXY 里，否则容器 DNS 会整体走代理并失败
     expect(byName.NO_PROXY).toContain('100.100.2.136');
     expect(byName.no_proxy).toBe(byName.NO_PROXY);

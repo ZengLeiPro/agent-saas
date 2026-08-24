@@ -15,8 +15,10 @@ import {
 } from '../connectors/github.js';
 import {
   connectXCredential,
+  createBirdWhoamiProbe,
   disconnectXCredential,
   getXConnectionWithGovernance,
+  type XValidateCredentials,
 } from '../connectors/x.js';
 
 const githubConnectSchema = z.object({
@@ -50,6 +52,7 @@ export interface ConnectorsRouterDeps {
   secretVault: SecretVault;
   governanceCredentialStore?: GovernanceCredentialReader;
   aliyunService?: AliyunConnectorService;
+  xValidateCredentials?: XValidateCredentials;
   legacyWriteGate?: {
     assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
   };
@@ -69,6 +72,7 @@ function normalizeGithubToken(value: string): string | undefined {
 
 export function createConnectorsRouter(deps: ConnectorsRouterDeps): Router {
   const router = Router();
+  const validateXCredentials = deps.xValidateCredentials ?? createBirdWhoamiProbe();
 
   router.use(async (req, res, next) => {
     const path = req.path.toLowerCase().replace(/\/+$/, '');
@@ -217,6 +221,7 @@ export function createConnectorsRouter(deps: ConnectorsRouterDeps): Router {
         vault: deps.secretVault,
         ...auth,
         credentials: parsed.data,
+        validateCredentials: validateXCredentials,
       });
       return res.json({ connection });
     } catch (error) {

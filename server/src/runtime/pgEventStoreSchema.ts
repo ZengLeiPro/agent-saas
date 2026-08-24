@@ -133,8 +133,9 @@ export async function applyPgEventStoreSchema(
     SELECT tenant_id, session_id, COALESCE(MAX(session_sequence), 0) + 1
     FROM ${eventsTable}
     GROUP BY tenant_id, session_id
-    ON CONFLICT (tenant_id, session_id) DO UPDATE
+    ON CONFLICT (session_id) DO UPDATE
     SET next_sequence = GREATEST(${cursorsTable}.next_sequence, EXCLUDED.next_sequence)
+    WHERE ${cursorsTable}.tenant_id = EXCLUDED.tenant_id
   `);
   // 保留 LEGACY default：rolling deploy 中旧 writer 仍可能省略 tenant_id。新代码
   // 始终显式写 tenant_id；default 只承接旧进程/旧数据，绝不作为新 API fallback。

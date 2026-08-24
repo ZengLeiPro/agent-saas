@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
 import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
+import { allocatePgEventSequences } from './pgEventCursorAllocator.js';
 import { encodePgEventNotifyPayload, lockPgEventGlobalSequence } from './pgEventStoreProtocol.js';
 import type { PlatformEvent, PlatformEventInput } from './types.js';
 import { releaseRunLease } from './runTerminalLifecycle.js';
@@ -1358,18 +1359,13 @@ export class PgRunStore implements RunStore {
     // Must match PgEventStore.appendBatch: hold through the caller's COMMIT so BIGSERIAL
     // allocation order cannot diverge from durable commit order across the two writers.
     await lockPgEventGlobalSequence(client, this.eventsTable);
-    await client.query(`
-      INSERT INTO ${this.eventCursorsTable} (tenant_id, session_id, next_sequence)
-      VALUES ($1, $2, 1)
-      ON CONFLICT (tenant_id, session_id) DO NOTHING
-    `, [tenantId, sessionId]);
-    const cursor = await client.query<{ start_sequence: string }>(`
-      UPDATE ${this.eventCursorsTable}
-      SET next_sequence = next_sequence + $3
-      WHERE tenant_id = $1 AND session_id = $2
-      RETURNING next_sequence - $3 AS start_sequence
-    `, [tenantId, sessionId, events.length]);
-    const startSequence = Number(cursor.rows[0]?.start_sequence ?? 1);
+    const startSequence = await allocatePgEventSequences(
+      client,
+      this.eventCursorsTable,
+      tenantId,
+      sessionId,
+      events.length,
+    );
     const timestamp = new Date().toISOString();
     const fullEvents = events.map((event, index) => ({
       id: randomUUID(),

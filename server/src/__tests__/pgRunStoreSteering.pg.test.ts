@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { LEGACY_TENANT_ID } from '../data/tenants/types.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { PgEventStore } from '../runtime/pgEventStore.js';
 import { PgRunStore } from '../runtime/runStore.js';
 import { recoverRunningToolInvocations } from '../runtime/toolInvocationRecovery.js';
@@ -463,11 +463,11 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       },
     };
 
-    const first = await store.applySteeringInputsAtomically('target-atomic-idempotency', [input], LEGACY_TENANT_ID);
-    const retry = await store.applySteeringInputsAtomically('target-atomic-idempotency', [input], LEGACY_TENANT_ID);
+    const first = await store.applySteeringInputsAtomically('target-atomic-idempotency', [input], DEFAULT_TENANT_ID);
+    const retry = await store.applySteeringInputsAtomically('target-atomic-idempotency', [input], DEFAULT_TENANT_ID);
     expect(first.events.map((event) => event.type)).toEqual(['user_message', 'interjection_applied']);
     expect(retry).toEqual({ appliedSourceRunIds: [], events: [] });
-    const events = await eventStore.list(LEGACY_TENANT_ID, sessionId);
+    const events = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
     expect(events.filter((event) => event.type === 'user_message')).toHaveLength(1);
     expect(events.filter((event) => event.type === 'interjection_applied')).toEqual([
       expect.objectContaining({
@@ -493,7 +493,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     await eventStore.append({
       type: 'user_message', runId: targetRunId, sessionId, content: '旧版已追加内容',
       interjectionSourceRunId: sourceRunId,
-    }, { tenantId: LEGACY_TENANT_ID });
+    }, { tenantId: DEFAULT_TENANT_ID });
 
     const recovered = await store.applySteeringInputsAtomically(targetRunId, [{
       sourceRunId,
@@ -501,7 +501,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
         type: 'user_message', runId: targetRunId, sessionId, content: '旧版已追加内容',
         interjectionSourceRunId: sourceRunId,
       },
-    }], LEGACY_TENANT_ID);
+    }], DEFAULT_TENANT_ID);
 
     expect(recovered.appliedSourceRunIds).toEqual([sourceRunId]);
     expect(recovered.events).toEqual([
@@ -512,7 +512,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       }),
     ]);
     await expect(store.get(sourceRunId)).resolves.toMatchObject({ status: 'completed' });
-    const events = await eventStore.list(LEGACY_TENANT_ID, sessionId);
+    const events = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
     expect(events.filter((event) => (
       event.type === 'user_message' && event.interjectionSourceRunId === sourceRunId
     ))).toHaveLength(1);
@@ -539,17 +539,17 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
           type: 'user_message', runId: targetRunId, sessionId, content: '竞态内容',
           interjectionSourceRunId: sourceRunId,
         },
-      }], LEGACY_TENANT_ID),
+      }], DEFAULT_TENANT_ID),
       store.cancelSteeringBeforeDispatchBySessionWithEvent(
         sessionId,
         'web_abort',
         targetRunId,
-        { type: 'run_cancel_requested', sessionId, runId: targetRunId, reason: 'web_abort' }, LEGACY_TENANT_ID,
+        { type: 'run_cancel_requested', sessionId, runId: targetRunId, reason: 'web_abort' }, DEFAULT_TENANT_ID,
       ),
     ]);
 
     const source = await store.get(sourceRunId);
-    const events = await eventStore.list(LEGACY_TENANT_ID, sessionId);
+    const events = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
     const contentEvents = events.filter((event) => (
       event.type === 'user_message' && event.interjectionSourceRunId === sourceRunId
     ));
@@ -573,7 +573,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
         sessionId,
         'web_abort',
         runId,
-        { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' }, LEGACY_TENANT_ID,
+        { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' }, DEFAULT_TENANT_ID,
       );
 
       expect(result.targetCancelled).toBe(true);
@@ -599,7 +599,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       sessionId,
       'web_abort',
       runId,
-      { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' }, LEGACY_TENANT_ID,
+      { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' }, DEFAULT_TENANT_ID,
     );
 
     expect(result).toMatchObject({ targetCancelled: false, eventCreated: false });
@@ -611,7 +611,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       metadata: expect.objectContaining({ terminalRunStatus: 'completed' }),
     });
     expect((await toolInvocationStore.get('invocation-stop-terminal-race'))?.cancelRequestedAt).toBeUndefined();
-    const events = await eventStore.list(LEGACY_TENANT_ID, sessionId);
+    const events = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
     expect(events.some((event) => event.type === 'run_cancel_requested')).toBe(false);
     expect(events.some((event) => event.type === 'tool_invocation_cancel_requested')).toBe(false);
   });
@@ -628,7 +628,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
         sessionId,
         'web_abort',
         runId,
-        { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' }, LEGACY_TENANT_ID,
+        { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' }, DEFAULT_TENANT_ID,
       );
       const start = () => toolInvocationStore.start({
         invocationId,
@@ -677,7 +677,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
         sessionId,
         'web_abort',
         runId,
-        { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' }, LEGACY_TENANT_ID,
+        { type: 'run_cancel_requested', sessionId, runId, reason: 'web_abort' }, DEFAULT_TENANT_ID,
       ),
       toolInvocationStore.complete(invocationId, 'completed'),
     ]);

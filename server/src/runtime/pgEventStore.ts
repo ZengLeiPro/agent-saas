@@ -8,6 +8,7 @@ import {
   TOOL_RESULT_PROJECTION_SUFFIX_CHARS,
 } from './replayEventBounds.js';
 import { encodePgEventNotifyPayload, lockPgEventGlobalSequence, parsePgCursor } from './pgEventStoreProtocol.js';
+import { allocatePgEventSequences } from './pgEventCursorAllocator.js';
 import { applyPgEventStoreSchema } from './pgEventStoreSchema.js';
 export { decodePgEventNotifyPayload, encodePgEventNotifyPayload } from './pgEventStoreProtocol.js';
 
@@ -155,26 +156,20 @@ export class PgEventStore implements EventStore {
     }
 
     const sessionId = events[0]!.sessionId;
+    if (!sessionId) throw new Error('Runtime event append requires a session');
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       // Keep new writers commit-ordered as an optimization; read-side SHARE locking below is the
       // compatibility guarantee for rolling-deploy writers that do not take this advisory lock.
       await lockPgEventGlobalSequence(client, this.eventsTable);
-      await client.query(
-        `INSERT INTO ${this.cursorsTable} (tenant_id, session_id, next_sequence)
-         VALUES ($1, $2, 1)
-         ON CONFLICT (tenant_id, session_id) DO NOTHING`,
-        [tenantId, sessionId],
+      const startSequence = await allocatePgEventSequences(
+        client,
+        this.cursorsTable,
+        tenantId,
+        sessionId,
+        events.length,
       );
-      const cursor = await client.query<{ start_sequence: string }>(
-        `UPDATE ${this.cursorsTable}
-         SET next_sequence = next_sequence + $2
-         WHERE tenant_id = $1 AND session_id = $3
-         RETURNING next_sequence - $2 AS start_sequence`,
-        [tenantId, events.length, sessionId],
-      );
-      const startSequence = Number(cursor.rows[0]?.start_sequence ?? 1);
       const timestamp = new Date().toISOString();
       const fullEvents = events.map((event, index) => ({
         id: randomUUID(),

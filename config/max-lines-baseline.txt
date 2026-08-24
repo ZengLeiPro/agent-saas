@@ -37,7 +37,7 @@ server/src/routes/skills.ts	1403	production
 server/src/runtime/rawAgentLoop.ts	3959	production
 server/src/runtime/rawRuntimeRunDispatch.ts	3240	production
 server/src/runtime/responsesApiAdapter.ts	2007	production
-server/src/runtime/runStore.ts	1417	production
+server/src/runtime/runStore.ts	1413	production
 server/src/runtime/types.ts	1131	production
 server/src/taskboard/store.ts	1125	production
 shared/src/lib/wsEventProcessor.test.ts	1122	test

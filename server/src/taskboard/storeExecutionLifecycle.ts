@@ -48,7 +48,21 @@ export function unresolvedExecutionRecovery(
   completionStatus: 'failed' | 'cancelled',
   failedCount: number,
   maxRetries: number,
+  options: { agentFirstIntegration?: boolean } = {},
 ): { status: TaskBoardStatus; exhausted: boolean } {
+  if (options.agentFirstIntegration) {
+    // Runtime/network completion failures are not business decisions. Keep the
+    // durable Agent stage dispatchable; the scheduler creates a fresh Execution
+    // through the normal outbox instead of retrying synchronously.
+    return {
+      exhausted: false,
+      status: purpose === 'review'
+        ? 'in_review'
+        : purpose === 'merge'
+          ? 'ready_to_merge'
+          : 'in_progress',
+    };
+  }
   const exhausted = completionStatus === 'failed' && failedCount >= Math.max(0, maxRetries);
   return {
     exhausted,
@@ -410,6 +424,10 @@ async function completeExecutionInternal(
         completionInput.status,
         failedCount,
         maxRetries,
+        {
+          agentFirstIntegration: loaded.task.kind === 'integration'
+            && loaded.task.workflowVersion === 3,
+        },
       );
       const retryStatus = recovery.status;
       const exhausted = recovery.exhausted;

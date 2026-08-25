@@ -6,6 +6,7 @@ import type { TaskboardIntegrationDispatchCandidate, TaskboardIdentity } from '.
 import { createIntegrationBatch } from './v2Store.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { rowToTask, visibleCommentPredicate } from './storeHelpers.js';
+import { purposeForIntegrationAgentStatus } from './workflow/decider.js';
 
 interface IntegrationTriggerHost {
   pool: {
@@ -57,7 +58,8 @@ export async function claimIntegrationDispatchCandidates(
         expectedBoardVersion: trigger.boardVersion,
       }, trigger.mode === 'scheduled' ? 'scheduled_policy' : 'on_ready_policy');
       await completeTrigger(host, trigger);
-      // v3 is driven only by IntegrationEngineV3 system requests. Never dispatch a Merge Agent.
+      // Agent-first integrations enter through the durable rendezvous and are
+      // picked up below; legacy integrations still start directly with merge.
       if ((task.workflowVersion ?? 2) === 2) created.push({ identity, task, purpose: 'merge' });
     } catch (error) {
       const code = error && typeof error === 'object' && 'code' in error
@@ -441,10 +443,18 @@ async function loadUnstartedIntegrationTasks(
                   )
              ))
             OR (t.kind='integration' AND COALESCE(t.workflow_version,2)=3
-                AND t.status IN ('todo','in_progress') AND l.active_integration_task_id=t.id
+                AND t.status IN ('todo','in_progress','in_review','ready_to_merge')
+                AND l.active_integration_task_id=t.id
                 AND EXISTS (
                   SELECT 1 FROM ${agentsTable} agent
-                   WHERE agent.integration_task_id=t.id AND agent.status IN ('active','reviewing')
+                   WHERE agent.integration_task_id=t.id
+                     AND (
+                       (t.status IN ('todo','in_progress') AND agent.status='active')
+                       OR (t.status='in_review' AND agent.status='reviewing')
+                       OR (t.status='ready_to_merge' AND agent.status='ready_to_merge'
+                           AND agent.verdict='approved' AND agent.review_execution_id IS NOT NULL
+                           AND agent.review_head_oid IS NOT NULL)
+                     )
                 ))
             OR (t.kind IN ('delivery','remediation') AND t.status='in_review'
                 AND t.provider_pull_request_id IS NOT NULL)
@@ -501,8 +511,10 @@ async function loadUnstartedIntegrationTasks(
         username: 'board-owner',
       },
       task: rowToTask(row),
-      purpose: row.kind === 'integration' && Number(row.workflow_version ?? 2) === 2
-        ? 'merge'
+      purpose: row.kind === 'integration'
+        ? Number(row.workflow_version ?? 2) === 2
+          ? 'merge'
+          : purposeForIntegrationAgentStatus(rowToTask(row).status)!
         : row.status === 'in_review' ? 'review' : 'work',
     }));
   } finally {

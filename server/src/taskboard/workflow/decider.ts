@@ -58,6 +58,15 @@ export function purposeForIntegrationV3Candidate(
   return undefined;
 }
 
+export function purposeForIntegrationAgentStatus(
+  status: TaskBoardStatus,
+): 'work' | 'review' | 'merge' | undefined {
+  if (status === 'todo' || status === 'in_progress') return 'work';
+  if (status === 'in_review') return 'review';
+  if (status === 'ready_to_merge') return 'merge';
+  return undefined;
+}
+
 export function isCurrentIntegrationV3Execution(
   candidate: IntegrationV3Facts,
   binding: IntegrationV3ExecutionBinding | undefined,
@@ -89,7 +98,7 @@ export function assertExecutionRequestAllowed(
       // Agent-first integrations deliberately have no server-side Candidate.  The
       // durable Agent session reconciles GitHub and decides the next recoverable step.
       if (!candidate) {
-        const expected = task.status === 'in_review' ? 'review' : task.status === 'in_progress' ? 'work' : undefined;
+        const expected = purposeForIntegrationAgentStatus(task.status);
         if (!expected || purpose !== expected) {
           throw new TaskboardValidationError('Integration Agent is not dispatchable for this purpose', 'TASKBOARD_INTEGRATION_AGENT_EXECUTION_STATE_INVALID');
         }

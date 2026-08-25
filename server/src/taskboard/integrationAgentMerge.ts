@@ -40,11 +40,13 @@ export async function mergeIntegrationAgent(
     const loaded = await client.query(
       `SELECT t.*,b.repository,b.integration_policy,b.owner_user_id,
               e.id AS execution_id,e.purpose,e.status AS execution_status,e.transitioned_at,e.superseded_at,
-              a.provider_pull_request_id,a.integration_branch,a.review_head_oid,a.verdict,a.review_execution_id,a.status AS agent_status
+              a.provider_pull_request_id,a.integration_branch,a.review_head_oid,a.verdict,a.review_execution_id,a.status AS agent_status,
+              review_e.purpose AS review_purpose,review_e.transitioned_at AS review_transitioned_at
          FROM ${host.executionsTable} e
          JOIN ${host.tasksTable} t ON t.id=e.task_id
          JOIN ${host.boardsTable} b ON b.id=t.board_id
          JOIN ${agentsTable} a ON a.integration_task_id=t.id
+         LEFT JOIN ${host.executionsTable} review_e ON review_e.id=a.review_execution_id AND review_e.task_id=t.id
         WHERE e.run_id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
         FOR UPDATE OF t,e,a`, [runId, identity.tenantId, identity.ownerUserId],
     );
@@ -57,7 +59,8 @@ export async function mergeIntegrationAgent(
     }
     const pullRequestId = String(row.provider_pull_request_id ?? '');
     const reviewHeadOid = String(row.review_head_oid ?? '');
-    if (row.agent_status !== 'ready_to_merge' || row.verdict !== 'approved' || !row.review_execution_id || !pullRequestId || !reviewHeadOid) {
+    if (row.agent_status !== 'ready_to_merge' || row.verdict !== 'approved' || !row.review_execution_id
+      || row.review_purpose !== 'review' || !row.review_transitioned_at || !pullRequestId || !reviewHeadOid) {
       throw new TaskboardValidationError('Integration Agent lacks a head-bound approved review', 'TASKBOARD_INTEGRATION_AGENT_REVIEW_REQUIRED');
     }
     const repository = jsonObject(row.repository);

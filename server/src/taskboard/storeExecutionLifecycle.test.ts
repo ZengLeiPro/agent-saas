@@ -267,4 +267,13 @@ describe('unresolvedExecutionRecovery', () => {
         .toEqual({ status, exhausted });
     },
   );
+
+  it.each([
+    ['work', 'in_progress'],
+    ['review', 'in_review'],
+    ['merge', 'ready_to_merge'],
+  ] as const)('keeps Agent-first %s runtime failures asynchronously dispatchable after the generic threshold', (purpose, status) => {
+    expect(unresolvedExecutionRecovery(purpose, 'failed', 99, 1, { agentFirstIntegration: true }))
+      .toEqual({ status, exhausted: false });
+  });
 });

@@ -30,6 +30,7 @@ function loadedRow() {
     execution_id: 'merge-execution-1', purpose: 'merge', execution_status: 'running', transitioned_at: null, superseded_at: null,
     provider_pull_request_id: '42', integration_branch: 'integration/integration-1', review_head_oid: 'agent-head',
     verdict: 'approved', review_execution_id: 'review-execution-1', agent_status: 'ready_to_merge',
+    review_purpose: 'review', review_transitioned_at: now,
   };
 }
 
@@ -51,11 +52,14 @@ function finalizationClient() {
   };
 }
 
-function hostWith(provider: { getPullRequest: ReturnType<typeof vi.fn>; mergePullRequest: ReturnType<typeof vi.fn> }) {
+function hostWith(
+  provider: { getPullRequest: ReturnType<typeof vi.fn>; mergePullRequest: ReturnType<typeof vi.fn> },
+  row = loadedRow(),
+) {
   const loadClient = {
     release: vi.fn(),
     query: vi.fn(async (sql: string) => sql.includes('FROM executions e')
-      ? { rows: [loadedRow()] } : { rows: [], rowCount: 0 }),
+      ? { rows: [row] } : { rows: [], rowCount: 0 }),
   };
   const finalized = finalizationClient();
   const clients = [loadClient, finalized];
@@ -73,6 +77,20 @@ function hostWith(provider: { getPullRequest: ReturnType<typeof vi.fn>; mergePul
 }
 
 describe('mergeIntegrationAgent', () => {
+  it('rejects a review Execution that attempts to invoke the merge gateway directly', async () => {
+    const provider = {
+      getPullRequest: vi.fn(async () => pullRequest),
+      mergePullRequest: vi.fn(),
+    };
+    const { host } = hostWith(provider, { ...loadedRow(), execution_id: 'review-execution-1', purpose: 'review' });
+
+    await expect(mergeIntegrationAgent(host, identity, 'review-run')).rejects.toMatchObject({
+      code: 'TASKBOARD_INTEGRATION_AGENT_MERGE_INVALID',
+    });
+    expect(provider.getPullRequest).not.toHaveBeenCalled();
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+  });
+
   it('converges every source and delivery after a normal merged receipt', async () => {
     const provider = {
       getPullRequest: vi.fn(async () => pullRequest),

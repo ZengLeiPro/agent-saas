@@ -186,6 +186,52 @@ describe('Resource Assignment 与 Personal Preference', () => {
       && item.params?.[5] === 'user-bob')).toBe(true);
   });
 
+  it('legacy 内置 Connector 为客户组织投影 everyone allow，且不覆盖显式治理', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const query = async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, ...(params ? { params } : {}) });
+      if (sql.includes('SELECT * FROM test_resource_assignment_sets')) return { rows: [], rowCount: 0 };
+      return { rows: [], rowCount: 1 };
+    };
+    const store = new PgAssignmentStore({
+      pool: { query, connect: async () => ({ query, release: () => undefined }) } as never,
+      tablePrefix: 'test',
+      platformTenantId: 'pantheon',
+    });
+    await expect(store.backfillLegacyConnectorAssignments({
+      tenantIds: ['pantheon', 'acme', 'acme'],
+      connectorIds: ['google_workspace', 'github', 'google_workspace'],
+      projectedBy: 'system:governance-m1',
+    })).resolves.toEqual({ resourceSetsProjected: 2 });
+    const connectorAssignments = queries.filter(item =>
+      item.sql.includes('INSERT INTO test_resource_assignments') && item.params?.[2] === 'connector',
+    );
+    expect(connectorAssignments).toHaveLength(2);
+    expect(connectorAssignments.every(item =>
+      item.params?.[1] === 'acme'
+      && item.params?.[4] === 'everyone'
+      && item.params?.[5] === null
+      && item.params?.[6] === 'allow',
+    )).toBe(true);
+    expect(connectorAssignments.some(item => item.params?.[3] === 'google_workspace')).toBe(true);
+
+    const governedQuery = vi.fn().mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT * FROM test_resource_assignment_sets')) {
+        return { rows: [assignmentSetRow({ resource_type: 'connector', resource_id: 'google_workspace', source: 'governance' })], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const governedStore = new PgAssignmentStore({
+      pool: { connect: async () => ({ query: governedQuery, release: () => undefined }) } as never,
+      tablePrefix: 'test',
+      platformTenantId: 'pantheon',
+    });
+    await expect(governedStore.backfillLegacyConnectorAssignments({
+      tenantIds: ['acme'], connectorIds: ['google_workspace'], projectedBy: 'system:governance-m1',
+    })).resolves.toEqual({ resourceSetsProjected: 0 });
+    expect(governedQuery).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO test_resource_assignments'), expect.anything());
+  });
+
   it('effective binding 同时计算 user/everyone/agent，deny 优先；directory group 未解析时 fail closed', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const query = async (sql: string, params?: unknown[]) => {

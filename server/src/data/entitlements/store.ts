@@ -433,6 +433,11 @@ function legacyScopes(settings: TenantSettings): Array<{
       mode: settings.models.allowedModels.length === 0 ? 'all' : 'selected',
       resourceIds: settings.models.allowedModels,
     },
+    {
+      resourceType: 'connector',
+      mode: 'all',
+      resourceIds: [],
+    },
   ];
 }
 

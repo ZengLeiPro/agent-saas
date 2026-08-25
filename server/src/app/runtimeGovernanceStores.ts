@@ -11,7 +11,7 @@ import { PgDirectoryGroupStore } from '../data/directoryGroups/index.js';
 import { PgOAuthGrantStore } from '../data/oauthGrants/index.js';
 import { GovernanceShadowProjectionScheduler } from '../governance/migrations/shadowProjectionScheduler.js';
 import { PgCredentialStore } from '../data/credentials/index.js';
-import { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
+import { BUILTIN_CONNECTOR_DEFINITIONS, PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
 import { PgEnvironmentStore } from '../data/environments/index.js';
 import { PgAgentResourceStore } from '../data/agentResources/index.js';
 import { projectManagedOrgAgentVersion } from '../data/agentResources/orgAgentProjection.js';
@@ -288,6 +288,23 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
       `Connector Catalog builtin registration: created=${connectorCatalogBackfill.created} `
       + `unchanged=${connectorCatalogBackfill.unchanged}`,
     );
+    if (tenantStore) {
+      try {
+        const connectorAssignmentBackfill = await assignmentStore.backfillLegacyConnectorAssignments({
+          tenantIds: tenantStore.listAll().map(tenant => tenant.id),
+          connectorIds: BUILTIN_CONNECTOR_DEFINITIONS.map(connector => connector.connectorId),
+          projectedBy: 'system:governance-m1',
+        });
+        serverLogger.info(
+          `Governance Connector Assignment shadow backfill: sets=${connectorAssignmentBackfill.resourceSetsProjected}`,
+        );
+      } catch (error) {
+        serverLogger.warn(
+          `Governance Connector Assignment shadow backfill failed; legacy authority remains active: `
+          + `${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
     environmentStore = new PgEnvironmentStore({
       pool: pgEventStore.pool,
       tablePrefix: tablePrefix,
@@ -846,6 +863,11 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
             platformTenantId: DEFAULT_TENANT_ID,
             resolveSkillResourceId: resolveLegacySkillResourceId,
           });
+          await assignmentStore!.backfillLegacyConnectorAssignments({
+            tenantIds: tenantStore!.listAll().map(tenant => tenant.id),
+            connectorIds: BUILTIN_CONNECTOR_DEFINITIONS.map(connector => connector.connectorId),
+            projectedBy: 'system:governance-shadow',
+          });
         },
       }, (name, error) => {
         serverLogger.warn(
@@ -863,6 +885,7 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
       tenantStore.setPostPersistObserver(() => {
         scheduleMembership();
         scheduleEntitlement();
+        scheduleAssignment();
       });
       orgAgentStore.setPostPersistObserver(scheduleAssignment);
       skillConfigStore.setPostPersistObserver(scheduleAssignment);

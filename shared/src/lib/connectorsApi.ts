@@ -218,10 +218,21 @@ async function revokeGoogleWorkspaceOAuthGrants(reason: string): Promise<void> {
     && grant.connectorId === 'google-workspace'
     && (grant.status === 'active' || grant.status === 'error'));
   if (grants.length === 0) {
-    await jsonOrError<{ grantId: string }>(
-      await authFetch('/api/connectors/google-workspace/oauth-grant/ensure', { method: 'POST' }),
-      '补齐 Google Workspace OAuth Grant 失败',
-    );
+    const ensureResponse = await authFetch('/api/connectors/google-workspace/oauth-grant/ensure', { method: 'POST' });
+    if (!ensureResponse.ok) {
+      const body = await ensureResponse.json().catch(() => ({})) as { error?: string; code?: string };
+      if (ensureResponse.status !== 409 || body.code !== 'GOOGLE_WORKSPACE_SCOPE_UNVERIFIABLE') {
+        throw new Error(body.error || '补齐 Google Workspace OAuth Grant 失败');
+      }
+      const disconnectResponse = await authFetch('/api/connectors/google-workspace/unverified-disconnect', {
+        method: 'POST',
+      });
+      if (!disconnectResponse.ok) {
+        const disconnectBody = await disconnectResponse.json().catch(() => ({})) as { error?: string };
+        throw new Error(disconnectBody.error || 'Google Workspace 断开失败');
+      }
+      return;
+    }
     current = await governanceAccessApi.listOAuthGrants();
     grants = current.grants.filter(grant => grant.provider === 'google'
       && grant.connectorId === 'google-workspace'

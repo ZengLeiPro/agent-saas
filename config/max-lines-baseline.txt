@@ -52,5 +52,5 @@ web/src/components/ModelManager/index.tsx	1366	production
 web/src/components/RuntimeOperationsManager/index.tsx	1219	production
 web/src/components/SettingsCenter/SettingsModal.tsx	1092	production
 web/src/components/TenantManager/index.tsx	1222	production
-web/src/hooks/useChatAppState.ts	3178	production
+web/src/hooks/useChatAppState.ts	3177	production
 web/src/hooks/useSession.ts	1075	production

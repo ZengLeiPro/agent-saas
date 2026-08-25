@@ -69,7 +69,14 @@ describe("CronService shared Store consistency", () => {
     for (const service of started) service.stop();
     started.length = 0;
     await Promise.all(
-      dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+      // stop() 会取消后续调度，但已启动的跨进程落盘可能仍在收尾；Node 的 rm
+      // 对 ENOTEMPTY/EBUSY 做有限重试，避免临时目录清理与最后一次写入竞争。
+      dirs.splice(0).map((dir) => rm(dir, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      })),
     );
   });
 

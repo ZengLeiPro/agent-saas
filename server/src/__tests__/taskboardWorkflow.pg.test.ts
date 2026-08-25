@@ -72,7 +72,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
        VALUES($1,$2,$3,$4,'running','work','initial',2,$5,$6)`,
       [executionId, advisory.id, runId, `session-${executionId}`, `attempt-${executionId}`, identity.ownerUserId],
     );
-    const input = { status: 'todo' as const, body: 'Protocol delivery' };
+    const input = { targetStatus: 'todo' as const, body: 'Protocol delivery' };
     await expect(store.finishExecutionV2(identity, runId, { ...input, body: ' ' }))
       .rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_COMMENT_REQUIRED' });
     const resolved = await store.finishExecutionV2(identity, runId, input);
@@ -95,7 +95,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       .rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_FENCED' });
   });
 
-  it('V2 Run 未 finish 时保持任务阶段且不写 Agent 过程评论', async () => {
+  it('V2 Run 未 finish 时保持任务阶段且不写评论或创建续跑 Execution', async () => {
     const board = await store.createBoard(identity, { name: 'Unfinished stage board' });
     const advisory = await store.createTask(identity, board.id, {
       title: 'Continue until finished', kind: 'advisory', status: 'in_progress',
@@ -109,18 +109,9 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       [executionId, advisory.id, runId, `session-${executionId}`, `attempt-${executionId}`, identity.ownerUserId],
     );
 
-    const sessionId = `session-${executionId}`;
-    const resumeId = `${executionId}-resume`;
-    const resumeRunId = `run-${resumeId}`;
-    const resumeExecution = executionClaim(advisory.id, advisory.version, resumeId, resumeRunId);
-    resumeExecution.trigger = 'resume';
-    resumeExecution.sessionId = sessionId;
-    resumeExecution.dispatch.session.sessionId = sessionId;
-    resumeExecution.dispatch.run.sessionId = sessionId;
     const completed = await store.completeExecution(runId, {
       status: 'succeeded',
       commentBody: '这条 Run 输出不应进入任务评论区',
-      resumeExecution,
     });
 
     expect(completed).toMatchObject({
@@ -128,10 +119,9 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       execution: { status: 'succeeded' },
     });
     expect(await store.listComments(identity, advisory.id)).toHaveLength(0);
-    expect(await store.listExecutions(identity, advisory.id)).toEqual(expect.arrayContaining([
+    expect(await store.listExecutions(identity, advisory.id)).toEqual([
       expect.objectContaining({ id: executionId, status: 'succeeded' }),
-      expect.objectContaining({ id: resumeId, status: 'queued', trigger: 'resume', sessionId }),
-    ]));
+    ]);
   });
 
   it('claim replay is returned before terminal checks while new terminal claims remain forbidden', async () => {
@@ -227,6 +217,9 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     });
     const context = await store.getExecutionContextV2(identity, task.id, { runId });
     expect(context.task.resumeContext).toEqual(claimed.task.resumeContext);
+    expect(context.board).not.toHaveProperty('prompt');
+    expect(context.board).not.toHaveProperty('stagePrompts');
+    expect((await store.getBoard(identity, board.id)).prompt).toEqual(expect.any(String));
   });
 
   it('canceled source remains navigable history but delivery is eligible again in get/list/search', async () => {
@@ -320,7 +313,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       `UPDATE ${store.executionsTable} SET status='cancelled',superseded_at=now(),fence_epoch=fence_epoch+1 WHERE id=$1`,
       [executionId],
     );
-    const late = { status: 'in_review' as const, body: 'Late review' };
+    const late = { targetStatus: 'in_review' as const, body: 'Late review' };
     await expect(store.finishExecutionV2(identity, runId, late)).rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_FENCED' });
   });
 
@@ -408,7 +401,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
 
     await store.finishExecutionV2(identity, runId, {
       body: 'Protocol delivery',
-      status: 'done',
+      targetStatus: 'done',
     });
     await store.completeExecution(runId, { status: 'succeeded', commentBody: 'Integration completed' });
     expect((await store.listExecutions(identity, integration.id))[0]).toMatchObject({
@@ -487,7 +480,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     });
     await store.finishExecutionV2(identity, mergeRunId, {
       body: 'Protocol delivery',
-      status: 'in_progress',
+      targetStatus: 'in_progress',
     });
     await store.completeExecution(mergeRunId, { status: 'succeeded', commentBody: 'Merge is waiting for remediation' });
 
@@ -516,7 +509,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     });
     await expect(store.finishExecutionV2(identity, remediationRunId, {
       body: 'Protocol delivery',
-      status: 'in_review',
+      targetStatus: 'in_review',
     })).rejects.toMatchObject({ code: 'TASKBOARD_REMEDIATION_COMMIT_REQUIRED' });
     expect(await store.getTask(identity, recovery!.task.id)).toMatchObject({ status: 'in_progress' });
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
@@ -540,7 +533,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     });
     const remediationResolved = await store.finishExecutionV2(identity, remediationRunId, {
       body: 'Work delivery',
-      status: 'in_review',
+      targetStatus: 'in_review',
     });
     expect(remediationResolved.status).toBe('in_review');
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
@@ -562,7 +555,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     const reviewContext = await store.getExecutionContextV2(identity, recovery!.task.id, { runId: reviewRunId });
     const approved = await store.finishExecutionV2(identity, reviewRunId, {
       body: 'Review delivery',
-      status: 'ready_to_merge',
+      targetStatus: 'ready_to_merge',
     });
     expect(approved.status).toBe('done');
     await store.completeExecution(reviewRunId, { status: 'succeeded', commentBody: 'Remediation approved' });
@@ -640,7 +633,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     });
     await store.finishExecutionV2(identity, runId, {
       body: 'Protocol delivery',
-      status: 'in_progress',
+      targetStatus: 'in_progress',
     });
     await store.completeExecution(runId, { status: 'succeeded', commentBody: 'Waiting for checks remediation' });
     const candidates = await store.claimIntegrationDispatchCandidatesV2(10);

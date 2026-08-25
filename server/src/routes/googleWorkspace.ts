@@ -34,7 +34,8 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
   router.use(async (req, res, next) => {
     const governedOAuthFlow = (req.method === 'GET' && req.path === '/oauth/callback')
       || (req.method === 'POST' && req.path === '/google-workspace/oauth/start')
-      || (req.method === 'POST' && req.path === '/google-workspace/oauth-grant/ensure');
+      || (req.method === 'POST' && req.path === '/google-workspace/oauth-grant/ensure')
+      || (req.method === 'POST' && req.path === '/google-workspace/unverified-disconnect');
     const writesLegacyState = !governedOAuthFlow && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
     if (!writesLegacyState || !options.legacyWriteGate) return next();
     try {
@@ -75,12 +76,42 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
         userId: req.user.sub, username: req.user.username, tenantId: req.user.tenantId,
       });
       if (!grant) {
-        res.status(409).json({ error: 'Google Workspace 连接缺少可验证的授权范围，请重新连接' });
+        res.status(409).json({
+          error: 'Google Workspace 连接缺少可验证的授权范围',
+          code: 'GOOGLE_WORKSPACE_SCOPE_UNVERIFIABLE',
+        });
         return;
       }
       res.json({ grantId: grant.grantId });
     } catch (error) {
       res.status(503).json({ error: error instanceof Error ? error.message : 'Google Workspace OAuth Grant 补齐失败' });
+    }
+  });
+
+  router.post('/google-workspace/unverified-disconnect', async (req, res) => {
+    if (!req.user?.sub || !req.user.username || !req.user.tenantId) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    if (!options.oauthService || !options.ensureOAuthGrant) {
+      res.status(503).json({ error: 'Google Workspace 连接服务或 OAuth Grant 权威尚未配置' });
+      return;
+    }
+    try {
+      const grant = await options.ensureOAuthGrant({
+        userId: req.user.sub, username: req.user.username, tenantId: req.user.tenantId,
+      });
+      if (grant) {
+        res.status(409).json({
+          error: '请通过治理 OAuth Grant 签名预览撤销授权',
+          code: 'OAUTH_GRANT_SIGNED_REVOCATION_REQUIRED',
+        });
+        return;
+      }
+      await options.oauthService.disconnect(req.user.sub, req.user.username, req.user.tenantId);
+      res.status(204).end();
+    } catch (error) {
+      res.status(503).json({ error: error instanceof Error ? error.message : 'Google Workspace 断开失败' });
     }
   });
 

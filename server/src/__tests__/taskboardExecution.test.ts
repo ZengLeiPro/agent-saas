@@ -321,8 +321,13 @@ describe('TaskboardExecutionCoordinator', () => {
     expect(rig.store.claimExecution).not.toHaveBeenCalled();
   });
 
-  it('wake 前重读最新任务和评论并生成执行提示词', async () => {
-    const rig = makeRig({}, {
+  it('wake 前重读最新任务和提示语并生成最小用户消息', async () => {
+    const rig = makeRig({
+      getExecutionContextByRunId: vi.fn(async () => ({
+        identity, task, comments: [comment], execution: execution({ status: 'queued', purpose: 'work' }),
+        boardPrompt: '看板整体约束', stagePrompts: { work: '实施阶段约束', review: '复核阶段约束' },
+      })),
+    }, {
       resolveUserDisplayName: () => '爱丽丝 @alice',
       timezone: 'Asia/Shanghai',
     });
@@ -337,6 +342,11 @@ describe('TaskboardExecutionCoordinator', () => {
 
     expect(rig.store.getExecutionContextByRunId).toHaveBeenCalledWith('run-1');
     expect(rig.store.setExecutionStatus).toHaveBeenCalledWith('run-1', 'running');
+    expect(prepared.metadata).toMatchObject({
+      taskboardBoardPrompt: '看板整体约束',
+      taskboardStagePrompt: '实施阶段约束',
+    });
+    expect(prepared.metadata).not.toMatchObject({ taskboardStagePrompt: '复核阶段约束' });
     expect(prepared.metadata.wakeMessage).toMatchObject({
       content: expect.stringMatching(/taskId: task-1[\s\S]*executionId: execution-1/),
     });

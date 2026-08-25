@@ -635,8 +635,12 @@ export async function getExecutionContextV2(
       ? await client.query(`SELECT * FROM ${options.integrationSourcesTable} WHERE integration_task_id=$1 ORDER BY source_order`, [taskId])
       : undefined;
     const policy = jsonObject(loaded.board.integration_policy) as { revision?: string } | undefined;
+    const { prompt: _prompt, stagePrompts: _stagePrompts, ...contextBoard } = rowToBoard(
+      loaded.board,
+      identity.ownerUserId,
+    );
     return {
-      board: rowToBoard(loaded.board, identity.ownerUserId),
+      board: contextBoard,
       task: loaded.task,
       ...(comments ? { comments: comments.rows.map(rowToComment) } : {}),
       ...(executions ? { executions: executions.rows.map(rowToExecution) } : {}),

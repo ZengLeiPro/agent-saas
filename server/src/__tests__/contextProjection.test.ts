@@ -509,7 +509,7 @@ describe('compaction 切分（/compact 真实现）', () => {
     ], { sessionId: 'session-1', runId: 'run-active' });
     expect(active.messages[0]?.content).toContain('state="active"');
     expect(active.messages[0]?.content).toContain('<resume-policy>');
-    expect(active.messages[0]?.content).toContain('优先依据摘要中的未完成事项重新调用 TodoWrite');
+    expect(active.messages[0]?.content).toContain('首个正常工具调用必须用 TodoWrite 提交完整业务步骤快照');
     expect(active.messages[0]?.content).toContain('修复配置问题');
 
     const historical = buildContextProjection([

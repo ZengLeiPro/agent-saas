@@ -223,6 +223,7 @@ export interface TaskboardContinuationContext {
   task: TaskBoardTask;
   comment: TaskBoardComment;
   pendingComments: TaskBoardComment[];
+  boardPrompt?: string;
   /** 看板各执行阶段（work/review/merge）特定提示语；缺省阶段执行时使用系统固定模板。 */
   stagePrompts?: Partial<Record<TaskBoardExecutionPurpose, string>>;
   continuationRunId?: string;
@@ -237,8 +238,6 @@ export interface TaskboardExecutionCompletionInput {
   commentBody: string;
   attachments?: TaskBoardAttachment[];
   error?: string;
-  /** 当前阶段未 finish 时，与本轮终态回写同事务创建的续跑 Execution。 */
-  resumeExecution?: TaskboardExecutionClaimInput;
   /** 实施 finish 后，与本轮终态回写同事务创建的自动复核 Execution。 */
   reviewExecution?: TaskboardExecutionClaimInput;
 }

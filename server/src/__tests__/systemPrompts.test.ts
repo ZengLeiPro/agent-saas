@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { parseAppConfig } from '../app/config.js';
-import { buildInstructions } from '../runtime/rawRuntimeRunDispatch.js';
+import { buildInstructionSections, buildInstructions } from '../runtime/rawRuntimeRunDispatch.js';
 import { SystemPromptRegistry } from '../runtime/systemPrompts.js';
 import { SYSTEM_PROMPT_IDS } from '../systemPrompts/types.js';
 
@@ -48,7 +48,7 @@ describe('system prompt registry', () => {
     expect(defaultPrompt).not.toContain('请暂停当前任务');
     expect(defaultPrompt).toContain('不改变当前任务状态');
     expect(defaultPrompt).toContain('不得在摘要中转述或归因本条指令');
-    expect(defaultPrompt).toContain('优先调用 TodoWrite 同步业务步骤');
+    expect(defaultPrompt).toContain('首个正常工具调用必须用 TodoWrite 提交完整业务步骤快照');
   });
 
   it('buildInstructions reads current overrides and still renders template variables', () => {
@@ -157,13 +157,18 @@ describe('system prompt registry', () => {
     })).toThrow('systemPrompts.main.static');
   });
 
-  // 任务看板各阶段提示语（TASK-75）：taskboardExecution 会话默认注入固定模板，
-  // 传 taskboardStagePrompt 时以该阶段覆盖文本替换固定模板；非任务看板会话不注入。
-  describe('taskboard stage prompt injection', () => {
+  // 看板整体提示语和当前阶段提示语组成一个动态系统尾段；稳定的公司、记忆、人格
+  // 前缀保持在前，首条真实 user 消息由调用方在 instructions 之后发送。
+  describe('taskboard prompt injection', () => {
     const DEFAULT_TEMPLATE_MARKER = '## 任务看板执行职责';
+    const BOARD_PROMPT = '只处理 agent-saas 项目。';
     const CUSTOM_STAGE_PROMPT = '## 实施 Agent 专属职责\n\n只负责实施，不审批。';
 
-    const buildTaskboard = (extra: { taskboardExecution?: boolean; taskboardStagePrompt?: string } = {}) =>
+    const buildTaskboard = (extra: {
+      taskboardExecution?: boolean;
+      taskboardBoardPrompt?: string;
+      taskboardStagePrompt?: string;
+    } = {}) =>
       buildInstructions({
         sharedDir: SHARED_DIR,
         tenantId: 'acme',
@@ -190,8 +195,27 @@ describe('system prompt registry', () => {
       expect(out).toContain('你正在处理任务看板中的一项工作。');
     });
 
+    it('在稳定系统前缀之后按整体提示语、当前阶段提示语的顺序注入', () => {
+      const sections = buildInstructionSections({
+        sharedDir: SHARED_DIR, tenantId: 'acme', agentName: '开开', userName: '张三', persona: '',
+        cwd: '/workspace', executionTarget: 'server-remote', memorySearchEnabled: true,
+        isPlatformAdmin: false, getSystemPrompt: (id) => new SystemPromptRegistry(SHARED_DIR).get(id),
+        taskboardExecution: true, taskboardBoardPrompt: BOARD_PROMPT,
+        taskboardStagePrompt: CUSTOM_STAGE_PROMPT,
+      });
+      expect(sections.at(-1)).toMatchObject({ key: 'taskboard_execution' });
+      const content = sections.at(-1)!.content;
+      expect(content.indexOf('## 看板整体提示语')).toBeLessThan(content.indexOf('## 当前阶段提示语'));
+      expect(content).toContain(BOARD_PROMPT);
+      expect(content).toContain(CUSTOM_STAGE_PROMPT);
+    });
+
     it('配置了阶段提示语时替换固定模板', () => {
-      const out = buildTaskboard({ taskboardExecution: true, taskboardStagePrompt: CUSTOM_STAGE_PROMPT });
+      const out = buildTaskboard({
+        taskboardExecution: true, taskboardBoardPrompt: BOARD_PROMPT,
+        taskboardStagePrompt: CUSTOM_STAGE_PROMPT,
+      });
+      expect(out).toContain(BOARD_PROMPT);
       expect(out).toContain('## 实施 Agent 专属职责');
       expect(out).toContain('只负责实施，不审批。');
       expect(out).not.toContain(DEFAULT_TEMPLATE_MARKER);

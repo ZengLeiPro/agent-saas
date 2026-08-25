@@ -19,6 +19,7 @@ const harness = vi.hoisted(() => {
       harness.currentFiles = files;
     }),
     sessionCallbacks: null as null | {
+      onSessionsLoaded?: (sessions: Array<{ sessionId: string }>) => void;
       onQueuedMessages?: (sessionId: string, messages: unknown[]) => void;
       cancelActiveStream?: () => void;
     },
@@ -186,6 +187,24 @@ afterEach(() => {
 });
 
 describe("useChatAppState queue delivery lifecycle", () => {
+  it("keeps a WS-confirmed session running when a later list snapshot is temporarily inactive", async () => {
+    harness.session.sessionId = "session-sleeping";
+    harness.session.isNewSession = false;
+    harness.authFetch.mockImplementation(async (url: string) => url === "/api/sessions/active-streams"
+      ? response({ sessions: [{ sessionId: "session-sleeping", active: false }] }) : response({}, 404));
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => emit({ type: "session_status", sessionId: "session-sleeping", status: "running", streamId: "stream-sleeping", runId: "run-sleeping" }));
+    expect(result.current.runningSessionIds.has("session-sleeping")).toBe(true);
+    await act(async () => {
+      harness.sessionCallbacks?.onSessionsLoaded?.([{ sessionId: "session-sleeping" }]);
+      await Promise.resolve(); await Promise.resolve();
+    });
+    await waitFor(() => expect(harness.authFetch).toHaveBeenCalledWith("/api/sessions/active-streams", expect.objectContaining({ method: "POST" })));
+    expect(result.current.runningSessionIds.has("session-sleeping")).toBe(true);
+    expect(result.current.sessionRuntimeStatuses.get("session-sleeping")).toBe("running");
+  });
+
   it("assigns an authoritative new session to the pending group", async () => {
     const { result } = renderHook(() => useChatAppState());
 

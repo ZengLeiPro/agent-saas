@@ -523,12 +523,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     const requestedVersions = new Map(
       sessionIds.map((sessionId) => [sessionId, runtimeVersionBySessionRef.current.get(sessionId) ?? 0]),
     );
-    if (sessionIds.length === 0) {
-      setRunningSessionIds(new Set());
-      setSessionRuntimeStatuses(new Map());
-      return;
-    }
-
+    if (sessionIds.length === 0) { setRunningSessionIds(new Set()); setSessionRuntimeStatuses(new Map()); return; }
     try {
       const batches: string[][] = [];
       for (let offset = 0; offset < sessionIds.length; offset += 100) {
@@ -557,13 +552,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           snapshotStatus.set(item.sessionId, item.active);
           if (!item.active) {
             const existing = activeRunsBySession.current.get(item.sessionId);
-            // 列表快照仅用于恢复状态，不能推翻已由 WS 确认且尚未收到终态的运行态。
-            // 长时间静默的工具（如 sleep）可能让跨进程快照短暂滞后；此时若清掉
-            // runningSessionIds，左栏会错误地把仍在执行的会话显示成已结束。
+            // 快照滞后时，不得清掉 WS 已确认但尚未收到终态的会话。
             if (existing && isActiveRuntimeStatus(existing.status)) {
-              snapshotStatus.set(item.sessionId, true);
-              snapshotRuntimeStatuses.set(item.sessionId, existing.status as SessionRuntimeStatus);
-              continue;
+              snapshotStatus.set(item.sessionId, true); snapshotRuntimeStatuses.set(item.sessionId, existing.status as SessionRuntimeStatus); continue;
             }
             if (existing?.lastEventCursor) {
               activeRunsBySession.current.set(item.sessionId, {

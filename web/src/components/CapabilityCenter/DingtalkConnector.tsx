@@ -249,6 +249,16 @@ export function useDwsConnections(enabled = true): DwsConnectionsState {
     }
   }, [enabled, authSession, loadConnections, reopenAuthorizationPage]);
 
+  // 授权成功后，后端会紧接着完成首次凭据检测。避免只读取一次 pending 状态后
+  // 永久停在「检测中」，直到检测落定前持续刷新连接状态。
+  useEffect(() => {
+    if (!enabled || !connections.some((connection) => connection.status === "pending")) return;
+    const timer = window.setInterval(() => {
+      void loadConnections();
+    }, 2_000);
+    return () => window.clearInterval(timer);
+  }, [connections, enabled, loadConnections]);
+
   const authInProgress = authSession?.status === "starting" || authSession?.status === "awaiting_user";
   const authServiceUnavailable = authServiceAvailable === false;
   const needsReconnect = connections.some((connection) => connection.status === "disconnected");

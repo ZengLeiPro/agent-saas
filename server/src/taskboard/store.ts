@@ -273,7 +273,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return runIntegrationV3RepositoryProbe(this.integrationV3RepositoryProbe, input);
   }
 
-
   attachExecutionPullRequestV2(
     identity: TaskboardIdentity,
     runId: string,

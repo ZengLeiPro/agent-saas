@@ -43,7 +43,7 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
   }, 30_000);
 
   async function seedHistoricalIntegration(label: string, source: 'valid' | 'missing' | 'malformed') {
-    const repositoryId = `github:acme/${label}`;
+    const repositoryId = `github:${identity.tenantId}:acme/${label}`;
     const board = await store.createBoard(identity, {
       name: `${label} board`,
       repository: {
@@ -120,7 +120,7 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
     );
     expect(migrated.rows.find((row) => row.id === validId)).toMatchObject({
       workflow_version: 3, agent_count: 1,
-      repository_id: 'github:acme/valid', integration_branch: `integration/${validId}`,
+      repository_id: `github:${identity.tenantId}:acme/valid`, integration_branch: `integration/${validId}`,
     });
     expect(migrated.rows.find((row) => row.id === missingId)).toMatchObject({ workflow_version: 2, agent_count: 0 });
     expect(migrated.rows.find((row) => row.id === malformedId)).toMatchObject({ workflow_version: 2, agent_count: 1 });

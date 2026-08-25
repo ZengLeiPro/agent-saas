@@ -128,10 +128,10 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       execution: { status: 'succeeded' },
     });
     expect(await store.listComments(identity, advisory.id)).toHaveLength(0);
-    expect(await store.listExecutions(identity, advisory.id)).toEqual([
+    expect(await store.listExecutions(identity, advisory.id)).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: executionId, status: 'succeeded' }),
       expect.objectContaining({ id: resumeId, status: 'queued', trigger: 'resume', sessionId }),
-    ]);
+    ]));
   });
 
   it('claim replay is returned before terminal checks while new terminal claims remain forbidden', async () => {

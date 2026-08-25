@@ -131,7 +131,7 @@ async function enqueueExecution(
       claim.runId,
       claim.sessionId,
       claim.purpose,
-      claim.trigger,
+      claim.trigger ?? 'initial',
       claim.protocolVersion ?? 2,
       claim.executionOwnerUserId,
     ],

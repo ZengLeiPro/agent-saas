@@ -50,7 +50,7 @@ describe('TaskboardExecutionCoordinator reconciliation', () => {
     expect(rig.store.finishWorkflowCancellation).not.toHaveBeenCalledWith('cancel-missing');
   });
 
-  it('workflow cancellation CAS 输给 completed 终态时不完成 outbox', async () => {
+  it('workflow cancellation CAS 输给 completed 终态时按 durable fact 收敛 outbox', async () => {
     const get = vi.fn()
       .mockResolvedValueOnce({
         runId: 'run-race', sessionId: 'session-race', tenantId: 'tenant-1', status: 'running',
@@ -60,9 +60,11 @@ describe('TaskboardExecutionCoordinator reconciliation', () => {
         runId: 'run-race', sessionId: 'session-race', tenantId: 'tenant-1', status: 'completed',
         requestedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:02:00.000Z', metadata: {},
       });
+    const reconcileTerminal = vi.fn(async () => undefined);
     const rig = makeRig({
       claimWorkflowCancellations: vi.fn(async () => [{ id: 'cancel-race', runId: 'run-race', reason: 'superseded' }]),
       finishWorkflowCancellation: vi.fn(async () => undefined),
+      reconcileWorkflowCancellationTerminal: reconcileTerminal,
     }, {
       runStore: {
         get,
@@ -74,10 +76,40 @@ describe('TaskboardExecutionCoordinator reconciliation', () => {
 
     await rig.coordinator.reconcile();
 
-    expect(rig.store.finishWorkflowCancellation).toHaveBeenCalledWith(
-      'cancel-race', expect.stringContaining('CAS 未命中'),
-    );
-    expect(rig.store.finishWorkflowCancellation).not.toHaveBeenCalledWith('cancel-race');
+    expect(reconcileTerminal).toHaveBeenCalledWith('cancel-race', {
+      runId: 'run-race', status: 'completed',
+    });
+    expect(rig.store.finishWorkflowCancellation).not.toHaveBeenCalled();
+  });
+
+  it('terminal-before-outbox 收敛失败后可重试，重复消费保持幂等委托', async () => {
+    const reconcileTerminal = vi.fn()
+      .mockRejectedValueOnce(new Error('fault after terminal read'))
+      .mockResolvedValue(undefined);
+    const finish = vi.fn(async () => undefined);
+    const rig = makeRig({
+      claimWorkflowCancellations: vi.fn(async () => [{
+        id: 'cancel-terminal', runId: 'run-terminal', reason: 'superseded',
+      }]),
+      finishWorkflowCancellation: finish,
+      reconcileWorkflowCancellationTerminal: reconcileTerminal,
+    }, {
+      runStore: { get: vi.fn(async (): Promise<RunRecord> => ({
+        runId: 'run-terminal', sessionId: 'session-terminal', tenantId: 'tenant-1',
+        status: 'failed', statusReason: 'runtime failed first',
+        requestedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:02:00.000Z', metadata: {},
+      })) },
+    });
+
+    await rig.coordinator.reconcile();
+    await rig.coordinator.reconcile();
+    await rig.coordinator.reconcile();
+
+    expect(finish).toHaveBeenCalledWith('cancel-terminal', 'fault after terminal read');
+    expect(reconcileTerminal).toHaveBeenCalledTimes(3);
+    expect(reconcileTerminal).toHaveBeenLastCalledWith('cancel-terminal', {
+      runId: 'run-terminal', status: 'failed', reason: 'runtime failed first',
+    });
   });
 
   it('dispatch gate 拒绝已被 fence 的 claim，绝不创建 Runtime Run', async () => {

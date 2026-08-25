@@ -248,9 +248,19 @@ export interface TaskboardWorkflowCancellation {
   reason: string;
 }
 
+export interface TaskboardRuntimeTerminalFact {
+  runId: string;
+  status: "completed" | "failed" | "orphaned";
+  reason?: string;
+}
+
 export interface TaskboardExecutionStore {
   claimWorkflowCancellations?(limit?: number): Promise<TaskboardWorkflowCancellation[]>;
   finishWorkflowCancellation?(id: string, error?: string): Promise<void>;
+  reconcileWorkflowCancellationTerminal?(
+    id: string,
+    fact: TaskboardRuntimeTerminalFact,
+  ): Promise<void>;
   reconcileMergeOperationsV2?(limit?: number): Promise<number>;
   claimIntegrationDispatchCandidatesV2?(limit?: number): Promise<TaskboardIntegrationDispatchCandidate[]>;
   listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]>;

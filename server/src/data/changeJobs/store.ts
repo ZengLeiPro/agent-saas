@@ -357,6 +357,7 @@ export class PgGovernanceChangeJobStore {
     expectedRevision: number,
     requestedBy: string,
     additionalAttempts = 5,
+    resetDomains: readonly string[] = [],
   ): Promise<GovernanceChangeJob> {
     if (!Number.isInteger(additionalAttempts) || additionalAttempts < 1 || additionalAttempts > 20) {
       throw new GovernanceChangeJobInvariantError('CHANGE_JOB_INVALID');
@@ -383,6 +384,15 @@ export class PgGovernanceChangeJobStore {
       `, [tenantId, current.jobType, current.targetType, current.targetId, jobId]);
       if (active.rows[0]) throw new GovernanceChangeJobInvariantError('CHANGE_JOB_TARGET_BUSY');
       try {
+        if (resetDomains.length > 0) {
+          await client.query(`
+            UPDATE ${this.domainsTable}
+            SET status='pending',total_count=0,completed_count=0,failed_count=0,
+                unresolved_items_json='[]'::jsonb,receipt_json=NULL,last_error_code=NULL,
+                revision=revision+1,updated_at=NOW()
+            WHERE job_id=$1 AND domain=ANY($2::text[])
+          `, [jobId, [...new Set(resetDomains)]]);
+        }
         const result = await client.query(`
           UPDATE ${this.jobsTable}
           SET status='retry_wait',next_retry_at=NOW(),completed_at=NULL,

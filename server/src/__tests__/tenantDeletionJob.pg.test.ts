@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { PgGovernanceChangeJobStore, TENANT_DELETE_DOMAINS } from '../data/changeJobs/index.js';
 import { PgGovernanceMigrationRunner } from '../data/governance-schema/index.js';
@@ -353,6 +353,108 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
       requestedBy: 'platform-admin', additionalAttempts: 2,
     })).rejects.toThrow('CHANGE_JOB_VERSION_CONFLICT');
     expect(tenantStore.findById('terminal-acme')).toBeUndefined();
+  }, 30_000);
+
+  it('replays audit retention before refreshing proof after verification failed on residuals', async () => {
+    const jobs = new PgGovernanceChangeJobStore({ pool, tablePrefix: prefix });
+    await jobs.init();
+    const tenantStore = new TenantStore(join(tmpRoot, 'verification-replay-tenants.json'));
+    await tenantStore.create({ id: 'verification-acme', name: 'Verification Acme', createdBy: 'test' });
+    await tenantStore.create({ id: 'verification-guard', name: 'Verification Guard', createdBy: 'test' });
+    let auditUnmarked = 0;
+    let injectedResidual = 1;
+    let auditRuns = 0;
+    const executor = createDurableTenantDeletionExecutor({
+      jobs, tenantStore, maxAttempts: 1,
+      governanceCleanup: {
+        execute: async (_tenantId: string, domain: string) => {
+          if (domain === 'audit_retention') { auditRuns += 1; auditUnmarked = 0; }
+        },
+        verifyTenantDeletion: async () => ({
+          credentials: 0, governance: { audit_retention_unmarked: auditUnmarked, managed_agents: injectedResidual },
+        }),
+      } as never,
+      deleteResources: async tenantId => deletionReport(tenantId),
+      verifyResources: async tenantId => ({
+        residuals: deletionReport(tenantId).residuals, externalRuntimeAuthority: 'test-authority',
+      }),
+    });
+
+    const failed = await executor.execute({
+      tenantId: 'verification-acme', idempotencyKey: 'verification-delete-v1', requestedBy: 'admin', reasonCode: 'test',
+    });
+    expect(failed.job.status).toBe('dead_letter');
+    expect(failed.proof?.residuals.governance.managed_agents).toBe(1);
+    const staleProofTime = failed.proof?.verifiedAt;
+
+    // Fault-inject an audit row arriving after the original retention pass.
+    auditUnmarked = 1;
+    injectedResidual = 0;
+    await new Promise(resolve => setTimeout(resolve, 2));
+    const replayed = await executor.replay({
+      tenantId: 'verification-acme', jobId: failed.job.jobId, expectedRevision: failed.job.revision,
+      requestedBy: 'platform-admin', additionalAttempts: 1,
+    });
+
+    expect(replayed.job.status).toBe('succeeded');
+    expect(auditRuns).toBe(2);
+    expect(replayed.proof).toMatchObject({
+      verifiedAt: expect.any(String),
+      residuals: { governance: { audit_retention_unmarked: 0, managed_agents: 0 } },
+    });
+    expect(replayed.proof?.verifiedAt).not.toBe(staleProofTime);
+    await expect(executor.replay({
+      tenantId: 'verification-acme', jobId: failed.job.jobId, expectedRevision: failed.job.revision,
+      requestedBy: 'platform-admin', additionalAttempts: 1,
+    })).rejects.toThrow('CHANGE_JOB_VERSION_CONFLICT');
+  }, 30_000);
+
+  it('refreshes successful verification proof when replay follows tenant-record failure', async () => {
+    const jobs = new PgGovernanceChangeJobStore({ pool, tablePrefix: prefix });
+    await jobs.init();
+    const tenantStore = new TenantStore(join(tmpRoot, 'record-replay-tenants.json'));
+    await tenantStore.create({ id: 'record-acme', name: 'Record Acme', createdBy: 'test' });
+    await tenantStore.create({ id: 'record-guard', name: 'Record Guard', createdBy: 'test' });
+    const deleteTenant = vi.spyOn(tenantStore, 'delete').mockRejectedValueOnce(new Error('INJECTED_TENANT_RECORD_FAILURE'));
+    let auditRuns = 0;
+    let verificationRuns = 0;
+    const executor = createDurableTenantDeletionExecutor({
+      jobs, tenantStore, maxAttempts: 1,
+      governanceCleanup: {
+        execute: async (_tenantId: string, domain: string) => {
+          if (domain === 'audit_retention') auditRuns += 1;
+        },
+        verifyTenantDeletion: async () => {
+          verificationRuns += 1;
+          return { credentials: 0, governance: {} };
+        },
+      } as never,
+      deleteResources: async tenantId => deletionReport(tenantId),
+      verifyResources: async tenantId => ({
+        residuals: deletionReport(tenantId).residuals, externalRuntimeAuthority: 'test-authority',
+      }),
+    });
+
+    const failed = await executor.execute({
+      tenantId: 'record-acme', idempotencyKey: 'record-delete-v1', requestedBy: 'admin', reasonCode: 'test',
+    });
+    expect(failed.job.status).toBe('dead_letter');
+    expect(failed.domains.find(domain => domain.domain === 'deletion_verification')?.status).toBe('succeeded');
+    expect(failed.domains.find(domain => domain.domain === 'tenant_record')?.status).toBe('failed');
+    const staleProofTime = failed.proof?.verifiedAt;
+
+    await new Promise(resolve => setTimeout(resolve, 2));
+    const replayed = await executor.replay({
+      tenantId: 'record-acme', jobId: failed.job.jobId, expectedRevision: failed.job.revision,
+      requestedBy: 'platform-admin', additionalAttempts: 1,
+    });
+
+    expect(replayed.job.status).toBe('succeeded');
+    expect(auditRuns).toBe(2);
+    expect(verificationRuns).toBe(2);
+    expect(replayed.proof?.verifiedAt).not.toBe(staleProofTime);
+    expect(deleteTenant).toHaveBeenCalledTimes(2);
+    expect(tenantStore.findById('record-acme')).toBeUndefined();
   }, 30_000);
 
   it('continuously consumes a retry when next_retry_at becomes due without another route call', async () => {

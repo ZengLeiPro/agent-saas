@@ -100,7 +100,7 @@ import {
   isPersistedInteractionClaimExpired,
   persistedInteractionEventId,
   INTERACTIVE_PERMISSION_TOOLS,
-  readLatestPlanContent, resumeTerminalPersistedAskUser,
+  readLatestPlanContent, resolvePersistedAskUserResumeFallback, resumeTerminalPersistedAskUser,
   TERMINAL_RUN_STATUSES,
   VOICE_STT_TAG,
   wantsToolAutoApproval,
@@ -1320,15 +1320,15 @@ export class WebChannel implements BaseChannel {
         this.sendRespond(client, interactionId, clientAttemptId, 'AskUserQuestion resume requires runtime scheduler');
         return true;
       }
-      if (!meta || !pendingAskUser.runId || !pendingAskUser.toolCallId) {
-        chatLogger.warn(`ask_user resume enqueue rejected: missing meta/runId/toolCallId session=${sessionId} interaction=${interactionId}`);
-        return false;
-      }
+      if (!pendingAskUser.runId || !pendingAskUser.toolCallId) {
+        chatLogger.warn(`ask_user resume enqueue rejected: missing runId/toolCallId session=${sessionId} interaction=${interactionId}`); return false; }
       const currentRun = await enqueueRuntime.runStore.get(pendingAskUser.runId);
       if (!currentRun) { chatLogger.warn(`ask_user resume enqueue ignored missing run=${pendingAskUser.runId}`); this.sendRespond(client, interactionId, clientAttemptId, 'Run unavailable'); return true; }
+      const fallback = resolvePersistedAskUserResumeFallback({ sessionId, meta, sessionRecord, currentRun });
+      if (!fallback) { chatLogger.warn(`ask_user resume rejected: conflicting durable identity session=${sessionId} interaction=${interactionId}`); this.sendRespond(client, interactionId, clientAttemptId, 'Access denied'); return true; }
       const normalizedResponse = normalizeInteractionResponse(response);
       if (TERMINAL_RUN_STATUSES.has(currentRun.status)) {
-        const terminalResume = await resumeTerminalPersistedAskUser({ eventStore: eventStore!, runStore: enqueueRuntime.runStore, scheduler: enqueueRuntime.scheduler, tenantId, sessionId, interactionId, sourceRun: currentRun, pendingAskUser, response: normalizedResponse, userId: client.user?.sub, fallback: meta, transcriptPath });
+        const terminalResume = await resumeTerminalPersistedAskUser({ eventStore: eventStore!, runStore: enqueueRuntime.runStore, scheduler: enqueueRuntime.scheduler, tenantId, sessionId, interactionId, sourceRun: currentRun, pendingAskUser, response: normalizedResponse, userId: client.user?.sub, fallback, transcriptPath });
         if ('error' in terminalResume) { this.sendRespond(client, interactionId, clientAttemptId, terminalResume.error); return true; }
         const resumeRunId = `interaction-resume:${sessionId}:${interactionId}`;
         if (terminalResume.activated && client.user?.sub && this.eventBus) this.eventBus.emitUser(client.user.sub, { type: 'session_status', sessionId, status: 'queued', runId: resumeRunId });
@@ -1337,7 +1337,7 @@ export class WebChannel implements BaseChannel {
       const acceptedEvent = existingEvents.find((event): event is Extract<PlatformEvent, { type: 'interaction_resolved' }> => event.type === 'interaction_resolved' && event.interactionId === interactionId);
       const existingClaim = currentRun.metadata?.persistedInteractionResumeClaim;
       if (acceptedEvent && isPersistedInteractionClaim(existingClaim, sessionId, interactionId)) {
-        const activated = await this.activatePersistedInteractionClaim(pendingAskUser.runId, existingClaim, { resumeInteraction: { interactionId, response: acceptedEvent.response } });
+        const activated = (currentRun.status === 'pending' && currentRun.metadata?.schedulerState === 'ready') || await this.activatePersistedInteractionClaim(pendingAskUser.runId, existingClaim, { resumeInteraction: { interactionId, response: acceptedEvent.response } });
         this.sendRespond(client, interactionId, clientAttemptId, activated ? undefined : 'Interaction response is awaiting activation', activated ? normalizeInteractionResponse(acceptedEvent.response as Record<string, unknown>) : undefined);
         return true;
       }

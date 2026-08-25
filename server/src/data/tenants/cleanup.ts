@@ -725,6 +725,7 @@ export function createDurableTenantDeletionExecutor(options: {
           input.expectedRevision,
           input.requestedBy,
           input.additionalAttempts ?? options.maxAttempts ?? 5,
+          ['audit_retention', 'deletion_verification'],
         );
         if (replayed.jobType !== 'tenant_delete') throw new Error('CHANGE_JOB_NOT_FOUND');
         return executeJob(replayed, false);

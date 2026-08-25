@@ -436,6 +436,9 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
         metadata: {
           expectedRevision: parsed.data.expectedRevision,
           additionalAttempts: parsed.data.additionalAttempts ?? 5,
+          // Replay intent is written after the original retention pass; classify it at creation
+          // so rejected/stale replay attempts cannot leave a new unretained tenant audit row.
+          tenantDeletedAt: new Date().toISOString(),
         },
       });
       const receipt = await opts.tenantDeletionExecutor.replay({

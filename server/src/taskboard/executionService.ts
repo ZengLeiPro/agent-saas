@@ -40,7 +40,7 @@ import {
 import { resolveExecutionModelRef } from './executionFields.js';
 import { dispatchRetryDelayMs, limitComment, limitError } from './executionHelpers.js';
 import { buildExecutionPrompt } from './executionPrompt.js';
-import { cancelTaskboardWorkflowRun } from './workflowCancellation.js';
+import { consumeTaskboardWorkflowCancellation } from './workflowCancellation.js';
 export { executionWritebackInstructions } from './executionPrompt.js';
 import {
   writeTaskboardSessionTitle,
@@ -419,8 +419,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     const cancellations = await this.options.store.claimWorkflowCancellations?.(20) ?? [];
     for (const cancellation of cancellations) {
       try {
-        await cancelTaskboardWorkflowRun(this.options.runStore, cancellation.runId, cancellation.reason);
-        await this.options.store.finishWorkflowCancellation?.(cancellation.id);
+        await consumeTaskboardWorkflowCancellation(this.options.runStore, this.options.store, cancellation);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await this.options.store.finishWorkflowCancellation?.(cancellation.id, message);

@@ -104,10 +104,9 @@ import { initializeTaskboardStore } from './storeSchema.js';
 import { assertIntegrationV3RuntimeAvailable } from './integrationV3ActivationStore.js';
 import { loadBoard as loadStoredBoard, requireTaskWithBoard as requireStoredTaskWithBoard } from './storeTaskAccess.js';
 import { isStoredTaskWatched, setStoredTaskWatched } from './taskWatchStore.js';
-import {
-  claimWorkflowCancellations as claimStoredWorkflowCancellations,
+import { claimWorkflowCancellations as claimStoredWorkflowCancellations,
   finishWorkflowCancellation as finishStoredWorkflowCancellation,
-} from './workflow/cancellationOutbox.js';
+  reconcileWorkflowCancellationTerminal as reconcileStoredWorkflowCancellationTerminal } from './workflow/cancellationOutbox.js';
 import {
   claimExecution as claimStoredExecution,
   completeExecution as completeStoredExecution,
@@ -131,7 +130,7 @@ import {
   type TaskboardExpectedVersionInput,
   type TaskboardIdentity,
   type TaskboardPage,
-  type TaskboardPageFilter,
+  type TaskboardPageFilter, type TaskboardRuntimeTerminalFact,
   type TaskboardService,
   type TaskboardTaskCreateResult,
   type TaskboardTaskListFilter,
@@ -317,6 +316,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   finishWorkflowCancellation(id: string, error?: string): Promise<void> {
     return finishStoredWorkflowCancellation(this, id, error);
   }
+  reconcileWorkflowCancellationTerminal(id: string, fact: TaskboardRuntimeTerminalFact): Promise<void> { return reconcileStoredWorkflowCancellationTerminal(this, id, fact); }
   reconcileMergeOperationsV2(limit?: number): Promise<number> {
     return reconcileUnknownMergeOperations(this, limit);
   }

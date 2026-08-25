@@ -2,11 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import { Semaphore } from '../../runtime/fileReadCoalesce.js';
 import type { InteractionResponse } from '../../agent/types.js';
+import type { SessionMeta } from '../../data/transcripts/meta.js';
 import { EventBackedApprovalStore } from '../../runtime/approvalStore.js';
 import { buildPendingInteractionsFromEvents, normalizeInteractionResponse } from '../../runtime/interactionProjection.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../../runtime/fileEventStore.js';
 import { buildRuntimeReplayState } from '../../runtime/replay.js';
 import type { RunRecord, RunStatus, RunStore } from '../../runtime/runStore.js';
+import type { RuntimeSessionRecord } from '../../runtime/sessionCatalog.js';
 import type { EventStore, PlatformEvent } from '../../runtime/types.js';
 import { openTrustedDirectory, withTrustedFile } from '../../security/trustedFile.js';
 import { chatLogger } from '../../utils/logger.js';
@@ -26,6 +28,35 @@ export const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled'
 type TerminalAskUserResumeResult =
   | { canonicalResponse: InteractionResponse; activated: boolean }
   | { error: string };
+
+type PersistedAskUserResumeFallback = {
+  userId: string;
+  model?: string;
+  executionTarget?: string;
+  workspaceId?: string;
+};
+
+/** Build path-independent resume identity only when durable sources agree. */
+export function resolvePersistedAskUserResumeFallback(input: {
+  sessionId: string;
+  meta?: SessionMeta;
+  sessionRecord: RuntimeSessionRecord | null;
+  currentRun: RunRecord;
+}): PersistedAskUserResumeFallback | null {
+  if (input.currentRun.sessionId !== input.sessionId
+    || (input.sessionRecord && input.sessionRecord.sessionId !== input.sessionId)) return null;
+  const userIds = new Set([input.currentRun.userId, input.sessionRecord?.userId, input.meta?.userId]
+    .filter((value): value is string => Boolean(value)));
+  const tenantIds = new Set([input.currentRun.tenantId, input.sessionRecord?.tenantId, input.meta?.tenantId]
+    .filter((value): value is string => Boolean(value)));
+  if (userIds.size !== 1 || tenantIds.size > 1) return null;
+  return {
+    userId: userIds.values().next().value!,
+    model: input.currentRun.model ?? input.sessionRecord?.modelRef ?? input.meta?.model,
+    executionTarget: input.currentRun.executionTarget ?? input.sessionRecord?.executionTarget ?? input.meta?.executionTarget,
+    workspaceId: input.currentRun.workspaceId ?? input.sessionRecord?.workspaceId ?? input.meta?.workspaceId,
+  };
+}
 
 /** Persist a terminal ask_user response, then idempotently stage and activate its synthetic resume run. */
 export async function resumeTerminalPersistedAskUser(input: {

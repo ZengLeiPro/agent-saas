@@ -1,11 +1,14 @@
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 import { request as httpRequest, type Server } from 'node:http';
-import { lstat, mkdtemp, mkdir, readFile, readdir, rename, stat, symlink, writeFile, rm } from 'node:fs/promises';
+import { copyFile, lstat, mkdtemp, mkdir, readFile, readdir, rename, stat, symlink, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createUploadRouter } from '../routes/upload.js';
+import { resolveRuntimeInboundAttachments } from '../runtime/runtimeAttachmentResolution.js';
+import type { RawRuntimeRunDispatchConfig } from '../runtime/rawRuntimeRunDispatchTypes.js';
 import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 import {
   DEFAULT_STAGED_RETENTION_MS,
@@ -106,6 +109,56 @@ describe('attachment upload hardening', () => {
     expect(await readdir(join(userCwd, 'uploads'))).toEqual(['.state']);
     expect((await readdir(join(userCwd, 'uploads'))).filter((name) => !name.startsWith('.'))).toEqual([]);
     expect(await manager.resolveAttachments(userCwd, [body.files[0].attachmentId])).toEqual(body.files);
+  });
+
+  it('resolves canonical cloud text and image references through the Web runtime without upload copies', async () => {
+    const root = await createRoot();
+    const manager = new UploadManager({ agentCwd: root });
+    const userCwd = join(root, USER.tenantId, USER.sub);
+    const textPath = 'assets/20260825/cloud.txt';
+    const imagePath = 'assets/20260825/cloud.png';
+    await mkdir(join(userCwd, 'assets', '20260825'), { recursive: true });
+    await writeFile(join(userCwd, textPath), 'cloud-content');
+    await copyFile(resolve(process.cwd(), '../web/public/favicon-32x32.png'), join(userCwd, imagePath));
+
+    const references = await manager.registerAssetReferences(
+      userCwd,
+      [textPath, imagePath],
+      { sessionId: 'session-a' },
+    );
+    await manager.markReferenced(userCwd, references, { sessionId: 'session-a' });
+    const runtimeConfig: RawRuntimeRunDispatchConfig = {
+      agentCwd: root,
+      sharedDir: root,
+      uploadManager: manager,
+    };
+    const resolved = await resolveRuntimeInboundAttachments(runtimeConfig, userCwd, 'session-a', {
+      channel: 'web',
+      attachments: references.map((reference) => ({
+        ...reference,
+        relativePath: 'uploads/伪造路径',
+      })),
+    });
+
+    expect(resolved.map((attachment) => attachment.relativePath)).toEqual([textPath, imagePath]);
+    expect(resolved[0]).toMatchObject({ isImage: false, mimeType: 'text/plain' });
+    expect(resolved[1]).toMatchObject({ isImage: true, mimeType: 'image/png' });
+    expect((await readdir(join(userCwd, 'uploads'))).filter((name) => !name.startsWith('.'))).toEqual([]);
+    await expect(resolveRuntimeInboundAttachments(runtimeConfig, userCwd, 'session-b', {
+      channel: 'web',
+      attachments: references,
+    })).rejects.toThrow('Attachment does not belong to session');
+    await expect(resolveRuntimeInboundAttachments(runtimeConfig, userCwd, 'session-a', {
+      channel: 'web',
+      attachments: [{ ...references[0], attachmentId: randomUUID() }],
+    })).rejects.toThrow('Attachment not found');
+
+    await rm(join(userCwd, textPath));
+    await expect(manager.resolveAttachments(
+      userCwd,
+      [references[0].attachmentId!],
+      { sessionId: 'session-a' },
+    )).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('cleans an unused asset reference without deleting the source asset', async () => {

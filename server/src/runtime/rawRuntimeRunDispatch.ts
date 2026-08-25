@@ -101,7 +101,8 @@ import { createLogger } from '../utils/logger.js';
 import { enterSessionContext } from '../utils/requestContext.js';
 import { RawAgentLoop } from './rawAgentLoop.js';
 import { resolveEffectiveMcpLoadingMode } from './mcpToolLoading.js';
-import { modelSupportsImage, resolveInboundAttachments } from './imageAttachments.js';
+import { modelSupportsImage } from './imageAttachments.js';
+import { resolveRuntimeInboundAttachments } from './runtimeAttachmentResolution.js';
 import {
   analyzeImagesWithFallback,
   type ImageUnderstandingModelConfig,
@@ -1224,10 +1225,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
 
     let resolvedAttachments: ModelAttachmentRef[];
     try {
-      resolvedAttachments = await resolveInboundAttachments(message.attachments, {
-        cwd,
-        channel: message.channel,
-      });
+      resolvedAttachments = await resolveRuntimeInboundAttachments(config, cwd, sessionId, message);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       yield { type: 'error', error: detail };
@@ -1635,10 +1633,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
                 attachments: wakeMessage.attachments,
                 metadata: wakeMessage.metadata,
               };
-              const queuedAttachments = await resolveInboundAttachments(queuedMessage.attachments, {
-                cwd,
-                channel: queuedMessage.channel,
-              });
+              const queuedAttachments = await resolveRuntimeInboundAttachments(config, cwd, sessionId, queuedMessage);
               let queuedVisionAnalysis;
               if (
                 queuedAttachments.some((attachment) => attachment.isImage)

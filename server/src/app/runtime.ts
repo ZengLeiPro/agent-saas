@@ -1657,7 +1657,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     memoryStore: memoryConsolidationStore, memoryIndexService: memoryIndexServiceRef.current, logger: { info: msg => serverLogger.info(msg), warn: msg => serverLogger.warn(msg) },
   });
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
-    agentCwd,
+    agentCwd, uploadManager,
     sharedDir,
     modelAdapterFactory: (connection, providerOptions) => createModelAdapterForProtocol(
       connection,

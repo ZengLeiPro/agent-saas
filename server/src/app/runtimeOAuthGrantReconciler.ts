@@ -1,5 +1,26 @@
-import type { OAuthGrant } from '../data/oauthGrants/types.js';
+import type { ConnectorConnectionStore } from '../connectors/connectionStore.js';
+import type { OAuthGrant, OAuthGrantProjectionInput } from '../data/oauthGrants/types.js';
 import type { AppRuntime } from './runtime.js';
+
+export function buildGoogleWorkspaceOAuthGrantProjection(
+  connectionStore: Pick<ConnectorConnectionStore, 'get'> | undefined,
+  context: { userId: string; username: string; tenantId: string },
+): OAuthGrantProjectionInput | undefined {
+  const google = connectionStore?.get(context.username, 'google-workspace');
+  const scopeSummary = typeof google?.metadata?.grantedScopes === 'string'
+    ? [...new Set(google.metadata.grantedScopes.split(/\s+/).filter(Boolean))].sort()
+    : [];
+  if (google?.status !== 'connected' || google.tenantId !== context.tenantId
+    || google.userId !== context.userId || scopeSummary.length === 0) return undefined;
+  return {
+    grantId: `google-workspace:${context.tenantId}:${context.userId}`,
+    provider: 'google', connectorId: 'google-workspace',
+    approvedAt: google.connectedAt ?? google.updatedAt,
+    purpose: 'legacy_google_workspace_backfill', scopeSummary,
+    tenantId: context.tenantId, subjectUserId: context.userId,
+    status: 'active', action: 'approved', actorUserId: context.userId,
+  };
+}
 
 async function revokeProvider(runtime: AppRuntime, grant: OAuthGrant): Promise<void> {
   const user = runtime.userStore?.findById(grant.subjectUserId);
@@ -69,17 +90,18 @@ export function createOAuthGrantReconciler(runtime: AppRuntime) {
         purpose: 'legacy_mcp_oauth_backfill', scopeSummary: [...connection.grantedScopes],
       });
     }
-    const google = runtime.connectorConnectionStore?.get(user.username, 'google-workspace');
-    const googleScopes = typeof google?.metadata?.grantedScopes === 'string'
-      ? [...new Set(google.metadata.grantedScopes.split(/\s+/).filter(Boolean))].sort()
-      : [];
-    if (google?.status === 'connected' && google.tenantId === tenantId && google.userId === subjectUserId
-      && googleScopes.length > 0) {
+    const googleProjection = buildGoogleWorkspaceOAuthGrantProjection(
+      runtime.connectorConnectionStore,
+      { userId: subjectUserId, username: user.username, tenantId },
+    );
+    if (googleProjection) {
       projections.push({
-        grantId: `google-workspace:${tenantId}:${subjectUserId}`,
-        provider: 'google', connectorId: 'google-workspace',
-        approvedAt: google.connectedAt ?? google.updatedAt,
-        purpose: 'legacy_google_workspace_backfill', scopeSummary: googleScopes,
+        grantId: googleProjection.grantId,
+        provider: googleProjection.provider,
+        connectorId: googleProjection.connectorId!,
+        approvedAt: googleProjection.approvedAt,
+        purpose: googleProjection.purpose,
+        scopeSummary: googleProjection.scopeSummary,
       });
     }
     for (const projection of projections) {

@@ -38,6 +38,10 @@ function sameStepKey(a: BusinessStepEventItem, b: BusinessStepEventItem): boolea
   return !!a.todo && !!b.todo && todoItemKey(a.todo) === todoItemKey(b.todo);
 }
 
+function markSectionResumePending(section: BusinessStepSection | null): void {
+  if (section) section.resumePending = true;
+}
+
 /**
  * 外部系统动作行（2026-08-04 曾磊拍板）。
  *
@@ -227,6 +231,8 @@ export function groupMessages(
       // 压缩发生在步骤中途时，不切断 start → terminal 的业务语义。
       // 当前节尚未写入 result，因此先放分界线、稍后再落整节，视觉上等价于
       // 把分界线归位到最近步骤上方，同时保留步骤内压缩前后的完整过程。
+      // 若本轮到此结束，渲染层需明确它等待恢复，不能误作尚未开始的 Play 状态。
+      markSectionResumePending(currentSection);
       result.push(msg);
     } else if (SECTION_BREAKING_TYPES.has(msg.type)) {
       flushGroup(false);

@@ -33,6 +33,11 @@ async function collect(stream: AsyncIterable<OutboundEvent>): Promise<OutboundEv
 describe('RawAgentLoop.compact（/compact 真实现）', () => {
   const cleanupDirs = new Set<string>();
 
+  it('要求恢复未完成 business Todo 时首个正常工具调用同步完整快照', () => {
+    expect(DEFAULT_COMPACTION_REQUEST_PROMPT).toContain('仍有 in_progress 的 business 步骤');
+    expect(DEFAULT_COMPACTION_REQUEST_PROMPT).toContain('首个正常工具调用必须用 TodoWrite 提交完整业务步骤快照');
+  });
+
   afterEach(async () => {
     for (const dir of cleanupDirs) {
       await rm(dir, { recursive: true, force: true });

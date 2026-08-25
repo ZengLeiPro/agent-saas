@@ -585,6 +585,19 @@ describe("BusinessStepSectionView", () => {
     expect(screen.getByTestId("process-content")).toBeTruthy();
   });
 
+  it("marks compacted open sections as waiting to resume instead of not started", () => {
+    const { container } = render(
+      <BusinessStepSectionView debugMode section={section({ resumePending: true })}>
+        <div data-testid="process-content">残留内容</div>
+      </BusinessStepSectionView>,
+    );
+
+    expect(screen.getByText("已暂停，待恢复")).toBeTruthy();
+    expect(container.querySelector(".lucide-clock-3")).toBeTruthy();
+    expect(container.querySelector(".lucide-play")).toBeNull();
+    expect(container.querySelector(".animate-spin")).toBeNull();
+  });
+
   it("marks failed sections with fail semantics and outcome tone", () => {
     const terminal = event({
       kind: "fail",

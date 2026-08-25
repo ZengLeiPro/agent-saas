@@ -17,6 +17,8 @@ export interface BusinessStepSection {
   items: RenderItem[];
   /** 进行中且 run 活跃（流末尾的开放节）。 */
   isActive: boolean;
+  /** 该开放节中途经过上下文压缩；run 空闲时应明确显示待恢复，而非未开始。 */
+  resumePending?: boolean;
   /**
    * 跨层矛盾（2026-08-03 任务 C）：步骤宣称干净完成（complete 且 outcome tone 非
    * warn/fail），但区间内同类操作的**最后一次**调用平台事实仍是失败（presentation

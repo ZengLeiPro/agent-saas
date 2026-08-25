@@ -354,9 +354,11 @@ export class TaskboardContextSyncWorker {
 }
 
 export function taskboardFailureCode(stage: string, error: unknown): string {
-  if (error instanceof ContextStoreError) return `${stage}_${error.code.replace(/^CONTEXT_/, '')}`;
   const code = error && typeof error === 'object' && 'code' in error
     ? String((error as { code?: unknown }).code ?? '') : '';
+  if (error instanceof ContextStoreError || /^CONTEXT_[A-Z0-9_]+$/.test(code)) {
+    return `${stage}_${code.replace(/^CONTEXT_/, '')}`;
+  }
   const suffix = code === '23503' ? 'REFERENCE_MISSING'
     : code === '23505' ? 'UNIQUE_CONFLICT'
       : code === '23514' ? 'CONSTRAINT_VIOLATION'
@@ -364,7 +366,8 @@ export function taskboardFailureCode(stage: string, error: unknown): string {
           : code === '40001' ? 'SERIALIZATION_FAILURE'
             : code === '40P01' ? 'DEADLOCK'
               : code === '42P01' || code === '42703' ? 'SCHEMA_MISMATCH' : '';
-  return suffix ? `${stage}_${suffix}` : stage;
+  if (suffix) return `${stage}_${suffix}`;
+  return /^[0-9A-Z]{5}$/.test(code) ? `${stage}_PG_${code}` : stage;
 }
 
 function inventoryComplete(watermark: ContextJson | undefined): boolean {

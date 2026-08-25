@@ -25,30 +25,6 @@ function options(client: { query: ReturnType<typeof vi.fn>; release: ReturnType<
 }
 
 describe('Workflow v3 blocked resume authority', () => {
-  it('resumes from a locked blocked candidate even when the task projection is still todo', async () => {
-    const query = vi.fn(async (sql: string, _values?: unknown[]) => {
-      if (sql.includes('JOIN boards b') && sql.includes('FOR UPDATE OF t')) return { rows: [loadedTask(3)] };
-      if (sql.includes('SELECT b.*') && sql.includes('FROM boards b')) return { rows: [{ id: 'board-1', board_role: 'owner' }] };
-      if (sql.includes('AS merged')) return { rows: [{ merged: false }] };
-      if (sql.includes('SELECT * FROM integration_candidates')) return { rows: [{
-        id: 'candidate-1', repository_id: 'repo-1', state: 'blocked', current_revision: 1, work_round: 2,
-      }] };
-      if (sql.includes('UPDATE lanes')) return { rows: [{ epoch: 7 }] };
-      if (sql.includes('SELECT purpose FROM blocks')) return { rows: [{ purpose: 'work' }] };
-      if (sql.includes('UPDATE integration_candidates')) return { rows: [{
-        id: 'candidate-1', state: 'blocked', current_revision: 1, work_round: 2, workflow_epoch: 4, lane_epoch: 7,
-      }] };
-      if (sql.includes('FROM tasks t WHERE t.id=$1')) return { rows: [loadedTask(3)] };
-      return { rows: [] };
-    });
-    const client = { query, release: vi.fn() };
-    await expect(resumeBlockedTask(options(client), identity, 'task-1', {
-      expectedVersion: 1, decision: 'reconcile workspace',
-    })).resolves.toMatchObject({ id: 'task-1', status: 'todo', workflowVersion: 3 });
-    expect(query.mock.calls.some(([sql]) => String(sql).includes("state IN ('blocked','needs_human') FOR UPDATE"))).toBe(true);
-    expect(query.mock.calls.some(([sql]) => String(sql).includes("'workspace_sync'"))).toBe(true);
-  });
-
   it('still rejects a v3 resume when a merge fact exists', async () => {
     const query = vi.fn(async (sql: string, _values?: unknown[]) => {
       if (sql.includes('JOIN boards b') && sql.includes('FOR UPDATE OF t')) return { rows: [loadedTask(3)] };

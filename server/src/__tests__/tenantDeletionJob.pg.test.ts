@@ -161,6 +161,7 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
     const domainsTable = `${upgradePrefix}_governance_change_job_domains`;
     const oldDomains = TENANT_DELETE_DOMAINS.filter(domain => domain !== 'deletion_verification');
     const tenantStore = new TenantStore(join(tmpRoot, 'v29-upgrade-tenants.json'));
+    await tenantStore.create({ id: 'upgrade-guard', name: 'Upgrade Guard', createdBy: 'test' });
     await tenantStore.create({ id: 'legacy-done', name: 'Legacy Done', createdBy: 'test' });
     await tenantStore.setDisabled('legacy-done', true, 'test');
 
@@ -210,6 +211,7 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
     await jobs.init();
     const tenantStore = new TenantStore(join(tmpRoot, 'final-proof-tenants.json'));
     await tenantStore.create({ id: 'proof-acme', name: 'Proof Acme', createdBy: 'test' });
+    await tenantStore.create({ id: 'proof-guard', name: 'Proof Guard', createdBy: 'test' });
     let injectedGovernance = 1;
     const executor = createDurableTenantDeletionExecutor({
       jobs,

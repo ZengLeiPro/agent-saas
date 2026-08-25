@@ -282,6 +282,17 @@ describe('ContextStore PostgreSQL data layer', () => {
     expect(checkpointSql).toContain('GREATEST(coverage_end');
   });
 
+  it('preserves already-decoded JSONB scalar string watermarks', async () => {
+    const client = new IngestClient();
+    const store = new ContextStore({ pool: { connect: vi.fn(async () => client) } as never, tablePrefix: 'test' });
+    const base = ingestInput({ title: 'unused' });
+
+    await expect(store.ingestPage({ ...base, records: [], checkpoint: { watermark: 'inventory-v1' } }))
+      .resolves.toMatchObject({ partition: { watermark: 'inventory-v1' } });
+    await expect(store.ingestPage({ ...base, records: [], checkpoint: { watermark: '123' } }))
+      .resolves.toMatchObject({ partition: { watermark: '123' } });
+  });
+
   it('persists a Unicode native locator and emits only populated typed envelope fields in outbox v2', async () => {
     const client = new IngestClient();
     const store = new ContextStore({ pool: { connect: vi.fn(async () => client) } as never, tablePrefix: 'test' });

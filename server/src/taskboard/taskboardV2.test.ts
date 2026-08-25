@@ -88,8 +88,8 @@ describe('taskboard V2 contracts', () => {
     expect(merge.capabilities).toMatchObject({ mergeReviewedSource: true, createRemediation: true });
   });
 
-  it('resolves an Integration v3 execution context contract from the current candidate state', async () => {
-    const query = vi.fn(async (_sql: string) => ({ rows: [{ state: 'working' }] }));
+  it('resolves an Integration v3 execution context contract from the current Agent state', async () => {
+    const query = vi.fn(async (_sql: string) => ({ rows: [{ status: 'active' }] }));
     const contract = await resolveExecutionContextWorkflowContract(
       { integrationSourcesTable: 'runtime_taskboard_integration_sources' },
       { query } as never,
@@ -98,7 +98,7 @@ describe('taskboard V2 contracts', () => {
     );
 
     expect(contract).toMatchObject({ taskKind: 'integration', purpose: 'work' });
-    expect(query.mock.calls[0]![0]).toContain('runtime_taskboard_integration_candidates');
+    expect(query.mock.calls[0]![0]).toContain('runtime_taskboard_integration_agents');
   });
 
   it('treats a canceled integration source as historical and allows delivery reselection', () => {

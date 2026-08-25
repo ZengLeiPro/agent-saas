@@ -30,7 +30,7 @@ describe('taskboard execution writeback prompt', () => {
     expect(merge).toContain('Provider 不可用时失败关闭');
   });
 
-  it('Workflow v3 Integration Review 明确检查并绑定当前 candidate revision', () => {
+  it('Workflow v3 Integration Review 明确检查并绑定当前 Integration Agent PR', () => {
     const integrationReview = context('review');
     integrationReview.task.kind = 'integration';
     integrationReview.task.workflowVersion = 3;
@@ -38,23 +38,22 @@ describe('taskboard execution writeback prompt', () => {
     const prompt = executionWritebackInstructions(integrationReview).join('\n');
 
     expect(prompt).toContain('execution.pull_request.inspect');
-    expect(prompt).toContain('当前 candidate revision');
-    expect(prompt).toContain('candidate/revision/subject');
+    expect(prompt).toContain('当前 Integration Agent 的精确 PR/head/base');
+    expect(prompt).toContain('Integration Agent 当前 PR/head/subject');
+    expect(prompt).not.toMatch(/candidate/i);
     expect(prompt).toContain('服务端硬门禁');
   });
 
-  it('Workflow v3 Integration Work 明确先受控 push、禁止 git push、后 transition 到 in_review', () => {
+  it('Workflow v3 Integration Work 按持久 Integration Agent 对账和受控合并', () => {
     const integrationWork = context('work');
     integrationWork.task.kind = 'integration';
     integrationWork.task.workflowVersion = 3;
     const prompt = executionWritebackInstructions(integrationWork).join('\n');
-    expect(prompt).toContain('integrationCandidate');
-    expect(prompt).toContain('sourceSnapshots 中完整冻结来源集');
-    expect(prompt).toContain('execution.integration_candidate.push');
-    expect(prompt).toContain('只传 commitOid');
-    expect(prompt).toContain('基线漂移重建以冻结 base 为父');
-    expect(prompt).toContain('不得执行 git push');
-    expect(prompt.indexOf('受控 push 成功')).toBeLessThan(prompt.indexOf('execution.transition({status: "in_review"})') + 1);
-    expect(executionWritebackInstructions(context('review')).join('\n')).not.toContain('integration_candidate.push');
+    expect(prompt).toContain('持久的 Integration Agent');
+    expect(prompt).toContain('GitHub PR、head 与 CI 为唯一代码事实');
+    expect(prompt).toContain('同一 integration branch/PR');
+    expect(prompt).toContain('受控 Merge Gateway');
+    expect(prompt).not.toContain('execution.integration_candidate.push');
+    expect(prompt).not.toMatch(/candidate/i);
   });
 });

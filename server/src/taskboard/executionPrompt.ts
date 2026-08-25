@@ -40,15 +40,15 @@ export function executionWritebackInstructions(context: TaskboardExecutionContex
     && context.task.kind === 'integration'
     && context.task.workflowVersion === 3) {
     instructions.splice(2, 0,
-      '- 独立调用 execution.pull_request.inspect 检查当前 candidate revision 的精确 PR/head/base 与 CI；失败 job 用 execution.pull_request.log 读取，随后重新读取最新 context receipt。',
-      '- 当前 Review Execution、candidate/revision/subject 与全绿 head 绑定的 inspection receipt 是 approved 的服务端硬门禁；pending、failure、unknown 均不得批准。');
+      '- 独立调用 execution.pull_request.inspect 检查当前 Integration Agent 的精确 PR/head/base 与 CI；失败 job 用 execution.pull_request.log 读取，随后重新读取最新 context receipt。',
+      '- 当前 Review Execution、Integration Agent 当前 PR/head/subject 与全绿 head 绑定的 inspection receipt 是 approved 的服务端硬门禁；pending、failure、unknown 均不得批准。');
   } else if (context.execution.purpose === 'merge') {
     instructions.splice(2, 0,
       '- 合并前必须调用 integration.source.inspect 重新读取当前精确 head、reviewed subject、required checks 与 mergeability；失败 job 用 integration.source.log 读取，Provider 不可用时失败关闭。');
   }
   if (context.task.kind === 'integration' && context.task.workflowVersion === 3) {
     instructions.splice(2, 0,
-      '- 这是一个持久的 Integration Agent：先以 GitHub PR、head 与 CI 为唯一代码事实对账，不得相信旧 Candidate、Revision、lease 或 outbox 字段。',
+      '- 这是一个持久的 Integration Agent：先以 GitHub PR、head 与 CI 为唯一代码事实对账，不得相信旧协调状态、revision、lease 或 outbox 字段。',
       '- 组合来源、修复 CI 和处理 Review 反馈都在同一 integration branch/PR 上完成；head 变化后必须重新发起只读 Review。',
       '- 只有当前 Review 对当前 head 的明确批准且 CI 全绿时才请求受控 Merge Gateway；红 CI、过期 review 或 head 变化必须拒绝合并。',
       '- 普通网络、CI 或可修复冲突错误应继续对账和重试，不得把任务置为 blocked。');

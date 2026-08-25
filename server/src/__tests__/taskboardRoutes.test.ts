@@ -100,19 +100,20 @@ afterEach(async () => {
 });
 
 describe('Taskboard routes', () => {
-  it('does not start the legacy merge Agent for a manually-created workflow v3 batch', async () => {
+  it('starts a durable Integration Agent work execution for a manually-created workflow v3 batch', async () => {
     const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
-    let legacyStarts = 0;
+    const integrationTask = { ...TASK, kind: 'integration' as const, workflowVersion: 3 as const };
+    let starts = 0;
     const service = {
       ...makeService(captured),
       async createIntegrationBatch() {
-        return { ...TASK, kind: 'integration' as const, workflowVersion: 3 as const };
+        return integrationTask;
       },
     } as TaskboardService;
     const executionService = {
       async startExecution() {
-        legacyStarts += 1;
-        return { task: TASK, execution: EXECUTION };
+        starts += 1;
+        return { task: integrationTask, execution: EXECUTION };
       },
     } as unknown as TaskboardExecutionService;
     const rig = await makeRig(service, USER, captured, executionService);
@@ -123,31 +124,14 @@ describe('Taskboard routes', () => {
     }));
 
     expect(response.status).toBe(202);
-    expect(await response.json()).toMatchObject({ task: { kind: 'integration', workflowVersion: 3 } });
-    expect(legacyStarts).toBe(0);
-  });
-
-  it('exposes maintainer-audited requeue only for a failed workflow v3 candidate', async () => {
-    const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
-    const v3Task = { ...TASK, kind: 'integration' as const, workflowVersion: 3 as const };
-    const service = {
-      ...makeService(captured),
-      async getTask() { return v3Task; },
-      async getBoard() { return { ...BOARD, role: 'maintainer' as const }; },
-    } as TaskboardService;
-    const calls: unknown[] = [];
-    const rig = await makeRig(service, USER, captured, undefined, undefined, {
-      requeueIntegrationV3Candidate: async (input) => {
-        calls.push(input);
-        return { candidateId: 'candidate-1', taskId: v3Task.id, previousError: 'provider denied', status: 'idle' };
-      },
+    expect(await response.json()).toMatchObject({
+      task: { kind: 'integration', workflowVersion: 3 },
+      execution: { purpose: 'work' },
     });
-
-    const response = await rig.request(`/api/taskboard/tasks/${v3Task.id}/integration-candidate/requeue`, postJson({ reason: 'credentials repaired' }));
-    expect(response.status).toBe(202);
-    expect(await response.json()).toMatchObject({ candidateId: 'candidate-1', previousError: 'provider denied', status: 'idle' });
-    expect(calls).toEqual([expect.objectContaining({ taskId: v3Task.id, reason: 'credentials repaired' })]);
+    expect(starts).toBe(1);
   });
+
+
 
   it('requires login before checking service availability, then returns 503 when PG service is disabled', async () => {
     const rig = await makeRig(undefined, null);

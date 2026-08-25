@@ -247,29 +247,12 @@ function DisclosureButton({
 }
 
 function PlanTodoRow({ todo, index }: { todo: TodoItem; index: number }) {
-  const status = todo.status;
-  const icon = status === "completed"
-    ? <CircleCheck className={activityStatusIconClass("success", "size-3.5")} />
-    : status === "failed"
-      ? <CircleX className={activityStatusIconClass("danger", "size-3.5")} />
-      : status === "blocked"
-        ? <TriangleAlert className={activityStatusIconClass("danger", "size-3.5")} />
-        : status === "waiting"
-          ? <Clock3 className={activityStatusIconClass("pending", "size-3.5")} />
-          : status === "in_progress"
-            ? <Loader2 className={activityStatusIconClass("active", "size-3.5 animate-spin")} />
-            : (
-              <span className="flex size-3.5 items-center justify-center rounded-full border border-border text-[9px] tabular-nums text-muted-foreground">
-                {index}
-              </span>
-            );
   return (
     <li className="flex items-start gap-2.5 py-1">
-      <span className="mt-[3px] shrink-0">{icon}</span>
-      <span className={cn(
-        "min-w-0 flex-1 break-words text-sm leading-5",
-        status === "in_progress" ? "font-medium text-foreground" : "text-muted-foreground",
-      )}>
+      <span className="mt-[3px] flex size-3.5 shrink-0 items-center justify-center rounded-full border border-border text-[9px] tabular-nums text-muted-foreground">
+        {index}
+      </span>
+      <span className="min-w-0 flex-1 break-words text-sm leading-5 text-muted-foreground">
         {todo.content}
       </span>
     </li>
@@ -287,7 +270,6 @@ function PlanBlock({
   onToggleAll?: () => void;
 }) {
   const todos = event.todos ?? [];
-  const completedCount = todos.filter((todo) => todo.status === "completed").length;
   return (
     <section aria-label="业务计划" data-business-step={event.id}>
       <header className="flex items-center gap-2.5">
@@ -303,7 +285,7 @@ function PlanBlock({
           </button>
         ) : null}
         <span className="text-2xs tabular-nums text-muted-foreground">
-          {completedCount}/{todos.length} 完成
+          共 {todos.length} 步
         </span>
       </header>
       <ol className="ml-[7px] mt-2.5 border-l border-border/50 pl-5">

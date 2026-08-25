@@ -66,7 +66,7 @@ const CRON_MANAGE_ACTIONS = ['delete', 'run', ...TASKBOARD_MANAGE_ACTIONS] as co
 const dateTimeSchema = z.string().datetime({ offset: true });
 const cronManageSchema = z.object({
   target: z.enum(['cron', 'taskboard']).optional().describe('操作对象。默认 cron；taskboard 由服务端按当前用户与租户鉴权。'),
-  action: z.enum(CRON_MANAGE_ACTIONS).describe('cron 支持 list/create/update/delete/run；taskboard 支持 board/task/comment/execution 资源 action。Work/Review 必须用 execution.pull_request.inspect 读取当前 head 的权威 CI；Integration Agent Merge 使用 integration.agent.merge，并在调用时复核当前 PR、CI 与审批 head。'),
+  action: z.enum(CRON_MANAGE_ACTIONS).describe('cron 支持 list/create/update/delete/run；taskboard 支持 board/task/comment/execution 资源 action。Work/Review 必须用 execution.pull_request.inspect 读取当前 head 的权威 CI；workflowVersion=3 Integration Agent Merge 只能使用 integration.agent.merge，并在调用时复核当前 PR、CI 与审批 head；legacy v2 Merge 继续使用 integration.source.inspect/log/merge。'),
   id: z.string().optional().describe('cron job、旧 taskboard 任务或评论 id。'),
   boardId: z.string().optional().describe('taskboard 看板 id。'),
   taskId: z.string().optional().describe('taskboard 任务 id。'),

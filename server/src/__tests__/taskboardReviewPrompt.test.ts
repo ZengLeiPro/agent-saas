@@ -44,6 +44,18 @@ describe('taskboard execution writeback prompt', () => {
     expect(prompt).toContain('服务端硬门禁');
   });
 
+  it('Workflow v3 Integration Merge 只指向 Agent Merge Gateway', () => {
+    const integrationMerge = context('merge');
+    integrationMerge.task.kind = 'integration';
+    integrationMerge.task.workflowVersion = 3;
+
+    const prompt = executionWritebackInstructions(integrationMerge).join('\n');
+
+    expect(prompt).toContain('integration.agent.merge');
+    expect(prompt).not.toContain('必须调用 integration.source.inspect');
+    expect(prompt).not.toContain('用 integration.source.log 读取');
+  });
+
   it('Workflow v3 Integration Work 按持久 Integration Agent 对账和受控合并', () => {
     const integrationWork = context('work');
     integrationWork.task.kind = 'integration';

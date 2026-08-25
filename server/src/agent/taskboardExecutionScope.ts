@@ -29,6 +29,10 @@ export function assertTaskboardExecutionScope(
     if (input.action.startsWith('integration.') && context.task.kind !== 'integration') {
       throw new Error('只有 integration 任务可以读取集成来源');
     }
+    if (context.task.workflowVersion === 3
+      && ['integration.source.inspect', 'integration.source.log', 'integration.source.merge'].includes(input.action)) {
+      throw new Error('Workflow v3 Integration Agent 禁止调用 legacy integration.source 操作');
+    }
     return;
   }
   if (!LEGACY_EXECUTION_ACTIONS.includes(input.action as (typeof LEGACY_EXECUTION_ACTIONS)[number])) {

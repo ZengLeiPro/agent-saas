@@ -42,6 +42,11 @@ export function executionWritebackInstructions(context: TaskboardExecutionContex
     instructions.splice(2, 0,
       '- 独立调用 execution.pull_request.inspect 检查当前 Integration Agent 的精确 PR/head/base 与 CI；失败 job 用 execution.pull_request.log 读取，随后重新读取最新 context receipt。',
       '- 当前 Review Execution、Integration Agent 当前 PR/head/subject 与全绿 head 绑定的 inspection receipt 是 approved 的服务端硬门禁；pending、failure、unknown 均不得批准。');
+  } else if (context.execution.purpose === 'merge'
+    && context.task.kind === 'integration'
+    && context.task.workflowVersion === 3) {
+    instructions.splice(2, 0,
+      '- 仅调用 integration.agent.merge 请求受控 Merge Gateway；该 action 会立即重读当前 PR/head、审批与 CI 并在任一门禁不满足时失败关闭。不得调用 legacy integration.source.inspect/log/merge。');
   } else if (context.execution.purpose === 'merge') {
     instructions.splice(2, 0,
       '- 合并前必须调用 integration.source.inspect 重新读取当前精确 head、reviewed subject、required checks 与 mergeability；失败 job 用 integration.source.log 读取，Provider 不可用时失败关闭。');

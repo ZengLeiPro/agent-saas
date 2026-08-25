@@ -28,6 +28,15 @@ export function purposeForIntegrationAgentStatus(
   return undefined;
 }
 
+export function assertIntegrationExecutionMigrated(task: Pick<TaskBoardTask, 'kind' | 'workflowVersion'>): void {
+  if (task.kind === 'integration' && task.workflowVersion !== 3) {
+    throw new TaskboardValidationError(
+      'Integration task is awaiting Agent-first workflow migration',
+      'TASKBOARD_INTEGRATION_MIGRATION_REQUIRED',
+    );
+  }
+}
+
 export function assertExecutionRequestAllowed(
   task: TaskBoardTask,
   purpose: TaskBoardExecutionPurpose,
@@ -40,27 +49,10 @@ export function assertExecutionRequestAllowed(
     );
   }
   if (task.kind === 'integration') {
-    if (task.workflowVersion === 3) {
-      const expected = purposeForIntegrationAgentStatus(task.status);
-      if (!expected || purpose !== expected) {
-        throw new TaskboardValidationError('Integration Agent is not dispatchable for this purpose', 'TASKBOARD_INTEGRATION_AGENT_EXECUTION_STATE_INVALID');
-      }
-      return;
-    }
-    // Missing workflowVersion is legacy v2 by contract.
-    if (purpose !== 'merge') {
-      throw new TaskboardValidationError(
-        'Integration tasks only accept merge execution',
-        'TASKBOARD_INTEGRATION_PURPOSE_INVALID',
-      );
-    }
-    if (!['todo', 'in_progress'].includes(task.status)) {
-      throw new TaskboardValidationError(
-        task.status === 'blocked'
-          ? 'Blocked integration requires an explicit source-level resume decision'
-          : 'Integration task is not dispatchable',
-        task.status === 'blocked' ? 'TASKBOARD_RESUME_REQUIRED' : 'TASKBOARD_EXECUTION_STATUS_INVALID',
-      );
+    assertIntegrationExecutionMigrated(task);
+    const expected = purposeForIntegrationAgentStatus(task.status);
+    if (!expected || purpose !== expected) {
+      throw new TaskboardValidationError('Integration Agent is not dispatchable for this purpose', 'TASKBOARD_INTEGRATION_AGENT_EXECUTION_STATE_INVALID');
     }
     return;
   }
@@ -99,12 +91,8 @@ export function decideTransition(
   status: TaskBoardStatus,
   facts: WorkflowFacts,
 ): TransitionDecision {
-  const completingMergedIntegration = task.kind === 'integration'
-    && task.workflowVersion !== 3
-    && purpose === 'merge'
-    && status === 'done';
-  if ((TERMINAL_STATUSES.has(task.status) && !completingMergedIntegration)
-    || (isIrreversibleMerged(task, facts) && !completingMergedIntegration)) {
+  assertIntegrationExecutionMigrated(task);
+  if (TERMINAL_STATUSES.has(task.status) || isIrreversibleMerged(task, facts)) {
     throw new TaskboardValidationError('Terminal task cannot accept a transition', 'TASKBOARD_EXECUTION_FENCED');
   }
   if (purpose === 'work') {

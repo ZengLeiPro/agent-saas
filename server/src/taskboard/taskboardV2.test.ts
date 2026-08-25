@@ -80,12 +80,13 @@ describe('taskboard V2 contracts', () => {
     const merge = resolveWorkflowContract({
       ...task,
       kind: 'integration',
-      status: 'in_progress',
+      workflowVersion: 3,
+      status: 'ready_to_merge',
     }, 'merge');
 
     expect(work.allowedStatuses).toEqual(['in_review', 'blocked']);
     expect(review.allowedStatuses).toEqual(['ready_to_merge', 'todo', 'in_review', 'blocked']);
-    expect(merge.capabilities).toMatchObject({ mergeReviewedSource: true, createRemediation: true });
+    expect(merge.capabilities).toMatchObject({ mergeIntegrationAgent: true, cleanupIntegrationAgent: true });
   });
 
   it('resolves native Integration Agent work and ready_to_merge contracts without Candidate state', async () => {

@@ -19,7 +19,7 @@ import {
 import { TaskboardNotFoundError, TaskboardValidationError, type TaskboardIdentity } from '../types.js';
 import { loadWorkflowFacts } from './commandService.js';
 import { assertCurrentIntegrationAgentPullRequestGate, assertCurrentPullRequestGate } from './pullRequestGate.js';
-import { decideTransition } from './decider.js';
+import { assertIntegrationExecutionMigrated, decideTransition } from './decider.js';
 
 const ACTIVE = ['queued', 'running', 'waiting_user', 'waiting_approval'];
 
@@ -56,23 +56,15 @@ export async function finishExecutionV2(
       if (prior.rows[0]) return loadTask(options, client, taskId);
     }
     assertActiveExecution(executionRow, execution);
+    assertIntegrationExecutionMigrated(loaded.task);
     await recordExecutionFinishComment(options, client, execution, input.body);
 
-    if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3) {
+    if (loaded.task.kind === 'integration') {
       return transitionIntegrationAgent(options, client, identity, loaded.task, execution, input.targetStatus);
     }
     const facts = await loadWorkflowFacts(options, client, loaded.task);
-    const completingMergedIntegration = loaded.task.kind === 'integration'
-      && loaded.task.workflowVersion !== 3
-      && execution.purpose === 'merge'
-      && input.targetStatus === 'done';
-    if ((loaded.task.status === 'done' && !completingMergedIntegration)
-      || loaded.task.status === 'canceled'
-      || (facts.hasMergeFact && !completingMergedIntegration)) {
+    if (loaded.task.status === 'done' || loaded.task.status === 'canceled' || facts.hasMergeFact) {
       throw new TaskboardValidationError('Expired or terminal execution cannot transition the task', 'TASKBOARD_EXECUTION_FENCED');
-    }
-    if (completingMergedIntegration && !facts.hasMergeFact) {
-      throw new TaskboardValidationError('Integration task has no complete merge fact', 'TASKBOARD_INTEGRATION_INCOMPLETE');
     }
     const decision = decideTransition(loaded.task, execution.purpose, input.targetStatus, facts);
     const nextStatus = decision.toStatus;
@@ -91,7 +83,6 @@ export async function finishExecutionV2(
     }
     await updateTaskStatus(options, client, taskId, nextStatus);
     if (nextStatus === 'blocked') await recordBlock(options, client, taskId, execution);
-    if (loaded.task.kind === 'integration' && nextStatus === 'done') await closeIntegration(options, client, loaded.task, loaded.board.repository);
     await markTransitioned(options, client, execution, input.targetStatus);
     await appendChange(options, client, taskId, 'execution.transitioned', 'agent', identity.ownerUserId, {
       executionId: execution.id, runId, purpose: execution.purpose, fromStatus: loaded.task.status, status: nextStatus,
@@ -196,14 +187,6 @@ async function recordBlock(options: TaskboardV2StoreOptions, client: PoolClient,
     `INSERT INTO ${options.blockEpisodesTable}(id,task_id,purpose,execution_id,reason_code,reason)
      VALUES ($1,$2,$3,$4,'agent_needs_human','See the execution Agent comment')`,
     [randomUUID(), taskId, execution.purpose, execution.id]);
-}
-
-async function closeIntegration(options: TaskboardV2StoreOptions, client: PoolClient, task: TaskBoardTask, repositoryRaw: unknown): Promise<void> {
-  await client.query(`UPDATE ${options.mergeAuthorizationsTable} SET revoked_at=now() WHERE integration_task_id=$1 AND revoked_at IS NULL`, [task.id]);
-  const repository = jsonObject(repositoryRaw) as { repositoryId?: string } | undefined;
-  if (repository?.repositoryId) await client.query(
-    `UPDATE ${options.integrationLanesTable} SET active_integration_task_id=NULL,lease_id=NULL,updated_at=now()
-     WHERE repository_id=$1 AND active_integration_task_id=$2`, [repository.repositoryId, task.id]);
 }
 
 function jsonObject(value: unknown): Record<string, unknown> | undefined {

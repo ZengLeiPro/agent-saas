@@ -95,11 +95,15 @@ interface Rig {
 }
 
 const rigs: Rig[] = [];
-afterEach(async () => {
-  await Promise.all(rigs.splice(0).map((rig) => rig.close()));
-});
-
+afterEach(async () => { await Promise.all(rigs.splice(0).map((rig) => rig.close())); });
 describe('Taskboard routes', () => {
+  it('fails closed for v2 integration execute and comment continuation before dispatch', async () => {
+    const service = makeService({ identities: [], taskFilters: [], createBoards: [] });
+    service.getTask = async () => ({ ...TASK, kind: 'integration', workflowVersion: 2 });
+    const unavailable = async (): Promise<never> => { throw new Error('must not dispatch'); };
+    const rig = await makeRig(service, USER, undefined, { startExecution: unavailable, continueExecution: unavailable } as never);
+    for (const [suffix, body] of [['execute', { expectedVersion: TASK.version }], ['execute', { expectedVersion: TASK.version, purpose: 'merge' }], [`comments/${COMMENT.id}/execute`, {}]] as const) expect(await (await rig.request(`/api/taskboard/tasks/${TASK.id}/${suffix}`, postJson(body))).json()).toMatchObject({ code: 'TASKBOARD_INTEGRATION_MIGRATION_REQUIRED' });
+  });
   it('starts a durable Integration Agent work execution for a manually-created workflow v3 batch', async () => {
     const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
     const integrationTask = { ...TASK, kind: 'integration' as const, workflowVersion: 3 as const };

@@ -16,7 +16,7 @@ function integrationRow(id: string, status: 'in_progress' | 'in_review' | 'ready
 function hostWithRows(rows: Record<string, unknown>[]) {
   const client = {
     release: vi.fn(),
-    query: vi.fn(async (sql: string) => {
+    query: vi.fn(async (sql: string, _values?: unknown[]) => {
       if (sql.includes('UPDATE tasks task') && sql.includes('SET workflow_version=3')) {
         rows.forEach((row) => { if (Number(row.workflow_version ?? 2) === 2) row.workflow_version = 3; });
       }
@@ -74,8 +74,13 @@ describe('claimIntegrationDispatchCandidates Agent-first routing', () => {
     const queries = client.query.mock.calls.map(([sql]) => String(sql));
     const rendezvousSql = queries.find((sql) => sql.includes('WITH candidates AS'))!;
     const migrationSql = queries.find((sql) => sql.includes('UPDATE tasks task'))!;
+    expect(rendezvousSql).toContain('ORDER BY t.updated_at,t.id');
+    expect(rendezvousSql).toContain('LIMIT $1\n          FOR UPDATE OF t SKIP LOCKED');
+    expect(client.query.mock.calls.find(([sql]) => String(sql).includes('WITH candidates AS'))?.[1]).toEqual([10]);
     expect(rendezvousSql).toContain('ON CONFLICT (integration_task_id) DO NOTHING');
     expect(migrationSql).toContain('SET workflow_version=3');
+    expect(migrationSql).toContain('FROM candidates candidate');
+    expect(client.query.mock.calls.find(([sql]) => String(sql).includes('UPDATE tasks task'))?.[1]).toEqual([10]);
     expect(migrationSql).toContain("agent.integration_branch='integration/' || task.id");
     const dispatchSql = client.query.mock.calls.map(([sql]) => String(sql))
       .find((sql) => sql.includes('SELECT t.*, b.tenant_id'))!;

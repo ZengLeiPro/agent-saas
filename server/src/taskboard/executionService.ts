@@ -32,6 +32,7 @@ import {
 } from './continuationCoordinator.js';
 import { reuseTaskboardSession } from './executionSession.js';
 import { reusableTaskboardSessionId, taskboardExecutionSessionDescriptor } from './executionSessionMetadata.js';
+import { assertIntegrationExecutionMigrated, purposeForIntegrationAgentStatus } from './workflow/decider.js';
 import {
   assertDispatchedRun,
   canonicalizeDispatchPayload,
@@ -304,7 +305,9 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     options: { executionId?: string; trigger?: 'initial' | 'comment' | 'resume' | 'retry'; sessionId?: string } = {},
   ): Promise<TaskboardExecutionClaimInput> {
     const launch = await this.resolveLaunch(identity, taskId, input.purpose);
-    const purpose = input.purpose ?? (launch.modelContext.taskKind === 'integration' ? 'merge' : 'work');
+    const integrationPurpose = launch.modelContext.taskKind === 'integration'
+      ? purposeForIntegrationAgentStatus(launch.modelContext.taskStatus ?? 'todo') : undefined;
+    const purpose = input.purpose ?? integrationPurpose ?? 'work';
     const executions = purpose === 'work' || launch.modelContext.taskKind === 'integration'
       ? await this.options.store.listExecutions(identity, taskId)
       : [];
@@ -391,9 +394,14 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     if (!executionIdentity || executionIdentity.tenantId !== identity.tenantId) {
       throw new TaskboardPermissionError('Board execution identity is unavailable');
     }
-    // 未显式指定阶段时，integration 任务按 merge 阶段、其余按 work 阶段解析。
+    if (modelContext.taskKind === 'integration') {
+      assertIntegrationExecutionMigrated({ kind: modelContext.taskKind, workflowVersion: modelContext.workflowVersion });
+    }
     const resolvedPurpose = purpose
-      ?? (modelContext.taskKind === 'integration' ? 'merge' : 'work');
+      ?? (modelContext.taskKind === 'integration'
+        ? purposeForIntegrationAgentStatus(modelContext.taskStatus ?? 'todo')
+        : undefined)
+      ?? 'work';
     const explicitModelRef = resolveExecutionModelRef(
       modelContext.taskModel,
       modelContext.boardStageModels,
@@ -915,6 +923,7 @@ function finalAssistantText(events: PlatformEvent[], runId: string, sessionId: s
 }
 
 function assertContinuationAllowed(task: TaskBoardTask, activeExecution?: TaskBoardExecution): void {
+  assertIntegrationExecutionMigrated(task);
   if (task.status === 'done' || task.status === 'canceled' || task.mergedCommitOid) {
     throw new TaskboardValidationError(
       '已完成、已取消或已合并任务不能继续派发',
@@ -925,20 +934,8 @@ function assertContinuationAllowed(task: TaskBoardTask, activeExecution?: TaskBo
     throw new TaskboardValidationError('阻塞任务需要显式恢复后才能继续', 'TASKBOARD_RESUME_REQUIRED');
   }
   if (task.kind === 'integration') {
-    if (task.workflowVersion === 3) {
-      if (!activeExecution) throw new TaskboardValidationError('Integration v3 由系统按 Candidate 状态推进；当前没有可继续的 Agent 执行，请仅发表评论', 'TASKBOARD_V3_COMMENT_CONTINUATION_REQUIRES_ACTIVE');
-      if (!['work', 'review'].includes(activeExecution.purpose)) throw new TaskboardValidationError('Integration v3 只能继续当前的 Work 或 Review 执行', 'TASKBOARD_INTEGRATION_PURPOSE_INVALID');
-      return;
-    }
-    if (!['todo', 'in_progress'].includes(task.status)) {
-      throw new TaskboardValidationError('当前集成任务状态不允许从评论继续执行', 'TASKBOARD_EXECUTION_STATUS_INVALID');
-    }
-    if (activeExecution && activeExecution.purpose !== 'merge') {
-      throw new TaskboardValidationError(
-        '集成任务只能继续 merge execution',
-        'TASKBOARD_INTEGRATION_PURPOSE_INVALID',
-      );
-    }
+    if (!activeExecution) throw new TaskboardValidationError('Integration Agent 由系统按 Agent 状态推进；当前没有可继续的执行，请仅发表评论', 'TASKBOARD_V3_COMMENT_CONTINUATION_REQUIRES_ACTIVE');
+    if (!['work', 'review'].includes(activeExecution.purpose)) throw new TaskboardValidationError('Integration Agent 只能继续当前的 Work 或 Review 执行', 'TASKBOARD_INTEGRATION_PURPOSE_INVALID');
     return;
   }
   if (!['todo', 'in_review', 'in_progress'].includes(task.status)) {
@@ -949,7 +946,10 @@ function assertContinuationAllowed(task: TaskBoardTask, activeExecution?: TaskBo
 function continuationPurpose(task: TaskBoardTask): TaskBoardExecutionPurpose {
   assertContinuationAllowed(task);
 
-  if (task.kind === 'integration') return 'merge';
+  if (task.kind === 'integration') {
+    const purpose = purposeForIntegrationAgentStatus(task.status);
+    if (purpose) return purpose;
+  }
   if (task.status === 'in_review') return 'review';
   if (task.status === 'todo') return 'work';
   throw new TaskboardValidationError('当前任务状态不允许从评论创建新执行', 'TASKBOARD_EXECUTION_STATUS_INVALID');

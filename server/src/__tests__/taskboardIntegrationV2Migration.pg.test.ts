@@ -91,11 +91,14 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
     expect(initialDefault.rows[0]?.value).toContain('3');
 
     await pool.query(`ALTER TABLE ${store.tasksTable} ALTER COLUMN workflow_version SET DEFAULT 2`);
-    let validId: string;
+    let validIds: string[];
     let missingId: string;
     let malformedId: string;
     try {
-      validId = await seedHistoricalIntegration('valid', 'valid');
+      validIds = [];
+      for (const label of ['batch-a', 'batch-b', 'batch-c']) {
+        validIds.push(await seedHistoricalIntegration(label, 'valid'));
+      }
       missingId = await seedHistoricalIntegration('missing', 'missing');
       malformedId = await seedHistoricalIntegration('malformed', 'malformed');
     } finally {
@@ -106,9 +109,27 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
       `UPDATE ${store.tasksTable} SET workflow_version=3 WHERE id=$1`,
       [missingId],
     )).rejects.toThrow(/TASKBOARD_WORKFLOW_VERSION_IMMUTABLE/u);
+    for (const [index, id] of [...validIds, missingId, malformedId].entries()) {
+      await pool.query(`UPDATE ${store.tasksTable} SET updated_at=$2 WHERE id=$1`, [
+        id, new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+      ]);
+    }
+
+    await store.claimIntegrationDispatchCandidatesV2(2);
+    const firstRound = await pool.query(
+      `SELECT count(*)::int AS migrated FROM ${store.tasksTable}
+        WHERE id=ANY($1::text[]) AND workflow_version=3`, [validIds],
+    );
+    expect(firstRound.rows[0]?.migrated).toBe(2);
+
+    await store.claimIntegrationDispatchCandidatesV2(2);
+    const secondRound = await pool.query(
+      `SELECT count(*)::int AS migrated FROM ${store.tasksTable}
+        WHERE id=ANY($1::text[]) AND workflow_version=3`, [validIds],
+    );
+    expect(secondRound.rows[0]?.migrated).toBe(3);
 
     await store.claimIntegrationDispatchCandidatesV2(10);
-
     const migrated = await pool.query(
       `SELECT task.id,task.workflow_version,count(agent.integration_task_id)::int AS agent_count,
               min(agent.repository_id) AS repository_id,min(agent.integration_branch) AS integration_branch
@@ -116,12 +137,13 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
          LEFT JOIN ${agentsTable} agent ON agent.integration_task_id=task.id
         WHERE task.id=ANY($1::text[])
         GROUP BY task.id,task.workflow_version`,
-      [[validId, missingId, malformedId]],
+      [[...validIds, missingId, malformedId]],
     );
-    expect(migrated.rows.find((row) => row.id === validId)).toMatchObject({
-      workflow_version: 3, agent_count: 1,
-      repository_id: `github:${identity.tenantId}:acme/valid`, integration_branch: `integration/${validId}`,
-    });
+    for (const validId of validIds) {
+      expect(migrated.rows.find((row) => row.id === validId)).toMatchObject({
+        workflow_version: 3, agent_count: 1, integration_branch: `integration/${validId}`,
+      });
+    }
     expect(migrated.rows.find((row) => row.id === missingId)).toMatchObject({ workflow_version: 2, agent_count: 0 });
     expect(migrated.rows.find((row) => row.id === malformedId)).toMatchObject({ workflow_version: 2, agent_count: 1 });
 
@@ -131,13 +153,13 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
          FROM ${store.tasksTable} task
          LEFT JOIN ${agentsTable} agent ON agent.integration_task_id=task.id
         WHERE task.id=$1 GROUP BY task.workflow_version`,
-      [validId],
+      [validIds[0]],
     );
     expect(replay.rows[0]).toMatchObject({ workflow_version: 3, agent_count: 1 });
 
     await expect(pool.query(
       `UPDATE ${store.tasksTable} SET workflow_version=2 WHERE id=$1`,
-      [validId],
+      [validIds[0]],
     )).rejects.toThrow(/TASKBOARD_WORKFLOW_VERSION_IMMUTABLE/u);
   });
 });

@@ -16,7 +16,9 @@ import { resolveExecutionModelRef } from './executionFields.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import {
   assertExecutionRequestAllowed,
+  assertIntegrationExecutionMigrated,
   isIrreversibleMerged,
+  purposeForIntegrationAgentStatus,
   type WorkflowFacts,
 } from './workflow/decider.js';
 import { loadWorkflowFacts } from './workflow/commandService.js';
@@ -95,7 +97,12 @@ export async function claimExecution(
     const loaded = await store.requireTaskWithBoard(client, identity, taskId, true);
     assertBoardRole(loaded.boardRole);
     assertWritableTask(loaded.task, loaded.boardArchivedAt);
-    const purpose = input.purpose ?? (loaded.task.kind === 'integration' ? 'merge' : 'work');
+    assertIntegrationExecutionMigrated(loaded.task);
+    const purpose = input.purpose
+      ?? (loaded.task.kind === 'integration'
+        ? purposeForIntegrationAgentStatus(loaded.task.status)
+        : undefined)
+      ?? 'work';
     // Authorization and object visibility are checked above. Idempotent replay must be resolved
     // before mutable task/workflow checks, otherwise a successful request cannot be retried after
     // the task has advanced to blocked/done/merged.

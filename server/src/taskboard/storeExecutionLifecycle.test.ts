@@ -70,6 +70,27 @@ function claimInput(): TaskboardExecutionClaimInput {
 }
 
 describe('claimExecution model consistency', () => {
+  it.each([undefined, 'merge'] as const)(
+    'rejects a v2 integration purpose=%s before reading or inserting executions',
+    async (purpose) => {
+      const legacyTask: TaskBoardTask = { ...task, kind: 'integration', workflowVersion: 2 };
+      const client = { query: vi.fn() };
+      const store = {
+        requireTaskWithBoard: vi.fn(async () => ({
+          task: legacyTask, boardOwnerUserId: identity.ownerUserId, boardRole: 'owner',
+        })),
+        withTransaction: vi.fn(async (operation: (transaction: typeof client) => Promise<unknown>) => operation(client)),
+      } as unknown as PgTaskboardStore;
+      const input = claimInput();
+      if (purpose) input.purpose = purpose;
+      else delete input.purpose;
+
+      await expect(claimExecution(store, identity, task.id, input)).rejects.toMatchObject({
+        code: 'TASKBOARD_INTEGRATION_MIGRATION_REQUIRED',
+      });
+      expect(client.query).not.toHaveBeenCalled();
+    },
+  );
   it('replays the same execution id after the task reaches a terminal state', async () => {
     const terminalTask = { ...task, status: 'done' as const, version: 9 };
     const client = {

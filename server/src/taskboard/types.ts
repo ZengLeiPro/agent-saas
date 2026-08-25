@@ -179,6 +179,7 @@ export interface TaskboardExecutionModelContext {
   boardStageModels?: TaskBoardStageModels;
   taskKind?: 'delivery' | 'integration' | 'remediation';
   taskStatus?: TaskBoardStatus;
+  workflowVersion?: 2 | 3;
   integrationDurableSessionId?: string;
   policyRevision?: string;
   boardOwnerUserId: string;

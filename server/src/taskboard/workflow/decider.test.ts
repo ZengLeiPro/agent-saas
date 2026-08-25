@@ -13,12 +13,12 @@ describe('direct workflow transitions', () => {
     expect(decideTransition(remediation, 'review', 'ready_to_merge', {hasMergeFact:false})).toEqual({toStatus:'done'});
     expect(decideTransition(remediation, 'review', 'done', {hasMergeFact:false})).toEqual({toStatus:'done'});
   });
-  it('only lets legacy integration merge finish after a complete merge fact', () => {
+  it('fails closed instead of completing a historical source-level merge execution', () => {
     const integration = task({ kind: 'integration', status: 'in_progress', workflowVersion: 2 });
-    expect(() => decideTransition(integration, 'merge', 'done', { hasMergeFact: false })).toThrow();
-    expect(decideTransition(integration, 'merge', 'done', { hasMergeFact: true })).toEqual({ toStatus: 'done' });
-    expect(decideTransition({ ...integration, status: 'done' }, 'merge', 'done', { hasMergeFact: true })).toEqual({ toStatus: 'done' });
-    expect(() => decideTransition(integration, 'merge', 'in_progress', { hasMergeFact: true })).toThrow();
+    expect(() => decideTransition(integration, 'merge', 'done', { hasMergeFact: true }))
+      .toThrowError(expect.objectContaining({ code: 'TASKBOARD_INTEGRATION_MIGRATION_REQUIRED' }));
+    expect(() => assertExecutionRequestAllowed(integration, 'merge'))
+      .toThrowError(expect.objectContaining({ code: 'TASKBOARD_INTEGRATION_MIGRATION_REQUIRED' }));
   });
   it('routes every Agent-first stage through its dedicated execution purpose', () => {
     const integration = task({ kind: 'integration', workflowVersion: 3 });

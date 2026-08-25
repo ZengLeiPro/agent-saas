@@ -7,6 +7,7 @@ import {
   type TaskBoardTaskKind,
 } from '../../../shared/src/types/taskboard.js';
 import { TaskboardValidationError } from './types.js';
+import { assertIntegrationExecutionMigrated, purposeForIntegrationAgentStatus } from './workflow/decider.js';
 
 export function taskFieldMigrationSql(tasksTable: string): string {
   return `
@@ -64,28 +65,21 @@ export function resolveExecutionPurpose(
   kind: TaskBoardTaskKind = 'delivery',
   workflowVersion: TaskBoardIntegrationWorkflowVersion = 2,
 ): TaskBoardExecutionPurpose {
-  if (kind === 'integration' && workflowVersion === 3) {
-    const purpose = requested ?? 'work';
-    if (purpose === 'work' || purpose === 'review') return purpose;
-    throw new TaskboardValidationError(
-      'Integration Agent only accepts work or review execution',
-      'TASKBOARD_INTEGRATION_AGENT_PURPOSE_INVALID',
-    );
-  }
-  const purpose = requested ?? (kind === 'integration' ? 'merge' : 'work');
-  if (purpose === 'merge') {
-    if (kind === 'integration' && (status === 'todo' || status === 'in_progress' || status === 'blocked')) {
-      return purpose;
-    }
-    throw new TaskboardValidationError(
-      'Only active integration tasks can be handed to a merge Agent',
-      'TASKBOARD_MERGE_REQUIRES_INTEGRATION',
-    );
-  }
   if (kind === 'integration') {
+    assertIntegrationExecutionMigrated({ kind, workflowVersion });
+    const expected = purposeForIntegrationAgentStatus(status);
+    const purpose = requested ?? expected;
+    if (purpose && purpose === expected) return purpose;
     throw new TaskboardValidationError(
-      'Integration tasks only accept merge execution',
-      'TASKBOARD_INTEGRATION_PURPOSE_INVALID',
+      'Integration Agent is not dispatchable for this purpose',
+      'TASKBOARD_INTEGRATION_AGENT_EXECUTION_STATE_INVALID',
+    );
+  }
+  const purpose = requested ?? 'work';
+  if (purpose === 'merge') {
+    throw new TaskboardValidationError(
+      'Only integration tasks can use merge execution',
+      'TASKBOARD_MERGE_REQUIRES_INTEGRATION',
     );
   }
   const requiredStatus = purpose === 'review' ? 'in_review' : 'todo';

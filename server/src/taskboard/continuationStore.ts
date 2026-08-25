@@ -316,7 +316,7 @@ export async function loadExecutionModelContext(
   const { agentsTable } = integrationAgentTableNames(host.integrationSourcesTable);
   const result = await host.pool.query(
     `SELECT t.model AS task_model, t.stage_models AS task_stage_models,
-            t.kind AS task_kind, t.status AS task_status,
+            t.kind AS task_kind, t.status AS task_status, t.workflow_version,
             agent.durable_session_id AS integration_durable_session_id,
             b.model AS board_model, b.stage_models AS board_stage_models,
             b.owner_user_id AS board_owner_user_id,

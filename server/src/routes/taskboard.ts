@@ -28,6 +28,7 @@ import {
 } from '../../../shared/src/types/taskboard.js';
 import { assertActiveBoard, assertBoardRole } from '../taskboard/storeHelpers.js';
 import { generateAndApplyTaskTitle } from '../taskboard/taskTitle.js';
+import { assertIntegrationExecutionMigrated } from '../taskboard/workflow/decider.js';
 import { releaseTaskCreationAfterFailure, taskCreationRequestDigest, waitForTaskCreationClaim } from '../taskboard/taskCreationLifecycle.js';
 import { sameTaskAttachments } from '../taskboard/taskAttachmentMatch.js';
 import {
@@ -612,6 +613,7 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     const input = parseOrReply(executionStartSchema, req.body, res, 'body');
     if (!input) return;
     const identity = identityFrom(req);
+    assertIntegrationExecutionMigrated(await options.service!.getTask(identity, req.params.id));
     const execution = await options.executionService.startExecution(identity, req.params.id, input);
     res.status(202).json(withCreatorAvatarVersionInExecution(options.userStore, identity, execution));
   }));
@@ -680,8 +682,10 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     if (!options.executionService?.continueExecution) {
       throw new TaskboardExecutionUnavailableError();
     }
+    const identity = identityFrom(req);
+    assertIntegrationExecutionMigrated(await options.service!.getTask(identity, req.params.id));
     res.status(202).json(await options.executionService.continueExecution(
-      identityFrom(req),
+      identity,
       req.params.id,
       req.params.commentId,
     ));

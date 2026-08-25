@@ -244,6 +244,8 @@ async function loadUnstartedIntegrationTasks(
               SELECT 1 FROM ${host.executionsTable} e
                WHERE e.task_id=t.id AND e.status IN ('queued','running','waiting_user','waiting_approval')
             )
+          ORDER BY t.updated_at,t.id
+          LIMIT $1
           FOR UPDATE OF t SKIP LOCKED
        )
        INSERT INTO ${agentsTable}
@@ -255,13 +257,30 @@ async function loadUnstartedIntegrationTasks(
         GROUP BY candidate.id
        HAVING count(*)>0 AND count(DISTINCT source.repository_id)=1
        ON CONFLICT (integration_task_id) DO NOTHING`,
+      [limit],
     );
     // Keep the statements separate: PostgreSQL data-modifying CTEs share a snapshot,
     // while the immutable-version trigger must observe the rendezvous just inserted.
     await client.query(
-      `UPDATE ${host.tasksTable} task
+      `WITH candidates AS (
+         SELECT t.id
+           FROM ${host.tasksTable} t
+           JOIN ${host.integrationLanesTable} candidate_lane ON candidate_lane.active_integration_task_id=t.id
+          WHERE t.kind='integration' AND COALESCE(t.workflow_version,2)=2
+            AND t.status IN ('todo','in_progress')
+            AND t.archived_at IS NULL AND t.deleted_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM ${host.executionsTable} e
+               WHERE e.task_id=t.id AND e.status IN ('queued','running','waiting_user','waiting_approval')
+            )
+          ORDER BY t.updated_at,t.id
+          LIMIT $1
+          FOR UPDATE OF t SKIP LOCKED
+       )
+       UPDATE ${host.tasksTable} task
           SET workflow_version=3,version=version+1,updated_at=now()
-         FROM ${agentsTable} agent
+         FROM candidates candidate
+         JOIN ${agentsTable} agent ON agent.integration_task_id=candidate.id
          JOIN ${host.integrationLanesTable} lane
            ON lane.active_integration_task_id=agent.integration_task_id
           AND lane.repository_id=agent.repository_id
@@ -287,6 +306,7 @@ async function loadUnstartedIntegrationTasks(
              WHERE execution.task_id=task.id
                AND execution.status IN ('queued','running','waiting_user','waiting_approval')
           )`,
+      [limit],
     );
     const result = await client.query(
       `SELECT t.*, b.tenant_id, b.owner_user_id,

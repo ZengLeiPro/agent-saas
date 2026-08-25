@@ -45,7 +45,7 @@ export function UnifiedSettingsSidebar({
 
   return (
     <aside
-      className={cn("relative flex h-full shrink-0 flex-col border-r border-black/[0.08] bg-background", hidden && "hidden", className)}
+      className={cn("relative flex h-full shrink-0 flex-col bg-background", hidden && "hidden", className)}
       style={{ width }}
       data-testid="unified-settings-sidebar"
       // @ts-expect-error -- inert is a valid HTML attribute, React types lag behind

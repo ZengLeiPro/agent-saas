@@ -15,7 +15,7 @@ export function DeferredUnifiedSettingsSidebar(props: UnifiedSettingsSidebarProp
   return (
     <Suspense fallback={(
       <aside
-        className={cn("h-full shrink-0 border-r border-black/[0.08] bg-background", props.hidden && "hidden", props.className)}
+        className={cn("h-full shrink-0 bg-background", props.hidden && "hidden", props.className)}
         style={{ width: props.width }}
         aria-label="正在加载设置导航"
       />

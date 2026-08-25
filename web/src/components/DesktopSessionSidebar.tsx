@@ -1926,8 +1926,8 @@ export function DesktopSessionSidebar({
       <div className="flex h-full w-full">
         {/* 左主栏：导航 + 分组目录(可拖动调宽) */}
         <div
-          className="relative flex h-full shrink-0 flex-col border-r border-black/[0.08]"
-          style={{ width: mainPanelWidth }}
+          className={cn("relative flex h-full shrink-0 flex-col", (subPanelOpen || showTrash) && "border-r border-black/[0.08]")}
+          style={{ width: mainPanelWidth }} data-testid="desktop-sidebar-main-panel"
         >
           {/* Header: 品牌徽标 + 收起侧边栏 */}
           <SidebarBrandHeader onCollapse={onCollapse} />

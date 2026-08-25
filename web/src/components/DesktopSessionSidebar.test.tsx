@@ -204,6 +204,15 @@ describe("桌面侧边栏会话激活态", () => {
     expect(screen.queryByRole("button", { name: "新建到分组" })).toBeNull();
   });
 
+  it("双栏只保留内部栏位分割线，侧边栏外缘不描边", () => {
+    const collapsed = renderSidebar("capabilities", [session], "double", { activeSessionId: null });
+    expect(screen.getByTestId("desktop-sidebar-main-panel").classList.contains("border-r")).toBe(false);
+    collapsed.unmount();
+
+    renderSidebar("chat", [session], "double");
+    expect(screen.getByTestId("desktop-sidebar-main-panel").classList.contains("border-r")).toBe(true);
+  });
+
   it("平台管理员头像菜单也只显示一个设置入口", () => {
     renderSidebar("chat", [session], "single", { isAdmin: true, isPlatformAdmin: true });
 
@@ -228,7 +237,8 @@ describe("桌面侧边栏会话激活态", () => {
       onSettingsNavigate,
     });
 
-    expect(await screen.findByTestId("unified-settings-sidebar")).toBeTruthy();
+    const settingsSidebar = await screen.findByTestId("unified-settings-sidebar");
+    expect(settingsSidebar.classList.contains("border-r")).toBe(false);
     expect(screen.queryByText("新建会话")).toBeNull();
     expect(screen.queryByLabelText("搜索会话内容")).toBeNull();
     expect(screen.queryByText("会话 A")).toBeNull();

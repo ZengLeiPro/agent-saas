@@ -185,6 +185,132 @@ describe('health router', () => {
     expect(body).toMatchObject({ status: 'draining', draining: true });
   });
 
+  it.each(['not_configured', 'disabled'])('treats integration v3 %s as not applicable to site readiness', async () => {
+    const server = await startHealthServer({
+      getIntegrationV3Health: async () => ({ status: 'not_applicable', releaseReady: true, reasons: [] }),
+    });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: 'ok', integrationV3: { status: 'not_applicable', releaseReady: true },
+    });
+  });
+
+  it('reports 200 when enabled integration v3 adapters, gateway, and worker are healthy', async () => {
+    const server = await startHealthServer({
+      getIntegrationV3Health: async () => ({
+        status: 'ok', releaseReady: true, reasons: [],
+        metrics: { capturedAt: new Date().toISOString(), unknownOperationCount: 0, oldestUnknownOperationAgeMs: null,
+          staleLaneCount: 0, staleOutboxCount: 0, oldestOutboxAgeMs: null, cleanupFailureCount: 0,
+          gatewayDisabled: false, gatewayHealthy: true, activeV2Count: 0, activeV3Count: 1,
+          costBudgetUsed: null, costBudgetLimit: null, workRoundBudgetUsed: null, workRoundBudgetLimit: null },
+      }),
+    });
+    servers.push(server);
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: 'ok', integrationV3: { status: 'ok', releaseReady: true } });
+  });
+
+  it('keeps remediation deployment ready while reporting a failed candidate', async () => {
+    const server = await startHealthServer({
+      getIntegrationV3Health: async () => ({
+        status: 'degraded', releaseReady: true, reasons: ['active_failed_candidate'],
+        metrics: { capturedAt: new Date().toISOString(), unknownOperationCount: 0, oldestUnknownOperationAgeMs: null,
+          staleLaneCount: 0, staleOutboxCount: 0, oldestOutboxAgeMs: null, cleanupFailureCount: 0,
+          activeFailedCandidateCount: 1, gatewayDisabled: false, gatewayHealthy: true, activeV2Count: 0, activeV3Count: 1,
+          costBudgetUsed: null, costBudgetLimit: null, workRoundBudgetUsed: null, workRoundBudgetLimit: null },
+      }),
+    });
+    servers.push(server);
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: 'ok', integrationV3: { status: 'degraded', releaseReady: true, reasons: ['active_failed_candidate'] },
+    });
+  });
+
+  it.each([
+    'worker_or_required_adapter_unavailable',
+    'runtime_isolation_attestation_unavailable',
+    'gateway_unhealthy',
+    'git_unavailable',
+  ])('fails readiness with 503 when enabled integration v3 condition %s is broken', async (reason) => {
+    const server = await startHealthServer({
+      getIntegrationV3Health: async () => ({
+        status: 'degraded', releaseReady: false, reasons: [reason],
+        metrics: { capturedAt: new Date().toISOString(), unknownOperationCount: 0, oldestUnknownOperationAgeMs: null,
+          staleLaneCount: 0, staleOutboxCount: 0, oldestOutboxAgeMs: null, cleanupFailureCount: 0,
+          gatewayDisabled: reason === 'gateway_unhealthy', gatewayHealthy: false, activeV2Count: 0, activeV3Count: 1,
+          costBudgetUsed: null, costBudgetLimit: null, workRoundBudgetUsed: null, workRoundBudgetLimit: null },
+      }),
+    });
+    servers.push(server);
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ status: 'not_ready', integrationV3: { reasons: [reason] } });
+  });
+
+  it('fails the release readiness gate when integration v3 is degraded', async () => {
+    const server = await startHealthServer({
+      getIntegrationV3Health: async () => ({
+        status: 'degraded', releaseReady: false, reasons: ['gateway_disabled'],
+        metrics: { capturedAt: new Date().toISOString(), unknownOperationCount: 0, oldestUnknownOperationAgeMs: null,
+          staleLaneCount: 0, staleOutboxCount: 0, oldestOutboxAgeMs: null, cleanupFailureCount: 0,
+          gatewayDisabled: true, gatewayHealthy: false, activeV2Count: 0, activeV3Count: 1,
+          costBudgetUsed: null, costBudgetLimit: null, workRoundBudgetUsed: null, workRoundBudgetLimit: null },
+      }),
+    });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ status: 'not_ready', integrationV3: { releaseReady: false } });
+  });
+
+  it('fails readiness closed when integration v3 PostgreSQL metrics are unavailable', async () => {
+    const server = await startHealthServer({
+      getIntegrationV3Health: async () => { throw new Error('integration metrics db unavailable'); },
+    });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      status: 'not_ready',
+      integrationV3: { releaseReady: false, reasons: ['metrics_unavailable'] },
+      error: 'integration metrics db unavailable',
+    });
+  });
+
+  it('returns a non-sensitive attested release identity from readiness', async () => {
+    const server = await startHealthServer({
+      getRuntimeIdentity: () => ({
+        environment: 'staging', releaseId: 'rc-20260825-01', releaseSha: 'a'.repeat(40),
+        serverDigest: `sha256:${'b'.repeat(64)}`, webDigest: `sha256:${'c'.repeat(64)}`,
+        safetyAttested: true,
+      }),
+    });
+    servers.push(server);
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      release: { environment: 'staging', releaseId: 'rc-20260825-01', releaseSha: 'a'.repeat(40), safetyAttested: true },
+    });
+  });
+
+  it('fails readiness closed for an unattested staging identity', async () => {
+    const server = await startHealthServer({
+      getRuntimeIdentity: () => ({ environment: 'staging', safetyAttested: false }),
+    });
+    servers.push(server);
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ status: 'not_ready', release: { safetyAttested: false } });
+  });
+
   it('defaults warmup to done when no status provider is wired', async () => {
     const server = await startHealthServer({});
     servers.push(server);

@@ -97,6 +97,7 @@ import type { NotifyChannel } from '../cron/notifyChannel.js';
 import { createDingtalkNotifyChannel } from '../cron/notifyChannels/index.js';
 import { buildFollowupContext } from '../cron/followup.js';
 import { assertDevDatabaseSafety, loadAppConfig } from './config.js';
+import { assertRuntimeEnvironmentSafety } from '../release/environmentSafety.js';
 import { createRuntimeWebPushAssembly, startTaskboardStatusNotificationWorker } from './runtimeWebPush.js';
 import { createModelResolvers } from './modelResolvers.js';
 import { createTitleModelAdapterFactory, resolveTitleGeneratorConfigs } from './titleGeneratorConfigs.js';
@@ -277,6 +278,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const sessionLockMode = config.runtimeScheduler?.sessionLockMode ?? 'dual';
   // 非 production 进程禁止连远程 PG（2026-07-26 本地 dev 接管生产库事故）
   assertDevDatabaseSafety(config);
+  // Staging 是独立安全域：任一身份或隔离断言失败均在启动其它服务前中止。
+  const runtimeIdentity = assertRuntimeEnvironmentSafety(config);
   // ClientDaemonGateway 仍是进程内连接表。拆成 ws-only + runtime-worker 后，daemon
   // 连在 Web 进程、执行却发生在 Worker，二者尚无跨进程转发层。显式配置时必须
   // fail-fast，让部署保留旧 worker，不能静默把 executionTarget=client 变成不可用。
@@ -2957,6 +2960,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
 
   return {
     config,
+    runtimeIdentity,
     processRole,
     processCwd,
     sessionBasePath,

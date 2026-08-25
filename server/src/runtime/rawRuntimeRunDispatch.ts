@@ -926,8 +926,7 @@ export function buildInstructionSections(params: {
   profileSystemInstructions?: string;
   /** 任务看板 Execution 的动态提示语，位于稳定系统前缀之后、首条 user 消息之前。 */
   taskboardExecution?: boolean;
-  taskboardBoardPrompt?: string;
-  taskboardStagePrompt?: string;
+  taskboardBoardPrompt?: string; taskboardStagePrompt?: string;
 }): Array<{ key: string; name: string; content: string }> {
   const modules = new Set(params.contextModules
     ?? ['company_info', 'tenant_instructions', 'runtime_memory', 'personal_context']);
@@ -1006,12 +1005,7 @@ export function buildInstructionSections(params: {
       personalVars,
     ),
   });
-  appendTaskboardExecutionInstruction(sections, params.taskboardExecution, {
-    boardPrompt: params.taskboardBoardPrompt,
-    stagePrompt: params.taskboardStagePrompt,
-    fallbackStagePrompt: () => params.getSystemPrompt?.('main.taskboardExecution')
-      || loadPrompt(params.sharedDir, 'taskboard-execution'),
-  });
+  appendTaskboardExecutionInstruction(sections, params.taskboardExecution, { boardPrompt: params.taskboardBoardPrompt, stagePrompt: params.taskboardStagePrompt, fallbackStagePrompt: () => params.getSystemPrompt?.('main.taskboardExecution') || loadPrompt(params.sharedDir, 'taskboard-execution') });
   return sections;
 }
 export function buildInstructions(params: Parameters<typeof buildInstructionSections>[0]): string {
@@ -1524,9 +1518,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           isPlatformAdmin,
           memoryPolicyVersion,
           getSystemPrompt: config.getSystemPrompt,
-          taskboardExecution: isTaskboardExecution,
-          taskboardBoardPrompt: options.taskboardBoardPrompt,
-          taskboardStagePrompt: options.taskboardStagePrompt,
+          taskboardExecution: isTaskboardExecution, taskboardBoardPrompt: options.taskboardBoardPrompt, taskboardStagePrompt: options.taskboardStagePrompt,
           ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
           ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
           ...(orgAgent ? { orgAgent } : {}),
@@ -2158,9 +2150,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       isPlatformAdmin: resumeIsPlatformAdmin,
       memoryPolicyVersion,
       getSystemPrompt: config.getSystemPrompt,
-      taskboardExecution: isTaskboardExecution,
-      taskboardBoardPrompt: request.taskboardBoardPrompt,
-      taskboardStagePrompt: request.taskboardStagePrompt,
+      taskboardExecution: isTaskboardExecution, taskboardBoardPrompt: request.taskboardBoardPrompt, taskboardStagePrompt: request.taskboardStagePrompt,
       ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
       ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
       ...(orgAgent ? { orgAgent } : {}),
@@ -2640,9 +2630,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       isPlatformAdmin: resumeIsPlatformAdmin,
       memoryPolicyVersion,
       getSystemPrompt: config.getSystemPrompt,
-      taskboardExecution: isTaskboardExecution,
-      taskboardBoardPrompt: request.taskboardBoardPrompt,
-      taskboardStagePrompt: request.taskboardStagePrompt,
+      taskboardExecution: isTaskboardExecution, taskboardBoardPrompt: request.taskboardBoardPrompt, taskboardStagePrompt: request.taskboardStagePrompt,
       ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
       ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
       ...(orgAgent ? { orgAgent } : {}),

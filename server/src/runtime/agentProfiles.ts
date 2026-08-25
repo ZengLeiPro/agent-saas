@@ -26,6 +26,10 @@ export { applyOrgAgentExecutionMode, appendDispatcherInstructionSection, resolve
 
 export type AgentProfileScene = AgentProfileBindingKey;
 
+function shortDigest(value: string | undefined): string {
+  return value?.slice(0, 12) || 'missing';
+}
+
 export interface BoundAgentRuntimeProfile {
   binding: AgentProfileSessionBinding;
   profile: AgentRuntimeProfile;
@@ -133,7 +137,11 @@ export class AgentRuntimeProfileResolver {
         && session.profileVersionId === builtin.version.profileVersionId
         && digest === version.configDigest;
       if (!currentBuiltinBackgroundProfile) {
-        throw new AgentRuntimeProfileError('会话 Profile 摘要校验失败，已拒绝切换到其他版本', 'CONFLICT');
+        const mismatch = digest !== version.configDigest ? 'version_config' : 'session_pin';
+        throw new AgentRuntimeProfileError(
+          `会话 Profile 摘要校验失败，已拒绝切换到其他版本（${mismatch}; binding=${expectedBindingKey}; version=${version.profileVersionId}; session=${shortDigest(session.profileConfigDigest)}; stored=${shortDigest(version.configDigest)}; actual=${shortDigest(digest)}）`,
+          'CONFLICT',
+        );
       }
     }
     return this.toBound({ expected: expectedBindingKey, bindingKey: expectedBindingKey, profile, version, source }, session.profileResolution ?? source);

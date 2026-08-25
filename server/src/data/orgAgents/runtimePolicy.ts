@@ -100,22 +100,6 @@ export const orgAgentRuntimePolicySchema = z.object({
         message: '前台调度器必须启用子 Agent 能力',
       });
     }
-    for (const requiredTool of ['Agent', 'BackgroundTask']) {
-      if (policy.tools.allowlist && !policy.tools.allowlist.includes(requiredTool)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['tools', 'allowlist'],
-          message: `前台调度器工具允许列表必须包含 ${requiredTool}`,
-        });
-      }
-      if (policy.tools.denylist.includes(requiredTool)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['tools', 'denylist'],
-          message: `前台调度器不能禁止 ${requiredTool}`,
-        });
-      }
-    }
   }
   // Keep the Profile invariant at the policy boundary too. A null allowlist can
   // inherit workspace tools, so denying the readiness gate would be unsafe.
@@ -266,6 +250,25 @@ export function mergeOrgAgentRuntimePolicy(
       ),
     },
   });
+}
+
+/** Dispatcher front desk keeps only its runtime-mandatory delegation surface. */
+export function mergeOrgAgentFrontRuntimePolicy(
+  shared: AgentRuntimeProfileConfig,
+  input: OrgAgentRuntimePolicy | undefined,
+): AgentRuntimeProfileConfig {
+  const policy = normalizeOrgAgentRuntimePolicy(input);
+  const merged = mergeOrgAgentRuntimePolicy(shared, policy);
+  if (policy.executionMode !== 'dispatcher') return merged;
+  return {
+    ...merged,
+    tools: {
+      allowlist: merged.tools.allowlist
+        ? uniqueSorted([...merged.tools.allowlist, 'Agent', 'BackgroundTask'])
+        : null,
+      denylist: merged.tools.denylist.filter(tool => tool !== 'Agent' && tool !== 'BackgroundTask'),
+    },
+  };
 }
 
 /**

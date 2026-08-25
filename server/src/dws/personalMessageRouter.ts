@@ -17,6 +17,8 @@ import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
 const DEFAULT_POLL_MS = 1_000;
 const DEFAULT_LEASE_TTL_MS = 120_000;
 const DEFAULT_LEASE_RENEW_MS = 30_000;
+const DEFAULT_MAX_CONCURRENCY = 4;
+const MAX_CONCURRENCY = 32;
 const ACTIVE_RUN_RECHECK_MS = 30_000;
 const DWS_REPLY_IDEMPOTENCY_SAFE_MS = 23 * 60 * 60 * 1_000;
 const MAX_EVENT_ID_LENGTH = 512;
@@ -85,27 +87,31 @@ export interface AgentDwsMessageRouterOptions {
   pollMs?: number;
   leaseTtlMs?: number;
   leaseRenewMs?: number;
+  maxConcurrency?: number;
   logger?: {
     info(message: string): void;
     warn(message: string): void;
   };
 }
 
-/** Durable DWS inbox worker. One claimed event is processed at a time per process. */
+/** Durable DWS inbox worker. Conversations run concurrently; each conversation remains FIFO in the store. */
 export class AgentDwsMessageRouter {
   private readonly workerId = `agent-dws-router:${randomUUID()}`;
   private readonly pollMs: number;
   private readonly leaseTtlMs: number;
   private readonly leaseRenewMs: number;
+  private readonly maxConcurrency: number;
+  private readonly active = new Set<Promise<void>>();
+  private readonly activeAborts = new Set<AbortController>();
   private timer?: NodeJS.Timeout;
-  private active?: Promise<boolean>;
-  private activeAbort?: AbortController;
+  private pumping = false;
   private stopped = false;
 
   constructor(private readonly options: AgentDwsMessageRouterOptions) {
     this.pollMs = boundedPositive(options.pollMs, DEFAULT_POLL_MS);
     this.leaseTtlMs = boundedPositive(options.leaseTtlMs, DEFAULT_LEASE_TTL_MS);
     this.leaseRenewMs = boundedPositive(options.leaseRenewMs, DEFAULT_LEASE_RENEW_MS);
+    this.maxConcurrency = Math.min(boundedPositive(options.maxConcurrency, DEFAULT_MAX_CONCURRENCY), MAX_CONCURRENCY);
     if (this.leaseRenewMs >= this.leaseTtlMs) {
       throw new Error('Agent DWS inbox lease renew interval must be shorter than its TTL');
     }
@@ -122,8 +128,8 @@ export class AgentDwsMessageRouter {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
-    this.activeAbort?.abort();
-    await this.active?.catch(() => undefined);
+    for (const controller of this.activeAborts) controller.abort();
+    await Promise.allSettled([...this.active]);
   }
 
   async ingest(account: AgentDwsAccountRecord, event: DwsPersonalEvent): Promise<boolean> {
@@ -172,7 +178,7 @@ export class AgentDwsMessageRouter {
     const item = await this.options.messageStore.claimNext(this.workerId, this.leaseTtlMs);
     if (!item) return false;
     const abortController = new AbortController();
-    this.activeAbort = abortController;
+    this.activeAborts.add(abortController);
     let leaseLost = false;
     let renewing = false;
     const heartbeat = setInterval(() => {
@@ -205,7 +211,7 @@ export class AgentDwsMessageRouter {
       if (leaseLost) throw new Error('Agent DWS inbox lease lost');
       return true;
     } catch (error) {
-      if (!leaseLost) {
+      if (!leaseLost && !(this.stopped && abortController.signal.aborted)) {
         const persist = error instanceof AgentDwsMessageDeferredError
           ? this.options.messageStore.defer(
               item.inboxId,
@@ -230,7 +236,7 @@ export class AgentDwsMessageRouter {
       return false;
     } finally {
       clearInterval(heartbeat);
-      if (this.activeAbort === abortController) this.activeAbort = undefined;
+      this.activeAborts.delete(abortController);
     }
   }
 
@@ -241,18 +247,23 @@ export class AgentDwsMessageRouter {
   }
 
   private async kick(): Promise<void> {
-    if (this.stopped || this.active) return;
-    const task = (async () => {
-      let processed = false;
-      do {
-        processed = await this.runOnce();
-      } while (processed && !this.stopped);
-      return processed;
-    })().finally(() => {
-      if (this.active === task) this.active = undefined;
-    });
-    this.active = task;
-    await task;
+    if (this.stopped || this.pumping) return;
+    this.pumping = true;
+    try {
+      while (!this.stopped && this.active.size < this.maxConcurrency) {
+        let processed = false;
+        let task!: Promise<void>;
+        task = this.runOnce()
+          .then(result => { processed = result; })
+          .finally(() => {
+            this.active.delete(task);
+            if (processed) this.scheduleKick();
+          });
+        this.active.add(task);
+      }
+    } finally {
+      this.pumping = false;
+    }
   }
 
   private async process(item: AgentDwsInboxRecord, abortController: AbortController): Promise<void> {

@@ -22,11 +22,13 @@ import {
   buildRuntimeSkillsResolver,
   composeSkillFilters,
   createRawRuntimeRunDispatch,
+  mergeOrgAgentBoundRuntimeProfile,
   resolveOrgAgentOverrides,
   resolveOrgAgentSessionSnapshot,
 } from '../runtime/rawRuntimeRunDispatch.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
+import { getBuiltinProfileByBinding } from '../data/agentProfiles/builtins.js';
 import { DEFAULT_ORG_AGENT_RUNTIME_POLICY } from '../data/orgAgents/runtimePolicy.js';
 import type { HandRecord } from '../runtime/handStore.js';
 import type { SkillsDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
@@ -245,6 +247,42 @@ describe('buildInstructions 专职 Agent 覆盖（真实模板渲染）', () => 
     expect(instructions).toContain('<dispatcher-mode>');
     expect(instructions).toContain('其他任何实质咨询或执行请求都必须创建 background Worker');
     expect(instructions).toContain('已交给执行 Agent，我继续在线');
+  });
+
+  it('dispatcher 前台强制保留派发工具，不污染 Worker 工具策略', () => {
+    const builtin = getBuiltinProfileByBinding('org_agent');
+    const bound = {
+      profile: builtin.profile,
+      version: builtin.version,
+      binding: {
+        profileId: builtin.profile.profileId,
+        profileKey: builtin.profile.profileKey,
+        profileVersionId: builtin.version.profileVersionId,
+        profileVersionNumber: builtin.version.versionNumber,
+        profileConfigDigest: builtin.version.configDigest,
+        profileBindingKey: 'org_agent' as const,
+        profileResolution: 'builtin' as const,
+      },
+    };
+    const agent = orgAgentRecord({
+      runtime: {
+        ...structuredClone(DEFAULT_ORG_AGENT_RUNTIME_POLICY),
+        executionMode: 'dispatcher',
+        tools: {
+          allowlist: ['Read', 'WaitForWorkspaceReady'],
+          denylist: ['Agent', 'BackgroundTask'],
+        },
+      },
+    });
+
+    const merged = mergeOrgAgentBoundRuntimeProfile(bound, agent);
+    expect(merged.version.config.capabilities.backgroundTasks).toBe(true);
+    expect(merged.version.config.capabilities.subagents).toBe(true);
+    expect(merged.version.config.tools.allowlist).toEqual([
+      'Agent', 'BackgroundTask', 'Read', 'WaitForWorkspaceReady',
+    ]);
+    expect(merged.version.config.tools.denylist).not.toContain('Agent');
+    expect(merged.version.config.tools.denylist).not.toContain('BackgroundTask');
   });
 
   it('个人会话（缺省）：persona 正常注入、无组织专职段（兼容红线）', () => {

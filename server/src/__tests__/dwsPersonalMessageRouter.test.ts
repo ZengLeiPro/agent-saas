@@ -61,8 +61,9 @@ const item: AgentDwsInboxRecord = {
 };
 
 function setup(input: {
-  claimed?: AgentDwsInboxRecord;
+  claimed?: AgentDwsInboxRecord | AgentDwsInboxRecord[];
   dispatch?: AgentRunDispatch;
+  maxConcurrency?: number;
   existingRun?: { runId: string; sessionId: string; status: string } | null;
   recoveredEvents?: Array<Record<string, unknown>>;
   bindingPeerOpenDingtalkId?: string;
@@ -70,29 +71,40 @@ function setup(input: {
   resolveRequester?: typeof requester | null;
   requesterAllowed?: boolean;
 } = {}) {
-  const claimed = input.claimed ?? item;
+  const claimedItems = Array.isArray(input.claimed) ? input.claimed : [input.claimed ?? item];
+  const claimed = claimedItems[0]!;
+  const claimedById = new Map(claimedItems.map(entry => [entry.inboxId, entry]));
+  const claimNext = vi.fn();
+  for (const entry of claimedItems) claimNext.mockResolvedValueOnce(entry);
+  claimNext.mockResolvedValue(null);
   const messageStore = {
     init: vi.fn(),
     ingest: vi.fn(),
     listForAccount: vi.fn().mockResolvedValue([]),
-    claimNext: vi.fn().mockResolvedValue(claimed),
+    claimNext,
     renewLease: vi.fn().mockResolvedValue(true),
-    getOrCreateBinding: vi.fn().mockResolvedValue({
-      bindingId: 'binding-a', tenantId: 'tenant-a', accountId: 'account-a',
-      conversationId: 'cid-a', requesterUserId: 'user-a', sessionId: 'session-a',
+    getOrCreateBinding: vi.fn().mockImplementation(async (
+      tenantId: string, accountId: string, conversationId: string,
+    ) => ({
+      bindingId: `binding-${conversationId}`, tenantId, accountId,
+      conversationId, requesterUserId: 'user-a',
+      sessionId: conversationId === 'cid-a' ? 'session-a' : `session-${conversationId}`,
       ...(input.bindingPeerOpenDingtalkId ? { peerOpenDingtalkId: input.bindingPeerOpenDingtalkId } : {}),
       createdAt: item.createdAt, updatedAt: item.updatedAt,
-    }),
+    })),
     markDispatchStarted: vi.fn().mockImplementation(async (
-      _inboxId: string, _owner: string, _fence: number, sessionId: string, runId: string,
-    ) => ({ ...claimed, sessionId, runId })),
+      inboxId: string, _owner: string, _fence: number, sessionId: string, runId: string,
+    ) => ({ ...(claimedById.get(inboxId) ?? claimed), sessionId, runId })),
     saveDispatchResult: vi.fn().mockImplementation(async (
-      _inboxId: string, _owner: string, _fence: number, responseText: string,
-    ) => ({ ...claimed, state: 'reply_pending', responseText })),
-    markReplyAttemptStarted: vi.fn().mockResolvedValue({
-      ...claimed,
-      state: 'reply_pending',
-      replyStartedAt: claimed.replyStartedAt ?? new Date().toISOString(),
+      inboxId: string, _owner: string, _fence: number, responseText: string,
+    ) => ({ ...(claimedById.get(inboxId) ?? claimed), state: 'reply_pending', responseText })),
+    markReplyAttemptStarted: vi.fn().mockImplementation(async (inboxId: string) => {
+      const entry = claimedById.get(inboxId) ?? claimed;
+      return {
+        ...entry,
+        state: 'reply_pending',
+        replyStartedAt: entry.replyStartedAt ?? new Date().toISOString(),
+      };
     }),
     defer: vi.fn().mockResolvedValue({ ...claimed, state: 'retry_wait' }),
     complete: vi.fn().mockResolvedValue({ ...claimed, state: 'completed' }),
@@ -141,6 +153,7 @@ function setup(input: {
     pollMs: 60_000,
     leaseTtlMs: 60_000,
     leaseRenewMs: 30_000,
+    ...(input.maxConcurrency ? { maxConcurrency: input.maxConcurrency } : {}),
   });
   return {
     router, messageStore, accountStore, dispatch, sender,
@@ -149,6 +162,68 @@ function setup(input: {
 }
 
 describe('AgentDwsMessageRouter', () => {
+  it('processes different conversations concurrently up to the configured bound', async () => {
+    const second = {
+      ...item,
+      inboxId: 'inbox-b',
+      eventId: 'event-b',
+      conversationId: 'cid-b',
+      messageId: 'mid-b',
+      content: '请整理明天的计划',
+    };
+    let active = 0;
+    let maxActive = 0;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let started = 0;
+    let bothStarted!: () => void;
+    const startedPromise = new Promise<void>(resolve => { bothStarted = resolve; });
+    const dispatch = vi.fn((message, _context, _options, hooks) => (async function* () {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      started += 1;
+      if (started === 2) bothStarted();
+      await gate;
+      await hooks?.onResult?.({ resultText: `完成：${message.content}` });
+      active -= 1;
+      yield { type: 'session_init' as const, sessionId: message.chatId === 'cid-a' ? 'session-a' : 'session-cid-b' };
+      yield { type: 'done' as const };
+    })());
+    const { router, messageStore } = setup({
+      claimed: [item, second],
+      dispatch,
+      maxConcurrency: 2,
+    });
+
+    router.start();
+    await startedPromise;
+    expect(maxActive).toBe(2);
+    release();
+    await vi.waitFor(() => expect(messageStore.complete).toHaveBeenCalledTimes(2));
+    await router.stop();
+  });
+
+  it('aborts and waits for all active work on stop without consuming retries', async () => {
+    let started!: () => void;
+    const startedPromise = new Promise<void>(resolve => { started = resolve; });
+    const dispatch = vi.fn((_message, _context, options) => (async function* () {
+      started();
+      await new Promise<void>(resolve => {
+        if (options.abortController?.signal.aborted) resolve();
+        else options.abortController?.signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      yield { type: 'done' as const };
+    })());
+    const { router, messageStore } = setup({ dispatch, maxConcurrency: 1 });
+
+    router.start();
+    await startedPromise;
+    await router.stop();
+
+    expect(messageStore.fail).not.toHaveBeenCalled();
+    expect(messageStore.defer).not.toHaveBeenCalled();
+  });
+
   it('ingests normalized text events before runtime dispatch', async () => {
     const { router, messageStore } = setup();
     messageStore.ingest.mockResolvedValue({ record: item, created: true });

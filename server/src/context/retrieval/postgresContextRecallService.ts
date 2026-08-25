@@ -10,6 +10,7 @@ import {
   contextSourceLocatorFromRow,
   type ContextSourceAuthorizationDenyReason,
 } from './sourceAuthorization.js';
+import { contextDisplayKind, normalizeContextFilterValues } from './taxonomy.js';
 import type {
   ContextRecallEvidence,
   ContextRecallFreshness,
@@ -39,6 +40,8 @@ export interface PgContextRecallServiceOptions {
 }
 
 const PROCESS_CONTEXT_ID_SIGNING_KEY = randomBytes(32).toString('base64url');
+const MIN_RECALL_CANDIDATE_SCAN = 200;
+const MAX_RECALL_CANDIDATE_SCAN = 1_000;
 
 /**
  * PostgreSQL baseline recall. It intentionally uses only exact matches, ILIKE and
@@ -63,11 +66,15 @@ export class PgContextRecallService implements ContextRecallService {
     const assignmentVersions = scopeVersions(request.scope.collections);
     if (assignmentVersions.size === 0) return { hits: [], degraded: false };
     const collectionIds = [...assignmentVersions.keys()];
-    const escapedPattern = `%${escapeLike(request.query)}%`;
-    const kinds = request.filters.kinds?.length ? [...request.filters.kinds] : null;
-    const sources = request.filters.sources?.length ? [...request.filters.sources] : null;
+    const escapedPattern = `%${escapeLike(request.query.normalize('NFKC'))}%`;
+    const kinds = normalizeContextFilterValues(request.filters.kinds);
+    const sources = normalizeContextFilterValues(request.filters.sources);
     const from = request.filters.timeRange?.from ?? null;
     const to = request.filters.timeRange?.to ?? null;
+    const scanLimit = Math.min(
+      MAX_RECALL_CANDIDATE_SCAN,
+      Math.max(MIN_RECALL_CANDIDATE_SCAN, request.limit * 20),
+    );
 
     const result = await this.options.pool.query(`
       SELECT r.tenant_id,r.source_id,r.collection_id,r.record_id,r.current_revision,
@@ -158,24 +165,40 @@ export class PgContextRecallService implements ContextRecallService {
           OR r.metadata_json::text ILIKE $4 ESCAPE '\\'
           OR COALESCE(derived_context.matches_query,FALSE)
         )
-        AND ($5::text[] IS NULL OR COALESCE(r.record_kind,NULLIF(r.metadata_json->>'kind',''),s.kind)=ANY($5::text[]))
-        AND ($6::text[] IS NULL OR r.source_id=ANY($6::text[]) OR s.kind=ANY($6::text[]))
-        AND ($7::timestamptz IS NULL OR COALESCE(r.source_updated_at,r.observed_at) >= $7)
-        AND ($8::timestamptz IS NULL OR COALESCE(r.source_updated_at,r.observed_at) < $8)
-      ORDER BY route_rank,COALESCE(r.source_updated_at,r.observed_at) DESC,r.record_id
+        AND ($5::text[] IS NULL
+          OR LOWER(NORMALIZE(COALESCE(r.entity_type,''), NFKC))=ANY($5::text[])
+          OR LOWER(NORMALIZE(COALESCE(r.record_kind,NULLIF(r.metadata_json->>'kind',''),s.kind), NFKC))=ANY($5::text[])
+          OR LOWER(NORMALIZE(COALESCE(r.metadata_json->>'eventType',r.metadata_json->>'event_type',''), NFKC))=ANY($5::text[]))
+        AND ($6::text[] IS NULL
+          OR LOWER(NORMALIZE(r.source_id, NFKC))=ANY($6::text[])
+          OR LOWER(NORMALIZE(s.kind, NFKC))=ANY($6::text[])
+          OR LOWER(NORMALIZE(r.collection_id, NFKC))=ANY($6::text[])
+          OR LOWER(NORMALIZE(c.external_key, NFKC))=ANY($6::text[]))
+        AND ($7::timestamptz IS NULL OR COALESCE(r.occurred_at,r.source_updated_at,r.observed_at) >= $7)
+        AND ($8::timestamptz IS NULL OR COALESCE(r.occurred_at,r.source_updated_at,r.observed_at) < $8)
+      ORDER BY route_rank,COALESCE(r.occurred_at,r.source_updated_at,r.observed_at) DESC,r.record_id
       LIMIT $9
     `, [request.subject.tenantId, collectionIds, request.query, escapedPattern, kinds, sources, from, to,
-      request.limit, request.subject.userId]);
+      scanLimit + 1, request.subject.userId]);
     throwIfAborted(request.signal);
 
-    const authorization = await this.authorizeNativeRows(request.subject, result.rows as Row[]);
-    const hits = authorization.rows.map(row => this.hitFromRow(row, assignmentVersions));
+    const fetchedRows = result.rows as Row[];
+    const candidateRows = fetchedRows.slice(0, scanLimit);
+    const authorization = await this.authorizeNativeRows(request.subject, candidateRows);
+    const hits = authorization.rows.slice(0, request.limit)
+      .map(row => this.hitFromRow(row, assignmentVersions));
     const scopeHealth = await this.loadScopeHealth(request.subject.tenantId, collectionIds);
-    const reasons = [...new Set([...scopeHealth.reasons, ...authorization.reasons])];
+    const scanCapped = fetchedRows.length > scanLimit && hits.length < request.limit;
+    const reasons = [...new Set([
+      ...scopeHealth.reasons,
+      ...authorization.reasons,
+      ...(scanCapped ? ['context_candidate_scan_limit'] : []),
+    ])];
     return {
       hits,
       degraded: reasons.length > 0,
       ...(reasons.length ? { degradationReasons: reasons } : {}),
+      diagnostics: { normalizedFilters: { kinds: kinds ?? [], sources: sources ?? [] } },
     };
   }
 
@@ -355,6 +378,10 @@ export class PgContextRecallService implements ContextRecallService {
       collectionId,
       assignmentVersion: assignmentVersions.get(collectionId)!,
       kind: String(row.record_kind),
+      recordKind: String(row.record_kind),
+      ...(typeof row.entity_type === 'string' && row.entity_type.trim()
+        ? { entityType: contextDisplayKind(row.entity_type, row.record_kind) }
+        : {}),
       content,
       score: row.route_rank === 1 ? 1 : row.route_rank === 2 ? 0.8 : row.route_rank === 3 ? 0.7 : 0.5,
       source: {

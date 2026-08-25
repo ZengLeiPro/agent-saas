@@ -243,17 +243,71 @@ export const credentialListSchema = z.object({ credentials: z.array(z.object({
 const organizationResourceSchema = z.object({
   resourceId: z.string(), name: z.string(), status: z.enum(['enabled', 'disabled']),
   policyEnabled: z.boolean(),
-  scope: z.array(z.object({ assigneeType: z.string(), assigneeId: z.string().optional(), effect: z.enum(['allow', 'deny']) }).strict()).optional(),
+  scope: z.array(z.object({ assigneeType: z.string(), assigneeId: z.string().optional(),
+    effect: z.enum(['allow', 'deny']), origin: z.enum(['direct', 'migration', 'policy_default']).optional() }).strict()).optional(),
   effectiveAssignment: z.literal('assigned').optional(),
   source: z.string(), version: z.number().int().positive(), updatedAt: z.string(),
+}).strict();
+
+const organizationKnowledgeSuiteSchema = z.object({
+  suiteId: z.string(), name: z.string(), description: z.string(), policyEnabled: z.boolean(),
+  resourceIds: z.array(z.string()).min(1),
+  expectedResourceIds: z.array(z.string()).default([]),
+  missingResourceIds: z.array(z.string()).default([]), unknownResourceIds: z.array(z.string()).default([]),
+  completeness: z.enum(['complete', 'incomplete', 'attention']).default('complete'),
+  resources: z.array(z.object({ resourceId: z.string(), name: z.string(),
+    version: z.number().int().positive(), status: z.enum(['enabled', 'disabled']) }).strict()).min(1),
+  configuration: z.object({
+    mode: z.enum(['none', 'all', 'selected', 'advanced', 'mixed']),
+    userIds: z.array(z.string()), groupIds: z.array(z.string()),
+  }).strict(),
 }).strict();
 
 export const memoryKnowledgeListSchema = z.object({
   tenantId: z.string(), authority: z.literal('governance_assignment_sets'),
   accessMode: z.enum(['manage', 'inspect', 'effective_only']),
+  suites: z.array(organizationKnowledgeSuiteSchema).optional().default([]),
   knowledge: z.array(organizationResourceSchema),
   memory: z.array(organizationResourceSchema),
   effective: z.object({ organizationKnowledge: z.boolean(), organizationMemory: z.boolean() }).strict(),
+}).strict();
+
+const assignmentPreviewSubjectSchema = z.object({
+  assigneeType: z.enum(['everyone', 'user', 'directory_group', 'agent']),
+  assigneeId: z.string().optional(), effect: z.enum(['allow', 'deny']), label: z.string(),
+}).strict();
+export const assignmentBatchPreviewSchema = z.object({
+  previewId: z.string().regex(/^abpv1\.[a-f0-9]{64}$/),
+  baselineDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  expiresAt: z.string().datetime({ offset: true }),
+  changes: z.array(z.object({
+    resourceType: z.string(), resourceId: z.string(), expectedVersion: z.number().int().nonnegative(),
+    before: z.array(assignmentPreviewSubjectSchema), after: z.array(assignmentPreviewSubjectSchema),
+    addedCount: z.number().int().nonnegative(), removedCount: z.number().int().nonnegative(),
+    beforeUserCount: z.number().int().nonnegative(), afterUserCount: z.number().int().nonnegative(),
+    addedUserCount: z.number().int().nonnegative(), removedUserCount: z.number().int().nonnegative(),
+  }).strict()).min(1),
+  impact: z.object({ resourceCount: z.number().int().positive(), atomic: z.literal(true),
+    directSubjectCount: z.number().int().nonnegative(), effectiveUserCount: z.number().int().nonnegative(),
+    addedUserCount: z.number().int().nonnegative(), removedUserCount: z.number().int().nonnegative(),
+    agentRuleCount: z.number().int().nonnegative(), requiresNewSession: z.boolean() }).strict(),
+  ...mutationAuditShape,
+}).strict();
+const assignmentRecordSchema = z.object({
+  assignmentId: z.string(), tenantId: z.string(), resourceType: z.string(), resourceId: z.string(),
+  assigneeType: z.enum(['everyone', 'user', 'directory_group', 'agent']), assigneeId: z.string().optional(),
+  effect: z.enum(['allow', 'deny']), origin: z.enum(['direct', 'migration', 'policy_default']),
+  version: z.number().int().positive(), createdAt: z.string(), createdBy: z.string(), updatedAt: z.string(), updatedBy: z.string(),
+}).strict();
+export const assignmentBatchReceiptSchema = z.object({
+  sets: z.array(z.object({ tenantId: z.string(), resourceType: z.string(), resourceId: z.string(),
+    resourceName: z.string().optional(), status: z.enum(['enabled', 'disabled']).optional(),
+    source: z.enum(['legacy_projection', 'governance']), version: z.number().int().positive(),
+    assignments: z.array(assignmentRecordSchema), createdAt: z.string(), createdBy: z.string(), updatedAt: z.string(), updatedBy: z.string(),
+  }).strict()).min(1),
+  changed: z.literal(true),
+  projectionStatus: z.string(), projectionIds: z.array(z.string()), requiresNewSession: z.literal(true),
+  ...mutationAuditShape,
 }).strict();
 
 export const memoryResourcePreviewSchema = z.object({

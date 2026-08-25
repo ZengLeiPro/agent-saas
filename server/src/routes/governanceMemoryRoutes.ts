@@ -56,6 +56,64 @@ function baseline(tenantId: string, resourceId: string, set: ResourceAssignmentS
   };
 }
 
+function simpleScope(set: ResourceAssignmentSet): {
+  mode: 'none' | 'all' | 'selected' | 'advanced'; userIds: string[]; groupIds: string[];
+} {
+  const assignments = set.assignments;
+  if (assignments.length === 0) return { mode: 'none', userIds: [], groupIds: [] };
+  if (assignments.length === 1 && assignments[0]?.assigneeType === 'everyone' && assignments[0].effect === 'allow') {
+    return { mode: 'all', userIds: [], groupIds: [] };
+  }
+  if (assignments.every(item => (item.assigneeType === 'user' || item.assigneeType === 'directory_group')
+    && item.effect === 'allow' && item.assigneeId)) {
+    return { mode: 'selected',
+      userIds: [...new Set(assignments.filter(item => item.assigneeType === 'user').map(item => item.assigneeId!))].sort(),
+      groupIds: [...new Set(assignments.filter(item => item.assigneeType === 'directory_group').map(item => item.assigneeId!))].sort() };
+  }
+  return { mode: 'advanced', userIds: [], groupIds: [] };
+}
+
+export function knowledgeSuites(sets: ResourceAssignmentSet[], policyEnabled: boolean) {
+  const taskboardManifest = ['taskboard-projects', 'taskboard-tasks', 'taskboard-events'] as const;
+  const taskboardIds = new Set<string>(taskboardManifest);
+  const taskboardSets = sets.filter(set => set.resourceId.startsWith('taskboard-'));
+  const groups: Array<{ suiteId: string; name: string; description: string; sets: ResourceAssignmentSet[];
+    expectedResourceIds?: string[]; missingResourceIds?: string[]; unknownResourceIds?: string[] }> = [];
+  if (taskboardSets.length) {
+    const present = new Set(taskboardSets.map(set => set.resourceId));
+    groups.push({ suiteId: 'taskboard', name: 'Taskboard 项目与任务',
+      description: '项目、任务和变更历史作为一个授权套件原子提交。', sets: taskboardSets,
+      expectedResourceIds: [...taskboardManifest],
+      missingResourceIds: taskboardManifest.filter(resourceId => !present.has(resourceId)),
+      unknownResourceIds: taskboardSets.filter(set => !taskboardIds.has(set.resourceId)).map(set => set.resourceId),
+    });
+  }
+  for (const set of sets.filter(item => !item.resourceId.startsWith('taskboard-'))) {
+    groups.push({ suiteId: `resource:${set.resourceId}`, name: set.resourceName ?? set.resourceId,
+      description: '独立组织知识资源；复杂规则可在高级配置中管理。', sets: [set] });
+  }
+  return groups.map(group => {
+    const scopes = group.sets.map(simpleScope);
+    const first = scopes[0];
+    const same = scopes.every(scope => scope.mode === first?.mode
+      && scope.userIds.join('\u0000') === first.userIds.join('\u0000')
+      && scope.groupIds.join('\u0000') === first.groupIds.join('\u0000'));
+    const mode = same ? first?.mode ?? 'none' : 'mixed';
+    const missingResourceIds = group.missingResourceIds ?? [];
+    const unknownResourceIds = group.unknownResourceIds ?? [];
+    return { suiteId: group.suiteId, name: group.name, description: group.description,
+      policyEnabled, resourceIds: group.sets.map(set => set.resourceId),
+      expectedResourceIds: group.expectedResourceIds ?? group.sets.map(set => set.resourceId),
+      missingResourceIds, unknownResourceIds,
+      completeness: missingResourceIds.length ? 'incomplete' : unknownResourceIds.length ? 'attention' : 'complete',
+      resources: group.sets.map(set => ({ resourceId: set.resourceId, name: set.resourceName ?? set.resourceId,
+        version: set.version, status: set.status ?? 'enabled' })),
+      configuration: { mode, userIds: same ? first?.userIds ?? [] : [],
+        groupIds: same ? first?.groupIds ?? [] : [] },
+    };
+  });
+}
+
 function publicResource(set: ResourceAssignmentSet, policyEnabled: boolean, includeScope: boolean) {
   return {
     resourceId: set.resourceId,
@@ -66,6 +124,7 @@ function publicResource(set: ResourceAssignmentSet, policyEnabled: boolean, incl
       assigneeType: item.assigneeType,
       ...(item.assigneeId ? { assigneeId: item.assigneeId } : {}),
       effect: item.effect,
+      origin: item.origin,
     })) } : { effectiveAssignment: 'assigned' as const }),
     source: set.source,
     version: set.version,
@@ -117,6 +176,7 @@ export function registerGovernanceMemoryRoutes(options: {
       tenantId,
       authority: 'governance_assignment_sets',
       accessMode: persona === 'org_admin' ? 'manage' : persona === 'platform_admin' ? 'inspect' : 'effective_only',
+      ...(req.query.includeSuites === '1' ? { suites: knowledgeSuites(knowledge, knowledgeEnabled) } : {}),
       knowledge: knowledge.map(set => ({
         resourceId: set.resourceId,
         name: set.resourceName ?? set.resourceId,
@@ -126,6 +186,7 @@ export function registerGovernanceMemoryRoutes(options: {
           assigneeType: item.assigneeType,
           ...(item.assigneeId ? { assigneeId: item.assigneeId } : {}),
           effect: item.effect,
+          origin: item.origin,
         })) } : { effectiveAssignment: 'assigned' as const }),
         source: set.source, version: set.version, updatedAt: set.updatedAt,
       })),

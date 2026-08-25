@@ -20,6 +20,7 @@ function hit(): ContextRecallHit {
     collectionId: 'collection-a',
     assignmentVersion: 7,
     kind: 'chat_message',
+    recordKind: 'chat_message',
     content: '客户确认 9 月 1 日上线。',
     source: { sourceId: 'dws-a', kind: 'dws', displayName: '钉钉聊天', url: 'https://example.test/native' },
     time: { occurredAt: '2026-08-22T12:00:00.000Z' },

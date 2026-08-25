@@ -148,7 +148,21 @@ export interface ContextReviewItem extends ContextRecord {
   authority: ContextAuthority;
   evidence: ContextEvidenceRef[];
 }
-export interface ContextPage<T> { items: T[]; nextCursor: string | null; degraded: boolean }
+export interface ContextDiagnosis {
+  code: "scope_empty" | "no_source_records" | "no_visible_records" | "native_acl_filtered" | "candidate_limit_reached"
+    | "projection_missing" | "query_no_match" | "source_degraded";
+  stage: "assignment" | "ingestion" | "authorization" | "projection" | "query" | "source";
+  message: string;
+  action: string;
+  scannedCandidates?: number;
+  deniedCandidates?: number;
+}
+export interface ContextPage<T> {
+  items: T[];
+  nextCursor: string | null;
+  degraded: boolean;
+  diagnosis?: ContextDiagnosis;
+}
 export interface ContextListQuery { cursor?: string; filter?: string; type?: string }
 export interface ContextTimelineQuery extends ContextListQuery { entityId?: string; from?: string; through?: string }
 export interface ContextRelationQuery extends ContextListQuery { depth?: 1 | 2 }

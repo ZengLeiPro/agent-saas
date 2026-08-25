@@ -50,6 +50,7 @@ function makeHit(overrides: Partial<ContextRecallHit> = {}): ContextRecallHit {
     collectionId: 'collection-a',
     assignmentVersion: 7,
     kind: 'derived_fact',
+    recordKind: 'derived_fact',
     content: 'The launch date is September 1.',
     score: 0.91,
     source: { sourceId: 'wiki', kind: 'wiki', displayName: 'Launch plan', url: 'https://example.test/wiki/1' },
@@ -153,10 +154,12 @@ describe('ContextSearchToolProvider', () => {
       hits: [makeHit()],
       degraded: true,
       degradationReasons: ['reranker_unavailable'],
+      diagnostics: { normalizedFilters: { kinds: [], sources: [] } },
     });
 
     const result = await provider.invoke(makeCall('ContextSearch', { query: 'launch date' }), makeContext());
     const output = JSON.parse(result!.content) as Record<string, unknown>;
+    expect(output).not.toHaveProperty('diagnostics');
     expect(output).toMatchObject({
       degraded: true,
       degradationReasons: ['assignment_snapshot_stale', 'reranker_unavailable'],

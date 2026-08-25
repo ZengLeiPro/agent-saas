@@ -11,7 +11,8 @@ import {
 import { authFetch } from './authFetch';
 import { parseJsonResponse } from './parseJsonResponse';
 import {
-  agentListSchema, auditListSchema, changeJobSchema, credentialListSchema, credentialOperationPreviewSchema, directoryGroupListSchema,
+  agentListSchema, assignmentBatchPreviewSchema, assignmentBatchReceiptSchema,
+  auditListSchema, changeJobSchema, credentialListSchema, credentialOperationPreviewSchema, directoryGroupListSchema,
   entitlementCatalogSchema, entitlementPreviewSchema, entitlementResponseSchema,
   environmentTemplateListSchema, governanceReceiptSchema, lifecycleMutationReceiptSchema,
   lifecyclePreviewSchema, lifecycleResponseSchema, memberDetailsSchema, membershipListSchema,
@@ -370,10 +371,20 @@ export const contextReviewItemSchema = z.object({
 export const contextReviewDecisionResponseSchema = z.object({
   status: z.enum(['confirmed', 'rejected']),
 }).strict();
+export const contextProductDiagnosisSchema = z.object({
+  code: z.enum(['scope_empty', 'no_source_records', 'no_visible_records', 'native_acl_filtered',
+    'candidate_limit_reached', 'projection_missing', 'query_no_match', 'source_degraded']),
+  stage: z.enum(['assignment', 'ingestion', 'authorization', 'projection', 'query', 'source']),
+  message: z.string().min(1),
+  action: z.string().min(1),
+  scannedCandidates: z.number().int().nonnegative().optional(),
+  deniedCandidates: z.number().int().nonnegative().optional(),
+}).strict();
 const pageOf = <T extends z.ZodTypeAny>(item: T) => z.object({
   items: z.array(item),
   nextCursor: z.string().min(1).nullable(),
   degraded: z.boolean(),
+  diagnosis: contextProductDiagnosisSchema.optional(),
 }).strict();
 export const contextTimelinePageSchema = pageOf(contextTimelineItemSchema);
 export const contextEntityPageSchema = pageOf(contextEntitySchema);
@@ -572,7 +583,9 @@ export const governanceAccessApi = {
   updatePolicy: <T = unknown>(policyKey: string, command: GovernanceCommand, tenantId?: string) =>
     request<T>(withQuery(`${ACCESS_BASE}/policies/${id(policyKey)}`, tenant(tenantId)), body('PUT', command), schemaFor<T>(governanceReceiptSchema)),
   listMemoryKnowledge: <T = unknown>(tenantId?: string) =>
-    request<T>(withQuery(`${ACCESS_BASE}/organization-resources/memory-knowledge`, tenant(tenantId)), undefined, schemaFor<T>(memoryKnowledgeListSchema)),
+    request<T>(withQuery(`${ACCESS_BASE}/organization-resources/memory-knowledge`, {
+      ...tenant(tenantId), includeSuites: '1',
+    }), undefined, schemaFor<T>(memoryKnowledgeListSchema)),
   previewMemoryResource: <T = unknown>(command: GovernanceCommand, tenantId?: string) =>
     request<T>(withQuery(`${ACCESS_BASE}/organization-resources/memory/preview`, tenant(tenantId)), body('POST', command), schemaFor<T>(memoryResourcePreviewSchema)),
   updateMemoryResource: <T = unknown>(resourceId: string, command: GovernanceCommand, tenantId?: string) =>
@@ -583,6 +596,12 @@ export const governanceAccessApi = {
     request<T>(withQuery(`${ACCESS_BASE}/assignments/${id(resourceType)}/${id(resourceId)}/preview`, tenant(tenantId)), body('POST', command)),
   updateAssignment: <T = unknown>(resourceType: string, resourceId: string, command: GovernanceCommand, tenantId?: string) =>
     request<T>(withQuery(`${ACCESS_BASE}/assignments/${id(resourceType)}/${id(resourceId)}`, tenant(tenantId)), body('PUT', command)),
+  previewAssignmentBatch: <T = unknown>(command: GovernanceCommand, tenantId?: string) =>
+    request<T>(withQuery(`${ACCESS_BASE}/assignments/batch/preview`, tenant(tenantId)), body('POST', command),
+      schemaFor<T>(assignmentBatchPreviewSchema)),
+  updateAssignmentBatch: <T = unknown>(command: GovernanceCommand, tenantId?: string) =>
+    request<T>(withQuery(`${ACCESS_BASE}/assignments/batch`, tenant(tenantId)), body('PUT', command),
+      schemaFor<T>(assignmentBatchReceiptSchema)),
   listContentGrants: <T = unknown>(query?: Record<string, QueryValue>) =>
     request<T>(withQuery(`${ACCESS_BASE}/content-grants`, query)),
   createContentGrant: <T = unknown>(command: GovernanceCommand) =>

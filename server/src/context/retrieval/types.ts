@@ -68,7 +68,11 @@ export interface ContextRecallHit {
   collectionId: string;
   /** Version used by the backend; the provider checks it against the fresh scope. */
   assignmentVersion: number;
+  /** Canonical business kind. Prefer entity type (for example Task/Project). */
   kind: string;
+  /** Storage envelope kind remains available for advanced filtering and diagnostics. */
+  recordKind: string;
+  entityType?: string;
   content: string;
   score?: number;
   source: ContextRecallSource;
@@ -104,10 +108,18 @@ export interface ContextRecallGetRequest {
   signal?: AbortSignal;
 }
 
+export interface ContextRecallSearchDiagnostics {
+  normalizedFilters: {
+    kinds: readonly string[];
+    sources: readonly string[];
+  };
+}
+
 export interface ContextRecallSearchResult {
   hits: readonly ContextRecallHit[];
   degraded: boolean;
   degradationReasons?: readonly string[];
+  diagnostics?: ContextRecallSearchDiagnostics;
 }
 
 export interface ContextRecallGetResult {

@@ -106,8 +106,10 @@ export class PgContextProductStore implements ContextProductStore {
         AND ($3::text IS NULL OR en.entity_type=$3)
         AND ($4::text IS NULL OR en.display_name ILIKE '%'||$4||'%'
           OR en.payload_json::text ILIKE '%'||$4||'%')
-      ORDER BY en.entity_id,en.generation DESC LIMIT $5`,
-    [input.tenantId, unique(input.collectionIds), input.type ?? null, input.filter ?? null, input.limit]);
+        AND ($5::text IS NULL OR en.entity_id>$5)
+      ORDER BY en.entity_id,en.generation DESC LIMIT $6`,
+    [input.tenantId, unique(input.collectionIds), input.type ?? null, input.filter ?? null,
+      input.afterEntityId ?? null, input.limit]);
     return result.rows.map(entityFromRow);
   }
 
@@ -733,6 +735,7 @@ function validateList(input: ProductStoreListInput): void {
   input.collectionIds.forEach(validateId);
   if (input.entityId) validateId(input.entityId);
   if (input.itemId) validateId(input.itemId);
+  if (input.afterEntityId) validateId(input.afterEntityId);
 }
 function validateId(value: string): void { if (typeof value !== 'string' || !value || value.length > 500 || /[\u0000-\u001f]/u.test(value)) invalid(); }
 function invalid(): never { throw new ContextProductError('CONTEXT_PRODUCT_INVALID'); }

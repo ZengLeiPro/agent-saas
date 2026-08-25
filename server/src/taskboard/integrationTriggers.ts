@@ -236,7 +236,7 @@ async function loadUnstartedIntegrationTasks(
       `WITH candidates AS (
          SELECT t.id
            FROM ${host.tasksTable} t
-           JOIN ${host.integrationLanesTable} l ON l.active_integration_task_id=t.id
+           JOIN ${host.integrationLanesTable} lane ON lane.active_integration_task_id=t.id
           WHERE t.kind='integration' AND COALESCE(t.workflow_version,2)=2
             AND t.status IN ('todo','in_progress')
             AND t.archived_at IS NULL AND t.deleted_at IS NULL
@@ -245,23 +245,48 @@ async function loadUnstartedIntegrationTasks(
                WHERE e.task_id=t.id AND e.status IN ('queued','running','waiting_user','waiting_approval')
             )
           FOR UPDATE OF t SKIP LOCKED
-       ), rendezvous AS (
-         INSERT INTO ${agentsTable}
-           (integration_task_id,delivery_source_ids,repository_id,integration_branch,status)
-         SELECT candidate.id,jsonb_agg(source.id ORDER BY source.source_order),min(source.repository_id),
-                'integration/' || candidate.id,'active'
-           FROM candidates candidate
-           JOIN ${host.integrationSourcesTable} source ON source.integration_task_id=candidate.id
-          GROUP BY candidate.id
-         ON CONFLICT (integration_task_id) DO NOTHING
-         RETURNING integration_task_id
        )
-       UPDATE ${host.tasksTable} task
-          SET workflow_version=3,version=version+1,updated_at=now()
+       INSERT INTO ${agentsTable}
+         (integration_task_id,delivery_source_ids,repository_id,integration_branch,status)
+       SELECT candidate.id,jsonb_agg(source.id ORDER BY source.source_order),min(source.repository_id),
+              'integration/' || candidate.id,'active'
          FROM candidates candidate
-        WHERE task.id=candidate.id
-          AND (EXISTS (SELECT 1 FROM rendezvous created WHERE created.integration_task_id=candidate.id)
-               OR EXISTS (SELECT 1 FROM ${agentsTable} existing WHERE existing.integration_task_id=candidate.id))`,
+         JOIN ${host.integrationSourcesTable} source ON source.integration_task_id=candidate.id
+        GROUP BY candidate.id
+       HAVING count(*)>0 AND count(DISTINCT source.repository_id)=1
+       ON CONFLICT (integration_task_id) DO NOTHING`,
+    );
+    // Keep the statements separate: PostgreSQL data-modifying CTEs share a snapshot,
+    // while the immutable-version trigger must observe the rendezvous just inserted.
+    await client.query(
+      `UPDATE ${host.tasksTable} task
+          SET workflow_version=3,version=version+1,updated_at=now()
+         FROM ${agentsTable} agent
+         JOIN ${host.integrationLanesTable} lane
+           ON lane.active_integration_task_id=agent.integration_task_id
+          AND lane.repository_id=agent.repository_id
+        WHERE task.id=agent.integration_task_id
+          AND task.board_id=lane.board_id
+          AND task.kind='integration' AND COALESCE(task.workflow_version,2)=2
+          AND task.status IN ('todo','in_progress')
+          AND task.archived_at IS NULL AND task.deleted_at IS NULL
+          AND agent.integration_branch='integration/' || task.id
+          AND agent.delivery_source_ids=(
+            SELECT jsonb_agg(source.id ORDER BY source.source_order)
+              FROM ${host.integrationSourcesTable} source
+             WHERE source.integration_task_id=task.id
+          )
+          AND agent.repository_id=(
+            SELECT min(source.repository_id)
+              FROM ${host.integrationSourcesTable} source
+             WHERE source.integration_task_id=task.id
+            HAVING count(*)>0 AND count(DISTINCT source.repository_id)=1
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM ${host.executionsTable} execution
+             WHERE execution.task_id=task.id
+               AND execution.status IN ('queued','running','waiting_user','waiting_approval')
+          )`,
     );
     const result = await client.query(
       `SELECT t.*, b.tenant_id, b.owner_user_id,

@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 
-import { runIntegrationAgentSchema } from './integrationAgentSchema.js';
+import { integrationAgentTableNames, runIntegrationAgentSchema } from './integrationAgentSchema.js';
 
 interface TaskboardV2SchemaOptions {
   boardsTable: string;
@@ -400,22 +400,59 @@ export async function runTaskboardV2Schema(
       ADD COLUMN IF NOT EXISTS workflow_version SMALLINT NOT NULL DEFAULT 2
       CHECK (workflow_version IN (2, 3))
   `);
+  await runIntegrationAgentSchema(options, client);
+  const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
   await client.query(`
     CREATE OR REPLACE FUNCTION ${options.tasksTable}_workflow_version_immutable_fn()
     RETURNS trigger LANGUAGE plpgsql AS $function$
     BEGIN
       IF NEW.workflow_version IS DISTINCT FROM OLD.workflow_version THEN
+        IF OLD.workflow_version=2 AND NEW.workflow_version=3
+           AND OLD.kind='integration' AND NEW.kind='integration'
+           AND EXISTS (
+             SELECT 1
+               FROM ${agentsTable} agent
+               JOIN ${options.integrationLanesTable} lane
+                 ON lane.active_integration_task_id=NEW.id
+                AND lane.repository_id=agent.repository_id
+                AND lane.board_id=NEW.board_id
+              WHERE agent.integration_task_id=NEW.id
+                AND agent.integration_branch='integration/' || NEW.id
+                AND agent.delivery_source_ids=(
+                  SELECT jsonb_agg(source.id ORDER BY source.source_order)
+                    FROM ${options.integrationSourcesTable} source
+                   WHERE source.integration_task_id=NEW.id
+                )
+                AND agent.repository_id=(
+                  SELECT min(source.repository_id)
+                    FROM ${options.integrationSourcesTable} source
+                   WHERE source.integration_task_id=NEW.id
+                  HAVING count(*)>0 AND count(DISTINCT source.repository_id)=1
+                )
+           ) THEN
+          RETURN NEW;
+        END IF;
         RAISE EXCEPTION 'TASKBOARD_WORKFLOW_VERSION_IMMUTABLE';
       END IF;
       RETURN NEW;
     END
     $function$;
-    DROP TRIGGER IF EXISTS ${options.tasksTable}_workflow_version_immutable ON ${options.tasksTable};
-    CREATE TRIGGER ${options.tasksTable}_workflow_version_immutable
-      BEFORE UPDATE OF workflow_version ON ${options.tasksTable}
-      FOR EACH ROW EXECUTE FUNCTION ${options.tasksTable}_workflow_version_immutable_fn()
+    DO $trigger$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+         WHERE tgrelid='${options.tasksTable}'::regclass
+           AND tgname=left('${options.tasksTable}_workflow_version_immutable',
+                           current_setting('max_identifier_length')::int)
+           AND NOT tgisinternal
+      ) THEN
+        CREATE TRIGGER ${options.tasksTable}_workflow_version_immutable
+          BEFORE UPDATE OF workflow_version ON ${options.tasksTable}
+          FOR EACH ROW EXECUTE FUNCTION ${options.tasksTable}_workflow_version_immutable_fn();
+      END IF;
+    END
+    $trigger$
   `);
-  await runIntegrationAgentSchema(options, client);
 }
 
 export async function retireTaskboardResolutionSchema(

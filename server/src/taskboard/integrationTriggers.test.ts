@@ -17,7 +17,7 @@ function hostWithRows(rows: Record<string, unknown>[]) {
   const client = {
     release: vi.fn(),
     query: vi.fn(async (sql: string) => {
-      if (sql.includes('WITH candidates AS')) {
+      if (sql.includes('UPDATE tasks task') && sql.includes('SET workflow_version=3')) {
         rows.forEach((row) => { if (Number(row.workflow_version ?? 2) === 2) row.workflow_version = 3; });
       }
       if (sql.includes('SELECT t.*, b.tenant_id')) return { rows };
@@ -71,11 +71,12 @@ describe('claimIntegrationDispatchCandidates Agent-first routing', () => {
       10,
     )).resolves.toMatchObject([{ task: { id: 'legacy-task', workflowVersion: 3 }, purpose: 'work' }]);
 
-    const migrationSql = client.query.mock.calls.map(([sql]) => String(sql))
-      .find((sql) => sql.includes('WITH candidates AS'))!;
-    expect(migrationSql).toContain("SET workflow_version=3");
-    expect(migrationSql).toContain('ON CONFLICT (integration_task_id) DO NOTHING');
-    expect(migrationSql).toContain('UPDATE tasks task');
+    const queries = client.query.mock.calls.map(([sql]) => String(sql));
+    const rendezvousSql = queries.find((sql) => sql.includes('WITH candidates AS'))!;
+    const migrationSql = queries.find((sql) => sql.includes('UPDATE tasks task'))!;
+    expect(rendezvousSql).toContain('ON CONFLICT (integration_task_id) DO NOTHING');
+    expect(migrationSql).toContain('SET workflow_version=3');
+    expect(migrationSql).toContain("agent.integration_branch='integration/' || task.id");
     const dispatchSql = client.query.mock.calls.map(([sql]) => String(sql))
       .find((sql) => sql.includes('SELECT t.*, b.tenant_id'))!;
     expect(dispatchSql).toContain("t.workflow_version=3");

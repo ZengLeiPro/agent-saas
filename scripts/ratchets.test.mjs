@@ -232,6 +232,21 @@ test('web evaluation enforces request/byte tolerance, absolute ceilings, lowerin
   assert.equal(evaluateWeb(metrics, { ...grown, reason: 'reviewed necessary growth' }, baseline).errors.length, 0);
 });
 
+test('formal taskboard integration spec is Agent-first and contains no retired protocol contract', () => {
+  const spec = fs.readFileSync(path.join(process.cwd(), 'docs/taskboard-integration-v3.md'), 'utf8');
+  const retiredTerms = [
+    'integrationV3ControlPlane',
+    'integration.source.inspect',
+    'integration.source.merge',
+    'candidate_revisions',
+    'v2/v3 worker',
+  ];
+  for (const term of retiredTerms) assert.equal(spec.includes(term), false, `retired term remains: ${term}`);
+  for (const contract of ['Agent-first', 'GitHub PR', 'Merge Gateway']) {
+    assert.equal(spec.includes(contract), true, `required contract is missing: ${contract}`);
+  }
+});
+
 test('web baseline update requires an explicit reason and never performs a build', () => {
   const root = tempDir('web-update-');
   try {

@@ -68,7 +68,7 @@ export class ReleaseAttestationLog {
     this.now = timing.now ?? (() => new Date());
   }
 
-  list(): readonly ReleaseAttestation[] { return this.entries; }
+  list(): readonly ReleaseAttestation[] { return Object.freeze([...this.entries]); }
   currentState(): ReleaseState { return this.entries.at(-1)?.state ?? 'created'; }
   boundManifestDigest(): string { return this.manifestDigest; }
 

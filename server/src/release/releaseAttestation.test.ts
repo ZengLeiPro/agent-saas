@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ReleaseAttestationLog } from './releaseAttestation.js';
+import { ReleaseAttestationLog, type ReleaseAttestation } from './releaseAttestation.js';
 import { getPromotionEligibility } from './releasePolicy.js';
 
 const DIGEST = `sha256:${'a'.repeat(64)}`;
@@ -24,6 +24,19 @@ describe('ReleaseAttestationLog', () => {
     expect(append(entries, 'built', 'build-1')).toEqual(first);
     expect(() => append(entries, 'rejected', 'build-1')).toThrow(/already used/);
     expect(() => append(entries, 'approved', 'approval-early')).toThrow(/Illegal or late/);
+  });
+
+  it('exposes a frozen attestation snapshot that cannot change the state machine', () => {
+    const entries = log();
+    const snapshot = entries.list();
+
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(() => (snapshot as ReleaseAttestation[]).push({
+      id: 'forged', releaseId: 'rc-20260825-01', manifestDigest: DIGEST, state: 'approved',
+      operationKey: 'forged', actor: 'attacker', recordedAt: NOW.toISOString(),
+    })).toThrow();
+    expect(entries.currentState()).toBe('created');
+    expect(entries.isPromotable()).toBe(false);
   });
 
   it('keeps implicit-time retries idempotent across clock ticks', () => {

@@ -1,23 +1,31 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { afterAll, describe, expect, it } from 'vitest';
 import type { AppConfig } from '../app/config.js';
 import { assertRuntimeEnvironmentSafety } from './environmentSafety.js';
 import { readRuntimeIdentity } from './runtimeIdentity.js';
 
 const SHA = 'a'.repeat(40);
 const DIGEST = `sha256:${'b'.repeat(64)}`;
+const stagingRoot = mkdtempSync(join(tmpdir(), 'agent-saas-staging-'));
+const workspace = join(stagingRoot, 'workspace');
+mkdirSync(workspace);
+afterAll(() => rmSync(stagingRoot, { recursive: true, force: true }));
+
 const stagingEnv = {
   AGENT_SAAS_ENVIRONMENT: 'staging',
   AGENT_SAAS_RELEASE_ID: 'rc-20260825-01',
   AGENT_SAAS_RELEASE_SHA: SHA,
   AGENT_SAAS_SERVER_DIGEST: DIGEST,
   AGENT_SAAS_WEB_DIGEST: DIGEST,
-  AGENT_SAAS_STAGING_ROOT: '/srv/agent-saas-staging',
+  AGENT_SAAS_STAGING_ROOT: stagingRoot,
   AGENT_SAAS_STAGING_DATABASE_HOSTS: 'staging-db.internal',
 };
 
 function config(overrides: Record<string, unknown> = {}): AppConfig {
   return {
-    agent: { cwd: '/srv/agent-saas-staging/workspace' },
+    agent: { cwd: workspace },
     server: {},
     cron: { enabled: false },
     runtimeEventStore: { backend: 'pg', connectionString: 'postgresql://staging@staging-db.internal/runtime' },
@@ -49,6 +57,21 @@ describe('assertRuntimeEnvironmentSafety', () => {
     expect(() => assertRuntimeEnvironmentSafety(config({ agent: { cwd: './workspace' } }), stagingEnv)).toThrow(/agent workspace/);
     expect(() => assertRuntimeEnvironmentSafety(config({ secretVault: { backend: 'encrypted-file', filePath: '/srv/agent-saas-staging-evil/secrets.json' } }), stagingEnv)).toThrow(/SecretVault file/);
     expect(() => assertRuntimeEnvironmentSafety(config({ secretVault: { backend: 'encrypted-file', filePath: './secrets.json' } }), stagingEnv)).toThrow(/SecretVault file/);
+  });
+
+  it('rejects workspace and SecretVault symlinks escaping the staging root', () => {
+    const productionRoot = mkdtempSync(join(tmpdir(), 'agent-saas-production-'));
+    const escapedWorkspace = join(stagingRoot, 'escaped-workspace');
+    const productionSecret = join(productionRoot, 'secrets.json');
+    const escapedSecret = join(stagingRoot, 'escaped-secrets.json');
+    mkdirSync(join(productionRoot, 'workspace'));
+    writeFileSync(productionSecret, '{}');
+    symlinkSync(join(productionRoot, 'workspace'), escapedWorkspace);
+    symlinkSync(productionSecret, escapedSecret);
+
+    expect(() => assertRuntimeEnvironmentSafety(config({ agent: { cwd: escapedWorkspace } }), stagingEnv)).toThrow(/agent workspace/);
+    expect(() => assertRuntimeEnvironmentSafety(config({ secretVault: { backend: 'encrypted-file', filePath: escapedSecret } }), stagingEnv)).toThrow(/SecretVault file/);
+    rmSync(productionRoot, { recursive: true, force: true });
   });
 
   it('fails closed for a production database reference or unsafe egress', () => {

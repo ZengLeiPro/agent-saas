@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -5,9 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import {
+  createBirdWhoamiProbe,
   getXConnectionWithGovernance,
   revokePendingXCredentials,
   resolveXRuntimeEnv,
+  XCredentialProbeError,
 } from '../connectors/x.js';
 import { InMemorySecretVault } from '../security/secretVault.js';
 
@@ -35,6 +38,40 @@ function cookieCredential(authToken: string, ct0: string): string {
 }
 
 describe('X native connector', () => {
+  it.each([
+    ['fetch failed', 'network'],
+    ['HTTP 401 unauthorized', 'authentication'],
+    ['GraphQL schema changed', 'upstream'],
+  ] as const)('classifies Bird probe failure as %s', async (output, kind) => {
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(), stderr: new EventEmitter(), kill: vi.fn(),
+    });
+    const probe = createBirdWhoamiProbe({ spawnImpl: vi.fn().mockReturnValue(child) as never });
+    const pending = probe({ authToken: 'auth', ct0: 'ct0' });
+    child.stderr.emit('data', Buffer.from(output));
+    child.emit('close', 1);
+    await expect(pending).rejects.toMatchObject({ kind });
+  });
+
+  it('classifies a silent Bird probe timeout as network and force-kills it', async () => {
+    vi.useFakeTimers();
+    try {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(), stderr: new EventEmitter(), kill: vi.fn(),
+      });
+      const probe = createBirdWhoamiProbe({ spawnImpl: vi.fn().mockReturnValue(child) as never, timeoutMs: 15_000 });
+      const completion = probe({ authToken: 'auth', ct0: 'ct0' }).catch(error => error);
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+      await expect(completion).resolves.toBeInstanceOf(XCredentialProbeError);
+      await expect(completion).resolves.toMatchObject({ kind: 'network' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('uses the governance Credential as the source for status and runtime env without a legacy connection record', async () => {
     const root = createRoot();
     const store = new ConnectorConnectionStore(join(root, 'connections.json'));

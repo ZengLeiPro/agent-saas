@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+
 import type { SecretVault } from '../security/secretVault.js';
 import type { GovernanceCredential } from '../data/credentials/types.js';
 import type { GovernanceCredentialReader } from './governanceCredential.js';
@@ -10,6 +12,21 @@ export interface XConnectInput {
   authToken: string;
   ct0: string;
 }
+
+export type XCredentialProbeKind = 'network' | 'authentication' | 'upstream';
+
+export class XCredentialProbeError extends Error {
+  constructor(readonly kind: XCredentialProbeKind) {
+    super({
+      network: 'X 网络或代理不可达，请检查出口代理后重试',
+      authentication: 'X cookie 无效或已过期，请重新获取 auth_token 和 ct0',
+      upstream: 'X 上游接口验证失败，请稍后重试',
+    }[kind]);
+    this.name = 'XCredentialProbeError';
+  }
+}
+
+export type XValidateCredentials = (credentials: XConnectInput) => Promise<void>;
 
 export interface XConnectionView {
   connectorId: typeof X_CONNECTOR_ID;
@@ -68,6 +85,80 @@ export function normalizeXConnectInput(input: XConnectInput): XConnectInput {
     authToken: normalizeCookie(input.authToken, 'auth_token'),
     ct0: normalizeCookie(input.ct0, 'ct0'),
   };
+}
+
+function classifyBirdProbeFailure(output: string): XCredentialProbeKind {
+  if (/\b(?:401|403)\b|unauthori[sz]ed|forbidden|invalid (?:auth|cookie|token)/i.test(output)) {
+    return 'authentication';
+  }
+  if (/fetch failed|econnrefused|enotfound|ehostunreach|enetunreach|etimedout|timeout|proxy/i.test(output)) {
+    return 'network';
+  }
+  return 'upstream';
+}
+
+/**
+ * Bird 使用 Node 原生 fetch。探针只在服务端内部传入 cookie，且永不返回命令输出，
+ * 避免把 cookie 或代理凭据写进 API 响应、日志与任务记录。
+ */
+export function createBirdWhoamiProbe(options: {
+  spawnImpl?: typeof spawn;
+  timeoutMs?: number;
+} = {}): XValidateCredentials {
+  const spawnImpl = options.spawnImpl ?? spawn;
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  return async credentials => await new Promise<void>((resolve, reject) => {
+    const child = spawnImpl('bird', ['whoami'], {
+      env: {
+        ...process.env,
+        NODE_USE_ENV_PROXY: '1',
+        AUTH_TOKEN: credentials.authToken,
+        CT0: credentials.ct0,
+        TWITTER_AUTH_TOKEN: credentials.authToken,
+        TWITTER_CT0: credentials.ct0,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    let timedOut = false;
+    let settled = false;
+    let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+    const capture = (chunk: Buffer) => { output = `${output}${chunk.toString('utf8')}`.slice(-8_192); };
+    const cleanup = () => {
+      clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+    };
+    const fail = (kind: XCredentialProbeKind) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new XCredentialProbeError(kind));
+    };
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    child.stdout.on('data', capture);
+    child.stderr.on('data', capture);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      forceKillTimer = setTimeout(() => {
+        child.kill('SIGKILL');
+        fail('network');
+      }, 2_000);
+      forceKillTimer.unref?.();
+    }, timeoutMs);
+    timer.unref?.();
+    child.once('error', error => fail(classifyBirdProbeFailure(error.message)));
+    child.once('close', code => {
+      if (timedOut) return fail('network');
+      if (code === 0) succeed();
+      else fail(classifyBirdProbeFailure(output));
+    });
+  });
 }
 
 export function toXConnectionView(
@@ -252,9 +343,11 @@ export async function connectXCredential(input: {
   username: string;
   tenantId: string;
   credentials: XConnectInput;
+  validateCredentials?: XValidateCredentials;
   onError?: (error: Error) => void;
 }): Promise<XConnectionView> {
   const credentials = normalizeXConnectInput(input.credentials);
+  await (input.validateCredentials ?? createBirdWhoamiProbe())(credentials);
   const secret = await input.vault.putSecret(
     input.userId,
     'connector',

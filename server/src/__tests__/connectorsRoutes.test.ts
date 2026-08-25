@@ -11,7 +11,12 @@ import { AliyunConnectorService, type AliyunValidateCredentials } from '../conne
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import { resolveGithubRuntimeEnv } from '../connectors/github.js';
 import { type GovernanceCredentialReader } from '../connectors/governanceCredential.js';
-import { resolveXRuntimeEnv, type XGovernanceCredentialReader } from '../connectors/x.js';
+import {
+  resolveXRuntimeEnv,
+  XCredentialProbeError,
+  type XGovernanceCredentialReader,
+  type XValidateCredentials,
+} from '../connectors/x.js';
 import { createConnectorsRouter } from '../routes/connectors.js';
 import { InMemorySecretVault } from '../security/secretVault.js';
 
@@ -31,6 +36,7 @@ afterEach(async () => {
 async function createRig(options: {
   legacyWriteGate?: { assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void> };
   governanceCredentialStore?: GovernanceCredentialReader;
+  xValidateCredentials?: XValidateCredentials;
 } = {}): Promise<Rig> {
   const root = mkdtempSync(join(tmpdir(), 'connectors-route-'));
   const connectionStore = new ConnectorConnectionStore(join(root, 'connections.json'));
@@ -59,6 +65,7 @@ async function createRig(options: {
   app.use('/api/connectors', createConnectorsRouter({
     connectionStore, secretVault, aliyunService,
     ...(options.governanceCredentialStore ? { governanceCredentialStore: options.governanceCredentialStore } : {}),
+    xValidateCredentials: options.xValidateCredentials ?? (async () => undefined),
     ...(options.legacyWriteGate ? { legacyWriteGate: options.legacyWriteGate } : {}),
   }));
   const server: Server = await new Promise(resolve => {
@@ -336,6 +343,19 @@ describe('native connectors routes', () => {
       { connectionStore: rig.connectionStore, vault: rig.secretVault },
       { userId: 'user-1', username: 'alice', tenantId: 'tenant-a' },
     )).resolves.toEqual({});
+  });
+
+  it('does not mark an invalid X cookie as connected', async () => {
+    const rig = await createRig({
+      xValidateCredentials: async () => { throw new XCredentialProbeError('authentication'); },
+    });
+    const response = await rig.request('/api/connectors/x', json('POST', {
+      authToken: 'invalid-auth-cookie',
+      ct0: 'invalid-ct0-cookie',
+    }));
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: expect.stringMatching(/cookie 无效|过期/) });
+    expect(rig.connectionStore.get('alice', 'x')).toBeUndefined();
   });
 
   it('rejects incomplete X cookie credentials', async () => {

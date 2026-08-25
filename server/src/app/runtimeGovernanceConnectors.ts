@@ -847,9 +847,22 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       : (!userStore ? context : undefined);
     if (!ownedContext) return {};
 
+    let googleWorkspaceScopes: string[] = [];
+    try {
+      googleWorkspaceScopes = await googleWorkspaceOAuthService?.grantedScopes(
+        ownedContext.userId,
+        ownedContext.username,
+        ownedContext.tenantId,
+      ) ?? [];
+    } catch (error) {
+      serverLogger.warn(
+        `Google Workspace OAuth scope recovery skipped: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     const googleWorkspaceGrant = buildGoogleWorkspaceOAuthGrantProjection(
       connectorConnectionStore,
       ownedContext,
+      googleWorkspaceScopes,
     );
     if (googleWorkspaceGrant && oauthGrantStore) {
       try {

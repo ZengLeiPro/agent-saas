@@ -255,7 +255,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     if (caught instanceof TaskBoardConflictError) {
       setNotice("任务版本已冲突，已回滚并重新加载最新数据，请重试。");
     } else {
-      setNotice(`移动任务失败：${caught instanceof Error ? caught.message : "未知错误"}`);
+      setNotice("移动任务失败，已回滚并重新加载最新数据，请刷新后重试。");
     }
   }, []);
 
@@ -306,6 +306,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     const nextIndex = supportsManualOrdering && nextTaskId
       ? target.findIndex((task) => task.id === nextTaskId)
       : -1;
+    const resolvedNextTaskId = nextIndex >= 0 ? nextTaskId : undefined;
     const previousTaskId = nextIndex > 0
       ? target[nextIndex - 1]?.id
       : nextIndex === 0
@@ -315,7 +316,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
       moved,
       status,
       supportsManualOrdering ? previousTaskId : undefined,
-      supportsManualOrdering ? nextTaskId : undefined,
+      supportsManualOrdering ? resolvedNextTaskId : undefined,
     ).catch(() => undefined);
   };
 

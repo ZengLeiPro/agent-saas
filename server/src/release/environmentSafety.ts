@@ -1,4 +1,5 @@
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { isAbsolute, relative, sep } from 'node:path';
 import type { AppConfig } from '../app/config.js';
 import { readRuntimeIdentity, type RuntimeIdentity } from './runtimeIdentity.js';
 
@@ -15,8 +16,12 @@ function hostname(connectionString: string): string | undefined {
 
 function isWithinRoot(root: string, candidate: string): boolean {
   if (!isAbsolute(root) || !isAbsolute(candidate)) return false;
-  const pathFromRoot = relative(resolve(root), resolve(candidate));
-  return pathFromRoot === '' || (!pathFromRoot.startsWith(`..${sep}`) && pathFromRoot !== '..' && !isAbsolute(pathFromRoot));
+  try {
+    const pathFromRoot = relative(realpathSync(root), realpathSync(candidate));
+    return pathFromRoot === '' || (!pathFromRoot.startsWith(`..${sep}`) && pathFromRoot !== '..' && !isAbsolute(pathFromRoot));
+  } catch {
+    return false;
+  }
 }
 
 /**

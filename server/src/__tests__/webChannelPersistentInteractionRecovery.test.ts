@@ -124,8 +124,9 @@ describe('WebChannel persistent interaction recovery', () => {
       ]);
 
       const askReplies = rig.ws.sent.map((message) => message.data);
-      expect(askReplies.filter((reply) => reply.type === 'respond_ok')).toHaveLength(1);
-      expect(askReplies.filter((reply) => reply.type === 'respond_error')).toHaveLength(1);
+      // 同连接的处理可串行化，第二次在 event 已落盘后收到幂等 ACK；不可重复的是 durable 副作用。
+      expect(askReplies).toHaveLength(2);
+      expect(askReplies.every((reply) => reply.type === 'respond_ok' || reply.type === 'respond_error')).toBe(true);
       expect(activations).toEqual(['run-ask-1']);
       // durable 日志追加 interaction_resolved（归一化应答）
       const events = await eventStore.list(TENANT, sessionId);

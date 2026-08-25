@@ -5,6 +5,7 @@ import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import { allocatePgEventSequences } from './pgEventCursorAllocator.js';
 import { encodePgEventNotifyPayload, lockPgEventGlobalSequence } from './pgEventStoreProtocol.js';
 import type { PlatformEvent, PlatformEventInput } from './types.js';
+import { buildRunCancellationEvents } from './runCancellationEvents.js';
 import { releaseRunLease } from './runTerminalLifecycle.js';
 import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL, STOPPABLE_RUN_STATUS_SQL } from './runStatusPolicy.js';
 import { normalizeRunRecord, parseCount, sanitizeIdentifier, serializeRuntimeEvent, stringMetadata } from './runStoreRecordHelpers.js';
@@ -886,6 +887,7 @@ export class PgRunStore implements RunStore {
     const client = await this.pool.connect();
     let appended: Array<PlatformEvent & { sequence: number }> = [];
     let targetCancelled = false;
+    let targetPreviousStatus: RunStatus | undefined;
     let runCancelEventCreated = false;
     try {
       await client.query('BEGIN');
@@ -897,13 +899,14 @@ export class PgRunStore implements RunStore {
       // 必须先锁定并核验 target，再写 session stopped_at 或撤销排队项；否则状态预读后
       // target 并发终态化时，stop 会错误影响后续普通队列/steering。
       if (targetRunId) {
-        const target = await client.query<{ status: string }>(`
+        const target = await client.query<{ status: RunStatus }>(`
           SELECT status
           FROM ${this.runsTable}
           WHERE session_id = $1 AND run_id = $2
           FOR UPDATE
         `, [sessionId, targetRunId]);
-        if (target.rows[0] && ['completed', 'failed', 'cancelled', 'orphaned'].includes(target.rows[0].status)) {
+        targetPreviousStatus = target.rows[0]?.status;
+        if (targetPreviousStatus && ['completed', 'failed', 'cancelled', 'orphaned'].includes(targetPreviousStatus)) {
           await client.query('COMMIT');
           return { cancelled: [], targetCancelled: false, eventCreated: false };
         }
@@ -1047,10 +1050,7 @@ export class PgRunStore implements RunStore {
         existingEvent = existing.rows[0]?.event_json;
       }
       const shouldAppendRunCancel = Boolean(event && !existingEvent && (!targetRunId || targetCancelled));
-      const eventsToAppend: PlatformEventInput[] = [
-        ...(shouldAppendRunCancel ? [event!] : []),
-        ...toolCancelEvents,
-      ];
+      const eventsToAppend = buildRunCancellationEvents(event, shouldAppendRunCancel, toolCancelEvents, sessionId, targetRunId, targetCancelled, targetPreviousStatus, reason);
       if (eventsToAppend.length > 0) {
         appended = await this.appendRuntimeEventsInTransaction(client, eventsToAppend, tenantId);
         runCancelEventCreated = shouldAppendRunCancel;

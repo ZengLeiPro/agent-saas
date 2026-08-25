@@ -133,8 +133,9 @@ function setup(state: TaskBoardIntegrationCandidate['state'], providerFacts = fa
     providerRequestId: input.operationKey,
     providerPullRequestId: '42',
     mergedCommitOid: 'commit-1',
+    baseOid: revision.baseOid,
   }));
-  const reconcileMerge = vi.fn<IntegrationEngineV3ProviderHost['reconcileMerge']>(async () => ({ status: 'succeeded', receipt: { providerPullRequestId: '42', mergedCommitOid: 'commit-1', mergedTreeOid: 'tree-1' } }));
+  const reconcileMerge = vi.fn<IntegrationEngineV3ProviderHost['reconcileMerge']>(async () => ({ status: 'succeeded', receipt: { providerPullRequestId: '42', mergedCommitOid: 'commit-1', mergedTreeOid: 'tree-1', baseOid: revision.baseOid } }));
   const readFacts = vi.fn(async () => structuredClone(currentFacts));
   const assertCurrent = vi.fn(async () => undefined);
   const getFlags = vi.fn(async () => ({ enabled: true, composeEnabled: true, reviewEnabled: true, mergeEnabled: true, cleanupEnabled: true, workspaceSyncEnabled: true }));
@@ -538,7 +539,7 @@ describe('IntegrationEngineV3', () => {
     await expect(context.engine.execute({ type: 'merge_approved', candidateId: value.id, expected: expected(context.candidates.value), executionId: 'merge-execution-1' })).rejects.toThrow(/reconcile is required/);
     expect(context.merge).toHaveBeenCalledTimes(1);
 
-    context.setFacts(facts({ state: 'merged', baseOid: 'merged-main', mergeCommitOid: 'commit-1', mergedTreeOid: 'tree-1' }));
+    context.setFacts(facts({ state: 'merged', baseOid: 'base-1', mergeCommitOid: 'commit-1', mergedTreeOid: 'tree-1' }));
     const reconciled = await context.engine.execute({ type: 'reconcile_merge', candidateId: value.id, expected: expected(context.candidates.value), operationKey });
     expect(reconciled.candidate).toMatchObject({ state: 'merged', mergedCommitOid: 'commit-1' });
     expect(context.reconcileMerge).toHaveBeenCalledTimes(1);
@@ -630,6 +631,7 @@ describe('IntegrationEngineV3', () => {
         providerRequestId: input.operationKey,
         providerPullRequestId: '42',
         mergedCommitOid: 'commit-1',
+        baseOid: 'base-1',
       };
     });
 
@@ -640,17 +642,42 @@ describe('IntegrationEngineV3', () => {
     expect(result).toMatchObject({ status: 'provider_unknown', candidate: { state: 'needs_human' } });
   });
 
-  it('accepts a direct controlled receipt only when Provider facts have the approved revision tree', async () => {
+  it('rejects commitMerged when base advances by an empty commit after the final gate even if the merged tree is unchanged', async () => {
     const value = candidate('approved');
     const context = setup('approved');
+    const commitMerged = vi.spyOn(context.candidates, 'commitMerged');
     context.merge.mockImplementationOnce(async (_repository: TaskBoardRepositoryConfig, input: { operationKey: string }) => {
       context.setFacts(facts({
-        state: 'merged', baseOid: 'merged-main', mergeCommitOid: 'commit-1', mergedTreeOid: 'tree-1',
+        state: 'merged', baseOid: 'empty-base-drift', mergeCommitOid: 'commit-1', mergedTreeOid: 'tree-1',
       }));
       return {
         providerRequestId: input.operationKey,
         providerPullRequestId: '42',
         mergedCommitOid: 'commit-1',
+        baseOid: 'empty-base-drift',
+      };
+    });
+
+    const result = await context.engine.execute({
+      type: 'merge_approved', candidateId: value.id, expected: expected(value), executionId: 'merge-execution-1',
+    });
+
+    expect(result).toMatchObject({ status: 'provider_unknown', candidate: { state: 'needs_human' } });
+    expect(commitMerged).not.toHaveBeenCalled();
+  });
+
+  it('accepts a direct controlled receipt only when Provider facts have the approved revision tree and base', async () => {
+    const value = candidate('approved');
+    const context = setup('approved');
+    context.merge.mockImplementationOnce(async (_repository: TaskBoardRepositoryConfig, input: { operationKey: string }) => {
+      context.setFacts(facts({
+        state: 'merged', baseOid: 'base-1', mergeCommitOid: 'commit-1', mergedTreeOid: 'tree-1',
+      }));
+      return {
+        providerRequestId: input.operationKey,
+        providerPullRequestId: '42',
+        mergedCommitOid: 'commit-1',
+        baseOid: 'base-1',
       };
     });
 

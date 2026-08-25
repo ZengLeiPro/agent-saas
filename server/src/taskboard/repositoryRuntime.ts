@@ -77,7 +77,7 @@ export class RepositoryProviderIntegrationEngineV3Adapter implements Integration
       draft: pull.draft,
       mergeable: pull.mergeable,
       baseBranch: pull.baseRef,
-      baseOid: base.oid,
+      baseOid: pull.state === 'merged' ? pull.baseOid : base.oid,
       headOid: pull.headOid,
       treeOid: head.treeOid,
       requiredChecksKnown: pull.requiredChecksKnown === true && gates.known && requiredCheckIdentitiesStable,
@@ -90,10 +90,15 @@ export class RepositoryProviderIntegrationEngineV3Adapter implements Integration
     };
   }
 
-  async merge(repository: TaskBoardRepositoryConfig, input: { providerPullRequestId: string; expectedHeadOid: string; method: 'merge'|'squash'|'rebase'; operationKey: string }, credentialOwnerId: string): Promise<Record<string, unknown>> {
+  async merge(repository: TaskBoardRepositoryConfig, input: { providerPullRequestId: string; expectedBaseOid: string; expectedHeadOid: string; method: 'merge'|'squash'|'rebase'; operationKey: string }, credentialOwnerId: string): Promise<Record<string, unknown>> {
     const receipt = await this.provider.mergePullRequest(repository, { ...input, requestId: input.operationKey }, credentialOwnerId);
     if (!receipt.merged || !receipt.mergedCommitOid) throw new Error(receipt.message ?? 'Provider did not return a verified merge receipt');
-    return { ...receipt.raw, providerRequestId: receipt.providerRequestId, mergedCommitOid: receipt.mergedCommitOid };
+    const facts = await this.readFacts(repository, input.providerPullRequestId, credentialOwnerId);
+    if (facts.state !== 'merged' || facts.baseOid !== input.expectedBaseOid || facts.headOid !== input.expectedHeadOid
+      || facts.mergeCommitOid !== receipt.mergedCommitOid) {
+      throw new Error('Provider merge receipt does not bind the approved base/head graph');
+    }
+    return { ...receipt.raw, providerRequestId: receipt.providerRequestId, mergedCommitOid: receipt.mergedCommitOid, baseOid: facts.baseOid };
   }
 
   async reconcileMerge(operation: IntegrationProviderOperationRecord, repository: TaskBoardRepositoryConfig, credentialOwnerId: string): Promise<IntegrationProviderReconcileResult> {
@@ -114,6 +119,10 @@ export class RepositoryProviderIntegrationEngineV3Adapter implements Integration
         };
       }
       if (facts.state !== 'merged' || !facts.mergeCommitOid) return { status: 'not_found', detail: 'Pull request is not merged' };
+      const expectedBase = String(operation.expected.baseOid ?? '');
+      if (!expectedBase || facts.baseOid !== expectedBase) {
+        return { status: 'mismatch', detail: 'Merged base does not match the approved candidate base', evidence: { baseOid: facts.baseOid, expectedBase } };
+      }
       const expectedTree = String(operation.expected.treeOid ?? '');
       if (!facts.mergedTreeOid || facts.mergedTreeOid !== expectedTree) {
         return { status: 'mismatch', detail: 'Merged tree does not match the approved candidate tree', evidence: { mergedTreeOid: facts.mergedTreeOid, expectedTree } };
@@ -125,6 +134,7 @@ export class RepositoryProviderIntegrationEngineV3Adapter implements Integration
           providerPullRequestId,
           mergedCommitOid: facts.mergeCommitOid,
           mergedTreeOid: facts.mergedTreeOid,
+          baseOid: facts.baseOid,
         },
       };
     } catch (error) {

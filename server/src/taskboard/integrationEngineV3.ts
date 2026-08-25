@@ -91,6 +91,7 @@ export interface IntegrationEngineV3ProviderHost {
   readFacts(repository: TaskBoardRepositoryConfig, providerPullRequestId: string, credentialOwnerId: string): Promise<IntegrationEngineV3ProviderFacts>;
   merge(repository: TaskBoardRepositoryConfig, input: {
     providerPullRequestId: string;
+    expectedBaseOid: string;
     expectedHeadOid: string;
     method: 'merge' | 'squash' | 'rebase';
     operationKey: string;
@@ -401,7 +402,7 @@ export class IntegrationEngineV3 {
           finalGateError = error;
           throw error;
         }
-        const receipt = await this.options.provider.merge(repository, { providerPullRequestId: requiredPr(current.candidate), expectedHeadOid: revision.headOid, method: current.candidate.mergeMethod, operationKey }, this.options.credentialOwnerId);
+        const receipt = await this.options.provider.merge(repository, { providerPullRequestId: requiredPr(current.candidate), expectedBaseOid: revision.baseOid, expectedHeadOid: revision.headOid, method: current.candidate.mergeMethod, operationKey }, this.options.credentialOwnerId);
         return { ...receipt, providerPullRequestId: requiredPr(current.candidate) };
       }, {
         isDefinitiveFailure: (error) => error === finalGateError,
@@ -470,15 +471,26 @@ export class IntegrationEngineV3 {
   }
 
   private async finishMerge(current: IntegrationEngineV3ResolvedCurrent, operation: IntegrationProviderOperationRecord): Promise<IntegrationEngineV3Result> {
-    const facts = await this.readAndValidateFacts(current, true);
+    const facts = await this.readProviderFacts(current);
+    try {
+      this.assertProviderFacts(current, facts, true);
+    } catch (error) {
+      if (!(error instanceof TaskboardValidationError) || error.code !== 'TASKBOARD_INTEGRATION_SUBJECT_DRIFT') throw error;
+      const candidate = current.candidate.state === 'needs_human'
+        ? current.candidate
+        : await this.transition(current, 'needs_human', errorMessage(error));
+      return { candidate, status: 'provider_unknown', operation };
+    }
     const receipt = operation.receipt ?? {};
     const receiptCommitOid = typeof receipt.mergedCommitOid === 'string' ? receipt.mergedCommitOid : undefined;
+    const receiptBaseOid = typeof receipt.baseOid === 'string' ? receipt.baseOid : undefined;
     const directControlledReceipt = receipt.providerRequestId === operation.operationKey;
     const exactProviderMergedTree = facts.mergedTreeOid === current.revision.treeOid;
     const exactReconciledTree = receipt.mergedTreeOid === current.revision.treeOid
       && exactProviderMergedTree;
     if (facts.state !== 'merged' || !facts.mergeCommitOid || receiptCommitOid !== facts.mergeCommitOid
-      || !exactProviderMergedTree || (!directControlledReceipt && !exactReconciledTree)) {
+      || receiptBaseOid !== current.revision.baseOid || !exactProviderMergedTree
+      || (!directControlledReceipt && !exactReconciledTree)) {
       const candidate = current.candidate.state === 'needs_human'
         ? current.candidate
         : await this.transition(current, 'needs_human', 'Merged provider facts do not match the controlled operation receipt');
@@ -524,9 +536,10 @@ export class IntegrationEngineV3 {
     if (facts.repositoryId !== current.candidate.repositoryId
       || facts.providerPullRequestId !== requiredPr(current.candidate)
       || facts.baseBranch !== current.candidate.baseBranch
+      || facts.baseOid !== revision.baseOid
       || facts.headOid !== revision.headOid
       || facts.treeOid !== revision.treeOid
-      || (!merged && (facts.state !== 'open' || facts.baseOid !== revision.baseOid))) {
+      || (!merged && facts.state !== 'open')) {
       throw failClosed('Provider subject drifted from the candidate revision', 'TASKBOARD_INTEGRATION_SUBJECT_DRIFT');
     }
     if (!merged) this.assertPullRequestMergeable(facts);

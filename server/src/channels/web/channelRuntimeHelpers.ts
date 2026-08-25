@@ -9,6 +9,7 @@ import { buildRuntimeReplayState } from '../../runtime/replay.js';
 import type { RunRecord, RunStatus, RunStore } from '../../runtime/runStore.js';
 import type { EventStore, PlatformEvent } from '../../runtime/types.js';
 import { openTrustedDirectory, withTrustedFile } from '../../security/trustedFile.js';
+import { chatLogger } from '../../utils/logger.js';
 
 /** Bounds cross-session approval resume work while per-file reads are coalesced. */
 export const approvalResumeSemaphore = new Semaphore(8);
@@ -21,6 +22,69 @@ export const INTERACTIVE_PERMISSION_TOOLS = new Set([
 ]);
 
 export const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'orphaned']);
+
+type TerminalAskUserResumeResult =
+  | { canonicalResponse: InteractionResponse; activated: boolean }
+  | { error: string };
+
+/** Persist a terminal ask_user response, then idempotently stage and activate its synthetic resume run. */
+export async function resumeTerminalPersistedAskUser(input: {
+  eventStore: EventStore;
+  runStore: Pick<RunStore, 'get'>;
+  scheduler: {
+    enqueue(run: Parameters<RunStore['upsertPending']>[0]): Promise<RunRecord>;
+    activateCreatedRun?(runId: string): Promise<RunRecord | null>;
+  };
+  tenantId: string;
+  sessionId: string;
+  interactionId: string;
+  sourceRun: RunRecord;
+  pendingAskUser: { runId?: string; toolCallId?: string; invocationId?: string };
+  response: InteractionResponse;
+  userId?: string | null;
+  fallback: { userId: string; model?: string; executionTarget?: string; workspaceId?: string };
+  transcriptPath?: string | null;
+}): Promise<TerminalAskUserResumeResult> {
+  const { tenantId, sessionId, interactionId, sourceRun, pendingAskUser } = input;
+  const sourceRunId = pendingAskUser.runId!;
+  const canonicalResolved = await appendPersistedInteractionResolved(input.eventStore, tenantId, {
+    id: persistedInteractionEventId(sessionId, interactionId), type: 'interaction_resolved', sessionId,
+    runId: sourceRunId, toolCallId: pendingAskUser.toolCallId,
+    ...(pendingAskUser.invocationId ? { invocationId: pendingAskUser.invocationId } : {}),
+    interactionId, interactionType: 'ask_user', userId: input.userId ?? undefined, response: input.response,
+  });
+  const canonicalResponse = normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>);
+  const resumeRunId = `interaction-resume:${sessionId}:${interactionId}`;
+  let resumeRun = await input.runStore.get(resumeRunId);
+  if (!resumeRun) {
+    try {
+      resumeRun = await input.scheduler.enqueue({
+        runId: resumeRunId, sessionId, userId: sourceRun.userId ?? input.fallback.userId, tenantId,
+        model: sourceRun.model ?? input.fallback.model, channel: 'web',
+        executionTarget: sourceRun.executionTarget ?? input.fallback.executionTarget as any,
+        workspaceId: sourceRun.workspaceId ?? input.fallback.workspaceId ?? sessionId,
+        metadata: { ...(sourceRun.metadata ?? {}), schedulerState: 'staged', resumeInteractionConsumedAt: null,
+          resumeInteractionConsumedId: null, resumeInteraction: { interactionId, response: canonicalResolved.response },
+          transcriptPath: input.transcriptPath },
+      });
+    } catch (error) {
+      chatLogger.warn(`ask_user terminal resume enqueue failed run=${resumeRunId} interaction=${interactionId}: ${error instanceof Error ? error.message : String(error)}`);
+      return { error: 'Interaction response was persisted but resume enqueue failed; please retry' };
+    }
+  }
+  if (resumeRun.status !== 'pending' || resumeRun.metadata?.schedulerState !== 'staged') {
+    return { canonicalResponse, activated: false };
+  }
+  try {
+    if (!input.scheduler.activateCreatedRun || !await input.scheduler.activateCreatedRun(resumeRunId)) {
+      return { error: 'Interaction response is awaiting resume activation; please retry' };
+    }
+  } catch (error) {
+    chatLogger.warn(`ask_user terminal resume activation failed run=${resumeRunId} interaction=${interactionId}: ${error instanceof Error ? error.message : String(error)}`);
+    return { error: 'Interaction response is awaiting resume activation; please retry' };
+  }
+  return { canonicalResponse, activated: true };
+}
 
 type PersistedInteractionType = 'ask_user' | 'approval';
 /** A crashed staged claimant may be recovered after this bounded lease. */

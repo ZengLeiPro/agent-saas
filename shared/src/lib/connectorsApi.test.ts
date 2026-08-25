@@ -231,6 +231,33 @@ describe('X governance connector API', () => {
     expect(api.previewOAuthGrantRevocation).toHaveBeenCalledWith('grant-google', '用户主动断开 Google Workspace');
   });
 
+  it('Google Workspace 历史连接缺少可验证授权范围时走受控清理', async () => {
+    api.listOAuthGrants.mockResolvedValueOnce({ grants: [] });
+    api.authFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          error: 'Google Workspace 连接缺少可验证的授权范围',
+          code: 'GOOGLE_WORKSPACE_SCOPE_UNVERIFIABLE',
+        }),
+      } as Response)
+      .mockResolvedValueOnce({ ok: true, status: 204 } as Response)
+      .mockResolvedValueOnce(jsonResponse({
+        connection: null,
+        available: true,
+      }));
+
+    await expect(disconnectGoogleWorkspace()).resolves.toEqual({ connection: null, available: true });
+    expect(api.authFetch).toHaveBeenNthCalledWith(
+      2,
+      '/api/connectors/google-workspace/unverified-disconnect',
+      { method: 'POST' },
+    );
+    expect(api.previewOAuthGrantRevocation).not.toHaveBeenCalled();
+    expect(api.revokeOAuthGrant).not.toHaveBeenCalled();
+  });
+
   it('Google Workspace 撤销后仍保持连接时明确提示仍在处理', async () => {
     api.listOAuthGrants.mockResolvedValueOnce({ grants: [{
       grantId: 'grant-google', provider: 'google', connectorId: 'google-workspace', status: 'active',

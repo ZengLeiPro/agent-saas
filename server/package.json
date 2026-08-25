@@ -64,6 +64,7 @@
     "verify:client-daemon": "vitest run src/__tests__/clientDaemonProtocol.test.ts src/__tests__/clientDaemonGateway.test.ts src/__tests__/clientDaemonRunner.test.ts"
   },
   "dependencies": {
+    "@agent/shared": "workspace:*",
     "@alicloud/openapi-client": "0.4.15",
     "@alicloud/sts20150401": "1.2.0",
     "@duckdb/node-api": "1.5.3-r.3",

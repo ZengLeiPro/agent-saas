@@ -306,7 +306,6 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     const nextIndex = supportsManualOrdering && nextTaskId
       ? target.findIndex((task) => task.id === nextTaskId)
       : -1;
-    const resolvedNextTaskId = nextIndex >= 0 ? nextTaskId : undefined;
     const previousTaskId = nextIndex > 0
       ? target[nextIndex - 1]?.id
       : nextIndex === 0
@@ -316,7 +315,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
       moved,
       status,
       supportsManualOrdering ? previousTaskId : undefined,
-      supportsManualOrdering ? resolvedNextTaskId : undefined,
+      supportsManualOrdering ? nextTaskId : undefined,
     ).catch(() => undefined);
   };
 

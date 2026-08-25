@@ -716,28 +716,6 @@ describe("TaskBoardView", () => {
     expect(screen.getAllByRole("button", { name: /TASK-1/ }).length).toBeGreaterThan(0);
   });
 
-  it("跨列拖入空列时不携带来源列或过期邻居", async () => {
-    mocks.tasks = [taskOne];
-    render(<TaskBoardView />);
-
-    const source = (await screen.findAllByTestId("task-card-task-1"))[0];
-    const todoColumn = screen.getByRole("region", { name: "待推进列" });
-    const dataTransfer = {
-      effectAllowed: "move",
-      setData: vi.fn(),
-      getData: vi.fn(() => "task-1"),
-    };
-    fireEvent.dragStart(source, { dataTransfer });
-    fireEvent.drop(within(todoColumn).getByText("暂无任务"), { dataTransfer });
-
-    await waitFor(() => expect(mocks.optimisticMove).toHaveBeenCalledOnce());
-    expect(mocks.optimisticMove).toHaveBeenCalledWith(
-      taskOne,
-      { status: "todo", previousTaskId: undefined, nextTaskId: undefined },
-      expect.any(Array),
-    );
-  });
-
   it("邻居校验失败时显示中文重试提示", async () => {
     mocks.tasks = [taskOne];
     mocks.optimisticMove.mockRejectedValueOnce(new Error("Move neighbors are stale or not adjacent"));

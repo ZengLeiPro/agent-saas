@@ -116,6 +116,8 @@ function rig() {
       status: 'canceled' as const,
       version: input.expectedVersion + 1,
     })),
+    mergeIntegrationAgentV2: vi.fn(async () => ({ ...task, kind: 'integration' as const, workflowVersion: 3, status: 'in_progress' as const })),
+    cleanupIntegrationAgentV2: vi.fn(async () => ({ ...task, kind: 'integration' as const, workflowVersion: 3, status: 'done' as const })),
     inspectExecutionPullRequestV2: vi.fn(async () => ({
       gateStatus: 'success' as const,
       receipt: {
@@ -172,11 +174,11 @@ function rig() {
   return { service, executionService, executionStore, options };
 }
 
-function executionScope(purpose: 'work' | 'review', protocolVersion?: 2): { execution: TaskboardExecutionContext } {
+function executionScope(purpose: 'work' | 'review' | 'merge', protocolVersion?: 2): { execution: TaskboardExecutionContext } {
   return {
     execution: {
       identity,
-      task: { ...task, status: 'in_progress' },
+      task: { ...task, status: 'in_progress', ...(purpose === 'merge' ? { kind: 'integration' as const, workflowVersion: 3 } : {}) },
       boardPrompt: '',
       comments: [],
       execution: { ...execution, purpose, status: 'running', ...(protocolVersion ? { protocolVersion } : {}) },
@@ -227,6 +229,22 @@ describe('CronManage taskboard actions', () => {
     expect(service.finishExecutionV2).toHaveBeenCalledWith(
       identity, execution.runId, { status: 'ready_to_merge', body: '复核通过，检查记录见评论。' },
     );
+  });
+
+  it('按 merge -> cleanup -> execution.finish(done) 真实 action 链收敛', async () => {
+    const { service, options } = rig();
+    const scope = { ...executionScope('merge', 2), trustedWorkspace: { id: 'workspace-1', root: '/workspace/task-worktree' } };
+
+    await expect(invokeTaskboardAction(options, identity, { action: 'integration.agent.merge' }, scope))
+      .resolves.toMatchObject({ merged: true, cleanupRequired: true, task: { status: 'in_progress' } });
+    await expect(invokeTaskboardAction(options, identity, { action: 'integration.agent.cleanup' }, scope))
+      .resolves.toMatchObject({ cleaned: true, task: { status: 'done' } });
+    await expect(invokeTaskboardAction(options, identity, { action: 'execution.finish', status: 'done', body: '合并与资源清理回执均已核验。' }, scope))
+      .resolves.toMatchObject({ finished: true, task: { status: 'done' } });
+
+    expect(service.mergeIntegrationAgentV2).toHaveBeenCalledWith(identity, execution.runId);
+    expect(service.cleanupIntegrationAgentV2).toHaveBeenCalledWith(identity, execution.runId, scope.trustedWorkspace);
+    expect(service.finishExecutionV2).toHaveBeenCalledWith(identity, execution.runId, { status: 'done', body: '合并与资源清理回执均已核验。' });
   });
 
   it('普通会话创建带分支任务并用显式版本回写字段', async () => {

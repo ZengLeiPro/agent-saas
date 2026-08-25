@@ -156,6 +156,13 @@ export interface RepositoryWriteReceipt {
   raw: Record<string, unknown>;
 }
 
+export interface RepositoryBranchDeleteReceipt {
+  operationKey: string;
+  ref: string;
+  deleted: boolean;
+  raw: Record<string, unknown>;
+}
+
 export interface RepositoryMergeReceipt {
   providerRequestId: string;
   providerPullRequestId: string;
@@ -195,6 +202,7 @@ export interface RepositoryProvider {
     operationKey: string;
   }, credentialOwnerId: string): Promise<RepositoryIntegrationPullRequestReceipt>;
   closePullRequest?(repository: TaskBoardRepositoryConfig, input: { providerPullRequestId: string; operationKey: string }, credentialOwnerId: string): Promise<RepositoryWriteReceipt>;
+  deleteBranch?(repository: TaskBoardRepositoryConfig, input: { ref: string; expectedOid: string; operationKey: string }, credentialOwnerId: string): Promise<RepositoryBranchDeleteReceipt>;
   commentPullRequest?(repository: TaskBoardRepositoryConfig, input: { providerPullRequestId: string; body: string; operationKey: string }, credentialOwnerId: string): Promise<RepositoryWriteReceipt>;
   mergePullRequest(repository: TaskBoardRepositoryConfig, input: {
     providerPullRequestId: string;
@@ -476,6 +484,26 @@ export class GithubRepositoryProvider implements RepositoryProvider {
     const number = parsePullRequestNumber(input.providerPullRequestId);
     const raw = asRecord(await this.request(repository, credentialOwnerId, this.repoPath(repository, `/pulls/${number}`), { method: 'PATCH', body: JSON.stringify({ state: 'closed' }) }));
     return { operationKey: input.operationKey, providerPullRequestId: String(number), raw };
+  }
+
+  async deleteBranch(repository: TaskBoardRepositoryConfig, input: { ref: string; expectedOid: string; operationKey: string }, credentialOwnerId: string): Promise<RepositoryBranchDeleteReceipt> {
+    assertOperationKey(input.operationKey);
+    const ref = normalizeBranchRef(input.ref);
+    let currentOid: string;
+    try {
+      const current = asRecord(await this.request(repository, credentialOwnerId, this.repoPath(repository, `/git/ref/heads/${encodeRefPath(ref)}`)));
+      currentOid = requiredString(current.object, 'sha', `GitHub ref ${ref} OID`);
+    } catch (error) {
+      if (error instanceof GithubApiError && error.status === 404) {
+        return { operationKey: input.operationKey, ref, deleted: false, raw: { reconciledAbsent: true } };
+      }
+      throw error;
+    }
+    if (currentOid !== input.expectedOid) {
+      throw new RepositoryProviderDriftError('Branch changed before cleanup');
+    }
+    await this.request(repository, credentialOwnerId, this.repoPath(repository, `/git/refs/heads/${ref.split('/').map(encodeURIComponent).join('/')}`), { method: 'DELETE' });
+    return { operationKey: input.operationKey, ref, deleted: true, raw: { expectedOid: input.expectedOid } };
   }
 
   async commentPullRequest(repository: TaskBoardRepositoryConfig, input: { providerPullRequestId: string; body: string; operationKey: string }, credentialOwnerId: string): Promise<RepositoryWriteReceipt> {

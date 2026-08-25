@@ -35,7 +35,7 @@ export function resolveWorkflowContract(
       return {
         ...base,
         objective: '通过受控 Merge Gateway 合并当前已批准的 Integration Agent PR。',
-        capabilities: { readContext: true, comment: true, mergeIntegrationAgent: true, merge: true },
+        capabilities: { readContext: true, comment: true, mergeIntegrationAgent: true, cleanupIntegrationAgent: true, merge: true },
         allowedStatuses: ['in_progress', 'done', 'blocked'],
       };
     }

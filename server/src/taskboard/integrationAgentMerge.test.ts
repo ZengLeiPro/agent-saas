@@ -68,6 +68,7 @@ function hostWith(
     release: vi.fn(),
     query: vi.fn(async (sql: string) => {
       if (sql.includes('FROM executions e')) return { rows: [row] };
+      if (sql.includes('SET merge_receipt=')) return { rows: [{ integration_task_id: 'integration-1' }], rowCount: 1 };
       if (sql.includes('UPDATE sources_agents')) return { rows: [], rowCount: 1 };
       return { rows: [], rowCount: 0 };
     }),
@@ -138,25 +139,19 @@ describe('mergeIntegrationAgent', () => {
     expect(provider.getPullRequest).not.toHaveBeenCalled();
   });
 
-  it('converges every source and delivery after a normal merged receipt', async () => {
+  it('persists the merge receipt but keeps the task in progress until cleanup', async () => {
     const provider = {
       getPullRequest: vi.fn(async () => pullRequest),
       mergePullRequest: vi.fn(async () => ({ providerRequestId: 'request-1', providerPullRequestId: '42', merged: true, mergedCommitOid: 'merge-42', raw: {} })),
     };
-    const { host, finalized } = hostWith(provider);
+    const { host, loadClient, finalized } = hostWith(provider);
 
     await expect(mergeIntegrationAgent(host, identity, 'run-1')).resolves.toMatchObject({
-      id: 'integration-1', status: 'done', mergedCommitOid: 'merge-42',
+      id: 'integration-1', status: 'in_progress',
     });
     expect(provider.mergePullRequest).toHaveBeenCalledOnce();
-    const queries = finalized.query.mock.calls.map(([sql]) => String(sql)).join('\n');
-    expect(queries).toContain("SET state='merged',provider_receipt_id");
-    expect(queries).toContain("SET status='done',merged_commit_oid=$2");
-    expect(finalized.query.mock.calls).toContainEqual([
-      expect.stringContaining('terminal_reason_code=$3'),
-      [['integration-1'], 'merge-execution-1', 'integration_converged'],
-    ]);
-    expect(queries).toContain("SET status='merged',merge_in_flight_execution_id=NULL");
+    expect(loadClient.query).toHaveBeenCalledWith(expect.stringContaining('SET merge_receipt=$2::jsonb'), expect.arrayContaining(['integration-1']));
+    expect(finalized.query).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -175,47 +170,25 @@ describe('mergeIntegrationAgent', () => {
     expect(provider.mergePullRequest).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ method }), identity.ownerUserId);
   });
 
-  it('atomically takes over a terminal owner fence for the same review and converges an already merged PR', async () => {
+  it('atomically takes over a terminal owner fence and persists a recovered merged receipt', async () => {
     const mergedPullRequest = { ...pullRequest, state: 'merged' as const, mergeCommitOid: 'merge-42' };
-    const provider = {
-      getPullRequest: vi.fn()
-        .mockResolvedValueOnce(pullRequest)
-        .mockResolvedValueOnce(mergedPullRequest),
-      mergePullRequest: vi.fn(async () => ({ providerRequestId: 'request-1', providerPullRequestId: '42', merged: true, mergedCommitOid: 'merge-42', raw: {} })),
-    };
-    const { host, loadClient, finalized, clients } = hostWith(provider);
-    finalized.query.mockRejectedValueOnce(new Error('finalizer unavailable'));
-
-    await expect(mergeIntegrationAgent(host, identity, 'run-1')).rejects.toThrow('finalizer unavailable');
-
+    const provider = { getPullRequest: vi.fn(async () => mergedPullRequest), mergePullRequest: vi.fn() };
     const recoveryRow = {
       ...loadedRow(), execution_id: 'merge-execution-2',
       merge_in_flight_execution_id: 'merge-execution-1',
-      merge_in_flight_review_execution_id: 'review-execution-1',
-      merge_in_flight_review_head_oid: 'agent-head',
+      merge_in_flight_review_execution_id: 'review-execution-1', merge_in_flight_review_head_oid: 'agent-head',
       fence_owner_execution_id: 'merge-execution-1', fence_owner_execution_status: 'failed',
       fence_owner_transitioned_at: now, fence_owner_superseded_at: null,
     };
-    loadClient.query.mockImplementation(async (sql: string) => {
-      if (sql.includes('FROM executions e')) return { rows: [recoveryRow] };
-      if (sql.includes('UPDATE sources_agents')) return { rows: [], rowCount: 1 };
-      return { rows: [], rowCount: 0 };
-    });
-    const recoveredFinalizer = finalizationClient('merge-execution-2');
-    clients.push(loadClient, recoveredFinalizer);
-    await expect(mergeIntegrationAgent(host, identity, 'run-2')).resolves.toMatchObject({
-      status: 'done', mergedCommitOid: 'merge-42',
-    });
+    const { host, loadClient } = hostWith(provider, recoveryRow);
 
+    await expect(mergeIntegrationAgent(host, identity, 'run-2')).resolves.toMatchObject({ status: 'in_progress' });
     expect(loadClient.query).toHaveBeenCalledWith(
       expect.stringContaining('AND merge_in_flight_execution_id=$5'),
       ['integration-1', 'merge-execution-2', 'review-execution-1', 'agent-head', 'merge-execution-1'],
     );
-    expect(provider.mergePullRequest).toHaveBeenCalledOnce();
-    expect(provider.getPullRequest).toHaveBeenCalledTimes(2);
-    expect(recoveredFinalizer.query).toHaveBeenCalledWith(
-      expect.stringContaining("SET state='merged',provider_receipt_id"), expect.any(Array),
-    );
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+    expect(loadClient.query).toHaveBeenCalledWith(expect.stringContaining('SET merge_receipt=$2::jsonb'), expect.any(Array));
   });
 
   it('fails closed when an already merged pull request has no merge commit oid', async () => {
@@ -239,12 +212,13 @@ describe('mergeIntegrationAgent', () => {
         .mockResolvedValueOnce({ ...pullRequest, state: 'merged', mergeCommitOid: 'merge-42' }),
       mergePullRequest: vi.fn(async () => { throw new Error('provider timeout'); }),
     };
-    const { host, finalized } = hostWith(provider);
+    const { host, loadClient, finalized } = hostWith(provider);
 
-    await expect(mergeIntegrationAgent(host, identity, 'run-1')).resolves.toMatchObject({ status: 'done', mergedCommitOid: 'merge-42' });
+    await expect(mergeIntegrationAgent(host, identity, 'run-1')).resolves.toMatchObject({ status: 'in_progress' });
     expect(provider.mergePullRequest).toHaveBeenCalledOnce();
     expect(provider.getPullRequest).toHaveBeenCalledTimes(2);
-    expect(finalized.query).toHaveBeenCalledWith(expect.stringContaining("SET state='merged',provider_receipt_id"), expect.any(Array));
+    expect(loadClient.query).toHaveBeenCalledWith(expect.stringContaining('SET merge_receipt=$2::jsonb'), expect.any(Array));
+    expect(finalized.query).not.toHaveBeenCalled();
   });
 
   it('does not converge local state when a provider exception re-reads as still open', async () => {

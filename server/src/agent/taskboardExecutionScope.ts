@@ -22,7 +22,7 @@ export function assertTaskboardExecutionScope(
     'execution.pull_request.set', 'execution.pull_request.inspect', 'execution.pull_request.log',
     'execution.review_subject.record',
     'integration.sources', 'integration.source.inspect',
-    'integration.source.log', 'integration.source.merge', 'integration.agent.merge',
+    'integration.source.log', 'integration.source.merge', 'integration.agent.merge', 'integration.agent.cleanup',
   ];
   if (executionActions.includes(input.action)) {
     if (input.taskId && input.taskId !== context.task.id) throw new Error('看板 Agent 只能操作当前任务');

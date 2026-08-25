@@ -46,7 +46,7 @@ export function executionWritebackInstructions(context: TaskboardExecutionContex
     && context.task.kind === 'integration'
     && context.task.workflowVersion === 3) {
     instructions.splice(2, 0,
-      '- 仅调用 integration.agent.merge 请求受控 Merge Gateway；该 action 会立即重读当前 PR/head、审批与 CI 并在任一门禁不满足时失败关闭。不得调用 legacy integration.source.inspect/log/merge。');
+      '- 依次调用 integration.agent.merge 与 integration.agent.cleanup；Merge Gateway 会重读当前 PR/head、审批与 CI，cleanup 会按持久 receipt 对账并清理绑定的来源 PR/branch、integration branch 与任务 worktree。cleanup 成功后才可 execution.finish(done)。不得调用 legacy integration.source.inspect/log/merge。');
   } else if (context.execution.purpose === 'merge') {
     instructions.splice(2, 0,
       '- 合并前必须调用 integration.source.inspect 重新读取当前精确 head、reviewed subject、required checks 与 mergeability；失败 job 用 integration.source.log 读取，Provider 不可用时失败关闭。');

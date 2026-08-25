@@ -67,6 +67,14 @@ export async function finishExecutionV2(
     const executionRow = executionResult.rows[0] as Record<string, unknown> | undefined;
     if (!executionRow) throw new TaskboardNotFoundError('Taskboard execution not found');
     const execution = rowToExecution(executionRow);
+    if (executionRow.transitioned_at && loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3
+      && execution.purpose === 'merge' && input.status === 'done' && loaded.task.status === 'done') {
+      const prior = await client.query(
+        `SELECT id FROM ${options.commentsTable}
+          WHERE task_id=$1 AND author_type='agent' AND author_id=$2 AND body=$3
+          ORDER BY created_at DESC LIMIT 1`, [taskId, execution.runId, input.body.trim()]);
+      if (prior.rows[0]) return loadTask(options, client, taskId);
+    }
     assertActiveExecution(executionRow, execution);
     await recordExecutionFinishComment(options, client, execution, input.body);
 
@@ -140,6 +148,19 @@ async function transitionIntegrationAgent(
   task: TaskBoardTask, execution: TaskBoardExecution, status: TaskBoardTask['status'],
 ): Promise<TaskBoardTask> {
   const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
+  if (execution.purpose === 'merge' && status === 'done' && task.status === 'done') {
+    const terminal = await client.query(
+      `SELECT status,cleanup_receipt FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [task.id]);
+    const cleanup = jsonObject(terminal.rows[0]?.cleanup_receipt);
+    if (terminal.rows[0]?.status !== 'merged' || cleanup?.completed !== true) {
+      throw new TaskboardValidationError('Integration Agent cleanup is incomplete', 'TASKBOARD_INTEGRATION_INCOMPLETE');
+    }
+    await markTransitioned(options, client, execution, status);
+    await appendChange(options, client, task.id, 'integration.agent.transitioned', 'agent', identity.ownerUserId, {
+      executionId: execution.id, runId: execution.runId, purpose: execution.purpose, status: 'done',
+    });
+    return loadTask(options, client, task.id);
+  }
   let nextStatus: TaskBoardTask['status'];
   let agentStatus: 'active' | 'reviewing' | 'ready_to_merge';
   if (execution.purpose === 'work' && status === 'in_review') {

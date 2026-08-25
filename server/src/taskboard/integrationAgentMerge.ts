@@ -5,7 +5,7 @@ import type { TaskBoardIntegrationPolicy, TaskBoardTask } from '../../../shared/
 import { repositoryWithBoardCiPolicy } from './ciPolicy.js';
 import { assertPullRequestGate } from './deliveryPullRequests.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
-import { finalizeMergedIntegrationAgent } from './integrationFinalization.js';
+import { rowToTask } from './storeHelpers.js';
 import type { RepositoryMergeReceipt, RepositoryProvider } from './repositoryProvider.js';
 import { TaskboardNotFoundError, TaskboardValidationError, type TaskboardIdentity } from './types.js';
 
@@ -177,14 +177,28 @@ export async function mergeIntegrationAgent(
       mergeAuthorityMayHaveCommitted = false;
       throw new TaskboardValidationError(receipt.message ?? 'Provider did not confirm merge', 'TASKBOARD_PROVIDER_RECEIPT_INCOMPLETE');
     }
-    return finalizeMergedIntegrationAgent(host, String(row.id), {
-      providerRequestId: receipt.providerRequestId,
-      mergedCommitOid: receipt.mergedCommitOid,
-      raw: receipt.raw,
-      exceptExecutionId: String(row.execution_id),
-      expectedAgent: { providerPullRequestId: pullRequestId, integrationBranch: String(row.integration_branch) },
-      event: { runId, executionId: String(row.execution_id), reviewHeadOid, reviewExecutionId },
-    });
+    // Provider merge and local terminal convergence are deliberately separate.  Persist
+    // the authority receipt first; cleanup must reconcile remote/file facts before the
+    // current Execution may finish the task.
+    const recorded = await client.query(
+      `UPDATE ${agentsTable}
+          SET merge_receipt=$2::jsonb,updated_at=now()
+        WHERE integration_task_id=$1 AND merge_in_flight_execution_id=$3
+        RETURNING integration_task_id`,
+      [String(row.id), JSON.stringify({
+        providerRequestId: receipt.providerRequestId,
+        providerPullRequestId: pullRequestId,
+        integrationBranch: String(row.integration_branch),
+        reviewHeadOid,
+        reviewExecutionId,
+        executionId: String(row.execution_id),
+        runId,
+        mergedCommitOid: receipt.mergedCommitOid,
+        raw: receipt.raw,
+      }), String(row.execution_id)],
+    );
+    if (!recorded.rows[0]) throw new TaskboardValidationError('Integration Agent merge fence changed before receipt persistence', 'TASKBOARD_CONTEXT_STALE');
+    return rowToTask(row);
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
     if (fenceMarked && row && !mergeAuthorityMayHaveCommitted) {

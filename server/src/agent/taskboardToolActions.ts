@@ -62,6 +62,7 @@ export const TASKBOARD_RESOURCE_ACTIONS = [
   'integration.source.log',
   'integration.source.merge',
   'integration.agent.merge',
+  'integration.agent.cleanup',
 ] as const;
 export const TASKBOARD_MANAGE_ACTIONS = [
   ...TASKBOARD_LEGACY_ACTIONS,
@@ -457,7 +458,14 @@ export async function invokeTaskboardAction(
         throw new Error('仅当前 integration merge Execution 可以合并 Agent pull request');
       }
       const task = await service.mergeIntegrationAgentV2(identity, scope.execution.execution.runId);
-      return { merged: true, task };
+      return { merged: true, cleanupRequired: true, task };
+    }
+    case 'integration.agent.cleanup': {
+      if (!scope.execution || !scope.trustedWorkspace || !service.cleanupIntegrationAgentV2) {
+        throw new Error('仅当前 integration merge Execution 的受控 workspace 可以执行 cleanup');
+      }
+      const task = await service.cleanupIntegrationAgentV2(identity, scope.execution.execution.runId, scope.trustedWorkspace);
+      return { cleaned: true, task };
     }
     case 'execution.list': {
       const result = await requireExecutionService(options.executionService?.()).searchExecutions(

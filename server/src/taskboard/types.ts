@@ -535,6 +535,11 @@ export interface TaskboardService {
     identity: TaskboardIdentity,
     runId: string,
   ): Promise<TaskBoardTask>;
+  cleanupIntegrationAgentV2?(
+    identity: TaskboardIdentity,
+    runId: string,
+    workspace: { id: string; root: string },
+  ): Promise<TaskBoardTask>;
   linkIntegrationRemediationV2?(
     identity: TaskboardIdentity,
     runId: string,

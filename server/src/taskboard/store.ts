@@ -50,6 +50,7 @@ import {
 import type { RepositoryProvider } from './repositoryProvider.js';
 import { claimIntegrationDispatchCandidates } from './integrationTriggers.js';
 import { mergeIntegrationAgent } from './integrationAgentMerge.js';
+import { cleanupIntegrationAgent } from './integrationAgentCleanup.js';
 import {
   attachExecutionPullRequest, inspectExecutionPullRequest, readExecutionPullRequestJobLog,
   recordReviewedExecutionSubject, type ExecutionPullRequestInspection,
@@ -287,6 +288,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   }
   mergeIntegrationAgentV2(identity: TaskboardIdentity, runId: string) {
     return mergeIntegrationAgent(this, identity, runId);
+  }
+  cleanupIntegrationAgentV2(identity: TaskboardIdentity, runId: string, workspace: { id: string; root: string }) {
+    return cleanupIntegrationAgent(this, identity, runId, workspace);
   }
   linkIntegrationRemediationV2(
     identity: TaskboardIdentity,

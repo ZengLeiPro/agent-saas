@@ -38,6 +38,8 @@ export async function runIntegrationAgentSchema(
       merge_in_flight_execution_id TEXT,
       merge_in_flight_review_execution_id TEXT,
       merge_in_flight_review_head_oid TEXT,
+      merge_receipt JSONB,
+      cleanup_receipt JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       CHECK ((verdict IS NULL AND review_execution_id IS NULL) OR (review_head_oid IS NOT NULL))
@@ -46,5 +48,7 @@ export async function runIntegrationAgentSchema(
   await client.query(`ALTER TABLE ${agentsTable} ADD COLUMN IF NOT EXISTS merge_in_flight_execution_id TEXT`);
   await client.query(`ALTER TABLE ${agentsTable} ADD COLUMN IF NOT EXISTS merge_in_flight_review_execution_id TEXT`);
   await client.query(`ALTER TABLE ${agentsTable} ADD COLUMN IF NOT EXISTS merge_in_flight_review_head_oid TEXT`);
+  await client.query(`ALTER TABLE ${agentsTable} ADD COLUMN IF NOT EXISTS merge_receipt JSONB`);
+  await client.query(`ALTER TABLE ${agentsTable} ADD COLUMN IF NOT EXISTS cleanup_receipt JSONB`);
   await client.query(`CREATE INDEX IF NOT EXISTS ${agentsTable}_active_idx ON ${agentsTable}(status) WHERE status IN ('active','reviewing','ready_to_merge')`);
 }

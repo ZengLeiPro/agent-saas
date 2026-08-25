@@ -97,9 +97,9 @@ export class ContextRetentionStore {
   private async countCandidates(client: PoolClient, request: ContextRetentionRequest): Promise<ContextRetentionCounts> {
     const params = retentionParams(request);
     const source = await client.query(`SELECT COUNT(*)::integer count FROM ${this.base.outbox}
-      WHERE tenant_id=$1 AND seq<=$3 AND created_at<$2`, params.slice(0, 3));
+      WHERE tenant_id=$1 AND seq<=$3::bigint AND created_at<$2::timestamptz`, params.slice(0, 3));
     const derived = await client.query(`SELECT COUNT(*)::integer count FROM ${this.derived.derivedOutbox}
-      WHERE tenant_id=$1 AND seq<=$4 AND created_at<$2 AND status IN ('delivered','revoked')`, params);
+      WHERE tenant_id=$1 AND seq<=$4::bigint AND created_at<$2::timestamptz AND status IN ('delivered','revoked')`, params);
     const evidence = await client.query(`SELECT COUNT(*)::integer count FROM ${this.base.evidence} e
       WHERE ${this.collectibleRevisionPredicate('e')}`, params.slice(0, 3));
     const revisions = await client.query(`SELECT COUNT(*)::integer count FROM ${this.base.revisions} r
@@ -113,9 +113,9 @@ export class ContextRetentionStore {
   private async deleteCandidates(client: PoolClient, request: ContextRetentionRequest): Promise<ContextRetentionCounts> {
     const params = retentionParams(request);
     const sourceOutbox = await client.query(`DELETE FROM ${this.base.outbox}
-      WHERE tenant_id=$1 AND seq<=$3 AND created_at<$2`, params.slice(0, 3));
+      WHERE tenant_id=$1 AND seq<=$3::bigint AND created_at<$2::timestamptz`, params.slice(0, 3));
     const derivedOutbox = await client.query(`DELETE FROM ${this.derived.derivedOutbox}
-      WHERE tenant_id=$1 AND seq<=$4 AND created_at<$2 AND status IN ('delivered','revoked')`, params);
+      WHERE tenant_id=$1 AND seq<=$4::bigint AND created_at<$2::timestamptz AND status IN ('delivered','revoked')`, params);
     const evidence = await client.query(`DELETE FROM ${this.base.evidence} e
       WHERE ${this.collectibleRevisionPredicate('e')}`, params.slice(0, 3));
     const revisions = await client.query(`DELETE FROM ${this.base.revisions} r
@@ -129,7 +129,7 @@ export class ContextRetentionStore {
   private collectibleRevisionPredicate(alias: string): string {
     const b = this.base;
     const d = this.derived;
-    return `${alias}.tenant_id=$1 AND ${alias}.created_at<$2
+    return `${alias}.tenant_id=$1 AND ${alias}.created_at<$2::timestamptz
       AND EXISTS (SELECT 1 FROM ${b.records} current
         WHERE current.tenant_id=${alias}.tenant_id AND current.source_id=${alias}.source_id
           AND current.collection_id=${alias}.collection_id AND current.record_id=${alias}.record_id
@@ -137,7 +137,7 @@ export class ContextRetentionStore {
       AND NOT EXISTS (SELECT 1 FROM ${b.outbox} o
         WHERE o.tenant_id=${alias}.tenant_id AND o.source_id=${alias}.source_id
           AND o.collection_id=${alias}.collection_id AND o.record_id=${alias}.record_id
-          AND o.record_revision=${alias}.revision AND NOT (o.seq<=$3 AND o.created_at<$2))
+          AND o.record_revision=${alias}.revision AND NOT (o.seq<=$3::bigint AND o.created_at<$2::timestamptz))
       AND NOT EXISTS (SELECT 1 FROM ${d.entities} x WHERE x.tenant_id=${alias}.tenant_id
         AND x.source_id=${alias}.source_id AND x.collection_id=${alias}.collection_id
         AND x.record_id=${alias}.record_id AND x.record_revision=${alias}.revision)

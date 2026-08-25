@@ -522,7 +522,7 @@ describe('governanceApi fail closed', () => {
     const source = {
       sourceId: 'source-a', name: '钉钉', system: 'dws', collectionId: 'collection-a', collection: '产品知识',
       status: 'healthy', lastSyncedAt: null, watermarkLagSeconds: null,
-      ingestOutcomes: { truncated: 0, refused: 0, unreadable: 0 },
+      ingestOutcomes: { truncated: 0, refused: 0, unreadable: 0, retrying: 0, lastErrorCodes: [], nextRetryAt: null },
       historicalLearningScope: { enabled: true, summary: '已配置' },
       realtimeListeningScope: { enabled: false, summary: '未配置' },
     };
@@ -568,6 +568,8 @@ describe('governanceApi fail closed', () => {
       .mockResolvedValueOnce(jsonResponse(page))
       .mockResolvedValueOnce(jsonResponse(page))
       .mockResolvedValueOnce(jsonResponse(detail))
+      .mockResolvedValueOnce(jsonResponse(page))
+      .mockResolvedValueOnce(jsonResponse(page))
       .mockResolvedValueOnce(jsonResponse(profile))
       .mockResolvedValueOnce(jsonResponse(page))
       .mockResolvedValueOnce(jsonResponse(page));
@@ -575,6 +577,8 @@ describe('governanceApi fail closed', () => {
     await contextCenterApi.listTimeline({ cursor: 'next token', filter: '交付', entityId: 'entity/1' }, { tenantId: 'tenant a' });
     await contextCenterApi.listEntities({ type: 'person', filter: '张三' }, { tenantId: 'tenant a' });
     await contextCenterApi.getEntity('entity/1', { tenantId: 'tenant a' });
+    await contextCenterApi.listEntityItems('entity/1', { cursor: 'i2' }, { tenantId: 'tenant a' });
+    await contextCenterApi.listEntityCorrections('entity/1', { cursor: 'c2' }, { tenantId: 'tenant a' });
     await contextCenterApi.getEntityProfile('entity/1', { tenantId: 'tenant a' });
     await contextCenterApi.listEntityRelations('entity/1', { cursor: 'r2', depth: 2 }, { tenantId: 'tenant a' });
     await contextCenterApi.listReviews({ filter: 'conflicted' }, { tenantId: 'tenant a' });
@@ -583,6 +587,8 @@ describe('governanceApi fail closed', () => {
       '/api/admin/context-plane/timeline?tenantId=tenant+a&cursor=next+token&filter=%E4%BA%A4%E4%BB%98&entityId=entity%2F1',
       '/api/admin/context-plane/entities?tenantId=tenant+a&filter=%E5%BC%A0%E4%B8%89&type=person',
       '/api/admin/context-plane/entities/entity%2F1?tenantId=tenant+a',
+      '/api/admin/context-plane/entities/entity%2F1/items?tenantId=tenant+a&cursor=i2',
+      '/api/admin/context-plane/entities/entity%2F1/corrections?tenantId=tenant+a&cursor=c2',
       '/api/admin/context-plane/entities/entity%2F1/profile?tenantId=tenant+a',
       '/api/admin/context-plane/entities/entity%2F1/relations?tenantId=tenant+a&cursor=r2&depth=2',
       '/api/admin/context-plane/reviews?tenantId=tenant+a&filter=conflicted',
@@ -635,7 +641,8 @@ describe('governanceApi fail closed', () => {
       updatedAt: '2026-08-23T08:00:00.000Z', degraded: false,
     };
     const authority = { scope: 'organization', label: '来源事实' };
-    const derivedItem = { ...common, id: 'item-1', type: 'Decision', authority, evidence: [] };
+    const derivedItem = { ...common, id: 'item-1', type: 'Decision', authority, evidence: [],
+      review: 'confirmed', correctable: true, correctionDisabledReason: null };
     const profileAttribute = {
       ...common, id: 'facet-1', type: 'role', authority, evidence: [], conflict: null, review: null,
     };
@@ -670,6 +677,22 @@ describe('governanceApi fail closed', () => {
     await expect(contextCenterApi.getEntityProfile('entity-1')).rejects.toMatchObject({ code: 'INVALID_GOVERNANCE_RESPONSE' });
     await expect(contextCenterApi.getEntity('entity-1')).rejects.toMatchObject({ code: 'INVALID_GOVERNANCE_RESPONSE' });
     await expect(contextCenterApi.listEntityRelations('entity-1', { depth: 2 })).rejects.toMatchObject({ code: 'INVALID_GOVERNANCE_RESPONSE' });
+  });
+
+  it('Context item DTO 仅允许 confirmed/current 宣告可纠正', async () => {
+    const common = { id: 'item-1', type: 'Status', label: '状态', summary: '正常', revision: 1,
+      updatedAt: '2026-08-23T08:00:00.000Z', degraded: false,
+      authority: { scope: 'organization', label: '来源事实' }, evidence: [] };
+    mockAuthFetch
+      .mockResolvedValueOnce(jsonResponse({ items: [{ ...common, review: 'proposed', correctable: false,
+        correctionDisabledReason: 'pending_review' }], nextCursor: null, degraded: false }))
+      .mockResolvedValueOnce(jsonResponse({ items: [{ ...common, review: 'proposed', correctable: true,
+        correctionDisabledReason: null }], nextCursor: null, degraded: false }));
+    await expect(contextCenterApi.listEntityItems('entity-1')).resolves.toMatchObject({
+      items: [expect.objectContaining({ review: 'proposed', correctable: false })],
+    });
+    await expect(contextCenterApi.listEntityItems('entity-1'))
+      .rejects.toMatchObject({ code: 'INVALID_GOVERNANCE_RESPONSE' });
   });
 
   it('Context 产品 DTO 严格拒绝额外 tenant/ACL 字段', async () => {

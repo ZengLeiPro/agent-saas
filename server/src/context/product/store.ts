@@ -27,6 +27,8 @@ import {
   type ProductRelationCandidate,
 } from './types.js';
 
+const PRODUCT_CANDIDATE_FETCH_LIMIT = 201;
+
 /** Candidate-only PG adapter. Every returned row is still authorization='unchecked' at the service boundary. */
 export class PgContextProductStore implements ContextProductStore {
   private readonly derived: ContextPhase23TableNames;
@@ -149,17 +151,20 @@ export class PgContextProductStore implements ContextProductStore {
     return result.rows[0] ? entityFromRow(result.rows[0]) : null;
   }
 
-  async listItems(tenantId: string, entityId: string): Promise<ProductItemCandidate[]> {
-    return this.queryItems({ tenantId, entityId, collectionIds: [], limit: 200 }, true);
+  async listItems(tenantId: string, entityId: string, limit = PRODUCT_CANDIDATE_FETCH_LIMIT): Promise<ProductItemCandidate[]> {
+    return this.queryItems({ tenantId, entityId, collectionIds: [], limit }, true);
   }
 
   async getItem(tenantId: string, entityId: string, itemId: string): Promise<ProductItemCandidate | null> {
-    validateId(itemId);
-    return (await this.listItems(tenantId, entityId)).find(item => item.itemId === itemId) ?? null;
+    validateId(tenantId); validateId(entityId); validateId(itemId);
+    const items = await this.queryItems({ tenantId, entityId, itemId, collectionIds: [], limit: 1 }, true);
+    return items[0] ?? null;
   }
 
-  async listCorrections(tenantId: string, entityId: string, actorId: string): Promise<ProductCorrectionCandidate[]> {
+  async listCorrections(tenantId: string, entityId: string, actorId: string,
+    limit = PRODUCT_CANDIDATE_FETCH_LIMIT): Promise<ProductCorrectionCandidate[]> {
     validateId(tenantId); validateId(entityId); validateId(actorId);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) invalid();
     const result = await this.pool.query(`SELECT r.*,i.subject_entity_id,i.value_json,i.updated_at,
         COALESCE(jsonb_agg(jsonb_build_object('sourceId',ie.source_id,'collectionId',ie.collection_id,
           'recordId',ie.record_id,'recordRevision',ie.record_revision,'evidenceId',ie.evidence_id)
@@ -173,7 +178,7 @@ export class PgContextProductStore implements ContextProductStore {
         AND (i.owner_principal IS NULL OR i.owner_principal=$3)
       GROUP BY r.tenant_id,r.generation,r.item_id,r.review_id,r.review_status,r.reviewer_principal,
         r.comment,r.authority,r.revoked,r.created_at,r.updated_at,i.subject_entity_id,i.value_json,i.updated_at
-      ORDER BY r.created_at DESC LIMIT 200`, [tenantId, entityId, actorId]);
+      ORDER BY r.created_at DESC,r.review_id LIMIT $4`, [tenantId, entityId, actorId, limit]);
     return result.rows.map(row => correctionFromRow(row)).filter(item =>
       item.scope.type === 'org' || (item.scope.type === 'person' && item.scope.personId === actorId));
   }
@@ -567,11 +572,12 @@ export class PgContextProductStore implements ContextProductStore {
           OR ($10='proposed' AND i.review_status='proposed' AND i.conflict_status<>'open')
           OR ($10='conflicted' AND i.conflict_status='open'))
         AND ($11::boolean=FALSE OR i.owner_principal IS NULL)
+        AND ($12::text IS NULL OR i.item_id=$12)
       GROUP BY i.tenant_id,i.generation,i.item_id,en.display_name
       ORDER BY i.valid_from DESC,i.item_id LIMIT $9`,
     [input.tenantId, input.entityId ?? null, input.type ?? null, input.filter ?? null,
       input.from ?? null, input.through ?? null, ignoreCollections, unique(input.collectionIds), input.limit, reviewState,
-      organizationReviewOnly]);
+      organizationReviewOnly, input.itemId ?? null]);
     return result.rows.map(itemFromRow);
   }
 
@@ -726,6 +732,7 @@ function validateList(input: ProductStoreListInput): void {
   if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 500 || input.collectionIds.length > 200) invalid();
   input.collectionIds.forEach(validateId);
   if (input.entityId) validateId(input.entityId);
+  if (input.itemId) validateId(input.itemId);
 }
 function validateId(value: string): void { if (typeof value !== 'string' || !value || value.length > 500 || /[\u0000-\u001f]/u.test(value)) invalid(); }
 function invalid(): never { throw new ContextProductError('CONTEXT_PRODUCT_INVALID'); }

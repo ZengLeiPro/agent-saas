@@ -40,6 +40,7 @@ import { GITHUB_CONNECTOR_ID, resolveGithubRuntimeEnv, revokePendingGithubCreden
 import { resolveXRuntimeEnv, revokePendingXCredentials } from '../connectors/x.js';
 import { applyNativeConnectorRuntimeState } from '../connectors/runtimeState.js';
 import { GoogleWorkspaceOAuthService, PgGoogleWorkspaceOAuthStateStore, resolveGoogleWorkspaceRuntimeEnv } from '../connectors/googleWorkspace.js';
+import { buildGoogleWorkspaceOAuthGrantProjection } from './runtimeOAuthGrantReconciler.js';
 import { connectNotionCredential, disconnectNotion, getLiveNotionConnection, resolveNotionRuntimeEnv, type NotionConnectionView } from '../connectors/notion.js';
 import { SignupConfigStore } from '../data/signupConfig.js';
 import { EgressConfigStore } from '../data/egressConfig.js';
@@ -845,6 +846,25 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       ? (!owner.disabled && owner.id === context.userId && owner.tenantId === context.tenantId ? context : undefined)
       : (!userStore ? context : undefined);
     if (!ownedContext) return {};
+
+    const googleWorkspaceGrant = buildGoogleWorkspaceOAuthGrantProjection(
+      connectorConnectionStore,
+      ownedContext,
+    );
+    if (googleWorkspaceGrant && oauthGrantStore) {
+      try {
+        const existingGrant = await oauthGrantStore.getForSubject(
+          ownedContext.tenantId,
+          ownedContext.userId,
+          googleWorkspaceGrant.grantId,
+        );
+        if (!existingGrant) await oauthGrantStore.ensureProjection(googleWorkspaceGrant);
+      } catch (error) {
+        serverLogger.warn(
+          `Google Workspace OAuth Grant projection skipped: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
 
     const [githubEnv, xEnv, notionEnv, googleWorkspaceEnv, aliyunEnv, dwsEnv, feishuEnv, mcpConnectorEnv] = await Promise.all([
       resolveGithubRuntimeEnv({

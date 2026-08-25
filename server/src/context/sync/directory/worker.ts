@@ -25,7 +25,7 @@ export class DirectoryContextSyncWorker {
   constructor(
     private readonly store: DirectoryContextStore,
     private readonly reader: DirectoryContextReader,
-    options: DirectoryContextSyncOptions = {},
+    private readonly options: DirectoryContextSyncOptions = {},
   ) {
     this.leaseOwner = options.leaseOwner ?? `directory-context:${randomUUID()}`;
     this.leaseMs = options.leaseMs ?? DEFAULT_LEASE_MS;
@@ -35,7 +35,13 @@ export class DirectoryContextSyncWorker {
   async runOnce(): Promise<DirectoryContextSyncResult[]> {
     const tenantIds = [...new Set(await this.reader.listTenantIds())].sort();
     const results: DirectoryContextSyncResult[] = [];
-    for (const tenantId of tenantIds) results.push(await this.runTenant(tenantId));
+    for (const tenantId of tenantIds) {
+      try {
+        results.push(await this.runTenant(tenantId));
+      } catch (error) {
+        this.options.onTenantError?.(tenantId, error);
+      }
+    }
     return results;
   }
 
@@ -76,42 +82,56 @@ export class DirectoryContextSyncWorker {
     });
     if (!lease) return { tenantId, people: 0, revoked: 0, skipped: true };
 
-    const people = await this.reader.listPeople(tenantId);
-    if (people.some(person => person.tenantId !== tenantId)) {
-      throw new Error('DIRECTORY_TENANT_SCOPE_MISMATCH');
+    try {
+      const people = await this.reader.listPeople(tenantId);
+      if (people.some(person => person.tenantId !== tenantId)) {
+        throw new Error('DIRECTORY_TENANT_SCOPE_MISMATCH');
+      }
+      const observedAt = this.now().toISOString();
+      const currentIds = await this.store.listCurrentExternalRecordIds(
+        tenantId,
+        sourceId,
+        DIRECTORY_COLLECTION_ID,
+      );
+      const seen = new Set(people.map(person => person.userId));
+      const missing = currentIds.filter(userId => !seen.has(userId));
+      const records = [
+        ...people.map(person => normalizeDirectoryPerson(person, observedAt)),
+        ...missing.map(userId => normalizeMissingDirectoryPerson(tenantId, userId, observedAt)),
+      ];
+      await this.store.ingestPage({
+        tenantId,
+        sourceId,
+        collectionId: DIRECTORY_COLLECTION_ID,
+        partitionKey: DIRECTORY_PARTITION_KEY,
+        leaseOwner: this.leaseOwner,
+        leaseFence: lease.leaseFence,
+        records,
+        checkpoint: {
+          watermark: { inventoryObservedAt: observedAt },
+          coverageEnd: observedAt,
+          complete: true,
+          releaseLease: true,
+        },
+      });
+      return {
+        tenantId,
+        people: people.length,
+        revoked: people.filter(person => person.status !== 'active').length + missing.length,
+        skipped: false,
+      };
+    } catch (error) {
+      await this.store.failPartition({
+        tenantId,
+        sourceId,
+        collectionId: DIRECTORY_COLLECTION_ID,
+        partitionKey: DIRECTORY_PARTITION_KEY,
+        leaseOwner: this.leaseOwner,
+        leaseFence: lease.leaseFence,
+        errorCode: 'DIRECTORY_SYNC_FAILED',
+        retryAt: new Date(this.now().getTime() + 60_000).toISOString(),
+      }).catch(() => undefined);
+      throw error;
     }
-    const observedAt = this.now().toISOString();
-    const currentIds = await this.store.listCurrentExternalRecordIds(
-      tenantId,
-      sourceId,
-      DIRECTORY_COLLECTION_ID,
-    );
-    const seen = new Set(people.map(person => person.userId));
-    const missing = currentIds.filter(userId => !seen.has(userId));
-    const records = [
-      ...people.map(person => normalizeDirectoryPerson(person, observedAt)),
-      ...missing.map(userId => normalizeMissingDirectoryPerson(tenantId, userId, observedAt)),
-    ];
-    await this.store.ingestPage({
-      tenantId,
-      sourceId,
-      collectionId: DIRECTORY_COLLECTION_ID,
-      partitionKey: DIRECTORY_PARTITION_KEY,
-      leaseOwner: this.leaseOwner,
-      leaseFence: lease.leaseFence,
-      records,
-      checkpoint: {
-        watermark: { inventoryObservedAt: observedAt },
-        coverageEnd: observedAt,
-        complete: true,
-        releaseLease: true,
-      },
-    });
-    return {
-      tenantId,
-      people: people.length,
-      revoked: people.filter(person => person.status !== 'active').length + missing.length,
-      skipped: false,
-    };
   }
 }

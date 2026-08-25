@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ApiSessionDetail } from '../types/session';
+import type { ApiSessionDetail, ApiTranscriptBlock } from '../types/session';
+import { mergeSessionMessageDelta, mergeSessionMessagePage } from './sessionMerge';
 import { mapSessionDetailToMessages } from './sessionsApi';
 
 function createAskUserDetail(result: string): ApiSessionDetail {
@@ -221,45 +222,73 @@ describe('子 Agent 摘要', () => {
 });
 
 describe('Artifact 交付历史恢复', () => {
+  const artifactCall: ApiTranscriptBlock = {
+    id: 'artifact-call',
+    kind: 'tool_use',
+    title: 'Artifact',
+    defaultOpen: false,
+    content: JSON.stringify({ action: 'deliver', artifact_id: 'artifact-1' }),
+    toolName: 'Artifact',
+    toolId: 'call-artifact',
+  };
+  const deliveryResult: ApiTranscriptBlock = {
+    id: 'artifact-result',
+    kind: 'tool_result',
+    title: '结果',
+    defaultOpen: false,
+    content: JSON.stringify({
+      action: 'deliver',
+      artifactId: 'artifact-1',
+      kind: 'file',
+      fileName: '交付结果.docx',
+      sizeBytes: 2048,
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    }),
+    toolName: 'Artifact',
+    toolId: 'call-artifact',
+  };
+  const mapArtifactBlocks = (blocks: ApiTranscriptBlock[], mode?: ApiSessionDetail['mode']) => mapSessionDetailToMessages({
+    sessionId: 's-artifact',
+    stats: { lines: blocks.length, parsedLines: blocks.length, parseErrors: 0 },
+    ...(mode ? { mode } : {}),
+    blocks,
+  });
+
   it('tool metadata 缺失时从 deliver 结果恢复文件卡片', () => {
-    const messages = mapSessionDetailToMessages({
-      sessionId: 's-artifact',
-      stats: { lines: 2, parsedLines: 2, parseErrors: 0 },
-      blocks: [
-        {
-          id: 'artifact-call',
-          kind: 'tool_use',
-          title: 'Artifact',
-          defaultOpen: false,
-          content: JSON.stringify({ action: 'deliver', artifact_id: 'artifact-1' }),
-          toolName: 'Artifact',
-          toolId: 'call-artifact',
-        },
-        {
-          id: 'artifact-result',
-          kind: 'tool_result',
-          title: '结果',
-          defaultOpen: false,
-          content: JSON.stringify({
-            action: 'deliver',
-            artifactId: 'artifact-1',
-            kind: 'file',
-            fileName: '交付结果.docx',
-            sizeBytes: 2048,
-            mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          }),
-          toolName: 'Artifact',
-          toolId: 'call-artifact',
-        },
-      ],
-    });
+    const messages = mapArtifactBlocks([artifactCall, deliveryResult]);
 
     expect(messages).toEqual([expect.objectContaining({
+      id: 'artifact-delivery-artifact-1',
       type: 'file_download',
       artifactId: 'artifact-1',
       artifactKind: 'file',
       fileName: '交付结果.docx',
       fileSize: 2048,
     })]);
+  });
+
+  it('分页历史缺少 tool_use 时仍从孤儿 deliver 结果恢复文件卡片', () => {
+    const messages = mapArtifactBlocks([deliveryResult], 'before');
+
+    expect(messages).toEqual([expect.objectContaining({
+      id: 'artifact-delivery-artifact-1',
+      type: 'file_download',
+      artifactId: 'artifact-1',
+      fileName: '交付结果.docx',
+    })]);
+  });
+
+  it('完整页与重叠 tool_result delta 合并后只保留一张卡片', () => {
+    const full = mapArtifactBlocks([artifactCall, deliveryResult], 'full');
+    const delta = mapArtifactBlocks([deliveryResult], 'delta');
+
+    expect(mergeSessionMessageDelta(full, delta)).toEqual(delta);
+  });
+
+  it('孤儿结果页与 before 边界页合并后只保留一张卡片', () => {
+    const base = mapArtifactBlocks([deliveryResult], 'full');
+    const page = mapArtifactBlocks([artifactCall, deliveryResult], 'before');
+
+    expect(mergeSessionMessagePage(base, page)).toEqual(page);
   });
 });

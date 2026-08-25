@@ -1443,7 +1443,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       eventStore,
       runStore: config.runStore,
       sessionCatalog,
-      parentSessionId: sessionId,
+      parentSessionId: sessionId, tenantId: tenantIdForRun,
       logger,
     });
     const runtimeIsolationRequirement = integrationRuntimeIsolationRequirement(options.runtimeIsolationMetadata ?? message.metadata, { tenantId: sessionRecord.tenantId, runId, sessionId, workspaceId: sessionRecord.workspaceId ?? sessionId });

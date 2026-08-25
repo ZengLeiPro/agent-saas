@@ -244,6 +244,7 @@ export type AzerothRow = z.infer<(typeof azerothEntitySchemas)[AzerothEntity]>;
 export interface ParsedAzerothPage {
   items: Record<string, unknown>[];
   hasMore: boolean;
+  pagination: PaginationFacts;
 }
 
 /** Validates both the pagination envelope and every typed entity row. */
@@ -271,10 +272,11 @@ export function parseAzerothPage(
         : pagination.total !== undefined
           ? page * pageSize < pagination.total
           : items.length === pageSize;
-  return { items, hasMore };
+  return { items, hasMore, pagination };
 }
 
-interface PaginationFacts {
+export interface PaginationFacts {
+  page?: number;
   hasNext?: boolean;
   nextPage?: number | null;
   totalPages?: number;
@@ -300,6 +302,7 @@ function extractEnvelope(value: unknown): { items: unknown[]; pagination: Pagina
   return {
     items,
     pagination: {
+      page: optionalInteger(facts.page ?? facts.pageNumber ?? facts.currentPage, 'page'),
       hasNext: optionalBoolean(facts.hasNext, 'hasNext'),
       nextPage: optionalNullableInteger(facts.nextPage, 'nextPage'),
       totalPages: optionalInteger(facts.totalPages ?? facts.pages, 'totalPages'),

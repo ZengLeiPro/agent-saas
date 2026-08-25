@@ -5,6 +5,12 @@ import type { PoolClient, QueryResultRow } from 'pg';
 import { tableNames, type ContextPhase4TableNames } from '../phase4/migration.js';
 import { contextTableNames, contextTablePrefix, type ContextPgPool, type ContextTableNames } from '../store/migration.js';
 import type { ContextJson, ContextObject } from '../store/types.js';
+import { findRecordConflictGroups, recomputeOrganizationConflicts } from './conflictLifecycle.js';
+import {
+  failDerivedConsumerLease,
+  resetDerivedConsumerForReplay,
+  type ResetDerivedConsumerInput,
+} from './consumerOperations.js';
 import { DeterministicContextProjector, fingerprint } from './projector.js';
 import { reduceDerivedProfile } from './profileReducer.js';
 import { nextItemStorageRevision, reviewRevision } from './reviewRevisions.js';
@@ -142,6 +148,19 @@ export class DerivedContextStore {
       WHERE tenant_id=$1 AND consumer_id=$2 AND lease_owner=$3 AND lease_fence=$4`,
     [lease.tenantId, lease.consumerId, lease.leaseOwner, lease.leaseFence]);
     return result.rowCount === 1;
+  }
+
+  async failConsumerLease(lease: ConsumerLease, errorCode: string): Promise<boolean> {
+    return failDerivedConsumerLease(this.options.pool, this.tables, lease, errorCode, this.now());
+  }
+
+  /**
+   * Rewinds one tenant consumer for an idempotent replay. Derived rows and user
+   * reviews are preserved; active leases and stale operator snapshots fail closed.
+   */
+  async resetConsumerForReplay(input: ResetDerivedConsumerInput): Promise<{ previousCursorSeq: string }> {
+    assertId(input.tenantId); assertId(input.consumerId);
+    return this.tx(client => resetDerivedConsumerForReplay(client, this.tables, input, this.now()));
   }
 
   /** Resolves one tenant-scoped, bounded batch. Concurrent workers share work via SKIP LOCKED. */
@@ -382,6 +401,7 @@ export class DerivedContextStore {
     // Every canonical item/evidence writer serializes through the current entity row before item rows.
     await this.lockCanonicalEntities(client, event, projection.entities.map(entity => entity.entityId));
     if (event.deleted || event.revoked || event.eventType !== 'context.record.upserted') {
+      const affectedConflictGroups = await findRecordConflictGroups(client, this.tables, event);
       const lifecycle = event.deleted ? 'deleted' : 'revoked';
       await client.query(`UPDATE ${this.tables.entities} SET lifecycle=$6,updated_at=NOW()
         WHERE tenant_id=$1 AND source_id=$2 AND collection_id=$3 AND record_id=$4 AND record_revision<=$5`,
@@ -416,6 +436,7 @@ export class DerivedContextStore {
       await client.query(`UPDATE ${this.tables.profileFacetEvidence} SET revoked=TRUE,updated_at=NOW()
         WHERE tenant_id=$1 AND source_id=$2 AND collection_id=$3 AND record_id=$4 AND record_revision<=$5`,
       [event.tenantId, event.sourceId, event.collectionId, event.recordId, event.recordRevision]);
+      await recomputeOrganizationConflicts(client, this.tables, event.tenantId, affectedConflictGroups);
       return;
     }
     const generation = event.seq;
@@ -444,6 +465,11 @@ export class DerivedContextStore {
       [event.tenantId, changedEntityIds]);
     }
     for (const item of projection.items) await this.upsertSourceItem(client, event.tenantId, generation, item);
+    await recomputeOrganizationConflicts(client, this.tables, event.tenantId, projection.items.map(item => ({
+      subjectEntityId: item.entityId,
+      itemType: item.itemType,
+      semanticKey: item.semanticKey,
+    })));
     for (const relation of projection.relations) await this.upsertRelationCandidate(client, event.tenantId, relation);
     await this.materializePendingRelations(client, event.tenantId, RELATION_RESOLVE_LIMIT);
   }
@@ -487,17 +513,6 @@ export class DerivedContextStore {
       item.validTo ?? null, item.recordRevision ?? 1, item.ownerPrincipal ?? null,
       JSON.stringify(item.aclPrincipals ?? [])]);
     await insertEvidence(client, this.tables, this.baseTables, tenantId, generation, item.itemId, item.evidence);
-    const conflict = await client.query(`SELECT COUNT(DISTINCT i.value_json->>'valueFingerprint')::integer count
-      FROM ${this.tables.derivedItems} i
-      WHERE i.tenant_id=$1 AND i.subject_entity_id=$2 AND i.item_type=$3 AND i.semantic_key=$4
-        AND i.lifecycle='active' AND i.review_status='confirmed' AND i.owner_principal IS NULL`,
-    [tenantId, item.entityId, item.itemType, item.semanticKey]);
-    if (Number(conflict.rows[0]?.count ?? 0) > 1) {
-      await client.query(`UPDATE ${this.tables.derivedItems} SET conflict_status='open',updated_at=NOW()
-        WHERE tenant_id=$1 AND subject_entity_id=$2 AND item_type=$3 AND semantic_key=$4
-          AND lifecycle='active' AND review_status='confirmed' AND owner_principal IS NULL`,
-      [tenantId, item.entityId, item.itemType, item.semanticKey]);
-    }
   }
 
   private async upsertRelationCandidate(
@@ -681,16 +696,19 @@ async function loadExactOutbox(
 ): Promise<ClaimedContextRecord[]> {
   const result = await client.query(`
     SELECT o.*,v.content_json,v.metadata_json,v.entity_type,v.record_kind,v.native_id,v.occurred_at,
-      v.source_event_id,v.owner_principal,v.acl_principals,v.deleted,v.revoked,v.source_updated_at,v.observed_at,
+      v.source_event_id,v.owner_principal,v.acl_principals,v.deleted,v.revoked,
+      r.deleted AS current_deleted,r.revoked AS current_revoked,v.source_updated_at,v.observed_at,
       COALESCE(jsonb_agg(jsonb_build_object('evidenceId',e.evidence_id,'kind',e.kind,'data',e.data_json)
         ORDER BY e.evidence_id) FILTER (WHERE e.evidence_id IS NOT NULL),'[]'::jsonb) evidence_json
     FROM ${tables.outbox} o
     JOIN ${tables.revisions} v ON v.tenant_id=o.tenant_id AND v.source_id=o.source_id
       AND v.collection_id=o.collection_id AND v.record_id=o.record_id AND v.revision=o.record_revision
+    JOIN ${tables.records} r ON r.tenant_id=v.tenant_id AND r.source_id=v.source_id
+      AND r.collection_id=v.collection_id AND r.record_id=v.record_id
     LEFT JOIN ${tables.evidence} e ON e.tenant_id=v.tenant_id AND e.source_id=v.source_id
       AND e.collection_id=v.collection_id AND e.record_id=v.record_id AND e.revision=v.revision
     WHERE o.tenant_id=$1 AND o.seq>$2
-    GROUP BY o.tenant_id,o.seq,v.tenant_id,v.source_id,v.collection_id,v.record_id,v.revision
+    GROUP BY o.tenant_id,o.seq,v.tenant_id,v.source_id,v.collection_id,v.record_id,v.revision,r.deleted,r.revoked
     ORDER BY o.seq LIMIT $3`, [tenantId, afterSeq, limit]);
   return result.rows.map(claimedRecordFromRow);
 }
@@ -704,16 +722,19 @@ async function loadExactOutboxBySeqs(
   if (seqs.length === 0) return [];
   const result = await client.query(`
     SELECT o.*,v.content_json,v.metadata_json,v.entity_type,v.record_kind,v.native_id,v.occurred_at,
-      v.source_event_id,v.owner_principal,v.acl_principals,v.deleted,v.revoked,v.source_updated_at,v.observed_at,
+      v.source_event_id,v.owner_principal,v.acl_principals,v.deleted,v.revoked,
+      r.deleted AS current_deleted,r.revoked AS current_revoked,v.source_updated_at,v.observed_at,
       COALESCE(jsonb_agg(jsonb_build_object('evidenceId',e.evidence_id,'kind',e.kind,'data',e.data_json)
         ORDER BY e.evidence_id) FILTER (WHERE e.evidence_id IS NOT NULL),'[]'::jsonb) evidence_json
     FROM ${tables.outbox} o
     JOIN ${tables.revisions} v ON v.tenant_id=o.tenant_id AND v.source_id=o.source_id
       AND v.collection_id=o.collection_id AND v.record_id=o.record_id AND v.revision=o.record_revision
+    JOIN ${tables.records} r ON r.tenant_id=v.tenant_id AND r.source_id=v.source_id
+      AND r.collection_id=v.collection_id AND r.record_id=v.record_id
     LEFT JOIN ${tables.evidence} e ON e.tenant_id=v.tenant_id AND e.source_id=v.source_id
       AND e.collection_id=v.collection_id AND e.record_id=v.record_id AND e.revision=v.revision
     WHERE o.tenant_id=$1 AND o.seq=ANY($2::bigint[])
-    GROUP BY o.tenant_id,o.seq,v.tenant_id,v.source_id,v.collection_id,v.record_id,v.revision
+    GROUP BY o.tenant_id,o.seq,v.tenant_id,v.source_id,v.collection_id,v.record_id,v.revision,r.deleted,r.revoked
     ORDER BY o.seq`, [tenantId, seqs]);
   return result.rows.map(claimedRecordFromRow);
 }
@@ -736,8 +757,8 @@ function claimedRecordFromRow(row: QueryResultRow): ClaimedContextRecord {
     ...(row.source_event_id ? { sourceEventId: String(row.source_event_id) } : {}),
     ...(row.owner_principal ? { ownerPrincipal: String(row.owner_principal) } : {}),
     ...(Array.isArray(row.acl_principals) ? { aclPrincipals: row.acl_principals.map(String) } : {}),
-    deleted: Boolean(row.deleted),
-    revoked: Boolean(row.revoked),
+    deleted: Boolean(row.deleted) || Boolean(row.current_deleted),
+    revoked: Boolean(row.revoked) || Boolean(row.current_revoked),
     ...(row.source_updated_at ? { sourceUpdatedAt: iso(row.source_updated_at) } : {}),
     observedAt: iso(row.observed_at),
     evidence: Array.isArray(row.evidence_json) ? row.evidence_json.map((value: unknown) => {

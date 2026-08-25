@@ -112,6 +112,7 @@ function OutcomeSummary({ source }: { source: ContextSource }) {
     { label: "截断", value: source.ingestOutcomes.truncated },
     { label: "拒绝", value: source.ingestOutcomes.refused },
     { label: "不可读", value: source.ingestOutcomes.unreadable },
+    { label: "重试中", value: source.ingestOutcomes.retrying },
   ];
   const hasIssue = outcomes.some((outcome) => outcome.value > 0);
   return (
@@ -124,8 +125,14 @@ function OutcomeSummary({ source }: { source: ContextSource }) {
                 {outcome.label} {outcome.value.toLocaleString("zh-CN")}
               </Badge>
             ))
-          : <Badge variant="success">无截断、拒绝或不可读</Badge>}
+          : <Badge variant="success">无截断、拒绝、不可读或重试</Badge>}
       </div>
+      {source.ingestOutcomes.lastErrorCodes.length > 0 && (
+        <div className="mt-1 break-words font-mono text-xs text-destructive">
+          错误分类：{source.ingestOutcomes.lastErrorCodes.join("、")}
+        </div>
+      )}
+      {source.ingestOutcomes.nextRetryAt && <div className="mt-1 text-xs text-muted-foreground">下次重试：{formatDateTime(source.ingestOutcomes.nextRetryAt)}</div>}
     </div>
   );
 }

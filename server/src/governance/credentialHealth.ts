@@ -1,4 +1,5 @@
 import { createAliyunValidateCredentials } from '../connectors/aliyun.js';
+import { createBirdWhoamiProbe, normalizeXConnectInput, XCredentialProbeError } from '../connectors/x.js';
 
 export interface CredentialHealthResult {
   healthy: boolean;
@@ -51,12 +52,37 @@ async function checkAliyun(secret: string): Promise<CredentialHealthResult> {
   }
 }
 
+async function checkX(secret: string): Promise<CredentialHealthResult> {
+  try {
+    const value = JSON.parse(secret) as Record<string, unknown>;
+    const credentials = normalizeXConnectInput({
+      authToken: typeof value.authToken === 'string' ? value.authToken : '',
+      ct0: typeof value.ct0 === 'string' ? value.ct0 : '',
+    });
+    await createBirdWhoamiProbe()(credentials);
+    return { healthy: true, code: 'UPSTREAM_IDENTITY_VERIFIED' };
+  } catch (error) {
+    if (error instanceof XCredentialProbeError) {
+      return {
+        healthy: false,
+        code: {
+          network: 'CONNECTOR_NETWORK_UNREACHABLE',
+          authentication: 'CREDENTIAL_AUTHENTICATION_FAILED',
+          upstream: 'CONNECTOR_UPSTREAM_INVALID',
+        }[error.kind],
+      };
+    }
+    return { healthy: false, code: 'CREDENTIAL_SECRET_FORMAT_INVALID' };
+  }
+}
+
 /** Performs an upstream identity request. Unsupported connectors fail closed. */
 export async function validateGovernanceCredentialHealth(
   connectorId: string,
   secret: string,
 ): Promise<CredentialHealthResult> {
   if (connectorId === 'aliyun') return checkAliyun(secret);
+  if (connectorId === 'x') return checkX(secret);
   const token = tokenFromSecret(secret);
   if (!token) return { healthy: false, code: 'CREDENTIAL_SECRET_FORMAT_INVALID' };
   if (connectorId === 'github') {

@@ -57,6 +57,26 @@ describe('Context product admin routes', () => {
     expect(listEntities).toHaveBeenLastCalledWith({ tenantId: 'tenant-b', actorId: 'platform-actor' }, {});
   });
 
+  it('paginates entity items and correction history with strict server-owned subjects', async () => {
+    const listEntityItems = vi.fn(async () => ({ items: [], nextCursor: null, degraded: false }));
+    const listEntityCorrections = vi.fn(async () => ({ items: [], nextCursor: null, degraded: false }));
+    const base = await start({ listEntityItems, listEntityCorrections } as Partial<ContextProductService>);
+
+    expect((await fetch(`${base}/entities/entity-a/items?limit=0`)).status).toBe(400);
+    expect((await fetch(`${base}/entities/entity-a/items?unknown=x`)).status).toBe(400);
+    expect((await fetch(`${base}/entities/entity-a/corrections?tenantId=tenant-b`)).status).toBe(403);
+    expect((await fetch(`${base}/entities/entity-a/corrections?unknown=x`)).status).toBe(400);
+
+    expect((await fetch(`${base}/entities/entity-a/items?cursor=item-cursor&limit=25`)).status).toBe(200);
+    expect(listEntityItems).toHaveBeenCalledWith(
+      { tenantId: 'tenant-a', actorId: 'actor-a' }, 'entity-a', { cursor: 'item-cursor', limit: 25 },
+    );
+    expect((await fetch(`${base}/entities/entity-a/corrections?cursor=correction-cursor&limit=10`)).status).toBe(200);
+    expect(listEntityCorrections).toHaveBeenCalledWith(
+      { tenantId: 'tenant-a', actorId: 'actor-a' }, 'entity-a', { cursor: 'correction-cursor', limit: 10 },
+    );
+  });
+
   it('requires expectedRevision and the server correction contract', async () => {
     const correct = vi.fn(async () => ({ id: 'review-a' }));
     const base = await start({ correct } as Partial<ContextProductService>);

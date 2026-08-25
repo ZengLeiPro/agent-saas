@@ -131,6 +131,90 @@ describePg('DerivedContextStore PostgreSQL integration', () => {
     ]));
   });
 
+  it('rewinds one idle tenant consumer with cursor CAS while preserving derived rows for idempotent replay', async () => {
+    const beforeCursor = await pool.query(`SELECT cursor_seq FROM ${derived.tables.consumers}
+      WHERE tenant_id='tenant-a' AND consumer_id='projector'`);
+    const cursorSeq = String(beforeCursor.rows[0].cursor_seq);
+    const itemCount = await pool.query(`SELECT COUNT(*)::integer count FROM ${derived.tables.derivedItems}
+      WHERE tenant_id='tenant-a'`);
+    const activeLease = await derived.claimContextOutbox({
+      tenantId: 'tenant-a', consumerId: 'projector', leaseOwner: 'replay-race', leaseMs: 60_000,
+    });
+    expect(activeLease).not.toBeNull();
+    await expect(derived.resetConsumerForReplay({
+      tenantId: 'tenant-a', consumerId: 'projector', expectedCursorSeq: cursorSeq,
+    })).rejects.toMatchObject({ code: 'DERIVED_VERSION_CONFLICT' });
+    await expect(derived.failConsumerLease(activeLease!, 'DERIVED_PROJECTION_FAILED')).resolves.toBe(true);
+    const failedLease = (await pool.query(`SELECT status,last_error_code,lease_fence FROM ${derived.tables.consumers}
+      WHERE tenant_id='tenant-a' AND consumer_id='projector'`)).rows[0];
+    expect(failedLease).toMatchObject({ status: 'retry_wait', last_error_code: 'DERIVED_PROJECTION_FAILED' });
+    await expect(derived.resetConsumerForReplay({
+      tenantId: 'tenant-a', consumerId: 'projector', expectedCursorSeq: `${cursorSeq}0`,
+    })).rejects.toMatchObject({ code: 'DERIVED_VERSION_CONFLICT' });
+
+    await expect(derived.resetConsumerForReplay({
+      tenantId: 'tenant-a', consumerId: 'projector', expectedCursorSeq: cursorSeq,
+    })).resolves.toEqual({ previousCursorSeq: cursorSeq });
+    const reset = await pool.query(`SELECT cursor_seq,status,lease_owner,lease_fence
+      FROM ${derived.tables.consumers} WHERE tenant_id='tenant-a' AND consumer_id='projector'`);
+    expect(reset.rows[0]).toMatchObject({ cursor_seq: '0', status: 'idle', lease_owner: null });
+    expect(BigInt(reset.rows[0].lease_fence)).toBe(BigInt(failedLease.lease_fence) + 1n);
+    expect((await pool.query(`SELECT COUNT(*)::integer count FROM ${derived.tables.derivedItems}
+      WHERE tenant_id='tenant-a'`)).rows[0].count).toBe(itemCount.rows[0].count);
+    await drain();
+  });
+
+  it('recomputes organization conflicts after convergence, revoke and delete while preserving real multi-value conflicts', async () => {
+    const convergeId = entityId('tenant-a', 'Task', 'task-conflict-converge', 'source-a');
+    const deleteId = entityId('tenant-a', 'Task', 'task-conflict-delete', 'source-a');
+    const record = (recordId: string, nativeId: string, code: string, evidenceId: string,
+      state: { revoked?: boolean; deleted?: boolean } = {}) => ({
+      recordId, externalRecordId: recordId, entityType: 'task' as const, recordKind: 'snapshot' as const, nativeId,
+      content: { title: nativeId, status: { code } }, ...state, observedAt: '2026-08-22T10:10:00Z',
+      evidence: [{ evidenceId, kind: 'quote' as const, data: { quote: `${nativeId} ${code}` } }],
+    });
+    const statuses = async (subjectEntityId: string) => (await pool.query<{ conflict_status: string }>(
+      `SELECT conflict_status FROM ${derived.tables.derivedItems}
+       WHERE tenant_id='tenant-a' AND subject_entity_id=$1 AND item_type='Status'
+         AND lifecycle='active' AND review_status='confirmed' AND owner_principal IS NULL
+       ORDER BY item_id`, [subjectEntityId],
+    )).rows.map(row => row.conflict_status);
+
+    await ingest([
+      record('task-conflict-converge-a', 'task-conflict-converge', 'open', 'task-conflict-converge-a-ev'),
+      record('task-conflict-converge-b', 'task-conflict-converge', 'blocked', 'task-conflict-converge-b-ev'),
+      record('task-conflict-delete-a', 'task-conflict-delete', 'open', 'task-conflict-delete-a-ev'),
+      record('task-conflict-delete-b', 'task-conflict-delete', 'blocked', 'task-conflict-delete-b-ev'),
+    ]);
+    await drain();
+    expect(await statuses(convergeId)).toEqual(['open', 'open']);
+    expect(await statuses(deleteId)).toEqual(['open', 'open']);
+
+    await ingest([record(
+      'task-conflict-converge-b', 'task-conflict-converge', 'open', 'task-conflict-converge-b-converged-ev',
+    )]);
+    await drain();
+    expect(await statuses(convergeId)).toEqual(['none', 'none']);
+
+    await ingest([record(
+      'task-conflict-converge-b', 'task-conflict-converge', 'blocked', 'task-conflict-converge-b-diverged-ev',
+    )]);
+    await drain();
+    expect(await statuses(convergeId)).toEqual(['open', 'open']);
+
+    await ingest([record(
+      'task-conflict-converge-b', 'task-conflict-converge', 'blocked', 'task-conflict-converge-b-revoked-ev', { revoked: true },
+    )]);
+    await drain();
+    expect(await statuses(convergeId)).toEqual(['none']);
+
+    await ingest([record(
+      'task-conflict-delete-b', 'task-conflict-delete', 'blocked', 'task-conflict-delete-b-deleted-ev', { deleted: true },
+    )]);
+    await drain();
+    expect(await statuses(deleteId)).toEqual(['none']);
+  });
+
   it('scopes personal corrections, gates org corrections, isolates proposed items and revokes reads live', async () => {
     const taskId = entityId('tenant-a', 'Task', 'task-1', 'source-a');
     const evidence = { sourceId: 'source-a', collectionId: 'collection-a', recordId: 'task-r', recordRevision: 2, evidenceId: 'task-ev-2' };
@@ -203,6 +287,27 @@ describePg('DerivedContextStore PostgreSQL integration', () => {
         OR evidence_record_id IN ('task-r','task-r-conflict'))`);
     expect(revokedLinks.rows.length).toBeGreaterThan(0);
     expect(revokedLinks.rows.every(row => row.lifecycle === 'revoked' && row.revoked === true)).toBe(true);
+  });
+
+  it('advances past an upsert already revoked before projection without materializing stale evidence', async () => {
+    const nativeId = 'task-revoked-before-project';
+    const recordId = 'task-revoked-before-project-r';
+    await ingest([{
+      recordId, externalRecordId: recordId, entityType: 'task', recordKind: 'snapshot', nativeId,
+      content: { title: 'Transient', status: { code: 'open' } }, observedAt: '2026-08-23T07:00:00Z',
+      evidence: [{ evidenceId: 'task-revoked-before-project-ev-1', kind: 'quote', data: { quote: 'Transient open' } }],
+    }]);
+    await ingest([{
+      recordId, externalRecordId: recordId, entityType: 'task', recordKind: 'snapshot', nativeId,
+      content: { title: 'Transient', status: { code: 'closed' } }, revoked: true,
+      observedAt: '2026-08-23T07:01:00Z',
+      evidence: [{ evidenceId: 'task-revoked-before-project-ev-2', kind: 'quote', data: { quote: 'Transient revoked' } }],
+    }]);
+
+    await expect(drain()).resolves.toBeUndefined();
+    const projected = await pool.query(`SELECT lifecycle FROM ${derived.tables.entities}
+      WHERE tenant_id='tenant-a' AND entity_id=$1`, [entityId('tenant-a', 'Task', nativeId, 'source-a')]);
+    expect(projected.rows).toEqual([]);
   });
 
   it('durably resolves Task before Project, refreshes incoming target revisions, revokes and replays idempotently', async () => {

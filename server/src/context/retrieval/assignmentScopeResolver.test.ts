@@ -80,6 +80,45 @@ describe('AssignmentContextRecallScopeResolver', () => {
       } satisfies Partial<ContextRecallScopeDriftError>);
   });
 
+  it('re-reads live access and reduces an old pinned session to zero when knowledge is disabled', async () => {
+    const assignments = reader();
+    let enabled = true;
+    const resolveAccess = vi.fn(async () => ({
+      activeMembership: true,
+      organizationKnowledgeEnabled: enabled,
+    }));
+    const resolver = new AssignmentContextRecallScopeResolver(assignments, {
+      resolveAccess,
+      resolveSessionPin: async () => ({
+        tenantId: 'tenant-a', userId: 'user-a', orgAgentId: 'agent-a',
+        collectionAssignments: [{
+          collectionId: 'collection-a', assignmentVersion: 7, resourceType: 'org_knowledge',
+        }],
+      }),
+      now: () => new Date('2026-08-22T12:00:00.000Z'),
+    });
+
+    await expect(resolver.resolve(subject, { operation: 'search' }))
+      .resolves.toMatchObject({ collections: [{ collectionId: 'collection-a' }] });
+    enabled = false;
+    await expect(resolver.resolve(subject, { operation: 'get', recallId: 'old-hit' })).resolves.toEqual({
+      collections: [], resolvedAt: '2026-08-22T12:00:00.000Z', degraded: false, degradationReasons: [],
+    });
+    expect(resolveAccess).toHaveBeenCalledTimes(2);
+    expect(assignments.listEffectiveResourceIds).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an inactive target-tenant membership before trusting an everyone assignment', async () => {
+    const assignments = reader();
+    const resolver = new AssignmentContextRecallScopeResolver(assignments, {
+      resolveAccess: async () => ({ activeMembership: false, organizationKnowledgeEnabled: true }),
+    });
+
+    await expect(resolver.resolve({ ...subject, tenantId: 'tenant-b', userId: 'platform-actor' }, { operation: 'search' }))
+      .rejects.toMatchObject({ code: 'CONTEXT_RECALL_MEMBERSHIP_INACTIVE' });
+    expect(assignments.listEffectiveResourceIds).not.toHaveBeenCalled();
+  });
+
   it('rejects a session pin owned by another tenant or user before assignment lookup', async () => {
     const assignments = reader();
     const resolver = new AssignmentContextRecallScopeResolver(assignments, {

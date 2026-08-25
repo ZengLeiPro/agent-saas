@@ -32,8 +32,9 @@ export function createContextProductService(
   const registry = runtime.contextSourceAuthorizationRegistry;
   const derived = runtime.derivedContextStore;
   const memberships = runtime.membershipStore;
+  const entitlements = runtime.entitlementStore;
   const secret = config.auth?.jwtSecret;
-  if (!pool || !assignments || !registry || !derived || !memberships || !secret) return undefined;
+  if (!pool || !assignments || !registry || !derived || !memberships || !entitlements || !secret) return undefined;
   const tablePrefix = config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined;
   const roleGate = {
     mayCorrectOrganization: async ({ tenantId, actorId }: { tenantId: string; actorId: string }) => {
@@ -43,7 +44,21 @@ export function createContextProductService(
   };
   return new ContextProductService({
     store: new PgContextProductStore(pool, tablePrefix),
-    scopes: new AssignmentContextRecallScopeResolver(assignments, { resourceTypes: ['org_knowledge'] }),
+    scopes: new AssignmentContextRecallScopeResolver(assignments, {
+      resourceTypes: ['org_knowledge'],
+      resolveAccess: async subject => {
+        const [membership, policies] = await Promise.all([
+          memberships.getMembership(subject.tenantId, subject.userId),
+          entitlements.getPolicies(subject.tenantId),
+        ]);
+        return {
+          activeMembership: membership?.status === 'active',
+          organizationKnowledgeEnabled: policies.some(policy => (
+            policy.policyKey === 'knowledge.org.enabled' && policy.value === true
+          )),
+        };
+      },
+    }),
     authorization: new ContextProductAuthorization(
       registry,
       createHash('sha256').update(`context-product:${secret}`).digest(),

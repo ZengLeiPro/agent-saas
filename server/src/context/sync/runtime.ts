@@ -6,7 +6,7 @@ import type { UserStore } from '../../data/users/store.js';
 import { listAzerothTokenBindings } from '../../integrations/azeroth/tokens.js';
 import type { PgTaskboardStore } from '../../taskboard/store.js';
 import type { ContextStore } from '../store/index.js';
-import type { DerivedContextStore } from '../derived/index.js';
+import { DerivedStoreError, type DerivedContextStore } from '../derived/index.js';
 import { AZEROTH_ENTITIES, ConfigAzerothContextPorts, AzerothInventoryWorker, identityFor } from './azeroth/index.js';
 import { DIRECTORY_COLLECTION_ID, DirectoryContextSyncWorker, GovernanceDirectoryContextReader } from './directory/index.js';
 import { PgTaskboardContextReader, TASKBOARD_COLLECTIONS, TaskboardContextSyncWorker } from './taskboard/index.js';
@@ -20,7 +20,7 @@ const RELATION_RESOLVE_PAGE_CAP = 100;
 
 export interface ContextPlanePhase2RuntimeOptions {
   contextStore: ContextStore;
-  taskboardStore: PgTaskboardStore;
+  taskboardStore?: PgTaskboardStore;
   membershipStore: PgMembershipStore;
   assignmentStore: PgAssignmentStore;
   userStore: UserStore;
@@ -32,7 +32,7 @@ export interface ContextPlanePhase2RuntimeOptions {
 }
 
 export class ContextPlanePhase2Runtime {
-  private readonly taskboard: TaskboardContextSyncWorker;
+  private readonly taskboard?: TaskboardContextSyncWorker;
   private readonly directory: DirectoryContextSyncWorker;
   private readonly azeroth: AzerothInventoryWorker;
   private readonly logger;
@@ -44,13 +44,21 @@ export class ContextPlanePhase2Runtime {
 
   constructor(private readonly options: ContextPlanePhase2RuntimeOptions) {
     this.logger = options.logger ?? { info: () => undefined, warn: () => undefined };
-    this.taskboard = new TaskboardContextSyncWorker({
-      store: options.contextStore,
-      reader: new PgTaskboardContextReader(options.taskboardStore),
-    });
+    this.taskboard = options.taskboardStore
+      ? new TaskboardContextSyncWorker({
+          store: options.contextStore,
+          reader: new PgTaskboardContextReader(options.taskboardStore),
+          onTenantError: (tenantId, error) =>
+            this.logger.warn(`Context Taskboard sync failed for tenant ${tenantId}: ${safeError(error)}`),
+        })
+      : undefined;
     this.directory = new DirectoryContextSyncWorker(
       options.contextStore,
       new GovernanceDirectoryContextReader(options.userStore, options.membershipStore),
+      {
+        onTenantError: (tenantId, error) =>
+          this.logger.warn(`Context Directory sync failed for tenant ${tenantId}: ${safeError(error)}`),
+      },
     );
     const azerothPorts = new ConfigAzerothContextPorts({ fetchImpl: options.fetchImpl });
     this.azeroth = new AzerothInventoryWorker({
@@ -82,19 +90,33 @@ export class ContextPlanePhase2Runtime {
   }
 
   async runFastOnce(): Promise<void> {
-    const [taskboardResults, directoryResults] = await Promise.all([
-      this.taskboard.runOnce(),
+    const [taskboardRun, directoryRun] = await Promise.allSettled([
+      this.taskboard?.runOnce() ?? Promise.resolve([]),
       this.directory.runOnce(),
     ]);
+    if (taskboardRun.status === 'rejected') {
+      this.logger.warn(`Context Taskboard coordinator failed: ${safeError(taskboardRun.reason)}`);
+    }
+    if (directoryRun.status === 'rejected') {
+      this.logger.warn(`Context Directory coordinator failed: ${safeError(directoryRun.reason)}`);
+    }
+    const taskboardResults = taskboardRun.status === 'fulfilled' ? taskboardRun.value : [];
+    const directoryResults = directoryRun.status === 'fulfilled' ? directoryRun.value : [];
     const tenantIds = new Set([
       ...taskboardResults.map(result => result.tenantId),
       ...directoryResults.map(result => result.tenantId),
     ]);
+    let projectedTenants = 0;
     for (const tenantId of tenantIds) {
-      await this.ensurePhase2Assignments(tenantId, false);
-      await this.projectDerived(tenantId);
+      try {
+        await this.ensurePhase2Assignments(tenantId, false);
+        await this.projectDerived(tenantId);
+        projectedTenants += 1;
+      } catch (error) {
+        this.logger.warn(`Context fast projection failed for tenant ${tenantId}: ${safeError(error)}`);
+      }
     }
-    this.logger.info(`Context Phase2/3 fast sync completed: tenants=${tenantIds.size}`);
+    this.logger.info(`Context Phase2/3 fast sync completed: tenants=${tenantIds.size}, projected=${projectedTenants}`);
   }
 
   async runAzerothOnce(): Promise<void> {
@@ -147,7 +169,12 @@ export class ContextPlanePhase2Runtime {
         outboxCapped = false;
         break;
       }
-      await store.projectClaimed(lease);
+      try {
+        await store.projectClaimed(lease);
+      } catch (error) {
+        await store.failConsumerLease(lease, derivedProjectionFailureCode(error)).catch(() => false);
+        throw error;
+      }
       if (lease.events.length < DERIVED_OUTBOX_PAGE_SIZE) { outboxCapped = false; break; }
     }
     if (outboxCapped) this.logger.warn(`Context derived projector page cap reached for tenant ${tenantId}`);
@@ -167,7 +194,9 @@ export class ContextPlanePhase2Runtime {
 
   private async ensurePhase2Assignments(tenantId: string, includeAzeroth: boolean): Promise<void> {
     const resources = [
-      ...Object.values(TASKBOARD_COLLECTIONS).map(item => ({ id: item.collectionId, name: item.displayName })),
+      ...(this.taskboard
+        ? Object.values(TASKBOARD_COLLECTIONS).map(item => ({ id: item.collectionId, name: item.displayName }))
+        : []),
       { id: DIRECTORY_COLLECTION_ID, name: '组织成员' },
       ...(includeAzeroth ? AZEROTH_ENTITIES.map(entity => ({ id: identityFor(entity).collectionId, name: `Azeroth ${entity}` })) : []),
     ];
@@ -187,6 +216,23 @@ export class ContextPlanePhase2Runtime {
         if (!await this.options.assignmentStore.getAssignmentSet(tenantId, 'org_knowledge', resource.id)) throw error;
       }
     }
+  }
+}
+
+export function derivedProjectionFailureCode(error: unknown): string {
+  if (error instanceof DerivedStoreError) return error.code;
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code ?? '') : '';
+  switch (code) {
+    case '23503': return 'DERIVED_REFERENCE_MISSING';
+    case '23505': return 'DERIVED_UNIQUE_CONFLICT';
+    case '23514': return 'DERIVED_CONSTRAINT_VIOLATION';
+    case '22007':
+    case '22008': return 'DERIVED_TIMESTAMP_INVALID';
+    case '22P02': return 'DERIVED_VALUE_INVALID';
+    case '42P01':
+    case '42703': return 'DERIVED_SCHEMA_MISMATCH';
+    default: return 'DERIVED_PROJECTION_FAILED';
   }
 }
 

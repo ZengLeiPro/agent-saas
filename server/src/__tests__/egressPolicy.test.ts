@@ -90,9 +90,10 @@ describe('buildSandboxProxyEnv', () => {
     });
     const names = env.map((entry) => entry.name);
     expect(names).toEqual([
-      'HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'NO_PROXY', 'no_proxy',
+      'HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'NODE_USE_ENV_PROXY', 'NO_PROXY', 'no_proxy',
     ]);
     const byName = Object.fromEntries(env.map((entry) => [entry.name, entry.value]));
+    expect(byName.NODE_USE_ENV_PROXY).toBe('1');
     expect(byName.HTTP_PROXY).toBe('http://172.16.177.77:7890');
     expect(byName.http_proxy).toBe(byName.HTTP_PROXY);
     expect(byName.no_proxy).toBe(byName.NO_PROXY);

@@ -142,13 +142,26 @@ describe('governance credential signed commits', () => {
       connectorId: 'aliyun', kind: 'personal_grant', purpose: '阿里云 CLI 用户凭据',
       scopeSummary: { regionId: 'cn-shenzhen', scopes: ['aliyun:*'] }, secret,
     }));
-
     expect(response.status).toBe(422);
     await expect(response.json()).resolves.toEqual({ error: 'Credential validation failed', code: 'UPSTREAM_IDENTITY_CHECK_FAILED' });
     expect(health).toHaveBeenCalledWith('aliyun', secret);
     expect(putSecret).not.toHaveBeenCalled();
   });
-
+  it('无效 X Cookie 不会创建治理 Credential 或写入 Vault', async () => {
+    const health = vi.fn().mockResolvedValue({ healthy: false, code: 'CREDENTIAL_AUTHENTICATION_FAILED' });
+    const putSecret = vi.fn();
+    const create = vi.fn();
+    const test = await rig({ credentialHealthCheck: health, putSecret, create });
+    const secret = JSON.stringify({ authToken: 'invalid-auth', ct0: 'invalid-ct0' });
+    const response = await test.request('/api/governance/resources/credentials', json({
+      connectorId: 'x', kind: 'personal_grant', purpose: 'X bird CLI 用户凭据', secret,
+    }));
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({ error: 'Credential validation failed', code: 'CREDENTIAL_AUTHENTICATION_FAILED' });
+    expect(health).toHaveBeenCalledWith('x', secret);
+    expect(putSecret).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
   it('阿里云 STS 身份元数据写入治理 scopeSummary 供连接状态展示', async () => {
     const health = vi.fn().mockResolvedValue({
       healthy: true, code: 'UPSTREAM_IDENTITY_VERIFIED',
@@ -193,7 +206,27 @@ describe('governance credential signed commits', () => {
     expect(health).toHaveBeenCalledWith('aliyun', command.secret);
     expect(rotateSecret).not.toHaveBeenCalled();
   });
-
+  it('无效 X Cookie 不会轮换或激活治理 Credential', async () => {
+    const health = vi.fn().mockResolvedValue({ healthy: false, code: 'CREDENTIAL_AUTHENTICATION_FAILED' });
+    const rotateSecret = vi.fn();
+    const completeRotation = vi.fn();
+    const test = await rig({
+      credentialHealthCheck: health,
+      getCredential: vi.fn().mockResolvedValue(credential({ connectorId: 'x', kind: 'personal_grant', ownerUserId: 'admin-1' })),
+      rotateSecret,
+      completeRotation,
+    });
+    const command = { expectedVersion: 1, secret: JSON.stringify({ authToken: 'invalid-auth', ct0: 'invalid-ct0' }), reason: '更新 X bird CLI 用户凭据' };
+    const signed = await preview(test, '/api/governance/resources/credentials/cred-1/rotate/preview', command);
+    const response = await test.request('/api/governance/resources/credentials/cred-1/rotate', json({
+      ...command, previewId: signed.previewId, baselineDigest: signed.baselineDigest, expiresAt: signed.expiresAt,
+    }));
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({ error: 'Credential validation failed', code: 'CREDENTIAL_AUTHENTICATION_FAILED' });
+    expect(health).toHaveBeenCalledWith('x', command.secret);
+    expect(rotateSecret).not.toHaveBeenCalled();
+    expect(completeRotation).not.toHaveBeenCalled();
+  });
   it('阿里云跨地域跨账号 rotation 原子持久化新 scopeSummary', async () => {
     const personal = credential({
       connectorId: 'aliyun', kind: 'personal_grant', ownerUserId: 'admin-1', custodianUserId: undefined,

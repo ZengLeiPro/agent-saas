@@ -358,6 +358,11 @@ ARG SERVER_GIT_PACKAGE_VERSION=2.49.1-r0
 RUN apk add --no-cache "git=${SERVER_GIT_PACKAGE_VERSION}" \
     && git --version
 
+# X 凭据保存前由服务端运行 bird whoami 做端到端验证；版本须与 Sandbox 保持一致。
+RUN npm install -g @steipete/bird@0.8.0 \
+    && command -v bird \
+    && bird --version
+
 COPY shared ./shared
 COPY server ./server
 COPY --from=web-build /app/web/dist ./web/dist

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reason": "ACS SNAT 多网段迁移需同时声明旧变量空值 tombstone 与新变量",
-  "updatedAt": "2026-08-23",
+  "reason": "阶段 A Release Manifest 本地不可变存储需要显式目录变量",
+  "updatedAt": "2026-08-25",
   "domains": {
     "server": {
       "budget": 48,
@@ -139,8 +139,9 @@
       ]
     },
     "deployment/scripts": {
-      "budget": 24,
+      "budget": 25,
       "names": [
+        "AGENT_SAAS_RELEASE_MANIFEST_DIR",
         "AGENT_TRANSCRIPTS_ROOT",
         "CLIENT_DAEMON_AUTH_TOKEN",
         "CLIENT_DAEMON_HAND_ID",

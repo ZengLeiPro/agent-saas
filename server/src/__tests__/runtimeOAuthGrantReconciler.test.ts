@@ -48,6 +48,22 @@ describe('OAuth Grant durable revocation reconciler', () => {
     });
   });
 
+  it('旧连接 metadata 缺 scope 时使用 Vault 恢复范围构造 Grant 投影', () => {
+    const projection = buildGoogleWorkspaceOAuthGrantProjection({
+      get: vi.fn().mockReturnValue({
+        status: 'connected', username: 'alice', userId: 'user-1', tenantId: 'tenant-a',
+        connectedAt: '2026-08-24T00:00:00.000Z', updatedAt: '2026-08-24T00:00:00.000Z',
+        metadata: { credentialOwnerId: 'user-1' },
+      }),
+    } as never, { userId: 'user-1', username: 'alice', tenantId: 'tenant-a' }, [
+      'openid', 'https://www.googleapis.com/auth/drive.readonly',
+    ]);
+
+    expect(projection?.scopeSummary).toEqual([
+      'https://www.googleapis.com/auth/drive.readonly', 'openid',
+    ]);
+  });
+
   it('provider 撤销失败后保持本地阻断并进入退避重试', async () => {
     const test = rig(baseGrant, { providerFails: true });
     await reconcileOAuthGrantRevocations(test.runtime);

@@ -40,6 +40,7 @@ function channelRig(
   runStore: MemoryRunStore,
   eventStore: { list: FileEventStore['list']; append: FileEventStore['append'] },
   activations: string[],
+  activationDispatches: Record<string, unknown>[] = [],
 ): { channel: WebChannel; ws: FakeWebSocket } {
   const channel = new WebChannel({
     agentCwd: tmp,
@@ -51,6 +52,7 @@ function channelRig(
       sessionCatalog: new FileSessionCatalog({ agentCwd: tmp }),
       scheduler: {
         activateCreatedRun: async (runId: string, claim: Record<string, unknown>, metadataPatch?: Record<string, unknown>) => {
+          activationDispatches.push(metadataPatch ?? {});
           const activated = await runStore.activatePersistedInteractionResume(runId, claim, metadataPatch);
           if (activated) activations.push(runId);
           return activated;
@@ -248,12 +250,59 @@ describe('TASK-200 staged interaction lifecycle', () => {
       resumeInteraction: { interactionId: 'interaction-staged', response: { answers: { q: 'stale' } } },
     } });
     const activations: string[] = [];
-    const { channel, ws } = channelRig(tmp, runs, { list: store.list.bind(store), append: store.append.bind(store) }, activations);
+    const activationDispatches: Record<string, unknown>[] = [];
+    const { channel, ws } = channelRig(
+      tmp, runs, { list: store.list.bind(store), append: store.append.bind(store) }, activations, activationDispatches,
+    );
 
     await (channel as any).resolveInteraction(wsClient(ws, USER), 'interaction-staged', { answers: { q: 'new' } }, sessionId);
     expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'interaction-staged' });
     expect(activations).toEqual(['run-staged']);
     expect((await store.list(TENANT, sessionId)).filter((event) => event.type === 'interaction_resolved')).toHaveLength(1);
     expect((await runs.get('run-staged'))?.metadata?.resumeInteraction).toEqual({ interactionId: 'interaction-staged', response: { answers: { q: 'yes' } } });
+    expect(activationDispatches).toEqual([
+      { resumeInteraction: { interactionId: 'interaction-staged', response: { answers: { q: 'yes' } } } },
+    ]);
+  });
+
+  it('Approval durable resolution overrides a conflicting staged claim for activation dispatch', async () => {
+    const { sessionId, tmp, store } = await seed();
+    const approvalId = 'approval-canonical';
+    await store.append({
+      type: 'assistant_tool_calls', sessionId, runId: 'run-staged', content: '',
+      toolCalls: [{ id: 'call-approval', name: 'Shell', arguments: '{"command":"rm -rf /"}' }],
+    } as any, { tenantId: TENANT });
+    await store.append({
+      type: 'approval_requested', sessionId, runId: 'run-staged', approvalId, toolCallId: 'call-approval',
+      toolId: 'Shell', toolName: 'Shell', input: { command: 'rm -rf /' },
+    } as any, { tenantId: TENANT });
+    await store.append({
+      type: 'interaction_resolved', sessionId, runId: 'run-staged', toolCallId: 'call-approval',
+      interactionId: approvalId, interactionType: 'approval', userId: USER.sub, response: { allow: false },
+    }, { tenantId: TENANT });
+    const runs = new MemoryRunStore();
+    await runs.upsertPending({ runId: 'run-staged', sessionId, userId: USER.sub, metadata: {
+      schedulerState: 'staged',
+      persistedInteractionResumeClaim: {
+        sessionId, interactionId: approvalId, interactionType: 'approval', claimId: 'crashed-approval-claim', claimedAt: new Date().toISOString(),
+      },
+      resumeApproval: { approvalId, response: { allow: true } },
+    } });
+    const append = vi.fn(store.append.bind(store));
+    const activations: string[] = [];
+    const activationDispatches: Record<string, unknown>[] = [];
+    const { channel, ws } = channelRig(tmp, runs, { list: store.list.bind(store), append }, activations, activationDispatches);
+
+    await (channel as any).resolveInteraction(wsClient(ws, USER), approvalId, { allow: true }, sessionId);
+
+    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: approvalId });
+    const canonical = (await store.list(TENANT, sessionId)).filter((event) => (
+      event.type === 'interaction_resolved' && event.interactionId === approvalId
+    ));
+    expect(canonical).toEqual([expect.objectContaining({ response: { allow: false } })]);
+    expect(append).not.toHaveBeenCalled();
+    expect((await runs.get('run-staged'))?.metadata?.resumeApproval).toEqual({ approvalId, response: { allow: false } });
+    expect(activations).toEqual(['run-staged']);
+    expect(activationDispatches).toEqual([{ resumeApproval: { approvalId, response: { allow: false } } }]);
   });
 });

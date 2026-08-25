@@ -29,7 +29,7 @@ function config(overrides: Record<string, unknown> = {}): AppConfig {
     server: {},
     cron: { enabled: false },
     runtimeEventStore: { backend: 'pg', connectionString: 'postgresql://staging@staging-db.internal/runtime' },
-    egress: { server: { enabled: true, proxyUrl: 'http://proxy.internal', matchDomains: ['api.example.test'], bypassDomains: [], timeoutMs: 20_000, failOpen: false }, sandbox: { enabled: false, proxyUrl: '', noProxy: [] }, packageMirrors: { enabled: false, pipIndexUrl: '', pipTrustedHost: '', npmRegistry: '' } },
+    egress: { server: { enabled: true, proxyUrl: 'http://proxy.internal', matchDomains: [], bypassDomains: [], timeoutMs: 20_000, failOpen: false }, sandbox: { enabled: false, proxyUrl: '', noProxy: [] }, packageMirrors: { enabled: false, pipIndexUrl: '', pipTrustedHost: '', npmRegistry: '' } },
     tenantRemoteHands: { hands: [] },
     ...overrides,
   } as AppConfig;
@@ -74,9 +74,11 @@ describe('assertRuntimeEnvironmentSafety', () => {
     rmSync(productionRoot, { recursive: true, force: true });
   });
 
-  it('fails closed for a production database reference or unsafe egress', () => {
+  it('fails closed for a production database reference or egress that permits direct traffic', () => {
     expect(() => assertRuntimeEnvironmentSafety(config({ runtimeEventStore: { backend: 'pg', connectionString: 'postgresql://app@db.prod.internal/runtime' } }), stagingEnv)).toThrow(/database host|production marker/);
     expect(() => assertRuntimeEnvironmentSafety(config({ egress: undefined }), stagingEnv)).toThrow(/egress/);
+    expect(() => assertRuntimeEnvironmentSafety(config({ egress: { ...config().egress, server: { ...config().egress!.server, matchDomains: ['api.example.test'] } } }), stagingEnv)).toThrow(/proxy all domains/);
+    expect(() => assertRuntimeEnvironmentSafety(config({ egress: { ...config().egress, server: { ...config().egress!.server, bypassDomains: ['localhost'] } } }), stagingEnv)).toThrow(/proxy all domains/);
   });
 
   it('does not apply staging-specific assertions to production', () => {

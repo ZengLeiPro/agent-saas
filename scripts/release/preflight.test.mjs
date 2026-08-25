@@ -97,6 +97,14 @@ test('preflight fails closed for conflicting production topology or component ba
   assert.match(stale.blockingReasons.join('\n'), /does not match the supplied baseline/u);
 });
 
+test('runtime identity rejects placeholder topology fields', () => {
+  const identity = productionIdentity({ topology: { ...productionIdentity().topology, api: { unit: 'blue', releaseSymlink: 'blue', pidfile: 'blue', readyfile: 'blue' } } });
+  const result = readRuntimeIdentity({ identityPath: './production.json', readFileSync: () => JSON.stringify(identity) });
+  assert.equal(result.ok, false);
+  assert.match(result.blockingReasons.join('\n'), /colored systemd unit/u);
+  assert.match(result.blockingReasons.join('\n'), /absolute path/u);
+});
+
 test('runtime identity accepts only local, complete production JSON', () => {
   const valid = readRuntimeIdentity({
     identityPath: './production.json',

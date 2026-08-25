@@ -52,11 +52,11 @@ test('unknown paths fail closed while retaining mapped components', () => {
   ]);
 });
 
-test('reads changed files with git diff --name-only through an injectable executor', () => {
+test('reads changed paths and retains both sides of cross-component renames', () => {
   const calls = [];
   const execFileSync = (...args) => {
     calls.push(args);
-    return 'web/src/App.tsx\nacs-orchestrator/src/index.ts\n';
+    return 'M\tweb/src/App.tsx\nR100\tweb/src/old.ts\tserver/src/new.ts\n';
   };
 
   const paths = readChangedPaths({
@@ -66,10 +66,10 @@ test('reads changed files with git diff --name-only through an injectable execut
     execFileSync,
   });
 
-  assert.deepEqual(paths, ['web/src/App.tsx', 'acs-orchestrator/src/index.ts']);
+  assert.deepEqual(paths, ['web/src/App.tsx', 'web/src/old.ts', 'server/src/new.ts']);
   assert.deepEqual(calls, [[
     'git',
-    ['diff', '--name-only', `${SHA_A}...${SHA_B}`],
+    ['diff', '--name-status', '--find-renames', '--find-copies', `${SHA_A}...${SHA_B}`],
     { cwd: '/repo', encoding: 'utf8' },
   ]]);
 });

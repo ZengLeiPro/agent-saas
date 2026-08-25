@@ -483,7 +483,7 @@ export function BusinessStepSectionView({
   onOpenChange?: (open: boolean) => void;
   showOutcomeWhenCollapsed?: boolean;
 }) {
-  const { start, terminal, isActive } = section;
+  const { start, terminal, isActive, resumePending } = section;
   const terminalMeta = terminal ? TERMINAL_META[terminal.kind] : undefined;
   const todo = terminal?.todo ?? start.todo;
   const processCount = countSectionProcessItems(section);
@@ -533,6 +533,8 @@ export function BusinessStepSectionView({
           <terminalMeta.Icon className={activityStatusIconClass(terminalMeta.tone, "mt-1 size-4 shrink-0")} />
         ) : isActive ? (
           <Loader2 className={activityStatusIconClass("active", "mt-1 size-4 shrink-0 animate-spin")} />
+        ) : resumePending ? (
+          <Clock3 className="mt-1 size-4 shrink-0 text-muted-foreground/70" />
         ) : (
           <Play className="mt-1 size-4 shrink-0 text-muted-foreground/60" />
         )}
@@ -551,6 +553,9 @@ export function BusinessStepSectionView({
             {titleLabel}
           </span>
           <StepBadge index={terminal?.stepIndex ?? start.stepIndex} count={terminal?.stepCount ?? start.stepCount} />
+          {!terminal && !isActive && resumePending ? (
+            <span className="text-2xs text-muted-foreground">已暂停，待恢复</span>
+          ) : null}
           {terminalMeta && section.processAnomaly && sectionOpen ? (
             // 跨层矛盾角标：平台事实（区间内同类操作最后一次仍失败）压过模型
             // 干净完成叙事。浅色低重量，不改写模型文本。

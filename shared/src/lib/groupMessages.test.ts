@@ -274,6 +274,7 @@ describe('groupMessages sectioning（章节化）', () => {
     const section = result[2] as BusinessStepSection;
     expect(section.start).toMatchObject({ kind: 'start', todo: { id: 'verify' } });
     expect(section.terminal).toMatchObject({ kind: 'complete', todo: { id: 'verify' } });
+    expect(section.resumePending).toBe(true);
     expect(section.items).toHaveLength(2);
     expect((section.items[0] as ActivityGroup).items.map(item => item.id)).toEqual(['read-before']);
     expect((section.items[1] as ActivityGroup).items.map(item => item.id)).toEqual(['read-after']);

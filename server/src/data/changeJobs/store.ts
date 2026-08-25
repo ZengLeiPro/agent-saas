@@ -267,7 +267,7 @@ export class PgGovernanceChangeJobStore {
     const result = await this.options.pool.query(`
       UPDATE ${this.domainsTable} d
       SET status=$4,total_count=$5,completed_count=$6,failed_count=$7,last_error_code=$8,
-          unresolved_items_json=$9::jsonb,revision=revision+1,updated_at=NOW()
+          unresolved_items_json=$9::jsonb,revision=d.revision+1,updated_at=NOW()
       FROM ${this.jobsTable} j
       WHERE d.job_id=$2 AND d.domain=$3 AND d.revision=$10
         AND j.job_id=d.job_id AND j.tenant_id=$1 AND j.status='running' AND j.updated_by=$11

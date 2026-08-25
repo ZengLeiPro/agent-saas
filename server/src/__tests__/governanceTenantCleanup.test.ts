@@ -52,7 +52,7 @@ describe('GovernanceTenantCleanup', () => {
     expect(agentsIndex).toBeGreaterThan(accountsIndex);
   });
 
-  it('credentials 先逐个撤销 Secret，再把治理记录置为 revoked', async () => {
+  it('credentials 先逐个撤销 Secret，再删除提交与凭据记录', async () => {
     const revokeSecret = vi.fn().mockResolvedValue(undefined);
     const pool = {
       connect: vi.fn(),
@@ -71,6 +71,7 @@ describe('GovernanceTenantCleanup', () => {
     await cleanup.execute('acme', 'credentials');
     expect(revokeSecret).toHaveBeenNthCalledWith(1, 's1', expect.objectContaining({ userId: 'u1', tenantId: 'acme' }));
     expect(revokeSecret).toHaveBeenNthCalledWith(2, 's2', expect.objectContaining({ tenantId: 'acme' }));
-    expect(String(pool.query.mock.calls[1][0])).toContain("SET status='revoked'");
+    expect(String(pool.query.mock.calls[1][0])).toContain('DELETE FROM test_credential_commits');
+    expect(String(pool.query.mock.calls[2][0])).toContain('DELETE FROM test_credentials');
   });
 });

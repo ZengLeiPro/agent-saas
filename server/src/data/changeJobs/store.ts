@@ -299,7 +299,7 @@ export class PgGovernanceChangeJobStore {
     `, [
       input.tenantId, input.jobId, input.domain, input.status, input.totalCount,
       input.completedCount, input.failedCount, input.errorCode ?? null,
-      JSON.stringify(input.unresolvedItems ?? []), JSON.stringify(input.receipt ?? null), input.expectedRevision, input.workerId,
+      JSON.stringify(input.unresolvedItems ?? []), input.receipt === undefined ? null : JSON.stringify(input.receipt), input.expectedRevision, input.workerId,
     ]);
     if (!result.rows[0]) throw new GovernanceChangeJobInvariantError('CHANGE_JOB_VERSION_CONFLICT');
     return rowToDomain(result.rows[0]);

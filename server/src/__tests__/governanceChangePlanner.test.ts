@@ -59,9 +59,9 @@ describe('GovernanceChangePlanner', () => {
       .rejects.toThrow('CREDENTIAL_NOT_FOUND');
   });
 
-  it('Tenant 删除固定为先冻结、末删记录的 9 阶段可重试 Change Job', async () => {
+  it('Tenant 删除固定为先冻结、证明核验、末删记录的 10 阶段可重试 Change Job', async () => {
     const { planner } = buildPlanner();
-    expect(TENANT_DELETE_DOMAINS).toHaveLength(9);
+    expect(TENANT_DELETE_DOMAINS).toHaveLength(10);
     expect(TENANT_DELETE_DOMAINS[0]).toBe('tenant_freeze');
     expect(TENANT_DELETE_DOMAINS.at(-1)).toBe('tenant_record');
     await expect(planner.createTenantDeletion({

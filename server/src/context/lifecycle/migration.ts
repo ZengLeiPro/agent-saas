@@ -22,7 +22,7 @@ export function buildContextRetentionMigrationSql(tablePrefix?: string): string[
       max_audit_attempts INTEGER NOT NULL DEFAULT 5 CHECK (max_audit_attempts >= 1),
       audit_lease_owner UUID,
       audit_lease_expires_at TIMESTAMPTZ,
-      audit_next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      audit_next_attempt_at TIMESTAMPTZ DEFAULT NOW(),
       last_audit_error TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -42,7 +42,7 @@ export function buildContextRetentionRetryMigrationSql(tablePrefix?: string): st
   return [
     `ALTER TABLE ${receipts} ADD COLUMN IF NOT EXISTS max_audit_attempts INTEGER NOT NULL DEFAULT 5 CHECK (max_audit_attempts >= 1)`,
     `ALTER TABLE ${receipts} ADD COLUMN IF NOT EXISTS audit_lease_owner UUID`,
-    `ALTER TABLE ${receipts} ADD COLUMN IF NOT EXISTS audit_next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    `ALTER TABLE ${receipts} ADD COLUMN IF NOT EXISTS audit_next_attempt_at TIMESTAMPTZ DEFAULT NOW()`,
     `UPDATE ${receipts} SET audit_next_attempt_at=COALESCE(audit_next_attempt_at,created_at,NOW())
       WHERE audit_status IN ('pending','retry_wait')`,
     `DO $$ DECLARE constraint_name TEXT; BEGIN

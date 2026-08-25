@@ -1369,14 +1369,16 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       sessionRef.current.refreshCurrentSession();
     }
   }, [clearWatchdog, dispatchConnection, patchSessionRuntime]);
-
   const reconcileLastRunState = useCallback(async (sessionId: string, lastRunState: LastRunState) => {
     if (!isTerminalRuntimeStatus(lastRunState.status)) return;
-    if (sessionId !== immediateSessionIdRef.current) return patchSessionRuntime(sessionId, {
-      status: lastRunState.status,
-      ...(lastRunState.runId ? { runId: lastRunState.runId } : {}),
-      attached: false,
-    });
+    if (sessionId !== immediateSessionIdRef.current) {
+      patchSessionRuntime(sessionId, {
+        status: lastRunState.status,
+        ...(lastRunState.runId ? { runId: lastRunState.runId } : {}),
+        attached: false,
+      });
+    }
+    if (sessionId !== immediateSessionIdRef.current) return;
 
     try {
       const res = await authFetch(`/api/sessions/${sessionId}/stream-status`);
@@ -2683,12 +2685,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
     const httpResultStale = httpRequestGeneration !== streamBindingGenerationRef.current;
     if (!httpResultStale) {
-      // HTTP 探活把"权威 runId / streamId"补回来（即使 Map 没有也能恢复）。
-      // patchSessionRuntime 会同步写 refs；恢复出不同 binding 时必须先切代，挡住旧 resume 响应。
-      if (httpActive !== false) {
-        advanceStreamBindingGenerationIfChanged({ streamId: httpStreamId, runId: httpRunId });
-      }
-      // HTTP inactive 不能推翻仍未收到终态的 WS-confirmed runtime；继续 resume，等 WS 权威响应收口。
+      // HTTP 探活补回权威 runId / streamId；恢复不同 binding 时先切代，挡住旧 resume 响应。
+      if (httpActive !== false) advanceStreamBindingGenerationIfChanged({ streamId: httpStreamId, runId: httpRunId });
+      // HTTP inactive 不推翻未收到终态的 WS-confirmed runtime；继续 resume，等 WS 权威响应收口。
       const existingRuntime = activeRunsBySession.current.get(targetSessionId);
       if (httpActive === false && !(existingRuntime?.source === 'ws' && isActiveRuntimeStatus(existingRuntime.status))) {
         patchSessionRuntime(targetSessionId, { status: 'idle', streamId: null, runId: null, attached: false });

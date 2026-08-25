@@ -230,7 +230,7 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
     expect(Number(columns.rows[0]?.count)).toBe(0);
     await new PgGovernanceMigrationRunner(pool, v22Prefix).run();
     const retried = await pool.query<{ version: number }>(`SELECT MAX(version) AS version FROM ${v22Prefix}_governance_schema_versions`);
-    expect(Number(retried.rows[0]?.version)).toBe(26);
+    expect(Number(retried.rows[0]?.version)).toBe(27);
   }, 30_000);
 
   it('V18 遗留 org_memory 空元数据可升级，V23 已标记且旧 ledger 存在时 V24 仍幂等', async () => {
@@ -446,7 +446,7 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
     const retried = await pool.query<{ version: number }>(
       `SELECT MAX(version) AS version FROM ${v18Prefix}_governance_schema_versions`,
     );
-    expect(Number(retried.rows[0]?.version)).toBe(26);
+    expect(Number(retried.rows[0]?.version)).toBe(27);
     const unresolvedAfter = await pool.query<{ is_nullable: string; column_default: string }>(`
       SELECT is_nullable,column_default FROM information_schema.columns
       WHERE table_schema=current_schema() AND table_name=$1 AND column_name='unresolved_items_json'

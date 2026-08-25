@@ -154,6 +154,8 @@ export type SessionRuntime = {
   runId?: string;
   lastEventId?: number;
   lastEventCursor?: string | null;
+  /** 最近一次活跃态的权威来源；列表快照不得伪装为 WS 生命周期事件。 */
+  source?: 'ws' | 'snapshot';
   attached: boolean;
 };
 

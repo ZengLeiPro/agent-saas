@@ -180,4 +180,33 @@ describe('DWS auth keepalive', () => {
     expect(result).toMatchObject({ authenticated: true, refreshTokenValid: true, refreshed: true });
     expect(store.failCheck).not.toHaveBeenCalled();
   });
+
+  it('授权完成后可在未启动定时扫描的 API 进程执行一次首次检测', async () => {
+    const claimed = connection();
+    const store: DwsConnectionStore = {
+      syncProfiles: vi.fn(async () => undefined),
+      claimDue: vi.fn().mockResolvedValueOnce(claimed).mockResolvedValue(null),
+      completeCheck: vi.fn(async () => undefined),
+      failCheck: vi.fn(async () => undefined),
+      releaseClaim: vi.fn(async () => undefined),
+      listForUser: vi.fn(async () => []),
+    };
+    const service = new DwsAuthKeepaliveService({
+      agentCwd: '/mnt/agent-saas/workspaces',
+      userStore: { listAll: () => [], findById: () => user() as never },
+      connectionStore: store,
+      runner: { check: vi.fn(async () => ({ authenticated: true, tokenValid: true, refreshTokenValid: true, refreshed: false })) },
+      maxChecksPerRun: 1,
+    });
+
+    await service.runOnce(NOW, { allowStopped: true });
+
+    expect(store.claimDue).toHaveBeenCalledOnce();
+    expect(store.completeCheck).toHaveBeenCalledWith(
+      claimed,
+      expect.any(String),
+      expect.objectContaining({ authenticated: true, refreshTokenValid: true }),
+      NOW,
+    );
+  });
 });

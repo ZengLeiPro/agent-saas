@@ -107,6 +107,36 @@ describe('Google Workspace native connector', () => {
     expect(JSON.stringify(connectionStore.get('alice', 'google-workspace'))).not.toContain('refresh-1');
   });
 
+  it('从旧连接的 Vault token bundle 恢复授权范围', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'google-workspace-'));
+    roots.push(root);
+    const connectionStore = new ConnectorConnectionStore(join(root, 'connections.json'));
+    const vault = new InMemorySecretVault();
+    const secret = await vault.putSecret(
+      'user-1',
+      'connector',
+      JSON.stringify({
+        accessToken: 'legacy-access',
+        refreshToken: 'legacy-refresh',
+        expiresAt: Date.now() + 3_600_000,
+        scope: 'openid https://www.googleapis.com/auth/drive.readonly',
+      }),
+      { actor: 'connector_proxy', userId: 'user-1', tenantId: 'tenant-a', scopes: ['secret:connector:write'] },
+    );
+    await connectionStore.connect({
+      username: 'alice', userId: 'user-1', tenantId: 'tenant-a', connectorId: 'google-workspace',
+      credentialRefs: { oauth: secret.id }, metadata: { credentialOwnerId: 'user-1' },
+    });
+    const service = new GoogleWorkspaceOAuthService({
+      clientId: 'client-id', clientSecret: 'client-secret', connectionStore, vault,
+    });
+
+    await expect(service.grantedScopes('user-1', 'alice', 'tenant-a')).resolves.toEqual([
+      'https://www.googleapis.com/auth/drive.readonly',
+      'openid',
+    ]);
+  });
+
   it('keeps the local credential when Google provider revocation fails so deletion can retry safely', async () => {
     const root = mkdtempSync(join(tmpdir(), 'google-workspace-'));
     roots.push(root);

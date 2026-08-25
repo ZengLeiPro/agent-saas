@@ -83,12 +83,11 @@ import {
   resendQueuedEntry, restoreQueuedEntryForEdit,
 } from "./useChatAppStateQueueConsistency";
 import { useChatNotificationState, useChatStreamCorrelation } from "./useChatRuntimeState";
-
+import { useInteractionResponseWaiters } from "./useInteractionResponseWaiters";
 export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const { user } = useAuth();
   // 授权模式对所有用户生效（2026-07-02 起），用户在账户设置中自行切换。
   const authorizationModeEnabled = user?.preferences?.authorizationModeEnabled === true;
-
   // 从 URL 解析初始状态（仅执行一次）
   const [urlState] = useState(() => parseUrl());
 
@@ -329,6 +328,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // ---- Sub-hooks ----
   const msg = useMessages();
+  const { respondToInteraction, settleInteractionResponse } = useInteractionResponseWaiters();
   const uploadSessionIdRef = useRef<string | null>(urlState.sessionId); const getUploadSessionId = useCallback(() => uploadSessionIdRef.current, []);
   const fileUpload = useFileUpload(activeTab, getUploadSessionId);
   const { connectionState, dispatchConnection } = useConnectionState();
@@ -467,7 +467,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     );
     const existing = activeRunsBySession.current.get(sid) ?? { status: 'idle' as const, attached: false };
     const next: SessionRuntime = { ...existing };
-    if (patch.status !== undefined) next.status = patch.status;
+    if (patch.status !== undefined) next.status = patch.status; if (patch.source !== undefined) next.source = patch.source;
     if (patch.attached !== undefined) next.attached = patch.attached;
     if (patch.streamId !== undefined) {
       if (patch.streamId === null) delete next.streamId;
@@ -523,12 +523,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     const requestedVersions = new Map(
       sessionIds.map((sessionId) => [sessionId, runtimeVersionBySessionRef.current.get(sessionId) ?? 0]),
     );
-    if (sessionIds.length === 0) {
-      setRunningSessionIds(new Set());
-      setSessionRuntimeStatuses(new Map());
-      return;
-    }
-
+    if (sessionIds.length === 0) { setRunningSessionIds(new Set()); setSessionRuntimeStatuses(new Map()); return; }
     try {
       const batches: string[][] = [];
       for (let offset = 0; offset < sessionIds.length; offset += 100) {
@@ -557,6 +552,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           snapshotStatus.set(item.sessionId, item.active);
           if (!item.active) {
             const existing = activeRunsBySession.current.get(item.sessionId);
+            // 快照滞后时，不得清掉 WS 已确认但尚未收到终态的会话。
+            if (existing?.source === 'ws' && isActiveRuntimeStatus(existing.status)) {
+              snapshotStatus.set(item.sessionId, true); snapshotRuntimeStatuses.set(item.sessionId, existing.status as SessionRuntimeStatus); continue;
+            }
             if (existing?.lastEventCursor) {
               activeRunsBySession.current.set(item.sessionId, {
                 status: 'idle',
@@ -575,7 +574,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           snapshotRuntimeStatuses.set(item.sessionId, runtimeStatus);
           activeRunsBySession.current.set(item.sessionId, {
             ...(existing ?? { attached: false }),
-            status: runtimeStatus,
+            status: runtimeStatus, source: existing?.source === 'ws' && (!item.runId || !existing.runId || item.runId === existing.runId) && (!item.streamId || !existing.streamId || item.streamId === existing.streamId) ? 'ws' : 'snapshot',
             streamId: item.streamId ?? existing?.streamId,
             runId: item.runId ?? existing?.runId,
             attached: existing?.attached ?? false,
@@ -1512,7 +1511,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       // 无 sessionId 的流事件则归属当前已 attach 的会话。
       const eventSessionId = 'sessionId' in data && typeof data.sessionId === 'string'
         ? data.sessionId
-        : wsLatestSessionIdRef.current.value ?? sessionIdRef.current;
+        : wsLatestSessionIdRef.current?.value ?? sessionIdRef.current;
       if (envelope.eventId != null && eventSessionId) {
         const existing = activeRunsBySession.current.get(eventSessionId);
         activeRunsBySession.current.set(eventSessionId, {
@@ -1534,8 +1533,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         }
       }
 
-      // 忽略控制消息
+      // 表单回答必须以服务端回执为准：此前这里直接忽略回执，而提交端会先乐观
+      // 标记“已回答/排队”。当服务端拒绝或恢复失败时，UI 就会永久伪装成排队。
       if (data.type === 'respond_ok' || data.type === 'respond_error') {
+        settleInteractionResponse(data);
         return;
       }
 
@@ -1568,7 +1569,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           a.sessionId,
           a.active
             ? {
-                status: isActiveRuntimeStatus(a.status) ? a.status as SessionRuntimeStatus : 'running',
+                status: isActiveRuntimeStatus(a.status) ? a.status as SessionRuntimeStatus : 'running', source: 'ws',
                 ...(a.streamId ? { streamId: a.streamId } : {}),
                 ...(a.runId ? { runId: a.runId } : {}),
                 attached: true,
@@ -1761,7 +1762,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
         // ① 总是更新 Map（per-session 持久态,不论是否当前会话）
         patchSessionRuntime(d.sessionId, {
-          status: d.status,
+          status: d.status, source: 'ws',
           ...(d.streamId ? { streamId: d.streamId } : {}),
           ...(d.runId ? { runId: d.runId } : {}),
           attached: isActiveRuntimeStatus(d.status),
@@ -1858,7 +1859,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           : false;
         // 总是更新 Map（per-session 持久态）,即使不是当前会话。当前会话的标识已先切代。
         patchSessionRuntime(data.sessionId, {
-          status: 'running',
+          status: 'running', source: 'ws',
           streamId: data.streamId,
           ...(data.runId ? { runId: data.runId } : {}),
           attached: false, // 下方 resume 前尚未真正订阅这条流
@@ -2048,7 +2049,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
       if ((data.type === 'permission_request' || data.type === 'ask_user') && sessionIdRef.current) {
         patchSessionRuntime(sessionIdRef.current, {
-          status: data.type === 'permission_request' ? 'waiting_approval' : 'waiting_user',
+          status: data.type === 'permission_request' ? 'waiting_approval' : 'waiting_user', source: 'ws',
           attached: true,
         });
       }
@@ -2933,23 +2934,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   }, [setInput, selectSessionWithUrl]);
 
   // ---- Interaction responses (via WS) ----
-  const respondToInteraction = useCallback(async (
-    interactionId: string,
-    response: Record<string, unknown>,
-  ) => {
-    await wsClient.ensureConnectedSend({
-      action: 'respond',
-      interactionId,
-      sessionId: sessionIdRef.current,
-      ...response,
-    });
-  }, []);
-
   const handlePermissionResponse = useCallback(async (
     interactionId: string,
     allow: boolean,
   ) => {
-    await respondToInteraction(interactionId, { allow, message: allow ? undefined : "User denied" });
+    try { await respondToInteraction(interactionId, sessionIdRef.current, { allow, message: allow ? undefined : "User denied" }); } catch (error) { pushNotification({ key: `interaction_response_failed:${interactionId}`, text: error instanceof Error ? error.message : '提交审批失败，请重试', priority: 'high', timeoutMs: 8_000 }); return; }
 
     const idx = msg.messagesRef.current.findIndex(
       (m) => m.type === "permission_request" && m.interactionId === interactionId
@@ -2969,7 +2958,17 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     interactionId: string,
     answers: AskUserAnswers,
   ) => {
-    await respondToInteraction(interactionId, { answers });
+    try {
+      await respondToInteraction(interactionId, sessionIdRef.current, { answers });
+    } catch (error) {
+      pushNotification({
+        key: `interaction_response_failed:${interactionId}`,
+        text: error instanceof Error ? error.message : '提交回答失败，请重试',
+        priority: 'high',
+        timeoutMs: 8_000,
+      });
+      return;
+    }
 
     const idx = msg.messagesRef.current.findIndex(
       (m) => m.type === "ask_user" && m.interactionId === interactionId
@@ -2983,7 +2982,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
     upsertRuntimeStatusMessage(msg, 'queued');
     markSessionRead(sessionIdRef.current);
-  }, [respondToInteraction, msg.messagesRef, msg.updateMessageAt, markSessionRead]);
+  }, [respondToInteraction, msg.messagesRef, msg.updateMessageAt, markSessionRead, pushNotification]);
 
   // ---- 会话切换时恢复模型选择 ----
   // 仅在 sessionId 实际切换时才重置/恢复，避免 sessions 列表刷新（WS 重连、

@@ -49,12 +49,12 @@ export const TASKBOARD_RESOURCE_ACTIONS = [
   'comment.delete',
   'execution.list',
   'execution.context',
-  'execution.comment',
+
   'execution.pull_request.set',
   'execution.pull_request.inspect',
   'execution.pull_request.log',
   'execution.review_subject.record',
-  'execution.transition',
+  'execution.finish',
   'integration.create',
   'integration.cancel',
   'integration.sources',
@@ -344,17 +344,6 @@ export async function invokeTaskboardAction(
         },
       }) as unknown as Record<string, unknown>;
     }
-    case 'execution.comment': {
-      if (!scope.execution || !service.createExecutionCommentV2) {
-        throw new Error('仅当前任务 Execution 可以写入 Agent 进展评论');
-      }
-      const comment = await service.createExecutionCommentV2(
-        identity,
-        scope.execution.execution.runId,
-        requireField(input.body, 'body'),
-      );
-      return { created: true, comment };
-    }
     case 'execution.pull_request.set': {
       if (!scope.execution || !service.attachExecutionPullRequestV2) {
         throw new Error('仅当前 work Execution 可以登记 pull request');
@@ -396,13 +385,16 @@ export async function invokeTaskboardAction(
       );
       return { updated: true, task };
     }
-    case 'execution.transition': {
-      if (!scope.execution || !service.transitionExecutionV2) {
-        throw new Error('仅当前任务 Execution 可以推进任务状态');
+    case 'execution.finish': {
+      if (!scope.execution || !service.finishExecutionV2) {
+        throw new Error('仅当前任务 Execution 可以完成当前阶段');
       }
-      if (!input.status) throw new Error('execution.transition 需要 status');
-      const task = await service.transitionExecutionV2(identity, scope.execution.execution.runId, { status: input.status });
-      return { transitioned: true, task };
+      if (!input.status) throw new Error('execution.finish 需要 status');
+      const task = await service.finishExecutionV2(identity, scope.execution.execution.runId, {
+        status: input.status,
+        body: requireField(input.body, 'body'),
+      });
+      return { finished: true, task };
     }
     case 'integration.create': {
       if (!service.createIntegrationBatch) throw new Error('任务看板集成批次服务未启用');
@@ -859,7 +851,7 @@ async function moveLegacyTask(
 ): Promise<Record<string, unknown>> {
   if (execution) {
     if (execution.execution.protocolVersion === 2) {
-      throw new Error('当前 Execution 必须通过 execution.transition 指定下一状态');
+      throw new Error('当前 Execution 必须通过 execution.finish 完成当前阶段');
     }
     const status = input.status;
     const executionStore = options.executionStore?.();

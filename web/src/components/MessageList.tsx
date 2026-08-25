@@ -801,17 +801,21 @@ export const MessageList = memo(function MessageList({
               const systemActions = systemActionIds.size
                 ? sub.items.filter((child) => systemActionIds.has(child.id)).map((child) => renderFlowItem(child))
                 : null;
+              const deliverableItems = sub.items.filter((child) => child.type === 'file_download' && !!child.artifactId);
+              const processItems = deliverableItems.length
+                ? sub.items.filter((child) => child.type !== 'file_download' || !child.artifactId) : sub.items;
+              const deliverables = deliverableItems.map((child) => renderFlowItem(child));
               const sectionOpen = isBusinessStepOpen(sub.id, !!sub.terminal);
               return (
                 <ErrorBoundary key={sub.id} inline>
                   <BusinessStepSectionView
                     section={sub}
                     debugMode={debugMode}
-                    systemActions={systemActions}
+                    systemActions={systemActions} deliverables={deliverables}
                     open={sectionOpen} onOpenChange={(open) => setBusinessStepOpen(sub.id, open)}
                     showOutcomeWhenCollapsed={showBusinessStepOutcomeWhenCollapsed}
                   >
-                    {sub.items.map((child) => renderFlowItem(child))}
+                    {processItems.map((child) => renderFlowItem(child))}
                   </BusinessStepSectionView>
                 </ErrorBoundary>
               );
@@ -830,10 +834,6 @@ export const MessageList = memo(function MessageList({
                 </ErrorBoundary>
               );
             }
-            // 双重保险:此层理论上不该出现 file_download。
-            // - [FILE] 内联(无 artifactId): MessageItem 在 text 内联展开,顶层跳过。
-            // - legacy artifact_created 卡片(有 artifactId): groupIntoBubbles 已独立提到顶层。
-            if (sub.type === 'file_download' && sub.artifactId) return null;
             if (sub.type === 'activity_group') {
               return (
                 <ErrorBoundary key={sub.id} inline>

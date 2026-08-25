@@ -5,11 +5,12 @@ import type { AppRuntime } from './runtime.js';
 export function buildGoogleWorkspaceOAuthGrantProjection(
   connectionStore: Pick<ConnectorConnectionStore, 'get'> | undefined,
   context: { userId: string; username: string; tenantId: string },
+  fallbackScopeSummary: string[] = [],
 ): OAuthGrantProjectionInput | undefined {
   const google = connectionStore?.get(context.username, 'google-workspace');
   const scopeSummary = typeof google?.metadata?.grantedScopes === 'string'
     ? [...new Set(google.metadata.grantedScopes.split(/\s+/).filter(Boolean))].sort()
-    : [];
+    : [...new Set(fallbackScopeSummary)].sort();
   if (google?.status !== 'connected' || google.tenantId !== context.tenantId
     || google.userId !== context.userId || scopeSummary.length === 0) return undefined;
   return {
@@ -90,9 +91,15 @@ export function createOAuthGrantReconciler(runtime: AppRuntime) {
         purpose: 'legacy_mcp_oauth_backfill', scopeSummary: [...connection.grantedScopes],
       });
     }
+    const googleScopes = await runtime.googleWorkspaceOAuthService?.grantedScopes(
+      subjectUserId,
+      user.username,
+      tenantId,
+    ).catch(() => []) ?? [];
     const googleProjection = buildGoogleWorkspaceOAuthGrantProjection(
       runtime.connectorConnectionStore,
       { userId: subjectUserId, username: user.username, tenantId },
+      googleScopes,
     );
     if (googleProjection) {
       projections.push({

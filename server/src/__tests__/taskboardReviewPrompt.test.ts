@@ -18,7 +18,9 @@ describe('taskboard execution writeback prompt', () => {
 
     for (const prompt of [work, review, merge]) {
       expect(prompt).toContain('读取任务看板返回的最新事实和结构化职责约束');
-      expect(prompt).toContain('提交明确、真实且可验证的阶段结果');
+      expect(prompt).toContain('execution.finish');
+      expect(prompt).toContain('明确、真实且可验证的交接评论');
+      expect(prompt).toContain('工作过程中不要写 Agent 进度评论');
       expect(prompt).not.toContain('status=');
       expect(prompt).not.toContain('target=taskboard');
     }
@@ -56,7 +58,8 @@ describe('taskboard execution writeback prompt', () => {
     expect(prompt).not.toContain('用 integration.source.log 读取');
   });
 
-  it('Workflow v3 Integration Work 按持久 Integration Agent 对账和受控合并', () => {
+  it('Workflow v3 Integration Work 按持久 Integration Agent 对账和原生 finish contract 交接', () => {
+
     const integrationWork = context('work');
     integrationWork.task.kind = 'integration';
     integrationWork.task.workflowVersion = 3;
@@ -65,7 +68,9 @@ describe('taskboard execution writeback prompt', () => {
     expect(prompt).toContain('GitHub PR、head 与 CI 为唯一代码事实');
     expect(prompt).toContain('同一 integration branch/PR');
     expect(prompt).toContain('受控 Merge Gateway');
+    expect(prompt).toContain('execution.finish');
     expect(prompt).not.toContain('execution.integration_candidate.push');
     expect(prompt).not.toMatch(/candidate/i);
+
   });
 });

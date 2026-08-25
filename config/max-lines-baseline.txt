@@ -39,7 +39,7 @@ server/src/runtime/rawRuntimeRunDispatch.ts	3240	production
 server/src/runtime/responsesApiAdapter.ts	2007	production
 server/src/runtime/runStore.ts	1413	production
 server/src/runtime/types.ts	1131	production
-server/src/taskboard/store.ts	1104	production
+server/src/taskboard/store.ts	1096	production
 shared/src/lib/wsEventProcessor.test.ts	1122	test
 shared/src/lib/wsEventProcessor.ts	1024	production
 shared/src/schemas/workflowScenario.ts	1025	production
@@ -52,5 +52,5 @@ web/src/components/ModelManager/index.tsx	1366	production
 web/src/components/RuntimeOperationsManager/index.tsx	1219	production
 web/src/components/SettingsCenter/SettingsModal.tsx	1092	production
 web/src/components/TenantManager/index.tsx	1222	production
-web/src/hooks/useChatAppState.ts	3187	production
+web/src/hooks/useChatAppState.ts	3186	production
 web/src/hooks/useSession.ts	1075	production

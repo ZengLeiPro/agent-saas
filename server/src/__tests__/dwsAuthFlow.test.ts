@@ -146,10 +146,11 @@ describe('DWS device authorization flow', () => {
 
     let connected!: () => void;
     const completed = new Promise<void>((resolve) => { connected = resolve; });
+    const events: string[] = [];
     const authStore: DwsAuthSessionStore = {
       createOrReuse: vi.fn(async () => ({ record: session(), created: true })),
       markAwaitingUser: vi.fn(async () => undefined),
-      markConnected: vi.fn(async () => { connected(); }),
+      markConnected: vi.fn(async () => { events.push('marked_connected'); connected(); }),
       markFailed: vi.fn(async () => undefined),
       getLatestForUser: vi.fn(async () => session()),
     };
@@ -161,7 +162,7 @@ describe('DWS device authorization flow', () => {
       releaseClaim: vi.fn(async () => undefined),
       listForUser: vi.fn(async () => []),
     };
-    const onConnected = vi.fn(async () => undefined);
+    const onConnected = vi.fn(async () => { events.push('verified'); });
     const service = new DwsAuthFlowService({
       agentCwd: join(root, 'workspaces'),
       authSessionStore: authStore,
@@ -192,6 +193,43 @@ describe('DWS device authorization flow', () => {
     );
     expect(JSON.stringify(vi.mocked(connectionStore.syncProfiles).mock.calls)).not.toContain('不应进入状态账本');
     await vi.waitFor(() => expect(onConnected).toHaveBeenCalledWith(user()));
+    expect(events).toEqual(['verified', 'marked_connected']);
     expect(authStore.markFailed).not.toHaveBeenCalled();
+  });
+
+  it('检测到上个进程遗留的授权会话时重新发起 device flow', async () => {
+    const interrupted = session();
+    const replacement = { ...session(), sessionId: 'auth-session-2' };
+    const authStore: DwsAuthSessionStore = {
+      createOrReuse: vi.fn()
+        .mockResolvedValueOnce({ record: interrupted, created: false })
+        .mockResolvedValueOnce({ record: replacement, created: true }),
+      markAwaitingUser: vi.fn(async () => undefined),
+      markConnected: vi.fn(async () => undefined),
+      markFailed: vi.fn(async () => undefined),
+      getLatestForUser: vi.fn(async () => replacement),
+    };
+    const service = new DwsAuthFlowService({
+      agentCwd: '/missing-workspaces',
+      authSessionStore: authStore,
+      connectionStore: {
+        syncProfiles: vi.fn(async () => undefined),
+        claimDue: vi.fn(async () => null),
+        completeCheck: vi.fn(async () => undefined),
+        failCheck: vi.fn(async () => undefined),
+        releaseClaim: vi.fn(async () => undefined),
+        listForUser: vi.fn(async () => []),
+      },
+      runner: { login: vi.fn(async () => undefined) },
+    });
+
+    await expect(service.start(user())).resolves.toEqual(replacement);
+    expect(authStore.markFailed).toHaveBeenCalledWith(
+      'auth-session-1',
+      expect.objectContaining({ tenantId: 'kaiyan', userId: user().id }),
+      'authorization_interrupted',
+      '上次钉钉授权已中断，已重新生成授权页面',
+    );
+    expect(authStore.createOrReuse).toHaveBeenCalledTimes(2);
   });
 });

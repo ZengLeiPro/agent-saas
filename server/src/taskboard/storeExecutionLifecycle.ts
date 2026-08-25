@@ -8,7 +8,11 @@ import type {
 } from '../../../shared/src/types/taskboard.js';
 import { finalizeExecutionForArchivedTask } from './archiveGuard.js';
 import { nextTaskColumnSortOrder } from './continuationStore.js';
-import { applyExecutionTaskCompletion, enqueueAutomaticReview } from './executionCompletion.js';
+import {
+  applyExecutionTaskCompletion,
+  enqueueAutomaticResume,
+  enqueueAutomaticReview,
+} from './executionCompletion.js';
 import { resolveExecutionModelRef } from './executionFields.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { requireIntegrationAgentRendezvous } from './legacyIntegrationAgentMigration.js';
@@ -380,16 +384,12 @@ async function completeExecutionInternal(
       );
       return { task: loaded.task, execution: currentExecution };
     }
-    let completionInput = input;
+    const completionInput = input;
     const hasProtocolTransition = currentExecution.protocolVersion === 2
       && Boolean(executionResult.rows[0].transitioned_at);
-    if (currentExecution.protocolVersion === 2 && input.status === 'succeeded' && !hasProtocolTransition) {
-      completionInput = {
-        status: 'failed',
-        error: 'TASKBOARD_PROTOCOL_INCOMPLETE',
-        commentBody: 'Agent Run 已结束，但没有调用 execution.transition。',
-      };
-    }
+    const unfinishedStage = currentExecution.protocolVersion === 2
+      && input.status === 'succeeded'
+      && !hasProtocolTransition;
     const archivedResult = await finalizeExecutionForArchivedTask(
       store, client, loaded.task, loaded.boardArchivedAt, currentExecution, completionInput,
     );
@@ -468,13 +468,20 @@ async function completeExecutionInternal(
     }
 
     const existingExecutionComment = await client.query(
-      `SELECT 1 FROM ${store.changesTable}
-        WHERE task_id=$1 AND change_type='execution.comment' AND actor_id=$2 LIMIT 1`,
+      `SELECT c.id FROM ${store.changesTable} ch
+         JOIN ${store.commentsTable} c ON c.id=ch.payload->>'commentId'
+        WHERE ch.task_id=$1 AND ch.change_type='execution.comment' AND ch.actor_id=$2 LIMIT 1`,
       [taskId, runId],
     );
-    if (completionInput.status !== 'succeeded'
-      || !existingExecutionComment.rows[0]
-      || (completionInput.attachments?.length ?? 0) > 0) {
+    if (!unfinishedStage && existingExecutionComment.rows[0]
+      && (completionInput.attachments?.length ?? 0) > 0) {
+      await client.query(
+        `UPDATE ${store.commentsTable}
+            SET attachments=$2::jsonb,version=version+1,updated_at=now()
+          WHERE id=$1`,
+        [String(existingExecutionComment.rows[0].id), JSON.stringify(completionInput.attachments)],
+      );
+    } else if (!unfinishedStage && !existingExecutionComment.rows[0]) {
       const deliveryComment = await client.query(
         `INSERT INTO ${store.commentsTable}
            (id,task_id,body,attachments,author_type,author_id,author_name,continuation_eligible,version)
@@ -503,9 +510,15 @@ async function completeExecutionInternal(
         WHERE run_id=$1 AND status<>'dispatched'`,
       [runId],
     );
-    await enqueueAutomaticReview(
-      store, client, loaded.task, currentExecution, executionSucceeded, completionInput.reviewExecution,
-    );
+    if (unfinishedStage) {
+      await enqueueAutomaticResume(
+        store, client, loaded.task, currentExecution, completionInput.resumeExecution,
+      );
+    } else {
+      await enqueueAutomaticReview(
+        store, client, loaded.task, currentExecution, executionSucceeded, completionInput.reviewExecution,
+      );
+    }
     await appendTaskChange(store, client, taskId, 'execution.completed', 'system', runId, {
       executionId: currentExecution.id,
       purpose: currentExecution.purpose,

@@ -2827,7 +2827,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           ) {
             await skillConfigStore.setUserSkillSelected(connectedUser.username, 'dws', true);
           }
-          await dwsAuthKeepaliveService?.runOnce();
+          await dwsAuthKeepaliveService?.runOnce(new Date(), { allowStopped: true });
         },
         logger: serverLogger.child('DwsAuthFlow'),
       });

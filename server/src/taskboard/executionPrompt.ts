@@ -25,8 +25,8 @@ export function buildExecutionPrompt(
 export function executionWritebackInstructions(context: TaskboardExecutionContext): string[] {
   const instructions = [
     '- 读取任务看板返回的最新事实和结构化职责约束。',
-    '- 自主完成当前职责，按需记录重要进展。',
-    '- 结束前先通过 execution.comment 提交明确、真实且可验证的阶段结果，再用 execution.transition 只指定下一状态。',
+    '- 自主完成当前职责；工作过程中不要写 Agent 进度评论。',
+    '- 当前职责完成或确实阻塞时，只调用一次 execution.finish，原子写入明确、真实且可验证的交接评论并指定下一状态。',
   ];
   if (context.execution.purpose === 'work' && context.task.kind !== 'integration') {
     instructions.splice(2, 0,

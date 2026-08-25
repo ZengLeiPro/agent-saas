@@ -3,7 +3,7 @@ import pg, { type PoolClient } from 'pg';
 import {
   TASKBOARD_DEFAULT_PROMPT, type TaskBoard, type TaskBoardComment, type TaskBoardCommentCreateInput,
   type TaskBoardCommentPatchInput, type TaskBoardCreateInput, type TaskBoardExecution,
-  type TaskBoardExecutionContextInput, type TaskBoardExecutionContextResponse, type TaskBoardExecutionTransitionInput,
+  type TaskBoardExecutionContextInput, type TaskBoardExecutionContextResponse, type TaskBoardExecutionFinishInput,
   type TaskBoardExecutionStartResult, type TaskBoardIntegrationBatchCreateInput, type TaskBoardIntegrationSource,
   type TaskBoardMember, type TaskBoardMemberPatchInput, type TaskBoardPatchInput, type TaskBoardRepositoryConfig,
   type TaskBoardTask, type TaskBoardTaskCreateInput, type TaskBoardTaskMoveInput, type TaskBoardTaskPatchInput,
@@ -62,7 +62,6 @@ import {
   appendBoardChange,
   appendTaskChange,
   cancelIntegrationTask as cancelStoredIntegrationTask,
-  createExecutionCommentV2 as createStoredExecutionCommentV2,
   createIntegrationBatch as createStoredIntegrationBatch,
   getExecutionContextV2 as getStoredExecutionContextV2,
   listBoardMembers as listStoredBoardMembers,
@@ -70,7 +69,7 @@ import {
   removeBoardMember as removeStoredBoardMember,
   upsertBoardMember as upsertStoredBoardMember,
 } from './v2Store.js';
-import { transitionExecutionV2 as transitionStoredExecutionV2 } from './workflow/transitionService.js';
+import { finishExecutionV2 as finishStoredExecutionV2 } from './workflow/transitionService.js';
 import { resumeBlockedTask as resumeStoredBlockedTask } from './workflow/resumeService.js';
 import {
   assertActiveBoard,
@@ -239,13 +238,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<TaskBoardExecutionContextResponse> {
     return getStoredExecutionContextV2(this, identity, taskId, input);
   }
-  createExecutionCommentV2(
-    identity: TaskboardIdentity,
-    runId: string,
-    body: string,
-  ): Promise<TaskBoardComment> {
-    return createStoredExecutionCommentV2(this, identity, runId, body);
-  }
   setRepositoryProvider(provider: RepositoryProvider): void {
     this.repositoryProvider = provider;
   }
@@ -317,12 +309,12 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return claimIntegrationDispatchCandidates(this, limit);
   }
 
-  transitionExecutionV2(
+  finishExecutionV2(
     identity: TaskboardIdentity,
     runId: string,
-    input: TaskBoardExecutionTransitionInput,
+    input: TaskBoardExecutionFinishInput,
   ): Promise<TaskBoardTask> {
-    return transitionStoredExecutionV2(this, identity, runId, input);
+    return finishStoredExecutionV2(this, identity, runId, input);
   }
 
   async listBoards(identity: TaskboardIdentity, includeArchived = false): Promise<TaskBoard[]> {

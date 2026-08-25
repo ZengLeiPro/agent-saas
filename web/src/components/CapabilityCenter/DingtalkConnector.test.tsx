@@ -71,4 +71,26 @@ describe("DingtalkOnlyConnectors（无个人 Agent 租户的钉钉连接入口�
 
     expect((await screen.findAllByText("需重连")).length).toBeGreaterThan(0);
   });
+
+  it("首次检测完成后自动刷新卡片状态", async () => {
+    let connectionRequests = 0;
+    dwsAuthFetch.mockReset().mockImplementation(async (url: string) => {
+      if (url.includes("/api/dws/connections")) {
+        connectionRequests += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            connections: [connectionRequests === 1 ? { ...CONNECTED, status: "pending" } : CONNECTED],
+          }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({ session: null }) };
+    });
+
+    render(<DingtalkOnlyConnectors />);
+    expect(await screen.findByText("检测中")).toBeTruthy();
+
+    await waitFor(() => expect(screen.getByText("已连接")).toBeTruthy(), { timeout: 3_000 });
+  });
 });

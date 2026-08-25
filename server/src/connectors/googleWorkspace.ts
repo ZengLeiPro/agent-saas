@@ -369,6 +369,17 @@ export class GoogleWorkspaceOAuthService {
     }
   }
 
+  async grantedScopes(userId: string, username: string, tenantId: string): Promise<string[]> {
+    const record = this.options.connectionStore.get(username, GOOGLE_WORKSPACE_CONNECTOR_ID);
+    if (!record || record.status !== 'connected' || record.userId !== userId || record.tenantId !== tenantId) return [];
+    const metadataScopes = normalizeGrantedScopes(record.metadata?.grantedScopes);
+    if (metadataScopes.length > 0) return metadataScopes;
+    const ref = record.credentialRefs[GOOGLE_WORKSPACE_OAUTH_CREDENTIAL_KEY];
+    if (!ref) return [];
+    const bundle = await this.readBundle(ref, credentialOwnerId(record), tenantId);
+    return normalizeGrantedScopes(bundle.scope);
+  }
+
   connectionView(userId: string, username: string, tenantId: string): GoogleWorkspaceConnectionView {
     const record = this.options.connectionStore.get(username, GOOGLE_WORKSPACE_CONNECTOR_ID);
     const connected = record?.status === 'connected'
@@ -554,6 +565,13 @@ function tokenBundleFromResponse(
 
 function safeOAuthError(response: GoogleTokenResponse): string {
   return (response.error_description || response.error || 'unknown error').slice(0, 300);
+}
+
+function normalizeGrantedScopes(value: string | undefined): string[] {
+  if (!value?.trim()) return [];
+  const scopes = [...new Set(value.split(/\s+/).map(scope => scope.trim()).filter(Boolean))].sort();
+  const allowed = new Set(GOOGLE_WORKSPACE_SCOPES);
+  return scopes.every(scope => allowed.has(scope)) ? scopes : [];
 }
 
 function sanitizeIdentifier(value: string): string {

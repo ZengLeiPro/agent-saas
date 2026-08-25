@@ -7,7 +7,7 @@ import type {
   TaskBoardExecution,
   TaskBoardExecutionContextInput,
   TaskBoardExecutionContextResponse,
-  TaskBoardExecutionTransitionInput,
+  TaskBoardExecutionFinishInput,
   TaskBoardExecutionStartResult,
   TaskBoardIntegrationBatchCreateInput,
   TaskBoardIntegrationSource,
@@ -460,24 +460,14 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.claimIntegrationDispatchCandidatesV2?.(limit) ?? [];
   }
 
-  async createExecutionCommentV2(
+  async finishExecutionV2(
     identity: TaskboardIdentity,
     runId: string,
-    body: string,
-  ): Promise<TaskBoardComment> {
-    const service = await this.service();
-    if (!service.createExecutionCommentV2) throw new Error('Taskboard execution comments unavailable');
-    return service.createExecutionCommentV2(identity, runId, body);
-  }
-
-  async transitionExecutionV2(
-    identity: TaskboardIdentity,
-    runId: string,
-    input: TaskBoardExecutionTransitionInput,
+    input: TaskBoardExecutionFinishInput,
   ): Promise<TaskBoardTask> {
     const service = await this.service();
-    if (!service.transitionExecutionV2) throw new Error('Taskboard execution transition unavailable');
-    return service.transitionExecutionV2(identity, runId, input);
+    if (!service.finishExecutionV2) throw new Error('Taskboard execution finish unavailable');
+    return service.finishExecutionV2(identity, runId, input);
   }
 
   async listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {

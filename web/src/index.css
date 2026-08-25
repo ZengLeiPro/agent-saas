@@ -204,19 +204,28 @@
   }
 
   /* prose 内代码块：撑满气泡宽度，内部独立横滚 */
-  .prose pre {
+  .prose pre,
+  .prose-chat pre {
     max-width: 100%;
     overflow-x: auto;
     display: block;
   }
 
-  /* CJK 表格：keep-all 让中文只在标点处断行，避免逐字折行挤压列宽 */
-  .prose table {
-    word-break: keep-all;
+  /* 表格：允许换行（break-word + anywhere 兜底极长串），最多 4 行的硬约束
+     由 td/th 的 min-width 在 MessageItem / MarkdownPreviewPanel 里动态计算注入。
+     .prose-chat 是文件预览与消息正文实际使用的 Markdown 容器。
+     vertical-align: top 让多行 cell 在视觉上整齐对齐到顶部。 */
+  .prose table,
+  .prose-chat table {
+    table-layout: auto;
   }
   .prose table th,
-  .prose table td {
-    white-space: nowrap;
+  .prose table td,
+  .prose-chat table th,
+  .prose-chat table td {
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    vertical-align: top;
   }
 
   /*

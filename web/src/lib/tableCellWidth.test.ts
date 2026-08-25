@@ -4,6 +4,7 @@ import {
   estimateTextWidthPx,
   extractTextFromChildren,
   getCellMinWidthPx,
+  getTableCellStyle,
 } from "./tableCellWidth";
 
 describe("extractTextFromChildren", () => {
@@ -82,5 +83,19 @@ describe("getCellMinWidthPx", () => {
   it("maxLines 越大列宽越窄", () => {
     const text = "中".repeat(40);
     expect(getCellMinWidthPx(text, 2)).toBeGreaterThan(getCellMinWidthPx(text, 8));
+  });
+});
+
+describe("getTableCellStyle", () => {
+  it("将 GFM 的右对齐降为左对齐，同时保留其它样式", () => {
+    expect(getTableCellStyle("内容", { color: "red", textAlign: "right" })).toMatchObject({
+      minWidth: "56px",
+      color: "red",
+      textAlign: "left",
+    });
+  });
+
+  it("保留 GFM 的居中对齐", () => {
+    expect(getTableCellStyle("内容", { textAlign: "center" }).textAlign).toBe("center");
   });
 });

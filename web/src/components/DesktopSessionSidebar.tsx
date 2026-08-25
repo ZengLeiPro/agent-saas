@@ -60,7 +60,7 @@ import { LogoutAccountDialog } from "@/components/LogoutAccountDialog";
 import { getAccountKey, type SavedAccountSummary } from "@/lib/savedAccounts";
 import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
-import { UnifiedSettingsSidebar } from "@/components/UnifiedSettingsSidebar";
+import { DeferredUnifiedSettingsSidebar, preloadUnifiedSettingsSidebar } from "@/components/DeferredUnifiedSettingsSidebar";
 import { getSidebarNavItems, formatShortDate, getSessionWaitingLabel, getGroupWaitingRuntimeStatus } from "@/types/sidebar";
 import type { SessionGroup, SessionListEntry } from "@/types/sessionGroup";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
@@ -541,7 +541,7 @@ function SidebarUserMenuFooter({
       <div className="relative" ref={userMenuRef}>
         <button
           type="button"
-          onClick={() => authEnabled && authUser && setShowUserMenu((v) => !v)}
+          onClick={() => { preloadUnifiedSettingsSidebar(); if (authEnabled && authUser) setShowUserMenu((v) => !v); }}
           disabled={!authUser}
           className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted disabled:opacity-50"
         >
@@ -1653,7 +1653,7 @@ export function DesktopSessionSidebar({
 
   if (settingsMode) {
     const hasSecondPanel = subPanelOpen || showTrash;
-    return <UnifiedSettingsSidebar
+    return <DeferredUnifiedSettingsSidebar
         width={sidebarLayout === "single" ? singlePanelWidth : (hasSecondPanel ? mainPanelWidth + subPanelWidth : mainPanelWidth)}
         hidden={hidden}
         className={className}

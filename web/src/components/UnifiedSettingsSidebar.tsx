@@ -9,22 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
 
-export function UnifiedSettingsSidebar({
-  width,
-  hidden,
-  className,
-  isAdmin,
-  isPlatformAdmin,
-  personalAgentEnabled,
-  target,
-  activeSection,
-  onNavigate,
-  onClose,
-  onCollapse,
-  onResizeMouseDown,
-  onResizeDoubleClick,
-  footer,
-}: {
+export interface UnifiedSettingsSidebarProps {
   width: number;
   hidden: boolean;
   className?: string;
@@ -39,7 +24,13 @@ export function UnifiedSettingsSidebar({
   onResizeMouseDown: MouseEventHandler<HTMLDivElement>;
   onResizeDoubleClick: MouseEventHandler<HTMLDivElement>;
   footer: ReactNode;
-}) {
+}
+
+export function UnifiedSettingsSidebar({
+  width, hidden, className, isAdmin, isPlatformAdmin, personalAgentEnabled,
+  target, activeSection, onNavigate, onClose, onCollapse,
+  onResizeMouseDown, onResizeDoubleClick, footer,
+}: UnifiedSettingsSidebarProps) {
   const groups = useMemo(() => [
     {
       id: "personal" as const,

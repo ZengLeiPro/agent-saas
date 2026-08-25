@@ -70,7 +70,7 @@ export type WsEvent =
     | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; finalOutput?: boolean }
     | { type: 'error'; message: string }
     | { type: 'respond_error'; interactionId: string; error: string; clientAttemptId?: string }
-    | { type: 'respond_ok'; interactionId: string; clientAttemptId?: string }
+    | { type: 'respond_ok'; interactionId: string; clientAttemptId?: string; response?: Record<string, unknown> }
     | { type: 'abort_ok'; streamId?: string; runId?: string }
     | { type: 'pending_interactions'; interactions: Array<{ interactionId: string; type: string; questions?: WsAskUserQuestion[]; toolId?: string; toolName?: string; displayName?: string; toolInput?: Record<string, unknown>; planContent?: string }> }
     | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; requestId?: string }

@@ -34,6 +34,7 @@ import { useSession } from "./useSession";
 import { useFileUpload } from "./useFileUpload";
 import { useAuth } from "../contexts/AuthContext";
 import { isCompactionStatusEvent } from "../lib/compaction";
+import { acknowledgedInteractionResponse } from "./interactionResponseAck";
 import type { MessageItemInput } from "@agent/shared";
 
 /** A response write is not an ACK; expire it so the interaction remains retryable. */
@@ -971,11 +972,12 @@ export function useChatAppStateCore(): ChatAppState {
     if (idx < 0) return;
 
     if (data.type === "respond_ok") {
+      const canonicalResponse = acknowledgedInteractionResponse(data, pending.response);
       msgRef.current.updateMessageAt(idx, (m) => {
         if (m.type !== pending.type || m.interactionId !== data.interactionId || m.status !== "pending") return m;
         return m.type === "permission_request"
-          ? { ...m, status: pending.response.allow ? "allowed" as const : "denied" as const }
-          : { ...m, status: "answered" as const, answers: pending.response.answers as AskUserAnswers };
+          ? { ...m, status: canonicalResponse.allow ? "allowed" as const : "denied" as const }
+          : { ...m, status: "answered" as const, answers: canonicalResponse.answers as AskUserAnswers };
       });
       return;
     }

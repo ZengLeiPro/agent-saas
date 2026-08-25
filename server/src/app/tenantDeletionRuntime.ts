@@ -4,6 +4,7 @@ import {
   createDurableTenantDeletionExecutor,
   type TenantDeletionReport,
 } from '../data/tenants/cleanup.js';
+import { serverLogger } from '../utils/logger.js';
 import type { AppRuntime } from './runtime.js';
 
 export function createRouteTenantDeletionExecutor(
@@ -13,7 +14,7 @@ export function createRouteTenantDeletionExecutor(
 ) {
   const { governanceChangeJobStore: jobs, runtimePgEventStore, secretVault, tenantStore } = runtime;
   if (!deleteResources || !jobs || !runtimePgEventStore || !secretVault || !tenantStore) return undefined;
-  return createDurableTenantDeletionExecutor({
+  const executor = createDurableTenantDeletionExecutor({
     jobs,
     tenantStore,
     deleteResources,
@@ -23,6 +24,13 @@ export function createRouteTenantDeletionExecutor(
       vault: secretVault,
     }),
     onFrozen: (tenantId) => webChannel?.disconnectTenant(tenantId),
-    workerId: 'tenant-deletion-route',
+    workerId: 'tenant-deletion-runtime',
+    onJobError: (error, job) => serverLogger.error(
+      `Tenant deletion consumer failed tenant=${job.tenantId} job=${job.jobId} status=${job.status}:`,
+      error,
+    ),
   });
+  executor.start();
+  runtime.tenantDeletionShutdown = () => executor.stop();
+  return executor;
 }

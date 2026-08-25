@@ -101,13 +101,25 @@ export class PgGovernanceChangeJobStore {
     return result.rows[0] ? rowToJob(result.rows[0]) : null;
   }
 
-  async listDue(jobType: GovernanceChangeJobType, limit = 25): Promise<GovernanceChangeJob[]> {
+  async listDue(
+    jobType: GovernanceChangeJobType,
+    limit = 25,
+    expiredRunningLeaseMs?: number,
+  ): Promise<GovernanceChangeJob[]> {
     const safeLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const safeLeaseMs = expiredRunningLeaseMs === undefined
+      ? null
+      : Math.max(1, Math.trunc(expiredRunningLeaseMs));
     const result = await this.options.pool.query(
       `SELECT * FROM ${this.jobsTable}
-       WHERE job_type=$1 AND (status='pending' OR (status='retry_wait' AND next_retry_at<=NOW()))
+       WHERE job_type=$1 AND (
+         status='pending'
+         OR (status='retry_wait' AND next_retry_at<=NOW())
+         OR ($3::bigint IS NOT NULL AND status='running'
+           AND updated_at < NOW() - ($3 * INTERVAL '1 millisecond'))
+       )
        ORDER BY COALESCE(next_retry_at,created_at),created_at LIMIT $2`,
-      [jobType, safeLimit],
+      [jobType, safeLimit, safeLeaseMs],
     );
     return result.rows.map(rowToJob);
   }

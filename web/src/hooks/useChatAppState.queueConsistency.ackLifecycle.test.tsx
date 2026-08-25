@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatAppState } from "./useChatAppState";
 import type { UploadedFile } from "@/components/types";
@@ -191,5 +191,36 @@ describe("useChatAppState ACK lifecycle", () => {
     act(() => emit({ type: "respond_ok", interactionId: "ask-retry", clientAttemptId: latestAttemptId }));
     await act(async () => { await result.current.handleAskUserResponse("ask-retry", answers); });
     expect(interactionPayloads()).toHaveLength(3);
+  });
+
+  it("applies the canonical first response when its ACK was lost and the retry changed the answer", async () => {
+    const { result } = renderHook(() => useChatAppState());
+    act(() => emit({
+      type: "pending_interactions",
+      interactions: [{
+        type: "permission_request",
+        interactionId: "approval-canonical",
+        toolName: "Shell",
+        toolInput: { command: "echo test" },
+      }],
+    }));
+
+    await act(async () => { await result.current.handlePermissionResponse("approval-canonical", true); });
+    await act(async () => {
+      for (const handler of [...harness.stateHandlers]) handler("reconnecting");
+      await Promise.resolve();
+    });
+    await act(async () => { await result.current.handlePermissionResponse("approval-canonical", false); });
+    const retryAttemptId = interactionPayloads()[1].clientAttemptId as string;
+
+    act(() => emit({
+      type: "respond_ok",
+      interactionId: "approval-canonical",
+      clientAttemptId: retryAttemptId,
+      response: { allow: true, message: "first response was persisted" },
+    }));
+
+    await waitFor(() => expect(result.current.messages.find((message) => "interactionId" in message && message.interactionId === "approval-canonical"))
+      .toMatchObject({ type: "permission_request", status: "allowed" }));
   });
 });

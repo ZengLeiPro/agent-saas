@@ -1520,10 +1520,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     pendingInteractionResponsesRef.current.delete(data.interactionId);
     const idx = msgRef.current.messagesRef.current.findIndex((m) => m.type === pending.type && m.interactionId === data.interactionId);
     if (idx < 0) return;
-    if (data.type === 'respond_ok') {
+    if (data.type === 'respond_ok') { const canonicalResponse = data.response && typeof data.response === 'object' ? data.response : pending.response;
       msgRef.current.updateMessageAt(idx, (m) => {
         if (m.type !== pending.type || m.interactionId !== data.interactionId || m.status !== 'pending') return m;
-        return m.type === 'permission_request' ? { ...m, status: pending.response.allow ? 'allowed' as const : 'denied' as const } : { ...m, status: 'answered' as const, answers: pending.response.answers as AskUserAnswers };
+        return m.type === 'permission_request' ? { ...m, status: canonicalResponse.allow ? 'allowed' as const : 'denied' as const } : { ...m, status: 'answered' as const, answers: canonicalResponse.answers as AskUserAnswers };
       });
       if (pending.type === 'permission_request') upsertRuntimeStatusMessage(msgRef.current, 'queued');
       markSessionRead(sessionIdRef.current);

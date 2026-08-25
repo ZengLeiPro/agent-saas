@@ -287,9 +287,68 @@ describe('materializeCandidateObjects', () => {
       onWorkspaceObjectDirectoryBound: async () => {
         await symlink(sentinel, alternates);
       },
-    })).rejects.toMatchObject({ code: 'unsafe_git_metadata', stage: 'final_binding' });
+    })).rejects.toMatchObject({ code: 'alternates_forbidden', stage: 'final_binding' });
     expect(await readFile(sentinelMarker, 'utf8')).toBe('must stay untouched\n');
     await rm(alternates);
+  });
+
+  it('never follows source .git or target repository replacements after binding their trusted roots', async () => {
+    const source = await repository();
+    const treeOid = await git(source.root, ['rev-parse', `${source.newOid}^{tree}`]);
+    const sentinel = await mkdtemp(join(tmpdir(), 'parent-race-sentinel-'));
+    const workspace = await mkdtemp(join(tmpdir(), 'parent-race-workspace-'));
+    roots.push(sentinel, workspace);
+    const marker = join(sentinel, 'sentinel');
+    await writeFile(marker, 'must stay untouched\n');
+    const target = join(workspace, 'agent-saas');
+    await mkdir(target);
+    await git(target, ['init']);
+
+    const movedGit = join(source.root, '.git-before-race');
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root, workspaceRoot: workspace, repositoryName: 'agent-saas',
+      baseOid: source.oldOid, headOid: source.newOid, treeOid,
+      onSourceRepositoryRootBound: async () => {
+        await rename(join(source.root, '.git'), movedGit);
+        await symlink(sentinel, join(source.root, '.git'));
+      },
+    })).rejects.toMatchObject({ code: 'unsafe_git_metadata', stage: 'source_snapshot' });
+    expect(await readFile(marker, 'utf8')).toBe('must stay untouched\n');
+    await rm(join(source.root, '.git'));
+    await rename(movedGit, join(source.root, '.git'));
+
+    const movedTarget = `${target}-before-race`;
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root, workspaceRoot: workspace, repositoryName: 'agent-saas',
+      baseOid: source.oldOid, headOid: source.newOid, treeOid,
+      onWorkspaceRootBound: async () => {
+        await rename(target, movedTarget);
+        await symlink(sentinel, target);
+      },
+    })).rejects.toMatchObject({ code: 'unsafe_git_metadata', stage: 'target_binding' });
+    expect(await readFile(marker, 'utf8')).toBe('must stay untouched\n');
+    await rm(target);
+    await rename(movedTarget, target);
+  });
+
+  it('rejects any object injected outside the candidate closure in trusted.git', async () => {
+    const source = await repository();
+    const treeOid = await git(source.root, ['rev-parse', `${source.newOid}^{tree}`]);
+    const workspace = await mkdtemp(join(tmpdir(), 'trusted-closure-workspace-'));
+    roots.push(workspace);
+    const target = join(workspace, 'agent-saas');
+    await mkdir(target);
+    await git(target, ['init']);
+    const outsider = join(workspace, 'outside-object.txt');
+    await writeFile(outsider, 'not in candidate closure\n');
+
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root, workspaceRoot: workspace, repositoryName: 'agent-saas',
+      baseOid: source.oldOid, headOid: source.newOid, treeOid,
+      onTrustedCandidateMaterialized: async (trustedRepositoryPath) => {
+        await git(trustedRepositoryPath, ['hash-object', '-w', outsider]);
+      },
+    })).rejects.toMatchObject({ code: 'object_missing', stage: 'trusted_pack' });
   });
 
   it('rejects source info/alternates before any Git command can consume it', async () => {

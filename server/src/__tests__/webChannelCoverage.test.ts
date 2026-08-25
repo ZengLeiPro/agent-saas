@@ -654,7 +654,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       (rig.channel as any).handleRespond(wsClient(rig.ws, USER), { action: 'respond', interactionId: id, clientAttemptId: 'attempt-success', allow: true, message: '同意执行' });
       await expect(pending).resolves.toEqual({ allow: true, message: '同意执行' });
       // respond_ok 在 appendDurableWebCommand（真实 fs 扫描）之后发出 → 等宏任务
-      await vi.waitFor(() => { expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: id, clientAttemptId: 'attempt-success' }); }, { timeout: 5_000 });
+      await vi.waitFor(() => { expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: id, clientAttemptId: 'attempt-success', response: { allow: true, message: '同意执行' } }); }, { timeout: 5_000 });
       expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: id });
       expect(interactionStore.get(id)).toBeUndefined();
     });
@@ -1533,12 +1533,11 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await runStore.markStatus('run-ask-1', 'waiting_user');
       const enqueued: UpsertRunInput[] = [];
       const rig = resumeRig(runStore, tmp, enqueued);
-
       (rig.channel as any).handleRespond(wsClient(rig.ws, USER), {
         action: 'respond', interactionId: 'ask-int-1', sessionId, answers: { q1: '红色' },
       });
       await vi.waitFor(() => expect(rig.ws.sent.at(-1)?.data)
-        .toEqual({ type: 'respond_ok', interactionId: 'ask-int-1' }));
+        .toEqual({ type: 'respond_ok', interactionId: 'ask-int-1', response: { answers: { q1: '红色' } } }));
       expect(enqueued).toHaveLength(1);
       expect(enqueued[0]).toMatchObject({
         runId: 'run-ask-1', sessionId, userId: USER.sub, model: 'm-ask', channel: 'web',
@@ -1577,9 +1576,8 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await runStore.markStatus('run-appr-1', 'waiting_approval');
       const enqueued: UpsertRunInput[] = [];
       const rig = resumeRig(runStore, tmp, enqueued);
-
-      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: true, message: '可以执行' }, sessionId);
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'appr-1' });
+      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: true, message: '可以执行' }, sessionId, 'attempt-first');
+      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'appr-1', clientAttemptId: 'attempt-first', response: { allow: true, message: '可以执行' } });
       expect(enqueued).toHaveLength(1);
       expect(enqueued[0]).toMatchObject({
         runId: 'run-appr-1', sessionId,
@@ -1591,11 +1589,16 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         response: { allow: true, message: '可以执行' },
       });
 
-      // 第二次 respond：日志里已有 interaction_resolved → 直接 respond_ok，不再入队
+      // 首次 ACK 丢失后用户改答重试：ACK fence 回显本次 attempt，但 response 必须仍是首答 canonical。
       rig.ws.sent.length = 0;
-      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: true }, sessionId);
-      expect(rig.ws.sent.map((m) => m.data.type)).toEqual(['respond_ok']);
+      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: false, message: '改为拒绝' }, sessionId, 'attempt-retry');
+      expect(rig.ws.sent).toHaveLength(1);
+      expect(rig.ws.sent[0].data).toEqual({ type: 'respond_ok', interactionId: 'appr-1', clientAttemptId: 'attempt-retry', response: { allow: true, message: '可以执行' } });
       expect(enqueued).toHaveLength(1);
+      const durableResolved = (await eventStore.list(TENANT, sessionId)).find((event) => event.type === 'interaction_resolved');
+      expect(durableResolved).toMatchObject({ response: { allow: true, message: '可以执行' } });
+      expect(JSON.stringify(durableResolved)).not.toContain('attempt-first');
+      expect(JSON.stringify(durableResolved)).not.toContain('attempt-retry');
     });
 
     it('approval 指向终态 run → 拒绝遗留审批并 respond_ok，不恢复旧 run', async () => {
@@ -1614,11 +1617,8 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await runStore.markStatus('run-appr-t', 'completed');
       const enqueued: UpsertRunInput[] = [];
       const rig = resumeRig(runStore, tmp, enqueued);
-
       await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-t-1', { allow: true }, sessionId);
-      expect(rig.ws.sent.at(-1)?.data).toEqual({
-        type: 'respond_ok', interactionId: 'appr-t-1',
-      });
+      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'appr-t-1', response: { allow: false, message: '源 run 不可恢复（completed），拒绝遗留审批' } });
       expect(enqueued).toHaveLength(0);
       const events = await eventStore.list(TENANT, sessionId);
       expect(events.at(-1)).toMatchObject({

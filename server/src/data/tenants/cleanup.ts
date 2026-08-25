@@ -125,6 +125,12 @@ export interface DurableTenantDeletionExecutor {
   }): Promise<TenantDeletionJobReceipt>;
   get(tenantId: string, jobId: string): Promise<TenantDeletionJobReceipt | null>;
   findByIdempotency(tenantId: string, idempotencyKey: string): Promise<TenantDeletionJobReceipt | null>;
+  /** Starts with an immediate recovery scan, then continuously consumes due retries. */
+  start(): void;
+  /** Stops future scans and waits for the active scan to settle. */
+  stop(): Promise<void>;
+  /** Visible test/operations hook for one isolated due-job scan. */
+  runDue(): Promise<void>;
 }
 
 function emptyContextDeletionReport(): ContextTenantDeletionReport {
@@ -355,7 +361,11 @@ export function createDurableTenantDeletionExecutor(options: {
   workerId?: string;
   retryDelayMs?: number;
   leaseMs?: number;
+  pollIntervalMs?: number;
+  batchSize?: number;
+  onJobError?: (error: unknown, job: Pick<GovernanceChangeJob, 'tenantId' | 'jobId' | 'status'>) => void;
 }): DurableTenantDeletionExecutor {
+  const leaseMs = options.leaseMs ?? 5 * 60_000;
   const worker = new GovernanceChangeJobWorker({
     store: options.jobs,
     workerId: options.workerId ?? 'tenant-deletion',
@@ -395,16 +405,51 @@ export function createDurableTenantDeletionExecutor(options: {
     const result = await worker.execute({ tenantId: job.tenantId, jobId: job.jobId, handlers: handlers(job.tenantId) });
     return receipt(result, created);
   };
-  return {
+  const tenantExecutions = new Map<string, Promise<unknown>>();
+  const perTenant = async <T>(tenantId: string, operation: () => Promise<T>): Promise<T> => {
+    const prior = tenantExecutions.get(tenantId) ?? Promise.resolve();
+    const current = prior.catch(() => undefined).then(operation);
+    tenantExecutions.set(tenantId, current);
+    try {
+      return await current;
+    } finally {
+      if (tenantExecutions.get(tenantId) === current) tenantExecutions.delete(tenantId);
+    }
+  };
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let activeScan: Promise<void> | undefined;
+  let stopped = true;
+  const runDue = async (): Promise<void> => {
+    if (activeScan) return activeScan;
+    const scan = (async () => {
+      const due = await options.jobs.listDue('tenant_delete', options.batchSize ?? 25, leaseMs);
+      await Promise.all(due.map(job => perTenant(job.tenantId, async () => {
+        try {
+          await executeJob(job, false);
+        } catch (error) {
+          options.onJobError?.(error, job);
+        }
+      })));
+    })();
+    activeScan = scan;
+    try {
+      await scan;
+    } finally {
+      if (activeScan === scan) activeScan = undefined;
+    }
+  };
+  const executor: DurableTenantDeletionExecutor = {
     async execute(input) {
-      const existing = await options.jobs.findByIdempotency(input.tenantId, 'tenant_delete', input.idempotencyKey);
-      if (existing) return executeJob(existing, false);
-      const created = await options.jobs.create({
-        tenantId: input.tenantId, jobType: 'tenant_delete', targetType: 'tenant', targetId: input.tenantId,
-        idempotencyKey: input.idempotencyKey, request: { reasonCode: input.reasonCode },
-        domains: [...TENANT_DELETE_DOMAINS], createdBy: input.requestedBy,
+      return perTenant(input.tenantId, async () => {
+        const existing = await options.jobs.findByIdempotency(input.tenantId, 'tenant_delete', input.idempotencyKey);
+        if (existing) return executeJob(existing, false);
+        const created = await options.jobs.create({
+          tenantId: input.tenantId, jobType: 'tenant_delete', targetType: 'tenant', targetId: input.tenantId,
+          idempotencyKey: input.idempotencyKey, request: { reasonCode: input.reasonCode },
+          domains: [...TENANT_DELETE_DOMAINS], createdBy: input.requestedBy,
+        });
+        return executeJob(created.job, created.created);
       });
-      return executeJob(created.job, created.created);
     },
     async get(tenantId, jobId) {
       const job = await options.jobs.get(tenantId, jobId);
@@ -414,5 +459,27 @@ export function createDurableTenantDeletionExecutor(options: {
       const job = await options.jobs.findByIdempotency(tenantId, 'tenant_delete', idempotencyKey);
       return job ? receipt(job, false) : null;
     },
+    start() {
+      if (!stopped) return;
+      stopped = false;
+      void runDue().catch(error => options.onJobError?.(error, {
+        tenantId: '*', jobId: 'tenant-delete-scan', status: 'pending',
+      }));
+      timer = setInterval(() => {
+        void runDue().catch(error => options.onJobError?.(error, {
+          tenantId: '*', jobId: 'tenant-delete-scan', status: 'pending',
+        }));
+      }, Math.max(10, options.pollIntervalMs ?? 5_000));
+      timer.unref?.();
+    },
+    async stop() {
+      stopped = true;
+      if (timer) clearInterval(timer);
+      timer = undefined;
+      await activeScan?.catch(() => undefined);
+      await Promise.allSettled(tenantExecutions.values());
+    },
+    runDue,
   };
+  return executor;
 }

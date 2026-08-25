@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
+import { PgGovernanceChangeJobStore, TENANT_DELETE_DOMAINS } from '../data/changeJobs/index.js';
 import {
   createDurableTenantDeletionExecutor,
   type TenantDeletionReport,
@@ -16,6 +16,20 @@ import { TenantStore } from '../data/tenants/store.js';
 const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
+
+async function waitForJob(
+  jobs: PgGovernanceChangeJobStore,
+  tenantId: string,
+  jobId: string,
+  status: 'succeeded' | 'retry_wait',
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if ((await jobs.get(tenantId, jobId))?.status === status) return;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for ${jobId} to become ${status}`);
+}
 
 describePg('durable tenant deletion PostgreSQL recovery', () => {
   const prefix = `tdel_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
@@ -93,5 +107,69 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
     expect(replay.job.jobId).toBe(second.job.jobId);
     expect(replay.job.status).toBe('succeeded');
     expect(resourceAttempts).toBe(2);
+  }, 30_000);
+
+  it('recovers an expired running PostgreSQL job when a new service instance starts', async () => {
+    const jobs = new PgGovernanceChangeJobStore({ pool, tablePrefix: prefix });
+    await jobs.init();
+    const tenantStore = new TenantStore(join(tmpRoot, 'restart-tenants.json'));
+    await tenantStore.create({ id: 'restart-acme', name: 'Restart Acme', createdBy: 'test' });
+    const created = await jobs.create({
+      tenantId: 'restart-acme', jobType: 'tenant_delete', targetType: 'tenant', targetId: 'restart-acme',
+      idempotencyKey: 'restart-delete-v1', request: { reasonCode: 'test' },
+      domains: [...TENANT_DELETE_DOMAINS],
+      createdBy: 'admin',
+    });
+    await jobs.claim('restart-acme', created.job.jobId, created.job.revision, 'dead-service');
+    await new Promise(resolve => setTimeout(resolve, 30));
+
+    const errors: unknown[] = [];
+    const restarted = createDurableTenantDeletionExecutor({
+      jobs,
+      tenantStore,
+      leaseMs: 10,
+      pollIntervalMs: 10,
+      governanceCleanup: { execute: async () => undefined } as never,
+      deleteResources: async tenantId => ({ tenantId } as TenantDeletionReport),
+      onJobError: error => errors.push(error),
+    });
+    restarted.start();
+    await waitForJob(jobs, 'restart-acme', created.job.jobId, 'succeeded');
+    await restarted.stop();
+
+    expect(errors).toEqual([]);
+    expect(tenantStore.findById('restart-acme')).toBeUndefined();
+    expect((await jobs.get('restart-acme', created.job.jobId))?.attempt).toBe(2);
+  }, 30_000);
+
+  it('continuously consumes a retry when next_retry_at becomes due without another route call', async () => {
+    const jobs = new PgGovernanceChangeJobStore({ pool, tablePrefix: prefix });
+    await jobs.init();
+    const tenantStore = new TenantStore(join(tmpRoot, 'retry-tenants.json'));
+    await tenantStore.create({ id: 'retry-acme', name: 'Retry Acme', createdBy: 'test' });
+    let attempts = 0;
+    const executor = createDurableTenantDeletionExecutor({
+      jobs,
+      tenantStore,
+      retryDelayMs: 40,
+      pollIntervalMs: 10,
+      governanceCleanup: { execute: async () => undefined } as never,
+      deleteResources: async tenantId => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('RETRY_ONCE');
+        return { tenantId } as TenantDeletionReport;
+      },
+    });
+
+    const first = await executor.execute({
+      tenantId: 'retry-acme', idempotencyKey: 'retry-delete-v1', requestedBy: 'admin', reasonCode: 'test',
+    });
+    expect(first.job.status).toBe('retry_wait');
+    executor.start();
+    await waitForJob(jobs, 'retry-acme', first.job.jobId, 'succeeded');
+    await executor.stop();
+
+    expect(attempts).toBe(2);
+    expect(tenantStore.findById('retry-acme')).toBeUndefined();
   }, 30_000);
 });

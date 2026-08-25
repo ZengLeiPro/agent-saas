@@ -263,7 +263,9 @@ describe('TaskboardContextSyncWorker', () => {
   it.each([
     [new ContextStoreError('CONTEXT_LEASE_LOST'), 'TASKBOARD_PROJECT_CHECKPOINT_FAILED_LEASE_LOST'],
     [new ContextStoreError('CONTEXT_INVALID'), 'TASKBOARD_PROJECT_CHECKPOINT_FAILED_INVALID'],
+    [Object.assign(new Error('cross-module'), { code: 'CONTEXT_LEASE_LOST' }), 'TASKBOARD_PROJECT_CHECKPOINT_FAILED_LEASE_LOST'],
     [Object.assign(new Error('unique detail'), { code: '23505' }), 'TASKBOARD_PROJECT_CHECKPOINT_FAILED_UNIQUE_CONFLICT'],
+    [Object.assign(new Error('pg detail'), { code: '22023' }), 'TASKBOARD_PROJECT_CHECKPOINT_FAILED_PG_22023'],
     [new Error('unknown detail'), 'TASKBOARD_PROJECT_CHECKPOINT_FAILED'],
   ])('classifies checkpoint failures without persisting raw error details', (error, expected) => {
     expect(taskboardFailureCode('TASKBOARD_PROJECT_CHECKPOINT_FAILED', error)).toBe(expected);

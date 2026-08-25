@@ -5,8 +5,8 @@ import type { TaskBoardIntegrationPolicy, TaskBoardTask } from '../../../shared/
 import { repositoryWithBoardCiPolicy } from './ciPolicy.js';
 import { assertPullRequestGate } from './deliveryPullRequests.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
-import type { RepositoryProvider } from './repositoryProvider.js';
-import { rowToTask } from './storeHelpers.js';
+import { finalizeMergedIntegrationAgent } from './integrationFinalization.js';
+import type { RepositoryMergeReceipt, RepositoryProvider } from './repositoryProvider.js';
 import { TaskboardNotFoundError, TaskboardValidationError, type TaskboardIdentity } from './types.js';
 
 export interface IntegrationAgentMergeHost {
@@ -19,6 +19,10 @@ export interface IntegrationAgentMergeHost {
   integrationLanesTable: string;
   integrationSourcesTable: string;
   mergeAuthorizationsTable: string;
+  mergeOperationsTable: string;
+  blockEpisodesTable: string;
+  remediationAttemptsTable: string;
+  cancellationOutboxTable: string;
   repositoryProvider?: RepositoryProvider;
 }
 
@@ -64,28 +68,41 @@ export async function mergeIntegrationAgent(
     if (current.baseRef !== configured.baseBranch || current.headRef !== String(row.integration_branch)) {
       throw new TaskboardValidationError('Integration Agent review is stale after pull request subject drift', 'TASKBOARD_SUBJECT_STALE');
     }
-    const receipt = await host.repositoryProvider.mergePullRequest(configured, {
-      providerPullRequestId: pullRequestId, expectedHeadOid: reviewHeadOid, method: 'squash', requestId: randomUUID(),
-      operationKey: `integration-agent:${String(row.id)}:${reviewHeadOid}`,
-    }, String(row.owner_user_id));
+    // Do not hold database locks across the provider write. The durable finalizer
+    // reacquires the aggregate locks after a provider merge receipt is known.
+    await client.query('COMMIT');
+
+    const requestId = randomUUID();
+    let receipt: RepositoryMergeReceipt;
+    try {
+      receipt = await host.repositoryProvider.mergePullRequest(configured, {
+        providerPullRequestId: pullRequestId, expectedHeadOid: reviewHeadOid, method: 'squash', requestId,
+        operationKey: `integration-agent:${String(row.id)}:${reviewHeadOid}`,
+      }, String(row.owner_user_id));
+    } catch (error) {
+      // A timeout can mean GitHub merged the PR but the response was lost. Re-read
+      // the authority before allowing any local terminal projection.
+      const afterError = await host.repositoryProvider.getPullRequest(configured, pullRequestId, String(row.owner_user_id));
+      if (afterError.state !== 'merged' || !afterError.mergeCommitOid) throw error;
+      receipt = {
+        providerRequestId: requestId,
+        providerPullRequestId: pullRequestId,
+        merged: true,
+        mergedCommitOid: afterError.mergeCommitOid,
+        raw: { reconciledAfterProviderError: true, pullRequest: afterError },
+      };
+    }
     if (!receipt.merged || !receipt.mergedCommitOid) {
       throw new TaskboardValidationError(receipt.message ?? 'Provider did not confirm merge', 'TASKBOARD_PROVIDER_RECEIPT_INCOMPLETE');
     }
-    await client.query(`UPDATE ${agentsTable} SET status='merged',updated_at=now() WHERE integration_task_id=$1`, [row.id]);
-    const taskResult = await client.query(
-      `UPDATE ${host.tasksTable} SET status='done',merged_commit_oid=$2,completed_at=now(),workflow_epoch=workflow_epoch+1,
-          next_action='none',next_action_revision=next_action_revision+1,version=version+1,updated_at=now()
-        WHERE id=$1 RETURNING *`, [row.id, receipt.mergedCommitOid],
-    );
-    await client.query(`UPDATE ${host.mergeAuthorizationsTable} SET revoked_at=now() WHERE integration_task_id=$1 AND revoked_at IS NULL`, [row.id]);
-    await client.query(`UPDATE ${host.integrationLanesTable} SET active_integration_task_id=NULL,lease_id=NULL,epoch=epoch+1,updated_at=now() WHERE active_integration_task_id=$1`, [row.id]);
-    await client.query(
-      `INSERT INTO ${host.changesTable}(task_id,change_type,actor_type,actor_id,execution_id,payload)
-       VALUES ($1,'integration.agent.merge.succeeded','agent',$2,$3,$4::jsonb)`,
-      [row.id, runId, row.execution_id, JSON.stringify({ providerPullRequestId: pullRequestId, reviewHeadOid, reviewExecutionId: row.review_execution_id, mergedCommitOid: receipt.mergedCommitOid })],
-    );
-    await client.query('COMMIT');
-    return rowToTask(taskResult.rows[0]!);
+    return finalizeMergedIntegrationAgent(host, String(row.id), {
+      providerRequestId: receipt.providerRequestId,
+      mergedCommitOid: receipt.mergedCommitOid,
+      raw: receipt.raw,
+      exceptExecutionId: String(row.execution_id),
+      expectedAgent: { providerPullRequestId: pullRequestId, integrationBranch: String(row.integration_branch) },
+      event: { runId, executionId: String(row.execution_id), reviewHeadOid, reviewExecutionId: String(row.review_execution_id) },
+    });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
     throw error;

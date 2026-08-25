@@ -1,0 +1,125 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import { mergeIntegrationAgent, type IntegrationAgentMergeHost } from './integrationAgentMerge.js';
+import type { RepositoryPullRequestSnapshot } from './repositoryProvider.js';
+import type { TaskboardIdentity } from './types.js';
+
+const identity: TaskboardIdentity = { tenantId: 'tenant-1', ownerUserId: 'owner-1', username: 'owner' };
+const now = '2026-08-25T09:00:00.000Z';
+
+const pullRequest: RepositoryPullRequestSnapshot = {
+  providerPullRequestId: '42', number: 42, state: 'open', draft: false,
+  headRef: 'integration/integration-1', headOid: 'agent-head', baseRef: 'main', baseOid: 'base',
+  mergeable: true, requiredChecksKnown: true, requiredChecksConfigured: true,
+  requiredChecks: [{ name: 'Build & Check', status: 'success' }], subjectDigest: 'digest',
+};
+
+function integrationTaskRow() {
+  return {
+    id: 'integration-1', board_id: 'board-1', identifier: 'TB-1', kind: 'integration', workflow_version: 3,
+    title: 'Integrate', description: '', status: 'done', priority: 'none', labels: [], sort_order: 0,
+    version: 2, created_at: now, updated_at: now, completed_at: now, merged_commit_oid: 'merge-42',
+  };
+}
+
+function loadedRow() {
+  return {
+    ...integrationTaskRow(), status: 'in_progress', merged_commit_oid: null,
+    repository: { provider: 'github', repositoryId: 'github:acme/repo', owner: 'acme', name: 'repo', baseBranch: 'main', allowForkPullRequest: false },
+    integration_policy: {}, owner_user_id: identity.ownerUserId,
+    execution_id: 'merge-execution-1', purpose: 'merge', execution_status: 'running', transitioned_at: null, superseded_at: null,
+    provider_pull_request_id: '42', integration_branch: 'integration/integration-1', review_head_oid: 'agent-head',
+    verdict: 'approved', review_execution_id: 'review-execution-1', agent_status: 'ready_to_merge',
+  };
+}
+
+function finalizationClient() {
+  return {
+    release: vi.fn(),
+    query: vi.fn(async (sql: string) => {
+      if (sql.includes('SELECT id,delivery_task_id,remediation_task_id')) {
+        return { rows: [{ id: 'source-1', delivery_task_id: 'delivery-1', remediation_task_id: null }] };
+      }
+      if (sql.includes('SELECT DISTINCT integration_source_id,remediation_task_id')) return { rows: [] };
+      if (sql.includes('FROM sources_agents')) return { rows: [{ provider_pull_request_id: '42', integration_branch: 'integration/integration-1' }] };
+      if (sql.includes('SELECT * FROM sources') && sql.includes('integration_task_id=$1')) {
+        return { rows: [{ id: 'source-1', state: 'ready', merged_commit_oid: null }] };
+      }
+      if (sql.includes('RETURNING *')) return { rows: [integrationTaskRow()] };
+      return { rows: [], rowCount: 0 };
+    }),
+  };
+}
+
+function hostWith(provider: { getPullRequest: ReturnType<typeof vi.fn>; mergePullRequest: ReturnType<typeof vi.fn> }) {
+  const loadClient = {
+    release: vi.fn(),
+    query: vi.fn(async (sql: string) => sql.includes('FROM executions e')
+      ? { rows: [loadedRow()] } : { rows: [], rowCount: 0 }),
+  };
+  const finalized = finalizationClient();
+  const clients = [loadClient, finalized];
+  return {
+    host: {
+      pool: { connect: vi.fn(async () => clients.shift()!) },
+      tasksTable: 'tasks', boardsTable: 'boards', executionsTable: 'executions', commentsTable: 'comments', changesTable: 'changes',
+      integrationLanesTable: 'lanes', integrationSourcesTable: 'sources', mergeAuthorizationsTable: 'authorizations',
+      mergeOperationsTable: 'merge_operations', blockEpisodesTable: 'blocks', remediationAttemptsTable: 'remediation_attempts',
+      cancellationOutboxTable: 'cancellations', repositoryProvider: provider,
+    } as unknown as IntegrationAgentMergeHost,
+    loadClient,
+    finalized,
+  };
+}
+
+describe('mergeIntegrationAgent', () => {
+  it('converges every source and delivery after a normal merged receipt', async () => {
+    const provider = {
+      getPullRequest: vi.fn(async () => pullRequest),
+      mergePullRequest: vi.fn(async () => ({ providerRequestId: 'request-1', providerPullRequestId: '42', merged: true, mergedCommitOid: 'merge-42', raw: {} })),
+    };
+    const { host, finalized } = hostWith(provider);
+
+    await expect(mergeIntegrationAgent(host, identity, 'run-1')).resolves.toMatchObject({
+      id: 'integration-1', status: 'done', mergedCommitOid: 'merge-42',
+    });
+    expect(provider.mergePullRequest).toHaveBeenCalledOnce();
+    const queries = finalized.query.mock.calls.map(([sql]) => String(sql)).join('\n');
+    expect(queries).toContain("SET state='merged',provider_receipt_id");
+    expect(queries).toContain("SET status='done',merged_commit_oid=$2");
+    expect(finalized.query.mock.calls).toContainEqual([
+      expect.stringContaining('terminal_reason_code=$3'),
+      [['integration-1'], 'merge-execution-1', 'integration_converged'],
+    ]);
+    expect(queries).toContain("SET status='merged',updated_at=now()");
+  });
+
+  it('re-reads a timed-out provider merge and converges an already merged PR without retrying merge', async () => {
+    const provider = {
+      getPullRequest: vi.fn()
+        .mockResolvedValueOnce(pullRequest)
+        .mockResolvedValueOnce({ ...pullRequest, state: 'merged', mergeCommitOid: 'merge-42' }),
+      mergePullRequest: vi.fn(async () => { throw new Error('provider timeout'); }),
+    };
+    const { host, finalized } = hostWith(provider);
+
+    await expect(mergeIntegrationAgent(host, identity, 'run-1')).resolves.toMatchObject({ status: 'done', mergedCommitOid: 'merge-42' });
+    expect(provider.mergePullRequest).toHaveBeenCalledOnce();
+    expect(provider.getPullRequest).toHaveBeenCalledTimes(2);
+    expect(finalized.query).toHaveBeenCalledWith(expect.stringContaining("SET state='merged',provider_receipt_id"), expect.any(Array));
+  });
+
+  it('does not converge local state when a provider exception re-reads as still open', async () => {
+    const providerError = new Error('provider timeout');
+    const provider = {
+      getPullRequest: vi.fn(async () => pullRequest),
+      mergePullRequest: vi.fn(async () => { throw providerError; }),
+    };
+    const { host, finalized } = hostWith(provider);
+
+    await expect(mergeIntegrationAgent(host, identity, 'run-1')).rejects.toBe(providerError);
+    expect(provider.mergePullRequest).toHaveBeenCalledOnce();
+    expect(provider.getPullRequest).toHaveBeenCalledTimes(2);
+    expect(finalized.query).not.toHaveBeenCalled();
+  });
+});

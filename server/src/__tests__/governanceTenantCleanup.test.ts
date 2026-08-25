@@ -56,7 +56,7 @@ describe('GovernanceTenantCleanup', () => {
     const revokeSecret = vi.fn().mockResolvedValue(undefined);
     const pool = {
       connect: vi.fn(),
-      query: vi.fn()
+      query: vi.fn().mockResolvedValue({ rows: [{ count: '0' }] })
         .mockResolvedValueOnce({ rows: [
           { credential_id: 'c1', secret_ref: 's1', owner_user_id: 'u1' },
           { credential_id: 'c2', secret_ref: 's2', owner_user_id: null },

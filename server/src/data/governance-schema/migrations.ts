@@ -952,7 +952,7 @@ export class PgGovernanceMigrationRunner {
     this.schemaVersionsTable = `${this.prefix}_governance_schema_versions`;
   }
 
-  async run(): Promise<void> {
+  async run(targetVersion = Number.POSITIVE_INFINITY): Promise<void> {
     const client = await this.pool.connect();
     const lockKey = `${this.schemaVersionsTable}:migrate`;
     try {
@@ -969,7 +969,7 @@ export class PgGovernanceMigrationRunner {
       const applied = new Set(appliedResult.rows.map(row => Number(row.version)));
 
       for (const migration of migrations(this.prefix)) {
-        if (applied.has(migration.version)) continue;
+        if (migration.version > targetVersion || applied.has(migration.version)) continue;
         await client.query('BEGIN');
         try {
           for (const statement of migration.statements) {

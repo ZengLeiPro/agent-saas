@@ -117,7 +117,7 @@ function buildReport(tenant: TenantRecord): TenantDeletionReport {
       },
       users: 0,
       runtime: { events: 0, cursors: 0, runs: 0, sessions: 0, tools: 0 },
-      files: 0, workspaces: 0, sandboxes: 0, snat: 0,
+      files: 0, workspaces: 0, sandboxes: 0, trafficPolicies: 0, snat: 0,
     },
   };
 }
@@ -270,7 +270,7 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
         job: { jobId: 'job-proof', tenantId: 'acme', status: 'succeeded', revision: 8 },
         proof: {
           report: { tenantId: 'acme' },
-          residuals: { credentials: 0, files: 0, workspaces: 0, sandboxes: 0, snat: 0 },
+          residuals: { credentials: 0, files: 0, workspaces: 0, sandboxes: 0, trafficPolicies: 0, snat: 0 },
         },
       });
     });

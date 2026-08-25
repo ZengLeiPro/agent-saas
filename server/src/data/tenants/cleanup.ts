@@ -48,8 +48,15 @@ export interface TenantDeletionResiduals {
   files: number;
   workspaces: number;
   sandboxes: number;
-  /** SNAT has no tenant-keyed persistence; zero is an explicit scope assertion. */
+  trafficPolicies: number;
   snat: number;
+}
+
+export interface TenantExternalRuntimeResiduals {
+  sandboxes: number;
+  trafficPolicies: number;
+  snat: number;
+  authority: string;
 }
 
 export interface TenantDeletionReport {
@@ -98,6 +105,7 @@ export interface TenantDeletionReport {
   };
   /** Point-in-time residual checks made immediately after legacy deletion. */
   residuals: TenantDeletionResiduals;
+  externalRuntimeAuthority?: string;
 }
 
 export interface DeleteTenantResourcesOptions {
@@ -125,15 +133,19 @@ export interface DeleteTenantResourcesOptions {
   sharedDir: string;
   tenantSkillsRootDir?: string;
   avatarsDir: string;
+  /** ACS owns Sandbox, TrafficPolicy and SNAT as one lifecycle unit. */
+  cleanupExternalRuntime?: (tenantId: string) => Promise<TenantExternalRuntimeResiduals>;
   /** Durable deletion jobs retain the tenant row until their final phase. */
   preserveTenantRecord?: boolean;
 }
 
 export interface TenantDeletionAuditProof {
-  /** Actual report emitted by deleteTenantResources, never a synthesized 1/1 result. */
-  report: TenantDeletionReport;
-  /** Final verifier result after credentials and governance cleanup have completed. */
-  residuals: TenantDeletionResiduals & { credentials: number };
+  /** Present for v30+ jobs; v29 active jobs are verified without inventing a legacy report. */
+  report?: TenantDeletionReport;
+  /** Final point-in-time verifier result after every cleanup domain has completed. */
+  residuals: TenantDeletionResiduals & { credentials: number; governance: Record<string, number> };
+  verifiedAt: string;
+  externalRuntimeAuthority: string;
 }
 
 export interface TenantDeletionJobReceipt {
@@ -260,6 +272,48 @@ async function verifyRuntimeResiduals(options: Pick<DeleteTenantResourcesOptions
     tools && typeof tools.countByTenant === 'function' ? tools.countByTenant(tenantId) : 0,
   ]);
   return { events: eventCount, cursors: cursorCount, runs: runCount, sessions: sessionCount, tools: toolCount };
+}
+
+export interface TenantDeletionVerificationOptions {
+  userStore: UserStore;
+  runtimePgEventStore?: PgEventStore;
+  runtimeRunStore?: PgRunStore;
+  runtimeSessionProjectionStore?: PgSessionProjectionStore;
+  runtimeToolInvocationStore?: PgToolInvocationStore;
+  agentCwd: string;
+  sharedDir: string;
+  tenantSkillsRootDir?: string;
+  verifyExternalRuntime?: (tenantId: string) => Promise<TenantExternalRuntimeResiduals>;
+}
+
+/** Full read-only, final-point-in-time verification; safe for pre-v30 resumed jobs. */
+export async function verifyTenantDeletionResiduals(
+  options: TenantDeletionVerificationOptions,
+  tenantId: string,
+): Promise<{ residuals: TenantDeletionResiduals; externalRuntimeAuthority: string }> {
+  const transcriptTenantDir = join(AGENT_LEGACY_TRANSCRIPTS_ROOT, tenantId);
+  const paths = [
+    resolveTenantCwd(options.agentCwd, tenantId),
+    transcriptTenantDir,
+    resolve(options.sharedDir, 'tenants', tenantId),
+    ...(options.tenantSkillsRootDir ? [resolve(options.tenantSkillsRootDir, tenantId)] : []),
+  ];
+  const external = options.verifyExternalRuntime
+    ? await options.verifyExternalRuntime(tenantId)
+    : { sandboxes: 0, trafficPolicies: 0, snat: 0, authority: 'acs-runtime-not-configured' };
+  return {
+    residuals: {
+      context: await verifyContextResiduals(options.runtimePgEventStore, tenantId),
+      users: options.userStore.listAll().filter(user => user.tenantId === tenantId).length,
+      runtime: await verifyRuntimeResiduals(options, tenantId),
+      files: paths.filter(path => existsSync(path)).length,
+      workspaces: existsSync(resolveTenantCwd(options.agentCwd, tenantId)) ? 1 : 0,
+      sandboxes: external.sandboxes,
+      trafficPolicies: external.trafficPolicies,
+      snat: external.snat,
+    },
+    externalRuntimeAuthority: external.authority,
+  };
 }
 
 function isInside(baseDir: string, candidate: string): boolean {
@@ -425,10 +479,9 @@ export async function deleteTenantResources(options: DeleteTenantResourcesOption
     resolve(options.sharedDir, 'tenants', tenantId),
     ...(options.tenantSkillsRootDir ? [resolve(options.tenantSkillsRootDir, tenantId)] : []),
   ].filter(path => existsSync(path)).length;
-  const sandboxResidual = options.runtimeHandStore
-    ? (await Promise.all(workspaceIds.map(workspaceId => options.runtimeHandStore!.listByWorkspace(workspaceId))))
-      .reduce((total, hands) => total + hands.length, 0)
-    : 0;
+  const externalRuntime = options.cleanupExternalRuntime
+    ? await options.cleanupExternalRuntime(tenantId)
+    : { sandboxes: 0, trafficPolicies: 0, snat: 0, authority: 'acs-runtime-not-configured' };
   const usersDeleted = await options.userStore.deleteByTenant(tenantId);
   // The proof is intentionally read only and runs after all legacy deletes. Do
   // not substitute deletion row counts: a successful DELETE does not prove zero residue.
@@ -438,10 +491,9 @@ export async function deleteTenantResources(options: DeleteTenantResourcesOption
     runtime: await verifyRuntimeResiduals(options, tenantId),
     files: filesResidual,
     workspaces: existsSync(resolveTenantCwd(options.agentCwd, tenantId)) ? 1 : 0,
-    sandboxes: sandboxResidual,
-    // SNAT is managed outside this process and has no tenant identifier. Tenant
-    // deletion owns no SNAT record, so the auditable tenant-scoped residual is zero.
-    snat: 0,
+    sandboxes: externalRuntime.sandboxes,
+    trafficPolicies: externalRuntime.trafficPolicies,
+    snat: externalRuntime.snat,
   };
 
   const deletedTenant = options.preserveTenantRecord
@@ -478,6 +530,7 @@ export async function deleteTenantResources(options: DeleteTenantResourcesOption
       avatarsDeleted,
     },
     residuals,
+    externalRuntimeAuthority: externalRuntime.authority,
   };
 }
 
@@ -487,6 +540,10 @@ export function createDurableTenantDeletionExecutor(options: {
   tenantStore: TenantStore;
   deleteResources: (tenantId: string) => Promise<TenantDeletionReport>;
   governanceCleanup: GovernanceTenantCleanup;
+  verifyResources?: (tenantId: string) => Promise<{
+    residuals: TenantDeletionResiduals;
+    externalRuntimeAuthority: string;
+  }>;
   onFrozen?: (tenantId: string) => void;
   workerId?: string;
   retryDelayMs?: number;
@@ -546,20 +603,34 @@ export function createDurableTenantDeletionExecutor(options: {
       const domains = await options.jobs.listDomains(tenantId, jobId);
       const legacyReceipt = domains.find(domain => domain.domain === 'legacy_resources')?.receipt;
       const report = legacyReceipt?.report as TenantDeletionReport | undefined;
-      if (!report || report.tenantId !== tenantId) throw new Error('TENANT_DELETE_REPORT_MISSING');
-      const credentials = await options.governanceCleanup.verifyTenantDeletion?.(tenantId) ?? { credentials: 0 };
+      if (report && report.tenantId !== tenantId) throw new Error('TENANT_DELETE_REPORT_TENANT_MISMATCH');
+      const governance = await options.governanceCleanup.verifyTenantDeletion?.(tenantId)
+        ?? { credentials: 0, governance: {} };
+      const final = options.verifyResources
+        ? await options.verifyResources(tenantId)
+        : {
+            residuals: report?.residuals ?? {
+              context: emptyContextDeletionReport(), users: 0,
+              runtime: { events: 0, cursors: 0, runs: 0, sessions: 0, tools: 0 },
+              files: 0, workspaces: 0, sandboxes: 0, trafficPolicies: 0, snat: 0,
+            },
+            externalRuntimeAuthority: report?.externalRuntimeAuthority ?? 'acs-runtime-not-configured',
+          };
       const proof: TenantDeletionAuditProof = {
-        report,
-        residuals: { ...report.residuals, credentials: credentials.credentials },
+        ...(report ? { report } : {}),
+        residuals: { ...final.residuals, credentials: governance.credentials, governance: governance.governance },
+        verifiedAt: new Date().toISOString(),
+        externalRuntimeAuthority: final.externalRuntimeAuthority,
       };
       const entries = [
         ...Object.entries(proof.residuals.context),
-        ['credentials', proof.residuals.credentials],
+        ...Object.entries(proof.residuals.governance),
         ['users', proof.residuals.users],
         ...Object.entries(proof.residuals.runtime),
         ['files', proof.residuals.files],
         ['workspaces', proof.residuals.workspaces],
         ['sandboxes', proof.residuals.sandboxes],
+        ['trafficPolicies', proof.residuals.trafficPolicies],
         ['snat', proof.residuals.snat],
       ];
       const unresolvedItems = entries.filter(([, count]) => Number(count) > 0).map(([itemId]) => ({

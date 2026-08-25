@@ -65,7 +65,7 @@ import { runtimeRunController } from "../runtime/runController.js";
 import { createSessionArtifactLifecycle } from '../runtime/sessionArtifactLifecycle.js';
 import { createTenantsRouter } from "../routes/tenants.js";
 import { deleteTenantResources } from "../data/tenants/cleanup.js";
-import { createRouteTenantDeletionExecutor } from './tenantDeletionRuntime.js';
+import { createRouteTenantDeletionExecutor, createTenantExternalRuntimeLifecycle } from './tenantDeletionRuntime.js';
 import { createGovernanceOffboardingExecutor, createSafeCronOffboardingExecutor, type ExecuteUserOffboarding } from './governanceOffboarding.js';
 import { archivePersonalWorkspace } from './governancePersonalDataRetention.js';
 import { createModelsAdminRouter } from "../routes/modelsAdmin.js";
@@ -801,6 +801,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       app.use("/api/signup", signupRouters.publicRouter);
       app.use("/api/admin/signup-config", signupRouters.adminRouter);
     }
+    const externalTenantRuntime = createTenantExternalRuntimeLifecycle(config, runtime.secretVault);
     const executeLegacyTenantDeletion = runtime.tenantStore && runtime.userStore
       ? async (tenantId: string) => {
           await runtime.dwsPersonalEventGateway?.stopTenant(tenantId);
@@ -836,21 +837,20 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
             cronService: runtime.cronRuntime.service,
             tokenUsageStore: runtime.tokenUsageStore,
             billingService: runtime.billingService,
-            runtimePgEventStore: runtime.runtimePgEventStore,
-            runtimeRunStore: runtime.runtimeRunStore,
-            runtimeSessionProjectionStore: runtime.runtimeSessionProjectionStore,
-            runtimeToolInvocationStore: runtime.runtimeToolInvocationStore,
-            runtimeHandStore: runtime.runtimeHandStore,
-            artifactService: runtime.artifactService,
+            runtimePgEventStore: runtime.runtimePgEventStore, runtimeRunStore: runtime.runtimeRunStore,
+            runtimeSessionProjectionStore: runtime.runtimeSessionProjectionStore, artifactService: runtime.artifactService,
+            runtimeToolInvocationStore: runtime.runtimeToolInvocationStore, runtimeHandStore: runtime.runtimeHandStore,
             agentCwd,
             sharedDir,
             tenantSkillsRootDir: runtime.tenantSkillsRootDir,
             avatarsDir: resolve(processCwd, config.auth?.usersFile || './data/users.json', '..', 'avatars'),
+            cleanupExternalRuntime: externalTenantRuntime.cleanup,
             preserveTenantRecord: true,
           });
         }
       : undefined;
-    const tenantDeletionExecutor = createRouteTenantDeletionExecutor(runtime, executeLegacyTenantDeletion, webChannel);
+    const tenantDeletionExecutor = createRouteTenantDeletionExecutor(runtime, executeLegacyTenantDeletion, webChannel,
+      { agentCwd, sharedDir, tenantSkillsRootDir: runtime.tenantSkillsRootDir, verifyExternalRuntime: externalTenantRuntime.verify });
     // Tenant management (admin-only CRUD；PR 1 仅元数据，不影响任何运行时行为)
     if (runtime.tenantStore) {
       app.use(

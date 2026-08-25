@@ -7,6 +7,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { PgGovernanceChangeJobStore, TENANT_DELETE_DOMAINS } from '../data/changeJobs/index.js';
+import { PgGovernanceMigrationRunner } from '../data/governance-schema/index.js';
 import {
   createDurableTenantDeletionExecutor,
   type TenantDeletionReport,
@@ -38,7 +39,7 @@ function deletionReport(tenantId: string): TenantDeletionReport {
       tenantSkillsDirDeleted: false, avatarsDeleted: 0 },
     residuals: {
       context, users: 0, runtime: { events: 0, cursors: 0, runs: 0, sessions: 0, tools: 0 },
-      files: 0, workspaces: 0, sandboxes: 0, snat: 0,
+      files: 0, workspaces: 0, sandboxes: 0, trafficPolicies: 0, snat: 0,
     },
   } as TenantDeletionReport;
 }
@@ -136,7 +137,7 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
       report: { tenantId: 'acme' },
       residuals: {
         credentials: 0, users: 0, runtime: { events: 0, cursors: 0, runs: 0, sessions: 0, tools: 0 },
-        files: 0, workspaces: 0, sandboxes: 0, snat: 0,
+        files: 0, workspaces: 0, sandboxes: 0, trafficPolicies: 0, snat: 0,
       },
     });
     expect(second.domains.find(item => item.domain === 'legacy_resources')).toMatchObject({
@@ -150,6 +151,102 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
     expect(replay.job.status).toBe('succeeded');
     expect(replay.proof).toEqual(second.proof);
     expect(resourceAttempts).toBe(2);
+  }, 30_000);
+
+  it('upgrades real v29 active jobs without inventing a legacy receipt at either crash point', async () => {
+    const upgradePrefix = `${prefix}_v29resume`;
+    const runner = new PgGovernanceMigrationRunner(pool, upgradePrefix);
+    await runner.run(29);
+    const jobsTable = `${upgradePrefix}_governance_change_jobs`;
+    const domainsTable = `${upgradePrefix}_governance_change_job_domains`;
+    const oldDomains = TENANT_DELETE_DOMAINS.filter(domain => domain !== 'deletion_verification');
+    const tenantStore = new TenantStore(join(tmpRoot, 'v29-upgrade-tenants.json'));
+    await tenantStore.create({ id: 'legacy-done', name: 'Legacy Done', createdBy: 'test' });
+    await tenantStore.setDisabled('legacy-done', true, 'test');
+
+    for (const [tenantId, tenantRecordDone] of [['legacy-done', false], ['record-done', true]] as const) {
+      const jobId = `v29-${tenantId}`;
+      await pool.query(`INSERT INTO ${jobsTable}
+        (job_id,tenant_id,job_type,target_type,target_id,idempotency_key,status,created_by,updated_by)
+        VALUES ($1,$2,'tenant_delete','tenant',$2,$3,'pending','tester','tester')`,
+      [jobId, tenantId, `delete-${tenantId}`]);
+      for (const domain of oldDomains) {
+        const succeeded = domain !== 'tenant_record' || tenantRecordDone;
+        await pool.query(`INSERT INTO ${domainsTable} (job_id,domain,status,total_count,completed_count,failed_count)
+          VALUES ($1,$2,$3,0,0,0)`, [jobId, domain, succeeded ? 'succeeded' : 'pending']);
+      }
+    }
+    await runner.run();
+
+    const jobs = new PgGovernanceChangeJobStore({ pool, tablePrefix: upgradePrefix });
+    const deleteResources = async () => { throw new Error('LEGACY_DELETE_MUST_NOT_RERUN'); };
+    const executor = createDurableTenantDeletionExecutor({
+      jobs, tenantStore, deleteResources,
+      governanceCleanup: {
+        execute: async () => undefined,
+        verifyTenantDeletion: async () => ({ credentials: 0, governance: {} }),
+      } as never,
+      verifyResources: async tenantId => ({
+        residuals: deletionReport(tenantId).residuals,
+        externalRuntimeAuthority: 'test-authority',
+      }),
+    });
+
+    for (const tenantId of ['legacy-done', 'record-done']) {
+      const resumed = await executor.execute({
+        tenantId, idempotencyKey: `delete-${tenantId}`, requestedBy: 'admin', reasonCode: 'resume-v29',
+      });
+      expect(resumed.job.status).toBe('succeeded');
+      expect(resumed.proof).toMatchObject({
+        verifiedAt: expect.any(String), externalRuntimeAuthority: 'test-authority',
+      });
+      expect(resumed.proof?.report).toBeUndefined();
+      expect(tenantStore.findById(tenantId)).toBeUndefined();
+    }
+  }, 30_000);
+
+  it('fails final verification when a residual appears after the legacy snapshot, then safely replays', async () => {
+    const jobs = new PgGovernanceChangeJobStore({ pool, tablePrefix: prefix });
+    await jobs.init();
+    const tenantStore = new TenantStore(join(tmpRoot, 'final-proof-tenants.json'));
+    await tenantStore.create({ id: 'proof-acme', name: 'Proof Acme', createdBy: 'test' });
+    let injectedGovernance = 1;
+    const executor = createDurableTenantDeletionExecutor({
+      jobs,
+      tenantStore,
+      governanceCleanup: {
+        execute: async () => undefined,
+        verifyTenantDeletion: async () => ({
+          credentials: 0, governance: { managed_agents: injectedGovernance },
+        }),
+      } as never,
+      deleteResources: async tenantId => deletionReport(tenantId),
+      verifyResources: async tenantId => ({
+        residuals: deletionReport(tenantId).residuals,
+        externalRuntimeAuthority: 'test-authority',
+      }),
+    });
+
+    const partial = await executor.execute({
+      tenantId: 'proof-acme', idempotencyKey: 'proof-delete-v1', requestedBy: 'admin', reasonCode: 'test',
+    });
+    expect(partial.job.status).toBe('partial');
+    expect(partial.domains.find(item => item.domain === 'deletion_verification')).toMatchObject({
+      status: 'partial', unresolvedItems: [{ itemId: 'managed_agents', reasonCode: 'TENANT_DELETE_RESIDUAL' }],
+    });
+    expect(partial.domains.find(item => item.domain === 'tenant_record')?.status).toBe('pending');
+    expect(tenantStore.findById('proof-acme')).toMatchObject({ disabled: true });
+
+    injectedGovernance = 0;
+    const replayed = await executor.replay({
+      tenantId: 'proof-acme', jobId: partial.job.jobId, expectedRevision: partial.job.revision,
+      requestedBy: 'platform-admin', additionalAttempts: 1,
+    });
+    expect(replayed.job.status).toBe('succeeded');
+    expect(replayed.proof).toMatchObject({
+      verifiedAt: expect.any(String), externalRuntimeAuthority: 'test-authority', residuals: { users: 0 },
+    });
+    expect(tenantStore.findById('proof-acme')).toBeUndefined();
   }, 30_000);
 
   it('recovers an expired running PostgreSQL job when a new service instance starts', async () => {

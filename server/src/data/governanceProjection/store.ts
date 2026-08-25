@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
 
 import { governanceTablePrefix, type GovernancePgPool } from '../governance-schema/index.js';
 import {
@@ -130,6 +131,13 @@ export class PgGovernanceProjectionOutboxStore implements GovernanceProjectionOu
   }
 
   async enqueue(input: GovernanceProjectionEnqueueInput): Promise<GovernanceProjectionOutboxItem> {
+    return this.enqueueWithClient(this.options.pool, input);
+  }
+
+  async enqueueWithClient(
+    client: Pick<PoolClient, 'query'>,
+    input: GovernanceProjectionEnqueueInput,
+  ): Promise<GovernanceProjectionOutboxItem> {
     if (!input.tenantId.trim() || !SAFE_NAME_PATTERN.test(input.projector)
       || !input.idempotencyKey.trim() || input.idempotencyKey.length > 500
       || (input.maxAttempts !== undefined
@@ -138,7 +146,7 @@ export class PgGovernanceProjectionOutboxStore implements GovernanceProjectionOu
     }
     const payload = assertGovernanceProjectionPayloadSafe(input.payload);
     const availableAt = assertDate(input.availableAt);
-    const result = await this.options.pool.query(`
+    const result = await client.query(`
       INSERT INTO ${this.outboxTable} (
         outbox_id,tenant_id,projector,idempotency_key,payload_json,status,
         attempt,max_attempts,lease_fence,next_attempt_at,created_at,updated_at

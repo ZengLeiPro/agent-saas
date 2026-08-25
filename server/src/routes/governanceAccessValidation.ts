@@ -64,6 +64,29 @@ export const assignmentPatchSchema = z.object({
   baselineDigest: z.string().regex(/^[a-f0-9]{64}$/),
   expiresAt: z.string().datetime({ offset: true }),
 }).strict();
+const assignmentBatchChangeSchema = z.object({
+  resourceType: assignmentResourceTypeSchema,
+  resourceId: z.string().min(1).max(200),
+  ...assignmentMutationShape,
+}).strict();
+const assignmentBatchMutationShape = {
+  changes: z.array(assignmentBatchChangeSchema).min(1).max(50),
+  reason: z.string().min(3).max(500),
+};
+const MAX_ASSIGNMENT_BATCH_RULES = 500;
+const assignmentBatchSize = <T extends z.ZodRawShape>(shape: T) => z.object(shape).strict().superRefine((value, ctx) => {
+  const total = (value as { changes: Array<{ assignments: unknown[] }> }).changes
+    .reduce((count, change) => count + change.assignments.length, 0);
+  if (total > MAX_ASSIGNMENT_BATCH_RULES) ctx.addIssue({ code: z.ZodIssueCode.custom,
+    message: 'Assignment batch too large', path: ['changes'] });
+});
+export const assignmentBatchPreviewSchema = assignmentBatchSize(assignmentBatchMutationShape);
+export const assignmentBatchPatchSchema = assignmentBatchSize({
+  ...assignmentBatchMutationShape,
+  previewId: z.string().regex(/^abpv1\.[a-f0-9]{64}$/),
+  baselineDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  expiresAt: z.string().datetime({ offset: true }),
+});
 export const contentGrantSchema = z.object({
   tenantId: z.string().min(2).max(64).optional(),
   subjectUserId: z.string().min(1).max(128),
@@ -89,6 +112,7 @@ export const preferenceSchema = z.object({
 
 export type MembershipMutation = z.infer<typeof membershipPreviewSchema>;
 export type AssignmentMutation = z.infer<typeof assignmentPreviewSchema>;
+export type AssignmentBatchMutation = z.infer<typeof assignmentBatchPreviewSchema>;
 export type GovernancePersona = 'platform_admin' | 'org_admin' | 'member';
 export type MembershipActionId = 'promote_admin' | 'demote_member' | 'grant_owner' | 'revoke_owner' | 'disable' | 'restore' | 'recover_owner';
 export interface MembershipAllowedAction {

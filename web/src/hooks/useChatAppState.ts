@@ -67,12 +67,8 @@ import {
   type WsBlockState,
 } from '@agent/shared';
 import {
-  isActiveRuntimeStatus,
-  isTerminalRuntimeStatus,
-  runtimeStatusFromSessionStatus,
-  type LastRunState,
-  type TerminalRuntimeStatus,
-} from "./chatRuntimeHelpers";
+  activeRuntimePatchFromStreamStatus, fetchSessionStreamStatus, isActiveRuntimeStatus, isTerminalRuntimeStatus,
+  runtimeStatusFromSessionStatus, type LastRunState, type TerminalRuntimeStatus } from "./chatRuntimeHelpers";
 
 export type { ChatAppState, ChatAppStateOptions } from "./useChatAppStateTypes";
 import type {
@@ -1366,15 +1362,17 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         ...(lastRunState.runId ? { runId: lastRunState.runId } : {}),
         attached: false,
       });
+      return;
     }
-    if (sessionId !== immediateSessionIdRef.current) return;
 
+    const existingRuntime = activeRunsBySession.current.get(sessionId);
+    if (isActiveRuntimeStatus(existingRuntime?.status) && existingRuntime?.runId && lastRunState.runId
+      && existingRuntime.runId !== lastRunState.runId) return;
     const requestedRuntimeVersion = runtimeVersionBySessionRef.current.get(sessionId) ?? 0;
-    try {
-      const res = await authFetch(`/api/sessions/${sessionId}/stream-status`);
-      if (!res.ok) return; const { active } = await res.json() as { active: boolean };
-      if (active || requestedRuntimeVersion !== (runtimeVersionBySessionRef.current.get(sessionId) ?? 0)) return;
-    } catch {
+    const status = await fetchSessionStreamStatus(sessionId);
+    if (!status || requestedRuntimeVersion !== (runtimeVersionBySessionRef.current.get(sessionId) ?? 0)) return;
+    if (status.active) {
+      patchSessionRuntime(sessionId, activeRuntimePatchFromStreamStatus(status));
       return;
     }
 
@@ -1773,13 +1771,18 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           streamBindingGenerationRef.current += 1;
         }
 
-        // ① 总是更新 Map（per-session 持久态,不论是否当前会话）
-        patchSessionRuntime(d.sessionId, {
-          status: d.status, source: 'ws',
-          ...(d.streamId ? { streamId: d.streamId } : {}),
-          ...(d.runId ? { runId: d.runId } : {}),
-          attached: isActiveRuntimeStatus(d.status),
-        });
+        // 当前会话终态先保留 active latch，等下方探活确认；否则 run 交接空窗会让列表先闪回旧时间。
+        const deferCurrentTerminal = isTerminalRuntimeStatus(d.status)
+          && d.sessionId === immediateSessionIdRef.current
+          && loadingRef.current;
+        if (!deferCurrentTerminal) {
+          patchSessionRuntime(d.sessionId, {
+            status: d.status, source: 'ws',
+            ...(d.streamId ? { streamId: d.streamId } : {}),
+            ...(d.runId ? { runId: d.runId } : {}),
+            attached: isActiveRuntimeStatus(d.status),
+          });
+        }
 
         // ② tracking 集合仅用于关联运行态；未读状态由服务端事件同步。
         if (isActiveRuntimeStatus(d.status)) {
@@ -1808,9 +1811,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         }
 
         if (isTerminalRuntimeStatus(d.status) && d.sessionId === sessionIdRef.current && loadingRef.current) {
-          const terminalStatus = d.status;
-          const statusRunId = d.runId;
-          const statusStreamId = d.streamId;
+          const terminalStatus = d.status, statusRunId = d.runId, statusStreamId = d.streamId;
+          const terminalRuntimeVersion = runtimeVersionBySessionRef.current.get(d.sessionId) ?? 0;
           setTimeout(() => {
             if (!loadingRef.current || sessionIdRef.current !== d.sessionId) return;
             void (async () => {
@@ -1818,15 +1820,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                 (statusRunId && runIdRef.current && statusRunId !== runIdRef.current)
                 || (statusStreamId && streamIdRef.current && statusStreamId !== streamIdRef.current),
               );
-              let active: boolean | null = null;
-              try {
-                const res = await authFetch(`/api/sessions/${d.sessionId}/stream-status`);
-                if (res.ok) {
-                  const json = await res.json() as { active: boolean };
-                  active = json.active;
-                  if (active) return;
-                }
-              } catch { /* fall through: session_status remains the fallback */ }
+              const status = await fetchSessionStreamStatus(d.sessionId);
+              const active = status?.active ?? null;
+              if (status?.active) {
+                patchSessionRuntime(d.sessionId, { ...activeRuntimePatchFromStreamStatus(status), attached: true });
+                return;
+              }
+              if (terminalRuntimeVersion !== (runtimeVersionBySessionRef.current.get(d.sessionId) ?? 0)) return;
               if (idMismatched && active !== false) return;
               if (!loadingRef.current || sessionIdRef.current !== d.sessionId) return;
               finalizeTerminalRuntime({
@@ -2699,9 +2699,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (!httpResultStale) {
       // HTTP 探活补回权威 runId / streamId；恢复不同 binding 时先切代，挡住旧 resume 响应。
       if (httpActive !== false) advanceStreamBindingGenerationIfChanged({ streamId: httpStreamId, runId: httpRunId });
-      // HTTP inactive 不推翻未收到终态的 WS-confirmed runtime；继续 resume，等 WS 权威响应收口。
+      // HTTP inactive 不推翻列表已经确认的 active latch；继续 resume，等关联的 WS 响应收口。
       const existingRuntime = activeRunsBySession.current.get(targetSessionId);
-      if (httpActive === false && !(existingRuntime?.source === 'ws' && isActiveRuntimeStatus(existingRuntime.status))) {
+      if (httpActive === false && !isActiveRuntimeStatus(existingRuntime?.status)) {
         patchSessionRuntime(targetSessionId, { status: 'idle', streamId: null, runId: null, attached: false });
         streamIdRef.current = null;
         runIdRef.current = null;

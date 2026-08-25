@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils';
 import { VoiceBar } from './VoiceBar';
 import { useFilePreview } from '@/contexts/FilePreviewContext';
 import { authFetch } from '@/lib/authFetch';
-import { extractTextFromChildren, getCellMinWidthPx } from '@/lib/tableCellWidth';
+import { extractTextFromChildren, getTableCellStyle } from '@/lib/tableCellWidth';
 import { MD_PATH_RE, HTML_PATH_RE, resolveImageSrc, getPreviewFileType, getFileTypeVisual, splitByMessageMarkers, stripPartialCiteMarker } from '@agent/shared';
 import { MessageCitationCard } from './MessageCitationCard';
 import { MessageFeedbackButton } from './MessageFeedback';
@@ -148,16 +148,16 @@ const LazyMarkdown = lazy(async () => {
         <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
       ),
       table: ({ node, children, className, ...props }) => (
-        <div className="overflow-x-auto">
-          <table className={cn("w-max", className)} {...props}>{children}</table>
+        <div className="max-w-full overflow-x-auto">
+          <table className={className} {...props}>{children}</table>
         </div>
       ),
       // td/th 注入 min-width = ⌈文本宽度 / 4⌉，保证自然换行不超过 4 行
       td: ({ node, children, style, ...props }) => (
-        <td style={{ minWidth: `${getCellMinWidthPx(extractTextFromChildren(children))}px`, ...style }} {...props}>{children}</td>
+        <td style={getTableCellStyle(extractTextFromChildren(children), style)} {...props}>{children}</td>
       ),
       th: ({ node, children, style, ...props }) => (
-        <th style={{ minWidth: `${getCellMinWidthPx(extractTextFromChildren(children))}px`, ...style }} {...props}>{children}</th>
+        <th style={getTableCellStyle(extractTextFromChildren(children), style)} {...props}>{children}</th>
       ),
       code: ({ node, className, children, ...props }) => {
         // 有 className 说明是代码块（```lang），跳过

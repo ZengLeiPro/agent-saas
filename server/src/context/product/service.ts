@@ -16,6 +16,7 @@ import type { RelationEdgeCandidate } from '../relations/types.js';
 import { ContextProductAuthorization } from './authorization.js';
 import {
   ContextProductError,
+  type ContextProductDiagnosis,
   type ContextProductStore,
   type ContextProductSubject,
   type ProductEntityCandidate,
@@ -70,21 +71,25 @@ export class ContextProductService {
   async listTimeline(subject: ContextProductSubject, query: TimelineQuery): Promise<ProductPage<Record<string, unknown>>> {
     const scope = await this.scope(subject);
     const { limit, offset, fingerprint } = this.page(subject, 'timeline', query);
-    const candidates = await this.options.store.listTimeline({
-      tenantId: subject.tenantId, collectionIds: assigned(scope), limit: CANDIDATE_LIMIT,
+    const collectionIds = assigned(scope);
+    if (collectionIds.length === 0) {
+      return this.slice(subject, fingerprint, [], offset, limit, false, diagnosis('scope_empty', 0, 0));
+    }
+    const fetched = await this.options.store.listTimeline({
+      tenantId: subject.tenantId, collectionIds, limit: CANDIDATE_LIMIT + 1,
       ...(query.filter ? { filter: query.filter } : {}), ...(query.type ? { type: query.type } : {}),
       ...(query.entityId ? { entityId: query.entityId } : {}), ...(query.from ? { from: query.from } : {}),
       ...(query.through ? { through: query.through } : {}),
     });
+    const candidates = fetched.slice(0, CANDIDATE_LIMIT);
+    const authorized = await this.options.authorization.authorizeRecords(
+      subject, scope, candidates.map(candidate => candidate.locator),
+    );
     const visible: Record<string, unknown>[] = [];
-    let denied = false;
-    for (const candidate of candidates) {
-      if (!await this.options.authorization.authorizeRecord(subject, scope, candidate.locator)) {
-        denied = true;
-        continue;
-      }
+    for (const [index, candidate] of candidates.entries()) {
+      if (!authorized[index]) continue;
       const evidence = await this.visibleEvidence(subject, scope, candidate.evidence);
-      if (!evidence) { denied = true; continue; }
+      if (!evidence) continue;
       visible.push({
         ...common(candidate.timelineId, candidate.type, candidate.label, candidate.summary,
           candidate.locator.recordRevision, candidate.updatedAt, false),
@@ -92,25 +97,63 @@ export class ContextProductService {
         authority: authority('organization', 'source'), evidence,
       });
     }
-    return this.slice(subject, fingerprint, visible, offset, limit,
-      denied || candidates.length >= CANDIDATE_LIMIT);
+    const capped = fetched.length > CANDIDATE_LIMIT;
+    const degraded = Boolean(scope.degraded) || capped;
+    const emptyDiagnosis = visible.length > 0 ? undefined
+      : scope.degraded ? diagnosis('source_degraded')
+      : hasTimelineFilter(query) ? diagnosis('query_no_match')
+      : diagnosis('no_visible_records');
+    return this.slice(subject, fingerprint, visible, offset, limit, degraded,
+      emptyDiagnosis ?? (scope.degraded ? diagnosis('source_degraded')
+        : capped ? diagnosis('candidate_limit_reached') : undefined));
   }
 
   async listEntities(subject: ContextProductSubject, query: ListQuery): Promise<ProductPage<Record<string, unknown>>> {
     const scope = await this.scope(subject);
-    const { limit, offset, fingerprint } = this.page(subject, 'entities', query);
-    const candidates = await this.options.store.listEntities({
-      tenantId: subject.tenantId, collectionIds: assigned(scope), limit: CANDIDATE_LIMIT,
-      ...(query.filter ? { filter: query.filter } : {}), ...(query.type ? { type: query.type } : {}),
-    });
-    const visible: Record<string, unknown>[] = [];
-    let denied = false;
-    for (const entity of candidates) {
-      if (!await this.options.authorization.authorizeRecord(subject, scope, entity.locator)) { denied = true; continue; }
-      visible.push(entityDto(entity, false));
+    const { limit, fingerprint, afterEntityId: cursorEntityId } = this.entityPage(subject, scope, query);
+    const collectionIds = assigned(scope);
+    if (collectionIds.length === 0) {
+      return { items: [], nextCursor: null, degraded: false, diagnosis: diagnosis('scope_empty') };
     }
-    return this.slice(subject, fingerprint, visible, offset, limit,
-      denied || candidates.length >= CANDIDATE_LIMIT);
+    const visible: Array<{ entityId: string; value: Record<string, unknown> }> = [];
+    let scanned = 0;
+    let afterEntityId = cursorEntityId;
+    let exhausted = false;
+    let capped = false;
+    while (visible.length < limit + 1 && scanned < ENTITY_CANDIDATE_SCAN_LIMIT && !exhausted) {
+      const batchLimit = Math.min(CANDIDATE_LIMIT, ENTITY_CANDIDATE_SCAN_LIMIT - scanned);
+      const fetched = await this.options.store.listEntities({
+        tenantId: subject.tenantId, collectionIds, limit: batchLimit + 1,
+        ...(query.filter ? { filter: query.filter } : {}), ...(query.type ? { type: query.type } : {}),
+        ...(afterEntityId ? { afterEntityId } : {}),
+      });
+      const candidates = fetched.slice(0, batchLimit);
+      scanned += candidates.length;
+      const authorized = await this.options.authorization.authorizeRecords(
+        subject, scope, candidates.map(entity => entity.locator),
+      );
+      candidates.forEach((entity, index) => {
+        if (authorized[index]) visible.push({ entityId: entity.entityId, value: entityDto(entity, false) });
+      });
+      capped = fetched.length > batchLimit && scanned >= ENTITY_CANDIDATE_SCAN_LIMIT;
+      exhausted = fetched.length <= batchLimit;
+      const nextAfter = candidates.at(-1)?.entityId;
+      if (!exhausted && (!nextAfter || nextAfter === afterEntityId)) exhausted = true;
+      afterEntityId = nextAfter;
+    }
+    const pageItems = visible.slice(0, limit);
+    const degraded = Boolean(scope.degraded) || capped;
+    const emptyDiagnosis = pageItems.length > 0 ? undefined
+      : scope.degraded ? diagnosis('source_degraded')
+      : query.filter || query.type ? diagnosis('query_no_match')
+      : diagnosis('no_visible_records');
+    const nextCursor = visible.length > limit && pageItems.length
+      ? this.options.authorization.entityCursor(subject, fingerprint, pageItems.at(-1)!.entityId)
+      : null;
+    return { items: pageItems.map(item => item.value), nextCursor, degraded,
+      ...(emptyDiagnosis ? { diagnosis: emptyDiagnosis }
+        : scope.degraded ? { diagnosis: diagnosis('source_degraded') }
+          : capped && pageItems.length ? { diagnosis: diagnosis('candidate_limit_reached') } : {}) };
   }
 
   async getEntity(subject: ContextProductSubject, entityId: string): Promise<Record<string, unknown>> {
@@ -502,23 +545,63 @@ export class ContextProductService {
     const limit = Number(query.limit ?? 25);
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new ContextProductError('CONTEXT_PRODUCT_INVALID');
     const normalized = { ...query, cursor: undefined, limit };
-    const fingerprint = createHash('sha256').update(JSON.stringify([endpoint, normalized])).digest('base64url');
+    const fingerprint = createHash('sha256').update(JSON.stringify([endpoint, subject.actorId, normalized])).digest('base64url');
     const offset = typeof query.cursor === 'string'
-      ? this.options.authorization.parseCursor(subject.tenantId, fingerprint, query.cursor) : 0;
+      ? this.options.authorization.parseCursor(subject, fingerprint, query.cursor) : 0;
     return { limit, offset, fingerprint };
   }
 
+  private entityPage(subject: ContextProductSubject, scope: ContextRecallResolvedScope, query: ListQuery) {
+    const limit = Number(query.limit ?? 25);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new ContextProductError('CONTEXT_PRODUCT_INVALID');
+    const normalized = { ...query, cursor: undefined, limit };
+    const versions = scope.collections.map(item => [item.collectionId, item.assignmentVersion]).sort();
+    const fingerprint = createHash('sha256')
+      .update(JSON.stringify(['entities', subject.actorId, normalized, versions])).digest('base64url');
+    const afterEntityId = typeof query.cursor === 'string'
+      ? this.options.authorization.parseEntityCursor(subject, fingerprint, query.cursor) : undefined;
+    return { limit, fingerprint, afterEntityId };
+  }
+
   private slice(subject: ContextProductSubject, fingerprint: string, values: Record<string, unknown>[],
-    offset: number, limit: number, degraded: boolean): ProductPage<Record<string, unknown>> {
+    offset: number, limit: number, degraded: boolean, diagnosisValue?: ContextProductDiagnosis): ProductPage<Record<string, unknown>> {
     if (offset > values.length) throw new ContextProductError('CONTEXT_PRODUCT_CURSOR_INVALID');
     const items = values.slice(offset, offset + limit);
     const next = offset + items.length;
     return { items, nextCursor: next < values.length
-      ? this.options.authorization.cursor(subject.tenantId, fingerprint, next) : null, degraded };
+      ? this.options.authorization.cursor(subject, fingerprint, next) : null, degraded,
+    ...(diagnosisValue ? { diagnosis: diagnosisValue } : {}) };
   }
 }
 
 const CANDIDATE_LIMIT = 200;
+const ENTITY_CANDIDATE_SCAN_LIMIT = 1_000;
+
+function hasTimelineFilter(query: TimelineQuery): boolean {
+  return Boolean(query.filter || query.type || query.entityId || query.from || query.through);
+}
+
+function diagnosis(code: ContextProductDiagnosis['code'], _scannedCandidates = 0,
+  _deniedCandidates = 0): ContextProductDiagnosis {
+  switch (code) {
+    case 'scope_empty': return { code, stage: 'assignment', message: '当前成员没有可用的组织知识范围。',
+      action: '前往资源治理，为成员分配数据源后开启新会话。' };
+    case 'no_source_records': return { code, stage: 'ingestion', message: '授权范围内还没有可消费的来源记录。',
+      action: '检查数据源同步状态、采集范围和最近同步时间。' };
+    case 'no_visible_records': return { code, stage: 'authorization', message: '当前没有可见记录。',
+      action: '检查数据同步、筛选条件以及你在来源系统中的访问范围。' };
+    case 'native_acl_filtered': return { code: 'no_visible_records', stage: 'authorization', message: '当前没有可见记录。',
+      action: '检查数据同步、筛选条件以及你在来源系统中的访问范围。' };
+    case 'candidate_limit_reached': return { code, stage: 'query', message: '候选扫描达到安全上限，结果可能不完整。',
+      action: '缩小时间、类型或关键词范围后重试。' };
+    case 'projection_missing': return { code, stage: 'projection', message: '已授权来源尚未形成可展示的实体投影。',
+      action: '检查实体投影同步状态；Timeline 有数据时无需重复授权。' };
+    case 'query_no_match': return { code, stage: 'query', message: '当前筛选条件没有匹配结果。',
+      action: '清除筛选或调整时间、类型与关键词。' };
+    case 'source_degraded': return { code, stage: 'source', message: '至少一个数据源处于降级状态。',
+      action: '查看 Context Center 的同步诊断并修复来源连接。' };
+  }
+}
 
 const PROFILE_FACETS: ReadonlyArray<keyof DerivedProfile['facets']> = [
   'role', 'tasks', 'workflow', 'artifacts', 'knowhow',

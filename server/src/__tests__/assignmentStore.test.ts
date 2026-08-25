@@ -250,6 +250,88 @@ describe('Resource Assignment 与 Personal Preference', () => {
     expect(query).toHaveBeenCalledWith('COMMIT');
   });
 
+  it('Store 边界拒绝超过 500 条的批量规则，不能绕过路由上限', async () => {
+    const connect = vi.fn();
+    const store = new PgAssignmentStore({ pool: { connect } as never, tablePrefix: 'test' });
+    await expect(store.replaceAssignmentSetsAtomically('acme', [{
+      resourceType: 'org_knowledge', resourceId: 'taskboard-projects', expectedVersion: 0,
+      assignments: Array.from({ length: 501 }, (_, index) => ({
+        assigneeType: 'user' as const, assigneeId: `user-${index}`, effect: 'allow' as const,
+      })),
+    }], 'admin-1')).rejects.toMatchObject({ code: 'ASSIGNMENT_INVALID' });
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it('批量 Assignment 在同一事务中锁定全部资源，任一版本冲突会整体回滚', async () => {
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('SELECT * FROM test_resource_assignment_sets')) {
+        const resourceId = String(params?.[2]);
+        return { rows: [assignmentSetRow({ resource_type: 'org_knowledge', resource_id: resourceId,
+          version: resourceId === 'taskboard-tasks' ? 2 : 1 })], rowCount: 1 };
+      }
+      if (sql.includes('UPDATE test_resource_assignment_sets')) {
+        return { rows: [assignmentSetRow({ resource_type: 'org_knowledge', resource_id: params?.[2], version: 2 })], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const client = { query, release: vi.fn() };
+    const store = new PgAssignmentStore({ pool: { connect: vi.fn().mockResolvedValue(client) } as never, tablePrefix: 'test' });
+
+    await expect(store.replaceAssignmentSetsAtomically('acme', [
+      { resourceType: 'org_knowledge', resourceId: 'taskboard-projects', expectedVersion: 1, assignments: [] },
+      { resourceType: 'org_knowledge', resourceId: 'taskboard-tasks', expectedVersion: 1, assignments: [] },
+    ], 'admin-1')).rejects.toMatchObject({ code: 'ASSIGNMENT_SET_VERSION_CONFLICT' });
+    expect(query).toHaveBeenCalledWith('ROLLBACK');
+    expect(query).not.toHaveBeenCalledWith('COMMIT');
+    expect(query.mock.calls.filter(call => String(call[0]).includes('pg_advisory_xact_lock'))).toHaveLength(2);
+  });
+
+  it('批量写后的 projection callback 失败会与 Assignment 一起回滚', async () => {
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('SELECT * FROM test_resource_assignment_sets')) {
+        return { rows: [assignmentSetRow({ resource_type: 'org_knowledge', resource_id: params?.[2], version: 1 })], rowCount: 1 };
+      }
+      if (sql.includes('UPDATE test_resource_assignment_sets')) {
+        return { rows: [assignmentSetRow({ resource_type: 'org_knowledge', resource_id: params?.[2], version: 2 })], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const client = { query, release: vi.fn() };
+    const store = new PgAssignmentStore({ pool: { connect: vi.fn().mockResolvedValue(client) } as never, tablePrefix: 'test' });
+    const afterWrite = vi.fn(async () => { throw new Error('OUTBOX_FAILED'); });
+    await expect(store.replaceAssignmentSetsAtomically('acme', [{ resourceType: 'org_knowledge',
+      resourceId: 'taskboard-projects', expectedVersion: 1, assignments: [] }], 'admin-1', afterWrite))
+      .rejects.toThrow('OUTBOX_FAILED');
+    expect(afterWrite).toHaveBeenCalledOnce();
+    expect(query).toHaveBeenCalledWith('ROLLBACK');
+    expect(query).not.toHaveBeenCalledWith('COMMIT');
+  });
+
+  it('高级编辑未改动的规则会保留既有 migration origin', async () => {
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('SELECT * FROM test_resource_assignment_sets')) return { rows: [assignmentSetRow()], rowCount: 1 };
+      if (sql.includes('UPDATE test_resource_assignment_sets')) return { rows: [assignmentSetRow({ version: 3 })], rowCount: 1 };
+      if (sql.includes('SELECT assignee_type,assignee_id,effect,origin')) return { rows: [{
+        assignee_type: 'user', assignee_id: 'user-1', effect: 'allow', origin: 'migration',
+      }], rowCount: 1 };
+      if (sql.includes('INSERT INTO test_resource_assignments')) {
+        const inputs = JSON.parse(String(params?.[4])) as Array<Record<string, unknown>>;
+        return { rows: inputs.map(input => ({
+          assignment_id: input.assignment_id, tenant_id: params?.[0], resource_type: params?.[1], resource_id: params?.[2],
+          assignee_type: input.assignee_type, assignee_id: input.assignee_id, effect: input.effect, origin: input.origin,
+          version: 1, created_at: NOW, created_by: params?.[3], updated_at: NOW, updated_by: params?.[3],
+        })), rowCount: inputs.length };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const client = { query, release: vi.fn() };
+    const store = new PgAssignmentStore({ pool: { connect: vi.fn().mockResolvedValue(client) } as never, tablePrefix: 'test' });
+    const updated = await store.replaceAssignments('acme', 'org_knowledge', 'kb-1', [
+      { assigneeType: 'user', assigneeId: 'user-1', effect: 'allow' },
+    ], 2, 'admin-1');
+    expect(updated.assignments[0]?.origin).toBe('migration');
+  });
+
   it('治理写以 AssignmentSet expectedVersion 原子替换，拒绝同一 assignee 的冲突规则', async () => {
     let queryCount = 0;
     const query = async (sql: string, params?: unknown[]) => {
@@ -264,23 +346,24 @@ describe('Resource Assignment 与 Personal Preference', () => {
         };
       }
       if (sql.includes('INSERT INTO test_resource_assignments')) {
+        const inputs = JSON.parse(String(params?.[4])) as Array<Record<string, unknown>>;
         return {
-          rows: [{
-            assignment_id: params?.[0],
-            tenant_id: params?.[1],
-            resource_type: params?.[2],
-            resource_id: params?.[3],
-            assignee_type: params?.[4],
-            assignee_id: params?.[5],
-            effect: params?.[6],
-            origin: params?.[7],
+          rows: inputs.map(input => ({
+            assignment_id: input.assignment_id,
+            tenant_id: params?.[0],
+            resource_type: params?.[1],
+            resource_id: params?.[2],
+            assignee_type: input.assignee_type,
+            assignee_id: input.assignee_id,
+            effect: input.effect,
+            origin: input.origin,
             version: 1,
             created_at: NOW,
-            created_by: params?.[8],
+            created_by: params?.[3],
             updated_at: NOW,
-            updated_by: params?.[8],
-          }],
-          rowCount: 1,
+            updated_by: params?.[3],
+          })),
+          rowCount: inputs.length,
         };
       }
       return { rows: [], rowCount: 1 };

@@ -61,12 +61,13 @@ describe('PgContextProductStore hardened candidates', () => {
     const query = vi.fn(async (_sql: string, _params?: readonly unknown[]) => ({ rows: [row] }));
     const store = new PgContextProductStore({ query } as never, 'test');
     const result = await store.listEntities({ tenantId: 'tenant-a', collectionIds: ['collection-a'], limit: 25,
-      type: 'Project', filter: 'payload' });
+      type: 'Project', filter: 'payload', afterEntityId: 'entity-before' });
 
     const sql = String(query.mock.calls[0]![0]);
     expect(sql).toContain("en.display_name ILIKE '%'||$4||'%'");
     expect(sql).toContain("en.payload_json::text ILIKE '%'||$4||'%'");
-    expect(query.mock.calls[0]![1]![2]).toBe('Project');
+    expect(sql).toContain('en.entity_id>$5');
+    expect(query.mock.calls[0]![1]).toEqual(['tenant-a', ['collection-a'], 'Project', 'payload', 'entity-before', 25]);
     expect(result[0]).toMatchObject({ entityType: 'Project', summary: 'Safe payload' });
   });
 

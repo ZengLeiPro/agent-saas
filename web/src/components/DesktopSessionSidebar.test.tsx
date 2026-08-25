@@ -204,6 +204,15 @@ describe("桌面侧边栏会话激活态", () => {
     expect(screen.queryByRole("button", { name: "新建到分组" })).toBeNull();
   });
 
+  it("双栏只保留内部栏位分割线，侧边栏外缘不描边", () => {
+    const collapsed = renderSidebar("capabilities", [session], "double", { activeSessionId: null });
+    expect(screen.getByTestId("desktop-sidebar-main-panel").classList.contains("border-r")).toBe(false);
+    collapsed.unmount();
+
+    renderSidebar("chat", [session], "double");
+    expect(screen.getByTestId("desktop-sidebar-main-panel").classList.contains("border-r")).toBe(true);
+  });
+
   it("平台管理员头像菜单也只显示一个设置入口", () => {
     renderSidebar("chat", [session], "single", { isAdmin: true, isPlatformAdmin: true });
 
@@ -215,7 +224,7 @@ describe("桌面侧边栏会话激活态", () => {
     expect(screen.queryByText("平台控制台")).toBeNull();
   });
 
-  it.each(["single", "double"] as const)("%s 布局进入设置后整块替换常规侧边栏", (sidebarLayout) => {
+  it.each(["single", "double"] as const)("%s 布局进入设置后整块替换常规侧边栏", async (sidebarLayout) => {
     const onCloseSettings = vi.fn();
     const onSettingsNavigate = vi.fn();
     renderSidebar("chat", [session], sidebarLayout, {
@@ -228,7 +237,8 @@ describe("桌面侧边栏会话激活态", () => {
       onSettingsNavigate,
     });
 
-    expect(screen.getByTestId("unified-settings-sidebar")).toBeTruthy();
+    const settingsSidebar = await screen.findByTestId("unified-settings-sidebar");
+    expect(settingsSidebar.classList.contains("border-r")).toBe(false);
     expect(screen.queryByText("新建会话")).toBeNull();
     expect(screen.queryByLabelText("搜索会话内容")).toBeNull();
     expect(screen.queryByText("会话 A")).toBeNull();
@@ -243,14 +253,14 @@ describe("桌面侧边栏会话激活态", () => {
     expect(onCloseSettings).toHaveBeenCalledOnce();
   });
 
-  it("普通用户的统一设置菜单隐藏组织和平台分组", () => {
+  it("普通用户的统一设置菜单隐藏组织和平台分组", async () => {
     renderSidebar("chat", [session], "single", {
       settingsMode: true,
       settingsTarget: "personal",
       activeSettingsSection: "account-security",
     });
 
-    expect(screen.getByText("个人设置")).toBeTruthy();
+    expect(await screen.findByText("个人设置")).toBeTruthy();
     expect(screen.queryByText("平台管理")).toBeNull();
     expect(screen.queryAllByText("组织管理")).toHaveLength(0);
     expect(screen.getByRole("button", { name: "账户与安全" })).toBeTruthy();

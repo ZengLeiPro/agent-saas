@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { governanceRoute } from "@/lib/governanceNavigation";
@@ -6,8 +7,8 @@ import { DEFAULT_TENANT_SETTINGS } from "@/components/TenantManager/types";
 import { OrganizationCredentialsPage, OrganizationEnvironmentsPage, OrganizationGroupsPage, OrganizationMemoryKnowledgePage, OrganizationMembersPage, OrganizationOffboardingPage, OrganizationPoliciesPage } from "./OrganizationGovernancePage";
 
 const mocks = vi.hoisted(() => ({
-  listMemberships: vi.fn(), createMembership: vi.fn(), getMembershipDetails: vi.fn(), listDirectoryGroups: vi.fn(), listCredentials: vi.fn(), listConnectors: vi.fn(), getEntitlements: vi.fn(), getTenantSettings: vi.fn(), updateTenantSettings: vi.fn(), listMemoryKnowledge: vi.fn(), listEnvironmentTemplates: vi.fn(),
-  previewMembership: vi.fn(), updateMembership: vi.fn(), previewUserOffboarding: vi.fn(), startUserOffboarding: vi.fn(), previewPolicy: vi.fn(), updatePolicy: vi.fn(), previewMemoryResource: vi.fn(), updateMemoryResource: vi.fn(), previewAssignment: vi.fn(), updateAssignment: vi.fn(),
+  getSnapshot: vi.fn(), listMemberships: vi.fn(), createMembership: vi.fn(), getMembershipDetails: vi.fn(), listDirectoryGroups: vi.fn(), listCredentials: vi.fn(), listConnectors: vi.fn(), getEntitlements: vi.fn(), getTenantSettings: vi.fn(), updateTenantSettings: vi.fn(), listMemoryKnowledge: vi.fn(), listEnvironmentTemplates: vi.fn(),
+  previewMembership: vi.fn(), updateMembership: vi.fn(), previewUserOffboarding: vi.fn(), startUserOffboarding: vi.fn(), previewPolicy: vi.fn(), updatePolicy: vi.fn(), previewMemoryResource: vi.fn(), updateMemoryResource: vi.fn(), previewAssignment: vi.fn(), updateAssignment: vi.fn(), previewAssignmentBatch: vi.fn(), updateAssignmentBatch: vi.fn(),
   previewEntitlementScope: vi.fn(), updateEntitlementScope: vi.fn(), previewCredentialCreate: vi.fn(), createCredential: vi.fn(), previewCredentialRotation: vi.fn(), rotateCredential: vi.fn(), previewCredentialTransfer: vi.fn(), transferCredential: vi.fn(), testCredentialHealth: vi.fn(),
 }));
 
@@ -35,7 +36,7 @@ vi.mock("@/components/TenantManager/hooks", () => ({
 
 vi.mock("@agent/shared/lib/governanceApi", () => ({
   contextCenterApi: {
-    getSnapshot: vi.fn().mockResolvedValue({ generatedAt: "2026-08-22T15:40:00.000Z", sources: [], consumers: [] }),
+    getSnapshot: mocks.getSnapshot,
     getEvidence: vi.fn().mockResolvedValue([]),
     listTimeline: vi.fn().mockResolvedValue({ items: [], nextCursor: null, degraded: false }),
     listEntities: vi.fn().mockResolvedValue({ items: [], nextCursor: null, degraded: false }),
@@ -63,6 +64,8 @@ vi.mock("@agent/shared/lib/governanceApi", () => ({
     updateMemoryResource: mocks.updateMemoryResource,
     previewAssignment: mocks.previewAssignment,
     updateAssignment: mocks.updateAssignment,
+    previewAssignmentBatch: mocks.previewAssignmentBatch,
+    updateAssignmentBatch: mocks.updateAssignmentBatch,
     previewPolicy: mocks.previewPolicy,
     updatePolicy: mocks.updatePolicy,
     previewEntitlementScope: mocks.previewEntitlementScope,
@@ -87,10 +90,15 @@ vi.mock("@agent/shared/lib/governanceApi", () => ({
 describe("OrganizationGovernancePage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.history.replaceState({}, "", "/");
     authState.isAdmin = true;
     authState.username = "org-admin";
+    authFetchMock.mockResolvedValue(new Response(JSON.stringify([]), { status: 200,
+      headers: { "Content-Type": "application/json" } }));
     mocks.listConnectors.mockResolvedValue({ connectors: [] });
+    mocks.getSnapshot.mockResolvedValue({ generatedAt: "2026-08-22T15:40:00.000Z", sources: [], consumers: [] });
     mocks.listMemberships.mockResolvedValue({ memberships: [] });
+    mocks.listDirectoryGroups.mockResolvedValue({ groups: [] });
     mocks.getTenantSettings.mockResolvedValue({
       tenantId: "tenant-a",
       settings: { ...structuredClone(DEFAULT_TENANT_SETTINGS), features: { ...structuredClone(DEFAULT_TENANT_SETTINGS.features), debugModeAllowed: true, debugModeEnabled: true } },
@@ -423,7 +431,7 @@ describe("OrganizationGovernancePage", () => {
   });
 
   it("记忆与知识入口扩展 Context 产品页签且不创建额外壳层", async () => {
-    mocks.listMemoryKnowledge.mockResolvedValue({ tenantId: "tenant-a", authority: "governance_assignment_sets", accessMode: "manage", knowledge: [], memory: [], effective: { organizationKnowledge: false, organizationMemory: false } });
+    mocks.listMemoryKnowledge.mockResolvedValue({ tenantId: "tenant-a", authority: "governance_assignment_sets", accessMode: "manage", suites: [], knowledge: [], memory: [], effective: { organizationKnowledge: false, organizationMemory: false } });
     render(<OrganizationMemoryKnowledgePage tenantId="tenant-a" />);
     await screen.findByText("当前组织没有组织知识资源。");
     const tabs = screen.getByRole("tablist", { name: "记忆与知识区域" });
@@ -434,8 +442,83 @@ describe("OrganizationGovernancePage", () => {
     for (const tab of Array.from(tabs.querySelectorAll('[role="tab"]'))) expect(tab.className).toContain("shrink-0");
   });
 
+  it("记忆与知识深链绑定租户并恢复页签与筛选", async () => {
+    const user = userEvent.setup();
+    mocks.listMemoryKnowledge.mockResolvedValue({ tenantId: "tenant-a", authority: "governance_assignment_sets", accessMode: "manage", suites: [], knowledge: [], memory: [], effective: { organizationKnowledge: false, organizationMemory: false } });
+    const first = render(<OrganizationMemoryKnowledgePage tenantId="tenant-a" />);
+    await user.click(await screen.findByRole("tab", { name: "Timeline" }));
+    fireEvent.change(await screen.findByLabelText("Timeline 筛选"), { target: { value: "task" } });
+    fireEvent.click(screen.getByRole("button", { name: "筛选" }));
+    await waitFor(() => {
+      const params = new URLSearchParams(window.location.search);
+      expect(params.get("contextTenant")).toBe("tenant-a");
+      expect(params.get("contextView")).toBe("timeline");
+      expect(params.get("contextFilter")).toBe("task");
+    });
+    first.unmount();
+    render(<OrganizationMemoryKnowledgePage tenantId="tenant-a" />);
+    expect(screen.getByRole("tab", { name: "Timeline" }).getAttribute("data-state")).toBe("active");
+    expect((screen.getByLabelText("Timeline 筛选") as HTMLInputElement).value).toBe("task");
+  });
+
+  it("不同租户不继承 Context 深链且同页实例跟随 URL 同步", async () => {
+    const user = userEvent.setup();
+    mocks.listMemoryKnowledge.mockResolvedValue({ tenantId: "tenant-a", authority: "governance_assignment_sets", accessMode: "manage", suites: [], knowledge: [], memory: [], effective: { organizationKnowledge: false, organizationMemory: false } });
+    window.history.replaceState({}, "", "/?contextTenant=tenant-a&contextView=entities&contextFilter=project");
+    render(<><OrganizationMemoryKnowledgePage tenantId="tenant-a" /><OrganizationMemoryKnowledgePage tenantId="tenant-a" /></>);
+    expect(screen.getAllByRole("tab", { name: "实体" }).every(tab => tab.getAttribute("data-state") === "active")).toBe(true);
+    await user.click(screen.getAllByRole("tab", { name: "Timeline" })[0]!);
+    await waitFor(() => expect(screen.getAllByRole("tab", { name: "Timeline" })
+      .every(tab => tab.getAttribute("data-state") === "active")).toBe(true));
+    window.history.replaceState({}, "", "/?contextTenant=tenant-a&contextView=entities");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    const tenantB = render(<OrganizationMemoryKnowledgePage tenantId="tenant-b" />);
+    expect(tenantB.container.querySelector('[role="tab"][data-state="active"]')?.textContent).toBe("资源治理");
+  });
+
+  it("Taskboard 套件通过姓名和部门选择后一次预览并原子提交三个 Collection", async () => {
+    const resources = ["taskboard-projects", "taskboard-tasks", "taskboard-events"].map((resourceId, index) => ({ resourceId, name: resourceId, version: index + 1, status: "enabled" as const }));
+    mocks.listMemoryKnowledge.mockResolvedValue({
+      tenantId: "tenant-a", authority: "governance_assignment_sets", accessMode: "manage",
+      suites: [{ suiteId: "taskboard", name: "Taskboard 项目与任务", description: "项目、任务和变更历史原子授权。",
+        policyEnabled: true, resourceIds: resources.map(item => item.resourceId),
+        expectedResourceIds: resources.map(item => item.resourceId), missingResourceIds: [], unknownResourceIds: [],
+        completeness: "complete", resources,
+        configuration: { mode: "none", userIds: [], groupIds: [] } }],
+      knowledge: resources.map(item => ({ ...item, policyEnabled: true, scope: [], source: "governance", updatedAt: "2026-08-14T00:00:00.000Z" })),
+      memory: [], effective: { organizationKnowledge: true, organizationMemory: false },
+    });
+    mocks.listMemberships.mockResolvedValue({ memberships: [{ userId: "user-1", status: "active", directoryProfile: { displayName: "曾磊", username: "zenglei" } }] });
+    mocks.listDirectoryGroups.mockResolvedValue({ groups: [{ groupId: "dept-rd", displayName: "研发部", status: "active" }] });
+    mocks.previewAssignmentBatch.mockResolvedValue({ previewId: `abpv1.${"a".repeat(64)}`, baselineDigest: "b".repeat(64), expiresAt: "2099-01-01T00:00:00.000Z",
+      changes: resources.map(item => ({ resourceId: item.resourceId, before: [], after: [
+        { assigneeType: "user", assigneeId: "user-1", effect: "allow", label: "曾磊" },
+        { assigneeType: "directory_group", assigneeId: "dept-rd", effect: "allow", label: "研发部" },
+      ], addedCount: 2, removedCount: 0, beforeUserCount: 0, afterUserCount: 1,
+        addedUserCount: 1, removedUserCount: 0 })), impact: { resourceCount: 3, directSubjectCount: 2,
+        effectiveUserCount: 1, addedUserCount: 1, removedUserCount: 0, agentRuleCount: 0,
+        atomic: true, requiresNewSession: true } });
+    mocks.updateAssignmentBatch.mockResolvedValue({ sets: resources.map(item => ({ resourceId: item.resourceId, version: item.version + 1 })), auditId: "audit-batch", effectiveAt: "2026-08-25T12:00:00.000Z" });
+
+    render(<OrganizationMemoryKnowledgePage tenantId="tenant-a" />);
+    expect(await screen.findByText("接入什么数据")).toBeTruthy();
+    fireEvent.click(await screen.findByLabelText(/曾磊/));
+    fireEvent.click(await screen.findByLabelText(/研发部/));
+    fireEvent.click(screen.getByRole("button", { name: "预览完整差异" }));
+    await waitFor(() => expect(mocks.previewAssignmentBatch).toHaveBeenCalledWith(expect.objectContaining({
+      changes: expect.arrayContaining([expect.objectContaining({ resourceId: "taskboard-projects",
+        assignments: expect.arrayContaining([expect.objectContaining({ assigneeId: "user-1" }), expect.objectContaining({ assigneeId: "dept-rd" })]) })]),
+    }), "tenant-a"));
+    expect(await screen.findByText(/原子边界/)).toBeTruthy();
+    expect(screen.getAllByText(/曾磊（user-1）/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "原子提交 3 个 Collection" }));
+    await waitFor(() => expect(mocks.updateAssignmentBatch).toHaveBeenCalled());
+    expect(await screen.findByText(/需新建 Agent 会话验收/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "新建 Agent 会话" }).getAttribute("href")).toBe("/");
+  });
+
   it("记忆知识页使用组织权威元数据并可 signed preview→commit 创建 memory", async () => {
-    mocks.listMemoryKnowledge.mockResolvedValue({ tenantId: "tenant-a", authority: "governance_assignment_sets", accessMode: "manage", knowledge: [], memory: [], effective: { organizationKnowledge: false, organizationMemory: false } });
+    mocks.listMemoryKnowledge.mockResolvedValue({ tenantId: "tenant-a", authority: "governance_assignment_sets", accessMode: "manage", suites: [], knowledge: [], memory: [], effective: { organizationKnowledge: false, organizationMemory: false } });
     mocks.previewMemoryResource.mockResolvedValue({ previewId: `mrpv1.${"a".repeat(64)}`, baselineDigest: "b".repeat(64), expiresAt: "2099-01-01T00:00:00.000Z", impact: { operation: "create" }, changeId: "intent-1" });
     mocks.updateMemoryResource.mockResolvedValue({ changeId: "change-1", auditId: "audit-1", effectiveAt: "2026-08-14T00:00:00.000Z", version: 1 });
     render(<OrganizationMemoryKnowledgePage tenantId="tenant-a" />);
@@ -445,23 +528,92 @@ describe("OrganizationGovernancePage", () => {
     fireEvent.change(screen.getByLabelText("记忆资源 ID"), { target: { value: "team-decisions" } });
     fireEvent.change(screen.getByLabelText("team-decisions记忆名称"), { target: { value: "团队决策" } });
     fireEvent.change(screen.getByLabelText("team-decisions记忆变更原因"), { target: { value: "建立组织记忆" } });
-    fireEvent.click(screen.getByRole("button", { name: "生成签名预览" }));
+    const previewButton = screen.getByRole("button", { name: "生成签名预览" });
+    await waitFor(() => expect((previewButton as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(previewButton);
     fireEvent.click(await screen.findByRole("button", { name: "确认提交" }));
     await waitFor(() => expect(mocks.updateMemoryResource).toHaveBeenCalledWith("team-decisions", expect.objectContaining({ expectedVersion: 0, name: "团队决策", previewId: `mrpv1.${"a".repeat(64)}` }), "tenant-a"));
     await waitFor(() => expect(document.body.textContent).toContain("audit-1"));
   });
 
   it("知识资源范围通过 Assignment signed preview→commit 管理", async () => {
-    mocks.listMemoryKnowledge.mockResolvedValue({ tenantId: "tenant-a", authority: "governance_assignment_sets", accessMode: "manage", knowledge: [{ resourceId: "kb-1", name: "知识库", status: "enabled", policyEnabled: true, scope: [{ assigneeType: "everyone", effect: "allow" }], source: "governance", version: 2, updatedAt: "2026-08-14T00:00:00.000Z" }], memory: [], effective: { organizationKnowledge: true, organizationMemory: false } });
+    mocks.listMemoryKnowledge.mockResolvedValue({ tenantId: "tenant-a", authority: "governance_assignment_sets", accessMode: "manage", suites: [], knowledge: [{ resourceId: "kb-1", name: "知识库", status: "enabled", policyEnabled: true, scope: [{ assigneeType: "everyone", effect: "allow" }], source: "governance", version: 2, updatedAt: "2026-08-14T00:00:00.000Z" }], memory: [], effective: { organizationKnowledge: true, organizationMemory: false } });
+    mocks.listMemberships.mockResolvedValue({ memberships: [
+      { userId: "user-1", status: "active", directoryProfile: { displayName: "成员一" } },
+      { userId: "user-2", status: "active", directoryProfile: { displayName: "成员二" } },
+    ] });
     mocks.previewAssignment.mockResolvedValue({ previewId: `apv1.${"a".repeat(64)}`, baselineDigest: "b".repeat(64), expiresAt: "2099-01-01T00:00:00.000Z", impact: {}, changeId: "intent-2" });
     mocks.updateAssignment.mockResolvedValue({ changeId: "change-2", auditId: "audit-2" });
     render(<OrganizationMemoryKnowledgePage tenantId="tenant-a" />);
+    fireEvent.click(await screen.findByText(/高级配置：逐个 Collection/));
     fireEvent.click(await screen.findByRole("button", { name: "管理安全范围" }));
-    fireEvent.change(screen.getByLabelText("kb-1成员范围"), { target: { value: "selected" } });
-    fireEvent.change(screen.getByLabelText("kb-1成员 ID"), { target: { value: "user-1, user-2" } });
+    fireEvent.change(screen.getByLabelText("kb-1规则1主体类型"), { target: { value: "user" } });
+    fireEvent.change(await screen.findByLabelText("kb-1规则1主体"), { target: { value: "user-1" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "新增 Assignment 规则" })[1]);
+    fireEvent.change(screen.getByLabelText("kb-1规则2主体类型"), { target: { value: "user" } });
+    fireEvent.change(await screen.findByLabelText("kb-1规则2主体"), { target: { value: "user-2" } });
     fireEvent.click(screen.getAllByRole("button", { name: "生成签名预览" })[1]);
     fireEvent.click(await screen.findByRole("button", { name: "确认提交" }));
     await waitFor(() => expect(mocks.updateAssignment).toHaveBeenCalledWith("org_knowledge", "kb-1", expect.objectContaining({ expectedVersion: 2, assignments: [{ assigneeType: "user", assigneeId: "user-1", effect: "allow" }, { assigneeType: "user", assigneeId: "user-2", effect: "allow" }] }), "tenant-a"));
+  });
+
+  it("高级配置可无损提交目录群组与 Agent 的 allow/deny 规则", async () => {
+    mocks.listMemoryKnowledge.mockResolvedValue({ tenantId: "tenant-a", authority: "governance_assignment_sets",
+      accessMode: "manage", suites: [], knowledge: [{ resourceId: "kb-advanced", name: "复杂知识库",
+        status: "enabled", policyEnabled: true, scope: [
+          { assigneeType: "directory_group", assigneeId: "dept-rd", effect: "allow", origin: "migration" },
+          { assigneeType: "agent", assigneeId: "agent-1", effect: "deny", origin: "direct" },
+        ], source: "governance", version: 4, updatedAt: "2026-08-25T00:00:00.000Z" }], memory: [],
+      effective: { organizationKnowledge: true, organizationMemory: false } });
+    mocks.listDirectoryGroups.mockResolvedValue({ groups: [{ groupId: "dept-rd", displayName: "研发部", status: "active" }] });
+    authFetchMock.mockResolvedValue(new Response(JSON.stringify([{ id: "agent-1", name: "研发 Agent", enabled: true }]),
+      { status: 200, headers: { "Content-Type": "application/json" } }));
+    mocks.previewAssignment.mockResolvedValue({ previewId: `apv1.${"a".repeat(64)}`, baselineDigest: "b".repeat(64),
+      expiresAt: "2099-01-01T00:00:00.000Z", impact: {}, changeId: "intent-advanced" });
+    render(<OrganizationMemoryKnowledgePage tenantId="tenant-a" />);
+    fireEvent.click(await screen.findByText(/高级配置：逐个 Collection/));
+    fireEvent.click(await screen.findByRole("button", { name: "管理安全范围" }));
+    expect((await screen.findByLabelText("kb-advanced规则1主体") as HTMLSelectElement).value).toBe("dept-rd");
+    expect((screen.getByLabelText("kb-advanced规则2主体") as HTMLSelectElement).value).toBe("agent-1");
+    fireEvent.click(screen.getAllByRole("button", { name: "生成签名预览" })[1]);
+    await waitFor(() => expect(mocks.previewAssignment).toHaveBeenCalledWith("org_knowledge", "kb-advanced",
+      expect.objectContaining({ assignments: [
+        { assigneeType: "directory_group", assigneeId: "dept-rd", effect: "allow" },
+        { assigneeType: "agent", assigneeId: "agent-1", effect: "deny" },
+      ] }), "tenant-a"));
+  });
+
+  it("Taskboard 缺少必需 Collection 时明确告警并禁止简单提交", async () => {
+    const resources = ["taskboard-projects", "taskboard-tasks"].map(resourceId => ({
+      resourceId, name: resourceId, version: 1, status: "enabled" as const,
+    }));
+    mocks.listMemoryKnowledge.mockResolvedValue({ tenantId: "tenant-a", authority: "governance_assignment_sets",
+      accessMode: "manage", suites: [{ suiteId: "taskboard", name: "Taskboard 项目与任务", description: "套件",
+        policyEnabled: true, resourceIds: resources.map(item => item.resourceId),
+        expectedResourceIds: ["taskboard-projects", "taskboard-tasks", "taskboard-events"],
+        missingResourceIds: ["taskboard-events"], unknownResourceIds: [], completeness: "incomplete", resources,
+        configuration: { mode: "none", userIds: [], groupIds: [] } }],
+      knowledge: [], memory: [], effective: { organizationKnowledge: true, organizationMemory: false } });
+    render(<OrganizationMemoryKnowledgePage tenantId="tenant-a" />);
+    expect(await screen.findByText(/缺少：taskboard-events/)).toBeTruthy();
+    expect(screen.getByText(/套件定义不完整/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "预览完整差异" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("同步 snapshot 失败显示不可用而不是伪装成没有同步记录", async () => {
+    const resources = ["taskboard-projects", "taskboard-tasks", "taskboard-events"].map(resourceId => ({
+      resourceId, name: resourceId, version: 1, status: "enabled" as const,
+    }));
+    mocks.getSnapshot.mockRejectedValue(new Error("snapshot unavailable"));
+    mocks.listMemoryKnowledge.mockResolvedValue({ tenantId: "tenant-a", authority: "governance_assignment_sets",
+      accessMode: "manage", suites: [{ suiteId: "taskboard", name: "Taskboard", description: "套件",
+        policyEnabled: true, resourceIds: resources.map(item => item.resourceId),
+        expectedResourceIds: resources.map(item => item.resourceId), missingResourceIds: [], unknownResourceIds: [],
+        completeness: "complete", resources, configuration: { mode: "none", userIds: [], groupIds: [] } }],
+      knowledge: [], memory: [], effective: { organizationKnowledge: true, organizationMemory: false } });
+    render(<OrganizationMemoryKnowledgePage tenantId="tenant-a" />);
+    expect(await screen.findByText(/同步状态不可用：snapshot unavailable/)).toBeTruthy();
+    expect(screen.queryByText("未发现同步记录")).toBeNull();
   });
 
   it("环境范围展示权威模板目录和 effective scope", async () => {

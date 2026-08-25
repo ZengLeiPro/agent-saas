@@ -2,6 +2,7 @@ export * from './types.js';
 export * from './ports.js';
 export * from './assignmentScopeResolver.js';
 export * from './postgresContextRecallService.js';
+export * from './taxonomy.js';
 export * from './sourceAuthorization.js';
 export * from './taskboardAuthorization.js';
 export * from './principalAuthorization.js';

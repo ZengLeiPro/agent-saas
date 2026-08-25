@@ -16,6 +16,7 @@ const harness = vi.hoisted(() => {
       harness.currentFiles = files;
     }),
     sessionCallbacks: null as null | {
+      onSessionsLoaded?: (sessions: Array<{ sessionId: string }>) => void;
       onQueuedMessages?: (sessionId: string, messages: unknown[]) => void;
       cancelActiveStream?: () => void;
     },
@@ -136,6 +137,7 @@ beforeEach(() => {
   harness.currentFiles = [];
   harness.session.sessionId = null;
   harness.session.isNewSession = true;
+  harness.sessionCallbacks = null;
   Object.values(harness.session).forEach((value) => {
     if (typeof value === "function" && "mockClear" in value) (value as ReturnType<typeof vi.fn>).mockClear();
   });
@@ -150,6 +152,40 @@ afterEach(() => {
 });
 
 describe("useChatAppState queue consistency lifecycle", () => {
+  it("keeps a WS-confirmed session running when a later list snapshot is temporarily inactive", async () => {
+    harness.session.sessionId = "session-sleeping";
+    harness.session.isNewSession = false;
+    harness.authFetch.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions/active-streams") {
+        return response({ sessions: [{ sessionId: "session-sleeping", active: false }] });
+      }
+      return response({}, 404);
+    });
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => emit({
+      type: "session_status",
+      sessionId: "session-sleeping",
+      status: "running",
+      streamId: "stream-sleeping",
+      runId: "run-sleeping",
+    }));
+    expect(result.current.runningSessionIds.has("session-sleeping")).toBe(true);
+
+    await act(async () => {
+      harness.sessionCallbacks?.onSessionsLoaded?.([{ sessionId: "session-sleeping" }]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(harness.authFetch).toHaveBeenCalledWith(
+      "/api/sessions/active-streams",
+      expect.objectContaining({ method: "POST" }),
+    ));
+
+    expect(result.current.runningSessionIds.has("session-sleeping")).toBe(true);
+    expect(result.current.sessionRuntimeStatuses.get("session-sleeping")).toBe("running");
+  });
+
   it("reattaches a cold switched session before accepting text and done", async () => {
     harness.session.sessionId = "session-old";
     harness.session.isNewSession = false;

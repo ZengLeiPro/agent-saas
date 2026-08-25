@@ -557,6 +557,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           snapshotStatus.set(item.sessionId, item.active);
           if (!item.active) {
             const existing = activeRunsBySession.current.get(item.sessionId);
+            // 列表快照仅用于恢复状态，不能推翻已由 WS 确认且尚未收到终态的运行态。
+            // 长时间静默的工具（如 sleep）可能让跨进程快照短暂滞后；此时若清掉
+            // runningSessionIds，左栏会错误地把仍在执行的会话显示成已结束。
+            if (existing && isActiveRuntimeStatus(existing.status)) {
+              snapshotStatus.set(item.sessionId, true);
+              snapshotRuntimeStatuses.set(item.sessionId, existing.status as SessionRuntimeStatus);
+              continue;
+            }
             if (existing?.lastEventCursor) {
               activeRunsBySession.current.set(item.sessionId, {
                 status: 'idle',

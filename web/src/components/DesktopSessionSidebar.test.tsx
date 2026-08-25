@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
 import type { AppTab, ChatSessionIndexItem } from "@/types/sidebar";
 
 vi.mock("@/contexts/AuthContext", () => ({
@@ -81,6 +82,7 @@ function renderSidebar(
   activeTab: AppTab,
   sessions: ChatSessionIndexItem[] = [session],
   sidebarLayout: "single" | "double" = "single",
+  extraProps: Partial<ComponentProps<typeof DesktopSessionSidebar>> = {},
 ) {
   const onNew = vi.fn();
   return {
@@ -93,6 +95,7 @@ function renderSidebar(
         onSelect={vi.fn()}
         onNew={onNew}
         onTabChange={vi.fn()}
+        {...extraProps}
       />,
     ),
     onNew,
@@ -199,5 +202,67 @@ describe("桌面侧边栏会话激活态", () => {
     renderSidebar("chat", [session], sidebarLayout);
 
     expect(screen.queryByRole("button", { name: "新建到分组" })).toBeNull();
+  });
+
+  it("双栏只保留内部栏位分割线，侧边栏外缘不描边", () => {
+    const collapsed = renderSidebar("capabilities", [session], "double", { activeSessionId: null });
+    expect(screen.getByTestId("desktop-sidebar-main-panel").classList.contains("border-r")).toBe(false);
+    collapsed.unmount();
+
+    renderSidebar("chat", [session], "double");
+    expect(screen.getByTestId("desktop-sidebar-main-panel").classList.contains("border-r")).toBe(true);
+  });
+
+  it("平台管理员头像菜单也只显示一个设置入口", () => {
+    renderSidebar("chat", [session], "single", { isAdmin: true, isPlatformAdmin: true });
+
+    fireEvent.click(screen.getByRole("button", { name: /tester/ }));
+
+    expect(screen.getByRole("button", { name: "设置" })).toBeTruthy();
+    expect(screen.queryByText("个人设置")).toBeNull();
+    expect(screen.queryByText("组织控制台")).toBeNull();
+    expect(screen.queryByText("平台控制台")).toBeNull();
+  });
+
+  it.each(["single", "double"] as const)("%s 布局进入设置后整块替换常规侧边栏", async (sidebarLayout) => {
+    const onCloseSettings = vi.fn();
+    const onSettingsNavigate = vi.fn();
+    renderSidebar("chat", [session], sidebarLayout, {
+      isAdmin: true,
+      isPlatformAdmin: true,
+      settingsMode: true,
+      settingsTarget: "platform",
+      activeSettingsSection: "models",
+      onCloseSettings,
+      onSettingsNavigate,
+    });
+
+    const settingsSidebar = await screen.findByTestId("unified-settings-sidebar");
+    expect(settingsSidebar.classList.contains("border-r")).toBe(false);
+    expect(screen.queryByText("新建会话")).toBeNull();
+    expect(screen.queryByLabelText("搜索会话内容")).toBeNull();
+    expect(screen.queryByText("会话 A")).toBeNull();
+    expect(screen.getByText("个人设置")).toBeTruthy();
+    expect(screen.getAllByText("组织管理").length).toBeGreaterThan(0);
+    expect(screen.getByText("平台管理")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "模型" }).getAttribute("aria-current")).toBe("page");
+
+    fireEvent.click(screen.getByRole("button", { name: "系统配置" }));
+    expect(onSettingsNavigate).toHaveBeenCalledWith("platform", "system");
+    fireEvent.click(screen.getByRole("button", { name: "返回主界面" }));
+    expect(onCloseSettings).toHaveBeenCalledOnce();
+  });
+
+  it("普通用户的统一设置菜单隐藏组织和平台分组", async () => {
+    renderSidebar("chat", [session], "single", {
+      settingsMode: true,
+      settingsTarget: "personal",
+      activeSettingsSection: "account-security",
+    });
+
+    expect(await screen.findByText("个人设置")).toBeTruthy();
+    expect(screen.queryByText("平台管理")).toBeNull();
+    expect(screen.queryAllByText("组织管理")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "账户与安全" })).toBeTruthy();
   });
 });

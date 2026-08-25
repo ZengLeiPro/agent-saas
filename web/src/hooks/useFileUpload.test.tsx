@@ -63,8 +63,18 @@ describe("useFileUpload 并发隔离", () => {
     expect(result.current.uploadedFiles.map((file) => file.originalName)).toEqual(["a.txt", "b.txt"]);
   });
 
-  it("从资料库添加时调用服务端导入接口并追加附件", async () => {
-    mocks.authFetch.mockResolvedValueOnce(uploadResponse("方案.pdf"));
+  it("从资料库添加时调用服务端引用接口并保留 assets 路径", async () => {
+    mocks.authFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+      success: true,
+      files: [{
+        attachmentId: crypto.randomUUID(),
+        originalName: "方案.pdf",
+        relativePath: "assets/20260822/方案.pdf",
+        size: 1,
+        mimeType: "application/pdf",
+        isImage: false,
+      }],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
     const { result } = renderHook(() => useFileUpload("chat", () => "session-1"));
 
     await act(async () => {
@@ -78,7 +88,10 @@ describe("useFileUpload 并发隔离", () => {
         body: JSON.stringify({ paths: ["assets/20260822/方案.pdf"] }),
       }),
     );
-    expect(result.current.uploadedFiles[0]?.originalName).toBe("方案.pdf");
+    expect(result.current.uploadedFiles[0]).toMatchObject({
+      originalName: "方案.pdf",
+      relativePath: "assets/20260822/方案.pdf",
+    });
   });
 
   it("资料库超出 20 个文件时 reject，避免调用方误判成功", async () => {

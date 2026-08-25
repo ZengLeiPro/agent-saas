@@ -21,13 +21,11 @@ import {
   GripVertical,
   X,
   ChevronsUpDown,
-  UserCog,
   Search,
   Share2,
 } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 import { PanelToggleIcon } from "@/components/icons/PanelToggleIcon";
-import { getGovernanceUserMenuEntries } from "@/lib/governanceUserMenu";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { BillingMiniBadge } from "@/components/BillingMiniBadge";
 import { RenameSessionDialog } from "@/components/chat/RenameSessionDialog";
@@ -62,6 +60,7 @@ import { LogoutAccountDialog } from "@/components/LogoutAccountDialog";
 import { getAccountKey, type SavedAccountSummary } from "@/lib/savedAccounts";
 import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
+import { DeferredUnifiedSettingsSidebar, preloadUnifiedSettingsSidebar } from "@/components/DeferredUnifiedSettingsSidebar";
 import { getSidebarNavItems, formatShortDate, getSessionWaitingLabel, getGroupWaitingRuntimeStatus } from "@/types/sidebar";
 import type { SessionGroup, SessionListEntry } from "@/types/sessionGroup";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
@@ -93,11 +92,13 @@ interface DesktopSessionSidebarProps {
   className?: string;
   activeTab?: AppTab;
   onTabChange?: (tab: AppTab) => void;
-  /** push 版本的 tab 切换：用于 user menu 跳转到「组织/平台分析」，浏览器后退可回到原页面 */
-  onPushTab?: (tab: AppTab) => void;
   onOpenSettings?: (section?: SettingsSectionId) => void;
-  /** 打开「组织管理」/「平台管理」modal，并把 URL 推到 /tenant-admin/settings 或 /platform-admin/settings */
-  onOpenAdminSettings?: (target: AdminSettingsTarget) => void;
+  /** 统一设置模式会替换整块主侧边栏，而不是再打开一层弹窗。 */
+  settingsMode?: boolean;
+  settingsTarget?: "personal" | AdminSettingsTarget;
+  activeSettingsSection?: string;
+  onSettingsNavigate?: (target: "personal" | AdminSettingsTarget, section: string) => void;
+  onCloseSettings?: () => void;
   isAdmin?: boolean;
   /** 平台 admin（跨组织管理者）。组织管理入口对 admin 可见，平台管理入口仅平台 admin 可见。 */
   isPlatformAdmin?: boolean;
@@ -502,10 +503,7 @@ interface SidebarUserMenuFooterProps {
   setShowUserMenu: Dispatch<SetStateAction<boolean>>;
   userMenuRef: React.RefObject<HTMLDivElement>;
   isAdmin: boolean;
-  isPlatformAdmin: boolean;
   onOpenSettings?: (section?: SettingsSectionId) => void;
-  onNavigateAdminTab?: (tab: AppTab) => void;
-  onOpenAdminSettings?: (target: AdminSettingsTarget) => void;
   billingSessionId?: string | null;
   billingSummary: TenantBillingSummary | null;
   billingAllowance: BillingAllowance | null;
@@ -521,9 +519,7 @@ function SidebarUserMenuFooter({
   setShowUserMenu,
   userMenuRef,
   isAdmin,
-  isPlatformAdmin,
   onOpenSettings,
-  onNavigateAdminTab,
   billingSessionId,
   billingSummary,
   billingAllowance,
@@ -545,7 +541,7 @@ function SidebarUserMenuFooter({
       <div className="relative" ref={userMenuRef}>
         <button
           type="button"
-          onClick={() => authEnabled && authUser && setShowUserMenu((v) => !v)}
+          onClick={() => { preloadUnifiedSettingsSidebar(); if (authEnabled && authUser) setShowUserMenu((v) => !v); }}
           disabled={!authUser}
           className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted disabled:opacity-50"
         >
@@ -666,24 +662,17 @@ function SidebarUserMenuFooter({
             )}
 
             <div className={USER_MENU_SECTION}>
-              {getGovernanceUserMenuEntries({ isAdmin, isPlatformAdmin }).map((entry) => {
-                const Icon = entry.id === "settings" ? UserCog : entry.id === "organization" ? EntityIcons.org : EntityIcons.admin;
-                return (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    className={USER_MENU_ITEM}
-                    onClick={() => {
-                      setShowUserMenu(false);
-                      if (entry.id === "settings") onOpenSettings?.("account");
-                      else onNavigateAdminTab?.(entry.id === "organization" ? "tenant-admin" : "platform-admin");
-                    }}
-                  >
-                    <Icon className="size-5" />
-                    {entry.label}
-                  </button>
-                );
-              })}
+              <button
+                type="button"
+                className={USER_MENU_ITEM}
+                onClick={() => {
+                  setShowUserMenu(false);
+                  onOpenSettings?.("account-security");
+                }}
+              >
+                <Settings2 className="size-5" />
+                设置
+              </button>
             </div>
 
             <div className={USER_MENU_SECTION}>
@@ -963,9 +952,12 @@ export function DesktopSessionSidebar({
   className,
   activeTab = "chat",
   onTabChange,
-  onPushTab,
   onOpenSettings,
-  onOpenAdminSettings,
+  settingsMode = false,
+  settingsTarget = "personal",
+  activeSettingsSection = "account-security",
+  onSettingsNavigate,
+  onCloseSettings,
   isAdmin = false,
   isPlatformAdmin = false,
   hasMore,
@@ -1659,6 +1651,26 @@ export function DesktopSessionSidebar({
     </div>
   );
 
+  if (settingsMode) {
+    const hasSecondPanel = subPanelOpen || showTrash;
+    return <DeferredUnifiedSettingsSidebar
+        width={sidebarLayout === "single" ? singlePanelWidth : (hasSecondPanel ? mainPanelWidth + subPanelWidth : mainPanelWidth)}
+        hidden={hidden}
+        className={className}
+        isAdmin={isAdmin}
+        isPlatformAdmin={isPlatformAdmin}
+        personalAgentEnabled={personalAgentEnabled}
+        target={settingsTarget}
+        activeSection={activeSettingsSection}
+        onNavigate={onSettingsNavigate}
+        onClose={onCloseSettings}
+        onCollapse={onCollapse}
+        onResizeMouseDown={sidebarLayout === "single" ? onSingleResizeMouseDown : (hasSecondPanel ? onSubResizeMouseDown : onMainResizeMouseDown)}
+        onResizeDoubleClick={sidebarLayout === "single" ? onSingleResizeDoubleClick : (hasSecondPanel ? onSubResizeDoubleClick : onMainResizeDoubleClick)}
+        footer={<SidebarUserMenuFooter authUser={authUser} authEnabled={authEnabled} roleLabel={roleLabel} showUserMenu={showUserMenu} setShowUserMenu={setShowUserMenu} userMenuRef={userMenuRef} isAdmin={isAdmin} onOpenSettings={onOpenSettings} billingSessionId={activeSessionId} billingSummary={billingSummary} billingAllowance={billingAllowance} accounts={accounts} switchAccount={switchAccount} />}
+      />;
+  }
+
   if (sidebarLayout === "single") {
     const visibleSingleSessions = singleExpandedGroup?.children ?? [];
     return (
@@ -1836,10 +1848,7 @@ export function DesktopSessionSidebar({
           setShowUserMenu={setShowUserMenu}
           userMenuRef={userMenuRef}
           isAdmin={isAdmin}
-          isPlatformAdmin={isPlatformAdmin}
           onOpenSettings={onOpenSettings}
-          onNavigateAdminTab={(tab) => (onPushTab ?? onTabChange)?.(tab)}
-          onOpenAdminSettings={onOpenAdminSettings}
           billingSessionId={activeSessionId}
           billingSummary={billingSummary}
           billingAllowance={billingAllowance}
@@ -1917,8 +1926,8 @@ export function DesktopSessionSidebar({
       <div className="flex h-full w-full">
         {/* 左主栏：导航 + 分组目录(可拖动调宽) */}
         <div
-          className="relative flex h-full shrink-0 flex-col border-r border-black/[0.08]"
-          style={{ width: mainPanelWidth }}
+          className={cn("relative flex h-full shrink-0 flex-col", (subPanelOpen || showTrash) && "border-r border-black/[0.08]")}
+          style={{ width: mainPanelWidth }} data-testid="desktop-sidebar-main-panel"
         >
           {/* Header: 品牌徽标 + 收起侧边栏 */}
           <SidebarBrandHeader onCollapse={onCollapse} />
@@ -2193,16 +2202,7 @@ export function DesktopSessionSidebar({
             setShowUserMenu={setShowUserMenu}
             userMenuRef={userMenuRef}
             isAdmin={isAdmin}
-            isPlatformAdmin={isPlatformAdmin}
-            onOpenSettings={onOpenSettings}
-            onNavigateAdminTab={(tab) => {
-              setSubPanelOpen(false);
-              (onPushTab ?? onTabChange)?.(tab);
-            }}
-            onOpenAdminSettings={(target) => {
-              setSubPanelOpen(false);
-              onOpenAdminSettings?.(target);
-            }}
+              onOpenSettings={onOpenSettings}
             billingSessionId={activeSessionId}
             billingSummary={billingSummary} billingAllowance={billingAllowance}
             accounts={accounts}

@@ -87,10 +87,13 @@ function store(overrides: Partial<ContextProductStore> = {}): ContextProductStor
   };
 }
 function harness(overrides: { store?: ContextProductStore; scopes?: ContextRecallScopeResolver; assigned?: string[];
-  authorize?: (recordId: string) => boolean | Promise<boolean>; role?: boolean;
+  authorize?: (recordId: string) => boolean | Promise<boolean>;
+  authorizeBatch?: (recordIds: string[]) => boolean[] | Promise<boolean[]>; role?: boolean;
   appendReview?: ReturnType<typeof vi.fn>; getProfile?: ReturnType<typeof vi.fn> } = {}) {
   const registry = new ContextSourceAuthorizationRegistry({
-    taskboard: { authorize: async (_subject, value) => overrides.authorize ? overrides.authorize(value.recordId) : true },
+    taskboard: overrides.authorizeBatch
+      ? { authorizeBatch: async (_subject, values) => overrides.authorizeBatch!(values.map(value => value.recordId)) }
+      : { authorize: async (_subject, value) => overrides.authorize ? overrides.authorize(value.recordId) : true },
   });
   const authorization = new ContextProductAuthorization(registry, createHash('sha256').update('test').digest());
   const appendReview = overrides.appendReview ?? vi.fn(async () => ({
@@ -216,6 +219,49 @@ describe('ContextProductService authorization boundary', () => {
     expect(authorize).toHaveBeenCalledWith('record-entity-a');
   });
 
+  it('continues entity candidates after an ACL-denied batch instead of returning a false empty page', async () => {
+    const denied = Array.from({ length: 200 }, (_, index) => entity(`denied-${String(index).padStart(3, '0')}`));
+    const allowed = entity('visible');
+    const all = [...denied, allowed];
+    const listEntities = vi.fn(async (input: { afterEntityId?: string; limit: number }) => {
+      const start = input.afterEntityId ? all.findIndex(item => item.entityId === input.afterEntityId) + 1 : 0;
+      return all.slice(start, start + input.limit);
+    });
+    const result = await harness({
+      store: store({ listEntities: listEntities as ContextProductStore['listEntities'] }),
+      authorize: recordId => recordId === 'record-visible',
+    }).service.listEntities(subject, { limit: 1 });
+
+    expect(result.items).toEqual([expect.objectContaining({ id: 'visible' })]);
+    expect(result.degraded).toBe(false);
+    expect(listEntities).toHaveBeenNthCalledWith(2, expect.objectContaining({ afterEntityId: 'denied-199' }));
+  });
+
+  it('batches Entity native ACL checks and exposes no denied candidate counts at the scan ceiling', async () => {
+    const candidates = Array.from({ length: 1_001 }, (_, index) => entity(`denied-${String(index).padStart(4, '0')}`));
+    const listEntities = vi.fn(async (input: { afterEntityId?: string; limit: number }) => {
+      const start = input.afterEntityId ? candidates.findIndex(item => item.entityId === input.afterEntityId) + 1 : 0;
+      return candidates.slice(start, start + input.limit);
+    });
+    const authorizeBatch = vi.fn(async (recordIds: string[]) => recordIds.map(() => false));
+    const page = await harness({ store: store({ listEntities }), authorizeBatch }).service.listEntities(subject, {});
+    expect(authorizeBatch).toHaveBeenCalledTimes(5);
+    expect(authorizeBatch.mock.calls.every(([ids]) => ids.length === 200)).toBe(true);
+    expect(page).toMatchObject({ items: [], degraded: true, diagnosis: { code: 'no_visible_records' } });
+    expect(page.diagnosis).not.toHaveProperty('deniedCandidates');
+  });
+
+  it('returns structured empty-state reasons without treating correct ACL filtering as degradation', async () => {
+    const emptyScope = await harness({ assigned: [] }).service.listEntities(subject, {});
+    expect(emptyScope).toMatchObject({ degraded: false, diagnosis: { code: 'scope_empty', stage: 'assignment' } });
+
+    const filtered = await harness({ authorize: () => false }).service.listEntities(subject, {});
+    expect(filtered).toMatchObject({ degraded: false,
+      diagnosis: { code: 'no_visible_records', stage: 'authorization' } });
+    expect(filtered.diagnosis).not.toHaveProperty('deniedCandidates');
+    expect(filtered.diagnosis).not.toHaveProperty('scannedCandidates');
+  });
+
   it('drops a whole item when any evidence is unauthorized', async () => {
     const second = { ...evidenceRef, recordId: 'record-denied', evidenceId: 'evidence-denied' };
     const productStore = store({
@@ -314,15 +360,29 @@ describe('ContextProductService authorization boundary', () => {
     const service = harness({ store: store({ listEntities: vi.fn(async () => entities),
       getEntity: vi.fn(async (_tenant, id) => entities.find(value => value.entityId === id) ?? null) }) }).service;
     const first = await service.listEntities(subject, { limit: 1 });
-    expect(first.nextCursor).toMatch(/^cp1\./);
+    expect(first.nextCursor).toMatch(/^cp2\./);
     await expect(service.listEntities(subject, { limit: 1, cursor: `${first.nextCursor}x` })).rejects.toThrowError('CONTEXT_PRODUCT_CURSOR_INVALID');
     await expect(service.listEntities({ tenantId: 'tenant-b', actorId: 'actor-a' }, { limit: 1, cursor: first.nextCursor! }))
       .rejects.toThrowError('CONTEXT_PRODUCT_CURSOR_INVALID');
+    await expect(service.listEntities({ tenantId: 'tenant-a', actorId: 'actor-b' }, { limit: 1, cursor: first.nextCursor! }))
+      .rejects.toThrowError('CONTEXT_PRODUCT_CURSOR_INVALID');
+  });
+
+  it('uses a stable actor-bound keyset cursor when records are inserted before the current page', async () => {
+    let entities = [entity('a'), entity('b'), entity('c')];
+    const listEntities = vi.fn(async (input: { afterEntityId?: string; limit: number }) =>
+      entities.filter(item => !input.afterEntityId || item.entityId > input.afterEntityId).slice(0, input.limit));
+    const service = harness({ store: store({ listEntities }) }).service;
+    const first = await service.listEntities(subject, { limit: 1 });
+    expect(first.items.map(item => item.id)).toEqual(['a']);
+    entities = [entity('0'), ...entities];
+    const second = await service.listEntities(subject, { limit: 1, cursor: first.nextCursor! });
+    expect(second.items.map(item => item.id)).toEqual(['b']);
   });
 
   it.each(['timeline', 'entities', 'reviews'] as const)(
     'marks %s degraded when its internal candidate ceiling is reached', async endpoint => {
-      const candidates = Array.from({ length: 200 }, (_, index) => index);
+      const candidates = Array.from({ length: 201 }, (_, index) => index);
       const listTimeline = vi.fn(async () => candidates.map(index => timeline({ timelineId: `timeline-${index}` })));
       const listEntities = vi.fn(async () => candidates.map(index => entity(`entity-${index}`)));
       const listReviews = vi.fn(async () => candidates.map(index => ({
@@ -334,9 +394,9 @@ describe('ContextProductService authorization boundary', () => {
         : endpoint === 'entities' ? await service.listEntities(subject, {})
           : await service.listReviews(subject, {});
       expect(page.items).toHaveLength(25);
-      expect(page.degraded).toBe(true);
+      expect(page.degraded).toBe(endpoint !== 'entities');
       const candidateCall = endpoint === 'timeline' ? listTimeline : endpoint === 'entities' ? listEntities : listReviews;
-      expect(candidateCall).toHaveBeenCalledWith(expect.objectContaining({ limit: 200 }));
+      expect(candidateCall).toHaveBeenCalledWith(expect.objectContaining({ limit: endpoint === 'reviews' ? 200 : 201 }));
     });
 
   it('provides signed load-more pages for entity items and marks the candidate ceiling degraded', async () => {

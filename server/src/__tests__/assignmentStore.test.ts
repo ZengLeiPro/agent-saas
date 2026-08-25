@@ -186,6 +186,52 @@ describe('Resource Assignment 与 Personal Preference', () => {
       && item.params?.[5] === 'user-bob')).toBe(true);
   });
 
+  it('legacy 内置 Connector 为客户组织投影 everyone allow，且不覆盖显式治理', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const query = async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, ...(params ? { params } : {}) });
+      if (sql.includes('SELECT * FROM test_resource_assignment_sets')) return { rows: [], rowCount: 0 };
+      return { rows: [], rowCount: 1 };
+    };
+    const store = new PgAssignmentStore({
+      pool: { query, connect: async () => ({ query, release: () => undefined }) } as never,
+      tablePrefix: 'test',
+      platformTenantId: 'pantheon',
+    });
+    await expect(store.backfillLegacyConnectorAssignments({
+      tenantIds: ['pantheon', 'acme', 'acme'],
+      connectorIds: ['google_workspace', 'github', 'google_workspace'],
+      projectedBy: 'system:governance-m1',
+    })).resolves.toEqual({ resourceSetsProjected: 2 });
+    const connectorAssignments = queries.filter(item =>
+      item.sql.includes('INSERT INTO test_resource_assignments') && item.params?.[2] === 'connector',
+    );
+    expect(connectorAssignments).toHaveLength(2);
+    expect(connectorAssignments.every(item =>
+      item.params?.[1] === 'acme'
+      && item.params?.[4] === 'everyone'
+      && item.params?.[5] === null
+      && item.params?.[6] === 'allow',
+    )).toBe(true);
+    expect(connectorAssignments.some(item => item.params?.[3] === 'google_workspace')).toBe(true);
+
+    const governedQuery = vi.fn().mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT * FROM test_resource_assignment_sets')) {
+        return { rows: [assignmentSetRow({ resource_type: 'connector', resource_id: 'google_workspace', source: 'governance' })], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const governedStore = new PgAssignmentStore({
+      pool: { connect: async () => ({ query: governedQuery, release: () => undefined }) } as never,
+      tablePrefix: 'test',
+      platformTenantId: 'pantheon',
+    });
+    await expect(governedStore.backfillLegacyConnectorAssignments({
+      tenantIds: ['acme'], connectorIds: ['google_workspace'], projectedBy: 'system:governance-m1',
+    })).resolves.toEqual({ resourceSetsProjected: 0 });
+    expect(governedQuery).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO test_resource_assignments'), expect.anything());
+  });
+
   it('effective binding 同时计算 user/everyone/agent，deny 优先；directory group 未解析时 fail closed', async () => {
     const queries: Array<{ sql: string; params?: unknown[] }> = [];
     const query = async (sql: string, params?: unknown[]) => {
@@ -250,6 +296,88 @@ describe('Resource Assignment 与 Personal Preference', () => {
     expect(query).toHaveBeenCalledWith('COMMIT');
   });
 
+  it('Store 边界拒绝超过 500 条的批量规则，不能绕过路由上限', async () => {
+    const connect = vi.fn();
+    const store = new PgAssignmentStore({ pool: { connect } as never, tablePrefix: 'test' });
+    await expect(store.replaceAssignmentSetsAtomically('acme', [{
+      resourceType: 'org_knowledge', resourceId: 'taskboard-projects', expectedVersion: 0,
+      assignments: Array.from({ length: 501 }, (_, index) => ({
+        assigneeType: 'user' as const, assigneeId: `user-${index}`, effect: 'allow' as const,
+      })),
+    }], 'admin-1')).rejects.toMatchObject({ code: 'ASSIGNMENT_INVALID' });
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it('批量 Assignment 在同一事务中锁定全部资源，任一版本冲突会整体回滚', async () => {
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('SELECT * FROM test_resource_assignment_sets')) {
+        const resourceId = String(params?.[2]);
+        return { rows: [assignmentSetRow({ resource_type: 'org_knowledge', resource_id: resourceId,
+          version: resourceId === 'taskboard-tasks' ? 2 : 1 })], rowCount: 1 };
+      }
+      if (sql.includes('UPDATE test_resource_assignment_sets')) {
+        return { rows: [assignmentSetRow({ resource_type: 'org_knowledge', resource_id: params?.[2], version: 2 })], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const client = { query, release: vi.fn() };
+    const store = new PgAssignmentStore({ pool: { connect: vi.fn().mockResolvedValue(client) } as never, tablePrefix: 'test' });
+
+    await expect(store.replaceAssignmentSetsAtomically('acme', [
+      { resourceType: 'org_knowledge', resourceId: 'taskboard-projects', expectedVersion: 1, assignments: [] },
+      { resourceType: 'org_knowledge', resourceId: 'taskboard-tasks', expectedVersion: 1, assignments: [] },
+    ], 'admin-1')).rejects.toMatchObject({ code: 'ASSIGNMENT_SET_VERSION_CONFLICT' });
+    expect(query).toHaveBeenCalledWith('ROLLBACK');
+    expect(query).not.toHaveBeenCalledWith('COMMIT');
+    expect(query.mock.calls.filter(call => String(call[0]).includes('pg_advisory_xact_lock'))).toHaveLength(2);
+  });
+
+  it('批量写后的 projection callback 失败会与 Assignment 一起回滚', async () => {
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('SELECT * FROM test_resource_assignment_sets')) {
+        return { rows: [assignmentSetRow({ resource_type: 'org_knowledge', resource_id: params?.[2], version: 1 })], rowCount: 1 };
+      }
+      if (sql.includes('UPDATE test_resource_assignment_sets')) {
+        return { rows: [assignmentSetRow({ resource_type: 'org_knowledge', resource_id: params?.[2], version: 2 })], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const client = { query, release: vi.fn() };
+    const store = new PgAssignmentStore({ pool: { connect: vi.fn().mockResolvedValue(client) } as never, tablePrefix: 'test' });
+    const afterWrite = vi.fn(async () => { throw new Error('OUTBOX_FAILED'); });
+    await expect(store.replaceAssignmentSetsAtomically('acme', [{ resourceType: 'org_knowledge',
+      resourceId: 'taskboard-projects', expectedVersion: 1, assignments: [] }], 'admin-1', afterWrite))
+      .rejects.toThrow('OUTBOX_FAILED');
+    expect(afterWrite).toHaveBeenCalledOnce();
+    expect(query).toHaveBeenCalledWith('ROLLBACK');
+    expect(query).not.toHaveBeenCalledWith('COMMIT');
+  });
+
+  it('高级编辑未改动的规则会保留既有 migration origin', async () => {
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('SELECT * FROM test_resource_assignment_sets')) return { rows: [assignmentSetRow()], rowCount: 1 };
+      if (sql.includes('UPDATE test_resource_assignment_sets')) return { rows: [assignmentSetRow({ version: 3 })], rowCount: 1 };
+      if (sql.includes('SELECT assignee_type,assignee_id,effect,origin')) return { rows: [{
+        assignee_type: 'user', assignee_id: 'user-1', effect: 'allow', origin: 'migration',
+      }], rowCount: 1 };
+      if (sql.includes('INSERT INTO test_resource_assignments')) {
+        const inputs = JSON.parse(String(params?.[4])) as Array<Record<string, unknown>>;
+        return { rows: inputs.map(input => ({
+          assignment_id: input.assignment_id, tenant_id: params?.[0], resource_type: params?.[1], resource_id: params?.[2],
+          assignee_type: input.assignee_type, assignee_id: input.assignee_id, effect: input.effect, origin: input.origin,
+          version: 1, created_at: NOW, created_by: params?.[3], updated_at: NOW, updated_by: params?.[3],
+        })), rowCount: inputs.length };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const client = { query, release: vi.fn() };
+    const store = new PgAssignmentStore({ pool: { connect: vi.fn().mockResolvedValue(client) } as never, tablePrefix: 'test' });
+    const updated = await store.replaceAssignments('acme', 'org_knowledge', 'kb-1', [
+      { assigneeType: 'user', assigneeId: 'user-1', effect: 'allow' },
+    ], 2, 'admin-1');
+    expect(updated.assignments[0]?.origin).toBe('migration');
+  });
+
   it('治理写以 AssignmentSet expectedVersion 原子替换，拒绝同一 assignee 的冲突规则', async () => {
     let queryCount = 0;
     const query = async (sql: string, params?: unknown[]) => {
@@ -264,23 +392,24 @@ describe('Resource Assignment 与 Personal Preference', () => {
         };
       }
       if (sql.includes('INSERT INTO test_resource_assignments')) {
+        const inputs = JSON.parse(String(params?.[4])) as Array<Record<string, unknown>>;
         return {
-          rows: [{
-            assignment_id: params?.[0],
-            tenant_id: params?.[1],
-            resource_type: params?.[2],
-            resource_id: params?.[3],
-            assignee_type: params?.[4],
-            assignee_id: params?.[5],
-            effect: params?.[6],
-            origin: params?.[7],
+          rows: inputs.map(input => ({
+            assignment_id: input.assignment_id,
+            tenant_id: params?.[0],
+            resource_type: params?.[1],
+            resource_id: params?.[2],
+            assignee_type: input.assignee_type,
+            assignee_id: input.assignee_id,
+            effect: input.effect,
+            origin: input.origin,
             version: 1,
             created_at: NOW,
-            created_by: params?.[8],
+            created_by: params?.[3],
             updated_at: NOW,
-            updated_by: params?.[8],
-          }],
-          rowCount: 1,
+            updated_by: params?.[3],
+          })),
+          rowCount: inputs.length,
         };
       }
       return { rows: [], rowCount: 1 };

@@ -39,8 +39,8 @@ const contextSearchSchema = z.object({
   query: z.string().trim().min(1).max(2_000).describe('Natural-language recall query.'),
   limit: z.number().int().min(1).max(MAX_CONTEXT_LIMIT).optional().describe('Maximum hits; default 10, maximum 50.'),
   timeRange: timeRangeSchema.optional().describe('Optional source-time range.'),
-  kinds: filterListSchema.optional().describe('Optional record-kind filters.'),
-  sources: filterListSchema.optional().describe('Optional source ID/kind filters.'),
+  kinds: filterListSchema.optional().describe('Optional business entity or storage record-kind filters, for example Task, Project, snapshot or event.'),
+  sources: filterListSchema.optional().describe('Optional Collection ID, source ID or provider-kind filters, for example taskboard-tasks or taskboard.'),
 }).strict();
 
 type ContextSearchInput = z.infer<typeof contextSearchSchema>;
@@ -238,6 +238,8 @@ function formatHit(hit: ContextRecallHit): Record<string, unknown> {
     collectionId: hit.collectionId,
     assignmentVersion: hit.assignmentVersion,
     kind: hit.kind,
+    recordKind: hit.recordKind,
+    ...(hit.entityType ? { entityType: hit.entityType } : {}),
     content: hit.content,
     ...(hit.score !== undefined ? { score: hit.score } : {}),
     source: hit.source,

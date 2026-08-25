@@ -449,9 +449,13 @@ describe('governanceApi fail closed', () => {
     })).resolves.toMatchObject({ changeId: 'intent-1', impact: { secretStoredInVault: true } });
   });
 
-  it('组织记忆知识列表严格接受真实空列表', async () => {
-    mockAuthFetch.mockResolvedValue(jsonResponse({ tenantId: 'tenant-1', authority: 'governance_assignment_sets', accessMode: 'manage', knowledge: [], memory: [], effective: { organizationKnowledge: false, organizationMemory: false } }));
-    await expect(governanceAccessApi.listMemoryKnowledge('tenant-1')).resolves.toMatchObject({ knowledge: [], memory: [] });
+  it('组织记忆知识列表兼容尚未返回 suites 的旧服务并显式请求新字段', async () => {
+    mockAuthFetch.mockResolvedValue(jsonResponse({ tenantId: 'tenant-1', authority: 'governance_assignment_sets',
+      accessMode: 'manage', knowledge: [], memory: [],
+      effective: { organizationKnowledge: false, organizationMemory: false } }));
+    await expect(governanceAccessApi.listMemoryKnowledge('tenant-1')).resolves.toMatchObject({ suites: [], knowledge: [], memory: [] });
+    expect(mockAuthFetch).toHaveBeenLastCalledWith(
+      '/api/governance/access/organization-resources/memory-knowledge?tenantId=tenant-1&includeSuites=1', undefined);
   });
 
   it('组织记忆写入客户端严格调用 signed preview→commit 端点', async () => {
@@ -465,6 +469,25 @@ describe('governanceApi fail closed', () => {
     mockAuthFetch.mockResolvedValueOnce(jsonResponse({ changeId: 'change-1', auditId: 'audit-1' }));
     await governanceAccessApi.updateMemoryResource('mem-1', { ...command, previewId: preview.previewId }, 'tenant-1');
     expect(mockAuthFetch).toHaveBeenLastCalledWith('/api/governance/access/organization-resources/memory/mem-1?tenantId=tenant-1', expect.objectContaining({ method: 'PUT' }));
+  });
+
+  it('批量 Assignment 客户端使用严格的原子 preview 端点', async () => {
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({
+      previewId: `abpv1.${'a'.repeat(64)}`, baselineDigest: 'b'.repeat(64), expiresAt: '2099-08-10T08:05:00Z',
+      changes: [{ resourceType: 'org_knowledge', resourceId: 'taskboard-tasks', expectedVersion: 2,
+        before: [], after: [{ assigneeType: 'user', assigneeId: 'user-1', effect: 'allow', label: '曾磊' }],
+        addedCount: 1, removedCount: 0, beforeUserCount: 0, afterUserCount: 1,
+        addedUserCount: 1, removedUserCount: 0 }],
+      impact: { resourceCount: 1, atomic: true, directSubjectCount: 1, effectiveUserCount: 1,
+        addedUserCount: 1, removedUserCount: 0, agentRuleCount: 0, requiresNewSession: true },
+      changeId: 'intent-1',
+    }));
+    const command = { reason: '开放 Taskboard', changes: [{ resourceType: 'org_knowledge',
+      resourceId: 'taskboard-tasks', expectedVersion: 2, assignments: [] }] };
+    await expect(governanceAccessApi.previewAssignmentBatch(command, 'tenant-1'))
+      .resolves.toMatchObject({ impact: { atomic: true }, changes: [{ resourceId: 'taskboard-tasks' }] });
+    expect(mockAuthFetch).toHaveBeenLastCalledWith('/api/governance/access/assignments/batch/preview?tenantId=tenant-1',
+      expect.objectContaining({ method: 'POST' }));
   });
 
   it('Context Center adapter 仅通过签名 handle 获取 Evidence，不接受来源枚举参数', async () => {

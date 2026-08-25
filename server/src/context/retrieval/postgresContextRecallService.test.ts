@@ -49,7 +49,9 @@ describe('PgContextRecallService', () => {
 
     expect(query.mock.calls[0]![0]).toContain('r.record_id=$3 OR r.external_record_id=$3');
     expect(query.mock.calls[0]![0]).toContain('ILIKE $4');
-    expect(query.mock.calls[0]![0]).toContain('COALESCE(r.source_updated_at,r.observed_at) >= $7');
+    expect(query.mock.calls[0]![0]).toContain('COALESCE(r.occurred_at,r.source_updated_at,r.observed_at) >= $7');
+    expect(query.mock.calls[0]![0]).toContain('LOWER(NORMALIZE(r.collection_id, NFKC))=ANY($6::text[])');
+    expect(query.mock.calls[0]![0]).toContain("LOWER(NORMALIZE(COALESCE(r.entity_type,''), NFKC))=ANY($5::text[])");
     expect(query.mock.calls[0]![0]).toContain('LEFT JOIN test_agent_dws_accounts a');
     expect(query.mock.calls[0]![0]).toContain("a.event_policy_json #> '{contextPolicy}'");
     expect(query.mock.calls[0]![0]).toContain("s.kind<>'dws' OR a.status='active'");
@@ -67,13 +69,13 @@ describe('PgContextRecallService', () => {
     expect(query.mock.calls[0]![0]).toContain("{minutes,lookbackDays}");
     expect(query.mock.calls[0]![1]).toEqual([
       'tenant-a', ['collection-a'], 'Quarterly plan', '%Quarterly plan%', ['document'], ['source-a'],
-      '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', 5, 'user-a',
+      '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', 201, 'user-a',
     ]);
     expect(result).toMatchObject({
       degraded: true,
       degradationReasons: ['context_sync_truncated'],
       hits: [{
-        collectionId: 'collection-a', assignmentVersion: 7, kind: 'document',
+        collectionId: 'collection-a', assignmentVersion: 7, kind: 'document', recordKind: 'document',
         freshness: { status: 'fresh' },
         route: { strategy: 'postgres_exact_ilike_derived' },
         evidence: [{ evidenceId: 'ev-1', excerpt: 'Quarterly plan' }],
@@ -92,7 +94,7 @@ describe('PgContextRecallService', () => {
   });
 
   it('adds only confirmed evidence-bound derived context to an already authorized source hit', async () => {
-    const query = vi.fn(async (sql: string) => sql.includes('BOOL_OR(refused OR status')
+    const query = vi.fn(async (sql: string, _params?: readonly unknown[]) => sql.includes('BOOL_OR(refused OR status')
       ? { rows: [{ refused: false, truncated: false, retry_wait: false }] }
       : { rows: [hitRow({
           route_rank: 3,
@@ -114,7 +116,7 @@ describe('PgContextRecallService', () => {
       hitRow({ source_kind: 'taskboard', record_id: 'allowed', metadata_json: { kind: 'board', boardId: 'board-a' } }),
       hitRow({ source_kind: 'taskboard', record_id: 'denied', metadata_json: { kind: 'board', boardId: 'board-b' } }),
     ];
-    const query = vi.fn(async (sql: string) => sql.includes('BOOL_OR(refused OR status')
+    const query = vi.fn(async (sql: string, _params?: readonly unknown[]) => sql.includes('BOOL_OR(refused OR status')
       ? { rows: [{ refused: false, truncated: false, retry_wait: false }] }
       : { rows: taskRows });
     const registry = new ContextSourceAuthorizationRegistry({
@@ -127,14 +129,63 @@ describe('PgContextRecallService', () => {
     expect(query.mock.calls[0]![0]).toContain("WHEN s.kind<>'dws' THEN TRUE");
   });
 
+  it('accepts Collection IDs and entity types as canonical filters and exposes storage kind separately', async () => {
+    const row = hitRow({
+      source_kind: 'taskboard', source_id: 'taskboard', collection_id: 'taskboard-projects',
+      entity_type: 'project', record_kind: 'snapshot', metadata_json: { boardId: 'board-a' },
+    });
+    const query = vi.fn(async (sql: string, _params?: readonly unknown[]) => sql.includes('BOOL_OR(refused OR status')
+      ? { rows: [{ refused: false, truncated: false, retry_wait: false }] }
+      : { rows: [row] });
+    const registry = new ContextSourceAuthorizationRegistry({
+      taskboard: { authorizeBatch: vi.fn(async (_subject, locators: readonly unknown[]) => locators.map(() => true)) },
+    });
+    const service = new PgContextRecallService({ pool: { query } as never, tablePrefix: 'test', sourceAuthorizationRegistry: registry });
+    const result = await service.search({
+      subject,
+      scope: { ...scope, collections: [{ collectionId: 'taskboard-projects', assignmentVersion: 2 }] },
+      query: '开沿 Agent 需求', limit: 3,
+      filters: { kinds: [' Project '], sources: ['TASKBOARD-PROJECTS'] },
+    });
+
+    expect(query.mock.calls[0]![1]).toEqual(expect.arrayContaining([['project'], ['taskboard-projects']]));
+    expect(result).toMatchObject({
+      hits: [{ kind: 'snapshot', recordKind: 'snapshot', entityType: 'Project', collectionId: 'taskboard-projects' }],
+      diagnostics: { normalizedFilters: { kinds: ['project'], sources: ['taskboard-projects'] } },
+    });
+  });
+
+  it('overfetches before live ACL so denied early candidates do not starve visible hits', async () => {
+    const rows = Array.from({ length: 152 }, (_, index) => hitRow({
+      source_kind: 'taskboard', record_id: index < 150 ? `denied-${index}` : `allowed-${index}`,
+      metadata_json: { taskId: `task-${index}` },
+    }));
+    const query = vi.fn(async (sql: string, _params?: readonly unknown[]) => sql.includes('BOOL_OR(refused OR status')
+      ? { rows: [{ refused: false, truncated: false, retry_wait: false }] }
+      : { rows });
+    const registry = new ContextSourceAuthorizationRegistry({
+      taskboard: { authorizeBatch: vi.fn(async (_subject, locators: readonly { recordId: string }[]) =>
+        locators.map(locator => locator.recordId.startsWith('allowed-'))) },
+    });
+    const service = new PgContextRecallService({ pool: { query } as never, tablePrefix: 'test', sourceAuthorizationRegistry: registry });
+    const result = await service.search({ subject, scope, query: 'task', limit: 2, filters: {} });
+
+    expect(result.hits).toHaveLength(2);
+    expect(result).toMatchObject({ degraded: false,
+      diagnostics: { normalizedFilters: { kinds: [], sources: [] } } });
+    expect(result.diagnostics).not.toHaveProperty('deniedCandidates');
+    expect(query.mock.calls[0]![1]![8]).toBe(201);
+  });
+
   it('fails closed with a non-sensitive degraded reason when a taskboard authorizer is absent or throws', async () => {
     const row = hitRow({ source_kind: 'taskboard', metadata_json: { kind: 'task', taskId: 'task-a' } });
-    const query = vi.fn(async (sql: string) => sql.includes('BOOL_OR(refused OR status')
+    const query = vi.fn(async (sql: string, _params?: readonly unknown[]) => sql.includes('BOOL_OR(refused OR status')
       ? { rows: [{ refused: false, truncated: false, retry_wait: false }] }
       : { rows: [row] });
     const missing = new PgContextRecallService({ pool: { query } as never, tablePrefix: 'test' });
-    await expect(missing.search({ subject, scope, query: 'secret', limit: 5, filters: {} })).resolves.toEqual({
+    await expect(missing.search({ subject, scope, query: 'secret', limit: 5, filters: {} })).resolves.toMatchObject({
       hits: [], degraded: true, degradationReasons: ['context_source_authorizer_missing'],
+      diagnostics: { normalizedFilters: { kinds: [], sources: [] } },
     });
 
     const broken = new PgContextRecallService({
@@ -144,7 +195,8 @@ describe('PgContextRecallService', () => {
       }),
     });
     const result = await broken.search({ subject, scope, query: 'secret', limit: 5, filters: {} });
-    expect(result).toEqual({ hits: [], degraded: true, degradationReasons: ['context_source_authorization_error'] });
+    expect(result).toMatchObject({ hits: [], degraded: true, degradationReasons: ['context_source_authorization_error'],
+      diagnostics: { normalizedFilters: { kinds: [], sources: [] } } });
     expect(JSON.stringify(result)).not.toContain('Quarterly plan');
   });
 

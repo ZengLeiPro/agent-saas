@@ -45,6 +45,7 @@ type ImageDimensions = { width: number; height: number };
 export interface ResolveAttachmentOptions {
   cwd: string;
   channel: InboundMessage['channel'];
+  resolveWebAttachments?: (attachmentIds: readonly string[]) => Promise<UploadedFileInfo[]>;
 }
 
 export async function resolveInboundAttachments(
@@ -56,6 +57,21 @@ export async function resolveInboundAttachments(
     throw new Error(`UPLOAD_REJECTED: 单条消息最多 ${MAX_ATTACHMENTS_PER_TURN} 个附件`);
   }
 
+  let inboundAttachments = attachments;
+  const canonicalWebAttachments = options.channel === 'web' && !!options.resolveWebAttachments;
+  if (canonicalWebAttachments) {
+    const attachmentIds = attachments.map((attachment) => {
+      if (!attachment.attachmentId || !UUID_PATTERN.test(attachment.attachmentId)) {
+        throw new Error('ATTACHMENT_FORBIDDEN: 附件标识无效或不属于当前工作区');
+      }
+      return attachment.attachmentId;
+    });
+    inboundAttachments = await options.resolveWebAttachments!(attachmentIds);
+    if (inboundAttachments.length !== attachmentIds.length) {
+      throw new Error('ATTACHMENT_FORBIDDEN: 附件标识无效或不属于当前工作区');
+    }
+  }
+
   const initRelative = `uploads/.attachment-init-${randomUUID()}`;
   await writeTrustedFile(options.cwd, initRelative, '', { createParents: true, exclusive: true, mode: 0o600 });
   await removeTrustedPath(options.cwd, initRelative);
@@ -64,9 +80,9 @@ export async function resolveInboundAttachments(
   let totalImageBytes = 0;
 
   try {
-    for (const inbound of attachments) {
+    for (const inbound of inboundAttachments) {
       const attachmentId = normalizeAttachmentId(inbound.attachmentId);
-      let source = await openInboundSource(inbound, options, uploads.fdPath);
+      let source = await openInboundSource(inbound, options, uploads.fdPath, canonicalWebAttachments);
       try {
         if (!source.workspaceRelativePath) {
           const stagedName = `${attachmentId}_${safeDisplayName(inbound.originalName || source.relativePath)}`;
@@ -231,7 +247,7 @@ export async function readModelImageDataUrl(
 ): Promise<string> {
   let file: Buffer;
   try {
-    const opened = await openTrustedWorkspaceFile(cwd, part.relativePath);
+    const opened = await openTrustedWorkspaceFile(cwd, part.relativePath, false);
     try {
       file = await opened.handle.readFile();
     } finally {
@@ -365,8 +381,12 @@ async function openInboundSource(
   inbound: UploadedFileInfo,
   options: ResolveAttachmentOptions,
   uploadsRoot: string,
+  canonicalWebAttachment: boolean,
 ): Promise<OpenedInboundSource> {
   if (options.channel === 'web') {
+    if (canonicalWebAttachment) {
+      return openTrustedWorkspaceSource(options.cwd, inbound.relativePath, true);
+    }
     if (inbound.attachmentId && UUID_PATTERN.test(inbound.attachmentId)) {
       const matches = (await readdir(uploadsRoot))
         .filter((name) => name.startsWith(`${inbound.attachmentId}_`));
@@ -405,8 +425,12 @@ async function openInboundSource(
   return openTrustedWorkspaceSource(options.cwd, inbound.relativePath);
 }
 
-async function openTrustedWorkspaceSource(cwd: string, relativePath: string): Promise<OpenedInboundSource> {
-  const file = await openTrustedWorkspaceFile(cwd, relativePath);
+async function openTrustedWorkspaceSource(
+  cwd: string,
+  relativePath: string,
+  allowAssets = false,
+): Promise<OpenedInboundSource> {
+  const file = await openTrustedWorkspaceFile(cwd, relativePath, allowAssets);
   return {
     relativePath,
     workspaceRelativePath: relativePath,
@@ -415,10 +439,16 @@ async function openTrustedWorkspaceSource(cwd: string, relativePath: string): Pr
   };
 }
 
-async function openTrustedWorkspaceFile(cwd: string, relativePath: string): Promise<TrustedFile> {
+async function openTrustedWorkspaceFile(
+  cwd: string,
+  relativePath: string,
+  allowAssets: boolean,
+): Promise<TrustedFile> {
+  const allowedRoot = relativePath.startsWith('uploads/')
+    || (allowAssets && relativePath.startsWith('assets/'));
   if (!relativePath || isAbsolute(relativePath) || relativePath.includes('\0') || relativePath.includes('\\')
-    || !relativePath.startsWith('uploads/') || relativePath.split('/').includes('..')) {
-    throw new Error('ATTACHMENT_FORBIDDEN: 附件路径格式非法或不在当前用户 uploads 目录');
+    || !allowedRoot || relativePath.split('/').includes('..')) {
+    throw new Error('ATTACHMENT_FORBIDDEN: 附件路径格式非法或不在受信目录');
   }
   try {
     return await openTrustedFile(cwd, relativePath);

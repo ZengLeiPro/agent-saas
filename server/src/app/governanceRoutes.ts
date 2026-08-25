@@ -152,6 +152,10 @@ export function registerGovernanceRoutes(
           accountStatus: user.disabled ? 'disabled' as const : 'active' as const,
         } : null;
       },
+      getAgentProfile: (tenantId, agentId) => {
+        const agent = runtime.orgAgentStore?.get(agentId);
+        return agent?.tenantId === tenantId && agent.enabled ? { name: agent.name } : null;
+      },
       getMemberProfile: (tenantId, userId) => {
         const user = runtime.userStore?.findById(userId);
         if (!user || user.tenantId !== tenantId) return null;

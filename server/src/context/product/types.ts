@@ -115,6 +115,8 @@ export interface ProductStoreListInput {
   through?: string;
   /** Exact derived-item lookup; never implemented as a scan of a bounded list. */
   itemId?: string;
+  /** Keyset used by the service to continue authorization-aware entity scanning. */
+  afterEntityId?: string;
 }
 
 export interface ProductRelationCandidate {
@@ -187,10 +189,28 @@ export interface ContextProductStore {
   }): Promise<{ status: 'confirmed' | 'rejected' }>;
 }
 
+export type ContextProductDiagnosisCode =
+  | 'scope_empty'
+  | 'no_source_records'
+  | 'no_visible_records'
+  | 'native_acl_filtered'
+  | 'candidate_limit_reached'
+  | 'projection_missing'
+  | 'query_no_match'
+  | 'source_degraded';
+
+export interface ContextProductDiagnosis {
+  code: ContextProductDiagnosisCode;
+  stage: 'assignment' | 'ingestion' | 'authorization' | 'projection' | 'query' | 'source';
+  message: string;
+  action: string;
+}
+
 export interface ProductPage<T> {
   items: T[];
   nextCursor: string | null;
   degraded: boolean;
+  diagnosis?: ContextProductDiagnosis;
 }
 
 export class ContextProductError extends Error {

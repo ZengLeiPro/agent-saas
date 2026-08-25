@@ -101,6 +101,8 @@ function publicCitation(hit: ContextRecallHit): Record<string, unknown> {
   return {
     id: hit.id,
     kind: hit.kind,
+    recordKind: hit.recordKind,
+    ...(hit.entityType ? { entityType: hit.entityType } : {}),
     content: hit.content,
     source: {
       sourceId: hit.source.sourceId,

@@ -476,7 +476,22 @@ export function OrganizationCredentialsPage({ tenantId }: { tenantId: string }) 
   </div>;
 }
 
+type MemoryKnowledgeView = "governance" | "context-center" | "timeline" | "entities" | "reviews";
+type MemoryKnowledgeLocation = { view: MemoryKnowledgeView; filter: string; entityId: string | null };
+const MEMORY_KNOWLEDGE_VIEWS = new Set<MemoryKnowledgeView>(["governance", "context-center", "timeline", "entities", "reviews"]);
+const MEMORY_KNOWLEDGE_LOCATION_EVENT = "memory-knowledge-location-change";
+function memoryKnowledgeLocation(tenantId: string): MemoryKnowledgeLocation {
+  if (typeof window === "undefined") return { view: "governance", filter: "", entityId: null };
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("contextTenant") !== tenantId) return { view: "governance", filter: "", entityId: null };
+  const value = params.get("contextView") as MemoryKnowledgeView | null;
+  const view = value && MEMORY_KNOWLEDGE_VIEWS.has(value) ? value : "governance";
+  return { view, filter: params.get("contextFilter") ?? "",
+    entityId: view === "entities" ? params.get("contextEntity") : null };
+}
+
 export function OrganizationMemoryKnowledgePage({ tenantId }: { tenantId: string }) {
+  const [locationState, setLocationState] = useState<MemoryKnowledgeLocation>(() => memoryKnowledgeLocation(tenantId));
   const scopedContextApi = useMemo<ContextCenterApiPort>(() => ({
     getSnapshot: options => contextCenterApi.getSnapshot({ ...options, tenantId }),
     getEvidence: (id, options) => contextCenterApi.getEvidence(id, { ...options, tenantId }),
@@ -491,8 +506,31 @@ export function OrganizationMemoryKnowledgePage({ tenantId }: { tenantId: string
     createCorrection: (entityId, command, options) => contextCenterApi.createCorrection(entityId, command, { ...options, tenantId }),
     decideReview: (itemId, command, options) => contextCenterApi.decideReview(itemId, command, { ...options, tenantId }),
   }), [tenantId]);
+  const updateLocation = (next: MemoryKnowledgeLocation, replace = false) => {
+    setLocationState(next);
+    const url = new URL(window.location.href);
+    url.searchParams.set("contextTenant", tenantId);
+    url.searchParams.set("contextView", next.view);
+    if (next.filter) url.searchParams.set("contextFilter", next.filter);
+    else url.searchParams.delete("contextFilter");
+    if (next.view === "entities" && next.entityId) url.searchParams.set("contextEntity", next.entityId);
+    else url.searchParams.delete("contextEntity");
+    window.history[replace ? "replaceState" : "pushState"]({}, "", url);
+    window.dispatchEvent(new Event(MEMORY_KNOWLEDGE_LOCATION_EVENT));
+  };
+  const navigate = (view: MemoryKnowledgeView) => updateLocation({ view, filter: "", entityId: null });
+  useEffect(() => {
+    const syncLocation = () => setLocationState(memoryKnowledgeLocation(tenantId));
+    syncLocation();
+    window.addEventListener("popstate", syncLocation);
+    window.addEventListener(MEMORY_KNOWLEDGE_LOCATION_EVENT, syncLocation);
+    return () => {
+      window.removeEventListener("popstate", syncLocation);
+      window.removeEventListener(MEMORY_KNOWLEDGE_LOCATION_EVENT, syncLocation);
+    };
+  }, [tenantId]);
   return (
-    <Tabs defaultValue="governance" className="min-h-0">
+    <Tabs value={locationState.view} onValueChange={value => navigate(value as MemoryKnowledgeView)} className="min-h-0">
       <TabsList aria-label="记忆与知识区域" className="h-auto w-full flex-nowrap justify-start overflow-x-auto sm:flex-wrap">
         <TabsTrigger value="governance" className="shrink-0">资源治理</TabsTrigger>
         <TabsTrigger value="context-center" className="shrink-0">Context Center</TabsTrigger>
@@ -500,10 +538,16 @@ export function OrganizationMemoryKnowledgePage({ tenantId }: { tenantId: string
         <TabsTrigger value="entities" className="shrink-0">实体</TabsTrigger>
         <TabsTrigger value="reviews" className="shrink-0">待审核</TabsTrigger>
       </TabsList>
-      <TabsContent value="governance" className="mt-4"><MemoryKnowledgeGovernance tenantId={tenantId} /></TabsContent>
+      <TabsContent value="governance" className="mt-4"><MemoryKnowledgeGovernance tenantId={tenantId} onNavigate={target => navigate(target === "center" ? "context-center" : target)} /></TabsContent>
       <TabsContent value="context-center" className="mt-4 min-h-0"><ContextCenterPage api={scopedContextApi} /></TabsContent>
-      <TabsContent value="timeline" className="mt-4"><ContextTimelinePanel api={scopedContextApi} /></TabsContent>
-      <TabsContent value="entities" className="mt-4"><ContextEntitiesPanel api={scopedContextApi} /></TabsContent>
+      <TabsContent value="timeline" className="mt-4"><ContextTimelinePanel api={scopedContextApi}
+        initialFilter={locationState.view === "timeline" ? locationState.filter : ""}
+        onFilterChange={filter => updateLocation({ view: "timeline", filter, entityId: null }, true)} /></TabsContent>
+      <TabsContent value="entities" className="mt-4"><ContextEntitiesPanel api={scopedContextApi}
+        initialFilter={locationState.view === "entities" ? locationState.filter : ""}
+        initialEntityId={locationState.view === "entities" ? locationState.entityId : null}
+        onFilterChange={filter => updateLocation({ view: "entities", filter, entityId: null }, true)}
+        onEntityChange={entityId => updateLocation({ ...locationState, view: "entities", entityId })} /></TabsContent>
       <TabsContent value="reviews" className="mt-4"><ContextReviewsPanel api={scopedContextApi} /></TabsContent>
     </Tabs>
   );

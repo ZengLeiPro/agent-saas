@@ -35,7 +35,7 @@ server/src/routes/platformObservability.ts	1276	production
 server/src/routes/sessions.ts	3340	production
 server/src/routes/skills.ts	1403	production
 server/src/runtime/rawAgentLoop.ts	3959	production
-server/src/runtime/rawRuntimeRunDispatch.ts	3240	production
+server/src/runtime/rawRuntimeRunDispatch.ts	3235	production
 server/src/runtime/responsesApiAdapter.ts	2007	production
 server/src/runtime/runStore.ts	1413	production
 server/src/runtime/types.ts	1131	production
@@ -52,5 +52,5 @@ web/src/components/ModelManager/index.tsx	1366	production
 web/src/components/RuntimeOperationsManager/index.tsx	1219	production
 web/src/components/SettingsCenter/SettingsModal.tsx	1092	production
 web/src/components/TenantManager/index.tsx	1222	production
-web/src/hooks/useChatAppState.ts	3185	production
+web/src/hooks/useChatAppState.ts	3167	production
 web/src/hooks/useSession.ts	1075	production

@@ -22,7 +22,7 @@ function renderText(message: MessageItemType) {
 }
 
 describe('正文 Markdown 表格宽度', () => {
-  it('短表格按内容收缩，同时保留超宽表格的横向滚动容器', async () => {
+  it('表格限制在内容区内，并保留超宽表格的横向滚动容器', async () => {
     renderText({
       id: 'table',
       type: 'text',
@@ -35,7 +35,26 @@ describe('正文 Markdown 表格宽度', () => {
     });
 
     const table = await screen.findByRole('table');
-    expect(table.className).toContain('w-max');
+    expect(table.className).not.toContain('w-max');
+    expect(table.parentElement?.className).toContain('max-w-full');
     expect(table.parentElement?.className).toContain('overflow-x-auto');
+  });
+
+  it('将 GFM 右对齐列改为左对齐，但保留居中列', async () => {
+    renderText({
+      id: 'aligned-table',
+      type: 'text',
+      content: [
+        '| 左对齐 | 右对齐 | 居中 |',
+        '| --- | ---: | :---: |',
+        '| 文本 | 数值 | 状态 |',
+      ].join('\n'),
+    });
+
+    const table = await screen.findByRole('table');
+    const [left, right, center] = Array.from(table.querySelectorAll('th'));
+    expect(left.style.textAlign).toBe('');
+    expect(right.style.textAlign).toBe('left');
+    expect(center.style.textAlign).toBe('center');
   });
 });

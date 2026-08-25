@@ -53,6 +53,18 @@ function api(overrides: Partial<ContextCenterApiPort> = {}): ContextCenterApiPor
 }
 
 describe("Context 产品面板", () => {
+  it("空页展示后端结构化原因与下一步，不再把无授权和无数据混为一谈", async () => {
+    render(<ContextEntitiesPanel api={api({ listEntities: vi.fn().mockResolvedValue({
+      items: [], nextCursor: null, degraded: false,
+      diagnosis: { code: "native_acl_filtered", stage: "authorization", message: "候选记录均被来源系统原生权限过滤。",
+        action: "确认成员在来源系统中拥有目标项目权限。", scannedCandidates: 8, deniedCandidates: 8 },
+    }) })} />);
+    expect(await screen.findByText("候选记录均被来源系统原生权限过滤。")).toBeTruthy();
+    expect(screen.getByText("确认成员在来源系统中拥有目标项目权限。")).toBeTruthy();
+    expect(screen.getByText("native_acl_filtered")).toBeTruthy();
+    expect(screen.queryByText(/当前结果为降级数据/)).toBeNull();
+  });
+
   it("顶层 Timeline 消费 nextCursor、追加去重，筛选后重置第一页且保留降级上限提示", async () => {
     const user = userEvent.setup();
     const first = { ...entity, id: "timeline-page-1", type: "Status", label: "Timeline 第一页", occurredAt: entity.updatedAt, entityId: entity.id, entityLabel: entity.label, authority, evidence };

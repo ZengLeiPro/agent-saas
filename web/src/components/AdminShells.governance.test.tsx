@@ -25,7 +25,7 @@ vi.mock("@agent/shared/lib/governanceApi", async (importOriginal) => {
       ] }),
       listMemoryKnowledge: vi.fn().mockResolvedValue({
         tenantId: "acme", authority: "governance_assignment_sets", accessMode: "inspect",
-        knowledge: [], memory: [], effective: { organizationKnowledge: false, organizationMemory: false },
+        suites: [], knowledge: [], memory: [], effective: { organizationKnowledge: false, organizationMemory: false },
       }),
     },
     governanceResourcesApi: {

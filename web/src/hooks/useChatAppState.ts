@@ -42,13 +42,14 @@ import {
   shouldAcceptSessionEvent,
 } from "@/lib/queueConsistency";
 export type { QueuedInterjection } from "@/lib/interjectionConsumption";
-import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, replaceSettingsUrl, pushAdminSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, normalizeAdminSettingsSection, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl, buildTenantAdminUrl, pushTenantAdminUrl, replaceTenantAdminUrl, normalizeTenantAdminSection, preserveScopeSearch, preserveSearchKeys, TENANT_ADMIN_SCOPE_KEYS, pushGovernanceUrl, replaceGovernanceUrl } from "@/lib/urlSync";
+import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, replaceSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl, buildTenantAdminUrl, pushTenantAdminUrl, replaceTenantAdminUrl, normalizeTenantAdminSection, preserveScopeSearch, preserveSearchKeys, TENANT_ADMIN_SCOPE_KEYS, pushGovernanceUrl, replaceGovernanceUrl } from "@/lib/urlSync";
 import { buildGovernanceUrl, governanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
 import { registerUpdateGuard, registerBeforeReloadHook, maybeReloadOnPopstate } from "@/lib/swUpdate";
 import { clearRunShellApprovalStorage, runShellApprovalStorageKey } from "@/lib/runShellApprovalStorage";
-import type { AdminSettingsState, AdminSettingsTarget, PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
+import type { AdminSettingsState, PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
 import { useMessages } from "@/hooks/useMessages";
 import { usePersonalSettingsNavigation } from "@/hooks/usePersonalSettingsNavigation";
+import { useAdminSettingsNavigation } from "@/hooks/useAdminSettingsNavigation";
 import { usePendingNewSessionTarget } from "@/hooks/usePendingNewSessionTarget";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSession } from "@/hooks/useSession";
@@ -66,12 +67,8 @@ import {
   type WsBlockState,
 } from '@agent/shared';
 import {
-  isActiveRuntimeStatus,
-  isTerminalRuntimeStatus,
-  runtimeStatusFromSessionStatus,
-  type LastRunState,
-  type TerminalRuntimeStatus,
-} from "./chatRuntimeHelpers";
+  activeRuntimePatchFromStreamStatus, fetchSessionStreamStatus, isActiveRuntimeStatus, isTerminalRuntimeStatus,
+  runtimeStatusFromSessionStatus, type LastRunState, type TerminalRuntimeStatus } from "./chatRuntimeHelpers";
 
 export type { ChatAppState, ChatAppStateOptions } from "./useChatAppStateTypes";
 import type {
@@ -1008,37 +1005,19 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     closeState: () => { setSettingsOpen(false); setGovernanceRouteRaw(null); },
   });
 
-  const openAdminSettings = useCallback((target: AdminSettingsTarget, section?: string) => {
-    // user settings modal 互斥关闭；不要切 activeTab，避免关闭管理弹窗后把用户留在组织/平台分析页。
-    setSettingsOpen(false);
-    const sec = normalizeAdminSettingsSection(target, section);
-    setAdminSettingsRaw({ target, section: sec });
-    pushAdminSettingsUrl(target, sec);
-  }, []);
-
-  const closeAdminSettings = useCallback(() => {
-    const current = adminSettingsRef.current;
-    if (!current) return;
-    setAdminSettingsRaw(null);
-    // 从任意页面打开管理弹窗时，关闭后回到打开前的 activeTab/session；
-    // 若用户是直接访问 /tenant-admin/settings 或 /platform-admin/settings，activeTab 本身就是 admin 页。
-    const tab = activeTabRef.current;
-    if (tab === 'platform-admin') {
-      pushPlatformAdminUrl(platformAdminRouteRef.current);
-    } else if (tab === 'tenant-admin') {
-      pushTenantAdminUrl({ section: tenantAdminSectionRef.current, search: preserveSearchKeys(TENANT_ADMIN_SCOPE_KEYS) });
-    } else {
-      pushUrl(tab, tab === 'chat' ? immediateSessionIdRef.current : null);
-    }
-  }, []);
-
-  const setAdminSettingsSection = useCallback((section: string) => {
-    const current = adminSettingsRef.current;
-    if (!current) return;
-    const sec = normalizeAdminSettingsSection(current.target, section);
-    setAdminSettingsRaw({ target: current.target, section: sec });
-    pushAdminSettingsUrl(current.target, sec);
-  }, []);
+  const { openAdminSettings, closeAdminSettings, setAdminSettingsSection } = useAdminSettingsNavigation({
+    getActiveTab: () => activeTabRef.current,
+    getPlatformRoute: () => platformAdminRouteRef.current,
+    getTenantSection: () => tenantAdminSectionRef.current,
+    getSessionId: () => immediateSessionIdRef.current,
+    getCurrentSettings: () => adminSettingsRef.current,
+    openState: (target, section) => {
+      setSettingsOpen(false);
+      setGovernanceRouteRaw(null);
+      setAdminSettingsRaw({ target, section });
+    },
+    closeState: () => setAdminSettingsRaw(null),
+  });
 
   // ---- 企业专家草稿态（2026-07 唯恩批次）----
   // ref：sendChatViaWs 首条消息（无 sessionId）时带上 orgAgentId，收到 'session' 事件
@@ -1169,9 +1148,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       setGovernanceRouteRaw(urlGovernanceRoute);
       setPendingCanonicalPath(canonicalPath);
       if (urlAdminSettings) {
-        // admin settings modal 路径：activeTab 同步到 admin frame，modal 打开到对应 section
+        // 统一设置工作区覆盖在当前产品页上；页内前进/后退只切设置叶子，不改动来源 tab。
         setSettingsOpen(false);
-        setActiveTabRaw(tab);
         setAdminSettingsRaw(urlAdminSettings);
         return;
       }
@@ -1377,15 +1355,17 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         ...(lastRunState.runId ? { runId: lastRunState.runId } : {}),
         attached: false,
       });
+      return;
     }
-    if (sessionId !== immediateSessionIdRef.current) return;
 
+    const existingRuntime = activeRunsBySession.current.get(sessionId);
+    if (isActiveRuntimeStatus(existingRuntime?.status) && existingRuntime?.runId && lastRunState.runId
+      && existingRuntime.runId !== lastRunState.runId) return;
     const requestedRuntimeVersion = runtimeVersionBySessionRef.current.get(sessionId) ?? 0;
-    try {
-      const res = await authFetch(`/api/sessions/${sessionId}/stream-status`);
-      if (!res.ok) return; const { active } = await res.json() as { active: boolean };
-      if (active || requestedRuntimeVersion !== (runtimeVersionBySessionRef.current.get(sessionId) ?? 0)) return;
-    } catch {
+    const status = await fetchSessionStreamStatus(sessionId);
+    if (!status || requestedRuntimeVersion !== (runtimeVersionBySessionRef.current.get(sessionId) ?? 0)) return;
+    if (status.active) {
+      patchSessionRuntime(sessionId, activeRuntimePatchFromStreamStatus(status));
       return;
     }
 
@@ -1761,13 +1741,18 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           streamBindingGenerationRef.current += 1;
         }
 
-        // ① 总是更新 Map（per-session 持久态,不论是否当前会话）
-        patchSessionRuntime(d.sessionId, {
-          status: d.status, source: 'ws',
-          ...(d.streamId ? { streamId: d.streamId } : {}),
-          ...(d.runId ? { runId: d.runId } : {}),
-          attached: isActiveRuntimeStatus(d.status),
-        });
+        // 当前会话终态先保留 active latch，等下方探活确认；否则 run 交接空窗会让列表先闪回旧时间。
+        const deferCurrentTerminal = isTerminalRuntimeStatus(d.status)
+          && d.sessionId === immediateSessionIdRef.current
+          && loadingRef.current;
+        if (!deferCurrentTerminal) {
+          patchSessionRuntime(d.sessionId, {
+            status: d.status, source: 'ws',
+            ...(d.streamId ? { streamId: d.streamId } : {}),
+            ...(d.runId ? { runId: d.runId } : {}),
+            attached: isActiveRuntimeStatus(d.status),
+          });
+        }
 
         // ② tracking 集合仅用于关联运行态；未读状态由服务端事件同步。
         if (isActiveRuntimeStatus(d.status)) {
@@ -1796,9 +1781,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         }
 
         if (isTerminalRuntimeStatus(d.status) && d.sessionId === sessionIdRef.current && loadingRef.current) {
-          const terminalStatus = d.status;
-          const statusRunId = d.runId;
-          const statusStreamId = d.streamId;
+          const terminalStatus = d.status, statusRunId = d.runId, statusStreamId = d.streamId;
+          const terminalRuntimeVersion = runtimeVersionBySessionRef.current.get(d.sessionId) ?? 0;
           setTimeout(() => {
             if (!loadingRef.current || sessionIdRef.current !== d.sessionId) return;
             void (async () => {
@@ -1806,15 +1790,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                 (statusRunId && runIdRef.current && statusRunId !== runIdRef.current)
                 || (statusStreamId && streamIdRef.current && statusStreamId !== streamIdRef.current),
               );
-              let active: boolean | null = null;
-              try {
-                const res = await authFetch(`/api/sessions/${d.sessionId}/stream-status`);
-                if (res.ok) {
-                  const json = await res.json() as { active: boolean };
-                  active = json.active;
-                  if (active) return;
-                }
-              } catch { /* fall through: session_status remains the fallback */ }
+              const status = await fetchSessionStreamStatus(d.sessionId);
+              const active = status?.active ?? null;
+              if (status?.active) {
+                patchSessionRuntime(d.sessionId, { ...activeRuntimePatchFromStreamStatus(status), attached: true });
+                return;
+              }
+              if (terminalRuntimeVersion !== (runtimeVersionBySessionRef.current.get(d.sessionId) ?? 0)) return;
               if (idMismatched && active !== false) return;
               if (!loadingRef.current || sessionIdRef.current !== d.sessionId) return;
               finalizeTerminalRuntime({
@@ -2687,9 +2669,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (!httpResultStale) {
       // HTTP 探活补回权威 runId / streamId；恢复不同 binding 时先切代，挡住旧 resume 响应。
       if (httpActive !== false) advanceStreamBindingGenerationIfChanged({ streamId: httpStreamId, runId: httpRunId });
-      // HTTP inactive 不推翻未收到终态的 WS-confirmed runtime；继续 resume，等 WS 权威响应收口。
+      // HTTP inactive 不推翻列表已经确认的 active latch；继续 resume，等关联的 WS 响应收口。
       const existingRuntime = activeRunsBySession.current.get(targetSessionId);
-      if (httpActive === false && !(existingRuntime?.source === 'ws' && isActiveRuntimeStatus(existingRuntime.status))) {
+      if (httpActive === false && !isActiveRuntimeStatus(existingRuntime?.status)) {
         patchSessionRuntime(targetSessionId, { status: 'idle', streamId: null, runId: null, attached: false });
         streamIdRef.current = null;
         runIdRef.current = null;

@@ -22,6 +22,7 @@ import { registerGovernanceTenantSettingsRoutes } from './governanceTenantSettin
 import type { TenantSettingsPatch } from './tenantSettingsValidation.js';
 import { registerGovernanceOrganizationAccessRoutes } from './governanceOrganizationAccessRoutes.js';
 import { registerGovernanceMemoryRoutes } from './governanceMemoryRoutes.js';
+import { registerGovernanceAssignmentBatchRoutes } from './governanceAssignmentBatchRoutes.js';
 import {
   ASSIGNMENT_RESOURCE_TYPES,
   assignmentBaseline,
@@ -61,9 +62,11 @@ export function createGovernanceAccessRouter(deps: {
   reconcileOAuthGrants?: (tenantId: string, subjectUserId: string) => Promise<void>;
   revokeOAuthGrant?: (grant: OAuthGrant, user: NonNullable<Request['user']>) => Promise<void>;
   directoryGroups?: {
-    getGroup(tenantId: string, groupId: string): Promise<{ groupId: string; status: 'active' | 'disabled' } | null>;
+    getGroup(tenantId: string, groupId: string): Promise<{
+      groupId: string; displayName?: string; status: 'active' | 'disabled'; } | null>;
     listGroups(tenantId: string): Promise<unknown[]>;
     getAssignmentSnapshot(tenantId: string, groupId: string): Promise<{
+      group?: { groupId: string; displayName?: string };
       memberUserIds: string[]; digest: string; fresh: boolean;
     } | null>;
   };
@@ -86,6 +89,7 @@ export function createGovernanceAccessRouter(deps: {
     accountStatus: 'active' | 'disabled'; dingtalkBound: boolean; createdAt: string; updatedAt: string;
     debugMode?: boolean; debugModeAvailable?: boolean;
   } | null;
+  getAgentProfile?: (tenantId: string, agentId: string) => { name: string } | null;
   validateMemberDebugMode?: (tenantId: string, debugMode: boolean) => string | null;
   getMemberBudgetOverview?: (tenantId: string, userId: string) => Promise<BillingMemberBudgetOverview>;
   createMember?: (input: MembershipCreateInput & { tenantId: string; createdBy: string }) => Promise<{
@@ -178,6 +182,11 @@ export function createGovernanceAccessRouter(deps: {
           return { status: 503, body: { error: 'Directory group projection is stale', code: 'DIRECTORY_GROUP_AUTHORITY_STALE' } };
         }
       }
+      if (assignment.assigneeType === 'agent' && !deps.getAgentProfile) return {
+        status: 503, body: { error: 'Agent authority unavailable', code: 'ASSIGNMENT_AGENT_AUTHORITY_UNAVAILABLE' } };
+      if (assignment.assigneeType === 'agent' && !deps.getAgentProfile!(tenantId, assignment.assigneeId!)) return {
+        status: 409, body: { error: 'Active same-tenant Agent required', code: 'ASSIGNMENT_AGENT_SUBJECT_INVALID' } };
+
     }
     return null;
   };
@@ -185,12 +194,9 @@ export function createGovernanceAccessRouter(deps: {
     tenantId: string,
     assignments: AssignmentMutation['assignments'],
   ): Promise<Record<string, unknown>> => {
-    const includesEveryone = assignments.some(item => item.assigneeType === 'everyone');
-    const activeMemberships = includesEveryone
-      ? (await deps.memberships.listMemberships(tenantId))
-          .filter(item => item.status === 'active')
-          .map(item => ({ userId: item.userId, version: item.version })).sort((a, b) => a.userId.localeCompare(b.userId))
-      : [];
+    const activeMemberships = (await deps.memberships.listMemberships(tenantId))
+      .filter(item => item.status === 'active')
+      .map(item => ({ userId: item.userId, version: item.version })).sort((a, b) => a.userId.localeCompare(b.userId));
     const groupIds = [...new Set(assignments
       .filter(item => item.assigneeType === 'directory_group')
       .map(item => item.assigneeId!))].sort();
@@ -198,7 +204,8 @@ export function createGovernanceAccessRouter(deps: {
     for (const groupId of groupIds) {
       const snapshot = await deps.directoryGroups?.getAssignmentSnapshot(tenantId, groupId);
       if (!snapshot || !snapshot.fresh) throw new Error('DIRECTORY_GROUP_AUTHORITY_STALE');
-      groups.push({ groupId, digest: snapshot.digest, memberUserIds: snapshot.memberUserIds });
+      groups.push({ groupId, displayName: snapshot.group?.displayName ?? groupId,
+        digest: snapshot.digest, memberUserIds: snapshot.memberUserIds });
     }
     return { activeMemberships, groups };
   };
@@ -251,7 +258,6 @@ export function createGovernanceAccessRouter(deps: {
     }
     return { kind: 'tenant_member', actorTenantId: req.user!.tenantId };
   };
-
   const membershipActionsFor = (
     req: Request,
     tenantId: string,
@@ -287,7 +293,6 @@ export function createGovernanceAccessRouter(deps: {
     }
     return actions;
   };
-
   router.use(async (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     const platformAdmin = await deps.memberships.getPlatformAdmin(req.user.sub);
@@ -303,7 +308,6 @@ export function createGovernanceAccessRouter(deps: {
     actorMemberships.set(req, membership);
     next();
   });
-
   router.use(async (req, res, next) => {
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
     const user = req.user!;
@@ -410,14 +414,12 @@ export function createGovernanceAccessRouter(deps: {
     }) as typeof res.json;
     next();
   });
-
   registerGovernanceTenantSettingsRoutes(router, {
     personaFor: req => personas.get(req),
     tenantFor,
     getTenantSettings: deps.getTenantSettings,
     updateTenantSettings: deps.updateTenantSettings,
   });
-
   router.get('/projections/:projectionId', async (req, res) => {
     if (!canManageTenant(req) || !deps.projectionOutbox) return res.status(404).json({ error: 'Projection not found' });
     const projection = await deps.projectionOutbox.get(req.params.projectionId);
@@ -426,7 +428,6 @@ export function createGovernanceAccessRouter(deps: {
     }
     res.json(projection);
   });
-
   router.get('/oauth-grants', async (req, res) => {
     if (!deps.oauthGrants) {
       return res.status(503).json({ error: 'OAuth grant authority unavailable', code: 'OAUTH_GRANT_AUTHORITY_UNAVAILABLE' });
@@ -436,7 +437,6 @@ export function createGovernanceAccessRouter(deps: {
     await deps.reconcileOAuthGrants?.(tenantId, req.user!.sub);
     return res.json({ grants: await deps.oauthGrants.listForSubject(tenantId, req.user!.sub) });
   });
-
   router.post('/memberships', async (req, res) => {
     if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
     if (!deps.createMember) return res.status(503).json({ error: 'Member creation authority unavailable', code: 'MEMBERSHIP_CREATION_AUTHORITY_UNAVAILABLE' });
@@ -478,7 +478,6 @@ export function createGovernanceAccessRouter(deps: {
       });
     }
   });
-
   router.get('/memberships', async (req, res) => {
     if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
     const tenantId = tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
@@ -490,7 +489,6 @@ export function createGovernanceAccessRouter(deps: {
       allowedActions: membershipActionsFor(req, tenantId, membership),
     })) });
   });
-
   router.get('/memberships/:userId/details', async (req, res) => {
     if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
     const tenantId = tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
@@ -536,7 +534,6 @@ export function createGovernanceAccessRouter(deps: {
       });
     }
   });
-
   router.post('/memberships/:userId/preview', async (req, res) => {
     if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
     const parsed = membershipPreviewSchema.safeParse(req.body);
@@ -591,7 +588,6 @@ export function createGovernanceAccessRouter(deps: {
       });
     }
   });
-
   router.patch('/memberships/:userId', async (req, res) => {
     if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
     const parsed = membershipPatchSchema.safeParse(req.body);
@@ -682,7 +678,6 @@ export function createGovernanceAccessRouter(deps: {
       });
     }
   });
-
   router.get('/platform-admins', async (req, res) => {
     if (personas.get(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
     const platformAdmins = await deps.memberships.listPlatformAdmins();
@@ -690,7 +685,6 @@ export function createGovernanceAccessRouter(deps: {
       ...item, directoryProfile: deps.getPlatformAdminProfile?.(item.userId) ?? null,
     })) });
   });
-
   router.patch('/platform-admins/:userId', async (req, res) => {
     if (personas.get(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
     const parsed = platformAdminPatchSchema.safeParse(req.body);
@@ -700,7 +694,6 @@ export function createGovernanceAccessRouter(deps: {
       code: 'GOVERNANCE_PREVIEW_AUTHORITY_UNAVAILABLE',
     });
   });
-
   router.get('/audit-events', async (req, res) => {
     if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
     const parsed = auditQuerySchema.safeParse(req.query);
@@ -720,7 +713,6 @@ export function createGovernanceAccessRouter(deps: {
     });
     res.json({ events, nextBefore: events.length === parsed.data.limit ? events.at(-1)?.occurredAt : undefined });
   });
-
   if (deps.oauthGrants) {
     registerGovernanceOAuthGrantRoutes({
       router,
@@ -733,7 +725,6 @@ export function createGovernanceAccessRouter(deps: {
       ...(deps.resolveDependencyImpact ? { dependencyImpact: (grant: OAuthGrant) => oauthDependencyImpact(deps.resolveDependencyImpact!, grant) } : {}),
     });
   }
-
   registerGovernanceTenantLifecycleRoutes({
     router,
     secret: deps.membershipPreviewSecret,
@@ -747,7 +738,6 @@ export function createGovernanceAccessRouter(deps: {
     ...(deps.onTenantLifecycleChanged ? { onTenantLifecycleChanged: deps.onTenantLifecycleChanged } : {}),
     ...(deps.resolveDependencyImpact ? { dependencyImpact: (tenantId, action) => tenantDependencyImpact(deps.resolveDependencyImpact!, tenantId, action) } : {}),
   });
-
   router.get('/directory-groups', async (req, res) => {
     const tenantId = tenantFor(req, req.query.tenantId as string | undefined);
     if (!tenantId || !canManageTenant(req)) return res.status(403).json({ error: 'Organization admin required' });
@@ -756,7 +746,6 @@ export function createGovernanceAccessRouter(deps: {
     }
     return res.json({ tenantId, groups: await deps.directoryGroups.listGroups(tenantId) });
   });
-
   registerGovernanceEntitlementRoutes({
     router,
     entitlements: deps.entitlements,
@@ -771,13 +760,22 @@ export function createGovernanceAccessRouter(deps: {
     ...(deps.projectionOutbox ? { projectionOutbox: deps.projectionOutbox } : {}),
     ...(deps.projectionReconciler ? { projectionReconciler: deps.projectionReconciler } : {}),
   });
-
   registerGovernanceOrganizationAccessRoutes({ router, assignments: deps.assignments, entitlements: deps.entitlements,
     secret: deps.membershipPreviewSecret, previewTtlMs, now, personaFor: req => personas.get(req), tenantFor,
     ...(deps.projectionOutbox ? { projectionOutbox: deps.projectionOutbox } : {}),
     ...(deps.projectionReconciler ? { projectionReconciler: deps.projectionReconciler } : {}),
   });
   registerGovernanceMemoryRoutes({ router, assignments: deps.assignments, entitlements: deps.entitlements, secret: deps.membershipPreviewSecret, previewTtlMs, now, personaFor: req => personas.get(req), tenantFor, validateSubjects: assignmentSubjectError, assignmentSnapshot: assignmentDirectorySnapshot });
+
+  registerGovernanceAssignmentBatchRoutes({ router, assignments: deps.assignments, memberships: deps.memberships,
+    secret: deps.membershipPreviewSecret, previewTtlMs, now, personaFor: req => personas.get(req), tenantFor,
+    validateSubjects: assignmentSubjectError, validateResource: assignmentResourceError,
+    assignmentSnapshot: assignmentDirectorySnapshot,
+    ...(deps.getMemberProfile ? { getMemberProfile: deps.getMemberProfile } : {}),
+    ...(deps.getAgentProfile ? { getAgentProfile: deps.getAgentProfile } : {}),
+    ...(deps.projectionOutbox ? { projectionOutbox: deps.projectionOutbox } : {}),
+    ...(deps.projectionReconciler ? { projectionReconciler: deps.projectionReconciler } : {}),
+  });
 
   router.get('/assignments/:resourceType/:resourceId', async (req, res) => {
     if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });

@@ -81,78 +81,105 @@ export class PgAssignmentStore {
     updatedBy: string,
     metadata?: { resourceName: string; status: 'enabled' | 'disabled' },
   ): Promise<ResourceAssignmentSet> {
+    const results = await this.replaceAssignmentSetsAtomically(tenantId, [{
+      resourceType, resourceId, assignments: inputs, expectedVersion, ...(metadata ? { metadata } : {}),
+    }], updatedBy);
+    return results[0]!;
+  }
+
+  async replaceAssignmentSetsAtomically(tenantId: string, changes: Array<{
+    resourceType: AssignmentResourceType;
+    resourceId: string;
+    assignments: ResourceAssignmentInput[];
+    expectedVersion: number;
+    metadata?: { resourceName: string; status: 'enabled' | 'disabled' };
+  }>, updatedBy: string, afterWrite?: (
+    client: PoolClient, sets: readonly ResourceAssignmentSet[],
+  ) => Promise<void>): Promise<ResourceAssignmentSet[]> {
     this.assertCustomerTenant(tenantId);
-    const normalized = normalizeAssignmentInputs(inputs);
+    if (changes.length < 1 || changes.length > 50
+      || changes.reduce((total, change) => total + change.assignments.length, 0) > 500) {
+      throw new AssignmentInvariantError('ASSIGNMENT_INVALID');
+    }
+    const normalized = changes.map(change => ({ ...change, assignments: normalizeAssignmentInputs(change.assignments) }));
+    const keys = normalized.map(change => `${change.resourceType}\u0000${change.resourceId}`);
+    if (new Set(keys).size !== keys.length) throw new AssignmentInvariantError('ASSIGNMENT_INVALID');
     return this.withTransaction(async client => {
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
-        `assignment:${tenantId}:${resourceType}:${resourceId}`,
-      ]);
-      const current = await client.query(
-        `SELECT * FROM ${this.assignmentSetsTable}
-         WHERE tenant_id = $1 AND resource_type = $2 AND resource_id = $3
-         FOR UPDATE`,
-        [tenantId, resourceType, resourceId],
-      );
-      let setResult;
-      if (!current.rows[0]) {
-        if (expectedVersion !== 0) {
-          throw new AssignmentInvariantError('ASSIGNMENT_SET_VERSION_CONFLICT');
-        }
-        setResult = await client.query(`
-          INSERT INTO ${this.assignmentSetsTable} (
-            tenant_id,resource_type,resource_id,resource_name,resource_status,source,version,created_by,updated_by
-          ) VALUES ($1,$2,$3,$5,$6,'governance',1,$4,$4)
-          RETURNING *
-        `, [tenantId, resourceType, resourceId, updatedBy, metadata?.resourceName ?? null, metadata?.status ?? 'enabled']);
-      } else {
-        if (Number(current.rows[0].version) !== expectedVersion) {
-          throw new AssignmentInvariantError('ASSIGNMENT_SET_VERSION_CONFLICT');
-        }
-        setResult = await client.query(`
-          UPDATE ${this.assignmentSetsTable}
-          SET source = 'governance',
-              resource_name = COALESCE($6, resource_name),
-              resource_status = COALESCE($7, resource_status),
-              version = version + 1,
-              updated_at = NOW(),
-              updated_by = $4
-          WHERE tenant_id = $1 AND resource_type = $2 AND resource_id = $3 AND version = $5
-          RETURNING *
-        `, [tenantId, resourceType, resourceId, updatedBy, expectedVersion, metadata?.resourceName ?? null, metadata?.status ?? null]);
-        if (!setResult.rows[0]) {
-          throw new AssignmentInvariantError('ASSIGNMENT_SET_VERSION_CONFLICT');
-        }
-      }
-      await client.query(
-        `DELETE FROM ${this.assignmentsTable}
-         WHERE tenant_id = $1 AND resource_type = $2 AND resource_id = $3`,
-        [tenantId, resourceType, resourceId],
-      );
-      const rows: Record<string, unknown>[] = [];
-      for (const input of normalized) {
-        const assignmentId = randomUUID();
-        const inserted = await client.query(`
-          INSERT INTO ${this.assignmentsTable} (
-            assignment_id, tenant_id, resource_type, resource_id,
-            assignee_type, assignee_id, effect, origin,
-            created_by, updated_by
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
-          RETURNING *
-        `, [
-          assignmentId,
-          tenantId,
-          resourceType,
-          resourceId,
-          input.assigneeType,
-          input.assigneeId ?? null,
-          input.effect,
-          input.origin ?? 'direct',
-          updatedBy,
+      for (const change of [...normalized].sort((left, right) =>
+        `${left.resourceType}\u0000${left.resourceId}`.localeCompare(`${right.resourceType}\u0000${right.resourceId}`))) {
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+          `assignment:${tenantId}:${change.resourceType}:${change.resourceId}`,
         ]);
-        rows.push(inserted.rows[0]);
       }
-      return rowToAssignmentSet(setResult.rows[0], rows);
+      const results: ResourceAssignmentSet[] = [];
+      for (const change of normalized) {
+        results.push(await this.replaceAssignmentsWithClient(client, tenantId, change.resourceType,
+          change.resourceId, change.assignments, change.expectedVersion, updatedBy, change.metadata));
+      }
+      await afterWrite?.(client, results);
+      return results;
     });
+  }
+
+  private async replaceAssignmentsWithClient(client: PoolClient, tenantId: string,
+    resourceType: AssignmentResourceType, resourceId: string, normalized: ResourceAssignmentInput[],
+    expectedVersion: number, updatedBy: string,
+    metadata?: { resourceName: string; status: 'enabled' | 'disabled' }): Promise<ResourceAssignmentSet> {
+    const current = await client.query(
+      `SELECT * FROM ${this.assignmentSetsTable}
+       WHERE tenant_id = $1 AND resource_type = $2 AND resource_id = $3
+       FOR UPDATE`, [tenantId, resourceType, resourceId]);
+    let setResult;
+    if (!current.rows[0]) {
+      if (expectedVersion !== 0) throw new AssignmentInvariantError('ASSIGNMENT_SET_VERSION_CONFLICT');
+      setResult = await client.query(`
+        INSERT INTO ${this.assignmentSetsTable} (
+          tenant_id,resource_type,resource_id,resource_name,resource_status,source,version,created_by,updated_by
+        ) VALUES ($1,$2,$3,$5,$6,'governance',1,$4,$4)
+        RETURNING *
+      `, [tenantId, resourceType, resourceId, updatedBy, metadata?.resourceName ?? null, metadata?.status ?? 'enabled']);
+    } else {
+      if (Number(current.rows[0].version) !== expectedVersion) {
+        throw new AssignmentInvariantError('ASSIGNMENT_SET_VERSION_CONFLICT');
+      }
+      setResult = await client.query(`
+        UPDATE ${this.assignmentSetsTable}
+        SET source = 'governance', resource_name = COALESCE($6, resource_name),
+            resource_status = COALESCE($7, resource_status), version = version + 1,
+            updated_at = NOW(), updated_by = $4
+        WHERE tenant_id = $1 AND resource_type = $2 AND resource_id = $3 AND version = $5
+        RETURNING *
+      `, [tenantId, resourceType, resourceId, updatedBy, expectedVersion,
+        metadata?.resourceName ?? null, metadata?.status ?? null]);
+      if (!setResult.rows[0]) throw new AssignmentInvariantError('ASSIGNMENT_SET_VERSION_CONFLICT');
+    }
+    const existingAssignments = await client.query(`SELECT assignee_type,assignee_id,effect,origin
+      FROM ${this.assignmentsTable}
+      WHERE tenant_id = $1 AND resource_type = $2 AND resource_id = $3`, [tenantId, resourceType, resourceId]);
+    const origins = new Map(existingAssignments.rows.map(row => [
+      `${String(row.assignee_type)}\u0000${String(row.assignee_id ?? '')}\u0000${String(row.effect)}`,
+      String(row.origin),
+    ]));
+    await client.query(`DELETE FROM ${this.assignmentsTable}
+      WHERE tenant_id = $1 AND resource_type = $2 AND resource_id = $3`, [tenantId, resourceType, resourceId]);
+    const inputs = normalized.map(input => ({
+      assignmentId: randomUUID(), assigneeType: input.assigneeType, assigneeId: input.assigneeId ?? null,
+      effect: input.effect,
+      origin: input.origin ?? origins.get(`${input.assigneeType}\u0000${input.assigneeId ?? ''}\u0000${input.effect}`) ?? 'direct',
+    }));
+    const inserted = inputs.length ? await client.query(`
+      INSERT INTO ${this.assignmentsTable} (
+        assignment_id,tenant_id,resource_type,resource_id,assignee_type,assignee_id,effect,origin,created_by,updated_by
+      ) SELECT row.assignment_id,$1,$2,$3,row.assignee_type,row.assignee_id,row.effect,row.origin,$4,$4
+        FROM JSONB_TO_RECORDSET($5::jsonb) AS row(
+          assignment_id TEXT,assignee_type TEXT,assignee_id TEXT,effect TEXT,origin TEXT
+        )
+      RETURNING *
+    `, [tenantId, resourceType, resourceId, updatedBy, JSON.stringify(inputs.map(input => ({
+      assignment_id: input.assignmentId, assignee_type: input.assigneeType, assignee_id: input.assigneeId,
+      effect: input.effect, origin: input.origin,
+    })))]) : { rows: [] };
+    return rowToAssignmentSet(setResult.rows[0], inserted.rows);
   }
 
   async setUserPreference(
@@ -291,6 +318,33 @@ export class PgAssignmentStore {
           input.projectedBy,
         );
         if (changed) resourceSetsProjected += 1;
+      }
+      return { resourceSetsProjected };
+    });
+  }
+
+  async backfillLegacyConnectorAssignments(input: {
+    tenantIds: string[];
+    connectorIds: string[];
+    projectedBy: string;
+  }): Promise<{ resourceSetsProjected: number }> {
+    return this.withTransaction(async client => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['governance-connector-assignment-backfill']);
+      let resourceSetsProjected = 0;
+      const tenantIds = [...new Set(input.tenantIds)].filter(id => id !== this.platformTenantId).sort();
+      const connectorIds = [...new Set(input.connectorIds)].sort();
+      for (const tenantId of tenantIds) {
+        for (const connectorId of connectorIds) {
+          const changed = await this.upsertLegacySet(
+            client,
+            tenantId,
+            'connector',
+            connectorId,
+            [{ assigneeType: 'everyone', effect: 'allow' }],
+            input.projectedBy,
+          );
+          if (changed) resourceSetsProjected += 1;
+        }
       }
       return { resourceSetsProjected };
     });

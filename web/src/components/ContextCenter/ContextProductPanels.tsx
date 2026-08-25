@@ -13,6 +13,7 @@ import type {
   ContextCenterApiPort,
   ContextCorrectionRecord,
   ContextDerivedItem,
+  ContextDiagnosis,
   ContextEntity,
   ContextEntityDetail,
   ContextEntityProfile,
@@ -59,12 +60,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : "请求失败，请稍后重试";
 }
 
-function StateFrame({ loading, error, empty, onRetry, children }: {
-  loading: boolean; error: string | null; empty: boolean; onRetry: () => void; children: React.ReactNode;
+function StateFrame({ loading, error, empty, diagnosis, onRetry, children }: {
+  loading: boolean; error: string | null; empty: boolean; diagnosis?: ContextDiagnosis;
+  onRetry: () => void; children: React.ReactNode;
 }) {
   if (loading) return <div className="flex min-h-52 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />正在加载</div>;
   if (error) return <div role="alert" className="flex min-h-52 flex-col items-center justify-center gap-3 rounded-xl border border-danger/30 bg-danger/5 p-6 text-center"><TriangleAlert className="size-7 text-danger-ink" /><p className="text-sm text-danger-ink">{error}</p><Button variant="outline" size="sm" onClick={onRetry}>重试</Button></div>;
-  if (empty) return <div className="min-h-52 rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground"><FileSearch className="mx-auto mb-2 size-8" />暂无符合条件的数据</div>;
+  if (empty) return <div className="min-h-52 rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+    <FileSearch className="mx-auto mb-2 size-8" />
+    <p className="font-medium text-foreground">{diagnosis?.message ?? "暂无符合条件的数据"}</p>
+    {diagnosis ? <><p className="mx-auto mt-2 max-w-2xl">{diagnosis.action}</p>
+      <p className="mt-2 font-mono text-xs">{diagnosis.code}</p></> : null}
+  </div>;
   return <>{children}</>;
 }
 
@@ -100,9 +107,13 @@ function useEvidenceDrawer(api: ContextCenterApiPort) {
   };
 }
 
-export function ContextTimelinePanel({ api }: { api: ContextCenterApiPort }) {
-  const [filter, setFilter] = useState("");
-  const [appliedFilter, setAppliedFilter] = useState("");
+export function ContextTimelinePanel({ api, initialFilter = "", onFilterChange }: {
+  api: ContextCenterApiPort;
+  initialFilter?: string;
+  onFilterChange?: (filter: string) => void;
+}) {
+  const [filter, setFilter] = useState(initialFilter);
+  const [appliedFilter, setAppliedFilter] = useState(initialFilter);
   const [page, setPage] = useState<ContextPage<ContextTimelineItem> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -136,15 +147,25 @@ export function ContextTimelinePanel({ api }: { api: ContextCenterApiPort }) {
     void load();
     return () => { request.current += 1; };
   }, [load]);
+  useEffect(() => {
+    setFilter(initialFilter);
+    setAppliedFilter(initialFilter);
+  }, [initialFilter]);
+  const applyFilter = () => {
+    const next = filter.trim();
+    onFilterChange?.(next);
+    if (next === appliedFilter) void load();
+    else setAppliedFilter(next);
+  };
 
   return <div className="space-y-4">
     <div className="flex flex-wrap gap-2">
       <Input aria-label="Timeline 筛选" className="max-w-sm" value={filter} onChange={event => setFilter(event.target.value)} placeholder="按类型、标签或摘要筛选" />
-      <Button variant="outline" onClick={() => setAppliedFilter(filter.trim())}>筛选</Button>
+      <Button variant="outline" onClick={applyFilter}>筛选</Button>
       <Button variant="ghost" onClick={() => void load()}><RefreshCw className="mr-1.5 size-4" />刷新</Button>
     </div>
     <Degraded show={Boolean(page?.degraded)} exhausted={Boolean(page?.degraded && !page.nextCursor)} />
-    <StateFrame loading={loading && !page} error={error} empty={Boolean(page && page.items.length === 0)} onRetry={() => void load()}>
+    <StateFrame loading={loading && !page} error={error} empty={Boolean(page && page.items.length === 0)} diagnosis={page?.diagnosis} onRetry={() => void load()}>
       <div className="space-y-3" aria-label="Context Timeline">
         {page?.items.map(item => <Card key={item.id} density="compact"><CardContent className="p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -390,7 +411,7 @@ function EntityDetailView({ api, entityId, onBack }: { api: ContextCenterApiPort
         <TabsContent value="profile" className="mt-4"><EntityProfileView profile={profile} openEvidence={openEvidence} /></TabsContent>
         <TabsContent value="timeline" className="mt-4">
           <Degraded show={Boolean(timeline?.degraded)} exhausted={Boolean(timeline?.degraded && !timeline.nextCursor)} />
-          <StateFrame loading={timelineLoading && !timeline} error={timelineError} empty={Boolean(timeline && timeline.items.length === 0)} onRetry={() => void loadTimeline()}>
+          <StateFrame loading={timelineLoading && !timeline} error={timelineError} empty={Boolean(timeline && timeline.items.length === 0)} diagnosis={timeline?.diagnosis} onRetry={() => void loadTimeline()}>
             <div className="space-y-2">{timeline?.items.map(item => <div key={item.id} className="rounded-lg border p-3"><div className="flex justify-between gap-2"><div><strong className="text-sm">{item.label}</strong><p className="mt-1 text-sm text-muted-foreground">{item.summary}</p></div><EvidenceButton label={`${item.label} 的 Evidence`} evidence={item.evidence} open={openEvidence} /></div></div>)}</div>
             <LoadMore cursor={timeline?.nextCursor} busy={timelineMoreLoading} error={timelineMoreError} onLoad={cursor => void loadTimeline(cursor)} />
           </StateFrame>
@@ -417,7 +438,7 @@ function EntityDetailView({ api, entityId, onBack }: { api: ContextCenterApiPort
             </label>
           </div>
           <Degraded show={Boolean(relations?.degraded)} exhausted={Boolean(relations?.degraded && !relations.nextCursor)} />
-          <StateFrame loading={relationsLoading && !relations} error={relationsError} empty={Boolean(relations && relations.items.length === 0)} onRetry={() => void loadRelations(relationDepth)}>
+          <StateFrame loading={relationsLoading && !relations} error={relationsError} empty={Boolean(relations && relations.items.length === 0)} diagnosis={relations?.diagnosis} onRetry={() => void loadRelations(relationDepth)}>
             <ul className="overflow-hidden rounded-lg border" aria-label="中心实体邻接关系">
               {relations?.items.map(relation => (
                 <li key={relation.id} className="grid grid-cols-1 gap-3 border-b p-3 last:border-b-0 md:grid-cols-3 md:items-center">
@@ -447,11 +468,17 @@ function EntityDetailView({ api, entityId, onBack }: { api: ContextCenterApiPort
   </div>;
 }
 
-export function ContextEntitiesPanel({ api }: { api: ContextCenterApiPort }) {
-  const [filter, setFilter] = useState("");
-  const [applied, setApplied] = useState("");
+export function ContextEntitiesPanel({ api, initialFilter = "", initialEntityId = null, onFilterChange, onEntityChange }: {
+  api: ContextCenterApiPort;
+  initialFilter?: string;
+  initialEntityId?: string | null;
+  onFilterChange?: (filter: string) => void;
+  onEntityChange?: (entityId: string | null) => void;
+}) {
+  const [filter, setFilter] = useState(initialFilter);
+  const [applied, setApplied] = useState(initialFilter);
   const [page, setPage] = useState<ContextPage<ContextEntity> | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(initialEntityId);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [moreLoading, setMoreLoading] = useState(false);
@@ -483,12 +510,27 @@ export function ContextEntitiesPanel({ api }: { api: ContextCenterApiPort }) {
     void load();
     return () => { request.current += 1; };
   }, [load]);
-  if (selected) return <EntityDetailView api={api} entityId={selected} onBack={() => setSelected(null)} />;
+  useEffect(() => {
+    setFilter(initialFilter);
+    setApplied(initialFilter);
+    setSelected(initialEntityId);
+  }, [initialEntityId, initialFilter]);
+  const selectEntity = (entityId: string | null) => {
+    setSelected(entityId);
+    onEntityChange?.(entityId);
+  };
+  const applyFilter = () => {
+    const next = filter.trim();
+    onFilterChange?.(next);
+    if (next === applied) void load();
+    else setApplied(next);
+  };
+  if (selected) return <EntityDetailView api={api} entityId={selected} onBack={() => selectEntity(null)} />;
   return <div className="space-y-4">
-    <div className="flex gap-2"><Input aria-label="实体筛选" className="max-w-sm" value={filter} onChange={event => setFilter(event.target.value)} placeholder="按类型、标签或摘要筛选" /><Button variant="outline" onClick={() => { const next = filter.trim(); if (next === applied) void load(); else setApplied(next); }}>筛选</Button></div>
+    <div className="flex gap-2"><Input aria-label="实体筛选" className="max-w-sm" value={filter} onChange={event => setFilter(event.target.value)} placeholder="按类型、标签或摘要筛选" /><Button variant="outline" onClick={applyFilter}>筛选</Button></div>
     <Degraded show={Boolean(page?.degraded)} exhausted={Boolean(page?.degraded && !page.nextCursor)} />
-    <StateFrame loading={loading && !page} error={error} empty={Boolean(page && page.items.length === 0)} onRetry={() => void load()}>
-      <div className="grid gap-3 md:grid-cols-2">{page?.items.map(entity => <button key={entity.id} type="button" className="rounded-xl border bg-card p-4 text-left transition-colors hover:border-primary/40" onClick={() => setSelected(entity.id)}><div className="flex items-center gap-2"><Badge variant="outline">{entity.type}</Badge><strong>{entity.label}</strong><span className="ml-auto text-xs text-muted-foreground">v{entity.revision}</span></div><p className="mt-2 text-sm text-muted-foreground">{entity.summary || "未提供摘要"}</p><p className="mt-3 text-xs text-muted-foreground">更新于 {formatDateTime(entity.updatedAt)}</p></button>)}</div>
+    <StateFrame loading={loading && !page} error={error} empty={Boolean(page && page.items.length === 0)} diagnosis={page?.diagnosis} onRetry={() => void load()}>
+      <div className="grid gap-3 md:grid-cols-2">{page?.items.map(entity => <button key={entity.id} type="button" className="rounded-xl border bg-card p-4 text-left transition-colors hover:border-primary/40" onClick={() => selectEntity(entity.id)}><div className="flex items-center gap-2"><Badge variant="outline">{entity.type}</Badge><strong>{entity.label}</strong><span className="ml-auto text-xs text-muted-foreground">v{entity.revision}</span></div><p className="mt-2 text-sm text-muted-foreground">{entity.summary || "未提供摘要"}</p><p className="mt-3 text-xs text-muted-foreground">更新于 {formatDateTime(entity.updatedAt)}</p></button>)}</div>
       <LoadMore cursor={page?.nextCursor} busy={moreLoading} error={moreError} onLoad={cursor => void load(cursor)} />
     </StateFrame>
   </div>;
@@ -549,7 +591,7 @@ export function ContextReviewsPanel({ api }: { api: ContextCenterApiPort }) {
     <label className="block max-w-xs text-sm">审核状态<select aria-label="审核状态筛选" className="mt-1 w-full rounded-md border bg-background px-3 py-2" value={status} onChange={event => setStatus(event.target.value as typeof status)}><option value="">全部待审核</option><option value="proposed">proposed</option><option value="conflicted">conflicted</option></select></label>
     <Degraded show={Boolean(page?.degraded)} exhausted={Boolean(page?.degraded && !page.nextCursor)} />
     {actionError && <p role="alert" className="rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger-ink">审核操作失败：{actionError}</p>}
-    <StateFrame loading={loading && !page} error={error} empty={Boolean(page && queue.length === 0)} onRetry={() => void load()}>
+    <StateFrame loading={loading && !page} error={error} empty={Boolean(page && queue.length === 0)} diagnosis={page?.diagnosis} onRetry={() => void load()}>
       <div className="space-y-3">{queue.map(item => <Card key={item.id} density="compact"><CardHeader><CardTitle className="flex flex-wrap items-center gap-2"><Badge variant={item.status === "conflicted" ? "danger" : "warning"}>{item.status}</Badge>{item.entityLabel} · {item.label}<span className="ml-auto text-xs font-normal text-muted-foreground">v{item.revision}</span></CardTitle></CardHeader><CardContent><div className="grid gap-3 sm:grid-cols-2"><div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">原值</p><p className="mt-1 text-sm">{item.originalSummary || "无原值"}</p></div><div className="rounded-lg border border-primary/30 bg-primary/5 p-3"><p className="text-xs text-muted-foreground">建议值</p><p className="mt-1 text-sm">{item.proposedSummary}</p></div></div>{item.conflict && <p className="mt-3 text-sm text-danger-ink">冲突：{item.conflict}</p>}<div className="mt-4 flex flex-wrap items-center gap-2"><EvidenceButton label={`${item.label} 审核 Evidence`} evidence={item.evidence} open={openEvidence} /><span className="mr-auto text-xs text-muted-foreground">{item.authority.label} · {formatDateTime(item.updatedAt)}</span><Button variant="outline" disabled={busy === item.id} onClick={() => void decide(item, "reject")}>拒绝建议值</Button><Button disabled={busy === item.id} onClick={() => void decide(item, "confirm")}>确认建议值</Button></div></CardContent></Card>)}</div>
       <LoadMore cursor={page?.nextCursor} busy={moreLoading} error={moreError} onLoad={cursor => void load(cursor)} />
     </StateFrame>

@@ -36,16 +36,34 @@ export class ContextProductAuthorization {
     scope: ContextRecallResolvedScope,
     candidate: ProductRecordLocator,
   ): Promise<boolean> {
-    if (!scope.collections.some(item => item.resourceType === 'org_knowledge'
-      && item.collectionId === candidate.collectionId)) return false;
-    if (candidate.currentDeleted || candidate.currentRevoked || candidate.refused
-      || candidate.currentRevision < 1 || candidate.recordRevision < 1
-      || candidate.recordRevision > candidate.currentRevision) return false;
-    const [decision] = await this.registry.authorizeBatch(
+    const [authorized] = await this.authorizeRecords(subject, scope, [candidate]);
+    return authorized === true;
+  }
+
+  async authorizeRecords(
+    subject: ContextProductSubject,
+    scope: ContextRecallResolvedScope,
+    candidates: readonly ProductRecordLocator[],
+  ): Promise<readonly boolean[]> {
+    const allowedCollections = new Set(scope.collections
+      .filter(item => item.resourceType === 'org_knowledge')
+      .map(item => item.collectionId));
+    const decisions = candidates.map(() => false);
+    const eligible: Array<{ index: number; candidate: ProductRecordLocator }> = [];
+    candidates.forEach((candidate, index) => {
+      if (!allowedCollections.has(candidate.collectionId)
+        || candidate.currentDeleted || candidate.currentRevoked || candidate.refused
+        || candidate.currentRevision < 1 || candidate.recordRevision < 1
+        || candidate.recordRevision > candidate.currentRevision) return;
+      eligible.push({ index, candidate });
+    });
+    if (!eligible.length) return decisions;
+    const authorized = await this.registry.authorizeBatch(
       { tenantId: subject.tenantId, userId: subject.actorId },
-      [sourceLocator(candidate)],
+      eligible.map(item => sourceLocator(item.candidate)),
     );
-    return decision?.authorized === true;
+    eligible.forEach((item, index) => { decisions[item.index] = authorized[index]?.authorized === true; });
+    return decisions;
   }
 
   evidenceHandle(tenantId: string, ref: DerivedEvidenceRef): string {
@@ -87,17 +105,29 @@ export class ContextProductAuthorization {
     }
   }
 
-  cursor(tenantId: string, fingerprint: string, offset: number): string {
-    return this.sign('cp1', { t: tenantId, f: fingerprint, o: offset });
+  cursor(subject: ContextProductSubject, fingerprint: string, offset: number): string {
+    return this.sign('cp1', { t: subject.tenantId, a: subject.actorId, f: fingerprint, o: offset });
   }
 
-  parseCursor(tenantId: string, fingerprint: string, cursor: string): number {
+  parseCursor(subject: ContextProductSubject, fingerprint: string, cursor: string): number {
     const parsed = this.verify('cp1', cursor);
-    if (parsed.t !== tenantId || parsed.f !== fingerprint || !Number.isSafeInteger(parsed.o)
-      || Number(parsed.o) < 0 || Number(parsed.o) > 100_000) {
+    if (parsed.t !== subject.tenantId || parsed.a !== subject.actorId || parsed.f !== fingerprint
+      || !Number.isSafeInteger(parsed.o) || Number(parsed.o) < 0 || Number(parsed.o) > 100_000) {
       throw new ContextProductError('CONTEXT_PRODUCT_CURSOR_INVALID');
     }
     return Number(parsed.o);
+  }
+
+  entityCursor(subject: ContextProductSubject, fingerprint: string, entityId: string): string {
+    if (!validId(entityId)) throw new ContextProductError('CONTEXT_PRODUCT_CURSOR_INVALID');
+    return this.sign('cp2', { t: subject.tenantId, a: subject.actorId, f: fingerprint, e: entityId });
+  }
+
+  parseEntityCursor(subject: ContextProductSubject, fingerprint: string, cursor: string): string {
+    const parsed = this.verify('cp2', cursor);
+    if (parsed.t !== subject.tenantId || parsed.a !== subject.actorId || parsed.f !== fingerprint
+      || !validId(parsed.e)) throw new ContextProductError('CONTEXT_PRODUCT_CURSOR_INVALID');
+    return String(parsed.e);
   }
 
   private sign(prefix: string, value: Record<string, unknown>): string {
@@ -107,19 +137,22 @@ export class ContextProductAuthorization {
 
   private verify(prefix: string, token: string): Record<string, unknown> {
     if (typeof token !== 'string' || token.length > MAX_TOKEN_LENGTH) {
-      throw new ContextProductError(prefix === 'cp1' ? 'CONTEXT_PRODUCT_CURSOR_INVALID' : 'CONTEXT_PRODUCT_EVIDENCE_INVALID');
+      throw new ContextProductError(prefix === 'cp1' || prefix === 'cp2'
+        ? 'CONTEXT_PRODUCT_CURSOR_INVALID' : 'CONTEXT_PRODUCT_EVIDENCE_INVALID');
     }
     const [actualPrefix, payload, provided, extra] = token.split('.');
     const expected = payload ? signature(prefix, payload, this.signingKey) : '';
     if (actualPrefix !== prefix || !payload || !provided || extra || !safeEqual(provided, expected)) {
-      throw new ContextProductError(prefix === 'cp1' ? 'CONTEXT_PRODUCT_CURSOR_INVALID' : 'CONTEXT_PRODUCT_EVIDENCE_INVALID');
+      throw new ContextProductError(prefix === 'cp1' || prefix === 'cp2'
+        ? 'CONTEXT_PRODUCT_CURSOR_INVALID' : 'CONTEXT_PRODUCT_EVIDENCE_INVALID');
     }
     try {
       const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as unknown;
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid');
       return parsed as Record<string, unknown>;
     } catch {
-      throw new ContextProductError(prefix === 'cp1' ? 'CONTEXT_PRODUCT_CURSOR_INVALID' : 'CONTEXT_PRODUCT_EVIDENCE_INVALID');
+      throw new ContextProductError(prefix === 'cp1' || prefix === 'cp2'
+        ? 'CONTEXT_PRODUCT_CURSOR_INVALID' : 'CONTEXT_PRODUCT_EVIDENCE_INVALID');
     }
   }
 }

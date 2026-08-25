@@ -185,6 +185,7 @@ describe('records', () => {
     expect(row?.hasAttribute('data-comparison-track')).toBe(true);
     expect(row?.className).not.toContain('fit-content');
     expect(row?.className).toContain('gap-y-2');
+    expect(row?.className).toContain('select-text');
     expect(rows[0]?.className).toContain('py-2.5');
     expect(table).toBeTruthy();
     expect(rows).toHaveLength(3);
@@ -217,6 +218,7 @@ describe('records', () => {
 
     expect(container.querySelector('[data-records-title]')?.className).toContain('bg-primary/5');
     expect(screen.getByText('字段迁移完成').className).toContain('text-foreground');
+    expect(screen.getByText('字段迁移完成').closest('button')?.className).toContain('select-text');
     expect(screen.getByText('字段迁移完成').closest('button')?.querySelector('svg')?.classList.contains('text-success')).toBe(true);
     expect(screen.getByText('回读失败').closest('button')?.querySelector('svg')?.classList.contains('text-destructive')).toBe(true);
     expect(screen.getByText('回读失败').className).not.toContain('line-through');

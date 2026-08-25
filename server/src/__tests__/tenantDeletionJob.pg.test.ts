@@ -114,6 +114,7 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
     await jobs.init();
     const tenantStore = new TenantStore(join(tmpRoot, 'restart-tenants.json'));
     await tenantStore.create({ id: 'restart-acme', name: 'Restart Acme', createdBy: 'test' });
+    await tenantStore.create({ id: 'restart-guard', name: 'Restart Guard', createdBy: 'test' });
     const created = await jobs.create({
       tenantId: 'restart-acme', jobType: 'tenant_delete', targetType: 'tenant', targetId: 'restart-acme',
       idempotencyKey: 'restart-delete-v1', request: { reasonCode: 'test' },
@@ -147,6 +148,7 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
     await jobs.init();
     const tenantStore = new TenantStore(join(tmpRoot, 'retry-tenants.json'));
     await tenantStore.create({ id: 'retry-acme', name: 'Retry Acme', createdBy: 'test' });
+    await tenantStore.create({ id: 'retry-guard', name: 'Retry Guard', createdBy: 'test' });
     let attempts = 0;
     const executor = createDurableTenantDeletionExecutor({
       jobs,

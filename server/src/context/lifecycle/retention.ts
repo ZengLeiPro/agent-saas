@@ -65,7 +65,7 @@ export class ContextRetentionStore {
     try {
       await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
       // Serialize plans for one tenant without blocking unrelated tenants.
-      await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`context-retention\0${request.tenantId}`]);
+      await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`context-retention:${request.tenantId}`]);
       const safeWatermark = await this.safeSourceWatermark(client, request.tenantId);
       if (BigInt(request.sourceOutboxWatermark) > BigInt(safeWatermark)) {
         throw new Error(`CONTEXT_RETENTION_UNSAFE_WATERMARK requested=${request.sourceOutboxWatermark} safe=${safeWatermark}`);

@@ -40,7 +40,7 @@ export async function failDerivedConsumerLease(
           'attempts',COALESCE(NULLIF(substring(last_error_message FROM '"attempts"\\s*:\\s*([0-9]+)'), '')::integer,0)+1,
           'errorCode',$5::text,'failedAt',$6::text
         )::text,
-        last_heartbeat_at=$6,updated_at=$6
+        last_heartbeat_at=$6::timestamptz,updated_at=$6::timestamptz
     WHERE tenant_id=$1 AND consumer_id=$2 AND lease_owner=$3 AND lease_fence=$4`,
   [lease.tenantId, lease.consumerId, lease.leaseOwner, lease.leaseFence,
     errorCode, failedAt, DERIVED_DEAD_LETTER_ATTEMPTS]);

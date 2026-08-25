@@ -89,17 +89,13 @@ describe("GovernanceConsole", () => {
 });
 
 describe("治理用户菜单", () => {
-  it("平台管理员只有个人设置、组织控制台、平台控制台三个稳定入口", () => {
-    expect(getGovernanceUserMenuEntries({ isAdmin: true, isPlatformAdmin: true })).toEqual([
-      { id: "settings", label: "个人设置" },
-      { id: "organization", label: "组织控制台" },
-      { id: "platform", label: "平台控制台" },
-    ]);
-  });
-
-  it("普通成员只显示个人设置", () => {
-    expect(getGovernanceUserMenuEntries({ isAdmin: false, isPlatformAdmin: false })).toEqual([
-      { id: "settings", label: "个人设置" },
+  it.each([
+    { isAdmin: true, isPlatformAdmin: true },
+    { isAdmin: true, isPlatformAdmin: false },
+    { isAdmin: false, isPlatformAdmin: false },
+  ])("所有角色都只显示统一设置入口", (access) => {
+    expect(getGovernanceUserMenuEntries(access)).toEqual([
+      { id: "settings", label: "设置" },
     ]);
   });
 });

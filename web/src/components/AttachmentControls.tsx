@@ -1,6 +1,5 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 
-import AssetLibraryDialog from "@/components/AssetLibraryDialog";
 import AttachmentSourceMenu from "@/components/AttachmentSourceMenu";
 
 interface AttachmentControlsProps {
@@ -9,6 +8,8 @@ interface AttachmentControlsProps {
   onAssetConfirm?: (paths: string[]) => Promise<void> | void;
   disabled: boolean;
 }
+
+const LazyAssetLibraryDialog = lazy(() => import("@/components/AssetLibraryDialog"));
 
 export default function AttachmentControls({
   onLocalFile,
@@ -28,14 +29,16 @@ export default function AttachmentControls({
   }
 
   return (
-    <AssetLibraryDialog
-      open
-      onOpenChange={(open) => {
-        setLibraryOpen(open);
-        if (!open) onMenuOpenChange(false);
-      }}
-      onConfirm={onAssetConfirm}
-      disabled={disabled}
-    />
+    <Suspense fallback={null}>
+      <LazyAssetLibraryDialog
+        open
+        onOpenChange={(open) => {
+          setLibraryOpen(open);
+          if (!open) onMenuOpenChange(false);
+        }}
+        onConfirm={onAssetConfirm}
+        disabled={disabled}
+      />
+    </Suspense>
   );
 }

@@ -20,6 +20,7 @@ function createRoot(): string {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   while (roots.length > 0) rmSync(roots.pop()!, { recursive: true, force: true });
 });
 
@@ -89,6 +90,50 @@ describe('runtime governance connector env', () => {
         LARKSUITE_CLI_USER_ACCESS_TOKEN: 'uat_runtime',
         DASHSCOPE_API_KEY: 'tenant-stt-key',
       });
+    } finally {
+      await runtime.mcpClientShutdown();
+    }
+  });
+
+  it('uses the Google Workspace governance catalog id when authorizing OAuth', async () => {
+    const root = createRoot();
+    const vault = new InMemorySecretVault();
+    vi.stubEnv('GOOGLE_WORKSPACE_CONNECTOR_CLIENT_ID', 'google-client-id');
+    vi.stubEnv('GOOGLE_WORKSPACE_CONNECTOR_CLIENT_SECRET', 'google-client-secret');
+    const user = {
+      id: 'user-1', username: 'alice', tenantId: 'tenant-a', role: 'user', disabled: false,
+    };
+    const listEffectiveResourceIds = vi.fn().mockResolvedValue([{
+      resourceId: 'google_workspace',
+      bindingId: 'binding-1',
+      assignmentVersion: 1,
+      finalEffect: 'allow',
+      bindings: [],
+    }]);
+    const runtime = await initializeRuntimeGovernanceConnectors({
+      processCwd: root,
+      agentCwd: join(root, 'agents'),
+      config: {} as AppConfig,
+      secretVault: vault,
+      userStore: { findById: vi.fn(() => user) } as never,
+      membershipStore: { getMembership: vi.fn().mockResolvedValue({ status: 'active' }) } as never,
+      governanceChangeJobStore: { findActiveForTarget: vi.fn().mockResolvedValue(null) } as never,
+      assignmentStore: { listEffectiveResourceIds } as never,
+      entitlementStore: {
+        getEntitlementSet: vi.fn().mockResolvedValue({ status: 'active' }),
+        listResourceScopes: vi.fn().mockResolvedValue([{
+          resourceType: 'connector', mode: 'selected', resourceIds: ['google_workspace'],
+        }]),
+      } as never,
+      resolveLegacySkillResourceId: (_user, skillId) => skillId,
+    });
+
+    try {
+      await expect(runtime.googleWorkspaceOAuthService?.startAuthorization(
+        user as never,
+        'https://agent.example.test/api/connectors/oauth/callback',
+      )).resolves.toMatchObject({ authorizationUrl: expect.stringContaining('accounts.google.com') });
+      expect(listEffectiveResourceIds).toHaveBeenCalledWith('tenant-a', 'user-1', 'connector');
     } finally {
       await runtime.mcpClientShutdown();
     }

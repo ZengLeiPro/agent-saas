@@ -92,12 +92,14 @@ describe("ChatInput 布局", () => {
 });
 
 describe("ChatInput 附件来源入口", () => {
-  it("点击添加附件后显示紧凑的本地和云端文件选项", async () => {
+  it("首次点击立即显示更舒展的本地和云端文件选项", () => {
     renderInput({ onAssetSelect: vi.fn() });
 
     fireEvent.click(screen.getByRole("button", { name: "添加附件" }));
 
-    expect(await screen.findByRole("button", { name: "本地文件" })).toBeTruthy();
+    const localOption = screen.getByRole("button", { name: "本地文件" });
+    expect(localOption.classList.contains("text-[13px]")).toBe(true);
+    expect(localOption.classList.contains("py-2")).toBe(true);
     expect(screen.getByRole("button", { name: "云端文件" })).toBeTruthy();
     expect(screen.queryByText("从设备中选择")).toBeNull();
     expect(screen.queryByText("选择已有文件")).toBeNull();

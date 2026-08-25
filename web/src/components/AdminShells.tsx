@@ -1,8 +1,15 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, Loader2, X, type LucideIcon } from "lucide-react";
+import { ChevronLeft, Loader2, X } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
 import { SettingsPanelHeaderStickyProvider } from "@/components/SettingsCenter/SettingsPanelHeader";
+import {
+  PLATFORM_SETTINGS_SECTIONS,
+  TENANT_SETTINGS_SECTIONS,
+  type AdminSettingsNavigationItem,
+  type PlatformSettingsSectionId,
+  type TenantSettingsSectionId,
+} from "@/components/SettingsCenter/unifiedSettingsConfig";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { cn } from "@/lib/utils";
@@ -49,28 +56,10 @@ const ConnectorDictionaryManagerPanel = lazy(() => import("@/components/Connecto
 const TenantConnectorDictionaryPanel = lazy(() => import("@/components/ConnectorDictionaryManager/TenantPanel"));
 const AgentDwsAccountsPage = lazy(() => import('@/components/AgentDwsAccounts'));
 
-export type TenantSection = "overview" | "users" | "skills" | "org-agents" | "mcp" | "connector-dictionary" | "usage" | "billing" | "files" | "qa" | "audit" | "settings" | "company" | "instructions";
-export type PlatformSection = "tenants" | "signup" | "models" | "billing" | "remote-hands" | "tool-controls" | "connector-dictionary" | "agent-profiles" | "system-prompts" | "memory-polling" | "global-mcp" | "skill-pool" | "egress" | "system";
+export type TenantSection = "overview" | "usage" | "qa" | "audit" | TenantSettingsSectionId;
+export type PlatformSection = PlatformSettingsSectionId;
 
-interface ShellButton<T extends string> {
-  id: T;
-  label: string;
-  icon: LucideIcon;
-  platformOnly?: boolean;
-}
-
-const tenantSettingsSections: ShellButton<TenantSection>[] = [
-  { id: "users", label: "成员", icon: EntityIcons.members },
-  { id: "skills", label: "技能", icon: EntityIcons.skill },
-  { id: "org-agents", label: "组织智能体", icon: EntityIcons.expert },
-  { id: "mcp", label: "连接器", icon: EntityIcons.connector },
-  { id: "connector-dictionary", label: "连接器映射", icon: EntityIcons.connector },
-  { id: "billing", label: "计费", icon: EntityIcons.billing },
-  { id: "files", label: "文件与数据", icon: EntityIcons.files },
-  { id: "company", label: "公司信息", icon: EntityIcons.companyInfo },
-  { id: "instructions", label: "自定义规则", icon: EntityIcons.tenantInstructions },
-  { id: "settings", label: "组织管理", icon: EntityIcons.org },
-];
+type ShellButton<T extends string> = AdminSettingsNavigationItem<T>;
 
 const SETTINGS_NAV_ITEM_SELECTED =
   "relative bg-brand-accent-soft text-foreground font-semibold " +
@@ -78,23 +67,6 @@ const SETTINGS_NAV_ITEM_SELECTED =
   "before:h-5 before:w-[3px] before:rounded-r-full before:bg-brand-accent";
 const SETTINGS_NAV_ITEM_UNSELECTED =
   "text-muted-foreground hover:bg-muted/60 hover:text-foreground";
-
-const platformSettingsSections: ShellButton<PlatformSection>[] = [
-  { id: "tenants", label: "组织", icon: EntityIcons.org },
-  { id: "signup", label: "注册管理", icon: EntityIcons.signup },
-  { id: "models", label: "模型", icon: EntityIcons.model },
-  { id: "billing", label: "计费", icon: EntityIcons.billing },
-  { id: "remote-hands", label: "执行环境池", icon: EntityIcons.runtimePool },
-  { id: "tool-controls", label: "工具开关", icon: EntityIcons.toolControls },
-  { id: "connector-dictionary", label: "连接器映射", icon: EntityIcons.connector },
-  { id: "agent-profiles", label: "系统智能体", icon: EntityIcons.runtimePool },
-  { id: "system-prompts", label: "系统提示语", icon: EntityIcons.systemPrompts },
-  { id: "memory-polling", label: "记忆轮询", icon: EntityIcons.memoryPolling },
-  { id: "global-mcp", label: "全局 MCP", icon: EntityIcons.connector },
-  { id: "skill-pool", label: "技能池", icon: EntityIcons.skill },
-  { id: "egress", label: "网络出口", icon: EntityIcons.egress },
-  { id: "system", label: "系统配置", icon: EntityIcons.systemConfig },
-];
 
 function AdminSettingsModal<T extends string>({
   open,
@@ -283,6 +255,7 @@ export function TenantAdminShell({
   onSettingsSectionChange,
   onSettingsClose,
   settingsOnly = false,
+  settingsContentOnly = false,
   activeAnalysisSection,
   onAnalysisSectionChange,
   headerControlsPlacement = "inline",
@@ -303,14 +276,16 @@ export function TenantAdminShell({
   renderCompanyInfo: (tenantId: string, tenantName?: string) => ReactNode;
   /** 受控：modal 是否打开（由 useChatAppState.adminSettings 控制） */
   settingsOpen: boolean;
-  /** 受控：modal 当前 section（合法值见 tenantSettingsSections） */
+  /** 受控：modal 当前 section（合法值见 TENANT_SETTINGS_SECTIONS） */
   settingsSection: TenantSection;
   /** 切换 section 时调用，父级负责改 state + push URL */
   onSettingsSectionChange: (section: TenantSection) => void;
   /** 关闭 modal 时调用，父级负责改 state + push URL */
   onSettingsClose: () => void;
-  /** 仅渲染设置 modal，不渲染背后的分析页；用于从任意页面打开管理弹窗时保持原页面不变。 */
+  /** 仅渲染设置 modal，不渲染背后的分析页；用于移动端保留旧入口。 */
   settingsOnly?: boolean;
+  /** 仅渲染设置叶子内容，用于桌面统一设置工作区。 */
+  settingsContentOnly?: boolean;
   activeAnalysisSection?: TenantSection;
   onAnalysisSectionChange?: (section: TenantSection) => void;
   headerControlsPlacement?: "inline" | "none";
@@ -379,9 +354,9 @@ export function TenantAdminShell({
     setVisitedTenantSections(prev => (prev.has(settingsSection) ? prev : new Set(prev).add(settingsSection)));
   }, [settingsOpen, settingsSection]);
 
-  const visibleTenantSettingsSections = renderOrgAgents
-    ? tenantSettingsSections
-    : tenantSettingsSections.filter((section) => section.id !== "org-agents");
+  const visibleTenantSettingsSections = (renderOrgAgents
+    ? TENANT_SETTINGS_SECTIONS
+    : TENANT_SETTINGS_SECTIONS.filter((section) => section.id !== "org-agents")) as ShellButton<TenantSection>[];
 
   const tenantSectionsToRender: { id: TenantSection; node: ReactNode }[] = [
     { id: "users", node: renderUsers(effectiveTenantId, currentTenant?.name) },
@@ -411,6 +386,21 @@ export function TenantAdminShell({
       })}
     </>
   );
+
+  if (settingsContentOnly) {
+    return (
+      <div className="flex h-full min-h-0 flex-col bg-card">
+        {tenantSwitcher && (
+          <div className="shrink-0 border-b px-5 py-3">
+            <div className="max-w-xs">{tenantSwitcher}</div>
+          </div>
+        )}
+        <div className="min-h-0 flex-1 overflow-hidden p-4 md:p-8 md:pt-5">
+          <SettingsPanelHeaderStickyProvider>{settingsContent}</SettingsPanelHeaderStickyProvider>
+        </div>
+      </div>
+    );
+  }
 
   const governanceContent = (() => {
     if (!governanceRoute) return null;
@@ -527,6 +517,7 @@ export function PlatformAdminShell({
   onSettingsSectionChange,
   onSettingsClose,
   settingsOnly = false,
+  settingsContentOnly = false,
   headerControlsPlacement = "inline",
   governanceRoute,
   governanceContentOnly = false,
@@ -547,8 +538,10 @@ export function PlatformAdminShell({
   settingsSection: PlatformSection;
   onSettingsSectionChange: (section: PlatformSection) => void;
   onSettingsClose: () => void;
-  /** 仅渲染设置 modal，不渲染背后的分析页；用于从任意页面打开管理弹窗时保持原页面不变。 */
+  /** 仅渲染设置 modal，不渲染背后的分析页；用于移动端保留旧入口。 */
   settingsOnly?: boolean;
+  /** 仅渲染设置叶子内容，用于桌面统一设置工作区。 */
+  settingsContentOnly?: boolean;
   headerControlsPlacement?: "inline" | "none";
   governanceRoute?: GovernanceRouteState | null;
   governanceContentOnly?: boolean;
@@ -596,6 +589,14 @@ export function PlatformAdminShell({
       </div>
     </div>
   );
+
+  if (settingsContentOnly) {
+    return (
+      <div className="h-full min-h-0 bg-card p-4 md:p-8 md:pt-5">
+        <SettingsPanelHeaderStickyProvider>{settingsContent}</SettingsPanelHeaderStickyProvider>
+      </div>
+    );
+  }
 
   const governanceContent = (() => {
     if (!governanceRoute) return null;
@@ -675,7 +676,7 @@ export function PlatformAdminShell({
   })();
 
   const settingsModal = (
-    <AdminSettingsModal open={settingsOpen} title="平台管理" description="" badge="平台管理员" sections={platformSettingsSections} active={settingsSection} onActiveChange={onSettingsSectionChange} onClose={onSettingsClose}>
+    <AdminSettingsModal open={settingsOpen} title="平台管理" description="" badge="平台管理员" sections={PLATFORM_SETTINGS_SECTIONS} active={settingsSection} onActiveChange={onSettingsSectionChange} onClose={onSettingsClose}>
       {settingsContent}
     </AdminSettingsModal>
   );

@@ -18,6 +18,12 @@ import {
 import type { AppTab } from "@/types/sidebar";
 import type { CanonicalSettingsSectionId, SettingsSectionId } from "@/types/settings";
 
+function isUnifiedSettingsUrl(url: string): boolean {
+  return url.startsWith("/settings")
+    || url.startsWith("/tenant-admin/settings")
+    || url.startsWith("/platform-admin/settings");
+}
+
 export interface PersonalSettingsNavigationDeps {
   getActiveTab: () => AppTab;
   getPlatformRoute: () => { section?: PlatformAdminSection | null; entityId?: string | null };
@@ -41,9 +47,12 @@ export function usePersonalSettingsNavigation(deps: PersonalSettingsNavigationDe
     const normalized = normalizeSettingsSection(section);
     const route = governanceSettingsRoute(section);
     const currentUrl = `${window.location.pathname}${window.location.search}`;
-    const source = currentUrl.startsWith("/settings") ? returnUrl() : currentUrl;
+    const current = readPersonalSettingsHistoryState();
+    const fromSettingsRoute = isUnifiedSettingsUrl(currentUrl);
+    const source = current?.source ?? (fromSettingsRoute ? returnUrl() : currentUrl);
+    if (!current && fromSettingsRoute) window.history.replaceState({}, "", source);
     deps.openState(normalized, route);
-    pushSettingsRoute(route, { source, depth: 1 });
+    pushSettingsRoute(route, { source, depth: current ? current.depth + 1 : 1 });
   }, [deps, returnUrl]);
 
   const closeSettings = useCallback(() => {
@@ -55,10 +64,11 @@ export function usePersonalSettingsNavigation(deps: PersonalSettingsNavigationDe
     const normalized = normalizeSettingsSection(section);
     const route = governanceSettingsRoute(section);
     const current = readPersonalSettingsHistoryState();
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+    const source = current?.source ?? (isUnifiedSettingsUrl(currentUrl) ? returnUrl() : currentUrl);
+    if (!current && isUnifiedSettingsUrl(currentUrl)) window.history.replaceState({}, "", source);
     deps.openState(normalized, route);
-    pushSettingsRoute(route, current
-      ? { source: current.source, depth: current.depth + 1 }
-      : { source: returnUrl(), depth: 1 });
+    pushSettingsRoute(route, { source, depth: current ? current.depth + 1 : 1 });
   }, [deps, returnUrl]);
 
   return { openSettings, closeSettings, setSettingsSection };

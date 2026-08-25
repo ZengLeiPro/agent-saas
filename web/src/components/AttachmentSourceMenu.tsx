@@ -7,7 +7,7 @@ interface AttachmentSourceMenuProps {
   onAssetLibrary?: () => void;
 }
 
-const optionClassName = "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition-colors hover:bg-accent";
+const optionClassName = "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[13px] font-medium leading-5 transition-colors hover:bg-accent";
 
 export default function AttachmentSourceMenu({
   onLocalFile,

@@ -11,6 +11,7 @@ import {
 import type { UploadedFileInfo } from '../types/index.js';
 import type { TaskBoardAttachment, TaskBoardUploadAttachment } from '../../../shared/src/types/taskboard.js';
 import { uploadLogger } from '../utils/logger.js';
+import { mimeTypeForAsset, validateAssetPath, validateAttachmentStatePath } from './assetReference.js';
 import {
   atomicWriteTrustedFile,
   openTrustedDirectory,
@@ -40,6 +41,7 @@ export interface AttachmentState {
   relativePath: string;
   size: number;
   mimeType: string;
+  source?: 'upload' | 'asset';
   status: 'staged' | 'referenced';
   createdAt: string;
   referencedAt?: string;
@@ -252,6 +254,61 @@ export class UploadManager {
 
     return this.withUserMutation(active.userCwd, async () => this.completeRequestLocked(requestId, active, files, refs));
   }
+  async registerAssetReferences(
+    userCwd: string,
+    paths: readonly string[],
+    refs: UploadReference = {},
+  ): Promise<UploadedFileInfo[]> {
+    this.knownUserCwds.add(userCwd);
+    return this.withUserMutation(userCwd, async () => {
+      const createdStateIds: string[] = [];
+      try {
+        const referenced: UploadedFileInfo[] = [];
+        for (const requestedPath of paths) {
+          const relativePath = validateAssetPath(userCwd, requestedPath);
+          const source = await openTrustedFile(userCwd, relativePath);
+          const size = source.stats.size;
+          await source.handle.close();
+          if (size > MAX_UPLOAD_FILE_BYTES) {
+            throw Object.assign(new Error('单文件不能超过 2 GiB'), { statusCode: 413 });
+          }
+          const attachmentId = randomUUID();
+          const originalName = basename(relativePath);
+          const mimeType = mimeTypeForAsset(originalName);
+          const state: AttachmentState = {
+            version: 1,
+            attachmentId,
+            filename: originalName,
+            originalName,
+            relativePath,
+            size,
+            mimeType,
+            source: 'asset',
+            status: 'staged',
+            createdAt: new Date(this.now()).toISOString(),
+            ...(refs.sessionId ? { sessionIds: [refs.sessionId] } : {}),
+            ...(refs.clientMessageId ? { clientMessageIds: [refs.clientMessageId] } : {}),
+          };
+          await this.writeState(userCwd, state, 'uploads/.state');
+          createdStateIds.push(attachmentId);
+          referenced.push({
+            attachmentId,
+            originalName,
+            relativePath,
+            size,
+            mimeType,
+            isImage: isSupportedImage(mimeType),
+          });
+        }
+        return referenced;
+      } catch (error) {
+        await Promise.allSettled(createdStateIds.map((attachmentId) => (
+          removeTrustedPath(userCwd, `uploads/.state/${attachmentId}.json`)
+        )));
+        throw error;
+      }
+    });
+  }
 
   private async completeRequestLocked(
     requestId: string,
@@ -364,10 +421,10 @@ export class UploadManager {
           }
           throw error;
         }
-        if (state.attachmentId !== attachmentId || basename(state.filename) !== state.filename
-          || state.relativePath !== `uploads/${state.filename}`) {
+        if (state.attachmentId !== attachmentId || basename(state.filename) !== state.filename) {
           throw new Error(`Invalid attachment state: ${attachmentId}`);
         }
+        validateAttachmentStatePath(userCwd, state);
         if (refs.sessionId && !state.sessionIds?.includes(refs.sessionId)) {
           throw new Error(`Attachment does not belong to session: ${attachmentId}`);
         }
@@ -505,10 +562,10 @@ export class UploadManager {
           if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
           throw error;
         }
-        if (state.attachmentId !== attachmentId || basename(state.filename) !== state.filename
-          || state.relativePath !== `uploads/${state.filename}`) {
+        if (state.attachmentId !== attachmentId || basename(state.filename) !== state.filename) {
           throw new Error(`Invalid attachment state: ${attachmentId}`);
         }
+        validateAttachmentStatePath(userCwd, state);
         if (refs.sessionId && state.sessionIds?.some((sessionId) => sessionId !== refs.sessionId)) {
           throw new Error(`Attachment is already bound to another session: ${attachmentId}`);
         }
@@ -527,7 +584,9 @@ export class UploadManager {
   async getUsage(userCwd: string): Promise<UploadUsageSnapshot> {
     this.knownUserCwds.add(userCwd);
     const states = await this.readStates(userCwd);
-    const statusByFilename = new Map(states.map((state) => [state.filename, state.status]));
+    const statusByFilename = new Map(
+      states.filter((state) => state.source !== 'asset').map((state) => [state.filename, state.status]),
+    );
     const regularFiles = await listFilesRecursive(userCwd, 'uploads', new Set(['.partial', '.state']));
     const partialFiles = await listFilesRecursive(userCwd, 'uploads/.partial');
 
@@ -584,17 +643,23 @@ export class UploadManager {
       if (!Number.isFinite(createdAt) || createdAt > cutoff) continue;
       if (!ATTACHMENT_ID_RE.test(state.attachmentId) || basename(state.filename) !== state.filename) continue;
 
-      if (state.relativePath !== `uploads/${state.filename}`) continue;
-      let size = state.size;
       try {
-        const opened = await openTrustedFile(userCwd, state.relativePath);
-        size = opened.stats.size;
-        await opened.handle.close();
-        await removeTrustedPath(userCwd, state.relativePath);
-        deletedFiles += 1;
-        deletedBytes += size;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        validateAttachmentStatePath(userCwd, state);
+      } catch {
+        continue;
+      }
+      if (state.source !== 'asset') {
+        let size = state.size;
+        try {
+          const opened = await openTrustedFile(userCwd, state.relativePath);
+          size = opened.stats.size;
+          await opened.handle.close();
+          await removeTrustedPath(userCwd, state.relativePath);
+          deletedFiles += 1;
+          deletedBytes += size;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
       }
       await removeTrustedPath(userCwd, `uploads/.state/${state.attachmentId}.json`).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error;

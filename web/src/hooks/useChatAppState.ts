@@ -42,13 +42,14 @@ import {
   shouldAcceptSessionEvent,
 } from "@/lib/queueConsistency";
 export type { QueuedInterjection } from "@/lib/interjectionConsumption";
-import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, replaceSettingsUrl, pushAdminSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, normalizeAdminSettingsSection, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl, buildTenantAdminUrl, pushTenantAdminUrl, replaceTenantAdminUrl, normalizeTenantAdminSection, preserveScopeSearch, preserveSearchKeys, TENANT_ADMIN_SCOPE_KEYS, pushGovernanceUrl, replaceGovernanceUrl } from "@/lib/urlSync";
+import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, replaceSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl, buildTenantAdminUrl, pushTenantAdminUrl, replaceTenantAdminUrl, normalizeTenantAdminSection, preserveScopeSearch, preserveSearchKeys, TENANT_ADMIN_SCOPE_KEYS, pushGovernanceUrl, replaceGovernanceUrl } from "@/lib/urlSync";
 import { buildGovernanceUrl, governanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
 import { registerUpdateGuard, registerBeforeReloadHook, maybeReloadOnPopstate } from "@/lib/swUpdate";
 import { clearRunShellApprovalStorage, runShellApprovalStorageKey } from "@/lib/runShellApprovalStorage";
-import type { AdminSettingsState, AdminSettingsTarget, PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
+import type { AdminSettingsState, PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
 import { useMessages } from "@/hooks/useMessages";
 import { usePersonalSettingsNavigation } from "@/hooks/usePersonalSettingsNavigation";
+import { useAdminSettingsNavigation } from "@/hooks/useAdminSettingsNavigation";
 import { usePendingNewSessionTarget } from "@/hooks/usePendingNewSessionTarget";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSession } from "@/hooks/useSession";
@@ -1015,37 +1016,19 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     closeState: () => { setSettingsOpen(false); setGovernanceRouteRaw(null); },
   });
 
-  const openAdminSettings = useCallback((target: AdminSettingsTarget, section?: string) => {
-    // user settings modal 互斥关闭；不要切 activeTab，避免关闭管理弹窗后把用户留在组织/平台分析页。
-    setSettingsOpen(false);
-    const sec = normalizeAdminSettingsSection(target, section);
-    setAdminSettingsRaw({ target, section: sec });
-    pushAdminSettingsUrl(target, sec);
-  }, []);
-
-  const closeAdminSettings = useCallback(() => {
-    const current = adminSettingsRef.current;
-    if (!current) return;
-    setAdminSettingsRaw(null);
-    // 从任意页面打开管理弹窗时，关闭后回到打开前的 activeTab/session；
-    // 若用户是直接访问 /tenant-admin/settings 或 /platform-admin/settings，activeTab 本身就是 admin 页。
-    const tab = activeTabRef.current;
-    if (tab === 'platform-admin') {
-      pushPlatformAdminUrl(platformAdminRouteRef.current);
-    } else if (tab === 'tenant-admin') {
-      pushTenantAdminUrl({ section: tenantAdminSectionRef.current, search: preserveSearchKeys(TENANT_ADMIN_SCOPE_KEYS) });
-    } else {
-      pushUrl(tab, tab === 'chat' ? immediateSessionIdRef.current : null);
-    }
-  }, []);
-
-  const setAdminSettingsSection = useCallback((section: string) => {
-    const current = adminSettingsRef.current;
-    if (!current) return;
-    const sec = normalizeAdminSettingsSection(current.target, section);
-    setAdminSettingsRaw({ target: current.target, section: sec });
-    pushAdminSettingsUrl(current.target, sec);
-  }, []);
+  const { openAdminSettings, closeAdminSettings, setAdminSettingsSection } = useAdminSettingsNavigation({
+    getActiveTab: () => activeTabRef.current,
+    getPlatformRoute: () => platformAdminRouteRef.current,
+    getTenantSection: () => tenantAdminSectionRef.current,
+    getSessionId: () => immediateSessionIdRef.current,
+    getCurrentSettings: () => adminSettingsRef.current,
+    openState: (target, section) => {
+      setSettingsOpen(false);
+      setGovernanceRouteRaw(null);
+      setAdminSettingsRaw({ target, section });
+    },
+    closeState: () => setAdminSettingsRaw(null),
+  });
 
   // ---- 企业专家草稿态（2026-07 唯恩批次）----
   // ref：sendChatViaWs 首条消息（无 sessionId）时带上 orgAgentId，收到 'session' 事件
@@ -1176,9 +1159,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       setGovernanceRouteRaw(urlGovernanceRoute);
       setPendingCanonicalPath(canonicalPath);
       if (urlAdminSettings) {
-        // admin settings modal 路径：activeTab 同步到 admin frame，modal 打开到对应 section
+        // 统一设置工作区覆盖在当前产品页上；页内前进/后退只切设置叶子，不改动来源 tab。
         setSettingsOpen(false);
-        setActiveTabRaw(tab);
         setAdminSettingsRaw(urlAdminSettings);
         return;
       }

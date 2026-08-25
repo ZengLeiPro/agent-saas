@@ -184,9 +184,10 @@ describePg('Taskboard execution cancellation PostgreSQL races', () => {
     ]);
     const completedRun = await runStore.get(runId);
     expect(completedRun).toMatchObject({ status: 'completed' });
-    await expect(toolInvocationStore.get(invocationId)).resolves.toMatchObject({
-      status: 'completed', cancelRequestedAt: undefined, cancelReason: undefined,
-    });
+    const completedTool = await toolInvocationStore.get(invocationId);
+    expect(completedTool).toMatchObject({ status: 'completed' });
+    expect(completedTool?.cancelRequestedAt).toBeUndefined();
+    expect(completedTool?.cancelReason).toBeUndefined();
 
     const persisted = await pool.query<{
       global_sequence: string;
@@ -244,9 +245,10 @@ describePg('Taskboard execution cancellation PostgreSQL races', () => {
     expect(eventsAfterReplay.filter((event) => event.type === 'run_state_changed')).toHaveLength(1);
     expect(settleRunDebit).toHaveBeenCalledTimes(1);
     await expect(runStore.get(runId)).resolves.toMatchObject({ status: 'completed' });
-    await expect(toolInvocationStore.get(invocationId)).resolves.toMatchObject({
-      status: 'completed', cancelRequestedAt: undefined, cancelReason: undefined,
-    });
+    const completedToolAfter = await toolInvocationStore.get(invocationId);
+    expect(completedToolAfter).toMatchObject({ status: 'completed' });
+    expect(completedToolAfter?.cancelRequestedAt).toBeUndefined();
+    expect(completedToolAfter?.cancelReason).toBeUndefined();
 
     const result = await pool.query(
       `SELECT e.status,e.error,e.superseded_at,o.status AS cancellation_status,d.status AS dispatch_status,

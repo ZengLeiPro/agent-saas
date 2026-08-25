@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo, lazy, Suspense, useCallback, useRef } fro
 import { ChevronLeft, Loader2, CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/authFetch";
-import { extractTextFromChildren, getCellMinWidthPx } from "@/lib/tableCellWidth";
+import { extractTextFromChildren, getTableCellStyle } from "@/lib/tableCellWidth";
 import { resolveImageSrc } from "@agent/shared";
 import { FilePreviewActions, printFilePreviewElement, useFilePreviewPrint } from "@/components/FilePreviewActions";
 import { ImageLightbox } from "@/components/ImageLightbox";
@@ -98,16 +98,16 @@ const LazyMarkdownRenderer = lazy(async () => {
           <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
         ),
         table: ({ children, ...props }) => (
-          <div className="overflow-x-auto">
+          <div className="max-w-full overflow-x-auto">
             <table {...props}>{children}</table>
           </div>
         ),
         // td/th 注入 min-width = ⌈文本宽度 / 4⌉，保证自然换行不超过 4 行
         td: ({ children, style, ...props }) => (
-          <td style={{ minWidth: `${getCellMinWidthPx(extractTextFromChildren(children))}px`, ...style }} {...props}>{children}</td>
+          <td style={getTableCellStyle(extractTextFromChildren(children), style)} {...props}>{children}</td>
         ),
         th: ({ children, style, ...props }) => (
-          <th style={{ minWidth: `${getCellMinWidthPx(extractTextFromChildren(children))}px`, ...style }} {...props}>{children}</th>
+          <th style={getTableCellStyle(extractTextFromChildren(children), style)} {...props}>{children}</th>
         ),
         img: ({ src, alt, ...props }) => {
           if (!src || isExternalSrc(src)) {

@@ -1,4 +1,4 @@
-import React, { ReactNode } from 'react';
+import React, { CSSProperties, ReactNode } from 'react';
 
 /**
  * 表格单元格宽度估算
@@ -66,4 +66,15 @@ export function getCellMinWidthPx(text: string, maxLines: number = MAX_LINES): n
   if (!text) return MIN_CELL_WIDTH_PX;
   const textWidth = estimateTextWidthPx(text);
   return Math.max(MIN_CELL_WIDTH_PX, Math.ceil(textWidth / maxLines) + CELL_PAD_PX);
+}
+
+/**
+ * Markdown 预览不将 GFM 的右对齐标记用于普通文本列；居中标记仍保留。
+ */
+export function getTableCellStyle(text: string, style?: CSSProperties): CSSProperties {
+  return {
+    minWidth: `${getCellMinWidthPx(text)}px`,
+    ...style,
+    textAlign: style?.textAlign === 'right' ? 'left' : style?.textAlign,
+  };
 }

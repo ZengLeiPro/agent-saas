@@ -1,6 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { authFetch } from "@/lib/authFetch";
+import { MarkdownPreviewPanel } from "./MarkdownPreviewPanel";
 import { FilePreviewDialog, FilePreviewPanel } from "./FilePreviewPanel";
 
 vi.mock("@/lib/authFetch", () => ({
@@ -91,5 +93,28 @@ describe("FilePreviewDialog", () => {
     const expand = screen.getByRole("button", { name: "放大到弹窗预览" });
     fireEvent.click(expand);
     expect(onExpand).toHaveBeenCalledTimes(1);
+  });
+
+  it("Markdown 文件预览限制表格横滚范围，并处理 GFM 右对齐", async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        filename: "table.md",
+        content: [
+          "| 左对齐 | 右对齐 | 居中 |",
+          "| --- | ---: | :---: |",
+          "| 文本 | 数值 | 状态 |",
+        ].join("\n"),
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+
+    render(<MarkdownPreviewPanel filePath="assets/table.md" onBack={vi.fn()} hideHeader />);
+
+    const table = await screen.findByRole("table");
+    const [left, right, center] = Array.from(table.querySelectorAll("th"));
+    expect(table.parentElement?.className).toContain("max-w-full");
+    expect(table.parentElement?.className).toContain("overflow-x-auto");
+    expect(left.style.textAlign).toBe("");
+    expect(right.style.textAlign).toBe("left");
+    expect(center.style.textAlign).toBe("center");
   });
 });

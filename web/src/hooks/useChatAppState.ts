@@ -1372,14 +1372,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   const reconcileLastRunState = useCallback(async (sessionId: string, lastRunState: LastRunState) => {
     if (!isTerminalRuntimeStatus(lastRunState.status)) return;
-    if (sessionId !== immediateSessionIdRef.current) {
-      patchSessionRuntime(sessionId, {
-        status: lastRunState.status,
-        ...(lastRunState.runId ? { runId: lastRunState.runId } : {}),
-        attached: false,
-      });
-      return;
-    }
+    if (sessionId !== immediateSessionIdRef.current) return patchSessionRuntime(sessionId, {
+      status: lastRunState.status,
+      ...(lastRunState.runId ? { runId: lastRunState.runId } : {}),
+      attached: false,
+    });
 
     try {
       const res = await authFetch(`/api/sessions/${sessionId}/stream-status`);
@@ -2692,9 +2689,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         advanceStreamBindingGenerationIfChanged({ streamId: httpStreamId, runId: httpRunId });
       }
       // HTTP inactive 不能推翻仍未收到终态的 WS-confirmed runtime；继续 resume，等 WS 权威响应收口。
-      const cachedRuntime = activeRunsBySession.current.get(targetSessionId);
-      const preserveWsRuntime = cachedRuntime?.source === 'ws' && isActiveRuntimeStatus(cachedRuntime.status);
-      if (httpActive === false && !preserveWsRuntime) {
+      const existingRuntime = activeRunsBySession.current.get(targetSessionId);
+      if (httpActive === false && !(existingRuntime?.source === 'ws' && isActiveRuntimeStatus(existingRuntime.status))) {
         patchSessionRuntime(targetSessionId, { status: 'idle', streamId: null, runId: null, attached: false });
         streamIdRef.current = null;
         runIdRef.current = null;

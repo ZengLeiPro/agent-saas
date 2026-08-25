@@ -77,10 +77,14 @@ export class TaskboardContextSyncWorker {
       if (!inventoryComplete(existing.projects.watermark)) {
         failureCode = 'TASKBOARD_BOARD_INVENTORY_FAILED';
         result.inventoryBoards = await this.importBoardInventory(tenantId, observedAt, leases.projects);
+        failureCode = 'TASKBOARD_LEASE_RENEW_FAILED';
+        await this.renewLeases(tenantId, Object.values(leases));
       }
       if (!inventoryComplete(existing.tasks.watermark)) {
         failureCode = 'TASKBOARD_TASK_INVENTORY_FAILED';
         result.inventoryTasks = await this.importTaskInventory(tenantId, observedAt, leases.tasks);
+        failureCode = 'TASKBOARD_LEASE_RENEW_FAILED';
+        await this.renewLeases(tenantId, Object.values(leases));
       }
 
       failureCode = 'TASKBOARD_CHANGE_BOUND_FAILED';
@@ -89,6 +93,8 @@ export class TaskboardContextSyncWorker {
       assertSeq(throughSeq);
       assertSeq(afterSeq);
       while (BigInt(afterSeq) < BigInt(throughSeq)) {
+        failureCode = 'TASKBOARD_LEASE_RENEW_FAILED';
+        await this.renewLeases(tenantId, Object.values(leases));
         failureCode = 'TASKBOARD_CHANGE_PAGE_FAILED';
         const page = await this.options.reader.listChanges(tenantId, afterSeq, throughSeq, this.pageSize);
         if (page.items.length === 0) {
@@ -148,6 +154,8 @@ export class TaskboardContextSyncWorker {
         afterSeq = lastSeq;
       }
 
+      failureCode = 'TASKBOARD_LEASE_RENEW_FAILED';
+      await this.renewLeases(tenantId, Object.values(leases));
       failureCode = 'TASKBOARD_CHECKPOINT_FAILED';
       await this.ingest(tenantId, leases.projects, [], {
         watermark: INVENTORY_WATERMARK,
@@ -282,6 +290,19 @@ export class TaskboardContextSyncWorker {
       assertAdvancingCursor(cursor, page.nextCursor);
       cursor = page.nextCursor;
     }
+  }
+
+  private async renewLeases(tenantId: string, partitions: ContextSyncPartition[]): Promise<void> {
+    const renewed = await Promise.all(partitions.map(partition => this.options.store.renewPartitionLease({
+      tenantId,
+      sourceId: TASKBOARD_SOURCE_ID,
+      collectionId: partition.collectionId,
+      partitionKey: TASKBOARD_PARTITION_KEY,
+      leaseOwner: this.workerId,
+      leaseFence: partition.leaseFence,
+      leaseMs: this.leaseMs,
+    })));
+    if (renewed.some(value => !value)) throw new Error('Taskboard context lease renewal failed');
   }
 
   private ingest(

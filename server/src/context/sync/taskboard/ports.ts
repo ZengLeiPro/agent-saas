@@ -47,6 +47,15 @@ export interface TaskboardContextStore {
     leaseOwner: string;
     leaseMs: number;
   }): Promise<ContextSyncPartition | null>;
+  renewPartitionLease(input: {
+    tenantId: string;
+    sourceId: string;
+    collectionId: string;
+    partitionKey: string;
+    leaseOwner: string;
+    leaseFence: number;
+    leaseMs: number;
+  }): Promise<boolean>;
   ingestPage(input: IngestContextPageInput): Promise<IngestContextPageResult>;
   failPartition(input: FailContextPartitionInput): Promise<ContextSyncPartition>;
 }

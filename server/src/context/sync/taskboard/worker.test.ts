@@ -101,6 +101,10 @@ class FakeStore implements TaskboardContextStore {
     this.partitions.set(key, leased);
     return leased;
   }
+  async renewPartitionLease(input: Parameters<TaskboardContextStore['renewPartitionLease']>[0]) {
+    const current = this.partitions.get(partitionKey(input.tenantId, input.collectionId));
+    return Boolean(current?.leaseOwner === input.leaseOwner && current.leaseFence === input.leaseFence);
+  }
   async ingestPage(input: IngestContextPageInput): Promise<IngestContextPageResult> {
     if (new Set(input.records.map(record => record.externalRecordId)).size !== input.records.length) {
       throw new Error('duplicate external record IDs');
@@ -227,6 +231,19 @@ describe('TaskboardContextSyncWorker', () => {
         status: 'retry_wait', lastErrorCode: 'TASKBOARD_CHANGE_PAGE_FAILED',
         nextRetryAt: '2026-08-23T06:01:00.000Z',
       }),
+    ]));
+  });
+
+  it('renews every fenced lease during long runs and fails closed if renewal is lost', async () => {
+    const reader = seededReader();
+    const store = new FakeStore();
+    const renew = vi.spyOn(store, 'renewPartitionLease').mockResolvedValue(false);
+
+    await expect(createWorker(reader, store, 2).runTenant('tenant-a'))
+      .rejects.toThrow('lease renewal failed');
+    expect(renew).toHaveBeenCalled();
+    expect([...store.partitions.values()]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'retry_wait', lastErrorCode: 'TASKBOARD_LEASE_RENEW_FAILED' }),
     ]));
   });
 

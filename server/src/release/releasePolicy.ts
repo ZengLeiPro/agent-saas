@@ -17,7 +17,9 @@ export interface PromotionEligibility {
 /** Pure fail-closed policy gate; callers obtain Git ancestry and production facts separately. */
 export function getPromotionEligibility(input: PromotionPolicyInput): PromotionEligibility {
   const blockingReasons: string[] = [];
-  if (input.manifestDigest !== input.expectedManifestDigest) blockingReasons.push('Manifest digest mismatch.');
+  if (input.manifestDigest !== input.expectedManifestDigest || input.attestations.boundManifestDigest() !== input.expectedManifestDigest) {
+    blockingReasons.push('Manifest digest mismatch.');
+  }
   if (!input.isMainAncestor) blockingReasons.push('Release SHA is not reachable from main.');
   if (!input.productionBaselineIsAncestor) blockingReasons.push('Production baseline is not an ancestor of release SHA.');
   if (input.expiresAt && (!Number.isFinite(Date.parse(input.expiresAt)) || Date.parse(input.expiresAt) <= Date.now())) {

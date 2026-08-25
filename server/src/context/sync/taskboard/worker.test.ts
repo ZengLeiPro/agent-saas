@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type {
-  ContextCollection,
+import {
+  ContextStoreError,
+  type ContextCollection,
   ContextIngestRecordInput,
   ContextSource,
   ContextSyncPartition,
@@ -10,7 +11,7 @@ import type {
 } from '../../store/index.js';
 import type { TaskboardContextReader, TaskboardContextStore } from './ports.js';
 import type { TaskboardBoardRow, TaskboardChangeRow, TaskboardTaskRow } from './types.js';
-import { TaskboardContextSyncWorker } from './worker.js';
+import { TaskboardContextSyncWorker, taskboardFailureCode } from './worker.js';
 
 const NOW = '2026-08-23T06:00:00.000Z';
 
@@ -257,6 +258,15 @@ describe('TaskboardContextSyncWorker', () => {
     expect([...store.partitions.values()]).toEqual(expect.arrayContaining([
       expect.objectContaining({ status: 'retry_wait', lastErrorCode: 'TASKBOARD_TASK_LOOKUP_FAILED' }),
     ]));
+  });
+
+  it.each([
+    [new ContextStoreError('CONTEXT_LEASE_LOST'), 'TASKBOARD_PROJECT_CHECKPOINT_FAILED_LEASE_LOST'],
+    [new ContextStoreError('CONTEXT_INVALID'), 'TASKBOARD_PROJECT_CHECKPOINT_FAILED_INVALID'],
+    [Object.assign(new Error('unique detail'), { code: '23505' }), 'TASKBOARD_PROJECT_CHECKPOINT_FAILED_UNIQUE_CONFLICT'],
+    [new Error('unknown detail'), 'TASKBOARD_PROJECT_CHECKPOINT_FAILED'],
+  ])('classifies checkpoint failures without persisting raw error details', (error, expected) => {
+    expect(taskboardFailureCode('TASKBOARD_PROJECT_CHECKPOINT_FAILED', error)).toBe(expected);
   });
 
   it.each([

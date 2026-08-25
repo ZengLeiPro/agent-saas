@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { ContextIngestRecordInput, ContextJson, ContextSyncPartition } from '../../store/index.js';
+import { ContextStoreError, type ContextIngestRecordInput, type ContextJson, type ContextSyncPartition } from '../../store/index.js';
 import {
   normalizeDeletedTaskFallback,
   normalizeTaskboardBoard,
@@ -156,17 +156,19 @@ export class TaskboardContextSyncWorker {
 
       failureCode = 'TASKBOARD_LEASE_RENEW_FAILED';
       await this.renewLeases(tenantId, Object.values(leases));
-      failureCode = 'TASKBOARD_CHECKPOINT_FAILED';
+      failureCode = 'TASKBOARD_PROJECT_CHECKPOINT_FAILED';
       await this.ingest(tenantId, leases.projects, [], {
         watermark: INVENTORY_WATERMARK,
         complete: true,
         releaseLease: true,
       });
+      failureCode = 'TASKBOARD_TASK_CHECKPOINT_FAILED';
       await this.ingest(tenantId, leases.tasks, [], {
         watermark: INVENTORY_WATERMARK,
         complete: true,
         releaseLease: true,
       });
+      failureCode = 'TASKBOARD_EVENT_CHECKPOINT_FAILED';
       await this.ingest(tenantId, leases.events, [], {
         watermark: throughSeq,
         complete: true,
@@ -175,7 +177,7 @@ export class TaskboardContextSyncWorker {
       result.watermark = throughSeq;
       return result;
     } catch (error) {
-      await this.failLeases(tenantId, Object.values(leases), failureCode);
+      await this.failLeases(tenantId, Object.values(leases), taskboardFailureCode(failureCode, error));
       throw error;
     }
   }
@@ -349,6 +351,20 @@ export class TaskboardContextSyncWorker {
   private async releaseLeases(tenantId: string, partitions: ContextSyncPartition[]): Promise<void> {
     await Promise.all(partitions.map(partition => this.ingest(tenantId, partition, [], { releaseLease: true }).catch(() => undefined)));
   }
+}
+
+export function taskboardFailureCode(stage: string, error: unknown): string {
+  if (error instanceof ContextStoreError) return `${stage}_${error.code.replace(/^CONTEXT_/, '')}`;
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code ?? '') : '';
+  const suffix = code === '23503' ? 'REFERENCE_MISSING'
+    : code === '23505' ? 'UNIQUE_CONFLICT'
+      : code === '23514' ? 'CONSTRAINT_VIOLATION'
+        : code === '22P02' ? 'VALUE_INVALID'
+          : code === '40001' ? 'SERIALIZATION_FAILURE'
+            : code === '40P01' ? 'DEADLOCK'
+              : code === '42P01' || code === '42703' ? 'SCHEMA_MISMATCH' : '';
+  return suffix ? `${stage}_${suffix}` : stage;
 }
 
 function inventoryComplete(watermark: ContextJson | undefined): boolean {

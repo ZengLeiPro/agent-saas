@@ -240,19 +240,11 @@ export function completeContinuation(
       const migrationError = 'Integration task requires Agent-first workflow migration';
       await client.query(
         `UPDATE ${host.executionsTable}
-            SET status=CASE
-                  WHEN status IN ('queued','running','waiting_user','waiting_approval') THEN 'failed'
-                  ELSE status
-                END,
-                error=$3,
-                finished_at=CASE
-                  WHEN status IN ('queued','running','waiting_user','waiting_approval')
-                    THEN COALESCE(finished_at, now())
-                  ELSE finished_at
-                END,
+            SET status='failed', error=$2, finished_at=COALESCE(finished_at, now()),
                 reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL, updated_at=now()
-          WHERE task_id=$1 AND run_id=$2`,
-        [taskId, runId, migrationError],
+          WHERE task_id=$1
+            AND status IN ('queued','running','waiting_user','waiting_approval')`,
+        [taskId, migrationError],
       );
       await client.query(
         `UPDATE ${host.executionOutboxTable}

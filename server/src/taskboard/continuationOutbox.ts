@@ -214,13 +214,13 @@ export async function claimContinuationDispatch(
           AND t.kind='integration' AND t.workflow_version<>3
           AND (o.status='pending'
             OR (o.status='dispatching' AND o.lease_expires_at <= now()))
-        RETURNING o.run_id
+        RETURNING o.run_id, o.task_id
      ), legacy_execution AS (
        UPDATE ${host.executionsTable} e
           SET status='failed', error='Integration task requires Agent-first workflow migration',
               finished_at=COALESCE(e.finished_at, now()), updated_at=now(),
               reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL
-        WHERE e.run_id IN (SELECT run_id FROM legacy_outbox)
+        WHERE e.task_id IN (SELECT task_id FROM legacy_outbox)
           AND e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
         RETURNING e.run_id
      ), candidate AS (

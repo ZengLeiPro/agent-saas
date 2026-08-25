@@ -83,7 +83,7 @@ export async function enqueueAutomaticResume(
   ) {
     throw new TaskboardValidationError('Invalid automatic resume execution');
   }
-  await enqueueExecution(host, client, task.id, resume);
+  await enqueueExecution(host, client, task.id, resume, execution.protocolVersion ?? 1);
 }
 
 export async function enqueueAutomaticReview(
@@ -111,7 +111,7 @@ export async function enqueueAutomaticReview(
   }
   if (task.status !== 'in_progress' && task.status !== 'in_review') return;
 
-  await enqueueExecution(host, client, task.id, review);
+  await enqueueExecution(host, client, task.id, review, execution.protocolVersion ?? 1);
 }
 
 async function enqueueExecution(
@@ -119,6 +119,7 @@ async function enqueueExecution(
   client: PoolClient,
   taskId: string,
   claim: TaskboardExecutionCompletionInput['reviewExecution'],
+  defaultProtocolVersion: 1 | 2,
 ): Promise<void> {
   if (!claim) return;
   await client.query(
@@ -132,7 +133,7 @@ async function enqueueExecution(
       claim.sessionId,
       claim.purpose,
       claim.trigger ?? 'initial',
-      claim.protocolVersion ?? 2,
+      claim.protocolVersion ?? defaultProtocolVersion,
       claim.executionOwnerUserId,
     ],
   );

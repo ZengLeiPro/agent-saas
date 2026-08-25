@@ -55,9 +55,10 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
     const integration = await store.createTask(identity, board.id, { title: `${label} integration`, status: 'todo' });
     await pool.query(`UPDATE ${store.tasksTable} SET kind='integration' WHERE id=$1`, [integration.id]);
     await pool.query(
-      `INSERT INTO ${store.integrationLanesTable}(repository_id,board_id,active_integration_task_id)
-       VALUES($1,$2,$3)`,
-      [repositoryId, board.id, integration.id],
+      `UPDATE ${store.integrationLanesTable}
+          SET active_integration_task_id=$1
+        WHERE repository_id=$2 AND board_id=$3`,
+      [integration.id, repositoryId, board.id],
     );
     if (source !== 'missing') {
       const sourceId = randomUUID();

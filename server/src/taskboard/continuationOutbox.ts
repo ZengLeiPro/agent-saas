@@ -309,12 +309,39 @@ export async function claimContinuationReconcileCandidates(
   leaseId: string,
 ): Promise<TaskboardContinuationReconcileCandidate[]> {
   const result = await host.pool.query(
-    `WITH candidates AS (
+    `WITH legacy_candidates AS (
+       SELECT o.run_id, o.task_id
+         FROM ${host.continuationOutboxTable} o
+         JOIN ${host.tasksTable} t ON t.id=o.task_id
+         JOIN ${host.boardsTable} b ON b.id=t.board_id
+        WHERE o.status='dispatched' AND t.kind='integration' AND t.workflow_version<>3
+          AND t.archived_at IS NULL AND b.archived_at IS NULL
+          AND COALESCE(o.last_reconciled_at, o.dispatched_at, o.updated_at) <= $1
+          AND (o.reconcile_lease_expires_at IS NULL OR o.reconcile_lease_expires_at <= clock_timestamp())
+        ORDER BY COALESCE(o.last_reconciled_at, '-infinity'::timestamptz), o.updated_at, o.run_id
+        FOR UPDATE OF o SKIP LOCKED LIMIT $2
+     ), legacy_outbox AS (
+       UPDATE ${host.continuationOutboxTable} o
+          SET status='completed', lease_id=NULL, lease_expires_at=NULL,
+              reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL,
+              last_error='Integration task requires Agent-first workflow migration', updated_at=now()
+         FROM legacy_candidates legacy WHERE o.run_id=legacy.run_id
+       RETURNING o.task_id
+     ), legacy_execution AS (
+       UPDATE ${host.executionsTable} e
+          SET status='failed', error='Integration task requires Agent-first workflow migration',
+              finished_at=COALESCE(e.finished_at, now()), updated_at=now(),
+              reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL
+        WHERE e.task_id IN (SELECT task_id FROM legacy_outbox)
+          AND e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
+       RETURNING e.run_id
+     ), candidates AS (
        SELECT o.run_id
          FROM ${host.continuationOutboxTable} o
          JOIN ${host.tasksTable} t ON t.id=o.task_id
          JOIN ${host.boardsTable} b ON b.id=t.board_id
-        WHERE o.status='dispatched' AND t.archived_at IS NULL AND b.archived_at IS NULL
+        WHERE o.status='dispatched' AND NOT (t.kind='integration' AND t.workflow_version<>3)
+          AND t.archived_at IS NULL AND b.archived_at IS NULL
           AND COALESCE(o.last_reconciled_at, o.dispatched_at, o.updated_at) <= $1
           AND (o.reconcile_lease_expires_at IS NULL OR o.reconcile_lease_expires_at <= clock_timestamp())
         ORDER BY COALESCE(o.last_reconciled_at, '-infinity'::timestamptz), o.updated_at, o.run_id

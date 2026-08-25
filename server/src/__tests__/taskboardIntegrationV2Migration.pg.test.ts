@@ -243,6 +243,152 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
     expect(await store.getTask(identity, taskId)).toMatchObject({ workflowVersion: 3 });
   });
 
+  it('reconcile atomically absorbs stale dispatched v2 execution and still returns v3 candidates', async () => {
+    const taskId = await seedV2Integration('guarded-execution-reconcile');
+    const runId = await seedExecution(taskId, 'guarded-execution-reconcile');
+    const v3TaskId = await seedHistoricalIntegration('guarded-execution-reconcile-v3', 'valid');
+    const v3RunId = await seedExecution(v3TaskId, 'guarded-execution-reconcile-v3');
+    const before = await store.getTask(identity, taskId);
+    await pool.query(
+      `UPDATE ${store.executionOutboxTable}
+          SET status='dispatched',lease_id='stale-dispatch',lease_expires_at=now()-interval '1 minute'
+        WHERE run_id=ANY($1::text[])`, [[runId, v3RunId]],
+    );
+    await pool.query(
+      `UPDATE ${store.executionsTable} SET updated_at=now()-interval '2 minutes'
+        WHERE run_id=ANY($1::text[])`, [[runId, v3RunId]],
+    );
+
+    const first = await store.claimExecutionReconcileCandidates(new Date(), 10, 'execution-reconcile');
+    const replay = await store.claimExecutionReconcileCandidates(new Date(), 10, 'execution-reconcile-replay');
+    expect(first.map((candidate) => candidate.runId)).toContain(v3RunId);
+    expect(first.map((candidate) => candidate.runId)).not.toContain(runId);
+    expect(replay.map((candidate) => candidate.runId)).not.toContain(runId);
+    expect(await pool.query(
+      `SELECT e.status,e.error,e.reconcile_lease_id,o.status AS outbox_status,
+              o.lease_id,o.lease_expires_at,o.last_error
+         FROM ${store.executionsTable} e JOIN ${store.executionOutboxTable} o ON o.run_id=e.run_id
+        WHERE e.run_id=$1`, [runId],
+    )).toMatchObject({ rows: [expect.objectContaining({
+      status: 'failed', reconcile_lease_id: null, outbox_status: 'dispatched',
+      lease_id: null, lease_expires_at: null,
+      error: expect.stringContaining('migration'), last_error: expect.stringContaining('migration'),
+    })] });
+    expect(await store.getTask(identity, taskId)).toMatchObject({
+      status: before.status, version: before.version, commentCount: before.commentCount,
+    });
+    await store.claimIntegrationDispatchCandidatesV2(10);
+    expect(await store.getTask(identity, taskId)).toMatchObject({ workflowVersion: 3 });
+  });
+
+  it('reconcile atomically absorbs stale dispatched v2 continuation by task execution run', async () => {
+    const taskId = await seedV2Integration('guarded-continuation-reconcile');
+    const executionRunId = await seedExecution(taskId, 'guarded-continuation-reconcile-execution');
+    const continuationRunId = 'run-guarded-continuation-reconcile-runtime';
+    const comment = await store.createComment(identity, taskId, { body: 'legacy reconcile source' });
+    const v3TaskId = await seedHistoricalIntegration('guarded-continuation-reconcile-v3', 'valid');
+    const v3ExecutionRunId = await seedExecution(v3TaskId, 'guarded-continuation-reconcile-v3-execution');
+    const v3ContinuationRunId = 'run-guarded-continuation-reconcile-v3-runtime';
+    const v3Comment = await store.createComment(identity, v3TaskId, { body: 'v3 reconcile source' });
+    await pool.query(
+      `UPDATE ${store.commentsTable} SET continuation_run_id=$2,continuation_eligible=true WHERE id=$1`,
+      [comment.id, continuationRunId],
+    );
+    await pool.query(
+      `INSERT INTO ${store.continuationOutboxTable}
+         (run_id,task_id,comment_id,session_id,payload,status,dispatched_at,updated_at,
+          lease_id,lease_expires_at,reconcile_lease_id,reconcile_lease_expires_at)
+       VALUES($1,$2,$3,$4,'{}'::jsonb,'dispatched',now()-interval '2 minutes',now()-interval '2 minutes',
+              'stale-dispatch',now()-interval '1 minute','stale-reconcile',now()-interval '1 minute')`,
+      [continuationRunId, taskId, comment.id, 'session-guarded-continuation-reconcile-execution'],
+    );
+    await pool.query(
+      `UPDATE ${store.commentsTable} SET continuation_run_id=$2,continuation_eligible=true WHERE id=$1`,
+      [v3Comment.id, v3ContinuationRunId],
+    );
+    await pool.query(
+      `INSERT INTO ${store.continuationOutboxTable}
+         (run_id,task_id,comment_id,session_id,payload,status,dispatched_at,updated_at)
+       VALUES($1,$2,$3,$4,'{}'::jsonb,'dispatched',now()-interval '2 minutes',now()-interval '2 minutes')`,
+      [v3ContinuationRunId, v3TaskId, v3Comment.id, 'session-guarded-continuation-reconcile-v3-execution'],
+    );
+    const before = await store.getTask(identity, taskId);
+    const commentsBefore = await store.listComments(identity, taskId);
+    const changesBefore = await pool.query(
+      `SELECT count(*)::int AS count FROM ${store.changesTable} WHERE task_id=$1`, [taskId],
+    );
+
+    expect(continuationRunId).not.toBe(executionRunId);
+    const first = await store.claimContinuationReconcileCandidates(new Date(), 10, 'continuation-reconcile');
+    const replay = await store.claimContinuationReconcileCandidates(new Date(), 10, 'continuation-replay');
+    expect(first.map((candidate) => candidate.runId)).toContain(v3ContinuationRunId);
+    expect(first.map((candidate) => candidate.runId)).not.toContain(continuationRunId);
+    expect(replay.map((candidate) => candidate.runId)).not.toContain(continuationRunId);
+    expect(await pool.query(
+      `SELECT status,lease_id,lease_expires_at,reconcile_lease_id,reconcile_lease_expires_at,last_error
+         FROM ${store.continuationOutboxTable} WHERE run_id=$1`, [continuationRunId],
+    )).toMatchObject({ rows: [expect.objectContaining({
+      status: 'completed', lease_id: null, lease_expires_at: null,
+      reconcile_lease_id: null, reconcile_lease_expires_at: null,
+      last_error: expect.stringContaining('migration'),
+    })] });
+    expect(await pool.query(
+      `SELECT status,error,reconcile_lease_id FROM ${store.executionsTable} WHERE run_id=$1`, [executionRunId],
+    )).toMatchObject({ rows: [expect.objectContaining({
+      status: 'failed', reconcile_lease_id: null, error: expect.stringContaining('migration'),
+    })] });
+    expect(await store.getTask(identity, taskId)).toMatchObject({
+      status: before.status, version: before.version, commentCount: before.commentCount,
+    });
+    expect(await store.listComments(identity, taskId)).toEqual(commentsBefore);
+    expect((await pool.query(
+      `SELECT count(*)::int AS count FROM ${store.changesTable} WHERE task_id=$1`, [taskId],
+    )).rows[0]).toEqual(changesBefore.rows[0]);
+    expect(await pool.query(
+      `SELECT status FROM ${store.executionsTable} WHERE run_id=$1`, [v3ExecutionRunId],
+    )).toMatchObject({ rows: [{ status: 'running' }] });
+    expect(await store.getTask(identity, v3TaskId)).toMatchObject({ workflowVersion: 3 });
+    await store.claimIntegrationDispatchCandidatesV2(10);
+    expect(await store.getTask(identity, taskId)).toMatchObject({ workflowVersion: 3 });
+  });
+
+  it('run_started absorption is side-effect free and idempotent for a dispatched v2 continuation', async () => {
+    const taskId = await seedV2Integration('guarded-continuation-started');
+    const executionRunId = await seedExecution(taskId, 'guarded-continuation-started-execution');
+    const continuationRunId = 'run-guarded-continuation-started-runtime';
+    const comment = await store.createComment(identity, taskId, { body: 'legacy run_started source' });
+    await pool.query(
+      `UPDATE ${store.commentsTable} SET continuation_run_id=$2,continuation_eligible=true WHERE id=$1`,
+      [comment.id, continuationRunId],
+    );
+    await pool.query(
+      `INSERT INTO ${store.continuationOutboxTable}(run_id,task_id,comment_id,session_id,payload,status,dispatched_at)
+       VALUES($1,$2,$3,$4,'{}'::jsonb,'dispatched',now())`,
+      [continuationRunId, taskId, comment.id, 'session-guarded-continuation-started-execution'],
+    );
+    const before = await store.getTask(identity, taskId);
+    const commentsBefore = await store.listComments(identity, taskId);
+    const changesBefore = await pool.query(
+      `SELECT count(*)::int AS count FROM ${store.changesTable} WHERE task_id=$1`, [taskId],
+    );
+
+    await expect(store.markContinuationRunning(taskId, continuationRunId)).resolves.toMatchObject({ id: taskId });
+    await expect(store.markContinuationRunning(taskId, continuationRunId)).resolves.toMatchObject({ id: taskId });
+    expect(await pool.query(
+      `SELECT status,error,finished_at FROM ${store.executionsTable} WHERE run_id=$1`, [executionRunId],
+    )).toMatchObject({ rows: [expect.objectContaining({ status: 'failed', error: expect.stringContaining('migration') })] });
+    expect(await pool.query(
+      `SELECT status,last_error FROM ${store.continuationOutboxTable} WHERE run_id=$1`, [continuationRunId],
+    )).toMatchObject({ rows: [{ status: 'completed', last_error: expect.stringContaining('migration') }] });
+    expect(await store.getTask(identity, taskId)).toMatchObject({
+      status: before.status, version: before.version, commentCount: before.commentCount,
+    });
+    expect(await store.listComments(identity, taskId)).toEqual(commentsBefore);
+    expect((await pool.query(
+      `SELECT count(*)::int AS count FROM ${store.changesTable} WHERE task_id=$1`, [taskId],
+    )).rows[0]).toEqual(changesBefore.rows[0]);
+  });
+
   it.each(['succeeded', 'failed'] as const)(
     'absorbs a v2 %s run completion without task delivery side effects',
     async (completionStatus) => {

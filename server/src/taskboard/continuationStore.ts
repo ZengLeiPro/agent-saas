@@ -27,6 +27,7 @@ import {
 } from './types.js';
 
 const DEFAULT_SORT_GAP = 1024;
+const MIGRATION_ERROR = 'Integration task requires Agent-first workflow migration';
 
 export interface TaskboardContinuationStoreHost {
   pool: Pool;
@@ -179,6 +180,9 @@ export function markContinuationRunning(
     );
     if (!outbox.rows[0] || outbox.rows[0].status === 'completed'
       || outbox.rows[0].reconcile_lease_valid !== true) return loaded.task;
+    if (await absorbLegacyIntegrationContinuation(host, client, loaded.task, taskId, runId)) {
+      return loaded.task;
+    }
     assertWritableTask(loaded.task, loaded.boardArchivedAt);
     const facts = await loadWorkflowFacts(host, client, loaded.task);
     if (loaded.task.status === 'done' || loaded.task.status === 'canceled' || facts.hasMergeFact) {
@@ -205,6 +209,35 @@ export function markContinuationRunning(
     );
     return loadAccessibleTask(host, loaded.identity, taskId, client);
   });
+}
+
+async function absorbLegacyIntegrationContinuation(
+  host: TaskboardContinuationStoreHost,
+  client: PoolClient,
+  task: TaskBoardTask,
+  taskId: string,
+  runId: string,
+): Promise<boolean> {
+  if (task.kind !== 'integration' || task.workflowVersion === 3) return false;
+  await client.query(
+    `UPDATE ${host.executionsTable}
+        SET status='failed', error=$2, finished_at=COALESCE(finished_at, now()),
+            reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL, updated_at=now()
+      WHERE task_id=$1 AND status IN ('queued','running','waiting_user','waiting_approval')`,
+    [taskId, MIGRATION_ERROR],
+  );
+  await client.query(
+    `UPDATE ${host.continuationOutboxTable}
+        SET status='completed', lease_id=NULL, lease_expires_at=NULL,
+            reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL,
+            last_error=$3, updated_at=now()
+      WHERE task_id=$1 AND run_id=$2
+        AND (status<>'completed' OR lease_id IS NOT NULL OR lease_expires_at IS NOT NULL
+          OR reconcile_lease_id IS NOT NULL OR reconcile_lease_expires_at IS NOT NULL
+          OR last_error IS DISTINCT FROM $3)`,
+    [taskId, runId, MIGRATION_ERROR],
+  );
+  return true;
 }
 
 export async function hasSuccessfulContinuationSince(
@@ -236,31 +269,7 @@ export function completeContinuation(
   return withTransaction(host.pool, async (client) => {
     const loaded = await loadInternalTaskForUpdate(host, client, taskId);
     if (!loaded) return null;
-    if (loaded.task.kind === 'integration' && loaded.task.workflowVersion !== 3) {
-      const migrationError = 'Integration task requires Agent-first workflow migration';
-      await client.query(
-        `UPDATE ${host.executionsTable}
-            SET status='failed', error=$2, finished_at=COALESCE(finished_at, now()),
-                reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL, updated_at=now()
-          WHERE task_id=$1
-            AND status IN ('queued','running','waiting_user','waiting_approval')`,
-        [taskId, migrationError],
-      );
-      await client.query(
-        `UPDATE ${host.executionOutboxTable}
-            SET status='dispatched', lease_id=NULL, lease_expires_at=NULL,
-                last_error=$2, dispatched_at=COALESCE(dispatched_at, now()), updated_at=now()
-          WHERE run_id=$1`,
-        [runId, migrationError],
-      );
-      await client.query(
-        `UPDATE ${host.continuationOutboxTable}
-            SET status='completed', lease_id=NULL, lease_expires_at=NULL,
-                reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL,
-                last_error=$3, updated_at=now()
-          WHERE task_id=$1 AND run_id=$2`,
-        [taskId, runId, migrationError],
-      );
+    if (await absorbLegacyIntegrationContinuation(host, client, loaded.task, taskId, runId)) {
       return loaded.task;
     }
     const facts = await loadWorkflowFacts(host, client, loaded.task);

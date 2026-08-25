@@ -105,6 +105,9 @@ function setup(input: {
   const sender = { send: vi.fn().mockResolvedValue(undefined) } satisfies DwsPersonalMessageSenderLike;
   const auditRequesterRejection = vi.fn().mockResolvedValue(undefined);
   const auditToolPolicyRejection = vi.fn().mockResolvedValue(undefined);
+  const authorizeRequester = vi.fn().mockResolvedValue(input.requesterAllowed === false
+    ? { allowed: false, reason: 'ASSIGNMENT_DENIED' }
+    : { allowed: true });
   const dispatch = input.dispatch ?? vi.fn((
     _message, _context, _options, hooks,
   ) => (async function* () {
@@ -125,9 +128,7 @@ function setup(input: {
       providerOptions: { protocol: 'responses' as const },
     })),
     resolveRequester: vi.fn().mockResolvedValue(input.resolveRequester === undefined ? requester : input.resolveRequester),
-    authorizeRequester: vi.fn().mockResolvedValue(input.requesterAllowed === false
-      ? { allowed: false, reason: 'ASSIGNMENT_DENIED' }
-      : { allowed: true }),
+    authorizeRequester,
     auditRequesterRejection,
     auditToolPolicyRejection,
     sender,
@@ -141,7 +142,10 @@ function setup(input: {
     leaseTtlMs: 60_000,
     leaseRenewMs: 30_000,
   });
-  return { router, messageStore, accountStore, dispatch, sender, auditRequesterRejection, auditToolPolicyRejection };
+  return {
+    router, messageStore, accountStore, dispatch, sender,
+    authorizeRequester, auditRequesterRejection, auditToolPolicyRejection,
+  };
 }
 
 describe('AgentDwsMessageRouter', () => {
@@ -171,7 +175,7 @@ describe('AgentDwsMessageRouter', () => {
   });
 
   it('binds a stable Session, dispatches the org Agent, and sends one durable reply', async () => {
-    const { router, messageStore, dispatch, sender } = setup();
+    const { router, messageStore, dispatch, sender, authorizeRequester } = setup();
 
     await expect(router.runOnce()).resolves.toBe(true);
 
@@ -192,6 +196,9 @@ describe('AgentDwsMessageRouter', () => {
     );
     expect(messageStore.getOrCreateBinding).toHaveBeenCalledWith(
       'tenant-a', 'account-a', 'cid-a', 'user-a', expect.stringMatching(/^agent-dws-session-/), undefined,
+    );
+    expect(authorizeRequester.mock.invocationCallOrder[0]!).toBeLessThan(
+      messageStore.getOrCreateBinding.mock.invocationCallOrder[0]!,
     );
     expect(messageStore.saveDispatchResult).toHaveBeenCalledWith(
       'inbox-a', expect.stringMatching(/^agent-dws-router:/), 1, '今天已完成三项工作。',
@@ -302,14 +309,20 @@ describe('AgentDwsMessageRouter', () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it('keeps requester-bound Session but blocks dispatch when audience or Assignment denies access', async () => {
-    const { router, messageStore, dispatch } = setup({ requesterAllowed: false });
+  it('rejects audience or Assignment denial before requester binding side effects', async () => {
+    const { router, messageStore, dispatch, authorizeRequester, auditRequesterRejection } = setup({
+      requesterAllowed: false,
+    });
 
     await expect(router.runOnce()).resolves.toBe(true);
 
-    expect(messageStore.getOrCreateBinding).toHaveBeenCalledWith(
-      'tenant-a', 'account-a', 'cid-a', 'user-a', expect.any(String), undefined,
-    );
+    expect(authorizeRequester).toHaveBeenCalledWith(expect.objectContaining({
+      account, requester, sessionId: expect.stringMatching(/^agent-dws-session-/),
+    }));
+    expect(messageStore.getOrCreateBinding).not.toHaveBeenCalled();
+    expect(auditRequesterRejection).toHaveBeenCalledWith(expect.objectContaining({
+      requester, reason: 'ASSIGNMENT_DENIED',
+    }));
     expect(messageStore.markDispatchStarted).not.toHaveBeenCalled();
     expect(messageStore.complete).toHaveBeenCalledOnce();
     expect(messageStore.fail).not.toHaveBeenCalled();

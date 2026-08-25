@@ -278,6 +278,16 @@ export class AgentDwsMessageRouter {
 
     const candidateSessionId = `agent-dws-session-${randomUUID()}`;
     const runId = item.runId ?? deterministicId('agent-dws-run', `${item.accountId}:${item.eventId}`);
+    const authorization = await this.options.authorizeRequester({
+      account,
+      requester,
+      sessionId: candidateSessionId,
+      runId,
+    });
+    if (!authorization.allowed) {
+      await this.rejectAccess(account, item, authorization.reason ?? 'ACCESS_DENIED', requester);
+      return;
+    }
     const binding = await this.options.messageStore.getOrCreateBinding(
       item.tenantId,
       item.accountId,
@@ -286,16 +296,6 @@ export class AgentDwsMessageRouter {
       candidateSessionId,
       item.eventType === 'user_im_message_receive_o2o_all' ? item.senderOpenDingtalkId : undefined,
     );
-    const authorization = await this.options.authorizeRequester({
-      account,
-      requester,
-      sessionId: binding.sessionId,
-      runId,
-    });
-    if (!authorization.allowed) {
-      await this.rejectAccess(account, item, authorization.reason ?? 'ACCESS_DENIED', requester);
-      return;
-    }
     const claimed = await this.options.messageStore.markDispatchStarted(
       item.inboxId,
       this.workerId,

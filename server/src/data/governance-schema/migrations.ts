@@ -918,6 +918,21 @@ function migrations(prefix: string): GovernanceMigration[] {
       version: 26,
       statements: buildContextPhase4MigrationSql(prefix),
     },
+    {
+      version: 27,
+      statements: [
+        `ALTER TABLE ${prefix}_agent_dws_conversation_bindings
+          ADD COLUMN IF NOT EXISTS requester_user_id TEXT`,
+        `UPDATE ${prefix}_agent_dws_conversation_bindings
+          SET requester_user_id=account_id WHERE requester_user_id IS NULL`,
+        `ALTER TABLE ${prefix}_agent_dws_conversation_bindings
+          ALTER COLUMN requester_user_id SET NOT NULL`,
+        `ALTER TABLE ${prefix}_agent_dws_conversation_bindings
+          DROP CONSTRAINT IF EXISTS ${prefix}_agent_dws_conversation_bindings_account_id_conversation_id_key`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}_agent_dws_bindings_requester_unique_idx
+          ON ${prefix}_agent_dws_conversation_bindings (account_id,conversation_id,requester_user_id)`,
+      ],
+    },
   ];
 }
 

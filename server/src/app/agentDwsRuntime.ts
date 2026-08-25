@@ -2,6 +2,7 @@ import type { AgentRunDispatch } from '../agent/index.js';
 import { DwsContextRuntime } from '../context/sync/index.js';
 import type { ContextStore } from '../context/store/index.js';
 import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
+import type { GovernanceAuditStore } from '../data/governance-audit/types.js';
 import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import { AgentDwsAuthFlowService } from '../dws/agentAuthFlow.js';
@@ -13,8 +14,13 @@ import {
   type AgentDwsDefaultModelResolution,
 } from '../dws/personalMessageRouter.js';
 import { DwsPersonalMessageSender } from '../dws/personalMessageSender.js';
+import { DwsRequesterIdentityResolver } from '../dws/requesterIdentityResolver.js';
+import type { UserStore } from '../data/users/store.js';
 import type { PgEventStore } from '../runtime/pgEventStore.js';
+import { isAssignedToOrgAgent, type OrgAgentStore } from '../data/orgAgents/store.js';
+import type { RunPreflightService } from '../runtime/runPreflight.js';
 import type { PgRunStore } from '../runtime/runStore.js';
+import type { UserIdentity } from '../types/index.js';
 import type { Logger } from '../utils/logger.js';
 
 export type ConnectorServerRemoteResolver = (principal: DwsWorkspacePrincipal) => Promise<{
@@ -32,6 +38,54 @@ export interface AgentDwsRuntimeBundle {
   stop(): Promise<void>;
 }
 
+export async function authorizeAgentDwsRequesterAccess(input: {
+  account: AgentDwsAccountRecord;
+  requester: UserIdentity;
+  sessionId: string;
+  runId: string;
+  orgAgentStore: Pick<OrgAgentStore, 'get'>;
+  runPreflightService: Pick<RunPreflightService, 'preflight'>;
+  auditStore: GovernanceAuditStore;
+}): Promise<{ allowed: boolean; reason?: string }> {
+  const recordDecision = async (decision: { allowed: boolean; reason?: string }) => {
+    await input.auditStore.append({
+      correlationId: `dws-requester-access-${input.runId}`,
+      actorType: 'user',
+      actorUserId: input.requester.id,
+      actorPersona: input.requester.role === 'admin' ? 'org_admin' : 'member',
+      actorTenantId: input.account.tenantId,
+      action: 'dws.requester.access_decision',
+      targetType: 'org_agent',
+      targetId: input.account.agentId,
+      targetTenantId: input.account.tenantId,
+      purpose: 'record DWS requester audience and assignment decision',
+      reason: decision.reason ?? 'ACCESS_ALLOWED',
+      result: decision.allowed ? 'succeeded' : 'failed',
+      metadata: { allowed: decision.allowed },
+    });
+    return decision;
+  };
+  const agent = input.orgAgentStore.get(input.account.agentId);
+  if (!agent || !agent.enabled || agent.tenantId !== input.account.tenantId) {
+    return await recordDecision({ allowed: false, reason: 'ORG_AGENT_UNAVAILABLE' });
+  }
+  if (!isAssignedToOrgAgent(agent, input.requester.username)) {
+    return await recordDecision({ allowed: false, reason: 'ORG_AGENT_AUDIENCE_DENIED' });
+  }
+  const preflight = await input.runPreflightService.preflight({
+    phase: 'enqueue',
+    runId: input.runId,
+    sessionId: input.sessionId,
+    userId: input.requester.id,
+    tenantId: input.account.tenantId,
+    orgAgentId: input.account.agentId,
+    skipBilling: true,
+  });
+  return await recordDecision(preflight.accessDecision.verdict === 'allow'
+    ? { allowed: true }
+    : { allowed: false, reason: preflight.accessDecision.reasonCode });
+}
+
 export async function createAgentDwsRuntime(options: {
   agentCwd: string;
   accountStore: AgentDwsAccountStore;
@@ -43,6 +97,10 @@ export async function createAgentDwsRuntime(options: {
   tablePrefix: string;
   dispatch: AgentRunDispatch;
   resolveDefaultModel: (tenantId: string) => AgentDwsDefaultModelResolution | null;
+  userStore: UserStore;
+  orgAgentStore: Pick<OrgAgentStore, 'get'>;
+  runPreflightService: Pick<RunPreflightService, 'preflight'>;
+  governanceAuditStore: GovernanceAuditStore;
   resolveServerRemote: ConnectorServerRemoteResolver;
   remoteAvailable: boolean;
   enableWorker: boolean;
@@ -78,6 +136,12 @@ export async function createAgentDwsRuntime(options: {
       })
     : undefined;
 
+  const requesterIdentityResolver = new DwsRequesterIdentityResolver({
+    agentCwd: options.agentCwd,
+    userStore: options.userStore,
+    auditStore: options.governanceAuditStore,
+    resolveServerRemote: options.resolveServerRemote,
+  });
   const messageRouter = options.messageStore
     ? new AgentDwsMessageRouter({
         agentCwd: options.agentCwd,
@@ -85,6 +149,51 @@ export async function createAgentDwsRuntime(options: {
         accountStore: options.accountStore,
         dispatch: options.dispatch,
         resolveDefaultModel: options.resolveDefaultModel,
+        resolveRequester: (account, senderOpenDingtalkId, senderName) => requesterIdentityResolver.resolve(
+          account,
+          senderOpenDingtalkId,
+          senderName,
+        ),
+        authorizeRequester: input => authorizeAgentDwsRequesterAccess({
+          ...input,
+          orgAgentStore: options.orgAgentStore,
+          runPreflightService: options.runPreflightService,
+          auditStore: options.governanceAuditStore,
+        }),
+        auditRequesterRejection: async ({ account, eventId, requester, reason }) => {
+          await options.governanceAuditStore.append({
+            correlationId: `agent-dws-rejection:${account.accountId}:${eventId}`,
+            actorType: requester ? 'user' : 'service',
+            actorUserId: requester?.id ?? `agent-dws:${account.accountId}`,
+            actorPersona: requester ? (requester.role === 'admin' ? 'org_admin' : 'member') : 'service',
+            actorTenantId: account.tenantId,
+            action: 'dws.requester.rejected',
+            targetType: 'org_agent',
+            targetId: account.agentId,
+            targetTenantId: account.tenantId,
+            purpose: 'persist terminal DWS requester rejection',
+            reason,
+            result: 'failed',
+            metadata: { requesterMapped: Boolean(requester) },
+          });
+        },
+        auditToolPolicyRejection: async ({ account, requester, runId, toolName }) => {
+          await options.governanceAuditStore.append({
+            correlationId: `agent-dws-tool-policy:${runId}`,
+            actorType: 'user',
+            actorUserId: requester.id,
+            actorPersona: requester.role === 'admin' ? 'org_admin' : 'member',
+            actorTenantId: account.tenantId,
+            action: 'dws.tool_policy.rejected',
+            targetType: 'org_agent',
+            targetId: account.agentId,
+            targetTenantId: account.tenantId,
+            purpose: 'persist DWS channel tool policy rejection before provider invocation',
+            reason: 'DWS_INTERACTIVE_APPROVAL_UNAVAILABLE',
+            result: 'failed',
+            metadata: { ...(toolName ? { toolName } : {}), channel: 'dingtalk' },
+          });
+        },
         sender: new DwsPersonalMessageSender({
           agentCwd: options.agentCwd,
           resolveServerRemote: options.resolveServerRemote,

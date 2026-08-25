@@ -91,7 +91,7 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
       `SELECT version FROM ${prefix}_governance_schema_versions ORDER BY version`,
     );
     expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
-      Array.from({ length: 26 }, (_, index) => index + 1),
+      Array.from({ length: 27 }, (_, index) => index + 1),
     );
     const v18Tables = await pool.query<{ name: string | null }>(
       `SELECT to_regclass($1) AS name UNION ALL SELECT to_regclass($2) UNION ALL SELECT to_regclass($3) UNION ALL SELECT to_regclass($4)`,
@@ -305,7 +305,7 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
       SELECT MAX(version)::integer AS version,COUNT(*) FILTER (WHERE version=23)::text AS count
       FROM ${legacyPrefix}_governance_schema_versions
     `);
-    expect(versions.rows[0]).toMatchObject({ version: 26, count: '1' });
+    expect(versions.rows[0]).toMatchObject({ version: 27, count: '1' });
     await expect(pool.query(`INSERT INTO ${commits}
       (tenant_id,operation,idempotency_key,nonce_digest,request_digest,target_id,actor_user_id,status)
       VALUES ('tenant-a','create','idem-1','nonce-2','request-2','target-2','admin-1','running')`)).rejects.toThrow();

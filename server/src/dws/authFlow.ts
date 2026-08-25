@@ -72,7 +72,7 @@ export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
       fetchImpl: this.options.fetchImpl,
     });
     const userCwd = resolveDwsPrincipalCwd(this.options.agentCwd, user);
-    const mountSubPath = deriveWorkspaceMountSubPath(this.options.agentCwd, userCwd);
+    const mountSubPath = deriveDwsWorkspaceMountSubPath(this.options.agentCwd, userCwd);
     if (!mountSubPath) throw new Error('无法解析 DWS 用户工作区挂载路径');
     const workspaceId = deriveDwsPrincipalWorkspaceId(user);
     const sandboxScopeId = `${workspaceId}__${mountSubPath.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
@@ -136,7 +136,7 @@ export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
       fetchImpl: this.options.fetchImpl,
     });
     const userCwd = resolveDwsPrincipalCwd(this.options.agentCwd, user);
-    const mountSubPath = deriveWorkspaceMountSubPath(this.options.agentCwd, userCwd);
+    const mountSubPath = deriveDwsWorkspaceMountSubPath(this.options.agentCwd, userCwd);
     if (!mountSubPath) throw new Error('无法解析 DWS 用户工作区挂载路径');
     const workspaceId = deriveDwsPrincipalWorkspaceId(user);
     const sandboxScopeId = `${workspaceId}__${mountSubPath.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
@@ -357,7 +357,7 @@ export function deriveDwsPrincipalWorkspaceId(principal: DwsWorkspacePrincipal):
   return deriveStableWorkspaceId(principal, `dws-${principal.id}`);
 }
 
-function deriveWorkspaceMountSubPath(agentCwd: string, userCwd: string): string | undefined {
+export function deriveDwsWorkspaceMountSubPath(agentCwd: string, userCwd: string): string | undefined {
   const mountRoot = resolve(agentCwd, '..');
   const rel = relative(mountRoot, resolve(userCwd));
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) return undefined;
@@ -368,11 +368,13 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
-function redactDwsError(error: unknown): string {
+export function redactDwsError(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   return text
     .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]')
     .replace(/((?:access_token|refresh_token|authorization|token)\s*[=:]\s*["']?)[^\s,"'}]+/gi, '$1[REDACTED]')
+    .replace(/(--profile(?:=|\s+)["']?)[^\s"']+/gi, '$1[REDACTED]')
+    .replace(/(?:\/[^\s"']+)*\/\.dws\/(?:config|keys)(?:\/[^\s"']*)?/gi, '[DWS_PROFILE_PATH_REDACTED]')
     .replace(/https:\/\/login\.dingtalk\.com\/oauth2\/device\/verify\.htm\?user_code=[A-Z0-9-]+/gi, '[DWS_AUTH_URL_REDACTED]')
     .replace(/\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/gi, '[DWS_USER_CODE_REDACTED]')
     .replace(/\s+/g, ' ')

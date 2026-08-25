@@ -179,19 +179,24 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     tenantId: string,
     accountId: string,
     conversationId: string,
+    requesterUserId: string,
     candidateSessionId: string,
     peerOpenDingtalkId?: string,
   ): Promise<AgentDwsConversationBindingRecord> {
-    assertTexts(tenantId, accountId, conversationId, candidateSessionId);
+    assertTexts(tenantId, accountId, conversationId, requesterUserId, candidateSessionId);
     const result = await this.pool.query(`
       INSERT INTO ${this.bindingsTable} AS binding (
-        binding_id,tenant_id,account_id,conversation_id,session_id,peer_open_dingtalk_id,created_at,updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
-      ON CONFLICT (account_id,conversation_id) DO UPDATE
+        binding_id,tenant_id,account_id,conversation_id,requester_user_id,session_id,
+        peer_open_dingtalk_id,created_at,updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
+      ON CONFLICT (account_id,conversation_id,requester_user_id) DO UPDATE
       SET peer_open_dingtalk_id=COALESCE(binding.peer_open_dingtalk_id,EXCLUDED.peer_open_dingtalk_id),
           updated_at=binding.updated_at
       RETURNING binding.*
-    `, [`adwsb-${randomUUID()}`, tenantId, accountId, conversationId, candidateSessionId, optionalText(peerOpenDingtalkId)]);
+    `, [
+      `adwsb-${randomUUID()}`, tenantId, accountId, conversationId, requesterUserId,
+      candidateSessionId, optionalText(peerOpenDingtalkId),
+    ]);
     const row = result.rows[0] as Record<string, unknown> | undefined;
     if (!row) throw new AgentDwsMessageInvariantError('AGENT_DWS_MESSAGE_INVALID');
     return mapBindingRow(row);
@@ -393,6 +398,7 @@ function mapBindingRow(row: Record<string, unknown>): AgentDwsConversationBindin
     tenantId: String(row.tenant_id),
     accountId: String(row.account_id),
     conversationId: String(row.conversation_id),
+    requesterUserId: String(row.requester_user_id),
     sessionId: String(row.session_id),
     ...(optionalText(row.peer_open_dingtalk_id)
       ? { peerOpenDingtalkId: optionalText(row.peer_open_dingtalk_id) }

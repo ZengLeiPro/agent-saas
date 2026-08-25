@@ -132,21 +132,21 @@ describe('PgAgentDwsMessageStore', () => {
   it('binding 并发 upsert 总是返回数据库 winner session', async () => {
     const winner = {
       binding_id: 'binding-winner', tenant_id: 'tenant-1', account_id: 'account-1',
-      conversation_id: 'conversation-1', session_id: 'session-winner',
+      conversation_id: 'conversation-1', requester_user_id: 'user-1', session_id: 'session-winner',
       peer_open_dingtalk_id: 'peer-winner', created_at: new Date(NOW), updated_at: NOW,
     };
     const query = vi.fn().mockResolvedValue({ rows: [winner] });
     const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
 
     const [first, second] = await Promise.all([
-      store.getOrCreateBinding('tenant-1', 'account-1', 'conversation-1', 'session-a'),
-      store.getOrCreateBinding('tenant-1', 'account-1', 'conversation-1', 'session-b'),
+      store.getOrCreateBinding('tenant-1', 'account-1', 'conversation-1', 'user-1', 'session-a'),
+      store.getOrCreateBinding('tenant-1', 'account-1', 'conversation-1', 'user-1', 'session-b'),
     ]);
 
     expect(first).toMatchObject({ sessionId: 'session-winner', peerOpenDingtalkId: 'peer-winner' });
     expect(second).toMatchObject({ sessionId: 'session-winner', peerOpenDingtalkId: 'peer-winner' });
     const sql = String(query.mock.calls[0]?.[0]);
-    expect(sql).toContain('ON CONFLICT (account_id,conversation_id) DO UPDATE');
+    expect(sql).toContain('ON CONFLICT (account_id,conversation_id,requester_user_id) DO UPDATE');
     expect(sql).toContain('peer_open_dingtalk_id=COALESCE(binding.peer_open_dingtalk_id,EXCLUDED.peer_open_dingtalk_id)');
   });
 

@@ -62,3 +62,30 @@ describe('Governance schema v21 Agent DWS peer binding migration', () => {
     ))).toBe(true);
   });
 });
+
+describe('Governance schema v27 Agent DWS requester binding migration', () => {
+  it('adds requester identity and replaces conversation-only uniqueness with requester-scoped uniqueness', async () => {
+    const query = vi.fn(async (sql: string, values?: readonly unknown[]) => {
+      if (sql.includes('SELECT version FROM')) {
+        return { rows: Array.from({ length: 26 }, (_, index) => ({ version: index + 1 })) };
+      }
+      return { rows: [], rowCount: values?.[0] === 27 ? 1 : 0 };
+    });
+    const client = { query, release: vi.fn() };
+    const pool = { connect: async () => client };
+
+    await new PgGovernanceMigrationRunner(pool as never, 'test').run();
+
+    const sql = query.mock.calls.map(call => String(call[0])).join('\n');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS requester_user_id TEXT');
+    expect(sql).toContain('SET requester_user_id=account_id WHERE requester_user_id IS NULL');
+    expect(sql).toContain('ALTER COLUMN requester_user_id SET NOT NULL');
+    expect(sql).toContain('DROP CONSTRAINT IF EXISTS test_agent_dws_conversation_bindings_account_id_conversation_id_key');
+    expect(sql).toContain('test_agent_dws_bindings_requester_unique_idx');
+    expect(sql).toContain('(account_id,conversation_id,requester_user_id)');
+    expect(query.mock.calls.some(call => (
+      String(call[0]) === 'INSERT INTO test_governance_schema_versions (version) VALUES ($1)'
+      && call[1]?.[0] === 27
+    ))).toBe(true);
+  });
+});

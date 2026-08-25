@@ -61,6 +61,7 @@ export interface AgentDwsConversationBindingRecord {
   tenantId: string;
   accountId: string;
   conversationId: string;
+  requesterUserId: string;
   sessionId: string;
   peerOpenDingtalkId?: string;
   createdAt: string;
@@ -84,6 +85,7 @@ export interface AgentDwsMessageStore {
     tenantId: string,
     accountId: string,
     conversationId: string,
+    requesterUserId: string,
     candidateSessionId: string,
     peerOpenDingtalkId?: string,
   ): Promise<AgentDwsConversationBindingRecord>;

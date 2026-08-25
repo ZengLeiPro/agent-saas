@@ -467,7 +467,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     );
     const existing = activeRunsBySession.current.get(sid) ?? { status: 'idle' as const, attached: false };
     const next: SessionRuntime = { ...existing };
-    if (patch.status !== undefined) next.status = patch.status;
+    if (patch.status !== undefined) next.status = patch.status; if (patch.source !== undefined) next.source = patch.source;
     if (patch.attached !== undefined) next.attached = patch.attached;
     if (patch.streamId !== undefined) {
       if (patch.streamId === null) delete next.streamId;
@@ -553,7 +553,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           if (!item.active) {
             const existing = activeRunsBySession.current.get(item.sessionId);
             // 快照滞后时，不得清掉 WS 已确认但尚未收到终态的会话。
-            if (existing && isActiveRuntimeStatus(existing.status)) {
+            if (existing?.source === 'ws' && isActiveRuntimeStatus(existing.status)) {
               snapshotStatus.set(item.sessionId, true); snapshotRuntimeStatuses.set(item.sessionId, existing.status as SessionRuntimeStatus); continue;
             }
             if (existing?.lastEventCursor) {
@@ -574,7 +574,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           snapshotRuntimeStatuses.set(item.sessionId, runtimeStatus);
           activeRunsBySession.current.set(item.sessionId, {
             ...(existing ?? { attached: false }),
-            status: runtimeStatus,
+            status: runtimeStatus, source: 'snapshot',
             streamId: item.streamId ?? existing?.streamId,
             runId: item.runId ?? existing?.runId,
             attached: existing?.attached ?? false,
@@ -1569,7 +1569,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           a.sessionId,
           a.active
             ? {
-                status: isActiveRuntimeStatus(a.status) ? a.status as SessionRuntimeStatus : 'running',
+                status: isActiveRuntimeStatus(a.status) ? a.status as SessionRuntimeStatus : 'running', source: 'ws',
                 ...(a.streamId ? { streamId: a.streamId } : {}),
                 ...(a.runId ? { runId: a.runId } : {}),
                 attached: true,
@@ -1762,7 +1762,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
         // ① 总是更新 Map（per-session 持久态,不论是否当前会话）
         patchSessionRuntime(d.sessionId, {
-          status: d.status,
+          status: d.status, source: 'ws',
           ...(d.streamId ? { streamId: d.streamId } : {}),
           ...(d.runId ? { runId: d.runId } : {}),
           attached: isActiveRuntimeStatus(d.status),
@@ -1859,7 +1859,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           : false;
         // 总是更新 Map（per-session 持久态）,即使不是当前会话。当前会话的标识已先切代。
         patchSessionRuntime(data.sessionId, {
-          status: 'running',
+          status: 'running', source: 'ws',
           streamId: data.streamId,
           ...(data.runId ? { runId: data.runId } : {}),
           attached: false, // 下方 resume 前尚未真正订阅这条流
@@ -2049,7 +2049,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
       if ((data.type === 'permission_request' || data.type === 'ask_user') && sessionIdRef.current) {
         patchSessionRuntime(sessionIdRef.current, {
-          status: data.type === 'permission_request' ? 'waiting_approval' : 'waiting_user',
+          status: data.type === 'permission_request' ? 'waiting_approval' : 'waiting_user', source: 'ws',
           attached: true,
         });
       }

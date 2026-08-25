@@ -205,6 +205,26 @@ describe("useChatAppState queue delivery lifecycle", () => {
     expect(result.current.sessionRuntimeStatuses.get("session-sleeping")).toBe("running");
   });
 
+  it("clears a snapshot-only runtime when a later snapshot is inactive", async () => {
+    harness.session.sessionId = "session-finished";
+    harness.session.isNewSession = false;
+    const active = [true, false];
+    harness.authFetch.mockImplementation(async (url: string) => url === "/api/sessions/active-streams"
+      ? response({ sessions: [{ sessionId: "session-finished", active: active.shift() }] }) : response({}, 404));
+    const { result } = renderHook(() => useChatAppState());
+
+    await act(async () => {
+      harness.sessionCallbacks?.onSessionsLoaded?.([{ sessionId: "session-finished" }]);
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(result.current.runningSessionIds.has("session-finished")).toBe(true);
+    await act(async () => {
+      harness.sessionCallbacks?.onSessionsLoaded?.([{ sessionId: "session-finished" }]);
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(result.current.runningSessionIds.has("session-finished")).toBe(false);
+  });
+
   it("assigns an authoritative new session to the pending group", async () => {
     const { result } = renderHook(() => useChatAppState());
 

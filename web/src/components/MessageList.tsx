@@ -801,12 +801,9 @@ export const MessageList = memo(function MessageList({
               const systemActions = systemActionIds.size
                 ? sub.items.filter((child) => systemActionIds.has(child.id)).map((child) => renderFlowItem(child))
                 : null;
-              const deliverableItems = sub.items.filter(
-                (child) => child.type === 'file_download' && !!child.artifactId,
-              );
+              const deliverableItems = sub.items.filter((child) => child.type === 'file_download' && !!child.artifactId);
               const processItems = deliverableItems.length
-                ? sub.items.filter((child) => child.type !== 'file_download' || !child.artifactId)
-                : sub.items;
+                ? sub.items.filter((child) => child.type !== 'file_download' || !child.artifactId) : sub.items;
               const deliverables = deliverableItems.map((child) => renderFlowItem(child));
               const sectionOpen = isBusinessStepOpen(sub.id, !!sub.terminal);
               return (
@@ -814,8 +811,7 @@ export const MessageList = memo(function MessageList({
                   <BusinessStepSectionView
                     section={sub}
                     debugMode={debugMode}
-                    systemActions={systemActions}
-                    deliverables={deliverables}
+                    systemActions={systemActions} deliverables={deliverables}
                     open={sectionOpen} onOpenChange={(open) => setBusinessStepOpen(sub.id, open)}
                     showOutcomeWhenCollapsed={showBusinessStepOutcomeWhenCollapsed}
                   >

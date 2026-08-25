@@ -654,6 +654,26 @@ describe("TaskDetail 草稿隔离", () => {
     expect(screen.queryByRole("button", { name: "交给 Agent" })).toBeNull();
   });
 
+  it("Workflow v3 集成详情加载并展示真实来源投影", async () => {
+    const integrationTask = {
+      ...taskOne, id: "integration-v3", identifier: "TASK-V3",
+      kind: "integration" as const, workflowVersion: 3 as const, status: "in_progress" as const,
+    };
+    mocks.fetchTask.mockResolvedValue(integrationTask);
+    mocks.fetchIntegrationSources.mockResolvedValue([{
+      id: "source-v3", integrationTaskId: integrationTask.id, deliveryTaskId: "delivery-v3",
+      deliveryTaskIdentifier: "TASK-SOURCE", deliveryTaskTitle: "真实交付来源",
+      repositoryId: "repo-1", providerPullRequestId: "pr-v3", reviewedSubjectDigest: "digest-v3",
+      order: 0, state: "ready", attemptCount: 1, updatedAt: taskOne.updatedAt,
+    }]);
+
+    render(<TaskDetail {...props({ task: integrationTask })} />);
+
+    await waitFor(() => expect(mocks.fetchIntegrationSources).toHaveBeenCalledWith(integrationTask.id));
+    expect(await screen.findByText(/TASK-SOURCE · 真实交付来源/)).toBeTruthy();
+    expect(screen.getByText("0/1 已合并")).toBeTruthy();
+  });
+
   it("集成阻塞恢复仅提交用户显式勾选的来源", async () => {
     const user = userEvent.setup();
     const integrationTask = {

@@ -37,6 +37,41 @@ function hostWithRows(rows: Record<string, unknown>[]) {
 }
 
 describe('claimIntegrationDispatchCandidates Agent-first routing', () => {
+  it('repairs an old Candidate with no Agent row and dispatches it in the same scan', async () => {
+    const legacy = integrationRow('legacy-task', 'in_progress');
+    let agentCreated = false;
+    const client = {
+      release: vi.fn(),
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes("t.kind='integration'") && sql.includes('NOT EXISTS (SELECT 1 FROM sources_agents')) return { rows: [legacy] };
+        if (sql.trim().startsWith('SELECT 1 FROM sources_agents')) return { rows: agentCreated ? [{ '?column?': 1 }] : [] };
+        if (sql.includes('FROM sources_candidates c')) return { rows: [{
+          repository_id: 'github:acme/repo', branch: 'integration/legacy-task', provider_pull_request_id: '42', state: 'active',
+          approved_review_execution_id: null, head_oid: null,
+        }] };
+        if (sql.includes('SELECT id FROM sources') && sql.includes('source_order')) return { rows: [{ id: 'source-1' }] };
+        if (sql.includes('INSERT INTO sources_agents')) { agentCreated = true; return { rows: [], rowCount: 1 }; }
+        if (sql.includes('SELECT t.*, b.tenant_id')) return { rows: agentCreated ? [legacy] : [] };
+        return { rows: [] };
+      }),
+    };
+    const host = {
+      pool: { connect: vi.fn(async () => client), query: vi.fn(async () => ({ rows: [] })) },
+      boardsTable: 'boards', tasksTable: 'tasks', commentsTable: 'comments', executionsTable: 'executions',
+      membersTable: 'members', changesTable: 'changes', integrationLanesTable: 'lanes',
+      integrationSourcesTable: 'sources', mergeAuthorizationsTable: 'authorizations',
+      mergeOperationsTable: 'merge_operations', blockEpisodesTable: 'blocks',
+      integrationTriggerOutboxTable: 'trigger_outbox', remediationAttemptsTable: 'remediation_attempts',
+      cancellationOutboxTable: 'cancellations',
+    };
+
+    await expect(claimIntegrationDispatchCandidates(
+      host as unknown as Parameters<typeof claimIntegrationDispatchCandidates>[0], 10,
+    )).resolves.toMatchObject([{ task: { id: 'legacy-task' }, purpose: 'work' }]);
+    expect(client.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO sources_agents'))).toBe(true);
+    expect(client.query.mock.calls.some(([sql]) => String(sql).includes('UPDATE sources_candidates'))).toBe(false);
+  });
+
   it('dispatches work, re-dispatched review, and approved merge as separate controlled executions', async () => {
     const { host, client } = hostWithRows([
       integrationRow('work-task', 'in_progress'),

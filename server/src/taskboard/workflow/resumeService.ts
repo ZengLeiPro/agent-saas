@@ -50,6 +50,7 @@ export async function resumeBlockedTask(
         `UPDATE ${agentsTable}
             SET status='active',review_head_oid=NULL,verdict=NULL,review_execution_id=NULL,updated_at=now()
           WHERE integration_task_id=$1 AND status NOT IN ('merged','canceled')
+            AND merge_in_flight_execution_id IS NULL
           RETURNING integration_task_id`, [taskId],
       );
       if (!resumed.rows[0]) {

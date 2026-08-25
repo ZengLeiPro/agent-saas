@@ -278,8 +278,14 @@ export async function finalizeMergedIntegrationAgent(
       [integrationTaskId],
     );
     const agent = agentResult.rows[0];
-    if (!agent || String(agent.provider_pull_request_id ?? '') !== input.expectedAgent.providerPullRequestId
-      || String(agent.integration_branch ?? '') !== input.expectedAgent.integrationBranch) {
+    if (!agent || agent.status !== 'ready_to_merge' || agent.verdict !== 'approved'
+      || String(agent.provider_pull_request_id ?? '') !== input.expectedAgent.providerPullRequestId
+      || String(agent.integration_branch ?? '') !== input.expectedAgent.integrationBranch
+      || String(agent.review_head_oid ?? '') !== input.event.reviewHeadOid
+      || String(agent.review_execution_id ?? '') !== input.event.reviewExecutionId
+      || String(agent.merge_in_flight_execution_id ?? '') !== input.event.executionId
+      || String(agent.merge_in_flight_review_execution_id ?? '') !== input.event.reviewExecutionId
+      || String(agent.merge_in_flight_review_head_oid ?? '') !== input.event.reviewHeadOid) {
       throw new TaskboardValidationError('Integration Agent changed during merge reconciliation', 'TASKBOARD_SUBJECT_STALE');
     }
     const sourcesResult = await client.query(
@@ -347,7 +353,9 @@ export async function finalizeMergedIntegrationAgent(
     // Agent/integration terminal state, authorization revocation and lane release are
     // deliberately last: all dependent cleanup and fencing above must succeed first.
     await client.query(
-      `UPDATE ${agentsTable} SET status='merged',updated_at=now()
+      `UPDATE ${agentsTable}
+          SET status='merged',merge_in_flight_execution_id=NULL,
+              merge_in_flight_review_execution_id=NULL,merge_in_flight_review_head_oid=NULL,updated_at=now()
         WHERE integration_task_id=$1 AND status<>'merged'`,
       [integrationTaskId],
     );

@@ -5,6 +5,7 @@ import { computeNextRunAtMs } from '../cron/scheduler.js';
 import type { TaskboardIntegrationDispatchCandidate, TaskboardIdentity } from './types.js';
 import { createIntegrationBatch } from './v2Store.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
+import { ensureLegacyIntegrationAgentRendezvous } from './legacyIntegrationAgentMigration.js';
 import { rowToTask, visibleCommentPredicate } from './storeHelpers.js';
 import { purposeForIntegrationAgentStatus } from './workflow/decider.js';
 
@@ -421,6 +422,29 @@ async function loadUnstartedIntegrationTasks(
   const { agentsTable } = integrationAgentTableNames(host.integrationSourcesTable);
   const client = await host.pool.connect();
   try {
+    // A v3 task can predate the Agent rendezvous table. Repair that one-way
+    // compatibility gap during the scanner pass so scheduling does not depend on
+    // a user opening context or issuing resume first.
+    await client.query('BEGIN');
+    const legacyTasks = await client.query(
+      `SELECT t.*,
+              (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', host.changesTable)}) AS comment_count
+         FROM ${host.tasksTable} t
+         JOIN ${host.integrationLanesTable} l ON l.active_integration_task_id=t.id
+        WHERE t.kind='integration' AND COALESCE(t.workflow_version,2)=3
+          AND t.status IN ('todo','in_progress','in_review','ready_to_merge')
+          AND t.archived_at IS NULL AND t.deleted_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM ${agentsTable} agent WHERE agent.integration_task_id=t.id)
+        ORDER BY t.created_at
+        LIMIT $1
+        FOR UPDATE OF t`,
+      [limit],
+    );
+    for (const legacyTask of legacyTasks.rows) {
+      await ensureLegacyIntegrationAgentRendezvous(host, client, rowToTask(legacyTask));
+    }
+    await client.query('COMMIT');
+
     const result = await client.query(
       `SELECT t.*, b.tenant_id, b.owner_user_id,
               (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', host.changesTable)}) AS comment_count
@@ -517,6 +541,9 @@ async function loadUnstartedIntegrationTasks(
           : purposeForIntegrationAgentStatus(rowToTask(row).status)!
         : row.status === 'in_review' ? 'review' : 'work',
     }));
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
   } finally {
     client.release();
   }

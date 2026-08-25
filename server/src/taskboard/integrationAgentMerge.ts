@@ -26,7 +26,7 @@ export interface IntegrationAgentMergeHost {
   repositoryProvider?: RepositoryProvider;
 }
 
-/** Final Agent merge gate. It always re-reads GitHub immediately before merge. */
+/** Final Agent merge gate. It fences resume durably, then performs provider I/O without a DB transaction. */
 export async function mergeIntegrationAgent(
   host: IntegrationAgentMergeHost,
   identity: TaskboardIdentity,
@@ -34,13 +34,17 @@ export async function mergeIntegrationAgent(
 ): Promise<TaskBoardTask> {
   if (!host.repositoryProvider) throw new TaskboardValidationError('Repository provider is unavailable', 'TASKBOARD_CI_UNAVAILABLE');
   const client = await host.pool.connect();
+  let row: Record<string, unknown> | undefined;
+  let fenceMarked = false;
+  let mergeAuthorityMayHaveCommitted = false;
+  const { agentsTable } = integrationAgentTableNames(host.integrationSourcesTable);
   try {
     await client.query('BEGIN');
-    const { agentsTable } = integrationAgentTableNames(host.integrationSourcesTable);
     const loaded = await client.query(
       `SELECT t.*,b.repository,b.integration_policy,b.owner_user_id,
               e.id AS execution_id,e.purpose,e.status AS execution_status,e.transitioned_at,e.superseded_at,
               a.provider_pull_request_id,a.integration_branch,a.review_head_oid,a.verdict,a.review_execution_id,a.status AS agent_status,
+              a.merge_in_flight_execution_id,a.merge_in_flight_review_execution_id,a.merge_in_flight_review_head_oid,
               review_e.purpose AS review_purpose,review_e.transitioned_at AS review_transitioned_at
          FROM ${host.executionsTable} e
          JOIN ${host.tasksTable} t ON t.id=e.task_id
@@ -50,22 +54,47 @@ export async function mergeIntegrationAgent(
         WHERE e.run_id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
         FOR UPDATE OF t,e,a`, [runId, identity.tenantId, identity.ownerUserId],
     );
-    const row = loaded.rows[0];
+    row = loaded.rows[0];
     if (!row) throw new TaskboardNotFoundError('Integration Agent execution not found');
     if (row.kind !== 'integration' || Number(row.workflow_version) !== 3 || row.purpose !== 'merge'
       || !['queued', 'running', 'waiting_user', 'waiting_approval'].includes(String(row.execution_status))
       || row.transitioned_at || row.superseded_at) {
       throw new TaskboardValidationError('Current execution cannot merge the integration Agent pull request', 'TASKBOARD_INTEGRATION_AGENT_MERGE_INVALID');
     }
+    const executionId = String(row.execution_id);
     const pullRequestId = String(row.provider_pull_request_id ?? '');
     const reviewHeadOid = String(row.review_head_oid ?? '');
-    if (row.agent_status !== 'ready_to_merge' || row.verdict !== 'approved' || !row.review_execution_id
+    const reviewExecutionId = String(row.review_execution_id ?? '');
+    if (row.agent_status !== 'ready_to_merge' || row.verdict !== 'approved' || !reviewExecutionId
       || row.review_purpose !== 'review' || !row.review_transitioned_at || !pullRequestId || !reviewHeadOid) {
       throw new TaskboardValidationError('Integration Agent lacks a head-bound approved review', 'TASKBOARD_INTEGRATION_AGENT_REVIEW_REQUIRED');
     }
+    const existingFence = String(row.merge_in_flight_execution_id ?? '');
+    if (existingFence && (existingFence !== executionId
+      || String(row.merge_in_flight_review_execution_id ?? '') !== reviewExecutionId
+      || String(row.merge_in_flight_review_head_oid ?? '') !== reviewHeadOid)) {
+      throw new TaskboardValidationError('Another Integration Agent merge is already in flight', 'TASKBOARD_INTEGRATION_AGENT_MERGE_IN_FLIGHT');
+    }
+    if (!existingFence) {
+      await client.query(
+        `UPDATE ${agentsTable}
+            SET merge_in_flight_execution_id=$2,merge_in_flight_review_execution_id=$3,
+                merge_in_flight_review_head_oid=$4,updated_at=now()
+          WHERE integration_task_id=$1 AND status='ready_to_merge' AND verdict='approved'
+            AND review_execution_id=$3 AND review_head_oid=$4
+            AND merge_in_flight_execution_id IS NULL`,
+        [String(row.id), executionId, reviewExecutionId, reviewHeadOid],
+      );
+    }
+    fenceMarked = true;
+    await client.query('COMMIT');
+
     const repository = jsonObject(row.repository);
     if (!repository || repository.provider !== 'github') throw new TaskboardValidationError('Board repository is not configured', 'TASKBOARD_REPOSITORY_REQUIRED');
-    const configured = repositoryWithBoardCiPolicy(repository as { provider: 'github'; repositoryId: string; owner: string; name: string; baseBranch: string; allowForkPullRequest: false }, jsonObject(row.integration_policy) as TaskBoardIntegrationPolicy | undefined);
+    const policy = jsonObject(row.integration_policy) as TaskBoardIntegrationPolicy | undefined;
+    const configured = repositoryWithBoardCiPolicy(repository as { provider: 'github'; repositoryId: string; owner: string; name: string; baseBranch: string; allowForkPullRequest: false }, policy);
+    const configuredMethod = policy?.execution?.mergeMethod;
+    const mergeMethod = configuredMethod === 'rebase' || configuredMethod === 'squash' ? configuredMethod : 'merge';
     const current = await host.repositoryProvider.getPullRequest(configured, pullRequestId, String(row.owner_user_id));
     if (current.providerPullRequestId !== pullRequestId || current.headOid !== reviewHeadOid
       || current.baseRef !== configured.baseBranch || current.headRef !== String(row.integration_branch)) {
@@ -73,6 +102,7 @@ export async function mergeIntegrationAgent(
     }
     let receipt: RepositoryMergeReceipt | undefined;
     if (current.state === 'merged') {
+      mergeAuthorityMayHaveCommitted = true;
       if (!current.mergeCommitOid) {
         throw new TaskboardValidationError('Provider did not return the merged commit oid', 'TASKBOARD_PROVIDER_RECEIPT_INCOMPLETE');
       }
@@ -86,21 +116,22 @@ export async function mergeIntegrationAgent(
     } else {
       assertPullRequestGate(current, { providerPullRequestId: pullRequestId, headOid: reviewHeadOid, requireMergeable: true });
     }
-    // Do not hold database locks across the provider write. The durable finalizer
-    // reacquires the aggregate locks after a provider merge receipt is known.
-    await client.query('COMMIT');
 
     const requestId = randomUUID();
     if (!receipt) try {
+      mergeAuthorityMayHaveCommitted = true;
       receipt = await host.repositoryProvider.mergePullRequest(configured, {
-        providerPullRequestId: pullRequestId, expectedHeadOid: reviewHeadOid, method: 'squash', requestId,
+        providerPullRequestId: pullRequestId, expectedHeadOid: reviewHeadOid, method: mergeMethod, requestId,
         operationKey: `integration-agent:${String(row.id)}:${reviewHeadOid}`,
       }, String(row.owner_user_id));
     } catch (error) {
-      // A timeout can mean GitHub merged the PR but the response was lost. Re-read
-      // the authority before allowing any local terminal projection.
+      // A timeout can mean GitHub merged the PR but the response was lost. Keep the
+      // fence if reconciliation itself is unavailable so the same execution can retry.
       const afterError = await host.repositoryProvider.getPullRequest(configured, pullRequestId, String(row.owner_user_id));
-      if (afterError.state !== 'merged') throw error;
+      if (afterError.state !== 'merged') {
+        mergeAuthorityMayHaveCommitted = false;
+        throw error;
+      }
       if (afterError.providerPullRequestId !== pullRequestId || afterError.headOid !== reviewHeadOid
         || afterError.baseRef !== configured.baseBranch || afterError.headRef !== String(row.integration_branch)) {
         throw new TaskboardValidationError('Integration Agent review is stale after pull request subject drift', 'TASKBOARD_SUBJECT_STALE');
@@ -117,6 +148,7 @@ export async function mergeIntegrationAgent(
       };
     }
     if (!receipt.merged || !receipt.mergedCommitOid) {
+      mergeAuthorityMayHaveCommitted = false;
       throw new TaskboardValidationError(receipt.message ?? 'Provider did not confirm merge', 'TASKBOARD_PROVIDER_RECEIPT_INCOMPLETE');
     }
     return finalizeMergedIntegrationAgent(host, String(row.id), {
@@ -125,10 +157,20 @@ export async function mergeIntegrationAgent(
       raw: receipt.raw,
       exceptExecutionId: String(row.execution_id),
       expectedAgent: { providerPullRequestId: pullRequestId, integrationBranch: String(row.integration_branch) },
-      event: { runId, executionId: String(row.execution_id), reviewHeadOid, reviewExecutionId: String(row.review_execution_id) },
+      event: { runId, executionId: String(row.execution_id), reviewHeadOid, reviewExecutionId },
     });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
+    if (fenceMarked && row && !mergeAuthorityMayHaveCommitted) {
+      await client.query(
+        `UPDATE ${agentsTable}
+            SET merge_in_flight_execution_id=NULL,merge_in_flight_review_execution_id=NULL,
+                merge_in_flight_review_head_oid=NULL,updated_at=now()
+          WHERE integration_task_id=$1 AND merge_in_flight_execution_id=$2
+            AND merge_in_flight_review_execution_id=$3 AND merge_in_flight_review_head_oid=$4`,
+        [String(row.id), String(row.execution_id), String(row.review_execution_id), String(row.review_head_oid)],
+      ).catch(() => undefined);
+    }
     throw error;
   } finally { client.release(); }
 }

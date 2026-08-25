@@ -161,7 +161,7 @@ export function TaskDetail({
     refresh: refreshExecutions,
   } = useTaskExecutions(open && task ? task.id : null, active && open);
   const integrationSourcesState = useIntegrationSources(
-    open && currentTask?.kind === "integration" && currentTask.workflowVersion !== 3 ? currentTask.id : null,
+    open && currentTask?.kind === "integration" ? currentTask.id : null,
     active && open,
   );
 

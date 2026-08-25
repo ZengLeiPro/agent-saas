@@ -42,7 +42,12 @@ function finalizationClient() {
         return { rows: [{ id: 'source-1', delivery_task_id: 'delivery-1', remediation_task_id: null }] };
       }
       if (sql.includes('SELECT DISTINCT integration_source_id,remediation_task_id')) return { rows: [] };
-      if (sql.includes('FROM sources_agents')) return { rows: [{ provider_pull_request_id: '42', integration_branch: 'integration/integration-1' }] };
+      if (sql.includes('FROM sources_agents')) return { rows: [{
+        provider_pull_request_id: '42', integration_branch: 'integration/integration-1', status: 'ready_to_merge', verdict: 'approved',
+        review_head_oid: 'agent-head', review_execution_id: 'review-execution-1',
+        merge_in_flight_execution_id: 'merge-execution-1', merge_in_flight_review_execution_id: 'review-execution-1',
+        merge_in_flight_review_head_oid: 'agent-head',
+      }] };
       if (sql.includes('SELECT * FROM sources') && sql.includes('integration_task_id=$1')) {
         return { rows: [{ id: 'source-1', state: 'ready', merged_commit_oid: null }] };
       }
@@ -110,7 +115,23 @@ describe('mergeIntegrationAgent', () => {
       expect.stringContaining('terminal_reason_code=$3'),
       [['integration-1'], 'merge-execution-1', 'integration_converged'],
     ]);
-    expect(queries).toContain("SET status='merged',updated_at=now()");
+    expect(queries).toContain("SET status='merged',merge_in_flight_execution_id=NULL");
+  });
+
+  it.each([
+    ['merge', {}],
+    ['squash', { execution: { mergeMethod: 'squash' } }],
+    ['rebase', { execution: { mergeMethod: 'rebase' } }],
+  ] as const)('uses the board integration merge method %s', async (method, integrationPolicy) => {
+    const provider = {
+      getPullRequest: vi.fn(async () => pullRequest),
+      mergePullRequest: vi.fn(async () => ({ providerRequestId: 'request-1', providerPullRequestId: '42', merged: true, mergedCommitOid: 'merge-42', raw: {} })),
+    };
+    const { host } = hostWith(provider, { ...loadedRow(), integration_policy: integrationPolicy });
+
+    await mergeIntegrationAgent(host, identity, 'run-1');
+
+    expect(provider.mergePullRequest).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ method }), identity.ownerUserId);
   });
 
   it('recovers finalization on a later invocation after the provider already merged the pull request', async () => {

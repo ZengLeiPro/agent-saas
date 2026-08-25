@@ -230,23 +230,54 @@ async function loadUnstartedIntegrationTasks(
   try {
     await client.query('BEGIN');
     // Historical v2 rows are upgraded in the same transaction that creates their
-    // durable rendezvous. Existing source rows already contain the frozen source IDs
-    // needed by the Agent, so retries can safely converge through ON CONFLICT.
-    await client.query(
-      `WITH candidates AS (
+    // durable rendezvous. Filter every binding invariant before LIMIT so permanently
+    // malformed old rows cannot starve newer migratable rows. Reusing this exact
+    // locking query in both statements preserves one stable batch: this transaction
+    // retains its row locks, while concurrent claimers skip them.
+    const migrationCandidates = `
          SELECT t.id
            FROM ${host.tasksTable} t
-           JOIN ${host.integrationLanesTable} lane ON lane.active_integration_task_id=t.id
+           JOIN ${host.integrationLanesTable} candidate_lane
+             ON candidate_lane.active_integration_task_id=t.id
+            AND candidate_lane.board_id=t.board_id
           WHERE t.kind='integration' AND COALESCE(t.workflow_version,2)=2
             AND t.status IN ('todo','in_progress')
             AND t.archived_at IS NULL AND t.deleted_at IS NULL
+            AND EXISTS (
+              SELECT 1
+                FROM ${host.integrationSourcesTable} source
+               WHERE source.integration_task_id=t.id
+               GROUP BY source.integration_task_id
+              HAVING count(*)>0
+                 AND count(DISTINCT source.repository_id)=1
+                 AND min(source.repository_id)=candidate_lane.repository_id
+            )
+            AND (
+              NOT EXISTS (
+                SELECT 1 FROM ${agentsTable} existing
+                 WHERE existing.integration_task_id=t.id
+              )
+              OR EXISTS (
+                SELECT 1 FROM ${agentsTable} existing
+                 WHERE existing.integration_task_id=t.id
+                   AND existing.repository_id=candidate_lane.repository_id
+                   AND existing.integration_branch='integration/' || t.id
+                   AND existing.delivery_source_ids=(
+                     SELECT jsonb_agg(source.id ORDER BY source.source_order)
+                       FROM ${host.integrationSourcesTable} source
+                      WHERE source.integration_task_id=t.id
+                   )
+              )
+            )
             AND NOT EXISTS (
               SELECT 1 FROM ${host.executionsTable} e
                WHERE e.task_id=t.id AND e.status IN ('queued','running','waiting_user','waiting_approval')
             )
           ORDER BY t.updated_at,t.id
           LIMIT $1
-          FOR UPDATE OF t SKIP LOCKED
+          FOR UPDATE OF t SKIP LOCKED`;
+    await client.query(
+      `WITH candidates AS (${migrationCandidates}
        )
        INSERT INTO ${agentsTable}
          (integration_task_id,delivery_source_ids,repository_id,integration_branch,status)
@@ -255,27 +286,13 @@ async function loadUnstartedIntegrationTasks(
          FROM candidates candidate
          JOIN ${host.integrationSourcesTable} source ON source.integration_task_id=candidate.id
         GROUP BY candidate.id
-       HAVING count(*)>0 AND count(DISTINCT source.repository_id)=1
        ON CONFLICT (integration_task_id) DO NOTHING`,
       [limit],
     );
     // Keep the statements separate: PostgreSQL data-modifying CTEs share a snapshot,
     // while the immutable-version trigger must observe the rendezvous just inserted.
     await client.query(
-      `WITH candidates AS (
-         SELECT t.id
-           FROM ${host.tasksTable} t
-           JOIN ${host.integrationLanesTable} candidate_lane ON candidate_lane.active_integration_task_id=t.id
-          WHERE t.kind='integration' AND COALESCE(t.workflow_version,2)=2
-            AND t.status IN ('todo','in_progress')
-            AND t.archived_at IS NULL AND t.deleted_at IS NULL
-            AND NOT EXISTS (
-              SELECT 1 FROM ${host.executionsTable} e
-               WHERE e.task_id=t.id AND e.status IN ('queued','running','waiting_user','waiting_approval')
-            )
-          ORDER BY t.updated_at,t.id
-          LIMIT $1
-          FOR UPDATE OF t SKIP LOCKED
+      `WITH candidates AS (${migrationCandidates}
        )
        UPDATE ${host.tasksTable} task
           SET workflow_version=3,version=version+1,updated_at=now()

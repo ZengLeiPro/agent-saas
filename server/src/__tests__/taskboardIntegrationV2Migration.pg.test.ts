@@ -42,7 +42,7 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
     }
   }, 30_000);
 
-  async function seedHistoricalIntegration(label: string, source: 'valid' | 'missing' | 'malformed') {
+  async function seedHistoricalIntegration(label: string, source: 'valid' | 'missing' | 'cross-repository' | 'malformed') {
     const repositoryId = `github:${identity.tenantId}:acme/${label}`;
     const board = await store.createBoard(identity, {
       name: `${label} board`,
@@ -69,7 +69,16 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
          VALUES($1,$2,$3,$4,'17','sha256:reviewed',0,'pending')`,
         [sourceId, integration.id, delivery.id, repositoryId],
       );
-      if (source === 'malformed') {
+      if (source === 'cross-repository') {
+        const otherDelivery = await store.createTask(identity, board.id, { title: `${label} other delivery`, status: 'todo' });
+        await pool.query(
+          `INSERT INTO ${store.integrationSourcesTable}
+             (id,integration_task_id,delivery_task_id,repository_id,provider_pull_request_id,
+              reviewed_subject_digest,source_order,state)
+           VALUES($1,$2,$3,$4,'18','sha256:reviewed',1,'pending')`,
+          [randomUUID(), integration.id, otherDelivery.id, `${repositoryId}-other`],
+        );
+      } else if (source === 'malformed') {
         await pool.query(
           `INSERT INTO ${agentsTable}
              (integration_task_id,delivery_source_ids,repository_id,integration_branch,status)
@@ -93,14 +102,16 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
     await pool.query(`ALTER TABLE ${store.tasksTable} ALTER COLUMN workflow_version SET DEFAULT 2`);
     let validIds: string[];
     let missingId: string;
+    let crossRepositoryId: string;
     let malformedId: string;
     try {
+      missingId = await seedHistoricalIntegration('missing', 'missing');
+      crossRepositoryId = await seedHistoricalIntegration('cross-repository', 'cross-repository');
+      malformedId = await seedHistoricalIntegration('malformed', 'malformed');
       validIds = [];
       for (const label of ['batch-a', 'batch-b', 'batch-c']) {
         validIds.push(await seedHistoricalIntegration(label, 'valid'));
       }
-      missingId = await seedHistoricalIntegration('missing', 'missing');
-      malformedId = await seedHistoricalIntegration('malformed', 'malformed');
     } finally {
       await pool.query(`ALTER TABLE ${store.tasksTable} ALTER COLUMN workflow_version SET DEFAULT 3`);
     }
@@ -109,7 +120,9 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
       `UPDATE ${store.tasksTable} SET workflow_version=3 WHERE id=$1`,
       [missingId],
     )).rejects.toThrow(/TASKBOARD_WORKFLOW_VERSION_IMMUTABLE/u);
-    for (const [index, id] of [...validIds, missingId, malformedId].entries()) {
+    // Permanently invalid historical rows are older than every valid row, but must
+    // be filtered before the bounded migration batch is selected.
+    for (const [index, id] of [missingId, crossRepositoryId, malformedId, ...validIds].entries()) {
       await pool.query(`UPDATE ${store.tasksTable} SET updated_at=$2 WHERE id=$1`, [
         id, new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
       ]);
@@ -137,7 +150,7 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
          LEFT JOIN ${agentsTable} agent ON agent.integration_task_id=task.id
         WHERE task.id=ANY($1::text[])
         GROUP BY task.id,task.workflow_version`,
-      [[...validIds, missingId, malformedId]],
+      [[...validIds, missingId, crossRepositoryId, malformedId]],
     );
     for (const validId of validIds) {
       expect(migrated.rows.find((row) => row.id === validId)).toMatchObject({
@@ -145,6 +158,7 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
       });
     }
     expect(migrated.rows.find((row) => row.id === missingId)).toMatchObject({ workflow_version: 2, agent_count: 0 });
+    expect(migrated.rows.find((row) => row.id === crossRepositoryId)).toMatchObject({ workflow_version: 2, agent_count: 0 });
     expect(migrated.rows.find((row) => row.id === malformedId)).toMatchObject({ workflow_version: 2, agent_count: 1 });
 
     await store.claimIntegrationDispatchCandidatesV2(10);

@@ -20,6 +20,7 @@ const harness = vi.hoisted(() => {
     }),
     sessionCallbacks: null as null | {
       onSessionsLoaded?: (sessions: Array<{ sessionId: string }>) => void;
+      onLastRunState?: (sessionId: string, lastRunState: { status: string; runId: string; error?: string }) => void;
       onQueuedMessages?: (sessionId: string, messages: unknown[]) => void;
       cancelActiveStream?: () => void;
     },
@@ -187,6 +188,58 @@ afterEach(() => {
 });
 
 describe("useChatAppState queue delivery lifecycle", () => {
+  it("keeps a WS-confirmed runtime when stream-status is inactive during session restore", async () => {
+    let resolveStreamStatus!: (value: Response) => void;
+    harness.authFetch.mockImplementation((url: string) => (
+      url.endsWith("/stream-status")
+        ? new Promise<Response>((resolve) => { resolveStreamStatus = resolve; })
+        : Promise.resolve(response({}, 404))
+    ));
+    const { result, rerender } = renderHook(() => useChatAppState());
+
+    act(() => emit({
+      type: "session_status",
+      sessionId: "session-sleeping",
+      status: "running",
+      streamId: "stream-sleeping",
+      runId: "run-sleeping",
+    }));
+    expect(result.current.runningSessionIds.has("session-sleeping")).toBe(true);
+
+    harness.session.sessionId = "session-sleeping";
+    harness.session.isNewSession = false;
+    rerender();
+    await waitFor(() => expect(resolveStreamStatus).toBeTypeOf("function"));
+    await act(async () => { resolveStreamStatus(response({ active: false })); });
+
+    expect(result.current.runningSessionIds.has("session-sleeping")).toBe(true);
+    expect(result.current.sessionRuntimeStatuses.get("session-sleeping")).toBe("running");
+  });
+
+  it("does not clear a current WS runtime from a stale terminal lastRunState", async () => {
+    harness.session.sessionId = "session-running";
+    harness.session.isNewSession = false;
+    harness.authFetch.mockImplementation(async (url: string) => (
+      url.endsWith("/stream-status") ? response({ active: true, runId: "run-running" }) : response({}, 404)
+    ));
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => emit({
+      type: "session_status",
+      sessionId: "session-running",
+      status: "running",
+      streamId: "stream-running",
+      runId: "run-running",
+    }));
+    await act(async () => {
+      harness.sessionCallbacks?.onLastRunState?.("session-running", { status: "completed", runId: "run-previous" });
+      await Promise.resolve();
+    });
+
+    expect(result.current.runningSessionIds.has("session-running")).toBe(true);
+    expect(result.current.sessionRuntimeStatuses.get("session-running")).toBe("running");
+  });
+
   it("keeps a WS-confirmed runtime through active and inactive snapshots, then clears it on terminal", async () => {
     harness.session.sessionId = "session-sleeping";
     harness.session.isNewSession = false;

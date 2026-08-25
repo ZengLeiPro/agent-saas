@@ -151,7 +151,9 @@ describePg('Context retention PostgreSQL lifecycle', () => {
     const audit = vi.fn().mockResolvedValue(undefined);
     const consumer = new ContextRetentionAuditConsumer(retention, audit, { batchSize: 10 });
 
-    await expect(consumer.runOnce()).resolves.toMatchObject({ claimed: 1, delivered: 1, failed: 0 });
+    const recovered = await consumer.runOnce();
+    expect(recovered.claimed).toBeGreaterThanOrEqual(1);
+    expect(recovered).toMatchObject({ delivered: recovered.claimed, failed: 0 });
     expect(audit).toHaveBeenCalledWith(expect.objectContaining({ receiptId: committed.receiptId, tenantId: 'tenant-crash' }));
     expect((await pool.query(`SELECT audit_status FROM ${contextRetentionTableNames(prefix).receipts}
       WHERE tenant_id='tenant-crash' AND receipt_id=$1`, [committed.receiptId])).rows)

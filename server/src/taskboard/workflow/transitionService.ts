@@ -3,7 +3,7 @@ import type { PoolClient } from 'pg';
 
 import type {
   TaskBoardExecution,
-  TaskBoardExecutionTransitionInput,
+  TaskBoardExecutionFinishInput,
   TaskBoardIntegrationCandidateState,
   TaskBoardTask,
 } from '../../../../shared/src/types/taskboard.js';
@@ -24,11 +24,11 @@ import { decideTransition, isCurrentIntegrationV3Execution, type IntegrationV3Ex
 
 const ACTIVE = ['queued', 'running', 'waiting_user', 'waiting_approval'];
 
-export async function transitionExecutionV2(
+export async function finishExecutionV2(
   options: TaskboardV2StoreOptions,
   identity: TaskboardIdentity,
   runId: string,
-  input: TaskBoardExecutionTransitionInput,
+  input: TaskBoardExecutionFinishInput,
 ): Promise<TaskBoardTask> {
   return withTransaction(options, async (client) => {
     const ownership = await client.query(
@@ -68,7 +68,7 @@ export async function transitionExecutionV2(
     if (!executionRow) throw new TaskboardNotFoundError('Taskboard execution not found');
     const execution = rowToExecution(executionRow);
     assertActiveExecution(executionRow, execution);
-    await assertExecutionComment(options, client, execution);
+    await recordExecutionFinishComment(options, client, execution, input.body);
 
     if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3) {
       return transitionIntegrationV3(options, client, identity, loaded.task, execution, executionRow, input.status);
@@ -208,14 +208,26 @@ function assertActiveExecution(row: Record<string, unknown>, execution: TaskBoar
   }
 }
 
-async function assertExecutionComment(options: TaskboardV2StoreOptions, client: PoolClient, execution: TaskBoardExecution): Promise<void> {
-  const comment = await client.query(
-    `SELECT 1 FROM ${options.commentsTable} c
-     JOIN ${options.changesTable} ch ON ch.task_id=c.task_id AND ch.change_type='execution.comment'
-       AND ch.payload->>'commentId'=c.id
-     WHERE c.task_id=$1 AND ch.actor_id=$2 LIMIT 1`, [execution.taskId, execution.runId]);
-  if (!comment.rows[0]) throw new TaskboardValidationError(
-    'Write an Agent comment with execution.comment before transitioning', 'TASKBOARD_EXECUTION_COMMENT_REQUIRED');
+async function recordExecutionFinishComment(
+  options: TaskboardV2StoreOptions,
+  client: PoolClient,
+  execution: TaskBoardExecution,
+  body: string,
+): Promise<void> {
+  const normalized = body.trim();
+  if (!normalized) {
+    throw new TaskboardValidationError('Execution finish comment is required', 'TASKBOARD_EXECUTION_COMMENT_REQUIRED');
+  }
+  const result = await client.query(
+    `INSERT INTO ${options.commentsTable}
+       (id,task_id,body,author_type,author_id,author_name,continuation_eligible,version)
+     VALUES ($1,$2,$3,'agent',$4,'Agent',false,1)
+     RETURNING id`,
+    [randomUUID(), execution.taskId, normalized, execution.runId],
+  );
+  await appendChange(options, client, execution.taskId, 'execution.comment', 'agent', execution.runId, {
+    commentId: String(result.rows[0]!.id),
+  });
 }
 
 async function markTransitioned(options: TaskboardV2StoreOptions, client: PoolClient, execution: TaskBoardExecution, status: string): Promise<void> {

@@ -25,8 +25,8 @@ export function buildExecutionPrompt(
 export function executionWritebackInstructions(context: TaskboardExecutionContext): string[] {
   const instructions = [
     '- 读取任务看板返回的最新事实和结构化职责约束。',
-    '- 自主完成当前职责，按需记录重要进展。',
-    '- 结束前先通过 execution.comment 提交明确、真实且可验证的阶段结果，再用 execution.transition 只指定下一状态。',
+    '- 自主完成当前职责；工作过程中不要写 Agent 进度评论。',
+    '- 当前职责完成或确实阻塞时，只调用一次 execution.finish，原子写入明确、真实且可验证的交接评论并指定下一状态。',
   ];
   if (context.execution.purpose === 'work' && context.task.kind !== 'integration') {
     instructions.splice(2, 0,
@@ -51,7 +51,7 @@ export function executionWritebackInstructions(context: TaskboardExecutionContex
     instructions.splice(2, 0,
       '- 读取 execution.context 的 integrationCandidate；若 revision.compositionComplete=false，必须处理 sourceSnapshots 中完整冻结来源集与 lastError 指定冲突，不得用无关改动或空提交宣称完成。',
       '- 创建单父提交后调用 execution.integration_candidate.push 且只传 commitOid；正常修复以当前 head 为父，基线漂移重建以冻结 base 为父；不得执行 git push。',
-      '- 只有完整冻结来源集已纳入结果且受控 push 成功后，才能通过 execution.transition({status: "in_review"}) 请求系统复核。');
+      '- 只有完整冻结来源集已纳入结果且受控 push 成功后，才能通过 execution.finish({status: "in_review", body}) 请求系统复核。');
   }
   return instructions;
 }

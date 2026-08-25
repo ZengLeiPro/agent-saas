@@ -208,6 +208,7 @@ export function rowToExecution(row: Record<string, unknown>): TaskBoardExecution
     ...(row.attempt_id ? { attemptId: String(row.attempt_id) } : {}),
     requestedBy: String(row.requested_by),
     ...(row.error !== null && row.error !== undefined ? { error: String(row.error) } : {}),
+    ...(row.transitioned_at ? { transitionedAt: toIso(row.transitioned_at) } : {}),
     ...(row.superseded_at ? { supersededAt: toIso(row.superseded_at) } : {}),
     ...(row.fence_epoch !== null && row.fence_epoch !== undefined ? { fenceEpoch: String(row.fence_epoch) } : {}),
     ...(row.started_at ? { startedAt: toIso(row.started_at) } : {}),

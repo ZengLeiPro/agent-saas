@@ -66,6 +66,26 @@ export async function applyExecutionTaskCompletion(
   return succeeded;
 }
 
+export async function enqueueAutomaticResume(
+  host: ExecutionCompletionHost,
+  client: PoolClient,
+  task: TaskBoardTask,
+  execution: TaskBoardExecution,
+  resume: TaskboardExecutionCompletionInput['resumeExecution'],
+): Promise<void> {
+  if (!resume) return;
+  if (
+    execution.protocolVersion !== 2
+    || resume.purpose !== execution.purpose
+    || resume.executionOwnerUserId !== execution.requestedBy
+    || task.status === 'done'
+    || task.status === 'canceled'
+  ) {
+    throw new TaskboardValidationError('Invalid automatic resume execution');
+  }
+  await enqueueExecution(host, client, task.id, resume);
+}
+
 export async function enqueueAutomaticReview(
   host: ExecutionCompletionHost,
   client: PoolClient,
@@ -91,23 +111,34 @@ export async function enqueueAutomaticReview(
   }
   if (task.status !== 'in_progress' && task.status !== 'in_review') return;
 
+  await enqueueExecution(host, client, task.id, review);
+}
+
+async function enqueueExecution(
+  host: ExecutionCompletionHost,
+  client: PoolClient,
+  taskId: string,
+  claim: TaskboardExecutionCompletionInput['reviewExecution'],
+): Promise<void> {
+  if (!claim) return;
   await client.query(
     `INSERT INTO ${host.executionsTable}
-       (id, task_id, run_id, session_id, status, purpose, trigger, protocol_version, requested_by)
-     VALUES ($1,$2,$3,$4,'queued','review','initial',$5,$6)`,
+       (id,task_id,run_id,session_id,status,purpose,trigger,protocol_version,requested_by)
+     VALUES ($1,$2,$3,$4,'queued',$5,$6,$7,$8)`,
     [
-      review.executionId,
-      task.id,
-      review.runId,
-      review.sessionId,
-      review.protocolVersion ?? execution.protocolVersion,
-      execution.requestedBy,
+      claim.executionId,
+      taskId,
+      claim.runId,
+      claim.sessionId,
+      claim.purpose,
+      claim.trigger,
+      claim.protocolVersion ?? 2,
+      claim.executionOwnerUserId,
     ],
   );
   await client.query(
-    `INSERT INTO ${host.executionOutboxTable}
-       (run_id, execution_id, payload)
+    `INSERT INTO ${host.executionOutboxTable}(run_id,execution_id,payload)
      VALUES ($1,$2,$3::jsonb)`,
-    [review.runId, review.executionId, JSON.stringify(review.dispatch)],
+    [claim.runId, claim.executionId, JSON.stringify(claim.dispatch)],
   );
 }

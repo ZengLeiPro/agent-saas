@@ -659,7 +659,8 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       userResolver: userId => userStore?.findById(userId),
       authorizeSubject: authorizeOAuthSubject,
       authorizeGrant: authorizeOAuthGrant,
-      authorizeConnect: (userId, tenantId) => authorizeConnectorAssignment(userId, tenantId, 'google-workspace'),
+      // OAuth 连接记录沿用 google-workspace；治理目录与既有指派的资源 ID 是 google_workspace。
+      authorizeConnect: (userId, tenantId) => authorizeConnectorAssignment(userId, tenantId, 'google_workspace'),
       logger: serverLogger.child('GoogleWorkspaceConnector'),
       fetchImpl: egressFetch,
     });

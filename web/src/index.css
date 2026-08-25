@@ -210,13 +210,17 @@
     display: block;
   }
 
-  /* CJK 表格：keep-all 让中文只在标点处断行，避免逐字折行挤压列宽 */
+  /* 表格：允许换行（break-word + anywhere 兜底极长串），最多 4 行的硬约束
+     由 td/th 的 min-width 在 MessageItem / MarkdownPreviewPanel 里动态计算注入。
+     vertical-align: top 让多行 cell 在视觉上整齐对齐到顶部。 */
   .prose table {
-    word-break: keep-all;
+    table-layout: auto;
   }
   .prose table th,
   .prose table td {
-    white-space: nowrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    vertical-align: top;
   }
 
   /*

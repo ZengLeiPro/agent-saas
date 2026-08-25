@@ -661,11 +661,13 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       if (!started) {
         throw new Error(`任务看板执行已终止：${record.runId}`);
       }
+      const boardPrompt = context.boardPrompt.trim();
       const stagePrompt = context.stagePrompts?.[context.execution.purpose]?.trim();
       return {
         ...record,
         metadata: {
           ...record.metadata,
+          ...(boardPrompt ? { taskboardBoardPrompt: boardPrompt } : {}),
           ...(stagePrompt ? { taskboardStagePrompt: stagePrompt } : {}),
           wakeMessage: {
             channel: 'web',
@@ -699,11 +701,16 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       const targetExecution = continuationContext.activeExecution
         ?? continuationContext.continuationExecution
         ?? continuationContext.latestExecution;
+      const boardPrompt = continuationContext.boardPrompt?.trim();
       const stagePrompt = targetExecution
         ? continuationContext.stagePrompts?.[targetExecution.purpose]?.trim()
         : undefined;
-      return stagePrompt
-        ? { ...record, metadata: { ...record.metadata, taskboardStagePrompt: stagePrompt } }
+      return boardPrompt || stagePrompt
+        ? { ...record, metadata: {
+            ...record.metadata,
+            ...(boardPrompt ? { taskboardBoardPrompt: boardPrompt } : {}),
+            ...(stagePrompt ? { taskboardStagePrompt: stagePrompt } : {}),
+          } }
         : record;
     } catch {
       return record;

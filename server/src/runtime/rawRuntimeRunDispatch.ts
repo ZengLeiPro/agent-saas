@@ -924,8 +924,9 @@ export function buildInstructionSections(params: {
   /** Profile 只选择可选上下文模块；main.static 与 dynamic-personal 中的平台安全底座不可移除。 */
   contextModules?: readonly ('company_info' | 'tenant_instructions' | 'runtime_memory' | 'personal_context')[];
   profileSystemInstructions?: string;
-  /** 任务看板 Execution 的稳定职责总纲；不含 task 数据或阶段分支。 */
+  /** 任务看板 Execution 的动态提示语，位于稳定系统前缀之后、首条 user 消息之前。 */
   taskboardExecution?: boolean;
+  taskboardBoardPrompt?: string;
   taskboardStagePrompt?: string;
 }): Array<{ key: string; name: string; content: string }> {
   const modules = new Set(params.contextModules
@@ -1005,7 +1006,12 @@ export function buildInstructionSections(params: {
       personalVars,
     ),
   });
-  appendTaskboardExecutionInstruction(sections, params.taskboardExecution, () => params.taskboardStagePrompt?.trim() || params.getSystemPrompt?.('main.taskboardExecution') || loadPrompt(params.sharedDir, 'taskboard-execution'));
+  appendTaskboardExecutionInstruction(sections, params.taskboardExecution, {
+    boardPrompt: params.taskboardBoardPrompt,
+    stagePrompt: params.taskboardStagePrompt,
+    fallbackStagePrompt: () => params.getSystemPrompt?.('main.taskboardExecution')
+      || loadPrompt(params.sharedDir, 'taskboard-execution'),
+  });
   return sections;
 }
 export function buildInstructions(params: Parameters<typeof buildInstructionSections>[0]): string {
@@ -1518,7 +1524,9 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           isPlatformAdmin,
           memoryPolicyVersion,
           getSystemPrompt: config.getSystemPrompt,
-          taskboardExecution: isTaskboardExecution, taskboardStagePrompt: options.taskboardStagePrompt,
+          taskboardExecution: isTaskboardExecution,
+          taskboardBoardPrompt: options.taskboardBoardPrompt,
+          taskboardStagePrompt: options.taskboardStagePrompt,
           ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
           ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
           ...(orgAgent ? { orgAgent } : {}),
@@ -2150,7 +2158,9 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       isPlatformAdmin: resumeIsPlatformAdmin,
       memoryPolicyVersion,
       getSystemPrompt: config.getSystemPrompt,
-      taskboardExecution: isTaskboardExecution, taskboardStagePrompt: request.taskboardStagePrompt,
+      taskboardExecution: isTaskboardExecution,
+      taskboardBoardPrompt: request.taskboardBoardPrompt,
+      taskboardStagePrompt: request.taskboardStagePrompt,
       ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
       ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
       ...(orgAgent ? { orgAgent } : {}),
@@ -2630,7 +2640,9 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       isPlatformAdmin: resumeIsPlatformAdmin,
       memoryPolicyVersion,
       getSystemPrompt: config.getSystemPrompt,
-      taskboardExecution: isTaskboardExecution, taskboardStagePrompt: request.taskboardStagePrompt,
+      taskboardExecution: isTaskboardExecution,
+      taskboardBoardPrompt: request.taskboardBoardPrompt,
+      taskboardStagePrompt: request.taskboardStagePrompt,
       ...(boundProfile ? { contextModules: boundProfile.version.config.context.modules } : {}),
       ...(boundProfile ? { profileSystemInstructions: boundProfile.version.config.context.systemInstructions } : {}),
       ...(orgAgent ? { orgAgent } : {}),
@@ -2990,7 +3002,7 @@ export async function wakeRuntimeSession(
         model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
-        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}), ...(run.metadata.dispatcherCompletion === true ? { dispatcherCompletion: true } : {}), ...(typeof run.metadata.taskboardStagePrompt === 'string' ? { taskboardStagePrompt: run.metadata.taskboardStagePrompt } : {}), runtimeIsolationMetadata: run.metadata,
+        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}), ...(run.metadata.dispatcherCompletion === true ? { dispatcherCompletion: true } : {}), ...(typeof run.metadata.taskboardBoardPrompt === 'string' ? { taskboardBoardPrompt: run.metadata.taskboardBoardPrompt } : {}), ...(typeof run.metadata.taskboardStagePrompt === 'string' ? { taskboardStagePrompt: run.metadata.taskboardStagePrompt } : {}), runtimeIsolationMetadata: run.metadata,
         abortController,
         runtimeWorkerId: options.lease?.workerId,
         runtimeDrainHandoff: drainHandoff,
@@ -3063,7 +3075,7 @@ export async function wakeRuntimeSession(
         model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
-        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}), ...(run.metadata.dispatcherCompletion === true ? { dispatcherCompletion: true } : {}), ...(typeof run.metadata.taskboardStagePrompt === 'string' ? { taskboardStagePrompt: run.metadata.taskboardStagePrompt } : {}), runtimeIsolationMetadata: run.metadata,
+        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}), ...(run.metadata.dispatcherCompletion === true ? { dispatcherCompletion: true } : {}), ...(typeof run.metadata.taskboardBoardPrompt === 'string' ? { taskboardBoardPrompt: run.metadata.taskboardBoardPrompt } : {}), ...(typeof run.metadata.taskboardStagePrompt === 'string' ? { taskboardStagePrompt: run.metadata.taskboardStagePrompt } : {}), runtimeIsolationMetadata: run.metadata,
         abortController,
         runtimeWorkerId: options.lease?.workerId,
         runtimeDrainHandoff: drainHandoff,
@@ -3129,7 +3141,7 @@ export async function wakeRuntimeSession(
         model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
         approvalPolicy,
-        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}), ...(run.metadata.dispatcherCompletion === true ? { dispatcherCompletion: true } : {}), ...(typeof run.metadata.taskboardStagePrompt === 'string' ? { taskboardStagePrompt: run.metadata.taskboardStagePrompt } : {}),
+        ...(wakeToolProfile ? { toolProfile: wakeToolProfile } : {}), ...(run.metadata.dispatcherCompletion === true ? { dispatcherCompletion: true } : {}), ...(typeof run.metadata.taskboardBoardPrompt === 'string' ? { taskboardBoardPrompt: run.metadata.taskboardBoardPrompt } : {}), ...(typeof run.metadata.taskboardStagePrompt === 'string' ? { taskboardStagePrompt: run.metadata.taskboardStagePrompt } : {}),
         ...(session.orgAgentId ? { orgAgentId: session.orgAgentId } : {}),
         recordUserMessage: wakePrompt.recordUserMessage,
         abortController,

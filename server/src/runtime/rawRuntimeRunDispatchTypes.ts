@@ -396,7 +396,8 @@ export interface RawApprovalResumeRequest {
   /** run.metadata.toolProfile 恢复（wake 路径传入；resume 后维持受限工具集）。 */
   toolProfile?: 'memory_poll' | 'memory_consolidate';
   dispatcherCompletion?: boolean;
-  /** run.metadata.taskboardStagePrompt 恢复：任务看板 Execution 按阶段配置的特定提示语。 */
+  /** run.metadata 中恢复的任务看板整体提示语与当前阶段提示语。 */
+  taskboardBoardPrompt?: string;
   taskboardStagePrompt?: string;
   /** Server-only persisted metadata for Integration Work/Review isolation re-attestation. */
   runtimeIsolationMetadata?: Record<string, unknown>;
@@ -424,7 +425,8 @@ export interface RawInteractionResumeRequest {
   /** run.metadata.toolProfile 恢复（wake 路径传入；resume 后维持受限工具集）。 */
   toolProfile?: 'memory_poll' | 'memory_consolidate';
   dispatcherCompletion?: boolean;
-  /** run.metadata.taskboardStagePrompt 恢复：任务看板 Execution 按阶段配置的特定提示语。 */
+  /** run.metadata 中恢复的任务看板整体提示语与当前阶段提示语。 */
+  taskboardBoardPrompt?: string;
   taskboardStagePrompt?: string;
   /** Server-only persisted metadata for Integration Work/Review isolation re-attestation. */
   runtimeIsolationMetadata?: Record<string, unknown>;

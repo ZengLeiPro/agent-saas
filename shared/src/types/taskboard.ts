@@ -412,8 +412,10 @@ export interface TaskBoardExecutionIntegrationCandidate {
   sourceSnapshots: TaskBoardIntegrationCandidateSourceSnapshot[];
 }
 
+export type TaskBoardExecutionContextBoard = Omit<TaskBoard, "prompt" | "stagePrompts">;
+
 export interface TaskBoardExecutionContextResponse {
-  board: TaskBoard;
+  board: TaskBoardExecutionContextBoard;
   task: TaskBoardTask;
   comments?: TaskBoardComment[];
   executions?: TaskBoardExecution[];

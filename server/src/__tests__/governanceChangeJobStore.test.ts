@@ -24,7 +24,7 @@ function buildPool() {
       if (existing) return { rows: [], rowCount: 0 };
       const row = {
         job_id: params[0], tenant_id: params[1], job_type: params[2], target_type: params[3], target_id: params[4],
-        idempotency_key: params[5], request_json: JSON.parse(String(params[6])), status: 'pending', revision: '1', attempt: 0,
+        idempotency_key: params[5], request_json: JSON.parse(String(params[6])), status: 'pending', revision: '1', attempt: 0, max_attempts: params[8] ?? 5,
         last_error_code: null, next_retry_at: null, created_at: NOW, created_by: params[7], updated_at: NOW,
         updated_by: params[7], completed_at: null,
       };
@@ -121,7 +121,7 @@ describe('Governance Change Job', () => {
     expect(sql).toContain('test_governance_change_jobs_active_target_unique');
     expect(sql).toContain("WHERE status IN ('pending','running','retry_wait')");
     expect(sql).toContain('unresolved_items_json');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(27);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(29);
   });
 
   it('同 idempotency key 返回同一 Job，不重复建立分域', async () => {
@@ -243,7 +243,8 @@ describe('Governance Change Job', () => {
     let job: GovernanceChangeJob = {
       jobId: 'job-offboard', tenantId: 'acme', jobType: 'user_offboarding', targetType: 'user',
       targetId: 'leaver', idempotencyKey: 'offboard-1', request: {}, status: 'pending',
-      revision: 1, attempt: 0, createdAt: NOW, createdBy: 'admin', updatedAt: NOW, updatedBy: 'admin',
+      revision: 1, attempt: 0, maxAttempts: 5,
+      createdAt: NOW, createdBy: 'admin', updatedAt: NOW, updatedBy: 'admin',
     };
     const domains = new Map<string, GovernanceChangeJobDomain>([
       ['credentials_connectors', {

@@ -39,6 +39,7 @@ function rowToJob(row: Record<string, unknown>): GovernanceChangeJob {
     jobType: row.job_type as GovernanceChangeJobType, targetType: String(row.target_type), targetId: String(row.target_id),
     idempotencyKey: String(row.idempotency_key), request: row.request_json as Record<string, unknown>,
     status: row.status as GovernanceChangeJob['status'], revision: Number(row.revision), attempt: Number(row.attempt),
+    maxAttempts: Number(row.max_attempts ?? 5),
     ...(row.last_error_code ? { lastErrorCode: String(row.last_error_code) } : {}),
     ...(row.next_retry_at ? { nextRetryAt: row.next_retry_at instanceof Date ? row.next_retry_at.toISOString() : String(row.next_retry_at) } : {}),
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
@@ -157,10 +158,13 @@ export class PgGovernanceChangeJobStore {
     idempotencyKey: string;
     request?: Record<string, unknown>;
     domains: string[];
+    maxAttempts?: number;
     createdBy: string;
   }): Promise<{ job: GovernanceChangeJob; domains: GovernanceChangeJobDomain[]; created: boolean }> {
+    const maxAttempts = input.maxAttempts ?? 5;
     if (!input.tenantId.trim() || !input.targetType.trim() || !input.targetId.trim()
-      || !input.idempotencyKey.trim() || input.domains.length === 0 || input.domains.some(domain => !domain.trim())) {
+      || !input.idempotencyKey.trim() || input.domains.length === 0 || input.domains.some(domain => !domain.trim())
+      || !Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 100) {
       throw new GovernanceChangeJobInvariantError('CHANGE_JOB_INVALID');
     }
     assertChangeJobRequestSafe(input.request ?? {});
@@ -168,12 +172,13 @@ export class PgGovernanceChangeJobStore {
       const jobId = `chg-${randomUUID()}`;
       const inserted = await client.query(`
         INSERT INTO ${this.jobsTable} (
-          job_id,tenant_id,job_type,target_type,target_id,idempotency_key,request_json,status,created_by,updated_by
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,'pending',$8,$8)
+          job_id,tenant_id,job_type,target_type,target_id,idempotency_key,request_json,status,
+          max_attempts,created_by,updated_by
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,'pending',$9,$8,$8)
         ON CONFLICT DO NOTHING RETURNING *
       `, [
         jobId, input.tenantId, input.jobType, input.targetType, input.targetId,
-        input.idempotencyKey, JSON.stringify(input.request ?? {}), input.createdBy,
+        input.idempotencyKey, JSON.stringify(input.request ?? {}), input.createdBy, maxAttempts,
       ]);
       let job: GovernanceChangeJob;
       let created = false;
@@ -212,6 +217,7 @@ export class PgGovernanceChangeJobStore {
         const identityMatches = job.targetType === input.targetType
           && job.targetId === input.targetId
           && job.createdBy === input.createdBy
+          && job.maxAttempts === maxAttempts
           && governanceDigest(job.request) === governanceDigest(input.request ?? {})
           && governanceDigest(existingDomains) === governanceDigest(requestedDomains);
         if (!identityMatches) throw new GovernanceChangeJobInvariantError('IDEMPOTENCY_KEY_REUSE_CONFLICT');
@@ -321,7 +327,7 @@ export class PgGovernanceChangeJobStore {
     errorCode: string;
     failedBy: string;
     retryAt?: string;
-    terminalStatus?: 'partial' | 'failed';
+    terminalStatus?: 'partial' | 'failed' | 'dead_letter';
   }): Promise<GovernanceChangeJob> {
     const retryAt = input.retryAt ? new Date(input.retryAt) : undefined;
     if (retryAt && Number.isNaN(retryAt.getTime())) throw new GovernanceChangeJobInvariantError('CHANGE_JOB_INVALID');
@@ -329,7 +335,7 @@ export class PgGovernanceChangeJobStore {
     const result = await this.options.pool.query(`
       UPDATE ${this.jobsTable}
       SET status=$4,last_error_code=$5,next_retry_at=$6,revision=revision+1,updated_at=NOW(),updated_by=$7,
-          completed_at=CASE WHEN $4 IN ('partial','failed') THEN NOW() ELSE NULL END
+          completed_at=CASE WHEN $4 IN ('partial','failed','dead_letter') THEN NOW() ELSE NULL END
       WHERE tenant_id=$1 AND job_id=$2 AND revision=$3 AND status='running' AND updated_by=$7 RETURNING *
     `, [
       input.tenantId, input.jobId, input.expectedRevision, status,
@@ -344,7 +350,11 @@ export class PgGovernanceChangeJobStore {
     jobId: string,
     expectedRevision: number,
     requestedBy: string,
+    additionalAttempts = 5,
   ): Promise<GovernanceChangeJob> {
+    if (!Number.isInteger(additionalAttempts) || additionalAttempts < 1 || additionalAttempts > 20) {
+      throw new GovernanceChangeJobInvariantError('CHANGE_JOB_INVALID');
+    }
     return this.withTransaction(async client => {
       const currentResult = await client.query(
         `SELECT * FROM ${this.jobsTable} WHERE tenant_id=$1 AND job_id=$2 FOR UPDATE`,
@@ -353,7 +363,7 @@ export class PgGovernanceChangeJobStore {
       if (!currentResult.rows[0]) throw new GovernanceChangeJobInvariantError('CHANGE_JOB_NOT_FOUND');
       const current = rowToJob(currentResult.rows[0]);
       if (current.revision !== expectedRevision) throw new GovernanceChangeJobInvariantError('CHANGE_JOB_VERSION_CONFLICT');
-      if (!['retry_wait', 'partial', 'failed'].includes(current.status)) {
+      if (!['retry_wait', 'partial', 'failed', 'dead_letter'].includes(current.status)) {
         throw new GovernanceChangeJobInvariantError('CHANGE_JOB_INVALID_TRANSITION');
       }
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
@@ -370,10 +380,12 @@ export class PgGovernanceChangeJobStore {
         const result = await client.query(`
           UPDATE ${this.jobsTable}
           SET status='retry_wait',next_retry_at=NOW(),completed_at=NULL,
+              max_attempts=GREATEST(max_attempts,attempt+$5),
               revision=revision+1,updated_at=NOW(),updated_by=$4
-          WHERE tenant_id=$1 AND job_id=$2 AND revision=$3 AND status IN ('retry_wait','partial','failed')
+          WHERE tenant_id=$1 AND job_id=$2 AND revision=$3
+            AND status IN ('retry_wait','partial','failed','dead_letter')
           RETURNING *
-        `, [tenantId, jobId, expectedRevision, requestedBy]);
+        `, [tenantId, jobId, expectedRevision, requestedBy, additionalAttempts]);
         if (result.rows[0]) return rowToJob(result.rows[0]);
       } catch (error) {
         if ((error as { code?: string }).code === '23505') {

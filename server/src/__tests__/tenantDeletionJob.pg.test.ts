@@ -21,7 +21,7 @@ async function waitForJob(
   jobs: PgGovernanceChangeJobStore,
   tenantId: string,
   jobId: string,
-  status: 'succeeded' | 'retry_wait',
+  status: 'succeeded' | 'retry_wait' | 'dead_letter',
 ): Promise<void> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
@@ -141,6 +141,76 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
     expect(errors).toEqual([]);
     expect(tenantStore.findById('restart-acme')).toBeUndefined();
     expect((await jobs.get('restart-acme', created.job.jobId))?.attempt).toBe(2);
+  }, 30_000);
+
+  it('moves retryable failures to observable dead_letter at the persisted attempt limit', async () => {
+    const jobs = new PgGovernanceChangeJobStore({ pool, tablePrefix: prefix });
+    await jobs.init();
+    const tenantStore = new TenantStore(join(tmpRoot, 'dead-letter-tenants.json'));
+    await tenantStore.create({ id: 'dead-acme', name: 'Dead Acme', createdBy: 'test' });
+    await tenantStore.create({ id: 'dead-guard', name: 'Dead Guard', createdBy: 'test' });
+    let attempts = 0;
+    const executor = createDurableTenantDeletionExecutor({
+      jobs,
+      tenantStore,
+      maxAttempts: 2,
+      retryDelayMs: 5,
+      pollIntervalMs: 10,
+      governanceCleanup: { execute: async () => undefined } as never,
+      deleteResources: async () => {
+        attempts += 1;
+        throw new Error('INJECTED_PERSISTENT_FAILURE');
+      },
+    });
+
+    const first = await executor.execute({
+      tenantId: 'dead-acme', idempotencyKey: 'dead-delete-v1', requestedBy: 'admin', reasonCode: 'test',
+    });
+    expect(first.job).toMatchObject({ status: 'retry_wait', attempt: 1, maxAttempts: 2 });
+    executor.start();
+    await waitForJob(jobs, 'dead-acme', first.job.jobId, 'dead_letter');
+    await executor.stop();
+
+    expect(await jobs.get('dead-acme', first.job.jobId)).toMatchObject({
+      status: 'dead_letter', attempt: 2, maxAttempts: 2, lastErrorCode: 'INJECTED_PERSISTENT_FAILURE',
+    });
+    expect(attempts).toBe(2);
+    expect(tenantStore.findById('dead-acme')).toMatchObject({ disabled: true });
+  }, 30_000);
+
+  it('replays a failed terminal job with revision CAS and rejects a duplicate stale replay', async () => {
+    const jobs = new PgGovernanceChangeJobStore({ pool, tablePrefix: prefix });
+    await jobs.init();
+    const tenantStore = new TenantStore(join(tmpRoot, 'terminal-replay-tenants.json'));
+    await tenantStore.create({ id: 'terminal-acme', name: 'Terminal Acme', createdBy: 'test' });
+    await tenantStore.create({ id: 'terminal-guard', name: 'Terminal Guard', createdBy: 'test' });
+    const created = await jobs.create({
+      tenantId: 'terminal-acme', jobType: 'tenant_delete', targetType: 'tenant', targetId: 'terminal-acme',
+      idempotencyKey: 'terminal-delete-v1', request: { reasonCode: 'test' },
+      domains: [...TENANT_DELETE_DOMAINS], createdBy: 'admin', maxAttempts: 2,
+    });
+    const claimed = await jobs.claim('terminal-acme', created.job.jobId, created.job.revision, 'injector');
+    const terminal = await jobs.fail({
+      tenantId: 'terminal-acme', jobId: created.job.jobId, expectedRevision: claimed.revision,
+      errorCode: 'INJECTED_TERMINAL_FAILURE', failedBy: 'injector', terminalStatus: 'failed',
+    });
+    const executor = createDurableTenantDeletionExecutor({
+      jobs,
+      tenantStore,
+      governanceCleanup: { execute: async () => undefined } as never,
+      deleteResources: async tenantId => ({ tenantId } as TenantDeletionReport),
+    });
+
+    const replayed = await executor.replay({
+      tenantId: 'terminal-acme', jobId: terminal.jobId, expectedRevision: terminal.revision,
+      requestedBy: 'platform-admin', additionalAttempts: 2,
+    });
+    expect(replayed.job).toMatchObject({ status: 'succeeded', attempt: 2, maxAttempts: 3 });
+    await expect(executor.replay({
+      tenantId: 'terminal-acme', jobId: terminal.jobId, expectedRevision: terminal.revision,
+      requestedBy: 'platform-admin', additionalAttempts: 2,
+    })).rejects.toThrow('CHANGE_JOB_VERSION_CONFLICT');
+    expect(tenantStore.findById('terminal-acme')).toBeUndefined();
   }, 30_000);
 
   it('continuously consumes a retry when next_retry_at becomes due without another route call', async () => {

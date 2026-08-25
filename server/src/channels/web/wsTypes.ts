@@ -212,7 +212,7 @@ export type WsDownstreamEvent =
     | { type: 'pending_interactions'; interactions: Array<{ interactionId: string; type: string; runId?: string; toolCallId?: string; invocationId?: string; questions?: WsAskUserQuestion[]; toolId?: string; toolName?: string; displayName?: string; toolInput?: Record<string, unknown>; planContent?: string }> }
     | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; requestId?: string }
     | { type: 'stream_started'; sessionId: string; streamId: string; runId?: string }
-    | { type: 'interaction_resolved'; sessionId: string; interactionId: string }
+    | { type: 'interaction_resolved'; sessionId: string; interactionId: string; response?: Record<string, unknown> }
     | { type: 'session_deleted'; sessionId: string }
     | { type: 'user_message'; content: string; timestamp: number; client_msg_id?: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }> }
     | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction }

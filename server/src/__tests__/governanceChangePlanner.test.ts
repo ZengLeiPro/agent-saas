@@ -29,7 +29,7 @@ function buildPlanner() {
         job: {
           jobId: 'chg-1', tenantId: input.tenantId, jobType: input.jobType,
           targetType: input.targetType, targetId: input.targetId, idempotencyKey: input.idempotencyKey,
-          request: input.request, status: 'pending', revision: 1, attempt: 0,
+          request: input.request, status: 'pending', revision: 1, attempt: 0, maxAttempts: 5,
           createdAt: credential.createdAt, createdBy: input.createdBy,
           updatedAt: credential.updatedAt, updatedBy: input.createdBy,
         },

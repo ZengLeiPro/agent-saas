@@ -146,7 +146,7 @@ describe('WebChannel persistent interaction recovery', () => {
       expect((await runStore.get('run-ask-1'))?.metadata?.resumeInteraction).toEqual({
         interactionId: 'ask-int-1', response: { answers: { q1: '红色' } },
       });
-      expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: 'ask-int-1' });
+      expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: 'ask-int-1', response: { answers: { q1: '红色' } } });
       expect(rig.userEvents).toContainEqual({ type: 'session_status', sessionId, status: 'queued', runId: 'run-ask-1' });
     });
 

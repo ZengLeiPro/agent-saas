@@ -7,6 +7,7 @@ import { governanceV18Statements } from './v18Migration.js';
 import { buildContextMigrationSql } from '../../context/store/migration.js';
 import { buildContextPhase23MigrationSql } from '../../context/phase23/migration.js';
 import { buildContextPhase4MigrationSql } from '../../context/phase4/migration.js';
+import { buildContextRetentionMigrationSql } from '../../context/lifecycle/migration.js';
 
 export type GovernancePgPool = pg.Pool;
 
@@ -548,9 +549,12 @@ function migrations(prefix: string): GovernanceMigration[] {
           target_id TEXT NOT NULL,
           idempotency_key TEXT NOT NULL,
           request_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-          status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'retry_wait', 'succeeded', 'failed')),
+          status TEXT NOT NULL CHECK (status IN (
+            'pending', 'running', 'retry_wait', 'succeeded', 'partial', 'failed', 'dead_letter'
+          )),
           revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
           attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),
+          max_attempts INTEGER NOT NULL DEFAULT 5 CHECK (max_attempts >= 1),
           last_error_code TEXT,
           next_retry_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -922,6 +926,26 @@ function migrations(prefix: string): GovernanceMigration[] {
       version: 27,
       statements: [`ALTER TABLE ${changeJobDomains}
         ADD COLUMN IF NOT EXISTS unresolved_items_json JSONB NOT NULL DEFAULT '[]'::jsonb`],
+    },
+    { version: 28, statements: buildContextRetentionMigrationSql(prefix) },
+    {
+      version: 29,
+      statements: [
+        `ALTER TABLE ${changeJobs} ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 5 CHECK (max_attempts >= 1)`,
+        `DO $$ DECLARE constraint_name TEXT; BEGIN
+          SELECT conname INTO constraint_name FROM pg_constraint
+          WHERE conrelid='${changeJobs}'::regclass AND contype='c'
+            AND pg_get_constraintdef(oid) LIKE '%status%retry_wait%succeeded%failed%';
+          IF constraint_name IS NOT NULL
+            AND pg_get_constraintdef((SELECT oid FROM pg_constraint
+              WHERE conrelid='${changeJobs}'::regclass AND conname=constraint_name)) NOT LIKE '%dead_letter%'
+          THEN
+            EXECUTE format('ALTER TABLE ${changeJobs} DROP CONSTRAINT %I', constraint_name);
+            ALTER TABLE ${changeJobs} ADD CONSTRAINT ${changeJobs}_status_check
+              CHECK (status IN ('pending','running','retry_wait','succeeded','partial','failed','dead_letter'));
+          END IF;
+        END $$`,
+      ],
     },
   ];
 }

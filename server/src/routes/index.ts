@@ -48,6 +48,7 @@ export {
 export {
   createContextAdminRouter,
   type ContextAdminRouterOptions,
+  type ContextRetentionWorkerPort,
 } from './contextAdmin.js';
 export {
   createSystemPromptsAdminRouter,

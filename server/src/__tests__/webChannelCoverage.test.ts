@@ -655,7 +655,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await expect(pending).resolves.toEqual({ allow: true, message: '同意执行' });
       // respond_ok 在 appendDurableWebCommand（真实 fs 扫描）之后发出 → 等宏任务
       await vi.waitFor(() => { expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: id, clientAttemptId: 'attempt-success', response: { allow: true, message: '同意执行' } }); }, { timeout: 5_000 });
-      expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: id });
+      expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: id, response: { allow: true, message: '同意执行' } });
       expect(interactionStore.get(id)).toBeUndefined();
     });
     it('未知交互且无持久化兜底 → Interaction not found or expired', async () => {
@@ -1553,7 +1553,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect((await runStore.get('run-ask-1'))?.metadata?.resumeInteraction).toEqual({
         interactionId: 'ask-int-1', response: { answers: { q1: '红色' } },
       });
-      expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: 'ask-int-1' });
+      expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: 'ask-int-1', response: { answers: { q1: '红色' } } });
       expect(rig.userEvents).toContainEqual({ type: 'session_status', sessionId, status: 'queued', runId: 'run-ask-1' });
     });
 
@@ -1657,11 +1657,11 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(resumeCalls).toHaveLength(0);
       const events = await eventStore.list(TENANT, sessionId);
       expect(events.at(-1)).toMatchObject({
-        type: 'approval_resolved',
-        approvalId: 'appr-l-1',
+        type: 'approval_resolved', approvalId: 'appr-l-1',
         decision: 'rejected',
         message: expect.stringContaining('未恢复旧 Run'),
       });
+      expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: 'appr-l-1', response: { allow: false, message: '持久审批恢复需要 Runtime Scheduler；已安全拒绝，未恢复旧 Run' } });
       expect(rig.userEvents).not.toContainEqual(expect.objectContaining({ type: 'session_status', status: 'busy' }));
       expect((rig.channel as any).findActiveStreamIdBySession(sessionId)).toBeUndefined();
     });

@@ -75,7 +75,7 @@ export type WsEvent =
     | { type: 'pending_interactions'; interactions: Array<{ interactionId: string; type: string; questions?: WsAskUserQuestion[]; toolId?: string; toolName?: string; displayName?: string; toolInput?: Record<string, unknown>; planContent?: string }> }
     | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; requestId?: string }
     | { type: 'stream_started'; sessionId: string; streamId: string; runId?: string }
-    | { type: 'interaction_resolved'; sessionId: string; interactionId: string }
+    | { type: 'interaction_resolved'; sessionId: string; interactionId: string; response?: Record<string, unknown> }
     | { type: 'session_deleted'; sessionId: string }
     | { type: 'session_read_state_changed'; sessionId: string; hasUnreadAiReply: boolean }
     | { type: 'user_message'; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number; client_msg_id?: string; sourceRunId?: string; sessionId?: string }

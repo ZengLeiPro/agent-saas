@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { DerivedContextAdminReadStore } from '../context/derived/index.js';
+import { ContextRetentionStore, ContextRetentionWorker, type ContextRetentionReceipt } from '../context/lifecycle/index.js';
 import {
   ContextProductAuthorization,
   ContextProductService,
@@ -10,6 +11,44 @@ import { AssignmentContextRecallScopeResolver } from '../context/retrieval/index
 import type { ContextAdminConsumerStorePort } from '../routes/contextAdmin.js';
 import type { AppConfig } from '../types/index.js';
 import type { AppRuntime } from './runtimeContracts.js';
+
+export function createContextRetentionWorker(
+  runtime: AppRuntime,
+  config: AppConfig,
+): ContextRetentionWorker | undefined {
+  const pool = runtime.runtimePgEventStore?.pool;
+  const audit = runtime.governanceAuditStore;
+  if (!pool || !audit) return undefined;
+  const tablePrefix = config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined;
+  return new ContextRetentionWorker(
+    new ContextRetentionStore({ pool, ...(tablePrefix ? { tablePrefix } : {}) }),
+    async (receipt: ContextRetentionReceipt) => {
+      try {
+        await audit.append({
+          auditId: receipt.receiptId,
+          correlationId: receipt.receiptId,
+          actorType: 'service', actorUserId: 'context-retention-worker', actorPersona: 'service',
+          action: 'context.retention.collect', targetType: 'context_retention_receipt',
+          targetId: receipt.receiptId, targetTenantId: receipt.tenantId,
+          purpose: 'context retention and garbage collection', result: 'succeeded',
+          afterDigest: receipt.receiptSha256,
+          metadata: {
+            dryRun: receipt.dryRun,
+            sourceOutboxWatermark: receipt.sourceOutboxWatermark,
+            derivedOutboxWatermark: receipt.derivedOutboxWatermark,
+            sourceOutboxCount: receipt.counts.sourceOutbox,
+            derivedOutboxCount: receipt.counts.derivedOutbox,
+            evidenceCount: receipt.counts.evidence,
+            revisionCount: receipt.counts.revisions,
+          },
+        });
+      } catch (error) {
+        // A deterministic audit id makes retry idempotent after an uncertain append outcome.
+        if ((error as { code?: string })?.code !== '23505') throw error;
+      }
+    },
+  );
+}
 
 export function createContextAdminConsumerStore(
   runtime: AppRuntime,

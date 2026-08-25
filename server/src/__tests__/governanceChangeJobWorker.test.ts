@@ -64,6 +64,26 @@ describe('GovernanceChangeJobWorker', () => {
     expect(store.claim.mock.calls[0][3]).toBe(store.recoverExpiredRunning.mock.calls[0][3]);
   });
 
+  it('达到持久化尝试上限后进入可观察 dead_letter', async () => {
+    const exhausted = { ...job, status: 'running', revision: 2, attempt: 3, maxAttempts: 3 };
+    const store = {
+      get: vi.fn().mockResolvedValue({ ...job, attempt: 2, maxAttempts: 3 }),
+      claim: vi.fn().mockResolvedValue(exhausted),
+      listDomains: vi.fn().mockResolvedValue(domains),
+      updateDomain: vi.fn().mockResolvedValue({}),
+      renewLease: vi.fn().mockResolvedValue(true),
+      complete: vi.fn(),
+      fail: vi.fn().mockResolvedValue({ ...exhausted, status: 'dead_letter', revision: 3 }),
+    };
+    const worker = new GovernanceChangeJobWorker({ store: store as never, workerId: 'worker-1' });
+    await expect(worker.execute({
+      tenantId: 'acme', jobId: 'job-1', handlers: { first: async () => { throw new Error('DB_DOWN'); } },
+    })).resolves.toMatchObject({ status: 'dead_letter' });
+    expect(store.fail).toHaveBeenCalledWith(expect.objectContaining({
+      expectedRevision: 2, errorCode: 'DB_DOWN', terminalStatus: 'dead_letter',
+    }));
+  });
+
   it('domain 失败记录失败计数并进入 retry_wait', async () => {
     const store = {
       get: vi.fn().mockResolvedValue(job),

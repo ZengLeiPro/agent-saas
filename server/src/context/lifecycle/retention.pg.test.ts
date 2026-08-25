@@ -1,12 +1,13 @@
 import { randomBytes } from 'node:crypto';
 
 import { Pool } from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { PgGovernanceMigrationRunner } from '../../data/governance-schema/index.js';
 import { tableNames as phase4TableNames } from '../phase4/migration.js';
 import { ContextStore } from '../store/store.js';
-import { ContextRetentionStore } from './retention.js';
+import { ContextRetentionStore, ContextRetentionWorker } from './retention.js';
+import { contextRetentionTableNames } from './migration.js';
 
 const connectionString = process.env.TEST_DATABASE_URL?.trim();
 const describePg = connectionString ? describe : describe.skip;
@@ -29,6 +30,7 @@ describePg('Context retention PostgreSQL lifecycle', () => {
       const tables = [
         ...Object.values(phase4TableNames(prefix)),
         ...Object.values(context.tables),
+        ...Object.values(contextRetentionTableNames(prefix)),
       ];
       await pool.query(`DROP TABLE IF EXISTS ${[...new Set(tables)].reverse().join(',')} CASCADE`);
       await pool.end();
@@ -80,6 +82,10 @@ describePg('Context retention PostgreSQL lifecycle', () => {
 
     const applied = await retention.collect({ ...request, dryRun: false });
     expect(applied.counts).toEqual(plan.counts);
+    const receiptRows = await pool.query(`SELECT tenant_id,audit_status,receipt_json FROM ${contextRetentionTableNames(prefix).receipts}
+      WHERE receipt_id=$1`, [applied.receiptId]);
+    expect(receiptRows.rows).toMatchObject([{ tenant_id: 'tenant-a', audit_status: 'pending',
+      receipt_json: { receiptId: applied.receiptId, receiptSha256: applied.receiptSha256 } }]);
     expect((await pool.query(`SELECT revision FROM ${context.tables.revisions} WHERE tenant_id='tenant-a' ORDER BY revision`)).rows)
       .toEqual([{ revision: '2' }]);
     expect((await pool.query(`SELECT COUNT(*)::integer count FROM ${context.tables.revisions} WHERE tenant_id='tenant-b'`)).rows[0].count).toBe(2);
@@ -92,4 +98,29 @@ describePg('Context retention PostgreSQL lifecycle', () => {
     })).rejects.toThrow('CONTEXT_RETENTION_UNSAFE_WATERMARK');
     expect((await pool.query(`SELECT COUNT(*)::integer count FROM ${context.tables.revisions} WHERE tenant_id='tenant-b'`)).rows[0].count).toBe(2);
   });
+
+  it('durably retries audit failures and cannot claim the receipt across tenants', async () => {
+    const cursors = await pool.query(`SELECT MIN(cursor_seq) watermark FROM ${phase4TableNames(prefix).consumers}
+      WHERE tenant_id='tenant-b'`);
+    const audit = vi.fn().mockRejectedValueOnce(new Error('audit offline')).mockResolvedValue(undefined);
+    const worker = new ContextRetentionWorker(retention, audit);
+    const result = await worker.run([{
+      tenantId: 'tenant-b', sourceOutboxWatermark: String(cursors.rows[0].watermark),
+      derivedOutboxWatermark: '0', retainAfter: '2021-01-01T00:00:00Z',
+    }]);
+    const receipt = result.failures[0]?.receipt;
+    expect(receipt).toBeDefined();
+    const table = contextRetentionTableNames(prefix).receipts;
+    expect((await pool.query(`SELECT audit_status,audit_attempt FROM ${table}
+      WHERE tenant_id='tenant-b' AND receipt_id=$1`, [receipt!.receiptId])).rows)
+      .toEqual([{ audit_status: 'retry_wait', audit_attempt: 1 }]);
+
+    await expect(worker.retryAudit('tenant-a', receipt!.receiptId))
+      .rejects.toThrow('CONTEXT_RETENTION_RECEIPT_NOT_FOUND');
+    await expect(worker.retryAudit('tenant-b', receipt!.receiptId)).resolves.toMatchObject({ receiptId: receipt!.receiptId });
+    expect((await pool.query(`SELECT audit_status,audit_attempt FROM ${table}
+      WHERE tenant_id='tenant-b' AND receipt_id=$1`, [receipt!.receiptId])).rows)
+      .toEqual([{ audit_status: 'delivered', audit_attempt: 2 }]);
+  });
+
 });

@@ -223,4 +223,30 @@ describe("useChatAppState ACK lifecycle", () => {
     await waitFor(() => expect(result.current.messages.find((message) => "interactionId" in message && message.interactionId === "approval-canonical"))
       .toMatchObject({ type: "permission_request", status: "allowed" }));
   });
+
+  it.each([
+    ["approval-remote-allow", true, "allowed"],
+    ["approval-remote-deny", false, "denied"],
+  ] as const)("applies cross-connection canonical approval %s", async (interactionId, allow, status) => {
+    const { result } = renderHook(() => useChatAppState());
+    act(() => emit({ type: "pending_interactions", interactions: [{
+      type: "permission_request", interactionId, toolName: "Shell", toolInput: { command: "echo test" },
+    }] }));
+    act(() => emit({ type: "interaction_resolved", sessionId: "session-remote", interactionId, response: { allow } }));
+    await waitFor(() => expect(result.current.messages.find((message) => "interactionId" in message && message.interactionId === interactionId))
+      .toMatchObject({ type: "permission_request", status }));
+  });
+
+  it("applies cross-connection canonical AskUser answer after a lost ACK and changed retry", async () => {
+    const { result } = renderHook(() => useChatAppState());
+    act(() => emit({ type: "pending_interactions", interactions: [{
+      type: "ask_user", interactionId: "ask-remote", questions: [{ question: "q", header: "h", options: [], multiSelect: false }],
+    }] }));
+    act(() => emit({
+      type: "interaction_resolved", sessionId: "session-remote", interactionId: "ask-remote",
+      response: { answers: { q: "canonical-first-answer" } },
+    }));
+    await waitFor(() => expect(result.current.messages.find((message) => "interactionId" in message && message.interactionId === "ask-remote"))
+      .toMatchObject({ type: "ask_user", status: "answered", answers: { q: "canonical-first-answer" } }));
+  });
 });

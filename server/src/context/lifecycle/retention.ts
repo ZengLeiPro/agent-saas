@@ -4,6 +4,7 @@ import type { PoolClient } from 'pg';
 
 import { tableNames as phase4TableNames } from '../phase4/migration.js';
 import { contextTableNames, contextTablePrefix, type ContextPgPool } from '../store/migration.js';
+import { contextRetentionTableNames } from './migration.js';
 
 export interface ContextRetentionRequest {
   tenantId: string;
@@ -48,12 +49,14 @@ export interface ContextRetentionStoreOptions {
 export class ContextRetentionStore {
   private readonly base;
   private readonly derived;
+  private readonly lifecycle;
   private readonly now: () => Date;
 
   constructor(private readonly options: ContextRetentionStoreOptions) {
     const prefix = contextTablePrefix(options.tablePrefix);
     this.base = contextTableNames(prefix);
     this.derived = phase4TableNames(prefix);
+    this.lifecycle = contextRetentionTableNames(prefix);
     this.now = options.now ?? (() => new Date());
   }
 
@@ -73,13 +76,17 @@ export class ContextRetentionStore {
       const counts = dryRun
         ? await this.countCandidates(client, request)
         : await this.deleteCandidates(client, request);
-      await client.query('COMMIT');
       const completedAt = this.now().toISOString();
-      const receipt = {
+      const unsignedReceipt = {
         ...request, dryRun, receiptId: randomUUID(), safeSourceOutboxWatermark: safeWatermark,
         startedAt, completedAt, counts,
       };
-      return { ...receipt, receiptSha256: receiptHash(receipt) };
+      const receipt = { ...unsignedReceipt, receiptSha256: receiptHash(unsignedReceipt) };
+      await client.query(`INSERT INTO ${this.lifecycle.receipts}
+        (tenant_id,receipt_id,receipt_json) VALUES ($1,$2,$3::jsonb)`,
+      [request.tenantId, receipt.receiptId, JSON.stringify(receipt)]);
+      await client.query('COMMIT');
+      return receipt;
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);
       throw error;
@@ -92,6 +99,40 @@ export class ContextRetentionStore {
     const result = await client.query(`SELECT COALESCE(MIN(cursor_seq),0) AS watermark
       FROM ${this.derived.consumers} WHERE tenant_id=$1`, [tenantId]);
     return String(result.rows[0]?.watermark ?? '0');
+  }
+
+  /** Claims one tenant-owned receipt for delivery. Expired claims are safely reclaimable. */
+  async claimAudit(tenantId: string, receiptId: string): Promise<{ receipt: ContextRetentionReceipt; delivered: boolean }> {
+    const result = await this.options.pool.query(`UPDATE ${this.lifecycle.receipts}
+      SET audit_status='delivering',audit_attempt=audit_attempt+1,
+        audit_lease_expires_at=NOW()+INTERVAL '5 minutes',last_audit_error=NULL,updated_at=NOW()
+      WHERE tenant_id=$1 AND receipt_id=$2::uuid AND (
+        audit_status IN ('pending','retry_wait') OR
+        (audit_status='delivering' AND audit_lease_expires_at<NOW()))
+      RETURNING receipt_json`, [tenantId, receiptId]);
+    if (result.rowCount) return { receipt: result.rows[0].receipt_json as ContextRetentionReceipt, delivered: false };
+    const existing = await this.options.pool.query(`SELECT receipt_json,audit_status
+      FROM ${this.lifecycle.receipts} WHERE tenant_id=$1 AND receipt_id=$2::uuid`, [tenantId, receiptId]);
+    if (!existing.rowCount) throw new Error('CONTEXT_RETENTION_RECEIPT_NOT_FOUND');
+    if (existing.rows[0].audit_status === 'delivered') {
+      return { receipt: existing.rows[0].receipt_json as ContextRetentionReceipt, delivered: true };
+    }
+    throw new Error('CONTEXT_RETENTION_AUDIT_IN_PROGRESS');
+  }
+
+  async completeAudit(tenantId: string, receiptId: string): Promise<void> {
+    const result = await this.options.pool.query(`UPDATE ${this.lifecycle.receipts}
+      SET audit_status='delivered',audit_lease_expires_at=NULL,last_audit_error=NULL,
+        delivered_at=NOW(),updated_at=NOW()
+      WHERE tenant_id=$1 AND receipt_id=$2::uuid AND audit_status='delivering'`, [tenantId, receiptId]);
+    if (!result.rowCount) throw new Error('CONTEXT_RETENTION_AUDIT_CLAIM_LOST');
+  }
+
+  async failAudit(tenantId: string, receiptId: string, error: string): Promise<void> {
+    await this.options.pool.query(`UPDATE ${this.lifecycle.receipts}
+      SET audit_status='retry_wait',audit_lease_expires_at=NULL,last_audit_error=$3,updated_at=NOW()
+      WHERE tenant_id=$1 AND receipt_id=$2::uuid AND audit_status='delivering'`,
+    [tenantId, receiptId, error.replace(/\s+/g, ' ').slice(0, 300)]);
   }
 
   private async countCandidates(client: PoolClient, request: ContextRetentionRequest): Promise<ContextRetentionCounts> {
@@ -169,11 +210,18 @@ export interface ContextRetentionWorkerFailure {
   receipt?: ContextRetentionReceipt;
 }
 
-/** Runs independent tenant plans; a failure is returned and never aborts later tenants. */
+export interface ContextRetentionWorkerStore {
+  collect(request: ContextRetentionRequest): Promise<ContextRetentionReceipt>;
+  claimAudit(tenantId: string, receiptId: string): Promise<{ receipt: ContextRetentionReceipt; delivered: boolean }>;
+  completeAudit(tenantId: string, receiptId: string): Promise<void>;
+  failAudit(tenantId: string, receiptId: string, error: string): Promise<void>;
+}
+
+/** Runs independent tenant plans and delivers their durable audit outbox receipts. */
 export class ContextRetentionWorker {
   constructor(
-    private readonly store: Pick<ContextRetentionStore, 'collect'>,
-    private readonly audit: (receipt: ContextRetentionReceipt) => Promise<void> = async () => undefined,
+    private readonly store: ContextRetentionWorkerStore,
+    private readonly audit: (receipt: ContextRetentionReceipt) => Promise<void>,
   ) {}
 
   async run(requests: readonly ContextRetentionRequest[]): Promise<{
@@ -186,7 +234,7 @@ export class ContextRetentionWorker {
       let committedReceipt: ContextRetentionReceipt | undefined;
       try {
         committedReceipt = await this.store.collect(request);
-        await this.audit(committedReceipt);
+        await this.deliver(committedReceipt);
         receipts.push(committedReceipt);
       } catch (error) {
         failures.push({
@@ -196,6 +244,24 @@ export class ContextRetentionWorker {
       }
     }
     return { receipts, failures };
+  }
+
+  /** Tenant and receipt id are both required; callers cannot replay another tenant's receipt. */
+  async retryAudit(tenantId: string, receiptId: string): Promise<ContextRetentionReceipt> {
+    const claimed = await this.store.claimAudit(tenantId, receiptId);
+    if (claimed.delivered) return claimed.receipt;
+    try {
+      await this.audit(claimed.receipt);
+      await this.store.completeAudit(tenantId, receiptId);
+      return claimed.receipt;
+    } catch (error) {
+      await this.store.failAudit(tenantId, receiptId, safeError(error)).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async deliver(receipt: ContextRetentionReceipt): Promise<void> {
+    await this.retryAudit(receipt.tenantId, receipt.receiptId);
   }
 }
 

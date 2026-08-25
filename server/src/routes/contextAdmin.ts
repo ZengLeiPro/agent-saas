@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { isPlatformAdmin } from '../auth/types.js';
 import { ContextProductError, type ContextProductService } from '../context/product/index.js';
+import type { ContextRetentionReceipt, ContextRetentionRequest } from '../context/lifecycle/index.js';
 
 interface ContextAdminSource {
   sourceId: string;
@@ -57,10 +58,19 @@ export interface ContextAdminConsumerStorePort {
   }>>;
 }
 
+export interface ContextRetentionWorkerPort {
+  run(requests: readonly ContextRetentionRequest[]): Promise<{
+    receipts: ContextRetentionReceipt[];
+    failures: Array<{ tenantId: string; error: string; receipt?: ContextRetentionReceipt }>;
+  }>;
+  retryAudit(tenantId: string, receiptId: string): Promise<ContextRetentionReceipt>;
+}
+
 export interface ContextAdminRouterOptions {
   store?: ContextAdminStorePort;
   consumers?: ContextAdminConsumerStorePort;
   product?: ContextProductService;
+  retention?: ContextRetentionWorkerPort;
   now?: () => Date;
 }
 
@@ -70,6 +80,14 @@ const tenantQuerySchema = z.object({
 const evidenceQuerySchema = tenantQuerySchema.extend({
   id: z.string().min(1).max(2_000),
 }).strict();
+const retentionBodySchema = z.object({
+  tenantId: z.string().trim().min(1).max(128).optional(),
+  sourceOutboxWatermark: z.string().regex(/^\d+$/),
+  derivedOutboxWatermark: z.string().regex(/^\d+$/),
+  retainAfter: z.iso.datetime(),
+  dryRun: z.boolean().optional(),
+}).strict();
+const retentionReceiptParamsSchema = z.object({ receiptId: z.uuid() }).strict();
 const productListQuerySchema = tenantQuerySchema.extend({
   cursor: z.string().min(1).max(2_000).optional(),
   limit: z.coerce.number().int().min(1).max(50).optional(),
@@ -205,6 +223,46 @@ export function createContextAdminRouter(options: ContextAdminRouterOptions): Ro
   });
   router.get('/reviews', async (req, res) => productRead(req, res, options, productListQuerySchema,
     (product, subject, query) => product.listReviews(subject, query)));
+
+  router.post('/retention', async (req, res) => {
+    if (!options.retention) return unavailable(res);
+    const body = retentionBodySchema.safeParse(req.body);
+    if (!body.success) return res.status(400).json({ code: 'CONTEXT_RETENTION_INVALID' });
+    const tenantId = resolveTenant(req, body.data.tenantId);
+    if (!tenantId) return res.status(403).json({ code: 'CONTEXT_ADMIN_TENANT_FORBIDDEN' });
+    const { tenantId: _requested, ...plan } = body.data;
+    const result = await options.retention.run([{ ...plan, tenantId }]);
+    if (result.failures.length) {
+      const failure = result.failures[0]!;
+      return res.status(failure.receipt ? 502 : 500).json({
+        code: 'CONTEXT_RETENTION_FAILED', error: failure.error,
+        ...(failure.receipt ? { receipt: failure.receipt } : {}),
+      });
+    }
+    return res.status(200).json({ receipt: result.receipts[0] });
+  });
+
+  router.post('/retention/receipts/:receiptId/retry', async (req, res) => {
+    if (!options.retention) return unavailable(res);
+    const params = retentionReceiptParamsSchema.safeParse(req.params);
+    const query = tenantQuerySchema.safeParse(req.query);
+    if (!params.success || !query.success) return res.status(400).json({ code: 'CONTEXT_RETENTION_INVALID' });
+    const tenantId = resolveTenant(req, query.data.tenantId);
+    if (!tenantId) return res.status(403).json({ code: 'CONTEXT_ADMIN_TENANT_FORBIDDEN' });
+    try {
+      const receipt = await options.retention.retryAudit(tenantId, params.data.receiptId);
+      return res.status(200).json({ receipt });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'CONTEXT_RETENTION_RECEIPT_NOT_FOUND') {
+        return res.status(404).json({ code: message });
+      }
+      if (message === 'CONTEXT_RETENTION_AUDIT_IN_PROGRESS') {
+        return res.status(409).json({ code: message });
+      }
+      return res.status(502).json({ code: 'CONTEXT_RETENTION_AUDIT_FAILED' });
+    }
+  });
 
   router.post('/entities/:entityId/corrections', async (req, res) => {
     const params = entityParamsSchema.safeParse(req.params);

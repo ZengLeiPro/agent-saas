@@ -1250,7 +1250,7 @@ export class WebChannel implements BaseChannel {
           this.eventBus!.emitUser(entry.userId, {
             type: 'interaction_resolved',
             sessionId,
-            interactionId,
+            interactionId, response: durableResponse,
           }, client.ws);
           break;
         }
@@ -1344,7 +1344,7 @@ export class WebChannel implements BaseChannel {
           ...(pendingAskUser.invocationId ? { invocationId: pendingAskUser.invocationId } : {}), interactionId, interactionType: 'ask_user', userId: client.user?.sub, response: normalizedResponse });
         const resumeRunId = `interaction-resume:${sessionId}:${interactionId}`;
         if (!await enqueueRuntime.runStore.get(resumeRunId)) { await enqueueRuntime.scheduler.enqueue({ runId: resumeRunId, sessionId, userId: currentRun.userId ?? meta.userId, tenantId, model: currentRun.model ?? meta.model, channel: 'web', executionTarget: currentRun.executionTarget ?? meta.executionTarget as any, workspaceId: currentRun.workspaceId ?? meta.workspaceId ?? sessionId, metadata: { ...(currentRun.metadata ?? {}), resumeInteractionConsumedAt: null, resumeInteractionConsumedId: null, resumeInteraction: { interactionId, response: canonicalResolved.response }, transcriptPath } }); if (client.user?.sub && this.eventBus) this.eventBus.emitUser(client.user.sub, { type: 'session_status', sessionId, status: 'queued', runId: resumeRunId }); }
-        this.sendRespond(client, interactionId, clientAttemptId, undefined, normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>)); if (client.user?.sub && this.eventBus) this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws); return true;
+        this.sendRespond(client, interactionId, clientAttemptId, undefined, normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>)); if (client.user?.sub && this.eventBus) this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId, response: normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>) }, client.ws); return true;
       }
       const acceptedEvent = existingEvents.find((event): event is Extract<PlatformEvent, { type: 'interaction_resolved' }> => event.type === 'interaction_resolved' && event.interactionId === interactionId);
       const existingClaim = currentRun.metadata?.persistedInteractionResumeClaim;
@@ -1384,7 +1384,7 @@ export class WebChannel implements BaseChannel {
       }
       this.sendRespond(client, interactionId, clientAttemptId, undefined, normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>));
       if (client.user?.sub && this.eventBus) {
-        this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws);
+        this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId, response: normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>) }, client.ws);
         this.eventBus.emitUser(client.user.sub, { type: 'session_status', sessionId, status: 'queued', runId: pendingAskUser.runId });
       }
       return true;
@@ -1398,7 +1398,7 @@ export class WebChannel implements BaseChannel {
       );
       this.sendRespond(client, interactionId, clientAttemptId, undefined, { allow: false, message: rejectionMessage });
       if (client.user?.sub && this.eventBus) {
-        this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws);
+        this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId, response: { allow: false, message: rejectionMessage } }, client.ws);
       }
       return true;
     }
@@ -1432,7 +1432,7 @@ export class WebChannel implements BaseChannel {
         );
         this.sendRespond(client, interactionId, clientAttemptId, undefined, { allow: false, message: rejectionMessage });
         if (client.user?.sub && this.eventBus) {
-          this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws);
+          this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId, response: { allow: false, message: rejectionMessage } }, client.ws);
         }
         return true;
       }
@@ -1485,7 +1485,7 @@ export class WebChannel implements BaseChannel {
       }
       this.sendRespond(client, interactionId, clientAttemptId, undefined, normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>));
       if (client.user?.sub && this.eventBus) {
-        this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws);
+        this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId, response: normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>) }, client.ws);
         this.eventBus.emitUser(client.user.sub, { type: 'session_status', sessionId, status: 'queued', runId: pendingApprovalRunId });
       }
       return true;

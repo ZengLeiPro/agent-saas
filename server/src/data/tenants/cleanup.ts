@@ -125,6 +125,14 @@ export interface DurableTenantDeletionExecutor {
   }): Promise<TenantDeletionJobReceipt>;
   get(tenantId: string, jobId: string): Promise<TenantDeletionJobReceipt | null>;
   findByIdempotency(tenantId: string, idempotencyKey: string): Promise<TenantDeletionJobReceipt | null>;
+  /** CAS-fenced replay of retryable or terminal work; grants a bounded fresh attempt budget. */
+  replay(input: {
+    tenantId: string;
+    jobId: string;
+    expectedRevision: number;
+    requestedBy: string;
+    additionalAttempts?: number;
+  }): Promise<TenantDeletionJobReceipt>;
   /** Starts with an immediate recovery scan, then continuously consumes due retries. */
   start(): void;
   /** Stops future scans and waits for the active scan to settle. */
@@ -360,6 +368,7 @@ export function createDurableTenantDeletionExecutor(options: {
   onFrozen?: (tenantId: string) => void;
   workerId?: string;
   retryDelayMs?: number;
+  maxAttempts?: number;
   leaseMs?: number;
   pollIntervalMs?: number;
   batchSize?: number;
@@ -398,7 +407,7 @@ export function createDurableTenantDeletionExecutor(options: {
     },
   });
   const executeJob = async (job: GovernanceChangeJob, created: boolean): Promise<TenantDeletionJobReceipt> => {
-    if (['succeeded', 'partial', 'failed'].includes(job.status)) return receipt(job, created);
+    if (['succeeded', 'partial', 'failed', 'dead_letter'].includes(job.status)) return receipt(job, created);
     if (job.status === 'retry_wait' && job.nextRetryAt && Date.parse(job.nextRetryAt) > Date.now()) {
       return receipt(job, created);
     }
@@ -446,7 +455,9 @@ export function createDurableTenantDeletionExecutor(options: {
         const created = await options.jobs.create({
           tenantId: input.tenantId, jobType: 'tenant_delete', targetType: 'tenant', targetId: input.tenantId,
           idempotencyKey: input.idempotencyKey, request: { reasonCode: input.reasonCode },
-          domains: [...TENANT_DELETE_DOMAINS], createdBy: input.requestedBy,
+          domains: [...TENANT_DELETE_DOMAINS],
+          ...(options.maxAttempts !== undefined ? { maxAttempts: options.maxAttempts } : {}),
+          createdBy: input.requestedBy,
         });
         return executeJob(created.job, created.created);
       });
@@ -458,6 +469,21 @@ export function createDurableTenantDeletionExecutor(options: {
     async findByIdempotency(tenantId, idempotencyKey) {
       const job = await options.jobs.findByIdempotency(tenantId, 'tenant_delete', idempotencyKey);
       return job ? receipt(job, false) : null;
+    },
+    async replay(input) {
+      return perTenant(input.tenantId, async () => {
+        const current = await options.jobs.get(input.tenantId, input.jobId);
+        if (!current || current.jobType !== 'tenant_delete') throw new Error('CHANGE_JOB_NOT_FOUND');
+        const replayed = await options.jobs.retryNow(
+          input.tenantId,
+          input.jobId,
+          input.expectedRevision,
+          input.requestedBy,
+          input.additionalAttempts ?? options.maxAttempts ?? 5,
+        );
+        if (replayed.jobType !== 'tenant_delete') throw new Error('CHANGE_JOB_NOT_FOUND');
+        return executeJob(replayed, false);
+      });
     },
     start() {
       if (!stopped) return;

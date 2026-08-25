@@ -115,6 +115,7 @@ interface RigOptions {
   /** true 时 orgAgentStore 的落盘路径被目录占据 → persist 必失败（验证 seed 降级） */
   brokenOrgAgentStore?: boolean;
   governanceAuditStore?: GovernanceAuditStore;
+  replayError?: string;
 }
 
 interface TestRig {
@@ -178,6 +179,17 @@ async function makeTestRig(opts: RigOptions = {}): Promise<TestRig> {
         },
         get: async () => null,
         findByIdempotency: async () => null,
+        replay: async ({ tenantId, jobId, expectedRevision }: {
+          tenantId: string; jobId: string; expectedRevision: number;
+        }) => {
+          if (opts.replayError) throw new Error(opts.replayError);
+          callOrder.push(`replay:${tenantId}:${jobId}:${expectedRevision}`);
+          return {
+            created: false,
+            job: { jobId, tenantId, status: 'succeeded', revision: expectedRevision + 2 },
+            domains: [{ jobId, domain: 'tenant_record', status: 'succeeded' }],
+          };
+        },
       } as never,
     }),
   }));
@@ -224,6 +236,39 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
         error: `Cannot rename the default tenant "${DEFAULT_TENANT_ID}"`,
       });
       expect(h.tenantStore.findById(DEFAULT_TENANT_ID)?.name).toBe('万神殿');
+    });
+  });
+
+  describe('POST /:id/deletion-jobs/:jobId/replay', () => {
+    it('校验 revision，并把受控 replay 交给 executor', async () => {
+      h = await makeTestRig();
+      h.setCaller(PLATFORM_ADMIN);
+      const invalid = await h.request(
+        '/api/tenants/acme/deletion-jobs/job-1/replay',
+        jsonInit('POST', { expectedRevision: 0 }),
+      );
+      expect(invalid.status).toBe(400);
+
+      const replayed = await h.request(
+        '/api/tenants/acme/deletion-jobs/job-1/replay',
+        jsonInit('POST', { expectedRevision: 7, additionalAttempts: 2 }),
+      );
+      expect(replayed.status).toBe(200);
+      await expect(replayed.json()).resolves.toMatchObject({
+        created: false, job: { jobId: 'job-1', status: 'succeeded', revision: 9 },
+      });
+      expect(h.callOrder).toEqual(['replay:acme:job-1:7']);
+    });
+
+    it('重复 replay 的 stale revision 映射为 409 CAS 冲突', async () => {
+      h = await makeTestRig({ replayError: 'CHANGE_JOB_VERSION_CONFLICT' });
+      h.setCaller(PLATFORM_ADMIN);
+      const response = await h.request(
+        '/api/tenants/acme/deletion-jobs/job-1/replay',
+        jsonInit('POST', { expectedRevision: 7 }),
+      );
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ code: 'CHANGE_JOB_VERSION_CONFLICT' });
     });
   });
 

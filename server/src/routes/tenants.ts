@@ -63,6 +63,11 @@ const deleteTenantSchema = z.object({
   confirm: z.string().min(1),
 });
 
+const replayTenantDeletionSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+  additionalAttempts: z.number().int().min(1).max(20).optional(),
+});
+
 export interface CreateTenantsRouterOptions {
   tenantStore: TenantStore;
   /** 用户存储用于上级关闭时清理组织成员的个人调试开关。 */
@@ -411,6 +416,57 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
       return;
     }
     res.json(receipt);
+  });
+
+  // POST /api/tenants/:id/deletion-jobs/:jobId/replay — revision-fenced terminal replay.
+  router.post('/:id/deletion-jobs/:jobId/replay', requirePlatformAdmin, async (req, res) => {
+    const parsed = replayTenantDeletionSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]!.message });
+      return;
+    }
+    if (!opts.tenantDeletionExecutor) {
+      res.status(501).json({ error: '当前服务未启用持久化组织删除任务' });
+      return;
+    }
+    try {
+      await recordGovernanceIntent(opts.governanceAuditStore, req.user!, {
+        action: 'tenant.delete.replay', targetType: 'tenant_deletion_job', targetId: req.params.jobId,
+        targetTenantId: req.params.id, purpose: 'platform_governance', reason: 'operator_replay',
+        metadata: {
+          expectedRevision: parsed.data.expectedRevision,
+          additionalAttempts: parsed.data.additionalAttempts ?? 5,
+        },
+      });
+      const receipt = await opts.tenantDeletionExecutor.replay({
+        tenantId: req.params.id,
+        jobId: req.params.jobId,
+        expectedRevision: parsed.data.expectedRevision,
+        requestedBy: req.user!.sub,
+        ...(parsed.data.additionalAttempts !== undefined
+          ? { additionalAttempts: parsed.data.additionalAttempts }
+          : {}),
+      });
+      auditLog(req, 'tenant_deleted',
+        `${req.params.id} replay job=${req.params.jobId} revision=${parsed.data.expectedRevision}`);
+      res.status(receipt.job.status === 'succeeded' ? 200 : 202).json(receipt);
+    } catch (err) {
+      if (err instanceof GovernanceAuditUnavailableError) {
+        res.status(503).json({ code: err.code, error: err.message });
+        return;
+      }
+      const code = err instanceof Error ? err.message : String(err);
+      if (code === 'CHANGE_JOB_NOT_FOUND') {
+        res.status(404).json({ code, error: '组织删除任务不存在' });
+        return;
+      }
+      if (['CHANGE_JOB_VERSION_CONFLICT', 'CHANGE_JOB_INVALID_TRANSITION', 'CHANGE_JOB_TARGET_BUSY'].includes(code)) {
+        res.status(409).json({ code, error: '组织删除任务状态已变化，请刷新后重试' });
+        return;
+      }
+      apiLogger.error(`重放组织删除任务失败（tenant=${req.params.id}, job=${req.params.jobId}）: ${code}`);
+      res.status(500).json({ error: code });
+    }
   });
 
   // DELETE /api/tenants/:id — create/reuse and drive a durable deletion job.

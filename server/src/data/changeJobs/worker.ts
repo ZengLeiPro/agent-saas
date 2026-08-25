@@ -29,7 +29,9 @@ export class GovernanceChangeJobWorker {
   constructor(private readonly options: {
     store: PgGovernanceChangeJobStore;
     workerId: string;
+    /** Base delay for bounded exponential retry. */
     retryDelayMs?: number;
+    maxRetryDelayMs?: number;
     leaseMs?: number;
   }) {}
 
@@ -51,7 +53,7 @@ export class GovernanceChangeJobWorker {
       if (!recovered) return current;
       current = recovered;
     }
-    if (current.status === 'succeeded' || current.status === 'partial' || current.status === 'failed') return current;
+    if (['succeeded', 'partial', 'failed', 'dead_letter'].includes(current.status)) return current;
     const claimed = await this.options.store.claim(
       input.tenantId, input.jobId, current.revision, executionId,
     );
@@ -75,15 +77,26 @@ export class GovernanceChangeJobWorker {
         ? error.message
         : 'CHANGE_JOB_HANDLER_FAILED';
       const retryable = !(error instanceof DomainExecutionFailure) || error.retryable;
+      const attempt = claimed.attempt ?? current.attempt ?? 1;
+      const maxAttempts = claimed.maxAttempts ?? current.maxAttempts ?? 5;
+      const exhausted = attempt >= maxAttempts;
+      const baseDelayMs = Math.max(0, this.options.retryDelayMs ?? 60_000);
+      const retryDelayMs = Math.min(
+        this.options.maxRetryDelayMs ?? 60 * 60_000,
+        baseDelayMs * (2 ** Math.max(0, attempt - 1)),
+      );
+      const terminalStatus = retryable
+        ? 'dead_letter' as const
+        : domains.some(domain => domain.status === 'succeeded') ? 'partial' as const : 'failed' as const;
       return this.options.store.fail({
         tenantId: input.tenantId,
         jobId: input.jobId,
         expectedRevision: claimed.revision,
         errorCode: code,
         failedBy: executionId,
-        ...(retryable
-          ? { retryAt: new Date(Date.now() + (this.options.retryDelayMs ?? 60_000)).toISOString() }
-          : { terminalStatus: 'partial' as const }),
+        ...(retryable && !exhausted
+          ? { retryAt: new Date(Date.now() + retryDelayMs).toISOString() }
+          : { terminalStatus }),
       });
     }
   }

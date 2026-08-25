@@ -617,7 +617,7 @@ describe('wsEventProcessor pending interaction replay', () => {
     });
   });
 
-  it('marks replayed pending interactions as resolved', () => {
+  it('keeps legacy resolved events pending when the canonical response is absent', () => {
     const { messages, ctx } = createTestRig([
       {
         id: 'pending',
@@ -633,7 +633,7 @@ describe('wsEventProcessor pending interaction replay', () => {
     expect(messages[0]).toMatchObject({
       type: 'ask_user',
       interactionId: 'ask-2',
-      status: 'answered',
+      status: 'pending',
     });
   });
 });

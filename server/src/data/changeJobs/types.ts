@@ -1,5 +1,6 @@
 export type GovernanceChangeJobType = 'tenant_delete' | 'resource_retire' | 'credential_revoke' | 'user_offboarding';
-export type GovernanceChangeJobStatus = 'pending' | 'running' | 'retry_wait' | 'succeeded' | 'partial' | 'failed';
+export type GovernanceChangeJobStatus =
+  | 'pending' | 'running' | 'retry_wait' | 'succeeded' | 'partial' | 'failed' | 'dead_letter';
 export type GovernanceChangeDomainStatus = 'pending' | 'running' | 'succeeded' | 'failed';
 
 export interface GovernanceChangeJobUnresolvedItem {
@@ -25,7 +26,10 @@ export interface GovernanceChangeJob {
   request: Record<string, unknown>;
   status: GovernanceChangeJobStatus;
   revision: number;
+  /** Number of claims already made; incremented atomically with each claim. */
   attempt: number;
+  /** Persisted finite retry budget, observable in every job receipt. */
+  maxAttempts: number;
   lastErrorCode?: string;
   nextRetryAt?: string;
   createdAt: string;

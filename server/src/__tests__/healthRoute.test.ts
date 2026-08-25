@@ -11,8 +11,15 @@ const APP_CONFIG = {
 } as any;
 
 async function startHealthServer(options: Parameters<typeof createHealthRouter>[1] = {}) {
+  const originalNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'test';
   const app = express();
-  app.use('/api', createHealthRouter(APP_CONFIG, options));
+  try {
+    app.use('/api', createHealthRouter(APP_CONFIG, options));
+  } finally {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+  }
   const server: Server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });

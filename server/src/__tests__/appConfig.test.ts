@@ -827,8 +827,8 @@ describe('parseAppConfig', () => {
     })).toThrow(/authTokenRef must be a vault ref id, not an actual secret value/);
   });
 });
-
 describe('assertDevDatabaseSafety', () => {
+  const DEV_ENV = { NODE_ENV: 'development', AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT: '1' };
   const REMOTE_CONN = 'postgresql://app_user:s3cr3t-p4ss@db-remote.rds.example.com:5432/runtime?sslmode=disable';
 
   const configWith = (runtimeEventStore: unknown) =>
@@ -838,14 +838,14 @@ describe('assertDevDatabaseSafety', () => {
     configWith({ backend: 'pg', connectionString });
 
   it('blocks a non-production process from connecting to a remote database', () => {
-    expect(() => assertDevDatabaseSafety(pgConfig(REMOTE_CONN), { NODE_ENV: 'development' }))
+    expect(() => assertDevDatabaseSafety(pgConfig(REMOTE_CONN), DEV_ENV))
       .toThrow(/db-remote\.rds\.example\.com/);
   });
 
   it('never leaks credentials from the connection string in the error message', () => {
     let message = '';
     try {
-      assertDevDatabaseSafety(pgConfig(REMOTE_CONN), { NODE_ENV: 'development' });
+      assertDevDatabaseSafety(pgConfig(REMOTE_CONN), DEV_ENV);
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
@@ -856,39 +856,39 @@ describe('assertDevDatabaseSafety', () => {
   });
 
   it('allows production processes to use the remote database', () => {
-    expect(() => assertDevDatabaseSafety(pgConfig(REMOTE_CONN), { NODE_ENV: 'production' }))
+    expect(() => assertDevDatabaseSafety(pgConfig(REMOTE_CONN), { NODE_ENV: 'production', AGENT_SAAS_ENVIRONMENT: 'production' }))
       .not.toThrow();
   });
 
   it.each(['localhost', '127.0.0.1', '[::1]'])('allows local database host %s in development', (host) => {
     const config = pgConfig(`postgresql://dev:dev@${host}:5432/runtime`);
 
-    expect(() => assertDevDatabaseSafety(config, { NODE_ENV: 'development' })).not.toThrow();
+    expect(() => assertDevDatabaseSafety(config, DEV_ENV)).not.toThrow();
   });
 
   it('allows an explicit opt-out for debugging against a remote database', () => {
-    const env = { NODE_ENV: 'development', ALLOW_REMOTE_DB_IN_DEV: '1' };
+    const env = { NODE_ENV: 'development', AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT: '1', ALLOW_REMOTE_DB_IN_DEV: '1' };
 
     expect(() => assertDevDatabaseSafety(pgConfig(REMOTE_CONN), env)).not.toThrow();
   });
 
   it('ignores the file backend, which never opens a database connection', () => {
-    expect(() => assertDevDatabaseSafety(configWith({ backend: 'file' }), { NODE_ENV: 'development' }))
+    expect(() => assertDevDatabaseSafety(configWith({ backend: 'file' }), DEV_ENV))
       .not.toThrow();
   });
 
   it('stays out of the way when runtimeEventStore is absent', () => {
-    expect(() => assertDevDatabaseSafety(parseAppConfig(baseConfig), { NODE_ENV: 'development' }))
+    expect(() => assertDevDatabaseSafety(parseAppConfig(baseConfig), DEV_ENV))
       .not.toThrow();
   });
 
   it('does not block when the connection string is unparseable', () => {
-    expect(() => assertDevDatabaseSafety(pgConfig('not-a-valid-url'), { NODE_ENV: 'development' }))
+    expect(() => assertDevDatabaseSafety(pgConfig('not-a-valid-url'), DEV_ENV))
       .not.toThrow();
   });
 
   it('blocks when NODE_ENV is unset, since only production is trusted', () => {
     expect(() => assertDevDatabaseSafety(pgConfig(REMOTE_CONN), {}))
-      .toThrow(/拒绝启动/);
+      .toThrow(/AGENT_SAAS_ENVIRONMENT/);
   });
 });

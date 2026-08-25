@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AppConfig } from '../app/config.js';
 import { assertRuntimeEnvironmentSafety } from './environmentSafety.js';
+import { readRuntimeIdentity } from './runtimeIdentity.js';
 
 const SHA = 'a'.repeat(40);
 const DIGEST = `sha256:${'b'.repeat(64)}`;
@@ -27,6 +28,13 @@ function config(overrides: Record<string, unknown> = {}): AppConfig {
 }
 
 describe('assertRuntimeEnvironmentSafety', () => {
+  it('rejects missing or invalid environment identities unless an explicit development/test exception applies', () => {
+    expect(() => readRuntimeIdentity({})).toThrow(/must explicitly be staging or production/);
+    expect(() => readRuntimeIdentity({ AGENT_SAAS_ENVIRONMENT: 'stagin' })).toThrow(/must be staging or production/);
+    expect(readRuntimeIdentity({ NODE_ENV: 'test' })).toMatchObject({ environment: 'test', safetyAttested: true });
+    expect(readRuntimeIdentity({ NODE_ENV: 'development', AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT: '1' })).toMatchObject({ environment: 'development', safetyAttested: true });
+  });
+
   it('attests a fully isolated staging identity', () => {
     expect(assertRuntimeEnvironmentSafety(config(), stagingEnv)).toMatchObject({ environment: 'staging', releaseSha: SHA, safetyAttested: true });
   });

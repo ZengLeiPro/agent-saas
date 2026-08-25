@@ -3,7 +3,8 @@ import { ReleaseAttestationLog } from './releaseAttestation.js';
 import { getPromotionEligibility } from './releasePolicy.js';
 
 const DIGEST = `sha256:${'a'.repeat(64)}`;
-function log() { return new ReleaseAttestationLog('rc-20260825-01', DIGEST); }
+const NOW = new Date('2026-08-25T12:00:00.000Z');
+function log(digest = DIGEST) { return new ReleaseAttestationLog('rc-20260825-01', digest, { now: () => NOW }); }
 function append(entry: ReleaseAttestationLog, state: Parameters<ReleaseAttestationLog['append']>[0]['state'], operationKey: string = state) {
   return entry.append({ state, operationKey, actor: 'release-bot', manifestDigest: DIGEST });
 }
@@ -32,11 +33,24 @@ describe('ReleaseAttestationLog', () => {
     expect(entries.isPromotable()).toBe(false);
   });
 
-  it('fails promotion policy closed for expired, non-main, or baseline-drifted releases', () => {
+  it('rejects expired, future, malformed, and out-of-order receipts; approvals expire too', () => {
+    const entries = log();
+    expect(() => entries.append({ state: 'built', operationKey: 'old', actor: 'release-bot', manifestDigest: DIGEST, recordedAt: '2026-08-24T11:59:59.999Z' })).toThrow(/expired/);
+    expect(() => entries.append({ state: 'built', operationKey: 'future', actor: 'release-bot', manifestDigest: DIGEST, recordedAt: '2026-08-25T12:05:00.001Z' })).toThrow(/future/);
+    expect(() => entries.append({ state: 'built', operationKey: 'bad-time', actor: 'release-bot', manifestDigest: DIGEST, recordedAt: '2026-08-25' })).toThrow(/ISO UTC/);
+    append(entries, 'built');
+    expect(() => entries.append({ state: 'staging_deployed', operationKey: 'out-of-order', actor: 'release-bot', manifestDigest: DIGEST, recordedAt: '2026-08-25T11:59:59.999Z' })).toThrow(/expired|out of order/);
+    append(entries, 'staging_deployed'); append(entries, 'verified'); append(entries, 'approved');
+    expect(entries.isPromotable(new Date('2026-08-26T12:00:00.001Z'))).toBe(false);
+  });
+
+  it('fails promotion policy closed for cross-manifest, expired, non-main, or baseline-drifted releases', () => {
     const entries = log();
     append(entries, 'built'); append(entries, 'staging_deployed'); append(entries, 'verified'); append(entries, 'approved');
     const allowed = getPromotionEligibility({ attestations: entries, manifestDigest: DIGEST, expectedManifestDigest: DIGEST, isMainAncestor: true, productionBaselineIsAncestor: true });
     expect(allowed.promotable).toBe(true);
+    const crossManifest = getPromotionEligibility({ attestations: entries, manifestDigest: `sha256:${'b'.repeat(64)}`, expectedManifestDigest: `sha256:${'b'.repeat(64)}`, isMainAncestor: true, productionBaselineIsAncestor: true });
+    expect(crossManifest).toMatchObject({ promotable: false, blockingReasons: ['Manifest digest mismatch.'] });
     const denied = getPromotionEligibility({ attestations: entries, manifestDigest: DIGEST, expectedManifestDigest: DIGEST, isMainAncestor: false, productionBaselineIsAncestor: false, expiresAt: '2000-01-01T00:00:00.000Z' });
     expect(denied).toMatchObject({ promotable: false, blockingReasons: expect.arrayContaining(['Release SHA is not reachable from main.', 'Production baseline is not an ancestor of release SHA.', 'Release promotion approval has expired.']) });
   });

@@ -41,6 +41,14 @@ export function runPreflight({
 
   const identity = readRuntimeIdentity({ identityPath, readFileSync });
   blockingReasons.push(...identity.blockingReasons);
+  if (identity.ok) {
+    if (identity.identity.gitSha !== baseline) blockingReasons.push('Production runtime identity gitSha does not match the supplied baseline.');
+    for (const [component, entry] of Object.entries(identity.identity.components)) {
+      if (!gitSucceeds(['merge-base', '--is-ancestor', entry.gitSha, target], { cwd, execFileSync })) {
+        blockingReasons.push(`Production component ${component} SHA is not an ancestor of target.`);
+      }
+    }
+  }
 
   const classification = targetIsFullSha && baselineIsFullSha
     ? classifyComponents({ baseline, target, cwd, execFileSync })

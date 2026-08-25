@@ -12,12 +12,17 @@ function productionIdentity(overrides = {}) {
   return {
     schemaVersion: 1,
     environment: 'production',
-    gitSha: TARGET,
+    gitSha: BASELINE,
     components: {
       web: component(TARGET),
       api: component(TARGET),
       runtimeWorker: component(TARGET),
       acs: component(TARGET),
+    },
+    topology: {
+      activeColor: 'blue', observedAt: '2026-08-25T00:00:00.000Z',
+      api: { unit: 'agent-saas-api@blue.service', releaseSymlink: '/srv/releases/blue', pidfile: '/run/blue-api.pid', readyfile: '/run/blue-api.ready' },
+      runtimeWorker: { unit: 'agent-saas-worker@blue.service', releaseSymlink: '/srv/releases/blue', pidfile: '/run/blue-worker.pid', readyfile: '/run/blue-worker.ready' },
     },
     ...overrides,
   };
@@ -79,6 +84,17 @@ test('preflight blocks a target outside main, a non-ancestor baseline, incomplet
   assert.match(result.blockingReasons.join('\n'), /component "web" must have an ISO/u);
   assert.match(result.blockingReasons.join('\n'), /missing component "api"/u);
   assert.match(result.blockingReasons.join('\n'), /not mapped to a release component: package.json/u);
+});
+
+test('preflight fails closed for conflicting production topology or component baseline', () => {
+  const topologyConflict = productionIdentity({ topology: { ...productionIdentity().topology, api: { ...productionIdentity().topology.api, pidfile: '/run/green-api.pid' } } });
+  const conflict = runPreflight({ target: TARGET, baseline: BASELINE, identityPath: './production.json', execFileSync: successfulGit, readFileSync: () => JSON.stringify(topologyConflict) });
+  assert.equal(conflict.ok, false);
+  assert.match(conflict.blockingReasons.join('\n'), /pidfile conflicts with activeColor/u);
+  const baselineConflict = productionIdentity({ gitSha: TARGET });
+  const stale = runPreflight({ target: TARGET, baseline: BASELINE, identityPath: './production.json', execFileSync: successfulGit, readFileSync: () => JSON.stringify(baselineConflict) });
+  assert.equal(stale.ok, false);
+  assert.match(stale.blockingReasons.join('\n'), /does not match the supplied baseline/u);
 });
 
 test('runtime identity accepts only local, complete production JSON', () => {

@@ -46,12 +46,12 @@ export function executionWritebackInstructions(context: TaskboardExecutionContex
     instructions.splice(2, 0,
       '- 合并前必须调用 integration.source.inspect 重新读取当前精确 head、reviewed subject、required checks 与 mergeability；失败 job 用 integration.source.log 读取，Provider 不可用时失败关闭。');
   }
-  if (context.task.kind === 'integration' && context.task.workflowVersion === 3
-    && context.execution.purpose === 'work') {
+  if (context.task.kind === 'integration' && context.task.workflowVersion === 3) {
     instructions.splice(2, 0,
-      '- 读取 execution.context 的 integrationCandidate；若 revision.compositionComplete=false，必须处理 sourceSnapshots 中完整冻结来源集与 lastError 指定冲突，不得用无关改动或空提交宣称完成。',
-      '- 创建单父提交后调用 execution.integration_candidate.push 且只传 commitOid；正常修复以当前 head 为父，基线漂移重建以冻结 base 为父；不得执行 git push。',
-      '- 只有完整冻结来源集已纳入结果且受控 push 成功后，才能通过 execution.transition({status: "in_review"}) 请求系统复核。');
+      '- 这是一个持久的 Integration Agent：先以 GitHub PR、head 与 CI 为唯一代码事实对账，不得相信旧 Candidate、Revision、lease 或 outbox 字段。',
+      '- 组合来源、修复 CI 和处理 Review 反馈都在同一 integration branch/PR 上完成；head 变化后必须重新发起只读 Review。',
+      '- 只有当前 Review 对当前 head 的明确批准且 CI 全绿时才请求受控 Merge Gateway；红 CI、过期 review 或 head 变化必须拒绝合并。',
+      '- 普通网络、CI 或可修复冲突错误应继续对账和重试，不得把任务置为 blocked。');
   }
   return instructions;
 }

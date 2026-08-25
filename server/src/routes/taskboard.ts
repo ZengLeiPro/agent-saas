@@ -401,16 +401,12 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       input,
       'manual_batch',
     );
-    // Workflow v3 is driven exclusively by its durable candidate worker. Starting the legacy
-    // merge Agent here creates a second writer for the same manually-created batch.
-    if (task.workflowVersion === 3) {
-      res.status(202).json({ task: withCreatorAvatarVersion(options.userStore, identity, task) });
-      return;
-    }
     if (!options.executionService) throw new TaskboardExecutionUnavailableError();
+    // Agent-first integrations begin one durable work session.  It reconciles GitHub
+    // before acting; server-side state is only a rendezvous/merge-gate record.
     const execution = await options.executionService.startExecution(identity, task.id, {
       expectedVersion: task.version,
-      purpose: 'merge',
+      purpose: task.workflowVersion === 3 ? 'work' : 'merge',
     });
     res.status(202).json(withCreatorAvatarVersionInExecution(options.userStore, identity, execution));
   }));

@@ -12,15 +12,9 @@ import { loadExecutionIntegrationCandidate } from './executionCandidateContext.j
 import { assertIntegrationSourcesProviderReady } from './integrationSourceCiGate.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
 import { rowToIntegrationSource } from './integrationSourceMapper.js';
+import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import { assertIntegrationV3RuntimeAvailable } from './integrationV3ActivationStore.js';
-import {
-  computeIntegrationPolicySnapshotDigest,
-  computeIntegrationSourceSeedDigest,
-  computeIntegrationRequirementDigest,
-  computeIntegrationReviewReceiptDigest,
-  computeIntegrationSourceSetDigest,
-} from './integrationCandidateDigest.js';
 import { resolveExecutionContextWorkflowContract } from './executionContextContract.js';
 import {
   commentExecutionJoin,
@@ -247,12 +241,8 @@ export async function createIntegrationBatch(
           'TASKBOARD_INTEGRATION_SOURCE_UNREVIEWED',
         );
       }
-      if (workflowVersion === 3 && (!row.head_oid || !row.base_oid || !row.review_execution_id)) {
-        throw new TaskboardValidationError(
-          `Task ${String(row.identifier)} lacks frozen v3 review evidence`,
-          'TASKBOARD_INTEGRATION_SOURCE_SNAPSHOT_INCOMPLETE',
-        );
-      }
+      // Integration Agent reconciles this PR directly with GitHub on every wake;
+      // no source head/review snapshot is promoted into server-side authority.
     }
     const sourceProvider = workflowVersion === 3 ? options.integrationV3RepositoryProvider : options.repositoryProvider;
     await assertIntegrationSourcesProviderReady(sourceProvider, providerRepository, String(board.owner_user_id), sources.rows);
@@ -303,11 +293,7 @@ export async function createIntegrationBatch(
         workflowVersion,
       ],
     );
-    const frozenSources: Array<{
-      order: number; integrationSourceId: string; deliveryTaskId: string; deliveryTaskVersion: number;
-      repositoryId: string; providerPullRequestId: string; frozenHeadOid: string; frozenBaseOid: string;
-      reviewedSubjectDigest: string; reviewExecutionId: string; reviewReceiptDigest: string; requirementDigest: string;
-    }> = [];
+    const frozenSources: Array<{ integrationSourceId: string }> = [];
     for (const [index, row] of sources.rows.entries()) {
       const integrationSourceId = randomUUID();
       await client.query(
@@ -320,76 +306,23 @@ export async function createIntegrationBatch(
           row.provider_pull_request_id, row.reviewed_subject_digest, index,
         ],
       );
-      if (workflowVersion === 3) {
-        frozenSources.push({
-          order: index,
-          integrationSourceId,
-          deliveryTaskId: String(row.id),
-          deliveryTaskVersion: Number(row.version),
-          repositoryId: repository.repositoryId,
-          providerPullRequestId: String(row.provider_pull_request_id),
-          frozenHeadOid: String(row.head_oid),
-          frozenBaseOid: String(row.base_oid),
-          reviewedSubjectDigest: String(row.reviewed_subject_digest),
-          reviewExecutionId: String(row.review_execution_id),
-          reviewReceiptDigest: computeIntegrationReviewReceiptDigest(
-            String(row.review_execution_id), String(row.reviewed_subject_digest),
-          ),
-          requirementDigest: computeIntegrationRequirementDigest(String(row.title), String(row.description ?? '')),
-        });
-      }
+      if (workflowVersion === 3) frozenSources.push({ integrationSourceId });
       await appendChange(options, client, String(row.id), 'integration.source_added', 'system', identity.ownerUserId, {
         integrationTaskId,
         order: index,
       });
     }
     if (workflowVersion === 3) {
-      const tables = integrationCandidateTableNames(options.integrationSourcesTable);
-      const candidateId = randomUUID();
-      const branch = `integration/${integrationTaskId}`;
-      const sourceSetDigest = computeIntegrationSourceSetDigest(frozenSources);
-      const policySnapshot = policy as Record<string, unknown>;
-      const policySnapshotDigest = computeIntegrationPolicySnapshotDigest(policySnapshot);
-      // Revision 1 is the immutable bootstrap subject. Provider-facing compose appends
-      // revision 2 before checks/review; it never treats this source-bound seed as a PR fact.
-      const bootstrapBaseOid = frozenSources[0]!.frozenBaseOid;
-      const bootstrapHeadOid = frozenSources[0]!.frozenHeadOid;
-      const subjectDigest = computeIntegrationSourceSeedDigest({
-        repositoryId: repository.repositoryId,
-        baseBranch: repository.baseBranch!,
-        baseOid: bootstrapBaseOid,
-        headOid: bootstrapHeadOid,
-        sourceSetDigest,
-        mergeMethod: policy.execution?.mergeMethod ?? 'squash',
-        policyRevision: policy.revision,
-        policySnapshotDigest,
-      });
-      const laneEpoch = String(BigInt(String(lane.rows[0].epoch)) + 1n);
+      // GitHub is the only code authority.  Persist only the durable Agent rendezvous
+      // record; source PR heads/reviews are re-read by the Agent before every action.
+      const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
       await client.query(
-        `INSERT INTO ${tables.candidatesTable}
-          (id,integration_task_id,repository_id,base_branch,branch,state,current_revision,workflow_epoch,lane_epoch,
-           policy_revision,merge_method,policy_snapshot,source_set_digest)
-         VALUES ($1,$2,$3,$4,$5,'preparing',1,0,$6::bigint,$7,$8,$9::jsonb,$10)`,
-        [candidateId, integrationTaskId, repository.repositoryId, repository.baseBranch, branch, laneEpoch,
-          policy.revision, policy.execution?.mergeMethod ?? 'squash', JSON.stringify(policySnapshot), sourceSetDigest]);
-      await client.query(
-        `INSERT INTO ${tables.revisionsTable}
-          (candidate_id,revision,digest_version,base_oid,head_oid,subject_kind,tree_oid,composition_complete,
-           source_set_digest,subject_digest,policy_snapshot_digest,policy_revision,merge_method,work_round)
-         VALUES ($1,1,1,$2,$3,'source_seed',NULL,FALSE,$4,$5,$6,$7,$8,0)`,
-        [candidateId, bootstrapBaseOid, bootstrapHeadOid, sourceSetDigest, subjectDigest,
-          policySnapshotDigest, policy.revision, policy.execution?.mergeMethod ?? 'squash']);
-      for (const frozen of frozenSources) {
-        await client.query(
-          `INSERT INTO ${tables.sourceSnapshotsTable}
-            (candidate_id,revision,source_order,integration_source_id,delivery_task_id,delivery_task_version,
-             repository_id,provider_pull_request_id,frozen_head_oid,frozen_base_oid,reviewed_subject_digest,
-             review_execution_id,review_receipt_digest,requirement_digest)
-           VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-          [candidateId, frozen.order, frozen.integrationSourceId, frozen.deliveryTaskId, frozen.deliveryTaskVersion,
-            frozen.repositoryId, frozen.providerPullRequestId, frozen.frozenHeadOid, frozen.frozenBaseOid,
-            frozen.reviewedSubjectDigest, frozen.reviewExecutionId, frozen.reviewReceiptDigest, frozen.requirementDigest]);
-      }
+        `INSERT INTO ${agentsTable}
+          (integration_task_id,delivery_source_ids,repository_id,integration_branch,status)
+         VALUES ($1,$2::jsonb,$3,$4,'active')`,
+        [integrationTaskId, JSON.stringify(frozenSources.map((source) => source.integrationSourceId)),
+          repository.repositoryId, `integration/${integrationTaskId}`],
+      );
     }
     await client.query(
       `INSERT INTO ${options.mergeAuthorizationsTable}

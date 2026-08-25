@@ -11,6 +11,7 @@ import { nextTaskColumnSortOrder } from './continuationStore.js';
 import { applyExecutionTaskCompletion, enqueueAutomaticReview } from './executionCompletion.js';
 import { resolveExecutionModelRef } from './executionFields.js';
 import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
+import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import {
   assertExecutionRequestAllowed,
   isIrreversibleMerged,
@@ -100,7 +101,12 @@ export async function claimExecution(
     }
     const facts: WorkflowFacts = await loadWorkflowFacts(store, client, loaded.task);
     let candidateBinding: Record<string, unknown> | undefined;
+    let integrationAgent = false;
     if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3) {
+      const { agentsTable } = integrationAgentTableNames(store.integrationSourcesTable);
+      const agent = await client.query(`SELECT integration_task_id FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId]);
+      integrationAgent = Boolean(agent.rows[0]);
+      if (!integrationAgent) {
       const tables = integrationCandidateTableNames(store.integrationSourcesTable);
       const bound = await client.query(
         `SELECT c.id,c.state,c.version,c.current_revision,c.work_round,c.workflow_epoch,c.lane_epoch,r.head_oid
@@ -125,6 +131,7 @@ export async function claimExecution(
         ...(candidateBinding.head_oid ? { headOid: String(candidateBinding.head_oid) } : {}),
       };
       facts.hasMergeFact ||= facts.candidate.state === 'merged';
+      }
     }
     if (loaded.task.status === 'done' || loaded.task.status === 'canceled'
       || isIrreversibleMerged(loaded.task, facts)) {
@@ -189,7 +196,7 @@ export async function claimExecution(
 
     const attemptId = input.attemptId ?? randomUUID();
     if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3
-      && !candidateBinding?.head_oid) {
+      && !integrationAgent && !candidateBinding?.head_oid) {
       throw new TaskboardValidationError(
         'Workflow v3 execution requires a current candidate revision binding',
         'TASKBOARD_CANDIDATE_EXECUTION_BINDING_REQUIRED',
@@ -243,6 +250,10 @@ export async function claimExecution(
       throw error;
     }
 
+    if (integrationAgent) {
+      const { agentsTable } = integrationAgentTableNames(store.integrationSourcesTable);
+      await client.query(`UPDATE ${agentsTable} SET durable_session_id=$2, updated_at=now() WHERE integration_task_id=$1`, [taskId, input.sessionId]);
+    }
     await client.query(
       `UPDATE ${store.commentsTable}
           SET continuation_run_id=$2, updated_at=now()

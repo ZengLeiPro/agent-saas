@@ -8,6 +8,7 @@ import type {
   TaskBoardTask,
 } from '../../../../shared/src/types/taskboard.js';
 import { integrationCandidateTableNames } from '../integrationCandidateSchema.js';
+import { integrationAgentTableNames } from '../integrationAgentSchema.js';
 import { rowToExecution } from '../storeHelpers.js';
 import {
   appendChange,
@@ -71,6 +72,9 @@ export async function transitionExecutionV2(
     await assertExecutionComment(options, client, execution);
 
     if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3) {
+      const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
+      const agent = await client.query(`SELECT integration_task_id FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [loaded.task.id]);
+      if (agent.rows[0]) return transitionIntegrationAgent(options, client, identity, loaded.task, execution, input.status);
       return transitionIntegrationV3(options, client, identity, loaded.task, execution, executionRow, input.status);
     }
     const facts = await loadWorkflowFacts(options, client, loaded.task);
@@ -132,6 +136,37 @@ export async function transitionExecutionV2(
     }
     return loadTask(options, client, taskId);
   });
+}
+
+async function transitionIntegrationAgent(
+  options: TaskboardV2StoreOptions, client: PoolClient, identity: TaskboardIdentity,
+  task: TaskBoardTask, execution: TaskBoardExecution, status: TaskBoardTask['status'],
+): Promise<TaskBoardTask> {
+  const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
+  let nextStatus: TaskBoardTask['status'];
+  let agentStatus: 'active' | 'reviewing' | 'ready_to_merge';
+  if (execution.purpose === 'work' && status === 'in_review') {
+    nextStatus = 'in_review'; agentStatus = 'reviewing';
+  } else if (execution.purpose === 'review' && status === 'ready_to_merge') {
+    // Approval is deliberately minimal and head-bound.  The merge gateway must
+    // re-read GitHub and reject any changed head or non-green CI before merging.
+    nextStatus = 'ready_to_merge'; agentStatus = 'ready_to_merge';
+  } else if (execution.purpose === 'review' && (status === 'todo' || status === 'in_review')) {
+    nextStatus = status === 'todo' ? 'in_progress' : 'in_review';
+    agentStatus = status === 'todo' ? 'active' : 'reviewing';
+  } else {
+    throw new TaskboardValidationError('Integration Agent can only request review, return for repair, or record approval', 'TASKBOARD_INTEGRATION_AGENT_TRANSITION_INVALID');
+  }
+  await client.query(`UPDATE ${agentsTable}
+      SET status=$2, verdict=CASE WHEN $2='ready_to_merge' THEN 'approved' ELSE NULL END,
+          review_execution_id=CASE WHEN $2='ready_to_merge' THEN $3 ELSE NULL END, updated_at=now()
+      WHERE integration_task_id=$1`, [task.id, agentStatus, execution.id]);
+  await updateTaskStatus(options, client, task.id, nextStatus);
+  await markTransitioned(options, client, execution, status);
+  await appendChange(options, client, task.id, 'integration.agent.transitioned', 'agent', identity.ownerUserId, {
+    executionId: execution.id, runId: execution.runId, purpose: execution.purpose, status: nextStatus,
+  });
+  return loadTask(options, client, task.id);
 }
 
 async function transitionIntegrationV3(

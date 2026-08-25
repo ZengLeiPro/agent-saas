@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg';
 
 import { runIntegrationCandidateSchema } from './integrationCandidateSchema.js';
+import { runIntegrationAgentSchema } from './integrationAgentSchema.js';
 
 interface TaskboardV2SchemaOptions {
   boardsTable: string;
@@ -391,6 +392,7 @@ export async function runTaskboardV2Schema(
       WHERE status IN ('pending','processing')
   `);
   await runIntegrationCandidateSchema(options, client);
+  await runIntegrationAgentSchema(options, client);
 }
 
 export async function retireTaskboardResolutionSchema(

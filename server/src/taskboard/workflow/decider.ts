@@ -86,11 +86,14 @@ export function assertExecutionRequestAllowed(
   if (task.kind === 'integration') {
     if (task.workflowVersion === 3) {
       const candidate = options.facts?.candidate;
+      // Agent-first integrations deliberately have no server-side Candidate.  The
+      // durable Agent session reconciles GitHub and decides the next recoverable step.
       if (!candidate) {
-        throw new TaskboardValidationError(
-          'Workflow v3 integration dispatch requires the current candidate',
-          'TASKBOARD_CANDIDATE_REQUIRED',
-        );
+        const expected = task.status === 'in_review' ? 'review' : task.status === 'in_progress' ? 'work' : undefined;
+        if (!expected || purpose !== expected) {
+          throw new TaskboardValidationError('Integration Agent is not dispatchable for this purpose', 'TASKBOARD_INTEGRATION_AGENT_EXECUTION_STATE_INVALID');
+        }
+        return;
       }
       const expected = purposeForIntegrationV3Candidate(candidate.state);
       if (!expected || purpose !== expected) {

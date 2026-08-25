@@ -11,7 +11,7 @@ import type {
   TaskBoardExecutionPurpose,
   TaskBoardExecutionContextInput,
   TaskBoardExecutionContextResponse,
-  TaskBoardExecutionTransitionInput,
+  TaskBoardExecutionFinishInput,
   TaskBoardIntegrationBatchCreateInput,
   TaskBoardIntegrationCandidateDetails,
   TaskBoardIntegrationSource,
@@ -237,7 +237,9 @@ export interface TaskboardExecutionCompletionInput {
   commentBody: string;
   attachments?: TaskBoardAttachment[];
   error?: string;
-  /** 实施成功时与终态回写同事务创建的自动复核 Execution。 */
+  /** 当前阶段未 finish 时，与本轮终态回写同事务创建的续跑 Execution。 */
+  resumeExecution?: TaskboardExecutionClaimInput;
+  /** 实施 finish 后，与本轮终态回写同事务创建的自动复核 Execution。 */
   reviewExecution?: TaskboardExecutionClaimInput;
 }
 
@@ -512,11 +514,6 @@ export interface TaskboardService {
     taskId: string,
     input?: TaskBoardExecutionContextInput,
   ): Promise<TaskBoardExecutionContextResponse>;
-  createExecutionCommentV2?(
-    identity: TaskboardIdentity,
-    runId: string,
-    body: string,
-  ): Promise<TaskBoardComment>;
   attachExecutionPullRequestV2?(
     identity: TaskboardIdentity,
     runId: string,
@@ -560,10 +557,10 @@ export interface TaskboardService {
     remediationTaskId: string,
   ): Promise<TaskBoardIntegrationSource>;
   reconcileMergeOperationsV2?(limit?: number): Promise<number>;
-  transitionExecutionV2?(
+  finishExecutionV2?(
     identity: TaskboardIdentity,
     runId: string,
-    input: TaskBoardExecutionTransitionInput,
+    input: TaskBoardExecutionFinishInput,
   ): Promise<TaskBoardTask>;
 }
 

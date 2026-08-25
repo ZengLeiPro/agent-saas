@@ -74,7 +74,6 @@ interface DefaultModelResolution {
 
 const RECONCILIATION_GRACE_MS = 30_000;
 
-
 export interface TaskboardExecutionCoordinatorOptions extends TaskboardSessionGroupingOptions {
   store: TaskboardExecutionStore;
   scheduler: Pick<RuntimeScheduler,
@@ -290,7 +289,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     identity: TaskboardIdentity,
     taskId: string,
     input: TaskBoardExecutionStartInput,
-    options: { executionId?: string; trigger?: 'initial' | 'comment' | 'resume' | 'retry' } = {},
+    options: { executionId?: string; trigger?: 'initial' | 'comment' | 'resume' | 'retry'; sessionId?: string } = {},
   ): Promise<TaskBoardExecutionStartResult> {
     const claim = await this.prepareExecutionClaim(identity, taskId, input, options);
     const claimed = await this.options.store.claimExecution(identity, taskId, claim);
@@ -302,7 +301,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     identity: TaskboardIdentity,
     taskId: string,
     input: TaskBoardExecutionStartInput,
-    options: { executionId?: string; trigger?: 'initial' | 'comment' | 'resume' | 'retry' } = {},
+    options: { executionId?: string; trigger?: 'initial' | 'comment' | 'resume' | 'retry'; sessionId?: string } = {},
   ): Promise<TaskboardExecutionClaimInput> {
     const launch = await this.resolveLaunch(identity, taskId, input.purpose);
     const purpose = input.purpose ?? (launch.modelContext.taskKind === 'integration' ? 'merge' : 'work');
@@ -316,7 +315,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       purpose,
       taskId,
     );
-    const sessionId = workSessionId ?? `${sessionDescriptor.sessionPrefix}-${randomUUID()}`;
+    const sessionId = options.sessionId ?? workSessionId ?? `${sessionDescriptor.sessionPrefix}-${randomUUID()}`;
     const session = await reuseTaskboardSession({
       sessionCatalog: this.options.sessionCatalog,
       agentCwd: this.options.agentCwd,
@@ -821,35 +820,46 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       tenantId: context.identity.tenantId,
     });
     const attachments = await extractAgentAttachments(output, userCwd);
+    let resumeExecution: TaskboardExecutionClaimInput | undefined;
+    if (context.execution.protocolVersion === 2) {
+      resumeExecution = await this.prepareExecutionClaim(context.identity, context.task.id,
+        { expectedVersion: context.task.version, purpose: context.execution.purpose },
+        { executionId: `${context.execution.id}-resume`, trigger: 'resume', sessionId: context.execution.sessionId });
+    }
     let reviewExecution: TaskboardExecutionClaimInput | undefined;
-    if (context.execution.purpose === 'work' && (
-      context.execution.protocolVersion !== 2 || context.task.status === 'in_review'
-    )) {
+    if (context.execution.purpose === 'work'
+      && !(context.task.kind === 'integration' && context.task.workflowVersion === 3)
+      && (context.execution.protocolVersion !== 2 || context.execution.transitionedAt
+        || context.task.status === 'in_review')) {
       const existingSession = await this.options.sessionCatalog.get(sessionId);
       const reviewIdentity = this.options.resolveOwnerIdentity?.(context.identity.ownerUserId) ?? {
         ...context.identity,
         username: existingSession?.username ?? context.identity.username,
         userRole: existingSession?.userRole ?? context.identity.userRole,
       };
-      reviewExecution = await this.prepareExecutionClaim(
-        reviewIdentity,
-        context.task.id,
+      reviewExecution = await this.prepareExecutionClaim(reviewIdentity, context.task.id,
         { expectedVersion: context.task.version, purpose: 'review' },
-        { executionId: `${context.execution.id}-review` },
-      );
+        { executionId: `${context.execution.id}-review` });
     }
     const completion = {
       status: 'succeeded' as const,
       commentBody: limitComment(`Agent 交付\n\n${stripFileMarkers(output)}`),
       ...(attachments.length ? { attachments } : {}),
+      ...(resumeExecution ? { resumeExecution } : {}),
       ...(reviewExecution ? { reviewExecution } : {}),
     };
     const completed = reconcileLeaseId
       ? await this.options.store.completeExecutionFromReconcile(runId, completion, reconcileLeaseId)
       : await this.options.store.completeExecution(runId, completion);
+    if (completed && resumeExecution) await this.dispatchExecution(resumeExecution.runId);
     if (completed && reviewExecution) await this.dispatchExecution(reviewExecution.runId);
+    if (completed && !reviewExecution && context.execution.protocolVersion === 2
+      && context.execution.purpose === 'work' && completed.task.status === 'in_review'
+      && !(completed.task.kind === 'integration' && completed.task.workflowVersion === 3)) {
+      await this.startExecutionInternal(context.identity, completed.task.id,
+        { expectedVersion: completed.task.version, purpose: 'review' });
+    }
   }
-
   private async completeFailedRun(
     runId: string,
     sessionId: string,

@@ -77,6 +77,16 @@ function credentialView<T extends { secretRef: string }>(credential: T): Omit<T,
   return safe;
 }
 
+export function blocksPersonalCredentialMutation(
+  connectorId: string | null | undefined,
+  health: { healthy: boolean; code: string } | undefined,
+): boolean {
+  return Boolean(health && !health.healthy && !(
+    connectorId === 'x'
+    && ['CONNECTOR_NETWORK_UNREACHABLE', 'CONNECTOR_UPSTREAM_INVALID'].includes(health.code)
+  ));
+}
+
 export function registerGovernanceCredentialRoutes(options: {
   router: Router;
   connectors: PgConnectorCatalogStore;
@@ -104,7 +114,6 @@ export function registerGovernanceCredentialRoutes(options: {
       return { healthy: false, code: 'CONNECTOR_HEALTH_CHECK_FAILED' };
     }
   };
-
   type ActiveCommit = { leaseToken: string; recovery?: Record<string, unknown> };
   const claimSignedCommit = async (res: Response, input: {
     tenantId: string;
@@ -339,7 +348,9 @@ export function registerGovernanceCredentialRoutes(options: {
     let healthMetadata: Record<string, string> | undefined;
     if (parsed.data.kind === 'personal_grant') {
       const health = await validatePersonalSecret(parsed.data.connectorId, parsed.data.secret);
-      if (health && !health.healthy) return res.status(422).json({ error: 'Credential validation failed', code: health.code });
+      if (blocksPersonalCredentialMutation(parsed.data.connectorId, health)) {
+        return res.status(422).json({ error: 'Credential validation failed', code: health!.code });
+      }
       healthMetadata = health?.metadata;
     }
     let secretRef: string | undefined;
@@ -694,12 +705,12 @@ export function registerGovernanceCredentialRoutes(options: {
       : undefined;
     if (target.credential.kind === 'personal_grant') {
       const health = await validatePersonalSecret(target.credential.connectorId, mutation.secret);
-      if (health && !health.healthy) {
+      if (blocksPersonalCredentialMutation(target.credential.connectorId, health)) {
         if (!await finishOrCritical(res, {
           tenantId: target.tenantId, operation: 'rotate', idempotencyKey,
-          leaseToken: claimed.leaseToken, status: 'failed', errorCode: health.code,
+          leaseToken: claimed.leaseToken, status: 'failed', errorCode: health!.code,
         }, { changed: false })) return;
-        return res.status(422).json({ error: 'Credential validation failed', code: health.code });
+        return res.status(422).json({ error: 'Credential validation failed', code: health!.code });
       }
       if (health?.metadata) {
         rotationScopeSummary = { ...target.credential.scopeSummary, ...(mutation.scopeSummary ?? {}), ...health.metadata };

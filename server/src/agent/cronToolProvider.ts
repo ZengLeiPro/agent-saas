@@ -80,7 +80,7 @@ const cronManageSchema = z.object({
   description: z.string().max(20_000).optional(),
   prompt: z.string().max(20_000).optional(),
   visibility: z.enum(TASKBOARD_VISIBILITIES).optional(),
-  body: z.string().trim().max(20_000).optional().describe('评论正文；comment.create 可仅提交附件。'),
+  body: z.string().trim().max(20_000).optional().describe('评论正文；execution.finish 必填，comment.create 可仅提交附件。'),
   reason: z.string().trim().min(1).max(2_000).optional().describe('取消集成任务的原因。'),
   enabled: z.boolean().optional().describe('cron 是否启用。create 时默认 true。'),
   schedule: cronScheduleSchema.optional().describe('cron create 必填。kind=cron：{expr: "0 9 * * *", tz: "Asia/Shanghai"}；kind=every：{everyMs}；kind=at：{atMs: epoch 毫秒}。'),

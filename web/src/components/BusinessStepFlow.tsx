@@ -466,6 +466,7 @@ export function BusinessStepFlow({
 function countSectionProcessItems(section: BusinessStepSection): number {
   let count = 0;
   for (const item of section.items) {
+    if (item.type === "file_download" && item.artifactId) continue;
     if (item.type === "activity_group") count += item.items.length;
     else count += 1;
   }
@@ -481,6 +482,7 @@ export function BusinessStepSectionView({
   debugMode,
   children,
   systemActions,
+  deliverables,
   open,
   onOpenChange,
   showOutcomeWhenCollapsed,
@@ -493,6 +495,8 @@ export function BusinessStepSectionView({
    * 遵循既有留痕规则，整步折叠时则与其他正文一起隐藏。
    */
   systemActions?: ReactNode;
+  /** Artifact 正式交付物不是调试过程，步骤折叠后也必须保持可见。 */
+  deliverables?: ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   showOutcomeWhenCollapsed?: boolean;
@@ -633,6 +637,7 @@ export function BusinessStepSectionView({
           ) : null}
         </div>
       ) : null}
+      {deliverables ? <div className="mt-2.5 flex flex-col gap-2.5">{deliverables}</div> : null}
     </section>
   );
 }

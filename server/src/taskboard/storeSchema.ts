@@ -18,6 +18,7 @@ import {
 } from './continuationOutbox.js';
 import { executionFieldMigrationSql, taskFieldMigrationSql } from './executionFields.js';
 import { runExecutionOutboxMigrations } from './executionOutboxStore.js';
+import { retireIntegrationCandidateSchema } from './retiredIntegrationCandidateSchema.js';
 import { quoteSqlLiteral } from './storeHelpers.js';
 import { taskFieldsMigrationSql, taskTableSql } from './taskFields.js';
 import { retireTaskboardResolutionSchema, runTaskboardV2Schema } from './v2Schema.js';
@@ -112,6 +113,7 @@ export async function initializeTaskboardStore(store: PgTaskboardStore): Promise
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
+    await retireIntegrationCandidateSchema(store.integrationSourcesTable, client);
     await client.query(executionFieldMigrationSql(store.executionsTable));
     await client.query(`
       CREATE TABLE IF NOT EXISTS ${store.executionOutboxTable} (

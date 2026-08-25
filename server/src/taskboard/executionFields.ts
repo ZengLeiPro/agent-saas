@@ -23,14 +23,14 @@ export function executionFieldMigrationSql(executionsTable: string): string {
     ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS trigger TEXT NOT NULL DEFAULT 'initial';
     ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS protocol_version INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS attempt_id TEXT;
-    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_id TEXT;
-    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_version INTEGER;
-    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_revision INTEGER;
-    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_work_round INTEGER;
-    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_workflow_epoch BIGINT;
-    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_lane_epoch BIGINT;
-    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_head_oid TEXT;
     ALTER TABLE ${executionsTable} DROP CONSTRAINT IF EXISTS ${executionsTable}_candidate_binding_check;
+    ALTER TABLE ${executionsTable} DROP COLUMN IF EXISTS candidate_id;
+    ALTER TABLE ${executionsTable} DROP COLUMN IF EXISTS candidate_version;
+    ALTER TABLE ${executionsTable} DROP COLUMN IF EXISTS candidate_revision;
+    ALTER TABLE ${executionsTable} DROP COLUMN IF EXISTS candidate_work_round;
+    ALTER TABLE ${executionsTable} DROP COLUMN IF EXISTS candidate_workflow_epoch;
+    ALTER TABLE ${executionsTable} DROP COLUMN IF EXISTS candidate_lane_epoch;
+    ALTER TABLE ${executionsTable} DROP COLUMN IF EXISTS candidate_head_oid;
     ALTER TABLE ${executionsTable} DROP CONSTRAINT IF EXISTS ${executionsTable}_trigger_check;
     ALTER TABLE ${executionsTable} ADD CONSTRAINT ${executionsTable}_trigger_check
       CHECK (trigger IN ('initial', 'comment', 'resume', 'retry'));

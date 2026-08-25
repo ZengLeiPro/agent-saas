@@ -36,7 +36,6 @@ describe('Workflow v3 blocked resume authority', () => {
     await expect(resumeBlockedTask(options(client), identity, 'task-1', {
       expectedVersion: 1, decision: 'must not resume merged work',
     })).rejects.toMatchObject({ code: 'TASKBOARD_RESUME_INVALID' });
-    expect(query.mock.calls.some(([sql]) => String(sql).includes('SELECT * FROM integration_candidates'))).toBe(false);
   });
 
   it('rejects resume while a provider merge is durably in flight', async () => {

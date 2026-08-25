@@ -355,39 +355,6 @@ export interface TaskboardExecutionStore {
   ): Promise<TaskBoardExecutionStartResult | null>;
 }
 
-export interface TaskboardIntegrationPushIssueInput {
-  executionId: string;
-  candidateId: string;
-  ttlMs?: number;
-}
-
-export interface TaskboardIntegrationPushInput {
-  executionId: string;
-  candidateId: string;
-  capabilityToken: string;
-  /** The only git selector accepted from an Agent. Ref, remote and path are server-resolved. */
-  commitOid: string;
-}
-
-export interface TaskboardIntegrationPushService {
-  health(): Promise<{ enabled: boolean; healthy: boolean; reason?: string }>;
-  /** Trusted taskboard adapter entrypoint; execution/candidate target is server-resolved. */
-  pushCandidate(identity: TaskboardIdentity, input: {
-    executionId: string;
-    workspaceRoot: string;
-    commitOid: string;
-  }): Promise<{ pushed: true; candidateId: string; commitOid: string }>;
-  issue(identity: TaskboardIdentity, input: TaskboardIntegrationPushIssueInput): Promise<{
-    capabilityToken: string;
-    expiresAt: string;
-  }>;
-  push(identity: TaskboardIdentity, input: TaskboardIntegrationPushInput): Promise<{
-    pushed: true;
-    candidateId: string;
-    commitOid: string;
-  }>;
-}
-
 export interface TaskboardExecutionService {
   listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]>;
   searchExecutions(

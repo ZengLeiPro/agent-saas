@@ -9,7 +9,6 @@ import type {
 import { rowToBoard } from './boardFields.js';
 import { repositoryWithBoardCiPolicy } from './ciPolicy.js';
 import { loadExecutionIntegrationAgent } from './executionIntegrationAgentContext.js';
-import { ensureLegacyIntegrationAgentRendezvous } from './legacyIntegrationAgentMigration.js';
 import { assertIntegrationSourcesProviderReady } from './integrationSourceCiGate.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
 import { rowToIntegrationSource } from './integrationSourceMapper.js';
@@ -355,7 +354,6 @@ export async function cancelIntegrationTask(
       throw new TaskboardValidationError('Stop the active merge execution before canceling');
     }
     if ((loaded.task.workflowVersion ?? 2) === 3) {
-      await ensureLegacyIntegrationAgentRendezvous(options, client, loaded.task);
       const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
       const agent = await client.query(
         `SELECT repository_id FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId],
@@ -479,8 +477,6 @@ export async function getExecutionContextV2(
   const client = await options.pool.connect();
   try {
     const loaded = await loadAccessibleTaskAndBoard(options, client, identity, taskId, false);
-    // Legacy Candidate rows are only consulted once to seed the Agent record.
-    await ensureLegacyIntegrationAgentRendezvous(options, client, loaded.task);
     const include = new Set(input.include ?? ['task', 'board', 'comments', 'executions', 'integrationSources']);
     const latestExecutionResult = await client.query(
       `SELECT e.*, t.workflow_epoch

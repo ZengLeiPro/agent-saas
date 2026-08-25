@@ -14,7 +14,6 @@ import {
 } from './executionCompletion.js';
 import { resolveExecutionModelRef } from './executionFields.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
-import { requireIntegrationAgentRendezvous } from './legacyIntegrationAgentMigration.js';
 import {
   assertExecutionRequestAllowed,
   isIrreversibleMerged,
@@ -126,7 +125,6 @@ export async function claimExecution(
     const facts: WorkflowFacts = await loadWorkflowFacts(store, client, loaded.task);
     let integrationAgent = false;
     if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3) {
-      await requireIntegrationAgentRendezvous(store, client, loaded.task);
       const { agentsTable } = integrationAgentTableNames(store.integrationSourcesTable);
       const agent = await client.query(
         `SELECT integration_task_id FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId],
@@ -199,16 +197,13 @@ export async function claimExecution(
     try {
       const inserted = await client.query(
         `INSERT INTO ${store.executionsTable}
-           (id, task_id, run_id, session_id, status, purpose, trigger, protocol_version, attempt_id, requested_by,
-            candidate_id,candidate_version,candidate_revision,candidate_work_round,candidate_workflow_epoch,
-            candidate_lane_epoch,candidate_head_oid)
-         VALUES ($1,$2,$3,$4,'queued',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::bigint,$15::bigint,$16)
+           (id, task_id, run_id, session_id, status, purpose, trigger, protocol_version, attempt_id, requested_by)
+         VALUES ($1,$2,$3,$4,'queued',$5,$6,$7,$8,$9)
          RETURNING *`,
         [
           input.executionId, taskId, input.runId, input.sessionId, purpose,
           input.trigger ?? 'initial', input.protocolVersion ?? 2, attemptId,
           identity.ownerUserId,
-          null, null, null, null, null, null, null,
         ],
       );
       await client.query(

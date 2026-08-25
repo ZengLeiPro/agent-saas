@@ -60,7 +60,20 @@ export async function assertCurrentIntegrationAgentPullRequestGate(
       'TASKBOARD_CI_UNAVAILABLE',
     );
   }
-  assertPullRequestGate(current, { providerPullRequestId, headOid: String(receipt.headOid ?? ''), requireMergeable: true });
+  const expectedHeadOid = String(receipt.headOid ?? '');
+  if (current.state === 'merged') {
+    if (!current.mergeCommitOid) {
+      throw new TaskboardValidationError(
+        'Provider did not return the merged commit oid',
+        'TASKBOARD_PROVIDER_RECEIPT_INCOMPLETE',
+      );
+    }
+    if (current.providerPullRequestId !== providerPullRequestId || current.headOid !== expectedHeadOid) {
+      throw new TaskboardValidationError('Integration Agent pull request subject changed', 'TASKBOARD_SUBJECT_STALE');
+    }
+  } else {
+    assertPullRequestGate(current, { providerPullRequestId, headOid: expectedHeadOid, requireMergeable: true });
+  }
   if (current.baseRef !== repository.baseBranch || current.headRef !== String(agent.integration_branch)) {
     throw new TaskboardValidationError('Integration Agent pull request subject changed', 'TASKBOARD_SUBJECT_STALE');
   }

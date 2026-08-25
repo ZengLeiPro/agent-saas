@@ -76,13 +76,6 @@ async function main(): Promise<void> {
     operations: `${p}_taskboard_merge_ops`, continuations: `${p}_taskboard_cont_outbox`,
     cancellations: `${p}_taskboard_cancel_outbox`, lanes: `${p}_taskboard_integration_lanes`,
     authorizations: `${p}_taskboard_merge_auths`,
-    candidates: `${p}_taskboard_integration_candidates`,
-    providerOperationsV3: `${p}_taskboard_integration_provider_operations_v3`,
-    requestsOutboxV3: `${p}_taskboard_integration_requests_outbox_v3`,
-  };
-  const v3Tables = {
-    tasks: tables.tasks, executions: tables.execs, lanes: tables.lanes, candidates: tables.candidates,
-    providerOperations: tables.providerOperationsV3, requestsOutbox: tables.requestsOutboxV3,
   };
   const params: unknown[] = [args.taskId ?? null, args.boardId ?? null];
   const deliveryScope = scope('t.board_id', [

@@ -810,7 +810,6 @@ jobs:
           WORKER_CANDIDATE_STARTED=0
           WORKER_ACTIVE_DRAIN_STARTED=0
           WORKER_PREACTIVATED=0
-          WORKER_V3_ENABLED=false
           WORKER_IDLE=""
           PREV_WORKER_IDLE_TARGET=""
           log "switch color/$IDLE: $(readlink "$COLOR_DIR/$IDLE" 2>/dev/null || echo '<none>') -> $RELEASE_DIR"
@@ -981,7 +980,7 @@ jobs:
 
           # ── 5.5 Runtime Worker 候选：在 Web readiness 前完成接管 ──
           # 新 Web 的 v3 readiness 依赖同 release 的健康 worker。候选先启动，旧 worker
-          # 协作排空后由候选取得 activation ownership；只有 heartbeat healthy 才启动 Web。
+          # 候选 worker 进程就绪并完成旧 worker 排空后再启动 Web。
           WORKER_ACTIVE=""
           if [ "$WORKER_DEPLOY_REQUIRED" = "true" ]; then
             # ClientDaemonGateway 目前仍是进程内连接表，不能跨 ws-only/runtime-worker
@@ -1067,7 +1066,7 @@ jobs:
             log "switch worker/$WORKER_IDLE: ${PREV_WORKER_IDLE_TARGET:-<none>} -> $RELEASE_DIR"
             ln -sfn "$RELEASE_DIR" "$WORKER_DIR/$WORKER_IDLE"
             WORKER_CANDIDATE_STARTED=1
-            log "runtime worker candidate prepared: color=$WORKER_IDLE (activation precedes Web readiness)"
+            log "runtime worker candidate prepared: color=$WORKER_IDLE (process readiness precedes Web readiness)"
           else
             if [ ! -f "$WORKER_ACTIVE_COLOR_FILE" ]; then
               log "ERROR: classifier skipped runtime worker but active marker is missing"
@@ -1134,49 +1133,6 @@ jobs:
               log "active runtime worker drained before Web start: color=$WORKER_ACTIVE waited=${WORKER_OLD_WAITED}s"
             fi
 
-            WORKER_V3_ENABLED=$(node -e '
-              const config = require("/etc/agent-saas/config.json");
-              process.stdout.write(config.integrationV3ControlPlane?.enabled === true ? "true" : "false");
-            ')
-            if [ "$WORKER_V3_ENABLED" = "true" ]; then
-              WORKER_V3_DB_URL=$(node -e '
-                const config = require("/etc/agent-saas/config.json");
-                process.stdout.write(config.runtimeEventStore?.connectionString ?? "");
-              ')
-              WORKER_V3_HEARTBEATS_TABLE=$(node -e '
-                const config = require("/etc/agent-saas/config.json");
-                const prefix = config.runtimeEventStore?.tablePrefix ?? "runtime";
-                if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(prefix)) process.exit(2);
-                process.stdout.write(`${prefix}_taskboard_integration_activation_heartbeats_v3`);
-              ')
-              if [ -z "$WORKER_V3_DB_URL" ]; then
-                log "ERROR: Workflow v3 is enabled but runtimeEventStore.connectionString is missing"
-                rollback_idle_and_exit
-              fi
-              # 单次 ACS 隔离证明探针最多 90s，失败后 10s 重试；240s 允许两次
-              # 满超时后完成第三次探针，避免把临时冷启动误判为候选 worker 失败。
-              WORKER_V3_READY_TIMEOUT=240
-              WORKER_V3_READY=0
-              for _ in $(seq 1 "$WORKER_V3_READY_TIMEOUT"); do
-                worker_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" 2>/dev/null || true)
-                worker_v3_ready=$(psql "$WORKER_V3_DB_URL" -X -qAt -v ON_ERROR_STOP=1 -c \
-                  "SELECT CASE WHEN EXISTS (
-                     SELECT 1 FROM ${WORKER_V3_HEARTBEATS_TABLE}
-                      WHERE process_identity LIKE 'runtime-worker:${worker_pid}:%'
-                        AND release_identity='${RELEASE_ID}' AND process_role='runtime-worker'
-                        AND status='healthy' AND updated_at>=clock_timestamp()-interval '30 seconds'
-                   ) THEN 1 ELSE 0 END" 2>/dev/null || echo 0)
-                if [ "$worker_v3_ready" = "1" ]; then
-                  WORKER_V3_READY=1
-                  break
-                fi
-                sleep 1
-              done
-              if [ "$WORKER_V3_READY" -ne 1 ]; then
-                log "ERROR: runtime worker candidate has no healthy Workflow v3 heartbeat before Web start (${WORKER_V3_READY_TIMEOUT}s)"
-                rollback_idle_and_exit
-              fi
-            fi
             echo "$WORKER_IDLE" > "$WORKER_ACTIVE_COLOR_FILE"
             WORKER_PREACTIVATED=1
             log "runtime worker promoted before Web readiness: color=$WORKER_IDLE release=$RELEASE_ID"

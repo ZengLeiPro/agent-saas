@@ -34,7 +34,6 @@ import {
 } from './executionTaskActions.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
-import { requireIntegrationAgentRendezvous } from './legacyIntegrationAgentMigration.js';
 import { clearBoardCiPolicyForRepositoryChange, normalizeIntegrationPolicyCiFallback } from './ciPolicy.js';
 import { discoverBoardCiPolicy } from './ciPolicyDiscovery.js';
 import { deleteStoredTask, rollbackStoredTask } from './storeTaskDelete.js';
@@ -991,7 +990,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       if (archive) {
         await assertTaskHasNoActiveRuns(this, client, taskId);
         if (loaded.task.kind === 'integration' && (loaded.task.workflowVersion ?? 2) === 3) {
-          await requireIntegrationAgentRendezvous(this, client, loaded.task);
           const { agentsTable } = integrationAgentTableNames(this.integrationSourcesTable);
           const agent = await client.query(
             `SELECT status FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId]);

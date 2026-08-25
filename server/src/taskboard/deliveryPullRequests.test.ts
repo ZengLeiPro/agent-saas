@@ -225,6 +225,64 @@ describe('Workflow v3 integration Agent PR inspection', () => {
     expect(transactionClient.query.mock.calls.flat().join('\n')).not.toContain('candidates');
   });
 
+  it('records an exact externally merged Agent subject without bypassing merge receipt and cleanup', async () => {
+    const mergedAgent = { ...snapshot, state: 'merged' as const, mergeCommitOid: 'merge-agent' };
+    const loadClient = client(async () => ({ rows: [{
+      task_id: 'integration-1', kind: 'integration', task_branch: null, provider_pull_request_id: null,
+      execution_id: 'review-1', purpose: 'review', execution_status: 'running', transitioned_at: null, superseded_at: null,
+      repository: contextRow().repository, owner_user_id: identity.ownerUserId,
+      agent_task_id: 'integration-1', agent_provider_pull_request_id: '32', integration_branch: 'integration/integration-1',
+    }] }));
+    const activeTask = { ...taskRow(), id: 'integration-1', kind: 'integration', workflow_version: 3,
+      status: 'in_review', merged_commit_oid: null, completed_at: null };
+    const transactionClient = client(async (sql) => {
+      if (sql.includes('SELECT id FROM tasks')) return { rows: [{ id: 'integration-1' }] };
+      if (sql.includes('SELECT id FROM executions')) return { rows: [{ id: 'review-1' }] };
+      if (sql.includes('SELECT a.provider_pull_request_id')) return { rows: [{
+        provider_pull_request_id: '32', integration_branch: 'integration/integration-1', repository_id: 'github:acme/repo',
+        provider_ci_execution_id: 'review-1', provider_ci_purpose: 'review', provider_ci_head_oid: 'agent-head', provider_ci_status: 'success',
+      }] };
+      if (sql.includes('SET pull_request_number=')) return { rows: [activeTask] };
+      return { rows: [] };
+    });
+    const host = {
+      ...hostWithPullRequest(mergedPullRequest).host,
+      pool: { connect: vi.fn(async () => [loadClient, transactionClient].shift()!) },
+      repositoryProvider: { getPullRequest: vi.fn(async () => mergedAgent), mergePullRequest: vi.fn() },
+    } as unknown as IntegrationOperationHost;
+    const clients = [loadClient, transactionClient];
+    (host.pool.connect as ReturnType<typeof vi.fn>).mockImplementation(async () => clients.shift()!);
+
+    await expect(recordReviewedExecutionSubject(host, identity, 'run-review-1')).resolves.toMatchObject({
+      id: 'integration-1', status: 'in_review',
+    });
+    const sql = transactionClient.query.mock.calls.flat().join('\n');
+    expect(sql).not.toContain("SET status='done'");
+    expect(sql).not.toContain('merge_receipt');
+    expect(sql).toContain('review.subject_recorded');
+  });
+
+  it.each([
+    ['repository', { repositoryId: 'github:other/repo' }],
+    ['base', { baseRef: 'release' }],
+    ['head', { headOid: 'other-head' }],
+    ['branch', { headRef: 'integration/other' }],
+  ])('fails closed when an externally merged Agent %s binding drifts', async (_field, patch) => {
+    const loadClient = client(async () => ({ rows: [{
+      task_id: 'integration-1', kind: 'integration', task_branch: null, provider_pull_request_id: null,
+      execution_id: 'review-1', purpose: 'review', execution_status: 'running', transitioned_at: null, superseded_at: null,
+      repository: contextRow().repository, owner_user_id: identity.ownerUserId,
+      agent_task_id: 'integration-1', agent_provider_pull_request_id: '32', integration_branch: 'integration/integration-1',
+    }] }));
+    const host = {
+      ...hostWithPullRequest(mergedPullRequest).host,
+      pool: { connect: vi.fn(async () => loadClient) },
+      repositoryProvider: { getPullRequest: vi.fn(async () => ({ ...snapshot, state: 'merged' as const, mergeCommitOid: 'merge-agent', ...patch })), mergePullRequest: vi.fn() },
+    } as unknown as IntegrationOperationHost;
+    await expect(recordReviewedExecutionSubject(host, identity, 'run-review-1'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_SUBJECT_STALE' });
+  });
+
   it('rejects an Agent branch drift before recording review evidence', async () => {
     const loadClient = client(async () => ({ rows: [{
       task_id: 'integration-1', kind: 'integration', task_branch: null, provider_pull_request_id: null,

@@ -46,20 +46,15 @@ describe('taskboard task status DDL', () => {
     );
   });
 
-  it('keeps retired candidate execution columns nullable for legacy rows', () => {
+  it('drops retired Candidate execution binding columns idempotently', () => {
     const sql = executionFieldMigrationSql('runtime_taskboard_execs');
     for (const column of [
-      'candidate_id TEXT',
-      'candidate_version INTEGER',
-      'candidate_revision INTEGER',
-      'candidate_work_round INTEGER',
-      'candidate_workflow_epoch BIGINT',
-      'candidate_lane_epoch BIGINT',
-      'candidate_head_oid TEXT',
+      'candidate_id', 'candidate_version', 'candidate_revision', 'candidate_work_round',
+      'candidate_workflow_epoch', 'candidate_lane_epoch', 'candidate_head_oid',
     ]) {
-      expect(sql).toContain(`ADD COLUMN IF NOT EXISTS ${column};`);
+      expect(sql).toContain(`DROP COLUMN IF EXISTS ${column};`);
+      expect(sql).not.toContain(`ADD COLUMN IF NOT EXISTS ${column}`);
     }
-    expect(sql).not.toContain('integration_push_capabilities');
   });
 
   it('defines every delivery evidence column written by pull request registration', () => {

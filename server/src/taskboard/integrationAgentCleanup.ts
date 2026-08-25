@@ -7,7 +7,6 @@ import type { TaskBoardIntegrationPolicy, TaskBoardRepositoryConfig, TaskBoardTa
 import { repositoryWithBoardCiPolicy } from './ciPolicy.js';
 import { finalizeMergedIntegrationAgent } from './integrationFinalization.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
-import { migrateLegacyIntegrationSourceHeads } from './legacyIntegrationAgentMigration.js';
 import { isCanonicalGithubRepositoryRemote, type RepositoryProvider } from './repositoryProvider.js';
 import { TaskboardNotFoundError, TaskboardValidationError, type TaskboardIdentity } from './types.js';
 
@@ -60,17 +59,6 @@ export async function cleanupIntegrationAgent(
     if (row.kind !== 'integration' || Number(row.workflow_version) !== 3 || String(row.execution_id) !== receipt(row.merge_receipt).executionId
       || String(row.durable_session_id ?? '') !== String(row.session_id ?? '')) {
       throw new TaskboardValidationError('Cleanup is not bound to the current Integration Agent execution', 'TASKBOARD_INTEGRATION_AGENT_MERGE_INVALID');
-    }
-    if ((Array.isArray(row.sources) ? row.sources : []).some((source: Record<string, unknown>) => !source.frozenHeadOid)) {
-      await migrateLegacyIntegrationSourceHeads(host, client, String(row.id));
-      const migrated = await client.query(
-        `SELECT id,frozen_head_oid FROM ${host.integrationSourcesTable} WHERE integration_task_id=$1`,
-        [String(row.id)],
-      );
-      const heads = new Map(migrated.rows.map((source) => [String(source.id), source.frozen_head_oid]));
-      row.sources = (Array.isArray(row.sources) ? row.sources : []).map((source: Record<string, unknown>) => ({
-        ...source, frozenHeadOid: heads.get(String(source.sourceId)) ?? source.frozenHeadOid,
-      }));
     }
     const merge = receipt(row.merge_receipt);
     if (!merge.mergedCommitOid || merge.providerPullRequestId !== String(row.provider_pull_request_id)

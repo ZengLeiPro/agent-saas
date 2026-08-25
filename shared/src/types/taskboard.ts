@@ -56,22 +56,6 @@ export const TASKBOARD_MERGE_OPERATION_STATES = [
 ] as const;
 
 export const TASKBOARD_INTEGRATION_WORKFLOW_VERSIONS = [2, 3] as const;
-export const TASKBOARD_INTEGRATION_CANDIDATE_STATES = [
-  "preparing",
-  "composing",
-  "waiting_checks",
-  "needs_work",
-  "working",
-  "in_review",
-  "approved",
-  "merging",
-  "merged",
-  "blocked",
-  "needs_human",
-  "canceled",
-] as const;
-export const TASKBOARD_INTEGRATION_CANDIDATE_DIGEST_VERSIONS = [1] as const;
-
 export const TASKBOARD_ALLOWED_ACTIONS = [
   "board.read",
   "board.update",
@@ -139,9 +123,6 @@ export type TaskBoardIntegrationTriggerMode = (typeof TASKBOARD_INTEGRATION_TRIG
 export type TaskBoardIntegrationSourceState = (typeof TASKBOARD_INTEGRATION_SOURCE_STATES)[number];
 export type TaskBoardMergeOperationState = (typeof TASKBOARD_MERGE_OPERATION_STATES)[number];
 export type TaskBoardIntegrationWorkflowVersion = (typeof TASKBOARD_INTEGRATION_WORKFLOW_VERSIONS)[number];
-export type TaskBoardIntegrationCandidateState = (typeof TASKBOARD_INTEGRATION_CANDIDATE_STATES)[number];
-export type TaskBoardIntegrationCandidateDigestVersion =
-  (typeof TASKBOARD_INTEGRATION_CANDIDATE_DIGEST_VERSIONS)[number];
 export type TaskBoardIntegrationMergeMethod = "merge" | "squash" | "rebase";
 
 export interface TaskBoardCiRequiredCheck {
@@ -406,12 +387,6 @@ export interface TaskBoardChange {
   createdAt: string;
 }
 
-export interface TaskBoardExecutionIntegrationCandidate {
-  candidate: TaskBoardIntegrationCandidate;
-  revision?: TaskBoardIntegrationCandidateRevision;
-  sourceSnapshots: TaskBoardIntegrationCandidateSourceSnapshot[];
-}
-
 export interface TaskBoardExecutionIntegrationAgent {
   integrationTaskId: string;
   deliverySourceIds: string[];
@@ -434,140 +409,13 @@ export interface TaskBoardExecutionContextResponse {
   comments?: TaskBoardComment[];
   executions?: TaskBoardExecution[];
   integrationSources?: TaskBoardIntegrationSource[];
-  /** Live Agent-first integration projection. Candidate data is history-only. */
+  /** Live Agent-first integration projection. */
   integrationAgent?: TaskBoardExecutionIntegrationAgent;
-  /** @deprecated Historical Candidate projection; never supplied by Agent-first context. */
-  integrationCandidate?: TaskBoardExecutionIntegrationCandidate;
   changes?: TaskBoardChange[];
   asOfSeq: string;
   nextCursor?: string;
   hasMore: boolean;
   contract: TaskBoardWorkflowContract;
-}
-
-export interface TaskBoardIntegrationCandidate {
-  id: string;
-  integrationTaskId: string;
-  repositoryId: string;
-  baseBranch: string;
-  branch: string;
-  providerPullRequestId?: string;
-  state: TaskBoardIntegrationCandidateState;
-  currentRevision: number;
-  workRound: number;
-  version: number;
-  workflowEpoch: string;
-  laneEpoch: string;
-  policyRevision: string;
-  mergeMethod: TaskBoardIntegrationMergeMethod;
-  policySnapshot: Record<string, unknown>;
-  sourceSetDigest?: string;
-  approvedRevision?: number;
-  approvedReviewExecutionId?: string;
-  mergedCommitOid?: string;
-  lastError?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface TaskBoardIntegrationCandidateRevision {
-  candidateId: string;
-  revision: number;
-  digestVersion: TaskBoardIntegrationCandidateDigestVersion;
-  baseOid: string;
-  headOid: string;
-  /** source_seed revisions intentionally have no Git tree; provider_subject revisions always do. */
-  subjectKind?: 'source_seed' | 'provider_subject';
-  treeOid?: string;
-  /** False until deterministic composition or a fenced Work push incorporates the complete frozen source set. */
-  compositionComplete: boolean;
-  sourceSetDigest: string;
-  subjectDigest: string;
-  policySnapshotDigest: string;
-  policyRevision: string;
-  mergeMethod: TaskBoardIntegrationMergeMethod;
-  workRound: number;
-  workExecutionId?: string;
-  reviewExecutionId?: string;
-  createdAt: string;
-}
-
-export type TaskBoardIntegrationCandidatePhase =
-  | "freezing"
-  | "composing"
-  | "checks"
-  | "work"
-  | "review"
-  | "merging"
-  | "cleanup"
-  | "unknown"
-  | "blocked"
-  | "merged";
-
-/** Read projection returned by GET /tasks/:taskId/integration-candidate. */
-export interface TaskBoardIntegrationCandidateDetails {
-  candidate: TaskBoardIntegrationCandidate;
-  revisions: TaskBoardIntegrationCandidateRevision[];
-  sourceSnapshots: TaskBoardIntegrationCandidateSourceSnapshot[];
-  /** Optional server projection; clients derive a conservative phase from candidate.state when absent. */
-  phase?: TaskBoardIntegrationCandidatePhase;
-  operations?: Array<{
-    id: string;
-    operationKey: string;
-    kind: string;
-    state: string;
-    attemptCount: number;
-    error?: string;
-    receipt?: Record<string, unknown>;
-    updatedAt: string;
-  }>;
-  worker?: { status: string; checkpoint: Record<string, unknown>; error?: string };
-  requests?: Array<{
-    kind: "work" | "review" | "workspace_sync";
-    status: string;
-    attempts: number;
-    error?: string;
-    executionId?: string;
-    updatedAt: string;
-  }>;
-  cleanup?: {
-    outcome: "pending" | "completed" | "failed" | "skipped";
-    requestStatus: string;
-    reason?: string;
-    receipt?: {
-      version: 1;
-      outcome: "succeeded" | "failed";
-      actions: Array<{
-        action: "revoke_capabilities" | "fence_capabilities" | "remove_candidate_worktree" | "source_pull_request";
-        status: "succeeded" | "skipped" | "failed";
-        target?: string;
-        reason?: string;
-        error?: string;
-      }>;
-      completedAt: string;
-    };
-    updatedAt: string;
-  };
-  history?: { includeHistory: boolean; page: number; pageSize: number; total: number; hasMore: boolean };
-  lastRefreshedAt: string;
-}
-
-export interface TaskBoardIntegrationCandidateSourceSnapshot {
-  candidateId: string;
-  revision: number;
-  order: number;
-  integrationSourceId: string;
-  deliveryTaskId: string;
-  deliveryTaskVersion: number;
-  repositoryId: string;
-  providerPullRequestId: string;
-  frozenHeadOid: string;
-  frozenBaseOid: string;
-  reviewedSubjectDigest: string;
-  reviewExecutionId: string;
-  reviewReceiptDigest: string;
-  requirementDigest: string;
-  createdAt: string;
 }
 
 export interface TaskBoardIntegrationSource {

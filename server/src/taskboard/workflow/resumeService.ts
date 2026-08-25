@@ -8,7 +8,6 @@ import {
   withTransaction,
 } from '../v2Store.js';
 import { integrationAgentTableNames } from '../integrationAgentSchema.js';
-import { ensureLegacyIntegrationAgentRendezvous } from '../legacyIntegrationAgentMigration.js';
 import { loadWorkflowFacts } from './commandService.js';
 import {
   TaskboardConflictError,
@@ -42,9 +41,6 @@ export async function resumeBlockedTask(
           'TASKBOARD_INTEGRATION_AGENT_RESUME_SOURCE_FORBIDDEN',
         );
       }
-      // The migration bridge may read a historical Candidate once to establish
-      // the durable Agent record.  Resume itself never reads or writes Candidate state.
-      await ensureLegacyIntegrationAgentRendezvous(options, client, loaded.task);
       const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
       const resumed = await client.query(
         `UPDATE ${agentsTable}

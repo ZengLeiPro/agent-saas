@@ -20,7 +20,6 @@ import { TaskboardNotFoundError, TaskboardValidationError, type TaskboardIdentit
 import { loadWorkflowFacts } from './commandService.js';
 import { assertCurrentIntegrationAgentPullRequestGate, assertCurrentPullRequestGate } from './pullRequestGate.js';
 import { decideTransition } from './decider.js';
-import { requireIntegrationAgentRendezvous } from '../legacyIntegrationAgentMigration.js';
 
 const ACTIVE = ['queued', 'running', 'waiting_user', 'waiting_approval'];
 
@@ -79,7 +78,6 @@ export async function finishExecutionV2(
     await recordExecutionFinishComment(options, client, execution, input.body);
 
     if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3) {
-      await requireIntegrationAgentRendezvous(options, client, loaded.task);
       return transitionIntegrationAgent(options, client, identity, loaded.task, execution, input.targetStatus);
     }
     const facts = await loadWorkflowFacts(options, client, loaded.task);

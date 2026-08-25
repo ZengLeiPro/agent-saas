@@ -449,8 +449,8 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       }
     }
     await this.options.store.reconcileMergeOperationsV2?.(20);
-    const integrationCandidates = await this.options.store.claimIntegrationDispatchCandidatesV2?.(10) ?? [];
-    for (const candidate of integrationCandidates) {
+    const integrationDispatches = await this.options.store.claimIntegrationDispatchCandidatesV2?.(10) ?? [];
+    for (const candidate of integrationDispatches) {
       try {
         await this.startExecutionInternal(candidate.identity, candidate.task.id, {
           expectedVersion: candidate.task.version,

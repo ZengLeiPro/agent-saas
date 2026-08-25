@@ -2,10 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
 import type { TaskBoardIntegrationPolicy, TaskBoardTask } from '../../../shared/src/types/taskboard.js';
-import {
-  finalizeMergedSource,
-  type IntegrationOperationHost,
-} from './integrationOperations.js';
+import { finalizeMergedSource, type IntegrationOperationHost } from './integrationOperations.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { repositoryWithBoardCiPolicy } from './ciPolicy.js';
 import type {
@@ -324,6 +321,7 @@ export async function recordReviewedExecutionSubject(
     context.providerPullRequestId,
     context.boardOwnerUserId,
   );
+  assertPullRequestIdentity(context, pullRequest);
   if (pullRequest.state === 'merged') {
     if (!pullRequest.mergeCommitOid) {
       throw new TaskboardValidationError(
@@ -331,16 +329,18 @@ export async function recordReviewedExecutionSubject(
         'TASKBOARD_PROVIDER_RECEIPT_INCOMPLETE',
       );
     }
-    return reconcileExternallyMergedPullRequest(host, context, {
-      ...pullRequest,
-      mergeCommitOid: pullRequest.mergeCommitOid,
-    });
-  }
-  if (pullRequest.state !== 'open' || pullRequest.draft) {
+    if (!context.isIntegrationAgent) {
+      return reconcileExternallyMergedPullRequest(host, context, {
+        ...pullRequest,
+        mergeCommitOid: pullRequest.mergeCommitOid,
+      });
+    }
+    // Do not converge here. The review may race an external merge, but an
+    // Integration Agent must still transition through merge receipt persistence,
+    // checkpointed cleanup, and the single finalization state machine.
+  } else if (pullRequest.state !== 'open' || pullRequest.draft) {
     throw new TaskboardValidationError('Pull request is not reviewable', 'TASKBOARD_PR_NOT_OPEN');
   }
-  assertRemediationPullRequest(context, pullRequest.providerPullRequestId);
-  assertRemediationBranch(context, pullRequest.headRef);
   const client = await host.pool.connect();
   try {
     await client.query('BEGIN');
@@ -348,11 +348,19 @@ export async function recordReviewedExecutionSubject(
     if (context.isIntegrationAgent) {
       const { agentsTable } = integrationAgentTableNames(host.integrationSourcesTable);
       const current = await client.query(
-        `SELECT provider_pull_request_id,integration_branch FROM ${agentsTable}
-          WHERE integration_task_id=$1 FOR UPDATE`, [context.taskId],
+        `SELECT a.provider_pull_request_id,a.integration_branch,a.repository_id,
+                t.provider_ci_execution_id,t.provider_ci_purpose,t.provider_ci_head_oid,t.provider_ci_status
+           FROM ${agentsTable} a JOIN ${host.tasksTable} t ON t.id=a.integration_task_id
+          WHERE a.integration_task_id=$1 FOR UPDATE OF a,t`, [context.taskId],
       );
-      if (String(current.rows[0]?.provider_pull_request_id ?? '') !== pullRequest.providerPullRequestId
-        || String(current.rows[0]?.integration_branch ?? '') !== pullRequest.headRef) {
+      const binding = current.rows[0];
+      if (String(binding?.provider_pull_request_id ?? '') !== pullRequest.providerPullRequestId
+        || String(binding?.integration_branch ?? '') !== pullRequest.headRef
+        || String(binding?.repository_id ?? '') !== context.repository.repositoryId
+        || String(binding?.provider_ci_execution_id ?? '') !== context.executionId
+        || String(binding?.provider_ci_purpose ?? '') !== 'review'
+        || String(binding?.provider_ci_head_oid ?? '') !== pullRequest.headOid
+        || String(binding?.provider_ci_status ?? '') !== 'success') {
         throw new TaskboardValidationError('Integration Agent pull request changed during review', 'TASKBOARD_SUBJECT_STALE');
       }
     } else {
@@ -609,7 +617,8 @@ function assertPullRequestIdentity(
   context: Awaited<ReturnType<typeof loadContext>>,
   snapshot: RepositoryPullRequestSnapshot,
 ): void {
-  if (snapshot.providerPullRequestId !== context.providerPullRequestId
+  if (('repositoryId' in snapshot && snapshot.repositoryId !== context.repository.repositoryId)
+    || snapshot.providerPullRequestId !== context.providerPullRequestId
     || snapshot.baseRef !== context.repository.baseBranch) {
     throw new TaskboardValidationError('Provider returned a pull request outside the registered subject', 'TASKBOARD_SUBJECT_STALE');
   }

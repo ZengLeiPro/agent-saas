@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WebChannel, type WebChannelConfig } from '../channels/web/channel.js';
+import { interactionStore } from '../channels/web/interactionStore.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
 import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
@@ -82,6 +83,76 @@ describe('TASK-200 staged interaction lifecycle', () => {
     expect(await store.listRecoverable()).toEqual([]);
     expect(wake).not.toHaveBeenCalled();
     expect(await store.get('run-tick')).toMatchObject({ status: 'pending', metadata: { schedulerState: 'staged' } });
+  });
+
+  it('scheduler automatically activates a staged claim after interaction_resolved survives a crash', async () => {
+    const { sessionId, store } = await seed();
+    await store.append({
+      id: `interaction_resolved:${sessionId}:interaction-staged`,
+      type: 'interaction_resolved', sessionId, runId: 'run-staged', toolCallId: 'call-staged',
+      interactionId: 'interaction-staged', interactionType: 'ask_user', userId: USER.sub,
+      response: { answers: { q: 'durable' } },
+    }, { tenantId: TENANT });
+    const runs = new MemoryRunStore();
+    const claim = {
+      sessionId, interactionId: 'interaction-staged', interactionType: 'ask_user',
+      claimId: 'crashed-after-append', claimedAt: new Date().toISOString(),
+    };
+    await runs.upsertPending({
+      runId: 'run-staged', sessionId, userId: USER.sub, tenantId: TENANT,
+      metadata: {
+        schedulerState: 'staged', persistedInteractionResumeClaim: claim,
+        resumeInteraction: { interactionId: 'interaction-staged', response: { answers: { q: 'stale' } } },
+      },
+    });
+    const scheduler = new RuntimeScheduler({ runStore: runs, eventStore: store, autoWake: false });
+
+    await scheduler.tick();
+
+    expect(await runs.get('run-staged')).toMatchObject({
+      status: 'pending',
+      metadata: {
+        schedulerState: 'ready',
+        resumeInteraction: { interactionId: 'interaction-staged', response: { answers: { q: 'durable' } } },
+      },
+    });
+    expect(await runs.listRecoverable()).toEqual([
+      expect.objectContaining({ runId: 'run-staged', metadata: expect.objectContaining({ schedulerState: 'ready' }) }),
+    ]);
+  });
+
+  it('active interaction keeps Agent pending and returns error until durable persistence succeeds', async () => {
+    const { sessionId, tmp, store } = await seed();
+    const runs = new MemoryRunStore();
+    let failAppend = true;
+    const eventStore = {
+      list: store.list.bind(store),
+      append: vi.fn(async (...args: Parameters<FileEventStore['append']>) => {
+        if (failAppend) throw new Error('active append exploded');
+        return store.append(...args);
+      }),
+    };
+    const { channel, ws } = channelRig(tmp, runs, eventStore, []);
+    const interactionId = `active-${randomUUID()}`;
+    const agentResponse = interactionStore.create(interactionId, 'ask_user', {
+      sessionId, runId: 'run-active', toolCallId: 'call-active', userId: USER.sub,
+    });
+
+    await (channel as any).resolveInteraction(
+      wsClient(ws, USER), interactionId, { answers: { q: 'first' } }, sessionId, 'active-fail',
+    );
+    expect(ws.sent.at(-1)?.data).toMatchObject({ type: 'respond_error', clientAttemptId: 'active-fail' });
+    expect(interactionStore.get(interactionId)).toBeDefined();
+
+    failAppend = false;
+    await (channel as any).resolveInteraction(
+      wsClient(ws, USER), interactionId, { answers: { q: 'second' } }, sessionId, 'active-ok',
+    );
+    await expect(agentResponse).resolves.toEqual({ answers: { q: 'second' } });
+    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId, clientAttemptId: 'active-ok' });
+    expect((await store.list(TENANT, sessionId)).filter((event) => (
+      event.type === 'interaction_resolved' && event.interactionId === interactionId
+    ))).toHaveLength(1);
   });
 
   it('append exception does not ACK, rolls back, and a retry completes once', async () => {

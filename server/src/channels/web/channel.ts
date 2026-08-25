@@ -28,6 +28,7 @@ import type { AgentRunDispatch, AgentRunHooks } from '../../agent/types.js';
 import type { ExecutionTargetKind } from '../../agent/toolRuntime.js';
 import { toRunModelOptions } from '../../app/models.js';
 import { interactionStore } from './interactionStore.js';
+import { appendActiveInteractionResolved } from './activeInteractionPersistence.js';
 import { persistedInteractionAccessError } from './persistedInteractionAccess.js';
 import {
   buildChatMessageActivityDetail,
@@ -108,7 +109,6 @@ import {
   VOICE_STT_TAG,
   wantsToolAutoApproval,
 } from './channelRuntimeHelpers.js';
-
 import { handleWebChannelEvents, type WebChannelEventTitleContext } from './channelEventHandler.js';
 import { bindChatAttachments } from './attachmentBinding.js';
 
@@ -1220,26 +1220,26 @@ export class WebChannel implements BaseChannel {
         return;
       }
     }
-    const resolved = interactionStore.resolve(interactionId, response);
+    let durableResponse = normalizeInteractionResponse(response);
+    if (pendingInteraction) {
+      if (!sessionId) { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response cannot be persisted without a session'); return; }
+      try {
+        const canonical = await appendActiveInteractionResolved({
+          sessionId, interactionId, pendingInteraction, response: durableResponse,
+          tenantId: this.eventStoreTenantForClient(client, undefined, pendingInteraction.userId) ?? undefined, userId: client.user?.sub,
+          runtimeEventStoreFor: this.config.runtimeEventStoreFor,
+        }); durableResponse = normalizeInteractionResponse(canonical.response as Record<string, unknown>);
+      } catch (error) {
+        chatLogger.warn(`active interaction persistence failed interaction=${interactionId}: ${error instanceof Error ? error.message : String(error)}`); this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response was not persisted; please retry'); return;
+      }
+    }
+    const resolved = interactionStore.resolve(interactionId, durableResponse);
     if (!resolved) {
-      const resumed = await this.tryResumePersistedInteraction(client, interactionId, response, fallbackSessionId, clientAttemptId);
+      const resumed = await this.tryResumePersistedInteraction(client, interactionId, durableResponse as Record<string, unknown>, fallbackSessionId, clientAttemptId);
       if (!resumed) {
         this.sendRespond(client, interactionId, clientAttemptId, 'Interaction not found or expired');
       }
       return;
-    }
-    if (sessionId && pendingInteraction) {
-      await this.appendDurableWebCommand(sessionId, {
-        type: 'interaction_resolved',
-        sessionId,
-        ...(pendingInteraction.runId ? { runId: pendingInteraction.runId } : {}),
-        ...(pendingInteraction.toolCallId ? { toolCallId: pendingInteraction.toolCallId } : {}),
-        ...(pendingInteraction.invocationId ? { invocationId: pendingInteraction.invocationId } : {}),
-        interactionId,
-        interactionType: pendingInteraction.type,
-        userId: client.user?.sub,
-        response: normalizeInteractionResponse(response),
-      }, this.eventStoreTenantForClient(client, undefined, pendingInteraction.userId) ?? undefined);
     }
     this.sendRespond(client, interactionId, clientAttemptId);
 

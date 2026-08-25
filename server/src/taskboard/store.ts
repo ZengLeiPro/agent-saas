@@ -25,7 +25,7 @@ import {
   claimExecutionDispatch,
   claimExecutionReconcileCandidates,
   markExecutionDispatchSucceeded,
-  retryExecutionDispatch,
+  retryExecutionDispatch, runExecutionDispatchGate,
 } from './executionOutboxStore.js';
 import {
   createTaskFromExecution as createStoredTaskFromExecution,
@@ -957,9 +957,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<TaskBoardTask> {
     return moveTaskFromReviewExecution(this, identity, runId, status);
   }
-  claimExecutionDispatch(runId: string | undefined, leaseId: string) {
-    return claimExecutionDispatch(this, runId, leaseId);
-  }
+  claimExecutionDispatch(runId: string | undefined, leaseId: string) { return claimExecutionDispatch(this, runId, leaseId); }
+
+  runExecutionDispatchGate(runId: string, leaseId: string, operation: () => Promise<void>) { return runExecutionDispatchGate(this, runId, leaseId, operation); }
   markExecutionDispatchSucceeded(runId: string, leaseId: string) {
     return markExecutionDispatchSucceeded(this, runId, leaseId);
   }

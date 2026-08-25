@@ -327,6 +327,11 @@ export interface TaskboardExecutionStore {
     status: Extract<TaskBoardStatus, 'ready_to_merge' | 'todo' | 'blocked'>,
   ): Promise<TaskBoardTask>;
   claimExecutionDispatch(runId: string | undefined, leaseId: string): Promise<TaskboardExecutionDispatch | null>;
+  /**
+   * 在 execution/outbox/cancellation 行锁门禁内创建 durable Runtime Run。
+   * false 表示 execution 已被取消或 dispatch lease 已失效，调用方不得创建 run。
+   */
+  runExecutionDispatchGate(runId: string, leaseId: string, operation: () => Promise<void>): Promise<boolean>;
   markExecutionDispatchSucceeded(runId: string, leaseId: string): Promise<boolean>;
   retryExecutionDispatch(runId: string, leaseId: string, error: string, delayMs: number): Promise<boolean>;
   claimExecutionReconcileCandidates(

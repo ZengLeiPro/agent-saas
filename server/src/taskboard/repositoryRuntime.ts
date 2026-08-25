@@ -101,12 +101,32 @@ export class RepositoryProviderIntegrationEngineV3Adapter implements Integration
     if (!providerPullRequestId) return { status: 'mismatch', detail: 'Provider operation has no pull request binding' };
     try {
       const facts = await this.readFacts(repository, providerPullRequestId, credentialOwnerId);
+      if (facts.repositoryId !== operation.repositoryId || facts.providerPullRequestId !== providerPullRequestId) {
+        return {
+          status: 'mismatch',
+          detail: 'Provider facts do not match the merge operation target',
+          evidence: {
+            repositoryId: facts.repositoryId,
+            expectedRepositoryId: operation.repositoryId,
+            providerPullRequestId: facts.providerPullRequestId,
+            expectedProviderPullRequestId: providerPullRequestId,
+          },
+        };
+      }
       if (facts.state !== 'merged' || !facts.mergeCommitOid) return { status: 'not_found', detail: 'Pull request is not merged' };
       const expectedTree = String(operation.expected.treeOid ?? '');
       if (!facts.mergedTreeOid || facts.mergedTreeOid !== expectedTree) {
         return { status: 'mismatch', detail: 'Merged tree does not match the approved candidate tree', evidence: { mergedTreeOid: facts.mergedTreeOid, expectedTree } };
       }
-      return { status: 'succeeded', receipt: { providerPullRequestId, mergedCommitOid: facts.mergeCommitOid, mergedTreeOid: facts.mergedTreeOid } };
+      return {
+        status: 'succeeded',
+        receipt: {
+          providerRequestId: operation.operationKey,
+          providerPullRequestId,
+          mergedCommitOid: facts.mergeCommitOid,
+          mergedTreeOid: facts.mergedTreeOid,
+        },
+      };
     } catch (error) {
       return { status: 'indeterminate', detail: error instanceof Error ? error.message : String(error) };
     }

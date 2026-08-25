@@ -16,7 +16,6 @@ import {
   GovernanceAuditUnavailableError,
   governanceDigest,
   recordGovernanceIntent,
-  recordGovernanceOutcome,
   type GovernanceAuditStore,
 } from '../data/governance-audit/index.js';
 import { apiLogger } from '../utils/logger.js';
@@ -24,7 +23,7 @@ import type { TenantStore } from '../data/tenants/store.js';
 import { withTenantDebugModeLock } from '../data/tenants/debugModeLock.js';
 import type { UserStore } from '../data/users/store.js';
 import { DEFAULT_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
-import type { TenantDeletionReport } from '../data/tenants/cleanup.js';
+import type { DurableTenantDeletionExecutor, TenantDeletionReport } from '../data/tenants/cleanup.js';
 import {
   MAX_COMPANY_INFO_CHARS,
   readTenantCompanyInfo,
@@ -74,8 +73,10 @@ export interface CreateTenantsRouterOptions {
   onTenantDisabled?: (tenantId: string) => void;
   /** 记忆能力配置态/实际生效态；缺省仅用于路由单测和旧嵌入方兼容。 */
   resolveMemoryFeatureStatus?: (tenantId: string) => TenantMemoryFeatureStatusMap;
-  /** 组织删除时的全量清理实现，由 app runtime 注入完整依赖。 */
+  /** @deprecated 仅保留嵌入方类型兼容；DELETE 不再执行非持久的同步 hard delete。 */
   deleteTenantResources?: (tenantId: string) => Promise<TenantDeletionReport>;
+  /** PostgreSQL-backed durable tenant deletion state machine. */
+  tenantDeletionExecutor?: DurableTenantDeletionExecutor;
   /** 高风险组织删除的独立 append-only 治理审计；缺失时删除 fail closed。 */
   governanceAuditStore?: GovernanceAuditStore;
   /**
@@ -112,6 +113,8 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
     const changesGovernedState = req.method === 'PATCH'
       && (/^\/[^/]+\/status$/.test(req.path) || /^\/[^/]+\/settings$/.test(req.path));
     if (!(createsTenant || deletesTenant || changesGovernedState) || !opts.legacyWriteGate) return next();
+    // DELETE is no longer a legacy mutation when backed by the durable job executor.
+    if (deletesTenant && opts.tenantDeletionExecutor) return next();
     if (deletesTenant || changesGovernedState) {
       res.status(409).json({
         error: '旧版 Tenant 治理写入口已封闭，请使用治理 API 或 Change Job',
@@ -396,7 +399,21 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
     }
   });
 
-  // DELETE /api/tenants/:id — hard delete tenant + tenant-owned resources
+  // GET /api/tenants/:id/deletion-jobs/:jobId — durable status/receipt.
+  router.get('/:id/deletion-jobs/:jobId', requirePlatformAdmin, async (req, res) => {
+    if (!opts.tenantDeletionExecutor) {
+      res.status(501).json({ error: '当前服务未启用持久化组织删除任务' });
+      return;
+    }
+    const receipt = await opts.tenantDeletionExecutor.get(req.params.id, req.params.jobId);
+    if (!receipt) {
+      res.status(404).json({ error: '组织删除任务不存在' });
+      return;
+    }
+    res.json(receipt);
+  });
+
+  // DELETE /api/tenants/:id — create/reuse and drive a durable deletion job.
   router.delete('/:id', requirePlatformAdmin, async (req, res) => {
     const parsed = deleteTenantSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -407,80 +424,55 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
       res.status(400).json({ error: '请填写完全一致的组织 slug 以确认删除' });
       return;
     }
-    const tenant = tenantStore.findById(req.params.id);
-    if (!tenant) {
-      res.status(404).json({ error: '组织不存在' });
-      return;
-    }
-    // 根租户不可删除，必须在调用任何跨存储清理器前 fail closed。
-    if (tenant.id === DEFAULT_TENANT_ID) {
+    if (req.params.id === DEFAULT_TENANT_ID) {
       res.status(409).json({ error: `Cannot delete the default tenant "${DEFAULT_TENANT_ID}"` });
       return;
     }
-    if (!opts.deleteTenantResources) {
-      res.status(501).json({ error: '当前服务未启用组织删除清理器' });
+    if (!opts.tenantDeletionExecutor) {
+      res.status(501).json({ error: '当前服务未启用持久化组织删除任务' });
       return;
     }
-    let intent;
+    const idempotencyKey = String(req.header('Idempotency-Key') || `tenant-delete:${req.params.id}`).trim();
+    if (!idempotencyKey || idempotencyKey.length > 200) {
+      res.status(400).json({ error: 'Idempotency-Key 长度必须为 1-200' });
+      return;
+    }
+    const tenant = tenantStore.findById(req.params.id);
+    if (!tenant) {
+      const existing = await opts.tenantDeletionExecutor.findByIdempotency(req.params.id, idempotencyKey);
+      if (existing) {
+        res.status(existing.job.status === 'succeeded' ? 200 : 202).json(existing);
+        return;
+      }
+      res.status(404).json({ error: '组织不存在' });
+      return;
+    }
     try {
-      intent = await recordGovernanceIntent(opts.governanceAuditStore, req.user!, {
-        action: 'tenant.delete',
-        targetType: 'tenant',
-        targetId: tenant.id,
-        targetTenantId: tenant.id,
-        purpose: 'platform_governance',
-        reason: 'confirmed_hard_delete',
+      await recordGovernanceIntent(opts.governanceAuditStore, req.user!, {
+        action: 'tenant.delete.schedule', targetType: 'tenant', targetId: tenant.id,
+        targetTenantId: tenant.id, purpose: 'platform_governance', reason: 'confirmed_hard_delete',
         beforeDigest: governanceDigest({ id: tenant.id, name: tenant.name, disabled: tenant.disabled }),
+        metadata: { idempotencyKey },
       });
+      const receipt = await opts.tenantDeletionExecutor.execute({
+        tenantId: tenant.id, idempotencyKey, requestedBy: req.user!.sub,
+        reasonCode: 'confirmed_hard_delete',
+      });
+      auditLog(req, 'tenant_deleted', `${tenant.id} job=${receipt.job.jobId} status=${receipt.job.status}`);
+      res.status(receipt.job.status === 'succeeded' ? 200 : 202).json(receipt);
     } catch (err) {
       if (err instanceof GovernanceAuditUnavailableError) {
         res.status(503).json({ code: err.code, error: err.message });
         return;
       }
-      throw err;
-    }
-
-    let report: TenantDeletionReport;
-    try {
-      report = await opts.deleteTenantResources(tenant.id);
-      opts.onTenantDisabled?.(tenant.id);
-    } catch (err: unknown) {
-      await recordGovernanceOutcome(opts.governanceAuditStore!, intent, 'failed', {
-        metadata: { errorCode: 'TENANT_DELETE_FAILED' },
-      }).catch(error => apiLogger.error(`组织删除失败结果审计写入失败（tenant=${tenant.id}）: ${error instanceof Error ? error.message : String(error)}`));
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg === 'Tenant not found') {
-        res.status(404).json({ error: '组织不存在' });
-      } else if (msg.includes('Cannot delete')) {
-        res.status(409).json({ error: msg });
-      } else {
-        apiLogger.warn(`删除组织失败（tenant=${req.params.id}）: ${msg}`);
-        res.status(500).json({ error: msg });
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('CHANGE_JOB_TARGET_BUSY')) {
+        res.status(409).json({ code: 'CHANGE_JOB_TARGET_BUSY', error: '该组织已有活动删除任务' });
+        return;
       }
-      return;
+      apiLogger.error(`创建组织删除任务失败（tenant=${tenant.id}）: ${message}`);
+      res.status(500).json({ error: message });
     }
-
-    let outcome;
-    try {
-      outcome = await recordGovernanceOutcome(opts.governanceAuditStore!, intent, 'succeeded', {
-        afterDigest: governanceDigest({ deleted: true, report }),
-        metadata: {
-          usersDeleted: report.usersDeleted,
-          agentProfilesDeleted: report.agentProfilesDeleted,
-        },
-      });
-    } catch (err) {
-      apiLogger.error(`组织删除成功但结果审计写入失败（tenant=${tenant.id}）: ${err instanceof Error ? err.message : String(err)}`);
-      res.status(500).json({
-        code: 'GOVERNANCE_AUDIT_OUTCOME_FAILED',
-        error: '组织已删除，但治理审计结果写入失败，请立即人工核对',
-        changed: true,
-        intentAuditId: intent.auditId,
-      });
-      return;
-    }
-    auditLog(req, 'tenant_deleted', `${tenant.id} (${tenant.name}) users=${report.usersDeleted}`);
-    res.json({ ok: true, report, auditId: outcome.auditId });
   });
 
   return router;

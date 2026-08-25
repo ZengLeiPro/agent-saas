@@ -23,9 +23,11 @@ interface ChangeJobCreator {
   }): Promise<{ job: GovernanceChangeJob; created: boolean }>;
 }
 
+// Handler insertion order is the deletion state machine. `tenant_freeze` must
+// be durable before any destructive phase and `tenant_record` must be last.
 export const TENANT_DELETE_DOMAINS = [
-  'sessions_runs', 'memory', 'assignments', 'agents_skills', 'credentials',
-  'memberships', 'tenant_configuration', 'audit_retention',
+  'tenant_freeze', 'legacy_resources', 'assignments', 'agents_skills', 'credentials',
+  'memberships', 'tenant_configuration', 'audit_retention', 'tenant_record',
 ] as const;
 
 export class GovernanceChangePlanner {

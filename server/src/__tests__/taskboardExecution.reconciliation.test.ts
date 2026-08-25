@@ -4,13 +4,93 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { RunCreateConflictError } from '../runtime/runStore.js';
+import { RunCreateConflictError, type RunRecord } from '../runtime/runStore.js';
 import type { PlatformEvent } from '../runtime/types.js';
 import { TaskboardValidationError, type TaskboardIdentity } from '../taskboard/types.js';
 
 import { comment, execution, identity, makeRig, task } from './taskboardExecutionTestRig.js';
 
 describe('TaskboardExecutionCoordinator reconciliation', () => {
+  it('workflow cancellation 走标准 target/steering/tool/event 原子链后才完成 outbox', async () => {
+    const cancel = vi.fn(async () => ({ cancelled: [], targetCancelled: true, eventCreated: true }));
+    const rig = makeRig({
+      claimWorkflowCancellations: vi.fn(async () => [{ id: 'cancel-1', runId: 'run-cancel', reason: 'superseded' }]),
+      finishWorkflowCancellation: vi.fn(async () => undefined),
+    }, {
+      runStore: {
+        get: vi.fn(async (): Promise<RunRecord | null> => ({
+          runId: 'run-cancel', sessionId: 'session-cancel', tenantId: 'tenant-1', userId: 'owner-1',
+          status: 'running', requestedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:01:00.000Z', metadata: {},
+        })),
+        cancelSteeringBeforeDispatchBySessionWithEvent: cancel,
+      },
+    });
+
+    await rig.coordinator.reconcile();
+
+    expect(cancel).toHaveBeenCalledWith(
+      'session-cancel', 'superseded', 'run-cancel',
+      expect.objectContaining({ type: 'run_cancel_requested', runId: 'run-cancel', reason: 'superseded' }),
+      'tenant-1',
+    );
+    expect(rig.store.finishWorkflowCancellation).toHaveBeenCalledWith('cancel-1');
+  });
+
+  it('workflow cancellation 遇到尚未创建的 run 时保留失败 outbox，不误标完成', async () => {
+    const rig = makeRig({
+      claimWorkflowCancellations: vi.fn(async () => [{ id: 'cancel-missing', runId: 'run-missing', reason: 'superseded' }]),
+      finishWorkflowCancellation: vi.fn(async () => undefined),
+    });
+
+    await rig.coordinator.reconcile();
+
+    expect(rig.store.finishWorkflowCancellation).toHaveBeenCalledWith(
+      'cancel-missing', expect.stringContaining('尚未创建'),
+    );
+    expect(rig.store.finishWorkflowCancellation).not.toHaveBeenCalledWith('cancel-missing');
+  });
+
+  it('workflow cancellation CAS 输给 completed 终态时不完成 outbox', async () => {
+    const get = vi.fn()
+      .mockResolvedValueOnce({
+        runId: 'run-race', sessionId: 'session-race', tenantId: 'tenant-1', status: 'running',
+        requestedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:01:00.000Z', metadata: {},
+      })
+      .mockResolvedValueOnce({
+        runId: 'run-race', sessionId: 'session-race', tenantId: 'tenant-1', status: 'completed',
+        requestedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:02:00.000Z', metadata: {},
+      });
+    const rig = makeRig({
+      claimWorkflowCancellations: vi.fn(async () => [{ id: 'cancel-race', runId: 'run-race', reason: 'superseded' }]),
+      finishWorkflowCancellation: vi.fn(async () => undefined),
+    }, {
+      runStore: {
+        get,
+        cancelSteeringBeforeDispatchBySessionWithEvent: vi.fn(async () => ({
+          cancelled: [], targetCancelled: false, eventCreated: false,
+        })),
+      },
+    });
+
+    await rig.coordinator.reconcile();
+
+    expect(rig.store.finishWorkflowCancellation).toHaveBeenCalledWith(
+      'cancel-race', expect.stringContaining('CAS 未命中'),
+    );
+    expect(rig.store.finishWorkflowCancellation).not.toHaveBeenCalledWith('cancel-race');
+  });
+
+  it('dispatch gate 拒绝已被 fence 的 claim，绝不创建 Runtime Run', async () => {
+    const rig = makeRig({
+      runExecutionDispatchGate: vi.fn(async () => false),
+    });
+
+    await rig.coordinator.startExecution(identity, task.id, { expectedVersion: task.version, purpose: 'work' });
+
+    expect(rig.store.runExecutionDispatchGate).toHaveBeenCalledTimes(1);
+    expect(rig.scheduler.enqueueCreateOnly).not.toHaveBeenCalled();
+    expect(rig.store.markExecutionDispatchSucceeded).not.toHaveBeenCalled();
+  });
   it('后台对账使用 single-flight，不阻塞或叠加 Scheduler tick', async () => {
     let resolveCandidates!: (value: []) => void;
     const candidates = new Promise<[]>((resolve) => { resolveCandidates = resolve; });

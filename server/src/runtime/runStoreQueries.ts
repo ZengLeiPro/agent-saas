@@ -121,6 +121,19 @@ export class PgRunStoreQueries {
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
   }
 
+  async listStagedPersistedInteractionResumes(limit = 50): Promise<RunRecord[]> {
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      SELECT row_to_json(run.*) AS row_json
+      FROM ${this.runsTable} run
+      WHERE status = 'pending'
+        AND metadata->>'schedulerState' = 'staged'
+        AND jsonb_typeof(metadata->'persistedInteractionResumeClaim') = 'object'
+      ORDER BY updated_at ASC, run_id ASC
+      LIMIT $1
+    `, [limit]);
+    return result.rows.map((row) => normalizeRunRecord(row.row_json));
+  }
+
   async activatePersistedInteractionResume(
     runId: string,
     claim: Record<string, unknown>,

@@ -26,6 +26,14 @@ import { DEFAULT_TENANT_ID, TENANT_SLUG_PATTERN, type TenantRecord } from './typ
 import type { TenantStore } from './store.js';
 import type { McpOAuthService } from '../../mcp/oauthService.js';
 import { ContextStore, type ContextTenantDeletionReport } from '../../context/store/store.js';
+import {
+  GovernanceChangeJobWorker,
+  TENANT_DELETE_DOMAINS,
+  type GovernanceChangeJob,
+  type GovernanceChangeJobDomain,
+  type GovernanceTenantCleanup,
+  type PgGovernanceChangeJobStore,
+} from '../changeJobs/index.js';
 
 export interface TenantDeletionReport {
   tenantId: string;
@@ -98,6 +106,25 @@ export interface DeleteTenantResourcesOptions {
   sharedDir: string;
   tenantSkillsRootDir?: string;
   avatarsDir: string;
+  /** Durable deletion jobs retain the tenant row until their final phase. */
+  preserveTenantRecord?: boolean;
+}
+
+export interface TenantDeletionJobReceipt {
+  created: boolean;
+  job: GovernanceChangeJob;
+  domains: GovernanceChangeJobDomain[];
+}
+
+export interface DurableTenantDeletionExecutor {
+  execute(input: {
+    tenantId: string;
+    idempotencyKey: string;
+    requestedBy: string;
+    reasonCode: string;
+  }): Promise<TenantDeletionJobReceipt>;
+  get(tenantId: string, jobId: string): Promise<TenantDeletionJobReceipt | null>;
+  findByIdempotency(tenantId: string, idempotencyKey: string): Promise<TenantDeletionJobReceipt | null>;
 }
 
 function emptyContextDeletionReport(): ContextTenantDeletionReport {
@@ -282,7 +309,9 @@ export async function deleteTenantResources(options: DeleteTenantResourcesOption
     : false;
 
   const usersDeleted = await options.userStore.deleteByTenant(tenantId);
-  const deletedTenant = await options.tenantStore.delete(tenantId);
+  const deletedTenant = options.preserveTenantRecord
+    ? options.tenantStore.findById(tenantId) ?? tenant
+    : await options.tenantStore.delete(tenantId);
 
   return {
     tenantId,
@@ -312,6 +341,78 @@ export async function deleteTenantResources(options: DeleteTenantResourcesOption
       sharedTenantDirDeleted,
       tenantSkillsDirDeleted,
       avatarsDeleted,
+    },
+  };
+}
+
+/** Builds a resumable tenant deletion state machine on governance change jobs. */
+export function createDurableTenantDeletionExecutor(options: {
+  jobs: PgGovernanceChangeJobStore;
+  tenantStore: TenantStore;
+  deleteResources: (tenantId: string) => Promise<TenantDeletionReport>;
+  governanceCleanup: GovernanceTenantCleanup;
+  onFrozen?: (tenantId: string) => void;
+  workerId?: string;
+  retryDelayMs?: number;
+  leaseMs?: number;
+}): DurableTenantDeletionExecutor {
+  const worker = new GovernanceChangeJobWorker({
+    store: options.jobs,
+    workerId: options.workerId ?? 'tenant-deletion',
+    ...(options.retryDelayMs !== undefined ? { retryDelayMs: options.retryDelayMs } : {}),
+    ...(options.leaseMs !== undefined ? { leaseMs: options.leaseMs } : {}),
+  });
+  const receipt = async (job: GovernanceChangeJob, created: boolean): Promise<TenantDeletionJobReceipt> => ({
+    created, job, domains: await options.jobs.listDomains(job.tenantId, job.jobId),
+  });
+  const handlers = (tenantId: string) => ({
+    tenant_freeze: async () => {
+      const tenant = options.tenantStore.findById(tenantId);
+      if (!tenant) return;
+      if (!tenant.disabled) await options.tenantStore.setDisabled(tenantId, true, 'system:tenant-deletion');
+      options.onFrozen?.(tenantId);
+    },
+    legacy_resources: async () => { await options.deleteResources(tenantId); },
+    assignments: async () => options.governanceCleanup.execute(tenantId, 'assignments'),
+    agents_skills: async () => options.governanceCleanup.execute(tenantId, 'agents_skills'),
+    credentials: async () => options.governanceCleanup.execute(tenantId, 'credentials'),
+    memberships: async () => options.governanceCleanup.execute(tenantId, 'memberships'),
+    tenant_configuration: async () => options.governanceCleanup.execute(tenantId, 'tenant_configuration'),
+    audit_retention: async () => options.governanceCleanup.execute(tenantId, 'audit_retention'),
+    tenant_record: async () => {
+      const tenant = options.tenantStore.findById(tenantId);
+      // Replay after a crash between row deletion and progress acknowledgement.
+      if (!tenant) return;
+      if (!tenant.disabled) throw new Error('TENANT_DELETE_NOT_FROZEN');
+      await options.tenantStore.delete(tenantId);
+    },
+  });
+  const executeJob = async (job: GovernanceChangeJob, created: boolean): Promise<TenantDeletionJobReceipt> => {
+    if (['succeeded', 'partial', 'failed'].includes(job.status)) return receipt(job, created);
+    if (job.status === 'retry_wait' && job.nextRetryAt && Date.parse(job.nextRetryAt) > Date.now()) {
+      return receipt(job, created);
+    }
+    const result = await worker.execute({ tenantId: job.tenantId, jobId: job.jobId, handlers: handlers(job.tenantId) });
+    return receipt(result, created);
+  };
+  return {
+    async execute(input) {
+      const existing = await options.jobs.findByIdempotency(input.tenantId, 'tenant_delete', input.idempotencyKey);
+      if (existing) return executeJob(existing, false);
+      const created = await options.jobs.create({
+        tenantId: input.tenantId, jobType: 'tenant_delete', targetType: 'tenant', targetId: input.tenantId,
+        idempotencyKey: input.idempotencyKey, request: { reasonCode: input.reasonCode },
+        domains: [...TENANT_DELETE_DOMAINS], createdBy: input.requestedBy,
+      });
+      return executeJob(created.job, created.created);
+    },
+    async get(tenantId, jobId) {
+      const job = await options.jobs.get(tenantId, jobId);
+      return job?.jobType === 'tenant_delete' ? receipt(job, false) : null;
+    },
+    async findByIdempotency(tenantId, idempotencyKey) {
+      const job = await options.jobs.findByIdempotency(tenantId, 'tenant_delete', idempotencyKey);
+      return job ? receipt(job, false) : null;
     },
   };
 }

@@ -79,6 +79,15 @@ export class MemoryRunStore implements RunStore {
     return updated;
   }
 
+  async listStagedPersistedInteractionResumes(limit = 50): Promise<RunRecord[]> {
+    return [...this.records.values()]
+      .filter((record) => record.status === 'pending'
+        && record.metadata?.schedulerState === 'staged'
+        && record.metadata?.persistedInteractionResumeClaim
+        && typeof record.metadata.persistedInteractionResumeClaim === 'object')
+      .slice(0, limit);
+  }
+
   async activatePersistedInteractionResume(runId: string, claim: Record<string, unknown>, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
     const record = this.records.get(runId);
     if (

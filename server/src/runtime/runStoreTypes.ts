@@ -257,6 +257,8 @@ export interface RunStore {
     reason: string,
     metadataPatch: Record<string, unknown>,
   ): Promise<RunRecord | null>;
+  /** 列出等待 durable interaction_resolved 协调激活的 staged claim。 */
+  listStagedPersistedInteractionResumes?(limit?: number): Promise<RunRecord[]>;
   activatePersistedInteractionResume?(
     runId: string,
     claim: Record<string, unknown>,

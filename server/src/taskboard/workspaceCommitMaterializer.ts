@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
 import { constants, createReadStream } from 'node:fs';
-import { chmod, lstat, mkdir, mkdtemp, open, opendir, readFile, realpath, rm } from 'node:fs/promises';
+import { chmod, link, lstat, mkdir, mkdtemp, open, opendir, readFile, realpath, rm, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -115,8 +116,10 @@ export async function materializeCandidateObjects(input: {
   treeOid: string;
   /** Test synchronization point after the candidate closure is isolated from its source path. */
   onTrustedCandidateMaterialized?: (repositoryPath: string) => Promise<void> | void;
-  /** Test synchronization point after the target directory is bound by file descriptor. */
+  /** Test synchronization point after the target object directory is bound by file descriptor. */
   onWorkspaceObjectDirectoryBound?: (objectDirectory: string) => Promise<void> | void;
+  /** Test synchronization point after the target pack directory is bound by file descriptor. */
+  onWorkspacePackDirectoryBound?: (packDirectory: string) => Promise<void> | void;
 }): Promise<MaterializedCandidateObjects> {
   if (![input.baseOid, input.headOid, input.treeOid].every((value) => OID.test(value))) {
     throw new WorkspaceCommitMaterializationError('object_missing');
@@ -127,6 +130,8 @@ export async function materializeCandidateObjects(input: {
   let stage = 'temporary_repository';
   let sourceObjectDirectory: BoundObjectDirectory | undefined;
   let targetObjectDirectory: BoundObjectDirectory | undefined;
+  let targetPackDirectory: BoundObjectDirectory | undefined;
+  let targetCandidateFiles: BoundRegularFile[] = [];
   try {
     await chmod(temporaryRoot, 0o700);
     const trustedRepositoryPath = join(temporaryRoot, 'trusted.git');
@@ -164,19 +169,44 @@ export async function materializeCandidateObjects(input: {
     const indexName = `pack-${packHash}.idx`;
 
     // Publication is deliberately not index-pack-with-GIT_OBJECT_DIRECTORY: that would let
-    // Git traverse mutable objects/pack or objects/info. Only no-follow descriptor copying is
-    // permitted. A substituted path is detected afterwards and fails closed.
+    // Git traverse mutable objects/pack or objects/info. Bind both namespace levels, stage
+    // exact bytes under random names, then atomically link idx-before-pack without clobbering.
     stage = 'target_binding';
     targetObjectDirectory = await bindWorkspaceObjectDirectory(input.workspaceRoot, input.repositoryName);
     await input.onWorkspaceObjectDirectoryBound?.(targetObjectDirectory.path);
+    targetPackDirectory = await bindPackDirectory(targetObjectDirectory);
+    await input.onWorkspacePackDirectoryBound?.(targetPackDirectory.path);
     stage = 'target_publish';
     await publishTrustedPack(
-      targetObjectDirectory.handle,
+      targetPackDirectory,
       join(trustedPackDirectory, packName),
       join(trustedPackDirectory, indexName),
     );
+
+    // Bind the exact published pair and prove that it alone contains the requested closure.
+    // This prevents a same-name pre-existing file or a post-publication pathname swap from
+    // being accepted merely because it is a regular file.
+    targetCandidateFiles = [
+      await bindRegularFile(targetPackDirectory, packName),
+      await bindRegularFile(targetPackDirectory, indexName),
+    ];
+    stage = 'target_closure';
+    await assertPublishedCandidateClosure(
+      temporaryRoot,
+      targetCandidateFiles[0]!,
+      targetCandidateFiles[1]!,
+      input.baseOid,
+      input.headOid,
+      input.treeOid,
+    );
     stage = 'final_binding';
     await assertWorkspaceObjectDirectoryBinding(input.workspaceRoot, input.repositoryName, targetObjectDirectory);
+    await assertBoundPath(targetPackDirectory, true);
+    for (const candidateFile of targetCandidateFiles) await assertBoundPath(candidateFile, false);
+    await Promise.all(targetCandidateFiles.map((file) => file.handle.close()));
+    targetCandidateFiles = [];
+    await targetPackDirectory.handle.close();
+    targetPackDirectory = undefined;
     await targetObjectDirectory.handle.close();
     targetObjectDirectory = undefined;
 
@@ -193,17 +223,22 @@ export async function materializeCandidateObjects(input: {
     throw new WorkspaceCommitMaterializationError('materialization_failed', stage, error);
   } finally {
     await sourceObjectDirectory?.handle.close();
+    await Promise.all(targetCandidateFiles.map((file) => file.handle.close()));
+    await targetPackDirectory?.handle.close();
     await targetObjectDirectory?.handle.close();
     await rm(temporaryRoot, { recursive: true, force: true });
   }
 }
 
-interface BoundObjectDirectory {
+interface BoundPath {
   path: string;
   device: number;
   inode: number;
   handle: Awaited<ReturnType<typeof open>>;
 }
+
+type BoundObjectDirectory = BoundPath;
+type BoundRegularFile = BoundPath;
 
 async function bindWorkspaceObjectDirectory(workspaceRoot: string, repositoryName: string): Promise<BoundObjectDirectory> {
   return bindObjectDirectory(await resolveWorkspaceObjectDirectory(workspaceRoot, repositoryName));
@@ -225,7 +260,7 @@ async function bindSourceObjectDirectory(sourceRepositoryPath: string): Promise<
 }
 
 /** Binds a validated directory so later copying never follows its mutable pathname. */
-async function bindObjectDirectory(path: string): Promise<BoundObjectDirectory> {
+async function bindObjectDirectory(path: string, bindingPath = path): Promise<BoundObjectDirectory> {
   if (process.platform !== 'linux') throw new Error('descriptor-bound object directories require Linux');
   const expected = await lstat(path);
   if (!expected.isDirectory() || expected.isSymbolicLink()) throw new Error('unsafe object directory');
@@ -235,10 +270,35 @@ async function bindObjectDirectory(path: string): Promise<BoundObjectDirectory> 
     if (!actual.isDirectory() || actual.dev !== expected.dev || actual.ino !== expected.ino) {
       throw new Error('object directory changed during binding');
     }
+    return { path: bindingPath, device: actual.dev, inode: actual.ino, handle };
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+}
+
+async function bindPackDirectory(objectDirectory: BoundObjectDirectory): Promise<BoundObjectDirectory> {
+  return bindObjectDirectory(`/proc/self/fd/${objectDirectory.handle.fd}/pack`, join(objectDirectory.path, 'pack'));
+}
+
+async function bindRegularFile(directory: BoundObjectDirectory, name: string): Promise<BoundRegularFile> {
+  const path = join(directory.path, name);
+  const handle = await open(`/proc/self/fd/${directory.handle.fd}/${name}`, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const actual = await handle.stat();
+    if (!actual.isFile()) throw new Error('unsafe candidate file');
     return { path, device: actual.dev, inode: actual.ino, handle };
   } catch (error) {
     await handle.close();
     throw error;
+  }
+}
+
+async function assertBoundPath(expected: BoundPath, directory: boolean): Promise<void> {
+  const actual = await lstat(expected.path);
+  if (actual.isSymbolicLink() || actual.dev !== expected.device || actual.ino !== expected.inode
+    || (directory ? !actual.isDirectory() : !actual.isFile())) {
+    throw new WorkspaceCommitMaterializationError('unsafe_git_metadata');
   }
 }
 
@@ -388,7 +448,10 @@ async function copyBoundDirectory(
 }
 
 async function copyBoundRegularFile(sourcePath: string, destinationPath: string, exclusive: boolean): Promise<boolean> {
-  const source = await open(sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const source = await open(
+    sourcePath,
+    constants.O_RDONLY | (/^\/proc\/self\/fd\/\d+$/.test(sourcePath) ? 0 : constants.O_NOFOLLOW),
+  );
   let destination: Awaited<ReturnType<typeof open>> | undefined;
   try {
     if (!(await source.stat()).isFile()) throw new WorkspaceCommitMaterializationError('unsafe_git_metadata');
@@ -418,21 +481,100 @@ async function copyBoundRegularFile(sourcePath: string, destinationPath: string,
 }
 
 async function publishTrustedPack(
-  targetObjectDirectory: Awaited<ReturnType<typeof open>>,
+  packDirectory: BoundObjectDirectory,
   packPath: string,
   indexPath: string,
 ): Promise<void> {
-  const packDirectory = await open(
-    `/proc/self/fd/${targetObjectDirectory.fd}/pack`,
-    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
-  );
-  try {
-    if (!(await packDirectory.stat()).isDirectory()) throw new WorkspaceCommitMaterializationError('unsafe_git_metadata');
-    await copyBoundRegularFile(packPath, `/proc/self/fd/${packDirectory.fd}/${basename(packPath)}`, true);
-    await copyBoundRegularFile(indexPath, `/proc/self/fd/${packDirectory.fd}/${basename(indexPath)}`, true);
-  } finally {
-    await packDirectory.close();
+  const sources = [
+    { path: indexPath, name: basename(indexPath) },
+    { path: packPath, name: basename(packPath) },
+  ];
+  const expected = new Map<string, string>();
+  const missing: typeof sources = [];
+
+  // Preflight the complete pair. A pre-existing same-name file is accepted only when its
+  // bytes exactly match the trusted artifact; a damaged half-pair is never silently reused.
+  for (const source of sources) {
+    const digest = await digestRegularFile(source.path);
+    expected.set(source.name, digest);
+    const targetPath = `/proc/self/fd/${packDirectory.handle.fd}/${source.name}`;
+    try {
+      if (await digestRegularFile(targetPath) !== digest) {
+        throw new WorkspaceCommitMaterializationError('unsafe_git_metadata');
+      }
+    } catch (error) {
+      if (isMissing(error)) missing.push(source);
+      else throw error;
+    }
   }
+
+  const staged: Array<{ source: typeof sources[number]; path: string }> = [];
+  try {
+    for (const source of missing) {
+      const path = `/proc/self/fd/${packDirectory.handle.fd}/.taskboard-${randomBytes(16).toString('hex')}.tmp`;
+      await copyBoundRegularFile(source.path, path, true);
+      if (await digestRegularFile(path) !== expected.get(source.name)) {
+        throw new WorkspaceCommitMaterializationError('unsafe_git_metadata');
+      }
+      staged.push({ source, path });
+    }
+
+    // idx first: until the pack link appears Git cannot consume an incomplete new pair.
+    for (const item of staged) {
+      const targetPath = `/proc/self/fd/${packDirectory.handle.fd}/${item.source.name}`;
+      try {
+        await link(item.path, targetPath);
+      } catch (error) {
+        if (!isAlreadyExists(error) || await digestRegularFile(targetPath) !== expected.get(item.source.name)) throw error;
+      }
+    }
+  } finally {
+    await Promise.all(staged.map(({ path }) => unlink(path).catch((error: unknown) => {
+      if (!isMissing(error)) throw error;
+    })));
+  }
+
+  for (const source of sources) {
+    if (await digestRegularFile(`/proc/self/fd/${packDirectory.handle.fd}/${source.name}`) !== expected.get(source.name)) {
+      throw new WorkspaceCommitMaterializationError('unsafe_git_metadata');
+    }
+  }
+}
+
+async function digestRegularFile(path: string): Promise<string> {
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    if (!(await file.stat()).isFile()) throw new WorkspaceCommitMaterializationError('unsafe_git_metadata');
+    const digest = createHash('sha256');
+    const buffer = Buffer.allocUnsafe(COPY_BUFFER_SIZE);
+    let position = 0;
+    while (true) {
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, position);
+      if (bytesRead === 0) break;
+      digest.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+    return digest.digest('hex');
+  } finally {
+    await file.close();
+  }
+}
+
+async function assertPublishedCandidateClosure(
+  temporaryRoot: string,
+  pack: BoundRegularFile,
+  index: BoundRegularFile,
+  baseOid: string,
+  headOid: string,
+  treeOid: string,
+): Promise<void> {
+  const repositoryName = `published-${randomBytes(8).toString('hex')}.git`;
+  const repositoryPath = join(temporaryRoot, repositoryName);
+  await runGit(temporaryRoot, ['init', '--bare', repositoryName]);
+  const destination = join(repositoryPath, 'objects', 'pack');
+  await copyBoundRegularFile(`/proc/self/fd/${pack.handle.fd}`, join(destination, basename(pack.path)), true);
+  await copyBoundRegularFile(`/proc/self/fd/${index.handle.fd}`, join(destination, basename(index.path)), true);
+  await assertCandidateObjects(repositoryPath, baseOid, headOid, treeOid);
 }
 
 async function assertCommitGraph(

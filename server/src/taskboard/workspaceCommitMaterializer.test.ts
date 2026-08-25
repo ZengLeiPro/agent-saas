@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -80,6 +80,36 @@ describe('materializeCandidateObjects', () => {
       headOid: source.newOid,
       treeOid,
     })).resolves.toMatchObject({ headOid: source.newOid });
+  });
+
+  it.each(['pack', 'idx'] as const)('rejects a pre-existing damaged same-name %s file', async (extension) => {
+    const source = await repository();
+    const treeOid = await git(source.root, ['rev-parse', `${source.newOid}^{tree}`]);
+    const workspace = await mkdtemp(join(tmpdir(), 'damaged-pack-workspace-'));
+    roots.push(workspace);
+    const target = join(workspace, 'agent-saas');
+    await mkdir(target);
+    await git(target, ['init']);
+    const input = {
+      sourceRepositoryPath: source.root,
+      workspaceRoot: workspace,
+      repositoryName: 'agent-saas',
+      baseOid: source.oldOid,
+      headOid: source.newOid,
+      treeOid,
+    };
+    await materializeCandidateObjects(input);
+
+    const packDirectory = join(target, '.git', 'objects', 'pack');
+    const name = (await readdir(packDirectory)).find((entry) => entry.endsWith(`.${extension}`));
+    expect(name).toBeDefined();
+    const damaged = join(packDirectory, name!);
+    await writeFile(damaged, 'pre-existing damaged same-name sentinel\n');
+
+    await expect(materializeCandidateObjects(input)).rejects.toMatchObject({
+      code: 'unsafe_git_metadata', stage: 'target_publish',
+    });
+    expect(await readFile(damaged, 'utf8')).toBe('pre-existing damaged same-name sentinel\n');
   });
 
   it('ignores a poisoned target loose object because target objects are never Git inputs', async () => {
@@ -228,10 +258,27 @@ describe('materializeCandidateObjects', () => {
         await rename(packDirectory, movedPackDirectory);
         await symlink(sentinel, packDirectory);
       },
-    })).rejects.toMatchObject({ code: 'materialization_failed', stage: 'target_publish' });
+    })).rejects.toMatchObject({ code: 'materialization_failed', stage: 'target_binding' });
     expect(await readFile(sentinelMarker, 'utf8')).toBe('must stay untouched\n');
     await rm(packDirectory);
     await rename(movedPackDirectory, packDirectory);
+
+    const detachedPackDirectory = join(objectDirectory, 'pack-detached-after-bind');
+    const replacementMarker = 'replacement-directory-sentinel';
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root, workspaceRoot: workspace, repositoryName: 'agent-saas',
+      baseOid: source.oldOid, headOid: source.newOid, treeOid,
+      onWorkspacePackDirectoryBound: async (boundPath) => {
+        expect(boundPath).toBe(packDirectory);
+        await rename(packDirectory, detachedPackDirectory);
+        await mkdir(packDirectory);
+        await writeFile(join(packDirectory, replacementMarker), 'must stay untouched\n');
+      },
+    })).rejects.toMatchObject({ code: 'unsafe_git_metadata', stage: 'final_binding' });
+    expect(await readdir(packDirectory)).toEqual([replacementMarker]);
+    expect(await readFile(join(packDirectory, replacementMarker), 'utf8')).toBe('must stay untouched\n');
+    await rm(packDirectory, { recursive: true });
+    await rename(detachedPackDirectory, packDirectory);
 
     const alternates = join(objectDirectory, 'info', 'alternates');
     await expect(materializeCandidateObjects({

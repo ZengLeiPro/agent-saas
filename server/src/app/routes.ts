@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { Express, Request, Response } from "express";
-
 import type { AppRuntime } from "./runtime.js";
 import { registerAudioTranscribeAdminRoute } from "./audioTranscribeAdminRoute.js";
 import { registerGovernanceRoutes } from './governanceRoutes.js';
@@ -15,7 +14,6 @@ import { applyModelsHotUpdate } from "./modelsHotUpdate.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import { enforcePlatformWritePolicy } from "../auth/platformGovernance.js";
 import { createRuntimeTaskboardTitleGenerator } from "../taskboard/taskTitle.js";
-
 import {
   createHealthRouter,
   createUploadRouter,
@@ -67,6 +65,7 @@ import { runtimeRunController } from "../runtime/runController.js";
 import { createSessionArtifactLifecycle } from '../runtime/sessionArtifactLifecycle.js';
 import { createTenantsRouter } from "../routes/tenants.js";
 import { deleteTenantResources } from "../data/tenants/cleanup.js";
+import { createRouteTenantDeletionExecutor } from './tenantDeletionRuntime.js';
 import { createGovernanceOffboardingExecutor, createSafeCronOffboardingExecutor, type ExecuteUserOffboarding } from './governanceOffboarding.js';
 import { archivePersonalWorkspace } from './governancePersonalDataRetention.js';
 import { createModelsAdminRouter } from "../routes/modelsAdmin.js";
@@ -88,7 +87,6 @@ import type { WebChannel } from "../channels/web/channel.js";
 import { initAuditLog, redactLegacyChatPreviewsInFile } from "../data/login-logs/index.js";
 import { configureModelPricing } from "../data/usage/pricing.js";
 import { configureImageGenPricing } from "../data/usage/imageGenPricing.js";
-
 export function registerRoutes(app: Express, runtime: AppRuntime): void {
   // 路由约定:
   // - 通道消息入口路由（如 /api/chat、/api/dingtalk/webhook）由各 Channel.start() 注册
@@ -848,9 +846,11 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
             sharedDir,
             tenantSkillsRootDir: runtime.tenantSkillsRootDir,
             avatarsDir: resolve(processCwd, config.auth?.usersFile || './data/users.json', '..', 'avatars'),
+            preserveTenantRecord: true,
           });
         }
       : undefined;
+    const tenantDeletionExecutor = createRouteTenantDeletionExecutor(runtime, executeLegacyTenantDeletion, webChannel);
     // Tenant management (admin-only CRUD；PR 1 仅元数据，不影响任何运行时行为)
     if (runtime.tenantStore) {
       app.use(
@@ -867,7 +867,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           onTenantDisabled: webChannel
             ? (tenantId: string) => webChannel.disconnectTenant(tenantId)
             : undefined,
-          deleteTenantResources: executeLegacyTenantDeletion,
+          ...(tenantDeletionExecutor ? { tenantDeletionExecutor } : {}),
         }),
       );
     }

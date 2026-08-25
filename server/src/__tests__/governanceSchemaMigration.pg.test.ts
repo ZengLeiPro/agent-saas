@@ -91,7 +91,7 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
       `SELECT version FROM ${prefix}_governance_schema_versions ORDER BY version`,
     );
     expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
-      Array.from({ length: 26 }, (_, index) => index + 1),
+      Array.from({ length: 27 }, (_, index) => index + 1),
     );
     const v18Tables = await pool.query<{ name: string | null }>(
       `SELECT to_regclass($1) AS name UNION ALL SELECT to_regclass($2) UNION ALL SELECT to_regclass($3) UNION ALL SELECT to_regclass($4)`,

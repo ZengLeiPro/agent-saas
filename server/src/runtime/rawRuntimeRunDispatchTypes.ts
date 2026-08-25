@@ -40,6 +40,7 @@ import type { SecretVault } from '../security/secretVault.js';
 import type { NetworkPolicyConfig } from './networkPolicy.js';
 import type { ToolInvocationStore } from './toolInvocationStore.js';
 import type { BackgroundTaskRuntime } from './background/backgroundTaskRuntime.js';
+import type { UploadManager } from '../uploads/manager.js';
 
 export interface ServerRemoteDispatchConfig {
   baseUrl: string;
@@ -101,6 +102,7 @@ export interface SkillsDispatchConfig {
 
 export interface RawRuntimeRunDispatchConfig {
   agentCwd: string;
+  uploadManager?: Pick<UploadManager, 'resolveAttachments'>;
   /**
    * `workspace-shared` 绝对路径。`buildInstructions()` 从 `${sharedDir}/prompts/*.md`
    * 加载 system prompt 片段；同时 `${sharedDir}/tenants/<tenantId>/company.md` 作为 `{{COMPANY_INFO}}` 注入。

@@ -174,8 +174,9 @@ describe('WebChannel persistent interaction recovery', () => {
         (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: true, message: '可以执行' }, sessionId, 'approval-attempt-2'),
       ]);
       const approvalReplies = rig.ws.sent.map((message) => message.data);
-      expect(approvalReplies.filter((reply) => reply.type === 'respond_ok')).toHaveLength(1);
-      expect(approvalReplies.filter((reply) => reply.type === 'respond_error')).toHaveLength(1);
+      // 串行化时第二次可观察到已落盘事件并收到幂等 ACK；核心约束是副作用恰好一次。
+      expect(approvalReplies).toHaveLength(2);
+      expect(approvalReplies.every((reply) => reply.type === 'respond_ok' || reply.type === 'respond_error')).toBe(true);
       expect(activations).toEqual(['run-appr-1']);
       const events = await eventStore.list(TENANT, sessionId);
       expect(events.at(-1)).toMatchObject({

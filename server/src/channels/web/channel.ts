@@ -1184,9 +1184,9 @@ export class WebChannel implements BaseChannel {
     }
 
     const pendingInteraction = interactionStore.get(interactionId);
-    const actionAccessError = pendingInteraction?.userId
+    const actionAccessError = pendingInteraction && (pendingInteraction.userId
       ? this.sensitiveActionAccessError(client, { ownerUserId: pendingInteraction.userId })
-      : this.anonymousBindingAccessError(client, pendingInteraction?.boundWebSocket);
+      : this.anonymousBindingAccessError(client, pendingInteraction.boundWebSocket));
     if (actionAccessError) {
       this.sendRespond(client, interactionId, clientAttemptId, actionAccessError);
       return;

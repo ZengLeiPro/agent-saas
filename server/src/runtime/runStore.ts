@@ -1302,7 +1302,7 @@ export class PgRunStore implements RunStore {
   }
   async activateStagedRun(runId: string): Promise<RunRecord | null> { return this.queries.activateStagedRun(runId); }
   async claimPersistedInteractionResume(runId: string, expectedStatuses: readonly RunStatus[], reason: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.claimPersistedInteractionResume(runId, expectedStatuses, reason, metadataPatch); }
-  async activatePersistedInteractionResume(runId: string, claim: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.activatePersistedInteractionResume(runId, claim); }
+  async activatePersistedInteractionResume(runId: string, claim: Record<string, unknown>, metadataPatch?: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.activatePersistedInteractionResume(runId, claim, metadataPatch); }
   async rollbackPersistedInteractionResume(runId: string, claim: Record<string, unknown>, waitingStatus: 'waiting_user' | 'waiting_approval', reason?: string): Promise<RunRecord | null> { return this.queries.rollbackPersistedInteractionResume(runId, claim, waitingStatus, reason); }
   async stagePendingRun(runId: string): Promise<RunRecord | null> { return this.queries.stagePendingRun(runId); }
   async cancelPendingTaskboardRun(runId: string, reason: string): Promise<RunRecord | null> { return this.queries.cancelPendingTaskboardRun(runId, reason); }

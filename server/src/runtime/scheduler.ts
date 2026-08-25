@@ -188,12 +188,13 @@ export class RuntimeScheduler {
   async activateCreatedRun(
     runId: string,
     interactionClaim?: Record<string, unknown>,
+    interactionMetadataPatch?: Record<string, unknown>,
   ): Promise<RunRecord | null> {
     let activated: RunRecord | null;
     if (interactionClaim) {
       const activate = this.options.runStore.activatePersistedInteractionResume?.bind(this.options.runStore);
       if (!activate) throw new Error('RunStore staged interaction activation unavailable');
-      activated = await activate(runId, interactionClaim);
+      activated = await activate(runId, interactionClaim, interactionMetadataPatch);
     } else {
       const activate = this.options.runStore.activateStagedRun?.bind(this.options.runStore);
       if (!activate) throw new Error('RunStore staged activation unavailable');

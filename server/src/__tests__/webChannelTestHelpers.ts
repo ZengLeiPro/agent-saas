@@ -79,7 +79,7 @@ export class MemoryRunStore implements RunStore {
     return updated;
   }
 
-  async activatePersistedInteractionResume(runId: string, claim: Record<string, unknown>): Promise<RunRecord | null> {
+  async activatePersistedInteractionResume(runId: string, claim: Record<string, unknown>, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
     const record = this.records.get(runId);
     if (
       !record || record.status !== 'pending' || record.metadata?.schedulerState !== 'staged'
@@ -88,7 +88,7 @@ export class MemoryRunStore implements RunStore {
     const updated = {
       ...record,
       updatedAt: new Date().toISOString(),
-      metadata: { ...record.metadata, schedulerState: 'ready' },
+      metadata: { ...record.metadata, ...metadataPatch, schedulerState: 'ready' },
     };
     this.records.set(runId, updated);
     return updated;

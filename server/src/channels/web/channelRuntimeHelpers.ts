@@ -3,7 +3,7 @@ import { readdir } from 'node:fs/promises';
 import { Semaphore } from '../../runtime/fileReadCoalesce.js';
 import type { InteractionResponse } from '../../agent/types.js';
 import type { RunRecord, RunStatus, RunStore } from '../../runtime/runStore.js';
-import type { EventStore } from '../../runtime/types.js';
+import type { EventStore, PlatformEvent } from '../../runtime/types.js';
 import { openTrustedDirectory, withTrustedFile } from '../../security/trustedFile.js';
 
 /** Bounds cross-session approval resume work while per-file reads are coalesced. */
@@ -122,14 +122,17 @@ export async function appendPersistedInteractionResolved(
   eventStore: EventStore,
   tenantId: string,
   event: Extract<Parameters<EventStore['append']>[0], { type: 'interaction_resolved' }> & { id: string },
-): Promise<void> {
+): Promise<Extract<PlatformEvent, { type: 'interaction_resolved' }>> {
+  const canonical = (candidate: PlatformEvent | undefined) => {
+    if (candidate?.type !== 'interaction_resolved' || candidate.id !== event.id) throw new Error(`Interaction resolution id collision: ${event.id}`);
+    return candidate;
+  };
   try {
-    await eventStore.append(event, { tenantId });
+    return canonical(await eventStore.append(event, { tenantId }));
   } catch (error) {
     const accepted = await eventStore.list(tenantId, event.sessionId)
-      .then((events) => events.some((candidate) => candidate.id === event.id))
-      .catch(() => false);
-    if (accepted) return;
+      .then((events) => events.find((candidate) => candidate.id === event.id));
+    if (accepted) return canonical(accepted);
     throw error;
   }
 }

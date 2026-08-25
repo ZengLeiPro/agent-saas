@@ -124,17 +124,18 @@ export class PgRunStoreQueries {
   async activatePersistedInteractionResume(
     runId: string,
     claim: Record<string, unknown>,
+    metadataPatch: Record<string, unknown> = {},
   ): Promise<RunRecord | null> {
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       UPDATE ${this.runsTable}
-      SET metadata = jsonb_set(metadata, '{schedulerState}', '"ready"'::jsonb, true),
+      SET metadata = jsonb_set(metadata || $3::jsonb, '{schedulerState}', '"ready"'::jsonb, true),
           updated_at = clock_timestamp()
       WHERE run_id = $1
         AND status = 'pending'
         AND metadata->>'schedulerState' = 'staged'
         AND metadata->'persistedInteractionResumeClaim' @> $2::jsonb
       RETURNING row_to_json(${this.runsTable}.*) AS row_json
-    `, [runId, JSON.stringify(claim)]);
+    `, [runId, JSON.stringify(claim), JSON.stringify(metadataPatch)]);
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
   }
 

@@ -1157,12 +1157,10 @@ export class WebChannel implements BaseChannel {
   /** 处理 respond 消息（替代 POST /api/chat/respond） */
   private sendRespond(client: WsClient, interactionId: string, clientAttemptId?: string, error?: string): void { this.wsSend(client.ws, { type: error ? 'respond_error' : 'respond_ok', interactionId, ...(error ? { error } : {}), ...(typeof clientAttemptId === 'string' ? { clientAttemptId } : {}) }); }
 
-  /** Activate exactly this staged interaction claim, never a generic staged run. */
-  private async activatePersistedInteractionClaim(runId: string, claim: PersistedInteractionClaimMetadata['persistedInteractionResumeClaim']): Promise<boolean> {
+  private async activatePersistedInteractionClaim(runId: string, claim: PersistedInteractionClaimMetadata['persistedInteractionResumeClaim'], metadataPatch?: Record<string, unknown>): Promise<boolean> {
     const runtime = this.config.enqueueRuntime; if (!runtime?.scheduler.activateCreatedRun) return false;
-    if (await runtime.scheduler.activateCreatedRun(runId, claim)) return true;
-    const current = await runtime.runStore.get(runId);
-    return current?.status === 'pending' && current.metadata?.schedulerState === 'ready' && claimsMatch(current.metadata?.persistedInteractionResumeClaim, claim);
+    if (await runtime.scheduler.activateCreatedRun(runId, claim, metadataPatch)) return true;
+    const current = await runtime.runStore.get(runId); return current?.status === 'pending' && current.metadata?.schedulerState === 'ready' && claimsMatch(current.metadata?.persistedInteractionResumeClaim, claim);
   }
   /** Fence the append immediately before it becomes durable. */
   private async ownsPersistedInteractionClaim(runId: string, claim: PersistedInteractionClaimMetadata['persistedInteractionResumeClaim']): Promise<boolean> {
@@ -1370,15 +1368,16 @@ export class WebChannel implements BaseChannel {
       }
       if (claim.outcome !== 'claimed') { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction resume is still being recovered'); return true; }
       if (!await this.ownsPersistedInteractionClaim(pendingAskUser.runId, claim.metadata.persistedInteractionResumeClaim)) { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction resume claim was superseded; please retry'); return true; }
+      let canonicalResolved: Extract<PlatformEvent, { type: 'interaction_resolved' }>;
       try {
-        await appendPersistedInteractionResolved(eventStore!, tenantId, { id: persistedInteractionEventId(sessionId, interactionId), type: 'interaction_resolved', sessionId, runId: pendingAskUser.runId, toolCallId: pendingAskUser.toolCallId, ...(pendingAskUser.invocationId ? { invocationId: pendingAskUser.invocationId } : {}), interactionId, interactionType: 'ask_user', userId: client.user?.sub, response: normalizedResponse });
+        canonicalResolved = await appendPersistedInteractionResolved(eventStore!, tenantId, { id: persistedInteractionEventId(sessionId, interactionId), type: 'interaction_resolved', sessionId, runId: pendingAskUser.runId, toolCallId: pendingAskUser.toolCallId, ...(pendingAskUser.invocationId ? { invocationId: pendingAskUser.invocationId } : {}), interactionId, interactionType: 'ask_user', userId: client.user?.sub, response: normalizedResponse });
       } catch (error) {
         await this.rollbackPersistedInteractionClaim(pendingAskUser.runId, claim.metadata.persistedInteractionResumeClaim, 'waiting_user', 'ask_user_resume_event_append_failed');
         chatLogger.warn(`ask_user resume append failed run=${pendingAskUser.runId} interaction=${interactionId}: ${error instanceof Error ? error.message : String(error)}`);
         this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response was not persisted; please retry');
         return true;
       }
-      if (!await this.activatePersistedInteractionClaim(pendingAskUser.runId, claim.metadata.persistedInteractionResumeClaim)) {
+      if (!await this.activatePersistedInteractionClaim(pendingAskUser.runId, claim.metadata.persistedInteractionResumeClaim, { resumeInteraction: { interactionId, response: canonicalResolved.response } })) {
         this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response is awaiting activation');
         return true;
       }
@@ -1469,8 +1468,9 @@ export class WebChannel implements BaseChannel {
       }
       if (claim.outcome !== 'claimed') { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction resume is still being recovered'); return true; }
       if (!await this.ownsPersistedInteractionClaim(pendingApprovalRunId, claim.metadata.persistedInteractionResumeClaim)) { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction resume claim was superseded; please retry'); return true; }
+      let canonicalResolved: Extract<PlatformEvent, { type: 'interaction_resolved' }>;
       try {
-        await appendPersistedInteractionResolved(eventStore, tenantId, {
+        canonicalResolved = await appendPersistedInteractionResolved(eventStore, tenantId, {
           id: persistedInteractionEventId(sessionId, interactionId), type: 'interaction_resolved', sessionId, runId: pendingApprovalRunId, interactionId, interactionType: 'approval', userId: client.user?.sub, response: resumeResponse,
         });
       } catch (error) {
@@ -1479,7 +1479,7 @@ export class WebChannel implements BaseChannel {
         this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response was not persisted; please retry');
         return true;
       }
-      if (!await this.activatePersistedInteractionClaim(pendingApprovalRunId, claim.metadata.persistedInteractionResumeClaim)) {
+      if (!await this.activatePersistedInteractionClaim(pendingApprovalRunId, claim.metadata.persistedInteractionResumeClaim, { resumeApproval: { approvalId: interactionId, response: canonicalResolved.response } })) {
         this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response is awaiting activation');
         return true;
       }

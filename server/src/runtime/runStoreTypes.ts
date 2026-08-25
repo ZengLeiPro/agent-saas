@@ -260,6 +260,7 @@ export interface RunStore {
   activatePersistedInteractionResume?(
     runId: string,
     claim: Record<string, unknown>,
+    metadataPatch?: Record<string, unknown>,
   ): Promise<RunRecord | null>;
   rollbackPersistedInteractionResume?(
     runId: string,

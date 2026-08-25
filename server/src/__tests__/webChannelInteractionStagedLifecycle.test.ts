@@ -50,8 +50,8 @@ function channelRig(
       runStore,
       sessionCatalog: new FileSessionCatalog({ agentCwd: tmp }),
       scheduler: {
-        activateCreatedRun: async (runId: string, claim: Record<string, unknown>) => {
-          const activated = await runStore.activatePersistedInteractionResume(runId, claim);
+        activateCreatedRun: async (runId: string, claim: Record<string, unknown>, metadataPatch?: Record<string, unknown>) => {
+          const activated = await runStore.activatePersistedInteractionResume(runId, claim, metadataPatch);
           if (activated) activations.push(runId);
           return activated;
         },
@@ -181,22 +181,37 @@ describe('TASK-200 staged interaction lifecycle', () => {
         return store.append(...args);
       },
     }, oldActivations);
+    let releaseReplacement!: () => void;
+    const replacementGate = new Promise<void>((resolve) => { releaseReplacement = resolve; });
+    let replacementStarted!: () => void;
+    const replacementStartedGate = new Promise<void>((resolve) => { replacementStarted = resolve; });
     const newActivations: string[] = [];
-    const replacement = channelRig(tmp, runs, { list: store.list.bind(store), append: store.append.bind(store) }, newActivations);
+    const replacement = channelRig(tmp, runs, {
+      list: store.list.bind(store),
+      append: async (...args: Parameters<FileEventStore['append']>) => {
+        replacementStarted();
+        await replacementGate;
+        return store.append(...args);
+      },
+    }, newActivations);
     vi.useFakeTimers();
     try {
       const oldAttempt = (old.channel as any).resolveInteraction(wsClient(old.ws, USER), 'interaction-staged', { answers: { q: 'old' } }, sessionId, 'old-attempt');
       await appendStartedGate;
       vi.setSystemTime(new Date(Date.now() + 31_000));
-      await (replacement.channel as any).resolveInteraction(wsClient(replacement.ws, USER), 'interaction-staged', { answers: { q: 'new' } }, sessionId, 'new-attempt');
+      const replacementAttempt = (replacement.channel as any).resolveInteraction(wsClient(replacement.ws, USER), 'interaction-staged', { answers: { q: 'new' } }, sessionId, 'new-attempt');
+      await replacementStartedGate;
       releaseAppend();
       await oldAttempt;
+      releaseReplacement();
+      await replacementAttempt;
     } finally {
       vi.useRealTimers();
     }
     const resolved = (await store.list(TENANT, sessionId)).filter((event) => event.type === 'interaction_resolved');
     expect(resolved).toHaveLength(1);
-    expect(resolved[0]).toMatchObject({ response: { answers: { q: 'new' } } });
+    expect(resolved[0]).toMatchObject({ response: { answers: { q: 'old' } } });
+    expect((await runs.get('run-staged'))?.metadata?.resumeInteraction).toEqual({ interactionId: 'interaction-staged', response: { answers: { q: 'old' } } });
     expect(newActivations).toEqual(['run-staged']);
     expect(oldActivations).toEqual([]);
     expect(old.ws.sent.at(-1)?.data).toMatchObject({ type: 'respond_error' });

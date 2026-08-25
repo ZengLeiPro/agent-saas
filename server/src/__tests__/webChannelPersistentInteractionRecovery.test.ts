@@ -88,8 +88,8 @@ describe('WebChannel persistent interaction recovery', () => {
         runtimeEventStoreFor: (tp) => (eventStore as any) ?? new FileEventStore(getRuntimeEventLogPath(tp), TENANT),
         enqueueRuntime: {
           scheduler: {
-            activateCreatedRun: async (runId: string, claim: Record<string, unknown>) => {
-              const activated = await runStore.activatePersistedInteractionResume(runId, claim);
+            activateCreatedRun: async (runId: string, claim: Record<string, unknown>, metadataPatch?: Record<string, unknown>) => {
+              const activated = await runStore.activatePersistedInteractionResume(runId, claim, metadataPatch);
               if (activated) activations.push(runId);
               return activated;
             },
@@ -212,7 +212,8 @@ describe('WebChannel persistent interaction recovery', () => {
       const uncertainStore = {
         list: eventStore.list.bind(eventStore),
         append: vi.fn(async (...args: Parameters<FileEventStore['append']>) => {
-          await eventStore.append(...args);
+          const [event, context] = args;
+          await eventStore.append({ ...event, response: { allow: false } } as any, context);
           throw new Error('commit outcome unknown');
         }),
       };
@@ -222,8 +223,10 @@ describe('WebChannel persistent interaction recovery', () => {
       await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-uncertain', { allow: true }, sessionId, 'approval-uncertain');
       expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'appr-uncertain', clientAttemptId: 'approval-uncertain' });
       expect(activations).toEqual(['run-appr-uncertain']);
-      expect((await eventStore.list(TENANT, sessionId)).filter((event) => event.type === 'interaction_resolved' && event.interactionId === 'appr-uncertain')).toHaveLength(1);
-      expect(await runStore.get('run-appr-uncertain')).toMatchObject({ status: 'pending', metadata: { schedulerState: 'ready' } });
+      const resolved = (await eventStore.list(TENANT, sessionId)).filter((event) => event.type === 'interaction_resolved' && event.interactionId === 'appr-uncertain');
+      expect(resolved).toHaveLength(1);
+      expect(resolved[0]).toMatchObject({ response: { allow: false } });
+      expect(await runStore.get('run-appr-uncertain')).toMatchObject({ status: 'pending', metadata: { schedulerState: 'ready', resumeApproval: { approvalId: 'appr-uncertain', response: { allow: false } } } });
     });
 
     it('approval 指向终态 run → 拒绝遗留审批并 respond_ok，不恢复旧 run', async () => {

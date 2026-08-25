@@ -26,6 +26,16 @@ describe('ReleaseAttestationLog', () => {
     expect(() => append(entries, 'approved', 'approval-early')).toThrow(/Illegal or late/);
   });
 
+  it('keeps implicit-time retries idempotent across clock ticks', () => {
+    let now = new Date('2026-08-25T12:00:00.000Z');
+    const entries = new ReleaseAttestationLog('rc-20260825-01', DIGEST, { now: () => now });
+    const first = append(entries, 'built', 'build-retry');
+    now = new Date('2026-08-25T12:00:00.001Z');
+
+    expect(append(entries, 'built', 'build-retry')).toBe(first);
+    expect(() => entries.append({ state: 'built', operationKey: 'build-retry', actor: 'release-bot', manifestDigest: DIGEST, reason: 'different' })).toThrow(/already used/);
+  });
+
   it('rejects mismatched manifest evidence and lets revocation remove promotion eligibility', () => {
     const entries = log();
     expect(() => entries.append({ state: 'built', operationKey: 'build', actor: 'release-bot', manifestDigest: `sha256:${'b'.repeat(64)}` })).toThrow(/does not match/);

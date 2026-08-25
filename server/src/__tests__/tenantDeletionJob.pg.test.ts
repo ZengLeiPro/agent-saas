@@ -154,7 +154,7 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
   }, 30_000);
 
   it('upgrades real v29 active jobs without inventing a legacy receipt at either crash point', async () => {
-    const upgradePrefix = `${prefix}_v29resume`;
+    const upgradePrefix = `${prefix}v29`;
     const runner = new PgGovernanceMigrationRunner(pool, upgradePrefix);
     await runner.run(29);
     const jobsTable = `${upgradePrefix}_governance_change_jobs`;
@@ -205,7 +205,7 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
     }
   }, 30_000);
 
-  it('fails final verification when a residual appears after the legacy snapshot, then safely replays', async () => {
+  it('retries final verification when a residual appears after the legacy snapshot', async () => {
     const jobs = new PgGovernanceChangeJobStore({ pool, tablePrefix: prefix });
     await jobs.init();
     const tenantStore = new TenantStore(join(tmpRoot, 'final-proof-tenants.json'));
@@ -214,6 +214,7 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
     const executor = createDurableTenantDeletionExecutor({
       jobs,
       tenantStore,
+      retryDelayMs: 0,
       governanceCleanup: {
         execute: async () => undefined,
         verifyTenantDeletion: async () => ({
@@ -227,20 +228,19 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
       }),
     });
 
-    const partial = await executor.execute({
+    const retry = await executor.execute({
       tenantId: 'proof-acme', idempotencyKey: 'proof-delete-v1', requestedBy: 'admin', reasonCode: 'test',
     });
-    expect(partial.job.status).toBe('partial');
-    expect(partial.domains.find(item => item.domain === 'deletion_verification')).toMatchObject({
-      status: 'partial', unresolvedItems: [{ itemId: 'managed_agents', reasonCode: 'TENANT_DELETE_RESIDUAL' }],
+    expect(retry.job.status).toBe('retry_wait');
+    expect(retry.domains.find(item => item.domain === 'deletion_verification')).toMatchObject({
+      status: 'failed', unresolvedItems: [{ itemId: 'managed_agents', reasonCode: 'TENANT_DELETE_RESIDUAL' }],
     });
-    expect(partial.domains.find(item => item.domain === 'tenant_record')?.status).toBe('pending');
+    expect(retry.domains.find(item => item.domain === 'tenant_record')?.status).toBe('pending');
     expect(tenantStore.findById('proof-acme')).toMatchObject({ disabled: true });
 
     injectedGovernance = 0;
-    const replayed = await executor.replay({
-      tenantId: 'proof-acme', jobId: partial.job.jobId, expectedRevision: partial.job.revision,
-      requestedBy: 'platform-admin', additionalAttempts: 1,
+    const replayed = await executor.execute({
+      tenantId: 'proof-acme', idempotencyKey: 'proof-delete-v1', requestedBy: 'admin', reasonCode: 'retry',
     });
     expect(replayed.job.status).toBe('succeeded');
     expect(replayed.proof).toMatchObject({

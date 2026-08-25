@@ -26,25 +26,24 @@ const details: TaskBoardIntegrationCandidateDetails = {
   lastRefreshedAt: "2026-08-19T02:03:00.000Z",
 };
 
-describe("Integration v3 Candidate UI", () => {
+describe("Integration Agent UI", () => {
   beforeEach(() => fetchIntegrationCandidate.mockReset());
 
-  it("展示 Candidate 身份、当前 subject 与 Work/Review 历史，不展示逐来源已合并", async () => {
+  it("只展示 Agent 进展与 PR，不泄露 Candidate/revision/source-set 历史", async () => {
     fetchIntegrationCandidate.mockResolvedValue(details);
     render(<IntegrationCandidateDetails taskId="task-v3" />);
 
-    expect(await screen.findByText("integration/candidate-1")).toBeTruthy();
+    expect(await screen.findByText("Integration Agent")).toBeTruthy();
+    expect(screen.getByText("integration/candidate-1")).toBeTruthy();
     expect(screen.getByText("42")).toBeTruthy();
-    expect(screen.getByText("main @ aaaaaaaaaaaa")).toBeTruthy();
-    expect(screen.getByText("bbbbbbbbbbbb / cccccccccccc")).toBeTruthy();
-    expect(screen.getByText("sha256:sources")).toBeTruthy();
-    expect(screen.getByText(/R2 · round 1/)).toBeTruthy();
-    expect(screen.getByText("review-2")).toBeTruthy();
-    expect(screen.getByText(/last refreshed/)).toBeTruthy();
-    expect(screen.queryByText(/\d+\/\d+ 已合并/)).toBeNull();
+    expect(screen.getByText("正在独立复核")).toBeTruthy();
+    expect(screen.getByText(/等待当前 PR head 的独立 Review/)).toBeTruthy();
+    expect(screen.queryByText(/source-set/)).toBeNull();
+    expect(screen.queryByText(/Work 历史/)).toBeNull();
+    expect(screen.queryByText(/revision/)).toBeNull();
   });
 
-  it("TaskDetail 的 v3 容器自行加载并渲染 Candidate，而非 v2 来源详情", async () => {
+  it("TaskDetail 的 v3 容器自行加载 Agent 进展，而非 v2 来源详情", async () => {
     fetchIntegrationCandidate.mockResolvedValue(details);
     render(
       <IntegrationTaskDetails
@@ -57,46 +56,22 @@ describe("Integration v3 Candidate UI", () => {
       />,
     );
 
-    expect(await screen.findByText("integration/candidate-1")).toBeTruthy();
+    expect(await screen.findByText("Integration Agent")).toBeTruthy();
     expect(fetchIntegrationCandidate).toHaveBeenCalledWith("task-v3");
     expect(screen.queryByRole("region", { name: "集成来源" })).toBeNull();
   });
 
-  it.each([
-    [undefined, "已合并 · cleanup 待处理"],
-    [{ outcome: "failed", requestStatus: "failed", reason: "branch deletion failed", updatedAt: details.lastRefreshedAt }, "已合并 · cleanup 失败：branch deletion failed"],
-    [{ outcome: "skipped", requestStatus: "completed", reason: "skipped-by-policy: disabled", updatedAt: details.lastRefreshedAt }, "已合并 · cleanup 已跳过：skipped-by-policy: disabled"],
-    [{ outcome: "completed", requestStatus: "completed", updatedAt: details.lastRefreshedAt }, "已合并 · cleanup 已完成"],
-  ] as const)("区分 merged 后的 cleanup 状态 %#", async (cleanup, expected) => {
-    fetchIntegrationCandidate.mockResolvedValue({
-      ...details,
-      candidate: { ...details.candidate, state: "merged" },
-      ...(cleanup ? { cleanup } : {}),
-    });
-    render(<IntegrationCandidateDetails taskId="task-v3" />);
-    expect(await screen.findByText(expected)).toBeTruthy();
-  });
-
-  it("cleanup 永久失败时提供人工重排入口", async () => {
-    fetchIntegrationCandidate.mockResolvedValue({
-      ...details,
-      candidate: { ...details.candidate, state: "merged" },
-      cleanup: { outcome: "failed", requestStatus: "failed", reason: "branch deletion failed", updatedAt: details.lastRefreshedAt },
-    });
-    render(<IntegrationCandidateDetails taskId="task-v3" />);
-    expect(await screen.findByRole("button", { name: "Maintainer 重新排队 cleanup" })).toBeTruthy();
-  });
-
-  it("明确展示永久 worker_error", async () => {
+  it("只在永久失败时呈现人工处理与重新排队入口", async () => {
     fetchIntegrationCandidate.mockResolvedValue({
       ...details,
       worker: { status: "failed", checkpoint: {}, error: "provider permission denied" },
     });
     render(<IntegrationCandidateDetails taskId="task-v3" />);
-    expect(await screen.findByText("worker_error：provider permission denied")).toBeTruthy();
+    expect(await screen.findByText(/需要人工：provider permission denied/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Maintainer 重新排队" })).toBeTruthy();
   });
 
-  it("同一 Candidate 刷新失败时保留 stale 投影", async () => {
+  it("同一 Agent 刷新失败时保留上次投影", async () => {
     fetchIntegrationCandidate.mockResolvedValueOnce(details).mockRejectedValueOnce(new Error("temporary outage"));
     const { result } = renderHook(() => useIntegrationCandidate("task-v3"));
     await waitFor(() => expect(result.current.details).toEqual(details));

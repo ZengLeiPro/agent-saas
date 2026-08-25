@@ -142,6 +142,66 @@ describe('TASK-200 staged interaction lifecycle', () => {
     expect((await store.list(TENANT, sessionId)).filter((event) => event.type === 'interaction_resolved')).toHaveLength(1);
   });
 
+  it('a post-durable append error still activates and ACKs exactly once', async () => {
+    const { sessionId, tmp, store } = await seed();
+    const runs = new MemoryRunStore();
+    await runs.upsertPending({ runId: 'run-staged', sessionId, userId: USER.sub });
+    await runs.markStatus('run-staged', 'waiting_user');
+    const eventStore = {
+      list: store.list.bind(store),
+      append: vi.fn(async (...args: Parameters<FileEventStore['append']>) => {
+        await store.append(...args);
+        throw new Error('commit outcome unknown');
+      }),
+    };
+    const activations: string[] = [];
+    const { channel, ws } = channelRig(tmp, runs, eventStore, activations);
+
+    await (channel as any).resolveInteraction(wsClient(ws, USER), 'interaction-staged', { answers: { q: 'yes' } }, sessionId, 'uncertain-commit');
+    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'interaction-staged', clientAttemptId: 'uncertain-commit' });
+    expect(activations).toEqual(['run-staged']);
+    expect((await store.list(TENANT, sessionId)).filter((event) => event.type === 'interaction_resolved')).toHaveLength(1);
+  });
+
+  it('an expired claimant cannot append a second resolution after a new lease activates', async () => {
+    const { sessionId, tmp, store } = await seed();
+    const runs = new MemoryRunStore();
+    await runs.upsertPending({ runId: 'run-staged', sessionId, userId: USER.sub });
+    await runs.markStatus('run-staged', 'waiting_user');
+    let releaseAppend!: () => void;
+    const appendGate = new Promise<void>((resolve) => { releaseAppend = resolve; });
+    let appendStarted!: () => void;
+    const appendStartedGate = new Promise<void>((resolve) => { appendStarted = resolve; });
+    const oldActivations: string[] = [];
+    const old = channelRig(tmp, runs, {
+      list: store.list.bind(store),
+      append: async (...args: Parameters<FileEventStore['append']>) => {
+        appendStarted();
+        await appendGate;
+        return store.append(...args);
+      },
+    }, oldActivations);
+    const newActivations: string[] = [];
+    const replacement = channelRig(tmp, runs, { list: store.list.bind(store), append: store.append.bind(store) }, newActivations);
+    vi.useFakeTimers();
+    try {
+      const oldAttempt = (old.channel as any).resolveInteraction(wsClient(old.ws, USER), 'interaction-staged', { answers: { q: 'old' } }, sessionId, 'old-attempt');
+      await appendStartedGate;
+      vi.setSystemTime(new Date(Date.now() + 31_000));
+      await (replacement.channel as any).resolveInteraction(wsClient(replacement.ws, USER), 'interaction-staged', { answers: { q: 'new' } }, sessionId, 'new-attempt');
+      releaseAppend();
+      await oldAttempt;
+    } finally {
+      vi.useRealTimers();
+    }
+    const resolved = (await store.list(TENANT, sessionId)).filter((event) => event.type === 'interaction_resolved');
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]).toMatchObject({ response: { answers: { q: 'new' } } });
+    expect(newActivations).toEqual(['run-staged']);
+    expect(oldActivations).toEqual([]);
+    expect(old.ws.sent.at(-1)?.data).toMatchObject({ type: 'respond_error' });
+  });
+
   it('a staged claim crash before append rolls back, reclaims, and completes', async () => {
     const { sessionId, tmp, store } = await seed();
     const runs = new MemoryRunStore();

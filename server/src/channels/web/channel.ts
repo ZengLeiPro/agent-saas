@@ -94,12 +94,14 @@ import {
 // These helpers retain the existing policy constants and filesystem behavior.
 import {
   approvalResumeSemaphore,
+  appendPersistedInteractionResolved,
   claimPersistedInteractionResume,
   claimsMatch,
   type PersistedInteractionClaimMetadata,
   hasPersistedInteractionResumeClaim,
   isPersistedInteractionClaim,
   isPersistedInteractionClaimExpired,
+  persistedInteractionEventId,
   INTERACTIVE_PERMISSION_TOOLS,
   readLatestPlanContent,
   TERMINAL_RUN_STATUSES,
@@ -1369,7 +1371,7 @@ export class WebChannel implements BaseChannel {
       if (claim.outcome !== 'claimed') { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction resume is still being recovered'); return true; }
       if (!await this.ownsPersistedInteractionClaim(pendingAskUser.runId, claim.metadata.persistedInteractionResumeClaim)) { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction resume claim was superseded; please retry'); return true; }
       try {
-        await eventStore!.append({ type: 'interaction_resolved', sessionId, runId: pendingAskUser.runId, toolCallId: pendingAskUser.toolCallId, ...(pendingAskUser.invocationId ? { invocationId: pendingAskUser.invocationId } : {}), interactionId, interactionType: 'ask_user', userId: client.user?.sub, response: normalizedResponse }, { tenantId });
+        await appendPersistedInteractionResolved(eventStore!, tenantId, { id: persistedInteractionEventId(sessionId, interactionId), type: 'interaction_resolved', sessionId, runId: pendingAskUser.runId, toolCallId: pendingAskUser.toolCallId, ...(pendingAskUser.invocationId ? { invocationId: pendingAskUser.invocationId } : {}), interactionId, interactionType: 'ask_user', userId: client.user?.sub, response: normalizedResponse });
       } catch (error) {
         await this.rollbackPersistedInteractionClaim(pendingAskUser.runId, claim.metadata.persistedInteractionResumeClaim, 'waiting_user', 'ask_user_resume_event_append_failed');
         chatLogger.warn(`ask_user resume append failed run=${pendingAskUser.runId} interaction=${interactionId}: ${error instanceof Error ? error.message : String(error)}`);
@@ -1438,7 +1440,8 @@ export class WebChannel implements BaseChannel {
       }
       const currentClaim = currentRun?.metadata?.persistedInteractionResumeClaim;
       if (alreadyAccepted && isPersistedInteractionClaim(currentClaim, sessionId, interactionId)) { this.sendRespond(client, interactionId, clientAttemptId, await this.activatePersistedInteractionClaim(pendingApprovalRunId, currentClaim) ? undefined : 'Interaction response is awaiting activation'); return true; }
-      if (alreadyAccepted || alreadyApplied) { this.sendRespond(client, interactionId, clientAttemptId); return true; }
+      // A durable event without its staged claim may be an uncertain append result; reclaim and activate it below instead of ACKing a waiting Run.
+      if (alreadyApplied) { this.sendRespond(client, interactionId, clientAttemptId); return true; }
       if (!meta || !transcriptPath) {
         await approvalStore.resolvePending(
           interactionId,
@@ -1467,7 +1470,9 @@ export class WebChannel implements BaseChannel {
       if (claim.outcome !== 'claimed') { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction resume is still being recovered'); return true; }
       if (!await this.ownsPersistedInteractionClaim(pendingApprovalRunId, claim.metadata.persistedInteractionResumeClaim)) { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction resume claim was superseded; please retry'); return true; }
       try {
-        await eventStore.append({ type: 'interaction_resolved', sessionId, runId: pendingApprovalRunId, interactionId, interactionType: 'approval', userId: client.user?.sub, response: resumeResponse }, { tenantId });
+        await appendPersistedInteractionResolved(eventStore, tenantId, {
+          id: persistedInteractionEventId(sessionId, interactionId), type: 'interaction_resolved', sessionId, runId: pendingApprovalRunId, interactionId, interactionType: 'approval', userId: client.user?.sub, response: resumeResponse,
+        });
       } catch (error) {
         await this.rollbackPersistedInteractionClaim(pendingApprovalRunId, claim.metadata.persistedInteractionResumeClaim, 'waiting_approval', 'approval_resume_event_append_failed');
         chatLogger.warn(`approval resume append failed run=${pendingApprovalRunId} interaction=${interactionId}: ${error instanceof Error ? error.message : String(error)}`);

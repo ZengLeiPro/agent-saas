@@ -3,6 +3,7 @@ import { readdir } from 'node:fs/promises';
 import { Semaphore } from '../../runtime/fileReadCoalesce.js';
 import type { InteractionResponse } from '../../agent/types.js';
 import type { RunRecord, RunStatus, RunStore } from '../../runtime/runStore.js';
+import type { EventStore } from '../../runtime/types.js';
 import { openTrustedDirectory, withTrustedFile } from '../../security/trustedFile.js';
 
 /** Bounds cross-session approval resume work while per-file reads are coalesced. */
@@ -110,6 +111,27 @@ export function isPersistedInteractionClaimExpired(claim: PersistedInteractionCl
   if (typeof claimedAt !== 'string') return true; // pre-lease claims are recoverable legacy state
   const claimedAtMs = Date.parse(claimedAt);
   return !Number.isFinite(claimedAtMs) || Date.now() - claimedAtMs >= PERSISTED_INTERACTION_CLAIM_LEASE_MS;
+}
+
+export function persistedInteractionEventId(sessionId: string, interactionId: string): string {
+  return `interaction_resolved:${sessionId}:${interactionId}`;
+}
+
+/** Read back a stable id after an uncertain append before deciding whether to roll back a claim. */
+export async function appendPersistedInteractionResolved(
+  eventStore: EventStore,
+  tenantId: string,
+  event: Extract<Parameters<EventStore['append']>[0], { type: 'interaction_resolved' }> & { id: string },
+): Promise<void> {
+  try {
+    await eventStore.append(event, { tenantId });
+  } catch (error) {
+    const accepted = await eventStore.list(tenantId, event.sessionId)
+      .then((events) => events.some((candidate) => candidate.id === event.id))
+      .catch(() => false);
+    if (accepted) return;
+    throw error;
+  }
 }
 
 /** 语音转写前缀标记（STT 注入 / 门禁判定前剥离共用） */

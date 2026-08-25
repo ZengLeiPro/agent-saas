@@ -82,10 +82,10 @@ describe('WebChannel persistent interaction recovery', () => {
     await rm(join(AGENT_LEGACY_TRANSCRIPTS_ROOT, TENANT), { recursive: true, force: true });
   });
   describe('持久化交互恢复', () => {
-    function resumeRig(runStore: MemoryRunStore, tmp: string, activations: string[]): Rig {
+    function resumeRig(runStore: MemoryRunStore, tmp: string, activations: string[], eventStore?: { list: FileEventStore['list']; append: FileEventStore['append'] }): Rig {
       return makeRig({
         agentCwd: tmp,
-        runtimeEventStoreFor: (tp) => new FileEventStore(getRuntimeEventLogPath(tp), TENANT),
+        runtimeEventStoreFor: (tp) => (eventStore as any) ?? new FileEventStore(getRuntimeEventLogPath(tp), TENANT),
         enqueueRuntime: {
           scheduler: {
             activateCreatedRun: async (runId: string, claim: Record<string, unknown>) => {
@@ -191,6 +191,39 @@ describe('WebChannel persistent interaction recovery', () => {
       await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: true }, sessionId);
       expect(rig.ws.sent.map((m) => m.data.type)).toEqual(['respond_ok']);
       expect(activations).toEqual(['run-appr-1']);
+    });
+
+    it('approval 写后抛错时读取 durable resolution、activate 并 ACK', async () => {
+      const tmp = await makeTmp('cov-appruncertain-');
+      const { sessionId, eventStore } = await seedRuntimeSession(USER, {
+        model: 'm-appr', executionTarget: 'server-local', workspaceId: 'ws-appr',
+      });
+      await eventStore.append({
+        type: 'assistant_tool_calls', sessionId, runId: 'run-appr-uncertain', content: '',
+        toolCalls: [{ id: 'call-appr-uncertain', name: 'Shell', arguments: '{"command":"ls"}' }],
+      } as any, { tenantId: TENANT });
+      await eventStore.append({
+        type: 'approval_requested', sessionId, runId: 'run-appr-uncertain', approvalId: 'appr-uncertain',
+        toolCallId: 'call-appr-uncertain', toolId: 'Shell', toolName: 'Shell', input: { command: 'ls' },
+      } as any, { tenantId: TENANT });
+      const runStore = new MemoryRunStore();
+      await runStore.upsertPending({ runId: 'run-appr-uncertain', sessionId, userId: USER.sub, model: 'm-appr', channel: 'web' });
+      await runStore.markStatus('run-appr-uncertain', 'waiting_approval');
+      const uncertainStore = {
+        list: eventStore.list.bind(eventStore),
+        append: vi.fn(async (...args: Parameters<FileEventStore['append']>) => {
+          await eventStore.append(...args);
+          throw new Error('commit outcome unknown');
+        }),
+      };
+      const activations: string[] = [];
+      const rig = resumeRig(runStore, tmp, activations, uncertainStore);
+
+      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-uncertain', { allow: true }, sessionId, 'approval-uncertain');
+      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'appr-uncertain', clientAttemptId: 'approval-uncertain' });
+      expect(activations).toEqual(['run-appr-uncertain']);
+      expect((await eventStore.list(TENANT, sessionId)).filter((event) => event.type === 'interaction_resolved' && event.interactionId === 'appr-uncertain')).toHaveLength(1);
+      expect(await runStore.get('run-appr-uncertain')).toMatchObject({ status: 'pending', metadata: { schedulerState: 'ready' } });
     });
 
     it('approval 指向终态 run → 拒绝遗留审批并 respond_ok，不恢复旧 run', async () => {

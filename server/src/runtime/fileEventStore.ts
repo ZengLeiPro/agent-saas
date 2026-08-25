@@ -23,6 +23,21 @@ export function getRuntimeEventLogPath(transcriptPath: string): string {
 }
 
 const eventReadsInFlight = new Map<string, Promise<string | null>>();
+const eventAppendTails = new Map<string, Promise<void>>();
+
+async function serializeEventAppend<T>(cacheKey: string, work: () => Promise<T>): Promise<T> {
+  const previous = eventAppendTails.get(cacheKey) ?? Promise.resolve();
+  let release!: () => void;
+  const next = new Promise<void>((resolve) => { release = resolve; });
+  eventAppendTails.set(cacheKey, next);
+  await previous.catch(() => undefined);
+  try {
+    return await work();
+  } finally {
+    release();
+    if (eventAppendTails.get(cacheKey) === next) eventAppendTails.delete(cacheKey);
+  }
+}
 
 function defaultTrustedRoot(filePath: string): string {
   try {
@@ -60,19 +75,25 @@ export class FileEventStore implements EventStore {
     // 操作显式校验 scope，避免错误 tenant 复用同一路径时读写成功。
     this.assertTenant(ctx.tenantId);
     if (events.length === 0) return [];
-    const timestamp = new Date().toISOString();
-    const fullEvents = events.map((event) => ({
-      id: randomUUID(),
-      timestamp,
-      ...event,
-    } as PlatformEvent));
-    await appendTrustedFile(
-      this.trustedRoot,
-      this.relativePath,
-      fullEvents.map((event) => JSON.stringify(event)).join('\n') + '\n',
-      'utf-8',
-    );
-    return fullEvents;
+    return serializeEventAppend(this.cacheKey, async () => {
+      const existingById = new Map((await this.readAll()).map((event) => [event.id, event]));
+      const timestamp = new Date().toISOString();
+      const appended = events.map((event) => ({
+        id: event.id ?? randomUUID(),
+        timestamp,
+        ...event,
+      } as PlatformEvent));
+      const fresh = appended.filter((event) => !existingById.has(event.id));
+      if (fresh.length > 0) {
+        await appendTrustedFile(
+          this.trustedRoot,
+          this.relativePath,
+          fresh.map((event) => JSON.stringify(event)).join('\n') + '\n',
+          'utf-8',
+        );
+      }
+      return appended.map((event) => existingById.get(event.id) ?? event);
+    });
   }
 
   async list(tenantId: string, _sessionId: string, options: EventListOptions = {}): Promise<PlatformEvent[]> {
@@ -139,11 +160,17 @@ export class FileEventStore implements EventStore {
     const raw = await pending;
     if (raw === null) return [];
     const events: PlatformEvent[] = [];
+    const eventIds = new Set<string>();
     for (const line of raw.split('\n')) {
       const trimmed = line.trim();
       if (!trimmed) continue;
       try {
-        events.push(JSON.parse(trimmed) as PlatformEvent);
+        const event = JSON.parse(trimmed) as PlatformEvent;
+        // 稳定 id 是 durable accept 的幂等键；保留先落盘的权威事实，容忍旧文件
+        // 或多进程 append 竞争遗留的重复 JSONL 行。
+        if (eventIds.has(event.id)) continue;
+        eventIds.add(event.id);
+        events.push(event);
       } catch {
         // 保留 append-only 文件的容错：坏行不阻塞后续 replay。
       }

@@ -2,7 +2,7 @@ import type { PlatformEvent } from './types.js';
 
 export type PlatformEventInput = PlatformEvent extends infer Event
   ? Event extends PlatformEvent
-    ? Omit<Event, 'id' | 'timestamp'>
+    ? Omit<Event, 'id' | 'timestamp'> & { id?: string }
     : never
   : never;
 

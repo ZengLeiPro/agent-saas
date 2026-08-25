@@ -7,6 +7,7 @@ import type { TaskBoardIntegrationPolicy, TaskBoardRepositoryConfig, TaskBoardTa
 import { repositoryWithBoardCiPolicy } from './ciPolicy.js';
 import { finalizeMergedIntegrationAgent } from './integrationFinalization.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
+import { migrateLegacyIntegrationSourceHeads } from './legacyIntegrationAgentMigration.js';
 import { isCanonicalGithubRepositoryRemote, type RepositoryProvider } from './repositoryProvider.js';
 import { TaskboardNotFoundError, TaskboardValidationError, type TaskboardIdentity } from './types.js';
 
@@ -43,7 +44,8 @@ export async function cleanupIntegrationAgent(
       `SELECT t.*,b.repository,b.integration_policy,b.owner_user_id,e.id AS execution_id,e.session_id,
               a.integration_branch,a.provider_pull_request_id,a.merge_receipt,a.cleanup_receipt,a.durable_session_id,
               COALESCE(jsonb_agg(jsonb_build_object('sourceId',s.id,'providerPullRequestId',s.provider_pull_request_id,
-                'branch',d.branch,'deliveryProviderPullRequestId',d.provider_pull_request_id)) FILTER (WHERE s.id IS NOT NULL),'[]'::jsonb) AS sources
+                'frozenHeadOid',s.frozen_head_oid,'branch',d.branch,
+                'deliveryProviderPullRequestId',d.provider_pull_request_id)) FILTER (WHERE s.id IS NOT NULL),'[]'::jsonb) AS sources
          FROM ${host.executionsTable} e JOIN ${host.tasksTable} t ON t.id=e.task_id
          JOIN ${host.boardsTable} b ON b.id=t.board_id JOIN ${agentsTable} a ON a.integration_task_id=t.id
          LEFT JOIN ${host.integrationSourcesTable} s ON s.integration_task_id=t.id
@@ -58,6 +60,17 @@ export async function cleanupIntegrationAgent(
     if (row.kind !== 'integration' || Number(row.workflow_version) !== 3 || String(row.execution_id) !== receipt(row.merge_receipt).executionId
       || String(row.durable_session_id ?? '') !== String(row.session_id ?? '')) {
       throw new TaskboardValidationError('Cleanup is not bound to the current Integration Agent execution', 'TASKBOARD_INTEGRATION_AGENT_MERGE_INVALID');
+    }
+    if ((Array.isArray(row.sources) ? row.sources : []).some((source: Record<string, unknown>) => !source.frozenHeadOid)) {
+      await migrateLegacyIntegrationSourceHeads(host, client, String(row.id));
+      const migrated = await client.query(
+        `SELECT id,frozen_head_oid FROM ${host.integrationSourcesTable} WHERE integration_task_id=$1`,
+        [String(row.id)],
+      );
+      const heads = new Map(migrated.rows.map((source) => [String(source.id), source.frozen_head_oid]));
+      row.sources = (Array.isArray(row.sources) ? row.sources : []).map((source: Record<string, unknown>) => ({
+        ...source, frozenHeadOid: heads.get(String(source.sourceId)) ?? source.frozenHeadOid,
+      }));
     }
     const merge = receipt(row.merge_receipt);
     if (!merge.mergedCommitOid || merge.providerPullRequestId !== String(row.provider_pull_request_id)
@@ -75,18 +88,29 @@ export async function cleanupIntegrationAgent(
       const source = object(value)!;
       const sourceId = String(source.sourceId);
       const providerPullRequestId = String(source.providerPullRequestId ?? '');
+      const frozenHeadOid = String(source.frozenHeadOid ?? '');
       const branch = String(source.branch ?? '');
       if (!providerPullRequestId || providerPullRequestId !== String(source.deliveryProviderPullRequestId ?? '') || !branch
         || branch === repository.baseBranch || branch === merge.integrationBranch) {
         throw new TaskboardValidationError('Source cleanup binding is incomplete', 'TASKBOARD_SUBJECT_STALE');
       }
-      const current = await provider.getPullRequest(repository, providerPullRequestId, owner);
-      if (current.providerPullRequestId !== providerPullRequestId || current.baseRef !== repository.baseBranch || current.headRef !== branch) {
-        throw new TaskboardValidationError('Source pull request changed before cleanup', 'TASKBOARD_SUBJECT_STALE');
+      if (!frozenHeadOid) {
+        throw new TaskboardValidationError(
+          `Source ${sourceId} has no verified frozen head; re-review and recreate its integration source`,
+          'TASKBOARD_CONTEXT_STALE',
+        );
       }
+      const current = await provider.getPullRequest(repository, providerPullRequestId, owner);
+      if (current.providerPullRequestId !== providerPullRequestId || current.baseRef !== repository.baseBranch
+        || current.headRef !== branch || current.headOid !== frozenHeadOid) {
+        throw new TaskboardValidationError(
+          `Source ${sourceId} head drifted from reviewed ${frozenHeadOid}; cleanup was not authorized`,
+          'TASKBOARD_CONTEXT_STALE',
+        );
+      }
+      await provider.deleteBranch(repository, { ref: branch, expectedOid: frozenHeadOid, operationKey: `integration-agent-cleanup:${row.id}:source-branch:${sourceId}` }, owner);
       if (current.state === 'open') await provider.closePullRequest(repository, { providerPullRequestId, operationKey: `integration-agent-cleanup:${row.id}:source-pr:${sourceId}` }, owner);
-      await provider.deleteBranch(repository, { ref: branch, expectedOid: current.headOid, operationKey: `integration-agent-cleanup:${row.id}:source-branch:${sourceId}` }, owner);
-      sourceProgress[sourceId] = { done: true, providerPullRequestId, branch, headOid: current.headOid };
+      sourceProgress[sourceId] = { done: true, providerPullRequestId, branch, headOid: frozenHeadOid };
       progress.sources = sourceProgress;
       await checkpoint(client, agentsTable, String(row.id), progress);
     }

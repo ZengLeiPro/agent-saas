@@ -200,6 +200,7 @@ export interface TaskboardExecutionModelContext {
   boardStageModels?: TaskBoardStageModels;
   taskKind?: 'delivery' | 'integration' | 'remediation';
   taskStatus?: TaskBoardStatus;
+  integrationDurableSessionId?: string;
   policyRevision?: string;
   boardOwnerUserId: string;
   boardId?: string;

@@ -40,6 +40,13 @@ import {
 } from './types.js';
 import { appendTaskChange } from './v2Store.js';
 
+export function shouldPersistIntegrationDurableSession(
+  integrationAgent: boolean,
+  purpose: TaskBoardExecutionPurpose,
+): boolean {
+  return integrationAgent && purpose === 'work';
+}
+
 function assertBoardRole(role: 'viewer' | 'editor' | 'maintainer' | 'owner' | undefined): void {
   if (!role || role === 'viewer') {
     throw new TaskboardPermissionError('Taskboard role does not allow this operation');
@@ -233,9 +240,13 @@ export async function claimExecution(
       throw error;
     }
 
-    if (integrationAgent) {
+    if (shouldPersistIntegrationDurableSession(integrationAgent, purpose)) {
       const { agentsTable } = integrationAgentTableNames(store.integrationSourcesTable);
-      await client.query(`UPDATE ${agentsTable} SET durable_session_id=$2, updated_at=now() WHERE integration_task_id=$1`, [taskId, input.sessionId]);
+      await client.query(
+        `UPDATE ${agentsTable} SET durable_session_id=COALESCE(durable_session_id,$2),updated_at=now()
+          WHERE integration_task_id=$1`,
+        [taskId, input.sessionId],
+      );
     }
     await client.query(
       `UPDATE ${store.commentsTable}

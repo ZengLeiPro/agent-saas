@@ -6,6 +6,7 @@
 export interface IntegrationCandidateTableNames {
   candidatesTable: string;
   revisionsTable: string;
+  sourceSnapshotsTable: string;
 }
 
 export function integrationCandidateTableNames(integrationSourcesTable: string): IntegrationCandidateTableNames {
@@ -15,5 +16,6 @@ export function integrationCandidateTableNames(integrationSourcesTable: string):
   return {
     candidatesTable: `${root}_candidates`,
     revisionsTable: `${root}_candidate_revisions`,
+    sourceSnapshotsTable: `${root}_candidate_source_snapshots`,
   };
 }

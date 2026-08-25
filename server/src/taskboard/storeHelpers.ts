@@ -422,6 +422,9 @@ export function rowToExecutionModelContext(
       ? { taskKind: row.task_kind }
       : { taskKind: 'delivery' as const }),
     ...(row.task_status ? { taskStatus: String(row.task_status) as TaskBoardTask['status'] } : {}),
+    ...(row.integration_durable_session_id
+      ? { integrationDurableSessionId: String(row.integration_durable_session_id) }
+      : {}),
     ...(row.policy_revision ? { policyRevision: String(row.policy_revision) } : {}),
     boardOwnerUserId: String(row.board_owner_user_id),
     ...(row.board_id ? { boardId: String(row.board_id) } : {}),

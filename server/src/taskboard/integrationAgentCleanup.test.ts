@@ -23,7 +23,7 @@ function finalizerClient() {
   }) };
 }
 
-function loadClient(cleanupReceipt: Record<string, unknown>) {
+function loadClient(cleanupReceipt: Record<string, unknown>, frozenHeadOid: string | null = 'source-head') {
   return { release: vi.fn(), query: vi.fn(async (sql: string, values?: unknown[]) => {
     if (sql.includes('FROM executionsTable')) return { rows: [] };
     if (sql.includes('FROM executions e')) return { rows: [{
@@ -31,7 +31,7 @@ function loadClient(cleanupReceipt: Record<string, unknown>) {
       execution_id: 'merge-1', session_id: 'session-1', durable_session_id: 'session-1', integration_branch: 'integration/integration-1', provider_pull_request_id: '42',
       merge_receipt: { providerRequestId: 'request-1', providerPullRequestId: '42', integrationBranch: 'integration/integration-1', reviewHeadOid: 'agent-head', reviewExecutionId: 'review-1', executionId: 'merge-1', runId: 'run-1', mergedCommitOid: 'merge-42', raw: {} },
       cleanup_receipt: cleanupReceipt,
-      sources: [{ sourceId: 'source-1', providerPullRequestId: '11', deliveryProviderPullRequestId: '11', branch: 'feature/source-1' }],
+      sources: [{ sourceId: 'source-1', providerPullRequestId: '11', deliveryProviderPullRequestId: '11', frozenHeadOid, branch: 'feature/source-1' }],
     }] };
     if (sql.includes('SET cleanup_receipt=')) Object.assign(cleanupReceipt, JSON.parse(String(values?.[1])));
     return { rows: [], rowCount: 1 };
@@ -61,5 +61,42 @@ describe('cleanupIntegrationAgent', () => {
     expect(provider.closePullRequest).toHaveBeenCalledOnce();
     expect(provider.deleteBranch).toHaveBeenCalledTimes(3);
     expect(cleanupReceipt).toMatchObject({ integrationBranchDone: true, worktreeDone: true, completed: true });
+  });
+
+  it('returns a recoverable error without provider mutation when no frozen head can be verified', async () => {
+    const cleanupReceipt: Record<string, unknown> = { version: 1, workspaceId: 'workspace-1', sources: {}, worktreeDone: true };
+    const provider = { getPullRequest: vi.fn(), closePullRequest: vi.fn(), deleteBranch: vi.fn(), mergePullRequest: vi.fn() };
+    const host = { pool: { connect: vi.fn(async () => loadClient(cleanupReceipt, null)) }, tasksTable: 'tasks', boardsTable: 'boards',
+      executionsTable: 'executions', commentsTable: 'comments', changesTable: 'changes', integrationLanesTable: 'lanes',
+      integrationSourcesTable: 'sources', mergeAuthorizationsTable: 'auths', mergeOperationsTable: 'ops',
+      blockEpisodesTable: 'blocks', remediationAttemptsTable: 'attempts', cancellationOutboxTable: 'cancel',
+      repositoryProvider: provider } as unknown as IntegrationAgentCleanupHost;
+
+    await expect(cleanupIntegrationAgent(host, identity, 'run-1', { id: 'workspace-1', root: '/already-removed' }))
+      .rejects.toMatchObject({ code: 'TASKBOARD_CONTEXT_STALE', message: expect.stringContaining('no verified frozen head') });
+    expect(provider.getPullRequest).not.toHaveBeenCalled();
+    expect(provider.closePullRequest).not.toHaveBeenCalled();
+    expect(provider.deleteBranch).not.toHaveBeenCalled();
+  });
+
+  it('fails closed without closing or deleting when a reviewed source advances from S1 to S2', async () => {
+    const cleanupReceipt: Record<string, unknown> = { version: 1, workspaceId: 'workspace-1', sources: {}, worktreeDone: true };
+    const provider = {
+      getPullRequest: vi.fn(async () => ({ providerPullRequestId: '11', number: 11, state: 'open', draft: false,
+        headRef: 'feature/source-1', headOid: 'source-head-s2', baseRef: 'main', baseOid: 'base', mergeable: true,
+        requiredChecks: [], subjectDigest: 'digest' })),
+      closePullRequest: vi.fn(), deleteBranch: vi.fn(), mergePullRequest: vi.fn(),
+    };
+    const host = { pool: { connect: vi.fn(async () => loadClient(cleanupReceipt)) }, tasksTable: 'tasks', boardsTable: 'boards',
+      executionsTable: 'executions', commentsTable: 'comments', changesTable: 'changes', integrationLanesTable: 'lanes',
+      integrationSourcesTable: 'sources', mergeAuthorizationsTable: 'auths', mergeOperationsTable: 'ops',
+      blockEpisodesTable: 'blocks', remediationAttemptsTable: 'attempts', cancellationOutboxTable: 'cancel',
+      repositoryProvider: provider } as unknown as IntegrationAgentCleanupHost;
+
+    await expect(cleanupIntegrationAgent(host, identity, 'run-1', { id: 'workspace-1', root: '/already-removed' }))
+      .rejects.toMatchObject({ code: 'TASKBOARD_CONTEXT_STALE' });
+    expect(provider.closePullRequest).not.toHaveBeenCalled();
+    expect(provider.deleteBranch).not.toHaveBeenCalled();
+    expect(cleanupReceipt).not.toHaveProperty('completed');
   });
 });

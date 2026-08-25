@@ -21,7 +21,10 @@ export async function ensureLegacyIntegrationAgentRendezvous(
   const existing = await client.query(
     `SELECT 1 FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [task.id],
   );
-  if (existing.rows[0]) return true;
+  if (existing.rows[0]) {
+    await migrateLegacyIntegrationSourceHeads(options, client, task.id);
+    return true;
+  }
 
   const legacy = integrationCandidateTableNames(options.integrationSourcesTable);
   const candidate = await client.query(
@@ -55,7 +58,29 @@ export async function ensureLegacyIntegrationAgentRendezvous(
       status, approved ? String(row.head_oid) : null, approved ? 'approved' : null,
       approved ? String(row.approved_review_execution_id) : null],
   );
+  await migrateLegacyIntegrationSourceHeads(options, client, task.id);
   return true;
+}
+
+/** Copies only the immutable, reviewed head recorded by the retired Candidate source snapshot. */
+export async function migrateLegacyIntegrationSourceHeads(
+  options: Pick<TaskboardV2StoreOptions, 'integrationSourcesTable' | 'tasksTable'>,
+  client: Pick<PoolClient, 'query'>,
+  taskId: string,
+): Promise<void> {
+  const legacy = integrationCandidateTableNames(options.integrationSourcesTable);
+  const exists = await client.query(`SELECT to_regclass($1) AS snapshots_table`, [legacy.sourceSnapshotsTable]);
+  if (!exists.rows[0]?.snapshots_table) return;
+  await client.query(
+    `UPDATE ${options.integrationSourcesTable} s
+        SET frozen_head_oid=snapshot.frozen_head_oid,updated_at=now()
+       FROM ${legacy.candidatesTable} candidate
+       JOIN ${legacy.sourceSnapshotsTable} snapshot
+         ON snapshot.candidate_id=candidate.id AND snapshot.revision=candidate.current_revision
+      WHERE candidate.integration_task_id=$1 AND snapshot.integration_source_id=s.id
+        AND s.integration_task_id=$1 AND s.frozen_head_oid IS NULL`,
+    [taskId],
+  );
 }
 
 export async function requireIntegrationAgentRendezvous(

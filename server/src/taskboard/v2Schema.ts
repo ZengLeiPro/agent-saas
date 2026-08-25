@@ -204,6 +204,7 @@ export async function runTaskboardV2Schema(
       repository_id TEXT NOT NULL,
       provider_pull_request_id TEXT NOT NULL,
       reviewed_subject_digest TEXT NOT NULL,
+      frozen_head_oid TEXT,
       source_order INTEGER NOT NULL CHECK (source_order >= 0),
       state TEXT NOT NULL DEFAULT 'pending'
         CHECK (state IN ('pending','validating','ready','merging','merged','waiting_retry','re_reviewing','resolving_conflict','waiting_remediation','needs_human','canceled')),
@@ -219,6 +220,8 @@ export async function runTaskboardV2Schema(
     )
   `);
   await client.query(`
+    ALTER TABLE ${options.integrationSourcesTable}
+      ADD COLUMN IF NOT EXISTS frozen_head_oid TEXT;
     ALTER TABLE ${options.integrationSourcesTable}
       ADD COLUMN IF NOT EXISTS remediation_task_id TEXT REFERENCES ${options.tasksTable}(id);
     ALTER TABLE ${options.integrationSourcesTable}

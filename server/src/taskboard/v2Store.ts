@@ -218,14 +218,12 @@ export async function createIntegrationBatch(
           'TASKBOARD_INTEGRATION_SOURCE_INVALID',
         );
       }
-      if (!row.provider_pull_request_id || !row.reviewed_subject_digest) {
+      if (!row.provider_pull_request_id || !row.reviewed_subject_digest || !row.head_oid) {
         throw new TaskboardValidationError(
           `Task ${String(row.identifier)} has no reviewed pull request subject`,
           'TASKBOARD_INTEGRATION_SOURCE_UNREVIEWED',
         );
       }
-      // Integration Agent reconciles this PR directly with GitHub on every wake;
-      // no source head/review snapshot is promoted into server-side authority.
     }
     const sourceProvider = options.repositoryProvider;
     await assertIntegrationSourcesProviderReady(sourceProvider, providerRepository, String(board.owner_user_id), sources.rows);
@@ -282,11 +280,11 @@ export async function createIntegrationBatch(
       await client.query(
         `INSERT INTO ${options.integrationSourcesTable}
            (id, integration_task_id, delivery_task_id, repository_id, provider_pull_request_id,
-            reviewed_subject_digest, source_order)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+            reviewed_subject_digest, frozen_head_oid, source_order)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [
           integrationSourceId, integrationTaskId, row.id, repository.repositoryId,
-          row.provider_pull_request_id, row.reviewed_subject_digest, index,
+          row.provider_pull_request_id, row.reviewed_subject_digest, row.head_oid, index,
         ],
       );
       if (workflowVersion === 3) frozenSources.push({ integrationSourceId });

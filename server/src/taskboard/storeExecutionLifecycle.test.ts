@@ -4,6 +4,7 @@ import type { TaskBoardTask } from '../../../shared/src/types/taskboard.js';
 import type { PgTaskboardStore } from './store.js';
 import {
   claimExecution,
+  shouldPersistIntegrationDurableSession,
   unresolvedExecutionRecovery,
 } from './storeExecutionLifecycle.js';
 import type { TaskboardExecutionClaimInput, TaskboardIdentity } from './types.js';
@@ -249,6 +250,15 @@ describe('claimExecution model consistency', () => {
       task: { id: task.id },
       execution: { id: 'execution-1', purpose: 'work' },
     });
+  });
+});
+
+describe('Integration Agent durable session persistence', () => {
+  it('is established by work only and is never overwritten by independent review or merge', () => {
+    expect(shouldPersistIntegrationDurableSession(true, 'work')).toBe(true);
+    expect(shouldPersistIntegrationDurableSession(true, 'review')).toBe(false);
+    expect(shouldPersistIntegrationDurableSession(true, 'merge')).toBe(false);
+    expect(shouldPersistIntegrationDurableSession(false, 'work')).toBe(false);
   });
 });
 

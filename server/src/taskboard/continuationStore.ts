@@ -5,6 +5,7 @@ import type {
   TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import { parseStagePrompts } from './boardFields.js';
+import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import {
   applyCommentAuthorDisplayName,
   assertWritableTask,
@@ -311,15 +312,18 @@ export async function loadExecutionModelContext(
   identity: TaskboardIdentity,
   taskId: string,
 ): Promise<TaskboardExecutionModelContext> {
+  const { agentsTable } = integrationAgentTableNames(host.integrationSourcesTable);
   const result = await host.pool.query(
     `SELECT t.model AS task_model, t.stage_models AS task_stage_models,
             t.kind AS task_kind, t.status AS task_status,
+            agent.durable_session_id AS integration_durable_session_id,
             b.model AS board_model, b.stage_models AS board_stage_models,
             b.owner_user_id AS board_owner_user_id,
             b.integration_policy->>'revision' AS policy_revision,
             b.id AS board_id, b.name AS board_name
        FROM ${host.tasksTable} t
        JOIN ${host.boardsTable} b ON b.id=t.board_id
+       LEFT JOIN ${agentsTable} agent ON agent.integration_task_id=t.id
       WHERE t.id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')`,
     [taskId, identity.tenantId, identity.ownerUserId],
   );

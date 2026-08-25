@@ -31,7 +31,7 @@ import {
   reconcileTaskboardContinuation,
 } from './continuationCoordinator.js';
 import { reuseTaskboardSession } from './executionSession.js';
-import { taskboardExecutionSessionDescriptor } from './executionSessionMetadata.js';
+import { reusableTaskboardSessionId, taskboardExecutionSessionDescriptor } from './executionSessionMetadata.js';
 import {
   assertDispatchedRun,
   canonicalizeDispatchPayload,
@@ -305,17 +305,20 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
   ): Promise<TaskboardExecutionClaimInput> {
     const launch = await this.resolveLaunch(identity, taskId, input.purpose);
     const purpose = input.purpose ?? (launch.modelContext.taskKind === 'integration' ? 'merge' : 'work');
-    const executions = purpose === 'work'
+    const executions = purpose === 'work' || launch.modelContext.taskKind === 'integration'
       ? await this.options.store.listExecutions(identity, taskId)
       : [];
     const executionId = options.executionId ?? randomUUID();
-    const workSessionId = executions.find((execution) => execution.purpose === 'work')?.sessionId;
+    const reusableSessionId = reusableTaskboardSessionId(
+      launch.modelContext.taskKind, purpose, executions, launch.modelContext.integrationDurableSessionId,
+    );
     const sessionDescriptor = taskboardExecutionSessionDescriptor(
       launch.modelContext.taskKind,
       purpose,
       taskId,
     );
-    const sessionId = options.sessionId ?? workSessionId ?? `${sessionDescriptor.sessionPrefix}-${randomUUID()}`;
+    const sessionId = options.sessionId ?? reusableSessionId
+      ?? `${sessionDescriptor.sessionPrefix}-${randomUUID()}`;
     const session = await reuseTaskboardSession({
       sessionCatalog: this.options.sessionCatalog,
       agentCwd: this.options.agentCwd,

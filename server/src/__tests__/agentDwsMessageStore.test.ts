@@ -129,25 +129,66 @@ describe('PgAgentDwsMessageStore', () => {
     expect(query.mock.calls[0]?.[1]).toEqual(['tenant-1', 'account-1', 100]);
   });
 
-  it('binding 并发 upsert 总是返回数据库 winner session', async () => {
-    const winner = {
-      binding_id: 'binding-winner', tenant_id: 'tenant-1', account_id: 'account-1',
-      conversation_id: 'conversation-1', requester_user_id: 'user-1', session_id: 'session-winner',
-      peer_open_dingtalk_id: 'peer-winner', created_at: new Date(NOW), updated_at: NOW,
-    };
-    const query = vi.fn().mockResolvedValue({ rows: [winner] });
-    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+  it('binding 先与 legacy writer 汇合，再按 requester 隔离后续成员', async () => {
+    let requesterBindingCount = 0;
+    const query = vi.fn(async (sql: string, values?: readonly unknown[]) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [] };
+      if (sql.includes('gov_agent_dws_conversation_bindings AS binding')) {
+        return { rows: [{ session_id: 'legacy-session', peer_open_dingtalk_id: 'peer-winner' }] };
+      }
+      if (sql.includes('SELECT 1 FROM gov_agent_dws_requester_conversation_bindings')) {
+        return { rows: requesterBindingCount > 0 ? [{ '?column?': 1 }] : [] };
+      }
+      if (sql.includes('gov_agent_dws_requester_conversation_bindings AS binding')) {
+        requesterBindingCount += 1;
+        return { rows: [{
+          binding_id: `binding-${requesterBindingCount}`, tenant_id: 'tenant-1', account_id: 'account-1',
+          conversation_id: 'conversation-1', requester_user_id: values?.[4], session_id: values?.[5],
+          peer_open_dingtalk_id: 'peer-winner', created_at: new Date(NOW), updated_at: NOW,
+        }] };
+      }
+      throw new Error(`unexpected sql: ${sql}`);
+    });
+    const client = { query, release: vi.fn() };
+    const store = new PgAgentDwsMessageStore({ connect: async () => client } as never, 'gov');
 
-    const [first, second] = await Promise.all([
-      store.getOrCreateBinding('tenant-1', 'account-1', 'conversation-1', 'user-1', 'session-a'),
-      store.getOrCreateBinding('tenant-1', 'account-1', 'conversation-1', 'user-1', 'session-b'),
-    ]);
+    const first = await store.getOrCreateBinding(
+      'tenant-1', 'account-1', 'conversation-1', 'user-1', 'session-a', 'peer-winner',
+    );
+    const second = await store.getOrCreateBinding(
+      'tenant-1', 'account-1', 'conversation-1', 'user-2', 'session-b', 'peer-winner',
+    );
 
-    expect(first).toMatchObject({ sessionId: 'session-winner', peerOpenDingtalkId: 'peer-winner' });
-    expect(second).toMatchObject({ sessionId: 'session-winner', peerOpenDingtalkId: 'peer-winner' });
-    const sql = String(query.mock.calls[0]?.[0]);
-    expect(sql).toContain('ON CONFLICT (account_id,conversation_id,requester_user_id) DO UPDATE');
-    expect(sql).toContain('peer_open_dingtalk_id=COALESCE(binding.peer_open_dingtalk_id,EXCLUDED.peer_open_dingtalk_id)');
+    expect(first).toMatchObject({ requesterUserId: 'user-1', sessionId: 'legacy-session' });
+    expect(second).toMatchObject({ requesterUserId: 'user-2', sessionId: 'session-b' });
+    expect(query.mock.calls.some(call => String(call[0]).includes(
+      'ON CONFLICT (account_id,conversation_id) DO UPDATE',
+    ))).toBe(true);
+    expect(query.mock.calls.some(call => String(call[0]).includes(
+      'ON CONFLICT (account_id,conversation_id,requester_user_id) DO UPDATE',
+    ))).toBe(true);
+    expect(client.release).toHaveBeenCalledTimes(2);
+  });
+
+  it('requester binding 写入失败时回滚 legacy 双写', async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rows: [] };
+      if (sql.includes('gov_agent_dws_conversation_bindings AS binding')) {
+        return { rows: [{ session_id: 'legacy-session' }] };
+      }
+      if (sql.includes('SELECT 1 FROM gov_agent_dws_requester_conversation_bindings')) return { rows: [] };
+      throw new Error('requester binding unavailable');
+    });
+    const client = { query, release: vi.fn() };
+    const store = new PgAgentDwsMessageStore({ connect: async () => client } as never, 'gov');
+
+    await expect(store.getOrCreateBinding(
+      'tenant-1', 'account-1', 'conversation-1', 'user-1', 'session-a',
+    )).rejects.toThrow('requester binding unavailable');
+
+    expect(query.mock.calls.at(-1)?.[0]).toBe('ROLLBACK');
+    expect(query).not.toHaveBeenCalledWith('COMMIT');
+    expect(client.release).toHaveBeenCalledOnce();
   });
 
   it('状态写入均校验 owner/fence/有效 lease，状态与 Date/string 正确映射', async () => {
@@ -201,6 +242,29 @@ describe('PgAgentDwsMessageStore', () => {
     expect(sql).toContain('reply_started_at=COALESCE(reply_started_at,NOW())');
     expect(sql).toContain('attempt=GREATEST(attempt-1,0)');
     expect(sql).toContain('lease_owner=$2 AND lease_fence=$3');
+  });
+
+  it('租户删除在同一事务清理 requester、legacy binding 与 inbox', async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [], rowCount: 0 };
+      if (sql.includes('requester_conversation_bindings')) return { rows: [], rowCount: 2 };
+      if (sql.includes('agent_dws_conversation_bindings')) return { rows: [], rowCount: 3 };
+      if (sql.includes('agent_dws_event_inbox')) return { rows: [], rowCount: 4 };
+      throw new Error(`unexpected sql: ${sql}`);
+    });
+    const client = { query, release: vi.fn() };
+    const store = new PgAgentDwsMessageStore({ connect: async () => client } as never, 'gov');
+
+    await expect(store.deleteForTenant('tenant-1')).resolves.toBe(9);
+
+    expect(query.mock.calls.map(call => String(call[0]))).toEqual([
+      'BEGIN',
+      expect.stringContaining('gov_agent_dws_requester_conversation_bindings'),
+      expect.stringContaining('gov_agent_dws_conversation_bindings'),
+      expect.stringContaining('gov_agent_dws_event_inbox'),
+      'COMMIT',
+    ]);
+    expect(client.release).toHaveBeenCalledOnce();
   });
 
   it('fail 到达 maxAttempts 转 dead_letter，否则指数/受控 retry，错误脱敏至 500 字且保留响应', async () => {

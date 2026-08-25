@@ -57,6 +57,8 @@ function migrations(prefix: string): GovernanceMigration[] {
   const directoryGroups = `${prefix}_directory_groups`, directoryGroupMembers = `${prefix}_directory_group_members`;
   const oauthGrants = `${prefix}_oauth_grants`, oauthApprovalRecords = `${prefix}_oauth_approval_records`;
   const nativeOAuthHandoffs = `${prefix}_native_oauth_handoffs`;
+  const agentDwsAccounts = `${prefix}_agent_dws_accounts`;
+  const agentDwsRequesterBindings = `${prefix}_agent_dws_requester_conversation_bindings`;
 
   return [
     {
@@ -921,16 +923,23 @@ function migrations(prefix: string): GovernanceMigration[] {
     {
       version: 27,
       statements: [
-        `ALTER TABLE ${prefix}_agent_dws_conversation_bindings
-          ADD COLUMN IF NOT EXISTS requester_user_id TEXT`,
-        `UPDATE ${prefix}_agent_dws_conversation_bindings
-          SET requester_user_id=account_id WHERE requester_user_id IS NULL`,
-        `ALTER TABLE ${prefix}_agent_dws_conversation_bindings
-          ALTER COLUMN requester_user_id SET NOT NULL`,
-        `ALTER TABLE ${prefix}_agent_dws_conversation_bindings
-          DROP CONSTRAINT IF EXISTS ${prefix}_agent_dws_conversation_bindings_account_id_conversation_id_key`,
-        `CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}_agent_dws_bindings_requester_unique_idx
-          ON ${prefix}_agent_dws_conversation_bindings (account_id,conversation_id,requester_user_id)`,
+        `CREATE TABLE IF NOT EXISTS ${agentDwsRequesterBindings} (
+          binding_id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL,
+          account_id TEXT NOT NULL,
+          FOREIGN KEY (tenant_id,account_id)
+            REFERENCES ${agentDwsAccounts}(tenant_id,account_id) ON DELETE CASCADE,
+          conversation_id TEXT NOT NULL,
+          requester_user_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          peer_open_dingtalk_id TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (account_id,conversation_id,requester_user_id),
+          UNIQUE (session_id)
+        )`,
+        `CREATE INDEX IF NOT EXISTS ${agentDwsRequesterBindings}_tenant_idx
+          ON ${agentDwsRequesterBindings} (tenant_id,updated_at DESC)`,
       ],
     },
   ];

@@ -22,12 +22,14 @@ type PgPool = pg.Pool;
 export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
   readonly inboxTable: string;
   readonly bindingsTable: string;
+  readonly legacyBindingsTable: string;
   private readonly tablePrefix: string;
 
   constructor(private readonly pool: PgPool, tablePrefix?: string) {
     this.tablePrefix = governanceTablePrefix(tablePrefix);
     this.inboxTable = `${this.tablePrefix}_agent_dws_event_inbox`;
-    this.bindingsTable = `${this.tablePrefix}_agent_dws_conversation_bindings`;
+    this.bindingsTable = `${this.tablePrefix}_agent_dws_requester_conversation_bindings`;
+    this.legacyBindingsTable = `${this.tablePrefix}_agent_dws_conversation_bindings`;
   }
 
   async init(): Promise<void> {
@@ -184,22 +186,55 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     peerOpenDingtalkId?: string,
   ): Promise<AgentDwsConversationBindingRecord> {
     assertTexts(tenantId, accountId, conversationId, requesterUserId, candidateSessionId);
-    const result = await this.pool.query(`
-      INSERT INTO ${this.bindingsTable} AS binding (
-        binding_id,tenant_id,account_id,conversation_id,requester_user_id,session_id,
-        peer_open_dingtalk_id,created_at,updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
-      ON CONFLICT (account_id,conversation_id,requester_user_id) DO UPDATE
-      SET peer_open_dingtalk_id=COALESCE(binding.peer_open_dingtalk_id,EXCLUDED.peer_open_dingtalk_id),
-          updated_at=binding.updated_at
-      RETURNING binding.*
-    `, [
-      `adwsb-${randomUUID()}`, tenantId, accountId, conversationId, requesterUserId,
-      candidateSessionId, optionalText(peerOpenDingtalkId),
-    ]);
-    const row = result.rows[0] as Record<string, unknown> | undefined;
-    if (!row) throw new AgentDwsMessageInvariantError('AGENT_DWS_MESSAGE_INVALID');
-    return mapBindingRow(row);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const legacy = await client.query(`
+        INSERT INTO ${this.legacyBindingsTable} AS binding (
+          binding_id,tenant_id,account_id,conversation_id,session_id,
+          peer_open_dingtalk_id,created_at,updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
+        ON CONFLICT (account_id,conversation_id) DO UPDATE
+        SET peer_open_dingtalk_id=COALESCE(binding.peer_open_dingtalk_id,EXCLUDED.peer_open_dingtalk_id),
+            updated_at=binding.updated_at
+        RETURNING binding.*
+      `, [
+        `adwsb-${randomUUID()}`, tenantId, accountId, conversationId,
+        candidateSessionId, optionalText(peerOpenDingtalkId),
+      ]);
+      const legacyRow = legacy.rows[0] as Record<string, unknown> | undefined;
+      if (!legacyRow) throw new AgentDwsMessageInvariantError('AGENT_DWS_MESSAGE_INVALID');
+      const requesterBindings = await client.query(`
+        SELECT 1 FROM ${this.bindingsTable}
+        WHERE account_id=$1 AND conversation_id=$2
+        LIMIT 1
+      `, [accountId, conversationId]);
+      const requesterSessionId = requesterBindings.rows[0]
+        ? candidateSessionId
+        : String(legacyRow.session_id);
+      const result = await client.query(`
+        INSERT INTO ${this.bindingsTable} AS binding (
+          binding_id,tenant_id,account_id,conversation_id,requester_user_id,session_id,
+          peer_open_dingtalk_id,created_at,updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
+        ON CONFLICT (account_id,conversation_id,requester_user_id) DO UPDATE
+        SET peer_open_dingtalk_id=COALESCE(binding.peer_open_dingtalk_id,EXCLUDED.peer_open_dingtalk_id),
+            updated_at=binding.updated_at
+        RETURNING binding.*
+      `, [
+        `adwsrb-${randomUUID()}`, tenantId, accountId, conversationId, requesterUserId,
+        requesterSessionId, optionalText(peerOpenDingtalkId),
+      ]);
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      if (!row) throw new AgentDwsMessageInvariantError('AGENT_DWS_MESSAGE_INVALID');
+      await client.query('COMMIT');
+      return mapBindingRow(row);
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async markDispatchStarted(
@@ -338,11 +373,14 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
       const bindings = await client.query(
         `DELETE FROM ${this.bindingsTable} WHERE tenant_id=$1`, [tenantId],
       );
+      const legacyBindings = await client.query(
+        `DELETE FROM ${this.legacyBindingsTable} WHERE tenant_id=$1`, [tenantId],
+      );
       const inbox = await client.query(
         `DELETE FROM ${this.inboxTable} WHERE tenant_id=$1`, [tenantId],
       );
       await client.query('COMMIT');
-      return (bindings.rowCount ?? 0) + (inbox.rowCount ?? 0);
+      return (bindings.rowCount ?? 0) + (legacyBindings.rowCount ?? 0) + (inbox.rowCount ?? 0);
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);
       throw error;

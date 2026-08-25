@@ -13,7 +13,6 @@ import type {
   TaskBoardExecutionContextResponse,
   TaskBoardExecutionTransitionInput,
   TaskBoardIntegrationBatchCreateInput,
-  TaskBoardIntegrationCandidateDetails,
   TaskBoardIntegrationSource,
   TaskBoardMember,
   TaskBoardMemberPatchInput,
@@ -411,19 +410,6 @@ export interface TaskboardExecutionService {
   ): Promise<TaskBoardExecutionStartResult>;
 }
 
-export interface TaskboardIntegrationCandidateView extends TaskBoardIntegrationCandidateDetails {
-  operations: Array<{
-    id: string;
-    operationKey: string;
-    kind: string;
-    state: string;
-    attemptCount: number;
-    error?: string;
-    receipt?: Record<string, unknown>;
-    updatedAt: string;
-  }>;
-  worker: { status: string; checkpoint: Record<string, unknown>; error?: string };
-}
 
 export interface TaskboardService {
   listBoards(identity: TaskboardIdentity, includeArchived?: boolean): Promise<TaskBoard[]>;
@@ -497,11 +483,6 @@ export interface TaskboardService {
     identity: TaskboardIdentity,
     integrationTaskId: string,
   ): Promise<TaskBoardIntegrationSource[]>;
-  getIntegrationCandidate?(
-    identity: TaskboardIdentity,
-    integrationTaskId: string,
-    options?: { includeHistory?: boolean; page?: number; pageSize?: number },
-  ): Promise<TaskboardIntegrationCandidateView>;
   resumeBlockedTask?(
     identity: TaskboardIdentity,
     taskId: string,

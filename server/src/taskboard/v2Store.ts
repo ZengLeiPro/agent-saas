@@ -48,8 +48,6 @@ export interface TaskboardV2StoreOptions {
   remediationAttemptsTable: string;
   cancellationOutboxTable: string;
   repositoryProvider?: RepositoryProvider;
-  /** Legacy Candidate-only adapter; Agent-first paths always use repositoryProvider. */
-  integrationV3RepositoryProvider?: RepositoryProvider;
 }
 
 const SORT_GAP = 1024;

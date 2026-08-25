@@ -1,14 +1,12 @@
 import {
   TASKBOARD_EXECUTION_PURPOSES,
   type TaskBoardExecutionPurpose,
-  type TaskBoardIntegrationCandidateState,
   type TaskBoardIntegrationWorkflowVersion,
   type TaskBoardStageModels,
   type TaskBoardStatus,
   type TaskBoardTaskKind,
 } from '../../../shared/src/types/taskboard.js';
 import { TaskboardValidationError } from './types.js';
-import { purposeForIntegrationV3Candidate } from './workflow/decider.js';
 
 export function taskFieldMigrationSql(tasksTable: string): string {
   return `
@@ -25,23 +23,7 @@ export function executionFieldMigrationSql(executionsTable: string): string {
     ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS trigger TEXT NOT NULL DEFAULT 'initial';
     ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS protocol_version INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS attempt_id TEXT;
-    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_id TEXT;
-    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_version INTEGER;
-    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_revision INTEGER;
-    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_work_round INTEGER;
-    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_workflow_epoch BIGINT;
-    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_lane_epoch BIGINT;
-    ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS candidate_head_oid TEXT;
     ALTER TABLE ${executionsTable} DROP CONSTRAINT IF EXISTS ${executionsTable}_candidate_binding_check;
-    ALTER TABLE ${executionsTable} ADD CONSTRAINT ${executionsTable}_candidate_binding_check CHECK (
-      (candidate_id IS NULL AND candidate_version IS NULL AND candidate_revision IS NULL
-        AND candidate_work_round IS NULL AND candidate_workflow_epoch IS NULL
-        AND candidate_lane_epoch IS NULL AND candidate_head_oid IS NULL)
-      OR
-      (candidate_id IS NOT NULL AND candidate_version > 0 AND candidate_revision > 0
-        AND candidate_work_round >= 0 AND candidate_workflow_epoch IS NOT NULL
-        AND candidate_lane_epoch IS NOT NULL AND candidate_head_oid IS NOT NULL)
-    );
     ALTER TABLE ${executionsTable} DROP CONSTRAINT IF EXISTS ${executionsTable}_trigger_check;
     ALTER TABLE ${executionsTable} ADD CONSTRAINT ${executionsTable}_trigger_check
       CHECK (trigger IN ('initial', 'comment', 'resume', 'retry'));
@@ -56,53 +38,6 @@ export function executionFieldMigrationSql(executionsTable: string): string {
     ALTER TABLE ${executionsTable} ADD COLUMN IF NOT EXISTS reconcile_lease_expires_at TIMESTAMPTZ;
     DROP INDEX IF EXISTS ${executionsTable}_session_uidx;
     CREATE INDEX IF NOT EXISTS ${executionsTable}_session_idx ON ${executionsTable} (session_id, created_at DESC);
-    CREATE TABLE IF NOT EXISTS ${executionsTable}_integration_push_fences (
-      tenant_id TEXT NOT NULL,
-      repository_id TEXT NOT NULL,
-      integration_task_id TEXT NOT NULL,
-      candidate_id TEXT NOT NULL,
-      revision INTEGER NOT NULL CHECK (revision > 0),
-      lane_epoch BIGINT NOT NULL,
-      workflow_epoch BIGINT NOT NULL,
-      enabled BOOLEAN NOT NULL DEFAULT false,
-      reason TEXT NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      PRIMARY KEY (tenant_id, repository_id, integration_task_id)
-    );
-    CREATE TABLE IF NOT EXISTS ${executionsTable}_integration_push_capabilities (
-      id TEXT PRIMARY KEY,
-      secret_hash TEXT NOT NULL CHECK (length(secret_hash) = 64),
-      tenant_id TEXT NOT NULL,
-      repository_id TEXT NOT NULL,
-      integration_task_id TEXT NOT NULL,
-      candidate_id TEXT NOT NULL,
-      revision INTEGER NOT NULL CHECK (revision > 0),
-      execution_id TEXT NOT NULL REFERENCES ${executionsTable}(id),
-      exact_ref TEXT NOT NULL,
-      expected_old_oid TEXT NOT NULL,
-      expected_base_oid TEXT NOT NULL,
-      lane_epoch BIGINT NOT NULL,
-      workflow_epoch BIGINT NOT NULL,
-      issued_at TIMESTAMPTZ NOT NULL,
-      expires_at TIMESTAMPTZ NOT NULL,
-      status TEXT NOT NULL CHECK (status IN ('active','consumed','revoked')),
-      consumed_at TIMESTAMPTZ,
-      revoked_at TIMESTAMPTZ,
-      revoke_reason TEXT,
-      CHECK (expires_at > issued_at),
-      CHECK ((status = 'consumed') = (consumed_at IS NOT NULL)),
-      CHECK ((status = 'revoked') = (revoked_at IS NOT NULL))
-    );
-    ALTER TABLE ${executionsTable}_integration_push_capabilities
-      ADD COLUMN IF NOT EXISTS expected_base_oid TEXT;
-    UPDATE ${executionsTable}_integration_push_capabilities
-      SET expected_base_oid=expected_old_oid WHERE expected_base_oid IS NULL;
-    ALTER TABLE ${executionsTable}_integration_push_capabilities
-      ALTER COLUMN expected_base_oid SET NOT NULL;
-    CREATE INDEX IF NOT EXISTS ${executionsTable}_integration_push_capabilities_active_idx
-      ON ${executionsTable}_integration_push_capabilities
-      (tenant_id, repository_id, integration_task_id, expires_at)
-      WHERE status = 'active'
   `;
 }
 
@@ -121,24 +56,14 @@ export function resolveExecutionPurpose(
   requested: TaskBoardExecutionPurpose | undefined,
   kind: TaskBoardTaskKind = 'delivery',
   workflowVersion: TaskBoardIntegrationWorkflowVersion = 2,
-  candidateState?: TaskBoardIntegrationCandidateState,
 ): TaskBoardExecutionPurpose {
   if (kind === 'integration' && workflowVersion === 3) {
-    const expected = candidateState && purposeForIntegrationV3Candidate(candidateState);
-    const purpose = requested ?? expected;
-    if (purpose === 'merge') {
-      throw new TaskboardValidationError(
-        'Workflow v3 never hands integration merge to an Agent',
-        'TASKBOARD_V3_AGENT_MERGE_FORBIDDEN',
-      );
-    }
-    if (!expected || purpose !== expected) {
-      throw new TaskboardValidationError(
-        'Candidate state is not dispatchable for the requested execution purpose',
-        'TASKBOARD_CANDIDATE_EXECUTION_STATE_INVALID',
-      );
-    }
-    return purpose;
+    const purpose = requested ?? 'work';
+    if (purpose === 'work' || purpose === 'review') return purpose;
+    throw new TaskboardValidationError(
+      'Integration Agent only accepts work or review execution',
+      'TASKBOARD_INTEGRATION_AGENT_PURPOSE_INVALID',
+    );
   }
   const purpose = requested ?? (kind === 'integration' ? 'merge' : 'work');
   if (purpose === 'merge') {

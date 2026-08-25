@@ -16,7 +16,6 @@ import type {
 import type {
   TaskBoardCiPolicyDiscovery,
   TaskBoardIntegrationBatchCreateInput,
-  TaskBoardIntegrationCandidateDetails,
   TaskBoardDirectoryUser,
   TaskBoardIntegrationSource,
   TaskBoardMember,
@@ -169,28 +168,6 @@ export async function cancelIntegrationTask(
     jsonRequest("POST", { expectedVersion, ...(reason?.trim() ? { reason: reason.trim() } : {}) }),
   );
   return parseEntity<TaskBoardTask>(response, "取消集成任务", "task");
-}
-
-export async function fetchIntegrationCandidate(
-  taskId: string,
-  options: { includeHistory?: boolean; page?: number; pageSize?: number } = {},
-): Promise<TaskBoardIntegrationCandidateDetails> {
-  const query = new URLSearchParams();
-  if (options.includeHistory) query.set("includeHistory", "true");
-  if (options.page !== undefined) query.set("page", String(options.page));
-  if (options.pageSize !== undefined) query.set("pageSize", String(options.pageSize));
-  const response = await authFetch(
-    `${API_BASE}/tasks/${encodeURIComponent(taskId)}/integration-candidate${query.size ? `?${query}` : ""}`,
-  );
-  return parseEntity<TaskBoardIntegrationCandidateDetails>(response, "Integration v3 Candidate", "result");
-}
-
-export async function requeueIntegrationCandidate(taskId: string, reason: string): Promise<{ candidateId: string; taskId: string; previousError: string; status: "idle" }> {
-  const response = await authFetch(
-    `${API_BASE}/tasks/${encodeURIComponent(taskId)}/integration-candidate/requeue`,
-    jsonRequest("POST", { reason: reason.trim() }),
-  );
-  return parseEntity<{ candidateId: string; taskId: string; previousError: string; status: "idle" }>(response, "重新排队 Integration v3 Candidate", "result");
 }
 
 export async function fetchIntegrationSources(taskId: string): Promise<TaskBoardIntegrationSource[]> {

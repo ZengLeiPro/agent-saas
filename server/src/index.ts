@@ -312,7 +312,6 @@ async function shutdownCleanup(): Promise<void> {
     runtimePerformanceSampler?.stop();
     httpServer?.close();
     cronService?.stop();
-    await runtime?.integrationV3WorkerShutdown?.();
     await runtime?.contextPlaneShutdown?.();
     runtime?.notionAuthFlowShutdown?.();
     await runtime?.dwsAuthKeepaliveShutdown?.();

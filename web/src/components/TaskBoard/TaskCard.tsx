@@ -13,7 +13,6 @@ import {
   PRIORITY_LABELS,
   TASK_KIND_LABELS,
 } from "./constants";
-import { IntegrationCandidateCardSummary } from "./IntegrationCandidate";
 import { IntegrationCardSummary } from "./IntegrationSources";
 
 interface TaskCardProps {
@@ -120,9 +119,7 @@ export function TaskCard({
           </div>
         ) : null}
         {kind === "integration" ? (
-          task.workflowVersion === 3
-            ? <IntegrationCandidateCardSummary taskId={task.id} />
-            : <IntegrationCardSummary taskId={task.id} />
+          <IntegrationCardSummary taskId={task.id} />
         ) : null}
         {kind === "delivery" && task.integrationState ? (
           <div className="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">

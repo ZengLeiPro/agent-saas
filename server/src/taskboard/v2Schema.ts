@@ -1,6 +1,5 @@
 import type { PoolClient } from 'pg';
 
-import { runIntegrationCandidateSchema } from './integrationCandidateSchema.js';
 import { runIntegrationAgentSchema } from './integrationAgentSchema.js';
 
 interface TaskboardV2SchemaOptions {
@@ -391,7 +390,28 @@ export async function runTaskboardV2Schema(
       ON ${options.integrationTriggerOutboxTable} (board_id)
       WHERE status IN ('pending','processing')
   `);
-  await runIntegrationCandidateSchema(options, client);
+  // Agent-first integrations still use workflow_version, but Candidate tables
+  // are historical-only and must never be installed by a new runtime.
+  await client.query(`
+    ALTER TABLE ${options.tasksTable}
+      ADD COLUMN IF NOT EXISTS workflow_version SMALLINT NOT NULL DEFAULT 2
+      CHECK (workflow_version IN (2, 3))
+  `);
+  await client.query(`
+    CREATE OR REPLACE FUNCTION ${options.tasksTable}_workflow_version_immutable_fn()
+    RETURNS trigger LANGUAGE plpgsql AS $function$
+    BEGIN
+      IF NEW.workflow_version IS DISTINCT FROM OLD.workflow_version THEN
+        RAISE EXCEPTION 'TASKBOARD_WORKFLOW_VERSION_IMMUTABLE';
+      END IF;
+      RETURN NEW;
+    END
+    $function$;
+    DROP TRIGGER IF EXISTS ${options.tasksTable}_workflow_version_immutable ON ${options.tasksTable};
+    CREATE TRIGGER ${options.tasksTable}_workflow_version_immutable
+      BEFORE UPDATE OF workflow_version ON ${options.tasksTable}
+      FOR EACH ROW EXECUTE FUNCTION ${options.tasksTable}_workflow_version_immutable_fn()
+  `);
   await runIntegrationAgentSchema(options, client);
 }
 

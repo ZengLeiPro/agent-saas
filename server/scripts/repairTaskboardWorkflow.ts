@@ -6,11 +6,7 @@ import pg from 'pg';
 
 import { sanitizeIdentifier } from '../src/taskboard/storeHelpers.js';
 import { completeRemediationAfterMerge } from '../src/taskboard/workflow/commandService.js';
-import {
-  applyIntegrationV3Repair,
-  scanIntegrationV3Invariants,
-  type IntegrationV3RepairFinding,
-} from '../src/taskboard/integrationV3Repair.js';
+
 
 const { Pool } = pg;
 
@@ -206,29 +202,12 @@ async function main(): Promise<void> {
     );
     for (const row of advisoryCandidates.rows) findings.push({ type: 'manual_advisory_reclassification_candidate', taskId: row.id, boardId: row.board_id, detail: row });
 
-    const v3Findings = await scanIntegrationV3Invariants(client, v3Tables, { taskId: args.taskId });
-    for (const finding of v3Findings) findings.push({
-      type: `v3.${finding.type}`, taskId: finding.taskId,
-      detail: { ...finding.detail, disposition: finding.disposition, finding },
-    });
-
     let applied = 0;
     if (args.apply) {
       await client.query('BEGIN');
       const repairLog = `${p}_taskboard_workflow_repairs`;
       await client.query(`CREATE TABLE IF NOT EXISTS ${repairLog} (command_id TEXT PRIMARY KEY, finding_type TEXT NOT NULL, task_id TEXT, detail JSONB NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
-      for (const finding of v3Findings) {
-        const commandId = canonicalHash({ v: 3, finding });
-        const claimed = await client.query(
-          `INSERT INTO ${repairLog}(command_id,finding_type,task_id,detail) VALUES($1,$2,$3,$4::jsonb) ON CONFLICT DO NOTHING RETURNING command_id`,
-          [commandId, `v3.${finding.type}`, finding.taskId ?? null, JSON.stringify(finding)],
-        );
-        if (!claimed.rows[0]) continue;
-        const result = await applyIntegrationV3Repair(client, v3Tables, finding as IntegrationV3RepairFinding);
-        if (result.outcome !== 'no_longer_present') applied += 1;
-      }
       for (const finding of findings) {
-        if (finding.type.startsWith('v3.')) continue;
         if (finding.type === 'manual_advisory_reclassification_candidate'
           || finding.type === 'manual_remediation_review_required') continue;
         if (finding.type === 'duplicate_active_source' && Number(finding.detail.merge_fact_count ?? 0) > 1) {

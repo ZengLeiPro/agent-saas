@@ -22,7 +22,6 @@ import type {
   TaskboardExecutionService,
   TaskboardExecutionStore,
   TaskboardIdentity,
-  TaskboardIntegrationPushService,
   TaskboardService,
   TaskboardTaskSearchFilter,
 } from '../taskboard/types.js';
@@ -142,7 +141,6 @@ export interface TaskboardToolOptions {
   service: () => TaskboardService | undefined;
   generateTaskTitle?: (description: string, identity: TaskboardIdentity) => Promise<string | null>;
   executionService?: () => TaskboardExecutionService | undefined;
-  integrationPush?: () => TaskboardIntegrationPushService | undefined;
   resolveTrustedWorkspace?: (
     identity: TaskboardIdentity,
     workspace: { id?: string; executionTarget: string },

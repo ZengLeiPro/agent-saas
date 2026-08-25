@@ -42,8 +42,7 @@ import {
   STATUS_LABELS,
   TASK_KIND_LABELS,
 } from "./constants";
-import { IntegrationTaskDetails } from "./IntegrationCandidate";
-import { useIntegrationSources } from "./IntegrationSources";
+import { IntegrationSourceDetails, useIntegrationSources } from "./IntegrationSources";
 import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from "./TaskAttachments";
 import { TaskDetailComments, EXECUTION_PURPOSE_LABELS } from "./TaskDetailComments";
@@ -738,7 +737,7 @@ export function TaskDetail({
                           && (integrationSourcesState.loading || integrationSourcesState.error !== null
                             || selectedResumeSourceIds.size === 0))}
                       >
-                        显式恢复{isIntegrationV3 ? " Candidate" : taskKind === "integration" ? "阻塞来源" : "任务"}
+                        显式恢复{isIntegrationV3 ? " Integration Agent" : taskKind === "integration" ? "阻塞来源" : "任务"}
                       </Button>
                     ) : null}
                   </div>
@@ -785,13 +784,17 @@ export function TaskDetail({
               </section>
 
               {taskKind === "integration" ? (
-                <IntegrationTaskDetails
-                  task={currentTask}
-                  active={active && open}
-                  sourceState={integrationSourcesState}
+                <IntegrationSourceDetails
+                  taskId={currentTask.id}
+                  state={integrationSourcesState}
                   selectedSourceIds={selectedResumeSourceIds}
-                  setSelectedSourceIds={setSelectedResumeSourceIds}
-                  sourceSelectionEnabled={currentTask.status === "blocked" && canTransitionTask}
+                  onSourceSelectionChange={currentTask.status === "blocked" && canTransitionTask ? (sourceId, selected) => {
+                    setSelectedResumeSourceIds((previous) => {
+                      const next = new Set(previous);
+                      if (selected) next.add(sourceId); else next.delete(sourceId);
+                      return next;
+                    });
+                  } : undefined}
                   onNavigateTask={onNavigateTask}
                 />
               ) : null}

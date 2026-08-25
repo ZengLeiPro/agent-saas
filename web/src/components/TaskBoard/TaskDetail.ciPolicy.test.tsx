@@ -16,7 +16,6 @@ vi.mock("./api", async (importOriginal) => ({
   fetchTask: mocks.fetchTask,
   resumeTask: mocks.resumeTask,
   fetchIntegrationSources: vi.fn(async () => []),
-  fetchIntegrationCandidate: vi.fn(async () => null),
 }));
 vi.mock("./hooks", () => ({
   useTaskComments: () => ({ comments: [], loading: false, error: null, refresh: vi.fn(), addComment: vi.fn() }),

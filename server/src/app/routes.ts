@@ -129,7 +129,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         : undefined,
       getIsDraining: () => channelManager.draining,
       getSkillsWarmupStatus: () => runtime.getSkillsWarmupStatus(),
-      getIntegrationV3Health: runtime.getIntegrationV3Health,
     }),
   );
   app.use('/api', activeOffboardingWriteFence(runtime));
@@ -484,7 +483,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       agentCwd,
       uploadManager: runtime.uploadManager,
       generateTaskTitle: createRuntimeTaskboardTitleGenerator(agentCwd, runtime),
-      requeueIntegrationV3Candidate: runtime.requeueIntegrationV3Candidate,
     }),
   );
 

@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import type { TaskBoardTask } from "@agent/shared";
 import { TaskCard } from "./TaskCard";
 
-vi.mock("./IntegrationCandidate", () => ({ IntegrationCandidateCardSummary: () => <div>v3 Candidate summary</div> }));
 vi.mock("./IntegrationSources", () => ({ IntegrationCardSummary: () => <div>v2 source summary</div> }));
 
 function task(overrides: Partial<TaskBoardTask> = {}): TaskBoardTask {

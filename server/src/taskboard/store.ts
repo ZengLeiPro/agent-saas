@@ -33,7 +33,6 @@ import {
   updateTaskBranchFromExecution as updateStoredTaskBranchFromExecution,
 } from './executionTaskActions.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
-import { loadIntegrationCandidateProjection } from './integrationCandidateProjection.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { requireIntegrationAgentRendezvous } from './legacyIntegrationAgentMigration.js';
 import { clearBoardCiPolicyForRepositoryChange, normalizeIntegrationPolicyCiFallback } from './ciPolicy.js';
@@ -49,7 +48,6 @@ import {
   rowToBoard, stageModelsToJson, stagePromptsToJson,
 } from './boardFields.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
-import { runIntegrationV3RepositoryProbe, type IntegrationV3RepositoryProbe, type IntegrationV3RepositoryProbeInput } from './integrationV3RepositoryProbe.js';
 import { claimIntegrationDispatchCandidates } from './integrationTriggers.js';
 import { mergeIntegrationAgent } from './integrationAgentMerge.js';
 import {
@@ -147,8 +145,6 @@ export interface PgTaskboardStoreOptions {
   pool: PgPool;
   tablePrefix?: string;
   repositoryProvider?: RepositoryProvider;
-  /** @deprecated only retained for historical Candidate inspection compatibility. */
-  integrationV3RepositoryProbe?: IntegrationV3RepositoryProbe;
 }
 export class PgTaskboardStore implements TaskboardService, TaskboardExecutionStore {
   readonly pool: PgPool;
@@ -169,13 +165,11 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   readonly integrationTriggerOutboxTable: string;
   readonly remediationAttemptsTable: string;
   readonly cancellationOutboxTable: string; readonly watchersTable: string; readonly statusNotificationOutboxTable: string;
-  repositoryProvider?: RepositoryProvider; integrationV3RepositoryProvider?: RepositoryProvider;
-  private integrationV3RepositoryProbe?: IntegrationV3RepositoryProbe;
+  repositoryProvider?: RepositoryProvider;
   constructor(options: PgTaskboardStoreOptions) {
     const prefix = sanitizeIdentifier(options.tablePrefix ?? 'runtime');
     this.pool = options.pool;
     this.repositoryProvider = options.repositoryProvider;
-    this.integrationV3RepositoryProbe = options.integrationV3RepositoryProbe;
     this.boardsTable = `${prefix}_taskboards`;
     this.tasksTable = `${prefix}_taskboard_tasks`;
     this.commentsTable = `${prefix}_taskboard_comments`;
@@ -231,16 +225,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<TaskBoardIntegrationSource[]> {
     return listStoredIntegrationSources(this, identity, integrationTaskId);
   }
-  /**
-   * Loads the durable v3 candidate projection after checking task visibility
-   * and workflow eligibility through the store's public task access path.
-   */
-  getIntegrationCandidate(
-    identity: TaskboardIdentity, integrationTaskId: string,
-    options?: { includeHistory?: boolean; page?: number; pageSize?: number },
-  ) {
-    return loadIntegrationCandidateProjection(this, identity, integrationTaskId, options);
-  }
   resumeBlockedTask(
     identity: TaskboardIdentity,
     taskId: string,
@@ -266,12 +250,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     this.repositoryProvider = provider;
   }
   getRepositoryProvider(): RepositoryProvider | undefined { return this.repositoryProvider; }
-  // Historical Candidate adapter surface. It is not consulted by Agent-first integrations.
-  setIntegrationV3RepositoryProvider(provider: RepositoryProvider | undefined): void { this.integrationV3RepositoryProvider = provider; }
-  setIntegrationV3RepositoryProbe(probe: IntegrationV3RepositoryProbe): void { this.integrationV3RepositoryProbe = probe; }
-  probeIntegrationV3Repository(input: IntegrationV3RepositoryProbeInput): Promise<void> {
-    return runIntegrationV3RepositoryProbe(this.integrationV3RepositoryProbe, input);
-  }
+
 
   attachExecutionPullRequestV2(
     identity: TaskboardIdentity,

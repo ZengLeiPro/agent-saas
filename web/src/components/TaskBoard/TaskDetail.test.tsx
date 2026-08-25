@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => ({
   continueTaskExecution: vi.fn(),
   resumeTask: vi.fn(),
   fetchIntegrationSources: vi.fn(),
-  fetchIntegrationCandidate: vi.fn(),
   addComment: vi.fn(),
   refreshComments: vi.fn(async () => undefined),
   comments: [] as TaskBoardComment[],
@@ -28,7 +27,6 @@ vi.mock("./api", async (importOriginal) => {
     ...actual,
     fetchTask: mocks.fetchTask,
     fetchIntegrationSources: mocks.fetchIntegrationSources,
-    fetchIntegrationCandidate: mocks.fetchIntegrationCandidate,
     continueTaskExecution: mocks.continueTaskExecution,
     resumeTask: mocks.resumeTask,
   };
@@ -115,7 +113,6 @@ describe("TaskDetail 草稿隔离", () => {
     mocks.executions = [];
     mocks.fetchTask.mockImplementation(async (id: string) => id === taskOne.id ? taskOne : taskTwo);
     mocks.fetchIntegrationSources.mockResolvedValue([]);
-    mocks.fetchIntegrationCandidate.mockResolvedValue(null);
     mocks.addComment.mockResolvedValue(undefined);
   });
 

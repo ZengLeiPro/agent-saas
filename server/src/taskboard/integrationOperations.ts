@@ -40,7 +40,6 @@ export interface IntegrationOperationHost {
   remediationAttemptsTable: string;
   cancellationOutboxTable: string;
   repositoryProvider?: RepositoryProvider;
-  integrationV3RepositoryProvider?: RepositoryProvider;
 }
 
 export interface IntegrationSourceInspection {

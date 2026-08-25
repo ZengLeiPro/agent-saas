@@ -1661,7 +1661,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const memoryContextTools = createRuntimeMemoryContextTools({
     contextStore, assignments: assignmentStore, memberships: membershipStore, entitlements: entitlementStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, recallIdSigningKey: config.auth?.jwtSecret, sessionCatalog, sourceAuthorizationRegistry: contextSourceAuthorizationRegistry,
     memoryStore: memoryConsolidationStore, memoryIndexService: memoryIndexServiceRef.current, logger: { info: msg => serverLogger.info(msg), warn: msg => serverLogger.warn(msg) },
-    additionalProviders: createDwsBusinessToolProviders({ agentCwd, accountStore: agentDwsAccountStore, connectionStore: dwsConnectionStore, userStore, auditStore: governanceAuditStore,
+    additionalProviders: createDwsBusinessToolProviders({ agentCwd, accountStore: agentDwsAccountStore, assignmentStore, connectionStore: dwsConnectionStore, userStore, auditStore: governanceAuditStore,
       isRequesterRuntimeEnabled: username => connectorConnectionStore.isRuntimeEnabled(username, 'dws'), sessionCatalog, resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured) }),
   });
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {

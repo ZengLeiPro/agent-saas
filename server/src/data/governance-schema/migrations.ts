@@ -3,6 +3,7 @@ import { PLATFORM_TENANT_ID } from '../tenants/types.js';
 import { agentDwsMigrations } from './agentDwsMigrations.js';
 import { governanceV22Statements } from './v22Migration.js';
 import { governanceV23Statements } from './v23Migration.js';
+import { governanceV28Statements } from './v28Migration.js';
 import { governanceV18Statements } from './v18Migration.js';
 import { buildContextMigrationSql } from '../../context/store/migration.js';
 import { buildContextPhase23MigrationSql } from '../../context/phase23/migration.js';
@@ -941,6 +942,10 @@ function migrations(prefix: string): GovernanceMigration[] {
         `CREATE INDEX IF NOT EXISTS ${agentDwsRequesterBindings}_tenant_idx
           ON ${agentDwsRequesterBindings} (tenant_id,updated_at DESC)`,
       ],
+    },
+    {
+      version: 28,
+      statements: governanceV28Statements(assignments),
     },
   ];
 }

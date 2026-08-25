@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { z } from 'zod';
 
 import type {
@@ -11,6 +13,7 @@ import type {
   ToolRisk,
 } from '../agent/toolRuntime.js';
 import type { AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
+import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { GovernanceAuditStore } from '../data/governance-audit/types.js';
 import type { UserStore } from '../data/users/store.js';
 import type { SessionCatalog } from '../runtime/sessionCatalog.js';
@@ -62,6 +65,7 @@ const FORBIDDEN_FLAGS = /^(?:-p|-f|--profile|--format|--token|--access-token|--r
 
 interface ClassifiedCommand {
   module: string;
+  commandPath: string;
   risk: 'read' | 'write';
 }
 
@@ -93,6 +97,7 @@ export const dwsBusinessToolDescriptor: ToolDescriptor<DwsBusinessInput> = {
 export interface DwsBusinessToolProviderOptions {
   agentCwd: string;
   accountStore: AgentDwsAccountStore;
+  assignmentStore?: Pick<PgAssignmentStore, 'listEffectiveResourceIds'>;
   connectionStore?: DwsConnectionStore;
   userStore: UserStore;
   isRequesterRuntimeEnabled?: (username: string) => boolean;
@@ -178,6 +183,18 @@ export class DwsBusinessToolProvider implements ToolProvider {
       await auditRejection('DWS_BUSINESS_AGENT_ACCOUNT_UNAVAILABLE');
       throw new Error('当前企业专家没有可用的钉钉账号授权');
     }
+    const delegation = input.credentialMode === 'agent'
+      ? await this.resolveAgentCredentialDelegation(
+          identity.tenantId,
+          identity.id,
+          account.accountId,
+          input.args,
+        ).catch(() => null)
+      : null;
+    if (input.credentialMode === 'agent' && !delegation) {
+      await auditRejection('DWS_BUSINESS_AGENT_DELEGATION_DENIED');
+      throw new Error('当前请求者没有此专家钉钉账号的业务动作与资源委托权限');
+    }
     const auditBase = {
       correlationId,
       actorType: 'user' as const,
@@ -189,7 +206,17 @@ export class DwsBusinessToolProvider implements ToolProvider {
       targetId: session.orgAgentId,
       targetTenantId: identity.tenantId,
       purpose: 'execute registered DWS business action through credential broker',
-      metadata: { module: command.module, credentialMode: input.credentialMode, sessionBound: true },
+      metadata: {
+        module: command.module,
+        commandPath: command.commandPath,
+        credentialMode: input.credentialMode,
+        sessionBound: true,
+        ...(delegation ? {
+          delegationResourceId: delegation.resourceId,
+          delegationBindingId: delegation.bindingId,
+          delegationAssignmentVersion: delegation.assignmentVersion,
+        } : {}),
+      },
     };
     await this.options.auditStore.append({ ...auditBase, result: 'intent' });
 
@@ -231,6 +258,26 @@ export class DwsBusinessToolProvider implements ToolProvider {
       }).catch(() => undefined);
       throw new Error(message);
     }
+  }
+
+  private async resolveAgentCredentialDelegation(
+    tenantId: string,
+    requesterUserId: string,
+    accountId: string,
+    args: string[],
+  ): Promise<{
+    resourceId: string;
+    bindingId: string;
+    assignmentVersion: number;
+  } | null> {
+    if (!this.options.assignmentStore) return null;
+    const requiredResourceId = deriveDwsAgentDelegationResourceId(accountId, args);
+    const effective = await this.options.assignmentStore.listEffectiveResourceIds(
+      tenantId,
+      requesterUserId,
+      'dws_delegation',
+    );
+    return effective.find(entry => entry.resourceId === requiredResourceId) ?? null;
   }
 
   private async resolveRequesterPrincipal(tenantId: string, userId: string): Promise<{
@@ -373,16 +420,29 @@ function classifyCommand(args: string[]): ClassifiedCommand {
   if (pathTokens.some(token => FORBIDDEN_VERBS.has(token))) {
     throw new Error('DWS 命令超出业务 Broker 边界');
   }
-  if (actionTokens.some(token => WRITE_VERBS.has(token))) return { module, risk: 'write' };
-  if (actionTokens.some(token => READ_VERBS.has(token))) return { module, risk: 'read' };
+  const normalizedCommandPath = commandPath.map(token => token.toLowerCase()).join('.');
+  if (actionTokens.some(token => WRITE_VERBS.has(token))) {
+    return { module, commandPath: normalizedCommandPath, risk: 'write' };
+  }
+  if (actionTokens.some(token => READ_VERBS.has(token))) {
+    return { module, commandPath: normalizedCommandPath, risk: 'read' };
+  }
   throw new Error('DWS 动作未登记风险等级，已拒绝执行');
+}
+
+export function deriveDwsAgentDelegationResourceId(accountId: string, args: string[]): string {
+  if (!/^[A-Za-z0-9_-]{1,160}$/.test(accountId)) {
+    throw new Error('DWS Agent account id cannot be represented as a delegation resource');
+  }
+  const digest = createHash('sha256').update(JSON.stringify(args)).digest('hex');
+  return `dws-delegation:${accountId}:${digest}`;
 }
 
 function sanitizeDwsBusinessOutput(content: string, profileId: string): string {
   return content
     .split(profileId).join('[DWS_PROFILE_REDACTED]')
     .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]')
-    .replace(/((?:access_token|refresh_token|authorization|token)\s*[=:]\s*["']?)[^\s,"'}]+/gi, '$1[REDACTED]')
+    .replace(/((?:["']?(?:access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|token)["']?)\s*[=:]\s*["']?)[^\s,"'}]+/gi, '$1[REDACTED]')
     .replace(/(?:\/[^\s"']+)*\/\.dws\/(?:config|keys)(?:\/[^\s"']*)?/gi, '[DWS_PROFILE_PATH_REDACTED]');
 }
 

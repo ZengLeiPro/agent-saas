@@ -212,8 +212,11 @@ export class PgAssignmentStore {
   }>> {
     const unresolvedGroups = await this.options.pool.query(`
       SELECT 1
-      FROM ${this.assignmentsTable}
-      WHERE tenant_id=$1 AND resource_type=$2 AND assignee_type='directory_group'
+      FROM ${this.assignmentsTable} a
+      JOIN ${this.assignmentSetsTable} s
+        ON s.tenant_id=a.tenant_id AND s.resource_type=a.resource_type AND s.resource_id=a.resource_id
+      WHERE a.tenant_id=$1 AND a.resource_type=$2 AND a.assignee_type='directory_group'
+        AND s.resource_status='enabled'
       LIMIT 1
     `, [tenantId, resourceType]);
     let directoryGroupIds: string[] = [];
@@ -235,7 +238,7 @@ export class PgAssignmentStore {
       FROM ${this.assignmentSetsTable} s
       JOIN ${this.assignmentsTable} a
         ON a.tenant_id=s.tenant_id AND a.resource_type=s.resource_type AND a.resource_id=s.resource_id
-      WHERE s.tenant_id=$1 AND s.resource_type=$3
+      WHERE s.tenant_id=$1 AND s.resource_type=$3 AND s.resource_status='enabled'
         AND (
           a.assignee_type='everyone'
           OR (a.assignee_type='user' AND a.assignee_id=$2)

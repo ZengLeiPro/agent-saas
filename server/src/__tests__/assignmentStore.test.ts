@@ -73,7 +73,7 @@ describe('Resource Assignment 与 Personal Preference', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_resource_assignments');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_user_resource_preferences');
     expect(sql).toContain("assignee_type = 'everyone' AND assignee_id IS NULL");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(27);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(28);
   });
 
   it('legacy username 仅在同租户唯一命中时转 immutable userId；未解析 deny 记 issue 且不误授权同名账号', async () => {
@@ -201,6 +201,7 @@ describe('Resource Assignment 与 Personal Preference', () => {
       resourceId: 'skill-1', bindingId: 'assignment-1', assignmentVersion: 3, finalEffect: 'allow', bindings: [],
     }]);
     const effectiveSql = queries[1].sql;
+    expect(effectiveSql).toContain("s.resource_status='enabled'");
     expect(effectiveSql).toContain("a.assignee_type='agent' AND a.assignee_id=$4");
     expect(effectiveSql).toContain("NOT BOOL_OR(a.effect='deny')");
     expect(effectiveSql).toContain("a.assignee_type='directory_group' AND a.assignee_id=ANY($5::text[])");

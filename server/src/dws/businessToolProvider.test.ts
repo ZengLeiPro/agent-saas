@@ -4,6 +4,7 @@ import type { ToolCallContext } from '../agent/toolRuntime.js';
 import { InMemoryGovernanceAuditStore } from '../data/governance-audit/store.js';
 import {
   DwsBusinessToolProvider,
+  deriveDwsAgentDelegationResourceId,
   dwsBusinessToolDescriptor,
   resolveDwsBusinessRisk,
 } from './businessToolProvider.js';
@@ -20,7 +21,7 @@ const user = {
   dingtalkStaffId: 'sender-a', disabled: false,
 };
 
-function setup() {
+function setup(input: { delegatedScopes?: string[]; assignmentUnavailable?: boolean } = {}) {
   const auditStore = new InMemoryGovernanceAuditStore();
   const invoke = vi.fn().mockResolvedValue({
     status: 'success',
@@ -31,11 +32,17 @@ function setup() {
     }],
     metadata: { exitCode: 0, command: 'dws --profile agent-profile-secret' },
   });
+  const listEffectiveResourceIds = input.assignmentUnavailable
+    ? vi.fn().mockRejectedValue(new Error('assignment unavailable'))
+    : vi.fn().mockResolvedValue((input.delegatedScopes ?? [
+      deriveDwsAgentDelegationResourceId('account-a', ['calendar', 'event', 'list', '--today']),
+    ]).map(resourceId => ({ resourceId, bindingId: 'assignment-a', assignmentVersion: 3 })));
   const provider = new DwsBusinessToolProvider({
     agentCwd: '/workspace',
     accountStore: {
       listForTenant: vi.fn().mockResolvedValue([account]),
     } as never,
+    assignmentStore: { listEffectiveResourceIds } as never,
     connectionStore: {
       listForUser: vi.fn().mockResolvedValue([{
         tenantId: 'tenant-a', userId: 'user-a', username: 'alice', profileId: 'requester-profile-secret',
@@ -64,7 +71,7 @@ function setup() {
     sessionId: 'session-a', runId: 'run-a', toolCallId: 'tool-a', invocationId: 'invocation-a',
     executionAudit,
   };
-  return { provider, invoke, auditStore, context, executionAudit };
+  return { provider, invoke, auditStore, context, executionAudit, listEffectiveResourceIds };
 }
 
 describe('DwsBusinessToolProvider', () => {
@@ -104,8 +111,74 @@ describe('DwsBusinessToolProvider', () => {
     }));
     expect(JSON.stringify(executionAudit.record.mock.calls)).not.toContain('raw-token');
     expect(auditStore.events.map(event => event.result)).toEqual(['intent', 'succeeded']);
+    expect(auditStore.events[0]?.metadata).toMatchObject({
+      commandPath: 'calendar.event.list',
+      delegationBindingId: 'assignment-a',
+      delegationAssignmentVersion: 3,
+    });
     expect(JSON.stringify(auditStore.events)).not.toContain('agent-profile-secret');
     expect(JSON.stringify(auditStore.events)).not.toContain('remote-token');
+  });
+
+  it('输出脱敏覆盖 camelCase credential 字段', async () => {
+    const { provider, invoke, context } = setup({
+      delegatedScopes: [deriveDwsAgentDelegationResourceId('account-a', ['calendar', 'event', 'list'])],
+    });
+    invoke.mockResolvedValueOnce({
+      status: 'success',
+      content: '{"accessToken":"access-secret","refreshToken":"refresh-secret","clientSecret":"client-secret"}',
+    });
+
+    const result = await provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['calendar', 'event', 'list'], credentialMode: 'agent' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, context);
+
+    expect(result?.content).toContain('[REDACTED]');
+    expect(result?.content).not.toMatch(/access-secret|refresh-secret|client-secret/);
+  });
+
+  it('Agent credential 对未显式委托的敏感模块和策略不可用状态 fail closed', async () => {
+    for (const module of ['mail', 'contact', 'oa', 'calendar']) {
+      const { provider, invoke, auditStore, context, listEffectiveResourceIds } = setup({ delegatedScopes: [] });
+      await expect(provider.invoke({
+        toolId: 'DwsBusiness',
+        input: { args: [module, 'message', 'list'], credentialMode: 'agent' },
+        authorization: { approved: true, source: 'policy_auto' },
+      }, context)).rejects.toThrow('委托权限');
+      expect(listEffectiveResourceIds).toHaveBeenCalledWith('tenant-a', 'user-a', 'dws_delegation');
+      expect(invoke).not.toHaveBeenCalled();
+      expect(auditStore.events.at(-1)).toMatchObject({
+        reason: 'DWS_BUSINESS_AGENT_DELEGATION_DENIED', result: 'failed',
+      });
+    }
+
+    const unavailable = setup({ assignmentUnavailable: true });
+    await expect(unavailable.provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['mail', 'message', 'list'], credentialMode: 'agent' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, unavailable.context)).rejects.toThrow('委托权限');
+    expect(unavailable.invoke).not.toHaveBeenCalled();
+  });
+
+  it('Agent credential 委托绑定账号与完整参数，目标资源或 payload 变化即拒绝', async () => {
+    const exact = setup({ delegatedScopes: [
+      deriveDwsAgentDelegationResourceId('account-a', ['mail', 'message', 'list']),
+    ] });
+    await expect(exact.provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['mail', 'message', 'list'], credentialMode: 'agent' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, exact.context)).resolves.toMatchObject({ content: '{"ok":true}' });
+
+    await expect(exact.provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['mail', 'message', 'list', '--folder-id', 'other'], credentialMode: 'agent' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, exact.context)).rejects.toThrow('委托权限');
+    expect(exact.invoke).toHaveBeenCalledOnce();
   });
 
   it('requester 模式只从可信连接记录选择唯一 profile，写命令自动追加 --yes', async () => {

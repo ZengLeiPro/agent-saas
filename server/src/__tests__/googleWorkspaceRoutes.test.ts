@@ -79,6 +79,52 @@ describe('Google Workspace OAuth callback handoff delivery', () => {
     expect(test.ensureOAuthGrant).toHaveBeenCalledWith({ userId: 'user-1', username: 'alice', tenantId: 'tenant-a' });
   });
 
+  it('OAuth Grant 无法补齐时返回受控清理标识', async () => {
+    const test = fixture();
+    test.ensureOAuthGrant.mockResolvedValueOnce(undefined);
+    const response = await request(
+      test.options,
+      '/api/connectors/google-workspace/oauth-grant/ensure',
+      { method: 'POST' },
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'GOOGLE_WORKSPACE_SCOPE_UNVERIFIABLE',
+    });
+  });
+
+  it('仅在无法补齐可验证 OAuth Grant 时允许清理历史连接', async () => {
+    const test = fixture();
+    test.ensureOAuthGrant.mockResolvedValueOnce(undefined);
+    const response = await request(
+      test.options,
+      '/api/connectors/google-workspace/unverified-disconnect',
+      { method: 'POST' },
+    );
+
+    expect(response.status).toBe(204);
+    expect(test.ensureOAuthGrant).toHaveBeenCalledWith({
+      userId: 'user-1', username: 'alice', tenantId: 'tenant-a',
+    });
+    expect(test.disconnect).toHaveBeenCalledWith('user-1', 'alice', 'tenant-a');
+  });
+
+  it('已有可验证 OAuth Grant 时拒绝绕过签名撤销', async () => {
+    const test = fixture();
+    const response = await request(
+      test.options,
+      '/api/connectors/google-workspace/unverified-disconnect',
+      { method: 'POST' },
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'OAUTH_GRANT_SIGNED_REVOCATION_REQUIRED',
+    });
+    expect(test.disconnect).not.toHaveBeenCalled();
+  });
+
   it('callback 重放无法把已成功或待确认的 handoff 降级为 failed', async () => {
     const test = fixture();
     test.finishAuthorization.mockRejectedValue(new Error('Google Workspace OAuth state 已过期'));

@@ -1,4 +1,6 @@
 import type { ApiSessionDetail } from "@/lib/sessionsApi";
+import { authFetch } from "@/lib/authFetch";
+import type { SessionRuntimeStatus } from "@agent/shared";
 import { wsClient, type WsResumeMessage } from "@/lib/wsClient";
 
 export type LastRunState = NonNullable<ApiSessionDetail["lastRunState"]>;
@@ -23,6 +25,30 @@ const TERMINAL_RUNTIME_STATUSES = new Set<string>([
 
 export function isActiveRuntimeStatus(status: string | undefined): boolean {
   return !!status && ACTIVE_RUNTIME_STATUSES.has(status);
+}
+
+export type StreamStatusSnapshot = {
+  active: boolean;
+  streamId?: string;
+  runId?: string;
+  status?: string;
+};
+
+export async function fetchSessionStreamStatus(sessionId: string): Promise<StreamStatusSnapshot | null> {
+  try {
+    const response = await authFetch(`/api/sessions/${sessionId}/stream-status`);
+    return response.ok ? response.json() as Promise<StreamStatusSnapshot> : null;
+  } catch {
+    return null;
+  }
+}
+
+export function activeRuntimePatchFromStreamStatus(snapshot: StreamStatusSnapshot) {
+  return {
+    status: isActiveRuntimeStatus(snapshot.status) ? snapshot.status as SessionRuntimeStatus : 'running' as const,
+    ...(snapshot.streamId ? { streamId: snapshot.streamId } : {}),
+    ...(snapshot.runId ? { runId: snapshot.runId } : {}),
+  };
 }
 
 export function isTerminalRuntimeStatus(status: string | undefined): status is TerminalRuntimeStatus {

@@ -149,7 +149,7 @@ describe('TASK-200 staged interaction lifecycle', () => {
       wsClient(ws, USER), interactionId, { answers: { q: 'second' } }, sessionId, 'active-ok',
     );
     await expect(agentResponse).resolves.toEqual({ answers: { q: 'second' } });
-    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId, clientAttemptId: 'active-ok' });
+    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId, clientAttemptId: 'active-ok', response: { answers: { q: 'second' } } });
     expect((await store.list(TENANT, sessionId)).filter((event) => (
       event.type === 'interaction_resolved' && event.interactionId === interactionId
     ))).toHaveLength(1);
@@ -177,7 +177,7 @@ describe('TASK-200 staged interaction lifecycle', () => {
 
     failAppend = false;
     await (channel as any).resolveInteraction(wsClient(ws, USER), 'interaction-staged', { answers: { q: 'yes' } }, sessionId, 'try-2');
-    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'interaction-staged', clientAttemptId: 'try-2' });
+    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'interaction-staged', clientAttemptId: 'try-2', response: { answers: { q: 'yes' } } });
     expect(activations).toEqual(['run-staged']);
     expect((await store.list(TENANT, sessionId)).filter((event) => event.type === 'interaction_resolved')).toHaveLength(1);
   });
@@ -231,7 +231,7 @@ describe('TASK-200 staged interaction lifecycle', () => {
     const { channel, ws } = channelRig(tmp, runs, eventStore, activations);
 
     await (channel as any).resolveInteraction(wsClient(ws, USER), 'interaction-staged', { answers: { q: 'yes' } }, sessionId, 'uncertain-commit');
-    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'interaction-staged', clientAttemptId: 'uncertain-commit' });
+    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'interaction-staged', clientAttemptId: 'uncertain-commit', response: { answers: { q: 'yes' } } });
     expect(activations).toEqual(['run-staged']);
     expect((await store.list(TENANT, sessionId)).filter((event) => event.type === 'interaction_resolved')).toHaveLength(1);
   });
@@ -302,7 +302,7 @@ describe('TASK-200 staged interaction lifecycle', () => {
     const { channel, ws } = channelRig(tmp, runs, { list: store.list.bind(store), append: store.append.bind(store) }, activations);
 
     await (channel as any).resolveInteraction(wsClient(ws, USER), 'interaction-staged', { answers: { q: 'retry' } }, sessionId);
-    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'interaction-staged' });
+    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'interaction-staged', response: { answers: { q: 'retry' } } });
     expect(activations).toEqual(['run-staged']);
     expect((await store.list(TENANT, sessionId)).filter((event) => event.type === 'interaction_resolved')).toHaveLength(1);
     expect(await runs.get('run-staged')).toMatchObject({ status: 'pending', metadata: { schedulerState: 'ready' } });
@@ -327,7 +327,7 @@ describe('TASK-200 staged interaction lifecycle', () => {
     );
 
     await (channel as any).resolveInteraction(wsClient(ws, USER), 'interaction-staged', { answers: { q: 'new' } }, sessionId);
-    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'interaction-staged' });
+    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'interaction-staged', response: { answers: { q: 'yes' } } });
     expect(activations).toEqual(['run-staged']);
     expect((await store.list(TENANT, sessionId)).filter((event) => event.type === 'interaction_resolved')).toHaveLength(1);
     expect((await runs.get('run-staged'))?.metadata?.resumeInteraction).toEqual({ interactionId: 'interaction-staged', response: { answers: { q: 'yes' } } });
@@ -366,7 +366,7 @@ describe('TASK-200 staged interaction lifecycle', () => {
 
     await (channel as any).resolveInteraction(wsClient(ws, USER), approvalId, { allow: true }, sessionId);
 
-    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: approvalId });
+    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: approvalId, response: { allow: false } });
     const canonical = (await store.list(TENANT, sessionId)).filter((event) => (
       event.type === 'interaction_resolved' && event.interactionId === approvalId
     ));

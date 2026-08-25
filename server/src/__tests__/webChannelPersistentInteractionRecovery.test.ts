@@ -221,7 +221,7 @@ describe('WebChannel persistent interaction recovery', () => {
       const rig = resumeRig(runStore, tmp, activations, uncertainStore);
 
       await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-uncertain', { allow: true }, sessionId, 'approval-uncertain');
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'appr-uncertain', clientAttemptId: 'approval-uncertain' });
+      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'appr-uncertain', clientAttemptId: 'approval-uncertain', response: { allow: false } });
       expect(activations).toEqual(['run-appr-uncertain']);
       const resolved = (await eventStore.list(TENANT, sessionId)).filter((event) => event.type === 'interaction_resolved' && event.interactionId === 'appr-uncertain');
       expect(resolved).toHaveLength(1);
@@ -248,7 +248,7 @@ describe('WebChannel persistent interaction recovery', () => {
 
       await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-t-1', { allow: true }, sessionId);
       expect(rig.ws.sent.at(-1)?.data).toEqual({
-        type: 'respond_ok', interactionId: 'appr-t-1',
+        type: 'respond_ok', interactionId: 'appr-t-1', response: { allow: false, message: '源 run 不可恢复（completed），拒绝遗留审批' },
       });
       expect(activations).toHaveLength(0);
       const events = await eventStore.list(TENANT, sessionId);

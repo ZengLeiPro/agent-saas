@@ -549,12 +549,9 @@ function migrations(prefix: string): GovernanceMigration[] {
           target_id TEXT NOT NULL,
           idempotency_key TEXT NOT NULL,
           request_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-          status TEXT NOT NULL CHECK (status IN (
-            'pending', 'running', 'retry_wait', 'succeeded', 'partial', 'failed', 'dead_letter'
-          )),
+          status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'retry_wait', 'succeeded', 'failed')),
           revision BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
           attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),
-          max_attempts INTEGER NOT NULL DEFAULT 5 CHECK (max_attempts >= 1),
           last_error_code TEXT,
           next_retry_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

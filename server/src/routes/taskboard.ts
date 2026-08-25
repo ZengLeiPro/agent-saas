@@ -629,7 +629,9 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     if (!options.service!.resumeBlockedTask) throw new TaskboardExecutionUnavailableError();
     const input = parseOrReply(taskResumeSchema, req.body, res, 'body');
     if (!input) return;
-    sendTask(req, res, await options.service!.resumeBlockedTask(identityFrom(req), req.params.id, input));
+    const identity = identityFrom(req);
+    assertIntegrationExecutionMigrated(await options.service!.getTask(identity, req.params.id));
+    sendTask(req, res, await options.service!.resumeBlockedTask(identity, req.params.id, input));
   }));
 
   router.post('/tasks/:id/integration-cancel', route(async (req, res) => {

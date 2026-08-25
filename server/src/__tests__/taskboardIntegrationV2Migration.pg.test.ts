@@ -90,6 +90,46 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
     return integration.id;
   }
 
+  async function seedV2Integration(label: string): Promise<string> {
+    await pool.query(`ALTER TABLE ${store.tasksTable} ALTER COLUMN workflow_version SET DEFAULT 2`);
+    try {
+      return await seedHistoricalIntegration(label, 'valid');
+    } finally {
+      await pool.query(`ALTER TABLE ${store.tasksTable} ALTER COLUMN workflow_version SET DEFAULT 3`);
+    }
+  }
+
+  async function seedExecution(taskId: string, suffix: string): Promise<string> {
+    const executionId = `execution-${suffix}`;
+    const runId = `run-${suffix}`;
+    const sessionId = `session-${suffix}`;
+    await pool.query(
+      `INSERT INTO ${store.executionsTable}
+         (id,task_id,run_id,session_id,status,purpose,trigger,protocol_version,requested_by)
+       VALUES($1,$2,$3,$4,'running','work','initial',2,$5)`,
+      [executionId, taskId, runId, sessionId, identity.ownerUserId],
+    );
+    await pool.query(
+      `INSERT INTO ${store.executionOutboxTable}(run_id,execution_id,payload)
+       VALUES($1,$2,$3::jsonb)`,
+      [runId, executionId, JSON.stringify({
+        version: 1,
+        session: {
+          sessionId, userId: identity.ownerUserId, username: identity.username,
+          tenantId: identity.tenantId, channel: 'web', cwd: '/tmp/taskboard-v2-guard',
+          transcriptPath: `/tmp/${sessionId}.jsonl`, status: 'running',
+          createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        },
+        run: {
+          runId, sessionId, userId: identity.ownerUserId, tenantId: identity.tenantId,
+          channel: 'web', idempotencyKey: `taskboard-execution:${executionId}`,
+          metadata: { taskboardExecution: true, taskboardExecutionId: executionId },
+        },
+      })],
+    );
+    return runId;
+  }
+
   it('atomically creates the unique Agent rendezvous before the constrained 2 to 3 upgrade', async () => {
     const initialDefault = await pool.query(
       `SELECT column_default AS value
@@ -175,5 +215,113 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
       `UPDATE ${store.tasksTable} SET workflow_version=2 WHERE id=$1`,
       [validIds[0]],
     )).rejects.toThrow(/TASKBOARD_WORKFLOW_VERSION_IMMUTABLE/u);
+  });
+
+  it('absorbs v2 execution outbox before dispatch and releases the scanner migration', async () => {
+    const taskId = await seedV2Integration('guarded-execution-outbox');
+    const runId = await seedExecution(taskId, 'guarded-v2-outbox');
+    const before = await store.getTask(identity, taskId);
+
+    await expect(store.claimExecutionDispatch(runId, 'must-not-lease')).resolves.toBeNull();
+
+    const state = await pool.query(
+      `SELECT e.status AS execution_status,e.error,o.status AS outbox_status,
+              o.lease_id,o.lease_expires_at,o.last_error
+         FROM ${store.executionsTable} e
+         JOIN ${store.executionOutboxTable} o ON o.run_id=e.run_id
+        WHERE e.run_id=$1`, [runId],
+    );
+    expect(state.rows[0]).toMatchObject({
+      execution_status: 'failed', outbox_status: 'dispatched', lease_id: null, lease_expires_at: null,
+      error: expect.stringContaining('migration'), last_error: expect.stringContaining('migration'),
+    });
+    expect(await store.getTask(identity, taskId)).toMatchObject({
+      status: before.status, version: before.version, commentCount: before.commentCount,
+    });
+
+    await store.claimIntegrationDispatchCandidatesV2(10);
+    expect(await store.getTask(identity, taskId)).toMatchObject({ workflowVersion: 3 });
+  });
+
+  it.each(['succeeded', 'failed'] as const)(
+    'absorbs a v2 %s run completion without task delivery side effects',
+    async (completionStatus) => {
+      const taskId = await seedV2Integration(`guarded-completion-${completionStatus}`);
+      const runId = await seedExecution(taskId, `guarded-completion-${completionStatus}`);
+      const before = await store.getTask(identity, taskId);
+      const changesBefore = await pool.query(
+        `SELECT count(*)::int AS count FROM ${store.changesTable} WHERE task_id=$1`, [taskId],
+      );
+
+      const first = await store.completeExecution(runId, {
+        status: completionStatus,
+        ...(completionStatus === 'failed' ? { error: 'runtime failed' } : {}),
+        commentBody: 'must not be delivered',
+        attachments: [{
+          attachmentId: randomUUID(), originalName: 'must-not-exist.txt',
+          relativePath: 'assets/must-not-exist.txt', size: 1, mimeType: 'text/plain', isImage: false,
+        }],
+      });
+      const duplicate = await store.completeExecution(runId, {
+        status: 'succeeded', commentBody: 'duplicate must also be absorbed',
+      });
+
+      expect(first?.execution).toMatchObject({ status: 'failed', error: expect.stringContaining('migration') });
+      expect(duplicate?.execution).toMatchObject({ status: 'failed', error: expect.stringContaining('migration') });
+      expect(await store.getTask(identity, taskId)).toMatchObject({
+        status: before.status, version: before.version, commentCount: before.commentCount,
+      });
+      const changesAfter = await pool.query(
+        `SELECT count(*)::int AS count FROM ${store.changesTable} WHERE task_id=$1`, [taskId],
+      );
+      expect(changesAfter.rows[0].count).toBe(changesBefore.rows[0].count);
+      expect(await store.listComments(identity, taskId)).toHaveLength(0);
+
+      await store.claimIntegrationDispatchCandidatesV2(10);
+      expect(await store.getTask(identity, taskId)).toMatchObject({ workflowVersion: 3 });
+    },
+  );
+
+  it('absorbs a v2 continuation and any associated execution without moving the task', async () => {
+    const taskId = await seedV2Integration('guarded-continuation');
+    const runId = await seedExecution(taskId, 'guarded-continuation');
+    const comment = await store.createComment(identity, taskId, { body: 'legacy continuation source' });
+    const before = await store.getTask(identity, taskId);
+    await pool.query(
+      `UPDATE ${store.commentsTable} SET continuation_run_id=$2,continuation_eligible=true WHERE id=$1`,
+      [comment.id, runId],
+    );
+    await pool.query(
+      `INSERT INTO ${store.continuationOutboxTable}(run_id,task_id,comment_id,session_id,payload)
+       VALUES($1,$2,$3,$4,'{}'::jsonb)`,
+      [runId, taskId, comment.id, 'session-guarded-continuation'],
+    );
+
+    await expect(store.claimContinuationDispatch(runId, 'must-not-lease')).resolves.toBeNull();
+    await store.completeContinuation(taskId, runId, {
+      status: 'succeeded', commentBody: 'must not advance task',
+    });
+    await store.completeContinuation(taskId, runId, {
+      status: 'failed', error: 'duplicate', commentBody: 'must remain absorbed',
+    });
+
+    const state = await pool.query(
+      `SELECT e.status AS execution_status,e.error,o.status AS continuation_status,
+              o.lease_id,o.reconcile_lease_id,o.last_error
+         FROM ${store.executionsTable} e
+         JOIN ${store.continuationOutboxTable} o ON o.run_id=e.run_id
+        WHERE e.run_id=$1`, [runId],
+    );
+    expect(state.rows[0]).toMatchObject({
+      execution_status: 'failed', continuation_status: 'completed', lease_id: null,
+      reconcile_lease_id: null, error: expect.stringContaining('migration'),
+      last_error: expect.stringContaining('migration'),
+    });
+    expect(await store.getTask(identity, taskId)).toMatchObject({
+      status: before.status, version: before.version, commentCount: before.commentCount,
+    });
+
+    await store.claimIntegrationDispatchCandidatesV2(10);
+    expect(await store.getTask(identity, taskId)).toMatchObject({ workflowVersion: 3 });
   });
 });

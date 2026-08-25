@@ -101,8 +101,9 @@ describe('Taskboard routes', () => {
     const service = makeService({ identities: [], taskFilters: [], createBoards: [] });
     service.getTask = async () => ({ ...TASK, kind: 'integration', workflowVersion: 2 });
     const unavailable = async (): Promise<never> => { throw new Error('must not dispatch'); };
+    service.resumeBlockedTask = unavailable;
     const rig = await makeRig(service, USER, undefined, { startExecution: unavailable, continueExecution: unavailable } as never);
-    for (const [suffix, body] of [['execute', { expectedVersion: TASK.version }], ['execute', { expectedVersion: TASK.version, purpose: 'merge' }], [`comments/${COMMENT.id}/execute`, {}]] as const) expect(await (await rig.request(`/api/taskboard/tasks/${TASK.id}/${suffix}`, postJson(body))).json()).toMatchObject({ code: 'TASKBOARD_INTEGRATION_MIGRATION_REQUIRED' });
+    for (const [suffix, body] of [['execute', { expectedVersion: TASK.version }], ['execute', { expectedVersion: TASK.version, purpose: 'merge' }], [`comments/${COMMENT.id}/execute`, {}], ['resume', { expectedVersion: TASK.version, decision: 'continue', sourceIds: ['legacy-source'] }]] as const) expect(await (await rig.request(`/api/taskboard/tasks/${TASK.id}/${suffix}`, postJson(body))).json()).toMatchObject({ code: 'TASKBOARD_INTEGRATION_MIGRATION_REQUIRED' });
   });
   it('starts a durable Integration Agent work execution for a manually-created workflow v3 batch', async () => {
     const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
@@ -134,8 +135,6 @@ describe('Taskboard routes', () => {
     });
     expect(starts).toBe(1);
   });
-
-
 
   it('requires login before checking service availability, then returns 503 when PG service is disabled', async () => {
     const rig = await makeRig(undefined, null);

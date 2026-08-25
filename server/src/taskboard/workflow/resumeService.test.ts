@@ -25,6 +25,23 @@ function options(client: { query: ReturnType<typeof vi.fn>; release: ReturnType<
 }
 
 describe('Workflow v3 blocked resume authority', () => {
+  it('fails closed for v2 integration before workflow/source/task mutations', async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('JOIN boards b') && sql.includes('FOR UPDATE OF t')) return { rows: [loadedTask(2)] };
+      if (sql.includes('SELECT b.*') && sql.includes('FROM boards b')) return { rows: [{ id: 'board-1', board_role: 'owner' }] };
+      return { rows: [] };
+    });
+    const client = { query, release: vi.fn() };
+
+    await expect(resumeBlockedTask(options(client), identity, 'task-1', {
+      expectedVersion: 1, decision: 'must migrate first', sourceIds: ['legacy-source'],
+    })).rejects.toMatchObject({ code: 'TASKBOARD_INTEGRATION_MIGRATION_REQUIRED' });
+    expect(query.mock.calls.map(([sql]) => String(sql))).not.toEqual(expect.arrayContaining([
+      expect.stringContaining('UPDATE integration'),
+      expect.stringContaining('UPDATE tasks'),
+      expect.stringContaining('INSERT INTO changes'),
+    ]));
+  });
   it('still rejects a v3 resume when a merge fact exists', async () => {
     const query = vi.fn(async (sql: string, _values?: unknown[]) => {
       if (sql.includes('JOIN boards b') && sql.includes('FOR UPDATE OF t')) return { rows: [loadedTask(3)] };

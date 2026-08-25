@@ -387,6 +387,42 @@ async function completeExecutionInternal(
     );
     if (!executionResult.rows[0] || executionResult.rows[0].reconcile_lease_valid !== true) return null;
     const currentExecution = rowToExecution(executionResult.rows[0]);
+    if (loaded.task.kind === 'integration' && loaded.task.workflowVersion !== 3) {
+      const migrationError = 'Integration task requires Agent-first workflow migration';
+      const absorbed = await client.query(
+        `UPDATE ${store.executionsTable}
+            SET status=CASE
+                  WHEN status IN ('queued','running','waiting_user','waiting_approval') THEN 'failed'
+                  ELSE status
+                END,
+                error=$2,
+                finished_at=CASE
+                  WHEN status IN ('queued','running','waiting_user','waiting_approval')
+                    THEN COALESCE(finished_at, now())
+                  ELSE finished_at
+                END,
+                reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL, updated_at=now()
+          WHERE run_id=$1
+          RETURNING *`,
+        [runId, migrationError],
+      );
+      await client.query(
+        `UPDATE ${store.executionOutboxTable}
+            SET status='dispatched', lease_id=NULL, lease_expires_at=NULL,
+                last_error=$2, dispatched_at=COALESCE(dispatched_at, now()), updated_at=now()
+          WHERE run_id=$1`,
+        [runId, migrationError],
+      );
+      await client.query(
+        `UPDATE ${store.continuationOutboxTable}
+            SET status='completed', lease_id=NULL, lease_expires_at=NULL,
+                reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL,
+                last_error=$2, updated_at=now()
+          WHERE run_id=$1`,
+        [runId, migrationError],
+      );
+      return { task: loaded.task, execution: rowToExecution(absorbed.rows[0]) };
+    }
     if (isTerminalExecutionStatus(currentExecution.status)) {
       await client.query(
         `UPDATE ${store.executionOutboxTable}

@@ -9,6 +9,7 @@ import {
 } from '../v2Store.js';
 import { integrationAgentTableNames } from '../integrationAgentSchema.js';
 import { loadWorkflowFacts } from './commandService.js';
+import { assertIntegrationExecutionMigrated } from './decider.js';
 import {
   TaskboardConflictError,
   TaskboardValidationError,
@@ -24,6 +25,7 @@ export async function resumeBlockedTask(
   return withTransaction(options, async (client) => {
     const loaded = await loadAccessibleTaskAndBoard(options, client, identity, taskId, true);
     await requireBoardAccess(options, client, identity, loaded.task.boardId, 'maintainer', false);
+    assertIntegrationExecutionMigrated(loaded.task);
     if (loaded.task.version !== input.expectedVersion) throw new TaskboardConflictError(loaded.task);
     const facts = await loadWorkflowFacts(options, client, loaded.task);
     const workflowV3 = loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3;
@@ -32,8 +34,8 @@ export async function resumeBlockedTask(
     }
     const decision = input.decision.trim();
     if (!decision) throw new TaskboardValidationError('Resume decision is required');
-    let resumePurpose: 'work' | 'review' | 'merge' = 'work';
-    let resumedSourceIds: string[] = [];
+    let resumePurpose: 'work' | 'review' = 'work';
+    const resumedSourceIds: string[] = [];
     if (workflowV3) {
       if (input.sourceIds?.length) {
         throw new TaskboardValidationError(
@@ -65,25 +67,7 @@ export async function resumeBlockedTask(
         'user', identity.ownerUserId, { decision });
       return loadTask(options, client, taskId);
     }
-    if (loaded.task.kind === 'integration') {
-      const sourceIds = [...new Set(input.sourceIds ?? [])];
-      if (!sourceIds.length) {
-        throw new TaskboardValidationError('Integration resume requires explicit sourceIds', 'TASKBOARD_RESUME_SOURCE_REQUIRED');
-      }
-      const resumed = await client.query(
-        `UPDATE ${options.integrationSourcesTable}
-            SET state='pending',last_error=NULL,updated_at=now()
-          WHERE integration_task_id=$1 AND id=ANY($2::text[]) AND state='needs_human'
-            AND merged_commit_oid IS NULL AND provider_receipt_id IS NULL
-          RETURNING id`,
-        [taskId, sourceIds],
-      );
-      if (resumed.rows.length !== sourceIds.length) {
-        throw new TaskboardValidationError('One or more sources are not resumable', 'TASKBOARD_RESUME_SOURCE_INVALID');
-      }
-      resumedSourceIds = sourceIds;
-      resumePurpose = 'merge';
-    } else if (input.sourceIds?.length) {
+    if (input.sourceIds?.length) {
       throw new TaskboardValidationError('sourceIds are only valid for integration resume');
     } else {
       const episode = await client.query(

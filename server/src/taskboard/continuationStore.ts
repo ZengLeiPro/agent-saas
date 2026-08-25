@@ -35,6 +35,7 @@ export interface TaskboardContinuationStoreHost {
   commentsTable: string;
   changesTable: string;
   executionsTable: string;
+  executionOutboxTable: string;
   integrationSourcesTable: string;
   remediationAttemptsTable: string;
   continuationOutboxTable: string;
@@ -235,6 +236,41 @@ export function completeContinuation(
   return withTransaction(host.pool, async (client) => {
     const loaded = await loadInternalTaskForUpdate(host, client, taskId);
     if (!loaded) return null;
+    if (loaded.task.kind === 'integration' && loaded.task.workflowVersion !== 3) {
+      const migrationError = 'Integration task requires Agent-first workflow migration';
+      await client.query(
+        `UPDATE ${host.executionsTable}
+            SET status=CASE
+                  WHEN status IN ('queued','running','waiting_user','waiting_approval') THEN 'failed'
+                  ELSE status
+                END,
+                error=$3,
+                finished_at=CASE
+                  WHEN status IN ('queued','running','waiting_user','waiting_approval')
+                    THEN COALESCE(finished_at, now())
+                  ELSE finished_at
+                END,
+                reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL, updated_at=now()
+          WHERE task_id=$1 AND run_id=$2`,
+        [taskId, runId, migrationError],
+      );
+      await client.query(
+        `UPDATE ${host.executionOutboxTable}
+            SET status='dispatched', lease_id=NULL, lease_expires_at=NULL,
+                last_error=$2, dispatched_at=COALESCE(dispatched_at, now()), updated_at=now()
+          WHERE run_id=$1`,
+        [runId, migrationError],
+      );
+      await client.query(
+        `UPDATE ${host.continuationOutboxTable}
+            SET status='completed', lease_id=NULL, lease_expires_at=NULL,
+                reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL,
+                last_error=$3, updated_at=now()
+          WHERE task_id=$1 AND run_id=$2`,
+        [taskId, runId, migrationError],
+      );
+      return loaded.task;
+    }
     const facts = await loadWorkflowFacts(host, client, loaded.task);
     if (loaded.task.archivedAt || loaded.boardArchivedAt
       || loaded.task.status === 'done' || loaded.task.status === 'canceled' || facts.hasMergeFact) {

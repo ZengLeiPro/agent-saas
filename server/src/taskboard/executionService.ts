@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-
 import type {
   TaskBoardExecution,
   TaskBoardExecutionPurpose,
@@ -39,6 +38,7 @@ import {
   InvalidTaskboardDispatchPayloadError,
 } from './executionDispatchValidation.js';
 import { resolveExecutionModelRef } from './executionFields.js';
+import { absorbLegacyIntegrationRuntimeCompletion } from './integrationMigrationCompletion.js';
 import { dispatchRetryDelayMs, limitComment, limitError } from './executionHelpers.js';
 import { buildExecutionPrompt } from './executionPrompt.js';
 export { executionWritebackInstructions } from './executionPrompt.js';
@@ -68,11 +68,9 @@ import type {
   TaskboardPage,
   TaskboardPageFilter,
 } from './types.js';
-
 interface DefaultModelResolution {
   ref: string;
 }
-
 const RECONCILIATION_GRACE_MS = 30_000;
 
 export interface TaskboardExecutionCoordinatorOptions extends TaskboardSessionGroupingOptions {
@@ -824,6 +822,9 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     const context = await this.options.store.getExecutionContextByRunId(runId);
     if (!context || isTerminalExecution(context.execution)) return;
     assertExecutionSession(context.execution, sessionId);
+    if (await absorbLegacyIntegrationRuntimeCompletion(
+      this.options.store, context, runId, reconcileLeaseId,
+    )) return;
     const events = this.options.eventStore.listByRun
       ? await this.options.eventStore.listByRun(context.identity.tenantId, sessionId, runId)
       : await this.options.eventStore.list(context.identity.tenantId, sessionId);

@@ -4,6 +4,7 @@ import type { DispatchMetricsSnapshot } from '../engine/metricsStore.js';
 import type { ActiveRunCounts } from '../runtime/runStore.js';
 import type { UploadMetricsSnapshot } from '../uploads/manager.js';
 import type { IntegrationV3HealthStatus } from '../taskboard/integrationV3Observability.js';
+import { assertRuntimeEnvironmentSafety } from '../release/environmentSafety.js';
 import type { RuntimeIdentity } from '../release/runtimeIdentity.js';
 
 export interface HealthRouteOptions {
@@ -48,6 +49,8 @@ export function createHealthRouter(
   options: HealthRouteOptions = {},
 ): Router {
   const router = Router();
+  // Re-assert at route assembly so readiness only reports an identity proven by startup policy.
+  const runtimeIdentity = assertRuntimeEnvironmentSafety(config);
 
   // Health check（未认证用户仅返回状态，认证用户返回详细信息）
   router.get('/health', (req, res) => {
@@ -95,7 +98,7 @@ export function createHealthRouter(
   router.get('/healthz/ready', async (_req, res) => {
     const draining = options.getIsDraining?.() ?? false;
     const warmup = options.getSkillsWarmupStatus?.() ?? { state: 'done' as const };
-    const release = options.getRuntimeIdentity?.();
+    const release = options.getRuntimeIdentity?.() ?? runtimeIdentity;
     const safetyAttested = release?.safetyAttested !== false;
     let integrationV3: IntegrationV3HealthStatus | undefined;
     try {

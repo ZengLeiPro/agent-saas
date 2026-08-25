@@ -1,5 +1,4 @@
 import type { AppConfig } from '../types/index.js';
-import type { RuntimeIdentity } from '../release/runtimeIdentity.js';
 import type { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
 import type { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
 import type { RuntimeAuditQuery } from '../runtime/auditQuery.js';
@@ -127,8 +126,6 @@ export interface SkillsWarmupStatus {
 
 export interface AppRuntime {
   config: AppConfig;
-  /** Non-sensitive deployment identity, asserted before runtime startup. */
-  runtimeIdentity: RuntimeIdentity;
   processRole: AppRuntimeProcessRole;
   processCwd: string;
   sessionBasePath: string;

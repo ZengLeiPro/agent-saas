@@ -126,7 +126,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         ? () => runtime.runtimeRunStore!.getActiveCounts!()
         : undefined,
       getIsDraining: () => channelManager.draining,
-      getRuntimeIdentity: () => runtime.runtimeIdentity,
       getSkillsWarmupStatus: () => runtime.getSkillsWarmupStatus(),
     }),
   );

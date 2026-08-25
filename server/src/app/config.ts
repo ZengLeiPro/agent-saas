@@ -22,7 +22,7 @@ import { looksLikeSecret } from '../security/secretHeuristics.js';
 import { SYSTEM_PROMPT_IDS } from '../systemPrompts/types.js';
 import { sttConfigSchema, sttPricingSchema } from './sttConfigSchema.js';
 import { runtimeSchedulerConfigSchema } from './runtimeSchedulerConfigSchema.js';
-
+import { assertRuntimeEnvironmentSafety } from '../release/environmentSafety.js';
 const agentPermissionModeSchema = z.enum([
   'default',
   'acceptEdits',
@@ -1411,9 +1411,9 @@ export function assertDevDatabaseSafety(
   config: AppConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): void {
+  assertRuntimeEnvironmentSafety(config, env);
   if (env.NODE_ENV === 'production') return;
   if (env.ALLOW_REMOTE_DB_IN_DEV === '1') return;
-
   const store = config.runtimeEventStore;
   if (store?.backend !== 'pg') return;
 

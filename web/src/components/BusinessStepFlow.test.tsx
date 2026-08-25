@@ -46,7 +46,7 @@ function expandEvidence() {
 const NO_FILL_SELECTORS = ["section.bg-success\\/5", "section.bg-warning\\/5", "section.bg-destructive\\/5"];
 
 describe("BusinessStepFlow", () => {
-  it("renders one frameless compact plan with status icons but no redundant status text", () => {
+  it("renders one frameless compact plan with static step numbers", () => {
     const { container } = render(
       <BusinessStepFlow
         event={event({
@@ -62,15 +62,16 @@ describe("BusinessStepFlow", () => {
     );
 
     expect(screen.getByRole("region", { name: "业务计划" })).toBeTruthy();
-    expect(screen.getByText("1/3 完成")).toBeTruthy();
-    expect(screen.queryByText("完成")).toBeNull();
-    expect(screen.queryByText("进行中")).toBeNull();
+    expect(screen.getByText("共 3 步")).toBeTruthy();
+    expect(screen.getByText("1")).toBeTruthy();
+    expect(screen.getByText("2")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
     const rows = ["读取订单", "核验订单", "写入结果"].map((label) => screen.getByText(label));
-    expect(rows[1].className).toContain("font-medium");
-    expect(rows[1].className).toContain("text-foreground");
-    expect(rows[0].className).not.toContain("line-through");
-    expect(rows[0].className).not.toContain("opacity-");
+    for (const row of rows) {
+      expect(row.className).toContain("text-muted-foreground");
+      expect(row.className).not.toContain("font-medium");
+    }
+    expect(container.querySelector(".animate-spin")).toBeNull();
     // 去框：计划块容器不允许四边框与状态色填充
     const region = screen.getByRole("region", { name: "业务计划" });
     // 统一节奏（2026-08-04）：计划块不带任何流向 margin，块间距由容器 gap 承担

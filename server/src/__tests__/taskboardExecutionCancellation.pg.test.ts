@@ -114,10 +114,11 @@ describePg('Taskboard execution cancellation PostgreSQL races', () => {
     await expect(runStore.get(runId)).resolves.toMatchObject({ runId });
 
     await pool.query(`UPDATE ${store.executionsTable} SET status='queued',finished_at=NULL WHERE id=$1`, [executionId]);
+    const pendingCancellationId = randomUUID();
     await pool.query(
       `INSERT INTO ${store.cancellationOutboxTable}(id,execution_id,run_id,task_id,reason,fence_epoch)
        VALUES($1,$2,$3,$4,'superseded',1)`,
-      [randomUUID(), executionId, runId, task.id],
+      [pendingCancellationId, executionId, runId, task.id],
     );
     await pool.query(
       `UPDATE ${store.executionOutboxTable}
@@ -125,6 +126,9 @@ describePg('Taskboard execution cancellation PostgreSQL races', () => {
       [runId],
     );
     await expect(store.claimExecutionDispatch(runId, 'lease-after-cancel')).resolves.toBeNull();
+    const [pendingCancellation] = await store.claimWorkflowCancellations(1);
+    expect(pendingCancellation).toMatchObject({ id: pendingCancellationId, runId });
+    await store.finishWorkflowCancellation(pendingCancellationId);
   });
 
   it('terminal-before-outbox 以 Runtime completed fact 纠正 Execution 并幂等关闭两个 outbox', async () => {

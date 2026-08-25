@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { ContextIngestRecordInput, ContextJson, ContextSyncPartition } from '../../store/index.js';
+import { ContextStoreError, type ContextIngestRecordInput, type ContextJson, type ContextSyncPartition } from '../../store/index.js';
 import {
   normalizeDeletedTaskFallback,
   normalizeTaskboardBoard,
@@ -72,27 +72,39 @@ export class TaskboardContextSyncWorker {
 
     const observedAt = this.clock.now().toISOString();
     const result = emptyResult(tenantId, watermarkFrom(existing.events.watermark), false);
+    let failureCode = 'TASKBOARD_SYNC_FAILED';
     try {
       if (!inventoryComplete(existing.projects.watermark)) {
+        failureCode = 'TASKBOARD_BOARD_INVENTORY_FAILED';
         result.inventoryBoards = await this.importBoardInventory(tenantId, observedAt, leases.projects);
+        failureCode = 'TASKBOARD_LEASE_RENEW_FAILED';
+        await this.renewLeases(tenantId, Object.values(leases));
       }
       if (!inventoryComplete(existing.tasks.watermark)) {
+        failureCode = 'TASKBOARD_TASK_INVENTORY_FAILED';
         result.inventoryTasks = await this.importTaskInventory(tenantId, observedAt, leases.tasks);
+        failureCode = 'TASKBOARD_LEASE_RENEW_FAILED';
+        await this.renewLeases(tenantId, Object.values(leases));
       }
 
+      failureCode = 'TASKBOARD_CHANGE_BOUND_FAILED';
       const throughSeq = await this.options.reader.getChangeUpperBound(tenantId);
       let afterSeq = watermarkFrom(existing.events.watermark);
       assertSeq(throughSeq);
       assertSeq(afterSeq);
       while (BigInt(afterSeq) < BigInt(throughSeq)) {
+        failureCode = 'TASKBOARD_LEASE_RENEW_FAILED';
+        await this.renewLeases(tenantId, Object.values(leases));
+        failureCode = 'TASKBOARD_CHANGE_PAGE_FAILED';
         const page = await this.options.reader.listChanges(tenantId, afterSeq, throughSeq, this.pageSize);
         if (page.items.length === 0) {
           throw new Error('Taskboard change reader returned an empty page before the fixed upper bound');
         }
-        const projectRecords: ContextIngestRecordInput[] = [];
-        const taskRecords: ContextIngestRecordInput[] = [];
+        const projectRecords = new Map<string, ContextIngestRecordInput>();
+        const taskRecords = new Map<string, ContextIngestRecordInput>();
         const eventRecords: ContextIngestRecordInput[] = [];
         for (const change of page.items) {
+          failureCode = 'TASKBOARD_CHANGE_NORMALIZE_FAILED';
           assertTenant(tenantId, change.tenantId);
           assertSeq(change.seq);
           if (BigInt(change.seq) <= BigInt(afterSeq) || BigInt(change.seq) > BigInt(throughSeq)) {
@@ -100,45 +112,63 @@ export class TaskboardContextSyncWorker {
           }
           eventRecords.push(normalizeTaskboardChange(change, observedAt).record);
           if (change.resourceType === 'board') {
+            failureCode = 'TASKBOARD_BOARD_LOOKUP_FAILED';
             const board = await this.options.reader.getBoard(tenantId, change.resourceId);
             if (board) {
+              failureCode = 'TASKBOARD_BOARD_NORMALIZE_FAILED';
               assertTenant(tenantId, board.tenantId);
-              projectRecords.push(normalizeTaskboardBoard(board, observedAt).record);
+              const record = normalizeTaskboardBoard(board, observedAt).record;
+              projectRecords.set(record.externalRecordId, record);
             }
           } else {
+            failureCode = 'TASKBOARD_TASK_LOOKUP_FAILED';
             const task = await this.options.reader.getTask(tenantId, change.resourceId);
             if (task) {
+              failureCode = 'TASKBOARD_TASK_NORMALIZE_FAILED';
               assertTenant(tenantId, task.tenantId);
-              taskRecords.push(normalizeTaskboardTask(task, observedAt).record);
+              const record = normalizeTaskboardTask(task, observedAt).record;
+              taskRecords.set(record.externalRecordId, record);
             } else if (change.changeType === 'task.deleted') {
-              taskRecords.push(normalizeDeletedTaskFallback(change, observedAt));
+              failureCode = 'TASKBOARD_DELETE_NORMALIZE_FAILED';
+              const record = normalizeDeletedTaskFallback(change, observedAt);
+              taskRecords.set(record.externalRecordId, record);
             }
           }
         }
 
-        if (projectRecords.length) await this.ingest(tenantId, leases.projects, projectRecords, {});
-        if (taskRecords.length) await this.ingest(tenantId, leases.tasks, taskRecords, {});
+        const projectBatch = [...projectRecords.values()];
+        const taskBatch = [...taskRecords.values()];
+        failureCode = 'TASKBOARD_PROJECT_INGEST_FAILED';
+        if (projectBatch.length) await this.ingest(tenantId, leases.projects, projectBatch, {});
+        failureCode = 'TASKBOARD_TASK_INGEST_FAILED';
+        if (taskBatch.length) await this.ingest(tenantId, leases.tasks, taskBatch, {});
         const lastSeq = page.items[page.items.length - 1]!.seq;
+        failureCode = 'TASKBOARD_EVENT_INGEST_FAILED';
         await this.ingest(tenantId, leases.events, eventRecords, {
           watermark: lastSeq,
           ...(page.nextCursor ? { pageCursor: page.nextCursor } : {}),
         });
         result.changes += page.items.length;
-        result.snapshots += projectRecords.length + taskRecords.length;
+        result.snapshots += projectBatch.length + taskBatch.length;
         result.events += eventRecords.length;
         afterSeq = lastSeq;
       }
 
+      failureCode = 'TASKBOARD_LEASE_RENEW_FAILED';
+      await this.renewLeases(tenantId, Object.values(leases));
+      failureCode = 'TASKBOARD_PROJECT_CHECKPOINT_FAILED';
       await this.ingest(tenantId, leases.projects, [], {
         watermark: INVENTORY_WATERMARK,
         complete: true,
         releaseLease: true,
       });
+      failureCode = 'TASKBOARD_TASK_CHECKPOINT_FAILED';
       await this.ingest(tenantId, leases.tasks, [], {
         watermark: INVENTORY_WATERMARK,
         complete: true,
         releaseLease: true,
       });
+      failureCode = 'TASKBOARD_EVENT_CHECKPOINT_FAILED';
       await this.ingest(tenantId, leases.events, [], {
         watermark: throughSeq,
         complete: true,
@@ -147,7 +177,7 @@ export class TaskboardContextSyncWorker {
       result.watermark = throughSeq;
       return result;
     } catch (error) {
-      await this.failLeases(tenantId, Object.values(leases));
+      await this.failLeases(tenantId, Object.values(leases), taskboardFailureCode(failureCode, error));
       throw error;
     }
   }
@@ -264,6 +294,19 @@ export class TaskboardContextSyncWorker {
     }
   }
 
+  private async renewLeases(tenantId: string, partitions: ContextSyncPartition[]): Promise<void> {
+    const renewed = await Promise.all(partitions.map(partition => this.options.store.renewPartitionLease({
+      tenantId,
+      sourceId: TASKBOARD_SOURCE_ID,
+      collectionId: partition.collectionId,
+      partitionKey: TASKBOARD_PARTITION_KEY,
+      leaseOwner: this.workerId,
+      leaseFence: partition.leaseFence,
+      leaseMs: this.leaseMs,
+    })));
+    if (renewed.some(value => !value)) throw new Error('Taskboard context lease renewal failed');
+  }
+
   private ingest(
     tenantId: string,
     lease: ContextSyncPartition,
@@ -287,7 +330,11 @@ export class TaskboardContextSyncWorker {
     });
   }
 
-  private async failLeases(tenantId: string, partitions: ContextSyncPartition[]): Promise<void> {
+  private async failLeases(
+    tenantId: string,
+    partitions: ContextSyncPartition[],
+    errorCode: string,
+  ): Promise<void> {
     const retryAt = new Date(this.clock.now().getTime() + DEFAULT_RETRY_MS).toISOString();
     await Promise.all(partitions.map(partition => this.options.store.failPartition({
       tenantId,
@@ -296,7 +343,7 @@ export class TaskboardContextSyncWorker {
       partitionKey: TASKBOARD_PARTITION_KEY,
       leaseOwner: this.workerId,
       leaseFence: partition.leaseFence,
-      errorCode: 'TASKBOARD_SYNC_FAILED',
+      errorCode,
       retryAt,
     }).catch(() => undefined)));
   }
@@ -304,6 +351,23 @@ export class TaskboardContextSyncWorker {
   private async releaseLeases(tenantId: string, partitions: ContextSyncPartition[]): Promise<void> {
     await Promise.all(partitions.map(partition => this.ingest(tenantId, partition, [], { releaseLease: true }).catch(() => undefined)));
   }
+}
+
+export function taskboardFailureCode(stage: string, error: unknown): string {
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code ?? '') : '';
+  if (error instanceof ContextStoreError || /^CONTEXT_[A-Z0-9_]+$/.test(code)) {
+    return `${stage}_${code.replace(/^CONTEXT_/, '')}`;
+  }
+  const suffix = code === '23503' ? 'REFERENCE_MISSING'
+    : code === '23505' ? 'UNIQUE_CONFLICT'
+      : code === '23514' ? 'CONSTRAINT_VIOLATION'
+        : code === '22P02' ? 'VALUE_INVALID'
+          : code === '40001' ? 'SERIALIZATION_FAILURE'
+            : code === '40P01' ? 'DEADLOCK'
+              : code === '42P01' || code === '42703' ? 'SCHEMA_MISMATCH' : '';
+  if (suffix) return `${stage}_${suffix}`;
+  return /^[0-9A-Z]{5}$/.test(code) ? `${stage}_PG_${code}` : stage;
 }
 
 function inventoryComplete(watermark: ContextJson | undefined): boolean {

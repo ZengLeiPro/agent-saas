@@ -216,6 +216,9 @@ export function buildSandboxProxyEnv(config: EgressSandboxProxyConfig): SandboxE
     { name: 'http_proxy', value: proxy },
     { name: 'HTTPS_PROXY', value: proxy },
     { name: 'https_proxy', value: proxy },
+    // Node 22 原生 fetch 默认忽略 HTTP(S)_PROXY；此开关让 bird 等 Node CLI
+    // 与 curl/Chromium 共享 Sandbox 的统一出口策略。
+    { name: 'NODE_USE_ENV_PROXY', value: '1' },
     { name: 'NO_PROXY', value: noProxy },
     { name: 'no_proxy', value: noProxy },
   ];

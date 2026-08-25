@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type {
-  ContextCollection,
+import {
+  ContextStoreError,
+  type ContextCollection,
   ContextIngestRecordInput,
   ContextSource,
   ContextSyncPartition,
@@ -10,7 +11,7 @@ import type {
 } from '../../store/index.js';
 import type { TaskboardContextReader, TaskboardContextStore } from './ports.js';
 import type { TaskboardBoardRow, TaskboardChangeRow, TaskboardTaskRow } from './types.js';
-import { TaskboardContextSyncWorker } from './worker.js';
+import { TaskboardContextSyncWorker, taskboardFailureCode } from './worker.js';
 
 const NOW = '2026-08-23T06:00:00.000Z';
 
@@ -101,7 +102,14 @@ class FakeStore implements TaskboardContextStore {
     this.partitions.set(key, leased);
     return leased;
   }
+  async renewPartitionLease(input: Parameters<TaskboardContextStore['renewPartitionLease']>[0]) {
+    const current = this.partitions.get(partitionKey(input.tenantId, input.collectionId));
+    return Boolean(current?.leaseOwner === input.leaseOwner && current.leaseFence === input.leaseFence);
+  }
   async ingestPage(input: IngestContextPageInput): Promise<IngestContextPageResult> {
+    if (new Set(input.records.map(record => record.externalRecordId)).size !== input.records.length) {
+      throw new Error('duplicate external record IDs');
+    }
     const key = partitionKey(input.tenantId, input.collectionId);
     const current = this.partitions.get(key)!;
     if (current.leaseOwner !== input.leaseOwner || current.leaseFence !== input.leaseFence) throw new Error('lease lost');
@@ -174,6 +182,24 @@ describe('TaskboardContextSyncWorker', () => {
     expect(store.outboxCount).toBe(outbox);
   });
 
+  it('deduplicates repeated resource snapshots within a change page while preserving every event', async () => {
+    const reader = seededReader();
+    reader.changes.push(
+      change('1', 'board', 'board-a', 'board.updated'),
+      change('2', 'board', 'board-a', 'board.updated'),
+      change('3', 'task', 'task-a', 'task.updated'),
+      change('4', 'task', 'task-a', 'task.transitioned'),
+    );
+    const store = new FakeStore();
+
+    const result = await createWorker(reader, store, 10).runTenant('tenant-a');
+
+    expect(result).toMatchObject({ changes: 4, events: 4, snapshots: 2, watermark: '4' });
+    expect(record(store, 'taskboard-projects', 'board-a')).toBeDefined();
+    expect(record(store, 'taskboard-tasks', 'task-a')).toBeDefined();
+    expect([...store.records.keys()].filter(key => key.includes('taskboard-events'))).toHaveLength(4);
+  });
+
   it('creates a tombstone only for explicit task deletion and treats archive as a normal snapshot update', async () => {
     const reader = seededReader();
     reader.tasks[0] = task({ archivedAt: NOW });
@@ -203,9 +229,59 @@ describe('TaskboardContextSyncWorker', () => {
       .rejects.toThrow('empty page before the fixed upper bound');
     expect([...store.partitions.values()]).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        status: 'retry_wait', lastErrorCode: 'TASKBOARD_SYNC_FAILED',
+        status: 'retry_wait', lastErrorCode: 'TASKBOARD_CHANGE_PAGE_FAILED',
         nextRetryAt: '2026-08-23T06:01:00.000Z',
       }),
+    ]));
+  });
+
+  it('renews every fenced lease during long runs and fails closed if renewal is lost', async () => {
+    const reader = seededReader();
+    const store = new FakeStore();
+    const renew = vi.spyOn(store, 'renewPartitionLease').mockResolvedValue(false);
+
+    await expect(createWorker(reader, store, 2).runTenant('tenant-a'))
+      .rejects.toThrow('lease renewal failed');
+    expect(renew).toHaveBeenCalled();
+    expect([...store.partitions.values()]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'retry_wait', lastErrorCode: 'TASKBOARD_LEASE_RENEW_FAILED' }),
+    ]));
+  });
+
+  it('persists a precise change-apply stage without exposing the upstream error', async () => {
+    const reader = seededReader();
+    reader.changes.push(change('1', 'task', 'task-a', 'task.updated'));
+    vi.spyOn(reader, 'getTask').mockRejectedValue(new Error('private database detail'));
+    const store = new FakeStore();
+
+    await expect(createWorker(reader, store, 2).runTenant('tenant-a')).rejects.toThrow('private database detail');
+    expect([...store.partitions.values()]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'retry_wait', lastErrorCode: 'TASKBOARD_TASK_LOOKUP_FAILED' }),
+    ]));
+  });
+
+  it.each([
+    [new ContextStoreError('CONTEXT_LEASE_LOST'), 'TASKBOARD_PROJECT_CHECKPOINT_FAILED_LEASE_LOST'],
+    [new ContextStoreError('CONTEXT_INVALID'), 'TASKBOARD_PROJECT_CHECKPOINT_FAILED_INVALID'],
+    [Object.assign(new Error('cross-module'), { code: 'CONTEXT_LEASE_LOST' }), 'TASKBOARD_PROJECT_CHECKPOINT_FAILED_LEASE_LOST'],
+    [Object.assign(new Error('unique detail'), { code: '23505' }), 'TASKBOARD_PROJECT_CHECKPOINT_FAILED_UNIQUE_CONFLICT'],
+    [Object.assign(new Error('pg detail'), { code: '22023' }), 'TASKBOARD_PROJECT_CHECKPOINT_FAILED_PG_22023'],
+    [new Error('unknown detail'), 'TASKBOARD_PROJECT_CHECKPOINT_FAILED'],
+  ])('classifies checkpoint failures without persisting raw error details', (error, expected) => {
+    expect(taskboardFailureCode('TASKBOARD_PROJECT_CHECKPOINT_FAILED', error)).toBe(expected);
+  });
+
+  it.each([
+    ['board inventory', 'listBoards', 'TASKBOARD_BOARD_INVENTORY_FAILED'],
+    ['task inventory', 'listTasks', 'TASKBOARD_TASK_INVENTORY_FAILED'],
+  ] as const)('persists the failing %s stage without exposing source data', async (_name, method, errorCode) => {
+    const reader = seededReader();
+    vi.spyOn(reader, method).mockRejectedValue(new Error('upstream detail'));
+    const store = new FakeStore();
+
+    await expect(createWorker(reader, store, 2).runTenant('tenant-a')).rejects.toThrow('upstream detail');
+    expect([...store.partitions.values()]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'retry_wait', lastErrorCode: errorCode }),
     ]));
   });
 

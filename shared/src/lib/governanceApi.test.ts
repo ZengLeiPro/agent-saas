@@ -522,7 +522,7 @@ describe('governanceApi fail closed', () => {
     const source = {
       sourceId: 'source-a', name: '钉钉', system: 'dws', collectionId: 'collection-a', collection: '产品知识',
       status: 'healthy', lastSyncedAt: null, watermarkLagSeconds: null,
-      ingestOutcomes: { truncated: 0, refused: 0, unreadable: 0, retrying: 0, nextRetryAt: null },
+      ingestOutcomes: { truncated: 0, refused: 0, unreadable: 0, retrying: 0, lastErrorCodes: [], nextRetryAt: null },
       historicalLearningScope: { enabled: true, summary: '已配置' },
       realtimeListeningScope: { enabled: false, summary: '未配置' },
     };

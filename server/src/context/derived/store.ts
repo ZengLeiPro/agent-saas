@@ -696,16 +696,19 @@ async function loadExactOutbox(
 ): Promise<ClaimedContextRecord[]> {
   const result = await client.query(`
     SELECT o.*,v.content_json,v.metadata_json,v.entity_type,v.record_kind,v.native_id,v.occurred_at,
-      v.source_event_id,v.owner_principal,v.acl_principals,v.deleted,v.revoked,v.source_updated_at,v.observed_at,
+      v.source_event_id,v.owner_principal,v.acl_principals,v.deleted,v.revoked,
+      r.deleted AS current_deleted,r.revoked AS current_revoked,v.source_updated_at,v.observed_at,
       COALESCE(jsonb_agg(jsonb_build_object('evidenceId',e.evidence_id,'kind',e.kind,'data',e.data_json)
         ORDER BY e.evidence_id) FILTER (WHERE e.evidence_id IS NOT NULL),'[]'::jsonb) evidence_json
     FROM ${tables.outbox} o
     JOIN ${tables.revisions} v ON v.tenant_id=o.tenant_id AND v.source_id=o.source_id
       AND v.collection_id=o.collection_id AND v.record_id=o.record_id AND v.revision=o.record_revision
+    JOIN ${tables.records} r ON r.tenant_id=v.tenant_id AND r.source_id=v.source_id
+      AND r.collection_id=v.collection_id AND r.record_id=v.record_id
     LEFT JOIN ${tables.evidence} e ON e.tenant_id=v.tenant_id AND e.source_id=v.source_id
       AND e.collection_id=v.collection_id AND e.record_id=v.record_id AND e.revision=v.revision
     WHERE o.tenant_id=$1 AND o.seq>$2
-    GROUP BY o.tenant_id,o.seq,v.tenant_id,v.source_id,v.collection_id,v.record_id,v.revision
+    GROUP BY o.tenant_id,o.seq,v.tenant_id,v.source_id,v.collection_id,v.record_id,v.revision,r.deleted,r.revoked
     ORDER BY o.seq LIMIT $3`, [tenantId, afterSeq, limit]);
   return result.rows.map(claimedRecordFromRow);
 }
@@ -719,16 +722,19 @@ async function loadExactOutboxBySeqs(
   if (seqs.length === 0) return [];
   const result = await client.query(`
     SELECT o.*,v.content_json,v.metadata_json,v.entity_type,v.record_kind,v.native_id,v.occurred_at,
-      v.source_event_id,v.owner_principal,v.acl_principals,v.deleted,v.revoked,v.source_updated_at,v.observed_at,
+      v.source_event_id,v.owner_principal,v.acl_principals,v.deleted,v.revoked,
+      r.deleted AS current_deleted,r.revoked AS current_revoked,v.source_updated_at,v.observed_at,
       COALESCE(jsonb_agg(jsonb_build_object('evidenceId',e.evidence_id,'kind',e.kind,'data',e.data_json)
         ORDER BY e.evidence_id) FILTER (WHERE e.evidence_id IS NOT NULL),'[]'::jsonb) evidence_json
     FROM ${tables.outbox} o
     JOIN ${tables.revisions} v ON v.tenant_id=o.tenant_id AND v.source_id=o.source_id
       AND v.collection_id=o.collection_id AND v.record_id=o.record_id AND v.revision=o.record_revision
+    JOIN ${tables.records} r ON r.tenant_id=v.tenant_id AND r.source_id=v.source_id
+      AND r.collection_id=v.collection_id AND r.record_id=v.record_id
     LEFT JOIN ${tables.evidence} e ON e.tenant_id=v.tenant_id AND e.source_id=v.source_id
       AND e.collection_id=v.collection_id AND e.record_id=v.record_id AND e.revision=v.revision
     WHERE o.tenant_id=$1 AND o.seq=ANY($2::bigint[])
-    GROUP BY o.tenant_id,o.seq,v.tenant_id,v.source_id,v.collection_id,v.record_id,v.revision
+    GROUP BY o.tenant_id,o.seq,v.tenant_id,v.source_id,v.collection_id,v.record_id,v.revision,r.deleted,r.revoked
     ORDER BY o.seq`, [tenantId, seqs]);
   return result.rows.map(claimedRecordFromRow);
 }
@@ -751,8 +757,8 @@ function claimedRecordFromRow(row: QueryResultRow): ClaimedContextRecord {
     ...(row.source_event_id ? { sourceEventId: String(row.source_event_id) } : {}),
     ...(row.owner_principal ? { ownerPrincipal: String(row.owner_principal) } : {}),
     ...(Array.isArray(row.acl_principals) ? { aclPrincipals: row.acl_principals.map(String) } : {}),
-    deleted: Boolean(row.deleted),
-    revoked: Boolean(row.revoked),
+    deleted: Boolean(row.deleted) || Boolean(row.current_deleted),
+    revoked: Boolean(row.revoked) || Boolean(row.current_revoked),
     ...(row.source_updated_at ? { sourceUpdatedAt: iso(row.source_updated_at) } : {}),
     observedAt: iso(row.observed_at),
     evidence: Array.isArray(row.evidence_json) ? row.evidence_json.map((value: unknown) => {

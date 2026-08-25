@@ -8,7 +8,7 @@ import type { AskUserQuestion } from "./AskUserBlock";
 
 interface AskUserPromptPanelProps {
   questions: AskUserQuestion[];
-  onSubmit: (answers: AskUserAnswers) => void;
+  onSubmit: (answers: AskUserAnswers) => void | Promise<void>;
 }
 
 const CUSTOM_VALUE = "__custom__";
@@ -50,6 +50,7 @@ function ChoiceIndicator({ selected, multiSelect }: { selected: boolean; multiSe
 export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedByQuestion, setSelectedByQuestion] = useState<Record<number, Set<string>>>({});
   const [customInputs, setCustomInputs] = useState<Record<number, string>>({});
 
@@ -92,16 +93,22 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
     return answers;
   }, [activeIndex, customInputs, questions, selectedByQuestion]);
 
-  const submitAnswers = useCallback((answers: AskUserAnswers) => {
-    onSubmit(answers);
-  }, [onSubmit]);
+  const submitAnswers = useCallback(async (answers: AskUserAnswers) => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      await onSubmit(answers);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [isSubmitting, onSubmit]);
 
   const goNextOrSubmit = useCallback((answers?: AskUserAnswers) => {
     if (activeIndex < total - 1) {
       setActiveIndex((idx) => Math.min(idx + 1, total - 1));
       return;
     }
-    submitAnswers(answers ?? buildAnswers());
+    void submitAnswers(answers ?? buildAnswers());
   }, [activeIndex, buildAnswers, submitAnswers, total]);
 
   const toggleOption = useCallback((label: string) => {
@@ -163,7 +170,7 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
           <button
             type="button"
             className="flex size-8 items-center justify-center rounded-full transition-colors hover:bg-muted"
-            disabled={activeIndex === 0}
+            disabled={isSubmitting || activeIndex === 0}
             onClick={() => setActiveIndex((idx) => Math.max(idx - 1, 0))}
             aria-label="上一题"
           >
@@ -175,7 +182,7 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
           <button
             type="button"
             className="flex size-8 items-center justify-center rounded-full transition-colors hover:bg-muted"
-            disabled={activeIndex === total - 1}
+            disabled={isSubmitting || activeIndex === total - 1}
             onClick={() => setActiveIndex((idx) => Math.min(idx + 1, total - 1))}
             aria-label="下一题"
           >
@@ -184,7 +191,8 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
           <button
             type="button"
             className="flex size-8 items-center justify-center rounded-full text-foreground transition-colors hover:bg-muted"
-            onClick={() => submitAnswers(buildAnswers(false))}
+            disabled={isSubmitting}
+            onClick={() => void submitAnswers(buildAnswers(false))}
             aria-label="全部跳过"
             title="全部跳过"
           >
@@ -265,7 +273,8 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
           <button
             type="button"
             className="rounded-full bg-muted px-4 py-2 text-[0.92em] font-medium text-foreground transition-colors hover:bg-muted/80"
-            onClick={() => submitAnswers(buildAnswers(false))}
+            disabled={isSubmitting}
+            onClick={() => void submitAnswers(buildAnswers(false))}
           >
             全部跳过
           </button>
@@ -273,7 +282,7 @@ export function AskUserPromptPanel({ questions, onSubmit }: AskUserPromptPanelPr
             <button
               type="button"
               className="rounded-full bg-primary px-4 py-2 text-[0.92em] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-              disabled={!hasCurrentAnswer && activeIndex === total - 1}
+              disabled={isSubmitting || (!hasCurrentAnswer && activeIndex === total - 1)}
               onClick={() => goNextOrSubmit()}
             >
               {activeIndex < total - 1 ? "下一题" : "提交"}

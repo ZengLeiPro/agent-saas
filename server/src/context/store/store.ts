@@ -71,7 +71,9 @@ function optionalIso(value: unknown): string | undefined {
 }
 
 function json<T extends ContextJson>(value: unknown): T {
-  return (typeof value === 'string' ? JSON.parse(value) : value) as T;
+  // node-postgres already decodes JSON/JSONB. Re-parsing a decoded scalar string
+  // throws for values such as "inventory-v1" and corrupts "123" into a number.
+  return value as T;
 }
 
 function envelopeFromRow(row: Row): ContextTypedEnvelope {

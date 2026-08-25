@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { OAuthGrant } from '../data/oauthGrants/types.js';
-import { reconcileOAuthGrantRevocations } from '../app/runtimeOAuthGrantReconciler.js';
+import {
+  buildGoogleWorkspaceOAuthGrantProjection,
+  reconcileOAuthGrantRevocations,
+} from '../app/runtimeOAuthGrantReconciler.js';
 import type { AppRuntime } from '../app/runtime.js';
 
 const baseGrant: OAuthGrant = {
@@ -30,6 +33,21 @@ function rig(grant: OAuthGrant, options: { providerFails?: boolean; finalizeFail
 }
 
 describe('OAuth Grant durable revocation reconciler', () => {
+  it('为已有 Google Workspace 连接构造可供运行时补齐的 OAuth Grant 投影', () => {
+    const projection = buildGoogleWorkspaceOAuthGrantProjection({
+      get: vi.fn().mockReturnValue({
+        status: 'connected', username: 'alice', userId: 'user-1', tenantId: 'tenant-a',
+        connectedAt: '2026-08-24T00:00:00.000Z', updatedAt: '2026-08-24T00:00:00.000Z',
+        metadata: { grantedScopes: 'openid https://www.googleapis.com/auth/drive.readonly openid' },
+      }),
+    } as never, { userId: 'user-1', username: 'alice', tenantId: 'tenant-a' });
+
+    expect(projection).toMatchObject({
+      grantId: 'google-workspace:tenant-a:user-1', provider: 'google', connectorId: 'google-workspace',
+      scopeSummary: ['https://www.googleapis.com/auth/drive.readonly', 'openid'], status: 'active',
+    });
+  });
+
   it('provider 撤销失败后保持本地阻断并进入退避重试', async () => {
     const test = rig(baseGrant, { providerFails: true });
     await reconcileOAuthGrantRevocations(test.runtime);

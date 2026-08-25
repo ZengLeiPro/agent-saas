@@ -10,16 +10,15 @@ import { resolveRuntimeStatusPatch, type RuntimeStatus, type RuntimeStatusOption
 import { normalizeToolPresentation } from './toolPresentation';
 import { normalizeToolResultMetadata } from './toolResultMetadata';
 import { formatPermissionInput, isDedicatedToolName, resolvePlanModeDisplay } from './wsToolDisplay';
+import { handleArtifactDeliveryToolResult } from './artifactDeliveryMessage';
 
 export { resolvePlanModeDisplay } from './wsToolDisplay';
-
 import {
   findUserMsgIndexByClientId,
   type MessagesController,
   type WsBlockState,
   type WsProcessingContext,
 } from './wsEventProcessorHelpers';
-
 export function upsertRuntimeStatusMessage(
   msg: MessagesController,
   status: RuntimeStatus,
@@ -572,6 +571,7 @@ export function processWsEvent(
   }
 
   if (data.type === "tool_result") {
+    if (handleArtifactDeliveryToolResult(data, msg)) return removeRuntimeStatusMessages(msg);
     // 独立卡片工具的结果由各自卡片呈现，兜底跳过。
     if (isDedicatedToolName(data.toolName)) {
       removeRuntimeStatusMessages(msg);

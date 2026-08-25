@@ -9,16 +9,24 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve()))));
 });
 
-async function request(options: Parameters<typeof createGoogleWorkspaceRouter>[0], path: string): Promise<Response> {
+async function request(
+  options: Parameters<typeof createGoogleWorkspaceRouter>[0],
+  path: string,
+  init?: RequestInit,
+): Promise<Response> {
   const app = express();
   app.use(express.json());
+  app.use((req, _res, next) => {
+    req.user = { sub: 'user-1', username: 'alice', tenantId: 'tenant-a' } as never;
+    next();
+  });
   app.use('/api/connectors', createGoogleWorkspaceRouter(options));
   const server = app.listen(0);
   servers.push(server);
   await new Promise<void>(resolve => server.once('listening', resolve));
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('test server unavailable');
-  return fetch(`http://127.0.0.1:${address.port}${path}`);
+  return fetch(`http://127.0.0.1:${address.port}${path}`, init);
 }
 
 function fixture() {
@@ -28,15 +36,18 @@ function fixture() {
   });
   const disconnect = vi.fn().mockResolvedValue(undefined);
   const recordOAuthGrant = vi.fn().mockResolvedValue({ grantId: 'grant-1' });
+  const ensureOAuthGrant = vi.fn().mockResolvedValue({ grantId: 'google-workspace:tenant-a:user-1' });
   const complete = vi.fn().mockRejectedValue(new Error('delivery commit outcome unknown'));
   return {
     finishAuthorization,
     disconnect,
     recordOAuthGrant,
+    ensureOAuthGrant,
     complete,
     options: {
       oauthService: { finishAuthorization, disconnect } as never,
       recordOAuthGrant,
+      ensureOAuthGrant,
       nativeOAuthHandoff: { complete } as never,
       webBaseUrl: 'https://agent.example.com',
     },
@@ -53,6 +64,19 @@ describe('Google Workspace OAuth callback handoff delivery', () => {
     expect(test.disconnect).not.toHaveBeenCalled();
     expect(test.complete).toHaveBeenCalledTimes(1);
     expect(test.complete).toHaveBeenCalledWith('state-12345678', { status: 'succeeded' });
+  });
+
+  it('为已连接的旧 Google Workspace 记录补齐 OAuth Grant，供签名撤销流程使用', async () => {
+    const test = fixture();
+    const response = await request(
+      test.options,
+      '/api/connectors/google-workspace/oauth-grant/ensure',
+      { method: 'POST' },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ grantId: 'google-workspace:tenant-a:user-1' });
+    expect(test.ensureOAuthGrant).toHaveBeenCalledWith({ userId: 'user-1', username: 'alice', tenantId: 'tenant-a' });
   });
 
   it('callback 重放无法把已成功或待确认的 handoff 降级为 failed', async () => {

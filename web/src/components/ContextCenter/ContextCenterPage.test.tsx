@@ -17,7 +17,7 @@ const snapshot: ContextCenterSnapshot = {
       lastSyncedAt: "2026-08-22T15:38:00.000Z",
       backfillCoverage: { kind: "items", coveredItems: 1200, totalItems: 2400 },
       watermarkLagSeconds: 120,
-      ingestOutcomes: { truncated: 3, refused: 1, unreadable: 0, retrying: 0, nextRetryAt: null },
+      ingestOutcomes: { truncated: 3, refused: 1, unreadable: 0, retrying: 0, lastErrorCodes: [], nextRetryAt: null },
       historicalLearningScope: {
         enabled: true,
         summary: "产品空间内已授权的历史文档",
@@ -47,7 +47,10 @@ const snapshot: ContextCenterSnapshot = {
         coveredThrough: "2026-08-20T00:00:00.000Z",
       },
       watermarkLagSeconds: null,
-      ingestOutcomes: { truncated: 0, refused: 0, unreadable: 0, retrying: 1, nextRetryAt: "2026-08-22T15:45:00.000Z" },
+      ingestOutcomes: {
+        truncated: 0, refused: 0, unreadable: 0, retrying: 1,
+        lastErrorCodes: ["TASKBOARD_CHANGE_APPLY_FAILED"], nextRetryAt: "2026-08-22T15:45:00.000Z",
+      },
       historicalLearningScope: { enabled: true, summary: "已授权客户的历史跟进记录" },
       realtimeListeningScope: { enabled: false, summary: "实时事件订阅尚未配置" },
     },
@@ -98,6 +101,7 @@ describe("ContextCenterPage", () => {
     expect(screen.getByText("拒绝 1")).toBeTruthy();
     expect(screen.getAllByText("不可读 0")).toHaveLength(2);
     expect(screen.getByText("重试中 1")).toBeTruthy();
+    expect(screen.getByText("错误分类：TASKBOARD_CHANGE_APPLY_FAILED")).toBeTruthy();
     expect(screen.getByText("下次重试：08/22 23:45")).toBeTruthy();
     expect(screen.getAllByRole("region", { name: "历史学习范围" })).toHaveLength(2);
     expect(screen.getAllByRole("region", { name: "实时监听范围" })).toHaveLength(2);

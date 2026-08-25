@@ -210,10 +210,23 @@ export class DwsAuthFlowService implements DwsAuthFlowServiceLike {
   async start(user: UserInfo): Promise<DwsAuthSessionRecord> {
     if (this.stopped) throw new Error('DWS 授权服务正在停止');
     const identity = identityFor(user);
-    const result = await this.options.authSessionStore.createOrReuse(identity);
+    const userKey = `${identity.tenantId}:${identity.userId}`;
+    let result = await this.options.authSessionStore.createOrReuse(identity);
+
+    // 授权会话存储在数据库里，但实际的 device flow 只能由当前进程继续执行。
+    // 进程重启后遗留的 starting/awaiting_user 会话不能再复用，否则页面会一直停在授权准备中。
+    if (!result.created && !this.activeUsers.has(userKey)) {
+      await this.options.authSessionStore.markFailed(
+        result.record.sessionId,
+        identity,
+        'authorization_interrupted',
+        '上次钉钉授权已中断，已重新生成授权页面',
+      );
+      result = await this.options.authSessionStore.createOrReuse(identity);
+    }
+
     if (result.created) {
       const controller = new AbortController();
-      const userKey = `${identity.tenantId}:${identity.userId}`;
       this.active.set(result.record.sessionId, controller);
       this.activeUsers.set(userKey, controller);
       const task = this.run(result.record, user, identity, controller).finally(() => {
@@ -291,10 +304,11 @@ export class DwsAuthFlowService implements DwsAuthFlowServiceLike {
       if (controller.signal.aborted) throw new Error('DWS 授权已取消');
       await this.options.connectionStore.syncProfiles(identity, profiles);
       if (controller.signal.aborted) throw new Error('DWS 授权已取消');
-      await this.options.authSessionStore.markConnected(session.sessionId, identity);
       await this.options.onConnected?.(user).catch((err) => {
         this.options.logger?.warn(`DWS post-login verification deferred user=${user.id}: ${redactDwsError(err)}`);
       });
+      if (controller.signal.aborted) throw new Error('DWS 授权已取消');
+      await this.options.authSessionStore.markConnected(session.sessionId, identity);
       this.options.logger?.info(`DWS authorization connected user=${user.id} profiles=${profiles.length}`);
     } catch (err) {
       const message = redactDwsError(err);

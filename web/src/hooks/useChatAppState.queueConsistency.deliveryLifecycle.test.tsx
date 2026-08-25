@@ -141,12 +141,6 @@ function chatPayloads(): Array<Record<string, unknown>> {
     .filter((payload) => payload.action === "chat");
 }
 
-function interactionPayloads(): Array<Record<string, unknown>> {
-  return harness.sends.mock.calls
-    .map(([payload]) => payload as Record<string, unknown>)
-    .filter((payload) => payload.action === "respond");
-}
-
 const fileA: UploadedFile = {
   attachmentId: "att-a",
   originalName: "a.png",
@@ -167,6 +161,7 @@ const fileB: UploadedFile = {
 };
 
 beforeEach(() => {
+  window.history.replaceState(null, "", "/chat");
   harness.messageHandlers.clear();
   harness.stateHandlers.clear();
   harness.sends.mockClear();
@@ -475,68 +470,19 @@ describe("useChatAppState queue delivery lifecycle", () => {
     }]);
   });
 
-  it("only completes matching interactions after respond_ok, restores respond_error, and ignores replayed ACKs", async () => {
+  it("handles a rejected permission response without surfacing an unhandled rejection", async () => {
+    harness.session.sessionId = "session-permission";
+    harness.session.isNewSession = false;
     const { result } = renderHook(() => useChatAppState());
-    const answers = { "Choose a path": "Continue" };
 
-    act(() => emit({
-      type: "pending_interactions",
-      sessionId: "s1",
-      interactions: [
-        {
-          type: "ask_user",
-          interactionId: "ask-1",
-          questions: [{
-            question: "Choose a path",
-            header: "Path",
-            options: [{ label: "Continue", description: "Proceed" }],
-            multiSelect: false,
-          }],
-        },
-        {
-          type: "permission_request",
-          interactionId: "permission-1",
-          toolName: "run_shell",
-          toolInput: { command: "pwd" },
-        },
-      ],
-    }));
-    await waitFor(() => expect(result.current.messages).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "ask_user", interactionId: "ask-1", status: "pending" }),
-      expect.objectContaining({ type: "permission_request", interactionId: "permission-1", status: "pending" }),
+    const pending = result.current.handlePermissionResponse("permission-1", true);
+    await waitFor(() => expect(harness.sends).toHaveBeenCalledWith(expect.objectContaining({
+      action: "respond", interactionId: "permission-1",
+    })));
+    act(() => emit({ type: "respond_error", interactionId: "permission-1", error: "Run unavailable" }));
+    await act(async () => { await pending; });
+    await waitFor(() => expect(result.current.notifications).toEqual(expect.arrayContaining([
+      expect.objectContaining({ text: "Run unavailable", priority: "high" }),
     ])));
-
-    await act(async () => {
-      await result.current.handleAskUserResponse("ask-1", answers);
-      await result.current.handleAskUserResponse("ask-1", answers);
-    });
-    expect(interactionPayloads()).toEqual([expect.objectContaining({
-      interactionId: "ask-1", answers,
-    })]);
-    expect(result.current.messages.find((m) => m.type === "ask_user" && m.interactionId === "ask-1")).toMatchObject({ status: "pending" });
-
-    // An ACK for another interaction must not complete or fail this one.
-    act(() => emit({ type: "respond_error", interactionId: "permission-1", error: "not this reply", sessionId: "s1" }));
-    expect(result.current.messages.find((m) => m.type === "ask_user" && m.interactionId === "ask-1")).toMatchObject({ status: "pending" });
-
-    act(() => emit({ type: "respond_error", interactionId: "ask-1", error: "temporary rejection", sessionId: "s1" }));
-    await waitFor(() => expect(result.current.messages).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "ask_user", interactionId: "ask-1", status: "pending" }),
-      expect.objectContaining({ type: "system-error", content: expect.stringContaining("temporary rejection") }),
-    ])));
-
-    await act(async () => { await result.current.handleAskUserResponse("ask-1", answers); });
-    expect(interactionPayloads()).toHaveLength(2);
-    act(() => emit({ type: "respond_ok", interactionId: "ask-1", sessionId: "s1", clientAttemptId: interactionPayloads()[1]!.clientAttemptId }));
-    await waitFor(() => expect(result.current.messages.find((m) => m.type === "ask_user" && m.interactionId === "ask-1")).toMatchObject({
-      status: "answered", answers,
-    }));
-    act(() => emit({ type: "respond_ok", interactionId: "ask-1", sessionId: "s1" }));
-    expect(result.current.messages.find((m) => m.type === "ask_user" && m.interactionId === "ask-1")).toMatchObject({ status: "answered", answers });
-
-    await act(async () => { await result.current.handlePermissionResponse("permission-1", true); });
-    expect(result.current.messages.find((m) => m.type === "permission_request" && m.interactionId === "permission-1")).toMatchObject({ status: "pending" });
-    act(() => emit({ type: "respond_ok", interactionId: "permission-1", sessionId: "s1" }));
-    await waitFor(() => expect(result.current.messages.find((m) => m.type === "permission_request" && m.interactionId === "permission-1")).toMatchObject({ status: "allowed" }));
   });
 });

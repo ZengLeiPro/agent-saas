@@ -35,7 +35,6 @@ import { DeleteGroupDialog } from "@/components/chat/DeleteGroupDialog";
 import { AddToGroupDialog } from "@/components/chat/AddToGroupDialog";
 import { AddSessionsToGroupDialog } from "@/components/chat/AddSessionsToGroupDialog";
 import { LazySessionShareDialog } from "@/components/chat/LazySessionShareDialog";
-import { LazyNewSessionGroupDialog } from "@/components/chat/LazyNewSessionGroupDialog";
 import { TrashView } from "@/components/chat/TrashView";
 import { SessionSearchResults } from "@/components/chat/SessionSearchResults";
 
@@ -1015,7 +1014,6 @@ export function DesktopSessionSidebar({
   const highlightedSessionId = activeTab === "chat" ? activeSessionId : null;
   // 分组重命名/删除状态
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
-  const [newSessionGroupOpen, setNewSessionGroupOpen] = useState(false);
   const [renameGroupId, setRenameGroupId] = useState<string | null>(null);
   const [deleteGroupId, setDeleteGroupId] = useState<string | null>(null);
   const [singleExpandedGroupKey, setSingleExpandedGroupKey] = useState<string | null>(null);
@@ -1682,7 +1680,6 @@ export function DesktopSessionSidebar({
           isNewSessionActive={activeTab === "chat" && activeSessionId === null}
           isLoading={isLoading}
           onNew={onNew}
-          onChooseGroup={() => setNewSessionGroupOpen(true)}
           onTabChange={onTabChange}
           beforeNavigate={() => setSingleExpandedGroupKey(null)}
           constrainNewButton={false}
@@ -1897,15 +1894,6 @@ export function DesktopSessionSidebar({
           setCompactDialogOpen={setCompactDialogOpen}
           onCompact={onCompact}
         />
-        <LazyNewSessionGroupDialog
-          open={newSessionGroupOpen}
-          onOpenChange={setNewSessionGroupOpen}
-          groups={allGroups}
-          onSelect={(groupId) => {
-            onNew(groupId);
-            if (activeTab !== "chat") onTabChange?.("chat");
-          }}
-        />
       </aside>
     );
   }
@@ -1942,7 +1930,6 @@ export function DesktopSessionSidebar({
             isNewSessionActive={activeTab === "chat" && activeSessionId === null}
             isLoading={isLoading}
             onNew={onNew}
-            onChooseGroup={() => setNewSessionGroupOpen(true)}
             onTabChange={onTabChange}
           />
           {/* 导航与分组之间的分隔线 */}
@@ -2430,15 +2417,6 @@ export function DesktopSessionSidebar({
         compactDialogOpen={compactDialogOpen}
         setCompactDialogOpen={setCompactDialogOpen}
         onCompact={onCompact}
-      />
-      <LazyNewSessionGroupDialog
-        open={newSessionGroupOpen}
-        onOpenChange={setNewSessionGroupOpen}
-        groups={allGroups}
-        onSelect={(groupId) => {
-          onNew(groupId);
-          if (activeTab !== "chat") onTabChange?.("chat");
-        }}
       />
     </aside>
   );

@@ -44,11 +44,12 @@ const TenantRemoteHandsManagerPanel = lazy(() => import("@/components/TenantRemo
 const ToolControlsManagerPanel = lazy(() => import("@/components/ToolControlsManager").then(m => ({ default: m.ToolControlsManager })));
 const SignupConfigManagerPanel = lazy(() => import("@/components/SignupConfigManager").then(m => ({ default: m.SignupConfigManager })));
 const MemoryPollingManagerPanel = lazy(() => import("@/components/MemoryPollingManager").then(m => ({ default: m.MemoryPollingManager })));
-const SettingsModal = lazy(() => import("@/components/SettingsCenter").then(m => ({ default: m.SettingsModal })));
+const SettingsContent = lazy(() => import("@/components/SettingsCenter").then(m => ({ default: m.SettingsContent })));
 const TenantAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.TenantAdminShell })));
 const PlatformAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.PlatformAdminShell })));
 const CapabilityCenterPanel = lazy(() => import("@/components/CapabilityCenter").then(m => ({ default: m.CapabilityCenter })));
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
+import { useUnifiedSettingsWorkspace } from "@/hooks/useUnifiedSettingsWorkspace";
 import { EmptySessionScenarios } from "@/components/scenarios/EmptySessionScenarios";
 import { EmptyChatRecommendCards } from "@/components/scenarios/EmptyChatRecommendCards";
 import { useRoleKitConfig } from "@/components/scenarios/useRoleKitConfig";
@@ -101,6 +102,19 @@ export function DesktopLayout(props: LayoutProps) {
   } = props;
 
   const { user: authUser, updatePreferences } = useAuth();
+  const {
+    mode: settingsMode,
+    target: settingsTarget,
+    activeSection: activeSettingsSection,
+    navigate: handleSettingsNavigate,
+    close: handleCloseUnifiedSettings,
+    open: handleOpenUnifiedSettings,
+    onControllerChange: handleSettingsControllerChange,
+  } = useUnifiedSettingsWorkspace({
+    settingsOpen, settingsSection, adminSettings, openSettings, closeSettings, setSettingsSection,
+    openAdminSettings, closeAdminSettings, setAdminSettingsSection,
+  });
+
   const subagentTranscriptContext = useSubagentTranscript();
   const subagentTranscript = subagentTranscriptContext?.transcript ?? null;
   const closeSubagentTranscript = subagentTranscriptContext?.closeTranscript;
@@ -133,8 +147,10 @@ export function DesktopLayout(props: LayoutProps) {
 
   const capabilityReplayActive = activeTab === "capabilities" && capabilityReplayOpen;
   // 工作流回放自行渲染会话卡与系统数据卡；目录态仍由外层提供统一浮动白框。
-  const contentPanelFloating =
-    activeTab === "chat" || (activeTab === "capabilities" && !capabilityReplayOpen) || activeTab === "cron";
+  const contentPanelFloating = settingsMode
+    || activeTab === "chat"
+    || (activeTab === "capabilities" && !capabilityReplayOpen)
+    || activeTab === "cron";
 
   const sidePreviewOpen = !!previewFilePath && previewMode === "side";
 
@@ -156,7 +172,7 @@ export function DesktopLayout(props: LayoutProps) {
           : fileBrowserOpen ? 'browser'
             : null;
   const rightPanelOpen = rightPanelKind !== null;
-  const showRightPanel = activeTab === "chat" && rightPanelOpen;
+  const showRightPanel = !settingsMode && activeTab === "chat" && rightPanelOpen;
   const rightPanelKey = rightPanelKind === 'subagent'
     ? subagentTranscript?.childSessionId ?? null
     : rightPanelKind === 'preview' ? previewFilePath : rightPanelKind;
@@ -334,6 +350,11 @@ export function DesktopLayout(props: LayoutProps) {
     }
   }, [isAdmin, isPlatformAdmin, personalAgentEnabled, activeTab, setActiveTab]);
 
+  useEffect(() => {
+    if (adminSettings?.target === "tenant" && !isAdmin) closeAdminSettings();
+    if (adminSettings?.target === "platform" && !isPlatformAdmin) closeAdminSettings();
+  }, [adminSettings?.target, closeAdminSettings, isAdmin, isPlatformAdmin]);
+
   if (activeTab === "tenant-admin" && governanceRoute?.area === "organization") {
     return (
       <Suspense fallback={SuspenseFallback}>
@@ -403,17 +424,20 @@ export function DesktopLayout(props: LayoutProps) {
         isLoading={isLoadingSessions}
         activeTab={activeTab}
         onTabChange={setActiveTab}
-        onPushTab={pushActiveTab}
-        onOpenSettings={openSettings}
-        onOpenAdminSettings={openAdminSettings}
+        onOpenSettings={handleOpenUnifiedSettings}
+        settingsMode={settingsMode}
+        settingsTarget={settingsTarget}
+        activeSettingsSection={activeSettingsSection}
+        onSettingsNavigate={handleSettingsNavigate}
+        onCloseSettings={handleCloseUnifiedSettings}
         isAdmin={isAdmin}
         isPlatformAdmin={isPlatformAdmin}
         hasMore={hasMoreSessions}
         isLoadingMore={isLoadingMoreSessions}
         onLoadMore={loadMoreSessions}
         onLoadGroupSessions={loadGroupSessions}
-        hidden={sidebarCollapsed}
-        onCollapse={toggleSidebar}
+        hidden={settingsMode ? false : sidebarCollapsed}
+        onCollapse={settingsMode ? undefined : toggleSidebar}
         onPreviewTrashSession={previewTrashSession}
         trashPreviewSessionId={trashPreviewSessionId}
         sidebarLayout={sidebarLayout}
@@ -425,14 +449,14 @@ export function DesktopLayout(props: LayoutProps) {
         ref={showRightPanel ? splitContainerRef : undefined}
         className={cn(
           "my-2.5 mr-2.5 flex min-h-0 min-w-0 flex-1",
-          sidebarCollapsed && "ml-2.5",
+          sidebarCollapsed && !settingsMode && "ml-2.5",
           chatFontLarge && "chat-font-large",
           chatWidthWide && "chat-width-wide",
         )}
       >
         <div
           className={cn(
-            "flex min-h-0 min-w-0 flex-col overflow-hidden",
+            "relative flex min-h-0 min-w-0 flex-col overflow-hidden",
             !capabilityReplayActive && "rounded-xl",
             contentPanelFloating && FLOATING_PANEL_SURFACE,
           )}
@@ -722,8 +746,8 @@ export function DesktopLayout(props: LayoutProps) {
               <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />
             )}
                 renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
-                settingsOpen={adminSettings?.target === "tenant"}
-                settingsSection={(adminSettings?.target === "tenant" ? adminSettings.section : "users") as TenantSection}
+                settingsOpen={false}
+                settingsSection="users"
                 onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
                 onSettingsClose={closeAdminSettings}
                 activeAnalysisSection={tenantAdminSection}
@@ -749,8 +773,8 @@ export function DesktopLayout(props: LayoutProps) {
                 activeSection={platformAdminSection}
                 entityId={platformAdminEntityId}
                 onSectionChange={setPlatformAdminRoute}
-                settingsOpen={adminSettings?.target === "platform"}
-                settingsSection={(adminSettings?.target === "platform" ? adminSettings.section : "tenants") as PlatformSection}
+                settingsOpen={false}
+                settingsSection="tenants"
                 onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
                 onSettingsClose={closeAdminSettings}
                 headerControlsPlacement="none"
@@ -759,49 +783,6 @@ export function DesktopLayout(props: LayoutProps) {
           </div>
         )}
 
-        {adminSettings?.target === "tenant" && (
-          <Suspense fallback={null}>
-            <TenantAdminShell
-              renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
-              renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
-              renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-              renderMcp={() => <McpAdminCatalogPanel />}
-              renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
-              renderFiles={() => (
-                <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />
-              )}
-              renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
-              settingsOpen
-              settingsOnly
-              settingsSection={adminSettings.section as TenantSection}
-              onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
-              onSettingsClose={closeAdminSettings}
-            />
-          </Suspense>
-        )}
-        {adminSettings?.target === "platform" && (
-          <Suspense fallback={null}>
-            <PlatformAdminShell
-              renderTenants={() => <TenantManager />}
-              renderSignupConfig={() => <SignupConfigManagerPanel />}
-              renderModels={() => <ModelManagerPanel />}
-              renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
-              renderToolControls={() => <ToolControlsManagerPanel />}
-              renderMemoryPolling={() => <MemoryPollingManagerPanel />}
-              renderMcp={() => <McpAdminCatalogPanel />}
-              renderSkills={() => <SkillManagerPanel mode="platform" />}
-              renderEfficiency={() => <EfficiencyViewPanel />}
-              activeSection={platformAdminSection}
-              entityId={platformAdminEntityId}
-              onSectionChange={setPlatformAdminRoute}
-              settingsOpen
-              settingsOnly
-              settingsSection={adminSettings.section as PlatformSection}
-              onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
-              onSettingsClose={closeAdminSettings}
-            />
-          </Suspense>
-        )}
         {trashMounted && (
           <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "trash" && "hidden")}>
             <TrashView
@@ -860,38 +841,88 @@ export function DesktopLayout(props: LayoutProps) {
             />
           </Suspense>
         )}
-        <Suspense fallback={null}>
-          <SettingsModal
-            open={settingsOpen}
-            section={settingsSection}
-            onSectionChange={setSettingsSection}
-            onClose={closeSettings}
-            renderMemory={() => <MemorySectionPanel />}
-            renderFiles={() => (
-              <FileBrowserLazy
-                onPreviewFile={openFilePreview}
-                owner={authUser?.username}
-                fullPage
-                reserveCloseButtonSpace
-              />
+        {settingsMode && (
+          <div className="absolute inset-0 z-30 min-h-0 overflow-hidden bg-card" data-testid="unified-settings-content">
+            <div className={cn("h-full min-h-0", settingsTarget !== "personal" && "hidden")}>
+              <Suspense fallback={SuspenseFallback}>
+                <SettingsContent
+                  open
+                  section={settingsSection}
+                  onSectionChange={setSettingsSection}
+                  onClose={handleCloseUnifiedSettings}
+                  onNavigationControllerChange={handleSettingsControllerChange}
+                  renderMemory={() => <MemorySectionPanel />}
+                  renderFiles={() => (
+                    <FileBrowserLazy
+                      onPreviewFile={openFilePreview}
+                      owner={authUser?.username}
+                      fullPage
+                      reserveCloseButtonSpace
+                    />
+                  )}
+                  sidebarLayout={sidebarLayout}
+                  onSidebarLayoutChange={handleSidebarLayoutChange}
+                  personalAgentEnabled={personalAgentEnabled}
+                  renderTrash={() => (
+                    <TrashView
+                      onClose={handleCloseUnifiedSettings}
+                      onPreviewSession={(id) => previewTrashSession(id)}
+                      activePreviewId={trashPreviewSessionId}
+                      showHeader={false}
+                    />
+                  )}
+                />
+              </Suspense>
+            </div>
+
+            {isAdmin && (
+              <div className={cn("h-full min-h-0", settingsTarget !== "tenant" && "hidden")}>
+                <Suspense fallback={SuspenseFallback}>
+                  <TenantAdminShell
+                    renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
+                    renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
+                    renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
+                    renderMcp={() => <McpAdminCatalogPanel />}
+                    renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
+                    renderFiles={() => <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
+                    renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
+                    settingsOpen={settingsTarget === "tenant"}
+                    settingsContentOnly
+                    settingsSection={(settingsTarget === "tenant" ? activeSettingsSection : "users") as TenantSection}
+                    onSettingsSectionChange={(section) => handleSettingsNavigate("tenant", section)}
+                    onSettingsClose={handleCloseUnifiedSettings}
+                  />
+                </Suspense>
+              </div>
             )}
-            sidebarLayout={sidebarLayout}
-            onSidebarLayoutChange={handleSidebarLayoutChange}
-            personalAgentEnabled={personalAgentEnabled}
-            renderTrash={() => (
-              <TrashView
-                onClose={closeSettings}
-                onPreviewSession={(id) => previewTrashSession(id)}
-                activePreviewId={trashPreviewSessionId}
-                showHeader={false}
-              />
+
+            {isPlatformAdmin && (
+              <div className={cn("h-full min-h-0", settingsTarget !== "platform" && "hidden")}>
+                <Suspense fallback={SuspenseFallback}>
+                  <PlatformAdminShell
+                    renderTenants={() => <TenantManager />}
+                    renderSignupConfig={() => <SignupConfigManagerPanel />}
+                    renderModels={() => <ModelManagerPanel />}
+                    renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
+                    renderToolControls={() => <ToolControlsManagerPanel />}
+                    renderMemoryPolling={() => <MemoryPollingManagerPanel />}
+                    renderMcp={() => <McpAdminCatalogPanel />}
+                    renderSkills={() => <SkillManagerPanel mode="platform" />}
+                    renderEfficiency={() => <EfficiencyViewPanel />}
+                    activeSection={platformAdminSection}
+                    entityId={platformAdminEntityId}
+                    onSectionChange={setPlatformAdminRoute}
+                    settingsOpen={settingsTarget === "platform"}
+                    settingsContentOnly
+                    settingsSection={(settingsTarget === "platform" ? activeSettingsSection : "tenants") as PlatformSection}
+                    onSettingsSectionChange={(section) => handleSettingsNavigate("platform", section)}
+                    onSettingsClose={handleCloseUnifiedSettings}
+                  />
+                </Suspense>
+              </div>
             )}
-          />
-          {/*
-            组织/平台管理弹窗可从任意页面打开：openAdminSettings 只推 settings URL，
-            不切 activeTab；弹窗统一由 settingsOnly shell 承载，关闭后回到原页面。
-          */}
-        </Suspense>
+          </div>
+        )}
         </div>
 
         {rightPanelOpen && (

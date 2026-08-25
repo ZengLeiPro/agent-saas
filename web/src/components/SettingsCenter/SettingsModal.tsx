@@ -32,12 +32,12 @@ import {
   MyPermissionsSection,
 } from "@/components/PersonalSettings/V2Sections";
 import {
-  SettingsDirtyBoundary,
   restoreSettingsDraft,
   useSettingsDirtyEntry,
   type SettingsDirtyController,
 } from "@/components/PersonalSettings/dirtyRegistry";
 import { AgentDocEditor } from "@/components/AgentProfile/AgentDocEditor";
+import { EmbeddedSettingsFrame } from "@/components/SettingsCenter/EmbeddedSettingsFrame";
 import { TrashView } from "@/components/chat/TrashView";
 import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
@@ -824,17 +824,10 @@ export interface SettingsModalProps {
   onSidebarLayoutChange?: (layout: SidebarLayoutPref) => void;
   /** false 时隐藏只服务个人通用 Agent 的设置；管理员调用方应传 true。 */
   personalAgentEnabled?: boolean;
+  onNavigationControllerChange?: (controller: SettingsDirtyController | null) => void;
 }
 
-export function SettingsModal(props: SettingsModalProps) {
-  return (
-    <SettingsDirtyBoundary>
-      {(dirtyController) => <SettingsModalInner {...props} dirtyController={dirtyController} />}
-    </SettingsDirtyBoundary>
-  );
-}
-
-function SettingsModalInner({
+export function SettingsModalInner({
   open,
   section: sectionInput,
   onSectionChange,
@@ -845,8 +838,9 @@ function SettingsModalInner({
   sidebarLayout = "double",
   onSidebarLayoutChange,
   personalAgentEnabled = true,
-  dirtyController,
-}: SettingsModalProps & { dirtyController: SettingsDirtyController }) {
+  onNavigationControllerChange,
+  dirtyController, embedded = false,
+}: SettingsModalProps & { dirtyController: SettingsDirtyController; embedded?: boolean }) {
   const section = normalizeSettingsSection(sectionInput);
   const { user, updateAvatar, updatePreferences } = useAuth();
   const avatarInputRef = useRef<HTMLInputElement>(null);
@@ -856,6 +850,10 @@ function SettingsModalInner({
   const [personalizationSaving, setPersonalizationSaving] = useState(false);
   const [personalizationSaved, setPersonalizationSaved] = useState(false);
   const [, startSectionTransition] = useTransition();
+
+  useEffect(() => {
+    onNavigationControllerChange?.(dirtyController); return () => onNavigationControllerChange?.(null);
+  }, [dirtyController, onNavigationControllerChange]);
 
   const handleSectionChange = useCallback((id: CanonicalSettingsSectionId) => {
     if (id === section) return;
@@ -1007,6 +1005,8 @@ function SettingsModalInner({
       })}
     </>
   );
+
+  if (embedded) return <EmbeddedSettingsFrame content={content} showPasswordDialog={showPasswordDialog} onShowPasswordDialogChange={setShowPasswordDialog} avatarUploading={avatarUploading} />;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 backdrop-blur-sm md:p-8" role="dialog" aria-modal="true" aria-label="设置" onClick={handleClose}>

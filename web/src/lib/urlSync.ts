@@ -584,18 +584,26 @@ export function buildAdminSettingsUrl(target: AdminSettingsTarget, section?: str
   return `${prefix}/${encodeURIComponent(sec)}`;
 }
 
-export function pushAdminSettingsUrl(target: AdminSettingsTarget, section?: string | null): void {
+export function pushAdminSettingsUrl(
+  target: AdminSettingsTarget,
+  section?: string | null,
+  navigation?: PersonalSettingsHistoryState,
+): void {
   const next = buildAdminSettingsUrl(target, section);
   if (window.location.pathname !== next) {
     if (maybeNavigateWithUpdate(next)) return;
-    window.history.pushState({}, '', next);
+    window.history.pushState(settingsHistoryState(navigation), '', next);
   }
 }
 
-export function replaceAdminSettingsUrl(target: AdminSettingsTarget, section?: string | null): void {
+export function replaceAdminSettingsUrl(
+  target: AdminSettingsTarget,
+  section?: string | null,
+  navigation?: PersonalSettingsHistoryState,
+): void {
   const next = buildAdminSettingsUrl(target, section);
   if (window.location.pathname !== next) {
-    window.history.replaceState({}, '', next);
+    window.history.replaceState(settingsHistoryState(navigation), '', next);
   }
 }
 

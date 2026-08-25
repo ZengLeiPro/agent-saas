@@ -1,3 +1,4 @@
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { AppConfig } from '../app/config.js';
 import { readRuntimeIdentity, type RuntimeIdentity } from './runtimeIdentity.js';
 
@@ -10,6 +11,12 @@ function values(value: unknown): string[] {
 
 function hostname(connectionString: string): string | undefined {
   try { return new URL(connectionString).hostname.toLowerCase(); } catch { return undefined; }
+}
+
+function isWithinRoot(root: string, candidate: string): boolean {
+  if (!isAbsolute(root) || !isAbsolute(candidate)) return false;
+  const pathFromRoot = relative(resolve(root), resolve(candidate));
+  return pathFromRoot === '' || (!pathFromRoot.startsWith(`..${sep}`) && pathFromRoot !== '..' && !isAbsolute(pathFromRoot));
 }
 
 /**
@@ -25,12 +32,12 @@ export function assertRuntimeEnvironmentSafety(config: AppConfig, env: NodeJS.Pr
   if (env.AGENT_SAAS_ACS_ENABLED === '1' || (config.tenantRemoteHands?.hands.length ?? 0) > 0) failures.push('staging must disable ACS and remote Hand execution');
 
   const stagingRoot = env.AGENT_SAAS_STAGING_ROOT?.trim();
-  if (!stagingRoot) failures.push('AGENT_SAAS_STAGING_ROOT is required');
-  if (stagingRoot && config.agent.cwd?.startsWith('/') && !config.agent.cwd.startsWith(stagingRoot)) {
-    failures.push('agent workspace is outside AGENT_SAAS_STAGING_ROOT');
+  if (!stagingRoot || !isAbsolute(stagingRoot)) failures.push('AGENT_SAAS_STAGING_ROOT must be an absolute path');
+  if (stagingRoot && !isWithinRoot(stagingRoot, config.agent.cwd ?? '')) {
+    failures.push('agent workspace must be an absolute path within AGENT_SAAS_STAGING_ROOT');
   }
-  if (stagingRoot && config.secretVault?.backend === 'encrypted-file' && config.secretVault.filePath.startsWith('/') && !config.secretVault.filePath.startsWith(stagingRoot)) {
-    failures.push('SecretVault file is outside AGENT_SAAS_STAGING_ROOT');
+  if (stagingRoot && config.secretVault?.backend === 'encrypted-file' && !isWithinRoot(stagingRoot, config.secretVault.filePath)) {
+    failures.push('SecretVault file must be an absolute path within AGENT_SAAS_STAGING_ROOT');
   }
 
   const db = config.runtimeEventStore;

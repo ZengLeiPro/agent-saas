@@ -44,6 +44,13 @@ describe('assertRuntimeEnvironmentSafety', () => {
     expect(() => assertRuntimeEnvironmentSafety(config({ cron: { enabled: true } }), stagingEnv)).toThrow(/cron.enabled/);
   });
 
+  it('rejects staging root prefix collisions and relative isolated paths', () => {
+    expect(() => assertRuntimeEnvironmentSafety(config({ agent: { cwd: '/srv/agent-saas-staging-evil/workspace' } }), stagingEnv)).toThrow(/agent workspace/);
+    expect(() => assertRuntimeEnvironmentSafety(config({ agent: { cwd: './workspace' } }), stagingEnv)).toThrow(/agent workspace/);
+    expect(() => assertRuntimeEnvironmentSafety(config({ secretVault: { backend: 'encrypted-file', filePath: '/srv/agent-saas-staging-evil/secrets.json' } }), stagingEnv)).toThrow(/SecretVault file/);
+    expect(() => assertRuntimeEnvironmentSafety(config({ secretVault: { backend: 'encrypted-file', filePath: './secrets.json' } }), stagingEnv)).toThrow(/SecretVault file/);
+  });
+
   it('fails closed for a production database reference or unsafe egress', () => {
     expect(() => assertRuntimeEnvironmentSafety(config({ runtimeEventStore: { backend: 'pg', connectionString: 'postgresql://app@db.prod.internal/runtime' } }), stagingEnv)).toThrow(/database host|production marker/);
     expect(() => assertRuntimeEnvironmentSafety(config({ egress: undefined }), stagingEnv)).toThrow(/egress/);

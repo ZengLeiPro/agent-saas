@@ -77,6 +77,17 @@ export class ReleaseAttestationLog {
     if (input.manifestDigest !== this.manifestDigest) throw new Error('Attestation manifest digest does not match immutable RC');
     if (!input.operationKey.trim()) throw new Error('Attestation operationKey is required');
     if (!input.actor.trim()) throw new Error('Attestation actor is required');
+    const duplicate = this.entries.find((entry) => entry.operationKey === input.operationKey);
+    if (duplicate) {
+      const sameBusinessOperation = duplicate.state === input.state
+        && duplicate.manifestDigest === input.manifestDigest
+        && duplicate.actor === input.actor
+        && duplicate.reason === input.reason
+        && (input.recordedAt === undefined || duplicate.recordedAt === input.recordedAt);
+      if (sameBusinessOperation) return duplicate;
+      throw new Error('Attestation operationKey was already used with different content');
+    }
+
     const recordedAt = input.recordedAt ?? this.now().toISOString();
     const recordedAtMs = timestamp(recordedAt, 'Attestation recordedAt');
     const nowMs = this.now().valueOf();
@@ -84,12 +95,6 @@ export class ReleaseAttestationLog {
     if (recordedAtMs > nowMs + this.maxFutureSkewMs) throw new Error('Attestation recordedAt is too far in the future');
     const latest = this.entries.at(-1);
     if (latest && recordedAtMs < timestamp(latest.recordedAt, 'Stored attestation recordedAt')) throw new Error('Attestation recordedAt is out of order');
-
-    const duplicate = this.entries.find((entry) => entry.operationKey === input.operationKey);
-    if (duplicate) {
-      if (duplicate.state === input.state && duplicate.manifestDigest === input.manifestDigest && duplicate.actor === input.actor && duplicate.recordedAt === recordedAt) return duplicate;
-      throw new Error('Attestation operationKey was already used with different content');
-    }
 
     const current = this.currentState();
     const sequential = SEQUENTIAL_TRANSITIONS[current]?.includes(input.state) ?? false;

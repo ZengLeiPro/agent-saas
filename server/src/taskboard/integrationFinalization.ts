@@ -3,7 +3,7 @@ import type { PoolClient } from 'pg';
 import type { TaskBoardIntegrationSource } from '../../../shared/src/types/taskboard.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { rowToIntegrationSource } from './integrationSourceMapper.js';
-import type { IntegrationOperationHost } from './integrationOperations.js';
+import type { IntegrationFinalizationHost } from './integrationFinalizationHost.js';
 import { rowToTask, visibleCommentPredicate } from './storeHelpers.js';
 import { TaskboardNotFoundError, TaskboardValidationError } from './types.js';
 import {
@@ -12,7 +12,7 @@ import {
 } from './workflow/commandService.js';
 
 export async function finalizeMergedSource(
-  host: IntegrationOperationHost,
+  host: IntegrationFinalizationHost,
   sourceId: string,
   input: {
     providerRequestId: string;
@@ -225,7 +225,7 @@ export async function finalizeMergedSource(
  * timeout can be replayed without leaving partially-completed delivery tasks.
  */
 export async function finalizeMergedIntegrationAgent(
-  host: IntegrationOperationHost,
+  host: IntegrationFinalizationHost,
   integrationTaskId: string,
   input: {
     providerRequestId: string;
@@ -405,7 +405,7 @@ export async function finalizeMergedIntegrationAgent(
 }
 
 export async function withIntegrationTransaction<T>(
-  host: IntegrationOperationHost,
+  host: IntegrationFinalizationHost,
   operation: (client: PoolClient) => Promise<T>,
 ): Promise<T> {
   const client = await host.pool.connect();

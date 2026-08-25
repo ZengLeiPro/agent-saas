@@ -28,11 +28,10 @@ describe('taskboard execution writeback prompt', () => {
     expect(work).toContain('pending、failure、unknown 均不得提交复核');
     expect(review).toContain('不得复用 Work 阶段旧结果');
     expect(review).toContain('inspection receipt');
-    expect(merge).toContain('integration.source.inspect');
-    expect(merge).toContain('Provider 不可用时失败关闭');
+    expect(merge).not.toContain('integration.source.');
   });
 
-  it('Workflow v3 Integration Review 明确检查并绑定当前 Integration Agent PR', () => {
+  it('Integration Review 明确检查并绑定当前 Integration Agent PR', () => {
     const integrationReview = context('review');
     integrationReview.task.kind = 'integration';
     integrationReview.task.workflowVersion = 3;
@@ -46,7 +45,7 @@ describe('taskboard execution writeback prompt', () => {
     expect(prompt).toContain('服务端硬门禁');
   });
 
-  it('Workflow v3 Integration Merge 只指向 Agent Merge Gateway', () => {
+  it('Integration Merge 只指向 Agent Merge Gateway', () => {
     const integrationMerge = context('merge');
     integrationMerge.task.kind = 'integration';
     integrationMerge.task.workflowVersion = 3;
@@ -60,7 +59,7 @@ describe('taskboard execution writeback prompt', () => {
     expect(prompt).not.toContain('用 integration.source.log 读取');
   });
 
-  it('Workflow v3 Integration Work 按持久 Integration Agent 对账和原生 finish contract 交接', () => {
+  it('Integration Work 按持久 Integration Agent 对账和原生 finish contract 交接', () => {
 
     const integrationWork = context('work');
     integrationWork.task.kind = 'integration';

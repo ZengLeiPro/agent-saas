@@ -2,7 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
 import type { TaskBoardIntegrationPolicy, TaskBoardTask } from '../../../shared/src/types/taskboard.js';
-import { finalizeMergedSource, type IntegrationOperationHost } from './integrationOperations.js';
+import { finalizeMergedSource } from './integrationFinalization.js';
+import type { IntegrationFinalizationHost } from './integrationFinalizationHost.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { repositoryWithBoardCiPolicy } from './ciPolicy.js';
 import type {
@@ -18,7 +19,10 @@ import {
   type TaskboardIdentity,
 } from './types.js';
 
-interface DeliveryPullRequestHost extends IntegrationOperationHost {}
+export interface DeliveryPullRequestHost extends IntegrationFinalizationHost {
+  boardsTable: string;
+  repositoryProvider?: RepositoryProvider;
+}
 
 export interface ExecutionPullRequestInspectionReceipt {
   inspectionId: string;

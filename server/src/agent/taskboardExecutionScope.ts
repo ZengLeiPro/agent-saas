@@ -29,17 +29,12 @@ export function assertTaskboardExecutionScope(
     'execution.context', 'execution.finish',
     'execution.pull_request.set', 'execution.pull_request.inspect', 'execution.pull_request.log',
     'execution.review_subject.record',
-    'integration.sources', 'integration.source.inspect',
-    'integration.source.log', 'integration.source.merge', 'integration.agent.merge', 'integration.agent.cleanup',
+    'integration.sources', 'integration.agent.merge', 'integration.agent.cleanup',
   ];
   if (executionActions.includes(input.action)) {
     if (input.taskId && input.taskId !== context.task.id) throw new Error('看板 Agent 只能操作当前任务');
     if (input.action.startsWith('integration.') && context.task.kind !== 'integration') {
       throw new Error('只有 integration 任务可以读取集成来源');
-    }
-    if (context.task.workflowVersion === 3
-      && ['integration.source.inspect', 'integration.source.log', 'integration.source.merge'].includes(input.action)) {
-      throw new Error('Workflow v3 Integration Agent 禁止调用 legacy integration.source 操作');
     }
     return;
   }
@@ -76,7 +71,7 @@ export function assertTaskboardExecutionScope(
         || (input.status !== undefined && input.status !== 'todo')
         || context.execution.purpose === 'review'
         || (context.execution.purpose === 'work' && input.kind !== undefined && input.kind !== 'delivery')
-        || (context.execution.purpose === 'merge' && (input.kind !== 'remediation' || !input.sourceId))) {
+        || context.execution.purpose === 'merge') {
         throw new Error('当前职责不能创建该后续任务');
       }
       return;

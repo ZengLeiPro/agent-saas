@@ -448,7 +448,6 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         );
       }
     }
-    await this.options.store.reconcileMergeOperationsV2?.(20);
     const integrationDispatches = await this.options.store.claimIntegrationDispatchCandidatesV2?.(10) ?? [];
     for (const candidate of integrationDispatches) {
       try {

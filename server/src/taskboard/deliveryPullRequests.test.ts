@@ -5,8 +5,8 @@ import {
   inspectExecutionPullRequest,
   pullRequestGateStatus,
   recordReviewedExecutionSubject,
+  type DeliveryPullRequestHost,
 } from './deliveryPullRequests.js';
-import type { IntegrationOperationHost } from './integrationOperations.js';
 import type { RepositoryPullRequestSnapshot } from './repositoryProvider.js';
 import type { TaskboardIdentity } from './types.js';
 
@@ -94,7 +94,7 @@ function hostWithPullRequest(pullRequest: RepositoryPullRequestSnapshot) {
       getPullRequest: vi.fn(async () => pullRequest),
       mergePullRequest: vi.fn(),
     },
-  } as unknown as IntegrationOperationHost;
+  } as unknown as DeliveryPullRequestHost;
   return { host, transactionClient };
 }
 
@@ -175,7 +175,7 @@ describe('recordReviewedExecutionSubject external merge reconciliation', () => {
         getPullRequest: vi.fn(async () => ({ ...mergedPullRequest, state: 'closed' as const, mergeCommitOid: undefined })),
         mergePullRequest: vi.fn(),
       },
-    } as unknown as IntegrationOperationHost;
+    } as unknown as DeliveryPullRequestHost;
 
     await expect(recordReviewedExecutionSubject(host, identity, 'run-41')).rejects.toMatchObject({
       code: 'TASKBOARD_PR_NOT_OPEN',
@@ -216,7 +216,7 @@ describe('Workflow v3 integration Agent PR inspection', () => {
       ...hostWithPullRequest(mergedPullRequest).host,
       pool: { connect: vi.fn(async () => clients.shift()!) },
       repositoryProvider: { getPullRequest: vi.fn(), inspectPullRequest, mergePullRequest: vi.fn() },
-    } as unknown as IntegrationOperationHost;
+    } as unknown as DeliveryPullRequestHost;
 
     await expect(inspectExecutionPullRequest(host, identity, 'run-review-1')).resolves.toMatchObject({
       receipt: { providerPullRequestId: '32', headOid: 'agent-head', integrationAgent: true }, gateStatus: 'success',
@@ -249,7 +249,7 @@ describe('Workflow v3 integration Agent PR inspection', () => {
       ...hostWithPullRequest(mergedPullRequest).host,
       pool: { connect: vi.fn(async () => [loadClient, transactionClient].shift()!) },
       repositoryProvider: { getPullRequest: vi.fn(async () => mergedAgent), mergePullRequest: vi.fn() },
-    } as unknown as IntegrationOperationHost;
+    } as unknown as DeliveryPullRequestHost;
     const clients = [loadClient, transactionClient];
     (host.pool.connect as ReturnType<typeof vi.fn>).mockImplementation(async () => clients.shift()!);
 
@@ -278,7 +278,7 @@ describe('Workflow v3 integration Agent PR inspection', () => {
       ...hostWithPullRequest(mergedPullRequest).host,
       pool: { connect: vi.fn(async () => loadClient) },
       repositoryProvider: { getPullRequest: vi.fn(async () => ({ ...snapshot, state: 'merged' as const, mergeCommitOid: 'merge-agent', ...patch })), mergePullRequest: vi.fn() },
-    } as unknown as IntegrationOperationHost;
+    } as unknown as DeliveryPullRequestHost;
     await expect(recordReviewedExecutionSubject(host, identity, 'run-review-1'))
       .rejects.toMatchObject({ code: 'TASKBOARD_SUBJECT_STALE' });
   });
@@ -294,7 +294,7 @@ describe('Workflow v3 integration Agent PR inspection', () => {
       ...hostWithPullRequest(mergedPullRequest).host,
       pool: { connect: vi.fn(async () => loadClient) },
       repositoryProvider: { getPullRequest: vi.fn(async () => snapshot), mergePullRequest: vi.fn() },
-    } as unknown as IntegrationOperationHost;
+    } as unknown as DeliveryPullRequestHost;
     await expect(recordReviewedExecutionSubject(host, identity, 'run-review-1'))
       .rejects.toMatchObject({ code: 'TASKBOARD_SUBJECT_STALE' });
   });

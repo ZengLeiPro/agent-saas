@@ -284,15 +284,9 @@ async function loadUnstartedIntegrationTasks(
                            AND agent.review_head_oid IS NOT NULL)
                      )
                 ))
-            OR (t.kind IN ('delivery','remediation') AND t.status='in_review'
+            OR (t.kind='delivery' AND t.status='in_review'
                 AND t.provider_pull_request_id IS NOT NULL)
-            OR (t.kind='remediation' AND t.status='todo'
-                AND EXISTS (
-                  SELECT 1 FROM ${host.integrationSourcesTable} linked_source
-                   WHERE linked_source.remediation_task_id=t.id
-                     AND linked_source.state='waiting_remediation'
-                ))
-            OR (t.kind IN ('delivery','remediation') AND t.status='todo'
+            OR (t.kind='delivery' AND t.status='todo'
                 AND (
                   (EXISTS (
                     SELECT 1 FROM ${host.executionsTable} retry_execution

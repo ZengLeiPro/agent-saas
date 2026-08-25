@@ -35,8 +35,6 @@ import type {
   TaskboardExpectedVersionInput,
   TaskboardIdentity,
   TaskboardIntegrationDispatchCandidate,
-  TaskboardIntegrationMergeResult,
-  TaskboardIntegrationSourceInspection,
   TaskboardPage,
   TaskboardPageFilter,
   TaskboardService,
@@ -398,38 +396,6 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.recordReviewedExecutionSubjectV2(identity, runId);
   }
 
-  async inspectIntegrationSourceV2(
-    identity: TaskboardIdentity,
-    runId: string,
-    sourceId: string,
-  ): Promise<TaskboardIntegrationSourceInspection> {
-    await this.init();
-    if (!this.target.inspectIntegrationSourceV2) throw new Error('Taskboard integration provider unavailable');
-    return this.target.inspectIntegrationSourceV2(identity, runId, sourceId);
-  }
-
-  async readIntegrationSourceJobLogV2(
-    identity: TaskboardIdentity,
-    runId: string,
-    sourceId: string,
-    inspectionId: string,
-    providerJobId: string,
-  ): Promise<{ inspectionId: string; providerJobId: string; log: string }> {
-    await this.init();
-    if (!this.target.readIntegrationSourceJobLogV2) throw new Error('Taskboard integration provider unavailable');
-    return this.target.readIntegrationSourceJobLogV2(identity, runId, sourceId, inspectionId, providerJobId);
-  }
-
-  async mergeIntegrationSourceV2(
-    identity: TaskboardIdentity,
-    runId: string,
-    sourceId: string,
-  ): Promise<TaskboardIntegrationMergeResult> {
-    await this.init();
-    if (!this.target.mergeIntegrationSourceV2) throw new Error('Taskboard integration provider unavailable');
-    return this.target.mergeIntegrationSourceV2(identity, runId, sourceId);
-  }
-
   async mergeIntegrationAgentV2(
     identity: TaskboardIdentity,
     runId: string,
@@ -447,22 +413,6 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     await this.init();
     if (!this.target.cleanupIntegrationAgentV2) throw new Error('Taskboard integration Agent cleanup unavailable');
     return this.target.cleanupIntegrationAgentV2(identity, runId, workspace);
-  }
-
-  async linkIntegrationRemediationV2(
-    identity: TaskboardIdentity,
-    runId: string,
-    sourceId: string,
-    remediationTaskId: string,
-  ) {
-    await this.init();
-    if (!this.target.linkIntegrationRemediationV2) throw new Error('Taskboard integration provider unavailable');
-    return this.target.linkIntegrationRemediationV2(identity, runId, sourceId, remediationTaskId);
-  }
-
-  async reconcileMergeOperationsV2(limit?: number): Promise<number> {
-    await this.init();
-    return this.target.reconcileMergeOperationsV2?.(limit) ?? 0;
   }
 
   async claimIntegrationDispatchCandidatesV2(limit?: number): Promise<TaskboardIntegrationDispatchCandidate[]> {

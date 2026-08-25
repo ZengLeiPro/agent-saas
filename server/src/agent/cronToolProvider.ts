@@ -66,11 +66,10 @@ const CRON_MANAGE_ACTIONS = ['delete', 'run', ...TASKBOARD_MANAGE_ACTIONS] as co
 const dateTimeSchema = z.string().datetime({ offset: true });
 const cronManageSchema = z.object({
   target: z.enum(['cron', 'taskboard']).optional().describe('操作对象。默认 cron；taskboard 由服务端按当前用户与租户鉴权。'),
-  action: z.enum(CRON_MANAGE_ACTIONS).describe('cron 支持 list/create/update/delete/run；taskboard 支持 board/task/comment/execution 资源 action。Execution 可按当前用户权限执行只读查询，写操作仍受当前任务与阶段约束；execution.finish 只使用 targetStatus 与 body 完成交接。Work/Review 必须用 execution.pull_request.inspect 读取当前 head 的权威 CI；workflowVersion=3 Integration Agent Merge 只依次使用 integration.agent.merge、integration.agent.cleanup，cleanup 完成后才能 execution.finish({targetStatus: "done", body})；legacy v2 Merge 继续使用 integration.source.inspect/log/merge。'),
+  action: z.enum(CRON_MANAGE_ACTIONS).describe('cron 支持 list/create/update/delete/run；taskboard 支持 board/task/comment/execution 资源 action。Execution 可按当前用户权限执行只读查询，写操作仍受当前任务与阶段约束；execution.finish 只使用 targetStatus 与 body 完成交接。Work/Review 必须用 execution.pull_request.inspect 读取当前 head 的权威 CI；workflowVersion=3 Integration Agent Merge 只依次使用 integration.agent.merge、integration.agent.cleanup，cleanup 完成后才能 execution.finish({targetStatus: "done", body})。'),
   id: z.string().optional().describe('cron job、旧 taskboard 任务或评论 id。'),
   boardId: z.string().optional().describe('taskboard 看板 id。'),
   taskId: z.string().optional().describe('taskboard 任务 id。'),
-  sourceId: z.string().optional().describe('taskboard integration source id。'),
   providerPullRequestId: z.string().optional().describe('仓库 Provider 的 pull request id 或编号。'),
   inspectionId: z.string().uuid().optional().describe('execution.pull_request.inspect 返回的受控快照 id。'),
   providerJobId: z.string().regex(/^\d+$/).optional().describe('当前 inspection receipt 中的 GitHub Actions job id。'),

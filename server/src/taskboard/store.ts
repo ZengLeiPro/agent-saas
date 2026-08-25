@@ -55,10 +55,6 @@ import {
   recordReviewedExecutionSubject, type ExecutionPullRequestInspection,
 } from './deliveryPullRequests.js';
 import {
-  inspectIntegrationSource, linkIntegrationRemediation, mergeIntegrationSource, readIntegrationSourceJobLog,
-  reconcileUnknownMergeOperations, type IntegrationSourceInspection,
-} from './integrationOperations.js';
-import {
   appendBoardChange,
   appendTaskChange,
   cancelIntegrationTask as cancelStoredIntegrationTask,
@@ -272,37 +268,11 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return recordReviewedExecutionSubject(this, identity, runId);
   }
 
-  inspectIntegrationSourceV2(
-    identity: TaskboardIdentity,
-    runId: string,
-    sourceId: string,
-  ): Promise<IntegrationSourceInspection> {
-    return inspectIntegrationSource(this, identity, runId, sourceId);
-  }
-  readIntegrationSourceJobLogV2(identity: TaskboardIdentity, runId: string, sourceId: string, inspectionId: string, providerJobId: string) {
-    return readIntegrationSourceJobLog(this, identity, runId, sourceId, inspectionId, providerJobId);
-  }
-  mergeIntegrationSourceV2(identity: TaskboardIdentity, runId: string, sourceId: string) {
-    return mergeIntegrationSource(this, identity, runId, sourceId);
-  }
-  mergeIntegrationAgentV2(identity: TaskboardIdentity, runId: string) { return mergeIntegrationAgent(this, identity, runId); }
-  cleanupIntegrationAgentV2(identity: TaskboardIdentity, runId: string, workspace: { id: string; root: string }) { return cleanupIntegrationAgent(this, identity, runId, workspace); }
-  linkIntegrationRemediationV2(
-    identity: TaskboardIdentity,
-    runId: string,
-    sourceId: string,
-    remediationTaskId: string,
-  ) {
-    return linkIntegrationRemediation(this, identity, runId, sourceId, remediationTaskId);
-  }
   claimWorkflowCancellations(limit = 20): Promise<Array<{ id: string; runId: string; reason: string }>> {
     return claimStoredWorkflowCancellations(this, limit);
   }
   finishWorkflowCancellation(id: string, error?: string): Promise<void> {
     return finishStoredWorkflowCancellation(this, id, error);
-  }
-  reconcileMergeOperationsV2(limit?: number): Promise<number> {
-    return reconcileUnknownMergeOperations(this, limit);
   }
   claimIntegrationDispatchCandidatesV2(limit?: number) {
     return claimIntegrationDispatchCandidates(this, limit);

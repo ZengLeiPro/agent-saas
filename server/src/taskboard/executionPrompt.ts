@@ -37,21 +37,16 @@ export function executionWritebackInstructions(context: TaskboardExecutionContex
       '- 独立调用 execution.pull_request.inspect 检查当前精确 head/base/subject 与 CI，再登记 reviewed subject 并重新读取最新 context receipt；不得复用 Work 阶段旧结果。',
       '- inspection receipt 与当前 head 全绿是 approved 的服务端硬门禁；pending、failure、unknown 均不得批准。');
   } else if (context.execution.purpose === 'review'
-    && context.task.kind === 'integration'
-    && context.task.workflowVersion === 3) {
+    && context.task.kind === 'integration') {
     instructions.splice(2, 0,
       '- 独立调用 execution.pull_request.inspect 检查当前 Integration Agent 的精确 PR/head/base 与 CI；失败 job 用 execution.pull_request.log 读取，随后重新读取最新 context receipt。',
       '- 当前 Review Execution、Integration Agent 当前 PR/head/subject 与全绿 head 绑定的 inspection receipt 是 approved 的服务端硬门禁；pending、failure、unknown 均不得批准。');
   } else if (context.execution.purpose === 'merge'
-    && context.task.kind === 'integration'
-    && context.task.workflowVersion === 3) {
+    && context.task.kind === 'integration') {
     instructions.splice(2, 0,
-      '- 依次调用 integration.agent.merge 与 integration.agent.cleanup；Merge Gateway 会重读当前 PR/head、审批与 CI，cleanup 会按持久 receipt 对账并清理绑定的来源 PR/branch、integration branch 与任务 worktree。cleanup 成功后才可 execution.finish({targetStatus: "done", body})。不得调用 legacy integration.source.inspect/log/merge。');
-  } else if (context.execution.purpose === 'merge') {
-    instructions.splice(2, 0,
-      '- 合并前必须调用 integration.source.inspect 重新读取当前精确 head、reviewed subject、required checks 与 mergeability；失败 job 用 integration.source.log 读取，Provider 不可用时失败关闭。');
+      '- 依次调用 integration.agent.merge 与 integration.agent.cleanup；Merge Gateway 会重读当前 PR/head、审批与 CI，cleanup 会按持久 receipt 对账并清理绑定的来源 PR/branch、integration branch 与任务 worktree。cleanup 成功后才可 execution.finish({targetStatus: "done", body})。');
   }
-  if (context.task.kind === 'integration' && context.task.workflowVersion === 3) {
+  if (context.task.kind === 'integration') {
     instructions.splice(2, 0,
       '- 这是一个持久的 Integration Agent：先以 GitHub PR、head 与 CI 为唯一代码事实对账，不得相信旧协调状态、revision、lease 或 outbox 字段。',
       '- Work 必须处理 execution.context 中完整冻结来源集；组合来源、修复 CI 和处理 Review 反馈都在同一 integration branch/PR 上完成，不得用无关改动或空提交宣称完成；head 变化后必须重新发起只读 Review。',

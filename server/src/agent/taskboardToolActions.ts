@@ -58,9 +58,6 @@ export const TASKBOARD_RESOURCE_ACTIONS = [
   'integration.create',
   'integration.cancel',
   'integration.sources',
-  'integration.source.inspect',
-  'integration.source.log',
-  'integration.source.merge',
   'integration.agent.merge',
   'integration.agent.cleanup',
 ] as const;
@@ -80,7 +77,6 @@ export const TASKBOARD_READ_ACTIONS = [
   'execution.list',
   'execution.context',
   'integration.sources',
-  'integration.source.inspect',
 ] as const;
 export interface TaskboardAttachmentInput {
   attachmentId: string;
@@ -90,7 +86,6 @@ export interface TaskboardManageInput {
   id?: string;
   boardId?: string;
   taskId?: string;
-  sourceId?: string;
   providerPullRequestId?: string;
   inspectionId?: string;
   providerJobId?: string;
@@ -426,38 +421,6 @@ export async function invokeTaskboardAction(
       const sources = await service.listIntegrationSources(identity, taskId);
       return { count: sources.length, sources };
     }
-    case 'integration.source.inspect': {
-      if (!scope.execution || !service.inspectIntegrationSourceV2) {
-        throw new Error('仅当前 merge Execution 可以检查集成来源');
-      }
-      return await service.inspectIntegrationSourceV2(
-        identity,
-        scope.execution.execution.runId,
-        requireField(input.sourceId, 'sourceId'),
-      ) as unknown as Record<string, unknown>;
-    }
-    case 'integration.source.log': {
-      if (!scope.execution || !service.readIntegrationSourceJobLogV2) {
-        throw new Error('仅当前 merge Execution 可以读取受控 CI 失败日志');
-      }
-      return await service.readIntegrationSourceJobLogV2(
-        identity,
-        scope.execution.execution.runId,
-        requireField(input.sourceId, 'sourceId'),
-        requireField(input.inspectionId, 'inspectionId'),
-        requireField(input.providerJobId, 'providerJobId'),
-      );
-    }
-    case 'integration.source.merge': {
-      if (!scope.execution || !service.mergeIntegrationSourceV2) {
-        throw new Error('仅当前 merge Execution 可以合并集成来源');
-      }
-      return await service.mergeIntegrationSourceV2(
-        identity,
-        scope.execution.execution.runId,
-        requireField(input.sourceId, 'sourceId'),
-      ) as unknown as Record<string, unknown>;
-    }
     case 'integration.agent.merge': {
       if (!scope.execution || !service.mergeIntegrationAgentV2) {
         throw new Error('仅当前 integration merge Execution 可以合并 Agent pull request');
@@ -717,10 +680,7 @@ async function createExecutionTask(
 ): Promise<Record<string, unknown>> {
   const executionStore = options.executionStore?.();
   if (!executionStore) throw new Error('任务看板执行上下文服务未启用');
-  const kind = input.kind ?? (execution.task.kind === 'integration' ? 'remediation' : 'delivery');
-  if (execution.task.kind === 'integration' && kind === 'remediation' && !input.sourceId) {
-    throw new Error('integration remediation 任务需要 sourceId');
-  }
+  const kind = input.kind ?? 'delivery';
   const dispatcher = input.dispatch ? requireExecutionService(options.executionService?.()) : undefined;
   const service = options.service();
   if (!service) throw new Error('任务看板服务未启用');
@@ -779,10 +739,6 @@ async function createExecutionTask(
     await rollbackCreatedTask(service, identity, task, error, () => cleanupTaskboardAttachments(options, identity, task.id, ownerUserId, scopedAttachments));
   }
   try {
-    if (ownsCreation && kind === 'remediation' && input.sourceId) {
-      if (!service.linkIntegrationRemediationV2) throw new Error('任务看板 remediation 关联服务未启用');
-      await service.linkIntegrationRemediationV2(identity, execution.execution.runId, input.sourceId, task.id);
-    }
     if (createResult.creationClaimToken) {
       task = await service.completeTaskCreation(identity, task.id, createResult.creationClaimToken);
     }

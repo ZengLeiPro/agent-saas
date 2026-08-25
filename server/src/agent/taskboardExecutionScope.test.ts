@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import type { TaskboardExecutionContext, TaskboardIdentity } from '../taskboard/types.js';
+import { cronManageToolDescriptor } from './cronToolProvider.js';
 import { assertTaskboardExecutionScope } from './taskboardExecutionScope.js';
+import { TASKBOARD_MANAGE_ACTIONS, TASKBOARD_RESOURCE_ACTIONS } from './taskboardToolActions.js';
 
 const identity: TaskboardIdentity = {
   tenantId: 'tenant-a', ownerUserId: 'user-1', username: 'alice', userRole: 'user',
@@ -18,21 +20,28 @@ function context(workflowVersion: 2 | 3): TaskboardExecutionContext {
   } as TaskboardExecutionContext;
 }
 
+const removedActions = [
+  'integration.source.inspect',
+  'integration.source.log',
+  'integration.source.merge',
+] as const;
+
 describe('taskboard Integration Execution scope', () => {
-  it.each([
-    'integration.source.inspect',
-    'integration.source.log',
-    'integration.source.merge',
-  ] as const)('hard-rejects workflow v3 action %s', (action) => {
-    expect(() => assertTaskboardExecutionScope({ action }, context(3), identity))
-      .toThrow('Workflow v3 Integration Agent 禁止调用 legacy integration.source 操作');
+  it.each(removedActions)('removes legacy action %s from action lists and CronManage schema', (action) => {
+    expect(TASKBOARD_RESOURCE_ACTIONS).not.toContain(action);
+    expect(TASKBOARD_MANAGE_ACTIONS).not.toContain(action);
+    expect(() => cronManageToolDescriptor.schema.parse({ target: 'taskboard', action })).toThrow();
   });
 
-  it.each([
-    'integration.source.inspect',
-    'integration.source.log',
-    'integration.source.merge',
-  ] as const)('keeps legacy v2 action %s available', (action) => {
-    expect(() => assertTaskboardExecutionScope({ action }, context(2), identity)).not.toThrow();
+  it.each([2, 3] as const)('does not let workflow v%s invoke removed source actions', (workflowVersion) => {
+    for (const action of removedActions) {
+      expect(() => assertTaskboardExecutionScope({ action }, context(workflowVersion), identity))
+        .toThrow('看板 Agent Execution 只能使用当前任务协议 action');
+    }
+  });
+
+  it('only exposes Agent-first integration merge actions in execution scope', () => {
+    expect(() => assertTaskboardExecutionScope({ action: 'integration.agent.merge' }, context(3), identity)).not.toThrow();
+    expect(() => assertTaskboardExecutionScope({ action: 'integration.agent.cleanup' }, context(3), identity)).not.toThrow();
   });
 });

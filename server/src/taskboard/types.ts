@@ -93,31 +93,10 @@ export interface TaskboardExpectedVersionInput {
   expectedVersion: number;
 }
 
-export interface TaskboardIntegrationSourceInspection {
-  source: TaskBoardIntegrationSource;
-  pullRequest: RepositoryPullRequestInspection;
-  inspectionReceipt: {
-    inspectionId: string;
-    executionId: string;
-    taskId: string;
-    sourceId: string;
-    providerPullRequestId: string;
-    headOid: string;
-    providerQueriedAt: string;
-    digest: string;
-  };
-}
-
 export interface TaskboardIntegrationDispatchCandidate {
   identity: TaskboardIdentity;
   task: TaskBoardTask;
   purpose: TaskBoardExecutionPurpose;
-}
-
-export interface TaskboardIntegrationMergeResult {
-  source: TaskBoardIntegrationSource;
-  task: TaskBoardTask;
-  receipt: Record<string, unknown>;
 }
 
 export interface TaskboardExecutionDispatchPayload {
@@ -251,7 +230,6 @@ export interface TaskboardWorkflowCancellation {
 export interface TaskboardExecutionStore {
   claimWorkflowCancellations?(limit?: number): Promise<TaskboardWorkflowCancellation[]>;
   finishWorkflowCancellation?(id: string, error?: string): Promise<void>;
-  reconcileMergeOperationsV2?(limit?: number): Promise<number>;
   claimIntegrationDispatchCandidatesV2?(limit?: number): Promise<TaskboardIntegrationDispatchCandidate[]>;
   listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]>;
   searchExecutions(
@@ -481,23 +459,6 @@ export interface TaskboardService {
     identity: TaskboardIdentity,
     runId: string,
   ): Promise<TaskBoardTask>;
-  inspectIntegrationSourceV2?(
-    identity: TaskboardIdentity,
-    runId: string,
-    sourceId: string,
-  ): Promise<TaskboardIntegrationSourceInspection>;
-  readIntegrationSourceJobLogV2?(
-    identity: TaskboardIdentity,
-    runId: string,
-    sourceId: string,
-    inspectionId: string,
-    providerJobId: string,
-  ): Promise<{ inspectionId: string; providerJobId: string; log: string }>;
-  mergeIntegrationSourceV2?(
-    identity: TaskboardIdentity,
-    runId: string,
-    sourceId: string,
-  ): Promise<TaskboardIntegrationMergeResult>;
   mergeIntegrationAgentV2?(
     identity: TaskboardIdentity,
     runId: string,
@@ -507,13 +468,6 @@ export interface TaskboardService {
     runId: string,
     workspace: { id: string; root: string },
   ): Promise<TaskBoardTask>;
-  linkIntegrationRemediationV2?(
-    identity: TaskboardIdentity,
-    runId: string,
-    sourceId: string,
-    remediationTaskId: string,
-  ): Promise<TaskBoardIntegrationSource>;
-  reconcileMergeOperationsV2?(limit?: number): Promise<number>;
   finishExecutionV2?(
     identity: TaskboardIdentity,
     runId: string,

@@ -42,25 +42,6 @@ export async function finishExecutionV2(
     const taskId = String(ownership.rows[0].task_id);
     // Global lock order: Task -> Source/Attempt -> Execution.
     const loaded = await loadAccessibleTaskAndBoard(options, client, identity, taskId, true);
-    let remediationApproval: { sourceId: string; attemptId: string; integrationTaskId: string } | undefined;
-    if (loaded.task.kind === 'remediation'
-      && (input.targetStatus === 'done' || input.targetStatus === 'ready_to_merge')) {
-      const relation = await client.query(
-        `SELECT s.id AS source_id,s.integration_task_id,a.id AS attempt_id
-         FROM ${options.remediationAttemptsTable} a
-         JOIN ${options.integrationSourcesTable} s ON s.id=a.integration_source_id
-         WHERE a.remediation_task_id=$1 AND a.state='active'
-           AND s.remediation_task_id=$1 AND s.state='waiting_remediation'
-         FOR UPDATE OF s,a`, [taskId]);
-      if (relation.rows.length !== 1) {
-        throw new TaskboardValidationError('Remediation approval requires exactly one active source attempt', 'TASKBOARD_REMEDIATION_SOURCE_REQUIRED');
-      }
-      remediationApproval = {
-        sourceId: String(relation.rows[0].source_id),
-        attemptId: String(relation.rows[0].attempt_id),
-        integrationTaskId: String(relation.rows[0].integration_task_id),
-      };
-    }
     const executionResult = await client.query(
       `SELECT e.* FROM ${options.executionsTable} e WHERE e.run_id=$1 FOR UPDATE`, [runId]);
     const executionRow = executionResult.rows[0] as Record<string, unknown> | undefined;
@@ -107,25 +88,6 @@ export async function finishExecutionV2(
     if ((execution.purpose === 'work' && nextStatus === 'in_review')
       || (execution.purpose === 'review' && nextStatus === 'ready_to_merge')) {
       await assertCurrentPullRequestGate(options, client, loaded.task, loaded.board, execution.id, execution.purpose);
-    }
-    if (loaded.task.kind === 'remediation' && execution.purpose === 'work' && nextStatus === 'in_review') {
-      if (!await recordRemediationCommit(options, client, taskId, execution.id)) {
-        throw new TaskboardValidationError('Remediation work must produce a new commit before entering review', 'TASKBOARD_REMEDIATION_COMMIT_REQUIRED');
-      }
-    }
-    if (remediationApproval) {
-      const resumed = await client.query(
-        `UPDATE ${options.integrationSourcesTable} SET state='pending',remediation_task_id=NULL,last_error=NULL,updated_at=now()
-         WHERE id=$1 AND state='waiting_remediation' AND remediation_task_id=$2 RETURNING id`,
-        [remediationApproval.sourceId, taskId]);
-      if (!resumed.rows[0]) throw new TaskboardValidationError('Remediation source changed before approval', 'TASKBOARD_CONTEXT_STALE');
-      const attempt = await client.query(
-        `UPDATE ${options.remediationAttemptsTable} SET state='resolved',resolved_at=now()
-         WHERE id=$1 AND state='active' RETURNING id`, [remediationApproval.attemptId]);
-      if (!attempt.rows[0]) throw new TaskboardValidationError('Remediation attempt changed before approval', 'TASKBOARD_CONTEXT_STALE');
-      await appendChange(options, client, remediationApproval.integrationTaskId, 'integration.remediation_completed', 'agent', identity.ownerUserId, {
-        sourceId: remediationApproval.sourceId, remediationTaskId: taskId, attemptId: remediationApproval.attemptId,
-      });
     }
     await updateTaskStatus(options, client, taskId, nextStatus);
     if (nextStatus === 'blocked') await recordBlock(options, client, taskId, execution);
@@ -242,36 +204,6 @@ async function closeIntegration(options: TaskboardV2StoreOptions, client: PoolCl
   if (repository?.repositoryId) await client.query(
     `UPDATE ${options.integrationLanesTable} SET active_integration_task_id=NULL,lease_id=NULL,updated_at=now()
      WHERE repository_id=$1 AND active_integration_task_id=$2`, [repository.repositoryId, task.id]);
-}
-
-async function recordRemediationCommit(options: TaskboardV2StoreOptions, client: PoolClient, remediationTaskId: string, executionId: string): Promise<boolean> {
-  const locked = await client.query(
-    `SELECT a.id,a.integration_source_id,a.base_head_oid,a.completed_head_oid,s.integration_task_id,
-       d.head_oid AS delivery_head_oid,r.head_oid AS remediation_head_oid
-     FROM ${options.remediationAttemptsTable} a
-     JOIN ${options.integrationSourcesTable} s ON s.id=a.integration_source_id
-     JOIN ${options.tasksTable} d ON d.id=s.delivery_task_id JOIN ${options.tasksTable} r ON r.id=a.remediation_task_id
-     WHERE a.remediation_task_id=$1 AND a.state='active' AND s.remediation_task_id=$1 AND s.state='waiting_remediation'
-     FOR UPDATE OF s,a`, [remediationTaskId]);
-  const row = locked.rows[0];
-  if (!row) return true;
-  const headOid = row.remediation_head_oid ? String(row.remediation_head_oid) : '';
-  const baseline = row.base_head_oid ?? row.delivery_head_oid;
-  if (!headOid || headOid === baseline || headOid === row.completed_head_oid) return false;
-  const attempt = await client.query(
-    `UPDATE ${options.remediationAttemptsTable} SET completed_head_oid=$2
-     WHERE id=$1 AND state='active' AND completed_head_oid IS DISTINCT FROM $2 RETURNING id`, [row.id, headOid]);
-  if (!attempt.rows[0]) throw new TaskboardValidationError('Remediation attempt changed', 'TASKBOARD_CONTEXT_STALE');
-  const source = await client.query(
-    `UPDATE ${options.integrationSourcesTable} SET remediation_count=remediation_count+1,updated_at=now()
-     WHERE id=$1 AND state='waiting_remediation' AND remediation_task_id=$2 RETURNING integration_task_id,remediation_count`,
-    [row.integration_source_id, remediationTaskId]);
-  if (!source.rows[0]) throw new TaskboardValidationError('Remediation source changed', 'TASKBOARD_CONTEXT_STALE');
-  await appendChange(options, client, String(source.rows[0].integration_task_id), 'integration.remediation_commit_recorded', 'agent', executionId, {
-    sourceId: String(row.integration_source_id), remediationTaskId, attemptId: String(row.id), headOid,
-    remediationCount: Number(source.rows[0].remediation_count),
-  });
-  return true;
 }
 
 function jsonObject(value: unknown): Record<string, unknown> | undefined {

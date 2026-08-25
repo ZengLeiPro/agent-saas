@@ -73,6 +73,7 @@ function hostWith(
     } as unknown as IntegrationAgentMergeHost,
     loadClient,
     finalized,
+    clients,
   };
 }
 
@@ -110,6 +111,45 @@ describe('mergeIntegrationAgent', () => {
       [['integration-1'], 'merge-execution-1', 'integration_converged'],
     ]);
     expect(queries).toContain("SET status='merged',updated_at=now()");
+  });
+
+  it('recovers finalization on a later invocation after the provider already merged the pull request', async () => {
+    const mergedPullRequest = { ...pullRequest, state: 'merged' as const, mergeCommitOid: 'merge-42' };
+    const provider = {
+      getPullRequest: vi.fn()
+        .mockResolvedValueOnce(pullRequest)
+        .mockResolvedValueOnce(mergedPullRequest),
+      mergePullRequest: vi.fn(async () => ({ providerRequestId: 'request-1', providerPullRequestId: '42', merged: true, mergedCommitOid: 'merge-42', raw: {} })),
+    };
+    const { host, loadClient, finalized, clients } = hostWith(provider);
+    finalized.query.mockRejectedValueOnce(new Error('finalizer unavailable'));
+
+    await expect(mergeIntegrationAgent(host, identity, 'run-1')).rejects.toThrow('finalizer unavailable');
+
+    const recoveredFinalizer = finalizationClient();
+    clients.push(loadClient, recoveredFinalizer);
+    await expect(mergeIntegrationAgent(host, identity, 'run-1')).resolves.toMatchObject({
+      status: 'done', mergedCommitOid: 'merge-42',
+    });
+    expect(provider.mergePullRequest).toHaveBeenCalledOnce();
+    expect(provider.getPullRequest).toHaveBeenCalledTimes(2);
+    expect(recoveredFinalizer.query).toHaveBeenCalledWith(
+      expect.stringContaining("SET state='merged',provider_receipt_id"), expect.any(Array),
+    );
+  });
+
+  it('fails closed when an already merged pull request has no merge commit oid', async () => {
+    const provider = {
+      getPullRequest: vi.fn(async () => ({ ...pullRequest, state: 'merged' as const })),
+      mergePullRequest: vi.fn(),
+    };
+    const { host, finalized } = hostWith(provider);
+
+    await expect(mergeIntegrationAgent(host, identity, 'run-1')).rejects.toMatchObject({
+      code: 'TASKBOARD_PROVIDER_RECEIPT_INCOMPLETE',
+    });
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+    expect(finalized.query).not.toHaveBeenCalled();
   });
 
   it('re-reads a timed-out provider merge and converges an already merged PR without retrying merge', async () => {

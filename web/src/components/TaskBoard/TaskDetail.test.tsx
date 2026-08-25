@@ -421,6 +421,9 @@ describe("TaskDetail 草稿隔离", () => {
     render(<TaskDetail {...props({ task: current })} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(current.id));
 
+    expect(screen.getByText(/Agent-first Integration v3 会按当前阶段自动恢复/)).toBeTruthy();
+    expect(screen.getByText(/当前阶段：实施中/)).toBeTruthy();
+    expect(screen.queryByText(/Candidate|重新排队/)).toBeNull();
     await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
     await user.click(screen.getByRole("checkbox", { name: "发表后继续实施" }));
     await user.click(screen.getByRole("button", { name: "发表" }));

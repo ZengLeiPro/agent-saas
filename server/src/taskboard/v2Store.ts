@@ -496,8 +496,12 @@ export async function getExecutionContextV2(
       throw new TaskboardNotFoundError('Execution does not belong to this task');
     }
     const latestExecution = latestExecutionResult.rows[0] ? rowToExecution(latestExecutionResult.rows[0]) : undefined;
+    const activeExecution = latestExecution
+      && ['queued', 'running', 'waiting_user', 'waiting_approval'].includes(latestExecution.status)
+      ? latestExecution
+      : undefined;
     const contract = await resolveExecutionContextWorkflowContract(
-      options, client, loaded.task, latestExecution?.purpose,
+      options, client, loaded.task, activeExecution?.purpose,
     );
     const asOfResult = await client.query(
       `SELECT COALESCE(MAX(seq),0)::text AS seq FROM ${options.changesTable} WHERE task_id=$1`,

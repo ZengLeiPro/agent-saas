@@ -99,7 +99,7 @@ describe('taskboard V2 contracts', () => {
     const merge = await resolveExecutionContextWorkflowContract(
       { integrationSourcesTable: 'runtime_taskboard_integration_sources' },
       { query } as never,
-      { ...task, kind: 'integration', status: 'ready_to_merge', workflowVersion: 3 },
+      { ...task, kind: 'integration', status: 'in_progress', workflowVersion: 3 },
       'merge',
     );
 
@@ -110,6 +110,15 @@ describe('taskboard V2 contracts', () => {
       allowedStatuses: ['in_progress', 'done', 'blocked'],
     });
     expect(query).not.toHaveBeenCalled();
+  });
+
+  it('keeps unbound Integration Agent contracts status-derived after a merge claim changes status', () => {
+    const claimedTask = { ...task, kind: 'integration' as const, status: 'in_progress' as const, workflowVersion: 3 as const };
+
+    expect(resolveWorkflowContract(claimedTask)).toMatchObject({ purpose: 'work' });
+    expect(() => resolveWorkflowContract(claimedTask, 'merge')).toThrowError(expect.objectContaining({
+      code: 'TASKBOARD_PURPOSE_INVALID',
+    }));
   });
 
   it('treats a canceled integration source as historical and allows delivery reselection', () => {

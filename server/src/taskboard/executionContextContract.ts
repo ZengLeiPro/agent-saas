@@ -7,7 +7,7 @@ export async function resolveExecutionContextWorkflowContract(
   _options: { integrationSourcesTable: string },
   _client: Pick<PoolClient, 'query'>,
   task: TaskBoardTask,
-  purpose?: import('../../../shared/src/types/taskboard.js').TaskBoardExecutionPurpose,
+  activePurpose?: import('../../../shared/src/types/taskboard.js').TaskBoardExecutionPurpose,
 ) {
-  return resolveWorkflowContract(task, purpose);
+  return resolveWorkflowContract(task, activePurpose, { activeExecution: Boolean(activePurpose) });
 }

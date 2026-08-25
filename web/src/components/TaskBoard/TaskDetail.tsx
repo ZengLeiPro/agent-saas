@@ -443,7 +443,7 @@ export function TaskDetail({
     }
     const decision = preset?.decision ?? window.prompt(
       isIntegrationV3
-        ? "请填写恢复 Workflow v3 Candidate 的决策与后续要求"
+        ? "请填写恢复 Integration Agent 的决策与后续要求"
         : taskKind === "integration"
           ? `请填写恢复 ${sourceIds!.length} 个阻塞来源的决策与后续要求`
           : "请填写解除阻塞后的恢复决策与后续要求",
@@ -697,7 +697,7 @@ export function TaskDetail({
                 {taskKind === "integration" && currentTask.workflowVersion === 3
                   && !["done", "canceled"].includes(currentTask.status) ? (
                     <p className="text-xs text-muted-foreground">
-                      Integration v3 由系统按 Candidate 状态自动推进 Work、Review 与合并；异常时请在 Candidate 区重新排队或显式恢复。
+                      Agent-first Integration v3 会按当前阶段自动恢复并持续推进 Work、Review 与合并；当前阶段：{STATUS_LABELS[currentTask.status]}。
                     </p>
                   ) : null}
                 {currentTask.providerPullRequestId ? <p>PR：<span className="font-mono">{currentTask.providerPullRequestId}</span>{currentTask.pullRequestNumber ? `（#${currentTask.pullRequestNumber}）` : ""}</p> : null}

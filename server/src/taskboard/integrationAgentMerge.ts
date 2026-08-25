@@ -67,17 +67,31 @@ export async function mergeIntegrationAgent(
     if (!repository || repository.provider !== 'github') throw new TaskboardValidationError('Board repository is not configured', 'TASKBOARD_REPOSITORY_REQUIRED');
     const configured = repositoryWithBoardCiPolicy(repository as { provider: 'github'; repositoryId: string; owner: string; name: string; baseBranch: string; allowForkPullRequest: false }, jsonObject(row.integration_policy) as TaskBoardIntegrationPolicy | undefined);
     const current = await host.repositoryProvider.getPullRequest(configured, pullRequestId, String(row.owner_user_id));
-    assertPullRequestGate(current, { providerPullRequestId: pullRequestId, headOid: reviewHeadOid, requireMergeable: true });
-    if (current.baseRef !== configured.baseBranch || current.headRef !== String(row.integration_branch)) {
+    if (current.providerPullRequestId !== pullRequestId || current.headOid !== reviewHeadOid
+      || current.baseRef !== configured.baseBranch || current.headRef !== String(row.integration_branch)) {
       throw new TaskboardValidationError('Integration Agent review is stale after pull request subject drift', 'TASKBOARD_SUBJECT_STALE');
+    }
+    let receipt: RepositoryMergeReceipt | undefined;
+    if (current.state === 'merged') {
+      if (!current.mergeCommitOid) {
+        throw new TaskboardValidationError('Provider did not return the merged commit oid', 'TASKBOARD_PROVIDER_RECEIPT_INCOMPLETE');
+      }
+      receipt = {
+        providerRequestId: `recovered-merged:${pullRequestId}:${current.mergeCommitOid}`,
+        providerPullRequestId: pullRequestId,
+        merged: true,
+        mergedCommitOid: current.mergeCommitOid,
+        raw: { recoveredMergedPullRequest: true, pullRequest: current },
+      };
+    } else {
+      assertPullRequestGate(current, { providerPullRequestId: pullRequestId, headOid: reviewHeadOid, requireMergeable: true });
     }
     // Do not hold database locks across the provider write. The durable finalizer
     // reacquires the aggregate locks after a provider merge receipt is known.
     await client.query('COMMIT');
 
     const requestId = randomUUID();
-    let receipt: RepositoryMergeReceipt;
-    try {
+    if (!receipt) try {
       receipt = await host.repositoryProvider.mergePullRequest(configured, {
         providerPullRequestId: pullRequestId, expectedHeadOid: reviewHeadOid, method: 'squash', requestId,
         operationKey: `integration-agent:${String(row.id)}:${reviewHeadOid}`,
@@ -86,7 +100,14 @@ export async function mergeIntegrationAgent(
       // A timeout can mean GitHub merged the PR but the response was lost. Re-read
       // the authority before allowing any local terminal projection.
       const afterError = await host.repositoryProvider.getPullRequest(configured, pullRequestId, String(row.owner_user_id));
-      if (afterError.state !== 'merged' || !afterError.mergeCommitOid) throw error;
+      if (afterError.state !== 'merged') throw error;
+      if (afterError.providerPullRequestId !== pullRequestId || afterError.headOid !== reviewHeadOid
+        || afterError.baseRef !== configured.baseBranch || afterError.headRef !== String(row.integration_branch)) {
+        throw new TaskboardValidationError('Integration Agent review is stale after pull request subject drift', 'TASKBOARD_SUBJECT_STALE');
+      }
+      if (!afterError.mergeCommitOid) {
+        throw new TaskboardValidationError('Provider did not return the merged commit oid', 'TASKBOARD_PROVIDER_RECEIPT_INCOMPLETE');
+      }
       receipt = {
         providerRequestId: requestId,
         providerPullRequestId: pullRequestId,

@@ -9,13 +9,17 @@ import { purposeForIntegrationAgentStatus } from './workflow/decider.js';
 export function resolveWorkflowContract(
   task: TaskBoardTask,
   requestedPurpose?: TaskBoardExecutionPurpose,
+  options: { activeExecution?: boolean } = {},
 ): TaskBoardWorkflowContract {
   const purpose = requestedPurpose ?? purposeForTask(task);
   const base = { taskKind: task.kind ?? 'delivery', purpose, status: task.status };
   if (task.kind === 'integration') {
     if (task.workflowVersion === 3) {
       const expected = purposeForIntegrationAgentStatus(task.status);
-      if (!expected || expected !== purpose) invalidPurpose(task, purpose);
+      if (options.activeExecution) {
+        const activeStageStatus = purpose === 'review' ? 'in_review' : 'in_progress';
+        if (task.status !== activeStageStatus) invalidPurpose(task, purpose);
+      } else if (!expected || expected !== purpose) invalidPurpose(task, purpose);
       if (purpose === 'work') return {
         ...base,
         objective: '维护持久 Integration Agent 的单一 branch/PR，并交付独立复核。',

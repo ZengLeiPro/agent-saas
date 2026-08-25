@@ -83,12 +83,11 @@ import {
   resendQueuedEntry, restoreQueuedEntryForEdit,
 } from "./useChatAppStateQueueConsistency";
 import { useChatNotificationState, useChatStreamCorrelation } from "./useChatRuntimeState";
-
+import { useInteractionResponseWaiters } from "./useInteractionResponseWaiters";
 export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const { user } = useAuth();
   // 授权模式对所有用户生效（2026-07-02 起），用户在账户设置中自行切换。
   const authorizationModeEnabled = user?.preferences?.authorizationModeEnabled === true;
-
   // 从 URL 解析初始状态（仅执行一次）
   const [urlState] = useState(() => parseUrl());
 
@@ -329,6 +328,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // ---- Sub-hooks ----
   const msg = useMessages();
+  const { respondToInteraction, settleInteractionResponse } = useInteractionResponseWaiters();
   const uploadSessionIdRef = useRef<string | null>(urlState.sessionId); const getUploadSessionId = useCallback(() => uploadSessionIdRef.current, []);
   const fileUpload = useFileUpload(activeTab, getUploadSessionId);
   const { connectionState, dispatchConnection } = useConnectionState();
@@ -1512,7 +1512,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       // 无 sessionId 的流事件则归属当前已 attach 的会话。
       const eventSessionId = 'sessionId' in data && typeof data.sessionId === 'string'
         ? data.sessionId
-        : wsLatestSessionIdRef.current.value ?? sessionIdRef.current;
+        : wsLatestSessionIdRef.current?.value ?? sessionIdRef.current;
       if (envelope.eventId != null && eventSessionId) {
         const existing = activeRunsBySession.current.get(eventSessionId);
         activeRunsBySession.current.set(eventSessionId, {
@@ -1534,8 +1534,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         }
       }
 
-      // 忽略控制消息
+      // 表单回答必须以服务端回执为准：此前这里直接忽略回执，而提交端会先乐观
+      // 标记“已回答/排队”。当服务端拒绝或恢复失败时，UI 就会永久伪装成排队。
       if (data.type === 'respond_ok' || data.type === 'respond_error') {
+        settleInteractionResponse(data);
         return;
       }
 
@@ -2933,23 +2935,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   }, [setInput, selectSessionWithUrl]);
 
   // ---- Interaction responses (via WS) ----
-  const respondToInteraction = useCallback(async (
-    interactionId: string,
-    response: Record<string, unknown>,
-  ) => {
-    await wsClient.ensureConnectedSend({
-      action: 'respond',
-      interactionId,
-      sessionId: sessionIdRef.current,
-      ...response,
-    });
-  }, []);
-
   const handlePermissionResponse = useCallback(async (
     interactionId: string,
     allow: boolean,
   ) => {
-    await respondToInteraction(interactionId, { allow, message: allow ? undefined : "User denied" });
+    try { await respondToInteraction(interactionId, sessionIdRef.current, { allow, message: allow ? undefined : "User denied" }); } catch (error) { pushNotification({ key: `interaction_response_failed:${interactionId}`, text: error instanceof Error ? error.message : '提交审批失败，请重试', priority: 'high', timeoutMs: 8_000 }); return; }
 
     const idx = msg.messagesRef.current.findIndex(
       (m) => m.type === "permission_request" && m.interactionId === interactionId
@@ -2969,7 +2959,17 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     interactionId: string,
     answers: AskUserAnswers,
   ) => {
-    await respondToInteraction(interactionId, { answers });
+    try {
+      await respondToInteraction(interactionId, sessionIdRef.current, { answers });
+    } catch (error) {
+      pushNotification({
+        key: `interaction_response_failed:${interactionId}`,
+        text: error instanceof Error ? error.message : '提交回答失败，请重试',
+        priority: 'high',
+        timeoutMs: 8_000,
+      });
+      return;
+    }
 
     const idx = msg.messagesRef.current.findIndex(
       (m) => m.type === "ask_user" && m.interactionId === interactionId
@@ -2983,7 +2983,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
     upsertRuntimeStatusMessage(msg, 'queued');
     markSessionRead(sessionIdRef.current);
-  }, [respondToInteraction, msg.messagesRef, msg.updateMessageAt, markSessionRead]);
+  }, [respondToInteraction, msg.messagesRef, msg.updateMessageAt, markSessionRead, pushNotification]);
 
   // ---- 会话切换时恢复模型选择 ----
   // 仅在 sessionId 实际切换时才重置/恢复，避免 sessions 列表刷新（WS 重连、

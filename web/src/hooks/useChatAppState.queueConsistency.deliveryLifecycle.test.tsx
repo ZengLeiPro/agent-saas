@@ -161,6 +161,7 @@ const fileB: UploadedFile = {
 };
 
 beforeEach(() => {
+  window.history.replaceState(null, "", "/chat");
   harness.messageHandlers.clear();
   harness.stateHandlers.clear();
   harness.sends.mockClear();
@@ -467,5 +468,21 @@ describe("useChatAppState queue delivery lifecycle", () => {
       mimeType: fileB.mimeType,
       isImage: fileB.isImage,
     }]);
+  });
+
+  it("handles a rejected permission response without surfacing an unhandled rejection", async () => {
+    harness.session.sessionId = "session-permission";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+
+    const pending = result.current.handlePermissionResponse("permission-1", true);
+    await waitFor(() => expect(harness.sends).toHaveBeenCalledWith(expect.objectContaining({
+      action: "respond", interactionId: "permission-1",
+    })));
+    act(() => emit({ type: "respond_error", interactionId: "permission-1", error: "Run unavailable" }));
+    await act(async () => { await pending; });
+    await waitFor(() => expect(result.current.notifications).toEqual(expect.arrayContaining([
+      expect.objectContaining({ text: "Run unavailable", priority: "high" }),
+    ])));
   });
 });

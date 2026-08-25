@@ -56,7 +56,7 @@ describe('taskboard execution writeback prompt', () => {
     expect(prompt).toContain('只传 commitOid');
     expect(prompt).toContain('基线漂移重建以冻结 base 为父');
     expect(prompt).toContain('不得执行 git push');
-    expect(prompt.indexOf('受控 push 成功')).toBeLessThan(prompt.indexOf('execution.finish({status: "in_review", body})') + 1);
+    expect(prompt.indexOf('受控 push 成功')).toBeLessThan(prompt.indexOf('execution.finish({targetStatus: "in_review", body})') + 1);
     expect(executionWritebackInstructions(context('review')).join('\n')).not.toContain('integration_candidate.push');
   });
 });

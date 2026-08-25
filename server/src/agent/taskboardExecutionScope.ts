@@ -2,6 +2,11 @@ import type { TaskboardExecutionContext, TaskboardIdentity } from '../taskboard/
 import type { TaskboardManageInput } from './taskboardToolActions.js';
 
 const LEGACY_EXECUTION_ACTIONS = ['list', 'create', 'update', 'move', 'execute'] as const;
+const EXECUTION_USER_READ_ACTIONS = [
+  'board.list', 'board.search', 'board.get',
+  'task.list', 'task.search', 'task.get',
+  'comment.list', 'execution.list', 'execution.context',
+] as const;
 
 /** Enforces the current active Execution as the sole authority for every Agent writeback. */
 export function assertTaskboardExecutionScope(
@@ -14,6 +19,9 @@ export function assertTaskboardExecutionScope(
     || context.identity.ownerUserId !== identity.ownerUserId) {
     throw new Error('任务看板执行身份不匹配');
   }
+  if (EXECUTION_USER_READ_ACTIONS.includes(
+    input.action as (typeof EXECUTION_USER_READ_ACTIONS)[number],
+  )) return;
   if (!['queued', 'running', 'waiting_user', 'waiting_approval'].includes(context.execution.status)) {
     throw new Error('任务看板执行已终止，不能继续回写');
   }

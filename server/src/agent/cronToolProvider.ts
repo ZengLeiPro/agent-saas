@@ -66,7 +66,7 @@ const CRON_MANAGE_ACTIONS = ['delete', 'run', ...TASKBOARD_MANAGE_ACTIONS] as co
 const dateTimeSchema = z.string().datetime({ offset: true });
 const cronManageSchema = z.object({
   target: z.enum(['cron', 'taskboard']).optional().describe('操作对象。默认 cron；taskboard 由服务端按当前用户与租户鉴权。'),
-  action: z.enum(CRON_MANAGE_ACTIONS).describe('cron 支持 list/create/update/delete/run；taskboard 支持 board/task/comment/execution 资源 action。Work/Review 必须用 execution.pull_request.inspect 读取当前 head 的权威 CI；Merge 使用 integration.source.inspect。Integration Work 单父 commit 后须调用 execution.integration_candidate.push；正常修复以当前 head 为父，基线漂移重建以冻结 base 为父，且不得自行 git push。'),
+  action: z.enum(CRON_MANAGE_ACTIONS).describe('cron 支持 list/create/update/delete/run；taskboard 支持 board/task/comment/execution 资源 action。Execution 可按当前用户权限执行只读查询，写操作仍受当前任务与阶段约束；execution.finish 使用 targetStatus 与 body 完成交接。Work/Review 必须用 execution.pull_request.inspect 读取当前 head 的权威 CI；Merge 使用 integration.source.inspect。Integration Work 单父 commit 后须调用 execution.integration_candidate.push；正常修复以当前 head 为父，基线漂移重建以冻结 base 为父，且不得自行 git push。'),
   id: z.string().optional().describe('cron job、旧 taskboard 任务或评论 id。'),
   boardId: z.string().optional().describe('taskboard 看板 id。'),
   taskId: z.string().optional().describe('taskboard 任务 id。'),
@@ -88,6 +88,8 @@ const cronManageSchema = z.object({
   notify: notifyConfigSchema.optional().describe('cron 完成后的结果推送配置。'),
   branch: z.string().trim().min(1).max(512).nullable().optional(),
   status: z.enum(TASKBOARD_STATUSES).optional(),
+  targetStatus: z.enum(TASKBOARD_STATUSES).optional()
+    .describe('execution.finish 必填：当前阶段结束后任务应处于的目标状态。'),
   statuses: z.array(z.enum(TASKBOARD_STATUSES)).max(TASKBOARD_STATUSES.length).optional(),
   priority: z.enum(TASKBOARD_PRIORITIES).optional(),
   priorities: z.array(z.enum(TASKBOARD_PRIORITIES)).max(TASKBOARD_PRIORITIES.length).optional(),

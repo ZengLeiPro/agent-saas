@@ -820,17 +820,10 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       tenantId: context.identity.tenantId,
     });
     const attachments = await extractAgentAttachments(output, userCwd);
-    let resumeExecution: TaskboardExecutionClaimInput | undefined;
-    if (context.execution.protocolVersion === 2) {
-      resumeExecution = await this.prepareExecutionClaim(context.identity, context.task.id,
-        { expectedVersion: context.task.version, purpose: context.execution.purpose },
-        { executionId: `${context.execution.id}-resume`, trigger: 'resume', sessionId: context.execution.sessionId });
-    }
     let reviewExecution: TaskboardExecutionClaimInput | undefined;
     if (context.execution.purpose === 'work'
       && !(context.task.kind === 'integration' && context.task.workflowVersion === 3)
-      && (context.execution.protocolVersion !== 2 || context.execution.transitionedAt
-        || context.task.status === 'in_review')) {
+      && (context.execution.protocolVersion !== 2 || context.execution.transitionedAt)) {
       const existingSession = await this.options.sessionCatalog.get(sessionId);
       const reviewIdentity = this.options.resolveOwnerIdentity?.(context.identity.ownerUserId) ?? {
         ...context.identity,
@@ -845,15 +838,13 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       status: 'succeeded' as const,
       commentBody: limitComment(`Agent 交付\n\n${stripFileMarkers(output)}`),
       ...(attachments.length ? { attachments } : {}),
-      ...(resumeExecution ? { resumeExecution } : {}),
       ...(reviewExecution ? { reviewExecution } : {}),
     };
     const completed = reconcileLeaseId
       ? await this.options.store.completeExecutionFromReconcile(runId, completion, reconcileLeaseId)
       : await this.options.store.completeExecution(runId, completion);
-    if (completed && resumeExecution) await this.dispatchExecution(resumeExecution.runId);
     if (completed && reviewExecution) await this.dispatchExecution(reviewExecution.runId);
-    if (completed && !reviewExecution && context.execution.protocolVersion === 2
+    if (completed?.execution.transitionedAt && !reviewExecution && context.execution.protocolVersion === 2
       && context.execution.purpose === 'work' && completed.task.status === 'in_review'
       && !(completed.task.kind === 'integration' && completed.task.workflowVersion === 3)) {
       await this.startExecutionInternal(context.identity, completed.task.id,

@@ -6,10 +6,10 @@ import type { TaskboardExecutionContext } from '../taskboard/types.js';
 import { comment, execution, identity, makeRig, task } from './taskboardExecutionTestRig.js';
 
 describe('TaskboardExecutionCoordinator finish protocol', () => {
-  it('V2 Run 未 finish 时结束当前 Run 并自动续跑同一阶段', async () => {
+  it('V2 work 未 finish 时即使任务已进入复核，也不自动续跑或派发 review', async () => {
     const currentExecution = execution({ protocolVersion: 2, status: 'running' });
-    const completeExecution = vi.fn(async () => ({
-      task: { ...task, status: 'in_progress' as const, version: task.version + 1 },
+    const completeExecution = vi.fn(async (_runId: string, _input: unknown) => ({
+      task: { ...task, status: 'in_review' as const, version: task.version + 1 },
       execution: execution({ protocolVersion: 2, status: 'succeeded' }),
     }));
     const rig = makeRig({
@@ -17,7 +17,7 @@ describe('TaskboardExecutionCoordinator finish protocol', () => {
       listExecutions: vi.fn(async () => [currentExecution]),
       getExecutionContextByRunId: vi.fn(async (): Promise<TaskboardExecutionContext> => ({
         identity,
-        task: { ...task, status: 'in_progress' },
+        task: { ...task, status: 'in_review' },
         boardPrompt: '完成当前职责。',
         comments: [comment],
         execution: currentExecution,
@@ -36,18 +36,15 @@ describe('TaskboardExecutionCoordinator finish protocol', () => {
 
     expect(completeExecution).toHaveBeenCalledWith(currentExecution.runId, expect.objectContaining({
       status: 'succeeded',
-      resumeExecution: expect.objectContaining({
-        purpose: 'work',
-        trigger: 'resume',
-        sessionId: currentExecution.sessionId,
-      }),
     }));
+    expect(completeExecution.mock.calls[0]?.[1]).not.toHaveProperty('resumeExecution');
     expect(rig.store.claimExecution).not.toHaveBeenCalled();
+    expect(rig.store.claimExecutionDispatch).not.toHaveBeenCalled();
   });
 
   it('finish 与 run_finished 并发时按事务结果补派 review', async () => {
     const currentExecution = execution({ protocolVersion: 2, status: 'running' });
-    const completeExecution = vi.fn(async () => ({
+    const completeExecution = vi.fn(async (_runId: string, _input: unknown) => ({
       task: { ...task, status: 'in_review' as const, version: task.version + 1 },
       execution: execution({ protocolVersion: 2, status: 'succeeded', transitionedAt: '2026-08-01T03:00:00Z' }),
     }));
@@ -69,9 +66,9 @@ describe('TaskboardExecutionCoordinator finish protocol', () => {
       expect.objectContaining({ purpose: 'review' }));
   });
 
-  it.each(['review', 'merge'] as const)('%s Run 未 finish 时复用原 Session', async (purpose) => {
+  it.each(['review', 'merge'] as const)('%s Run 未 finish 时不自动续跑', async (purpose) => {
     const currentExecution = execution({ protocolVersion: 2, status: 'running', purpose });
-    const completeExecution = vi.fn(async () => ({
+    const completeExecution = vi.fn(async (_runId: string, _input: unknown) => ({
       task: { ...task, status: 'in_progress' as const },
       execution: execution({ protocolVersion: 2, status: 'succeeded', purpose }),
     }));
@@ -97,7 +94,8 @@ describe('TaskboardExecutionCoordinator finish protocol', () => {
     } as PlatformEvent);
 
     expect(completeExecution).toHaveBeenCalledWith(currentExecution.runId, expect.objectContaining({
-      resumeExecution: expect.objectContaining({ purpose, sessionId: currentExecution.sessionId }),
+      status: 'succeeded',
     }));
+    expect(completeExecution.mock.calls[0]?.[1]).not.toHaveProperty('resumeExecution');
   });
 });

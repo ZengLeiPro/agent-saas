@@ -574,7 +574,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           snapshotRuntimeStatuses.set(item.sessionId, runtimeStatus);
           activeRunsBySession.current.set(item.sessionId, {
             ...(existing ?? { attached: false }),
-            status: runtimeStatus, source: 'snapshot',
+            status: runtimeStatus, source: existing?.source === 'ws' && (!item.runId || !existing.runId || item.runId === existing.runId) && (!item.streamId || !existing.streamId || item.streamId === existing.streamId) ? 'ws' : 'snapshot',
             streamId: item.streamId ?? existing?.streamId,
             runId: item.runId ?? existing?.runId,
             attached: existing?.attached ?? false,

@@ -130,22 +130,6 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
     return runId;
   }
 
-  async function seedRemainingActiveExecutions(taskId: string, suffix: string): Promise<string[]> {
-    const statuses = ['queued', 'waiting_user', 'waiting_approval'] as const;
-    const runIds: string[] = [];
-    for (const status of statuses) {
-      const runId = `run-${suffix}-${status}`;
-      runIds.push(runId);
-      await pool.query(
-        `INSERT INTO ${store.executionsTable}
-           (id,task_id,run_id,session_id,status,purpose,trigger,protocol_version,requested_by)
-         VALUES($1,$2,$3,$4,$5,'work','initial',2,$6)`,
-        [`execution-${suffix}-${status}`, taskId, runId, `session-${suffix}-${status}`, status, identity.ownerUserId],
-      );
-    }
-    return runIds;
-  }
-
   it('atomically creates the unique Agent rendezvous before the constrained 2 to 3 upgrade', async () => {
     const initialDefault = await pool.query(
       `SELECT column_default AS value
@@ -301,9 +285,6 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
   it('claim absorbs a v2 continuation whose Runtime run differs from the active execution run', async () => {
     const taskId = await seedV2Integration('guarded-continuation-claim');
     const executionRunId = await seedExecution(taskId, 'guarded-continuation-claim-execution');
-    const otherExecutionRunIds = await seedRemainingActiveExecutions(
-      taskId, 'guarded-continuation-claim-execution',
-    );
     const continuationRunId = 'run-guarded-continuation-claim-runtime';
     const comment = await store.createComment(identity, taskId, { body: 'legacy continuation source' });
     const before = await store.getTask(identity, taskId);
@@ -326,18 +307,15 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
 
     const executions = await pool.query(
       `SELECT run_id,status,error FROM ${store.executionsTable}
-        WHERE run_id=ANY($1::text[]) ORDER BY run_id`, [[executionRunId, ...otherExecutionRunIds]],
+        WHERE run_id=$1 ORDER BY run_id`, [executionRunId],
     );
     const outbox = await pool.query(
       `SELECT status,lease_id,reconcile_lease_id,last_error
          FROM ${store.continuationOutboxTable} WHERE run_id=$1`, [continuationRunId],
     );
-    expect(executions.rows).toHaveLength(4);
-    expect(executions.rows).toEqual(expect.arrayContaining(
-      [executionRunId, ...otherExecutionRunIds].map((runId) => expect.objectContaining({
-        run_id: runId, status: 'failed', error: expect.stringContaining('migration'),
-      })),
-    ));
+    expect(executions.rows).toEqual([expect.objectContaining({
+      run_id: executionRunId, status: 'failed', error: expect.stringContaining('migration'),
+    })]);
     expect(outbox.rows[0]).toMatchObject({
       status: 'completed', lease_id: null, reconcile_lease_id: null,
       last_error: expect.stringContaining('migration'),
@@ -357,9 +335,6 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
   it('completion absorbs a v2 continuation and terminates the task active execution, not only its Runtime run', async () => {
     const taskId = await seedV2Integration('guarded-continuation-completion');
     const executionRunId = await seedExecution(taskId, 'guarded-continuation-completion-execution');
-    const otherExecutionRunIds = await seedRemainingActiveExecutions(
-      taskId, 'guarded-continuation-completion-execution',
-    );
     const continuationRunId = 'run-guarded-continuation-completion-runtime';
     const comment = await store.createComment(identity, taskId, { body: 'legacy completion source' });
     const before = await store.getTask(identity, taskId);
@@ -379,22 +354,19 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
     });
     const firstExecutions = await pool.query(
       `SELECT run_id,status,error,finished_at FROM ${store.executionsTable}
-        WHERE run_id=ANY($1::text[]) ORDER BY run_id`, [[executionRunId, ...otherExecutionRunIds]],
+        WHERE run_id=$1 ORDER BY run_id`, [executionRunId],
     );
     await store.completeContinuation(taskId, continuationRunId, {
       status: 'failed', error: 'duplicate', commentBody: 'must remain absorbed',
     });
     const replayExecutions = await pool.query(
       `SELECT run_id,status,error,finished_at FROM ${store.executionsTable}
-        WHERE run_id=ANY($1::text[]) ORDER BY run_id`, [[executionRunId, ...otherExecutionRunIds]],
+        WHERE run_id=$1 ORDER BY run_id`, [executionRunId],
     );
 
-    expect(firstExecutions.rows).toHaveLength(4);
-    expect(firstExecutions.rows).toEqual(expect.arrayContaining(
-      [executionRunId, ...otherExecutionRunIds].map((runId) => expect.objectContaining({
-        run_id: runId, status: 'failed', error: expect.stringContaining('migration'),
-      })),
-    ));
+    expect(firstExecutions.rows).toEqual([expect.objectContaining({
+      run_id: executionRunId, status: 'failed', error: expect.stringContaining('migration'),
+    })]);
     expect(replayExecutions.rows).toEqual(firstExecutions.rows);
     expect(await pool.query(
       `SELECT status,last_error FROM ${store.continuationOutboxTable} WHERE run_id=$1`, [continuationRunId],

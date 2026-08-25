@@ -397,8 +397,10 @@ export async function runTaskboardV2Schema(
   // are historical-only and must never be installed by a new runtime.
   await client.query(`
     ALTER TABLE ${options.tasksTable}
-      ADD COLUMN IF NOT EXISTS workflow_version SMALLINT NOT NULL DEFAULT 2
-      CHECK (workflow_version IN (2, 3))
+      ADD COLUMN IF NOT EXISTS workflow_version SMALLINT NOT NULL DEFAULT 3
+      CHECK (workflow_version IN (2, 3));
+    ALTER TABLE ${options.tasksTable}
+      ALTER COLUMN workflow_version SET DEFAULT 3
   `);
   await runIntegrationAgentSchema(options, client);
   const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);

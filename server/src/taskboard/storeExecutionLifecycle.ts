@@ -10,8 +10,8 @@ import { finalizeExecutionForArchivedTask } from './archiveGuard.js';
 import { nextTaskColumnSortOrder } from './continuationStore.js';
 import { applyExecutionTaskCompletion, enqueueAutomaticReview } from './executionCompletion.js';
 import { resolveExecutionModelRef } from './executionFields.js';
-import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
+import { requireIntegrationAgentRendezvous } from './legacyIntegrationAgentMigration.js';
 import {
   assertExecutionRequestAllowed,
   isIrreversibleMerged,
@@ -100,38 +100,14 @@ export async function claimExecution(
       return { task: loaded.task, execution };
     }
     const facts: WorkflowFacts = await loadWorkflowFacts(store, client, loaded.task);
-    let candidateBinding: Record<string, unknown> | undefined;
     let integrationAgent = false;
     if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3) {
+      await requireIntegrationAgentRendezvous(store, client, loaded.task);
       const { agentsTable } = integrationAgentTableNames(store.integrationSourcesTable);
-      const agent = await client.query(`SELECT integration_task_id FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId]);
+      const agent = await client.query(
+        `SELECT integration_task_id FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId],
+      );
       integrationAgent = Boolean(agent.rows[0]);
-      if (!integrationAgent) {
-      const tables = integrationCandidateTableNames(store.integrationSourcesTable);
-      const bound = await client.query(
-        `SELECT c.id,c.state,c.version,c.current_revision,c.work_round,c.workflow_epoch,c.lane_epoch,r.head_oid
-           FROM ${tables.candidatesTable} c LEFT JOIN ${tables.revisionsTable} r
-             ON r.candidate_id=c.id AND r.revision=c.current_revision
-          WHERE c.integration_task_id=$1 FOR UPDATE OF c`, [taskId]);
-      candidateBinding = bound.rows[0];
-      if (!candidateBinding) {
-        throw new TaskboardValidationError(
-          'Workflow v3 integration task has no current candidate',
-          'TASKBOARD_CANDIDATE_REQUIRED',
-        );
-      }
-      facts.candidate = {
-        id: String(candidateBinding.id),
-        state: String(candidateBinding.state) as NonNullable<WorkflowFacts['candidate']>['state'],
-        version: Number(candidateBinding.version),
-        currentRevision: Number(candidateBinding.current_revision),
-        workRound: Number(candidateBinding.work_round),
-        workflowEpoch: String(candidateBinding.workflow_epoch),
-        laneEpoch: String(candidateBinding.lane_epoch),
-        ...(candidateBinding.head_oid ? { headOid: String(candidateBinding.head_oid) } : {}),
-      };
-      facts.hasMergeFact ||= facts.candidate.state === 'merged';
-      }
     }
     if (loaded.task.status === 'done' || loaded.task.status === 'canceled'
       || isIrreversibleMerged(loaded.task, facts)) {
@@ -195,13 +171,6 @@ export async function claimExecution(
       );
 
     const attemptId = input.attemptId ?? randomUUID();
-    if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3
-      && !integrationAgent && !candidateBinding?.head_oid) {
-      throw new TaskboardValidationError(
-        'Workflow v3 execution requires a current candidate revision binding',
-        'TASKBOARD_CANDIDATE_EXECUTION_BINDING_REQUIRED',
-      );
-    }
     let execution: TaskBoardExecution;
     try {
       const inserted = await client.query(
@@ -215,10 +184,7 @@ export async function claimExecution(
           input.executionId, taskId, input.runId, input.sessionId, purpose,
           input.trigger ?? 'initial', input.protocolVersion ?? 2, attemptId,
           identity.ownerUserId,
-          candidateBinding?.id ?? null, candidateBinding?.version ?? null,
-          candidateBinding?.current_revision ?? null, candidateBinding?.work_round ?? null,
-          candidateBinding?.workflow_epoch ?? null, candidateBinding?.lane_epoch ?? null,
-          candidateBinding?.head_oid ?? null,
+          null, null, null, null, null, null, null,
         ],
       );
       await client.query(

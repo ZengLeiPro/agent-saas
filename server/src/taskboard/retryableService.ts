@@ -440,6 +440,15 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.mergeIntegrationSourceV2(identity, runId, sourceId);
   }
 
+  async mergeIntegrationAgentV2(
+    identity: TaskboardIdentity,
+    runId: string,
+  ): Promise<TaskBoardTask> {
+    await this.init();
+    if (!this.target.mergeIntegrationAgentV2) throw new Error('Taskboard integration Agent gateway unavailable');
+    return this.target.mergeIntegrationAgentV2(identity, runId);
+  }
+
   async linkIntegrationRemediationV2(
     identity: TaskboardIdentity,
     runId: string,

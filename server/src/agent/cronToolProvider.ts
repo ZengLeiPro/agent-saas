@@ -66,7 +66,7 @@ const CRON_MANAGE_ACTIONS = ['delete', 'run', ...TASKBOARD_MANAGE_ACTIONS] as co
 const dateTimeSchema = z.string().datetime({ offset: true });
 const cronManageSchema = z.object({
   target: z.enum(['cron', 'taskboard']).optional().describe('操作对象。默认 cron；taskboard 由服务端按当前用户与租户鉴权。'),
-  action: z.enum(CRON_MANAGE_ACTIONS).describe('cron 支持 list/create/update/delete/run；taskboard 支持 board/task/comment/execution 资源 action。Work/Review 必须用 execution.pull_request.inspect 读取当前 head 的权威 CI；Merge 使用 integration.source.inspect。Integration Work 单父 commit 后须调用 execution.integration_candidate.push；正常修复以当前 head 为父，基线漂移重建以冻结 base 为父，且不得自行 git push。'),
+  action: z.enum(CRON_MANAGE_ACTIONS).describe('cron 支持 list/create/update/delete/run；taskboard 支持 board/task/comment/execution 资源 action。Work/Review 必须用 execution.pull_request.inspect 读取当前 head 的权威 CI；Integration Agent Merge 使用 integration.agent.merge，并在调用时复核当前 PR、CI 与审批 head。'),
   id: z.string().optional().describe('cron job、旧 taskboard 任务或评论 id。'),
   boardId: z.string().optional().describe('taskboard 看板 id。'),
   taskId: z.string().optional().describe('taskboard 任务 id。'),
@@ -121,7 +121,7 @@ const cronManageSchema = z.object({
   deliveryTaskIds: z.array(z.string().min(1).max(128)).min(1).max(100).optional(),
   expectedBoardVersion: z.number().int().min(1).optional(),
   commitOid: z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/).optional()
-    .describe('仅 execution.integration_candidate.push 使用：Work Agent 刚创建的完整 commit OID。'),
+    .describe('受控 Git 操作使用的完整 commit OID。'),
 }).strict();
 
 export const cronManageToolDescriptor: ToolDescriptor<CronManageInput> = {
@@ -150,7 +150,6 @@ export const cronManageToolDescriptor: ToolDescriptor<CronManageInput> = {
       && action !== 'task.dispatch'
       && action !== 'comment.delete'
       && action !== 'integration.create'
-      && action !== 'execution.integration_candidate.push'
       && dispatch !== true
     ) return { risk: 'workspace_write' };
     return undefined;
@@ -210,9 +209,7 @@ function recordTaskboardAudit(
         ? 'execution'
         : 'task';
   const resultResource = result?.[objectType] as { id?: unknown } | undefined;
-  const objectId = action === 'execution.integration_candidate.push' && typeof result?.candidateId === 'string'
-    ? result.candidateId
-    : typeof resultResource?.id === 'string'
+  const objectId = typeof resultResource?.id === 'string'
       ? resultResource.id
       : objectType === 'board'
         ? input.boardId
@@ -333,15 +330,8 @@ export class CronToolProvider implements ToolProvider {
           ...(identity.realName ? { displayName: `${identity.realName} @${identity.username}` } : {}),
           ...(identity.role ? { userRole: identity.role } : {}),
         };
-        const trustedWorkspace = input.action === 'execution.integration_candidate.push'
-          ? await this.options.taskboard.resolveTrustedWorkspace?.(taskboardIdentity, {
-              ...(context.workspace.id ? { id: context.workspace.id } : {}),
-              executionTarget: context.workspace.executionTarget,
-            })
-          : undefined;
         const result = await invokeTaskboardAction(this.options.taskboard, taskboardIdentity, input, {
           ...(execution ? { execution } : {}),
-          ...(trustedWorkspace ? { trustedWorkspace } : {}),
           ...(context.sessionId ? { sessionId: context.sessionId } : {}),
         });
         recordTaskboardAudit(context, identity, input, taskboardExecution, result);

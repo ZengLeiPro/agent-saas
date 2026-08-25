@@ -566,7 +566,7 @@ export function BoardDialog({
                     <SelectTrigger aria-label="Integration workflow 版本"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="2">v2（稳定版，默认）</SelectItem>
-                      <SelectItem value="3">v3（Candidate）</SelectItem>
+                      <SelectItem value="3">v3（Integration Agent）</SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">新建策略默认 v2；任务创建后 workflow version 不可变。</p>
@@ -578,8 +578,8 @@ export function BoardDialog({
                     <div className="grid gap-2 sm:grid-cols-2">
                       {([
                         ["engineV3", "启用 v3 engine"],
-                        ["compose", "Candidate 组合"],
-                        ["review", "Candidate Review"],
+                        ["compose", "Agent 组合"],
+                        ["review", "Agent Review"],
                         ["merge", "合入 main"],
                         ["cleanup", "合入后 cleanup"],
                         ["workspaceSync", "Workspace 同步"],

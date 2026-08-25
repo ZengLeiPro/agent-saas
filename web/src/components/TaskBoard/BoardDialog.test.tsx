@@ -319,7 +319,7 @@ describe("BoardDialog", () => {
     expect(screen.queryByRole("checkbox", { name: "启用 v3 engine" })).toBeNull();
 
     await user.click(screen.getByRole("combobox", { name: "Integration workflow 版本" }));
-    await user.click(screen.getByRole("option", { name: "v3（Candidate）" }));
+    await user.click(screen.getByRole("option", { name: "v3（Integration Agent）" }));
     expect(screen.getByRole("checkbox", { name: "启用 v3 engine" }).getAttribute("data-state")).toBe("checked");
     await user.click(screen.getByRole("checkbox", { name: "Workspace 同步" }));
     await user.click(screen.getByRole("button", { name: "创建看板" }));

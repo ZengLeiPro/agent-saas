@@ -8,12 +8,12 @@ import type {
 } from '../../../shared/src/types/taskboard.js';
 import { rowToBoard } from './boardFields.js';
 import { repositoryWithBoardCiPolicy } from './ciPolicy.js';
-import { loadExecutionIntegrationCandidate } from './executionCandidateContext.js';
+import { loadExecutionIntegrationAgent } from './executionIntegrationAgentContext.js';
+import { ensureLegacyIntegrationAgentRendezvous } from './legacyIntegrationAgentMigration.js';
 import { assertIntegrationSourcesProviderReady } from './integrationSourceCiGate.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
 import { rowToIntegrationSource } from './integrationSourceMapper.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
-import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
 import { resolveExecutionContextWorkflowContract } from './executionContextContract.js';
 import {
   commentExecutionJoin,
@@ -48,13 +48,8 @@ export interface TaskboardV2StoreOptions {
   remediationAttemptsTable: string;
   cancellationOutboxTable: string;
   repositoryProvider?: RepositoryProvider;
+  /** Legacy Candidate-only adapter; Agent-first paths always use repositoryProvider. */
   integrationV3RepositoryProvider?: RepositoryProvider;
-  /** Optional for structural v2 hosts; PgTaskboardStore always supplies a fail-closed implementation. */
-  probeIntegrationV3Repository?(input: {
-    tenantId: string;
-    ownerUserId: string;
-    repository: TaskBoardRepositoryConfig;
-  }): Promise<void>;
 }
 
 const SORT_GAP = 1024;
@@ -168,20 +163,10 @@ export async function createIntegrationBatch(
       repository,
       policy as unknown as TaskBoardIntegrationPolicy,
     );
-    if (workflowVersion === 3 && policy.featureFlags?.engineV3 !== true) {
-      throw new TaskboardValidationError('Workflow v3 requires the engineV3 feature flag', 'TASKBOARD_INTEGRATION_V3_DISABLED');
-    }
     // Agent-first integrations run through the generic durable execution coordinator;
     // they do not depend on the retired Candidate worker heartbeat.
     if (workflowVersion === 3 && !repository.baseBranch) {
       throw new TaskboardValidationError('Workflow v3 requires a repository base branch', 'TASKBOARD_REPOSITORY_REQUIRED');
-    }
-    if (workflowVersion === 3) {
-      await options.probeIntegrationV3Repository?.({
-        tenantId: identity.tenantId,
-        ownerUserId: identity.ownerUserId,
-        repository,
-      });
     }
     if (source !== 'manual_batch' && policy.trigger?.mode !== (source === 'scheduled_policy' ? 'scheduled' : 'on_ready')) {
       throw new TaskboardValidationError('Integration trigger no longer matches board policy', 'TASKBOARD_POLICY_CHANGED');
@@ -244,7 +229,7 @@ export async function createIntegrationBatch(
       // Integration Agent reconciles this PR directly with GitHub on every wake;
       // no source head/review snapshot is promoted into server-side authority.
     }
-    const sourceProvider = workflowVersion === 3 ? options.integrationV3RepositoryProvider : options.repositoryProvider;
+    const sourceProvider = options.repositoryProvider;
     await assertIntegrationSourcesProviderReady(sourceProvider, providerRepository, String(board.owner_user_id), sources.rows);
     const duplicate = await client.query(
       `SELECT s.delivery_task_id,s.provider_pull_request_id
@@ -374,6 +359,7 @@ export async function cancelIntegrationTask(
       throw new TaskboardValidationError('Stop the active merge execution before canceling');
     }
     if ((loaded.task.workflowVersion ?? 2) === 3) {
+      await ensureLegacyIntegrationAgentRendezvous(options, client, loaded.task);
       const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
       const agent = await client.query(
         `SELECT repository_id FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId],
@@ -403,55 +389,10 @@ export async function cancelIntegrationTask(
         await appendChange(options, client, taskId, 'integration.agent.canceled', 'user', identity.ownerUserId, { reason }, true);
         return loadTask(options, client, taskId);
       }
-      const tables = integrationCandidateTableNames(options.integrationSourcesTable);
-      const candidate = await client.query(
-        `SELECT * FROM ${tables.candidatesTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId]);
-      const row = candidate.rows[0];
-      if (!row || ['merging','merged','canceled'].includes(String(row.state))) {
-        throw new TaskboardValidationError(
-          String(row?.state) === 'merging' ? 'A merging candidate must be reconciled before cancellation' : 'Workflow v3 candidate is already terminal',
-          String(row?.state) === 'merging' ? 'TASKBOARD_PROVIDER_RESULT_UNKNOWN' : 'TASKBOARD_CANDIDATE_CANCEL_INVALID',
-        );
-      }
-      const uncertainV3 = await client.query(
-        `SELECT 1 FROM ${tables.providerOperationsTable}
-          WHERE candidate_id=$1 AND kind='merge_pull_request' AND state IN ('executing','unknown','succeeded') LIMIT 1`, [row.id]);
-      if (uncertainV3.rows[0]) throw new TaskboardValidationError(
-        'Provider result must be reconciled before cancellation', 'TASKBOARD_PROVIDER_RESULT_UNKNOWN');
-      const reason = input.reason?.trim() || 'Integration task canceled by user';
-      const changed = await client.query(
-        `UPDATE ${tables.candidatesTable}
-            SET state='canceled',approved_revision=NULL,approved_review_execution_id=NULL,last_error=$2,
-                workflow_epoch=workflow_epoch+1,worker_status='idle',worker_checkpoint='{}'::jsonb,
-                worker_error=NULL,worker_lease_id=NULL,worker_lease_expires_at=NULL,worker_available_at=now(),
-                version=version+1,updated_at=now()
-          WHERE id=$1 AND state NOT IN ('merged','canceled') RETURNING id`, [row.id, reason]);
-      if (!changed.rows[0]) throw new TaskboardValidationError('Workflow v3 candidate changed', 'TASKBOARD_CANDIDATE_CAS_MISMATCH');
-      await client.query(
-        `UPDATE ${tables.providerOperationsTable} SET state='failed',error=$2,updated_at=now()
-          WHERE candidate_id=$1 AND state='prepared'`, [row.id, `Candidate canceled before provider execution: ${reason}`]);
-      await client.query(
-        `UPDATE ${tables.requestsOutboxTable}
-            SET status='failed',lease_id=NULL,lease_expires_at=NULL,last_error=$2,updated_at=now()
-          WHERE candidate_id=$1 AND kind<>'cleanup' AND status IN ('pending','processing')`,
-        [row.id, `Candidate canceled before request execution: ${reason}`]);
-      await client.query(
-        `UPDATE ${options.tasksTable}
-            SET status='canceled',completed_at=NULL,workflow_epoch=workflow_epoch+1,next_action='none',
-                next_action_revision=next_action_revision+1,version=version+1,updated_at=now()
-          WHERE id=$1 AND workflow_version=3`, [taskId]);
-      await client.query(
-        `UPDATE ${options.integrationSourcesTable}
-            SET state='canceled',last_error=$2,updated_at=now()
-          WHERE integration_task_id=$1 AND state<>'merged' AND merged_commit_oid IS NULL`, [taskId, reason]);
-      await client.query(
-        `UPDATE ${options.integrationLanesTable}
-            SET active_integration_task_id=NULL,lease_id=NULL,epoch=epoch+1,updated_at=now()
-          WHERE repository_id=$1 AND active_integration_task_id=$2 AND epoch=$3::bigint`,
-        [String(row.repository_id), taskId, String(row.lane_epoch)]);
-      await appendChange(options, client, taskId, 'integration.canceled.v3', 'user', identity.ownerUserId,
-        { candidateId: String(row.id), reason }, true);
-      return loadTask(options, client, taskId);
+      throw new TaskboardValidationError(
+        'Integration task has no Agent rendezvous record',
+        'TASKBOARD_INTEGRATION_AGENT_REQUIRED',
+      );
     }
     const uncertain = await client.query(
       `SELECT 1
@@ -542,6 +483,8 @@ export async function getExecutionContextV2(
   const client = await options.pool.connect();
   try {
     const loaded = await loadAccessibleTaskAndBoard(options, client, identity, taskId, false);
+    // Legacy Candidate rows are only consulted once to seed the Agent record.
+    await ensureLegacyIntegrationAgentRendezvous(options, client, loaded.task);
     const include = new Set(input.include ?? ['task', 'board', 'comments', 'executions', 'integrationSources']);
     const latestExecutionResult = await client.query(
       `SELECT e.*, t.workflow_epoch
@@ -608,7 +551,7 @@ export async function getExecutionContextV2(
       ...(executions ? { executions: executions.rows.map(rowToExecution) } : {}),
       ...(sources ? { integrationSources: sources.rows.map(rowToIntegrationSource) } : {}),
       ...(include.has('integrationSources') && loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3
-        ? { integrationCandidate: await loadExecutionIntegrationCandidate(client, options.integrationSourcesTable, taskId) } : {}),
+        ? { integrationAgent: await loadExecutionIntegrationAgent(client, options.integrationSourcesTable, taskId) } : {}),
       ...(page.length ? { changes: page.map(rowToChange) } : {}),
       asOfSeq,
       ...(page.length && changeRows.rows.length > limit

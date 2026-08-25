@@ -553,6 +553,10 @@ export interface TaskboardService {
     runId: string,
     sourceId: string,
   ): Promise<TaskboardIntegrationMergeResult>;
+  mergeIntegrationAgentV2?(
+    identity: TaskboardIdentity,
+    runId: string,
+  ): Promise<TaskBoardTask>;
   linkIntegrationRemediationV2?(
     identity: TaskboardIdentity,
     runId: string,

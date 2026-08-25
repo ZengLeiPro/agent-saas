@@ -411,12 +411,29 @@ export interface TaskBoardExecutionIntegrationCandidate {
   sourceSnapshots: TaskBoardIntegrationCandidateSourceSnapshot[];
 }
 
+export interface TaskBoardExecutionIntegrationAgent {
+  integrationTaskId: string;
+  deliverySourceIds: string[];
+  repositoryId: string;
+  durableSessionId?: string;
+  integrationBranch: string;
+  providerPullRequestId?: string;
+  status: 'active' | 'reviewing' | 'ready_to_merge' | 'merged' | 'canceled';
+  reviewHeadOid?: string;
+  verdict?: 'approved' | 'changes_requested';
+  reviewExecutionId?: string;
+  updatedAt: string;
+}
+
 export interface TaskBoardExecutionContextResponse {
   board: TaskBoard;
   task: TaskBoardTask;
   comments?: TaskBoardComment[];
   executions?: TaskBoardExecution[];
   integrationSources?: TaskBoardIntegrationSource[];
+  /** Live Agent-first integration projection. Candidate data is history-only. */
+  integrationAgent?: TaskBoardExecutionIntegrationAgent;
+  /** @deprecated Historical Candidate projection; never supplied by Agent-first context. */
   integrationCandidate?: TaskBoardExecutionIntegrationCandidate;
   changes?: TaskBoardChange[];
   asOfSeq: string;

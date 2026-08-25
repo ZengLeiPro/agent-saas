@@ -51,7 +51,6 @@ export const TASKBOARD_RESOURCE_ACTIONS = [
   'execution.list',
   'execution.context',
   'execution.comment',
-  'execution.integration_candidate.push',
   'execution.pull_request.set',
   'execution.pull_request.inspect',
   'execution.pull_request.log',
@@ -60,10 +59,10 @@ export const TASKBOARD_RESOURCE_ACTIONS = [
   'integration.create',
   'integration.cancel',
   'integration.sources',
-  'integration.candidate',
   'integration.source.inspect',
   'integration.source.log',
   'integration.source.merge',
+  'integration.agent.merge',
 ] as const;
 export const TASKBOARD_MANAGE_ACTIONS = [
   ...TASKBOARD_LEGACY_ACTIONS,
@@ -81,7 +80,6 @@ export const TASKBOARD_READ_ACTIONS = [
   'execution.list',
   'execution.context',
   'integration.sources',
-  'integration.candidate',
   'integration.source.inspect',
 ] as const;
 export interface TaskboardAttachmentInput {
@@ -137,7 +135,7 @@ export interface TaskboardManageInput {
   reason?: string;
   deliveryTaskIds?: string[];
   expectedBoardVersion?: number;
-  /** execution.integration_candidate.push 的唯一模型输入。 */
+  /** 受控 Git 操作使用的提交 OID。 */
   commitOid?: string;
 }
 export interface TaskboardToolOptions {
@@ -348,18 +346,6 @@ export async function invokeTaskboardAction(
         },
       }) as unknown as Record<string, unknown>;
     }
-    case 'execution.integration_candidate.push': {
-      if (!scope.execution || !scope.trustedWorkspace) {
-        throw new Error('当前 Integration Work Execution 缺少受信 workspace 绑定');
-      }
-      const integrationPush = options.integrationPush?.();
-      if (!integrationPush) throw new Error('Integration Work 受控 push 服务未启用');
-      return integrationPush.pushCandidate(identity, {
-        executionId: scope.execution.execution.id,
-        workspaceRoot: scope.trustedWorkspace.root,
-        commitOid: requireCommitOid(input.commitOid),
-      });
-    }
     case 'execution.comment': {
       if (!scope.execution || !service.createExecutionCommentV2) {
         throw new Error('仅当前任务 Execution 可以写入 Agent 进展评论');
@@ -444,11 +430,6 @@ export async function invokeTaskboardAction(
       const sources = await service.listIntegrationSources(identity, taskId);
       return { count: sources.length, sources };
     }
-    case 'integration.candidate': {
-      if (!service.getIntegrationCandidate) throw new Error('任务看板 Integration v3 candidate 读取服务未启用');
-      const taskId = scope.execution?.task.id ?? requireId(input, 'taskId');
-      return await service.getIntegrationCandidate(identity, taskId) as unknown as Record<string, unknown>;
-    }
     case 'integration.source.inspect': {
       if (!scope.execution || !service.inspectIntegrationSourceV2) {
         throw new Error('仅当前 merge Execution 可以检查集成来源');
@@ -480,6 +461,13 @@ export async function invokeTaskboardAction(
         scope.execution.execution.runId,
         requireField(input.sourceId, 'sourceId'),
       ) as unknown as Record<string, unknown>;
+    }
+    case 'integration.agent.merge': {
+      if (!scope.execution || !service.mergeIntegrationAgentV2) {
+        throw new Error('仅当前 integration merge Execution 可以合并 Agent pull request');
+      }
+      const task = await service.mergeIntegrationAgentV2(identity, scope.execution.execution.runId);
+      return { merged: true, task };
     }
     case 'execution.list': {
       const result = await requireExecutionService(options.executionService?.()).searchExecutions(

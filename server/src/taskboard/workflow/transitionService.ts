@@ -4,10 +4,8 @@ import type { PoolClient } from 'pg';
 import type {
   TaskBoardExecution,
   TaskBoardExecutionTransitionInput,
-  TaskBoardIntegrationCandidateState,
   TaskBoardTask,
 } from '../../../../shared/src/types/taskboard.js';
-import { integrationCandidateTableNames } from '../integrationCandidateSchema.js';
 import { integrationAgentTableNames } from '../integrationAgentSchema.js';
 import { rowToExecution } from '../storeHelpers.js';
 import {
@@ -20,8 +18,9 @@ import {
 } from '../v2Store.js';
 import { TaskboardNotFoundError, TaskboardValidationError, type TaskboardIdentity } from '../types.js';
 import { loadWorkflowFacts } from './commandService.js';
-import { assertCurrentCandidatePullRequestGate, assertCurrentPullRequestGate } from './pullRequestGate.js';
-import { decideTransition, isCurrentIntegrationV3Execution, type IntegrationV3ExecutionBinding, type IntegrationV3Facts } from './decider.js';
+import { assertCurrentIntegrationAgentPullRequestGate, assertCurrentPullRequestGate } from './pullRequestGate.js';
+import { decideTransition } from './decider.js';
+import { requireIntegrationAgentRendezvous } from '../legacyIntegrationAgentMigration.js';
 
 const ACTIVE = ['queued', 'running', 'waiting_user', 'waiting_approval'];
 
@@ -72,10 +71,8 @@ export async function transitionExecutionV2(
     await assertExecutionComment(options, client, execution);
 
     if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3) {
-      const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
-      const agent = await client.query(`SELECT integration_task_id FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [loaded.task.id]);
-      if (agent.rows[0]) return transitionIntegrationAgent(options, client, identity, loaded.task, execution, input.status);
-      return transitionIntegrationV3(options, client, identity, loaded.task, execution, executionRow, input.status);
+      await requireIntegrationAgentRendezvous(options, client, loaded.task);
+      return transitionIntegrationAgent(options, client, identity, loaded.task, execution, input.status);
     }
     const facts = await loadWorkflowFacts(options, client, loaded.task);
     const completingMergedIntegration = loaded.task.kind === 'integration'
@@ -148,8 +145,8 @@ async function transitionIntegrationAgent(
   if (execution.purpose === 'work' && status === 'in_review') {
     nextStatus = 'in_review'; agentStatus = 'reviewing';
   } else if (execution.purpose === 'review' && status === 'ready_to_merge') {
-    // Approval is deliberately minimal and head-bound.  The merge gateway must
-    // re-read GitHub and reject any changed head or non-green CI before merging.
+    const gate = await assertCurrentIntegrationAgentPullRequestGate(options, client, task, execution.id);
+    await client.query(`UPDATE ${agentsTable} SET review_head_oid=$2 WHERE integration_task_id=$1`, [task.id, gate.headOid]);
     nextStatus = 'ready_to_merge'; agentStatus = 'ready_to_merge';
   } else if (execution.purpose === 'review' && (status === 'todo' || status === 'in_review')) {
     nextStatus = status === 'todo' ? 'in_progress' : 'in_review';
@@ -165,74 +162,6 @@ async function transitionIntegrationAgent(
   await markTransitioned(options, client, execution, status);
   await appendChange(options, client, task.id, 'integration.agent.transitioned', 'agent', identity.ownerUserId, {
     executionId: execution.id, runId: execution.runId, purpose: execution.purpose, status: nextStatus,
-  });
-  return loadTask(options, client, task.id);
-}
-
-async function transitionIntegrationV3(
-  options: TaskboardV2StoreOptions, client: PoolClient, identity: TaskboardIdentity,
-  task: TaskBoardTask, execution: TaskBoardExecution, executionRow: Record<string, unknown>, status: TaskBoardTask['status'],
-): Promise<TaskBoardTask> {
-  const { candidatesTable, revisionsTable } = integrationCandidateTableNames(options.integrationSourcesTable);
-  const result = await client.query(
-    `SELECT c.*,r.base_oid,r.head_oid,r.subject_digest FROM ${candidatesTable} c
-     LEFT JOIN ${revisionsTable} r ON r.candidate_id=c.id AND r.revision=c.current_revision
-     WHERE c.integration_task_id=$1 FOR UPDATE OF c`, [task.id]);
-  const row = result.rows[0] as Record<string, unknown> | undefined;
-  if (!row) throw new TaskboardValidationError('Workflow v3 integration task has no candidate', 'TASKBOARD_CANDIDATE_REQUIRED');
-  const candidate: IntegrationV3Facts = {
-    id: String(row.id), state: String(row.state) as TaskBoardIntegrationCandidateState,
-    version: Number(row.version), currentRevision: Number(row.current_revision), workRound: Number(row.work_round),
-    workflowEpoch: String(row.workflow_epoch), laneEpoch: String(row.lane_epoch),
-    ...(row.head_oid ? { headOid: String(row.head_oid) } : {}),
-  };
-  const binding = executionBinding(executionRow);
-  if (!binding || !candidate.headOid || !row.subject_digest || !isCurrentIntegrationV3Execution(candidate, binding)) {
-    throw new TaskboardValidationError('Candidate changed or execution binding expired', 'TASKBOARD_EXECUTION_FENCED');
-  }
-  const decision = decideTransition(task, execution.purpose, status, { hasMergeFact: false, candidate, executionBinding: binding });
-  if (execution.purpose === 'review' && status === 'ready_to_merge') {
-    await assertCurrentCandidatePullRequestGate(options, client, task, execution.id, {
-      candidateId: candidate.id,
-      revision: candidate.currentRevision,
-      providerPullRequestId: String(row.provider_pull_request_id ?? ''),
-      headOid: candidate.headOid,
-      baseOid: String(row.base_oid ?? ''),
-      subjectDigest: String(row.subject_digest),
-    });
-  }
-  if (decision.requestSystemReview) {
-    await markTransitioned(options, client, execution, status);
-    await appendChange(options, client, task.id, 'integration.candidate_review_requested', 'agent', identity.ownerUserId, {
-      schemaVersion: 3, executionId: execution.id, runId: execution.runId, purpose: execution.purpose,
-      status, candidateId: candidate.id, candidateRevision: candidate.currentRevision, candidateHeadOid: candidate.headOid,
-      candidateWorkRound: candidate.workRound, workflowEpoch: candidate.workflowEpoch, laneEpoch: candidate.laneEpoch,
-      reconcileRequired: true, reviewRequested: true,
-    });
-    return loadTask(options, client, task.id);
-  }
-  if (!decision.toStatus || !decision.candidateState) {
-    throw new TaskboardValidationError('Workflow v3 transition is incomplete', 'TASKBOARD_WORKFLOW_TRANSITION_INVALID');
-  }
-  const approved = decision.candidateState === 'approved';
-  const updated = await client.query(
-    `UPDATE ${candidatesTable} SET state=$8,
-       approved_revision=CASE WHEN $9::boolean THEN current_revision ELSE NULL END,
-       approved_review_execution_id=CASE WHEN $9::boolean THEN $7 ELSE NULL END,
-       last_error=CASE WHEN $8='blocked' THEN 'Agent transitioned candidate to blocked' ELSE NULL END,
-       workflow_epoch=workflow_epoch+1,version=version+1,updated_at=now()
-     WHERE id=$1 AND version=$2 AND current_revision=$3 AND work_round=$4
-       AND workflow_epoch=$5::bigint AND lane_epoch=$6::bigint AND state=$10 RETURNING workflow_epoch`,
-    [candidate.id, candidate.version, candidate.currentRevision, candidate.workRound, candidate.workflowEpoch,
-      candidate.laneEpoch, execution.id, decision.candidateState, approved, candidate.state]);
-  if (!updated.rows[0]) throw new TaskboardValidationError('Candidate changed before transition', 'TASKBOARD_CANDIDATE_CAS_MISMATCH');
-  await updateTaskStatus(options, client, task.id, decision.toStatus);
-  if (decision.toStatus === 'blocked') await recordBlock(options, client, task.id, execution);
-  await markTransitioned(options, client, execution, status);
-  await appendChange(options, client, task.id, 'execution.transitioned.v3', 'agent', identity.ownerUserId, {
-    schemaVersion: 3, executionId: execution.id, runId: execution.runId, purpose: execution.purpose, status: decision.toStatus,
-    candidateId: candidate.id, candidateRevision: candidate.currentRevision, candidateHeadOid: candidate.headOid,
-    candidateWorkRound: candidate.workRound, workflowEpoch: String(updated.rows[0].workflow_epoch), laneEpoch: candidate.laneEpoch,
   });
   return loadTask(options, client, task.id);
 }
@@ -282,17 +211,6 @@ async function closeIntegration(options: TaskboardV2StoreOptions, client: PoolCl
   if (repository?.repositoryId) await client.query(
     `UPDATE ${options.integrationLanesTable} SET active_integration_task_id=NULL,lease_id=NULL,updated_at=now()
      WHERE repository_id=$1 AND active_integration_task_id=$2`, [repository.repositoryId, task.id]);
-}
-
-function executionBinding(row: Record<string, unknown>): IntegrationV3ExecutionBinding | undefined {
-  if (!row.candidate_id || row.candidate_version == null || row.candidate_revision == null || row.candidate_work_round == null
-    || row.candidate_workflow_epoch == null || row.candidate_lane_epoch == null || !row.candidate_head_oid) return undefined;
-  return {
-    candidateId: String(row.candidate_id), candidateVersion: Number(row.candidate_version),
-    candidateRevision: Number(row.candidate_revision), candidateWorkRound: Number(row.candidate_work_round),
-    candidateWorkflowEpoch: String(row.candidate_workflow_epoch), candidateLaneEpoch: String(row.candidate_lane_epoch),
-    candidateHeadOid: String(row.candidate_head_oid),
-  };
 }
 
 async function recordRemediationCommit(options: TaskboardV2StoreOptions, client: PoolClient, remediationTaskId: string, executionId: string): Promise<boolean> {

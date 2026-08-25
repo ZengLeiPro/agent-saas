@@ -2050,8 +2050,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         ...createTaskboardRuntimeOptions({ modelResolver, userStore, timezone: config.server.timezone, logger: serverLogger, eventStore: pgEventStore, groupTaskboardSession: (input) => groupStore.addTaskboardSession(input), onSessionsChanged: clearSessionsListCache }),
         logger: serverLogger.child('TaskboardExecution') });
     }
-    if (enableSingletonWorkers && rawTaskboardStore && taskboardExecutionCoordinator && config.integrationV3ControlPlane?.enabled === true && integrationV3RepositoryProvider)
-      integrationV3Runtime = startRuntimeTaskboardIntegrationV3(buildRuntimeTaskboardIntegrationV3Options({ store: rawTaskboardStore, executionCoordinator: taskboardExecutionCoordinator, repositoryProvider: integrationV3RepositoryProvider, processCwd, agentCwd, processRole: processRole === 'all' ? 'all' : 'runtime-worker', releaseIdentity: skillSourceRevision, runtimeIsolationAttestationProvider: integrationV3Adapters.runtimeIsolationAttestationProvider, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, personalAccessTokenResolver: integrationV3PersonalAccessTokenResolver, control: config.integrationV3ControlPlane }));
+    // Candidate v3 control-plane is retired. Existing Candidate rows are lazily
+    // migrated into integration_agents; no Candidate worker is started here.
     runtimeSchedulerCapacity = createRuntimeSchedulerCapacityController({
       store: runtimeSchedulerConfigStore!, scheduler: runtimeScheduler, sessionLockMode,
     });

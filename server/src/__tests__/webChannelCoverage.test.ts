@@ -1537,11 +1537,11 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const enqueued: UpsertRunInput[] = [];
       const rig = resumeRig(runStore, tmp, enqueued);
 
-      await (rig.channel as any).resolveInteraction(
-        wsClient(rig.ws, USER), 'ask-int-1', { answers: { q1: '红色' } }, sessionId,
-      );
-
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'ask-int-1' });
+      (rig.channel as any).handleRespond(wsClient(rig.ws, USER), {
+        action: 'respond', interactionId: 'ask-int-1', sessionId, answers: { q1: '红色' },
+      });
+      await vi.waitFor(() => expect(rig.ws.sent.at(-1)?.data)
+        .toEqual({ type: 'respond_ok', interactionId: 'ask-int-1' }));
       expect(enqueued).toHaveLength(1);
       expect(enqueued[0]).toMatchObject({
         runId: 'run-ask-1', sessionId, userId: USER.sub, tenantId: TENANT,

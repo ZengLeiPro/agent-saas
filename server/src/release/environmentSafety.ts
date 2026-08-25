@@ -1,0 +1,57 @@
+import type { AppConfig } from '../app/config.js';
+import { readRuntimeIdentity, type RuntimeIdentity } from './runtimeIdentity.js';
+
+function values(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.flatMap(values);
+  if (value && typeof value === 'object') return Object.values(value).flatMap(values);
+  return [];
+}
+
+function hostname(connectionString: string): string | undefined {
+  try { return new URL(connectionString).hostname.toLowerCase(); } catch { return undefined; }
+}
+
+/**
+ * Staging is a separate safety domain, not NODE_ENV=staging. This pure startup
+ * assertion fails closed before any service, scheduler, or connector starts.
+ */
+export function assertRuntimeEnvironmentSafety(config: AppConfig, env: NodeJS.ProcessEnv = process.env): RuntimeIdentity {
+  const identity = readRuntimeIdentity(env);
+  if (identity.environment !== 'staging') return { ...identity, safetyAttested: true };
+
+  const failures: string[] = [];
+  if (config.cron?.enabled !== false) failures.push('staging cron.enabled must be explicitly false');
+  if (env.AGENT_SAAS_ACS_ENABLED === '1' || (config.tenantRemoteHands?.hands.length ?? 0) > 0) failures.push('staging must disable ACS and remote Hand execution');
+
+  const stagingRoot = env.AGENT_SAAS_STAGING_ROOT?.trim();
+  if (!stagingRoot) failures.push('AGENT_SAAS_STAGING_ROOT is required');
+  if (stagingRoot && config.agent.cwd?.startsWith('/') && !config.agent.cwd.startsWith(stagingRoot)) {
+    failures.push('agent workspace is outside AGENT_SAAS_STAGING_ROOT');
+  }
+  if (stagingRoot && config.secretVault?.backend === 'encrypted-file' && config.secretVault.filePath.startsWith('/') && !config.secretVault.filePath.startsWith(stagingRoot)) {
+    failures.push('SecretVault file is outside AGENT_SAAS_STAGING_ROOT');
+  }
+
+  const db = config.runtimeEventStore;
+  if (db?.backend !== 'pg') {
+    failures.push('staging requires an explicitly identified PostgreSQL database');
+  } else {
+    const allowedHosts = new Set((env.AGENT_SAAS_STAGING_DATABASE_HOSTS ?? '').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean));
+    const host = hostname(db.connectionString);
+    if (!host || allowedHosts.size === 0 || !allowedHosts.has(host)) failures.push('database host is not in AGENT_SAAS_STAGING_DATABASE_HOSTS');
+  }
+
+  const serverEgress = config.egress?.server;
+  if (!serverEgress?.enabled || serverEgress.failOpen || serverEgress.matchDomains.length === 0) {
+    failures.push('staging egress must be an enabled fail-closed allowlist');
+  }
+
+  const markers = (env.AGENT_SAAS_PRODUCTION_MARKERS ?? '.prod.,production').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
+  if (markers.length > 0 && values(config).some((item) => markers.some((marker) => item.toLowerCase().includes(marker)))) {
+    failures.push('staging configuration contains a production marker');
+  }
+
+  if (failures.length > 0) throw new Error(`Staging safety assertion failed:\n- ${failures.join('\n- ')}`);
+  return { ...identity, safetyAttested: true };
+}

@@ -1380,11 +1380,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
     if (sessionId !== immediateSessionIdRef.current) return;
 
+    const requestedRuntimeVersion = runtimeVersionBySessionRef.current.get(sessionId) ?? 0;
     try {
       const res = await authFetch(`/api/sessions/${sessionId}/stream-status`);
-      if (!res.ok) return;
-      const { active } = await res.json() as { active: boolean };
-      if (active) return;
+      if (!res.ok) return; const { active } = await res.json() as { active: boolean };
+      if (active || requestedRuntimeVersion !== (runtimeVersionBySessionRef.current.get(sessionId) ?? 0)) return;
     } catch {
       return;
     }

@@ -716,6 +716,24 @@ describe("TaskBoardView", () => {
     expect(screen.getAllByRole("button", { name: /TASK-1/ }).length).toBeGreaterThan(0);
   });
 
+  it("邻居校验失败时显示中文重试提示", async () => {
+    mocks.tasks = [taskOne];
+    mocks.optimisticMove.mockRejectedValueOnce(new Error("Move neighbors are stale or not adjacent"));
+    render(<TaskBoardView />);
+
+    const source = (await screen.findAllByTestId("task-card-task-1"))[0];
+    const todoColumn = screen.getByRole("region", { name: "待推进列" });
+    const dataTransfer = {
+      effectAllowed: "move",
+      setData: vi.fn(),
+      getData: vi.fn(() => "task-1"),
+    };
+    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.drop(within(todoColumn).getByText("暂无任务"), { dataTransfer });
+
+    expect((await screen.findByRole("alert")).textContent).toContain("移动任务失败，已回滚并重新加载最新数据，请刷新后重试。");
+  });
+
   it("拖拽取消会清除源任务，后续外部拖入不会误移动旧任务", async () => {
     mocks.tasks = [
       taskOne,

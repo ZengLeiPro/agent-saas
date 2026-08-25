@@ -108,7 +108,7 @@ export async function loadContinuationContext(
 ): Promise<TaskboardContinuationContext> {
   const task = await loadAccessibleTask(host, identity, taskId);
   const commentResult = await host.pool.query(
-    `SELECT c.*, b.stage_prompts AS board_stage_prompts
+    `SELECT c.*, b.prompt AS board_prompt, b.stage_prompts AS board_stage_prompts
        FROM ${host.commentsTable} c
        JOIN ${host.tasksTable} t ON t.id=c.task_id
        JOIN ${host.boardsTable} b ON b.id=t.board_id
@@ -149,6 +149,7 @@ export async function loadContinuationContext(
     task,
     comment: applyCommentAuthorDisplayName(rowToComment(commentResult.rows[0]), identity),
     pendingComments: pendingResult.rows.map((row) => applyCommentAuthorDisplayName(rowToComment(row), identity)),
+    boardPrompt: String(commentResult.rows[0].board_prompt ?? ''),
     ...(Object.keys(stagePrompts).length ? { stagePrompts } : {}),
     ...(continuationRunId ? { continuationRunId } : {}),
     ...(activeContinuationResult.rows[0] ? { hasActiveContinuation: true } : {}),

@@ -217,6 +217,9 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     });
     const context = await store.getExecutionContextV2(identity, task.id, { runId });
     expect(context.task.resumeContext).toEqual(claimed.task.resumeContext);
+    expect(context.board).not.toHaveProperty('prompt');
+    expect(context.board).not.toHaveProperty('stagePrompts');
+    expect((await store.getBoard(identity, board.id)).prompt).toEqual(expect.any(String));
   });
 
   it('canceled source remains navigable history but delivery is eligible again in get/list/search', async () => {

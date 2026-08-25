@@ -223,6 +223,7 @@ export interface TaskboardContinuationContext {
   task: TaskBoardTask;
   comment: TaskBoardComment;
   pendingComments: TaskBoardComment[];
+  boardPrompt?: string;
   /** 看板各执行阶段（work/review/merge）特定提示语；缺省阶段执行时使用系统固定模板。 */
   stagePrompts?: Partial<Record<TaskBoardExecutionPurpose, string>>;
   continuationRunId?: string;

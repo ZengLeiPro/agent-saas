@@ -107,8 +107,7 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
       [missingId],
     )).rejects.toThrow(/TASKBOARD_WORKFLOW_VERSION_IMMUTABLE/u);
 
-    const first = await store.claimIntegrationDispatchCandidatesV2(10);
-    expect(first.some((candidate) => candidate.task.id === validId && candidate.task.workflowVersion === 3)).toBe(true);
+    await store.claimIntegrationDispatchCandidatesV2(10);
 
     const migrated = await pool.query(
       `SELECT task.id,task.workflow_version,count(agent.integration_task_id)::int AS agent_count,

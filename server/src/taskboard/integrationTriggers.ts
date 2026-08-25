@@ -4,6 +4,7 @@ import type { PoolClient } from 'pg';
 import { computeNextRunAtMs } from '../cron/scheduler.js';
 import type { TaskboardIntegrationDispatchCandidate, TaskboardIdentity } from './types.js';
 import { createIntegrationBatch } from './v2Store.js';
+import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { rowToTask, visibleCommentPredicate } from './storeHelpers.js';
 
 interface IntegrationTriggerHost {
@@ -415,6 +416,7 @@ async function loadUnstartedIntegrationTasks(
   limit: number,
 ): Promise<TaskboardIntegrationDispatchCandidate[]> {
   if (limit <= 0) return [];
+  const { agentsTable } = integrationAgentTableNames(host.integrationSourcesTable);
   const client = await host.pool.connect();
   try {
     const result = await client.query(
@@ -438,6 +440,12 @@ async function loadUnstartedIntegrationTasks(
                     )
                   )
              ))
+            OR (t.kind='integration' AND COALESCE(t.workflow_version,2)=3
+                AND t.status IN ('todo','in_progress') AND l.active_integration_task_id=t.id
+                AND EXISTS (
+                  SELECT 1 FROM ${agentsTable} agent
+                   WHERE agent.integration_task_id=t.id AND agent.status IN ('active','reviewing')
+                ))
             OR (t.kind IN ('delivery','remediation') AND t.status='in_review'
                 AND t.provider_pull_request_id IS NOT NULL)
             OR (t.kind='remediation' AND t.status='todo'
@@ -493,7 +501,9 @@ async function loadUnstartedIntegrationTasks(
         username: 'board-owner',
       },
       task: rowToTask(row),
-      purpose: row.kind === 'integration' ? 'merge' : row.status === 'in_review' ? 'review' : 'work',
+      purpose: row.kind === 'integration' && Number(row.workflow_version ?? 2) === 2
+        ? 'merge'
+        : row.status === 'in_review' ? 'review' : 'work',
     }));
   } finally {
     client.release();

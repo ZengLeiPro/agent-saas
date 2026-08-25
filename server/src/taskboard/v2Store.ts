@@ -14,7 +14,6 @@ import type { RepositoryProvider } from './repositoryProvider.js';
 import { rowToIntegrationSource } from './integrationSourceMapper.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
-import { assertIntegrationV3RuntimeAvailable } from './integrationV3ActivationStore.js';
 import { resolveExecutionContextWorkflowContract } from './executionContextContract.js';
 import {
   commentExecutionJoin,
@@ -172,7 +171,8 @@ export async function createIntegrationBatch(
     if (workflowVersion === 3 && policy.featureFlags?.engineV3 !== true) {
       throw new TaskboardValidationError('Workflow v3 requires the engineV3 feature flag', 'TASKBOARD_INTEGRATION_V3_DISABLED');
     }
-    if (workflowVersion === 3) await assertIntegrationV3RuntimeAvailable(client, options.integrationSourcesTable);
+    // Agent-first integrations run through the generic durable execution coordinator;
+    // they do not depend on the retired Candidate worker heartbeat.
     if (workflowVersion === 3 && !repository.baseBranch) {
       throw new TaskboardValidationError('Workflow v3 requires a repository base branch', 'TASKBOARD_REPOSITORY_REQUIRED');
     }
@@ -374,6 +374,35 @@ export async function cancelIntegrationTask(
       throw new TaskboardValidationError('Stop the active merge execution before canceling');
     }
     if ((loaded.task.workflowVersion ?? 2) === 3) {
+      const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
+      const agent = await client.query(
+        `SELECT repository_id FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId],
+      );
+      if (agent.rows[0]) {
+        const reason = input.reason?.trim() || 'Integration task canceled by user';
+        await client.query(
+          `UPDATE ${agentsTable} SET status='canceled',updated_at=now() WHERE integration_task_id=$1`, [taskId],
+        );
+        await client.query(
+          `UPDATE ${options.tasksTable}
+              SET status='canceled',completed_at=NULL,workflow_epoch=workflow_epoch+1,next_action='none',
+                  next_action_revision=next_action_revision+1,version=version+1,updated_at=now()
+            WHERE id=$1 AND workflow_version=3`, [taskId],
+        );
+        await client.query(
+          `UPDATE ${options.integrationSourcesTable}
+              SET state='canceled',last_error=$2,updated_at=now()
+            WHERE integration_task_id=$1 AND state<>'merged' AND merged_commit_oid IS NULL`, [taskId, reason],
+        );
+        await client.query(
+          `UPDATE ${options.integrationLanesTable}
+              SET active_integration_task_id=NULL,lease_id=NULL,epoch=epoch+1,updated_at=now()
+            WHERE repository_id=$1 AND active_integration_task_id=$2`,
+          [String(agent.rows[0].repository_id), taskId],
+        );
+        await appendChange(options, client, taskId, 'integration.agent.canceled', 'user', identity.ownerUserId, { reason }, true);
+        return loadTask(options, client, taskId);
+      }
       const tables = integrationCandidateTableNames(options.integrationSourcesTable);
       const candidate = await client.query(
         `SELECT * FROM ${tables.candidatesTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId]);

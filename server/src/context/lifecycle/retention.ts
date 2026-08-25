@@ -97,13 +97,13 @@ export class ContextRetentionStore {
   private async countCandidates(client: PoolClient, request: ContextRetentionRequest): Promise<ContextRetentionCounts> {
     const params = retentionParams(request);
     const source = await client.query(`SELECT COUNT(*)::integer count FROM ${this.base.outbox}
-      WHERE tenant_id=$1 AND seq<=$3 AND created_at<$2`, params);
+      WHERE tenant_id=$1 AND seq<=$3 AND created_at<$2`, params.slice(0, 3));
     const derived = await client.query(`SELECT COUNT(*)::integer count FROM ${this.derived.derivedOutbox}
       WHERE tenant_id=$1 AND seq<=$4 AND created_at<$2 AND status IN ('delivered','revoked')`, params);
     const evidence = await client.query(`SELECT COUNT(*)::integer count FROM ${this.base.evidence} e
-      WHERE ${this.collectibleRevisionPredicate('e')}`, params);
+      WHERE ${this.collectibleRevisionPredicate('e')}`, params.slice(0, 3));
     const revisions = await client.query(`SELECT COUNT(*)::integer count FROM ${this.base.revisions} r
-      WHERE ${this.collectibleRevisionPredicate('r')}`, params);
+      WHERE ${this.collectibleRevisionPredicate('r')}`, params.slice(0, 3));
     return {
       sourceOutbox: count(source.rows[0]), derivedOutbox: count(derived.rows[0]),
       evidence: count(evidence.rows[0]), revisions: count(revisions.rows[0]),
@@ -113,13 +113,13 @@ export class ContextRetentionStore {
   private async deleteCandidates(client: PoolClient, request: ContextRetentionRequest): Promise<ContextRetentionCounts> {
     const params = retentionParams(request);
     const sourceOutbox = await client.query(`DELETE FROM ${this.base.outbox}
-      WHERE tenant_id=$1 AND seq<=$3 AND created_at<$2`, params);
+      WHERE tenant_id=$1 AND seq<=$3 AND created_at<$2`, params.slice(0, 3));
     const derivedOutbox = await client.query(`DELETE FROM ${this.derived.derivedOutbox}
       WHERE tenant_id=$1 AND seq<=$4 AND created_at<$2 AND status IN ('delivered','revoked')`, params);
     const evidence = await client.query(`DELETE FROM ${this.base.evidence} e
-      WHERE ${this.collectibleRevisionPredicate('e')}`, params);
+      WHERE ${this.collectibleRevisionPredicate('e')}`, params.slice(0, 3));
     const revisions = await client.query(`DELETE FROM ${this.base.revisions} r
-      WHERE ${this.collectibleRevisionPredicate('r')}`, params);
+      WHERE ${this.collectibleRevisionPredicate('r')}`, params.slice(0, 3));
     return {
       sourceOutbox: sourceOutbox.rowCount ?? 0, derivedOutbox: derivedOutbox.rowCount ?? 0,
       evidence: evidence.rowCount ?? 0, revisions: revisions.rowCount ?? 0,

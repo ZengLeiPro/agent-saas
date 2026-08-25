@@ -25,6 +25,10 @@ function validateTopology(topology, reasons) {
       if (!nonEmpty(entry[field])) reasons.push(`Production runtime identity topology ${role}.${field} is required.`);
       else if (COLOR_PATTERN.test(topology.activeColor ?? '') && !entry[field].includes(topology.activeColor)) reasons.push(`Production runtime identity topology ${role}.${field} conflicts with activeColor.`);
     }
+    if (!/^[A-Za-z0-9_.-]+@(blue|green)\.service$/u.test(entry.unit ?? '')) reasons.push(`Production runtime identity topology ${role}.unit must be a colored systemd unit.`);
+    for (const field of ['releaseSymlink', 'pidfile', 'readyfile']) {
+      if (typeof entry[field] === 'string' && !entry[field].startsWith('/')) reasons.push(`Production runtime identity topology ${role}.${field} must be an absolute path.`);
+    }
   }
 }
 

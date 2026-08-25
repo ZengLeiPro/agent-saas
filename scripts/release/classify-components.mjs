@@ -49,13 +49,18 @@ export function classifyChangedPaths(changedPaths) {
 export function readChangedPaths({ baseline, target, cwd = process.cwd(), execFileSync = defaultExecFileSync }) {
   const output = execFileSync(
     'git',
-    ['diff', '--name-only', `${baseline}...${target}`],
+    ['diff', '--name-status', '--find-renames', '--find-copies', `${baseline}...${target}`],
     { cwd, encoding: 'utf8' },
   );
 
   return String(output)
     .split(/\r?\n/u)
-    .map((filePath) => filePath.trim())
+    .flatMap((line) => {
+      const fields = line.split('\t').map((field) => field.trim()).filter(Boolean);
+      if (fields.length === 0) return [];
+      if (/^[RC]\d*$/u.test(fields[0]) && fields.length === 3) return fields.slice(1);
+      return fields.length > 1 ? [fields.at(-1)] : fields;
+    })
     .filter(Boolean);
 }
 

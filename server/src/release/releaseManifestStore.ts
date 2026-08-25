@@ -19,7 +19,7 @@ export function calculateManifestDigest(manifest: Omit<ReleaseManifest, 'digest'
     .digest('hex')}`;
 }
 
-function validateManifest(manifest: unknown): ReleaseManifest {
+export function validateManifest(manifest: unknown): ReleaseManifest {
   const parsed = releaseManifestSchema.parse(manifest);
   const { digest, ...unsignedManifest } = parsed;
   const calculated = calculateManifestDigest(unsignedManifest);
@@ -66,6 +66,7 @@ export class ReleaseManifestStore {
       throw new Error(`Stored Release Manifest ${releaseId} is not valid JSON`);
     }
     const manifest = validateManifest(raw);
+    if (manifest.releaseId !== releaseId) throw new Error(`Stored Release Manifest ${releaseId} has a mismatched releaseId`);
     return { manifest, manifestDigest: manifest.digest };
   }
 }

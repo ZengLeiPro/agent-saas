@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
-import { canonicalJson, releaseManifestSchema } from '@agent/shared';
-import { calculateManifestDigest, ReleaseManifestStore } from '../src/release/releaseManifestStore.js';
+import { canonicalJson } from '@agent/shared';
+import { calculateManifestDigest, ReleaseManifestStore, validateManifest } from '../src/release/releaseManifestStore.js';
 
 function usage(): never {
   throw new Error('Usage: release-manifest.mts <create|validate|digest|diff> <manifest.json> [other-manifest.json]');
@@ -14,7 +14,7 @@ const [command, inputPath, otherPath] = process.argv.slice(2);
 if (!command || !inputPath) usage();
 
 const input = await readManifest(inputPath);
-const parsed = releaseManifestSchema.parse(input);
+const parsed = validateManifest(input);
 const { digest, ...unsigned } = parsed;
 const calculated = calculateManifestDigest(unsigned);
 
@@ -31,7 +31,7 @@ if (command === 'validate') {
   process.stdout.write(`${canonicalJson(stored)}\n`);
 } else if (command === 'diff') {
   if (!otherPath) usage();
-  const other = releaseManifestSchema.parse(await readManifest(otherPath));
+  const other = validateManifest(await readManifest(otherPath));
   const changes = Object.fromEntries(Object.keys(parsed.components).map((component) => [
     component,
     { before: other.components[component as keyof typeof other.components], after: parsed.components[component as keyof typeof parsed.components] },

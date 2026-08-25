@@ -181,6 +181,18 @@ describe('Taskboard routes', () => {
     }]);
   });
 
+  it('defaults integration policies to workflow v3 and rejects v2 or featureFlags inputs', async () => {
+    const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
+    const rig = await makeRig(makeService(captured), USER, captured);
+    const repository = { provider: 'github', repositoryId: 'github:acme/app', owner: 'acme', name: 'app', baseBranch: 'main', allowForkPullRequest: false };
+    const integrationPolicy = { schemaVersion: 1, enabled: true, revision: 'client', trigger: { mode: 'manual', allowedRoles: ['owner'] }, batch: { maxTasks: 10, selection: 'priority_then_ready_at' }, execution: { mergeMethod: 'squash', continueIndependentSources: true, autoResolveConflicts: true, maxAutomaticRemediationRounds: 2, maxTransientRetries: 3, requireGreenChecks: true, deleteRemoteBranch: false, deploy: false } };
+    expect((await rig.request('/api/taskboard/boards', postJson({ name: 'Agent-first', repository, integrationPolicy }))).status).toBe(201);
+    expect(captured.createBoards.at(-1)).toMatchObject({ integrationPolicy: { workflowVersion: 3 } });
+    expect((await rig.request('/api/taskboard/boards', postJson({ name: 'Legacy selectable', repository, integrationPolicy: { ...integrationPolicy, workflowVersion: 2 } }))).status).toBe(400);
+    expect((await rig.request('/api/taskboard/boards', postJson({ name: 'Flags selectable', repository, integrationPolicy: { ...integrationPolicy, featureFlags: { engineV3: true } } }))).status).toBe(400);
+    expect(captured.createBoards).toHaveLength(1);
+  });
+
   it('parses and validates per-stage prompts on board create/patch', async () => {
     const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
     const rig = await makeRig(makeService(captured), USER, captured);

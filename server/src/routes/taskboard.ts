@@ -67,11 +67,7 @@ const integrationPolicySchema = z.object({
   schemaVersion: z.literal(1),
   enabled: z.boolean(),
   revision: z.string().trim().max(128).default('server'),
-  workflowVersion: z.union([z.literal(2), z.literal(3)]).optional(),
-  featureFlags: z.object({
-    engineV3: z.boolean(), compose: z.boolean(), review: z.boolean(), merge: z.boolean(),
-    cleanup: z.boolean(), workspaceSync: z.boolean(),
-  }).strict().optional(),
+  workflowVersion: z.literal(3).default(3),
   ciPolicy: boardCiPolicySchema.optional(),
   trigger: integrationTriggerSchema,
   batch: z.object({
@@ -393,7 +389,7 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     // before acting; server-side state is only a rendezvous/merge-gate record.
     const execution = await options.executionService.startExecution(identity, task.id, {
       expectedVersion: task.version,
-      purpose: task.workflowVersion === 3 ? 'work' : 'merge',
+      purpose: 'work',
     });
     res.status(202).json(withCreatorAvatarVersionInExecution(options.userStore, identity, execution));
   }));

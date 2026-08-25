@@ -145,8 +145,7 @@ export async function createIntegrationBatch(
     const policy = jsonObject(board.integration_policy) as {
       enabled?: boolean;
       revision?: string;
-      workflowVersion?: 2 | 3;
-      featureFlags?: { engineV3?: boolean; compose?: boolean; review?: boolean; merge?: boolean; cleanup?: boolean; workspaceSync?: boolean };
+      workflowVersion?: 3;
       trigger?: { mode?: string; allowedRoles?: string[] };
       batch?: { maxTasks?: number };
       execution?: { mergeMethod?: 'merge' | 'squash' | 'rebase' };
@@ -155,7 +154,7 @@ export async function createIntegrationBatch(
     if (!repository?.repositoryId || !policy?.enabled || !policy.revision) {
       throw new TaskboardValidationError('Board integration policy is not enabled', 'TASKBOARD_INTEGRATION_DISABLED');
     }
-    const workflowVersion = policy.workflowVersion ?? 2;
+    const workflowVersion = 3 as const;
     const providerRepository = repositoryWithBoardCiPolicy(
       repository,
       policy as unknown as TaskBoardIntegrationPolicy,
@@ -286,24 +285,22 @@ export async function createIntegrationBatch(
           row.provider_pull_request_id, row.reviewed_subject_digest, row.head_oid, index,
         ],
       );
-      if (workflowVersion === 3) frozenSources.push({ integrationSourceId });
+      frozenSources.push({ integrationSourceId });
       await appendChange(options, client, String(row.id), 'integration.source_added', 'system', identity.ownerUserId, {
         integrationTaskId,
         order: index,
       });
     }
-    if (workflowVersion === 3) {
-      // GitHub is the only code authority.  Persist only the durable Agent rendezvous
-      // record; source PR heads/reviews are re-read by the Agent before every action.
-      const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
-      await client.query(
-        `INSERT INTO ${agentsTable}
-          (integration_task_id,delivery_source_ids,repository_id,integration_branch,status)
-         VALUES ($1,$2::jsonb,$3,$4,'active')`,
-        [integrationTaskId, JSON.stringify(frozenSources.map((source) => source.integrationSourceId)),
-          repository.repositoryId, `integration/${integrationTaskId}`],
-      );
-    }
+    // GitHub is the only code authority. Persist only the durable Agent rendezvous
+    // record; source PR heads/reviews are re-read by the Agent before every action.
+    const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
+    await client.query(
+      `INSERT INTO ${agentsTable}
+        (integration_task_id,delivery_source_ids,repository_id,integration_branch,status)
+       VALUES ($1,$2::jsonb,$3,$4,'active')`,
+      [integrationTaskId, JSON.stringify(frozenSources.map((source) => source.integrationSourceId)),
+        repository.repositoryId, `integration/${integrationTaskId}`],
+    );
     await client.query(
       `INSERT INTO ${options.mergeAuthorizationsTable}
          (id, source, actor_user_id, repository_id, integration_task_id, policy_revision)

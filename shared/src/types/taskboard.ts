@@ -175,17 +175,8 @@ export interface TaskBoardIntegrationPolicy {
   schemaVersion: 1;
   enabled: boolean;
   revision: string;
-  /** Persisted single-writer route. Omitted policies remain on the legacy v2 workflow. */
-  workflowVersion?: TaskBoardIntegrationWorkflowVersion;
-  /** v3 is opt-in twice: workflowVersion=3 and engineV3=true. Individual kill switches fail closed. */
-  featureFlags?: {
-    engineV3: boolean;
-    compose: boolean;
-    review: boolean;
-    merge: boolean;
-    cleanup: boolean;
-    workspaceSync: boolean;
-  };
+  /** Integration creation is Agent-first; v2 is retained only on historical task rows until automatic migration. */
+  workflowVersion?: 3;
   /** Used only when GitHub branch protection and rulesets declare no required checks. */
   ciPolicy?: TaskBoardCiPolicy;
   trigger: TaskBoardIntegrationTrigger;

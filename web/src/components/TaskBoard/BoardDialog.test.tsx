@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TASKBOARD_DEFAULT_PROMPT } from "@agent/shared";
-import type { ModelList, TaskBoard } from "@agent/shared";
+import type { ModelList, TaskBoard, TaskBoardCreateInput } from "@agent/shared";
 import type { TaskBoardCiPolicyDiscovery } from "@agent/shared/types/taskboard";
 import { BoardDialog } from "./BoardDialog";
 
@@ -305,33 +305,25 @@ describe("BoardDialog", () => {
     });
   });
 
-  it("默认使用 workflow v2，并在选择 v3 后提交 feature flags", async () => {
+  it("新看板固定提交 Agent workflow v3，且不展示协议选择或 feature flags", async () => {
     const user = userEvent.setup();
-    const onCreate = vi.fn(async () => undefined);
+    const onCreate = vi.fn(async (_input: TaskBoardCreateInput) => undefined);
     render(<BoardDialog open onOpenChange={vi.fn()} onCreate={onCreate} onUpdate={vi.fn(async () => undefined)} />);
 
-    await user.type(screen.getByRole("textbox", { name: "名称" }), "v3 集成");
+    await user.type(screen.getByRole("textbox", { name: "名称" }), "Agent 集成");
     await user.click(screen.getByRole("checkbox", { name: "关联 GitHub 仓库" }));
     await user.type(screen.getByRole("textbox", { name: "Repository ID" }), "repo-1");
     await user.type(screen.getByRole("textbox", { name: "仓库所有者" }), "kaiyan");
     await user.type(screen.getByRole("textbox", { name: "仓库名" }), "agent-saas");
-    expect(screen.getByRole("combobox", { name: "Integration workflow 版本" }).textContent).toContain("v2");
-    expect(screen.queryByRole("checkbox", { name: "启用 v3 engine" })).toBeNull();
 
-    await user.click(screen.getByRole("combobox", { name: "Integration workflow 版本" }));
-    await user.click(screen.getByRole("option", { name: "v3（Integration Agent）" }));
-    expect(screen.getByRole("checkbox", { name: "启用 v3 engine" }).getAttribute("data-state")).toBe("checked");
-    await user.click(screen.getByRole("checkbox", { name: "Workspace 同步" }));
+    expect(screen.queryByRole("combobox", { name: "Integration workflow 版本" })).toBeNull();
+    expect(screen.queryByText(/feature flags/i)).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "启用 v3 engine" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "创建看板" }));
 
-    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
-      integrationPolicy: expect.objectContaining({
-        workflowVersion: 3,
-        featureFlags: {
-          engineV3: true, compose: true, review: true, merge: true, cleanup: true, workspaceSync: false,
-        },
-      }),
-    }));
+    const policy = onCreate.mock.calls[0]?.[0].integrationPolicy;
+    expect(policy).toMatchObject({ workflowVersion: 3 });
+    expect(policy).not.toHaveProperty("featureFlags");
   });
 
   it("展示 GitHub 与 observed checks，并仅在用户勾选后写入看板 fallback", async () => {

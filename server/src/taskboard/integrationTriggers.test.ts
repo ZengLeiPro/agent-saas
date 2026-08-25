@@ -17,6 +17,9 @@ function hostWithRows(rows: Record<string, unknown>[]) {
   const client = {
     release: vi.fn(),
     query: vi.fn(async (sql: string) => {
+      if (sql.includes('WITH candidates AS')) {
+        rows.forEach((row) => { if (Number(row.workflow_version ?? 2) === 2) row.workflow_version = 3; });
+      }
       if (sql.includes('SELECT t.*, b.tenant_id')) return { rows };
       return { rows: [] };
     }),
@@ -57,5 +60,25 @@ describe('claimIntegrationDispatchCandidates Agent-first routing', () => {
     expect(dispatchSql).toContain("t.status IN ('todo','in_progress','in_review','ready_to_merge')");
     expect(dispatchSql).toContain("t.status='in_review' AND agent.status='reviewing'");
     expect(dispatchSql).toContain("agent.verdict='approved' AND agent.review_execution_id IS NOT NULL");
+  });
+
+  it('atomically migrates historical v2 integrations into the idempotent Agent rendezvous path', async () => {
+    const legacy = { ...integrationRow('legacy-task', 'in_progress'), workflow_version: 2 };
+    const { host, client } = hostWithRows([legacy]);
+
+    await expect(claimIntegrationDispatchCandidates(
+      host as unknown as Parameters<typeof claimIntegrationDispatchCandidates>[0],
+      10,
+    )).resolves.toMatchObject([{ task: { id: 'legacy-task', workflowVersion: 3 }, purpose: 'work' }]);
+
+    const migrationSql = client.query.mock.calls.map(([sql]) => String(sql))
+      .find((sql) => sql.includes('WITH candidates AS'))!;
+    expect(migrationSql).toContain("SET workflow_version=3");
+    expect(migrationSql).toContain('ON CONFLICT (integration_task_id) DO NOTHING');
+    expect(migrationSql).toContain('UPDATE tasks task');
+    const dispatchSql = client.query.mock.calls.map(([sql]) => String(sql))
+      .find((sql) => sql.includes('SELECT t.*, b.tenant_id'))!;
+    expect(dispatchSql).toContain("t.workflow_version=3");
+    expect(dispatchSql).not.toContain("workflow_version,2)=2");
   });
 });

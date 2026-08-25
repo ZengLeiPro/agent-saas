@@ -323,6 +323,33 @@ export class PgAssignmentStore {
     });
   }
 
+  async backfillLegacyConnectorAssignments(input: {
+    tenantIds: string[];
+    connectorIds: string[];
+    projectedBy: string;
+  }): Promise<{ resourceSetsProjected: number }> {
+    return this.withTransaction(async client => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['governance-connector-assignment-backfill']);
+      let resourceSetsProjected = 0;
+      const tenantIds = [...new Set(input.tenantIds)].filter(id => id !== this.platformTenantId).sort();
+      const connectorIds = [...new Set(input.connectorIds)].sort();
+      for (const tenantId of tenantIds) {
+        for (const connectorId of connectorIds) {
+          const changed = await this.upsertLegacySet(
+            client,
+            tenantId,
+            'connector',
+            connectorId,
+            [{ assigneeType: 'everyone', effect: 'allow' }],
+            input.projectedBy,
+          );
+          if (changed) resourceSetsProjected += 1;
+        }
+      }
+      return { resourceSetsProjected };
+    });
+  }
+
   async listResourceSets(tenantId: string, resourceType: AssignmentResourceType): Promise<ResourceAssignmentSet[]> {
     const result = await this.options.pool.query(
       `SELECT s.*, COALESCE(json_agg(a.* ORDER BY a.assignment_id) FILTER (WHERE a.assignment_id IS NOT NULL), '[]'::json) AS assignments

@@ -918,6 +918,11 @@ function migrations(prefix: string): GovernanceMigration[] {
       version: 26,
       statements: buildContextPhase4MigrationSql(prefix),
     },
+    {
+      version: 27,
+      statements: [`ALTER TABLE ${changeJobDomains}
+        ADD COLUMN IF NOT EXISTS unresolved_items_json JSONB NOT NULL DEFAULT '[]'::jsonb`],
+    },
   ];
 }
 

@@ -41,7 +41,13 @@ describePg('Taskboard execution cancellation PostgreSQL races', () => {
 
   it('holds the execution fence behind durable run creation and rejects pending-cancellation claims', async () => {
     const suffix = randomUUID();
-    const board = await store.createBoard(identity, { name: `取消门禁-${suffix}` });
+    const board = await store.createBoard(identity, {
+      name: `取消门禁-${suffix}`,
+      repository: {
+        provider: 'github', repositoryId: 'github:test/taskboard-cancel', owner: 'test',
+        name: 'taskboard-cancel', baseBranch: 'main', allowForkPullRequest: false,
+      },
+    });
     const task = await store.createTask(identity, board.id, { title: '取消与派发竞态', status: 'todo' });
     const executionId = `execution-${suffix}`;
     const runId = `run-${suffix}`;

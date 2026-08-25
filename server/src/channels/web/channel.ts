@@ -1337,13 +1337,14 @@ export class WebChannel implements BaseChannel {
         return false;
       }
       const currentRun = await enqueueRuntime.runStore.get(pendingAskUser.runId);
-      if (!currentRun || TERMINAL_RUN_STATUSES.has(currentRun.status)) {
-        chatLogger.warn(
-          `ask_user resume enqueue ignored unavailable run=${pendingAskUser.runId} `
-          + `status=${currentRun?.status ?? 'missing'}`,
-        );
-        this.sendRespond(client, interactionId, clientAttemptId, 'Run unavailable');
-        return true;
+      if (!currentRun) { chatLogger.warn(`ask_user resume enqueue ignored missing run=${pendingAskUser.runId}`); this.sendRespond(client, interactionId, clientAttemptId, 'Run unavailable'); return true; }
+      const normalizedResponse = normalizeInteractionResponse(response);
+      if (TERMINAL_RUN_STATUSES.has(currentRun.status)) {
+        const canonicalResolved = await appendPersistedInteractionResolved(eventStore!, tenantId, { id: persistedInteractionEventId(sessionId, interactionId), type: 'interaction_resolved', sessionId, runId: pendingAskUser.runId, toolCallId: pendingAskUser.toolCallId,
+          ...(pendingAskUser.invocationId ? { invocationId: pendingAskUser.invocationId } : {}), interactionId, interactionType: 'ask_user', userId: client.user?.sub, response: normalizedResponse });
+        const resumeRunId = `interaction-resume:${sessionId}:${interactionId}`;
+        if (!await enqueueRuntime.runStore.get(resumeRunId)) { await enqueueRuntime.scheduler.enqueue({ runId: resumeRunId, sessionId, userId: currentRun.userId ?? meta.userId, tenantId, model: currentRun.model ?? meta.model, channel: 'web', executionTarget: currentRun.executionTarget ?? meta.executionTarget as any, workspaceId: currentRun.workspaceId ?? meta.workspaceId ?? sessionId, metadata: { ...(currentRun.metadata ?? {}), resumeInteractionConsumedAt: null, resumeInteractionConsumedId: null, resumeInteraction: { interactionId, response: canonicalResolved.response }, transcriptPath } }); if (client.user?.sub && this.eventBus) this.eventBus.emitUser(client.user.sub, { type: 'session_status', sessionId, status: 'queued', runId: resumeRunId }); }
+        this.sendRespond(client, interactionId, clientAttemptId, undefined, normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>)); if (client.user?.sub && this.eventBus) this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws); return true;
       }
       const acceptedEvent = existingEvents.find((event): event is Extract<PlatformEvent, { type: 'interaction_resolved' }> => event.type === 'interaction_resolved' && event.interactionId === interactionId);
       const existingClaim = currentRun.metadata?.persistedInteractionResumeClaim;
@@ -1352,7 +1353,6 @@ export class WebChannel implements BaseChannel {
         this.sendRespond(client, interactionId, clientAttemptId, activated ? undefined : 'Interaction response is awaiting activation', activated ? normalizeInteractionResponse(acceptedEvent.response as Record<string, unknown>) : undefined);
         return true;
       }
-      const normalizedResponse = normalizeInteractionResponse(response);
       let claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingAskUser.runId, expectedStatus: 'waiting_user', reason: 'ask_user_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'ask_user', response: normalizedResponse });
       if (claim.outcome === 'unsupported') {
         chatLogger.error(`ask_user resume rejected: RunStore lacks staged interaction CAS run=${pendingAskUser.runId} interaction=${interactionId}`);

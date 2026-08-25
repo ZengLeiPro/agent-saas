@@ -6,6 +6,7 @@ vi.mock('../connectors/aliyun.js', () => ({
 }));
 
 import { validateGovernanceCredentialHealth } from './credentialHealth.js';
+import { blocksPersonalCredentialMutation } from '../routes/governanceCredentialRoutes.js';
 
 describe('governance credential health', () => {
   beforeEach(() => mock.createAliyunValidateCredentials.mockReset());
@@ -34,5 +35,14 @@ describe('governance credential health', () => {
     await expect(validateGovernanceCredentialHealth('aliyun', JSON.stringify({
       accessKeyId: 'LTAI-id', accessKeySecret: 'secret', regionId: 'cn-shenzhen',
     }))).resolves.toEqual({ healthy: false, code: 'UPSTREAM_IDENTITY_CHECK_FAILED' });
+  });
+
+  it.each([
+    ['x', 'CONNECTOR_NETWORK_UNREACHABLE', false],
+    ['x', 'CONNECTOR_UPSTREAM_INVALID', false],
+    ['x', 'CREDENTIAL_AUTHENTICATION_FAILED', true],
+    ['aliyun', 'CONNECTOR_NETWORK_UNREACHABLE', true],
+  ])('连接器 %s 校验结果 %s 的保存阻断判定为 %s', (connectorId, code, blocked) => {
+    expect(blocksPersonalCredentialMutation(connectorId, { healthy: false, code })).toBe(blocked);
   });
 });

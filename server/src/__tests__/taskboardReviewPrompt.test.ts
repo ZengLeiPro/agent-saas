@@ -18,7 +18,9 @@ describe('taskboard execution writeback prompt', () => {
 
     for (const prompt of [work, review, merge]) {
       expect(prompt).toContain('读取任务看板返回的最新事实和结构化职责约束');
-      expect(prompt).toContain('提交明确、真实且可验证的阶段结果');
+      expect(prompt).toContain('execution.finish');
+      expect(prompt).toContain('明确、真实且可验证的交接评论');
+      expect(prompt).toContain('工作过程中不要写 Agent 进度评论');
       expect(prompt).not.toContain('status=');
       expect(prompt).not.toContain('target=taskboard');
     }
@@ -43,7 +45,7 @@ describe('taskboard execution writeback prompt', () => {
     expect(prompt).toContain('服务端硬门禁');
   });
 
-  it('Workflow v3 Integration Work 明确先受控 push、禁止 git push、后 transition 到 in_review', () => {
+  it('Workflow v3 Integration Work 明确先受控 push、禁止 git push、后 finish 到 in_review', () => {
     const integrationWork = context('work');
     integrationWork.task.kind = 'integration';
     integrationWork.task.workflowVersion = 3;
@@ -54,7 +56,7 @@ describe('taskboard execution writeback prompt', () => {
     expect(prompt).toContain('只传 commitOid');
     expect(prompt).toContain('基线漂移重建以冻结 base 为父');
     expect(prompt).toContain('不得执行 git push');
-    expect(prompt.indexOf('受控 push 成功')).toBeLessThan(prompt.indexOf('execution.transition({status: "in_review"})') + 1);
+    expect(prompt.indexOf('受控 push 成功')).toBeLessThan(prompt.indexOf('execution.finish({status: "in_review", body})') + 1);
     expect(executionWritebackInstructions(context('review')).join('\n')).not.toContain('integration_candidate.push');
   });
 });

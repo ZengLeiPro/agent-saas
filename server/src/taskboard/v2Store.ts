@@ -656,47 +656,6 @@ export async function getExecutionContextV2(
   }
 }
 
-export async function createExecutionCommentV2(
-  options: TaskboardV2StoreOptions,
-  identity: TaskboardIdentity,
-  runId: string,
-  body: string,
-) {
-  const normalized = body.trim();
-  if (!normalized) throw new TaskboardValidationError('Comment body is required');
-  return withTransaction(options, async (client) => {
-    const execution = await client.query(
-      `SELECT e.task_id, e.id AS execution_id, e.session_id, e.purpose
-         FROM ${options.executionsTable} e
-         JOIN ${options.tasksTable} t ON t.id=e.task_id
-         JOIN ${options.boardsTable} b ON b.id=t.board_id
-        WHERE e.run_id=$1 AND e.status IN ('queued','running','waiting_user','waiting_approval')
-          AND e.transitioned_at IS NULL AND e.superseded_at IS NULL
-          AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
-        FOR UPDATE OF e`,
-      [runId, identity.tenantId, identity.ownerUserId],
-    );
-    if (!execution.rows[0]) throw new TaskboardNotFoundError('Active taskboard execution not found');
-    const taskId = String(execution.rows[0].task_id);
-    const result = await client.query(
-      `INSERT INTO ${options.commentsTable}
-         (id, task_id, body, author_type, author_id, author_name, continuation_eligible, version)
-       VALUES ($1,$2,$3,'agent',$4,'Agent',false,1)
-       RETURNING *`,
-      [randomUUID(), taskId, normalized, runId],
-    );
-    await appendChange(options, client, taskId, 'execution.comment', 'agent', runId, {
-      commentId: String(result.rows[0]!.id),
-    });
-    return {
-      ...rowToComment(result.rows[0]!),
-      executionId: String(execution.rows[0].execution_id),
-      sessionId: String(execution.rows[0].session_id),
-      executionPurpose: String(execution.rows[0].purpose) as TaskBoardComment['executionPurpose'],
-    };
-  });
-}
-
 export async function appendBoardChange(
   options: TaskboardV2StoreOptions,
   client: PoolClient,

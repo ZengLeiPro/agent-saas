@@ -408,6 +408,8 @@ export interface RawApprovalResumeRequest {
 }
 
 export interface RawInteractionResumeRequest {
+  /** Scheduler wake 当前实际执行的 Run；replacement resume 必须显式覆盖原 interaction 的 Run。 */
+  runId?: string;
   interactionId: string;
   response: InteractionResponse;
   sessionId: string;

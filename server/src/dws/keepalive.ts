@@ -169,13 +169,14 @@ export class DwsAuthKeepaliveService {
     this.currentAbort?.abort();
   }
 
-  async runOnce(now = new Date()): Promise<void> {
-    if (this.running || this.stopped) return;
+  async runOnce(now = new Date(), options: { allowStopped?: boolean } = {}): Promise<void> {
+    const allowStopped = options.allowStopped === true;
+    if (this.running || (this.stopped && !allowStopped)) return;
     if (this.options.isExecutionEnabled && !await this.options.isExecutionEnabled()) return;
     this.running = true;
     try {
       await this.syncProfileMetadata(now);
-      for (let index = 0; index < this.maxChecksPerRun && !this.stopped; index += 1) {
+      for (let index = 0; index < this.maxChecksPerRun && (!this.stopped || allowStopped); index += 1) {
         const connection = await this.options.connectionStore.claimDue(this.workerId, now);
         if (!connection) break;
         await this.checkClaimed(connection, now);

@@ -212,6 +212,26 @@ describe("MessageList business step sections", () => {
     expect(screen.queryByText("TodoWrite")).toBeNull();
   });
 
+  it("keeps Artifact deliverables visible when their completed business step is folded", () => {
+    const withDeliverable = messages();
+    withDeliverable.splice(3, 0, {
+      id: "artifact-delivery-artifact-1",
+      type: "file_download",
+      fileName: "OpenAI Codex Harness运行机制与开沿Agent-SaaS借鉴分析.md",
+      fileType: "text/markdown",
+      filePath: "OpenAI Codex Harness运行机制与开沿Agent-SaaS借鉴分析.md",
+      fileSize: 43007,
+      artifactId: "artifact-1",
+      artifactKind: "file",
+      mimeType: "text/markdown",
+    });
+
+    render(<MessageList messages={withDeliverable} loading={false} debugModeOverride={false} />);
+
+    expect(screen.getByRole("button", { name: /核验订单/ }).getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getAllByText("OpenAI Codex Harness运行机制与开沿Agent-SaaS借鉴分析.md")).toHaveLength(1);
+  });
+
   it("reveals constant business details on title click without exposing debug metadata", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
 

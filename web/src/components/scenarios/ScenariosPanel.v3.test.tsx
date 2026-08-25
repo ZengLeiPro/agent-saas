@@ -219,7 +219,7 @@ describe("ScenariosPanel V3", () => {
     expect(screen.getByTestId("workflow-catalog").children).toHaveLength(28);
   });
 
-  it("D1 主 CTA 只进入连接器，不调用聊天启动", () => {
+  it("D1 卡片不展示接入按钮，仍可打开工作流详情", () => {
     const d1 = makeWorkflowScenario("connector-scenario", {
       readiness: "D1_CONNECTOR",
       launch: {
@@ -231,12 +231,29 @@ describe("ScenariosPanel V3", () => {
       cta: { primary: "接入我的系统", secondary: "查看工作流" },
     });
     mocked.workflowLibrary = makeWorkflowLibrary([d1]);
-    const onStartWorkflow = vi.fn();
-    const onConnectWorkflow = vi.fn();
-    render(<ScenariosPanel onTryScenario={vi.fn()} onStartWorkflow={onStartWorkflow} onConnectWorkflow={onConnectWorkflow} />);
-    fireEvent.click(screen.getByRole("button", { name: "接入我的系统" }));
-    expect(onConnectWorkflow).toHaveBeenCalledWith("workflow-connector-scenario");
-    expect(onStartWorkflow).not.toHaveBeenCalled();
+    render(<ScenariosPanel onTryScenario={vi.fn()} />);
+    const catalog = screen.getByTestId("workflow-catalog");
+    expect(within(catalog).queryByRole("button", { name: "接入我的系统" })).toBeNull();
+    expect(within(catalog).getByRole("button", { name: "查看工作流" })).toBeTruthy();
+  });
+
+  it("目录卡只保留目标词和原标题副标题", () => {
+    const scenario = makeWorkflowScenario("compact-card", {
+      goalTags: ["保交付"],
+      value: "这段长说明不应留在卡片上",
+      shortChain: ["读取状态", "判断异常", "执行动作"],
+      triggerBadge: "订单进入交付窗口时",
+      actionBadge: "会执行、会等待、会继续",
+      humanApprovalSummary: "改期承诺必须审批",
+    });
+    mocked.workflowLibrary = makeWorkflowLibrary([scenario]);
+    render(<ScenariosPanel onTryScenario={vi.fn()} />);
+    const catalog = screen.getByTestId("workflow-catalog");
+    expect(within(catalog).getByRole("heading", { name: "保交付" })).toBeTruthy();
+    expect(within(catalog).getByText(scenario.title)).toBeTruthy();
+    expect(catalog.textContent).not.toContain(scenario.value);
+    expect(catalog.textContent).not.toContain(scenario.triggerBadge);
+    expect(catalog.textContent).not.toContain(scenario.humanApprovalSummary);
   });
 
 
@@ -250,7 +267,7 @@ describe("ScenariosPanel V3", () => {
     const titles = within(screen.getByTestId("workflow-catalog"))
       .getAllByRole("heading", { level: 3 })
       .map((node) => node.textContent);
-    expect(titles).toEqual(["业务结果 hero-first", "业务结果 hero-second", "业务结果 ordinary"]);
+    expect(titles).toEqual(["推进成交", "推进成交", "推进成交"]);
     expect(screen.getAllByText("重点工作流")).toHaveLength(2);
     expect(document.body.textContent).not.toContain("82");
     expect(document.body.textContent).not.toContain("designScore");
@@ -348,7 +365,7 @@ describe("ScenariosPanel V3", () => {
     fireEvent.click(screen.getByRole("tab", { name: "机械装备/自动化" }));
     fireEvent.click(screen.getByRole("tab", { name: "生产制造" }));
     fireEvent.click(screen.getByRole("tab", { name: "已有单体系统" }));
-    fireEvent.click(screen.getByRole("button", { name: scenario.title }));
+    fireEvent.click(screen.getByRole("button", { name: scenario.goalTags[0] }));
     expect(await screen.findByText("行业业务版本 · 生产制造版本", {}, { timeout: 5_000 })).toBeTruthy();
     expect(screen.getByText("生产订单与交期承诺")).toBeTruthy();
     expect(screen.getByText("岗位视图 · 财务")).toBeTruthy();

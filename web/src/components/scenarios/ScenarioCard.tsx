@@ -210,9 +210,9 @@ export function WorkflowScenarioCard({
   scenario,
   onOpenDetail,
   onPrimaryAction,
-  compact,
 }: WorkflowScenarioCardProps) {
   const cta = workflowCta(scenario);
+  const showPrimaryAction = cta.label !== "接入我的系统";
   return (
     <article
       className={cn(
@@ -230,55 +230,42 @@ export function WorkflowScenarioCard({
       </div>
       <h3 className="mt-3 text-base font-semibold leading-snug">
         <button type="button" className="text-left hover:text-brand-600" onClick={() => onOpenDetail(scenario)}>
-          {scenario.title}
+          {scenario.goalTags[0]}
         </button>
       </h3>
-      <p className={cn("mt-1.5 text-sm leading-5 text-muted-foreground", compact ? "line-clamp-2" : "line-clamp-3")}>
-        {scenario.value}
-      </p>
-      {!compact ? (
-        <ol className="mt-4 flex flex-wrap items-center gap-1 text-xs text-muted-foreground" aria-label="工作流短链">
-          {scenario.shortChain.map((step, index) => (
-            <li key={`${scenario.id}-${index}`} className="inline-flex items-center gap-1">
-              {index > 0 ? <span aria-hidden="true">→</span> : null}
-              <span>{step}</span>
-            </li>
-          ))}
-        </ol>
+      <p className="mt-1.5 text-sm leading-5 text-muted-foreground">{scenario.title}</p>
+      {cta.secondaryLabel || showPrimaryAction ? (
+        <div className="mt-auto flex items-center justify-end gap-2 pt-4">
+          {cta.secondaryLabel ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 px-3 text-xs"
+              onClick={(event) => {
+                event.stopPropagation();
+                if (cta.secondaryAction) onPrimaryAction(cta.secondaryAction, scenario);
+                else onOpenDetail(scenario);
+              }}
+            >
+              {cta.secondaryLabel}
+            </Button>
+          ) : null}
+          {showPrimaryAction ? (
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 px-3 text-xs"
+              onClick={(event) => {
+                event.stopPropagation();
+                onPrimaryAction(cta.action, scenario);
+              }}
+            >
+              {cta.label}
+            </Button>
+          ) : null}
+        </div>
       ) : null}
-      <div className="mt-4 grid gap-1.5 text-xs text-muted-foreground">
-        <span>触发：{scenario.triggerBadge}</span>
-        <span>行动：{scenario.actionBadge}</span>
-        <span>人审：{scenario.humanApprovalSummary}</span>
-      </div>
-      <div className="mt-auto flex items-center justify-end gap-2 pt-4">
-        {cta.secondaryLabel ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 px-3 text-xs"
-            onClick={(event) => {
-              event.stopPropagation();
-              if (cta.secondaryAction) onPrimaryAction(cta.secondaryAction, scenario);
-              else onOpenDetail(scenario);
-            }}
-          >
-            {cta.secondaryLabel}
-          </Button>
-        ) : null}
-        <Button
-          type="button"
-          size="sm"
-          className="h-8 px-3 text-xs"
-          onClick={(event) => {
-            event.stopPropagation();
-            onPrimaryAction(cta.action, scenario);
-          }}
-        >
-          {cta.label}
-        </Button>
-      </div>
     </article>
   );
 }

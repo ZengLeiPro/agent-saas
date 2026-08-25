@@ -19,6 +19,7 @@ const harness = vi.hoisted(() => {
       harness.currentFiles = files;
     }),
     sessionCallbacks: null as null | {
+      onSessionsLoaded?: (sessions: Array<{ sessionId: string }>) => void;
       onQueuedMessages?: (sessionId: string, messages: unknown[]) => void;
       cancelActiveStream?: () => void;
     },
@@ -186,6 +187,46 @@ afterEach(() => {
 });
 
 describe("useChatAppState queue delivery lifecycle", () => {
+  it("keeps a WS-confirmed runtime through active and inactive snapshots, then clears it on terminal", async () => {
+    harness.session.sessionId = "session-sleeping";
+    harness.session.isNewSession = false;
+    const active = [true, false];
+    harness.authFetch.mockImplementation(async (url: string) => url === "/api/sessions/active-streams"
+      ? response({ sessions: [{ sessionId: "session-sleeping", active: active.shift(), streamId: "stream-sleeping", runId: "run-sleeping" }] }) : response({}, 404));
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => emit({ type: "session_status", sessionId: "session-sleeping", status: "running", streamId: "stream-sleeping", runId: "run-sleeping" }));
+    await act(async () => {
+      harness.sessionCallbacks?.onSessionsLoaded?.([{ sessionId: "session-sleeping" }]);
+      await Promise.resolve(); await Promise.resolve();
+      harness.sessionCallbacks?.onSessionsLoaded?.([{ sessionId: "session-sleeping" }]);
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(result.current.runningSessionIds.has("session-sleeping")).toBe(true);
+    act(() => emit({ type: "session_status", sessionId: "session-sleeping", status: "completed", runId: "run-sleeping" }));
+    expect(result.current.runningSessionIds.has("session-sleeping")).toBe(false);
+  });
+
+  it("clears a snapshot-only runtime when a later snapshot is inactive", async () => {
+    harness.session.sessionId = "session-finished";
+    harness.session.isNewSession = false;
+    const active = [true, false];
+    harness.authFetch.mockImplementation(async (url: string) => url === "/api/sessions/active-streams"
+      ? response({ sessions: [{ sessionId: "session-finished", active: active.shift() }] }) : response({}, 404));
+    const { result } = renderHook(() => useChatAppState());
+
+    await act(async () => {
+      harness.sessionCallbacks?.onSessionsLoaded?.([{ sessionId: "session-finished" }]);
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(result.current.runningSessionIds.has("session-finished")).toBe(true);
+    await act(async () => {
+      harness.sessionCallbacks?.onSessionsLoaded?.([{ sessionId: "session-finished" }]);
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(result.current.runningSessionIds.has("session-finished")).toBe(false);
+  });
+
   it("assigns an authoritative new session to the pending group", async () => {
     const { result } = renderHook(() => useChatAppState());
 

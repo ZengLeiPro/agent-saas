@@ -638,11 +638,12 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       interactionStore.resolve(id, { allow: false });
       await pending;
     });
-
     it('正常 resolve：dispatch 收到原始应答、respond_ok、同 session 其他连接收 interaction_resolved 广播', async () => {
       const tmp = await makeTmp('cov-respond-');
       const rig = makeRig({ agentCwd: tmp });
       const sessionId = randomUUID();
+      const transcriptPath = getTranscriptPath(tmp, sessionId, { tenantId: TENANT, userId: USER.sub });
+      await writeSessionMeta(transcriptPath, { userId: USER.sub, username: USER.username, tenantId: TENANT, channel: 'web', createdAt: new Date().toISOString() });
       const id = `cov-ok-${RUN_TAG}`;
       const pending = interactionStore.create(id, 'permission_request', {
         sessionId, userId: USER.sub, toolId: 'Shell', toolName: 'Shell',
@@ -657,7 +658,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: id });
       expect(interactionStore.get(id)).toBeUndefined();
     });
-
     it('未知交互且无持久化兜底 → Interaction not found or expired', async () => {
       const tmp = await makeTmp('cov-respond-miss-');
       const rig = makeRig({ agentCwd: tmp });
@@ -1447,7 +1447,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await rig.send(USER, { approvalPolicy: { autoApproveTools: true } });
       expect(responses).toEqual([{ allow: false, message: 'User stopped generation' }]);
     });
-
     it('人工审批 round-trip：permission_request 推 WS（含 ExitPlanMode planContent），respond 后 dispatch 拿到应答', async () => {
       const tmp = await makeTmp('cov-audit-rt-');
       const userCwd = resolveUserCwd(tmp, { id: USER.sub, username: USER.username, role: 'user', tenantId: TENANT });
@@ -1455,10 +1454,12 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await mkdir(plansDir, { recursive: true });
       await writeFile(join(plansDir, 'latest.md'), '# PLAN BODY');
       const sessionId = randomUUID();
+      const transcriptPath = getTranscriptPath(tmp, sessionId, { tenantId: TENANT, userId: USER.sub });
+      await writeSessionMeta(transcriptPath, { userId: USER.sub, username: USER.username, tenantId: TENANT, channel: 'web', createdAt: new Date().toISOString() });
       const interactionId = `rt-${RUN_TAG}`;
       let resolved: InteractionResponse | undefined;
       const dispatch: AgentRunDispatch = async function* (_msg, _ctx, _opts, hooks) {
-        await hooks?.onSessionStart?.(sessionId);
+        await hooks?.onSessionStart?.(sessionId, transcriptPath);
         resolved = await hooks!.onInteraction!({
           type: 'permission_request', interactionId,
           toolId: 'ExitPlanMode', toolName: 'ExitPlanMode', toolInput: {},
@@ -1492,7 +1493,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       // 广播分支由上方「正常 resolve」用例（手工挂 activeStreams）单独覆盖。
     });
   });
-
   // ════════════════════════════════════════════════════════════════════
   // 5. publishRuntimeOutboundEvent
   // ════════════════════════════════════════════════════════════════════

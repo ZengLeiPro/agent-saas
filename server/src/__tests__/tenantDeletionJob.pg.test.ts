@@ -46,6 +46,7 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
     await jobs.init();
     const tenantStore = new TenantStore(join(tmpRoot, 'tenants.json'));
     await tenantStore.create({ id: 'acme', name: 'Acme', createdBy: 'test' });
+    await tenantStore.create({ id: 'remaining', name: 'Remaining', createdBy: 'test' });
 
     const calls: string[] = [];
     let resourceAttempts = 0;

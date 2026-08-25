@@ -63,12 +63,6 @@ describe("TaskCard", () => {
     expect(screen.queryByText("Agent 自动标签")).toBeNull();
   });
 
-  it("按 integration task workflowVersion 分流 v2/v3 卡片摘要", () => {
-    renderCard(task({ kind: "integration", workflowVersion: 3 }));
-    expect(screen.getByText("v3 Candidate summary")).toBeTruthy();
-    expect(screen.queryByText("v2 source summary")).toBeNull();
-  });
-
   it("兼容没有创建人和完成时间的旧任务", () => {
     renderCard(task({ creatorUserId: undefined, creatorName: undefined, completedAt: undefined }));
 

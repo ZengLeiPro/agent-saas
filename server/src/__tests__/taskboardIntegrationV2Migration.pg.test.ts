@@ -82,9 +82,25 @@ describePg('taskboard historical integration migration (PostgreSQL)', () => {
   }
 
   it('atomically creates the unique Agent rendezvous before the constrained 2 to 3 upgrade', async () => {
-    const validId = await seedHistoricalIntegration('valid', 'valid');
-    const missingId = await seedHistoricalIntegration('missing', 'missing');
-    const malformedId = await seedHistoricalIntegration('malformed', 'malformed');
+    const initialDefault = await pool.query(
+      `SELECT column_default AS value
+         FROM information_schema.columns
+        WHERE table_schema=current_schema() AND table_name=$1 AND column_name='workflow_version'`,
+      [store.tasksTable],
+    );
+    expect(initialDefault.rows[0]?.value).toContain('3');
+
+    await pool.query(`ALTER TABLE ${store.tasksTable} ALTER COLUMN workflow_version SET DEFAULT 2`);
+    let validId: string;
+    let missingId: string;
+    let malformedId: string;
+    try {
+      validId = await seedHistoricalIntegration('valid', 'valid');
+      missingId = await seedHistoricalIntegration('missing', 'missing');
+      malformedId = await seedHistoricalIntegration('malformed', 'malformed');
+    } finally {
+      await pool.query(`ALTER TABLE ${store.tasksTable} ALTER COLUMN workflow_version SET DEFAULT 3`);
+    }
 
     await expect(pool.query(
       `UPDATE ${store.tasksTable} SET workflow_version=3 WHERE id=$1`,

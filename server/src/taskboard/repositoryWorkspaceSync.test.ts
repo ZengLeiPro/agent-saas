@@ -16,6 +16,7 @@ import {
   type RepositoryWorkspaceSyncHost,
   type RepositoryWorkspaceSyncLock,
 } from './repositoryWorkspaceSync.js';
+import { runSafeServerGit } from './safeServerGitRunner.js';
 
 const exec = promisify(execFile);
 const REPOSITORY = '/srv/cache/acme-widget';
@@ -667,21 +668,11 @@ describe('syncRepositoryWorkspace', () => {
     const repositoryPath = join(root, 'repository');
     const worktreePath = join(root, 'candidate-worktree');
     const commands: RepositoryWorkspaceGitCommand[] = [];
-    const actualGit = async (cwd: string, args: readonly string[]) => {
-      try {
-        const result = await exec('git', [...args], { cwd });
-        return { exitCode: 0, stdout: result.stdout, stderr: result.stderr };
-      } catch (error: any) {
-        return { exitCode: Number(error.code) || 1, stdout: String(error.stdout ?? ''), stderr: String(error.stderr ?? error.message) };
-      }
-    };
     try {
       await exec('git', ['init', '-b', 'main', repositoryPath]);
-      await exec('git', ['config', 'user.name', 'Test'], { cwd: repositoryPath });
-      await exec('git', ['config', 'user.email', 'test@example.com'], { cwd: repositoryPath });
       await writeFile(join(repositoryPath, 'base.txt'), 'base\n');
       await exec('git', ['add', '.'], { cwd: repositoryPath });
-      await exec('git', ['commit', '-m', 'base'], { cwd: repositoryPath });
+      await exec('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'base'], { cwd: repositoryPath });
       await exec('git', ['worktree', 'add', '-b', 'integration/real', worktreePath], { cwd: repositoryPath });
       await exec('git', ['checkout', '--detach'], { cwd: worktreePath });
       const branchOid = (await exec('git', ['rev-parse', 'refs/heads/integration/real'], { cwd: repositoryPath })).stdout.trim();
@@ -690,7 +681,7 @@ describe('syncRepositoryWorkspace', () => {
         validateServerOwnedRepository: async () => undefined,
         runGit: async (command) => {
           commands.push(command);
-          return actualGit(command.cwd, command.args);
+          return runSafeServerGit(command);
         },
       };
       const error = await syncRepositoryWorkspace(host, {

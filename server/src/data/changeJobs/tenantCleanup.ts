@@ -33,6 +33,14 @@ export class GovernanceTenantCleanup {
     }
   }
 
+  /** Final tenant-delete verifier: no credential rows may survive a hard delete. */
+  async verifyTenantDeletion(tenantId: string): Promise<{ credentials: number }> {
+    const result = await this.options.pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM ${this.prefix}_credentials WHERE tenant_id=$1`, [tenantId],
+    );
+    return { credentials: Number(result.rows[0]?.count ?? 0) };
+  }
+
   private async transaction(work: (client: PoolClient) => Promise<void>): Promise<void> {
     const client = await this.options.pool.connect();
     try {
@@ -102,10 +110,12 @@ export class GovernanceTenantCleanup {
         scopes: ['secret:connector:revoke'],
       });
     }
+    // Revocation is externally observable before the durable credential rows are
+    // removed; retaining revoked rows would leave tenant credential residue.
     await this.options.pool.query(
-      `UPDATE ${credentials} SET status='revoked',version=version+1,updated_at=NOW(),updated_by='system:tenant-cleanup' WHERE tenant_id=$1 AND status <> 'revoked'`,
-      [tenantId],
+      `DELETE FROM ${this.prefix}_credential_commits WHERE tenant_id=$1`, [tenantId],
     );
+    await this.options.pool.query(`DELETE FROM ${credentials} WHERE tenant_id=$1`, [tenantId]);
   }
 
   private async deleteMemberships(tenantId: string): Promise<void> {

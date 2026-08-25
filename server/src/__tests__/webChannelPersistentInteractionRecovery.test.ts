@@ -246,18 +246,29 @@ describe('WebChannel persistent interaction recovery', () => {
       const activations: string[] = [];
       const rig = resumeRig(runStore, tmp, activations);
 
-      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-t-1', { allow: true }, sessionId);
+      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-t-1', { allow: true }, sessionId, 'terminal-attempt-1');
       expect(rig.ws.sent.at(-1)?.data).toEqual({
-        type: 'respond_ok', interactionId: 'appr-t-1', response: { allow: false, message: '源 run 不可恢复（completed），拒绝遗留审批' },
+        type: 'respond_ok', interactionId: 'appr-t-1', clientAttemptId: 'terminal-attempt-1', response: { allow: false, message: '源 run 不可恢复（completed），拒绝遗留审批' },
+      });
+      // Simulate a dropped ACK / disconnected client: recovery must replay the stable deny, not expire.
+      rig.ws.sent.length = 0;
+      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-t-1', { allow: true }, sessionId, 'terminal-attempt-2');
+      expect(rig.ws.sent).toHaveLength(1);
+      expect(rig.ws.sent[0]?.data).toEqual({
+        type: 'respond_ok', interactionId: 'appr-t-1', clientAttemptId: 'terminal-attempt-2', response: { allow: false, message: '源 run 不可恢复（completed），拒绝遗留审批' },
       });
       expect(activations).toHaveLength(0);
       const events = await eventStore.list(TENANT, sessionId);
-      expect(events.at(-1)).toMatchObject({
-        type: 'approval_resolved',
-        approvalId: 'appr-t-1',
-        decision: 'rejected',
-        message: expect.stringContaining('源 run 不可恢复（completed）'),
-      });
+      const canonical = events.filter((event) => event.type === 'interaction_resolved' && event.interactionId === 'appr-t-1');
+      const approvals = events.filter((event) => event.type === 'approval_resolved' && event.approvalId === 'appr-t-1');
+      expect(canonical).toEqual([expect.objectContaining({
+        id: `interaction_resolved:${sessionId}:appr-t-1`, sessionId, runId: 'run-appr-t', interactionType: 'approval',
+        response: { allow: false, message: '源 run 不可恢复（completed），拒绝遗留审批' },
+      })]);
+      expect(canonical[0]).not.toHaveProperty('clientAttemptId');
+      expect(approvals).toEqual([expect.objectContaining({
+        sessionId, runId: 'run-appr-t', decision: 'rejected', message: expect.stringContaining('源 run 不可恢复（completed）'),
+      })]);
     });
 
     it('无 enqueueRuntime 时 fail-closed 拒绝持久审批，不调用 legacy resumeApprovalDispatch', async () => {
@@ -282,17 +293,34 @@ describe('WebChannel persistent interaction recovery', () => {
       });
 
       await (rig.channel as any).resolveInteraction(
-        wsClient(rig.ws, USER), 'appr-l-1', { allow: false, message: '不允许' }, sessionId,
+        wsClient(rig.ws, USER), 'appr-l-1', { allow: false, message: '不允许' }, sessionId, 'no-scheduler-attempt-1',
       );
-      expect(rig.ws.sent.some((m) => m.data.type === 'respond_ok')).toBe(true);
+      expect(rig.ws.sent.at(-1)?.data).toEqual({
+        type: 'respond_ok', interactionId: 'appr-l-1', clientAttemptId: 'no-scheduler-attempt-1',
+        response: { allow: false, message: '持久审批恢复需要 Runtime Scheduler；已安全拒绝，未恢复旧 Run' },
+      });
+      // The original ACK is lost; a reconnect uses a new clientAttemptId but receives the canonical deny.
+      rig.ws.sent.length = 0;
+      await (rig.channel as any).resolveInteraction(
+        wsClient(rig.ws, USER), 'appr-l-1', { allow: true }, sessionId, 'no-scheduler-attempt-2',
+      );
+      expect(rig.ws.sent).toHaveLength(1);
+      expect(rig.ws.sent[0]?.data).toEqual({
+        type: 'respond_ok', interactionId: 'appr-l-1', clientAttemptId: 'no-scheduler-attempt-2',
+        response: { allow: false, message: '持久审批恢复需要 Runtime Scheduler；已安全拒绝，未恢复旧 Run' },
+      });
       expect(resumeCalls).toHaveLength(0);
       const events = await eventStore.list(TENANT, sessionId);
-      expect(events.at(-1)).toMatchObject({
-        type: 'approval_resolved',
-        approvalId: 'appr-l-1',
-        decision: 'rejected',
-        message: expect.stringContaining('未恢复旧 Run'),
-      });
+      const canonical = events.filter((event) => event.type === 'interaction_resolved' && event.interactionId === 'appr-l-1');
+      const approvals = events.filter((event) => event.type === 'approval_resolved' && event.approvalId === 'appr-l-1');
+      expect(canonical).toEqual([expect.objectContaining({
+        id: `interaction_resolved:${sessionId}:appr-l-1`, sessionId, runId: 'run-appr-l', interactionType: 'approval',
+        response: { allow: false, message: '持久审批恢复需要 Runtime Scheduler；已安全拒绝，未恢复旧 Run' },
+      })]);
+      expect(canonical[0]).not.toHaveProperty('clientAttemptId');
+      expect(approvals).toEqual([expect.objectContaining({
+        sessionId, runId: 'run-appr-l', decision: 'rejected', message: expect.stringContaining('未恢复旧 Run'),
+      })]);
       expect(rig.userEvents).not.toContainEqual(expect.objectContaining({ type: 'session_status', status: 'busy' }));
       expect((rig.channel as any).findActiveStreamIdBySession(sessionId)).toBeUndefined();
     });

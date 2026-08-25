@@ -6,6 +6,11 @@ import { tableNames as phase4TableNames } from '../phase4/migration.js';
 import { contextTableNames, contextTablePrefix, type ContextPgPool } from '../store/migration.js';
 import { contextRetentionTableNames } from './migration.js';
 
+const DEFAULT_AUDIT_LEASE_MS = 5 * 60_000;
+const DEFAULT_AUDIT_MAX_ATTEMPTS = 5;
+const DEFAULT_AUDIT_RETRY_BASE_MS = 1_000;
+const DEFAULT_AUDIT_RETRY_MAX_MS = 5 * 60_000;
+
 export interface ContextRetentionRequest {
   tenantId: string;
   /** Inclusive source outbox sequence that the operator has approved for collection. */
@@ -39,6 +44,17 @@ export interface ContextRetentionStoreOptions {
   pool: ContextPgPool;
   tablePrefix?: string;
   now?: () => Date;
+  auditLeaseMs?: number;
+  auditMaxAttempts?: number;
+  auditRetryBaseMs?: number;
+  auditRetryMaxMs?: number;
+}
+
+export interface ContextRetentionAuditClaim {
+  tenantId: string;
+  receiptId: string;
+  receipt: ContextRetentionReceipt;
+  leaseId: string;
 }
 
 /**
@@ -51,6 +67,10 @@ export class ContextRetentionStore {
   private readonly derived;
   private readonly lifecycle;
   private readonly now: () => Date;
+  private readonly auditLeaseMs: number;
+  private readonly auditMaxAttempts: number;
+  private readonly auditRetryBaseMs: number;
+  private readonly auditRetryMaxMs: number;
 
   constructor(private readonly options: ContextRetentionStoreOptions) {
     const prefix = contextTablePrefix(options.tablePrefix);
@@ -58,6 +78,10 @@ export class ContextRetentionStore {
     this.derived = phase4TableNames(prefix);
     this.lifecycle = contextRetentionTableNames(prefix);
     this.now = options.now ?? (() => new Date());
+    this.auditLeaseMs = positiveInt(options.auditLeaseMs, DEFAULT_AUDIT_LEASE_MS);
+    this.auditMaxAttempts = positiveInt(options.auditMaxAttempts, DEFAULT_AUDIT_MAX_ATTEMPTS);
+    this.auditRetryBaseMs = positiveInt(options.auditRetryBaseMs, DEFAULT_AUDIT_RETRY_BASE_MS);
+    this.auditRetryMaxMs = Math.max(this.auditRetryBaseMs, positiveInt(options.auditRetryMaxMs, DEFAULT_AUDIT_RETRY_MAX_MS));
   }
 
   async collect(request: ContextRetentionRequest): Promise<ContextRetentionReceipt> {
@@ -82,9 +106,11 @@ export class ContextRetentionStore {
         startedAt, completedAt, counts,
       };
       const receipt = { ...unsignedReceipt, receiptSha256: receiptHash(unsignedReceipt) };
+      // The receipt/outbox insert is in the same transaction as the deletion.
       await client.query(`INSERT INTO ${this.lifecycle.receipts}
-        (tenant_id,receipt_id,receipt_json) VALUES ($1,$2,$3::jsonb)`,
-      [request.tenantId, receipt.receiptId, JSON.stringify(receipt)]);
+        (tenant_id,receipt_id,receipt_json,max_audit_attempts,audit_next_attempt_at)
+        VALUES ($1,$2,$3::jsonb,$4,NOW())`,
+      [request.tenantId, receipt.receiptId, JSON.stringify(receipt), this.auditMaxAttempts]);
       await client.query('COMMIT');
       return receipt;
     } catch (error) {
@@ -101,38 +127,83 @@ export class ContextRetentionStore {
     return String(result.rows[0]?.watermark ?? '0');
   }
 
-  /** Claims one tenant-owned receipt for delivery. Expired claims are safely reclaimable. */
-  async claimAudit(tenantId: string, receiptId: string): Promise<{ receipt: ContextRetentionReceipt; delivered: boolean }> {
+  /** Claims one tenant-owned receipt for an explicit, tenant-scoped admin replay. */
+  async claimAudit(tenantId: string, receiptId: string): Promise<{ receipt: ContextRetentionReceipt; delivered: boolean; leaseId?: string }> {
+    const leaseId = randomUUID();
     const result = await this.options.pool.query(`UPDATE ${this.lifecycle.receipts}
-      SET audit_status='delivering',audit_attempt=audit_attempt+1,
-        audit_lease_expires_at=NOW()+INTERVAL '5 minutes',last_audit_error=NULL,updated_at=NOW()
-      WHERE tenant_id=$1 AND receipt_id=$2::uuid AND (
+      SET audit_status='delivering',audit_attempt=audit_attempt+1,audit_lease_owner=$3::uuid,
+        audit_lease_expires_at=NOW()+($4::bigint * INTERVAL '1 millisecond'),last_audit_error=NULL,updated_at=NOW()
+      WHERE tenant_id=$1 AND receipt_id=$2::uuid AND audit_attempt<max_audit_attempts AND (
         audit_status IN ('pending','retry_wait') OR
         (audit_status='delivering' AND audit_lease_expires_at<NOW()))
-      RETURNING receipt_json`, [tenantId, receiptId]);
-    if (result.rowCount) return { receipt: result.rows[0].receipt_json as ContextRetentionReceipt, delivered: false };
+      RETURNING receipt_json`, [tenantId, receiptId, leaseId, this.auditLeaseMs]);
+    if (result.rowCount) return { receipt: result.rows[0].receipt_json as ContextRetentionReceipt, delivered: false, leaseId };
     const existing = await this.options.pool.query(`SELECT receipt_json,audit_status
       FROM ${this.lifecycle.receipts} WHERE tenant_id=$1 AND receipt_id=$2::uuid`, [tenantId, receiptId]);
     if (!existing.rowCount) throw new Error('CONTEXT_RETENTION_RECEIPT_NOT_FOUND');
     if (existing.rows[0].audit_status === 'delivered') {
       return { receipt: existing.rows[0].receipt_json as ContextRetentionReceipt, delivered: true };
     }
+    if (existing.rows[0].audit_status === 'dead_letter') throw new Error('CONTEXT_RETENTION_AUDIT_DEAD_LETTER');
     throw new Error('CONTEXT_RETENTION_AUDIT_IN_PROGRESS');
   }
 
-  async completeAudit(tenantId: string, receiptId: string): Promise<void> {
+  /** Atomically leases ready receipts across tenants. SKIP LOCKED prevents one tenant from blocking another. */
+  async claimNextAudits(leaseOwner: string, limit: number): Promise<ContextRetentionAuditClaim[]> {
+    if (!leaseOwner || !Number.isInteger(limit) || limit < 1) throw new Error('CONTEXT_RETENTION_AUDIT_CLAIM_INVALID');
+    const leaseId = randomUUID();
+    const result = await this.options.pool.query(`WITH candidates AS (
+      SELECT tenant_id,receipt_id FROM ${this.lifecycle.receipts}
+      WHERE audit_attempt<max_audit_attempts AND (
+        (audit_status IN ('pending','retry_wait') AND audit_next_attempt_at<=NOW()) OR
+        (audit_status='delivering' AND audit_lease_expires_at<NOW())
+      )
+      ORDER BY audit_next_attempt_at NULLS FIRST,created_at,tenant_id,receipt_id
+      FOR UPDATE SKIP LOCKED LIMIT $1
+    )
+    UPDATE ${this.lifecycle.receipts} receipt
+    SET audit_status='delivering',audit_attempt=receipt.audit_attempt+1,audit_lease_owner=$2::uuid,
+      audit_lease_expires_at=NOW()+($3::bigint * INTERVAL '1 millisecond'),last_audit_error=NULL,updated_at=NOW()
+    FROM candidates
+    WHERE receipt.tenant_id=candidates.tenant_id AND receipt.receipt_id=candidates.receipt_id
+    RETURNING receipt.tenant_id,receipt.receipt_id,receipt.receipt_json`, [limit, leaseId, this.auditLeaseMs]);
+    return result.rows.map(row => ({
+      tenantId: String(row.tenant_id), receiptId: String(row.receipt_id),
+      receipt: row.receipt_json as ContextRetentionReceipt, leaseId,
+    }));
+  }
+
+  /** Converts abandoned/exhausted deliveries into observable terminal failures. */
+  async deadLetterExhaustedAudits(): Promise<number> {
     const result = await this.options.pool.query(`UPDATE ${this.lifecycle.receipts}
-      SET audit_status='delivered',audit_lease_expires_at=NULL,last_audit_error=NULL,
+      SET audit_status='dead_letter',audit_lease_owner=NULL,audit_lease_expires_at=NULL,
+        audit_next_attempt_at=NULL,last_audit_error=COALESCE(last_audit_error,'CONTEXT_RETENTION_AUDIT_MAX_ATTEMPTS'),updated_at=NOW()
+      WHERE audit_attempt>=max_audit_attempts AND (
+        audit_status IN ('pending','retry_wait') OR (audit_status='delivering' AND audit_lease_expires_at<NOW())
+      )`);
+    return result.rowCount ?? 0;
+  }
+
+  async completeAudit(tenantId: string, receiptId: string, leaseId?: string): Promise<void> {
+    const result = await this.options.pool.query(`UPDATE ${this.lifecycle.receipts}
+      SET audit_status='delivered',audit_lease_owner=NULL,audit_lease_expires_at=NULL,audit_next_attempt_at=NULL,last_audit_error=NULL,
         delivered_at=NOW(),updated_at=NOW()
-      WHERE tenant_id=$1 AND receipt_id=$2::uuid AND audit_status='delivering'`, [tenantId, receiptId]);
+      WHERE tenant_id=$1 AND receipt_id=$2::uuid AND audit_status='delivering'
+        AND ($3::uuid IS NULL OR audit_lease_owner=$3::uuid)`, [tenantId, receiptId, leaseId ?? null]);
     if (!result.rowCount) throw new Error('CONTEXT_RETENTION_AUDIT_CLAIM_LOST');
   }
 
-  async failAudit(tenantId: string, receiptId: string, error: string): Promise<void> {
-    await this.options.pool.query(`UPDATE ${this.lifecycle.receipts}
-      SET audit_status='retry_wait',audit_lease_expires_at=NULL,last_audit_error=$3,updated_at=NOW()
-      WHERE tenant_id=$1 AND receipt_id=$2::uuid AND audit_status='delivering'`,
-    [tenantId, receiptId, error.replace(/\s+/g, ' ').slice(0, 300)]);
+  async failAudit(tenantId: string, receiptId: string, error: string, leaseId?: string): Promise<void> {
+    const result = await this.options.pool.query(`UPDATE ${this.lifecycle.receipts}
+      SET audit_status=CASE WHEN audit_attempt>=max_audit_attempts THEN 'dead_letter' ELSE 'retry_wait' END,
+        audit_lease_owner=NULL,audit_lease_expires_at=NULL,
+        audit_next_attempt_at=CASE WHEN audit_attempt>=max_audit_attempts THEN NULL
+          ELSE NOW()+(LEAST($5::bigint,$4::bigint * (2 ^ GREATEST(audit_attempt-1,0))) * INTERVAL '1 millisecond') END,
+        last_audit_error=$3,updated_at=NOW()
+      WHERE tenant_id=$1 AND receipt_id=$2::uuid AND audit_status='delivering'
+        AND ($6::uuid IS NULL OR audit_lease_owner=$6::uuid)`,
+    [tenantId, receiptId, safeError(error), this.auditRetryBaseMs, this.auditRetryMaxMs, leaseId ?? null]);
+    if (!result.rowCount) throw new Error('CONTEXT_RETENTION_AUDIT_CLAIM_LOST');
   }
 
   private async countCandidates(client: PoolClient, request: ContextRetentionRequest): Promise<ContextRetentionCounts> {
@@ -212,9 +283,9 @@ export interface ContextRetentionWorkerFailure {
 
 export interface ContextRetentionWorkerStore {
   collect(request: ContextRetentionRequest): Promise<ContextRetentionReceipt>;
-  claimAudit(tenantId: string, receiptId: string): Promise<{ receipt: ContextRetentionReceipt; delivered: boolean }>;
-  completeAudit(tenantId: string, receiptId: string): Promise<void>;
-  failAudit(tenantId: string, receiptId: string, error: string): Promise<void>;
+  claimAudit(tenantId: string, receiptId: string): Promise<{ receipt: ContextRetentionReceipt; delivered: boolean; leaseId?: string }>;
+  completeAudit(tenantId: string, receiptId: string, leaseId?: string): Promise<void>;
+  failAudit(tenantId: string, receiptId: string, error: string, leaseId?: string): Promise<void>;
 }
 
 /** Runs independent tenant plans and delivers their durable audit outbox receipts. */
@@ -237,10 +308,7 @@ export class ContextRetentionWorker {
         await this.deliver(committedReceipt);
         receipts.push(committedReceipt);
       } catch (error) {
-        failures.push({
-          tenantId: request.tenantId, error: safeError(error),
-          ...(committedReceipt ? { receipt: committedReceipt } : {}),
-        });
+        failures.push({ tenantId: request.tenantId, error: safeError(error), ...(committedReceipt ? { receipt: committedReceipt } : {}) });
       }
     }
     return { receipts, failures };
@@ -252,10 +320,10 @@ export class ContextRetentionWorker {
     if (claimed.delivered) return claimed.receipt;
     try {
       await this.audit(claimed.receipt);
-      await this.store.completeAudit(tenantId, receiptId);
+      await this.store.completeAudit(tenantId, receiptId, claimed.leaseId);
       return claimed.receipt;
     } catch (error) {
-      await this.store.failAudit(tenantId, receiptId, safeError(error)).catch(() => undefined);
+      await this.store.failAudit(tenantId, receiptId, safeError(error), claimed.leaseId).catch(() => undefined);
       throw error;
     }
   }
@@ -263,6 +331,98 @@ export class ContextRetentionWorker {
   private async deliver(receipt: ContextRetentionReceipt): Promise<void> {
     await this.retryAudit(receipt.tenantId, receipt.receiptId);
   }
+}
+
+export interface ContextRetentionAuditConsumerStore {
+  deadLetterExhaustedAudits(): Promise<number>;
+  claimNextAudits(leaseOwner: string, limit: number): Promise<ContextRetentionAuditClaim[]>;
+  completeAudit(tenantId: string, receiptId: string, leaseId?: string): Promise<void>;
+  failAudit(tenantId: string, receiptId: string, error: string, leaseId?: string): Promise<void>;
+}
+
+export interface ContextRetentionAuditConsumerOptions {
+  batchSize?: number;
+  intervalMs?: number;
+  logger?: { info(message: string): void; warn(message: string): void };
+}
+
+/**
+ * Controlled runtime entrypoint for post-commit audit delivery. It never initiates
+ * collection (and therefore preserves retention's default dry-run policy).
+ */
+export class ContextRetentionAuditConsumer {
+  private readonly leaseOwner = randomUUID();
+  private readonly batchSize: number;
+  private readonly intervalMs: number;
+  private readonly logger: { info(message: string): void; warn(message: string): void };
+  private timer?: NodeJS.Timeout;
+  private running?: Promise<ContextRetentionAuditConsumerResult>;
+
+  constructor(
+    private readonly store: ContextRetentionAuditConsumerStore,
+    private readonly audit: (receipt: ContextRetentionReceipt) => Promise<void>,
+    options: ContextRetentionAuditConsumerOptions = {},
+  ) {
+    this.batchSize = positiveInt(options.batchSize, 50);
+    this.intervalMs = positiveInt(options.intervalMs, 30_000);
+    this.logger = options.logger ?? { info: () => undefined, warn: () => undefined };
+  }
+
+  start(): void {
+    if (this.timer) return;
+    void this.trigger();
+    this.timer = setInterval(() => void this.trigger(), this.intervalMs);
+    this.timer.unref?.();
+  }
+
+  async stop(): Promise<void> {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = undefined;
+    await this.running;
+  }
+
+  async runOnce(): Promise<ContextRetentionAuditConsumerResult> {
+    const deadLettered = await this.store.deadLetterExhaustedAudits();
+    const claims = await this.store.claimNextAudits(this.leaseOwner, this.batchSize);
+    let delivered = 0;
+    let failed = 0;
+    for (const claim of claims) {
+      try {
+        await this.audit(claim.receipt);
+        await this.store.completeAudit(claim.tenantId, claim.receiptId, claim.leaseId);
+        delivered += 1;
+      } catch (error) {
+        failed += 1;
+        const message = safeError(error);
+        try {
+          await this.store.failAudit(claim.tenantId, claim.receiptId, message, claim.leaseId);
+        } catch (persistError) {
+          this.logger.warn(`Context retention audit failure persistence failed tenant=${claim.tenantId} receipt=${claim.receiptId}: ${safeError(persistError)}`);
+        }
+        this.logger.warn(`Context retention audit delivery failed tenant=${claim.tenantId} receipt=${claim.receiptId}: ${message}`);
+      }
+    }
+    if (deadLettered) this.logger.warn(`Context retention audit dead-lettered receipts=${deadLettered}`);
+    return { claimed: claims.length, delivered, failed, deadLettered };
+  }
+
+  private trigger(): Promise<ContextRetentionAuditConsumerResult> {
+    if (this.running) return this.running;
+    this.running = this.runOnce()
+      .catch(error => {
+        this.logger.warn(`Context retention audit consumer failed: ${safeError(error)}`);
+        return { claimed: 0, delivered: 0, failed: 0, deadLettered: 0 };
+      })
+      .finally(() => { this.running = undefined; });
+    return this.running;
+  }
+}
+
+export interface ContextRetentionAuditConsumerResult {
+  claimed: number;
+  delivered: number;
+  failed: number;
+  deadLettered: number;
 }
 
 function validateRequest(request: ContextRetentionRequest): void {
@@ -277,6 +437,9 @@ function retentionParams(request: ContextRetentionRequest): [string, string, str
   return [request.tenantId, new Date(request.retainAfter).toISOString(), request.sourceOutboxWatermark, request.derivedOutboxWatermark];
 }
 
+function positiveInt(value: number | undefined, fallback: number): number {
+  return Number.isInteger(value) && value! > 0 ? value! : fallback;
+}
 function count(row: Record<string, unknown> | undefined): number { return Number(row?.count ?? 0); }
 function receiptHash(receipt: object): string { return createHash('sha256').update(JSON.stringify(receipt)).digest('hex'); }
 function safeError(error: unknown): string {

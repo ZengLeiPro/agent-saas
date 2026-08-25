@@ -238,6 +238,7 @@ import { sanitizeUserOverrides } from '../security/extraDirs.js';
 import { initializeRuntimeGovernanceStores } from './runtimeGovernanceStores.js';
 import type { ContextStore } from '../context/store/index.js';
 import { createRuntimeContextPlane, createRuntimeMemoryContextTools } from './runtimeMemoryContextTools.js';
+import { createRuntimeContextPlaneShutdown } from './runtimeContextAdmin.js';
 import { initializeRuntimeGovernanceConnectors } from './runtimeGovernanceConnectors.js';
 import {
   initializeRuntimeGovernanceCredentials,
@@ -1491,12 +1492,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     runResolutionSnapshotStore,
     resolveLegacySkillResourceId,
   });
-  googleWorkspaceOAuthService = initializedGoogleWorkspaceOAuthService;
-  credentialBroker = initializedCredentialBroker;
-  const { authorizationRegistry: contextSourceAuthorizationRegistry, derivedStore: derivedContextStore,
-    syncRuntime: contextPlanePhase2Runtime } = createRuntimeContextPlane({
+  [googleWorkspaceOAuthService, credentialBroker] = [initializedGoogleWorkspaceOAuthService, initializedCredentialBroker];
+  const { authorizationRegistry: contextSourceAuthorizationRegistry, derivedStore: derivedContextStore, syncRuntime: contextPlanePhase2Runtime } = createRuntimeContextPlane({
     contextStore, taskboardStore: rawTaskboardStore, membershipStore, assignmentStore, userStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, fetchImpl: egressFetch, enableWorker: enableSchedulerWorker, logger: serverLogger,
   });
+  const contextPlaneShutdown = createRuntimeContextPlaneShutdown(contextPlanePhase2Runtime, { runtimePgEventStore: pgEventStore, governanceAuditStore }, config, enableSchedulerWorker, serverLogger);
   taskboardRepositoryProvider = configureTaskboardGithubRepositoryProvider(taskboardStoreService, userStore, {
     connectionStore: connectorConnectionStore,
     vault: secretVault,
@@ -3004,7 +3004,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     disconnectNotionConnection,
     googleWorkspaceOAuthService,
     notionAuthFlowShutdown: notionAuthFlowService ? () => notionAuthFlowService?.stop() : undefined,
-    contextPlaneShutdown: contextPlanePhase2Runtime ? () => contextPlanePhase2Runtime!.stop() : undefined,
+    contextPlaneShutdown,
     dwsAuthKeepaliveShutdown: dwsAuthKeepaliveService || dwsAuthFlowService || agentDwsRuntime
       ? async () => {
           dwsAuthFlowService?.stop();

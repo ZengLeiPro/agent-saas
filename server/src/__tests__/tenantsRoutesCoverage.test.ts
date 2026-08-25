@@ -83,6 +83,7 @@ function buildReport(tenant: TenantRecord): TenantDeletionReport {
     context: {
       enabled: false,
       deletion: {
+        retentionReceiptsDeleted: 0,
         relationCandidatesDeleted: 0, entityLinksDeleted: 0, itemEvidenceDeleted: 0, profileFacetEvidenceDeleted: 0,
         reviewsDeleted: 0, derivedItemsDeleted: 0, profileFacetsDeleted: 0, entitiesDeleted: 0, consumersDeleted: 0,
         derivedOutboxDeleted: 0, outboxDeleted: 0, evidenceDeleted: 0, revisionsDeleted: 0, recordsDeleted: 0,
@@ -105,6 +106,18 @@ function buildReport(tenant: TenantRecord): TenantDeletionReport {
       sharedTenantDirDeleted: true,
       tenantSkillsDirDeleted: false,
       avatarsDeleted: 0,
+    },
+    residuals: {
+      context: {
+        retentionReceiptsDeleted: 0,
+        relationCandidatesDeleted: 0, entityLinksDeleted: 0, itemEvidenceDeleted: 0, profileFacetEvidenceDeleted: 0,
+        reviewsDeleted: 0, derivedItemsDeleted: 0, profileFacetsDeleted: 0, entitiesDeleted: 0, consumersDeleted: 0,
+        derivedOutboxDeleted: 0, outboxDeleted: 0, evidenceDeleted: 0, revisionsDeleted: 0, recordsDeleted: 0,
+        partitionsDeleted: 0, collectionsDeleted: 0, sourcesDeleted: 0,
+      },
+      users: 0,
+      runtime: { events: 0, cursors: 0, runs: 0, sessions: 0, tools: 0 },
+      files: 0, workspaces: 0, sandboxes: 0, snat: 0,
     },
   };
 }
@@ -177,7 +190,15 @@ async function makeTestRig(opts: RigOptions = {}): Promise<TestRig> {
             domains: [{ jobId: 'job-1', domain: 'tenant_record', status: 'succeeded' }],
           };
         },
-        get: async () => null,
+        get: async (tenantId: string, jobId: string) => ({
+          created: false,
+          job: { jobId, tenantId, status: 'succeeded', revision: 8 },
+          domains: [{ jobId, domain: 'deletion_verification', status: 'succeeded' }],
+          proof: {
+            report: buildReport({ id: tenantId, name: tenantId, createdAt: '', createdBy: 'test', updatedAt: '', disabled: true }),
+            residuals: { ...buildReport({ id: tenantId, name: tenantId, createdAt: '', createdBy: 'test', updatedAt: '', disabled: true }).residuals, credentials: 0 },
+          },
+        }),
         findByIdempotency: async () => null,
         replay: async ({ tenantId, jobId, expectedRevision }: {
           tenantId: string; jobId: string; expectedRevision: number;
@@ -236,6 +257,22 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
         error: `Cannot rename the default tenant "${DEFAULT_TENANT_ID}"`,
       });
       expect(h.tenantStore.findById(DEFAULT_TENANT_ID)?.name).toBe('万神殿');
+    });
+  });
+
+  describe('GET /:id/deletion-jobs/:jobId', () => {
+    it('返回持久化的删除报告和零残留审计证明', async () => {
+      h = await makeTestRig();
+      h.setCaller(PLATFORM_ADMIN);
+      const response = await h.request('/api/tenants/acme/deletion-jobs/job-proof');
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        job: { jobId: 'job-proof', tenantId: 'acme', status: 'succeeded', revision: 8 },
+        proof: {
+          report: { tenantId: 'acme' },
+          residuals: { credentials: 0, files: 0, workspaces: 0, sandboxes: 0, snat: 0 },
+        },
+      });
     });
   });
 

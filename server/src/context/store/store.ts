@@ -7,6 +7,7 @@ import {
   type ContextTableNames,
 } from './migration.js';
 import { tableNames as contextPhase4TableNames } from '../phase4/migration.js';
+import { contextRetentionTableNames } from '../lifecycle/migration.js';
 import {
   ContextStoreError,
   type ContextCollection,
@@ -193,6 +194,7 @@ export interface ContextStoreOptions {
 
 /** Durable receipt for a tenant-scoped Context hard delete. */
 export interface ContextTenantDeletionReport {
+  retentionReceiptsDeleted: number;
   relationCandidatesDeleted: number;
   entityLinksDeleted: number;
   itemEvidenceDeleted: number;
@@ -233,7 +235,9 @@ export class ContextStore {
   async hardDeleteTenant(tenantId: string): Promise<ContextTenantDeletionReport> {
     assertScope(tenantId);
     const phase4 = contextPhase4TableNames(this.tablePrefix);
+    const retention = contextRetentionTableNames(this.tablePrefix);
     const plan: Array<{ key: Exclude<keyof ContextTenantDeletionReport, 'totalDeleted'>; table: string }> = [
+      { key: 'retentionReceiptsDeleted', table: retention.receipts },
       { key: 'relationCandidatesDeleted', table: phase4.relationCandidates },
       { key: 'entityLinksDeleted', table: phase4.entityLinks },
       { key: 'itemEvidenceDeleted', table: phase4.itemEvidence },

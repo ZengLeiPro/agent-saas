@@ -495,7 +495,7 @@ describe('Run Resolution Snapshot 敏感内容围栏', () => {
     const queries: string[] = [];
     const query = async (sql: string) => {
       queries.push(sql);
-      if (sql.includes('SELECT version FROM')) return { rows: [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }, { version: 18 }, { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 }, { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 }, { version: 27 }, { version: 28 }, { version: 29 }] };
+      if (sql.includes('SELECT version FROM')) return { rows: [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }, { version: 18 }, { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 }, { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 }, { version: 27 }, { version: 28 }, { version: 29 }, { version: 30 }, { version: 31 }] };
       return { rows: [], rowCount: 0 };
     };
     const pool = { query, connect: async () => ({ query, release: () => undefined }) };

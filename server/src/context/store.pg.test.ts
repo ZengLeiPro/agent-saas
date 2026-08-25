@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { PgGovernanceMigrationRunner } from '../data/governance-schema/index.js';
 import { tableNames as contextPhase4TableNames } from './phase4/migration.js';
+import { contextRetentionTableNames } from './lifecycle/migration.js';
 import { contextTableNames } from './store/migration.js';
 import { ContextStore, ContextStoreError } from './store/index.js';
 
@@ -238,6 +239,10 @@ describePg('PgContextStore PostgreSQL integration', () => {
 
     await seed(targetTenant);
     await seed(otherTenant);
+    const receipts = contextRetentionTableNames(prefix).receipts;
+    await pool.query(`INSERT INTO ${receipts} (tenant_id,receipt_id,receipt_json)
+      VALUES ($1,'00000000-0000-4000-8000-000000000001','{}'),
+        ($2,'00000000-0000-4000-8000-000000000002','{}')`, [targetTenant, otherTenant]);
     const targetBefore = await countRows(targetTenant);
     const otherBefore = await countRows(otherTenant);
     expect(Object.values(targetBefore).reduce((total, count) => total + count, 0)).toBe(19);
@@ -264,15 +269,19 @@ describePg('PgContextStore PostgreSQL integration', () => {
     await pool.query(`DROP FUNCTION ${functionName}()`);
 
     await expect(store.hardDeleteTenant(targetTenant)).resolves.toMatchObject({
+      retentionReceiptsDeleted: 1,
       relationCandidatesDeleted: 1, entityLinksDeleted: 1, itemEvidenceDeleted: 1, profileFacetEvidenceDeleted: 1,
       reviewsDeleted: 1, derivedItemsDeleted: 1, profileFacetsDeleted: 1, entitiesDeleted: 1, consumersDeleted: 1,
       derivedOutboxDeleted: 1, outboxDeleted: 1, evidenceDeleted: 1, revisionsDeleted: 2, recordsDeleted: 2,
-      partitionsDeleted: 1, collectionsDeleted: 1, sourcesDeleted: 1, totalDeleted: 19,
+      partitionsDeleted: 1, collectionsDeleted: 1, sourcesDeleted: 1, totalDeleted: 20,
     });
     expect(Object.values(await countRows(targetTenant))).toEqual(Array(tenantTables.length).fill(0));
+    expect((await pool.query(`SELECT COUNT(*)::int AS count FROM ${receipts} WHERE tenant_id=$1`, [targetTenant])).rows[0]?.count).toBe(0);
     expect(await countRows(otherTenant)).toEqual(otherBefore);
+    expect((await pool.query(`SELECT COUNT(*)::int AS count FROM ${receipts} WHERE tenant_id=$1`, [otherTenant])).rows[0]?.count).toBe(1);
 
     await expect(store.hardDeleteTenant(targetTenant)).resolves.toEqual({
+      retentionReceiptsDeleted: 0,
       relationCandidatesDeleted: 0, entityLinksDeleted: 0, itemEvidenceDeleted: 0, profileFacetEvidenceDeleted: 0,
       reviewsDeleted: 0, derivedItemsDeleted: 0, profileFacetsDeleted: 0, entitiesDeleted: 0, consumersDeleted: 0,
       derivedOutboxDeleted: 0, outboxDeleted: 0, evidenceDeleted: 0, revisionsDeleted: 0, recordsDeleted: 0,

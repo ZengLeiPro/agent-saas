@@ -38,6 +38,32 @@ describe('GovernanceChangeJobWorker', () => {
     expect(store.fail).not.toHaveBeenCalled();
   });
 
+  it('把 handler 的结构化 receipt 与域状态在同一 fenced 更新中持久化', async () => {
+    const store = {
+      get: vi.fn().mockResolvedValue(job),
+      claim: vi.fn().mockResolvedValue({ ...job, status: 'running', revision: 2 }),
+      listDomains: vi.fn().mockResolvedValue([{ domain: 'legacy_resources', status: 'pending', revision: 1 }]),
+      updateDomain: vi.fn().mockResolvedValue({}),
+      renewLease: vi.fn().mockResolvedValue(true),
+      complete: vi.fn().mockResolvedValue({ ...job, status: 'succeeded', revision: 3 }),
+      fail: vi.fn(),
+    };
+    const worker = new GovernanceChangeJobWorker({ store: store as never, workerId: 'worker-1' });
+    await worker.execute({
+      tenantId: 'acme', jobId: 'job-1',
+      handlers: {
+        legacy_resources: async () => ({
+          affectedCount: 7, completedCount: 7, unresolvedItems: [],
+          receipt: { report: { tenantId: 'acme', usersDeleted: 2 } },
+        }),
+      },
+    });
+    expect(store.updateDomain).toHaveBeenCalledWith(expect.objectContaining({
+      totalCount: 7, completedCount: 7,
+      receipt: { report: { tenantId: 'acme', usersDeleted: 2 } },
+    }));
+  });
+
   it('回收租约过期的 running Job 后继续执行', async () => {
     const running = { ...job, status: 'running', revision: 2 };
     const recovered = { ...job, status: 'retry_wait', revision: 3 };

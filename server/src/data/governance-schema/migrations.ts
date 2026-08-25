@@ -4,10 +4,11 @@ import { agentDwsMigrations } from './agentDwsMigrations.js';
 import { governanceV22Statements } from './v22Migration.js';
 import { governanceV23Statements } from './v23Migration.js';
 import { governanceV18Statements } from './v18Migration.js';
+import { governanceV30ChangeJobStatements } from './v30ChangeJobMigration.js';
 import { buildContextMigrationSql } from '../../context/store/migration.js';
 import { buildContextPhase23MigrationSql } from '../../context/phase23/migration.js';
 import { buildContextPhase4MigrationSql } from '../../context/phase4/migration.js';
-import { buildContextRetentionMigrationSql } from '../../context/lifecycle/migration.js';
+import { buildContextRetentionMigrationSql, buildContextRetentionRetryMigrationSql } from '../../context/lifecycle/migration.js';
 
 export type GovernancePgPool = pg.Pool;
 
@@ -897,28 +898,12 @@ function migrations(prefix: string): GovernanceMigration[] {
       }),
     },
     ...agentDwsMigrations(prefix),
-    {
-      version: 22,
-      statements: governanceV22Statements({ assignmentSets, assignments }),
-    },
-    {
-      version: 23,
-      statements: governanceV23Statements({ credentialCommits }),
-    },
-    {
-      // Context Plane participates in the official governance migration ledger. Do not
-      // introduce a second context-specific schema_versions table.
-      version: 24,
-      statements: buildContextMigrationSql(prefix),
-    },
-    {
-      version: 25,
-      statements: buildContextPhase23MigrationSql(prefix),
-    },
-    {
-      version: 26,
-      statements: buildContextPhase4MigrationSql(prefix),
-    },
+    { version: 22, statements: governanceV22Statements({ assignmentSets, assignments }) },
+    { version: 23, statements: governanceV23Statements({ credentialCommits }) },
+    // Context Plane participates in the official governance migration ledger.
+    { version: 24, statements: buildContextMigrationSql(prefix) },
+    { version: 25, statements: buildContextPhase23MigrationSql(prefix) },
+    { version: 26, statements: buildContextPhase4MigrationSql(prefix) },
     {
       version: 27,
       statements: [`ALTER TABLE ${changeJobDomains}
@@ -943,6 +928,17 @@ function migrations(prefix: string): GovernanceMigration[] {
           END IF;
         END $$`,
       ],
+    },
+    {
+      // Kept before v31: v30 owns change-job evidence and execution ordering;
+      // v31 only upgrades retention-receipt retry state.
+      version: 30,
+      statements: governanceV30ChangeJobStatements(changeJobs, changeJobDomains),
+    },
+    {
+      // Durable retry/lease protocol for retention receipts created by v28.
+      version: 31,
+      statements: buildContextRetentionRetryMigrationSql(prefix),
     },
   ];
 }

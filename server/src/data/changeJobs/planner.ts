@@ -27,7 +27,7 @@ interface ChangeJobCreator {
 // be durable before any destructive phase and `tenant_record` must be last.
 export const TENANT_DELETE_DOMAINS = [
   'tenant_freeze', 'legacy_resources', 'assignments', 'agents_skills', 'credentials',
-  'memberships', 'tenant_configuration', 'audit_retention', 'tenant_record',
+  'memberships', 'tenant_configuration', 'audit_retention', 'deletion_verification', 'tenant_record',
 ] as const;
 
 export class GovernanceChangePlanner {

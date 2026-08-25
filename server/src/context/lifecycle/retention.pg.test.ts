@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PgGovernanceMigrationRunner } from '../../data/governance-schema/index.js';
 import { tableNames as phase4TableNames } from '../phase4/migration.js';
 import { ContextStore } from '../store/store.js';
-import { ContextRetentionStore, ContextRetentionWorker } from './retention.js';
+import { ContextRetentionAuditConsumer, ContextRetentionStore, ContextRetentionWorker, type ContextRetentionReceipt } from './retention.js';
 import { contextRetentionTableNames } from './migration.js';
 
 const connectionString = process.env.TEST_DATABASE_URL?.trim();
@@ -17,6 +17,29 @@ describePg('Context retention PostgreSQL lifecycle', () => {
   let pool: Pool;
   let context: ContextStore;
   let retention: ContextRetentionStore;
+
+  const insertReceipt = async (tenantId: string, values: {
+    status?: 'pending' | 'delivering' | 'retry_wait';
+    attempts?: number;
+    maxAttempts?: number;
+    leaseExpired?: boolean;
+  } = {}): Promise<ContextRetentionReceipt> => {
+    const receipt = {
+      tenantId, receiptId: randomUUID(), dryRun: false, sourceOutboxWatermark: '0', derivedOutboxWatermark: '0',
+      retainAfter: '2021-01-01T00:00:00.000Z', safeSourceOutboxWatermark: '0',
+      startedAt: '2021-01-01T00:00:00.000Z', completedAt: '2021-01-01T00:00:00.000Z',
+      counts: { sourceOutbox: 0, derivedOutbox: 0, evidence: 0, revisions: 0 }, receiptSha256: 'a'.repeat(64),
+    } as ContextRetentionReceipt;
+    const table = contextRetentionTableNames(prefix).receipts;
+    await pool.query(`INSERT INTO ${table}
+      (tenant_id,receipt_id,receipt_json,audit_status,audit_attempt,max_audit_attempts,audit_lease_expires_at,audit_next_attempt_at)
+      VALUES ($1,$2,$3::jsonb,$4,$5,$6,
+        CASE WHEN $7 THEN NOW()-INTERVAL '1 minute' ELSE NULL END,NOW()-INTERVAL '1 minute')`, [
+      tenantId, receipt.receiptId, JSON.stringify(receipt), values.status ?? 'pending', values.attempts ?? 0,
+      values.maxAttempts ?? 5, values.leaseExpired ?? false,
+    ]);
+    return receipt;
+  };
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: connectionString!, connectionTimeoutMillis: 5_000, max: 4 });
@@ -121,6 +144,61 @@ describePg('Context retention PostgreSQL lifecycle', () => {
     expect((await pool.query(`SELECT audit_status,audit_attempt FROM ${table}
       WHERE tenant_id='tenant-b' AND receipt_id=$1`, [receipt!.receiptId])).rows)
       .toEqual([{ audit_status: 'delivered', audit_attempt: 2 }]);
+  });
+
+  it('recovers a receipt committed before a process crash through the background consumer', async () => {
+    const committed = await insertReceipt('tenant-crash');
+    const audit = vi.fn().mockResolvedValue(undefined);
+    const consumer = new ContextRetentionAuditConsumer(retention, audit, { batchSize: 10 });
+
+    await expect(consumer.runOnce()).resolves.toMatchObject({ claimed: 1, delivered: 1, failed: 0 });
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ receiptId: committed.receiptId, tenantId: 'tenant-crash' }));
+    expect((await pool.query(`SELECT audit_status FROM ${contextRetentionTableNames(prefix).receipts}
+      WHERE tenant_id='tenant-crash' AND receipt_id=$1`, [committed.receiptId])).rows)
+      .toEqual([{ audit_status: 'delivered' }]);
+  });
+
+  it('uses finite backoff and dead-letters audit delivery after max attempts', async () => {
+    const committed = await insertReceipt('tenant-exhaust', { maxAttempts: 2 });
+    const consumer = new ContextRetentionAuditConsumer(retention, vi.fn().mockRejectedValue(new Error('sink unavailable')));
+    const table = contextRetentionTableNames(prefix).receipts;
+
+    await expect(consumer.runOnce()).resolves.toMatchObject({ claimed: 1, failed: 1 });
+    let state = await pool.query(`SELECT audit_status,audit_attempt,audit_next_attempt_at,last_audit_error FROM ${table}
+      WHERE tenant_id='tenant-exhaust' AND receipt_id=$1`, [committed.receiptId]);
+    expect(state.rows[0]).toMatchObject({ audit_status: 'retry_wait', audit_attempt: 1, last_audit_error: 'sink unavailable' });
+    expect(state.rows[0].audit_next_attempt_at).not.toBeNull();
+    await pool.query(`UPDATE ${table} SET audit_next_attempt_at=NOW()-INTERVAL '1 millisecond'
+      WHERE tenant_id='tenant-exhaust' AND receipt_id=$1`, [committed.receiptId]);
+
+    await expect(consumer.runOnce()).resolves.toMatchObject({ claimed: 1, failed: 1 });
+    state = await pool.query(`SELECT audit_status,audit_attempt,audit_next_attempt_at,last_audit_error FROM ${table}
+      WHERE tenant_id='tenant-exhaust' AND receipt_id=$1`, [committed.receiptId]);
+    expect(state.rows).toEqual([{
+      audit_status: 'dead_letter', audit_attempt: 2, audit_next_attempt_at: null, last_audit_error: 'sink unavailable',
+    }]);
+  });
+
+  it('reclaims an expired lease and isolates a failed tenant from another tenant', async () => {
+    const expired = await insertReceipt('tenant-expired', { status: 'delivering', attempts: 1, leaseExpired: true });
+    const failed = await insertReceipt('tenant-a-isolated');
+    const delivered = await insertReceipt('tenant-b-isolated');
+    const audit = vi.fn(async (item: ContextRetentionReceipt) => {
+      if (item.tenantId === 'tenant-a-isolated') throw new Error('tenant A offline');
+    });
+    const consumer = new ContextRetentionAuditConsumer(retention, audit, { batchSize: 10 });
+    const table = contextRetentionTableNames(prefix).receipts;
+
+    await expect(consumer.runOnce()).resolves.toMatchObject({ claimed: 3, delivered: 2, failed: 1 });
+    expect((await pool.query(`SELECT audit_status,audit_attempt FROM ${table}
+      WHERE tenant_id='tenant-expired' AND receipt_id=$1`, [expired.receiptId])).rows)
+      .toEqual([{ audit_status: 'delivered', audit_attempt: 2 }]);
+    expect((await pool.query(`SELECT audit_status,last_audit_error FROM ${table}
+      WHERE tenant_id='tenant-a-isolated' AND receipt_id=$1`, [failed.receiptId])).rows)
+      .toEqual([{ audit_status: 'retry_wait', last_audit_error: 'tenant A offline' }]);
+    expect((await pool.query(`SELECT audit_status FROM ${table}
+      WHERE tenant_id='tenant-b-isolated' AND receipt_id=$1`, [delivered.receiptId])).rows)
+      .toEqual([{ audit_status: 'delivered' }]);
   });
 
 });

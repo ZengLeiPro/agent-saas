@@ -26,6 +26,9 @@ import { DEFAULT_TENANT_ID, TENANT_SLUG_PATTERN, type TenantRecord } from './typ
 import type { TenantStore } from './store.js';
 import type { McpOAuthService } from '../../mcp/oauthService.js';
 import { ContextStore, type ContextTenantDeletionReport } from '../../context/store/store.js';
+import { contextTableNames } from '../../context/store/migration.js';
+import { contextRetentionTableNames } from '../../context/lifecycle/migration.js';
+import { tableNames as contextPhase4TableNames } from '../../context/phase4/migration.js';
 import {
   GovernanceChangeJobWorker,
   TENANT_DELETE_DOMAINS,
@@ -34,6 +37,20 @@ import {
   type GovernanceTenantCleanup,
   type PgGovernanceChangeJobStore,
 } from '../changeJobs/index.js';
+
+export interface TenantDeletionResiduals {
+  /** Every Context table deleted by ContextStore.hardDeleteTenant, checked after commit. */
+  context: Record<Exclude<keyof ContextTenantDeletionReport, 'totalDeleted'>, number>;
+  /** Read after deleteByTenant; this is never a deletion count. */
+  users: number;
+  /** Read-only final checks over the tenant-keyed durable runtime tables. */
+  runtime: { events: number; cursors: number; runs: number; sessions: number; tools: number };
+  files: number;
+  workspaces: number;
+  sandboxes: number;
+  /** SNAT has no tenant-keyed persistence; zero is an explicit scope assertion. */
+  snat: number;
+}
 
 export interface TenantDeletionReport {
   tenantId: string;
@@ -79,6 +96,8 @@ export interface TenantDeletionReport {
     tenantSkillsDirDeleted: boolean;
     avatarsDeleted: number;
   };
+  /** Point-in-time residual checks made immediately after legacy deletion. */
+  residuals: TenantDeletionResiduals;
 }
 
 export interface DeleteTenantResourcesOptions {
@@ -110,10 +129,19 @@ export interface DeleteTenantResourcesOptions {
   preserveTenantRecord?: boolean;
 }
 
+export interface TenantDeletionAuditProof {
+  /** Actual report emitted by deleteTenantResources, never a synthesized 1/1 result. */
+  report: TenantDeletionReport;
+  /** Final verifier result after credentials and governance cleanup have completed. */
+  residuals: TenantDeletionResiduals & { credentials: number };
+}
+
 export interface TenantDeletionJobReceipt {
   created: boolean;
   job: GovernanceChangeJob;
   domains: GovernanceChangeJobDomain[];
+  /** Stable, persisted evidence; returned by GET and idempotent/replay receipts. */
+  proof?: TenantDeletionAuditProof;
 }
 
 export interface DurableTenantDeletionExecutor {
@@ -143,6 +171,7 @@ export interface DurableTenantDeletionExecutor {
 
 function emptyContextDeletionReport(): ContextTenantDeletionReport {
   return {
+    retentionReceiptsDeleted: 0,
     relationCandidatesDeleted: 0,
     entityLinksDeleted: 0,
     itemEvidenceDeleted: 0,
@@ -162,6 +191,75 @@ function emptyContextDeletionReport(): ContextTenantDeletionReport {
     sourcesDeleted: 0,
     totalDeleted: 0,
   };
+}
+
+async function verifyContextResiduals(
+  runtimePgEventStore: PgEventStore | undefined,
+  tenantId: string,
+): Promise<TenantDeletionResiduals['context']> {
+  const zero = emptyContextDeletionReport();
+  const residuals = Object.fromEntries(
+    Object.keys(zero).filter(key => key !== 'totalDeleted').map(key => [key, 0]),
+  ) as TenantDeletionResiduals['context'];
+  if (!runtimePgEventStore || typeof runtimePgEventStore.pool.query !== 'function') return residuals;
+  const prefix = runtimePgEventStore.eventsTable.replace(/_events$/, '');
+  const base = contextTableNames(prefix);
+  const retention = contextRetentionTableNames(prefix);
+  const phase4 = contextPhase4TableNames(prefix);
+  const tables: Record<keyof TenantDeletionResiduals['context'], string> = {
+    retentionReceiptsDeleted: retention.receipts,
+    relationCandidatesDeleted: phase4.relationCandidates,
+    entityLinksDeleted: phase4.entityLinks,
+    itemEvidenceDeleted: phase4.itemEvidence,
+    profileFacetEvidenceDeleted: phase4.profileFacetEvidence,
+    reviewsDeleted: phase4.reviews,
+    derivedItemsDeleted: phase4.derivedItems,
+    profileFacetsDeleted: phase4.profileFacets,
+    entitiesDeleted: phase4.entities,
+    consumersDeleted: phase4.consumers,
+    derivedOutboxDeleted: phase4.derivedOutbox,
+    outboxDeleted: base.outbox,
+    evidenceDeleted: base.evidence,
+    revisionsDeleted: base.revisions,
+    recordsDeleted: base.records,
+    partitionsDeleted: base.partitions,
+    collectionsDeleted: base.collections,
+    sourcesDeleted: base.sources,
+  };
+  await Promise.all(Object.entries(tables).map(async ([key, table]) => {
+    const result = await runtimePgEventStore.pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM ${table} WHERE tenant_id=$1`, [tenantId],
+    );
+    residuals[key as keyof TenantDeletionResiduals['context']] = Number(result.rows[0]?.count ?? 0);
+  }));
+  return residuals;
+}
+
+async function verifyRuntimeResiduals(options: Pick<DeleteTenantResourcesOptions,
+  'runtimePgEventStore' | 'runtimeRunStore' | 'runtimeSessionProjectionStore' | 'runtimeToolInvocationStore'
+>, tenantId: string): Promise<TenantDeletionResiduals['runtime']> {
+  type ReadonlyPool = { query: <T>(sql: string, values: unknown[]) => Promise<{ rows: T[] }> };
+  const readable = (pool: unknown): pool is ReadonlyPool => (
+    Boolean(pool) && typeof (pool as { query?: unknown }).query === 'function'
+  );
+  const count = async (pool: ReadonlyPool, table: string) => {
+    const result = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM ${table} WHERE tenant_id=$1`, [tenantId],
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  };
+  const events = options.runtimePgEventStore;
+  const runs = options.runtimeRunStore;
+  const sessions = options.runtimeSessionProjectionStore;
+  const tools = options.runtimeToolInvocationStore;
+  const [eventCount, cursorCount, runCount, sessionCount, toolCount] = await Promise.all([
+    events && readable(events.pool) ? count(events.pool, events.eventsTable) : 0,
+    events && readable(events.pool) ? count(events.pool, `${events.eventsTable.replace(/_events$/, '')}_event_cursors`) : 0,
+    runs && readable(runs.pool) ? count(runs.pool, runs.runsTable) : 0,
+    sessions && readable(sessions.pool) ? count(sessions.pool, sessions.sessionsTable) : 0,
+    tools && typeof tools.countByTenant === 'function' ? tools.countByTenant(tenantId) : 0,
+  ]);
+  return { events: eventCount, cursors: cursorCount, runs: runCount, sessions: sessionCount, tools: toolCount };
 }
 
 function isInside(baseDir: string, candidate: string): boolean {
@@ -321,8 +419,31 @@ export async function deleteTenantResources(options: DeleteTenantResourcesOption
   const tenantSkillsDirDeleted = options.tenantSkillsRootDir
     ? await removeDirInside(options.tenantSkillsRootDir, resolve(options.tenantSkillsRootDir, tenantId))
     : false;
-
+  const filesResidual = [
+    resolveTenantCwd(options.agentCwd, tenantId),
+    transcriptTenantDir,
+    resolve(options.sharedDir, 'tenants', tenantId),
+    ...(options.tenantSkillsRootDir ? [resolve(options.tenantSkillsRootDir, tenantId)] : []),
+  ].filter(path => existsSync(path)).length;
+  const sandboxResidual = options.runtimeHandStore
+    ? (await Promise.all(workspaceIds.map(workspaceId => options.runtimeHandStore!.listByWorkspace(workspaceId))))
+      .reduce((total, hands) => total + hands.length, 0)
+    : 0;
   const usersDeleted = await options.userStore.deleteByTenant(tenantId);
+  // The proof is intentionally read only and runs after all legacy deletes. Do
+  // not substitute deletion row counts: a successful DELETE does not prove zero residue.
+  const residuals: TenantDeletionResiduals = {
+    context: await verifyContextResiduals(options.runtimePgEventStore, tenantId),
+    users: options.userStore.listAll().filter(user => user.tenantId === tenantId).length,
+    runtime: await verifyRuntimeResiduals(options, tenantId),
+    files: filesResidual,
+    workspaces: existsSync(resolveTenantCwd(options.agentCwd, tenantId)) ? 1 : 0,
+    sandboxes: sandboxResidual,
+    // SNAT is managed outside this process and has no tenant identifier. Tenant
+    // deletion owns no SNAT record, so the auditable tenant-scoped residual is zero.
+    snat: 0,
+  };
+
   const deletedTenant = options.preserveTenantRecord
     ? options.tenantStore.findById(tenantId) ?? tenant
     : await options.tenantStore.delete(tenantId);
@@ -356,6 +477,7 @@ export async function deleteTenantResources(options: DeleteTenantResourcesOption
       tenantSkillsDirDeleted,
       avatarsDeleted,
     },
+    residuals,
   };
 }
 
@@ -381,23 +503,75 @@ export function createDurableTenantDeletionExecutor(options: {
     ...(options.retryDelayMs !== undefined ? { retryDelayMs: options.retryDelayMs } : {}),
     ...(options.leaseMs !== undefined ? { leaseMs: options.leaseMs } : {}),
   });
-  const receipt = async (job: GovernanceChangeJob, created: boolean): Promise<TenantDeletionJobReceipt> => ({
-    created, job, domains: await options.jobs.listDomains(job.tenantId, job.jobId),
-  });
-  const handlers = (tenantId: string) => ({
+  const receipt = async (job: GovernanceChangeJob, created: boolean): Promise<TenantDeletionJobReceipt> => {
+    const domains = await options.jobs.listDomains(job.tenantId, job.jobId);
+    const verification = domains.find(domain => domain.domain === 'deletion_verification')?.receipt;
+    return {
+      created,
+      job,
+      domains,
+      ...(verification?.proof ? { proof: verification.proof as TenantDeletionAuditProof } : {}),
+    };
+  };
+  const handlers = (tenantId: string, jobId: string) => ({
     tenant_freeze: async () => {
       const tenant = options.tenantStore.findById(tenantId);
       if (!tenant) return;
       if (!tenant.disabled) await options.tenantStore.setDisabled(tenantId, true, 'system:tenant-deletion');
       options.onFrozen?.(tenantId);
     },
-    legacy_resources: async () => { await options.deleteResources(tenantId); },
+    legacy_resources: async () => {
+      const report = await options.deleteResources(tenantId);
+      const affectedCount = report.usersDeleted + report.agentProfilesDeleted + report.groupsDeleted
+        + report.cronJobsDeleted + report.tokenUsageRowsDeleted + report.context.deletion.totalDeleted
+        + report.runtime.eventsDeleted + report.runtime.eventCursorsDeleted + report.runtime.runsDeleted
+        + report.runtime.sessionsDeleted + report.runtime.toolInvocationsDeleted + report.runtime.handsDeleted
+        + report.runtime.artifactsDeleted + report.files.avatarsDeleted
+        + Number(report.files.workspaceDirDeleted) + Number(report.files.transcriptsDirDeleted)
+        + Number(report.files.sharedTenantDirDeleted) + Number(report.files.tenantSkillsDirDeleted);
+      return {
+        affectedCount,
+        completedCount: affectedCount,
+        unresolvedItems: [],
+        receipt: { report },
+      };
+    },
     assignments: async () => options.governanceCleanup.execute(tenantId, 'assignments'),
     agents_skills: async () => options.governanceCleanup.execute(tenantId, 'agents_skills'),
     credentials: async () => options.governanceCleanup.execute(tenantId, 'credentials'),
     memberships: async () => options.governanceCleanup.execute(tenantId, 'memberships'),
     tenant_configuration: async () => options.governanceCleanup.execute(tenantId, 'tenant_configuration'),
     audit_retention: async () => options.governanceCleanup.execute(tenantId, 'audit_retention'),
+    deletion_verification: async () => {
+      const domains = await options.jobs.listDomains(tenantId, jobId);
+      const legacyReceipt = domains.find(domain => domain.domain === 'legacy_resources')?.receipt;
+      const report = legacyReceipt?.report as TenantDeletionReport | undefined;
+      if (!report || report.tenantId !== tenantId) throw new Error('TENANT_DELETE_REPORT_MISSING');
+      const credentials = await options.governanceCleanup.verifyTenantDeletion?.(tenantId) ?? { credentials: 0 };
+      const proof: TenantDeletionAuditProof = {
+        report,
+        residuals: { ...report.residuals, credentials: credentials.credentials },
+      };
+      const entries = [
+        ...Object.entries(proof.residuals.context),
+        ['credentials', proof.residuals.credentials],
+        ['users', proof.residuals.users],
+        ...Object.entries(proof.residuals.runtime),
+        ['files', proof.residuals.files],
+        ['workspaces', proof.residuals.workspaces],
+        ['sandboxes', proof.residuals.sandboxes],
+        ['snat', proof.residuals.snat],
+      ];
+      const unresolvedItems = entries.filter(([, count]) => Number(count) > 0).map(([itemId]) => ({
+        itemType: 'tenant_residual', itemId: String(itemId), reasonCode: 'TENANT_DELETE_RESIDUAL', retryable: true,
+      }));
+      return {
+        affectedCount: entries.length,
+        completedCount: entries.length - unresolvedItems.length,
+        unresolvedItems,
+        receipt: { proof },
+      };
+    },
     tenant_record: async () => {
       const tenant = options.tenantStore.findById(tenantId);
       // Replay after a crash between row deletion and progress acknowledgement.
@@ -411,7 +585,7 @@ export function createDurableTenantDeletionExecutor(options: {
     if (job.status === 'retry_wait' && job.nextRetryAt && Date.parse(job.nextRetryAt) > Date.now()) {
       return receipt(job, created);
     }
-    const result = await worker.execute({ tenantId: job.tenantId, jobId: job.jobId, handlers: handlers(job.tenantId) });
+    const result = await worker.execute({ tenantId: job.tenantId, jobId: job.jobId, handlers: handlers(job.tenantId, job.jobId) });
     return receipt(result, created);
   };
   const tenantExecutions = new Map<string, Promise<unknown>>();

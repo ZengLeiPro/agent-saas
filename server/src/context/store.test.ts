@@ -204,14 +204,16 @@ describe('ContextStore PostgreSQL data layer', () => {
     const store = new ContextStore({ pool: { connect } as never, tablePrefix: 'test' });
 
     await expect(store.hardDeleteTenant('tenant-a')).resolves.toMatchObject({
-      relationCandidatesDeleted: 1,
-      entityLinksDeleted: 2,
-      evidenceDeleted: 12,
-      sourcesDeleted: 17,
-      totalDeleted: 153,
+      retentionReceiptsDeleted: 1,
+      relationCandidatesDeleted: 2,
+      entityLinksDeleted: 3,
+      evidenceDeleted: 13,
+      sourcesDeleted: 18,
+      totalDeleted: 171,
     });
     const deletes = query.mock.calls.filter(([sql]) => String(sql).startsWith('DELETE FROM'));
     expect(deletes.map(([sql]) => String(sql).match(/DELETE FROM (\S+)/)?.[1])).toEqual([
+      'test_context_retention_receipts',
       'test_context_relation_candidates', 'test_context_entity_links', 'test_context_derived_item_evidence',
       'test_context_profile_facet_evidence', 'test_context_derived_item_reviews', 'test_context_derived_items',
       'test_context_profile_facets', 'test_context_entities', 'test_context_consumers', 'test_context_derived_outbox',

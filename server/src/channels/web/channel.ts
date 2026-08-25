@@ -74,10 +74,8 @@ import {
   isPathWithinAnyDirectory,
   isPathWithinDirectory,
 } from '../../security/extraDirs.js';
-import { EventBackedApprovalStore } from '../../runtime/approvalStore.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../../runtime/fileEventStore.js';
 import type { EventStore, PlatformEvent } from '../../runtime/types.js';
-import { buildRuntimeReplayState } from '../../runtime/replay.js';
 import {
   DEFAULT_EXECUTION_CONFIG,
   resolveExecutionTarget,
@@ -87,16 +85,16 @@ import { deriveStableWorkspaceId } from '../../runtime/workspaceIdentity.js';
 import type { RunRecord } from '../../runtime/runStore.js';
 import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
 import { runtimeRunController } from '../../runtime/runController.js';
-import {
-  buildPendingInteractionsFromEvents,
-  normalizeInteractionResponse,
-} from '../../runtime/interactionProjection.js';
+import { normalizeInteractionResponse } from '../../runtime/interactionProjection.js';
 // Keep bounded resume primitives and workspace plan discovery out of the channel orchestrator.
 // These helpers retain the existing policy constants and filesystem behavior.
 import {
   approvalResumeSemaphore,
   appendPersistedInteractionResolved,
   claimPersistedInteractionResume,
+  failClosePersistedApproval,
+  findCanonicalPersistedApprovalResponse,
+  loadPersistedInteractionRecoveryState,
   claimsMatch,
   type PersistedInteractionClaimMetadata,
   hasPersistedInteractionResumeClaim,
@@ -1277,34 +1275,24 @@ export class WebChannel implements BaseChannel {
     const tenantId = persistedTenants.size <= 1 ? this.eventStoreTenantForClient(client, persistedTenants.values().next().value, ownerUserId) : null;
     if (!tenantId) { this.sendRespond(client, interactionId, clientAttemptId, 'Access denied'); return true; }
     const release = await approvalResumeSemaphore.acquire();
-    let eventStore: EventStore;
-    let approvalStore: EventBackedApprovalStore;
-    let existingEvents: PlatformEvent[];
-    let pendingApprovalRunId: string | undefined;
-    let pendingAskUser: ReturnType<typeof buildPendingInteractionsFromEvents>[number] | undefined;
-    let hasPendingApproval: boolean;
+    let recoveryState: Awaited<ReturnType<typeof loadPersistedInteractionRecoveryState>>;
     try {
-      eventStore = this.config.runtimeEventStoreFor
-        ? this.config.runtimeEventStoreFor(transcriptPath ?? '', tenantId) : new FileEventStore(getRuntimeEventLogPath(transcriptPath!), tenantId);
-      approvalStore = new EventBackedApprovalStore(eventStore, sessionId, tenantId);
-      existingEvents = await eventStore.list(tenantId, sessionId);
-      const replayState = buildRuntimeReplayState(existingEvents, await approvalStore.list(sessionId), sessionId);
-      const pendingState = replayState.pendingApprovals.find(
-        (state) => state.approval?.id === interactionId,
-      );
-      hasPendingApproval = Boolean(pendingState);
-      pendingApprovalRunId = pendingState?.approval?.runId;
-      pendingAskUser = buildPendingInteractionsFromEvents(existingEvents, sessionId)
-        .find((interaction) => interaction.type === 'ask_user' && interaction.interactionId === interactionId);
-      // A crash can append interaction_resolved before staged activation; keep the request addressable.
-      if (!pendingAskUser) {
-        const requested = existingEvents.find((event): event is Extract<PlatformEvent, { type: 'interaction_requested' }> => event.type === 'interaction_requested' && event.sessionId === sessionId && event.interactionId === interactionId && event.interactionType === 'ask_user');
-        if (requested) pendingAskUser = { interactionId: requested.interactionId, type: 'ask_user', sessionId, ...(requested.runId ? { runId: requested.runId } : {}), ...(requested.toolCallId ? { toolCallId: requested.toolCallId } : {}), ...(requested.invocationId ? { invocationId: requested.invocationId } : {}) };
-      }
+      recoveryState = await loadPersistedInteractionRecoveryState({
+        eventStoreFor: this.config.runtimeEventStoreFor,
+        transcriptPath,
+        tenantId,
+        sessionId, interactionId,
+      });
     } finally {
       release();
     }
-    if (!hasPendingApproval && !pendingAskUser) return false;
+    const { eventStore, approvalStore, existingEvents, pendingApprovalRunId, pendingAskUser, hasPendingApproval } = recoveryState;
+    if (!hasPendingApproval && !pendingAskUser) {
+      const canonicalResponse = findCanonicalPersistedApprovalResponse(existingEvents, sessionId, interactionId);
+      if (!canonicalResponse) return false;
+      this.sendRespond(client, interactionId, clientAttemptId, undefined, canonicalResponse);
+      return true;
+    }
     const sourceRunId = pendingApprovalRunId ?? pendingAskUser?.runId;
     const sourceRun = sourceRunId && enqueueRuntime ? durableRun?.runId === sourceRunId ? durableRun : await enqueueRuntime.runStore.get(sourceRunId) : null;
     const accessError = sourceRun?.tenantId && sourceRun.tenantId !== tenantId ? 'Access denied' : persistedInteractionAccessError({
@@ -1391,14 +1379,18 @@ export class WebChannel implements BaseChannel {
     }
     if (!enqueueRuntime) {
       const rejectionMessage = '持久审批恢复需要 Runtime Scheduler；已安全拒绝，未恢复旧 Run';
-      await approvalStore.resolvePending(
-        interactionId,
-        'rejected',
-        rejectionMessage,
-      );
-      this.sendRespond(client, interactionId, clientAttemptId, undefined, { allow: false, message: rejectionMessage });
-      if (client.user?.sub && this.eventBus) {
-        this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId, response: { allow: false, message: rejectionMessage } }, client.ws);
+      try {
+        const { response: canonicalResponse } = await failClosePersistedApproval({
+          eventStore, tenantId, approvalStore, sessionId, interactionId,
+          runId: pendingApprovalRunId!, userId: client.user?.sub, rejectionMessage,
+        });
+        this.sendRespond(client, interactionId, clientAttemptId, undefined, canonicalResponse);
+        if (client.user?.sub && this.eventBus) {
+          this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId, response: canonicalResponse }, client.ws);
+        }
+      } catch (error) {
+        chatLogger.warn(`approval fail-close persistence failed session=${sessionId} approval=${interactionId}: ${error instanceof Error ? error.message : String(error)}`);
+        this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response was not persisted; please retry');
       }
       return true;
     }
@@ -1425,14 +1417,22 @@ export class WebChannel implements BaseChannel {
       if (cannotResume) {
         const sourceStatus = currentRun?.status ?? 'missing';
         const rejectionMessage = `源 run 不可恢复（${sourceStatus}），拒绝遗留审批`;
-        const resolved = await approvalStore.resolvePending(interactionId, 'rejected', rejectionMessage);
-        chatLogger.warn(
-          `approval resume closed unavailable run=${pendingApprovalRunId} status=${sourceStatus} `
-          + `approval=${interactionId} resolved=${Boolean(resolved)}`,
-        );
-        this.sendRespond(client, interactionId, clientAttemptId, undefined, { allow: false, message: rejectionMessage });
-        if (client.user?.sub && this.eventBus) {
-          this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId, response: { allow: false, message: rejectionMessage } }, client.ws);
+        try {
+          const { response: canonicalResponse, resolved } = await failClosePersistedApproval({
+            eventStore, tenantId, approvalStore, sessionId, interactionId,
+            runId: pendingApprovalRunId, userId: client.user?.sub, rejectionMessage,
+          });
+          chatLogger.warn(
+            `approval resume closed unavailable run=${pendingApprovalRunId} status=${sourceStatus} `
+            + `approval=${interactionId} resolved=${resolved}`,
+          );
+          this.sendRespond(client, interactionId, clientAttemptId, undefined, canonicalResponse);
+          if (client.user?.sub && this.eventBus) {
+            this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId, response: canonicalResponse }, client.ws);
+          }
+        } catch (error) {
+          chatLogger.warn(`approval fail-close persistence failed session=${sessionId} approval=${interactionId}: ${error instanceof Error ? error.message : String(error)}`);
+          this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response was not persisted; please retry');
         }
         return true;
       }

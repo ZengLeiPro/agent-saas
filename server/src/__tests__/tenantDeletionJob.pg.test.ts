@@ -17,6 +17,32 @@ const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
+function deletionReport(tenantId: string): TenantDeletionReport {
+  const context = {
+    retentionReceiptsDeleted: 0,
+    relationCandidatesDeleted: 0, entityLinksDeleted: 0, itemEvidenceDeleted: 0, profileFacetEvidenceDeleted: 0,
+    reviewsDeleted: 0, derivedItemsDeleted: 0, profileFacetsDeleted: 0, entitiesDeleted: 0, consumersDeleted: 0,
+    derivedOutboxDeleted: 0, outboxDeleted: 0, evidenceDeleted: 0, revisionsDeleted: 0, recordsDeleted: 0,
+    partitionsDeleted: 0, collectionsDeleted: 0, sourcesDeleted: 0,
+  };
+  return {
+    tenantId,
+    context: { enabled: false, deletion: { ...context, totalDeleted: 0 } },
+    usersDeleted: 0, agentProfilesDeleted: 0, groupsDeleted: 0, cronJobsDeleted: 0,
+    skills: { usersRemoved: 0, tenantConfigRemoved: false, platformRefsRemoved: 0 },
+    mcp: { serversRemoved: 0, usersRemoved: 0 }, tokenUsageRowsDeleted: 0,
+    billing: { usageEvents: 0, creditLedger: 0, creditAccounts: 0, tenantPolicies: 0 },
+    runtime: { sessionIds: 0, eventsDeleted: 0, eventCursorsDeleted: 0, runsDeleted: 0, sessionsDeleted: 0,
+      toolInvocationsDeleted: 0, handsDeleted: 0, artifactsDeleted: 0 },
+    files: { workspaceDirDeleted: false, transcriptsDirDeleted: false, sharedTenantDirDeleted: false,
+      tenantSkillsDirDeleted: false, avatarsDeleted: 0 },
+    residuals: {
+      context, users: 0, runtime: { events: 0, cursors: 0, runs: 0, sessions: 0, tools: 0 },
+      files: 0, workspaces: 0, sandboxes: 0, snat: 0,
+    },
+  } as TenantDeletionReport;
+}
+
 async function waitForJob(
   jobs: PgGovernanceChangeJobStore,
   tenantId: string,
@@ -75,7 +101,7 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
         calls.push(`resources:${tenantStore.findById(tenantId)?.disabled}`);
         resourceAttempts += 1;
         if (resourceAttempts === 1) throw new Error('INJECTED_RESOURCE_FAILURE');
-        return { tenantId } as TenantDeletionReport;
+        return deletionReport(tenantId);
       },
       onFrozen: tenantId => { calls.push(`frozen:${tenantStore.findById(tenantId)?.disabled}`); },
     });
@@ -100,12 +126,29 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
     expect(calls.filter(item => item.startsWith('frozen:'))).toHaveLength(1);
     expect(calls.filter(item => item === 'resources:true')).toHaveLength(2);
     expect(second.domains.every(item => item.status === 'succeeded')).toBe(true);
+    expect(second.domains.map(item => item.domain)).toEqual([...TENANT_DELETE_DOMAINS]);
+    expect(calls).toEqual([
+      'frozen:true', 'resources:true', 'resources:true',
+      'assignments', 'agents_skills', 'credentials', 'memberships',
+      'tenant_configuration', 'audit_retention',
+    ]);
+    expect(second.proof).toMatchObject({
+      report: { tenantId: 'acme' },
+      residuals: {
+        credentials: 0, users: 0, runtime: { events: 0, cursors: 0, runs: 0, sessions: 0, tools: 0 },
+        files: 0, workspaces: 0, sandboxes: 0, snat: 0,
+      },
+    });
+    expect(second.domains.find(item => item.domain === 'legacy_resources')).toMatchObject({
+      totalCount: 0, completedCount: 0, receipt: { report: { tenantId: 'acme' } },
+    });
 
     const replay = await executor.execute({
       tenantId: 'acme', idempotencyKey: 'delete-acme-v1', requestedBy: 'admin', reasonCode: 'test',
     });
     expect(replay.job.jobId).toBe(second.job.jobId);
     expect(replay.job.status).toBe('succeeded');
+    expect(replay.proof).toEqual(second.proof);
     expect(resourceAttempts).toBe(2);
   }, 30_000);
 
@@ -131,7 +174,7 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
       leaseMs: 10,
       pollIntervalMs: 10,
       governanceCleanup: { execute: async () => undefined } as never,
-      deleteResources: async tenantId => ({ tenantId } as TenantDeletionReport),
+      deleteResources: async tenantId => deletionReport(tenantId),
       onJobError: error => errors.push(error),
     });
     restarted.start();
@@ -198,7 +241,7 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
       jobs,
       tenantStore,
       governanceCleanup: { execute: async () => undefined } as never,
-      deleteResources: async tenantId => ({ tenantId } as TenantDeletionReport),
+      deleteResources: async tenantId => deletionReport(tenantId),
     });
 
     const replayed = await executor.replay({
@@ -229,7 +272,7 @@ describePg('durable tenant deletion PostgreSQL recovery', () => {
       deleteResources: async tenantId => {
         attempts += 1;
         if (attempts === 1) throw new Error('RETRY_ONCE');
-        return { tenantId } as TenantDeletionReport;
+        return deletionReport(tenantId);
       },
     });
 

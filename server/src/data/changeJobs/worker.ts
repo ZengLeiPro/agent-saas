@@ -22,6 +22,7 @@ function validResult(value: unknown): value is GovernanceChangeDomainExecutionRe
     && Number.isInteger(result.completedCount) && result.completedCount >= 0
     && result.completedCount <= result.affectedCount
     && Array.isArray(result.unresolvedItems)
+    && (result.receipt === undefined || (typeof result.receipt === 'object' && result.receipt !== null && !Array.isArray(result.receipt)))
     && (result.completedCount === result.affectedCount || result.unresolvedItems.length > 0);
 }
 
@@ -133,6 +134,7 @@ export class GovernanceChangeJobWorker {
         completedCount: measured.completedCount,
         failedCount,
         unresolvedItems: unresolved,
+        ...(measured.receipt !== undefined ? { receipt: measured.receipt } : {}),
         ...(unresolved.length > 0 ? { errorCode: 'CHANGE_JOB_DOMAIN_UNRESOLVED' } : {}),
         workerId: executionId,
       });

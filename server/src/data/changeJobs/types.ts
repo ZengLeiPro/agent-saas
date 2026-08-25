@@ -14,6 +14,8 @@ export interface GovernanceChangeDomainExecutionResult {
   affectedCount: number;
   completedCount: number;
   unresolvedItems: readonly GovernanceChangeJobUnresolvedItem[];
+  /** Non-sensitive, durable evidence produced by this domain. */
+  receipt?: Record<string, unknown>;
 }
 
 export interface GovernanceChangeJob {
@@ -42,11 +44,15 @@ export interface GovernanceChangeJob {
 export interface GovernanceChangeJobDomain {
   jobId: string;
   domain: string;
+  /** Persisted execution order; legacy callers may omit it in synthetic test records. */
+  ordinal?: number;
   status: GovernanceChangeDomainStatus;
   totalCount: number;
   completedCount: number;
   failedCount: number;
   unresolvedItems: GovernanceChangeJobUnresolvedItem[];
+  /** Immutable-on-success domain evidence; persisted with the domain revision fence. */
+  receipt?: Record<string, unknown>;
   revision: number;
   updatedAt: string;
   lastErrorCode?: string;

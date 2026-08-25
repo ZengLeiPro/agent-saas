@@ -2,6 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import { Semaphore } from '../../runtime/fileReadCoalesce.js';
 import type { InteractionResponse } from '../../agent/types.js';
+import { EventBackedApprovalStore } from '../../runtime/approvalStore.js';
+import { buildPendingInteractionsFromEvents, normalizeInteractionResponse } from '../../runtime/interactionProjection.js';
+import { FileEventStore, getRuntimeEventLogPath } from '../../runtime/fileEventStore.js';
+import { buildRuntimeReplayState } from '../../runtime/replay.js';
 import type { RunRecord, RunStatus, RunStore } from '../../runtime/runStore.js';
 import type { EventStore, PlatformEvent } from '../../runtime/types.js';
 import { openTrustedDirectory, withTrustedFile } from '../../security/trustedFile.js';
@@ -135,6 +139,112 @@ export async function appendPersistedInteractionResolved(
     if (accepted) return canonical(accepted);
     throw error;
   }
+}
+
+export interface PersistedInteractionRecoveryState {
+  eventStore: EventStore;
+  approvalStore: EventBackedApprovalStore;
+  existingEvents: PlatformEvent[];
+  pendingApprovalRunId?: string;
+  pendingAskUser?: ReturnType<typeof buildPendingInteractionsFromEvents>[number];
+  hasPendingApproval: boolean;
+}
+
+/** Load durable state once, preserving ask-user recoverability after an uncertain append. */
+export async function loadPersistedInteractionRecoveryState(input: {
+  eventStoreFor?: (transcriptPath: string, tenantId: string) => EventStore;
+  transcriptPath: string | null;
+  tenantId: string;
+  sessionId: string;
+  interactionId: string;
+}): Promise<PersistedInteractionRecoveryState> {
+  const eventStore = input.eventStoreFor
+    ? input.eventStoreFor(input.transcriptPath ?? '', input.tenantId)
+    : new FileEventStore(getRuntimeEventLogPath(input.transcriptPath!), input.tenantId);
+  const approvalStore = new EventBackedApprovalStore(eventStore, input.sessionId, input.tenantId);
+  const existingEvents = await eventStore.list(input.tenantId, input.sessionId);
+  const pendingState = buildRuntimeReplayState(
+    existingEvents,
+    await approvalStore.list(input.sessionId),
+    input.sessionId,
+  ).pendingApprovals.find((state) => state.approval?.id === input.interactionId);
+  let pendingAskUser = buildPendingInteractionsFromEvents(existingEvents, input.sessionId)
+    .find((interaction) => interaction.type === 'ask_user' && interaction.interactionId === input.interactionId);
+  if (!pendingAskUser) {
+    const requested = existingEvents.find((event): event is Extract<PlatformEvent, { type: 'interaction_requested' }> => (
+      event.type === 'interaction_requested'
+      && event.sessionId === input.sessionId
+      && event.interactionId === input.interactionId
+      && event.interactionType === 'ask_user'
+    ));
+    if (requested) {
+      pendingAskUser = {
+        interactionId: requested.interactionId,
+        type: 'ask_user',
+        sessionId: input.sessionId,
+        ...(requested.runId ? { runId: requested.runId } : {}),
+        ...(requested.toolCallId ? { toolCallId: requested.toolCallId } : {}),
+        ...(requested.invocationId ? { invocationId: requested.invocationId } : {}),
+      };
+    }
+  }
+  return {
+    eventStore,
+    approvalStore,
+    existingEvents,
+    pendingApprovalRunId: pendingState?.approval?.runId,
+    pendingAskUser,
+    hasPendingApproval: Boolean(pendingState),
+  };
+}
+
+export function findCanonicalPersistedApprovalResponse(
+  events: PlatformEvent[],
+  sessionId: string,
+  interactionId: string,
+): InteractionResponse | undefined {
+  const canonical = events.find((event): event is Extract<PlatformEvent, { type: 'interaction_resolved' }> => (
+    event.type === 'interaction_resolved'
+    && event.id === persistedInteractionEventId(sessionId, interactionId)
+    && event.interactionType === 'approval'
+  ));
+  return canonical ? normalizeInteractionResponse(canonical.response) : undefined;
+}
+
+export interface FailClosedPersistedApprovalInput {
+  eventStore: EventStore;
+  tenantId: string;
+  approvalStore: EventBackedApprovalStore;
+  sessionId: string;
+  interactionId: string;
+  runId: string;
+  userId?: string;
+  rejectionMessage: string;
+}
+
+/** Persist the canonical deny before resolving the approval projection. */
+export async function failClosePersistedApproval({
+  eventStore,
+  tenantId,
+  approvalStore,
+  sessionId,
+  interactionId,
+  runId,
+  userId,
+  rejectionMessage,
+}: FailClosedPersistedApprovalInput): Promise<{ response: InteractionResponse; resolved: boolean }> {
+  const canonical = await appendPersistedInteractionResolved(eventStore, tenantId, {
+    id: persistedInteractionEventId(sessionId, interactionId),
+    type: 'interaction_resolved',
+    sessionId,
+    runId,
+    interactionId,
+    interactionType: 'approval',
+    userId,
+    response: { allow: false, message: rejectionMessage },
+  });
+  const resolved = await approvalStore.resolvePending(interactionId, 'rejected', rejectionMessage);
+  return { response: normalizeInteractionResponse(canonical.response), resolved: Boolean(resolved) };
 }
 
 /** 语音转写前缀标记（STT 注入 / 门禁判定前剥离共用） */

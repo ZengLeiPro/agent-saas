@@ -45,12 +45,15 @@ export async function mergeIntegrationAgent(
               e.id AS execution_id,e.purpose,e.status AS execution_status,e.transitioned_at,e.superseded_at,
               a.provider_pull_request_id,a.integration_branch,a.review_head_oid,a.verdict,a.review_execution_id,a.status AS agent_status,
               a.merge_in_flight_execution_id,a.merge_in_flight_review_execution_id,a.merge_in_flight_review_head_oid,
-              review_e.purpose AS review_purpose,review_e.transitioned_at AS review_transitioned_at
+              review_e.purpose AS review_purpose,review_e.transitioned_at AS review_transitioned_at,
+              fence_e.id AS fence_owner_execution_id,fence_e.status AS fence_owner_execution_status,
+              fence_e.transitioned_at AS fence_owner_transitioned_at,fence_e.superseded_at AS fence_owner_superseded_at
          FROM ${host.executionsTable} e
          JOIN ${host.tasksTable} t ON t.id=e.task_id
          JOIN ${host.boardsTable} b ON b.id=t.board_id
          JOIN ${agentsTable} a ON a.integration_task_id=t.id
          LEFT JOIN ${host.executionsTable} review_e ON review_e.id=a.review_execution_id AND review_e.task_id=t.id
+         LEFT JOIN ${host.executionsTable} fence_e ON fence_e.id=a.merge_in_flight_execution_id AND fence_e.task_id=t.id
         WHERE e.run_id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')
         FOR UPDATE OF t,e,a`, [runId, identity.tenantId, identity.ownerUserId],
     );
@@ -70,13 +73,33 @@ export async function mergeIntegrationAgent(
       throw new TaskboardValidationError('Integration Agent lacks a head-bound approved review', 'TASKBOARD_INTEGRATION_AGENT_REVIEW_REQUIRED');
     }
     const existingFence = String(row.merge_in_flight_execution_id ?? '');
-    if (existingFence && (existingFence !== executionId
-      || String(row.merge_in_flight_review_execution_id ?? '') !== reviewExecutionId
-      || String(row.merge_in_flight_review_head_oid ?? '') !== reviewHeadOid)) {
+    const existingFenceReviewExecutionId = String(row.merge_in_flight_review_execution_id ?? '');
+    const existingFenceReviewHeadOid = String(row.merge_in_flight_review_head_oid ?? '');
+    if (existingFence && (existingFenceReviewExecutionId !== reviewExecutionId
+      || existingFenceReviewHeadOid !== reviewHeadOid)) {
       throw new TaskboardValidationError('Another Integration Agent merge is already in flight', 'TASKBOARD_INTEGRATION_AGENT_MERGE_IN_FLIGHT');
     }
-    if (!existingFence) {
-      await client.query(
+    if (existingFence && existingFence !== executionId) {
+      const fenceOwnerActive = Boolean(row.fence_owner_execution_id)
+        && ['queued', 'running', 'waiting_user', 'waiting_approval'].includes(String(row.fence_owner_execution_status))
+        && !row.fence_owner_transitioned_at && !row.fence_owner_superseded_at;
+      if (fenceOwnerActive) {
+        throw new TaskboardValidationError('Another Integration Agent merge is already in flight', 'TASKBOARD_INTEGRATION_AGENT_MERGE_IN_FLIGHT');
+      }
+      const takeover = await client.query(
+        `UPDATE ${agentsTable}
+            SET merge_in_flight_execution_id=$2,updated_at=now()
+          WHERE integration_task_id=$1 AND status='ready_to_merge' AND verdict='approved'
+            AND review_execution_id=$3 AND review_head_oid=$4
+            AND merge_in_flight_execution_id=$5
+            AND merge_in_flight_review_execution_id=$3 AND merge_in_flight_review_head_oid=$4`,
+        [String(row.id), executionId, reviewExecutionId, reviewHeadOid, existingFence],
+      );
+      if (takeover.rowCount !== 1) {
+        throw new TaskboardValidationError('Another Integration Agent merge is already in flight', 'TASKBOARD_INTEGRATION_AGENT_MERGE_IN_FLIGHT');
+      }
+    } else if (!existingFence) {
+      const marked = await client.query(
         `UPDATE ${agentsTable}
             SET merge_in_flight_execution_id=$2,merge_in_flight_review_execution_id=$3,
                 merge_in_flight_review_head_oid=$4,updated_at=now()
@@ -85,6 +108,9 @@ export async function mergeIntegrationAgent(
             AND merge_in_flight_execution_id IS NULL`,
         [String(row.id), executionId, reviewExecutionId, reviewHeadOid],
       );
+      if (marked.rowCount !== 1) {
+        throw new TaskboardValidationError('Another Integration Agent merge is already in flight', 'TASKBOARD_INTEGRATION_AGENT_MERGE_IN_FLIGHT');
+      }
     }
     fenceMarked = true;
     await client.query('COMMIT');

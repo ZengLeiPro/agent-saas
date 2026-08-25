@@ -58,9 +58,16 @@ export const pgMock = (() => {
             )),
         };
       }
+      if (text.includes('SELECT event_json FROM') && text.includes('event_id = $2')) {
+        const existing = this.insertedEvents.find((event) => event.id === params?.[1]);
+        return { rows: existing ? [{ event_json: existing }] : [] };
+      }
       if (text.includes('(session_id, session_sequence, event_id, event_type, run_id, tenant_id, timestamp, event_json)')) {
         // PR 3：INSERT 参数顺序变更，event_json 是 $8（index 7）
-        this.insertedEvents.push(JSON.parse(String(params?.[7])) as PlatformEvent);
+        const event = JSON.parse(String(params?.[7])) as PlatformEvent;
+        if (this.insertedEvents.some((existing) => existing.id === event.id)) return { rows: [] };
+        this.insertedEvents.push(event);
+        return { rows: text.includes('RETURNING event_json') ? [{ event_json: event }] : [] };
       }
       return { rows: [] };
     }

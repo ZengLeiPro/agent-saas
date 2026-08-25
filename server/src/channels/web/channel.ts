@@ -1346,10 +1346,10 @@ export class WebChannel implements BaseChannel {
         this.sendRespond(client, interactionId, clientAttemptId, 'Run unavailable');
         return true;
       }
-      const alreadyAccepted = existingEvents.some((event) => event.type === 'interaction_resolved' && event.interactionId === interactionId);
+      const acceptedEvent = existingEvents.find((event): event is Extract<PlatformEvent, { type: 'interaction_resolved' }> => event.type === 'interaction_resolved' && event.interactionId === interactionId);
       const existingClaim = currentRun.metadata?.persistedInteractionResumeClaim;
-      if (alreadyAccepted && isPersistedInteractionClaim(existingClaim, sessionId, interactionId)) {
-        this.sendRespond(client, interactionId, clientAttemptId, await this.activatePersistedInteractionClaim(pendingAskUser.runId, existingClaim) ? undefined : 'Interaction response is awaiting activation'); return true;
+      if (acceptedEvent && isPersistedInteractionClaim(existingClaim, sessionId, interactionId)) {
+        this.sendRespond(client, interactionId, clientAttemptId, await this.activatePersistedInteractionClaim(pendingAskUser.runId, existingClaim, { resumeInteraction: { interactionId, response: acceptedEvent.response } }) ? undefined : 'Interaction response is awaiting activation'); return true;
       }
       const normalizedResponse = normalizeInteractionResponse(response);
       let claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingAskUser.runId, expectedStatus: 'waiting_user', reason: 'ask_user_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'ask_user', response: normalizedResponse });
@@ -1360,10 +1360,10 @@ export class WebChannel implements BaseChannel {
       }
       if (claim.outcome === 'rejected') {
         const stagedClaim = (await enqueueRuntime.runStore.get(pendingAskUser.runId))?.metadata?.persistedInteractionResumeClaim;
-        const durableResolved = (await eventStore!.list(tenantId, sessionId)).some((event) => event.type === 'interaction_resolved' && event.interactionId === interactionId);
+        const canonicalResolved = (await eventStore!.list(tenantId, sessionId)).find((event): event is Extract<PlatformEvent, { type: 'interaction_resolved' }> => event.type === 'interaction_resolved' && event.interactionId === interactionId);
         if (isPersistedInteractionClaim(stagedClaim, sessionId, interactionId)) {
-          if (durableResolved && await this.activatePersistedInteractionClaim(pendingAskUser.runId, stagedClaim)) { this.sendRespond(client, interactionId, clientAttemptId); return true; }
-          if (!durableResolved && isPersistedInteractionClaimExpired(stagedClaim) && await this.rollbackPersistedInteractionClaim(pendingAskUser.runId, stagedClaim, 'waiting_user', 'ask_user_resume_event_append_missing')) claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingAskUser.runId, expectedStatus: 'waiting_user', reason: 'ask_user_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'ask_user', response: normalizedResponse });
+          if (canonicalResolved && await this.activatePersistedInteractionClaim(pendingAskUser.runId, stagedClaim, { resumeInteraction: { interactionId, response: canonicalResolved.response } })) { this.sendRespond(client, interactionId, clientAttemptId); return true; }
+          if (!canonicalResolved && isPersistedInteractionClaimExpired(stagedClaim) && await this.rollbackPersistedInteractionClaim(pendingAskUser.runId, stagedClaim, 'waiting_user', 'ask_user_resume_event_append_missing')) claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingAskUser.runId, expectedStatus: 'waiting_user', reason: 'ask_user_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'ask_user', response: normalizedResponse });
         }
       }
       if (claim.outcome !== 'claimed') { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction resume is still being recovered'); return true; }
@@ -1438,7 +1438,7 @@ export class WebChannel implements BaseChannel {
         return true;
       }
       const currentClaim = currentRun?.metadata?.persistedInteractionResumeClaim;
-      if (alreadyAccepted && isPersistedInteractionClaim(currentClaim, sessionId, interactionId)) { this.sendRespond(client, interactionId, clientAttemptId, await this.activatePersistedInteractionClaim(pendingApprovalRunId, currentClaim) ? undefined : 'Interaction response is awaiting activation'); return true; }
+      if (acceptedEvent?.type === 'interaction_resolved' && isPersistedInteractionClaim(currentClaim, sessionId, interactionId)) { this.sendRespond(client, interactionId, clientAttemptId, await this.activatePersistedInteractionClaim(pendingApprovalRunId, currentClaim, { resumeApproval: { approvalId: interactionId, response: acceptedEvent.response } }) ? undefined : 'Interaction response is awaiting activation'); return true; }
       // A durable event without its staged claim may be an uncertain append result; reclaim and activate it below instead of ACKing a waiting Run.
       if (alreadyApplied) { this.sendRespond(client, interactionId, clientAttemptId); return true; }
       if (!meta || !transcriptPath) {
@@ -1460,10 +1460,10 @@ export class WebChannel implements BaseChannel {
       }
       if (claim.outcome === 'rejected') {
         const stagedClaim = (await enqueueRuntime.runStore.get(pendingApprovalRunId))?.metadata?.persistedInteractionResumeClaim;
-        const durableResolved = (await eventStore.list(tenantId, sessionId)).some((event) => event.type === 'interaction_resolved' && event.interactionId === interactionId);
+        const canonicalResolved = (await eventStore.list(tenantId, sessionId)).find((event): event is Extract<PlatformEvent, { type: 'interaction_resolved' }> => event.type === 'interaction_resolved' && event.interactionId === interactionId);
         if (isPersistedInteractionClaim(stagedClaim, sessionId, interactionId)) {
-          if (durableResolved && await this.activatePersistedInteractionClaim(pendingApprovalRunId, stagedClaim)) { this.sendRespond(client, interactionId, clientAttemptId); return true; }
-          if (!durableResolved && isPersistedInteractionClaimExpired(stagedClaim) && await this.rollbackPersistedInteractionClaim(pendingApprovalRunId, stagedClaim, 'waiting_approval', 'approval_resume_event_append_missing')) claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingApprovalRunId, expectedStatus: 'waiting_approval', reason: 'approval_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'approval', response: resumeResponse, transcriptPath });
+          if (canonicalResolved && await this.activatePersistedInteractionClaim(pendingApprovalRunId, stagedClaim, { resumeApproval: { approvalId: interactionId, response: canonicalResolved.response } })) { this.sendRespond(client, interactionId, clientAttemptId); return true; }
+          if (!canonicalResolved && isPersistedInteractionClaimExpired(stagedClaim) && await this.rollbackPersistedInteractionClaim(pendingApprovalRunId, stagedClaim, 'waiting_approval', 'approval_resume_event_append_missing')) claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingApprovalRunId, expectedStatus: 'waiting_approval', reason: 'approval_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'approval', response: resumeResponse, transcriptPath });
         }
       }
       if (claim.outcome !== 'claimed') { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction resume is still being recovered'); return true; }

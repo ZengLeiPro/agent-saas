@@ -245,6 +245,7 @@ describe('TASK-200 staged interaction lifecycle', () => {
     await runs.upsertPending({ runId: 'run-staged', sessionId, userId: USER.sub, metadata: {
       schedulerState: 'staged',
       persistedInteractionResumeClaim: { sessionId, interactionId: 'interaction-staged', interactionType: 'ask_user', claimId: 'crashed-claim', claimedAt: new Date(Date.now() - 31_000).toISOString() },
+      resumeInteraction: { interactionId: 'interaction-staged', response: { answers: { q: 'stale' } } },
     } });
     const activations: string[] = [];
     const { channel, ws } = channelRig(tmp, runs, { list: store.list.bind(store), append: store.append.bind(store) }, activations);
@@ -253,5 +254,6 @@ describe('TASK-200 staged interaction lifecycle', () => {
     expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'interaction-staged' });
     expect(activations).toEqual(['run-staged']);
     expect((await store.list(TENANT, sessionId)).filter((event) => event.type === 'interaction_resolved')).toHaveLength(1);
+    expect((await runs.get('run-staged'))?.metadata?.resumeInteraction).toEqual({ interactionId: 'interaction-staged', response: { answers: { q: 'yes' } } });
   });
 });

@@ -110,10 +110,15 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
 
     expect(result).toEqual({
       tenantsProjected: 1,
-      scopesProjected: 2,
+      scopesProjected: 3,
       policiesProjected: 23,
       issuesRecorded: 1,
     });
+    expect(queries.some(item =>
+      item.sql.includes('INSERT INTO test_entitlement_resource_scopes')
+      && item.params?.[1] === 'connector'
+      && item.params?.[2] === 'all',
+    )).toBe(true);
     expect(queries.some(item =>
       item.sql.includes('test_tenant_entitlement_sets')
       && item.params?.[0] === 'acme'

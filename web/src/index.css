@@ -366,6 +366,14 @@
     color: inherit;
   }
 
+  /* 引用块保留边线与排版，不显示 Typography 默认注入的开闭引号。 */
+  .prose blockquote p:first-of-type::before,
+  .prose blockquote p:last-of-type::after,
+  .prose-chat blockquote p:first-of-type::before,
+  .prose-chat blockquote p:last-of-type::after {
+    content: none;
+  }
+
   /* 用户消息正文字号（脱离 text-sm 以支持大字体切换） */
   .msg-user-text {
     font-size: 0.875rem;

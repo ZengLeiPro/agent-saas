@@ -3,11 +3,11 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 305507,
+    "startupJsGzipBytes": 307263,
     "startupCssGzipBytes": 33120,
     "startupJsBrotliBytes": 243472,
     "startupCssBrotliBytes": 26393,
-    "largestJsGzipBytes": 305507,
+    "largestJsGzipBytes": 307263,
     "largestCssGzipBytes": 33120,
     "largestJsBrotliBytes": 243472,
     "largestCssBrotliBytes": 26393,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "结构化策略拒绝恢复新增 failureKind/recoveryAction 协议处理、换模按钮与受控模型选择器；生产构建启动 JS 增加 1388 B gzip，仍低于 450000 B 单包绝对上限",
-  "updatedAt": "2026-08-23"
+  "reason": "删除退役 Candidate 共享运行时导出后，生产环境 minifier 符号布局变化；未新增 Web 功能，CI 实测启动 JS 为 307263 B gzip，仍低于 450000 B 单包绝对上限",
+  "updatedAt": "2026-08-26"
 }

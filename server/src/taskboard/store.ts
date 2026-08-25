@@ -286,12 +286,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   mergeIntegrationSourceV2(identity: TaskboardIdentity, runId: string, sourceId: string) {
     return mergeIntegrationSource(this, identity, runId, sourceId);
   }
-  mergeIntegrationAgentV2(identity: TaskboardIdentity, runId: string) {
-    return mergeIntegrationAgent(this, identity, runId);
-  }
-  cleanupIntegrationAgentV2(identity: TaskboardIdentity, runId: string, workspace: { id: string; root: string }) {
-    return cleanupIntegrationAgent(this, identity, runId, workspace);
-  }
+  mergeIntegrationAgentV2(identity: TaskboardIdentity, runId: string) { return mergeIntegrationAgent(this, identity, runId); }
+  cleanupIntegrationAgentV2(identity: TaskboardIdentity, runId: string, workspace: { id: string; root: string }) { return cleanupIntegrationAgent(this, identity, runId, workspace); }
   linkIntegrationRemediationV2(
     identity: TaskboardIdentity,
     runId: string,

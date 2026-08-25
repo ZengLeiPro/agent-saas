@@ -236,8 +236,6 @@ export interface TaskboardExecutionCompletionInput {
   commentBody: string;
   attachments?: TaskBoardAttachment[];
   error?: string;
-  /** 当前阶段未 finish 时，与本轮终态回写同事务创建的续跑 Execution。 */
-  resumeExecution?: TaskboardExecutionClaimInput;
   /** 实施 finish 后，与本轮终态回写同事务创建的自动复核 Execution。 */
   reviewExecution?: TaskboardExecutionClaimInput;
 }

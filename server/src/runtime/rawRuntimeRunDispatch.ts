@@ -2493,7 +2493,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       yield { type: 'error', error: `Raw interaction resume 缺少 durable interaction_resolved: ${request.interactionId}` };
       return;
     }
-    const resumeRunId = requestEvent.runId ?? `resume-${Date.now()}-${randomUUID()}`;
+    const resumeRunId = request.runId ?? requestEvent.runId ?? `resume-${Date.now()}-${randomUUID()}`;
     const existingResumeRun = await config.runStore?.get(resumeRunId);
     const resumeOutputTransactionMode = existingResumeRun
       ? resolveModelOutputTransactionMode(existingResumeRun.metadata)
@@ -3048,7 +3048,7 @@ export async function wakeRuntimeSession(
     try {
       let outboundError: string | undefined;
       for await (const event of dispatch({
-        interactionId: resumeInteraction.interactionId,
+        runId: run.runId, interactionId: resumeInteraction.interactionId,
         response: normalizeInteractionResponse(resolution.response ?? resumeInteraction.response),
         sessionId: run.sessionId,
         transcriptPath: session.transcriptPath,

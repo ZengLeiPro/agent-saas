@@ -66,26 +66,6 @@ export async function applyExecutionTaskCompletion(
   return succeeded;
 }
 
-export async function enqueueAutomaticResume(
-  host: ExecutionCompletionHost,
-  client: PoolClient,
-  task: TaskBoardTask,
-  execution: TaskBoardExecution,
-  resume: TaskboardExecutionCompletionInput['resumeExecution'],
-): Promise<void> {
-  if (!resume) return;
-  if (
-    execution.protocolVersion !== 2
-    || resume.purpose !== execution.purpose
-    || resume.executionOwnerUserId !== execution.requestedBy
-    || task.status === 'done'
-    || task.status === 'canceled'
-  ) {
-    throw new TaskboardValidationError('Invalid automatic resume execution');
-  }
-  await enqueueExecution(host, client, task.id, resume, execution.protocolVersion ?? 1);
-}
-
 export async function enqueueAutomaticReview(
   host: ExecutionCompletionHost,
   client: PoolClient,

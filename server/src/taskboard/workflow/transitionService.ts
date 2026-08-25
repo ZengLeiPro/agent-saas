@@ -45,7 +45,7 @@ export async function finishExecutionV2(
     const loaded = await loadAccessibleTaskAndBoard(options, client, identity, taskId, true);
     let remediationApproval: { sourceId: string; attemptId: string; integrationTaskId: string } | undefined;
     if (loaded.task.kind === 'remediation'
-      && (input.status === 'done' || input.status === 'ready_to_merge')) {
+      && (input.targetStatus === 'done' || input.targetStatus === 'ready_to_merge')) {
       const relation = await client.query(
         `SELECT s.id AS source_id,s.integration_task_id,a.id AS attempt_id
          FROM ${options.remediationAttemptsTable} a
@@ -68,7 +68,7 @@ export async function finishExecutionV2(
     if (!executionRow) throw new TaskboardNotFoundError('Taskboard execution not found');
     const execution = rowToExecution(executionRow);
     if (executionRow.transitioned_at && loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3
-      && execution.purpose === 'merge' && input.status === 'done' && loaded.task.status === 'done') {
+      && execution.purpose === 'merge' && input.targetStatus === 'done' && loaded.task.status === 'done') {
       const prior = await client.query(
         `SELECT id FROM ${options.commentsTable}
           WHERE task_id=$1 AND author_type='agent' AND author_id=$2 AND body=$3
@@ -80,13 +80,13 @@ export async function finishExecutionV2(
 
     if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3) {
       await requireIntegrationAgentRendezvous(options, client, loaded.task);
-      return transitionIntegrationAgent(options, client, identity, loaded.task, execution, input.status);
+      return transitionIntegrationAgent(options, client, identity, loaded.task, execution, input.targetStatus);
     }
     const facts = await loadWorkflowFacts(options, client, loaded.task);
     const completingMergedIntegration = loaded.task.kind === 'integration'
       && loaded.task.workflowVersion !== 3
       && execution.purpose === 'merge'
-      && input.status === 'done';
+      && input.targetStatus === 'done';
     if ((loaded.task.status === 'done' && !completingMergedIntegration)
       || loaded.task.status === 'canceled'
       || (facts.hasMergeFact && !completingMergedIntegration)) {
@@ -95,7 +95,7 @@ export async function finishExecutionV2(
     if (completingMergedIntegration && !facts.hasMergeFact) {
       throw new TaskboardValidationError('Integration task has no complete merge fact', 'TASKBOARD_INTEGRATION_INCOMPLETE');
     }
-    const decision = decideTransition(loaded.task, execution.purpose, input.status, facts);
+    const decision = decideTransition(loaded.task, execution.purpose, input.targetStatus, facts);
     const nextStatus = decision.toStatus;
     if (!nextStatus) throw new TaskboardValidationError('Transition does not advance task state', 'TASKBOARD_WORKFLOW_TRANSITION_INVALID');
 
@@ -132,7 +132,7 @@ export async function finishExecutionV2(
     await updateTaskStatus(options, client, taskId, nextStatus);
     if (nextStatus === 'blocked') await recordBlock(options, client, taskId, execution);
     if (loaded.task.kind === 'integration' && nextStatus === 'done') await closeIntegration(options, client, loaded.task, loaded.board.repository);
-    await markTransitioned(options, client, execution, input.status);
+    await markTransitioned(options, client, execution, input.targetStatus);
     await appendChange(options, client, taskId, 'execution.transitioned', 'agent', identity.ownerUserId, {
       executionId: execution.id, runId, purpose: execution.purpose, fromStatus: loaded.task.status, status: nextStatus,
     });

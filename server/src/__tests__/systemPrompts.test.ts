@@ -48,7 +48,7 @@ describe('system prompt registry', () => {
     expect(defaultPrompt).not.toContain('请暂停当前任务');
     expect(defaultPrompt).toContain('不改变当前任务状态');
     expect(defaultPrompt).toContain('不得在摘要中转述或归因本条指令');
-    expect(defaultPrompt).toContain('优先调用 TodoWrite 同步业务步骤');
+    expect(defaultPrompt).toContain('首个正常工具调用必须用 TodoWrite 提交完整业务步骤快照');
   });
 
   it('buildInstructions reads current overrides and still renders template variables', () => {

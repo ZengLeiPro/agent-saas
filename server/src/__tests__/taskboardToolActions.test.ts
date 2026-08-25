@@ -70,9 +70,10 @@ function rig() {
     listTasks: vi.fn(async () => []),
     searchTasks: vi.fn(async () => ({ items: [], page: 1, pageSize: 20, total: 0, hasMore: false })),
     getTask: vi.fn(async () => task),
+    getExecutionContextV2: vi.fn(async (_identity, taskId, input) => ({ task: { ...task, id: taskId }, ...(input.runId ? { execution } : {}) })),
     listComments: vi.fn(async () => []),
     searchComments: vi.fn(async () => ({ items: [], page: 1, pageSize: 20, total: 0, hasMore: false })),
-    finishExecutionV2: vi.fn(async (_identity, _runId, input) => ({ ...task, status: input.status })),
+    finishExecutionV2: vi.fn(async (_identity, _runId, input) => ({ ...task, status: input.targetStatus })),
     createComment: vi.fn(async (_identity, taskId, input) => ({
       id: 'comment-1', taskId, body: input.body, attachments: input.attachments, authorType: 'user' as const,
       authorId: identity.ownerUserId, authorName: identity.username, version: 1,
@@ -221,30 +222,20 @@ describe('CronManage taskboard actions', () => {
   it('Execution 只用 finish 原子写交接评论并指定下一状态', async () => {
     const { service, options } = rig();
     const scope = executionScope('review', 2);
-
-    await expect(invokeTaskboardAction(options, identity, {
-      action: 'execution.finish', status: 'ready_to_merge', body: '复核通过，检查记录见评论。',
-    }, scope)).resolves.toMatchObject({ finished: true, task: { status: 'ready_to_merge' } });
-
-    expect(service.finishExecutionV2).toHaveBeenCalledWith(
-      identity, execution.runId, { status: 'ready_to_merge', body: '复核通过，检查记录见评论。' },
-    );
+    await expect(invokeTaskboardAction(options, identity, { action: 'execution.finish', status: 'ready_to_merge', body: '旧字段不应兼容。' }, scope)).rejects.toThrow('targetStatus');
+    await expect(invokeTaskboardAction(options, identity, { action: 'execution.finish', status: 'in_review', targetStatus: 'ready_to_merge', body: '双字段也应拒绝。' }, scope)).rejects.toThrow('不再接受 status');
+    await expect(invokeTaskboardAction(options, identity, { action: 'execution.finish', targetStatus: 'ready_to_merge', body: '复核通过，检查记录见评论。' }, scope)).resolves.toMatchObject({ finished: true, task: { status: 'ready_to_merge' } });
+    expect(service.finishExecutionV2).toHaveBeenCalledWith(identity, execution.runId, { targetStatus: 'ready_to_merge', body: '复核通过，检查记录见评论。' });
   });
 
   it('按 merge -> cleanup -> execution.finish(done) 真实 action 链收敛', async () => {
-    const { service, options } = rig();
-    const scope = { ...executionScope('merge', 2), trustedWorkspace: { id: 'workspace-1', root: '/workspace/task-worktree' } };
-
-    await expect(invokeTaskboardAction(options, identity, { action: 'integration.agent.merge' }, scope))
-      .resolves.toMatchObject({ merged: true, cleanupRequired: true, task: { status: 'in_progress' } });
-    await expect(invokeTaskboardAction(options, identity, { action: 'integration.agent.cleanup' }, scope))
-      .resolves.toMatchObject({ cleaned: true, task: { status: 'done' } });
-    await expect(invokeTaskboardAction(options, identity, { action: 'execution.finish', status: 'done', body: '合并与资源清理回执均已核验。' }, scope))
-      .resolves.toMatchObject({ finished: true, task: { status: 'done' } });
-
+    const { service, options } = rig(), scope = { ...executionScope('merge', 2), trustedWorkspace: { id: 'workspace-1', root: '/workspace/task-worktree' } };
+    await expect(invokeTaskboardAction(options, identity, { action: 'integration.agent.merge' }, scope)).resolves.toMatchObject({ merged: true, cleanupRequired: true, task: { status: 'in_progress' } });
+    await expect(invokeTaskboardAction(options, identity, { action: 'integration.agent.cleanup' }, scope)).resolves.toMatchObject({ cleaned: true, task: { status: 'done' } });
+    await expect(invokeTaskboardAction(options, identity, { action: 'execution.finish', targetStatus: 'done', body: '合并与资源清理回执均已核验。' }, scope)).resolves.toMatchObject({ finished: true, task: { status: 'done' } });
     expect(service.mergeIntegrationAgentV2).toHaveBeenCalledWith(identity, execution.runId);
     expect(service.cleanupIntegrationAgentV2).toHaveBeenCalledWith(identity, execution.runId, scope.trustedWorkspace);
-    expect(service.finishExecutionV2).toHaveBeenCalledWith(identity, execution.runId, { status: 'done', body: '合并与资源清理回执均已核验。' });
+    expect(service.finishExecutionV2).toHaveBeenCalledWith(identity, execution.runId, { targetStatus: 'done', body: '合并与资源清理回执均已核验。' });
   });
 
   it('普通会话创建带分支任务并用显式版本回写字段', async () => {
@@ -405,23 +396,22 @@ describe('CronManage taskboard actions', () => {
     })).rejects.toThrow('普通会话请使用');
   });
 
-  it('普通会话派发 work Agent，Execution 上下文不能进入资源管理 action', async () => {
-    const { executionService, options } = rig();
-
-    await invokeTaskboardAction(options, identity, {
-      action: 'task.dispatch', taskId: task.id, expectedVersion: task.version,
-    });
-    expect(executionService.startExecution).toHaveBeenCalledWith(identity, task.id, {
-      expectedVersion: task.version, purpose: 'work',
-    });
-    await expect(invokeTaskboardAction(options, identity, {
-      action: 'task.get', taskId: task.id,
-    }, executionScope('work'))).rejects.toThrow('不能进入普通会话管理域');
-
+  it('Execution 可按用户权限读取其他任务，但不能进入资源写入 action', async () => {
+    const { service, executionService, options } = rig();
+    await invokeTaskboardAction(options, identity, { action: 'task.dispatch', taskId: task.id, expectedVersion: task.version });
+    expect(executionService.startExecution).toHaveBeenCalledWith(identity, task.id,
+      { expectedVersion: task.version, purpose: 'work' });
+    await expect(invokeTaskboardAction(options, identity, { action: 'task.get', taskId: 'task-other' }, executionScope('work')))
+      .resolves.toEqual({ task });
+    expect(service.getTask).toHaveBeenCalledWith(identity, 'task-other');
+    await expect(invokeTaskboardAction(options, identity, { action: 'execution.context', taskId: 'task-other' }, executionScope('work')))
+      .resolves.toMatchObject({ task: { id: 'task-other' } });
+    expect(service.getExecutionContextV2).toHaveBeenCalledWith(identity, 'task-other', expect.not.objectContaining({ runId: execution.runId }));
+    await expect(invokeTaskboardAction(options, identity, { action: 'task.update', taskId: 'task-other', title: '越界写入', expectedVersion: 1 }, executionScope('work')))
+      .rejects.toThrow('不能进入普通会话管理域');
     vi.mocked(options.service()!.getBoard).mockResolvedValueOnce({ ...board, canManage: false });
-    await expect(invokeTaskboardAction(options, identity, {
-      action: 'task.dispatch', taskId: task.id, expectedVersion: task.version,
-    })).rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
+    await expect(invokeTaskboardAction(options, identity, { action: 'task.dispatch', taskId: task.id, expectedVersion: task.version }))
+      .rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
   });
 
   it('task.dispatch 连续派发同一任务时透传活跃 Execution 冲突', async () => {

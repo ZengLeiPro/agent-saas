@@ -144,7 +144,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
     expect(await store.claimIntegrationDispatchCandidatesV2(10)).toHaveLength(0);
     await store.finishExecutionV2(identity, firstMergeRunId, {
       body: 'Protocol delivery',
-      status: 'in_progress',
+      targetStatus: 'in_progress',
     });
     await store.completeExecution(firstMergeRunId, { status: 'succeeded', commentBody: 'Waiting for checks remediation' });
 
@@ -172,7 +172,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
     });
     const remediationResolved = await store.finishExecutionV2(identity, remediationRunId, {
       body: 'Protocol delivery',
-      status: 'in_review',
+      targetStatus: 'in_review',
     });
     expect(remediationResolved.status).toBe('in_review');
     expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
@@ -191,7 +191,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
     const reviewContext = await store.getExecutionContextV2(identity, recovery!.task.id, { runId: reviewRunId });
     const approved = await store.finishExecutionV2(identity, reviewRunId, {
       body: 'Protocol delivery',
-      status: 'ready_to_merge',
+      targetStatus: 'ready_to_merge',
     });
     expect(approved.status).toBe('done');
     await store.completeExecution(reviewRunId, { status: 'succeeded', commentBody: 'Checks remediation approved' });
@@ -282,7 +282,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       });
       await store.finishExecutionV2(identity, mergeRunId, {
         body: 'Protocol delivery',
-        status: 'in_progress',
+        targetStatus: 'in_progress',
       });
       await store.completeExecution(mergeRunId, { status: 'succeeded', commentBody: 'Route to remediation' });
 
@@ -310,7 +310,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       });
       const remediationResolved = await store.finishExecutionV2(identity, remediationRunId, {
         body: 'Protocol delivery',
-        status: 'in_review',
+        targetStatus: 'in_review',
       });
       expect((await store.listIntegrationSources(identity, integration.id))[0]).toMatchObject({
         state: 'waiting_remediation', remediationCount: round,
@@ -328,7 +328,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       const reviewContext = await store.getExecutionContextV2(identity, recovery!.task.id, { runId: reviewRunId });
       const approved = await store.finishExecutionV2(identity, reviewRunId, {
         body: 'Protocol delivery',
-        status: 'ready_to_merge',
+        targetStatus: 'ready_to_merge',
       });
       expect(approved.status).toBe('done');
       await store.completeExecution(reviewRunId, { status: 'succeeded', commentBody: 'Review complete' });
@@ -356,7 +356,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
     });
     await store.finishExecutionV2(identity, exhaustedRunId, {
       body: 'Protocol delivery',
-      status: 'blocked',
+      targetStatus: 'blocked',
     });
     await store.completeExecution(exhaustedRunId, { status: 'succeeded', commentBody: 'Human intervention required' });
     const remaining = await store.claimIntegrationDispatchCandidatesV2(10);

@@ -103,6 +103,7 @@ export interface TaskboardManageInput {
   branch?: string | null;
   attachments?: TaskboardAttachmentInput[];
   status?: TaskBoardStatus;
+  targetStatus?: TaskBoardStatus;
   statuses?: TaskBoardStatus[];
   priority?: TaskBoardPriority;
   priorities?: TaskBoardPriority[];
@@ -334,9 +335,10 @@ export async function invokeTaskboardAction(
     }
     case 'execution.context': {
       if (!service.getExecutionContextV2) throw new Error('任务看板上下文协议未启用');
-      const taskId = scope.execution?.task.id ?? requireId(input, 'taskId');
+      const taskId = input.taskId ?? scope.execution?.task.id ?? requireId(input, 'taskId');
+      const currentExecution = scope.execution?.task.id === taskId ? scope.execution.execution : undefined;
       return await service.getExecutionContextV2(identity, taskId, {
-        ...(scope.execution ? { runId: scope.execution.execution.runId } : {}),
+        ...(currentExecution ? { runId: currentExecution.runId } : {}),
         ...(input.include ? { include: input.include } : {}),
         history: {
           mode: input.historyMode ?? 'auto',
@@ -390,9 +392,12 @@ export async function invokeTaskboardAction(
       if (!scope.execution || !service.finishExecutionV2) {
         throw new Error('仅当前任务 Execution 可以完成当前阶段');
       }
-      if (!input.status) throw new Error('execution.finish 需要 status');
+      if (input.status !== undefined) {
+        throw new Error('execution.finish 不再接受 status，请使用 targetStatus');
+      }
+      if (!input.targetStatus) throw new Error('execution.finish 需要 targetStatus');
       const task = await service.finishExecutionV2(identity, scope.execution.execution.runId, {
-        status: input.status,
+        targetStatus: input.targetStatus,
         body: requireField(input.body, 'body'),
       });
       return { finished: true, task };

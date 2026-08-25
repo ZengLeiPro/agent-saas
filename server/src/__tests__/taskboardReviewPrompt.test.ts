@@ -54,6 +54,8 @@ describe('taskboard execution writeback prompt', () => {
     const prompt = executionWritebackInstructions(integrationMerge).join('\n');
 
     expect(prompt).toContain('integration.agent.merge');
+    expect(prompt).toContain('integration.agent.cleanup');
+    expect(prompt).toContain('execution.finish({targetStatus: "done", body})');
     expect(prompt).not.toContain('必须调用 integration.source.inspect');
     expect(prompt).not.toContain('用 integration.source.log 读取');
   });
@@ -66,11 +68,11 @@ describe('taskboard execution writeback prompt', () => {
     const prompt = executionWritebackInstructions(integrationWork).join('\n');
     expect(prompt).toContain('持久的 Integration Agent');
     expect(prompt).toContain('GitHub PR、head 与 CI 为唯一代码事实');
+    expect(prompt).toContain('完整冻结来源集');
     expect(prompt).toContain('同一 integration branch/PR');
     expect(prompt).toContain('受控 Merge Gateway');
-    expect(prompt).toContain('execution.finish');
+    expect(prompt).toContain('execution.finish({targetStatus, body})');
     expect(prompt).not.toContain('execution.integration_candidate.push');
     expect(prompt).not.toMatch(/candidate/i);
-
   });
 });

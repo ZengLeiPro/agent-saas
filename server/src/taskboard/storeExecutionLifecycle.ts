@@ -10,7 +10,6 @@ import { finalizeExecutionForArchivedTask } from './archiveGuard.js';
 import { nextTaskColumnSortOrder } from './continuationStore.js';
 import {
   applyExecutionTaskCompletion,
-  enqueueAutomaticResume,
   enqueueAutomaticReview,
 } from './executionCompletion.js';
 import { resolveExecutionModelRef } from './executionFields.js';
@@ -510,11 +509,7 @@ async function completeExecutionInternal(
         WHERE run_id=$1 AND status<>'dispatched'`,
       [runId],
     );
-    if (unfinishedStage) {
-      await enqueueAutomaticResume(
-        store, client, loaded.task, currentExecution, completionInput.resumeExecution,
-      );
-    } else {
+    if (!unfinishedStage) {
       await enqueueAutomaticReview(
         store, client, loaded.task, currentExecution, executionSucceeded, completionInput.reviewExecution,
       );

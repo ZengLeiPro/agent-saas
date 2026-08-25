@@ -1313,15 +1313,12 @@ export class WebChannel implements BaseChannel {
         return false;
       }
       const currentRun = await enqueueRuntime.runStore.get(pendingAskUser.runId);
-      if (!currentRun || TERMINAL_RUN_STATUSES.has(currentRun.status)) {
-        chatLogger.warn(
-          `ask_user resume enqueue ignored unavailable run=${pendingAskUser.runId} `
-          + `status=${currentRun?.status ?? 'missing'}`,
-        );
-        this.wsSend(client.ws, { type: 'respond_error', interactionId, error: 'Run unavailable' });
-        return true;
-      }
       const normalizedResponse = normalizeInteractionResponse(response);
+      let resumeRunId = pendingAskUser.runId;
+      if (currentRun && TERMINAL_RUN_STATUSES.has(currentRun.status)) {
+        resumeRunId = `${Date.now()}-${randomUUID()}`;
+        chatLogger.info(`ask_user resume replacing terminal run=${pendingAskUser.runId} status=${currentRun.status} replacement=${resumeRunId}`);
+      }
       await eventStore!.append({
         type: 'interaction_resolved',
         sessionId,
@@ -1333,36 +1330,39 @@ export class WebChannel implements BaseChannel {
         userId: client.user?.sub,
         response: normalizedResponse,
       }, { tenantId });
-      await enqueueRuntime.runStore.markStatus(pendingAskUser.runId, 'pending', 'ask_user_resolved_enqueue_resume', {
+      const resumeMetadata = {
+        ...(currentRun?.metadata ?? {}),
         resumeInteractionConsumedAt: null,
         resumeInteractionConsumedId: null,
         resumeInteraction: {
           interactionId,
           response: normalizedResponse,
         },
-      });
-      const workspaceId = meta.workspaceId ?? sessionId;
+      };
+      if (resumeRunId === pendingAskUser.runId) {
+        const resumed = await enqueueRuntime.runStore.markStatus(
+          resumeRunId, 'pending', 'ask_user_resolved_enqueue_resume', resumeMetadata);
+        if (resumed && TERMINAL_RUN_STATUSES.has(resumed.status)) {
+          resumeRunId = `${Date.now()}-${randomUUID()}`;
+          chatLogger.info(`ask_user resume replacing concurrently terminal run=${pendingAskUser.runId} replacement=${resumeRunId}`);
+        }
+      }
+      const workspaceId = currentRun?.workspaceId ?? meta.workspaceId ?? sessionId;
       await enqueueRuntime.scheduler.enqueue({
-        runId: pendingAskUser.runId,
+        runId: resumeRunId,
         sessionId,
-        userId: meta.userId,
+        userId: currentRun?.userId ?? meta.userId,
         tenantId,
-        model: meta.model,
+        model: currentRun?.model ?? meta.model,
         channel: 'web',
-        executionTarget: meta.executionTarget as any,
+        executionTarget: currentRun?.executionTarget ?? meta.executionTarget as any,
         workspaceId,
-        metadata: {
-          transcriptPath,
-          resumeInteraction: {
-            interactionId,
-            response: normalizedResponse,
-          },
-        },
+        metadata: { ...resumeMetadata, transcriptPath },
       });
       this.wsSend(client.ws, { type: 'respond_ok', interactionId });
       if (client.user?.sub && this.eventBus) {
         this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws);
-        this.eventBus.emitUser(client.user.sub, { type: 'session_status', sessionId, status: 'queued', runId: pendingAskUser.runId });
+        this.eventBus.emitUser(client.user.sub, { type: 'session_status', sessionId, status: 'queued', runId: resumeRunId });
       }
       return true;
     }

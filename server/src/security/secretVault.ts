@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 export interface SecretRef {
@@ -309,10 +309,42 @@ export class EncryptedFileSecretVault implements SecretVault {
   }
 
   private async withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.writeChain.then(fn, fn);
+    const run = this.writeChain.then(() => this.withFileLock(fn), () => this.withFileLock(fn));
     this.writeChain = run.catch(() => undefined);
     return run;
   }
+
+  private async withFileLock<T>(fn: () => Promise<T>): Promise<T> {
+    await mkdir(dirname(this.filePath), { recursive: true, mode: 0o700 });
+    const lockPath = `${this.filePath}.lock`;
+    for (let attempt = 0; attempt < 400; attempt += 1) {
+      let handle;
+      try {
+        handle = await open(lockPath, 'wx', 0o600);
+      } catch (error) {
+        if (!isFileExistsError(error)) throw error;
+        const lockStat = await stat(lockPath).catch(() => undefined);
+        if (lockStat && Date.now() - lockStat.mtimeMs > 30_000) {
+          await unlink(lockPath).catch(() => undefined);
+          continue;
+        }
+        await new Promise(resolve => setTimeout(resolve, 25));
+        continue;
+      }
+      try {
+        return await fn();
+      } finally {
+        await handle.close();
+        await unlink(lockPath).catch(() => undefined);
+      }
+    }
+    throw new Error(`EncryptedFileSecretVault lock timeout: ${lockPath}`);
+  }
+}
+
+function isFileExistsError(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && 'code' in error
+    && (error as { code?: unknown }).code === 'EEXIST');
 }
 
 function refId(ref: SecretRef | string): string {

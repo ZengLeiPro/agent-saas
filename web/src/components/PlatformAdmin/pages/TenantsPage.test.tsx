@@ -5,6 +5,10 @@ const mocked = vi.hoisted(() => ({
   createTenant: vi.fn(),
   updateTenant: vi.fn(),
   tenantOverview: vi.fn(),
+  users: vi.fn(),
+  sessions: vi.fn(),
+  runs: vi.fn(),
+  sandboxes: vi.fn(),
 }));
 
 vi.mock("@/contexts/AuthContext", () => ({
@@ -21,6 +25,10 @@ vi.mock("@/components/TenantManager/hooks", () => ({
 vi.mock("../api", () => ({
   platformAdminApi: {
     tenantOverview: mocked.tenantOverview,
+    users: mocked.users,
+    sessions: mocked.sessions,
+    runs: mocked.runs,
+    sandboxes: mocked.sandboxes,
   },
 }));
 
@@ -31,6 +39,10 @@ describe("TenantsPage 创建组织入口", () => {
     mocked.createTenant.mockReset();
     mocked.updateTenant.mockReset();
     mocked.tenantOverview.mockReset();
+    mocked.users.mockReset();
+    mocked.sessions.mockReset();
+    mocked.runs.mockReset();
+    mocked.sandboxes.mockReset();
   });
 
   it("在组织主页面直接打开现有表单，创建成功后刷新列表", async () => {
@@ -84,6 +96,36 @@ describe("TenantsPage 创建组织入口", () => {
     expect(await screen.findByText("tenant id 已存在")).toBeTruthy();
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(mocked.tenantOverview).toHaveBeenCalledTimes(1);
+  });
+
+  it("空组织的添加成员入口锁定目标组织并进入治理成员页", async () => {
+    mocked.tenantOverview.mockResolvedValue({
+      items: [{
+        id: "test-org",
+        name: "测试组织",
+        disabled: false,
+        userCount: 0,
+        adminCount: 0,
+        activeRuns: 0,
+        sessions7d: 0,
+        costYuan30d: 0,
+        balanceCredits: null,
+        lastActiveAt: null,
+      }],
+      generatedAt: "2026-08-26T05:00:00.000Z",
+    });
+    mocked.users.mockResolvedValue({ items: [], nextCursor: null });
+    mocked.sessions.mockResolvedValue({ items: [], nextCursor: null });
+    mocked.runs.mockResolvedValue({ items: [], nextCursor: null });
+    mocked.sandboxes.mockResolvedValue({ sandboxes: [] });
+    window.history.replaceState({}, "", "/platform-console/org-business/tenants/test-org");
+
+    render(<TenantsPage tenantId="test-org" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "去添加成员" }));
+
+    expect(window.location.pathname).toBe("/tenant-admin/members/list");
+    expect(window.location.search).toBe("?org=test-org");
   });
 
   it("组织配置先选择目标组织，再进入正式治理配置", async () => {

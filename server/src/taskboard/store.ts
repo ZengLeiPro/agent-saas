@@ -10,7 +10,7 @@ import {
 } from '../../../shared/src/types/taskboard.js';
 import {
   completeContinuation, listTaskExecutions, loadContinuationContext, loadExecutionContext,
-  loadExecutionModelContext, markContinuationRunning, nextTaskColumnSortOrder,
+  loadExecutionModelContext, markContinuationRunning,
 } from './continuationStore.js';
 import {
   claimContinuationDispatch,
@@ -37,6 +37,7 @@ import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { clearBoardCiPolicyForRepositoryChange, normalizeIntegrationPolicyCiFallback } from './ciPolicy.js';
 import { discoverBoardCiPolicy } from './ciPolicyDiscovery.js';
 import { deleteStoredTask, rollbackStoredTask } from './storeTaskDelete.js';
+import { completeStoredTask } from './manualTaskCompletion.js';
 import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
 import {
   allowedActionsForRole,
@@ -705,13 +706,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       return this.requireTask(client, identity, taskId, false);
     });
   }
-  async archiveTask(
-    identity: TaskboardIdentity,
-    taskId: string,
-    input: TaskboardExpectedVersionInput,
-  ): Promise<TaskBoardTask> {
-    return this.setTaskArchived(identity, taskId, input.expectedVersion, true);
-  }
+  async completeTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask> { return completeStoredTask(this, identity, taskId, input); }
+
+  async archiveTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask> { return this.setTaskArchived(identity, taskId, input.expectedVersion, true); }
 
   async restoreTask(
     identity: TaskboardIdentity,

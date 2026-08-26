@@ -82,6 +82,7 @@ describe("TaskDetail 终止执行", () => {
       onTaskLoaded={onTaskLoaded}
       onUpdate={vi.fn(async (task) => task)}
       onMove={vi.fn(async (task) => task)}
+      onCompleteTask={vi.fn(async (task) => task)}
       onSetArchived={vi.fn(async (task) => task)}
       onExecute={vi.fn()}
       onCommentsChanged={vi.fn(async () => undefined)}

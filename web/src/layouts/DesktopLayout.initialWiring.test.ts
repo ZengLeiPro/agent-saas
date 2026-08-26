@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import analysisContentSource from "@/components/AnalysisWorkspaceContent.tsx?raw";
 import source from "./DesktopLayout.tsx?raw";
 
 describe("DesktopLayout 初始会话接线", () => {
@@ -14,8 +15,8 @@ describe("DesktopLayout 初始会话接线", () => {
 
   it("分析路由复用标准浮动布局，不再进入旧 GovernanceConsole 壳", () => {
     expect(source).toContain("analysisMode={analysisMode}");
-    expect(source).toContain('data-testid="unified-analysis-content"');
-    expect(source).toContain("governanceContentEmbedded");
+    expect(analysisContentSource).toContain('data-testid="unified-analysis-content"');
+    expect(analysisContentSource).toContain("governanceContentEmbedded");
     expect(source).toContain('if (!analysisMode && activeTab === "platform-admin"');
     expect(source).toContain('if (!analysisMode && activeTab === "tenant-admin"');
   });

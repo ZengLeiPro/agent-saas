@@ -2,6 +2,7 @@ import { startTransition } from 'react';
 import type { AppTab } from '@/types/sidebar';
 import type { CanonicalSettingsSectionId, SettingsSectionInput } from '@/types/settings';
 import { analysisHistoryStateForNavigation, readAnalysisHistoryState } from '@/lib/analysisHistory';
+export { analysisHistoryStateForNavigation } from '@/lib/analysisHistory';
 import {
   buildGovernanceUrl,
   governanceRoute,

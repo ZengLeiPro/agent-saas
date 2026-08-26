@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Volume2, VolumeX, Loader2, FolderOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -22,8 +22,7 @@ import type { LayoutProps } from "./types";
 import { hasSuccessfulFinalOutput } from "./firstDayGuideVisibility";
 import { useAuth } from "@/contexts/AuthContext";
 
-const GovernanceConsole = lazy(() => import("@/components/GovernanceConsole").then(m => ({ default: m.GovernanceConsole })));
-const OrganizationScopeBanner = lazy(() => import("@/components/GovernanceConsole").then(m => ({ default: m.OrganizationScopeBanner })));
+const GovernanceConsole = lazy(() => import("@/components/GovernanceConsole").then(m => ({ default: m.GovernanceConsole }))); const AnalysisWorkspaceContent = lazy(() => import("@/components/AnalysisWorkspaceContent").then(m => ({ default: m.AnalysisWorkspaceContent })));
 const CronManager = lazy(() => import("@/components/CronManager").then(m => ({ default: m.CronManager })));
 const UserManager = lazy(() => import("@/components/UserManager").then(m => ({ default: m.UserManager })));
 const TenantManager = lazy(() => import("@/components/TenantManager").then(m => ({ default: m.TenantManager })));
@@ -53,10 +52,8 @@ const TenantAdminHeaderControls = lazy(() => import("@/components/TenantAdminHea
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
 import { useUnifiedSettingsWorkspace } from "@/hooks/useUnifiedSettingsWorkspace";
 import { useManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
-import { closeAnalysisHistory, ensureAnalysisHistoryEntry, markAnalysisHistoryEntry } from "@/lib/analysisHistory";
-import { analysisNavigationRoute, isAnalysisRoute } from "@/lib/analysisNavigation";
+import { isAnalysisRoute, useUnifiedAnalysisWorkspace } from "@/hooks/useUnifiedAnalysisWorkspace";
 import { legacyRoleFallbackTab, managementAccessTarget } from "@/lib/managementAccessView";
-import { buildUrl, navigateGovernance } from "@/lib/urlSync";
 import { EmptySessionScenarios } from "@/components/scenarios/EmptySessionScenarios";
 import { EmptyChatRecommendCards } from "@/components/scenarios/EmptyChatRecommendCards";
 import { useRoleKitConfig } from "@/components/scenarios/useRoleKitConfig";
@@ -121,30 +118,8 @@ export function DesktopLayout(props: LayoutProps) {
     settingsOpen, settingsSection, adminSettings, openSettings, closeSettings, setSettingsSection,
     openAdminSettings, closeAdminSettings, setAdminSettingsSection,
   });
-  const analysisMode = !settingsMode && isAnalysisRoute(governanceRoute);
-  const accessTarget = managementAccessTarget({ settingsOpen, adminSettingsTarget: adminSettings?.target, activeTab, governanceArea: governanceRoute?.area });
-  const managementAccess = useManagementSettingsAccess({ user: authUser, authLoading, authEnabled, active: accessTarget !== null || isAdmin });
-  const lastAnalysisOrgIdRef = useRef<string | null>(null);
-  if (governanceRoute?.area === "organization" && governanceRoute.orgId) {
-    lastAnalysisOrgIdRef.current = governanceRoute.orgId;
-  }
-  const handleOpenAnalysis = useCallback(() => {
-    const source = `${window.location.pathname}${window.location.search}`;
-    pushActiveTab(managementAccess.platformEntryAllowed ? "platform-admin" : "tenant-admin");
-    markAnalysisHistoryEntry(source, 1);
-  }, [managementAccess.platformEntryAllowed, pushActiveTab]);
-  const handleCloseAnalysis = useCallback(() => {
-    closeAnalysisHistory(() => setActiveTab("chat"));
-  }, [setActiveTab]);
-  const handleAnalysisNavigate = useCallback((routeId: string) => {
-    const nextRoute = analysisNavigationRoute(routeId, governanceRoute, lastAnalysisOrgIdRef.current);
-    if (!nextRoute) return;
-    navigateGovernance(nextRoute);
-  }, [governanceRoute]);
-  useEffect(() => {
-    if (analysisMode) ensureAnalysisHistoryEntry(buildUrl("chat", sessionId));
-  }, [analysisMode, sessionId]);
-
+  const analysisMode = !settingsMode && isAnalysisRoute(governanceRoute); const accessTarget = managementAccessTarget({ settingsOpen, adminSettingsTarget: adminSettings?.target, activeTab, governanceArea: governanceRoute?.area });
+  const managementAccess = useManagementSettingsAccess({ user: authUser, authLoading, authEnabled, active: accessTarget !== null || isAdmin }); const { open: handleOpenAnalysis, close: handleCloseAnalysis, navigate: handleAnalysisNavigate } = useUnifiedAnalysisWorkspace({ mode: analysisMode, governanceRoute, managementAccess, sessionId, pushActiveTab, setActiveTab });
   const subagentTranscriptContext = useSubagentTranscript();
   const subagentTranscript = subagentTranscriptContext?.transcript ?? null;
   const closeSubagentTranscript = subagentTranscriptContext?.closeTranscript;
@@ -177,8 +152,7 @@ export function DesktopLayout(props: LayoutProps) {
 
   const capabilityReplayActive = activeTab === "capabilities" && capabilityReplayOpen;
   // 工作流回放自行渲染会话卡与系统数据卡；目录态仍由外层提供统一浮动白框。
-  const contentPanelFloating = settingsMode
-    || analysisMode
+  const contentPanelFloating = settingsMode || analysisMode
     || activeTab === "chat"
     || (activeTab === "capabilities" && !capabilityReplayOpen)
     || activeTab === "cron";
@@ -449,11 +423,7 @@ export function DesktopLayout(props: LayoutProps) {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         onOpenSettings={handleOpenUnifiedSettings}
-        onOpenAnalysis={handleOpenAnalysis}
-        analysisMode={analysisMode}
-        analysisRoute={analysisMode ? governanceRoute : null}
-        onAnalysisNavigate={handleAnalysisNavigate}
-        onCloseAnalysis={handleCloseAnalysis}
+        onOpenAnalysis={handleOpenAnalysis} analysisMode={analysisMode} analysisRoute={analysisMode ? governanceRoute : null} onAnalysisNavigate={handleAnalysisNavigate} onCloseAnalysis={handleCloseAnalysis}
         settingsMode={settingsMode}
         settingsTarget={settingsTarget}
         activeSettingsSection={activeSettingsSection}
@@ -883,64 +853,8 @@ export function DesktopLayout(props: LayoutProps) {
             />
           </Suspense>
         )}
-        {analysisMode && governanceRoute && (
-          <div className="absolute inset-0 z-30 min-h-0 overflow-hidden bg-card" data-testid="unified-analysis-content">
-            {governanceRoute.area === "organization" ? (
-              <Suspense fallback={SuspenseFallback}>
-                <ManagementSettingsAccessGate scope="tenant" target="tenant" access={managementAccess} onRetry={managementAccess.retry} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}>
-                  <div className="flex h-full min-h-0 flex-col">
-                    <OrganizationScopeBanner route={governanceRoute} />
-                    <div className="min-h-0 flex-1 overflow-hidden">
-                      <TenantAdminShell
-                        renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
-                        renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
-                        renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-                        renderMcp={() => <McpAdminCatalogPanel />}
-                        renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
-                        renderFiles={() => <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
-                        renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
-                        renderAutomation={() => <CronManager />}
-                        settingsOpen={false}
-                        settingsSection="users"
-                        onSettingsSectionChange={() => undefined}
-                        onSettingsClose={() => undefined}
-                        governanceRoute={governanceRoute}
-                        governanceContentOnly
-                        governanceContentEmbedded
-                      />
-                    </div>
-                  </div>
-                </ManagementSettingsAccessGate>
-              </Suspense>
-            ) : (
-              <Suspense fallback={SuspenseFallback}>
-                <ManagementSettingsAccessGate scope="platform" target="platform" access={managementAccess} onRetry={managementAccess.retry} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}>
-                  <PlatformAdminShell
-                    renderTenants={() => <TenantManager />}
-                    renderSignupConfig={() => <SignupConfigManagerPanel />}
-                    renderModels={() => <ModelManagerPanel />}
-                    renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
-                    renderToolControls={() => <ToolControlsManagerPanel />}
-                    renderMemoryPolling={() => <MemoryPollingManagerPanel />}
-                    renderMcp={() => <McpAdminCatalogPanel />}
-                    renderSkills={() => <SkillManagerPanel mode="platform" />}
-                    renderEfficiency={() => <EfficiencyViewPanel />}
-                    activeSection={platformAdminSection}
-                    entityId={platformAdminEntityId}
-                    onSectionChange={setPlatformAdminRoute}
-                    settingsOpen={false}
-                    settingsSection="tenants"
-                    onSettingsSectionChange={() => undefined}
-                    onSettingsClose={() => undefined}
-                    governanceRoute={governanceRoute}
-                    governanceContentOnly
-                    governanceContentEmbedded
-                  />
-                </ManagementSettingsAccessGate>
-              </Suspense>
-            )}
-          </div>
-        )}
+        {analysisMode && governanceRoute && <AnalysisWorkspaceContent route={governanceRoute} access={managementAccess} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}
+          openFilePreview={openFilePreview} platformAdminSection={platformAdminSection} platformAdminEntityId={platformAdminEntityId} setPlatformAdminRoute={setPlatformAdminRoute} />}
         {settingsMode && (
           <div className="absolute inset-0 z-30 min-h-0 overflow-hidden bg-card" data-testid="unified-settings-content">
             <div className={cn("h-full min-h-0", settingsTarget !== "personal" && "hidden")}>

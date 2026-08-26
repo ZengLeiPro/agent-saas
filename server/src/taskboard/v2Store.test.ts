@@ -18,11 +18,12 @@ const repository = {
 };
 
 describe('createIntegrationBatch', () => {
-  it('creates a single-Agent integration from delivery sources without lane, Review or Provider gates', async () => {
+  it('creates a single-Agent integration from ready-to-merge delivery sources without lane or Provider gates', async () => {
     let tailQuery = '';
     let taskInsert = '';
     let taskInsertValues: unknown[] = [];
     let agentInsert = '';
+    let sourceStatus: 'in_progress' | 'ready_to_merge' = 'ready_to_merge';
     const client = {
       query: vi.fn(async (sql: string, values?: unknown[]) => {
         if (sql.includes('FROM boards')) {
@@ -45,7 +46,7 @@ describe('createIntegrationBatch', () => {
             id: 'delivery-1',
             identifier: 'TASK-1',
             kind: 'delivery',
-            status: 'in_progress',
+            status: sourceStatus,
             branch: 'feature/task-1',
             provider_pull_request_id: null,
             reviewed_subject_digest: 'subject-1',
@@ -108,5 +109,10 @@ describe('createIntegrationBatch', () => {
     expect(sql).not.toContain('FROM integration_lanes');
     expect(sql).not.toContain('INSERT INTO merge_authorizations');
     expect(sql).not.toContain("e.purpose='review'");
+
+    sourceStatus = 'in_progress';
+    await expect(createIntegrationBatch(options, identity, 'board-1', {
+      deliveryTaskIds: ['delivery-1'], expectedBoardVersion: 1,
+    })).rejects.toMatchObject({ code: 'TASKBOARD_INTEGRATION_SOURCE_INVALID' });
   });
 });

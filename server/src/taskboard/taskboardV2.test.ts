@@ -137,13 +137,13 @@ describe('taskboard V2 contracts', () => {
     })).toMatchObject({ mergeEligibility: 'eligible', integrationState: 'canceled' });
   });
 
-  it('allows a maintainer to select an in-progress delivery branch without a frozen Review revision', () => {
+  it('keeps an in-progress delivery branch out of manual integration selection', () => {
     expect(rowToTask({
       id: task.id, board_id: task.boardId, identifier: task.identifier, kind: 'delivery',
       title: task.title, description: '', status: 'in_progress', priority: 'none', labels: [],
       branch: 'feature/TASK-1', sort_order: 1, comment_count: 0, version: 2,
       created_at: task.createdAt, updated_at: task.updatedAt,
-    })).toMatchObject({ mergeEligibility: 'eligible' });
+    })).toMatchObject({ mergeEligibility: 'not_applicable' });
   });
 
   it('keeps reviewed deliveries selectable after the stored CI inspection becomes old', () => {

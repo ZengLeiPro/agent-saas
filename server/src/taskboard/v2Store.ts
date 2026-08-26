@@ -185,7 +185,7 @@ export async function createIntegrationBatch(
       throw new TaskboardValidationError('One or more integration source tasks were not found');
     }
     for (const row of sources.rows) {
-      if (row.kind !== 'delivery' || row.status === 'canceled'
+      if (row.kind !== 'delivery' || row.status !== 'ready_to_merge'
         || (!row.branch && !row.provider_pull_request_id)) {
         throw new TaskboardValidationError(
           `Task ${String(row.identifier)} is not a usable delivery source`,

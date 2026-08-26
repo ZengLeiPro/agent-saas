@@ -127,7 +127,7 @@ function taskMergeEligibility(row: Record<string, unknown>): TaskBoardTask['merg
   if (row.kind !== 'delivery') return 'not_applicable';
   if (row.integration_state === 'merged' || row.merged_commit_oid) return 'merged';
   if (row.integration_state !== 'canceled' && (row.integration_source_id || row.integration_task_id)) return 'claimed';
-  return row.status !== 'canceled' && (row.branch || row.provider_pull_request_id)
+  return row.status === 'ready_to_merge' && (row.branch || row.provider_pull_request_id)
     ? 'eligible'
     : 'not_applicable';
 }

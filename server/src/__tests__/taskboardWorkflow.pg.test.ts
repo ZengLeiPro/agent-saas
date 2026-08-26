@@ -400,24 +400,17 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
             SET state='pending',provider_receipt_id=NULL,merged_commit_oid=NULL WHERE id=$1`,
         [source.id],
       );
-      await pool.query(`DROP INDEX ${store.integrationSourcesTable}_apr_uq`);
       await pool.query(
         `INSERT INTO ${store.integrationSourcesTable}
            (id,integration_task_id,delivery_task_id,repository_id,provider_pull_request_id,reviewed_subject_digest,source_order,state)
          VALUES($1,$2,$3,$4,'88','duplicate-digest',0,'pending')`,
         [randomUUID(), duplicateIntegration.id, duplicateDelivery.id, source.repositoryId],
       );
-      await expect(store.init()).rejects.toThrow(/TASKBOARD_ACTIVE_PR_DUPLICATES/);
-      const duplicateRepair = await execFileAsync('pnpm', [
-        'exec', 'tsx', 'scripts/repairTaskboardWorkflow.ts', '--apply', `--table-prefix=${prefix}`,
-        `--task-id=${duplicateDelivery.id}`, `--output=${outputBase}-duplicate`,
-      ], { cwd: process.cwd(), env: { ...process.env, DATABASE_URL: connectionString! }, timeout: 30_000 });
-      expect(duplicateRepair.stderr).toBe('');
       await expect(store.init()).resolves.toBeUndefined();
-      const index = await pool.query(`SELECT to_regclass($1) IS NOT NULL AS present`, [`${store.integrationSourcesTable}_apr_uq`]);
+      const index = await pool.query(`SELECT to_regclass($1) IS NOT NULL AS present`, [`${store.integrationSourcesTable}_repository_pr_idx`]);
       expect(index.rows[0].present).toBe(true);
     } finally {
-      for (const suffix of ['dry', 'apply-1', 'apply-2', 'unapproved', 'duplicate']) {
+      for (const suffix of ['dry', 'apply-1', 'apply-2', 'unapproved']) {
         await rm(`${outputBase}-${suffix}.json`, { force: true });
         await rm(`${outputBase}-${suffix}.md`, { force: true });
       }

@@ -4,12 +4,10 @@ import type { PoolClient } from 'pg';
 import type {
   TaskBoardChange, TaskBoardComment, TaskBoardExecutionContextInput, TaskBoardExecutionContextResponse,
   TaskBoardIntegrationBatchCreateInput, TaskBoardIntegrationSource, TaskBoardMember, TaskBoardMemberPatchInput,
-  TaskBoardIntegrationPolicy, TaskBoardRepositoryConfig, TaskBoardTask,
+  TaskBoardRepositoryConfig, TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import { rowToBoard } from './boardFields.js';
-import { repositoryWithBoardCiPolicy } from './ciPolicy.js';
 import { loadExecutionIntegrationAgent } from './executionIntegrationAgentContext.js';
-import { assertIntegrationSourcesProviderReady } from './integrationSourceCiGate.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
 import { rowToIntegrationSource } from './integrationSourceMapper.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
@@ -156,10 +154,6 @@ export async function createIntegrationBatch(
       throw new TaskboardValidationError('Board integration policy is not enabled', 'TASKBOARD_INTEGRATION_DISABLED');
     }
     const workflowVersion = 3 as const;
-    const providerRepository = repositoryWithBoardCiPolicy(
-      repository,
-      policy as unknown as TaskBoardIntegrationPolicy,
-    );
     // Agent-first integrations run through the generic durable execution coordinator;
     // they do not depend on the retired Candidate worker heartbeat.
     if (workflowVersion === 3 && !repository.baseBranch) {
@@ -177,29 +171,9 @@ export async function createIntegrationBatch(
     if (uniqueTaskIds.length > Math.max(1, Number(policy.batch?.maxTasks ?? 20))) {
       throw new TaskboardValidationError('Integration batch exceeds configured maximum', 'TASKBOARD_BATCH_TOO_LARGE');
     }
-    const lane = await client.query(
-      `SELECT repository_id, active_integration_task_id, epoch
-         FROM ${options.integrationLanesTable}
-        WHERE repository_id=$1 AND board_id=$2
-        FOR UPDATE`,
-      [repository.repositoryId, boardId],
-    );
-    if (!lane.rows[0]) throw new TaskboardValidationError('Integration lane is missing');
-    if (lane.rows[0].active_integration_task_id) {
-      throw new TaskboardValidationError(
-        'Repository already has an active integration task',
-        'TASKBOARD_INTEGRATION_ACTIVE',
-      );
-    }
     const sources = await client.query(
-      `SELECT t.*,review.id AS review_execution_id,
-              (SELECT count(*)::int FROM ${options.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', options.changesTable)}) AS comment_count
+      `SELECT t.*
          FROM ${options.tasksTable} t
-         LEFT JOIN LATERAL (
-           SELECT e.id FROM ${options.executionsTable} e
-            WHERE e.task_id=t.id AND e.purpose='review' AND e.status='succeeded'
-            ORDER BY e.finished_at DESC NULLS LAST,e.created_at DESC LIMIT 1
-         ) review ON true
         WHERE t.board_id=$1 AND t.id=ANY($2::text[])
         ORDER BY
           CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,
@@ -211,29 +185,21 @@ export async function createIntegrationBatch(
       throw new TaskboardValidationError('One or more integration source tasks were not found');
     }
     for (const row of sources.rows) {
-      if (row.kind !== 'delivery' || row.status !== 'ready_to_merge') {
+      if (row.kind !== 'delivery' || row.status === 'canceled'
+        || (!row.branch && !row.provider_pull_request_id)) {
         throw new TaskboardValidationError(
-          `Task ${String(row.identifier)} is not an eligible delivery task`,
+          `Task ${String(row.identifier)} is not a usable delivery source`,
           'TASKBOARD_INTEGRATION_SOURCE_INVALID',
         );
       }
-      if (!row.provider_pull_request_id || !row.reviewed_subject_digest || !row.head_oid) {
-        throw new TaskboardValidationError(
-          `Task ${String(row.identifier)} has no reviewed pull request subject`,
-          'TASKBOARD_INTEGRATION_SOURCE_UNREVIEWED',
-        );
-      }
     }
-    const sourceProvider = options.repositoryProvider;
-    await assertIntegrationSourcesProviderReady(sourceProvider, providerRepository, String(board.owner_user_id), sources.rows);
     const duplicate = await client.query(
-      `SELECT s.delivery_task_id,s.provider_pull_request_id
+      `SELECT s.delivery_task_id
          FROM ${options.integrationSourcesTable} s
         WHERE s.state NOT IN ('merged','canceled')
-          AND (s.delivery_task_id=ANY($1::text[])
-            OR (s.repository_id=$2 AND s.provider_pull_request_id=ANY($3::text[])))
+          AND s.delivery_task_id=ANY($1::text[])
         LIMIT 1`,
-      [uniqueTaskIds, repository.repositoryId, sources.rows.map((row) => String(row.provider_pull_request_id))],
+      [uniqueTaskIds],
     );
     if (duplicate.rows[0]) {
       throw new TaskboardValidationError(
@@ -266,7 +232,7 @@ export async function createIntegrationBatch(
         boardId,
         `TASK-${Number(nextNumber.rows[0]!.task_number)}`,
         title,
-        '集成多个已复核交付任务；来源集合在启动时冻结。',
+        '由一个持久 Integration Agent 自主组合、合并并清理本批次交付来源。',
         Number(tail.rows[0]?.max_sort_order ?? 0) + SORT_GAP,
         identity.ownerUserId,
         identity.displayName?.trim() || identity.username,
@@ -297,23 +263,10 @@ export async function createIntegrationBatch(
     const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
     await client.query(
       `INSERT INTO ${agentsTable}
-        (integration_task_id,delivery_source_ids,repository_id,integration_branch,status)
-       VALUES ($1,$2::jsonb,$3,$4,'active')`,
+        (integration_task_id,delivery_source_ids,repository_id,status)
+       VALUES ($1,$2::jsonb,$3,'active')`,
       [integrationTaskId, JSON.stringify(frozenSources.map((source) => source.integrationSourceId)),
-        repository.repositoryId, `integration/${integrationTaskId}`],
-    );
-    await client.query(
-      `INSERT INTO ${options.mergeAuthorizationsTable}
-         (id, source, actor_user_id, repository_id, integration_task_id, policy_revision)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
-      [randomUUID(), source, source === 'manual_batch' ? identity.ownerUserId : null,
-        repository.repositoryId, integrationTaskId, policy.revision],
-    );
-    await client.query(
-      `UPDATE ${options.integrationLanesTable}
-          SET active_integration_task_id=$2, epoch=epoch+1, updated_at=now()
-        WHERE repository_id=$1`,
-      [repository.repositoryId, integrationTaskId],
+        repository.repositoryId],
     );
     await appendChange(options, client, integrationTaskId, 'integration.created', 'system', identity.ownerUserId, {
       source,
@@ -347,46 +300,37 @@ export async function cancelIntegrationTask(
     if ((loaded.task.workflowVersion ?? 2) === 3) {
       const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
       const agent = await client.query(
-        `SELECT repository_id,status,merge_receipt,merge_in_flight_execution_id
-           FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId],
+        `SELECT repository_id FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId],
       );
-      if (agent.rows[0]) {
-        if (String(agent.rows[0].status) === 'merged' || agent.rows[0].merge_receipt
-          || agent.rows[0].merge_in_flight_execution_id) {
-          throw new TaskboardValidationError(
-            'Provider merge result must be reconciled before cancellation',
-            'TASKBOARD_PROVIDER_RESULT_UNKNOWN',
-          );
-        }
-        await fenceTaskExecutions(options, client, [taskId], 'integration_canceled');
-        const reason = input.reason?.trim() || 'Integration task canceled by user';
-        await client.query(
-          `UPDATE ${agentsTable} SET status='canceled',updated_at=now() WHERE integration_task_id=$1`, [taskId],
+      if (!agent.rows[0]) {
+        throw new TaskboardValidationError(
+          'Integration task has no Agent rendezvous record',
+          'TASKBOARD_INTEGRATION_AGENT_REQUIRED',
         );
-        await client.query(
-          `UPDATE ${options.tasksTable}
-              SET status='canceled',completed_at=NULL,workflow_epoch=workflow_epoch+1,next_action='none',
-                  next_action_revision=next_action_revision+1,version=version+1,updated_at=now()
-            WHERE id=$1 AND workflow_version=3`, [taskId],
-        );
-        await client.query(
-          `UPDATE ${options.integrationSourcesTable}
-              SET state='canceled',last_error=$2,updated_at=now()
-            WHERE integration_task_id=$1 AND state<>'merged' AND merged_commit_oid IS NULL`, [taskId, reason],
-        );
-        await client.query(
-          `UPDATE ${options.integrationLanesTable}
-              SET active_integration_task_id=NULL,lease_id=NULL,epoch=epoch+1,updated_at=now()
-            WHERE repository_id=$1 AND active_integration_task_id=$2`,
-          [String(agent.rows[0].repository_id), taskId],
-        );
-        await appendChange(options, client, taskId, 'integration.agent.canceled', 'user', identity.ownerUserId, { reason }, true);
-        return loadTask(options, client, taskId);
       }
-      throw new TaskboardValidationError(
-        'Integration task has no Agent rendezvous record',
-        'TASKBOARD_INTEGRATION_AGENT_REQUIRED',
+      await fenceTaskExecutions(options, client, [taskId], 'integration_canceled');
+      const reason = input.reason?.trim() || 'Integration task canceled by user';
+      await client.query(
+        `UPDATE ${agentsTable} SET status='canceled',updated_at=now() WHERE integration_task_id=$1`, [taskId],
       );
+      await client.query(
+        `UPDATE ${options.tasksTable}
+            SET status='canceled',completed_at=NULL,next_action='none',version=version+1,updated_at=now()
+          WHERE id=$1 AND workflow_version=3`, [taskId],
+      );
+      await client.query(
+        `UPDATE ${options.integrationSourcesTable}
+            SET state='canceled',last_error=$2,updated_at=now()
+          WHERE integration_task_id=$1 AND state<>'merged' AND merged_commit_oid IS NULL`, [taskId, reason],
+      );
+      await client.query(
+        `UPDATE ${options.integrationLanesTable}
+            SET active_integration_task_id=NULL,lease_id=NULL,epoch=epoch+1,updated_at=now()
+          WHERE repository_id=$1 AND active_integration_task_id=$2`,
+        [String(agent.rows[0].repository_id), taskId],
+      );
+      await appendChange(options, client, taskId, 'integration.agent.canceled', 'user', identity.ownerUserId, { reason }, true);
+      return loadTask(options, client, taskId);
     }
     const uncertain = await client.query(
       `SELECT 1
@@ -448,15 +392,7 @@ export async function listIntegrationSources(
       throw new TaskboardValidationError('Task is not an integration task');
     }
     const result = await client.query(
-      `SELECT s.*,d.identifier AS delivery_task_identifier,d.title AS delivery_task_title,
-              (SELECT COALESCE(jsonb_agg(jsonb_build_object(
-                'id',a.id,'round',a.round,'remediationTaskId',a.remediation_task_id,
-                'remediationTaskIdentifier',r.identifier,'remediationTaskTitle',r.title,
-                'state',a.state,'resolvedAt',a.resolved_at
-              ) ORDER BY a.round),'[]'::jsonb)
-                 FROM ${options.remediationAttemptsTable} a
-                 JOIN ${options.tasksTable} r ON r.id=a.remediation_task_id
-                WHERE a.integration_source_id=s.id) AS remediation_attempts
+      `SELECT s.*,d.identifier AS delivery_task_identifier,d.title AS delivery_task_title
          FROM ${options.integrationSourcesTable} s
          JOIN ${options.tasksTable} d ON d.id=s.delivery_task_id
         WHERE s.integration_task_id=$1

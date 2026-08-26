@@ -18,7 +18,7 @@ const repository = {
 };
 
 describe('createIntegrationBatch', () => {
-  it('creates Agent-first workflow v3 tasks and a durable rendezvous at the in-progress column tail', async () => {
+  it('creates a single-Agent integration from delivery sources without lane, Review or Provider gates', async () => {
     let tailQuery = '';
     let taskInsert = '';
     let taskInsertValues: unknown[] = [];
@@ -40,14 +40,14 @@ describe('createIntegrationBatch', () => {
             },
           }] };
         }
-        if (sql.includes('FROM integration_lanes')) return { rows: [{ epoch: '0' }] };
-        if (sql.includes('FROM tasks') && sql.includes('review.id AS review_execution_id')) {
+        if (sql.includes('FROM tasks') && sql.includes('FOR UPDATE OF t')) {
           return { rows: [{
             id: 'delivery-1',
             identifier: 'TASK-1',
             kind: 'delivery',
-            status: 'ready_to_merge',
-            provider_pull_request_id: '42',
+            status: 'in_progress',
+            branch: 'feature/task-1',
+            provider_pull_request_id: null,
             reviewed_subject_digest: 'subject-1',
             provider_ci_status: 'success',
             provider_ci_purpose: 'review',
@@ -102,5 +102,11 @@ describe('createIntegrationBatch', () => {
     expect(taskInsertValues[5]).toBe(5120);
     expect(taskInsertValues[8]).toBe(3);
     expect(agentInsert).toContain("'active'");
+    expect(agentInsert).not.toContain('integration_branch');
+    expect(options.repositoryProvider?.getPullRequest).not.toHaveBeenCalled();
+    const sql = client.query.mock.calls.map(([text]) => String(text)).join('\n');
+    expect(sql).not.toContain('FROM integration_lanes');
+    expect(sql).not.toContain('INSERT INTO merge_authorizations');
+    expect(sql).not.toContain("e.purpose='review'");
   });
 });

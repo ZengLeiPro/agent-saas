@@ -14,9 +14,12 @@ function context(workflowVersion: 2 | 3): TaskboardExecutionContext {
     identity,
     task: {
       id: 'integration-1', boardId: 'board-1', kind: 'integration', workflowVersion,
-      status: 'ready_to_merge',
+      status: workflowVersion === 3 ? 'in_progress' : 'ready_to_merge',
     },
-    execution: { id: 'execution-1', runId: 'run-1', purpose: 'merge', status: 'running' },
+    execution: {
+      id: 'execution-1', runId: 'run-1',
+      purpose: workflowVersion === 3 ? 'work' : 'merge', status: 'running',
+    },
   } as TaskboardExecutionContext;
 }
 
@@ -24,6 +27,8 @@ const removedActions = [
   'integration.source.inspect',
   'integration.source.log',
   'integration.source.merge',
+  'integration.agent.merge',
+  'integration.agent.cleanup',
 ] as const;
 
 describe('taskboard Integration Execution scope', () => {
@@ -40,8 +45,22 @@ describe('taskboard Integration Execution scope', () => {
     }
   });
 
-  it('only exposes Agent-first integration merge actions in execution scope', () => {
-    expect(() => assertTaskboardExecutionScope({ action: 'integration.agent.merge' }, context(3), identity)).not.toThrow();
-    expect(() => assertTaskboardExecutionScope({ action: 'integration.agent.cleanup' }, context(3), identity)).not.toThrow();
+  it.each([
+    'execution.pull_request.set',
+    'execution.pull_request.inspect',
+    'execution.pull_request.log',
+    'execution.review_subject.record',
+  ] as const)('keeps Integration out of the Delivery receipt protocol: %s', (action) => {
+    expect(() => assertTaskboardExecutionScope({ action }, context(3), identity))
+      .toThrow('Integration Agent 直接使用标准 Git/GitHub');
+  });
+
+  it('preserves Delivery pull request inspection', () => {
+    const delivery = {
+      ...context(3),
+      task: { id: 'delivery-1', boardId: 'board-1', kind: 'delivery', status: 'in_progress' },
+    } as TaskboardExecutionContext;
+    expect(() => assertTaskboardExecutionScope({ action: 'execution.pull_request.inspect' }, delivery, identity))
+      .not.toThrow();
   });
 });

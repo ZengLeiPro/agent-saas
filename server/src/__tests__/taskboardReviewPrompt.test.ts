@@ -31,47 +31,21 @@ describe('taskboard execution writeback prompt', () => {
     expect(merge).not.toContain('integration.source.');
   });
 
-  it('Integration Review 明确检查并绑定当前 Integration Agent PR', () => {
-    const integrationReview = context('review');
-    integrationReview.task.kind = 'integration';
-    integrationReview.task.workflowVersion = 3;
-
-    const prompt = executionWritebackInstructions(integrationReview).join('\n');
-
-    expect(prompt).toContain('execution.pull_request.inspect');
-    expect(prompt).toContain('当前 Integration Agent 的精确 PR/head/base');
-    expect(prompt).toContain('Integration Agent 当前 PR/head/subject');
-    expect(prompt).not.toMatch(/candidate/i);
-    expect(prompt).toContain('服务端硬门禁');
-  });
-
-  it('Integration Merge 只指向 Agent Merge Gateway', () => {
-    const integrationMerge = context('merge');
-    integrationMerge.task.kind = 'integration';
-    integrationMerge.task.workflowVersion = 3;
-
-    const prompt = executionWritebackInstructions(integrationMerge).join('\n');
-
-    expect(prompt).toContain('integration.agent.merge');
-    expect(prompt).toContain('integration.agent.cleanup');
-    expect(prompt).toContain('execution.finish({targetStatus: "done", body})');
-    expect(prompt).not.toContain('必须调用 integration.source.inspect');
-    expect(prompt).not.toContain('用 integration.source.log 读取');
-  });
-
-  it('Integration Work 按持久 Integration Agent 对账和原生 finish contract 交接', () => {
-
+  it('Integration 只提示一个持久 Agent 自主完成合并与安全清理', () => {
     const integrationWork = context('work');
     integrationWork.task.kind = 'integration';
     integrationWork.task.workflowVersion = 3;
+
     const prompt = executionWritebackInstructions(integrationWork).join('\n');
-    expect(prompt).toContain('持久的 Integration Agent');
-    expect(prompt).toContain('GitHub PR、head 与 CI 为唯一代码事实');
-    expect(prompt).toContain('完整冻结来源集');
-    expect(prompt).toContain('同一 integration branch/PR');
-    expect(prompt).toContain('受控 Merge Gateway');
-    expect(prompt).toContain('execution.finish({targetStatus, body})');
-    expect(prompt).not.toContain('execution.integration_candidate.push');
+
+    expect(prompt).toContain('唯一的持久 Agent');
+    expect(prompt).toContain('标准 Git 与 GitHub 能力');
+    expect(prompt).toContain('重新读取 GitHub 与本地 Git 的实际状态');
+    expect(prompt).toContain('本批次拥有的本地 worktree、本地分支、远程分支和临时目录');
+    expect(prompt).toContain('execution.finish({targetStatus: "done", body})');
+    expect(prompt).not.toContain('integration.agent.merge');
+    expect(prompt).not.toContain('integration.agent.cleanup');
+    expect(prompt).not.toContain('Merge Gateway');
     expect(prompt).not.toMatch(/candidate/i);
   });
 });

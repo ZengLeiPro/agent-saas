@@ -36,22 +36,13 @@ export function executionWritebackInstructions(context: TaskboardExecutionContex
     instructions.splice(2, 0,
       '- 独立调用 execution.pull_request.inspect 检查当前精确 head/base/subject 与 CI，再登记 reviewed subject 并重新读取最新 context receipt；不得复用 Work 阶段旧结果。',
       '- inspection receipt 与当前 head 全绿是 approved 的服务端硬门禁；pending、failure、unknown 均不得批准。');
-  } else if (context.execution.purpose === 'review'
-    && context.task.kind === 'integration') {
-    instructions.splice(2, 0,
-      '- 独立调用 execution.pull_request.inspect 检查当前 Integration Agent 的精确 PR/head/base 与 CI；失败 job 用 execution.pull_request.log 读取，随后重新读取最新 context receipt。',
-      '- 当前 Review Execution、Integration Agent 当前 PR/head/subject 与全绿 head 绑定的 inspection receipt 是 approved 的服务端硬门禁；pending、failure、unknown 均不得批准。');
-  } else if (context.execution.purpose === 'merge'
-    && context.task.kind === 'integration') {
-    instructions.splice(2, 0,
-      '- 依次调用 integration.agent.merge 与 integration.agent.cleanup；Merge Gateway 会重读当前 PR/head、审批与 CI，cleanup 会按持久 receipt 对账并清理绑定的来源 PR/branch、integration branch 与任务 worktree。cleanup 成功后才可 execution.finish({targetStatus: "done", body})。');
   }
   if (context.task.kind === 'integration') {
     instructions.splice(2, 0,
-      '- 这是一个持久的 Integration Agent：先以 GitHub PR、head 与 CI 为唯一代码事实对账，不得相信旧协调状态、revision、lease 或 outbox 字段。',
-      '- Work 必须处理 execution.context 中完整冻结来源集；组合来源、修复 CI 和处理 Review 反馈都在同一 integration branch/PR 上完成，不得用无关改动或空提交宣称完成；head 变化后必须重新发起只读 Review。',
-      '- 只有当前 Review 对当前 head 的明确批准且 CI 全绿时才请求受控 Merge Gateway；红 CI、过期 review 或 head 变化必须拒绝合并。',
-      '- 普通网络、CI 或可修复冲突错误应继续对账和重试，不得把任务置为 blocked。');
+      '- 你是本次 Integration 唯一的持久 Agent，负责从读取来源任务到 GitHub 合并、资源清理和任务收口的完整过程；是否创建 integration branch/worktree、采用何种合并方式、是否调用子 Agent，均由你根据现场事实自行决定。',
+      '- 直接使用当前运行环境提供的标准 Git 与 GitHub 能力；不要调用 Delivery 专用的 execution.pull_request.* 或 execution.review_subject.record receipt 协议。遵守仓库现有权限、branch protection 和 ruleset，不得把任务范围解释为对其他仓库或无关资源的授权。',
+      '- 任何 push、PR、merge、删除等外部操作结果不确定时，必须先重新读取 GitHub 与本地 Git 的实际状态，再决定是否继续，避免重复副作用。',
+      '- GitHub 确认合并后，清理本批次拥有的本地 worktree、本地分支、远程分支和临时目录；删除前确认归属且没有未合并提交。全部完成后调用 execution.finish({targetStatus: "done", body})；只有确实需要人工决策或补充条件时才使用 blocked。');
   }
   return instructions;
 }

@@ -12,8 +12,8 @@ const fetchIntegrationSources = vi.mocked(api.fetchIntegrationSources);
 function source(id: string, integrationTaskId: string): TaskBoardIntegrationSource {
   return {
     id, integrationTaskId, deliveryTaskId: `delivery-${id}`, repositoryId: "repo-1",
-    providerPullRequestId: `pr-${id}`, reviewedSubjectDigest: `digest-${id}`,
-    order: 0, state: "needs_human", attemptCount: 0,
+    providerPullRequestId: `pr-${id}`,
+    order: 0, state: "needs_human",
     updatedAt: "2026-08-18T00:00:00.000Z",
   };
 }

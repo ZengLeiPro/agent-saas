@@ -384,12 +384,7 @@ export interface TaskBoardExecutionIntegrationAgent {
   deliverySourceIds: string[];
   repositoryId: string;
   durableSessionId?: string;
-  integrationBranch: string;
-  providerPullRequestId?: string;
-  status: 'active' | 'reviewing' | 'ready_to_merge' | 'merged' | 'canceled';
-  reviewHeadOid?: string;
-  verdict?: 'approved' | 'changes_requested';
-  reviewExecutionId?: string;
+  status: 'active' | 'merged' | 'canceled';
   updatedAt: string;
 }
 
@@ -417,24 +412,10 @@ export interface TaskBoardIntegrationSource {
   deliveryTaskIdentifier?: string;
   deliveryTaskTitle?: string;
   repositoryId: string;
-  providerPullRequestId: string;
-  reviewedSubjectDigest: string;
+  providerPullRequestId?: string;
   order: number;
   state: TaskBoardIntegrationSourceState;
-  attemptCount: number;
-  remediationCount?: number;
-  providerReceiptId?: string;
   mergedCommitOid?: string;
-  remediationTaskId?: string;
-  remediationAttempts?: Array<{
-    id: string;
-    round: number;
-    remediationTaskId: string;
-    remediationTaskIdentifier?: string;
-    remediationTaskTitle?: string;
-    state: "active" | "resolved" | "superseded" | "canceled";
-    resolvedAt?: string;
-  }>;
   lastError?: string;
   updatedAt: string;
 }

@@ -40,14 +40,14 @@ export const MEMBER_ROLE_LABELS: Record<TaskBoardMemberRole, string> = {
 export const INTEGRATION_SOURCE_STATE_LABELS: Record<TaskBoardIntegrationSourceState, string> = {
   pending: "待处理",
   canceled: "已取消",
-  validating: "校验中",
-  ready: "可合并",
-  merging: "合并中",
+  validating: "处理中",
+  ready: "处理中",
+  merging: "处理中",
   merged: "已合并",
-  waiting_retry: "等待重试",
-  re_reviewing: "重新复核",
-  resolving_conflict: "解决冲突",
-  waiting_remediation: "等待修复",
+  waiting_retry: "处理中",
+  re_reviewing: "处理中",
+  resolving_conflict: "处理中",
+  waiting_remediation: "处理中",
   needs_human: "需要人工处理",
 };
 

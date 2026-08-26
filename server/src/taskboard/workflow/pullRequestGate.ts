@@ -3,82 +3,9 @@ import type { PoolClient } from 'pg';
 import type { TaskBoardIntegrationPolicy, TaskBoardTask } from '../../../../shared/src/types/taskboard.js';
 import { assertPullRequestGate } from '../deliveryPullRequests.js';
 import { repositoryWithBoardCiPolicy } from '../ciPolicy.js';
-import { integrationAgentTableNames } from '../integrationAgentSchema.js';
 import type { RepositoryPullRequestSnapshot } from '../repositoryProvider.js';
 import type { TaskboardV2StoreOptions } from '../v2Store.js';
 import { TaskboardValidationError } from '../types.js';
-
-export async function assertCurrentIntegrationAgentPullRequestGate(
-  options: TaskboardV2StoreOptions,
-  client: PoolClient,
-  task: TaskBoardTask,
-  executionId: string,
-): Promise<RepositoryPullRequestSnapshot> {
-  const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
-  const agentResult = await client.query(
-    `SELECT provider_pull_request_id,integration_branch FROM ${agentsTable}
-      WHERE integration_task_id=$1 FOR UPDATE`, [task.id],
-  );
-  const agent = agentResult.rows[0];
-  const providerPullRequestId = String(agent?.provider_pull_request_id ?? '');
-  if (!providerPullRequestId) {
-    throw new TaskboardValidationError('Integration Agent has not attached a pull request', 'TASKBOARD_PULL_REQUEST_REQUIRED');
-  }
-  const inspection = await client.query(
-    `SELECT payload FROM ${options.changesTable}
-      WHERE task_id=$1 AND execution_id=$2 AND change_type='pull_request.inspected'
-      ORDER BY seq DESC LIMIT 1`, [task.id, executionId],
-  );
-  const payload = jsonObject(inspection.rows[0]?.payload);
-  const receipt = jsonObject(payload?.receipt);
-  if (!receipt || receipt.executionId !== executionId || receipt.taskId !== task.id
-    || receipt.purpose !== 'review' || receipt.providerPullRequestId !== providerPullRequestId
-    || payload?.gateStatus !== 'success') {
-    throw new TaskboardValidationError(
-      'Current review execution must inspect successful checks for the integration Agent pull request',
-      'TASKBOARD_CI_INSPECTION_REQUIRED',
-    );
-  }
-  const boardResult = await client.query(
-    `SELECT repository,integration_policy,owner_user_id FROM ${options.boardsTable} WHERE id=$1`, [task.boardId],
-  );
-  const board = boardResult.rows[0];
-  const repository = jsonObject(board?.repository);
-  const configuredRepository = repository && repositoryWithBoardCiPolicy(
-    repository as { provider: 'github'; repositoryId: string; owner: string; name: string; baseBranch: string; allowForkPullRequest: false },
-    jsonObject(board?.integration_policy) as TaskBoardIntegrationPolicy | undefined,
-  );
-  if (!repository || repository.provider !== 'github' || !options.repositoryProvider) {
-    throw new TaskboardValidationError('Repository provider is unavailable', 'TASKBOARD_CI_UNAVAILABLE');
-  }
-  let current: RepositoryPullRequestSnapshot;
-  try {
-    current = await options.repositoryProvider.getPullRequest(configuredRepository!, providerPullRequestId, String(board.owner_user_id));
-  } catch (error) {
-    throw new TaskboardValidationError(
-      `Repository provider inspection failed: ${error instanceof Error ? error.message : String(error)}`,
-      'TASKBOARD_CI_UNAVAILABLE',
-    );
-  }
-  const expectedHeadOid = String(receipt.headOid ?? '');
-  if (current.state === 'merged') {
-    if (!current.mergeCommitOid) {
-      throw new TaskboardValidationError(
-        'Provider did not return the merged commit oid',
-        'TASKBOARD_PROVIDER_RECEIPT_INCOMPLETE',
-      );
-    }
-    if (current.providerPullRequestId !== providerPullRequestId || current.headOid !== expectedHeadOid) {
-      throw new TaskboardValidationError('Integration Agent pull request subject changed', 'TASKBOARD_SUBJECT_STALE');
-    }
-  } else {
-    assertPullRequestGate(current, { providerPullRequestId, headOid: expectedHeadOid, requireMergeable: true });
-  }
-  if (current.baseRef !== repository.baseBranch || current.headRef !== String(agent.integration_branch)) {
-    throw new TaskboardValidationError('Integration Agent pull request subject changed', 'TASKBOARD_SUBJECT_STALE');
-  }
-  return current;
-}
 
 export async function assertCurrentPullRequestGate(
   options: TaskboardV2StoreOptions,

@@ -421,8 +421,7 @@ describe("TaskDetail 草稿隔离", () => {
     render(<TaskDetail {...props({ task: current })} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(current.id));
 
-    expect(screen.getByText(/Agent-first Integration v3 会按当前阶段自动恢复/)).toBeTruthy();
-    expect(screen.getByText(/当前阶段：实施中/)).toBeTruthy();
+    expect(screen.getByText(/一个持久 Integration Agent 自主完成组合/)).toBeTruthy();
     expect(screen.queryByText(/Candidate|重新排队/)).toBeNull();
     await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
     await user.click(screen.getByRole("checkbox", { name: "发表后继续实施" }));
@@ -606,7 +605,7 @@ describe("TaskDetail 草稿隔离", () => {
     await waitFor(() => expect(onExecute).toHaveBeenCalledWith(stuckTask, "work"));
   });
 
-  it("集成任务详情区分任务类型并展示来源进度、错误和 merged commit", async () => {
+  it("集成任务详情只展示来源摘要与 merged commit，不暴露自动修复状态机", async () => {
     const integrationTask = {
       ...taskOne,
       id: "integration-1",
@@ -647,9 +646,11 @@ describe("TaskDetail 草稿隔离", () => {
 
     expect(await screen.findByText("集成批次")).toBeTruthy();
     expect(await screen.findByText("1/2 已合并")).toBeTruthy();
-    expect(screen.getByText("等待修复")).toBeTruthy();
+    expect(screen.getByText("处理中")).toBeTruthy();
+    expect(screen.queryByText(/等待修复|重新复核|等待重试/)).toBeNull();
     expect(screen.getByText(/merged commit abc123/)).toBeTruthy();
-    expect(screen.getByText(/合并冲突需要自动修复/)).toBeTruthy();
+    expect(screen.queryByText(/合并冲突需要自动修复/)).toBeNull();
+    expect(screen.queryByText(/尝试|复核对象|修复历史/)).toBeNull();
     expect(screen.queryByRole("button", { name: "保存任务" })).toBeNull();
     expect(screen.queryByRole("button", { name: "交给 Agent" })).toBeNull();
   });
@@ -664,49 +665,44 @@ describe("TaskDetail 草稿隔离", () => {
     expect(await screen.findByText(/TASK-SOURCE · 真实交付来源/)).toBeTruthy(); expect(screen.getByText("0/1 已合并")).toBeTruthy();
   });
 
-  it("集成阻塞恢复仅提交用户显式勾选的来源", async () => {
+  it("Integration blocked 只提交一次人工决策并恢复同一个 Agent", async () => {
     const user = userEvent.setup();
     const integrationTask = {
       ...taskOne, id: "integration-select", identifier: "TASK-10",
-      kind: "integration" as const, status: "blocked" as const,
+      kind: "integration" as const, workflowVersion: 3 as const, status: "blocked" as const,
     };
-    const resumedTask = { ...integrationTask, status: "todo" as const, version: integrationTask.version + 1 };
+    const resumedTask = {
+      ...integrationTask, status: "in_progress" as const, version: integrationTask.version + 1,
+      resumeContext: {
+        decision: "按当前批次继续处理", purpose: "work" as const, sourceIds: [],
+        requestedAt: "2026-08-26T08:00:00.000Z", requestedBy: "user-1",
+      },
+    };
     mocks.fetchTask.mockResolvedValue(integrationTask);
     mocks.fetchIntegrationSources.mockResolvedValue([
       {
         id: "source-a", integrationTaskId: integrationTask.id, deliveryTaskId: "delivery-a",
         deliveryTaskIdentifier: "TASK-1", repositoryId: "repo-1", providerPullRequestId: "pr-a",
-        reviewedSubjectDigest: "digest-a", order: 0, state: "needs_human", attemptCount: 1,
-        lastError: "需要确认 A", updatedAt: taskOne.updatedAt,
+        order: 0, state: "needs_human", lastError: "需要确认 A", updatedAt: taskOne.updatedAt,
       },
       {
         id: "source-b", integrationTaskId: integrationTask.id, deliveryTaskId: "delivery-b",
         deliveryTaskIdentifier: "TASK-2", repositoryId: "repo-1", providerPullRequestId: "pr-b",
-        reviewedSubjectDigest: "digest-b", order: 1, state: "needs_human", attemptCount: 1,
-        lastError: "需要确认 B", updatedAt: taskOne.updatedAt,
-      },
-      {
-        id: "source-c", integrationTaskId: integrationTask.id, deliveryTaskId: "delivery-c",
-        repositoryId: "repo-1", providerPullRequestId: "pr-c", reviewedSubjectDigest: "digest-c",
-        order: 2, state: "merged", attemptCount: 1, updatedAt: taskOne.updatedAt,
+        order: 1, state: "needs_human", lastError: "需要确认 B", updatedAt: taskOne.updatedAt,
       },
     ]);
     mocks.resumeTask.mockResolvedValue(resumedTask);
-    const prompt = vi.spyOn(window, "prompt").mockReturnValue(null);
+    const prompt = vi.spyOn(window, "prompt").mockReturnValue("按当前批次继续处理");
     render(<TaskDetail {...props({ task: integrationTask, canTransitionTask: true })} />);
 
-    const resume = await screen.findByRole("button", { name: "显式恢复阻塞来源" });
-    expect(resume.hasAttribute("disabled")).toBe(true);
-    await user.click(screen.getByRole("checkbox", { name: "选择恢复来源 TASK-1" }));
-    expect(resume.hasAttribute("disabled")).toBe(false);
-    await user.click(resume);
-    expect(mocks.resumeTask).not.toHaveBeenCalled();
-    prompt.mockReturnValue("仅恢复来源 A");
+    const resume = await screen.findByRole("button", { name: "恢复 Integration Agent" });
+    expect(screen.queryByRole("checkbox", { name: /选择恢复来源/ })).toBeNull();
     await user.click(resume);
     await waitFor(() => expect(mocks.resumeTask).toHaveBeenCalledWith(
-      integrationTask.id, integrationTask.version, "仅恢复来源 A", ["source-a"],
+      integrationTask.id, integrationTask.version, "按当前批次继续处理",
     ));
-
+    expect(prompt).toHaveBeenCalled();
+    expect(await screen.findByText("等待系统自动恢复同一个 Integration Agent")).toBeTruthy();
   });
 
   it("复核中任务可以启动独立 review Agent", async () => {
@@ -750,12 +746,11 @@ describe("TaskDetail 草稿隔离", () => {
     render(<TaskDetail {...props({ task: blockedTask, onExecute, onTaskLoaded, canTransitionTask: true })} />);
 
     expect(screen.queryByRole("button", { name: "重新运行" })).toBeNull();
-    await user.click(await screen.findByRole("button", { name: "显式恢复任务" }));
+    await user.click(await screen.findByRole("button", { name: "恢复任务" }));
     await waitFor(() => expect(mocks.resumeTask).toHaveBeenCalledWith(
       blockedTask.id,
       blockedTask.version,
       "依赖已解除，恢复实施",
-      undefined,
     ));
     expect(onExecute).not.toHaveBeenCalled();
     expect(onTaskLoaded).toHaveBeenCalledWith(resumedTask);

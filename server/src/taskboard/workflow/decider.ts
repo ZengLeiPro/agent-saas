@@ -21,11 +21,8 @@ export function isIrreversibleMerged(task: TaskBoardTask, facts?: WorkflowFacts)
 
 export function purposeForIntegrationAgentStatus(
   status: TaskBoardStatus,
-): 'work' | 'review' | 'merge' | undefined {
-  if (status === 'todo' || status === 'in_progress') return 'work';
-  if (status === 'in_review') return 'review';
-  if (status === 'ready_to_merge') return 'merge';
-  return undefined;
+): 'work' | undefined {
+  return status === 'todo' || status === 'in_progress' ? 'work' : undefined;
 }
 
 export function assertIntegrationExecutionMigrated(task: Pick<TaskBoardTask, 'kind' | 'workflowVersion'>): void {
@@ -50,9 +47,8 @@ export function assertExecutionRequestAllowed(
   }
   if (task.kind === 'integration') {
     assertIntegrationExecutionMigrated(task);
-    const expected = purposeForIntegrationAgentStatus(task.status);
-    if (!expected || purpose !== expected) {
-      throw new TaskboardValidationError('Integration Agent is not dispatchable for this purpose', 'TASKBOARD_INTEGRATION_AGENT_EXECUTION_STATE_INVALID');
+    if (purpose !== 'work' || !purposeForIntegrationAgentStatus(task.status)) {
+      throw new TaskboardValidationError('Integration Agent only runs one durable work execution', 'TASKBOARD_INTEGRATION_AGENT_EXECUTION_STATE_INVALID');
     }
     return;
   }
@@ -97,8 +93,10 @@ export function decideTransition(
   }
   if (purpose === 'work') {
     if (!['in_progress', 'todo'].includes(task.status)) invalidTransition(task, purpose, status);
+    if (task.kind === 'integration' && (status === 'done' || status === 'blocked')) return { toStatus: status };
     if (task.kind === 'advisory' && (status === 'todo' || status === 'blocked')) return { toStatus: status };
-    if (task.kind !== 'advisory' && (status === 'in_review' || status === 'blocked')) return { toStatus: status };
+    if (task.kind !== 'advisory' && task.kind !== 'integration'
+      && (status === 'in_review' || status === 'blocked')) return { toStatus: status };
   }
   if (purpose === 'review' && task.status === 'in_review') {
     if (task.kind === 'remediation' && status === 'ready_to_merge') return { toStatus: 'done' };
@@ -106,10 +104,6 @@ export function decideTransition(
       ? ['done', 'todo', 'in_review', 'blocked']
       : ['ready_to_merge', 'todo', 'in_review', 'blocked'];
     if (allowed.includes(status)) return { toStatus: status };
-  }
-  if (purpose === 'merge' && task.kind === 'integration') {
-    if (status === 'done' && facts.hasMergeFact) return { toStatus: status };
-    if (status === 'in_progress' || status === 'blocked') return { toStatus: status };
   }
   return invalidTransition(task, purpose, status);
 }

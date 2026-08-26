@@ -102,6 +102,8 @@ __pycache__/
 .playwright-cli/
 e2e/test-results/
 e2e/playwright-report/
+/test-results/
+/playwright-report/
 
 # Chaos 门禁报告产物（CI 上传为 artifact，不入库）
 .chaos-reports/

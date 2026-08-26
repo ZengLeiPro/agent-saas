@@ -14,8 +14,8 @@ const SHA_B = 'b'.repeat(40);
 test('classifies each mapped component path', () => {
   assert.deepEqual(classifyPath('web/src/App.tsx').components, ['web']);
   assert.deepEqual(classifyPath('server/src/index.ts').components, ['api', 'runtimeWorker', 'acs']);
-  assert.deepEqual(classifyPath('shared/src/types.ts').components, ['web', 'api']);
-  assert.deepEqual(classifyPath('workspace-shared/prompts/a.md').components, ['api']);
+  assert.deepEqual(classifyPath('shared/src/types.ts').components, ['web', 'api', 'runtimeWorker', 'acs']);
+  assert.deepEqual(classifyPath('workspace-shared/prompts/a.md').components, ['api', 'runtimeWorker', 'acs']);
   assert.deepEqual(classifyPath('hand-server/src/index.ts').components, ['runtimeWorker']);
   assert.deepEqual(classifyPath('acs-orchestrator/src/index.ts').components, ['acs']);
 });
@@ -31,13 +31,13 @@ test('server changes conservatively require API, runtime worker, and ACS deploym
   });
 });
 
-test('shared changes conservatively require both web and API deployment', () => {
+test('shared changes conservatively require every dependent component deployment', () => {
   const result = classifyChangedPaths(['shared/src/types/ws.ts']);
 
   assert.deepEqual(result, {
     ok: true,
     changedFiles: ['shared/src/types/ws.ts'],
-    components: ['web', 'api'],
+    components: ['web', 'api', 'runtimeWorker', 'acs'],
     blockingReasons: [],
   });
 });

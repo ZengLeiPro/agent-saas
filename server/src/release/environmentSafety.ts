@@ -55,8 +55,12 @@ export function assertRuntimeEnvironmentSafety(config: AppConfig, env: NodeJS.Pr
   }
 
   const serverEgress = config.egress?.server;
-  if (!serverEgress?.enabled || serverEgress.failOpen || serverEgress.matchDomains.length !== 0 || serverEgress.bypassDomains.length !== 0) {
-    failures.push('staging egress must proxy all domains without bypass or fail-open');
+  let supportedProxy = false;
+  try {
+    supportedProxy = ['http:', 'https:'].includes(new URL(serverEgress?.proxyUrl ?? '').protocol);
+  } catch { supportedProxy = false; }
+  if (!serverEgress?.enabled || !supportedProxy || serverEgress.failOpen || serverEgress.matchDomains.length !== 0 || serverEgress.bypassDomains.length !== 0) {
+    failures.push('staging egress must use a valid HTTP(S) proxy to proxy all domains without bypass or fail-open');
   }
 
   const markers = (env.AGENT_SAAS_PRODUCTION_MARKERS ?? '.prod.,production').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);

@@ -1,6 +1,6 @@
 # Release preflight
 
-`scripts/release/preflight.mjs` is a local-only, fail-closed release gate. It does not deploy, mutate Git state, or contact a network service. Its standard output is one JSON object; a blocked result exits with status `1` and lists every `blockingReasons` entry.
+`scripts/release/preflight.mjs` 是本地只读、fail-closed 的发布门禁。它不部署、不修改 Git，也不访问网络；输出一条 JSON，阻断时以状态码 `1` 退出并列出全部 `blockingReasons`。
 
 ```sh
 node scripts/release/preflight.mjs \
@@ -10,45 +10,46 @@ node scripts/release/preflight.mjs \
   --main main
 ```
 
-## Checks
+## 检查项
 
-1. `target` and `baseline` are complete 40-character Git SHAs.
-2. `target` is reachable from the configured `main` ref.
-3. `baseline` is an ancestor of `target`.
-4. The identity is read from a local filesystem path only and is complete production JSON.
-5. Changed files are obtained using `git diff --name-only <baseline>...<target>` and mapped to release components. Any unmapped path blocks the release.
+1. `target`、`baseline` 均为完整 40 位 SHA。
+2. `target` 可从 `main` 到达，`baseline` 是 `target` 的祖先。
+3. identity 仅从本地文件读取，且是完整 production JSON。
+4. topology 的 `observedAt` 必须在 5 分钟内；API、Runtime Worker 的 systemd unit 必须为 active，release symlink 的真实目标必须匹配组件 SHA，pidfile 必须指向存活进程，readyfile 必须匹配组件 SHA。
+5. 使用 `git diff --name-status --find-renames --find-copies <baseline>...<target>` 读取变更；rename/copy 的旧、新路径均分类，任何未知路径阻断发布。
 
-Path mapping is intentionally narrow:
-
-| Path prefix | Component |
+| 路径前缀 | 组件 |
 | --- | --- |
 | `web/` | `web` |
-| `server/`, `shared/`, `workspace-shared/` | `api` |
+| `server/` | `api`, `runtimeWorker`, `acs` |
+| `shared/` | `web`, `api`, `runtimeWorker`, `acs` |
+| `workspace-shared/` | `api`, `runtimeWorker`, `acs` |
 | `hand-server/` | `runtimeWorker` |
 | `acs-orchestrator/` | `acs` |
 
-For a component-only inspection, run:
-
-```sh
-node scripts/release/classify-components.mjs --baseline <sha> --target <sha>
-```
-
 ## Runtime identity contract
 
-The identity file must be JSON with this complete shape. It is an input to the gate and must be produced or copied locally before running the command.
+identity 必须包含 `schemaVersion: 1`、`environment: production`、完整 `gitSha`，以及 `web`、`api`、`runtimeWorker`、`acs` 四个组件的完整 SHA 与 `deployedAt`。此外必须包含实时 topology：
 
 ```json
 {
-  "schemaVersion": 1,
-  "environment": "production",
-  "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "components": {
-    "web": { "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "deployedAt": "2026-08-25T00:00:00.000Z" },
-    "api": { "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "deployedAt": "2026-08-25T00:00:00.000Z" },
-    "runtimeWorker": { "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "deployedAt": "2026-08-25T00:00:00.000Z" },
-    "acs": { "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "deployedAt": "2026-08-25T00:00:00.000Z" }
+  "topology": {
+    "activeColor": "blue",
+    "observedAt": "2026-08-26T07:00:00.000Z",
+    "api": {
+      "unit": "agent-saas-api@blue.service",
+      "releaseSymlink": "/srv/agent-saas/blue/current",
+      "pidfile": "/run/agent-saas/blue-api.pid",
+      "readyfile": "/run/agent-saas/blue-api.ready"
+    },
+    "runtimeWorker": {
+      "unit": "agent-saas-worker@blue.service",
+      "releaseSymlink": "/srv/agent-saas/blue/worker-current",
+      "pidfile": "/run/agent-saas/blue-worker.pid",
+      "readyfile": "/run/agent-saas/blue-worker.ready"
+    }
   }
 }
 ```
 
-No URL, `file:` URI, or remote identity source is accepted. The scripts expose their core functions for `node:test`; Git execution and local-file reading are injectable in tests.
+`releaseSymlink` 的 realpath 和 `readyfile` 内容必须包含对应组件 SHA。无 URL、`file:` URI或远程 identity 来源会被接受。核心函数将 Git 和本地观测依赖注入，以支持无副作用单元测试。

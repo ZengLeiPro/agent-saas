@@ -77,6 +77,7 @@ describe('assertRuntimeEnvironmentSafety', () => {
   it('fails closed for a production database reference or egress that permits direct traffic', () => {
     expect(() => assertRuntimeEnvironmentSafety(config({ runtimeEventStore: { backend: 'pg', connectionString: 'postgresql://app@db.prod.internal/runtime' } }), stagingEnv)).toThrow(/database host|production marker/);
     expect(() => assertRuntimeEnvironmentSafety(config({ egress: undefined }), stagingEnv)).toThrow(/egress/);
+    expect(() => assertRuntimeEnvironmentSafety(config({ egress: { ...config().egress, server: { ...config().egress!.server, proxyUrl: 'nonsense' } } }), stagingEnv)).toThrow(/valid HTTP\(S\) proxy/);
     expect(() => assertRuntimeEnvironmentSafety(config({ egress: { ...config().egress, server: { ...config().egress!.server, matchDomains: ['api.example.test'] } } }), stagingEnv)).toThrow(/proxy all domains/);
     expect(() => assertRuntimeEnvironmentSafety(config({ egress: { ...config().egress, server: { ...config().egress!.server, bypassDomains: ['localhost'] } } }), stagingEnv)).toThrow(/proxy all domains/);
   });

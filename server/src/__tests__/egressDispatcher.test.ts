@@ -170,13 +170,14 @@ describe('createEgressFetch', () => {
     expect(proxyFetch).not.toHaveBeenCalled();
   });
 
-  it('Request 形态无法安全转交另一个 fetch 实现，一律直连', async () => {
+  it('Request 形态在代理或 fail-closed 策略下拒绝直连绕过', async () => {
     const { egressFetch, baseFetch, proxyFetch } = harness({
       enabled: true,
       proxyUrl: 'http://127.0.0.1:7890',
+      failOpen: false,
     });
-    await egressFetch(new Request('https://example.com'));
-    expect(baseFetch).toHaveBeenCalledTimes(1);
+    await expect(egressFetch(new Request('https://example.com'))).rejects.toThrow(/cannot bypass/u);
+    expect(baseFetch).not.toHaveBeenCalled();
     expect(proxyFetch).not.toHaveBeenCalled();
   });
 

@@ -22,7 +22,7 @@ import type { LayoutProps } from "./types";
 import { hasSuccessfulFinalOutput } from "./firstDayGuideVisibility";
 import { useAuth } from "@/contexts/AuthContext";
 
-const GovernanceConsole = lazy(() => import("@/components/GovernanceConsole").then(m => ({ default: m.GovernanceConsole })));
+const GovernanceConsole = lazy(() => import("@/components/GovernanceConsole").then(m => ({ default: m.GovernanceConsole }))); const AnalysisWorkspaceContent = lazy(() => import("@/components/AnalysisWorkspaceContent").then(m => ({ default: m.AnalysisWorkspaceContent })));
 const CronManager = lazy(() => import("@/components/CronManager").then(m => ({ default: m.CronManager })));
 const UserManager = lazy(() => import("@/components/UserManager").then(m => ({ default: m.UserManager })));
 const TenantManager = lazy(() => import("@/components/TenantManager").then(m => ({ default: m.TenantManager })));
@@ -52,6 +52,7 @@ const TenantAdminHeaderControls = lazy(() => import("@/components/TenantAdminHea
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
 import { useUnifiedSettingsWorkspace } from "@/hooks/useUnifiedSettingsWorkspace";
 import { useManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
+import { isAnalysisRoute, useUnifiedAnalysisWorkspace } from "@/hooks/useUnifiedAnalysisWorkspace";
 import { legacyRoleFallbackTab, managementAccessTarget } from "@/lib/managementAccessView";
 import { EmptySessionScenarios } from "@/components/scenarios/EmptySessionScenarios";
 import { EmptyChatRecommendCards } from "@/components/scenarios/EmptyChatRecommendCards";
@@ -117,9 +118,8 @@ export function DesktopLayout(props: LayoutProps) {
     settingsOpen, settingsSection, adminSettings, openSettings, closeSettings, setSettingsSection,
     openAdminSettings, closeAdminSettings, setAdminSettingsSection,
   });
-  const accessTarget = managementAccessTarget({ settingsOpen, adminSettingsTarget: adminSettings?.target, activeTab, governanceArea: governanceRoute?.area });
-  const managementAccess = useManagementSettingsAccess({ user: authUser, authLoading, authEnabled, active: accessTarget !== null });
-
+  const analysisMode = !settingsMode && isAnalysisRoute(governanceRoute); const accessTarget = managementAccessTarget({ settingsOpen, adminSettingsTarget: adminSettings?.target, activeTab, governanceArea: governanceRoute?.area });
+  const managementAccess = useManagementSettingsAccess({ user: authUser, authLoading, authEnabled, active: accessTarget !== null || isAdmin }); const { open: handleOpenAnalysis, close: handleCloseAnalysis, navigate: handleAnalysisNavigate } = useUnifiedAnalysisWorkspace({ mode: analysisMode, governanceRoute, managementAccess, sessionId, pushActiveTab, setActiveTab });
   const subagentTranscriptContext = useSubagentTranscript();
   const subagentTranscript = subagentTranscriptContext?.transcript ?? null;
   const closeSubagentTranscript = subagentTranscriptContext?.closeTranscript;
@@ -152,7 +152,7 @@ export function DesktopLayout(props: LayoutProps) {
 
   const capabilityReplayActive = activeTab === "capabilities" && capabilityReplayOpen;
   // 工作流回放自行渲染会话卡与系统数据卡；目录态仍由外层提供统一浮动白框。
-  const contentPanelFloating = settingsMode
+  const contentPanelFloating = settingsMode || analysisMode
     || activeTab === "chat"
     || (activeTab === "capabilities" && !capabilityReplayOpen)
     || activeTab === "cron";
@@ -177,7 +177,7 @@ export function DesktopLayout(props: LayoutProps) {
           : fileBrowserOpen ? 'browser'
             : null;
   const rightPanelOpen = rightPanelKind !== null;
-  const showRightPanel = !settingsMode && activeTab === "chat" && rightPanelOpen;
+  const showRightPanel = !settingsMode && !analysisMode && activeTab === "chat" && rightPanelOpen;
   const rightPanelKey = rightPanelKind === 'subagent'
     ? subagentTranscript?.childSessionId ?? null
     : rightPanelKind === 'preview' ? previewFilePath : rightPanelKind;
@@ -347,7 +347,7 @@ export function DesktopLayout(props: LayoutProps) {
     if (fallback) setActiveTab(fallback);
   }, [isAdmin, isPlatformAdmin, personalAgentEnabled, activeTab, setActiveTab]);
 
-  if (activeTab === "tenant-admin" && governanceRoute?.area === "organization") {
+  if (!analysisMode && activeTab === "tenant-admin" && governanceRoute?.area === "organization") {
     return (
       <Suspense fallback={SuspenseFallback}>
         <ManagementSettingsAccessGate scope="tenant" target="tenant" access={managementAccess}
@@ -375,7 +375,7 @@ export function DesktopLayout(props: LayoutProps) {
     );
   }
 
-  if (activeTab === "platform-admin" && governanceRoute?.area === "platform") {
+  if (!analysisMode && activeTab === "platform-admin" && governanceRoute?.area === "platform") {
     return (
       <Suspense fallback={SuspenseFallback}>
         <ManagementSettingsAccessGate scope="platform" target="platform" access={managementAccess}
@@ -423,6 +423,7 @@ export function DesktopLayout(props: LayoutProps) {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         onOpenSettings={handleOpenUnifiedSettings}
+        onOpenAnalysis={handleOpenAnalysis} analysisMode={analysisMode} analysisRoute={analysisMode ? governanceRoute : null} onAnalysisNavigate={handleAnalysisNavigate} onCloseAnalysis={handleCloseAnalysis}
         settingsMode={settingsMode}
         settingsTarget={settingsTarget}
         activeSettingsSection={activeSettingsSection}
@@ -435,8 +436,8 @@ export function DesktopLayout(props: LayoutProps) {
         isLoadingMore={isLoadingMoreSessions}
         onLoadMore={loadMoreSessions}
         onLoadGroupSessions={loadGroupSessions}
-        hidden={settingsMode ? false : sidebarCollapsed}
-        onCollapse={settingsMode ? undefined : toggleSidebar}
+        hidden={settingsMode || analysisMode ? false : sidebarCollapsed}
+        onCollapse={settingsMode || analysisMode ? undefined : toggleSidebar}
         onPreviewTrashSession={previewTrashSession}
         trashPreviewSessionId={trashPreviewSessionId}
         sidebarLayout={sidebarLayout}
@@ -448,7 +449,7 @@ export function DesktopLayout(props: LayoutProps) {
         ref={showRightPanel ? splitContainerRef : undefined}
         className={cn(
           "my-2.5 mr-2.5 flex min-h-0 min-w-0 flex-1",
-          sidebarCollapsed && !settingsMode && "ml-2.5",
+          sidebarCollapsed && !settingsMode && !analysisMode && "ml-2.5",
           chatFontLarge && "chat-font-large",
           chatWidthWide && "chat-width-wide",
         )}
@@ -478,7 +479,7 @@ export function DesktopLayout(props: LayoutProps) {
         >
           <div className={cn("flex min-w-0 items-center gap-2", activeTab === "chat" && "flex-1")}>
             {/* 侧边栏展开后，收起入口移到侧边栏 header；此处只在收起态承接展开入口 */}
-            {sidebarCollapsed && (
+            {sidebarCollapsed && !settingsMode && !analysisMode && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -510,7 +511,7 @@ export function DesktopLayout(props: LayoutProps) {
               </div>
             ) : null}
           </div>
-          {activeTab === "platform-admin" && (
+          {!analysisMode && activeTab === "platform-admin" && (
             <Suspense fallback={null}>
               <PlatformAdminHeaderControls
                 active={platformAdminSection}
@@ -519,7 +520,7 @@ export function DesktopLayout(props: LayoutProps) {
               />
             </Suspense>
           )}
-          {activeTab === "tenant-admin" && (
+          {!analysisMode && activeTab === "tenant-admin" && (
             <Suspense fallback={null}>
               <TenantAdminHeaderControls
                 active={tenantAdminSection}
@@ -736,7 +737,7 @@ export function DesktopLayout(props: LayoutProps) {
           </div>
         )}
 
-        {tenantAdminMounted && (
+        {tenantAdminMounted && !analysisMode && (
           <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "tenant-admin" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
               <ManagementSettingsAccessGate scope="tenant" target="tenant"
@@ -764,7 +765,7 @@ export function DesktopLayout(props: LayoutProps) {
             </Suspense>
           </div>
         )}
-        {platformAdminMounted && (
+        {platformAdminMounted && !analysisMode && (
           <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "platform-admin" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
               <ManagementSettingsAccessGate scope="platform" target="platform"
@@ -852,6 +853,8 @@ export function DesktopLayout(props: LayoutProps) {
             />
           </Suspense>
         )}
+        {analysisMode && governanceRoute && <AnalysisWorkspaceContent route={governanceRoute} access={managementAccess} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}
+          openFilePreview={openFilePreview} platformAdminSection={platformAdminSection} platformAdminEntityId={platformAdminEntityId} setPlatformAdminRoute={setPlatformAdminRoute} />}
         {settingsMode && (
           <div className="absolute inset-0 z-30 min-h-0 overflow-hidden bg-card" data-testid="unified-settings-content">
             <div className={cn("h-full min-h-0", settingsTarget !== "personal" && "hidden")}>

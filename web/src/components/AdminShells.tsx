@@ -259,6 +259,7 @@ export function TenantAdminShell({
   headerControlsPlacement = "inline",
   governanceRoute,
   governanceContentOnly = false,
+  governanceContentEmbedded = false,
 }: {
   renderUsers: (tenantId?: string, tenantName?: string) => ReactNode;
   renderSkills: (tenantId?: string, tenantName?: string) => ReactNode;
@@ -289,6 +290,7 @@ export function TenantAdminShell({
   headerControlsPlacement?: "inline" | "none";
   governanceRoute?: GovernanceRouteState | null;
   governanceContentOnly?: boolean;
+  governanceContentEmbedded?: boolean;
   renderAutomation?: () => ReactNode;
 }) {
   const { user, isPlatformAdmin } = useAuth();
@@ -466,7 +468,14 @@ export function TenantAdminShell({
   })();
 
   if (governanceContentOnly) {
-    return <div className="min-h-full bg-muted/20 p-3 sm:p-4">{governanceContent}</div>;
+    return (
+      <div className={cn(
+        "min-h-full bg-muted/20 p-3 sm:p-4",
+        governanceContentEmbedded && "h-full min-h-0 overflow-auto bg-card p-4 md:p-6",
+      )}>
+        {governanceContent}
+      </div>
+    );
   }
 
   const content = (() => {
@@ -530,6 +539,7 @@ export function PlatformAdminShell({
   headerControlsPlacement = "inline",
   governanceRoute,
   governanceContentOnly = false,
+  governanceContentEmbedded = false,
 }: {
   renderTenants: () => ReactNode;
   renderSignupConfig?: () => ReactNode;
@@ -554,6 +564,7 @@ export function PlatformAdminShell({
   headerControlsPlacement?: "inline" | "none";
   governanceRoute?: GovernanceRouteState | null;
   governanceContentOnly?: boolean;
+  governanceContentEmbedded?: boolean;
 }) {
   // mount-once-visited（与 TenantAdminShell 同模式）
   const [visitedPlatformSections, setVisitedPlatformSections] = useState<Set<PlatformSection>>(() =>
@@ -639,7 +650,10 @@ export function PlatformAdminShell({
       case "platform.runtime.sessions":
         return <SessionsPage sessionId={governanceRoute.entityId} />;
       case "platform.runtime.runs":
-        return <RunTraceExplorer runId={governanceRoute.entityId} onRunIdChange={(next) => navigateGovernance(makeGovernanceRoute("platform.runtime.runs", { entityId: next }))} />;
+        return <RunTraceExplorer runId={governanceRoute.entityId} onRunIdChange={(next) => navigateGovernance(
+          makeGovernanceRoute("platform.runtime.runs", { entityId: next, search: governanceRoute.search }),
+          { replace: next === null },
+        )} />;
       case "platform.runtime.execution-providers":
         return renderRemoteHands();
       case "platform.runtime.environments":
@@ -664,7 +678,14 @@ export function PlatformAdminShell({
   })();
 
   if (governanceContentOnly) {
-    return <div className="min-h-full bg-muted/20 p-3 sm:p-4">{governanceContent}</div>;
+    return (
+      <div className={cn(
+        "min-h-full bg-muted/20 p-3 sm:p-4",
+        governanceContentEmbedded && "h-full min-h-0 overflow-auto bg-card p-4 md:p-6",
+      )}>
+        {governanceContent}
+      </div>
+    );
   }
 
   const content = (() => {

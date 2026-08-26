@@ -59,9 +59,11 @@ import { LogoutAccountDialog } from "@/components/LogoutAccountDialog";
 import { getAccountKey, type SavedAccountSummary } from "@/lib/savedAccounts";
 import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
+import { DeferredUnifiedAnalysisSidebar, preloadUnifiedAnalysisSidebar } from "@/components/DeferredUnifiedAnalysisSidebar";
 import { DeferredUnifiedSettingsSidebar, preloadUnifiedSettingsSidebar } from "@/components/DeferredUnifiedSettingsSidebar";
 import { getSidebarNavItems, formatShortDate, getSessionWaitingLabel, getGroupWaitingRuntimeStatus } from "@/types/sidebar";
 import type { SessionGroup, SessionListEntry } from "@/types/sessionGroup";
+import type { GovernanceRouteState } from "@/lib/governanceNavigation";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
 import type { ManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
 import { compareSessionActivity, formatBillingCredits } from "./desktopSessionSidebarUtils";
@@ -93,6 +95,9 @@ interface DesktopSessionSidebarProps {
   activeTab?: AppTab;
   onTabChange?: (tab: AppTab) => void;
   onOpenSettings?: (section?: SettingsSectionId) => void;
+  onOpenAnalysis?: () => void;
+  /** 统一分析模式与设置模式一样，会替换整块主侧边栏。 */
+  analysisMode?: boolean; analysisRoute?: GovernanceRouteState | null; onAnalysisNavigate?: (routeId: string) => void; onCloseAnalysis?: () => void;
   /** 统一设置模式会替换整块主侧边栏，而不是再打开一层弹窗。 */
   settingsMode?: boolean;
   settingsTarget?: "personal" | AdminSettingsTarget;
@@ -502,6 +507,7 @@ interface SidebarUserMenuFooterProps {
   setShowUserMenu: Dispatch<SetStateAction<boolean>>;
   userMenuRef: React.RefObject<HTMLDivElement>;
   isAdmin: boolean;
+  canOpenAnalysis: boolean; onOpenAnalysis?: () => void;
   onOpenSettings?: (section?: SettingsSectionId) => void;
   billingSessionId?: string | null;
   billingSummary: TenantBillingSummary | null;
@@ -518,6 +524,7 @@ function SidebarUserMenuFooter({
   setShowUserMenu,
   userMenuRef,
   isAdmin,
+  canOpenAnalysis, onOpenAnalysis,
   onOpenSettings,
   billingSessionId,
   billingSummary,
@@ -540,7 +547,7 @@ function SidebarUserMenuFooter({
       <div className="relative" ref={userMenuRef}>
         <button
           type="button"
-          onClick={() => { preloadUnifiedSettingsSidebar(); if (authEnabled && authUser) setShowUserMenu((v) => !v); }}
+          onClick={() => { preloadUnifiedAnalysisSidebar(); preloadUnifiedSettingsSidebar(); if (authEnabled && authUser) setShowUserMenu((v) => !v); }}
           disabled={!authUser}
           className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors hover:bg-muted disabled:opacity-50"
         >
@@ -661,6 +668,11 @@ function SidebarUserMenuFooter({
             )}
 
             <div className={USER_MENU_SECTION}>
+              {canOpenAnalysis && (
+                <button type="button" className={USER_MENU_ITEM} onClick={() => { setShowUserMenu(false); onOpenAnalysis?.(); }}>
+                  <EntityIcons.analytics className="size-5" /> 分析
+                </button>
+              )}
               <button
                 type="button"
                 className={USER_MENU_ITEM}
@@ -952,6 +964,8 @@ export function DesktopSessionSidebar({
   activeTab = "chat",
   onTabChange,
   onOpenSettings,
+  onOpenAnalysis, analysisMode = false, analysisRoute = null,
+  onAnalysisNavigate, onCloseAnalysis,
   settingsMode = false,
   settingsTarget = "personal",
   activeSettingsSection = "account-security",
@@ -979,6 +993,9 @@ export function DesktopSessionSidebar({
   const [showTrash, setShowTrash] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const roleLabel = isPlatformAdmin ? "平台管理员" : isAdmin ? "组织管理员" : "用户";
+  const analysisAccessReady = settingsAccess.status === "ready" || settingsAccess.status === "refreshing"; const canOpenAnalysis = analysisAccessReady && (settingsAccess.tenantEntryAllowed || settingsAccess.platformEntryAllowed);
+  const sidebarFooter = <SidebarUserMenuFooter authUser={authUser} authEnabled={authEnabled} roleLabel={roleLabel} showUserMenu={showUserMenu} setShowUserMenu={setShowUserMenu} userMenuRef={userMenuRef} isAdmin={isAdmin} canOpenAnalysis={canOpenAnalysis} onOpenAnalysis={onOpenAnalysis} onOpenSettings={onOpenSettings} billingSessionId={activeSessionId} billingSummary={billingSummary} billingAllowance={billingAllowance} accounts={accounts} switchAccount={switchAccount} />;
+  const analysisFooter = <SidebarUserMenuFooter authUser={authUser} authEnabled={authEnabled} roleLabel={roleLabel} showUserMenu={showUserMenu} setShowUserMenu={setShowUserMenu} userMenuRef={userMenuRef} isAdmin={isAdmin} canOpenAnalysis={false} onOpenAnalysis={onOpenAnalysis} onOpenSettings={onOpenSettings} billingSessionId={activeSessionId} billingSummary={billingSummary} billingAllowance={billingAllowance} accounts={accounts} switchAccount={switchAccount} />;
 
   // 压缩上下文确认弹窗
   const [compactDialogOpen, setCompactDialogOpen] = useState(false);
@@ -1650,6 +1667,16 @@ export function DesktopSessionSidebar({
     </div>
   );
 
+  if (!settingsMode && analysisMode && analysisRoute) {
+    const hasSecondPanel = subPanelOpen || showTrash;
+    return <DeferredUnifiedAnalysisSidebar
+      width={sidebarLayout === "single" ? singlePanelWidth : (hasSecondPanel ? mainPanelWidth + subPanelWidth : mainPanelWidth)} hidden={hidden} className={className}
+      access={settingsAccess} route={analysisRoute} onNavigate={onAnalysisNavigate} onClose={onCloseAnalysis} onCollapse={onCollapse}
+      onResizeMouseDown={sidebarLayout === "single" ? onSingleResizeMouseDown : (hasSecondPanel ? onSubResizeMouseDown : onMainResizeMouseDown)}
+      onResizeDoubleClick={sidebarLayout === "single" ? onSingleResizeDoubleClick : (hasSecondPanel ? onSubResizeDoubleClick : onMainResizeDoubleClick)} footer={analysisFooter}
+    />;
+  }
+
   if (settingsMode) {
     const hasSecondPanel = subPanelOpen || showTrash;
     return <DeferredUnifiedSettingsSidebar
@@ -1665,7 +1692,7 @@ export function DesktopSessionSidebar({
         onCollapse={onCollapse}
         onResizeMouseDown={sidebarLayout === "single" ? onSingleResizeMouseDown : (hasSecondPanel ? onSubResizeMouseDown : onMainResizeMouseDown)}
         onResizeDoubleClick={sidebarLayout === "single" ? onSingleResizeDoubleClick : (hasSecondPanel ? onSubResizeDoubleClick : onMainResizeDoubleClick)}
-        footer={<SidebarUserMenuFooter authUser={authUser} authEnabled={authEnabled} roleLabel={roleLabel} showUserMenu={showUserMenu} setShowUserMenu={setShowUserMenu} userMenuRef={userMenuRef} isAdmin={isAdmin} onOpenSettings={onOpenSettings} billingSessionId={activeSessionId} billingSummary={billingSummary} billingAllowance={billingAllowance} accounts={accounts} switchAccount={switchAccount} />}
+        footer={sidebarFooter}
       />;
   }
 
@@ -1838,21 +1865,7 @@ export function DesktopSessionSidebar({
           </div>
         </div>
 
-        <SidebarUserMenuFooter
-          authUser={authUser}
-          authEnabled={authEnabled}
-          roleLabel={roleLabel}
-          showUserMenu={showUserMenu}
-          setShowUserMenu={setShowUserMenu}
-          userMenuRef={userMenuRef}
-          isAdmin={isAdmin}
-          onOpenSettings={onOpenSettings}
-          billingSessionId={activeSessionId}
-          billingSummary={billingSummary}
-          billingAllowance={billingAllowance}
-          accounts={accounts}
-          switchAccount={switchAccount}
-        />
+        {sidebarFooter}
 
         <div
           className="group absolute inset-y-0 right-0 z-20 w-1 cursor-col-resize"
@@ -2192,20 +2205,7 @@ export function DesktopSessionSidebar({
           </ScrollArea>
 
           {/* Footer: 头像 + 用户名 + 上下箭头（点击展开用户菜单） */}
-          <SidebarUserMenuFooter
-            authUser={authUser}
-            authEnabled={authEnabled}
-            roleLabel={roleLabel}
-            showUserMenu={showUserMenu}
-            setShowUserMenu={setShowUserMenu}
-            userMenuRef={userMenuRef}
-            isAdmin={isAdmin}
-              onOpenSettings={onOpenSettings}
-            billingSessionId={activeSessionId}
-            billingSummary={billingSummary} billingAllowance={billingAllowance}
-            accounts={accounts}
-            switchAccount={switchAccount}
-          />
+          {sidebarFooter}
 
           {/* 主栏拖动条:贴主栏右边线,控制 mainPanelWidth */}
           <div

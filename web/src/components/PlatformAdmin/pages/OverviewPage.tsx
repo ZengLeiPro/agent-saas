@@ -18,6 +18,16 @@ function navigate(section: PlatformAdminSection, search?: Record<string, string 
   navigatePlatformAdmin({ section, search });
 }
 
+function navigateLink(
+  event: React.MouseEvent<HTMLAnchorElement>,
+  section: PlatformAdminSection,
+  search?: Record<string, string | number | boolean | null | undefined>,
+) {
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+  event.preventDefault();
+  navigate(section, search);
+}
+
 function navigateRef(ref: OverviewAttentionEntityRef | undefined) {
   if (!ref) return;
   const section = ref.kind === "run"
@@ -255,7 +265,11 @@ export function OverviewPage() {
             </div>
             <div className="flex justify-between gap-3">
               <span className="text-muted-foreground">正在执行</span>
-              <a className="text-primary hover:underline" href={buildPlatformAdminUrl({ section: "runs", search: { status: "active" } })}>
+              <a
+                className="text-primary hover:underline"
+                href={buildPlatformAdminUrl({ section: "runs", search: { status: "active" } })}
+                onClick={(event) => navigateLink(event, "runs", { status: "active" })}
+              >
                 {formatNumber(health?.activeRuns.total)} 条执行记录
               </a>
             </div>

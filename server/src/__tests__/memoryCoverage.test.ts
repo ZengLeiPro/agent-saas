@@ -158,11 +158,24 @@ describe('memory search: mergeHybridResults', () => {
     expect(merged[0]!.score).toBeCloseTo(0.8, 6);
   });
 
-  it('仅单路命中时另一路分数按 0 计', () => {
-    const merged = mergeHybridResults([vec('a', 1.0)], [kw('b', 1.0)], 0.5, 0.5);
+  it('同一精确 FTS 候选不会被负向量分抵消到生产阈值以下', () => {
+    const [exact] = mergeHybridResults([vec('exact', -0.1)], [kw('exact', 1)], 0.7, 0.3);
+    expect(exact!.score).toBeCloseTo(0.3, 6);
+    expect(exact!.score).toBeGreaterThanOrEqual(0.3);
+  });
+
+  it('仅单路命中时保留配置权重，关键词最佳候选可恰好通过生产阈值', () => {
+    const merged = mergeHybridResults([vec('a', 0.8)], [kw('b', 1)], 0.7, 0.3);
     const byPath = Object.fromEntries(merged.map((r) => [r.path, r.score]));
-    expect(byPath['p/a']).toBeCloseTo(0.5, 6); // 只有 vector
-    expect(byPath['p/b']).toBeCloseTo(0.5, 6); // 只有 keyword
+    expect(byPath['p/a']).toBeCloseTo(0.56, 6);
+    expect(byPath['p/b']).toBeCloseTo(0.3, 6);
+  });
+
+  it('权重为 0 时仍可显式禁用对应检索路', () => {
+    const merged = mergeHybridResults([vec('a', 0.8)], [kw('b', 1)], 1, 0);
+    const byPath = Object.fromEntries(merged.map((r) => [r.path, r.score]));
+    expect(byPath['p/a']).toBeCloseTo(0.8, 6);
+    expect(byPath['p/b']).toBe(0);
   });
 
   it('结果按合并分数降序排列', () => {
@@ -255,6 +268,7 @@ describe('memory search: searchKeyword (real FTS5 in-memory sqlite)', () => {
     );
     insert.run('c1', 'memory/a.md', 1, 3, 'the quick brown fox jumps');
     insert.run('c2', 'memory/b.md', 4, 6, 'lazy dog sleeps all day');
+    insert.run('c3', 'memory/c.md', 7, 9, 'fox');
   });
 
   afterEach(() => db.close());
@@ -267,15 +281,15 @@ describe('memory search: searchKeyword (real FTS5 in-memory sqlite)', () => {
     expect(searchKeyword(db, '   ', 5)).toEqual([]);
   });
 
-  it('命中的行携带 0-1 归一化 textScore 与 snippet', () => {
+  it('按最佳 BM25 候选归一化 textScore 并保留排序', () => {
     const rows = searchKeyword(db, 'fox', 5);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.id).toBe('c1');
-    expect(rows[0]!.path).toBe('memory/a.md');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.id).toBe('c3');
+    expect(rows[0]!.textScore).toBe(1);
+    expect(rows[1]!.textScore).toBeGreaterThan(0);
+    expect(rows[1]!.textScore).toBeLessThanOrEqual(1);
     expect(rows[0]!.snippet).toContain('fox');
-    expect(rows[0]!.textScore).toBeGreaterThan(0);
-    expect(rows[0]!.textScore).toBeLessThanOrEqual(1);
-    expect(rows[0]!.score).toBe(rows[0]!.textScore);
+    expect(rows.every((row) => row.score === row.textScore)).toBe(true);
   });
 });
 

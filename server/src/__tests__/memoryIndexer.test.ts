@@ -178,6 +178,68 @@ describe('MemoryIndexer', () => {
     }
   });
 
+  it('keeps an exact FTS-only hit above the production hybrid threshold', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'memory-index-hybrid-'));
+    cleanupDirs.add(workspace);
+    await mkdir(join(workspace, 'memory'), { recursive: true });
+    const distractors = Array.from({ length: 20 }, (_, index) => [
+      `## 干扰项 ${index}`,
+      `普通语义内容 ${index} ${'x'.repeat(120)}`,
+    ].join('\n'));
+    await writeFile(join(workspace, 'MEMORY.md'), [
+      '# 长期记忆',
+      ...distractors,
+      '## 唯一事实',
+      `Verdance（翠境生图 SaaS）已完全不推 ${'y'.repeat(120)}`,
+    ].join('\n'));
+
+    globalThis.fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { input?: string[] };
+      const inputs = Array.isArray(body.input) ? body.input : [];
+      return new Response(JSON.stringify({
+        data: inputs.map((text) => ({
+          embedding: text === 'Verdance' || !text.includes('Verdance') ? [1, 0, 0] : [0, 1, 0],
+        })),
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+
+    const config = testConfig(join(workspace, '.memory-index'));
+    config.search = { vectorWeight: 0.7, textWeight: 0.3, maxResults: 5, minScore: 0.3 };
+    const indexer = new MemoryIndexer(workspace, config, undefined, { skipWatch: true });
+    try {
+      await indexer.forceSync();
+      const result = await indexer.search('Verdance', { keywords: 'Verdance' });
+      const exactHit = result.results.find((item) => item.snippet.includes('已完全不推'));
+      expect(exactHit?.score).toBeCloseTo(0.3, 6);
+      expect(result.results[0]!.score).toBeCloseTo(0.7, 6);
+    } finally {
+      await indexer.close();
+    }
+  });
+
+  it('falls back to normalized FTS results when query embeddings are unavailable', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'memory-index-keyword-fallback-'));
+    cleanupDirs.add(workspace);
+    await mkdir(join(workspace, 'memory'), { recursive: true });
+    await writeFile(join(workspace, 'MEMORY.md'), '唯一代号：青铜齿轮。\n');
+
+    const config = testConfig(join(workspace, '.memory-index'));
+    config.search = { vectorWeight: 0.7, textWeight: 0.3, maxResults: 5, minScore: 0.3 };
+    const indexer = new MemoryIndexer(workspace, config, undefined, { skipWatch: true });
+    try {
+      await indexer.forceSync();
+      globalThis.fetch = vi.fn(async () => { throw new Error('embedding unavailable'); }) as typeof fetch;
+      const result = await indexer.search('青铜齿轮', { keywords: '青铜齿轮' });
+      expect(result.results.find((item) => item.snippet.includes('青铜齿轮'))?.score).toBeCloseTo(0.3, 6);
+
+      config.search = { ...config.search, vectorWeight: 0, textWeight: 0, minScore: 0 };
+      await expect(indexer.search('青铜齿轮', { keywords: '青铜齿轮' }))
+        .resolves.toMatchObject({ results: [] });
+    } finally {
+      await indexer.close();
+    }
+  });
+
   it('syncIfStale builds and refreshes the index with bounded search-path sync', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'memory-index-stale-'));
     cleanupDirs.add(workspace);

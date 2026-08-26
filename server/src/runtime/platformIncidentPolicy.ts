@@ -37,6 +37,12 @@ export function selectAttentionSystemIncidents(items: AttentionItem[]): Attentio
 
 /** 外部事件同样走事故白名单；计费与日常运维事件只保留在平台分析页。 */
 export function selectExternalSystemIncidents(source: string, items: AttentionItem[]): AttentionItem[] {
+  if (source === 'memory_consolidation') {
+    return items.filter((item) => (
+      item.kind === 'memory_consolidation_scanner_lag'
+      && (item.severity === 'high' || item.severity === 'critical')
+    ));
+  }
   if (source !== 'agent-saas-acs-orchestrator') return [];
   return items.filter((item) => (
     (item.kind === 'acs_sandbox_lifecycle_failed'

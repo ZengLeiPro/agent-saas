@@ -6,11 +6,13 @@ import { requirePlatformAdmin } from '../auth/middleware.js';
 import { getAppConfigPath, parseAppConfig } from '../app/config.js';
 import type { AppConfig, MemoryPollingConfig } from '../app/config.js';
 import { MEMORY_POLL_DEFAULTS } from '../cron/memoryPoll.js';
+import type { MemoryConsolidationScannerStatus } from '../memory/consolidation/types.js';
 
 export interface CreateMemoryPollingAdminRouterOptions {
   processCwd: string;
   config: AppConfig;
   onPollingUpdated?: (polling: MemoryPollingConfig) => void | Promise<void>;
+  getConsolidationScannerStatus?: () => Promise<MemoryConsolidationScannerStatus>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,11 +86,27 @@ export function createMemoryPollingAdminRouter(
   const router = Router();
   router.use(requirePlatformAdmin);
 
-  router.get('/', (_req, res) => {
+  router.get('/', async (_req, res) => {
     try {
       const configPath = getAppConfigPath(options.processCwd);
       const persisted = parseAppConfig(parseJsonc(readFileSync(configPath, 'utf-8')));
-      res.json(pollingView(persisted));
+      let consolidationScanner: MemoryConsolidationScannerStatus | null = null;
+      let consolidationScannerAvailable = false;
+      if (options.getConsolidationScannerStatus) {
+        try {
+          consolidationScanner = await options.getConsolidationScannerStatus();
+          consolidationScannerAvailable = true;
+        } catch {
+          // 观测查询失败不影响 polling 配置管理，也不参与 readiness。
+        }
+      }
+      res.json({
+        ...pollingView(persisted),
+        consolidationScanner: {
+          available: consolidationScannerAvailable,
+          status: consolidationScanner,
+        },
+      });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
     }

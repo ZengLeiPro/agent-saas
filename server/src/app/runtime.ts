@@ -248,6 +248,7 @@ import {
   createMemoryIndexService,
   loadSettingsEnv,
 } from './runtimeSetupHelpers.js';
+import { createMemoryConsolidationScannerStatusHandler } from './runtimeMemoryConsolidationStatus.js';
 // 公开契约类型已迁至 ./runtimeContracts.ts，这里按既有 import 路径继续对外转发。
 export type {
   AppRuntime,
@@ -2388,10 +2389,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       dispatch: billedRunDispatch,
       agentCwd,
       getConfig: resolveMemoryConsolidationConfig,
-      logger: {
-        info: (msg) => consolidationLogger.info(msg),
-        warn: (msg) => consolidationLogger.warn(msg),
-      },
+      onScannerStatus: createMemoryConsolidationScannerStatusHandler({ alertNotifier, logger: consolidationLogger }),
+      logger: { info: (msg) => consolidationLogger.info(msg), warn: (msg) => consolidationLogger.warn(msg) },
     });
   }
 
@@ -2971,6 +2970,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     dingtalkDeps,
     cronRuntime,
     getMemoryIndexService: () => memoryIndexServiceRef.current,
+    getMemoryConsolidationScannerStatus: memoryConsolidationStore ? () => memoryConsolidationStore!.getScannerStatus('memory-consolidation-v1') : undefined,
     memoryIndexShutdown,
     auditProjectionShutdown,
     runtimeEventStoreShutdown,

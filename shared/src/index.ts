@@ -169,6 +169,7 @@ export type {
   TaskBoardTaskMoveInput,
   TaskBoardCommentCreateInput,
   TaskBoardExecutionStartInput,
+  TaskBoardExecutionCancelInput,
   UserPermissions,
   PlatformCapability,
   PlatformCapabilityLimits,

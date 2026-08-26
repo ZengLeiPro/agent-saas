@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type {
   TaskBoardExecution,
+  TaskBoardExecutionCancelInput,
   TaskBoardExecutionPurpose,
   TaskBoardExecutionStartResult,
   TaskBoardStatus,
@@ -21,8 +22,9 @@ import {
   purposeForIntegrationAgentStatus,
   type WorkflowFacts,
 } from './workflow/decider.js';
-import { loadWorkflowFacts } from './workflow/commandService.js';
+import { fenceTaskExecutions, loadWorkflowFacts } from './workflow/commandService.js';
 import {
+  assertBoardRole as assertMinimumBoardRole,
   assertExecutionConfiguration,
   assertExpectedVersion,
   assertWritableTask,
@@ -33,6 +35,7 @@ import {
 } from './storeHelpers.js';
 import type { PgTaskboardStore } from './store.js';
 import {
+  TaskboardNotFoundError,
   TaskboardPermissionError,
   TaskboardValidationError,
   type TaskboardExecutionClaimInput,
@@ -85,6 +88,90 @@ export function unresolvedExecutionRecovery(
           ? 'in_review'
           : 'in_progress',
   };
+}
+
+export async function cancelExecution(
+  store: PgTaskboardStore,
+  identity: TaskboardIdentity,
+  taskId: string,
+  executionId: string,
+  input: TaskBoardExecutionCancelInput,
+): Promise<TaskBoardExecutionStartResult> {
+  return store.withTransaction(async (client) => {
+    const loaded = await store.requireTaskWithBoard(client, identity, taskId, true);
+    assertMinimumBoardRole(loaded.boardRole, 'maintainer');
+    assertWritableTask(loaded.task, loaded.boardArchivedAt);
+    assertExpectedVersion(loaded.task, input.expectedVersion);
+    if (loaded.task.kind === 'integration') {
+      throw new TaskboardValidationError(
+        'Integration Agent execution must be stopped through integration cancellation',
+        'TASKBOARD_INTEGRATION_CANCEL_REQUIRED',
+      );
+    }
+
+    const selected = await client.query(
+      `SELECT * FROM ${store.executionsTable} WHERE id=$1 AND task_id=$2 FOR UPDATE`,
+      [executionId, taskId],
+    );
+    if (!selected.rows[0]) throw new TaskboardNotFoundError('Taskboard execution not found');
+    const execution = rowToExecution(selected.rows[0]);
+    if (isTerminalExecutionStatus(execution.status)) {
+      return { task: loaded.task, execution };
+    }
+
+    const reason = optionalText(input.reason) ?? 'Operator cancelled the Agent execution';
+    const fenced = await fenceTaskExecutions(store, client, [taskId], 'operator_cancelled');
+    if (fenced === 0) {
+      throw new TaskboardValidationError(
+        'Taskboard execution is no longer active',
+        'TASKBOARD_EXECUTION_FENCED',
+      );
+    }
+
+    if (!execution.transitionedAt && loaded.task.status !== 'done' && loaded.task.status !== 'canceled') {
+      const recovery = unresolvedExecutionRecovery(execution.purpose, 'cancelled', 0, 0);
+      const sortOrder = recovery.status === loaded.task.status
+        ? loaded.task.sortOrder
+        : await nextTaskColumnSortOrder(
+          store,
+          client,
+          identity,
+          loaded.task.boardId,
+          taskId,
+          recovery.status,
+        );
+      await client.query(
+        `UPDATE ${store.tasksTable}
+            SET status=$2,sort_order=$3,completed_at=NULL,
+                workflow_epoch=workflow_epoch+1,
+                next_action=CASE
+                  WHEN $2='todo' THEN 'work'
+                  WHEN $2='in_review' THEN 'review'
+                  WHEN $2='in_progress' THEN $4
+                  ELSE 'none'
+                END,
+                next_action_revision=next_action_revision+1,
+                version=version+1,updated_at=now()
+          WHERE id=$1`,
+        [taskId, recovery.status, sortOrder, execution.purpose],
+      );
+    }
+
+    await appendTaskChange(store, client, taskId, 'execution.cancel_requested', 'user', identity.ownerUserId, {
+      executionId: execution.id,
+      runId: execution.runId,
+      purpose: execution.purpose,
+      reason,
+    });
+    const cancelled = await client.query(
+      `SELECT * FROM ${store.executionsTable} WHERE id=$1`,
+      [execution.id],
+    );
+    return {
+      task: await store.requireTask(client, identity, taskId, false),
+      execution: rowToExecution(cancelled.rows[0]),
+    };
+  });
 }
 
 export async function claimExecution(

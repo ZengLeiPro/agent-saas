@@ -82,6 +82,7 @@ interface TaskDetailProps {
   canDeleteTask?: boolean;
   canComment?: boolean;
   canExecute?: boolean;
+  canCancelExecution?: boolean;
   canCancelIntegration?: boolean;
   modelList?: ModelList | null;
   onOpenChange: (open: boolean) => void;
@@ -114,6 +115,7 @@ export function TaskDetail({
   canDeleteTask = true,
   canComment = true,
   canExecute = true,
+  canCancelExecution = false,
   canCancelIntegration = false,
   modelList = null,
   onOpenChange,
@@ -245,8 +247,11 @@ export function TaskDetail({
   }, [hydrateDraft, mergeServerDraft, open, onTaskLoaded, taskId]);
 
   const latestExecution = executions[0];
+  const latestExecutionActive = latestExecution
+    ? ACTIVE_EXECUTION_STATUSES.has(latestExecution.status)
+    : false;
   const executionActive = latestExecution
-    ? ACTIVE_EXECUTION_STATUSES.has(latestExecution.status) || latestExecution.continuationActive === true
+    ? latestExecutionActive || latestExecution.continuationActive === true
     : false;
   const executionStarted = Boolean(
     taskId
@@ -430,6 +435,35 @@ export function TaskDetail({
     }
   };
 
+  const cancelCurrentExecution = async () => {
+    if (!currentTask || !latestExecution || !latestExecutionActive || !canCancelExecution
+      || taskKind === "integration") return;
+    if (!window.confirm(
+      `确认终止 ${latestExecution.purpose === "review" ? "复核" : latestExecution.purpose === "merge" ? "合并" : "实施"}执行吗？当前运行会被取消，任务将回到可继续处理的状态。`,
+    )) return;
+    const operationTask = currentTask;
+    const requestId = ++detailRequestRef.current;
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await api.cancelExecution(operationTask.id, latestExecution.id, {
+        expectedVersion: operationTask.version,
+        reason: "看板维护者从任务详情终止执行",
+      });
+      if (!isCurrentOperation(requestId, operationTask.id)) return;
+      setCurrentTask(result.task);
+      mergeServerDraft(result.task);
+      onTaskLoaded(result.task);
+      await refreshExecutions();
+    } catch (caught) {
+      if (!isCurrentOperation(requestId, operationTask.id)) return;
+      useConflictCurrent(caught);
+      setError(caught instanceof Error ? caught.message : "终止 Agent 执行失败");
+    } finally {
+      if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
+    }
+  };
+
   const resumeBlocked = async (preset?: { decision: string; startAfterResume?: boolean }) => {
     if (!currentTask || currentTask.status !== "blocked" || !canTransitionTask || executionActive) return;
     const sourceIds = taskKind === "integration" && !isIntegrationV3
@@ -475,7 +509,7 @@ export function TaskDetail({
   };
 
   const cancelIntegration = async () => {
-    if (!currentTask || taskKind !== "integration" || !canCancelIntegration || executionActive) return;
+    if (!currentTask || taskKind !== "integration" || !canCancelIntegration) return;
     if (!window.confirm(`确认取消集成任务“${currentTask.title}”吗？已合并来源不会回滚。`)) return;
     const operationTask = currentTask;
     const requestId = ++detailRequestRef.current;
@@ -896,6 +930,18 @@ export function TaskDetail({
                 {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
                 <div className="flex flex-wrap gap-2">
                   {!editReadOnly ? <Button type="submit" disabled={saving || taskAttachments.uploading}>保存任务</Button> : null}
+                  {!boardReadOnly && taskKind !== "integration" && canCancelExecution && latestExecutionActive ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => void cancelCurrentExecution()}
+                      disabled={saving}
+                    >
+                      {saving ? <LoaderCircle className="animate-spin" /> : <CircleX />}
+                      终止执行
+                    </Button>
+                  ) : null}
                   {!boardReadOnly && taskKind === "integration" && canCancelIntegration
                     && !["done", "canceled"].includes(currentTask.status) ? (
                     <Button
@@ -903,7 +949,7 @@ export function TaskDetail({
                       variant="outline"
                       className="text-destructive hover:text-destructive"
                       onClick={() => void cancelIntegration()}
-                      disabled={saving || executionActive}
+                      disabled={saving}
                     >
                       <CircleX />取消集成
                     </Button>

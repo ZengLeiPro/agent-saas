@@ -321,6 +321,16 @@ describe('Taskboard routes', () => {
       searchExecutions: async (_identity, _taskId, filter = {}) => ({
         items: [EXECUTION], page: filter.page ?? 1, pageSize: filter.pageSize ?? 20, total: 1, hasMore: false,
       }),
+      cancelExecution: async (identity, taskId, executionId, input) => {
+        expect(identity.ownerUserId).toBe(USER.sub);
+        expect(taskId).toBe(TASK.id);
+        expect(executionId).toBe(EXECUTION.id);
+        expect(input).toEqual({ expectedVersion: TASK.version, reason: '人工终止' });
+        return {
+          task: { ...TASK, status: 'todo' },
+          execution: { ...EXECUTION, status: 'cancelled' },
+        };
+      },
       startExecution: async (identity, taskId, input) => {
         expect(identity).toEqual({
           tenantId: USER.tenantId,
@@ -366,6 +376,16 @@ describe('Taskboard routes', () => {
     const paged = await rig.request(`/api/taskboard/tasks/${TASK.id}/executions?page=1&pageSize=10`);
     expect(paged.status).toBe(200);
     expect(await paged.json()).toMatchObject({ items: [EXECUTION], page: 1, pageSize: 10, total: 1 });
+
+    const cancelled = await rig.request(
+      `/api/taskboard/tasks/${TASK.id}/executions/${EXECUTION.id}/cancel`,
+      postJson({ expectedVersion: TASK.version, reason: '人工终止' }),
+    );
+    expect(cancelled.status).toBe(200);
+    expect(await cancelled.json()).toMatchObject({
+      task: { status: 'todo' },
+      execution: { id: EXECUTION.id, status: 'cancelled' },
+    });
 
     const started = await rig.request(`/api/taskboard/tasks/${TASK.id}/execute`, postJson({
       expectedVersion: TASK.version,

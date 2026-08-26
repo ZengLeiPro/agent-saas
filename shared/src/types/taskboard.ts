@@ -70,6 +70,7 @@ export const TASKBOARD_ALLOWED_ACTIONS = [
   "task.delete",
   "comment.create",
   "execution.trigger",
+  "execution.cancel",
   "integration.create",
   "integration.authorize",
   "integration.cancel",
@@ -562,6 +563,11 @@ export interface TaskBoardCommentPatchInput {
 export interface TaskBoardExecutionStartInput {
   expectedVersion: number;
   purpose?: TaskBoardExecutionPurpose;
+}
+
+export interface TaskBoardExecutionCancelInput {
+  expectedVersion: number;
+  reason?: string;
 }
 
 export interface TaskBoardExecutionFinishInput {

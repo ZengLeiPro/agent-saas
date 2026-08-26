@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
   TaskBoardExecution,
+  TaskBoardExecutionCancelInput,
   TaskBoardExecutionPurpose,
   TaskBoardExecutionStartInput,
   TaskBoardExecutionStartResult,
@@ -137,6 +138,18 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     filter?: TaskboardPageFilter,
   ): Promise<TaskboardPage<TaskBoardExecution>> {
     return this.options.store.searchExecutions(identity, taskId, filter);
+  }
+
+  async cancelExecution(
+    identity: TaskboardIdentity,
+    taskId: string,
+    executionId: string,
+    input: TaskBoardExecutionCancelInput,
+  ): Promise<TaskBoardExecutionStartResult> {
+    if (!this.options.store.cancelExecution) throw new TaskboardExecutionUnavailableError();
+    const result = await this.options.store.cancelExecution(identity, taskId, executionId, input);
+    this.wakeReconciliation();
+    return result;
   }
 
   startExecution(

@@ -5,6 +5,7 @@ import type {
   TaskBoardCommentPatchInput,
   TaskBoardCreateInput,
   TaskBoardExecution,
+  TaskBoardExecutionCancelInput,
   TaskBoardExecutionContextInput,
   TaskBoardExecutionContextResponse,
   TaskBoardExecutionFinishInput,
@@ -442,6 +443,17 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
   ): Promise<TaskboardPage<TaskBoardExecution>> {
     await this.init();
     return this.target.searchExecutions(identity, taskId, filter);
+  }
+
+  async cancelExecution(
+    identity: TaskboardIdentity,
+    taskId: string,
+    executionId: string,
+    input: TaskBoardExecutionCancelInput,
+  ): Promise<TaskBoardExecutionStartResult> {
+    await this.init();
+    if (!this.target.cancelExecution) throw new Error('Taskboard execution cancellation unavailable');
+    return this.target.cancelExecution(identity, taskId, executionId, input);
   }
 
   async getExecutionModelContext(

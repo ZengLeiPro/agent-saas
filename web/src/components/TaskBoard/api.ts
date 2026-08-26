@@ -5,6 +5,7 @@ import type {
   TaskBoardCommentCreateInput,
   TaskBoardCreateInput,
   TaskBoardExecution,
+  TaskBoardExecutionCancelInput,
   TaskBoardExecutionPurpose,
   TaskBoardExecutionStartResult,
   TaskBoardPatchInput,
@@ -258,6 +259,18 @@ export async function deleteTask(id: string, expectedVersion: number): Promise<T
 export async function fetchExecutions(taskId: string): Promise<TaskBoardExecution[]> {
   const response = await authFetch(`${API_BASE}/tasks/${encodeURIComponent(taskId)}/executions`);
   return parseEntity<TaskBoardExecution[]>(response, "Agent 执行记录", "executions");
+}
+
+export async function cancelExecution(
+  taskId: string,
+  executionId: string,
+  input: TaskBoardExecutionCancelInput,
+): Promise<TaskBoardExecutionStartResult> {
+  const response = await authFetch(
+    `${API_BASE}/tasks/${encodeURIComponent(taskId)}/executions/${encodeURIComponent(executionId)}/cancel`,
+    jsonRequest("POST", input),
+  );
+  return parseEntity<TaskBoardExecutionStartResult>(response, "终止 Agent 执行", "result");
 }
 
 export async function executeTask(

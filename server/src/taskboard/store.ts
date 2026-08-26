@@ -3,7 +3,7 @@ import pg, { type PoolClient } from 'pg';
 import {
   TASKBOARD_DEFAULT_PROMPT, type TaskBoard, type TaskBoardComment, type TaskBoardCommentCreateInput,
   type TaskBoardCommentPatchInput, type TaskBoardCreateInput, type TaskBoardExecution,
-  type TaskBoardExecutionContextInput, type TaskBoardExecutionContextResponse, type TaskBoardExecutionFinishInput,
+  type TaskBoardExecutionCancelInput, type TaskBoardExecutionContextInput, type TaskBoardExecutionContextResponse, type TaskBoardExecutionFinishInput,
   type TaskBoardExecutionStartResult, type TaskBoardIntegrationBatchCreateInput, type TaskBoardIntegrationSource,
   type TaskBoardMember, type TaskBoardMemberPatchInput, type TaskBoardPatchInput, type TaskBoardRepositoryConfig,
   type TaskBoardTask, type TaskBoardTaskCreateInput, type TaskBoardTaskMoveInput, type TaskBoardTaskPatchInput,
@@ -104,6 +104,7 @@ import {
   finishWorkflowCancellation as finishStoredWorkflowCancellation, reconcileWorkflowCancellationTerminal as reconcileStoredWorkflowCancellationTerminal,
 } from './workflow/cancellationOutbox.js';
 import {
+  cancelExecution as cancelStoredExecution,
   claimExecution as claimStoredExecution,
   completeExecution as completeStoredExecution,
   completeExecutionFromReconcile as completeStoredExecutionFromReconcile,
@@ -805,6 +806,15 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     filter: TaskboardPageFilter = {},
   ): Promise<TaskboardPage<TaskBoardExecution>> {
     return searchStoredExecutions(this, identity, taskId, filter);
+  }
+
+  async cancelExecution(
+    identity: TaskboardIdentity,
+    taskId: string,
+    executionId: string,
+    input: TaskBoardExecutionCancelInput,
+  ): Promise<TaskBoardExecutionStartResult> {
+    return cancelStoredExecution(this, identity, taskId, executionId, input);
   }
 
   async getExecutionModelContext(identity: TaskboardIdentity, taskId: string): Promise<TaskboardExecutionModelContext> {

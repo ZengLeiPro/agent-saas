@@ -8,6 +8,7 @@ import type {
   TaskBoardCiPolicyDiscovery,
   TaskBoardCreateInput,
   TaskBoardExecution,
+  TaskBoardExecutionCancelInput,
   TaskBoardExecutionPurpose,
   TaskBoardExecutionContextInput,
   TaskBoardExecutionContextResponse,
@@ -248,6 +249,12 @@ export interface TaskboardExecutionStore {
     taskId: string,
     filter?: TaskboardPageFilter,
   ): Promise<TaskboardPage<TaskBoardExecution>>;
+  cancelExecution?(
+    identity: TaskboardIdentity,
+    taskId: string,
+    executionId: string,
+    input: TaskBoardExecutionCancelInput,
+  ): Promise<TaskBoardExecutionStartResult>;
   getExecutionModelContext(
     identity: TaskboardIdentity,
     taskId: string,
@@ -356,6 +363,12 @@ export interface TaskboardExecutionService {
     taskId: string,
     filter?: TaskboardPageFilter,
   ): Promise<TaskboardPage<TaskBoardExecution>>;
+  cancelExecution?(
+    identity: TaskboardIdentity,
+    taskId: string,
+    executionId: string,
+    input: TaskBoardExecutionCancelInput,
+  ): Promise<TaskBoardExecutionStartResult>;
   startExecution(
     identity: TaskboardIdentity,
     taskId: string,

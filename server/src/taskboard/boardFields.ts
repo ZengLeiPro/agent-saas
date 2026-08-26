@@ -227,6 +227,7 @@ export function allowedActionsForRole(role: TaskBoardMemberRole): TaskBoardAllow
     'task.transition',
     'task.archive',
     'task.delete',
+    'execution.cancel',
     'integration.create',
     'integration.authorize',
     'integration.cancel',

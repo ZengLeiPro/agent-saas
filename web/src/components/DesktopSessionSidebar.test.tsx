@@ -119,6 +119,7 @@ describe("桌面侧边栏会话激活态", () => {
     renderSidebar("chat");
 
     expect(getSessionRow().className).toContain("bg-brand-accent-soft");
+    expect(getSessionRow().className).not.toContain("before:bg-brand-accent");
   });
 
   it.each<AppTab>(["capabilities", "cron"])(

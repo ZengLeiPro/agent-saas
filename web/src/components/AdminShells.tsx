@@ -62,9 +62,7 @@ export type PlatformSection = PlatformSettingsSectionId;
 type ShellButton<T extends string> = AdminSettingsNavigationItem<T>;
 
 const SETTINGS_NAV_ITEM_SELECTED =
-  "relative bg-brand-accent-soft text-foreground font-semibold " +
-  "before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2 " +
-  "before:h-5 before:w-[3px] before:rounded-r-full before:bg-brand-accent";
+  "bg-brand-accent-soft text-foreground font-semibold";
 const SETTINGS_NAV_ITEM_UNSELECTED =
   "text-muted-foreground hover:bg-muted/60 hover:text-foreground";
 

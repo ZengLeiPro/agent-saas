@@ -210,8 +210,8 @@ function RecordRow({
   );
 }
 
-// 首列与展开控件列使用固定轨道，避免独立行因内容或 Chevron 宽度不同而破坏纵向对齐。
-const COMPARISON_COLUMNS = "sm:grid-cols-[9rem_repeat(3,minmax(8rem,1fr))_0.875rem]";
+// 首列、差异列与展开控件列使用固定轨道；基准和当前列等分剩余空间，兼顾跨行对齐与紧凑的右侧留白。
+const COMPARISON_COLUMNS = "sm:grid-cols-[9rem_repeat(2,minmax(8rem,1fr))_8rem_0.875rem]";
 
 function ComparisonRow({ item }: { item: RecordItem }) {
   const [open, setOpen] = useState(false);

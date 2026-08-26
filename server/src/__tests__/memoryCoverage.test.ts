@@ -158,6 +158,12 @@ describe('memory search: mergeHybridResults', () => {
     expect(merged[0]!.score).toBeCloseTo(0.8, 6);
   });
 
+  it('同一精确 FTS 候选不会被负向量分抵消到生产阈值以下', () => {
+    const [exact] = mergeHybridResults([vec('exact', -0.1)], [kw('exact', 1)], 0.7, 0.3);
+    expect(exact!.score).toBeCloseTo(0.3, 6);
+    expect(exact!.score).toBeGreaterThanOrEqual(0.3);
+  });
+
   it('仅单路命中时保留配置权重，关键词最佳候选可恰好通过生产阈值', () => {
     const merged = mergeHybridResults([vec('a', 0.8)], [kw('b', 1)], 0.7, 0.3);
     const byPath = Object.fromEntries(merged.map((r) => [r.path, r.score]));

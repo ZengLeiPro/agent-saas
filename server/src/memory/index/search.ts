@@ -191,7 +191,9 @@ export function mergeHybridResults(
       path: e.result.path,
       startLine: e.result.startLine,
       endLine: e.result.endLine,
-      score: vectorWeight * e.vectorScore + textWeight * e.textScore,
+      // 各路只贡献非负相关性；负 cosine 表示向量路未命中，不应反向抵消
+      // 同一 chunk 的精确 FTS 证据并把它压到生产 minScore 以下。
+      score: vectorWeight * Math.max(0, e.vectorScore) + textWeight * Math.max(0, e.textScore),
       snippet: e.result.snippet,
     }))
     .sort((a, b) => b.score - a.score);

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { rename, writeFile } from 'node:fs/promises';
+import { rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 export type ConnectorConnectionStatus = 'connected' | 'disconnected';
@@ -54,12 +54,11 @@ function pendingRefOwner(record: ConnectorConnectionRecord): PendingRevokeRefOwn
 function collectPendingRefOwners(
   refs: string[],
   current: ConnectorConnectionRecord | undefined,
-  retiredRefs: ReadonlySet<string>,
 ): Record<string, PendingRevokeRefOwner> {
   const owners: Record<string, PendingRevokeRefOwner> = {};
   for (const ref of refs) {
     const owner = current?.pendingRevokeRefOwners?.[ref]
-      ?? (current && retiredRefs.has(ref) ? pendingRefOwner(current) : undefined);
+      ?? (current ? pendingRefOwner(current) : undefined);
     if (owner) owners[ref] = owner;
   }
   return owners;
@@ -121,10 +120,9 @@ export class ConnectorConnectionStore {
         || (current.userId ? current.userId === input.userId : current.tenantId === input.tenantId);
       const nextRefs = new Set(Object.values(input.credentialRefs));
       const retiredRefs = Object.values(current?.credentialRefs ?? {}).filter(ref => !nextRefs.has(ref));
-      const retiredRefSet = new Set(retiredRefs);
       const pendingRevokeRefs = Array.from(new Set([...(current?.pendingRevokeRefs ?? []), ...retiredRefs]))
         .filter(ref => !nextRefs.has(ref));
-      const pendingRevokeRefOwners = collectPendingRefOwners(pendingRevokeRefs, current, retiredRefSet);
+      const pendingRevokeRefOwners = collectPendingRefOwners(pendingRevokeRefs, current);
       result = {
         connectorId: input.connectorId,
         username: input.username,
@@ -148,6 +146,47 @@ export class ConnectorConnectionStore {
       };
     });
     return clone(result);
+  }
+
+  async trackCredentialForRevocation(input: {
+    username: string;
+    connectorId: string;
+    credentialRef: string;
+    owner: PendingRevokeRefOwner;
+  }): Promise<void> {
+    await this.mutate(() => {
+      const now = new Date().toISOString();
+      const current = this.data.users[input.username]?.[input.connectorId];
+      const pendingRevokeRefs = Array.from(new Set([
+        ...(current?.pendingRevokeRefs ?? []),
+        input.credentialRef,
+      ]));
+      const record: ConnectorConnectionRecord = current ? {
+        ...current,
+        pendingRevokeRefs,
+        pendingRevokeRefOwners: {
+          ...(current.pendingRevokeRefOwners ?? {}),
+          [input.credentialRef]: input.owner,
+        },
+        updatedAt: now,
+      } : {
+        connectorId: input.connectorId,
+        username: input.username,
+        userId: input.owner.userId,
+        tenantId: input.owner.tenantId,
+        status: 'disconnected',
+        credentialRefs: {},
+        pendingRevokeRefs,
+        pendingRevokeRefOwners: { [input.credentialRef]: input.owner },
+        capabilities: {},
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.data.users[input.username] = {
+        ...(this.data.users[input.username] ?? {}),
+        [input.connectorId]: record,
+      };
+    });
   }
 
   async setCapability(
@@ -184,11 +223,7 @@ export class ConnectorConnectionStore {
         ...(current?.pendingRevokeRefs ?? []),
         ...activeRefs,
       ]));
-      const pendingRevokeRefOwners = collectPendingRefOwners(
-        pendingRevokeRefs,
-        current,
-        new Set(activeRefs),
-      );
+      const pendingRevokeRefOwners = collectPendingRefOwners(pendingRevokeRefs, current);
       result = {
         connectorId,
         username,
@@ -284,10 +319,17 @@ export class ConnectorConnectionStore {
 
   private async mutate(operation: () => void): Promise<void> {
     const run = this.writeQueue.then(async () => {
-      operation();
+      const previous = clone(this.data);
       const tmpPath = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
-      await writeFile(tmpPath, `${JSON.stringify(this.data, null, 2)}\n`, 'utf8');
-      await rename(tmpPath, this.filePath);
+      try {
+        operation();
+        await writeFile(tmpPath, `${JSON.stringify(this.data, null, 2)}\n`, 'utf8');
+        await rename(tmpPath, this.filePath);
+      } catch (error) {
+        this.data = previous;
+        await rm(tmpPath, { force: true }).catch(() => undefined);
+        throw error;
+      }
     });
     this.writeQueue = run.catch(() => undefined);
     return run;

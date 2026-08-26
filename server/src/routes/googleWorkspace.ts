@@ -159,11 +159,15 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
 
   router.get('/oauth/callback', async (req, res) => {
     const webBaseUrl = options.webBaseUrl || `${req.protocol}://${req.get('host')}`;
-    if (!options.oauthService || !options.recordOAuthGrant) {
+    const state = stringQuery(req.query.state, 512);
+    if (!options.oauthService || !options.recordOAuthGrant || !options.revokeOAuthGrant) {
+      const nativeRedirect = state ? await options.nativeOAuthHandoff?.complete(state, {
+        status: 'failed', errorCode: 'OAUTH_SERVICE_UNAVAILABLE',
+      }).catch(() => null) : null;
+      if (nativeRedirect) return res.redirect(302, nativeRedirect);
       res.status(503).send(oauthResultPage(false, 'Google Workspace 连接服务或 OAuth Grant 权威尚未配置', webBaseUrl));
       return;
     }
-    const state = stringQuery(req.query.state, 512);
     const code = stringQuery(req.query.code, 8192);
     const oauthError = stringQuery(req.query.error_description, 1024)
       || stringQuery(req.query.error, 256);
@@ -177,6 +181,11 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
       return;
     }
     if (!state || !code) {
+      const rejected = state ? await options.oauthService.rejectAuthorization(state).catch(() => false) : false;
+      const nativeRedirect = rejected ? await options.nativeOAuthHandoff?.complete(state!, {
+        status: 'failed', errorCode: 'OAUTH_CALLBACK_INCOMPLETE',
+      }).catch(() => null) : null;
+      if (nativeRedirect) return res.redirect(302, nativeRedirect);
       res.status(400).send(oauthResultPage(false, 'Google Workspace OAuth callback 参数不完整', webBaseUrl));
       return;
     }
@@ -185,25 +194,39 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
         state,
         code,
         redirectUri: connectorOAuthRedirectUrl(req),
+        recordGrant: async ({ user, scopeSummary }, previousScopes) => {
+          const grantId = `google-workspace:${user.tenantId}:${user.id}`;
+          const recordActiveGrant = async (scopes: string[]) => {
+            await options.recordOAuthGrant?.({
+              grantId,
+              tenantId: user.tenantId,
+              subjectUserId: user.id,
+              provider: 'google',
+              connectorId: GOOGLE_WORKSPACE_CONNECTOR_ID,
+              status: 'active',
+              scopeSummary: scopes,
+              approvedAt: new Date().toISOString(),
+              action: 'approved',
+              purpose: 'google_workspace_connect',
+              actorUserId: user.id,
+            });
+          };
+          await recordActiveGrant(scopeSummary);
+          return async () => {
+            if (previousScopes.length > 0) {
+              await recordActiveGrant(previousScopes);
+              return;
+            }
+            await options.revokeOAuthGrant?.({
+              grantId,
+              tenantId: user.tenantId,
+              subjectUserId: user.id,
+              purpose: 'google_workspace_connect_compensation',
+              actorUserId: user.id,
+            });
+          };
+        },
       });
-      try {
-        await options.recordOAuthGrant?.({
-          grantId: `google-workspace:${result.user.tenantId}:${result.user.id}`,
-          tenantId: result.user.tenantId,
-          subjectUserId: result.user.id,
-          provider: 'google',
-          connectorId: GOOGLE_WORKSPACE_CONNECTOR_ID,
-          status: 'active',
-          scopeSummary: result.scopeSummary,
-          approvedAt: new Date().toISOString(),
-          action: 'approved',
-          purpose: 'google_workspace_connect',
-          actorUserId: result.user.id,
-        });
-      } catch (error) {
-        await options.oauthService.disconnect(result.user.id, result.user.username, result.user.tenantId);
-        throw error;
-      }
       let nativeRedirect: string | null | undefined;
       try {
         nativeRedirect = await options.nativeOAuthHandoff?.complete(state, { status: 'succeeded' });
@@ -217,6 +240,10 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
       if (nativeRedirect) return res.redirect(302, nativeRedirect);
       res.send(oauthResultPage(true, 'Google Workspace 已连接，gws CLI 可直接使用', webBaseUrl));
     } catch (error) {
+      const nativeRedirect = await options.nativeOAuthHandoff?.complete(state, {
+        status: 'failed', errorCode: 'OAUTH_CALLBACK_FAILED',
+      }).catch(() => null);
+      if (nativeRedirect) return res.redirect(302, nativeRedirect);
       res.status(400).send(oauthResultPage(
         false,
         `${error instanceof Error ? error.message : 'Google Workspace OAuth 失败'}；若授权已在 Google 完成，请返回连接与授权页面刷新状态`,

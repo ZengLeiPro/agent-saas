@@ -13,6 +13,8 @@ const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const GOOGLE_USERINFO_ENDPOINT = 'https://openidconnect.googleapis.com/v1/userinfo';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1_000;
 const ACCESS_TOKEN_REFRESH_SKEW_MS = 60 * 1_000;
+// Testing/unverified Google OAuth apps reject consent requests above roughly 25 scopes.
+// Keep this preset broad but executable; GCP and administrator scopes require a separate verified flow.
 const GOOGLE_WORKSPACE_DEFAULT_SCOPES = [
   'openid',
   'email',
@@ -21,7 +23,6 @@ const GOOGLE_WORKSPACE_DEFAULT_SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',
   'https://www.googleapis.com/auth/gmail.modify',
   'https://www.googleapis.com/auth/gmail.settings.basic',
-  'https://www.googleapis.com/auth/gmail.settings.sharing',
   'https://www.googleapis.com/auth/calendar',
   'https://www.googleapis.com/auth/documents',
   'https://www.googleapis.com/auth/presentations',
@@ -33,28 +34,29 @@ const GOOGLE_WORKSPACE_DEFAULT_SCOPES = [
   'https://www.googleapis.com/auth/chat.spaces',
   'https://www.googleapis.com/auth/chat.memberships',
   'https://www.googleapis.com/auth/chat.messages.reactions',
+  'https://www.googleapis.com/auth/forms.body',
+  'https://www.googleapis.com/auth/forms.responses.readonly',
+  'https://www.googleapis.com/auth/meetings.space.created',
+  'https://www.googleapis.com/auth/meetings.space.readonly',
+  'https://www.googleapis.com/auth/meetings.space.settings',
+  'https://www.googleapis.com/auth/script.projects',
+  'https://www.googleapis.com/auth/script.deployments',
+] as const;
+
+const GOOGLE_WORKSPACE_PREVIOUS_EXPANDED_SCOPES = [
+  'https://www.googleapis.com/auth/gmail.settings.sharing',
   'https://www.googleapis.com/auth/chat.spaces.pins',
   'https://www.googleapis.com/auth/chat.customemojis',
   'https://www.googleapis.com/auth/chat.users.readstate',
   'https://www.googleapis.com/auth/chat.users.availability',
   'https://www.googleapis.com/auth/chat.users.sections',
   'https://www.googleapis.com/auth/chat.users.spacesettings',
-  'https://www.googleapis.com/auth/forms.body',
-  'https://www.googleapis.com/auth/forms.responses.readonly',
   'https://www.googleapis.com/auth/keep',
-  'https://www.googleapis.com/auth/meetings.space.created',
-  'https://www.googleapis.com/auth/meetings.space.readonly',
-  'https://www.googleapis.com/auth/meetings.space.settings',
   'https://www.googleapis.com/auth/drive.meet.readonly',
-  'https://www.googleapis.com/auth/script.projects',
-  'https://www.googleapis.com/auth/script.deployments',
   'https://www.googleapis.com/auth/script.processes',
   'https://www.googleapis.com/auth/script.metrics',
   'https://www.googleapis.com/auth/pubsub',
   'https://www.googleapis.com/auth/cloud-platform',
-] as const;
-
-const GOOGLE_WORKSPACE_ENTERPRISE_SCOPES = [
   'https://www.googleapis.com/auth/admin.reports.audit.readonly',
   'https://www.googleapis.com/auth/admin.reports.usage.readonly',
   'https://www.googleapis.com/auth/chat.admin.spaces',
@@ -82,13 +84,11 @@ const GOOGLE_WORKSPACE_LEGACY_SCOPES = [
   'https://www.googleapis.com/auth/contacts.readonly',
 ] as const;
 
-export const GOOGLE_WORKSPACE_REQUESTED_SCOPES = [
-  ...GOOGLE_WORKSPACE_DEFAULT_SCOPES,
-  ...GOOGLE_WORKSPACE_ENTERPRISE_SCOPES,
-] as const;
+export const GOOGLE_WORKSPACE_REQUESTED_SCOPES = [...GOOGLE_WORKSPACE_DEFAULT_SCOPES] as const;
 
 const GOOGLE_WORKSPACE_ACCEPTED_SCOPES = new Set<string>([
   ...GOOGLE_WORKSPACE_REQUESTED_SCOPES,
+  ...GOOGLE_WORKSPACE_PREVIOUS_EXPANDED_SCOPES,
   ...GOOGLE_WORKSPACE_LEGACY_SCOPES,
 ]);
 
@@ -97,10 +97,24 @@ const GOOGLE_WORKSPACE_SCOPE_ALIASES: Readonly<Record<string, string>> = {
   'https://www.googleapis.com/auth/userinfo.profile': 'profile',
 };
 
+const GOOGLE_WORKSPACE_SCOPE_UPGRADES: Readonly<Record<string, string>> = {
+  'https://www.googleapis.com/auth/gmail.readonly': 'https://www.googleapis.com/auth/gmail.modify',
+  'https://www.googleapis.com/auth/drive.readonly': 'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/calendar.readonly': 'https://www.googleapis.com/auth/calendar',
+  'https://www.googleapis.com/auth/chat.messages.readonly': 'https://www.googleapis.com/auth/chat.messages',
+  'https://www.googleapis.com/auth/chat.spaces.readonly': 'https://www.googleapis.com/auth/chat.spaces',
+  'https://www.googleapis.com/auth/contacts.readonly': 'https://www.googleapis.com/auth/contacts',
+};
+
 export interface GoogleWorkspaceOAuthUser {
   id: string;
   username: string;
   tenantId: string;
+}
+
+export interface GoogleWorkspaceAuthorizationResult {
+  user: GoogleWorkspaceOAuthUser;
+  scopeSummary: string[];
 }
 
 export interface GoogleWorkspacePendingOAuthState {
@@ -127,7 +141,7 @@ export class InMemoryGoogleWorkspaceOAuthStateStore implements GoogleWorkspaceOA
   async put(record: GoogleWorkspacePendingOAuthState): Promise<void> {
     const now = Date.now();
     for (const [state, current] of this.records) {
-      if (current.expiresAt <= now) this.records.delete(state);
+      if (current.expiresAt <= now || current.user.id === record.user.id) this.records.delete(state);
     }
     this.records.set(record.state, record);
   }
@@ -182,6 +196,14 @@ export class PgGoogleWorkspaceOAuthStateStore implements GoogleWorkspaceOAuthSta
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.table}_expires_idx ON ${this.table}(expires_at)`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.table}_user_idx ON ${this.table}(user_id)`);
     await this.pool.query(`
+      DELETE FROM ${this.table} older
+      USING ${this.table} newer
+      WHERE older.user_id = newer.user_id
+        AND older.user_id IS NOT NULL
+        AND (older.created_at, older.state) < (newer.created_at, newer.state)
+    `);
+    await this.pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${this.table}_user_unique_idx ON ${this.table}(user_id) WHERE user_id IS NOT NULL`);
+    await this.pool.query(`
       CREATE TABLE IF NOT EXISTS ${this.blockedUsersTable} (
         user_id TEXT PRIMARY KEY,
         blocked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -194,13 +216,14 @@ export class PgGoogleWorkspaceOAuthStateStore implements GoogleWorkspaceOAuthSta
     await this.pool.query(`
       INSERT INTO ${this.table} (state, code_verifier, redirect_uri, requested_scopes_json, user_id, user_json, expires_at)
       VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb, $7)
-      ON CONFLICT (state) DO UPDATE SET
+      ON CONFLICT (user_id) WHERE user_id IS NOT NULL DO UPDATE SET
+        state = EXCLUDED.state,
         code_verifier = EXCLUDED.code_verifier,
         redirect_uri = EXCLUDED.redirect_uri,
         requested_scopes_json = EXCLUDED.requested_scopes_json,
-        user_id = EXCLUDED.user_id,
         user_json = EXCLUDED.user_json,
-        expires_at = EXCLUDED.expires_at
+        expires_at = EXCLUDED.expires_at,
+        created_at = NOW()
     `, [
       record.state,
       record.codeVerifier,
@@ -305,6 +328,7 @@ export interface GoogleWorkspaceOAuthServiceOptions {
 
 export class GoogleWorkspaceOAuthService {
   private readonly refreshes = new Map<string, Promise<string>>();
+  private readonly authorizationCommits = new Map<string, Promise<void>>();
   private readonly fetchImpl: typeof fetch;
   private readonly stateStore: GoogleWorkspaceOAuthStateStore;
 
@@ -322,6 +346,11 @@ export class GoogleWorkspaceOAuthService {
       throw new Error('Google Workspace connector assignment is unavailable');
     }
     await this.stateStore.unblockUser(user.id);
+    const previousScopes = await this.grantedScopes(user.id, user.username, user.tenantId).catch(() => []);
+    const effectiveRequestedScopes = normalizeGoogleWorkspaceScopes([
+      ...GOOGLE_WORKSPACE_REQUESTED_SCOPES,
+      ...previousScopes,
+    ]);
     const state = randomBytes(24).toString('base64url');
     const codeVerifier = randomBytes(48).toString('base64url');
     const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
@@ -329,7 +358,7 @@ export class GoogleWorkspaceOAuthService {
       state,
       codeVerifier,
       redirectUri,
-      requestedScopes: [...GOOGLE_WORKSPACE_REQUESTED_SCOPES],
+      requestedScopes: effectiveRequestedScopes,
       user: { id: user.id, username: user.username, tenantId: user.tenantId },
       expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
     });
@@ -344,11 +373,11 @@ export class GoogleWorkspaceOAuthService {
     url.searchParams.set('code_challenge_method', 'S256');
     url.searchParams.set('access_type', 'offline');
     url.searchParams.set('prompt', 'consent');
-    url.searchParams.set('include_granted_scopes', 'false');
+    url.searchParams.set('include_granted_scopes', 'true');
     return {
       authorizationUrl: url.toString(), state,
-      requestedScopes: [...GOOGLE_WORKSPACE_REQUESTED_SCOPES],
-      purpose: '仅在本人获指派且组织已授权的 Agent Run 中调用 Google Workspace 内容、通信、自动化与管理能力',
+      requestedScopes: effectiveRequestedScopes,
+      purpose: '仅在本人获指派且组织已授权的 Agent Run 中调用 Google Workspace 内容、通信与自动化能力',
       riskLevel: 'high',
       dataDestination: '请求数据发送至 Google Workspace API；运行结果进入当前 Agent Run',
       revokeMethod: '可在连接与授权页经影响预览撤销；撤销后新 Run 立即不可用',
@@ -359,14 +388,51 @@ export class GoogleWorkspaceOAuthService {
     return Boolean(await this.stateStore.consume(state));
   }
 
-  async finishAuthorization(input: { state: string; code: string; redirectUri: string }): Promise<{ user: GoogleWorkspaceOAuthUser; scopeSummary: string[] }> {
+  async finishAuthorization(input: {
+    state: string;
+    code: string;
+    redirectUri: string;
+    recordGrant?: (
+      result: GoogleWorkspaceAuthorizationResult,
+      previousScopes: string[],
+    ) => Promise<(() => Promise<void>) | void>;
+  }): Promise<GoogleWorkspaceAuthorizationResult> {
     const pending = await this.stateStore.consume(input.state);
     if (!pending) throw new Error('Google Workspace OAuth state 已过期');
     if (pending.redirectUri !== input.redirectUri) throw new Error('Google Workspace OAuth redirect_uri 不匹配');
+    const commitKey = `${pending.user.tenantId}:${pending.user.id}`;
+    const previousCommit = this.authorizationCommits.get(commitKey) ?? Promise.resolve();
+    let releaseCommit!: () => void;
+    const commitGate = new Promise<void>(resolve => { releaseCommit = resolve; });
+    const queuedCommit = previousCommit.then(() => commitGate);
+    this.authorizationCommits.set(commitKey, queuedCommit);
+    await previousCommit;
+    try {
     await this.assertUserActive(pending.user);
     if (!this.options.authorizeConnect || !await this.options.authorizeConnect(pending.user.id, pending.user.tenantId)) {
       throw new Error('Google Workspace connector assignment is unavailable');
     }
+    const previousConnection = this.options.connectionStore.get(
+      pending.user.username,
+      GOOGLE_WORKSPACE_CONNECTOR_ID,
+    );
+    const ownedPreviousConnection = previousConnection?.status === 'connected'
+      && previousConnection.userId === pending.user.id
+      && previousConnection.tenantId === pending.user.tenantId
+      ? previousConnection
+      : undefined;
+    const previousRuntimeEnabled = this.options.connectionStore.isRuntimeEnabled(
+      pending.user.username,
+      GOOGLE_WORKSPACE_CONNECTOR_ID,
+    );
+    const previousRef = ownedPreviousConnection?.credentialRefs[GOOGLE_WORKSPACE_OAUTH_CREDENTIAL_KEY];
+    const previousBundle = previousRef
+      ? await this.readBundle(
+          previousRef,
+          credentialOwnerId(ownedPreviousConnection),
+          pending.user.tenantId,
+        ).catch(() => undefined)
+      : undefined;
 
     const response = await this.fetchImpl(GOOGLE_TOKEN_ENDPOINT, {
       method: 'POST',
@@ -381,18 +447,38 @@ export class GoogleWorkspaceOAuthService {
       }),
     });
     const tokenResponse = await response.json() as GoogleTokenResponse;
-    const bundle = tokenBundleFromResponse(tokenResponse);
-    if (!response.ok || !bundle) {
+    const exchangedBundle = tokenBundleFromResponse(tokenResponse);
+    if (!response.ok || !exchangedBundle) {
       throw new Error(`Google Workspace token exchange failed: ${safeOAuthError(tokenResponse)}`);
     }
     if (!tokenResponse.scope?.trim()) throw new Error('Google Workspace granted scope evidence is unavailable');
     const scopeSummary = normalizeGoogleWorkspaceScopes(tokenResponse.scope.split(/\s+/));
+    const grantedScopes = new Set(scopeSummary);
     const requestedScopes = new Set(normalizeGoogleWorkspaceScopes(pending.requestedScopes));
     if (requestedScopes.size === 0 || scopeSummary.some(scope => !requestedScopes.has(scope))) {
       throw new Error('Google Workspace granted scope exceeds the signed request');
     }
+    const missingScopes = GOOGLE_WORKSPACE_REQUESTED_SCOPES.filter(scope => !grantedScopes.has(scope));
+    if (missingScopes.length > 0) {
+      throw new Error('Google Workspace did not grant every required scope');
+    }
+    const previousScopes = normalizeGrantedScopes(
+      ownedPreviousConnection?.metadata?.grantedScopes ?? previousBundle?.scope,
+    );
+    if (previousScopes.some(scope => !googleScopeRemainsGranted(scope, grantedScopes))) {
+      throw new Error('Google Workspace reauthorization would reduce existing access');
+    }
 
-    const metadata = await this.fetchAccountMetadata(bundle.accessToken);
+    const metadata = await this.fetchAccountMetadata(exchangedBundle.accessToken);
+    if (!metadata.accountId && !metadata.accountEmail) {
+      throw new Error('Google Workspace account identity evidence is unavailable');
+    }
+    const needsPreviousRefreshToken = !tokenResponse.refresh_token && Boolean(previousBundle?.refreshToken);
+    if (needsPreviousRefreshToken && !sameGoogleAccount(ownedPreviousConnection?.metadata, metadata)) {
+      throw new Error('Google Workspace reauthorization account does not match the existing connection');
+    }
+    const bundle = tokenBundleFromResponse(tokenResponse, needsPreviousRefreshToken ? previousBundle : undefined);
+    if (!bundle?.refreshToken) throw new Error('Google Workspace refresh token 不可用，请重新授权');
     await this.assertUserActive(pending.user);
     const ref = await this.options.vault.putSecret(
       pending.user.id,
@@ -405,8 +491,24 @@ export class GoogleWorkspaceOAuthService {
         connectorId: GOOGLE_WORKSPACE_CONNECTOR_ID,
       },
     );
+    const result = { user: pending.user, scopeSummary };
     let connected = false;
+    let rollbackGrant: (() => Promise<void>) | undefined;
     try {
+      await this.options.connectionStore.trackCredentialForRevocation({
+        username: pending.user.username,
+        connectorId: GOOGLE_WORKSPACE_CONNECTOR_ID,
+        credentialRef: ref.id,
+        owner: { userId: pending.user.id, tenantId: pending.user.tenantId },
+      });
+      const grantCompensation = await input.recordGrant?.(result, previousScopes);
+      rollbackGrant = typeof grantCompensation === 'function' ? grantCompensation : undefined;
+      await this.assertUserActive(pending.user);
+      await this.options.connectionStore.setRuntimeEnabled(
+        pending.user.username,
+        GOOGLE_WORKSPACE_CONNECTOR_ID,
+        false,
+      );
       await this.options.connectionStore.connect({
         username: pending.user.username,
         userId: pending.user.id,
@@ -421,23 +523,39 @@ export class GoogleWorkspaceOAuthService {
         GOOGLE_WORKSPACE_CONNECTOR_ID,
         true,
       );
-      await this.assertUserActive(pending.user);
       await this.revokePending(pending.user.username);
-      return { user: pending.user, scopeSummary };
+      return result;
     } catch (error) {
-      if (connected) {
-        await this.options.connectionStore.disconnect(
+      if (!connected) {
+        await this.options.connectionStore.setRuntimeEnabled(
           pending.user.username,
           GOOGLE_WORKSPACE_CONNECTOR_ID,
-          pending.user.tenantId,
+          previousRuntimeEnabled,
         ).catch(() => undefined);
+        await rollbackGrant?.().catch(rollbackError => {
+          this.options.logger?.warn(`Google Workspace Grant compensation failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+        });
+        try {
+          await this.options.vault.revokeSecret(
+            ref.id,
+            vaultCaller(pending.user.id, pending.user.tenantId, 'revoke'),
+          );
+          await this.options.connectionStore.markCredentialRevoked(
+            pending.user.username,
+            GOOGLE_WORKSPACE_CONNECTOR_ID,
+            ref.id,
+          );
+        } catch (revokeError) {
+          this.options.logger?.warn(`Google Workspace credential compensation failed: ${revokeError instanceof Error ? revokeError.message : String(revokeError)}`);
+        }
       }
-      await this.options.vault.revokeSecret(
-        ref.id,
-        vaultCaller(pending.user.id, pending.user.tenantId, 'revoke'),
-      ).catch(() => undefined);
-      if (connected) await this.revokePending(pending.user.username);
       throw error;
+    }
+    } finally {
+      releaseCommit();
+      if (this.authorizationCommits.get(commitKey) === queuedCommit) {
+        this.authorizationCommits.delete(commitKey);
+      }
     }
   }
 
@@ -593,7 +711,12 @@ export class GoogleWorkspaceOAuthService {
     if (!record) return;
     for (const ref of record.pendingRevokeRefs ?? []) {
       try {
-        await this.options.vault.revokeSecret(ref, vaultCaller(credentialOwnerId(record), record.tenantId, 'revoke'));
+        const owner = record.pendingRevokeRefOwners?.[ref];
+        await this.options.vault.revokeSecret(ref, vaultCaller(
+          owner?.userId ?? credentialOwnerId(record),
+          owner?.tenantId ?? record.tenantId,
+          'revoke',
+        ));
         await this.options.connectionStore.markCredentialRevoked(
           record.username,
           GOOGLE_WORKSPACE_CONNECTOR_ID,
@@ -650,6 +773,21 @@ function normalizeGoogleWorkspaceScopes(scopes: Iterable<string>): string[] {
     .map(scope => scope.trim())
     .filter(Boolean)
     .map(scope => GOOGLE_WORKSPACE_SCOPE_ALIASES[scope] ?? scope))].sort();
+}
+
+function googleScopeRemainsGranted(scope: string, grantedScopes: Set<string>): boolean {
+  return grantedScopes.has(scope) || grantedScopes.has(GOOGLE_WORKSPACE_SCOPE_UPGRADES[scope] ?? '');
+}
+
+function sameGoogleAccount(
+  previous: Record<string, string> | undefined,
+  current: Record<string, string>,
+): boolean {
+  if (previous?.accountId && current.accountId) return previous.accountId === current.accountId;
+  if (previous?.accountEmail && current.accountEmail) {
+    return previous.accountEmail.toLowerCase() === current.accountEmail.toLowerCase();
+  }
+  return false;
 }
 
 function sanitizeIdentifier(value: string): string {

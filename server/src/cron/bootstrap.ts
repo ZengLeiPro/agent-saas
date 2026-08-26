@@ -10,6 +10,7 @@ import type { GroupStore } from '../data/groups/index.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
 import type { TenantStore } from '../data/tenants/store.js';
+import type { OrgAgentStore } from '../data/orgAgents/store.js';
 
 const { Client } = pg;
 
@@ -93,6 +94,7 @@ export interface CreateCronRuntimeOptions {
   }) => Promise<void>;
   userStore?: UserStoreLike;
   tenantStore?: TenantStore;
+  orgAgentStore?: OrgAgentStore;
   tokenUsageStore?: TokenUsageStore;
   skillConfigStore?: SkillConfigStore;
   skillMaterialization?: ExecutorOptions['skillMaterialization'];
@@ -167,6 +169,7 @@ export function createCronRuntime(options: CreateCronRuntimeOptions): CronRuntim
       resolveDefaultModel: options.resolveDefaultModel,
       userStore: options.userStore,
       tenantStore: options.tenantStore,
+      orgAgentStore: options.orgAgentStore,
       onSessionId: hooks?.onSessionId,
       tokenUsageStore: options.tokenUsageStore,
       skillConfigStore: options.skillConfigStore,

@@ -47,6 +47,7 @@ export function transferCronJobOwner(
   job.enabled = false;
   job.owner = input.owner;
   job.ownerName = input.ownerName;
+  delete job.orgAgentId;
   job.updatedAtMs = updatedAtAfterEdit(job, input.nowMs);
   job.state.nextRunAtMs = undefined;
   return { changed: true, value: job.id };

@@ -99,6 +99,8 @@ export interface CronJob {
   notify?: NotifyConfig;
   owner?: string;
   ownerName?: string;
+  /** 创建任务时由服务端从可信企业专家会话派生。 */
+  orgAgentId?: string;
   createdAtMs: number;
   updatedAtMs: number;
   state: CronJobState;

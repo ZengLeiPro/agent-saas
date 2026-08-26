@@ -2282,7 +2282,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       },
     } : {}),
     userStore,
-    tenantStore,
+    tenantStore, orgAgentStore,
     tokenUsageStore,
     skillConfigStore,
     skillMaterialization: skillMaterializationService,

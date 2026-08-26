@@ -188,6 +188,9 @@ export class DwsBusinessToolProvider implements ToolProvider {
         : []),
     ];
     if (mismatchFields.length > 0) {
+      const cronSessionUnbound = mismatchFields.length === 1
+        && mismatchFields[0] === 'session.orgAgentId'
+        && session?.channel === 'cron';
       const diagnostic = {
         mismatchFields,
         requesterUserId: identity.id,
@@ -203,7 +206,9 @@ export class DwsBusinessToolProvider implements ToolProvider {
       };
       this.options.logger?.warn(`DWS business subject mismatch ${JSON.stringify(diagnostic)}`);
       await auditRejection('DWS_BUSINESS_SUBJECT_MISMATCH', diagnostic);
-      throw new Error(`DWS Broker 会话绑定已失效（不一致项：${mismatchFields.join('、')}），请重新打开当前会话后重试`);
+      throw new Error(cronSessionUnbound
+        ? '此定时任务未绑定企业专家，无法使用 DWS Broker；请在目标企业专家会话中重新创建该定时任务'
+        : `DWS Broker 会话绑定已失效（不一致项：${mismatchFields.join('、')}），请重新打开当前会话后重试`);
     }
     if (!session?.orgAgentId) throw new Error('DWS Broker 会话绑定已失效，请重新打开当前会话后重试');
     let command: ClassifiedCommand;
@@ -456,10 +461,11 @@ function classifyCommand(args: string[]): ClassifiedCommand {
   if (!ALLOWED_MODULES.has(module)) throw new Error('DWS 模块未登记或不允许由 Broker 执行');
   const firstFlagIndex = args.findIndex(token => token.startsWith('-'));
   const commandPath = args.slice(0, firstFlagIndex < 0 ? args.length : firstFlagIndex);
-  const pathTokens = commandPath.flatMap(token => token.toLowerCase().split('-').filter(Boolean));
+  const pathTokens = commandPath.flatMap(token => token.toLowerCase().replace(/^\+/, '').split('-').filter(Boolean));
   const normalizedAction = commandPath.at(-1)!.toLowerCase().replace(/^\+/, '');
   const actionTokens = [normalizedAction, ...normalizedAction.split('-')].filter(Boolean);
-  const flagNameTokens = args.filter(token => token.startsWith('-'))
+  const trailingArgs = firstFlagIndex < 0 ? [] : args.slice(firstFlagIndex);
+  const flagNameTokens = trailingArgs.filter(token => token.startsWith('-'))
     .flatMap(token => token.split('=', 1)[0]!.toLowerCase().split('-').filter(Boolean));
   if ([...pathTokens, ...flagNameTokens].some(token => DESTRUCTIVE_VERBS.has(token))) {
     throw new Error('DWS 破坏性或高影响动作本阶段未开放');
@@ -468,6 +474,9 @@ function classifyCommand(args: string[]): ClassifiedCommand {
     throw new Error('DWS 命令超出业务 Broker 边界');
   }
   const normalizedCommandPath = commandPath.map(token => token.toLowerCase()).join('.');
+  if (trailingArgs.length > 0 && trailingArgs.every(token => token === '--help' || token === '-h')) {
+    return { module, commandPath: normalizedCommandPath, risk: 'read' };
+  }
   if (actionTokens.some(token => WRITE_VERBS.has(token))) {
     return { module, commandPath: normalizedCommandPath, risk: 'write' };
   }

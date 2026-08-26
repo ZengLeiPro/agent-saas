@@ -202,6 +202,76 @@ describe('cron executor', () => {
     );
   });
 
+  it('revalidates and forwards a trusted enterprise expert binding to cron sessions', async () => {
+    runAgentMock.mockImplementation((_message: any, _context: any, _options: any, hooks: any) => (async function* () {
+      await hooks?.onSessionStart?.('session-org-agent', '/tmp/session-org-agent.jsonl');
+      await hooks?.onResult?.({ subtype: 'success', numTurns: 1, resultText: 'ok' });
+      yield { type: 'done' };
+    })());
+    const job = { ...createOwnedCronJob('run DWS task'), orgAgentId: 'agent-a' };
+
+    const result = await executeJob(job, {
+      runAgent: (...args: any[]) => runAgentMock(...args),
+      agentCwd: '/tmp',
+      sharedDir: '/tmp/.shared',
+      userStore: {
+        findById: vi.fn(() => ({
+          id: 'u-wain', username: 'wain_user', role: 'user' as const, tenantId: 'wain',
+        })),
+      },
+      orgAgentStore: {
+        get: vi.fn(() => ({
+          id: 'agent-a', tenantId: 'wain', enabled: true,
+          audience: { exposure: 'all', usernames: [] },
+        })),
+      } as never,
+    });
+
+    expect(result.status).toBe('ok');
+    expect(runAgentMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ channel: 'cron' }),
+      expect.objectContaining({ orgAgentId: 'agent-a' }),
+      expect.anything(),
+    );
+  });
+
+  it('fails closed when a bound enterprise expert is unavailable or no longer assigned', async () => {
+    const job = { ...createOwnedCronJob('run DWS task'), orgAgentId: 'agent-a' };
+    const owner = {
+      id: 'u-wain', username: 'wain_user', role: 'user' as const, tenantId: 'wain',
+    };
+    for (const agent of [
+      { id: 'agent-a', tenantId: 'wain', enabled: false, audience: { exposure: 'all', usernames: [] } },
+      { id: 'agent-a', tenantId: 'wain', enabled: true, audience: { exposure: 'allow_users', usernames: ['other'] } },
+      { id: 'agent-a', tenantId: 'other', enabled: true, audience: { exposure: 'all', usernames: [] } },
+    ]) {
+      const result = await executeJob(job, {
+        runAgent: (...args: any[]) => runAgentMock(...args),
+        agentCwd: '/tmp',
+        sharedDir: '/tmp/.shared',
+        userStore: { findById: vi.fn(() => owner) },
+        orgAgentStore: { get: vi.fn(() => agent) } as never,
+      });
+      expect(result).toMatchObject({
+        status: 'error',
+        output: '定时任务绑定的企业专家当前不可用或你已失去访问权限',
+        suppressNotification: true,
+      });
+    }
+    const invalidAudience = await executeJob(job, {
+      runAgent: (...args: any[]) => runAgentMock(...args),
+      agentCwd: '/tmp',
+      sharedDir: '/tmp/.shared',
+      userStore: { findById: vi.fn(() => ({ ...owner, role: 'admin' as const })) },
+      orgAgentStore: {
+        get: vi.fn(() => ({ id: 'agent-a', tenantId: 'wain', enabled: true, audience: null })),
+      } as never,
+    });
+    expect(invalidAudience).toMatchObject({ status: 'error', suppressNotification: true });
+    expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
   it('inherits the owner authorization mode for ordinary cron agent turns', async () => {
     runAgentMock.mockImplementation((_message: any, _context: any, _options: any, hooks: any) => (async function* () {
       await hooks?.onSessionStart?.('session-authorized', '/tmp/session-authorized.jsonl');

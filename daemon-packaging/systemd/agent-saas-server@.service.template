@@ -35,7 +35,8 @@ Environment=AZEROTH_TOKENS_FILE=/etc/agent-saas/azeroth-tokens.json
 EnvironmentFile=/etc/agent-saas/server.env
 # 每色覆盖项（PORT、AGENT_SAAS_PIDFILE），放在共享 server.env 之后以便覆盖
 EnvironmentFile=/etc/agent-saas/server-%i.env
-# 角色是拓扑硬约束，必须放在可编辑 EnvironmentFile 之后，防止被旧值覆盖
+# 环境身份与角色是拓扑硬约束，必须放在可编辑 EnvironmentFile 之后，防止被旧值覆盖
+Environment=AGENT_SAAS_ENVIRONMENT=production
 Environment=AGENT_SAAS_PROCESS_ROLE=ws-only
 Environment=AGENT_SAAS_DRAIN_MARKER=/run/agent-saas-server-%i.draining
 ExecCondition=/usr/bin/test ! -e /run/agent-saas-server-%i.draining

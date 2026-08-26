@@ -113,6 +113,16 @@ export function useGoogleWorkspaceConnector(enabled = true): GoogleWorkspaceConn
     return () => window.removeEventListener("message", listener);
   }, [enabled, load]);
 
+  useEffect(() => {
+    if (!enabled || !connecting || !popupRef.current) return;
+    const timer = window.setInterval(() => {
+      if (!popupRef.current?.closed) return;
+      popupRef.current = null;
+      setConnecting(false);
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [connecting, enabled]);
+
   return { connection, available, loading, connecting, error, connect, setRuntimeEnabled, disconnect };
 }
 

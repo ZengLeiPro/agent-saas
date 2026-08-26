@@ -81,7 +81,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
   router.use(async (req, res, next) => {
     const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
     const isSelectionPreferenceWrite = isSkillSelectionPreferenceWrite(req.method, req.path);
-    if (!isMutation || isSelectionPreferenceWrite || req.path === '/sync' || !deps.legacyWriteGate) return next();
+    if (!isMutation || isSelectionPreferenceWrite || /^(?:PUT \/me\/skills\/[^/]+\/document|DELETE \/me\/skills\/[^/]+)$/.test(`${req.method} ${req.path}`) || req.path === '/sync' || !deps.legacyWriteGate) return next();
     try {
       await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
       next();

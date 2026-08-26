@@ -30,23 +30,37 @@ async function request(
 }
 
 function fixture() {
-  const finishAuthorization = vi.fn().mockResolvedValue({
-    user: { id: 'user-1', username: 'alice', tenantId: 'tenant-a' },
-    scopeSummary: ['drive.readonly'],
+  const finishAuthorization = vi.fn(async (input: {
+    recordGrant?: (
+      result: { user: { id: string; username: string; tenantId: string }; scopeSummary: string[] },
+      previousScopes: string[],
+    ) => Promise<unknown>;
+  }) => {
+    const result = {
+      user: { id: 'user-1', username: 'alice', tenantId: 'tenant-a' },
+      scopeSummary: ['drive.readonly'],
+    };
+    await input.recordGrant?.(result, []);
+    return result;
   });
   const disconnect = vi.fn().mockResolvedValue(undefined);
+  const rejectAuthorization = vi.fn().mockResolvedValue(true);
   const recordOAuthGrant = vi.fn().mockResolvedValue({ grantId: 'grant-1' });
+  const revokeOAuthGrant = vi.fn().mockResolvedValue({ grantId: 'grant-1' });
   const ensureOAuthGrant = vi.fn().mockResolvedValue({ grantId: 'google-workspace:tenant-a:user-1' });
   const complete = vi.fn().mockRejectedValue(new Error('delivery commit outcome unknown'));
   return {
     finishAuthorization,
     disconnect,
+    rejectAuthorization,
     recordOAuthGrant,
+    revokeOAuthGrant,
     ensureOAuthGrant,
     complete,
     options: {
-      oauthService: { finishAuthorization, disconnect } as never,
+      oauthService: { finishAuthorization, disconnect, rejectAuthorization } as never,
       recordOAuthGrant,
+      revokeOAuthGrant,
       ensureOAuthGrant,
       nativeOAuthHandoff: { complete } as never,
       webBaseUrl: 'https://agent.example.com',
@@ -125,13 +139,26 @@ describe('Google Workspace OAuth callback handoff delivery', () => {
     expect(test.disconnect).not.toHaveBeenCalled();
   });
 
-  it('callback 重放无法把已成功或待确认的 handoff 降级为 failed', async () => {
+  it('callback 缺少 code 时消费 state 并终结 pending handoff', async () => {
+    const test = fixture();
+    const response = await request(test.options, '/api/connectors/oauth/callback?state=state-12345678');
+    expect(response.status).toBe(400);
+    expect(test.rejectAuthorization).toHaveBeenCalledWith('state-12345678');
+    expect(test.complete).toHaveBeenCalledWith('state-12345678', {
+      status: 'failed', errorCode: 'OAUTH_CALLBACK_INCOMPLETE',
+    });
+    expect(test.finishAuthorization).not.toHaveBeenCalled();
+  });
+
+  it('callback 失败会终结 pending handoff，且持久层可拒绝重放降级', async () => {
     const test = fixture();
     test.finishAuthorization.mockRejectedValue(new Error('Google Workspace OAuth state 已过期'));
     const response = await request(test.options, '/api/connectors/oauth/callback?state=state-12345678&code=oauth-code');
     expect(response.status).toBe(400);
     expect(await response.text()).toContain('返回连接与授权页面刷新状态');
     expect(test.recordOAuthGrant).not.toHaveBeenCalled();
-    expect(test.complete).not.toHaveBeenCalled();
+    expect(test.complete).toHaveBeenCalledWith('state-12345678', {
+      status: 'failed', errorCode: 'OAUTH_CALLBACK_FAILED',
+    });
   });
 });

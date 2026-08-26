@@ -28,6 +28,13 @@ function user(): UserInfo {
   } as UserInfo;
 }
 
+const REQUESTED_SCOPE_EVIDENCE = GOOGLE_WORKSPACE_REQUESTED_SCOPES.join(' ');
+const CANONICAL_SCOPE_EVIDENCE = GOOGLE_WORKSPACE_REQUESTED_SCOPES.map(scope => {
+  if (scope === 'email') return 'https://www.googleapis.com/auth/userinfo.email';
+  if (scope === 'profile') return 'https://www.googleapis.com/auth/userinfo.profile';
+  return scope;
+}).join(' ');
+
 describe('Google Workspace native connector', () => {
   it('stores OAuth credentials in Vault and injects only the current user access token', async () => {
     const root = mkdtempSync(join(tmpdir(), 'google-workspace-'));
@@ -40,7 +47,7 @@ describe('Google Workspace native connector', () => {
         refresh_token: 'refresh-1',
         expires_in: 3600,
         token_type: 'Bearer',
-        scope: 'openid https://www.googleapis.com/auth/drive',
+        scope: REQUESTED_SCOPE_EVIDENCE,
       }), { status: 200, headers: { 'content-type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         email: 'alice@example.com',
@@ -63,15 +70,16 @@ describe('Google Workspace native connector', () => {
     expect(authorizationUrl.searchParams.get('access_type')).toBe('offline');
     expect(authorizationUrl.searchParams.get('scope')).toContain('gmail.settings.basic');
     expect(authorizationUrl.searchParams.get('scope')).toContain('spreadsheets');
-    expect(started.requestedScopes).toEqual([...GOOGLE_WORKSPACE_REQUESTED_SCOPES]);
-    expect(started.requestedScopes).toHaveLength(54);
+    expect(started.requestedScopes).toEqual([...GOOGLE_WORKSPACE_REQUESTED_SCOPES].sort());
+    expect(started.requestedScopes).toHaveLength(25);
+    expect(authorizationUrl.searchParams.get('include_granted_scopes')).toBe('true');
 
     const finished = await service.finishAuthorization({
       state: started.state,
       code: 'oauth-code',
       redirectUri: 'https://agent.example.com/api/connectors/oauth/callback',
     });
-    expect(finished.scopeSummary).toEqual(['https://www.googleapis.com/auth/drive', 'openid']);
+    expect(finished.scopeSummary).toEqual([...GOOGLE_WORKSPACE_REQUESTED_SCOPES].sort());
 
     expect(service.connectionView('user-1', 'alice', 'tenant-a')).toMatchObject({
       status: 'connected',
@@ -126,12 +134,7 @@ describe('Google Workspace native connector', () => {
           access_token: 'access-1',
           refresh_token: 'refresh-1',
           expires_in: 3600,
-          scope: [
-            'openid',
-            'https://www.googleapis.com/auth/userinfo.email',
-            'https://www.googleapis.com/auth/userinfo.profile',
-            'https://www.googleapis.com/auth/drive',
-          ].join(' '),
+          scope: CANONICAL_SCOPE_EVIDENCE,
         }), { status: 200, headers: { 'content-type': 'application/json' } }))
         .mockResolvedValueOnce(new Response(JSON.stringify({ email: 'alice@example.com' }), {
           status: 200, headers: { 'content-type': 'application/json' },
@@ -139,19 +142,15 @@ describe('Google Workspace native connector', () => {
     });
     const started = await service.startAuthorization(user(), 'https://agent.example.com/api/connectors/oauth/callback');
 
-    await expect(service.finishAuthorization({
+    const finished = await service.finishAuthorization({
       state: started.state,
       code: 'oauth-code',
       redirectUri: 'https://agent.example.com/api/connectors/oauth/callback',
-    })).resolves.toMatchObject({
-      scopeSummary: ['email', 'https://www.googleapis.com/auth/drive', 'openid', 'profile'],
     });
-    await expect(service.grantedScopes('user-1', 'alice', 'tenant-a')).resolves.toEqual([
-      'email',
-      'https://www.googleapis.com/auth/drive',
-      'openid',
-      'profile',
-    ]);
+    expect(finished.scopeSummary).toEqual([...GOOGLE_WORKSPACE_REQUESTED_SCOPES].sort());
+    expect(finished.scopeSummary).not.toContain('https://www.googleapis.com/auth/userinfo.email');
+    await expect(service.grantedScopes('user-1', 'alice', 'tenant-a'))
+      .resolves.toEqual([...GOOGLE_WORKSPACE_REQUESTED_SCOPES].sort());
   });
 
   it('still rejects Google scopes outside the signed request', async () => {
@@ -261,7 +260,7 @@ describe('Google Workspace native connector', () => {
     const vault = new InMemorySecretVault();
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        access_token: 'access-1', refresh_token: 'refresh-1', expires_in: 3600, scope: 'openid',
+        access_token: 'access-1', refresh_token: 'refresh-1', expires_in: 3600, scope: REQUESTED_SCOPE_EVIDENCE,
       }), { status: 200, headers: { 'content-type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ email: 'alice@example.com' }), {
         status: 200, headers: { 'content-type': 'application/json' },
@@ -287,7 +286,7 @@ describe('Google Workspace native connector', () => {
     const stateStore = new InMemoryGoogleWorkspaceOAuthStateStore();
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        access_token: 'shared-access', refresh_token: 'shared-refresh', expires_in: 3600, scope: 'openid',
+        access_token: 'shared-access', refresh_token: 'shared-refresh', expires_in: 3600, scope: REQUESTED_SCOPE_EVIDENCE,
       }), { status: 200, headers: { 'content-type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ email: 'alice@example.com' }), {
         status: 200, headers: { 'content-type': 'application/json' },
@@ -377,6 +376,171 @@ describe('Google Workspace native connector', () => {
     })).rejects.toThrow('授权用户已失效');
     expect(fetchImpl).not.toHaveBeenCalled();
     await expect(service.startAuthorization(user(), 'https://agent.example.com/api/connectors/oauth/callback')).rejects.toThrow('授权用户已失效');
+  });
+
+  it('reuses the existing refresh token during incremental reauthorization', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'google-workspace-'));
+    roots.push(root);
+    const connectionStore = new ConnectorConnectionStore(join(root, 'connections.json'));
+    const vault = new InMemorySecretVault();
+    const oldRef = await vault.putSecret(
+      'user-1',
+      'connector',
+      JSON.stringify({
+        accessToken: 'old-access', refreshToken: 'old-refresh', expiresAt: Date.now() + 3_600_000,
+        scope: 'openid https://www.googleapis.com/auth/gmail.readonly', tokenType: 'Bearer',
+      }),
+      { actor: 'connector_proxy', userId: 'user-1', tenantId: 'tenant-a', scopes: ['secret:connector:write'] },
+    );
+    await connectionStore.connect({
+      username: 'alice', userId: 'user-1', tenantId: 'tenant-a', connectorId: 'google-workspace',
+      credentialRefs: { oauth: oldRef.id }, metadata: {
+        credentialOwnerId: 'user-1', accountId: 'google-user-1', accountEmail: 'alice@example.com',
+        grantedScopes: 'openid https://www.googleapis.com/auth/gmail.readonly',
+      },
+    });
+    const service = new GoogleWorkspaceOAuthService({
+      clientId: 'client-id', clientSecret: 'client-secret', connectionStore, vault, authorizeConnect: async () => true,
+      fetchImpl: vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          access_token: 'expanded-access', expires_in: 3600, token_type: 'Bearer',
+          scope: `${REQUESTED_SCOPE_EVIDENCE} https://www.googleapis.com/auth/gmail.readonly`,
+        }), { status: 200, headers: { 'content-type': 'application/json' } }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          email: 'alice@example.com', sub: 'google-user-1',
+        }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })),
+    });
+
+    const started = await service.startAuthorization(user(), 'https://agent.example.com/api/connectors/oauth/callback');
+    expect(new URL(started.authorizationUrl).searchParams.get('scope')).not.toContain('gmail.readonly');
+    expect(started.requestedScopes).toContain('https://www.googleapis.com/auth/gmail.readonly');
+    await service.finishAuthorization({
+      state: started.state, code: 'oauth-code', redirectUri: 'https://agent.example.com/api/connectors/oauth/callback',
+    });
+
+    const newRef = connectionStore.get('alice', 'google-workspace')!.credentialRefs.oauth!;
+    const stored = JSON.parse(await vault.getSecret(newRef, {
+      actor: 'connector_proxy', userId: 'user-1', tenantId: 'tenant-a', scopes: ['secret:connector:read'],
+    })) as { accessToken?: string; refreshToken?: string };
+    expect(stored).toMatchObject({ accessToken: 'expanded-access', refreshToken: 'old-refresh' });
+  });
+
+  it('does not combine a new Google account access token with the previous refresh token', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'google-workspace-'));
+    roots.push(root);
+    const connectionStore = new ConnectorConnectionStore(join(root, 'connections.json'));
+    const vault = new InMemorySecretVault();
+    const oldRef = await vault.putSecret(
+      'user-1',
+      'connector',
+      JSON.stringify({
+        accessToken: 'old-access', refreshToken: 'old-refresh', expiresAt: Date.now() + 3_600_000,
+        scope: 'openid', tokenType: 'Bearer',
+      }),
+      { actor: 'connector_proxy', userId: 'user-1', tenantId: 'tenant-a', scopes: ['secret:connector:write'] },
+    );
+    await connectionStore.connect({
+      username: 'alice', userId: 'user-1', tenantId: 'tenant-a', connectorId: 'google-workspace',
+      credentialRefs: { oauth: oldRef.id }, metadata: {
+        credentialOwnerId: 'user-1', accountId: 'google-user-1', accountEmail: 'alice@example.com', grantedScopes: 'openid',
+      },
+    });
+    const service = new GoogleWorkspaceOAuthService({
+      clientId: 'client-id', clientSecret: 'client-secret', connectionStore, vault, authorizeConnect: async () => true,
+      fetchImpl: vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          access_token: 'other-account-access', expires_in: 3600, scope: REQUESTED_SCOPE_EVIDENCE,
+        }), { status: 200, headers: { 'content-type': 'application/json' } }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          email: 'bob@example.com', sub: 'google-user-2',
+        }), { status: 200, headers: { 'content-type': 'application/json' } })),
+    });
+    const started = await service.startAuthorization(user(), 'https://agent.example.com/api/connectors/oauth/callback');
+
+    await expect(service.finishAuthorization({
+      state: started.state, code: 'oauth-code', redirectUri: 'https://agent.example.com/api/connectors/oauth/callback',
+    })).rejects.toThrow('account does not match');
+    expect(connectionStore.get('alice', 'google-workspace')?.credentialRefs.oauth).toBe(oldRef.id);
+  });
+
+  it('keeps the previous connection when OAuth Grant persistence fails', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'google-workspace-'));
+    roots.push(root);
+    const connectionStore = new ConnectorConnectionStore(join(root, 'connections.json'));
+    const vault = new InMemorySecretVault();
+    const oldRef = await vault.putSecret(
+      'user-1',
+      'connector',
+      JSON.stringify({ accessToken: 'old-access', refreshToken: 'old-refresh', expiresAt: Date.now() + 3_600_000, scope: 'openid' }),
+      { actor: 'connector_proxy', userId: 'user-1', tenantId: 'tenant-a', scopes: ['secret:connector:write'] },
+    );
+    await connectionStore.connect({
+      username: 'alice', userId: 'user-1', tenantId: 'tenant-a', connectorId: 'google-workspace',
+      credentialRefs: { oauth: oldRef.id }, metadata: { credentialOwnerId: 'user-1', grantedScopes: 'openid' },
+    });
+    const service = new GoogleWorkspaceOAuthService({
+      clientId: 'client-id', clientSecret: 'client-secret', connectionStore, vault, authorizeConnect: async () => true,
+      authorizeGrant: async () => true,
+      fetchImpl: vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 3600, scope: REQUESTED_SCOPE_EVIDENCE,
+        }), { status: 200, headers: { 'content-type': 'application/json' } }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ email: 'alice@example.com' }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })),
+    });
+    const started = await service.startAuthorization(user(), 'https://agent.example.com/api/connectors/oauth/callback');
+
+    await expect(service.finishAuthorization({
+      state: started.state,
+      code: 'oauth-code',
+      redirectUri: 'https://agent.example.com/api/connectors/oauth/callback',
+      recordGrant: async () => { throw new Error('grant write failed'); },
+    })).rejects.toThrow('grant write failed');
+    expect(connectionStore.get('alice', 'google-workspace')!.credentialRefs.oauth).toBe(oldRef.id);
+    await expect(service.accessToken('user-1', 'alice', 'tenant-a')).resolves.toBe('old-access');
+  });
+
+  it('rolls back the Grant and preserves the old connection when connection persistence fails', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'google-workspace-'));
+    roots.push(root);
+    const connectionStore = new ConnectorConnectionStore(join(root, 'connections.json'));
+    const vault = new InMemorySecretVault();
+    const oldRef = await vault.putSecret(
+      'user-1',
+      'connector',
+      JSON.stringify({ accessToken: 'old-access', refreshToken: 'old-refresh', expiresAt: Date.now() + 3_600_000, scope: 'openid' }),
+      { actor: 'connector_proxy', userId: 'user-1', tenantId: 'tenant-a', scopes: ['secret:connector:write'] },
+    );
+    await connectionStore.connect({
+      username: 'alice', userId: 'user-1', tenantId: 'tenant-a', connectorId: 'google-workspace',
+      credentialRefs: { oauth: oldRef.id }, metadata: { credentialOwnerId: 'user-1', grantedScopes: 'openid' },
+    });
+    const service = new GoogleWorkspaceOAuthService({
+      clientId: 'client-id', clientSecret: 'client-secret', connectionStore, vault, authorizeConnect: async () => true,
+      fetchImpl: vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 3600, scope: REQUESTED_SCOPE_EVIDENCE,
+        }), { status: 200, headers: { 'content-type': 'application/json' } }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ email: 'alice@example.com' }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })),
+    });
+    const started = await service.startAuthorization(user(), 'https://agent.example.com/api/connectors/oauth/callback');
+    vi.spyOn(connectionStore, 'connect').mockRejectedValueOnce(new Error('connection write failed'));
+    const rollbackGrant = vi.fn().mockResolvedValue(undefined);
+
+    await expect(service.finishAuthorization({
+      state: started.state,
+      code: 'oauth-code',
+      redirectUri: 'https://agent.example.com/api/connectors/oauth/callback',
+      recordGrant: async () => rollbackGrant,
+    })).rejects.toThrow('connection write failed');
+    expect(rollbackGrant).toHaveBeenCalledTimes(1);
+    expect(connectionStore.get('alice', 'google-workspace')?.credentialRefs.oauth).toBe(oldRef.id);
+    expect(connectionStore.isRuntimeEnabled('alice', 'google-workspace')).toBe(true);
   });
 
   it('rejects mismatched redirects and consumes OAuth state once', async () => {

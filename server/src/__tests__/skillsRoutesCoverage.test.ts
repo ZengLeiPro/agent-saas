@@ -300,6 +300,24 @@ describe('skills routes coverage', () => {
     expect((await h.request('/api/skills/me/skills/alice_custom', { method: 'DELETE' })).status).toBe(404);
   });
 
+  it('治理封印后仍允许用户编辑和删除自己的自建 Skill', async () => {
+    await h.close();
+    h = await makeRig({ sealedLegacyWrites: true });
+    h.setCaller(KAIYAN_USER);
+
+    const updated = '---\nname: alice_custom\ndescription: updated\n---\nupdated body';
+    const edit = await h.request('/api/skills/me/skills/alice_custom/document', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: updated }),
+    });
+    expect(edit.status).toBe(200);
+    expect(await edit.json()).toMatchObject({ ok: true, skillId: 'alice_custom', source: 'custom' });
+
+    const remove = await h.request('/api/skills/me/skills/alice_custom', { method: 'DELETE' });
+    expect(remove.status).toBe(200);
+    expect(await remove.json()).toMatchObject({ ok: true });
+    expect(h.getLegacyGateCalls()).toBe(0);
+  });
+
   it('DELETE /me/skills/:skillId 401 未登录', async () => {
     h.setCaller(undefined);
     expect((await h.request('/api/skills/me/skills/x', { method: 'DELETE' })).status).toBe(401);

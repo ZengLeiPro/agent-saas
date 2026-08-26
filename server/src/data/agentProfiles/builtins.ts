@@ -341,6 +341,18 @@ export function createBuiltinAgentProfileRecords(now = new Date().toISOString())
   return { profiles, versions, bindings };
 }
 
+const BUILTIN_VERSION_COMPATIBLE_CONFIG_DIGESTS: Readonly<Record<string, readonly string[]>> = {
+  // Persisted by v2 deployments before 8b3268e5 raised maxTurns from 200 to 500
+  // without changing the builtin version id. These are same-version migrations,
+  // not aliases for the immutable v1 records.
+  arpv_builtin_subagent_general_v2: ['7be90f82f6c74799a7c0e5f37a7a1e346201bf8bd4c75233be010c42230958cc'],
+  arpv_builtin_subagent_explore_v2: ['c1d41392b7df4c4b593c9017620b2e573411ce8356fff0ce1728c8a3b0a857fe'],
+};
+
+export function getBuiltinCompatibleConfigDigests(profileVersionId: string): readonly string[] {
+  return BUILTIN_VERSION_COMPATIBLE_CONFIG_DIGESTS[profileVersionId] ?? [];
+}
+
 export function getBuiltinProfileByBinding(bindingKey: AgentProfileBindingKey): {
   profile: AgentRuntimeProfile;
   version: AgentRuntimeProfileVersion;

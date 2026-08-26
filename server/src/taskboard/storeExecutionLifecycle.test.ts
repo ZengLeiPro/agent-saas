@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TaskBoardTask } from '../../../shared/src/types/taskboard.js';
 import type { PgTaskboardStore } from './store.js';
 import {
+  cancelExecution,
   claimExecution,
   shouldPersistIntegrationDurableSession,
   unresolvedExecutionRecovery,
@@ -271,6 +272,72 @@ describe('claimExecution model consistency', () => {
       task: { id: task.id },
       execution: { id: 'execution-1', purpose: 'work' },
     });
+  });
+});
+
+describe('cancelExecution', () => {
+  it('终止已经交接但仍显示 running 的 Execution，且不回滚任务状态', async () => {
+    const transitionedExecution = {
+      id: 'execution-stale',
+      task_id: task.id,
+      run_id: 'run-stale',
+      session_id: 'session-stale',
+      status: 'running',
+      purpose: 'work',
+      trigger: 'initial',
+      protocol_version: 2,
+      requested_by: identity.ownerUserId,
+      transitioned_at: new Date('2026-08-18T01:05:00.000Z'),
+      fence_epoch: 1,
+      created_at: new Date(task.createdAt),
+      updated_at: new Date(task.updatedAt),
+    };
+    const cancelledExecution = {
+      ...transitionedExecution,
+      status: 'cancelled',
+      superseded_at: new Date('2026-08-18T01:06:00.000Z'),
+      finished_at: new Date('2026-08-18T01:06:00.000Z'),
+      fence_epoch: 2,
+    };
+    let executionSelects = 0;
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT * FROM taskboard_executions WHERE id=$1')) {
+          executionSelects += 1;
+          return { rows: [executionSelects === 1 ? transitionedExecution : cancelledExecution] };
+        }
+        if (sql.includes("UPDATE taskboard_executions") && sql.includes("SET status='cancelled'")) {
+          return {
+            rows: [{ id: transitionedExecution.id, run_id: transitionedExecution.run_id, task_id: task.id, fence_epoch: 2 }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+    const store = {
+      tasksTable: 'taskboard_tasks',
+      boardsTable: 'taskboard_boards',
+      executionsTable: 'taskboard_executions',
+      changesTable: 'taskboard_changes',
+      cancellationOutboxTable: 'taskboard_cancellation_outbox',
+      requireTaskWithBoard: vi.fn(async () => ({ task, boardRole: 'maintainer' })),
+      requireTask: vi.fn(async () => task),
+      withTransaction: vi.fn(async (operation: (transaction: typeof client) => Promise<unknown>) => operation(client)),
+    } as unknown as PgTaskboardStore;
+
+    await expect(cancelExecution(store, identity, task.id, transitionedExecution.id, {
+      expectedVersion: task.version,
+      reason: '清理卡死执行',
+    })).resolves.toMatchObject({
+      task: { id: task.id, status: task.status, version: task.version },
+      execution: { id: transitionedExecution.id, status: 'cancelled' },
+    });
+    expect(client.query).not.toHaveBeenCalledWith(expect.stringContaining('UPDATE taskboard_tasks'), expect.anything());
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO taskboard_cancellation_outbox'),
+      expect.arrayContaining([transitionedExecution.id, transitionedExecution.run_id, task.id, 'operator_cancelled']),
+    );
   });
 });
 

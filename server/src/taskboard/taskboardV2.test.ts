@@ -29,8 +29,10 @@ describe('taskboard V2 contracts', () => {
     expect(allowedActionsForRole('viewer')).toEqual(['board.read']);
     expect(allowedActionsForRole('editor')).toEqual(expect.arrayContaining(['comment.create', 'execution.trigger']));
     expect(allowedActionsForRole('editor')).not.toContain('task.transition');
+    expect(allowedActionsForRole('editor')).not.toContain('execution.cancel');
     expect(allowedActionsForRole('maintainer')).toEqual(expect.arrayContaining([
       'task.transition',
+      'execution.cancel',
       'integration.create',
       'integration.authorize',
       'integration.cancel',

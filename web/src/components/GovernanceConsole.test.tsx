@@ -67,6 +67,24 @@ describe("GovernanceConsole", () => {
     expect(screen.getByTestId("governance-page-loading")).toBeTruthy();
   });
 
+  it("平台管理员未选择组织时保持空作用域，不自动回退目录首项", async () => {
+    auth.isPlatformAdmin = true;
+    window.history.replaceState({}, "", "/tenant-admin/overview");
+    render(
+      <GovernanceConsole
+        area="organization"
+        route={governanceRoute("organization.overview.overview")}
+        onExit={() => undefined}
+      >
+        <div>请选择组织后显示内容</div>
+      </GovernanceConsole>,
+    );
+
+    expect(screen.getByText(/正在以平台管理员身份管理：请选择组织/)).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "切换组织" }).textContent).toContain("请选择目标组织");
+    await waitFor(() => expect(window.location.search).toBe(""));
+  });
+
   it("平台管理员进入组织作用域显示常驻 banner，并从切换器过滤 pantheon", async () => {
     auth.isPlatformAdmin = true;
     window.history.replaceState({}, "", "/tenant-admin/overview?org=acme");

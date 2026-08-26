@@ -132,6 +132,10 @@ const executionStartSchema = z.object({
   expectedVersion: z.number().int().min(1),
   purpose: z.enum(TASKBOARD_EXECUTION_PURPOSES).optional(),
 }).strict();
+const executionCancelSchema = z.object({
+  expectedVersion: z.number().int().min(1),
+  reason: z.string().trim().min(1).max(2_000).optional(),
+}).strict();
 const labelsSchema = z.array(z.string().trim().min(1).max(64)).max(20)
   .transform((labels) => [...new Set(labels)]);
 const dueAtSchema = z.string().datetime({ offset: true });
@@ -600,6 +604,22 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
       return;
     }
     res.json(await options.executionService.listExecutions(identityFrom(req), req.params.id));
+  }));
+
+  router.post('/tasks/:id/executions/:executionId/cancel', route(async (req, res) => {
+    if (!options.executionService?.cancelExecution) {
+      throw new TaskboardExecutionUnavailableError();
+    }
+    const input = parseOrReply(executionCancelSchema, req.body, res, 'body');
+    if (!input) return;
+    const identity = identityFrom(req);
+    const result = await options.executionService.cancelExecution(
+      identity,
+      req.params.id,
+      req.params.executionId,
+      input,
+    );
+    res.json(withCreatorAvatarVersionInExecution(options.userStore, identity, result));
   }));
 
   router.post('/tasks/:id/execute', route(async (req, res) => {

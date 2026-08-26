@@ -3,7 +3,7 @@ import pg, { type PoolClient } from 'pg';
 import {
   TASKBOARD_DEFAULT_PROMPT, type TaskBoard, type TaskBoardComment, type TaskBoardCommentCreateInput,
   type TaskBoardCommentPatchInput, type TaskBoardCreateInput, type TaskBoardExecution,
-  type TaskBoardExecutionContextInput, type TaskBoardExecutionContextResponse, type TaskBoardExecutionFinishInput,
+  type TaskBoardExecutionCancelInput, type TaskBoardExecutionContextInput, type TaskBoardExecutionContextResponse, type TaskBoardExecutionFinishInput,
   type TaskBoardExecutionStartResult, type TaskBoardIntegrationBatchCreateInput, type TaskBoardIntegrationSource,
   type TaskBoardMember, type TaskBoardMemberPatchInput, type TaskBoardPatchInput, type TaskBoardRepositoryConfig,
   type TaskBoardTask, type TaskBoardTaskCreateInput, type TaskBoardTaskMoveInput, type TaskBoardTaskPatchInput,
@@ -25,7 +25,7 @@ import {
   claimExecutionDispatch,
   claimExecutionReconcileCandidates,
   markExecutionDispatchSucceeded,
-  retryExecutionDispatch,
+  retryExecutionDispatch, runExecutionDispatchGate,
 } from './executionOutboxStore.js';
 import {
   createTaskFromExecution as createStoredTaskFromExecution,
@@ -101,9 +101,10 @@ import { loadBoard as loadStoredBoard, requireTaskWithBoard as requireStoredTask
 import { isStoredTaskWatched, setStoredTaskWatched } from './taskWatchStore.js';
 import {
   claimWorkflowCancellations as claimStoredWorkflowCancellations,
-  finishWorkflowCancellation as finishStoredWorkflowCancellation,
+  finishWorkflowCancellation as finishStoredWorkflowCancellation, reconcileWorkflowCancellationTerminal as reconcileStoredWorkflowCancellationTerminal,
 } from './workflow/cancellationOutbox.js';
 import {
+  cancelExecution as cancelStoredExecution,
   claimExecution as claimStoredExecution,
   completeExecution as completeStoredExecution,
   completeExecutionFromReconcile as completeStoredExecutionFromReconcile,
@@ -126,7 +127,7 @@ import {
   type TaskboardExpectedVersionInput,
   type TaskboardIdentity,
   type TaskboardPage,
-  type TaskboardPageFilter,
+  type TaskboardPageFilter, type TaskboardRuntimeTerminalFact,
   type TaskboardService,
   type TaskboardTaskCreateResult,
   type TaskboardTaskListFilter,
@@ -274,6 +275,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   finishWorkflowCancellation(id: string, error?: string): Promise<void> {
     return finishStoredWorkflowCancellation(this, id, error);
   }
+  reconcileWorkflowCancellationTerminal(id: string, fact: TaskboardRuntimeTerminalFact): Promise<void> { return reconcileStoredWorkflowCancellationTerminal(this, id, fact); }
   claimIntegrationDispatchCandidatesV2(limit?: number) {
     return claimIntegrationDispatchCandidates(this, limit);
   }
@@ -797,7 +799,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
     return listTaskExecutions(this, identity, taskId);
   }
-
   async searchExecutions(
     identity: TaskboardIdentity,
     taskId: string,
@@ -805,7 +806,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<TaskboardPage<TaskBoardExecution>> {
     return searchStoredExecutions(this, identity, taskId, filter);
   }
-
+  cancelExecution(identity: TaskboardIdentity, taskId: string, executionId: string, input: TaskBoardExecutionCancelInput): Promise<TaskBoardExecutionStartResult> { return cancelStoredExecution(this, identity, taskId, executionId, input); }
   async getExecutionModelContext(identity: TaskboardIdentity, taskId: string): Promise<TaskboardExecutionModelContext> {
     const [context, loaded] = await Promise.all([
       loadExecutionModelContext(this, identity, taskId),
@@ -896,9 +897,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<TaskBoardTask> {
     return moveTaskFromReviewExecution(this, identity, runId, status);
   }
-  claimExecutionDispatch(runId: string | undefined, leaseId: string) {
-    return claimExecutionDispatch(this, runId, leaseId);
-  }
+  claimExecutionDispatch(runId: string | undefined, leaseId: string) { return claimExecutionDispatch(this, runId, leaseId); }
+  runExecutionDispatchGate(runId: string, leaseId: string, operation: () => Promise<void>) { return runExecutionDispatchGate(this, runId, leaseId, operation); }
   markExecutionDispatchSucceeded(runId: string, leaseId: string) {
     return markExecutionDispatchSucceeded(this, runId, leaseId);
   }

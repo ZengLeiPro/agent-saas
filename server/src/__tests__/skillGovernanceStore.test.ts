@@ -164,7 +164,7 @@ describe('Governed Skill + Candidate 发布链', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_governed_skill_versions');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_skill_candidates');
     expect(sql).toContain("status IN ('draft', 'submitted', 'approved', 'rejected', 'published')");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(28);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(33);
   });
 
   it('personal Skill 强制 immutable owner；tenant Skill 建 stable ID', async () => {

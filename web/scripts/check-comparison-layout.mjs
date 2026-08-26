@@ -68,7 +68,7 @@ try {
   assert.equal(tracks.filter((track) => track.hasExpandControl).length, 1, "夹具必须覆盖 1 条可展开数据行");
   assert.match(tracks[0].gridTemplateColumns, /^144px\s/, "首列应保持紧凑的 9rem 固定轨道");
   for (const track of tracks) {
-    assert.match(track.gridTemplateColumns, /\s14px$/, `${track.label} 应保留固定的 Chevron 尾列`);
+    assert.match(track.gridTemplateColumns, /\s128px\s14px$/, `${track.label} 应使用紧凑的 8rem 差异列并保留固定的 Chevron 尾列`);
   }
 
   const expectedStarts = tracks[0].valueColumnStarts;

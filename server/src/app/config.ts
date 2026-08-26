@@ -930,8 +930,8 @@ const tenantRemoteHandsConfigSchema = z.object({
 /**
  * SecretVault backend 选择（A2）。
  *
- * 默认（未配置）：进程内 `InMemorySecretVault`，仅适合 dev/单进程。
- * `encrypted-file`：AES-256-GCM 落盘单文件，适合 staging/单实例。
+ * 默认（未配置）：生产 PG 模式使用共享加密 `data/secrets.enc`；其他模式使用进程内 `InMemorySecretVault`（仅适合 dev/单进程）。
+ * `encrypted-file`：AES-256-GCM 落盘单文件，适合 staging/共享数据目录部署。
  * `http`：外部 KMS / secret-manager proxy，生产推荐。
  *
  * vault 自身 auth 不能再走 vault ref（鸡生蛋），所以 http backend 的 token

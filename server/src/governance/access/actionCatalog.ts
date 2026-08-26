@@ -1,12 +1,19 @@
+import {
+  MANAGEMENT_ACTIONS_V1,
+  type ManagementActionV1,
+} from '../../../../shared/src/types/governance.js';
+
 export type ActionAuthority = 'platform' | 'tenant' | 'owner' | 'personal' | 'use';
 
 export interface ActionDefinition {
   action: string;
   authority: ActionAuthority;
   highRisk?: boolean;
+  /** Evaluated only by the narrow management snapshot service, never by AccessEvaluator. */
+  managementOnly?: boolean;
 }
 
-const definitions = [
+const standardDefinitions = [
   { action: 'platform_admin.manage', authority: 'platform', highRisk: true },
   { action: 'tenant.create', authority: 'platform', highRisk: true },
   { action: 'tenant.disable', authority: 'platform', highRisk: true },
@@ -39,10 +46,25 @@ const definitions = [
   { action: 'personal_skill.manage', authority: 'personal' },
 ] as const satisfies readonly ActionDefinition[];
 
+const managementDefinitions = MANAGEMENT_ACTIONS_V1.map((action): ActionDefinition => {
+  const authority = action.split('.')[1];
+  if (authority !== 'personal' && authority !== 'tenant' && authority !== 'platform') {
+    throw new Error(`Invalid management action authority: ${action}`);
+  }
+  return { action, authority, managementOnly: true };
+});
+
 export const ACTION_CATALOG = new Map<string, ActionDefinition>(
-  definitions.map((definition) => [definition.action, definition]),
+  [...standardDefinitions, ...managementDefinitions].map((definition) => [definition.action, definition]),
 );
 
 export function getActionDefinition(action: string): ActionDefinition | undefined {
-  return ACTION_CATALOG.get(action);
+  const definition = ACTION_CATALOG.get(action);
+  return definition?.managementOnly ? undefined : definition;
+}
+
+/** Narrow accessor for management snapshot evaluation; never falls back to the general catalog. */
+export function getManagementActionDefinition(action: ManagementActionV1): Readonly<ActionDefinition> | undefined {
+  const definition = ACTION_CATALOG.get(action);
+  return definition?.managementOnly === true ? definition : undefined;
 }

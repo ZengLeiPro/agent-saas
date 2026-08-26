@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +9,9 @@ import WebSocket from 'ws';
 import type { AgentRunDispatch, InteractionResponse } from '../agent/types.js';
 import { WebChannel } from '../channels/web/channel.js';
 import { interactionStore } from '../channels/web/interactionStore.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
+import { getTranscriptPath } from '../data/transcripts/index.js';
+import { writeSessionMeta } from '../data/transcripts/meta.js';
 import { chatMessage, FakeWebSocket, MemoryRunStore, wsClient } from './webChannelTestHelpers.js';
 
 function waitOpen(ws: WebSocket): Promise<void> {
@@ -54,9 +58,15 @@ describe('WebChannel WebSocket auth-mode chat boundary', () => {
     workspaces.length = 0;
   });
 
-  async function startChannel(authEnabled: boolean, dispatch: AgentRunDispatch): Promise<string> {
+  async function startChannel(authEnabled: boolean, dispatch: AgentRunDispatch, sessionId?: string): Promise<string> {
     const agentCwd = await mkdtemp(join(tmpdir(), 'web-channel-ws-auth-'));
     workspaces.push(agentCwd);
+    if (sessionId) {
+      await writeSessionMeta(getTranscriptPath(agentCwd, sessionId, { tenantId: DEFAULT_TENANT_ID }), {
+        userId: 'anonymous', username: 'anonymous', tenantId: DEFAULT_TENANT_ID,
+        channel: 'web', createdAt: new Date().toISOString(),
+      });
+    }
     const channel = new WebChannel({
       authEnabled,
       jwtSecret: authEnabled ? 'web-channel-ws-auth-test-secret' : undefined,
@@ -106,7 +116,7 @@ describe('WebChannel WebSocket auth-mode chat boundary', () => {
   });
 
   it('auth disabled lets the same anonymous WS answer ask_user and completes the run', async () => {
-    const sessionId = 'anonymous-interaction-session';
+    const sessionId = randomUUID();
     const interactionId = 'anonymous-ask-user';
     let interactionResponse: InteractionResponse | undefined;
     const dispatch: AgentRunDispatch = async function* (_message, _context, _options, hooks) {
@@ -125,7 +135,7 @@ describe('WebChannel WebSocket auth-mode chat boundary', () => {
       });
       yield { type: 'done' };
     };
-    const url = await startChannel(false, dispatch);
+    const url = await startChannel(false, dispatch, sessionId);
     const ws = new WebSocket(url);
     const messages: any[] = [];
     ws.on('message', (raw) => messages.push(JSON.parse(raw.toString())));

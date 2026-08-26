@@ -8,6 +8,7 @@ import type {
 } from '../agent/toolRuntime.js';
 import { parseMcpToolKey } from '../mcp/clientManager.js';
 import {
+  getBuiltinCompatibleConfigDigests,
   getBuiltinProfileByBinding,
 } from '../data/agentProfiles/builtins.js';
 import {
@@ -25,6 +26,10 @@ import type { RuntimeSessionRecord } from './sessionCatalog.js';
 export { applyOrgAgentExecutionMode, appendDispatcherInstructionSection, resolveAgentModePolicy } from './dispatcherMode.js';
 
 export type AgentProfileScene = AgentProfileBindingKey;
+
+function shortDigest(value: string | undefined): string {
+  return value?.slice(0, 12) || 'missing';
+}
 
 export interface BoundAgentRuntimeProfile {
   binding: AgentProfileSessionBinding;
@@ -126,14 +131,20 @@ export class AgentRuntimeProfileResolver {
     }
     const digest = digestAgentRuntimeProfileConfig(version.config);
     if (digest !== version.configDigest || session.profileConfigDigest !== version.configDigest) {
-      // 后台 Worker 可能由升级前的进程创建、升级后的进程执行。内置 Profile 的
-      // 版本 ID 不变时，仅允许它重新绑定当前内置定义；数据库 Profile 仍严格拒绝。
-      const currentBuiltinBackgroundProfile = (expectedBindingKey === 'background_general'
+      // 后台 Worker 可能由升级前的进程创建、升级后的进程执行。仅接受源码中按
+      // 同一内置 versionId 登记的迁移摘要；跨版本、缺失、随机及数据库摘要仍拒绝。
+      const historicalBuiltinBackgroundProfile = (expectedBindingKey === 'background_general'
         || expectedBindingKey === 'background_explore')
         && session.profileVersionId === builtin.version.profileVersionId
-        && digest === version.configDigest;
-      if (!currentBuiltinBackgroundProfile) {
-        throw new AgentRuntimeProfileError('会话 Profile 摘要校验失败，已拒绝切换到其他版本', 'CONFLICT');
+        && digest === version.configDigest
+        && !!session.profileConfigDigest
+        && getBuiltinCompatibleConfigDigests(version.profileVersionId).includes(session.profileConfigDigest);
+      if (!historicalBuiltinBackgroundProfile) {
+        const mismatch = digest !== version.configDigest ? 'version_config' : 'session_pin';
+        throw new AgentRuntimeProfileError(
+          `会话 Profile 摘要校验失败，已拒绝切换到其他版本（${mismatch}; binding=${expectedBindingKey}; version=${version.profileVersionId}; session=${shortDigest(session.profileConfigDigest)}; stored=${shortDigest(version.configDigest)}; actual=${shortDigest(digest)}）`,
+          'CONFLICT',
+        );
       }
     }
     return this.toBound({ expected: expectedBindingKey, bindingKey: expectedBindingKey, profile, version, source }, session.profileResolution ?? source);

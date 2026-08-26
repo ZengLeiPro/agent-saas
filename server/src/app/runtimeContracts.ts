@@ -146,6 +146,8 @@ export interface AppRuntime {
   auditProjectionShutdown?: () => Promise<void>;
   /** Runtime event store 外部连接关闭（仅 runtimeEventStore.backend='pg' 时定义） */
   runtimeEventStoreShutdown?: () => Promise<void>;
+  /** Stops durable tenant deletion scans before PostgreSQL shutdown. */
+  tenantDeletionShutdown?: () => Promise<void>;
   /** MCP 客户端 manager 关闭（关闭 stdio 子进程 + HTTP 连接，δ 阶段新增） */
   mcpClientShutdown?: () => Promise<void>;
   mcpClientManager?: McpClientManager;

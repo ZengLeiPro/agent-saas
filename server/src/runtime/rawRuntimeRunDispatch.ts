@@ -13,7 +13,7 @@ import type {
 import type { AgentStore } from '../data/agents/store.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import {
-  mergeOrgAgentRuntimePolicy,
+  mergeOrgAgentFrontRuntimePolicy,
   resolveOrgAgentRuntimeSkillIds,
 } from '../data/orgAgents/runtimePolicy.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
@@ -666,7 +666,7 @@ export function mergeOrgAgentBoundRuntimeProfile(
     ...bound,
     version: {
       ...bound.version,
-      config: mergeOrgAgentRuntimePolicy(bound.version.config, agent.runtime),
+      config: mergeOrgAgentFrontRuntimePolicy(bound.version.config, agent.runtime),
     },
   };
 }

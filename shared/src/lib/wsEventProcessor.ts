@@ -11,6 +11,7 @@ import { normalizeToolPresentation } from './toolPresentation';
 import { normalizeToolResultMetadata } from './toolResultMetadata';
 import { formatPermissionInput, isDedicatedToolName, resolvePlanModeDisplay } from './wsToolDisplay';
 import { handleArtifactDeliveryToolResult } from './artifactDeliveryMessage';
+import { applyInteractionResolution } from './wsInteractionResolution';
 
 export { resolvePlanModeDisplay } from './wsToolDisplay';
 import {
@@ -975,14 +976,13 @@ export function processWsEvent(
     for (let i = msgs.length - 1; i >= 0; i--) {
       const m = msgs[i];
       if ('interactionId' in m && (m as Record<string, unknown>).interactionId === data.interactionId) {
-        if (m.type === "permission_request" && m.status === "pending") {
-          msg.updateMessageAt(i, (prev) =>
-            prev.type === "permission_request" ? { ...prev, status: "allowed" as const } : prev
-          );
-        } else if (m.type === "ask_user" && m.status === "pending") {
-          msg.updateMessageAt(i, (prev) =>
-            prev.type === "ask_user" ? { ...prev, status: "answered" as const } : prev
-          );
+        if (
+          (m.type === 'permission_request' && m.status === 'pending')
+          || (m.type === 'ask_user' && m.status === 'pending')
+        ) {
+          // Legacy broadcasts carry no response; preserve pending instead of
+          // inventing an approval decision.
+          applyInteractionResolution(msg, i, data.response);
         }
         break;
       }

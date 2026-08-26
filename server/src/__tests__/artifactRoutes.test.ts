@@ -132,6 +132,40 @@ describe('artifact routes', () => {
     }
   });
 
+  it('uses attachment-only proxy URLs for explicit downloads of previewable files', async () => {
+    const pdf = await service.createFromBytes({
+      sessionId: SESSION_ID,
+      data: '%PDF-1.4',
+      fileName: '验收报告.pdf',
+      mimeType: 'application/pdf',
+    });
+    const image = await service.createFromBytes({
+      sessionId: SESSION_ID,
+      data: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+      fileName: '截图.png',
+      mimeType: 'image/png',
+    });
+    const { server, baseUrl } = await startServer(service, { sub: 'user-1', username: 'alice', role: 'user', tenantId: 'kaiyan' });
+    try {
+      const previewUrl = await fetch(`${baseUrl}/api/artifacts/${pdf.artifactId}/read-url?proxy=true`);
+      const preview = await previewUrl.json() as { url: string };
+      const previewContent = await fetch(preview.url);
+      expect(previewContent.headers.get('content-disposition')).toMatch(/^inline;/);
+
+      for (const artifact of [pdf, image]) {
+        const downloadUrl = await fetch(`${baseUrl}/api/artifacts/${artifact.artifactId}/read-url?download=true`);
+        expect(downloadUrl.status).toBe(200);
+        const download = await downloadUrl.json() as { url: string; direct: boolean };
+        expect(download.direct).toBe(false);
+        expect(download.url).toContain('download=true');
+        const content = await fetch(download.url);
+        expect(content.headers.get('content-disposition')).toMatch(/^attachment;/);
+      }
+    } finally {
+      await stopServer(server);
+    }
+  });
+
   it('forces active signed content to attachment with sandbox headers', async () => {
     const artifact = await service.createFromBytes({
       sessionId: SESSION_ID,

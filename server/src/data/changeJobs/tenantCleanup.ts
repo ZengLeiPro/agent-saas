@@ -33,6 +33,36 @@ export class GovernanceTenantCleanup {
     }
   }
 
+  /** Final tenant-delete verifier over every tenant-keyed governance table touched by cleanup. */
+  async verifyTenantDeletion(tenantId: string): Promise<{
+    credentials: number;
+    governance: Record<string, number>;
+  }> {
+    const tables = [
+      'resource_assignments', 'resource_assignment_sets', 'run_resolution_snapshots',
+      'content_access_grants', 'governance_projection_outbox', 'environment_instances',
+      'resource_references', 'agent_dws_event_inbox', 'agent_dws_conversation_bindings',
+      'agent_dws_accounts', 'managed_agents', 'governed_skills', 'skill_candidates',
+      'credential_commits', 'credentials', 'oauth_approval_records', 'native_oauth_handoffs',
+      'oauth_grants', 'directory_group_members', 'directory_groups', 'tenant_memberships',
+      'entitlement_resource_items', 'entitlement_resource_scopes', 'tenant_entitlement_sets',
+      'tenant_policies', 'governance_migration_issues',
+    ];
+    const governance: Record<string, number> = {};
+    for (const table of tables) {
+      const result = await this.options.pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM ${this.prefix}_${table} WHERE tenant_id=$1`, [tenantId],
+      );
+      governance[table] = Number(result.rows[0]?.count ?? 0);
+    }
+    const audit = await this.options.pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM ${this.prefix}_governance_audit_events
+       WHERE (target_tenant_id=$1 OR actor_tenant_id=$1) AND NOT (metadata_json ? 'tenantDeletedAt')`, [tenantId],
+    );
+    governance.audit_retention_unmarked = Number(audit.rows[0]?.count ?? 0);
+    return { credentials: governance.credentials ?? 0, governance };
+  }
+
   private async transaction(work: (client: PoolClient) => Promise<void>): Promise<void> {
     const client = await this.options.pool.connect();
     try {
@@ -56,7 +86,9 @@ export class GovernanceTenantCleanup {
         `DELETE FROM ${preferences} WHERE user_id IN (SELECT user_id FROM ${memberships} WHERE tenant_id=$1)`,
         [tenantId],
       );
+      await client.query(`DELETE FROM ${this.prefix}_resource_assignments WHERE tenant_id=$1`, [tenantId]);
       await client.query(`DELETE FROM ${sets} WHERE tenant_id=$1`, [tenantId]);
+      await client.query(`DELETE FROM ${this.prefix}_run_resolution_snapshots WHERE tenant_id=$1`, [tenantId]);
     });
   }
 
@@ -70,6 +102,8 @@ export class GovernanceTenantCleanup {
     const references = `${this.prefix}_resource_references`;
     await this.transaction(async client => {
       await client.query(`DELETE FROM ${references} WHERE tenant_id=$1`, [tenantId]);
+      await client.query(`DELETE FROM ${this.prefix}_agent_dws_event_inbox WHERE tenant_id=$1`, [tenantId]);
+      await client.query(`DELETE FROM ${this.prefix}_agent_dws_conversation_bindings WHERE tenant_id=$1`, [tenantId]);
       await client.query(`DELETE FROM ${agentDwsAccounts} WHERE tenant_id=$1`, [tenantId]);
       await client.query(`UPDATE ${agents} SET current_version_id=NULL WHERE tenant_id=$1`, [tenantId]);
       await client.query(
@@ -102,21 +136,31 @@ export class GovernanceTenantCleanup {
         scopes: ['secret:connector:revoke'],
       });
     }
+    // Revocation is externally observable before the durable credential rows are
+    // removed; retaining revoked rows would leave tenant credential residue.
     await this.options.pool.query(
-      `UPDATE ${credentials} SET status='revoked',version=version+1,updated_at=NOW(),updated_by='system:tenant-cleanup' WHERE tenant_id=$1 AND status <> 'revoked'`,
-      [tenantId],
+      `DELETE FROM ${this.prefix}_credential_commits WHERE tenant_id=$1`, [tenantId],
     );
+    await this.options.pool.query(`DELETE FROM ${credentials} WHERE tenant_id=$1`, [tenantId]);
   }
 
   private async deleteMemberships(tenantId: string): Promise<void> {
-    await this.options.pool.query(
-      `DELETE FROM ${this.prefix}_tenant_memberships WHERE tenant_id=$1`, [tenantId],
-    );
+    await this.transaction(async client => {
+      await client.query(`DELETE FROM ${this.prefix}_oauth_approval_records WHERE tenant_id=$1`, [tenantId]);
+      await client.query(`DELETE FROM ${this.prefix}_native_oauth_handoffs WHERE tenant_id=$1`, [tenantId]);
+      await client.query(`DELETE FROM ${this.prefix}_oauth_grants WHERE tenant_id=$1`, [tenantId]);
+      await client.query(`DELETE FROM ${this.prefix}_directory_group_members WHERE tenant_id=$1`, [tenantId]);
+      await client.query(`DELETE FROM ${this.prefix}_directory_groups WHERE tenant_id=$1`, [tenantId]);
+      await client.query(`DELETE FROM ${this.prefix}_tenant_memberships WHERE tenant_id=$1`, [tenantId]);
+    });
   }
 
   private async deleteTenantConfiguration(tenantId: string): Promise<void> {
     const sets = `${this.prefix}_tenant_entitlement_sets`;
     await this.transaction(async client => {
+      await client.query(`DELETE FROM ${this.prefix}_governance_projection_outbox WHERE tenant_id=$1`, [tenantId]);
+      await client.query(`DELETE FROM ${this.prefix}_content_access_grants WHERE tenant_id=$1`, [tenantId]);
+      await client.query(`DELETE FROM ${this.prefix}_environment_instances WHERE tenant_id=$1`, [tenantId]);
       await client.query(
         `DELETE FROM ${this.prefix}_entitlement_resource_items WHERE tenant_id=$1`, [tenantId],
       );

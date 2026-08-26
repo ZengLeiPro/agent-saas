@@ -95,7 +95,7 @@ describe('Context Plane Phase 2/3 governance migration', () => {
 
     await runner.run();
 
-    expect(insertedVersions.slice(-3)).toEqual([26, 27, 28]);
+    expect(insertedVersions).toEqual(expect.arrayContaining([25, 26, 27, 28]));
     expect(insertedVersions).toEqual([...insertedVersions].sort((left, right) => left - right));
     expect(new Set(insertedVersions).size).toBe(insertedVersions.length);
     expect(query.mock.calls.some(([sql]) => String(sql).includes(

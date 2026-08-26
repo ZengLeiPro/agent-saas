@@ -3,11 +3,13 @@ import { PLATFORM_TENANT_ID } from '../tenants/types.js';
 import { agentDwsMigrations } from './agentDwsMigrations.js';
 import { governanceV22Statements } from './v22Migration.js';
 import { governanceV23Statements } from './v23Migration.js';
-import { governanceV28Statements } from './v28Migration.js';
+import { governanceV32Statements, governanceV33Statements } from './v32V33Migration.js';
 import { governanceV18Statements } from './v18Migration.js';
+import { governanceV30ChangeJobStatements } from './v30ChangeJobMigration.js';
 import { buildContextMigrationSql } from '../../context/store/migration.js';
 import { buildContextPhase23MigrationSql } from '../../context/phase23/migration.js';
 import { buildContextPhase4MigrationSql } from '../../context/phase4/migration.js';
+import { buildContextRetentionMigrationSql, buildContextRetentionRetryMigrationSql } from '../../context/lifecycle/migration.js';
 
 export type GovernancePgPool = pg.Pool;
 
@@ -58,8 +60,6 @@ function migrations(prefix: string): GovernanceMigration[] {
   const directoryGroups = `${prefix}_directory_groups`, directoryGroupMembers = `${prefix}_directory_group_members`;
   const oauthGrants = `${prefix}_oauth_grants`, oauthApprovalRecords = `${prefix}_oauth_approval_records`;
   const nativeOAuthHandoffs = `${prefix}_native_oauth_handoffs`;
-  const agentDwsAccounts = `${prefix}_agent_dws_accounts`;
-  const agentDwsRequesterBindings = `${prefix}_agent_dws_requester_conversation_bindings`;
 
   return [
     {
@@ -899,54 +899,53 @@ function migrations(prefix: string): GovernanceMigration[] {
       }),
     },
     ...agentDwsMigrations(prefix),
-    {
-      version: 22,
-      statements: governanceV22Statements({ assignmentSets, assignments }),
-    },
-    {
-      version: 23,
-      statements: governanceV23Statements({ credentialCommits }),
-    },
-    {
-      // Context Plane participates in the official governance migration ledger. Do not
-      // introduce a second context-specific schema_versions table.
-      version: 24,
-      statements: buildContextMigrationSql(prefix),
-    },
-    {
-      version: 25,
-      statements: buildContextPhase23MigrationSql(prefix),
-    },
-    {
-      version: 26,
-      statements: buildContextPhase4MigrationSql(prefix),
-    },
+    { version: 22, statements: governanceV22Statements({ assignmentSets, assignments }) },
+    { version: 23, statements: governanceV23Statements({ credentialCommits }) },
+    // Context Plane participates in the official governance migration ledger.
+    { version: 24, statements: buildContextMigrationSql(prefix) },
+    { version: 25, statements: buildContextPhase23MigrationSql(prefix) },
+    { version: 26, statements: buildContextPhase4MigrationSql(prefix) },
     {
       version: 27,
+      statements: [`ALTER TABLE ${changeJobDomains}
+        ADD COLUMN IF NOT EXISTS unresolved_items_json JSONB NOT NULL DEFAULT '[]'::jsonb`],
+    },
+    { version: 28, statements: buildContextRetentionMigrationSql(prefix) },
+    {
+      version: 29,
       statements: [
-        `CREATE TABLE IF NOT EXISTS ${agentDwsRequesterBindings} (
-          binding_id TEXT PRIMARY KEY,
-          tenant_id TEXT NOT NULL,
-          account_id TEXT NOT NULL,
-          FOREIGN KEY (tenant_id,account_id)
-            REFERENCES ${agentDwsAccounts}(tenant_id,account_id) ON DELETE CASCADE,
-          conversation_id TEXT NOT NULL,
-          requester_user_id TEXT NOT NULL,
-          session_id TEXT NOT NULL,
-          peer_open_dingtalk_id TEXT,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          UNIQUE (account_id,conversation_id,requester_user_id),
-          UNIQUE (session_id)
-        )`,
-        `CREATE INDEX IF NOT EXISTS ${agentDwsRequesterBindings}_tenant_idx
-          ON ${agentDwsRequesterBindings} (tenant_id,updated_at DESC)`,
+        `ALTER TABLE ${changeJobs} ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 5 CHECK (max_attempts >= 1)`,
+        `DO $$ DECLARE constraint_name TEXT; BEGIN
+          SELECT conname INTO constraint_name FROM pg_constraint
+          WHERE conrelid='${changeJobs}'::regclass AND contype='c'
+            AND pg_get_constraintdef(oid) LIKE '%status%retry_wait%succeeded%failed%';
+          IF constraint_name IS NOT NULL
+            AND pg_get_constraintdef((SELECT oid FROM pg_constraint
+              WHERE conrelid='${changeJobs}'::regclass AND conname=constraint_name)) NOT LIKE '%dead_letter%'
+          THEN
+            EXECUTE format('ALTER TABLE ${changeJobs} DROP CONSTRAINT %I', constraint_name);
+            ALTER TABLE ${changeJobs} ADD CONSTRAINT ${changeJobs}_status_check
+              CHECK (status IN ('pending','running','retry_wait','succeeded','partial','failed','dead_letter'));
+          END IF;
+        END $$`,
       ],
     },
     {
-      version: 28,
-      statements: governanceV28Statements(assignments),
+      // Kept before v31: v30 owns change-job evidence and execution ordering;
+      // v31 only upgrades retention-receipt retry state.
+      version: 30,
+      statements: governanceV30ChangeJobStatements(changeJobs, changeJobDomains),
     },
+    {
+      // v28 曾在生产使用过其他语义；先幂等补齐 retention 基础表，再升级 retry/lease。
+      version: 31,
+      statements: [
+        ...buildContextRetentionMigrationSql(prefix),
+        ...buildContextRetentionRetryMigrationSql(prefix),
+      ],
+    },
+    { version: 32, statements: governanceV32Statements(prefix) },
+    { version: 33, statements: governanceV33Statements(assignments) },
   ];
 }
 
@@ -959,7 +958,7 @@ export class PgGovernanceMigrationRunner {
     this.schemaVersionsTable = `${this.prefix}_governance_schema_versions`;
   }
 
-  async run(): Promise<void> {
+  async run(targetVersion = Number.POSITIVE_INFINITY): Promise<void> {
     const client = await this.pool.connect();
     const lockKey = `${this.schemaVersionsTable}:migrate`;
     try {
@@ -976,7 +975,7 @@ export class PgGovernanceMigrationRunner {
       const applied = new Set(appliedResult.rows.map(row => Number(row.version)));
 
       for (const migration of migrations(this.prefix)) {
-        if (applied.has(migration.version)) continue;
+        if (migration.version > targetVersion || applied.has(migration.version)) continue;
         await client.query('BEGIN');
         try {
           for (const statement of migration.statements) {

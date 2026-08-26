@@ -128,6 +128,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
   const canDeleteTask = boardAllows(selectedBoard, "task.delete");
   const canComment = boardAllows(selectedBoard, "comment.create");
   const canExecute = boardAllows(selectedBoard, "execution.trigger");
+  const canCancelExecution = boardAllows(selectedBoard, "execution.cancel");
   const canCreateIntegration = boardAllows(selectedBoard, "integration.create")
     && Boolean(
       selectedBoard?.repository
@@ -541,6 +542,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         canDeleteTask={canDeleteTask}
         canComment={canComment}
         canExecute={canExecute}
+        canCancelExecution={canCancelExecution}
         canCancelIntegration={canCancelIntegration}
         modelList={modelList}
         onOpenChange={setDetailOpen}

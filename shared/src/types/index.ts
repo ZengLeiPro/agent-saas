@@ -172,6 +172,7 @@ export type {
   TaskBoardTaskMoveInput,
   TaskBoardCommentCreateInput,
   TaskBoardExecutionStartInput,
+  TaskBoardExecutionCancelInput,
   TaskBoardStagePrompts,
 } from "./taskboard";
 

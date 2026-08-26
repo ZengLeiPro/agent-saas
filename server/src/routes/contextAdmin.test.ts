@@ -3,10 +3,12 @@ import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { contextCenterSnapshotSchema } from '../../../shared/src/lib/governanceApi.js';
+import type { ContextRetentionReceipt } from '../context/lifecycle/index.js';
 import {
   createContextAdminRouter,
   type ContextAdminConsumerStorePort,
   type ContextAdminStorePort,
+  type ContextRetentionWorkerPort,
 } from './contextAdmin.js';
 
 const servers: import('node:http').Server[] = [];
@@ -18,12 +20,15 @@ async function start(
   user: Express.Request['user'],
   store?: ContextAdminStorePort,
   consumers?: ContextAdminConsumerStorePort,
+  retention?: ContextRetentionWorkerPort,
 ) {
   const app = express();
+  app.use(express.json());
   app.use((req, _res, next) => { req.user = user; next(); });
   app.use('/api/admin/context-plane', createContextAdminRouter({
     ...(store ? { store } : {}),
     ...(consumers ? { consumers } : {}),
+    ...(retention ? { retention } : {}),
     now: () => new Date('2026-08-22T16:00:00.000Z'),
   }));
   const server = await new Promise<import('node:http').Server>(resolve => {
@@ -171,6 +176,70 @@ describe('Context Plane admin HTTP contract', () => {
       listConsumers: vi.fn(async () => { throw new Error('db unavailable'); }),
     });
     expect((await fetch(`${unavailable}/snapshot`)).status).toBe(503);
+  });
+
+
+  it('runs default-dry retention and exposes tenant-isolated audit retry', async () => {
+    const receipt = {
+      tenantId: 'tenant-a', receiptId: '11111111-1111-4111-8111-111111111111', dryRun: true,
+    } as ContextRetentionReceipt;
+    const missingReceiptId = '22222222-2222-4222-8222-222222222222';
+    const state = {
+      status: 'dead_letter' as const, revision: 7, attempt: 5, maxAttempts: 5,
+      nextAttemptAt: null, leaseExpiresAt: null, lastError: 'sink unavailable', deliveredAt: null,
+    };
+    const retention: ContextRetentionWorkerPort = {
+      run: vi.fn(async () => ({ receipts: [receipt], failures: [] })),
+      getAuditState: vi.fn(async (_tenantId, receiptId) => {
+        if (receiptId === missingReceiptId) throw new Error('CONTEXT_RETENTION_RECEIPT_NOT_FOUND');
+        return state;
+      }),
+      retryAudit: vi.fn(async () => receipt),
+      replayDeadLetterAudit: vi.fn(async () => receipt),
+    };
+    const base = await start(orgAdmin, undefined, undefined, retention);
+    const response = await fetch(`${base}/retention`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sourceOutboxWatermark: '10', derivedOutboxWatermark: '20',
+        retainAfter: '2026-08-01T00:00:00.000Z',
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(retention.run).toHaveBeenCalledWith([expect.objectContaining({ tenantId: 'tenant-a' })]);
+    expect((retention.run as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]?.[0]).not.toHaveProperty('dryRun');
+
+    const stateResponse = await fetch(`${base}/retention/receipts/${receipt.receiptId}`);
+    expect(stateResponse.status).toBe(200);
+    await expect(stateResponse.json()).resolves.toEqual({ state });
+    expect(retention.getAuditState).toHaveBeenCalledWith('tenant-a', receipt.receiptId);
+    expect((await fetch(`${base}/retention/receipts/${missingReceiptId}`)).status).toBe(404);
+    expect((await fetch(`${base}/retention/receipts/${receipt.receiptId}?tenantId=tenant-b`)).status).toBe(403);
+    expect(retention.getAuditState).toHaveBeenCalledTimes(2);
+
+    const retry = await fetch(`${base}/retention/receipts/${receipt.receiptId}/retry`, { method: 'POST' });
+    expect(retry.status).toBe(200);
+    expect(retention.retryAudit).toHaveBeenCalledWith('tenant-a', receipt.receiptId);
+
+    expect((await fetch(`${base}/retention/receipts/${receipt.receiptId}/retry?tenantId=tenant-b`, {
+      method: 'POST',
+    })).status).toBe(403);
+    expect(retention.retryAudit).toHaveBeenCalledTimes(1);
+
+    expect((await fetch(`${base}/retention/receipts/${receipt.receiptId}/replay`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })).status).toBe(428);
+    const replay = await fetch(`${base}/retention/receipts/${receipt.receiptId}/replay`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedRevision: 7 }),
+    });
+    expect(replay.status).toBe(200);
+    expect(retention.replayDeadLetterAudit).toHaveBeenCalledWith('tenant-a', receipt.receiptId, 7);
+    expect((await fetch(`${base}/retention/receipts/${receipt.receiptId}/replay?tenantId=tenant-b`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedRevision: 7 }),
+    })).status).toBe(403);
+    expect(retention.replayDeadLetterAudit).toHaveBeenCalledTimes(1);
   });
 
   it('locks organization admins to their tenant and returns 503 for an unavailable optional Store', async () => {

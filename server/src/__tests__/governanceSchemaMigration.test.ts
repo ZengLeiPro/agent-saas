@@ -43,7 +43,7 @@ describe('Governance schema migration SQL fixtures', () => {
     expect(fixtureName).not.toContain(legacy.resourceId);
   });
 
-  it('V23-V28 ledger DDL 可从 V22 幂等升级，并保留 tenant-scoped 唯一键', async () => {
+  it('V23+ ledger DDL 可从 V22 幂等升级，并保留 tenant-scoped 唯一键', async () => {
     const statements = governanceV23Statements({ credentialCommits: 'safe_credential_commits' });
     expect(statements).toHaveLength(1);
     expect(statements[0]).toContain('CREATE TABLE IF NOT EXISTS safe_credential_commits');
@@ -72,23 +72,50 @@ describe('Governance schema migration SQL fixtures', () => {
     expect(applied.has(24)).toBe(true);
     expect(applied.has(25)).toBe(true);
     expect(applied.has(26)).toBe(true);
-    expect(applied.has(27)).toBe(true);
-    expect(applied.has(28)).toBe(true);
-    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(6);
+    expect(applied.has(32)).toBe(true);
+    expect(applied.has(33)).toBe(true);
+    const insertedVersions = queries
+      .filter(item => item.sql.includes('INSERT INTO safe_governance_schema_versions'))
+      .map(item => Number(item.params?.[0]));
+    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(insertedVersions.length);
+    expect(insertedVersions).toEqual(Array.from({ length: 11 }, (_, index) => index + 23));
     expect(queries.some(item => item.sql.includes("'dws_delegation'"))).toBe(true);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_credential_commits'))).toHaveLength(1);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_context_sources'))).toHaveLength(1);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_context_entities'))).toHaveLength(1);
     expect(queries.filter(item => item.sql.includes('safe_c26_links_contract_ck'))).toHaveLength(1);
+    expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_context_retention_receipts')))
+      .toHaveLength(2);
     expect(queries.filter(item => item.sql.includes('INSERT INTO safe_governance_schema_versions')))
-      .toEqual([
-        expect.objectContaining({ params: [23] }),
-        expect.objectContaining({ params: [24] }),
-        expect.objectContaining({ params: [25] }),
-        expect.objectContaining({ params: [26] }),
-        expect.objectContaining({ params: [27] }),
-        expect.objectContaining({ params: [28] }),
-      ]);
+      .toEqual(insertedVersions.map(version => expect.objectContaining({ params: [version] })));
     expect(() => new PgGovernanceMigrationRunner(pool as never, 'unsafe-prefix')).toThrow('Invalid PostgreSQL identifier');
+  });
+
+  it('旧生产 V28 账本下，V31 在 ALTER 前先幂等创建 retention 表', async () => {
+    const applied = new Set(Array.from({ length: 28 }, (_, index) => index + 1));
+    const queries: Array<{ sql: string; params?: readonly unknown[] }> = [];
+    const query = async (sql: string, params?: readonly unknown[]) => {
+      queries.push({ sql, params });
+      if (sql.includes('SELECT version FROM')) {
+        return { rows: [...applied].map(version => ({ version })), rowCount: applied.size };
+      }
+      if (sql.includes('INSERT INTO safe_governance_schema_versions')) {
+        applied.add(Number(params?.[0]));
+      }
+      return { rows: [], rowCount: 0 };
+    };
+    const pool = { connect: async () => ({ query, release: () => undefined }) };
+
+    await new PgGovernanceMigrationRunner(pool as never, 'safe').run();
+
+    const createIndex = queries.findIndex(item =>
+      item.sql.includes('CREATE TABLE IF NOT EXISTS safe_context_retention_receipts'));
+    const alterIndex = queries.findIndex(item =>
+      item.sql.includes('ALTER TABLE safe_context_retention_receipts ADD COLUMN'));
+    expect(createIndex).toBeGreaterThanOrEqual(0);
+    expect(alterIndex).toBeGreaterThan(createIndex);
+    expect([...applied].sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 33 }, (_, index) => index + 1),
+    );
   });
 });

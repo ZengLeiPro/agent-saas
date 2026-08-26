@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WebChannel } from '../channels/web/channel.js';
 import { getTranscriptPath } from '../data/transcripts/index.js';
@@ -138,6 +138,7 @@ describe('WebChannel 持久化提问恢复', () => {
             enqueued.push(input);
             return runStore.upsertPending(input);
           },
+          activateCreatedRun: async (runId: string) => runStore.markStatus(runId, 'pending', undefined, { schedulerState: 'ready' }),
         } as any,
         runStore,
         sessionCatalog,
@@ -155,7 +156,9 @@ describe('WebChannel 持久化提问恢复', () => {
       wsClient(ws, USER), 'ask-terminal', { answers: { confirm: '继续' } }, sessionId,
     );
 
-    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'ask-terminal' });
+    expect(ws.sent.at(-1)?.data).toEqual({
+      type: 'respond_ok', interactionId: 'ask-terminal', response: { answers: { confirm: '继续' } },
+    });
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0]).toMatchObject({
       runId: expect.not.stringMatching(/^run-ask-terminal$/),
@@ -237,5 +240,103 @@ describe('WebChannel 持久化提问恢复', () => {
     expect(events).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'run_finished', runId: 'run-ask-terminal' }),
     ]));
+  });
+
+  it('handleRespond 顶层兜底把异步异常关联回当前 attempt', async () => {
+    const channel = new WebChannel({ executionConfig: createExecutionConfig() }, async function* () { yield { type: 'done' as const }; });
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+    (channel as any).resolveInteraction = vi.fn().mockRejectedValue(new Error('unexpected resolve failure'));
+
+    (channel as any).handleRespond(wsClient(ws, USER), {
+      action: 'respond', interactionId: 'ask-top-level', clientAttemptId: 'attempt-top-level',
+    });
+
+    await vi.waitFor(() => expect(ws.sent).toHaveLength(1));
+    expect(ws.sent[0]?.data).toEqual({
+      type: 'respond_error', interactionId: 'ask-top-level', clientAttemptId: 'attempt-top-level',
+      error: 'Interaction response failed; please retry',
+    });
+  });
+
+  it('终态 ask_user enqueue 抛错后可由重试和重连幂等激活 canonical response', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'question-resume-enqueue-recovery-'));
+    dirs.push(tmp);
+    const { sessionId, eventStore } = await seedQuestion(tmp);
+    const sessionCatalog = new FileSessionCatalog({ agentCwd: tmp });
+    const runStore = new MemoryRunStore();
+    await runStore.upsertPending({
+      runId: 'run-ask-terminal', sessionId, userId: USER.sub, tenantId: TENANT,
+      model: 'm-ask', channel: 'web', executionTarget: 'server-local', workspaceId: 'ws-ask',
+    });
+    await runStore.markStatus('run-ask-terminal', 'completed');
+    const resumeRunId = `interaction-resume:${sessionId}:ask-terminal`;
+    const enqueue = vi.fn(async (input: UpsertRunInput) => {
+      const staged = await runStore.upsertPending(input);
+      if (enqueue.mock.calls.length === 1) throw new Error('queue transport unavailable');
+      return staged;
+    });
+    const activateCreatedRun = vi.fn(async (runId: string) => {
+      const record = await runStore.get(runId);
+      if (!record || record.metadata?.schedulerState !== 'staged') return record;
+      return runStore.markStatus(runId, 'pending', undefined, { schedulerState: 'ready' });
+    });
+    const channel = new WebChannel({
+      executionConfig: createExecutionConfig(),
+      agentCwd: tmp,
+      runtimeEventStoreFor: () => eventStore,
+      enqueueRuntime: {
+        scheduler: { enqueue, activateCreatedRun } as any,
+        runStore,
+        sessionCatalog,
+        enabled: true,
+      },
+    }, async function* () { yield { type: 'done' as const }; });
+    channels.push(channel);
+    const firstWs = new FakeWebSocket();
+
+    (channel as any).handleRespond(wsClient(firstWs, USER), {
+      action: 'respond', interactionId: 'ask-terminal', sessionId,
+      clientAttemptId: 'attempt-enqueue-failed', answers: { confirm: '继续' },
+    });
+    await vi.waitFor(() => expect(firstWs.sent).toHaveLength(1), { timeout: 5_000 });
+    expect(firstWs.sent[0]?.data).toEqual({
+      type: 'respond_error', interactionId: 'ask-terminal', clientAttemptId: 'attempt-enqueue-failed',
+      error: 'Interaction response was persisted but resume enqueue failed; please retry',
+    });
+    expect((await runStore.get(resumeRunId))?.metadata?.schedulerState).toBe('staged');
+
+    (channel as any).handleRespond(wsClient(firstWs, USER), {
+      action: 'respond', interactionId: 'ask-terminal', sessionId,
+      clientAttemptId: 'attempt-retry', answers: { confirm: '改成停止' },
+    });
+    await vi.waitFor(() => expect(firstWs.sent).toHaveLength(2), { timeout: 5_000 });
+    expect(firstWs.sent[1]?.data).toEqual({
+      type: 'respond_ok', interactionId: 'ask-terminal', clientAttemptId: 'attempt-retry',
+      response: { answers: { confirm: '继续' } },
+    });
+    expect((await runStore.get(resumeRunId))?.metadata).toMatchObject({
+      schedulerState: 'ready',
+      resumeInteraction: { interactionId: 'ask-terminal', response: { answers: { confirm: '继续' } } },
+    });
+
+    const reconnectWs = new FakeWebSocket();
+    for (const [clientAttemptId, answer] of [['attempt-reconnect', '再次不同'], ['attempt-duplicate', '重复不同']] as const) {
+      (channel as any).handleRespond(wsClient(reconnectWs, USER), {
+        action: 'respond', interactionId: 'ask-terminal', sessionId, clientAttemptId,
+        answers: { confirm: answer },
+      });
+    }
+    await vi.waitFor(() => expect(reconnectWs.sent).toHaveLength(2), { timeout: 5_000 });
+    expect(reconnectWs.sent.map((message) => message.data)).toEqual(expect.arrayContaining([
+      { type: 'respond_ok', interactionId: 'ask-terminal', clientAttemptId: 'attempt-reconnect', response: { answers: { confirm: '继续' } } },
+      { type: 'respond_ok', interactionId: 'ask-terminal', clientAttemptId: 'attempt-duplicate', response: { answers: { confirm: '继续' } } },
+    ]));
+    const resolved = (await eventStore.list(TENANT, sessionId)).filter((event) => (
+      event.type === 'interaction_resolved' && event.interactionId === 'ask-terminal'
+    ));
+    expect(resolved).toEqual([expect.objectContaining({ response: { answers: { confirm: '继续' } } })]);
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(activateCreatedRun).toHaveBeenCalledTimes(1);
   });
 });

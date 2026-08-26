@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import {
+  GOOGLE_WORKSPACE_REQUESTED_SCOPES,
   GoogleWorkspaceOAuthService,
   InMemoryGoogleWorkspaceOAuthStateStore,
   resolveGoogleWorkspaceRuntimeEnv,
@@ -39,7 +40,7 @@ describe('Google Workspace native connector', () => {
         refresh_token: 'refresh-1',
         expires_in: 3600,
         token_type: 'Bearer',
-        scope: 'openid https://www.googleapis.com/auth/drive.readonly',
+        scope: 'openid https://www.googleapis.com/auth/drive',
       }), { status: 200, headers: { 'content-type': 'application/json' } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         email: 'alice@example.com',
@@ -60,14 +61,17 @@ describe('Google Workspace native connector', () => {
     const authorizationUrl = new URL(started.authorizationUrl);
     expect(authorizationUrl.hostname).toBe('accounts.google.com');
     expect(authorizationUrl.searchParams.get('access_type')).toBe('offline');
-    expect(authorizationUrl.searchParams.get('scope')).toContain('gmail.readonly');
+    expect(authorizationUrl.searchParams.get('scope')).toContain('gmail.settings.basic');
+    expect(authorizationUrl.searchParams.get('scope')).toContain('spreadsheets');
+    expect(started.requestedScopes).toEqual([...GOOGLE_WORKSPACE_REQUESTED_SCOPES]);
+    expect(started.requestedScopes).toHaveLength(54);
 
     const finished = await service.finishAuthorization({
       state: started.state,
       code: 'oauth-code',
       redirectUri: 'https://agent.example.com/api/connectors/oauth/callback',
     });
-    expect(finished.scopeSummary).toEqual(['https://www.googleapis.com/auth/drive.readonly', 'openid']);
+    expect(finished.scopeSummary).toEqual(['https://www.googleapis.com/auth/drive', 'openid']);
 
     expect(service.connectionView('user-1', 'alice', 'tenant-a')).toMatchObject({
       status: 'connected',
@@ -126,7 +130,7 @@ describe('Google Workspace native connector', () => {
             'openid',
             'https://www.googleapis.com/auth/userinfo.email',
             'https://www.googleapis.com/auth/userinfo.profile',
-            'https://www.googleapis.com/auth/drive.readonly',
+            'https://www.googleapis.com/auth/drive',
           ].join(' '),
         }), { status: 200, headers: { 'content-type': 'application/json' } }))
         .mockResolvedValueOnce(new Response(JSON.stringify({ email: 'alice@example.com' }), {
@@ -140,11 +144,11 @@ describe('Google Workspace native connector', () => {
       code: 'oauth-code',
       redirectUri: 'https://agent.example.com/api/connectors/oauth/callback',
     })).resolves.toMatchObject({
-      scopeSummary: ['email', 'https://www.googleapis.com/auth/drive.readonly', 'openid', 'profile'],
+      scopeSummary: ['email', 'https://www.googleapis.com/auth/drive', 'openid', 'profile'],
     });
     await expect(service.grantedScopes('user-1', 'alice', 'tenant-a')).resolves.toEqual([
       'email',
-      'https://www.googleapis.com/auth/drive.readonly',
+      'https://www.googleapis.com/auth/drive',
       'openid',
       'profile',
     ]);
@@ -164,7 +168,7 @@ describe('Google Workspace native connector', () => {
         access_token: 'access-1',
         refresh_token: 'refresh-1',
         expires_in: 3600,
-        scope: 'openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/cloud-platform',
+        scope: 'openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/gmail.addons.current.message.readonly',
       }), { status: 200, headers: { 'content-type': 'application/json' } })),
     });
     const started = await service.startAuthorization(user(), 'https://agent.example.com/api/connectors/oauth/callback');
@@ -205,6 +209,49 @@ describe('Google Workspace native connector', () => {
       'https://www.googleapis.com/auth/drive.readonly',
       'openid',
     ]);
+  });
+
+  it('刷新响应省略 scope 时保留原授权范围证据', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'google-workspace-'));
+    roots.push(root);
+    const connectionStore = new ConnectorConnectionStore(join(root, 'connections.json'));
+    const vault = new InMemorySecretVault();
+    const secret = await vault.putSecret(
+      'user-1',
+      'connector',
+      JSON.stringify({
+        accessToken: 'expired-access',
+        refreshToken: 'refresh-1',
+        expiresAt: Date.now() - 1,
+        scope: 'openid https://www.googleapis.com/auth/gmail.settings.basic',
+        tokenType: 'Bearer',
+      }),
+      { actor: 'connector_proxy', userId: 'user-1', tenantId: 'tenant-a', scopes: ['secret:connector:write'] },
+    );
+    await connectionStore.connect({
+      username: 'alice', userId: 'user-1', tenantId: 'tenant-a', connectorId: 'google-workspace',
+      credentialRefs: { oauth: secret.id }, metadata: {
+        credentialOwnerId: 'user-1',
+        grantedScopes: 'openid https://www.googleapis.com/auth/gmail.settings.basic',
+      },
+    });
+    const service = new GoogleWorkspaceOAuthService({
+      clientId: 'client-id', clientSecret: 'client-secret', connectionStore, vault,
+      authorizeGrant: async () => true, authorizeConnect: async () => true,
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(JSON.stringify({
+        access_token: 'refreshed-access', expires_in: 3600,
+      }), { status: 200, headers: { 'content-type': 'application/json' } })),
+    });
+
+    await expect(service.accessToken('user-1', 'alice', 'tenant-a')).resolves.toBe('refreshed-access');
+    const refreshed = JSON.parse(await vault.getSecret(secret.id, {
+      actor: 'connector_proxy', userId: 'user-1', tenantId: 'tenant-a', scopes: ['secret:connector:read'],
+    })) as { refreshToken?: string; scope?: string; tokenType?: string };
+    expect(refreshed).toMatchObject({
+      refreshToken: 'refresh-1',
+      scope: 'openid https://www.googleapis.com/auth/gmail.settings.basic',
+      tokenType: 'Bearer',
+    });
   });
 
   it('keeps the local credential when Google provider revocation fails so deletion can retry safely', async () => {

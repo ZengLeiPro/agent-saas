@@ -22,14 +22,14 @@ import type { MyAgentSettingsTab } from "@/types/settings";
 function readMyAgentTab(): MyAgentSettingsTab {
   const parsed = parseGovernanceUrl(`${window.location.pathname}${window.location.search}`);
   if (parsed.kind !== "route" || parsed.route.routeId !== "settings.personal.my-agent") return "agent-profile";
-  return (parsed.route.tab as MyAgentSettingsTab | null) ?? "agent-profile";
+  return parsed.route.tab === "memory" ? "memory" : "agent-profile";
 }
 
 export function MyAgentSection({
   renderProfile,
   renderMemory,
 }: {
-  renderProfile: (openPersona: () => void) => ReactNode;
+  renderProfile: () => ReactNode;
   renderMemory?: () => ReactNode;
 }) {
   const { user } = useAuth();
@@ -49,18 +49,14 @@ export function MyAgentSection({
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
-      <SettingsPanelHeader title="我的 Agent" description="在资料、Persona 与长期 Memory 之间切换；深链刷新会保留当前 Tab。" />
+      <SettingsPanelHeader title="我的 Agent" description="在资料与长期 Memory 之间切换；深链刷新会保留当前 Tab。" />
       <Tabs value={tab} onValueChange={changeTab} className="flex min-h-0 flex-1 flex-col">
         <TabsList className="mb-4 w-fit">
           <TabsTrigger value="agent-profile">资料</TabsTrigger>
-          <TabsTrigger value="persona">Persona</TabsTrigger>
           <TabsTrigger value="memory">长期 Memory</TabsTrigger>
         </TabsList>
         <TabsContent value="agent-profile" className="min-h-0 flex-1 overflow-auto">
-          {renderProfile(() => changeTab("persona"))}
-        </TabsContent>
-        <TabsContent value="persona" className="min-h-0 flex-1">
-          {user?.username ? <AgentDocEditor username={user.username} kind="persona" hideInternalHeader /> : null}
+          {renderProfile()}
         </TabsContent>
         <TabsContent value="memory" className="min-h-0 flex-1">
           {renderMemory?.() ?? (user?.username ? <AgentDocEditor username={user.username} kind="memory" hideInternalHeader /> : null)}
@@ -294,7 +290,7 @@ export function ConnectionsSection() {
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border p-3 text-sm">
             <div className="min-w-0 flex-1"><div className="font-medium">Google Workspace</div><div className="text-xs text-muted-foreground">{hasActiveGoogleGrant ? "已存在受治理的长期授权" : googleGrant ? `当前状态：${grantStatusLabel[googleGrant.status]}，请重新连接` : "通过 Google 官方页面授权；回调成功后重新读取 OAuth Grant。"}</div></div>
-            {!hasActiveGoogleGrant ? <Button type="button" size="sm" onClick={() => { void connectGoogle(); }} disabled={connectingGoogle}>{connectingGoogle ? <Loader2 className="size-4 animate-spin" /> : null}{googleGrant ? "重新连接" : "连接"}</Button> : null}
+            <Button type="button" size="sm" onClick={() => { void connectGoogle(); }} disabled={connectingGoogle}>{connectingGoogle ? <Loader2 className="size-4 animate-spin" /> : null}{hasActiveGoogleGrant ? "扩展权限" : googleGrant ? "重新连接" : "连接"}</Button>
             {connectingGoogle ? <Button type="button" size="sm" variant="outline" onClick={cancelGoogleConnect}>取消授权</Button> : null}
           </div>
           {googleConnectPreview ? <div className="mt-3 space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4 text-sm" aria-labelledby="google-connect-preview-title">

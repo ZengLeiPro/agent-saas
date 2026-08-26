@@ -30,34 +30,16 @@ describe("platform admin url sync", () => {
     });
   });
 
-  it("canonicalizes legacy platform settings routes into V2 console leaves", () => {
-    expect(parseUrl("/platform-admin/settings/signup")).toMatchObject({
-      tab: "platform-admin",
-      adminSection: "overview",
-      adminSettings: null,
-      canonicalPath: "/platform-console/org-business/signup",
-    });
-
-    expect(parseUrl("/platform-admin/settings/memory-polling")).toMatchObject({
-      tab: "platform-admin",
-      adminSection: "overview",
-      adminSettings: null,
-      canonicalPath: "/platform-console/governance/memory-policy",
-    });
+  it("Registry platform settings 刷新时保留统一设置工作区", () => {
+    for (const section of ["signup", "memory-polling", "system-prompts", "agent-profiles"] as const) {
+      expect(parseUrl(`/platform-admin/settings/${section}`)).toMatchObject({
+        tab: "platform-admin",
+        adminSettings: { target: "platform", section },
+        canonicalPath: null,
+      });
+    }
     expect(buildAdminSettingsUrl("platform", "memory-polling"))
       .toBe("/platform-admin/settings/memory-polling");
-    expect(parseUrl("/platform-admin/settings/system-prompts")).toMatchObject({
-      tab: "platform-admin",
-      adminSection: "overview",
-      adminSettings: null,
-      canonicalPath: "/platform-console/governance/system-prompts",
-    });
-    expect(parseUrl("/platform-admin/settings/agent-profiles")).toMatchObject({
-      tab: "platform-admin",
-      adminSection: "overview",
-      adminSettings: null,
-      canonicalPath: "/platform-console/governance/system-settings",
-    });
   });
 
   it("canonicalizes legacy runtime settings sections into entity sections", () => {

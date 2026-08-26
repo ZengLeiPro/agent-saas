@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskBoardTask } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
 import {
+  cancelExecution,
   cancelIntegrationTask,
   createIntegrationBatch,
   deleteBoardMember,
@@ -64,6 +65,39 @@ describe("任务看板 API 错误对象", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ expectedVersion: task.version }),
+      }),
+    );
+  });
+
+  it("终止执行接口携带 Execution、CAS 版本与原因", async () => {
+    const result = {
+      task: { ...task, status: "todo" as const },
+      execution: {
+        id: "execution-1",
+        taskId: task.id,
+        runId: "run-1",
+        sessionId: "session-1",
+        status: "cancelled" as const,
+        purpose: "work" as const,
+        requestedBy: "user-1",
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+      },
+    };
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+
+    await expect(cancelExecution(task.id, result.execution.id, {
+      expectedVersion: task.version,
+      reason: "人工终止",
+    })).resolves.toEqual(result);
+    expect(authFetch).toHaveBeenCalledWith(
+      `/api/taskboard/tasks/${task.id}/executions/${result.execution.id}/cancel`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ expectedVersion: task.version, reason: "人工终止" }),
       }),
     );
   });

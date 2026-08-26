@@ -24,7 +24,7 @@ function buildPool() {
       if (existing) return { rows: [], rowCount: 0 };
       const row = {
         job_id: params[0], tenant_id: params[1], job_type: params[2], target_type: params[3], target_id: params[4],
-        idempotency_key: params[5], request_json: JSON.parse(String(params[6])), status: 'pending', revision: '1', attempt: 0,
+        idempotency_key: params[5], request_json: JSON.parse(String(params[6])), status: 'pending', revision: '1', attempt: 0, max_attempts: params[8] ?? 5,
         last_error_code: null, next_retry_at: null, created_at: NOW, created_by: params[7], updated_at: NOW,
         updated_by: params[7], completed_at: null,
       };
@@ -34,7 +34,7 @@ function buildPool() {
     if (sql.includes('INSERT INTO test_governance_change_job_domains')) {
       const key = `${params[0]}:${params[1]}`;
       if (!domains.has(key)) domains.set(key, {
-        job_id: params[0], domain: params[1], status: 'pending', total_count: '0', completed_count: '0',
+        job_id: params[0], domain: params[1], ordinal: params[2], status: 'pending', total_count: '0', completed_count: '0',
         failed_count: '0', unresolved_items_json: [], revision: '1', updated_at: NOW, last_error_code: null,
       });
       return { rows: [], rowCount: 1 };
@@ -49,8 +49,14 @@ function buildPool() {
         && ['pending', 'running', 'retry_wait'].includes(String(item.status)));
       return { rows: row ? [sql.includes('SELECT *') ? row : { job_id: row.job_id }] : [], rowCount: row ? 1 : 0 };
     }
+    if (!sql.includes('UPDATE') && sql.includes('FROM test_governance_change_job_domains') && sql.includes('d.job_id=$2')) {
+      const rows = [...domains.values()].filter(row => row.job_id === params[1])
+        .sort((a, b) => Number(a.ordinal) - Number(b.ordinal) || String(a.domain).localeCompare(String(b.domain)));
+      return { rows, rowCount: rows.length };
+    }
     if (sql.includes('FROM test_governance_change_job_domains') && sql.includes('WHERE job_id=$1')) {
-      const rows = [...domains.values()].filter(row => row.job_id === params[0]);
+      const rows = [...domains.values()].filter(row => row.job_id === params[0])
+        .sort((a, b) => Number(a.ordinal) - Number(b.ordinal) || String(a.domain).localeCompare(String(b.domain)));
       return { rows, rowCount: rows.length };
     }
     if (sql.includes('JOIN test_governance_change_jobs')) {
@@ -74,7 +80,7 @@ function buildPool() {
       const job = jobs.get(String(params[1]));
       const key = `${params[1]}:${params[2]}`;
       const row = domains.get(key);
-      if (!job || job.tenant_id !== params[0] || job.status !== 'running' || !row || Number(row.revision) !== Number(params[9])) return { rows: [], rowCount: 0 };
+      if (!job || job.tenant_id !== params[0] || job.status !== 'running' || !row || Number(row.revision) !== Number(params[10])) return { rows: [], rowCount: 0 };
       const updated = {
         ...row, status: params[3], total_count: String(params[4]), completed_count: String(params[5]),
         failed_count: String(params[6]), last_error_code: params[7], unresolved_items_json: JSON.parse(String(params[8])),
@@ -120,7 +126,20 @@ describe('Governance Change Job', () => {
     expect(sql).toContain('UNIQUE (tenant_id, job_type, idempotency_key)');
     expect(sql).toContain('test_governance_change_jobs_active_target_unique');
     expect(sql).toContain("WHERE status IN ('pending','running','retry_wait')");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(28);
+    expect(sql).toContain('unresolved_items_json');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS ordinal INTEGER');
+    expect(sql).toContain("'deletion_verification',9,'pending'");
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(33);
+  });
+
+  it('按请求顺序持久化并返回分域 ordinal，通用 Job 也不依赖字母排序', async () => {
+    const { pool } = buildPool();
+    const store = new PgGovernanceChangeJobStore({ pool, tablePrefix: 'test' });
+    const first = await store.create(createInput);
+    expect(first.domains.map(domain => [domain.domain, domain.ordinal]))
+      .toEqual([['memberships', 1], ['assignments', 2]]);
+    expect((await store.listDomains('acme', first.job.jobId)).map(domain => domain.domain))
+      .toEqual(['memberships', 'assignments']);
   });
 
   it('同 idempotency key 返回同一 Job，不重复建立分域', async () => {
@@ -242,7 +261,8 @@ describe('Governance Change Job', () => {
     let job: GovernanceChangeJob = {
       jobId: 'job-offboard', tenantId: 'acme', jobType: 'user_offboarding', targetType: 'user',
       targetId: 'leaver', idempotencyKey: 'offboard-1', request: {}, status: 'pending',
-      revision: 1, attempt: 0, createdAt: NOW, createdBy: 'admin', updatedAt: NOW, updatedBy: 'admin',
+      revision: 1, attempt: 0, maxAttempts: 5,
+      createdAt: NOW, createdBy: 'admin', updatedAt: NOW, updatedBy: 'admin',
     };
     const domains = new Map<string, GovernanceChangeJobDomain>([
       ['credentials_connectors', {

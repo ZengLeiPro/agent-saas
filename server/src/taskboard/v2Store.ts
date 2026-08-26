@@ -14,6 +14,7 @@ import type { RepositoryProvider } from './repositoryProvider.js';
 import { rowToIntegrationSource } from './integrationSourceMapper.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { resolveExecutionContextWorkflowContract } from './executionContextContract.js';
+import { fenceTaskExecutions } from './workflow/commandService.js';
 import {
   commentExecutionJoin,
   rowToComment,
@@ -338,24 +339,26 @@ export async function cancelIntegrationTask(
     if (loaded.task.kind !== 'integration') {
       throw new TaskboardValidationError('Only integration tasks can be canceled');
     }
+    if (loaded.task.status === 'canceled') return loaded.task;
     if (loaded.task.version !== input.expectedVersion) throw new TaskboardConflictError(loaded.task);
-    if (['done', 'canceled'].includes(loaded.task.status)) {
+    if (loaded.task.status === 'done') {
       throw new TaskboardValidationError('Integration task is already terminal');
-    }
-    const active = await client.query(
-      `SELECT 1 FROM ${options.executionsTable}
-        WHERE task_id=$1 AND status IN ('queued','running','waiting_user','waiting_approval') LIMIT 1`,
-      [taskId],
-    );
-    if (active.rows[0]) {
-      throw new TaskboardValidationError('Stop the active merge execution before canceling');
     }
     if ((loaded.task.workflowVersion ?? 2) === 3) {
       const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
       const agent = await client.query(
-        `SELECT repository_id FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId],
+        `SELECT repository_id,status,merge_receipt,merge_in_flight_execution_id
+           FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId],
       );
       if (agent.rows[0]) {
+        if (String(agent.rows[0].status) === 'merged' || agent.rows[0].merge_receipt
+          || agent.rows[0].merge_in_flight_execution_id) {
+          throw new TaskboardValidationError(
+            'Provider merge result must be reconciled before cancellation',
+            'TASKBOARD_PROVIDER_RESULT_UNKNOWN',
+          );
+        }
+        await fenceTaskExecutions(options, client, [taskId], 'integration_canceled');
         const reason = input.reason?.trim() || 'Integration task canceled by user';
         await client.query(
           `UPDATE ${agentsTable} SET status='canceled',updated_at=now() WHERE integration_task_id=$1`, [taskId],
@@ -398,6 +401,7 @@ export async function cancelIntegrationTask(
         'TASKBOARD_PROVIDER_RESULT_UNKNOWN',
       );
     }
+    await fenceTaskExecutions(options, client, [taskId], 'integration_canceled');
     await client.query(
       `UPDATE ${options.tasksTable}
           SET status='canceled', completed_at=NULL, version=version+1, updated_at=now()

@@ -654,22 +654,22 @@ describe('processWsEvent - 交互事件', () => {
     expect(ctrl.messages[1]).toMatchObject({ type: 'ask_user', interactionId: 'x2', status: 'pending' });
   });
 
-  it('interaction_resolved：pending permission → allowed', () => {
-    const ctrl = makeController([
-      { id: 'p', type: 'permission_request', interactionId: 'x1', toolName: 'T', toolInput: '', status: 'pending' },
-    ]);
-    const { ctx } = makeCtx(ctrl);
-    dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'x1' }, ctx);
-    expect((ctrl.messages[0] as Extract<MessageItem, { type: 'permission_request' }>).status).toBe('allowed');
+  it.each([[true, 'allowed'], [false, 'denied']] as const)('interaction_resolved：canonical allow=%s → %s', (allow, status) => {
+      const ctrl = makeController([{ id: 'p', type: 'permission_request', interactionId: 'x1', toolName: 'T', toolInput: '', status: 'pending' }]);
+      dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'x1', response: { allow } }, makeCtx(ctrl).ctx);
+      expect((ctrl.messages[0] as Extract<MessageItem, { type: 'permission_request' }>).status).toBe(status);
   });
 
-  it('interaction_resolved：pending ask_user → answered', () => {
-    const ctrl = makeController([
-      { id: 'a', type: 'ask_user', interactionId: 'x2', questions: [], status: 'pending' },
-    ]);
-    const { ctx } = makeCtx(ctrl);
-    dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'x2' }, ctx);
-    expect((ctrl.messages[0] as Extract<MessageItem, { type: 'ask_user' }>).status).toBe('answered');
+  it('interaction_resolved：应用 canonical AskUser answers', () => {
+    const ctrl = makeController([{ id: 'a', type: 'ask_user', interactionId: 'x2', questions: [], status: 'pending' }]);
+    dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'x2', response: { answers: { q: '否' } } }, makeCtx(ctrl).ctx);
+    expect(ctrl.messages[0]).toMatchObject({ type: 'ask_user', status: 'answered', answers: { q: '否' } });
+  });
+
+  it('interaction_resolved：兼容旧事件但不臆造审批结果', () => {
+    const ctrl = makeController([{ id: 'p', type: 'permission_request', interactionId: 'legacy', toolName: 'T', toolInput: '', status: 'pending' }]);
+    dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'legacy' }, makeCtx(ctrl).ctx);
+    expect((ctrl.messages[0] as Extract<MessageItem, { type: 'permission_request' }>).status).toBe('pending');
   });
 
   it('pending_interactions：批量补齐未存在的卡片，已存在的跳过', () => {

@@ -13,6 +13,8 @@ import { validateGovernanceCredentialHealth } from '../governance/credentialHeal
 import { revokePendingAliyunCredentials } from '../connectors/aliyun.js';
 import { revokePendingGithubCredentials } from '../connectors/github.js';
 import { revokePendingXCredentials } from '../connectors/x.js';
+import { GOOGLE_WORKSPACE_CONNECTOR_ID } from '../connectors/googleWorkspace.js';
+import type { OAuthGrant } from '../data/oauthGrants/types.js';
 import { inventoryPersonalWorkspace } from './governancePersonalDataRetention.js';
 import type { ExecuteUserOffboarding } from './governanceOffboarding.js';
 import type { AppRuntime } from './runtime.js';
@@ -27,6 +29,20 @@ import { resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import type { MembershipCreateInput } from '../routes/governanceAccessValidation.js';
 
 const scheduledOffboardingRuntimes = new WeakSet<AppRuntime>();
+
+export async function resolveRuntimeGoogleOAuthGrantImpact(grant: OAuthGrant) {
+  if (grant.provider !== 'google' || grant.connectorId !== GOOGLE_WORKSPACE_CONNECTOR_ID) {
+    throw new Error('OAuth dependency impact authority unavailable');
+  }
+  // Grant 是用户级运行时凭据；Agent/Automation 依赖的是 Connector 目录项，不直接引用 Grant。
+  return {
+    affectedResources: [],
+    blockers: [],
+    affectedAgents: [],
+    affectedAutomations: [],
+    brokenReferences: [],
+  };
+}
 
 export async function resolveRuntimeTenantLifecycleImpact(
   runtime: Pick<AppRuntime, 'tenantStore' | 'membershipStore'>,
@@ -286,9 +302,15 @@ export function registerGovernanceRoutes(
           };
         }),
         getTenantLifecycle: (tenantId: string) => runtime.tenantStore!.findByIdStrict(tenantId),
-        resolveDependencyImpact: input => input.kind === 'tenant' && input.action
-          ? resolveRuntimeTenantLifecycleImpact(runtime, input.tenantId, input.action)
-          : Promise.reject(new Error('Dependency impact authority unavailable')),
+        resolveDependencyImpact: input => {
+          if (input.kind === 'tenant' && input.action) {
+            return resolveRuntimeTenantLifecycleImpact(runtime, input.tenantId, input.action);
+          }
+          if (input.kind === 'oauth' && input.grant) {
+            return resolveRuntimeGoogleOAuthGrantImpact(input.grant);
+          }
+          return Promise.reject(new Error('Dependency impact authority unavailable'));
+        },
         setTenantDisabled: async (
           tenantId: string,
           disabled: boolean,

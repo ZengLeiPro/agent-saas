@@ -225,12 +225,12 @@ export class ArtifactService {
   async createReadUrlForUser(
     artifactId: string,
     user: RuntimeArtifactUser | undefined,
-    opts: { baseUrl: string; expiresInSeconds?: number; forceProxy?: boolean },
+    opts: { baseUrl: string; expiresInSeconds?: number; forceProxy?: boolean; forceDownload?: boolean },
   ): Promise<ArtifactReadUrl> {
     const record = await this.getForUser(artifactId, user);
     const ttlSeconds = opts.expiresInSeconds ?? this.defaultReadUrlTtlSeconds;
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
-    if (record.uri.startsWith('oss://') && !opts.forceProxy) {
+    if (record.uri.startsWith('oss://') && !opts.forceProxy && !opts.forceDownload) {
       return {
         url: await this.options.blobStore.createReadUrl(record.uri, { expiresInSeconds: ttlSeconds }),
         expiresAt,
@@ -240,7 +240,7 @@ export class ArtifactService {
     const token = this.signReadToken(artifactId, expiresAt);
     const base = opts.baseUrl.replace(/\/$/, '');
     return {
-      url: `${base}/api/artifacts/${encodeURIComponent(artifactId)}/content?token=${encodeURIComponent(token)}`,
+      url: `${base}/api/artifacts/${encodeURIComponent(artifactId)}/content?token=${encodeURIComponent(token)}${opts.forceDownload ? '&download=true' : ''}`,
       expiresAt,
       direct: false,
     };

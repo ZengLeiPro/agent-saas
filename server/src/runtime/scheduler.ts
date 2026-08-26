@@ -8,11 +8,12 @@ import {
 } from './background/backgroundTaskRuntime.js';
 import type { MessageDeliveryMode, RunRecord, RunStatus, RunStore } from './runStore.js';
 import type { RuntimeAdmissionGuard } from './memoryPressureGuard.js';
-import type { EventStore } from './types.js';
+import type { EventStore, PlatformEvent } from './types.js';
 
 const DEFAULT_APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const STALE_APPROVAL_REASON = 'stale_waiting_approval_timeout';
 const STALE_APPROVAL_BATCH_SIZE = 50;
+const STAGED_INTERACTION_RECOVERY_BATCH_SIZE = 50;
 const BACKGROUND_COMMAND_START_TIMEOUT_MS = 2 * 60_000;
 const DEFAULT_MAX_CONCURRENT_RUNS = 16;
 export const SCHEDULER_STATE_METADATA_KEY = 'schedulerState';
@@ -185,11 +186,28 @@ export class RuntimeScheduler {
    * Makes a create-only staged pending run visible to recovery/lease scans.
    * The RunStore CAS must return the current record when another worker already advanced it.
    */
-  async activateCreatedRun(runId: string): Promise<RunRecord> {
-    const activateStagedRun = this.options.runStore.activateStagedRun?.bind(this.options.runStore);
-    if (!activateStagedRun) throw new Error('RunStore staged activation unavailable');
-    const activated = await activateStagedRun(runId);
-    if (!activated) throw new Error(`Runtime Run not found during activation: ${runId}`);
+  async activateCreatedRun(
+    runId: string,
+    interactionClaim?: Record<string, unknown>,
+    interactionMetadataPatch?: Record<string, unknown>,
+  ): Promise<RunRecord | null> {
+    let activated: RunRecord | null;
+    if (interactionClaim) {
+      const activate = this.options.runStore.activatePersistedInteractionResume?.bind(this.options.runStore);
+      if (!activate) throw new Error('RunStore staged interaction activation unavailable');
+      activated = await activate(runId, interactionClaim, interactionMetadataPatch);
+    } else {
+      const activate = this.options.runStore.activateStagedRun?.bind(this.options.runStore);
+      if (!activate) throw new Error('RunStore staged activation unavailable');
+      activated = await activate(runId);
+    }
+    // Interaction activation is strict: null means another claimant owns (or
+    // rolled back) the staged record. Do not accidentally schedule a generic
+    // Taskboard staged run in that case.
+    if (!activated) {
+      if (interactionClaim) return null;
+      throw new Error(`Runtime Run not found during activation: ${runId}`);
+    }
     if (
       activated.status === 'pending'
       && activated.metadata?.[SCHEDULER_STATE_METADATA_KEY] === SCHEDULER_STATE_READY
@@ -279,6 +297,12 @@ export class RuntimeScheduler {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.options.logger?.error(`Runtime scheduler beforeTick failed: ${message}`);
+      }
+      try {
+        await this.recoverStagedPersistedInteractions();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.options.logger?.error(`Runtime scheduler staged interaction recovery failed: ${message}`);
       }
       try {
         const nextMaxConcurrentRuns = await this.options.resolveMaxConcurrentRuns?.();
@@ -403,6 +427,41 @@ export class RuntimeScheduler {
       });
     }, 0);
     timer.unref?.();
+  }
+
+  private async recoverStagedPersistedInteractions(): Promise<void> {
+    const listStaged = this.options.runStore.listStagedPersistedInteractionResumes?.bind(this.options.runStore);
+    const activate = this.options.runStore.activatePersistedInteractionResume?.bind(this.options.runStore);
+    if (!listStaged || !activate) return;
+
+    const staged = await listStaged(STAGED_INTERACTION_RECOVERY_BATCH_SIZE);
+    for (const record of staged) {
+      const claim = record.metadata?.persistedInteractionResumeClaim;
+      if (!isPersistedInteractionResumeClaim(claim, record.sessionId)) continue;
+      try {
+        const events = await this.options.eventStore.list(requireTenantId(record.tenantId), record.sessionId, {
+          includeTypes: ['interaction_resolved'],
+        });
+        const resolved = events.find((event): event is Extract<PlatformEvent, { type: 'interaction_resolved' }> => (
+          event.type === 'interaction_resolved'
+          && event.runId === record.runId
+          && event.interactionId === claim.interactionId
+          && event.interactionType === claim.interactionType
+        ));
+        if (!resolved) continue;
+        const metadataPatch = claim.interactionType === 'approval'
+          ? { resumeApproval: { approvalId: claim.interactionId, response: resolved.response } }
+          : { resumeInteraction: { interactionId: claim.interactionId, response: resolved.response } };
+        const activated = await activate(record.runId, claim, metadataPatch);
+        if (activated?.metadata?.[SCHEDULER_STATE_METADATA_KEY] === SCHEDULER_STATE_READY) {
+          this.tickAgainRequested = true;
+          this.options.logger?.info(`Recovered staged interaction activation for run ${record.runId}`);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.options.logger?.warn(`Failed staged interaction recovery for ${record.runId}: ${message}`);
+      }
+    }
   }
 
   private async cancelStaleWaitingApprovals(): Promise<void> {
@@ -606,6 +665,21 @@ export class RuntimeScheduler {
 function requireTenantId(tenantId: string | undefined): string {
   if (!tenantId?.trim()) throw new Error('Runtime event tenantId is required');
   return tenantId;
+}
+
+function isPersistedInteractionResumeClaim(
+  value: unknown,
+  sessionId: string,
+): value is Record<string, unknown> & {
+  sessionId: string;
+  interactionId: string;
+  interactionType: 'ask_user' | 'approval';
+} {
+  if (!value || typeof value !== 'object') return false;
+  const claim = value as Record<string, unknown>;
+  return claim.sessionId === sessionId
+    && typeof claim.interactionId === 'string'
+    && (claim.interactionType === 'ask_user' || claim.interactionType === 'approval');
 }
 
 function classifyRun(record: RunRecord): string {

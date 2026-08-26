@@ -17,6 +17,7 @@ export interface TaskboardExecutionOutboxHost {
   tasksTable: string;
   executionsTable: string;
   executionOutboxTable: string;
+  cancellationOutboxTable: string;
 }
 
 export async function runExecutionOutboxMigrations(
@@ -78,6 +79,11 @@ export async function claimExecutionDispatch(
          AND NOT (t.kind='integration' AND t.workflow_version<>3)
          AND t.archived_at IS NULL AND b.archived_at IS NULL
          AND e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
+         AND NOT EXISTS (
+           SELECT 1 FROM ${host.cancellationOutboxTable} cancellation
+           WHERE cancellation.execution_id=e.id
+             AND cancellation.status IN ('pending','processing','failed')
+         )
          AND ((o.status='pending' AND o.next_attempt_at <= now())
            OR (o.status='dispatching' AND o.lease_expires_at <= now()))
        ORDER BY o.next_attempt_at, o.created_at, o.run_id
@@ -95,6 +101,55 @@ export async function claimExecutionDispatch(
     [leaseId, runId ?? null],
   );
   return result.rows[0] ? rowToExecutionDispatch(result.rows[0]) : null;
+}
+
+export async function runExecutionDispatchGate(
+  host: TaskboardExecutionOutboxHost,
+  runId: string,
+  leaseId: string,
+  operation: () => Promise<void>,
+): Promise<boolean> {
+  return withTransaction(host.pool, async (client) => {
+    const admitted = await client.query(
+      `SELECT e.id
+       FROM ${host.executionsTable} e
+       JOIN ${host.executionOutboxTable} o ON o.run_id=e.run_id
+       WHERE e.run_id=$1
+         AND e.status IN ('queued','running','waiting_user','waiting_approval')
+         AND o.status='dispatching' AND o.lease_id=$2
+         AND NOT EXISTS (
+           SELECT 1 FROM ${host.cancellationOutboxTable} cancellation
+           WHERE cancellation.execution_id=e.id
+             AND cancellation.status IN ('pending','processing','failed')
+         )
+       FOR UPDATE OF e,o`,
+      [runId, leaseId],
+    );
+    if (!admitted.rows[0]) {
+      await client.query(
+        `UPDATE ${host.executionOutboxTable} o
+         SET status='dispatched',lease_id=NULL,lease_expires_at=NULL,updated_at=now()
+         FROM ${host.executionsTable} e
+         WHERE o.run_id=$1 AND o.run_id=e.run_id
+           AND o.status='dispatching' AND o.lease_id=$2
+           AND (
+             e.status IN ('succeeded','failed','cancelled')
+             OR EXISTS (
+               SELECT 1 FROM ${host.cancellationOutboxTable} cancellation
+               WHERE cancellation.execution_id=e.id
+                 AND cancellation.status IN ('pending','processing','failed')
+             )
+           )`,
+        [runId, leaseId],
+      );
+      return false;
+    }
+    // The execution row lock is deliberately held across durable Runtime Run creation.
+    // A concurrent workflow fence must wait; once it proceeds, the run exists and the
+    // canonical cancellation transaction can cancel target/steering/tools atomically.
+    await operation();
+    return true;
+  });
 }
 
 export function markExecutionDispatchSucceeded(

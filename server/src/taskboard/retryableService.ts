@@ -5,6 +5,7 @@ import type {
   TaskBoardCommentPatchInput,
   TaskBoardCreateInput,
   TaskBoardExecution,
+  TaskBoardExecutionCancelInput,
   TaskBoardExecutionContextInput,
   TaskBoardExecutionContextResponse,
   TaskBoardExecutionFinishInput,
@@ -444,6 +445,17 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.searchExecutions(identity, taskId, filter);
   }
 
+  async cancelExecution(
+    identity: TaskboardIdentity,
+    taskId: string,
+    executionId: string,
+    input: TaskBoardExecutionCancelInput,
+  ): Promise<TaskBoardExecutionStartResult> {
+    await this.init();
+    if (!this.target.cancelExecution) throw new Error('Taskboard execution cancellation unavailable');
+    return this.target.cancelExecution(identity, taskId, executionId, input);
+  }
+
   async getExecutionModelContext(
     identity: TaskboardIdentity,
     taskId: string,
@@ -590,6 +602,11 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
   ): Promise<TaskboardExecutionDispatch | null> {
     await this.init();
     return this.target.claimExecutionDispatch(runId, leaseId);
+  }
+
+  async runExecutionDispatchGate(runId: string, leaseId: string, operation: () => Promise<void>): Promise<boolean> {
+    await this.init();
+    return this.target.runExecutionDispatchGate(runId, leaseId, operation);
   }
 
   async markExecutionDispatchSucceeded(runId: string, leaseId: string): Promise<boolean> {

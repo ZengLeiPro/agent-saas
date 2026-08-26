@@ -12,7 +12,11 @@ import type {
   ToolResult,
   ToolRuntime,
 } from '../agent/toolRuntime.js';
-import { createBuiltinAgentProfileRecords, getBuiltinProfileByBinding } from '../data/agentProfiles/builtins.js';
+import {
+  createBuiltinAgentProfileRecords,
+  getBuiltinCompatibleConfigDigests,
+  getBuiltinProfileByBinding,
+} from '../data/agentProfiles/builtins.js';
 import {
   digestAgentRuntimeProfileConfig,
   parseAgentRuntimeProfileConfig,
@@ -378,27 +382,32 @@ describe('real RawAgentLoop Profile scenarios', () => {
     expect(systemMessage(newAdapter.requests[0]!)).toContain('PROFILE_V2_MARKER');
   });
 
-  it('allows a stale digest only for a current built-in background Worker Profile', async () => {
+  it('only accepts registered same-version migration digests for a built-in background Worker Profile', async () => {
     const store = new MutableProfileStore();
     await store.init();
     const resolver = new AgentRuntimeProfileResolver(store);
     const background = boundFromBuiltin('background_general');
-    const staleBackground = {
-      ...sessionFromBound(background),
-      profileConfigDigest: 'stale-background-digest',
-    };
+    const persistedV2Digest = digestAgentRuntimeProfileConfig({
+      ...background.version.config,
+      limits: { ...background.version.config.limits, maxTurns: 200 },
+    });
+    expect(getBuiltinCompatibleConfigDigests(background.version.profileVersionId)).toContain(persistedV2Digest);
     await expect(resolver.resolveForSession({
-      existingSession: staleBackground,
+      existingSession: { ...sessionFromBound(background), profileConfigDigest: persistedV2Digest },
       bindingKey: 'background_general',
     })).resolves.toMatchObject({
       binding: { profileVersionId: background.binding.profileVersionId },
     });
 
-    const main = boundFromBuiltin('main');
-    await expect(resolver.resolveForSession({
-      existingSession: { ...sessionFromBound(main), profileConfigDigest: 'stale-main-digest' },
-      bindingKey: 'main',
-    })).rejects.toMatchObject({ code: 'CONFLICT' });
+    const v1Digest = createBuiltinAgentProfileRecords().versions.find(version => (
+      version.profileVersionId === 'arpv_builtin_subagent_general_v1'
+    ))!.configDigest;
+    for (const profileConfigDigest of [v1Digest, 'unregistered-background-digest', undefined]) {
+      await expect(resolver.resolveForSession({
+        existingSession: { ...sessionFromBound(background), profileConfigDigest },
+        bindingKey: 'background_general',
+      })).rejects.toMatchObject({ code: 'CONFLICT' });
+    }
   });
 
   it('Responses relay only reuses state produced by the same Profile config digest', async () => {

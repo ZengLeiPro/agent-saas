@@ -156,6 +156,23 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     }
   }
 
+  async releaseClaim(
+    inboxId: string,
+    owner: string,
+    fence: number,
+  ): Promise<AgentDwsInboxRecord> {
+    assertOwnerFence(owner, fence);
+    assertTexts(inboxId);
+    return await this.updateWithLease(`
+      UPDATE ${this.inboxTable}
+      SET state='pending',attempt=GREATEST(attempt-1,0),
+          lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,updated_at=NOW()
+      WHERE inbox_id=$1 AND state='processing'
+        AND lease_owner=$2 AND lease_fence=$3 AND lease_expires_at > NOW()
+      RETURNING *
+    `, [inboxId, owner, fence]);
+  }
+
   async renewLease(
     inboxId: string,
     owner: string,

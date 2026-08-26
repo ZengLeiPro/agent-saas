@@ -1,13 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { Express, Request, Response } from "express";
-
 import type { AppRuntime } from "./runtime.js";
 import { registerAudioTranscribeAdminRoute } from "./audioTranscribeAdminRoute.js";
 import { registerGovernanceRoutes } from './governanceRoutes.js';
 import { activeOffboardingWriteFence, tenantFeatureGuard } from "./routeGuards.js";
 import { createContextRecallRuntime } from './runtimeMemoryContextTools.js';
-import { createContextAdminConsumerStore, createContextProductService } from './runtimeContextAdmin.js';
+import { createContextAdminConsumerStore, createContextProductService, createContextRetentionWorker } from './runtimeContextAdmin.js';
 export { activeOffboardingWriteFence } from "./routeGuards.js";
 import type { UserInfo } from "../data/users/types.js";
 import { getPublicModelList, getUserPublicModelList, resolveContextAccountingFromModels } from "./models.js";
@@ -15,7 +14,6 @@ import { applyModelsHotUpdate } from "./modelsHotUpdate.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import { enforcePlatformWritePolicy } from "../auth/platformGovernance.js";
 import { createRuntimeTaskboardTitleGenerator } from "../taskboard/taskTitle.js";
-
 import {
   createHealthRouter,
   createUploadRouter,
@@ -67,6 +65,7 @@ import { runtimeRunController } from "../runtime/runController.js";
 import { createSessionArtifactLifecycle } from '../runtime/sessionArtifactLifecycle.js';
 import { createTenantsRouter } from "../routes/tenants.js";
 import { deleteTenantResources } from "../data/tenants/cleanup.js";
+import { createRouteTenantDeletionExecutor, createTenantExternalRuntimeLifecycle } from './tenantDeletionRuntime.js';
 import { createGovernanceOffboardingExecutor, createSafeCronOffboardingExecutor, type ExecuteUserOffboarding } from './governanceOffboarding.js';
 import { archivePersonalWorkspace } from './governancePersonalDataRetention.js';
 import { createModelsAdminRouter } from "../routes/modelsAdmin.js";
@@ -88,7 +87,6 @@ import type { WebChannel } from "../channels/web/channel.js";
 import { initAuditLog, redactLegacyChatPreviewsInFile } from "../data/login-logs/index.js";
 import { configureModelPricing } from "../data/usage/pricing.js";
 import { configureImageGenPricing } from "../data/usage/imageGenPricing.js";
-
 export function registerRoutes(app: Express, runtime: AppRuntime): void {
   // 路由约定:
   // - 通道消息入口路由（如 /api/chat、/api/dingtalk/webhook）由各 Channel.start() 注册
@@ -271,7 +269,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   app.use('/api/admin/context-plane', requireAdmin, createContextAdminRouter({
     store: runtime.contextStore,
     consumers: createContextAdminConsumerStore(runtime, config),
-    product: createContextProductService(runtime, config),
+    product: createContextProductService(runtime, config), retention: createContextRetentionWorker(runtime, config),
   }));
   const webChannel = channelManager.getChannel<WebChannel>("web");
   app.use(
@@ -802,6 +800,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       app.use("/api/signup", signupRouters.publicRouter);
       app.use("/api/admin/signup-config", signupRouters.adminRouter);
     }
+    const externalTenantRuntime = createTenantExternalRuntimeLifecycle(config, runtime.secretVault);
     const executeLegacyTenantDeletion = runtime.tenantStore && runtime.userStore
       ? async (tenantId: string) => {
           await runtime.dwsPersonalEventGateway?.stopTenant(tenantId);
@@ -837,19 +836,20 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
             cronService: runtime.cronRuntime.service,
             tokenUsageStore: runtime.tokenUsageStore,
             billingService: runtime.billingService,
-            runtimePgEventStore: runtime.runtimePgEventStore,
-            runtimeRunStore: runtime.runtimeRunStore,
-            runtimeSessionProjectionStore: runtime.runtimeSessionProjectionStore,
-            runtimeToolInvocationStore: runtime.runtimeToolInvocationStore,
-            runtimeHandStore: runtime.runtimeHandStore,
-            artifactService: runtime.artifactService,
+            runtimePgEventStore: runtime.runtimePgEventStore, runtimeRunStore: runtime.runtimeRunStore,
+            runtimeSessionProjectionStore: runtime.runtimeSessionProjectionStore, artifactService: runtime.artifactService,
+            runtimeToolInvocationStore: runtime.runtimeToolInvocationStore, runtimeHandStore: runtime.runtimeHandStore,
             agentCwd,
             sharedDir,
             tenantSkillsRootDir: runtime.tenantSkillsRootDir,
             avatarsDir: resolve(processCwd, config.auth?.usersFile || './data/users.json', '..', 'avatars'),
+            cleanupExternalRuntime: externalTenantRuntime.cleanup,
+            preserveTenantRecord: true,
           });
         }
       : undefined;
+    const tenantDeletionExecutor = createRouteTenantDeletionExecutor(runtime, executeLegacyTenantDeletion, webChannel,
+      { agentCwd, sharedDir, tenantSkillsRootDir: runtime.tenantSkillsRootDir, verifyExternalRuntime: externalTenantRuntime.verify });
     // Tenant management (admin-only CRUD；PR 1 仅元数据，不影响任何运行时行为)
     if (runtime.tenantStore) {
       app.use(
@@ -866,7 +866,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           onTenantDisabled: webChannel
             ? (tenantId: string) => webChannel.disconnectTenant(tenantId)
             : undefined,
-          deleteTenantResources: executeLegacyTenantDeletion,
+          ...(tenantDeletionExecutor ? { tenantDeletionExecutor } : {}),
         }),
       );
     }

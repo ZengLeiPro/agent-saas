@@ -247,6 +247,29 @@ export interface RunStore {
   stagePendingRun?(runId: string): Promise<RunRecord | null>;
   /** poison dispatch 收口：仅取消 pending Taskboard Run；未命中返回当前记录。 */
   cancelPendingTaskboardRun?(runId: string, reason: string): Promise<RunRecord | null>;
+  /**
+   * 交互恢复专用的 staged 生命周期。它与 Taskboard 的 schedulerState=staged 隔离，
+   * 所有 activate/rollback 均须以 metadata 中的 interaction claim 作 CAS 所有权校验。
+   */
+  claimPersistedInteractionResume?(
+    runId: string,
+    expectedStatuses: readonly RunStatus[],
+    reason: string,
+    metadataPatch: Record<string, unknown>,
+  ): Promise<RunRecord | null>;
+  /** 列出等待 durable interaction_resolved 协调激活的 staged claim。 */
+  listStagedPersistedInteractionResumes?(limit?: number): Promise<RunRecord[]>;
+  activatePersistedInteractionResume?(
+    runId: string,
+    claim: Record<string, unknown>,
+    metadataPatch?: Record<string, unknown>,
+  ): Promise<RunRecord | null>;
+  rollbackPersistedInteractionResume?(
+    runId: string,
+    claim: Record<string, unknown>,
+    waitingStatus: Extract<RunStatus, 'waiting_user' | 'waiting_approval'>,
+    reason?: string,
+  ): Promise<RunRecord | null>;
   /** CAS 状态迁移；仅当前状态命中 expectedStatuses 时更新，未命中返回 null。 */
   markStatusIfCurrent?(
     runId: string,

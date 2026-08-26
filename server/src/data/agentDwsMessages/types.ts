@@ -80,6 +80,7 @@ export interface AgentDwsMessageStore {
   ingest(event: AgentDwsNormalizedEvent, rawPayload: unknown): Promise<AgentDwsIngestResult>;
   listForAccount(tenantId: string, accountId: string, limit?: number): Promise<AgentDwsInboxRecord[]>;
   claimNext(owner: string, ttlMs: number): Promise<AgentDwsInboxRecord | null>;
+  releaseClaim(inboxId: string, owner: string, fence: number): Promise<AgentDwsInboxRecord>;
   renewLease(inboxId: string, owner: string, fence: number, ttlMs: number): Promise<boolean>;
   getOrCreateBinding(
     tenantId: string,

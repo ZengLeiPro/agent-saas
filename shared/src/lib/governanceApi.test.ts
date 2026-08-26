@@ -8,6 +8,7 @@ import {
   contextSourceSchema,
   evaluateAccess,
   fetchEffectiveResources,
+  fetchManagementSnapshot,
   fetchMyGovernanceSummary,
   governanceAccessApi,
   governanceResourcesApi,
@@ -52,6 +53,29 @@ describe('governanceApi fail closed', () => {
     expect(mockAuthFetch).toHaveBeenCalledWith('/api/access/evaluate', expect.objectContaining({
       method: 'POST', body: JSON.stringify({ action: 'use', resource }),
     }));
+  });
+
+  it('typed management snapshot 仅调用窄化 POST 并严格解析 v1 响应', async () => {
+    const command = { decisions: [{ action: 'settings.personal.view' as const, scope: { kind: 'personal' as const } }] };
+    const response = {
+      contractVersion: 'v1',
+      subject: { userId: 'user-1', tenantId: 'tenant-1', persona: 'member', isOwner: false },
+      decisions: [{
+        ...command.decisions[0], allowed: true,
+        reason: { code: 'PERSONAL_SELF_ALLOWED', label: '允许', layer: 'management_scope' },
+        constraints: ['SELF_ONLY'],
+      }],
+      policySnapshot: { membershipVersion: 3 }, evaluatedAt: '2026-08-10T07:00:00.000Z',
+    };
+    mockAuthFetch.mockResolvedValue(jsonResponse(response));
+
+    await expect(fetchManagementSnapshot(command)).resolves.toEqual(response);
+    expect(mockAuthFetch).toHaveBeenCalledWith('/api/access/management-snapshot', expect.objectContaining({
+      method: 'POST', body: JSON.stringify(command),
+    }));
+
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ ...response, contractVersion: 'v2' }));
+    await expect(fetchManagementSnapshot(command)).rejects.toMatchObject({ code: 'INVALID_GOVERNANCE_RESPONSE' });
   });
 
   it('非 2xx 时保留后端 code 并明确抛错', async () => {

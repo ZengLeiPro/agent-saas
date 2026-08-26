@@ -35,6 +35,7 @@ const createArtifactSchema = z.object({
 const readUrlQuerySchema = z.object({
   expiresInSeconds: z.coerce.number().int().positive().max(7 * 24 * 60 * 60).optional(),
   proxy: z.enum(['true', 'false']).optional(),
+  download: z.enum(['true', 'false']).optional(),
 });
 
 const upsertShareSchema = z.object({
@@ -177,6 +178,7 @@ export function createArtifactsRouter(options: ArtifactsRouterOptions): Router {
           baseUrl: requestBaseUrl(req),
           expiresInSeconds: parsed.data.expiresInSeconds ?? options.defaultReadUrlTtlSeconds,
           forceProxy: parsed.data.proxy === 'true',
+          forceDownload: parsed.data.download === 'true',
         },
       );
       res.json(result);
@@ -199,7 +201,7 @@ export function createArtifactsRouter(options: ArtifactsRouterOptions): Router {
       res.setHeader('Content-Type', mimeType);
       res.setHeader('Content-Length', String(data.byteLength));
       const fileName = typeof record.metadata.fileName === 'string' ? record.metadata.fileName : `${record.artifactId}.bin`;
-      res.setHeader('Content-Disposition', buildContentDisposition(activeContent ? 'attachment' : 'inline', fileName));
+      res.setHeader('Content-Disposition', buildContentDisposition(activeContent || req.query.download === 'true' ? 'attachment' : 'inline', fileName));
       if (activeContent) res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
       res.send(data);
     } catch (err) {

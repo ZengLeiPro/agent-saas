@@ -755,6 +755,14 @@ export class PgToolInvocationStore implements ToolInvocationStore {
     return result.rowCount ?? 0;
   }
 
+  /** Read-only tenant residue check used by the hard-delete proof. */
+  async countByTenant(tenantId: string): Promise<number> {
+    const result = await this.options.pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM ${this.toolInvocationsTable} WHERE tenant_id=$1`, [tenantId],
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
   async listForAdmin(query: AdminToolInvocationQuery = {}): Promise<AdminToolInvocationResult> {
     const params: unknown[] = [];
     const clauses: string[] = [];

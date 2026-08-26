@@ -80,6 +80,16 @@ function buildReport(tenant: TenantRecord): TenantDeletionReport {
     mcp: { serversRemoved: 0, usersRemoved: 0 },
     tokenUsageRowsDeleted: 0,
     billing: { usageEvents: 0, creditLedger: 0, creditAccounts: 0, tenantPolicies: 0 },
+    context: {
+      enabled: false,
+      deletion: {
+        retentionReceiptsDeleted: 0,
+        relationCandidatesDeleted: 0, entityLinksDeleted: 0, itemEvidenceDeleted: 0, profileFacetEvidenceDeleted: 0,
+        reviewsDeleted: 0, derivedItemsDeleted: 0, profileFacetsDeleted: 0, entitiesDeleted: 0, consumersDeleted: 0,
+        derivedOutboxDeleted: 0, outboxDeleted: 0, evidenceDeleted: 0, revisionsDeleted: 0, recordsDeleted: 0,
+        partitionsDeleted: 0, collectionsDeleted: 0, sourcesDeleted: 0, totalDeleted: 0,
+      },
+    },
     runtime: {
       sessionIds: 0,
       eventsDeleted: 0,
@@ -97,6 +107,18 @@ function buildReport(tenant: TenantRecord): TenantDeletionReport {
       tenantSkillsDirDeleted: false,
       avatarsDeleted: 0,
     },
+    residuals: {
+      context: {
+        retentionReceiptsDeleted: 0,
+        relationCandidatesDeleted: 0, entityLinksDeleted: 0, itemEvidenceDeleted: 0, profileFacetEvidenceDeleted: 0,
+        reviewsDeleted: 0, derivedItemsDeleted: 0, profileFacetsDeleted: 0, entitiesDeleted: 0, consumersDeleted: 0,
+        derivedOutboxDeleted: 0, outboxDeleted: 0, evidenceDeleted: 0, revisionsDeleted: 0, recordsDeleted: 0,
+        partitionsDeleted: 0, collectionsDeleted: 0, sourcesDeleted: 0,
+      },
+      users: 0,
+      runtime: { events: 0, cursors: 0, runs: 0, sessions: 0, tools: 0 },
+      files: 0, workspaces: 0, sandboxes: 0, trafficPolicies: 0, snat: 0,
+    },
   };
 }
 
@@ -106,6 +128,7 @@ interface RigOptions {
   /** true 时 orgAgentStore 的落盘路径被目录占据 → persist 必失败（验证 seed 降级） */
   brokenOrgAgentStore?: boolean;
   governanceAuditStore?: GovernanceAuditStore;
+  replayError?: string;
 }
 
 interface TestRig {
@@ -153,10 +176,42 @@ async function makeTestRig(opts: RigOptions = {}): Promise<TestRig> {
     governanceAuditStore: opts.governanceAuditStore ?? new InMemoryGovernanceAuditStore(),
     onTenantDisabled: id => { callOrder.push(`disabled:${id}`); },
     ...(opts.withDeleter === false ? {} : {
-      deleteTenantResources: async (tenantId: string) => {
-        callOrder.push(`deleter:${tenantId}`);
-        return deleterImpl(tenantId);
-      },
+      tenantDeletionExecutor: {
+        execute: async ({ tenantId }: { tenantId: string }) => {
+          if (!tenantStore.findById(tenantId)?.disabled) {
+            await tenantStore.setDisabled(tenantId, true, 'system:tenant-deletion');
+          }
+          callOrder.push(`disabled:${tenantId}`);
+          callOrder.push(`deleter:${tenantId}`);
+          await deleterImpl(tenantId);
+          return {
+            created: true,
+            job: { jobId: 'job-1', tenantId, status: 'succeeded' },
+            domains: [{ jobId: 'job-1', domain: 'tenant_record', status: 'succeeded' }],
+          };
+        },
+        get: async (tenantId: string, jobId: string) => ({
+          created: false,
+          job: { jobId, tenantId, status: 'succeeded', revision: 8 },
+          domains: [{ jobId, domain: 'deletion_verification', status: 'succeeded' }],
+          proof: {
+            report: buildReport({ id: tenantId, name: tenantId, createdAt: '', createdBy: 'test', updatedAt: '', disabled: true }),
+            residuals: { ...buildReport({ id: tenantId, name: tenantId, createdAt: '', createdBy: 'test', updatedAt: '', disabled: true }).residuals, credentials: 0 },
+          },
+        }),
+        findByIdempotency: async () => null,
+        replay: async ({ tenantId, jobId, expectedRevision }: {
+          tenantId: string; jobId: string; expectedRevision: number;
+        }) => {
+          if (opts.replayError) throw new Error(opts.replayError);
+          callOrder.push(`replay:${tenantId}:${jobId}:${expectedRevision}`);
+          return {
+            created: false,
+            job: { jobId, tenantId, status: 'succeeded', revision: expectedRevision + 2 },
+            domains: [{ jobId, domain: 'tenant_record', status: 'succeeded' }],
+          };
+        },
+      } as never,
     }),
   }));
 
@@ -205,6 +260,55 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
     });
   });
 
+  describe('GET /:id/deletion-jobs/:jobId', () => {
+    it('返回持久化的删除报告和零残留审计证明', async () => {
+      h = await makeTestRig();
+      h.setCaller(PLATFORM_ADMIN);
+      const response = await h.request('/api/tenants/acme/deletion-jobs/job-proof');
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        job: { jobId: 'job-proof', tenantId: 'acme', status: 'succeeded', revision: 8 },
+        proof: {
+          report: { tenantId: 'acme' },
+          residuals: { credentials: 0, files: 0, workspaces: 0, sandboxes: 0, trafficPolicies: 0, snat: 0 },
+        },
+      });
+    });
+  });
+
+  describe('POST /:id/deletion-jobs/:jobId/replay', () => {
+    it('校验 revision，并把受控 replay 交给 executor', async () => {
+      h = await makeTestRig();
+      h.setCaller(PLATFORM_ADMIN);
+      const invalid = await h.request(
+        '/api/tenants/acme/deletion-jobs/job-1/replay',
+        jsonInit('POST', { expectedRevision: 0 }),
+      );
+      expect(invalid.status).toBe(400);
+
+      const replayed = await h.request(
+        '/api/tenants/acme/deletion-jobs/job-1/replay',
+        jsonInit('POST', { expectedRevision: 7, additionalAttempts: 2 }),
+      );
+      expect(replayed.status).toBe(200);
+      await expect(replayed.json()).resolves.toMatchObject({
+        created: false, job: { jobId: 'job-1', status: 'succeeded', revision: 9 },
+      });
+      expect(h.callOrder).toEqual(['replay:acme:job-1:7']);
+    });
+
+    it('重复 replay 的 stale revision 映射为 409 CAS 冲突', async () => {
+      h = await makeTestRig({ replayError: 'CHANGE_JOB_VERSION_CONFLICT' });
+      h.setCaller(PLATFORM_ADMIN);
+      const response = await h.request(
+        '/api/tenants/acme/deletion-jobs/job-1/replay',
+        jsonInit('POST', { expectedRevision: 7 }),
+      );
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ code: 'CHANGE_JOB_VERSION_CONFLICT' });
+    });
+  });
+
   // -------------------------------------------------------------------------
   // DELETE /api/tenants/:id —— 此前无任何路由级测试
   // -------------------------------------------------------------------------
@@ -250,7 +354,7 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
       h.setCaller(PLATFORM_ADMIN);
       const res = await h.request('/api/tenants/acme', jsonInit('DELETE', { confirm: 'acme' }));
       expect(res.status).toBe(501);
-      await expect(res.json()).resolves.toMatchObject({ error: '当前服务未启用组织删除清理器' });
+      await expect(res.json()).resolves.toMatchObject({ error: '当前服务未启用持久化组织删除任务' });
       expect(h.tenantStore.findById('acme')).toBeTruthy();
       expect(h.callOrder).toEqual([]); // 501 短路在回调之前
     });
@@ -267,20 +371,17 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
       expect(h.callOrder).toEqual([]);
     });
 
-    it('成功：200 {ok, report} 透传清理报告，清理成功后回调，store 落盘删除', async () => {
+    it('成功：200 返回 durable job 回执，先冻结再清理，store 落盘删除', async () => {
       h = await makeTestRig();
       h.setCaller(PLATFORM_ADMIN);
       const res = await h.request('/api/tenants/acme', jsonInit('DELETE', { confirm: 'acme' }));
       expect(res.status).toBe(200);
-      const body = await res.json() as { ok: boolean; report: TenantDeletionReport };
-      expect(body.ok).toBe(true);
-      // report 原样透传（取可辨识字段抽查）
-      expect(body.report.tenantId).toBe('acme');
-      expect(body.report.tenant.name).toBe('阿康');
-      expect(body.report.usersDeleted).toBe(2);
-      expect(body.report.skills.tenantConfigRemoved).toBe(true);
-      // 清理成功后才断连；store 中记录已删，其余租户不受影响
-      expect(h.callOrder).toEqual(['deleter:acme', 'disabled:acme']);
+      await expect(res.json()).resolves.toMatchObject({
+        created: true,
+        job: { jobId: 'job-1', tenantId: 'acme', status: 'succeeded' },
+        domains: [{ domain: 'tenant_record', status: 'succeeded' }],
+      });
+      expect(h.callOrder).toEqual(['disabled:acme', 'deleter:acme']);
       expect(h.tenantStore.findById('acme')).toBeUndefined();
       expect(h.tenantStore.count()).toBe(2);
     });
@@ -299,23 +400,24 @@ describe('tenants 路由残余分支（DELETE 全分支 + 列表 + settings/POST
       expect(h.callOrder).toEqual([]);
     });
 
-    it('清理器抛 "Tenant not found" → 404；抛普通错误 → 500 且组织仍在', async () => {
+    it('任务执行失败 → 500 且已冻结组织不会恢复可写', async () => {
       h = await makeTestRig();
       h.setCaller(PLATFORM_ADMIN);
 
       // 竞态场景：路由 findById 通过后、清理器执行时组织已被并发删除
       h.setDeleter(async () => { throw new Error('Tenant not found'); });
       const raced = await h.request('/api/tenants/acme', jsonInit('DELETE', { confirm: 'acme' }));
-      expect(raced.status).toBe(404);
-      await expect(raced.json()).resolves.toMatchObject({ error: '组织不存在' });
-      expect(h.callOrder).toEqual(['deleter:acme']);
+      expect(raced.status).toBe(500);
+      await expect(raced.json()).resolves.toMatchObject({ error: 'Tenant not found' });
+      expect(h.callOrder).toEqual(['disabled:acme', 'deleter:acme']);
+      expect(h.tenantStore.findById('acme')).toMatchObject({ disabled: true });
 
       h.setDeleter(async () => { throw new Error('磁盘清理失败'); });
       const failed = await h.request('/api/tenants/acme', jsonInit('DELETE', { confirm: 'acme' }));
       expect(failed.status).toBe(500);
       await expect(failed.json()).resolves.toMatchObject({ error: '磁盘清理失败' });
-      expect(h.tenantStore.findById('acme')).toBeTruthy(); // 默认清理器未跑，记录仍在
-      expect(h.callOrder).toEqual(['deleter:acme', 'deleter:acme']);
+      expect(h.tenantStore.findById('acme')).toMatchObject({ disabled: true });
+      expect(h.callOrder).toEqual(['disabled:acme', 'deleter:acme', 'disabled:acme', 'deleter:acme']);
     });
   });
 

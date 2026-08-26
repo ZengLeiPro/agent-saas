@@ -5,13 +5,15 @@ import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-selec
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { AdminEntityTable, AdminErrorAlert, EmptyState, EntityLink, MetricCard, StatusBadge } from "@/components/PlatformAdmin/common";
 import { useTenants } from "@/components/TenantManager/hooks";
 import type { UserInfo } from "@/components/UserManager/types";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
-import { navigateAdminSettings, navigatePlatformAdmin } from "@/lib/urlSync";
+import { filterCustomerOrganizations, governanceRoute } from "@/lib/governanceNavigation";
+import { navigateGovernance, navigatePlatformAdmin } from "@/lib/urlSync";
 
 import { platformAdminApi } from "../api";
 import { RUN_LABEL, SESSION_LABEL, TENANT_LABEL, formatRole, formatRunStatus } from "../displayText";
@@ -32,6 +34,8 @@ function UserList() {
   const [error, setError] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [memberTenantPickerOpen, setMemberTenantPickerOpen] = useState(false);
+  const [memberTenantId, setMemberTenantId] = useState("");
 
   const q = adminQuery.get("q") ?? "";
   const [qInput, setQInput] = useState(q);
@@ -48,10 +52,15 @@ function UserList() {
     return () => window.clearTimeout(timer);
   }, [patchQuery, q, qInput]);
 
+  const customerTenants = useMemo(() => filterCustomerOrganizations(tenants), [tenants]);
   const tenantSelectOptions = useMemo<AdminSelectOption[]>(() => [
     { value: "", label: "全部组织" },
     ...tenants.map(tenant => ({ value: tenant.id, label: tenant.name })),
   ], [tenants]);
+  const memberTenantOptions = useMemo<AdminSelectOption[]>(() => [
+    { value: "", label: "请选择目标组织" },
+    ...customerTenants.map(tenant => ({ value: tenant.id, label: tenant.name })),
+  ], [customerTenants]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -99,10 +108,10 @@ function UserList() {
             title={q || tenantId ? "没有匹配的用户" : "还没有任何用户"}
             description={q || tenantId
               ? "关键词按用户名、姓名、用户 ID 精确/前缀匹配，不匹配手机号中间段。换个关键词，或清除组织筛选后再看一次。"
-              : "组织下还没有成员。在「平台管理 · 组织」里为组织添加成员后，这里会显示。"}
+              : "选择目标客户组织后，将进入该组织的治理成员页添加成员。"}
             action={q || tenantId
               ? { label: "清除筛选", onClick: () => adminQuery.clear(["q", "tenantId", "cursor"]) }
-              : { label: "去组织配置添加成员", onClick: () => navigateAdminSettings("platform", "tenants") }}
+              : { label: "选择组织并添加成员", onClick: () => setMemberTenantPickerOpen(true) }}
           />
         }
         toolbar={
@@ -150,6 +159,35 @@ function UserList() {
           { key: "updated", header: "最后更新", sortable: true, sortNumeric: true, sortValue: row => (row.updatedAt ? Date.parse(row.updatedAt) || null : null), cell: row => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(row.updatedAt)}</span> },
         ]}
       />
+      <Dialog open={memberTenantPickerOpen} onOpenChange={open => {
+        setMemberTenantPickerOpen(open);
+        if (!open) setMemberTenantId("");
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>选择添加成员的目标组织</DialogTitle>
+            <DialogDescription>平台管理员必须明确选择客户组织；确认后进入该组织的「成员与权限 · 成员」治理页。</DialogDescription>
+          </DialogHeader>
+          {customerTenants.length ? (
+            <AdminSelect
+              ariaLabel="添加成员的目标组织"
+              size="md"
+              className="w-full"
+              options={memberTenantOptions}
+              value={memberTenantId}
+              onValueChange={setMemberTenantId}
+            />
+          ) : (
+            <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">当前没有可选择的客户组织。</div>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setMemberTenantPickerOpen(false)}>取消</Button>
+            <Button disabled={!memberTenantId} onClick={() => {
+              navigateGovernance(governanceRoute("organization.members.list", { orgId: memberTenantId }));
+            }}>进入成员治理页</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

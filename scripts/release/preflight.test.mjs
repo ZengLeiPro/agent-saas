@@ -104,7 +104,7 @@ test('preflight reports each blocking release condition as JSON data', () => {
 test('preflight blocks a target outside main, a non-ancestor baseline, incomplete identity, and unknown files', () => {
   const execFileSync = (_command, args) => {
     if (args[0] === 'merge-base') throw new Error('not an ancestor');
-    return 'web/src/App.tsx\npackage.json\n';
+    return 'web/src/App.tsx\nunmapped-release-input.txt\n';
   };
   const identity = productionIdentity({ components: { web: { gitSha: TARGET } } });
 
@@ -124,7 +124,7 @@ test('preflight blocks a target outside main, a non-ancestor baseline, incomplet
   assert.match(result.blockingReasons.join('\n'), /missing component "api"/u);
   assert.match(
     result.blockingReasons.join('\n'),
-    /not mapped to a release component: package.json/u,
+    /not mapped to a release component: unmapped-release-input.txt/u,
   );
 });
 

@@ -67,12 +67,12 @@ test('classifies root dependency files while explicitly ignoring release-only go
 });
 
 test('unknown paths fail closed while retaining mapped components', () => {
-  const result = classifyChangedPaths(['web/src/App.tsx', 'package.json']);
+  const result = classifyChangedPaths(['web/src/App.tsx', 'unmapped-release-input.txt']);
 
   assert.equal(result.ok, false);
   assert.deepEqual(result.components, ['web']);
   assert.deepEqual(result.blockingReasons, [
-    'Changed path is not mapped to a release component: package.json',
+    'Changed path is not mapped to a release component: unmapped-release-input.txt',
   ]);
 });
 

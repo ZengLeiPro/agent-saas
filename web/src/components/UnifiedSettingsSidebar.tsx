@@ -1,5 +1,5 @@
 import { useMemo, type MouseEventHandler, type ReactNode } from "react";
-import { ChevronLeft, Settings2 } from "lucide-react";
+import { CircleAlert, ChevronLeft, Loader2, Settings2 } from "lucide-react";
 
 import { PanelToggleIcon } from "@/components/icons/PanelToggleIcon";
 import { SETTINGS_SECTIONS } from "@/components/SettingsCenter/settingsConfig";
@@ -8,13 +8,13 @@ import { NAV_ITEM_SELECTED, NAV_ITEM_UNSELECTED } from "@/components/DesktopSess
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
+import type { ManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
 
 export interface UnifiedSettingsSidebarProps {
   width: number;
   hidden: boolean;
   className?: string;
-  isAdmin: boolean;
-  isPlatformAdmin: boolean;
+  access: ManagementSettingsAccess;
   personalAgentEnabled: boolean;
   target: "personal" | AdminSettingsTarget;
   activeSection: string;
@@ -27,7 +27,7 @@ export interface UnifiedSettingsSidebarProps {
 }
 
 export function UnifiedSettingsSidebar({
-  width, hidden, className, isAdmin, isPlatformAdmin, personalAgentEnabled,
+  width, hidden, className, access, personalAgentEnabled,
   target, activeSection, onNavigate, onClose, onCollapse,
   onResizeMouseDown, onResizeDoubleClick, footer,
 }: UnifiedSettingsSidebarProps) {
@@ -39,9 +39,9 @@ export function UnifiedSettingsSidebar({
         .filter((item) => personalAgentEnabled || item.id !== "my-agent")
         .map((item) => ({ id: item.id, label: item.label, icon: item.icon })),
     },
-    ...(isAdmin ? [{ id: "tenant" as const, label: "组织管理", items: TENANT_SETTINGS_SECTIONS }] : []),
-    ...(isPlatformAdmin ? [{ id: "platform" as const, label: "平台管理", items: PLATFORM_SETTINGS_SECTIONS }] : []),
-  ], [isAdmin, isPlatformAdmin, personalAgentEnabled]);
+    ...((access.status === "ready" || access.status === "refreshing") && access.tenantEntryAllowed ? [{ id: "tenant" as const, label: "组织管理", items: TENANT_SETTINGS_SECTIONS }] : []),
+    ...((access.status === "ready" || access.status === "refreshing") && access.platformEntryAllowed ? [{ id: "platform" as const, label: "平台管理", items: PLATFORM_SETTINGS_SECTIONS }] : []),
+  ], [access.platformEntryAllowed, access.status, access.tenantEntryAllowed, personalAgentEnabled]);
 
   return (
     <aside
@@ -68,6 +68,19 @@ export function UnifiedSettingsSidebar({
 
       <ScrollArea className="min-h-0 flex-1" aria-label="设置导航">
         <nav className="flex flex-col gap-4 px-2 pb-4 pt-1">
+          {(access.status === "loading" || access.status === "refreshing") && (
+            <div className="flex items-center gap-2 px-2 text-xs text-muted-foreground" role="status">
+              <Loader2 className="size-3.5 animate-spin" />
+              <span>{access.status === "refreshing" ? "正在更新管理权限…" : "正在验证管理权限…"}</span>
+            </div>
+          )}
+          {access.status === "error" && (
+            <button type="button" className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-destructive transition-colors hover:bg-destructive/10" onClick={access.retry}>
+              <CircleAlert className="size-4 shrink-0" />
+              <span className="min-w-0 flex-1">管理权限验证失败</span>
+              <span className="text-xs font-medium">重试</span>
+            </button>
+          )}
           {groups.map((group) => (
             <div key={group.id}>
               <div className="mb-1 px-2 text-xs font-medium text-muted-foreground">{group.label}</div>

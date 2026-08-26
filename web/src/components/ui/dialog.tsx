@@ -4,11 +4,20 @@ import { X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { usePortalContainer } from "@/components/ui/portal-container";
 
-const Dialog = DialogPrimitive.Root;
+function Dialog(props: React.ComponentProps<typeof DialogPrimitive.Root>) {
+  const { blocked } = usePortalContainer();
+  return <DialogPrimitive.Root {...props} {...(blocked ? { modal: false } : {})} />;
+}
+
 const DialogTrigger = DialogPrimitive.Trigger;
-const DialogPortal = DialogPrimitive.Portal;
 const DialogClose = DialogPrimitive.Close;
+
+function DialogPortal({ container, ...props }: React.ComponentProps<typeof DialogPrimitive.Portal>) {
+  const { container: contextContainer } = usePortalContainer();
+  return <DialogPrimitive.Portal container={container ?? contextContainer ?? undefined} {...props} />;
+}
 
 const DialogOverlay = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Overlay>,
@@ -30,8 +39,11 @@ const KEYBOARD_GAP = 12; // 底边与键盘之间的呼吸空间 (px)
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, style, ...props }, ref) => {
+>(({ className, children, style, onEscapeKeyDown, onFocusOutside, onInteractOutside,
+  onPointerDownOutside, ...props }, ref) => {
+  const { blocked } = usePortalContainer();
   const [kbStyle, setKbStyle] = React.useState<React.CSSProperties | null>(null);
+  const preventBlockedDismiss = React.useCallback((event: Event) => event.preventDefault(), []);
 
   React.useEffect(() => {
     const vv = window.visualViewport;
@@ -75,6 +87,10 @@ const DialogContent = React.forwardRef<
           kbStyle && "overflow-y-auto",
           className
         )}
+        onEscapeKeyDown={blocked ? preventBlockedDismiss : onEscapeKeyDown}
+        onFocusOutside={blocked ? preventBlockedDismiss : onFocusOutside}
+        onInteractOutside={blocked ? preventBlockedDismiss : onInteractOutside}
+        onPointerDownOutside={blocked ? preventBlockedDismiss : onPointerDownOutside}
         {...props}
       >
         {children}

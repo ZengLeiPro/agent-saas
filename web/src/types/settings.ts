@@ -1,15 +1,12 @@
 import type { LucideIcon } from "lucide-react";
 
+import type {
+  PersonalSettingsGroup,
+  PersonalSettingsSectionId,
+} from "@/lib/unifiedSettingsRegistry";
+
 /** V2 personal-settings page ids. Each id maps one-to-one to a canonical /settings URL. */
-export type CanonicalSettingsSectionId =
-  | "account-security"
-  | "my-agent"
-  | "chat-model"
-  | "appearance-layout"
-  | "my-permissions"
-  | "connections"
-  | "files-storage"
-  | "trash";
+export type CanonicalSettingsSectionId = PersonalSettingsSectionId;
 
 /** Accepted only at legacy URL/helper and existing caller boundaries. */
 export type LegacySettingsSectionId =
@@ -28,7 +25,7 @@ export type SettingsSectionId = CanonicalSettingsSectionId | LegacySettingsSecti
 export type SettingsSectionInput = SettingsSectionId;
 export type MyAgentSettingsTab = "agent-profile" | "persona" | "memory";
 
-export type SettingsSectionGroup = "personal" | "preferences" | "access" | "data";
+export type SettingsSectionGroup = PersonalSettingsGroup;
 
 export interface SettingsSectionConfig {
   id: CanonicalSettingsSectionId;

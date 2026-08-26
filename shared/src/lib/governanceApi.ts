@@ -1,11 +1,19 @@
 import { z } from 'zod';
-import type { AccessDecision, EffectiveResourceView, ExecutionReadiness } from '../types/governance';
+import type {
+  AccessDecision,
+  EffectiveResourceView,
+  ExecutionReadiness,
+  ManagementSnapshotRequestV1,
+  ManagementSnapshotResponseV1,
+} from '../types/governance';
 import type { GovernanceSkillImportResponse } from '../types/skill';
 import {
   accessDecisionSchema,
   assertGovernanceUiSafe,
   effectiveResourceViewSchema,
   executionReadinessSchema,
+  managementSnapshotRequestV1Schema,
+  managementSnapshotResponseV1Schema,
   parseGovernanceDto,
 } from '../types/governance';
 import { authFetch } from './authFetch';
@@ -724,6 +732,17 @@ export const governanceResourcesApi = {
   startCredentialRevoke: <T = unknown>(command: GovernanceCommand) =>
     request<T>(`${RESOURCE_BASE}/change-jobs/credential-revoke`, body('POST', command)),
 };
+
+export async function fetchManagementSnapshot(
+  command: ManagementSnapshotRequestV1,
+): Promise<ManagementSnapshotResponseV1> {
+  const requestBody = managementSnapshotRequestV1Schema.parse(command);
+  return request(
+    '/api/access/management-snapshot',
+    body('POST', requestBody),
+    managementSnapshotResponseV1Schema,
+  );
+}
 
 /** Planned authoritative endpoints. These never infer an allow result locally. */
 export async function evaluateAccess(command: GovernanceCommand): Promise<EffectiveResourceView[]> {

@@ -7,6 +7,10 @@ import {
   effectiveResourceViewSchema,
   executionReadinessSchema,
   expectedPrimaryResultCode,
+  MANAGEMENT_ACTIONS_V1,
+  managementActionV1Schema,
+  managementSnapshotRequestV1Schema,
+  managementSnapshotResponseV1Schema,
   type AccessDecision,
   type EffectiveResourceView,
 } from './governance';
@@ -93,6 +97,54 @@ describe('governance v1 schemas', () => {
       expect(accessDecisionSchema.safeParse({ ...access, [field]: 'x' }).success).toBe(false);
     },
   );
+
+  it('严格校验 v1 管理动作、scope、批量上限与安全响应', () => {
+    expect(managementActionV1Schema.options).toEqual(MANAGEMENT_ACTIONS_V1);
+    const request = {
+      decisions: [
+        { action: 'settings.personal.view', scope: { kind: 'personal' } },
+        { action: 'settings.tenant.view', scope: { kind: 'tenant', tenantId: 'tenant-1' } },
+        { action: 'settings.tenant.view', scope: { kind: 'platform' } },
+      ],
+    };
+    expect(managementSnapshotRequestV1Schema.parse(request)).toEqual(request);
+    expect(managementSnapshotRequestV1Schema.safeParse({ decisions: [] }).success).toBe(false);
+    expect(managementSnapshotRequestV1Schema.safeParse({
+      decisions: Array.from({ length: 65 }, () => request.decisions[0]),
+    }).success).toBe(false);
+    expect(managementSnapshotRequestV1Schema.safeParse({
+      decisions: [{ action: 'tenant.settings.write', scope: { kind: 'tenant', tenantId: 'tenant-1' } }],
+    }).success).toBe(false);
+    expect(managementSnapshotRequestV1Schema.safeParse({
+      decisions: [{ action: 'settings.tenant.view', scope: { kind: 'tenant' } }],
+    }).success).toBe(false);
+
+    const response = {
+      contractVersion: 'v1',
+      subject: { userId: 'user-1', tenantId: 'tenant-1', persona: 'org_admin', isOwner: true },
+      decisions: [{
+        ...request.decisions[1], allowed: true,
+        reason: { code: 'SAME_TENANT_ORG_ADMIN_ALLOWED', label: '允许', layer: 'management_authority' },
+        constraints: ['SAME_TENANT_ONLY'],
+      }, {
+        ...request.decisions[2], allowed: true,
+        reason: {
+          code: 'PLATFORM_TENANT_MANAGEMENT_ALLOWED',
+          label: '平台管理员可进入跨组织管理',
+          layer: 'management_authority',
+        },
+        constraints: ['EXPLICIT_TENANT_SCOPE'],
+      }],
+      policySnapshot: { membershipVersion: 3 },
+      evaluatedAt: '2026-08-10T07:00:00.000Z',
+    };
+    expect(managementSnapshotResponseV1Schema.parse(response)).toEqual(response);
+    expect(managementSnapshotResponseV1Schema.safeParse({ ...response, token: 'forbidden' }).success).toBe(false);
+    expect(managementSnapshotResponseV1Schema.safeParse({
+      ...response,
+      decisions: [{ ...response.decisions[0], reason: { code: 'UNKNOWN', label: '未知', layer: 'other' } }],
+    }).success).toBe(false);
+  });
 
   it('接受统一连接授权与有基线的变更预览，但拒绝外部账号明细', () => {
     const connection = {

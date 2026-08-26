@@ -1,4 +1,4 @@
-import { resolve } from 'path';
+import { join, resolve } from 'path';
 import type { AppConfig } from '../types/index.js';
 import { serverLogger } from '../utils/logger.js';
 import { resolveSttRuntimeConfig } from '../runtime/sttRuntimeConfig.js';
@@ -22,7 +22,17 @@ export async function initializeRuntimeGovernanceCredentials(
   // MCP / tenant resolver / serverRemote 装配时共享同一个 vault 实例。
   const secretVault: SecretVault = (() => {
     const vc = config.secretVault;
-    if (!vc || vc.backend === 'memory') {
+    if (!vc) {
+      const jwtSecret = config.auth?.jwtSecret;
+      if (process.env.NODE_ENV === 'production' && config.runtimeEventStore?.backend === 'pg' && jwtSecret) {
+        return new EncryptedFileSecretVault(
+          join(processCwd, 'data', 'secrets.enc'),
+          `agent-saas/secret-vault/v1:${jwtSecret}`,
+        );
+      }
+      return new InMemorySecretVault();
+    }
+    if (vc.backend === 'memory') {
       return new InMemorySecretVault();
     }
     if (vc.backend === 'encrypted-file') {

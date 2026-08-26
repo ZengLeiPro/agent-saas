@@ -8,23 +8,13 @@ import {
   type GovernanceRouteState,
 } from '@/lib/governanceNavigation';
 import { maybeNavigateWithUpdate } from '@/lib/swUpdate';
+import {
+  getSettingsSection,
+  isSettingsSectionId,
+  settingsFallbackSection,
+  settingsSectionsForScope,
+} from '@/lib/unifiedSettingsRegistry';
 
-/**
- * 用 Record 穷举而非字面量数组：往 SettingsSectionId 加成员却漏配这里时，
- * TS 会直接报缺失属性，避免新 section 被静默 fallback 到 account。
- */
-const SETTINGS_SECTION_ID_MAP: Record<CanonicalSettingsSectionId, true> = {
-  'account-security': true,
-  'my-agent': true,
-  'chat-model': true,
-  'appearance-layout': true,
-  'my-permissions': true,
-  'connections': true,
-  'files-storage': true,
-  'trash': true,
-};
-
-const SETTINGS_SECTION_IDS: ReadonlySet<string> = new Set(Object.keys(SETTINGS_SECTION_ID_MAP));
 const LEGACY_SETTINGS_SECTION_MAP: Readonly<Record<string, CanonicalSettingsSectionId>> = {
   account: 'account-security',
   general: 'chat-model',
@@ -37,15 +27,6 @@ const LEGACY_SETTINGS_SECTION_MAP: Readonly<Record<string, CanonicalSettingsSect
   storage: 'files-storage',
   data: 'trash',
 };
-
-/** 组织管理 modal 的合法 section（与 AdminShells.tenantSettingsSections 对齐） */
-const TENANT_ADMIN_SETTINGS_SECTIONS: ReadonlySet<string> = new Set([
-  'users', 'skills', 'org-agents', 'mcp', 'connector-dictionary', 'billing', 'files', 'company', 'instructions', 'settings',
-]);
-/** 平台管理 modal 的合法 section（与 AdminShells.platformSettingsSections 对齐） */
-const PLATFORM_ADMIN_SETTINGS_SECTIONS: ReadonlySet<string> = new Set([
-  'tenants', 'signup', 'models', 'billing', 'remote-hands', 'tool-controls', 'connector-dictionary', 'agent-profiles', 'system-prompts', 'memory-polling', 'global-mcp', 'skill-pool', 'egress', 'system',
-]);
 
 const PLATFORM_ADMIN_SECTIONS = [
   'overview',
@@ -108,9 +89,7 @@ export interface TenantAdminRouteState {
 }
 
 export function normalizeAdminSettingsSection(target: AdminSettingsTarget, section?: string | null): string {
-  const set = target === 'tenant' ? TENANT_ADMIN_SETTINGS_SECTIONS : PLATFORM_ADMIN_SETTINGS_SECTIONS;
-  const fallback = target === 'tenant' ? 'users' : 'tenants';
-  return set.has(section || '') ? (section as string) : fallback;
+  return isSettingsSectionId(target, section) ? section : settingsFallbackSection(target);
 }
 
 export interface ParsedUrlState {
@@ -130,27 +109,9 @@ export interface ParsedUrlState {
   canonicalPath: string | null;
 }
 
-const SETTINGS_ROUTE_BY_SECTION: Record<CanonicalSettingsSectionId, { routeId: string }> = {
-  'account-security': { routeId: 'settings.personal.account-security' },
-  'my-agent': { routeId: 'settings.personal.my-agent' },
-  'chat-model': { routeId: 'settings.preferences.chat-model' },
-  'appearance-layout': { routeId: 'settings.preferences.appearance-layout' },
-  'my-permissions': { routeId: 'settings.access.my-permissions' },
-  connections: { routeId: 'settings.access.connections' },
-  'files-storage': { routeId: 'settings.data.files-storage' },
-  trash: { routeId: 'settings.data.trash' },
-};
-
-const SETTINGS_SECTION_BY_ROUTE: Readonly<Record<string, CanonicalSettingsSectionId>> = {
-  'settings.personal.account-security': 'account-security',
-  'settings.personal.my-agent': 'my-agent',
-  'settings.preferences.chat-model': 'chat-model',
-  'settings.preferences.appearance-layout': 'appearance-layout',
-  'settings.access.my-permissions': 'my-permissions',
-  'settings.access.connections': 'connections',
-  'settings.data.files-storage': 'files-storage',
-  'settings.data.trash': 'trash',
-};
+const SETTINGS_SECTION_BY_ROUTE: ReadonlyMap<string, CanonicalSettingsSectionId> = new Map(
+  settingsSectionsForScope('personal').map((entry) => [entry.routeId, entry.id] as const),
+);
 
 const PLATFORM_SECTION_BY_ROUTE: Readonly<Record<string, PlatformAdminSection>> = {
   'platform.overview.overview': 'overview',
@@ -172,12 +133,12 @@ const TENANT_SECTION_BY_ROUTE: Readonly<Record<string, TenantAdminSection>> = {
 };
 
 export function normalizeSettingsSection(section?: string | null): CanonicalSettingsSectionId {
-  if (SETTINGS_SECTION_IDS.has(section || '')) return section as CanonicalSettingsSectionId;
-  return LEGACY_SETTINGS_SECTION_MAP[section || ''] ?? 'account-security';
+  if (isSettingsSectionId('personal', section)) return section;
+  return LEGACY_SETTINGS_SECTION_MAP[section || ''] ?? settingsFallbackSection('personal');
 }
 
 export function governanceSettingsRoute(section: SettingsSectionInput): GovernanceRouteState {
-  const target = SETTINGS_ROUTE_BY_SECTION[normalizeSettingsSection(section)];
+  const target = getSettingsSection('personal', normalizeSettingsSection(section));
   return governanceRoute(target.routeId, section === 'memory' ? { tab: 'memory' } : {});
 }
 
@@ -186,17 +147,14 @@ export function isSettingsPath(pathname = window.location.pathname): boolean {
 }
 
 function matchAdminSettingsPath(pathname: string): AdminSettingsState | null {
-  if (pathname === '/tenant-admin/settings' || pathname.startsWith('/tenant-admin/settings/')) {
-    const sec = pathname === '/tenant-admin/settings'
-      ? ''
-      : decodeURIComponent(pathname.slice('/tenant-admin/settings/'.length));
-    return { target: 'tenant', section: normalizeAdminSettingsSection('tenant', sec) };
-  }
-  if (pathname === '/platform-admin/settings' || pathname.startsWith('/platform-admin/settings/')) {
-    const sec = pathname === '/platform-admin/settings'
-      ? ''
-      : decodeURIComponent(pathname.slice('/platform-admin/settings/'.length));
-    return { target: 'platform', section: normalizeAdminSettingsSection('platform', sec) };
+  for (const target of ['tenant', 'platform'] as const) {
+    const prefix = `/${target}-admin/settings`;
+    if (pathname === prefix) return { target, section: settingsFallbackSection(target) };
+    if (!pathname.startsWith(`${prefix}/`)) continue;
+    const encodedSection = pathname.slice(prefix.length + 1);
+    if (!encodedSection || encodedSection.includes('/')) return null;
+    const section = decodeSegment(encodedSection);
+    return isSettingsSectionId(target, section) ? { target, section } : null;
   }
   return null;
 }
@@ -365,6 +323,13 @@ function parsed(state: Omit<ParsedUrlState, 'adminSection' | 'adminEntityId' | '
 
 /** 解析 pathname → URL state；search 只由 platform-admin 路由读取，常规 buildUrl 仍只管理 pathname */
 export function parseUrl(pathname = window.location.pathname, search = window.location.search): ParsedUrlState {
+  // Registry 中的统一管理设置叶必须停留在设置工作区；非 Registry 旧别名继续交给治理 canonical。
+  const adminSettings = matchAdminSettingsPath(pathname);
+  if (adminSettings) {
+    const tab: AppTab = adminSettings.target === 'tenant' ? 'tenant-admin' : 'platform-admin';
+    return parsed({ tab, sessionId: null, settingsSection: null, adminSettings });
+  }
+
   const governance = parseGovernanceUrl(`${pathname}${search}`);
   if (governance.kind === 'route') {
     const route = governance.route;
@@ -387,7 +352,7 @@ export function parseUrl(pathname = window.location.pathname, search = window.lo
     }
     return parsed({
       tab: 'chat', sessionId: null,
-      settingsSection: SETTINGS_SECTION_BY_ROUTE[route.routeId] ?? 'account-security',
+      settingsSection: SETTINGS_SECTION_BY_ROUTE.get(route.routeId) ?? settingsFallbackSection('personal'),
       adminSettings: null,
       governanceRoute: route,
       canonicalPath: governance.canonicalPath,
@@ -405,12 +370,6 @@ export function parseUrl(pathname = window.location.pathname, search = window.lo
       adminSettings: null,
       canonicalPath: platformAdmin.canonicalPath,
     });
-  }
-  const adminSettings = matchAdminSettingsPath(pathname);
-  if (adminSettings) {
-    // admin settings modal 浮在对应 admin frame 上；activeTab 跟随 target
-    const tab: AppTab = adminSettings.target === 'tenant' ? 'tenant-admin' : 'platform-admin';
-    return parsed({ tab, sessionId: null, settingsSection: null, adminSettings });
   }
   const tenantAdmin = parseTenantAdminPath(pathname, search);
   if (tenantAdmin) {
@@ -580,8 +539,7 @@ export function replaceSettingsUrl(section: SettingsSectionInput, navigation?: P
 
 export function buildAdminSettingsUrl(target: AdminSettingsTarget, section?: string | null): string {
   const sec = normalizeAdminSettingsSection(target, section);
-  const prefix = target === 'tenant' ? '/tenant-admin/settings' : '/platform-admin/settings';
-  return `${prefix}/${encodeURIComponent(sec)}`;
+  return settingsSectionsForScope(target).find((item) => item.id === sec)!.path;
 }
 
 export function pushAdminSettingsUrl(

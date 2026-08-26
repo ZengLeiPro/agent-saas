@@ -474,8 +474,8 @@
   // },
 
   // ── SecretVault backend 选择（A2）──────────────
-  // 未配置 = 进程内 `InMemorySecretVault`：所有 putSecret/rotate/revoke 仅
-  // 进程内可见，重启即丢；仅适合 dev/单进程。生产应显式选择：
+  // 未配置：生产 PG 模式自动使用共享 `server/data/secrets.enc`（密钥由 JWT secret
+  // 域分离派生），其他模式使用进程内 `InMemorySecretVault`。生产仍建议显式选择：
   //
   // "secretVault": {
   //   "backend": "encrypted-file",

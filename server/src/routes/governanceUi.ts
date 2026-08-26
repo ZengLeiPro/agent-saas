@@ -1,7 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
 
-import { isForbiddenGovernanceField } from '../../../shared/src/types/governance.js';
+import {
+  isForbiddenGovernanceField,
+  managementSnapshotRequestV1Schema,
+  managementSnapshotResponseV1Schema,
+} from '../../../shared/src/types/governance.js';
 import {
   AuthoritativeGovernanceService,
   GOVERNANCE_UI_DOMAINS,
@@ -10,6 +14,11 @@ import {
   type GovernanceEvaluationCommand,
   type GovernanceUiDomain,
 } from '../governance/ui/authoritativeService.js';
+import {
+  ManagementSnapshotError,
+  ManagementSnapshotService,
+  type ManagementSnapshotDeps,
+} from '../governance/ui/managementSnapshotService.js';
 
 const resourceSchema = z.object({
   type: z.string().min(1).max(80),
@@ -33,15 +42,26 @@ function assertSafe(value: unknown): void {
 }
 
 function errorResponse(error: unknown): { status: number; body: { code: string; message: string } } {
-  if (error instanceof GovernanceUiError) {
+  if (error instanceof GovernanceUiError || error instanceof ManagementSnapshotError) {
     return { status: error.status, body: { code: error.code, message: error.message } };
   }
   return { status: 503, body: { code: 'GOVERNANCE_DEPENDENCY_UNAVAILABLE', message: '治理权威依赖不可用' } };
 }
 
-export type GovernanceUiRouterDeps = Partial<AuthoritativeGovernanceDeps> & {
-  service?: Pick<AuthoritativeGovernanceService, 'evaluate' | 'preflight' | 'effectiveResources'>;
+type GovernanceUiTenantDeps = AuthoritativeGovernanceDeps['tenants'] & {
+  findByIdStrict?: ManagementSnapshotDeps['tenants']['findByIdStrict'];
 };
+
+export type GovernanceUiRouterDeps = Partial<Omit<AuthoritativeGovernanceDeps, 'tenants'>> & {
+  tenants?: GovernanceUiTenantDeps;
+  service?: Pick<AuthoritativeGovernanceService, 'evaluate' | 'preflight' | 'effectiveResources'>;
+  managementSnapshotService?: Pick<ManagementSnapshotService, 'createSnapshot'>;
+};
+
+function completeManagement(deps: GovernanceUiRouterDeps): deps is GovernanceUiRouterDeps & ManagementSnapshotDeps {
+  return Boolean(deps.users && deps.tenants && typeof deps.tenants.findByIdStrict === 'function'
+    && deps.memberships && deps.audit);
+}
 
 function complete(deps: GovernanceUiRouterDeps): deps is AuthoritativeGovernanceDeps {
   return Boolean(deps.users && deps.tenants && deps.memberships && deps.entitlements && deps.assignments
@@ -51,6 +71,27 @@ function complete(deps: GovernanceUiRouterDeps): deps is AuthoritativeGovernance
 export function createGovernanceUiRouter(deps: GovernanceUiRouterDeps): Router {
   const router = Router();
   const service = deps.service ?? (complete(deps) ? new AuthoritativeGovernanceService(deps) : undefined);
+  const managementSnapshotService = deps.managementSnapshotService
+    ?? (completeManagement(deps) ? new ManagementSnapshotService(deps) : undefined);
+
+  router.post('/api/access/management-snapshot', async (req, res) => {
+    if (!req.user) return res.status(401).json({ code: 'UNAUTHORIZED', message: '未登录' });
+    if (!managementSnapshotService) {
+      return res.status(503).json({ code: 'GOVERNANCE_DEPENDENCY_UNAVAILABLE', message: '治理权威依赖不可用' });
+    }
+    const parsed = managementSnapshotRequestV1Schema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ code: 'INVALID_MANAGEMENT_SNAPSHOT_REQUEST', message: '管理权限快照请求无效' });
+    }
+    try {
+      const value = await managementSnapshotService.createSnapshot(req.user.sub, parsed.data);
+      assertSafe(value);
+      res.json(managementSnapshotResponseV1Schema.parse(value));
+    } catch (error) {
+      const response = errorResponse(error);
+      res.status(response.status).json(response.body);
+    }
+  });
 
   router.post('/api/access/evaluate', async (req, res) => {
     if (!req.user) return res.status(401).json({ code: 'UNAUTHORIZED', message: '未登录' });

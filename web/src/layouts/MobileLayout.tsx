@@ -12,6 +12,8 @@ import { TokenUsageDisplay } from "@/components/TokenUsageDisplay";
 import { BillingMiniBadge } from "@/components/BillingMiniBadge";
 import { getPreviewFileType } from "@agent/shared";
 import { useAuth } from "@/contexts/AuthContext";
+import { useManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
+import { legacyRoleFallbackTab, managementAccessTarget } from "@/lib/managementAccessView";
 import { EmptyChatRecommendCards } from "@/components/scenarios/EmptyChatRecommendCards";
 import { EmptySessionScenarios } from "@/components/scenarios/EmptySessionScenarios";
 import { useScenarioDeepLink } from "@/components/scenarios/useScenarioDeepLink";
@@ -56,6 +58,7 @@ const TenantAdminShell = lazy(() => import("@/components/AdminShells").then(m =>
 const CompanyInfoSectionPanel = lazy(() => import("@/components/CompanyInfoEditor").then(m => ({ default: m.CompanyInfoSection })));
 const OrgAgentManagerPanel = lazy(() => import("@/components/OrgAgentManager").then(m => ({ default: m.OrgAgentManager })));
 const PlatformAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.PlatformAdminShell })));
+const ManagementSettingsAccessGate = lazy(() => import("@/components/ManagementSettingsAccessGate").then(m => ({ default: m.ManagementSettingsAccessGate })));
 
 const SuspenseFallback = (
   <div className="flex flex-1 items-center justify-center">
@@ -82,7 +85,19 @@ export function MobileLayout(props: LayoutProps) {
     agentProfile, sessionParticipants,
     startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   } = props;
-  const { user: authUser } = useAuth();
+  const { user: authUser, isLoading: authLoading, authEnabled } = useAuth();
+  const accessTarget = managementAccessTarget({
+    settingsOpen,
+    adminSettingsTarget: adminSettings?.target,
+    activeTab,
+    governanceArea: governanceRoute?.area,
+  });
+  const managementAccess = useManagementSettingsAccess({
+    user: authUser, authLoading, authEnabled, active: accessTarget !== null,
+  });
+  const handleReturnPersonalSettings = useCallback(() => {
+    openSettings(settingsSection);
+  }, [openSettings, settingsSection]);
   const subagentTranscriptContext = useSubagentTranscript();
   const subagentTranscript = subagentTranscriptContext?.transcript ?? null;
   const closeSubagentTranscript = subagentTranscriptContext?.closeTranscript;
@@ -175,16 +190,8 @@ export function MobileLayout(props: LayoutProps) {
   }, [activeWorkflow, input, sendMessage]);
 
   useEffect(() => {
-    if (!personalAgentEnabled && (activeTab === "scenarios" || activeTab === "profile" || activeTab === "cron")) {
-      setActiveTab("capabilities");
-      return;
-    }
-    if (!isAdmin && (activeTab === "skills" || activeTab === "usage" || activeTab === "tenant-admin")) {
-      setActiveTab("chat");
-    }
-    if (!isPlatformAdmin && (activeTab === "tenants" || activeTab === "models" || activeTab === "platform-admin")) {
-      setActiveTab("chat");
-    }
+    const fallback = legacyRoleFallbackTab({ activeTab, personalAgentEnabled, isAdmin, isPlatformAdmin });
+    if (fallback) setActiveTab(fallback);
   }, [isAdmin, isPlatformAdmin, personalAgentEnabled, activeTab, setActiveTab]);
 
   // iOS 键盘适配
@@ -246,7 +253,14 @@ export function MobileLayout(props: LayoutProps) {
   if (activeTab === "tenant-admin" && governanceRoute?.area === "organization") {
     return (
       <Suspense fallback={SuspenseFallback}>
-        <GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")}>
+        <ManagementSettingsAccessGate
+          scope="tenant"
+          target="tenant"
+          access={managementAccess}
+          onRetry={managementAccess.retry}
+          onReturnPersonal={handleReturnPersonalSettings}
+        >
+          <GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")}>
           <TenantAdminShell
             renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
             renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
@@ -263,7 +277,8 @@ export function MobileLayout(props: LayoutProps) {
             governanceRoute={governanceRoute}
             governanceContentOnly
           />
-        </GovernanceConsole>
+          </GovernanceConsole>
+        </ManagementSettingsAccessGate>
       </Suspense>
     );
   }
@@ -271,7 +286,14 @@ export function MobileLayout(props: LayoutProps) {
   if (activeTab === "platform-admin" && governanceRoute?.area === "platform") {
     return (
       <Suspense fallback={SuspenseFallback}>
-        <GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")}>
+        <ManagementSettingsAccessGate
+          scope="platform"
+          target="platform"
+          access={managementAccess}
+          onRetry={managementAccess.retry}
+          onReturnPersonal={handleReturnPersonalSettings}
+        >
+          <GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")}>
           <PlatformAdminShell
             renderTenants={() => <TenantManager />}
             renderSignupConfig={() => <SignupConfigManagerPanel />}
@@ -292,7 +314,8 @@ export function MobileLayout(props: LayoutProps) {
             governanceRoute={governanceRoute}
             governanceContentOnly
           />
-        </GovernanceConsole>
+          </GovernanceConsole>
+        </ManagementSettingsAccessGate>
       </Suspense>
     );
   }
@@ -420,8 +443,15 @@ export function MobileLayout(props: LayoutProps) {
               personalAgentEnabled={personalAgentEnabled}
               renderCronManager={() => <Suspense fallback={SuspenseFallback}><CronManager /></Suspense>}
               renderTenantManager={() => <Suspense fallback={SuspenseFallback}><TenantManager /></Suspense>}
-              renderTenantAdmin={() => (
+              renderTenantAdmin={adminSettings?.target === "tenant" ? undefined : () => (
                 <Suspense fallback={SuspenseFallback}>
+                  <ManagementSettingsAccessGate
+                    scope="tenant"
+                    target={activeTab === "tenant-admin" ? "tenant" : "personal"}
+                    access={managementAccess}
+                    onRetry={managementAccess.retry}
+                    onReturnPersonal={handleReturnPersonalSettings}
+                  >
                   <TenantAdminShell
                     renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
                     renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
@@ -437,10 +467,18 @@ export function MobileLayout(props: LayoutProps) {
                     activeAnalysisSection={tenantAdminSection}
                     onAnalysisSectionChange={setTenantAdminRoute}
                   />
+                  </ManagementSettingsAccessGate>
                 </Suspense>
               )}
-              renderPlatformAdmin={() => (
+              renderPlatformAdmin={adminSettings?.target === "platform" ? undefined : () => (
                 <Suspense fallback={SuspenseFallback}>
+                  <ManagementSettingsAccessGate
+                    scope="platform"
+                    target={activeTab === "platform-admin" ? "platform" : "personal"}
+                    access={managementAccess}
+                    onRetry={managementAccess.retry}
+                    onReturnPersonal={handleReturnPersonalSettings}
+                  >
                   <PlatformAdminShell
                     renderTenants={() => <TenantManager />}
                     renderSignupConfig={() => <SignupConfigManagerPanel />}
@@ -459,6 +497,7 @@ export function MobileLayout(props: LayoutProps) {
                     onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
                     onSettingsClose={closeAdminSettings}
                   />
+                  </ManagementSettingsAccessGate>
                 </Suspense>
               )}
               renderFileBrowser={() => (
@@ -663,7 +702,14 @@ export function MobileLayout(props: LayoutProps) {
         />
 
         {adminSettings?.target === "tenant" && (
-          <TenantAdminShell
+          <ManagementSettingsAccessGate
+            scope="tenant"
+            target={adminSettings.target}
+            access={managementAccess}
+            onRetry={managementAccess.retry}
+            onReturnPersonal={handleReturnPersonalSettings}
+          >
+            <TenantAdminShell
             renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
             renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
             renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
@@ -677,9 +723,17 @@ export function MobileLayout(props: LayoutProps) {
             onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
             onSettingsClose={closeAdminSettings}
           />
+          </ManagementSettingsAccessGate>
         )}
         {adminSettings?.target === "platform" && (
-          <PlatformAdminShell
+          <ManagementSettingsAccessGate
+            scope="platform"
+            target={adminSettings.target}
+            access={managementAccess}
+            onRetry={managementAccess.retry}
+            onReturnPersonal={handleReturnPersonalSettings}
+          >
+            <PlatformAdminShell
             renderTenants={() => <TenantManager />}
             renderSignupConfig={() => <SignupConfigManagerPanel />}
             renderModels={() => <ModelManagerPanel />}
@@ -698,6 +752,7 @@ export function MobileLayout(props: LayoutProps) {
             onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
             onSettingsClose={closeAdminSettings}
           />
+          </ManagementSettingsAccessGate>
         )}
         {/*
           组织/平台管理弹窗可从任意页面打开：openAdminSettings 只推 settings URL，

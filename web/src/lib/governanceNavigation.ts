@@ -1,3 +1,10 @@
+import {
+  getSettingsSection,
+  settingsSectionsForScope,
+  type PersonalSettingsSectionId,
+  type SettingsRegistryEntryForScope,
+} from "@/lib/unifiedSettingsRegistry";
+
 /**
  * V2 治理导航的单一事实源。
  *
@@ -151,19 +158,20 @@ const organizationWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
   },
 ];
 
+function personalSettingsRoute(entry: SettingsRegistryEntryForScope<"personal">): GovernanceRouteDefinition {
+  const tabOptions = "tabs" in entry
+    ? { tabs: entry.tabs, defaultTab: entry.defaultTab }
+    : {};
+  return {
+    ...route("settings", entry.group, entry.id, entry.label, entry.path.split("/").filter(Boolean), tabOptions),
+    id: entry.routeId,
+  };
+}
+
 const settingsWorkspace: GovernanceWorkspaceDefinition = {
-  id: "settings", label: "个人设置", routes: [
-    route("settings", "personal", "account-security", "账户与安全", ["settings", "account-security"]),
-    route("settings", "personal", "my-agent", "我的 Agent", ["settings", "my-agent"], {
-      tabs: ["agent-profile", "persona", "memory"], defaultTab: "agent-profile",
-    }),
-    route("settings", "preferences", "chat-model", "对话与模型", ["settings", "chat-model"]),
-    route("settings", "preferences", "appearance-layout", "外观与布局", ["settings", "appearance-layout"]),
-    route("settings", "access", "my-permissions", "我的权限", ["settings", "my-permissions"]),
-    route("settings", "access", "connections", "连接与授权", ["settings", "connections"]),
-    route("settings", "data", "files-storage", "文件与存储", ["settings", "files-storage"]),
-    route("settings", "data", "trash", "回收站", ["settings", "trash"]),
-  ],
+  id: "settings",
+  label: "个人设置",
+  routes: settingsSectionsForScope("personal").map(personalSettingsRoute),
 };
 
 export const GOVERNANCE_NAVIGATION = {
@@ -211,22 +219,9 @@ const PLATFORM_LEGACY: Readonly<Record<string, string>> = {
 };
 
 const PLATFORM_SETTINGS_LEGACY: Readonly<Record<string, string>> = {
-  tenants: "platform.org-business.tenants",
-  signup: "platform.org-business.signup",
-  models: "platform.resource-center.models",
-  billing: "platform.org-business.entitlements-billing",
-  "remote-hands": "platform.runtime.execution-providers",
+  ...Object.fromEntries(settingsSectionsForScope("platform").map((entry) => [entry.id, entry.targetRouteId])),
   "run-trace": "platform.runtime.runs",
   runtime: "platform.runtime.environments",
-  "tool-controls": "platform.resource-center.tools",
-  "connector-dictionary": "platform.resource-center.connectors",
-  "agent-profiles": "platform.governance.system-settings",
-  "system-prompts": "platform.governance.system-prompts",
-  "memory-polling": "platform.governance.memory-policy",
-  "global-mcp": "platform.resource-center.connectors",
-  "skill-pool": "platform.resource-center.skills",
-  egress: "platform.governance.network-security",
-  system: "platform.governance.system-settings",
 };
 
 const TENANT_LEGACY: Readonly<Record<string, string>> = {
@@ -239,31 +234,23 @@ const TENANT_LEGACY: Readonly<Record<string, string>> = {
   "/usage": "organization.governance.usage",
 };
 
-const TENANT_SETTINGS_LEGACY: Readonly<Record<string, string>> = {
-  users: "organization.members.list",
-  skills: "organization.agents.skills",
-  "org-agents": "organization.agents.org-agents",
-  mcp: "organization.agents.connectors",
-  "connector-dictionary": "organization.agents.connectors",
-  billing: "organization.governance.usage",
-  files: "organization.agents.files-data",
-  company: "organization.settings.profile",
-  instructions: "organization.settings.rules",
-  settings: "organization.settings.security",
-};
+const TENANT_SETTINGS_LEGACY: Readonly<Record<string, string>> = Object.fromEntries(
+  settingsSectionsForScope("tenant").map((entry) => [entry.id, entry.targetRouteId]),
+);
 
+const personalSettingsRouteId = (id: PersonalSettingsSectionId) => getSettingsSection("personal", id).routeId;
 const SETTINGS_LEGACY: Readonly<Record<string, { routeId: string; tab?: string }>> = {
-  "/settings": { routeId: "settings.personal.account-security" },
-  "/settings/account": { routeId: "settings.personal.account-security" },
-  "/settings/general": { routeId: "settings.preferences.chat-model" },
-  "/settings/personalization": { routeId: "settings.preferences.appearance-layout" },
-  "/settings/all-agents": { routeId: "settings.personal.my-agent" },
-  "/settings/memory": { routeId: "settings.personal.my-agent", tab: "memory" },
-  "/settings/skills": { routeId: "settings.access.my-permissions" },
-  "/settings/mcp": { routeId: "settings.access.connections" },
-  "/settings/files": { routeId: "settings.data.files-storage" },
-  "/settings/storage": { routeId: "settings.data.files-storage" },
-  "/settings/data": { routeId: "settings.data.trash" },
+  "/settings": { routeId: personalSettingsRouteId("account-security") },
+  "/settings/account": { routeId: personalSettingsRouteId("account-security") },
+  "/settings/general": { routeId: personalSettingsRouteId("chat-model") },
+  "/settings/personalization": { routeId: personalSettingsRouteId("appearance-layout") },
+  "/settings/all-agents": { routeId: personalSettingsRouteId("my-agent") },
+  "/settings/memory": { routeId: personalSettingsRouteId("my-agent"), tab: "memory" },
+  "/settings/skills": { routeId: personalSettingsRouteId("my-permissions") },
+  "/settings/mcp": { routeId: personalSettingsRouteId("connections") },
+  "/settings/files": { routeId: personalSettingsRouteId("files-storage") },
+  "/settings/storage": { routeId: personalSettingsRouteId("files-storage") },
+  "/settings/data": { routeId: personalSettingsRouteId("trash") },
 };
 
 function decodeParts(pathname: string): string[] | null {

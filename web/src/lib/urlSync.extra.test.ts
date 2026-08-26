@@ -124,17 +124,16 @@ describe("buildUrl 覆盖各 tab 分支", () => {
 });
 
 describe("parseUrl 常规路径分支", () => {
-  it("tenant-admin settings modal 路径", () => {
+  it("tenant-admin Registry 叶与 bare settings 留在统一设置工作区", () => {
     expect(parseUrl("/tenant-admin/settings/billing")).toMatchObject({
       tab: "tenant-admin",
-      adminSettings: null,
-      tenantAdminSection: "usage",
-      canonicalPath: "/tenant-admin/governance/usage",
+      adminSettings: { target: "tenant", section: "billing" },
+      tenantAdminSection: null,
+      canonicalPath: null,
     });
-    // 无 section 段 canonical 到成员叶子
     expect(parseUrl("/tenant-admin/settings")).toMatchObject({
-      adminSettings: null,
-      canonicalPath: "/tenant-admin/members/list",
+      adminSettings: { target: "tenant", section: "users" },
+      canonicalPath: null,
     });
   });
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { managementAccessTarget } from "@/lib/managementAccessView";
 import source from "./MobileLayout.tsx?raw";
 
 describe("MobileLayout 管理模块接线", () => {
@@ -26,5 +27,18 @@ describe("MobileLayout 管理模块接线", () => {
     expect(source).toContain("(prompt: string, scenario?: ScenarioItem)");
     expect(source).toContain("setLastTriedScenario(scenario ?? null)");
     expect(source).toContain("activeScenario={lastTriedScenario ?? undefined}");
+  });
+
+  it.each([
+    ["tenant settings deep link", false, "tenant", "chat", null, "tenant"],
+    ["platform settings deep link", false, "platform", "chat", null, "platform"],
+    ["organization canonical", false, null, "tenant-admin", "organization", "tenant"],
+    ["platform canonical", false, null, "platform-admin", "platform", "platform"],
+    ["personal settings", true, null, "chat", null, "personal"],
+    ["ordinary chat", false, null, "chat", null, null],
+  ] as const)("纯逻辑识别管理访问目标：%s", (
+    _case, settingsOpen, adminSettingsTarget, activeTab, governanceArea, expected,
+  ) => {
+    expect(managementAccessTarget({ settingsOpen, adminSettingsTarget, activeTab, governanceArea })).toBe(expected);
   });
 });

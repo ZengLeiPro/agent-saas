@@ -216,13 +216,20 @@ describe("TaskBoardView", () => {
 
     const source = screen.getByRole("option", { name: "市场事项（个人）" });
     const target = screen.getByRole("option", { name: "产品研发（个人）" });
+    const sourceHandle = within(source).getByTitle("拖动调整看板顺序（仅保存在本浏览器）");
+    expect(source.getAttribute("draggable")).toBeNull();
+    expect(sourceHandle.getAttribute("draggable")).toBe("true");
+    const indicator = source.querySelector("[data-select-item-indicator]");
+    expect(source.querySelector("[data-board-drag-handle]")).toBe(sourceHandle);
+    expect(indicator?.classList.contains("right-2")).toBe(true);
+
     const dataTransfer = {
       effectAllowed: "move",
       dropEffect: "none",
       setData: vi.fn(),
       getData: vi.fn(() => "board-2"),
     };
-    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.dragStart(sourceHandle, { dataTransfer });
     fireEvent.dragOver(target, { dataTransfer });
     fireEvent.drop(target, { dataTransfer });
 

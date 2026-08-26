@@ -278,6 +278,12 @@ jobs:
           set -euo pipefail
           rm -rf "$RUNNER_TEMP/web-assets" && mkdir -p "$RUNNER_TEMP/web-assets"
           tar -xzf "$RUNNER_TEMP/selected/web-assets.tgz" -C "$RUNNER_TEMP/web-assets"
+          jq -n \
+            --arg releaseId "$STAGING_RELEASE_ID" --arg releaseSha "$(jq -r .components.web.sourceSha "$RUNNER_TEMP/manifest.json")" \
+            --arg webDigest "$(jq -r .components.web.artifactDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg configFingerprint "$(jq -r .digest "$RUNNER_TEMP/manifest.json")" \
+            '{schemaVersion:1,environment:"staging",releaseId:$releaseId,releaseSha:$releaseSha,webDigest:$webDigest,configFingerprint:$configFingerprint}' \
+            > "$RUNNER_TEMP/web-assets/release-identity.json"
           aliyun oss sync "$RUNNER_TEMP/web-assets/" "$STAGING_WEB_OSS_URI/" --delete
           curl -fsS --retry 10 "$STAGING_WEB_URL" >/dev/null
 

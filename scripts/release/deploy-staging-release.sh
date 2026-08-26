@@ -52,6 +52,24 @@ else
 fi
 
 ln -sfn "$target" "$current"
+node - "$MANIFEST_PATH" /etc/agent-saas-staging/server.env <<'NODE'
+const fs = require('node:fs');
+const [manifestPath, envPath] = process.argv.slice(2);
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+const desired = {
+  AGENT_SAAS_RELEASE_ID: manifest.releaseId,
+  AGENT_SAAS_RELEASE_SHA: manifest.releaseSha,
+  AGENT_SAAS_SERVER_DIGEST: manifest.components.api.artifactDigest,
+  AGENT_SAAS_WEB_DIGEST: manifest.components.web.artifactDigest,
+  AGENT_SAAS_ACS_ORCHESTRATOR_DIGEST: manifest.components.acs.orchestratorArtifactDigest,
+  AGENT_SAAS_ACS_SANDBOX_IMAGE_DIGEST: manifest.components.acs.sandboxImageDigest,
+};
+const keys = new Set(Object.keys(desired));
+const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/).filter((line) => line && !keys.has(line.split('=', 1)[0]));
+for (const [key, value] of Object.entries(desired)) lines.push(`${key}=${value}`);
+fs.writeFileSync(`${envPath}.candidate`, `${lines.join('\n')}\n`, { mode: 0o600 });
+fs.renameSync(`${envPath}.candidate`, envPath);
+NODE
 node - "$MANIFEST_PATH" /etc/agent-saas-staging/acs-orchestrator.env <<'NODE'
 const fs = require('node:fs');
 const [manifestPath, envPath] = process.argv.slice(2);

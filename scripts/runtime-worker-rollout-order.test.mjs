@@ -33,18 +33,19 @@ test('runtime worker rollback restores a drain-started active process before can
   assert.equal(workflow.includes('WORKER_ACTIVE_DRAINED'), false);
 });
 
-test('runtime worker becomes healthy before Web readiness and traffic switch', () => {
+test('runtime worker process readiness precedes Web readiness and retired v3 gates stay absent', () => {
   const workerDrain = position('kill -USR2 "$OLD_WORKER_PID"');
-  const healthyHeartbeat = position("AND status='healthy' AND updated_at>=clock_timestamp()-interval '30 seconds'");
   const workerPromoted = position('runtime worker promoted before Web readiness');
   const webStart = position('start idle unit: ${SERVICE_NAME}@${IDLE}');
   const webReady = position('waiting ready: $READY_URL timeout=180s');
   const trafficSwitch = position('rewrite nginx upstream: primary=127.0.0.1:$IDLE_PORT');
 
-  assert.ok(workerDrain < healthyHeartbeat);
-  assert.ok(healthyHeartbeat < workerPromoted);
+  assert.ok(workerDrain < workerPromoted);
   assert.ok(workerPromoted < webStart);
   assert.ok(webStart < webReady);
   assert.ok(webReady < trafficSwitch);
+  assert.equal(workflow.includes('integrationV3ControlPlane'), false);
+  assert.equal(workflow.includes('integration_activation_heartbeats_v3'), false);
+  assert.equal(workflow.includes('WORKER_V3_'), false);
   assert.equal(workflow.includes('start deferred until Web cutover succeeds'), false);
 });

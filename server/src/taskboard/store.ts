@@ -33,11 +33,9 @@ import {
   updateTaskBranchFromExecution as updateStoredTaskBranchFromExecution,
 } from './executionTaskActions.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
-import { loadIntegrationCandidateProjection } from './integrationCandidateProjection.js';
-import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
+import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { clearBoardCiPolicyForRepositoryChange, normalizeIntegrationPolicyCiFallback } from './ciPolicy.js';
 import { discoverBoardCiPolicy } from './ciPolicyDiscovery.js';
-import { runIntegrationV3RepositoryProbe, type IntegrationV3RepositoryProbe, type IntegrationV3RepositoryProbeInput } from './integrationV3RepositoryProbe.js';
 import { deleteStoredTask, rollbackStoredTask } from './storeTaskDelete.js';
 import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
 import {
@@ -50,14 +48,12 @@ import {
 } from './boardFields.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
 import { claimIntegrationDispatchCandidates } from './integrationTriggers.js';
+import { mergeIntegrationAgent } from './integrationAgentMerge.js';
+import { cleanupIntegrationAgent } from './integrationAgentCleanup.js';
 import {
   attachExecutionPullRequest, inspectExecutionPullRequest, readExecutionPullRequestJobLog,
   recordReviewedExecutionSubject, type ExecutionPullRequestInspection,
 } from './deliveryPullRequests.js';
-import {
-  inspectIntegrationSource, linkIntegrationRemediation, mergeIntegrationSource, readIntegrationSourceJobLog,
-  reconcileUnknownMergeOperations, type IntegrationSourceInspection,
-} from './integrationOperations.js';
 import {
   appendBoardChange,
   appendTaskChange,
@@ -101,7 +97,6 @@ import {
   searchTasks as searchStoredTasks,
 } from './storeSearch.js';
 import { initializeTaskboardStore } from './storeSchema.js';
-import { assertIntegrationV3RuntimeAvailable } from './integrationV3ActivationStore.js';
 import { loadBoard as loadStoredBoard, requireTaskWithBoard as requireStoredTaskWithBoard } from './storeTaskAccess.js';
 import { isStoredTaskWatched, setStoredTaskWatched } from './taskWatchStore.js';
 import {
@@ -145,7 +140,6 @@ export interface PgTaskboardStoreOptions {
   pool: PgPool;
   tablePrefix?: string;
   repositoryProvider?: RepositoryProvider;
-  integrationV3RepositoryProbe?: IntegrationV3RepositoryProbe;
 }
 export class PgTaskboardStore implements TaskboardService, TaskboardExecutionStore {
   readonly pool: PgPool;
@@ -166,13 +160,11 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   readonly integrationTriggerOutboxTable: string;
   readonly remediationAttemptsTable: string;
   readonly cancellationOutboxTable: string; readonly watchersTable: string; readonly statusNotificationOutboxTable: string;
-  repositoryProvider?: RepositoryProvider; integrationV3RepositoryProvider?: RepositoryProvider;
-  private integrationV3RepositoryProbe?: IntegrationV3RepositoryProbe;
+  repositoryProvider?: RepositoryProvider;
   constructor(options: PgTaskboardStoreOptions) {
     const prefix = sanitizeIdentifier(options.tablePrefix ?? 'runtime');
     this.pool = options.pool;
     this.repositoryProvider = options.repositoryProvider;
-    this.integrationV3RepositoryProbe = options.integrationV3RepositoryProbe;
     this.boardsTable = `${prefix}_taskboards`;
     this.tasksTable = `${prefix}_taskboard_tasks`;
     this.commentsTable = `${prefix}_taskboard_comments`;
@@ -228,16 +220,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<TaskBoardIntegrationSource[]> {
     return listStoredIntegrationSources(this, identity, integrationTaskId);
   }
-  /**
-   * Loads the durable v3 candidate projection after checking task visibility
-   * and workflow eligibility through the store's public task access path.
-   */
-  getIntegrationCandidate(
-    identity: TaskboardIdentity, integrationTaskId: string,
-    options?: { includeHistory?: boolean; page?: number; pageSize?: number },
-  ) {
-    return loadIntegrationCandidateProjection(this, identity, integrationTaskId, options);
-  }
   resumeBlockedTask(
     identity: TaskboardIdentity,
     taskId: string,
@@ -256,11 +238,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     this.repositoryProvider = provider;
   }
   getRepositoryProvider(): RepositoryProvider | undefined { return this.repositoryProvider; }
-  setIntegrationV3RepositoryProvider(provider: RepositoryProvider | undefined): void { this.integrationV3RepositoryProvider = provider; }
-  setIntegrationV3RepositoryProbe(probe: IntegrationV3RepositoryProbe): void { this.integrationV3RepositoryProbe = probe; }
-  probeIntegrationV3Repository(input: IntegrationV3RepositoryProbeInput): Promise<void> {
-    return runIntegrationV3RepositoryProbe(this.integrationV3RepositoryProbe, input);
-  }
+
 
   attachExecutionPullRequestV2(
     identity: TaskboardIdentity,
@@ -290,35 +268,11 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return recordReviewedExecutionSubject(this, identity, runId);
   }
 
-  inspectIntegrationSourceV2(
-    identity: TaskboardIdentity,
-    runId: string,
-    sourceId: string,
-  ): Promise<IntegrationSourceInspection> {
-    return inspectIntegrationSource(this, identity, runId, sourceId);
-  }
-  readIntegrationSourceJobLogV2(identity: TaskboardIdentity, runId: string, sourceId: string, inspectionId: string, providerJobId: string) {
-    return readIntegrationSourceJobLog(this, identity, runId, sourceId, inspectionId, providerJobId);
-  }
-  mergeIntegrationSourceV2(identity: TaskboardIdentity, runId: string, sourceId: string) {
-    return mergeIntegrationSource(this, identity, runId, sourceId);
-  }
-  linkIntegrationRemediationV2(
-    identity: TaskboardIdentity,
-    runId: string,
-    sourceId: string,
-    remediationTaskId: string,
-  ) {
-    return linkIntegrationRemediation(this, identity, runId, sourceId, remediationTaskId);
-  }
   claimWorkflowCancellations(limit = 20): Promise<Array<{ id: string; runId: string; reason: string }>> {
     return claimStoredWorkflowCancellations(this, limit);
   }
   finishWorkflowCancellation(id: string, error?: string): Promise<void> {
     return finishStoredWorkflowCancellation(this, id, error);
-  }
-  reconcileMergeOperationsV2(limit?: number): Promise<number> {
-    return reconcileUnknownMergeOperations(this, limit);
   }
   claimIntegrationDispatchCandidatesV2(limit?: number) {
     return claimIntegrationDispatchCandidates(this, limit);
@@ -348,7 +302,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   getBoardCiPolicyDiscovery(identity: TaskboardIdentity, boardId: string) { return discoverBoardCiPolicy(this, identity, boardId); }
   async createBoard(identity: TaskboardIdentity, input: TaskBoardCreateInput): Promise<TaskBoard> {
     const integrationPolicy = input.integrationPolicy && normalizeIntegrationPolicyCiFallback(input.integrationPolicy);
-    if (integrationPolicy?.enabled && integrationPolicy.workflowVersion === 3) await assertIntegrationV3RuntimeAvailable(this.pool, this.integrationSourcesTable);
     const name = requireText(input.name, 'Board name');
     const description = optionalText(input.description);
     const prompt = normalizeBoardPrompt(input.prompt ?? TASKBOARD_DEFAULT_PROMPT);
@@ -361,7 +314,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     if (integrationPolicy && !repository) throw new TaskboardValidationError(
       'Integration policy requires a repository', 'TASKBOARD_REPOSITORY_REQUIRED',
     );
-    if (integrationPolicy?.enabled && integrationPolicy.workflowVersion === 3 && repository) await this.probeIntegrationV3Repository({ tenantId: identity.tenantId, ownerUserId: identity.ownerUserId, repository });
     try {
       return await this.withTransaction(async (client) => {
         const boardId = randomUUID();
@@ -400,7 +352,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   }
   async updateBoard(identity: TaskboardIdentity, boardId: string, input: TaskBoardPatchInput): Promise<TaskBoard> {
     const inputPolicy = input.integrationPolicy && normalizeIntegrationPolicyCiFallback(input.integrationPolicy);
-    if (inputPolicy?.enabled && inputPolicy.workflowVersion === 3) await assertIntegrationV3RuntimeAvailable(this.pool, this.integrationSourcesTable);
     return this.withTransaction(async (client) => {
       const current = await this.requireOwnedBoard(client, identity, boardId, true);
       assertExpectedVersion(current, input.expectedVersion);
@@ -452,10 +403,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         input.integrationPolicy === undefined ? current.integrationPolicy : inputPolicy ?? undefined,
       );
       const effectivePolicy = reboundPolicy.policy;
-      if ((input.repository !== undefined || input.integrationPolicy !== undefined)
-        && effectivePolicy?.enabled && effectivePolicy.workflowVersion === 3 && effectiveRepository) {
-        await this.probeIntegrationV3Repository({ tenantId: identity.tenantId, ownerUserId: identity.ownerUserId, repository: effectiveRepository });
-      }
       if (input.repository !== undefined) {
         const nextRepositoryId = normalizedRepository?.repositoryId;
         const currentRepositoryId = current.repository?.repositoryId;
@@ -1013,13 +960,13 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       if (archive) {
         await assertTaskHasNoActiveRuns(this, client, taskId);
         if (loaded.task.kind === 'integration' && (loaded.task.workflowVersion ?? 2) === 3) {
-          const { candidatesTable } = integrationCandidateTableNames(this.integrationSourcesTable);
-          const candidate = await client.query(
-            `SELECT state FROM ${candidatesTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId]);
-          if (!candidate.rows[0] || !['merged','canceled'].includes(String(candidate.rows[0].state))) {
+          const { agentsTable } = integrationAgentTableNames(this.integrationSourcesTable);
+          const agent = await client.query(
+            `SELECT status FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId]);
+          if (!agent.rows[0] || !['merged','canceled'].includes(String(agent.rows[0].status))) {
             throw new TaskboardValidationError(
-              'Workflow v3 integration must be canceled or merged before archive',
-              'TASKBOARD_V3_ARCHIVE_REQUIRES_TERMINAL_CANDIDATE',
+              'Integration Agent must be canceled or merged before archive',
+              'TASKBOARD_AGENT_ARCHIVE_REQUIRES_TERMINAL_STATUS',
             );
           }
         }

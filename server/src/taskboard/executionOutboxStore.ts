@@ -49,12 +49,33 @@ export async function claimExecutionDispatch(
   leaseId: string,
 ): Promise<TaskboardExecutionDispatch | null> {
   const result = await host.pool.query(
-    `WITH candidate AS (
+    `WITH legacy_outbox AS (
+       UPDATE ${host.executionOutboxTable} o
+          SET status='dispatched', lease_id=NULL, lease_expires_at=NULL,
+              last_error='Integration task requires Agent-first workflow migration',
+              dispatched_at=COALESCE(o.dispatched_at, now()), updated_at=now()
+         FROM ${host.executionsTable} e
+         JOIN ${host.tasksTable} t ON t.id=e.task_id
+        WHERE o.run_id=e.run_id AND ($2::text IS NULL OR o.run_id=$2)
+          AND t.kind='integration' AND t.workflow_version<>3
+          AND (o.status='pending'
+            OR (o.status='dispatching' AND o.lease_expires_at <= now()))
+        RETURNING o.run_id
+     ), legacy_execution AS (
+       UPDATE ${host.executionsTable} e
+          SET status='failed', error='Integration task requires Agent-first workflow migration',
+              finished_at=COALESCE(e.finished_at, now()), updated_at=now(),
+              reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL
+        WHERE e.run_id IN (SELECT run_id FROM legacy_outbox)
+          AND e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
+        RETURNING e.run_id
+     ), candidate AS (
        SELECT o.run_id FROM ${host.executionOutboxTable} o
        JOIN ${host.executionsTable} e ON e.run_id=o.run_id
        JOIN ${host.tasksTable} t ON t.id=e.task_id
        JOIN ${host.boardsTable} b ON b.id=t.board_id
        WHERE ($2::text IS NULL OR o.run_id=$2)
+         AND NOT (t.kind='integration' AND t.workflow_version<>3)
          AND t.archived_at IS NULL AND b.archived_at IS NULL
          AND e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
          AND ((o.status='pending' AND o.next_attempt_at <= now())
@@ -143,11 +164,38 @@ export async function claimExecutionReconcileCandidates(
   leaseId: string,
 ): Promise<TaskboardExecutionReconcileCandidate[]> {
   const result = await host.pool.query(
-    `WITH candidates AS (
+    `WITH legacy_candidates AS (
+       SELECT e.run_id FROM ${host.executionsTable} e
+       JOIN ${host.executionOutboxTable} o ON o.run_id=e.run_id
+       JOIN ${host.tasksTable} t ON t.id=e.task_id
+       JOIN ${host.boardsTable} b ON b.id=t.board_id
+       WHERE e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
+         AND o.status='dispatched' AND t.kind='integration' AND t.workflow_version<>3
+         AND t.archived_at IS NULL AND b.archived_at IS NULL
+         AND e.updated_at <= $1
+         AND (e.reconcile_lease_expires_at IS NULL OR e.reconcile_lease_expires_at <= clock_timestamp())
+       ORDER BY COALESCE(e.last_reconciled_at, '-infinity'::timestamptz), e.updated_at, e.run_id
+       FOR UPDATE OF e, o SKIP LOCKED LIMIT $2
+     ), legacy_execution AS (
+       UPDATE ${host.executionsTable} e
+          SET status='failed', error='Integration task requires Agent-first workflow migration',
+              finished_at=COALESCE(e.finished_at, now()), updated_at=now(),
+              reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL
+         FROM legacy_candidates legacy WHERE e.run_id=legacy.run_id
+       RETURNING e.run_id
+     ), legacy_outbox AS (
+       UPDATE ${host.executionOutboxTable} o
+          SET status='dispatched', lease_id=NULL, lease_expires_at=NULL,
+              last_error='Integration task requires Agent-first workflow migration',
+              dispatched_at=COALESCE(o.dispatched_at, now()), updated_at=now()
+         FROM legacy_execution legacy WHERE o.run_id=legacy.run_id
+       RETURNING o.run_id
+     ), candidates AS (
        SELECT e.run_id FROM ${host.executionsTable} e
        JOIN ${host.tasksTable} t ON t.id=e.task_id
        JOIN ${host.boardsTable} b ON b.id=t.board_id
        WHERE e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval')
+         AND NOT (t.kind='integration' AND t.workflow_version<>3)
          AND t.archived_at IS NULL AND b.archived_at IS NULL
          AND e.updated_at <= $1
          AND (e.reconcile_lease_expires_at IS NULL OR e.reconcile_lease_expires_at <= clock_timestamp())

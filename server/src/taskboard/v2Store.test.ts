@@ -18,10 +18,11 @@ const repository = {
 };
 
 describe('createIntegrationBatch', () => {
-  it('creates integration tasks at the in-progress column tail', async () => {
+  it('creates Agent-first workflow v3 tasks and a durable rendezvous at the in-progress column tail', async () => {
     let tailQuery = '';
     let taskInsert = '';
     let taskInsertValues: unknown[] = [];
+    let agentInsert = '';
     const client = {
       query: vi.fn(async (sql: string, values?: unknown[]) => {
         if (sql.includes('FROM boards')) {
@@ -66,7 +67,11 @@ describe('createIntegrationBatch', () => {
         if (sql.includes('INSERT INTO tasks')) {
           taskInsert = sql;
           taskInsertValues = values ?? [];
-          throw new Error('stop after task insert');
+          return { rows: [] };
+        }
+        if (sql.includes('INSERT INTO integration_agents')) {
+          agentInsert = sql;
+          throw new Error('stop after agent insert');
         }
         return { rows: [] };
       }),
@@ -90,10 +95,12 @@ describe('createIntegrationBatch', () => {
 
     await expect(createIntegrationBatch(options, identity, 'board-1', {
       deliveryTaskIds: ['delivery-1'], expectedBoardVersion: 1,
-    })).rejects.toThrow('stop after task insert');
+    })).rejects.toThrow('stop after agent insert');
 
     expect(tailQuery).toContain("status='in_progress'");
     expect(taskInsert).toContain("'in_progress'");
     expect(taskInsertValues[5]).toBe(5120);
+    expect(taskInsertValues[8]).toBe(3);
+    expect(agentInsert).toContain("'active'");
   });
 });

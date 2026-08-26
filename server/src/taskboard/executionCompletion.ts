@@ -24,10 +24,10 @@ export async function applyExecutionTaskCompletion(
   executionCreatedAt: string | Date,
   input: TaskboardExecutionCompletionInput,
 ): Promise<boolean> {
-  // Candidate transitions are protocol-driven and epoch fenced. Legacy
-  // completion callbacks (including late callbacks) must never project a v3
+  // Integration Agent transitions are protocol-driven and epoch fenced.
+  // Completion callbacks (including historical late callbacks) never project
   // integration task status.
-  if (task.kind === 'integration' && task.workflowVersion === 3) {
+  if (task.kind === 'integration') {
     return input.status === 'succeeded';
   }
   if (execution.protocolVersion === 2) {
@@ -77,7 +77,7 @@ export async function enqueueAutomaticReview(
   if (!review) return;
   if (task.kind === 'integration' && task.workflowVersion === 3) {
     throw new TaskboardValidationError(
-      'Workflow v3 review must be requested by integrationTriggers after candidate reconciliation',
+      'Integration Agent review must be requested by integrationTriggers after Agent state reconciliation',
       'TASKBOARD_V3_REVIEW_TRIGGER_REQUIRED',
     );
   }

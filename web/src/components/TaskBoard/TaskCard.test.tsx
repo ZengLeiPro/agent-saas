@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import type { TaskBoardTask } from "@agent/shared";
 import { TaskCard } from "./TaskCard";
 
-vi.mock("./IntegrationCandidate", () => ({ IntegrationCandidateCardSummary: () => <div>v3 Candidate summary</div> }));
 vi.mock("./IntegrationSources", () => ({ IntegrationCardSummary: () => <div>v2 source summary</div> }));
 
 function task(overrides: Partial<TaskBoardTask> = {}): TaskBoardTask {
@@ -62,12 +61,6 @@ describe("TaskCard", () => {
     renderCard(task({ labels: ["Agent 自动标签"] }));
 
     expect(screen.queryByText("Agent 自动标签")).toBeNull();
-  });
-
-  it("按 integration task workflowVersion 分流 v2/v3 卡片摘要", () => {
-    renderCard(task({ kind: "integration", workflowVersion: 3 }));
-    expect(screen.getByText("v3 Candidate summary")).toBeTruthy();
-    expect(screen.queryByText("v2 source summary")).toBeNull();
   });
 
   it("兼容没有创建人和完成时间的旧任务", () => {

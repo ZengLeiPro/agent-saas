@@ -3,7 +3,6 @@ import { join, resolve } from 'path';
 import { parse as parseJsonc } from 'jsonc-parser';
 import { z } from 'zod';
 import { buildWebToolsSchemas } from './webToolsSchema.js';
-import { integrationV3ControlPlaneConfigSchema } from './integrationV3ControlPlaneConfig.js';
 import { runtimeEventRetentionConfigSchema } from './runtimeEventRetentionConfig.js';
 import {
   DEFAULT_CODING_HAND_NETWORK_POLICY,
@@ -1236,7 +1235,6 @@ export const appConfigSchema = z.object({
   stt: sttConfigSchema.optional(),
   messageDisplay: messageDisplayConfigSchema.optional(),
   dispatch: dispatchConfigSchema.optional(),
-  integrationV3ControlPlane: integrationV3ControlPlaneConfigSchema,
   observability: observabilityConfigSchema.optional(),
   systemMonitor: systemMonitorConfigSchema,
   alerting: alertingConfigSchema,

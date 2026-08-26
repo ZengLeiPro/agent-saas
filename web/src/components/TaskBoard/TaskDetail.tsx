@@ -42,8 +42,7 @@ import {
   STATUS_LABELS,
   TASK_KIND_LABELS,
 } from "./constants";
-import { IntegrationTaskDetails } from "./IntegrationCandidate";
-import { useIntegrationSources } from "./IntegrationSources";
+import { IntegrationSourceDetails, useIntegrationSources } from "./IntegrationSources";
 import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from "./TaskAttachments";
 import { TaskDetailComments, EXECUTION_PURPOSE_LABELS } from "./TaskDetailComments";
@@ -162,7 +161,7 @@ export function TaskDetail({
     refresh: refreshExecutions,
   } = useTaskExecutions(open && task ? task.id : null, active && open);
   const integrationSourcesState = useIntegrationSources(
-    open && currentTask?.kind === "integration" && currentTask.workflowVersion !== 3 ? currentTask.id : null,
+    open && currentTask?.kind === "integration" ? currentTask.id : null,
     active && open,
   );
 
@@ -444,7 +443,7 @@ export function TaskDetail({
     }
     const decision = preset?.decision ?? window.prompt(
       isIntegrationV3
-        ? "请填写恢复 Workflow v3 Candidate 的决策与后续要求"
+        ? "请填写恢复 Integration Agent 的决策与后续要求"
         : taskKind === "integration"
           ? `请填写恢复 ${sourceIds!.length} 个阻塞来源的决策与后续要求`
           : "请填写解除阻塞后的恢复决策与后续要求",
@@ -698,7 +697,7 @@ export function TaskDetail({
                 {taskKind === "integration" && currentTask.workflowVersion === 3
                   && !["done", "canceled"].includes(currentTask.status) ? (
                     <p className="text-xs text-muted-foreground">
-                      Integration v3 由系统按 Candidate 状态自动推进 Work、Review 与合并；异常时请在 Candidate 区重新排队或显式恢复。
+                      Agent-first Integration v3 会按当前阶段自动恢复并持续推进 Work、Review 与合并；当前阶段：{STATUS_LABELS[currentTask.status]}。
                     </p>
                   ) : null}
                 {currentTask.providerPullRequestId ? <p>PR：<span className="font-mono">{currentTask.providerPullRequestId}</span>{currentTask.pullRequestNumber ? `（#${currentTask.pullRequestNumber}）` : ""}</p> : null}
@@ -738,7 +737,7 @@ export function TaskDetail({
                           && (integrationSourcesState.loading || integrationSourcesState.error !== null
                             || selectedResumeSourceIds.size === 0))}
                       >
-                        显式恢复{isIntegrationV3 ? " Candidate" : taskKind === "integration" ? "阻塞来源" : "任务"}
+                        显式恢复{isIntegrationV3 ? " Integration Agent" : taskKind === "integration" ? "阻塞来源" : "任务"}
                       </Button>
                     ) : null}
                   </div>
@@ -785,13 +784,17 @@ export function TaskDetail({
               </section>
 
               {taskKind === "integration" ? (
-                <IntegrationTaskDetails
-                  task={currentTask}
-                  active={active && open}
-                  sourceState={integrationSourcesState}
+                <IntegrationSourceDetails
+                  taskId={currentTask.id}
+                  state={integrationSourcesState}
                   selectedSourceIds={selectedResumeSourceIds}
-                  setSelectedSourceIds={setSelectedResumeSourceIds}
-                  sourceSelectionEnabled={currentTask.status === "blocked" && canTransitionTask}
+                  onSourceSelectionChange={currentTask.status === "blocked" && canTransitionTask ? (sourceId, selected) => {
+                    setSelectedResumeSourceIds((previous) => {
+                      const next = new Set(previous);
+                      if (selected) next.add(sourceId); else next.delete(sourceId);
+                      return next;
+                    });
+                  } : undefined}
                   onNavigateTask={onNavigateTask}
                 />
               ) : null}

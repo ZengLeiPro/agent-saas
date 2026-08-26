@@ -108,9 +108,9 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(workflow).toContain('recover interrupted runtime worker drain before rollout');
     expect(workflow).toContain('interrupted runtime worker candidate drained after active recovery');
     expect(workflow.split('recover_interrupted_runtime_worker_drain "$WORKER_ACTIVE"')).toHaveLength(3);
-    expect(workflow).toContain('WORKER_V3_READY_TIMEOUT=240');
-    expect(workflow).toContain('for _ in $(seq 1 "$WORKER_V3_READY_TIMEOUT")');
-    expect(workflow).toContain('runtime worker candidate has no healthy Workflow v3 heartbeat before Web start (${WORKER_V3_READY_TIMEOUT}s)');
+    expect(workflow).not.toContain('WORKER_V3_READY_TIMEOUT');
+    expect(workflow).not.toContain('integrationV3ControlPlane');
+    expect(workflow).not.toContain('taskboard_integration_activation_heartbeats_v3');
     expect(workflow).not.toContain('runtime worker candidate failed readiness after Web cutover');
     expect(workflow).toContain('idle drain endpoint unavailable; marker snapshot reports activeUploads=');
     expect(workflow).toContain('rm -f "/run/${SERVICE_NAME}-${IDLE}.pid" "/run/${SERVICE_NAME}-${IDLE}.draining"');

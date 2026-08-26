@@ -8,13 +8,29 @@ export interface TaskboardExecutionSessionDescriptor {
   integrationMetadata: Record<string, unknown>;
 }
 
+export function reusableTaskboardSessionId(
+  taskKind: TaskBoardTaskKind | undefined,
+  purpose: TaskBoardExecutionPurpose,
+  executions: Array<{ purpose: TaskBoardExecutionPurpose; sessionId: string }>,
+  integrationDurableSessionId?: string,
+): string | undefined {
+  if (taskKind === 'integration') {
+    return purpose === 'review'
+      ? undefined
+      : integrationDurableSessionId
+        ?? executions.find((execution) => execution.purpose === 'work')?.sessionId;
+  }
+  return purpose === 'work'
+    ? executions.find((execution) => execution.purpose === 'work')?.sessionId
+    : undefined;
+}
+
 export function taskboardExecutionSessionDescriptor(
   taskKind: TaskBoardTaskKind | undefined,
   purpose: TaskBoardExecutionPurpose,
   taskId: string,
 ): TaskboardExecutionSessionDescriptor {
-  const integrationAgentRuntime = taskKind === 'integration'
-    && (purpose === 'work' || purpose === 'review');
+  const integrationAgentRuntime = taskKind === 'integration';
   return {
     sessionPrefix: integrationAgentRuntime
       ? `taskboard-integration-${purpose}`

@@ -7,7 +7,7 @@ import type {
   TaskBoardPatchInput,
   TaskBoardVisibility,
 } from "@agent/shared";
-import type { TaskBoardCiPolicyDiscovery, TaskBoardExecutionPurpose, TaskBoardIntegrationPolicy, TaskBoardIntegrationTriggerMode, TaskBoardIntegrationWorkflowVersion, TaskBoardStageModels, TaskBoardStagePrompts } from "@agent/shared/types/taskboard";
+import type { TaskBoardCiPolicyDiscovery, TaskBoardExecutionPurpose, TaskBoardIntegrationPolicy, TaskBoardIntegrationTriggerMode, TaskBoardStageModels, TaskBoardStagePrompts } from "@agent/shared/types/taskboard";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -83,6 +83,7 @@ function defaultPolicy(): TaskBoardIntegrationPolicy {
     schemaVersion: 1,
     enabled: true,
     revision: "server",
+    workflowVersion: 3,
     trigger: { mode: "manual", allowedRoles: ["maintainer", "owner"] },
     batch: { maxTasks: 10, selection: "priority_then_ready_at" },
     execution: {
@@ -130,15 +131,6 @@ export function BoardDialog({
   const [repositoryName, setRepositoryName] = useState("");
   const [baseBranch, setBaseBranch] = useState("main");
   const [policyEnabled, setPolicyEnabled] = useState(true);
-  const [workflowVersion, setWorkflowVersion] = useState<TaskBoardIntegrationWorkflowVersion>(2);
-  const [featureFlags, setFeatureFlags] = useState<NonNullable<TaskBoardIntegrationPolicy["featureFlags"]>>({
-    engineV3: true,
-    compose: true,
-    review: true,
-    merge: true,
-    cleanup: true,
-    workspaceSync: true,
-  });
   const [triggerMode, setTriggerMode] = useState<TaskBoardIntegrationTriggerMode>("manual");
   const [cron, setCron] = useState("0 2 * * *");
   const [timezone, setTimezone] = useState("Asia/Shanghai");
@@ -184,10 +176,6 @@ export function BoardDialog({
       setBaseBranch(repository?.baseBranch ?? "main");
       const policy = board?.integrationPolicy ?? defaultPolicy();
       setPolicyEnabled(policy.enabled);
-      setWorkflowVersion(policy.workflowVersion ?? 2);
-      setFeatureFlags(policy.featureFlags ?? {
-        engineV3: true, compose: true, review: true, merge: true, cleanup: true, workspaceSync: true,
-      });
       setTriggerMode(policy.trigger.mode);
       setCron(policy.trigger.mode === "scheduled" ? policy.trigger.cron : "0 2 * * *");
       setTimezone(policy.trigger.mode === "scheduled" ? policy.trigger.timezone : "Asia/Shanghai");
@@ -223,10 +211,6 @@ export function BoardDialog({
     if (!dirtyFieldsRef.current.has("integrationPolicy")) {
       const policy = board.integrationPolicy ?? defaultPolicy();
       setPolicyEnabled(policy.enabled);
-      setWorkflowVersion(policy.workflowVersion ?? 2);
-      setFeatureFlags(policy.featureFlags ?? {
-        engineV3: true, compose: true, review: true, merge: true, cleanup: true, workspaceSync: true,
-      });
       setTriggerMode(policy.trigger.mode);
       setCron(policy.trigger.mode === "scheduled" ? policy.trigger.cron : "0 2 * * *");
       setTimezone(policy.trigger.mode === "scheduled" ? policy.trigger.timezone : "Asia/Shanghai");
@@ -362,8 +346,7 @@ export function BoardDialog({
       schemaVersion: 1,
       enabled: repositoryEnabled && policyEnabled,
       revision: previousPolicy.revision || "server",
-      workflowVersion,
-      ...(workflowVersion === 3 ? { featureFlags } : {}),
+      workflowVersion: 3,
       ...(ciPolicy ? { ciPolicy } : {}),
       trigger: triggerMode === "scheduled"
         ? { mode: "scheduled", cron: cron.trim(), timezone: timezone.trim() }
@@ -560,43 +543,6 @@ export function BoardDialog({
                   />
                   <Label htmlFor="taskboard-policy-enabled">启用集成策略</Label>
                 </div>
-                <div className="space-y-2">
-                  <Label>Integration workflow</Label>
-                  <Select value={String(workflowVersion)} onValueChange={(value) => { dirtyFieldsRef.current.add("integrationPolicy"); setWorkflowVersion(Number(value) as TaskBoardIntegrationWorkflowVersion); }} disabled={submitting || !canEditPolicy}>
-                    <SelectTrigger aria-label="Integration workflow 版本"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="2">v2（稳定版，默认）</SelectItem>
-                      <SelectItem value="3">v3（Candidate）</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">新建策略默认 v2；任务创建后 workflow version 不可变。</p>
-                </div>
-                {workflowVersion === 3 ? (
-                  <fieldset className="space-y-2 rounded-md border p-3">
-                    <legend className="px-1 text-sm font-medium">v3 feature flags</legend>
-                    <p className="text-xs text-muted-foreground">v3 需同时开启 engineV3；各阶段开关关闭时 fail closed，不会回退到 v2。</p>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {([
-                        ["engineV3", "启用 v3 engine"],
-                        ["compose", "Candidate 组合"],
-                        ["review", "Candidate Review"],
-                        ["merge", "合入 main"],
-                        ["cleanup", "合入后 cleanup"],
-                        ["workspaceSync", "Workspace 同步"],
-                      ] as const).map(([flag, label]) => (
-                        <label key={flag} className="flex items-center gap-2 text-sm">
-                          <Checkbox
-                            checked={featureFlags[flag]}
-                            onCheckedChange={(checked) => { dirtyFieldsRef.current.add("integrationPolicy"); setFeatureFlags((current) => ({ ...current, [flag]: checked === true })); }}
-                            aria-label={label}
-                            disabled={submitting || !canEditPolicy}
-                          />
-                          {label}
-                        </label>
-                      ))}
-                    </div>
-                  </fieldset>
-                ) : null}
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>触发模式</Label>

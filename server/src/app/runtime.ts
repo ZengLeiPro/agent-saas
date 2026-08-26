@@ -36,12 +36,7 @@ import { TaskboardExecutionCoordinator, createTaskboardAttachmentAccess, createT
 import { RetryableTaskboardService } from '../taskboard/retryableService.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import { configureTaskboardGithubRepositoryProvider } from '../taskboard/repositoryRuntime.js';
-import type { RepositoryProvider } from '../taskboard/repositoryProvider.js';
-import { resolveGithubToken } from '../connectors/github.js';
-import { buildRuntimeTaskboardIntegrationV3Options, configureRuntimeIntegrationV3RepositoryAccess, startRuntimeTaskboardIntegrationV3, type RuntimeTaskboardIntegrationV3 } from './runtimeTaskboardIntegrationV3.js';
 import { retentionWorkerOptions } from './runtimeEventRetentionConfig.js';
-import { createRuntimeIntegrationV3HealthProvider } from '../taskboard/integrationV3Observability.js';
-import { createIntegrationV3RequeueHandler } from '../taskboard/integrationV3Repair.js';
 import type { TaskboardService } from '../taskboard/types.js';
 import { createTaskboardTitleGenerator } from '../taskboard/taskTitle.js';
 import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
@@ -623,7 +618,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let appealStore: PgAppealStore | undefined;
   let taskboardService: TaskboardService | undefined;
   let taskboardStoreService: RetryableTaskboardService | undefined;
-  let rawTaskboardStore: PgTaskboardStore | undefined, taskboardExecutionCoordinator: TaskboardExecutionCoordinator | undefined, integrationV3Runtime: RuntimeTaskboardIntegrationV3 | undefined, taskboardRepositoryProvider: ReturnType<typeof configureTaskboardGithubRepositoryProvider>, integrationV3RepositoryProvider: RepositoryProvider | undefined, taskboardStatusNotificationWorker: ReturnType<typeof startTaskboardStatusNotificationWorker>;
+  let rawTaskboardStore: PgTaskboardStore | undefined, taskboardExecutionCoordinator: TaskboardExecutionCoordinator | undefined, taskboardRepositoryProvider: ReturnType<typeof configureTaskboardGithubRepositoryProvider>, taskboardStatusNotificationWorker: ReturnType<typeof startTaskboardStatusNotificationWorker>;
   let pgArtifactStore: PgArtifactStore | undefined;
   let systemMetricsStore: PgSystemMetricsStore | undefined;
   let systemMetricsCollector: SystemMetricsCollector | undefined;
@@ -715,7 +710,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     resolvedClientDaemonAuthToken,
     resolvedFeishuConnector,
     feishuConnectorScopes,
-  } = await initializeRuntimeGovernanceCredentials(config, processCwd); const integrationV3Adapters = (await import('./runtimeIntegrationV3ProductionAdapters.js')).resolveProductionIntegrationV3Adapters({ config, secretVault, ...options });
+  } = await initializeRuntimeGovernanceCredentials(config, processCwd);
   // P4 防御纵深（2026-06-22 落地，06-26 收敛 admin 容器 env）：把按 tenant 装配子进程 env 的规则统一塞进
   // ServerLocal / Container 两条路径。buildTenantScopedEnv 会按 workspace.tenantId
   // 决定是"匿名内部调用保留完整 process.env"还是"明确 tenant 先剔除敏感宿主
@@ -1502,12 +1497,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     vault: secretVault,
     onError: (error) => serverLogger.warn(`Taskboard GitHub credential resolve failed: ${error.message}`),
   });
-  const configuredIntegrationV3Access = configureRuntimeIntegrationV3RepositoryAccess({ store: rawTaskboardStore, control: config.integrationV3ControlPlane, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, resolvePersonalAccessToken: async ({ tenantId, ownerUserId }) => {
-    const user = userStore?.findById(ownerUserId); if (!user || user.disabled || (tenantId && user.tenantId !== tenantId)) return undefined;
-    return resolveGithubToken({ connectionStore: connectorConnectionStore, vault: secretVault, governanceCredentialStore: credentialStore, onError: (error) => serverLogger.warn(`Integration PAT resolve failed: ${error.message}`) }, { userId: user.id, username: user.username, tenantId: user.tenantId });
-  } });
-  integrationV3RepositoryProvider = configuredIntegrationV3Access.repositoryProvider;
-  const integrationV3PersonalAccessTokenResolver = configuredIntegrationV3Access.personalAccessTokenResolver;
   const initialMemoryIndexService = createMemoryIndexService(
     processCwd,
     config.memory?.index,
@@ -1680,7 +1669,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       : false,
     ...memoryContextTools, agentStore, orgAgentStore, tenantStore,
     environmentStore,
-    taskboard: { service: () => taskboardService, generateTaskTitle: (description, identity) => createTaskboardTitleGenerator({ agentCwd, titleGeneratorConfigs, titleModelAdapterFactory, refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(), getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'), tokenUsageStore, billingService })(description, identity), executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, integrationPush: () => integrationV3Runtime?.integrationPush, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
+    taskboard: { service: () => taskboardService, generateTaskTitle: (description, identity) => createTaskboardTitleGenerator({ agentCwd, titleGeneratorConfigs, titleModelAdapterFactory, refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(), getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'), tokenUsageStore, billingService })(description, identity), executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
       const effectiveAgentId = agentId
         ?? (await agentResourceStore?.findPersonalByOwner(tenantId, userId))?.agentId;
@@ -2050,8 +2039,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         ...createTaskboardRuntimeOptions({ modelResolver, userStore, timezone: config.server.timezone, logger: serverLogger, eventStore: pgEventStore, groupTaskboardSession: (input) => groupStore.addTaskboardSession(input), onSessionsChanged: clearSessionsListCache }),
         logger: serverLogger.child('TaskboardExecution') });
     }
-    if (enableSingletonWorkers && rawTaskboardStore && taskboardExecutionCoordinator && config.integrationV3ControlPlane?.enabled === true && integrationV3RepositoryProvider)
-      integrationV3Runtime = startRuntimeTaskboardIntegrationV3(buildRuntimeTaskboardIntegrationV3Options({ store: rawTaskboardStore, executionCoordinator: taskboardExecutionCoordinator, repositoryProvider: integrationV3RepositoryProvider, processCwd, agentCwd, processRole: processRole === 'all' ? 'all' : 'runtime-worker', releaseIdentity: skillSourceRevision, runtimeIsolationAttestationProvider: integrationV3Adapters.runtimeIsolationAttestationProvider, githubAppInstallationTokenProvider: integrationV3Adapters.githubAppInstallationTokenProvider, personalAccessTokenResolver: integrationV3PersonalAccessTokenResolver, control: config.integrationV3ControlPlane }));
+    // Candidate v3 control-plane is retired. Existing Candidate rows are lazily
+    // migrated into integration_agents; no Candidate worker is started here.
     runtimeSchedulerCapacity = createRuntimeSchedulerCapacityController({
       store: runtimeSchedulerConfigStore!, scheduler: runtimeScheduler, sessionLockMode,
     });
@@ -2538,7 +2527,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const beginRuntimeDrain = async (): Promise<void> => {
     if (runtimeDrainStarted) return;
     runtimeDrainStarted = true; taskboardStatusNotificationWorker?.stop();
-    await integrationV3Runtime?.stop();
     tenantLifecycleWatcher?.stop();
     memoryPollLeadershipGeneration += 1;
     // 1. 停止定时采样并取消在途 du。否则旧 Worker 在等待 run 安全交棒时仍会
@@ -3042,9 +3030,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     appealStore,
     taskboardService,
     taskboardExecutionService: taskboardExecutionCoordinator,
-    integrationV3WorkerShutdown: integrationV3Runtime ? () => integrationV3Runtime.stop() : undefined,
-    getIntegrationV3Health: createRuntimeIntegrationV3HealthProvider(config.integrationV3ControlPlane?.enabled === true, rawTaskboardStore, () => integrationV3Runtime?.health(), processRole),
-    requeueIntegrationV3Candidate: rawTaskboardStore ? createIntegrationV3RequeueHandler(rawTaskboardStore) : undefined,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },
     agentOptionsConfig,

@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => ({
   continueTaskExecution: vi.fn(),
   resumeTask: vi.fn(),
   fetchIntegrationSources: vi.fn(),
-  fetchIntegrationCandidate: vi.fn(),
   addComment: vi.fn(),
   refreshComments: vi.fn(async () => undefined),
   comments: [] as TaskBoardComment[],
@@ -28,7 +27,6 @@ vi.mock("./api", async (importOriginal) => {
     ...actual,
     fetchTask: mocks.fetchTask,
     fetchIntegrationSources: mocks.fetchIntegrationSources,
-    fetchIntegrationCandidate: mocks.fetchIntegrationCandidate,
     continueTaskExecution: mocks.continueTaskExecution,
     resumeTask: mocks.resumeTask,
   };
@@ -115,7 +113,6 @@ describe("TaskDetail 草稿隔离", () => {
     mocks.executions = [];
     mocks.fetchTask.mockImplementation(async (id: string) => id === taskOne.id ? taskOne : taskTwo);
     mocks.fetchIntegrationSources.mockResolvedValue([]);
-    mocks.fetchIntegrationCandidate.mockResolvedValue(null);
     mocks.addComment.mockResolvedValue(undefined);
   });
 
@@ -424,6 +421,9 @@ describe("TaskDetail 草稿隔离", () => {
     render(<TaskDetail {...props({ task: current })} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(current.id));
 
+    expect(screen.getByText(/Agent-first Integration v3 会按当前阶段自动恢复/)).toBeTruthy();
+    expect(screen.getByText(/当前阶段：实施中/)).toBeTruthy();
+    expect(screen.queryByText(/Candidate|重新排队/)).toBeNull();
     await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
     await user.click(screen.getByRole("checkbox", { name: "发表后继续实施" }));
     await user.click(screen.getByRole("button", { name: "发表" }));
@@ -654,12 +654,14 @@ describe("TaskDetail 草稿隔离", () => {
     expect(screen.queryByRole("button", { name: "交给 Agent" })).toBeNull();
   });
 
-  it("Workflow v3 不暴露 legacy 继续集成入口", async () => {
-    const integrationTask = { ...taskOne, id: "integration-v3", identifier: "TASK-11", kind: "integration" as const, workflowVersion: 3 as const, status: "in_progress" as const };
-    render(<TaskDetail {...props({ task: integrationTask })} />);
-    await waitFor(() => expect(mocks.fetchIntegrationCandidate).toHaveBeenCalledWith(integrationTask.id));
-    expect(screen.queryByRole("button", { name: "继续集成" })).toBeNull(); expect(screen.queryByRole("checkbox", { name: /发表后继续/ })).toBeNull();
-    expect(screen.getByText(/Integration v3 由系统按 Candidate 状态自动推进/)).toBeTruthy();
+  it("Workflow v3 集成详情加载并展示真实来源投影", async () => {
+    const integrationTask = { ...taskOne, id: "integration-v3", identifier: "TASK-V3", kind: "integration" as const, workflowVersion: 3 as const, status: "in_progress" as const };
+    mocks.fetchTask.mockResolvedValue(integrationTask);
+    mocks.fetchIntegrationSources.mockResolvedValue([{ id: "source-v3", integrationTaskId: integrationTask.id, deliveryTaskId: "delivery-v3",
+      deliveryTaskIdentifier: "TASK-SOURCE", deliveryTaskTitle: "真实交付来源", repositoryId: "repo-1",
+      providerPullRequestId: "pr-v3", reviewedSubjectDigest: "digest-v3", order: 0, state: "ready", attemptCount: 1, updatedAt: taskOne.updatedAt }]);
+    render(<TaskDetail {...props({ task: integrationTask })} />); await waitFor(() => expect(mocks.fetchIntegrationSources).toHaveBeenCalledWith(integrationTask.id));
+    expect(await screen.findByText(/TASK-SOURCE · 真实交付来源/)).toBeTruthy(); expect(screen.getByText("0/1 已合并")).toBeTruthy();
   });
 
   it("集成阻塞恢复仅提交用户显式勾选的来源", async () => {

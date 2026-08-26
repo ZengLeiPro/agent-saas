@@ -12,7 +12,6 @@ export function taskboardCreateRequestDigest(
     title: input.title,
     description: input.description,
     kind,
-    sourceId: input.sourceId,
     dispatch: input.dispatch === true,
     branch: input.branch,
     attachments: input.attachments?.map((attachment) => attachment.attachmentId),

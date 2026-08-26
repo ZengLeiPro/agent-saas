@@ -13,10 +13,12 @@ import {
   enqueueAutomaticReview,
 } from './executionCompletion.js';
 import { resolveExecutionModelRef } from './executionFields.js';
-import { integrationCandidateTableNames } from './integrationCandidateSchema.js';
+import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import {
   assertExecutionRequestAllowed,
+  assertIntegrationExecutionMigrated,
   isIrreversibleMerged,
+  purposeForIntegrationAgentStatus,
   type WorkflowFacts,
 } from './workflow/decider.js';
 import { loadWorkflowFacts } from './workflow/commandService.js';
@@ -39,6 +41,13 @@ import {
 } from './types.js';
 import { appendTaskChange } from './v2Store.js';
 
+export function shouldPersistIntegrationDurableSession(
+  integrationAgent: boolean,
+  purpose: TaskBoardExecutionPurpose,
+): boolean {
+  return integrationAgent && purpose === 'work';
+}
+
 function assertBoardRole(role: 'viewer' | 'editor' | 'maintainer' | 'owner' | undefined): void {
   if (!role || role === 'viewer') {
     throw new TaskboardPermissionError('Taskboard role does not allow this operation');
@@ -50,7 +59,21 @@ export function unresolvedExecutionRecovery(
   completionStatus: 'failed' | 'cancelled',
   failedCount: number,
   maxRetries: number,
+  options: { agentFirstIntegration?: boolean } = {},
 ): { status: TaskBoardStatus; exhausted: boolean } {
+  if (options.agentFirstIntegration) {
+    // Runtime/network completion failures are not business decisions. Keep the
+    // durable Agent stage dispatchable; the scheduler creates a fresh Execution
+    // through the normal outbox instead of retrying synchronously.
+    return {
+      exhausted: false,
+      status: purpose === 'review'
+        ? 'in_review'
+        : purpose === 'merge'
+          ? 'ready_to_merge'
+          : 'in_progress',
+    };
+  }
   const exhausted = completionStatus === 'failed' && failedCount >= Math.max(0, maxRetries);
   return {
     exhausted,
@@ -74,7 +97,12 @@ export async function claimExecution(
     const loaded = await store.requireTaskWithBoard(client, identity, taskId, true);
     assertBoardRole(loaded.boardRole);
     assertWritableTask(loaded.task, loaded.boardArchivedAt);
-    const purpose = input.purpose ?? (loaded.task.kind === 'integration' ? 'merge' : 'work');
+    assertIntegrationExecutionMigrated(loaded.task);
+    const purpose = input.purpose
+      ?? (loaded.task.kind === 'integration'
+        ? purposeForIntegrationAgentStatus(loaded.task.status)
+        : undefined)
+      ?? 'work';
     // Authorization and object visibility are checked above. Idempotent replay must be resolved
     // before mutable task/workflow checks, otherwise a successful request cannot be retried after
     // the task has advanced to blocked/done/merged.
@@ -102,32 +130,13 @@ export async function claimExecution(
       return { task: loaded.task, execution };
     }
     const facts: WorkflowFacts = await loadWorkflowFacts(store, client, loaded.task);
-    let candidateBinding: Record<string, unknown> | undefined;
+    let integrationAgent = false;
     if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3) {
-      const tables = integrationCandidateTableNames(store.integrationSourcesTable);
-      const bound = await client.query(
-        `SELECT c.id,c.state,c.version,c.current_revision,c.work_round,c.workflow_epoch,c.lane_epoch,r.head_oid
-           FROM ${tables.candidatesTable} c LEFT JOIN ${tables.revisionsTable} r
-             ON r.candidate_id=c.id AND r.revision=c.current_revision
-          WHERE c.integration_task_id=$1 FOR UPDATE OF c`, [taskId]);
-      candidateBinding = bound.rows[0];
-      if (!candidateBinding) {
-        throw new TaskboardValidationError(
-          'Workflow v3 integration task has no current candidate',
-          'TASKBOARD_CANDIDATE_REQUIRED',
-        );
-      }
-      facts.candidate = {
-        id: String(candidateBinding.id),
-        state: String(candidateBinding.state) as NonNullable<WorkflowFacts['candidate']>['state'],
-        version: Number(candidateBinding.version),
-        currentRevision: Number(candidateBinding.current_revision),
-        workRound: Number(candidateBinding.work_round),
-        workflowEpoch: String(candidateBinding.workflow_epoch),
-        laneEpoch: String(candidateBinding.lane_epoch),
-        ...(candidateBinding.head_oid ? { headOid: String(candidateBinding.head_oid) } : {}),
-      };
-      facts.hasMergeFact ||= facts.candidate.state === 'merged';
+      const { agentsTable } = integrationAgentTableNames(store.integrationSourcesTable);
+      const agent = await client.query(
+        `SELECT integration_task_id FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [taskId],
+      );
+      integrationAgent = Boolean(agent.rows[0]);
     }
     if (loaded.task.status === 'done' || loaded.task.status === 'canceled'
       || isIrreversibleMerged(loaded.task, facts)) {
@@ -191,30 +200,17 @@ export async function claimExecution(
       );
 
     const attemptId = input.attemptId ?? randomUUID();
-    if (loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3
-      && !candidateBinding?.head_oid) {
-      throw new TaskboardValidationError(
-        'Workflow v3 execution requires a current candidate revision binding',
-        'TASKBOARD_CANDIDATE_EXECUTION_BINDING_REQUIRED',
-      );
-    }
     let execution: TaskBoardExecution;
     try {
       const inserted = await client.query(
         `INSERT INTO ${store.executionsTable}
-           (id, task_id, run_id, session_id, status, purpose, trigger, protocol_version, attempt_id, requested_by,
-            candidate_id,candidate_version,candidate_revision,candidate_work_round,candidate_workflow_epoch,
-            candidate_lane_epoch,candidate_head_oid)
-         VALUES ($1,$2,$3,$4,'queued',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::bigint,$15::bigint,$16)
+           (id, task_id, run_id, session_id, status, purpose, trigger, protocol_version, attempt_id, requested_by)
+         VALUES ($1,$2,$3,$4,'queued',$5,$6,$7,$8,$9)
          RETURNING *`,
         [
           input.executionId, taskId, input.runId, input.sessionId, purpose,
           input.trigger ?? 'initial', input.protocolVersion ?? 2, attemptId,
           identity.ownerUserId,
-          candidateBinding?.id ?? null, candidateBinding?.version ?? null,
-          candidateBinding?.current_revision ?? null, candidateBinding?.work_round ?? null,
-          candidateBinding?.workflow_epoch ?? null, candidateBinding?.lane_epoch ?? null,
-          candidateBinding?.head_oid ?? null,
         ],
       );
       await client.query(
@@ -246,6 +242,14 @@ export async function claimExecution(
       throw error;
     }
 
+    if (shouldPersistIntegrationDurableSession(integrationAgent, purpose)) {
+      const { agentsTable } = integrationAgentTableNames(store.integrationSourcesTable);
+      await client.query(
+        `UPDATE ${agentsTable} SET durable_session_id=COALESCE(durable_session_id,$2),updated_at=now()
+          WHERE integration_task_id=$1`,
+        [taskId, input.sessionId],
+      );
+    }
     await client.query(
       `UPDATE ${store.commentsTable}
           SET continuation_run_id=$2, updated_at=now()
@@ -383,6 +387,42 @@ async function completeExecutionInternal(
     );
     if (!executionResult.rows[0] || executionResult.rows[0].reconcile_lease_valid !== true) return null;
     const currentExecution = rowToExecution(executionResult.rows[0]);
+    if (loaded.task.kind === 'integration' && loaded.task.workflowVersion !== 3) {
+      const migrationError = 'Integration task requires Agent-first workflow migration';
+      const absorbed = await client.query(
+        `UPDATE ${store.executionsTable}
+            SET status=CASE
+                  WHEN status IN ('queued','running','waiting_user','waiting_approval') THEN 'failed'
+                  ELSE status
+                END,
+                error=$2,
+                finished_at=CASE
+                  WHEN status IN ('queued','running','waiting_user','waiting_approval')
+                    THEN COALESCE(finished_at, now())
+                  ELSE finished_at
+                END,
+                reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL, updated_at=now()
+          WHERE run_id=$1
+          RETURNING *`,
+        [runId, migrationError],
+      );
+      await client.query(
+        `UPDATE ${store.executionOutboxTable}
+            SET status='dispatched', lease_id=NULL, lease_expires_at=NULL,
+                last_error=$2, dispatched_at=COALESCE(dispatched_at, now()), updated_at=now()
+          WHERE run_id=$1`,
+        [runId, migrationError],
+      );
+      await client.query(
+        `UPDATE ${store.continuationOutboxTable}
+            SET status='completed', lease_id=NULL, lease_expires_at=NULL,
+                reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL,
+                last_error=$2, updated_at=now()
+          WHERE run_id=$1`,
+        [runId, migrationError],
+      );
+      return { task: loaded.task, execution: rowToExecution(absorbed.rows[0]) };
+    }
     if (isTerminalExecutionStatus(currentExecution.status)) {
       await client.query(
         `UPDATE ${store.executionOutboxTable}
@@ -432,6 +472,10 @@ async function completeExecutionInternal(
         completionInput.status,
         failedCount,
         maxRetries,
+        {
+          agentFirstIntegration: loaded.task.kind === 'integration'
+            && loaded.task.workflowVersion === 3,
+        },
       );
       const retryStatus = recovery.status;
       const exhausted = recovery.exhausted;

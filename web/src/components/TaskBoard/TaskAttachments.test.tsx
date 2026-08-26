@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { initPlatform, type PlatformDeps, type TaskBoardAttachment } from "@agent/shared";
 import { TaskAttachmentList } from "./TaskAttachments";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
 beforeAll(() => {
   initPlatform({
@@ -52,6 +53,25 @@ describe("TaskAttachmentList", () => {
     } finally {
       clickSpy.mockRestore();
     }
+  });
+
+  it("任务详情 Sheet 内的预览层保留在 Sheet 中，以接收关闭操作", async () => {
+    render(
+      <Sheet open>
+        <SheetContent data-testid="task-detail-sheet" aria-describedby={undefined}>
+          <SheetTitle className="sr-only">任务详情</SheetTitle>
+          <TaskAttachmentList taskId="task-1" attachments={[imageAttachment]} />
+        </SheetContent>
+      </Sheet>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "预览图片：现场图.png" }));
+
+    const lightbox = await screen.findByRole("dialog", { name: "预览图片：现场图.png" });
+    expect(screen.getByTestId("task-detail-sheet").contains(lightbox)).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭预览" }));
+    expect(screen.queryByRole("dialog", { name: "预览图片：现场图.png" })).toBeNull();
   });
 
   it("非图片附件仍按下载方式处理", async () => {

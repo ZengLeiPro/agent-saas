@@ -4,7 +4,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { usePortalContainer } from "@/components/ui/portal-container";
+import { PortalContainerProvider, usePortalContainer } from "@/components/ui/portal-container";
 
 function Sheet(props: React.ComponentProps<typeof SheetPrimitive.Root>) {
   const { blocked } = usePortalContainer();
@@ -59,12 +59,27 @@ const SheetContent = React.forwardRef<
 >(({ side = "right", className, children, onEscapeKeyDown, onFocusOutside,
   onInteractOutside, onPointerDownOutside, ...props }, ref) => {
   const { blocked } = usePortalContainer();
+  const [content, setContent] = React.useState<React.ElementRef<typeof SheetPrimitive.Content> | null>(null);
   const preventBlockedDismiss = React.useCallback((event: Event) => event.preventDefault(), []);
+  const handleRef = React.useCallback((node: React.ElementRef<typeof SheetPrimitive.Content> | null) => {
+    setContent(node);
+    if (typeof ref === "function") ref(node);
+    else if (ref) ref.current = node;
+  }, [ref]);
+  const contentChildren = (
+    <>
+      {children}
+      <SheetPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
+        <X className="size-4" />
+        <span className="sr-only">关闭</span>
+      </SheetPrimitive.Close>
+    </>
+  );
   return (
     <SheetPortal>
       <SheetOverlay />
       <SheetPrimitive.Content
-        ref={ref}
+        ref={handleRef}
         className={cn(sheetVariants({ side }), className)}
         onEscapeKeyDown={blocked ? preventBlockedDismiss : onEscapeKeyDown}
         onFocusOutside={blocked ? preventBlockedDismiss : onFocusOutside}
@@ -72,11 +87,11 @@ const SheetContent = React.forwardRef<
         onPointerDownOutside={blocked ? preventBlockedDismiss : onPointerDownOutside}
         {...props}
       >
-        {children}
-        <SheetPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
-          <X className="size-4" />
-          <span className="sr-only">关闭</span>
-        </SheetPrimitive.Close>
+        {content ? (
+          <PortalContainerProvider container={content} blocked={blocked}>
+            {contentChildren}
+          </PortalContainerProvider>
+        ) : contentChildren}
       </SheetPrimitive.Content>
     </SheetPortal>
   );

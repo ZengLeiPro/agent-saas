@@ -19,6 +19,7 @@ const account: AgentDwsAccountRecord = {
   displayName: '开开',
   loginId: '17300000000',
   profileId: 'corp-a',
+  dingtalkUserId: 'agent-self',
   status: 'active',
   runtimeStatus: 'ready',
   eventKinds: ['at_me', 'all_direct'],
@@ -27,6 +28,15 @@ const account: AgentDwsAccountRecord = {
   createdBy: 'admin-a',
   updatedAt: '2026-08-14T00:00:00.000Z',
   updatedBy: 'admin-a',
+};
+
+const requester = {
+  id: 'user-a',
+  username: 'alice',
+  role: 'user' as const,
+  tenantId: 'tenant-a',
+  realName: '爱丽丝',
+  dingtalkStaffId: 'sender-a',
 };
 
 const item: AgentDwsInboxRecord = {
@@ -57,6 +67,8 @@ function setup(input: {
   recoveredEvents?: Array<Record<string, unknown>>;
   bindingPeerOpenDingtalkId?: string;
   resolveDefaultModel?: (tenantId: string) => AgentDwsDefaultModelResolution | null;
+  resolveRequester?: typeof requester | null;
+  requesterAllowed?: boolean;
 } = {}) {
   const claimed = input.claimed ?? item;
   const messageStore = {
@@ -67,7 +79,7 @@ function setup(input: {
     renewLease: vi.fn().mockResolvedValue(true),
     getOrCreateBinding: vi.fn().mockResolvedValue({
       bindingId: 'binding-a', tenantId: 'tenant-a', accountId: 'account-a',
-      conversationId: 'cid-a', sessionId: 'session-a',
+      conversationId: 'cid-a', requesterUserId: 'user-a', sessionId: 'session-a',
       ...(input.bindingPeerOpenDingtalkId ? { peerOpenDingtalkId: input.bindingPeerOpenDingtalkId } : {}),
       createdAt: item.createdAt, updatedAt: item.updatedAt,
     }),
@@ -91,6 +103,11 @@ function setup(input: {
     getForTenant: vi.fn().mockResolvedValue(account),
   } as unknown as AgentDwsAccountStore;
   const sender = { send: vi.fn().mockResolvedValue(undefined) } satisfies DwsPersonalMessageSenderLike;
+  const auditRequesterRejection = vi.fn().mockResolvedValue(undefined);
+  const auditToolPolicyRejection = vi.fn().mockResolvedValue(undefined);
+  const authorizeRequester = vi.fn().mockResolvedValue(input.requesterAllowed === false
+    ? { allowed: false, reason: 'ASSIGNMENT_DENIED' }
+    : { allowed: true });
   const dispatch = input.dispatch ?? vi.fn((
     _message, _context, _options, hooks,
   ) => (async function* () {
@@ -110,6 +127,10 @@ function setup(input: {
       connection: { apiKey: 'test-key', baseUrl: 'https://model.test/v1' },
       providerOptions: { protocol: 'responses' as const },
     })),
+    resolveRequester: vi.fn().mockResolvedValue(input.resolveRequester === undefined ? requester : input.resolveRequester),
+    authorizeRequester,
+    auditRequesterRejection,
+    auditToolPolicyRejection,
     sender,
     ...(input.existingRun !== undefined ? {
       runStore: { get: vi.fn().mockResolvedValue(input.existingRun) },
@@ -121,7 +142,10 @@ function setup(input: {
     leaseTtlMs: 60_000,
     leaseRenewMs: 30_000,
   });
-  return { router, messageStore, accountStore, dispatch, sender };
+  return {
+    router, messageStore, accountStore, dispatch, sender,
+    authorizeRequester, auditRequesterRejection, auditToolPolicyRejection,
+  };
 }
 
 describe('AgentDwsMessageRouter', () => {
@@ -151,7 +175,7 @@ describe('AgentDwsMessageRouter', () => {
   });
 
   it('binds a stable Session, dispatches the org Agent, and sends one durable reply', async () => {
-    const { router, messageStore, dispatch, sender } = setup();
+    const { router, messageStore, dispatch, sender, authorizeRequester } = setup();
 
     await expect(router.runOnce()).resolves.toBe(true);
 
@@ -159,7 +183,7 @@ describe('AgentDwsMessageRouter', () => {
       expect.objectContaining({ channel: 'dingtalk', chatId: 'cid-a', content: item.content }),
       expect.objectContaining({
         channel: 'dingtalk', resumeSessionId: 'session-a',
-        sessionOwner: expect.objectContaining({ id: 'account-a', tenantId: 'tenant-a' }),
+        sessionOwner: expect.objectContaining({ id: 'user-a', tenantId: 'tenant-a' }),
       }),
       expect.objectContaining({
         orgAgentId: 'agent-a', resumeSessionId: 'session-a',
@@ -169,6 +193,12 @@ describe('AgentDwsMessageRouter', () => {
         runtimeRunId: expect.stringMatching(/^agent-dws-run-/),
       }),
       expect.any(Object),
+    );
+    expect(messageStore.getOrCreateBinding).toHaveBeenCalledWith(
+      'tenant-a', 'account-a', 'cid-a', 'user-a', expect.stringMatching(/^agent-dws-session-/), undefined,
+    );
+    expect(authorizeRequester.mock.invocationCallOrder[0]!).toBeLessThan(
+      messageStore.getOrCreateBinding.mock.invocationCallOrder[0]!,
     );
     expect(messageStore.saveDispatchResult).toHaveBeenCalledWith(
       'inbox-a', expect.stringMatching(/^agent-dws-router:/), 1, '今天已完成三项工作。',
@@ -236,7 +266,7 @@ describe('AgentDwsMessageRouter', () => {
       await hooks?.onResult?.({ resultText: '已说明无法执行。' });
       yield { type: 'done' as const };
     })());
-    const { router, sender } = setup({ dispatch });
+    const { router, sender, auditToolPolicyRejection } = setup({ dispatch });
 
     await expect(router.runOnce()).resolves.toBe(true);
 
@@ -244,12 +274,62 @@ describe('AgentDwsMessageRouter', () => {
       allow: false,
       message: expect.stringContaining('工具审批'),
     });
+    expect(auditToolPolicyRejection).toHaveBeenCalledWith(expect.objectContaining({
+      runId: expect.stringMatching(/^agent-dws-run-/), toolName: 'Shell',
+    }));
     expect(sender.send).toHaveBeenCalledWith(
       account, expect.any(Object), '已说明无法执行。', expect.any(String),
     );
   });
 
-  it('ignores a direct-message self echo when its sender differs from the bound peer', async () => {
+  it('persists a terminal rejection when requester identity is missing', async () => {
+    const { senderOpenDingtalkId: _sender, ...claimed } = item;
+    const { router, messageStore, auditRequesterRejection, dispatch } = setup({ claimed });
+
+    await expect(router.runOnce()).resolves.toBe(true);
+
+    expect(auditRequesterRejection).toHaveBeenCalledWith(expect.objectContaining({
+      eventId: 'event-a', reason: 'REQUESTER_IDENTITY_MISSING',
+    }));
+    expect(messageStore.complete).toHaveBeenCalledOnce();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before binding when sender cannot map to a unique requester', async () => {
+    const { router, messageStore, dispatch, auditRequesterRejection } = setup({ resolveRequester: null });
+
+    await expect(router.runOnce()).resolves.toBe(true);
+
+    expect(messageStore.getOrCreateBinding).not.toHaveBeenCalled();
+    expect(messageStore.complete).toHaveBeenCalledOnce();
+    expect(messageStore.fail).not.toHaveBeenCalled();
+    expect(auditRequesterRejection).toHaveBeenCalledWith(expect.objectContaining({
+      eventId: 'event-a', reason: 'REQUESTER_IDENTITY_UNMAPPED_OR_AMBIGUOUS',
+    }));
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('rejects audience or Assignment denial before requester binding side effects', async () => {
+    const { router, messageStore, dispatch, authorizeRequester, auditRequesterRejection } = setup({
+      requesterAllowed: false,
+    });
+
+    await expect(router.runOnce()).resolves.toBe(true);
+
+    expect(authorizeRequester).toHaveBeenCalledWith(expect.objectContaining({
+      account, requester, sessionId: expect.stringMatching(/^agent-dws-session-/),
+    }));
+    expect(messageStore.getOrCreateBinding).not.toHaveBeenCalled();
+    expect(auditRequesterRejection).toHaveBeenCalledWith(expect.objectContaining({
+      requester, reason: 'ASSIGNMENT_DENIED',
+    }));
+    expect(messageStore.markDispatchStarted).not.toHaveBeenCalled();
+    expect(messageStore.complete).toHaveBeenCalledOnce();
+    expect(messageStore.fail).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('terminates a direct-message self echo rejected by requester resolution', async () => {
     const claimed = {
       ...item,
       eventType: 'user_im_message_receive_o2o_all',
@@ -258,14 +338,12 @@ describe('AgentDwsMessageRouter', () => {
     };
     const { router, messageStore, dispatch, sender } = setup({
       claimed,
-      bindingPeerOpenDingtalkId: 'human-peer',
+      resolveRequester: null,
     });
 
     await expect(router.runOnce()).resolves.toBe(true);
 
-    expect(messageStore.getOrCreateBinding).toHaveBeenCalledWith(
-      'tenant-a', 'account-a', 'cid-a', expect.stringMatching(/^agent-dws-session-/), 'agent-self',
-    );
+    expect(messageStore.getOrCreateBinding).not.toHaveBeenCalled();
     expect(messageStore.complete).toHaveBeenCalledOnce();
     expect(messageStore.markDispatchStarted).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();

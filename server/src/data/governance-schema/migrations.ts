@@ -3,6 +3,7 @@ import { PLATFORM_TENANT_ID } from '../tenants/types.js';
 import { agentDwsMigrations } from './agentDwsMigrations.js';
 import { governanceV22Statements } from './v22Migration.js';
 import { governanceV23Statements } from './v23Migration.js';
+import { governanceV28Statements } from './v28Migration.js';
 import { governanceV18Statements } from './v18Migration.js';
 import { buildContextMigrationSql } from '../../context/store/migration.js';
 import { buildContextPhase23MigrationSql } from '../../context/phase23/migration.js';
@@ -57,6 +58,8 @@ function migrations(prefix: string): GovernanceMigration[] {
   const directoryGroups = `${prefix}_directory_groups`, directoryGroupMembers = `${prefix}_directory_group_members`;
   const oauthGrants = `${prefix}_oauth_grants`, oauthApprovalRecords = `${prefix}_oauth_approval_records`;
   const nativeOAuthHandoffs = `${prefix}_native_oauth_handoffs`;
+  const agentDwsAccounts = `${prefix}_agent_dws_accounts`;
+  const agentDwsRequesterBindings = `${prefix}_agent_dws_requester_conversation_bindings`;
 
   return [
     {
@@ -917,6 +920,32 @@ function migrations(prefix: string): GovernanceMigration[] {
     {
       version: 26,
       statements: buildContextPhase4MigrationSql(prefix),
+    },
+    {
+      version: 27,
+      statements: [
+        `CREATE TABLE IF NOT EXISTS ${agentDwsRequesterBindings} (
+          binding_id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL,
+          account_id TEXT NOT NULL,
+          FOREIGN KEY (tenant_id,account_id)
+            REFERENCES ${agentDwsAccounts}(tenant_id,account_id) ON DELETE CASCADE,
+          conversation_id TEXT NOT NULL,
+          requester_user_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          peer_open_dingtalk_id TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (account_id,conversation_id,requester_user_id),
+          UNIQUE (session_id)
+        )`,
+        `CREATE INDEX IF NOT EXISTS ${agentDwsRequesterBindings}_tenant_idx
+          ON ${agentDwsRequesterBindings} (tenant_id,updated_at DESC)`,
+      ],
+    },
+    {
+      version: 28,
+      statements: governanceV28Statements(assignments),
     },
   ];
 }

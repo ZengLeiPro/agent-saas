@@ -29,6 +29,13 @@ export function createAssignmentResourceResolver(runtime: AppRuntime) {
       if (!runtime.environmentStore) return 'unavailable';
       return (await runtime.environmentStore.getTemplate(resourceId))?.status === 'published' ? 'valid' : 'not_found';
     }
+    if (resourceType === 'dws_delegation') {
+      if (!runtime.agentDwsAccountStore) return 'unavailable';
+      const match = /^dws-delegation:([A-Za-z0-9_-]{1,160}):[0-9a-f]{64}$/.exec(resourceId);
+      if (!match) return 'not_found';
+      const account = await runtime.agentDwsAccountStore.getForTenant(tenantId, match[1]!);
+      return account?.status === 'active' && Boolean(account.profileId) ? 'valid' : 'not_found';
+    }
     if (resourceType === 'connector') {
       if (!runtime.connectorCatalogStore) return 'unavailable';
       return (await runtime.connectorCatalogStore.get(resourceId))?.status === 'published' ? 'valid' : 'not_found';

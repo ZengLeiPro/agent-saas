@@ -55,6 +55,24 @@ describe('runtime entitlement model resolver', () => {
     await expect(createEntitlementResourceResolver(runtime)('model', 'group-a/model-1')).resolves.toEqual({ status: 'unavailable' });
   });
 
+  it('DWS 委托只接受绑定本租户 active Agent account 的正式 scope id', async () => {
+    const runtime = {
+      config: {},
+      agentDwsAccountStore: {
+        getForTenant: async (tenantId: string, accountId: string) => tenantId === 'tenant-a' && accountId === 'account-a'
+          ? { status: 'active', profileId: 'profile-a' }
+          : null,
+      },
+    } as unknown as AppRuntime;
+    const resolve = createAssignmentResourceResolver(runtime);
+    const valid = `dws-delegation:account-a:${'a'.repeat(64)}`;
+
+    await expect(resolve('tenant-a', 'dws_delegation', valid)).resolves.toBe('valid');
+    await expect(resolve('tenant-b', 'dws_delegation', valid)).resolves.toBe('not_found');
+    await expect(resolve('tenant-a', 'dws_delegation', 'dws-delegation:account-a:not-a-digest'))
+      .resolves.toBe('not_found');
+  });
+
   it('org_knowledge assignment 只接受本租户 active Context collection，依赖缺失时 fail closed', async () => {
     const runtime = {
       config: {},

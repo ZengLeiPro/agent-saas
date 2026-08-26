@@ -31,6 +31,7 @@ export interface DwsPersonalEvent {
   conversationId?: string;
   messageId?: string;
   senderOpenDingtalkId?: string;
+  senderName?: string;
   content?: string;
   timestamp?: number;
   raw: Record<string, unknown>;
@@ -322,6 +323,7 @@ export function parseEventLine(line: string): DwsPersonalEvent | null {
   }
   const eventId = text(raw.event_id);
   const type = text(raw.type) ?? text(raw.event_type);
+  const senderName = text(raw.sender_name) ?? text(raw.sender_nick);
   if (!eventId || !type) return null;
   return {
     type,
@@ -329,6 +331,7 @@ export function parseEventLine(line: string): DwsPersonalEvent | null {
     ...(text(raw.conversation_id) ? { conversationId: text(raw.conversation_id) } : {}),
     ...(text(raw.message_id) ? { messageId: text(raw.message_id) } : {}),
     ...(text(raw.sender_open_dingtalk_id) ? { senderOpenDingtalkId: text(raw.sender_open_dingtalk_id) } : {}),
+    ...(senderName ? { senderName } : {}),
     ...(text(raw.content) ? { content: text(raw.content) } : {}),
     ...(number(raw.timestamp) !== undefined ? { timestamp: number(raw.timestamp) } : {}),
     raw,

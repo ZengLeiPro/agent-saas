@@ -307,7 +307,7 @@ describe('governance access routes', () => {
     }] });
   });
 
-  it('成员详情按七类资源（含组织记忆）返回权威 Assignment 聚合，解析失败则整体 fail closed', async () => {
+  it('成员详情按八类资源（含 DWS 委托）返回权威 Assignment 聚合，解析失败则整体 fail closed', async () => {
     const listEffectiveResources = vi.fn().mockImplementation(async (
       _tenantId: string, _userId: string, resourceType: string,
     ) => resourceType === 'skill' ? [{
@@ -341,7 +341,7 @@ describe('governance access routes', () => {
         resources: expect.arrayContaining([expect.objectContaining({ resourceId: 'skill-1' })]),
       }),
     ]));
-    expect(listEffectiveResources).toHaveBeenCalledTimes(7);
+    expect(listEffectiveResources).toHaveBeenCalledTimes(8);
     expect(body.usagePolicy).toMatchObject({
       items: [{ userId: 'user-2', monthAttributedCreditsMicro: 125 }],
     });

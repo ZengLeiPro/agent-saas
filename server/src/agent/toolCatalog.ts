@@ -43,6 +43,7 @@ import { audioTranscribeToolDescriptor } from './audioTranscribeToolProvider.js'
 import { cronManageToolDescriptor } from './cronToolProvider.js';
 import { sessionContextToolDescriptor } from '../runtime/sessionContext.js';
 import { contextGetToolDescriptor, contextSearchToolDescriptor } from './contextSearchToolProvider.js';
+import { dwsBusinessToolDescriptor } from '../dws/businessToolProvider.js';
 
 /**
  * 平台内建工具的完整清单。展示顺序=admin 主页 grid 内工具卡片顺序。
@@ -77,6 +78,8 @@ export const PLATFORM_TOOL_CATALOG: readonly ToolDescriptor[] = [
   audioTranscribeToolDescriptor,
   // cron
   cronManageToolDescriptor,
+  // core connector broker
+  dwsBusinessToolDescriptor,
 ];
 
 /**
@@ -129,4 +132,5 @@ export const PLATFORM_TOOL_SOURCE_MODULE: Readonly<Record<string, string>> = {
   AudioTranscribe: 'server/src/agent/audioTranscribeToolProvider.ts',
   CronManage: 'server/src/agent/cronToolProvider.ts',
   SessionContext: 'server/src/runtime/sessionContext.ts',
+  DwsBusiness: 'server/src/dws/businessToolProvider.ts',
 };

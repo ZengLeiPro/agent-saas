@@ -183,6 +183,7 @@ import { PgDwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
 import { DwsAuthFlowService, DwsDeviceLoginRunner } from '../dws/authFlow.js';
+import { createDwsBusinessToolProviders } from '../dws/businessToolProvider.js';
 import { createAgentDwsRuntime, type AgentDwsRuntimeBundle } from './agentDwsRuntime.js';
 import { createConnectorServerRemoteResolver, hasAcsConnector } from './connectorServerRemote.js';
 import type { PgAgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
@@ -1554,6 +1555,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ...(sr.invokeTimeoutMs !== undefined ? { invokeTimeoutMs: sr.invokeTimeoutMs } : {}),
     };
   })();
+  const connectorAcsConfigured = hasAcsConnector(config.tenantRemoteHands?.hands);
+  const resolveConnectorServerRemote = createConnectorServerRemoteResolver({ defaultRemote: resolvedServerRemote,
+    eligibleHands: user => selectTenantRemoteHandsForRegistration(config.tenantRemoteHands?.hands, {
+      userId: user.id, username: user.username, userTenantId: user.tenantId }),
+    resolveHand: hand => tenantRemoteHandResolver.resolveForRegister(hand) });
   const resolvedWebTools = await resolveWebToolsConfig(config.webTools, secretVault);
   const resolvedImageGenTools = await resolveImageGenToolsConfig(config.imageGenTools, secretVault);
   // 生图 per-engine 定价注册表初始化；admin PUT /api/admin/image-gen-pricing 时热更。
@@ -1644,6 +1650,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const memoryContextTools = createRuntimeMemoryContextTools({
     contextStore, assignments: assignmentStore, memberships: membershipStore, entitlements: entitlementStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, recallIdSigningKey: config.auth?.jwtSecret, sessionCatalog, sourceAuthorizationRegistry: contextSourceAuthorizationRegistry,
     memoryStore: memoryConsolidationStore, memoryIndexService: memoryIndexServiceRef.current, logger: { info: msg => serverLogger.info(msg), warn: msg => serverLogger.warn(msg) },
+    additionalProviders: createDwsBusinessToolProviders({ agentCwd, accountStore: agentDwsAccountStore, assignmentStore, connectionStore: dwsConnectionStore, userStore, auditStore: governanceAuditStore,
+      isRequesterRuntimeEnabled: username => connectorConnectionStore.isRuntimeEnabled(username, 'dws'), sessionCatalog, resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured) }),
   });
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
     agentCwd, uploadManager,
@@ -2758,15 +2766,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     serverLogger.info(`RuntimeScheduler worker disabled for processRole=${processRole}; durable enqueue remains enabled`);
   }
 
-  const connectorAcsConfigured = hasAcsConnector(config.tenantRemoteHands?.hands);
-  const resolveConnectorServerRemote = createConnectorServerRemoteResolver({
-    defaultRemote: resolvedServerRemote,
-    eligibleHands: user => selectTenantRemoteHandsForRegistration(config.tenantRemoteHands?.hands, {
-      userId: user.id, username: user.username, userTenantId: user.tenantId,
-    }),
-    resolveHand: hand => tenantRemoteHandResolver.resolveForRegister(hand),
-  });
-
   if (notionAuthSessionStore && userStore && (resolvedServerRemote || connectorAcsConfigured)) {
     notionAuthFlowService = new NotionAuthFlowService({
       authSessionStore: notionAuthSessionStore,
@@ -2836,8 +2835,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     serverLogger.warn('DWS auth keepalive unavailable: PG connection store or DWS execution remote is not configured');
   }
 
-  if (agentDwsAccountStore) agentDwsRuntime = await createAgentDwsRuntime({
+  if (agentDwsAccountStore && userStore && orgAgentStore && runPreflightService && governanceAuditStore) agentDwsRuntime = await createAgentDwsRuntime({
     agentCwd, accountStore: agentDwsAccountStore, assignmentStore, contextStore, messageStore: agentDwsMessageStore, pgEventStore, pgRunStore,
+    userStore, orgAgentStore, runPreflightService, governanceAuditStore,
     tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix ?? 'agent_runtime' : 'agent_runtime', dispatch: finalDispatch, resolveDefaultModel: tenantId => defaultModelResolver?.(tenantId) ?? null,
     resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured),
     enableWorker: enableSchedulerWorker, isExecutionEnabled: isRuntimeExecutionEnabled, logger: serverLogger,

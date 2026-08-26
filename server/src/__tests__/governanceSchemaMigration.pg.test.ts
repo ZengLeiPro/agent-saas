@@ -9,6 +9,7 @@ import {
 } from '../data/governance-schema/migrations.js';
 import { governanceV23Statements } from '../data/governance-schema/v23Migration.js';
 import { PgOAuthGrantStore } from '../data/oauthGrants/store.js';
+import { PgAgentDwsMessageStore } from '../data/agentDwsMessages/store.js';
 
 const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
@@ -16,6 +17,7 @@ const describePg = testPgUrl ? describe : describe.skip;
 
 describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', () => {
   const prefix = `govv17_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
+  const v27RollbackPrefix = `v27rb_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   let pool: InstanceType<typeof Pool>;
 
   beforeAll(() => {
@@ -27,8 +29,9 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
     try {
       const tables = await pool.query<{ tablename: string }>(`
         SELECT tablename FROM pg_tables
-        WHERE schemaname=current_schema() AND LEFT(tablename,LENGTH($1))=$1
-      `, [prefix]);
+        WHERE schemaname=current_schema()
+          AND (LEFT(tablename,LENGTH($1))=$1 OR LEFT(tablename,LENGTH($2))=$2)
+      `, [prefix, v27RollbackPrefix]);
       for (const row of tables.rows) {
         await pool.query(`DROP TABLE IF EXISTS "${row.tablename}" CASCADE`);
       }
@@ -36,8 +39,9 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
         SELECT p.proname, pg_get_function_identity_arguments(p.oid) AS args
         FROM pg_proc p
         JOIN pg_namespace n ON n.oid=p.pronamespace
-        WHERE n.nspname=current_schema() AND LEFT(p.proname,LENGTH($1))=$1
-      `, [prefix]);
+        WHERE n.nspname=current_schema()
+          AND (LEFT(p.proname,LENGTH($1))=$1 OR LEFT(p.proname,LENGTH($2))=$2)
+      `, [prefix, v27RollbackPrefix]);
       for (const row of functions.rows) {
         await pool.query(`DROP FUNCTION IF EXISTS "${row.proname}"(${row.args}) CASCADE`);
       }
@@ -91,7 +95,7 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
       `SELECT version FROM ${prefix}_governance_schema_versions ORDER BY version`,
     );
     expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
-      Array.from({ length: 26 }, (_, index) => index + 1),
+      Array.from({ length: 28 }, (_, index) => index + 1),
     );
     const v18Tables = await pool.query<{ name: string | null }>(
       `SELECT to_regclass($1) AS name UNION ALL SELECT to_regclass($2) UNION ALL SELECT to_regclass($3) UNION ALL SELECT to_regclass($4)`,
@@ -108,6 +112,35 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
     await pool.query(`INSERT INTO ${prefix}_agent_dws_accounts
       (account_id,tenant_id,agent_id,display_name,login_id,status,event_policy_json,created_by,updated_by)
       VALUES ('adws-a','tenant-a','oa-sales','销售数字员工','sales-agent-001','draft','{"kinds":["at_me","all_direct"]}'::jsonb,'admin','admin')`);
+    const legacyBindingSql = `
+      INSERT INTO ${prefix}_agent_dws_conversation_bindings AS binding (
+        binding_id,tenant_id,account_id,conversation_id,session_id,
+        peer_open_dingtalk_id,created_at,updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
+      ON CONFLICT (account_id,conversation_id) DO UPDATE
+      SET peer_open_dingtalk_id=COALESCE(binding.peer_open_dingtalk_id,EXCLUDED.peer_open_dingtalk_id),
+          updated_at=binding.updated_at
+      RETURNING binding.*
+    `;
+    const legacyFirst = await pool.query<{ session_id: string }>(legacyBindingSql, [
+      'legacy-binding-a', 'tenant-a', 'adws-a', 'legacy-conversation', 'legacy-session-a', 'legacy-peer',
+    ]);
+    const legacyRetry = await pool.query<{ session_id: string }>(legacyBindingSql, [
+      'legacy-binding-b', 'tenant-a', 'adws-a', 'legacy-conversation', 'legacy-session-b', 'legacy-peer',
+    ]);
+    expect(legacyFirst.rows[0]?.session_id).toBe('legacy-session-a');
+    expect(legacyRetry.rows[0]?.session_id).toBe('legacy-session-a');
+    const requesterStore = new PgAgentDwsMessageStore(pool, prefix);
+    await expect(requesterStore.getOrCreateBinding(
+      'tenant-a', 'adws-a', 'legacy-conversation', 'requester-a', 'requester-session-a', 'legacy-peer',
+    )).resolves.toMatchObject({
+      conversationId: 'legacy-conversation', requesterUserId: 'requester-a', sessionId: 'legacy-session-a',
+    });
+    await expect(requesterStore.getOrCreateBinding(
+      'tenant-a', 'adws-a', 'legacy-conversation', 'requester-b', 'requester-session-b', 'legacy-peer',
+    )).resolves.toMatchObject({
+      conversationId: 'legacy-conversation', requesterUserId: 'requester-b', sessionId: 'requester-session-b',
+    });
     await expect(pool.query(`INSERT INTO ${prefix}_agent_dws_accounts
       (account_id,tenant_id,agent_id,display_name,login_id,status,event_policy_json,created_by,updated_by)
       VALUES ('adws-b','tenant-b','oa-sales','越权账号','cross-tenant','draft','{"kinds":["at_me"]}'::jsonb,'admin','admin')`)).rejects.toThrow();
@@ -230,7 +263,7 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
     expect(Number(columns.rows[0]?.count)).toBe(0);
     await new PgGovernanceMigrationRunner(pool, v22Prefix).run();
     const retried = await pool.query<{ version: number }>(`SELECT MAX(version) AS version FROM ${v22Prefix}_governance_schema_versions`);
-    expect(Number(retried.rows[0]?.version)).toBe(26);
+    expect(Number(retried.rows[0]?.version)).toBe(28);
   }, 30_000);
 
   it('V18 遗留 org_memory 空元数据可升级，V23 已标记且旧 ledger 存在时 V24 仍幂等', async () => {
@@ -305,7 +338,7 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
       SELECT MAX(version)::integer AS version,COUNT(*) FILTER (WHERE version=23)::text AS count
       FROM ${legacyPrefix}_governance_schema_versions
     `);
-    expect(versions.rows[0]).toMatchObject({ version: 26, count: '1' });
+    expect(versions.rows[0]).toMatchObject({ version: 28, count: '1' });
     await expect(pool.query(`INSERT INTO ${commits}
       (tenant_id,operation,idempotency_key,nonce_digest,request_digest,target_id,actor_user_id,status)
       VALUES ('tenant-a','create','idem-1','nonce-2','request-2','target-2','admin-1','running')`)).rejects.toThrow();
@@ -446,7 +479,7 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
     const retried = await pool.query<{ version: number }>(
       `SELECT MAX(version) AS version FROM ${v18Prefix}_governance_schema_versions`,
     );
-    expect(Number(retried.rows[0]?.version)).toBe(26);
+    expect(Number(retried.rows[0]?.version)).toBe(28);
     const unresolvedAfter = await pool.query<{ is_nullable: string; column_default: string }>(`
       SELECT is_nullable,column_default FROM information_schema.columns
       WHERE table_schema=current_schema() AND table_name=$1 AND column_name='unresolved_items_json'
@@ -476,6 +509,55 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
     expect(Number(assignmentChecks.rows[0]?.count)).toBe(1);
     expect(assignmentChecks.rows[0]?.definitions.join(' ')).toContain('connector');
   });
+
+  it('V27 expand 第二条 DDL 失败时整版回滚，重试后保留 legacy writer 并建立 requester 表', async () => {
+    const v27Prefix = v27RollbackPrefix;
+    let injected = false;
+    const failingPool = {
+      connect: async () => {
+        const client = await pool.connect();
+        return {
+          query: async (text: string, values?: readonly unknown[]) => {
+            const normalized = text.replace(/\s+/g, ' ').trim();
+            if (!injected && normalized.includes(`${v27Prefix}_agent_dws_requester_conversation_bindings_tenant_idx`)) {
+              injected = true;
+              throw new Error('INJECTED_V27_FAILURE');
+            }
+            return client.query(text, values as never);
+          },
+          release: () => client.release(),
+        };
+      },
+    } as unknown as GovernancePgPool;
+
+    await expect(new PgGovernanceMigrationRunner(failingPool, v27Prefix).run())
+      .rejects.toThrow('INJECTED_V27_FAILURE');
+    const rolledBack = await pool.query<{ version: number }>(
+      `SELECT MAX(version) AS version FROM ${v27Prefix}_governance_schema_versions`,
+    );
+    expect(Number(rolledBack.rows[0]?.version)).toBe(26);
+    const requesterTableBeforeRetry = await pool.query<{ name: string | null }>(
+      'SELECT to_regclass($1) AS name', [`${v27Prefix}_agent_dws_requester_conversation_bindings`],
+    );
+    expect(requesterTableBeforeRetry.rows[0]?.name).toBeNull();
+
+    await new PgGovernanceMigrationRunner(pool, v27Prefix).run();
+    const retried = await pool.query<{ version: number }>(
+      `SELECT MAX(version) AS version FROM ${v27Prefix}_governance_schema_versions`,
+    );
+    expect(Number(retried.rows[0]?.version)).toBe(28);
+    const tables = await pool.query<{ legacy: string | null; requester: string | null }>(
+      'SELECT to_regclass($1) AS legacy,to_regclass($2) AS requester',
+      [
+        `${v27Prefix}_agent_dws_conversation_bindings`,
+        `${v27Prefix}_agent_dws_requester_conversation_bindings`,
+      ],
+    );
+    expect(tables.rows[0]).toEqual({
+      legacy: `${v27Prefix}_agent_dws_conversation_bindings`,
+      requester: `${v27Prefix}_agent_dws_requester_conversation_bindings`,
+    });
+  }, 30_000);
 
   it('原生 OAuth handoff 仅保存 hash，并发兑换同一短码时恰好一次成功', async () => {
     await new PgGovernanceMigrationRunner(pool, prefix).run();

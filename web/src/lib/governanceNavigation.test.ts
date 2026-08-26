@@ -88,8 +88,17 @@ describe("governance navigation registry", () => {
     expect(buildGovernanceUrl(governanceRoute("organization.members.member", {
       orgId: "org-1", entityId: "user-1", tab: "security-audit",
     }))).toBe("/tenant-admin/members/member/user-1/security-audit?org=org-1");
-    expect(buildGovernanceUrl(governanceRoute("settings.personal.my-agent", { tab: "persona" })))
-      .toBe("/settings/my-agent?tab=persona");
+    expect(buildGovernanceUrl(governanceRoute("settings.personal.my-agent", { tab: "memory" })))
+      .toBe("/settings/my-agent?tab=memory");
+  });
+
+  it("已弃用的 Persona 深链 canonical 到资料页", () => {
+    expect(parseGovernanceUrl("/settings/my-agent?tab=persona")).toMatchObject({
+      kind: "route",
+      route: { routeId: "settings.personal.my-agent", tab: "agent-profile" },
+      canonicalPath: "/settings/my-agent",
+    });
+    expect(canonicalGovernanceUrl("/settings/my-agent?tab=persona")).toBe("/settings/my-agent");
   });
 
   it("缺省详情 tab 会 canonical 到显式默认 tab", () => {

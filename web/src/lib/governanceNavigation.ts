@@ -239,6 +239,9 @@ const TENANT_SETTINGS_LEGACY: Readonly<Record<string, string>> = Object.fromEntr
 );
 
 const personalSettingsRouteId = (id: PersonalSettingsSectionId) => getSettingsSection("personal", id).routeId;
+const LEGACY_SETTINGS_TAB_ALIASES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  "settings.personal.my-agent": { persona: "agent-profile" },
+};
 const SETTINGS_LEGACY: Readonly<Record<string, { routeId: string; tab?: string }>> = {
   "/settings": { routeId: personalSettingsRouteId("account-security") },
   "/settings/account": { routeId: personalSettingsRouteId("account-security") },
@@ -364,7 +367,7 @@ function parseRegistered(parts: readonly string[], params: URLSearchParams): Gov
     }
     if (definition.area === "settings" && definition.tabs) {
       const requested = params.get("tab");
-      if (requested) tab = requested;
+      if (requested) tab = LEGACY_SETTINGS_TAB_ALIASES[definition.id]?.[requested] ?? requested;
       if (tab && !definition.tabs.includes(tab)) return { kind: "invalid", reason: "invalid-tab" };
     }
     const orgId = definition.area === "organization" ? params.get("org") : null;

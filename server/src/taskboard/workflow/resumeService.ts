@@ -26,11 +26,15 @@ export async function resumeBlockedTask(
     const loaded = await loadAccessibleTaskAndBoard(options, client, identity, taskId, true);
     await requireBoardAccess(options, client, identity, loaded.task.boardId, 'maintainer', false);
     assertIntegrationExecutionMigrated(loaded.task);
-    if (loaded.task.version !== input.expectedVersion) throw new TaskboardConflictError(loaded.task);
+    if (loaded.task.version !== input.expectedVersion)
+      throw new TaskboardConflictError(loaded.task);
     const facts = await loadWorkflowFacts(options, client, loaded.task);
     const workflowV3 = loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3;
     if (facts.hasMergeFact || (!workflowV3 && loaded.task.status !== 'blocked')) {
-      throw new TaskboardValidationError('Only a non-merged blocked task can be resumed', 'TASKBOARD_RESUME_INVALID');
+      throw new TaskboardValidationError(
+        'Only a non-merged blocked task can be resumed',
+        'TASKBOARD_RESUME_INVALID',
+      );
     }
     const decision = input.decision.trim();
     if (!decision) throw new TaskboardValidationError('Resume decision is required');
@@ -46,10 +50,12 @@ export async function resumeBlockedTask(
       const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
       const resumed = await client.query(
         `UPDATE ${agentsTable}
-            SET status='active',review_head_oid=NULL,verdict=NULL,review_execution_id=NULL,updated_at=now()
+            SET status='active',review_head_oid=NULL,verdict=NULL,review_execution_id=NULL,
+                admission_receipt=NULL,updated_at=now()
           WHERE integration_task_id=$1 AND status NOT IN ('merged','canceled')
             AND merge_in_flight_execution_id IS NULL
-          RETURNING integration_task_id`, [taskId],
+          RETURNING integration_task_id`,
+        [taskId],
       );
       if (!resumed.rows[0]) {
         throw new TaskboardValidationError(
@@ -61,10 +67,18 @@ export async function resumeBlockedTask(
         `UPDATE ${options.tasksTable}
             SET status='in_progress',completed_at=NULL,next_action='none',
                 next_action_revision=next_action_revision+1,version=version+1,updated_at=now()
-          WHERE id=$1`, [taskId],
+          WHERE id=$1`,
+        [taskId],
       );
-      await appendChange(options, client, taskId, 'integration.agent.resumed',
-        'user', identity.ownerUserId, { decision });
+      await appendChange(
+        options,
+        client,
+        taskId,
+        'integration.agent.resumed',
+        'user',
+        identity.ownerUserId,
+        { decision },
+      );
       return loadTask(options, client, taskId);
     }
     if (input.sourceIds?.length) {
@@ -75,7 +89,8 @@ export async function resumeBlockedTask(
           WHERE task_id=$1 AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1`,
         [taskId],
       );
-      if (episode.rows[0]?.purpose === 'review' && loaded.task.kind !== 'advisory') resumePurpose = 'review';
+      if (episode.rows[0]?.purpose === 'review' && loaded.task.kind !== 'advisory')
+        resumePurpose = 'review';
     }
     const resumeStatus = resumePurpose === 'review' ? 'in_review' : 'todo';
     await client.query(
@@ -88,16 +103,29 @@ export async function resumeBlockedTask(
               ),
               version=version+1,updated_at=now()
         WHERE id=$1`,
-      [taskId, resumeStatus, resumePurpose, decision, JSON.stringify(resumedSourceIds), identity.ownerUserId],
+      [
+        taskId,
+        resumeStatus,
+        resumePurpose,
+        decision,
+        JSON.stringify(resumedSourceIds),
+        identity.ownerUserId,
+      ],
     );
     await client.query(
       `UPDATE ${options.blockEpisodesTable} SET closed_at=now()
         WHERE task_id=$1 AND closed_at IS NULL`,
       [taskId],
     );
-    await appendChange(options, client, taskId,
+    await appendChange(
+      options,
+      client,
+      taskId,
       loaded.task.kind === 'integration' ? 'integration.resume_requested' : 'task.resume_requested',
-      'user', identity.ownerUserId, { decision, sourceIds: resumedSourceIds, purpose: resumePurpose });
+      'user',
+      identity.ownerUserId,
+      { decision, sourceIds: resumedSourceIds, purpose: resumePurpose },
+    );
     return loadTask(options, client, taskId);
   });
 }

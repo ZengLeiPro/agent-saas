@@ -4,11 +4,20 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { usePortalContainer } from "@/components/ui/portal-container";
 
-const Sheet = SheetPrimitive.Root;
+function Sheet(props: React.ComponentProps<typeof SheetPrimitive.Root>) {
+  const { blocked } = usePortalContainer();
+  return <SheetPrimitive.Root {...props} {...(blocked ? { modal: false } : {})} />;
+}
+
 const SheetTrigger = SheetPrimitive.Trigger;
 const SheetClose = SheetPrimitive.Close;
-const SheetPortal = SheetPrimitive.Portal;
+
+function SheetPortal({ container, ...props }: React.ComponentProps<typeof SheetPrimitive.Portal>) {
+  const { container: contextContainer } = usePortalContainer();
+  return <SheetPrimitive.Portal container={container ?? contextContainer ?? undefined} {...props} />;
+}
 
 const SheetOverlay = React.forwardRef<
   React.ElementRef<typeof SheetPrimitive.Overlay>,
@@ -47,22 +56,31 @@ const SheetContent = React.forwardRef<
   React.ElementRef<typeof SheetPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof SheetPrimitive.Content> &
     VariantProps<typeof sheetVariants>
->(({ side = "right", className, children, ...props }, ref) => (
-  <SheetPortal>
-    <SheetOverlay />
-    <SheetPrimitive.Content
-      ref={ref}
-      className={cn(sheetVariants({ side }), className)}
-      {...props}
-    >
-      {children}
-      <SheetPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
-        <X className="size-4" />
-        <span className="sr-only">关闭</span>
-      </SheetPrimitive.Close>
-    </SheetPrimitive.Content>
-  </SheetPortal>
-));
+>(({ side = "right", className, children, onEscapeKeyDown, onFocusOutside,
+  onInteractOutside, onPointerDownOutside, ...props }, ref) => {
+  const { blocked } = usePortalContainer();
+  const preventBlockedDismiss = React.useCallback((event: Event) => event.preventDefault(), []);
+  return (
+    <SheetPortal>
+      <SheetOverlay />
+      <SheetPrimitive.Content
+        ref={ref}
+        className={cn(sheetVariants({ side }), className)}
+        onEscapeKeyDown={blocked ? preventBlockedDismiss : onEscapeKeyDown}
+        onFocusOutside={blocked ? preventBlockedDismiss : onFocusOutside}
+        onInteractOutside={blocked ? preventBlockedDismiss : onInteractOutside}
+        onPointerDownOutside={blocked ? preventBlockedDismiss : onPointerDownOutside}
+        {...props}
+      >
+        {children}
+        <SheetPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
+          <X className="size-4" />
+          <span className="sr-only">关闭</span>
+        </SheetPrimitive.Close>
+      </SheetPrimitive.Content>
+    </SheetPortal>
+  );
+});
 SheetContent.displayName = SheetPrimitive.Content.displayName;
 
 function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {

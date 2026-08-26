@@ -44,7 +44,7 @@ shared/src/lib/wsEventProcessor.test.ts	1122	test
 shared/src/lib/wsEventProcessor.ts	1024	production
 shared/src/schemas/workflowScenario.ts	1025	production
 web/src/components/BillingManager/index.tsx	2258	production
-web/src/components/DesktopSessionSidebar.tsx	2423	production
+web/src/components/DesktopSessionSidebar.tsx	2421	production
 web/src/components/MessageItem.tsx	1122	production
 web/src/components/MessageList.tsx	1127	production
 web/src/components/MobileSessionList.tsx	1033	production

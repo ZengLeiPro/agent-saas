@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import { usePortalContainer } from "@/components/ui/portal-container";
 
 interface ImageLightboxProps {
   src: string;
@@ -9,16 +10,19 @@ interface ImageLightboxProps {
 }
 
 /**
- * 图片预览必须挂到 body，避免被消息列表的 transform/overflow 层叠上下文裁剪。
+ * 普通页面挂到 body；管理 Gate 内挂到其本地容器，以继承 hidden/inert 访问边界。
  */
 export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
+  const { container, blocked } = usePortalContainer();
+
   useEffect(() => {
+    if (blocked) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [blocked, onClose]);
 
   return createPortal(
     <div
@@ -44,6 +48,6 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
         onClick={(event) => event.stopPropagation()}
       />
     </div>,
-    document.body,
+    container ?? document.body,
   );
 }

@@ -126,12 +126,12 @@ describe("parseUrl 的 tenantAdminSection", () => {
     });
   });
 
-  it("组织管理弹窗路径不被当成分析页签", () => {
+  it("Registry 组织管理设置刷新时保留统一设置工作区", () => {
     expect(parseUrl("/tenant-admin/settings/billing")).toMatchObject({
       tab: "tenant-admin",
-      tenantAdminSection: "usage",
-      adminSettings: null,
-      canonicalPath: "/tenant-admin/governance/usage",
+      tenantAdminSection: null,
+      adminSettings: { target: "tenant", section: "billing" },
+      canonicalPath: null,
     });
   });
 

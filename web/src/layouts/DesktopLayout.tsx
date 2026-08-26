@@ -11,8 +11,6 @@ import { TrashView } from "@/components/chat/TrashView";
 import { TokenUsageDisplay } from "@/components/TokenUsageDisplay";
 import { BillingMiniBadge } from "@/components/BillingMiniBadge";
 import { DisplaySettingsMenu } from "@/components/DisplaySettingsMenu";
-import { PlatformAdminHeaderControls } from "@/components/PlatformAdmin/PlatformAdminHeaderControls";
-import { TenantAdminHeaderControls } from "@/components/TenantAdminHeaderControls";
 import { useChatFontSize } from "@/hooks/useChatFontSize";
 import { useChatWidth } from "@/hooks/useChatWidth";
 import { useResizePanel } from "@/hooks/useResizePanel";
@@ -48,8 +46,13 @@ const SettingsContent = lazy(() => import("@/components/SettingsCenter").then(m 
 const TenantAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.TenantAdminShell })));
 const PlatformAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.PlatformAdminShell })));
 const CapabilityCenterPanel = lazy(() => import("@/components/CapabilityCenter").then(m => ({ default: m.CapabilityCenter })));
+const ManagementSettingsAccessGate = lazy(() => import("@/components/ManagementSettingsAccessGate").then(m => ({ default: m.ManagementSettingsAccessGate })));
+const PlatformAdminHeaderControls = lazy(() => import("@/components/PlatformAdmin/PlatformAdminHeaderControls").then(m => ({ default: m.PlatformAdminHeaderControls })));
+const TenantAdminHeaderControls = lazy(() => import("@/components/TenantAdminHeaderControls").then(m => ({ default: m.TenantAdminHeaderControls })));
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
 import { useUnifiedSettingsWorkspace } from "@/hooks/useUnifiedSettingsWorkspace";
+import { useManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
+import { legacyRoleFallbackTab, managementAccessTarget } from "@/lib/managementAccessView";
 import { EmptySessionScenarios } from "@/components/scenarios/EmptySessionScenarios";
 import { EmptyChatRecommendCards } from "@/components/scenarios/EmptyChatRecommendCards";
 import { useRoleKitConfig } from "@/components/scenarios/useRoleKitConfig";
@@ -101,7 +104,7 @@ export function DesktopLayout(props: LayoutProps) {
     startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   } = props;
 
-  const { user: authUser, updatePreferences } = useAuth();
+  const { user: authUser, updatePreferences, isLoading: authLoading, authEnabled } = useAuth();
   const {
     mode: settingsMode,
     target: settingsTarget,
@@ -114,6 +117,8 @@ export function DesktopLayout(props: LayoutProps) {
     settingsOpen, settingsSection, adminSettings, openSettings, closeSettings, setSettingsSection,
     openAdminSettings, closeAdminSettings, setAdminSettingsSection,
   });
+  const accessTarget = managementAccessTarget({ settingsOpen, adminSettingsTarget: adminSettings?.target, activeTab, governanceArea: governanceRoute?.area });
+  const managementAccess = useManagementSettingsAccess({ user: authUser, authLoading, authEnabled, active: accessTarget !== null });
 
   const subagentTranscriptContext = useSubagentTranscript();
   const subagentTranscript = subagentTranscriptContext?.transcript ?? null;
@@ -235,8 +240,8 @@ export function DesktopLayout(props: LayoutProps) {
     if (activeTab === "usage" && !usageMounted && isAdmin) setUsageMounted(true);
     if (activeTab === "mcp" && !mcpMounted) setMcpMounted(true);
     if (activeTab === "models" && !modelsMounted && isPlatformAdmin) setModelsMounted(true);
-    if (activeTab === "tenant-admin" && !tenantAdminMounted && isAdmin) setTenantAdminMounted(true);
-    if (activeTab === "platform-admin" && !platformAdminMounted && isPlatformAdmin) setPlatformAdminMounted(true);
+    if (activeTab === "tenant-admin" && !tenantAdminMounted) setTenantAdminMounted(true);
+    if (activeTab === "platform-admin" && !platformAdminMounted) setPlatformAdminMounted(true);
     if (activeTab === "trash" && !trashMounted) setTrashMounted(true);
   }, [activeTab, capabilitiesMounted, cronMounted, tenantsMounted, profileMounted, skillsMounted, usageMounted, mcpMounted, modelsMounted, tenantAdminMounted, platformAdminMounted, trashMounted, isAdmin, isPlatformAdmin]);
 
@@ -335,30 +340,19 @@ export function DesktopLayout(props: LayoutProps) {
     </div>
   ), []);
 
-  // 非 admin 用户访问 admin-only tab 时重定向到 chat
-  // 组织分析对 admin 可见；平台分析仅限平台 admin。
+  // Legacy tabs retain role-based fallback. Management workspaces are intentionally
+  // excluded: their snapshot gates are the sole entry authority.
   useEffect(() => {
-    if (!personalAgentEnabled && (activeTab === "scenarios" || activeTab === "profile" || activeTab === "cron")) {
-      setActiveTab("capabilities");
-      return;
-    }
-    if (!isAdmin && (activeTab === "skills" || activeTab === "usage" || activeTab === "tenant-admin")) {
-      setActiveTab("chat");
-    }
-    if (!isPlatformAdmin && (activeTab === "tenants" || activeTab === "models" || activeTab === "platform-admin")) {
-      setActiveTab("chat");
-    }
+    const fallback = legacyRoleFallbackTab({ activeTab, personalAgentEnabled, isAdmin, isPlatformAdmin });
+    if (fallback) setActiveTab(fallback);
   }, [isAdmin, isPlatformAdmin, personalAgentEnabled, activeTab, setActiveTab]);
-
-  useEffect(() => {
-    if (adminSettings?.target === "tenant" && !isAdmin) closeAdminSettings();
-    if (adminSettings?.target === "platform" && !isPlatformAdmin) closeAdminSettings();
-  }, [adminSettings?.target, closeAdminSettings, isAdmin, isPlatformAdmin]);
 
   if (activeTab === "tenant-admin" && governanceRoute?.area === "organization") {
     return (
       <Suspense fallback={SuspenseFallback}>
-        <GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")}>
+        <ManagementSettingsAccessGate scope="tenant" target="tenant" access={managementAccess}
+          onRetry={managementAccess.retry} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}>
+          <GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")}>
           <TenantAdminShell
             renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
             renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
@@ -375,7 +369,8 @@ export function DesktopLayout(props: LayoutProps) {
             governanceRoute={governanceRoute}
             governanceContentOnly
           />
-        </GovernanceConsole>
+          </GovernanceConsole>
+        </ManagementSettingsAccessGate>
       </Suspense>
     );
   }
@@ -383,7 +378,9 @@ export function DesktopLayout(props: LayoutProps) {
   if (activeTab === "platform-admin" && governanceRoute?.area === "platform") {
     return (
       <Suspense fallback={SuspenseFallback}>
-        <GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")}>
+        <ManagementSettingsAccessGate scope="platform" target="platform" access={managementAccess}
+          onRetry={managementAccess.retry} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}>
+          <GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")}>
           <PlatformAdminShell
             renderTenants={() => <TenantManager />}
             renderSignupConfig={() => <SignupConfigManagerPanel />}
@@ -404,7 +401,8 @@ export function DesktopLayout(props: LayoutProps) {
             governanceRoute={governanceRoute}
             governanceContentOnly
           />
-        </GovernanceConsole>
+          </GovernanceConsole>
+        </ManagementSettingsAccessGate>
       </Suspense>
     );
   }
@@ -432,6 +430,7 @@ export function DesktopLayout(props: LayoutProps) {
         onCloseSettings={handleCloseUnifiedSettings}
         isAdmin={isAdmin}
         isPlatformAdmin={isPlatformAdmin}
+        settingsAccess={managementAccess}
         hasMore={hasMoreSessions}
         isLoadingMore={isLoadingMoreSessions}
         onLoadMore={loadMoreSessions}
@@ -512,18 +511,22 @@ export function DesktopLayout(props: LayoutProps) {
             ) : null}
           </div>
           {activeTab === "platform-admin" && (
-            <PlatformAdminHeaderControls
-              active={platformAdminSection}
-              onActiveChange={(section) => setPlatformAdminRoute(section)}
-              className="min-w-0 flex-1"
-            />
+            <Suspense fallback={null}>
+              <PlatformAdminHeaderControls
+                active={platformAdminSection}
+                onActiveChange={(section) => setPlatformAdminRoute(section)}
+                className="min-w-0 flex-1"
+              />
+            </Suspense>
           )}
           {activeTab === "tenant-admin" && (
-            <TenantAdminHeaderControls
-              active={tenantAdminSection}
-              onActiveChange={setTenantAdminRoute}
-              className="min-w-0 flex-1"
-            />
+            <Suspense fallback={null}>
+              <TenantAdminHeaderControls
+                active={tenantAdminSection}
+                onActiveChange={setTenantAdminRoute}
+                className="min-w-0 flex-1"
+              />
+            </Suspense>
           )}
           <div
             ref={setCronHeaderActionsTarget}
@@ -736,6 +739,9 @@ export function DesktopLayout(props: LayoutProps) {
         {tenantAdminMounted && (
           <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "tenant-admin" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
+              <ManagementSettingsAccessGate scope="tenant" target="tenant"
+                access={managementAccess} onRetry={managementAccess.retry}
+                onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}>
               <TenantAdminShell
                 renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
                 renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
@@ -754,12 +760,16 @@ export function DesktopLayout(props: LayoutProps) {
                 onAnalysisSectionChange={setTenantAdminRoute}
                 headerControlsPlacement="none"
               />
+              </ManagementSettingsAccessGate>
             </Suspense>
           </div>
         )}
         {platformAdminMounted && (
           <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "platform-admin" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
+              <ManagementSettingsAccessGate scope="platform" target="platform"
+                access={managementAccess} onRetry={managementAccess.retry}
+                onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}>
               <PlatformAdminShell
                 renderTenants={() => <TenantManager />}
                 renderSignupConfig={() => <SignupConfigManagerPanel />}
@@ -779,6 +789,7 @@ export function DesktopLayout(props: LayoutProps) {
                 onSettingsClose={closeAdminSettings}
                 headerControlsPlacement="none"
               />
+              </ManagementSettingsAccessGate>
             </Suspense>
           </div>
         )}
@@ -875,10 +886,9 @@ export function DesktopLayout(props: LayoutProps) {
               </Suspense>
             </div>
 
-            {isAdmin && (
-              <div className={cn("h-full min-h-0", settingsTarget !== "tenant" && "hidden")}>
-                <Suspense fallback={SuspenseFallback}>
-                  <TenantAdminShell
+            <Suspense fallback={SuspenseFallback}>
+              <ManagementSettingsAccessGate scope="tenant" target={settingsTarget} access={managementAccess} onRetry={managementAccess.retry} onReturnPersonal={() => handleSettingsNavigate("personal", settingsSection)} persistAfterVisit>
+                <TenantAdminShell
                     renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
                     renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
                     renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
@@ -891,15 +901,13 @@ export function DesktopLayout(props: LayoutProps) {
                     settingsSection={(settingsTarget === "tenant" ? activeSettingsSection : "users") as TenantSection}
                     onSettingsSectionChange={(section) => handleSettingsNavigate("tenant", section)}
                     onSettingsClose={handleCloseUnifiedSettings}
-                  />
-                </Suspense>
-              </div>
-            )}
+                />
+              </ManagementSettingsAccessGate>
+            </Suspense>
 
-            {isPlatformAdmin && (
-              <div className={cn("h-full min-h-0", settingsTarget !== "platform" && "hidden")}>
-                <Suspense fallback={SuspenseFallback}>
-                  <PlatformAdminShell
+            <Suspense fallback={SuspenseFallback}>
+              <ManagementSettingsAccessGate scope="platform" target={settingsTarget} access={managementAccess} onRetry={managementAccess.retry} onReturnPersonal={() => handleSettingsNavigate("personal", settingsSection)} persistAfterVisit>
+                <PlatformAdminShell
                     renderTenants={() => <TenantManager />}
                     renderSignupConfig={() => <SignupConfigManagerPanel />}
                     renderModels={() => <ModelManagerPanel />}
@@ -917,10 +925,9 @@ export function DesktopLayout(props: LayoutProps) {
                     settingsSection={(settingsTarget === "platform" ? activeSettingsSection : "tenants") as PlatformSection}
                     onSettingsSectionChange={(section) => handleSettingsNavigate("platform", section)}
                     onSettingsClose={handleCloseUnifiedSettings}
-                  />
-                </Suspense>
-              </div>
-            )}
+                />
+              </ManagementSettingsAccessGate>
+            </Suspense>
           </div>
         )}
         </div>

@@ -230,6 +230,9 @@ describe("桌面侧边栏会话激活态", () => {
     renderSidebar("chat", [session], sidebarLayout, {
       isAdmin: true,
       isPlatformAdmin: true,
+      settingsAccess: {
+        status: "ready", personalAllowed: true, tenantEntryAllowed: true, platformEntryAllowed: true, retry: vi.fn(),
+      },
       settingsMode: true,
       settingsTarget: "platform",
       activeSettingsSection: "models",
@@ -251,6 +254,19 @@ describe("桌面侧边栏会话激活态", () => {
     expect(onSettingsNavigate).toHaveBeenCalledWith("platform", "system");
     fireEvent.click(screen.getByRole("button", { name: "返回主界面" }));
     expect(onCloseSettings).toHaveBeenCalledOnce();
+  });
+
+  it("统一设置不回退普通会话态的管理员角色", async () => {
+    renderSidebar("chat", [session], "single", {
+      isAdmin: true,
+      isPlatformAdmin: true,
+      settingsMode: true,
+      settingsTarget: "personal",
+    });
+
+    expect(await screen.findByText("个人设置")).toBeTruthy();
+    expect(screen.queryByText("组织管理")).toBeNull();
+    expect(screen.queryByText("平台管理")).toBeNull();
   });
 
   it("普通用户的统一设置菜单隐藏组织和平台分组", async () => {

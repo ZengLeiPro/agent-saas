@@ -228,6 +228,57 @@ export const connectionAuthorizationSchema = z.object({
   actions: z.array(nextActionSchema),
 }).strict();
 
+export const MANAGEMENT_ACTIONS_V1 = [
+  'settings.personal.view', 'settings.tenant.view', 'settings.platform.view',
+] as const;
+export const managementActionV1Schema = z.enum(MANAGEMENT_ACTIONS_V1);
+export const managementScopeV1Schema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('personal') }).strict(),
+  z.object({ kind: z.literal('tenant'), tenantId: nonEmpty.max(128) }).strict(),
+  z.object({ kind: z.literal('platform') }).strict(),
+]);
+export const managementConstraintV1Schema = z.enum([
+  'SELF_ONLY', 'SAME_TENANT_ONLY', 'EXPLICIT_TENANT_SCOPE', 'PLATFORM_ONLY',
+]);
+export const managementReasonCodeV1Schema = z.enum([
+  'ACTION_SCOPE_MISMATCH', 'PERSONAL_SELF_ALLOWED', 'ORG_ADMIN_REQUIRED',
+  'TENANT_SCOPE_MISMATCH', 'TENANT_NOT_FOUND', 'SAME_TENANT_ORG_ADMIN_ALLOWED',
+  'PLATFORM_ADMIN_EXPLICIT_TENANT_ALLOWED', 'PLATFORM_TENANT_MANAGEMENT_ALLOWED',
+  'PLATFORM_ADMIN_ALLOWED', 'PLATFORM_ADMIN_REQUIRED',
+]);
+export const managementReasonLayerV1Schema = z.enum(['management_scope', 'management_authority']);
+export const managementSnapshotDecisionRequestV1Schema = z.object({
+  action: managementActionV1Schema,
+  scope: managementScopeV1Schema,
+}).strict();
+export const managementSnapshotRequestV1Schema = z.object({
+  decisions: z.array(managementSnapshotDecisionRequestV1Schema).min(1).max(64),
+}).strict();
+export const managementSnapshotDecisionV1Schema = z.object({
+  action: managementActionV1Schema,
+  scope: managementScopeV1Schema,
+  allowed: z.boolean(),
+  reason: z.object({
+    code: managementReasonCodeV1Schema,
+    label: nonEmpty.max(300),
+    layer: managementReasonLayerV1Schema,
+  }).strict(),
+  constraints: z.array(managementConstraintV1Schema).max(4)
+    .refine(values => new Set(values).size === values.length, 'constraints must be unique'),
+}).strict();
+export const managementSnapshotResponseV1Schema = z.object({
+  contractVersion: z.literal(GOVERNANCE_CONTRACT_VERSION),
+  subject: z.object({
+    userId: nonEmpty.max(128),
+    tenantId: nonEmpty.max(128),
+    persona: governancePersonaSchema,
+    isOwner: z.boolean(),
+  }).strict(),
+  decisions: z.array(managementSnapshotDecisionV1Schema).min(1).max(64),
+  policySnapshot: z.object({ membershipVersion: z.number().int().nonnegative() }).strict(),
+  evaluatedAt: timestamp,
+}).strict();
+
 const forbiddenExactKeys = new Set([
   'secret', 'secretref', 'clientsecret', 'password', 'apikey', 'token', 'accesstoken',
   'refreshtoken', 'idtoken', 'authtoken', 'bearertoken', 'verifier', 'externalaccountid',
@@ -281,6 +332,15 @@ export type EffectiveResourceViewV1 = z.infer<typeof effectiveResourceViewV1Sche
 export type ConnectionAuthorizationV1 = z.infer<typeof connectionAuthorizationV1Schema>;
 export type ChangePreviewV1 = z.infer<typeof changePreviewV1Schema>;
 export type ChangeReceiptV1 = z.infer<typeof changeReceiptV1Schema>;
+export type ManagementActionV1 = z.infer<typeof managementActionV1Schema>;
+export type ManagementScopeV1 = z.infer<typeof managementScopeV1Schema>;
+export type ManagementConstraintV1 = z.infer<typeof managementConstraintV1Schema>;
+export type ManagementReasonCodeV1 = z.infer<typeof managementReasonCodeV1Schema>;
+export type ManagementReasonLayerV1 = z.infer<typeof managementReasonLayerV1Schema>;
+export type ManagementSnapshotDecisionRequestV1 = z.infer<typeof managementSnapshotDecisionRequestV1Schema>;
+export type ManagementSnapshotRequestV1 = z.infer<typeof managementSnapshotRequestV1Schema>;
+export type ManagementSnapshotDecisionV1 = z.infer<typeof managementSnapshotDecisionV1Schema>;
+export type ManagementSnapshotResponseV1 = z.infer<typeof managementSnapshotResponseV1Schema>;
 export type AccessDecision = AccessDecisionV1;
 export type ExecutionReadiness = ExecutionReadinessV1;
 export type ThreeAxisState = z.infer<typeof threeAxisStateSchema>;

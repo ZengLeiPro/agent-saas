@@ -35,7 +35,6 @@ import { AddSessionsToGroupDialog } from "@/components/chat/AddSessionsToGroupDi
 import { LazySessionShareDialog } from "@/components/chat/LazySessionShareDialog";
 import { TrashView } from "@/components/chat/TrashView";
 import { SessionSearchResults } from "@/components/chat/SessionSearchResults";
-
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,6 +63,7 @@ import { DeferredUnifiedSettingsSidebar, preloadUnifiedSettingsSidebar } from "@
 import { getSidebarNavItems, formatShortDate, getSessionWaitingLabel, getGroupWaitingRuntimeStatus } from "@/types/sidebar";
 import type { SessionGroup, SessionListEntry } from "@/types/sessionGroup";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
+import type { ManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
 import { compareSessionActivity, formatBillingCredits } from "./desktopSessionSidebarUtils";
 import {
   CompactSessionGroupLeadingIcon,
@@ -100,6 +100,7 @@ interface DesktopSessionSidebarProps {
   onSettingsNavigate?: (target: "personal" | AdminSettingsTarget, section: string) => void;
   onCloseSettings?: () => void;
   isAdmin?: boolean;
+  settingsAccess?: ManagementSettingsAccess;
   /** 平台 admin（跨组织管理者）。组织管理入口对 admin 可见，平台管理入口仅平台 admin 可见。 */
   isPlatformAdmin?: boolean;
   hasMore?: boolean;
@@ -114,7 +115,6 @@ interface DesktopSessionSidebarProps {
   sidebarLayout?: "double" | "single";
   personalAgentEnabled?: boolean;
 }
-
 
 const USER_MENU_ITEM =
   "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] text-foreground transition-colors hover:bg-accent";
@@ -465,7 +465,6 @@ function SessionRow({
     </div>
   );
 }
-
 
 interface SidebarBrandHeaderProps {
   className?: string;
@@ -959,6 +958,7 @@ export function DesktopSessionSidebar({
   onSettingsNavigate,
   onCloseSettings,
   isAdmin = false,
+  settingsAccess = { status: "ready", personalAllowed: true, tenantEntryAllowed: false, platformEntryAllowed: false, retry: () => undefined },
   isPlatformAdmin = false,
   hasMore,
   isLoadingMore,
@@ -1618,7 +1618,6 @@ export function DesktopSessionSidebar({
     setDeleteGroupId(null);
   }, [deleteGroupId, selectedView, groupsHook]);
 
-
   const renderSessionSearchBox = (variant: "section" | "inline" = "section") => (
     <div
       className={cn(
@@ -1657,8 +1656,7 @@ export function DesktopSessionSidebar({
         width={sidebarLayout === "single" ? singlePanelWidth : (hasSecondPanel ? mainPanelWidth + subPanelWidth : mainPanelWidth)}
         hidden={hidden}
         className={className}
-        isAdmin={isAdmin}
-        isPlatformAdmin={isPlatformAdmin}
+        access={settingsAccess}
         personalAgentEnabled={personalAgentEnabled}
         target={settingsTarget}
         activeSection={activeSettingsSection}

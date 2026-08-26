@@ -348,6 +348,8 @@ export interface TaskBoardExecution {
   requestedBy: string;
   error?: string;
   continuationActive?: boolean;
+  /** 顶层 Run 已终态，但所属 Session 仍有 Run、后台任务或待投递唤醒。 */
+  sessionActivityActive?: boolean;
   transitionedAt?: string;
   supersededAt?: string;
   fenceEpoch?: string;

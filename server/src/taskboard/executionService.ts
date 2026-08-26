@@ -90,7 +90,9 @@ export interface TaskboardExecutionCoordinatorOptions extends TaskboardSessionGr
   scheduler: Pick<RuntimeScheduler,
     'enqueue' | 'enqueueCreateOnly' | 'stagePendingRun' | 'activateCreatedRun' | 'cancelPendingTaskboardRun'
   >;
-  runStore: Pick<RunStore, 'get'> & Partial<Pick<RunStore, 'cancelSteeringBeforeDispatchBySessionWithEvent'>>;
+  runStore: Pick<RunStore, 'get'> & Partial<Pick<RunStore,
+    'cancelSteeringBeforeDispatchBySessionWithEvent' | 'hasTaskboardSessionActivity'
+  >>;
   sessionCatalog: SessionCatalog;
   eventStore: EventStore;
   agentCwd: string;
@@ -138,16 +140,34 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     await this.reconciliation;
   }
 
-  listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
-    return this.options.store.listExecutions(identity, taskId);
+  async listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
+    const executions = await this.options.store.listExecutions(identity, taskId);
+    return this.projectLatestSessionActivity(identity, executions);
   }
 
-  searchExecutions(
+  async searchExecutions(
     identity: TaskboardIdentity,
     taskId: string,
     filter?: TaskboardPageFilter,
   ): Promise<TaskboardPage<TaskBoardExecution>> {
-    return this.options.store.searchExecutions(identity, taskId, filter);
+    const page = await this.options.store.searchExecutions(identity, taskId, filter);
+    if (page.page !== 1) return page;
+    return { ...page, items: await this.projectLatestSessionActivity(identity, page.items) };
+  }
+
+  private async projectLatestSessionActivity(
+    identity: TaskboardIdentity,
+    executions: TaskBoardExecution[],
+  ): Promise<TaskBoardExecution[]> {
+    const latest = executions[0];
+    if (!latest || !isTerminalExecution(latest) || latest.continuationActive) return executions;
+    const sessionIds = [...new Set(executions.map((execution) => execution.sessionId))];
+    if (!await this.hasTaskboardSessionActivity(sessionIds, identity.tenantId)) return executions;
+    return [{ ...latest, sessionActivityActive: true }, ...executions.slice(1)];
+  }
+
+  private async hasTaskboardSessionActivity(sessionIds: string[], tenantId: string): Promise<boolean> {
+    return await this.options.runStore.hasTaskboardSessionActivity?.(sessionIds, tenantId) === true;
   }
 
   async cancelExecution(identity: TaskboardIdentity, taskId: string, executionId: string,
@@ -309,6 +329,18 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     options: { executionId?: string; trigger?: 'initial' | 'comment' | 'resume' | 'retry'; sessionId?: string } = {},
   ): Promise<TaskBoardExecutionStartResult> {
     const claim = await this.prepareExecutionClaim(identity, taskId, input, options);
+    const existing = await this.options.store.listExecutions(identity, taskId);
+    const existingClaim = existing.some((execution) => execution.runId === claim.runId);
+    const sessionIds = [...new Set([
+      claim.sessionId,
+      ...existing.map((execution) => execution.sessionId),
+    ])];
+    if (!existingClaim && await this.hasTaskboardSessionActivity(sessionIds, identity.tenantId)) {
+      throw new TaskboardValidationError(
+        '任务会话仍有后台工作或待处理唤醒，不能启动新的 Agent 执行',
+        'TASKBOARD_EXECUTION_ACTIVE',
+      );
+    }
     const claimed = await this.options.store.claimExecution(identity, taskId, claim);
     await this.dispatchExecution(claim.runId);
     return claimed;

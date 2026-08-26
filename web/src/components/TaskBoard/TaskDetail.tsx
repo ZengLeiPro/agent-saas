@@ -252,14 +252,19 @@ export function TaskDetail({
   const latestExecution = executions[0];
   const latestExecutionActive = Boolean(latestExecution && ACTIVE_EXECUTION_STATUSES.has(latestExecution.status));
   const executionActive = latestExecution
-    ? latestExecutionActive || latestExecution.continuationActive === true
+    ? latestExecutionActive
+      || latestExecution.continuationActive === true
+      || latestExecution.sessionActivityActive === true
     : false;
+  const executionStatusLabel = latestExecution?.sessionActivityActive && !latestExecutionActive
+    ? "主 Run 已结束 · 后台仍在执行"
+    : latestExecution ? EXECUTION_STATUS_LABELS[latestExecution.status] : "";
   const executionStarted = Boolean(
     taskId
     && (executionStartedTaskId === taskId || executions.some((item) => item.taskId === taskId)),
   );
   useEffect(() => {
-    if (latestExecution?.continuationActive) {
+    if (latestExecution?.continuationActive || latestExecution?.sessionActivityActive) {
       refreshedExecutionRef.current = null;
       return;
     }
@@ -695,7 +700,7 @@ export function TaskDetail({
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                     <span>
                       {taskKind === "integration" ? "集成执行" : latestExecution.purpose === "review" ? "独立复核" : taskKind === "advisory" ? "分析/答复" : "实施"}
-                      ：{EXECUTION_STATUS_LABELS[latestExecution.status]}
+                      ：{executionStatusLabel}
                     </span>
                     <time>{new Date(latestExecution.updatedAt).toLocaleString("zh-CN")}</time>
                   </div>
@@ -718,7 +723,7 @@ export function TaskDetail({
                   >
                     {saving || executionActive ? <LoaderCircle className="animate-spin" /> : <Bot />}
                     {executionActive && latestExecution
-                      ? EXECUTION_STATUS_LABELS[latestExecution.status]
+                      ? executionStatusLabel
                       : taskKind === "integration" ? "继续集成"
                         : currentTask.status === "in_review" ? "独立复核"
                           : currentTask.status === "in_progress" ? "恢复实施"

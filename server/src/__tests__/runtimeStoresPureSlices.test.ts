@@ -286,6 +286,29 @@ describe('parseCount（经 PgRunStore.getActiveCounts 驱动）', () => {
   });
 });
 
+describe('Taskboard Session 活跃查询', () => {
+  it('一次查询聚合父 Session Run、嵌套后台任务和待投递唤醒', async () => {
+    const { store, query } = makeRunStoreRig([{ active: true }]);
+
+    await expect(store.hasTaskboardSessionActivity(['session-work', 'session-review'], 'tenant-a'))
+      .resolves.toBe(true);
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('run.session_id = ANY($1::text[])');
+    expect(sql).toContain("background.metadata->>'parentSessionId' = ANY($1::text[])");
+    expect(sql).toContain("background.metadata->>'topLevelSessionId' = ANY($1::text[])");
+    expect(sql).toContain("background.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')");
+    expect(sql).toContain("COALESCE(background.metadata->>'wakeState', 'pending') IN ('pending','delivering')");
+    expect(sql).not.toContain("IN ('none','pending','delivering')");
+    expect(params).toEqual([['session-work', 'session-review'], 'tenant-a']);
+  });
+
+  it('空 Session 集合直接返回 false', async () => {
+    const { store, query } = makeRunStoreRig([{ active: true }]);
+    await expect(store.hasTaskboardSessionActivity([], 'tenant-a')).resolves.toBe(false);
+    expect(query).not.toHaveBeenCalled();
+  });
+});
+
 describe('sanitizeIdentifier（经 PgRunStore 构造函数驱动）', () => {
   it.each(['1bad', 'bad-prefix', 'bad;DROP TABLE x', 'bad prefix', ''])(
     '非法 tablePrefix %j 构造即 throw，错误消息回显原值',

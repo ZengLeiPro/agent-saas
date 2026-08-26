@@ -10,14 +10,13 @@ import { releaseRunLease } from './runTerminalLifecycle.js';
 import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL, STOPPABLE_RUN_STATUS_SQL } from './runStatusPolicy.js';
 import { normalizeRunRecord, parseCount, sanitizeIdentifier, serializeRuntimeEvent, stringMetadata } from './runStoreRecordHelpers.js';
 import { PgRunStoreQueries } from './runStoreQueries.js';
+import { hasTaskboardSessionActivity } from './runStoreSessionActivity.js';
 import { buildAppliedSteeringEventInputs, selectSteeringEventCandidates } from './steeringRuntimeEvents.js';
-
 const { Pool } = pg;
 type PgPoolClient = pg.PoolClient;
 export * from './runStoreTypes.js';
 import { BackgroundTaskLimitError, RunCreateConflictError } from './runStoreTypes.js';
 import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunLeaseAdmission, RunRecord, RunStatus, RunStore, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, UpsertRunInput } from './runStoreTypes.js';
-
 export class PgRunStore implements RunStore {
   readonly pool: PgPool;
   readonly runsTable: string;
@@ -190,6 +189,7 @@ export class PgRunStore implements RunStore {
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_session_idx ON ${this.runsTable} (session_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_session_enqueue_idx ON ${this.runsTable} (session_id, enqueue_seq)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_background_parent_session_idx ON ${this.runsTable} ((metadata->>'parentSessionId'), requested_at DESC) WHERE metadata->>'backgroundTask' = 'true'`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_background_top_session_idx ON ${this.runsTable} ((metadata->>'topLevelSessionId'), requested_at DESC) WHERE metadata->>'backgroundTask' = 'true'`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_background_parent_run_idx ON ${this.runsTable} ((metadata->>'parentRunId'), status) WHERE metadata->>'backgroundTask' = 'true'`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_background_tenant_status_idx ON ${this.runsTable} (tenant_id, status, updated_at) WHERE metadata->>'backgroundTask' = 'true'`);
       // RFC v1 P0.4：按 sessionId 找最近完成 run 的 last_response_id（跨 run 接力查询路径）
@@ -1224,6 +1224,7 @@ export class PgRunStore implements RunStore {
     `, [parentSessionId, options.userId ?? null, options.tenantId ?? null, limit]);
     return result.rows.map((entry) => normalizeRunRecord(entry.row_json));
   }
+  hasTaskboardSessionActivity(sessionIds: string[], tenantId?: string): Promise<boolean> { return hasTaskboardSessionActivity(this, sessionIds, tenantId); }
   findBackgroundTasksByIdentifier(parentSessionId: string, identifier: string, options: Pick<ListBackgroundTasksOptions, 'userId' | 'tenantId'> = {}): Promise<RunRecord[]> { return this.queries.findBackgroundTasksByIdentifier(parentSessionId, identifier, options); }
   async listPendingBackgroundTaskWakes(staleBefore: Date, limit = 50): Promise<RunRecord[]> {
     const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), 500);
@@ -1244,7 +1245,6 @@ export class PgRunStore implements RunStore {
     `, [staleBefore.toISOString(), boundedLimit]);
     return result.rows.map((entry) => normalizeRunRecord(entry.row_json));
   }
-
   async claimBackgroundTaskWake(
     runId: string,
     claimToken: string,

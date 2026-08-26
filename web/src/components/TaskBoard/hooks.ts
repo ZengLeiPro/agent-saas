@@ -462,7 +462,9 @@ export function useTaskExecutions(taskId: string | null, active = true) {
 
   const latestExecution = executions[0];
   const executionActive = Boolean(latestExecution && (
-    ACTIVE_EXECUTION_STATUSES.has(latestExecution.status) || latestExecution.continuationActive
+    ACTIVE_EXECUTION_STATUSES.has(latestExecution.status)
+    || latestExecution.continuationActive
+    || latestExecution.sessionActivityActive
   ));
   useEffect(() => {
     if (!active || !taskId) return;

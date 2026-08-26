@@ -124,6 +124,42 @@ describe("任务看板 hooks 并发一致性", () => {
     }
   });
 
+  it("正式 Execution 终态但 Session 后台活跃时继续轮询", async () => {
+    const activeSession: TaskBoardExecution = {
+      id: "execution-session-active",
+      taskId: originalTask.id,
+      runId: "run-session-active",
+      sessionId: "session-active",
+      status: "succeeded",
+      purpose: "work",
+      requestedBy: "user-1",
+      sessionActivityActive: true,
+      createdAt: originalTask.createdAt,
+      updatedAt: originalTask.updatedAt,
+    };
+    mocks.fetchExecutions
+      .mockResolvedValueOnce([activeSession])
+      .mockResolvedValueOnce([{ ...activeSession, sessionActivityActive: false }]);
+    vi.useFakeTimers();
+    try {
+      const { result, unmount } = renderHook(() => useTaskExecutions(originalTask.id));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(result.current.executions[0]?.sessionActivityActive).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(result.current.executions[0]?.sessionActivityActive).toBeFalsy();
+      expect(mocks.fetchExecutions).toHaveBeenCalledTimes(2);
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("终态或空闲时低频轮询以发现其他操作者启动的 Execution", async () => {
     const activeExecution: TaskBoardExecution = {
       id: "execution-new", taskId: originalTask.id, runId: "run-new", sessionId: "session-new",

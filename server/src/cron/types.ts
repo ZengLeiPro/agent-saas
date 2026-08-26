@@ -166,6 +166,8 @@ export interface CronJob {
 
   owner?: string; // 创建者 userId (JwtPayload.sub)
   ownerName?: string; // 创建者用户名（纯展示）
+  /** 创建任务的可信企业专家会话绑定；仅由服务端派生，客户端不能直接设置。 */
+  orgAgentId?: string;
 
   createdAtMs: number; // 创建时间
   updatedAtMs: number; // 更新时间

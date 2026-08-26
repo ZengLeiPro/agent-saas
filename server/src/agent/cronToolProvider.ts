@@ -8,6 +8,7 @@ import {
 } from '../../../shared/src/types/taskboard.js';
 import type { CronService } from '../cron/service.js';
 import { validateCronExpr } from '../cron/scheduler.js';
+import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 import {
   cronJobCreateSchema,
   cronJobPatchSchema,
@@ -256,6 +257,7 @@ function summarizeJob(job: CronJob): Record<string, unknown> {
     enabled: job.enabled,
     schedule: job.schedule,
     payloadKind: job.payload.kind,
+    ...(job.orgAgentId ? { orgAgentId: job.orgAgentId } : {}),
     ...(job.notify ? { notify: { enabled: job.notify.enabled, channel: job.notify.channel } } : {}),
     nextRunAt: toIso(job.state.nextRunAtMs),
     lastRunAt: toIso(job.state.lastRunAtMs),
@@ -272,6 +274,7 @@ function jobDetail(job: CronJob): Record<string, unknown> {
     enabled: job.enabled,
     schedule: job.schedule,
     payload: job.payload,
+    ...(job.orgAgentId ? { orgAgentId: job.orgAgentId } : {}),
     ...(job.notify ? { notify: job.notify } : {}),
     createdAt: toIso(job.createdAtMs),
     updatedAt: toIso(job.updatedAtMs),
@@ -288,6 +291,8 @@ function jobDetail(job: CronJob): Record<string, unknown> {
 export interface CronToolProviderOptions {
   /** 惰性 getter：cronRuntime 在 dispatch 构造之后才创建，取用时再解析。 */
   service: () => CronService | undefined;
+  /** 从当前可信 Session 派生企业专家绑定；不接受模型或客户端传入 orgAgentId。 */
+  sessionCatalog?: SessionCatalog;
   /** 同一工具中的任务看板域；PG taskboard 未启用时仅保留 cron 能力。 */
   taskboard?: TaskboardToolOptions;
 }
@@ -346,7 +351,7 @@ export class CronToolProvider implements ToolProvider {
     const service = this.options.service();
     if (!service) throw new Error('定时任务服务未启用');
     if (input.action === 'list') return this.query(service, identity, input);
-    return this.manage(service, identity, input);
+    return this.manage(service, identity, input, context);
   }
 
   private async query(service: CronService, identity: CronIdentity, input: CronManageInput): Promise<ToolResult> {
@@ -363,7 +368,24 @@ export class CronToolProvider implements ToolProvider {
     };
   }
 
-  private async manage(service: CronService, identity: CronIdentity, input: CronManageInput): Promise<ToolResult> {
+  private async resolveTrustedOrgAgentId(
+    identity: CronIdentity,
+    context: ToolCallContext,
+  ): Promise<string | undefined> {
+    if (!context.sessionId || !identity.tenantId || !this.options.sessionCatalog) return undefined;
+    const session = await this.options.sessionCatalog.get(context.sessionId);
+    if (!session
+      || session.userId !== identity.id
+      || session.tenantId !== identity.tenantId) return undefined;
+    return session.orgAgentId;
+  }
+
+  private async manage(
+    service: CronService,
+    identity: CronIdentity,
+    input: CronManageInput,
+    context: ToolCallContext,
+  ): Promise<ToolResult> {
     switch (input.action) {
       case 'create': {
         const create = cronJobCreateSchema.parse({
@@ -378,7 +400,14 @@ export class CronToolProvider implements ToolProvider {
           const check = validateCronExpr(create.schedule.expr, create.schedule.tz);
           if (!check.valid) throw new Error(`无效的 cron 表达式: ${check.error}`);
         }
-        const job = await service.add(create, { owner: identity.id, ownerName: identity.username });
+        const orgAgentId = create.payload.kind === 'agentTurn'
+          ? await this.resolveTrustedOrgAgentId(identity, context)
+          : undefined;
+        const job = await service.add(create, {
+          owner: identity.id,
+          ownerName: identity.username,
+          ...(orgAgentId ? { orgAgentId } : {}),
+        });
         return { content: JSON.stringify({ created: true, job: jobDetail(job) }, null, 2) };
       }
       case 'update': {

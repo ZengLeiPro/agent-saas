@@ -6,6 +6,35 @@ import type { TaskboardExecutionContext } from '../taskboard/types.js';
 import { comment, execution, identity, makeRig, task } from './taskboardExecutionTestRig.js';
 
 describe('TaskboardExecutionCoordinator finish protocol', () => {
+  it('absorbs a successful v2 Integration run before review or delivery preparation', async () => {
+    const currentExecution = execution({ protocolVersion: 2, status: 'running' });
+    const completeExecution = vi.fn(async () => ({
+      task: { ...task, kind: 'integration' as const, workflowVersion: 2 as const },
+      execution: execution({ protocolVersion: 2, status: 'failed' }),
+    }));
+    const rig = makeRig({
+      completeExecution,
+      getExecutionContextByRunId: vi.fn(async (): Promise<TaskboardExecutionContext> => ({
+        identity,
+        task: { ...task, kind: 'integration', workflowVersion: 2 },
+        boardPrompt: 'must not run', comments: [comment], execution: currentExecution,
+      })),
+    });
+
+    await rig.coordinator.handleRuntimeEvent({
+      id: 'event-v2-integration', timestamp: '2026-08-01T03:01:00.000Z', type: 'run_finished',
+      runId: currentExecution.runId, sessionId: currentExecution.sessionId,
+      subtype: 'success', numTurns: 2,
+    } as PlatformEvent);
+
+    expect(completeExecution).toHaveBeenCalledWith(currentExecution.runId, {
+      status: 'failed',
+      error: 'Integration task requires Agent-first workflow migration',
+      commentBody: 'Integration task requires Agent-first workflow migration',
+    });
+    expect(rig.store.claimExecution).not.toHaveBeenCalled();
+    expect(rig.store.claimExecutionDispatch).not.toHaveBeenCalled();
+  });
   it('V2 work 未 finish 时即使任务已进入复核，也不自动续跑或派发 review', async () => {
     const currentExecution = execution({ protocolVersion: 2, status: 'running' });
     const completeExecution = vi.fn(async (_runId: string, _input: unknown) => ({

@@ -3,6 +3,7 @@ import { PLATFORM_TENANT_ID } from '../tenants/types.js';
 import { agentDwsMigrations } from './agentDwsMigrations.js';
 import { governanceV22Statements } from './v22Migration.js';
 import { governanceV23Statements } from './v23Migration.js';
+import { governanceV32Statements, governanceV33Statements } from './v32V33Migration.js';
 import { governanceV18Statements } from './v18Migration.js';
 import { governanceV30ChangeJobStatements } from './v30ChangeJobMigration.js';
 import { buildContextMigrationSql } from '../../context/store/migration.js';
@@ -940,6 +941,8 @@ function migrations(prefix: string): GovernanceMigration[] {
       version: 31,
       statements: buildContextRetentionRetryMigrationSql(prefix),
     },
+    { version: 32, statements: governanceV32Statements(prefix) },
+    { version: 33, statements: governanceV33Statements(assignments) },
   ];
 }
 

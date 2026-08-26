@@ -92,27 +92,37 @@ describe('任务看板后续正式执行', () => {
     }));
   });
 
-  it('integration 评论在无 active execution 时只创建 merge execution', async () => {
-    const integration = { ...task, kind: 'integration' as const, status: 'todo' as const };
-    const claimed = { ...activeExecution, taskId: integration.id, purpose: 'merge' as const };
+  it.each([undefined, 'merge'] as const)(
+    'historical v2 integration execute purpose=%s fails closed before claim',
+    async (purpose) => {
+      const rig = makeRig({
+        getExecutionModelContext: vi.fn(async () => ({
+          taskKind: 'integration' as const,
+          taskStatus: 'in_progress' as const,
+          workflowVersion: 2 as const,
+          boardOwnerUserId: identity.ownerUserId,
+        })),
+      });
+
+      await expect(rig.coordinator.startExecution(identity, task.id, {
+        expectedVersion: task.version,
+        ...(purpose ? { purpose } : {}),
+      })).rejects.toMatchObject({ code: 'TASKBOARD_INTEGRATION_MIGRATION_REQUIRED' });
+      expect(rig.store.claimExecution).not.toHaveBeenCalled();
+    },
+  );
+
+  it('historical v2 integration comment continuation fails closed without creating an execution', async () => {
+    const integration = { ...task, kind: 'integration' as const, workflowVersion: 2 as const, status: 'todo' as const };
     const rig = makeRig({
       getContinuationContext: vi.fn(async () => ({
         task: integration, comment: comments[1]!, pendingComments: comments,
       })),
-      getExecutionModelContext: vi.fn(async () => ({
-        taskKind: 'integration' as const, boardOwnerUserId: identity.ownerUserId,
-      })),
-      claimExecution: vi.fn(async (_identity, _taskId, input) => ({
-        task: { ...integration, status: 'in_progress' as const },
-        execution: { ...claimed, id: input.executionId, runId: input.runId, sessionId: input.sessionId },
-      })),
     });
 
-    await rig.coordinator.continueExecution(identity, integration.id, comments[1]!.id);
-
-    expect(rig.store.claimExecution).toHaveBeenCalledWith(identity, integration.id, expect.objectContaining({
-      purpose: 'merge', trigger: 'comment', protocolVersion: 2,
-    }));
+    await expect(rig.coordinator.continueExecution(identity, integration.id, comments[1]!.id))
+      .rejects.toMatchObject({ code: 'TASKBOARD_INTEGRATION_MIGRATION_REQUIRED' });
+    expect(rig.store.claimExecution).not.toHaveBeenCalled();
     expect(rig.store.enqueueContinuation).not.toHaveBeenCalled();
   });
 

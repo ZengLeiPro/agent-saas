@@ -46,7 +46,7 @@ export const platformAdminPatchSchema = z.object({
 }).strict();
 export const assignmentResourceTypeSchema = z.enum([
   'org_agent', 'skill', 'credential', 'environment_template',
-  'org_knowledge', 'org_memory', 'connector',
+  'org_knowledge', 'org_memory', 'connector', 'dws_delegation',
 ]);
 const assignmentMutationShape = {
   expectedVersion: z.number().int().nonnegative(),
@@ -124,7 +124,7 @@ export interface MembershipAllowedAction {
 
 export const ASSIGNMENT_RESOURCE_TYPES: readonly AssignmentResourceType[] = [
   'org_agent', 'skill', 'credential', 'environment_template',
-  'org_knowledge', 'org_memory', 'connector',
+  'org_knowledge', 'org_memory', 'connector', 'dws_delegation',
 ];
 
 export function membershipBaseline(membership: TenantMembership): Record<string, unknown> {

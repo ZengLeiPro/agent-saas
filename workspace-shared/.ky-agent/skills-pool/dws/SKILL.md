@@ -9,6 +9,8 @@ metadata:
 
 通过 `dws` 命令管理钉钉产品能力。
 
+> **企业专家 DWS Broker**：当前会话提供 `DwsBusiness` 工具时，必须用它执行钉钉业务命令，禁止用 `Shell` 直接运行 `dws`。`args` 只传 `dws` 后面的 argv（不含 `dws`、`--profile`、`--format`、token）；`credentialMode=agent` 使用专家自身钉钉账号，`requester` 使用请求者已连接的唯一账号。写操作仍须先取得用户明确要求或确认并传 `confirmed=true`；本阶段不支持破坏性/高影响动作，也不通过 Broker 执行 `scripts/` 或本地文件导入/导出/上传/下载。
+
 > ⚠️ **平台运行时约定（必读，先于本文档其他章节）**：执行任何 `dws` 命令前必须读 [references/platform-runtime-context.md](./references/platform-runtime-context.md)。下面 6 条是实战踩坑得到的硬规则，违反任何一条都会让授权流程或调用失败：
 >
 > 1. **Token/config 隔离到 workspace**：`DWS_DISABLE_KEYCHAIN=1` + `DWS_CONFIG_DIR=/workspace/.dws/config` + `DWS_KEYCHAIN_DIR=/workspace/.dws/keys`。**ACS sandbox 镜像 Dockerfile `ENV` 层已默认注入这三个变量**，agent 直接跑 `dws <cmd>` 即可；本地开发（非 ACS 容器）需 `. .dws/env.sh` 或 `dws_runtime.dws_env()` 显式带 env。

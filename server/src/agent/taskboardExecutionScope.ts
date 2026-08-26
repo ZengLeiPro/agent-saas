@@ -26,20 +26,15 @@ export function assertTaskboardExecutionScope(
     throw new Error('任务看板执行已终止，不能继续回写');
   }
   const executionActions = [
-    'execution.context', 'execution.finish', 'execution.integration_candidate.push',
+    'execution.context', 'execution.finish',
     'execution.pull_request.set', 'execution.pull_request.inspect', 'execution.pull_request.log',
     'execution.review_subject.record',
-    'integration.sources', 'integration.candidate', 'integration.source.inspect',
-    'integration.source.log', 'integration.source.merge',
+    'integration.sources', 'integration.agent.merge', 'integration.agent.cleanup',
   ];
   if (executionActions.includes(input.action)) {
     if (input.taskId && input.taskId !== context.task.id) throw new Error('看板 Agent 只能操作当前任务');
     if (input.action.startsWith('integration.') && context.task.kind !== 'integration') {
       throw new Error('只有 integration 任务可以读取集成来源');
-    }
-    if (input.action === 'execution.integration_candidate.push'
-      && (context.task.kind !== 'integration' || context.execution.purpose !== 'work')) {
-      throw new Error('只有当前 integration work Execution 可以推送候选提交');
     }
     return;
   }
@@ -76,7 +71,7 @@ export function assertTaskboardExecutionScope(
         || (input.status !== undefined && input.status !== 'todo')
         || context.execution.purpose === 'review'
         || (context.execution.purpose === 'work' && input.kind !== undefined && input.kind !== 'delivery')
-        || (context.execution.purpose === 'merge' && (input.kind !== 'remediation' || !input.sourceId))) {
+        || context.execution.purpose === 'merge') {
         throw new Error('当前职责不能创建该后续任务');
       }
       return;

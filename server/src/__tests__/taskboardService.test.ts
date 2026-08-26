@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { resolveExecutionPurpose } from '../taskboard/executionFields.js';
-import { assertIntegrationV3RuntimeAvailable } from '../taskboard/integrationV3ActivationStore.js';
 import { RetryableTaskboardService, type InitializableTaskboardService } from '../taskboard/retryableService.js';
 import {
   PgTaskboardStore,
@@ -62,10 +61,18 @@ describe('Taskboard service hardening', () => {
     expect(() => resolveExecutionPurpose('in_review', 'work')).toThrow('Only todo or blocked tasks');
   });
 
+  it.each([
+    ['todo', 'work'], ['in_progress', 'work'], ['in_review', 'review'], ['ready_to_merge', 'merge'],
+  ] as const)('按 Agent 状态为 workflow v3 Integration 派发 %s -> %s', (status, purpose) => {
+    expect(resolveExecutionPurpose(status, undefined, 'integration', 3)).toBe(purpose);
+  });
+
   it('允许人工重跑阻塞的交付任务，但仍拒绝 review 与 integration 的非法组合', () => {
     expect(resolveExecutionPurpose('blocked', 'work', 'delivery')).toBe('work');
     expect(resolveExecutionPurpose('blocked', 'work', 'remediation')).toBe('work');
-    expect(resolveExecutionPurpose('blocked', 'merge', 'integration')).toBe('merge');
+    expect(() => resolveExecutionPurpose('blocked', 'merge', 'integration')).toThrowError(expect.objectContaining({
+      code: 'TASKBOARD_INTEGRATION_MIGRATION_REQUIRED',
+    }));
     expect(() => resolveExecutionPurpose('blocked', 'review', 'delivery')).toThrow('Only in-review tasks');
   });
 
@@ -81,17 +88,6 @@ describe('Taskboard service hardening', () => {
     })).toThrow(`max ${TASKBOARD_TABLE_PREFIX_MAX_LENGTH} bytes`);
   });
 
-  it('fails closed when Workflow v3 has no fresh compatible runtime worker', async () => {
-    const unavailable = { query: vi.fn(async () => ({ rows: [] })) } as never;
-    await expect(assertIntegrationV3RuntimeAvailable(unavailable, 'integration_sources')).rejects.toMatchObject({
-      code: 'TASKBOARD_INTEGRATION_V3_RUNTIME_UNAVAILABLE',
-    });
-
-    const available = { query: vi.fn(async () => ({
-      rows: [{ status: 'healthy', compatible: true, fresh: true }],
-    })) } as never;
-    await expect(assertIntegrationV3RuntimeAvailable(available, 'integration_sources')).resolves.toBeUndefined();
-  });
 
   it('retries a failed initialization and coalesces concurrent recovery requests', async () => {
     const board = {

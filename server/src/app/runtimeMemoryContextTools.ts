@@ -36,6 +36,7 @@ interface RuntimeMemoryContextToolsOptions {
   sourceAuthorizationRegistry?: ContextSourceAuthorizationRegistry;
   memoryStore?: PgMemoryConsolidationStore;
   memoryIndexService?: MemoryIndexService | null;
+  additionalProviders?: readonly ToolProvider[];
   logger?: { info?: (message: string) => void; warn?: (message: string) => void };
 }
 
@@ -98,7 +99,7 @@ export function createContextRecallRuntime(
 export function createRuntimeMemoryContextTools(
   options: RuntimeMemoryContextToolsOptions,
 ): RuntimeMemoryContextTools {
-  const memoryControlProviders: ToolProvider[] = [];
+  const memoryControlProviders: ToolProvider[] = [...(options.additionalProviders ?? [])];
   if (options.memoryStore) {
     memoryControlProviders.push(new MemoryCommandToolProvider({
       store: options.memoryStore,

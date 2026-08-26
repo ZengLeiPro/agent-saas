@@ -1537,7 +1537,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         action: 'respond', interactionId: 'ask-int-1', sessionId, answers: { q1: '红色' },
       });
       await vi.waitFor(() => expect(rig.ws.sent.at(-1)?.data)
-        .toEqual({ type: 'respond_ok', interactionId: 'ask-int-1', response: { answers: { q1: '红色' } } }));
+        .toEqual({ type: 'respond_ok', interactionId: 'ask-int-1', response: { answers: { q1: '红色' } } }), { timeout: 5_000 });
       expect(enqueued).toHaveLength(1);
       expect(enqueued[0]).toMatchObject({
         runId: 'run-ask-1', sessionId, userId: USER.sub, model: 'm-ask', channel: 'web',

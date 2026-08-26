@@ -9,6 +9,7 @@ const event = {
   conversation_id: 'cid-1',
   message_id: 'msg-1',
   sender_open_dingtalk_id: 'sender-1',
+  sender_nick: '爱丽丝',
   content: '@销售数字员工 查一下进度',
   timestamp: 1786630000000,
 };
@@ -21,6 +22,7 @@ describe('DWS Personal Stream event parser', () => {
       conversationId: event.conversation_id,
       messageId: event.message_id,
       senderOpenDingtalkId: event.sender_open_dingtalk_id,
+      senderName: event.sender_nick,
       content: event.content,
       timestamp: event.timestamp,
       raw: event,

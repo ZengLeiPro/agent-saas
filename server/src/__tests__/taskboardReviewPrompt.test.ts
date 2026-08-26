@@ -28,11 +28,10 @@ describe('taskboard execution writeback prompt', () => {
     expect(work).toContain('pending、failure、unknown 均不得提交复核');
     expect(review).toContain('不得复用 Work 阶段旧结果');
     expect(review).toContain('inspection receipt');
-    expect(merge).toContain('integration.source.inspect');
-    expect(merge).toContain('Provider 不可用时失败关闭');
+    expect(merge).not.toContain('integration.source.');
   });
 
-  it('Workflow v3 Integration Review 明确检查并绑定当前 candidate revision', () => {
+  it('Integration Review 明确检查并绑定当前 Integration Agent PR', () => {
     const integrationReview = context('review');
     integrationReview.task.kind = 'integration';
     integrationReview.task.workflowVersion = 3;
@@ -40,23 +39,39 @@ describe('taskboard execution writeback prompt', () => {
     const prompt = executionWritebackInstructions(integrationReview).join('\n');
 
     expect(prompt).toContain('execution.pull_request.inspect');
-    expect(prompt).toContain('当前 candidate revision');
-    expect(prompt).toContain('candidate/revision/subject');
+    expect(prompt).toContain('当前 Integration Agent 的精确 PR/head/base');
+    expect(prompt).toContain('Integration Agent 当前 PR/head/subject');
+    expect(prompt).not.toMatch(/candidate/i);
     expect(prompt).toContain('服务端硬门禁');
   });
 
-  it('Workflow v3 Integration Work 明确先受控 push、禁止 git push、后 finish 到 in_review', () => {
+  it('Integration Merge 只指向 Agent Merge Gateway', () => {
+    const integrationMerge = context('merge');
+    integrationMerge.task.kind = 'integration';
+    integrationMerge.task.workflowVersion = 3;
+
+    const prompt = executionWritebackInstructions(integrationMerge).join('\n');
+
+    expect(prompt).toContain('integration.agent.merge');
+    expect(prompt).toContain('integration.agent.cleanup');
+    expect(prompt).toContain('execution.finish({targetStatus: "done", body})');
+    expect(prompt).not.toContain('必须调用 integration.source.inspect');
+    expect(prompt).not.toContain('用 integration.source.log 读取');
+  });
+
+  it('Integration Work 按持久 Integration Agent 对账和原生 finish contract 交接', () => {
+
     const integrationWork = context('work');
     integrationWork.task.kind = 'integration';
     integrationWork.task.workflowVersion = 3;
     const prompt = executionWritebackInstructions(integrationWork).join('\n');
-    expect(prompt).toContain('integrationCandidate');
-    expect(prompt).toContain('sourceSnapshots 中完整冻结来源集');
-    expect(prompt).toContain('execution.integration_candidate.push');
-    expect(prompt).toContain('只传 commitOid');
-    expect(prompt).toContain('基线漂移重建以冻结 base 为父');
-    expect(prompt).toContain('不得执行 git push');
-    expect(prompt.indexOf('受控 push 成功')).toBeLessThan(prompt.indexOf('execution.finish({targetStatus: "in_review", body})') + 1);
-    expect(executionWritebackInstructions(context('review')).join('\n')).not.toContain('integration_candidate.push');
+    expect(prompt).toContain('持久的 Integration Agent');
+    expect(prompt).toContain('GitHub PR、head 与 CI 为唯一代码事实');
+    expect(prompt).toContain('完整冻结来源集');
+    expect(prompt).toContain('同一 integration branch/PR');
+    expect(prompt).toContain('受控 Merge Gateway');
+    expect(prompt).toContain('execution.finish({targetStatus, body})');
+    expect(prompt).not.toContain('execution.integration_candidate.push');
+    expect(prompt).not.toMatch(/candidate/i);
   });
 });

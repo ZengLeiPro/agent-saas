@@ -46,12 +46,15 @@ describe('taskboard task status DDL', () => {
     );
   });
 
-  it('migrates controlled push capabilities to bind the immutable candidate base', () => {
+  it('drops retired Candidate execution binding columns idempotently', () => {
     const sql = executionFieldMigrationSql('runtime_taskboard_execs');
-    expect(sql).toContain('expected_base_oid TEXT NOT NULL');
-    expect(sql).toContain('ADD COLUMN IF NOT EXISTS expected_base_oid TEXT');
-    expect(sql).toContain('SET expected_base_oid=expected_old_oid WHERE expected_base_oid IS NULL');
-    expect(sql).toContain('ALTER COLUMN expected_base_oid SET NOT NULL');
+    for (const column of [
+      'candidate_id', 'candidate_version', 'candidate_revision', 'candidate_work_round',
+      'candidate_workflow_epoch', 'candidate_lane_epoch', 'candidate_head_oid',
+    ]) {
+      expect(sql).toContain(`DROP COLUMN IF EXISTS ${column};`);
+      expect(sql).not.toContain(`ADD COLUMN IF NOT EXISTS ${column}`);
+    }
   });
 
   it('defines every delivery evidence column written by pull request registration', () => {

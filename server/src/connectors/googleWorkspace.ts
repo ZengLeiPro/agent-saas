@@ -25,6 +25,11 @@ export const GOOGLE_WORKSPACE_SCOPES = [
   'https://www.googleapis.com/auth/contacts.readonly',
 ];
 
+const GOOGLE_WORKSPACE_SCOPE_ALIASES: Readonly<Record<string, string>> = {
+  'https://www.googleapis.com/auth/userinfo.email': 'email',
+  'https://www.googleapis.com/auth/userinfo.profile': 'profile',
+};
+
 export interface GoogleWorkspaceOAuthUser {
   id: string;
   username: string;
@@ -314,8 +319,8 @@ export class GoogleWorkspaceOAuthService {
       throw new Error(`Google Workspace token exchange failed: ${safeOAuthError(tokenResponse)}`);
     }
     if (!tokenResponse.scope?.trim()) throw new Error('Google Workspace granted scope evidence is unavailable');
-    const scopeSummary = [...new Set(tokenResponse.scope.split(/\s+/).map(scope => scope.trim()).filter(Boolean))].sort();
-    const requestedScopes = new Set(pending.requestedScopes);
+    const scopeSummary = normalizeGoogleWorkspaceScopes(tokenResponse.scope.split(/\s+/));
+    const requestedScopes = new Set(normalizeGoogleWorkspaceScopes(pending.requestedScopes));
     if (requestedScopes.size === 0 || scopeSummary.some(scope => !requestedScopes.has(scope))) {
       throw new Error('Google Workspace granted scope exceeds the signed request');
     }
@@ -569,9 +574,16 @@ function safeOAuthError(response: GoogleTokenResponse): string {
 
 function normalizeGrantedScopes(value: string | undefined): string[] {
   if (!value?.trim()) return [];
-  const scopes = [...new Set(value.split(/\s+/).map(scope => scope.trim()).filter(Boolean))].sort();
+  const scopes = normalizeGoogleWorkspaceScopes(value.split(/\s+/));
   const allowed = new Set(GOOGLE_WORKSPACE_SCOPES);
   return scopes.every(scope => allowed.has(scope)) ? scopes : [];
+}
+
+function normalizeGoogleWorkspaceScopes(scopes: Iterable<string>): string[] {
+  return [...new Set([...scopes]
+    .map(scope => scope.trim())
+    .filter(Boolean)
+    .map(scope => GOOGLE_WORKSPACE_SCOPE_ALIASES[scope] ?? scope))].sort();
 }
 
 function sanitizeIdentifier(value: string): string {

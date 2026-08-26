@@ -28,10 +28,12 @@ export function normalizeBoardCiPolicy(value: TaskBoardCiPolicy | undefined): Ta
   return { requiredChecks: [...identities.values()].sort((a, b) => `${a.name}\u0000${a.appId ?? '*'}`.localeCompare(`${b.name}\u0000${b.appId ?? '*'}`)) };
 }
 
-export function normalizeIntegrationPolicyCiFallback<T extends TaskBoardIntegrationPolicy>(policy: T): T {
+export function normalizeIntegrationPolicyCiFallback(policy: TaskBoardIntegrationPolicy): TaskBoardIntegrationPolicy {
   const ciPolicy = normalizeBoardCiPolicy(policy.ciPolicy);
+  const { featureFlags: _ignored, ...persisted } = policy as TaskBoardIntegrationPolicy & { featureFlags?: unknown };
   return {
-    ...policy,
+    ...persisted,
+    workflowVersion: 3,
     ...(ciPolicy ? { ciPolicy } : {}),
   };
 }

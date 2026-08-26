@@ -96,7 +96,10 @@ export async function createTaskFromExecutionWithResult(
     if (input.status !== undefined && input.status !== 'todo') {
       throw new TaskboardValidationError('Taskboard Execution may only create todo follow-up tasks');
     }
-    const kind = input.kind ?? (currentTask.kind === 'integration' ? 'remediation' : 'delivery');
+    const kind = input.kind ?? 'delivery';
+    if (currentTask.kind === 'integration' && kind === 'remediation') {
+      throw new TaskboardValidationError('Integration Agent cannot create legacy remediation tasks');
+    }
     const creationDigest = requestDigest ?? taskCreationRequestDigest({
       boardId: currentTask.boardId, ...input, kind,
     });

@@ -9,6 +9,7 @@ import type {
 } from '../data/agentDwsMessages/index.js';
 import type { RunStore } from '../runtime/runStore.js';
 import type { EventStore, PlatformEvent } from '../runtime/types.js';
+import type { UserIdentity } from '../types/index.js';
 import { resolveAgentCwd } from '../workspace/resolver.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
 import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
@@ -55,6 +56,29 @@ export interface AgentDwsMessageRouterOptions {
   accountStore: AgentDwsAccountStore;
   dispatch: AgentRunDispatch;
   resolveDefaultModel: (tenantId: string) => AgentDwsDefaultModelResolution | null;
+  resolveRequester: (
+    account: AgentDwsAccountRecord,
+    senderOpenDingtalkId: string,
+    senderName?: string,
+  ) => Promise<UserIdentity | null> | UserIdentity | null;
+  authorizeRequester: (input: {
+    account: AgentDwsAccountRecord;
+    requester: UserIdentity;
+    sessionId: string;
+    runId: string;
+  }) => Promise<{ allowed: boolean; reason?: string }>;
+  auditRequesterRejection: (input: {
+    account: AgentDwsAccountRecord;
+    eventId: string;
+    requester?: UserIdentity;
+    reason: string;
+  }) => Promise<void>;
+  auditToolPolicyRejection: (input: {
+    account: AgentDwsAccountRecord;
+    requester: UserIdentity;
+    runId: string;
+    toolName?: string;
+  }) => Promise<void>;
   sender: DwsPersonalMessageSenderLike;
   runStore?: ExistingRunStore;
   eventStore?: ExistingRunEventStore;
@@ -122,6 +146,7 @@ export class AgentDwsMessageRouter {
     }
     if (event.messageId && !boundedExternalId(event.messageId, MAX_EVENT_ID_LENGTH)) return false;
     if (event.senderOpenDingtalkId && !boundedExternalId(event.senderOpenDingtalkId, MAX_EVENT_ID_LENGTH)) return false;
+    if (event.senderName && (!event.senderName.trim() || event.senderName.length > 200)) return false;
     const result = await this.options.messageStore.ingest({
       tenantId: account.tenantId,
       accountId: account.accountId,
@@ -136,6 +161,7 @@ export class AgentDwsMessageRouter {
       schemaVersion: 1,
       source: 'dws_personal_stream',
       eventType: event.type,
+      ...(event.senderName ? { senderName: event.senderName } : {}),
     });
     if (result.created) this.scheduleKick();
     return result.created;
@@ -236,21 +262,40 @@ export class AgentDwsMessageRouter {
     }
     if (account.agentId.length === 0) throw new Error('Agent DWS account has no Agent binding');
 
+    if (!item.senderOpenDingtalkId) {
+      await this.rejectAccess(account, item, 'REQUESTER_IDENTITY_MISSING');
+      return;
+    }
+    const requester = await this.options.resolveRequester(
+      account,
+      item.senderOpenDingtalkId,
+      typeof item.payload.senderName === 'string' ? item.payload.senderName : undefined,
+    );
+    if (!requester || !requester.tenantId || requester.tenantId !== account.tenantId) {
+      await this.rejectAccess(account, item, 'REQUESTER_IDENTITY_UNMAPPED_OR_AMBIGUOUS');
+      return;
+    }
+
+    const candidateSessionId = `agent-dws-session-${randomUUID()}`;
+    const runId = item.runId ?? deterministicId('agent-dws-run', `${item.accountId}:${item.eventId}`);
+    const authorization = await this.options.authorizeRequester({
+      account,
+      requester,
+      sessionId: candidateSessionId,
+      runId,
+    });
+    if (!authorization.allowed) {
+      await this.rejectAccess(account, item, authorization.reason ?? 'ACCESS_DENIED', requester);
+      return;
+    }
     const binding = await this.options.messageStore.getOrCreateBinding(
       item.tenantId,
       item.accountId,
       item.conversationId,
-      `agent-dws-session-${randomUUID()}`,
+      requester.id,
+      candidateSessionId,
       item.eventType === 'user_im_message_receive_o2o_all' ? item.senderOpenDingtalkId : undefined,
     );
-    if (item.eventType === 'user_im_message_receive_o2o_all'
-      && binding.peerOpenDingtalkId
-      && binding.peerOpenDingtalkId !== item.senderOpenDingtalkId) {
-      await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
-      this.options.logger?.info(`Agent DWS self echo ignored account=${item.accountId} event=${item.eventId}`);
-      return;
-    }
-    const runId = item.runId ?? deterministicId('agent-dws-run', `${item.accountId}:${item.eventId}`);
     const claimed = await this.options.messageStore.markDispatchStarted(
       item.inboxId,
       this.workerId,
@@ -262,8 +307,8 @@ export class AgentDwsMessageRouter {
     let responseText = claimed.responseText;
     if (responseText === undefined) {
       responseText = item.runId
-        ? await this.recoverOrResumeMissingRun(item, binding.sessionId, runId, account, abortController)
-        : await this.dispatch(item, binding.sessionId, runId, account, abortController);
+        ? await this.recoverOrResumeMissingRun(item, binding.sessionId, runId, account, requester, abortController)
+        : await this.dispatch(item, binding.sessionId, runId, account, requester, abortController);
       if (!responseText.trim()) throw new Error('Agent runtime completed without a reply');
       await this.options.messageStore.saveDispatchResult(
         item.inboxId,
@@ -295,16 +340,35 @@ export class AgentDwsMessageRouter {
     );
   }
 
+  private async rejectAccess(
+    account: AgentDwsAccountRecord,
+    item: AgentDwsInboxRecord,
+    reason: string,
+    requester?: UserIdentity,
+  ): Promise<void> {
+    await this.options.auditRequesterRejection({
+      account,
+      eventId: item.eventId,
+      ...(requester ? { requester } : {}),
+      reason,
+    });
+    await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
+    this.options.logger?.warn(
+      `Agent DWS requester rejected account=${item.accountId} event=${item.eventId} reason=${reason}`,
+    );
+  }
+
   private async recoverOrResumeMissingRun(
     item: AgentDwsInboxRecord,
     sessionId: string,
     runId: string,
     account: AgentDwsAccountRecord,
+    requester: UserIdentity,
     abortController: AbortController,
   ): Promise<string> {
     const existing = await this.options.runStore?.get(runId);
     if (!existing) {
-      return await this.dispatch(item, sessionId, runId, account, abortController);
+      return await this.dispatch(item, sessionId, runId, account, requester, abortController);
     }
     if (existing.sessionId !== sessionId) throw new Error('Agent DWS run/session binding mismatch');
     if (['pending', 'running', 'waiting_approval', 'waiting_user', 'waiting_hand'].includes(existing.status)) {
@@ -332,6 +396,7 @@ export class AgentDwsMessageRouter {
     sessionId: string,
     runId: string,
     account: AgentDwsAccountRecord,
+    requester: UserIdentity,
     abortController: AbortController,
   ): Promise<string> {
     const resolvedModel = this.options.resolveDefaultModel(account.tenantId);
@@ -356,14 +421,7 @@ export class AgentDwsMessageRouter {
       outputTransactionMode: 'terminal_buffered',
       resumeSessionId: sessionId,
       systemContext: buildSystemContext(account, item),
-      sessionOwner: {
-        id: account.accountId,
-        username: `agent-dws:${account.agentId}`,
-        role: 'user',
-        tenantId: account.tenantId,
-        realName: account.displayName,
-        ...(account.dingtalkUserId ? { dingtalkStaffId: account.dingtalkUserId } : {}),
-      },
+      sessionOwner: requester,
       targetCwd: resolveAgentCwd(this.options.agentCwd, account.tenantId, account.agentId),
     }, {
       cwd: resolveAgentCwd(this.options.agentCwd, account.tenantId, account.agentId),
@@ -377,15 +435,24 @@ export class AgentDwsMessageRouter {
       ...(item.payload.source === 'background_task_completion' ? { dispatcherCompletion: true } : {}),
       abortController,
     }, {
-      onInteraction: async event => event.type === 'permission_request'
-        ? {
+      onInteraction: async event => {
+        if (event.type === 'permission_request') {
+          await this.options.auditToolPolicyRejection({
+            account,
+            requester,
+            runId,
+            ...(event.toolName || event.toolId ? { toolName: event.toolName ?? event.toolId } : {}),
+          });
+          return {
             allow: false,
             message: '钉钉成员会话暂不支持交互式工具审批，本次工具调用已拒绝；请直接回复用户可执行的替代方案。',
-          }
-        : {
-            answers: {},
-            message: '钉钉成员会话暂不支持交互式提问；请在回复中直接向用户说明需要补充的信息。',
-          },
+          };
+        }
+        return {
+          answers: {},
+          message: '钉钉成员会话暂不支持交互式提问；请在回复中直接向用户说明需要补充的信息。',
+        };
+      },
       onResult: result => {
         resultText = result.resultText;
       },

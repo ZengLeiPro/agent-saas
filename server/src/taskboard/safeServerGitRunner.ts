@@ -2,7 +2,17 @@ import { execFile } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-import type { RepositoryWorkspaceGitCommand, RepositoryWorkspaceGitResult } from './repositoryWorkspaceSync.js';
+export interface RepositoryWorkspaceGitCommand {
+  cwd: string;
+  args: readonly string[];
+  env?: Readonly<Record<string, string>>;
+}
+
+export interface RepositoryWorkspaceGitResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
 
 const DEFAULT_GIT_TIMEOUT_MS = 30_000;
 const PUSH_GIT_TIMEOUT_MS = 20_000;

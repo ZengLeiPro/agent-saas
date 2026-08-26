@@ -4,7 +4,9 @@ import type { PoolClient } from 'pg';
 import { computeNextRunAtMs } from '../cron/scheduler.js';
 import type { TaskboardIntegrationDispatchCandidate, TaskboardIdentity } from './types.js';
 import { createIntegrationBatch } from './v2Store.js';
+import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { rowToTask, visibleCommentPredicate } from './storeHelpers.js';
+import { purposeForIntegrationAgentStatus } from './workflow/decider.js';
 
 interface IntegrationTriggerHost {
   pool: {
@@ -32,7 +34,6 @@ export async function claimIntegrationDispatchCandidates(
   limit = 10,
 ): Promise<TaskboardIntegrationDispatchCandidate[]> {
   await enqueueScheduledTriggers(host);
-  const created: TaskboardIntegrationDispatchCandidate[] = [];
   for (let index = 0; index < limit; index += 1) {
     const trigger = await claimTrigger(host);
     if (!trigger) break;
@@ -51,13 +52,11 @@ export async function claimIntegrationDispatchCandidates(
         await completeTrigger(host, trigger);
         continue;
       }
-      const task = await createIntegrationBatch(host, identity, trigger.boardId, {
+      await createIntegrationBatch(host, identity, trigger.boardId, {
         deliveryTaskIds: sources,
         expectedBoardVersion: trigger.boardVersion,
       }, trigger.mode === 'scheduled' ? 'scheduled_policy' : 'on_ready_policy');
       await completeTrigger(host, trigger);
-      // v3 is driven only by IntegrationEngineV3 system requests. Never dispatch a Merge Agent.
-      if ((task.workflowVersion ?? 2) === 2) created.push({ identity, task, purpose: 'merge' });
     } catch (error) {
       const code = error && typeof error === 'object' && 'code' in error
         ? String((error as { code: unknown }).code)
@@ -69,13 +68,7 @@ export async function claimIntegrationDispatchCandidates(
       }
     }
   }
-  const recoveryLimit = Math.max(0, limit - created.length);
-  const recoveries = await createAutomaticRemediationCandidates(host, recoveryLimit);
-  const recoverable = await loadUnstartedIntegrationTasks(
-    host,
-    Math.max(0, recoveryLimit - recoveries.length),
-  );
-  const candidates = [...created, ...recoveries, ...recoverable];
+  const candidates = await loadUnstartedIntegrationTasks(host, limit);
   return candidates.filter((candidate, index) => candidates.findIndex((item) => item.task.id === candidate.task.id) === index);
 }
 
@@ -227,196 +220,111 @@ async function eligibleSources(host: IntegrationTriggerHost, boardId: string, li
   }
 }
 
-async function createAutomaticRemediationCandidates(
-  host: IntegrationTriggerHost,
-  limit: number,
-): Promise<TaskboardIntegrationDispatchCandidate[]> {
-  if (limit <= 0) return [];
-  const result = await host.pool.query(
-    `SELECT s.id AS source_id,s.integration_task_id,s.delivery_task_id,s.remediation_count,
-            i.status AS integration_status,d.identifier AS delivery_identifier,d.title AS delivery_title,
-            d.description AS delivery_description,d.branch,d.provider_pull_request_id,d.pull_request_number,
-            d.head_oid,d.base_oid,d.model,i.board_id,b.tenant_id,b.owner_user_id,b.integration_policy
-       FROM ${host.integrationSourcesTable} s
-       JOIN ${host.tasksTable} i ON i.id=s.integration_task_id
-       JOIN ${host.tasksTable} d ON d.id=s.delivery_task_id
-       JOIN ${host.boardsTable} b ON b.id=i.board_id
-      WHERE (s.state='resolving_conflict'
-             OR (s.state='waiting_retry' AND s.last_error LIKE 'Required checks failed%'))
-        AND s.remediation_task_id IS NULL
-        AND i.kind='integration' AND COALESCE(i.workflow_version,2)=2 AND i.status IN ('todo','in_progress')
-        AND NOT EXISTS (
-          SELECT 1 FROM ${host.executionsTable} e
-           WHERE e.task_id=i.id AND e.status IN ('queued','running','waiting_user','waiting_approval')
-        )
-      ORDER BY s.updated_at,s.source_order,s.id
-      LIMIT $1`,
-    [limit],
-  );
-  const candidates: TaskboardIntegrationDispatchCandidate[] = [];
-  for (const row of result.rows) {
-    const policy = jsonObject(row.integration_policy) as {
-      execution?: { autoResolveConflicts?: boolean; maxAutomaticRemediationRounds?: number };
-    } | undefined;
-    if (policy?.execution?.autoResolveConflicts === false) continue;
-    const maxRounds = Math.max(0, Number(policy?.execution?.maxAutomaticRemediationRounds ?? 3));
-    if (Number(row.remediation_count ?? 0) >= maxRounds) {
-      await markAutomaticRecoveryExhausted(host, String(row.source_id));
-      continue;
-    }
-    const task = await createAutomaticRemediationTask(host, row, maxRounds);
-    if (!task) continue;
-    candidates.push({
-      identity: {
-        tenantId: String(row.tenant_id),
-        ownerUserId: String(row.owner_user_id),
-        username: 'board-owner',
-      },
-      task,
-      purpose: 'work',
-    });
-  }
-  return candidates;
-}
-
-async function createAutomaticRemediationTask(
-  host: IntegrationTriggerHost,
-  candidate: Record<string, unknown>,
-  maxRounds: number,
-): Promise<ReturnType<typeof rowToTask> | undefined> {
-  const client = await host.pool.connect();
-  try {
-    await client.query('BEGIN');
-    const taskIds = [String(candidate.integration_task_id), String(candidate.delivery_task_id)].sort();
-    await client.query(
-      `SELECT id FROM ${host.tasksTable} WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE`,
-      [taskIds],
-    );
-    const sourceResult = await client.query(
-      `SELECT s.*,i.board_id AS board_id,i.status AS integration_status,
-              d.identifier AS delivery_identifier,d.title AS delivery_title,d.description AS delivery_description,
-              d.branch,d.provider_pull_request_id,d.pull_request_number,d.head_oid,d.base_oid,d.model,
-              b.tenant_id,b.owner_user_id,b.integration_policy
-         FROM ${host.integrationSourcesTable} s
-         JOIN ${host.tasksTable} i ON i.id=s.integration_task_id
-         JOIN ${host.tasksTable} d ON d.id=s.delivery_task_id
-         JOIN ${host.boardsTable} b ON b.id=i.board_id
-        WHERE s.id=$1
-        FOR UPDATE OF s`,
-      [String(candidate.source_id)],
-    );
-    const source = sourceResult.rows[0];
-    if (!source
-      || !['todo', 'in_progress'].includes(String(source.integration_status))
-      || !['resolving_conflict', 'waiting_retry'].includes(String(source.state))
-      || (String(source.state) === 'waiting_retry' && !String(source.last_error ?? '').startsWith('Required checks failed'))
-      || source.remediation_task_id) {
-      await client.query('ROLLBACK');
-      return undefined;
-    }
-    if (Number(source.remediation_count ?? 0) >= maxRounds) {
-      await client.query(
-        `UPDATE ${host.integrationSourcesTable}
-            SET state='needs_human',last_error='Automatic remediation rounds exhausted; human intervention is required',updated_at=now()
-          WHERE id=$1 AND state<>'merged' AND merged_commit_oid IS NULL AND provider_receipt_id IS NULL`,
-        [String(candidate.source_id)],
-      );
-      await client.query('COMMIT');
-      return undefined;
-    }
-    const round = Math.max(1, Number(source.remediation_count ?? 0) + 1);
-    const nextNumber = await client.query(
-      `UPDATE ${host.boardsTable}
-          SET next_task_number=next_task_number+1,version=version+1,updated_at=now()
-        WHERE id=$1
-        RETURNING next_task_number-1 AS task_number`,
-      [source.board_id],
-    );
-    if (!nextNumber.rows[0]) throw new Error('Taskboard board not found for automatic remediation');
-    const tail = await client.query(
-      `SELECT COALESCE(MAX(sort_order),0) AS max_sort_order
-         FROM ${host.tasksTable}
-        WHERE board_id=$1 AND status='todo' AND archived_at IS NULL`,
-      [source.board_id],
-    );
-    const taskId = randomUUID();
-    const clientRequestId = `taskboard-auto-remediation:${String(source.id)}:${round}`;
-    await client.query(
-      `INSERT INTO ${host.tasksTable}
-         (id,board_id,identifier,kind,title,description,branch,attachments,status,priority,labels,
-          sort_order,model,provider_pull_request_id,pull_request_number,head_oid,base_oid,creator_user_id,creator_name,
-          client_request_id,version)
-       VALUES ($1,$2,$3,'remediation',$4,$5,$6,'[]'::jsonb,'todo','high',ARRAY['integration','remediation']::text[],
-               $7,$8,$9,$10,$11,$12,$13,$14,$15,1)`,
-      [
-        taskId, source.board_id, `TASK-${Number(nextNumber.rows[0].task_number)}`,
-        `修复集成来源：${String(source.delivery_identifier)}`,
-        [
-          `自动修复来源 ${String(source.id)} 的集成阻塞。`,
-          `沿用原分支 ${String(source.branch ?? '(未登记)')} 和 PR #${String(source.provider_pull_request_id)}。`,
-          '完成代码修复并验证后，必须登记当前 PR，再提交 ready_for_review；系统随后自动复核并恢复 merge。',
-        ].join('\n'),
-        source.branch ?? null,
-        Number(tail.rows[0]?.max_sort_order ?? 0) + 1024,
-        source.model ?? null,
-        String(source.provider_pull_request_id), source.pull_request_number ?? null,
-        source.head_oid ?? null, source.base_oid ?? null,
-        String(source.owner_user_id), 'Taskboard Agent', clientRequestId,
-      ],
-    );
-    await client.query(
-      `INSERT INTO ${host.remediationAttemptsTable}
-         (id,integration_source_id,round,remediation_task_id,state,base_head_oid)
-       VALUES ($1,$2,$3,$4,'active',$5)`,
-      [randomUUID(), String(source.id), round, taskId, source.head_oid ?? null],
-    );
-    await client.query(
-      `UPDATE ${host.integrationSourcesTable}
-          SET remediation_task_id=$2,state='waiting_remediation',last_error=NULL,updated_at=now()
-        WHERE id=$1 AND state IN ('resolving_conflict','waiting_retry') AND remediation_task_id IS NULL
-        RETURNING id`,
-      [String(source.id), taskId],
-    );
-    await client.query(
-      `INSERT INTO ${host.changesTable}
-         (task_id,change_type,actor_type,actor_id,payload)
-       VALUES ($1,'integration.remediation_created','system',$2,$3::jsonb)`,
-      [String(source.integration_task_id), String(source.id), JSON.stringify({
-        sourceId: String(source.id), remediationTaskId: taskId, round,
-      })],
-    );
-    const taskResult = await client.query(
-      `SELECT t.*,
-              (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=t.id) AS comment_count
-         FROM ${host.tasksTable} t WHERE t.id=$1`,
-      [taskId],
-    );
-    await client.query('COMMIT');
-    return rowToTask(taskResult.rows[0]!);
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-async function markAutomaticRecoveryExhausted(host: IntegrationTriggerHost, sourceId: string): Promise<void> {
-  await host.pool.query(
-    `UPDATE ${host.integrationSourcesTable}
-        SET state='needs_human',last_error='Automatic remediation rounds exhausted; human intervention is required',updated_at=now()
-      WHERE id=$1 AND state<>'merged' AND merged_commit_oid IS NULL AND provider_receipt_id IS NULL`,
-    [sourceId],
-  );
-}
-
 async function loadUnstartedIntegrationTasks(
   host: IntegrationTriggerHost,
   limit: number,
 ): Promise<TaskboardIntegrationDispatchCandidate[]> {
   if (limit <= 0) return [];
+  const { agentsTable } = integrationAgentTableNames(host.integrationSourcesTable);
   const client = await host.pool.connect();
   try {
+    await client.query('BEGIN');
+    // Historical v2 rows are upgraded in the same transaction that creates their
+    // durable rendezvous. Filter every binding invariant before LIMIT so permanently
+    // malformed old rows cannot starve newer migratable rows. Reusing this exact
+    // locking query in both statements preserves one stable batch: this transaction
+    // retains its row locks, while concurrent claimers skip them.
+    const migrationCandidates = `
+         SELECT t.id
+           FROM ${host.tasksTable} t
+           JOIN ${host.integrationLanesTable} candidate_lane
+             ON candidate_lane.active_integration_task_id=t.id
+            AND candidate_lane.board_id=t.board_id
+          WHERE t.kind='integration' AND COALESCE(t.workflow_version,2)=2
+            AND t.status IN ('todo','in_progress')
+            AND t.archived_at IS NULL AND t.deleted_at IS NULL
+            AND EXISTS (
+              SELECT 1
+                FROM ${host.integrationSourcesTable} source
+               WHERE source.integration_task_id=t.id
+               GROUP BY source.integration_task_id
+              HAVING count(*)>0
+                 AND count(DISTINCT source.repository_id)=1
+                 AND min(source.repository_id)=candidate_lane.repository_id
+            )
+            AND (
+              NOT EXISTS (
+                SELECT 1 FROM ${agentsTable} existing
+                 WHERE existing.integration_task_id=t.id
+              )
+              OR EXISTS (
+                SELECT 1 FROM ${agentsTable} existing
+                 WHERE existing.integration_task_id=t.id
+                   AND existing.repository_id=candidate_lane.repository_id
+                   AND existing.integration_branch='integration/' || t.id
+                   AND existing.delivery_source_ids=(
+                     SELECT jsonb_agg(source.id ORDER BY source.source_order)
+                       FROM ${host.integrationSourcesTable} source
+                      WHERE source.integration_task_id=t.id
+                   )
+              )
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM ${host.executionsTable} e
+               WHERE e.task_id=t.id AND e.status IN ('queued','running','waiting_user','waiting_approval')
+            )
+          ORDER BY t.updated_at,t.id
+          LIMIT $1
+          FOR UPDATE OF t SKIP LOCKED`;
+    await client.query(
+      `WITH candidates AS (${migrationCandidates}
+       )
+       INSERT INTO ${agentsTable}
+         (integration_task_id,delivery_source_ids,repository_id,integration_branch,status)
+       SELECT candidate.id,jsonb_agg(source.id ORDER BY source.source_order),min(source.repository_id),
+              'integration/' || candidate.id,'active'
+         FROM candidates candidate
+         JOIN ${host.integrationSourcesTable} source ON source.integration_task_id=candidate.id
+        GROUP BY candidate.id
+       ON CONFLICT (integration_task_id) DO NOTHING`,
+      [limit],
+    );
+    // Keep the statements separate: PostgreSQL data-modifying CTEs share a snapshot,
+    // while the immutable-version trigger must observe the rendezvous just inserted.
+    await client.query(
+      `WITH candidates AS (${migrationCandidates}
+       )
+       UPDATE ${host.tasksTable} task
+          SET workflow_version=3,version=version+1,updated_at=now()
+         FROM candidates candidate
+         JOIN ${agentsTable} agent ON agent.integration_task_id=candidate.id
+         JOIN ${host.integrationLanesTable} lane
+           ON lane.active_integration_task_id=agent.integration_task_id
+          AND lane.repository_id=agent.repository_id
+        WHERE task.id=agent.integration_task_id
+          AND task.board_id=lane.board_id
+          AND task.kind='integration' AND COALESCE(task.workflow_version,2)=2
+          AND task.status IN ('todo','in_progress')
+          AND task.archived_at IS NULL AND task.deleted_at IS NULL
+          AND agent.integration_branch='integration/' || task.id
+          AND agent.delivery_source_ids=(
+            SELECT jsonb_agg(source.id ORDER BY source.source_order)
+              FROM ${host.integrationSourcesTable} source
+             WHERE source.integration_task_id=task.id
+          )
+          AND agent.repository_id=(
+            SELECT min(source.repository_id)
+              FROM ${host.integrationSourcesTable} source
+             WHERE source.integration_task_id=task.id
+            HAVING count(*)>0 AND count(DISTINCT source.repository_id)=1
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM ${host.executionsTable} execution
+             WHERE execution.task_id=task.id
+               AND execution.status IN ('queued','running','waiting_user','waiting_approval')
+          )`,
+      [limit],
+    );
     const result = await client.query(
       `SELECT t.*, b.tenant_id, b.owner_user_id,
               (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', host.changesTable)}) AS comment_count
@@ -424,29 +332,23 @@ async function loadUnstartedIntegrationTasks(
          JOIN ${host.boardsTable} b ON b.id=t.board_id
          LEFT JOIN ${host.integrationLanesTable} l ON l.active_integration_task_id=t.id
         WHERE (
-            (t.kind='integration' AND COALESCE(t.workflow_version,2)=2
-             AND t.status IN ('todo','in_progress') AND l.active_integration_task_id=t.id
-             AND NOT EXISTS (
-               SELECT 1 FROM ${host.integrationSourcesTable} blocked_source
-                WHERE blocked_source.integration_task_id=t.id
-                  AND (
-                    blocked_source.state IN ('waiting_remediation','re_reviewing','merging','resolving_conflict','needs_human')
-                    OR EXISTS (
-                      SELECT 1 FROM ${host.mergeOperationsTable} blocked_operation
-                       WHERE blocked_operation.integration_source_id=blocked_source.id
-                         AND blocked_operation.state IN ('executing','unknown')
-                    )
-                  )
-             ))
-            OR (t.kind IN ('delivery','remediation') AND t.status='in_review'
-                AND t.provider_pull_request_id IS NOT NULL)
-            OR (t.kind='remediation' AND t.status='todo'
+            (t.kind='integration' AND t.workflow_version=3
+                AND t.status IN ('todo','in_progress','in_review','ready_to_merge')
+                AND l.active_integration_task_id=t.id
                 AND EXISTS (
-                  SELECT 1 FROM ${host.integrationSourcesTable} linked_source
-                   WHERE linked_source.remediation_task_id=t.id
-                     AND linked_source.state='waiting_remediation'
+                  SELECT 1 FROM ${agentsTable} agent
+                   WHERE agent.integration_task_id=t.id
+                     AND (
+                       (t.status IN ('todo','in_progress') AND agent.status='active')
+                       OR (t.status='in_review' AND agent.status='reviewing')
+                       OR (t.status='ready_to_merge' AND agent.status='ready_to_merge'
+                           AND agent.verdict='approved' AND agent.review_execution_id IS NOT NULL
+                           AND agent.review_head_oid IS NOT NULL)
+                     )
                 ))
-            OR (t.kind IN ('delivery','remediation') AND t.status='todo'
+            OR (t.kind='delivery' AND t.status='in_review'
+                AND t.provider_pull_request_id IS NOT NULL)
+            OR (t.kind='delivery' AND t.status='todo'
                 AND (
                   (EXISTS (
                     SELECT 1 FROM ${host.executionsTable} retry_execution
@@ -486,6 +388,7 @@ async function loadUnstartedIntegrationTasks(
         LIMIT $1`,
       [limit],
     );
+    await client.query('COMMIT');
     return result.rows.map((row) => ({
       identity: {
         tenantId: String(row.tenant_id),
@@ -493,8 +396,13 @@ async function loadUnstartedIntegrationTasks(
         username: 'board-owner',
       },
       task: rowToTask(row),
-      purpose: row.kind === 'integration' ? 'merge' : row.status === 'in_review' ? 'review' : 'work',
+      purpose: row.kind === 'integration'
+        ? purposeForIntegrationAgentStatus(rowToTask(row).status)!
+        : row.status === 'in_review' ? 'review' : 'work',
     }));
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
   } finally {
     client.release();
   }

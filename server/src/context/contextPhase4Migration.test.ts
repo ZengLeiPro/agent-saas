@@ -61,7 +61,7 @@ describe('Context Plane Phase 4 governance migration', () => {
 
     await runner.run();
 
-    expect(insertedVersions).toEqual(expect.arrayContaining([25, 26, 27]));
+    expect(insertedVersions).toEqual(expect.arrayContaining([25, 26, 27, 28]));
     expect(insertedVersions).toEqual([...insertedVersions].sort((a, b) => a - b));
     expect(new Set(insertedVersions).size).toBe(insertedVersions.length);
     expect(query.mock.calls.some(([sql]) => String(sql).includes('test_context_relation_candidates'))).toBe(true);

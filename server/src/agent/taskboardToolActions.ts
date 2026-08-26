@@ -22,7 +22,6 @@ import type {
   TaskboardExecutionService,
   TaskboardExecutionStore,
   TaskboardIdentity,
-  TaskboardIntegrationPushService,
   TaskboardService,
   TaskboardTaskSearchFilter,
 } from '../taskboard/types.js';
@@ -50,7 +49,7 @@ export const TASKBOARD_RESOURCE_ACTIONS = [
   'comment.delete',
   'execution.list',
   'execution.context',
-  'execution.integration_candidate.push',
+
   'execution.pull_request.set',
   'execution.pull_request.inspect',
   'execution.pull_request.log',
@@ -59,10 +58,8 @@ export const TASKBOARD_RESOURCE_ACTIONS = [
   'integration.create',
   'integration.cancel',
   'integration.sources',
-  'integration.candidate',
-  'integration.source.inspect',
-  'integration.source.log',
-  'integration.source.merge',
+  'integration.agent.merge',
+  'integration.agent.cleanup',
 ] as const;
 export const TASKBOARD_MANAGE_ACTIONS = [
   ...TASKBOARD_LEGACY_ACTIONS,
@@ -80,8 +77,6 @@ export const TASKBOARD_READ_ACTIONS = [
   'execution.list',
   'execution.context',
   'integration.sources',
-  'integration.candidate',
-  'integration.source.inspect',
 ] as const;
 export interface TaskboardAttachmentInput {
   attachmentId: string;
@@ -91,7 +86,6 @@ export interface TaskboardManageInput {
   id?: string;
   boardId?: string;
   taskId?: string;
-  sourceId?: string;
   providerPullRequestId?: string;
   inspectionId?: string;
   providerJobId?: string;
@@ -137,14 +131,13 @@ export interface TaskboardManageInput {
   reason?: string;
   deliveryTaskIds?: string[];
   expectedBoardVersion?: number;
-  /** execution.integration_candidate.push 的唯一模型输入。 */
+  /** 受控 Git 操作使用的提交 OID。 */
   commitOid?: string;
 }
 export interface TaskboardToolOptions {
   service: () => TaskboardService | undefined;
   generateTaskTitle?: (description: string, identity: TaskboardIdentity) => Promise<string | null>;
   executionService?: () => TaskboardExecutionService | undefined;
-  integrationPush?: () => TaskboardIntegrationPushService | undefined;
   resolveTrustedWorkspace?: (
     identity: TaskboardIdentity,
     workspace: { id?: string; executionTarget: string },
@@ -349,18 +342,6 @@ export async function invokeTaskboardAction(
         },
       }) as unknown as Record<string, unknown>;
     }
-    case 'execution.integration_candidate.push': {
-      if (!scope.execution || !scope.trustedWorkspace) {
-        throw new Error('当前 Integration Work Execution 缺少受信 workspace 绑定');
-      }
-      const integrationPush = options.integrationPush?.();
-      if (!integrationPush) throw new Error('Integration Work 受控 push 服务未启用');
-      return integrationPush.pushCandidate(identity, {
-        executionId: scope.execution.execution.id,
-        workspaceRoot: scope.trustedWorkspace.root,
-        commitOid: requireCommitOid(input.commitOid),
-      });
-    }
     case 'execution.pull_request.set': {
       if (!scope.execution || !service.attachExecutionPullRequestV2) {
         throw new Error('仅当前 work Execution 可以登记 pull request');
@@ -440,42 +421,19 @@ export async function invokeTaskboardAction(
       const sources = await service.listIntegrationSources(identity, taskId);
       return { count: sources.length, sources };
     }
-    case 'integration.candidate': {
-      if (!service.getIntegrationCandidate) throw new Error('任务看板 Integration v3 candidate 读取服务未启用');
-      const taskId = scope.execution?.task.id ?? requireId(input, 'taskId');
-      return await service.getIntegrationCandidate(identity, taskId) as unknown as Record<string, unknown>;
-    }
-    case 'integration.source.inspect': {
-      if (!scope.execution || !service.inspectIntegrationSourceV2) {
-        throw new Error('仅当前 merge Execution 可以检查集成来源');
+    case 'integration.agent.merge': {
+      if (!scope.execution || !service.mergeIntegrationAgentV2) {
+        throw new Error('仅当前 integration merge Execution 可以合并 Agent pull request');
       }
-      return await service.inspectIntegrationSourceV2(
-        identity,
-        scope.execution.execution.runId,
-        requireField(input.sourceId, 'sourceId'),
-      ) as unknown as Record<string, unknown>;
+      const task = await service.mergeIntegrationAgentV2(identity, scope.execution.execution.runId);
+      return { merged: true, cleanupRequired: true, task };
     }
-    case 'integration.source.log': {
-      if (!scope.execution || !service.readIntegrationSourceJobLogV2) {
-        throw new Error('仅当前 merge Execution 可以读取受控 CI 失败日志');
+    case 'integration.agent.cleanup': {
+      if (!scope.execution || !scope.trustedWorkspace || !service.cleanupIntegrationAgentV2) {
+        throw new Error('仅当前 integration merge Execution 的受控 workspace 可以执行 cleanup');
       }
-      return await service.readIntegrationSourceJobLogV2(
-        identity,
-        scope.execution.execution.runId,
-        requireField(input.sourceId, 'sourceId'),
-        requireField(input.inspectionId, 'inspectionId'),
-        requireField(input.providerJobId, 'providerJobId'),
-      );
-    }
-    case 'integration.source.merge': {
-      if (!scope.execution || !service.mergeIntegrationSourceV2) {
-        throw new Error('仅当前 merge Execution 可以合并集成来源');
-      }
-      return await service.mergeIntegrationSourceV2(
-        identity,
-        scope.execution.execution.runId,
-        requireField(input.sourceId, 'sourceId'),
-      ) as unknown as Record<string, unknown>;
+      const task = await service.cleanupIntegrationAgentV2(identity, scope.execution.execution.runId, scope.trustedWorkspace);
+      return { cleaned: true, task };
     }
     case 'execution.list': {
       const result = await requireExecutionService(options.executionService?.()).searchExecutions(
@@ -722,10 +680,7 @@ async function createExecutionTask(
 ): Promise<Record<string, unknown>> {
   const executionStore = options.executionStore?.();
   if (!executionStore) throw new Error('任务看板执行上下文服务未启用');
-  const kind = input.kind ?? (execution.task.kind === 'integration' ? 'remediation' : 'delivery');
-  if (execution.task.kind === 'integration' && kind === 'remediation' && !input.sourceId) {
-    throw new Error('integration remediation 任务需要 sourceId');
-  }
+  const kind = input.kind ?? 'delivery';
   const dispatcher = input.dispatch ? requireExecutionService(options.executionService?.()) : undefined;
   const service = options.service();
   if (!service) throw new Error('任务看板服务未启用');
@@ -784,10 +739,6 @@ async function createExecutionTask(
     await rollbackCreatedTask(service, identity, task, error, () => cleanupTaskboardAttachments(options, identity, task.id, ownerUserId, scopedAttachments));
   }
   try {
-    if (ownsCreation && kind === 'remediation' && input.sourceId) {
-      if (!service.linkIntegrationRemediationV2) throw new Error('任务看板 remediation 关联服务未启用');
-      await service.linkIntegrationRemediationV2(identity, execution.execution.runId, input.sourceId, task.id);
-    }
     if (createResult.creationClaimToken) {
       task = await service.completeTaskCreation(identity, task.id, createResult.creationClaimToken);
     }

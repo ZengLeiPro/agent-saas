@@ -4,6 +4,7 @@ import type { TaskBoardTask } from '../../../shared/src/types/taskboard.js';
 import type { PgTaskboardStore } from './store.js';
 import {
   claimExecution,
+  shouldPersistIntegrationDurableSession,
   unresolvedExecutionRecovery,
 } from './storeExecutionLifecycle.js';
 import type { TaskboardExecutionClaimInput, TaskboardIdentity } from './types.js';
@@ -69,6 +70,27 @@ function claimInput(): TaskboardExecutionClaimInput {
 }
 
 describe('claimExecution model consistency', () => {
+  it.each([undefined, 'merge'] as const)(
+    'rejects a v2 integration purpose=%s before reading or inserting executions',
+    async (purpose) => {
+      const legacyTask: TaskBoardTask = { ...task, kind: 'integration', workflowVersion: 2 };
+      const client = { query: vi.fn() };
+      const store = {
+        requireTaskWithBoard: vi.fn(async () => ({
+          task: legacyTask, boardOwnerUserId: identity.ownerUserId, boardRole: 'owner',
+        })),
+        withTransaction: vi.fn(async (operation: (transaction: typeof client) => Promise<unknown>) => operation(client)),
+      } as unknown as PgTaskboardStore;
+      const input = claimInput();
+      if (purpose) input.purpose = purpose;
+      else delete input.purpose;
+
+      await expect(claimExecution(store, identity, task.id, input)).rejects.toMatchObject({
+        code: 'TASKBOARD_INTEGRATION_MIGRATION_REQUIRED',
+      });
+      expect(client.query).not.toHaveBeenCalled();
+    },
+  );
   it('replays the same execution id after the task reaches a terminal state', async () => {
     const terminalTask = { ...task, status: 'done' as const, version: 9 };
     const client = {
@@ -181,7 +203,7 @@ describe('claimExecution model consistency', () => {
     });
   });
 
-  it('loads and validates the current v3 candidate before admitting a work execution', async () => {
+  it('admits v3 work through the durable Agent rendezvous without a Candidate binding', async () => {
     const integrationTask: TaskBoardTask = {
       ...task,
       kind: 'integration',
@@ -192,10 +214,8 @@ describe('claimExecution model consistency', () => {
       query: vi.fn(async (sql: string) => {
         if (sql.includes('FROM taskboard_executions WHERE id=')) return { rows: [] };
         if (sql.includes('AS merged')) return { rows: [{ merged: false }] };
-        if (sql.includes('SELECT c.id,c.state')) return { rows: [{
-          id: 'candidate-1', state: 'working', version: 4, current_revision: 2,
-          work_round: 1, workflow_epoch: '8', lane_epoch: '3', head_oid: 'head-2',
-        }] };
+        if (sql.includes('FROM taskboard_agents') && sql.includes('SELECT 1')) return { rows: [{}] };
+        if (sql.includes('SELECT integration_task_id FROM taskboard_agents')) return { rows: [{}] };
         if (sql.includes('SELECT 1 WHERE EXISTS')) return { rows: [{}] };
         return { rows: [] };
       }),
@@ -214,7 +234,7 @@ describe('claimExecution model consistency', () => {
     await expect(claimExecution(store, identity, task.id, claimInput())).rejects.toMatchObject({
       code: 'TASKBOARD_EXECUTION_ACTIVE',
     });
-    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('FOR UPDATE OF c'), [task.id]);
+    expect(client.query).toHaveBeenCalledWith(expect.stringContaining('FROM taskboard_agents'), [task.id]);
   });
 
   it('accepts the selected work-stage model while holding the board lock', async () => {
@@ -254,6 +274,15 @@ describe('claimExecution model consistency', () => {
   });
 });
 
+describe('Integration Agent durable session persistence', () => {
+  it('is established by work only and is never overwritten by independent review or merge', () => {
+    expect(shouldPersistIntegrationDurableSession(true, 'work')).toBe(true);
+    expect(shouldPersistIntegrationDurableSession(true, 'review')).toBe(false);
+    expect(shouldPersistIntegrationDurableSession(true, 'merge')).toBe(false);
+    expect(shouldPersistIntegrationDurableSession(false, 'work')).toBe(false);
+  });
+});
+
 describe('unresolvedExecutionRecovery', () => {
   it.each([
     ['work', 'cancelled', 99, 0, 'todo', false],
@@ -269,4 +298,13 @@ describe('unresolvedExecutionRecovery', () => {
         .toEqual({ status, exhausted });
     },
   );
+
+  it.each([
+    ['work', 'in_progress'],
+    ['review', 'in_review'],
+    ['merge', 'ready_to_merge'],
+  ] as const)('keeps Agent-first %s runtime failures asynchronously dispatchable after the generic threshold', (purpose, status) => {
+    expect(unresolvedExecutionRecovery(purpose, 'failed', 99, 1, { agentFirstIntegration: true }))
+      .toEqual({ status, exhausted: false });
+  });
 });

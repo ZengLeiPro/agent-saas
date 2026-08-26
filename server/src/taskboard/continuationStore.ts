@@ -5,6 +5,7 @@ import type {
   TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import { parseStagePrompts } from './boardFields.js';
+import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import {
   applyCommentAuthorDisplayName,
   assertWritableTask,
@@ -26,6 +27,7 @@ import {
 } from './types.js';
 
 const DEFAULT_SORT_GAP = 1024;
+const MIGRATION_ERROR = 'Integration task requires Agent-first workflow migration';
 
 export interface TaskboardContinuationStoreHost {
   pool: Pool;
@@ -34,6 +36,7 @@ export interface TaskboardContinuationStoreHost {
   commentsTable: string;
   changesTable: string;
   executionsTable: string;
+  executionOutboxTable: string;
   integrationSourcesTable: string;
   remediationAttemptsTable: string;
   continuationOutboxTable: string;
@@ -177,6 +180,9 @@ export function markContinuationRunning(
     );
     if (!outbox.rows[0] || outbox.rows[0].status === 'completed'
       || outbox.rows[0].reconcile_lease_valid !== true) return loaded.task;
+    if (await absorbLegacyIntegrationContinuation(host, client, loaded.task, taskId, runId)) {
+      return loaded.task;
+    }
     assertWritableTask(loaded.task, loaded.boardArchivedAt);
     const facts = await loadWorkflowFacts(host, client, loaded.task);
     if (loaded.task.status === 'done' || loaded.task.status === 'canceled' || facts.hasMergeFact) {
@@ -203,6 +209,35 @@ export function markContinuationRunning(
     );
     return loadAccessibleTask(host, loaded.identity, taskId, client);
   });
+}
+
+async function absorbLegacyIntegrationContinuation(
+  host: TaskboardContinuationStoreHost,
+  client: PoolClient,
+  task: TaskBoardTask,
+  taskId: string,
+  runId: string,
+): Promise<boolean> {
+  if (task.kind !== 'integration' || task.workflowVersion === 3) return false;
+  await client.query(
+    `UPDATE ${host.executionsTable}
+        SET status='failed', error=$2, finished_at=COALESCE(finished_at, now()),
+            reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL, updated_at=now()
+      WHERE task_id=$1 AND status IN ('queued','running','waiting_user','waiting_approval')`,
+    [taskId, MIGRATION_ERROR],
+  );
+  await client.query(
+    `UPDATE ${host.continuationOutboxTable}
+        SET status='completed', lease_id=NULL, lease_expires_at=NULL,
+            reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL,
+            last_error=$3, updated_at=now()
+      WHERE task_id=$1 AND run_id=$2
+        AND (status<>'completed' OR lease_id IS NOT NULL OR lease_expires_at IS NOT NULL
+          OR reconcile_lease_id IS NOT NULL OR reconcile_lease_expires_at IS NOT NULL
+          OR last_error IS DISTINCT FROM $3)`,
+    [taskId, runId, MIGRATION_ERROR],
+  );
+  return true;
 }
 
 export async function hasSuccessfulContinuationSince(
@@ -234,6 +269,9 @@ export function completeContinuation(
   return withTransaction(host.pool, async (client) => {
     const loaded = await loadInternalTaskForUpdate(host, client, taskId);
     if (!loaded) return null;
+    if (await absorbLegacyIntegrationContinuation(host, client, loaded.task, taskId, runId)) {
+      return loaded.task;
+    }
     const facts = await loadWorkflowFacts(host, client, loaded.task);
     if (loaded.task.archivedAt || loaded.boardArchivedAt
       || loaded.task.status === 'done' || loaded.task.status === 'canceled' || facts.hasMergeFact) {
@@ -312,15 +350,18 @@ export async function loadExecutionModelContext(
   identity: TaskboardIdentity,
   taskId: string,
 ): Promise<TaskboardExecutionModelContext> {
+  const { agentsTable } = integrationAgentTableNames(host.integrationSourcesTable);
   const result = await host.pool.query(
     `SELECT t.model AS task_model, t.stage_models AS task_stage_models,
-            t.kind AS task_kind, t.status AS task_status,
+            t.kind AS task_kind, t.status AS task_status, t.workflow_version,
+            agent.durable_session_id AS integration_durable_session_id,
             b.model AS board_model, b.stage_models AS board_stage_models,
             b.owner_user_id AS board_owner_user_id,
             b.integration_policy->>'revision' AS policy_revision,
             b.id AS board_id, b.name AS board_name
        FROM ${host.tasksTable} t
        JOIN ${host.boardsTable} b ON b.id=t.board_id
+       LEFT JOIN ${agentsTable} agent ON agent.integration_task_id=t.id
       WHERE t.id=$1 AND b.tenant_id=$2 AND (b.owner_user_id=$3 OR b.visibility='organization')`,
     [taskId, identity.tenantId, identity.ownerUserId],
   );

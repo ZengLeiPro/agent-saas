@@ -62,3 +62,30 @@ describe('Governance schema v21 Agent DWS peer binding migration', () => {
     ))).toBe(true);
   });
 });
+
+describe('Governance schema v27 Agent DWS requester binding expand migration', () => {
+  it('adds an isolated requester binding table while preserving the legacy writer schema', async () => {
+    const query = vi.fn(async (sql: string, values?: readonly unknown[]) => {
+      if (sql.includes('SELECT version FROM')) {
+        return { rows: Array.from({ length: 26 }, (_, index) => ({ version: index + 1 })) };
+      }
+      return { rows: [], rowCount: values?.[0] === 27 ? 1 : 0 };
+    });
+    const client = { query, release: vi.fn() };
+    const pool = { connect: async () => client };
+
+    await new PgGovernanceMigrationRunner(pool as never, 'test').run();
+
+    const sql = query.mock.calls.map(call => String(call[0])).join('\n');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_agent_dws_requester_conversation_bindings');
+    expect(sql).toContain('requester_user_id TEXT NOT NULL');
+    expect(sql).toContain('UNIQUE (account_id,conversation_id,requester_user_id)');
+    expect(sql).toContain('test_agent_dws_requester_conversation_bindings_tenant_idx');
+    expect(sql).not.toContain('ALTER TABLE test_agent_dws_conversation_bindings');
+    expect(sql).not.toContain('DROP CONSTRAINT IF EXISTS test_agent_dws_conversation_bindings');
+    expect(query.mock.calls.some(call => (
+      String(call[0]) === 'INSERT INTO test_governance_schema_versions (version) VALUES ($1)'
+      && call[1]?.[0] === 27
+    ))).toBe(true);
+  });
+});

@@ -164,7 +164,7 @@ describe('Environment Provider/Template/Instance 领域', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_environment_template_versions');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_resource_references');
     expect(sql).toContain('infrastructure_credential_id TEXT');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(31);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(33);
   });
 
   it('Provider 新建与更新必须 expectedRevision，保存 credentialId 而非 Secret', async () => {

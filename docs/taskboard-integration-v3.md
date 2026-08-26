@@ -1,132 +1,76 @@
-# Taskboard Integration Workflow v3 — Candidate 正式规格
+# Taskboard Integration — Agent-first 正式契约
 
-> **部署前数据库演练（强制）**：v3 schema 使用版本化、事务化 expand migrations，但仓库测试不代表生产量级验证。每次部署前必须在最新生产副本上演练并记录锁等待、执行时长、表膨胀与回滚步骤；未完成副本演练不得在生产执行。本文档不声称已取得生产量级结果。
+本文描述当前唯一受支持的 integration 流程。它是 Agent-first 协调协议，不是平行的代码状态机。
 
-## 1. 版本路由
+## 1. 权威边界
 
-`tasks.workflow_version` 是 integration task 的持久化、不可变单写者分流键。
+- **GitHub PR 是唯一代码事实源**：当前 PR、head、base、checks、merge 状态和 provider receipt 必须从 GitHub 重读。数据库只保存调度绑定、执行收据和恢复检查点，不得用本地 revision、lease 或 outbox 推断代码事实。
+- 一个 integration task 至多绑定一个 durable Integration Agent。Agent 跨越 work、merge 与 cleanup 多次执行持续存在；任务重启或进程切换不得创建第二个协调者。
+- Agent 的稳定绑定是 integration task、repository、按顺序排列的 delivery source IDs，以及 `integration/<task-id>` branch。GitHub PR 建立后也属于该绑定。
+- Agent 不拥有 GitHub 之外的第二份 PR、revision 或 subject 权威模型。
 
-- 迁移前和未显式指定的任务为 `2`；旧数据通过 `NOT NULL DEFAULT 2` 回填。
-- 新 v3 批次必须在插入 integration task 的同一事务中写入 `workflow_version=3`。
-- 创建后修改该字段由数据库 trigger 拒绝（`TASKBOARD_WORKFLOW_VERSION_IMMUTABLE`）。
-- v2 worker 只处理 `workflow_version=2`；v3 worker 只处理 `workflow_version=3`。未知版本 fail closed。
-- rollback 版本可读取、冻结、reconcile 或 cancel v3，不得把 v3 任务派给 v2 Merge Agent。
+## 2. 执行与会话
 
-当前变更只提供 schema/模型/store 基础；批次创建器、decider、trigger、repair、API/UI 的完整路由接线属于后续接口（见第 8 节）。
+1. **Work**：durable Agent 在绑定 worktree 中汇总来源，创建或更新唯一 integration branch 与 GitHub PR，并以 GitHub 返回的 head/checks 为准。
+2. **Review Session**：Review 是独立执行、独立会话，不复用 Work 会话。批准必须明确绑定当前 Agent、当前 GitHub PR、当前 head、当前 subject 和对应的全绿检查收据。head 变化立即使旧批准失效。
+3. **Merge**：仅 Agent 的受控 merge execution 可以调用 **Merge Gateway**。普通 Work、Review、客户端和通用 provider 工具都不能直接合并。
+4. **Cleanup**：仅绑定该 Agent 的受控 cleanup 可以关闭来源 PR、删除已核对 head 的来源 branch、删除 integration branch 和任务 worktree。每一步写 durable receipt；失败后从 receipt 继续，cleanup 完成前任务不能收敛为 done。
 
-## 2. 权威模型与计数语义
+Work、Review、Merge、Cleanup 可以由不同 execution 承载，但必须落在同一个 durable Agent rendezvous 上。execution retry 不是新 Agent，也不产生新的代码权威对象。
 
-一个 v3 integration task 对应一个稳定 `candidate`、一个稳定 branch、至多一个稳定 Integration PR。Candidate 是流程权威；task/source 仅是投影。
+## 3. 仅有的三道硬门禁
 
-- `candidate.current_revision`：candidate subject 每次变化后递增；revision 从 1 开始，永不覆盖。
-- `candidate.work_round`：Review 退回或冲突处理触发的一轮语义工作；从 0 开始，仅 `beginNextWorkRound` 增加。
-- execution retry：仍由 execution attempt/trigger 表达，绝不增加 revision 或 work round，除非重试实际产生了新 subject 并追加 revision。
+当前协议只有以下三道硬门禁，不另设影子 admission、双 worker 路由或额外状态机：
 
-三者不得互相推导或复用。
+1. **CI Gate**：GitHub 对当前 PR/current head 的 required checks 已知且全部成功；pending、failure、unknown 或 head 漂移一律关闭门禁。
+2. **Review Gate**：独立 Review Session 对同一 current head 明确批准，且 review execution、subject 与检查收据绑定仍新鲜。
+3. **Merge Gateway**：执行合并前重新读取 PR/head、CI 与 approval，并用 execution fence 记录 in-flight 绑定和 provider receipt。任何不一致拒绝合并；provider 结果 unknown 时只允许对账。
 
-### 2.1 Candidate
+看板策略可以定义 GitHub 未声明 required checks 时的受控 fallback，但不能绕过上述三道门禁，也不能把 observed optional checks 自动提升为 required。
 
-`*_taskboard_integration_candidates` 保存稳定身份、当前 revision、状态、fence（workflow/lane epoch）、policy、批准和 merge 投影。`integration_task_id` 唯一，`(repository_id, branch)` 唯一，PR 在仓库内唯一。
+## 4. 状态模型
 
-### 2.2 Candidate Revision
+任务只保留业务阶段；Agent rendezvous 只保留最小流程状态：
 
-`*_taskboard_integration_candidate_revisions` 是不可变 subject 快照，主键 `(candidate_id, revision)`。记录 base/head/tree、source-set、merge method、policy snapshot digest、work round 和可选 execution 关联。UPDATE/DELETE 由 trigger 拒绝。
+| Agent 状态 | 含义 | 可派发动作 |
+|---|---|---|
+| `active` | 汇总、修复或刷新 PR | Work |
+| `reviewing` | 当前 head 等待独立审查 | Review |
+| `ready_to_merge` | 当前 head 已通过 CI 与 Review | Merge，然后 Cleanup |
+| `merged` | merge receipt 与 cleanup 已收敛 | 无 |
+| `canceled` | 受控取消完成 | 无 |
 
-### 2.3 Candidate Source Snapshot
+Review 退回把同一个 Agent 返回 `active`；它不是新的持久状态树。PR/head 漂移撤销批准并回到对账/Work。终态不得因迟到 execution 回执回退。
 
-`*_taskboard_integration_candidate_source_snapshots` 按 revision 冻结有序来源，至少包含：source/task/version、PR、frozen head/base、原 review execution/receipt digest、reviewed subject digest、需求摘要 digest。它同样不可变。
+## 5. 恢复、幂等与副作用
 
-每个 revision 的来源顺序必须是从 0 开始的连续整数，来源 ID 不得重复，且全部属于 candidate repository。Store 在计算 digest 和写入前校验；数据库保证每 revision 的 order/source 唯一。
+- **恢复先对账**：任何 restart、timeout、unknown provider result 或部分 cleanup 都先重读 GitHub PR/head/state，再读取 durable merge/cleanup receipt；禁止先重发 provider 写操作。
+- Merge Gateway 以绑定 execution、review execution 和 review head 建立 in-flight fence。相同 operation key 可安全重试；冲突绑定必须 fail closed。
+- Cleanup 按 source 和 integration branch 分项 checkpoint。已完成步骤跳过；删除前核对 expected head，漂移时停止并交人工处理。
+- 外部已合并只能在验证 merged PR 与已批准 subject 一致后吸收；仍需补齐 merge receipt 和 cleanup，不能直接把任务标为 done。
+- cancel/archive/delete 不得绕过进行中的 merge，也不得丢失 provider receipt。
 
-## 3. Digest 协议
+## 6. 历史 workflow version 2 自动迁移
 
-所有 digest 使用 `sha256:<lowercase hex>`，输入采用递归 key 排序的 canonical JSON，并带 domain 与整数版本。当前唯一版本为 `1`；改变字段、规范化或相等语义必须新增版本，不得静默修改 v1。
+历史 integration task 不再由旧协议执行，只允许 scanner 自动迁移到当前 Agent-first 路径：
 
-- `taskboard.integration-source-set/v1`：覆盖有序 source snapshot 全字段（除 candidate/revision/createdAt）。
-- `taskboard.integration-policy-snapshot/v1`：覆盖完整 policy snapshot。
-- `taskboard.integration-candidate-subject/v1`：覆盖 repository ID、base branch、base OID、head OID、tree OID、source-set digest、merge method、policy revision、完整 policy snapshot 及其 digest。
+1. task 必须是未归档、未删除、可工作的 integration，绑定 active repository lane，且没有活动 execution；
+2. source 集合必须非空、同 repository，并形成确定顺序；
+3. scanner 在一个数据库事务中先幂等插入唯一 Agent rendezvous，再把 `workflow_version` 从 `2` 更新为 `3`；任一步失败整笔回滚；
+4. 数据库 immutable trigger 只放行该精确的 `2 → 3`：同事务内已存在与 task、active lane、repository、完整 source IDs 和固定 integration branch 一致的 Agent。其他所有版本修改继续抛出 `TASKBOARD_WORKFLOW_VERSION_IMMUTABLE`；
+5. 重复扫描通过 Agent 主键与条件更新收敛，不创建重复 Agent。缺 source、跨 repository、错误 branch 或错误绑定保持 version 2，等待修复后重试；不恢复旧执行协议。
 
-数组顺序有意义；空 source set、重复 source、非连续 order、`undefined`、非有限数值均拒绝。Review receipt 必须绑定 `candidate_id + revision + subject_digest + source_set_digest`。最终 merge 前必须重新读取 provider 并核对 base/head/tree/source-set/policy/lane/workflow epoch；任一变化使批准失效。
+新建 integration task 直接以 version 3 和 Agent-first 绑定进入流程。
 
-## 4. 状态转移
+## 7. 退役数据结构
 
-所有 command 必须锁 candidate，并以 `(candidate.version, candidate.current_revision, from_state)` 做 CAS。失败返回 `TASKBOARD_CANDIDATE_CAS_MISMATCH`，不得盲重试远端副作用。
+Candidate 聚合及其 revision、snapshot、provider-operation、request、heartbeat 与 migration 表均为退役结构，不是运行时能力。启动 schema 初始化按依赖顺序使用 `DROP TABLE IF EXISTS` / `DROP FUNCTION IF EXISTS` 幂等删除这些已知对象，不使用 `CASCADE`；若存在未知依赖则启动失败，避免误删活跃数据。
 
-| From | Command / event | Guard | To | Side effect / compensation |
-|---|---|---|---|---|
-| preparing | start compose | v3 task、lane/workflow epoch 有效 | composing | prepare provider intent；unknown 仅 reconcile |
-| preparing | block/cancel | 有原因或有效取消 fence | blocked / needs_human / canceled | revoke capability；取消不得删除审计快照 |
-| composing | compose clean | revision 已追加 | waiting_checks | 等待 authoritative checks |
-| composing | conflict | revision 已追加或冲突证据已保存 | needs_work | 不创建 remediation task |
-| waiting_checks | checks green | required checks 已知且全绿 | in_review | 派发绑定当前 revision 的 Review |
-| waiting_checks | checks failed | 可由 Work 修复 | needs_work | 保留 branch/PR |
-| waiting_checks | unsupported/timeout | fail closed | blocked / needs_human | 保存事实和恢复条件 |
-| needs_work | begin work round | CAS；无活动 canonical Work | working | `work_round += 1`；execution retry 不递增 |
-| working | subject refreshed | 新 immutable revision 已追加 | waiting_checks / in_review | 旧批准自动清空 |
-| in_review | approved | review execution 绑定当前 revision | approved | 保存 approved revision/execution |
-| in_review | changes requested | canonical review receipt | needs_work | 这是事件，不是持久状态 |
-| in_review | stale/blocked | subject/fence 不符或需人工 | needs_work / blocked / needs_human | 迟到回执记 ignored，不改权威状态 |
-| approved | base/policy/source 漂移 | 新 compose 必需 | composing | 清空批准，追加新 revision 后重跑 CI/Review |
-| approved | merge intent prepared | merge kill switch 开启；批准仍新鲜 | merging | provider ledger: prepare → execute |
-| merging | provider receipt verified | merged tree 等于 approved tree | merged | 原子收敛 task/source/lane；cleanup 异步 |
-| merging | unknown / unverifiable | 只能 reconcile | merging / needs_human | 禁止释放 lane 或标记 done |
-| blocked | resume | decision + 新 workflow epoch；重新取得 lane | preparing / composing / needs_work / in_review | 强制刷新 base 与批准有效性 |
-| needs_human | acknowledged/retry/cancel | 人工 decision 或有效取消 | blocked / composing / canceled | 不交回 v2 |
-| merged / canceled | any workflow command | terminal | — | 拒绝 |
+运行时不得重新创建、读取或双写这些表，也不存在启用旧 Candidate 协议的开关。integration source 行仅保留来源绑定与 cleanup 所需事实，不能执行另一套 merge 流程。
 
-通用的 `blocked`、`needs_human`、`canceled` 转移仅允许表中及代码 transition matrix 明示的来源状态。
+## 8. 运维约束
 
-## 5. 核心不变量
-
-1. workflow version 创建时确定且不可变；candidate 只能关联 v3 integration task。
-2. branch、repository、integration task 和 provider PR 是 candidate 稳定身份；revision 不创建新 PR。
-3. revision/source snapshot 只追加，不 UPDATE/DELETE；历史批准永不重写。
-4. `approved_revision === current_revision` 且 approved review execution 同时存在；追加 revision 自动清空批准。
-5. `merging` 只接受当前 approved revision；`merged` 必须带 provider merged commit OID，并验证 merged tree。
-6. source set 有序、非空、同仓库、无重复；source task version 和原 review receipt 被冻结。
-7. policy snapshot、merge method、base/head/tree 都是 subject digest 的一部分。
-8. candidate revision、work round、execution retry 独立。
-9. 迟到 execution receipt、过期 workflow/lane epoch 和 CAS 失败只能记 ignored。
-10. provider `unknown` 只能 reconcile；不得重发、释放 lane或推断失败。
-11. cancel/archive/delete 不得破坏 revision 审计；v3 integration task 应先走 cancel，再按保留策略归档。
-
-## 6. Store 契约
-
-`IntegrationCandidateStore` 提供最小接口：
-
-- `create`：仅接受已以 v3 创建的 integration task。
-- `appendRevision`：事务内写 revision + source snapshots，并 CAS 推进 current revision、撤销旧批准。
-- `beginNextWorkRound`：只从 `needs_work` 进入 `working` 并独立递增 work round。
-- `transition`：执行白名单状态转移与 approval/merge receipt guards。
-- `getByIntegrationTask` / `listRevisions`：读取当前权威对象及完整历史。
-
-所有写操作自带数据库事务；provider 写操作不应直接包在该事务中，而应由后续 operation ledger 按 prepare/execute/reconcile 协议衔接。
-
-## 7. CI 门禁解析
-
-门禁优先级固定为：GitHub branch protection / rulesets 声明的 required checks → 看板 `integrationPolicy.ciPolicy.requiredChecks` → 未配置。
-
-- 看板 fallback 按看板与仓库配置隔离，可为每个 context 额外指定 GitHub App ID；切换 Repository ID 会强制清空旧 fallback，需基于新仓库重新确认。
-- Delivery、Workflow v2 source inspection/merge 与 Workflow v3 均在调用 Provider 前注入同一看板 fallback。
-- 只有 GitHub 已权威确认 required checks 为空时才使用 fallback；GitHub 策略不可判定、存在不支持规则或要求 merge queue 时继续 fail closed。
-- `GET /api/taskboard/boards/:id/ci-policy` 以看板访问权限返回生效来源、GitHub required checks、看板 fallback，以及最近绑定 PR 的 observed checks、App 来源与精确 head；observed checks 只用于配置候选，候选读取失败不会遮蔽已取得的权威策略。
-- 看板设置允许有策略权限的成员显式勾选候选或手工填写 context/App ID；无策略权限成员只读。
-- 任意 observed optional check 都不会自动成为 required check。
-- 两层均为空时返回 `TASKBOARD_CI_UNCONFIGURED`，提示配置 GitHub 门禁或看板 fallback；它不是普通 pending。
-
-## 8. v2 兼容
-
-现有 integration source 状态、remediation、Merge Agent schema 和 execution purpose 均未删除或改义。现有批次创建路径未指定 v3，因此继续落为 workflow v2。新增表和索引采用 expand-only、`IF NOT EXISTS` / 可重复 trigger 安装，v2 读写路径不依赖 candidate 表。
-
-## 9. 生产启用条件
-
-v3 默认关闭；只有显式配置并通过全部激活探针后才承载批次：
-
-- `integrationV3ControlPlane.enabled=true`，配置 server-owned `controlledMirrorRoot`。
-- 配置固定 GitHub App installation ID，以及 App ID 和私钥的 Secret Vault 引用；v3 不接受用户 PAT 或通用 connector token。
-- 正式 server 镜像必须包含受支持的 Git；所有 mirror/worktree 操作统一经过 safe Git runner。
-- ACS runtime isolation attestation 必须通过真实 network-policy probe；配置布尔值不是证明。
-- gateway、worker、mirror、GitHub App 或 attestation 任一不可用时，v3 admission 与 readiness 均 fail closed。
-- Work/Review Runtime 不持有 GitHub、SSH 或控制面原始凭据；所有 provider 写操作由 Integration Engine 经 operation ledger 执行。
-
-v2 路径不依赖上述配置；v3 未配置或显式关闭时健康状态为 `not_applicable`，不得影响全站 readiness。
+- schema 变更必须事务化、可重试；不可通过临时删除 immutable trigger 获得迁移窗口。
+- 部署前在生产副本演练锁等待、执行时长、表膨胀和失败回滚。仓库测试不替代生产量级演练。
+- GitHub 或 Merge Gateway 不可达、required checks 不可判定、review 过期、head 漂移、receipt 不完整时均 fail closed。
+- Work/Review runtime 不持有可绕过 Merge Gateway 的合并或清理权限。

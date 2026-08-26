@@ -688,7 +688,7 @@ describe('任务看板评论续跑', () => {
     expect((await launch({ boardStageModels: stages }, 'review')).model.ref).toBe('stage/review');
     expect((await launch({ boardStageModels: stages }, 'work')).model.ref).toBe('stage/work');
     expect((await launch({ boardStageModels: stages }, 'merge')).model.ref).toBe('stage/merge');
-    const overridden = await launch({ taskKind: 'integration', taskModel: 'task/explicit', boardStageModels: stages });
+    const overridden = await launch({ taskKind: 'integration', workflowVersion: 3, taskModel: 'task/explicit', boardStageModels: stages });
     expect([overridden.explicitModelRef, overridden.model.ref]).toEqual(['task/explicit', 'task/explicit']);
     expect((await launch({ boardModel: 'board/fallback', boardStageModels: { review: 'stage/review' } }, 'work')).model.ref).toBe('board/fallback');
     expect((await launch({}, 'merge')).model.ref).toBe('model-default');

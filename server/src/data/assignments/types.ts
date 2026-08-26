@@ -8,7 +8,8 @@ export type AssignmentResourceType =
   | 'environment_template'
   | 'org_knowledge'
   | 'org_memory'
-  | 'connector';
+  | 'connector'
+  | 'dws_delegation';
 export type AssignmentAssigneeType = 'everyone' | 'user' | 'directory_group' | 'agent';
 export type AssignmentEffect = 'allow' | 'deny';
 export type AssignmentOrigin = 'direct' | 'migration' | 'policy_default';

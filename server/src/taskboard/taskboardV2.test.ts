@@ -80,25 +80,46 @@ describe('taskboard V2 contracts', () => {
     const merge = resolveWorkflowContract({
       ...task,
       kind: 'integration',
-      status: 'in_progress',
+      workflowVersion: 3,
+      status: 'ready_to_merge',
     }, 'merge');
 
     expect(work.allowedStatuses).toEqual(['in_review', 'blocked']);
     expect(review.allowedStatuses).toEqual(['ready_to_merge', 'todo', 'in_review', 'blocked']);
-    expect(merge.capabilities).toMatchObject({ mergeReviewedSource: true, createRemediation: true });
+    expect(merge.capabilities).toMatchObject({ mergeIntegrationAgent: true, cleanupIntegrationAgent: true });
   });
 
-  it('resolves an Integration v3 execution context contract from the current candidate state', async () => {
-    const query = vi.fn(async (_sql: string) => ({ rows: [{ state: 'working' }] }));
-    const contract = await resolveExecutionContextWorkflowContract(
+  it('resolves native Integration Agent work and ready_to_merge contracts without Candidate state', async () => {
+    const query = vi.fn();
+    const work = await resolveExecutionContextWorkflowContract(
       { integrationSourcesTable: 'runtime_taskboard_integration_sources' },
       { query } as never,
       { ...task, kind: 'integration', status: 'in_progress', workflowVersion: 3 },
       'work',
     );
+    const merge = await resolveExecutionContextWorkflowContract(
+      { integrationSourcesTable: 'runtime_taskboard_integration_sources' },
+      { query } as never,
+      { ...task, kind: 'integration', status: 'in_progress', workflowVersion: 3 },
+      'merge',
+    );
 
-    expect(contract).toMatchObject({ taskKind: 'integration', purpose: 'work' });
-    expect(query.mock.calls[0]![0]).toContain('runtime_taskboard_integration_candidates');
+    expect(work).toMatchObject({ taskKind: 'integration', purpose: 'work' });
+    expect(merge).toMatchObject({
+      taskKind: 'integration', purpose: 'merge',
+      capabilities: { mergeIntegrationAgent: true },
+      allowedStatuses: ['in_progress', 'done', 'blocked'],
+    });
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('keeps unbound Integration Agent contracts status-derived after a merge claim changes status', () => {
+    const claimedTask = { ...task, kind: 'integration' as const, status: 'in_progress' as const, workflowVersion: 3 as const };
+
+    expect(resolveWorkflowContract(claimedTask)).toMatchObject({ purpose: 'work' });
+    expect(() => resolveWorkflowContract(claimedTask, 'merge')).toThrowError(expect.objectContaining({
+      code: 'TASKBOARD_PURPOSE_INVALID',
+    }));
   });
 
   it('treats a canceled integration source as historical and allows delivery reselection', () => {

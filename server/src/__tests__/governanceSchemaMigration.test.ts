@@ -72,19 +72,22 @@ describe('Governance schema migration SQL fixtures', () => {
     expect(applied.has(24)).toBe(true);
     expect(applied.has(25)).toBe(true);
     expect(applied.has(26)).toBe(true);
-    expect(applied.has(27)).toBe(true);
-    expect(applied.has(28)).toBe(true);
+    expect(applied.has(32)).toBe(true);
+    expect(applied.has(33)).toBe(true);
     const insertedVersions = queries
       .filter(item => item.sql.includes('INSERT INTO safe_governance_schema_versions'))
       .map(item => Number(item.params?.[0]));
     expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(insertedVersions.length);
-    expect(insertedVersions).toEqual(expect.arrayContaining([23, 24, 25, 26, 27, 28]));
+    expect(insertedVersions).toEqual(Array.from({ length: 11 }, (_, index) => index + 23));
+    expect(queries.some(item => item.sql.includes("'dws_delegation'"))).toBe(true);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_credential_commits'))).toHaveLength(1);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_context_sources'))).toHaveLength(1);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_context_entities'))).toHaveLength(1);
     expect(queries.filter(item => item.sql.includes('safe_c26_links_contract_ck'))).toHaveLength(1);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_context_retention_receipts')))
       .toHaveLength(1);
+    expect(queries.filter(item => item.sql.includes('INSERT INTO safe_governance_schema_versions')))
+      .toEqual(insertedVersions.map(version => expect.objectContaining({ params: [version] })));
     expect(() => new PgGovernanceMigrationRunner(pool as never, 'unsafe-prefix')).toThrow('Invalid PostgreSQL identifier');
   });
 });

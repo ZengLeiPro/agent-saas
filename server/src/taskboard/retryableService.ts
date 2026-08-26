@@ -35,8 +35,6 @@ import type {
   TaskboardExpectedVersionInput,
   TaskboardIdentity,
   TaskboardIntegrationDispatchCandidate,
-  TaskboardIntegrationMergeResult,
-  TaskboardIntegrationSourceInspection,
   TaskboardPage,
   TaskboardPageFilter,
   TaskboardService,
@@ -326,16 +324,6 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.cancelIntegrationTask(identity, taskId, input);
   }
 
-  async getIntegrationCandidate(
-    identity: TaskboardIdentity,
-    integrationTaskId: string,
-    options?: { includeHistory?: boolean; page?: number; pageSize?: number },
-  ) {
-    const service = await this.service();
-    if (!service.getIntegrationCandidate) throw new Error('Taskboard Integration v3 candidate read unavailable');
-    return service.getIntegrationCandidate(identity, integrationTaskId, options);
-  }
-
   async resumeBlockedTask(
     identity: TaskboardIdentity,
     taskId: string,
@@ -408,52 +396,23 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.recordReviewedExecutionSubjectV2(identity, runId);
   }
 
-  async inspectIntegrationSourceV2(
+  async mergeIntegrationAgentV2(
     identity: TaskboardIdentity,
     runId: string,
-    sourceId: string,
-  ): Promise<TaskboardIntegrationSourceInspection> {
+  ): Promise<TaskBoardTask> {
     await this.init();
-    if (!this.target.inspectIntegrationSourceV2) throw new Error('Taskboard integration provider unavailable');
-    return this.target.inspectIntegrationSourceV2(identity, runId, sourceId);
+    if (!this.target.mergeIntegrationAgentV2) throw new Error('Taskboard integration Agent gateway unavailable');
+    return this.target.mergeIntegrationAgentV2(identity, runId);
   }
 
-  async readIntegrationSourceJobLogV2(
+  async cleanupIntegrationAgentV2(
     identity: TaskboardIdentity,
     runId: string,
-    sourceId: string,
-    inspectionId: string,
-    providerJobId: string,
-  ): Promise<{ inspectionId: string; providerJobId: string; log: string }> {
+    workspace: { id: string; root: string },
+  ): Promise<TaskBoardTask> {
     await this.init();
-    if (!this.target.readIntegrationSourceJobLogV2) throw new Error('Taskboard integration provider unavailable');
-    return this.target.readIntegrationSourceJobLogV2(identity, runId, sourceId, inspectionId, providerJobId);
-  }
-
-  async mergeIntegrationSourceV2(
-    identity: TaskboardIdentity,
-    runId: string,
-    sourceId: string,
-  ): Promise<TaskboardIntegrationMergeResult> {
-    await this.init();
-    if (!this.target.mergeIntegrationSourceV2) throw new Error('Taskboard integration provider unavailable');
-    return this.target.mergeIntegrationSourceV2(identity, runId, sourceId);
-  }
-
-  async linkIntegrationRemediationV2(
-    identity: TaskboardIdentity,
-    runId: string,
-    sourceId: string,
-    remediationTaskId: string,
-  ) {
-    await this.init();
-    if (!this.target.linkIntegrationRemediationV2) throw new Error('Taskboard integration provider unavailable');
-    return this.target.linkIntegrationRemediationV2(identity, runId, sourceId, remediationTaskId);
-  }
-
-  async reconcileMergeOperationsV2(limit?: number): Promise<number> {
-    await this.init();
-    return this.target.reconcileMergeOperationsV2?.(limit) ?? 0;
+    if (!this.target.cleanupIntegrationAgentV2) throw new Error('Taskboard integration Agent cleanup unavailable');
+    return this.target.cleanupIntegrationAgentV2(identity, runId, workspace);
   }
 
   async claimIntegrationDispatchCandidatesV2(limit?: number): Promise<TaskboardIntegrationDispatchCandidate[]> {

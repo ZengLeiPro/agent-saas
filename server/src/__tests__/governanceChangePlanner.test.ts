@@ -29,7 +29,7 @@ function buildPlanner() {
         job: {
           jobId: 'chg-1', tenantId: input.tenantId, jobType: input.jobType,
           targetType: input.targetType, targetId: input.targetId, idempotencyKey: input.idempotencyKey,
-          request: input.request, status: 'pending', revision: 1, attempt: 0,
+          request: input.request, status: 'pending', revision: 1, attempt: 0, maxAttempts: 5,
           createdAt: credential.createdAt, createdBy: input.createdBy,
           updatedAt: credential.updatedAt, updatedBy: input.createdBy,
         },
@@ -59,9 +59,11 @@ describe('GovernanceChangePlanner', () => {
       .rejects.toThrow('CREDENTIAL_NOT_FOUND');
   });
 
-  it('Tenant 删除固定为 8 个分域的可重试 Change Job', async () => {
+  it('Tenant 删除固定为先冻结、证明核验、末删记录的 10 阶段可重试 Change Job', async () => {
     const { planner } = buildPlanner();
-    expect(TENANT_DELETE_DOMAINS).toHaveLength(8);
+    expect(TENANT_DELETE_DOMAINS).toHaveLength(10);
+    expect(TENANT_DELETE_DOMAINS[0]).toBe('tenant_freeze');
+    expect(TENANT_DELETE_DOMAINS.at(-1)).toBe('tenant_record');
     await expect(planner.createTenantDeletion({
       tenantId: 'acme', idempotencyKey: 'delete-acme-v1', requestedBy: 'platform-admin', reasonCode: 'customer_request',
     })).resolves.toMatchObject({ created: true, job: { jobType: 'tenant_delete', targetId: 'acme' } });

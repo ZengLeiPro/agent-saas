@@ -326,6 +326,7 @@ async function shutdownCleanup(): Promise<void> {
     await runtime?.mcpClientShutdown?.();
     await runtime?.auditProjectionShutdown?.();
     await runtime?.artifactShutdown?.();
+    await runtime?.tenantDeletionShutdown?.();
     await runtime?.runtimeEventStoreShutdown?.();
   } catch (err) {
     serverLogger.error('Error during shutdown:', err);

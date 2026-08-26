@@ -5,6 +5,7 @@ import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import { allocatePgEventSequences } from './pgEventCursorAllocator.js';
 import { encodePgEventNotifyPayload, lockPgEventGlobalSequence } from './pgEventStoreProtocol.js';
 import type { PlatformEvent, PlatformEventInput } from './types.js';
+import { buildRunCancellationEvents } from './runCancellationEvents.js';
 import { releaseRunLease } from './runTerminalLifecycle.js';
 import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL, STOPPABLE_RUN_STATUS_SQL } from './runStatusPolicy.js';
 import { normalizeRunRecord, parseCount, sanitizeIdentifier, serializeRuntimeEvent, stringMetadata } from './runStoreRecordHelpers.js';
@@ -886,6 +887,7 @@ export class PgRunStore implements RunStore {
     const client = await this.pool.connect();
     let appended: Array<PlatformEvent & { sequence: number }> = [];
     let targetCancelled = false;
+    let targetPreviousStatus: RunStatus | undefined;
     let runCancelEventCreated = false;
     try {
       await client.query('BEGIN');
@@ -897,13 +899,14 @@ export class PgRunStore implements RunStore {
       // 必须先锁定并核验 target，再写 session stopped_at 或撤销排队项；否则状态预读后
       // target 并发终态化时，stop 会错误影响后续普通队列/steering。
       if (targetRunId) {
-        const target = await client.query<{ status: string }>(`
+        const target = await client.query<{ status: RunStatus }>(`
           SELECT status
           FROM ${this.runsTable}
           WHERE session_id = $1 AND run_id = $2
           FOR UPDATE
         `, [sessionId, targetRunId]);
-        if (target.rows[0] && ['completed', 'failed', 'cancelled', 'orphaned'].includes(target.rows[0].status)) {
+        targetPreviousStatus = target.rows[0]?.status;
+        if (targetPreviousStatus && ['completed', 'failed', 'cancelled', 'orphaned'].includes(targetPreviousStatus)) {
           await client.query('COMMIT');
           return { cancelled: [], targetCancelled: false, eventCreated: false };
         }
@@ -1047,10 +1050,7 @@ export class PgRunStore implements RunStore {
         existingEvent = existing.rows[0]?.event_json;
       }
       const shouldAppendRunCancel = Boolean(event && !existingEvent && (!targetRunId || targetCancelled));
-      const eventsToAppend: PlatformEventInput[] = [
-        ...(shouldAppendRunCancel ? [event!] : []),
-        ...toolCancelEvents,
-      ];
+      const eventsToAppend = buildRunCancellationEvents(event, shouldAppendRunCancel, toolCancelEvents, sessionId, targetRunId, targetCancelled, targetPreviousStatus, reason);
       if (eventsToAppend.length > 0) {
         appended = await this.appendRuntimeEventsInTransaction(client, eventsToAppend, tenantId);
         runCancelEventCreated = shouldAppendRunCancel;
@@ -1297,19 +1297,17 @@ export class PgRunStore implements RunStore {
     `, [runId, claimToken, state, patch, now]);
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
   }
-
-  async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
-    return this.queries.markStatus(runId, status, reason, metadataPatch);
-  }
+  async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> { return this.queries.markStatus(runId, status, reason, metadataPatch); }
   async activateStagedRun(runId: string): Promise<RunRecord | null> { return this.queries.activateStagedRun(runId); }
+  async claimPersistedInteractionResume(runId: string, expectedStatuses: readonly RunStatus[], reason: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.claimPersistedInteractionResume(runId, expectedStatuses, reason, metadataPatch); }
+
+  async listStagedPersistedInteractionResumes(limit?: number): Promise<RunRecord[]> { return this.queries.listStagedPersistedInteractionResumes(limit); }
+  async activatePersistedInteractionResume(runId: string, claim: Record<string, unknown>, metadataPatch?: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.activatePersistedInteractionResume(runId, claim, metadataPatch); }
+  async rollbackPersistedInteractionResume(runId: string, claim: Record<string, unknown>, waitingStatus: 'waiting_user' | 'waiting_approval', reason?: string): Promise<RunRecord | null> { return this.queries.rollbackPersistedInteractionResume(runId, claim, waitingStatus, reason); }
   async stagePendingRun(runId: string): Promise<RunRecord | null> { return this.queries.stagePendingRun(runId); }
   async cancelPendingTaskboardRun(runId: string, reason: string): Promise<RunRecord | null> { return this.queries.cancelPendingTaskboardRun(runId, reason); }
-  async markStatusIfCurrent(runId: string, expectedStatuses: readonly RunStatus[], nextStatus: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
-    return this.queries.markStatusIfCurrent(runId, expectedStatuses, nextStatus, reason, metadataPatch);
-  }
-  async patchMetadata(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> {
-    return this.queries.patchMetadata(runId, metadataPatch);
-  }
+  async markStatusIfCurrent(runId: string, expectedStatuses: readonly RunStatus[], nextStatus: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> { return this.queries.markStatusIfCurrent(runId, expectedStatuses, nextStatus, reason, metadataPatch); }
+  async patchMetadata(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.patchMetadata(runId, metadataPatch); }
   async get(runId: string): Promise<RunRecord | null> { return this.queries.get(runId); }
   async cancelActiveByUser(userId: string, reason: string): Promise<number> { return this.queries.cancelActiveByUser(userId, reason); }
   async cancelActiveByTenant(tenantId: string, reason: string): Promise<number> { return this.queries.cancelActiveByTenant(tenantId, reason); }

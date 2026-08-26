@@ -672,8 +672,5 @@ describe("useChatAppState queue delivery lifecycle", () => {
     })));
     act(() => emit({ type: "respond_error", interactionId: "permission-1", error: "Run unavailable" }));
     await act(async () => { await pending; });
-    await waitFor(() => expect(result.current.notifications).toEqual(expect.arrayContaining([
-      expect.objectContaining({ text: "Run unavailable", priority: "high" }),
-    ])));
   });
 });

@@ -1,15 +1,13 @@
 import { randomUUID } from 'node:crypto';
-
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { PgEventStore } from '../runtime/pgEventStore.js';
 import { PgRunStore } from '../runtime/runStore.js';
 import { recoverRunningToolInvocations } from '../runtime/toolInvocationRecovery.js';
 import { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import { cleanupSteeringPgTest, describePg, testPgUrl, waitForBlockedQuery } from './pgRunStoreSteering.pg.testHelpers.js';
-
+import { assertStagedInteractionRecovery } from './pgRunStoreStagedInteraction.testHelper.js';
 const { Pool } = pg;
 
 describePg('PgRunStore steering PostgreSQL contract', () => {
@@ -77,6 +75,8 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       status: 'running',
     });
   });
+
+  it('staged interaction claim 可被协调扫描并以 claim CAS 激活', () => assertStagedInteractionRecovery(store));
 
   it('同会话后入队 run 不能越过更早的 pending run', async () => {
     await store.enqueueUserMessage({

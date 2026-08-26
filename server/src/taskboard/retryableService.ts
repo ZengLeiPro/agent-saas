@@ -592,6 +592,11 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return this.target.claimExecutionDispatch(runId, leaseId);
   }
 
+  async runExecutionDispatchGate(runId: string, leaseId: string, operation: () => Promise<void>): Promise<boolean> {
+    await this.init();
+    return this.target.runExecutionDispatchGate(runId, leaseId, operation);
+  }
+
   async markExecutionDispatchSucceeded(runId: string, leaseId: string): Promise<boolean> {
     await this.init();
     return this.target.markExecutionDispatchSucceeded(runId, leaseId);

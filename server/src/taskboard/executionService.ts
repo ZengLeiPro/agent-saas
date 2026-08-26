@@ -41,6 +41,7 @@ import { resolveExecutionModelRef } from './executionFields.js';
 import { absorbLegacyIntegrationRuntimeCompletion } from './integrationMigrationCompletion.js';
 import { dispatchRetryDelayMs, limitComment, limitError } from './executionHelpers.js';
 import { buildExecutionPrompt } from './executionPrompt.js';
+import { consumeTaskboardWorkflowCancellation } from './workflowCancellation.js';
 export { executionWritebackInstructions } from './executionPrompt.js';
 import {
   writeTaskboardSessionTitle,
@@ -78,7 +79,7 @@ export interface TaskboardExecutionCoordinatorOptions extends TaskboardSessionGr
   scheduler: Pick<RuntimeScheduler,
     'enqueue' | 'enqueueCreateOnly' | 'stagePendingRun' | 'activateCreatedRun' | 'cancelPendingTaskboardRun'
   >;
-  runStore: Pick<RunStore, 'get'> & Partial<Pick<RunStore, 'markStatus' | 'markStatusIfCurrent'>>;
+  runStore: Pick<RunStore, 'get'> & Partial<Pick<RunStore, 'cancelSteeringBeforeDispatchBySessionWithEvent'>>;
   sessionCatalog: SessionCatalog;
   eventStore: EventStore;
   agentCwd: string;
@@ -427,25 +428,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     const cancellations = await this.options.store.claimWorkflowCancellations?.(20) ?? [];
     for (const cancellation of cancellations) {
       try {
-        if (this.options.runStore.markStatusIfCurrent) {
-          await this.options.runStore.markStatusIfCurrent(
-            cancellation.runId,
-            ['pending', 'running', 'waiting_user', 'waiting_approval'],
-            'cancelled',
-            cancellation.reason,
-            { taskboardWorkflowFenced: true },
-          );
-        } else if (this.options.runStore.markStatus) {
-          await this.options.runStore.markStatus(
-            cancellation.runId,
-            'cancelled',
-            cancellation.reason,
-            { taskboardWorkflowFenced: true },
-          );
-        } else {
-          throw new Error('RunStore cancellation is unavailable');
-        }
-        await this.options.store.finishWorkflowCancellation?.(cancellation.id);
+        await consumeTaskboardWorkflowCancellation(this.options.runStore, this.options.store, cancellation);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await this.options.store.finishWorkflowCancellation?.(cancellation.id, message);
@@ -546,7 +529,16 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
 
     try {
       const canonical = canonicalizeDispatchPayload(dispatch, this.options.agentCwd);
-      let run = await this.options.scheduler.enqueueCreateOnly(canonical.run);
+      let run: RunRecord | undefined;
+      const admitted = await this.options.store.runExecutionDispatchGate(
+        dispatch.runId,
+        dispatch.leaseId,
+        async () => { run = await this.options.scheduler.enqueueCreateOnly(canonical.run); },
+      );
+      if (!admitted || !run) {
+        this.options.logger?.info(`Taskboard execution dispatch fenced before run creation: run=${dispatch.runId}`);
+        return true;
+      }
       if (isLegacyPendingTaskboardRun(run)) {
         run = await this.options.scheduler.stagePendingRun(run.runId);
       }
@@ -569,6 +561,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
           }
         }
         const activated = await this.options.scheduler.activateCreatedRun(run.runId);
+        if (!activated) throw new Error(`Taskboard run activation lost: ${run.runId}`);
         assertDispatchedRun(activated, dispatch, canonical.run);
       }
       const marked = await this.options.store.markExecutionDispatchSucceeded(dispatch.runId, dispatch.leaseId);

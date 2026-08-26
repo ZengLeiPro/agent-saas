@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -82,7 +82,37 @@ describe('materializeCandidateObjects', () => {
     })).resolves.toMatchObject({ headOid: source.newOid });
   });
 
-  it('rejects a target loose object whose path OID does not match its content', async () => {
+  it.each(['pack', 'idx'] as const)('rejects a pre-existing damaged same-name %s file', async (extension) => {
+    const source = await repository();
+    const treeOid = await git(source.root, ['rev-parse', `${source.newOid}^{tree}`]);
+    const workspace = await mkdtemp(join(tmpdir(), 'damaged-pack-workspace-'));
+    roots.push(workspace);
+    const target = join(workspace, 'agent-saas');
+    await mkdir(target);
+    await git(target, ['init']);
+    const input = {
+      sourceRepositoryPath: source.root,
+      workspaceRoot: workspace,
+      repositoryName: 'agent-saas',
+      baseOid: source.oldOid,
+      headOid: source.newOid,
+      treeOid,
+    };
+    await materializeCandidateObjects(input);
+
+    const packDirectory = join(target, '.git', 'objects', 'pack');
+    const name = (await readdir(packDirectory)).find((entry) => entry.endsWith(`.${extension}`));
+    expect(name).toBeDefined();
+    const damaged = join(packDirectory, name!);
+    await writeFile(damaged, 'pre-existing damaged same-name sentinel\n');
+
+    await expect(materializeCandidateObjects(input)).rejects.toMatchObject({
+      code: 'unsafe_git_metadata', stage: 'target_publish',
+    });
+    expect(await readFile(damaged, 'utf8')).toBe('pre-existing damaged same-name sentinel\n');
+  });
+
+  it('ignores a poisoned target loose object because target objects are never Git inputs', async () => {
     const source = await repository();
     await git(source.root, ['commit', '--allow-empty', '-m', 'candidate']);
     const headOid = await git(source.root, ['rev-parse', 'HEAD']);
@@ -110,7 +140,7 @@ describe('materializeCandidateObjects', () => {
       baseOid: source.newOid,
       headOid,
       treeOid,
-    })).rejects.toMatchObject({ code: 'materialization_failed', stage: 'pack_index' });
+    })).resolves.toMatchObject({ baseOid: source.newOid, headOid, treeOid });
   });
 
   it('imports both exact tips when the authoritative base advanced beyond the PR head', async () => {
@@ -147,6 +177,200 @@ describe('materializeCandidateObjects', () => {
     expect(await git(target, ['cat-file', '-t', baseOid])).toBe('commit');
     expect(await git(target, ['cat-file', '-t', headOid])).toBe('commit');
     await expect(git(target, ['fsck', '--connectivity-only', '--no-dangling', baseOid, headOid])).resolves.toBe('');
+  });
+
+  it('uses the trusted candidate snapshot after a source symlink replacement', async () => {
+    const source = await repository();
+    const replacement = await repository();
+    const treeOid = await git(source.root, ['rev-parse', `${source.newOid}^{tree}`]);
+    const workspace = await mkdtemp(join(tmpdir(), 'candidate-workspace-'));
+    roots.push(workspace);
+    const target = join(workspace, 'agent-saas');
+    await mkdir(target);
+    await git(target, ['init']);
+    const movedSource = `${source.root}-trusted-snapshot`;
+
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root,
+      workspaceRoot: workspace,
+      repositoryName: 'agent-saas',
+      baseOid: source.oldOid,
+      headOid: source.newOid,
+      treeOid,
+      onTrustedCandidateMaterialized: async (trustedRepositoryPath) => {
+        expect((await stat(trustedRepositoryPath)).mode & 0o777).toBe(0o700);
+        await rename(source.root, movedSource);
+        roots.push(movedSource);
+        await symlink(replacement.root, source.root);
+      },
+    })).resolves.toMatchObject({ baseOid: source.oldOid, headOid: source.newOid, treeOid });
+
+    expect(await git(target, ['cat-file', '-t', source.oldOid])).toBe('commit');
+    expect(await git(target, ['cat-file', '-t', source.newOid])).toBe('commit');
+  });
+
+  it('does not import objects outside the requested base/head closure', async () => {
+    const source = await repository();
+    await git(source.root, ['checkout', '-b', 'outside', source.oldOid]);
+    await writeFile(join(source.root, 'outside.txt'), 'outside closure\n');
+    await git(source.root, ['add', 'outside.txt']);
+    await git(source.root, ['commit', '-m', 'outside candidate closure']);
+    const outsideOid = await git(source.root, ['rev-parse', 'HEAD']);
+    const treeOid = await git(source.root, ['rev-parse', `${source.newOid}^{tree}`]);
+    const workspace = await mkdtemp(join(tmpdir(), 'closure-candidate-workspace-'));
+    roots.push(workspace);
+    const target = join(workspace, 'agent-saas');
+    await mkdir(target);
+    await git(target, ['init']);
+
+    await materializeCandidateObjects({
+      sourceRepositoryPath: source.root,
+      workspaceRoot: workspace,
+      repositoryName: 'agent-saas',
+      baseOid: source.oldOid,
+      headOid: source.newOid,
+      treeOid,
+    });
+
+    await expect(git(target, ['cat-file', '-e', `${outsideOid}^{commit}`])).rejects.toThrow();
+  });
+
+  it('fails closed without touching sentinels when objects/pack or info/alternates changes after binding', async () => {
+    const source = await repository();
+    const treeOid = await git(source.root, ['rev-parse', `${source.newOid}^{tree}`]);
+    const workspace = await mkdtemp(join(tmpdir(), 'raced-candidate-workspace-'));
+    const sentinel = await mkdtemp(join(tmpdir(), 'candidate-object-sentinel-'));
+    roots.push(workspace, sentinel);
+    const target = join(workspace, 'agent-saas');
+    await mkdir(target);
+    await git(target, ['init']);
+    const sentinelMarker = join(sentinel, 'sentinel');
+    await writeFile(sentinelMarker, 'must stay untouched\n');
+
+    const objectDirectory = join(target, '.git', 'objects');
+    const packDirectory = join(objectDirectory, 'pack');
+    const movedPackDirectory = join(objectDirectory, 'pack-before-race');
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root, workspaceRoot: workspace, repositoryName: 'agent-saas',
+      baseOid: source.oldOid, headOid: source.newOid, treeOid,
+      onWorkspaceObjectDirectoryBound: async (boundPath) => {
+        expect(boundPath).toBe(objectDirectory);
+        await rename(packDirectory, movedPackDirectory);
+        await symlink(sentinel, packDirectory);
+      },
+    })).rejects.toMatchObject({ code: 'materialization_failed', stage: 'target_binding' });
+    expect(await readFile(sentinelMarker, 'utf8')).toBe('must stay untouched\n');
+    await rm(packDirectory);
+    await rename(movedPackDirectory, packDirectory);
+
+    const detachedPackDirectory = join(objectDirectory, 'pack-detached-after-bind');
+    const replacementMarker = 'replacement-directory-sentinel';
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root, workspaceRoot: workspace, repositoryName: 'agent-saas',
+      baseOid: source.oldOid, headOid: source.newOid, treeOid,
+      onWorkspacePackDirectoryBound: async (boundPath) => {
+        expect(boundPath).toBe(packDirectory);
+        await rename(packDirectory, detachedPackDirectory);
+        await mkdir(packDirectory);
+        await writeFile(join(packDirectory, replacementMarker), 'must stay untouched\n');
+      },
+    })).rejects.toMatchObject({ code: 'unsafe_git_metadata', stage: 'final_binding' });
+    expect(await readdir(packDirectory)).toEqual([replacementMarker]);
+    expect(await readFile(join(packDirectory, replacementMarker), 'utf8')).toBe('must stay untouched\n');
+    await rm(packDirectory, { recursive: true });
+    await rename(detachedPackDirectory, packDirectory);
+
+    const alternates = join(objectDirectory, 'info', 'alternates');
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root, workspaceRoot: workspace, repositoryName: 'agent-saas',
+      baseOid: source.oldOid, headOid: source.newOid, treeOid,
+      onWorkspaceObjectDirectoryBound: async () => {
+        await symlink(sentinel, alternates);
+      },
+    })).rejects.toMatchObject({ code: 'alternates_forbidden', stage: 'final_binding' });
+    expect(await readFile(sentinelMarker, 'utf8')).toBe('must stay untouched\n');
+    await rm(alternates);
+  });
+
+  it('never follows source .git or target repository replacements after binding their trusted roots', async () => {
+    const source = await repository();
+    const treeOid = await git(source.root, ['rev-parse', `${source.newOid}^{tree}`]);
+    const sentinel = await mkdtemp(join(tmpdir(), 'parent-race-sentinel-'));
+    const workspace = await mkdtemp(join(tmpdir(), 'parent-race-workspace-'));
+    roots.push(sentinel, workspace);
+    const marker = join(sentinel, 'sentinel');
+    await writeFile(marker, 'must stay untouched\n');
+    const target = join(workspace, 'agent-saas');
+    await mkdir(target);
+    await git(target, ['init']);
+
+    const movedGit = join(source.root, '.git-before-race');
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root, workspaceRoot: workspace, repositoryName: 'agent-saas',
+      baseOid: source.oldOid, headOid: source.newOid, treeOid,
+      onSourceRepositoryRootBound: async () => {
+        await rename(join(source.root, '.git'), movedGit);
+        await symlink(sentinel, join(source.root, '.git'));
+      },
+    })).rejects.toMatchObject({ code: 'unsafe_git_metadata', stage: 'source_snapshot' });
+    expect(await readFile(marker, 'utf8')).toBe('must stay untouched\n');
+    await rm(join(source.root, '.git'));
+    await rename(movedGit, join(source.root, '.git'));
+
+    const movedTarget = `${target}-before-race`;
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root, workspaceRoot: workspace, repositoryName: 'agent-saas',
+      baseOid: source.oldOid, headOid: source.newOid, treeOid,
+      onWorkspaceRootBound: async () => {
+        await rename(target, movedTarget);
+        await symlink(sentinel, target);
+      },
+    })).rejects.toMatchObject({ code: 'unsafe_git_metadata', stage: 'target_binding' });
+    expect(await readFile(marker, 'utf8')).toBe('must stay untouched\n');
+    await rm(target);
+    await rename(movedTarget, target);
+  });
+
+  it('rejects any object injected outside the candidate closure in trusted.git', async () => {
+    const source = await repository();
+    const treeOid = await git(source.root, ['rev-parse', `${source.newOid}^{tree}`]);
+    const workspace = await mkdtemp(join(tmpdir(), 'trusted-closure-workspace-'));
+    roots.push(workspace);
+    const target = join(workspace, 'agent-saas');
+    await mkdir(target);
+    await git(target, ['init']);
+    const outsider = join(workspace, 'outside-object.txt');
+    await writeFile(outsider, 'not in candidate closure\n');
+
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root, workspaceRoot: workspace, repositoryName: 'agent-saas',
+      baseOid: source.oldOid, headOid: source.newOid, treeOid,
+      onTrustedCandidateMaterialized: async (trustedRepositoryPath) => {
+        await git(trustedRepositoryPath, ['hash-object', '-w', outsider]);
+      },
+    })).rejects.toMatchObject({ code: 'object_missing', stage: 'trusted_pack' });
+  });
+
+  it('rejects source info/alternates before any Git command can consume it', async () => {
+    const source = await repository();
+    const treeOid = await git(source.root, ['rev-parse', `${source.newOid}^{tree}`]);
+    const sentinel = await mkdtemp(join(tmpdir(), 'source-alternate-sentinel-'));
+    roots.push(sentinel);
+    const marker = join(sentinel, 'sentinel');
+    await writeFile(marker, 'must stay untouched\n');
+    await mkdir(join(source.root, '.git', 'objects', 'info'), { recursive: true });
+    await writeFile(join(source.root, '.git', 'objects', 'info', 'alternates'), `${sentinel}\n`);
+    const workspace = await mkdtemp(join(tmpdir(), 'source-alternate-workspace-'));
+    roots.push(workspace);
+    const target = join(workspace, 'agent-saas');
+    await mkdir(target);
+    await git(target, ['init']);
+
+    await expect(materializeCandidateObjects({
+      sourceRepositoryPath: source.root, workspaceRoot: workspace, repositoryName: 'agent-saas',
+      baseOid: source.oldOid, headOid: source.newOid, treeOid,
+    })).rejects.toMatchObject({ code: 'alternates_forbidden' });
+    expect(await readFile(marker, 'utf8')).toBe('must stay untouched\n');
   });
 
   it('rejects an unverified candidate tree before dispatch', async () => {
@@ -186,6 +410,39 @@ describe('withMaterializedWorkspaceCommit', () => {
     });
     expect(result).toBe('pushed');
     await expect(readFile(join(temporaryRoot, 'repository.git', 'HEAD'), 'utf8')).rejects.toThrow();
+  });
+
+  it('fails before Git reads a workspace pack or alternates replaced after binding', async () => {
+    const source = await repository();
+    const sentinel = await mkdtemp(join(tmpdir(), 'workspace-read-sentinel-'));
+    roots.push(sentinel);
+    const marker = join(sentinel, 'sentinel');
+    await writeFile(marker, 'must stay untouched\n');
+    const objectDirectory = join(source.root, '.git', 'objects');
+    const packDirectory = join(objectDirectory, 'pack');
+    const movedPackDirectory = join(objectDirectory, 'pack-before-race');
+
+    await expect(withMaterializedWorkspaceCommit({
+      workspaceRoot: source.root, repositoryName: 'repository',
+      expectedOldOid: source.oldOid, commitOid: source.newOid,
+      onWorkspaceObjectDirectoryBound: async () => {
+        await rename(packDirectory, movedPackDirectory);
+        await symlink(sentinel, packDirectory);
+      },
+    }, async () => undefined)).rejects.toMatchObject({ code: 'unsafe_git_metadata' });
+    expect(await readFile(marker, 'utf8')).toBe('must stay untouched\n');
+    await rm(packDirectory);
+    await rename(movedPackDirectory, packDirectory);
+
+    await expect(withMaterializedWorkspaceCommit({
+      workspaceRoot: source.root, repositoryName: 'repository',
+      expectedOldOid: source.oldOid, commitOid: source.newOid,
+      onWorkspaceObjectDirectoryBound: async () => {
+        await symlink(sentinel, join(objectDirectory, 'info', 'alternates'));
+      },
+    }, async () => undefined)).rejects.toMatchObject({ code: 'alternates_forbidden' });
+    expect(await readFile(marker, 'utf8')).toBe('must stay untouched\n');
+    await rm(join(objectDirectory, 'info', 'alternates'));
   });
 
   it('materializes a controlled rebase while retaining the diverged old head for exact lease checks', async () => {

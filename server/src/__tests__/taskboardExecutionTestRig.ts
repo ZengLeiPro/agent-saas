@@ -152,6 +152,10 @@ export function makeRig(
         leaseId,
       };
     }),
+    runExecutionDispatchGate: vi.fn(async (_runId: string, _leaseId: string, operation: () => Promise<void>) => {
+      await operation();
+      return true;
+    }),
     markExecutionDispatchSucceeded: vi.fn(async (runId: string) => {
       dispatches.delete(runId);
       return true;

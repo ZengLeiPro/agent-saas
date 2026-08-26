@@ -18,7 +18,7 @@ server/src/__tests__/sessionsRoutesMetaOnly.test.ts	814	test
 server/src/__tests__/skillsRouterTenantIsolation.test.ts	833	test
 server/src/__tests__/taskboardStore.pg.test.ts	818	test
 server/src/__tests__/toolRuntime.test.ts	1277	test
-server/src/__tests__/webChannelCoverage.test.ts	1679	test
+server/src/__tests__/webChannelCoverage.test.ts	1669	test
 server/src/__tests__/webChannelExecutionTarget.test.ts	801	test
 server/src/__tests__/webChannelReconnect.test.ts	890	test
 server/src/__tests__/workflowLibraryV3.test.ts	1062	test
@@ -26,7 +26,7 @@ server/src/__tests__/wsEventProcessor.test.ts	830	test
 server/src/agent/toolRuntime.ts	1560	production
 server/src/app/config.ts	1431	production
 server/src/app/runtime.ts	3116	production
-server/src/channels/web/channel.ts	4383	production
+server/src/channels/web/channel.ts	4382	production
 server/src/cron/service.ts	1084	production
 server/src/data/billing/pgBillingStore.ts	2319	production
 server/src/data/transcripts/parse.ts	2019	production
@@ -37,7 +37,7 @@ server/src/routes/skills.ts	1403	production
 server/src/runtime/rawAgentLoop.ts	3959	production
 server/src/runtime/rawRuntimeRunDispatch.ts	3235	production
 server/src/runtime/responsesApiAdapter.ts	2007	production
-server/src/runtime/runStore.ts	1413	production
+server/src/runtime/runStore.ts	1411	production
 server/src/runtime/types.ts	1131	production
 server/src/taskboard/store.ts	1064	production
 shared/src/lib/wsEventProcessor.test.ts	1122	test
@@ -52,5 +52,5 @@ web/src/components/ModelManager/index.tsx	1366	production
 web/src/components/RuntimeOperationsManager/index.tsx	1219	production
 web/src/components/SettingsCenter/SettingsModal.tsx	1092	production
 web/src/components/TenantManager/index.tsx	1222	production
-web/src/hooks/useChatAppState.ts	3167	production
+web/src/hooks/useChatAppState.ts	3159	production
 web/src/hooks/useSession.ts	1075	production

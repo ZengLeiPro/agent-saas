@@ -15,9 +15,9 @@ const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
-describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', () => {
+describePg('Governance Schema V33 PostgreSQL 升级、约束与事务回滚', () => {
   const prefix = `govv17_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
-  const v27RollbackPrefix = `v27rb_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+  const v32RollbackPrefix = `v32rb_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   let pool: InstanceType<typeof Pool>;
 
   beforeAll(() => {
@@ -31,7 +31,7 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
         SELECT tablename FROM pg_tables
         WHERE schemaname=current_schema()
           AND (LEFT(tablename,LENGTH($1))=$1 OR LEFT(tablename,LENGTH($2))=$2)
-      `, [prefix, v27RollbackPrefix]);
+      `, [prefix, v32RollbackPrefix]);
       for (const row of tables.rows) {
         await pool.query(`DROP TABLE IF EXISTS "${row.tablename}" CASCADE`);
       }
@@ -41,7 +41,7 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
         JOIN pg_namespace n ON n.oid=p.pronamespace
         WHERE n.nspname=current_schema()
           AND (LEFT(p.proname,LENGTH($1))=$1 OR LEFT(p.proname,LENGTH($2))=$2)
-      `, [prefix, v27RollbackPrefix]);
+      `, [prefix, v32RollbackPrefix]);
       for (const row of functions.rows) {
         await pool.query(`DROP FUNCTION IF EXISTS "${row.proname}"(${row.args}) CASCADE`);
       }
@@ -50,7 +50,7 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
     }
   }, 30_000);
 
-  it('V17 中途失败回滚到 V16，重试升级到 V24 并建立 DWS、Context、租户隔离与 outbox trigger', async () => {
+  it('V17 中途失败回滚到 V16，重试升级到 V33 并建立 DWS、Context、租户隔离与 outbox trigger', async () => {
     let injected = false;
     const failingPool = {
       connect: async () => {
@@ -95,7 +95,7 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
       `SELECT version FROM ${prefix}_governance_schema_versions ORDER BY version`,
     );
     expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
-      Array.from({ length: 28 }, (_, index) => index + 1),
+      Array.from({ length: 33 }, (_, index) => index + 1),
     );
     const v18Tables = await pool.query<{ name: string | null }>(
       `SELECT to_regclass($1) AS name UNION ALL SELECT to_regclass($2) UNION ALL SELECT to_regclass($3) UNION ALL SELECT to_regclass($4)`,
@@ -263,7 +263,7 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
     expect(Number(columns.rows[0]?.count)).toBe(0);
     await new PgGovernanceMigrationRunner(pool, v22Prefix).run();
     const retried = await pool.query<{ version: number }>(`SELECT MAX(version) AS version FROM ${v22Prefix}_governance_schema_versions`);
-    expect(Number(retried.rows[0]?.version)).toBe(28);
+    expect(Number(retried.rows[0]?.version)).toBe(33);
   }, 30_000);
 
   it('V18 遗留 org_memory 空元数据可升级，V23 已标记且旧 ledger 存在时 V24 仍幂等', async () => {
@@ -338,7 +338,7 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
       SELECT MAX(version)::integer AS version,COUNT(*) FILTER (WHERE version=23)::text AS count
       FROM ${legacyPrefix}_governance_schema_versions
     `);
-    expect(versions.rows[0]).toMatchObject({ version: 28, count: '1' });
+    expect(versions.rows[0]).toMatchObject({ version: 33, count: '1' });
     await expect(pool.query(`INSERT INTO ${commits}
       (tenant_id,operation,idempotency_key,nonce_digest,request_digest,target_id,actor_user_id,status)
       VALUES ('tenant-a','create','idem-1','nonce-2','request-2','target-2','admin-1','running')`)).rejects.toThrow();
@@ -479,7 +479,7 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
     const retried = await pool.query<{ version: number }>(
       `SELECT MAX(version) AS version FROM ${v18Prefix}_governance_schema_versions`,
     );
-    expect(Number(retried.rows[0]?.version)).toBe(28);
+    expect(Number(retried.rows[0]?.version)).toBe(33);
     const unresolvedAfter = await pool.query<{ is_nullable: string; column_default: string }>(`
       SELECT is_nullable,column_default FROM information_schema.columns
       WHERE table_schema=current_schema() AND table_name=$1 AND column_name='unresolved_items_json'
@@ -510,8 +510,8 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
     expect(assignmentChecks.rows[0]?.definitions.join(' ')).toContain('connector');
   });
 
-  it('V27 expand 第二条 DDL 失败时整版回滚，重试后保留 legacy writer 并建立 requester 表', async () => {
-    const v27Prefix = v27RollbackPrefix;
+  it('V32 requester expand 第二条 DDL 失败时整版回滚，重试后保留 legacy writer 并升级到 V33', async () => {
+    const v32Prefix = v32RollbackPrefix;
     let injected = false;
     const failingPool = {
       connect: async () => {
@@ -519,9 +519,9 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
         return {
           query: async (text: string, values?: readonly unknown[]) => {
             const normalized = text.replace(/\s+/g, ' ').trim();
-            if (!injected && normalized.includes(`${v27Prefix}_agent_dws_requester_conversation_bindings_tenant_idx`)) {
+            if (!injected && normalized.includes(`${v32Prefix}_agent_dws_requester_conversation_bindings_tenant_idx`)) {
               injected = true;
-              throw new Error('INJECTED_V27_FAILURE');
+              throw new Error('INJECTED_V32_FAILURE');
             }
             return client.query(text, values as never);
           },
@@ -530,32 +530,32 @@ describePg('Governance Schema V24 PostgreSQL 升级、约束与事务回滚', ()
       },
     } as unknown as GovernancePgPool;
 
-    await expect(new PgGovernanceMigrationRunner(failingPool, v27Prefix).run())
-      .rejects.toThrow('INJECTED_V27_FAILURE');
+    await expect(new PgGovernanceMigrationRunner(failingPool, v32Prefix).run())
+      .rejects.toThrow('INJECTED_V32_FAILURE');
     const rolledBack = await pool.query<{ version: number }>(
-      `SELECT MAX(version) AS version FROM ${v27Prefix}_governance_schema_versions`,
+      `SELECT MAX(version) AS version FROM ${v32Prefix}_governance_schema_versions`,
     );
-    expect(Number(rolledBack.rows[0]?.version)).toBe(26);
+    expect(Number(rolledBack.rows[0]?.version)).toBe(31);
     const requesterTableBeforeRetry = await pool.query<{ name: string | null }>(
-      'SELECT to_regclass($1) AS name', [`${v27Prefix}_agent_dws_requester_conversation_bindings`],
+      'SELECT to_regclass($1) AS name', [`${v32Prefix}_agent_dws_requester_conversation_bindings`],
     );
     expect(requesterTableBeforeRetry.rows[0]?.name).toBeNull();
 
-    await new PgGovernanceMigrationRunner(pool, v27Prefix).run();
+    await new PgGovernanceMigrationRunner(pool, v32Prefix).run();
     const retried = await pool.query<{ version: number }>(
-      `SELECT MAX(version) AS version FROM ${v27Prefix}_governance_schema_versions`,
+      `SELECT MAX(version) AS version FROM ${v32Prefix}_governance_schema_versions`,
     );
-    expect(Number(retried.rows[0]?.version)).toBe(28);
+    expect(Number(retried.rows[0]?.version)).toBe(33);
     const tables = await pool.query<{ legacy: string | null; requester: string | null }>(
       'SELECT to_regclass($1) AS legacy,to_regclass($2) AS requester',
       [
-        `${v27Prefix}_agent_dws_conversation_bindings`,
-        `${v27Prefix}_agent_dws_requester_conversation_bindings`,
+        `${v32Prefix}_agent_dws_conversation_bindings`,
+        `${v32Prefix}_agent_dws_requester_conversation_bindings`,
       ],
     );
     expect(tables.rows[0]).toEqual({
-      legacy: `${v27Prefix}_agent_dws_conversation_bindings`,
-      requester: `${v27Prefix}_agent_dws_requester_conversation_bindings`,
+      legacy: `${v32Prefix}_agent_dws_conversation_bindings`,
+      requester: `${v32Prefix}_agent_dws_requester_conversation_bindings`,
     });
   }, 30_000);
 

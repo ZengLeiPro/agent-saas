@@ -288,6 +288,30 @@ export async function finalizeMergedIntegrationAgent(
       || String(agent.merge_in_flight_review_head_oid ?? '') !== input.event.reviewHeadOid) {
       throw new TaskboardValidationError('Integration Agent changed during merge reconciliation', 'TASKBOARD_SUBJECT_STALE');
     }
+    const mergeReceipt = jsonObject(agent.merge_receipt);
+    const boundFacts = jsonObject(input.raw.providerFacts);
+    const boundRevision = jsonObject(input.raw.approvedRevision);
+    if (!mergeReceipt || String(mergeReceipt.providerRequestId ?? '') !== input.providerRequestId
+      || String(mergeReceipt.providerPullRequestId ?? '') !== input.expectedAgent.providerPullRequestId
+      || String(mergeReceipt.integrationBranch ?? '') !== input.expectedAgent.integrationBranch
+      || String(mergeReceipt.reviewHeadOid ?? '') !== input.event.reviewHeadOid
+      || String(mergeReceipt.reviewExecutionId ?? '') !== input.event.reviewExecutionId
+      || String(mergeReceipt.executionId ?? '') !== input.event.executionId
+      || String(mergeReceipt.runId ?? '') !== input.event.runId
+      || String(mergeReceipt.mergedCommitOid ?? '') !== input.mergedCommitOid
+      || !sameJson(mergeReceipt.raw, input.raw)
+      || String(input.raw.providerRequestId ?? '') !== input.providerRequestId
+      || String(input.raw.providerPullRequestId ?? '') !== input.expectedAgent.providerPullRequestId
+      || String(input.raw.mergedCommitOid ?? '') !== input.mergedCommitOid
+      || String(boundRevision?.headOid ?? '') !== input.event.reviewHeadOid
+      || String(boundFacts?.providerPullRequestId ?? '') !== input.expectedAgent.providerPullRequestId
+      || String(boundFacts?.headOid ?? '') !== input.event.reviewHeadOid
+      || String(boundFacts?.mergeCommitOid ?? '') !== input.mergedCommitOid
+      || String(boundFacts?.mergedTreeOid ?? '') !== String(boundRevision?.treeOid ?? '')
+      || String(boundFacts?.baseOid ?? '') !== String(boundRevision?.baseOid ?? '')
+      || boundFacts?.state !== 'merged') {
+      throw new TaskboardValidationError('Stored merge receipt is not bound to provider facts', 'TASKBOARD_MERGE_RECEIPT_CONFLICT');
+    }
     const sourcesResult = await client.query(
       `SELECT * FROM ${host.integrationSourcesTable}
         WHERE integration_task_id=$1
@@ -402,6 +426,14 @@ export async function finalizeMergedIntegrationAgent(
     );
     return rowToTask(taskResult.rows[0]!);
   });
+}
+
+function jsonObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 export async function withIntegrationTransaction<T>(

@@ -6,6 +6,8 @@ import {
   type ContextPgPool,
   type ContextTableNames,
 } from './migration.js';
+import { tableNames as contextPhase4TableNames } from '../phase4/migration.js';
+import { contextRetentionTableNames } from '../lifecycle/migration.js';
 import {
   ContextStoreError,
   type ContextCollection,
@@ -190,14 +192,90 @@ export interface ContextStoreOptions {
   tablePrefix?: string;
 }
 
+/** Durable receipt for a tenant-scoped Context hard delete. */
+export interface ContextTenantDeletionReport {
+  retentionReceiptsDeleted: number;
+  relationCandidatesDeleted: number;
+  entityLinksDeleted: number;
+  itemEvidenceDeleted: number;
+  profileFacetEvidenceDeleted: number;
+  reviewsDeleted: number;
+  derivedItemsDeleted: number;
+  profileFacetsDeleted: number;
+  entitiesDeleted: number;
+  consumersDeleted: number;
+  derivedOutboxDeleted: number;
+  outboxDeleted: number;
+  evidenceDeleted: number;
+  revisionsDeleted: number;
+  recordsDeleted: number;
+  partitionsDeleted: number;
+  collectionsDeleted: number;
+  sourcesDeleted: number;
+  totalDeleted: number;
+}
+
 export class ContextStore {
   readonly tables: ContextTableNames;
   private readonly agentDwsAccountsTable: string;
+  private readonly tablePrefix: string;
 
   constructor(private readonly options: ContextStoreOptions) {
-    const tablePrefix = contextTablePrefix(options.tablePrefix);
-    this.tables = contextTableNames(tablePrefix);
-    this.agentDwsAccountsTable = `${tablePrefix}_agent_dws_accounts`;
+    this.tablePrefix = contextTablePrefix(options.tablePrefix);
+    this.tables = contextTableNames(this.tablePrefix);
+    this.agentDwsAccountsTable = `${this.tablePrefix}_agent_dws_accounts`;
+  }
+
+  /**
+   * Permanently removes every Context Plane phase row for one tenant. The explicit
+   * reverse-FK order is required because phase 2/3/4 foreign keys intentionally
+   * do not all cascade. The transaction makes a failed cleanup auditable and
+   * leaves Context data intact for a retry.
+   */
+  async hardDeleteTenant(tenantId: string): Promise<ContextTenantDeletionReport> {
+    assertScope(tenantId);
+    const phase4 = contextPhase4TableNames(this.tablePrefix);
+    const retention = contextRetentionTableNames(this.tablePrefix);
+    const plan: Array<{ key: Exclude<keyof ContextTenantDeletionReport, 'totalDeleted'>; table: string }> = [
+      { key: 'retentionReceiptsDeleted', table: retention.receipts },
+      { key: 'relationCandidatesDeleted', table: phase4.relationCandidates },
+      { key: 'entityLinksDeleted', table: phase4.entityLinks },
+      { key: 'itemEvidenceDeleted', table: phase4.itemEvidence },
+      { key: 'profileFacetEvidenceDeleted', table: phase4.profileFacetEvidence },
+      { key: 'reviewsDeleted', table: phase4.reviews },
+      { key: 'derivedItemsDeleted', table: phase4.derivedItems },
+      { key: 'profileFacetsDeleted', table: phase4.profileFacets },
+      { key: 'entitiesDeleted', table: phase4.entities },
+      { key: 'consumersDeleted', table: phase4.consumers },
+      { key: 'derivedOutboxDeleted', table: phase4.derivedOutbox },
+      { key: 'outboxDeleted', table: this.tables.outbox },
+      { key: 'evidenceDeleted', table: this.tables.evidence },
+      { key: 'revisionsDeleted', table: this.tables.revisions },
+      { key: 'recordsDeleted', table: this.tables.records },
+      { key: 'partitionsDeleted', table: this.tables.partitions },
+      { key: 'collectionsDeleted', table: this.tables.collections },
+      { key: 'sourcesDeleted', table: this.tables.sources },
+    ];
+    const deleted = {} as Omit<ContextTenantDeletionReport, 'totalDeleted'>;
+    const client = await this.options.pool.connect();
+    let currentStep = 'BEGIN';
+    try {
+      await client.query('BEGIN');
+      for (const { key, table } of plan) {
+        currentStep = key;
+        const result = await client.query(`DELETE FROM ${table} WHERE tenant_id=$1`, [tenantId]);
+        deleted[key] = result.rowCount ?? 0;
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      const cause = error instanceof Error ? error.message : String(error);
+      throw new Error(`CONTEXT_TENANT_HARD_DELETE_FAILED tenant=${tenantId} step=${currentStep}: ${cause}`);
+    } finally {
+      client.release();
+    }
+    const totalDeleted = Object.values(deleted).reduce((total, count) => total + count, 0);
+    return { ...deleted, totalDeleted };
   }
 
   async createSource(input: CreateContextSourceInput): Promise<ContextSource> {

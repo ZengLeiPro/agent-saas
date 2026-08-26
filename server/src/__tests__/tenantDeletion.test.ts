@@ -145,5 +145,61 @@ describe('deleteTenantResources', () => {
     expect(existsSync(join(sharedDir, 'tenants', tenantId))).toBe(false);
     expect(existsSync(join(tenantSkillsRootDir, tenantId))).toBe(false);
     expect(existsSync(join(avatarsDir, `${deletedUser.id}.png`))).toBe(false);
+    expect(report.context).toMatchObject({ enabled: false, deletion: { totalDeleted: 0 } });
+    expect(report.residuals).toMatchObject({
+      users: 0,
+      runtime: { events: 0, cursors: 0, runs: 0, sessions: 0, tools: 0 },
+    });
+  });
+
+  it('hard-deletes Context data through the durable runtime database before deleting the tenant', async () => {
+    const tenantStore = new TenantStore(join(root, 'tenants.json'));
+    await tenantStore.ensureDefaultTenant();
+    await tenantStore.create({ id: tenantId, name: '待删组织', createdBy: 'admin' });
+    const userStore = new UserStore(join(root, 'users.json'));
+    const query = vi.fn(async (sql: string, _params?: unknown[]) => ({ rows: [], rowCount: sql.startsWith('DELETE FROM') ? 1 : 0 }));
+    const client = { query, release: vi.fn() };
+    const readonlyQuery = vi.fn(async (_sql: string) => ({ rows: [{ count: '0' }] }));
+    const runtimePgEventStore = {
+      pool: { connect: vi.fn(async () => client), query: readonlyQuery },
+      eventsTable: 'test_events',
+      listSessionIdsByTenant: vi.fn(async () => []),
+      deleteByTenant: vi.fn(async () => ({ events: 0, cursors: 0 })),
+    };
+    const runtimeRunStore = {
+      pool: { query: readonlyQuery }, runsTable: 'test_runs',
+      listSessionIdsByTenant: vi.fn(async () => []), deleteByTenant: vi.fn(async () => 0),
+    };
+    const runtimeSessionProjectionStore = {
+      pool: { query: readonlyQuery }, sessionsTable: 'test_sessions', deleteByTenant: vi.fn(async () => 0),
+    };
+    const runtimeToolInvocationStore = { deleteByTenant: vi.fn(async () => 0), countByTenant: vi.fn(async () => 0) };
+
+    const report = await deleteTenantResources({
+      tenantId,
+      tenantStore,
+      userStore,
+      runtimePgEventStore: runtimePgEventStore as never,
+      runtimeRunStore: runtimeRunStore as never,
+      runtimeSessionProjectionStore: runtimeSessionProjectionStore as never,
+      runtimeToolInvocationStore: runtimeToolInvocationStore as never,
+      agentCwd,
+      sharedDir,
+      tenantSkillsRootDir,
+      avatarsDir,
+    });
+
+    expect(report.context).toMatchObject({ enabled: true, deletion: { retentionReceiptsDeleted: 1, totalDeleted: 18, sourcesDeleted: 1 } });
+    expect(report.residuals.context.retentionReceiptsDeleted).toBe(0);
+    expect(report.residuals.runtime).toEqual({ events: 0, cursors: 0, runs: 0, sessions: 0, tools: 0 });
+    expect(readonlyQuery.mock.calls.map(([sql]) => String(sql))).toEqual(expect.arrayContaining([
+      expect.stringContaining('test_events'), expect.stringContaining('test_event_cursors'),
+      expect.stringContaining('test_runs'), expect.stringContaining('test_sessions'),
+    ]));
+    expect(runtimeToolInvocationStore.countByTenant).toHaveBeenCalledWith(tenantId);
+    expect(query.mock.calls[0]?.[0]).toBe('BEGIN');
+    expect(query.mock.calls.map(([sql]) => sql)).toContain('COMMIT');
+    expect(query.mock.calls.filter(([sql]) => String(sql).startsWith('DELETE FROM')).every(([, params]) => params?.[0] === tenantId)).toBe(true);
+    expect(tenantStore.findById(tenantId)).toBeUndefined();
   });
 });

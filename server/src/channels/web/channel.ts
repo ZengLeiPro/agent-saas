@@ -28,6 +28,7 @@ import type { AgentRunDispatch, AgentRunHooks } from '../../agent/types.js';
 import type { ExecutionTargetKind } from '../../agent/toolRuntime.js';
 import { toRunModelOptions } from '../../app/models.js';
 import { interactionStore } from './interactionStore.js';
+import { appendActiveInteractionResolved } from './activeInteractionPersistence.js';
 import { persistedInteractionAccessError } from './persistedInteractionAccess.js';
 import {
   buildChatMessageActivityDetail,
@@ -73,10 +74,8 @@ import {
   isPathWithinAnyDirectory,
   isPathWithinDirectory,
 } from '../../security/extraDirs.js';
-import { EventBackedApprovalStore } from '../../runtime/approvalStore.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../../runtime/fileEventStore.js';
 import type { EventStore, PlatformEvent } from '../../runtime/types.js';
-import { buildRuntimeReplayState } from '../../runtime/replay.js';
 import {
   DEFAULT_EXECUTION_CONFIG,
   resolveExecutionTarget,
@@ -86,24 +85,29 @@ import { deriveStableWorkspaceId } from '../../runtime/workspaceIdentity.js';
 import type { RunRecord } from '../../runtime/runStore.js';
 import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
 import { runtimeRunController } from '../../runtime/runController.js';
-import {
-  buildPendingInteractionsFromEvents,
-  normalizeInteractionResponse,
-} from '../../runtime/interactionProjection.js';
-// Keep bounded resume primitives and workspace plan discovery out of the channel orchestrator.
-// These helpers retain the existing policy constants and filesystem behavior.
+import { normalizeInteractionResponse } from '../../runtime/interactionProjection.js';
 import {
   approvalResumeSemaphore,
+  appendPersistedInteractionResolved,
+  claimPersistedInteractionResume,
+  failClosePersistedApproval,
+  findCanonicalPersistedApprovalResponse,
+  loadPersistedInteractionRecoveryState,
+  claimsMatch,
+  type PersistedInteractionClaimMetadata,
+  hasPersistedInteractionResumeClaim,
+  hasConsistentPathlessApprovalIdentity,
+  isPersistedInteractionClaim,
+  isPersistedInteractionClaimExpired,
+  persistedInteractionEventId,
   INTERACTIVE_PERMISSION_TOOLS,
-  readLatestPlanContent,
+  readLatestPlanContent, resolvePersistedAskUserResumeFallback, resumeTerminalPersistedAskUser,
   TERMINAL_RUN_STATUSES,
   VOICE_STT_TAG,
   wantsToolAutoApproval,
 } from './channelRuntimeHelpers.js';
-
 import { handleWebChannelEvents, type WebChannelEventTitleContext } from './channelEventHandler.js';
 import { bindChatAttachments } from './attachmentBinding.js';
-
 import { deriveSubmissionSessionId, resolveAuthoritativeSubmissionState } from './channelSubmissionHelpers.js';
 import type { ModelResolver, WebChannelRuntimeConfig } from './channelConfig.js';
 export type { ModelResolver } from './channelConfig.js';
@@ -1147,15 +1151,31 @@ export class WebChannel implements BaseChannel {
   }
 
   /** 处理 respond 消息（替代 POST /api/chat/respond） */
+  private sendRespond(client: WsClient, interactionId: string, clientAttemptId?: string, error?: string, canonicalResponse?: object): void { this.wsSend(client.ws, { type: error ? 'respond_error' : 'respond_ok', interactionId, ...(error ? { error } : {}), ...(typeof clientAttemptId === 'string' ? { clientAttemptId } : {}), ...(!error && canonicalResponse ? { response: normalizeInteractionResponse(canonicalResponse as Record<string, unknown>) as unknown as Record<string, unknown> } : {}) }); }
+
+  private async activatePersistedInteractionClaim(runId: string, claim: PersistedInteractionClaimMetadata['persistedInteractionResumeClaim'], metadataPatch?: Record<string, unknown>): Promise<boolean> {
+    const runtime = this.config.enqueueRuntime; if (!runtime?.scheduler.activateCreatedRun) return false;
+    if (await runtime.scheduler.activateCreatedRun(runId, claim, metadataPatch)) return true;
+    const current = await runtime.runStore.get(runId); return current?.status === 'pending' && current.metadata?.schedulerState === 'ready' && claimsMatch(current.metadata?.persistedInteractionResumeClaim, claim);
+  }
+  /** Fence the append immediately before it becomes durable. */
+  private async ownsPersistedInteractionClaim(runId: string, claim: PersistedInteractionClaimMetadata['persistedInteractionResumeClaim']): Promise<boolean> {
+    const current = await this.config.enqueueRuntime?.runStore.get(runId);
+    return current?.status === 'pending' && current.metadata?.schedulerState === 'staged' && claimsMatch(current.metadata?.persistedInteractionResumeClaim, claim);
+  }
+  private async rollbackPersistedInteractionClaim(runId: string, claim: PersistedInteractionClaimMetadata['persistedInteractionResumeClaim'], waitingStatus: 'waiting_user' | 'waiting_approval', reason: string): Promise<boolean> {
+    const rollback = this.config.enqueueRuntime?.runStore.rollbackPersistedInteractionResume;
+    return Boolean(rollback && await rollback.call(this.config.enqueueRuntime!.runStore, runId, claim, waitingStatus, reason));
+  }
   private handleRespond(client: WsClient, msg: WsRespondMessage): void {
-    const { interactionId, sessionId, action: _, ...response } = msg;
+    const { interactionId, sessionId, clientAttemptId, action: _, ...response } = msg;
     if (!interactionId) {
-      this.wsSend(client.ws, { type: 'respond_error', interactionId: '', error: 'interactionId is required' });
+      this.sendRespond(client, '', clientAttemptId, 'interactionId is required');
       return;
     }
     const tenantAccessError = this.tenantAccessErrorForClient(client);
     if (tenantAccessError) {
-      this.wsSend(client.ws, { type: 'respond_error', interactionId, error: tenantAccessError });
+      this.sendRespond(client, interactionId, clientAttemptId, tenantAccessError);
       return;
     }
 
@@ -1164,25 +1184,23 @@ export class WebChannel implements BaseChannel {
       ? this.sensitiveActionAccessError(client, { ownerUserId: pendingInteraction.userId })
       : this.anonymousBindingAccessError(client, pendingInteraction.boundWebSocket));
     if (actionAccessError) {
-      this.wsSend(client.ws, { type: 'respond_error', interactionId, error: actionAccessError });
+      this.sendRespond(client, interactionId, clientAttemptId, actionAccessError);
       return;
     }
 
-    void this.resolveInteraction(client, interactionId, response, typeof sessionId === 'string' ? sessionId : undefined);
+    void this.resolveInteraction(client, interactionId, response, typeof sessionId === 'string' ? sessionId : undefined, clientAttemptId).catch((error) => {
+      chatLogger.error(`interaction response failed interaction=${interactionId}: ${error instanceof Error ? error.message : String(error)}`);
+      this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response failed; please retry');
+    });
   }
 
-  private async resolveInteraction(
-    client: WsClient,
-    interactionId: string,
-    response: Record<string, unknown>,
-    fallbackSessionId?: string,
-  ): Promise<void> {
+  private async resolveInteraction(client: WsClient, interactionId: string, response: Record<string, unknown>, fallbackSessionId?: string, clientAttemptId?: string): Promise<void> {
     // 在 resolve 之前获取 sessionId（resolve 会删除 entry）
     const pendingInteraction = interactionStore.get(interactionId);
     const sessionId = pendingInteraction?.sessionId ?? interactionStore.getSessionId(interactionId);
     const orgAgentAccessError = this.orgAgentActionAccessError(client, pendingInteraction?.orgAgentId);
     if (orgAgentAccessError) {
-      this.wsSend(client.ws, { type: 'respond_error', interactionId, error: orgAgentAccessError });
+      this.sendRespond(client, interactionId, clientAttemptId, orgAgentAccessError);
       return;
     }
     if (
@@ -1193,36 +1211,36 @@ export class WebChannel implements BaseChannel {
       const sourceRun = await this.config.enqueueRuntime.runStore.get(pendingInteraction.runId);
       if (!sourceRun || TERMINAL_RUN_STATUSES.has(sourceRun.status)) {
         const reason = `源 run 不可恢复（${sourceRun?.status ?? 'missing'}），拒绝遗留审批`;
-        const closed = await this.tryResumePersistedInteraction(client, interactionId, { allow: false }, sessionId);
+        const closed = await this.tryResumePersistedInteraction(client, interactionId, { allow: false }, sessionId, clientAttemptId);
         interactionStore.discard(interactionId, reason);
         if (!closed) {
-          this.wsSend(client.ws, { type: 'respond_error', interactionId, error: '终态 Run 的遗留审批关闭失败' });
+          this.sendRespond(client, interactionId, clientAttemptId, '终态 Run 的遗留审批关闭失败');
         }
         return;
       }
     }
-    const resolved = interactionStore.resolve(interactionId, response);
+    let durableResponse = normalizeInteractionResponse(response);
+    if (pendingInteraction) {
+      if (!sessionId) { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response cannot be persisted without a session'); return; }
+      try {
+        const canonical = await appendActiveInteractionResolved({
+          sessionId, interactionId, pendingInteraction, response: durableResponse,
+          tenantId: this.eventStoreTenantForClient(client, undefined, pendingInteraction.userId) ?? undefined, userId: client.user?.sub,
+          runtimeEventStoreFor: this.config.runtimeEventStoreFor,
+        }); durableResponse = normalizeInteractionResponse(canonical.response as Record<string, unknown>);
+      } catch (error) {
+        chatLogger.warn(`active interaction persistence failed interaction=${interactionId}: ${error instanceof Error ? error.message : String(error)}`); this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response was not persisted; please retry'); return;
+      }
+    }
+    const resolved = interactionStore.resolve(interactionId, durableResponse);
     if (!resolved) {
-      const resumed = await this.tryResumePersistedInteraction(client, interactionId, response, fallbackSessionId);
+      const resumed = await this.tryResumePersistedInteraction(client, interactionId, durableResponse as Record<string, unknown>, fallbackSessionId, clientAttemptId);
       if (!resumed) {
-        this.wsSend(client.ws, { type: 'respond_error', interactionId, error: 'Interaction not found or expired' });
+        this.sendRespond(client, interactionId, clientAttemptId, 'Interaction not found or expired');
       }
       return;
     }
-    if (sessionId && pendingInteraction) {
-      await this.appendDurableWebCommand(sessionId, {
-        type: 'interaction_resolved',
-        sessionId,
-        ...(pendingInteraction.runId ? { runId: pendingInteraction.runId } : {}),
-        ...(pendingInteraction.toolCallId ? { toolCallId: pendingInteraction.toolCallId } : {}),
-        ...(pendingInteraction.invocationId ? { invocationId: pendingInteraction.invocationId } : {}),
-        interactionId,
-        interactionType: pendingInteraction.type,
-        userId: client.user?.sub,
-        response: normalizeInteractionResponse(response),
-      }, this.eventStoreTenantForClient(client, undefined, pendingInteraction.userId) ?? undefined);
-    }
-    this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+    this.sendRespond(client, interactionId, clientAttemptId, undefined, durableResponse);
 
     // 广播到同用户其他连接，让它们关闭弹窗
     if (sessionId && this.eventBus) {
@@ -1231,7 +1249,7 @@ export class WebChannel implements BaseChannel {
           this.eventBus!.emitUser(entry.userId, {
             type: 'interaction_resolved',
             sessionId,
-            interactionId,
+            interactionId, response: durableResponse,
           }, client.ws);
           break;
         }
@@ -1244,6 +1262,7 @@ export class WebChannel implements BaseChannel {
     interactionId: string,
     response: Record<string, unknown>,
     sessionId?: string,
+    clientAttemptId?: string,
   ): Promise<boolean> {
     if (!sessionId) return false;
     const transcriptPath = this.config.agentCwd ? await findTranscriptOrMetaPathBySessionId(sessionId) : null;
@@ -1255,31 +1274,26 @@ export class WebChannel implements BaseChannel {
     const persistedTenants = new Set([durableRun?.tenantId, sessionRecord?.tenantId, meta?.tenantId].filter((id): id is string => Boolean(id)));
     const ownerUserId = durableRun?.userId || sessionRecord?.userId || meta?.userId || undefined;
     const tenantId = persistedTenants.size <= 1 ? this.eventStoreTenantForClient(client, persistedTenants.values().next().value, ownerUserId) : null;
-    if (!tenantId) { this.wsSend(client.ws, { type: 'respond_error', interactionId, error: 'Access denied' }); return true; }
+    if (!tenantId) { this.sendRespond(client, interactionId, clientAttemptId, 'Access denied'); return true; }
     const release = await approvalResumeSemaphore.acquire();
-    let eventStore: EventStore;
-    let approvalStore: EventBackedApprovalStore;
-    let existingEvents: PlatformEvent[];
-    let pendingApprovalRunId: string | undefined;
-    let pendingAskUser: ReturnType<typeof buildPendingInteractionsFromEvents>[number] | undefined;
-    let hasPendingApproval: boolean;
+    let recoveryState: Awaited<ReturnType<typeof loadPersistedInteractionRecoveryState>>;
     try {
-      eventStore = this.config.runtimeEventStoreFor
-        ? this.config.runtimeEventStoreFor(transcriptPath ?? '', tenantId) : new FileEventStore(getRuntimeEventLogPath(transcriptPath!), tenantId);
-      approvalStore = new EventBackedApprovalStore(eventStore, sessionId, tenantId);
-      existingEvents = await eventStore.list(tenantId, sessionId);
-      const replayState = buildRuntimeReplayState(existingEvents, await approvalStore.list(sessionId), sessionId);
-      const pendingState = replayState.pendingApprovals.find(
-        (state) => state.approval?.id === interactionId,
-      );
-      hasPendingApproval = Boolean(pendingState);
-      pendingApprovalRunId = pendingState?.approval?.runId;
-      pendingAskUser = buildPendingInteractionsFromEvents(existingEvents, sessionId)
-        .find((interaction) => interaction.type === 'ask_user' && interaction.interactionId === interactionId);
+      recoveryState = await loadPersistedInteractionRecoveryState({
+        eventStoreFor: this.config.runtimeEventStoreFor,
+        transcriptPath,
+        tenantId,
+        sessionId, interactionId,
+      });
     } finally {
       release();
     }
-    if (!hasPendingApproval && !pendingAskUser) return false;
+    const { eventStore, approvalStore, existingEvents, pendingApprovalRunId, pendingAskUser, hasPendingApproval } = recoveryState;
+    if (!hasPendingApproval && !pendingAskUser) {
+      const canonicalResponse = findCanonicalPersistedApprovalResponse(existingEvents, sessionId, interactionId);
+      if (!canonicalResponse) return false;
+      this.sendRespond(client, interactionId, clientAttemptId, undefined, canonicalResponse);
+      return true;
+    }
     const sourceRunId = pendingApprovalRunId ?? pendingAskUser?.runId;
     const sourceRun = sourceRunId && enqueueRuntime ? durableRun?.runId === sourceRunId ? durableRun : await enqueueRuntime.runStore.get(sourceRunId) : null;
     const accessError = sourceRun?.tenantId && sourceRun.tenantId !== tenantId ? 'Access denied' : persistedInteractionAccessError({
@@ -1290,7 +1304,7 @@ export class WebChannel implements BaseChannel {
       orgAgentAccessError: (orgAgentId, tenantId, username) => this.orgAgentActionAccessError(client, orgAgentId, tenantId, username),
     });
     if (accessError) {
-      this.wsSend(client.ws, { type: 'respond_error', interactionId, error: accessError });
+      this.sendRespond(client, interactionId, clientAttemptId, accessError);
       return true;
     }
     const userRecord = client.user ? this.userStore?.findById(client.user.sub) : undefined;
@@ -1302,80 +1316,82 @@ export class WebChannel implements BaseChannel {
       ...(userRecord?.realName ? { realName: userRecord.realName } : {}),
       ...(userRecord?.dingtalkStaffId ? { dingtalkStaffId: userRecord.dingtalkStaffId } : {}),
     } : undefined;
-
     if (pendingAskUser) {
       if (!enqueueRuntime) {
-        this.wsSend(client.ws, { type: 'respond_error', interactionId, error: 'AskUserQuestion resume requires runtime scheduler' });
+        this.sendRespond(client, interactionId, clientAttemptId, 'AskUserQuestion resume requires runtime scheduler');
         return true;
       }
-      if (!meta || !pendingAskUser.runId || !pendingAskUser.toolCallId) {
-        chatLogger.warn(`ask_user resume enqueue rejected: missing meta/runId/toolCallId session=${sessionId} interaction=${interactionId}`);
-        return false;
-      }
+      if (!pendingAskUser.runId || !pendingAskUser.toolCallId) {
+        chatLogger.warn(`ask_user resume enqueue rejected: missing runId/toolCallId session=${sessionId} interaction=${interactionId}`); return false; }
       const currentRun = await enqueueRuntime.runStore.get(pendingAskUser.runId);
+      if (!currentRun) { chatLogger.warn(`ask_user resume enqueue ignored missing run=${pendingAskUser.runId}`); this.sendRespond(client, interactionId, clientAttemptId, 'Run unavailable'); return true; }
+      const fallback = resolvePersistedAskUserResumeFallback({ sessionId, meta, sessionRecord, currentRun });
+      if (!fallback) { chatLogger.warn(`ask_user resume rejected: conflicting durable identity session=${sessionId} interaction=${interactionId}`); this.sendRespond(client, interactionId, clientAttemptId, 'Access denied'); return true; }
       const normalizedResponse = normalizeInteractionResponse(response);
-      let resumeRunId = pendingAskUser.runId;
-      if (currentRun && TERMINAL_RUN_STATUSES.has(currentRun.status)) {
-        resumeRunId = `${Date.now()}-${randomUUID()}`;
-        chatLogger.info(`ask_user resume replacing terminal run=${pendingAskUser.runId} status=${currentRun.status} replacement=${resumeRunId}`);
+      if (TERMINAL_RUN_STATUSES.has(currentRun.status)) {
+        const terminalResume = await resumeTerminalPersistedAskUser({ eventStore: eventStore!, runStore: enqueueRuntime.runStore, scheduler: enqueueRuntime.scheduler, tenantId, sessionId, interactionId, sourceRun: currentRun, pendingAskUser, response: normalizedResponse, userId: client.user?.sub, fallback, transcriptPath });
+        if ('error' in terminalResume) { this.sendRespond(client, interactionId, clientAttemptId, terminalResume.error); return true; }
+        const resumeRunId = `interaction-resume:${sessionId}:${interactionId}`;
+        if (terminalResume.activated && client.user?.sub && this.eventBus) this.eventBus.emitUser(client.user.sub, { type: 'session_status', sessionId, status: 'queued', runId: resumeRunId });
+        this.sendRespond(client, interactionId, clientAttemptId, undefined, terminalResume.canonicalResponse); if (client.user?.sub && this.eventBus) this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId, response: terminalResume.canonicalResponse }, client.ws); return true;
       }
-      await eventStore!.append({
-        type: 'interaction_resolved',
-        sessionId,
-        runId: pendingAskUser.runId,
-        toolCallId: pendingAskUser.toolCallId,
-        ...(pendingAskUser.invocationId ? { invocationId: pendingAskUser.invocationId } : {}),
-        interactionId,
-        interactionType: 'ask_user',
-        userId: client.user?.sub,
-        response: normalizedResponse,
-      }, { tenantId });
-      const resumeMetadata = {
-        ...(currentRun?.metadata ?? {}),
-        resumeInteractionConsumedAt: null,
-        resumeInteractionConsumedId: null,
-        resumeInteraction: {
-          interactionId,
-          response: normalizedResponse,
-        },
-      };
-      if (resumeRunId === pendingAskUser.runId) {
-        const resumed = await enqueueRuntime.runStore.markStatus(
-          resumeRunId, 'pending', 'ask_user_resolved_enqueue_resume', resumeMetadata);
-        if (resumed && TERMINAL_RUN_STATUSES.has(resumed.status)) {
-          resumeRunId = `${Date.now()}-${randomUUID()}`;
-          chatLogger.info(`ask_user resume replacing concurrently terminal run=${pendingAskUser.runId} replacement=${resumeRunId}`);
+      const acceptedEvent = existingEvents.find((event): event is Extract<PlatformEvent, { type: 'interaction_resolved' }> => event.type === 'interaction_resolved' && event.interactionId === interactionId);
+      const existingClaim = currentRun.metadata?.persistedInteractionResumeClaim;
+      if (acceptedEvent && isPersistedInteractionClaim(existingClaim, sessionId, interactionId)) {
+        const activated = (currentRun.status === 'pending' && currentRun.metadata?.schedulerState === 'ready') || await this.activatePersistedInteractionClaim(pendingAskUser.runId, existingClaim, { resumeInteraction: { interactionId, response: acceptedEvent.response } });
+        this.sendRespond(client, interactionId, clientAttemptId, activated ? undefined : 'Interaction response is awaiting activation', activated ? normalizeInteractionResponse(acceptedEvent.response as Record<string, unknown>) : undefined);
+        return true;
+      }
+      let claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingAskUser.runId, expectedStatus: 'waiting_user', reason: 'ask_user_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'ask_user', response: normalizedResponse });
+      if (claim.outcome === 'unsupported') {
+        chatLogger.error(`ask_user resume rejected: RunStore lacks staged interaction CAS run=${pendingAskUser.runId} interaction=${interactionId}`);
+        this.sendRespond(client, interactionId, clientAttemptId, 'Runtime store does not support atomic interaction resume');
+        return true;
+      }
+      if (claim.outcome === 'rejected') {
+        const stagedClaim = (await enqueueRuntime.runStore.get(pendingAskUser.runId))?.metadata?.persistedInteractionResumeClaim;
+        const canonicalResolved = (await eventStore!.list(tenantId, sessionId)).find((event): event is Extract<PlatformEvent, { type: 'interaction_resolved' }> => event.type === 'interaction_resolved' && event.interactionId === interactionId);
+        if (isPersistedInteractionClaim(stagedClaim, sessionId, interactionId)) {
+          if (canonicalResolved && await this.activatePersistedInteractionClaim(pendingAskUser.runId, stagedClaim, { resumeInteraction: { interactionId, response: canonicalResolved.response } })) { this.sendRespond(client, interactionId, clientAttemptId, undefined, normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>)); return true; }
+          if (!canonicalResolved && isPersistedInteractionClaimExpired(stagedClaim) && await this.rollbackPersistedInteractionClaim(pendingAskUser.runId, stagedClaim, 'waiting_user', 'ask_user_resume_event_append_missing')) claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingAskUser.runId, expectedStatus: 'waiting_user', reason: 'ask_user_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'ask_user', response: normalizedResponse });
         }
       }
-      const workspaceId = currentRun?.workspaceId ?? meta.workspaceId ?? sessionId;
-      await enqueueRuntime.scheduler.enqueue({
-        runId: resumeRunId,
-        sessionId,
-        userId: currentRun?.userId ?? meta.userId,
-        tenantId,
-        model: currentRun?.model ?? meta.model,
-        channel: 'web',
-        executionTarget: currentRun?.executionTarget ?? meta.executionTarget as any,
-        workspaceId,
-        metadata: { ...resumeMetadata, transcriptPath },
-      });
-      this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+      if (claim.outcome !== 'claimed') { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction resume is still being recovered'); return true; }
+      if (!await this.ownsPersistedInteractionClaim(pendingAskUser.runId, claim.metadata.persistedInteractionResumeClaim)) { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction resume claim was superseded; please retry'); return true; }
+      let canonicalResolved: Extract<PlatformEvent, { type: 'interaction_resolved' }>;
+      try {
+        canonicalResolved = await appendPersistedInteractionResolved(eventStore!, tenantId, { id: persistedInteractionEventId(sessionId, interactionId), type: 'interaction_resolved', sessionId, runId: pendingAskUser.runId, toolCallId: pendingAskUser.toolCallId, ...(pendingAskUser.invocationId ? { invocationId: pendingAskUser.invocationId } : {}), interactionId, interactionType: 'ask_user', userId: client.user?.sub, response: normalizedResponse });
+      } catch (error) {
+        await this.rollbackPersistedInteractionClaim(pendingAskUser.runId, claim.metadata.persistedInteractionResumeClaim, 'waiting_user', 'ask_user_resume_event_append_failed');
+        chatLogger.warn(`ask_user resume append failed run=${pendingAskUser.runId} interaction=${interactionId}: ${error instanceof Error ? error.message : String(error)}`);
+        this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response was not persisted; please retry');
+        return true;
+      }
+      if (!await this.activatePersistedInteractionClaim(pendingAskUser.runId, claim.metadata.persistedInteractionResumeClaim, { resumeInteraction: { interactionId, response: canonicalResolved.response } })) {
+        this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response is awaiting activation');
+        return true;
+      }
+      this.sendRespond(client, interactionId, clientAttemptId, undefined, normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>));
       if (client.user?.sub && this.eventBus) {
-        this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws);
-        this.eventBus.emitUser(client.user.sub, { type: 'session_status', sessionId, status: 'queued', runId: resumeRunId });
+        this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId, response: normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>) }, client.ws);
+        this.eventBus.emitUser(client.user.sub, { type: 'session_status', sessionId, status: 'queued', runId: pendingAskUser.runId });
       }
       return true;
     }
-
     if (!enqueueRuntime) {
-      await approvalStore.resolvePending(
-        interactionId,
-        'rejected',
-        '持久审批恢复需要 Runtime Scheduler；已安全拒绝，未恢复旧 Run',
-      );
-      this.wsSend(client.ws, { type: 'respond_ok', interactionId });
-      if (client.user?.sub && this.eventBus) {
-        this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws);
+      const rejectionMessage = '持久审批恢复需要 Runtime Scheduler；已安全拒绝，未恢复旧 Run';
+      try {
+        const { response: canonicalResponse } = await failClosePersistedApproval({
+          eventStore, tenantId, approvalStore, sessionId, interactionId,
+          runId: pendingApprovalRunId!, userId: client.user?.sub, rejectionMessage,
+        });
+        this.sendRespond(client, interactionId, clientAttemptId, undefined, canonicalResponse);
+        if (client.user?.sub && this.eventBus) {
+          this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId, response: canonicalResponse }, client.ws);
+        }
+      } catch (error) {
+        chatLogger.warn(`approval fail-close persistence failed session=${sessionId} approval=${interactionId}: ${error instanceof Error ? error.message : String(error)}`);
+        this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response was not persisted; please retry');
       }
       return true;
     }
@@ -1396,97 +1412,80 @@ export class WebChannel implements BaseChannel {
         && event.approvalId === interactionId
       ));
       const currentRun = sourceRun?.runId === pendingApprovalRunId ? sourceRun : await enqueueRuntime.runStore.get(pendingApprovalRunId);
+      if (!transcriptPath && (!currentRun || !hasConsistentPathlessApprovalIdentity({
+        sessionId, tenantId, sessionRecord, currentRun,
+      }))) {
+        this.sendRespond(client, interactionId, clientAttemptId, 'Access denied'); return true;
+      }
+      const alreadyClaimed = hasPersistedInteractionResumeClaim(currentRun?.metadata, sessionId, interactionId);
       const cannotResume = !currentRun || TERMINAL_RUN_STATUSES.has(currentRun.status)
-        || (!alreadyAccepted && !alreadyApplied && currentRun.status !== 'waiting_approval');
+        || (!alreadyAccepted && !alreadyApplied && !alreadyClaimed && currentRun.status !== 'waiting_approval');
       if (cannotResume) {
         const sourceStatus = currentRun?.status ?? 'missing';
-        const resolved = await approvalStore.resolvePending(
-          interactionId,
-          'rejected',
-          `源 run 不可恢复（${sourceStatus}），拒绝遗留审批`,
-        );
-        chatLogger.warn(
-          `approval resume closed unavailable run=${pendingApprovalRunId} status=${sourceStatus} `
-          + `approval=${interactionId} resolved=${Boolean(resolved)}`,
-        );
-        this.wsSend(client.ws, { type: 'respond_ok', interactionId });
-        if (client.user?.sub && this.eventBus) {
-          this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws);
+        const rejectionMessage = `源 run 不可恢复（${sourceStatus}），拒绝遗留审批`;
+        try {
+          const { response: canonicalResponse, resolved } = await failClosePersistedApproval({
+            eventStore, tenantId, approvalStore, sessionId, interactionId,
+            runId: pendingApprovalRunId, userId: client.user?.sub, rejectionMessage,
+          });
+          chatLogger.warn(
+            `approval resume closed unavailable run=${pendingApprovalRunId} status=${sourceStatus} `
+            + `approval=${interactionId} resolved=${resolved}`,
+          );
+          this.sendRespond(client, interactionId, clientAttemptId, undefined, canonicalResponse);
+          if (client.user?.sub && this.eventBus) {
+            this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId, response: canonicalResponse }, client.ws);
+          }
+        } catch (error) {
+          chatLogger.warn(`approval fail-close persistence failed session=${sessionId} approval=${interactionId}: ${error instanceof Error ? error.message : String(error)}`);
+          this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response was not persisted; please retry');
         }
         return true;
       }
-      if (alreadyAccepted || alreadyApplied) {
-        this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+      const currentClaim = currentRun?.metadata?.persistedInteractionResumeClaim;
+      if (acceptedEvent?.type === 'interaction_resolved' && isPersistedInteractionClaim(currentClaim, sessionId, interactionId)) {
+        const activated = (currentRun?.status === 'pending' && currentRun.metadata?.schedulerState === 'ready') || await this.activatePersistedInteractionClaim(pendingApprovalRunId, currentClaim, { resumeApproval: { approvalId: interactionId, response: acceptedEvent.response } });
+        this.sendRespond(client, interactionId, clientAttemptId, activated ? undefined : 'Interaction response is awaiting activation', activated ? normalizeInteractionResponse(acceptedEvent.response as Record<string, unknown>) : undefined);
         return true;
       }
-      if (!meta || !transcriptPath) {
-        await approvalStore.resolvePending(
-          interactionId,
-          'rejected',
-          '缺少可恢复的会话元数据，已安全拒绝审批',
-        );
-        this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+      // A durable event without its staged claim may be an uncertain append result; reclaim and activate it below instead of ACKing a waiting Run.
+      if (alreadyApplied) { this.sendRespond(client, interactionId, clientAttemptId, undefined, acceptedEvent?.type === 'interaction_resolved' ? normalizeInteractionResponse(acceptedEvent.response as Record<string, unknown>) : normalizeInteractionResponse(response)); return true; }
+      const acceptedResponse = acceptedEvent?.type === 'interaction_resolved' ? acceptedEvent.response : undefined;
+      const resumeResponse = acceptedResponse && typeof acceptedResponse === 'object' ? normalizeInteractionResponse(acceptedResponse as Record<string, unknown>) : normalizeInteractionResponse(response);
+      let claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingApprovalRunId, expectedStatus: 'waiting_approval', reason: 'approval_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'approval', response: resumeResponse, transcriptPath: transcriptPath ?? undefined });
+      if (claim.outcome === 'unsupported') {
+        chatLogger.error(`approval resume rejected: RunStore lacks staged interaction CAS run=${pendingApprovalRunId} approval=${interactionId}`);
+        this.sendRespond(client, interactionId, clientAttemptId, 'Runtime store does not support atomic interaction resume');
         return true;
       }
-      const acceptedResponse = acceptedEvent?.type === 'interaction_resolved'
-        ? acceptedEvent.response
-        : undefined;
-      const resumeResponse = acceptedResponse && typeof acceptedResponse === 'object'
-        ? normalizeInteractionResponse(acceptedResponse as Record<string, unknown>)
-        : normalizeInteractionResponse(response);
-      const resumedRun = await enqueueRuntime.runStore.markStatus(
-        pendingApprovalRunId,
-        'pending',
-        'approval_resolved_enqueue_resume',
-        {
-          transcriptPath,
-          resumeApprovalConsumedAt: null,
-          resumeApprovalConsumedId: null,
-          resumeApproval: {
-            approvalId: interactionId,
-            response: resumeResponse,
-          },
-        },
-      );
-      if (!resumedRun || TERMINAL_RUN_STATUSES.has(resumedRun.status)) {
-        await approvalStore.resolvePending(
-          interactionId,
-          'rejected',
-          `源 run 不可恢复（${resumedRun?.status ?? 'missing'}），拒绝遗留审批`,
-        );
-        this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+      if (claim.outcome === 'rejected') {
+        const stagedClaim = (await enqueueRuntime.runStore.get(pendingApprovalRunId))?.metadata?.persistedInteractionResumeClaim;
+        const canonicalResolved = (await eventStore.list(tenantId, sessionId)).find((event): event is Extract<PlatformEvent, { type: 'interaction_resolved' }> => event.type === 'interaction_resolved' && event.interactionId === interactionId);
+        if (isPersistedInteractionClaim(stagedClaim, sessionId, interactionId)) {
+          if (canonicalResolved && await this.activatePersistedInteractionClaim(pendingApprovalRunId, stagedClaim, { resumeApproval: { approvalId: interactionId, response: canonicalResolved.response } })) { this.sendRespond(client, interactionId, clientAttemptId, undefined, normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>)); return true; }
+          if (!canonicalResolved && isPersistedInteractionClaimExpired(stagedClaim) && await this.rollbackPersistedInteractionClaim(pendingApprovalRunId, stagedClaim, 'waiting_approval', 'approval_resume_event_append_missing')) claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingApprovalRunId, expectedStatus: 'waiting_approval', reason: 'approval_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'approval', response: resumeResponse, transcriptPath: transcriptPath ?? undefined });
+        }
+      }
+      if (claim.outcome !== 'claimed') { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction resume is still being recovered'); return true; }
+      if (!await this.ownsPersistedInteractionClaim(pendingApprovalRunId, claim.metadata.persistedInteractionResumeClaim)) { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction resume claim was superseded; please retry'); return true; }
+      let canonicalResolved: Extract<PlatformEvent, { type: 'interaction_resolved' }>;
+      try {
+        canonicalResolved = await appendPersistedInteractionResolved(eventStore, tenantId, {
+          id: persistedInteractionEventId(sessionId, interactionId), type: 'interaction_resolved', sessionId, runId: pendingApprovalRunId, interactionId, interactionType: 'approval', userId: client.user?.sub, response: resumeResponse,
+        });
+      } catch (error) {
+        await this.rollbackPersistedInteractionClaim(pendingApprovalRunId, claim.metadata.persistedInteractionResumeClaim, 'waiting_approval', 'approval_resume_event_append_failed');
+        chatLogger.warn(`approval resume append failed run=${pendingApprovalRunId} interaction=${interactionId}: ${error instanceof Error ? error.message : String(error)}`);
+        this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response was not persisted; please retry');
         return true;
       }
-      if (!alreadyAccepted) await eventStore.append({
-        type: 'interaction_resolved',
-        sessionId,
-        runId: pendingApprovalRunId,
-        interactionId,
-        interactionType: 'approval',
-        userId: client.user?.sub,
-        response: resumeResponse,
-      }, { tenantId });
-      const workspaceId = meta.workspaceId ?? sessionId;
-      await enqueueRuntime.scheduler.enqueue({
-        runId: pendingApprovalRunId,
-        sessionId,
-        userId: meta.userId,
-        tenantId,
-        model: meta.model,
-        channel: 'web',
-        executionTarget: meta.executionTarget as any,
-        workspaceId,
-        metadata: {
-          transcriptPath,
-          resumeApproval: {
-            approvalId: interactionId,
-            response: resumeResponse,
-          },
-        },
-      });
-      this.wsSend(client.ws, { type: 'respond_ok', interactionId });
+      if (!await this.activatePersistedInteractionClaim(pendingApprovalRunId, claim.metadata.persistedInteractionResumeClaim, { resumeApproval: { approvalId: interactionId, response: canonicalResolved.response } })) {
+        this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response is awaiting activation');
+        return true;
+      }
+      this.sendRespond(client, interactionId, clientAttemptId, undefined, normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>));
       if (client.user?.sub && this.eventBus) {
-        this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId }, client.ws);
+        this.eventBus.emitUser(client.user.sub, { type: 'interaction_resolved', sessionId, interactionId, response: normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>) }, client.ws);
         this.eventBus.emitUser(client.user.sub, { type: 'session_status', sessionId, status: 'queued', runId: pendingApprovalRunId });
       }
       return true;

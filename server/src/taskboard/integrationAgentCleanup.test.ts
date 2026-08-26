@@ -5,6 +5,12 @@ import type { TaskboardIdentity } from './types.js';
 
 const identity: TaskboardIdentity = { tenantId: 'tenant-1', ownerUserId: 'owner-1', username: 'owner' };
 const now = '2026-08-25T09:00:00.000Z';
+const mergeRaw = {
+  providerRequestId: 'request-1', providerPullRequestId: '42', mergedCommitOid: 'merge-42',
+  approvedRevision: { baseOid: 'base', headOid: 'agent-head', treeOid: 'approved-tree' },
+  providerFacts: { providerPullRequestId: '42', baseOid: 'base', headOid: 'agent-head', state: 'merged', mergeCommitOid: 'merge-42', mergedTreeOid: 'approved-tree' },
+};
+const mergeReceipt = { providerRequestId: 'request-1', providerPullRequestId: '42', integrationBranch: 'integration/integration-1', reviewHeadOid: 'agent-head', reviewExecutionId: 'review-1', executionId: 'merge-1', runId: 'run-1', mergedCommitOid: 'merge-42', raw: mergeRaw };
 
 function taskRow() {
   return { id: 'integration-1', board_id: 'board-1', identifier: 'TB-1', kind: 'integration', workflow_version: 3,
@@ -16,7 +22,7 @@ function finalizerClient() {
   return { release: vi.fn(), query: vi.fn(async (sql: string) => {
     if (sql.includes('SELECT id,delivery_task_id,remediation_task_id')) return { rows: [{ id: 'source-1', delivery_task_id: 'delivery-1', remediation_task_id: null }] };
     if (sql.includes('SELECT DISTINCT integration_source_id,remediation_task_id')) return { rows: [] };
-    if (sql.includes('FROM sources_agents')) return { rows: [{ provider_pull_request_id: '42', integration_branch: 'integration/integration-1', status: 'ready_to_merge', verdict: 'approved', review_head_oid: 'agent-head', review_execution_id: 'review-1', merge_in_flight_execution_id: 'merge-1', merge_in_flight_review_execution_id: 'review-1', merge_in_flight_review_head_oid: 'agent-head' }] };
+    if (sql.includes('FROM sources_agents')) return { rows: [{ provider_pull_request_id: '42', integration_branch: 'integration/integration-1', status: 'ready_to_merge', verdict: 'approved', review_head_oid: 'agent-head', review_execution_id: 'review-1', merge_in_flight_execution_id: 'merge-1', merge_in_flight_review_execution_id: 'review-1', merge_in_flight_review_head_oid: 'agent-head', merge_receipt: mergeReceipt }] };
     if (sql.includes('SELECT * FROM sources') && sql.includes('integration_task_id=$1')) return { rows: [{ id: 'source-1', state: 'ready', merged_commit_oid: null }] };
     if (sql.includes('RETURNING *')) return { rows: [{ ...taskRow(), status: 'done', completed_at: now, merged_commit_oid: 'merge-42' }] };
     return { rows: [], rowCount: 0 };
@@ -29,7 +35,7 @@ function loadClient(cleanupReceipt: Record<string, unknown>, frozenHeadOid: stri
     if (sql.includes('FROM executions e')) return { rows: [{
       ...taskRow(), repository: { provider: 'github', repositoryId: 'github:acme/repo', owner: 'acme', name: 'repo', baseBranch: 'main', allowForkPullRequest: false }, integration_policy: {}, owner_user_id: 'owner-1',
       execution_id: 'merge-1', session_id: 'session-1', durable_session_id: 'session-1', integration_branch: 'integration/integration-1', provider_pull_request_id: '42',
-      merge_receipt: { providerRequestId: 'request-1', providerPullRequestId: '42', integrationBranch: 'integration/integration-1', reviewHeadOid: 'agent-head', reviewExecutionId: 'review-1', executionId: 'merge-1', runId: 'run-1', mergedCommitOid: 'merge-42', raw: {} },
+      merge_receipt: mergeReceipt,
       cleanup_receipt: cleanupReceipt,
       sources: [{ sourceId: 'source-1', providerPullRequestId: '11', deliveryProviderPullRequestId: '11', frozenHeadOid, branch: 'feature/source-1' }],
     }] };

@@ -172,17 +172,21 @@ export class PgEventStore implements EventStore {
       );
       const timestamp = new Date().toISOString();
       const fullEvents = events.map((event, index) => ({
-        id: randomUUID(),
+        id: event.id ?? randomUUID(),
         timestamp,
         ...event,
         sequence: startSequence + index,
       }) as PlatformEvent & { sequence: number });
+      const durableEvents: PlatformEvent[] = [];
+      const newlyAppended: Array<PlatformEvent & { sequence: number }> = [];
 
       for (const event of fullEvents) {
-        await client.query(
+        const inserted = await client.query<{ event_json: PlatformEvent }>(
           `INSERT INTO ${this.eventsTable}
            (session_id, session_sequence, event_id, event_type, run_id, tenant_id, timestamp, event_json)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+           ON CONFLICT (tenant_id, event_id) DO NOTHING
+           RETURNING event_json`,
           [
             event.sessionId,
             event.sequence,
@@ -194,18 +198,29 @@ export class PgEventStore implements EventStore {
             serializeEventForJsonb(event),
           ],
         );
+        if (inserted.rows[0]) {
+          durableEvents.push(normalizeEventJson(inserted.rows[0].event_json));
+          newlyAppended.push(event);
+          continue;
+        }
+        const existing = await client.query<{ event_json: PlatformEvent }>(
+          `SELECT event_json FROM ${this.eventsTable} WHERE tenant_id = $1 AND event_id = $2`,
+          [tenantId, event.id],
+        );
+        if (!existing.rows[0]) throw new Error(`Event idempotency lookup failed: ${event.id}`);
+        durableEvents.push(normalizeEventJson(existing.rows[0].event_json));
       }
 
       await client.query('COMMIT');
       // 复用当前已 COMMIT 的 client，禁止在归还它之前再次向同一 pool 取连接。
       // 否则 active session locks 占满部分 pool 后，多条并发 append 会各自拿着
       // transaction client 等 pg_notify 的第二条连接，形成确定性 pool deadlock。
-      await this.notifyAppended(client, fullEvents).catch((err) => {
+      await this.notifyAppended(client, newlyAppended).catch((err) => {
         this.options.logger?.warn?.('PgEventStore notify failed after durable append', {
           error: err instanceof Error ? err.message : String(err),
         });
       });
-      return fullEvents;
+      return durableEvents;
     } catch (err) {
       await client.query('ROLLBACK').catch(() => undefined);
       throw err;

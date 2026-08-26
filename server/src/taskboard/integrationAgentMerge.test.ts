@@ -31,6 +31,11 @@ function loadedRow(): Record<string, unknown> {
     provider_pull_request_id: '42', integration_branch: 'integration/integration-1', review_head_oid: 'agent-head',
     verdict: 'approved', review_execution_id: 'review-execution-1', agent_status: 'ready_to_merge',
     review_purpose: 'review', review_transitioned_at: now,
+    review_inspection_payload: {
+      gateStatus: 'success',
+      receipt: { executionId: 'review-execution-1', taskId: 'integration-1', purpose: 'review', providerPullRequestId: '42', headOid: 'agent-head' },
+      snapshot: pullRequest,
+    },
     merge_in_flight_execution_id: null, merge_in_flight_review_execution_id: null, merge_in_flight_review_head_oid: null,
     fence_owner_execution_id: null, fence_owner_execution_status: null,
     fence_owner_transitioned_at: null, fence_owner_superseded_at: null,
@@ -61,9 +66,10 @@ function finalizationClient(mergeExecutionId = 'merge-execution-1') {
 }
 
 function hostWith(
-  provider: { getPullRequest: ReturnType<typeof vi.fn>; mergePullRequest: ReturnType<typeof vi.fn> },
+  provider: { getPullRequest: ReturnType<typeof vi.fn>; mergePullRequest: ReturnType<typeof vi.fn>; getCommit?: ReturnType<typeof vi.fn> },
   row = loadedRow(),
 ) {
+  provider.getCommit ??= vi.fn(async (_repository: unknown, oid: string) => ({ oid, treeOid: 'approved-tree' }));
   const loadClient = {
     release: vi.fn(),
     query: vi.fn(async (sql: string) => {
@@ -141,8 +147,9 @@ describe('mergeIntegrationAgent', () => {
 
   it('persists the merge receipt but keeps the task in progress until cleanup', async () => {
     const provider = {
-      getPullRequest: vi.fn(async () => pullRequest),
-      mergePullRequest: vi.fn(async () => ({ providerRequestId: 'request-1', providerPullRequestId: '42', merged: true, mergedCommitOid: 'merge-42', raw: {} })),
+      getPullRequest: vi.fn().mockResolvedValueOnce(pullRequest)
+        .mockResolvedValue({ ...pullRequest, state: 'merged', mergeCommitOid: 'merge-42' }),
+      mergePullRequest: vi.fn(async (_repository: unknown, input: { operationKey: string }) => ({ providerRequestId: input.operationKey, providerPullRequestId: '42', merged: true, mergedCommitOid: 'merge-42', raw: {} })),
     };
     const { host, loadClient, finalized } = hostWith(provider);
 
@@ -160,8 +167,9 @@ describe('mergeIntegrationAgent', () => {
     ['rebase', { execution: { mergeMethod: 'rebase' } }],
   ] as const)('uses the board integration merge method %s', async (method, integrationPolicy) => {
     const provider = {
-      getPullRequest: vi.fn(async () => pullRequest),
-      mergePullRequest: vi.fn(async () => ({ providerRequestId: 'request-1', providerPullRequestId: '42', merged: true, mergedCommitOid: 'merge-42', raw: {} })),
+      getPullRequest: vi.fn().mockResolvedValueOnce(pullRequest)
+        .mockResolvedValue({ ...pullRequest, state: 'merged', mergeCommitOid: 'merge-42' }),
+      mergePullRequest: vi.fn(async (_repository: unknown, input: { operationKey: string }) => ({ providerRequestId: input.operationKey, providerPullRequestId: '42', merged: true, mergedCommitOid: 'merge-42', raw: {} })),
     };
     const { host } = hostWith(provider, { ...loadedRow(), integration_policy: integrationPolicy });
 
@@ -189,6 +197,20 @@ describe('mergeIntegrationAgent', () => {
     );
     expect(provider.mergePullRequest).not.toHaveBeenCalled();
     expect(loadClient.query).toHaveBeenCalledWith(expect.stringContaining('SET merge_receipt=$2::jsonb'), expect.any(Array));
+  });
+
+  it('fails closed when an already merged pull request has no prior controlled merge fence', async () => {
+    const provider = {
+      getPullRequest: vi.fn(async () => ({ ...pullRequest, state: 'merged' as const, mergeCommitOid: 'merge-42' })),
+      mergePullRequest: vi.fn(),
+    };
+    const { host, loadClient } = hostWith(provider);
+
+    await expect(mergeIntegrationAgent(host, identity, 'run-1')).rejects.toMatchObject({
+      code: 'TASKBOARD_MERGE_RECEIPT_CONFLICT',
+    });
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+    expect(loadClient.query.mock.calls.some(([sql]) => String(sql).includes('SET merge_receipt='))).toBe(false);
   });
 
   it('fails closed when an already merged pull request has no merge commit oid', async () => {
@@ -219,6 +241,66 @@ describe('mergeIntegrationAgent', () => {
     expect(provider.getPullRequest).toHaveBeenCalledTimes(2);
     expect(loadClient.query).toHaveBeenCalledWith(expect.stringContaining('SET merge_receipt=$2::jsonb'), expect.any(Array));
     expect(finalized.query).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before merge when the base moved after the approved inspection', async () => {
+    const provider = {
+      getPullRequest: vi.fn(async () => ({ ...pullRequest, baseOid: 'base-drift' })),
+      mergePullRequest: vi.fn(),
+    };
+    const { host, loadClient } = hostWith(provider);
+
+    await expect(mergeIntegrationAgent(host, identity, 'run-1')).rejects.toMatchObject({ code: 'TASKBOARD_SUBJECT_STALE' });
+    expect(provider.mergePullRequest).not.toHaveBeenCalled();
+    expect(loadClient.query.mock.calls.some(([sql]) => String(sql).includes('SET merge_receipt='))).toBe(false);
+  });
+
+  it('fails closed when the final merged commit tree differs from the approved head tree', async () => {
+    const provider = {
+      getPullRequest: vi.fn().mockResolvedValueOnce(pullRequest)
+        .mockResolvedValue({ ...pullRequest, state: 'merged', mergeCommitOid: 'merge-42' }),
+      getCommit: vi.fn(async (_repository: unknown, oid: string) => ({ oid, treeOid: oid === 'agent-head' ? 'approved-tree' : 'wrong-tree' })),
+      mergePullRequest: vi.fn(async (_repository: unknown, input: { operationKey: string }) => ({ providerRequestId: input.operationKey, providerPullRequestId: '42', merged: true, mergedCommitOid: 'merge-42', raw: {} })),
+    };
+    const { host, loadClient } = hostWith(provider);
+
+    await expect(mergeIntegrationAgent(host, identity, 'run-1')).rejects.toMatchObject({ code: 'TASKBOARD_MERGE_RECEIPT_CONFLICT' });
+    expect(loadClient.query.mock.calls.some(([sql]) => String(sql).includes('SET merge_receipt='))).toBe(false);
+  });
+
+  it('rejects a provider receipt whose request id is not the controlled operation key', async () => {
+    const provider = {
+      getPullRequest: vi.fn(async () => pullRequest),
+      mergePullRequest: vi.fn(async () => ({ providerRequestId: 'unbound-request', providerPullRequestId: '42', merged: true, mergedCommitOid: 'merge-42', raw: {} })),
+    };
+    const { host, loadClient } = hostWith(provider);
+
+    await expect(mergeIntegrationAgent(host, identity, 'run-1')).rejects.toMatchObject({ code: 'TASKBOARD_PROVIDER_RECEIPT_INCOMPLETE' });
+    expect(loadClient.query.mock.calls.some(([sql]) => String(sql).includes('SET merge_receipt='))).toBe(false);
+  });
+
+  it('persists one receipt binding request, approved revision, and final provider facts', async () => {
+    const provider = {
+      getPullRequest: vi.fn().mockResolvedValueOnce(pullRequest)
+        .mockResolvedValue({ ...pullRequest, state: 'merged', mergeCommitOid: 'merge-42' }),
+      mergePullRequest: vi.fn(async (_repository: unknown, input: { operationKey: string }) => ({ providerRequestId: input.operationKey, providerPullRequestId: '42', merged: true, mergedCommitOid: 'merge-42', raw: { provider: 'receipt' } })),
+    };
+    const { host, loadClient } = hostWith(provider);
+
+    await mergeIntegrationAgent(host, identity, 'run-1');
+
+    const call = loadClient.query.mock.calls.find(([sql]) => String(sql).includes('SET merge_receipt=')) as unknown as [string, unknown[]];
+    const stored = JSON.parse(String(call[1][1]));
+    expect(stored).toMatchObject({
+      providerRequestId: expect.stringContaining('integration-agent:integration-1:base:agent-head:approved-tree'),
+      providerPullRequestId: '42', mergedCommitOid: 'merge-42',
+      raw: {
+        providerRequestId: expect.stringContaining('integration-agent:integration-1:base:agent-head:approved-tree'),
+        approvedRevision: { baseOid: 'base', headOid: 'agent-head', treeOid: 'approved-tree' },
+        providerFacts: { baseOid: 'base', headOid: 'agent-head', state: 'merged', mergedTreeOid: 'approved-tree' },
+        providerReceipt: { provider: 'receipt' },
+      },
+    });
   });
 
   it('does not converge local state when a provider exception re-reads as still open', async () => {

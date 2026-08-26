@@ -693,8 +693,15 @@ describe('PgRunStore steering inbox', () => {
     expect(queryCalls[eventLockIndex]?.params).toEqual(['runtime_events:global-sequence-commit-order']);
     const cursorInsert = queryCalls.find(({ sql }) => sql.includes('INSERT INTO runtime_event_cursors'));
     expect(cursorInsert?.sql).toContain('ON CONFLICT (tenant_id, session_id)');
-    expect(cursorInsert?.params).toEqual(['tenant-waiting', 'session-waiting', 2]);
-    expect(queries.filter((sql) => sql.includes('INSERT INTO runtime_events'))).toHaveLength(2);
+    expect(cursorInsert?.params).toEqual(['tenant-waiting', 'session-waiting', 3]);
+    const insertedEventTypes = queryCalls
+      .filter(({ sql }) => sql.includes('INSERT INTO runtime_events'))
+      .map(({ params }) => params[3]);
+    expect(insertedEventTypes).toEqual([
+      'run_cancel_requested',
+      'tool_invocation_cancel_requested',
+      'run_state_changed',
+    ]);
   });
 
   it('does not persist run/tool cancellation events when the target wins the race to a non-cancellable terminal state', async () => {

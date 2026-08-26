@@ -164,6 +164,40 @@ describePg('DerivedContextStore PostgreSQL integration', () => {
     await drain();
   });
 
+  it('moves repeated projection failures to an observable dead letter and safely replays with cursor CAS', async () => {
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      const lease = await derived.claimContextOutbox({
+        tenantId: 'tenant-dead-letter', consumerId: 'projector', leaseOwner: `failure-${attempt}`, leaseMs: 60_000,
+      });
+      expect(lease).not.toBeNull();
+      await expect(derived.failConsumerLease(lease!, 'DERIVED_PROJECTION_FAILED')).resolves.toBe(true);
+    }
+    const dead = (await pool.query(`SELECT cursor_seq,status,last_error_code,last_error_message
+      FROM ${derived.tables.consumers} WHERE tenant_id='tenant-dead-letter' AND consumer_id='projector'`)).rows[0];
+    expect(dead).toMatchObject({ cursor_seq: '0', status: 'disabled', last_error_code: 'DERIVED_PROJECTION_FAILED' });
+    expect(JSON.parse(dead.last_error_message)).toMatchObject({
+      state: 'dead_letter', attempts: 5, errorCode: 'DERIVED_PROJECTION_FAILED',
+    });
+    await expect(derived.claimContextOutbox({
+      tenantId: 'tenant-dead-letter', consumerId: 'projector', leaseOwner: 'blocked', leaseMs: 60_000,
+    })).resolves.toBeNull();
+    await expect(derived.resetConsumerForReplay({
+      tenantId: 'tenant-dead-letter', consumerId: 'projector', expectedCursorSeq: '1',
+    })).rejects.toMatchObject({ code: 'DERIVED_VERSION_CONFLICT' });
+    await expect(derived.resetConsumerForReplay({
+      tenantId: 'tenant-dead-letter', consumerId: 'projector', expectedCursorSeq: '0',
+    })).resolves.toEqual({ previousCursorSeq: '0' });
+    const reset = (await pool.query(`SELECT status,last_error_code,last_error_message
+      FROM ${derived.tables.consumers} WHERE tenant_id='tenant-dead-letter' AND consumer_id='projector'`)).rows[0];
+    expect(reset).toMatchObject({ status: 'idle', last_error_code: null, last_error_message: null });
+
+    await pool.query(`INSERT INTO ${derived.tables.consumers} (tenant_id,consumer_id,status)
+      VALUES ('tenant-admin-disabled','projector','disabled')`);
+    await expect(derived.resetConsumerForReplay({
+      tenantId: 'tenant-admin-disabled', consumerId: 'projector', expectedCursorSeq: '0',
+    })).rejects.toMatchObject({ code: 'DERIVED_VERSION_CONFLICT' });
+  });
+
   it('recomputes organization conflicts after convergence, revoke and delete while preserving real multi-value conflicts', async () => {
     const convergeId = entityId('tenant-a', 'Task', 'task-conflict-converge', 'source-a');
     const deleteId = entityId('tenant-a', 'Task', 'task-conflict-delete', 'source-a');

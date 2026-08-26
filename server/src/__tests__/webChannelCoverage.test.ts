@@ -614,8 +614,8 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
   describe('handleRespond / resolveInteraction（内存交互）', () => {
     it('缺 interactionId → respond_error；禁用租户 → respond_error', async () => {
       const rig = makeRig();
-      (rig.channel as any).handleRespond(wsClient(rig.ws, USER), { action: 'respond', interactionId: '' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_error', interactionId: '', error: 'interactionId is required' });
+      (rig.channel as any).handleRespond(wsClient(rig.ws, USER), { action: 'respond', interactionId: '', clientAttemptId: 'attempt-invalid' });
+      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_error', interactionId: '', error: 'interactionId is required', clientAttemptId: 'attempt-invalid' });
 
       const disabledRig = makeRig({
         tenantStore: {
@@ -638,11 +638,12 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       interactionStore.resolve(id, { allow: false });
       await pending;
     });
-
     it('正常 resolve：dispatch 收到原始应答、respond_ok、同 session 其他连接收 interaction_resolved 广播', async () => {
       const tmp = await makeTmp('cov-respond-');
       const rig = makeRig({ agentCwd: tmp });
       const sessionId = randomUUID();
+      const transcriptPath = getTranscriptPath(tmp, sessionId, { tenantId: TENANT, userId: USER.sub });
+      await writeSessionMeta(transcriptPath, { userId: USER.sub, username: USER.username, tenantId: TENANT, channel: 'web', createdAt: new Date().toISOString() });
       const id = `cov-ok-${RUN_TAG}`;
       const pending = interactionStore.create(id, 'permission_request', {
         sessionId, userId: USER.sub, toolId: 'Shell', toolName: 'Shell',
@@ -650,18 +651,13 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       (rig.channel as any).activeStreams.set('st-r', {
         controller: new AbortController(), userId: USER.sub, ws: rig.ws, sessionId,
       });
-      (rig.channel as any).handleRespond(wsClient(rig.ws, USER), {
-        action: 'respond', interactionId: id, allow: true, message: '同意执行',
-      });
+      (rig.channel as any).handleRespond(wsClient(rig.ws, USER), { action: 'respond', interactionId: id, clientAttemptId: 'attempt-success', allow: true, message: '同意执行' });
       await expect(pending).resolves.toEqual({ allow: true, message: '同意执行' });
       // respond_ok 在 appendDurableWebCommand（真实 fs 扫描）之后发出 → 等宏任务
-      await vi.waitFor(() => {
-        expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: id });
-      }, { timeout: 5_000 });
-      expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: id });
+      await vi.waitFor(() => { expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: id, clientAttemptId: 'attempt-success', response: { allow: true, message: '同意执行' } }); }, { timeout: 5_000 });
+      expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: id, response: { allow: true, message: '同意执行' } });
       expect(interactionStore.get(id)).toBeUndefined();
     });
-
     it('未知交互且无持久化兜底 → Interaction not found or expired', async () => {
       const tmp = await makeTmp('cov-respond-miss-');
       const rig = makeRig({ agentCwd: tmp });
@@ -1451,7 +1447,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await rig.send(USER, { approvalPolicy: { autoApproveTools: true } });
       expect(responses).toEqual([{ allow: false, message: 'User stopped generation' }]);
     });
-
     it('人工审批 round-trip：permission_request 推 WS（含 ExitPlanMode planContent），respond 后 dispatch 拿到应答', async () => {
       const tmp = await makeTmp('cov-audit-rt-');
       const userCwd = resolveUserCwd(tmp, { id: USER.sub, username: USER.username, role: 'user', tenantId: TENANT });
@@ -1459,10 +1454,12 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await mkdir(plansDir, { recursive: true });
       await writeFile(join(plansDir, 'latest.md'), '# PLAN BODY');
       const sessionId = randomUUID();
+      const transcriptPath = getTranscriptPath(tmp, sessionId, { tenantId: TENANT, userId: USER.sub });
+      await writeSessionMeta(transcriptPath, { userId: USER.sub, username: USER.username, tenantId: TENANT, channel: 'web', createdAt: new Date().toISOString() });
       const interactionId = `rt-${RUN_TAG}`;
       let resolved: InteractionResponse | undefined;
       const dispatch: AgentRunDispatch = async function* (_msg, _ctx, _opts, hooks) {
-        await hooks?.onSessionStart?.(sessionId);
+        await hooks?.onSessionStart?.(sessionId, transcriptPath);
         resolved = await hooks!.onInteraction!({
           type: 'permission_request', interactionId,
           toolId: 'ExitPlanMode', toolName: 'ExitPlanMode', toolInput: {},
@@ -1496,7 +1493,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       // 广播分支由上方「正常 resolve」用例（手工挂 activeStreams）单独覆盖。
     });
   });
-
   // ════════════════════════════════════════════════════════════════════
   // 5. publishRuntimeOutboundEvent
   // ════════════════════════════════════════════════════════════════════
@@ -1508,9 +1504,11 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         runtimeEventStoreFor: (tp) => new FileEventStore(getRuntimeEventLogPath(tp), TENANT),
         enqueueRuntime: {
           scheduler: {
-            enqueue: async (input: UpsertRunInput) => {
-              enqueued.push(input);
-              return runStore.upsertPending(input);
+            enqueue: async (input: UpsertRunInput) => runStore.upsertPending(input),
+            activateCreatedRun: async (runId: string, claim: Record<string, unknown>, metadataPatch: Record<string, unknown>) => {
+              const activated = await runStore.activatePersistedInteractionResume(runId, claim, metadataPatch);
+              if (activated) enqueued.push(await runStore.get(runId) as UpsertRunInput);
+              return activated;
             },
           } as any,
           runStore,
@@ -1533,19 +1531,16 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({ runId: 'run-ask-1', sessionId, userId: USER.sub, model: 'm-ask', channel: 'web' });
       await runStore.markStatus('run-ask-1', 'waiting_user');
-      const markSpy = vi.spyOn(runStore, 'markStatus');
       const enqueued: UpsertRunInput[] = [];
       const rig = resumeRig(runStore, tmp, enqueued);
-
       (rig.channel as any).handleRespond(wsClient(rig.ws, USER), {
         action: 'respond', interactionId: 'ask-int-1', sessionId, answers: { q1: '红色' },
       });
       await vi.waitFor(() => expect(rig.ws.sent.at(-1)?.data)
-        .toEqual({ type: 'respond_ok', interactionId: 'ask-int-1' }));
+        .toEqual({ type: 'respond_ok', interactionId: 'ask-int-1', response: { answers: { q1: '红色' } } }), { timeout: 5_000 });
       expect(enqueued).toHaveLength(1);
       expect(enqueued[0]).toMatchObject({
-        runId: 'run-ask-1', sessionId, userId: USER.sub, tenantId: TENANT,
-        model: 'm-ask', executionTarget: 'server-local', workspaceId: 'ws-ask', channel: 'web',
+        runId: 'run-ask-1', sessionId, userId: USER.sub, model: 'm-ask', channel: 'web',
         metadata: { resumeInteraction: { interactionId: 'ask-int-1', response: { answers: { q1: '红色' } } } },
       });
       // durable 日志追加 interaction_resolved（归一化应答）
@@ -1555,16 +1550,10 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         runId: 'run-ask-1', toolCallId: 'call-ask-1', userId: USER.sub,
         response: { answers: { q1: '红色' } },
       });
-      // 入队前 run 记录被重置为 pending 且带 resume 载荷（消费位清空）
-      expect(markSpy).toHaveBeenCalledWith('run-ask-1', 'pending', 'ask_user_resolved_enqueue_resume', {
-        resumeInteractionConsumedAt: null,
-        resumeInteractionConsumedId: null,
-        resumeInteraction: { interactionId: 'ask-int-1', response: { answers: { q1: '红色' } } },
-      });
       expect((await runStore.get('run-ask-1'))?.metadata?.resumeInteraction).toEqual({
         interactionId: 'ask-int-1', response: { answers: { q1: '红色' } },
       });
-      expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: 'ask-int-1' });
+      expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: 'ask-int-1', response: { answers: { q1: '红色' } } });
       expect(rig.userEvents).toContainEqual({ type: 'session_status', sessionId, status: 'queued', runId: 'run-ask-1' });
     });
 
@@ -1587,12 +1576,11 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await runStore.markStatus('run-appr-1', 'waiting_approval');
       const enqueued: UpsertRunInput[] = [];
       const rig = resumeRig(runStore, tmp, enqueued);
-
-      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: true, message: '可以执行' }, sessionId);
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'appr-1' });
+      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: true, message: '可以执行' }, sessionId, 'attempt-first');
+      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'appr-1', clientAttemptId: 'attempt-first', response: { allow: true, message: '可以执行' } });
       expect(enqueued).toHaveLength(1);
       expect(enqueued[0]).toMatchObject({
-        runId: 'run-appr-1', sessionId, workspaceId: 'ws-appr',
+        runId: 'run-appr-1', sessionId,
         metadata: { resumeApproval: { approvalId: 'appr-1', response: { allow: true, message: '可以执行' } } },
       });
       const events = await eventStore.list(TENANT, sessionId);
@@ -1601,11 +1589,16 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         response: { allow: true, message: '可以执行' },
       });
 
-      // 第二次 respond：日志里已有 interaction_resolved → 直接 respond_ok，不再入队
+      // 首次 ACK 丢失后用户改答重试：ACK fence 回显本次 attempt，但 response 必须仍是首答 canonical。
       rig.ws.sent.length = 0;
-      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: true }, sessionId);
-      expect(rig.ws.sent.map((m) => m.data.type)).toEqual(['respond_ok']);
+      await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-1', { allow: false, message: '改为拒绝' }, sessionId, 'attempt-retry');
+      expect(rig.ws.sent).toHaveLength(1);
+      expect(rig.ws.sent[0].data).toEqual({ type: 'respond_ok', interactionId: 'appr-1', clientAttemptId: 'attempt-retry', response: { allow: true, message: '可以执行' } });
       expect(enqueued).toHaveLength(1);
+      const durableResolved = (await eventStore.list(TENANT, sessionId)).find((event) => event.type === 'interaction_resolved');
+      expect(durableResolved).toMatchObject({ response: { allow: true, message: '可以执行' } });
+      expect(JSON.stringify(durableResolved)).not.toContain('attempt-first');
+      expect(JSON.stringify(durableResolved)).not.toContain('attempt-retry');
     });
 
     it('approval 指向终态 run → 拒绝遗留审批并 respond_ok，不恢复旧 run', async () => {
@@ -1624,11 +1617,8 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await runStore.markStatus('run-appr-t', 'completed');
       const enqueued: UpsertRunInput[] = [];
       const rig = resumeRig(runStore, tmp, enqueued);
-
       await (rig.channel as any).resolveInteraction(wsClient(rig.ws, USER), 'appr-t-1', { allow: true }, sessionId);
-      expect(rig.ws.sent.at(-1)?.data).toEqual({
-        type: 'respond_ok', interactionId: 'appr-t-1',
-      });
+      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'appr-t-1', response: { allow: false, message: '源 run 不可恢复（completed），拒绝遗留审批' } });
       expect(enqueued).toHaveLength(0);
       const events = await eventStore.list(TENANT, sessionId);
       expect(events.at(-1)).toMatchObject({
@@ -1667,11 +1657,11 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(resumeCalls).toHaveLength(0);
       const events = await eventStore.list(TENANT, sessionId);
       expect(events.at(-1)).toMatchObject({
-        type: 'approval_resolved',
-        approvalId: 'appr-l-1',
+        type: 'approval_resolved', approvalId: 'appr-l-1',
         decision: 'rejected',
         message: expect.stringContaining('未恢复旧 Run'),
       });
+      expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: 'appr-l-1', response: { allow: false, message: '持久审批恢复需要 Runtime Scheduler；已安全拒绝，未恢复旧 Run' } });
       expect(rig.userEvents).not.toContainEqual(expect.objectContaining({ type: 'session_status', status: 'busy' }));
       expect((rig.channel as any).findActiveStreamIdBySession(sessionId)).toBeUndefined();
     });

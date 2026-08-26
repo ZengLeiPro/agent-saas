@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Save } from "lucide-react";
+import { Loader2, RefreshCw, Save } from "lucide-react";
 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -15,23 +15,27 @@ interface PersonaEditDialogProps {
 export function PersonaEditDialog({ username, open, onOpenChange }: PersonaEditDialogProps) {
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setLoading(true);
-    setError(null);
+    setLoaded(false);
+    setLoadError(null);
+    setSaveError(null);
     fetchPersona(username)
       .then((persona) => {
-        if (!cancelled) setContent(parsePersona(persona || "").body);
+        if (cancelled) return;
+        setContent(parsePersona(persona || "").body);
+        setLoaded(true);
       })
       .catch((cause) => {
-        if (!cancelled) {
-          setContent("");
-          setError(cause instanceof Error ? cause.message : "读取人格定义失败");
-        }
+        if (!cancelled) setLoadError(cause instanceof Error ? cause.message : "读取人格定义失败");
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -39,20 +43,21 @@ export function PersonaEditDialog({ username, open, onOpenChange }: PersonaEditD
     return () => {
       cancelled = true;
     };
-  }, [open, username]);
+  }, [open, reloadKey, username]);
 
   const handleSave = useCallback(async () => {
+    if (!loaded) return;
     setSaving(true);
-    setError(null);
+    setSaveError(null);
     try {
       await updatePersona(username, content);
       onOpenChange(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "保存人格定义失败");
+      setSaveError(cause instanceof Error ? cause.message : "保存人格定义失败");
     } finally {
       setSaving(false);
     }
-  }, [content, onOpenChange, username]);
+  }, [content, loaded, onOpenChange, username]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -66,6 +71,14 @@ export function PersonaEditDialog({ username, open, onOpenChange }: PersonaEditD
             <div className="flex flex-1 items-center justify-center">
               <Loader2 className="size-5 animate-spin text-muted-foreground" />
             </div>
+          ) : loadError ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center" role="alert">
+              <p className="text-sm text-destructive">{loadError}</p>
+              <Button type="button" variant="outline" onClick={() => setReloadKey((value) => value + 1)}>
+                <RefreshCw className="size-4" />
+                重新加载
+              </Button>
+            </div>
           ) : (
             <Textarea
               aria-label="人格定义内容"
@@ -77,13 +90,13 @@ export function PersonaEditDialog({ username, open, onOpenChange }: PersonaEditD
               autoFocus
             />
           )}
-          {error ? <p className="mt-2 text-sm text-destructive" role="alert">{error}</p> : null}
+          {saveError ? <p className="mt-2 text-sm text-destructive" role="alert">{saveError}</p> : null}
         </div>
         <DialogFooter className="border-t px-6 py-4 sm:justify-between">
-          <span className="text-xs text-muted-foreground">{content.length}/10000</span>
+          <span className="text-xs text-muted-foreground">{loaded ? `${content.length}/10000` : "尚未加载"}</span>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>取消</Button>
-            <Button onClick={() => { void handleSave(); }} disabled={loading || saving}>
+            <Button onClick={() => { void handleSave(); }} disabled={!loaded || loading || saving}>
               {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
               保存
             </Button>

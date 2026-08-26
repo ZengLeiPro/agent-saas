@@ -23,6 +23,22 @@ describe("PersonaEditDialog", () => {
     api.updatePersona.mockResolvedValue(undefined);
   });
 
+  it("读取失败时禁止保存空内容，并允许重新加载", async () => {
+    api.fetchPersona.mockRejectedValueOnce(new Error("人格定义读取失败"));
+    render(<PersonaEditDialog username="tester" open onOpenChange={vi.fn()} />);
+
+    expect((await screen.findByRole("alert")).textContent).toContain("人格定义读取失败");
+    const saveButton = screen.getByRole("button", { name: "保存" }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
+    await userEvent.click(saveButton);
+    expect(api.updatePersona).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "重新加载" }));
+    const editor = await screen.findByRole("textbox", { name: "人格定义内容" });
+    expect((editor as HTMLTextAreaElement).value).toBe("已有的人格定义");
+    expect(saveButton.disabled).toBe(false);
+  });
+
   it("每次打开都以可编辑的大尺寸弹窗加载已有定义", async () => {
     const onOpenChange = vi.fn();
     const { rerender } = render(

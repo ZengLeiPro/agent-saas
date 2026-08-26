@@ -8,10 +8,12 @@ export const RELEASE_STATES = [
   'approved',
   'promoting',
   'completed',
+  'failed_before_change',
   'rejected',
   'revoked',
   'superseded',
   'partial_failed',
+  'rolled_back',
   'needs_human',
 ] as const;
 export type ReleaseState = (typeof RELEASE_STATES)[number];
@@ -54,14 +56,18 @@ const REVOCABLE_STATES = new Set<ReleaseState>([
   'approved',
   'promoting',
   'completed',
+  'failed_before_change',
   'rejected',
   'partial_failed',
+  'rolled_back',
   'needs_human',
   'superseded',
 ]);
 const FAILURE_STATES = new Set<ReleaseState>([
+  'failed_before_change',
   'rejected',
   'partial_failed',
+  'rolled_back',
   'needs_human',
   'superseded',
 ]);

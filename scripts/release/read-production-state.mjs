@@ -83,7 +83,12 @@ export function validateProductionObservations({ runtime, api, web, acs }) {
 }
 
 async function json(url) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  const requestUrl = new URL(url);
+  requestUrl.searchParams.set('release_observation', String(Date.now()));
+  const response = await fetch(requestUrl, {
+    headers: { 'cache-control': 'no-cache' },
+    signal: AbortSignal.timeout(10_000),
+  });
   if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
   return response.json();
 }

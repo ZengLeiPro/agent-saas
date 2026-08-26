@@ -231,4 +231,21 @@ describe('ReleaseAttestationLog', () => {
       blockingReasons: expect.arrayContaining([expect.stringMatching(/expired/)]),
     });
   });
+
+  it.each(['failed_before_change', 'partial_failed', 'rolled_back', 'needs_human'] as const)(
+    'records truthful terminal promotion outcome %s without allowing later completion',
+    (outcome) => {
+      const entries = log();
+      append(entries, 'built');
+      append(entries, 'staging_deployed');
+      append(entries, 'verified');
+      append(entries, 'approved');
+      append(entries, 'promoting');
+      append(entries, outcome);
+      expect(entries.currentState()).toBe(outcome);
+      expect(() => append(entries, 'completed', `late-complete-${outcome}`)).toThrow(
+        /Illegal or late/u,
+      );
+    },
+  );
 });

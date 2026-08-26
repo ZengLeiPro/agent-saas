@@ -1,4 +1,4 @@
-name: ACS CI / Deploy
+name: ACS CI / Legacy Deploy Disabled
 
 on:
   pull_request:
@@ -34,15 +34,9 @@ on:
       - 'scripts/acs-verify-per-session.py'
       - 'scripts/test_acs_operational_scripts.py'
       - 'scripts/test_acr_webhook_redelivery.py'
-  workflow_dispatch:
-    inputs:
-      force:
-        description: 'Force deploy even when no ACS-relevant change since the production SHA'
-        type: boolean
-        default: false
 
 env:
-  NODE_VERSION: "22"
+  NODE_VERSION: '22'
   ACR_REGISTRY: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com
   ACR_REPOSITORY: agent-saas/acs-sandbox
   ACR_INSTANCE_ID: cri-tapxtcyd6odwj3m4
@@ -473,7 +467,7 @@ jobs:
         id: wait
         if: steps.necessity.outputs.deploy_needed == 'true'
         env:
-          ACR_GITHUB_HOOK_ID: "649018221"
+          ACR_GITHUB_HOOK_ID: '649018221'
           ACR_WEBHOOK_REDELIVERY_TOKEN: ${{ secrets.ACS_WEBHOOK_REDELIVERY_TOKEN }}
         run: |
           set -euo pipefail

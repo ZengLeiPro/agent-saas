@@ -13,3 +13,9 @@
 组件不一致或 ACS namespace 不是 `agent-saas-coding` 都会失败。输出只含 SHA、digest、路径、
 PID 和非敏感配置指纹，不输出凭据。Promotion 把该输出与 Manifest 的
 `productionBaseline` 做 canonical 比较；有漂移即停止在任何生产写入之前。
+
+晋级开始后，`read-live-production-components.mjs` 不依赖旧的汇总 identity，分别从 API、
+Web、Worker 当前 systemd/env 和 ACS 读取实际矩阵，用于识别部分成功。只有该矩阵完整等于
+Manifest target，Workflow 才调用 `write-production-identity.mjs` 原子写入新的汇总 identity，
+随后再次运行严格交叉读回。这样 API 已切流但 Worker/Web 失败时会保留真实混合矩阵，而不会
+伪造目标版本或把它误写成 completed。

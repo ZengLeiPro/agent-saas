@@ -1,13 +1,9 @@
 # ============================================================================
-# CI/CD Pipeline: install → typecheck → test → build → optional ECS → Web OSS
+# CI Pipeline: install → typecheck → test → build
 # ============================================================================
 # 触发:
 #   - push to main: 只构建 + 测试 + 打包 artifact（不部署生产）
-#   - workflow_dispatch: 构建通过后按生产 active ECS SHA→目标 SHA 的累计差异
-#     决定是否部署 ECS，再发布 Web OSS（Actions 页面手动触发，
-#     或 `gh workflow run ci.yml`；`force_ecs=true` 可强制滚动 ECS）
-# 部署与发布解耦: 多 agent 共享仓库高频 push，push ≠ 上生产；
-# 想发版时手动触发一次 dispatch。
+#   - 生产 workflow_dispatch 已停用；生产只允许 promote-release.yml 消费固定 RC。
 # 蓝绿部署脚本: 读 /etc/agent-saas/active-color 定位 idle 色 → 解包新 release →
 #   只改 idle 色 symlink（active 色 symlink 永不动）→ start idle 实例 →
 #   ready(180s) 门禁 + warmup(420s 软门禁) + 冒烟 → 重写 nginx upstream +
@@ -19,19 +15,13 @@
 #   HTTP 传输错误先即时重试 1 次，逻辑样本仍要求 health/API/WS 全部成功。
 # ============================================================================
 
-name: App CI / Deploy
+name: App CI / Legacy Deploy Disabled
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      force_ecs:
-        description: 'Force ECS deploy even when no ECS-relevant path changed since production'
-        type: boolean
-        default: false
 
 # 手动生产发布整条链（build → optional ECS → Web OSS）互斥；普通 push CI 使用 run_id
 # 隔离，不互相排队。cancel-in-progress=false 保证正在发布的批次不会被新批次打断。
@@ -41,7 +31,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "22"
+  NODE_VERSION: '22'
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:

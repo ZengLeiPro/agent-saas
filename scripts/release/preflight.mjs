@@ -2,6 +2,8 @@ import { execFileSync as defaultExecFileSync } from 'node:child_process';
 import { classifyComponents } from './classify-components.mjs';
 import { isFullSha, readRuntimeIdentity } from './read-runtime-identity.mjs';
 
+export const TRUSTED_MAIN_REF = 'origin/main';
+
 function gitSucceeds(args, { cwd, execFileSync }) {
   try {
     execFileSync('git', args, { cwd, encoding: 'utf8', stdio: 'pipe' });
@@ -15,7 +17,6 @@ export function runPreflight({
   target,
   baseline,
   identityPath,
-  mainRef = 'main',
   cwd = process.cwd(),
   execFileSync = defaultExecFileSync,
   readFileSync,
@@ -32,8 +33,8 @@ export function runPreflight({
     blockingReasons.push('Baseline must be a complete 40-character SHA.');
   }
 
-  if (targetIsFullSha && !gitSucceeds(['merge-base', '--is-ancestor', target, mainRef], { cwd, execFileSync })) {
-    blockingReasons.push(`Target ${target} is not reachable from ${mainRef}.`);
+  if (targetIsFullSha && !gitSucceeds(['merge-base', '--is-ancestor', target, TRUSTED_MAIN_REF], { cwd, execFileSync })) {
+    blockingReasons.push(`Target ${target} is not reachable from ${TRUSTED_MAIN_REF}.`);
   }
   if (targetIsFullSha && baselineIsFullSha
     && !gitSucceeds(['merge-base', '--is-ancestor', baseline, target], { cwd, execFileSync })) {
@@ -60,7 +61,7 @@ export function runPreflight({
     ok: blockingReasons.length === 0,
     target,
     baseline,
-    mainRef,
+    mainRef: TRUSTED_MAIN_REF,
     changedFiles: classification.changedFiles,
     components: classification.components,
     identity: identity.ok ? identity.identity : null,
@@ -85,7 +86,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     target: args.target,
     baseline: args.baseline,
     identityPath: args.identity,
-    mainRef: args.main ?? 'main',
     cwd: args.cwd ?? process.cwd(),
   });
 

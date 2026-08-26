@@ -318,6 +318,17 @@ describe('health router', () => {
     expect(await response.json()).toMatchObject({ status: 'not_ready', release: { safetyAttested: false } });
   });
 
+  it('fails readiness closed when the live staging egress policy loses attestation', async () => {
+    const server = await startHealthServer({
+      getRuntimeIdentity: () => ({ environment: 'staging', safetyAttested: true }),
+      getEnvironmentSafetyAttested: () => false,
+    });
+    servers.push(server);
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ status: 'not_ready', release: { safetyAttested: false } });
+  });
+
   it('defaults warmup to done when no status provider is wired', async () => {
     const server = await startHealthServer({});
     servers.push(server);

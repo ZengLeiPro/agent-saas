@@ -21,6 +21,7 @@ export interface HealthRouteOptions {
   getIsDraining?: () => boolean;
   /** Non-sensitive deployment identity. Staging must be safety-attested before ready. */
   getRuntimeIdentity?: () => RuntimeIdentity;
+  getEnvironmentSafetyAttested?: () => boolean;
   /** Integration v3 release gate. Errors fail readiness closed. */
   getIntegrationV3Health?: () => IntegrationV3HealthStatus | Promise<IntegrationV3HealthStatus>;
   /** skills 后台物化进度（结构类型，避免反向依赖 app/runtime）；ready 载荷用 */
@@ -105,7 +106,8 @@ export function createHealthRouter(
     const draining = options.getIsDraining?.() ?? false;
     const warmup = options.getSkillsWarmupStatus?.() ?? { state: 'done' as const };
     const release = options.getRuntimeIdentity?.() ?? runtimeIdentity;
-    const safetyAttested = release?.safetyAttested !== false;
+    const safetyAttested = release?.safetyAttested !== false
+      && (options.getEnvironmentSafetyAttested?.() ?? true);
     let integrationV3: IntegrationV3HealthStatus | undefined;
     try {
       integrationV3 = await options.getIntegrationV3Health?.();
@@ -122,7 +124,7 @@ export function createHealthRouter(
       status: draining ? 'draining' : releaseReady && safetyAttested ? 'ok' : 'not_ready',
       draining,
       warmup,
-      ...(release ? { release } : {}),
+      ...(release ? { release: { ...release, safetyAttested } } : {}),
       ...(integrationV3 ? { integrationV3 } : {}),
     });
   });

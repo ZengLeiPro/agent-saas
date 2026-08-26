@@ -129,6 +129,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         : undefined,
       getIsDraining: () => channelManager.draining,
       getSkillsWarmupStatus: () => runtime.getSkillsWarmupStatus(),
+      ...(runtime.egressConfigStore ? { getEnvironmentSafetyAttested: () => runtime.egressConfigStore!.isEnvironmentSafetyAttested() } : {}),
     }),
   );
   app.use('/api', activeOffboardingWriteFence(runtime));

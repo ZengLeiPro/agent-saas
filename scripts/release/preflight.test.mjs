@@ -20,9 +20,9 @@ function productionIdentity(overrides = {}) {
       acs: component(TARGET),
     },
     topology: {
-      activeColor: 'blue', observedAt: '2026-08-25T00:00:00.000Z',
-      api: { unit: 'agent-saas-api@blue.service', releaseSymlink: '/srv/releases/blue', pidfile: '/run/blue-api.pid', readyfile: '/run/blue-api.ready' },
-      runtimeWorker: { unit: 'agent-saas-worker@blue.service', releaseSymlink: '/srv/releases/blue', pidfile: '/run/blue-worker.pid', readyfile: '/run/blue-worker.ready' },
+      observedAt: '2026-08-25T00:00:00.000Z',
+      api: { activeColor: 'blue', activeColorFile: '/etc/agent-saas/active-color', unit: 'agent-saas-server@blue.service', releaseSymlink: '/opt/agent-saas-app/color/blue', pidfile: '/run/agent-saas-server-blue.pid' },
+      runtimeWorker: { activeColor: 'green', activeColorFile: '/etc/agent-saas/runtime-worker-active-color', unit: 'agent-saas-runtime-worker@green.service', releaseSymlink: '/opt/agent-saas-app/worker/green', pidfile: '/run/agent-saas-runtime-worker-green.pid', readyfile: '/run/agent-saas-runtime-worker-green.ready' },
     },
     ...overrides,
   };
@@ -37,9 +37,13 @@ function successfulGit(command, args) {
 function runtimeObservation(overrides = {}) {
   return {
     now: Date.parse('2026-08-25T00:01:00.000Z'),
-    topologyExecFileSync: () => 'active\n',
+    topologyExecFileSync: (_command, args) => args.includes('ControlGroup') ? '/system.slice/agent-saas.service\n' : '100\n',
     topologyRealpathSync: () => `/srv/releases/${TARGET}`,
-    topologyReadFileSync: (path) => path.endsWith('.pid') ? '123' : TARGET,
+    topologyReadFileSync: (path) => {
+      if (path.endsWith('active-color')) return path.includes('runtime-worker') ? 'green' : 'blue';
+      if (path.includes('/proc/')) return '0::/system.slice/agent-saas.service';
+      return '123';
+    },
     topologyProcessExists: () => true,
     ...overrides,
   };
@@ -58,6 +62,20 @@ test('preflight succeeds for full SHAs, main ancestry, production identity, and 
   assert.equal(result.ok, true);
   assert.deepEqual(result.components, ['web', 'runtimeWorker']);
   assert.deepEqual(result.blockingReasons, []);
+});
+
+test('preflight pins ancestry to origin/main and ignores caller-selected refs', () => {
+  const calls = [];
+  runPreflight({
+    target: TARGET,
+    baseline: BASELINE,
+    identityPath: './production.json',
+    mainRef: TARGET,
+    execFileSync: (command, args) => { calls.push([command, args]); return args[0] === 'diff' ? 'web/src/App.tsx\n' : ''; },
+    readFileSync: () => JSON.stringify(productionIdentity()),
+    runtimeObservation: runtimeObservation(),
+  });
+  assert.deepEqual(calls[0]?.[1], ['merge-base', '--is-ancestor', TARGET, 'origin/main']);
 });
 
 test('preflight reports each blocking release condition as JSON data', () => {
@@ -92,7 +110,7 @@ test('preflight blocks a target outside main, a non-ancestor baseline, incomplet
   });
 
   assert.equal(result.ok, false);
-  assert.match(result.blockingReasons.join('\n'), /not reachable from main/u);
+  assert.match(result.blockingReasons.join('\n'), /not reachable from origin\/main/u);
   assert.match(result.blockingReasons.join('\n'), /not an ancestor/u);
   assert.match(result.blockingReasons.join('\n'), /component "web" must have an ISO/u);
   assert.match(result.blockingReasons.join('\n'), /missing component "api"/u);
@@ -114,7 +132,7 @@ test('runtime identity rejects placeholder topology fields', () => {
   const identity = productionIdentity({ topology: { ...productionIdentity().topology, api: { unit: 'blue', releaseSymlink: 'blue', pidfile: 'blue', readyfile: 'blue' } } });
   const result = readRuntimeIdentity({ identityPath: './production.json', readFileSync: () => JSON.stringify(identity), ...runtimeObservation() });
   assert.equal(result.ok, false);
-  assert.match(result.blockingReasons.join('\n'), /colored systemd unit/u);
+  assert.match(result.blockingReasons.join('\n'), /deployed systemd template/u);
   assert.match(result.blockingReasons.join('\n'), /absolute path/u);
 });
 
@@ -140,7 +158,7 @@ test('runtime identity fails closed for stale or unverifiable topology observati
     }),
   });
   assert.equal(missing.ok, false);
-  assert.match(missing.blockingReasons.join('\n'), /Unable to observe active systemd unit/u);
+  assert.match(missing.blockingReasons.join('\n'), /Unable to observe systemd process identity/u);
   assert.match(missing.blockingReasons.join('\n'), /Unable to resolve production release symlink/u);
   assert.match(missing.blockingReasons.join('\n'), /Unable to read production pidfile/u);
   assert.match(missing.blockingReasons.join('\n'), /Unable to read production readyfile/u);

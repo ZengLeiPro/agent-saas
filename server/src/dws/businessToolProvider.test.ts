@@ -204,7 +204,7 @@ describe('DwsBusinessToolProvider', () => {
   });
 
   it('管理员恢复其他用户会话时按会话归属者解析 requester，允许 workspace 保持当前操作者身份', async () => {
-    const { provider, invoke, context } = setup();
+    const { provider, invoke, context, auditStore } = setup();
     const admin = {
       id: 'admin-a', username: 'admin', role: 'admin' as const, tenantId: 'tenant-a', disabled: false,
     };
@@ -222,6 +222,41 @@ describe('DwsBusinessToolProvider', () => {
     const request = invoke.mock.calls[0]![0];
     expect(request.input.command).toContain("'--profile' 'requester-profile-secret'");
     expect(request.context.workspace).toMatchObject({ userId: 'user-a', username: 'alice' });
+    expect(auditStore.events[0]).toMatchObject({
+      actorUserId: admin.id,
+      actorPersona: 'org_admin',
+      metadata: { sessionOwnerUserId: 'user-a', operatorUserId: admin.id, operatorRole: 'admin' },
+    });
+  });
+
+  it('普通用户不能跨 Session 使用归属者的 requester profile', async () => {
+    const { provider, invoke, context, auditStore, logger } = setup();
+    const otherUser = {
+      id: 'user-b', username: 'bob', role: 'user' as const, tenantId: 'tenant-a', disabled: false,
+    };
+
+    await expect(provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['minutes', '+list-all'], credentialMode: 'requester' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, {
+      ...context,
+      channelContext: { ...context.channelContext, user: otherUser },
+      workspace: { ...context.workspace, userId: otherUser.id, username: otherUser.username },
+    })).rejects.toThrow('不一致项：operator.sessionOwnerDelegation');
+
+    expect(invoke).not.toHaveBeenCalled();
+    expect(auditStore.events.at(-1)).toMatchObject({
+      actorUserId: otherUser.id,
+      actorPersona: 'member',
+      reason: 'DWS_BUSINESS_SUBJECT_MISMATCH',
+      metadata: {
+        mismatchFields: ['operator.sessionOwnerDelegation'],
+        sessionOwnerUserId: 'user-a',
+        operatorUserId: otherUser.id,
+      },
+    });
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('"operatorUserId":"user-b"'));
   });
 
   it('拒绝未确认写操作、外部 profile 参数与身份漂移', async () => {

@@ -129,16 +129,17 @@ export class DwsBusinessToolProvider implements ToolProvider {
   ): Promise<ToolResult | undefined> {
     if (call.toolId !== dwsBusinessToolDescriptor.id) return undefined;
     const identity = context.channelContext.sessionOwner ?? context.channelContext.user;
-    const workspaceIdentity = context.channelContext.user ?? identity;
+    const operator = context.channelContext.user ?? identity;
+    const workspaceIdentity = operator;
     const session = context.sessionId ? await this.options.sessionCatalog.get(context.sessionId) : null;
     const correlationId = context.invocationId ?? context.toolCallId ?? `${context.runId ?? context.sessionId ?? 'unbound'}:dws`;
     const auditRejection = async (reason: string, metadata?: Record<string, unknown>) => {
       await this.options.auditStore.append({
         correlationId,
-        actorType: identity?.id ? 'user' : 'service',
-        actorUserId: identity?.id ?? 'dws-business-broker',
-        actorPersona: identity?.id ? (identity.role === 'admin' ? 'org_admin' : 'member') : 'service',
-        ...(identity?.tenantId ? { actorTenantId: identity.tenantId } : {}),
+        actorType: operator?.id ? 'user' : 'service',
+        actorUserId: operator?.id ?? 'dws-business-broker',
+        actorPersona: operator?.id ? (operator.role === 'admin' ? 'org_admin' : 'member') : 'service',
+        ...(operator?.tenantId ? { actorTenantId: operator.tenantId } : {}),
         action: 'dws.business.rejected',
         targetType: 'org_agent',
         targetId: session?.orgAgentId ?? 'unbound',
@@ -146,7 +147,14 @@ export class DwsBusinessToolProvider implements ToolProvider {
         purpose: 'persist rejected DWS business broker call',
         reason,
         result: 'failed',
-        metadata: { sessionBound: Boolean(session?.orgAgentId), ...metadata },
+        metadata: {
+          sessionBound: Boolean(session?.orgAgentId),
+          ...(identity?.id ? { sessionOwnerUserId: identity.id } : {}),
+          ...(identity?.tenantId ? { sessionOwnerTenantId: identity.tenantId } : {}),
+          ...(operator?.id ? { operatorUserId: operator.id } : {}),
+          ...(operator?.tenantId ? { operatorTenantId: operator.tenantId } : {}),
+          ...metadata,
+        },
       });
     };
     const parsed = businessInputSchema.safeParse(call.input);
@@ -155,11 +163,12 @@ export class DwsBusinessToolProvider implements ToolProvider {
       throw new Error('DWS Broker 输入格式无效');
     }
     const input = parsed.data;
-    if (!identity?.id || !identity.tenantId || !context.sessionId) {
+    if (!identity?.id || !identity.tenantId || !operator?.id || !operator.tenantId || !context.sessionId) {
       await auditRejection('DWS_BUSINESS_SUBJECT_MISSING');
       throw new Error('DWS Broker 缺少可信请求者或 Session 身份');
     }
     const mismatchFields = [
+      ...(operator?.id !== identity.id && operator?.role !== 'admin' ? ['operator.sessionOwnerDelegation'] : []),
       ...(!session?.orgAgentId ? ['session.orgAgentId'] : []),
       ...(session?.userId !== identity.id ? ['session.userId'] : []),
       ...(session?.tenantId !== identity.tenantId ? ['session.tenantId'] : []),
@@ -173,6 +182,9 @@ export class DwsBusinessToolProvider implements ToolProvider {
         mismatchFields,
         requesterUserId: identity.id,
         requesterTenantId: identity.tenantId,
+        operatorUserId: operator?.id,
+        operatorTenantId: operator?.tenantId,
+        operatorRole: operator?.role,
         sessionUserId: session?.userId,
         sessionTenantId: session?.tenantId,
         sessionOrgAgentId: session?.orgAgentId,
@@ -217,9 +229,9 @@ export class DwsBusinessToolProvider implements ToolProvider {
     const auditBase = {
       correlationId,
       actorType: 'user' as const,
-      actorUserId: identity.id,
-      actorPersona: identity.role === 'admin' ? 'org_admin' as const : 'member' as const,
-      actorTenantId: identity.tenantId,
+      actorUserId: operator.id,
+      actorPersona: operator.role === 'admin' ? 'org_admin' as const : 'member' as const,
+      actorTenantId: operator.tenantId,
       action: `dws.business.${command.risk}`,
       targetType: 'org_agent',
       targetId: session.orgAgentId,
@@ -230,6 +242,11 @@ export class DwsBusinessToolProvider implements ToolProvider {
         commandPath: command.commandPath,
         credentialMode: input.credentialMode,
         sessionBound: true,
+        sessionOwnerUserId: identity.id,
+        sessionOwnerTenantId: identity.tenantId,
+        operatorUserId: operator.id,
+        operatorTenantId: operator.tenantId,
+        operatorRole: operator.role,
         ...(delegation ? {
           delegationResourceId: delegation.resourceId,
           delegationBindingId: delegation.bindingId,

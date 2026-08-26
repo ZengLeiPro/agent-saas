@@ -44,6 +44,10 @@ export function reorderBoardIds(boardIds: string[], sourceId: string, targetId: 
   if (sourceIndex < 0 || targetIndex < 0) return boardIds;
 
   const next = boardIds.filter((boardId) => boardId !== sourceId);
-  next.splice(next.indexOf(targetId), 0, sourceId);
+  const targetIndexAfterRemoval = next.indexOf(targetId);
+  const insertionIndex = sourceIndex < targetIndex
+    ? targetIndexAfterRemoval + 1
+    : targetIndexAfterRemoval;
+  next.splice(insertionIndex, 0, sourceId);
   return next;
 }

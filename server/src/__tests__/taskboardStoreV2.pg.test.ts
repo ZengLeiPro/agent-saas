@@ -51,7 +51,7 @@ describePg('PgTaskboardStore V2 integration contract', () => {
     }
   }, 30_000);
 
-  it('enforces V2 RBAC, freezes integration sources, and keeps one active repository lane', async () => {
+  it('enforces V2 RBAC, freezes integration sources, and rejects duplicate active sources', async () => {
     const board = await store.createBoard(alice, {
       name: 'V2 集成闭环',
       visibility: 'organization',
@@ -127,7 +127,7 @@ describePg('PgTaskboardStore V2 integration contract', () => {
     await expect(store.createIntegrationBatch!(bob, board.id, {
       deliveryTaskIds: [first.id],
       expectedBoardVersion: boardAfterIntegration.version,
-    }, 'manual_batch')).rejects.toMatchObject({ code: 'TASKBOARD_INTEGRATION_ACTIVE' });
+    }, 'manual_batch')).rejects.toMatchObject({ code: 'TASKBOARD_INTEGRATION_SOURCE_DUPLICATE' });
 
     const change = await pool.query(
       `SELECT seq,payload FROM ${store.changesTable} WHERE task_id=$1 ORDER BY seq LIMIT 1`,

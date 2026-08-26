@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PortalContainerProvider } from "@/components/ui/portal-container";
@@ -21,7 +21,13 @@ export function ManagementSettingsAccessGate({
 }: ManagementSettingsAccessGateProps) {
   const active = target === scope;
   const [visited, setVisited] = useState(active);
-  const [portalContainer, setPortalContainer] = useState<HTMLDivElement | null>(null);
+  // Keep the portal host stable without a ref-driven state update. Mounting the full Radix
+  // management tree from a callback ref can recurse through composed refs under React 19.
+  const [portalContainer] = useState(() => document.createElement("div"));
+  const attachPortalContainer = useCallback((host: HTMLDivElement | null) => {
+    if (host) host.appendChild(portalContainer);
+    else portalContainer.remove();
+  }, [portalContainer]);
   useEffect(() => {
     if (persistAfterVisit && active) setVisited(true);
   }, [active, persistAfterVisit]);
@@ -49,17 +55,15 @@ export function ManagementSettingsAccessGate({
           inert={refreshingAllowed}
         >
           <div
-            ref={setPortalContainer}
+            ref={attachPortalContainer}
             data-testid={`management-settings-${scope}-portal-container`}
           />
-          {portalContainer && (
-            <PortalContainerProvider
-              container={portalContainer}
-              blocked={!active || refreshingAllowed}
-            >
-              {children}
-            </PortalContainerProvider>
-          )}
+          <PortalContainerProvider
+            container={portalContainer}
+            blocked={!active || refreshingAllowed}
+          >
+            {children}
+          </PortalContainerProvider>
         </div>
         {active && refreshingAllowed && (
           <div

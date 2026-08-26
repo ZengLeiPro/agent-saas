@@ -257,6 +257,42 @@ describe("ManagementSettingsAccessGate", () => {
     await waitFor(() => expect(document.body.style.pointerEvents).toBe("none"));
   });
 
+  it("两个持久管理 Gate 反复切换时保持 Portal 稳定且不触发嵌套更新", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    function Workspace({ scope }: { scope: "tenant" | "platform" }) {
+      return (
+        <Dialog defaultOpen>
+          <DialogContent data-testid={`${scope}-dialog`}>
+            <DialogTitle>{scope} 管理</DialogTitle>
+            <DialogDescription>验证 React 19 下管理工作区切换不会形成 ref 更新循环。</DialogDescription>
+          </DialogContent>
+        </Dialog>
+      );
+    }
+    const gates = (target: "tenant" | "platform") => (
+      <>
+        <ManagementSettingsAccessGate persistAfterVisit scope="tenant" target={target} access={access("ready", true)} onRetry={vi.fn()} onReturnPersonal={vi.fn()}>
+          <Workspace scope="tenant" />
+        </ManagementSettingsAccessGate>
+        <ManagementSettingsAccessGate persistAfterVisit scope="platform" target={target} access={access("ready", true)} onRetry={vi.fn()} onReturnPersonal={vi.fn()}>
+          <Workspace scope="platform" />
+        </ManagementSettingsAccessGate>
+      </>
+    );
+
+    const { rerender } = render(gates("tenant"));
+    for (let index = 0; index < 20; index += 1) {
+      rerender(gates(index % 2 === 0 ? "platform" : "tenant"));
+    }
+
+    const tenantPortal = screen.getByTestId("management-settings-tenant-portal-container");
+    const platformPortal = screen.getByTestId("management-settings-platform-portal-container");
+    expect(tenantPortal.contains(screen.getByTestId("tenant-dialog"))).toBe(true);
+    expect(platformPortal.contains(screen.getByTestId("platform-dialog"))).toBe(true);
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it("非持久 Gate refreshing 也把 Dialog 放进 inert 边界并由遮罩覆盖", () => {
     render(
       <ManagementSettingsAccessGate scope="platform" target="platform" access={access("refreshing", true)} onRetry={vi.fn()} onReturnPersonal={vi.fn()}>

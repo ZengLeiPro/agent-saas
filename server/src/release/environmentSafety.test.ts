@@ -1,17 +1,25 @@
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { AppConfig } from '../app/config.js';
-import { assertRuntimeEnvironmentSafety } from './environmentSafety.js';
+import { assertRuntimeEnvironmentSafety as assertSafetyImpl } from './environmentSafety.js';
 import { readRuntimeIdentity } from './runtimeIdentity.js';
 
 const SHA = 'a'.repeat(40);
 const DIGEST = `sha256:${'b'.repeat(64)}`;
 const stagingRoot = mkdtempSync(join(tmpdir(), 'agent-saas-staging-'));
 const workspace = join(stagingRoot, 'workspace');
+const processCwd = join(stagingRoot, 'app', 'server');
+const vaultFile = join(stagingRoot, 'vault', 'secrets.enc');
+const JWT_SECRET = 'staging-jwt-secret-that-is-at-least-32-characters';
 mkdirSync(workspace);
 mkdirSync(join(workspace, '.shared'));
+mkdirSync(join(workspace, 'uploads'));
+mkdirSync(join(processCwd, 'data'), { recursive: true });
+mkdirSync(join(stagingRoot, 'vault'));
+writeFileSync(vaultFile, 'encrypted');
 afterAll(() => rmSync(stagingRoot, { recursive: true, force: true }));
 
 const stagingEnv = {
@@ -27,13 +35,48 @@ const stagingEnv = {
   AGENT_SAAS_STAGING_DATABASE_NAME: 'runtime',
   AGENT_SAAS_STAGING_DATABASE_USER: 'staging',
   AGENT_SAAS_STAGING_ACS_HOSTS: 'acs.staging.internal',
+  AGENT_SAAS_STAGING_CREDENTIAL_NAMESPACE: 'STAGING_AGENT_SAAS',
+  AGENT_SAAS_PRODUCTION_CREDENTIAL_NAMESPACE: 'PRODUCTION_AGENT_SAAS',
+  AGENT_SAAS_STAGING_JWT_SECRET_SHA256: `sha256:${createHash('sha256').update(JWT_SECRET).digest('hex')}`,
+  AGENT_SAAS_PRODUCTION_JWT_SECRET_SHA256: `sha256:${'c'.repeat(64)}`,
+  AGENT_SAAS_STAGING_HAND_STORE_NAMESPACE: 'staging-hands',
+  AGENT_SAAS_PRODUCTION_HAND_STORE_NAMESPACE: 'production-hands',
+  AGENT_SAAS_STAGING_ACS_NAMESPACE: 'agent-saas-staging',
+  AGENT_SAAS_PRODUCTION_ACS_NAMESPACE: 'agent-saas-production',
+  AGENT_SAAS_STAGING_ACS_PVC: 'agent-saas-staging-workspace',
+  AGENT_SAAS_PRODUCTION_ACS_PVC: 'agent-saas-production-workspace',
+  AGENT_SAAS_STAGING_ACS_SERVICE_ACCOUNT: 'agent-saas-staging',
+  AGENT_SAAS_PRODUCTION_ACS_SERVICE_ACCOUNT: 'agent-saas-production',
+  AGENT_SAAS_STAGING_ACS_READY: '0',
+  AGENT_SAAS_STAGING_OAUTH_ENABLED: '0',
+  AGENT_SAAS_STAGING_NOTIFICATION_MODE: 'disabled',
 };
+
+function assertRuntimeEnvironmentSafety(
+  value: AppConfig,
+  env: NodeJS.ProcessEnv = stagingEnv,
+  options: { processCwd?: string } = { processCwd },
+) {
+  return assertSafetyImpl(value, env, options);
+}
 
 function config(overrides: Record<string, unknown> = {}): AppConfig {
   return {
     agent: { cwd: workspace },
     server: {},
+    auth: {
+      enabled: true,
+      jwtSecret: JWT_SECRET,
+      tokenExpiresIn: '30d',
+      usersFile: './data/users.json',
+    },
     cron: { enabled: false },
+    secretVault: {
+      backend: 'encrypted-file',
+      filePath: vaultFile,
+      encryptionKeyEnv: 'STAGING_AGENT_SAAS_VAULT_KEY',
+    },
+    toolControls: { enabled: false },
     runtimeEventStore: {
       backend: 'pg',
       connectionString: 'postgresql://staging@staging-db.internal/runtime',
@@ -74,7 +117,7 @@ describe('assertRuntimeEnvironmentSafety', () => {
   });
 
   it('attests a fully isolated staging identity', () => {
-    expect(assertRuntimeEnvironmentSafety(config(), stagingEnv)).toMatchObject({
+    expect(assertRuntimeEnvironmentSafety(config(), stagingEnv, { processCwd })).toMatchObject({
       environment: 'staging',
       releaseSha: SHA,
       safetyAttested: true,
@@ -82,11 +125,13 @@ describe('assertRuntimeEnvironmentSafety', () => {
   });
 
   it('fails closed when cron is absent or enabled', () => {
-    expect(() => assertRuntimeEnvironmentSafety(config({ cron: undefined }), stagingEnv)).toThrow(
-      /cron.enabled/,
-    );
     expect(() =>
-      assertRuntimeEnvironmentSafety(config({ cron: { enabled: true } }), stagingEnv),
+      assertRuntimeEnvironmentSafety(config({ cron: undefined }), stagingEnv, { processCwd }),
+    ).toThrow(/cron.enabled/);
+    expect(() =>
+      assertRuntimeEnvironmentSafety(config({ cron: { enabled: true } }), stagingEnv, {
+        processCwd,
+      }),
     ).toThrow(/cron.enabled/);
   });
 
@@ -196,7 +241,13 @@ describe('assertRuntimeEnvironmentSafety', () => {
       assertRuntimeEnvironmentSafety(
         config({
           tenantRemoteHands: {
-            hands: [{ id: 'staging-acs', baseUrl: 'https://acs.staging.internal' }],
+            hands: [
+              {
+                id: 'staging-acs',
+                baseUrl: 'https://acs.staging.internal',
+                authTokenRef: 'STAGING_AGENT_SAAS/acs-token',
+              },
+            ],
           },
         }),
         stagingEnv,
@@ -263,6 +314,34 @@ describe('assertRuntimeEnvironmentSafety', () => {
         stagingEnv,
       ),
     ).toThrow(/send endpoint/);
+  });
+
+  it('fails closed for shared credentials, unisolated runtime paths, and tools before ACS readiness', () => {
+    expect(() =>
+      assertRuntimeEnvironmentSafety(config(), stagingEnv, { processCwd: '/tmp' }),
+    ).toThrow(/processCwd\/data/);
+    expect(() =>
+      assertRuntimeEnvironmentSafety(config(), {
+        ...stagingEnv,
+        AGENT_SAAS_PRODUCTION_CREDENTIAL_NAMESPACE:
+          stagingEnv.AGENT_SAAS_STAGING_CREDENTIAL_NAMESPACE,
+      }),
+    ).toThrow(/credential namespaces/);
+    expect(() =>
+      assertRuntimeEnvironmentSafety(config(), {
+        ...stagingEnv,
+        AGENT_SAAS_PRODUCTION_JWT_SECRET_SHA256: stagingEnv.AGENT_SAAS_STAGING_JWT_SECRET_SHA256,
+      }),
+    ).toThrow(/JWT fingerprint/);
+    expect(() =>
+      assertRuntimeEnvironmentSafety(config({ toolControls: { enabled: true } }), stagingEnv),
+    ).toThrow(/tool execution/);
+    expect(() =>
+      assertRuntimeEnvironmentSafety(
+        config({ auth: { ...config().auth, selfSignup: { sms: { provider: 'aliyun' } } } }),
+        stagingEnv,
+      ),
+    ).toThrow(/notification paths/);
   });
 
   it('does not apply staging-specific assertions to production', () => {

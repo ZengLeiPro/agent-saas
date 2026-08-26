@@ -47,7 +47,11 @@ export function validManifestContent() {
     components: {
       web: { action: 'deploy' as const, sourceSha: RELEASE_SHA, artifactDigest: WEB_DIGEST },
       api: { action: 'deploy' as const, sourceSha: RELEASE_SHA, artifactDigest: SERVER_DIGEST },
-      runtimeWorker: { action: 'keep' as const, ...productionBaseline.runtimeWorker },
+      runtimeWorker: {
+        action: 'deploy' as const,
+        sourceSha: RELEASE_SHA,
+        artifactDigest: SERVER_DIGEST,
+      },
       acs: { action: 'keep' as const, ...productionBaseline.acs },
     },
     artifacts: {
@@ -132,6 +136,20 @@ describe('releaseManifestSchema', () => {
   it('binds both ACS digests and App digests to immutable artifacts', () => {
     const manifest = validManifestContent();
     manifest.components.acs.orchestratorArtifactDigest = MANIFEST_DIGEST;
+    expect(releaseManifestContentSchema.safeParse(manifest).success).toBe(false);
+  });
+
+  it('rejects a mixed API and Runtime Worker action matrix for one server bundle', () => {
+    const manifest = validManifestContent();
+    const runtimeWorker = manifest.components.runtimeWorker as {
+      action: 'deploy' | 'keep';
+      sourceSha: string;
+      artifactDigest: string;
+    };
+    Object.assign(runtimeWorker, {
+      action: 'keep',
+      ...manifest.productionBaseline.runtimeWorker,
+    });
     expect(releaseManifestContentSchema.safeParse(manifest).success).toBe(false);
   });
 

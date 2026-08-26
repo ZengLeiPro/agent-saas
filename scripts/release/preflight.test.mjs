@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { runPreflight } from './preflight.mjs';
+import { TRUSTED_PRODUCTION_IDENTITY_PATH, runPreflight } from './preflight.mjs';
 import { readRuntimeIdentity } from './read-runtime-identity.mjs';
 
 const TARGET = 'a'.repeat(40);
@@ -63,7 +63,7 @@ function runtimeObservation(overrides = {}) {
   return {
     now: Date.parse('2026-08-25T00:01:00.000Z'),
     topologyExecFileSync: (_command, args) =>
-      args.includes('ControlGroup') ? '/system.slice/agent-saas.service\n' : '100\n',
+      args.includes('ControlGroup') ? '/system.slice/agent-saas.service\n' : '123\n',
     topologyRealpathSync: () => `/srv/releases/${TARGET}`,
     topologyReadFileSync: (path) => {
       if (path.endsWith('active-color')) return path.includes('runtime-worker') ? 'green' : 'blue';
@@ -86,9 +86,9 @@ test('preflight succeeds for full SHAs, main ancestry, production identity, and 
   });
 
   assert.equal(result.ok, true);
-  assert.deepEqual(result.affectedComponents, ['web', 'runtimeWorker']);
+  assert.deepEqual(result.affectedComponents, ['web', 'api', 'runtimeWorker']);
   assert.equal(result.components.web.action, 'deploy');
-  assert.equal(result.components.api.action, 'keep');
+  assert.equal(result.components.api.action, 'deploy');
   assert.equal(result.workerMarkersConsistent, true);
   assert.deepEqual(result.blockingReasons, []);
 });
@@ -108,6 +108,22 @@ test('preflight pins ancestry to origin/main and ignores caller-selected refs', 
     runtimeObservation: runtimeObservation(),
   });
   assert.deepEqual(calls[0]?.[1], ['merge-base', '--is-ancestor', TARGET, 'origin/main']);
+});
+
+test('preflight defaults to the trusted production-host identity path', () => {
+  let observedPath;
+  const result = runPreflight({
+    target: TARGET,
+    baseline: BASELINE,
+    execFileSync: successfulGit,
+    readFileSync: (path) => {
+      observedPath = path;
+      return JSON.stringify(productionIdentity());
+    },
+    runtimeObservation: runtimeObservation(),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(observedPath, TRUSTED_PRODUCTION_IDENTITY_PATH);
 });
 
 test('preflight reports each blocking release condition as JSON data', () => {
@@ -231,6 +247,22 @@ test('runtime identity fails closed for stale or unverifiable topology observati
   assert.match(missing.blockingReasons.join('\n'), /Unable to resolve production release symlink/u);
   assert.match(missing.blockingReasons.join('\n'), /Unable to read production pidfile/u);
   assert.match(missing.blockingReasons.join('\n'), /Unable to read production readyfile/u);
+});
+
+test('runtime identity requires pidfile PID to equal systemd MainPID', () => {
+  const result = readRuntimeIdentity({
+    identityPath: './production.json',
+    readFileSync: () => JSON.stringify(productionIdentity()),
+    ...runtimeObservation({
+      topologyExecFileSync: (_command, args) =>
+        args.includes('ControlGroup') ? '/system.slice/agent-saas.service\n' : '456\n',
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.match(
+    result.blockingReasons.join('\n'),
+    /pidfile PID must equal the live systemd MainPID/u,
+  );
 });
 
 test('runtime identity accepts only local, complete production JSON', () => {

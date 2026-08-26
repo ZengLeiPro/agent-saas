@@ -44,8 +44,8 @@
       "artifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
     },
     "runtimeWorker": {
-      "action": "keep",
-      "sourceSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "action": "deploy",
+      "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "artifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
     },
     "acs": {
@@ -118,5 +118,5 @@
       "sandboxImageDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     }
   },
-  "digest": "sha256:f52379f42b3d65c03c179fd08d876528dce67a630fd819b773e94679a45e798f"
+  "digest": "sha256:5074639475e291825e7989564024c15371927e2d0770a37a145f7ba5fa98a44e"
 }

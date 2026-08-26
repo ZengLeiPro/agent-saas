@@ -161,12 +161,13 @@ function observeTopology(
       if (
         !Number.isSafeInteger(mainPid) ||
         mainPid <= 0 ||
+        mainPid !== pid ||
         !processExists(mainPid) ||
         !controlGroup ||
         !pidCgroup.includes(controlGroup)
       )
         reasons.push(
-          `Production runtime identity topology ${role} pidfile is not bound to the systemd unit cgroup.`,
+          `Production runtime identity topology ${role} pidfile PID must equal the live systemd MainPID in the unit cgroup.`,
         );
     } catch {
       reasons.push(`Unable to observe systemd process identity for ${role}.`);
@@ -234,6 +235,16 @@ export function validateRuntimeIdentity(identity, options = {}) {
           `Production runtime identity component "${component}" must have an artifact digest.`,
         );
       }
+    }
+    const api = identity.components.api;
+    const runtimeWorker = identity.components.runtimeWorker;
+    if (
+      api?.gitSha !== runtimeWorker?.gitSha ||
+      api?.artifactDigest !== runtimeWorker?.artifactDigest
+    ) {
+      blockingReasons.push(
+        'Production API and Runtime Worker identities must match while they share one server bundle.',
+      );
     }
   }
   validateTopology(identity.topology, blockingReasons, options.now ?? Date.now());

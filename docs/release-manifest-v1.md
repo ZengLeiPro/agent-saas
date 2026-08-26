@@ -3,7 +3,7 @@
 Release Manifest 是阶段 A 的本地、不可变发布契约；它不创建 tag、不上传制品，也不触发部署。
 
 - 每份 Manifest 使用 `schemaVersion: 1`，绑定完整 40 位小写 `releaseSha`、RC tag、创建者、来源 PR、Integration Candidate 和三类权威 check。
-- Web、API、Runtime Worker、ACS 分别记录 `deploy|keep`、源码 SHA 和制品 digest；ACS 必须同时记录 Orchestrator artifact digest 与 Sandbox image digest。
+- Web、API、Runtime Worker、ACS 分别记录 `deploy|keep`、源码 SHA 和制品 digest；当前 API 与 Runtime Worker 共享同一个 Server bundle，因此必须同时 `deploy` 或同时 `keep` 且 digest 相同；ACS 必须同时记录 Orchestrator artifact digest 与 Sandbox image digest。
 - `deploy` 必须使用 `releaseSha`；`keep` 的完整源码和 digest 身份必须等于 `productionBaseline`。
 - Server/Web/ACS Orchestrator/ACS image 制品采用无凭据、无签名参数的绝对 URI 或仓库名，并与组件 digest 双向绑定。
 - `rollbackTargets` 在 RC 创建时必须等于冻结的生产组件基线；`promotionPolicy` 固化过期时间、最低安全 SHA、N/N+1 兼容声明和人工授权要求。

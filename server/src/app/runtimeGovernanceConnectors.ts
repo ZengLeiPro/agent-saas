@@ -70,6 +70,7 @@ import {
   createEgressFetch,
   createEgressWebSocketConnector,
   createWebToolEgressFetch,
+  installStagingGlobalEgressFetch,
 } from '../runtime/egressDispatcher.js';
 import type { EgressConfig } from '../runtime/egressPolicy.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
@@ -790,20 +791,17 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
   } else {
     serverLogger.warn('Google Workspace connector disabled: OAuth client id/secret not configured');
   }
-  // 自助注册动态配置：文件不存在时用 config.json 的 auth.selfSignup 作 seed（兼容旧配置方式）
   const signupConfigStore = new SignupConfigStore(
     join(processCwd, 'data', 'signup-config.json'),
     config.auth?.selfSignup,
   );
-  // 网络出口（代理/镜像源）动态配置：文件不存在时用 config.json 的 egress 段作 seed。
+  const runtimeEnvironment = readRuntimeIdentity().environment;
   const egressConfigStore = new EgressConfigStore(
     join(processCwd, 'data', 'egress-config.json'),
     config.egress as EgressConfig | undefined,
-    readRuntimeIdentity().environment,
+    runtimeEnvironment,
   );
   const egressLogger = serverLogger.child('Egress');
-  // 代理凭据同步缓存：dispatcher 需要同步取值，而 vault.getSecret 是异步的，
-  // 因此在启动与每次配置保存后主动刷新一次，中间态按「无凭据」处理（内网代理通常无认证）。
   let egressProxyCredential: string | undefined;
   const refreshEgressProxyCredential = async (): Promise<void> => {
     const ref = egressConfigStore.getProxyCredentialRef();
@@ -834,6 +832,7 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
     egressLogger,
   );
   const egressFetch = createEgressFetch(egressDispatchers, egressLogger);
+  const restoreGlobalEgressFetch = installStagingGlobalEgressFetch(runtimeEnvironment, egressFetch);
   const webToolEgressFetch = createWebToolEgressFetch(egressDispatchers, egressLogger);
   const getNotionConnection =
     connectorConnectionStore && secretVault
@@ -1076,10 +1075,11 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
         : undefined,
     logger: serverLogger.child('McpProxy'),
   });
-  const mcpClientShutdown = () => mcpClientManager.shutdown();
-  // 能力中心连接器是用户级 CLI-first 能力：用户授权后，标准 env 只注入其
-  // 自己的隔离运行环境。MCP 的服务端 broker 仍负责工具调用；这里只导出模板
-  // 显式声明的 runtimeEnv，供 CLI/SDK/脚本直接使用。
+  const mcpClientShutdown = async () => {
+    restoreGlobalEgressFetch();
+    await egressDispatchers.close();
+    await mcpClientManager.shutdown();
+  };
   const resolveRunScopedEnv = async (context: {
     userId: string;
     username: string;

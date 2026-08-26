@@ -1,8 +1,13 @@
+import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { AppConfig } from '../app/config.js';
 import { isStagingServerEgressSafe } from '../runtime/egressPolicy.js';
 import { readRuntimeIdentity, type RuntimeIdentity } from './runtimeIdentity.js';
+
+export interface RuntimeEnvironmentSafetyOptions {
+  processCwd?: string;
+}
 
 function values(value: unknown): string[] {
   if (typeof value === 'string') return [value];
@@ -37,6 +42,17 @@ function urlAllowed(value: string | undefined, allowlist: Set<string>): boolean 
   }
 }
 
+function digest(value: string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+function credentialRefInNamespace(value: string | undefined, namespace: string): boolean {
+  return Boolean(
+    value &&
+    (value === namespace || value.startsWith(`${namespace}/`) || value.startsWith(`${namespace}_`)),
+  );
+}
+
 function isWithinRoot(root: string, candidate: string): boolean {
   if (!isAbsolute(root) || !isAbsolute(candidate)) return false;
   try {
@@ -57,6 +73,7 @@ function isWithinRoot(root: string, candidate: string): boolean {
 export function assertRuntimeEnvironmentSafety(
   config: AppConfig,
   env: NodeJS.ProcessEnv = process.env,
+  options: RuntimeEnvironmentSafetyOptions = {},
 ): RuntimeIdentity {
   const identity = readRuntimeIdentity(env);
   if (identity.environment !== 'staging') return { ...identity, safetyAttested: true };
@@ -87,7 +104,19 @@ export function assertRuntimeEnvironmentSafety(
   if (stagingRoot && !isWithinRoot(stagingRoot, config.agent.cwd ?? '')) {
     failures.push('agent workspace must be an absolute path within AGENT_SAAS_STAGING_ROOT');
   }
-  const sharedDir = resolve(config.agent.cwd ?? '', config.agent.sharedDir ?? '.shared');
+  const processCwd = options.processCwd ?? process.cwd();
+  if (!processCwd || !stagingRoot || !isWithinRoot(stagingRoot, processCwd)) {
+    failures.push('server processCwd/data must be pre-created within AGENT_SAAS_STAGING_ROOT');
+  } else if (!isWithinRoot(stagingRoot, resolve(processCwd, 'data'))) {
+    failures.push('server-data must be within AGENT_SAAS_STAGING_ROOT');
+  }
+  const agentCwd = config.agent.cwd ?? '';
+  if (stagingRoot && !isWithinRoot(stagingRoot, resolve(agentCwd, 'uploads'))) {
+    failures.push('uploads must be within AGENT_SAAS_STAGING_ROOT');
+  }
+  const sharedDir = config.agent.sharedDir
+    ? resolve(processCwd ? resolve(processCwd, '..') : '', config.agent.sharedDir)
+    : resolve(agentCwd, '.shared');
   if (stagingRoot && !isWithinRoot(stagingRoot, sharedDir))
     failures.push('agent sharedDir/NAS must be within AGENT_SAAS_STAGING_ROOT');
   if (
@@ -97,12 +126,89 @@ export function assertRuntimeEnvironmentSafety(
   ) {
     failures.push('SecretVault file must be an absolute path within AGENT_SAAS_STAGING_ROOT');
   }
+  if (!config.secretVault || config.secretVault.backend === 'memory') {
+    failures.push('staging requires an isolated persistent SecretVault');
+  }
   const vaultHosts = allowedHosts(env.AGENT_SAAS_STAGING_SECRET_VAULT_HOSTS);
   if (config.secretVault?.backend === 'http' && !urlAllowed(config.secretVault.baseUrl, vaultHosts))
     failures.push('HTTP SecretVault host is not staging-allowlisted');
+
+  const credentialNamespace = env.AGENT_SAAS_STAGING_CREDENTIAL_NAMESPACE?.trim() ?? '';
+  const productionCredentialNamespace =
+    env.AGENT_SAAS_PRODUCTION_CREDENTIAL_NAMESPACE?.trim() ?? '';
+  if (
+    !credentialNamespace ||
+    !productionCredentialNamespace ||
+    credentialNamespace === productionCredentialNamespace
+  ) {
+    failures.push('staging and production credential namespaces must be explicit and distinct');
+  }
+  if (
+    config.secretVault?.backend === 'encrypted-file' &&
+    !credentialRefInNamespace(config.secretVault.encryptionKeyEnv, credentialNamespace)
+  ) {
+    failures.push('SecretVault encryption key env must belong to the staging credential namespace');
+  }
+  if (
+    config.secretVault?.backend === 'http' &&
+    !credentialRefInNamespace(config.secretVault.authTokenEnv, credentialNamespace)
+  ) {
+    failures.push('SecretVault auth token env must belong to the staging credential namespace');
+  }
+  if (!config.auth?.enabled || !config.auth.jwtSecret) {
+    failures.push('staging authentication and its JWT secret must be explicitly enabled');
+  } else {
+    const stagingJwtFingerprint = env.AGENT_SAAS_STAGING_JWT_SECRET_SHA256?.trim();
+    const productionJwtFingerprint = env.AGENT_SAAS_PRODUCTION_JWT_SECRET_SHA256?.trim();
+    if (
+      !stagingJwtFingerprint ||
+      !productionJwtFingerprint ||
+      stagingJwtFingerprint !== digest(config.auth.jwtSecret) ||
+      stagingJwtFingerprint === productionJwtFingerprint
+    ) {
+      failures.push('staging JWT fingerprint must match config and differ from production');
+    }
+  }
+
   const handHosts = allowedHosts(env.AGENT_SAAS_STAGING_HAND_HOSTS);
   if (config.serverRemote && !urlAllowed(config.serverRemote.baseUrl, handHosts))
     failures.push('serverRemote host is not staging-allowlisted');
+  const remoteHands = [
+    ...(config.serverRemote ? [{ label: 'serverRemote', remote: config.serverRemote }] : []),
+    ...(config.tenantRemoteHands?.hands ?? []).map((hand) => ({
+      label: `Hand ${hand.id}`,
+      remote: hand,
+    })),
+  ];
+  for (const { label, remote } of remoteHands) {
+    if (remote.authToken || !credentialRefInNamespace(remote.authTokenRef, credentialNamespace)) {
+      failures.push(`${label} token must use a staging namespaced SecretVault reference`);
+    }
+  }
+  const handStoreNamespace = env.AGENT_SAAS_STAGING_HAND_STORE_NAMESPACE?.trim();
+  const productionHandStoreNamespace = env.AGENT_SAAS_PRODUCTION_HAND_STORE_NAMESPACE?.trim();
+  if (
+    !handStoreNamespace ||
+    !productionHandStoreNamespace ||
+    handStoreNamespace === productionHandStoreNamespace
+  ) {
+    failures.push('staging and production Hand store namespaces must be explicit and distinct');
+  }
+
+  for (const key of ['NAMESPACE', 'PVC', 'SERVICE_ACCOUNT'] as const) {
+    const stagingValue = env[`AGENT_SAAS_STAGING_ACS_${key}`]?.trim();
+    const productionValue = env[`AGENT_SAAS_PRODUCTION_ACS_${key}`]?.trim();
+    if (!stagingValue || !productionValue || stagingValue === productionValue) {
+      failures.push(`staging and production ACS ${key} identities must be explicit and distinct`);
+    }
+  }
+  const acsReady = env.AGENT_SAAS_STAGING_ACS_READY;
+  if (acsReady !== '0' && acsReady !== '1') {
+    failures.push('AGENT_SAAS_STAGING_ACS_READY must explicitly be 0 or 1');
+  }
+  if (acsReady !== '1' && config.toolControls?.enabled !== false) {
+    failures.push('platform tool execution must be explicitly disabled until Staging ACS is ready');
+  }
 
   const oauthHosts = allowedHosts(env.AGENT_SAAS_STAGING_OAUTH_HOSTS);
   const codexEndpoint =
@@ -114,6 +220,34 @@ export function assertRuntimeEnvironmentSafety(
     !oauthHosts.has('accounts.google.com')
   )
     failures.push('Google OAuth endpoint is not staging-allowlisted');
+  const oauthEnabled = env.AGENT_SAAS_STAGING_OAUTH_ENABLED;
+  if (oauthEnabled !== '0' && oauthEnabled !== '1') {
+    failures.push('AGENT_SAAS_STAGING_OAUTH_ENABLED must explicitly be 0 or 1');
+  }
+  const callbackHosts = allowedHosts(env.AGENT_SAAS_STAGING_OAUTH_CALLBACK_HOSTS);
+  const callbackUrls = [env.MCP_OAUTH_CALLBACK_URL, env.CONNECTOR_OAUTH_CALLBACK_URL].filter(
+    (value): value is string => Boolean(value),
+  );
+  if (oauthEnabled === '0' && callbackUrls.length > 0) {
+    failures.push('OAuth callbacks must be absent while Staging OAuth is disabled');
+  }
+  if (oauthEnabled === '1') {
+    if (
+      callbackUrls.length !== 2 ||
+      callbackUrls.some((value) => !urlAllowed(value, callbackHosts))
+    ) {
+      failures.push('Staging OAuth callbacks must use explicitly allowlisted Staging hosts');
+    }
+    const stagingClientNamespace = env.AGENT_SAAS_STAGING_OAUTH_CLIENT_NAMESPACE?.trim();
+    const productionClientNamespace = env.AGENT_SAAS_PRODUCTION_OAUTH_CLIENT_NAMESPACE?.trim();
+    if (
+      !stagingClientNamespace ||
+      !productionClientNamespace ||
+      stagingClientNamespace === productionClientNamespace
+    ) {
+      failures.push('staging and production OAuth client namespaces must be explicit and distinct');
+    }
+  }
 
   const notificationHosts = allowedHosts(env.AGENT_SAAS_STAGING_NOTIFICATION_HOSTS);
   if (config.dingtalk?.enabled && !notificationHosts.has('api.dingtalk.com'))
@@ -129,6 +263,21 @@ export function assertRuntimeEnvironmentSafety(
   )
     failures.push('signup notification endpoint is not staging-allowlisted');
   if (config.webPush?.enabled) failures.push('web push notifications must be disabled in staging');
+  if (env.AGENT_SAAS_STAGING_NOTIFICATION_MODE !== 'disabled') {
+    failures.push(
+      'Staging notifications must remain disabled until a verified test sink is configured',
+    );
+  }
+  if (
+    config.dingtalk?.enabled ||
+    config.dingtalkSendMessage?.enabled ||
+    config.auth?.selfSignup?.dingtalkLeadWebhook ||
+    config.auth?.selfSignup?.sms?.provider === 'aliyun'
+  ) {
+    failures.push(
+      'DingTalk and SMS production-capable notification paths must be disabled in staging',
+    );
+  }
 
   const db = config.runtimeEventStore;
   if (db?.backend !== 'pg') {

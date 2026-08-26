@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   ReleaseAttestationLog,
@@ -21,6 +21,30 @@ export class ReleaseAttestationStore {
   private pathFor(releaseId: string): string {
     assertReleaseId(releaseId);
     return join(this.rootDir, `${releaseId}.jsonl`);
+  }
+
+  private async withReleaseLock<T>(releaseId: string, operation: () => Promise<T>): Promise<T> {
+    const path = this.pathFor(releaseId);
+    const lockPath = `${path}.lock`;
+    await mkdir(dirname(path), { recursive: true });
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      try {
+        await mkdir(lockPath);
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        if (Date.now() >= deadline) {
+          throw new Error(`Timed out acquiring attestation lock for ${releaseId}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+    try {
+      return await operation();
+    } finally {
+      await rm(lockPath, { recursive: true, force: true });
+    }
   }
 
   async read(releaseId: string, manifestDigest: string): Promise<ReleaseAttestationLog> {
@@ -49,14 +73,17 @@ export class ReleaseAttestationStore {
     manifestDigest: string,
     input: Parameters<ReleaseAttestationLog['append']>[0],
   ): Promise<ReleaseAttestation> {
-    const log = await this.read(releaseId, manifestDigest);
-    const before = log.list().length;
-    const entry = log.append(input);
-    if (log.list().length === before) return entry;
+    return this.withReleaseLock(releaseId, async () => {
+      const log = await this.read(releaseId, manifestDigest);
+      const before = log.list().length;
+      const entry = log.append(input);
+      if (log.list().length === before) return entry;
 
-    const path = this.pathFor(releaseId);
-    await mkdir(dirname(path), { recursive: true });
-    await appendFile(path, `${JSON.stringify(entry)}\n`, { encoding: 'utf8', flag: 'a' });
-    return entry;
+      await appendFile(this.pathFor(releaseId), `${JSON.stringify(entry)}\n`, {
+        encoding: 'utf8',
+        flag: 'a',
+      });
+      return entry;
+    });
   }
 }

@@ -142,36 +142,47 @@ describe('ReleaseAttestationLog', () => {
     append(entries, 'staging_deployed');
     append(entries, 'verified');
     append(entries, 'approved');
-    const allowed = getPromotionEligibility({
-      attestations: entries,
-      manifestDigest: DIGEST,
-      expectedManifestDigest: DIGEST,
-      isMainAncestor: true,
-      minimumPromotableShaSatisfied: true,
-      productionBaselineMatches: true,
-    });
+    const allowed = getPromotionEligibility(
+      {
+        attestations: entries,
+        manifestDigest: DIGEST,
+        expectedManifestDigest: DIGEST,
+        isMainAncestor: true,
+        minimumPromotableShaSatisfied: true,
+        productionBaselineMatches: true,
+        expiresAt: '2026-08-26T12:00:00.000Z',
+      },
+      { now: () => NOW },
+    );
     expect(allowed.promotable).toBe(true);
-    const crossManifest = getPromotionEligibility({
-      attestations: entries,
-      manifestDigest: `sha256:${'b'.repeat(64)}`,
-      expectedManifestDigest: `sha256:${'b'.repeat(64)}`,
-      isMainAncestor: true,
-      minimumPromotableShaSatisfied: true,
-      productionBaselineMatches: true,
-    });
+    const crossManifest = getPromotionEligibility(
+      {
+        attestations: entries,
+        manifestDigest: `sha256:${'b'.repeat(64)}`,
+        expectedManifestDigest: `sha256:${'b'.repeat(64)}`,
+        isMainAncestor: true,
+        minimumPromotableShaSatisfied: true,
+        productionBaselineMatches: true,
+        expiresAt: '2026-08-26T12:00:00.000Z',
+      },
+      { now: () => NOW },
+    );
     expect(crossManifest).toMatchObject({
       promotable: false,
       blockingReasons: ['Manifest digest mismatch.'],
     });
-    const denied = getPromotionEligibility({
-      attestations: entries,
-      manifestDigest: DIGEST,
-      expectedManifestDigest: DIGEST,
-      isMainAncestor: false,
-      minimumPromotableShaSatisfied: false,
-      productionBaselineMatches: false,
-      expiresAt: '2000-01-01T00:00:00.000Z',
-    });
+    const denied = getPromotionEligibility(
+      {
+        attestations: entries,
+        manifestDigest: DIGEST,
+        expectedManifestDigest: DIGEST,
+        isMainAncestor: false,
+        minimumPromotableShaSatisfied: false,
+        productionBaselineMatches: false,
+        expiresAt: '2000-01-01T00:00:00.000Z',
+      },
+      { now: () => NOW },
+    );
     expect(denied).toMatchObject({
       promotable: false,
       blockingReasons: expect.arrayContaining([
@@ -180,6 +191,44 @@ describe('ReleaseAttestationLog', () => {
         'Current production component matrix drifted from the frozen baseline.',
         'Release promotion approval has expired.',
       ]),
+    });
+  });
+
+  it('evaluates required expiry with an injectable clock', () => {
+    const entries = log();
+    append(entries, 'built');
+    append(entries, 'staging_deployed');
+    append(entries, 'verified');
+    append(entries, 'approved');
+    const input = {
+      attestations: entries,
+      manifestDigest: DIGEST,
+      expectedManifestDigest: DIGEST,
+      isMainAncestor: true,
+      minimumPromotableShaSatisfied: true,
+      productionBaselineMatches: true,
+      expiresAt: '2026-08-25T12:00:00.001Z',
+    };
+
+    expect(getPromotionEligibility(input, { now: () => NOW }).promotable).toBe(true);
+    expect(
+      getPromotionEligibility(input, {
+        now: () => new Date('2026-08-25T12:00:00.001Z'),
+      }),
+    ).toMatchObject({
+      promotable: false,
+      blockingReasons: expect.arrayContaining([expect.stringMatching(/expired/)]),
+    });
+
+    const missingExpiry = getPromotionEligibility(
+      { ...input, expiresAt: undefined } as unknown as Parameters<
+        typeof getPromotionEligibility
+      >[0],
+      { now: () => NOW },
+    );
+    expect(missingExpiry).toMatchObject({
+      promotable: false,
+      blockingReasons: expect.arrayContaining([expect.stringMatching(/expired/)]),
     });
   });
 });

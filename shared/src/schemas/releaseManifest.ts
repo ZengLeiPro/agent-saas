@@ -247,6 +247,20 @@ export const releaseManifestContentSchema = z
     }
 
     const { components, artifacts } = manifest;
+    if (components.api.action !== components.runtimeWorker.action) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['components', 'runtimeWorker', 'action'],
+        message: 'API and Runtime Worker must deploy or keep together while sharing serverBundle',
+      });
+    }
+    if (components.api.artifactDigest !== components.runtimeWorker.artifactDigest) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['components', 'runtimeWorker', 'artifactDigest'],
+        message: 'API and Runtime Worker must identify the same serverBundle digest',
+      });
+    }
     const digestBindings: Array<[unknown, unknown, (string | number)[]]> = [
       [
         components.web.artifactDigest,

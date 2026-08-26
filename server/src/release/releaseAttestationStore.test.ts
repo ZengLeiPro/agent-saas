@@ -51,4 +51,49 @@ describe('ReleaseAttestationStore', () => {
       }),
     ).rejects.toThrow(/already used/);
   });
+
+  it('serializes concurrent appends across store instances before validating transitions', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'release-attestations-'));
+    directories.push(root);
+    const firstStore = new ReleaseAttestationStore(root, { now: () => NOW });
+    const secondStore = new ReleaseAttestationStore(root, { now: () => NOW });
+    const input = {
+      state: 'built' as const,
+      operationKey: 'build-concurrent',
+      actor: 'release-bot',
+      manifestDigest: DIGEST,
+    };
+
+    const results = await Promise.allSettled([
+      firstStore.append('rc-20260826-01', DIGEST, input),
+      secondStore.append('rc-20260826-01', DIGEST, input),
+    ]);
+
+    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled']);
+    const restored = await firstStore.read('rc-20260826-01', DIGEST);
+    expect(restored.list()).toHaveLength(1);
+    expect(restored.currentState()).toBe('built');
+  });
+
+  it('allows only one of two divergent concurrent transitions and leaves a replayable log', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'release-attestations-'));
+    directories.push(root);
+    const firstStore = new ReleaseAttestationStore(root, { now: () => NOW });
+    const secondStore = new ReleaseAttestationStore(root, { now: () => NOW });
+    const input = (operationKey: string) => ({
+      state: 'built' as const,
+      operationKey,
+      actor: 'release-bot',
+      manifestDigest: DIGEST,
+    });
+
+    const results = await Promise.allSettled([
+      firstStore.append('rc-20260826-01', DIGEST, input('build-a')),
+      secondStore.append('rc-20260826-01', DIGEST, input('build-b')),
+    ]);
+
+    expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected']);
+    await expect(firstStore.read('rc-20260826-01', DIGEST)).resolves.toMatchObject({});
+    expect((await firstStore.read('rc-20260826-01', DIGEST)).list()).toHaveLength(1);
+  });
 });

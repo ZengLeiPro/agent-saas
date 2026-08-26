@@ -45,7 +45,7 @@ function manifestFor(releaseId = 'rc-20260825-01') {
     components: {
       web: { action: 'deploy' as const, sourceSha: SHA, artifactDigest: WEB_DIGEST },
       api: { action: 'deploy' as const, sourceSha: SHA, artifactDigest: SERVER_DIGEST },
-      runtimeWorker: { action: 'keep' as const, ...productionBaseline.runtimeWorker },
+      runtimeWorker: { action: 'deploy' as const, sourceSha: SHA, artifactDigest: SERVER_DIGEST },
       acs: { action: 'keep' as const, ...productionBaseline.acs },
     },
     artifacts: {

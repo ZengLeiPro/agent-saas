@@ -3,6 +3,7 @@ import { classifyComponents } from './classify-components.mjs';
 import { isFullSha, readRuntimeIdentity } from './read-runtime-identity.mjs';
 
 export const TRUSTED_MAIN_REF = 'origin/main';
+export const TRUSTED_PRODUCTION_IDENTITY_PATH = '/etc/agent-saas/runtime-identity.json';
 
 function gitSucceeds(args, { cwd, execFileSync }) {
   try {
@@ -16,7 +17,7 @@ function gitSucceeds(args, { cwd, execFileSync }) {
 export function runPreflight({
   target,
   baseline,
-  identityPath,
+  identityPath = TRUSTED_PRODUCTION_IDENTITY_PATH,
   cwd = process.cwd(),
   execFileSync = defaultExecFileSync,
   readFileSync,
@@ -109,7 +110,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const result = runPreflight({
     target: args.target,
     baseline: args.baseline,
-    identityPath: args.identity,
     cwd: args.cwd ?? process.cwd(),
   });
 

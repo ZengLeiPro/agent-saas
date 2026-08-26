@@ -1,6 +1,9 @@
 {
   // ── 发布运行身份（通过环境变量注入，不写入本文件）────────────
   // staging/production 必须显式设置 AGENT_SAAS_ENVIRONMENT。
+  // Staging 还必须显式声明独立的 server root、credential/JWT/Hand store、
+  // ACS namespace/PVC/ServiceAccount、OAuth 与通知模式；完整变量清单见
+  // docs/release-preflight.md 的 “Staging startup identity” 一节。
   // Staging 还必须注入 release ID、完整 SHA、Server/Web digest，以及
   // ACS Orchestrator/Sandbox image 双 digest；Cron 必须在下方显式 enabled=false。
   // Staging DB host/name/user、ACS/Hand host 和文件根通过独立 allow-list 环境变量

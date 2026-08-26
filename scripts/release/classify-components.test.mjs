@@ -25,7 +25,7 @@ test('classifies each mapped component path', () => {
     'runtimeWorker',
     'acs',
   ]);
-  assert.deepEqual(classifyPath('hand-server/src/index.ts').components, ['runtimeWorker']);
+  assert.deepEqual(classifyPath('hand-server/src/index.ts').components, ['api', 'runtimeWorker']);
   assert.deepEqual(classifyPath('acs-orchestrator/src/index.ts').components, ['acs']);
 });
 
@@ -38,6 +38,13 @@ test('server changes conservatively require API, runtime worker, and ACS deploym
     components: ['api', 'runtimeWorker', 'acs'],
     blockingReasons: [],
   });
+});
+
+test('API and runtime worker stay coupled while they share one server bundle', () => {
+  assert.deepEqual(classifyChangedPaths(['hand-server/src/worker.ts']).components, [
+    'api',
+    'runtimeWorker',
+  ]);
 });
 
 test('shared changes conservatively require every dependent component deployment', () => {

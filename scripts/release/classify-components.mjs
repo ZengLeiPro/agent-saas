@@ -11,7 +11,7 @@ const PATH_COMPONENTS = Object.freeze([
   ['server/', ['api', 'runtimeWorker', 'acs']],
   ['shared/', ['web', 'api', 'runtimeWorker', 'acs']],
   ['workspace-shared/', ['api', 'runtimeWorker', 'acs']],
-  ['hand-server/', ['runtimeWorker']],
+  ['hand-server/', ['api', 'runtimeWorker']],
   ['acs-orchestrator/', ['acs']],
   ['daemon-packaging/', ['api', 'runtimeWorker', 'acs']],
   ['.github/', []],
@@ -71,6 +71,11 @@ export function classifyChangedPaths(changedPaths) {
     const classification = classifyPath(filePath);
     classification.components.forEach((component) => components.add(component));
     if (classification.blockingReason) blockingReasons.push(classification.blockingReason);
+  }
+
+  if (components.has('api') || components.has('runtimeWorker')) {
+    components.add('api');
+    components.add('runtimeWorker');
   }
 
   return {

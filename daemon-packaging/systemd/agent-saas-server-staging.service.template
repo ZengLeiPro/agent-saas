@@ -1,0 +1,27 @@
+[Unit]
+Description=Agent SaaS Staging API
+After=network-online.target remote-fs.target agent-saas-acs-orchestrator-staging.service
+Wants=network-online.target
+RequiresMountsFor=/mnt/agent-saas-staging
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agent-saas-staging/current/server
+Environment=NODE_ENV=production
+Environment=AGENT_SAAS_ENVIRONMENT=staging
+Environment=AGENT_SAAS_PROCESS_ROLE=ws-only
+Environment=AGENT_SAAS_CONFIG_PATH=/etc/agent-saas-staging/config.json
+Environment=AGENT_SAAS_PIDFILE=/run/agent-saas-server-staging.pid
+EnvironmentFile=/etc/agent-saas-staging/server.env
+ExecStart=/usr/bin/node --enable-source-maps dist/index.js
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=35
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/run /var/lib/agent-saas-staging /mnt/agent-saas-staging
+
+[Install]
+WantedBy=multi-user.target

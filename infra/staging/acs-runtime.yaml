@@ -1,0 +1,115 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-saas-staging
+  labels:
+    agent-saas.kaiyan.net/environment: staging
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-saas-staging-orchestrator
+  namespace: agent-saas-staging
+automountServiceAccountToken: true
+imagePullSecrets:
+  - name: agent-saas-staging-acr
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: agent-saas-staging-quota
+  namespace: agent-saas-staging
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    persistentvolumeclaims: "2"
+    pods: "8"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: agent-saas-staging-limits
+  namespace: agent-saas-staging
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: "1"
+        memory: 2Gi
+      default:
+        cpu: "2"
+        memory: 4Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agent-saas-staging-workspace
+  namespace: agent-saas-staging
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: alibabacloud-cnfs-nas
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-saas-staging-orchestrator
+  namespace: agent-saas-staging
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: ["network.alibabacloud.com"]
+    resources: ["sandboxes", "trafficpolicies"]
+    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-saas-staging-orchestrator
+  namespace: agent-saas-staging
+subjects:
+  - kind: ServiceAccount
+    name: agent-saas-staging-orchestrator
+    namespace: agent-saas-staging
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agent-saas-staging-orchestrator
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: agent-saas-staging
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: agent-saas-staging
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

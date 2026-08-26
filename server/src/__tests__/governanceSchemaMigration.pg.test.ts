@@ -8,6 +8,7 @@ import {
   type GovernancePgPool,
 } from '../data/governance-schema/migrations.js';
 import { governanceV23Statements } from '../data/governance-schema/v23Migration.js';
+import { governanceV32Statements, governanceV33Statements } from '../data/governance-schema/v32V33Migration.js';
 import { PgOAuthGrantStore } from '../data/oauthGrants/store.js';
 import { PgAgentDwsMessageStore } from '../data/agentDwsMessages/store.js';
 
@@ -18,6 +19,7 @@ const describePg = testPgUrl ? describe : describe.skip;
 describePg('Governance Schema V33 PostgreSQL 升级、约束与事务回滚', () => {
   const prefix = `govv17_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   const v32RollbackPrefix = `v32rb_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+  const legacyV28Prefix = `legacy28_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   let pool: InstanceType<typeof Pool>;
 
   beforeAll(() => {
@@ -30,8 +32,12 @@ describePg('Governance Schema V33 PostgreSQL 升级、约束与事务回滚', ()
       const tables = await pool.query<{ tablename: string }>(`
         SELECT tablename FROM pg_tables
         WHERE schemaname=current_schema()
-          AND (LEFT(tablename,LENGTH($1))=$1 OR LEFT(tablename,LENGTH($2))=$2)
-      `, [prefix, v32RollbackPrefix]);
+          AND (
+            LEFT(tablename,LENGTH($1))=$1
+            OR LEFT(tablename,LENGTH($2))=$2
+            OR LEFT(tablename,LENGTH($3))=$3
+          )
+      `, [prefix, v32RollbackPrefix, legacyV28Prefix]);
       for (const row of tables.rows) {
         await pool.query(`DROP TABLE IF EXISTS "${row.tablename}" CASCADE`);
       }
@@ -40,8 +46,12 @@ describePg('Governance Schema V33 PostgreSQL 升级、约束与事务回滚', ()
         FROM pg_proc p
         JOIN pg_namespace n ON n.oid=p.pronamespace
         WHERE n.nspname=current_schema()
-          AND (LEFT(p.proname,LENGTH($1))=$1 OR LEFT(p.proname,LENGTH($2))=$2)
-      `, [prefix, v32RollbackPrefix]);
+          AND (
+            LEFT(p.proname,LENGTH($1))=$1
+            OR LEFT(p.proname,LENGTH($2))=$2
+            OR LEFT(p.proname,LENGTH($3))=$3
+          )
+      `, [prefix, v32RollbackPrefix, legacyV28Prefix]);
       for (const row of functions.rows) {
         await pool.query(`DROP FUNCTION IF EXISTS "${row.proname}"(${row.args}) CASCADE`);
       }
@@ -509,6 +519,55 @@ describePg('Governance Schema V33 PostgreSQL 升级、约束与事务回滚', ()
     expect(Number(assignmentChecks.rows[0]?.count)).toBe(1);
     expect(assignmentChecks.rows[0]?.definitions.join(' ')).toContain('connector');
   });
+
+  it('旧生产 V27/V28 账本升级时由 V31 自愈创建 retention 表', async () => {
+    const legacyPrefix = legacyV28Prefix;
+    const runner = new PgGovernanceMigrationRunner(pool, legacyPrefix);
+    await runner.run(26);
+
+    for (const statement of governanceV32Statements(legacyPrefix)) {
+      await pool.query(statement);
+    }
+    for (const statement of governanceV33Statements(`${legacyPrefix}_resource_assignments`)) {
+      await pool.query(statement);
+    }
+    await pool.query(
+      `INSERT INTO ${legacyPrefix}_governance_schema_versions (version) VALUES (27),(28)`,
+    );
+
+    const before = await pool.query<{ name: string | null }>(
+      'SELECT to_regclass($1) AS name',
+      [`${legacyPrefix}_context_retention_receipts`],
+    );
+    expect(before.rows[0]?.name).toBeNull();
+
+    await runner.run();
+    await runner.run();
+
+    const appliedVersions = await pool.query<{ version: number }>(
+      `SELECT version FROM ${legacyPrefix}_governance_schema_versions ORDER BY version`,
+    );
+    expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
+      Array.from({ length: 33 }, (_, index) => index + 1),
+    );
+    const retentionTable = await pool.query<{ name: string | null }>(
+      'SELECT to_regclass($1) AS name',
+      [`${legacyPrefix}_context_retention_receipts`],
+    );
+    expect(retentionTable.rows[0]?.name).toBe(`${legacyPrefix}_context_retention_receipts`);
+    const retryColumns = await pool.query<{ column_name: string }>(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema=current_schema() AND table_name=$1
+        AND column_name IN ('audit_lease_owner','audit_next_attempt_at','audit_revision','max_audit_attempts')
+      ORDER BY column_name
+    `, [`${legacyPrefix}_context_retention_receipts`]);
+    expect(retryColumns.rows.map(row => row.column_name)).toEqual([
+      'audit_lease_owner',
+      'audit_next_attempt_at',
+      'audit_revision',
+      'max_audit_attempts',
+    ]);
+  }, 30_000);
 
   it('V32 requester expand 第二条 DDL 失败时整版回滚，重试后保留 legacy writer 并升级到 V33', async () => {
     const v32Prefix = v32RollbackPrefix;

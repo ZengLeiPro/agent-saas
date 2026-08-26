@@ -937,9 +937,12 @@ function migrations(prefix: string): GovernanceMigration[] {
       statements: governanceV30ChangeJobStatements(changeJobs, changeJobDomains),
     },
     {
-      // Durable retry/lease protocol for retention receipts created by v28.
+      // v28 曾在生产使用过其他语义；先幂等补齐 retention 基础表，再升级 retry/lease。
       version: 31,
-      statements: buildContextRetentionRetryMigrationSql(prefix),
+      statements: [
+        ...buildContextRetentionMigrationSql(prefix),
+        ...buildContextRetentionRetryMigrationSql(prefix),
+      ],
     },
     { version: 32, statements: governanceV32Statements(prefix) },
     { version: 33, statements: governanceV33Statements(assignments) },

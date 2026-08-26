@@ -85,9 +85,37 @@ describe('Governance schema migration SQL fixtures', () => {
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_context_entities'))).toHaveLength(1);
     expect(queries.filter(item => item.sql.includes('safe_c26_links_contract_ck'))).toHaveLength(1);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_context_retention_receipts')))
-      .toHaveLength(1);
+      .toHaveLength(2);
     expect(queries.filter(item => item.sql.includes('INSERT INTO safe_governance_schema_versions')))
       .toEqual(insertedVersions.map(version => expect.objectContaining({ params: [version] })));
     expect(() => new PgGovernanceMigrationRunner(pool as never, 'unsafe-prefix')).toThrow('Invalid PostgreSQL identifier');
+  });
+
+  it('旧生产 V28 账本下，V31 在 ALTER 前先幂等创建 retention 表', async () => {
+    const applied = new Set(Array.from({ length: 28 }, (_, index) => index + 1));
+    const queries: Array<{ sql: string; params?: readonly unknown[] }> = [];
+    const query = async (sql: string, params?: readonly unknown[]) => {
+      queries.push({ sql, params });
+      if (sql.includes('SELECT version FROM')) {
+        return { rows: [...applied].map(version => ({ version })), rowCount: applied.size };
+      }
+      if (sql.includes('INSERT INTO safe_governance_schema_versions')) {
+        applied.add(Number(params?.[0]));
+      }
+      return { rows: [], rowCount: 0 };
+    };
+    const pool = { connect: async () => ({ query, release: () => undefined }) };
+
+    await new PgGovernanceMigrationRunner(pool as never, 'safe').run();
+
+    const createIndex = queries.findIndex(item =>
+      item.sql.includes('CREATE TABLE IF NOT EXISTS safe_context_retention_receipts'));
+    const alterIndex = queries.findIndex(item =>
+      item.sql.includes('ALTER TABLE safe_context_retention_receipts ADD COLUMN'));
+    expect(createIndex).toBeGreaterThanOrEqual(0);
+    expect(alterIndex).toBeGreaterThan(createIndex);
+    expect([...applied].sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 33 }, (_, index) => index + 1),
+    );
   });
 });

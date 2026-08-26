@@ -571,6 +571,12 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     sendTask(req, res, await options.service!.moveTask(identityFrom(req), req.params.id, input));
   }));
 
+  router.post('/tasks/:id/complete', route(async (req, res) => {
+    const input = parseOrReply(expectedVersionSchema, req.body, res, 'body');
+    if (!input) return;
+    sendTask(req, res, await options.service!.completeTask(identityFrom(req), req.params.id, input));
+  }));
+
   router.post('/tasks/:id/archive', route(async (req, res) => {
     const input = parseOrReply(expectedVersionSchema, req.body, res, 'body');
     if (!input) return;

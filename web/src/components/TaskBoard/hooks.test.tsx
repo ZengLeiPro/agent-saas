@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   createTask: vi.fn(),
   patchTask: vi.fn(),
   moveTask: vi.fn(),
+  completeTask: vi.fn(),
   archiveTask: vi.fn(),
   restoreTask: vi.fn(),
   deleteTask: vi.fn(),
@@ -123,6 +124,52 @@ describe("任务看板 hooks 并发一致性", () => {
     }
   });
 
+  it("终态或空闲时低频轮询以发现其他操作者启动的 Execution", async () => {
+    const activeExecution: TaskBoardExecution = {
+      id: "execution-new", taskId: originalTask.id, runId: "run-new", sessionId: "session-new",
+      status: "running", purpose: "work", requestedBy: "user-2",
+      createdAt: originalTask.createdAt, updatedAt: originalTask.updatedAt,
+    };
+    mocks.fetchExecutions.mockResolvedValueOnce([]).mockResolvedValueOnce([activeExecution]);
+    vi.useFakeTimers();
+    try {
+      const { result, unmount } = renderHook(() => useTaskExecutions(originalTask.id));
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(result.current.executions).toEqual([]);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      expect(result.current.executions[0]).toEqual(activeExecution);
+      expect(mocks.fetchExecutions).toHaveBeenCalledTimes(2);
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("后台 Execution 刷新未完成时不发起重叠请求", async () => {
+    const activeExecution: TaskBoardExecution = {
+      id: "execution-slow", taskId: originalTask.id, runId: "run-slow", sessionId: "session-slow",
+      status: "running", purpose: "work", requestedBy: "user-2",
+      createdAt: originalTask.createdAt, updatedAt: originalTask.updatedAt,
+    };
+    const pendingRefresh = deferred<TaskBoardExecution[]>();
+    mocks.fetchExecutions.mockResolvedValueOnce([activeExecution]).mockReturnValueOnce(pendingRefresh.promise);
+    vi.useFakeTimers();
+    try {
+      const { unmount } = renderHook(() => useTaskExecutions(originalTask.id));
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+      expect(mocks.fetchExecutions).toHaveBeenCalledTimes(2);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
+      expect(mocks.fetchExecutions).toHaveBeenCalledTimes(2);
+      await act(async () => { pendingRefresh.resolve([activeExecution]); await pendingRefresh.promise; });
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("乐观移动立即生效，失败后回滚并刷新，同时提交 expectedVersion", async () => {
     const pendingMove = deferred<TaskBoardTask>();
     mocks.moveTask.mockReturnValueOnce(pendingMove.promise);
@@ -179,6 +226,20 @@ describe("任务看板 hooks 并发一致性", () => {
       await refreshPromise;
     });
     expect(result.current.tasks).toEqual([edited]);
+  });
+
+  it("人工完成任务后同步已完成状态并提交 CAS 版本", async () => {
+    const completed = { ...originalTask, status: "done" as const, version: originalTask.version + 1 };
+    mocks.completeTask.mockResolvedValueOnce(completed);
+    const { result } = renderHook(() => useBoardTasks(originalTask.boardId));
+    await waitFor(() => expect(result.current.tasks).toEqual([originalTask]));
+
+    await act(async () => {
+      await expect(result.current.completeTask(originalTask)).resolves.toEqual(completed);
+    });
+
+    expect(mocks.completeTask).toHaveBeenCalledWith(originalTask.id, originalTask.version);
+    expect(result.current.tasks).toEqual([completed]);
   });
 
   it("显式交给 Agent 后同步 in_progress 任务和执行记录", async () => {

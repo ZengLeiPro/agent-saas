@@ -46,6 +46,7 @@ import {
 import { IntegrationSourceDetails, useIntegrationSources } from "./IntegrationSources";
 import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from "./TaskAttachments";
+import { canManuallyCompleteTask, TaskCompletionButton } from "./TaskCompletionButton";
 import { TaskDetailComments, EXECUTION_PURPOSE_LABELS } from "./TaskDetailComments";
 import { useTaskComments, useTaskExecutions } from "./hooks";
 
@@ -95,6 +96,7 @@ interface TaskDetailProps {
     input: Omit<TaskBoardTaskPatchInput, "expectedVersion">,
   ) => Promise<TaskBoardTask>;
   onMove: (task: TaskBoardTask, status: TaskBoardStatus) => Promise<TaskBoardTask>;
+  onCompleteTask: (task: TaskBoardTask) => Promise<TaskBoardTask>;
   onSetArchived: (task: TaskBoardTask, archived: boolean) => Promise<TaskBoardTask>;
   onDeleteTask?: (task: TaskBoardTask) => Promise<TaskBoardTask>;
   onExecute: (
@@ -125,6 +127,7 @@ export function TaskDetail({
   onConfigureCiPolicy,
   onUpdate,
   onMove,
+  onCompleteTask,
   onSetArchived,
   onDeleteTask,
   onExecute,
@@ -160,6 +163,7 @@ export function TaskDetail({
     executions,
     loading: executionsLoading,
     error: executionsError,
+    ready: executionsReady,
     refresh: refreshExecutions,
   } = useTaskExecutions(open && task ? task.id : null, active && open);
   const integrationSourcesState = useIntegrationSources(
@@ -312,6 +316,7 @@ export function TaskDetail({
     && canTransitionTask
     && TASKBOARD_STATUSES.some((status) => canUserTransitionTask(taskKind, currentTask.status, status)),
   );
+  const canCompleteCurrentTask = canManuallyCompleteTask(currentTask, readOnly, canTransitionTask, executionActive, executionsReady && !executionsLoading && !executionsError);
   const isCurrentOperation = (requestId: number, operationTaskId: string) => (
     requestId === detailRequestRef.current && operationTaskId === draftTaskIdRef.current
   );
@@ -386,6 +391,28 @@ export function TaskDetail({
       if (!isCurrentOperation(requestId, operationTask.id)) return;
       useConflictCurrent(caught);
       setError(caught instanceof Error ? caught.message : "移动任务失败");
+    } finally {
+      if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
+    }
+  };
+
+  const completeCurrentTask = async () => {
+    if (!currentTask || !canCompleteCurrentTask) return;
+    if (!window.confirm(`确认将任务“${currentTask.title || currentTask.identifier}”标记为已完成吗？完成后将结束当前任务工作流。`)) return;
+    const operationTask = currentTask;
+    const requestId = ++detailRequestRef.current;
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await onCompleteTask(operationTask);
+      if (!isCurrentOperation(requestId, operationTask.id)) return;
+      setCurrentTask(next);
+      mergeServerDraft(next);
+      onTaskLoaded(next);
+    } catch (caught) {
+      if (!isCurrentOperation(requestId, operationTask.id)) return;
+      useConflictCurrent(caught); void refreshExecutions();
+      setError(caught instanceof Error ? caught.message : "完成任务失败");
     } finally {
       if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
     }
@@ -914,6 +941,7 @@ export function TaskDetail({
                       <CircleX />取消集成
                     </Button>
                   ) : null}
+                  <TaskCompletionButton visible={canCompleteCurrentTask} saving={saving} onComplete={() => void completeCurrentTask()} />
                   {!boardReadOnly && canArchiveTask ? (
                     <Button
                       type="button"

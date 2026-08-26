@@ -99,6 +99,11 @@ function props(overrides: Partial<ComponentProps<typeof TaskDetail>> = {}) {
       status,
       version: current.version + 1,
     })),
+    onCompleteTask: vi.fn(async (current: TaskBoardTask) => ({
+      ...current,
+      status: "done" as const,
+      version: current.version + 1,
+    })),
     onSetArchived: vi.fn(async (current: TaskBoardTask) => current),
     onExecute: vi.fn(),
     onCommentsChanged: vi.fn(async () => undefined),

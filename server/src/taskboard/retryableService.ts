@@ -208,6 +208,14 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return (await this.service()).moveTask(identity, taskId, input);
   }
 
+  async completeTask(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input: TaskboardExpectedVersionInput,
+  ): Promise<TaskBoardTask> {
+    return (await this.service()).completeTask(identity, taskId, input);
+  }
+
   async archiveTask(
     identity: TaskboardIdentity,
     taskId: string,

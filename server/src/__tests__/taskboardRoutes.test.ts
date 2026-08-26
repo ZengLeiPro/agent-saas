@@ -732,6 +732,7 @@ function makeService(captured: Captured): TaskboardService {
     async getTask(identity) { remember(identity); return TASK; },
     async updateTask(identity) { remember(identity); return TASK; },
     async moveTask(identity) { remember(identity); return TASK; },
+    async completeTask(identity) { remember(identity); return { ...TASK, status: 'done', version: 2, completedAt: TASK.updatedAt }; },
     async archiveTask(identity) { remember(identity); return { ...TASK, version: 2, archivedAt: TASK.updatedAt }; },
     async restoreTask(identity) { remember(identity); return { ...TASK, version: 2 }; },
     async deleteTask(identity) { remember(identity); return { ...TASK, version: 2, deletedAt: TASK.updatedAt }; },
@@ -795,6 +796,4 @@ function postJson(body: unknown): RequestInit {
   };
 }
 
-function patchJson(body: unknown): RequestInit {
-  return { ...postJson(body), method: 'PATCH' };
-}
+function patchJson(body: unknown): RequestInit { return { ...postJson(body), method: 'PATCH' }; }

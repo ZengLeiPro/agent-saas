@@ -89,6 +89,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     refresh: refreshTasks,
     addTask,
     updateTask,
+    completeTask,
     setArchived,
     removeTask,
     executeTask,
@@ -561,6 +562,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         }}
         onUpdate={async (task, input) => updateTask(task, input)}
         onMove={moveFromDetail}
+        onCompleteTask={async (task) => completeTask(task)}
         onSetArchived={async (task, archived) => setArchived(task, archived)}
         onDeleteTask={async (task) => removeTask(task)}
         onExecute={executeTask}

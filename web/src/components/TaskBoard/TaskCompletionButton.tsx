@@ -1,0 +1,39 @@
+import type { TaskBoardTask } from "@agent/shared";
+import { CircleCheckBig } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+
+export function canManuallyCompleteTask(
+  task: TaskBoardTask | null,
+  readOnly: boolean,
+  canTransitionTask: boolean,
+  executionActive: boolean,
+  executionStateReady: boolean,
+): boolean {
+  if (!task || readOnly || !canTransitionTask || executionActive || !executionStateReady) return false;
+  if (task.kind === "integration" || task.kind === "remediation") return false;
+  return !["done", "canceled"].includes(task.status) && task.mergeEligibility !== "claimed";
+}
+
+export function TaskCompletionButton({
+  visible,
+  saving,
+  onComplete,
+}: {
+  visible: boolean;
+  saving: boolean;
+  onComplete: () => void;
+}) {
+  if (!visible) return null;
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      onClick={onComplete}
+      disabled={saving}
+      className="text-emerald-700 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-400"
+    >
+      <CircleCheckBig />完成任务
+    </Button>
+  );
+}

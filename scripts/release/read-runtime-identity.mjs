@@ -6,6 +6,14 @@ export const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/iu;
 export const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const COLOR_PATTERN = /^(blue|green)$/u;
 const MAX_OBSERVATION_AGE_MS = 5 * 60 * 1000;
+const TOPOLOGY_ROLES = Object.freeze({
+  api: { component: 'api', unitPrefix: 'agent-saas-server', readyfile: false },
+  runtimeWorker: {
+    component: 'runtimeWorker',
+    unitPrefix: 'agent-saas-runtime-worker',
+    readyfile: true,
+  },
+});
 
 export function isFullSha(value) {
   return typeof value === 'string' && FULL_SHA_PATTERN.test(value);
@@ -26,35 +34,69 @@ function validateTopology(topology, reasons, now) {
     reasons.push('Production runtime identity topology must be an object.');
     return;
   }
-  if (!COLOR_PATTERN.test(topology.activeColor ?? ''))
-    reasons.push('Production runtime identity topology activeColor must be blue or green.');
   const observedAt = Date.parse(topology.observedAt ?? '');
   if (Number.isNaN(observedAt))
     reasons.push('Production runtime identity topology must have an ISO observedAt timestamp.');
   else if (observedAt > now + 60_000 || now - observedAt > MAX_OBSERVATION_AGE_MS)
     reasons.push('Production runtime identity topology observation is stale or in the future.');
-  for (const role of ['api', 'runtimeWorker']) {
+  for (const [role, contract] of Object.entries(TOPOLOGY_ROLES)) {
     const entry = topology[role];
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       reasons.push(`Production runtime identity topology is missing ${role}.`);
       continue;
     }
-    for (const field of ['unit', 'releaseSymlink', 'pidfile', 'readyfile']) {
+    if (!COLOR_PATTERN.test(entry.activeColor ?? ''))
+      reasons.push(
+        `Production runtime identity topology ${role}.activeColor must be blue or green.`,
+      );
+    const required = [
+      'activeColorFile',
+      'unit',
+      'releaseSymlink',
+      'pidfile',
+      ...(contract.readyfile ? ['readyfile'] : []),
+    ];
+    for (const field of required) {
       if (!nonEmpty(entry[field]))
         reasons.push(`Production runtime identity topology ${role}.${field} is required.`);
       else if (
-        COLOR_PATTERN.test(topology.activeColor ?? '') &&
-        !entry[field].includes(topology.activeColor)
+        field !== 'activeColorFile' &&
+        COLOR_PATTERN.test(entry.activeColor ?? '') &&
+        !entry[field].includes(entry.activeColor)
       )
         reasons.push(
           `Production runtime identity topology ${role}.${field} conflicts with activeColor.`,
         );
     }
-    if (!/^[A-Za-z0-9_.-]+@(blue|green)\.service$/u.test(entry.unit ?? ''))
+    if (entry.unit !== `${contract.unitPrefix}@${entry.activeColor}.service`)
       reasons.push(
-        `Production runtime identity topology ${role}.unit must be a colored systemd unit.`,
+        `Production runtime identity topology ${role}.unit does not match the deployed systemd template.`,
       );
-    for (const field of ['releaseSymlink', 'pidfile', 'readyfile']) {
+    const expectedPaths =
+      role === 'api'
+        ? {
+            activeColorFile: '/etc/agent-saas/active-color',
+            releaseSymlink: `/opt/agent-saas-app/color/${entry.activeColor}`,
+            pidfile: `/run/agent-saas-server-${entry.activeColor}.pid`,
+          }
+        : {
+            activeColorFile: '/etc/agent-saas/runtime-worker-active-color',
+            releaseSymlink: `/opt/agent-saas-app/worker/${entry.activeColor}`,
+            pidfile: `/run/agent-saas-runtime-worker-${entry.activeColor}.pid`,
+            readyfile: `/run/agent-saas-runtime-worker-${entry.activeColor}.ready`,
+          };
+    for (const [field, expected] of Object.entries(expectedPaths)) {
+      if (entry[field] !== expected)
+        reasons.push(
+          `Production runtime identity topology ${role}.${field} does not match the deployed path contract.`,
+        );
+    }
+    for (const field of [
+      'activeColorFile',
+      'releaseSymlink',
+      'pidfile',
+      ...(contract.readyfile ? ['readyfile'] : []),
+    ]) {
       if (typeof entry[field] === 'string' && !entry[field].startsWith('/'))
         reasons.push(
           `Production runtime identity topology ${role}.${field} must be an absolute path.`,
@@ -68,26 +110,22 @@ function observeTopology(
   reasons,
   { readFileSync, realpathSync, execFileSync, processExists },
 ) {
-  const topology = identity.topology;
-  if (!topology || typeof topology !== 'object') return;
-  for (const [role, component] of [
-    ['api', 'api'],
-    ['runtimeWorker', 'runtimeWorker'],
-  ]) {
-    const entry = topology[role];
+  for (const [role, contract] of Object.entries(TOPOLOGY_ROLES)) {
+    const entry = identity.topology?.[role];
     if (!entry || typeof entry !== 'object') continue;
+    let pid;
     try {
-      const active = String(
-        execFileSync('systemctl', ['is-active', entry.unit], { encoding: 'utf8', stdio: 'pipe' }),
-      ).trim();
-      if (active !== 'active')
-        reasons.push(`Production runtime identity topology ${role}.unit is not active.`);
+      const observedColor = String(readFileSync(entry.activeColorFile, 'utf8')).trim();
+      if (observedColor !== entry.activeColor)
+        reasons.push(
+          `Production runtime identity topology ${role}.activeColor does not match its color file.`,
+        );
     } catch {
-      reasons.push(`Unable to observe active systemd unit for ${role}.`);
+      reasons.push(`Unable to read production active-color file for ${role}.`);
     }
     try {
       const target = String(realpathSync(entry.releaseSymlink));
-      if (!target.includes(identity.components?.[component]?.gitSha ?? 'invalid'))
+      if (!target.includes(identity.components?.[contract.component]?.gitSha ?? 'invalid'))
         reasons.push(
           `Production runtime identity topology ${role}.releaseSymlink target does not match component SHA.`,
         );
@@ -95,7 +133,7 @@ function observeTopology(
       reasons.push(`Unable to resolve production release symlink for ${role}.`);
     }
     try {
-      const pid = Number.parseInt(String(readFileSync(entry.pidfile, 'utf8')).trim(), 10);
+      pid = Number.parseInt(String(readFileSync(entry.pidfile, 'utf8')).trim(), 10);
       if (!Number.isSafeInteger(pid) || pid <= 0 || !processExists(pid))
         reasons.push(
           `Production runtime identity topology ${role}.pidfile does not identify a live process.`,
@@ -104,13 +142,45 @@ function observeTopology(
       reasons.push(`Unable to read production pidfile for ${role}.`);
     }
     try {
-      const ready = String(readFileSync(entry.readyfile, 'utf8')).trim();
-      if (!ready.includes(identity.components?.[component]?.gitSha ?? 'invalid'))
+      const mainPid = Number.parseInt(
+        String(
+          execFileSync('systemctl', ['show', entry.unit, '--property', 'MainPID', '--value'], {
+            encoding: 'utf8',
+            stdio: 'pipe',
+          }),
+        ).trim(),
+        10,
+      );
+      const controlGroup = String(
+        execFileSync('systemctl', ['show', entry.unit, '--property', 'ControlGroup', '--value'], {
+          encoding: 'utf8',
+          stdio: 'pipe',
+        }),
+      ).trim();
+      const pidCgroup = String(readFileSync(`/proc/${pid}/cgroup`, 'utf8'));
+      if (
+        !Number.isSafeInteger(mainPid) ||
+        mainPid <= 0 ||
+        !processExists(mainPid) ||
+        !controlGroup ||
+        !pidCgroup.includes(controlGroup)
+      )
         reasons.push(
-          `Production runtime identity topology ${role}.readyfile does not match component SHA.`,
+          `Production runtime identity topology ${role} pidfile is not bound to the systemd unit cgroup.`,
         );
     } catch {
-      reasons.push(`Unable to read production readyfile for ${role}.`);
+      reasons.push(`Unable to observe systemd process identity for ${role}.`);
+    }
+    if (contract.readyfile) {
+      try {
+        const readyPid = Number.parseInt(String(readFileSync(entry.readyfile, 'utf8')).trim(), 10);
+        if (!Number.isSafeInteger(readyPid) || readyPid !== pid)
+          reasons.push(
+            `Production runtime identity topology ${role}.readyfile does not match its pidfile.`,
+          );
+      } catch {
+        reasons.push(`Unable to read production readyfile for ${role}.`);
+      }
     }
   }
 }
@@ -166,8 +236,7 @@ export function validateRuntimeIdentity(identity, options = {}) {
       }
     }
   }
-  const now = options.now ?? Date.now();
-  validateTopology(identity.topology, blockingReasons, now);
+  validateTopology(identity.topology, blockingReasons, options.now ?? Date.now());
   observeTopology(identity, blockingReasons, {
     readFileSync: options.topologyReadFileSync ?? defaultReadFileSync,
     realpathSync: options.topologyRealpathSync ?? defaultRealpathSync,
@@ -207,6 +276,6 @@ export function readRuntimeIdentity({
       blockingReasons: [`Unable to read production runtime identity JSON: ${error.message}`],
     };
   }
-  const validation = validateRuntimeIdentity(identity, { readFileSync, ...validationOptions });
+  const validation = validateRuntimeIdentity(identity, validationOptions);
   return { ok: validation.ok, identity, blockingReasons: validation.blockingReasons };
 }

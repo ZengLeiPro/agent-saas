@@ -11,14 +11,21 @@ import { SkillConfigStore } from '../data/skills/index.js';
 import { PgMembershipStore } from '../data/memberships/index.js';
 import { PgOAuthGrantStore } from '../data/oauthGrants/index.js';
 import { PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
-import { normalizeLegacyEntitlementSettings, PgEntitlementStore } from '../data/entitlements/index.js';
+import {
+  normalizeLegacyEntitlementSettings,
+  PgEntitlementStore,
+} from '../data/entitlements/index.js';
 import { PgAssignmentStore } from '../data/assignments/index.js';
 import { PgCredentialStore } from '../data/credentials/index.js';
 import { PgAgentResourceStore } from '../data/agentResources/index.js';
 import { PgEnvironmentStore } from '../data/environments/index.js';
 import { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
 import type { GovernanceAuditStore } from '../data/governance-audit/index.js';
-import { GovernanceDomainShadowAuditor, GovernanceShadowComparator, PgGovernanceMigrationControlStore } from '../data/migrationControl/index.js';
+import {
+  GovernanceDomainShadowAuditor,
+  GovernanceShadowComparator,
+  PgGovernanceMigrationControlStore,
+} from '../data/migrationControl/index.js';
 import { PgRunResolutionSnapshotStore } from '../runtime/runResolutionSnapshotStore.js';
 import { CredentialBroker } from '../runtime/credentialBroker.js';
 import { SubjectResolver } from '../governance/subject/resolver.js';
@@ -36,12 +43,26 @@ import {
 import { McpConfigStore } from '../data/mcpConfig.js';
 import { ConnectorConnectionStore } from '../connectors/connectionStore.js';
 import { AliyunConnectorService, revokePendingAliyunCredentials } from '../connectors/aliyun.js';
-import { GITHUB_CONNECTOR_ID, resolveGithubRuntimeEnv, revokePendingGithubCredentials } from '../connectors/github.js';
+import {
+  GITHUB_CONNECTOR_ID,
+  resolveGithubRuntimeEnv,
+  revokePendingGithubCredentials,
+} from '../connectors/github.js';
 import { resolveXRuntimeEnv, revokePendingXCredentials } from '../connectors/x.js';
 import { applyNativeConnectorRuntimeState } from '../connectors/runtimeState.js';
-import { GoogleWorkspaceOAuthService, PgGoogleWorkspaceOAuthStateStore, resolveGoogleWorkspaceRuntimeEnv } from '../connectors/googleWorkspace.js';
+import {
+  GoogleWorkspaceOAuthService,
+  PgGoogleWorkspaceOAuthStateStore,
+  resolveGoogleWorkspaceRuntimeEnv,
+} from '../connectors/googleWorkspace.js';
 import { buildGoogleWorkspaceOAuthGrantProjection } from './runtimeOAuthGrantReconciler.js';
-import { connectNotionCredential, disconnectNotion, getLiveNotionConnection, resolveNotionRuntimeEnv, type NotionConnectionView } from '../connectors/notion.js';
+import {
+  connectNotionCredential,
+  disconnectNotion,
+  getLiveNotionConnection,
+  resolveNotionRuntimeEnv,
+  type NotionConnectionView,
+} from '../connectors/notion.js';
 import { SignupConfigStore } from '../data/signupConfig.js';
 import { EgressConfigStore } from '../data/egressConfig.js';
 import {
@@ -51,7 +72,11 @@ import {
   createWebToolEgressFetch,
 } from '../runtime/egressDispatcher.js';
 import type { EgressConfig } from '../runtime/egressPolicy.js';
-import { resolveDwsConnectorRunEnv, resolveFeishuConnectorRunEnv } from '../runtime/connectorRunEnv.js';
+import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
+import {
+  resolveDwsConnectorRunEnv,
+  resolveFeishuConnectorRunEnv,
+} from '../runtime/connectorRunEnv.js';
 import type { FeishuTokenBroker } from '../feishu/tokenBroker.js';
 import { McpClientManager } from '../mcp/clientManager.js';
 import { McpProxy } from '../mcp/proxy.js';
@@ -101,17 +126,36 @@ export function resolveBrokeredMcpServerIds(
   username: string,
   tenantId: string,
 ): ReadonlySet<string> {
-  return new Set(store.getEffectiveServers(username, tenantId).map(server => server.id));
+  return new Set(store.getEffectiveServers(username, tenantId).map((server) => server.id));
 }
 
 /** Initializes connector credentials, governance shadow audits, MCP, and egress in strict startup order. */
 export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGovernanceConnectorDeps) {
   const {
-    processCwd, agentCwd, config, secretVault, getFeishuTokenBroker, tenantRunEnvByTenant,
-    userStore, tenantStore, orgAgentStore, skillConfigStore,
-    pgEventStore, membershipStore, oauthGrantStore, governanceChangeJobStore, entitlementStore, assignmentStore, credentialStore,
-    agentResourceStore, environmentStore, skillGovernanceStore, governanceAuditStore,
-    governanceMigrationControlStore, governanceShadowComparator, runResolutionSnapshotStore,
+    processCwd,
+    agentCwd,
+    config,
+    secretVault,
+    getFeishuTokenBroker,
+    tenantRunEnvByTenant,
+    userStore,
+    tenantStore,
+    orgAgentStore,
+    skillConfigStore,
+    pgEventStore,
+    membershipStore,
+    oauthGrantStore,
+    governanceChangeJobStore,
+    entitlementStore,
+    assignmentStore,
+    credentialStore,
+    agentResourceStore,
+    environmentStore,
+    skillGovernanceStore,
+    governanceAuditStore,
+    governanceMigrationControlStore,
+    governanceShadowComparator,
+    runResolutionSnapshotStore,
     resolveLegacySkillResourceId,
   } = deps;
   let credentialBroker: CredentialBroker | undefined;
@@ -127,7 +171,9 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
   const connectorConnectionStore = new ConnectorConnectionStore(
     join(processCwd, 'data', 'connector-connections.json'),
   );
-  for (const legacyConnection of connectorConnectionStore.listAll().filter(connection => !connection.userId)) {
+  for (const legacyConnection of connectorConnectionStore
+    .listAll()
+    .filter((connection) => !connection.userId)) {
     await connectorConnectionStore.disconnect(
       legacyConnection.username,
       legacyConnection.connectorId,
@@ -176,23 +222,32 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
   await revokePendingGithubCredentials({
     connectionStore: connectorConnectionStore,
     vault: secretVault,
-    onError: error => serverLogger.warn(`Pending GitHub credential revoke skipped: ${error.message}`),
+    onError: (error) =>
+      serverLogger.warn(`Pending GitHub credential revoke skipped: ${error.message}`),
   });
   await revokePendingXCredentials({
     connectionStore: connectorConnectionStore,
     vault: secretVault,
-    onError: error => serverLogger.warn(`Pending X credential revoke skipped: ${error.message}`),
+    onError: (error) => serverLogger.warn(`Pending X credential revoke skipped: ${error.message}`),
   });
   await revokePendingAliyunCredentials({
     connectionStore: connectorConnectionStore,
     vault: secretVault,
-    onError: error => serverLogger.warn(`Pending Aliyun credential revoke skipped: ${error.message}`),
+    onError: (error) =>
+      serverLogger.warn(`Pending Aliyun credential revoke skipped: ${error.message}`),
   });
   // P2 Credential Domain：legacy connector 连接投影为 governance credential（shadow）。
   // Broker 本身已按 AccessEvaluator + Credential Assignment 权威授权；connector
   // 调用链切换到 Broker 仍由后续迁移门禁控制。
-  if (credentialStore && userStore && membershipStore && entitlementStore
-    && assignmentStore && tenantStore && governanceAuditStore) {
+  if (
+    credentialStore &&
+    userStore &&
+    membershipStore &&
+    entitlementStore &&
+    assignmentStore &&
+    tenantStore &&
+    governanceAuditStore
+  ) {
     try {
       const backfill = await credentialStore.backfillLegacyCredentials({
         users: userStore.listAll(),
@@ -200,13 +255,22 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
         platformTenantId: DEFAULT_TENANT_ID,
         projectedBy: 'system:governance-m1',
       });
-      const projectedCredentials = (await Promise.all(tenantStore.listAll().map(tenant =>
-        credentialStore!.listForTenant(tenant.id))))
+      const projectedCredentials = (
+        await Promise.all(
+          tenantStore.listAll().map((tenant) => credentialStore!.listForTenant(tenant.id)),
+        )
+      )
         .flat()
-        .flatMap(credential => {
+        .flatMap((credential) => {
           const ownerUserId = credential.ownerUserId ?? credential.custodianUserId;
           return ownerUserId && credential.source === 'legacy_projection'
-            ? [{ credentialId: credential.credentialId, tenantId: credential.tenantId, ownerUserId }]
+            ? [
+                {
+                  credentialId: credential.credentialId,
+                  tenantId: credential.tenantId,
+                  ownerUserId,
+                },
+              ]
             : [];
         });
       const credentialAssignments = await assignmentStore!.backfillLegacyCredentialAssignments({
@@ -214,93 +278,152 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
         projectedBy: 'system:governance-m1',
       });
       serverLogger.info(
-        `Governance Credential shadow backfill: credentials=${backfill.credentialsProjected} `
-        + `assignments=${credentialAssignments.resourceSetsProjected} issues=${backfill.issuesRecorded}`,
+        `Governance Credential shadow backfill: credentials=${backfill.credentialsProjected} ` +
+          `assignments=${credentialAssignments.resourceSetsProjected} issues=${backfill.issuesRecorded}`,
       );
     } catch (error) {
       serverLogger.warn(
-        `Governance Credential shadow backfill failed; legacy authority remains active: `
-        + `${error instanceof Error ? error.message : String(error)}`,
+        `Governance Credential shadow backfill failed; legacy authority remains active: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    if (governanceShadowComparator && governanceMigrationControlStore && tenantStore && orgAgentStore && skillConfigStore) {
+    if (
+      governanceShadowComparator &&
+      governanceMigrationControlStore &&
+      tenantStore &&
+      orgAgentStore &&
+      skillConfigStore
+    ) {
       const auditor = new GovernanceDomainShadowAuditor({
         comparator: governanceShadowComparator,
         states: governanceMigrationControlStore,
       });
       try {
-        const entitlementComparisons = await Promise.all(tenantStore.listAll()
-          .filter(tenant => tenant.id !== DEFAULT_TENANT_ID)
-          .map(async tenant => ({
-            tenantId: tenant.id,
-            resourceType: 'tenant',
-            resourceId: tenant.id,
-            legacy: normalizeLegacyEntitlementSettings(
-              tenant.settings ?? DEFAULT_TENANT_SETTINGS,
-              Boolean(tenant.disabled),
-            ),
-            governance: await entitlementStore!.getProjectionSnapshot(tenant.id),
-            blocking: true,
-          })));
+        const entitlementComparisons = await Promise.all(
+          tenantStore
+            .listAll()
+            .filter((tenant) => tenant.id !== DEFAULT_TENANT_ID)
+            .map(async (tenant) => ({
+              tenantId: tenant.id,
+              resourceType: 'tenant',
+              resourceId: tenant.id,
+              legacy: normalizeLegacyEntitlementSettings(
+                tenant.settings ?? DEFAULT_TENANT_SETTINGS,
+                Boolean(tenant.disabled),
+              ),
+              governance: await entitlementStore!.getProjectionSnapshot(tenant.id),
+              blocking: true,
+            })),
+        );
         await auditor.audit('entitlement_policy', entitlementComparisons);
 
         const assignmentComparisons: Array<{
-          tenantId?: string; resourceType: string; resourceId: string;
-          legacy: unknown; governance: unknown | undefined; blocking: boolean;
-        }> = await Promise.all(orgAgentStore.listAll().map(async agent => {
-          const set = await assignmentStore!.getAssignmentSet(agent.tenantId, 'org_agent', agent.id);
-          const userIdFor = (username: string) => userStore?.findByUsername(username)?.id ?? `unresolved:${username}`;
-          const legacyAssignments = !agent.audience
-            ? []
-            : agent.audience.exposure === 'all'
-              ? [{ assigneeType: 'everyone', effect: 'allow' }]
-              : agent.audience.exposure === 'allow_users'
-                ? agent.audience.usernames.map(username => ({ assigneeType: 'user', assigneeId: userIdFor(username), effect: 'allow' }))
-                : [
-                    { assigneeType: 'everyone', effect: 'allow' },
-                    ...agent.audience.usernames.map(username => ({ assigneeType: 'user', assigneeId: userIdFor(username), effect: 'deny' })),
-                  ];
-          const normalize = (items: Array<{ assigneeType: string; assigneeId?: string; effect: string }>) => items
-            .map(item => ({ assigneeType: item.assigneeType, assigneeId: item.assigneeId ?? null, effect: item.effect }))
-            .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
-          return {
-            tenantId: agent.tenantId,
-            resourceType: 'org_agent',
-            resourceId: agent.id,
-            legacy: normalize(legacyAssignments),
-            governance: set ? normalize(set.assignments) : undefined,
-            blocking: true,
-          };
-        }));
-        for (const [tenantId, skillConfig] of Object.entries(skillConfigStore.getAllTenantConfigs())) {
+          tenantId?: string;
+          resourceType: string;
+          resourceId: string;
+          legacy: unknown;
+          governance: unknown | undefined;
+          blocking: boolean;
+        }> = await Promise.all(
+          orgAgentStore.listAll().map(async (agent) => {
+            const set = await assignmentStore!.getAssignmentSet(
+              agent.tenantId,
+              'org_agent',
+              agent.id,
+            );
+            const userIdFor = (username: string) =>
+              userStore?.findByUsername(username)?.id ?? `unresolved:${username}`;
+            const legacyAssignments = !agent.audience
+              ? []
+              : agent.audience.exposure === 'all'
+                ? [{ assigneeType: 'everyone', effect: 'allow' }]
+                : agent.audience.exposure === 'allow_users'
+                  ? agent.audience.usernames.map((username) => ({
+                      assigneeType: 'user',
+                      assigneeId: userIdFor(username),
+                      effect: 'allow',
+                    }))
+                  : [
+                      { assigneeType: 'everyone', effect: 'allow' },
+                      ...agent.audience.usernames.map((username) => ({
+                        assigneeType: 'user',
+                        assigneeId: userIdFor(username),
+                        effect: 'deny',
+                      })),
+                    ];
+            const normalize = (
+              items: Array<{ assigneeType: string; assigneeId?: string; effect: string }>,
+            ) =>
+              items
+                .map((item) => ({
+                  assigneeType: item.assigneeType,
+                  assigneeId: item.assigneeId ?? null,
+                  effect: item.effect,
+                }))
+                .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+            return {
+              tenantId: agent.tenantId,
+              resourceType: 'org_agent',
+              resourceId: agent.id,
+              legacy: normalize(legacyAssignments),
+              governance: set ? normalize(set.assignments) : undefined,
+              blocking: true,
+            };
+          }),
+        );
+        for (const [tenantId, skillConfig] of Object.entries(
+          skillConfigStore.getAllTenantConfigs(),
+        )) {
           const rules = {
-            ...Object.fromEntries((skillConfig.enabledSkills ?? []).map(skillId => [skillId, {
-              enabled: true, exposure: 'all' as const, usernames: [] as string[],
-            }])),
+            ...Object.fromEntries(
+              (skillConfig.enabledSkills ?? []).map((skillId) => [
+                skillId,
+                {
+                  enabled: true,
+                  exposure: 'all' as const,
+                  usernames: [] as string[],
+                },
+              ]),
+            ),
             ...(skillConfig.skills ?? {}),
             ...(skillConfig.ownSkills ?? {}),
           };
-          const userIdFor = (username: string) => userStore?.findByUsername(username)?.id ?? `unresolved:${username}`;
+          const userIdFor = (username: string) =>
+            userStore?.findByUsername(username)?.id ?? `unresolved:${username}`;
           for (const [skillId, rule] of Object.entries(rules)) {
             const set = await assignmentStore!.getAssignmentSet(tenantId, 'skill', skillId);
-            const desired = !rule.enabled ? []
+            const desired = !rule.enabled
+              ? []
               : rule.exposure === 'all'
                 ? [{ assigneeType: 'everyone', assigneeId: null, effect: 'allow' }]
                 : rule.exposure === 'allow_users'
-                  ? rule.usernames.map(username => ({
-                      assigneeType: 'user', assigneeId: userIdFor(username), effect: 'allow',
+                  ? rule.usernames.map((username) => ({
+                      assigneeType: 'user',
+                      assigneeId: userIdFor(username),
+                      effect: 'allow',
                     }))
                   : [
                       { assigneeType: 'everyone', assigneeId: null, effect: 'allow' },
-                      ...rule.usernames.map(username => ({
-                        assigneeType: 'user', assigneeId: userIdFor(username), effect: 'deny',
+                      ...rule.usernames.map((username) => ({
+                        assigneeType: 'user',
+                        assigneeId: userIdFor(username),
+                        effect: 'deny',
                       })),
                     ];
-            const normalize = (items: Array<{ assigneeType: string; assigneeId?: string | null; effect: string }>) => items
-              .map(item => ({ assigneeType: item.assigneeType, assigneeId: item.assigneeId ?? null, effect: item.effect }))
-              .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+            const normalize = (
+              items: Array<{ assigneeType: string; assigneeId?: string | null; effect: string }>,
+            ) =>
+              items
+                .map((item) => ({
+                  assigneeType: item.assigneeType,
+                  assigneeId: item.assigneeId ?? null,
+                  effect: item.effect,
+                }))
+                .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
             assignmentComparisons.push({
-              tenantId, resourceType: 'skill', resourceId: skillId,
+              tenantId,
+              resourceType: 'skill',
+              resourceId: skillId,
               legacy: normalize(desired),
               governance: set ? normalize(set.assignments) : undefined,
               blocking: true,
@@ -311,15 +434,25 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
           for (const credential of await credentialStore!.listForTenant(tenant.id)) {
             if (credential.source !== 'legacy_projection') continue;
             const ownerUserId = credential.ownerUserId ?? credential.custodianUserId;
-            const set = await assignmentStore!.getAssignmentSet(tenant.id, 'credential', credential.credentialId);
+            const set = await assignmentStore!.getAssignmentSet(
+              tenant.id,
+              'credential',
+              credential.credentialId,
+            );
             assignmentComparisons.push({
               tenantId: tenant.id,
               resourceType: 'credential',
               resourceId: credential.credentialId,
-              legacy: ownerUserId ? [{ assigneeType: 'user', assigneeId: ownerUserId, effect: 'allow' }] : [],
-              governance: set ? set.assignments.map(item => ({
-                assigneeType: item.assigneeType, assigneeId: item.assigneeId, effect: item.effect,
-              })) : undefined,
+              legacy: ownerUserId
+                ? [{ assigneeType: 'user', assigneeId: ownerUserId, effect: 'allow' }]
+                : [],
+              governance: set
+                ? set.assignments.map((item) => ({
+                    assigneeType: item.assigneeType,
+                    assigneeId: item.assigneeId,
+                    effect: item.effect,
+                  }))
+                : undefined,
               blocking: true,
             });
           }
@@ -332,11 +465,16 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
             tenantId: user.tenantId,
             resourceType: 'skill_preference',
             resourceId: user.id,
-            legacy: [...new Set(userConfig.selectedSkills.map(skillId =>
-              resolveLegacySkillResourceId(user, skillId)))].sort(),
+            legacy: [
+              ...new Set(
+                userConfig.selectedSkills.map((skillId) =>
+                  resolveLegacySkillResourceId(user, skillId),
+                ),
+              ),
+            ].sort(),
             governance: preferences
-              .filter(item => item.resourceType === 'skill' && item.enabled)
-              .map(item => item.resourceId)
+              .filter((item) => item.resourceType === 'skill' && item.enabled)
+              .map((item) => item.resourceId)
               .sort(),
             blocking: true,
           });
@@ -344,33 +482,47 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
         await auditor.audit('assignment', assignmentComparisons);
 
         const agentSkillComparisons = [] as Array<{
-          tenantId?: string; resourceType: string; resourceId: string;
-          legacy: unknown; governance: unknown | undefined; blocking: boolean;
+          tenantId?: string;
+          resourceType: string;
+          resourceId: string;
+          legacy: unknown;
+          governance: unknown | undefined;
+          blocking: boolean;
         }>;
         for (const agent of orgAgentStore.listAll()) {
           const resource = await agentResourceStore?.getForTenant(agent.tenantId, agent.id);
           agentSkillComparisons.push({
-            tenantId: agent.tenantId, resourceType: 'org_agent', resourceId: agent.id,
+            tenantId: agent.tenantId,
+            resourceType: 'org_agent',
+            resourceId: agent.id,
             legacy: { tenantId: agent.tenantId, enabled: agent.enabled },
-            governance: resource ? { tenantId: resource.tenantId, enabled: resource.status === 'enabled' } : undefined,
+            governance: resource
+              ? { tenantId: resource.tenantId, enabled: resource.status === 'enabled' }
+              : undefined,
             blocking: true,
           });
         }
-        for (const user of userStore!.listAll().filter(item => item.tenantId !== DEFAULT_TENANT_ID)) {
+        for (const user of userStore!
+          .listAll()
+          .filter((item) => item.tenantId !== DEFAULT_TENANT_ID)) {
           const resource = await agentResourceStore?.findPersonalByOwner(user.tenantId, user.id);
           agentSkillComparisons.push({
             tenantId: user.tenantId,
             resourceType: 'personal_agent',
             resourceId: user.id,
             legacy: { ownerUserId: user.id, enabled: !user.disabled },
-            governance: resource ? {
-              ownerUserId: resource.ownerUserId,
-              enabled: resource.status === 'enabled',
-            } : undefined,
+            governance: resource
+              ? {
+                  ownerUserId: resource.ownerUserId,
+                  enabled: resource.status === 'enabled',
+                }
+              : undefined,
             blocking: true,
           });
         }
-        for (const [tenantId, skillConfig] of Object.entries(skillConfigStore.getAllTenantConfigs())) {
+        for (const [tenantId, skillConfig] of Object.entries(
+          skillConfigStore.getAllTenantConfigs(),
+        )) {
           const skillIds = new Set([
             ...(skillConfig.enabledSkills ?? []),
             ...Object.keys(skillConfig.skills ?? {}),
@@ -378,15 +530,24 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
           ]);
           for (const skillId of skillIds) {
             const resource = await skillGovernanceStore?.getResource(skillId);
-            const resourceTenantId = Object.prototype.hasOwnProperty.call(skillConfig.ownSkills ?? {}, skillId)
+            const resourceTenantId = Object.prototype.hasOwnProperty.call(
+              skillConfig.ownSkills ?? {},
+              skillId,
+            )
               ? tenantId
               : DEFAULT_TENANT_ID;
             agentSkillComparisons.push({
-              tenantId, resourceType: 'skill', resourceId: skillId,
+              tenantId,
+              resourceType: 'skill',
+              resourceId: skillId,
               legacy: { assignedTenantId: tenantId, resourceTenantId, skillId },
-              governance: resource ? {
-                assignedTenantId: tenantId, resourceTenantId: resource.tenantId, skillId: resource.skillId,
-              } : undefined,
+              governance: resource
+                ? {
+                    assignedTenantId: tenantId,
+                    resourceTenantId: resource.tenantId,
+                    skillId: resource.skillId,
+                  }
+                : undefined,
               blocking: true,
             });
           }
@@ -402,12 +563,16 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
               ? await skillGovernanceStore?.getVersion(resource.currentVersionId)
               : null;
             agentSkillComparisons.push({
-              tenantId: user.tenantId, resourceType: 'personal_skill', resourceId: skillId,
+              tenantId: user.tenantId,
+              resourceType: 'personal_skill',
+              resourceId: skillId,
               legacy: { ownerUserId: user.id, legacySkillId },
-              governance: resource ? {
-                ownerUserId: resource.ownerUserId,
-                legacySkillId: version?.definition.legacySkillId,
-              } : undefined,
+              governance: resource
+                ? {
+                    ownerUserId: resource.ownerUserId,
+                    legacySkillId: version?.definition.legacySkillId,
+                  }
+                : undefined,
               blocking: true,
             });
           }
@@ -415,8 +580,12 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
         await auditor.audit('agent_skill', agentSkillComparisons);
 
         const credentialComparisons = [] as Array<{
-          tenantId?: string; resourceType: string; resourceId: string;
-          legacy: unknown; governance: unknown | undefined; blocking: boolean;
+          tenantId?: string;
+          resourceType: string;
+          resourceId: string;
+          legacy: unknown;
+          governance: unknown | undefined;
+          blocking: boolean;
         }>;
         for (const connection of connectorConnectionStore.listAll()) {
           if (connection.status !== 'connected') continue;
@@ -428,9 +597,13 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
               resourceType: 'credential',
               resourceId: `${connection.connectorId}:${connection.username}:${slot}`,
               legacy: { connectorId: connection.connectorId, secretRef, status: 'active' },
-              governance: credential ? {
-                connectorId: credential.connectorId, secretRef: credential.secretRef, status: credential.status,
-              } : undefined,
+              governance: credential
+                ? {
+                    connectorId: credential.connectorId,
+                    secretRef: credential.secretRef,
+                    status: credential.status,
+                  }
+                : undefined,
               blocking: true,
             });
           }
@@ -441,15 +614,20 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
           { providerId: 'server-local', enabled: true },
           ...(config.serverRemote?.baseUrl ? [{ providerId: 'server-remote', enabled: true }] : []),
         ];
-        const environmentComparisons = await Promise.all(expectedProviders.map(async expected => {
-          const provider = await environmentStore?.getProvider(expected.providerId);
-          return {
-            resourceType: 'execution_provider', resourceId: expected.providerId,
-            legacy: expected,
-            governance: provider ? { providerId: provider.providerId, enabled: provider.status === 'enabled' } : undefined,
-            blocking: true,
-          };
-        }));
+        const environmentComparisons = await Promise.all(
+          expectedProviders.map(async (expected) => {
+            const provider = await environmentStore?.getProvider(expected.providerId);
+            return {
+              resourceType: 'execution_provider',
+              resourceId: expected.providerId,
+              legacy: expected,
+              governance: provider
+                ? { providerId: provider.providerId, enabled: provider.status === 'enabled' }
+                : undefined,
+              blocking: true,
+            };
+          }),
+        );
         await auditor.audit('environment', environmentComparisons);
       } catch (error) {
         serverLogger.warn(
@@ -473,9 +651,8 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
     credentialBroker = new CredentialBroker({
       credentialStore,
       vault: secretVault,
-      authorizeUse: async (request, credential) => (
-        await credentialUseAuthorizer.authorize(request, credential)
-      ).allowed,
+      authorizeUse: async (request, credential) =>
+        (await credentialUseAuthorizer.authorize(request, credential)).allowed,
       auditUse: async ({ request, credential, result, reasonCode }) => {
         await governanceAuditStore!.append({
           correlationId: request.correlationId,
@@ -507,24 +684,45 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
     connectionStore: connectorConnectionStore,
     vault: secretVault,
     governanceCredentialStore: credentialStore,
-    onError: error => serverLogger.warn(`Aliyun connector runtime env skipped: ${error.message}`),
+    onError: (error) => serverLogger.warn(`Aliyun connector runtime env skipped: ${error.message}`),
   });
   const authorizeOAuthSubject = async (userId: string, tenantId: string): Promise<boolean> => {
     const user = userStore?.findById(userId);
-    if (!user || user.disabled || user.tenantId !== tenantId || tenantStore?.findById(tenantId)?.disabled) return false;
+    if (
+      !user ||
+      user.disabled ||
+      user.tenantId !== tenantId ||
+      tenantStore?.findById(tenantId)?.disabled
+    )
+      return false;
     if (!membershipStore || !governanceChangeJobStore) return false;
     const membership = await membershipStore.getMembership(tenantId, userId);
     if (!membership || membership.status !== 'active') return false;
-    return !await governanceChangeJobStore.findActiveForTarget(tenantId, 'user_offboarding', 'user', userId);
+    return !(await governanceChangeJobStore.findActiveForTarget(
+      tenantId,
+      'user_offboarding',
+      'user',
+      userId,
+    ));
   };
-  const authorizeOAuthGrant = async (grantId: string, userId: string, tenantId: string): Promise<boolean> => {
+  const authorizeOAuthGrant = async (
+    grantId: string,
+    userId: string,
+    tenantId: string,
+  ): Promise<boolean> => {
     if (!oauthGrantStore) return false;
     const grant = await oauthGrantStore.getForSubject(tenantId, userId, grantId);
-    return grant?.status === 'active'
-      && !grant.revocationStage
-      && (!grant.expiresAt || new Date(grant.expiresAt).getTime() > Date.now());
+    return (
+      grant?.status === 'active' &&
+      !grant.revocationStage &&
+      (!grant.expiresAt || new Date(grant.expiresAt).getTime() > Date.now())
+    );
   };
-  const authorizeConnectorAssignment = async (userId: string, tenantId: string, connectorId: string): Promise<boolean> => {
+  const authorizeConnectorAssignment = async (
+    userId: string,
+    tenantId: string,
+    connectorId: string,
+  ): Promise<boolean> => {
     if (!assignmentStore || !entitlementStore) return false;
     try {
       const [resources, entitlement, scopes] = await Promise.all([
@@ -532,10 +730,12 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
         entitlementStore.getEntitlementSet(tenantId),
         entitlementStore.listResourceScopes(tenantId),
       ]);
-      const connectorScope = scopes.find(scope => scope.resourceType === 'connector');
-      const entitled = entitlement?.status === 'active' && Boolean(connectorScope)
-        && (connectorScope!.mode === 'all' || connectorScope!.resourceIds.includes(connectorId));
-      return entitled && resources.some(item => item.resourceId === connectorId);
+      const connectorScope = scopes.find((scope) => scope.resourceType === 'connector');
+      const entitled =
+        entitlement?.status === 'active' &&
+        Boolean(connectorScope) &&
+        (connectorScope!.mode === 'all' || connectorScope!.resourceIds.includes(connectorId));
+      return entitled && resources.some((item) => item.resourceId === connectorId);
     } catch {
       return false;
     }
@@ -543,14 +743,14 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
   const mcpOAuthService = new McpOAuthService({
     store: mcpConfigStore,
     vault: secretVault,
-    userResolver: username => {
+    userResolver: (username) => {
       const user = userStore?.findByUsername(username);
       return user ? { id: user.id, tenantId: user.tenantId, disabled: user.disabled } : undefined;
     },
     authorizeSubject: authorizeOAuthSubject,
     authorizeGrant: authorizeOAuthGrant,
     authorizeConnect: authorizeConnectorAssignment,
-    onSecretRotated: async secretRef => {
+    onSecretRotated: async (secretRef) => {
       await credentialStore?.bumpGenerationBySecretRef(secretRef, 'system:mcp-oauth-rotation');
     },
   });
@@ -581,7 +781,7 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       const pgStateStore = new PgGoogleWorkspaceOAuthStateStore(
         pgEventStore.pool,
         config.runtimeEventStore?.backend === 'pg'
-          ? config.runtimeEventStore.tablePrefix ?? 'runtime'
+          ? (config.runtimeEventStore.tablePrefix ?? 'runtime')
           : 'runtime',
       );
       await pgStateStore.init();
@@ -599,6 +799,7 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
   const egressConfigStore = new EgressConfigStore(
     join(processCwd, 'data', 'egress-config.json'),
     config.egress as EgressConfig | undefined,
+    readRuntimeIdentity().environment,
   );
   const egressLogger = serverLogger.child('Egress');
   // 代理凭据同步缓存：dispatcher 需要同步取值，而 vault.getSecret 是异步的，
@@ -634,21 +835,25 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
   );
   const egressFetch = createEgressFetch(egressDispatchers, egressLogger);
   const webToolEgressFetch = createWebToolEgressFetch(egressDispatchers, egressLogger);
-  const getNotionConnection = connectorConnectionStore && secretVault
-    ? (identity: { userId: string; username: string; tenantId: string }) => getLiveNotionConnection({
-        ...identity,
-        connectionStore: connectorConnectionStore,
-        vault: secretVault,
-        fetchImpl: egressFetch,
-      })
-    : undefined;
-  const disconnectNotionConnection = connectorConnectionStore && secretVault
-    ? (identity: { userId: string; username: string; tenantId: string }) => disconnectNotion({
-        ...identity,
-        connectionStore: connectorConnectionStore,
-        vault: secretVault,
-      })
-    : undefined;
+  const getNotionConnection =
+    connectorConnectionStore && secretVault
+      ? (identity: { userId: string; username: string; tenantId: string }) =>
+          getLiveNotionConnection({
+            ...identity,
+            connectionStore: connectorConnectionStore,
+            vault: secretVault,
+            fetchImpl: egressFetch,
+          })
+      : undefined;
+  const disconnectNotionConnection =
+    connectorConnectionStore && secretVault
+      ? (identity: { userId: string; username: string; tenantId: string }) =>
+          disconnectNotion({
+            ...identity,
+            connectionStore: connectorConnectionStore,
+            vault: secretVault,
+          })
+      : undefined;
   if (googleWorkspaceClientId && googleWorkspaceClientSecret) {
     googleWorkspaceOAuthService = new GoogleWorkspaceOAuthService({
       clientId: googleWorkspaceClientId,
@@ -656,11 +861,12 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       connectionStore: connectorConnectionStore,
       vault: secretVault,
       stateStore: googleWorkspaceOAuthStateStore,
-      userResolver: userId => userStore?.findById(userId),
+      userResolver: (userId) => userStore?.findById(userId),
       authorizeSubject: authorizeOAuthSubject,
       authorizeGrant: authorizeOAuthGrant,
       // OAuth 连接记录沿用 google-workspace；治理目录与既有指派的资源 ID 是 google_workspace。
-      authorizeConnect: (userId, tenantId) => authorizeConnectorAssignment(userId, tenantId, 'google_workspace'),
+      authorizeConnect: (userId, tenantId) =>
+        authorizeConnectorAssignment(userId, tenantId, 'google_workspace'),
       logger: serverLogger.child('GoogleWorkspaceConnector'),
       fetchImpl: egressFetch,
     });
@@ -677,162 +883,197 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
     invokeTimeoutMs: 10 * 60_000,
     logger: serverLogger.child('McpClient'),
     secretVault,
-    configProvider: (username, workspaceRoot) => mcpConfigStore.buildUserMcpServers(
-      username,
-      workspaceRoot,
-      userStore?.findByUsername(username)?.tenantId,
-    ),
+    configProvider: (username, workspaceRoot) =>
+      mcpConfigStore.buildUserMcpServers(
+        username,
+        workspaceRoot,
+        userStore?.findByUsername(username)?.tenantId,
+      ),
     workspaceResolver: (username) => {
       const u = userStore?.findByUsername(username);
       return u
-        ? resolveUserCwd(agentCwd, { id: u.id, username: u.username, role: u.role, tenantId: u.tenantId })
+        ? resolveUserCwd(agentCwd, {
+            id: u.id,
+            username: u.username,
+            role: u.role,
+            tenantId: u.tenantId,
+          })
         : join(agentCwd, username);
     },
     // PR 11：让 mcp_proxy 调 vault.getSecret 时附 tenantId，使
     // tenant/global scope secret 通过 ACL（user-scope secret 行为不变）
     tenantResolver: (username) => userStore?.findByUsername(username)?.tenantId,
-    oauthProviderFactory: ({ username, tenantId, serverName }) => mcpOAuthService.runtimeProvider({
-      username,
-      tenantId,
-      serverName,
-    }),
+    oauthProviderFactory: ({ username, tenantId, serverName }) =>
+      mcpOAuthService.runtimeProvider({
+        username,
+        tenantId,
+        serverName,
+      }),
   });
   const mcpProxy = new McpProxy({
     manager: mcpClientManager,
     capabilityTokens: mcpCapabilityTokens,
     vault: secretVault,
-    warmupWithCredential: credentialBroker && credentialStore && assignmentStore
-      ? async ({ username, userId, sessionId, runId }) => {
-          const user = userStore?.findById(userId) ?? userStore?.findByUsername(username);
-          const snapshot = await runResolutionSnapshotStore?.get(runId);
-          if (!user || !snapshot
-            || snapshot.sessionId !== sessionId
-            || snapshot.actor.subjectId !== user.id
-            || snapshot.tenantId !== user.tenantId) {
-            throw new Error('RUN_SNAPSHOT_BINDING_MISMATCH');
+    warmupWithCredential:
+      credentialBroker && credentialStore && assignmentStore
+        ? async ({ username, userId, sessionId, runId }) => {
+            const user = userStore?.findById(userId) ?? userStore?.findByUsername(username);
+            const snapshot = await runResolutionSnapshotStore?.get(runId);
+            if (
+              !user ||
+              !snapshot ||
+              snapshot.sessionId !== sessionId ||
+              snapshot.actor.subjectId !== user.id ||
+              snapshot.tenantId !== user.tenantId
+            ) {
+              throw new Error('RUN_SNAPSHOT_BINDING_MISMATCH');
+            }
+            const descriptors = [] as Awaited<ReturnType<McpClientManager['warmupBrokered']>>;
+            const brokeredMcpServerIds = resolveBrokeredMcpServerIds(
+              mcpConfigStore,
+              username,
+              user.tenantId,
+            );
+            for (const connector of snapshot.connectors) {
+              // Snapshot connectors also include native providers such as Aliyun.
+              // Do not route those credentials through MCP list-tools.
+              if (!brokeredMcpServerIds.has(connector.id)) continue;
+              const candidates = [] as Array<{
+                credential: NonNullable<Awaited<ReturnType<PgCredentialStore['get']>>>;
+                generation: number;
+                revision: number;
+                scopes: string[];
+              }>;
+              for (const binding of snapshot.credentialBindings) {
+                const credential = await credentialStore!.get(binding.id);
+                if (
+                  credential?.connectorId === connector.id &&
+                  binding.generation !== undefined &&
+                  binding.revision !== undefined
+                ) {
+                  candidates.push({
+                    credential,
+                    generation: binding.generation,
+                    revision: binding.revision,
+                    scopes: binding.scopes ?? [],
+                  });
+                }
+              }
+              if (candidates.length !== 1) {
+                throw new Error(
+                  candidates.length === 0 ? 'CREDENTIAL_NOT_BOUND' : 'CREDENTIAL_AMBIGUOUS',
+                );
+              }
+              const candidate = candidates[0];
+              if (candidate.credential.version !== candidate.revision) {
+                throw new Error('CREDENTIAL_REVISION_CHANGED');
+              }
+              if (
+                !candidate.scopes.some(
+                  (scope) =>
+                    scope === '*' ||
+                    scope === `${connector.id}:*` ||
+                    scope.startsWith(`${connector.id}:`),
+                )
+              ) {
+                throw new Error('CREDENTIAL_SCOPE_NOT_SNAPSHOTTED');
+              }
+              const tools = await credentialBroker!.execute(
+                {
+                  credentialId: candidate.credential.credentialId,
+                  tenantId: user.tenantId,
+                  connectorId: connector.id,
+                  channel: 'mcp',
+                  delegatedUserId: user.id,
+                  agentId: snapshot.agent.id,
+                  expectedGeneration: candidate.generation,
+                  correlationId: `mcp:${sessionId}:${connector.id}:list-tools:${randomUUID()}`,
+                  purpose: `mcp list tools ${connector.id}`,
+                },
+                (resolved) =>
+                  mcpClientManager.warmupBrokered(username, connector.id, {
+                    secretRef: candidate.credential.secretRef,
+                    secret: resolved.secret,
+                  }),
+              );
+              descriptors.push(...tools);
+            }
+            return descriptors;
           }
-          const descriptors = [] as Awaited<ReturnType<McpClientManager['warmupBrokered']>>;
-          const brokeredMcpServerIds = resolveBrokeredMcpServerIds(
-            mcpConfigStore,
-            username,
-            user.tenantId,
-          );
-          for (const connector of snapshot.connectors) {
-            // Snapshot connectors also include native providers such as Aliyun.
-            // Do not route those credentials through MCP list-tools.
-            if (!brokeredMcpServerIds.has(connector.id)) continue;
+        : undefined,
+    executeWithCredential:
+      credentialBroker && credentialStore && assignmentStore
+        ? async ({ username, userId, sessionId, runId, serverName, toolName, toolKey, input }) => {
+            const user = userStore?.findById(userId) ?? userStore?.findByUsername(username);
+            if (!user) throw new Error('CREDENTIAL_SUBJECT_NOT_FOUND');
+            const snapshot = runId ? await runResolutionSnapshotStore?.get(runId) : null;
+            if (!snapshot) throw new Error('RUN_SNAPSHOT_REQUIRED');
+            if (
+              snapshot.sessionId !== sessionId ||
+              snapshot.actor.subjectId !== user.id ||
+              snapshot.tenantId !== user.tenantId ||
+              !snapshot.connectors.some((connector) => connector.id === serverName)
+            ) {
+              throw new Error('RUN_SNAPSHOT_BINDING_MISMATCH');
+            }
             const candidates = [] as Array<{
               credential: NonNullable<Awaited<ReturnType<PgCredentialStore['get']>>>;
-              generation: number;
-              revision: number;
+              expectedGeneration: number;
+              expectedRevision: number;
               scopes: string[];
             }>;
             for (const binding of snapshot.credentialBindings) {
               const credential = await credentialStore!.get(binding.id);
-              if (credential?.connectorId === connector.id
-                && binding.generation !== undefined
-                && binding.revision !== undefined) {
+              if (
+                credential?.connectorId === serverName &&
+                binding.generation !== undefined &&
+                binding.revision !== undefined
+              ) {
                 candidates.push({
                   credential,
-                  generation: binding.generation,
-                  revision: binding.revision,
+                  expectedGeneration: binding.generation,
+                  expectedRevision: binding.revision,
                   scopes: binding.scopes ?? [],
                 });
               }
             }
             if (candidates.length !== 1) {
-              throw new Error(candidates.length === 0 ? 'CREDENTIAL_NOT_BOUND' : 'CREDENTIAL_AMBIGUOUS');
+              throw new Error(
+                candidates.length === 0 ? 'CREDENTIAL_NOT_BOUND' : 'CREDENTIAL_AMBIGUOUS',
+              );
             }
-            const candidate = candidates[0];
-            if (candidate.credential.version !== candidate.revision) {
+            const { credential, expectedGeneration, expectedRevision, scopes } = candidates[0];
+            if (credential.version !== expectedRevision)
               throw new Error('CREDENTIAL_REVISION_CHANGED');
-            }
-            if (!candidate.scopes.some(scope =>
-              scope === '*' || scope === `${connector.id}:*` || scope.startsWith(`${connector.id}:`),
-            )) {
+            const requiredScope = `${serverName}:${toolName}`;
+            if (
+              !scopes.includes('*') &&
+              !scopes.includes(requiredScope) &&
+              !scopes.includes(`${serverName}:*`)
+            ) {
               throw new Error('CREDENTIAL_SCOPE_NOT_SNAPSHOTTED');
             }
-            const tools = await credentialBroker!.execute({
-              credentialId: candidate.credential.credentialId,
-              tenantId: user.tenantId,
-              connectorId: connector.id,
-              channel: 'mcp',
-              delegatedUserId: user.id,
-              agentId: snapshot.agent.id,
-              expectedGeneration: candidate.generation,
-              correlationId: `mcp:${sessionId}:${connector.id}:list-tools:${randomUUID()}`,
-              purpose: `mcp list tools ${connector.id}`,
-            }, resolved => mcpClientManager.warmupBrokered(
-              username,
-              connector.id,
-              { secretRef: candidate.credential.secretRef, secret: resolved.secret },
-            ));
-            descriptors.push(...tools);
+            return credentialBroker!.execute(
+              {
+                credentialId: credential.credentialId,
+                tenantId: user.tenantId,
+                connectorId: serverName,
+                channel: 'mcp',
+                delegatedUserId: user.id,
+                agentId: snapshot.agent.id,
+                expectedGeneration,
+                requiredScopes: [requiredScope],
+                correlationId: `mcp:${sessionId}:${serverName}:${toolName}:${randomUUID()}`,
+                purpose: `mcp tool ${serverName}/${toolName}`,
+              },
+              async (resolved) =>
+                mcpClientManager.invokeBrokered(username, toolKey, input, {
+                  secretRef: credential.secretRef,
+                  secret: resolved.secret,
+                }),
+            );
           }
-          return descriptors;
-        }
-      : undefined,
-    executeWithCredential: credentialBroker && credentialStore && assignmentStore
-      ? async ({ username, userId, sessionId, runId, serverName, toolName, toolKey, input }) => {
-          const user = userStore?.findById(userId) ?? userStore?.findByUsername(username);
-          if (!user) throw new Error('CREDENTIAL_SUBJECT_NOT_FOUND');
-          const snapshot = runId ? await runResolutionSnapshotStore?.get(runId) : null;
-          if (!snapshot) throw new Error('RUN_SNAPSHOT_REQUIRED');
-          if (snapshot.sessionId !== sessionId
-            || snapshot.actor.subjectId !== user.id
-            || snapshot.tenantId !== user.tenantId
-            || !snapshot.connectors.some(connector => connector.id === serverName)) {
-            throw new Error('RUN_SNAPSHOT_BINDING_MISMATCH');
-          }
-          const candidates = [] as Array<{
-            credential: NonNullable<Awaited<ReturnType<PgCredentialStore['get']>>>;
-            expectedGeneration: number;
-            expectedRevision: number;
-            scopes: string[];
-          }>;
-          for (const binding of snapshot.credentialBindings) {
-            const credential = await credentialStore!.get(binding.id);
-            if (credential?.connectorId === serverName
-              && binding.generation !== undefined
-              && binding.revision !== undefined) {
-              candidates.push({
-                credential,
-                expectedGeneration: binding.generation,
-                expectedRevision: binding.revision,
-                scopes: binding.scopes ?? [],
-              });
-            }
-          }
-          if (candidates.length !== 1) {
-            throw new Error(candidates.length === 0 ? 'CREDENTIAL_NOT_BOUND' : 'CREDENTIAL_AMBIGUOUS');
-          }
-          const { credential, expectedGeneration, expectedRevision, scopes } = candidates[0];
-          if (credential.version !== expectedRevision) throw new Error('CREDENTIAL_REVISION_CHANGED');
-          const requiredScope = `${serverName}:${toolName}`;
-          if (!scopes.includes('*')
-            && !scopes.includes(requiredScope)
-            && !scopes.includes(`${serverName}:*`)) {
-            throw new Error('CREDENTIAL_SCOPE_NOT_SNAPSHOTTED');
-          }
-          return credentialBroker!.execute({
-            credentialId: credential.credentialId,
-            tenantId: user.tenantId,
-            connectorId: serverName,
-            channel: 'mcp',
-            delegatedUserId: user.id,
-            agentId: snapshot.agent.id,
-            expectedGeneration,
-            requiredScopes: [requiredScope],
-            correlationId: `mcp:${sessionId}:${serverName}:${toolName}:${randomUUID()}`,
-            purpose: `mcp tool ${serverName}/${toolName}`,
-          }, async resolved => mcpClientManager.invokeBrokered(
-            username,
-            toolKey,
-            input,
-            { secretRef: credential.secretRef, secret: resolved.secret },
-          ));
-        }
-      : undefined,
+        : undefined,
     logger: serverLogger.child('McpProxy'),
   });
   const mcpClientShutdown = () => mcpClientManager.shutdown();
@@ -840,21 +1081,28 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
   // 自己的隔离运行环境。MCP 的服务端 broker 仍负责工具调用；这里只导出模板
   // 显式声明的 runtimeEnv，供 CLI/SDK/脚本直接使用。
   const resolveRunScopedEnv = async (context: {
-    userId: string; username: string; tenantId: string;
+    userId: string;
+    username: string;
+    tenantId: string;
   }): Promise<Record<string, string>> => {
     const owner = userStore?.findByUsername(context.username);
     const ownedContext = owner
-      ? (!owner.disabled && owner.id === context.userId && owner.tenantId === context.tenantId ? context : undefined)
-      : (!userStore ? context : undefined);
+      ? !owner.disabled && owner.id === context.userId && owner.tenantId === context.tenantId
+        ? context
+        : undefined
+      : !userStore
+        ? context
+        : undefined;
     if (!ownedContext) return {};
 
     let googleWorkspaceScopes: string[] = [];
     try {
-      googleWorkspaceScopes = await googleWorkspaceOAuthService?.grantedScopes(
-        ownedContext.userId,
-        ownedContext.username,
-        ownedContext.tenantId,
-      ) ?? [];
+      googleWorkspaceScopes =
+        (await googleWorkspaceOAuthService?.grantedScopes(
+          ownedContext.userId,
+          ownedContext.username,
+          ownedContext.tenantId,
+        )) ?? [];
     } catch (error) {
       serverLogger.warn(
         `Google Workspace OAuth scope recovery skipped: ${error instanceof Error ? error.message : String(error)}`,
@@ -880,34 +1128,53 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       }
     }
 
-    const [githubEnv, xEnv, notionEnv, googleWorkspaceEnv, aliyunEnv, dwsEnv, feishuEnv, mcpConnectorEnv] = await Promise.all([
-      resolveGithubRuntimeEnv({
-        connectionStore: connectorConnectionStore,
-        vault: secretVault,
-        governanceCredentialStore: credentialStore,
-        onError: error => serverLogger.warn(
-          `Native connector runtime env skipped: connector=${GITHUB_CONNECTOR_ID} reason=${error.message}`,
-        ),
-      }, ownedContext),
-      resolveXRuntimeEnv({
-        connectionStore: connectorConnectionStore,
-        vault: secretVault,
-        governanceCredentialStore: credentialStore,
-        onError: error => serverLogger.warn(
-          `Native connector runtime env skipped: connector=x reason=${error.message}`,
-        ),
-      }, ownedContext),
-      resolveNotionRuntimeEnv({
-        connectionStore: connectorConnectionStore,
-        vault: secretVault,
-        onError: error => serverLogger.warn(
-          `Native connector runtime env skipped: connector=notion reason=${error.message}`,
-        ),
-      }, ownedContext),
-      resolveGoogleWorkspaceRuntimeEnv(
-        googleWorkspaceOAuthService,
+    const [
+      githubEnv,
+      xEnv,
+      notionEnv,
+      googleWorkspaceEnv,
+      aliyunEnv,
+      dwsEnv,
+      feishuEnv,
+      mcpConnectorEnv,
+    ] = await Promise.all([
+      resolveGithubRuntimeEnv(
+        {
+          connectionStore: connectorConnectionStore,
+          vault: secretVault,
+          governanceCredentialStore: credentialStore,
+          onError: (error) =>
+            serverLogger.warn(
+              `Native connector runtime env skipped: connector=${GITHUB_CONNECTOR_ID} reason=${error.message}`,
+            ),
+        },
         ownedContext,
-        error => serverLogger.warn(
+      ),
+      resolveXRuntimeEnv(
+        {
+          connectionStore: connectorConnectionStore,
+          vault: secretVault,
+          governanceCredentialStore: credentialStore,
+          onError: (error) =>
+            serverLogger.warn(
+              `Native connector runtime env skipped: connector=x reason=${error.message}`,
+            ),
+        },
+        ownedContext,
+      ),
+      resolveNotionRuntimeEnv(
+        {
+          connectionStore: connectorConnectionStore,
+          vault: secretVault,
+          onError: (error) =>
+            serverLogger.warn(
+              `Native connector runtime env skipped: connector=notion reason=${error.message}`,
+            ),
+        },
+        ownedContext,
+      ),
+      resolveGoogleWorkspaceRuntimeEnv(googleWorkspaceOAuthService, ownedContext, (error) =>
+        serverLogger.warn(
           `Native connector runtime env skipped: connector=google-workspace reason=${error.message}`,
         ),
       ),
@@ -916,37 +1183,46 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
       resolveFeishuConnectorRunEnv(
         getFeishuTokenBroker?.(),
         ownedContext,
-        error => serverLogger.warn(
-          `Native connector runtime env skipped: connector=feishu reason=${error.message}`,
-        ),
+        (error) =>
+          serverLogger.warn(
+            `Native connector runtime env skipped: connector=feishu reason=${error.message}`,
+          ),
         connectorConnectionStore,
       ),
-      resolveConnectorRuntimeEnv({
-        store: mcpConfigStore,
-        vault: secretVault,
-        oauthService: mcpOAuthService,
-        excludedServerIds: legacyNativeMcpIds,
-        onError: (error, meta) => serverLogger.warn(
-          `MCP connector runtime env skipped: server=${meta.serverId} source=${meta.source} reason=${error.message}`,
-        ),
-      }, ownedContext),
+      resolveConnectorRuntimeEnv(
+        {
+          store: mcpConfigStore,
+          vault: secretVault,
+          oauthService: mcpOAuthService,
+          excludedServerIds: legacyNativeMcpIds,
+          onError: (error, meta) =>
+            serverLogger.warn(
+              `MCP connector runtime env skipped: server=${meta.serverId} source=${meta.source} reason=${error.message}`,
+            ),
+        },
+        ownedContext,
+      ),
     ]);
-    return applyNativeConnectorRuntimeState(connectorConnectionStore, ownedContext, {
-      ...mcpConnectorEnv,
-      ...aliyunEnv,
-      ...dwsEnv,
-      ...feishuEnv,
-      ...googleWorkspaceEnv,
-      ...notionEnv,
-      ...xEnv,
-      ...githubEnv,
-      ...(tenantRunEnvByTenant?.get(context.tenantId) ?? {}),
-    }, {
-      // X 暂停时仍保留自定义 MCP 写入的同名变量；tenant env 仍按原有优先级参与合并。
-      preserveEnvKeys: new Set(Object.keys(mcpConnectorEnv)),
-    });
+    return applyNativeConnectorRuntimeState(
+      connectorConnectionStore,
+      ownedContext,
+      {
+        ...mcpConnectorEnv,
+        ...aliyunEnv,
+        ...dwsEnv,
+        ...feishuEnv,
+        ...googleWorkspaceEnv,
+        ...notionEnv,
+        ...xEnv,
+        ...githubEnv,
+        ...(tenantRunEnvByTenant?.get(context.tenantId) ?? {}),
+      },
+      {
+        // X 暂停时仍保留自定义 MCP 写入的同名变量；tenant env 仍按原有优先级参与合并。
+        preserveEnvKeys: new Set(Object.keys(mcpConnectorEnv)),
+      },
+    );
   };
-
 
   return {
     mcpConfigStore,

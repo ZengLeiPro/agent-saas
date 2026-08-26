@@ -18,7 +18,11 @@ import { writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { egressConfigSchema } from '../app/config.js';
-import { DEFAULT_EGRESS_CONFIG, type EgressConfig } from '../runtime/egressPolicy.js';
+import {
+  DEFAULT_EGRESS_CONFIG,
+  isStagingServerEgressSafe,
+  type EgressConfig,
+} from '../runtime/egressPolicy.js';
 
 interface EgressConfigFileData {
   version: 1;
@@ -60,6 +64,7 @@ export class EgressConfigStore {
   constructor(
     private readonly filePath: string,
     seed?: EgressConfig,
+    private readonly environment?: string,
   ) {
     this.data = {
       version: 1,
@@ -67,6 +72,7 @@ export class EgressConfigStore {
       config: seed ? clone(seed) : defaultConfig(),
     };
     this.load();
+    this.assertEnvironmentPolicy(this.data.config);
   }
 
   getConfig(): EgressConfig {
@@ -75,6 +81,10 @@ export class EgressConfigStore {
 
   getConfigVersion(): number {
     return this.data.configVersion;
+  }
+
+  isEnvironmentSafetyAttested(): boolean {
+    return this.environment !== 'staging' || isStagingServerEgressSafe(this.data.config);
   }
 
   getProxyCredentialRef(): string | undefined {
@@ -100,6 +110,7 @@ export class EgressConfigStore {
     config: EgressConfig,
     opts: { actor: string; proxyCredentialRef?: string | null },
   ): Promise<void> {
+    this.assertEnvironmentPolicy(config);
     await this.serialize(async () => {
       this.data.config = clone(config);
       if (opts.proxyCredentialRef === null) {
@@ -127,6 +138,12 @@ export class EgressConfigStore {
       };
       await this.persist();
     });
+  }
+
+  private assertEnvironmentPolicy(config: EgressConfig): void {
+    if (this.environment === 'staging' && !isStagingServerEgressSafe(config)) {
+      throw new Error('staging egress configuration must remain full-proxy and fail-closed');
+    }
   }
 
   private serialize<T>(fn: () => Promise<T>): Promise<T> {
@@ -164,9 +181,7 @@ export class EgressConfigStore {
 
   private async persist(): Promise<void> {
     if (this.loadFailed) {
-      throw new Error(
-        `egress-config 文件损坏（${this.filePath}），拒绝覆盖写，请人工检查`,
-      );
+      throw new Error(`egress-config 文件损坏（${this.filePath}），拒绝覆盖写，请人工检查`);
     }
     mkdirSync(dirname(this.filePath), { recursive: true });
     const tmpPath = join(

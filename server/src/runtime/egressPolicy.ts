@@ -115,6 +115,22 @@ export const DEFAULT_PIP_INDEX_URL = 'https://mirrors.aliyun.com/pypi/simple/';
 export const DEFAULT_PIP_TRUSTED_HOST = 'mirrors.aliyun.com';
 export const DEFAULT_NPM_REGISTRY = 'https://registry.npmmirror.com';
 
+export function isStagingServerEgressSafe(config: EgressConfig): boolean {
+  let supportedProxy = false;
+  try {
+    supportedProxy = ['http:', 'https:'].includes(new URL(config.server.proxyUrl).protocol);
+  } catch {
+    supportedProxy = false;
+  }
+  return (
+    config.server.enabled &&
+    supportedProxy &&
+    !config.server.failOpen &&
+    config.server.matchDomains.length === 0 &&
+    config.server.bypassDomains.length === 0
+  );
+}
+
 export const DEFAULT_EGRESS_CONFIG: EgressConfig = Object.freeze({
   server: Object.freeze({
     enabled: false,
@@ -270,7 +286,5 @@ export function egressSandboxFingerprint(
 ): string {
   const proxyEnv = buildSandboxProxyEnv(sandbox);
   const mirrorEnv = buildPackageMirrorEnv(mirrors);
-  return [...proxyEnv, ...mirrorEnv]
-    .map((entry) => `${entry.name}=${entry.value}`)
-    .join('|');
+  return [...proxyEnv, ...mirrorEnv].map((entry) => `${entry.name}=${entry.value}`).join('|');
 }

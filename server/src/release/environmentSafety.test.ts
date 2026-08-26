@@ -11,6 +11,7 @@ const DIGEST = `sha256:${'b'.repeat(64)}`;
 const stagingRoot = mkdtempSync(join(tmpdir(), 'agent-saas-staging-'));
 const workspace = join(stagingRoot, 'workspace');
 mkdirSync(workspace);
+mkdirSync(join(workspace, '.shared'));
 afterAll(() => rmSync(stagingRoot, { recursive: true, force: true }));
 
 const stagingEnv = {
@@ -222,6 +223,46 @@ describe('assertRuntimeEnvironmentSafety', () => {
         stagingEnv,
       ),
     ).toThrow(/database name|production marker/);
+  });
+
+  it('requires explicit staging identities for NAS, Vault, Hand, OAuth, and notifications', () => {
+    expect(() =>
+      assertRuntimeEnvironmentSafety(
+        config({ agent: { cwd: workspace, sharedDir: '/mnt/shared-without-prod-marker' } }),
+        stagingEnv,
+      ),
+    ).toThrow(/sharedDir\/NAS/);
+    expect(() =>
+      assertRuntimeEnvironmentSafety(
+        config({
+          secretVault: {
+            backend: 'http',
+            baseUrl: 'https://vault.example.internal',
+            authToken: 'test-token',
+          },
+        }),
+        stagingEnv,
+      ),
+    ).toThrow(/SecretVault host/);
+    expect(() =>
+      assertRuntimeEnvironmentSafety(
+        config({
+          serverRemote: { baseUrl: 'https://hand.example.internal', authToken: 'test-token' },
+        }),
+        stagingEnv,
+      ),
+    ).toThrow(/serverRemote host/);
+    expect(() =>
+      assertRuntimeEnvironmentSafety(config({ codexSubscription: { enabled: true } }), stagingEnv),
+    ).toThrow(/OAuth endpoint/);
+    expect(() =>
+      assertRuntimeEnvironmentSafety(
+        config({
+          dingtalkSendMessage: { enabled: true, endpoint: 'https://notify.example.internal' },
+        }),
+        stagingEnv,
+      ),
+    ).toThrow(/send endpoint/);
   });
 
   it('does not apply staging-specific assertions to production', () => {

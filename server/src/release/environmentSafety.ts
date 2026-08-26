@@ -1,6 +1,7 @@
 import { realpathSync } from 'node:fs';
-import { isAbsolute, relative, sep } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { AppConfig } from '../app/config.js';
+import { isStagingServerEgressSafe } from '../runtime/egressPolicy.js';
 import { readRuntimeIdentity, type RuntimeIdentity } from './runtimeIdentity.js';
 
 function values(value: unknown): string[] {
@@ -15,6 +16,24 @@ function parseUrl(value: string): URL | undefined {
     return new URL(value);
   } catch {
     return undefined;
+  }
+}
+
+function allowedHosts(envValue: string | undefined): Set<string> {
+  return new Set(
+    (envValue ?? '')
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+function urlAllowed(value: string | undefined, allowlist: Set<string>): boolean {
+  if (!value || allowlist.size === 0) return false;
+  try {
+    return allowlist.has(new URL(value).hostname.toLowerCase());
+  } catch {
+    return false;
   }
 }
 
@@ -68,6 +87,9 @@ export function assertRuntimeEnvironmentSafety(
   if (stagingRoot && !isWithinRoot(stagingRoot, config.agent.cwd ?? '')) {
     failures.push('agent workspace must be an absolute path within AGENT_SAAS_STAGING_ROOT');
   }
+  const sharedDir = resolve(config.agent.cwd ?? '', config.agent.sharedDir ?? '.shared');
+  if (stagingRoot && !isWithinRoot(stagingRoot, sharedDir))
+    failures.push('agent sharedDir/NAS must be within AGENT_SAAS_STAGING_ROOT');
   if (
     stagingRoot &&
     config.secretVault?.backend === 'encrypted-file' &&
@@ -75,6 +97,38 @@ export function assertRuntimeEnvironmentSafety(
   ) {
     failures.push('SecretVault file must be an absolute path within AGENT_SAAS_STAGING_ROOT');
   }
+  const vaultHosts = allowedHosts(env.AGENT_SAAS_STAGING_SECRET_VAULT_HOSTS);
+  if (config.secretVault?.backend === 'http' && !urlAllowed(config.secretVault.baseUrl, vaultHosts))
+    failures.push('HTTP SecretVault host is not staging-allowlisted');
+  const handHosts = allowedHosts(env.AGENT_SAAS_STAGING_HAND_HOSTS);
+  if (config.serverRemote && !urlAllowed(config.serverRemote.baseUrl, handHosts))
+    failures.push('serverRemote host is not staging-allowlisted');
+
+  const oauthHosts = allowedHosts(env.AGENT_SAAS_STAGING_OAUTH_HOSTS);
+  const codexEndpoint =
+    config.codexSubscription?.endpoint ?? 'https://chatgpt.com/backend-api/codex/responses';
+  if (config.codexSubscription?.enabled && !urlAllowed(codexEndpoint, oauthHosts))
+    failures.push('OAuth endpoint is not staging-allowlisted');
+  if (
+    (env.GOOGLE_WORKSPACE_CONNECTOR_CLIENT_ID || env.GOOGLE_WORKSPACE_CONNECTOR_CLIENT_SECRET) &&
+    !oauthHosts.has('accounts.google.com')
+  )
+    failures.push('Google OAuth endpoint is not staging-allowlisted');
+
+  const notificationHosts = allowedHosts(env.AGENT_SAAS_STAGING_NOTIFICATION_HOSTS);
+  if (config.dingtalk?.enabled && !notificationHosts.has('api.dingtalk.com'))
+    failures.push('DingTalk notification endpoint is not staging-allowlisted');
+  if (
+    config.dingtalkSendMessage?.enabled &&
+    !urlAllowed(config.dingtalkSendMessage.endpoint, notificationHosts)
+  )
+    failures.push('DingTalk send endpoint is not staging-allowlisted');
+  if (
+    config.auth?.selfSignup?.dingtalkLeadWebhook &&
+    !urlAllowed(config.auth.selfSignup.dingtalkLeadWebhook, notificationHosts)
+  )
+    failures.push('signup notification endpoint is not staging-allowlisted');
+  if (config.webPush?.enabled) failures.push('web push notifications must be disabled in staging');
 
   const db = config.runtimeEventStore;
   if (db?.backend !== 'pg') {
@@ -101,20 +155,7 @@ export function assertRuntimeEnvironmentSafety(
       failures.push('database user does not match AGENT_SAAS_STAGING_DATABASE_USER');
   }
 
-  const serverEgress = config.egress?.server;
-  let supportedProxy = false;
-  try {
-    supportedProxy = ['http:', 'https:'].includes(new URL(serverEgress?.proxyUrl ?? '').protocol);
-  } catch {
-    supportedProxy = false;
-  }
-  if (
-    !serverEgress?.enabled ||
-    !supportedProxy ||
-    serverEgress.failOpen ||
-    serverEgress.matchDomains.length !== 0 ||
-    serverEgress.bypassDomains.length !== 0
-  ) {
+  if (!config.egress || !isStagingServerEgressSafe(config.egress)) {
     failures.push(
       'staging egress must use a valid HTTP(S) proxy to proxy all domains without bypass or fail-open',
     );

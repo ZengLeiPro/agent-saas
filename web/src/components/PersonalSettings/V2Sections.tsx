@@ -290,7 +290,7 @@ export function ConnectionsSection() {
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border p-3 text-sm">
             <div className="min-w-0 flex-1"><div className="font-medium">Google Workspace</div><div className="text-xs text-muted-foreground">{hasActiveGoogleGrant ? "已存在受治理的长期授权" : googleGrant ? `当前状态：${grantStatusLabel[googleGrant.status]}，请重新连接` : "通过 Google 官方页面授权；回调成功后重新读取 OAuth Grant。"}</div></div>
-            {!hasActiveGoogleGrant ? <Button type="button" size="sm" onClick={() => { void connectGoogle(); }} disabled={connectingGoogle}>{connectingGoogle ? <Loader2 className="size-4 animate-spin" /> : null}{googleGrant ? "重新连接" : "连接"}</Button> : null}
+            <Button type="button" size="sm" onClick={() => { void connectGoogle(); }} disabled={connectingGoogle}>{connectingGoogle ? <Loader2 className="size-4 animate-spin" /> : null}{hasActiveGoogleGrant ? "扩展权限" : googleGrant ? "重新连接" : "连接"}</Button>
             {connectingGoogle ? <Button type="button" size="sm" variant="outline" onClick={cancelGoogleConnect}>取消授权</Button> : null}
           </div>
           {googleConnectPreview ? <div className="mt-3 space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4 text-sm" aria-labelledby="google-connect-preview-title">

@@ -112,6 +112,26 @@ describe("连接与授权", () => {
     expect(popup.location.href).toContain("accounts.google.com");
   });
 
+  it("活动 Google OAuth Grant 可以直接扩展权限而无需先撤销", async () => {
+    governanceApi.listOAuthGrants.mockResolvedValue({ grants: [{
+      grantId: "grant-1", tenantId: "tenant-a", subjectUserId: "user-1", provider: "google", connectorId: "google-workspace",
+      status: "active", scopeSummary: ["gmail.readonly"], approvedAt: "2026-08-10T00:00:00.000Z", version: 1, approvals: [],
+    }] });
+    sharedApi.startGoogleWorkspaceOAuth.mockResolvedValue({
+      authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth?state=expanded",
+      state: "expanded", requestedScopes: ["gmail.modify", "gmail.settings.basic"],
+      purpose: "扩展 Google Workspace 能力", riskLevel: "high",
+      dataDestination: "Google Workspace API", revokeMethod: "连接与授权页撤销",
+    });
+
+    render(<ConnectionsSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "扩展权限" }));
+
+    await waitFor(() => expect(sharedApi.startGoogleWorkspaceOAuth).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("gmail.settings.basic")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "前往 Google 授权" })).toBeTruthy();
+  });
+
   it("活动 OAuth Grant 通过签名预览后才允许撤销，并保留可见治理回执", async () => {
     governanceApi.listOAuthGrants.mockResolvedValue({ grants: [{
       grantId: "grant-1", tenantId: "tenant-a", subjectUserId: "user-1", provider: "google", connectorId: "google-workspace",

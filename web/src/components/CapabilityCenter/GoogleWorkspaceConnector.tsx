@@ -116,7 +116,7 @@ export function useGoogleWorkspaceConnector(enabled = true): GoogleWorkspaceConn
   return { connection, available, loading, connecting, error, connect, setRuntimeEnabled, disconnect };
 }
 
-const DESCRIPTION = "使用 Google 官方 gws CLI 操作 Gmail、Drive、Calendar、Chat 和 Contacts。";
+const DESCRIPTION = "使用 Google 官方 gws CLI 操作 Gmail、Drive、Calendar、文档、表格、Chat、Meet、联系人及自动化能力。";
 
 function GoogleWorkspaceLogo() {
   return <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-white text-xl font-bold text-blue-600 ring-1 ring-inset ring-black/10">G</span>;
@@ -124,7 +124,7 @@ function GoogleWorkspaceLogo() {
 
 export function googleWorkspaceMatchesCatalog(query: string, activeFilter: string, connected: boolean): boolean {
   const normalized = query.trim().toLocaleLowerCase();
-  return (!normalized || "google workspace gws gmail drive calendar chat contacts".includes(normalized))
+  return (!normalized || "google workspace gws gmail drive calendar docs sheets slides tasks forms keep meet script classroom chat contacts".includes(normalized))
     && (activeFilter === "all" || activeFilter === "platform" || (activeFilter === "enabled" && connected));
 }
 
@@ -162,9 +162,9 @@ export function GoogleWorkspaceConnectorDrawer({ open, onOpenChange, state }: { 
     <CapabilityDetailDrawer open={open} onOpenChange={onOpenChange} title="Google Workspace" description={DESCRIPTION}>
       <div className="flex items-center gap-3"><GoogleWorkspaceLogo /><div><CapabilitySourceBadge source="platform" /><div className={cn("mt-1 text-xs font-medium", connected && runtimeEnabled ? "text-success" : "text-muted-foreground")}>{connected ? runtimeEnabled ? "已连接，运行环境可用" : "已暂停，授权仍保留" : state.available ? "未连接" : "管理员尚未配置 OAuth"}</div></div></div>
       {state.connection?.accountEmail ? <div className="rounded-xl p-3 text-sm ring-1 ring-border/60"><div className="text-xs text-muted-foreground">Google 账号</div><div className="mt-1 font-medium">{state.connection.accountEmail}</div></div> : null}
-      <div className={cn("p-3 text-sm text-muted-foreground", CAPABILITY_SUBTLE_SURFACE)}>授权后，平台按运行实时刷新 access token，并注入 <code>GOOGLE_WORKSPACE_CLI_TOKEN</code>。一个账号即可使用 Gmail、Drive、Calendar、Chat 与 Contacts。</div>
+      <div className={cn("p-3 text-sm text-muted-foreground", CAPABILITY_SUBTLE_SURFACE)}>授权后，平台按运行实时刷新 access token，并注入 <code>GOOGLE_WORKSPACE_CLI_TOKEN</code>。一个账号即可使用 Google Workspace 内容、通信、自动化与管理能力。</div>
       {state.error ? <div className="flex gap-2 rounded-xl bg-destructive/10 p-3 text-sm text-destructive"><TriangleAlert className="mt-0.5 size-4" />{state.error}</div> : null}
-      {connected ? <Button variant="destructive" onClick={() => void state.disconnect()} disabled={state.connecting}>断开连接</Button> : <Button onClick={() => void state.connect()} disabled={state.connecting || !state.available}>{state.connecting ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}连接 Google Workspace</Button>}
+      {connected ? <div className="flex gap-2"><Button variant="outline" onClick={() => void state.connect()} disabled={state.connecting || !state.available}>{state.connecting ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}扩展权限</Button><Button variant="destructive" onClick={() => void state.disconnect()} disabled={state.connecting}>断开连接</Button></div> : <Button onClick={() => void state.connect()} disabled={state.connecting || !state.available}>{state.connecting ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}连接 Google Workspace</Button>}
     </CapabilityDetailDrawer>
   );
 }

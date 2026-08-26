@@ -13,17 +13,84 @@ const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const GOOGLE_USERINFO_ENDPOINT = 'https://openidconnect.googleapis.com/v1/userinfo';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1_000;
 const ACCESS_TOKEN_REFRESH_SKEW_MS = 60 * 1_000;
-export const GOOGLE_WORKSPACE_SCOPES = [
+const GOOGLE_WORKSPACE_DEFAULT_SCOPES = [
   'openid',
   'email',
   'profile',
+  'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/spreadsheets',
+  'https://www.googleapis.com/auth/gmail.modify',
+  'https://www.googleapis.com/auth/gmail.settings.basic',
+  'https://www.googleapis.com/auth/gmail.settings.sharing',
+  'https://www.googleapis.com/auth/calendar',
+  'https://www.googleapis.com/auth/documents',
+  'https://www.googleapis.com/auth/presentations',
+  'https://www.googleapis.com/auth/tasks',
+  'https://www.googleapis.com/auth/contacts',
+  'https://www.googleapis.com/auth/contacts.other.readonly',
+  'https://www.googleapis.com/auth/directory.readonly',
+  'https://www.googleapis.com/auth/chat.messages',
+  'https://www.googleapis.com/auth/chat.spaces',
+  'https://www.googleapis.com/auth/chat.memberships',
+  'https://www.googleapis.com/auth/chat.messages.reactions',
+  'https://www.googleapis.com/auth/chat.spaces.pins',
+  'https://www.googleapis.com/auth/chat.customemojis',
+  'https://www.googleapis.com/auth/chat.users.readstate',
+  'https://www.googleapis.com/auth/chat.users.availability',
+  'https://www.googleapis.com/auth/chat.users.sections',
+  'https://www.googleapis.com/auth/chat.users.spacesettings',
+  'https://www.googleapis.com/auth/forms.body',
+  'https://www.googleapis.com/auth/forms.responses.readonly',
+  'https://www.googleapis.com/auth/keep',
+  'https://www.googleapis.com/auth/meetings.space.created',
+  'https://www.googleapis.com/auth/meetings.space.readonly',
+  'https://www.googleapis.com/auth/meetings.space.settings',
+  'https://www.googleapis.com/auth/drive.meet.readonly',
+  'https://www.googleapis.com/auth/script.projects',
+  'https://www.googleapis.com/auth/script.deployments',
+  'https://www.googleapis.com/auth/script.processes',
+  'https://www.googleapis.com/auth/script.metrics',
+  'https://www.googleapis.com/auth/pubsub',
+  'https://www.googleapis.com/auth/cloud-platform',
+] as const;
+
+const GOOGLE_WORKSPACE_ENTERPRISE_SCOPES = [
+  'https://www.googleapis.com/auth/admin.reports.audit.readonly',
+  'https://www.googleapis.com/auth/admin.reports.usage.readonly',
+  'https://www.googleapis.com/auth/chat.admin.spaces',
+  'https://www.googleapis.com/auth/chat.admin.memberships',
+  'https://www.googleapis.com/auth/chat.admin.delete',
+  'https://www.googleapis.com/auth/classroom.courses',
+  'https://www.googleapis.com/auth/classroom.rosters',
+  'https://www.googleapis.com/auth/classroom.coursework.students',
+  'https://www.googleapis.com/auth/classroom.coursework.me',
+  'https://www.googleapis.com/auth/classroom.announcements',
+  'https://www.googleapis.com/auth/classroom.topics',
+  'https://www.googleapis.com/auth/classroom.courseworkmaterials',
+  'https://www.googleapis.com/auth/classroom.guardianlinks.students',
+  'https://www.googleapis.com/auth/classroom.profile.emails',
+  'https://www.googleapis.com/auth/classroom.profile.photos',
+  'https://www.googleapis.com/auth/classroom.push-notifications',
+] as const;
+
+const GOOGLE_WORKSPACE_LEGACY_SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/drive.readonly',
   'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/chat.messages.readonly',
   'https://www.googleapis.com/auth/chat.spaces.readonly',
   'https://www.googleapis.com/auth/contacts.readonly',
-];
+] as const;
+
+export const GOOGLE_WORKSPACE_REQUESTED_SCOPES = [
+  ...GOOGLE_WORKSPACE_DEFAULT_SCOPES,
+  ...GOOGLE_WORKSPACE_ENTERPRISE_SCOPES,
+] as const;
+
+const GOOGLE_WORKSPACE_ACCEPTED_SCOPES = new Set<string>([
+  ...GOOGLE_WORKSPACE_REQUESTED_SCOPES,
+  ...GOOGLE_WORKSPACE_LEGACY_SCOPES,
+]);
 
 const GOOGLE_WORKSPACE_SCOPE_ALIASES: Readonly<Record<string, string>> = {
   'https://www.googleapis.com/auth/userinfo.email': 'email',
@@ -262,7 +329,7 @@ export class GoogleWorkspaceOAuthService {
       state,
       codeVerifier,
       redirectUri,
-      requestedScopes: [...GOOGLE_WORKSPACE_SCOPES],
+      requestedScopes: [...GOOGLE_WORKSPACE_REQUESTED_SCOPES],
       user: { id: user.id, username: user.username, tenantId: user.tenantId },
       expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
     });
@@ -271,7 +338,7 @@ export class GoogleWorkspaceOAuthService {
     url.searchParams.set('client_id', this.options.clientId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', GOOGLE_WORKSPACE_SCOPES.join(' '));
+    url.searchParams.set('scope', GOOGLE_WORKSPACE_REQUESTED_SCOPES.join(' '));
     url.searchParams.set('state', state);
     url.searchParams.set('code_challenge', codeChallenge);
     url.searchParams.set('code_challenge_method', 'S256');
@@ -280,8 +347,8 @@ export class GoogleWorkspaceOAuthService {
     url.searchParams.set('include_granted_scopes', 'false');
     return {
       authorizationUrl: url.toString(), state,
-      requestedScopes: [...GOOGLE_WORKSPACE_SCOPES],
-      purpose: '仅在本人获指派且组织已授权的 Agent Run 中调用 Gmail、Drive、Calendar、Chat 与 Contacts',
+      requestedScopes: [...GOOGLE_WORKSPACE_REQUESTED_SCOPES],
+      purpose: '仅在本人获指派且组织已授权的 Agent Run 中调用 Google Workspace 内容、通信、自动化与管理能力',
       riskLevel: 'high',
       dataDestination: '请求数据发送至 Google Workspace API；运行结果进入当前 Agent Run',
       revokeMethod: '可在连接与授权页经影响预览撤销；撤销后新 Run 立即不可用',
@@ -468,7 +535,7 @@ export class GoogleWorkspaceOAuthService {
       }),
     });
     const tokenResponse = await response.json() as GoogleTokenResponse;
-    const refreshed = tokenBundleFromResponse(tokenResponse, current.refreshToken);
+    const refreshed = tokenBundleFromResponse(tokenResponse, current);
     if (!response.ok || !refreshed) {
       throw new Error(`Google Workspace token refresh failed: ${safeOAuthError(tokenResponse)}`);
     }
@@ -556,15 +623,15 @@ export async function resolveGoogleWorkspaceRuntimeEnv(
 
 function tokenBundleFromResponse(
   response: GoogleTokenResponse,
-  fallbackRefreshToken?: string,
+  fallback?: Pick<GoogleTokenBundle, 'refreshToken' | 'scope' | 'tokenType'>,
 ): GoogleTokenBundle | undefined {
   if (!response.access_token) return undefined;
   return {
     accessToken: response.access_token,
-    refreshToken: response.refresh_token ?? fallbackRefreshToken,
+    refreshToken: response.refresh_token ?? fallback?.refreshToken,
     expiresAt: Date.now() + Math.max(1, response.expires_in ?? 3600) * 1_000,
-    scope: response.scope,
-    tokenType: response.token_type,
+    scope: response.scope ?? fallback?.scope,
+    tokenType: response.token_type ?? fallback?.tokenType,
   };
 }
 
@@ -575,8 +642,7 @@ function safeOAuthError(response: GoogleTokenResponse): string {
 function normalizeGrantedScopes(value: string | undefined): string[] {
   if (!value?.trim()) return [];
   const scopes = normalizeGoogleWorkspaceScopes(value.split(/\s+/));
-  const allowed = new Set(GOOGLE_WORKSPACE_SCOPES);
-  return scopes.every(scope => allowed.has(scope)) ? scopes : [];
+  return scopes.every(scope => GOOGLE_WORKSPACE_ACCEPTED_SCOPES.has(scope)) ? scopes : [];
 }
 
 function normalizeGoogleWorkspaceScopes(scopes: Iterable<string>): string[] {

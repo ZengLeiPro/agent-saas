@@ -12,7 +12,8 @@ Environment=ACS_ORCH_PORT=3410
 Environment=ACS_NAMESPACE=agent-saas-staging
 Environment=ACS_WORKSPACE_PVC=agent-saas-staging-workspace
 Environment=ACS_SERVICE_ACCOUNT=agent-saas-staging-orchestrator
-Environment=ACS_ORCH_RUNTIME_CONFIG=/var/lib/agent-saas-staging/acs/runtime-identity.json
+Environment=ACS_ORCH_RUNTIME_CONFIG_FILE=/var/lib/agent-saas-staging/acs/runtime-config.json
+Environment=ACS_RELEASE_IDENTITY_FILE=/etc/agent-saas-staging/acs-release-identity.json
 Environment=ACS_ORCH_PIDFILE=/run/agent-saas-acs-orchestrator-staging.pid
 EnvironmentFile=/etc/agent-saas-staging/acs-orchestrator.env
 ExecStart=/usr/bin/node --enable-source-maps dist/index.js

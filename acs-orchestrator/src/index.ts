@@ -7,6 +7,7 @@ import {
   applyRuntimeConfigPatch,
   loadConfigFromEnv,
   parseRuntimeConfigPatch,
+  releaseIdentityHealth,
   runtimeConfigSnapshot,
 } from './config.js';
 import { AcsExecutor } from './executor.js';
@@ -36,7 +37,6 @@ import {
   sendSandboxError,
   type SandboxRoute,
 } from './sandboxHttp.js';
-
 const config = loadConfigFromEnv();
 
 const logger = {
@@ -50,13 +50,18 @@ const kubeApi = KubeApi.tryCreate(config, logger);
 const activeRegistry = new ActiveSandboxRegistry();
 const sandboxManager = new SandboxManager(config, kubectl, logger, activeRegistry, kubeApi);
 const executor = new AcsExecutor(config, kubectl, sandboxManager, logger, activeRegistry);
-const provisioner = new Provisioner(config, kubectl, sandboxManager, () => executor.busySandboxNames(), activeRegistry);
+const provisioner = new Provisioner(
+  config,
+  kubectl,
+  sandboxManager,
+  () => executor.busySandboxNames(),
+  activeRegistry,
+);
 let lifecycleTimer: ReturnType<typeof setInterval> | null = null;
 let lifecycleRunning = false;
 const lastAlertAtByEvent = new Map<string, number>();
 let staleImagePrewarmRunning = false;
 const STREAM_HEARTBEAT_MS = 25_000;
-// ─── Graceful drain (SIGUSR2) ────────────────────────────────────
 // 用于零停机 deploy: `kill -USR2` -> 停接新的长运行请求 (/provision, /execute,
 // /execute-stream, /invocations/*) -> 等 inflight=0 -> exit(0)。/health 期间
 // 报告 draining + inflight 供 CI 脚本轮询。SIGTERM 沿用原短路径 (5s 硬退)。
@@ -71,12 +76,18 @@ async function withInflight<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 const snatOperations = new SnatOperations({
-  sandboxManager, authorize, sendJson, emitAlert, logger,
+  sandboxManager,
+  authorize,
+  sendJson,
+  emitAlert,
+  logger,
   drainDeadlineMs: config.drainDeadlineMs,
   inflightRequests: () => inflightRequests,
   lifecycleRunning: () => lifecycleRunning,
   backgroundMutationRunning: () => staleImagePrewarmRunning,
-  ...(config.runtimeConfigPath ? { stateFile: `${config.runtimeConfigPath}.snat-operation-state.json` } : {}),
+  ...(config.runtimeConfigPath
+    ? { stateFile: `${config.runtimeConfigPath}.snat-operation-state.json` }
+    : {}),
 });
 const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
@@ -117,19 +128,22 @@ const server = createServer((req, res) => {
   }
 
   if (req.url === '/snat/migrate-shared') {
-    if (draining) return sendJson(res, 503, { status: 'error', error: 'orchestrator draining, retry shortly' });
+    if (draining)
+      return sendJson(res, 503, { status: 'error', error: 'orchestrator draining, retry shortly' });
     void withInflight(() => snatOperations.handleMigration(req, res));
     return;
   }
 
   if (req.url === '/snat/restore-per-pod') {
-    if (draining) return sendJson(res, 503, { status: 'error', error: 'orchestrator draining, retry shortly' });
+    if (draining)
+      return sendJson(res, 503, { status: 'error', error: 'orchestrator draining, retry shortly' });
     void withInflight(() => snatOperations.handleRestore(req, res));
     return;
   }
 
   if (req.url === '/snat/restore-per-pod/cancel') {
-    if (draining) return sendJson(res, 503, { status: 'error', error: 'orchestrator draining, retry shortly' });
+    if (draining)
+      return sendJson(res, 503, { status: 'error', error: 'orchestrator draining, retry shortly' });
     void withInflight(() => snatOperations.handleRestoreCancel(req, res));
     return;
   }
@@ -141,7 +155,10 @@ const server = createServer((req, res) => {
   }
 
   // Drain 期间对新的长运行请求返回 503; 已在跑的请求正常继续
-  if (draining && (req.url === '/provision' || req.url === '/execute' || req.url === '/execute-stream')) {
+  if (
+    draining &&
+    (req.url === '/provision' || req.url === '/execute' || req.url === '/execute-stream')
+  ) {
     res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '5' });
     res.end(JSON.stringify({ status: 'error', error: 'orchestrator draining, retry shortly' }));
     return;
@@ -175,12 +192,14 @@ const server = createServer((req, res) => {
 
   const workspaceLifecycleMatch = req.url?.match(/^\/workspaces\/([^/?#]+)\/(archive|reset)$/);
   if (workspaceLifecycleMatch) {
-    void withInflight(() => handleWorkspaceLifecycle(
-      req,
-      res,
-      decodeURIComponent(workspaceLifecycleMatch[1]!),
-      workspaceLifecycleMatch[2] as 'archive' | 'reset',
-    ));
+    void withInflight(() =>
+      handleWorkspaceLifecycle(
+        req,
+        res,
+        decodeURIComponent(workspaceLifecycleMatch[1]!),
+        workspaceLifecycleMatch[2] as 'archive' | 'reset',
+      ),
+    );
     return;
   }
 
@@ -221,7 +240,9 @@ async function checkCrdExists(crdName: string): Promise<boolean> {
 async function checkNamespaceExists(namespace: string): Promise<boolean> {
   const viaApi = await kubeApi?.namespaceExists(namespace);
   if (typeof viaApi === 'boolean') return viaApi;
-  const result = await kubectl.run(['get', 'namespace', namespace, '-o', 'name'], { timeoutMs: 5_000 });
+  const result = await kubectl.run(['get', 'namespace', namespace, '-o', 'name'], {
+    timeoutMs: 5_000,
+  });
   return result.exitCode === 0;
 }
 
@@ -236,21 +257,26 @@ async function computeDeepHealth(): Promise<DeepHealthSnapshot> {
   const checks: Record<string, unknown> = {};
   let ok = true;
   // 各检查相互独立，并行执行（旧实现串行导致单次 /health 1.1s+）。
-  const [crdOk, trafficPolicyCrdOk, trafficPolicyRbacOk, namespaceOk, inventoryOutcome] = await Promise.all([
-    checkCrdExists(config.sandboxCrdName),
-    checkCrdExists(config.trafficPolicyCrdName),
-    checkCanCreate(config.trafficPolicyCrdName),
-    checkNamespaceExists(config.namespace),
-    (async () => {
-      try {
-        const sandboxes = await sandboxManager.inventorySummary();
-        const snat = await sandboxManager.snatStatus();
-        return { sandboxes, snat, error: undefined as string | undefined };
-      } catch (err) {
-        return { sandboxes: undefined, snat: undefined, error: err instanceof Error ? err.message : String(err) };
-      }
-    })(),
-  ]);
+  const [crdOk, trafficPolicyCrdOk, trafficPolicyRbacOk, namespaceOk, inventoryOutcome] =
+    await Promise.all([
+      checkCrdExists(config.sandboxCrdName),
+      checkCrdExists(config.trafficPolicyCrdName),
+      checkCanCreate(config.trafficPolicyCrdName),
+      checkNamespaceExists(config.namespace),
+      (async () => {
+        try {
+          const sandboxes = await sandboxManager.inventorySummary();
+          const snat = await sandboxManager.snatStatus();
+          return { sandboxes, snat, error: undefined as string | undefined };
+        } catch (err) {
+          return {
+            sandboxes: undefined,
+            snat: undefined,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      })(),
+    ]);
   checks.crd = crdOk ? 'ok' : 'error';
   checks.trafficPolicyCrd = trafficPolicyCrdOk ? 'ok' : 'error';
   checks.trafficPolicyRbac = trafficPolicyRbacOk ? 'ok' : 'error';
@@ -266,15 +292,17 @@ async function computeDeepHealth(): Promise<DeepHealthSnapshot> {
   }
   const snat = inventoryOutcome.snat;
   if (snat?.enabled) {
-    const sharedCidrsReady = snat.mode !== 'shared-cidr'
-      || snat.sharedCidrAvailableCount === (snat.sharedCidrs?.length ?? 0);
+    const sharedCidrsReady =
+      snat.mode !== 'shared-cidr' ||
+      snat.sharedCidrAvailableCount === (snat.sharedCidrs?.length ?? 0);
     const podCoverageOk = snat.uncoveredPodCidrs.length === 0;
     const snatOk = snat.configured && !snat.error && sharedCidrsReady && podCoverageOk;
     checks.snat = snatOk
       ? 'ok'
-      : (snat.error ?? (podCoverageOk
-        ? 'shared CIDRs are not all Available'
-        : `uncovered Pod CIDRs: ${snat.uncoveredPodCidrs.join(',')}`));
+      : (snat.error ??
+        (podCoverageOk
+          ? 'shared CIDRs are not all Available'
+          : `uncovered Pod CIDRs: ${snat.uncoveredPodCidrs.join(',')}`));
     if (!snatOk) ok = false;
   }
   return { at: Date.now(), ok, checks, sandboxes: inventoryOutcome.sandboxes, snat };
@@ -284,7 +312,9 @@ async function getDeepHealth(): Promise<DeepHealthSnapshot> {
   const ttl = config.healthDeepCacheMs;
   if (deepHealthLast && ttl > 0 && Date.now() - deepHealthLast.at < ttl) return deepHealthLast;
   if (!deepHealthInFlight) {
-    deepHealthInFlight = computeDeepHealth().finally(() => { deepHealthInFlight = null; });
+    deepHealthInFlight = computeDeepHealth().finally(() => {
+      deepHealthInFlight = null;
+    });
   }
   const snapshot = await deepHealthInFlight;
   deepHealthLast = snapshot;
@@ -300,6 +330,7 @@ async function handleHealth(res: ServerResponse): Promise<void> {
     inflight: inflightRequests,
     ...snatOperations.healthState(),
     backend: 'acs-agent-sandbox',
+    ...releaseIdentityHealth(config.releaseIdentity),
     namespace: config.namespace,
     sandboxKind: config.sandboxKind,
     image: config.sandboxImage,
@@ -310,7 +341,11 @@ async function handleHealth(res: ServerResponse): Promise<void> {
       hostWorkspaceRootConfigured: Boolean(config.hostWorkspaceRoot),
     },
     contextSemantics: {
-      workspacePersistence: config.pvcName ? 'nas-pvc' : config.hostWorkspaceRoot ? 'host-workspace' : 'ephemeral',
+      workspacePersistence: config.pvcName
+        ? 'nas-pvc'
+        : config.hostWorkspaceRoot
+          ? 'host-workspace'
+          : 'ephemeral',
       memoryInjection: 'session-start',
       memoryHotReload: false,
       folderAutoContext: false,
@@ -370,8 +405,9 @@ async function handleHealth(res: ServerResponse): Promise<void> {
 }
 
 function runtimeContractSnapshot(): Record<string, unknown> {
-  const requirementsPath = process.env.ACS_BASE_REQUIREMENTS_PATH?.trim()
-    || join(dirname(fileURLToPath(import.meta.url)), '..', 'requirements', 'base.txt');
+  const requirementsPath =
+    process.env.ACS_BASE_REQUIREMENTS_PATH?.trim() ||
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'requirements', 'base.txt');
   const wheelhousePath = process.env.ACS_PYTHON_WHEELHOUSE?.trim() || '/opt/ky-agent/python-wheels';
   return {
     python: {
@@ -422,51 +458,75 @@ async function handleRuntimeConfig(req: IncomingMessage, res: ServerResponse): P
   if (req.method === 'GET') {
     return sendJson(res, 200, { status: 'ok', runtimeConfig: runtimeConfigSnapshot(config) });
   }
-  if (req.method !== 'PATCH') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use GET or PATCH' });
+  if (req.method !== 'PATCH')
+    return sendJson(res, 405, { status: 'error', error: 'method not allowed; use GET or PATCH' });
   const body = await readJson(req, res);
   if (!body.ok) return;
   try {
     const patch = parseRuntimeConfigPatch(body.value);
     const runtimeConfig = applyRuntimeConfigPatch(config, patch);
     logger.warn(
-      `runtime_config_updated maxRunningSandboxes=${runtimeConfig.maxRunningSandboxes} `
-      + `warnRunningSandboxes=${runtimeConfig.warnRunningSandboxes} `
-      + `drainDeadlineMs=${runtimeConfig.drainDeadlineMs} persisted=${runtimeConfig.persisted}`,
+      `runtime_config_updated maxRunningSandboxes=${runtimeConfig.maxRunningSandboxes} ` +
+        `warnRunningSandboxes=${runtimeConfig.warnRunningSandboxes} ` +
+        `drainDeadlineMs=${runtimeConfig.drainDeadlineMs} persisted=${runtimeConfig.persisted}`,
     );
     return sendJson(res, 200, { status: 'ok', runtimeConfig });
   } catch (err) {
-    return sendJson(res, 400, { status: 'error', error: err instanceof Error ? err.message : String(err) });
+    return sendJson(res, 400, {
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
 async function handleLifecycleCleanup(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
+  if (req.method !== 'POST')
+    return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
   if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
   try {
-    const report = await sandboxManager.cleanupSandboxes({ busySandboxNames: activeBusySandboxNames() });
+    const report = await sandboxManager.cleanupSandboxes({
+      busySandboxNames: activeBusySandboxNames(),
+    });
     logger.warn(
-      `sandbox_lifecycle_manual_cleanup checked=${report.checked} paused=${report.paused.length} `
-      + `deleted=${report.deleted.length} skippedBusy=${report.skippedBusy.length}`,
+      `sandbox_lifecycle_manual_cleanup checked=${report.checked} paused=${report.paused.length} ` +
+        `deleted=${report.deleted.length} skippedBusy=${report.skippedBusy.length}`,
     );
     return sendJson(res, 200, { status: 'ok', report });
   } catch (err) {
-    return sendJson(res, 500, { status: 'error', error: err instanceof Error ? err.message : String(err) });
+    return sendJson(res, 500, {
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
-async function handleSandboxRoute(req: IncomingMessage, res: ServerResponse, route: SandboxRoute): Promise<void> {
+async function handleSandboxRoute(
+  req: IncomingMessage,
+  res: ServerResponse,
+  route: SandboxRoute,
+): Promise<void> {
   if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
-  if (config.executionMaintenance && !allowsExecutionMaintenanceBypass(req)
-    && route.kind === 'name' && route.action === 'resume') {
+  if (
+    config.executionMaintenance &&
+    !allowsExecutionMaintenanceBypass(req) &&
+    route.kind === 'name' &&
+    route.action === 'resume'
+  ) {
     return sendExecutionMaintenance(res, config.executionMaintenanceReason);
   }
   if (route.kind === 'list') {
-    if (req.method !== 'GET') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use GET' });
+    if (req.method !== 'GET')
+      return sendJson(res, 405, { status: 'error', error: 'method not allowed; use GET' });
     try {
-      const sandboxes = await sandboxManager.listSandboxInventory({ busySandboxNames: activeBusySandboxNames() });
+      const sandboxes = await sandboxManager.listSandboxInventory({
+        busySandboxNames: activeBusySandboxNames(),
+      });
       return sendJson(res, 200, { status: 'ok', sandboxes });
     } catch (err) {
-      return sendJson(res, 500, { status: 'error', error: err instanceof Error ? err.message : String(err) });
+      return sendJson(res, 500, {
+        status: 'error',
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -475,13 +535,17 @@ async function handleSandboxRoute(req: IncomingMessage, res: ServerResponse, rou
 
   try {
     if (route.action === 'pause') {
-      if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
+      if (req.method !== 'POST')
+        return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
       await sandboxManager.pauseByName(name, { busySandboxNames: activeBusySandboxNames() });
       return sendJson(res, 200, { status: 'ok', name, paused: true });
     }
     if (route.action === 'resume') {
-      if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
-      const ref = await sandboxManager.resumeByName(name, { busySandboxNames: activeBusySandboxNames() });
+      if (req.method !== 'POST')
+        return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
+      const ref = await sandboxManager.resumeByName(name, {
+        busySandboxNames: activeBusySandboxNames(),
+      });
       return sendJson(res, 200, { status: 'ok', name, resumed: true, ref });
     }
     if (req.method === 'GET') {
@@ -515,7 +579,8 @@ async function handleSandboxRoute(req: IncomingMessage, res: ServerResponse, rou
  * warmup 全程计入 withInflight，确保 drain 与 SNAT 回滚维护屏障不会漏掉已接受的创建。
  */
 async function handleWarmup(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
+  if (req.method !== 'POST')
+    return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
   if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
   if (config.executionMaintenance && !allowsExecutionMaintenanceBypass(req)) {
     return sendExecutionMaintenance(res, config.executionMaintenanceReason);
@@ -530,8 +595,14 @@ async function handleWarmup(req: IncomingMessage, res: ServerResponse): Promise<
   const raw = body.value as Record<string, unknown>;
   const workspaceId = typeof raw.workspaceId === 'string' ? raw.workspaceId.trim() : '';
   const sessionId = typeof raw.sessionId === 'string' ? raw.sessionId.trim() : '';
-  const sandboxScopeId = typeof raw.sandboxScopeId === 'string' && raw.sandboxScopeId.trim() ? raw.sandboxScopeId.trim() : undefined;
-  const mountSubPath = typeof raw.mountSubPath === 'string' && raw.mountSubPath.trim() ? raw.mountSubPath.trim() : undefined;
+  const sandboxScopeId =
+    typeof raw.sandboxScopeId === 'string' && raw.sandboxScopeId.trim()
+      ? raw.sandboxScopeId.trim()
+      : undefined;
+  const mountSubPath =
+    typeof raw.mountSubPath === 'string' && raw.mountSubPath.trim()
+      ? raw.mountSubPath.trim()
+      : undefined;
   if (!workspaceId || !sessionId) {
     return sendJson(res, 400, { status: 'error', error: 'workspaceId and sessionId are required' });
   }
@@ -539,7 +610,10 @@ async function handleWarmup(req: IncomingMessage, res: ServerResponse): Promise<
   try {
     ref = sandboxManager.ref({ workspaceId, sessionId, sandboxScopeId, mountSubPath });
   } catch (err) {
-    return sendJson(res, 400, { status: 'error', error: err instanceof Error ? err.message : String(err) });
+    return sendJson(res, 400, {
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
   sendJson(res, 202, { status: 'accepted', sandbox: ref.name });
   const activeKey = `warmup:${ref.name}:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`;
@@ -552,14 +626,17 @@ async function handleWarmup(req: IncomingMessage, res: ServerResponse): Promise<
     );
     logger.info(`sandbox_warmup_ok sandbox=${ref.name} totalMs=${Date.now() - startedAt}`);
   } catch (err) {
-    logger.warn(`sandbox_warmup_failed sandbox=${ref.name} totalMs=${Date.now() - startedAt} err=${err instanceof Error ? err.message : String(err)}`);
+    logger.warn(
+      `sandbox_warmup_failed sandbox=${ref.name} totalMs=${Date.now() - startedAt} err=${err instanceof Error ? err.message : String(err)}`,
+    );
   } finally {
     releaseActive();
   }
 }
 
 async function handleProvision(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
+  if (req.method !== 'POST')
+    return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
   if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
   if (config.executionMaintenance && !allowsExecutionMaintenanceBypass(req)) {
     return sendExecutionMaintenance(res, config.executionMaintenanceReason);
@@ -583,14 +660,21 @@ async function handleProvision(req: IncomingMessage, res: ServerResponse): Promi
   } catch (err) {
     if (err instanceof SandboxCapacityError) return sendCapacityError(res, err);
     const message = err instanceof Error ? err.message : String(err);
-    if (err instanceof SnatSharedCidrCoverageError || /ACS SNAT|CreateSnatEntry\(shared\)/.test(message)) {
+    if (
+      err instanceof SnatSharedCidrCoverageError ||
+      /ACS SNAT|CreateSnatEntry\(shared\)/.test(message)
+    ) {
       await emitAlert({
-        event: err instanceof SnatSharedCidrCoverageError ? 'snat_shared_cidr_coverage_gap' : 'snat_provision_failed',
+        event:
+          err instanceof SnatSharedCidrCoverageError
+            ? 'snat_shared_cidr_coverage_gap'
+            : 'snat_provision_failed',
         severity: 'error',
         message,
-        metadata: err instanceof SnatSharedCidrCoverageError
-          ? { podIp: err.podIp, sharedCidrs: err.sharedCidrs }
-          : undefined,
+        metadata:
+          err instanceof SnatSharedCidrCoverageError
+            ? { podIp: err.podIp, sharedCidrs: err.sharedCidrs }
+            : undefined,
       });
     }
     return sendJson(res, 500, { status: 'error', error: message });
@@ -598,7 +682,8 @@ async function handleProvision(req: IncomingMessage, res: ServerResponse): Promi
 }
 
 async function handleExecute(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
+  if (req.method !== 'POST')
+    return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
   if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
   if (config.executionMaintenance && !allowsExecutionMaintenanceBypass(req)) {
     return sendExecutionMaintenance(res, config.executionMaintenanceReason);
@@ -616,7 +701,8 @@ async function handleExecute(req: IncomingMessage, res: ServerResponse): Promise
 }
 
 async function handleExecuteStream(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
+  if (req.method !== 'POST')
+    return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
   if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
   if (config.executionMaintenance && !allowsExecutionMaintenanceBypass(req)) {
     return sendExecutionMaintenance(res, config.executionMaintenanceReason);
@@ -647,7 +733,8 @@ async function handleExecuteStream(req: IncomingMessage, res: ServerResponse): P
   }, STREAM_HEARTBEAT_MS);
   heartbeat.unref?.();
   const writeChunk = (chunk: unknown) => {
-    if (chunk && typeof chunk === 'object' && (chunk as { type?: unknown }).type === 'completed') sawCompleted = true;
+    if (chunk && typeof chunk === 'object' && (chunk as { type?: unknown }).type === 'completed')
+      sawCompleted = true;
     if (!res.destroyed && !res.writableEnded) res.write(`data: ${JSON.stringify(chunk)}\n\n`);
   };
   try {
@@ -659,18 +746,30 @@ async function handleExecuteStream(req: IncomingMessage, res: ServerResponse): P
       if (sawCompleted) break;
     }
   } catch (err) {
-    writeChunk({ type: 'completed', response: { status: 'error', error: err instanceof Error ? err.message : String(err) } });
+    writeChunk({
+      type: 'completed',
+      response: { status: 'error', error: err instanceof Error ? err.message : String(err) },
+    });
   } finally {
     clearInterval(heartbeat);
     req.removeListener('aborted', cancelDisconnectedInvocation);
     res.removeListener('close', cancelDisconnectedInvocation);
-    if (!sawCompleted) writeChunk({ type: 'completed', response: { status: 'error', error: 'ACS stream ended without completed chunk' } });
+    if (!sawCompleted)
+      writeChunk({
+        type: 'completed',
+        response: { status: 'error', error: 'ACS stream ended without completed chunk' },
+      });
     if (!res.destroyed && !res.writableEnded) res.end();
   }
 }
 
-async function handleCancel(req: IncomingMessage, res: ServerResponse, invocationId: string): Promise<void> {
-  if (req.method !== 'DELETE') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use DELETE' });
+async function handleCancel(
+  req: IncomingMessage,
+  res: ServerResponse,
+  invocationId: string,
+): Promise<void> {
+  if (req.method !== 'DELETE')
+    return sendJson(res, 405, { status: 'error', error: 'method not allowed; use DELETE' });
   if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
   const cancelled = executor.cancel(invocationId);
   return sendJson(res, 200, {
@@ -687,7 +786,8 @@ async function handleWorkspaceLifecycle(
   workspaceId: string,
   action: 'archive' | 'reset',
 ): Promise<void> {
-  if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
+  if (req.method !== 'POST')
+    return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
   if (!authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
   let reason: string = action;
   try {
@@ -697,10 +797,15 @@ async function handleWorkspaceLifecycle(
       if (typeof body.reason === 'string' && body.reason.trim()) reason = body.reason.trim();
     }
   } catch (err) {
-    return sendJson(res, 400, { status: 'error', error: err instanceof Error ? err.message : String(err) });
+    return sendJson(res, 400, {
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
   try {
-    const deleted = await sandboxManager.deleteByWorkspaceId(workspaceId, { busySandboxNames: activeBusySandboxNames() });
+    const deleted = await sandboxManager.deleteByWorkspaceId(workspaceId, {
+      busySandboxNames: activeBusySandboxNames(),
+    });
     if (deleted.skippedBusy.length) {
       return sendJson(res, 409, {
         status: 'error',
@@ -725,7 +830,10 @@ async function handleWorkspaceLifecycle(
         : 'workspace archive skipped because ACS_HOST_WORKSPACE_ROOT is not configured or workspace is missing',
     });
   } catch (err) {
-    return sendJson(res, 400, { status: 'error', error: err instanceof Error ? err.message : String(err) });
+    return sendJson(res, 400, {
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
@@ -739,12 +847,18 @@ function authorize(req: IncomingMessage): boolean {
   return !!match && match[1] === config.authToken;
 }
 
-async function readJson(req: IncomingMessage, res: ServerResponse): Promise<{ ok: true; value: unknown } | { ok: false }> {
+async function readJson(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<{ ok: true; value: unknown } | { ok: false }> {
   try {
     const raw = await readBody(req, MAX_BODY_BYTES);
     return { ok: true, value: raw.trim() ? JSON.parse(raw) : {} };
   } catch (err) {
-    sendJson(res, 400, { status: 'error', error: err instanceof Error ? err.message : String(err) });
+    sendJson(res, 400, {
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+    });
     return { ok: false };
   }
 }
@@ -779,7 +893,9 @@ server.listen(config.port, config.host, () => {
       writeFileSync(pidFile, `${process.pid}\n`, 'utf-8');
       logger.info(`pidfile written: ${pidFile} (pid=${process.pid})`);
     } catch (err) {
-      logger.warn(`failed to write pidfile ${pidFile}: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn(
+        `failed to write pidfile ${pidFile}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
   startLifecycleLoop();
@@ -815,7 +931,9 @@ process.on('SIGUSR2', () => {
     }
     if (Date.now() - startedAt >= config.drainDeadlineMs) {
       clearInterval(poll);
-      logger.warn(`drain deadline reached (${config.drainDeadlineMs}ms), forcing exit (inflight=${inflightRequests})`);
+      logger.warn(
+        `drain deadline reached (${config.drainDeadlineMs}ms), forcing exit (inflight=${inflightRequests})`,
+      );
       process.exit(1);
     }
     logger.info(`draining... inflight=${inflightRequests}`);
@@ -851,12 +969,19 @@ async function runStaleImagePrewarmOnce(reason: string): Promise<void> {
   }
   staleImagePrewarmRunning = true;
   try {
-    const result = await provisioner.prewarmStaleImagePausedSandboxes({ busySandboxNames: activeBusySandboxNames() });
-    if (result.queued.length || result.skipped.length || result.skippedBusy.length || result.failed.length) {
+    const result = await provisioner.prewarmStaleImagePausedSandboxes({
+      busySandboxNames: activeBusySandboxNames(),
+    });
+    if (
+      result.queued.length ||
+      result.skipped.length ||
+      result.skippedBusy.length ||
+      result.failed.length
+    ) {
       logger.warn(
-        `sandbox_stale_image_prewarm reason=${reason} queued=${result.queued.length} `
-        + `retired=${result.retired.length} adopted=${result.adopted.length} `
-        + `skipped=${result.skipped.length} skippedBusy=${result.skippedBusy.length} failed=${result.failed.length}`,
+        `sandbox_stale_image_prewarm reason=${reason} queued=${result.queued.length} ` +
+          `retired=${result.retired.length} adopted=${result.adopted.length} ` +
+          `skipped=${result.skipped.length} skippedBusy=${result.skippedBusy.length} failed=${result.failed.length}`,
       );
       await emitAlert({
         event: 'sandbox_stale_image_prewarm',
@@ -868,7 +993,9 @@ async function runStaleImagePrewarmOnce(reason: string): Promise<void> {
       logger.info(`sandbox_stale_image_prewarm reason=${reason} queued=0 skipped=0 failed=0`);
     }
   } catch (err) {
-    logger.error(`sandbox_stale_image_prewarm_error reason=${reason} err=${err instanceof Error ? err.message : String(err)}`);
+    logger.error(
+      `sandbox_stale_image_prewarm_error reason=${reason} err=${err instanceof Error ? err.message : String(err)}`,
+    );
   } finally {
     staleImagePrewarmRunning = false;
   }
@@ -891,12 +1018,19 @@ async function runLifecycleOnce(reason: string): Promise<void> {
         `background_shell_reconcile reason=${reason} checked=${backgroundShells.checked} failed=${backgroundShells.failed}`,
       );
     }
-    const report = await sandboxManager.cleanupSandboxes({ busySandboxNames: activeBusySandboxNames() });
-    if (report.paused.length || report.deleted.length || report.brokenRecycled.length || report.skippedBusy.length) {
+    const report = await sandboxManager.cleanupSandboxes({
+      busySandboxNames: activeBusySandboxNames(),
+    });
+    if (
+      report.paused.length ||
+      report.deleted.length ||
+      report.brokenRecycled.length ||
+      report.skippedBusy.length
+    ) {
       logger.warn(
-        `sandbox_lifecycle_actions reason=${reason} checked=${report.checked} paused=${report.paused.length} `
-        + `deleted=${report.deleted.length} brokenRecycled=${report.brokenRecycled.length} `
-        + `skippedBusy=${report.skippedBusy.length} snatDeleted=${report.snatDeleted.length}`,
+        `sandbox_lifecycle_actions reason=${reason} checked=${report.checked} paused=${report.paused.length} ` +
+          `deleted=${report.deleted.length} brokenRecycled=${report.brokenRecycled.length} ` +
+          `skippedBusy=${report.skippedBusy.length} snatDeleted=${report.snatDeleted.length}`,
       );
       await emitAlert({
         event: 'sandbox_lifecycle_actions',
@@ -911,9 +1045,10 @@ async function runLifecycleOnce(reason: string): Promise<void> {
       await emitAlert({
         event: report.snatUnexpected > 0 ? 'snat_unexpected_entries' : 'snat_orphan_cleanup',
         severity: report.snatUnexpected > 0 ? 'warning' : 'info',
-        message: report.snatUnexpected > 0
-          ? `ACS SNAT table has ${report.snatUnexpected} unexpected entry${report.snatUnexpected === 1 ? '' : 'ies'}`
-          : `ACS SNAT orphan cleanup deleted ${report.snatDeleted.length} entr${report.snatDeleted.length === 1 ? 'y' : 'ies'}`,
+        message:
+          report.snatUnexpected > 0
+            ? `ACS SNAT table has ${report.snatUnexpected} unexpected entry${report.snatUnexpected === 1 ? '' : 'ies'}`
+            : `ACS SNAT orphan cleanup deleted ${report.snatDeleted.length} entr${report.snatDeleted.length === 1 ? 'y' : 'ies'}`,
         metadata: {
           snatDeleted: report.snatDeleted,
           snatUnexpected: report.snatUnexpected,
@@ -921,11 +1056,14 @@ async function runLifecycleOnce(reason: string): Promise<void> {
       });
     }
     const inventory = await sandboxManager.inventorySummary();
-    const nearCount = config.warnRunningSandboxes > 0 && inventory.allocatedCount >= config.warnRunningSandboxes;
-    const nearCpu = config.warnAllocatedCpuMillicores > 0
-      && inventory.allocatedCpuMillicores >= config.warnAllocatedCpuMillicores;
-    const nearMemory = config.warnAllocatedMemoryMib > 0
-      && inventory.allocatedMemoryBytes >= config.warnAllocatedMemoryMib * 1024 * 1024;
+    const nearCount =
+      config.warnRunningSandboxes > 0 && inventory.allocatedCount >= config.warnRunningSandboxes;
+    const nearCpu =
+      config.warnAllocatedCpuMillicores > 0 &&
+      inventory.allocatedCpuMillicores >= config.warnAllocatedCpuMillicores;
+    const nearMemory =
+      config.warnAllocatedMemoryMib > 0 &&
+      inventory.allocatedMemoryBytes >= config.warnAllocatedMemoryMib * 1024 * 1024;
     if (nearCount || nearCpu || nearMemory) {
       await emitAlert({
         event: 'sandbox_allocated_near_quota',
@@ -954,7 +1092,12 @@ async function emitAlert(input: {
   message: string;
   metadata?: unknown;
 }): Promise<void> {
-  const log = input.severity === 'error' ? logger.error : input.severity === 'warning' ? logger.warn : logger.info;
+  const log =
+    input.severity === 'error'
+      ? logger.error
+      : input.severity === 'warning'
+        ? logger.warn
+        : logger.info;
   log(`alert event=${input.event} severity=${input.severity} message=${input.message}`);
   if (config.alertWebhookUrls.length === 0) return;
   const now = Date.now();
@@ -983,7 +1126,9 @@ async function emitAlert(input: {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          ...(config.alertWebhookBearerToken ? { authorization: `Bearer ${config.alertWebhookBearerToken}` } : {}),
+          ...(config.alertWebhookBearerToken
+            ? { authorization: `Bearer ${config.alertWebhookBearerToken}` }
+            : {}),
         },
         body,
         signal: controller.signal,
@@ -996,5 +1141,7 @@ async function emitAlert(input: {
       clearTimeout(timer);
     }
   }
-  logger.warn(`alert webhook failed on all ${config.alertWebhookUrls.length} url(s): ${errors.join('; ')}`);
+  logger.warn(
+    `alert webhook failed on all ${config.alertWebhookUrls.length} url(s): ${errors.join('; ')}`,
+  );
 }

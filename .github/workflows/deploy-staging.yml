@@ -1,0 +1,335 @@
+name: Deploy Staging RC
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: '发版说明'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+  deployments: write
+
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  ACR_INSTANCE_ID: cri-tapxtcyd6odwj3m4
+  ACR_REPO_ID: crr-csx99pbexlsw5qqv
+  ACR_REGION_ID: cn-shenzhen
+  ACR_REGISTRY: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com
+  ACR_REPOSITORY: agent-saas/acs-sandbox
+
+jobs:
+  build-deploy-verify:
+    name: Build and verify exact Staging RC
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: staging
+    env:
+      ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+      ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+      ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+      ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+      STAGING_ECS_HOST: ${{ secrets.STAGING_ECS_HOST }}
+      STAGING_ECS_USER: ${{ secrets.STAGING_ECS_USER }}
+      STAGING_ECS_SSH_KEY: ${{ secrets.STAGING_ECS_SSH_KEY }}
+      RELEASE_EVIDENCE_TOKEN: ${{ secrets.RELEASE_EVIDENCE_TOKEN }}
+      STAGING_E2E_USERNAME: ${{ secrets.STAGING_E2E_USERNAME }}
+      STAGING_E2E_PASSWORD: ${{ secrets.STAGING_E2E_PASSWORD }}
+      STAGING_WEB_URL: https://staging.agent.kaiyan.net
+      STAGING_API_URL: https://api.staging.agent.kaiyan.net
+      RELEASE_EVIDENCE_URL: ${{ vars.RELEASE_EVIDENCE_URL }}
+      STAGING_ISOLATION_EVIDENCE_URL: ${{ vars.STAGING_ISOLATION_EVIDENCE_URL }}
+      STAGING_RELEASE_OSS_URI: ${{ vars.STAGING_RELEASE_OSS_URI }}
+      STAGING_WEB_OSS_URI: oss://agent-saas-web-staging
+      STAGING_E2E_INTEGRATION_TASK_ID: ${{ vars.STAGING_E2E_INTEGRATION_TASK_ID }}
+
+    steps:
+      - name: Lock dispatch SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GITHUB_SHA" | grep -Eq '^[a-f0-9]{40}$'
+          test "$GITHUB_REF" = refs/heads/main
+          created_at="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)"
+          release_date="${created_at:0:10}"
+          release_id="rc-${release_date//-/}-$(printf '%02d' "$GITHUB_RUN_NUMBER")"
+          expires_at="$(node -e "process.stdout.write(new Date(Date.parse(process.argv[1])+86400000).toISOString())" "$created_at")"
+          {
+            echo "STAGING_RELEASE_ID=$release_id"
+            echo "STAGING_RELEASE_SHA=$GITHUB_SHA"
+            echo "RELEASE_CREATED_AT=$created_at"
+            echo "RELEASE_EXPIRES_AT=$expires_at"
+          } >> "$GITHUB_ENV"
+
+      - name: Checkout immutable dispatch revision
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Verify SHA is trusted main history
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Alibaba Cloud CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz -o "$RUNNER_TEMP/aliyun.tgz"
+          tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
+          sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
+
+      - name: Restore immutable RC on job re-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo 'REUSE_RC=false' >> "$GITHUB_ENV"
+          if ! gh release view "$STAGING_RELEASE_ID" >/dev/null 2>&1; then exit 0; fi
+          mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/attestations"
+          gh release download "$STAGING_RELEASE_ID" --dir "$RUNNER_TEMP/release" \
+            --pattern manifest.json --pattern artifact-index.json \
+            --pattern "$STAGING_RELEASE_ID.jsonl"
+          mv "$RUNNER_TEMP/release/manifest.json" "$RUNNER_TEMP/manifest.json"
+          mv "$RUNNER_TEMP/release/$STAGING_RELEASE_ID.jsonl" "$RUNNER_TEMP/attestations/"
+          pnpm exec tsx server/src/release/validateReleaseManifestCli.ts \
+            "$RUNNER_TEMP/manifest.json" "$STAGING_RELEASE_ID"
+          test "$(jq -r .releaseSha "$RUNNER_TEMP/manifest.json")" = "$GITHUB_SHA"
+          node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release/artifact-index.json" "$GITHUB_SHA" || {
+            destination="$STAGING_RELEASE_OSS_URI/$STAGING_RELEASE_ID"
+            rm -rf "$RUNNER_TEMP/release" && mkdir -p "$RUNNER_TEMP/release"
+            aliyun oss cp "$destination/" "$RUNNER_TEMP/release/" --recursive
+            node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release/artifact-index.json" "$GITHUB_SHA"
+          }
+          echo "MANIFEST_DIGEST=$(jq -r .digest "$RUNNER_TEMP/manifest.json")" >> "$GITHUB_ENV"
+          echo 'REUSE_RC=true' >> "$GITHUB_ENV"
+
+      - name: Read authoritative candidate and production evidence
+        if: env.REUSE_RC != 'true'
+        run: |
+          set -euo pipefail
+          : "${RELEASE_EVIDENCE_URL:?Missing staging variable RELEASE_EVIDENCE_URL}"
+          : "${RELEASE_EVIDENCE_TOKEN:?Missing staging secret RELEASE_EVIDENCE_TOKEN}"
+          curl -fsS --retry 3 \
+            -H "authorization: Bearer $RELEASE_EVIDENCE_TOKEN" \
+            "$RELEASE_EVIDENCE_URL?sha=$GITHUB_SHA" > "$RUNNER_TEMP/authoritative-evidence.json"
+          test "$(jq -r .releaseSha "$RUNNER_TEMP/authoritative-evidence.json")" = "$GITHUB_SHA"
+          test "$(jq -r .ok "$RUNNER_TEMP/authoritative-evidence.json")" = true
+          baseline="$(jq -r .productionBaseline.api.sourceSha "$RUNNER_TEMP/authoritative-evidence.json")"
+          git cat-file -e "$baseline^{commit}"
+          git merge-base --is-ancestor "$baseline" "$GITHUB_SHA"
+          node scripts/release/classify-components.mjs --baseline "$baseline" --target "$GITHUB_SHA" > "$RUNNER_TEMP/classification.json"
+          diff <(jq -S .components "$RUNNER_TEMP/classification.json") \
+               <(jq -S .affectedComponents "$RUNNER_TEMP/authoritative-evidence.json")
+
+      - name: Resolve exact ACS image when required
+        if: env.REUSE_RC != 'true'
+        run: |
+          set -euo pipefail
+          include_acs=false
+          if jq -e '.affectedComponents | index("acs") != null' "$RUNNER_TEMP/authoritative-evidence.json" >/dev/null; then
+            include_acs=true
+            RELEASE_SHA="$GITHUB_SHA" OUTPUT_FILE="$RUNNER_TEMP/acs-image.json" \
+              bash scripts/release/wait-for-acr-image.sh
+          fi
+          echo "INCLUDE_ACS=$include_acs" >> "$GITHUB_ENV"
+
+      - name: Build immutable artifacts once
+        if: env.REUSE_RC != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release"
+          args=(--sha="$GITHUB_SHA" --out="$RUNNER_TEMP/release")
+          if [ "$INCLUDE_ACS" = true ]; then
+            args+=(--include-acs --acs-image="$(jq -r .reference "$RUNNER_TEMP/acs-image.json")")
+          fi
+          node scripts/release/build-release.mjs "${args[@]}"
+          node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release/artifact-index.json" "$GITHUB_SHA"
+
+      - name: Persist content-addressed artifacts
+        if: env.REUSE_RC != 'true'
+        run: |
+          set -euo pipefail
+          : "${STAGING_RELEASE_OSS_URI:?Missing staging variable STAGING_RELEASE_OSS_URI}"
+          case "$STAGING_RELEASE_OSS_URI" in oss://*) ;; *) echo 'Release URI must be OSS'; exit 1 ;; esac
+          destination="$STAGING_RELEASE_OSS_URI/$STAGING_RELEASE_ID"
+          if aliyun oss stat "$destination/artifact-index.json" >/dev/null 2>&1; then
+            rm -rf "$RUNNER_TEMP/release-saved"
+            mkdir -p "$RUNNER_TEMP/release-saved"
+            aliyun oss cp "$destination/" "$RUNNER_TEMP/release-saved/" --recursive
+            node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release-saved/artifact-index.json" "$GITHUB_SHA"
+            rm -rf "$RUNNER_TEMP/release"
+            mv "$RUNNER_TEMP/release-saved" "$RUNNER_TEMP/release"
+          else
+            aliyun oss cp "$RUNNER_TEMP/release/" "$destination/" --recursive
+          fi
+
+      - name: Create canonical Release Manifest
+        if: env.REUSE_RC != 'true'
+        run: |
+          set -euo pipefail
+          node scripts/release/assemble-release-evidence.mjs \
+            --authoritative "$RUNNER_TEMP/authoritative-evidence.json" \
+            --index "$RUNNER_TEMP/release/artifact-index.json" \
+            --sha "$GITHUB_SHA" --release-id "$STAGING_RELEASE_ID" \
+            --actor "$GITHUB_ACTOR" --created-at "$RELEASE_CREATED_AT" \
+            --expires-at "$RELEASE_EXPIRES_AT" --artifact-base-uri "$STAGING_RELEASE_OSS_URI" \
+            --output "$RUNNER_TEMP/release-evidence.json"
+          pnpm exec tsx server/src/release/createReleaseCandidateCli.ts \
+            --input "$RUNNER_TEMP/release-evidence.json" \
+            --output "$RUNNER_TEMP/manifest.json"
+          pnpm exec tsx server/src/release/validateReleaseManifestCli.ts \
+            "$RUNNER_TEMP/manifest.json" "$STAGING_RELEASE_ID"
+          manifest_digest="$(jq -r .digest "$RUNNER_TEMP/manifest.json")"
+          echo "MANIFEST_DIGEST=$manifest_digest" >> "$GITHUB_ENV"
+
+      - name: Create immutable RC tag, Release and built attestation
+        if: env.REUSE_RC != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if git rev-parse "$STAGING_RELEASE_ID^{commit}" >/dev/null 2>&1; then
+            test "$(git rev-parse "$STAGING_RELEASE_ID^{commit}")" = "$GITHUB_SHA"
+          else
+            git config user.name github-actions
+            git config user.email github-actions@github.com
+            git tag -a "$STAGING_RELEASE_ID" "$GITHUB_SHA" -m "Agent SaaS $STAGING_RELEASE_ID"
+            git push origin "refs/tags/$STAGING_RELEASE_ID"
+          fi
+          mkdir -p "$RUNNER_TEMP/attestations"
+          pnpm exec tsx server/src/release/releaseAttestationCli.ts \
+            --root "$RUNNER_TEMP/attestations" --release-id "$STAGING_RELEASE_ID" \
+            --digest "$MANIFEST_DIGEST" --state built \
+            --operation "build:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR" \
+            --reason "${{ inputs.reason || 'manual staging release' }}"
+          if gh release view "$STAGING_RELEASE_ID" >/dev/null 2>&1; then
+            gh release upload "$STAGING_RELEASE_ID" "$RUNNER_TEMP/manifest.json" \
+              "$RUNNER_TEMP/release/artifact-index.json" \
+              "$RUNNER_TEMP/attestations/$STAGING_RELEASE_ID.jsonl" --clobber
+          else
+            gh release create "$STAGING_RELEASE_ID" --verify-tag --prerelease \
+              --title "$STAGING_RELEASE_ID" --notes "${{ inputs.reason || 'Staging release candidate' }}" \
+              "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/release/artifact-index.json" \
+              "$RUNNER_TEMP/attestations/$STAGING_RELEASE_ID.jsonl"
+          fi
+
+      - name: Materialize selected Manifest artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/selected"
+          fetch() {
+            local uri="$1" target="$2"
+            case "$uri" in
+              oss://*) aliyun oss cp "$uri" "$target" ;;
+              https://*) curl -fsSL --retry 3 "$uri" -o "$target" ;;
+              *) echo "Unsupported immutable artifact URI: $uri" >&2; return 1 ;;
+            esac
+          }
+          for pair in 'serverBundle server-bundle.tgz' 'webAssets web-assets.tgz' 'acsOrchestrator acs-orchestrator.tgz'; do
+            set -- $pair
+            uri="$(jq -r ".artifacts.$1.uri" "$RUNNER_TEMP/manifest.json")"
+            digest="$(jq -r ".artifacts.$1.digest" "$RUNNER_TEMP/manifest.json")"
+            fetch "$uri" "$RUNNER_TEMP/selected/$2"
+            test "sha256:$(sha256sum "$RUNNER_TEMP/selected/$2" | cut -d' ' -f1)" = "$digest"
+          done
+
+      - name: Configure Staging SSH
+        run: |
+          set -euo pipefail
+          : "${STAGING_ECS_HOST:?Missing secret STAGING_ECS_HOST}"
+          : "${STAGING_ECS_USER:?Missing secret STAGING_ECS_USER}"
+          : "${STAGING_ECS_SSH_KEY:?Missing secret STAGING_ECS_SSH_KEY}"
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$STAGING_ECS_SSH_KEY" > ~/.ssh/staging_key
+          chmod 600 ~/.ssh/staging_key
+          ssh-keyscan -H "$STAGING_ECS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy exact Staging API, Worker and ACS artifacts
+        run: |
+          set -euo pipefail
+          remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID"
+          ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" "mkdir -p '$remote'"
+          scp -i ~/.ssh/staging_key "$RUNNER_TEMP/selected/"*.tgz "$RUNNER_TEMP/manifest.json" \
+            scripts/release/deploy-staging-release.sh "$STAGING_ECS_USER@$STAGING_ECS_HOST:$remote/"
+          ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
+            "RELEASE_DIR='$remote' MANIFEST_PATH='$remote/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$remote/deploy-staging-release.sh'"
+
+      - name: Publish exact Staging Web artifact last
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/web-assets" && mkdir -p "$RUNNER_TEMP/web-assets"
+          tar -xzf "$RUNNER_TEMP/selected/web-assets.tgz" -C "$RUNNER_TEMP/web-assets"
+          aliyun oss sync "$RUNNER_TEMP/web-assets/" "$STAGING_WEB_OSS_URI/" --delete
+          curl -fsS --retry 10 "$STAGING_WEB_URL" >/dev/null
+
+      - name: Verify live reverse-isolation evidence
+        run: |
+          set -euo pipefail
+          : "${STAGING_ISOLATION_EVIDENCE_URL:?Missing staging variable}"
+          curl -fsS -H "authorization: Bearer $RELEASE_EVIDENCE_TOKEN" \
+            "$STAGING_ISOLATION_EVIDENCE_URL?releaseId=$STAGING_RELEASE_ID" \
+            > "$RUNNER_TEMP/isolation-evidence.json"
+          node scripts/staging/assert-isolation.mjs "$RUNNER_TEMP/isolation-evidence.json" \
+            "$RUNNER_TEMP/isolation-summary.json"
+          echo "STAGING_ISOLATION_SUMMARY=$RUNNER_TEMP/isolation-summary.json" >> "$GITHUB_ENV"
+
+      - name: Run real browser and ACS E2E
+        run: |
+          set -euo pipefail
+          pnpm -F web exec playwright install --with-deps chromium
+          pnpm -F web exec playwright test -c ../e2e/playwright.config.ts
+
+      - name: Record Staging deployment and verification
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          log_root="$RUNNER_TEMP/attestations"
+          current="$(tail -n1 "$log_root/$STAGING_RELEASE_ID.jsonl" | jq -r .state)"
+          if [ "$current" = built ]; then
+            pnpm exec tsx server/src/release/releaseAttestationCli.ts \
+              --root "$log_root" --release-id "$STAGING_RELEASE_ID" --digest "$MANIFEST_DIGEST" \
+              --state staging_deployed --operation "staging:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR"
+            current=staging_deployed
+          fi
+          if [ "$current" = staging_deployed ]; then
+            pnpm exec tsx server/src/release/releaseAttestationCli.ts \
+              --root "$log_root" --release-id "$STAGING_RELEASE_ID" --digest "$MANIFEST_DIGEST" \
+              --state verified --operation "e2e:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR"
+            current=verified
+          fi
+          test "$current" = verified
+          gh release upload "$STAGING_RELEASE_ID" "$log_root/$STAGING_RELEASE_ID.jsonl" --clobber
+
+      - name: Upload independent Staging evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-evidence-${{ env.STAGING_RELEASE_ID }}
+          if-no-files-found: error
+          retention-days: 90
+          path: |
+            test-results/
+            playwright-report/
+            ${{ runner.temp }}/manifest.json
+            ${{ runner.temp }}/isolation-summary.json

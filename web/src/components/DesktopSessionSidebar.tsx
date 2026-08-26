@@ -324,7 +324,7 @@ function SessionRow({
         className={cn(
           "group relative flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 transition-colors",
           active
-            ? "bg-brand-accent-soft before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:rounded-r-full before:bg-brand-accent"
+            ? "bg-brand-accent-soft"
             : "hover:bg-muted",
           menuOpen && "z-10",
         )}
@@ -395,7 +395,7 @@ function SessionRow({
       className={cn(
         "group relative cursor-pointer rounded-lg px-3 py-3 transition-colors",
         active
-          ? "bg-brand-accent-soft before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-r-full before:bg-brand-accent"
+          ? "bg-brand-accent-soft"
           : "hover:bg-muted",
         menuOpen && "z-10",
       )}

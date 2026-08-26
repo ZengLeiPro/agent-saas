@@ -37,6 +37,16 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
     expect(screen.queryByText("平台管理")).toBeNull();
   });
 
+  it("分组间距清晰且激活项不显示左侧竖线", () => {
+    renderSidebar(access("ready", true, true));
+
+    const navigation = screen.getByLabelText("设置导航");
+    expect(navigation.querySelector("nav")?.className).toContain("gap-6");
+    const activeItem = navigation.querySelector('[aria-current="page"]');
+    expect(activeItem?.className).toContain("bg-brand-accent-soft");
+    expect(activeItem?.className).not.toContain("before:bg-brand-accent");
+  });
+
   it("只按各自 snapshot allowed 显示管理分组", () => {
     const { rerender } = renderSidebar(access("ready", true, false));
     expect(screen.getAllByText("组织管理").length).toBeGreaterThan(0);

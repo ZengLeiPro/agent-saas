@@ -67,7 +67,7 @@ export function UnifiedSettingsSidebar({
       </div>
 
       <ScrollArea className="min-h-0 flex-1" aria-label="设置导航">
-        <nav className="flex flex-col gap-4 px-2 pb-4 pt-1">
+        <nav className="flex flex-col gap-6 px-2 pb-4 pt-1">
           {(access.status === "loading" || access.status === "refreshing") && (
             <div className="flex items-center gap-2 px-2 text-xs text-muted-foreground" role="status">
               <Loader2 className="size-3.5 animate-spin" />

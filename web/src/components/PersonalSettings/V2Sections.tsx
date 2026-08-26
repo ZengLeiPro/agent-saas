@@ -49,7 +49,7 @@ export function MyAgentSection({
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
-      <SettingsPanelHeader title="我的 Agent" description="在资料、Persona 与长期 Memory 之间切换；深链刷新会保留当前 Tab。" />
+      <SettingsPanelHeader title="我的 Agent" description="在资料与长期 Memory 之间切换；深链刷新会保留当前 Tab。" />
       <Tabs value={tab} onValueChange={changeTab} className="flex min-h-0 flex-1 flex-col">
         <TabsList className="mb-4 w-fit">
           <TabsTrigger value="agent-profile">资料</TabsTrigger>

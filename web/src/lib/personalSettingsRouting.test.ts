@@ -35,20 +35,25 @@ describe("V2 个人设置路由与来源返回", () => {
     expect(parseUrl(expected)).toMatchObject({ settingsSection: section, canonicalPath: null });
   });
 
-  it("旧 URL canonical 到 V2 页面并保留我的 Agent Memory 深链", () => {
+  it("旧 URL canonical 到 V2 页面，并归一化已弃用的 Persona 深链", () => {
     expect(parseUrl("/settings/account")).toMatchObject({ settingsSection: "account-security", canonicalPath: "/settings/account-security" });
     expect(parseUrl("/settings/memory")).toMatchObject({
       settingsSection: "my-agent",
       governanceRoute: { tab: "memory" },
       canonicalPath: "/settings/my-agent?tab=memory",
     });
+    expect(parseUrl("/settings/my-agent", "?tab=persona")).toMatchObject({
+      settingsSection: "my-agent",
+      governanceRoute: { tab: "agent-profile" },
+      canonicalPath: "/settings/my-agent",
+    });
   });
 
   it("页内深链累计来源深度，关闭一次退回来源；直达刷新用 replace", () => {
     pushSettingsUrl("account-security", { source: "/chat/source", depth: 1 });
-    navigateSettingsRoute(governanceRoute("settings.personal.my-agent", { tab: "persona" }));
+    navigateSettingsRoute(governanceRoute("settings.personal.my-agent", { tab: "memory" }));
     expect(readPersonalSettingsHistoryState()).toEqual({ source: "/chat/source", depth: 2 });
-    expect(window.location.href).toContain("/settings/my-agent?tab=persona");
+    expect(window.location.href).toContain("/settings/my-agent?tab=memory");
 
     const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
     expect(closePersonalSettingsHistory("/fallback")).toBe("back");

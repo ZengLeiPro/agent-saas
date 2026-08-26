@@ -33,6 +33,8 @@ describe("我的 Agent", () => {
   it("人格定义不再作为跳转 Tab，资料卡负责打开编辑弹窗", () => {
     render(<MyAgentSection renderProfile={() => <div>资料卡</div>} renderMemory={() => <div>长期记忆</div>} />);
 
+    fireEvent.click(screen.getByRole("button", { name: "查看说明" }));
+    expect(screen.getByText("在资料与长期 Memory 之间切换；深链刷新会保留当前 Tab。")).toBeTruthy();
     expect(screen.getByRole("tab", { name: "资料" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "长期 Memory" })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "Persona" })).toBeNull();

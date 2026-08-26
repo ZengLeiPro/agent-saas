@@ -294,6 +294,8 @@ export interface RunStore {
    */
   enqueueBackgroundTask?(input: UpsertRunInput, limits: EnqueueBackgroundTaskLimits): Promise<RunRecord>;
   listBackgroundTasks?(parentSessionId: string, options?: ListBackgroundTasksOptions): Promise<RunRecord[]>;
+  /** Taskboard 关联 Session 中仍在运行或尚未完成唤醒投递的工作。 */
+  hasTaskboardSessionActivity?(sessionIds: string[], tenantId?: string): Promise<boolean>;
   findBackgroundTasksByIdentifier?(
     parentSessionId: string,
     identifier: string,

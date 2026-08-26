@@ -388,18 +388,25 @@ export function useTaskExecutions(taskId: string | null, active = true) {
   const [error, setError] = useState<string | null>(null);
   const taskIdRef = useRef(taskId);
   const requestRef = useRef(0);
+  const backgroundRefreshRef = useRef<{ requestId: number; taskId: string } | null>(null);
   taskIdRef.current = taskId;
 
-  const refresh = useCallback(async () => {
-    const requestId = ++requestRef.current;
+  const refresh = useCallback(async (background = false) => {
     const requestedTaskId = taskId;
     if (!requestedTaskId || !active) {
+      requestRef.current += 1;
+      backgroundRefreshRef.current = null;
       setExecutions([]);
       setError(null);
       setLoading(false);
       return;
     }
-    setLoading(true);
+    if (background && backgroundRefreshRef.current?.taskId === requestedTaskId) return;
+    if (!background) backgroundRefreshRef.current = null;
+    const requestId = ++requestRef.current;
+    const backgroundRequest = background ? { requestId, taskId: requestedTaskId } : null;
+    if (backgroundRequest) backgroundRefreshRef.current = backgroundRequest;
+    else setLoading(true);
     try {
       const next = await api.fetchExecutions(requestedTaskId);
       if (requestId !== requestRef.current || requestedTaskId !== taskIdRef.current) return;
@@ -409,7 +416,9 @@ export function useTaskExecutions(taskId: string | null, active = true) {
       if (requestId !== requestRef.current || requestedTaskId !== taskIdRef.current) return;
       setError(errorText(caught, "加载 Agent 执行记录失败"));
     } finally {
-      if (requestId === requestRef.current && requestedTaskId === taskIdRef.current) {
+      if (backgroundRequest && backgroundRefreshRef.current === backgroundRequest) {
+        backgroundRefreshRef.current = null;
+      } else if (!background && requestId === requestRef.current && requestedTaskId === taskIdRef.current) {
         setLoading(false);
       }
     }
@@ -417,23 +426,27 @@ export function useTaskExecutions(taskId: string | null, active = true) {
 
   useEffect(() => {
     requestRef.current += 1;
+    backgroundRefreshRef.current = null;
     setExecutions([]);
     setError(null);
     setLoading(false);
     void refresh();
     return () => {
       requestRef.current += 1;
+      backgroundRefreshRef.current = null;
     };
   }, [refresh]);
 
   const latestExecution = executions[0];
   const shouldPoll = Boolean(latestExecution && (
-    ACTIVE_EXECUTION_STATUSES.has(latestExecution.status) || latestExecution.continuationActive
+    ACTIVE_EXECUTION_STATUSES.has(latestExecution.status)
+    || latestExecution.continuationActive
+    || latestExecution.sessionActivityActive
   ));
   useEffect(() => {
     if (!active || !taskId || !shouldPoll) return;
     const timer = window.setInterval(() => {
-      void refresh();
+      void refresh(true);
     }, 3_000);
     return () => window.clearInterval(timer);
   }, [active, refresh, shouldPoll, taskId]);

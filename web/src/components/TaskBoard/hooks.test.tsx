@@ -123,6 +123,113 @@ describe("任务看板 hooks 并发一致性", () => {
     }
   });
 
+  it("正式 Execution 终态但 Session 后台活跃时继续轮询", async () => {
+    const activeSession: TaskBoardExecution = {
+      id: "execution-terminal",
+      taskId: originalTask.id,
+      runId: "run-terminal",
+      sessionId: "session-terminal",
+      status: "succeeded",
+      purpose: "work",
+      requestedBy: "user-1",
+      sessionActivityActive: true,
+      createdAt: originalTask.createdAt,
+      updatedAt: originalTask.updatedAt,
+    };
+    mocks.fetchExecutions
+      .mockResolvedValueOnce([activeSession])
+      .mockResolvedValueOnce([{ ...activeSession, sessionActivityActive: false }]);
+    vi.useFakeTimers();
+    try {
+      const { result, unmount } = renderHook(() => useTaskExecutions(originalTask.id));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(result.current.executions[0]?.sessionActivityActive).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(result.current.executions[0]?.sessionActivityActive).toBeFalsy();
+      expect(mocks.fetchExecutions).toHaveBeenCalledTimes(2);
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("Session 活跃轮询的慢请求不重叠且最终响应可落地", async () => {
+    const activeSession: TaskBoardExecution = {
+      id: "execution-slow", taskId: originalTask.id, runId: "run-slow", sessionId: "session-slow",
+      status: "succeeded", purpose: "work", requestedBy: "user-1", sessionActivityActive: true,
+      createdAt: originalTask.createdAt, updatedAt: originalTask.updatedAt,
+    };
+    const pendingRefresh = deferred<TaskBoardExecution[]>();
+    mocks.fetchExecutions
+      .mockResolvedValueOnce([activeSession])
+      .mockReturnValueOnce(pendingRefresh.promise);
+    vi.useFakeTimers();
+    try {
+      const { result, unmount } = renderHook(() => useTaskExecutions(originalTask.id));
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+      expect(mocks.fetchExecutions).toHaveBeenCalledTimes(2);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
+      expect(mocks.fetchExecutions).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        pendingRefresh.resolve([{ ...activeSession, sessionActivityActive: false }]);
+        await pendingRefresh.promise;
+      });
+      expect(result.current.executions[0]?.sessionActivityActive).toBe(false);
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("旧任务后台轮询挂起时切换任务仍可继续轮询且旧响应不会覆盖", async () => {
+    const taskOneActive: TaskBoardExecution = {
+      id: "execution-task-1", taskId: originalTask.id, runId: "run-task-1", sessionId: "session-task-1",
+      status: "succeeded", purpose: "work", requestedBy: "user-1", sessionActivityActive: true,
+      createdAt: originalTask.createdAt, updatedAt: originalTask.updatedAt,
+    };
+    const taskTwoActive = { ...taskOneActive, id: "execution-task-2", taskId: "task-2", sessionId: "session-task-2" };
+    const pendingOldRefresh = deferred<TaskBoardExecution[]>();
+    mocks.fetchExecutions
+      .mockResolvedValueOnce([taskOneActive])
+      .mockReturnValueOnce(pendingOldRefresh.promise)
+      .mockResolvedValueOnce([taskTwoActive])
+      .mockResolvedValueOnce([{ ...taskTwoActive, sessionActivityActive: false }]);
+    vi.useFakeTimers();
+    try {
+      const { result, rerender, unmount } = renderHook(
+        ({ taskId }) => useTaskExecutions(taskId),
+        { initialProps: { taskId: originalTask.id } },
+      );
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+      expect(mocks.fetchExecutions).toHaveBeenCalledTimes(2);
+
+      rerender({ taskId: "task-2" });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+      expect(mocks.fetchExecutions).toHaveBeenCalledTimes(4);
+      expect(result.current.executions[0]?.taskId).toBe("task-2");
+      expect(result.current.executions[0]?.sessionActivityActive).toBe(false);
+
+      await act(async () => {
+        pendingOldRefresh.resolve([taskOneActive]);
+        await pendingOldRefresh.promise;
+      });
+      expect(result.current.executions[0]?.taskId).toBe("task-2");
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("乐观移动立即生效，失败后回滚并刷新，同时提交 expectedVersion", async () => {
     const pendingMove = deferred<TaskBoardTask>();
     mocks.moveTask.mockReturnValueOnce(pendingMove.promise);

@@ -404,19 +404,14 @@ export function TaskDetail({
   const completeCurrentTask = async () => {
     if (!currentTask || !canCompleteCurrentTask) return;
     if (!window.confirm(`确认将任务“${currentTask.title || currentTask.identifier}”标记为已完成吗？完成后将结束当前任务工作流。`)) return;
-    const operationTask = currentTask;
-    const requestId = ++detailRequestRef.current;
-    setSaving(true);
-    setError(null);
+    const operationTask = currentTask; const requestId = ++detailRequestRef.current;
+    setSaving(true); setError(null);
     try {
       const next = await onCompleteTask(operationTask);
       if (!isCurrentOperation(requestId, operationTask.id)) return;
-      setCurrentTask(next);
-      mergeServerDraft(next);
-      onTaskLoaded(next);
+      setCurrentTask(next); mergeServerDraft(next); onTaskLoaded(next);
     } catch (caught) {
-      if (!isCurrentOperation(requestId, operationTask.id)) return;
-      useConflictCurrent(caught); void refreshExecutions();
+      if (!isCurrentOperation(requestId, operationTask.id)) return; useConflictCurrent(caught); void refreshExecutions();
       setError(caught instanceof Error ? caught.message : "完成任务失败");
     } finally {
       if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);

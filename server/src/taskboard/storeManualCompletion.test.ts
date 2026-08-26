@@ -54,6 +54,7 @@ function host(current: TaskBoardTask, options: {
     executionsTable: 'executions',
     continuationOutboxTable: 'continuations',
     executionOutboxTable: 'execution_outbox',
+    blockEpisodesTable: 'blocks',
     changesTable: 'changes',
     withTransaction: vi.fn(async (operation: (transactionClient: TestClient) => Promise<unknown>) => operation(client)),
     requireTaskWithBoard: vi.fn(async () => ({
@@ -115,7 +116,11 @@ describe('PgTaskboardStore.completeTask', () => {
     ['remediation task', task({ kind: 'remediation' })],
     ['completed task', task({ status: 'done' })],
     ['canceled task', task({ status: 'canceled' })],
-    ['claimed task', task({ mergeEligibility: 'claimed' })],
+    ['eligible delivery', task({ kind: 'delivery', mergeEligibility: 'eligible' })],
+    ['claimed delivery', task({ kind: 'delivery', mergeEligibility: 'claimed' })],
+    ['delivery with an unmerged pull request', task({
+      kind: 'delivery', providerPullRequestId: '235', pullRequestNumber: 235,
+    })],
   ])('keeps %s under workflow control', async (_label, current) => {
     const { store } = host(current);
     await expect(PgTaskboardStore.prototype.completeTask.call(
@@ -137,6 +142,22 @@ describe('PgTaskboardStore.completeTask', () => {
       current.id,
       { expectedVersion: current.version },
     )).rejects.toMatchObject({ code });
+  });
+
+  it('closes an open block episode when completing a blocked task', async () => {
+    const current = task({ status: 'blocked' });
+    const { store, query } = host(current);
+
+    await PgTaskboardStore.prototype.completeTask.call(
+      store as unknown as PgTaskboardStore,
+      identity,
+      current.id,
+      { expectedVersion: current.version },
+    );
+
+    const sql = query.mock.calls.map(([statement]) => statement).join('\n');
+    expect(sql).toContain('UPDATE blocks SET closed_at=COALESCE(closed_at,now())');
+    expect(sql).toContain('WHERE task_id=$1 AND closed_at IS NULL');
   });
 
   it('rejects manual completion while an Agent execution is active', async () => {

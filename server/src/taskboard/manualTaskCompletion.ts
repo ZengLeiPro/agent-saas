@@ -21,9 +21,13 @@ export async function completeStoredTask(
     assertBoardRole(loaded.boardRole, 'maintainer');
     assertExpectedVersion(loaded.task, input.expectedVersion);
     assertWritableTask(loaded.task, loaded.boardArchivedAt);
+    const deliveryRequiresWorkflow = loaded.task.kind === 'delivery' && (
+      loaded.task.mergeEligibility === 'eligible' || loaded.task.mergeEligibility === 'claimed'
+      || Boolean(loaded.task.providerPullRequestId && !loaded.task.mergedCommitOid)
+    );
     if (loaded.task.kind === 'integration' || loaded.task.kind === 'remediation'
       || loaded.task.status === 'done' || loaded.task.status === 'canceled'
-      || loaded.task.mergeEligibility === 'claimed') {
+      || deliveryRequiresWorkflow) {
       throw new TaskboardValidationError(
         'This task must be completed by its workflow',
         'TASKBOARD_PROTECTED_TRANSITION',
@@ -46,6 +50,13 @@ export async function completeStoredTask(
         WHERE id=$1`,
       [taskId, sortOrder],
     );
+    if (loaded.task.status === 'blocked') {
+      await client.query(
+        `UPDATE ${store.blockEpisodesTable} SET closed_at=COALESCE(closed_at,now())
+          WHERE task_id=$1 AND closed_at IS NULL`,
+        [taskId],
+      );
+    }
     await appendTaskChange(store, client, taskId, 'task.transitioned', 'user', identity.ownerUserId, {
       from: loaded.task.status,
       to: 'done',

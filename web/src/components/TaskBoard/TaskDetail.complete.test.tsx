@@ -118,7 +118,11 @@ describe("TaskDetail 人工完成", () => {
     ["修复任务", { ...advisoryTask, kind: "remediation" as const }, false, true],
     ["已完成任务", { ...advisoryTask, status: "done" as const }, false, true],
     ["已取消任务", { ...advisoryTask, status: "canceled" as const }, false, true],
-    ["被集成占用", { ...advisoryTask, mergeEligibility: "claimed" as const }, false, true],
+    ["待集成 Delivery", { ...advisoryTask, kind: "delivery" as const, mergeEligibility: "eligible" as const }, false, true],
+    ["被集成占用", { ...advisoryTask, kind: "delivery" as const, mergeEligibility: "claimed" as const }, false, true],
+    ["带未合并 PR", {
+      ...advisoryTask, kind: "delivery" as const, providerPullRequestId: "235", pullRequestNumber: 235,
+    }, false, true],
   ])("%s不满足人工完成条件", (_label, candidate, readOnly, canTransition) => {
     expect(canManuallyCompleteTask(candidate, readOnly, canTransition, false, true)).toBe(false);
   });

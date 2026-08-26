@@ -146,24 +146,26 @@ describe("任务看板 hooks 并发一致性", () => {
     }
   });
 
-  it("后台 Execution 刷新未完成时不发起重叠请求", async () => {
+  it("后台 Execution 慢刷新不重叠且有效响应最终落地", async () => {
     const activeExecution: TaskBoardExecution = {
       id: "execution-slow", taskId: originalTask.id, runId: "run-slow", sessionId: "session-slow",
       status: "running", purpose: "work", requestedBy: "user-2",
       createdAt: originalTask.createdAt, updatedAt: originalTask.updatedAt,
     };
+    const completedExecution = { ...activeExecution, status: "succeeded" as const };
     const pendingRefresh = deferred<TaskBoardExecution[]>();
     mocks.fetchExecutions.mockResolvedValueOnce([activeExecution]).mockReturnValueOnce(pendingRefresh.promise);
     vi.useFakeTimers();
     try {
-      const { unmount } = renderHook(() => useTaskExecutions(originalTask.id));
+      const { result, unmount } = renderHook(() => useTaskExecutions(originalTask.id));
       await act(async () => { await Promise.resolve(); await Promise.resolve(); });
       await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
       expect(mocks.fetchExecutions).toHaveBeenCalledTimes(2);
 
       await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
       expect(mocks.fetchExecutions).toHaveBeenCalledTimes(2);
-      await act(async () => { pendingRefresh.resolve([activeExecution]); await pendingRefresh.promise; });
+      await act(async () => { pendingRefresh.resolve([completedExecution]); await pendingRefresh.promise; });
+      expect(result.current.executions[0]).toEqual(completedExecution);
       unmount();
     } finally {
       vi.useRealTimers();

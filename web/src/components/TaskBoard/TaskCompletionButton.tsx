@@ -12,7 +12,11 @@ export function canManuallyCompleteTask(
 ): boolean {
   if (!task || readOnly || !canTransitionTask || executionActive || !executionStateReady) return false;
   if (task.kind === "integration" || task.kind === "remediation") return false;
-  return !["done", "canceled"].includes(task.status) && task.mergeEligibility !== "claimed";
+  if (task.kind === "delivery" && (
+    task.mergeEligibility === "eligible" || task.mergeEligibility === "claimed"
+    || Boolean(task.providerPullRequestId && !task.mergedCommitOid)
+  )) return false;
+  return !["done", "canceled"].includes(task.status);
 }
 
 export function TaskCompletionButton({

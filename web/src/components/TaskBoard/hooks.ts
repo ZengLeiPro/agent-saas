@@ -411,9 +411,9 @@ export function useTaskExecutions(taskId: string | null, active = true) {
   taskIdRef.current = taskId;
 
   const refresh = useCallback(async (background = false) => {
-    const requestId = ++requestRef.current;
     const requestedTaskId = taskId;
     if (!requestedTaskId || !active) {
+      requestRef.current += 1;
       setExecutions([]);
       setLoadedTaskId(null);
       setError(null);
@@ -421,6 +421,7 @@ export function useTaskExecutions(taskId: string | null, active = true) {
       return;
     }
     if (background && backgroundRefreshRef.current) return;
+    const requestId = ++requestRef.current;
     if (background) backgroundRefreshRef.current = true;
     else setLoading(true);
     try {

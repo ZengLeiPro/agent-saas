@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -158,6 +158,23 @@ describeIfDocker('ContainerExecutionProvider', () => {
     expect(writeAudit?.containerName).toContain(prefix);
     expect(writeAudit?.stdoutBytes).toBeGreaterThan(0);
     expect(writeAudit?.stderrBytes).toBe(0);
+  });
+
+  it('ignores text range parameters when reading an image', async () => {
+    await copyFile(join(process.cwd(), '../web/public/favicon-32x32.png'), join(root, 'image.png'));
+
+    const response = await invoke(provider, workspace(root), 'Read', {
+      path: 'image.png',
+      offset: 1,
+      limit: 10,
+    });
+
+    expect(response.status).toBe('success');
+    expect(response.status === 'success' ? response.content : '').toContain('Read image image.png');
+    expect(response.status === 'success' ? response.metadata : undefined).toMatchObject({
+      path: 'image.png',
+      mimeType: 'image/png',
+    });
   });
 
   it('runs shell without inheriting host environment variables or host cwd files', async () => {

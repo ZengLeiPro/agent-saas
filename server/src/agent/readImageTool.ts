@@ -21,9 +21,6 @@ export async function tryReadWorkspaceImage(input: {
   const header = await readBufferPrefix(input.fullPath, 32);
   const mimeType = detectWorkspaceImageMime(header);
   if (!mimeType) return undefined;
-  if (input.offset !== undefined || input.limit !== undefined) {
-    throw new Error('Read: offset/limit are only valid for text files, not images');
-  }
   if (input.fileSize > MAX_READ_IMAGE_SOURCE_BYTES) {
     throw new Error(`Read: image too large (${input.fileSize}B > ${MAX_READ_IMAGE_SOURCE_BYTES}B)`);
   }

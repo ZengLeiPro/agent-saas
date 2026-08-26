@@ -180,6 +180,10 @@ export class AgentDwsMessageRouter {
     if (this.stopped) return false;
     const item = await this.options.messageStore.claimNext(this.workerId, this.leaseTtlMs);
     if (!item) return false;
+    if (this.stopped) {
+      await this.options.messageStore.releaseClaim(item.inboxId, this.workerId, item.leaseFence);
+      return false;
+    }
     const abortController = new AbortController();
     this.activeAborts.add(abortController);
     let leaseLost = false;

@@ -14,7 +14,7 @@ import type {
 } from '../agent/toolRuntime.js';
 import {
   createBuiltinAgentProfileRecords,
-  getBuiltinHistoricalConfigDigests,
+  getBuiltinCompatibleConfigDigests,
   getBuiltinProfileByBinding,
 } from '../data/agentProfiles/builtins.js';
 import {
@@ -382,20 +382,27 @@ describe('real RawAgentLoop Profile scenarios', () => {
     expect(systemMessage(newAdapter.requests[0]!)).toContain('PROFILE_V2_MARKER');
   });
 
-  it('only accepts registered historical digests for a current built-in background Worker Profile', async () => {
+  it('only accepts registered same-version migration digests for a built-in background Worker Profile', async () => {
     const store = new MutableProfileStore();
     await store.init();
     const resolver = new AgentRuntimeProfileResolver(store);
     const background = boundFromBuiltin('background_general');
-    const historicalDigest = getBuiltinHistoricalConfigDigests('background_general')[0]!;
+    const persistedV2Digest = digestAgentRuntimeProfileConfig({
+      ...background.version.config,
+      limits: { ...background.version.config.limits, maxTurns: 200 },
+    });
+    expect(getBuiltinCompatibleConfigDigests(background.version.profileVersionId)).toContain(persistedV2Digest);
     await expect(resolver.resolveForSession({
-      existingSession: { ...sessionFromBound(background), profileConfigDigest: historicalDigest },
+      existingSession: { ...sessionFromBound(background), profileConfigDigest: persistedV2Digest },
       bindingKey: 'background_general',
     })).resolves.toMatchObject({
       binding: { profileVersionId: background.binding.profileVersionId },
     });
 
-    for (const profileConfigDigest of ['unregistered-background-digest', undefined]) {
+    const v1Digest = createBuiltinAgentProfileRecords().versions.find(version => (
+      version.profileVersionId === 'arpv_builtin_subagent_general_v1'
+    ))!.configDigest;
+    for (const profileConfigDigest of [v1Digest, 'unregistered-background-digest', undefined]) {
       await expect(resolver.resolveForSession({
         existingSession: { ...sessionFromBound(background), profileConfigDigest },
         bindingKey: 'background_general',

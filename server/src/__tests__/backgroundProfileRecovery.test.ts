@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createBuiltinTools } from '../agent/builtinTools.js';
 import { createDefaultExecutionTransportRegistry, type ToolCallContext } from '../agent/toolRuntime.js';
-import { getBuiltinHistoricalConfigDigests } from '../data/agentProfiles/builtins.js';
+import { digestAgentRuntimeProfileConfig } from '../data/agentProfiles/types.js';
 import { InMemoryAgentRuntimeProfileStore } from '../data/agentProfiles/store.js';
 import {
   DEFAULT_ORG_AGENT_RUNTIME_POLICY,
@@ -31,7 +31,7 @@ afterEach(async () => {
 });
 
 describe('background Profile recovery', () => {
-  it('reloads the pinned task session and starts a real Worker child with a legacy builtin digest', async () => {
+  it('reloads a persisted v2 task pin from before the maxTurns migration and starts a real Worker', async () => {
     const root = await mkdtemp(join(tmpdir(), 'background-profile-recovery-'));
     cleanup.add(root);
     const tenantId = `tenant-${randomUUID().slice(0, 8)}`;
@@ -94,8 +94,11 @@ describe('background Profile recovery', () => {
     taskSession = resolver.bindSessionRecord(taskSession, effectiveWorker);
     expect(effectiveWorker.version.config.model).toEqual({ strategy: 'fixed', modelRef: 'mock/worker-model' });
     expect(taskSession.profileConfigDigest).toBe(background.binding.profileConfigDigest);
-    const historicalDigest = getBuiltinHistoricalConfigDigests('background_general')[0]!;
-    await sessionCatalog.upsert({ ...taskSession, profileConfigDigest: historicalDigest });
+    const persistedV2Digest = digestAgentRuntimeProfileConfig({
+      ...background.version.config,
+      limits: { ...background.version.config.limits, maxTurns: 200 },
+    });
+    await sessionCatalog.upsert({ ...taskSession, profileConfigDigest: persistedV2Digest });
     const reloaded = await sessionCatalog.get(taskSessionId);
     expect(reloaded).not.toBeNull();
 

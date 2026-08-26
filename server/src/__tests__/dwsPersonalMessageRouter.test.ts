@@ -86,6 +86,7 @@ function setup(input: {
     ingest: vi.fn(),
     listForAccount: vi.fn().mockResolvedValue([]),
     claimNext,
+    releaseClaim: vi.fn().mockResolvedValue({ ...claimed, state: 'pending', attempt: 0 }),
     renewLease: vi.fn().mockResolvedValue(true),
     getOrCreateBinding: vi.fn().mockImplementation(async (
       tenantId: string, accountId: string, conversationId: string,
@@ -221,6 +222,29 @@ describe('AgentDwsMessageRouter', () => {
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('database unavailable'));
     expect(claimNext.mock.calls.length).toBeGreaterThanOrEqual(2);
     await router.stop();
+  });
+
+  it('releases a claim that resolves during stop without dispatching or consuming retries', async () => {
+    let resolveClaim!: (claimed: AgentDwsInboxRecord) => void;
+    const pendingClaim = new Promise<AgentDwsInboxRecord>(resolve => { resolveClaim = resolve; });
+    const claimNext = vi.fn().mockReturnValueOnce(pendingClaim).mockResolvedValue(null);
+    const { router, messageStore, dispatch, sender } = setup({ claimNext, maxConcurrency: 1 });
+
+    router.start();
+    await vi.waitFor(() => expect(claimNext).toHaveBeenCalledOnce());
+    let stopSettled = false;
+    const stopping = router.stop().then(() => { stopSettled = true; });
+    await Promise.resolve();
+    expect(stopSettled).toBe(false);
+
+    resolveClaim(item);
+    await stopping;
+
+    expect(messageStore.releaseClaim).toHaveBeenCalledWith('inbox-a', expect.any(String), item.leaseFence);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(sender.send).not.toHaveBeenCalled();
+    expect(messageStore.fail).not.toHaveBeenCalled();
+    expect(messageStore.defer).not.toHaveBeenCalled();
   });
 
   it('aborts and waits for all active work on stop without consuming retries', async () => {

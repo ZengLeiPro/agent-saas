@@ -8,7 +8,7 @@ import type {
 } from '../agent/toolRuntime.js';
 import { parseMcpToolKey } from '../mcp/clientManager.js';
 import {
-  getBuiltinHistoricalConfigDigests,
+  getBuiltinCompatibleConfigDigests,
   getBuiltinProfileByBinding,
 } from '../data/agentProfiles/builtins.js';
 import {
@@ -131,14 +131,14 @@ export class AgentRuntimeProfileResolver {
     }
     const digest = digestAgentRuntimeProfileConfig(version.config);
     if (digest !== version.configDigest || session.profileConfigDigest !== version.configDigest) {
-      // 后台 Worker 可能由升级前的进程创建、升级后的进程执行。仅接受源码中明确
-      // 登记的历史内置摘要；缺失、随机摘要及数据库 Profile 仍严格拒绝。
+      // 后台 Worker 可能由升级前的进程创建、升级后的进程执行。仅接受源码中按
+      // 同一内置 versionId 登记的迁移摘要；跨版本、缺失、随机及数据库摘要仍拒绝。
       const historicalBuiltinBackgroundProfile = (expectedBindingKey === 'background_general'
         || expectedBindingKey === 'background_explore')
         && session.profileVersionId === builtin.version.profileVersionId
         && digest === version.configDigest
         && !!session.profileConfigDigest
-        && getBuiltinHistoricalConfigDigests(expectedBindingKey).includes(session.profileConfigDigest);
+        && getBuiltinCompatibleConfigDigests(version.profileVersionId).includes(session.profileConfigDigest);
       if (!historicalBuiltinBackgroundProfile) {
         const mismatch = digest !== version.configDigest ? 'version_config' : 'session_pin';
         throw new AgentRuntimeProfileError(

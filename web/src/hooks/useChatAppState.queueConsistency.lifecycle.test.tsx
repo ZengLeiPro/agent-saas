@@ -10,6 +10,7 @@ const harness = vi.hoisted(() => {
     messageHandlers,
     stateHandlers,
     sends: vi.fn(async (_payload: unknown) => true),
+    forceReconnect: vi.fn(async () => {}),
     authFetch: vi.fn(async (_url: string, _init?: unknown): Promise<Response> => new Response("{}", { status: 404 })),
     currentFiles: [] as UploadedFile[],
     replaceFiles: vi.fn((files: UploadedFile[]) => {
@@ -97,7 +98,7 @@ vi.mock("@/lib/wsClient", () => ({
     disconnect: vi.fn(),
     send: vi.fn(() => true),
     ensureConnectedSend: (payload: unknown) => harness.sends(payload),
-    forceReconnect: vi.fn(async () => {}),
+    forceReconnect: () => harness.forceReconnect(),
     setLastSeq: vi.fn(),
     setEpoch: vi.fn(),
     onMessage: (handler: (envelope: { data: unknown }) => void) => {
@@ -132,6 +133,7 @@ beforeEach(() => {
   harness.messageHandlers.clear();
   harness.stateHandlers.clear();
   harness.sends.mockClear();
+  harness.forceReconnect.mockReset().mockResolvedValue(undefined);
   harness.replaceFiles.mockClear();
   harness.currentFiles = [];
   harness.session.sessionId = null;
@@ -720,6 +722,40 @@ describe("useChatAppState queue consistency lifecycle", () => {
 
     await waitFor(() => expect(chatPayloads()).toHaveLength(2));
     expect(chatPayloads().map((payload) => payload.message)).toEqual(["first", "next root"]);
+  });
+
+  it("reconnects away from a draining server and lets retry resend the rejected message", async () => {
+    harness.session.sessionId = "session-draining";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => result.current.setInput("retry after restart"));
+    await act(async () => { await result.current.sendMessage(); });
+    const clientMsgId = chatPayloads()[0].client_msg_id as string;
+
+    act(() => emit({
+      type: "chat_rejected",
+      client_msg_id: clientMsgId,
+      reason_code: "server_draining",
+      reason: "服务即将关闭，请稍后重试",
+    }));
+
+    await waitFor(() => expect(harness.forceReconnect).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.messages.find((message) => (
+      message.type === "user" && message.clientMsgId === clientMsgId
+    ))).toMatchObject({ status: "failed" }));
+    const failedMessage = result.current.messages.find((message) => (
+      message.type === "user" && message.clientMsgId === clientMsgId
+    ));
+    if (!failedMessage) throw new Error("rejected message bubble missing");
+
+    act(() => result.current.retryMessage(failedMessage));
+    await waitFor(() => expect(chatPayloads()).toHaveLength(2));
+    expect(chatPayloads()[1]).toMatchObject({
+      client_msg_id: clientMsgId,
+      message: "retry after restart",
+      sessionId: "session-draining",
+    });
   });
 
   it("drops a provisional batch on session switch and ignores the late session confirmation", async () => {

@@ -1516,6 +1516,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // ---- WS 消息处理 ----
   useEffect(() => {
+    let drainingReconnect: Promise<void> | null = null;
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
       if (!data || !data.type) return;
@@ -2072,6 +2073,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         wsLatestSessionIdRef.current,
         immediateSessionIdRef.current,
       );
+
+      if (data.type === 'chat_rejected' && data.reason_code === 'server_draining' && !drainingReconnect) {
+        // drain 期间旧实例会保留既有 WebSocket 等待其他 run 排空。若不主动换连，
+        // 后续重试仍会发给同一个 draining 实例，只有刷新页面才会恢复。
+        drainingReconnect = wsClient.forceReconnect()
+          .catch(() => {})
+          .finally(() => { drainingReconnect = null; });
+      }
 
       // 新建会话 → replaceState（不创建历史记录）
       if (data.type === 'session' && 'sessionId' in data) {

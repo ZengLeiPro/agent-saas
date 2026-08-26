@@ -34,6 +34,17 @@ function successfulGit(command, args) {
   return '';
 }
 
+function runtimeObservation(overrides = {}) {
+  return {
+    now: Date.parse('2026-08-25T00:01:00.000Z'),
+    topologyExecFileSync: () => 'active\n',
+    topologyRealpathSync: () => `/srv/releases/${TARGET}`,
+    topologyReadFileSync: (path) => path.endsWith('.pid') ? '123' : TARGET,
+    topologyProcessExists: () => true,
+    ...overrides,
+  };
+}
+
 test('preflight succeeds for full SHAs, main ancestry, production identity, and mapped changes', () => {
   const result = runPreflight({
     target: TARGET,
@@ -41,6 +52,7 @@ test('preflight succeeds for full SHAs, main ancestry, production identity, and 
     identityPath: 'fixtures/production-runtime-identity.json',
     execFileSync: successfulGit,
     readFileSync: () => JSON.stringify(productionIdentity()),
+    runtimeObservation: runtimeObservation(),
   });
 
   assert.equal(result.ok, true);
@@ -76,6 +88,7 @@ test('preflight blocks a target outside main, a non-ancestor baseline, incomplet
     identityPath: 'fixtures/production-runtime-identity.json',
     execFileSync,
     readFileSync: () => JSON.stringify(identity),
+    runtimeObservation: runtimeObservation(),
   });
 
   assert.equal(result.ok, false);
@@ -88,27 +101,56 @@ test('preflight blocks a target outside main, a non-ancestor baseline, incomplet
 
 test('preflight fails closed for conflicting production topology or component baseline', () => {
   const topologyConflict = productionIdentity({ topology: { ...productionIdentity().topology, api: { ...productionIdentity().topology.api, pidfile: '/run/green-api.pid' } } });
-  const conflict = runPreflight({ target: TARGET, baseline: BASELINE, identityPath: './production.json', execFileSync: successfulGit, readFileSync: () => JSON.stringify(topologyConflict) });
+  const conflict = runPreflight({ target: TARGET, baseline: BASELINE, identityPath: './production.json', execFileSync: successfulGit, readFileSync: () => JSON.stringify(topologyConflict), runtimeObservation: runtimeObservation() });
   assert.equal(conflict.ok, false);
   assert.match(conflict.blockingReasons.join('\n'), /pidfile conflicts with activeColor/u);
   const baselineConflict = productionIdentity({ gitSha: TARGET });
-  const stale = runPreflight({ target: TARGET, baseline: BASELINE, identityPath: './production.json', execFileSync: successfulGit, readFileSync: () => JSON.stringify(baselineConflict) });
+  const stale = runPreflight({ target: TARGET, baseline: BASELINE, identityPath: './production.json', execFileSync: successfulGit, readFileSync: () => JSON.stringify(baselineConflict), runtimeObservation: runtimeObservation() });
   assert.equal(stale.ok, false);
   assert.match(stale.blockingReasons.join('\n'), /does not match the supplied baseline/u);
 });
 
 test('runtime identity rejects placeholder topology fields', () => {
   const identity = productionIdentity({ topology: { ...productionIdentity().topology, api: { unit: 'blue', releaseSymlink: 'blue', pidfile: 'blue', readyfile: 'blue' } } });
-  const result = readRuntimeIdentity({ identityPath: './production.json', readFileSync: () => JSON.stringify(identity) });
+  const result = readRuntimeIdentity({ identityPath: './production.json', readFileSync: () => JSON.stringify(identity), ...runtimeObservation() });
   assert.equal(result.ok, false);
   assert.match(result.blockingReasons.join('\n'), /colored systemd unit/u);
   assert.match(result.blockingReasons.join('\n'), /absolute path/u);
+});
+
+test('runtime identity fails closed for stale or unverifiable topology observations', () => {
+  const staleIdentity = productionIdentity({
+    topology: { ...productionIdentity().topology, observedAt: '2000-01-01T00:00:00.000Z' },
+  });
+  const stale = readRuntimeIdentity({
+    identityPath: './production.json',
+    readFileSync: () => JSON.stringify(staleIdentity),
+    ...runtimeObservation(),
+  });
+  assert.equal(stale.ok, false);
+  assert.match(stale.blockingReasons.join('\n'), /stale or in the future/u);
+
+  const missing = readRuntimeIdentity({
+    identityPath: './production.json',
+    readFileSync: () => JSON.stringify(productionIdentity()),
+    ...runtimeObservation({
+      topologyExecFileSync: () => { throw new Error('unit absent'); },
+      topologyRealpathSync: () => { throw new Error('symlink absent'); },
+      topologyReadFileSync: () => { throw new Error('file absent'); },
+    }),
+  });
+  assert.equal(missing.ok, false);
+  assert.match(missing.blockingReasons.join('\n'), /Unable to observe active systemd unit/u);
+  assert.match(missing.blockingReasons.join('\n'), /Unable to resolve production release symlink/u);
+  assert.match(missing.blockingReasons.join('\n'), /Unable to read production pidfile/u);
+  assert.match(missing.blockingReasons.join('\n'), /Unable to read production readyfile/u);
 });
 
 test('runtime identity accepts only local, complete production JSON', () => {
   const valid = readRuntimeIdentity({
     identityPath: './production.json',
     readFileSync: () => JSON.stringify(productionIdentity()),
+    ...runtimeObservation(),
   });
   assert.equal(valid.ok, true);
 

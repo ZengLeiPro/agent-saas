@@ -19,6 +19,7 @@ export function runPreflight({
   cwd = process.cwd(),
   execFileSync = defaultExecFileSync,
   readFileSync,
+  runtimeObservation = {},
 }) {
   const blockingReasons = [];
   const targetIsFullSha = isFullSha(target);
@@ -39,7 +40,7 @@ export function runPreflight({
     blockingReasons.push(`Baseline ${baseline} is not an ancestor of target ${target}.`);
   }
 
-  const identity = readRuntimeIdentity({ identityPath, readFileSync });
+  const identity = readRuntimeIdentity({ identityPath, readFileSync, ...runtimeObservation });
   blockingReasons.push(...identity.blockingReasons);
   if (identity.ok) {
     if (identity.identity.gitSha !== baseline) blockingReasons.push('Production runtime identity gitSha does not match the supplied baseline.');

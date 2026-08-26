@@ -1,20 +1,24 @@
-import { readFileSync as defaultReadFileSync } from 'node:fs';
+import { execFileSync as defaultExecFileSync } from 'node:child_process';
+import { readFileSync as defaultReadFileSync, realpathSync as defaultRealpathSync } from 'node:fs';
 
 export const COMPONENTS = Object.freeze(['web', 'api', 'runtimeWorker', 'acs']);
 export const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/iu;
 const COLOR_PATTERN = /^(blue|green)$/u;
+const MAX_OBSERVATION_AGE_MS = 5 * 60 * 1000;
 
 export function isFullSha(value) { return typeof value === 'string' && FULL_SHA_PATTERN.test(value); }
 export function isLocalFilePath(filePath) { return typeof filePath === 'string' && filePath.trim().length > 0 && !/^[a-z][a-z0-9+.-]*:/iu.test(filePath); }
 function nonEmpty(value) { return typeof value === 'string' && value.trim().length > 0; }
 
-function validateTopology(topology, reasons) {
+function validateTopology(topology, reasons, now) {
   if (!topology || typeof topology !== 'object' || Array.isArray(topology)) {
     reasons.push('Production runtime identity topology must be an object.');
     return;
   }
   if (!COLOR_PATTERN.test(topology.activeColor ?? '')) reasons.push('Production runtime identity topology activeColor must be blue or green.');
-  if (typeof topology.observedAt !== 'string' || Number.isNaN(Date.parse(topology.observedAt))) reasons.push('Production runtime identity topology must have an ISO observedAt timestamp.');
+  const observedAt = Date.parse(topology.observedAt ?? '');
+  if (Number.isNaN(observedAt)) reasons.push('Production runtime identity topology must have an ISO observedAt timestamp.');
+  else if (observedAt > now + 60_000 || now - observedAt > MAX_OBSERVATION_AGE_MS) reasons.push('Production runtime identity topology observation is stale or in the future.');
   for (const role of ['api', 'runtimeWorker']) {
     const entry = topology[role];
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -32,7 +36,32 @@ function validateTopology(topology, reasons) {
   }
 }
 
-export function validateRuntimeIdentity(identity) {
+function observeTopology(identity, reasons, { readFileSync, realpathSync, execFileSync, processExists }) {
+  const topology = identity.topology;
+  if (!topology || typeof topology !== 'object') return;
+  for (const [role, component] of [['api', 'api'], ['runtimeWorker', 'runtimeWorker']]) {
+    const entry = topology[role];
+    if (!entry || typeof entry !== 'object') continue;
+    try {
+      const active = String(execFileSync('systemctl', ['is-active', entry.unit], { encoding: 'utf8', stdio: 'pipe' })).trim();
+      if (active !== 'active') reasons.push(`Production runtime identity topology ${role}.unit is not active.`);
+    } catch { reasons.push(`Unable to observe active systemd unit for ${role}.`); }
+    try {
+      const target = String(realpathSync(entry.releaseSymlink));
+      if (!target.includes(identity.components?.[component]?.gitSha ?? 'invalid')) reasons.push(`Production runtime identity topology ${role}.releaseSymlink target does not match component SHA.`);
+    } catch { reasons.push(`Unable to resolve production release symlink for ${role}.`); }
+    try {
+      const pid = Number.parseInt(String(readFileSync(entry.pidfile, 'utf8')).trim(), 10);
+      if (!Number.isSafeInteger(pid) || pid <= 0 || !processExists(pid)) reasons.push(`Production runtime identity topology ${role}.pidfile does not identify a live process.`);
+    } catch { reasons.push(`Unable to read production pidfile for ${role}.`); }
+    try {
+      const ready = String(readFileSync(entry.readyfile, 'utf8')).trim();
+      if (!ready.includes(identity.components?.[component]?.gitSha ?? 'invalid')) reasons.push(`Production runtime identity topology ${role}.readyfile does not match component SHA.`);
+    } catch { reasons.push(`Unable to read production readyfile for ${role}.`); }
+  }
+}
+
+export function validateRuntimeIdentity(identity, options = {}) {
   const blockingReasons = [];
   if (!identity || typeof identity !== 'object' || Array.isArray(identity)) return { ok: false, blockingReasons: ['Production runtime identity must be a JSON object.'] };
   if (identity.schemaVersion !== 1) blockingReasons.push('Production runtime identity schemaVersion must be 1.');
@@ -48,14 +77,21 @@ export function validateRuntimeIdentity(identity) {
       if (typeof entry.deployedAt !== 'string' || Number.isNaN(Date.parse(entry.deployedAt))) blockingReasons.push(`Production runtime identity component "${component}" must have an ISO deployedAt timestamp.`);
     }
   }
-  validateTopology(identity.topology, blockingReasons);
+  const now = options.now ?? Date.now();
+  validateTopology(identity.topology, blockingReasons, now);
+  observeTopology(identity, blockingReasons, {
+    readFileSync: options.topologyReadFileSync ?? defaultReadFileSync,
+    realpathSync: options.topologyRealpathSync ?? defaultRealpathSync,
+    execFileSync: options.topologyExecFileSync ?? defaultExecFileSync,
+    processExists: options.topologyProcessExists ?? ((pid) => { try { process.kill(pid, 0); return true; } catch { return false; } }),
+  });
   return { ok: blockingReasons.length === 0, blockingReasons };
 }
 
-export function readRuntimeIdentity({ identityPath, readFileSync = defaultReadFileSync }) {
+export function readRuntimeIdentity({ identityPath, readFileSync = defaultReadFileSync, ...validationOptions }) {
   if (!isLocalFilePath(identityPath)) return { ok: false, identity: null, blockingReasons: ['Runtime identity must be read from a local file path.'] };
   let identity;
   try { identity = JSON.parse(readFileSync(identityPath, 'utf8')); } catch (error) { return { ok: false, identity: null, blockingReasons: [`Unable to read production runtime identity JSON: ${error.message}`] }; }
-  const validation = validateRuntimeIdentity(identity);
+  const validation = validateRuntimeIdentity(identity, { readFileSync, ...validationOptions });
   return { ok: validation.ok, identity, blockingReasons: validation.blockingReasons };
 }

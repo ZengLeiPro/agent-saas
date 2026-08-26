@@ -5,8 +5,8 @@ export const COMPONENTS = Object.freeze(['web', 'api', 'runtimeWorker', 'acs']);
 const PATH_COMPONENTS = Object.freeze([
   ['web/', ['web']],
   ['server/', ['api', 'runtimeWorker', 'acs']],
-  ['shared/', ['web', 'api']],
-  ['workspace-shared/', ['api']],
+  ['shared/', ['web', 'api', 'runtimeWorker', 'acs']],
+  ['workspace-shared/', ['api', 'runtimeWorker', 'acs']],
   ['hand-server/', ['runtimeWorker']],
   ['acs-orchestrator/', ['acs']],
 ]);

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ToolCallContext } from '../agent/toolRuntime.js';
 import { InMemoryGovernanceAuditStore } from '../data/governance-audit/store.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import {
   DwsBusinessToolProvider,
   deriveDwsAgentDelegationResourceId,
@@ -37,6 +38,7 @@ function setup(input: { delegatedScopes?: string[]; assignmentUnavailable?: bool
     : vi.fn().mockResolvedValue((input.delegatedScopes ?? [
       deriveDwsAgentDelegationResourceId('account-a', ['calendar', 'event', 'list', '--today']),
     ]).map(resourceId => ({ resourceId, bindingId: 'assignment-a', assignmentVersion: 3 })));
+  const logger = { warn: vi.fn() };
   const provider = new DwsBusinessToolProvider({
     agentCwd: '/workspace',
     accountStore: {
@@ -60,6 +62,7 @@ function setup(input: { delegatedScopes?: string[]; assignmentUnavailable?: bool
     auditStore,
     resolveServerRemote: vi.fn().mockResolvedValue({ baseUrl: 'https://hand.test', authToken: 'remote-token' }),
     createTransport: () => ({ invoke }),
+    logger,
   });
   const executionAudit = { records: [], record: vi.fn() };
   const context: ToolCallContext = {
@@ -71,12 +74,13 @@ function setup(input: { delegatedScopes?: string[]; assignmentUnavailable?: bool
     sessionId: 'session-a', runId: 'run-a', toolCallId: 'tool-a', invocationId: 'invocation-a',
     executionAudit,
   };
-  return { provider, invoke, auditStore, context, executionAudit, listEffectiveResourceIds };
+  return { provider, invoke, auditStore, context, executionAudit, listEffectiveResourceIds, logger };
 }
 
 describe('DwsBusinessToolProvider', () => {
   it('按命令动作动态分档，并对未知或破坏性动作 fail closed', () => {
     expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'list'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['minutes', '+list-all'] })).toBe('safe');
     expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'create'], confirmed: true })).toBe('workspace_write');
     expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'respond'], confirmed: true })).toBe('workspace_write');
     expect(resolveDwsBusinessRisk({ args: ['doc', 'delete'], confirmed: true })).toBe('dangerous');
@@ -200,8 +204,131 @@ describe('DwsBusinessToolProvider', () => {
     expect(request.context.workspace).toMatchObject({ userId: 'user-a', username: 'alice' });
   });
 
+  it('管理员恢复其他用户会话时按会话归属者解析 requester，允许 workspace 保持当前操作者身份', async () => {
+    const { provider, invoke, context, auditStore } = setup();
+    const admin = {
+      id: 'admin-a', username: 'admin', role: 'admin' as const, tenantId: 'tenant-a', disabled: false,
+    };
+
+    await provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['minutes', '+list-all'], credentialMode: 'requester' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, {
+      ...context,
+      channelContext: { ...context.channelContext, user: admin },
+      workspace: { ...context.workspace, userId: admin.id, username: admin.username },
+    });
+
+    const request = invoke.mock.calls[0]![0];
+    expect(request.input.command).toContain("'--profile' 'requester-profile-secret'");
+    expect(request.context.workspace).toMatchObject({ userId: 'user-a', username: 'alice' });
+    expect(auditStore.events[0]).toMatchObject({
+      actorUserId: admin.id,
+      actorPersona: 'org_admin',
+      metadata: { sessionOwnerUserId: 'user-a', operatorUserId: admin.id, operatorRole: 'admin' },
+    });
+  });
+
+  it('平台管理员可跨租户恢复 Session，requester 仍使用归属者 profile 并按 operator 审计', async () => {
+    const { provider, invoke, context, auditStore } = setup();
+    const platformAdmin = {
+      id: 'platform-admin', username: 'root', role: 'admin' as const,
+      tenantId: DEFAULT_TENANT_ID, disabled: false,
+    };
+
+    await provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['minutes', '+list-all'], credentialMode: 'requester' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, {
+      ...context,
+      channelContext: { ...context.channelContext, user: platformAdmin },
+      workspace: {
+        ...context.workspace,
+        userId: platformAdmin.id,
+        username: platformAdmin.username,
+        tenantId: platformAdmin.tenantId,
+      },
+    });
+
+    expect(invoke.mock.calls[0]![0].input.command).toContain("'--profile' 'requester-profile-secret'");
+    expect(auditStore.events[0]).toMatchObject({
+      actorUserId: platformAdmin.id,
+      actorTenantId: DEFAULT_TENANT_ID,
+      metadata: { sessionOwnerTenantId: 'tenant-a', operatorTenantId: DEFAULT_TENANT_ID },
+    });
+  });
+
+  it('异租户组织管理员不能跨租户使用 Session 归属者的 requester profile', async () => {
+    const { provider, invoke, context, auditStore, logger } = setup();
+    const otherTenantAdmin = {
+      id: 'admin-b', username: 'admin-b', role: 'admin' as const, tenantId: 'tenant-b', disabled: false,
+    };
+
+    await expect(provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['minutes', '+list-all'], credentialMode: 'requester' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, {
+      ...context,
+      channelContext: { ...context.channelContext, user: otherTenantAdmin },
+      workspace: {
+        ...context.workspace,
+        userId: otherTenantAdmin.id,
+        username: otherTenantAdmin.username,
+        tenantId: otherTenantAdmin.tenantId,
+      },
+    })).rejects.toThrow('不一致项：operator.sessionOwnerTenantScope');
+
+    expect(invoke).not.toHaveBeenCalled();
+    expect(auditStore.events.at(-1)).toMatchObject({
+      actorUserId: otherTenantAdmin.id,
+      actorTenantId: 'tenant-b',
+      reason: 'DWS_BUSINESS_SUBJECT_MISMATCH',
+      metadata: {
+        mismatchFields: ['operator.sessionOwnerTenantScope'],
+        sessionOwnerUserId: 'user-a',
+        sessionOwnerTenantId: 'tenant-a',
+        operatorUserId: otherTenantAdmin.id,
+        operatorTenantId: 'tenant-b',
+      },
+    });
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('"operatorTenantId":"tenant-b"'));
+  });
+
+  it('普通用户不能跨 Session 使用归属者的 requester profile', async () => {
+    const { provider, invoke, context, auditStore, logger } = setup();
+    const otherUser = {
+      id: 'user-b', username: 'bob', role: 'user' as const, tenantId: 'tenant-a', disabled: false,
+    };
+
+    await expect(provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['minutes', '+list-all'], credentialMode: 'requester' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, {
+      ...context,
+      channelContext: { ...context.channelContext, user: otherUser },
+      workspace: { ...context.workspace, userId: otherUser.id, username: otherUser.username },
+    })).rejects.toThrow('不一致项：operator.sessionOwnerTenantScope');
+
+    expect(invoke).not.toHaveBeenCalled();
+    expect(auditStore.events.at(-1)).toMatchObject({
+      actorUserId: otherUser.id,
+      actorPersona: 'member',
+      reason: 'DWS_BUSINESS_SUBJECT_MISMATCH',
+      metadata: {
+        mismatchFields: ['operator.sessionOwnerTenantScope'],
+        sessionOwnerUserId: 'user-a',
+        operatorUserId: otherUser.id,
+      },
+    });
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('"operatorUserId":"user-b"'));
+  });
+
   it('拒绝未确认写操作、外部 profile 参数与身份漂移', async () => {
-    const { provider, invoke, context } = setup();
+    const { provider, invoke, context, auditStore, logger } = setup();
     await expect(provider.invoke({
       toolId: 'DwsBusiness',
       input: { args: ['chat', 'message', 'send'] },
@@ -219,7 +346,12 @@ describe('DwsBusinessToolProvider', () => {
     }, {
       ...context,
       workspace: { ...context.workspace, userId: 'other-user' },
-    })).rejects.toThrow('绑定不一致');
+    })).rejects.toThrow('不一致项：workspace.userId');
     expect(invoke).not.toHaveBeenCalled();
+    expect(auditStore.events.at(-1)).toMatchObject({
+      reason: 'DWS_BUSINESS_SUBJECT_MISMATCH',
+      metadata: { mismatchFields: ['workspace.userId'], workspaceUserId: 'other-user' },
+    });
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('"mismatchFields":["workspace.userId"]'));
   });
 });

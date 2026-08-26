@@ -51,6 +51,7 @@ import {
   createWebToolEgressFetch,
 } from '../runtime/egressDispatcher.js';
 import type { EgressConfig } from '../runtime/egressPolicy.js';
+import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 import { resolveDwsConnectorRunEnv, resolveFeishuConnectorRunEnv } from '../runtime/connectorRunEnv.js';
 import type { FeishuTokenBroker } from '../feishu/tokenBroker.js';
 import { McpClientManager } from '../mcp/clientManager.js';
@@ -599,6 +600,7 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
   const egressConfigStore = new EgressConfigStore(
     join(processCwd, 'data', 'egress-config.json'),
     config.egress as EgressConfig | undefined,
+    readRuntimeIdentity().environment,
   );
   const egressLogger = serverLogger.child('Egress');
   // 代理凭据同步缓存：dispatcher 需要同步取值，而 vault.getSecret 是异步的，

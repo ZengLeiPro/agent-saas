@@ -220,10 +220,18 @@ function createResolvedEgressFetch(
   proxyFetch: typeof undiciFetch,
 ): typeof fetch {
   return async function egressFetch(input, init) {
-    // Request 形态无法安全拆成 (url, init) 交给另一个 fetch 实现（body 是流）。
-    if (input instanceof Request) return baseFetch(input, init);
+    const requestInput = input instanceof Request;
+    const targetInput = requestInput ? input.url : input as string | URL;
+    const { dispatcher, failOpen } = resolve(targetInput);
 
-    const { dispatcher, failOpen } = resolve(input as string | URL);
+    // Request 的 body 可能是一次性流，不能安全拆给另一个 fetch 实现。只在
+    // 明确 fail-open 且无需代理时允许直连；代理或 fail-closed 策略一律拒绝。
+    if (requestInput) {
+      if (dispatcher || !failOpen) {
+        throw new Error('Request input cannot bypass a proxy or fail-closed egress policy.');
+      }
+      return baseFetch(input, init);
+    }
     if (!dispatcher) return baseFetch(input, init);
 
     const target = typeof input === 'string' ? input : String(input);

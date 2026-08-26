@@ -129,6 +129,26 @@ afterEach(() => {
   while (roots.length > 0) rmSync(roots.pop()!, { recursive: true, force: true });
 });
 
+describe('staging egress config store', () => {
+  const safe = () => fullConfig({
+    server: {
+      enabled: true,
+      proxyUrl: 'http://proxy.staging.internal:7890',
+      matchDomains: [],
+      bypassDomains: [],
+      timeoutMs: 20_000,
+      failOpen: false,
+    },
+  });
+
+  it('rejects unsafe seed and hot updates', async () => {
+    expect(() => new EgressConfigStore('/unused', fullConfig(), 'staging')).toThrow(/staging egress/u);
+    const store = new EgressConfigStore('/unused', safe(), 'staging');
+    await expect(store.update(fullConfig(), { actor: 'admin' })).rejects.toThrow(/staging egress/u);
+    expect(store.getConfig().server.enabled).toBe(true);
+  });
+});
+
 describe('egress config admin router', () => {
   it('默认返回全关配置，不暴露凭据明文', async () => {
     await withApp(async ({ baseUrl }) => {

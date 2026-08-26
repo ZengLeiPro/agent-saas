@@ -3,6 +3,15 @@ import type { AppConfig } from '../types/index.js';
 import type { DispatchMetricsSnapshot } from '../engine/metricsStore.js';
 import type { ActiveRunCounts } from '../runtime/runStore.js';
 import type { UploadMetricsSnapshot } from '../uploads/manager.js';
+import { assertRuntimeEnvironmentSafety } from '../release/environmentSafety.js';
+import type { RuntimeIdentity } from '../release/runtimeIdentity.js';
+
+interface IntegrationV3HealthStatus {
+  status: string;
+  releaseReady: boolean;
+  reasons: string[];
+  metrics?: unknown;
+}
 
 export interface HealthRouteOptions {
   getDispatchMetrics?: () => DispatchMetricsSnapshot;
@@ -10,6 +19,11 @@ export interface HealthRouteOptions {
   getUploadMetrics?: () => UploadMetricsSnapshot;
   getActiveRunCounts?: () => Promise<ActiveRunCounts>;
   getIsDraining?: () => boolean;
+  /** Non-sensitive deployment identity. Staging must be safety-attested before ready. */
+  getRuntimeIdentity?: () => RuntimeIdentity;
+  getEnvironmentSafetyAttested?: () => boolean;
+  /** Integration v3 release gate. Errors fail readiness closed. */
+  getIntegrationV3Health?: () => IntegrationV3HealthStatus | Promise<IntegrationV3HealthStatus>;
   /** skills 后台物化进度（结构类型，避免反向依赖 app/runtime）；ready 载荷用 */
   getSkillsWarmupStatus?: () => {
     state: 'pending' | 'running' | 'done' | 'failed';
@@ -42,6 +56,8 @@ export function createHealthRouter(
   options: HealthRouteOptions = {},
 ): Router {
   const router = Router();
+  // Re-assert at route assembly so readiness only reports an identity proven by startup policy.
+  const runtimeIdentity = assertRuntimeEnvironmentSafety(config);
 
   // Health check（未认证用户仅返回状态，认证用户返回详细信息）
   router.get('/health', (req, res) => {
@@ -89,10 +105,27 @@ export function createHealthRouter(
   router.get('/healthz/ready', async (_req, res) => {
     const draining = options.getIsDraining?.() ?? false;
     const warmup = options.getSkillsWarmupStatus?.() ?? { state: 'done' as const };
-    res.status(draining ? 503 : 200).json({
-      status: draining ? 'draining' : 'ok',
+    const release = options.getRuntimeIdentity?.() ?? runtimeIdentity;
+    const safetyAttested = release?.safetyAttested !== false
+      && (options.getEnvironmentSafetyAttested?.() ?? true);
+    let integrationV3: IntegrationV3HealthStatus | undefined;
+    try {
+      integrationV3 = await options.getIntegrationV3Health?.();
+    } catch (error) {
+      res.status(503).json({
+        status: 'not_ready', draining, warmup,
+        integrationV3: { status: 'degraded', releaseReady: false, reasons: ['metrics_unavailable'] },
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+    const releaseReady = integrationV3?.releaseReady !== false;
+    res.status(draining || !releaseReady || !safetyAttested ? 503 : 200).json({
+      status: draining ? 'draining' : releaseReady && safetyAttested ? 'ok' : 'not_ready',
       draining,
       warmup,
+      ...(release ? { release: { ...release, safetyAttested } } : {}),
+      ...(integrationV3 ? { integrationV3 } : {}),
     });
   });
 

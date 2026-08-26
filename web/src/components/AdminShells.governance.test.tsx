@@ -52,6 +52,13 @@ vi.mock("@/components/PlatformAdmin/pages", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/PlatformAdmin/pages")>();
   return { ...actual, SandboxesPage: ({ sandboxName }: { sandboxName?: string | null }) => <div>环境实例 {sandboxName ?? "列表"}</div> };
 });
+vi.mock("@/components/RunTraceExplorer", () => ({
+  RunTraceExplorer: ({ runId, onRunIdChange }: { runId?: string | null; onRunIdChange?: (runId: string | null) => void }) => (
+    <button type="button" onClick={() => onRunIdChange?.(runId ? null : "run-1")}>
+      {runId ? "返回运行列表" : "打开运行详情"}
+    </button>
+  ),
+}));
 vi.mock("@/components/EgressConfigManager", () => ({ default: () => <div>网络与安全管理器</div> }));
 vi.mock("@/components/SystemPromptsManager", () => ({ default: () => <div>系统提示语管理器</div> }));
 vi.mock("@/components/PlatformAdmin/SystemSettingsPanel", () => ({ SystemSettingsPanel: () => <div>系统配置管理器</div> }));
@@ -189,6 +196,69 @@ describe("AdminShells V2 内容适配", () => {
     await userEvent.click(screen.getByRole("tab", { name: "Context Center" }));
     expect(await screen.findByRole("heading", { name: "Context Center" })).toBeTruthy();
     expect(adminShellMocks.contextSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("运行列表下钻与内部返回保留筛选且返回不新增历史层", async () => {
+    const search = "?tenantId=acme&status=failed&hours=168";
+    window.history.replaceState(
+      { analysisWorkspace: { source: "/chat/session-1", depth: 1 } },
+      "",
+      `/platform-console/runtime/runs${search}`,
+    );
+    const pushState = vi.spyOn(window.history, "pushState");
+    const replaceState = vi.spyOn(window.history, "replaceState");
+    const props = {
+      renderTenants: () => <div />,
+      renderModels: () => <div />,
+      renderRemoteHands: () => <div />,
+      renderToolControls: () => <div />,
+      renderMemoryPolling: () => <div />,
+      renderMcp: () => <div />,
+      renderSkills: () => <div />,
+      renderEfficiency: () => <div />,
+      activeSection: "runs" as const,
+      entityId: null,
+      onSectionChange: () => undefined,
+      settingsOpen: false,
+      settingsSection: "tenants" as const,
+      onSettingsSectionChange: () => undefined,
+      onSettingsClose: () => undefined,
+      governanceContentOnly: true,
+    };
+    const { rerender } = render(
+      <PlatformAdminShell
+        {...props}
+        governanceRoute={governanceRoute("platform.runtime.runs", { search })}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "打开运行详情" }));
+    expect(window.location.pathname).toBe("/platform-console/runtime/runs/run-1");
+    expect(Object.fromEntries(new URLSearchParams(window.location.search))).toEqual({
+      hours: "168",
+      status: "failed",
+      tenantId: "acme",
+    });
+    expect(window.history.state.analysisWorkspace).toEqual({ source: "/chat/session-1", depth: 2 });
+
+    rerender(
+      <PlatformAdminShell
+        {...props}
+        entityId="run-1"
+        governanceRoute={governanceRoute("platform.runtime.runs", { entityId: "run-1", search })}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "返回运行列表" }));
+
+    expect(window.location.pathname).toBe("/platform-console/runtime/runs");
+    expect(Object.fromEntries(new URLSearchParams(window.location.search))).toEqual({
+      hours: "168",
+      status: "failed",
+      tenantId: "acme",
+    });
+    expect(window.history.state.analysisWorkspace).toEqual({ source: "/chat/session-1", depth: 2 });
+    expect(pushState).toHaveBeenCalledTimes(1);
+    expect(replaceState).toHaveBeenCalledTimes(1);
   });
 
   it.each([

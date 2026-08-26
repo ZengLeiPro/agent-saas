@@ -32,4 +32,13 @@ describe("分析导航注册表", () => {
     expect(analysisNavigationRoute("platform.runtime.infra", organizationRoute)?.orgId).toBeNull();
     expect(analysisNavigationRoute("platform.resource-center.models", organizationRoute)).toBeNull();
   });
+
+  it("跨平台分析项只透传 tenantId 与 userId 作用域", () => {
+    const sessions = governanceRoute("platform.runtime.sessions", {
+      search: "?tenantId=acme&userId=u1&status=failed&hours=168",
+    });
+
+    expect(analysisNavigationRoute("platform.runtime.runs", sessions)?.search)
+      .toBe("?tenantId=acme&userId=u1");
+  });
 });

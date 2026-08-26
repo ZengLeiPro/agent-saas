@@ -54,6 +54,34 @@ describe("分析工作区历史", () => {
     expect(fallback).not.toHaveBeenCalled();
   });
 
+  it("带筛选的列表下钻详情再返回时不保留多余详情层", () => {
+    const search = "?tenantId=acme&status=failed&hours=168";
+    window.history.replaceState({}, "", `/platform-console/runtime/runs${search}`);
+    markAnalysisHistoryEntry("/chat/session-1", 1);
+
+    pushGovernanceUrl(governanceRoute("platform.runtime.runs", { entityId: "run-1", search }));
+    expect(window.location.pathname).toBe("/platform-console/runtime/runs/run-1");
+    expect(Object.fromEntries(new URLSearchParams(window.location.search))).toEqual({
+      hours: "168",
+      status: "failed",
+      tenantId: "acme",
+    });
+    expect(readAnalysisHistoryState()?.depth).toBe(2);
+
+    replaceGovernanceUrl(governanceRoute("platform.runtime.runs", { search }));
+    expect(window.location.pathname).toBe("/platform-console/runtime/runs");
+    expect(Object.fromEntries(new URLSearchParams(window.location.search))).toEqual({
+      hours: "168",
+      status: "failed",
+      tenantId: "acme",
+    });
+    expect(readAnalysisHistoryState()?.depth).toBe(2);
+
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    closeAnalysisHistory(vi.fn());
+    expect(go).toHaveBeenCalledWith(-2);
+  });
+
   it("直接打开分析 URL 时补建可一次关闭的来源条目", () => {
     window.history.replaceState({}, "", "/platform-console/overview/overview");
 

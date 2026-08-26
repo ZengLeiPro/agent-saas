@@ -650,7 +650,10 @@ export function PlatformAdminShell({
       case "platform.runtime.sessions":
         return <SessionsPage sessionId={governanceRoute.entityId} />;
       case "platform.runtime.runs":
-        return <RunTraceExplorer runId={governanceRoute.entityId} onRunIdChange={(next) => navigateGovernance(makeGovernanceRoute("platform.runtime.runs", { entityId: next }))} />;
+        return <RunTraceExplorer runId={governanceRoute.entityId} onRunIdChange={(next) => navigateGovernance(
+          makeGovernanceRoute("platform.runtime.runs", { entityId: next, search: governanceRoute.search }),
+          { replace: next === null },
+        )} />;
       case "platform.runtime.execution-providers":
         return renderRemoteHands();
       case "platform.runtime.environments":

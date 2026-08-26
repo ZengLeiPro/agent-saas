@@ -64,6 +64,17 @@ export function isAnalysisRoute(route: GovernanceRouteState | null | undefined):
   return getAnalysisNavigationItem(route?.routeId) !== null;
 }
 
+function platformScopeSearch(search: string | null | undefined): string {
+  const current = new URLSearchParams(search ?? "");
+  const next = new URLSearchParams();
+  for (const key of ["tenantId", "userId"] as const) {
+    const value = current.get(key);
+    if (value) next.set(key, value);
+  }
+  const value = next.toString();
+  return value ? `?${value}` : "";
+}
+
 export function analysisNavigationRoute(
   routeId: string,
   currentRoute: GovernanceRouteState | null | undefined,
@@ -75,5 +86,6 @@ export function analysisNavigationRoute(
     orgId: item.scope === "organization"
       ? (currentRoute?.area === "organization" ? currentRoute.orgId : fallbackOrgId)
       : null,
+    search: item.scope === "platform" ? platformScopeSearch(currentRoute?.search) : "",
   });
 }

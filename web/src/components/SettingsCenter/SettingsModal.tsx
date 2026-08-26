@@ -36,7 +36,7 @@ import {
   useSettingsDirtyEntry,
   type SettingsDirtyController,
 } from "@/components/PersonalSettings/dirtyRegistry";
-import { AgentDocEditor } from "@/components/AgentProfile/AgentDocEditor";
+import { PersonaEditDialog } from "@/components/AgentProfile/PersonaEditDialog";
 import { EmbeddedSettingsFrame } from "@/components/SettingsCenter/EmbeddedSettingsFrame";
 import { TrashView } from "@/components/chat/TrashView";
 import { useAuth } from "@/contexts/AuthContext";
@@ -369,9 +369,6 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
   const [savingPhone, setSavingPhone] = useState(false);
   const [phoneError, setPhoneError] = useState<string | null>(null);
   const phoneTimerRef = useRef<ReturnType<typeof setInterval>>();
-  // 人格定义 进入后接管整个账户面板（类似 settings/memory 那样的全屏 layout）
-  const [personaEditing, setPersonaEditing] = useState(false);
-
   useEffect(() => {
     const nextPhone = user?.phone?.trim() || "";
     setPhone(nextPhone);
@@ -490,20 +487,6 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
     window.setTimeout(() => setCopiedUserId(false), 1400);
   }, [userId]);
 
-  if (personaEditing && user?.username) {
-    return (
-      <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
-        <AgentDocEditor
-          username={user.username}
-          kind="persona"
-          headerTitle="人格定义"
-          headerDescription="定义你的 Agent 的人格和行为风格，新会话生效。"
-          onBack={() => setPersonaEditing(false)}
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <SettingsPanelHeader title="账户" description="管理你的账户资料、安全凭据和登录状态。" />
@@ -556,7 +539,7 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
               </div>
             </div>
           </section>
-          {showAgentSettings && <AgentAccountSection onOpenPersona={() => setPersonaEditing(true)} />}
+          {showAgentSettings && <AgentAccountSection />}
           <section className="space-y-3 rounded-2xl border bg-card p-5 shadow-sm">
           <div className="flex items-center justify-between gap-4">
             <div>
@@ -645,12 +628,7 @@ function AccountSection({ onAvatarUpload, avatarInputRef, avatarUploading, onCha
   );
 }
 
-interface AgentAccountSectionProps {
-  /** 点击「人格定义 → 编辑」时通知上层接管整个面板渲染 persona 编辑器。 */
-  onOpenPersona: () => void;
-}
-
-function AgentAccountSection({ onOpenPersona }: AgentAccountSectionProps) {
+function AgentAccountSection() {
   const { user } = useAuth();
   const username = user?.username;
   const [profile, setProfile] = useState<AgentProfileDetail | null>(null);
@@ -658,6 +636,7 @@ function AgentAccountSection({ onOpenPersona }: AgentAccountSectionProps) {
   const [signature, setSignature] = useState("");
   const [loading, setLoading] = useState(false);
   const [avatarPreviewOpen, setAvatarPreviewOpen] = useState(false);
+  const [personaDialogOpen, setPersonaDialogOpen] = useState(false);
   // Agent 名称/签名 改为弹窗编辑模式，与用户卡的「手机号 → 弹窗」交互一致
   const [editingField, setEditingField] = useState<"name" | "signature" | null>(null);
   const [draftValue, setDraftValue] = useState("");
@@ -773,7 +752,7 @@ function AgentAccountSection({ onOpenPersona }: AgentAccountSectionProps) {
             <div className="grid gap-x-3 gap-y-2 sm:grid-cols-[72px_minmax(0,1fr)_auto] sm:items-center">
               <div className="text-sm font-medium">人格定义</div>
               <div className="truncate text-sm text-muted-foreground">定义 Agent 的人格和行为风格</div>
-              <Button size="sm" variant="outline" className="min-w-20 justify-self-end" onClick={onOpenPersona}>编辑</Button>
+              <Button size="sm" variant="outline" className="min-w-20 justify-self-end" onClick={() => setPersonaDialogOpen(true)}>编辑</Button>
             </div>
           </div>
         </div>
@@ -808,6 +787,7 @@ function AgentAccountSection({ onOpenPersona }: AgentAccountSectionProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <PersonaEditDialog username={username} open={personaDialogOpen} onOpenChange={setPersonaDialogOpen} />
     </>
   );
 }
@@ -961,7 +941,7 @@ export function SettingsModalInner({
       node: (
         <MyAgentSection
           renderMemory={renderMemory}
-          renderProfile={(openPersona) => <AgentAccountSection onOpenPersona={openPersona} />}
+          renderProfile={() => <AgentAccountSection />}
         />
       ),
     },

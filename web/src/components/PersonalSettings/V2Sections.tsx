@@ -22,14 +22,14 @@ import type { MyAgentSettingsTab } from "@/types/settings";
 function readMyAgentTab(): MyAgentSettingsTab {
   const parsed = parseGovernanceUrl(`${window.location.pathname}${window.location.search}`);
   if (parsed.kind !== "route" || parsed.route.routeId !== "settings.personal.my-agent") return "agent-profile";
-  return (parsed.route.tab as MyAgentSettingsTab | null) ?? "agent-profile";
+  return parsed.route.tab === "memory" ? "memory" : "agent-profile";
 }
 
 export function MyAgentSection({
   renderProfile,
   renderMemory,
 }: {
-  renderProfile: (openPersona: () => void) => ReactNode;
+  renderProfile: () => ReactNode;
   renderMemory?: () => ReactNode;
 }) {
   const { user } = useAuth();
@@ -53,14 +53,10 @@ export function MyAgentSection({
       <Tabs value={tab} onValueChange={changeTab} className="flex min-h-0 flex-1 flex-col">
         <TabsList className="mb-4 w-fit">
           <TabsTrigger value="agent-profile">资料</TabsTrigger>
-          <TabsTrigger value="persona">Persona</TabsTrigger>
           <TabsTrigger value="memory">长期 Memory</TabsTrigger>
         </TabsList>
         <TabsContent value="agent-profile" className="min-h-0 flex-1 overflow-auto">
-          {renderProfile(() => changeTab("persona"))}
-        </TabsContent>
-        <TabsContent value="persona" className="min-h-0 flex-1">
-          {user?.username ? <AgentDocEditor username={user.username} kind="persona" hideInternalHeader /> : null}
+          {renderProfile()}
         </TabsContent>
         <TabsContent value="memory" className="min-h-0 flex-1">
           {renderMemory?.() ?? (user?.username ? <AgentDocEditor username={user.username} kind="memory" hideInternalHeader /> : null)}

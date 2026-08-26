@@ -23,7 +23,7 @@ export type LegacySettingsSectionId =
 
 export type SettingsSectionId = CanonicalSettingsSectionId | LegacySettingsSectionId;
 export type SettingsSectionInput = SettingsSectionId;
-export type MyAgentSettingsTab = "agent-profile" | "persona" | "memory";
+export type MyAgentSettingsTab = "agent-profile" | "memory";
 
 export type SettingsSectionGroup = PersonalSettingsGroup;
 

@@ -341,6 +341,14 @@ export function createBuiltinAgentProfileRecords(now = new Date().toISOString())
   return { profiles, versions, bindings };
 }
 
+export function getBuiltinHistoricalConfigDigests(bindingKey: AgentProfileBindingKey): string[] {
+  const profileId = BUILTIN_AGENT_PROFILE_BINDINGS[bindingKey];
+  const definition = BUILTIN_AGENT_PROFILES.find(item => item.profileId === profileId);
+  return (definition?.previousVersions ?? []).map(previous => (
+    digestAgentRuntimeProfileConfig(normalizeAgentRuntimeProfileConfig(previous.config))
+  ));
+}
+
 export function getBuiltinProfileByBinding(bindingKey: AgentProfileBindingKey): {
   profile: AgentRuntimeProfile;
   version: AgentRuntimeProfileVersion;

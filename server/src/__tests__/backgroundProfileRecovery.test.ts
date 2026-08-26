@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createBuiltinTools } from '../agent/builtinTools.js';
 import { createDefaultExecutionTransportRegistry, type ToolCallContext } from '../agent/toolRuntime.js';
+import { getBuiltinHistoricalConfigDigests } from '../data/agentProfiles/builtins.js';
 import { InMemoryAgentRuntimeProfileStore } from '../data/agentProfiles/store.js';
 import {
   DEFAULT_ORG_AGENT_RUNTIME_POLICY,
@@ -93,7 +94,8 @@ describe('background Profile recovery', () => {
     taskSession = resolver.bindSessionRecord(taskSession, effectiveWorker);
     expect(effectiveWorker.version.config.model).toEqual({ strategy: 'fixed', modelRef: 'mock/worker-model' });
     expect(taskSession.profileConfigDigest).toBe(background.binding.profileConfigDigest);
-    await sessionCatalog.upsert({ ...taskSession, profileConfigDigest: 'legacy-builtin-background-digest' });
+    const historicalDigest = getBuiltinHistoricalConfigDigests('background_general')[0]!;
+    await sessionCatalog.upsert({ ...taskSession, profileConfigDigest: historicalDigest });
     const reloaded = await sessionCatalog.get(taskSessionId);
     expect(reloaded).not.toBeNull();
 

@@ -252,23 +252,16 @@ export function mergeOrgAgentRuntimePolicy(
   });
 }
 
-/** Dispatcher front desk keeps only its runtime-mandatory delegation surface. */
+/** Dispatcher front desk inherits Profile tools; Agent-local tool policy only narrows Workers. */
 export function mergeOrgAgentFrontRuntimePolicy(
   shared: AgentRuntimeProfileConfig,
   input: OrgAgentRuntimePolicy | undefined,
 ): AgentRuntimeProfileConfig {
   const policy = normalizeOrgAgentRuntimePolicy(input);
   const merged = mergeOrgAgentRuntimePolicy(shared, policy);
-  if (policy.executionMode !== 'dispatcher') return merged;
-  return {
-    ...merged,
-    tools: {
-      allowlist: merged.tools.allowlist
-        ? uniqueSorted([...merged.tools.allowlist, 'Agent', 'BackgroundTask'])
-        : null,
-      denylist: merged.tools.denylist.filter(tool => tool !== 'Agent' && tool !== 'BackgroundTask'),
-    },
-  };
+  return policy.executionMode === 'dispatcher'
+    ? { ...merged, tools: structuredClone(shared.tools) }
+    : merged;
 }
 
 /**

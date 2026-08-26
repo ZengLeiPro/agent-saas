@@ -8,6 +8,7 @@ import type {
 } from '../agent/toolRuntime.js';
 import { parseMcpToolKey } from '../mcp/clientManager.js';
 import {
+  getBuiltinHistoricalConfigDigests,
   getBuiltinProfileByBinding,
 } from '../data/agentProfiles/builtins.js';
 import {
@@ -130,13 +131,15 @@ export class AgentRuntimeProfileResolver {
     }
     const digest = digestAgentRuntimeProfileConfig(version.config);
     if (digest !== version.configDigest || session.profileConfigDigest !== version.configDigest) {
-      // 后台 Worker 可能由升级前的进程创建、升级后的进程执行。内置 Profile 的
-      // 版本 ID 不变时，仅允许它重新绑定当前内置定义；数据库 Profile 仍严格拒绝。
-      const currentBuiltinBackgroundProfile = (expectedBindingKey === 'background_general'
+      // 后台 Worker 可能由升级前的进程创建、升级后的进程执行。仅接受源码中明确
+      // 登记的历史内置摘要；缺失、随机摘要及数据库 Profile 仍严格拒绝。
+      const historicalBuiltinBackgroundProfile = (expectedBindingKey === 'background_general'
         || expectedBindingKey === 'background_explore')
         && session.profileVersionId === builtin.version.profileVersionId
-        && digest === version.configDigest;
-      if (!currentBuiltinBackgroundProfile) {
+        && digest === version.configDigest
+        && !!session.profileConfigDigest
+        && getBuiltinHistoricalConfigDigests(expectedBindingKey).includes(session.profileConfigDigest);
+      if (!historicalBuiltinBackgroundProfile) {
         const mismatch = digest !== version.configDigest ? 'version_config' : 'session_pin';
         throw new AgentRuntimeProfileError(
           `会话 Profile 摘要校验失败，已拒绝切换到其他版本（${mismatch}; binding=${expectedBindingKey}; version=${version.profileVersionId}; session=${shortDigest(session.profileConfigDigest)}; stored=${shortDigest(version.configDigest)}; actual=${shortDigest(digest)}）`,

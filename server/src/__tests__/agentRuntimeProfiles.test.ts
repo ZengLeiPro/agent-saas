@@ -12,7 +12,11 @@ import type {
   ToolResult,
   ToolRuntime,
 } from '../agent/toolRuntime.js';
-import { createBuiltinAgentProfileRecords, getBuiltinProfileByBinding } from '../data/agentProfiles/builtins.js';
+import {
+  createBuiltinAgentProfileRecords,
+  getBuiltinHistoricalConfigDigests,
+  getBuiltinProfileByBinding,
+} from '../data/agentProfiles/builtins.js';
 import {
   digestAgentRuntimeProfileConfig,
   parseAgentRuntimeProfileConfig,
@@ -378,27 +382,25 @@ describe('real RawAgentLoop Profile scenarios', () => {
     expect(systemMessage(newAdapter.requests[0]!)).toContain('PROFILE_V2_MARKER');
   });
 
-  it('allows a stale digest only for a current built-in background Worker Profile', async () => {
+  it('only accepts registered historical digests for a current built-in background Worker Profile', async () => {
     const store = new MutableProfileStore();
     await store.init();
     const resolver = new AgentRuntimeProfileResolver(store);
     const background = boundFromBuiltin('background_general');
-    const staleBackground = {
-      ...sessionFromBound(background),
-      profileConfigDigest: 'stale-background-digest',
-    };
+    const historicalDigest = getBuiltinHistoricalConfigDigests('background_general')[0]!;
     await expect(resolver.resolveForSession({
-      existingSession: staleBackground,
+      existingSession: { ...sessionFromBound(background), profileConfigDigest: historicalDigest },
       bindingKey: 'background_general',
     })).resolves.toMatchObject({
       binding: { profileVersionId: background.binding.profileVersionId },
     });
 
-    const main = boundFromBuiltin('main');
-    await expect(resolver.resolveForSession({
-      existingSession: { ...sessionFromBound(main), profileConfigDigest: 'stale-main-digest' },
-      bindingKey: 'main',
-    })).rejects.toMatchObject({ code: 'CONFLICT' });
+    for (const profileConfigDigest of ['unregistered-background-digest', undefined]) {
+      await expect(resolver.resolveForSession({
+        existingSession: { ...sessionFromBound(background), profileConfigDigest },
+        bindingKey: 'background_general',
+      })).rejects.toMatchObject({ code: 'CONFLICT' });
+    }
   });
 
   it('Responses relay only reuses state produced by the same Profile config digest', async () => {

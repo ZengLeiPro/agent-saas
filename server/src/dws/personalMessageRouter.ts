@@ -104,6 +104,7 @@ export class AgentDwsMessageRouter {
   private readonly active = new Set<Promise<void>>();
   private readonly activeAborts = new Set<AbortController>();
   private timer?: NodeJS.Timeout;
+  private retryTimer?: NodeJS.Timeout;
   private pumping = false;
   private stopped = false;
 
@@ -127,7 +128,9 @@ export class AgentDwsMessageRouter {
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
+    if (this.retryTimer) clearTimeout(this.retryTimer);
     this.timer = undefined;
+    this.retryTimer = undefined;
     for (const controller of this.activeAborts) controller.abort();
     await Promise.allSettled([...this.active]);
   }
@@ -246,6 +249,15 @@ export class AgentDwsMessageRouter {
     });
   }
 
+  private scheduleRetry(): void {
+    if (this.stopped || this.retryTimer) return;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      this.scheduleKick();
+    }, this.pollMs);
+    this.retryTimer.unref?.();
+  }
+
   private async kick(): Promise<void> {
     if (this.stopped || this.pumping) return;
     this.pumping = true;
@@ -255,6 +267,10 @@ export class AgentDwsMessageRouter {
         let task!: Promise<void>;
         task = this.runOnce()
           .then(result => { processed = result; })
+          .catch(error => {
+            this.options.logger?.warn(`Agent DWS inbox claim failed: ${compactError(error)}`);
+            this.scheduleRetry();
+          })
           .finally(() => {
             this.active.delete(task);
             if (processed) this.scheduleKick();

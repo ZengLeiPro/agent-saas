@@ -64,19 +64,23 @@ function setup(input: {
   claimed?: AgentDwsInboxRecord | AgentDwsInboxRecord[];
   dispatch?: AgentRunDispatch;
   maxConcurrency?: number;
+  pollMs?: number;
   existingRun?: { runId: string; sessionId: string; status: string } | null;
   recoveredEvents?: Array<Record<string, unknown>>;
   bindingPeerOpenDingtalkId?: string;
   resolveDefaultModel?: (tenantId: string) => AgentDwsDefaultModelResolution | null;
   resolveRequester?: typeof requester | null;
   requesterAllowed?: boolean;
+  claimNext?: AgentDwsMessageStore['claimNext'];
+  logger?: { info(message: string): void; warn(message: string): void };
 } = {}) {
   const claimedItems = Array.isArray(input.claimed) ? input.claimed : [input.claimed ?? item];
   const claimed = claimedItems[0]!;
   const claimedById = new Map(claimedItems.map(entry => [entry.inboxId, entry]));
-  const claimNext = vi.fn();
-  for (const entry of claimedItems) claimNext.mockResolvedValueOnce(entry);
-  claimNext.mockResolvedValue(null);
+  const defaultClaimNext = vi.fn();
+  for (const entry of claimedItems) defaultClaimNext.mockResolvedValueOnce(entry);
+  defaultClaimNext.mockResolvedValue(null);
+  const claimNext = input.claimNext ?? defaultClaimNext;
   const messageStore = {
     init: vi.fn(),
     ingest: vi.fn(),
@@ -150,10 +154,11 @@ function setup(input: {
     ...(input.recoveredEvents ? {
       eventStore: { listByRun: vi.fn().mockResolvedValue(input.recoveredEvents) },
     } : {}),
-    pollMs: 60_000,
+    pollMs: input.pollMs ?? 60_000,
     leaseTtlMs: 60_000,
     leaseRenewMs: 30_000,
     ...(input.maxConcurrency ? { maxConcurrency: input.maxConcurrency } : {}),
+    ...(input.logger ? { logger: input.logger } : {}),
   });
   return {
     router, messageStore, accountStore, dispatch, sender,
@@ -200,6 +205,21 @@ describe('AgentDwsMessageRouter', () => {
     expect(maxActive).toBe(2);
     release();
     await vi.waitFor(() => expect(messageStore.complete).toHaveBeenCalledTimes(2));
+    await router.stop();
+  });
+
+  it('logs claim failures and retries without an unhandled rejection', async () => {
+    const claimNext = vi.fn()
+      .mockRejectedValueOnce(new Error('database unavailable'))
+      .mockResolvedValueOnce(item)
+      .mockResolvedValue(null);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const { router, messageStore } = setup({ claimNext, logger, maxConcurrency: 1, pollMs: 10 });
+
+    router.start();
+    await vi.waitFor(() => expect(messageStore.complete).toHaveBeenCalledOnce());
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('database unavailable'));
+    expect(claimNext.mock.calls.length).toBeGreaterThanOrEqual(2);
     await router.stop();
   });
 

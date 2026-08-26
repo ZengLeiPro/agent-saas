@@ -249,7 +249,7 @@ describe('buildInstructions 专职 Agent 覆盖（真实模板渲染）', () => 
     expect(instructions).toContain('已交给执行 Agent，我继续在线');
   });
 
-  it('dispatcher 前台强制保留派发工具，不污染 Worker 工具策略', () => {
+  it('dispatcher 前台继承 Profile 工具，不受 Worker allow/deny 污染', () => {
     const builtin = getBuiltinProfileByBinding('org_agent');
     const bound = {
       profile: builtin.profile,
@@ -278,11 +278,7 @@ describe('buildInstructions 专职 Agent 覆盖（真实模板渲染）', () => 
     const merged = mergeOrgAgentBoundRuntimeProfile(bound, agent);
     expect(merged.version.config.capabilities.backgroundTasks).toBe(true);
     expect(merged.version.config.capabilities.subagents).toBe(true);
-    expect(merged.version.config.tools.allowlist).toEqual([
-      'Agent', 'BackgroundTask', 'Read', 'WaitForWorkspaceReady',
-    ]);
-    expect(merged.version.config.tools.denylist).not.toContain('Agent');
-    expect(merged.version.config.tools.denylist).not.toContain('BackgroundTask');
+    expect(merged.version.config.tools).toEqual(builtin.version.config.tools);
   });
 
   it('个人会话（缺省）：persona 正常注入、无组织专职段（兼容红线）', () => {

@@ -12,6 +12,7 @@ import { parseAgentRuntimeProfileConfig } from '../data/agentProfiles/types.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
 import {
   DEFAULT_ORG_AGENT_RUNTIME_POLICY,
+  mergeOrgAgentFrontRuntimePolicy,
   mergeOrgAgentRuntimePolicy,
   mergeOrgAgentWorkerRuntimePolicy,
   orgAgentRuntimePolicySchema,
@@ -95,7 +96,10 @@ describe('Org Agent Runtime Policy', () => {
       workerModel: { strategy: 'fixed', modelRef: 'tenant/worker' },
       tools: { allowlist: ['Read', 'WaitForWorkspaceReady'], denylist: ['Agent'] },
     });
-    const worker = mergeOrgAgentWorkerRuntimePolicy(sharedProfile(), runtime);
+    const shared = sharedProfile();
+    const front = mergeOrgAgentFrontRuntimePolicy(shared, runtime);
+    const worker = mergeOrgAgentWorkerRuntimePolicy(shared, runtime);
+    expect(front.tools).toEqual(shared.tools);
     expect(worker.model).toEqual({ strategy: 'fixed', modelRef: 'tenant/worker' });
     expect(worker.tools.allowlist).toEqual(['Read', 'WaitForWorkspaceReady']);
     expect(worker.tools.denylist).toContain('Agent');

@@ -37,6 +37,7 @@ function setup(input: { delegatedScopes?: string[]; assignmentUnavailable?: bool
     : vi.fn().mockResolvedValue((input.delegatedScopes ?? [
       deriveDwsAgentDelegationResourceId('account-a', ['calendar', 'event', 'list', '--today']),
     ]).map(resourceId => ({ resourceId, bindingId: 'assignment-a', assignmentVersion: 3 })));
+  const logger = { warn: vi.fn() };
   const provider = new DwsBusinessToolProvider({
     agentCwd: '/workspace',
     accountStore: {
@@ -60,6 +61,7 @@ function setup(input: { delegatedScopes?: string[]; assignmentUnavailable?: bool
     auditStore,
     resolveServerRemote: vi.fn().mockResolvedValue({ baseUrl: 'https://hand.test', authToken: 'remote-token' }),
     createTransport: () => ({ invoke }),
+    logger,
   });
   const executionAudit = { records: [], record: vi.fn() };
   const context: ToolCallContext = {
@@ -71,12 +73,13 @@ function setup(input: { delegatedScopes?: string[]; assignmentUnavailable?: bool
     sessionId: 'session-a', runId: 'run-a', toolCallId: 'tool-a', invocationId: 'invocation-a',
     executionAudit,
   };
-  return { provider, invoke, auditStore, context, executionAudit, listEffectiveResourceIds };
+  return { provider, invoke, auditStore, context, executionAudit, listEffectiveResourceIds, logger };
 }
 
 describe('DwsBusinessToolProvider', () => {
   it('按命令动作动态分档，并对未知或破坏性动作 fail closed', () => {
     expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'list'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['minutes', '+list-all'] })).toBe('safe');
     expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'create'], confirmed: true })).toBe('workspace_write');
     expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'respond'], confirmed: true })).toBe('workspace_write');
     expect(resolveDwsBusinessRisk({ args: ['doc', 'delete'], confirmed: true })).toBe('dangerous');
@@ -200,8 +203,29 @@ describe('DwsBusinessToolProvider', () => {
     expect(request.context.workspace).toMatchObject({ userId: 'user-a', username: 'alice' });
   });
 
-  it('拒绝未确认写操作、外部 profile 参数与身份漂移', async () => {
+  it('管理员恢复其他用户会话时按会话归属者解析 requester，允许 workspace 保持当前操作者身份', async () => {
     const { provider, invoke, context } = setup();
+    const admin = {
+      id: 'admin-a', username: 'admin', role: 'admin' as const, tenantId: 'tenant-a', disabled: false,
+    };
+
+    await provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['minutes', '+list-all'], credentialMode: 'requester' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, {
+      ...context,
+      channelContext: { ...context.channelContext, user: admin },
+      workspace: { ...context.workspace, userId: admin.id, username: admin.username },
+    });
+
+    const request = invoke.mock.calls[0]![0];
+    expect(request.input.command).toContain("'--profile' 'requester-profile-secret'");
+    expect(request.context.workspace).toMatchObject({ userId: 'user-a', username: 'alice' });
+  });
+
+  it('拒绝未确认写操作、外部 profile 参数与身份漂移', async () => {
+    const { provider, invoke, context, auditStore, logger } = setup();
     await expect(provider.invoke({
       toolId: 'DwsBusiness',
       input: { args: ['chat', 'message', 'send'] },
@@ -219,7 +243,12 @@ describe('DwsBusinessToolProvider', () => {
     }, {
       ...context,
       workspace: { ...context.workspace, userId: 'other-user' },
-    })).rejects.toThrow('绑定不一致');
+    })).rejects.toThrow('不一致项：workspace.userId');
     expect(invoke).not.toHaveBeenCalled();
+    expect(auditStore.events.at(-1)).toMatchObject({
+      reason: 'DWS_BUSINESS_SUBJECT_MISMATCH',
+      metadata: { mismatchFields: ['workspace.userId'], workspaceUserId: 'other-user' },
+    });
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('"mismatchFields":["workspace.userId"]'));
   });
 });

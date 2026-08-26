@@ -113,6 +113,7 @@ export interface DwsBusinessToolProviderOptions {
     authToken: string;
     invokeTimeoutMs?: number;
   }) => Pick<ExecutionTransport, 'invoke'>;
+  logger?: { warn(message: string): void };
 }
 
 export class DwsBusinessToolProvider implements ToolProvider {
@@ -128,9 +129,10 @@ export class DwsBusinessToolProvider implements ToolProvider {
   ): Promise<ToolResult | undefined> {
     if (call.toolId !== dwsBusinessToolDescriptor.id) return undefined;
     const identity = context.channelContext.sessionOwner ?? context.channelContext.user;
+    const workspaceIdentity = context.channelContext.user ?? identity;
     const session = context.sessionId ? await this.options.sessionCatalog.get(context.sessionId) : null;
     const correlationId = context.invocationId ?? context.toolCallId ?? `${context.runId ?? context.sessionId ?? 'unbound'}:dws`;
-    const auditRejection = async (reason: string) => {
+    const auditRejection = async (reason: string, metadata?: Record<string, unknown>) => {
       await this.options.auditStore.append({
         correlationId,
         actorType: identity?.id ? 'user' : 'service',
@@ -144,7 +146,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
         purpose: 'persist rejected DWS business broker call',
         reason,
         result: 'failed',
-        metadata: { sessionBound: Boolean(session?.orgAgentId) },
+        metadata: { sessionBound: Boolean(session?.orgAgentId), ...metadata },
       });
     };
     const parsed = businessInputSchema.safeParse(call.input);
@@ -157,14 +159,31 @@ export class DwsBusinessToolProvider implements ToolProvider {
       await auditRejection('DWS_BUSINESS_SUBJECT_MISSING');
       throw new Error('DWS Broker 缺少可信请求者或 Session 身份');
     }
-    if (!session?.orgAgentId
-      || session.userId !== identity.id
-      || session.tenantId !== identity.tenantId
-      || context.workspace.userId !== identity.id
-      || (context.workspace.tenantId && context.workspace.tenantId !== identity.tenantId)) {
-      await auditRejection('DWS_BUSINESS_SUBJECT_MISMATCH');
-      throw new Error('DWS Broker 请求者、Session 或组织 Agent 绑定不一致');
+    const mismatchFields = [
+      ...(!session?.orgAgentId ? ['session.orgAgentId'] : []),
+      ...(session?.userId !== identity.id ? ['session.userId'] : []),
+      ...(session?.tenantId !== identity.tenantId ? ['session.tenantId'] : []),
+      ...(context.workspace.userId !== workspaceIdentity?.id ? ['workspace.userId'] : []),
+      ...(context.workspace.tenantId && context.workspace.tenantId !== workspaceIdentity?.tenantId
+        ? ['workspace.tenantId']
+        : []),
+    ];
+    if (mismatchFields.length > 0) {
+      const diagnostic = {
+        mismatchFields,
+        requesterUserId: identity.id,
+        requesterTenantId: identity.tenantId,
+        sessionUserId: session?.userId,
+        sessionTenantId: session?.tenantId,
+        sessionOrgAgentId: session?.orgAgentId,
+        workspaceUserId: context.workspace.userId,
+        workspaceTenantId: context.workspace.tenantId,
+      };
+      this.options.logger?.warn(`DWS business subject mismatch ${JSON.stringify(diagnostic)}`);
+      await auditRejection('DWS_BUSINESS_SUBJECT_MISMATCH', diagnostic);
+      throw new Error(`DWS Broker 会话绑定已失效（不一致项：${mismatchFields.join('、')}），请重新打开当前会话后重试`);
     }
+    if (!session?.orgAgentId) throw new Error('DWS Broker 会话绑定已失效，请重新打开当前会话后重试');
     let command: ClassifiedCommand;
     try {
       command = classifyCommand(input.args);
@@ -411,7 +430,8 @@ function classifyCommand(args: string[]): ClassifiedCommand {
   const firstFlagIndex = args.findIndex(token => token.startsWith('-'));
   const commandPath = args.slice(0, firstFlagIndex < 0 ? args.length : firstFlagIndex);
   const pathTokens = commandPath.flatMap(token => token.toLowerCase().split('-').filter(Boolean));
-  const actionTokens = commandPath.at(-1)!.toLowerCase().split('-').filter(Boolean);
+  const normalizedAction = commandPath.at(-1)!.toLowerCase().replace(/^\+/, '');
+  const actionTokens = [normalizedAction, ...normalizedAction.split('-')].filter(Boolean);
   const flagNameTokens = args.filter(token => token.startsWith('-'))
     .flatMap(token => token.split('=', 1)[0]!.toLowerCase().split('-').filter(Boolean));
   if ([...pathTokens, ...flagNameTokens].some(token => DESTRUCTIVE_VERBS.has(token))) {

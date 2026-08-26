@@ -1,6 +1,8 @@
 name: ACS CI / Deploy
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
     paths:
@@ -49,10 +51,99 @@ env:
   ACS_SERVICE_NAME: agent-saas-acs-orchestrator.service
 
 jobs:
+  acs-impact-gate:
+    name: ACS Impact Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout pull request revision
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Classify ACS impact
+        id: impact
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git cat-file -e "$BASE_SHA^{commit}"
+          git cat-file -e "$HEAD_SHA^{commit}"
+
+          changed_files="$RUNNER_TEMP/acs-pr-changed-files.txt"
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > "$changed_files"
+          out="$RUNNER_TEMP/acs-pr-classification.out"
+          bash .github/scripts/acs-classify.sh "$changed_files" "$BASE_SHA" > "$out"
+          cat "$out"
+
+          publish="$(sed -n 's/^publish=//p' "$out")"
+          contract_check="$(sed -n 's/^contract_check=//p' "$out")"
+          reason="$(sed -n 's/^reason=//p' "$out")"
+          skipped="$(sed -n 's/^skipped=//p' "$out")"
+          case "$publish:$contract_check" in
+            true:*|*:true) required=true ;;
+            false:false) required=false ;;
+            *) echo "::error title=ACS classifier contract::Invalid classifier result"; exit 1 ;;
+          esac
+          {
+            echo "required=$required"
+            echo "publish=$publish"
+            echo "contract_check=$contract_check"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### ACS Impact Gate"
+            echo
+            if [ "$required" = "true" ]; then
+              echo "- result: \`required\`"
+              echo "- reasons: $reason"
+            else
+              echo "- result: \`not_required\`"
+              echo "- skipped inputs: $skipped"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Setup pnpm
+        if: steps.impact.outputs.required == 'true'
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        if: steps.impact.outputs.required == 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.impact.outputs.required == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck server and orchestrator
+        if: steps.impact.outputs.required == 'true'
+        run: |
+          pnpm -F server typecheck
+          pnpm -F acs-orchestrator typecheck
+
+      - name: Test orchestrator
+        if: steps.impact.outputs.required == 'true'
+        run: pnpm -F acs-orchestrator test
+
+      - name: Test ACS operational scripts
+        if: steps.impact.outputs.required == 'true'
+        run: >-
+          python3 -m unittest
+          scripts/test_acs_operational_scripts.py
+          scripts/test_acr_webhook_redelivery.py
+
   changes:
     name: Classify ACS Impact
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    if: github.event_name != 'pull_request'
 
     outputs:
       publish: ${{ steps.filter.outputs.publish }}

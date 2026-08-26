@@ -111,6 +111,13 @@ describe("unified settings registry", () => {
     }
   });
 
+  it("我的 Agent 仅注册资料与长期 Memory Tab", () => {
+    const myAgent = getSettingsSection("personal", "my-agent");
+    expect(myAgent.description).toBe("资料与长期 Memory。");
+    expect("tabs" in myAgent).toBe(true);
+    if ("tabs" in myAgent) expect(myAgent.tabs).toEqual(["agent-profile", "memory"]);
+  });
+
   it.each([
     ["account", "account-security"],
     ["general", "chat-model"],

@@ -59,7 +59,7 @@ function defineSettingsRegistry<const T extends readonly SettingsRegistryContrac
  */
 export const SETTINGS_REGISTRY = defineSettingsRegistry([
   { scope: "personal", id: "account-security", label: "账户与安全", description: "账号资料、安全和登录状态。", group: "personal", iconKey: "user", accessAction: "settings.personal.view", dirtyPolicy: "immediate", routeId: "settings.personal.account-security" },
-  { scope: "personal", id: "my-agent", label: "我的 Agent", description: "资料、Persona 与长期 Memory。", group: "personal", iconKey: "bot", accessAction: "settings.personal.view", dirtyPolicy: "immediate", routeId: "settings.personal.my-agent", tabs: ["agent-profile", "persona", "memory"], defaultTab: "agent-profile" },
+  { scope: "personal", id: "my-agent", label: "我的 Agent", description: "资料与长期 Memory。", group: "personal", iconKey: "bot", accessAction: "settings.personal.view", dirtyPolicy: "immediate", routeId: "settings.personal.my-agent", tabs: ["agent-profile", "memory"], defaultTab: "agent-profile" },
   { scope: "personal", id: "chat-model", label: "对话与模型", description: "默认模型与对话展示偏好。", group: "preferences", iconKey: "message-square", accessAction: "settings.personal.view", dirtyPolicy: "guarded", routeId: "settings.preferences.chat-model" },
   { scope: "personal", id: "appearance-layout", label: "外观与布局", description: "侧边栏、会话列表和界面偏好。", group: "preferences", iconKey: "palette", accessAction: "settings.personal.view", dirtyPolicy: "immediate", routeId: "settings.preferences.appearance-layout" },
   { scope: "personal", id: "my-permissions", label: "我的权限", description: "服务端权威有效资源与权限解释。", group: "access", iconKey: "admin", accessAction: "settings.personal.view", dirtyPolicy: "immediate", routeId: "settings.access.my-permissions" },

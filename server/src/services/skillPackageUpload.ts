@@ -58,6 +58,14 @@ function safeRelativePath(name: string): string | null {
   return normalized;
 }
 
+function isMacOsMetadataPath(name: string): boolean {
+  if (!name || name.includes('\0') || /^[\\/]/.test(name) || /^[a-zA-Z]:[\\/]/.test(name)) return false;
+  const parts = name.replace(/\\/g, '/').split('/').filter(Boolean);
+  return parts[0] === '__MACOSX'
+    && parts.length <= MAX_SKILL_PATH_DEPTH
+    && parts.every(part => part !== '.' && part !== '..');
+}
+
 function openZipArchive(path: string): Promise<ZipFile> {
   return new Promise((resolve, reject) => {
     yauzl.open(path, { lazyEntries: true, validateEntrySizes: false }, (error, zipFile) => {
@@ -101,11 +109,14 @@ async function extractZipArchive(zipPath: string, destination: string): Promise<
         if (entryCount > MAX_SKILL_FILES) {
           throw new SkillPackageUploadError('SKILL_PACKAGE_LIMIT_EXCEEDED', 'zip 内文件数量超出限制', 413);
         }
-        const relativePath = safeRelativePath(entry.fileName);
-        if (!relativePath || paths.has(relativePath)) {
-          throw new SkillPackageUploadError('SKILL_PACKAGE_UNSAFE', 'zip 内包含不安全或重复路径', 400);
+        const isMacOsMetadata = isMacOsMetadataPath(entry.fileName);
+        const relativePath = isMacOsMetadata ? null : safeRelativePath(entry.fileName);
+        if (!isMacOsMetadata) {
+          if (!relativePath || paths.has(relativePath)) {
+            throw new SkillPackageUploadError('SKILL_PACKAGE_UNSAFE', 'zip 内包含不安全或重复路径', 400);
+          }
+          paths.add(relativePath);
         }
-        paths.add(relativePath);
         const unixMode = entry.externalFileAttributes >>> 16;
         if ((unixMode & 0xf000) === 0xa000) {
           throw new SkillPackageUploadError('SKILL_PACKAGE_UNSAFE', 'zip 内包含符号链接', 400);
@@ -117,6 +128,7 @@ async function extractZipArchive(zipPath: string, destination: string): Promise<
         if (declaredTotalBytes > MAX_SKILL_PACKAGE_BYTES) {
           throw new SkillPackageUploadError('SKILL_PACKAGE_LIMIT_EXCEEDED', 'zip 解压后大小超出限制', 413);
         }
+        if (!relativePath) return;
 
         const targetPath = join(destination, relativePath);
         if (entry.fileName.endsWith('/')) {
@@ -285,7 +297,7 @@ function inspectZipArchive(buffer: Buffer): void {
       throw new SkillPackageUploadError('SKILL_PACKAGE_LIMIT_EXCEEDED', 'zip 技能包超出支持的大小范围', 413);
     }
     const entryName = buffer.subarray(cursor + 46, cursor + 46 + fileNameLength).toString('utf-8');
-    if (!safeRelativePath(entryName)) {
+    if (!isMacOsMetadataPath(entryName) && !safeRelativePath(entryName)) {
       throw new SkillPackageUploadError('SKILL_PACKAGE_UNSAFE', 'zip 内包含不安全路径', 400);
     }
     const unixMode = externalAttributes >>> 16;

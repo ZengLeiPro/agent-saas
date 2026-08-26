@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -95,5 +95,72 @@ describe('ReleaseAttestationStore', () => {
     expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected']);
     await expect(firstStore.read('rc-20260826-01', DIGEST)).resolves.toMatchObject({});
     expect((await firstStore.read('rc-20260826-01', DIGEST)).list()).toHaveLength(1);
+  });
+
+  it('recovers a same-host lock whose owner process no longer exists', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'release-attestations-'));
+    directories.push(root);
+    const releaseId = 'rc-20260826-01';
+    const lockPath = join(root, `${releaseId}.jsonl.lock`);
+    await writeFile(
+      lockPath,
+      JSON.stringify({
+        token: 'abandoned-owner',
+        pid: 424_242,
+        hostname: 'release-host',
+        acquiredAt: '2026-08-26T07:59:00.000Z',
+      }),
+    );
+    const store = new ReleaseAttestationStore(root, {
+      now: () => NOW,
+      lockHostname: 'release-host',
+      lockProcessExists: () => false,
+      lockTimeoutMs: 100,
+      lockRetryMs: 1,
+    });
+
+    await expect(
+      store.append(releaseId, DIGEST, {
+        state: 'built',
+        operationKey: 'build-after-crash',
+        actor: 'release-bot',
+        manifestDigest: DIGEST,
+      }),
+    ).resolves.toMatchObject({ state: 'built' });
+    await expect(access(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await store.read(releaseId, DIGEST)).list()).toHaveLength(1);
+  });
+
+  it('does not steal a lock while its same-host owner is still alive', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'release-attestations-'));
+    directories.push(root);
+    const releaseId = 'rc-20260826-01';
+    const lockPath = join(root, `${releaseId}.jsonl.lock`);
+    await writeFile(
+      lockPath,
+      JSON.stringify({
+        token: 'live-owner',
+        pid: 101,
+        hostname: 'release-host',
+        acquiredAt: '2026-08-26T07:59:00.000Z',
+      }),
+    );
+    const store = new ReleaseAttestationStore(root, {
+      now: () => NOW,
+      lockHostname: 'release-host',
+      lockProcessExists: () => true,
+      lockTimeoutMs: 20,
+      lockRetryMs: 1,
+    });
+
+    await expect(
+      store.append(releaseId, DIGEST, {
+        state: 'built',
+        operationKey: 'build-blocked',
+        actor: 'release-bot',
+        manifestDigest: DIGEST,
+      }),
+    ).rejects.toThrow(/Timed out acquiring attestation lock/u);
+    await expect(access(lockPath)).resolves.toBeUndefined();
   });
 });

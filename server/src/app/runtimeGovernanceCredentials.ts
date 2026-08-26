@@ -11,12 +11,22 @@ import {
 import type { ResolvedWebToolsConfig } from '../agent/webToolProvider.js';
 import type { WebSearchProviderConfig } from '../agent/web/searchProviderTypes.js';
 import type { ResolvedImageGenToolsConfig } from '../agent/imageGenToolProvider.js';
+import {
+  installRuntimeStagingEgressBootstrap,
+  type RuntimeStagingEgressBootstrapOptions,
+} from './runtimeStagingEgressBootstrap.js';
+
+export interface RuntimeGovernanceCredentialOptions {
+  stagingEgress?: RuntimeStagingEgressBootstrapOptions;
+}
 
 /** Resolves startup credentials without exposing plaintext outside server bootstrap objects. */
 export async function initializeRuntimeGovernanceCredentials(
   config: AppConfig,
   processCwd: string,
+  options: RuntimeGovernanceCredentialOptions = {},
 ) {
+  const bootstrapEgress = installRuntimeStagingEgressBootstrap(config, options.stagingEgress);
   // A2: SecretVault 提前到 ClientDaemonGateway 之前，便于装配时按 vault ref 解析
   // clientDaemon.authTokenRef → plaintext，再用 setAuthToken 注入。提前到这里也让
   // MCP / tenant resolver / serverRemote 装配时共享同一个 vault 实例。
@@ -24,7 +34,11 @@ export async function initializeRuntimeGovernanceCredentials(
     const vc = config.secretVault;
     if (!vc) {
       const jwtSecret = config.auth?.jwtSecret;
-      if (process.env.NODE_ENV === 'production' && config.runtimeEventStore?.backend === 'pg' && jwtSecret) {
+      if (
+        process.env.NODE_ENV === 'production' &&
+        config.runtimeEventStore?.backend === 'pg' &&
+        jwtSecret
+      ) {
         return new EncryptedFileSecretVault(
           join(processCwd, 'data', 'secrets.enc'),
           `agent-saas/secret-vault/v1:${jwtSecret}`,
@@ -36,8 +50,8 @@ export async function initializeRuntimeGovernanceCredentials(
       return new InMemorySecretVault();
     }
     if (vc.backend === 'encrypted-file') {
-      const key = vc.encryptionKey
-        ?? (vc.encryptionKeyEnv ? process.env[vc.encryptionKeyEnv] : undefined);
+      const key =
+        vc.encryptionKey ?? (vc.encryptionKeyEnv ? process.env[vc.encryptionKeyEnv] : undefined);
       if (!key || key.length < 16) {
         throw new Error(
           `secretVault.backend="encrypted-file" 加密密钥未提供或长度 <16：${vc.encryptionKeyEnv ? `env "${vc.encryptionKeyEnv}" 为空或过短` : 'encryptionKey 缺失'}`,
@@ -47,14 +61,17 @@ export async function initializeRuntimeGovernanceCredentials(
       return new EncryptedFileSecretVault(filePath, key);
     }
     // http
-    const token = vc.authToken
-      ?? (vc.authTokenEnv ? process.env[vc.authTokenEnv] : undefined);
+    const token = vc.authToken ?? (vc.authTokenEnv ? process.env[vc.authTokenEnv] : undefined);
     if (!token || token.length < 8) {
       throw new Error(
         `secretVault.backend="http" bearer token 未提供或长度 <8：${vc.authTokenEnv ? `env "${vc.authTokenEnv}" 为空或过短` : 'authToken 缺失'}`,
       );
     }
-    return new HttpSecretVault({ baseUrl: vc.baseUrl, authToken: token });
+    return new HttpSecretVault({
+      baseUrl: vc.baseUrl,
+      authToken: token,
+      ...(bootstrapEgress.fetchImpl ? { fetchImpl: bootstrapEgress.fetchImpl } : {}),
+    });
   })();
   const resolvedSttRuntimeConfig = await resolveSttRuntimeConfig(config.stt, secretVault);
 
@@ -83,7 +100,9 @@ export async function initializeRuntimeGovernanceCredentials(
   // 飞书 Token Broker 只在 Server 内持有平台 App Secret。用户 access/refresh token
   // 以 tenant/user 隔离写入 SecretVault；sandbox 每次运行只获得 App ID 与短期 access token。
   // inline secret 仅作部署迁移兼容，生产优先使用 SecretVault ref。
-  const resolvedFeishuConnector = await (async (): Promise<{ appId: string; appSecret: string } | undefined> => {
+  const resolvedFeishuConnector = await (async (): Promise<
+    { appId: string; appSecret: string } | undefined
+  > => {
     const appId = process.env.FEISHU_CONNECTOR_APP_ID?.trim();
     const appSecretRef = process.env.FEISHU_CONNECTOR_APP_SECRET_REF?.trim();
     const inlineSecret = process.env.FEISHU_CONNECTOR_APP_SECRET?.trim();
@@ -108,18 +127,24 @@ export async function initializeRuntimeGovernanceCredentials(
       }
       return { appId, appSecret };
     } catch (err) {
-      serverLogger.warn(`Feishu connector disabled: app secret resolution failed: ${err instanceof Error ? err.message : String(err)}`);
+      serverLogger.warn(
+        `Feishu connector disabled: app secret resolution failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return undefined;
     }
   })();
-  const feishuConnectorScopes = Array.from(new Set(
-    (process.env.FEISHU_CONNECTOR_SCOPES ?? '')
-      .split(/[\s,]+/)
-      .map(scope => scope.trim())
-      .filter(scope => scope && scope !== 'offline_access'),
-  )).join(' ');
+  const feishuConnectorScopes = Array.from(
+    new Set(
+      (process.env.FEISHU_CONNECTOR_SCOPES ?? '')
+        .split(/[\s,]+/)
+        .map((scope) => scope.trim())
+        .filter((scope) => scope && scope !== 'offline_access'),
+    ),
+  ).join(' ');
   if (resolvedFeishuConnector && !feishuConnectorScopes) {
-    serverLogger.warn('Feishu Token Broker disabled: FEISHU_CONNECTOR_SCOPES has no business scopes');
+    serverLogger.warn(
+      'Feishu Token Broker disabled: FEISHU_CONNECTOR_SCOPES has no business scopes',
+    );
   }
 
   return {
@@ -184,7 +209,9 @@ async function resolveSearchApiKey(
       scopes: ['secret:web_tools:read'],
     });
   } catch (err) {
-    throw new Error(`${label} "${credential.apiKeyRef}" 解析失败: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `${label} "${credential.apiKeyRef}" 解析失败: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 

@@ -87,6 +87,7 @@ import { CapabilityTokenService } from '../security/capabilityToken.js';
 import type { SecretVault } from '../security/secretVault.js';
 import { CodexResponsesWebSocketPool } from '../runtime/responses/codexResponsesWebSocketPool.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
+import { shutdownRuntimeEgress } from './runtimeStagingEgressBootstrap.js';
 
 export interface RuntimeGovernanceConnectorDeps {
   processCwd: string;
@@ -1075,11 +1076,8 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
         : undefined,
     logger: serverLogger.child('McpProxy'),
   });
-  const mcpClientShutdown = async () => {
-    restoreGlobalEgressFetch();
-    await egressDispatchers.close();
-    await mcpClientManager.shutdown();
-  };
+  const mcpClientShutdown = () =>
+    shutdownRuntimeEgress(restoreGlobalEgressFetch, egressDispatchers, mcpClientManager);
   const resolveRunScopedEnv = async (context: {
     userId: string;
     username: string;

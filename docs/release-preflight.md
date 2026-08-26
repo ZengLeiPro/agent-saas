@@ -21,7 +21,7 @@ Staging 启动除 Release SHA/digest、数据库和代理变量外，还必须�
 - `AGENT_SAAS_STAGING_NOTIFICATION_MODE=disabled`；在正式建设测试 sink 前，DingTalk、阿里云短信和 Web Push 必须关闭；
 - Hand/SecretVault token 只能使用 Staging credential namespace 下的 Vault 引用，禁止 inline token。
 
-Staging 会把 egress fetch 安装为进程级 `globalThis.fetch`，因此未显式接入 dispatcher 的 DingTalk、短信等调用也不能绕过全代理、`failOpen=false` 的出口策略。以上是应用启动契约；数据库、Vault、K8s RBAC/PVC 等“无法访问生产”的反向权限证明仍属于阶段 C 的基础设施验收，不能由配置字符串替代。
+Staging 会在解析任何 Vault 引用前先安装无凭据、全代理、`failOpen=false` 的 bootstrap egress，再把动态 egress fetch 安装为进程级 `globalThis.fetch`。HTTP Vault 明确绑定 bootstrap fetch，避免提前捕获直连 fetch；bootstrap 不读取 Vault 中的代理凭据，以免形成“访问 Vault 前先访问 Vault”的循环依赖。因此未显式接入 dispatcher 的 DingTalk、短信等全局 fetch 调用也不能绕过出口策略。以上是应用启动契约；数据库、Vault、K8s RBAC/PVC 等“无法访问生产”的反向权限证明仍属于阶段 C 的基础设施验收，不能由配置字符串替代。
 
 ## 检查项
 

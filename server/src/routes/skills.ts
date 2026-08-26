@@ -81,7 +81,19 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
   router.use(async (req, res, next) => {
     const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
     const isSelectionPreferenceWrite = isSkillSelectionPreferenceWrite(req.method, req.path);
-    if (!isMutation || isSelectionPreferenceWrite || req.path === '/sync' || !deps.legacyWriteGate) return next();
+    const isPersonalSkillDocumentWrite = req.method === 'PUT'
+      && /^\/me\/skills\/[^/]+\/document$/.test(req.path);
+    const isPersonalSkillDelete = req.method === 'DELETE'
+      && /^\/me\/skills\/[^/]+$/.test(req.path);
+    // 个人 Skill 的编辑/删除始终由 /me 路径按登录用户收口，不是跨主体的旧管理写入口。
+    if (
+      !isMutation
+      || isSelectionPreferenceWrite
+      || isPersonalSkillDocumentWrite
+      || isPersonalSkillDelete
+      || req.path === '/sync'
+      || !deps.legacyWriteGate
+    ) return next();
     try {
       await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
       next();

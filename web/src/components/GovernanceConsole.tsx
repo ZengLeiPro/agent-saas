@@ -84,7 +84,7 @@ export function GovernanceCapabilityNotice({
   );
 }
 
-function OrganizationScopeBanner({ route }: { route: GovernanceRouteState }) {
+export function OrganizationScopeBanner({ route }: { route: GovernanceRouteState }) {
   const { user, isPlatformAdmin } = useAuth();
   const { tenants } = useTenants();
   const organizations = useMemo(() => filterCustomerOrganizations(tenants), [tenants]);

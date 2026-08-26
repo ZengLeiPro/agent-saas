@@ -1,6 +1,7 @@
 import { startTransition } from 'react';
 import type { AppTab } from '@/types/sidebar';
 import type { CanonicalSettingsSectionId, SettingsSectionInput } from '@/types/settings';
+import { analysisHistoryStateForNavigation, readAnalysisHistoryState } from '@/lib/analysisHistory';
 import {
   buildGovernanceUrl,
   governanceRoute,
@@ -517,15 +518,16 @@ export function replaceUrl(tab: AppTab, sessionId: string | null): void {
 export function pushPlatformAdminUrl(state: { section?: PlatformAdminSection | null; entityId?: string | null; search?: string | URLSearchParams | Record<string, string | number | boolean | null | undefined> } = {}): void {
   const next = buildPlatformAdminUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    if (maybeNavigateWithUpdate(next)) return;
-    window.history.pushState({}, '', next);
+    const historyState = analysisHistoryStateForNavigation('push', next);
+    if (!readAnalysisHistoryState(historyState) && maybeNavigateWithUpdate(next)) return;
+    window.history.pushState(historyState, '', next);
   }
 }
 
 export function replacePlatformAdminUrl(state: { section?: PlatformAdminSection | null; entityId?: string | null; search?: string | URLSearchParams | Record<string, string | number | boolean | null | undefined> } = {}): void {
   const next = buildPlatformAdminUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    window.history.replaceState({}, '', next);
+    window.history.replaceState(analysisHistoryStateForNavigation('replace', next), '', next);
   }
 }
 
@@ -568,15 +570,16 @@ export function replaceAdminSettingsUrl(
 export function pushTenantAdminUrl(state: { section?: TenantAdminSection | null; search?: string | URLSearchParams | Record<string, string | number | boolean | null | undefined> } = {}): void {
   const next = buildTenantAdminUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    if (maybeNavigateWithUpdate(next)) return;
-    window.history.pushState({}, '', next);
+    const historyState = analysisHistoryStateForNavigation('push', next);
+    if (!readAnalysisHistoryState(historyState) && maybeNavigateWithUpdate(next)) return;
+    window.history.pushState(historyState, '', next);
   }
 }
 
 export function replaceTenantAdminUrl(state: { section?: TenantAdminSection | null; search?: string | URLSearchParams | Record<string, string | number | boolean | null | undefined> } = {}): void {
   const next = buildTenantAdminUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    window.history.replaceState({}, '', next);
+    window.history.replaceState(analysisHistoryStateForNavigation('replace', next), '', next);
   }
 }
 
@@ -589,14 +592,14 @@ export function replaceTenantAdminUrl(state: { section?: TenantAdminSection | nu
 export function pushGovernanceUrl(state: GovernanceRouteState): void {
   const next = buildGovernanceUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    window.history.pushState({}, '', next);
+    window.history.pushState(analysisHistoryStateForNavigation('push', next), '', next);
   }
 }
 
 export function replaceGovernanceUrl(state: GovernanceRouteState): void {
   const next = buildGovernanceUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    window.history.replaceState({}, '', next);
+    window.history.replaceState(analysisHistoryStateForNavigation('replace', next), '', next);
   }
 }
 
@@ -657,8 +660,9 @@ export function navigateAdminSettings(target: AdminSettingsTarget, section?: str
  */
 export function navigateToHref(href: string): void {
   if (`${window.location.pathname}${window.location.search}` !== href) {
-    if (maybeNavigateWithUpdate(href)) return;
-    window.history.pushState({}, '', href);
+    const historyState = analysisHistoryStateForNavigation('push', href);
+    if (!readAnalysisHistoryState(historyState) && maybeNavigateWithUpdate(href)) return;
+    window.history.pushState(historyState, '', href);
   }
   notifyRouteChange();
 }

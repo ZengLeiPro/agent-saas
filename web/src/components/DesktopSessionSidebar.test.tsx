@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
+import { governanceRoute } from "@/lib/governanceNavigation";
 import type { AppTab, ChatSessionIndexItem } from "@/types/sidebar";
 
 vi.mock("@/contexts/AuthContext", () => ({
@@ -214,15 +215,73 @@ describe("桌面侧边栏会话激活态", () => {
     expect(screen.getByTestId("desktop-sidebar-main-panel").classList.contains("border-r")).toBe(true);
   });
 
-  it("平台管理员头像菜单也只显示一个设置入口", () => {
-    renderSidebar("chat", [session], "single", { isAdmin: true, isPlatformAdmin: true });
+  it("普通用户头像菜单不显示分析入口", () => {
+    renderSidebar("chat");
 
     fireEvent.click(screen.getByRole("button", { name: /tester/ }));
 
+    expect(screen.queryByRole("button", { name: "分析" })).toBeNull();
     expect(screen.getByRole("button", { name: "设置" })).toBeTruthy();
-    expect(screen.queryByText("个人设置")).toBeNull();
-    expect(screen.queryByText("组织控制台")).toBeNull();
-    expect(screen.queryByText("平台控制台")).toBeNull();
+  });
+
+  it("组织管理员头像菜单显示分析入口", () => {
+    renderSidebar("chat", [session], "single", {
+      isAdmin: true,
+      settingsAccess: {
+        status: "ready", personalAllowed: true, tenantEntryAllowed: true, platformEntryAllowed: false, retry: vi.fn(),
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /tester/ }));
+
+    expect(screen.getByRole("button", { name: "分析" })).toBeTruthy();
+  });
+
+  it("平台管理员头像菜单显示统一分析与设置入口", () => {
+    const onOpenAnalysis = vi.fn();
+    renderSidebar("chat", [session], "single", {
+      isAdmin: true,
+      isPlatformAdmin: true,
+      onOpenAnalysis,
+      settingsAccess: {
+        status: "ready", personalAllowed: true, tenantEntryAllowed: true, platformEntryAllowed: true, retry: vi.fn(),
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /tester/ }));
+
+    expect(screen.getByRole("button", { name: "分析" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "设置" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "分析" }));
+    expect(onOpenAnalysis).toHaveBeenCalledOnce();
+  });
+
+  it.each(["single", "double"] as const)("%s 布局进入分析后整块替换常规侧边栏", async (sidebarLayout) => {
+    const onAnalysisNavigate = vi.fn();
+    const onCloseAnalysis = vi.fn();
+    renderSidebar("platform-admin", [session], sidebarLayout, {
+      isAdmin: true,
+      isPlatformAdmin: true,
+      settingsAccess: {
+        status: "ready", personalAllowed: true, tenantEntryAllowed: true, platformEntryAllowed: true, retry: vi.fn(),
+      },
+      analysisMode: true,
+      analysisRoute: governanceRoute("platform.runtime.runs"),
+      onAnalysisNavigate,
+      onCloseAnalysis,
+    });
+
+    expect(await screen.findByTestId("unified-analysis-sidebar")).toBeTruthy();
+    expect(screen.queryByText("新建会话")).toBeNull();
+    expect(screen.queryByText("会话 A")).toBeNull();
+    expect(screen.getByText("平台分析")).toBeTruthy();
+    expect(screen.getByText("组织分析")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "运行" }).getAttribute("aria-current")).toBe("page");
+
+    fireEvent.click(screen.getByRole("button", { name: "执行效率" }));
+    expect(onAnalysisNavigate).toHaveBeenCalledWith("platform.runtime.efficiency");
+    fireEvent.click(screen.getByRole("button", { name: "返回主界面" }));
+    expect(onCloseAnalysis).toHaveBeenCalledOnce();
   });
 
   it.each(["single", "double"] as const)("%s 布局进入设置后整块替换常规侧边栏", async (sidebarLayout) => {

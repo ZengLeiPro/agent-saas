@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { analysisHistoryStateForNavigation } from "@/lib/analysisHistory";
+
 type QueryValue = string | number | boolean | null | undefined;
 
 /** 文本输入的默认历史合并窗口：一次连续输入只留一条历史记录，而不是每个字符一条 */
@@ -42,11 +44,13 @@ function nextHref(params: URLSearchParams) {
 }
 
 function replaceSearch(params: URLSearchParams) {
-  window.history.replaceState({}, "", nextHref(params));
+  const href = nextHref(params);
+  window.history.replaceState(analysisHistoryStateForNavigation("replace", href), "", href);
 }
 
 function pushSearch(params: URLSearchParams) {
-  window.history.pushState({}, "", nextHref(params));
+  const href = nextHref(params);
+  window.history.pushState(analysisHistoryStateForNavigation("push", href), "", href);
 }
 
 function applyValues(params: URLSearchParams, values: Record<string, QueryValue>) {

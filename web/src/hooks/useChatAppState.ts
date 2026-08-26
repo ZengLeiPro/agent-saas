@@ -44,6 +44,7 @@ import {
 export type { QueuedInterjection } from "@/lib/interjectionConsumption";
 import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, replaceSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl, buildTenantAdminUrl, pushTenantAdminUrl, replaceTenantAdminUrl, normalizeTenantAdminSection, preserveScopeSearch, preserveSearchKeys, TENANT_ADMIN_SCOPE_KEYS, pushGovernanceUrl, replaceGovernanceUrl } from "@/lib/urlSync";
 import { buildGovernanceUrl, governanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
+import { analysisHistoryStateForNavigation } from "@/lib/analysisHistory";
 import { registerUpdateGuard, registerBeforeReloadHook, maybeReloadOnPopstate } from "@/lib/swUpdate";
 import { clearRunShellApprovalStorage, runShellApprovalStorageKey } from "@/lib/runShellApprovalStorage";
 import type { AdminSettingsState, PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
@@ -1197,7 +1198,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (pendingCanonicalPath) {
       const current = `${window.location.pathname}${window.location.search}`;
       if (current !== pendingCanonicalPath) {
-        window.history.replaceState({}, '', pendingCanonicalPath);
+        window.history.replaceState(analysisHistoryStateForNavigation('replace', pendingCanonicalPath), '', pendingCanonicalPath);
       }
       setPendingCanonicalPath(null);
       return;

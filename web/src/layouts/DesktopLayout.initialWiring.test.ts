@@ -11,4 +11,12 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(source).toContain("&& !activeOrgAgent");
     expect(source).toContain("visible={hasSuccessfulFinalOutput(messages)}");
   });
+
+  it("分析路由复用标准浮动布局，不再进入旧 GovernanceConsole 壳", () => {
+    expect(source).toContain("analysisMode={analysisMode}");
+    expect(source).toContain('data-testid="unified-analysis-content"');
+    expect(source).toContain("governanceContentEmbedded");
+    expect(source).toContain('if (!analysisMode && activeTab === "platform-admin"');
+    expect(source).toContain('if (!analysisMode && activeTab === "tenant-admin"');
+  });
 });

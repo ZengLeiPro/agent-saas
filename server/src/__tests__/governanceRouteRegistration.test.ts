@@ -102,4 +102,33 @@ describe('registerGovernanceRoutes', () => {
     expect(mocks.access).toHaveBeenCalledTimes(1);
     expect(mocks.access.mock.calls[0]?.[0]).toMatchObject({ directoryGroups: directoryGroupStore });
   });
+
+  it('为 Google Workspace 撤销装配 OAuth 依赖影响权威，同时保持其他 OAuth fail closed', async () => {
+    const runtime = {
+      config: { auth: { jwtSecret: 'test-secret' } },
+      userStore: {},
+      tenantStore: {},
+      membershipStore: {},
+      entitlementStore: {},
+      assignmentStore: {},
+      governanceAuditStore: {},
+      governanceProjectionOutboxStore: {},
+    };
+
+    registerGovernanceRoutes(express(), runtime as never, {});
+
+    const resolver = mocks.access.mock.calls[0]?.[0]?.resolveDependencyImpact;
+    await expect(resolver({
+      tenantId: 'tenant-a',
+      kind: 'oauth',
+      grant: { provider: 'google', connectorId: 'google-workspace' },
+    })).resolves.toEqual({
+      affectedResources: [], blockers: [], affectedAgents: [], affectedAutomations: [], brokenReferences: [],
+    });
+    await expect(resolver({
+      tenantId: 'tenant-a',
+      kind: 'oauth',
+      grant: { provider: 'mcp:other', connectorId: 'other' },
+    })).rejects.toThrow('OAuth dependency impact authority unavailable');
+  });
 });

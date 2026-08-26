@@ -158,7 +158,7 @@ describe('records', () => {
     expect(grid?.children).toHaveLength(4);
   });
 
-  it('comparison 使用跨行稳定的紧凑首列，对照列等分，移动端按单项卡片重排并突出差异', () => {
+  it('comparison 使用跨行稳定的紧凑首列和差异列，基准与当前列等分，移动端按单项卡片重排并突出差异', () => {
     const longValue = '这是一段需要在比较列内换行的长文本'.repeat(8);
     const { container } = render(<PresentationBlocks blocks={[{
       kind: 'records', layout: 'comparison', title: '阶段停留对照',
@@ -174,7 +174,7 @@ describe('records', () => {
     const rows = container.querySelectorAll('[data-comparison-row]');
     const header = table?.firstElementChild;
     const row = rows[0]?.querySelector('button');
-    const columns = 'sm:grid-cols-[9rem_repeat(3,minmax(8rem,1fr))_0.875rem]';
+    const columns = 'sm:grid-cols-[9rem_repeat(2,minmax(8rem,1fr))_8rem_0.875rem]';
     expect(records?.className).toContain('w-full');
     expect(records?.firstElementChild?.className).toContain('sm:min-w-[36rem]');
     expect(header?.className).toContain(columns);

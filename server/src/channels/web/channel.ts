@@ -96,6 +96,7 @@ import {
   claimsMatch,
   type PersistedInteractionClaimMetadata,
   hasPersistedInteractionResumeClaim,
+  hasConsistentPathlessApprovalIdentity,
   isPersistedInteractionClaim,
   isPersistedInteractionClaimExpired,
   persistedInteractionEventId,
@@ -1411,6 +1412,11 @@ export class WebChannel implements BaseChannel {
         && event.approvalId === interactionId
       ));
       const currentRun = sourceRun?.runId === pendingApprovalRunId ? sourceRun : await enqueueRuntime.runStore.get(pendingApprovalRunId);
+      if (!transcriptPath && (!currentRun || !hasConsistentPathlessApprovalIdentity({
+        sessionId, tenantId, sessionRecord, currentRun,
+      }))) {
+        this.sendRespond(client, interactionId, clientAttemptId, 'Access denied'); return true;
+      }
       const alreadyClaimed = hasPersistedInteractionResumeClaim(currentRun?.metadata, sessionId, interactionId);
       const cannotResume = !currentRun || TERMINAL_RUN_STATUSES.has(currentRun.status)
         || (!alreadyAccepted && !alreadyApplied && !alreadyClaimed && currentRun.status !== 'waiting_approval');
@@ -1438,21 +1444,15 @@ export class WebChannel implements BaseChannel {
       }
       const currentClaim = currentRun?.metadata?.persistedInteractionResumeClaim;
       if (acceptedEvent?.type === 'interaction_resolved' && isPersistedInteractionClaim(currentClaim, sessionId, interactionId)) {
-        const activated = await this.activatePersistedInteractionClaim(pendingApprovalRunId, currentClaim, { resumeApproval: { approvalId: interactionId, response: acceptedEvent.response } });
+        const activated = (currentRun?.status === 'pending' && currentRun.metadata?.schedulerState === 'ready') || await this.activatePersistedInteractionClaim(pendingApprovalRunId, currentClaim, { resumeApproval: { approvalId: interactionId, response: acceptedEvent.response } });
         this.sendRespond(client, interactionId, clientAttemptId, activated ? undefined : 'Interaction response is awaiting activation', activated ? normalizeInteractionResponse(acceptedEvent.response as Record<string, unknown>) : undefined);
         return true;
       }
       // A durable event without its staged claim may be an uncertain append result; reclaim and activate it below instead of ACKing a waiting Run.
       if (alreadyApplied) { this.sendRespond(client, interactionId, clientAttemptId, undefined, acceptedEvent?.type === 'interaction_resolved' ? normalizeInteractionResponse(acceptedEvent.response as Record<string, unknown>) : normalizeInteractionResponse(response)); return true; }
-      if (!meta || !transcriptPath) {
-        const rejectionMessage = '缺少可恢复的会话元数据，已安全拒绝审批';
-        await approvalStore.resolvePending(interactionId, 'rejected', rejectionMessage);
-        this.sendRespond(client, interactionId, clientAttemptId, undefined, { allow: false, message: rejectionMessage });
-        return true;
-      }
       const acceptedResponse = acceptedEvent?.type === 'interaction_resolved' ? acceptedEvent.response : undefined;
       const resumeResponse = acceptedResponse && typeof acceptedResponse === 'object' ? normalizeInteractionResponse(acceptedResponse as Record<string, unknown>) : normalizeInteractionResponse(response);
-      let claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingApprovalRunId, expectedStatus: 'waiting_approval', reason: 'approval_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'approval', response: resumeResponse, transcriptPath });
+      let claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingApprovalRunId, expectedStatus: 'waiting_approval', reason: 'approval_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'approval', response: resumeResponse, transcriptPath: transcriptPath ?? undefined });
       if (claim.outcome === 'unsupported') {
         chatLogger.error(`approval resume rejected: RunStore lacks staged interaction CAS run=${pendingApprovalRunId} approval=${interactionId}`);
         this.sendRespond(client, interactionId, clientAttemptId, 'Runtime store does not support atomic interaction resume');
@@ -1463,7 +1463,7 @@ export class WebChannel implements BaseChannel {
         const canonicalResolved = (await eventStore.list(tenantId, sessionId)).find((event): event is Extract<PlatformEvent, { type: 'interaction_resolved' }> => event.type === 'interaction_resolved' && event.interactionId === interactionId);
         if (isPersistedInteractionClaim(stagedClaim, sessionId, interactionId)) {
           if (canonicalResolved && await this.activatePersistedInteractionClaim(pendingApprovalRunId, stagedClaim, { resumeApproval: { approvalId: interactionId, response: canonicalResolved.response } })) { this.sendRespond(client, interactionId, clientAttemptId, undefined, normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>)); return true; }
-          if (!canonicalResolved && isPersistedInteractionClaimExpired(stagedClaim) && await this.rollbackPersistedInteractionClaim(pendingApprovalRunId, stagedClaim, 'waiting_approval', 'approval_resume_event_append_missing')) claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingApprovalRunId, expectedStatus: 'waiting_approval', reason: 'approval_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'approval', response: resumeResponse, transcriptPath });
+          if (!canonicalResolved && isPersistedInteractionClaimExpired(stagedClaim) && await this.rollbackPersistedInteractionClaim(pendingApprovalRunId, stagedClaim, 'waiting_approval', 'approval_resume_event_append_missing')) claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingApprovalRunId, expectedStatus: 'waiting_approval', reason: 'approval_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'approval', response: resumeResponse, transcriptPath: transcriptPath ?? undefined });
         }
       }
       if (claim.outcome !== 'claimed') { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction resume is still being recovered'); return true; }

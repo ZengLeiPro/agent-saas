@@ -3,7 +3,11 @@ import { z } from 'zod';
 
 import { isPlatformAdmin } from '../auth/types.js';
 import { ContextProductError, type ContextProductService } from '../context/product/index.js';
-import type { ContextRetentionReceipt, ContextRetentionRequest } from '../context/lifecycle/index.js';
+import type {
+  ContextRetentionAuditState,
+  ContextRetentionReceipt,
+  ContextRetentionRequest,
+} from '../context/lifecycle/index.js';
 
 interface ContextAdminSource {
   sourceId: string;
@@ -63,7 +67,9 @@ export interface ContextRetentionWorkerPort {
     receipts: ContextRetentionReceipt[];
     failures: Array<{ tenantId: string; error: string; receipt?: ContextRetentionReceipt }>;
   }>;
+  getAuditState(tenantId: string, receiptId: string): Promise<ContextRetentionAuditState>;
   retryAudit(tenantId: string, receiptId: string): Promise<ContextRetentionReceipt>;
+  replayDeadLetterAudit(tenantId: string, receiptId: string, expectedRevision: number): Promise<ContextRetentionReceipt>;
 }
 
 export interface ContextAdminRouterOptions {
@@ -88,6 +94,7 @@ const retentionBodySchema = z.object({
   dryRun: z.boolean().optional(),
 }).strict();
 const retentionReceiptParamsSchema = z.object({ receiptId: z.uuid() }).strict();
+const retentionReplayBodySchema = z.object({ expectedRevision: z.number().int().positive() }).strict();
 const productListQuerySchema = tenantQuerySchema.extend({
   cursor: z.string().min(1).max(2_000).optional(),
   limit: z.coerce.number().int().min(1).max(50).optional(),
@@ -242,6 +249,23 @@ export function createContextAdminRouter(options: ContextAdminRouterOptions): Ro
     return res.status(200).json({ receipt: result.receipts[0] });
   });
 
+  router.get('/retention/receipts/:receiptId', async (req, res) => {
+    if (!options.retention) return unavailable(res);
+    const params = retentionReceiptParamsSchema.safeParse(req.params);
+    const query = tenantQuerySchema.safeParse(req.query);
+    if (!params.success || !query.success) return res.status(400).json({ code: 'CONTEXT_RETENTION_INVALID' });
+    const tenantId = resolveTenant(req, query.data.tenantId);
+    if (!tenantId) return res.status(403).json({ code: 'CONTEXT_ADMIN_TENANT_FORBIDDEN' });
+    try {
+      const state = await options.retention.getAuditState(tenantId, params.data.receiptId);
+      return res.status(200).json({ state });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'CONTEXT_RETENTION_RECEIPT_NOT_FOUND') return res.status(404).json({ code: message });
+      return res.status(502).json({ code: 'CONTEXT_RETENTION_AUDIT_STATE_FAILED' });
+    }
+  });
+
   router.post('/retention/receipts/:receiptId/retry', async (req, res) => {
     if (!options.retention) return unavailable(res);
     const params = retentionReceiptParamsSchema.safeParse(req.params);
@@ -260,6 +284,31 @@ export function createContextAdminRouter(options: ContextAdminRouterOptions): Ro
       if (message === 'CONTEXT_RETENTION_AUDIT_IN_PROGRESS') {
         return res.status(409).json({ code: message });
       }
+      return res.status(502).json({ code: 'CONTEXT_RETENTION_AUDIT_FAILED' });
+    }
+  });
+
+  router.post('/retention/receipts/:receiptId/replay', async (req, res) => {
+    if (!options.retention) return unavailable(res);
+    const params = retentionReceiptParamsSchema.safeParse(req.params);
+    const query = tenantQuerySchema.safeParse(req.query);
+    if (!params.success || !query.success) return res.status(400).json({ code: 'CONTEXT_RETENTION_INVALID' });
+    const tenantId = resolveTenant(req, query.data.tenantId);
+    if (!tenantId) return res.status(403).json({ code: 'CONTEXT_ADMIN_TENANT_FORBIDDEN' });
+    if (req.body?.expectedRevision === undefined) {
+      return res.status(428).json({ code: 'CONTEXT_RETENTION_PRECONDITION_REQUIRED' });
+    }
+    const body = retentionReplayBodySchema.safeParse(req.body);
+    if (!body.success) return res.status(400).json({ code: 'CONTEXT_RETENTION_INVALID' });
+    try {
+      const receipt = await options.retention.replayDeadLetterAudit(
+        tenantId, params.data.receiptId, body.data.expectedRevision,
+      );
+      return res.status(200).json({ receipt });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === 'CONTEXT_RETENTION_RECEIPT_NOT_FOUND') return res.status(404).json({ code: message });
+      if (message === 'CONTEXT_RETENTION_AUDIT_REPLAY_CONFLICT') return res.status(409).json({ code: message });
       return res.status(502).json({ code: 'CONTEXT_RETENTION_AUDIT_FAILED' });
     }
   });

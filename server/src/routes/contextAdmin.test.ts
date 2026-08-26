@@ -183,9 +183,19 @@ describe('Context Plane admin HTTP contract', () => {
     const receipt = {
       tenantId: 'tenant-a', receiptId: '11111111-1111-4111-8111-111111111111', dryRun: true,
     } as ContextRetentionReceipt;
+    const missingReceiptId = '22222222-2222-4222-8222-222222222222';
+    const state = {
+      status: 'dead_letter' as const, revision: 7, attempt: 5, maxAttempts: 5,
+      nextAttemptAt: null, leaseExpiresAt: null, lastError: 'sink unavailable', deliveredAt: null,
+    };
     const retention: ContextRetentionWorkerPort = {
       run: vi.fn(async () => ({ receipts: [receipt], failures: [] })),
+      getAuditState: vi.fn(async (_tenantId, receiptId) => {
+        if (receiptId === missingReceiptId) throw new Error('CONTEXT_RETENTION_RECEIPT_NOT_FOUND');
+        return state;
+      }),
       retryAudit: vi.fn(async () => receipt),
+      replayDeadLetterAudit: vi.fn(async () => receipt),
     };
     const base = await start(orgAdmin, undefined, undefined, retention);
     const response = await fetch(`${base}/retention`, {
@@ -199,6 +209,14 @@ describe('Context Plane admin HTTP contract', () => {
     expect(retention.run).toHaveBeenCalledWith([expect.objectContaining({ tenantId: 'tenant-a' })]);
     expect((retention.run as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]?.[0]).not.toHaveProperty('dryRun');
 
+    const stateResponse = await fetch(`${base}/retention/receipts/${receipt.receiptId}`);
+    expect(stateResponse.status).toBe(200);
+    await expect(stateResponse.json()).resolves.toEqual({ state });
+    expect(retention.getAuditState).toHaveBeenCalledWith('tenant-a', receipt.receiptId);
+    expect((await fetch(`${base}/retention/receipts/${missingReceiptId}`)).status).toBe(404);
+    expect((await fetch(`${base}/retention/receipts/${receipt.receiptId}?tenantId=tenant-b`)).status).toBe(403);
+    expect(retention.getAuditState).toHaveBeenCalledTimes(2);
+
     const retry = await fetch(`${base}/retention/receipts/${receipt.receiptId}/retry`, { method: 'POST' });
     expect(retry.status).toBe(200);
     expect(retention.retryAudit).toHaveBeenCalledWith('tenant-a', receipt.receiptId);
@@ -207,6 +225,21 @@ describe('Context Plane admin HTTP contract', () => {
       method: 'POST',
     })).status).toBe(403);
     expect(retention.retryAudit).toHaveBeenCalledTimes(1);
+
+    expect((await fetch(`${base}/retention/receipts/${receipt.receiptId}/replay`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })).status).toBe(428);
+    const replay = await fetch(`${base}/retention/receipts/${receipt.receiptId}/replay`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedRevision: 7 }),
+    });
+    expect(replay.status).toBe(200);
+    expect(retention.replayDeadLetterAudit).toHaveBeenCalledWith('tenant-a', receipt.receiptId, 7);
+    expect((await fetch(`${base}/retention/receipts/${receipt.receiptId}/replay?tenantId=tenant-b`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedRevision: 7 }),
+    })).status).toBe(403);
+    expect(retention.replayDeadLetterAudit).toHaveBeenCalledTimes(1);
   });
 
   it('locks organization admins to their tenant and returns 503 for an unavailable optional Store', async () => {

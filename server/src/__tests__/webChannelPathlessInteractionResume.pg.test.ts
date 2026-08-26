@@ -45,6 +45,18 @@ async function seedAskUser(sessionId: string, runId: string, interactionId: stri
   }, { tenantId: TENANT });
 }
 
+async function seedApproval(sessionId: string, runId: string, approvalId: string): Promise<void> {
+  const toolCallId = `call-${approvalId}`;
+  await store!.append({
+    type: 'assistant_tool_calls', sessionId, runId, content: '',
+    toolCalls: [{ id: toolCallId, name: 'Shell', arguments: '{"command":"echo ok"}' }],
+  }, { tenantId: TENANT });
+  await store!.append({
+    type: 'approval_requested', sessionId, runId, approvalId, toolCallId,
+    toolId: 'Shell', toolName: 'Shell', input: { command: 'echo ok' },
+  }, { tenantId: TENANT });
+}
+
 function channelFor(input: {
   sessionId: string;
   runStore: MemoryRunStore;
@@ -158,5 +170,36 @@ describePg('WebChannel pathless ask_user resume with PgEventStore', () => {
     expect(activateCreatedRun).toHaveBeenCalledTimes(2);
     const events = await store!.list(TENANT, sessionId);
     expect(events.filter(event => event.type === 'interaction_resolved')).toHaveLength(1);
+  });
+
+  it('真实 PG 无 transcript approval 保留 allow=true，重连/重复/竞争均读取唯一 canonical 并激活', async () => {
+    const sessionId = randomUUID();
+    const interactionId = 'approval-pathless-pg';
+    const runId = 'run-approval-pathless-pg';
+    await seedApproval(sessionId, runId, interactionId);
+    const runStore = new MemoryRunStore();
+    await createRun(runStore, runId, sessionId);
+    await runStore.markStatus(runId, 'waiting_approval');
+    const activateCreatedRun = vi.fn(async (targetRunId: string, claim: Record<string, unknown>, patch?: Record<string, unknown>) => (
+      runStore.activatePersistedInteractionResume(targetRunId, claim, patch)
+    ));
+    const channel = channelFor({ runStore, sessionId, scheduler: { enqueue: vi.fn(), activateCreatedRun } });
+    const first = new FakeWebSocket();
+    await (channel as any).resolveInteraction(wsClient(first, USER), interactionId, { allow: true }, sessionId, 'approval-first');
+    const reconnect = new FakeWebSocket();
+    const duplicate = new FakeWebSocket();
+    await Promise.all([
+      (channel as any).resolveInteraction(wsClient(reconnect, USER), interactionId, { allow: false }, sessionId, 'approval-reconnect'),
+      (channel as any).resolveInteraction(wsClient(duplicate, USER), interactionId, { allow: false }, sessionId, 'approval-duplicate'),
+    ]);
+    for (const ws of [first, reconnect, duplicate]) {
+      expect(ws.sent.at(-1)?.data).toMatchObject({ type: 'respond_ok', response: { allow: true } });
+    }
+    const events = await store!.list(TENANT, sessionId);
+    expect(events.filter(event => event.type === 'interaction_resolved')).toEqual([
+      expect.objectContaining({ interactionType: 'approval', response: { allow: true } }),
+    ]);
+    expect(activateCreatedRun).toHaveBeenCalledTimes(1);
+    expect(await runStore.get(runId)).toMatchObject({ status: 'pending', metadata: { schedulerState: 'ready' } });
   });
 });

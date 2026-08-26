@@ -174,11 +174,39 @@ describePg('Context retention PostgreSQL lifecycle', () => {
       WHERE tenant_id='tenant-exhaust' AND receipt_id=$1`, [committed.receiptId]);
 
     await expect(consumer.runOnce()).resolves.toMatchObject({ claimed: 1, failed: 1 });
-    state = await pool.query(`SELECT audit_status,audit_attempt,audit_next_attempt_at,last_audit_error FROM ${table}
+    state = await pool.query(`SELECT audit_status,audit_attempt,audit_revision,audit_next_attempt_at,last_audit_error FROM ${table}
       WHERE tenant_id='tenant-exhaust' AND receipt_id=$1`, [committed.receiptId]);
     expect(state.rows).toEqual([{
-      audit_status: 'dead_letter', audit_attempt: 2, audit_next_attempt_at: null, last_audit_error: 'sink unavailable',
+      audit_status: 'dead_letter', audit_attempt: 2, audit_revision: 5,
+      audit_next_attempt_at: null, last_audit_error: 'sink unavailable',
     }]);
+
+    const immutableProof = (await pool.query(`SELECT receipt_json FROM ${table}
+      WHERE tenant_id='tenant-exhaust' AND receipt_id=$1`, [committed.receiptId])).rows[0].receipt_json;
+    const adminReplay = new ContextRetentionWorker(retention, vi.fn().mockResolvedValue(undefined));
+    await expect(adminReplay.getAuditState('tenant-exhaust', committed.receiptId)).resolves.toEqual({
+      status: 'dead_letter', revision: 5, attempt: 2, maxAttempts: 2,
+      nextAttemptAt: null, leaseExpiresAt: null, lastError: 'sink unavailable', deliveredAt: null,
+    });
+    await expect(adminReplay.getAuditState('another-tenant', committed.receiptId))
+      .rejects.toThrow('CONTEXT_RETENTION_RECEIPT_NOT_FOUND');
+    await expect(adminReplay.replayDeadLetterAudit('another-tenant', committed.receiptId, 5))
+      .rejects.toThrow('CONTEXT_RETENTION_RECEIPT_NOT_FOUND');
+    await expect(adminReplay.replayDeadLetterAudit('tenant-exhaust', committed.receiptId, 4))
+      .rejects.toThrow('CONTEXT_RETENTION_AUDIT_REPLAY_CONFLICT');
+    await expect(adminReplay.replayDeadLetterAudit('tenant-exhaust', committed.receiptId, 5))
+      .resolves.toMatchObject({ receiptId: committed.receiptId });
+    expect((await pool.query(`SELECT audit_status,audit_attempt,audit_revision,audit_next_attempt_at,
+      audit_lease_owner,audit_lease_expires_at,last_audit_error FROM ${table}
+      WHERE tenant_id='tenant-exhaust' AND receipt_id=$1`, [committed.receiptId])).rows).toEqual([{
+      audit_status: 'delivered', audit_attempt: 1, audit_revision: 7, audit_next_attempt_at: null,
+      audit_lease_owner: null, audit_lease_expires_at: null, last_audit_error: null,
+    }]);
+    await expect(adminReplay.replayDeadLetterAudit('tenant-exhaust', committed.receiptId, 5))
+      .rejects.toThrow('CONTEXT_RETENTION_AUDIT_REPLAY_CONFLICT');
+    expect((await pool.query(`SELECT receipt_json FROM ${table}
+      WHERE tenant_id='tenant-exhaust' AND receipt_id=$1`, [committed.receiptId])).rows[0].receipt_json)
+      .toEqual(immutableProof);
   });
 
   it('reclaims an expired lease and isolates a failed tenant from another tenant', async () => {

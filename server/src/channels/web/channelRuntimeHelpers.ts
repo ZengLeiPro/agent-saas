@@ -36,6 +36,26 @@ type PersistedAskUserResumeFallback = {
   workspaceId?: string;
 };
 
+/** Authorize a pathless approval only when catalog and current Run identities agree. */
+export function hasConsistentPathlessApprovalIdentity(input: {
+  sessionId: string;
+  tenantId: string;
+  sessionRecord: RuntimeSessionRecord | null;
+  currentRun: RunRecord;
+}): boolean {
+  const { currentRun, sessionRecord } = input;
+  return Boolean(
+    sessionRecord
+    && currentRun.sessionId === input.sessionId
+    && sessionRecord.sessionId === input.sessionId
+    && currentRun.userId
+    && currentRun.userId === sessionRecord.userId
+    && currentRun.tenantId
+    && currentRun.tenantId === input.tenantId
+    && currentRun.tenantId === sessionRecord.tenantId
+  );
+}
+
 /** Build path-independent resume identity only when durable sources agree. */
 export function resolvePersistedAskUserResumeFallback(input: {
   sessionId: string;

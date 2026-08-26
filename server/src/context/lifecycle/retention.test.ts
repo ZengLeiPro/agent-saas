@@ -4,6 +4,7 @@ import {
   ContextRetentionAuditConsumer,
   ContextRetentionWorker,
   type ContextRetentionAuditConsumerStore,
+  type ContextRetentionAuditState,
   type ContextRetentionReceipt,
   type ContextRetentionRequest,
   type ContextRetentionWorkerStore,
@@ -18,12 +19,21 @@ function receipt(tenantId: string): ContextRetentionReceipt {
   return { tenantId, receiptId: `receipt-${tenantId}` } as ContextRetentionReceipt;
 }
 
+const auditState: ContextRetentionAuditState = {
+  status: 'dead_letter', revision: 7, attempt: 5, maxAttempts: 5,
+  nextAttemptAt: null, leaseExpiresAt: null, lastError: 'sink unavailable', deliveredAt: null,
+};
+
 function workerStore(collect: ContextRetentionWorkerStore['collect']): ContextRetentionWorkerStore {
   return {
     collect,
+    getAuditState: vi.fn(async () => auditState),
     claimAudit: vi.fn(async (_tenantId, receiptId) => ({
       receipt: { tenantId: receiptId.replace('receipt-', ''), receiptId } as ContextRetentionReceipt,
       delivered: false, leaseId: 'lease-a',
+    })),
+    replayDeadLetterAudit: vi.fn(async (tenantId, receiptId) => ({
+      tenantId, receiptId, receipt: { tenantId, receiptId } as ContextRetentionReceipt, leaseId: 'lease-replay',
     })),
     completeAudit: vi.fn(async () => undefined),
     failAudit: vi.fn(async () => undefined),
@@ -31,6 +41,14 @@ function workerStore(collect: ContextRetentionWorkerStore['collect']): ContextRe
 }
 
 describe('ContextRetentionWorker durable audit delivery', () => {
+  it('reads audit state through the tenant-scoped store port', async () => {
+    const store = workerStore(vi.fn());
+    const worker = new ContextRetentionWorker(store, vi.fn());
+
+    await expect(worker.getAuditState('tenant-a', 'receipt-tenant-a')).resolves.toEqual(auditState);
+    expect(store.getAuditState).toHaveBeenCalledWith('tenant-a', 'receipt-tenant-a');
+  });
+
   it('records a failed tenant and continues later tenants', async () => {
     const collect = vi.fn()
       .mockRejectedValueOnce(new Error('tenant A database unavailable'))
@@ -60,6 +78,17 @@ describe('ContextRetentionWorker durable audit delivery', () => {
 
     await expect(worker.retryAudit('tenant-a', 'receipt-tenant-a')).resolves.toMatchObject({ receiptId: 'receipt-tenant-a' });
     expect(audit).toHaveBeenCalledTimes(2);
+  });
+
+  it('replays a dead-letter only through the revision-bound store operation', async () => {
+    const store = workerStore(vi.fn());
+    const audit = vi.fn().mockResolvedValue(undefined);
+    const worker = new ContextRetentionWorker(store, audit);
+
+    await expect(worker.replayDeadLetterAudit('tenant-a', 'receipt-tenant-a', 7))
+      .resolves.toMatchObject({ receiptId: 'receipt-tenant-a' });
+    expect(store.replayDeadLetterAudit).toHaveBeenCalledWith('tenant-a', 'receipt-tenant-a', 7);
+    expect(store.completeAudit).toHaveBeenCalledWith('tenant-a', 'receipt-tenant-a', 'lease-replay');
   });
 });
 

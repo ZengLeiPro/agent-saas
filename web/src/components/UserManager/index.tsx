@@ -11,7 +11,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/AuthContext";
+import { governanceRoute } from "@/lib/governanceNavigation";
 import { refreshAll } from "@/lib/refreshBus";
+import { navigateGovernance } from "@/lib/urlSync";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { useUsers } from "./hooks";
 import { UserTable } from "./UserTable";
@@ -33,7 +35,6 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
     users,
     loading,
     error,
-    createUser,
     updateUser,
     deleteUser,
     toggleUserDisabled,
@@ -52,12 +53,11 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
 
   const isMobile = useIsMobile();
   const visibleUsers = tenantIdScope ? users.filter((u) => u.tenantId === tenantIdScope) : users;
-  const canCreateUser = true;
   const canResetPassword = (target: UserInfo | null): boolean => target !== null;
 
-  const openCreate = () => {
-    setEditingUser(null);
-    setShowForm(true);
+  const openGovernanceMembers = () => {
+    if (!tenantIdScope) return;
+    navigateGovernance(governanceRoute("organization.members.list", { orgId: tenantIdScope }));
   };
 
   const openEdit = (user: UserInfo) => {
@@ -71,19 +71,16 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
   };
 
   const handleSubmit = async (data: UserFormData) => {
-    if (editingUser) {
-      await updateUser(editingUser.id, {
-        role: data.role,
-        realName: data.realName,
-        position: data.position,
-        dingtalkStaffId: data.dingtalkStaffId,
-        debugMode: data.debugMode,
-        permissions: data.permissions,
-        tenantId: data.tenantId,
-      });
-    } else {
-      await createUser({ ...data, tenantId: data.tenantId || tenantIdScope });
-    }
+    if (!editingUser) return;
+    await updateUser(editingUser.id, {
+      role: data.role,
+      realName: data.realName,
+      position: data.position,
+      dingtalkStaffId: data.dingtalkStaffId,
+      debugMode: data.debugMode,
+      permissions: data.permissions,
+      tenantId: data.tenantId,
+    });
   };
 
   const openResetPassword = (user: UserInfo) => {
@@ -124,10 +121,10 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
                 刷新
               </Button>
             )}
-            {canCreateUser && (
-              <Button size="sm" onClick={openCreate}>
+            {tenantIdScope && (
+              <Button size="sm" onClick={openGovernanceMembers}>
                 <Plus className="size-4" />
-                新建用户
+                添加成员
               </Button>
             )}
           </>

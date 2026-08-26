@@ -318,14 +318,19 @@ export function TenantAdminShell({
     if (urlTenantId) setFallbackTenantId(urlTenantId);
   }, [urlTenantId]);
 
+  // 平台管理员的组织作用域必须来自显式 org 选择，不能用目录首项替代用户决策。
+  const explicitPlatformTenantId = isPlatformAdmin && tenants.some(tenant => tenant.id === targetTenantId)
+    ? targetTenantId
+    : "";
   const effectiveTenantId = isPlatformAdmin
-    ? (tenants.some(tenant => tenant.id === targetTenantId) ? targetTenantId : tenants[0]?.id) || ""
+    ? explicitPlatformTenantId
     : user?.tenantId || "";
   const currentTenant = tenants.find(t => t.id === effectiveTenantId);
-  const tenantSwitcherOptions: AdminSelectOption[] = tenants.map(tenant => ({
-    value: tenant.id,
-    label: tenant.name,
-  }));
+  const explicitPlatformTenant = tenants.find(t => t.id === explicitPlatformTenantId);
+  const tenantSwitcherOptions: AdminSelectOption[] = [
+    { value: "", label: "请选择目标组织" },
+    ...tenants.map(tenant => ({ value: tenant.id, label: tenant.name })),
+  ];
 
   const tenantSwitcher = isPlatformAdmin && tenants.length > 0 ? (
     // label 包裹的是自定义控件而非原生 select，因此这里的文案改用 span + aria-label 关联
@@ -336,7 +341,7 @@ export function TenantAdminShell({
         size="md"
         className="w-full"
         options={tenantSwitcherOptions}
-        value={effectiveTenantId}
+        value={explicitPlatformTenantId}
         onValueChange={setTargetTenantId}
       />
     </div>
@@ -357,7 +362,10 @@ export function TenantAdminShell({
     : TENANT_SETTINGS_SECTIONS.filter((section) => section.id !== "org-agents")) as ShellButton<TenantSection>[];
 
   const tenantSectionsToRender: { id: TenantSection; node: ReactNode }[] = [
-    { id: "users", node: renderUsers(effectiveTenantId, currentTenant?.name) },
+    { id: "users", node: renderUsers(
+      isPlatformAdmin ? explicitPlatformTenantId || undefined : effectiveTenantId,
+      isPlatformAdmin ? explicitPlatformTenant?.name : currentTenant?.name,
+    ) },
     { id: "skills", node: renderSkills(effectiveTenantId, currentTenant?.name) },
     ...(renderOrgAgents ? [{ id: "org-agents" as TenantSection, node: renderOrgAgents(effectiveTenantId, currentTenant?.name) }] : []),
     { id: "mcp", node: renderMcp() },
@@ -369,21 +377,23 @@ export function TenantAdminShell({
     { id: "settings", node: <TenantSettingsPanel tenantId={effectiveTenantId} /> },
   ];
 
-  const settingsContent = (
-    <>
-      {tenantSectionsToRender.map(({ id, node }) => {
-        if (!visitedTenantSections.has(id)) return null;
-        const isActive = id === settingsSection;
-        return (
-          <div key={id} className={cn("h-full min-h-0", !isActive && "hidden")} aria-hidden={!isActive}>
-            <Suspense fallback={<SettingsSectionFallback />}>
-              {node}
-            </Suspense>
-          </div>
-        );
-      })}
-    </>
-  );
+  const settingsContent = isPlatformAdmin && !explicitPlatformTenantId
+    ? <GovernanceCapabilityNotice title="请先选择目标组织" mode="readonly" />
+    : (
+      <>
+        {tenantSectionsToRender.map(({ id, node }) => {
+          if (!visitedTenantSections.has(id)) return null;
+          const isActive = id === settingsSection;
+          return (
+            <div key={id} className={cn("h-full min-h-0", !isActive && "hidden")} aria-hidden={!isActive}>
+              <Suspense fallback={<SettingsSectionFallback />}>
+                {node}
+              </Suspense>
+            </div>
+          );
+        })}
+      </>
+    );
 
   if (settingsContentOnly) {
     return (
@@ -460,6 +470,7 @@ export function TenantAdminShell({
   }
 
   const content = (() => {
+    if (!effectiveTenantId) return <GovernanceCapabilityNotice title="请先选择目标组织" mode="readonly" />;
     if (active === "usage") return renderUsage(effectiveTenantId);
     if (active === "qa") return <QaConsole tenantId={effectiveTenantId} />;
     if (active === "audit") return <AuditEventsPanel scope="tenant" tenantId={effectiveTenantId} tenantName={currentTenant?.name} />;

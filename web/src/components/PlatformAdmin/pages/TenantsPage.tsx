@@ -11,17 +11,13 @@ import { TenantFormDialog } from "@/components/TenantManager/TenantFormDialog";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { AdminEntityTable, AdminErrorAlert, EmptyState, EntityLink, MetricCard, StatusBadge } from "@/components/PlatformAdmin/common";
 import { governanceRoute, isCustomerOrganizationId } from "@/lib/governanceNavigation";
-import { navigateAdminSettings, navigateGovernance, navigatePlatformAdmin } from "@/lib/urlSync";
+import { navigateGovernance, navigatePlatformAdmin } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
 
 import { platformAdminApi } from "../api";
 import { RUN_LABEL, SESSION_LABEL, TENANT_LABEL, formatRole } from "../displayText";
 import { formatCredits, formatNumber, formatTime, formatYuan } from "../format";
 import type { PlatformRunRecord, PlatformSessionRecord, SandboxRecord, TenantOverviewItem } from "../types";
-
-function openSettings() {
-  navigateAdminSettings("platform", "tenants");
-}
 
 function go(section: "users" | "sessions" | "runs" | "sandboxes", search: Record<string, string>) {
   navigatePlatformAdmin({ section, search });
@@ -263,8 +259,11 @@ function TenantDetail({ tenantId }: { tenantId: string }) {
                   compact
                   icon={UserPlus}
                   title="这个组织还没有成员"
-                  description="没有成员，组织就不会产生任何对话与成本。在「组织配置」里添加成员后即可使用。"
-                  action={{ label: "去添加成员", onClick: openSettings }}
+                  description="没有成员，组织就不会产生任何对话与成本。请在该组织的治理成员页添加。"
+                  action={{
+                    label: "去添加成员",
+                    onClick: () => navigateGovernance(governanceRoute("organization.members.list", { orgId: tenantId })),
+                  }}
                 />
               )}
             </CardContent>

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ToolCallContext } from '../agent/toolRuntime.js';
 import { InMemoryGovernanceAuditStore } from '../data/governance-audit/store.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import {
   DwsBusinessToolProvider,
   deriveDwsAgentDelegationResourceId,
@@ -229,6 +230,73 @@ describe('DwsBusinessToolProvider', () => {
     });
   });
 
+  it('平台管理员可跨租户恢复 Session，requester 仍使用归属者 profile 并按 operator 审计', async () => {
+    const { provider, invoke, context, auditStore } = setup();
+    const platformAdmin = {
+      id: 'platform-admin', username: 'root', role: 'admin' as const,
+      tenantId: DEFAULT_TENANT_ID, disabled: false,
+    };
+
+    await provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['minutes', '+list-all'], credentialMode: 'requester' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, {
+      ...context,
+      channelContext: { ...context.channelContext, user: platformAdmin },
+      workspace: {
+        ...context.workspace,
+        userId: platformAdmin.id,
+        username: platformAdmin.username,
+        tenantId: platformAdmin.tenantId,
+      },
+    });
+
+    expect(invoke.mock.calls[0]![0].input.command).toContain("'--profile' 'requester-profile-secret'");
+    expect(auditStore.events[0]).toMatchObject({
+      actorUserId: platformAdmin.id,
+      actorTenantId: DEFAULT_TENANT_ID,
+      metadata: { sessionOwnerTenantId: 'tenant-a', operatorTenantId: DEFAULT_TENANT_ID },
+    });
+  });
+
+  it('异租户组织管理员不能跨租户使用 Session 归属者的 requester profile', async () => {
+    const { provider, invoke, context, auditStore, logger } = setup();
+    const otherTenantAdmin = {
+      id: 'admin-b', username: 'admin-b', role: 'admin' as const, tenantId: 'tenant-b', disabled: false,
+    };
+
+    await expect(provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['minutes', '+list-all'], credentialMode: 'requester' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, {
+      ...context,
+      channelContext: { ...context.channelContext, user: otherTenantAdmin },
+      workspace: {
+        ...context.workspace,
+        userId: otherTenantAdmin.id,
+        username: otherTenantAdmin.username,
+        tenantId: otherTenantAdmin.tenantId,
+      },
+    })).rejects.toThrow('不一致项：operator.sessionOwnerTenantScope');
+
+    expect(invoke).not.toHaveBeenCalled();
+    expect(auditStore.events.at(-1)).toMatchObject({
+      actorUserId: otherTenantAdmin.id,
+      actorTenantId: 'tenant-b',
+      reason: 'DWS_BUSINESS_SUBJECT_MISMATCH',
+      metadata: {
+        mismatchFields: ['operator.sessionOwnerTenantScope'],
+        sessionOwnerUserId: 'user-a',
+        sessionOwnerTenantId: 'tenant-a',
+        operatorUserId: otherTenantAdmin.id,
+        operatorTenantId: 'tenant-b',
+      },
+    });
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('"operatorTenantId":"tenant-b"'));
+  });
+
   it('普通用户不能跨 Session 使用归属者的 requester profile', async () => {
     const { provider, invoke, context, auditStore, logger } = setup();
     const otherUser = {
@@ -243,7 +311,7 @@ describe('DwsBusinessToolProvider', () => {
       ...context,
       channelContext: { ...context.channelContext, user: otherUser },
       workspace: { ...context.workspace, userId: otherUser.id, username: otherUser.username },
-    })).rejects.toThrow('不一致项：operator.sessionOwnerDelegation');
+    })).rejects.toThrow('不一致项：operator.sessionOwnerTenantScope');
 
     expect(invoke).not.toHaveBeenCalled();
     expect(auditStore.events.at(-1)).toMatchObject({
@@ -251,7 +319,7 @@ describe('DwsBusinessToolProvider', () => {
       actorPersona: 'member',
       reason: 'DWS_BUSINESS_SUBJECT_MISMATCH',
       metadata: {
-        mismatchFields: ['operator.sessionOwnerDelegation'],
+        mismatchFields: ['operator.sessionOwnerTenantScope'],
         sessionOwnerUserId: 'user-a',
         operatorUserId: otherUser.id,
       },

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { z } from 'zod';
 
+import { isPlatformAdmin } from '../auth/types.js';
 import type {
   AuthorizedToolCall,
   ExecutionAuditRecorder,
@@ -167,8 +168,17 @@ export class DwsBusinessToolProvider implements ToolProvider {
       await auditRejection('DWS_BUSINESS_SUBJECT_MISSING');
       throw new Error('DWS Broker 缺少可信请求者或 Session 身份');
     }
+    const operatorIsPlatformAdmin = isPlatformAdmin({
+      sub: operator.id,
+      username: operator.username,
+      role: operator.role,
+      tenantId: operator.tenantId,
+    });
+    const operatorCanActForSessionOwner = operator.id === identity.id
+      || (operator.role === 'admin' && operator.tenantId === identity.tenantId)
+      || operatorIsPlatformAdmin;
     const mismatchFields = [
-      ...(operator?.id !== identity.id && operator?.role !== 'admin' ? ['operator.sessionOwnerDelegation'] : []),
+      ...(!operatorCanActForSessionOwner ? ['operator.sessionOwnerTenantScope'] : []),
       ...(!session?.orgAgentId ? ['session.orgAgentId'] : []),
       ...(session?.userId !== identity.id ? ['session.userId'] : []),
       ...(session?.tenantId !== identity.tenantId ? ['session.tenantId'] : []),

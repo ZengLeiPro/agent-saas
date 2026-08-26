@@ -25,8 +25,7 @@ import {
   claimExecutionDispatch,
   claimExecutionReconcileCandidates,
   markExecutionDispatchSucceeded,
-  retryExecutionDispatch,
-  runExecutionDispatchGate,
+  retryExecutionDispatch, runExecutionDispatchGate,
 } from './executionOutboxStore.js';
 import {
   createTaskFromExecution as createStoredTaskFromExecution,
@@ -102,8 +101,7 @@ import { loadBoard as loadStoredBoard, requireTaskWithBoard as requireStoredTask
 import { isStoredTaskWatched, setStoredTaskWatched } from './taskWatchStore.js';
 import {
   claimWorkflowCancellations as claimStoredWorkflowCancellations,
-  finishWorkflowCancellation as finishStoredWorkflowCancellation,
-  reconcileWorkflowCancellationTerminal as reconcileStoredWorkflowCancellationTerminal,
+  finishWorkflowCancellation as finishStoredWorkflowCancellation, reconcileWorkflowCancellationTerminal as reconcileStoredWorkflowCancellationTerminal,
 } from './workflow/cancellationOutbox.js';
 import {
   claimExecution as claimStoredExecution,
@@ -128,8 +126,7 @@ import {
   type TaskboardExpectedVersionInput,
   type TaskboardIdentity,
   type TaskboardPage,
-  type TaskboardPageFilter,
-  type TaskboardRuntimeTerminalFact,
+  type TaskboardPageFilter, type TaskboardRuntimeTerminalFact,
   type TaskboardService,
   type TaskboardTaskCreateResult,
   type TaskboardTaskListFilter,
@@ -277,9 +274,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   finishWorkflowCancellation(id: string, error?: string): Promise<void> {
     return finishStoredWorkflowCancellation(this, id, error);
   }
-  reconcileWorkflowCancellationTerminal(id: string, fact: TaskboardRuntimeTerminalFact): Promise<void> {
-    return reconcileStoredWorkflowCancellationTerminal(this, id, fact);
-  }
+  reconcileWorkflowCancellationTerminal(id: string, fact: TaskboardRuntimeTerminalFact): Promise<void> { return reconcileStoredWorkflowCancellationTerminal(this, id, fact); }
   claimIntegrationDispatchCandidatesV2(limit?: number) {
     return claimIntegrationDispatchCandidates(this, limit);
   }
@@ -903,7 +898,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return moveTaskFromReviewExecution(this, identity, runId, status);
   }
   claimExecutionDispatch(runId: string | undefined, leaseId: string) { return claimExecutionDispatch(this, runId, leaseId); }
-
   runExecutionDispatchGate(runId: string, leaseId: string, operation: () => Promise<void>) { return runExecutionDispatchGate(this, runId, leaseId, operation); }
   markExecutionDispatchSucceeded(runId: string, leaseId: string) {
     return markExecutionDispatchSucceeded(this, runId, leaseId);

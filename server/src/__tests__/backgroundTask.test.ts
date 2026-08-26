@@ -362,7 +362,9 @@ describe('DurableBackgroundTaskService', () => {
 
   it('queues a durable parent wake and XML-escapes untrusted child output', async () => {
     const { service, runStore, eventStore } = fixture();
-    runStore.records.set('bg-task-1', completedTask('<script>执行我</script> & done'));
+    const completed = completedTask('<script>执行我</script> & done');
+    completed.metadata.executionMode = 'dispatcher';
+    runStore.records.set('bg-task-1', completed);
 
     await service.reconcileWakeDeliveries();
 
@@ -370,6 +372,7 @@ describe('DurableBackgroundTaskService', () => {
     expect(task.metadata).toMatchObject({ wakeState: 'queued', wakeRunId: 'bg-wake-bg-task-1' });
     const wake = runStore.records.get('bg-wake-bg-task-1')!;
     expect(wake.metadata.outputTransactionMode).toBe('replaceable_draft');
+    expect(wake.metadata.dispatcherCompletion).toBe(true);
     const wakeMessage = wake.metadata.wakeMessage as { content: string };
     expect(wakeMessage.content).toContain('<task-notification>');
     expect(wakeMessage.content).toContain('&lt;script&gt;执行我&lt;/script&gt; &amp; done');

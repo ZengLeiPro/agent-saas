@@ -117,6 +117,21 @@ describe('PgAgentDwsMessageStore', () => {
     expect(client.release).toHaveBeenCalledOnce();
   });
 
+  it('停机释放 processing claim 时回到 pending 并回退 attempt', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [inboxRow({ state: 'pending', attempt: 0 })] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+
+    await expect(store.releaseClaim('inbox-1', 'worker-1', 3)).resolves.toMatchObject({
+      state: 'pending', attempt: 0,
+    });
+
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("SET state='pending',attempt=GREATEST(attempt-1,0)");
+    expect(sql).toContain("WHERE inbox_id=$1 AND state='processing'");
+    expect(sql).toContain('lease_owner=$2 AND lease_fence=$3 AND lease_expires_at > NOW()');
+    expect(query.mock.calls[0]?.[1]).toEqual(['inbox-1', 'worker-1', 3]);
+  });
+
   it('按租户和账号读取最新 inbox，并限制诊断页大小', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [inboxRow({ state: 'retry_wait', attempt: 2 })] });
     const store = new PgAgentDwsMessageStore({ query } as never, 'gov');

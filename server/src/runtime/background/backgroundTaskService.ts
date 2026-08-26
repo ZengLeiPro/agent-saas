@@ -607,6 +607,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         workspaceId: parentSession.workspaceId,
         metadata: {
           backgroundTaskWake: true,
+          dispatcherCompletion: metadata.executionMode === 'dispatcher',
           outputTransactionMode: metadata.parentOutputTransactionMode,
           backgroundTaskId: task.runId,
           wakeMessage: {

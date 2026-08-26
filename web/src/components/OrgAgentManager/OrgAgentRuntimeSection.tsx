@@ -108,13 +108,6 @@ export function OrgAgentRuntimeSection({ value, onChange }: OrgAgentRuntimeSecti
         backgroundTasks: 'inherit',
         subagents: 'inherit',
       },
-      tools: {
-        ...value.tools,
-        allowlist: value.tools.allowlist
-          ? [...new Set([...value.tools.allowlist, 'Agent', 'BackgroundTask'])]
-          : null,
-        denylist: value.tools.denylist.filter(tool => tool !== 'Agent' && tool !== 'BackgroundTask'),
-      },
     });
   };
   const customContext = value.context.modules !== null;
@@ -263,7 +256,7 @@ export function OrgAgentRuntimeSection({ value, onChange }: OrgAgentRuntimeSecti
 
       <div className="space-y-3 rounded-md border border-dashed p-3">
         <div className="flex items-start justify-between gap-3">
-          <div><div className="text-sm font-medium">限制可用工具</div><div className="text-xs text-muted-foreground">关闭表示继承；开启后仅保留列出的工具。</div></div>
+          <div><div className="text-sm font-medium">限制可用工具</div><div className="text-xs text-muted-foreground">关闭表示继承；dispatcher 模式仅约束 Worker，前台派发工具由运行时保留。</div></div>
           <Switch checked={toolAllowlistLimited} onCheckedChange={checked => patch('tools', { ...value.tools, allowlist: checked ? [] : null })} />
         </div>
         {toolAllowlistLimited ? (

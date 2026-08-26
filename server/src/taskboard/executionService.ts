@@ -140,18 +140,12 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     return this.options.store.searchExecutions(identity, taskId, filter);
   }
 
-  async cancelExecution(
-    identity: TaskboardIdentity,
-    taskId: string,
-    executionId: string,
-    input: TaskBoardExecutionCancelInput,
-  ): Promise<TaskBoardExecutionStartResult> {
+  async cancelExecution(identity: TaskboardIdentity, taskId: string, executionId: string,
+    input: TaskBoardExecutionCancelInput): Promise<TaskBoardExecutionStartResult> {
     if (!this.options.store.cancelExecution) throw new TaskboardExecutionUnavailableError();
     const result = await this.options.store.cancelExecution(identity, taskId, executionId, input);
-    this.wakeReconciliation();
-    return result;
+    this.wakeReconciliation(); return result;
   }
-
   startExecution(
     identity: TaskboardIdentity,
     taskId: string,

@@ -572,7 +572,9 @@ export async function collectRuntimeTooling(
   if (audioProvider) providers.push(audioProvider);
   // 5. 统一任务工具：默认 cron，target=taskboard 时管理看板与独立 Agent 流程。
   if (config.cronService || config.taskboard) providers.push(new CronToolProvider({
-    service: config.cronService ?? (() => undefined), ...(config.taskboard ? { taskboard: config.taskboard } : {}),
+    service: config.cronService ?? (() => undefined),
+    ...(config.sessionCatalog ? { sessionCatalog: config.sessionCatalog } : {}),
+    ...(config.taskboard ? { taskboard: config.taskboard } : {}),
   }));
 
   // 6. MCP 工具（带超时兜底，单 server hang 不会卡 dispatch 主路径）

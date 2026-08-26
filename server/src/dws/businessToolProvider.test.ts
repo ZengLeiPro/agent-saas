@@ -22,7 +22,12 @@ const user = {
   dingtalkStaffId: 'sender-a', disabled: false,
 };
 
-function setup(input: { delegatedScopes?: string[]; assignmentUnavailable?: boolean } = {}) {
+function setup(input: {
+  delegatedScopes?: string[];
+  assignmentUnavailable?: boolean;
+  sessionOrgAgentId?: string | null;
+  sessionChannel?: 'web' | 'dingtalk' | 'cron';
+} = {}) {
   const auditStore = new InMemoryGovernanceAuditStore();
   const invoke = vi.fn().mockResolvedValue({
     status: 'success',
@@ -55,8 +60,9 @@ function setup(input: { delegatedScopes?: string[]; assignmentUnavailable?: bool
     sessionCatalog: {
       get: vi.fn().mockResolvedValue({
         sessionId: 'session-a', userId: 'user-a', username: 'alice', userRole: 'user',
-        tenantId: 'tenant-a', channel: 'dingtalk', cwd: '/workspace/agent', transcriptPath: 'x',
-        orgAgentId: 'agent-a', createdAt: '2026-08-25T00:00:00.000Z', updatedAt: '2026-08-25T00:00:00.000Z',
+        tenantId: 'tenant-a', channel: input.sessionChannel ?? 'dingtalk', cwd: '/workspace/agent', transcriptPath: 'x',
+        ...(input.sessionOrgAgentId === null ? {} : { orgAgentId: input.sessionOrgAgentId ?? 'agent-a' }),
+        createdAt: '2026-08-25T00:00:00.000Z', updatedAt: '2026-08-25T00:00:00.000Z',
       }),
     },
     auditStore,
@@ -81,10 +87,18 @@ describe('DwsBusinessToolProvider', () => {
   it('按命令动作动态分档，并对未知或破坏性动作 fail closed', () => {
     expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'list'] })).toBe('safe');
     expect(resolveDwsBusinessRisk({ args: ['minutes', '+list-all'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'list', '--help'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['chat', 'message', 'list-all', '--help'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['drive', 'recent', '--help'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['todo', 'task', 'list', '--help'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'future-verb', '--help', '--verbose'] })).toBe('dangerous');
     expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'create'], confirmed: true })).toBe('workspace_write');
     expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'respond'], confirmed: true })).toBe('workspace_write');
     expect(resolveDwsBusinessRisk({ args: ['doc', 'delete'], confirmed: true })).toBe('dangerous');
+    expect(resolveDwsBusinessRisk({ args: ['doc', 'delete', '--help'] })).toBe('dangerous');
+    expect(resolveDwsBusinessRisk({ args: ['doc', '+delete', '--help'] })).toBe('dangerous');
     expect(resolveDwsBusinessRisk({ args: ['drive', 'file', 'download'] })).toBe('dangerous');
+    expect(resolveDwsBusinessRisk({ args: ['drive', '+download', '--help'] })).toBe('dangerous');
     expect(resolveDwsBusinessRisk({ args: ['doc', 'get', '--output', '.dws/keys/token'] })).toBe('dangerous');
     expect(resolveDwsBusinessRisk({ args: ['mail', 'message', 'send', '--attachment', '.dws/keys/token'], confirmed: true })).toBe('dangerous');
     expect(resolveDwsBusinessRisk({ args: ['doc', 'export', 'get'] })).toBe('dangerous');
@@ -325,6 +339,17 @@ describe('DwsBusinessToolProvider', () => {
       },
     });
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('"operatorUserId":"user-b"'));
+  });
+
+  it('对未绑定企业专家的 cron Session 返回可操作错误', async () => {
+    const { provider, invoke, context } = setup({ sessionOrgAgentId: null, sessionChannel: 'cron' });
+
+    await expect(provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['drive', 'recent', '--help'], credentialMode: 'requester' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, context)).rejects.toThrow('请在目标企业专家会话中重新创建该定时任务');
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it('拒绝未确认写操作、外部 profile 参数与身份漂移', async () => {

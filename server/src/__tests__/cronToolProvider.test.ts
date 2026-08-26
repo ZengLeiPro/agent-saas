@@ -69,6 +69,57 @@ describe('CronToolProvider', () => {
     const stored = await service.get(parsed.job.id);
     expect(stored?.owner).toBe(OWNER.id);
     expect(stored?.ownerName).toBe(OWNER.username);
+    expect(stored?.orgAgentId).toBeUndefined();
+  });
+
+  it('create 只从匹配 owner/tenant 的可信 Session 固化企业专家绑定', async () => {
+    const get = vi.fn(async () => ({
+      sessionId: 'session-1', userId: OWNER.id, username: OWNER.username,
+      tenantId: OWNER.tenantId, orgAgentId: 'agent-a', channel: 'web',
+    }));
+    provider = new CronToolProvider({
+      service: () => service,
+      sessionCatalog: { get } as never,
+    });
+
+    await expect(provider.invoke(call('CronManage', {
+      ...CREATE_INPUT,
+      orgAgentId: 'spoofed-agent',
+    }), context(OWNER))).rejects.toThrow();
+
+    const result = await provider.invoke(call('CronManage', CREATE_INPUT), context(OWNER));
+    const parsed = JSON.parse(result!.content) as {
+      job: { id: string; orgAgentId?: string };
+    };
+    expect(parsed.job.orgAgentId).toBe('agent-a');
+    await expect(service.get(parsed.job.id)).resolves.toMatchObject({ orgAgentId: 'agent-a' });
+
+    get.mockResolvedValueOnce({
+      sessionId: 'session-1', userId: OTHER.id, username: OTHER.username,
+      tenantId: OWNER.tenantId, orgAgentId: 'agent-b', channel: 'web',
+    });
+    const wrongOwner = await provider.invoke(call('CronManage', CREATE_INPUT), context(OWNER));
+    const wrongOwnerId = (JSON.parse(wrongOwner!.content) as { job: { id: string } }).job.id;
+    expect((await service.get(wrongOwnerId))?.orgAgentId).toBeUndefined();
+
+    get.mockResolvedValueOnce({
+      sessionId: 'session-1', userId: OWNER.id, username: OWNER.username,
+      tenantId: 'other-tenant', orgAgentId: 'agent-c', channel: 'web',
+    });
+    const wrongTenant = await provider.invoke(call('CronManage', CREATE_INPUT), context(OWNER));
+    const wrongTenantId = (JSON.parse(wrongTenant!.content) as { job: { id: string } }).job.id;
+    expect((await service.get(wrongTenantId))?.orgAgentId).toBeUndefined();
+
+    get.mockResolvedValueOnce({
+      sessionId: 'session-1', userId: OWNER.id, username: OWNER.username,
+      tenantId: OWNER.tenantId, orgAgentId: 'agent-a', channel: 'web',
+    });
+    const systemEvent = await provider.invoke(call('CronManage', {
+      ...CREATE_INPUT,
+      payload: { kind: 'systemEvent', text: '发送普通提醒' },
+    }), context(OWNER));
+    const systemEventId = (JSON.parse(systemEvent!.content) as { job: { id: string } }).job.id;
+    expect((await service.get(systemEventId))?.orgAgentId).toBeUndefined();
   });
 
   it('action=list 只返回自己的任务；他人任务详情不可见', async () => {

@@ -382,7 +382,10 @@ export class CronService {
     if (outcome.changed) this.afterJobsChanged();
   }
 
-  async add(create: CronJobCreate, context?: { owner?: string; ownerName?: string }): Promise<CronJob> {
+  async add(
+    create: CronJobCreate,
+    context?: { owner?: string; ownerName?: string; orgAgentId?: string },
+  ): Promise<CronJob> {
     const nowMs = this.deps.nowMs();
     const createdEnabled = create.enabled ?? true;
     const schedule =
@@ -405,6 +408,7 @@ export class CronService {
       notify: create.notify,
       owner: context?.owner,
       ownerName: context?.ownerName,
+      orgAgentId: context?.orgAgentId,
       createdAtMs: nowMs,
       updatedAtMs: nowMs,
       state: {},
@@ -469,7 +473,10 @@ export class CronService {
       } else if (patch.enabled === true && wasEnabled === false && job.schedule.kind === "every") {
         job.schedule.anchorMs = job.schedule.anchorMs ?? nowMs;
       }
-      if (patch.payload !== undefined) job.payload = mergeCronPayload(job.payload, patch.payload);
+      if (patch.payload !== undefined) {
+        job.payload = mergeCronPayload(job.payload, patch.payload);
+        if (job.payload.kind === 'systemEvent') delete job.orgAgentId;
+      }
       if (patch.notify !== undefined) job.notify = patch.notify;
 
       job.updatedAtMs = updatedAtAfterEdit(job, nowMs);

@@ -308,6 +308,29 @@ export type {
   WorkflowTraceGateRequestedEventV1,
   WorkflowTraceV1,
 } from "./schemas/workflowTrace";
+export {
+  RELEASE_COMPONENTS,
+  releaseComponentSchema,
+  releaseIdSchema,
+  fullShaSchema,
+  sha256DigestSchema,
+  releaseComponentSourcesSchema,
+  releaseComponentPlanSchema,
+  releaseComponentsPlanSchema,
+  releaseArtifactSchema,
+  releaseManifestSchema,
+  canonicalJson,
+  canonicalizeJson,
+} from "./schemas/releaseManifest";
+export type {
+  ReleaseComponent,
+  ReleaseComponentSources,
+  ReleaseComponentPlan,
+  ReleaseComponentsPlan,
+  ReleaseArtifact,
+  ReleaseManifest,
+  CanonicalJsonValue,
+} from "./schemas/releaseManifest";
 export type { ResolvedScenarioSlug } from "./security/projectWorkflowPublic";
 export {
   cronWizardSubmitSchema,

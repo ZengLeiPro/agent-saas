@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -19,9 +19,25 @@ async function createFixture(config: unknown): Promise<{ rootDir: string; proces
 
 describe('createRuntime 运行时装配（补充分支）', () => {
   const cleanupRoots = new Set<string>();
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalEnvironment = process.env.AGENT_SAAS_ENVIRONMENT;
+  const originalAllowUnidentified = process.env.AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT;
+
+  beforeEach(() => {
+    delete process.env.AGENT_SAAS_ENVIRONMENT;
+    process.env.NODE_ENV = 'development';
+    process.env.AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT = '1';
+  });
+
   afterEach(async () => {
     for (const root of cleanupRoots) await rm(root, { recursive: true, force: true });
     cleanupRoots.clear();
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+    if (originalEnvironment === undefined) delete process.env.AGENT_SAAS_ENVIRONMENT;
+    else process.env.AGENT_SAAS_ENVIRONMENT = originalEnvironment;
+    if (originalAllowUnidentified === undefined) delete process.env.AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT;
+    else process.env.AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT = originalAllowUnidentified;
   });
 
   it('processRole 缺省为 all；多进程角色未配置 PG 时 fail-fast', async () => {
@@ -53,6 +69,7 @@ describe('createRuntime 运行时装配（补充分支）', () => {
     cleanupRoots.add(rootDir);
     const previous = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';
+    process.env.AGENT_SAAS_ENVIRONMENT = 'production';
     try {
       await expect(createRuntime({ processCwd }))
         .rejects.toThrow(/requires runtimeEventStore\.backend=pg/);

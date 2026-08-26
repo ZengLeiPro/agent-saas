@@ -44,7 +44,7 @@ import { serverLogger } from '../utils/logger.js';
 import type { SkillMaterializationCoordinator } from '../workspace/materialization/types.js';
 import { isSkillSelectionPreferenceWrite, registerSkillSelectionRoute, setUserSkillSelected, userSkillSelectionState } from './skillSelection.js';
 import {
-  safeName,
+  isMacOsMetadataZipEntry, safeName,
   safeRelativePath,
   skillIdFromName,
   validateSkillDocument,
@@ -288,12 +288,6 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       targetDir,
       join(archiveDir, `${basename(targetDir)}-${Date.now()}-${randomUUID()}`),
     );
-  }
-
-  function isMacOsMetadataZipEntry(entry: string): boolean {
-    if (!entry || /^[\\/]/.test(entry) || /^[a-zA-Z]:[\\/]/.test(entry)) return false;
-    const parts = entry.replace(/\\/g, '/').split('/').filter(Boolean);
-    return parts[0] === '__MACOSX' && parts.every(part => part !== '.' && part !== '..');
   }
 
   /**

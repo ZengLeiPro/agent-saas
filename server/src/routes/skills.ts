@@ -290,6 +290,12 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     );
   }
 
+  function isMacOsMetadataZipEntry(entry: string): boolean {
+    if (!entry || /^[\\/]/.test(entry) || /^[a-zA-Z]:[\\/]/.test(entry)) return false;
+    const parts = entry.replace(/\\/g, '/').split('/').filter(Boolean);
+    return parts[0] === '__MACOSX' && parts.every(part => part !== '.' && part !== '..');
+  }
+
   /**
    * 递归探测目录内是否存在符号链接条目。
    * safeRelativePath 只校验 zip 条目名，无法拦截 zip 内的符号链接条目
@@ -452,12 +458,12 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
         await writeFile(zipPath, first.buffer);
         const listed = await execFileAsync('unzip', ['-Z', '-1', zipPath], { encoding: 'utf-8' });
         const zipEntries = listed.stdout.split('\n').filter(Boolean);
-        if (zipEntries.some(entry => !safeRelativePath(entry))) {
+        if (zipEntries.some(entry => !isMacOsMetadataZipEntry(entry) && !safeRelativePath(entry))) {
           return res.status(400).json({ error: 'zip 内包含不安全路径' });
         }
         const extractDir = join(tempRoot, 'extracted');
         await mkdir(extractDir, { recursive: true });
-        await execFileAsync('unzip', ['-q', zipPath, '-d', extractDir]);
+        await execFileAsync('unzip', ['-q', zipPath, '-x', '__MACOSX', '__MACOSX/*', '-d', extractDir]);
         // 解压后二次防线：拒绝符号链接条目（条目名过滤挡不住 mode 0o120xxx 的 symlink）
         if (await containsSymlink(extractDir)) {
           return res.status(400).json({ error: 'zip 内包含不安全路径' });

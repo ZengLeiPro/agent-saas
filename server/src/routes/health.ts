@@ -3,9 +3,15 @@ import type { AppConfig } from '../types/index.js';
 import type { DispatchMetricsSnapshot } from '../engine/metricsStore.js';
 import type { ActiveRunCounts } from '../runtime/runStore.js';
 import type { UploadMetricsSnapshot } from '../uploads/manager.js';
-import type { IntegrationV3HealthStatus } from '../taskboard/integrationV3Observability.js';
 import { assertRuntimeEnvironmentSafety } from '../release/environmentSafety.js';
 import type { RuntimeIdentity } from '../release/runtimeIdentity.js';
+
+interface IntegrationV3HealthStatus {
+  status: string;
+  releaseReady: boolean;
+  reasons: string[];
+  metrics?: unknown;
+}
 
 export interface HealthRouteOptions {
   getDispatchMetrics?: () => DispatchMetricsSnapshot;

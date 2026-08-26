@@ -266,31 +266,24 @@ async function shareFileDownload(shareToken: string, filePath: string, fileName:
   document.body.removeChild(a);
 }
 
-/**
- * Artifact 签名 URL 解析：调 /api/artifacts/:id/read-url,后端返回 15 min TTL
- * 的直读 URL（本地 blob=签名 token,OSS=预签名 URL）。失败时抛错让调用侧兜底。
- */
-async function resolveArtifactUrl(artifactId: string): Promise<string> {
-  const res = await authFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/read-url`);
-  if (!res.ok) throw new Error(`resolveArtifactUrl: ${res.status}`);
+/** Artifact 下载 URL：强制服务端代理并以 attachment 响应，避免 OSS 直读 URL 被浏览器当作预览打开。 */
+async function resolveArtifactDownloadUrl(artifactId: string): Promise<string> {
+  const res = await authFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/read-url?download=true`);
+  if (!res.ok) throw new Error(`下载地址获取失败（HTTP ${res.status}）`);
   const body = await res.json() as { url?: string };
-  if (!body.url) throw new Error('resolveArtifactUrl: missing url');
+  if (!body.url) throw new Error('下载地址获取失败：响应缺少内容地址');
   return body.url;
 }
 
-/** Artifact 交付卡片下载：用签名 URL 触发浏览器原生下载。 */
+/** Artifact 交付卡片下载：服务端 attachment 响应与前端 download 语义双重保障。 */
 async function artifactDownload(artifactId: string, fileName: string) {
-  try {
-    const url = await resolveArtifactUrl(artifactId);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  } catch (err) {
-    console.error('Artifact download failed:', err);
-  }
+  const url = await resolveArtifactDownloadUrl(artifactId);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 /** 文件下载卡片，fileSize 为 0 时通过 HEAD 请求懒加载真实大小 */
@@ -309,6 +302,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
 }) {
   const [resolvedSize, setResolvedSize] = useState(fileSize); const [artifactPreviewOpen, setArtifactPreviewOpen] = useState(false);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const ownerParam = owner ? `&owner=${encodeURIComponent(owner)}` : '';
 
   useEffect(() => {
@@ -404,7 +398,10 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
             onClick={(e) => {
               e.stopPropagation();
               if (artifactId) {
-                void artifactDownload(artifactId, fileName);
+                setDownloadError(null);
+                void artifactDownload(artifactId, fileName).catch((err: unknown) => {
+                  setDownloadError(err instanceof Error ? err.message : '下载失败，请稍后重试');
+                });
               } else if (shareToken) {
                 void shareFileDownload(shareToken, filePath, fileName);
               } else if (filePreview?.downloadFile) {
@@ -420,6 +417,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
           </button>
         </div>
       </div>
+      {downloadError ? <p className="mt-1 text-xs text-destructive" role="alert">{downloadError}</p> : null}
       {artifactId && artifactPreviewOpen ? <Suspense fallback={null}><LazyArtifactPreviewDialog open artifactId={artifactId} fileName={fileName} fileSize={resolvedSize} mimeType={mimeType} onOpenChange={setArtifactPreviewOpen} /></Suspense> : null}
       {previewSrc && (
         <ImageLightbox

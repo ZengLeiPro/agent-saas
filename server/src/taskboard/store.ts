@@ -799,7 +799,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
     return listTaskExecutions(this, identity, taskId);
   }
-
   async searchExecutions(
     identity: TaskboardIdentity,
     taskId: string,
@@ -807,16 +806,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<TaskboardPage<TaskBoardExecution>> {
     return searchStoredExecutions(this, identity, taskId, filter);
   }
-
-  async cancelExecution(
-    identity: TaskboardIdentity,
-    taskId: string,
-    executionId: string,
-    input: TaskBoardExecutionCancelInput,
-  ): Promise<TaskBoardExecutionStartResult> {
-    return cancelStoredExecution(this, identity, taskId, executionId, input);
-  }
-
+  cancelExecution(identity: TaskboardIdentity, taskId: string, executionId: string, input: TaskBoardExecutionCancelInput): Promise<TaskBoardExecutionStartResult> { return cancelStoredExecution(this, identity, taskId, executionId, input); }
   async getExecutionModelContext(identity: TaskboardIdentity, taskId: string): Promise<TaskboardExecutionModelContext> {
     const [context, loaded] = await Promise.all([
       loadExecutionModelContext(this, identity, taskId),

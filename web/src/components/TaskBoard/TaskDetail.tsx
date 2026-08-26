@@ -33,6 +33,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import * as api from "./api";
+import { requestExecutionCancellation } from "./executionCancellation";
 import {
   boardAllows,
   canUserTransitionTask,
@@ -247,9 +248,7 @@ export function TaskDetail({
   }, [hydrateDraft, mergeServerDraft, open, onTaskLoaded, taskId]);
 
   const latestExecution = executions[0];
-  const latestExecutionActive = latestExecution
-    ? ACTIVE_EXECUTION_STATUSES.has(latestExecution.status)
-    : false;
+  const latestExecutionActive = Boolean(latestExecution && ACTIVE_EXECUTION_STATUSES.has(latestExecution.status));
   const executionActive = latestExecution
     ? latestExecutionActive || latestExecution.continuationActive === true
     : false;
@@ -436,24 +435,14 @@ export function TaskDetail({
   };
 
   const cancelCurrentExecution = async () => {
-    if (!currentTask || !latestExecution || !latestExecutionActive || !canCancelExecution
-      || taskKind === "integration") return;
-    if (!window.confirm(
-      `确认终止 ${latestExecution.purpose === "review" ? "复核" : latestExecution.purpose === "merge" ? "合并" : "实施"}执行吗？当前运行会被取消，任务将回到可继续处理的状态。`,
-    )) return;
+    if (!currentTask || !latestExecution || !latestExecutionActive || !canCancelExecution || taskKind === "integration") return;
     const operationTask = currentTask;
     const requestId = ++detailRequestRef.current;
-    setSaving(true);
-    setError(null);
+    setSaving(true); setError(null);
     try {
-      const result = await api.cancelExecution(operationTask.id, latestExecution.id, {
-        expectedVersion: operationTask.version,
-        reason: "看板维护者从任务详情终止执行",
-      });
-      if (!isCurrentOperation(requestId, operationTask.id)) return;
-      setCurrentTask(result.task);
-      mergeServerDraft(result.task);
-      onTaskLoaded(result.task);
+      const result = await requestExecutionCancellation(operationTask, latestExecution);
+      if (!result || !isCurrentOperation(requestId, operationTask.id)) return;
+      setCurrentTask(result.task); mergeServerDraft(result.task); onTaskLoaded(result.task);
       await refreshExecutions();
     } catch (caught) {
       if (!isCurrentOperation(requestId, operationTask.id)) return;
@@ -938,8 +927,7 @@ export function TaskDetail({
                       onClick={() => void cancelCurrentExecution()}
                       disabled={saving}
                     >
-                      {saving ? <LoaderCircle className="animate-spin" /> : <CircleX />}
-                      终止执行
+                      {saving ? <LoaderCircle className="animate-spin" /> : <CircleX />}终止执行
                     </Button>
                   ) : null}
                   {!boardReadOnly && taskKind === "integration" && canCancelIntegration

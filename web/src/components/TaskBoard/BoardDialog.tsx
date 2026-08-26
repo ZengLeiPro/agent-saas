@@ -35,11 +35,11 @@ import { ModelSelect } from "./ModelSelect";
 
 type BoardDraftField = "name" | "description" | "prompt" | "model" | "stageModels" | "stagePrompts" | "visibility" | "repository" | "integrationPolicy";
 
-/** 看板可配置的各执行阶段，用于阶段默认模型选择。 */
+/** 看板可配置的三类职责；Integration 全程只有一个 Agent，沿用 merge 配置作为其默认值。 */
 const STAGE_MODEL_FIELDS: Array<{ purpose: TaskBoardExecutionPurpose; title: string; hint: string }> = [
-  { purpose: "work", title: "实施（work）", hint: "实施 Agent 处理可交付任务时使用的默认模型" },
-  { purpose: "review", title: "复核（review）", hint: "复核 Agent 审查工作结果时使用的默认模型" },
-  { purpose: "merge", title: "集成（merge）", hint: "集成 Agent 合并交付时使用的默认模型" },
+  { purpose: "work", title: "实施（work）", hint: "普通交付 Work Agent 使用的默认模型" },
+  { purpose: "review", title: "复核（review）", hint: "普通交付 Review Agent 使用的默认模型" },
+  { purpose: "merge", title: "集成（merge）", hint: "单一 Integration Agent 从组合到清理全程使用的默认模型，不会另起 Merge Execution" },
 ];
 
 function numberInRange(value: string, fallback: number, min: number, max: number): number {
@@ -573,16 +573,13 @@ export function BoardDialog({
                     <Label htmlFor="taskboard-manual-maintainer" className="font-normal">允许维护者创建人工批次（所有者始终允许）</Label>
                   </div>
                 )}
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label>合并方式</Label>
-                    <Select value={mergeMethod} onValueChange={(value) => { dirtyFieldsRef.current.add("integrationPolicy"); setMergeMethod(value as typeof mergeMethod); }} disabled={submitting || !canEditPolicy}>
-                      <SelectTrigger aria-label="集成合并方式"><SelectValue /></SelectTrigger>
-                      <SelectContent><SelectItem value="merge">Merge</SelectItem><SelectItem value="squash">Squash</SelectItem><SelectItem value="rebase">Rebase</SelectItem></SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2"><Label htmlFor="taskboard-remediation-rounds">自动修复轮数</Label><Input id="taskboard-remediation-rounds" type="number" min={0} max={20} value={maxRemediationRounds} onChange={(event) => { dirtyFieldsRef.current.add("integrationPolicy"); setMaxRemediationRounds(event.target.value); }} disabled={submitting || !canEditPolicy} /></div>
-                  <div className="space-y-2"><Label htmlFor="taskboard-transient-retries">瞬时重试次数</Label><Input id="taskboard-transient-retries" type="number" min={0} max={20} value={maxTransientRetries} onChange={(event) => { dirtyFieldsRef.current.add("integrationPolicy"); setMaxTransientRetries(event.target.value); }} disabled={submitting || !canEditPolicy} /></div>
+                <div className="max-w-sm space-y-2">
+                  <Label>默认合并偏好</Label>
+                  <Select value={mergeMethod} onValueChange={(value) => { dirtyFieldsRef.current.add("integrationPolicy"); setMergeMethod(value as typeof mergeMethod); }} disabled={submitting || !canEditPolicy}>
+                    <SelectTrigger aria-label="集成默认合并偏好"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="merge">Merge</SelectItem><SelectItem value="squash">Squash</SelectItem><SelectItem value="rebase">Rebase</SelectItem></SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">仅作为 Integration Agent 的默认偏好，不构成额外的服务端流程门禁。</p>
                 </div>
                 <div className="space-y-3 rounded-md border p-3" aria-label="CI 门禁策略">
                   <div>
@@ -636,7 +633,7 @@ export function BoardDialog({
                     <p className="text-xs text-muted-foreground">仅在 GitHub required checks 明确为空时生效；observed checks 必须由有权限用户显式勾选或填写。</p>
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground">固定要求绿色检查；独立来源可继续，冲突自动修复；不自动部署或删除远端分支。</p>
+                <p className="text-xs text-muted-foreground">CI 配置继续服务普通 Delivery Work/Review；Integration Agent 直接读取并遵守 GitHub required checks、branch protection 与 ruleset。</p>
               </>
             ) : <p className="text-xs text-muted-foreground">未关联仓库时不会创建或执行集成批次。</p>}
           </section>
@@ -659,16 +656,16 @@ export function BoardDialog({
           </div>
           <section className="space-y-3">
             <div>
-              <h3 className="text-sm font-medium">各阶段执行提示语</h3>
+              <h3 className="text-sm font-medium">各类 Agent 执行提示语</h3>
               <p className="text-xs text-muted-foreground">
-                分别为实施（work）、复核（review）、集成（merge）阶段配置交给 Agent 的执行提示语；
-                未填写的阶段使用系统默认模板。
+                work/review 用于普通交付职责；merge 配置由单一 Integration Agent 全程使用，不代表独立 Merge 阶段。
+                未填写时使用系统默认模板。
               </p>
             </div>
             {([
-              ["work", "实施（work）", "实施 Agent 处理可交付任务时的执行提示语"],
-              ["review", "复核（review）", "复核 Agent 审查工作结果时的执行提示语"],
-              ["merge", "集成（merge）", "集成 Agent 合并交付时的执行提示语"],
+              ["work", "实施（work）", "普通交付 Work Agent 的执行提示语"],
+              ["review", "复核（review）", "普通交付 Review Agent 的执行提示语"],
+              ["merge", "集成（merge）", "单一 Integration Agent 从组合到清理全程使用，不会另起 Merge Execution"],
             ] as const).map(([purpose, title, hint]) => (
               <div className="space-y-2" key={purpose}>
                 <Label htmlFor={`taskboard-stage-${purpose}`}>{title}</Label>
@@ -706,9 +703,9 @@ export function BoardDialog({
           </div>
           <section className="space-y-3">
             <div>
-              <h3 className="text-sm font-medium">各阶段默认模型</h3>
+              <h3 className="text-sm font-medium">各类 Agent 默认模型</h3>
               <p className="text-xs text-muted-foreground">
-                分别为实施（work）、复核（review）、集成（merge）阶段指定默认模型；未指定的阶段继承看板运行模型。
+                work/review 用于普通交付职责；merge 是单一 Integration Agent 的全程默认模型。未指定时继承看板运行模型。
               </p>
             </div>
             {STAGE_MODEL_FIELDS.map(({ purpose, title, hint }) => (

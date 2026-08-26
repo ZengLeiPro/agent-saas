@@ -202,8 +202,8 @@ export async function runTaskboardV2Schema(
       integration_task_id TEXT NOT NULL REFERENCES ${options.tasksTable}(id) ON DELETE CASCADE,
       delivery_task_id TEXT NOT NULL REFERENCES ${options.tasksTable}(id),
       repository_id TEXT NOT NULL,
-      provider_pull_request_id TEXT NOT NULL,
-      reviewed_subject_digest TEXT NOT NULL,
+      provider_pull_request_id TEXT,
+      reviewed_subject_digest TEXT,
       frozen_head_oid TEXT,
       source_order INTEGER NOT NULL CHECK (source_order >= 0),
       state TEXT NOT NULL DEFAULT 'pending'
@@ -220,6 +220,10 @@ export async function runTaskboardV2Schema(
     )
   `);
   await client.query(`
+    ALTER TABLE ${options.integrationSourcesTable}
+      ALTER COLUMN provider_pull_request_id DROP NOT NULL;
+    ALTER TABLE ${options.integrationSourcesTable}
+      ALTER COLUMN reviewed_subject_digest DROP NOT NULL;
     ALTER TABLE ${options.integrationSourcesTable}
       ADD COLUMN IF NOT EXISTS frozen_head_oid TEXT;
     ALTER TABLE ${options.integrationSourcesTable}
@@ -348,29 +352,10 @@ export async function runTaskboardV2Schema(
       ON ${options.cancellationOutboxTable}(created_at) WHERE status IN ('pending','failed')
   `);
   await client.query(`
-    DO $migration$
-    DECLARE duplicate_summary TEXT;
-    BEGIN
-      SELECT string_agg(repository_id || ':' || provider_pull_request_id || '=' || duplicate_count, ', ')
-        INTO duplicate_summary
-        FROM (
-          SELECT repository_id,provider_pull_request_id,count(*)::text AS duplicate_count
-            FROM ${options.integrationSourcesTable}
-           WHERE state NOT IN ('merged','canceled')
-           GROUP BY repository_id,provider_pull_request_id HAVING count(*) > 1
-           ORDER BY repository_id,provider_pull_request_id
-           LIMIT 20
-        ) duplicates;
-      IF duplicate_summary IS NOT NULL THEN
-        RAISE EXCEPTION 'TASKBOARD_ACTIVE_PR_DUPLICATES: %. Run repair:taskboard-workflow --apply, then retry schema initialization.', duplicate_summary;
-      END IF;
-      EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS ${options.integrationSourcesTable}_apr_uq'
-        || ' ON ${options.integrationSourcesTable}(repository_id,provider_pull_request_id)'
-        || ' WHERE state NOT IN (''merged'',''canceled'')';
-      IF to_regclass('${options.integrationSourcesTable}_apr_uq') IS NULL THEN
-        RAISE EXCEPTION 'TASKBOARD_ACTIVE_PR_INDEX_MISSING';
-      END IF;
-    END $migration$
+    DROP INDEX IF EXISTS ${options.integrationSourcesTable}_apr_uq;
+    CREATE INDEX IF NOT EXISTS ${options.integrationSourcesTable}_repository_pr_idx
+      ON ${options.integrationSourcesTable}(repository_id,provider_pull_request_id)
+      WHERE provider_pull_request_id IS NOT NULL
   `);
   await client.query(`
     CREATE TABLE IF NOT EXISTS ${options.integrationTriggerOutboxTable} (

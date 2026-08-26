@@ -408,11 +408,13 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         ? purposeForIntegrationAgentStatus(modelContext.taskStatus ?? 'todo')
         : undefined)
       ?? 'work';
+    // Integration v3 is one work Execution; merge remains only the board's configuration key for that Agent.
+    const modelPurpose = modelContext.taskKind === 'integration' ? 'merge' : resolvedPurpose;
     const explicitModelRef = resolveExecutionModelRef(
       modelContext.taskModel,
       modelContext.boardStageModels,
       modelContext.boardModel,
-      resolvedPurpose,
+      modelPurpose,
       modelContext.taskStageModels,
     );
     const model = explicitModelRef
@@ -670,7 +672,9 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         throw new Error(`任务看板执行已终止：${record.runId}`);
       }
       const boardPrompt = context.boardPrompt.trim();
-      const stagePrompt = context.stagePrompts?.[context.execution.purpose]?.trim();
+      // The merge key supplies configuration only; the durable Integration Execution remains purpose=work.
+      const stagePurpose = context.task.kind === 'integration' ? 'merge' : context.execution.purpose;
+      const stagePrompt = context.stagePrompts?.[stagePurpose]?.trim();
       return {
         ...record,
         metadata: {
@@ -710,8 +714,11 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         ?? continuationContext.continuationExecution
         ?? continuationContext.latestExecution;
       const boardPrompt = continuationContext.boardPrompt?.trim();
-      const stagePrompt = targetExecution
-        ? continuationContext.stagePrompts?.[targetExecution.purpose]?.trim()
+      const stagePurpose = continuationContext.task.kind === 'integration'
+        ? 'merge'
+        : targetExecution?.purpose;
+      const stagePrompt = stagePurpose
+        ? continuationContext.stagePrompts?.[stagePurpose]?.trim()
         : undefined;
       return boardPrompt || stagePrompt
         ? { ...record, metadata: {
@@ -936,7 +943,7 @@ function assertContinuationAllowed(task: TaskBoardTask, activeExecution?: TaskBo
   }
   if (task.kind === 'integration') {
     if (!activeExecution) throw new TaskboardValidationError('Integration Agent 由系统按 Agent 状态推进；当前没有可继续的执行，请仅发表评论', 'TASKBOARD_V3_COMMENT_CONTINUATION_REQUIRES_ACTIVE');
-    if (!['work', 'review'].includes(activeExecution.purpose)) throw new TaskboardValidationError('Integration Agent 只能继续当前的 Work 或 Review 执行', 'TASKBOARD_INTEGRATION_PURPOSE_INVALID');
+    if (!['work', 'review'].includes(activeExecution.purpose)) throw new TaskboardValidationError('Integration Agent 只能继续当前持久 Execution', 'TASKBOARD_INTEGRATION_PURPOSE_INVALID');
     return;
   }
   if (!['todo', 'in_review', 'in_progress'].includes(task.status)) {

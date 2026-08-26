@@ -117,8 +117,6 @@ function rig() {
       status: 'canceled' as const,
       version: input.expectedVersion + 1,
     })),
-    mergeIntegrationAgentV2: vi.fn(async () => ({ ...task, kind: 'integration' as const, workflowVersion: 3, status: 'in_progress' as const })),
-    cleanupIntegrationAgentV2: vi.fn(async () => ({ ...task, kind: 'integration' as const, workflowVersion: 3, status: 'done' as const })),
     inspectExecutionPullRequestV2: vi.fn(async () => ({
       gateStatus: 'success' as const,
       receipt: {
@@ -228,14 +226,18 @@ describe('CronManage taskboard actions', () => {
     expect(service.finishExecutionV2).toHaveBeenCalledWith(identity, execution.runId, { targetStatus: 'ready_to_merge', body: '复核通过，检查记录见评论。' });
   });
 
-  it('按 merge -> cleanup -> execution.finish(done) 真实 action 链收敛', async () => {
-    const { service, options } = rig(), scope = { ...executionScope('merge', 2), trustedWorkspace: { id: 'workspace-1', root: '/workspace/task-worktree' } };
-    await expect(invokeTaskboardAction(options, identity, { action: 'integration.agent.merge' }, scope)).resolves.toMatchObject({ merged: true, cleanupRequired: true, task: { status: 'in_progress' } });
-    await expect(invokeTaskboardAction(options, identity, { action: 'integration.agent.cleanup' }, scope)).resolves.toMatchObject({ cleaned: true, task: { status: 'done' } });
-    await expect(invokeTaskboardAction(options, identity, { action: 'execution.finish', targetStatus: 'done', body: '合并与资源清理回执均已核验。' }, scope)).resolves.toMatchObject({ finished: true, task: { status: 'done' } });
-    expect(service.mergeIntegrationAgentV2).toHaveBeenCalledWith(identity, execution.runId);
-    expect(service.cleanupIntegrationAgentV2).toHaveBeenCalledWith(identity, execution.runId, scope.trustedWorkspace);
-    expect(service.finishExecutionV2).toHaveBeenCalledWith(identity, execution.runId, { targetStatus: 'done', body: '合并与资源清理回执均已核验。' });
+  it('Integration work Execution 直接用 execution.finish(done) 收口', async () => {
+    const { service, options } = rig();
+    const base = executionScope('work', 2);
+    const scope = {
+      ...base,
+      execution: {
+        ...base.execution!,
+        task: { ...base.execution!.task, kind: 'integration' as const, workflowVersion: 3 as const },
+      },
+    };
+    await expect(invokeTaskboardAction(options, identity, { action: 'execution.finish', targetStatus: 'done', body: '已核对 GitHub 合并结果并完成安全清理。' }, scope)).resolves.toMatchObject({ finished: true, task: { status: 'done' } });
+    expect(service.finishExecutionV2).toHaveBeenCalledWith(identity, execution.runId, { targetStatus: 'done', body: '已核对 GitHub 合并结果并完成安全清理。' });
   });
 
   it('普通会话创建带分支任务并用显式版本回写字段', async () => {

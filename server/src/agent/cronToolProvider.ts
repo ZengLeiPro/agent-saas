@@ -66,7 +66,7 @@ const CRON_MANAGE_ACTIONS = ['delete', 'run', ...TASKBOARD_MANAGE_ACTIONS] as co
 const dateTimeSchema = z.string().datetime({ offset: true });
 const cronManageSchema = z.object({
   target: z.enum(['cron', 'taskboard']).optional().describe('操作对象。默认 cron；taskboard 由服务端按当前用户与租户鉴权。'),
-  action: z.enum(CRON_MANAGE_ACTIONS).describe('cron 支持 list/create/update/delete/run；taskboard 支持 board/task/comment/execution 资源 action。Execution 可按当前用户权限执行只读查询，写操作仍受当前任务与阶段约束；execution.finish 只使用 targetStatus 与 body 完成交接。Work/Review 必须用 execution.pull_request.inspect 读取当前 head 的权威 CI；workflowVersion=3 Integration Agent Merge 只依次使用 integration.agent.merge、integration.agent.cleanup，cleanup 完成后才能 execution.finish({targetStatus: "done", body})。'),
+  action: z.enum(CRON_MANAGE_ACTIONS).describe('cron 支持 list/create/update/delete/run；taskboard 支持 board/task/comment/execution/integration 资源 action。Execution 可按当前用户权限读取上下文，并用 execution.finish({targetStatus, body}) 完成职责。普通 Delivery Work/Review 继续使用 pull request inspection 门禁；Integration task 只运行一个 durable work Agent，由它自主使用标准 Git/GitHub 完成合并与清理，最终仅回报 done 或 blocked。'),
   id: z.string().optional().describe('cron job、旧 taskboard 任务或评论 id。'),
   boardId: z.string().optional().describe('taskboard 看板 id。'),
   taskId: z.string().optional().describe('taskboard 任务 id。'),

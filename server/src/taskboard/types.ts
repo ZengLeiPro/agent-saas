@@ -488,15 +488,6 @@ export interface TaskboardService {
     identity: TaskboardIdentity,
     runId: string,
   ): Promise<TaskBoardTask>;
-  mergeIntegrationAgentV2?(
-    identity: TaskboardIdentity,
-    runId: string,
-  ): Promise<TaskBoardTask>;
-  cleanupIntegrationAgentV2?(
-    identity: TaskboardIdentity,
-    runId: string,
-    workspace: { id: string; root: string },
-  ): Promise<TaskBoardTask>;
   finishExecutionV2?(
     identity: TaskboardIdentity,
     runId: string,

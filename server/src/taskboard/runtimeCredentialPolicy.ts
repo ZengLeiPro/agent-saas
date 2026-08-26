@@ -37,8 +37,8 @@ export interface TaskboardRuntimeCredentialMetadata {
 
 /**
  * Compatibility classifier for dispatchers whose session naming cannot distinguish
- * ordinary implementation work from Integration Work. New dispatchers should set
- * taskboardIntegration=true plus taskboardIntegrationRole=work|review.
+ * ordinary implementation work from historical isolated Review/Merge executions.
+ * The current single Integration Agent intentionally keeps standard Git/GitHub credentials.
  */
 export function isCredentialIsolatedTaskboardRuntime(
   sessionId: string,
@@ -47,8 +47,6 @@ export function isCredentialIsolatedTaskboardRuntime(
   if (
     sessionId.startsWith('taskboard-review-')
     || sessionId.startsWith('taskboard-merge-')
-    || sessionId.startsWith('taskboard-integration-work-')
-    || sessionId.startsWith('taskboard-integration-review-')
   ) return true;
   if (!metadata?.taskboardExecution) return false;
   const role = (metadata.taskboardIntegrationRole ?? metadata.taskboardPurpose ?? '').toLowerCase();
@@ -57,7 +55,7 @@ export function isCredentialIsolatedTaskboardRuntime(
     || metadata.taskboardWorkflowVersion === 3
     || metadata.taskboardWorkflowVersion === '3'
     || metadata.taskboardWorkflowVersion === 'v3';
-  return integrationMarked && ['work', 'review', 'merge', 'integration_work', 'integration_review'].includes(role);
+  return integrationMarked && ['review', 'merge', 'integration_review'].includes(role);
 }
 
 export function stripTaskboardWritableGitCredentials(

@@ -17,8 +17,8 @@ import {
   withTransaction,
 } from '../v2Store.js';
 import { TaskboardNotFoundError, TaskboardValidationError, type TaskboardIdentity } from '../types.js';
-import { loadWorkflowFacts } from './commandService.js';
-import { assertCurrentIntegrationAgentPullRequestGate, assertCurrentPullRequestGate } from './pullRequestGate.js';
+import { fenceTaskExecutions, loadWorkflowFacts } from './commandService.js';
+import { assertCurrentPullRequestGate } from './pullRequestGate.js';
 import { assertIntegrationExecutionMigrated, decideTransition } from './decider.js';
 
 const ACTIVE = ['queued', 'running', 'waiting_user', 'waiting_approval'];
@@ -48,7 +48,8 @@ export async function finishExecutionV2(
     if (!executionRow) throw new TaskboardNotFoundError('Taskboard execution not found');
     const execution = rowToExecution(executionRow);
     if (executionRow.transitioned_at && loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3
-      && execution.purpose === 'merge' && input.targetStatus === 'done' && loaded.task.status === 'done') {
+      && execution.purpose === 'work' && input.targetStatus === loaded.task.status
+      && (input.targetStatus === 'done' || input.targetStatus === 'blocked')) {
       const prior = await client.query(
         `SELECT id FROM ${options.commentsTable}
           WHERE task_id=$1 AND author_type='agent' AND author_id=$2 AND body=$3
@@ -98,42 +99,76 @@ async function transitionIntegrationAgent(
   options: TaskboardV2StoreOptions, client: PoolClient, identity: TaskboardIdentity,
   task: TaskBoardTask, execution: TaskBoardExecution, status: TaskBoardTask['status'],
 ): Promise<TaskBoardTask> {
+  if (execution.purpose !== 'work' || (status !== 'done' && status !== 'blocked')) {
+    throw new TaskboardValidationError(
+      'Integration Agent can only finish the whole integration or request human help',
+      'TASKBOARD_INTEGRATION_AGENT_TRANSITION_INVALID',
+    );
+  }
   const { agentsTable } = integrationAgentTableNames(options.integrationSourcesTable);
-  if (execution.purpose === 'merge' && status === 'done' && task.status === 'done') {
-    const terminal = await client.query(
-      `SELECT status,cleanup_receipt FROM ${agentsTable} WHERE integration_task_id=$1 FOR UPDATE`, [task.id]);
-    const cleanup = jsonObject(terminal.rows[0]?.cleanup_receipt);
-    if (terminal.rows[0]?.status !== 'merged' || cleanup?.completed !== true) {
-      throw new TaskboardValidationError('Integration Agent cleanup is incomplete', 'TASKBOARD_INTEGRATION_INCOMPLETE');
-    }
-    await markTransitioned(options, client, execution, status);
-    await appendChange(options, client, task.id, 'integration.agent.transitioned', 'agent', identity.ownerUserId, {
-      executionId: execution.id, runId: execution.runId, purpose: execution.purpose, status: 'done',
-    });
-    return loadTask(options, client, task.id);
+  await client.query(
+    `UPDATE ${agentsTable}
+        SET status=$2,review_head_oid=NULL,verdict=NULL,review_execution_id=NULL,
+            merge_in_flight_execution_id=NULL,merge_in_flight_review_execution_id=NULL,
+            merge_in_flight_review_head_oid=NULL,updated_at=now()
+      WHERE integration_task_id=$1`,
+    [task.id, status === 'done' ? 'merged' : 'active'],
+  );
+  if (status === 'done') {
+    const sourceTasks = await client.query(
+      `SELECT delivery.id
+         FROM ${options.tasksTable} delivery
+         JOIN ${options.integrationSourcesTable} source ON source.delivery_task_id=delivery.id
+        WHERE source.integration_task_id=$1 AND source.state<>'canceled'
+        ORDER BY delivery.id
+        FOR UPDATE OF delivery`,
+      [task.id],
+    );
+    await fenceTaskExecutions(
+      options,
+      client,
+      sourceTasks.rows.map((row) => String(row.id)),
+      'integration_completed',
+    );
+    await client.query(
+      `UPDATE ${options.integrationSourcesTable}
+          SET state='merged',last_error=NULL,updated_at=now()
+        WHERE integration_task_id=$1 AND state<>'canceled'`,
+      [task.id],
+    );
+    await client.query(
+      `UPDATE ${options.tasksTable} delivery
+          SET status='done',completed_at=COALESCE(completed_at,now()),version=version+1,updated_at=now()
+        FROM ${options.integrationSourcesTable} source
+       WHERE source.integration_task_id=$1 AND source.delivery_task_id=delivery.id
+         AND delivery.status NOT IN ('done','canceled')`,
+      [task.id],
+    );
+    await client.query(
+      `UPDATE ${options.mergeAuthorizationsTable}
+          SET revoked_at=COALESCE(revoked_at,now())
+        WHERE integration_task_id=$1 AND revoked_at IS NULL`,
+      [task.id],
+    );
+    await client.query(
+      `UPDATE ${options.integrationLanesTable}
+          SET active_integration_task_id=NULL,lease_id=NULL,epoch=epoch+1,updated_at=now()
+        WHERE active_integration_task_id=$1`,
+      [task.id],
+    );
   }
-  let nextStatus: TaskBoardTask['status'];
-  let agentStatus: 'active' | 'reviewing' | 'ready_to_merge';
-  if (execution.purpose === 'work' && status === 'in_review') {
-    nextStatus = 'in_review'; agentStatus = 'reviewing';
-  } else if (execution.purpose === 'review' && status === 'ready_to_merge') {
-    const gate = await assertCurrentIntegrationAgentPullRequestGate(options, client, task, execution.id);
-    await client.query(`UPDATE ${agentsTable} SET review_head_oid=$2 WHERE integration_task_id=$1`, [task.id, gate.headOid]);
-    nextStatus = 'ready_to_merge'; agentStatus = 'ready_to_merge';
-  } else if (execution.purpose === 'review' && (status === 'todo' || status === 'in_review')) {
-    nextStatus = status === 'todo' ? 'in_progress' : 'in_review';
-    agentStatus = status === 'todo' ? 'active' : 'reviewing';
-  } else {
-    throw new TaskboardValidationError('Integration Agent can only request review, return for repair, or record approval', 'TASKBOARD_INTEGRATION_AGENT_TRANSITION_INVALID');
-  }
-  await client.query(`UPDATE ${agentsTable}
-      SET status=$2, verdict=CASE WHEN $2='ready_to_merge' THEN 'approved' ELSE NULL END,
-          review_execution_id=CASE WHEN $2='ready_to_merge' THEN $3 ELSE NULL END, updated_at=now()
-      WHERE integration_task_id=$1`, [task.id, agentStatus, execution.id]);
-  await updateTaskStatus(options, client, task.id, nextStatus);
+  await client.query(
+    `UPDATE ${options.tasksTable}
+        SET status=$2,completed_at=CASE WHEN $2='done' THEN COALESCE(completed_at,now()) ELSE NULL END,
+            workflow_epoch=workflow_epoch+1,next_action='none',next_action_revision=next_action_revision+1,
+            version=version+1,updated_at=now()
+      WHERE id=$1`,
+    [task.id, status],
+  );
+  if (status === 'blocked') await recordBlock(options, client, task.id, execution);
   await markTransitioned(options, client, execution, status);
-  await appendChange(options, client, task.id, 'integration.agent.transitioned', 'agent', identity.ownerUserId, {
-    executionId: execution.id, runId: execution.runId, purpose: execution.purpose, status: nextStatus,
+  await appendChange(options, client, task.id, 'integration.agent.finished', 'agent', identity.ownerUserId, {
+    executionId: execution.id, runId: execution.runId, status,
   });
   return loadTask(options, client, task.id);
 }
@@ -187,8 +222,4 @@ async function recordBlock(options: TaskboardV2StoreOptions, client: PoolClient,
     `INSERT INTO ${options.blockEpisodesTable}(id,task_id,purpose,execution_id,reason_code,reason)
      VALUES ($1,$2,$3,$4,'agent_needs_human','See the execution Agent comment')`,
     [randomUUID(), taskId, execution.purpose, execution.id]);
-}
-
-function jsonObject(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }

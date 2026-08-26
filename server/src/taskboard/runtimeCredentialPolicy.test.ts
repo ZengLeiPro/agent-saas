@@ -44,8 +44,6 @@ describe('taskboard runtime credential policy', () => {
   it.each([
     'taskboard-review-task-1',
     'taskboard-merge-task-1',
-    'taskboard-integration-work-task-1',
-    'taskboard-integration-review-task-1',
   ])(
     'removes writable Git credentials from %s sessions',
     (sessionId) => {
@@ -55,16 +53,17 @@ describe('taskboard runtime credential policy', () => {
     },
   );
 
-  it('uses compatible metadata to isolate integration work with a legacy session name', () => {
+  it('keeps standard Git/GitHub credentials for the single Integration Agent', () => {
     const metadata = {
       taskboardExecution: true,
       taskboardIntegration: true,
-      taskboardIntegrationRole: 'work',
+      taskboardIntegrationRole: 'integration',
+      taskboardPurpose: 'work',
     } as const;
-    expect(isCredentialIsolatedTaskboardRuntime('taskboard-task-1', metadata)).toBe(true);
+    expect(isCredentialIsolatedTaskboardRuntime('taskboard-integration-task-1', metadata)).toBe(false);
     const env = { ...writableGitEnv };
-    stripTaskboardWritableGitCredentials('taskboard-task-1', env, metadata);
-    expect(env).toEqual(isolatedEnv);
+    stripTaskboardWritableGitCredentials('taskboard-integration-task-1', env, metadata);
+    expect(env).toEqual(writableGitEnv);
   });
 
   it('accepts workflow-v3 purpose metadata without requiring shared type changes', () => {

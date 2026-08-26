@@ -62,10 +62,16 @@ describe('Taskboard service hardening', () => {
   });
 
   it.each([
-    ['todo', 'work'], ['in_progress', 'work'], ['in_review', 'review'], ['ready_to_merge', 'merge'],
-  ] as const)('按 Agent 状态为 workflow v3 Integration 派发 %s -> %s', (status, purpose) => {
+    ['todo', 'work'], ['in_progress', 'work'],
+  ] as const)('workflow v3 Integration 只派发 %s -> %s', (status, purpose) => {
     expect(resolveExecutionPurpose(status, undefined, 'integration', 3)).toBe(purpose);
   });
+
+  it.each(['in_review', 'ready_to_merge'] as const)(
+    '拒绝重新派发历史 Integration 阶段 %s',
+    (status) => expect(() => resolveExecutionPurpose(status, undefined, 'integration', 3))
+      .toThrowError(expect.objectContaining({ code: 'TASKBOARD_INTEGRATION_AGENT_EXECUTION_STATE_INVALID' })),
+  );
 
   it('允许人工重跑阻塞的交付任务，但仍拒绝 review 与 integration 的非法组合', () => {
     expect(resolveExecutionPurpose('blocked', 'work', 'delivery')).toBe('work');

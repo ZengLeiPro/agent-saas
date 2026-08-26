@@ -36,7 +36,7 @@ describe('TaskboardExecutionCoordinator reconciliation', () => {
     expect(rig.store.finishWorkflowCancellation).toHaveBeenCalledWith('cancel-1');
   });
 
-  it('workflow cancellation 遇到尚未创建的 run 时保留失败 outbox，不误标完成', async () => {
+  it('workflow cancellation 遇到未创建的 run 时直接收敛，避免永久 poison outbox', async () => {
     const rig = makeRig({
       claimWorkflowCancellations: vi.fn(async () => [{ id: 'cancel-missing', runId: 'run-missing', reason: 'superseded' }]),
       finishWorkflowCancellation: vi.fn(async () => undefined),
@@ -44,10 +44,7 @@ describe('TaskboardExecutionCoordinator reconciliation', () => {
 
     await rig.coordinator.reconcile();
 
-    expect(rig.store.finishWorkflowCancellation).toHaveBeenCalledWith(
-      'cancel-missing', expect.stringContaining('尚未创建'),
-    );
-    expect(rig.store.finishWorkflowCancellation).not.toHaveBeenCalledWith('cancel-missing');
+    expect(rig.store.finishWorkflowCancellation).toHaveBeenCalledWith('cancel-missing');
   });
 
   it('workflow cancellation CAS 输给 completed 终态时按 durable fact 收敛 outbox', async () => {

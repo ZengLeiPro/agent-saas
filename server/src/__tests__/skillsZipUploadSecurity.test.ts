@@ -254,6 +254,20 @@ describe('skills zip 上传安全（K2 symlink 旁路 + 路径过滤）', () => 
     expect(containsSymlink(installed)).toBe(false);
   });
 
+  it('忽略 macOS __MACOSX 元数据条目后正常安装', async () => {
+    const buf = makeZip([
+      { name: '__MACOSX/._SKILL.md', data: 'macOS metadata', mode: FILE_MODE },
+      { name: '__MACOSX/skill/._helper.py', data: 'macOS metadata', mode: FILE_MODE },
+      { name: 'SKILL.md', data: '---\nname: macos-legit\ndescription: macOS zip\n---\nbody', mode: FILE_MODE },
+    ]);
+    const res = await h.request('/api/skills/me/import', { method: 'POST', body: zipForm(buf) });
+    expect(res.status).toBe(200);
+    expect((await res.json() as { skill: { id: string } }).skill.id).toBe('macos-legit');
+    const installed = join(h.userSkillsDir, 'macos-legit');
+    expect(existsSync(join(installed, 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(installed, '__MACOSX'))).toBe(false);
+  });
+
   it('字面 ../ 路径条目仍被拒 → 400（回归 safeRelativePath）', async () => {
     const buf = makeZip([
       { name: '../evil.txt', data: 'x', mode: FILE_MODE },

@@ -49,3 +49,9 @@ export function safeRelativePath(name: string): string | null {
   ) return null;
   return normalized;
 }
+
+export function isMacOsMetadataZipEntry(entry: string): boolean {
+  if (!entry || /^[\\/]/.test(entry) || /^[a-zA-Z]:[\\/]/.test(entry)) return false;
+  const parts = entry.replace(/\\/g, '/').split('/').filter(Boolean);
+  return parts[0] === '__MACOSX' && parts.every(part => part !== '.' && part !== '..');
+}

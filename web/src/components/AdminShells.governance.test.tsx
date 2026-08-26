@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { UserManager } from "@/components/UserManager";
 import { governanceRoute } from "@/lib/governanceNavigation";
 import { PlatformAdminShell, TenantAdminShell } from "./AdminShells";
 
@@ -77,6 +78,7 @@ const commonTenantProps = {
 
 describe("AdminShells V2 内容适配", () => {
   beforeEach(() => {
+    window.history.replaceState({}, "", "/");
     adminShellMocks.auth = { user: { tenantId: "acme" }, isPlatformAdmin: false };
     adminShellMocks.tenants = [{ id: "acme", name: "Acme" }];
     adminShellMocks.contextSnapshot.mockReset().mockResolvedValue({
@@ -101,7 +103,7 @@ describe("AdminShells V2 内容适配", () => {
     expect(window.location.search).toContain("usageSection=billing");
   });
 
-  it("平台管理员进入组织控制台时跳过 pantheon，默认选择首个业务组织", async () => {
+  it("平台管理员未选择 org 时不默认使用首个业务组织", () => {
     adminShellMocks.auth = { user: { tenantId: "pantheon" }, isPlatformAdmin: true };
     adminShellMocks.tenants = [
       { id: "pantheon", name: "万神殿" },
@@ -116,8 +118,50 @@ describe("AdminShells V2 内容适配", () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: "预算与计费" }));
-    expect(await screen.findByText("组织预算面板 kaiyan-demo 开沿演示")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "组织作用域" })).toBeTruthy();
+    expect(screen.queryByText(/组织预算面板 kaiyan-demo/)).toBeNull();
+  });
+
+  it("平台管理员必须显式选择组织后才显示旧设置页的添加成员入口", async () => {
+    adminShellMocks.auth = { user: { tenantId: "pantheon" }, isPlatformAdmin: true };
+    adminShellMocks.tenants = [
+      { id: "pantheon", name: "万神殿" },
+      { id: "acme", name: "Acme" },
+      { id: "beta", name: "Beta" },
+    ];
+
+    const renderUsers = (tenantId?: string, tenantName?: string) => (
+      <UserManager tenantIdScope={tenantId} tenantName={tenantName} />
+    );
+    const { unmount } = render(
+      <TenantAdminShell
+        {...commonTenantProps}
+        settingsOpen
+        settingsContentOnly
+        renderUsers={renderUsers}
+        governanceRoute={governanceRoute("organization.overview.overview")}
+      />,
+    );
+
+    expect(screen.getByRole("combobox", { name: "切换组织管理目标" }).textContent).toContain("请选择目标组织");
+    expect(screen.queryByRole("button", { name: "添加成员" })).toBeNull();
+    unmount();
+
+    window.history.replaceState({}, "", "/tenant-admin/settings/users?org=acme");
+    render(
+      <TenantAdminShell
+        {...commonTenantProps}
+        settingsOpen
+        settingsContentOnly
+        renderUsers={renderUsers}
+        governanceRoute={governanceRoute("organization.overview.overview", { orgId: "acme" })}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "添加成员" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "添加成员" }));
+    expect(window.location.pathname).toBe("/tenant-admin/members/list");
+    expect(window.location.search).toBe("?org=acme");
   });
 
   it("组织成员叶子读取治理 Membership，不回退 legacy UserManager 身份", async () => {

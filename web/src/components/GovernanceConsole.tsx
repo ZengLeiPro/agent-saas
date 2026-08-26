@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, type ReactNode } from "react";
+import { Suspense, useMemo, type ReactNode } from "react";
 import {
   Activity,
   ChevronLeft,
@@ -93,16 +93,6 @@ function OrganizationScopeBanner({ route }: { route: GovernanceRouteState }) {
     ?? null;
   const current = organizations.find((organization) => organization.id === currentId) ?? null;
 
-  useEffect(() => {
-    if (!isPlatformAdmin || route.orgId || organizations.length === 0) return;
-    navigateGovernance(governanceRoute(route.routeId, {
-      entityId: route.entityId,
-      tab: route.tab,
-      orgId: organizations[0].id,
-      search: route.search,
-    }), { replace: true });
-  }, [isPlatformAdmin, organizations, route]);
-
   if (!isPlatformAdmin) return null;
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-300/70 bg-amber-50 px-4 py-2 text-sm text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
@@ -112,9 +102,12 @@ function OrganizationScopeBanner({ route }: { route: GovernanceRouteState }) {
         ariaLabel="切换组织"
         size="sm"
         className="ml-auto w-48 max-w-full bg-background"
-        options={organizations.map((organization) => ({ value: organization.id, label: organization.name }))}
+        options={[
+          { value: "", label: "请选择目标组织" },
+          ...organizations.map((organization) => ({ value: organization.id, label: organization.name })),
+        ]}
         value={currentId ?? ""}
-        placeholder="切换组织"
+        placeholder="请选择目标组织"
         onValueChange={(nextId) => {
           if (!nextId || nextId === currentId) return;
           navigateToHref(buildOrganizationSwitchUrl(route, nextId));

@@ -796,24 +796,13 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return deleteStoredComment(this, identity, commentId, input);
   }
 
-  listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
-    return listTaskExecutions(this, identity, taskId);
-  }
+  listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> { return listTaskExecutions(this, identity, taskId); }
 
-  async searchExecutions(
-    identity: TaskboardIdentity,
-    taskId: string,
-    filter: TaskboardPageFilter = {},
-  ): Promise<TaskboardPage<TaskBoardExecution>> {
+  async searchExecutions(identity: TaskboardIdentity, taskId: string, filter: TaskboardPageFilter = {}): Promise<TaskboardPage<TaskBoardExecution>> {
     return searchStoredExecutions(this, identity, taskId, filter);
   }
 
-  async cancelExecution(
-    identity: TaskboardIdentity,
-    taskId: string,
-    executionId: string,
-    input: TaskBoardExecutionCancelInput,
-  ): Promise<TaskBoardExecutionStartResult> {
+  async cancelExecution(identity: TaskboardIdentity, taskId: string, executionId: string, input: TaskBoardExecutionCancelInput): Promise<TaskBoardExecutionStartResult> {
     return cancelStoredExecution(this, identity, taskId, executionId, input);
   }
 

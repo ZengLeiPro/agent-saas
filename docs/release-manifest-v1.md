@@ -6,7 +6,8 @@ Release Manifest 是阶段 A 的本地、不可变发布契约；它不创建 ta
 - Web、API、Runtime Worker、ACS 分别记录 `deploy|keep`、源码 SHA 和制品 digest；当前 API 与 Runtime Worker 共享同一个 Server bundle，因此必须同时 `deploy` 或同时 `keep` 且 digest 相同；ACS 必须同时记录 Orchestrator artifact digest 与 Sandbox image digest。
 - `deploy` 必须使用 `releaseSha`；`keep` 的完整源码和 digest 身份必须等于 `productionBaseline`。
 - Server/Web/ACS Orchestrator/ACS image 制品采用无凭据、无签名参数的绝对 URI 或仓库名，并与组件 digest 双向绑定。
-- `rollbackTargets` 在 RC 创建时必须等于冻结的生产组件基线；`promotionPolicy` 固化过期时间、最低安全 SHA、N/N+1 兼容声明和人工授权要求。
+- `rollbackTargets` 在 RC 创建时必须等于冻结的生产组件基线；`promotionPolicy` 固化过期时间、最低安全 SHA、N/N+1 兼容声明、兼容测试报告 digest 和人工授权要求。
+- `migrationPlan` 固化 `none|expand`、迁移计划 digest 和观察后确认要求；生产晋级禁止执行 contract，contract 只能作为兼容窗口后的独立发布。
 - Manifest digest 使用 `sha256(agent-saas-release-manifest-v1\0 + canonical JSON)`，canonical JSON 递归按键排序且保持数组顺序。
 - `ReleaseManifestStore` 使用排他创建；相同 `releaseId` 不允许覆盖。读取时重新校验 schema 和 digest。
 

@@ -72,7 +72,14 @@ function manifestFor(releaseId = 'rc-20260825-01') {
       expiresAt: '2026-09-01T08:00:00.000Z',
       minimumPromotableSha: BASELINE,
       appAcsCompatibility: 'n_and_n_plus_1' as const,
+      compatibilityEvidenceDigest: `sha256:${'8'.repeat(64)}`,
       requiresHumanApproval: true as const,
+    },
+    migrationPlan: {
+      phase: 'none' as const,
+      planDigest: `sha256:${'7'.repeat(64)}`,
+      confirmation: 'not_required' as const,
+      contract: 'separate_release' as const,
     },
     rollbackTargets: matrix(),
   };

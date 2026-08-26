@@ -90,6 +90,8 @@ test('preflight succeeds for full SHAs, main ancestry, production identity, and 
   assert.equal(result.components.web.action, 'deploy');
   assert.equal(result.components.api.action, 'deploy');
   assert.equal(result.workerMarkersConsistent, true);
+  assert.equal(result.migrationPlan.phase, 'none');
+  assert.equal(result.migrationPlan.contract, 'separate_release');
   assert.deepEqual(result.blockingReasons, []);
 });
 

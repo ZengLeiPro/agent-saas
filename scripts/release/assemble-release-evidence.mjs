@@ -29,6 +29,14 @@ export async function assembleReleaseEvidence(options) {
     throw new Error('Authoritative evidence is not bound to the dispatch SHA');
   if (authoritative.ok !== true || !DIGEST_PATTERN.test(authoritative.evidenceDigest ?? ''))
     throw new Error('Authoritative release evidence is not verified');
+  if (!DIGEST_PATTERN.test(authoritative.compatibilityEvidenceDigest ?? ''))
+    throw new Error('N/N+1 compatibility evidence is missing');
+  if (
+    !authoritative.migrationPlan ||
+    !DIGEST_PATTERN.test(authoritative.migrationPlan.planDigest ?? '')
+  ) {
+    throw new Error('Migration plan evidence is missing');
+  }
   if (authoritative.productionBaselineStatus !== 'known')
     throw new Error('Production baseline is unknown');
   const createdAt = options['created-at'];
@@ -50,6 +58,7 @@ export async function assembleReleaseEvidence(options) {
     createdAt,
     createdBy: options.actor,
     expiresAt,
+    compatibilityEvidenceDigest: authoritative.compatibilityEvidenceDigest,
     integrationCandidates: authoritative.integrationCandidates,
     sourcePullRequests: authoritative.sourcePullRequests,
     checks: authoritative.checks,
@@ -69,6 +78,7 @@ export async function assembleReleaseEvidence(options) {
         : {}),
     },
     baselineArtifacts: authoritative.baselineArtifacts,
+    migrationPlan: authoritative.migrationPlan,
   };
   if (
     !output.releaseId ||

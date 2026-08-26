@@ -31,6 +31,7 @@ async function fixture() {
       ok: true,
       releaseSha: SHA,
       evidenceDigest: `sha256:${'1'.repeat(64)}`,
+      compatibilityEvidenceDigest: `sha256:${'8'.repeat(64)}`,
       productionBaselineStatus: 'known',
       integrationCandidates: [],
       sourcePullRequests: [],
@@ -38,6 +39,12 @@ async function fixture() {
       productionBaseline: {},
       affectedComponents: ['web'],
       baselineArtifacts: {},
+      migrationPlan: {
+        phase: 'none',
+        planDigest: `sha256:${'7'.repeat(64)}`,
+        confirmation: 'not_required',
+        contract: 'separate_release',
+      },
     }),
   );
   return root;
@@ -60,6 +67,7 @@ test('binds built artifact URIs to the internally selected release', async () =>
     value.builtArtifacts.serverBundle.uri,
     'oss://agent-saas-releases/rc-20260826-22/server.tgz',
   );
+  assert.equal(value.migrationPlan.contract, 'separate_release');
 });
 
 test('fails closed on an unknown production baseline', async () => {
@@ -81,5 +89,27 @@ test('fails closed on an unknown production baseline', async () => {
       output: join(root, 'output.json'),
     }),
     /baseline is unknown/u,
+  );
+});
+
+test('fails closed without compatibility and migration evidence', async () => {
+  const root = await fixture();
+  const path = join(root, 'authoritative.json');
+  const value = JSON.parse(await (await import('node:fs/promises')).readFile(path, 'utf8'));
+  delete value.compatibilityEvidenceDigest;
+  await writeFile(path, JSON.stringify(value));
+  await assert.rejects(
+    assembleReleaseEvidence({
+      authoritative: path,
+      index: join(root, 'index.json'),
+      sha: SHA,
+      'release-id': 'rc-20260826-22',
+      actor: 'operator',
+      'created-at': '2026-08-26T01:00:00.000Z',
+      'expires-at': '2026-08-27T01:00:00.000Z',
+      'artifact-base-uri': 'oss://agent-saas-releases',
+      output: join(root, 'missing-evidence-output.json'),
+    }),
+    /compatibility evidence/u,
   );
 });

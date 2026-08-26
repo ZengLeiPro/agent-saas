@@ -19,6 +19,7 @@ export interface ReleaseCandidateEvidence {
   createdAt: string;
   createdBy: string;
   expiresAt: string;
+  compatibilityEvidenceDigest: string;
   integrationCandidates: ReleaseManifestContent['integrationCandidates'];
   sourcePullRequests: number[];
   checks: ReleaseManifestContent['checks'];
@@ -36,6 +37,7 @@ export interface ReleaseCandidateEvidence {
     acsOrchestrator: ArtifactEntry;
     acsImage: { repository: string; digest: string };
   };
+  migrationPlan: ReleaseManifestContent['migrationPlan'];
 }
 
 export function createReleaseCandidate(evidence: ReleaseCandidateEvidence): ReleaseManifest {
@@ -110,8 +112,10 @@ export function createReleaseCandidate(evidence: ReleaseCandidateEvidence): Rele
       expiresAt: evidence.expiresAt,
       minimumPromotableSha: evidence.releaseSha,
       appAcsCompatibility: 'n_and_n_plus_1',
+      compatibilityEvidenceDigest: evidence.compatibilityEvidenceDigest,
       requiresHumanApproval: true,
     },
+    migrationPlan: evidence.migrationPlan,
     rollbackTargets: evidence.productionBaseline,
   });
   return Object.freeze({ ...content, digest: calculateManifestDigest(content) });

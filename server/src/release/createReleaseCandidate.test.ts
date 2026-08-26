@@ -23,6 +23,7 @@ function evidence(): ReleaseCandidateEvidence {
     createdAt: '2026-08-26T00:00:00.000Z',
     createdBy: 'release-operator',
     expiresAt: '2026-08-27T00:00:00.000Z',
+    compatibilityEvidenceDigest: `sha256:${'8'.repeat(64)}`,
     integrationCandidates: [
       { candidateId: '85a9cb68-4130-4c0a-aec3-e4cc9c671bd5', revision: 3, mergedCommitOid: SHA },
     ],
@@ -47,6 +48,12 @@ function evidence(): ReleaseCandidateEvidence {
       webAssets: { uri: 'oss://agent-saas-releases/base-web.tgz', digest: WEB, size: 10 },
       acsOrchestrator: { uri: 'oss://agent-saas-releases/base-acs.tgz', digest: ORCH, size: 10 },
       acsImage: { repository: 'registry/acs', digest: IMAGE },
+    },
+    migrationPlan: {
+      phase: 'none',
+      planDigest: `sha256:${'7'.repeat(64)}`,
+      confirmation: 'not_required',
+      contract: 'separate_release',
     },
   };
 }

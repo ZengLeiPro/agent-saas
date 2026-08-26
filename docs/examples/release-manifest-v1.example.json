@@ -97,7 +97,14 @@
     "expiresAt": "2026-09-02T08:00:00.000Z",
     "minimumPromotableSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "appAcsCompatibility": "n_and_n_plus_1",
+    "compatibilityEvidenceDigest": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
     "requiresHumanApproval": true
+  },
+  "migrationPlan": {
+    "phase": "none",
+    "planDigest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "confirmation": "not_required",
+    "contract": "separate_release"
   },
   "rollbackTargets": {
     "web": {
@@ -118,5 +125,5 @@
       "sandboxImageDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     }
   },
-  "digest": "sha256:5074639475e291825e7989564024c15371927e2d0770a37a145f7ba5fa98a44e"
+  "digest": "sha256:f9d988fb0c2e9e913b896ee950b42d60a4f16d981e748ecf6a50b2e5f0237269"
 }

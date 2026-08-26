@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "22"
+  NODE_VERSION: '22'
   ACR_INSTANCE_ID: cri-tapxtcyd6odwj3m4
   ACR_REPO_ID: crr-csx99pbexlsw5qqv
   ACR_REGION_ID: cn-shenzhen
@@ -47,6 +47,7 @@ jobs:
       STAGING_API_URL: https://api.staging.agent.kaiyan.net
       RELEASE_EVIDENCE_URL: ${{ vars.RELEASE_EVIDENCE_URL }}
       STAGING_ISOLATION_EVIDENCE_URL: ${{ vars.STAGING_ISOLATION_EVIDENCE_URL }}
+      STAGING_SSH_HOST_KEY_SHA256: ${{ vars.STAGING_SSH_HOST_KEY_SHA256 }}
       STAGING_RELEASE_OSS_URI: ${{ vars.STAGING_RELEASE_OSS_URI }}
       STAGING_WEB_OSS_URI: oss://agent-saas-web-staging
       STAGING_E2E_INTEGRATION_TASK_ID: ${{ vars.STAGING_E2E_INTEGRATION_TASK_ID }}
@@ -139,6 +140,12 @@ jobs:
           node scripts/release/classify-components.mjs --baseline "$baseline" --target "$GITHUB_SHA" > "$RUNNER_TEMP/classification.json"
           diff <(jq -S .components "$RUNNER_TEMP/classification.json") \
                <(jq -S .affectedComponents "$RUNNER_TEMP/authoritative-evidence.json")
+          node scripts/release/migration-plan.mjs --changed-paths "$RUNNER_TEMP/classification.json" \
+            --target "$GITHUB_SHA" > "$RUNNER_TEMP/migration-plan.json"
+          diff <(jq -S .migrationPlan "$RUNNER_TEMP/migration-plan.json") \
+               <(jq -S .migrationPlan "$RUNNER_TEMP/authoritative-evidence.json")
+          jq -e '.compatibilityEvidenceDigest | test("^sha256:[a-f0-9]{64}$")' \
+            "$RUNNER_TEMP/authoritative-evidence.json" >/dev/null
 
       - name: Resolve exact ACS image when required
         if: env.REUSE_RC != 'true'
@@ -252,6 +259,20 @@ jobs:
             test "sha256:$(sha256sum "$RUNNER_TEMP/selected/$2" | cut -d' ' -f1)" = "$digest"
           done
 
+      - name: Create GitHub Staging Deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          deployment_id="$(jq -n --arg ref "$GITHUB_SHA" --arg releaseId "$STAGING_RELEASE_ID" \
+            '{ref:$ref,environment:"staging",auto_merge:false,required_contexts:[],payload:{releaseId:$releaseId}}' \
+            | gh api --method POST "repos/$GITHUB_REPOSITORY/deployments" --input - --jq .id)"
+          test "$deployment_id" -gt 0
+          echo "STAGING_DEPLOYMENT_ID=$deployment_id" >> "$GITHUB_ENV"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$deployment_id/statuses" \
+            -f state=in_progress -f environment=staging \
+            -f environment_url="$STAGING_WEB_URL" >/dev/null
+
       - name: Configure Staging SSH
         run: |
           set -euo pipefail
@@ -261,7 +282,11 @@ jobs:
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "$STAGING_ECS_SSH_KEY" > ~/.ssh/staging_key
           chmod 600 ~/.ssh/staging_key
-          ssh-keyscan -H "$STAGING_ECS_HOST" >> ~/.ssh/known_hosts
+          : "${STAGING_SSH_HOST_KEY_SHA256:?Missing pinned Staging SSH host key fingerprint}"
+          ssh-keyscan -t ed25519 -H "$STAGING_ECS_HOST" > "$RUNNER_TEMP/staging-known-host"
+          test "$(ssh-keygen -lf "$RUNNER_TEMP/staging-known-host" -E sha256 | awk '{print $2}')" = \
+            "$STAGING_SSH_HOST_KEY_SHA256"
+          cat "$RUNNER_TEMP/staging-known-host" >> ~/.ssh/known_hosts
 
       - name: Deploy exact Staging API, Worker and ACS artifacts
         run: |
@@ -313,19 +338,34 @@ jobs:
           log_root="$RUNNER_TEMP/attestations"
           current="$(tail -n1 "$log_root/$STAGING_RELEASE_ID.jsonl" | jq -r .state)"
           if [ "$current" = built ]; then
+            staging_reason="$(jq -nc --arg deploymentId "$STAGING_DEPLOYMENT_ID" --arg e2eRunId "$GITHUB_RUN_ID" \
+              --arg manifestDigest "$MANIFEST_DIGEST" \
+              '{stagingDeploymentId:$deploymentId,e2eRunId:$e2eRunId,manifestDigest:$manifestDigest}')"
             pnpm exec tsx server/src/release/releaseAttestationCli.ts \
               --root "$log_root" --release-id "$STAGING_RELEASE_ID" --digest "$MANIFEST_DIGEST" \
-              --state staging_deployed --operation "staging:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR"
+              --state staging_deployed --operation "staging:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
+              --actor "$GITHUB_ACTOR" --reason "$staging_reason"
             current=staging_deployed
           fi
           if [ "$current" = staging_deployed ]; then
             pnpm exec tsx server/src/release/releaseAttestationCli.ts \
               --root "$log_root" --release-id "$STAGING_RELEASE_ID" --digest "$MANIFEST_DIGEST" \
-              --state verified --operation "e2e:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR"
+              --state verified --operation "e2e:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" --actor "$GITHUB_ACTOR"
             current=verified
           fi
           test "$current" = verified
           gh release upload "$STAGING_RELEASE_ID" "$log_root/$STAGING_RELEASE_ID.jsonl" --clobber
+
+      - name: Complete GitHub Staging Deployment
+        if: always() && env.STAGING_DEPLOYMENT_ID != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_STATUS: ${{ job.status }}
+        run: |
+          state=failure
+          [ "$WORKFLOW_STATUS" = success ] && state=success
+          gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$STAGING_DEPLOYMENT_ID/statuses" \
+            -f state="$state" -f environment=staging -f environment_url="$STAGING_WEB_URL" >/dev/null
 
       - name: Upload independent Staging evidence
         if: always()

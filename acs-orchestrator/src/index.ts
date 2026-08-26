@@ -37,6 +37,8 @@ import {
   sendSandboxError,
   type SandboxRoute,
 } from './sandboxHttp.js';
+import { AlertDispatcher, type AcsAlert } from './alerts.js';
+import { SandboxLifecycleController } from './lifecycleController.js';
 const config = loadConfigFromEnv();
 
 const logger = {
@@ -57,10 +59,9 @@ const provisioner = new Provisioner(
   () => executor.busySandboxNames(),
   activeRegistry,
 );
-let lifecycleTimer: ReturnType<typeof setInterval> | null = null;
-let lifecycleRunning = false;
-const lastAlertAtByEvent = new Map<string, number>();
-let staleImagePrewarmRunning = false;
+const alerts = new AlertDispatcher(config, logger);
+const emitAlert = (input: AcsAlert) => alerts.emit(input);
+let lifecycleController: SandboxLifecycleController;
 const STREAM_HEARTBEAT_MS = 25_000;
 // 用于零停机 deploy: `kill -USR2` -> 停接新的长运行请求 (/provision, /execute,
 // /execute-stream, /invocations/*) -> 等 inflight=0 -> exit(0)。/health 期间
@@ -83,12 +84,22 @@ const snatOperations = new SnatOperations({
   logger,
   drainDeadlineMs: config.drainDeadlineMs,
   inflightRequests: () => inflightRequests,
-  lifecycleRunning: () => lifecycleRunning,
-  backgroundMutationRunning: () => staleImagePrewarmRunning,
+  lifecycleRunning: () => lifecycleController.isLifecycleRunning(),
+  backgroundMutationRunning: () => lifecycleController.isBackgroundMutationRunning(),
   ...(config.runtimeConfigPath
     ? { stateFile: `${config.runtimeConfigPath}.snat-operation-state.json` }
     : {}),
 });
+lifecycleController = new SandboxLifecycleController(
+  config,
+  provisioner,
+  executor,
+  sandboxManager,
+  alerts,
+  logger,
+  activeBusySandboxNames,
+  () => snatOperations.isMaintenanceActive(),
+);
 const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     void handleHealth(res);
@@ -898,12 +909,12 @@ server.listen(config.port, config.host, () => {
       );
     }
   }
-  startLifecycleLoop();
+  lifecycleController.start();
 });
 
 const shutdown = (sig: NodeJS.Signals) => {
   logger.info(`received ${sig}, shutting down`);
-  if (lifecycleTimer) clearInterval(lifecycleTimer);
+  lifecycleController.stop();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5_000).unref();
 };
@@ -916,7 +927,7 @@ process.on('SIGUSR2', () => {
   if (draining) return;
   draining = true;
   logger.info(`SIGUSR2 received — entering drain mode (inflight=${inflightRequests})`);
-  if (lifecycleTimer) clearInterval(lifecycleTimer);
+  lifecycleController.stop();
   // 停接新连接; 已建立连接 keep-alive 上的新请求会拿到 draining=true 状态或
   // 长运行路径的 503。已在跑的 handler 通过 withInflight 计数,进度不受影响。
   server.close(() => {
@@ -940,208 +951,3 @@ process.on('SIGUSR2', () => {
   }, 2_000);
   poll.unref();
 });
-
-function startLifecycleLoop(): void {
-  if (!config.lifecycleEnabled) {
-    logger.info('sandbox lifecycle loop disabled');
-    return;
-  }
-  // 07-05：orchestrator 启动时先预热一次老镜像 Paused sandbox。只处理
-  // Paused + image drift，不碰 Running，避免镜像部署后老会话下次唤醒才发现。
-  void runStaleImagePrewarmOnce('startup');
-  void runLifecycleOnce('startup');
-  lifecycleTimer = setInterval(() => {
-    void runStaleImagePrewarmOnce('interval');
-    void runLifecycleOnce('interval');
-  }, config.sandboxCleanupIntervalMs);
-  lifecycleTimer.unref?.();
-  logger.info(`sandbox lifecycle loop enabled intervalMs=${config.sandboxCleanupIntervalMs}`);
-}
-
-async function runStaleImagePrewarmOnce(reason: string): Promise<void> {
-  if (snatOperations.isMaintenanceActive()) {
-    logger.info(`sandbox_stale_image_prewarm reason=${reason} skipped=snat_rollback_maintenance`);
-    return;
-  }
-  if (staleImagePrewarmRunning) {
-    logger.info(`sandbox_stale_image_prewarm reason=${reason} skipped=already_running`);
-    return;
-  }
-  staleImagePrewarmRunning = true;
-  try {
-    const result = await provisioner.prewarmStaleImagePausedSandboxes({
-      busySandboxNames: activeBusySandboxNames(),
-    });
-    if (
-      result.queued.length ||
-      result.skipped.length ||
-      result.skippedBusy.length ||
-      result.failed.length
-    ) {
-      logger.warn(
-        `sandbox_stale_image_prewarm reason=${reason} queued=${result.queued.length} ` +
-          `retired=${result.retired.length} adopted=${result.adopted.length} ` +
-          `skipped=${result.skipped.length} skippedBusy=${result.skippedBusy.length} failed=${result.failed.length}`,
-      );
-      await emitAlert({
-        event: 'sandbox_stale_image_prewarm',
-        severity: result.failed.length ? 'warning' : 'info',
-        message: `ACS Sandbox stale-image retire processed ${result.queued.length} Paused sandbox${result.queued.length === 1 ? '' : 'es'}`,
-        metadata: result,
-      });
-    } else {
-      logger.info(`sandbox_stale_image_prewarm reason=${reason} queued=0 skipped=0 failed=0`);
-    }
-  } catch (err) {
-    logger.error(
-      `sandbox_stale_image_prewarm_error reason=${reason} err=${err instanceof Error ? err.message : String(err)}`,
-    );
-  } finally {
-    staleImagePrewarmRunning = false;
-  }
-}
-
-async function runLifecycleOnce(reason: string): Promise<void> {
-  if (snatOperations.isMaintenanceActive()) {
-    logger.info(`sandbox_lifecycle reason=${reason} skipped=snat_rollback_maintenance`);
-    return;
-  }
-  if (lifecycleRunning) {
-    logger.info(`sandbox_lifecycle reason=${reason} skipped=already_running`);
-    return;
-  }
-  lifecycleRunning = true;
-  try {
-    const backgroundShells = await executor.reconcileBackgroundShellProtections();
-    if (backgroundShells.checked > 0) {
-      logger.info(
-        `background_shell_reconcile reason=${reason} checked=${backgroundShells.checked} failed=${backgroundShells.failed}`,
-      );
-    }
-    const report = await sandboxManager.cleanupSandboxes({
-      busySandboxNames: activeBusySandboxNames(),
-    });
-    if (
-      report.paused.length ||
-      report.deleted.length ||
-      report.brokenRecycled.length ||
-      report.skippedBusy.length
-    ) {
-      logger.warn(
-        `sandbox_lifecycle_actions reason=${reason} checked=${report.checked} paused=${report.paused.length} ` +
-          `deleted=${report.deleted.length} brokenRecycled=${report.brokenRecycled.length} ` +
-          `skippedBusy=${report.skippedBusy.length} snatDeleted=${report.snatDeleted.length}`,
-      );
-      await emitAlert({
-        event: 'sandbox_lifecycle_actions',
-        severity: report.deleted.length || report.brokenRecycled.length ? 'warning' : 'info',
-        message: report.brokenRecycled.length
-          ? `ACS Sandbox lifecycle recycled ${report.brokenRecycled.length} broken paused sandbox${report.brokenRecycled.length === 1 ? '' : 'es'} (false-paused billing leak)`
-          : 'ACS Sandbox lifecycle guard took action',
-        metadata: report,
-      });
-    }
-    if (report.snatDeleted.length || report.snatUnexpected > 0) {
-      await emitAlert({
-        event: report.snatUnexpected > 0 ? 'snat_unexpected_entries' : 'snat_orphan_cleanup',
-        severity: report.snatUnexpected > 0 ? 'warning' : 'info',
-        message:
-          report.snatUnexpected > 0
-            ? `ACS SNAT table has ${report.snatUnexpected} unexpected entry${report.snatUnexpected === 1 ? '' : 'ies'}`
-            : `ACS SNAT orphan cleanup deleted ${report.snatDeleted.length} entr${report.snatDeleted.length === 1 ? 'y' : 'ies'}`,
-        metadata: {
-          snatDeleted: report.snatDeleted,
-          snatUnexpected: report.snatUnexpected,
-        },
-      });
-    }
-    const inventory = await sandboxManager.inventorySummary();
-    const nearCount =
-      config.warnRunningSandboxes > 0 && inventory.allocatedCount >= config.warnRunningSandboxes;
-    const nearCpu =
-      config.warnAllocatedCpuMillicores > 0 &&
-      inventory.allocatedCpuMillicores >= config.warnAllocatedCpuMillicores;
-    const nearMemory =
-      config.warnAllocatedMemoryMib > 0 &&
-      inventory.allocatedMemoryBytes >= config.warnAllocatedMemoryMib * 1024 * 1024;
-    if (nearCount || nearCpu || nearMemory) {
-      await emitAlert({
-        event: 'sandbox_allocated_near_quota',
-        severity: inventory.executionReady ? 'warning' : 'error',
-        message: `ACS allocated capacity count=${inventory.allocatedCount} cpu=${inventory.allocatedCpuMillicores}m`,
-        metadata: inventory,
-      });
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    logger.error(`sandbox_lifecycle_failed reason=${reason}: ${message}`);
-    await emitAlert({
-      event: 'sandbox_lifecycle_failed',
-      severity: 'error',
-      message,
-      metadata: { reason },
-    });
-  } finally {
-    lifecycleRunning = false;
-  }
-}
-
-async function emitAlert(input: {
-  event: string;
-  severity: 'info' | 'warning' | 'error';
-  message: string;
-  metadata?: unknown;
-}): Promise<void> {
-  const log =
-    input.severity === 'error'
-      ? logger.error
-      : input.severity === 'warning'
-        ? logger.warn
-        : logger.info;
-  log(`alert event=${input.event} severity=${input.severity} message=${input.message}`);
-  if (config.alertWebhookUrls.length === 0) return;
-  const now = Date.now();
-  const lastAt = lastAlertAtByEvent.get(input.event) ?? 0;
-  if (config.alertMinIntervalMs > 0 && now - lastAt < config.alertMinIntervalMs) return;
-  lastAlertAtByEvent.set(input.event, now);
-  const body = JSON.stringify({
-    source: 'agent-saas-acs-orchestrator',
-    namespace: config.namespace,
-    event: input.event,
-    severity: input.severity,
-    message: input.message,
-    metadata: input.metadata ?? {},
-    occurredAt: new Date().toISOString(),
-  });
-  // 2026-08-01：多 URL fallback。server 蓝绿部署下单端口（3200/3201）在切色或部署
-  // 窗口会连接拒绝，07-25 起历轮 prewarm failed 告警全部 fetch failed 丢失。逐个
-  // 尝试，任一投递成功即停。
-  const errors: string[] = [];
-  for (const url of config.alertWebhookUrls) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5_000);
-    timer.unref?.();
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(config.alertWebhookBearerToken
-            ? { authorization: `Bearer ${config.alertWebhookBearerToken}` }
-            : {}),
-        },
-        body,
-        signal: controller.signal,
-      });
-      if (response.ok) return;
-      errors.push(`HTTP ${response.status} (${url})`);
-    } catch (err) {
-      errors.push(`${err instanceof Error ? err.message : String(err)} (${url})`);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  logger.warn(
-    `alert webhook failed on all ${config.alertWebhookUrls.length} url(s): ${errors.join('; ')}`,
-  );
-}

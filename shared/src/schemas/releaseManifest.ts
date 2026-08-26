@@ -156,7 +156,16 @@ export const releaseManifestContentSchema = z
         expiresAt: utcTimestampSchema,
         minimumPromotableSha: fullShaSchema,
         appAcsCompatibility: z.literal('n_and_n_plus_1'),
+        compatibilityEvidenceDigest: sha256DigestSchema,
         requiresHumanApproval: z.literal(true),
+      })
+      .strict(),
+    migrationPlan: z
+      .object({
+        phase: z.enum(['none', 'expand']),
+        planDigest: sha256DigestSchema,
+        confirmation: z.enum(['not_required', 'required_after_observation']),
+        contract: z.literal('separate_release'),
       })
       .strict(),
     rollbackTargets: releaseComponentMatrixSchema,
@@ -197,6 +206,16 @@ export const releaseManifestContentSchema = z
         code: z.ZodIssueCode.custom,
         path: ['promotionPolicy', 'expiresAt'],
         message: 'promotion expiry must be later than Manifest creation',
+      });
+    }
+    if (
+      (manifest.migrationPlan.phase === 'none') !==
+      (manifest.migrationPlan.confirmation === 'not_required')
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['migrationPlan', 'confirmation'],
+        message: 'expand migrations require post-observation confirmation; none must not claim it',
       });
     }
     for (const [index, candidate] of manifest.integrationCandidates.entries()) {

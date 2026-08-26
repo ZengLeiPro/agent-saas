@@ -78,7 +78,14 @@ export function validManifestContent() {
       expiresAt: '2026-09-01T08:00:00.000Z',
       minimumPromotableSha: BASELINE_SHA,
       appAcsCompatibility: 'n_and_n_plus_1' as const,
+      compatibilityEvidenceDigest: `sha256:${'8'.repeat(64)}`,
       requiresHumanApproval: true as const,
+    },
+    migrationPlan: {
+      phase: 'none' as const,
+      planDigest: `sha256:${'7'.repeat(64)}`,
+      confirmation: 'not_required' as const,
+      contract: 'separate_release' as const,
     },
     rollbackTargets: matrix(),
   };
@@ -157,6 +164,21 @@ describe('releaseManifestSchema', () => {
     const manifest = validManifestContent();
     manifest.rollbackTargets.web.sourceSha = RELEASE_SHA;
     expect(releaseManifestContentSchema.safeParse(manifest).success).toBe(false);
+  });
+
+  it('requires expand migrations to be confirmed after observation and keeps contract separate', () => {
+    const invalid = {
+      ...validManifestContent(),
+      migrationPlan: {
+        ...validManifestContent().migrationPlan,
+        phase: 'expand',
+        confirmation: 'not_required',
+      },
+    };
+    expect(releaseManifestContentSchema.safeParse(invalid).success).toBe(false);
+
+    invalid.migrationPlan.confirmation = 'required_after_observation';
+    expect(releaseManifestContentSchema.safeParse(invalid).success).toBe(true);
   });
 });
 

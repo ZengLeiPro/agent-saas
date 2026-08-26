@@ -1,5 +1,6 @@
 import { execFileSync as defaultExecFileSync } from 'node:child_process';
 import { classifyComponents } from './classify-components.mjs';
+import { createMigrationPlan } from './migration-plan.mjs';
 import { isFullSha, readRuntimeIdentity } from './read-runtime-identity.mjs';
 
 export const TRUSTED_MAIN_REF = 'origin/main';
@@ -72,6 +73,16 @@ export function runPreflight({
       ? classifyComponents({ baseline, target, cwd, execFileSync })
       : { ok: false, changedFiles: [], components: [], blockingReasons: [] };
   blockingReasons.push(...classification.blockingReasons);
+  const migrations =
+    classification.ok && targetIsFullSha
+      ? createMigrationPlan({
+          changedPaths: classification.changedFiles,
+          target,
+          cwd,
+          execFileSync,
+        })
+      : { ok: false, migrationPlan: null, blockingReasons: [] };
+  blockingReasons.push(...migrations.blockingReasons);
   const componentActions = Object.fromEntries(
     ['web', 'api', 'runtimeWorker', 'acs'].map((component) => [
       component,
@@ -88,6 +99,7 @@ export function runPreflight({
     affectedComponents: classification.components,
     productionBaseline: identity.ok ? identity.identity.components : null,
     components: componentActions,
+    migrationPlan: migrations.migrationPlan,
     workerMarkersConsistent: identity.ok,
     runtimeIdentity: identity.ok ? identity.identity : null,
     blockingReasons,

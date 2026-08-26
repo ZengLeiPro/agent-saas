@@ -69,6 +69,7 @@ import type {
 import type { PgResourceReferenceStore } from '../data/resourceReferences/index.js';
 import type { CredentialBroker } from '../runtime/credentialBroker.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
+import type { MemoryConsolidationScannerStatus } from '../memory/consolidation/types.js';
 import type { UserStore } from '../data/users/store.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import type { AgentStore } from '../data/agents/store.js';
@@ -141,6 +142,7 @@ export interface AppRuntime {
   dingtalkDeps: DingtalkDeps;
   cronRuntime: CronRuntime;
   getMemoryIndexService?: () => MemoryIndexService | null;
+  getMemoryConsolidationScannerStatus?: () => Promise<MemoryConsolidationScannerStatus>;
   memoryIndexShutdown?: () => Promise<void>;
   /** Runtime audit DuckDB 句柄关闭（仅 audit.projection='duckdb' 时定义） */
   auditProjectionShutdown?: () => Promise<void>;

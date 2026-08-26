@@ -452,6 +452,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       processCwd,
       config,
       onPollingUpdated: runtime.updateMemoryPollingConfig,
+      getConsolidationScannerStatus: runtime.getMemoryConsolidationScannerStatus,
     }),
   );
 

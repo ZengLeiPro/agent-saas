@@ -130,6 +130,7 @@ export class MemoryIndexer {
     let keywordResults: Awaited<ReturnType<typeof searchKeyword>> = [];
 
     const vectorPromise = (async () => {
+      if (this.config.search.vectorWeight <= 0) return;
       try {
         const queryVec = await this.provider.embed([cleaned]);
         if (queryVec[0] && queryVec[0].some((v) => v !== 0)) {
@@ -144,6 +145,7 @@ export class MemoryIndexer {
     })();
 
     const keywordPromise = (async () => {
+      if (this.config.search.textWeight <= 0) return;
       try {
         const kw = opts?.keywords?.trim();
         if (this.ftsAvailable && kw) {
@@ -166,9 +168,15 @@ export class MemoryIndexer {
         this.config.search.textWeight,
       );
     } else if (vectorResults.length > 0) {
-      merged = vectorResults;
+      merged = vectorResults.map((result) => ({
+        ...result,
+        score: this.config.search.vectorWeight * result.score,
+      }));
     } else {
-      merged = keywordResults;
+      merged = keywordResults.map((result) => ({
+        ...result,
+        score: this.config.search.textWeight * result.score,
+      }));
     }
 
     // 时间衰减
@@ -185,9 +193,21 @@ export class MemoryIndexer {
     const bestFilteredScore = filteredOut > 0
       ? Math.max(...merged.filter((r) => r.score < minScore).map((r) => r.score))
       : 0;
+    const results = passed.slice(0, maxResults);
+
+    // hybrid 的向量权重可以让纯向量候选占满截断窗口。若最佳关键词候选已通过
+    // minScore，至少保留这一条，避免唯一词精确命中在最终 top-N 再次丢失。
+    if (this.config.search.textWeight > 0 && vectorResults.length > 0 && keywordResults.length > 0 && results.length > 0) {
+      const keywordAnchor = keywordResults[0]!;
+      const sameLocation = (result: SearchResult): boolean => result.path === keywordAnchor.path
+        && result.startLine === keywordAnchor.startLine
+        && result.endLine === keywordAnchor.endLine;
+      const passedAnchor = passed.find(sameLocation);
+      if (passedAnchor && !results.some(sameLocation)) results[results.length - 1] = passedAnchor;
+    }
 
     return {
-      results: passed.slice(0, maxResults),
+      results,
       meta: { totalCandidates, filteredOut, bestFilteredScore },
     };
   }

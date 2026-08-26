@@ -140,16 +140,22 @@ export function searchKeyword(
     )
     .all(ftsQuery, limit) as unknown as KeywordSearchRow[];
 
-  return rows.map((r) => {
-    const textScore = bm25RankToScore(r.rank);
+  const scored = rows.map((row) => ({ row, rawScore: bm25RankToScore(row.rank) }));
+  const bestScore = Math.max(0, ...scored.map(({ rawScore }) => rawScore));
+
+  return scored.map(({ row, rawScore }) => {
+    // FTS5 bm25 的绝对量级取决于语料规模，常见值接近 1e-6，不能直接与
+    // cosine 相似度共用绝对阈值。按本次关键词候选的最佳分归一化，保留
+    // BM25 排序，同时让关键词单路降级和 hybrid 精确命中都能通过 minScore。
+    const textScore = bestScore > 0 ? rawScore / bestScore : 0;
     return {
-      id: r.id,
-      path: r.path,
-      startLine: r.start_line,
-      endLine: r.end_line,
+      id: row.id,
+      path: row.path,
+      startLine: row.start_line,
+      endLine: row.end_line,
       score: textScore,
       textScore,
-      snippet: truncate(r.text, SNIPPET_MAX_CHARS),
+      snippet: truncate(row.text, SNIPPET_MAX_CHARS),
     };
   });
 }

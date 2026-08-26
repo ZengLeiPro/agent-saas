@@ -82,6 +82,21 @@ export interface MemoryTombstone {
   revokedAt: string | null;
 }
 
+export interface MemoryConsolidationScannerStatus {
+  capturedAt: string;
+  consumerName: string;
+  cursor: number;
+  cursorUpdatedAt: string | null;
+  latestBoundarySequence: number;
+  latestBoundaryAt: string | null;
+  sequenceLag: number;
+  oldestPendingBoundarySequence: number | null;
+  oldestPendingBoundaryAt: string | null;
+  oldestPendingAgeMs: number | null;
+  skips24hByReason: Record<string, number>;
+  latestSkipAt: string | null;
+}
+
 export interface MemoryConsolidationResolvedConfig {
   enabled: boolean;
   debounceMinutes: number;

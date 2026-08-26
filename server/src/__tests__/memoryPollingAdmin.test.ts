@@ -58,6 +58,20 @@ async function withApp<T>(
   writeFileSync(configPath, JSON.stringify(rawConfig, null, 2), 'utf-8');
   const runtimeConfig = parseAppConfig(rawConfig);
   const onPollingUpdated = vi.fn();
+  const getConsolidationScannerStatus = vi.fn(async () => ({
+    capturedAt: '2026-08-26T15:00:00.000Z',
+    consumerName: 'memory-consolidation-v1',
+    cursor: 120,
+    cursorUpdatedAt: '2026-08-26T14:59:00.000Z',
+    latestBoundarySequence: 135,
+    latestBoundaryAt: '2026-08-26T14:59:30.000Z',
+    sequenceLag: 15,
+    oldestPendingBoundarySequence: 121,
+    oldestPendingBoundaryAt: '2026-08-26T14:58:30.000Z',
+    oldestPendingAgeMs: 90_000,
+    skips24hByReason: { internal_session_taskboard: 7 },
+    latestSkipAt: '2026-08-26T14:59:00.000Z',
+  }));
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -73,6 +87,7 @@ async function withApp<T>(
     processCwd,
     config: runtimeConfig,
     onPollingUpdated,
+    getConsolidationScannerStatus,
   }));
   const server = app.listen(0);
   servers.push(server);
@@ -112,6 +127,16 @@ describe('memory polling admin router', () => {
           maxTurns: 30,
           timeoutSeconds: 900,
           model: null,
+        },
+        consolidationScanner: {
+          available: true,
+          status: {
+            cursor: 120,
+            sequenceLag: 15,
+            oldestPendingBoundarySequence: 121,
+            oldestPendingAgeMs: 90_000,
+            skips24hByReason: { internal_session_taskboard: 7 },
+          },
         },
       });
     });

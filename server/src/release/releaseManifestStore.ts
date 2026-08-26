@@ -5,6 +5,7 @@ import {
   canonicalJson,
   releaseManifestSchema,
   type ReleaseManifest,
+  type ReleaseManifestContent,
 } from '@agent/shared';
 
 export interface StoredReleaseManifest {
@@ -12,7 +13,7 @@ export interface StoredReleaseManifest {
   manifestDigest: string;
 }
 
-export function calculateManifestDigest(manifest: Omit<ReleaseManifest, 'digest'>): string {
+export function calculateManifestDigest(manifest: ReleaseManifestContent): string {
   return `sha256:${createHash('sha256')
     .update('agent-saas-release-manifest-v1\0')
     .update(canonicalJson(manifest))
@@ -66,7 +67,8 @@ export class ReleaseManifestStore {
       throw new Error(`Stored Release Manifest ${releaseId} is not valid JSON`);
     }
     const manifest = validateManifest(raw);
-    if (manifest.releaseId !== releaseId) throw new Error(`Stored Release Manifest ${releaseId} has a mismatched releaseId`);
+    if (manifest.releaseId !== releaseId)
+      throw new Error(`Stored Release Manifest ${releaseId} has a mismatched releaseId`);
     return { manifest, manifestDigest: manifest.digest };
   }
 }

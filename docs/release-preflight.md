@@ -18,21 +18,41 @@ node scripts/release/preflight.mjs \
 4. topology 的 `observedAt` 必须在 5 分钟内；API、Runtime Worker 的 systemd unit 必须为 active，release symlink 的真实目标必须匹配组件 SHA，pidfile 必须指向存活进程，readyfile 必须匹配组件 SHA。
 5. 使用 `git diff --name-status --find-renames --find-copies <baseline>...<target>` 读取变更；rename/copy 的旧、新路径均分类，任何未知路径阻断发布。
 
-| 路径前缀 | 组件 |
-| --- | --- |
-| `web/` | `web` |
-| `server/` | `api`, `runtimeWorker`, `acs` |
-| `shared/` | `web`, `api`, `runtimeWorker`, `acs` |
-| `workspace-shared/` | `api`, `runtimeWorker`, `acs` |
-| `hand-server/` | `runtimeWorker` |
-| `acs-orchestrator/` | `acs` |
+| 路径前缀            | 组件                                 |
+| ------------------- | ------------------------------------ |
+| `web/`              | `web`                                |
+| `server/`           | `api`, `runtimeWorker`, `acs`        |
+| `shared/`           | `web`, `api`, `runtimeWorker`, `acs` |
+| `workspace-shared/` | `api`, `runtimeWorker`, `acs`        |
+| `hand-server/`      | `runtimeWorker`                      |
+| `acs-orchestrator/` | `acs`                                |
 
 ## Runtime identity contract
 
-identity 必须包含 `schemaVersion: 1`、`environment: production`、完整 `gitSha`，以及 `web`、`api`、`runtimeWorker`、`acs` 四个组件的完整 SHA 与 `deployedAt`。此外必须包含实时 topology：
+identity 必须包含 `schemaVersion: 1`、`environment: production`、完整 `gitSha`、正整数 `configSchemaVersion` 和非敏感 `configFingerprint`。Web/API/Runtime Worker 分别提供完整 SHA、artifact digest 与 `deployedAt`；ACS 还必须分别提供 Orchestrator artifact digest 和 Sandbox image digest。此外必须包含实时 topology：
 
 ```json
 {
+  "schemaVersion": 1,
+  "environment": "production",
+  "gitSha": "<40-char-sha>",
+  "configSchemaVersion": 1,
+  "configFingerprint": "sha256:<digest>",
+  "components": {
+    "web": { "gitSha": "<sha>", "artifactDigest": "sha256:<digest>", "deployedAt": "<utc>" },
+    "api": { "gitSha": "<sha>", "artifactDigest": "sha256:<digest>", "deployedAt": "<utc>" },
+    "runtimeWorker": {
+      "gitSha": "<sha>",
+      "artifactDigest": "sha256:<digest>",
+      "deployedAt": "<utc>"
+    },
+    "acs": {
+      "gitSha": "<sha>",
+      "orchestratorArtifactDigest": "sha256:<digest>",
+      "sandboxImageDigest": "sha256:<digest>",
+      "deployedAt": "<utc>"
+    }
+  },
   "topology": {
     "activeColor": "blue",
     "observedAt": "2026-08-26T07:00:00.000Z",

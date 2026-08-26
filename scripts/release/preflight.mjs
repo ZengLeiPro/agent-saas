@@ -32,38 +32,59 @@ export function runPreflight({
     blockingReasons.push('Baseline must be a complete 40-character SHA.');
   }
 
-  if (targetIsFullSha && !gitSucceeds(['merge-base', '--is-ancestor', target, mainRef], { cwd, execFileSync })) {
+  if (
+    targetIsFullSha &&
+    !gitSucceeds(['merge-base', '--is-ancestor', target, mainRef], { cwd, execFileSync })
+  ) {
     blockingReasons.push(`Target ${target} is not reachable from ${mainRef}.`);
   }
-  if (targetIsFullSha && baselineIsFullSha
-    && !gitSucceeds(['merge-base', '--is-ancestor', baseline, target], { cwd, execFileSync })) {
+  if (
+    targetIsFullSha &&
+    baselineIsFullSha &&
+    !gitSucceeds(['merge-base', '--is-ancestor', baseline, target], { cwd, execFileSync })
+  ) {
     blockingReasons.push(`Baseline ${baseline} is not an ancestor of target ${target}.`);
   }
 
   const identity = readRuntimeIdentity({ identityPath, readFileSync, ...runtimeObservation });
   blockingReasons.push(...identity.blockingReasons);
   if (identity.ok) {
-    if (identity.identity.gitSha !== baseline) blockingReasons.push('Production runtime identity gitSha does not match the supplied baseline.');
+    if (identity.identity.gitSha !== baseline)
+      blockingReasons.push(
+        'Production runtime identity gitSha does not match the supplied baseline.',
+      );
     for (const [component, entry] of Object.entries(identity.identity.components)) {
-      if (!gitSucceeds(['merge-base', '--is-ancestor', entry.gitSha, target], { cwd, execFileSync })) {
+      if (
+        !gitSucceeds(['merge-base', '--is-ancestor', entry.gitSha, target], { cwd, execFileSync })
+      ) {
         blockingReasons.push(`Production component ${component} SHA is not an ancestor of target.`);
       }
     }
   }
 
-  const classification = targetIsFullSha && baselineIsFullSha
-    ? classifyComponents({ baseline, target, cwd, execFileSync })
-    : { ok: false, changedFiles: [], components: [], blockingReasons: [] };
+  const classification =
+    targetIsFullSha && baselineIsFullSha
+      ? classifyComponents({ baseline, target, cwd, execFileSync })
+      : { ok: false, changedFiles: [], components: [], blockingReasons: [] };
   blockingReasons.push(...classification.blockingReasons);
+  const componentActions = Object.fromEntries(
+    ['web', 'api', 'runtimeWorker', 'acs'].map((component) => [
+      component,
+      { action: classification.components.includes(component) ? 'deploy' : 'keep' },
+    ]),
+  );
 
   return {
     ok: blockingReasons.length === 0,
-    target,
+    releaseSha: target,
     baseline,
     mainRef,
     changedFiles: classification.changedFiles,
-    components: classification.components,
-    identity: identity.ok ? identity.identity : null,
+    affectedComponents: classification.components,
+    productionBaseline: identity.ok ? identity.identity.components : null,
+    components: componentActions,
+    workerMarkersConsistent: identity.ok,
+    runtimeIdentity: identity.ok ? identity.identity : null,
     blockingReasons,
   };
 }

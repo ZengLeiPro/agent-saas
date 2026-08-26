@@ -14,8 +14,17 @@ const SHA_B = 'b'.repeat(40);
 test('classifies each mapped component path', () => {
   assert.deepEqual(classifyPath('web/src/App.tsx').components, ['web']);
   assert.deepEqual(classifyPath('server/src/index.ts').components, ['api', 'runtimeWorker', 'acs']);
-  assert.deepEqual(classifyPath('shared/src/types.ts').components, ['web', 'api', 'runtimeWorker', 'acs']);
-  assert.deepEqual(classifyPath('workspace-shared/prompts/a.md').components, ['api', 'runtimeWorker', 'acs']);
+  assert.deepEqual(classifyPath('shared/src/types.ts').components, [
+    'web',
+    'api',
+    'runtimeWorker',
+    'acs',
+  ]);
+  assert.deepEqual(classifyPath('workspace-shared/prompts/a.md').components, [
+    'api',
+    'runtimeWorker',
+    'acs',
+  ]);
   assert.deepEqual(classifyPath('hand-server/src/index.ts').components, ['runtimeWorker']);
   assert.deepEqual(classifyPath('acs-orchestrator/src/index.ts').components, ['acs']);
 });
@@ -39,6 +48,21 @@ test('shared changes conservatively require every dependent component deployment
     changedFiles: ['shared/src/types/ws.ts'],
     components: ['web', 'api', 'runtimeWorker', 'acs'],
     blockingReasons: [],
+  });
+});
+
+test('classifies root dependency files while explicitly ignoring release-only governance files', () => {
+  assert.deepEqual(classifyPath('pnpm-lock.yaml'), {
+    components: ['web', 'api', 'runtimeWorker', 'acs'],
+    blockingReason: null,
+  });
+  assert.deepEqual(classifyPath('scripts/release/preflight.mjs'), {
+    components: [],
+    blockingReason: null,
+  });
+  assert.deepEqual(classifyPath('docs/release-manifest-v1.md'), {
+    components: [],
+    blockingReason: null,
   });
 });
 
@@ -67,11 +91,13 @@ test('reads changed paths and retains both sides of cross-component renames', ()
   });
 
   assert.deepEqual(paths, ['web/src/App.tsx', 'web/src/old.ts', 'server/src/new.ts']);
-  assert.deepEqual(calls, [[
-    'git',
-    ['diff', '--name-status', '--find-renames', '--find-copies', `${SHA_A}...${SHA_B}`],
-    { cwd: '/repo', encoding: 'utf8' },
-  ]]);
+  assert.deepEqual(calls, [
+    [
+      'git',
+      ['diff', '--name-status', '--find-renames', '--find-copies', `${SHA_A}...${SHA_B}`],
+      { cwd: '/repo', encoding: 'utf8' },
+    ],
+  ]);
 });
 
 test('returns blocking JSON-ready data when git diff cannot run', () => {

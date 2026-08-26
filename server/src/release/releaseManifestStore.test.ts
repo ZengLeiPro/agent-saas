@@ -6,28 +6,86 @@ import { calculateManifestDigest, ReleaseManifestStore } from './releaseManifest
 
 const SHA = 'a'.repeat(40);
 const BASELINE = 'b'.repeat(40);
-const DIGEST = `sha256:${'c'.repeat(64)}`;
+const SERVER_DIGEST = `sha256:${'c'.repeat(64)}`;
+const WEB_DIGEST = `sha256:${'d'.repeat(64)}`;
+const ACS_BUNDLE_DIGEST = `sha256:${'e'.repeat(64)}`;
+const ACS_IMAGE_DIGEST = `sha256:${'f'.repeat(64)}`;
+
+function matrix() {
+  return {
+    web: { sourceSha: BASELINE, artifactDigest: WEB_DIGEST },
+    api: { sourceSha: BASELINE, artifactDigest: SERVER_DIGEST },
+    runtimeWorker: { sourceSha: BASELINE, artifactDigest: SERVER_DIGEST },
+    acs: {
+      sourceSha: BASELINE,
+      orchestratorArtifactDigest: ACS_BUNDLE_DIGEST,
+      sandboxImageDigest: ACS_IMAGE_DIGEST,
+    },
+  };
+}
 
 function manifestFor(releaseId = 'rc-20260825-01') {
+  const productionBaseline = matrix();
   const unsigned = {
+    schemaVersion: 1 as const,
     releaseId,
     releaseSha: SHA,
-    productionBaseline: { web: BASELINE, api: BASELINE, runtimeWorker: BASELINE, acs: BASELINE },
+    tag: releaseId,
+    createdAt: '2026-08-25T08:00:00.000Z',
+    createdBy: 'test',
+    integrationCandidates: [
+      {
+        candidateId: '85a9cb68-4130-4c0a-aec3-e4cc9c671bd5',
+        revision: 1,
+        mergedCommitOid: SHA,
+      },
+    ],
+    sourcePullRequests: [183],
+    productionBaseline,
     components: {
-      web: { action: 'deploy' as const, sourceSha: SHA },
-      api: { action: 'deploy' as const, sourceSha: SHA },
-      runtimeWorker: { action: 'keep' as const, sourceSha: BASELINE },
-      acs: { action: 'keep' as const, sourceSha: BASELINE },
+      web: { action: 'deploy' as const, sourceSha: SHA, artifactDigest: WEB_DIGEST },
+      api: { action: 'deploy' as const, sourceSha: SHA, artifactDigest: SERVER_DIGEST },
+      runtimeWorker: { action: 'keep' as const, ...productionBaseline.runtimeWorker },
+      acs: { action: 'keep' as const, ...productionBaseline.acs },
     },
-    rollbackTargets: { web: BASELINE, api: BASELINE, runtimeWorker: BASELINE, acs: BASELINE },
-    artifacts: [{ id: 'server-bundle', component: 'api' as const, uri: 'file:///releases/server.tgz', digest: DIGEST }],
+    artifacts: {
+      serverBundle: {
+        uri: 'oss://release-records/releases/server.tgz',
+        digest: SERVER_DIGEST,
+        size: 123,
+      },
+      webAssets: { uri: 'oss://release-records/releases/web.tgz', digest: WEB_DIGEST, size: 456 },
+      acsOrchestrator: {
+        required: false,
+        uri: 'oss://release-records/releases/acs.tgz',
+        digest: ACS_BUNDLE_DIGEST,
+        size: 789,
+      },
+      acsImage: { required: false, repository: 'agent-saas/acs-sandbox', digest: ACS_IMAGE_DIGEST },
+    },
+    checks: {
+      appCi: { status: 'success' as const, headSha: SHA, runId: 123 },
+      acsImpact: { status: 'not_required' as const, headSha: SHA },
+      integrationReceipt: { status: 'success' as const, subjectDigest: SERVER_DIGEST },
+    },
+    promotionPolicy: {
+      expiresAt: '2026-09-01T08:00:00.000Z',
+      minimumPromotableSha: BASELINE,
+      appAcsCompatibility: 'n_and_n_plus_1' as const,
+      requiresHumanApproval: true as const,
+    },
+    rollbackTargets: matrix(),
   };
   return { ...unsigned, digest: calculateManifestDigest(unsigned) };
 }
 
 describe('ReleaseManifestStore', () => {
   const directories: string[] = [];
-  afterEach(async () => { await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
+  afterEach(async () => {
+    await Promise.all(
+      directories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
+    );
+  });
 
   it('creates and reads a digest-verified canonical manifest', async () => {
     const root = await mkdtemp(join(tmpdir(), 'release-manifest-'));
@@ -50,9 +108,23 @@ describe('ReleaseManifestStore', () => {
     const root = await mkdtemp(join(tmpdir(), 'release-manifest-'));
     directories.push(root);
     const store = new ReleaseManifestStore(root);
-    await expect(store.create({ ...manifestFor(), digest: `sha256:${'0'.repeat(64)}` })).rejects.toThrow(/digest/);
+    await expect(
+      store.create({ ...manifestFor(), digest: `sha256:${'0'.repeat(64)}` }),
+    ).rejects.toThrow(/digest/);
     const good = manifestFor();
-    await writeFile(join(root, 'rc-20260825-01.json'), JSON.stringify({ ...good, artifacts: [{ ...good.artifacts![0], uri: 'file:///releases/tampered.tgz' }] }));
+    await writeFile(
+      join(root, 'rc-20260825-01.json'),
+      JSON.stringify({
+        ...good,
+        artifacts: {
+          ...good.artifacts,
+          webAssets: {
+            ...good.artifacts.webAssets,
+            uri: 'oss://release-records/releases/tampered.tgz',
+          },
+        },
+      }),
+    );
     await expect(store.read('rc-20260825-01')).rejects.toThrow(/digest/);
   });
 });

@@ -6,23 +6,46 @@ import { readRuntimeIdentity } from './read-runtime-identity.mjs';
 
 const TARGET = 'a'.repeat(40);
 const BASELINE = 'b'.repeat(40);
+const DIGEST = `sha256:${'c'.repeat(64)}`;
 
 function productionIdentity(overrides = {}) {
-  const component = (gitSha) => ({ gitSha, deployedAt: '2026-08-25T00:00:00.000Z' });
+  const component = (gitSha) => ({
+    gitSha,
+    artifactDigest: DIGEST,
+    deployedAt: '2026-08-25T00:00:00.000Z',
+  });
   return {
     schemaVersion: 1,
     environment: 'production',
     gitSha: BASELINE,
+    configSchemaVersion: 1,
+    configFingerprint: DIGEST,
     components: {
       web: component(TARGET),
       api: component(TARGET),
       runtimeWorker: component(TARGET),
-      acs: component(TARGET),
+      acs: {
+        gitSha: TARGET,
+        orchestratorArtifactDigest: DIGEST,
+        sandboxImageDigest: DIGEST,
+        deployedAt: '2026-08-25T00:00:00.000Z',
+      },
     },
     topology: {
-      activeColor: 'blue', observedAt: '2026-08-25T00:00:00.000Z',
-      api: { unit: 'agent-saas-api@blue.service', releaseSymlink: '/srv/releases/blue', pidfile: '/run/blue-api.pid', readyfile: '/run/blue-api.ready' },
-      runtimeWorker: { unit: 'agent-saas-worker@blue.service', releaseSymlink: '/srv/releases/blue', pidfile: '/run/blue-worker.pid', readyfile: '/run/blue-worker.ready' },
+      activeColor: 'blue',
+      observedAt: '2026-08-25T00:00:00.000Z',
+      api: {
+        unit: 'agent-saas-api@blue.service',
+        releaseSymlink: '/srv/releases/blue',
+        pidfile: '/run/blue-api.pid',
+        readyfile: '/run/blue-api.ready',
+      },
+      runtimeWorker: {
+        unit: 'agent-saas-worker@blue.service',
+        releaseSymlink: '/srv/releases/blue',
+        pidfile: '/run/blue-worker.pid',
+        readyfile: '/run/blue-worker.ready',
+      },
     },
     ...overrides,
   };
@@ -39,7 +62,7 @@ function runtimeObservation(overrides = {}) {
     now: Date.parse('2026-08-25T00:01:00.000Z'),
     topologyExecFileSync: () => 'active\n',
     topologyRealpathSync: () => `/srv/releases/${TARGET}`,
-    topologyReadFileSync: (path) => path.endsWith('.pid') ? '123' : TARGET,
+    topologyReadFileSync: (path) => (path.endsWith('.pid') ? '123' : TARGET),
     topologyProcessExists: () => true,
     ...overrides,
   };
@@ -56,7 +79,10 @@ test('preflight succeeds for full SHAs, main ancestry, production identity, and 
   });
 
   assert.equal(result.ok, true);
-  assert.deepEqual(result.components, ['web', 'runtimeWorker']);
+  assert.deepEqual(result.affectedComponents, ['web', 'runtimeWorker']);
+  assert.equal(result.components.web.action, 'deploy');
+  assert.equal(result.components.api.action, 'keep');
+  assert.equal(result.workerMarkersConsistent, true);
   assert.deepEqual(result.blockingReasons, []);
 });
 
@@ -96,23 +122,54 @@ test('preflight blocks a target outside main, a non-ancestor baseline, incomplet
   assert.match(result.blockingReasons.join('\n'), /not an ancestor/u);
   assert.match(result.blockingReasons.join('\n'), /component "web" must have an ISO/u);
   assert.match(result.blockingReasons.join('\n'), /missing component "api"/u);
-  assert.match(result.blockingReasons.join('\n'), /not mapped to a release component: package.json/u);
+  assert.match(
+    result.blockingReasons.join('\n'),
+    /not mapped to a release component: package.json/u,
+  );
 });
 
 test('preflight fails closed for conflicting production topology or component baseline', () => {
-  const topologyConflict = productionIdentity({ topology: { ...productionIdentity().topology, api: { ...productionIdentity().topology.api, pidfile: '/run/green-api.pid' } } });
-  const conflict = runPreflight({ target: TARGET, baseline: BASELINE, identityPath: './production.json', execFileSync: successfulGit, readFileSync: () => JSON.stringify(topologyConflict), runtimeObservation: runtimeObservation() });
+  const topologyConflict = productionIdentity({
+    topology: {
+      ...productionIdentity().topology,
+      api: { ...productionIdentity().topology.api, pidfile: '/run/green-api.pid' },
+    },
+  });
+  const conflict = runPreflight({
+    target: TARGET,
+    baseline: BASELINE,
+    identityPath: './production.json',
+    execFileSync: successfulGit,
+    readFileSync: () => JSON.stringify(topologyConflict),
+    runtimeObservation: runtimeObservation(),
+  });
   assert.equal(conflict.ok, false);
   assert.match(conflict.blockingReasons.join('\n'), /pidfile conflicts with activeColor/u);
   const baselineConflict = productionIdentity({ gitSha: TARGET });
-  const stale = runPreflight({ target: TARGET, baseline: BASELINE, identityPath: './production.json', execFileSync: successfulGit, readFileSync: () => JSON.stringify(baselineConflict), runtimeObservation: runtimeObservation() });
+  const stale = runPreflight({
+    target: TARGET,
+    baseline: BASELINE,
+    identityPath: './production.json',
+    execFileSync: successfulGit,
+    readFileSync: () => JSON.stringify(baselineConflict),
+    runtimeObservation: runtimeObservation(),
+  });
   assert.equal(stale.ok, false);
   assert.match(stale.blockingReasons.join('\n'), /does not match the supplied baseline/u);
 });
 
 test('runtime identity rejects placeholder topology fields', () => {
-  const identity = productionIdentity({ topology: { ...productionIdentity().topology, api: { unit: 'blue', releaseSymlink: 'blue', pidfile: 'blue', readyfile: 'blue' } } });
-  const result = readRuntimeIdentity({ identityPath: './production.json', readFileSync: () => JSON.stringify(identity), ...runtimeObservation() });
+  const identity = productionIdentity({
+    topology: {
+      ...productionIdentity().topology,
+      api: { unit: 'blue', releaseSymlink: 'blue', pidfile: 'blue', readyfile: 'blue' },
+    },
+  });
+  const result = readRuntimeIdentity({
+    identityPath: './production.json',
+    readFileSync: () => JSON.stringify(identity),
+    ...runtimeObservation(),
+  });
   assert.equal(result.ok, false);
   assert.match(result.blockingReasons.join('\n'), /colored systemd unit/u);
   assert.match(result.blockingReasons.join('\n'), /absolute path/u);
@@ -134,9 +191,15 @@ test('runtime identity fails closed for stale or unverifiable topology observati
     identityPath: './production.json',
     readFileSync: () => JSON.stringify(productionIdentity()),
     ...runtimeObservation({
-      topologyExecFileSync: () => { throw new Error('unit absent'); },
-      topologyRealpathSync: () => { throw new Error('symlink absent'); },
-      topologyReadFileSync: () => { throw new Error('file absent'); },
+      topologyExecFileSync: () => {
+        throw new Error('unit absent');
+      },
+      topologyRealpathSync: () => {
+        throw new Error('symlink absent');
+      },
+      topologyReadFileSync: () => {
+        throw new Error('file absent');
+      },
     }),
   });
   assert.equal(missing.ok, false);

@@ -6,6 +6,7 @@ import { MessageItemWithDisplay as MessageItem } from './MessageItemWithDisplay'
 import type { TtsProps } from './MessageItem';
 import { ActivityGroupBlock } from './ActivityGroupBlock';
 import { BusinessStepFlow, BusinessStepSectionView } from './BusinessStepFlow';
+import { BusinessStepTimeline } from './BusinessStepTimeline';
 import { CompactionDivider } from './CompactionDivider';
 import { asCompactionItem } from '@/lib/compaction';
 import { cn } from '@/lib/utils';
@@ -36,6 +37,7 @@ interface AiBubbleGroup {
 }
 
 type BubbleRenderItem = RenderItem | AiBubbleGroup;
+
 /**
  * Groups consecutive AI render items into a single bubble.
  * A bubble ends when a `text` or `voice` item is encountered (terminal output).
@@ -889,14 +891,10 @@ export const MessageList = memo(function MessageList({
                 {showHeader && (
                   <AiMessageHeader agentProfile={displayAgent} timestamp={timestamp} />
                 )}
-                {/* 统一节奏：bubble 内相邻块一律 gap-2.5（10px），与虚拟行 ROW_GAP 一致；
-                    元素自身不带流向 margin，间距只在这一层与 ROW_GAP 两处定义。 */}
+                {/* 普通流块保持 10px；连续业务步骤收进专属时间线组后使用 6px，
+                    避免折叠标题被当成一串独立消息块。 */}
                 <div className={cn('flex flex-col gap-2.5', showHeader && HEADER_FLOW_PADDING_CLASS)}>
-                  {item.items.map((sub) => {
-                    // ai_bubble 顶层的 file_download 双重保险维持原语义：一律跳过。
-                    if (sub.type === 'file_download') return null;
-                    return renderFlowItem(sub);
-                  })}
+                  <BusinessStepTimeline items={item.items} renderItem={renderFlowItem} />
                 </div>
               </div>
             );

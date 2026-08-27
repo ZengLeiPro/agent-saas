@@ -11,7 +11,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { ensureAppHistoryIndex, readAppHistoryIndex } from "@/lib/appHistory";
-import { readPersonalSettingsHistoryState } from "@/lib/urlSync";
+import { notifyRouteChange, readPersonalSettingsHistoryState } from "@/lib/urlSync";
 import {
   Dialog,
   DialogContent,
@@ -229,7 +229,7 @@ export function SettingsDirtyBoundary({
         window.history.replaceState(accepted.state, "", accepted.href);
         requestNavigation(() => {
           window.history.replaceState(target.state, "", target.href);
-          window.dispatchEvent(new PopStateEvent("popstate", { state: target.state }));
+          notifyRouteChange(target.state);
         });
         return;
       }

@@ -618,11 +618,11 @@ export function replaceGovernanceUrl(state: GovernanceRouteState): void {
 // useAdminUrlQuery 的订阅者重新读 URL。改造前全仓有 16 处手写派发——新增一个导航调用点
 // 只要漏了这一行就静默失效（URL 变了、界面不动）。
 //
-// 下面的 navigate* 是唯一允许调用 notifyRouteChange 的地方；调用点只用 navigate*。
+// 所有 synthetic popstate 都由 notifyRouteChange 统一派发；常规调用点只用下面的 navigate*。
 
-/** push URL 之后通知所有 URL 订阅者重新解析（pushState 不触发 popstate） */
-function notifyRouteChange(): void {
-  window.dispatchEvent(new PopStateEvent('popstate'));
+/** push/replace URL 之后通知所有 URL 订阅者重新解析（history API 不触发 popstate） */
+export function notifyRouteChange(state: unknown = window.history.state): void {
+  window.dispatchEvent(new PopStateEvent('popstate', { state }));
 }
 
 /** V2 治理 route 跳转（push + 通知）；前进/后退继续由同一 popstate 通道重解析。 */

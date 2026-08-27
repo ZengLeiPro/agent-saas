@@ -97,7 +97,7 @@ export async function finalizeExecutionForArchivedTask(
 
 function activeRunError(): TaskboardValidationError {
   return new TaskboardValidationError(
-    'Tasks with an active Agent execution cannot be archived',
+    'Tasks with an active Agent execution cannot change lifecycle state',
     'TASKBOARD_EXECUTION_ACTIVE',
   );
 }

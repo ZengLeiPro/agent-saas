@@ -9,13 +9,9 @@ export interface IntegrationAgentSchemaOptions {
   integrationSourcesTable: string;
 }
 
-export interface IntegrationAgentTableNames {
-  agentsTable: string;
-}
+export interface IntegrationAgentTableNames { agentsTable: string; }
 
-export function integrationAgentTableNames(
-  integrationSourcesTable: string,
-): IntegrationAgentTableNames {
+export function integrationAgentTableNames(integrationSourcesTable: string): IntegrationAgentTableNames {
   const root = integrationSourcesTable.endsWith('_sources')
     ? integrationSourcesTable.slice(0, -'_sources'.length)
     : integrationSourcesTable;
@@ -33,13 +29,12 @@ export async function runIntegrationAgentSchema(
       delivery_source_ids JSONB NOT NULL,
       repository_id TEXT NOT NULL,
       durable_session_id TEXT,
-      integration_branch TEXT NOT NULL,
+      integration_branch TEXT,
       provider_pull_request_id TEXT,
       status TEXT NOT NULL CHECK (status IN ('active','reviewing','ready_to_merge','merged','canceled')),
       review_head_oid TEXT,
       verdict TEXT CHECK (verdict IN ('approved','changes_requested')),
       review_execution_id TEXT,
-      admission_receipt JSONB,
       merge_in_flight_execution_id TEXT,
       merge_in_flight_review_execution_id TEXT,
       merge_in_flight_review_head_oid TEXT,
@@ -50,19 +45,11 @@ export async function runIntegrationAgentSchema(
       CHECK ((verdict IS NULL AND review_execution_id IS NULL) OR (review_head_oid IS NOT NULL))
     )
   `);
-  await client.query(
-    `ALTER TABLE ${agentsTable} ADD COLUMN IF NOT EXISTS merge_in_flight_execution_id TEXT`,
-  );
-  await client.query(`ALTER TABLE ${agentsTable} ADD COLUMN IF NOT EXISTS admission_receipt JSONB`);
-  await client.query(
-    `ALTER TABLE ${agentsTable} ADD COLUMN IF NOT EXISTS merge_in_flight_review_execution_id TEXT`,
-  );
-  await client.query(
-    `ALTER TABLE ${agentsTable} ADD COLUMN IF NOT EXISTS merge_in_flight_review_head_oid TEXT`,
-  );
+  await client.query(`ALTER TABLE ${agentsTable} ALTER COLUMN integration_branch DROP NOT NULL`);
+  await client.query(`ALTER TABLE ${agentsTable} ADD COLUMN IF NOT EXISTS merge_in_flight_execution_id TEXT`);
+  await client.query(`ALTER TABLE ${agentsTable} ADD COLUMN IF NOT EXISTS merge_in_flight_review_execution_id TEXT`);
+  await client.query(`ALTER TABLE ${agentsTable} ADD COLUMN IF NOT EXISTS merge_in_flight_review_head_oid TEXT`);
   await client.query(`ALTER TABLE ${agentsTable} ADD COLUMN IF NOT EXISTS merge_receipt JSONB`);
   await client.query(`ALTER TABLE ${agentsTable} ADD COLUMN IF NOT EXISTS cleanup_receipt JSONB`);
-  await client.query(
-    `CREATE INDEX IF NOT EXISTS ${agentsTable}_active_idx ON ${agentsTable}(status) WHERE status IN ('active','reviewing','ready_to_merge')`,
-  );
+  await client.query(`CREATE INDEX IF NOT EXISTS ${agentsTable}_active_idx ON ${agentsTable}(status) WHERE status IN ('active','reviewing','ready_to_merge')`);
 }

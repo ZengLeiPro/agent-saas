@@ -91,7 +91,9 @@ describe('Taskboard automatic review', () => {
     expect(first.execution.sessionId).not.toBe(second.execution.sessionId);
     expect([first.execution.sessionId, second.execution.sessionId]).not.toContain('work-session');
     expect([first.execution.sessionId, second.execution.sessionId]).not.toContain('review-session-old');
-    expect(rig.store.listExecutions).not.toHaveBeenCalled();
+    expect(rig.store.listExecutions).toHaveBeenCalledTimes(2);
+    expect(rig.store.listExecutions).toHaveBeenNthCalledWith(1, identity, task.id);
+    expect(rig.store.listExecutions).toHaveBeenNthCalledWith(2, identity, task.id);
   });
 
   it('返工 work 复用原 work Session，不误接最新 review Session', async () => {

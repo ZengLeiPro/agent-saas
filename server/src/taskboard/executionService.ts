@@ -5,13 +5,10 @@ import type {
   TaskBoardExecutionPurpose,
   TaskBoardExecutionStartInput,
   TaskBoardExecutionStartResult,
-  TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import { resolveExecutionTarget, type ExecutionConfig } from '../runtime/executionConfig.js';
 import { RunCreateConflictError, type RunRecord, type RunStore } from '../runtime/runStore.js';
 import {
-  SCHEDULER_STATE_METADATA_KEY,
-  SCHEDULER_STATE_STAGED,
   type RuntimeScheduler,
 } from '../runtime/scheduler.js';
 import {
@@ -33,6 +30,20 @@ import {
 import { reuseTaskboardSession } from './executionSession.js';
 import { reusableTaskboardSessionId, taskboardExecutionSessionDescriptor } from './executionSessionMetadata.js';
 import { assertIntegrationExecutionMigrated, purposeForIntegrationAgentStatus } from './workflow/decider.js';
+import {
+  RECONCILIATION_GRACE_MS,
+  assertContinuationAllowed,
+  assertExecutionSession,
+  continuationPurpose,
+  finalAssistantText,
+  isLegacyPendingTaskboardRun,
+  isStagedPendingRun,
+  isTerminalExecution,
+  isTerminalRun,
+  isTerminalRunWithinGrace,
+  matchesReconcileCandidate,
+  requireTenantId,
+} from './executionServiceUtils.js';
 import {
   assertDispatchedRun,
   canonicalizeDispatchPayload,
@@ -73,14 +84,15 @@ import type {
 interface DefaultModelResolution {
   ref: string;
 }
-const RECONCILIATION_GRACE_MS = 30_000;
 
 export interface TaskboardExecutionCoordinatorOptions extends TaskboardSessionGroupingOptions {
   store: TaskboardExecutionStore;
   scheduler: Pick<RuntimeScheduler,
     'enqueue' | 'enqueueCreateOnly' | 'stagePendingRun' | 'activateCreatedRun' | 'cancelPendingTaskboardRun'
   >;
-  runStore: Pick<RunStore, 'get'> & Partial<Pick<RunStore, 'cancelSteeringBeforeDispatchBySessionWithEvent'>>;
+  runStore: Pick<RunStore, 'get'> & Partial<Pick<RunStore,
+    'cancelSteeringBeforeDispatchBySessionWithEvent' | 'hasTaskboardSessionActivity'
+  >>;
   sessionCatalog: SessionCatalog;
   eventStore: EventStore;
   agentCwd: string;
@@ -128,16 +140,34 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     await this.reconciliation;
   }
 
-  listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
-    return this.options.store.listExecutions(identity, taskId);
+  async listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]> {
+    const executions = await this.options.store.listExecutions(identity, taskId);
+    return this.projectLatestSessionActivity(identity, executions);
   }
 
-  searchExecutions(
+  async searchExecutions(
     identity: TaskboardIdentity,
     taskId: string,
     filter?: TaskboardPageFilter,
   ): Promise<TaskboardPage<TaskBoardExecution>> {
-    return this.options.store.searchExecutions(identity, taskId, filter);
+    const page = await this.options.store.searchExecutions(identity, taskId, filter);
+    if (page.page !== 1) return page;
+    return { ...page, items: await this.projectLatestSessionActivity(identity, page.items) };
+  }
+
+  private async projectLatestSessionActivity(
+    identity: TaskboardIdentity,
+    executions: TaskBoardExecution[],
+  ): Promise<TaskBoardExecution[]> {
+    const latest = executions[0];
+    if (!latest || !isTerminalExecution(latest) || latest.continuationActive) return executions;
+    const sessionIds = [...new Set(executions.map((execution) => execution.sessionId))];
+    if (!await this.hasTaskboardSessionActivity(sessionIds, identity.tenantId)) return executions;
+    return [{ ...latest, sessionActivityActive: true }, ...executions.slice(1)];
+  }
+
+  private async hasTaskboardSessionActivity(sessionIds: string[], tenantId: string): Promise<boolean> {
+    return await this.options.runStore.hasTaskboardSessionActivity?.(sessionIds, tenantId) === true;
   }
 
   async cancelExecution(identity: TaskboardIdentity, taskId: string, executionId: string,
@@ -299,6 +329,18 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     options: { executionId?: string; trigger?: 'initial' | 'comment' | 'resume' | 'retry'; sessionId?: string } = {},
   ): Promise<TaskBoardExecutionStartResult> {
     const claim = await this.prepareExecutionClaim(identity, taskId, input, options);
+    const existing = await this.options.store.listExecutions(identity, taskId);
+    const existingClaim = existing.some((execution) => execution.runId === claim.runId);
+    const sessionIds = [...new Set([
+      claim.sessionId,
+      ...existing.map((execution) => execution.sessionId),
+    ])];
+    if (!existingClaim && await this.hasTaskboardSessionActivity(sessionIds, identity.tenantId)) {
+      throw new TaskboardValidationError(
+        '任务会话仍有后台工作或待处理唤醒，不能启动新的 Agent 执行',
+        'TASKBOARD_EXECUTION_ACTIVE',
+      );
+    }
     const claimed = await this.options.store.claimExecution(identity, taskId, claim);
     await this.dispatchExecution(claim.runId);
     return claimed;
@@ -408,11 +450,13 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         ? purposeForIntegrationAgentStatus(modelContext.taskStatus ?? 'todo')
         : undefined)
       ?? 'work';
+    // Integration v3 is one work Execution; merge remains only the board's configuration key for that Agent.
+    const modelPurpose = modelContext.taskKind === 'integration' ? 'merge' : resolvedPurpose;
     const explicitModelRef = resolveExecutionModelRef(
       modelContext.taskModel,
       modelContext.boardStageModels,
       modelContext.boardModel,
-      resolvedPurpose,
+      modelPurpose,
       modelContext.taskStageModels,
     );
     const model = explicitModelRef
@@ -670,7 +714,9 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         throw new Error(`任务看板执行已终止：${record.runId}`);
       }
       const boardPrompt = context.boardPrompt.trim();
-      const stagePrompt = context.stagePrompts?.[context.execution.purpose]?.trim();
+      // The merge key supplies configuration only; the durable Integration Execution remains purpose=work.
+      const stagePurpose = context.task.kind === 'integration' ? 'merge' : context.execution.purpose;
+      const stagePrompt = context.stagePrompts?.[stagePurpose]?.trim();
       return {
         ...record,
         metadata: {
@@ -710,8 +756,11 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         ?? continuationContext.continuationExecution
         ?? continuationContext.latestExecution;
       const boardPrompt = continuationContext.boardPrompt?.trim();
-      const stagePrompt = targetExecution
-        ? continuationContext.stagePrompts?.[targetExecution.purpose]?.trim()
+      const stagePurpose = continuationContext.task.kind === 'integration'
+        ? 'merge'
+        : targetExecution?.purpose;
+      const stagePrompt = stagePurpose
+        ? continuationContext.stagePrompts?.[stagePurpose]?.trim()
         : undefined;
       return boardPrompt || stagePrompt
         ? { ...record, metadata: {
@@ -889,112 +938,4 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       await this.options.store.completeExecution(runId, completion);
     }
   }
-}
-
-function isLegacyPendingTaskboardRun(run: RunRecord): boolean {
-  return run.status === 'pending'
-    && run.metadata?.taskboardExecution === true
-    && run.metadata?.[SCHEDULER_STATE_METADATA_KEY] === undefined;
-}
-
-function isStagedPendingRun(run: RunRecord): boolean {
-  return run.status === 'pending'
-    && run.metadata?.[SCHEDULER_STATE_METADATA_KEY] === SCHEDULER_STATE_STAGED;
-}
-
-function assertExecutionSession(execution: TaskBoardExecution, sessionId: string): void {
-  if (execution.sessionId !== sessionId) {
-    throw new Error(`Runtime session 与任务看板 Execution 不匹配：run=${execution.runId}`);
-  }
-}
-
-function finalAssistantText(events: PlatformEvent[], runId: string, sessionId: string): string {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
-    if (
-      event?.type !== 'assistant_message'
-      || event.incomplete
-      || event.runId !== runId
-      || event.sessionId !== sessionId
-    ) continue;
-    const content = event.content?.trim();
-    if (content) return content;
-  }
-  return '';
-}
-
-function assertContinuationAllowed(task: TaskBoardTask, activeExecution?: TaskBoardExecution): void {
-  assertIntegrationExecutionMigrated(task);
-  if (task.status === 'done' || task.status === 'canceled' || task.mergedCommitOid) {
-    throw new TaskboardValidationError(
-      '已完成、已取消或已合并任务不能继续派发',
-      'TASKBOARD_TERMINAL_EXECUTION_FORBIDDEN',
-    );
-  }
-  if (task.status === 'blocked') {
-    throw new TaskboardValidationError('阻塞任务需要显式恢复后才能继续', 'TASKBOARD_RESUME_REQUIRED');
-  }
-  if (task.kind === 'integration') {
-    if (!activeExecution) throw new TaskboardValidationError('Integration Agent 由系统按 Agent 状态推进；当前没有可继续的执行，请仅发表评论', 'TASKBOARD_V3_COMMENT_CONTINUATION_REQUIRES_ACTIVE');
-    if (!['work', 'review'].includes(activeExecution.purpose)) throw new TaskboardValidationError('Integration Agent 只能继续当前的 Work 或 Review 执行', 'TASKBOARD_INTEGRATION_PURPOSE_INVALID');
-    return;
-  }
-  if (!['todo', 'in_review', 'in_progress'].includes(task.status)) {
-    throw new TaskboardValidationError('当前任务状态不允许从评论创建新执行', 'TASKBOARD_EXECUTION_STATUS_INVALID');
-  }
-}
-
-function continuationPurpose(task: TaskBoardTask): TaskBoardExecutionPurpose {
-  assertContinuationAllowed(task);
-
-  if (task.kind === 'integration') {
-    const purpose = purposeForIntegrationAgentStatus(task.status);
-    if (purpose) return purpose;
-  }
-  if (task.status === 'in_review') return 'review';
-  if (task.status === 'todo') return 'work';
-  throw new TaskboardValidationError('当前任务状态不允许从评论创建新执行', 'TASKBOARD_EXECUTION_STATUS_INVALID');
-}
-
-function matchesReconcileCandidate(
-  run: RunRecord,
-  candidate: TaskboardExecutionReconcileCandidate,
-): boolean {
-  return run.runId === candidate.runId
-    && run.sessionId === candidate.sessionId
-    && run.metadata?.taskboardExecution === true
-    && run.metadata?.taskboardExecutionId === candidate.executionId;
-}
-
-function isTerminalRunWithinGrace(run: RunRecord): boolean {
-  const terminalAt = run.status === 'completed'
-    ? run.completedAt ?? run.updatedAt
-    : run.status === 'failed'
-      ? run.failedAt ?? run.updatedAt
-      : run.status === 'cancelled'
-        ? run.cancelledAt ?? run.updatedAt
-        : run.status === 'orphaned'
-          ? run.updatedAt
-          : undefined;
-  if (!terminalAt) return false;
-  const terminalAtMs = Date.parse(terminalAt);
-  return Number.isFinite(terminalAtMs) && terminalAtMs > Date.now() - RECONCILIATION_GRACE_MS;
-}
-
-function isTerminalRun(run: RunRecord): boolean {
-  return run.status === 'completed'
-    || run.status === 'failed'
-    || run.status === 'cancelled'
-    || run.status === 'orphaned';
-}
-
-function requireTenantId(tenantId: string | undefined): string {
-  if (!tenantId?.trim()) throw new Error('Runtime event tenantId is required');
-  return tenantId;
-}
-
-function isTerminalExecution(execution: TaskBoardExecution): boolean {
-  return execution.status === 'succeeded'
-    || execution.status === 'failed'
-    || execution.status === 'cancelled';
 }

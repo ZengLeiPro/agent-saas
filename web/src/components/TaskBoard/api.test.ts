@@ -4,6 +4,7 @@ import { authFetch } from "@/lib/authFetch";
 import {
   cancelExecution,
   cancelIntegrationTask,
+  completeTask,
   createIntegrationBatch,
   deleteBoardMember,
   deleteTask,
@@ -98,6 +99,23 @@ describe("任务看板 API 错误对象", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ expectedVersion: task.version, reason: "人工终止" }),
+      }),
+    );
+  });
+
+  it("人工完成接口提交 CAS 版本并返回完成后的任务", async () => {
+    const completed = { ...task, status: "done" as const, version: task.version + 1 };
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify(completed), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+
+    await expect(completeTask(task.id, task.version)).resolves.toEqual(completed);
+    expect(authFetch).toHaveBeenCalledWith(
+      `/api/taskboard/tasks/${task.id}/complete`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ expectedVersion: task.version }),
       }),
     );
   });

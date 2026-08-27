@@ -19,6 +19,11 @@ import type { TokenUsageStore } from "../data/usage/store.js";
 import type { TenantStore } from "../data/tenants/store.js";
 import { checkTenantAccess } from "../data/tenants/access.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
+import {
+  isAssignedToOrgAgent,
+  parseOrgAgentAudience,
+  type OrgAgentStore,
+} from "../data/orgAgents/store.js";
 import type {
   CronJob,
   CronPayload,
@@ -63,6 +68,8 @@ export interface ExecutorOptions {
   userStore?: UserStoreLike;
   /** 组织存储（用于阻止 disabled tenant 的后台任务继续执行） */
   tenantStore?: TenantStore;
+  /** 企业专家存储（cron 运行前重新校验固化绑定的可用性与 audience）。 */
+  orgAgentStore?: OrgAgentStore;
   /** session 创建时立即回调（不等执行完成），用于 pTimeout 场景保留 sessionId */
   onSessionId?: (sessionId: string, transcriptPath?: string) => void | Promise<void>;
   /** Token 用量统计 store（可选） */
@@ -318,6 +325,21 @@ async function executeAgentTurn(
       return { status: 'error', output: tenantAccess.message };
     }
   }
+  if (job.orgAgentId) {
+    const orgAgent = owner ? opts.orgAgentStore?.get(job.orgAgentId) : undefined;
+    const adminExempt = owner?.role === 'admin'
+      && (owner.tenantId === DEFAULT_TENANT_ID || orgAgent?.tenantId === owner.tenantId);
+    const audienceValid = !!orgAgent && !!parseOrgAgentAudience(orgAgent.audience);
+    const assigned = audienceValid && (adminExempt || isAssignedToOrgAgent(orgAgent, owner?.username));
+    if (!owner || !orgAgent || !orgAgent.enabled || orgAgent.tenantId !== owner.tenantId || !assigned) {
+      if (timeout) clearTimeout(timeout);
+      return {
+        status: 'error',
+        output: '定时任务绑定的企业专家当前不可用或你已失去访问权限',
+        suppressNotification: true,
+      };
+    }
+  }
   if (owner) {
     // PR 6 P1-5：cron 路径透传 owner.tenantId，否则 wain 组织的 cron 任务会
     // 错路径到 kaiyan/<owner.username>/
@@ -480,6 +502,7 @@ async function executeAgentTurn(
         ...(modelProviderOptions ? { modelProviderOptions } : {}),
         persistSession: true,
         includePartialMessages: true,
+        ...(job.orgAgentId ? { orgAgentId: job.orgAgentId } : {}),
         ...skipFlags,
         ...(overrides?.toolProfile ? { toolProfile: overrides.toolProfile } : {}),
         ...(approvalPolicy ? { approvalPolicy } : {}),

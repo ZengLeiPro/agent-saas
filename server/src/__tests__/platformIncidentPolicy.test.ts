@@ -30,6 +30,13 @@ describe('platformIncidentPolicy', () => {
     expect(selectExternalSystemIncidents('fake-acs-orchestrator-proxy', [
       { kind: 'acs_sandbox_lifecycle_failed', severity: 'high', title: 'spoofed source' },
     ])).toEqual([]);
+    expect(selectExternalSystemIncidents('memory_consolidation', [
+      { kind: 'memory_consolidation_scanner_lag', severity: 'medium', title: 'within grace' },
+      { kind: 'memory_consolidation_scanner_lag', severity: 'high', title: 'beyond grace' },
+      { kind: 'failed_run', severity: 'high', title: 'unrelated' },
+    ])).toEqual([
+      { kind: 'memory_consolidation_scanner_lag', severity: 'high', title: 'beyond grace' },
+    ]);
     expect(selectExternalSystemIncidents('agent-saas-acs-orchestrator', [
       { kind: 'acs_sandbox_stale_image_prewarm', severity: 'medium', title: 'prewarm failed' },
       { kind: 'acs_sandbox_running_near_quota', severity: 'high', title: 'capacity exhausted' },

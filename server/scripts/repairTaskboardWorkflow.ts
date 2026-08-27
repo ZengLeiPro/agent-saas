@@ -127,7 +127,8 @@ async function main(): Promise<void> {
     const mismatchedPurpose = await client.query(
       `SELECT t.id,t.board_id,e.id AS execution_id,e.purpose,e.status
          FROM ${tables.tasks} t JOIN ${tables.execs} e ON e.task_id=t.id
-        WHERE t.kind='integration' AND e.purpose<>'merge' AND ${ACTIVE_EXECUTION}${scope('t.board_id', ['t.id'])}`,
+        WHERE t.kind='integration' AND t.workflow_version=3 AND e.purpose<>'work'
+          AND ${ACTIVE_EXECUTION}${scope('t.board_id', ['t.id'])}`,
       params,
     );
     for (const row of mismatchedPurpose.rows) findings.push({ type: 'integration_purpose_mismatch', taskId: row.id, boardId: row.board_id, detail: row });
@@ -165,26 +166,6 @@ async function main(): Promise<void> {
       type: 'integration_not_converged', taskId: row.id, boardId: row.board_id, detail: row,
     });
 
-    const duplicateSources = await client.query(
-      `SELECT min(t.id) AS id,min(t.board_id) AS board_id,s.repository_id,s.provider_pull_request_id,
-              count(*) FILTER (WHERE ${SOURCE_MERGE_FACT})::int AS merge_fact_count,
-              jsonb_agg(jsonb_build_object(
-                'sourceId',s.id,'deliveryTaskId',s.delivery_task_id,'integrationTaskId',s.integration_task_id,
-                'hasMergeFact',(${SOURCE_MERGE_FACT})
-              ) ORDER BY CASE WHEN (${SOURCE_MERGE_FACT}) THEN 0 ELSE 1 END,s.created_at,s.id) AS sources
-         FROM ${tables.sources} s JOIN ${tables.tasks} t ON t.id=s.delivery_task_id
-        WHERE s.state NOT IN ('merged','canceled')
-        GROUP BY s.repository_id,s.provider_pull_request_id
-       HAVING count(*)>1
-          AND ($1::text IS NULL OR bool_or($1 IN (
-            t.id,s.integration_task_id,
-            (CASE WHEN EXISTS (SELECT 1 FROM ${tables.attempts} a WHERE a.integration_source_id=s.id AND a.remediation_task_id=$1) THEN $1 END)
-          )))
-          AND ($2::text IS NULL OR bool_or(t.board_id=$2))`,
-      params,
-    );
-    for (const row of duplicateSources.rows) findings.push({ type: 'duplicate_active_source', taskId: row.id, boardId: row.board_id, detail: row });
-
     const advisoryCandidates = await client.query(
       `SELECT t.id,t.board_id,t.title FROM ${tables.tasks} t
         WHERE t.kind='delivery' AND t.provider_pull_request_id IS NULL AND t.merged_commit_oid IS NULL
@@ -203,9 +184,6 @@ async function main(): Promise<void> {
       for (const finding of findings) {
         if (finding.type === 'manual_advisory_reclassification_candidate'
           || finding.type === 'manual_remediation_review_required') continue;
-        if (finding.type === 'duplicate_active_source' && Number(finding.detail.merge_fact_count ?? 0) > 1) {
-          throw new Error(`TASKBOARD_DUPLICATE_ACTIVE_SOURCE_AMBIGUOUS: ${String(finding.detail.repository_id)}:${String(finding.detail.provider_pull_request_id)}`);
-        }
         const commandId = canonicalHash({ v: 2, finding });
         const claimed = await client.query(
           `INSERT INTO ${repairLog}(command_id,finding_type,task_id,detail) VALUES($1,$2,$3,$4::jsonb) ON CONFLICT DO NOTHING RETURNING command_id`,
@@ -316,24 +294,6 @@ async function main(): Promise<void> {
           );
           await client.query(`UPDATE ${tables.authorizations} SET revoked_at=COALESCE(revoked_at,now()) WHERE integration_task_id=$1 AND revoked_at IS NULL`, [finding.taskId]);
           await client.query(`UPDATE ${tables.lanes} SET active_integration_task_id=NULL,lease_id=NULL,epoch=epoch+1,updated_at=now() WHERE active_integration_task_id=$1`, [finding.taskId]);
-        } else if (finding.type === 'duplicate_active_source') {
-          const sources = Array.isArray(finding.detail.sources) ? finding.detail.sources as Array<Record<string, unknown>> : [];
-          const [canonical, ...duplicates] = sources;
-          if (!canonical || duplicates.length === 0) throw new Error('Malformed duplicate source finding');
-          for (const duplicate of duplicates) {
-            await client.query(
-              `UPDATE ${tables.sources} SET state='canceled',last_error=$2,updated_at=now()
-                WHERE id=$1 AND state NOT IN ('merged','canceled')`,
-              [duplicate.sourceId, `Historical duplicate; canonical source ${String(canonical.sourceId)}`],
-            );
-            await client.query(
-              `INSERT INTO ${tables.changes}(task_id,change_type,actor_type,actor_id,payload)
-               VALUES($1,'integration.source_duplicate_canceled','system',$2,$3::jsonb)`,
-              [duplicate.deliveryTaskId, commandId, JSON.stringify({
-                commandId, canonicalSourceId: canonical.sourceId, canceledSourceId: duplicate.sourceId,
-              })],
-            );
-          }
         }
         if (finding.taskId) {
           await client.query(
@@ -343,11 +303,6 @@ async function main(): Promise<void> {
         }
         applied += 1;
       }
-      await client.query(
-        `CREATE UNIQUE INDEX IF NOT EXISTS ${tables.sources}_apr_uq
-           ON ${tables.sources}(repository_id,provider_pull_request_id)
-        WHERE state NOT IN ('merged','canceled')`,
-      );
       await client.query('COMMIT');
     }
 
@@ -366,29 +321,20 @@ async function main(): Promise<void> {
       ),
       await client.query(
         `SELECT count(*)::int AS count FROM ${tables.tasks} t JOIN ${tables.execs} e ON e.task_id=t.id
-          WHERE t.kind='integration' AND e.purpose<>'merge' AND ${ACTIVE_EXECUTION}${scope('t.board_id', ['t.id'])}`,
+          WHERE t.kind='integration' AND t.workflow_version=3 AND e.purpose<>'work'
+            AND ${ACTIVE_EXECUTION}${scope('t.board_id', ['t.id'])}`,
         params,
       ),
       await client.query(
         `SELECT count(*)::int AS count FROM ${tables.tasks} t WHERE t.kind='remediation' AND t.status='ready_to_merge'${scope('t.board_id', ['t.id'])}`,
         params,
       ),
-      await client.query(
-        `SELECT count(*)::int AS count FROM (
-           SELECT repository_id,provider_pull_request_id FROM ${tables.sources}
-            WHERE state NOT IN ('merged','canceled')
-            GROUP BY repository_id,provider_pull_request_id HAVING count(*)>1
-         ) duplicates`,
-      ),
-      await client.query(`SELECT to_regclass($1) IS NOT NULL AS present`, [`${tables.sources}_apr_uq`]),
     ];
     const after = {
       mergedProjectionMismatch: Number(postChecks[0].rows[0]?.count ?? 0),
       mergedActiveExecution: Number(postChecks[1].rows[0]?.count ?? 0),
       integrationPurposeMismatch: Number(postChecks[2].rows[0]?.count ?? 0),
       remediationReadyToMerge: Number(postChecks[3].rows[0]?.count ?? 0),
-      duplicateActiveSource: Number(postChecks[4].rows[0]?.count ?? 0),
-      activePrUniqueIndexPresent: postChecks[5].rows[0]?.present === true,
     };
     const summary = {
       mode: args.apply ? 'apply' : 'dry-run', taskId: args.taskId, boardId: args.boardId,

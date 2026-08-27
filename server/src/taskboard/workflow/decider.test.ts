@@ -20,13 +20,15 @@ describe('direct workflow transitions', () => {
     expect(() => assertExecutionRequestAllowed(integration, 'merge'))
       .toThrowError(expect.objectContaining({ code: 'TASKBOARD_INTEGRATION_MIGRATION_REQUIRED' }));
   });
-  it('routes every Agent-first stage through its dedicated execution purpose', () => {
+  it('routes Agent-first Integration only through one work purpose', () => {
     const integration = task({ kind: 'integration', workflowVersion: 3 });
+    expect(purposeForIntegrationAgentStatus('todo')).toBe('work');
     expect(purposeForIntegrationAgentStatus('in_progress')).toBe('work');
-    expect(purposeForIntegrationAgentStatus('in_review')).toBe('review');
-    expect(purposeForIntegrationAgentStatus('ready_to_merge')).toBe('merge');
-    expect(() => assertExecutionRequestAllowed({ ...integration, status: 'ready_to_merge' }, 'review')).toThrow();
-    expect(() => assertExecutionRequestAllowed({ ...integration, status: 'ready_to_merge' }, 'merge')).not.toThrow();
+    expect(purposeForIntegrationAgentStatus('in_review')).toBeUndefined();
+    expect(purposeForIntegrationAgentStatus('ready_to_merge')).toBeUndefined();
+    expect(() => assertExecutionRequestAllowed(integration, 'work')).not.toThrow();
+    expect(() => assertExecutionRequestAllowed(integration, 'review')).toThrow();
+    expect(() => assertExecutionRequestAllowed(integration, 'merge')).toThrow();
   });
   it('exposes allowedStatuses without evidence fields', () => {
     expect(resolveWorkflowContract(task(), 'work').allowedStatuses).toEqual(['in_review','blocked']);

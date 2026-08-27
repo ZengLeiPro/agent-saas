@@ -232,6 +232,14 @@ export async function moveTask(
   return parseEntity<TaskBoardTask>(response, "移动任务", "task");
 }
 
+export async function completeTask(id: string, expectedVersion: number): Promise<TaskBoardTask> {
+  const response = await authFetch(
+    `${API_BASE}/tasks/${encodeURIComponent(id)}/complete`,
+    jsonRequest("POST", { expectedVersion }),
+  );
+  return parseEntity<TaskBoardTask>(response, "完成任务", "task");
+}
+
 export async function archiveTask(id: string, expectedVersion: number): Promise<TaskBoardTask> {
   const response = await authFetch(
     `${API_BASE}/tasks/${encodeURIComponent(id)}/archive`,

@@ -819,9 +819,6 @@ async function readLineRange(fullPath, relPath, options) {
       const relPath = relativeWorkspacePath(fullPath);
       const imageMime = detectImageMime(await readFileBufferPrefix(fullPath, 32));
       if (imageMime) {
-        if (request.offset !== undefined || request.limit !== undefined) {
-          throw new Error('Read: offset/limit are only valid for text files, not images');
-        }
         if (st.size > maxReadImageSourceBytes) {
           throw new Error('Read: image too large (' + st.size + 'B > ' + maxReadImageSourceBytes + 'B)');
         }

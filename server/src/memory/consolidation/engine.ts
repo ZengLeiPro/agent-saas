@@ -24,6 +24,7 @@ import {
   MemoryConsolidationDraftConflictError,
 } from './draft.js';
 import { buildConsolidationPrompt, MEMORY_CONSOLIDATION_PROMPT_VERSION } from './prompt.js';
+import { classifyInternalMemorySession, CONSOLIDATION_CHAT_PREFIX } from './sessionEligibility.js';
 import {
   PgMemoryConsolidationStore,
   type MemoryConsolidationCommitFence,
@@ -33,6 +34,7 @@ import {
   CONSOLIDATION_RETRY_BACKOFF_MINUTES,
   type ConsolidationState,
   type MemoryConsolidationResolvedConfig,
+  type MemoryConsolidationScannerStatus,
 } from './types.js';
 
 interface EventStoreForConsolidation {
@@ -103,6 +105,7 @@ export interface MemoryConsolidationEngineOptions {
   dispatch: AgentRunDispatch;
   agentCwd: string;
   getConfig(): MemoryConsolidationResolvedConfig;
+  onScannerStatus?: (status: MemoryConsolidationScannerStatus) => void | Promise<void>;
   logger?: {
     info: (msg: string) => void;
     warn: (msg: string) => void;
@@ -110,10 +113,10 @@ export interface MemoryConsolidationEngineOptions {
 }
 
 const CONSUMER_NAME = 'memory-consolidation-v1';
-const CONSOLIDATION_CHAT_PREFIX = 'memory-consolidate-';
 /** 新会话 projection 正常应很快出现；超过一小时仍缺失视为 poison event。 */
 export const MISSING_PROJECTION_GRACE_MS = 60 * 60_000;
 const MISSING_PROJECTION_WARN_INTERVAL_MS = 5 * 60_000;
+const SCANNER_STATUS_REFRESH_INTERVAL_MS = 60_000;
 const MAX_EVENT_FUTURE_SKEW_MS = 5 * 60_000;
 const DRAFT_CLEANUP_WAIT_MS = 5_000;
 const EXCLUDED_CHANNELS = new Set(['cron']);
@@ -129,9 +132,7 @@ function isEligibleProjection(projection: ConsolidationProjection, sessionId: st
     && meta.sessionSource !== 'memory_consolidation'
     && meta.memoryAutomationEligible !== false
     && (projection.channel === undefined || !EXCLUDED_CHANNELS.has(projection.channel))
-    && !sessionId.startsWith('memory-maint-')
-    && !sessionId.startsWith(CONSOLIDATION_CHAT_PREFIX)
-    && !sessionId.startsWith('taskboard-')
+    && classifyInternalMemorySession(sessionId) === null
     && Boolean(projection.userId);
 }
 
@@ -141,6 +142,7 @@ export class MemoryConsolidationEngine {
   private scanning = false;
   private working = false;
   private stopped = true;
+  private lastScannerStatusRefreshAt = 0;
   private readonly missingProjectionWarnedAt = new Map<number, number>();
   private readonly workerId = `worker-${process.pid}-${randomUUID().slice(0, 8)}`;
 
@@ -222,8 +224,19 @@ export class MemoryConsolidationEngine {
       }
     } catch (err) {
       this.options.logger?.warn(`consolidation scan failed: ${message(err)}`);
-    } finally {
-      this.scanning = false;
+    } finally { await this.publishScannerStatusIfDue(); this.scanning = false; }
+  }
+
+  private async publishScannerStatusIfDue(): Promise<void> {
+    if (!this.options.onScannerStatus) return;
+    const now = Date.now();
+    if (now - this.lastScannerStatusRefreshAt < SCANNER_STATUS_REFRESH_INTERVAL_MS) return;
+    this.lastScannerStatusRefreshAt = now;
+    try {
+      const status = await this.options.store.getScannerStatus(CONSUMER_NAME);
+      await this.options.onScannerStatus(status);
+    } catch (error) {
+      this.options.logger?.warn(`consolidation scanner status failed: ${message(error)}`);
     }
   }
 
@@ -235,9 +248,24 @@ export class MemoryConsolidationEngine {
     const event = envelope.event;
     if (!this.options.isTenantEnabled(envelope.tenantId)) return true;
 
+    const rawTimestamp = typeof event.timestamp === 'string' ? event.timestamp : undefined;
+    const internalSessionClass = classifyInternalMemorySession(envelope.sessionId);
+    if (internalSessionClass) {
+      await this.options.store.quarantineEnvelopeAndAdvanceCursor({
+        consumerName: CONSUMER_NAME,
+        globalSequence: envelope.globalSequence,
+        tenantId: envelope.tenantId,
+        sessionId: envelope.sessionId,
+        eventType: event.type,
+        ...(rawTimestamp ? { eventTimestamp: rawTimestamp } : {}),
+        reason: `internal_session_${internalSessionClass}`,
+      });
+      this.missingProjectionWarnedAt.delete(envelope.globalSequence);
+      return true;
+    }
+
     const projection = await this.options.projectionStore.get(envelope.sessionId, { includeDeleted: true });
     if (!projection) {
-      const rawTimestamp = typeof event.timestamp === 'string' ? event.timestamp : undefined;
       const eventAtMs = rawTimestamp ? Date.parse(rawTimestamp) : Number.NaN;
       const now = Date.now();
       const tooFarInFuture = Number.isFinite(eventAtMs) && eventAtMs - now > MAX_EVENT_FUTURE_SKEW_MS;

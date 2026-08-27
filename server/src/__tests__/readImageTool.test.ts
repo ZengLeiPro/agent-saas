@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   PlatformToolRuntime,
-  ServerLocalExecutionProvider,
   type WorkspaceRef,
 } from '../agent/toolRuntime.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
@@ -59,17 +58,25 @@ describe('Read 图片工具', () => {
     }
   });
 
-  it('拒绝对图片使用文本行范围参数', async () => {
+  it('忽略图片调用中的文本行范围参数', async () => {
     const root = await mkdtemp(join(tmpdir(), 'agent-read-image-range-'));
     try {
       await copyFile(join(process.cwd(), '../web/public/favicon-32x32.png'), join(root, '界面.png'));
-      const response = await new ServerLocalExecutionProvider().execute({
-        toolName: 'Read',
+      const result = await new PlatformToolRuntime().invoke({
+        toolId: 'Read',
         input: { path: '界面.png', offset: 1, limit: 10 },
-        context: { workspace: workspace(root) },
+        authorization: { approved: true, source: 'policy_auto' },
+      }, { channelContext, workspace: workspace(root) });
+
+      expect(result.content).toContain('Read image 界面.png');
+      expect(result.modelImages).toHaveLength(1);
+      expect(result.modelImages?.[0]).toMatchObject({
+        type: 'image_attachment',
+        displayName: '界面.png',
+        mimeType: 'image/png',
+        width: 32,
+        height: 32,
       });
-      expect(response.status).toBe('error');
-      expect(response.status === 'error' ? response.error : '').toContain('only valid for text files');
     } finally {
       await rm(root, { recursive: true, force: true });
     }

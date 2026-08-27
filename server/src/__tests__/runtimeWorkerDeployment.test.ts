@@ -60,6 +60,10 @@ describe('Runtime Worker 生产部署契约', () => {
       join(repoRoot, 'daemon-packaging/systemd/agent-saas-runtime-worker@.service.template'),
       'utf-8',
     );
+    const legacyWebUnit = await readFile(
+      join(repoRoot, 'daemon-packaging/systemd/agent-saas-server.service.template'),
+      'utf-8',
+    );
     const nginxNasDropIn = await readFile(
       join(repoRoot, 'daemon-packaging/systemd/nginx-agent-saas-nas.conf'),
       'utf-8',
@@ -67,11 +71,18 @@ describe('Runtime Worker 生产部署契约', () => {
     const workflow = await readFile(join(repoRoot, '.github/workflows/ci.yml'), 'utf-8');
     const serverEntry = await readFile(join(repoRoot, 'server/src/index.ts'), 'utf-8');
 
+    expect(webUnit).toContain('Environment=AGENT_SAAS_ENVIRONMENT=production');
+    expect(webUnit).toContain('EnvironmentFile=-/etc/agent-saas/server-%i.release.env');
+    expect(webUnit).toContain('ExecStart=/usr/bin/node --enable-source-maps dist/index.js');
     expect(webUnit).toContain('Environment=AGENT_SAAS_PROCESS_ROLE=ws-only');
     expect(webUnit).toContain('AGENT_SAAS_DRAIN_MARKER=/run/agent-saas-server-%i.draining');
+    expect(legacyWebUnit).toContain('Environment=AGENT_SAAS_ENVIRONMENT=production');
     expect(webUnit).toContain(
       'ExecCondition=/usr/bin/test ! -e /run/agent-saas-server-%i.draining',
     );
+    expect(workerUnit).toContain('Environment=AGENT_SAAS_ENVIRONMENT=production');
+    expect(workerUnit).toContain('EnvironmentFile=-/etc/agent-saas/runtime-worker-%i.release.env');
+    expect(workerUnit).toContain('ExecStart=/usr/bin/node --enable-source-maps dist/index.js');
     expect(workerUnit).toContain('Environment=AGENT_SAAS_PROCESS_ROLE=runtime-worker');
     expect(workerUnit).toContain('AGENT_SAAS_PIDFILE=/run/agent-saas-runtime-worker-%i.pid');
     expect(workerUnit).toContain('AGENT_SAAS_READYFILE=/run/agent-saas-runtime-worker-%i.ready');
@@ -88,13 +99,18 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(workerUnit).toContain('OOMPolicy=stop');
     expect(workerUnit).toContain('OOMScoreAdjust=500');
     expect(workerUnit).toContain('RestartSec=30');
-    expect(webUnit).toContain('ExecStart=/usr/bin/node --enable-source-maps dist/index.js');
-    expect(workerUnit).toContain('ExecStart=/usr/bin/node --enable-source-maps dist/index.js');
-    expect(webUnit).not.toContain('ExecStart=/usr/local/bin/pnpm');
-    expect(workerUnit).not.toContain('ExecStart=/usr/local/bin/pnpm');
     expect(webUnit).toContain('RequiresMountsFor=/mnt/agent-workspaces /mnt/agent-saas');
     expect(workerUnit).toContain('RequiresMountsFor=/mnt/agent-workspaces /mnt/agent-saas');
     expect(nginxNasDropIn).toContain('RequiresMountsFor=/mnt/agent-saas');
+    expect(webUnit.indexOf('Environment=AGENT_SAAS_ENVIRONMENT=production')).toBeGreaterThan(
+      webUnit.lastIndexOf('EnvironmentFile='),
+    );
+    expect(workerUnit.indexOf('Environment=AGENT_SAAS_ENVIRONMENT=production')).toBeGreaterThan(
+      workerUnit.lastIndexOf('EnvironmentFile='),
+    );
+    expect(legacyWebUnit.indexOf('Environment=AGENT_SAAS_ENVIRONMENT=production')).toBeGreaterThan(
+      legacyWebUnit.lastIndexOf('EnvironmentFile='),
+    );
     expect(webUnit.indexOf('Environment=AGENT_SAAS_PROCESS_ROLE=ws-only')).toBeGreaterThan(
       webUnit.lastIndexOf('EnvironmentFile='),
     );

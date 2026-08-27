@@ -36,7 +36,9 @@ export async function cancelTaskboardWorkflowRun(
   reason: string,
 ): Promise<WorkflowCancellationOutcome> {
   const run = await runStore.get(runId);
-  if (!run) throw new Error(`Runtime Run 尚未创建，保留 cancellation outbox：${runId}`);
+  // Workflow fencing locks the Execution row against Runtime creation before enqueuing cancellation.
+  // If no Run exists after that fence commits, dispatch is no longer admissible and cancellation is complete.
+  if (!run) return { kind: 'cancelled' };
   if (run.status === 'cancelled') {
     runtimeRunController.abort(runId, reason);
     return { kind: 'cancelled' };

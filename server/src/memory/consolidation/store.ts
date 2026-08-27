@@ -25,9 +25,14 @@ import { Pool, type PoolClient } from 'pg';
 import type {
   ConsolidationRunRecord,
   ConsolidationState,
+  MemoryConsolidationScannerStatus,
   MemoryTombstone,
   TombstoneScope,
 } from './types.js';
+import {
+  initMemoryConsolidationScannerTables,
+  readMemoryConsolidationScannerStatus,
+} from './scannerStatus.js';
 import {
   mapRun,
   mapState,
@@ -58,6 +63,7 @@ export class PgMemoryConsolidationStore {
     this.prefix = options.tablePrefix ?? 'agent_runtime';
   }
 
+  private get eventsTable(): string { return `${this.prefix}_events`; }
   private get consumersTable(): string { return `${this.prefix}_memory_consolidation_consumers`; }
   private get skipsTable(): string { return `${this.prefix}_memory_consolidation_skips`; }
   private get stateTable(): string { return `${this.prefix}_memory_consolidation_state`; }
@@ -69,31 +75,10 @@ export class PgMemoryConsolidationStore {
     const client = await this.pool.connect();
     try {
       await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ${this.consumersTable} (
-          consumer_name TEXT PRIMARY KEY,
-          last_global_sequence BIGINT NOT NULL DEFAULT 0,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ${this.skipsTable} (
-          consumer_name TEXT NOT NULL,
-          global_sequence BIGINT NOT NULL,
-          tenant_id TEXT NOT NULL,
-          session_id TEXT NOT NULL,
-          event_type TEXT NOT NULL,
-          event_timestamp TIMESTAMPTZ,
-          reason TEXT NOT NULL,
-          first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          skipped_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          PRIMARY KEY (consumer_name, global_sequence)
-        )
-      `);
-      await client.query(`
-        CREATE INDEX IF NOT EXISTS ${this.skipsTable}_tenant_idx
-        ON ${this.skipsTable} (tenant_id, skipped_at DESC)
-      `);
+      await initMemoryConsolidationScannerTables(client, {
+        consumers: this.consumersTable,
+        skips: this.skipsTable,
+      });
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.stateTable} (
           tenant_id TEXT NOT NULL,
@@ -202,6 +187,14 @@ export class PgMemoryConsolidationStore {
       [consumerName],
     );
     return res.rows[0] ? Number(res.rows[0].last_global_sequence) : 0;
+  }
+
+  getScannerStatus(consumerName: string): Promise<MemoryConsolidationScannerStatus> {
+    return readMemoryConsolidationScannerStatus({
+      pool: this.pool,
+      consumerName,
+      tables: { events: this.eventsTable, consumers: this.consumersTable, skips: this.skipsTable },
+    });
   }
 
   async advanceConsumerCursor(consumerName: string, toGlobalSequence: number): Promise<void> {

@@ -208,6 +208,14 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return (await this.service()).moveTask(identity, taskId, input);
   }
 
+  async completeTask(
+    identity: TaskboardIdentity,
+    taskId: string,
+    input: TaskboardExpectedVersionInput,
+  ): Promise<TaskBoardTask> {
+    return (await this.service()).completeTask(identity, taskId, input);
+  }
+
   async archiveTask(
     identity: TaskboardIdentity,
     taskId: string,
@@ -395,25 +403,6 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     await this.init();
     if (!this.target.recordReviewedExecutionSubjectV2) throw new Error('Taskboard repository provider unavailable');
     return this.target.recordReviewedExecutionSubjectV2(identity, runId);
-  }
-
-  async mergeIntegrationAgentV2(
-    identity: TaskboardIdentity,
-    runId: string,
-  ): Promise<TaskBoardTask> {
-    await this.init();
-    if (!this.target.mergeIntegrationAgentV2) throw new Error('Taskboard integration Agent gateway unavailable');
-    return this.target.mergeIntegrationAgentV2(identity, runId);
-  }
-
-  async cleanupIntegrationAgentV2(
-    identity: TaskboardIdentity,
-    runId: string,
-    workspace: { id: string; root: string },
-  ): Promise<TaskBoardTask> {
-    await this.init();
-    if (!this.target.cleanupIntegrationAgentV2) throw new Error('Taskboard integration Agent cleanup unavailable');
-    return this.target.cleanupIntegrationAgentV2(identity, runId, workspace);
   }
 
   async claimIntegrationDispatchCandidatesV2(limit?: number): Promise<TaskboardIntegrationDispatchCandidate[]> {

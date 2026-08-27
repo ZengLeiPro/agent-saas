@@ -37,7 +37,8 @@ function props(overrides: Partial<ComponentProps<typeof TaskDetail>> = {}): Comp
   return {
     open: true, task: blockedTask, board: editableBoard, boardReadOnly: false, canTransitionTask: true,
     onOpenChange: vi.fn(), onTaskLoaded: vi.fn(), onUpdate: vi.fn(async (task) => task),
-    onMove: vi.fn(async (task) => task), onSetArchived: vi.fn(async (task) => task),
+    onMove: vi.fn(async (task) => task), onCompleteTask: vi.fn(async (task) => task),
+    onSetArchived: vi.fn(async (task) => task),
     onExecute: vi.fn(), onCommentsChanged: vi.fn(async () => undefined), ...overrides,
   };
 }
@@ -67,7 +68,7 @@ describe("TaskDetail CI 未配置闭环", () => {
     expect(onConfigureCiPolicy).toHaveBeenCalledOnce();
     await user.click(screen.getByRole("button", { name: "恢复任务并重新检查" }));
     await waitFor(() => expect(mocks.resumeTask).toHaveBeenCalledWith(
-      blockedTask.id, blockedTask.version, "CI 门禁已配置，恢复实施并重新检查当前精确 PR head", undefined,
+      blockedTask.id, blockedTask.version, "CI 门禁已配置，恢复实施并重新检查当前精确 PR head",
     ));
     expect(onExecute).toHaveBeenCalledWith(resumedTask, "work");
     expect(onTaskLoaded).toHaveBeenLastCalledWith(runningTask);

@@ -42,7 +42,7 @@ import {
   shouldAcceptSessionEvent,
 } from "@/lib/queueConsistency";
 export type { QueuedInterjection } from "@/lib/interjectionConsumption";
-import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, replaceSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl, buildTenantAdminUrl, pushTenantAdminUrl, replaceTenantAdminUrl, normalizeTenantAdminSection, preserveScopeSearch, preserveSearchKeys, TENANT_ADMIN_SCOPE_KEYS, pushGovernanceUrl, replaceGovernanceUrl } from "@/lib/urlSync";
+import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, replaceSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl, buildTenantAdminUrl, pushTenantAdminUrl, replaceTenantAdminUrl, normalizeTenantAdminSection, preserveScopeSearch, preserveSearchKeys, TENANT_ADMIN_SCOPE_KEYS, pushGovernanceUrl, replaceGovernanceUrl, analysisHistoryStateForNavigation } from "@/lib/urlSync";
 import { buildGovernanceUrl, governanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
 import { registerUpdateGuard, registerBeforeReloadHook, maybeReloadOnPopstate } from "@/lib/swUpdate";
 import { clearRunShellApprovalStorage, runShellApprovalStorageKey } from "@/lib/runShellApprovalStorage";
@@ -68,7 +68,7 @@ import {
 } from '@agent/shared';
 import {
   activeRuntimePatchFromStreamStatus, fetchSessionStreamStatus, isActiveRuntimeStatus, isTerminalRuntimeStatus,
-  runtimeStatusFromSessionStatus, type LastRunState, type TerminalRuntimeStatus } from "./chatRuntimeHelpers";
+  reconnectAfterServerDrain, runtimeStatusFromSessionStatus, type LastRunState, type TerminalRuntimeStatus } from "./chatRuntimeHelpers";
 
 export type { ChatAppState, ChatAppStateOptions } from "./useChatAppStateTypes";
 import type {
@@ -1197,7 +1197,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (pendingCanonicalPath) {
       const current = `${window.location.pathname}${window.location.search}`;
       if (current !== pendingCanonicalPath) {
-        window.history.replaceState({}, '', pendingCanonicalPath);
+        window.history.replaceState(analysisHistoryStateForNavigation('replace', pendingCanonicalPath), '', pendingCanonicalPath);
       }
       setPendingCanonicalPath(null);
       return;
@@ -1366,8 +1366,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
 
     const existingRuntime = activeRunsBySession.current.get(sessionId);
-    if (isActiveRuntimeStatus(existingRuntime?.status) && existingRuntime?.runId && lastRunState.runId
-      && existingRuntime.runId !== lastRunState.runId) return;
+    if (existingRuntime && isActiveRuntimeStatus(existingRuntime.status)
+      && (!existingRuntime.runId || !lastRunState.runId || existingRuntime.runId !== lastRunState.runId)) return;
     const requestedRuntimeVersion = runtimeVersionBySessionRef.current.get(sessionId) ?? 0;
     const status = await fetchSessionStreamStatus(sessionId);
     if (!status || requestedRuntimeVersion !== (runtimeVersionBySessionRef.current.get(sessionId) ?? 0)) return;
@@ -2072,7 +2072,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         wsLatestSessionIdRef.current,
         immediateSessionIdRef.current,
       );
-
+      if (data.type === 'chat_rejected' && data.reason_code === 'server_draining') reconnectAfterServerDrain();
       // 新建会话 → replaceState（不创建历史记录）
       if (data.type === 'session' && 'sessionId' in data) {
         const authoritativeSessionId = (data as any).sessionId as string;

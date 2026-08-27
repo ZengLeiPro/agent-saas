@@ -76,22 +76,26 @@ describe('taskboard V2 contracts', () => {
     })).toBe('task/review');
   });
 
-  it('derives work, review and merge duties from one structured workflow contract', () => {
+  it('keeps Delivery Work/Review contracts while Integration uses one autonomous work contract', () => {
     const work = resolveWorkflowContract(task, 'work');
     const review = resolveWorkflowContract({ ...task, status: 'in_review' }, 'review');
-    const merge = resolveWorkflowContract({
+    const integration = resolveWorkflowContract({
       ...task,
       kind: 'integration',
       workflowVersion: 3,
-      status: 'ready_to_merge',
-    }, 'merge');
+      status: 'in_progress',
+    }, 'work');
 
     expect(work.allowedStatuses).toEqual(['in_review', 'blocked']);
     expect(review.allowedStatuses).toEqual(['ready_to_merge', 'todo', 'in_review', 'blocked']);
-    expect(merge.capabilities).toMatchObject({ mergeIntegrationAgent: true, cleanupIntegrationAgent: true });
+    expect(integration).toMatchObject({
+      purpose: 'work',
+      capabilities: { merge: true },
+      allowedStatuses: ['done', 'blocked'],
+    });
   });
 
-  it('resolves native Integration Agent work and ready_to_merge contracts without Candidate state', async () => {
+  it('resolves only the native Integration Agent work contract', async () => {
     const query = vi.fn();
     const work = await resolveExecutionContextWorkflowContract(
       { integrationSourcesTable: 'runtime_taskboard_integration_sources' },
@@ -99,19 +103,15 @@ describe('taskboard V2 contracts', () => {
       { ...task, kind: 'integration', status: 'in_progress', workflowVersion: 3 },
       'work',
     );
-    const merge = await resolveExecutionContextWorkflowContract(
-      { integrationSourcesTable: 'runtime_taskboard_integration_sources' },
-      { query } as never,
+    expect(work).toMatchObject({
+      taskKind: 'integration', purpose: 'work',
+      capabilities: { merge: true },
+      allowedStatuses: ['done', 'blocked'],
+    });
+    expect(() => resolveWorkflowContract(
       { ...task, kind: 'integration', status: 'in_progress', workflowVersion: 3 },
       'merge',
-    );
-
-    expect(work).toMatchObject({ taskKind: 'integration', purpose: 'work' });
-    expect(merge).toMatchObject({
-      taskKind: 'integration', purpose: 'merge',
-      capabilities: { mergeIntegrationAgent: true },
-      allowedStatuses: ['in_progress', 'done', 'blocked'],
-    });
+    )).toThrowError(expect.objectContaining({ code: 'TASKBOARD_PURPOSE_INVALID' }));
     expect(query).not.toHaveBeenCalled();
   });
 
@@ -135,6 +135,15 @@ describe('taskboard V2 contracts', () => {
       integration_source_id: 'source-old', integration_task_id: 'integration-old', integration_state: 'canceled',
       created_at: task.createdAt, updated_at: task.updatedAt,
     })).toMatchObject({ mergeEligibility: 'eligible', integrationState: 'canceled' });
+  });
+
+  it('keeps an in-progress delivery branch out of manual integration selection', () => {
+    expect(rowToTask({
+      id: task.id, board_id: task.boardId, identifier: task.identifier, kind: 'delivery',
+      title: task.title, description: '', status: 'in_progress', priority: 'none', labels: [],
+      branch: 'feature/TASK-1', sort_order: 1, comment_count: 0, version: 2,
+      created_at: task.createdAt, updated_at: task.updatedAt,
+    })).toMatchObject({ mergeEligibility: 'not_applicable' });
   });
 
   it('keeps reviewed deliveries selectable after the stored CI inspection becomes old', () => {
@@ -197,11 +206,11 @@ describe('taskboard V2 contracts', () => {
     expect(ddl).toContain("trigger_mode IN ('scheduled','on_ready','manual')");
     expect(ddl).toContain("state NOT IN ('merged','canceled')");
     expect(ddl).toContain('provider_receipt JSONB');
-    expect(ddl).toContain('TASKBOARD_ACTIVE_PR_DUPLICATES');
-    expect(ddl).toContain('apr_uq');
+    expect(ddl).toContain('ALTER COLUMN provider_pull_request_id DROP NOT NULL');
+    expect(ddl).toContain('DROP INDEX IF EXISTS tb_sources_apr_uq');
+    expect(ddl).toContain('CREATE INDEX IF NOT EXISTS tb_sources_repository_pr_idx');
     expect(ddl).toContain("terminal_reason_code=COALESCE(terminal_reason_code,'legacy_resolution_migrated')");
     expect(sql.at(-1)).toBe('COMMIT');
-    expect(sql.lastIndexOf('BEGIN')).toBeGreaterThan(sql.findIndex((statement) => statement.includes('TASKBOARD_ACTIVE_PR_DUPLICATES')));
     expect(ddl).toContain('DROP TABLE IF EXISTS tb_resolutions');
     expect(ddl).toContain('DROP COLUMN IF EXISTS resolution_id');
     expect(ddl).toContain('DROP COLUMN IF EXISTS resolved_at');

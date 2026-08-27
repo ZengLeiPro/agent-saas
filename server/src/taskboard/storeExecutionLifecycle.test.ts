@@ -238,6 +238,46 @@ describe('claimExecution model consistency', () => {
     expect(client.query).toHaveBeenCalledWith(expect.stringContaining('FROM taskboard_agents'), [task.id]);
   });
 
+  it('validates the single v3 work Execution against the Integration merge-model configuration key', async () => {
+    const integrationTask: TaskBoardTask = {
+      ...task,
+      kind: 'integration',
+      workflowVersion: 3,
+      status: 'in_progress',
+    };
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('FROM taskboard_executions WHERE id=')) return { rows: [] };
+        if (sql.includes('AS merged')) return { rows: [{ merged: false }] };
+        if (sql.includes('SELECT integration_task_id FROM taskboard_agents')) return { rows: [{}] };
+        if (sql.includes('SELECT 1 WHERE EXISTS')) return { rows: [] };
+        throw new Error('passed Integration model check');
+      }),
+    };
+    const store = {
+      executionsTable: 'taskboard_executions',
+      continuationOutboxTable: 'taskboard_continuation_outbox',
+      integrationSourcesTable: 'taskboard_sources',
+      remediationAttemptsTable: 'taskboard_remediation_attempts',
+      requireTaskWithBoard: vi.fn(async () => ({
+        task: integrationTask,
+        boardModel: 'group-a/model-board',
+        boardStageModels: { work: 'group-a/model-work', merge: 'group-a/model-merge' },
+        boardOwnerUserId: identity.ownerUserId,
+        boardRole: 'owner',
+      })),
+      withTransaction: vi.fn(async (operation: (transaction: typeof client) => Promise<unknown>) => operation(client)),
+    } as unknown as PgTaskboardStore;
+    const input = claimInput();
+    input.configuredModelRef = 'group-a/model-merge';
+
+    await expect(claimExecution(store, identity, task.id, input)).rejects.toThrow('passed Integration model check');
+    input.configuredModelRef = 'group-a/model-work';
+    await expect(claimExecution(store, identity, task.id, input)).rejects.toMatchObject({
+      code: 'TASKBOARD_EXECUTION_MODEL_CHANGED',
+    });
+  });
+
   it('accepts the selected work-stage model while holding the board lock', async () => {
     const client = {
       query: vi.fn(async () => ({
@@ -368,9 +408,9 @@ describe('unresolvedExecutionRecovery', () => {
 
   it.each([
     ['work', 'in_progress'],
-    ['review', 'in_review'],
-    ['merge', 'ready_to_merge'],
-  ] as const)('keeps Agent-first %s runtime failures asynchronously dispatchable after the generic threshold', (purpose, status) => {
+    ['review', 'in_progress'],
+    ['merge', 'in_progress'],
+  ] as const)('normalizes historical Agent-first %s runtime failures into the single work stage', (purpose, status) => {
     expect(unresolvedExecutionRecovery(purpose, 'failed', 99, 1, { agentFirstIntegration: true }))
       .toEqual({ status, exhausted: false });
   });

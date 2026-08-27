@@ -248,6 +248,7 @@ import {
   createMemoryIndexService,
   loadSettingsEnv,
 } from './runtimeSetupHelpers.js';
+import { createMemoryConsolidationScannerStatusHandler } from './runtimeMemoryConsolidationStatus.js';
 // 公开契约类型已迁至 ./runtimeContracts.ts，这里按既有 import 路径继续对外转发。
 export type {
   AppRuntime,
@@ -1651,7 +1652,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     contextStore, assignments: assignmentStore, memberships: membershipStore, entitlements: entitlementStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, recallIdSigningKey: config.auth?.jwtSecret, sessionCatalog, sourceAuthorizationRegistry: contextSourceAuthorizationRegistry,
     memoryStore: memoryConsolidationStore, memoryIndexService: memoryIndexServiceRef.current, logger: { info: msg => serverLogger.info(msg), warn: msg => serverLogger.warn(msg) },
     additionalProviders: createDwsBusinessToolProviders({ agentCwd, accountStore: agentDwsAccountStore, assignmentStore, connectionStore: dwsConnectionStore, userStore, auditStore: governanceAuditStore,
-      isRequesterRuntimeEnabled: username => connectorConnectionStore.isRuntimeEnabled(username, 'dws'), sessionCatalog, resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured) }),
+      isRequesterRuntimeEnabled: username => connectorConnectionStore.isRuntimeEnabled(username, 'dws'), sessionCatalog, resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured), logger: serverLogger.child('DwsBusiness') }),
   });
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
     agentCwd, uploadManager,
@@ -2282,7 +2283,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       },
     } : {}),
     userStore,
-    tenantStore,
+    tenantStore, orgAgentStore,
     tokenUsageStore,
     skillConfigStore,
     skillMaterialization: skillMaterializationService,
@@ -2388,10 +2389,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       dispatch: billedRunDispatch,
       agentCwd,
       getConfig: resolveMemoryConsolidationConfig,
-      logger: {
-        info: (msg) => consolidationLogger.info(msg),
-        warn: (msg) => consolidationLogger.warn(msg),
-      },
+      onScannerStatus: createMemoryConsolidationScannerStatusHandler({ alertNotifier, logger: consolidationLogger }),
+      logger: { info: (msg) => consolidationLogger.info(msg), warn: (msg) => consolidationLogger.warn(msg) },
     });
   }
 
@@ -2971,6 +2970,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     dingtalkDeps,
     cronRuntime,
     getMemoryIndexService: () => memoryIndexServiceRef.current,
+    getMemoryConsolidationScannerStatus: memoryConsolidationStore ? () => memoryConsolidationStore!.getScannerStatus('memory-consolidation-v1') : undefined,
     memoryIndexShutdown,
     auditProjectionShutdown,
     runtimeEventStoreShutdown,

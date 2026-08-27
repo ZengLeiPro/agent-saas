@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { z } from 'zod';
 
+import { isPlatformAdmin } from '../auth/types.js';
 import type {
   AuthorizedToolCall,
   ExecutionAuditRecorder,
@@ -113,6 +114,7 @@ export interface DwsBusinessToolProviderOptions {
     authToken: string;
     invokeTimeoutMs?: number;
   }) => Pick<ExecutionTransport, 'invoke'>;
+  logger?: { warn(message: string): void };
 }
 
 export class DwsBusinessToolProvider implements ToolProvider {
@@ -128,15 +130,17 @@ export class DwsBusinessToolProvider implements ToolProvider {
   ): Promise<ToolResult | undefined> {
     if (call.toolId !== dwsBusinessToolDescriptor.id) return undefined;
     const identity = context.channelContext.sessionOwner ?? context.channelContext.user;
+    const operator = context.channelContext.user ?? identity;
+    const workspaceIdentity = operator;
     const session = context.sessionId ? await this.options.sessionCatalog.get(context.sessionId) : null;
     const correlationId = context.invocationId ?? context.toolCallId ?? `${context.runId ?? context.sessionId ?? 'unbound'}:dws`;
-    const auditRejection = async (reason: string) => {
+    const auditRejection = async (reason: string, metadata?: Record<string, unknown>) => {
       await this.options.auditStore.append({
         correlationId,
-        actorType: identity?.id ? 'user' : 'service',
-        actorUserId: identity?.id ?? 'dws-business-broker',
-        actorPersona: identity?.id ? (identity.role === 'admin' ? 'org_admin' : 'member') : 'service',
-        ...(identity?.tenantId ? { actorTenantId: identity.tenantId } : {}),
+        actorType: operator?.id ? 'user' : 'service',
+        actorUserId: operator?.id ?? 'dws-business-broker',
+        actorPersona: operator?.id ? (operator.role === 'admin' ? 'org_admin' : 'member') : 'service',
+        ...(operator?.tenantId ? { actorTenantId: operator.tenantId } : {}),
         action: 'dws.business.rejected',
         targetType: 'org_agent',
         targetId: session?.orgAgentId ?? 'unbound',
@@ -144,7 +148,14 @@ export class DwsBusinessToolProvider implements ToolProvider {
         purpose: 'persist rejected DWS business broker call',
         reason,
         result: 'failed',
-        metadata: { sessionBound: Boolean(session?.orgAgentId) },
+        metadata: {
+          sessionBound: Boolean(session?.orgAgentId),
+          ...(identity?.id ? { sessionOwnerUserId: identity.id } : {}),
+          ...(identity?.tenantId ? { sessionOwnerTenantId: identity.tenantId } : {}),
+          ...(operator?.id ? { operatorUserId: operator.id } : {}),
+          ...(operator?.tenantId ? { operatorTenantId: operator.tenantId } : {}),
+          ...metadata,
+        },
       });
     };
     const parsed = businessInputSchema.safeParse(call.input);
@@ -153,18 +164,53 @@ export class DwsBusinessToolProvider implements ToolProvider {
       throw new Error('DWS Broker 输入格式无效');
     }
     const input = parsed.data;
-    if (!identity?.id || !identity.tenantId || !context.sessionId) {
+    if (!identity?.id || !identity.tenantId || !operator?.id || !operator.tenantId || !context.sessionId) {
       await auditRejection('DWS_BUSINESS_SUBJECT_MISSING');
       throw new Error('DWS Broker 缺少可信请求者或 Session 身份');
     }
-    if (!session?.orgAgentId
-      || session.userId !== identity.id
-      || session.tenantId !== identity.tenantId
-      || context.workspace.userId !== identity.id
-      || (context.workspace.tenantId && context.workspace.tenantId !== identity.tenantId)) {
-      await auditRejection('DWS_BUSINESS_SUBJECT_MISMATCH');
-      throw new Error('DWS Broker 请求者、Session 或组织 Agent 绑定不一致');
+    const operatorIsPlatformAdmin = isPlatformAdmin({
+      sub: operator.id,
+      username: operator.username,
+      role: operator.role,
+      tenantId: operator.tenantId,
+    });
+    const operatorCanActForSessionOwner = operator.id === identity.id
+      || (operator.role === 'admin' && operator.tenantId === identity.tenantId)
+      || operatorIsPlatformAdmin;
+    const mismatchFields = [
+      ...(!operatorCanActForSessionOwner ? ['operator.sessionOwnerTenantScope'] : []),
+      ...(!session?.orgAgentId ? ['session.orgAgentId'] : []),
+      ...(session?.userId !== identity.id ? ['session.userId'] : []),
+      ...(session?.tenantId !== identity.tenantId ? ['session.tenantId'] : []),
+      ...(context.workspace.userId !== workspaceIdentity?.id ? ['workspace.userId'] : []),
+      ...(context.workspace.tenantId && context.workspace.tenantId !== workspaceIdentity?.tenantId
+        ? ['workspace.tenantId']
+        : []),
+    ];
+    if (mismatchFields.length > 0) {
+      const cronSessionUnbound = mismatchFields.length === 1
+        && mismatchFields[0] === 'session.orgAgentId'
+        && session?.channel === 'cron';
+      const diagnostic = {
+        mismatchFields,
+        requesterUserId: identity.id,
+        requesterTenantId: identity.tenantId,
+        operatorUserId: operator?.id,
+        operatorTenantId: operator?.tenantId,
+        operatorRole: operator?.role,
+        sessionUserId: session?.userId,
+        sessionTenantId: session?.tenantId,
+        sessionOrgAgentId: session?.orgAgentId,
+        workspaceUserId: context.workspace.userId,
+        workspaceTenantId: context.workspace.tenantId,
+      };
+      this.options.logger?.warn(`DWS business subject mismatch ${JSON.stringify(diagnostic)}`);
+      await auditRejection('DWS_BUSINESS_SUBJECT_MISMATCH', diagnostic);
+      throw new Error(cronSessionUnbound
+        ? '此定时任务未绑定企业专家，无法使用 DWS Broker；请在目标企业专家会话中重新创建该定时任务'
+        : `DWS Broker 会话绑定已失效（不一致项：${mismatchFields.join('、')}），请重新打开当前会话后重试`);
     }
+    if (!session?.orgAgentId) throw new Error('DWS Broker 会话绑定已失效，请重新打开当前会话后重试');
     let command: ClassifiedCommand;
     try {
       command = classifyCommand(input.args);
@@ -198,9 +244,9 @@ export class DwsBusinessToolProvider implements ToolProvider {
     const auditBase = {
       correlationId,
       actorType: 'user' as const,
-      actorUserId: identity.id,
-      actorPersona: identity.role === 'admin' ? 'org_admin' as const : 'member' as const,
-      actorTenantId: identity.tenantId,
+      actorUserId: operator.id,
+      actorPersona: operator.role === 'admin' ? 'org_admin' as const : 'member' as const,
+      actorTenantId: operator.tenantId,
       action: `dws.business.${command.risk}`,
       targetType: 'org_agent',
       targetId: session.orgAgentId,
@@ -211,6 +257,11 @@ export class DwsBusinessToolProvider implements ToolProvider {
         commandPath: command.commandPath,
         credentialMode: input.credentialMode,
         sessionBound: true,
+        sessionOwnerUserId: identity.id,
+        sessionOwnerTenantId: identity.tenantId,
+        operatorUserId: operator.id,
+        operatorTenantId: operator.tenantId,
+        operatorRole: operator.role,
         ...(delegation ? {
           delegationResourceId: delegation.resourceId,
           delegationBindingId: delegation.bindingId,
@@ -410,9 +461,11 @@ function classifyCommand(args: string[]): ClassifiedCommand {
   if (!ALLOWED_MODULES.has(module)) throw new Error('DWS 模块未登记或不允许由 Broker 执行');
   const firstFlagIndex = args.findIndex(token => token.startsWith('-'));
   const commandPath = args.slice(0, firstFlagIndex < 0 ? args.length : firstFlagIndex);
-  const pathTokens = commandPath.flatMap(token => token.toLowerCase().split('-').filter(Boolean));
-  const actionTokens = commandPath.at(-1)!.toLowerCase().split('-').filter(Boolean);
-  const flagNameTokens = args.filter(token => token.startsWith('-'))
+  const pathTokens = commandPath.flatMap(token => token.toLowerCase().replace(/^\+/, '').split('-').filter(Boolean));
+  const normalizedAction = commandPath.at(-1)!.toLowerCase().replace(/^\+/, '');
+  const actionTokens = [normalizedAction, ...normalizedAction.split('-')].filter(Boolean);
+  const trailingArgs = firstFlagIndex < 0 ? [] : args.slice(firstFlagIndex);
+  const flagNameTokens = trailingArgs.filter(token => token.startsWith('-'))
     .flatMap(token => token.split('=', 1)[0]!.toLowerCase().split('-').filter(Boolean));
   if ([...pathTokens, ...flagNameTokens].some(token => DESTRUCTIVE_VERBS.has(token))) {
     throw new Error('DWS 破坏性或高影响动作本阶段未开放');
@@ -421,6 +474,9 @@ function classifyCommand(args: string[]): ClassifiedCommand {
     throw new Error('DWS 命令超出业务 Broker 边界');
   }
   const normalizedCommandPath = commandPath.map(token => token.toLowerCase()).join('.');
+  if (trailingArgs.length > 0 && trailingArgs.every(token => token === '--help' || token === '-h')) {
+    return { module, commandPath: normalizedCommandPath, risk: 'read' };
+  }
   if (actionTokens.some(token => WRITE_VERBS.has(token))) {
     return { module, commandPath: normalizedCommandPath, risk: 'write' };
   }

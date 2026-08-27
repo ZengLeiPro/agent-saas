@@ -15,10 +15,8 @@ export function reusableTaskboardSessionId(
   integrationDurableSessionId?: string,
 ): string | undefined {
   if (taskKind === 'integration') {
-    return purpose === 'review'
-      ? undefined
-      : integrationDurableSessionId
-        ?? executions.find((execution) => execution.purpose === 'work')?.sessionId;
+    return integrationDurableSessionId
+      ?? executions.find((execution) => execution.purpose === 'work')?.sessionId;
   }
   return purpose === 'work'
     ? executions.find((execution) => execution.purpose === 'work')?.sessionId
@@ -33,7 +31,7 @@ export function taskboardExecutionSessionDescriptor(
   const integrationAgentRuntime = taskKind === 'integration';
   return {
     sessionPrefix: integrationAgentRuntime
-      ? `taskboard-integration-${purpose}`
+      ? 'taskboard-integration'
       : purpose === 'review'
         ? 'taskboard-review'
         : purpose === 'merge'
@@ -41,7 +39,7 @@ export function taskboardExecutionSessionDescriptor(
           : 'taskboard',
     integrationMetadata: integrationAgentRuntime ? {
       taskboardIntegration: true,
-      taskboardIntegrationRole: purpose,
+      taskboardIntegrationRole: 'integration',
       taskboardIntegrationTaskId: taskId,
       taskboardWorkflowVersion: 3,
     } : {},

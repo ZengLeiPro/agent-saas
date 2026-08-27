@@ -68,14 +68,7 @@ export function unresolvedExecutionRecovery(
     // Runtime/network completion failures are not business decisions. Keep the
     // durable Agent stage dispatchable; the scheduler creates a fresh Execution
     // through the normal outbox instead of retrying synchronously.
-    return {
-      exhausted: false,
-      status: purpose === 'review'
-        ? 'in_review'
-        : purpose === 'merge'
-          ? 'ready_to_merge'
-          : 'in_progress',
-    };
+    return { exhausted: false, status: 'in_progress' };
   }
   const exhausted = completionStatus === 'failed' && failedCount >= Math.max(0, maxRetries);
   return {
@@ -249,12 +242,14 @@ export async function claimExecution(
       allowInitialInProgress: input.trigger === 'initial',
       facts,
     });
+    // Integration v3 has one work Execution, while the existing merge key remains its board/task model configuration slot.
+    const configurationPurpose = loaded.task.kind === 'integration' ? 'merge' : purpose;
     assertExecutionConfiguration(
       resolveExecutionModelRef(
         loaded.task.model,
         loaded.boardStageModels,
         loaded.boardModel,
-        purpose,
+        configurationPurpose,
         loaded.task.stageModels,
       ),
       input.configuredModelRef,

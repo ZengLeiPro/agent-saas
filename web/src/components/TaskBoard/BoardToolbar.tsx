@@ -4,7 +4,7 @@ import {
   type TaskBoard,
   type TaskBoardPriority,
 } from "@agent/shared";
-import { Archive, ArchiveRestore, MoreHorizontal, Plus, Search } from "lucide-react";
+import { Archive, ArchiveRestore, GripVertical, MoreHorizontal, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -74,13 +74,13 @@ export function BoardToolbar({
   const orderedBoards = orderBoards(boards, boardOrder);
   const readOnly = !!board.archivedAt;
 
-  const handleBoardDragStart = (event: DragEvent<HTMLDivElement>, boardId: string) => {
+  const handleBoardDragStart = (event: DragEvent<HTMLElement>, boardId: string) => {
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", boardId);
     setDraggedBoardId(boardId);
   };
 
-  const handleBoardDragOver = (event: DragEvent<HTMLDivElement>) => {
+  const handleBoardDragOver = (event: DragEvent<HTMLElement>) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
   };
@@ -115,14 +115,23 @@ export function BoardToolbar({
               <SelectItem
                 key={item.id}
                 value={item.id}
-                draggable
-                title="拖动调整看板顺序（仅保存在本浏览器）"
-                onDragStart={(event) => handleBoardDragStart(event, item.id)}
+                indicatorPosition="end"
                 onDragOver={handleBoardDragOver}
                 onDrop={(event) => handleBoardDrop(event, item.id)}
-                onDragEnd={() => setDraggedBoardId(null)}
               >
-                {item.name}{item.visibility === "organization" ? "（组织）" : "（个人）"}{item.archivedAt ? "（已归档）" : ""}
+                <span className="flex items-center gap-2">
+                  <span
+                    data-board-drag-handle
+                    draggable
+                    className="cursor-grab text-muted-foreground active:cursor-grabbing"
+                    title="拖动调整看板顺序（仅保存在本浏览器）"
+                    onDragStart={(event) => handleBoardDragStart(event, item.id)}
+                    onDragEnd={() => setDraggedBoardId(null)}
+                  >
+                    <GripVertical className="size-4" aria-hidden="true" />
+                  </span>
+                  <span>{item.name}{item.visibility === "organization" ? "（组织）" : "（个人）"}{item.archivedAt ? "（已归档）" : ""}</span>
+                </span>
               </SelectItem>
             ))}
           </SelectContent>

@@ -250,7 +250,10 @@ export function makeRig(
       return cancelled;
     }),
   };
-  const runStore = { get: vi.fn(async (): Promise<RunRecord | null> => null) };
+  const runStore = {
+    get: vi.fn(async (): Promise<RunRecord | null> => null),
+    hasTaskboardSessionActivity: vi.fn(async (): Promise<boolean> => false),
+  };
   const sessionCatalog = {
     upsert: vi.fn(async () => undefined),
     ensure: vi.fn(async () => undefined),

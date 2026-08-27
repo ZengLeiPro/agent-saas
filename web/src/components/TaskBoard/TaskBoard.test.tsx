@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   refreshTasks: vi.fn(async () => undefined),
   addTask: vi.fn(),
   updateTask: vi.fn(),
+  completeTask: vi.fn(),
   setArchived: vi.fn(),
   executeTask: vi.fn(),
   optimisticMove: vi.fn(),
@@ -44,6 +45,7 @@ vi.mock("./hooks", () => ({
     refresh: mocks.refreshTasks,
     addTask: mocks.addTask,
     updateTask: mocks.updateTask,
+    completeTask: mocks.completeTask,
     setArchived: mocks.setArchived,
     executeTask: mocks.executeTask,
     optimisticMove: mocks.optimisticMove,
@@ -206,7 +208,7 @@ describe("TaskBoardView", () => {
     expect(screen.queryByRole("button", { name: /TASK-2/ })).toBeNull();
   }, 15_000);
 
-  it("可以拖动看板下拉选项排序，并将顺序保存在浏览器本地", async () => {
+  it("可以将看板下拉选项向上拖动，并将顺序保存在浏览器本地", async () => {
     const user = userEvent.setup();
     const view = render(<TaskBoardView />);
     const trigger = screen.getByRole("combobox", { name: "选择看板" });
@@ -214,13 +216,53 @@ describe("TaskBoardView", () => {
 
     const source = screen.getByRole("option", { name: "市场事项（个人）" });
     const target = screen.getByRole("option", { name: "产品研发（个人）" });
+    const sourceHandle = within(source).getByTitle("拖动调整看板顺序（仅保存在本浏览器）");
+    expect(source.getAttribute("draggable")).toBeNull();
+    expect(sourceHandle.getAttribute("draggable")).toBe("true");
+    const indicator = source.querySelector("[data-select-item-indicator]");
+    expect(source.querySelector("[data-board-drag-handle]")).toBe(sourceHandle);
+    expect(indicator?.classList.contains("right-2")).toBe(true);
+
     const dataTransfer = {
       effectAllowed: "move",
       dropEffect: "none",
       setData: vi.fn(),
       getData: vi.fn(() => "board-2"),
     };
-    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.dragStart(sourceHandle, { dataTransfer });
+    fireEvent.dragOver(target, { dataTransfer });
+    fireEvent.drop(target, { dataTransfer });
+
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "市场事项（个人）",
+      "产品研发（个人）",
+    ]);
+    expect(window.localStorage.getItem("taskboard:board-order")).toBe('["board-2","board-1"]');
+
+    view.unmount();
+    render(<TaskBoardView />);
+    await user.click(screen.getByRole("combobox", { name: "选择看板" }));
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "市场事项（个人）",
+      "产品研发（个人）",
+    ]);
+  });
+
+  it("可以将看板下拉选项向下拖动，并将顺序保存在浏览器本地", async () => {
+    const user = userEvent.setup();
+    const view = render(<TaskBoardView />);
+    await user.click(screen.getByRole("combobox", { name: "选择看板" }));
+
+    const source = screen.getByRole("option", { name: "产品研发（个人）" });
+    const target = screen.getByRole("option", { name: "市场事项（个人）" });
+    const sourceHandle = within(source).getByTitle("拖动调整看板顺序（仅保存在本浏览器）");
+    const dataTransfer = {
+      effectAllowed: "move",
+      dropEffect: "none",
+      setData: vi.fn(),
+      getData: vi.fn(() => "board-1"),
+    };
+    fireEvent.dragStart(sourceHandle, { dataTransfer });
     fireEvent.dragOver(target, { dataTransfer });
     fireEvent.drop(target, { dataTransfer });
 

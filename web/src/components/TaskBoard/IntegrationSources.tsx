@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TaskBoardIntegrationSource } from "@agent/shared/types/taskboard";
 import { CircleCheck, GitCommitHorizontal, LoaderCircle, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import * as api from "./api";
 import { INTEGRATION_SOURCE_STATE_LABELS } from "./constants";
 
@@ -50,7 +49,7 @@ export function useIntegrationSources(taskId: string | null, active = true) {
 export function IntegrationCardSummary({ taskId }: { taskId: string }) {
   const { sources, loading, error } = useIntegrationSources(taskId);
   const merged = sources.filter((source) => source.state === "merged").length;
-  const problem = sources.find((source) => source.lastError);
+  const problem = sources.find((source) => source.state === "needs_human" && source.lastError);
   const activeStates = useMemo(() => Array.from(new Set(
     sources.filter((source) => source.state !== "merged").map((source) => source.state),
   )), [sources]);
@@ -75,14 +74,10 @@ export function IntegrationCardSummary({ taskId }: { taskId: string }) {
 export function IntegrationSourceDetails({
   taskId,
   state,
-  selectedSourceIds,
-  onSourceSelectionChange,
   onNavigateTask,
 }: {
   taskId: string;
   state?: ReturnType<typeof useIntegrationSources>;
-  selectedSourceIds?: ReadonlySet<string>;
-  onSourceSelectionChange?: (sourceId: string, selected: boolean) => void;
   onNavigateTask?: (taskId: string) => void;
 }) {
   const internal = useIntegrationSources(taskId, !state);
@@ -94,7 +89,7 @@ export function IntegrationSourceDetails({
       <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold">集成来源</h3>
-          <p className="mt-1 text-xs text-muted-foreground">按已复核的 PR 身份逐项校验、合并；失败来源不会掩盖其他来源进度。</p>
+          <p className="mt-1 text-xs text-muted-foreground">本批次输入摘要；具体组合、修复和合并由同一个 Integration Agent 自主处理。</p>
         </div>
         <Badge variant="outline">{merged}/{sources.length} 已合并</Badge>
       </div>
@@ -103,13 +98,6 @@ export function IntegrationSourceDetails({
         <article key={source.id} className="space-y-2 rounded-md border bg-background/80 p-3 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
-              {source.state === "needs_human" && onSourceSelectionChange ? (
-                <Checkbox
-                  aria-label={`选择恢复来源 ${source.deliveryTaskIdentifier ?? source.deliveryTaskId}`}
-                  checked={selectedSourceIds?.has(source.id) ?? false}
-                  onCheckedChange={(checked) => onSourceSelectionChange(source.id, checked === true)}
-                />
-              ) : null}
               <button
                 type="button"
                 className="min-w-0 truncate text-left font-medium text-primary hover:underline"
@@ -122,37 +110,15 @@ export function IntegrationSourceDetails({
             </div>
             <Badge variant={source.state === "merged" ? "secondary" : "outline"}>{INTEGRATION_SOURCE_STATE_LABELS[source.state]}</Badge>
           </div>
-          <dl className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
-            <div><dt className="inline">PR：</dt><dd className="inline font-mono">{source.providerPullRequestId}</dd></div>
-            <div><dt className="inline">尝试：</dt><dd className="inline">{source.attemptCount} 次</dd></div>
-            <div className="sm:col-span-2"><dt className="inline">复核对象：</dt><dd className="inline break-all font-mono">{source.reviewedSubjectDigest}</dd></div>
-          </dl>
-          {source.remediationAttempts?.length ? (
-            <div className="text-xs text-muted-foreground">
-              <span className="font-medium">修复历史：</span>
-              {source.remediationAttempts.map((attempt) => {
-                const stateLabel = attempt.state === "active" ? "当前轮"
-                  : attempt.state === "resolved" ? "已验收"
-                    : attempt.state === "superseded" ? "已被后续轮次替代" : "已取消";
-                return (
-                  <button
-                    key={attempt.id}
-                    type="button"
-                    className="ml-2 text-primary hover:underline disabled:text-muted-foreground disabled:no-underline"
-                    onClick={() => onNavigateTask?.(attempt.remediationTaskId)}
-                    disabled={!onNavigateTask}
-                  >
-                    R{attempt.round} · {attempt.remediationTaskIdentifier ?? attempt.remediationTaskId}
-                    {attempt.remediationTaskTitle ? ` · ${attempt.remediationTaskTitle}` : ""} · {stateLabel}
-                  </button>
-                );
-              })}
-            </div>
+          {source.providerPullRequestId ? (
+            <dl className="text-xs text-muted-foreground">
+              <div><dt className="inline">PR：</dt><dd className="inline font-mono">{source.providerPullRequestId}</dd></div>
+            </dl>
           ) : null}
           {source.mergedCommitOid ? (
             <p className="flex items-center gap-1 break-all text-xs text-emerald-700 dark:text-emerald-400"><GitCommitHorizontal className="size-3.5 shrink-0" />merged commit {source.mergedCommitOid}</p>
           ) : null}
-          {source.lastError ? <p className="whitespace-pre-wrap text-xs text-destructive"><TriangleAlert className="mr-1 inline size-3.5" />{source.lastError}</p> : null}
+          {source.state === "needs_human" && source.lastError ? <p className="whitespace-pre-wrap text-xs text-destructive"><TriangleAlert className="mr-1 inline size-3.5" />{source.lastError}</p> : null}
           {source.state === "merged" && !source.lastError ? <p className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400"><CircleCheck className="size-3.5" />来源已完成</p> : null}
         </article>
       ))}

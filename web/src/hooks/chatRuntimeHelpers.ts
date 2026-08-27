@@ -75,6 +75,16 @@ export function runtimeStatusFromSessionStatus(
   }
 }
 
+let serverDrainReconnect: Promise<void> | null = null;
+
+/** A draining instance keeps existing sockets alive, so move retries onto a fresh connection. */
+export function reconnectAfterServerDrain(): void {
+  if (serverDrainReconnect) return;
+  serverDrainReconnect = wsClient.forceReconnect()
+    .catch(() => {})
+    .finally(() => { serverDrainReconnect = null; });
+}
+
 /** Deduplicate reconnect resumes emitted by this hook's two connection listeners. */
 const RESUME_DEDUP_MS = 2000;
 let lastResumeSessionId = "";

@@ -61,19 +61,24 @@ describe('integration cancellation convergence', () => {
     expect(query.mock.calls.some(([sql]) => String(sql).includes('SELECT 1 FROM executions'))).toBe(false);
   });
 
-  it('does not cancel an Integration Agent while a Provider merge result is in flight', async () => {
+  it('cancels without relying on obsolete Provider merge-in-flight state', async () => {
     const query = vi.fn(async (sql: string, _params?: unknown[]) => {
       if (sql.includes('JOIN boards b') && sql.includes('FOR UPDATE OF t')) return { rows: [loadedTask('in_progress')] };
       if (sql.includes('FROM integration_agents') && sql.includes('FOR UPDATE')) {
-        return { rows: [{ repository_id: 'repo-1', status: 'ready_to_merge', merge_receipt: null, merge_in_flight_execution_id: 'merge-1' }] };
+        return { rows: [{ repository_id: 'repo-1' }] };
       }
+      if (sql.includes("UPDATE executions") && sql.includes("SET status='cancelled'")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes('FROM tasks t WHERE t.id=$1')) return { rows: [taskRow('canceled')] };
       return { rows: [] };
     });
     const client = { query, release: vi.fn() };
 
     await expect(cancelIntegrationTask(options(client), identity, 'integration-1', { expectedVersion: 1 }))
-      .rejects.toMatchObject({ code: 'TASKBOARD_PROVIDER_RESULT_UNKNOWN' });
-    expect(query.mock.calls.some(([sql]) => String(sql).includes("UPDATE executions") && String(sql).includes("SET status='cancelled'"))).toBe(false);
+      .resolves.toMatchObject({ status: 'canceled' });
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("UPDATE executions") && String(sql).includes("SET status='cancelled'"))).toBe(true);
+    expect(query.mock.calls.some(([sql]) => String(sql).includes('merge_in_flight_execution_id'))).toBe(false);
   });
 
   it('fences active workflow v2 executions through the cancellation outbox', async () => {

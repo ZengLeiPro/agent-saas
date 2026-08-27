@@ -11,6 +11,7 @@ import { Pool } from 'pg';
 
 import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import { CONSOLIDATION_RETRY_BACKOFF_MINUTES } from '../memory/consolidation/types.js';
+import { PgEventStore } from '../runtime/pgEventStore.js';
 
 const connectionString = process.env.MEMORY_CONSOLIDATION_TEST_PG_URL;
 const describePg = connectionString ? describe : describe.skip;
@@ -18,6 +19,7 @@ const prefix = `mc_test_${randomUUID().replaceAll('-', '_').slice(0, 12)}`;
 const store = connectionString
   ? new PgMemoryConsolidationStore({ connectionString, tablePrefix: prefix })
   : null;
+const eventStore = connectionString ? new PgEventStore({ connectionString, tablePrefix: prefix }) : null;
 const verificationPool = connectionString ? new Pool({ connectionString, max: 1 }) : null;
 
 const BASE = { tenantId: 't1', userId: 'u1', workspaceId: 'w1', sessionId: 's1' };
@@ -25,12 +27,14 @@ const now = (): string => new Date().toISOString();
 
 describePg('PgMemoryConsolidationStore contract', () => {
   beforeAll(async () => {
+    await eventStore!.init();
     await store!.init();
     await store!.init(); // 幂等 init（advisory lock 串行化）
   });
 
   afterAll(async () => {
     await store?.close();
+    await eventStore?.close();
     await verificationPool?.end();
   });
 
@@ -74,6 +78,36 @@ describePg('PgMemoryConsolidationStore contract', () => {
     });
     expect(result.rows[0]!.skipped_at.getTime()).toBeGreaterThanOrEqual(result.rows[0]!.first_seen_at.getTime());
     expect(await store!.getConsumerCursor('c1')).toBe(101);
+  });
+
+  it('scanner 状态展示 cursor lag、最老边界和 24 小时分类隔离计数', async () => {
+    await eventStore!.append({
+      type: 'run_started', runId: 'status-run', sessionId: 'taskboard-integration-status', model: 'm', channel: 'web',
+    } as never, { tenantId: 't1' });
+    await eventStore!.append({
+      type: 'run_finished', runId: 'status-run', sessionId: 'taskboard-integration-status', status: 'completed',
+    } as never, { tenantId: 't1' });
+    const boundaries = await verificationPool!.query<{ global_sequence: string }>(
+      `SELECT global_sequence FROM ${prefix}_events
+       WHERE event_type IN ('run_started', 'run_finished')
+       ORDER BY global_sequence ASC`,
+    );
+    const [first, second] = boundaries.rows.slice(-2).map((row) => Number(row.global_sequence));
+    await store!.quarantineEnvelopeAndAdvanceCursor({
+      consumerName: 'c-status', globalSequence: first!, tenantId: 't1',
+      sessionId: 'taskboard-integration-status', eventType: 'run_started',
+      reason: 'internal_session_taskboard',
+    });
+
+    const status = await store!.getScannerStatus('c-status');
+
+    expect(status.cursor).toBe(first);
+    expect(status.latestBoundarySequence).toBe(second);
+    expect(status.sequenceLag).toBe(second! - first!);
+    expect(status.oldestPendingBoundarySequence).toBe(second);
+    expect(status.oldestPendingAgeMs).toBeGreaterThanOrEqual(0);
+    expect(status.skips24hByReason.internal_session_taskboard).toBe(1);
+    expect(status.latestSkipAt).toBeTruthy();
   });
 
   it('run_started 清 due 并登记 active；eligible run_finished 提 target 并设 due', async () => {

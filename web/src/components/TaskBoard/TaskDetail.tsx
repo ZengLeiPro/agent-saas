@@ -46,6 +46,7 @@ import {
 import { IntegrationSourceDetails, useIntegrationSources } from "./IntegrationSources";
 import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from "./TaskAttachments";
+import { canManuallyCompleteTask, TaskCompletionButton } from "./TaskCompletionButton";
 import { TaskDetailComments, EXECUTION_PURPOSE_LABELS } from "./TaskDetailComments";
 import { useTaskComments, useTaskExecutions } from "./hooks";
 
@@ -95,6 +96,7 @@ interface TaskDetailProps {
     input: Omit<TaskBoardTaskPatchInput, "expectedVersion">,
   ) => Promise<TaskBoardTask>;
   onMove: (task: TaskBoardTask, status: TaskBoardStatus) => Promise<TaskBoardTask>;
+  onCompleteTask: (task: TaskBoardTask) => Promise<TaskBoardTask>;
   onSetArchived: (task: TaskBoardTask, archived: boolean) => Promise<TaskBoardTask>;
   onDeleteTask?: (task: TaskBoardTask) => Promise<TaskBoardTask>;
   onExecute: (
@@ -125,6 +127,7 @@ export function TaskDetail({
   onConfigureCiPolicy,
   onUpdate,
   onMove,
+  onCompleteTask,
   onSetArchived,
   onDeleteTask,
   onExecute,
@@ -142,7 +145,6 @@ export function TaskDetail({
   const [watching, setWatching] = useState(false);
   const [watchLoading, setWatchLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedResumeSourceIds, setSelectedResumeSourceIds] = useState<Set<string>>(new Set());
   const taskAttachments = useFileUpload("taskboard");
   const commentAttachments = useFileUpload("taskboard");
   const draftTaskIdRef = useRef<string | null>(null);
@@ -161,6 +163,7 @@ export function TaskDetail({
     executions,
     loading: executionsLoading,
     error: executionsError,
+    ready: executionsReady,
     refresh: refreshExecutions,
   } = useTaskExecutions(open && task ? task.id : null, active && open);
   const integrationSourcesState = useIntegrationSources(
@@ -192,7 +195,6 @@ export function TaskDetail({
       detailRequestRef.current += 1;
       refreshedExecutionRef.current = null;
       setWatching(task?.watched === true);
-      setSelectedResumeSourceIds(new Set());
       setExecutionStartedTaskId(null);
       setSaving(false);
     }
@@ -250,14 +252,19 @@ export function TaskDetail({
   const latestExecution = executions[0];
   const latestExecutionActive = Boolean(latestExecution && ACTIVE_EXECUTION_STATUSES.has(latestExecution.status));
   const executionActive = latestExecution
-    ? latestExecutionActive || latestExecution.continuationActive === true
+    ? latestExecutionActive
+      || latestExecution.continuationActive === true
+      || latestExecution.sessionActivityActive === true
     : false;
+  const executionStatusLabel = latestExecution?.sessionActivityActive && !latestExecutionActive
+    ? "主 Run 已结束 · 后台仍在执行"
+    : latestExecution ? EXECUTION_STATUS_LABELS[latestExecution.status] : "";
   const executionStarted = Boolean(
     taskId
     && (executionStartedTaskId === taskId || executions.some((item) => item.taskId === taskId)),
   );
   useEffect(() => {
-    if (latestExecution?.continuationActive) {
+    if (latestExecution?.continuationActive || latestExecution?.sessionActivityActive) {
       refreshedExecutionRef.current = null;
       return;
     }
@@ -303,20 +310,18 @@ export function TaskDetail({
       ? ["todo", "in_progress"].includes(currentTask?.status ?? "canceled")
       : ["todo", "in_review"].includes(currentTask?.status ?? "canceled")
         || (currentTask?.status === "in_progress" && !executionActive));
-  const isIntegrationV3 = taskKind === "integration" && currentTask?.workflowVersion === 3;
-  const canContinueCurrentTask = isIntegrationV3
+  const canContinueCurrentTask = taskKind === "integration"
     ? (!readOnly && canExecute && executionActive
-      && ["in_progress", "in_review"].includes(currentTask?.status ?? "canceled")
-      && (latestExecution?.purpose === "work" || latestExecution?.purpose === "review"))
+      && currentTask?.status === "in_progress" && latestExecution?.purpose === "work")
     : (canRunCurrentTask && currentTask?.status !== "in_progress")
-      || (!readOnly && canExecute && taskKind !== "integration"
-        && currentTask?.status === "in_progress" && executionActive);
+      || (!readOnly && canExecute && currentTask?.status === "in_progress" && executionActive);
   const canTransitionCurrentTask = Boolean(
     currentTask
     && !readOnly
     && canTransitionTask
     && TASKBOARD_STATUSES.some((status) => canUserTransitionTask(taskKind, currentTask.status, status)),
   );
+  const canCompleteCurrentTask = canManuallyCompleteTask(currentTask, readOnly, canTransitionTask, executionActive, executionsReady && !executionsLoading && !executionsError);
   const isCurrentOperation = (requestId: number, operationTaskId: string) => (
     requestId === detailRequestRef.current && operationTaskId === draftTaskIdRef.current
   );
@@ -396,6 +401,23 @@ export function TaskDetail({
     }
   };
 
+  const completeCurrentTask = async () => {
+    if (!currentTask || !canCompleteCurrentTask) return;
+    if (!window.confirm(`确认将任务“${currentTask.title || currentTask.identifier}”标记为已完成吗？完成后将结束当前任务工作流。`)) return;
+    const operationTask = currentTask; const requestId = ++detailRequestRef.current;
+    setSaving(true); setError(null);
+    try {
+      const next = await onCompleteTask(operationTask);
+      if (!isCurrentOperation(requestId, operationTask.id)) return;
+      setCurrentTask(next); mergeServerDraft(next); onTaskLoaded(next);
+    } catch (caught) {
+      if (!isCurrentOperation(requestId, operationTask.id)) return; useConflictCurrent(caught); void refreshExecutions();
+      setError(caught instanceof Error ? caught.message : "完成任务失败");
+    } finally {
+      if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
+    }
+  };
+
   const changeArchived = async () => {
     if (!currentTask || boardReadOnly || !canArchiveTask) return;
     const operationTask = currentTask;
@@ -455,21 +477,10 @@ export function TaskDetail({
 
   const resumeBlocked = async (preset?: { decision: string; startAfterResume?: boolean }) => {
     if (!currentTask || currentTask.status !== "blocked" || !canTransitionTask || executionActive) return;
-    const sourceIds = taskKind === "integration" && !isIntegrationV3
-      ? integrationSourcesState.sources
-        .filter((source) => source.state === "needs_human" && selectedResumeSourceIds.has(source.id))
-        .map((source) => source.id)
-      : undefined;
-    if (taskKind === "integration" && !isIntegrationV3 && !sourceIds?.length) {
-      setError("请先勾选至少一个要恢复的 needs_human 集成来源");
-      return;
-    }
     const decision = preset?.decision ?? window.prompt(
-      isIntegrationV3
+      taskKind === "integration"
         ? "请填写恢复 Integration Agent 的决策与后续要求"
-        : taskKind === "integration"
-          ? `请填写恢复 ${sourceIds!.length} 个阻塞来源的决策与后续要求`
-          : "请填写解除阻塞后的恢复决策与后续要求",
+        : "请填写解除阻塞后的恢复决策与后续要求",
     )?.trim();
     if (!decision) return;
     const operationTask = currentTask;
@@ -477,7 +488,7 @@ export function TaskDetail({
     setSaving(true);
     setError(null);
     try {
-      const resumed = await api.resumeTask(operationTask.id, operationTask.version, decision, sourceIds);
+      const resumed = await api.resumeTask(operationTask.id, operationTask.version, decision);
       if (!isCurrentOperation(requestId, operationTask.id)) return;
       const next = preset?.startAfterResume ? (await onExecute(resumed, "work")).task : resumed;
       if (!isCurrentOperation(requestId, operationTask.id)) return;
@@ -485,8 +496,7 @@ export function TaskDetail({
       mergeServerDraft(next);
       onTaskLoaded(next);
       if (taskKind === "integration") {
-        setSelectedResumeSourceIds(new Set());
-        await integrationSourcesState.refresh();
+          await integrationSourcesState.refresh();
       }
     } catch (caught) {
       if (!isCurrentOperation(requestId, operationTask.id)) return;
@@ -519,11 +529,11 @@ export function TaskDetail({
   };
 
   const startAgentExecution = async (purpose: TaskBoardExecutionPurpose) => {
-    const statusAllowed = purpose === "merge"
-      ? taskKind === "integration" && ["todo", "in_progress", "blocked"].includes(currentTask?.status ?? "")
+    const statusAllowed = taskKind === "integration"
+      ? purpose === "work" && ["todo", "in_progress"].includes(currentTask?.status ?? "")
       : purpose === "review"
-        ? taskKind !== "integration" && currentTask?.status === "in_review"
-        : taskKind !== "integration" && ["todo", "blocked", "in_progress"].includes(currentTask?.status ?? "");
+        ? currentTask?.status === "in_review"
+        : ["todo", "blocked", "in_progress"].includes(currentTask?.status ?? "");
     if (!currentTask || !canRunCurrentTask || !statusAllowed || executionActive) return;
     if (dirtyFieldsRef.current.size > 0) {
       setError("请先保存未提交的任务修改，再交给 Agent");
@@ -684,8 +694,8 @@ export function TaskDetail({
                 {latestExecution ? (
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                     <span>
-                      {latestExecution.purpose === "review" ? "独立复核" : latestExecution.purpose === "merge" ? "集成合并" : taskKind === "advisory" ? "分析/答复" : "实施"}
-                      ：{EXECUTION_STATUS_LABELS[latestExecution.status]}
+                      {taskKind === "integration" ? "集成执行" : latestExecution.purpose === "review" ? "独立复核" : taskKind === "advisory" ? "分析/答复" : "实施"}
+                      ：{executionStatusLabel}
                     </span>
                     <time>{new Date(latestExecution.updatedAt).toLocaleString("zh-CN")}</time>
                   </div>
@@ -693,8 +703,7 @@ export function TaskDetail({
                 {executionsError ? <p role="alert" className="text-xs text-destructive">{executionsError}</p> : null}
                 {latestExecution?.error ? <p className="whitespace-pre-wrap text-xs text-destructive">{latestExecution.error}</p> : null}
                 {canRunCurrentTask && (
-                  (taskKind === "integration" && currentTask.workflowVersion !== 3
-                    && ["todo", "in_progress"].includes(currentTask.status))
+                  (taskKind === "integration" && ["todo", "in_progress"].includes(currentTask.status))
                   || (taskKind !== "integration" && currentTask.status === "todo")
                   || (taskKind !== "integration" && currentTask.status === "in_review")
                   || (taskKind !== "integration" && currentTask.status === "in_progress" && !executionActive)
@@ -703,13 +712,13 @@ export function TaskDetail({
                     type="button"
                     size="sm"
                     onClick={() => void startAgentExecution(
-                      taskKind === "integration" ? "merge" : currentTask.status === "in_review" ? "review" : "work",
+                      taskKind === "integration" ? "work" : currentTask.status === "in_review" ? "review" : "work",
                     )}
                     disabled={saving || executionsLoading || executionActive}
                   >
                     {saving || executionActive ? <LoaderCircle className="animate-spin" /> : <Bot />}
                     {executionActive && latestExecution
-                      ? EXECUTION_STATUS_LABELS[latestExecution.status]
+                      ? executionStatusLabel
                       : taskKind === "integration" ? "继续集成"
                         : currentTask.status === "in_review" ? "独立复核"
                           : currentTask.status === "in_progress" ? "恢复实施"
@@ -717,16 +726,15 @@ export function TaskDetail({
                           : "开始实施"}
                   </Button>
                 ) : null}
-                {taskKind === "integration" && currentTask.workflowVersion === 3
-                  && !["done", "canceled"].includes(currentTask.status) ? (
-                    <p className="text-xs text-muted-foreground">
-                      Agent-first Integration v3 会按当前阶段自动恢复并持续推进 Work、Review 与合并；当前阶段：{STATUS_LABELS[currentTask.status]}。
-                    </p>
-                  ) : null}
+                {taskKind === "integration" && !["done", "canceled"].includes(currentTask.status) ? (
+                  <p className="text-xs text-muted-foreground">
+                    一个持久 Integration Agent 自主完成组合、GitHub 合并与清理；只有需要人工决定时才会阻塞。
+                  </p>
+                ) : null}
                 {currentTask.providerPullRequestId ? <p>PR：<span className="font-mono">{currentTask.providerPullRequestId}</span>{currentTask.pullRequestNumber ? `（#${currentTask.pullRequestNumber}）` : ""}</p> : null}
-                {currentTask.reviewedSubjectDigest ? <p className="break-all text-xs text-muted-foreground">已复核对象：<span className="font-mono">{currentTask.reviewedSubjectDigest}</span></p> : null}
+                {taskKind !== "integration" && currentTask.reviewedSubjectDigest ? <p className="break-all text-xs text-muted-foreground">已复核对象：<span className="font-mono">{currentTask.reviewedSubjectDigest}</span></p> : null}
                 {currentTask.mergedCommitOid ? <p className="flex items-center gap-1 break-all text-xs text-emerald-700 dark:text-emerald-400"><GitCommitHorizontal className="size-3.5 shrink-0" />merged commit {currentTask.mergedCommitOid}</p> : null}
-                {currentTask.providerCiStatus === "unconfigured" ? (
+                {taskKind !== "integration" && currentTask.providerCiStatus === "unconfigured" ? (
                   <div aria-label="CI 门禁未配置" className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
                     <p className="font-medium">CI 门禁未配置</p>
                     <p className="text-xs">GitHub required checks 与看板 fallback 均为空；系统已 fail-closed，不会把 observed optional checks 自动视为门禁。</p>
@@ -747,7 +755,7 @@ export function TaskDetail({
                     ) : null}
                   </div>
                 ) : null}
-                {currentTask.status === "blocked" && currentTask.providerCiStatus !== "unconfigured" ? (
+                {currentTask.status === "blocked" && (taskKind === "integration" || currentTask.providerCiStatus !== "unconfigured") ? (
                   <div className="space-y-2 text-amber-700 dark:text-amber-300">
                     <p>任务已阻塞；请查看最新执行错误或评论中的解除条件。</p>
                     {canTransitionTask ? (
@@ -756,11 +764,9 @@ export function TaskDetail({
                         size="sm"
                         variant="outline"
                         onClick={() => void resumeBlocked()}
-                        disabled={saving || executionActive || (taskKind === "integration" && !isIntegrationV3
-                          && (integrationSourcesState.loading || integrationSourcesState.error !== null
-                            || selectedResumeSourceIds.size === 0))}
+                        disabled={saving || executionActive}
                       >
-                        显式恢复{isIntegrationV3 ? " Integration Agent" : taskKind === "integration" ? "阻塞来源" : "任务"}
+                        恢复{taskKind === "integration" ? " Integration Agent" : "任务"}
                       </Button>
                     ) : null}
                   </div>
@@ -770,7 +776,7 @@ export function TaskDetail({
                     <p className="font-medium">最近恢复决策与后续要求</p>
                     <p className="whitespace-pre-wrap">{currentTask.resumeContext.decision}</p>
                     <p className="text-xs opacity-80">
-                      恢复目标：{currentTask.resumeContext.purpose === "review" ? "复核" : currentTask.resumeContext.purpose === "merge" ? "集成" : "实施"} Agent
+                      恢复目标：{taskKind === "integration" ? "集成" : currentTask.resumeContext.purpose === "review" ? "复核" : "实施"} Agent
                       {currentTask.resumeContext.sourceIds.length
                         ? ` · ${currentTask.resumeContext.sourceIds.length} 个来源`
                         : ""}
@@ -779,7 +785,9 @@ export function TaskDetail({
                     <p className="text-xs opacity-80">
                       {currentTask.resumeContext.consumedAt
                         ? `已交给 Agent · ${new Date(currentTask.resumeContext.consumedAt).toLocaleString("zh-CN")}`
-                        : "尚未交给 Agent，需另行启动"}
+                        : taskKind === "integration"
+                          ? "等待系统自动恢复同一个 Integration Agent"
+                          : "尚未交给 Agent，需另行启动"}
                     </p>
                   </div>
                 ) : null}
@@ -803,21 +811,12 @@ export function TaskDetail({
                     {currentTask.mergeEligibility === "claimed" ? "，不可重复选择。" : ""}
                   </p>
                 ) : null}
-                {currentTask.integrationState === "re_reviewing" ? <p>来源变更后正在重新复核已评审对象。</p> : null}
               </section>
 
               {taskKind === "integration" ? (
                 <IntegrationSourceDetails
                   taskId={currentTask.id}
                   state={integrationSourcesState}
-                  selectedSourceIds={selectedResumeSourceIds}
-                  onSourceSelectionChange={currentTask.status === "blocked" && canTransitionTask ? (sourceId, selected) => {
-                    setSelectedResumeSourceIds((previous) => {
-                      const next = new Set(previous);
-                      if (selected) next.add(sourceId); else next.delete(sourceId);
-                      return next;
-                    });
-                  } : undefined}
                   onNavigateTask={onNavigateTask}
                 />
               ) : null}
@@ -942,6 +941,7 @@ export function TaskDetail({
                       <CircleX />取消集成
                     </Button>
                   ) : null}
+                  <TaskCompletionButton visible={canCompleteCurrentTask} saving={saving} onComplete={() => void completeCurrentTask()} />
                   {!boardReadOnly && canArchiveTask ? (
                     <Button
                       type="button"

@@ -421,6 +421,7 @@ export interface TaskboardService {
     title: string,
   ): Promise<TaskBoardTask>;
   moveTask(identity: TaskboardIdentity, taskId: string, input: TaskBoardTaskMoveInput): Promise<TaskBoardTask>;
+  completeTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask>;
   archiveTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask>;
   restoreTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask>;
   deleteTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask>;
@@ -487,15 +488,6 @@ export interface TaskboardService {
   recordReviewedExecutionSubjectV2?(
     identity: TaskboardIdentity,
     runId: string,
-  ): Promise<TaskBoardTask>;
-  mergeIntegrationAgentV2?(
-    identity: TaskboardIdentity,
-    runId: string,
-  ): Promise<TaskBoardTask>;
-  cleanupIntegrationAgentV2?(
-    identity: TaskboardIdentity,
-    runId: string,
-    workspace: { id: string; root: string },
   ): Promise<TaskBoardTask>;
   finishExecutionV2?(
     identity: TaskboardIdentity,

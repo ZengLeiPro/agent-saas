@@ -114,17 +114,19 @@ describe("cron service payload patch", () => {
       name: "agent job",
       schedule: { kind: "cron", expr: "0 9 * * *" },
       payload: { kind: "agentTurn", message: "old prompt", model: "old-model" },
-    });
+    }, { owner: 'user-a', orgAgentId: 'agent-a' });
 
     const systemUpdated = await service.update(agentJob.id, {
       payload: { kind: "systemEvent", text: "notify" },
     });
     expect(systemUpdated?.payload).toEqual({ kind: "systemEvent", text: "notify" });
+    expect(systemUpdated?.orgAgentId).toBeUndefined();
 
     const agentUpdated = await service.update(agentJob.id, {
       payload: { kind: "agentTurn", message: "run" },
     });
     expect(agentUpdated?.payload).toEqual({ kind: "agentTurn", message: "run" });
+    expect(agentUpdated?.orgAgentId).toBeUndefined();
   });
 
   it("accepts model-only payload patches in schema", () => {

@@ -10,7 +10,7 @@ import {
 } from '../../../shared/src/types/taskboard.js';
 import {
   completeContinuation, listTaskExecutions, loadContinuationContext, loadExecutionContext,
-  loadExecutionModelContext, markContinuationRunning, nextTaskColumnSortOrder,
+  loadExecutionModelContext, markContinuationRunning,
 } from './continuationStore.js';
 import {
   claimContinuationDispatch,
@@ -37,6 +37,7 @@ import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { clearBoardCiPolicyForRepositoryChange, normalizeIntegrationPolicyCiFallback } from './ciPolicy.js';
 import { discoverBoardCiPolicy } from './ciPolicyDiscovery.js';
 import { deleteStoredTask, rollbackStoredTask } from './storeTaskDelete.js';
+import { completeStoredTask } from './manualTaskCompletion.js';
 import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
 import {
   allowedActionsForRole,
@@ -48,8 +49,6 @@ import {
 } from './boardFields.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
 import { claimIntegrationDispatchCandidates } from './integrationTriggers.js';
-import { mergeIntegrationAgent } from './integrationAgentMerge.js';
-import { cleanupIntegrationAgent } from './integrationAgentCleanup.js';
 import {
   attachExecutionPullRequest, inspectExecutionPullRequest, readExecutionPullRequestJobLog,
   recordReviewedExecutionSubject, type ExecutionPullRequestInspection,
@@ -334,12 +333,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
               : null,
           ],
         );
-        if (repository) {
-          await client.query(
-            `INSERT INTO ${this.integrationLanesTable} (repository_id, board_id) VALUES ($1,$2)`,
-            [repository.repositoryId, boardId],
-          );
-        }
         await appendBoardChange(this, client, boardId, 'board.created', 'user', identity.ownerUserId, {
           name,
           visibility,
@@ -425,29 +418,13 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           }
         }
         if (nextRepositoryId !== currentRepositoryId) {
+          // Old boards may still have a workflow-v2 lane; remove it instead of creating a new runtime dependency.
           await client.query(`DELETE FROM ${this.integrationLanesTable} WHERE board_id=$1`, [boardId]);
-          if (normalizedRepository) {
-            await client.query(
-              `INSERT INTO ${this.integrationLanesTable} (repository_id, board_id) VALUES ($1,$2)`,
-              [normalizedRepository.repositoryId, boardId],
-            );
-          }
         }
         params.push(normalizedRepository ? JSON.stringify(normalizedRepository) : null);
         assignments.push(`repository=$${params.length}::jsonb`);
       }
       if (input.integrationPolicy !== undefined || reboundPolicy.cleared) {
-        const activeIntegration = await client.query(
-          `SELECT 1 FROM ${this.integrationLanesTable}
-            WHERE board_id=$1 AND active_integration_task_id IS NOT NULL LIMIT 1`,
-          [boardId],
-        );
-        if (activeIntegration.rows[0]) {
-          throw new TaskboardValidationError(
-            'Integration policy cannot change while an integration task is active',
-            'TASKBOARD_POLICY_ACTIVE',
-          );
-        }
         if (effectivePolicy && !effectiveRepository) {
           throw new TaskboardValidationError(
             'Integration policy requires a repository',
@@ -729,13 +706,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       return this.requireTask(client, identity, taskId, false);
     });
   }
-  async archiveTask(
-    identity: TaskboardIdentity,
-    taskId: string,
-    input: TaskboardExpectedVersionInput,
-  ): Promise<TaskBoardTask> {
-    return this.setTaskArchived(identity, taskId, input.expectedVersion, true);
-  }
+  async completeTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask> { return completeStoredTask(this, identity, taskId, input); }
+
+  async archiveTask(identity: TaskboardIdentity, taskId: string, input: TaskboardExpectedVersionInput): Promise<TaskBoardTask> { return this.setTaskArchived(identity, taskId, input.expectedVersion, true); }
 
   async restoreTask(
     identity: TaskboardIdentity,

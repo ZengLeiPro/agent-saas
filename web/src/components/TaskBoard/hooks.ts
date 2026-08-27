@@ -274,6 +274,23 @@ export function useBoardTasks(boardId: string | null) {
     }
   };
 
+  const completeTask = async (task: TaskBoardTask) => {
+    const mutationBoardId = boardId;
+    invalidateRefresh();
+    try {
+      const next = await api.completeTask(task.id, task.version);
+      if (mountedRef.current && mutationBoardId === boardIdRef.current) {
+        invalidateRefresh();
+        syncTask(next);
+        setError(null);
+      }
+      return next;
+    } catch (caught) {
+      if (mountedRef.current) await recoverFailure(caught, mutationBoardId);
+      throw caught;
+    }
+  };
+
   const setArchived = async (task: TaskBoardTask, archived: boolean) => {
     const mutationBoardId = boardId;
     invalidateRefresh();
@@ -367,6 +384,7 @@ export function useBoardTasks(boardId: string | null) {
     refresh,
     addTask,
     updateTask,
+    completeTask,
     setArchived,
     removeTask,
     executeTask,
@@ -384,32 +402,45 @@ const ACTIVE_EXECUTION_STATUSES = new Set<TaskBoardExecution["status"]>([
 
 export function useTaskExecutions(taskId: string | null, active = true) {
   const [executions, setExecutions] = useState<TaskBoardExecution[]>([]);
+  const [loadedTaskId, setLoadedTaskId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const taskIdRef = useRef(taskId);
   const requestRef = useRef(0);
+  const backgroundRefreshRef = useRef<{ requestId: number; taskId: string } | null>(null);
   taskIdRef.current = taskId;
 
-  const refresh = useCallback(async () => {
-    const requestId = ++requestRef.current;
+  const refresh = useCallback(async (background = false) => {
     const requestedTaskId = taskId;
     if (!requestedTaskId || !active) {
+      requestRef.current += 1;
+      backgroundRefreshRef.current = null;
       setExecutions([]);
+      setLoadedTaskId(null);
       setError(null);
       setLoading(false);
       return;
     }
-    setLoading(true);
+    if (background && backgroundRefreshRef.current?.taskId === requestedTaskId) return;
+    if (!background) backgroundRefreshRef.current = null;
+    const requestId = ++requestRef.current;
+    const backgroundRequest = background ? { requestId, taskId: requestedTaskId } : null;
+    if (backgroundRequest) backgroundRefreshRef.current = backgroundRequest;
+    else setLoading(true);
     try {
       const next = await api.fetchExecutions(requestedTaskId);
       if (requestId !== requestRef.current || requestedTaskId !== taskIdRef.current) return;
       setExecutions(next);
+      setLoadedTaskId(requestedTaskId);
       setError(null);
     } catch (caught) {
       if (requestId !== requestRef.current || requestedTaskId !== taskIdRef.current) return;
+      setLoadedTaskId(null);
       setError(errorText(caught, "加载 Agent 执行记录失败"));
     } finally {
-      if (requestId === requestRef.current && requestedTaskId === taskIdRef.current) {
+      if (backgroundRequest && backgroundRefreshRef.current === backgroundRequest) {
+        backgroundRefreshRef.current = null;
+      } else if (!background && requestId === requestRef.current && requestedTaskId === taskIdRef.current) {
         setLoading(false);
       }
     }
@@ -417,28 +448,34 @@ export function useTaskExecutions(taskId: string | null, active = true) {
 
   useEffect(() => {
     requestRef.current += 1;
+    backgroundRefreshRef.current = null;
     setExecutions([]);
+    setLoadedTaskId(null);
     setError(null);
     setLoading(false);
     void refresh();
     return () => {
       requestRef.current += 1;
+      backgroundRefreshRef.current = null;
     };
   }, [refresh]);
 
   const latestExecution = executions[0];
-  const shouldPoll = Boolean(latestExecution && (
-    ACTIVE_EXECUTION_STATUSES.has(latestExecution.status) || latestExecution.continuationActive
+  const executionActive = Boolean(latestExecution && (
+    ACTIVE_EXECUTION_STATUSES.has(latestExecution.status)
+    || latestExecution.continuationActive
+    || latestExecution.sessionActivityActive
   ));
   useEffect(() => {
-    if (!active || !taskId || !shouldPoll) return;
+    if (!active || !taskId) return;
     const timer = window.setInterval(() => {
-      void refresh();
-    }, 3_000);
+      if (!loading) void refresh(true);
+    }, executionActive ? 3_000 : 15_000);
     return () => window.clearInterval(timer);
-  }, [active, refresh, shouldPoll, taskId]);
+  }, [active, executionActive, loading, refresh, taskId]);
 
-  return { executions, loading, error, refresh };
+  const ready = Boolean(taskId && loadedTaskId === taskId && !error);
+  return { executions, loading, error, ready, refresh };
 }
 
 export function useTaskComments(taskId: string | null) {

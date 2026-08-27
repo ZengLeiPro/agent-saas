@@ -10,6 +10,7 @@ const harness = vi.hoisted(() => {
     messageHandlers,
     stateHandlers,
     sends: vi.fn(async (_payload: unknown) => true),
+    forceReconnect: vi.fn(async () => {}),
     authFetch: vi.fn(async (_url: string, _init?: unknown): Promise<Response> => new Response("{}", { status: 404 })),
     pendingOrgAgentIdRef: { current: null as string | null },
     pendingNewSessionGroupIdRef: { current: null as string | null },
@@ -112,7 +113,7 @@ vi.mock("@/lib/wsClient", () => ({
     disconnect: vi.fn(),
     send: vi.fn(() => true),
     ensureConnectedSend: (payload: unknown) => harness.sends(payload),
-    forceReconnect: vi.fn(async () => {}),
+    forceReconnect: () => harness.forceReconnect(),
     setLastSeq: vi.fn(),
     setEpoch: vi.fn(),
     onMessage: (handler: (envelope: { data: unknown }) => void) => {
@@ -167,6 +168,7 @@ beforeEach(() => {
   harness.messageHandlers.clear();
   harness.stateHandlers.clear();
   harness.sends.mockClear();
+  harness.forceReconnect.mockReset().mockResolvedValue(undefined);
   harness.assignPendingGroup.mockClear();
   harness.pendingOrgAgentIdRef.current = null;
   harness.pendingNewSessionGroupIdRef.current = null;
@@ -188,6 +190,40 @@ afterEach(() => {
 });
 
 describe("useChatAppState queue delivery lifecycle", () => {
+  it("reconnects away from a draining server and lets retry resend the rejected message", async () => {
+    harness.session.sessionId = "session-draining";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => result.current.setInput("retry after restart"));
+    await act(async () => { await result.current.sendMessage(); });
+    const clientMsgId = chatPayloads()[0].client_msg_id as string;
+
+    act(() => emit({
+      type: "chat_rejected",
+      client_msg_id: clientMsgId,
+      reason_code: "server_draining",
+      reason: "服务即将关闭，请稍后重试",
+    }));
+
+    await waitFor(() => expect(harness.forceReconnect).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.messages.find((message) => (
+      message.type === "user" && message.clientMsgId === clientMsgId
+    ))).toMatchObject({ status: "failed" }));
+    const failedMessage = result.current.messages.find((message) => (
+      message.type === "user" && message.clientMsgId === clientMsgId
+    ));
+    if (!failedMessage) throw new Error("rejected message bubble missing");
+
+    act(() => result.current.retryMessage(failedMessage));
+    await waitFor(() => expect(chatPayloads()).toHaveLength(2));
+    expect(chatPayloads()[1]).toMatchObject({
+      client_msg_id: clientMsgId,
+      message: "retry after restart",
+      sessionId: "session-draining",
+    });
+  });
+
   it("keeps a WS-confirmed runtime when stream-status is inactive during session restore", async () => {
     let resolveStreamStatus!: (value: Response) => void;
     harness.authFetch.mockImplementation((url: string) => (
@@ -320,6 +356,24 @@ describe("useChatAppState queue delivery lifecycle", () => {
     });
     act(() => emit({ type: "session_status", sessionId: "session-running", status: "running", streamId: "stream-current", runId: "run-current" }));
     await act(async () => { resolveStreamStatus(response({ active: false })); });
+
+    expect(result.current.runningSessionIds.has("session-running")).toBe(true);
+    expect(result.current.sessionRuntimeStatuses.get("session-running")).toBe("running");
+  });
+
+  it("does not let a stale terminal snapshot clear an ID-less active lifecycle", async () => {
+    harness.session.sessionId = "session-running";
+    harness.session.isNewSession = false;
+    harness.authFetch.mockImplementation(async (url: string) => (
+      url.endsWith("/stream-status") ? response({ active: false }) : response({}, 404)
+    ));
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => emit({ type: "session_status", sessionId: "session-running", status: "running" }));
+    await act(async () => {
+      harness.sessionCallbacks?.onLastRunState?.("session-running", { status: "completed", runId: "run-previous" });
+      await Promise.resolve();
+    });
 
     expect(result.current.runningSessionIds.has("session-running")).toBe(true);
     expect(result.current.sessionRuntimeStatuses.get("session-running")).toBe("running");

@@ -6,7 +6,6 @@ import type { TaskboardIntegrationDispatchCandidate, TaskboardIdentity } from '.
 import { createIntegrationBatch } from './v2Store.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { rowToTask, visibleCommentPredicate } from './storeHelpers.js';
-import { purposeForIntegrationAgentStatus } from './workflow/decider.js';
 
 interface IntegrationTriggerHost {
   pool: {
@@ -43,10 +42,6 @@ export async function claimIntegrationDispatchCandidates(
       username: 'board-owner',
     };
     try {
-      if (trigger.activeIntegrationTaskId) {
-        await releaseTrigger(host, trigger.id, 30_000);
-        continue;
-      }
       const sources = await eligibleSources(host, trigger.boardId, trigger.maxTasks);
       if (!sources.length) {
         await completeTrigger(host, trigger);
@@ -61,7 +56,7 @@ export async function claimIntegrationDispatchCandidates(
       const code = error && typeof error === 'object' && 'code' in error
         ? String((error as { code: unknown }).code)
         : '';
-      if (code === 'TASKBOARD_INTEGRATION_ACTIVE' || code === 'TASKBOARD_VERSION_CONFLICT') {
+      if (code === 'TASKBOARD_VERSION_CONFLICT') {
         await releaseTrigger(host, trigger.id, 30_000);
       } else {
         await failTrigger(host, trigger.id, error instanceof Error ? error.message : String(error));
@@ -129,7 +124,6 @@ async function claimTrigger(host: IntegrationTriggerHost): Promise<{
   boardVersion: number;
   policyRevision: string;
   maxTasks: number;
-  activeIntegrationTaskId?: string;
 } | undefined> {
   const client = await host.pool.connect();
   try {
@@ -162,10 +156,8 @@ async function claimTrigger(host: IntegrationTriggerHost): Promise<{
       return undefined;
     }
     const board = await client.query(
-      `SELECT b.tenant_id,b.owner_user_id,b.version,b.integration_policy,
-              l.active_integration_task_id
+      `SELECT b.tenant_id,b.owner_user_id,b.version,b.integration_policy
          FROM ${host.boardsTable} b
-         LEFT JOIN ${host.integrationLanesTable} l ON l.board_id=b.id
         WHERE b.id=$1`,
       [row.board_id],
     );
@@ -182,9 +174,6 @@ async function claimTrigger(host: IntegrationTriggerHost): Promise<{
       boardVersion: Number(boardRow.version),
       policyRevision: String(row.policy_revision),
       maxTasks: Math.max(1, Number(policy?.batch?.maxTasks ?? 20)),
-      ...(boardRow.active_integration_task_id
-        ? { activeIntegrationTaskId: String(boardRow.active_integration_task_id) }
-        : {}),
     };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
@@ -325,26 +314,45 @@ async function loadUnstartedIntegrationTasks(
           )`,
       [limit],
     );
+    await client.query(
+      `UPDATE ${host.tasksTable} task
+          SET status='in_progress',completed_at=NULL,next_action='none',version=version+1,updated_at=now()
+         FROM ${agentsTable} agent
+        WHERE agent.integration_task_id=task.id
+          AND task.kind='integration' AND task.workflow_version=3
+          AND task.status IN ('in_review','ready_to_merge')
+          AND task.archived_at IS NULL AND task.deleted_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM ${host.executionsTable} execution
+             WHERE execution.task_id=task.id
+               AND execution.status IN ('queued','running','waiting_user','waiting_approval')
+          )`,
+    );
+    await client.query(
+      `UPDATE ${agentsTable} agent
+          SET status='active',review_head_oid=NULL,verdict=NULL,review_execution_id=NULL,updated_at=now()
+         FROM ${host.tasksTable} task
+        WHERE task.id=agent.integration_task_id
+          AND task.kind='integration' AND task.workflow_version=3
+          AND task.status='in_progress'
+          AND agent.status IN ('reviewing','ready_to_merge')
+          AND NOT EXISTS (
+            SELECT 1 FROM ${host.executionsTable} execution
+             WHERE execution.task_id=task.id
+               AND execution.status IN ('queued','running','waiting_user','waiting_approval')
+          )`,
+    );
     const result = await client.query(
       `SELECT t.*, b.tenant_id, b.owner_user_id,
               (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', host.changesTable)}) AS comment_count
          FROM ${host.tasksTable} t
          JOIN ${host.boardsTable} b ON b.id=t.board_id
-         LEFT JOIN ${host.integrationLanesTable} l ON l.active_integration_task_id=t.id
         WHERE (
             (t.kind='integration' AND t.workflow_version=3
-                AND t.status IN ('todo','in_progress','in_review','ready_to_merge')
-                AND l.active_integration_task_id=t.id
+                AND t.status IN ('todo','in_progress')
                 AND EXISTS (
                   SELECT 1 FROM ${agentsTable} agent
-                   WHERE agent.integration_task_id=t.id
-                     AND (
-                       (t.status IN ('todo','in_progress') AND agent.status='active')
-                       OR (t.status='in_review' AND agent.status='reviewing')
-                       OR (t.status='ready_to_merge' AND agent.status='ready_to_merge'
-                           AND agent.verdict='approved' AND agent.review_execution_id IS NOT NULL
-                           AND agent.review_head_oid IS NOT NULL)
-                     )
+                   WHERE agent.integration_task_id=t.id AND agent.status='active'
                 ))
             OR (t.kind='delivery' AND t.status='in_review'
                 AND t.provider_pull_request_id IS NOT NULL)
@@ -396,9 +404,7 @@ async function loadUnstartedIntegrationTasks(
         username: 'board-owner',
       },
       task: rowToTask(row),
-      purpose: row.kind === 'integration'
-        ? purposeForIntegrationAgentStatus(rowToTask(row).status)!
-        : row.status === 'in_review' ? 'review' : 'work',
+      purpose: row.kind === 'integration' ? 'work' : row.status === 'in_review' ? 'review' : 'work',
     }));
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);

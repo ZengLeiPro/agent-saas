@@ -160,12 +160,20 @@ describe("MessageList first Agent row spacing", () => {
     expect(screen.getByText("正在思考").parentElement?.parentElement?.className).toContain("pt-1.5");
   });
 
-  it("keeps the business plan on the same unified flow rhythm", () => {
+  it("keeps the plan on the normal flow rhythm and compacts consecutive business steps", () => {
     render(<MessageList messages={messages()} loading={false} debugModeOverride={false} />);
 
     const plan = screen.getByRole("region", { name: "业务计划" });
-    expect(plan.parentElement?.className).toContain("gap-2.5");
-    expect(plan.parentElement?.className).toContain("pt-1.5");
+    const outerFlow = plan.parentElement;
+    expect(outerFlow?.className).toContain("gap-2.5");
+    expect(outerFlow?.className).toContain("pt-1.5");
+
+    const completed = screen.getByRole("region", { name: "业务步骤已完成" });
+    const active = screen.getByRole("region", { name: "业务步骤" });
+    const stepRun = completed.closest("[data-business-step-run]");
+    expect(stepRun?.className).toContain("gap-1.5");
+    expect(active.closest("[data-business-step-run]")).toBe(stepRun);
+    expect(stepRun?.parentElement).toBe(outerFlow);
   });
 });
 

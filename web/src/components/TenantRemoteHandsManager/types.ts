@@ -1,6 +1,19 @@
 export type TenantRemoteHandRolloutMode = "disabled" | "drain" | "allowlist" | "tenant" | "all";
 export type NetworkPolicyMode = "isolated" | "public-egress" | "private-egress";
 
+export interface AcsRuntimeConfig {
+  maxRunningSandboxes: number;
+  warnRunningSandboxes: number;
+  drainDeadlineMs: number;
+  persisted?: boolean;
+}
+
+export interface AcsRuntimeConfigResponse {
+  status: "ok";
+  runtimeConfig: AcsRuntimeConfig;
+  error?: string;
+}
+
 export interface NetworkPolicyConfig {
   mode: NetworkPolicyMode;
   denyPrivateNetworks?: boolean;

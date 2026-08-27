@@ -311,6 +311,26 @@ export interface SessionDetailResponse {
   sandboxes: SandboxRecord[];
 }
 
+export interface RuntimeSchedulerCapacity {
+  status: "ok";
+  sessionLockMode: "dual" | "lease";
+  maxConcurrentRuns: number;
+  effectiveMaxConcurrentRuns: number;
+  maxConfigurableConcurrentRuns: number;
+  editable: boolean;
+  executionEnabled: boolean;
+  maintenanceReason?: string;
+  inFlightRuns: number;
+  inFlightBackgroundRuns: number;
+  foregroundReservedRuns: number;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
+export interface RuntimeSchedulerConfigResponse {
+  runtimeScheduler: RuntimeSchedulerCapacity;
+}
+
 export interface RuntimeOperationsResponse {
   generatedAt: string;
   processRole: string | null;

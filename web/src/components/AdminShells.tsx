@@ -578,6 +578,9 @@ export function PlatformAdminShell({
   const platformSectionsToRender: { id: PlatformSection; render: () => ReactNode }[] = [
     { id: "tenants", render: renderTenants },
     { id: "signup", render: () => renderSignupConfig ? renderSignupConfig() : null },
+    { id: "platform-admins", render: () => <PlatformAdminsPage /> },
+    { id: "agent-templates", render: () => <PlatformTemplateCatalogPage kind="agent" /> },
+    { id: "environment-templates", render: () => <PlatformTemplateCatalogPage kind="environment" /> },
     { id: "models", render: renderModels },
     { id: "billing", render: () => <PlatformBillingManager /> },
     { id: "remote-hands", render: renderRemoteHands },

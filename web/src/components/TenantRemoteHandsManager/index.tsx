@@ -14,6 +14,7 @@ import { useTenants } from "@/components/TenantManager/hooks";
 import { useUsers } from "@/components/UserManager/hooks";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
+import { AcsRuntimeSettingsCard } from "./AcsRuntimeSettingsCard";
 import { useTenantRemoteHands } from "./hooks";
 import type {
   CredentialMode,
@@ -435,6 +436,8 @@ export function TenantRemoteHandsManager() {
           <span>{localError || error}</span>
         </div>
       )}
+
+      <AcsRuntimeSettingsCard readOnly={platformReadOnly} />
 
       <SettingsTwoColumn
         sidebar={(

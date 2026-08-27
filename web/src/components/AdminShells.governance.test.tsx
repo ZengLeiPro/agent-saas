@@ -21,6 +21,7 @@ vi.mock("@agent/shared/lib/governanceApi", async (importOriginal) => {
     },
     governanceAccessApi: {
       ...actual.governanceAccessApi,
+      listPlatformAdmins: vi.fn().mockResolvedValue({ platformAdmins: [] }),
       listMemberships: vi.fn().mockResolvedValue({ memberships: [
         { userId: "member-1", persona: "member", isOwner: false, status: "active", version: 1, allowedActions: [] },
       ] }),
@@ -320,6 +321,34 @@ describe("AdminShells V2 内容适配", () => {
     );
     expect(await screen.findByText(expected)).toBeTruthy();
     expect(screen.queryByText("只读")).toBeNull();
+  });
+
+  it.each([
+    ["platform-admins", "平台管理员"],
+    ["agent-templates", "智能体模板"],
+    ["environment-templates", "环境模板"],
+  ] as const)("统一设置入口 %s 挂载既有治理页面", async (settingsSection, expectedTitle) => {
+    render(
+      <PlatformAdminShell
+        renderTenants={() => <div />}
+        renderModels={() => <div />}
+        renderRemoteHands={() => <div />}
+        renderToolControls={() => <div />}
+        renderMemoryPolling={() => <div />}
+        renderMcp={() => <div />}
+        renderSkills={() => <div />}
+        renderEfficiency={() => <div />}
+        activeSection="overview"
+        entityId={null}
+        onSectionChange={() => undefined}
+        settingsOpen
+        settingsContentOnly
+        settingsSection={settingsSection}
+        onSettingsSectionChange={() => undefined}
+        onSettingsClose={() => undefined}
+      />,
+    );
+    expect((await screen.findAllByText(expectedTitle)).length).toBeGreaterThan(0);
   });
 
   it("平台 Agent Template 叶子读取治理模板目录", async () => {

@@ -112,7 +112,7 @@ export function DesktopLayout(props: LayoutProps) {
     activeSection: activeSettingsSection,
     navigate: handleSettingsNavigate,
     close: handleCloseUnifiedSettings,
-    open: handleOpenUnifiedSettings,
+    open: handleOpenUnifiedSettings, openOrganizationGovernance: handleOpenOrganizationGovernance,
     onControllerChange: handleSettingsControllerChange,
   } = useUnifiedSettingsWorkspace({
     settingsOpen, settingsSection, adminSettings, openSettings, closeSettings, setSettingsSection,
@@ -427,7 +427,7 @@ export function DesktopLayout(props: LayoutProps) {
         settingsMode={settingsMode}
         settingsTarget={settingsTarget}
         activeSettingsSection={activeSettingsSection}
-        onSettingsNavigate={handleSettingsNavigate}
+        onSettingsNavigate={handleSettingsNavigate} onOpenOrganizationGovernance={handleOpenOrganizationGovernance}
         onCloseSettings={handleCloseUnifiedSettings}
         isAdmin={isAdmin}
         isPlatformAdmin={isPlatformAdmin}

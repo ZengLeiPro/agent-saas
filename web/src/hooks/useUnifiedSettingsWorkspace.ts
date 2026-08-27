@@ -1,7 +1,8 @@
 import { useCallback, useRef } from "react";
 
 import type { SettingsDirtyController } from "@/components/PersonalSettings/dirtyRegistry";
-import type { AdminSettingsState, AdminSettingsTarget } from "@/lib/urlSync";
+import { governanceRoute } from "@/lib/governanceNavigation";
+import { navigateGovernance, type AdminSettingsState, type AdminSettingsTarget } from "@/lib/urlSync";
 import type { SettingsSectionId } from "@/types/settings";
 
 export function useUnifiedSettingsWorkspace({
@@ -53,6 +54,9 @@ export function useUnifiedSettingsWorkspace({
     if (mode) navigate("personal", section);
     else openSettings(section);
   }, [mode, navigate, openSettings]);
+  const openOrganizationGovernance = useCallback(() => {
+    requestNavigation(() => navigateGovernance(governanceRoute("organization.members.list")));
+  }, [requestNavigation]);
 
-  return { mode, target, activeSection, navigate, close, open, onControllerChange };
+  return { mode, target, activeSection, navigate, close, open, openOrganizationGovernance, guardNavigation: requestNavigation, onControllerChange };
 }

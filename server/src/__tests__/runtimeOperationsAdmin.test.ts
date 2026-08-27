@@ -140,6 +140,16 @@ describe('runtime operations admin router', () => {
         },
       });
 
+      const currentConfig = await fetch(`${baseUrl}/api/admin/runtime-operations/scheduler/runtime-config`);
+      expect(currentConfig.status).toBe(200);
+      await expect(readJson(currentConfig)).resolves.toMatchObject({
+        runtimeScheduler: {
+          maxConcurrentRuns: 16,
+          maxConfigurableConcurrentRuns: 64,
+          editable: true,
+        },
+      });
+
       const update = await fetch(`${baseUrl}/api/admin/runtime-operations/scheduler/runtime-config`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },

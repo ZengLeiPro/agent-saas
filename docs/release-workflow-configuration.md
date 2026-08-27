@@ -80,8 +80,10 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
 
 ## 外部设置
 
-- 旧 `ci.yml` 与 `acs-sandbox.yml` 不再暴露 `workflow_dispatch`；它们只承担 App/ACS CI 和
-  main push 的 ACR 自动构建。生产手动入口只能是 `promote-release.yml`。
+- 旧 `ci.yml` 与 `acs-sandbox.yml` 保留 `workflow_dispatch`，仅用于尚未迁移到 RC Promotion 的
+  旧版本人工兼容部署；push/PR 仍只执行 CI，不自动部署生产。旧入口不生成不可变 RC、Staging E2E、
+  Promotion receipt 或 15 分钟生产观察证据，因此不得用于宣称新版发布契约已通过。完成旧版本迁移后
+  应再次关闭这两个兼容入口；新版本生产发布仍优先使用 `promote-release.yml`。
 - GitHub main 与 RC tag ruleset 需一起应用 `config/github-main-ruleset.json`、
   `config/github-rc-tag-ruleset.json`；后者禁止更新或删除 `refs/tags/rc-*`。应用前导出旧规则作为回退。
 - Staging 资源按 `infra/staging/resource-plan.json` 创建，所有 `UNASSIGNED` 清零并完成反向隔离

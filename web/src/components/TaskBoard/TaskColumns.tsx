@@ -182,8 +182,8 @@ export function TaskColumns({
   };
 
   return (
-    <div className="relative min-h-0 flex-1 overflow-hidden">
-      <div className="mb-3 md:hidden">
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div data-testid="taskboard-mobile-controls" className="mb-3 shrink-0 md:hidden">
         <Select value={mobileStatus} onValueChange={(value) => onMobileStatusChange(value as TaskBoardStatus)}>
           <SelectTrigger aria-label="移动端状态"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -309,7 +309,7 @@ export function TaskColumns({
       <section
         data-testid="taskboard-mobile-list"
         aria-label={`${STATUS_LABELS[mobileStatus]}任务列表`}
-        className="h-[calc(100%-3rem)] space-y-2 overflow-y-auto md:hidden"
+        className="min-h-0 flex-1 space-y-2 overflow-y-auto md:hidden"
       >
         {mobileTasks.map((task) => (
           <TaskCard

@@ -19,6 +19,7 @@ Environment=NODE_ENV=production
 Environment=AGENT_SAAS_CONFIG_PATH=/etc/agent-saas/config.json
 Environment=AZEROTH_TOKENS_FILE=/etc/agent-saas/azeroth-tokens.json
 EnvironmentFile=/etc/agent-saas/server.env
+EnvironmentFile=-/etc/agent-saas/runtime-worker-%i.release.env
 # Worker 的环境身份、角色与进程文件是拓扑硬约束，必须覆盖共享 env 中可能残留的旧值
 Environment=AGENT_SAAS_ENVIRONMENT=production
 Environment=AGENT_SAAS_PROCESS_ROLE=runtime-worker
@@ -30,7 +31,7 @@ Environment=AGENT_SAAS_RUNTIME_PERF_ENABLED=true
 Environment=AGENT_SAAS_RUNTIME_PERF_INTERVAL_MS=30000
 ExecCondition=/usr/bin/test ! -e /run/agent-saas-runtime-worker-%i.draining
 ExecStartPre=/usr/bin/rm -f /run/agent-saas-runtime-worker-%i.ready
-ExecStart=/usr/local/bin/pnpm start
+ExecStart=/usr/bin/node --enable-source-maps dist/index.js
 Restart=on-failure
 RestartSec=30
 KillSignal=SIGTERM

@@ -1,0 +1,19 @@
+{
+  "name": "immutable-rc-tags",
+  "target": "tag",
+  "enforcement": "active",
+  "bypass_actors": [],
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/tags/rc-*"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    { "type": "deletion" },
+    {
+      "type": "update",
+      "parameters": { "update_allows_fetch_and_merge": false }
+    }
+  ]
+}

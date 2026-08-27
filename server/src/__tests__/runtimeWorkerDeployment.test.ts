@@ -17,10 +17,15 @@ async function classify(paths: string[]): Promise<Record<string, string>> {
     cwd: repoRoot,
     encoding: 'utf-8',
   });
-  return Object.fromEntries(output.trim().split('\n').map((line) => {
-    const separator = line.indexOf('=');
-    return [line.slice(0, separator), line.slice(separator + 1)];
-  }));
+  return Object.fromEntries(
+    output
+      .trim()
+      .split('\n')
+      .map((line) => {
+        const separator = line.indexOf('=');
+        return [line.slice(0, separator), line.slice(separator + 1)];
+      }),
+  );
 }
 
 describe('Runtime Worker 生产部署契约', () => {
@@ -30,16 +35,17 @@ describe('Runtime Worker 生产部署契约', () => {
   });
 
   it('纯 Web/文档/Server 测试变更不滚动 worker，生产 Server 变更必须滚动', async () => {
-    await expect(classify([
-      'web/src/App.tsx',
-      'docs/managed-agents-roadmap.md',
-      'server/src/__tests__/runtimeWake.test.ts',
-    ])).resolves.toMatchObject({ required: 'false' });
+    await expect(
+      classify([
+        'web/src/App.tsx',
+        'docs/managed-agents-roadmap.md',
+        'server/src/__tests__/runtimeWake.test.ts',
+      ]),
+    ).resolves.toMatchObject({ required: 'false' });
 
-    await expect(classify([
-      'web/src/App.tsx',
-      'server/src/runtime/rawAgentLoop.ts',
-    ])).resolves.toMatchObject({
+    await expect(
+      classify(['web/src/App.tsx', 'server/src/runtime/rawAgentLoop.ts']),
+    ).resolves.toMatchObject({
       required: 'true',
       reason: 'server/src/runtime/rawAgentLoop.ts',
     });
@@ -66,16 +72,26 @@ describe('Runtime Worker 生产部署契约', () => {
     const serverEntry = await readFile(join(repoRoot, 'server/src/index.ts'), 'utf-8');
 
     expect(webUnit).toContain('Environment=AGENT_SAAS_ENVIRONMENT=production');
+    expect(webUnit).toContain('EnvironmentFile=-/etc/agent-saas/server-%i.release.env');
+    expect(webUnit).toContain('ExecStart=/usr/bin/node --enable-source-maps dist/index.js');
     expect(webUnit).toContain('Environment=AGENT_SAAS_PROCESS_ROLE=ws-only');
     expect(webUnit).toContain('AGENT_SAAS_DRAIN_MARKER=/run/agent-saas-server-%i.draining');
     expect(legacyWebUnit).toContain('Environment=AGENT_SAAS_ENVIRONMENT=production');
-    expect(webUnit).toContain('ExecCondition=/usr/bin/test ! -e /run/agent-saas-server-%i.draining');
+    expect(webUnit).toContain(
+      'ExecCondition=/usr/bin/test ! -e /run/agent-saas-server-%i.draining',
+    );
     expect(workerUnit).toContain('Environment=AGENT_SAAS_ENVIRONMENT=production');
+    expect(workerUnit).toContain('EnvironmentFile=-/etc/agent-saas/runtime-worker-%i.release.env');
+    expect(workerUnit).toContain('ExecStart=/usr/bin/node --enable-source-maps dist/index.js');
     expect(workerUnit).toContain('Environment=AGENT_SAAS_PROCESS_ROLE=runtime-worker');
     expect(workerUnit).toContain('AGENT_SAAS_PIDFILE=/run/agent-saas-runtime-worker-%i.pid');
     expect(workerUnit).toContain('AGENT_SAAS_READYFILE=/run/agent-saas-runtime-worker-%i.ready');
-    expect(workerUnit).toContain('AGENT_SAAS_DRAIN_MARKER=/run/agent-saas-runtime-worker-%i.draining');
-    expect(workerUnit).toContain('ExecCondition=/usr/bin/test ! -e /run/agent-saas-runtime-worker-%i.draining');
+    expect(workerUnit).toContain(
+      'AGENT_SAAS_DRAIN_MARKER=/run/agent-saas-runtime-worker-%i.draining',
+    );
+    expect(workerUnit).toContain(
+      'ExecCondition=/usr/bin/test ! -e /run/agent-saas-runtime-worker-%i.draining',
+    );
     expect(workerUnit).toContain('WorkingDirectory=/opt/agent-saas-app/worker/%i/server');
     expect(workerUnit).toContain('MemoryHigh=45%');
     expect(workerUnit).toContain('MemoryMax=60%');
@@ -86,18 +102,27 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(webUnit).toContain('RequiresMountsFor=/mnt/agent-workspaces /mnt/agent-saas');
     expect(workerUnit).toContain('RequiresMountsFor=/mnt/agent-workspaces /mnt/agent-saas');
     expect(nginxNasDropIn).toContain('RequiresMountsFor=/mnt/agent-saas');
-    expect(webUnit.indexOf('Environment=AGENT_SAAS_ENVIRONMENT=production'))
-      .toBeGreaterThan(webUnit.lastIndexOf('EnvironmentFile='));
-    expect(workerUnit.indexOf('Environment=AGENT_SAAS_ENVIRONMENT=production'))
-      .toBeGreaterThan(workerUnit.lastIndexOf('EnvironmentFile='));
-    expect(legacyWebUnit.indexOf('Environment=AGENT_SAAS_ENVIRONMENT=production'))
-      .toBeGreaterThan(legacyWebUnit.lastIndexOf('EnvironmentFile='));
-    expect(webUnit.indexOf('Environment=AGENT_SAAS_PROCESS_ROLE=ws-only'))
-      .toBeGreaterThan(webUnit.lastIndexOf('EnvironmentFile='));
-    expect(workerUnit.indexOf('Environment=AGENT_SAAS_PROCESS_ROLE=runtime-worker'))
-      .toBeGreaterThan(workerUnit.lastIndexOf('EnvironmentFile='));
-    expect(workflow).toContain('runtime worker split blocked because production clientDaemon is configured');
-    expect(workflow).toContain('runtime worker split blocked because active clientDaemon devices exist');
+    expect(webUnit.indexOf('Environment=AGENT_SAAS_ENVIRONMENT=production')).toBeGreaterThan(
+      webUnit.lastIndexOf('EnvironmentFile='),
+    );
+    expect(workerUnit.indexOf('Environment=AGENT_SAAS_ENVIRONMENT=production')).toBeGreaterThan(
+      workerUnit.lastIndexOf('EnvironmentFile='),
+    );
+    expect(legacyWebUnit.indexOf('Environment=AGENT_SAAS_ENVIRONMENT=production')).toBeGreaterThan(
+      legacyWebUnit.lastIndexOf('EnvironmentFile='),
+    );
+    expect(webUnit.indexOf('Environment=AGENT_SAAS_PROCESS_ROLE=ws-only')).toBeGreaterThan(
+      webUnit.lastIndexOf('EnvironmentFile='),
+    );
+    expect(
+      workerUnit.indexOf('Environment=AGENT_SAAS_PROCESS_ROLE=runtime-worker'),
+    ).toBeGreaterThan(workerUnit.lastIndexOf('EnvironmentFile='));
+    expect(workflow).toContain(
+      'runtime worker split blocked because production clientDaemon is configured',
+    );
+    expect(workflow).toContain(
+      'runtime worker split blocked because active clientDaemon devices exist',
+    );
     expect(workflow).toContain('if (config?.clientDaemon) process.exit(42)');
     expect(workflow).toContain('systemctl disable "${SERVICE_NAME}@${ACTIVE}"');
     expect(workflow).toContain('systemctl disable "${WORKER_SERVICE}@${WORKER_ACTIVE}"');
@@ -115,20 +140,35 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(rollbackBlock).toContain('WORKER_ACTIVE_DRAIN_STARTED');
     expect(rollbackBlock).toContain('systemctl enable "${WORKER_SERVICE}@${WORKER_ACTIVE}"');
     expect(rollbackBlock).toContain('systemctl restart "${WORKER_SERVICE}@${WORKER_ACTIVE}"');
-    expect(rollbackBlock.indexOf('previous runtime worker restored before candidate stop'))
-      .toBeLessThan(rollbackBlock.indexOf('stop runtime worker candidate:'));
+    expect(
+      rollbackBlock.indexOf('previous runtime worker restored before candidate stop'),
+    ).toBeLessThan(rollbackBlock.indexOf('stop runtime worker candidate:'));
     expect(workflow).toContain('WORKER_DRAIN_TIMEOUT=960');
     expect(workflow).toContain('recover interrupted runtime worker drain before rollout');
-    expect(workflow).toContain('interrupted runtime worker candidate drained after active recovery');
-    expect(workflow.split('recover_interrupted_runtime_worker_drain "$WORKER_ACTIVE"')).toHaveLength(3);
+    expect(workflow).toContain(
+      'interrupted runtime worker candidate drained after active recovery',
+    );
+    expect(
+      workflow.split('recover_interrupted_runtime_worker_drain "$WORKER_ACTIVE"'),
+    ).toHaveLength(3);
     expect(workflow).not.toContain('WORKER_V3_READY_TIMEOUT');
     expect(workflow).not.toContain('integrationV3ControlPlane');
     expect(workflow).not.toContain('taskboard_integration_activation_heartbeats_v3');
     expect(workflow).not.toContain('runtime worker candidate failed readiness after Web cutover');
-    expect(workflow).toContain('idle drain endpoint unavailable; marker snapshot reports activeUploads=');
-    expect(workflow).toContain('rm -f "/run/${SERVICE_NAME}-${IDLE}.pid" "/run/${SERVICE_NAME}-${IDLE}.draining"');
-    expect(workflow).toContain('rollback drain endpoint unavailable; marker snapshot reports activeUploads=');
-    expect(workflow).toContain('rm -f "/run/${SERVICE}-${OTHER}.pid" "/run/${SERVICE}-${OTHER}.draining"');
-    expect(serverEntry).toContain('writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced })');
+    expect(workflow).toContain(
+      'idle drain endpoint unavailable; marker snapshot reports activeUploads=',
+    );
+    expect(workflow).toContain(
+      'rm -f "/run/${SERVICE_NAME}-${IDLE}.pid" "/run/${SERVICE_NAME}-${IDLE}.draining"',
+    );
+    expect(workflow).toContain(
+      'rollback drain endpoint unavailable; marker snapshot reports activeUploads=',
+    );
+    expect(workflow).toContain(
+      'rm -f "/run/${SERVICE}-${OTHER}.pid" "/run/${SERVICE}-${OTHER}.draining"',
+    );
+    expect(serverEntry).toContain(
+      'writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced })',
+    );
   });
 });

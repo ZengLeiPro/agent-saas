@@ -66,26 +66,31 @@ async function withApp<T>(
   const runtimeConfig = parseAppConfig({
     ...baseRawConfig(),
     tenantRemoteHands: {
-      hands: [{
-        id: 'agent-saas-acs',
-        name: 'ACS',
-        baseUrl: 'http://127.0.0.1:65535',
-        authToken: 'test-token',
-        backend: 'acs',
-      }],
+      hands: [
+        {
+          id: 'agent-saas-acs',
+          name: 'ACS',
+          baseUrl: 'http://127.0.0.1:65535',
+          authToken: 'test-token',
+          backend: 'acs',
+        },
+      ],
     },
     runtimeEventStore: { backend: 'pg', connectionString: 'postgres://localhost/test' },
   } as Record<string, unknown>);
 
   const orchestratorCalls: Array<{ path: string; body: unknown }> = [];
   const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const url =
+      typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     orchestratorCalls.push({
       path: url,
       body: init?.body ? JSON.parse(String(init.body)) : undefined,
     });
     const status = options.orchestratorStatus ?? 200;
-    return new Response(JSON.stringify(status === 200 ? { ok: true } : { error: 'boom' }), { status });
+    return new Response(JSON.stringify(status === 200 ? { ok: true } : { error: 'boom' }), {
+      status,
+    });
   }) as unknown as typeof fetch;
 
   const refreshProxyCredential = vi.fn(async () => undefined);
@@ -104,13 +109,16 @@ async function withApp<T>(
     };
     next();
   });
-  app.use('/api/admin/egress-config', createEgressConfigAdminRouter({
-    config: runtimeConfig,
-    store,
-    secretVault,
-    refreshProxyCredential,
-    fetchImpl,
-  }));
+  app.use(
+    '/api/admin/egress-config',
+    createEgressConfigAdminRouter({
+      config: runtimeConfig,
+      store,
+      secretVault,
+      refreshProxyCredential,
+      fetchImpl,
+    }),
+  );
   const server = app.listen(0);
   servers.push(server);
   const address = server.address();
@@ -130,19 +138,22 @@ afterEach(() => {
 });
 
 describe('staging egress config store', () => {
-  const safe = () => fullConfig({
-    server: {
-      enabled: true,
-      proxyUrl: 'http://proxy.staging.internal:7890',
-      matchDomains: [],
-      bypassDomains: [],
-      timeoutMs: 20_000,
-      failOpen: false,
-    },
-  });
+  const safe = () =>
+    fullConfig({
+      server: {
+        enabled: true,
+        proxyUrl: 'http://proxy.staging.internal:7890',
+        matchDomains: [],
+        bypassDomains: [],
+        timeoutMs: 20_000,
+        failOpen: false,
+      },
+    });
 
   it('rejects unsafe seed and hot updates', async () => {
-    expect(() => new EgressConfigStore('/unused', fullConfig(), 'staging')).toThrow(/staging egress/u);
+    expect(() => new EgressConfigStore('/unused', fullConfig(), 'staging')).toThrow(
+      /staging egress/u,
+    );
     const store = new EgressConfigStore('/unused', safe(), 'staging');
     await expect(store.update(fullConfig(), { actor: 'admin' })).rejects.toThrow(/staging egress/u);
     expect(store.getConfig().server.enabled).toBe(true);
@@ -154,7 +165,7 @@ describe('egress config admin router', () => {
     await withApp(async ({ baseUrl }) => {
       const response = await fetch(`${baseUrl}/api/admin/egress-config`);
       expect(response.status).toBe(200);
-      const body = await response.json() as any;
+      const body = (await response.json()) as any;
       expect(body.config.server.enabled).toBe(false);
       expect(body.config.sandbox.enabled).toBe(false);
       expect(body.proxyCredentialConfigured).toBe(false);
@@ -164,15 +175,21 @@ describe('egress config admin router', () => {
   });
 
   it('非平台管理员一律 403', async () => {
-    await withApp(async ({ baseUrl }) => {
-      const response = await fetch(`${baseUrl}/api/admin/egress-config`);
-      expect(response.status).toBe(403);
-    }, { role: 'user' });
+    await withApp(
+      async ({ baseUrl }) => {
+        const response = await fetch(`${baseUrl}/api/admin/egress-config`);
+        expect(response.status).toBe(403);
+      },
+      { role: 'user' },
+    );
 
-    await withApp(async ({ baseUrl }) => {
-      const response = await fetch(`${baseUrl}/api/admin/egress-config`);
-      expect(response.status).toBe(403);
-    }, { tenantId: 'some-other-tenant' });
+    await withApp(
+      async ({ baseUrl }) => {
+        const response = await fetch(`${baseUrl}/api/admin/egress-config`);
+        expect(response.status).toBe(403);
+      },
+      { tenantId: 'some-other-tenant' },
+    );
   });
 
   it('保存后落盘（0600）并下发 orchestrator', async () => {
@@ -195,7 +212,7 @@ describe('egress config admin router', () => {
         }),
       });
       expect(response.status).toBe(200);
-      const body = await response.json() as any;
+      const body = (await response.json()) as any;
       expect(body.config.server.matchDomains).toEqual(['openai.com']);
       expect(body.sandboxSync.ok).toBe(true);
 
@@ -216,23 +233,26 @@ describe('egress config admin router', () => {
   });
 
   it('orchestrator 下发失败不回滚配置，只标记 sandboxSync', async () => {
-    await withApp(async ({ baseUrl, store }) => {
-      const response = await fetch(`${baseUrl}/api/admin/egress-config`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          config: fullConfig({
-            sandbox: { enabled: true, proxyUrl: 'http://10.0.0.1:8080', noProxy: [] },
+    await withApp(
+      async ({ baseUrl, store }) => {
+        const response = await fetch(`${baseUrl}/api/admin/egress-config`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            config: fullConfig({
+              sandbox: { enabled: true, proxyUrl: 'http://10.0.0.1:8080', noProxy: [] },
+            }),
           }),
-        }),
-      });
-      expect(response.status).toBe(200);
-      const body = await response.json() as any;
-      expect(body.sandboxSync.ok).toBe(false);
-      expect(body.sandboxSync.error).toContain('500');
-      // 配置本身仍是期望态
-      expect(store.getConfig().sandbox.proxyUrl).toBe('http://10.0.0.1:8080');
-    }, { orchestratorStatus: 500 });
+        });
+        expect(response.status).toBe(200);
+        const body = (await response.json()) as any;
+        expect(body.sandboxSync.ok).toBe(false);
+        expect(body.sandboxSync.error).toContain('500');
+        // 配置本身仍是期望态
+        expect(store.getConfig().sandbox.proxyUrl).toBe('http://10.0.0.1:8080');
+      },
+      { orchestratorStatus: 500 },
+    );
   });
 
   it('启用但地址非法时 400，且不写盘', async () => {
@@ -279,7 +299,7 @@ describe('egress config admin router', () => {
         }),
       });
       expect(response.status).toBe(400);
-      expect((await response.json() as any).error).toContain('socks');
+      expect(((await response.json()) as any).error).toContain('socks');
     });
   });
 
@@ -299,24 +319,27 @@ describe('egress config admin router', () => {
   });
 
   it('代理凭据写 vault 并只回显布尔标记', async () => {
-    await withApp(async ({ baseUrl, storePath }) => {
-      const response = await fetch(`${baseUrl}/api/admin/egress-config`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          config: fullConfig(),
-          proxyCredential: 'alice:super-secret',
-        }),
-      });
-      expect(response.status).toBe(200);
-      const body = await response.json() as any;
-      expect(body.proxyCredentialConfigured).toBe(true);
-      expect(JSON.stringify(body)).not.toContain('super-secret');
+    await withApp(
+      async ({ baseUrl, storePath }) => {
+        const response = await fetch(`${baseUrl}/api/admin/egress-config`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            config: fullConfig(),
+            proxyCredential: 'alice:super-secret',
+          }),
+        });
+        expect(response.status).toBe(200);
+        const body = (await response.json()) as any;
+        expect(body.proxyCredentialConfigured).toBe(true);
+        expect(JSON.stringify(body)).not.toContain('super-secret');
 
-      const raw = readFileSync(storePath, 'utf-8');
-      expect(raw).not.toContain('super-secret');
-      expect(JSON.parse(raw).proxyCredentialRef).toBeTruthy();
-    }, { withVault: true });
+        const raw = readFileSync(storePath, 'utf-8');
+        expect(raw).not.toContain('super-secret');
+        expect(JSON.parse(raw).proxyCredentialRef).toBeTruthy();
+      },
+      { withVault: true },
+    );
   });
 
   it('未启用 vault 时拒绝保存凭据而不是静默丢弃', async () => {
@@ -327,7 +350,7 @@ describe('egress config admin router', () => {
         body: JSON.stringify({ config: fullConfig(), proxyCredential: 'alice:pw' }),
       });
       expect(response.status).toBe(400);
-      expect((await response.json() as any).error).toContain('secretVault');
+      expect(((await response.json()) as any).error).toContain('secretVault');
     });
   });
 

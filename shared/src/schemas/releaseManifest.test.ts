@@ -1,94 +1,195 @@
-import { describe, expect, it } from "vitest";
-import { canonicalJson, releaseManifestSchema } from "./releaseManifest";
+import { describe, expect, it } from 'vitest';
+import {
+  canonicalJson,
+  releaseManifestContentSchema,
+  releaseManifestSchema,
+} from './releaseManifest';
 
-const RELEASE_SHA = "a".repeat(40);
-const BASELINE_SHA = "b".repeat(40);
-const ROLLBACK_SHA = "c".repeat(40);
-const DIGEST = `sha256:${"d".repeat(64)}`;
+const RELEASE_SHA = 'a'.repeat(40);
+const BASELINE_SHA = 'b'.repeat(40);
+const SERVER_DIGEST = `sha256:${'c'.repeat(64)}`;
+const WEB_DIGEST = `sha256:${'d'.repeat(64)}`;
+const ACS_BUNDLE_DIGEST = `sha256:${'e'.repeat(64)}`;
+const ACS_IMAGE_DIGEST = `sha256:${'f'.repeat(64)}`;
+const MANIFEST_DIGEST = `sha256:${'0'.repeat(64)}`;
 
-function componentSources(sha: string) {
+function matrix(sha = BASELINE_SHA) {
   return {
-    web: sha,
-    api: sha,
-    runtimeWorker: sha,
-    acs: sha,
+    web: { sourceSha: sha, artifactDigest: WEB_DIGEST },
+    api: { sourceSha: sha, artifactDigest: SERVER_DIGEST },
+    runtimeWorker: { sourceSha: sha, artifactDigest: SERVER_DIGEST },
+    acs: {
+      sourceSha: sha,
+      orchestratorArtifactDigest: ACS_BUNDLE_DIGEST,
+      sandboxImageDigest: ACS_IMAGE_DIGEST,
+    },
   };
 }
 
-function validManifest() {
-  const productionBaseline = componentSources(BASELINE_SHA);
+export function validManifestContent() {
+  const productionBaseline = matrix();
   return {
-    releaseId: "release-20260825.1",
+    schemaVersion: 1 as const,
+    releaseId: 'rc-20260825-01',
     releaseSha: RELEASE_SHA,
-    digest: DIGEST,
+    tag: 'rc-20260825-01',
+    createdAt: '2026-08-25T08:00:00.000Z',
+    createdBy: 'github-actions',
+    integrationCandidates: [
+      {
+        candidateId: '85a9cb68-4130-4c0a-aec3-e4cc9c671bd5',
+        revision: 2,
+        mergedCommitOid: RELEASE_SHA,
+      },
+    ],
+    sourcePullRequests: [183, 194],
     productionBaseline,
     components: {
-      web: { action: "deploy" as const, sourceSha: RELEASE_SHA },
-      api: { action: "keep" as const, sourceSha: productionBaseline.api },
-      runtimeWorker: { action: "deploy" as const, sourceSha: RELEASE_SHA },
-      acs: { action: "keep" as const, sourceSha: productionBaseline.acs },
+      web: { action: 'deploy' as const, sourceSha: RELEASE_SHA, artifactDigest: WEB_DIGEST },
+      api: { action: 'deploy' as const, sourceSha: RELEASE_SHA, artifactDigest: SERVER_DIGEST },
+      runtimeWorker: {
+        action: 'deploy' as const,
+        sourceSha: RELEASE_SHA,
+        artifactDigest: SERVER_DIGEST,
+      },
+      acs: { action: 'keep' as const, ...productionBaseline.acs },
     },
-    rollbackTargets: componentSources(ROLLBACK_SHA),
-    artifacts: [{
-      id: "web-build",
-      component: "web" as const,
-      uri: "https://artifacts.example.test/releases/web.tgz",
-      digest: DIGEST,
-    }],
+    artifacts: {
+      serverBundle: {
+        uri: 'oss://release-records/releases/server.tgz',
+        digest: SERVER_DIGEST,
+        size: 123,
+      },
+      webAssets: { uri: 'oss://release-records/releases/web.tgz', digest: WEB_DIGEST, size: 456 },
+      acsOrchestrator: {
+        required: false,
+        uri: 'oss://release-records/releases/acs.tgz',
+        digest: ACS_BUNDLE_DIGEST,
+        size: 789,
+      },
+      acsImage: { required: false, repository: 'agent-saas/acs-sandbox', digest: ACS_IMAGE_DIGEST },
+    },
+    checks: {
+      appCi: { status: 'success' as const, headSha: RELEASE_SHA, runId: 123 },
+      acsImpact: { status: 'not_required' as const, headSha: RELEASE_SHA },
+      integrationReceipt: { status: 'success' as const, subjectDigest: SERVER_DIGEST },
+    },
+    promotionPolicy: {
+      expiresAt: '2026-09-01T08:00:00.000Z',
+      minimumPromotableSha: BASELINE_SHA,
+      appAcsCompatibility: 'n_and_n_plus_1' as const,
+      compatibilityEvidenceDigest: `sha256:${'8'.repeat(64)}`,
+      requiresHumanApproval: true as const,
+    },
+    migrationPlan: {
+      phase: 'none' as const,
+      planDigest: `sha256:${'7'.repeat(64)}`,
+      confirmation: 'not_required' as const,
+      contract: 'separate_release' as const,
+    },
+    rollbackTargets: matrix(),
   };
 }
 
-describe("releaseManifestSchema", () => {
-  it("accepts all four component sections and artifacts", () => {
-    expect(releaseManifestSchema.safeParse(validManifest()).success).toBe(true);
+describe('releaseManifestSchema', () => {
+  it('accepts the complete component, evidence, policy, artifact, and rollback contract', () => {
+    expect(
+      releaseManifestSchema.safeParse({ ...validManifestContent(), digest: MANIFEST_DIGEST })
+        .success,
+    ).toBe(true);
   });
 
-  it("rejects a non-complete release SHA", () => {
-    expect(releaseManifestSchema.safeParse({ ...validManifest(), releaseSha: "abc123" }).success).toBe(false);
+  it('rejects incomplete SHAs, unsafe artifact URIs, and unsorted PR evidence', () => {
+    expect(
+      releaseManifestContentSchema.safeParse({ ...validManifestContent(), releaseSha: 'abc123' })
+        .success,
+    ).toBe(false);
+    const unsafe = validManifestContent();
+    unsafe.artifacts.webAssets.uri = 'https://user:password@example.test/web.tgz?signature=secret';
+    expect(releaseManifestContentSchema.safeParse(unsafe).success).toBe(false);
+    expect(
+      releaseManifestContentSchema.safeParse({
+        ...validManifestContent(),
+        sourcePullRequests: [194, 183],
+      }).success,
+    ).toBe(false);
   });
 
-  it("rejects a malformed sha256 digest", () => {
-    expect(releaseManifestSchema.safeParse({ ...validManifest(), digest: "sha256:ABC" }).success).toBe(false);
+  it('requires traceable source evidence and coherent ACS check receipts', () => {
+    expect(
+      releaseManifestContentSchema.safeParse({
+        ...validManifestContent(),
+        integrationCandidates: [],
+      }).success,
+    ).toBe(false);
+    const inconsistent = validManifestContent();
+    (inconsistent.checks as unknown as Record<string, unknown>).acsImpact = {
+      status: 'success',
+      headSha: RELEASE_SHA,
+    };
+    expect(releaseManifestContentSchema.safeParse(inconsistent).success).toBe(false);
   });
 
-  it("requires deploy sourceSha to match releaseSha", () => {
-    const manifest = validManifest();
-    manifest.components.web.sourceSha = BASELINE_SHA;
+  it('binds deploy and keep source identities to release and baseline', () => {
+    const deploy = validManifestContent();
+    deploy.components.web.sourceSha = BASELINE_SHA;
+    expect(releaseManifestContentSchema.safeParse(deploy).success).toBe(false);
 
-    const result = releaseManifestSchema.safeParse(manifest);
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues.map(issue => issue.path.join("."))).toContain("components.web.sourceSha");
-    }
+    const keep = validManifestContent();
+    keep.components.acs.sandboxImageDigest = MANIFEST_DIGEST;
+    expect(releaseManifestContentSchema.safeParse(keep).success).toBe(false);
   });
 
-  it("requires keep sourceSha to match that component's productionBaseline", () => {
-    const manifest = validManifest();
-    manifest.components.api.sourceSha = RELEASE_SHA;
-
-    const result = releaseManifestSchema.safeParse(manifest);
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues.map(issue => issue.path.join("."))).toContain("components.api.sourceSha");
-    }
+  it('binds both ACS digests and App digests to immutable artifacts', () => {
+    const manifest = validManifestContent();
+    manifest.components.acs.orchestratorArtifactDigest = MANIFEST_DIGEST;
+    expect(releaseManifestContentSchema.safeParse(manifest).success).toBe(false);
   });
 
-  it("rejects component maps which do not cover all four components", () => {
-    const manifest = validManifest();
-    const { acs, ...missingAcs } = manifest.rollbackTargets;
-    void acs;
+  it('rejects a mixed API and Runtime Worker action matrix for one server bundle', () => {
+    const manifest = validManifestContent();
+    const runtimeWorker = manifest.components.runtimeWorker as {
+      action: 'deploy' | 'keep';
+      sourceSha: string;
+      artifactDigest: string;
+    };
+    Object.assign(runtimeWorker, {
+      action: 'keep',
+      ...manifest.productionBaseline.runtimeWorker,
+    });
+    expect(releaseManifestContentSchema.safeParse(manifest).success).toBe(false);
+  });
 
-    expect(releaseManifestSchema.safeParse({ ...manifest, rollbackTargets: missingAcs }).success).toBe(false);
+  it('requires rollback targets to equal the frozen production baseline', () => {
+    const manifest = validManifestContent();
+    manifest.rollbackTargets.web.sourceSha = RELEASE_SHA;
+    expect(releaseManifestContentSchema.safeParse(manifest).success).toBe(false);
+  });
+
+  it('requires expand migrations to be confirmed after observation and keeps contract separate', () => {
+    const invalid = {
+      ...validManifestContent(),
+      migrationPlan: {
+        ...validManifestContent().migrationPlan,
+        phase: 'expand',
+        confirmation: 'not_required',
+      },
+    };
+    expect(releaseManifestContentSchema.safeParse(invalid).success).toBe(false);
+
+    invalid.migrationPlan.confirmation = 'required_after_observation';
+    expect(releaseManifestContentSchema.safeParse(invalid).success).toBe(true);
   });
 });
 
-describe("canonicalJson", () => {
-  it("recursively sorts object keys while preserving array order", () => {
-    expect(canonicalJson({ z: { b: 2, a: 1 }, a: [{ y: 2, x: 1 }, "first", "second"] }))
-      .toBe('{"a":[{"x":1,"y":2},"first","second"],"z":{"a":1,"b":2}}');
+describe('canonicalJson', () => {
+  it('recursively sorts object keys, preserves arrays, and normalizes negative zero', () => {
+    expect(canonicalJson({ z: { b: 2, a: -0 }, a: [{ y: 2, x: 1 }, 'first', 'second'] })).toBe(
+      '{"a":[{"x":1,"y":2},"first","second"],"z":{"a":0,"b":2}}',
+    );
   });
 
-  it("rejects values which JSON would silently coerce", () => {
+  it('rejects values which JSON would silently coerce', () => {
     expect(() => canonicalJson({ number: Number.NaN })).toThrow(TypeError);
     expect(() => canonicalJson({ missing: undefined })).toThrow(TypeError);
   });

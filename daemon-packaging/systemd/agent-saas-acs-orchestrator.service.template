@@ -1,0 +1,24 @@
+[Unit]
+Description=Agent SaaS Production ACS Orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agent-saas/acs-current/acs-orchestrator
+Environment=NODE_ENV=production
+Environment=ACS_ORCH_PORT=3400
+Environment=ACS_NAMESPACE=agent-saas-coding
+Environment=ACS_ORCH_RUNTIME_CONFIG_FILE=/var/lib/agent-saas/acs-orchestrator-runtime.json
+Environment=ACS_RELEASE_IDENTITY_FILE=/etc/agent-saas/acs-release-identity.json
+EnvironmentFile=/etc/agent-saas/acs-orchestrator.env
+ExecStart=/usr/bin/node --enable-source-maps dist/index.js
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=660
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

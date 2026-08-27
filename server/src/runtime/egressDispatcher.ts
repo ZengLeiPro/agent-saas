@@ -50,6 +50,27 @@ export type EgressWebSocketConnector = (input: {
   connectTimeoutMs?: number;
 }) => Promise<EgressWebSocket>;
 
+export interface GlobalFetchTarget {
+  fetch: typeof fetch;
+}
+
+/**
+ * Staging cannot rely on opt-in callers: install the fail-closed egress fetch
+ * for every use of globalThis.fetch and return a guarded restore callback.
+ */
+export function installStagingGlobalEgressFetch(
+  environment: string,
+  guardedFetch: typeof fetch,
+  target: GlobalFetchTarget = globalThis,
+): () => void {
+  if (environment !== 'staging') return () => undefined;
+  const previous = target.fetch;
+  target.fetch = guardedFetch;
+  return () => {
+    if (target.fetch === guardedFetch) target.fetch = previous;
+  };
+}
+
 interface CachedDispatcher {
   version: number;
   agent: ProxyAgent | null;
@@ -92,14 +113,12 @@ export class EgressDispatcherRegistry {
         const credential = this.source.getProxyCredential?.();
         agent = new ProxyAgent({
           uri: parsed.sanitizedUrl,
-          ...(credential
-            ? { token: `Basic ${Buffer.from(credential).toString('base64')}` }
-            : {}),
+          ...(credential ? { token: `Basic ${Buffer.from(credential).toString('base64')}` } : {}),
           connectTimeout: serverConfig.timeoutMs,
         });
         this.logger.info?.(
-          `[egress] server 代理已就绪 ${parsed.sanitizedUrl}`
-            + `（matchDomains=${serverConfig.matchDomains.length || 'all'}, failOpen=${serverConfig.failOpen}）`,
+          `[egress] server 代理已就绪 ${parsed.sanitizedUrl}` +
+            `（matchDomains=${serverConfig.matchDomains.length || 'all'}, failOpen=${serverConfig.failOpen}）`,
         );
       }
     }
@@ -160,17 +179,27 @@ function isProxyTransportError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const code = (err as NodeJS.ErrnoException).code ?? '';
   if (
-    ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'EPIPE', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET']
-      .includes(code)
+    [
+      'ECONNREFUSED',
+      'ECONNRESET',
+      'ETIMEDOUT',
+      'EHOSTUNREACH',
+      'ENETUNREACH',
+      'EPIPE',
+      'UND_ERR_CONNECT_TIMEOUT',
+      'UND_ERR_SOCKET',
+    ].includes(code)
   ) {
     return true;
   }
   const message = `${err.message} ${(err.cause as Error | undefined)?.message ?? ''}`.toLowerCase();
-  return message.includes('proxy')
-    || message.includes('econnrefused')
-    || message.includes('connect timeout')
-    || message.includes('socket hang up')
-    || message.includes('fetch failed');
+  return (
+    message.includes('proxy') ||
+    message.includes('econnrefused') ||
+    message.includes('connect timeout') ||
+    message.includes('socket hang up') ||
+    message.includes('fetch failed')
+  );
 }
 
 /**
@@ -182,12 +211,7 @@ export function createEgressFetch(
   baseFetch: typeof fetch = fetch,
   proxyFetch: typeof undiciFetch = undiciFetch,
 ): typeof fetch {
-  return createResolvedEgressFetch(
-    url => registry.resolve(url),
-    logger,
-    baseFetch,
-    proxyFetch,
-  );
+  return createResolvedEgressFetch((url) => registry.resolve(url), logger, baseFetch, proxyFetch);
 }
 
 /**
@@ -201,7 +225,7 @@ export function createWebToolEgressFetch(
   proxyFetch: typeof undiciFetch = undiciFetch,
 ): typeof fetch {
   return createResolvedEgressFetch(
-    url => registry.resolveWebTool(url),
+    (url) => registry.resolveWebTool(url),
     logger,
     baseFetch,
     proxyFetch,
@@ -221,7 +245,7 @@ function createResolvedEgressFetch(
 ): typeof fetch {
   return async function egressFetch(input, init) {
     const requestInput = input instanceof Request;
-    const targetInput = requestInput ? input.url : input as string | URL;
+    const targetInput = requestInput ? input.url : (input as string | URL);
     const { dispatcher, failOpen } = resolve(targetInput);
 
     // Request 的 body 可能是一次性流，不能安全拆给另一个 fetch 实现。只在
@@ -246,8 +270,8 @@ function createResolvedEgressFetch(
     } catch (err) {
       if (!failOpen || !isProxyTransportError(err)) throw err;
       logger.warn(
-        `[egress] 经代理请求失败，已降级直连重试: ${target}`
-          + ` (${err instanceof Error ? err.message : String(err)})`,
+        `[egress] 经代理请求失败，已降级直连重试: ${target}` +
+          ` (${err instanceof Error ? err.message : String(err)})`,
       );
       return baseFetch(input, init);
     }
@@ -272,8 +296,8 @@ export function createEgressWebSocketConnector(
     } catch (error) {
       if (!dispatcher || !failOpen || !isProxyTransportError(error)) throw error;
       logger.warn(
-        `[egress] WebSocket 经代理连接失败，已降级直连重试: ${url}`
-          + ` (${error instanceof Error ? error.message : String(error)})`,
+        `[egress] WebSocket 经代理连接失败，已降级直连重试: ${url}` +
+          ` (${error instanceof Error ? error.message : String(error)})`,
       );
       return openWebSocket(url, headers, null, signal, connectTimeoutMs);
     }
@@ -305,7 +329,11 @@ async function openWebSocket(
       socket.removeEventListener('error', onError);
       socket.removeEventListener('close', onClose);
       if (error !== undefined) {
-        try { socket.close(); } catch { /* connecting socket may already be closed */ }
+        try {
+          socket.close();
+        } catch {
+          /* connecting socket may already be closed */
+        }
         reject(error);
       } else {
         resolve(socket);
@@ -314,17 +342,20 @@ async function openWebSocket(
     const onOpen = () => finish();
     const onError = (event: Event) => {
       const candidate = event as Event & { error?: unknown; message?: string };
-      const detail = candidate.error instanceof Error && candidate.error.message.trim()
-        ? candidate.error
-        : typeof candidate.message === 'string' && candidate.message.trim()
-          ? new Error(candidate.message)
-          : new Error('WebSocket connection failed before open (empty ErrorEvent)');
+      const detail =
+        candidate.error instanceof Error && candidate.error.message.trim()
+          ? candidate.error
+          : typeof candidate.message === 'string' && candidate.message.trim()
+            ? new Error(candidate.message)
+            : new Error('WebSocket connection failed before open (empty ErrorEvent)');
       finish(detail);
     };
     const onClose = (event: CloseEvent) => {
-      finish(new Error(
-        `WebSocket closed before open (code=${event.code} reason=${event.reason || 'none'})`,
-      ));
+      finish(
+        new Error(
+          `WebSocket closed before open (code=${event.code} reason=${event.reason || 'none'})`,
+        ),
+      );
     };
     const onAbort = () => finish(signal?.reason ?? new DOMException('Aborted', 'AbortError'));
     const timer = setTimeout(() => {

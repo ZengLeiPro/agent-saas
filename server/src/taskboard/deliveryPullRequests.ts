@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
-import type { TaskBoardIntegrationPolicy, TaskBoardTask } from '../../../shared/src/types/taskboard.js';
+import type {
+  TaskBoardIntegrationPolicy,
+  TaskBoardTask,
+} from '../../../shared/src/types/taskboard.js';
 import { finalizeMergedSource } from './integrationFinalization.js';
 import type { IntegrationFinalizationHost } from './integrationFinalizationHost.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
@@ -50,13 +53,24 @@ export async function inspectExecutionPullRequest(
 ): Promise<ExecutionPullRequestInspection> {
   const context = await loadContext(host, identity, runId, ['work', 'review']);
   if (!context.providerPullRequestId) {
-    throw new TaskboardValidationError('Current execution has no pull request', 'TASKBOARD_PULL_REQUEST_REQUIRED');
+    throw new TaskboardValidationError(
+      'Current execution has no pull request',
+      'TASKBOARD_PULL_REQUEST_REQUIRED',
+    );
   }
   const provider = requireProvider(host);
   const snapshot = provider.inspectPullRequest
-    ? await provider.inspectPullRequest(context.repository, context.providerPullRequestId, context.boardOwnerUserId)
+    ? await provider.inspectPullRequest(
+        context.repository,
+        context.providerPullRequestId,
+        context.boardOwnerUserId,
+      )
     : {
-        ...await provider.getPullRequest(context.repository, context.providerPullRequestId, context.boardOwnerUserId),
+        ...(await provider.getPullRequest(
+          context.repository,
+          context.providerPullRequestId,
+          context.boardOwnerUserId,
+        )),
         repositoryId: context.repository.repositoryId,
         providerQueriedAt: new Date().toISOString(),
         workflowRuns: [],
@@ -84,20 +98,33 @@ export async function inspectExecutionPullRequest(
       const { agentsTable } = integrationAgentTableNames(host.integrationSourcesTable);
       const current = await client.query(
         `SELECT provider_pull_request_id,integration_branch FROM ${agentsTable}
-          WHERE integration_task_id=$1 FOR UPDATE`, [context.taskId],
+          WHERE integration_task_id=$1 FOR UPDATE`,
+        [context.taskId],
       );
-      if (String(current.rows[0]?.provider_pull_request_id ?? '') !== snapshot.providerPullRequestId
-        || String(current.rows[0]?.integration_branch ?? '') !== snapshot.headRef) {
-        throw new TaskboardValidationError('Integration Agent pull request changed during inspection', 'TASKBOARD_SUBJECT_STALE');
+      if (
+        String(current.rows[0]?.provider_pull_request_id ?? '') !==
+          snapshot.providerPullRequestId ||
+        String(current.rows[0]?.integration_branch ?? '') !== snapshot.headRef
+      ) {
+        throw new TaskboardValidationError(
+          'Integration Agent pull request changed during inspection',
+          'TASKBOARD_SUBJECT_STALE',
+        );
       }
     } else {
       const current = await client.query(
         `SELECT provider_pull_request_id,head_oid FROM ${host.tasksTable} WHERE id=$1 FOR UPDATE`,
         [context.taskId],
       );
-      if (String(current.rows[0]?.provider_pull_request_id ?? '') !== snapshot.providerPullRequestId
-        || (current.rows[0]?.head_oid && String(current.rows[0].head_oid) !== snapshot.headOid)) {
-        throw new TaskboardValidationError('Pull request head changed during inspection', 'TASKBOARD_SUBJECT_STALE');
+      if (
+        String(current.rows[0]?.provider_pull_request_id ?? '') !==
+          snapshot.providerPullRequestId ||
+        (current.rows[0]?.head_oid && String(current.rows[0].head_oid) !== snapshot.headOid)
+      ) {
+        throw new TaskboardValidationError(
+          'Pull request head changed during inspection',
+          'TASKBOARD_SUBJECT_STALE',
+        );
       }
     }
     await client.query(
@@ -106,14 +133,26 @@ export async function inspectExecutionPullRequest(
               provider_ci_purpose=$4,provider_ci_head_oid=$5,provider_ci_status=$6,
               provider_ci_inspected_at=$7,version=version+1,updated_at=now()
         WHERE id=$1`,
-      [context.taskId, inspectionId, context.executionId, context.purpose,
-        snapshot.headOid, gateStatus, snapshot.providerQueriedAt],
+      [
+        context.taskId,
+        inspectionId,
+        context.executionId,
+        context.purpose,
+        snapshot.headOid,
+        gateStatus,
+        snapshot.providerQueriedAt,
+      ],
     );
     await client.query(
       `INSERT INTO ${host.changesTable}
          (task_id, change_type, actor_type, actor_id, execution_id, payload)
        VALUES ($1,'pull_request.inspected','agent',$2,$3,$4::jsonb)`,
-      [context.taskId, runId, context.executionId, JSON.stringify({ receipt, gateStatus, snapshot })],
+      [
+        context.taskId,
+        runId,
+        context.executionId,
+        JSON.stringify({ receipt, gateStatus, snapshot }),
+      ],
     );
     await client.query('COMMIT');
     return { receipt, snapshot, gateStatus };
@@ -149,18 +188,31 @@ export async function readExecutionPullRequestJobLog(
   }
   const snapshot = jsonObject(payload?.snapshot);
   const runs = Array.isArray(snapshot?.workflowRuns) ? snapshot.workflowRuns : [];
-  const job = runs.flatMap((run) => {
-    const jobs = jsonObject(run)?.jobs;
-    return Array.isArray(jobs) ? jobs : [];
-  }).map(jsonObject).find((candidate) => candidate?.id === providerJobId);
+  const job = runs
+    .flatMap((run) => {
+      const jobs = jsonObject(run)?.jobs;
+      return Array.isArray(jobs) ? jobs : [];
+    })
+    .map(jsonObject)
+    .find((candidate) => candidate?.id === providerJobId);
   if (!job || job.failureLogRef !== `github-job:${providerJobId}`) {
-    throw new TaskboardValidationError('Workflow job is not part of this inspection receipt', 'TASKBOARD_CI_LOG_SCOPE_INVALID');
+    throw new TaskboardValidationError(
+      'Workflow job is not part of this inspection receipt',
+      'TASKBOARD_CI_LOG_SCOPE_INVALID',
+    );
   }
   const provider = requireProvider(host);
   if (!provider.getWorkflowJobLog) {
-    throw new TaskboardValidationError('Provider job log reader is unavailable', 'TASKBOARD_CI_UNAVAILABLE');
+    throw new TaskboardValidationError(
+      'Provider job log reader is unavailable',
+      'TASKBOARD_CI_UNAVAILABLE',
+    );
   }
-  const log = await provider.getWorkflowJobLog(context.repository, providerJobId, context.boardOwnerUserId);
+  const log = await provider.getWorkflowJobLog(
+    context.repository,
+    providerJobId,
+    context.boardOwnerUserId,
+  );
   const client = await host.pool.connect();
   try {
     await client.query('BEGIN');
@@ -188,36 +240,57 @@ export function pullRequestGateStatus(
   if (snapshot.requiredChecksKnown !== true) return 'unavailable';
   if (snapshot.requiredChecksConfigured === false) return 'unconfigured';
   if (snapshot.requiredChecks.some((check) => check.status === 'failure')) return 'failure';
-  if (snapshot.requiredChecks.length === 0
-    || snapshot.requiredChecks.some((check) => check.status !== 'success')) return 'pending';
+  if (
+    snapshot.requiredChecks.length === 0 ||
+    snapshot.requiredChecks.some((check) => check.status !== 'success')
+  )
+    return 'pending';
   return 'success';
 }
 
 export function assertPullRequestGate(
   snapshot: RepositoryPullRequestSnapshot,
-  expected: { providerPullRequestId: string; headOid: string; baseOid?: string; subjectDigest?: string; requireMergeable?: boolean },
+  expected: {
+    providerPullRequestId: string;
+    headOid: string;
+    baseOid?: string;
+    subjectDigest?: string;
+    requireMergeable?: boolean;
+  },
 ): void {
-  if (snapshot.providerPullRequestId !== expected.providerPullRequestId
-    || snapshot.headOid !== expected.headOid
-    || (expected.baseOid && snapshot.baseOid !== expected.baseOid)
-    || (expected.subjectDigest && snapshot.subjectDigest !== expected.subjectDigest)) {
-    throw new TaskboardValidationError('Pull request subject changed after inspection', 'TASKBOARD_SUBJECT_STALE');
+  if (
+    snapshot.providerPullRequestId !== expected.providerPullRequestId ||
+    snapshot.headOid !== expected.headOid ||
+    (expected.baseOid && snapshot.baseOid !== expected.baseOid) ||
+    (expected.subjectDigest && snapshot.subjectDigest !== expected.subjectDigest)
+  ) {
+    throw new TaskboardValidationError(
+      'Pull request subject changed after inspection',
+      'TASKBOARD_SUBJECT_STALE',
+    );
   }
   if (snapshot.state !== 'open' || snapshot.draft) {
     throw new TaskboardValidationError('Pull request is closed or draft', 'TASKBOARD_PR_NOT_OPEN');
   }
   if (expected.requireMergeable && snapshot.mergeable !== true) {
     throw new TaskboardValidationError(
-      snapshot.mergeable === false ? 'Pull request is not mergeable' : 'Pull request mergeability is unknown',
-      snapshot.mergeable === false ? 'TASKBOARD_PR_NOT_MERGEABLE' : 'TASKBOARD_MERGEABILITY_UNKNOWN',
+      snapshot.mergeable === false
+        ? 'Pull request is not mergeable'
+        : 'Pull request mergeability is unknown',
+      snapshot.mergeable === false
+        ? 'TASKBOARD_PR_NOT_MERGEABLE'
+        : 'TASKBOARD_MERGEABILITY_UNKNOWN',
     );
   }
   if (snapshot.requiredChecksKnown !== true) {
-    throw new TaskboardValidationError('Provider could not authoritatively determine required checks', 'TASKBOARD_CI_UNAVAILABLE');
+    throw new TaskboardValidationError(
+      'Provider could not authoritatively determine required checks',
+      'TASKBOARD_CI_UNAVAILABLE',
+    );
   }
   if (snapshot.requiredChecksConfigured === false) {
     throw new TaskboardValidationError(
-      'CI gate is not configured: add GitHub required checks or this board\'s explicit CI fallback',
+      "CI gate is not configured: add GitHub required checks or this board's explicit CI fallback",
       'TASKBOARD_CI_UNCONFIGURED',
     );
   }
@@ -252,7 +325,10 @@ export async function attachExecutionPullRequest(
     context.boardOwnerUserId,
   );
   if (pullRequest.state !== 'open') {
-    throw new TaskboardValidationError('Delivery pull request must be open', 'TASKBOARD_PR_NOT_OPEN');
+    throw new TaskboardValidationError(
+      'Delivery pull request must be open',
+      'TASKBOARD_PR_NOT_OPEN',
+    );
   }
   assertRemediationPullRequest(context, pullRequest.providerPullRequestId);
   assertRemediationBranch(context, pullRequest.headRef);
@@ -264,11 +340,15 @@ export async function attachExecutionPullRequest(
       const { agentsTable } = integrationAgentTableNames(host.integrationSourcesTable);
       const updated = await client.query(
         `UPDATE ${agentsTable} SET provider_pull_request_id=$2,review_head_oid=NULL,verdict=NULL,
-            review_execution_id=NULL,updated_at=now()
+            review_execution_id=NULL,admission_receipt=NULL,updated_at=now()
           WHERE integration_task_id=$1 AND integration_branch=$3 RETURNING integration_task_id`,
         [context.taskId, pullRequest.providerPullRequestId, pullRequest.headRef],
       );
-      if (!updated.rows[0]) throw new TaskboardValidationError('Integration Agent branch changed before pull request attachment', 'TASKBOARD_SUBJECT_STALE');
+      if (!updated.rows[0])
+        throw new TaskboardValidationError(
+          'Integration Agent branch changed before pull request attachment',
+          'TASKBOARD_SUBJECT_STALE',
+        );
     } else {
       await client.query(
         `UPDATE ${host.tasksTable}
@@ -279,25 +359,37 @@ export async function attachExecutionPullRequest(
                 provider_ci_status=NULL,provider_ci_inspected_at=NULL,
                 version=version+1, updated_at=now()
           WHERE id=$1`,
-        [context.taskId, pullRequest.providerPullRequestId, pullRequest.number, pullRequest.headOid, pullRequest.baseOid],
+        [
+          context.taskId,
+          pullRequest.providerPullRequestId,
+          pullRequest.number,
+          pullRequest.headOid,
+          pullRequest.baseOid,
+        ],
       );
     }
     const result = await client.query(
       `SELECT t.*, (SELECT count(*)::int FROM ${host.commentsTable} c
         WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', host.changesTable)}) AS comment_count
-       FROM ${host.tasksTable} t WHERE t.id=$1`, [context.taskId],
+       FROM ${host.tasksTable} t WHERE t.id=$1`,
+      [context.taskId],
     );
     await client.query(
       `INSERT INTO ${host.changesTable}
          (task_id, change_type, actor_type, actor_id, execution_id, payload)
        VALUES ($1,'pull_request.attached','agent',$2,$3,$4::jsonb)`,
-      [context.taskId, runId, context.executionId, JSON.stringify({
-        providerPullRequestId: pullRequest.providerPullRequestId,
-        number: pullRequest.number,
-        headOid: pullRequest.headOid,
-        baseOid: pullRequest.baseOid,
-        subjectDigest: pullRequest.subjectDigest,
-      })],
+      [
+        context.taskId,
+        runId,
+        context.executionId,
+        JSON.stringify({
+          providerPullRequestId: pullRequest.providerPullRequestId,
+          number: pullRequest.number,
+          headOid: pullRequest.headOid,
+          baseOid: pullRequest.baseOid,
+          subjectDigest: pullRequest.subjectDigest,
+        }),
+      ],
     );
     await client.query('COMMIT');
     return rowToTask(result.rows[0]!);
@@ -355,17 +447,23 @@ export async function recordReviewedExecutionSubject(
         `SELECT a.provider_pull_request_id,a.integration_branch,a.repository_id,
                 t.provider_ci_execution_id,t.provider_ci_purpose,t.provider_ci_head_oid,t.provider_ci_status
            FROM ${agentsTable} a JOIN ${host.tasksTable} t ON t.id=a.integration_task_id
-          WHERE a.integration_task_id=$1 FOR UPDATE OF a,t`, [context.taskId],
+          WHERE a.integration_task_id=$1 FOR UPDATE OF a,t`,
+        [context.taskId],
       );
       const binding = current.rows[0];
-      if (String(binding?.provider_pull_request_id ?? '') !== pullRequest.providerPullRequestId
-        || String(binding?.integration_branch ?? '') !== pullRequest.headRef
-        || String(binding?.repository_id ?? '') !== context.repository.repositoryId
-        || String(binding?.provider_ci_execution_id ?? '') !== context.executionId
-        || String(binding?.provider_ci_purpose ?? '') !== 'review'
-        || String(binding?.provider_ci_head_oid ?? '') !== pullRequest.headOid
-        || String(binding?.provider_ci_status ?? '') !== 'success') {
-        throw new TaskboardValidationError('Integration Agent pull request changed during review', 'TASKBOARD_SUBJECT_STALE');
+      if (
+        String(binding?.provider_pull_request_id ?? '') !== pullRequest.providerPullRequestId ||
+        String(binding?.integration_branch ?? '') !== pullRequest.headRef ||
+        String(binding?.repository_id ?? '') !== context.repository.repositoryId ||
+        String(binding?.provider_ci_execution_id ?? '') !== context.executionId ||
+        String(binding?.provider_ci_purpose ?? '') !== 'review' ||
+        String(binding?.provider_ci_head_oid ?? '') !== pullRequest.headOid ||
+        String(binding?.provider_ci_status ?? '') !== 'success'
+      ) {
+        throw new TaskboardValidationError(
+          'Integration Agent pull request changed during review',
+          'TASKBOARD_SUBJECT_STALE',
+        );
       }
     } else {
       const current = await client.query(
@@ -373,7 +471,10 @@ export async function recordReviewedExecutionSubject(
         [context.taskId],
       );
       if (current.rows[0]?.provider_pull_request_id !== context.providerPullRequestId) {
-        throw new TaskboardValidationError('Pull request changed during review', 'TASKBOARD_SUBJECT_STALE');
+        throw new TaskboardValidationError(
+          'Pull request changed during review',
+          'TASKBOARD_SUBJECT_STALE',
+        );
       }
     }
     const result = await client.query(
@@ -383,18 +484,29 @@ export async function recordReviewedExecutionSubject(
         WHERE id=$1
         RETURNING *,
           (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=${host.tasksTable}.id AND ${visibleCommentPredicate('c', host.changesTable)}) AS comment_count`,
-      [context.taskId, pullRequest.number, pullRequest.headOid, pullRequest.baseOid, pullRequest.subjectDigest],
+      [
+        context.taskId,
+        pullRequest.number,
+        pullRequest.headOid,
+        pullRequest.baseOid,
+        pullRequest.subjectDigest,
+      ],
     );
     await client.query(
       `INSERT INTO ${host.changesTable}
          (task_id, change_type, actor_type, actor_id, execution_id, payload)
        VALUES ($1,'review.subject_recorded','agent',$2,$3,$4::jsonb)`,
-      [context.taskId, runId, context.executionId, JSON.stringify({
-        providerPullRequestId: pullRequest.providerPullRequestId,
-        headOid: pullRequest.headOid,
-        baseOid: pullRequest.baseOid,
-        subjectDigest: pullRequest.subjectDigest,
-      })],
+      [
+        context.taskId,
+        runId,
+        context.executionId,
+        JSON.stringify({
+          providerPullRequestId: pullRequest.providerPullRequestId,
+          headOid: pullRequest.headOid,
+          baseOid: pullRequest.baseOid,
+          subjectDigest: pullRequest.subjectDigest,
+        }),
+      ],
     );
     await client.query(
       `UPDATE ${host.integrationSourcesTable}
@@ -413,8 +525,14 @@ export async function recordReviewedExecutionSubject(
          FROM ${host.integrationSourcesTable} s
         WHERE s.remediation_task_id=$1 AND s.state='waiting_remediation'
           AND d.id=s.delivery_task_id`,
-      [context.taskId, pullRequest.providerPullRequestId, pullRequest.number,
-        pullRequest.headOid, pullRequest.baseOid, pullRequest.subjectDigest],
+      [
+        context.taskId,
+        pullRequest.providerPullRequestId,
+        pullRequest.number,
+        pullRequest.headOid,
+        pullRequest.baseOid,
+        pullRequest.subjectDigest,
+      ],
     );
     await client.query('COMMIT');
     return rowToTask(result.rows[0]!);
@@ -465,7 +583,10 @@ async function reconcileExternallyMergedPullRequest(
       [context.taskId],
     );
     if (current.rows[0]?.provider_pull_request_id !== context.providerPullRequestId) {
-      throw new TaskboardValidationError('Pull request changed during merge reconciliation', 'TASKBOARD_SUBJECT_STALE');
+      throw new TaskboardValidationError(
+        'Pull request changed during merge reconciliation',
+        'TASKBOARD_SUBJECT_STALE',
+      );
     }
     const result = await client.query(
       `UPDATE ${host.tasksTable}
@@ -477,7 +598,13 @@ async function reconcileExternallyMergedPullRequest(
         WHERE id=$1
         RETURNING *,
           (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=${host.tasksTable}.id AND ${visibleCommentPredicate('c', host.changesTable)}) AS comment_count`,
-      [context.taskId, pullRequest.number, pullRequest.headOid, pullRequest.baseOid, pullRequest.mergeCommitOid],
+      [
+        context.taskId,
+        pullRequest.number,
+        pullRequest.headOid,
+        pullRequest.baseOid,
+        pullRequest.mergeCommitOid,
+      ],
     );
     await client.query(
       `UPDATE ${host.blockEpisodesTable} SET closed_at=COALESCE(closed_at,now())
@@ -494,13 +621,18 @@ async function reconcileExternallyMergedPullRequest(
           SELECT 1 FROM ${host.changesTable}
            WHERE task_id=$1 AND change_type='merge.succeeded.v2' AND payload->>'commandId'=$2
         )`,
-      [context.taskId, commandId, context.executionId, JSON.stringify({
-        schemaVersion: 2,
+      [
+        context.taskId,
         commandId,
-        providerPullRequestId: pullRequest.providerPullRequestId,
-        mergedCommitOid: pullRequest.mergeCommitOid,
-        reconciledFrom: 'review_subject',
-      })],
+        context.executionId,
+        JSON.stringify({
+          schemaVersion: 2,
+          commandId,
+          providerPullRequestId: pullRequest.providerPullRequestId,
+          mergedCommitOid: pullRequest.mergeCommitOid,
+          reconciledFrom: 'review_subject',
+        }),
+      ],
     );
     await client.query('COMMIT');
     return rowToTask(result.rows[0]!);
@@ -530,7 +662,14 @@ async function loadContext(
   deliveryProviderPullRequestId?: string;
   taskBranch?: string;
   deliveryBranch?: string;
-  repository: { provider: 'github'; repositoryId: string; owner: string; name: string; baseBranch: string; allowForkPullRequest: false };
+  repository: {
+    provider: 'github';
+    repositoryId: string;
+    owner: string;
+    name: string;
+    baseBranch: string;
+    allowForkPullRequest: false;
+  };
   boardOwnerUserId: string;
 }> {
   const client = await host.pool.connect();
@@ -566,11 +705,21 @@ async function loadContext(
     const kind = String(row.kind);
     const purpose = String(row.purpose);
     const isIntegrationAgent = kind === 'integration' && Boolean(row.agent_task_id);
-    if ((!['delivery', 'remediation'].includes(kind) && !isIntegrationAgent) || !purposes.includes(purpose)) {
-      throw new TaskboardValidationError('Execution purpose cannot inspect the current pull request');
+    if (
+      (!['delivery', 'remediation'].includes(kind) && !isIntegrationAgent) ||
+      !purposes.includes(purpose)
+    ) {
+      throw new TaskboardValidationError(
+        'Execution purpose cannot inspect the current pull request',
+      );
     }
-    if (row.transitioned_at || row.superseded_at
-      || !['queued', 'running', 'waiting_user', 'waiting_approval'].includes(String(row.execution_status))) {
+    if (
+      row.transitioned_at ||
+      row.superseded_at ||
+      !['queued', 'running', 'waiting_user', 'waiting_approval'].includes(
+        String(row.execution_status),
+      )
+    ) {
       throw new TaskboardValidationError('Taskboard execution is no longer active');
     }
     const repository = jsonObject(row.repository);
@@ -578,22 +727,42 @@ async function loadContext(
       throw new TaskboardValidationError('Board repository is not configured');
     }
     return {
-      taskId: String(row.task_id), executionId: String(row.execution_id), runId,
-      purpose: purpose as 'work' | 'review', isRemediation: kind === 'remediation', isIntegrationAgent,
+      taskId: String(row.task_id),
+      executionId: String(row.execution_id),
+      runId,
+      purpose: purpose as 'work' | 'review',
+      isRemediation: kind === 'remediation',
+      isIntegrationAgent,
       ...(isIntegrationAgent && row.agent_provider_pull_request_id
         ? { providerPullRequestId: String(row.agent_provider_pull_request_id) }
-        : row.provider_pull_request_id ? { providerPullRequestId: String(row.provider_pull_request_id) } : {}),
+        : row.provider_pull_request_id
+          ? { providerPullRequestId: String(row.provider_pull_request_id) }
+          : {}),
       ...(row.integration_branch ? { integrationBranch: String(row.integration_branch) } : {}),
-      ...(row.source_provider_pull_request_id ? { sourceProviderPullRequestId: String(row.source_provider_pull_request_id) } : {}),
-      ...(row.delivery_provider_pull_request_id ? { deliveryProviderPullRequestId: String(row.delivery_provider_pull_request_id) } : {}),
+      ...(row.source_provider_pull_request_id
+        ? { sourceProviderPullRequestId: String(row.source_provider_pull_request_id) }
+        : {}),
+      ...(row.delivery_provider_pull_request_id
+        ? { deliveryProviderPullRequestId: String(row.delivery_provider_pull_request_id) }
+        : {}),
       ...(row.task_branch ? { taskBranch: String(row.task_branch) } : {}),
       ...(row.delivery_branch ? { deliveryBranch: String(row.delivery_branch) } : {}),
-      repository: repositoryWithBoardCiPolicy(repository as {
-        provider: 'github'; repositoryId: string; owner: string; name: string; baseBranch: string; allowForkPullRequest: false;
-      }, jsonObject(row.integration_policy) as TaskBoardIntegrationPolicy | undefined),
+      repository: repositoryWithBoardCiPolicy(
+        repository as {
+          provider: 'github';
+          repositoryId: string;
+          owner: string;
+          name: string;
+          baseBranch: string;
+          allowForkPullRequest: false;
+        },
+        jsonObject(row.integration_policy) as TaskBoardIntegrationPolicy | undefined,
+      ),
       boardOwnerUserId: String(row.owner_user_id),
     };
-  } finally { client.release(); }
+  } finally {
+    client.release();
+  }
 }
 
 async function lockExecution(
@@ -602,10 +771,7 @@ async function lockExecution(
   runId: string,
   taskId: string,
 ): Promise<void> {
-  await client.query(
-    `SELECT id FROM ${host.tasksTable} WHERE id=$1 FOR UPDATE`,
-    [taskId],
-  );
+  await client.query(`SELECT id FROM ${host.tasksTable} WHERE id=$1 FOR UPDATE`, [taskId]);
   const result = await client.query(
     `SELECT id FROM ${host.executionsTable}
       WHERE run_id=$1 AND task_id=$2
@@ -621,13 +787,21 @@ function assertPullRequestIdentity(
   context: Awaited<ReturnType<typeof loadContext>>,
   snapshot: RepositoryPullRequestSnapshot,
 ): void {
-  if (('repositoryId' in snapshot && snapshot.repositoryId !== context.repository.repositoryId)
-    || snapshot.providerPullRequestId !== context.providerPullRequestId
-    || snapshot.baseRef !== context.repository.baseBranch) {
-    throw new TaskboardValidationError('Provider returned a pull request outside the registered subject', 'TASKBOARD_SUBJECT_STALE');
+  if (
+    ('repositoryId' in snapshot && snapshot.repositoryId !== context.repository.repositoryId) ||
+    snapshot.providerPullRequestId !== context.providerPullRequestId ||
+    snapshot.baseRef !== context.repository.baseBranch
+  ) {
+    throw new TaskboardValidationError(
+      'Provider returned a pull request outside the registered subject',
+      'TASKBOARD_SUBJECT_STALE',
+    );
   }
   if (context.isIntegrationAgent && snapshot.headRef !== context.integrationBranch) {
-    throw new TaskboardValidationError('Provider returned a pull request outside the integration Agent branch', 'TASKBOARD_SUBJECT_STALE');
+    throw new TaskboardValidationError(
+      'Provider returned a pull request outside the integration Agent branch',
+      'TASKBOARD_SUBJECT_STALE',
+    );
   }
   assertRemediationPullRequest(context, snapshot.providerPullRequestId);
   assertRemediationBranch(context, snapshot.headRef);
@@ -638,17 +812,21 @@ function inspectionDigest(
   inspectionId: string,
   snapshot: RepositoryPullRequestInspection,
 ): string {
-  return createHash('sha256').update(JSON.stringify({
-    executionId: context.executionId,
-    inspectionId,
-    repositoryId: snapshot.repositoryId,
-    providerPullRequestId: snapshot.providerPullRequestId,
-    headOid: snapshot.headOid,
-    subjectDigest: snapshot.subjectDigest,
-    providerQueriedAt: snapshot.providerQueriedAt,
-    integrationAgent: context.isIntegrationAgent,
-    integrationBranch: context.integrationBranch,
-  })).digest('hex');
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        executionId: context.executionId,
+        inspectionId,
+        repositoryId: snapshot.repositoryId,
+        providerPullRequestId: snapshot.providerPullRequestId,
+        headOid: snapshot.headOid,
+        subjectDigest: snapshot.subjectDigest,
+        providerQueriedAt: snapshot.providerQueriedAt,
+        integrationAgent: context.isIntegrationAgent,
+        integrationBranch: context.integrationBranch,
+      }),
+    )
+    .digest('hex');
 }
 
 function assertRemediationPullRequest(
@@ -656,10 +834,12 @@ function assertRemediationPullRequest(
   providerPullRequestId: string,
 ): void {
   if (!context.isRemediation) return;
-  if (!context.sourceProviderPullRequestId
-    || !context.deliveryProviderPullRequestId
-    || context.sourceProviderPullRequestId !== context.deliveryProviderPullRequestId
-    || providerPullRequestId !== context.sourceProviderPullRequestId) {
+  if (
+    !context.sourceProviderPullRequestId ||
+    !context.deliveryProviderPullRequestId ||
+    context.sourceProviderPullRequestId !== context.deliveryProviderPullRequestId ||
+    providerPullRequestId !== context.sourceProviderPullRequestId
+  ) {
     throw new TaskboardValidationError(
       'Remediation pull request must remain the integration source pull request',
       'TASKBOARD_REMEDIATION_PR_MISMATCH',
@@ -694,7 +874,7 @@ function jsonObject(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== 'string') return undefined;
   try {
     const parsed = JSON.parse(value);
-    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : undefined;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : undefined;
   } catch {
     return undefined;
   }

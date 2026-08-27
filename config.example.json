@@ -1,4 +1,14 @@
 {
+  // ── 发布运行身份（通过环境变量注入，不写入本文件）────────────
+  // staging/production 必须显式设置 AGENT_SAAS_ENVIRONMENT。
+  // Staging 还必须显式声明独立的 server root、credential/JWT/Hand store、
+  // ACS namespace/PVC/ServiceAccount、OAuth 与通知模式；完整变量清单见
+  // docs/release-preflight.md 的 “Staging startup identity” 一节。
+  // Staging 还必须注入 release ID、完整 SHA、Server/Web digest，以及
+  // ACS Orchestrator/Sandbox image 双 digest；Cron 必须在下方显式 enabled=false。
+  // Staging DB host/name/user、ACS/Hand host 和文件根通过独立 allow-list 环境变量
+  // 约束，任何缺失、生产标记或越界路径都会在启动前 fail closed。
+
   // ── 模型切换 ──────────────────────────────────────────────
   "models": {
     // false: 会话开始后只能在当前 provider 分组内切换
@@ -43,7 +53,7 @@
             // 不配置 = 该模型不启用自动压缩。无内置默认——窗口值直接决定触发点，宁缺勿错。
             "context_window": 200000
           },
-          { "id": "gpt54mini", "name": "GPT 5.4 Mini", "value": "gpt-5.4-mini"},
+          { "id": "gpt54mini", "name": "GPT 5.4 Mini", "value": "gpt-5.4-mini" },
           { "id": "k25", "name": "Kimi 2.5", "value": "kimi-2.5" },
           { "id": "m25", "name": "MiniMax 2.5", "value": "MiniMax-2.5" },
           {
@@ -407,7 +417,7 @@
   // 两 backend 同一份 audit 数据结果一致（见 verify:audit-read 双 backend 验证）
   "audit": {
     "projection": "file"
-  },
+  }
 
   // ── Runtime Artifact 对象后端 ─────────────────────────────
   // 不配置时默认使用本机 ./data/artifacts 作为 local blob backend；PG runtime
@@ -449,7 +459,6 @@
   //   "maxBatchesPerCategory": 10
   //   // "authorizationRef": "CHG-000000" // 仅经批准切 execute 时填写
   // },
-
 
   // ── Client daemon reverse WebSocket（Many-hands 客户侧 hand）──────────────
   // 客户机器 daemon 通过 ws(s)://<server>/daemon 反向连接平台，hello 后注册为

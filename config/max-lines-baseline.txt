@@ -6,6 +6,7 @@
 
 acs-orchestrator/src/sandboxManager.test.ts	1723	test
 acs-orchestrator/src/sandboxManager.ts	1187	production
+acs-orchestrator/src/snatManager.test.ts	855	test
 server/src/__tests__/appConfig.test.ts	894	test
 server/src/__tests__/billingRouterEndpoints.test.ts	822	test
 server/src/__tests__/feishuTokenBroker.test.ts	809	test
@@ -25,7 +26,9 @@ server/src/__tests__/workflowLibraryV3.test.ts	1062	test
 server/src/__tests__/wsEventProcessor.test.ts	830	test
 server/src/agent/toolRuntime.ts	1560	production
 server/src/app/config.ts	1431	production
+server/src/app/routes.ts	1154	production
 server/src/app/runtime.ts	3116	production
+server/src/app/runtimeGovernanceConnectors.ts	1246	production
 server/src/channels/web/channel.ts	4382	production
 server/src/cron/service.ts	1084	production
 server/src/data/billing/pgBillingStore.ts	2319	production

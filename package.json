@@ -22,7 +22,7 @@
     "test:coverage": "pnpm -r --workspace-concurrency=1 --filter='./server' --filter='./shared' --filter='./web' run --if-present test:coverage",
     "coverage:summary": "node scripts/coverage-summary.mjs",
     "coverage:diff": "node scripts/coverage-diff.mjs",
-    "typecheck": "pnpm -r --parallel --filter='./server' --filter='./shared' --filter='./web' run --if-present typecheck",
+    "typecheck": "pnpm -r --parallel run --if-present typecheck",
     "preflight:pr": "bash scripts/pr-preflight.sh",
     "test:ratchets": "node --test scripts/ratchets.test.mjs scripts/runtime-worker-rollout-order.test.mjs",
     "check:ratchets": "pnpm test:ratchets && node scripts/check-max-lines-ratchet.mjs && node scripts/check-env-var-count.mjs",
@@ -51,7 +51,8 @@
     "expo": "~55.0.5",
     "react": "19.2.0",
     "react-native": "0.83.2",
-    "zustand": "^5.0.12"
+    "zustand": "^5.0.12",
+    "zod": "^4.3.6"
   },
   "lint-staged": {
     "*.{js,cjs,mjs,jsx,ts,cts,mts,tsx}": [

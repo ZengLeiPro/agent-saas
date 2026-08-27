@@ -18,7 +18,11 @@ import { writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { egressConfigSchema } from '../app/config.js';
-import { DEFAULT_EGRESS_CONFIG, isStagingServerEgressSafe, type EgressConfig } from '../runtime/egressPolicy.js';
+import {
+  DEFAULT_EGRESS_CONFIG,
+  isStagingServerEgressSafe,
+  type EgressConfig,
+} from '../runtime/egressPolicy.js';
 
 interface EgressConfigFileData {
   version: 1;
@@ -177,9 +181,7 @@ export class EgressConfigStore {
 
   private async persist(): Promise<void> {
     if (this.loadFailed) {
-      throw new Error(
-        `egress-config 文件损坏（${this.filePath}），拒绝覆盖写，请人工检查`,
-      );
+      throw new Error(`egress-config 文件损坏（${this.filePath}），拒绝覆盖写，请人工检查`);
     }
     mkdirSync(dirname(this.filePath), { recursive: true });
     const tmpPath = join(

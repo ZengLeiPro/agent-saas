@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "environment": "staging",
+  "region": "cn-shenzhen",
+  "status": "planned",
+  "resources": {
+    "web": {
+      "bucket": "agent-saas-web-staging",
+      "domain": "staging.agent.kaiyan.net"
+    },
+    "api": {
+      "ecsName": "stg-agent-saas-app-cn-shenzhen",
+      "domain": "api.staging.agent.kaiyan.net",
+      "port": 3210
+    },
+    "database": {
+      "instanceId": "UNASSIGNED",
+      "database": "agent_saas_staging",
+      "role": "agent_saas_staging"
+    },
+    "nas": {
+      "fileSystemId": "UNASSIGNED",
+      "mountRoot": "/mnt/agent-saas-staging"
+    },
+    "vault": {
+      "credentialNamespace": "STAGING_AGENT_SAAS",
+      "backend": "encrypted-file",
+      "path": "/var/lib/agent-saas-staging/vault/secrets.enc"
+    },
+    "notifications": {
+      "mode": "disabled",
+      "sinkId": "UNASSIGNED"
+    },
+    "acs": {
+      "namespace": "agent-saas-staging",
+      "pvc": "agent-saas-staging-workspace",
+      "serviceAccount": "agent-saas-staging-orchestrator",
+      "imagePullSecret": "agent-saas-staging-acr",
+      "orchestratorPort": 3410,
+      "workspaceRoot": "/mnt/agent-saas-staging/workspaces",
+      "handStoreNamespace": "agent-saas-staging"
+    },
+    "runtime": {
+      "releaseRoot": "/opt/agent-saas-staging/releases",
+      "currentLink": "/opt/agent-saas-staging/current",
+      "stateRoot": "/var/lib/agent-saas-staging",
+      "configRoot": "/etc/agent-saas-staging",
+      "lockRoot": "/run/lock/agent-saas-staging"
+    }
+  },
+  "defaults": {
+    "cronEnabled": false,
+    "productionOAuthEnabled": false,
+    "productionHandEnabled": false,
+    "productionNotificationsEnabled": false,
+    "egressMode": "allowlist"
+  },
+  "requiredEvidence": [
+    "database-role-cannot-read-or-write-production",
+    "oss-identity-cannot-write-production-bucket",
+    "nas-identity-cannot-traverse-production-root",
+    "notification-delivery-reaches-test-sink-only",
+    "api-worker-cannot-connect-production-hand-or-acs",
+    "acs-service-account-cannot-read-production-namespace-resources",
+    "sandbox-cannot-mount-or-traverse-production-workspace"
+  ]
+}

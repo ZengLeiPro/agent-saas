@@ -35,19 +35,19 @@ Environment=AZEROTH_TOKENS_FILE=/etc/agent-saas/azeroth-tokens.json
 EnvironmentFile=/etc/agent-saas/server.env
 # 每色覆盖项（PORT、AGENT_SAAS_PIDFILE），放在共享 server.env 之后以便覆盖
 EnvironmentFile=/etc/agent-saas/server-%i.env
+EnvironmentFile=-/etc/agent-saas/server-%i.release.env
 # 环境身份与角色是拓扑硬约束，必须放在可编辑 EnvironmentFile 之后，防止被旧值覆盖
 Environment=AGENT_SAAS_ENVIRONMENT=production
 Environment=AGENT_SAAS_PROCESS_ROLE=ws-only
 Environment=AGENT_SAAS_DRAIN_MARKER=/run/agent-saas-server-%i.draining
 ExecCondition=/usr/bin/test ! -e /run/agent-saas-server-%i.draining
-ExecStart=/usr/local/bin/pnpm start
+ExecStart=/usr/bin/node --enable-source-maps dist/index.js
 # on-failure：drain 自退（exit 0）不复活，崩溃仍自动拉起
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM
 TimeoutStopSec=35
-# pnpm wrapper（MainPID）收 SIGTERM 以 143 退出；这是正常 stop 语义，
-# 不应把 unit 标为 failed（node 本体在 cgroup 内正常走 gracefulShutdown）
+# 直接启动 node，使 systemd MainPID 与应用 pidfile 的真实进程一致。
 SuccessExitStatus=143
 NoNewPrivileges=true
 PrivateTmp=true

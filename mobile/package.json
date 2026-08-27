@@ -11,6 +11,7 @@
     "build:android": "./scripts/build.sh android",
     "build:ios:only": "./scripts/build.sh ios --build",
     "submit:ios": "./scripts/build.sh ios --submit",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {

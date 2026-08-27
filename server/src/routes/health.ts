@@ -51,10 +51,7 @@ const ZERO_ACTIVE_RUN_COUNTS: ActiveRunCounts = {
  * @param config 应用配置
  * @returns Express Router
  */
-export function createHealthRouter(
-  config: AppConfig,
-  options: HealthRouteOptions = {},
-): Router {
+export function createHealthRouter(config: AppConfig, options: HealthRouteOptions = {}): Router {
   const router = Router();
   // Re-assert at route assembly so readiness only reports an identity proven by startup policy.
   const runtimeIdentity = assertRuntimeEnvironmentSafety(config);
@@ -106,15 +103,21 @@ export function createHealthRouter(
     const draining = options.getIsDraining?.() ?? false;
     const warmup = options.getSkillsWarmupStatus?.() ?? { state: 'done' as const };
     const release = options.getRuntimeIdentity?.() ?? runtimeIdentity;
-    const safetyAttested = release?.safetyAttested !== false
-      && (options.getEnvironmentSafetyAttested?.() ?? true);
+    const safetyAttested =
+      release?.safetyAttested !== false && (options.getEnvironmentSafetyAttested?.() ?? true);
     let integrationV3: IntegrationV3HealthStatus | undefined;
     try {
       integrationV3 = await options.getIntegrationV3Health?.();
     } catch (error) {
       res.status(503).json({
-        status: 'not_ready', draining, warmup,
-        integrationV3: { status: 'degraded', releaseReady: false, reasons: ['metrics_unavailable'] },
+        status: 'not_ready',
+        draining,
+        warmup,
+        integrationV3: {
+          status: 'degraded',
+          releaseReady: false,
+          reasons: ['metrics_unavailable'],
+        },
         error: error instanceof Error ? error.message : String(error),
       });
       return;
@@ -138,7 +141,7 @@ export function createHealthRouter(
     const activeUploads = uploadMetrics?.activeUploads ?? 0;
     let activeRuns = ZERO_ACTIVE_RUN_COUNTS;
     try {
-      activeRuns = await options.getActiveRunCounts?.() ?? ZERO_ACTIVE_RUN_COUNTS;
+      activeRuns = (await options.getActiveRunCounts?.()) ?? ZERO_ACTIVE_RUN_COUNTS;
     } catch (err) {
       res.status(503).json({
         status: 'error',

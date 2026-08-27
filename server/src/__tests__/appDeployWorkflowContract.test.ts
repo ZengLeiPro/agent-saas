@@ -18,10 +18,15 @@ async function classify(paths: string[]): Promise<Record<string, string>> {
     cwd: repoRoot,
     encoding: 'utf-8',
   });
-  return Object.fromEntries(output.trim().split('\n').map((line) => {
-    const separator = line.indexOf('=');
-    return [line.slice(0, separator), line.slice(separator + 1)];
-  }));
+  return Object.fromEntries(
+    output
+      .trim()
+      .split('\n')
+      .map((line) => {
+        const separator = line.indexOf('=');
+        return [line.slice(0, separator), line.slice(separator + 1)];
+      }),
+  );
 }
 
 describe('App 生产部署门禁', () => {
@@ -31,15 +36,17 @@ describe('App 生产部署门禁', () => {
   });
 
   it('纯 Web、Mobile、文档与 Server 测试变更不要求滚动 ECS', async () => {
-    await expect(classify([
-      'web/src/App.tsx',
-      'web/src/App.test.tsx',
-      'mobile/app/index.tsx',
-      'docs/deployment.md',
-      'README.md',
-      'server/src/__tests__/runtimeWake.test.ts',
-      'scripts/deploy-recovery-web.sh',
-    ])).resolves.toMatchObject({
+    await expect(
+      classify([
+        'web/src/App.tsx',
+        'web/src/App.test.tsx',
+        'mobile/app/index.tsx',
+        'docs/deployment.md',
+        'README.md',
+        'server/src/__tests__/runtimeWake.test.ts',
+        'scripts/deploy-recovery-web.sh',
+      ]),
+    ).resolves.toMatchObject({
       required: 'false',
       reason: 'none',
     });
@@ -71,30 +78,32 @@ describe('App 生产部署门禁', () => {
     });
   });
 
-  it('按生产 active SHA 做累计 diff，失败时 fail-open，并保留强制 ECS 入口', async () => {
+  it('停用旧生产 dispatch，并只保留固定 RC Promotion 手动入口', async () => {
     const workflow = await readFile(workflowPath, 'utf-8');
+    const promotion = await readFile(
+      join(repoRoot, '.github/workflows/promote-release.yml'),
+      'utf-8',
+    );
     const planStart = workflow.indexOf('  deploy_plan:');
     const ecsStart = workflow.indexOf('  deploy-ecs:');
     const webStart = workflow.indexOf('  deploy-web-oss:');
-    const plan = workflow.slice(planStart, ecsStart);
     const ecs = workflow.slice(ecsStart, webStart);
     const web = workflow.slice(webStart);
+    const triggerBlock = workflow.slice(
+      workflow.indexOf('on:\n'),
+      workflow.indexOf('\nconcurrency:'),
+    );
 
     expect(planStart).toBeGreaterThan(-1);
     expect(ecsStart).toBeGreaterThan(planStart);
     expect(webStart).toBeGreaterThan(ecsStart);
-    expect(workflow).toContain('force_ecs:');
-    expect(plan).toContain('root=/opt/agent-saas-app/color');
-    expect(plan).toContain('git merge-base --is-ancestor "$production_ecs_sha" "$GITHUB_SHA"');
-    expect(plan).toContain('git diff --name-only "$production_ecs_sha" "$GITHUB_SHA"');
-    expect(plan).toContain('bash .github/scripts/ecs-release-classify.sh');
-    expect(plan).toContain('proceeding with ECS deploy (fail-open)');
-    expect(plan).toContain('echo "ecs_required=true" >> "$GITHUB_OUTPUT"');
+    expect(triggerBlock).not.toContain('workflow_dispatch:');
     expect(ecs).toContain('needs: [build, deploy_plan]');
-    expect(ecs).toContain("needs.deploy_plan.outputs.ecs_required == 'true'");
+    expect(ecs).toContain("github.event_name == 'workflow_dispatch'");
     expect(web).toContain('needs: [build, deploy_plan, deploy-ecs]');
-    expect(web).toContain('always() &&');
-    expect(web).toContain("needs.deploy_plan.outputs.ecs_required == 'false' && needs.deploy-ecs.result == 'skipped'");
-    expect(web).toContain("needs.deploy_plan.outputs.ecs_required == 'true' && needs.deploy-ecs.result == 'success'");
+    expect(web).toContain("github.event_name == 'workflow_dispatch'");
+    expect(promotion).toContain('workflow_dispatch:');
+    expect(promotion).toContain('release_id:');
+    expect(promotion).toContain('environment: production');
   });
 });

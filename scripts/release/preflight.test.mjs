@@ -1,28 +1,53 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { runPreflight } from './preflight.mjs';
+import { TRUSTED_PRODUCTION_IDENTITY_PATH, runPreflight } from './preflight.mjs';
 import { readRuntimeIdentity } from './read-runtime-identity.mjs';
 
 const TARGET = 'a'.repeat(40);
 const BASELINE = 'b'.repeat(40);
+const DIGEST = `sha256:${'c'.repeat(64)}`;
 
 function productionIdentity(overrides = {}) {
-  const component = (gitSha) => ({ gitSha, deployedAt: '2026-08-25T00:00:00.000Z' });
+  const component = (gitSha) => ({
+    gitSha,
+    artifactDigest: DIGEST,
+    deployedAt: '2026-08-25T00:00:00.000Z',
+  });
   return {
     schemaVersion: 1,
     environment: 'production',
     gitSha: BASELINE,
+    configSchemaVersion: 1,
+    configFingerprint: DIGEST,
     components: {
       web: component(TARGET),
       api: component(TARGET),
       runtimeWorker: component(TARGET),
-      acs: component(TARGET),
+      acs: {
+        gitSha: TARGET,
+        orchestratorArtifactDigest: DIGEST,
+        sandboxImageDigest: DIGEST,
+        deployedAt: '2026-08-25T00:00:00.000Z',
+      },
     },
     topology: {
       observedAt: '2026-08-25T00:00:00.000Z',
-      api: { activeColor: 'blue', activeColorFile: '/etc/agent-saas/active-color', unit: 'agent-saas-server@blue.service', releaseSymlink: '/opt/agent-saas-app/color/blue', pidfile: '/run/agent-saas-server-blue.pid' },
-      runtimeWorker: { activeColor: 'green', activeColorFile: '/etc/agent-saas/runtime-worker-active-color', unit: 'agent-saas-runtime-worker@green.service', releaseSymlink: '/opt/agent-saas-app/worker/green', pidfile: '/run/agent-saas-runtime-worker-green.pid', readyfile: '/run/agent-saas-runtime-worker-green.ready' },
+      api: {
+        activeColor: 'blue',
+        activeColorFile: '/etc/agent-saas/active-color',
+        unit: 'agent-saas-server@blue.service',
+        releaseSymlink: '/opt/agent-saas-app/color/blue',
+        pidfile: '/run/agent-saas-server-blue.pid',
+      },
+      runtimeWorker: {
+        activeColor: 'green',
+        activeColorFile: '/etc/agent-saas/runtime-worker-active-color',
+        unit: 'agent-saas-runtime-worker@green.service',
+        releaseSymlink: '/opt/agent-saas-app/worker/green',
+        pidfile: '/run/agent-saas-runtime-worker-green.pid',
+        readyfile: '/run/agent-saas-runtime-worker-green.ready',
+      },
     },
     ...overrides,
   };
@@ -37,7 +62,8 @@ function successfulGit(command, args) {
 function runtimeObservation(overrides = {}) {
   return {
     now: Date.parse('2026-08-25T00:01:00.000Z'),
-    topologyExecFileSync: (_command, args) => args.includes('ControlGroup') ? '/system.slice/agent-saas.service\n' : '100\n',
+    topologyExecFileSync: (_command, args) =>
+      args.includes('ControlGroup') ? '/system.slice/agent-saas.service\n' : '123\n',
     topologyRealpathSync: () => `/srv/releases/${TARGET}`,
     topologyReadFileSync: (path) => {
       if (path.endsWith('active-color')) return path.includes('runtime-worker') ? 'green' : 'blue';
@@ -60,7 +86,12 @@ test('preflight succeeds for full SHAs, main ancestry, production identity, and 
   });
 
   assert.equal(result.ok, true);
-  assert.deepEqual(result.components, ['web', 'runtimeWorker']);
+  assert.deepEqual(result.affectedComponents, ['web', 'api', 'runtimeWorker']);
+  assert.equal(result.components.web.action, 'deploy');
+  assert.equal(result.components.api.action, 'deploy');
+  assert.equal(result.workerMarkersConsistent, true);
+  assert.equal(result.migrationPlan.phase, 'none');
+  assert.equal(result.migrationPlan.contract, 'separate_release');
   assert.deepEqual(result.blockingReasons, []);
 });
 
@@ -71,11 +102,30 @@ test('preflight pins ancestry to origin/main and ignores caller-selected refs', 
     baseline: BASELINE,
     identityPath: './production.json',
     mainRef: TARGET,
-    execFileSync: (command, args) => { calls.push([command, args]); return args[0] === 'diff' ? 'web/src/App.tsx\n' : ''; },
+    execFileSync: (command, args) => {
+      calls.push([command, args]);
+      return args[0] === 'diff' ? 'web/src/App.tsx\n' : '';
+    },
     readFileSync: () => JSON.stringify(productionIdentity()),
     runtimeObservation: runtimeObservation(),
   });
   assert.deepEqual(calls[0]?.[1], ['merge-base', '--is-ancestor', TARGET, 'origin/main']);
+});
+
+test('preflight defaults to the trusted production-host identity path', () => {
+  let observedPath;
+  const result = runPreflight({
+    target: TARGET,
+    baseline: BASELINE,
+    execFileSync: successfulGit,
+    readFileSync: (path) => {
+      observedPath = path;
+      return JSON.stringify(productionIdentity());
+    },
+    runtimeObservation: runtimeObservation(),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(observedPath, TRUSTED_PRODUCTION_IDENTITY_PATH);
 });
 
 test('preflight reports each blocking release condition as JSON data', () => {
@@ -96,7 +146,7 @@ test('preflight reports each blocking release condition as JSON data', () => {
 test('preflight blocks a target outside main, a non-ancestor baseline, incomplete identity, and unknown files', () => {
   const execFileSync = (_command, args) => {
     if (args[0] === 'merge-base') throw new Error('not an ancestor');
-    return 'web/src/App.tsx\npackage.json\n';
+    return 'web/src/App.tsx\nunmapped-release-input.txt\n';
   };
   const identity = productionIdentity({ components: { web: { gitSha: TARGET } } });
 
@@ -114,23 +164,54 @@ test('preflight blocks a target outside main, a non-ancestor baseline, incomplet
   assert.match(result.blockingReasons.join('\n'), /not an ancestor/u);
   assert.match(result.blockingReasons.join('\n'), /component "web" must have an ISO/u);
   assert.match(result.blockingReasons.join('\n'), /missing component "api"/u);
-  assert.match(result.blockingReasons.join('\n'), /not mapped to a release component: package.json/u);
+  assert.match(
+    result.blockingReasons.join('\n'),
+    /not mapped to a release component: unmapped-release-input.txt/u,
+  );
 });
 
 test('preflight fails closed for conflicting production topology or component baseline', () => {
-  const topologyConflict = productionIdentity({ topology: { ...productionIdentity().topology, api: { ...productionIdentity().topology.api, pidfile: '/run/green-api.pid' } } });
-  const conflict = runPreflight({ target: TARGET, baseline: BASELINE, identityPath: './production.json', execFileSync: successfulGit, readFileSync: () => JSON.stringify(topologyConflict), runtimeObservation: runtimeObservation() });
+  const topologyConflict = productionIdentity({
+    topology: {
+      ...productionIdentity().topology,
+      api: { ...productionIdentity().topology.api, pidfile: '/run/green-api.pid' },
+    },
+  });
+  const conflict = runPreflight({
+    target: TARGET,
+    baseline: BASELINE,
+    identityPath: './production.json',
+    execFileSync: successfulGit,
+    readFileSync: () => JSON.stringify(topologyConflict),
+    runtimeObservation: runtimeObservation(),
+  });
   assert.equal(conflict.ok, false);
   assert.match(conflict.blockingReasons.join('\n'), /pidfile conflicts with activeColor/u);
   const baselineConflict = productionIdentity({ gitSha: TARGET });
-  const stale = runPreflight({ target: TARGET, baseline: BASELINE, identityPath: './production.json', execFileSync: successfulGit, readFileSync: () => JSON.stringify(baselineConflict), runtimeObservation: runtimeObservation() });
+  const stale = runPreflight({
+    target: TARGET,
+    baseline: BASELINE,
+    identityPath: './production.json',
+    execFileSync: successfulGit,
+    readFileSync: () => JSON.stringify(baselineConflict),
+    runtimeObservation: runtimeObservation(),
+  });
   assert.equal(stale.ok, false);
   assert.match(stale.blockingReasons.join('\n'), /does not match the supplied baseline/u);
 });
 
 test('runtime identity rejects placeholder topology fields', () => {
-  const identity = productionIdentity({ topology: { ...productionIdentity().topology, api: { unit: 'blue', releaseSymlink: 'blue', pidfile: 'blue', readyfile: 'blue' } } });
-  const result = readRuntimeIdentity({ identityPath: './production.json', readFileSync: () => JSON.stringify(identity), ...runtimeObservation() });
+  const identity = productionIdentity({
+    topology: {
+      ...productionIdentity().topology,
+      api: { unit: 'blue', releaseSymlink: 'blue', pidfile: 'blue', readyfile: 'blue' },
+    },
+  });
+  const result = readRuntimeIdentity({
+    identityPath: './production.json',
+    readFileSync: () => JSON.stringify(identity),
+    ...runtimeObservation(),
+  });
   assert.equal(result.ok, false);
   assert.match(result.blockingReasons.join('\n'), /deployed systemd template/u);
   assert.match(result.blockingReasons.join('\n'), /absolute path/u);
@@ -152,9 +233,15 @@ test('runtime identity fails closed for stale or unverifiable topology observati
     identityPath: './production.json',
     readFileSync: () => JSON.stringify(productionIdentity()),
     ...runtimeObservation({
-      topologyExecFileSync: () => { throw new Error('unit absent'); },
-      topologyRealpathSync: () => { throw new Error('symlink absent'); },
-      topologyReadFileSync: () => { throw new Error('file absent'); },
+      topologyExecFileSync: () => {
+        throw new Error('unit absent');
+      },
+      topologyRealpathSync: () => {
+        throw new Error('symlink absent');
+      },
+      topologyReadFileSync: () => {
+        throw new Error('file absent');
+      },
     }),
   });
   assert.equal(missing.ok, false);
@@ -162,6 +249,22 @@ test('runtime identity fails closed for stale or unverifiable topology observati
   assert.match(missing.blockingReasons.join('\n'), /Unable to resolve production release symlink/u);
   assert.match(missing.blockingReasons.join('\n'), /Unable to read production pidfile/u);
   assert.match(missing.blockingReasons.join('\n'), /Unable to read production readyfile/u);
+});
+
+test('runtime identity requires pidfile PID to equal systemd MainPID', () => {
+  const result = readRuntimeIdentity({
+    identityPath: './production.json',
+    readFileSync: () => JSON.stringify(productionIdentity()),
+    ...runtimeObservation({
+      topologyExecFileSync: (_command, args) =>
+        args.includes('ControlGroup') ? '/system.slice/agent-saas.service\n' : '456\n',
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.match(
+    result.blockingReasons.join('\n'),
+    /pidfile PID must equal the live systemd MainPID/u,
+  );
 });
 
 test('runtime identity accepts only local, complete production JSON', () => {

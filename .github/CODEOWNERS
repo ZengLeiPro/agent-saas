@@ -1,0 +1,12 @@
+# Repository owner is the authoritative owner of release and security boundaries.
+.github/workflows/** @ZengLeiPro
+.github/scripts/** @ZengLeiPro
+scripts/deploy-*.sh @ZengLeiPro
+daemon-packaging/** @ZengLeiPro
+server/src/security/** @ZengLeiPro
+server/src/auth/** @ZengLeiPro
+server/src/data/billing/** @ZengLeiPro
+server/src/data/migrations/** @ZengLeiPro
+server/src/runtime/** @ZengLeiPro
+server/src/cron/** @ZengLeiPro
+acs-orchestrator/** @ZengLeiPro

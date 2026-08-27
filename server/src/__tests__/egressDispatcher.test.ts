@@ -4,6 +4,7 @@ import {
   EgressDispatcherRegistry,
   createEgressFetch,
   createWebToolEgressFetch,
+  installStagingGlobalEgressFetch,
   type EgressConfigSource,
 } from '../runtime/egressDispatcher.js';
 import { DEFAULT_EGRESS_CONFIG, type EgressConfig } from '../runtime/egressPolicy.js';
@@ -40,6 +41,21 @@ afterEach(async () => {
 });
 
 describe('EgressDispatcherRegistry', () => {
+  it('Staging installs one global fail-closed fetch path and restores it safely', () => {
+    const direct = vi.fn() as unknown as typeof fetch;
+    const guarded = vi.fn() as unknown as typeof fetch;
+    const target = { fetch: direct };
+
+    const restore = installStagingGlobalEgressFetch('staging', guarded, target);
+    expect(target.fetch).toBe(guarded);
+    restore();
+    expect(target.fetch).toBe(direct);
+
+    const productionRestore = installStagingGlobalEgressFetch('production', guarded, target);
+    expect(target.fetch).toBe(direct);
+    productionRestore();
+  });
+
   it('未启用时一律直连', () => {
     const { registry } = makeRegistry(makeSource());
     expect(registry.resolve('https://example.com').dispatcher).toBeNull();
@@ -60,22 +76,26 @@ describe('EgressDispatcherRegistry', () => {
   });
 
   it('按域名分流：命中走代理，未命中直连', () => {
-    const { registry } = makeRegistry(makeSource({
-      enabled: true,
-      proxyUrl: 'http://127.0.0.1:7890',
-      matchDomains: ['openai.com'],
-    }));
+    const { registry } = makeRegistry(
+      makeSource({
+        enabled: true,
+        proxyUrl: 'http://127.0.0.1:7890',
+        matchDomains: ['openai.com'],
+      }),
+    );
     expect(registry.resolve('https://api.openai.com/v1').dispatcher).not.toBeNull();
     expect(registry.resolve('https://ark.cn-beijing.volces.com/api').dispatcher).toBeNull();
   });
 
   it('bypass 优先于 match', () => {
-    const { registry } = makeRegistry(makeSource({
-      enabled: true,
-      proxyUrl: 'http://127.0.0.1:7890',
-      matchDomains: ['example.com'],
-      bypassDomains: ['internal.example.com'],
-    }));
+    const { registry } = makeRegistry(
+      makeSource({
+        enabled: true,
+        proxyUrl: 'http://127.0.0.1:7890',
+        matchDomains: ['example.com'],
+        bypassDomains: ['internal.example.com'],
+      }),
+    );
     expect(registry.resolve('https://internal.example.com/a').dispatcher).toBeNull();
     expect(registry.resolve('https://other.example.com/a').dispatcher).not.toBeNull();
   });
@@ -93,10 +113,12 @@ describe('EgressDispatcherRegistry', () => {
   });
 
   it('非法 URL 不抛错，按直连处理', () => {
-    const { registry } = makeRegistry(makeSource({
-      enabled: true,
-      proxyUrl: 'http://127.0.0.1:7890',
-    }));
+    const { registry } = makeRegistry(
+      makeSource({
+        enabled: true,
+        proxyUrl: 'http://127.0.0.1:7890',
+      }),
+    );
     expect(registry.resolve('::::not a url').dispatcher).toBeNull();
   });
 });
@@ -144,11 +166,14 @@ describe('createEgressFetch', () => {
   });
 
   it('Web 工具忽略 matchDomains，把未知来源交给代理分流', async () => {
-    const { egressFetch, baseFetch, proxyFetch } = harness({
-      enabled: true,
-      proxyUrl: 'http://127.0.0.1:7890',
-      matchDomains: ['openai.com'],
-    }, 'web-tool');
+    const { egressFetch, baseFetch, proxyFetch } = harness(
+      {
+        enabled: true,
+        proxyUrl: 'http://127.0.0.1:7890',
+        matchDomains: ['openai.com'],
+      },
+      'web-tool',
+    );
 
     const response = await egressFetch('https://www.pewresearch.org/report');
     expect(await response.text()).toBe('proxy-ok');
@@ -157,12 +182,15 @@ describe('createEgressFetch', () => {
   });
 
   it('Web 工具仍尊重 bypassDomains 强制直连', async () => {
-    const { egressFetch, baseFetch, proxyFetch } = harness({
-      enabled: true,
-      proxyUrl: 'http://127.0.0.1:7890',
-      matchDomains: ['openai.com'],
-      bypassDomains: ['kaiyan.net'],
-    }, 'web-tool');
+    const { egressFetch, baseFetch, proxyFetch } = harness(
+      {
+        enabled: true,
+        proxyUrl: 'http://127.0.0.1:7890',
+        matchDomains: ['openai.com'],
+        bypassDomains: ['kaiyan.net'],
+      },
+      'web-tool',
+    );
 
     const response = await egressFetch('https://api.kaiyan.net/health');
     expect(await response.text()).toBe('direct-ok');

@@ -99,6 +99,54 @@ export interface AcsOrchestratorConfig {
   alertMinIntervalMs: number;
   capabilities: AcsRuntimeCapabilities;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
+  releaseIdentity?: AcsReleaseIdentity;
+}
+
+export interface AcsReleaseIdentity {
+  schemaVersion: 1;
+  environment: 'staging' | 'production';
+  releaseId: string;
+  sourceSha: string;
+  orchestratorArtifactDigest: string;
+  sandboxImageDigest: string;
+  namespace: string;
+  configFingerprint: string;
+}
+
+export function releaseIdentityHealth(identity: AcsReleaseIdentity | undefined) {
+  return {
+    environment: identity?.environment ?? null,
+    releaseId: identity?.releaseId ?? null,
+    sourceSha: identity?.sourceSha ?? null,
+    orchestratorArtifactDigest: identity?.orchestratorArtifactDigest ?? null,
+    sandboxImageDigest: identity?.sandboxImageDigest ?? null,
+    configFingerprint: identity?.configFingerprint ?? null,
+    releaseIdentityAttested: Boolean(identity),
+  };
+}
+
+function readReleaseIdentity(path: string | undefined): AcsReleaseIdentity | undefined {
+  if (!path) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    throw new Error(`ACS_RELEASE_IDENTITY_FILE cannot be read: ${String(error)}`);
+  }
+  const identity = value as Partial<AcsReleaseIdentity>;
+  if (
+    identity.schemaVersion !== 1 ||
+    !['staging', 'production'].includes(identity.environment ?? '') ||
+    !/^rc-\d{8}-\d{2,}$/u.test(identity.releaseId ?? '') ||
+    !/^[a-f0-9]{40}$/u.test(identity.sourceSha ?? '') ||
+    !/^sha256:[a-f0-9]{64}$/u.test(identity.orchestratorArtifactDigest ?? '') ||
+    !/^sha256:[a-f0-9]{64}$/u.test(identity.sandboxImageDigest ?? '') ||
+    !identity.namespace ||
+    !/^sha256:[a-f0-9]{64}$/u.test(identity.configFingerprint ?? '')
+  ) {
+    throw new Error('ACS_RELEASE_IDENTITY_FILE has an invalid release identity');
+  }
+  return identity as AcsReleaseIdentity;
 }
 
 export interface AcsRuntimeCapabilities {
@@ -185,7 +233,11 @@ export interface AcsRuntimeConfigPatch {
   egress?: AcsEgressConfig;
 }
 
-function readIntEnv(name: string, fallback: number, opts: { min?: number; max?: number } = {}): number {
+function readIntEnv(
+  name: string,
+  fallback: number,
+  opts: { min?: number; max?: number } = {},
+): number {
   const raw = process.env[name]?.trim();
   if (!raw) return fallback;
   const value = Number.parseInt(raw, 10);
@@ -238,7 +290,8 @@ function readRuntimeCapabilities(): AcsRuntimeCapabilities {
 
 function readSnatMode(): AcsSnatMode {
   const raw = process.env.ACS_SNAT_MODE?.trim() || 'disabled';
-  if (raw === 'disabled' || raw === 'probe-only' || raw === 'per-sandbox' || raw === 'shared-cidr') return raw;
+  if (raw === 'disabled' || raw === 'probe-only' || raw === 'per-sandbox' || raw === 'shared-cidr')
+    return raw;
   throw new Error(`ACS_SNAT_MODE 非法: ${raw}`);
 }
 
@@ -256,14 +309,21 @@ function readRuntimeConfigFile(path: string | undefined): AcsRuntimeConfigPatch 
 }
 
 export function parseRuntimeConfigPatch(input: unknown): AcsRuntimeConfigPatch {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('runtime config patch must be an object');
+  if (!input || typeof input !== 'object' || Array.isArray(input))
+    throw new Error('runtime config patch must be an object');
   const raw = input as Record<string, unknown>;
   const patch: AcsRuntimeConfigPatch = {};
   if ('maxRunningSandboxes' in raw) {
-    patch.maxRunningSandboxes = parseRuntimeConfigInt('maxRunningSandboxes', raw.maxRunningSandboxes);
+    patch.maxRunningSandboxes = parseRuntimeConfigInt(
+      'maxRunningSandboxes',
+      raw.maxRunningSandboxes,
+    );
   }
   if ('warnRunningSandboxes' in raw) {
-    patch.warnRunningSandboxes = parseRuntimeConfigInt('warnRunningSandboxes', raw.warnRunningSandboxes);
+    patch.warnRunningSandboxes = parseRuntimeConfigInt(
+      'warnRunningSandboxes',
+      raw.warnRunningSandboxes,
+    );
   }
   for (const key of [
     'maxAllocatedCpuMillicores',
@@ -273,13 +333,21 @@ export function parseRuntimeConfigPatch(input: unknown): AcsRuntimeConfigPatch {
   ] as const) {
     if (key in raw) patch[key] = parseRuntimeConfigInt(key, raw[key], 10_000_000);
   }
-  if ('executionMaintenance' in raw) patch.executionMaintenance = parseBool('executionMaintenance', raw.executionMaintenance);
+  if ('executionMaintenance' in raw)
+    patch.executionMaintenance = parseBool('executionMaintenance', raw.executionMaintenance);
   if ('executionMaintenanceReason' in raw) {
-    if (raw.executionMaintenanceReason !== undefined && typeof raw.executionMaintenanceReason !== 'string') {
+    if (
+      raw.executionMaintenanceReason !== undefined &&
+      typeof raw.executionMaintenanceReason !== 'string'
+    ) {
       throw new Error('executionMaintenanceReason must be a string');
     }
-    const reason = typeof raw.executionMaintenanceReason === 'string' ? raw.executionMaintenanceReason.trim() : '';
-    if (reason.length > 500) throw new Error('executionMaintenanceReason must be at most 500 characters');
+    const reason =
+      typeof raw.executionMaintenanceReason === 'string'
+        ? raw.executionMaintenanceReason.trim()
+        : '';
+    if (reason.length > 500)
+      throw new Error('executionMaintenanceReason must be at most 500 characters');
     patch.executionMaintenanceReason = reason || undefined;
   }
   if ('drainDeadlineMs' in raw) {
@@ -293,14 +361,17 @@ export function parseRuntimeConfigPatch(input: unknown): AcsRuntimeConfigPatch {
 }
 
 function parseRuntimeConfigInt(name: string, value: unknown, max = 1_000): number {
-  if (typeof value !== 'number' || !Number.isInteger(value)) throw new Error(`${name} must be an integer`);
+  if (typeof value !== 'number' || !Number.isInteger(value))
+    throw new Error(`${name} must be an integer`);
   if (value < 0 || value > max) throw new Error(`${name} must be between 0 and ${max}`);
   return value;
 }
 
 function parseRuntimeConfigDuration(name: string, value: unknown): number {
-  if (typeof value !== 'number' || !Number.isInteger(value)) throw new Error(`${name} must be an integer`);
-  if (value < 1_000 || value > 24 * 60 * 60_000) throw new Error(`${name} must be between 1000 and 86400000`);
+  if (typeof value !== 'number' || !Number.isInteger(value))
+    throw new Error(`${name} must be an integer`);
+  if (value < 1_000 || value > 24 * 60 * 60_000)
+    throw new Error(`${name} must be between 1000 and 86400000`);
   return value;
 }
 
@@ -312,10 +383,12 @@ function parseBool(name: string, value: unknown): boolean {
 function parseStringList(name: string, value: unknown): string[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new Error(`${name} must be an array of strings`);
-  return value.map((item, index) => {
-    if (typeof item !== 'string') throw new Error(`${name}[${index}] must be a string`);
-    return item.trim();
-  }).filter(Boolean);
+  return value
+    .map((item, index) => {
+      if (typeof item !== 'string') throw new Error(`${name}[${index}] must be a string`);
+      return item.trim();
+    })
+    .filter(Boolean);
 }
 
 function parseOptionalString(name: string, value: unknown): string {
@@ -337,7 +410,8 @@ export function parseEgressConfigPatch(input: unknown): AcsEgressConfig {
   const mirrorsRaw = (raw.packageMirrors ?? {}) as Record<string, unknown>;
 
   const proxy: EgressSandboxProxyConfig = {
-    enabled: proxyRaw.enabled === undefined ? false : parseBool('egress.proxy.enabled', proxyRaw.enabled),
+    enabled:
+      proxyRaw.enabled === undefined ? false : parseBool('egress.proxy.enabled', proxyRaw.enabled),
     proxyUrl: parseOptionalString('egress.proxy.proxyUrl', proxyRaw.proxyUrl),
     noProxy: parseStringList('egress.proxy.noProxy', proxyRaw.noProxy),
   };
@@ -346,9 +420,15 @@ export function parseEgressConfigPatch(input: unknown): AcsEgressConfig {
   }
 
   const packageMirrors: EgressPackageMirrorsConfig = {
-    enabled: mirrorsRaw.enabled === undefined ? false : parseBool('egress.packageMirrors.enabled', mirrorsRaw.enabled),
+    enabled:
+      mirrorsRaw.enabled === undefined
+        ? false
+        : parseBool('egress.packageMirrors.enabled', mirrorsRaw.enabled),
     pipIndexUrl: parseOptionalString('egress.packageMirrors.pipIndexUrl', mirrorsRaw.pipIndexUrl),
-    pipTrustedHost: parseOptionalString('egress.packageMirrors.pipTrustedHost', mirrorsRaw.pipTrustedHost),
+    pipTrustedHost: parseOptionalString(
+      'egress.packageMirrors.pipTrustedHost',
+      mirrorsRaw.pipTrustedHost,
+    ),
     npmRegistry: parseOptionalString('egress.packageMirrors.npmRegistry', mirrorsRaw.npmRegistry),
   };
   if (packageMirrors.enabled && !packageMirrors.pipIndexUrl && !packageMirrors.npmRegistry) {
@@ -375,25 +455,27 @@ function cloneEgressConfig(value: AcsEgressConfig | undefined): AcsEgressConfig 
 
 function validateRuntimeConfigValues(values: AcsRuntimeConfigPatch): void {
   if (
-    values.maxRunningSandboxes !== undefined
-    && values.warnRunningSandboxes !== undefined
-    && values.maxRunningSandboxes > 0
-    && values.warnRunningSandboxes > values.maxRunningSandboxes
+    values.maxRunningSandboxes !== undefined &&
+    values.warnRunningSandboxes !== undefined &&
+    values.maxRunningSandboxes > 0 &&
+    values.warnRunningSandboxes > values.maxRunningSandboxes
   ) {
     throw new Error('warnRunningSandboxes must be <= maxRunningSandboxes');
   }
   if (
-    values.maxAllocatedCpuMillicores !== undefined
-    && values.warnAllocatedCpuMillicores !== undefined
-    && values.maxAllocatedCpuMillicores > 0
-    && values.warnAllocatedCpuMillicores > values.maxAllocatedCpuMillicores
-  ) throw new Error('warnAllocatedCpuMillicores must be <= maxAllocatedCpuMillicores');
+    values.maxAllocatedCpuMillicores !== undefined &&
+    values.warnAllocatedCpuMillicores !== undefined &&
+    values.maxAllocatedCpuMillicores > 0 &&
+    values.warnAllocatedCpuMillicores > values.maxAllocatedCpuMillicores
+  )
+    throw new Error('warnAllocatedCpuMillicores must be <= maxAllocatedCpuMillicores');
   if (
-    values.maxAllocatedMemoryMib !== undefined
-    && values.warnAllocatedMemoryMib !== undefined
-    && values.maxAllocatedMemoryMib > 0
-    && values.warnAllocatedMemoryMib > values.maxAllocatedMemoryMib
-  ) throw new Error('warnAllocatedMemoryMib must be <= maxAllocatedMemoryMib');
+    values.maxAllocatedMemoryMib !== undefined &&
+    values.warnAllocatedMemoryMib !== undefined &&
+    values.maxAllocatedMemoryMib > 0 &&
+    values.warnAllocatedMemoryMib > values.maxAllocatedMemoryMib
+  )
+    throw new Error('warnAllocatedMemoryMib must be <= maxAllocatedMemoryMib');
 }
 
 export function runtimeConfigSnapshot(config: AcsOrchestratorConfig): AcsRuntimeConfigSnapshot {
@@ -405,7 +487,9 @@ export function runtimeConfigSnapshot(config: AcsOrchestratorConfig): AcsRuntime
     maxAllocatedMemoryMib: config.maxAllocatedMemoryMib,
     warnAllocatedMemoryMib: config.warnAllocatedMemoryMib,
     executionMaintenance: config.executionMaintenance,
-    ...(config.executionMaintenanceReason ? { executionMaintenanceReason: config.executionMaintenanceReason } : {}),
+    ...(config.executionMaintenanceReason
+      ? { executionMaintenanceReason: config.executionMaintenanceReason }
+      : {}),
     drainDeadlineMs: config.drainDeadlineMs,
     // 容错 undefined：生产上已存在的 runtime-config.json 是旧格式（只有三个配额字段），
     // 启动回灌时 config.egress 可能还没被赋值。
@@ -423,11 +507,15 @@ export function applyRuntimeConfigPatch(
     maxRunningSandboxes: patch.maxRunningSandboxes ?? config.maxRunningSandboxes,
     warnRunningSandboxes: patch.warnRunningSandboxes ?? config.warnRunningSandboxes,
     maxAllocatedCpuMillicores: patch.maxAllocatedCpuMillicores ?? config.maxAllocatedCpuMillicores,
-    warnAllocatedCpuMillicores: patch.warnAllocatedCpuMillicores ?? config.warnAllocatedCpuMillicores,
+    warnAllocatedCpuMillicores:
+      patch.warnAllocatedCpuMillicores ?? config.warnAllocatedCpuMillicores,
     maxAllocatedMemoryMib: patch.maxAllocatedMemoryMib ?? config.maxAllocatedMemoryMib,
     warnAllocatedMemoryMib: patch.warnAllocatedMemoryMib ?? config.warnAllocatedMemoryMib,
     executionMaintenance: patch.executionMaintenance ?? config.executionMaintenance,
-    executionMaintenanceReason: Object.prototype.hasOwnProperty.call(patch, 'executionMaintenanceReason')
+    executionMaintenanceReason: Object.prototype.hasOwnProperty.call(
+      patch,
+      'executionMaintenanceReason',
+    )
       ? patch.executionMaintenanceReason
       : config.executionMaintenanceReason,
     drainDeadlineMs: patch.drainDeadlineMs ?? config.drainDeadlineMs,
@@ -435,7 +523,8 @@ export function applyRuntimeConfigPatch(
   };
   validateRuntimeConfigValues(next);
   if (config.snat?.mode === 'shared-cidr') {
-    const rollbackCapacity = config.snat.maxManagedEntries - (config.snat.sharedCidrs?.length ?? 0) - 2;
+    const rollbackCapacity =
+      config.snat.maxManagedEntries - (config.snat.sharedCidrs?.length ?? 0) - 2;
     if (next.maxRunningSandboxes <= 0 || next.maxRunningSandboxes > rollbackCapacity) {
       throw new Error(
         `maxRunningSandboxes ${next.maxRunningSandboxes} must be within shared-cidr rollback capacity 1..${rollbackCapacity}`,
@@ -463,6 +552,7 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
   const authToken = readRequiredEnv('ACS_ORCH_AUTH_TOKEN');
   if (authToken.length < 8) throw new Error('ACS_ORCH_AUTH_TOKEN 过短 (<8 chars)，拒绝启动');
   const runtimeConfigPath = readOptionalPathEnv('ACS_ORCH_RUNTIME_CONFIG_FILE');
+  const releaseIdentity = readReleaseIdentity(readOptionalPathEnv('ACS_RELEASE_IDENTITY_FILE'));
   const persistedRuntimeConfig = readRuntimeConfigFile(runtimeConfigPath);
   const snatMode = readSnatMode();
   const snatRegionId = process.env.ACS_SNAT_REGION_ID?.trim() || undefined;
@@ -486,13 +576,20 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
       return parsed.canonical;
     })
     .filter((value, index, values) => values.indexOf(value) === index);
-  const snatMaxManagedEntries = readIntEnv('ACS_SNAT_MAX_MANAGED_ENTRIES', 12, { min: 1, max: 200 });
+  const snatMaxManagedEntries = readIntEnv('ACS_SNAT_MAX_MANAGED_ENTRIES', 12, {
+    min: 1,
+    max: 200,
+  });
   if (snatMode !== 'disabled' && (!snatRegionId || !snatTableId || !snatIp)) {
-    throw new Error('ACS_SNAT_MODE 启用时必须配置 ACS_SNAT_REGION_ID / ACS_SNAT_TABLE_ID / ACS_SNAT_IP');
+    throw new Error(
+      'ACS_SNAT_MODE 启用时必须配置 ACS_SNAT_REGION_ID / ACS_SNAT_TABLE_ID / ACS_SNAT_IP',
+    );
   }
   if (snatMode === 'shared-cidr') {
     if (snatSharedCidrs.length === 0) {
-      throw new Error('ACS_SNAT_MODE=shared-cidr 时必须配置 ACS_SNAT_SHARED_CIDRS（或旧变量 ACS_SNAT_SHARED_CIDR）');
+      throw new Error(
+        'ACS_SNAT_MODE=shared-cidr 时必须配置 ACS_SNAT_SHARED_CIDRS（或旧变量 ACS_SNAT_SHARED_CIDR）',
+      );
     }
     const parsedCidrs = snatSharedCidrs.map((value) => parseIpv4Cidr(value)!);
     for (const cidr of parsedCidrs) {
@@ -503,7 +600,9 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     for (let left = 0; left < parsedCidrs.length; left++) {
       for (let right = left + 1; right < parsedCidrs.length; right++) {
         if (ipv4CidrsOverlap(parsedCidrs[left]!, parsedCidrs[right]!)) {
-          throw new Error(`ACS_SNAT_SHARED_CIDRS 存在重叠: ${parsedCidrs[left]!.canonical},${parsedCidrs[right]!.canonical}`);
+          throw new Error(
+            `ACS_SNAT_SHARED_CIDRS 存在重叠: ${parsedCidrs[left]!.canonical},${parsedCidrs[right]!.canonical}`,
+          );
         }
       }
     }
@@ -523,7 +622,8 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     sandboxApiVersion: process.env.ACS_SANDBOX_API_VERSION?.trim() || 'agents.kruise.io/v1alpha1',
     sandboxKind: process.env.ACS_SANDBOX_KIND?.trim() || 'Sandbox',
     sandboxCrdName: process.env.ACS_SANDBOX_CRD_NAME?.trim() || 'sandboxes.agents.kruise.io',
-    trafficPolicyCrdName: process.env.ACS_TRAFFIC_POLICY_CRD_NAME?.trim() || 'trafficpolicies.network.alibabacloud.com',
+    trafficPolicyCrdName:
+      process.env.ACS_TRAFFIC_POLICY_CRD_NAME?.trim() || 'trafficpolicies.network.alibabacloud.com',
     sandboxImage: readRequiredEnv('ACS_SANDBOX_IMAGE'),
     sandboxContainerName: process.env.ACS_SANDBOX_CONTAINER_NAME?.trim() || 'sandbox',
     sandboxRuntimes: readStringListEnv('ACS_SANDBOX_RUNTIMES'),
@@ -541,13 +641,19 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     memoryRequest: process.env.ACS_SANDBOX_MEMORY_REQUEST?.trim() || '512Mi',
     cpuLimit: process.env.ACS_SANDBOX_CPU_LIMIT?.trim() || undefined,
     memoryLimit: process.env.ACS_SANDBOX_MEMORY_LIMIT?.trim() || undefined,
-    sandboxWaitTimeoutMs: readIntEnv('ACS_SANDBOX_WAIT_TIMEOUT_MS', 90_000, { min: 1_000, max: 600_000 }),
+    sandboxWaitTimeoutMs: readIntEnv('ACS_SANDBOX_WAIT_TIMEOUT_MS', 90_000, {
+      min: 1_000,
+      max: 600_000,
+    }),
     execTimeoutMs: readIntEnv('ACS_EXEC_TIMEOUT_MS', 120_000, { min: 1_000, max: 600_000 }),
     healthDeepCacheMs: readIntEnv('ACS_HEALTH_DEEP_CACHE_MS', 15_000, { min: 0, max: 300_000 }),
     imageCacheEnabled: readBoolEnv('ACS_SANDBOX_IMAGE_CACHE_ENABLED', true),
     skipProvisionOnSameRecipe: readBoolEnv('ACS_SKIP_PROVISION_ON_SAME_RECIPE', true),
     lifecycleEnabled: readBoolEnv('ACS_SANDBOX_LIFECYCLE_ENABLED', true),
-    sandboxCleanupIntervalMs: readIntEnv('ACS_SANDBOX_CLEANUP_INTERVAL_MS', 60_000, { min: 10_000, max: 24 * 60 * 60_000 }),
+    sandboxCleanupIntervalMs: readIntEnv('ACS_SANDBOX_CLEANUP_INTERVAL_MS', 60_000, {
+      min: 10_000,
+      max: 24 * 60 * 60_000,
+    }),
     // 2026-08-10 曾磊拍板：idle pause 4h -> 5min（推翻 07-31 的 5min -> 4h）。
     //
     // 07-31 改成 4h 的依据是「ACS pause 后唤醒走删除重建（35-110s），resume
@@ -558,17 +664,32 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     // 配合 per-session Sandbox（A 方案）：pod 数从「每 workspace 1 个」变成
     // 「每顶层会话组 1 个」，idle 窗口直接决定总 pod·h——4h 会让每个短会话都
     // 拖 4 小时空转。既然唤醒零代价，窗口就该收紧。
-    sandboxIdlePauseMs: readIntEnv('ACS_SANDBOX_IDLE_PAUSE_MS', 5 * 60_000, { min: 0, max: 7 * 24 * 60 * 60_000 }),
+    sandboxIdlePauseMs: readIntEnv('ACS_SANDBOX_IDLE_PAUSE_MS', 5 * 60_000, {
+      min: 0,
+      max: 7 * 24 * 60 * 60_000,
+    }),
     // 2026-08-12 曾磊拍板：per-session 后每天十几到几十个新会话会各自留下休眠盘，
     // 不能只按已复用会话的 24h 命中率定 TTL。过去 30 天全量模拟中 2h 仍保住
     // 92.0% 复用，同时把平均保留库存从 16.19 降至 2.34，故普通/Taskboard 改为 2h。
-    sandboxTtlMs: readIntEnv('ACS_SANDBOX_TTL_MS', 2 * 60 * 60_000, { min: 0, max: 30 * 24 * 60 * 60_000 }),
+    sandboxTtlMs: readIntEnv('ACS_SANDBOX_TTL_MS', 2 * 60 * 60_000, {
+      min: 0,
+      max: 30 * 24 * 60 * 60_000,
+    }),
     // CI 正常路径由 workflow EXIT trap 即时删除；1h 只兜底异常泄漏。
-    sandboxCiTtlMs: readIntEnv('ACS_SANDBOX_CI_TTL_MS', 60 * 60_000, { min: 0, max: 30 * 24 * 60 * 60_000 }),
-    sandboxOrphanGraceMs: readIntEnv('ACS_SANDBOX_ORPHAN_GRACE_MS', 30 * 60_000, { min: 0, max: 7 * 24 * 60 * 60_000 }),
+    sandboxCiTtlMs: readIntEnv('ACS_SANDBOX_CI_TTL_MS', 60 * 60_000, {
+      min: 0,
+      max: 30 * 24 * 60 * 60_000,
+    }),
+    sandboxOrphanGraceMs: readIntEnv('ACS_SANDBOX_ORPHAN_GRACE_MS', 30 * 60_000, {
+      min: 0,
+      max: 7 * 24 * 60 * 60_000,
+    }),
     // 宽限默认 5min：正常 pause 收敛 <2min（生产实测），5min 足以避开瞬态；
     // 且必须小于发布门禁的等待窗口（acs-sandbox.yml 5.5 段 8min），否则门禁等不到自愈。
-    sandboxBrokenRecycleGraceMs: readIntEnv('ACS_SANDBOX_BROKEN_RECYCLE_GRACE_MS', 5 * 60_000, { min: 0, max: 24 * 60 * 60_000 }),
+    sandboxBrokenRecycleGraceMs: readIntEnv('ACS_SANDBOX_BROKEN_RECYCLE_GRACE_MS', 5 * 60_000, {
+      min: 0,
+      max: 24 * 60 * 60_000,
+    }),
     // 2026-08-10 曾磊拍板：不设业务使用配额，只保留高位全局安全阀 + 钉钉告警，
     // 用途是挡住 bug 风暴（如 07-28 一个 agent fan-out 9 个孙 agent 那类），
     // 而不是限制正常使用。旧默认 8/6 是 per-workspace 时代的值，per-session 下
@@ -580,27 +701,54 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     // 只淘汰安全 Paused CR，绝不强停 Running；无安全候选时以结构化 503 fail closed。
     maxRunningSandboxes: readIntEnv('ACS_SANDBOX_MAX_RUNNING', 200, { min: 0, max: 1_000 }),
     warnRunningSandboxes: readIntEnv('ACS_SANDBOX_WARN_RUNNING', 150, { min: 0, max: 1_000 }),
-    maxAllocatedCpuMillicores: readIntEnv('ACS_SANDBOX_MAX_ALLOCATED_CPU_MILLICORES', 0, { min: 0, max: 10_000_000 }),
-    warnAllocatedCpuMillicores: readIntEnv('ACS_SANDBOX_WARN_ALLOCATED_CPU_MILLICORES', 0, { min: 0, max: 10_000_000 }),
-    maxAllocatedMemoryMib: readIntEnv('ACS_SANDBOX_MAX_ALLOCATED_MEMORY_MIB', 0, { min: 0, max: 10_000_000 }),
-    warnAllocatedMemoryMib: readIntEnv('ACS_SANDBOX_WARN_ALLOCATED_MEMORY_MIB', 0, { min: 0, max: 10_000_000 }),
+    maxAllocatedCpuMillicores: readIntEnv('ACS_SANDBOX_MAX_ALLOCATED_CPU_MILLICORES', 0, {
+      min: 0,
+      max: 10_000_000,
+    }),
+    warnAllocatedCpuMillicores: readIntEnv('ACS_SANDBOX_WARN_ALLOCATED_CPU_MILLICORES', 0, {
+      min: 0,
+      max: 10_000_000,
+    }),
+    maxAllocatedMemoryMib: readIntEnv('ACS_SANDBOX_MAX_ALLOCATED_MEMORY_MIB', 0, {
+      min: 0,
+      max: 10_000_000,
+    }),
+    warnAllocatedMemoryMib: readIntEnv('ACS_SANDBOX_WARN_ALLOCATED_MEMORY_MIB', 0, {
+      min: 0,
+      max: 10_000_000,
+    }),
     executionMaintenance: false,
-    drainDeadlineMs: readIntEnv('ACS_ORCH_DRAIN_DEADLINE_MS', 120_000, { min: 1_000, max: 24 * 60 * 60_000 }),
-    networkPolicy: parseNetworkPolicyFromEnv(process.env, 'ACS_NETWORK_POLICY', DEFAULT_CODING_HAND_NETWORK_POLICY),
+    drainDeadlineMs: readIntEnv('ACS_ORCH_DRAIN_DEADLINE_MS', 120_000, {
+      min: 1_000,
+      max: 24 * 60 * 60_000,
+    }),
+    networkPolicy: parseNetworkPolicyFromEnv(
+      process.env,
+      'ACS_NETWORK_POLICY',
+      DEFAULT_CODING_HAND_NETWORK_POLICY,
+    ),
     snat: {
       mode: snatMode,
       aliyunCliPath: process.env.ACS_ALIYUN_CLI_PATH?.trim() || 'aliyun',
       ...(snatRegionId ? { regionId: snatRegionId } : {}),
       ...(snatTableId ? { snatTableId } : {}),
       ...(snatIp ? { snatIp } : {}),
-      ...(snatSharedCidrs.length > 0 ? {
-        sharedCidr: snatSharedCidrs[0],
-        sharedCidrs: snatSharedCidrs,
-      } : {}),
+      ...(snatSharedCidrs.length > 0
+        ? {
+            sharedCidr: snatSharedCidrs[0],
+            sharedCidrs: snatSharedCidrs,
+          }
+        : {}),
       entryNamePrefix: process.env.ACS_SNAT_ENTRY_NAME_PREFIX?.trim() || 'agent-saas-acs',
       maxManagedEntries: snatMaxManagedEntries,
-      requestTimeoutMs: readIntEnv('ACS_SNAT_REQUEST_TIMEOUT_MS', 20_000, { min: 1_000, max: 120_000 }),
-      stabilizeAfterCreateMs: readIntEnv('ACS_SNAT_STABILIZE_AFTER_CREATE_MS', 8_000, { min: 0, max: 60_000 }),
+      requestTimeoutMs: readIntEnv('ACS_SNAT_REQUEST_TIMEOUT_MS', 20_000, {
+        min: 1_000,
+        max: 120_000,
+      }),
+      stabilizeAfterCreateMs: readIntEnv('ACS_SNAT_STABILIZE_AFTER_CREATE_MS', 8_000, {
+        min: 0,
+        max: 60_000,
+      }),
       statusCacheMs: readIntEnv('ACS_SNAT_STATUS_CACHE_MS', 20_000, { min: 0, max: 300_000 }),
     },
     // 默认全关；实际值由 server 下发的 runtime-config 覆盖（下方 applyRuntimeConfigPatch）
@@ -611,10 +759,20 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
       .map((url) => url.trim())
       .filter((url) => url.length > 0),
     alertWebhookBearerToken: process.env.ACS_ALERT_WEBHOOK_BEARER_TOKEN?.trim() || undefined,
-    alertMinIntervalMs: readIntEnv('ACS_ALERT_MIN_INTERVAL_MS', 5 * 60_000, { min: 0, max: 24 * 60 * 60_000 }),
+    alertMinIntervalMs: readIntEnv('ACS_ALERT_MIN_INTERVAL_MS', 5 * 60_000, {
+      min: 0,
+      max: 24 * 60 * 60_000,
+    }),
     capabilities: readRuntimeCapabilities(),
     logLevel: readLogLevel(),
+    ...(releaseIdentity ? { releaseIdentity } : {}),
   };
+  if (releaseIdentity) {
+    if (releaseIdentity.namespace !== base.namespace)
+      throw new Error('ACS release identity namespace does not match ACS_NAMESPACE');
+    if (!base.sandboxImage.endsWith(`@${releaseIdentity.sandboxImageDigest}`))
+      throw new Error('ACS release identity Sandbox digest does not match ACS_SANDBOX_IMAGE');
+  }
   applyRuntimeConfigPatch(base, persistedRuntimeConfig);
   return base;
 }

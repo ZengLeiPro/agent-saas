@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -13,6 +13,40 @@ import {
 } from './config.js';
 
 describe('ACS runtime config', () => {
+  it('loads a release identity only when namespace and immutable image digest agree', () => {
+    const originalEnv = { ...process.env };
+    const root = mkdtempSync(join(tmpdir(), 'acs-release-identity-'));
+    const path = join(root, 'identity.json');
+    const digest = `sha256:${'a'.repeat(64)}`;
+    writeFileSync(
+      path,
+      JSON.stringify({
+        schemaVersion: 1,
+        environment: 'staging',
+        releaseId: 'rc-20260826-01',
+        sourceSha: 'b'.repeat(40),
+        orchestratorArtifactDigest: `sha256:${'c'.repeat(64)}`,
+        sandboxImageDigest: digest,
+        namespace: 'agent-saas-staging',
+        configFingerprint: `sha256:${'d'.repeat(64)}`,
+      }),
+    );
+    process.env.ACS_ORCH_AUTH_TOKEN = 'orchestrator-token';
+    process.env.ACS_NAMESPACE = 'agent-saas-staging';
+    process.env.ACS_SANDBOX_IMAGE = `registry.example.com/agent-saas/acs-sandbox@${digest}`;
+    process.env.ACS_RELEASE_IDENTITY_FILE = path;
+    try {
+      expect(loadConfigFromEnv().releaseIdentity).toMatchObject({
+        environment: 'staging',
+        releaseId: 'rc-20260826-01',
+        sandboxImageDigest: digest,
+      });
+      process.env.ACS_NAMESPACE = 'production';
+      expect(() => loadConfigFromEnv()).toThrow(/namespace/u);
+    } finally {
+      process.env = originalEnv;
+    }
+  });
   it('updates running quota settings and persists them when runtimeConfigPath is configured', () => {
     const root = mkdtempSync(join(tmpdir(), 'acs-runtime-config-'));
     const runtimeConfigPath = join(root, 'runtime.json');
@@ -73,14 +107,16 @@ describe('ACS runtime config', () => {
       runtimeConfigPath,
     } as AcsOrchestratorConfig;
 
-    expect(applyRuntimeConfigPatch(config, {
-      maxAllocatedCpuMillicores: 260_000,
-      warnAllocatedCpuMillicores: 220_000,
-      maxAllocatedMemoryMib: 532_480,
-      warnAllocatedMemoryMib: 450_560,
-      executionMaintenance: true,
-      executionMaintenanceReason: 'planned maintenance',
-    })).toMatchObject({
+    expect(
+      applyRuntimeConfigPatch(config, {
+        maxAllocatedCpuMillicores: 260_000,
+        warnAllocatedCpuMillicores: 220_000,
+        maxAllocatedMemoryMib: 532_480,
+        warnAllocatedMemoryMib: 450_560,
+        executionMaintenance: true,
+        executionMaintenanceReason: 'planned maintenance',
+      }),
+    ).toMatchObject({
       maxAllocatedCpuMillicores: 260_000,
       warnAllocatedCpuMillicores: 220_000,
       maxAllocatedMemoryMib: 532_480,
@@ -90,7 +126,10 @@ describe('ACS runtime config', () => {
       persisted: true,
     });
 
-    const persisted = JSON.parse(readFileSync(runtimeConfigPath, 'utf-8')) as Record<string, unknown>;
+    const persisted = JSON.parse(readFileSync(runtimeConfigPath, 'utf-8')) as Record<
+      string,
+      unknown
+    >;
     expect(persisted).toMatchObject({
       maxAllocatedCpuMillicores: 260_000,
       warnAllocatedCpuMillicores: 220_000,
@@ -106,28 +145,35 @@ describe('ACS runtime config', () => {
     });
     expect(cleared.executionMaintenance).toBe(false);
     expect(cleared).not.toHaveProperty('executionMaintenanceReason');
-    expect(JSON.parse(readFileSync(runtimeConfigPath, 'utf-8'))).not.toHaveProperty('executionMaintenanceReason');
+    expect(JSON.parse(readFileSync(runtimeConfigPath, 'utf-8'))).not.toHaveProperty(
+      'executionMaintenanceReason',
+    );
   });
 
   it('rejects invalid runtime config values', () => {
-    expect(() => parseRuntimeConfigPatch({ maxRunningSandboxes: 2, warnRunningSandboxes: 3 }))
-      .toThrow(/warnRunningSandboxes/);
-    expect(() => parseRuntimeConfigPatch({ maxRunningSandboxes: 1.5 }))
-      .toThrow(/integer/);
-    expect(() => parseRuntimeConfigPatch({ drainDeadlineMs: 999 }))
-      .toThrow(/drainDeadlineMs/);
-    expect(() => parseRuntimeConfigPatch({
-      maxAllocatedCpuMillicores: 10_000,
-      warnAllocatedCpuMillicores: 10_001,
-    })).toThrow(/warnAllocatedCpuMillicores/);
-    expect(() => parseRuntimeConfigPatch({
-      maxAllocatedMemoryMib: 10_000,
-      warnAllocatedMemoryMib: 10_001,
-    })).toThrow(/warnAllocatedMemoryMib/);
-    expect(() => parseRuntimeConfigPatch({ executionMaintenance: 'yes' }))
-      .toThrow(/executionMaintenance/);
-    expect(() => parseRuntimeConfigPatch({ executionMaintenanceReason: 'x'.repeat(501) }))
-      .toThrow(/at most 500/);
+    expect(() =>
+      parseRuntimeConfigPatch({ maxRunningSandboxes: 2, warnRunningSandboxes: 3 }),
+    ).toThrow(/warnRunningSandboxes/);
+    expect(() => parseRuntimeConfigPatch({ maxRunningSandboxes: 1.5 })).toThrow(/integer/);
+    expect(() => parseRuntimeConfigPatch({ drainDeadlineMs: 999 })).toThrow(/drainDeadlineMs/);
+    expect(() =>
+      parseRuntimeConfigPatch({
+        maxAllocatedCpuMillicores: 10_000,
+        warnAllocatedCpuMillicores: 10_001,
+      }),
+    ).toThrow(/warnAllocatedCpuMillicores/);
+    expect(() =>
+      parseRuntimeConfigPatch({
+        maxAllocatedMemoryMib: 10_000,
+        warnAllocatedMemoryMib: 10_001,
+      }),
+    ).toThrow(/warnAllocatedMemoryMib/);
+    expect(() => parseRuntimeConfigPatch({ executionMaintenance: 'yes' })).toThrow(
+      /executionMaintenance/,
+    );
+    expect(() => parseRuntimeConfigPatch({ executionMaintenanceReason: 'x'.repeat(501) })).toThrow(
+      /at most 500/,
+    );
   });
 
   it('rejects a hot running limit above shared-cidr rollback capacity', () => {
@@ -142,11 +188,15 @@ describe('ACS runtime config', () => {
       },
     } as AcsOrchestratorConfig;
 
-    expect(() => applyRuntimeConfigPatch(config, { maxRunningSandboxes: 191 }))
-      .toThrow(/rollback capacity 1\.\.190/);
-    expect(() => applyRuntimeConfigPatch(config, { maxRunningSandboxes: 0 }))
-      .toThrow(/rollback capacity 1\.\.190/);
-    expect(applyRuntimeConfigPatch(config, { maxRunningSandboxes: 190 }).maxRunningSandboxes).toBe(190);
+    expect(() => applyRuntimeConfigPatch(config, { maxRunningSandboxes: 191 })).toThrow(
+      /rollback capacity 1\.\.190/,
+    );
+    expect(() => applyRuntimeConfigPatch(config, { maxRunningSandboxes: 0 })).toThrow(
+      /rollback capacity 1\.\.190/,
+    );
+    expect(applyRuntimeConfigPatch(config, { maxRunningSandboxes: 190 }).maxRunningSandboxes).toBe(
+      190,
+    );
   });
 
   it('loads desired network policy from env without claiming enforcement', () => {
@@ -213,10 +263,7 @@ describe('ACS runtime config', () => {
     delete process.env.ACS_SNAT_SHARED_CIDR;
     try {
       process.env.ACS_SNAT_SHARED_CIDRS = '172.16.179.9/24, 172.16.180.0/24\n172.16.179.0/24';
-      expect(loadConfigFromEnv().snat.sharedCidrs).toEqual([
-        '172.16.179.0/24',
-        '172.16.180.0/24',
-      ]);
+      expect(loadConfigFromEnv().snat.sharedCidrs).toEqual(['172.16.179.0/24', '172.16.180.0/24']);
 
       delete process.env.ACS_SNAT_SHARED_CIDRS;
       process.env.ACS_SNAT_SHARED_CIDR = '172.16.181.7/24';
@@ -323,7 +370,11 @@ describe('ACS runtime config', () => {
 describe('egress runtime config patch', () => {
   it('接受 server 下发的完整出口配置', () => {
     const parsed = parseEgressConfigPatch({
-      proxy: { enabled: true, proxyUrl: 'http://172.16.177.77:7890', noProxy: ['internal.example.com', ' '] },
+      proxy: {
+        enabled: true,
+        proxyUrl: 'http://172.16.177.77:7890',
+        noProxy: ['internal.example.com', ' '],
+      },
       packageMirrors: {
         enabled: true,
         pipIndexUrl: 'https://mirrors.aliyun.com/pypi/simple/',
@@ -347,12 +398,15 @@ describe('egress runtime config patch', () => {
   });
 
   it('启用但地址非法直接拒绝——静默忽略会让管理员误以为代理已生效', () => {
-    expect(() => parseEgressConfigPatch({ proxy: { enabled: true, proxyUrl: '' } }))
-      .toThrow(/proxyUrl/);
-    expect(() => parseEgressConfigPatch({ proxy: { enabled: true, proxyUrl: '172.16.177.77:7890' } }))
-      .toThrow(/proxyUrl/);
-    expect(() => parseEgressConfigPatch({ packageMirrors: { enabled: true } }))
-      .toThrow(/pipIndexUrl/);
+    expect(() => parseEgressConfigPatch({ proxy: { enabled: true, proxyUrl: '' } })).toThrow(
+      /proxyUrl/,
+    );
+    expect(() =>
+      parseEgressConfigPatch({ proxy: { enabled: true, proxyUrl: '172.16.177.77:7890' } }),
+    ).toThrow(/proxyUrl/);
+    expect(() => parseEgressConfigPatch({ packageMirrors: { enabled: true } })).toThrow(
+      /pipIndexUrl/,
+    );
   });
 
   it('类型不对时报错而不是静默转换', () => {
@@ -368,7 +422,9 @@ describe('egress runtime config patch', () => {
       drainDeadlineMs: 120_000,
     } as AcsOrchestratorConfig;
     const snapshot = applyRuntimeConfigPatch(config, {
-      egress: parseEgressConfigPatch({ proxy: { enabled: true, proxyUrl: 'http://10.0.0.1:8080' } }),
+      egress: parseEgressConfigPatch({
+        proxy: { enabled: true, proxyUrl: 'http://10.0.0.1:8080' },
+      }),
     });
     expect(snapshot.maxRunningSandboxes).toBe(8);
     expect(snapshot.egress.proxy.proxyUrl).toBe('http://10.0.0.1:8080');

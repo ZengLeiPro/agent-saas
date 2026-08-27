@@ -4,8 +4,9 @@ import {
   type TaskBoardStatus,
   type TaskBoardTask,
 } from "@agent/shared";
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { Archive, ChevronLeft, ChevronRight, Layers3, LoaderCircle, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
@@ -29,12 +30,16 @@ interface TaskColumnsProps {
   canTransitionTask: boolean;
   canCreateIntegration: boolean;
   selectedDeliveryTaskIds: Set<string>;
+  creatingIntegration: boolean;
+  archivedCount: number;
   mobileStatus: TaskBoardStatus;
   onMobileStatusChange: (status: TaskBoardStatus) => void;
   onCreateTask: (status: TaskBoardStatus) => void;
   onOpenTask: (task: TaskBoardTask) => void;
   onDragStart: (taskId: string) => void;
   onDragEnd: () => void;
+  onCreateIntegration: () => void;
+  onOpenArchivedTasks: () => void;
   onDeliverySelectedChange: (taskId: string, selected: boolean) => void;
   onDrop: (
     status: TaskBoardStatus,
@@ -69,12 +74,16 @@ export function TaskColumns({
   canTransitionTask,
   canCreateIntegration,
   selectedDeliveryTaskIds,
+  creatingIntegration,
+  archivedCount,
   mobileStatus,
   onMobileStatusChange,
   onCreateTask,
   onOpenTask,
   onDragStart,
   onDragEnd,
+  onCreateIntegration,
+  onOpenArchivedTasks,
   onDeliverySelectedChange,
   onDrop,
 }: TaskColumnsProps) {
@@ -91,26 +100,53 @@ export function TaskColumns({
     dragEnabled && (taskStatusSupportsManualOrdering(status) || status === "canceled")
   );
 
+  const renderStatusAction = (status: TaskBoardStatus) => {
+    if (["backlog", "todo"].includes(status)) {
+      return (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="w-full"
+          disabled={readOnly || !canCreateTask}
+          aria-label={`在${STATUS_LABELS[status]}新建任务`}
+          onClick={() => onCreateTask(status)}
+        >
+          <Plus className="size-3.5" />
+          新建任务
+        </Button>
+      );
+    }
+
+    if (status === "ready_to_merge" && canCreateIntegration) {
+      const hasSelection = selectedDeliveryTaskIds.size > 0;
+      return (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className={cn(
+            "w-full",
+            hasSelection && "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white dark:border-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-600",
+          )}
+          disabled={readOnly || !hasSelection || creatingIntegration}
+          onClick={onCreateIntegration}
+        >
+          {creatingIntegration ? <LoaderCircle className="animate-spin" /> : <Layers3 />}
+          创建集成批次（{selectedDeliveryTaskIds.size}）
+        </Button>
+      );
+    }
+
+    return null;
+  };
+
   const renderStatusBody = (status: TaskBoardStatus, columnTasks: TaskBoardTask[]) => {
     const statusDragEnabled = canDragFromStatus(status);
+    const action = renderStatusAction(status);
     return (
     <>
-      {["backlog", "todo"].includes(status) ? (
-        <div className="shrink-0 border-b p-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="w-full"
-            disabled={readOnly || !canCreateTask}
-            aria-label={`在${STATUS_LABELS[status]}新建任务`}
-            onClick={() => onCreateTask(status)}
-          >
-            <Plus className="size-3.5" />
-            新建任务
-          </Button>
-        </div>
-      ) : null}
+      {action ? <div className="shrink-0 border-b p-2">{action}</div> : null}
       <div
         className="min-h-24 flex-1 space-y-2 overflow-y-auto p-2"
         onDragOver={(event) => {
@@ -146,8 +182,8 @@ export function TaskColumns({
   };
 
   return (
-    <div className="relative min-h-0 flex-1 overflow-hidden">
-      <div className="mb-3 md:hidden">
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div data-testid="taskboard-mobile-controls" className="mb-3 shrink-0 md:hidden">
         <Select value={mobileStatus} onValueChange={(value) => onMobileStatusChange(value as TaskBoardStatus)}>
           <SelectTrigger aria-label="移动端状态"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -156,20 +192,20 @@ export function TaskColumns({
             ))}
           </SelectContent>
         </Select>
-        {["backlog", "todo"].includes(mobileStatus) ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="mt-2 w-full"
-            disabled={readOnly || !canCreateTask}
-            aria-label={`在${STATUS_LABELS[mobileStatus]}新建任务`}
-            onClick={() => onCreateTask(mobileStatus)}
-          >
-            <Plus className="size-3.5" />
-            新建任务
-          </Button>
+        {renderStatusAction(mobileStatus) ? (
+          <div className="mt-2">{renderStatusAction(mobileStatus)}</div>
         ) : null}
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="mt-2 w-full"
+          aria-label={`在移动端查看已归档任务（${archivedCount}）`}
+          onClick={onOpenArchivedTasks}
+        >
+          <Archive className="size-3.5" />
+          归档（{archivedCount}）
+        </Button>
       </div>
 
       <div
@@ -253,12 +289,27 @@ export function TaskColumns({
             </section>
           );
         })}
+        <button
+          type="button"
+          data-testid="taskboard-archived-column"
+          className={`${collapsedTerminalClassName} min-h-56 cursor-pointer items-center gap-2 py-2 text-xs font-medium outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`}
+          aria-label={`查看已归档任务（${archivedCount}）`}
+          title="查看已归档任务"
+          onClick={onOpenArchivedTasks}
+        >
+          <ChevronRight className="size-3.5 shrink-0" />
+          <Archive className="size-3.5 shrink-0" />
+          <span className="[writing-mode:vertical-rl]">归档</span>
+          <span className="rounded-full bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            {archivedCount}
+          </span>
+        </button>
       </div>
 
       <section
         data-testid="taskboard-mobile-list"
         aria-label={`${STATUS_LABELS[mobileStatus]}任务列表`}
-        className="h-[calc(100%-3rem)] space-y-2 overflow-y-auto md:hidden"
+        className="min-h-0 flex-1 space-y-2 overflow-y-auto md:hidden"
       >
         {mobileTasks.map((task) => (
           <TaskCard

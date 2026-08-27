@@ -25,7 +25,6 @@ import {
   brokenPausedStateReason,
   brokenSandboxStateReason,
   isBackgroundShellProtected,
-  isCiSandboxName,
   labelValue,
   nodeHeapLimitMb,
   normalizeMountSubPath,
@@ -53,7 +52,6 @@ export type { ManagedSandbox, ManagedSandboxInventory, SandboxStatus } from './s
 export {
   brokenPausedStateReason,
   brokenSandboxStateReason,
-  isCiSandboxName,
   nodeHeapLimitMb,
   pausedConditionLastTransition,
 } from './sandboxState.js';
@@ -431,7 +429,7 @@ export class SandboxManager {
     return (await this.listManagedSandboxes()).map((sandbox) => {
       const lastActiveAtMs = parseDateMs(sandbox.lastActiveAt);
       const idleMs = lastActiveAtMs === undefined ? undefined : Math.max(0, nowMs - lastActiveAtMs);
-      const effectiveTtlMs = this.effectiveTtlMs(sandbox.name);
+      const effectiveTtlMs = this.config.sandboxTtlMs;
       const ttlRemainingMs = idleMs === undefined || effectiveTtlMs <= 0
         ? undefined
         : Math.max(0, effectiveTtlMs - idleMs);
@@ -629,14 +627,7 @@ export class SandboxManager {
           continue;
         }
       }
-      // CI 临时 sandbox（as-ws-ci-* 前缀）走短 TTL（sandboxCiTtlMs，默认 1h）。
-      // 正常 workflow EXIT 会立即删除；这里只兜底 cleanup trap / 控制面异常泄漏。
-      // sandboxCiTtlMs=0 表示关闭这条特殊路径，退回普通 TTL。
-      const isCiSandbox = isCiSandboxName(sandbox.name);
-      const effectiveTtlMs = isCiSandbox && this.config.sandboxCiTtlMs > 0
-        ? this.config.sandboxCiTtlMs
-        : this.config.sandboxTtlMs;
-      const shouldDeleteByTtl = effectiveTtlMs > 0 && idleMs >= effectiveTtlMs;
+      const shouldDeleteByTtl = this.config.sandboxTtlMs > 0 && idleMs >= this.config.sandboxTtlMs;
       const orphanPhase = !['Running', 'Paused'].includes(phase);
       const shouldDeleteOrphan = this.config.sandboxOrphanGraceMs > 0 && orphanPhase && ageMs >= this.config.sandboxOrphanGraceMs;
       if (shouldDeleteByTtl || shouldDeleteOrphan) {
@@ -965,12 +956,6 @@ export class SandboxManager {
     const status = await this.getStatus(name);
     if (!status || !backgroundShellProtectionFromStatus(status)) return;
     throw new SandboxBusyError(`ACS Sandbox ${name} has active background shell tasks; refuse to ${reason}`);
-  }
-
-  private effectiveTtlMs(name: string): number {
-    return isCiSandboxName(name) && this.config.sandboxCiTtlMs > 0
-      ? this.config.sandboxCiTtlMs
-      : this.config.sandboxTtlMs;
   }
 
   private refFromStatus(name: string, status: SandboxStatus): SandboxRef {

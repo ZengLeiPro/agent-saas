@@ -35,7 +35,6 @@ function config(overrides: Partial<AcsOrchestratorConfig> = {}): AcsOrchestrator
     maxRunningSandboxes: 200,
     sandboxIdlePauseMs: 0,
     sandboxTtlMs: 0,
-    sandboxCiTtlMs: 0,
     sandboxOrphanGraceMs: 0,
     sandboxBrokenRecycleGraceMs: 0,
     networkPolicy: { mode: 'public-egress', denyPrivateNetworks: true },

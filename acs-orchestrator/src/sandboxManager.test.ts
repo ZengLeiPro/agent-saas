@@ -1290,7 +1290,7 @@ describe('SandboxManager', () => {
     expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/healthy-paused')).toBe(false);
   });
 
-  it('cleanupSandboxes: as-ws-ci-* 前缀走 sandboxCiTtlMs 短 TTL', async () => {
+  it('cleanupSandboxes: CI 命名前缀与用户 Sandbox 使用相同 TTL', async () => {
     const calls: string[][] = [];
     const kubectl = {
       async run(args: string[]): Promise<KubectlResult> {
@@ -1300,7 +1300,7 @@ describe('SandboxManager', () => {
             stdout: JSON.stringify({
               items: [
                 {
-                  // CI sandbox，8h idle 已过 6h 短 TTL → 应该删
+                  // CI 部署冒烟 Sandbox，8h idle 已过统一 6h TTL → 应该删
                   metadata: {
                     name: 'as-ws-ci-acr-12345-abc',
                     annotations: {
@@ -1311,7 +1311,7 @@ describe('SandboxManager', () => {
                   status: { phase: 'Paused' },
                 },
                 {
-                  // 用户 sandbox 同样 8h idle，普通 TTL 7d 未到 → 不该删
+                  // 用户 Sandbox 同样 8h idle，也已过统一 6h TTL → 应该删
                   metadata: {
                     name: 'as-ws-pantheon-user-workspace-xxx',
                     annotations: {
@@ -1322,7 +1322,7 @@ describe('SandboxManager', () => {
                   status: { phase: 'Paused' },
                 },
                 {
-                  // CI sandbox 4h idle，未过 6h 短 TTL → 不该删
+                  // CI 部署冒烟 Sandbox 4h idle，未过统一 6h TTL → 不该删
                   metadata: {
                     name: 'as-ws-ci-acs-manual-99999',
                     annotations: {
@@ -1345,53 +1345,19 @@ describe('SandboxManager', () => {
     const manager = new SandboxManager({
       ...baseConfig(),
       sandboxIdlePauseMs: 5 * 60_000,
-      sandboxTtlMs: 7 * 24 * 60 * 60_000,
-      sandboxCiTtlMs: 6 * 60 * 60_000,
+      sandboxTtlMs: 6 * 60 * 60_000,
     }, kubectl, noopLogger);
 
-    // now = 2026-06-27 00:00：ci-acr idle 8h（应删）/ 用户 idle 8h（不删）/ ci-manual idle 4h（不删）
+    // now = 2026-06-27 00:00：两个 8h idle Sandbox 都应删除，4h idle 的不删除。
     const report = await manager.cleanupSandboxes({ now: new Date('2026-06-27T00:00:00.000Z') });
 
-    expect(report.deleted).toEqual(['as-ws-ci-acr-12345-abc']);
+    expect(report.deleted.sort()).toEqual([
+      'as-ws-ci-acr-12345-abc',
+      'as-ws-pantheon-user-workspace-xxx',
+    ]);
     expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-ws-ci-acr-12345-abc')).toBe(true);
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-ws-pantheon-user-workspace-xxx')).toBe(false);
+    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-ws-pantheon-user-workspace-xxx')).toBe(true);
     expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-ws-ci-acs-manual-99999')).toBe(false);
-  });
-
-  it('cleanupSandboxes: sandboxCiTtlMs=0 时 CI sandbox 回退到普通 sandboxTtlMs', async () => {
-    const kubectl = {
-      async run(args: string[]): Promise<KubectlResult> {
-        if (args[0] === 'get' && args.includes('-l')) {
-          return {
-            stdout: JSON.stringify({
-              items: [{
-                metadata: {
-                  name: 'as-ws-ci-acr-12345',
-                  annotations: {
-                    'agent-saas.kaiyan.net/created-at': '2026-06-26T16:00:00.000Z',
-                    'agent-saas.kaiyan.net/last-active-at': '2026-06-26T16:00:00.000Z',
-                  },
-                },
-                status: { phase: 'Paused' },
-              }],
-            }),
-            stderr: '', exitCode: 0, signal: null,
-          };
-        }
-        return { stdout: '', stderr: '', exitCode: 0, signal: null };
-      },
-    } as unknown as Kubectl;
-
-    const manager = new SandboxManager({
-      ...baseConfig(),
-      sandboxIdlePauseMs: 5 * 60_000,
-      sandboxTtlMs: 7 * 24 * 60 * 60_000,
-      sandboxCiTtlMs: 0,  // 关闭 CI 短 TTL
-    }, kubectl, noopLogger);
-
-    // 8h idle 远小于 7d，不删
-    const report = await manager.cleanupSandboxes({ now: new Date('2026-06-27T00:00:00.000Z') });
-    expect(report.deleted).toEqual([]);
   });
 
   it('prewarmStaleImagePausedSandboxes: 没有 sandbox 时返回空报告', async () => {

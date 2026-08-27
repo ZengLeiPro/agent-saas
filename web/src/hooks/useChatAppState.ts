@@ -68,7 +68,7 @@ import {
 } from '@agent/shared';
 import {
   activeRuntimePatchFromStreamStatus, fetchSessionStreamStatus, isActiveRuntimeStatus, isTerminalRuntimeStatus,
-  runtimeStatusFromSessionStatus, type LastRunState, type TerminalRuntimeStatus } from "./chatRuntimeHelpers";
+  reconnectAfterServerDrain, runtimeStatusFromSessionStatus, type LastRunState, type TerminalRuntimeStatus } from "./chatRuntimeHelpers";
 
 export type { ChatAppState, ChatAppStateOptions } from "./useChatAppStateTypes";
 import type {
@@ -2072,7 +2072,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         wsLatestSessionIdRef.current,
         immediateSessionIdRef.current,
       );
-
+      if (data.type === 'chat_rejected' && data.reason_code === 'server_draining') reconnectAfterServerDrain();
       // 新建会话 → replaceState（不创建历史记录）
       if (data.type === 'session' && 'sessionId' in data) {
         const authoritativeSessionId = (data as any).sessionId as string;

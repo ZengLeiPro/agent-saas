@@ -1,4 +1,37 @@
 apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: agent-saas-staging-workspace
+  labels:
+    agent-saas.kaiyan.net/environment: staging
+spec:
+  accessModes:
+    - ReadWriteMany
+  capacity:
+    storage: 100Gi
+  csi:
+    driver: nasplugin.csi.alibabacloud.com
+    volumeAttributes:
+      path: /agent-saas-staging
+      server: 020ksw7nv1wjde1xy9c-tny86.cn-shenzhen.nas.aliyuncs.com
+    volumeHandle: agent-saas-staging-workspace
+  mountOptions:
+    - vers=3
+    - nolock
+    - proto=tcp
+    - rsize=1048576
+    - wsize=1048576
+    - hard
+    - timeo=600
+    - retrans=2
+    - noresvport
+    - acregmin=600
+    - acregmax=600
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: agent-saas-staging-nas-csi
+  volumeMode: Filesystem
+---
+apiVersion: v1
 kind: Namespace
 metadata:
   name: agent-saas-staging
@@ -51,10 +84,11 @@ metadata:
 spec:
   accessModes:
     - ReadWriteMany
+  volumeName: agent-saas-staging-workspace
   resources:
     requests:
       storage: 100Gi
-  storageClassName: alibabacloud-cnfs-nas
+  storageClassName: agent-saas-staging-nas-csi
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

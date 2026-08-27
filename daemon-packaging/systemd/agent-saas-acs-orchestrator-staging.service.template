@@ -15,6 +15,7 @@ Environment=ACS_SERVICE_ACCOUNT=agent-saas-staging-orchestrator
 Environment=ACS_ORCH_RUNTIME_CONFIG_FILE=/var/lib/agent-saas-staging/acs/runtime-config.json
 Environment=ACS_RELEASE_IDENTITY_FILE=/etc/agent-saas-staging/acs-release-identity.json
 Environment=ACS_ORCH_PIDFILE=/run/agent-saas-acs-orchestrator-staging.pid
+Environment=KUBECONFIG=/etc/agent-saas-staging/kubeconfig
 EnvironmentFile=/etc/agent-saas-staging/acs-orchestrator.env
 ExecStart=/usr/bin/node --enable-source-maps dist/index.js
 Restart=on-failure

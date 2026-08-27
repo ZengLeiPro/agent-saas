@@ -5,6 +5,9 @@ import test from 'node:test';
 const workflowPath = new URL('../../.github/workflows/deploy-staging.yml', import.meta.url);
 const deployPath = new URL('./deploy-staging-release.sh', import.meta.url);
 const resourcePath = new URL('../../infra/staging/resource-plan.json', import.meta.url);
+const acsRuntimePath = new URL('../../infra/staging/acs-runtime.yaml', import.meta.url);
+const observationPath = new URL('./observe-production.mjs', import.meta.url);
+const isolationPath = new URL('../staging/assert-isolation.mjs', import.meta.url);
 
 function runScriptLines(text) {
   const output = [];
@@ -67,10 +70,12 @@ test('resource plan records provisioned resources while first deployment remains
   assert.equal(plan.verificationStatus, 'pending');
   assert.equal(plan.firstDeploymentReadiness, 'blocked');
   assert.ok(plan.blockingConditions.length > 0);
-  assert.ok(plan.blockingConditions.includes('staging-acs-runtime-not-applied'));
+  assert.ok(!plan.blockingConditions.includes('staging-acs-runtime-not-applied'));
   assert.ok(plan.blockingConditions.includes('release-evidence-service-not-deployed'));
   assert.notEqual(plan.resources.acs.namespace, 'agent-saas-coding');
-  assert.equal(plan.resources.acs.status, 'pending-bootstrap');
+  assert.equal(plan.resources.acs.status, 'applied');
+  assert.equal(plan.resources.acs.clusterId, 'c819935b09a7d4a2a844561ef22a17448');
+  assert.equal(plan.resources.acs.sharedComputePool, true);
   assert.equal(plan.resources.database.instanceId, 'pgm-wz96n2735914490l');
   assert.equal(plan.resources.nas.isolationLevel, 'logical-shared-filesystem');
   assert.equal(plan.defaults.cronEnabled, false);
@@ -83,4 +88,20 @@ test('resource plan records provisioned resources while first deployment remains
     ),
   );
   assert.ok(plan.requiredEvidence.includes('sandbox-workspace-uses-staging-only-pvc-and-paths'));
+});
+
+test('Staging ACS binds a static shared-NAS subdirectory without using a missing dynamic class', async () => {
+  const runtime = await readFile(acsRuntimePath, 'utf8');
+  assert.match(runtime, /kind: PersistentVolume[\s\S]*name: agent-saas-staging-workspace/u);
+  assert.match(runtime, /path: \/agent-saas-staging/u);
+  assert.match(runtime, /volumeName: agent-saas-staging-workspace/u);
+  assert.match(runtime, /storageClassName: agent-saas-staging-nas-csi/u);
+  assert.doesNotMatch(runtime, /alibabacloud-cnfs-nas/u);
+});
+
+test('Evidence Service dependencies suppress their standalone CLIs when bundled', async () => {
+  for (const path of [observationPath, isolationPath]) {
+    const source = await readFile(path, 'utf8');
+    assert.match(source, /process\.env\.AGENT_SAAS_EMBEDDED !== 'true'/u);
+  }
 });

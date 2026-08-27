@@ -104,7 +104,7 @@ export function assertIsolationEvidence(value, { now = Date.now(), maxAgeMs = 60
   };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.env.AGENT_SAAS_EMBEDDED !== 'true' && import.meta.url === `file://${process.argv[1]}`) {
   const [input, output] = process.argv.slice(2);
   if (!input) throw new Error('usage: assert-isolation.mjs <evidence.json> [summary.json]');
   const value = assertIsolationEvidence(JSON.parse(await readFile(input, 'utf8')));

@@ -6,7 +6,6 @@
   "verificationStatus": "pending",
   "firstDeploymentReadiness": "blocked",
   "blockingConditions": [
-    "staging-acs-runtime-not-applied",
     "staging-runtime-services-not-deployed",
     "staging-database-migrations-not-applied",
     "release-evidence-service-not-deployed",
@@ -64,8 +63,11 @@
       "deliveryPolicy": "deny-all"
     },
     "acs": {
-      "status": "pending-bootstrap",
+      "status": "applied",
       "namespace": "agent-saas-staging",
+      "clusterId": "c819935b09a7d4a2a844561ef22a17448",
+      "sharedComputePool": true,
+      "pv": "agent-saas-staging-workspace",
       "pvc": "agent-saas-staging-workspace",
       "serviceAccount": "agent-saas-staging-orchestrator",
       "imagePullSecret": "agent-saas-staging-acr",

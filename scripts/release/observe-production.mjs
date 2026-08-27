@@ -100,7 +100,7 @@ async function sleep(milliseconds) {
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.env.AGENT_SAAS_EMBEDDED !== 'true' && import.meta.url === `file://${process.argv[1]}`) {
   const args = options(process.argv);
   const durationMs = Number(args['duration-ms'] ?? 15 * 60_000);
   const intervalMs = Number(args['interval-ms'] ?? 30_000);

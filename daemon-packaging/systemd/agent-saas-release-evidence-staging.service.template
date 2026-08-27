@@ -1,0 +1,22 @@
+[Unit]
+Description=Agent SaaS Staging release evidence authority
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agent-saas-staging
+Group=agent-saas-staging
+WorkingDirectory=/opt/agent-saas-release-evidence/current
+EnvironmentFile=/etc/agent-saas-staging/release-evidence.env
+ExecStart=/usr/bin/node --enable-source-maps scripts/release/evidence-service.mjs
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/agent-saas-release-evidence
+
+[Install]
+WantedBy=multi-user.target

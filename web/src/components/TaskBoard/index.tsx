@@ -5,7 +5,7 @@ import type {
   TaskBoardStatus,
   TaskBoardTask,
 } from "@agent/shared";
-import { Layers3, LoaderCircle, Plus, RefreshCw } from "lucide-react";
+import { Plus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import * as api from "./api";
@@ -362,18 +362,6 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         <RefreshCw className="size-3.5" />
         刷新
       </Button>
-      {canCreateIntegration ? (
-        <Button
-          type="button"
-          size="sm"
-          className="bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-600"
-          disabled={selectedDeliveryTaskIds.size === 0 || creatingIntegration}
-          onClick={() => void createManualIntegration()}
-        >
-          {creatingIntegration ? <LoaderCircle className="animate-spin" /> : <Layers3 />}
-          创建集成批次（{selectedDeliveryTaskIds.size}）
-        </Button>
-      ) : null}
       <Button
         size="sm"
         onClick={() => openTaskDialog("backlog")}
@@ -417,7 +405,6 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
             submitters={submitters}
             submitterUserId={submitterUserId}
             priority={priority}
-            archivedCount={archivedTasks.length}
             message={notice || boardsError || tasksError}
             onBoardChange={setSelectedBoardId}
             onCreateBoard={() => setBoardDialogMode("create")}
@@ -436,7 +423,6 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
             onSearchChange={setSearch}
             onSubmitterChange={setSubmitterUserId}
             onPriorityChange={setPriority}
-            onOpenArchivedTasks={() => setArchivedTasksOpen(true)}
           />
 
           <div className="relative flex min-h-0 flex-1 flex-col gap-3 md:flex-row">
@@ -452,6 +438,8 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
                 canTransitionTask={canTransitionTask}
                 canCreateIntegration={canCreateIntegration}
                 selectedDeliveryTaskIds={selectedDeliveryTaskIds}
+                creatingIntegration={creatingIntegration}
+                archivedCount={archivedTasks.length}
                 mobileStatus={mobileStatus}
                 onMobileStatusChange={setMobileStatus}
                 onCreateTask={openTaskDialog}
@@ -461,6 +449,8 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
                 }}
                 onDragStart={setDraggedTaskId}
                 onDragEnd={() => setDraggedTaskId(null)}
+                onCreateIntegration={() => void createManualIntegration()}
+                onOpenArchivedTasks={() => setArchivedTasksOpen(true)}
                 onDeliverySelectedChange={(taskId, selected) => {
                   const maxTasks = selectedBoard?.integrationPolicy?.batch.maxTasks ?? 100;
                   if (selected && !selectedDeliveryTaskIds.has(taskId) && selectedDeliveryTaskIds.size >= maxTasks) {

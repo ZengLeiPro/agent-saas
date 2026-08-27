@@ -37,6 +37,8 @@ export interface ChatAppState {
   isDragging: boolean;
   isLoadingSessions: boolean;
   isLoadingMessages: boolean;
+  sessionLoadError: string | null;
+  retrySessionLoad: () => void;
   hasMoreHistory: boolean;
   isLoadingEarlier: boolean;
   loadEarlierMessages: () => Promise<void>;

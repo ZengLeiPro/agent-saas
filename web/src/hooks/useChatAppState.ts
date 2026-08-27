@@ -3023,7 +3023,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     dismissUploadError: fileUpload.dismissUploadError,
     isDragging: fileUpload.isDragging,
     isLoadingSessions: session.isLoadingSessions,
-    isLoadingMessages: session.isLoadingMessages,
+    isLoadingMessages: session.isLoadingMessages, sessionLoadError: session.sessionLoadError, retrySessionLoad: session.retrySessionLoad,
     hasMoreHistory: session.hasMoreHistory,
     isLoadingEarlier: session.isLoadingEarlier,
     loadEarlierMessages: session.loadEarlierMessages,

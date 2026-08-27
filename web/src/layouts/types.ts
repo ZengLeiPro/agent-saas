@@ -74,6 +74,8 @@ export interface LayoutProps {
   messages: MessageItem[];
   loading: boolean;
   isLoadingMessages: boolean;
+  sessionLoadError: string | null;
+  retrySessionLoad: () => void;
   hasMoreHistory: boolean;
   isLoadingEarlier: boolean;
   loadEarlierMessages: () => Promise<void>;

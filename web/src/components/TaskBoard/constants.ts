@@ -105,8 +105,15 @@ const WORKFLOW_PROTECTED_STATUSES = new Set<TaskBoardStatus>([
   "done",
 ]);
 
-export function canUserTransitionTask(task: TaskBoardTaskKind | undefined, from: TaskBoardStatus, to: TaskBoardStatus): boolean {
-  if ((task ?? "delivery") === "integration" || from === to) return false;
+export function canUserTransitionTask(task: TaskBoardTask | TaskBoardTaskKind | undefined, from: TaskBoardStatus, to: TaskBoardStatus): boolean {
+  const kind = typeof task === "string" ? task : task?.kind;
+  if ((kind ?? "delivery") === "integration" || from === to) return false;
+  if (to === "todo" && ["ready_to_merge", "done", "canceled"].includes(from)) {
+    const mergeEligibility = typeof task === "object" ? task.mergeEligibility : undefined;
+    return (kind === "delivery" || kind === "advisory" || kind === undefined)
+      && mergeEligibility !== "claimed"
+      && mergeEligibility !== "merged";
+  }
   return !WORKFLOW_PROTECTED_STATUSES.has(from) && !WORKFLOW_PROTECTED_STATUSES.has(to);
 }
 

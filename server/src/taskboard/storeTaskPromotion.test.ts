@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { TaskBoardTask, TaskBoardTaskPatchInput } from '../../../shared/src/types/taskboard.js';
+import { PgTaskboardStore } from './store.js';
 import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
+import type { TaskboardIdentity } from './types.js';
 
 function task(kind: TaskBoardTask['kind'], status: TaskBoardTask['status'] = 'done'): TaskBoardTask {
   return {
@@ -38,5 +40,33 @@ describe('task kind promotion', () => {
         status: 'todo',
       },
     });
+  });
+
+  it('clears automatic next action when promoting, so implementation still requires a manual start', async () => {
+    const current = task('advisory', 'todo');
+    const promoted = { ...current, kind: 'delivery' as const, version: current.version + 1 };
+    const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [] }));
+    const client = { query };
+    const store = {
+      tasksTable: 'tasks', boardsTable: 'boards', executionsTable: 'executions',
+      continuationOutboxTable: 'continuations', changesTable: 'changes',
+      withTransaction: vi.fn(async (operation: (db: typeof client) => Promise<unknown>) => operation(client)),
+      requireTaskWithBoard: vi.fn(async () => ({ task: current, boardRole: 'maintainer', boardArchivedAt: undefined })),
+      requireTask: vi.fn(async () => promoted),
+    };
+    const identity: TaskboardIdentity = { tenantId: 'tenant-1', ownerUserId: 'user-1', username: 'alice' };
+
+    await PgTaskboardStore.prototype.updateTask.call(
+      store as unknown as PgTaskboardStore,
+      identity,
+      current.id,
+      { kind: 'delivery', expectedVersion: current.version },
+    );
+
+    const sql = query.mock.calls.map(([statement]) => statement).join('\n');
+    expect(sql).toContain("status='todo'");
+    expect(sql).toContain("next_action='none'");
+    expect(sql).toContain('workflow_epoch=workflow_epoch+1');
+    expect(sql).toContain('next_action_revision=next_action_revision+1');
   });
 });

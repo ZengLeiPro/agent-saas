@@ -322,6 +322,31 @@ describe("TaskDetail 草稿隔离", () => {
     confirmSpy.mockRestore();
   });
 
+  it.each(["ready_to_merge", "done", "canceled"] as const)("%s 任务可恢复到待推进，但不会自动开始实施", async (status) => {
+    const user = userEvent.setup();
+    const current = { ...taskOne, kind: "delivery" as const, status, mergeEligibility: "eligible" as const };
+    const requeued = { ...current, status: "todo" as const, version: current.version + 1, mergeEligibility: "not_applicable" as const };
+    mocks.fetchTask.mockResolvedValue(current);
+    const onMove = vi.fn(async () => requeued);
+    const onExecute = vi.fn();
+    render(<TaskDetail {...props({ task: current, onMove, onExecute })} />);
+
+    await user.click(await screen.findByRole("combobox", { name: "任务状态" }));
+    await user.click(screen.getByRole("option", { name: "待推进" }));
+
+    await waitFor(() => expect(onMove).toHaveBeenCalledWith(current, "todo"));
+    expect(onExecute).not.toHaveBeenCalled();
+    expect(await screen.findByRole("button", { name: "开始实施" })).toBeTruthy();
+  });
+
+  it("已被集成认领的待合并任务不能恢复到待推进", async () => {
+    const current = { ...taskOne, kind: "delivery" as const, status: "ready_to_merge" as const, mergeEligibility: "claimed" as const };
+    mocks.fetchTask.mockResolvedValue(current);
+    render(<TaskDetail {...props({ task: current })} />);
+
+    expect((await screen.findByRole("combobox", { name: "任务状态" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("评论可只上传附件后发表", async () => {
     const user = userEvent.setup();
     const uploaded = {

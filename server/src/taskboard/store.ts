@@ -39,6 +39,7 @@ import { discoverBoardCiPolicy } from './ciPolicyDiscovery.js';
 import { deleteStoredTask, rollbackStoredTask } from './storeTaskDelete.js';
 import { completeStoredTask } from './manualTaskCompletion.js';
 import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
+import { assertManualTaskRequeueAllowed, isManualTaskRequeue } from './storeTaskRequeue.js';
 import {
   allowedActionsForRole,
   appendModelAssignments,
@@ -584,7 +585,15 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         params.push(input.description);
         assignments.push(`description=$${params.length}`);
       }
-      if (kindMutation.promoting) assignments.push("kind='delivery'", "status='todo'", 'completed_at=NULL', 'resume_context=NULL');
+      if (kindMutation.promoting) assignments.push(
+        "kind='delivery'",
+        "status='todo'",
+        'completed_at=NULL',
+        'resume_context=NULL',
+        "next_action='none'",
+        'workflow_epoch=workflow_epoch+1',
+        'next_action_revision=next_action_revision+1',
+      );
       if (input.branch !== undefined) {
         params.push(optionalText(input.branch));
         assignments.push(`branch=$${params.length}`);
@@ -630,6 +639,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       assertBoardRole(loaded.boardRole, input.status === loaded.task.status ? 'editor' : 'maintainer');
       assertExpectedVersion(loaded.task, input.expectedVersion);
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
+      const manuallyRequeued = isManualTaskRequeue(loaded.task, input.status);
       if (input.status !== loaded.task.status) {
         if (loaded.task.kind === 'integration') {
           throw new TaskboardValidationError(
@@ -637,7 +647,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
             'TASKBOARD_PROTECTED_TRANSITION',
           );
         }
-        if (['in_progress', 'in_review', 'ready_to_merge', 'blocked', 'done'].includes(input.status)
+        if (manuallyRequeued) {
+          assertManualTaskRequeueAllowed(loaded.task);
+        } else if (['in_progress', 'in_review', 'ready_to_merge', 'blocked', 'done'].includes(input.status)
           || ['in_progress', 'in_review', 'ready_to_merge', 'blocked', 'done'].includes(loaded.task.status)) {
           throw new TaskboardValidationError(
             'This state transition requires a workflow command',
@@ -684,6 +696,20 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       else if (next) sortOrder = next.sortOrder - DEFAULT_SORT_GAP;
       else sortOrder = DEFAULT_SORT_GAP;
 
+      const manualRequeueReset = manuallyRequeued
+        ? `,
+                workflow_epoch=t.workflow_epoch+1,
+                next_action='none',
+                next_action_revision=t.next_action_revision+1,
+                resume_context=NULL,
+                reviewed_subject_digest=NULL,
+                provider_ci_inspection_id=NULL,
+                provider_ci_execution_id=NULL,
+                provider_ci_purpose=NULL,
+                provider_ci_head_oid=NULL,
+                provider_ci_status=NULL,
+                provider_ci_inspected_at=NULL`
+        : '';
       await client.query(
         `UPDATE ${this.tasksTable} t
             SET status=$4,
@@ -692,7 +718,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
                   WHEN $4='done' AND t.status<>'done' THEN now()
                   WHEN $4='done' THEN t.completed_at
                   ELSE NULL
-                END,
+                END${manualRequeueReset},
                 version=t.version+1,
                 updated_at=now()
            FROM ${this.boardsTable} b
@@ -701,7 +727,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         [taskId, identity.tenantId, identity.ownerUserId, input.status, sortOrder],
       );
       await appendTaskChange(this, client, taskId,
-        input.status === loaded.task.status ? 'task.reordered' : 'task.transitioned',
+        input.status === loaded.task.status
+          ? 'task.reordered'
+          : manuallyRequeued ? 'task.requeued' : 'task.transitioned',
         'user', identity.ownerUserId, { from: loaded.task.status, to: input.status });
       return this.requireTask(client, identity, taskId, false);
     });

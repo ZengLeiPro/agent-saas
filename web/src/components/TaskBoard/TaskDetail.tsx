@@ -319,7 +319,7 @@ export function TaskDetail({
     currentTask
     && !readOnly
     && canTransitionTask
-    && TASKBOARD_STATUSES.some((status) => canUserTransitionTask(taskKind, currentTask.status, status)),
+    && TASKBOARD_STATUSES.some((status) => canUserTransitionTask(currentTask, currentTask.status, status)),
   );
   const canCompleteCurrentTask = canManuallyCompleteTask(currentTask, readOnly, canTransitionTask, executionActive, executionsReady && !executionsLoading && !executionsError);
   const isCurrentOperation = (requestId: number, operationTaskId: string) => (
@@ -382,7 +382,7 @@ export function TaskDetail({
 
   const changeStatus = async (status: TaskBoardStatus) => {
     if (!currentTask || !canTransitionCurrentTask || status === currentTask.status
-      || !canUserTransitionTask(taskKind, currentTask.status, status)) return;
+      || !canUserTransitionTask(currentTask, currentTask.status, status)) return;
     const operationTask = currentTask;
     const requestId = ++detailRequestRef.current;
     setSaving(true);
@@ -866,7 +866,7 @@ export function TaskDetail({
                           <SelectItem
                             key={status}
                             value={status}
-                            disabled={status !== currentTask.status && !canUserTransitionTask(taskKind, currentTask.status, status)}
+                            disabled={status !== currentTask.status && !canUserTransitionTask(currentTask, currentTask.status, status)}
                           >{STATUS_LABELS[status]}</SelectItem>
                         ))}
                       </SelectContent>

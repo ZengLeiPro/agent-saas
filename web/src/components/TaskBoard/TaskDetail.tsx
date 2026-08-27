@@ -38,6 +38,7 @@ import {
   boardAllows,
   canUserTransitionTask,
   EXECUTION_STATUS_LABELS,
+  isTaskPlanningTransition,
   INTEGRATION_SOURCE_STATE_LABELS,
   PRIORITY_LABELS,
   STATUS_LABELS,
@@ -79,6 +80,7 @@ interface TaskDetailProps {
   board?: TaskBoard | null;
   boardReadOnly: boolean;
   canUpdateTask?: boolean;
+  canReorderTask?: boolean;
   canTransitionTask?: boolean;
   canArchiveTask?: boolean;
   canDeleteTask?: boolean;
@@ -113,6 +115,7 @@ export function TaskDetail({
   board = null,
   boardReadOnly,
   canUpdateTask = true,
+  canReorderTask = true,
   canTransitionTask = true,
   canArchiveTask = true,
   canDeleteTask = true,
@@ -315,11 +318,15 @@ export function TaskDetail({
       && currentTask?.status === "in_progress" && latestExecution?.purpose === "work")
     : (canRunCurrentTask && currentTask?.status !== "in_progress")
       || (!readOnly && canExecute && currentTask?.status === "in_progress" && executionActive);
+  const canMoveCurrentTaskTo = (status: TaskBoardStatus) => Boolean(
+    currentTask
+    && canUserTransitionTask(currentTask, currentTask.status, status)
+    && (canTransitionTask || (canReorderTask && isTaskPlanningTransition(currentTask.status, status))),
+  );
   const canTransitionCurrentTask = Boolean(
     currentTask
     && !readOnly
-    && canTransitionTask
-    && TASKBOARD_STATUSES.some((status) => canUserTransitionTask(currentTask, currentTask.status, status)),
+    && TASKBOARD_STATUSES.some(canMoveCurrentTaskTo),
   );
   const canCompleteCurrentTask = canManuallyCompleteTask(currentTask, readOnly, canTransitionTask, executionActive, executionsReady && !executionsLoading && !executionsError);
   const isCurrentOperation = (requestId: number, operationTaskId: string) => (
@@ -382,7 +389,7 @@ export function TaskDetail({
 
   const changeStatus = async (status: TaskBoardStatus) => {
     if (!currentTask || !canTransitionCurrentTask || status === currentTask.status
-      || !canUserTransitionTask(currentTask, currentTask.status, status)) return;
+      || !canMoveCurrentTaskTo(status)) return;
     const operationTask = currentTask;
     const requestId = ++detailRequestRef.current;
     setSaving(true);
@@ -866,7 +873,7 @@ export function TaskDetail({
                           <SelectItem
                             key={status}
                             value={status}
-                            disabled={status !== currentTask.status && !canUserTransitionTask(currentTask, currentTask.status, status)}
+                            disabled={status !== currentTask.status && !canMoveCurrentTaskTo(status)}
                           >{STATUS_LABELS[status]}</SelectItem>
                         ))}
                       </SelectContent>

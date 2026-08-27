@@ -352,6 +352,31 @@ describe("TaskBoardView", () => {
     ]);
   });
 
+  it("只有排序权限的 editor 也能将待推进任务移入需求池", async () => {
+    mocks.boards = [{
+      ...board("board-1", "产品研发"),
+      canManage: false,
+      allowedActions: ["board.read", "task.reorder"],
+    }];
+    mocks.tasks = [taskOne, taskTwo];
+    render(<TaskBoardView />);
+
+    const source = screen.getAllByTestId("task-card-task-2")[0];
+    fireEvent.dragStart(source, {
+      dataTransfer: { effectAllowed: "move", setData: vi.fn(), getData: vi.fn(() => taskTwo.id) },
+    });
+    fireEvent.drop(screen.getAllByTestId("task-card-task-1")[0], {
+      dataTransfer: { getData: vi.fn(() => taskTwo.id) },
+    });
+
+    await waitFor(() => expect(mocks.optimisticMove).toHaveBeenCalled());
+    expect(mocks.optimisticMove.mock.calls[0]?.[1]).toEqual({
+      status: "backlog",
+      previousTaskId: undefined,
+      nextTaskId: taskOne.id,
+    });
+  });
+
   it("自动排序列允许跨阶段拖拽，但禁止同列重排", async () => {
     const canceledTask = {
       ...taskOne,

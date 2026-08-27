@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { TaskBoardTask } from '../../../shared/src/types/taskboard.js';
 import { PgTaskboardStore } from './store.js';
-import { assertManualTaskRequeueAllowed, isManualTaskRequeue } from './storeTaskRequeue.js';
+import { assertManualTaskRequeueAllowed, isManualTaskRequeue, isTaskPlanningTransition } from './storeTaskRequeue.js';
 import type { TaskboardIdentity } from './types.js';
 
 function task(overrides: Partial<TaskBoardTask> = {}): TaskBoardTask {
@@ -28,6 +28,13 @@ describe('manual task requeue', () => {
     expect(isManualTaskRequeue(task({ status: 'canceled' }), 'backlog')).toBe(false);
   });
 
+  it('recognizes only backlog/todo moves as planning transitions', () => {
+    expect(isTaskPlanningTransition('todo', 'backlog')).toBe(true);
+    expect(isTaskPlanningTransition('backlog', 'todo')).toBe(true);
+    expect(isTaskPlanningTransition('todo', 'todo')).toBe(false);
+    expect(isTaskPlanningTransition('canceled', 'backlog')).toBe(false);
+  });
+
   it.each(['delivery', 'advisory'] as const)('allows unclaimed %s tasks', (kind) => {
     expect(() => assertManualTaskRequeueAllowed(task({ kind, mergeEligibility: 'not_applicable' }))).not.toThrow();
   });
@@ -44,6 +51,44 @@ describe('manual task requeue', () => {
     } catch (error) {
       expect(error).toMatchObject({ code: 'TASKBOARD_PROTECTED_TRANSITION' });
     }
+  });
+
+  it('allows an editor to move a task between backlog and todo', async () => {
+    const current = task({ status: 'todo' });
+    const moved = { ...current, status: 'backlog' as const, version: current.version + 1 };
+    const client = { query: vi.fn(async () => ({ rows: [] })) };
+    const store = {
+      tasksTable: 'tasks', boardsTable: 'boards', executionsTable: 'executions',
+      continuationOutboxTable: 'continuations', changesTable: 'changes',
+      withTransaction: vi.fn(async (operation: (db: typeof client) => Promise<unknown>) => operation(client)),
+      requireTaskWithBoard: vi.fn(async () => ({ task: current, boardRole: 'editor', boardArchivedAt: undefined })),
+      requireTask: vi.fn(async () => moved),
+    };
+    const identity: TaskboardIdentity = { tenantId: 'tenant-1', ownerUserId: 'user-1', username: 'alice' };
+
+    await expect(PgTaskboardStore.prototype.moveTask.call(
+      store as unknown as PgTaskboardStore,
+      identity,
+      current.id,
+      { status: 'backlog', expectedVersion: current.version },
+    )).resolves.toEqual(moved);
+  });
+
+  it('still requires a maintainer for non-planning state transitions', async () => {
+    const current = task({ status: 'canceled' });
+    const client = { query: vi.fn(async () => ({ rows: [] })) };
+    const store = {
+      withTransaction: vi.fn(async (operation: (db: typeof client) => Promise<unknown>) => operation(client)),
+      requireTaskWithBoard: vi.fn(async () => ({ task: current, boardRole: 'editor', boardArchivedAt: undefined })),
+    };
+    const identity: TaskboardIdentity = { tenantId: 'tenant-1', ownerUserId: 'user-1', username: 'alice' };
+
+    await expect(PgTaskboardStore.prototype.moveTask.call(
+      store as unknown as PgTaskboardStore,
+      identity,
+      current.id,
+      { status: 'backlog', expectedVersion: current.version },
+    )).rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
   });
 
   it('resets workflow intent and stale review evidence without starting an execution', async () => {

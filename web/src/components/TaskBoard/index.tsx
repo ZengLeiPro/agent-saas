@@ -17,6 +17,7 @@ import { useBoardTasks, useTaskboardModelList, useTaskBoards } from "./hooks";
 import {
   boardAllows,
   canUserTransitionTask,
+  isTaskPlanningTransition,
   sortTaskBoardTasks,
   taskStatusSupportsManualOrdering,
 } from "./constants";
@@ -299,7 +300,10 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
       }
       return;
     }
-    if (status !== moved.status && (!canTransitionTask || !canUserTransitionTask(moved, moved.status, status))) {
+    if (status !== moved.status && (
+      !canUserTransitionTask(moved, moved.status, status)
+      || (!canTransitionTask && !(canReorderTask && isTaskPlanningTransition(moved.status, status)))
+    )) {
       setNotice("该任务状态由工作流推进，当前不能通过拖拽变更。");
       return;
     }
@@ -538,6 +542,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         board={selectedBoard}
         boardReadOnly={boardReadOnly}
         canUpdateTask={canUpdateTask}
+        canReorderTask={canReorderTask}
         canTransitionTask={canTransitionTask}
         canArchiveTask={canArchiveTask}
         canDeleteTask={canDeleteTask}

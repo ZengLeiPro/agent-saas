@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaskBoardTask } from "@agent/shared";
-import { canUserTransitionTask } from "./constants";
+import { canUserTransitionTask, isTaskPlanningTransition } from "./constants";
 
 function task(overrides: Partial<TaskBoardTask> = {}): TaskBoardTask {
   return {
@@ -21,6 +21,15 @@ function task(overrides: Partial<TaskBoardTask> = {}): TaskBoardTask {
     ...overrides,
   };
 }
+
+describe("isTaskPlanningTransition", () => {
+  it("仅识别需求池与待推进之间的双向移动", () => {
+    expect(isTaskPlanningTransition("todo", "backlog")).toBe(true);
+    expect(isTaskPlanningTransition("backlog", "todo")).toBe(true);
+    expect(isTaskPlanningTransition("todo", "todo")).toBe(false);
+    expect(isTaskPlanningTransition("canceled", "backlog")).toBe(false);
+  });
+});
 
 describe("canUserTransitionTask", () => {
   it.each(["ready_to_merge", "done", "canceled"] as const)("允许将 %s 手动恢复到待推进", (status) => {

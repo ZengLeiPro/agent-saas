@@ -105,6 +105,10 @@ const WORKFLOW_PROTECTED_STATUSES = new Set<TaskBoardStatus>([
   "done",
 ]);
 
+export function isTaskPlanningTransition(from: TaskBoardStatus, to: TaskBoardStatus): boolean {
+  return from !== to && [from, to].every((status) => status === "backlog" || status === "todo");
+}
+
 export function canUserTransitionTask(task: TaskBoardTask | TaskBoardTaskKind | undefined, from: TaskBoardStatus, to: TaskBoardStatus): boolean {
   const kind = typeof task === "string" ? task : task?.kind;
   if ((kind ?? "delivery") === "integration" || from === to) return false;

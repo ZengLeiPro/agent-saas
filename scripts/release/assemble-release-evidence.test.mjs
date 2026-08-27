@@ -5,8 +5,12 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { assembleReleaseEvidence } from './assemble-release-evidence.mjs';
 import { canonicalJson, digestBuffer, digestFile } from './artifact-lib.mjs';
+import {
+  createValidReleaseEvidence,
+  RELEASE_EVIDENCE_SHA,
+} from './release-evidence-fixture.test-helper.mjs';
 
-const SHA = 'a'.repeat(40);
+const SHA = RELEASE_EVIDENCE_SHA;
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'release-evidence-'));
@@ -25,28 +29,7 @@ async function fixture() {
   };
   const index = { ...body, aggregateDigest: digestBuffer(Buffer.from(canonicalJson(body))) };
   await writeFile(join(root, 'index.json'), JSON.stringify(index));
-  await writeFile(
-    join(root, 'authoritative.json'),
-    JSON.stringify({
-      ok: true,
-      releaseSha: SHA,
-      evidenceDigest: `sha256:${'1'.repeat(64)}`,
-      compatibilityEvidenceDigest: `sha256:${'8'.repeat(64)}`,
-      productionBaselineStatus: 'known',
-      integrationCandidates: [],
-      sourcePullRequests: [],
-      checks: {},
-      productionBaseline: {},
-      affectedComponents: ['web'],
-      baselineArtifacts: {},
-      migrationPlan: {
-        phase: 'none',
-        planDigest: `sha256:${'7'.repeat(64)}`,
-        confirmation: 'not_required',
-        contract: 'separate_release',
-      },
-    }),
-  );
+  await writeFile(join(root, 'authoritative.json'), JSON.stringify(createValidReleaseEvidence()));
   return root;
 }
 
@@ -88,7 +71,7 @@ test('fails closed on an unknown production baseline', async () => {
       'artifact-base-uri': 'oss://agent-saas-releases',
       output: join(root, 'output.json'),
     }),
-    /baseline is unknown/u,
+    /schema is invalid/u,
   );
 });
 
@@ -110,6 +93,6 @@ test('fails closed without compatibility and migration evidence', async () => {
       'artifact-base-uri': 'oss://agent-saas-releases',
       output: join(root, 'missing-evidence-output.json'),
     }),
-    /compatibility evidence/u,
+    /schema is invalid/u,
   );
 });

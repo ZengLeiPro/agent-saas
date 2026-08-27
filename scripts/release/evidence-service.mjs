@@ -3,7 +3,8 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { canonicalJson, digestBuffer, DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
+import { canonicalJson, DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
+import { validateReleaseEvidenceDocument } from './release-evidence-schema.mjs';
 import { evaluateObservationSamples } from './observe-production.mjs';
 import { assertIsolationEvidence } from '../staging/assert-isolation.mjs';
 
@@ -43,32 +44,9 @@ async function writeImmutable(path, value) {
 }
 
 export function validateReleaseEvidence(value, expectedSha) {
-  if (
-    !SHA_PATTERN.test(expectedSha ?? '') ||
-    value?.releaseSha !== expectedSha ||
-    value.ok !== true
-  )
+  if (!SHA_PATTERN.test(expectedSha ?? ''))
     throw new Error('Release evidence is not bound to the requested complete SHA');
-  if (
-    value.productionBaselineStatus !== 'known' ||
-    !Array.isArray(value.integrationCandidates) ||
-    !value.integrationCandidates.length ||
-    !Array.isArray(value.sourcePullRequests) ||
-    !value.sourcePullRequests.length ||
-    !value.checks ||
-    !value.productionBaseline ||
-    !value.baselineArtifacts ||
-    !Array.isArray(value.affectedComponents) ||
-    !value.migrationPlan ||
-    !DIGEST_PATTERN.test(value.migrationPlan.planDigest ?? '') ||
-    !DIGEST_PATTERN.test(value.compatibilityEvidenceDigest ?? '')
-  ) {
-    throw new Error('Release evidence is incomplete');
-  }
-  const { evidenceDigest, ...body } = value;
-  const actual = digestBuffer(Buffer.from(canonicalJson(body)));
-  if (evidenceDigest !== actual) throw new Error('Release evidence digest is invalid');
-  return value;
+  return validateReleaseEvidenceDocument(value, { expectedSha });
 }
 
 export function validateObservationSample(value, releaseId, manifestDigest, now = Date.now()) {

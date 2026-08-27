@@ -19,9 +19,11 @@ Variables：`STAGING_RELEASE_OSS_URI`、`RELEASE_EVIDENCE_URL`、
 Workflow 中，修改时必须走 CODEOWNER 审核。
 
 `RELEASE_EVIDENCE_URL` 指向仓库已实现的 `evidence-service.mjs` 的
-`/release-evidence` 端点。返回记录必须绑定请求的完整 SHA，至少包含 Integration Candidate、
-PR/check、当前生产矩阵及基线制品、组件分类、由 `migration-plan.mjs` 重算一致的迁移计划，
-以及真实 N/N+1 兼容测试报告的 `compatibilityEvidenceDigest`。字段未知时 Workflow fail closed。
+`/release-evidence` 端点。返回记录必须通过 `release-evidence-schema.mjs` 的版本化完整 Schema，
+绑定请求的完整 SHA，并包含 Integration Candidate、PR/check、当前生产矩阵及相互绑定的基线制品、
+合法且满足 API/Runtime Worker 耦合约束的组件分类、由 `migration-plan.mjs` 重算一致的迁移计划，
+以及真实 N/N+1 兼容测试报告的 `compatibilityEvidenceDigest`。Schema 校验和摘要复算都在不可变
+写入之前完成，字段未知、缺失或冲突时 fail closed，不会占用并毒化该 SHA 的记录路径。
 
 ## production
 

@@ -3,32 +3,18 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { canonicalJson, digestBuffer } from './artifact-lib.mjs';
 import { createEvidenceService } from './evidence-service.mjs';
+import {
+  createValidReleaseEvidence,
+  RELEASE_EVIDENCE_SHA,
+} from './release-evidence-fixture.test-helper.mjs';
 
 const READ_TOKEN = 'evidence-service-read-token-32-bytes-long';
 const WRITE_TOKEN = 'evidence-service-write-token-32-bytes-long';
-const SHA = 'a'.repeat(40);
+const SHA = RELEASE_EVIDENCE_SHA;
 const RELEASE_ID = 'rc-20260827-01';
 const MANIFEST_DIGEST = `sha256:${'d'.repeat(64)}`;
 const NOW = Date.parse('2026-08-27T00:00:00.000Z');
-
-function releaseEvidence() {
-  const body = {
-    ok: true,
-    releaseSha: SHA,
-    productionBaselineStatus: 'known',
-    integrationCandidates: [{ candidateId: 'candidate' }],
-    sourcePullRequests: [1],
-    checks: { appCi: { status: 'success' } },
-    productionBaseline: { web: {} },
-    baselineArtifacts: { serverBundle: {} },
-    affectedComponents: ['web'],
-    migrationPlan: { planDigest: `sha256:${'b'.repeat(64)}` },
-    compatibilityEvidenceDigest: `sha256:${'c'.repeat(64)}`,
-  };
-  return { ...body, evidenceDigest: digestBuffer(Buffer.from(canonicalJson(body))) };
-}
 
 test('serves an authenticated immutable release-evidence producer endpoint', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'evidence-service-'));
@@ -45,21 +31,60 @@ test('serves an authenticated immutable release-evidence producer endpoint', asy
   const created = await fetch(url, {
     method: 'POST',
     headers: writeHeaders,
-    body: JSON.stringify(releaseEvidence()),
+    body: JSON.stringify(createValidReleaseEvidence()),
   });
   assert.equal(created.status, 201);
   const read = await fetch(url, { headers: readHeaders });
   assert.equal(read.status, 200);
   assert.equal((await read.json()).releaseSha, SHA);
   assert.equal((await fetch(url, { method: 'POST', headers: readHeaders })).status, 401);
-  const divergent = releaseEvidence();
-  divergent.sourcePullRequests = [2];
+  const divergent = createValidReleaseEvidence({ sourcePullRequests: [202] });
   const conflict = await fetch(url, {
     method: 'POST',
     headers: writeHeaders,
     body: JSON.stringify(divergent),
   });
   assert.notEqual(conflict.status, 201);
+});
+
+test('rejects incomplete evidence before immutable persistence without poisoning the SHA', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'evidence-service-poison-'));
+  const server = createEvidenceService({ root, readToken: READ_TOKEN, writeToken: WRITE_TOKEN });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  const url = `http://127.0.0.1:${port}/release-evidence?sha=${SHA}`;
+  const headers = {
+    authorization: `Bearer ${WRITE_TOKEN}`,
+    'content-type': 'application/json',
+  };
+  const placeholder = {
+    ok: true,
+    releaseSha: SHA,
+    productionBaselineStatus: 'known',
+    integrationCandidates: [{ candidateId: 'candidate' }],
+    sourcePullRequests: [1],
+    checks: { appCi: { status: 'success' } },
+    productionBaseline: { web: {} },
+    baselineArtifacts: { serverBundle: {} },
+    affectedComponents: ['web'],
+    migrationPlan: { planDigest: `sha256:${'7'.repeat(64)}` },
+    compatibilityEvidenceDigest: `sha256:${'8'.repeat(64)}`,
+    evidenceDigest: `sha256:${'9'.repeat(64)}`,
+  };
+  const rejected = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(placeholder),
+  });
+  assert.equal(rejected.status, 400);
+
+  const created = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(createValidReleaseEvidence()),
+  });
+  assert.equal(created.status, 201);
 });
 
 test('produces fresh Staging isolation and Production observation responses', async (t) => {

@@ -110,6 +110,12 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ob
   assert.match(deploy, /cleanup_acs_failure/u);
   assert.match(deploy, /verify --root "\$target" --component server/u);
   assert.match(deploy, /releases\/\$artifact_digest/u);
+  assert.match(deploy, /r\.environment !== 'production'/u);
+  assert.match(
+    deploy,
+    /systemctl show "agent-saas-runtime-worker@\$worker_idle" --property Environment --value/u,
+  );
+  assert.match(deploy, /grep -Fx 'AGENT_SAAS_ENVIRONMENT=production'/u);
   assert.match(deploy, /app_committed=true/u);
   assert.match(deploy, /printf '%s\\n' "\$api_active" >\/etc\/agent-saas\/active-color/u);
   assert.match(deploy, /rollback_root\/nginx-upstream\.conf/u);

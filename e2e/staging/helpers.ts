@@ -116,6 +116,7 @@ export async function waitForSessionRun(
   token: string,
   sessionId: string,
   expectedStatuses: string[] = ['completed'],
+  excludedRunIds: ReadonlySet<string> = new Set(),
 ): Promise<{ runId: string; status: string }> {
   let found: { runId: string; status: string } | undefined;
   await expect
@@ -127,7 +128,10 @@ export async function waitForSessionRun(
           '/api/admin/runtime/trace/recent-runs?hours=1&limit=200',
         )) as { runs?: Array<{ runId?: string; sessionId?: string; status?: string }> };
         const run = response.runs?.find(
-          (item) => item.sessionId === sessionId && expectedStatuses.includes(String(item.status)),
+          (item) =>
+            item.sessionId === sessionId &&
+            expectedStatuses.includes(String(item.status)) &&
+            !excludedRunIds.has(String(item.runId)),
         );
         if (run?.runId && run.status) found = { runId: run.runId, status: run.status };
         return found?.status;
@@ -160,8 +164,9 @@ export async function assertAcsToolEvidence(
   sessionId: string,
   expectedTools: string[],
   expectedContent: string,
+  excludedRunIds: ReadonlySet<string> = new Set(),
 ): Promise<void> {
-  const run = await waitForSessionRun(request, token, sessionId);
+  const run = await waitForSessionRun(request, token, sessionId, ['completed'], excludedRunIds);
   const events = await readRunTrace(request, token, run.runId);
   const calls = events.flatMap((event) =>
     event.type === 'assistant_tool_calls' ? (event.toolCalls ?? []) : [],

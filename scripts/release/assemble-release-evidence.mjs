@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
+import { validateReleaseEvidenceDocument } from './release-evidence-schema.mjs';
 import { verifyArtifactIndex } from './verify-artifact.mjs';
 
 function parse(argv) {
@@ -23,22 +23,11 @@ function artifactUri(baseUri, releaseId, path) {
 }
 
 export async function assembleReleaseEvidence(options) {
-  const authoritative = JSON.parse(await readFile(resolve(options.authoritative), 'utf8'));
+  const authoritative = validateReleaseEvidenceDocument(
+    JSON.parse(await readFile(resolve(options.authoritative), 'utf8')),
+    { expectedSha: options.sha },
+  );
   const index = await verifyArtifactIndex(options.index, options.sha);
-  if (!SHA_PATTERN.test(options.sha ?? '') || authoritative.releaseSha !== options.sha)
-    throw new Error('Authoritative evidence is not bound to the dispatch SHA');
-  if (authoritative.ok !== true || !DIGEST_PATTERN.test(authoritative.evidenceDigest ?? ''))
-    throw new Error('Authoritative release evidence is not verified');
-  if (!DIGEST_PATTERN.test(authoritative.compatibilityEvidenceDigest ?? ''))
-    throw new Error('N/N+1 compatibility evidence is missing');
-  if (
-    !authoritative.migrationPlan ||
-    !DIGEST_PATTERN.test(authoritative.migrationPlan.planDigest ?? '')
-  ) {
-    throw new Error('Migration plan evidence is missing');
-  }
-  if (authoritative.productionBaselineStatus !== 'known')
-    throw new Error('Production baseline is unknown');
   const createdAt = options['created-at'];
   const expiresAt = options['expires-at'];
   if (!createdAt || !expiresAt || Date.parse(expiresAt) <= Date.parse(createdAt))

@@ -237,7 +237,7 @@ const fs = require('node:fs');
 const [manifestPath, readyPath] = process.argv.slice(2);
 const m = JSON.parse(fs.readFileSync(manifestPath));
 const r = JSON.parse(fs.readFileSync(readyPath)).release;
-if (r.releaseId !== m.releaseId || r.releaseSha !== m.components.api.sourceSha || r.serverDigest !== m.components.api.artifactDigest) process.exit(1);
+if (r.environment !== 'production' || r.releaseId !== m.releaseId || r.releaseSha !== m.components.api.sourceSha || r.serverDigest !== m.components.api.artifactDigest) process.exit(1);
 NODE
 
   cp -a /etc/nginx/conf.d/agent-saas-upstream.conf "$rollback_root/nginx-upstream.conf"
@@ -263,6 +263,8 @@ EOF
     sleep 1
   done
   test -n "${pid:-}" && test "$pid" = "${ready:-}" && kill -0 "$pid"
+  systemctl show "agent-saas-runtime-worker@$worker_idle" --property Environment --value \
+    | tr ' ' '\n' | grep -Fx 'AGENT_SAAS_ENVIRONMENT=production' >/dev/null
   echo "$worker_idle" >/etc/agent-saas/runtime-worker-active-color
 
   old_worker_pid="$(cat "/run/agent-saas-runtime-worker-$worker_active.pid" 2>/dev/null || true)"

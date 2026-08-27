@@ -182,16 +182,19 @@ beforeEach(() => {
     if (typeof value === "function" && "mockClear" in value) (value as ReturnType<typeof vi.fn>).mockClear();
   });
   harness.session.newSession.mockImplementation(() => harness.sessionCallbacks?.onNewSession?.());
+  harness.session.removeSession.mockImplementation((sessionId: string) => {
+    if (harness.session.sessionId !== sessionId) return;
+    harness.session.sessionId = null;
+    harness.sessionCallbacks?.onNewSession?.();
+  });
   harness.authFetch.mockReset().mockResolvedValue(response({}, 404));
   let id = 0;
   vi.spyOn(globalThis.crypto, "randomUUID").mockImplementation(() => `00000000-0000-4000-8000-${String(++id).padStart(12, "0")}`);
 });
-
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
-
 describe("useChatAppState queue delivery lifecycle", () => {
   it("defaults new conversations to daily and sends the selected profile on the first WS chat", async () => {
     const { result } = renderHook(() => useChatAppState());
@@ -203,7 +206,6 @@ describe("useChatAppState queue delivery lifecycle", () => {
     await act(async () => { await result.current.sendMessage(); });
     expect(chatPayloads()[0]).toMatchObject({ message: "compile this", sandboxProfile: "coding" });
   });
-
   it("locks existing sessions and falls back legacy details without sandboxProfile to coding", () => {
     const { result } = renderHook(() => useChatAppState());
     act(() => result.current.selectSession("legacy-session"));
@@ -215,7 +217,6 @@ describe("useChatAppState queue delivery lifecycle", () => {
     act(() => harness.sessionCallbacks?.onSandboxProfile?.("legacy-session", "daily"));
     expect(result.current.sandboxProfile).toBe("daily");
   });
-
   it("returns to daily when browser navigation opens a blank new conversation", () => {
     const { result, rerender } = renderHook(() => useChatAppState());
     harness.session.sessionId = "coding-session"; rerender();
@@ -225,7 +226,6 @@ describe("useChatAppState queue delivery lifecycle", () => {
     act(() => window.dispatchEvent(new PopStateEvent("popstate")));
     expect(harness.session.newSession).toHaveBeenCalledOnce(); expect(result.current.sandboxProfile).toBe("daily");
   });
-
   it("locks the draft profile while the first message is pending and adopts the session event authority", async () => {
     const { result } = renderHook(() => useChatAppState());
     act(() => result.current.setInput("first message")); await act(async () => { await result.current.sendMessage(); });
@@ -234,23 +234,38 @@ describe("useChatAppState queue delivery lifecycle", () => {
     act(() => emit({ type: "session", sessionId: "session-authoritative", client_msg_id: clientMsgId, sandboxProfile: "coding" }));
     expect(result.current.sandboxProfile).toBe("coding");
   });
-
+  it("falls back a direct existing-session route to coding before detail succeeds", () => {
+    window.history.replaceState(null, "", "/chat/direct-session"); harness.session.sessionId = "direct-session";
+    const { result } = renderHook(() => useChatAppState());
+    expect(result.current.sandboxProfile).toBe("coding");
+  });
+  it("falls back forward navigation to coding before detail succeeds", () => {
+    const { result } = renderHook(() => useChatAppState());
+    expect(result.current.sandboxProfile).toBe("daily");
+    window.history.pushState(null, "", "/chat/forward-session"); act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    expect(harness.session.selectSession).toHaveBeenCalledWith("forward-session"); expect(result.current.sandboxProfile).toBe("coding");
+  });
+  it("clears the active session synchronously and restores daily after a remote deletion", async () => {
+    window.history.replaceState(null, "", "/chat/remote-session"); harness.session.sessionId = "remote-session";
+    const { result } = renderHook(() => useChatAppState());
+    act(() => emit({ type: "sync_ok", seq: 1, events: [{ event: { type: "session_deleted", sessionId: "remote-session" } }] }));
+    expect(result.current.sandboxProfile).toBe("daily");
+    act(() => result.current.setInput("after deletion")); await act(async () => { await result.current.sendMessage(); });
+    expect(chatPayloads()[0]).toMatchObject({ sandboxProfile: "daily" }); expect(chatPayloads()[0].sessionId).toBeUndefined();
+  });
   it("reconnects away from a draining server and lets retry resend the rejected message", async () => {
     harness.session.sessionId = "session-draining";
     harness.session.isNewSession = false;
     const { result } = renderHook(() => useChatAppState());
-
     act(() => result.current.setInput("retry after restart"));
     await act(async () => { await result.current.sendMessage(); });
     const clientMsgId = chatPayloads()[0].client_msg_id as string;
-
     act(() => emit({
       type: "chat_rejected",
       client_msg_id: clientMsgId,
       reason_code: "server_draining",
       reason: "服务即将关闭，请稍后重试",
     }));
-
     await waitFor(() => expect(harness.forceReconnect).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(result.current.messages.find((message) => (
       message.type === "user" && message.clientMsgId === clientMsgId
@@ -259,7 +274,6 @@ describe("useChatAppState queue delivery lifecycle", () => {
       message.type === "user" && message.clientMsgId === clientMsgId
     ));
     if (!failedMessage) throw new Error("rejected message bubble missing");
-
     act(() => result.current.retryMessage(failedMessage));
     await waitFor(() => expect(chatPayloads()).toHaveLength(2));
     expect(chatPayloads()[1]).toMatchObject({
@@ -268,7 +282,6 @@ describe("useChatAppState queue delivery lifecycle", () => {
       sessionId: "session-draining",
     });
   });
-
   it("keeps a WS-confirmed runtime when stream-status is inactive during session restore", async () => {
     let resolveStreamStatus!: (value: Response) => void;
     harness.authFetch.mockImplementation((url: string) => (
@@ -277,7 +290,6 @@ describe("useChatAppState queue delivery lifecycle", () => {
         : Promise.resolve(response({}, 404))
     ));
     const { result, rerender } = renderHook(() => useChatAppState());
-
     act(() => emit({
       type: "session_status",
       sessionId: "session-sleeping",
@@ -286,17 +298,14 @@ describe("useChatAppState queue delivery lifecycle", () => {
       runId: "run-sleeping",
     }));
     expect(result.current.runningSessionIds.has("session-sleeping")).toBe(true);
-
     harness.session.sessionId = "session-sleeping";
     harness.session.isNewSession = false;
     rerender();
     await waitFor(() => expect(resolveStreamStatus).toBeTypeOf("function"));
     await act(async () => { resolveStreamStatus(response({ active: false })); });
-
     expect(result.current.runningSessionIds.has("session-sleeping")).toBe(true);
     expect(result.current.sessionRuntimeStatuses.get("session-sleeping")).toBe("running");
   });
-
   it("keeps a snapshot-confirmed runtime while a clicked session waits for resume authority", async () => {
     harness.authFetch.mockImplementation(async (url: string) => {
       if (url === "/api/sessions/active-streams") {
@@ -306,25 +315,21 @@ describe("useChatAppState queue delivery lifecycle", () => {
       return response({}, 404);
     });
     const { result, rerender } = renderHook(() => useChatAppState());
-
     await act(async () => {
       harness.sessionCallbacks?.onSessionsLoaded?.([{ sessionId: "session-sleeping" }]);
       await Promise.resolve();
       await Promise.resolve();
     });
     expect(result.current.runningSessionIds.has("session-sleeping")).toBe(true);
-
     harness.session.sessionId = "session-sleeping";
     harness.session.isNewSession = false;
     rerender();
     await waitFor(() => expect(harness.sends.mock.calls.some(([payload]) => (
       (payload as { action?: string }).action === "resume"
     ))).toBe(true));
-
     expect(result.current.runningSessionIds.has("session-sleeping")).toBe(true);
     expect(result.current.sessionRuntimeStatuses.get("session-sleeping")).toBe("running");
   });
-
   it("does not clear a current WS runtime from a stale terminal lastRunState", async () => {
     harness.session.sessionId = "session-running";
     harness.session.isNewSession = false;
@@ -332,7 +337,6 @@ describe("useChatAppState queue delivery lifecycle", () => {
       url.endsWith("/stream-status") ? response({ active: true, runId: "run-running" }) : response({}, 404)
     ));
     const { result } = renderHook(() => useChatAppState());
-
     act(() => emit({
       type: "session_status",
       sessionId: "session-running",
@@ -344,17 +348,14 @@ describe("useChatAppState queue delivery lifecycle", () => {
       harness.sessionCallbacks?.onLastRunState?.("session-running", { status: "completed", runId: "run-previous" });
       await Promise.resolve();
     });
-
     expect(result.current.runningSessionIds.has("session-running")).toBe(true);
     expect(result.current.sessionRuntimeStatuses.get("session-running")).toBe("running");
   });
-
   it("keeps the list active across a terminal-to-next-run handoff", async () => {
     vi.useFakeTimers();
     harness.session.sessionId = "session-running";
     harness.session.isNewSession = false;
     const { result } = renderHook(() => useChatAppState());
-
     act(() => emit({
       type: "session_status",
       sessionId: "session-running",
@@ -374,7 +375,6 @@ describe("useChatAppState queue delivery lifecycle", () => {
       streamId: "stream-previous",
       runId: "run-previous",
     }));
-
     expect(result.current.runningSessionIds.has("session-running")).toBe(true);
     expect(result.current.sessionRuntimeStatuses.get("session-running")).toBe("running");
     await act(async () => {
@@ -385,7 +385,6 @@ describe("useChatAppState queue delivery lifecycle", () => {
     expect(result.current.runningSessionIds.has("session-running")).toBe(true);
     expect(result.current.sessionRuntimeStatuses.get("session-running")).toBe("waiting_user");
   });
-
   it("ignores a delayed inactive terminal lookup after a newer WS runtime", async () => {
     let resolveStreamStatus!: (value: Response) => void;
     harness.session.sessionId = "session-running";

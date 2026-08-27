@@ -202,7 +202,7 @@ export async function ensureRuntimeHandRegistered(params: {
           ...(baseRecipe.setupCommands ?? []),
           ...environmentVersion.recipe.setupCommands,
         ],
-        resources: { ...environmentVersion.recipe.resources },
+        resources: { ...baseRecipe.resources, ...environmentVersion.recipe.resources },
       }
     : baseRecipe;
   if (params.runtimeIsolationRequirement) {
@@ -211,8 +211,7 @@ export async function ensureRuntimeHandRegistered(params: {
     }
     recipe.runtimeIsolationRequirement = params.runtimeIsolationRequirement;
   }
-  const recipeDigest = environmentVersion?.digest
-    ?? createHash('sha256').update(JSON.stringify(recipe)).digest('hex');
+  const recipeDigest = createHash('sha256').update(JSON.stringify(recipe)).digest('hex');
   const defaultHandRegistration = {
     handId: defaultHandId,
     sessionId: params.sessionId,
@@ -344,7 +343,7 @@ export async function ensureRuntimeHandRegistered(params: {
         handId: defaultHandId,
         status: defaultProvisionFailure ? 'unhealthy' : 'ready',
         leaseExpiresAt,
-        recipeDigest,
+        recipeDigest: version.digest,
         expectedRevision: current.revision,
       });
     } else {
@@ -356,7 +355,7 @@ export async function ensureRuntimeHandRegistered(params: {
         templateVersionId: version.versionId,
         handId: defaultHandId,
         leaseExpiresAt,
-        recipeDigest,
+        recipeDigest: version.digest,
       });
       await params.environmentStore.transition({
         tenantId: params.userTenantId,

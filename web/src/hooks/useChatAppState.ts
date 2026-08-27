@@ -288,7 +288,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   );
   const voiceCallbackRef = useRef(options?.onVoiceEvent);
   voiceCallbackRef.current = options?.onVoiceEvent;
-
   // ---- Model selection (with retry on WS reconnect) ----
   const [modelList, setModelList] = useState<ModelList | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
@@ -296,7 +295,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const effectiveAutoApproveRunShell = authorizationModeEnabled || autoApproveRunShell;
   const modelListRef = useRef(modelList);
   modelListRef.current = modelList;
-
   const fetchModelList = useCallback(() => {
     authFetch("/api/models")
       .then((r) => {
@@ -311,17 +309,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       })
       .catch(() => { });
   }, []);
-
   useEffect(() => {
     fetchModelList();
   }, [fetchModelList]);
-
   useEffect(() => {
     const handleDefaultModelChanged = () => { fetchModelList(); };
     window.addEventListener("agent:default-model-changed", handleDefaultModelChanged);
     return () => window.removeEventListener("agent:default-model-changed", handleDefaultModelChanged);
   }, [fetchModelList]);
-
   useEffect(() => {
     registerRefresh("models", async () => { fetchModelList(); });
     return () => unregisterRefresh("models");
@@ -349,7 +344,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const releaseAllInteractionResponses = useCallback((error: string) => { for (const [id, { generation }] of pendingInteractionResponsesRef.current) releaseInteractionResponse(id, generation, error); }, [releaseInteractionResponse]);
   // 同步更新的 sessionId ref（解决 React 批量更新时 sessionIdRef 延迟问题）
   const immediateSessionIdRef = useRef<string | null>(urlState.sessionId);
-  const { sandboxProfile, sandboxProfileRef, setSandboxProfile, selectExistingSandboxProfile, startNewSandboxProfile, hydrateSandboxProfile } = useSandboxProfile(immediateSessionIdRef, sessionIdRef, loadingRef);
+  const { sandboxProfile, sandboxProfileRef, setSandboxProfile, selectExistingSandboxProfile, startNewSandboxProfile, hydrateSandboxProfile } = useSandboxProfile(immediateSessionIdRef, sessionIdRef, loadingRef, urlState.sessionId ? "coding" : "daily");
   const trashPreviewSessionIdRef = useRef<string | null>(trashPreviewSessionId);
   trashPreviewSessionIdRef.current = trashPreviewSessionId;
   const refreshTokenUsageRef = useRef<() => void>(() => { });
@@ -1131,7 +1126,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // Popstate refs（保持最新引用避免 effect 重注册）
   const selectSessionRawRef = useRef(session.selectSession);
-  selectSessionRawRef.current = session.selectSession;
+  selectSessionRawRef.current = (id) => { selectExistingSandboxProfile(); session.selectSession(id); };
   const newSessionRawRef = useRef(session.newSession);
   newSessionRawRef.current = session.newSession;
 
@@ -1667,7 +1662,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               });
             }
           }
-          else if (e.type === 'session_deleted') sessionRef.current.removeSession(e.sessionId);
+          else if (e.type === 'session_deleted') {
+            if ((immediateSessionIdRef.current ?? sessionIdRef.current) === e.sessionId) {
+              immediateSessionIdRef.current = null; sessionIdRef.current = null; queuedSessionIdRef.current = null; wsLatestSessionIdRef.current = { value: null };
+            }
+            sessionRef.current.removeSession(e.sessionId);
+          }
           else if (e.type === 'message_queued') {
             const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
             if (sid === e.sessionId && !consumedInterjectionsRef.current.has({ clientMsgId: e.clientMsgId, sourceRunId: e.runId })) {

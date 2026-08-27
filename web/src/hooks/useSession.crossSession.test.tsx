@@ -60,6 +60,14 @@ beforeEach(() => {
 });
 
 describe("useSession 跨会话详情请求隔离", () => {
+  it("服务端广播删除当前会话时通知上层恢复新会话默认状态", async () => {
+    const callbacks = makeCallbacks(); callbacks.onNewSession = vi.fn();
+    const { result } = renderHook(() => useSession(callbacks));
+    await act(async () => { result.current.setSessionId("remote-session"); });
+    await act(async () => { result.current.removeSession("remote-session"); });
+    expect(result.current.sessionId).toBeNull(); expect(callbacks.onNewSession).toHaveBeenCalledOnce();
+  });
+
   it("删除最后一个会话时通知上层恢复新会话默认状态", async () => {
     const callbacks = makeCallbacks();
     callbacks.onNewSession = vi.fn();

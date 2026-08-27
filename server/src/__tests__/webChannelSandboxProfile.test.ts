@@ -76,4 +76,48 @@ describe('WebChannel synchronous sandbox profile fallback', () => {
     });
     await expect(readSessionMeta(transcriptPath)).resolves.toMatchObject({ sandboxProfile: 'coding' });
   });
+
+  it('keeps a coding selection when an invalid sessionId falls back to a new synchronous session', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'web-sync-invalid-profile-'));
+    dirs.push(tmp);
+    const newSessionId = randomUUID();
+    const transcriptPath = getTranscriptPath('/unused', newSessionId, {
+      tenantId: USER.tenantId,
+      userId: USER.sub,
+    });
+    const dispatch: AgentRunDispatch = async function* (message, context) {
+      expect(context.resumeSessionId).toBeUndefined();
+      expect(message).toMatchObject({ chatId: '', metadata: { sandboxProfile: 'coding' } });
+      await writeSessionMeta(transcriptPath, {
+        userId: USER.sub,
+        username: USER.username,
+        userRole: USER.role,
+        tenantId: USER.tenantId,
+        channel: 'web',
+        sandboxProfile: 'coding',
+        createdAt: new Date().toISOString(),
+      });
+      yield { type: 'session_init', sessionId: newSessionId };
+      yield { type: 'done' };
+    };
+    const channel = new WebChannel({ executionConfig: createExecutionConfig(), agentCwd: tmp }, dispatch);
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+    (channel as any).eventBus = {
+      emitReply: (target: any, data: any) => target?.send?.(JSON.stringify({ data })),
+      emitSession: (context: any, data: any) => context?.ws?.send?.(JSON.stringify({ data })),
+      emitUser: () => undefined,
+      emitDual: () => undefined,
+    };
+
+    await (channel as any).processChatMessage(wsClient(ws, USER), chatMessage({
+      sessionId: 'missing-session',
+      client_msg_id: 'cm-invalid-coding',
+      message: '失效会话后继续 coding',
+      sandboxProfile: 'coding',
+    }));
+    await flushMicrotasks();
+
+    await expect(readSessionMeta(transcriptPath)).resolves.toMatchObject({ sandboxProfile: 'coding' });
+  });
 });

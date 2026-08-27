@@ -6,9 +6,10 @@ export function useSandboxProfile(
   immediateSessionIdRef: MutableRefObject<string | null>,
   sessionIdRef: MutableRefObject<string | null>,
   loadingRef: MutableRefObject<boolean>,
+  initialProfile: SandboxProfile = "daily",
 ) {
-  const [sandboxProfile, setSandboxProfileState] = useState<SandboxProfile>("daily");
-  const sandboxProfileRef = useRef<SandboxProfile>("daily");
+  const [sandboxProfile, setSandboxProfileState] = useState<SandboxProfile>(initialProfile);
+  const sandboxProfileRef = useRef<SandboxProfile>(initialProfile);
   const update = useCallback((profile: SandboxProfile) => {
     sandboxProfileRef.current = profile;
     setSandboxProfileState(profile);

@@ -2567,15 +2567,6 @@ export class WebChannel implements BaseChannel {
       chatLogger.info(`Attachments: ${imageCount} image(s), ${fileCount} file(s)`);
     }
 
-    // 构造 InboundMessage
-    const inbound: InboundMessage = {
-      channel: 'web',
-      chatId: sessionId || '',
-      content: resolvedMessage,
-      attachments,
-      ...(!sessionId && msg.sandboxProfile !== undefined ? { metadata: { sandboxProfile: msg.sandboxProfile } } : {}),
-    };
-
     // 构造 ChannelContext
     let userIdentity: ChannelContext['user'];
     if (user) {
@@ -2658,6 +2649,14 @@ export class WebChannel implements BaseChannel {
         }
       }
     }
+
+    const inbound: InboundMessage = {
+      channel: 'web',
+      chatId: validSessionId || '',
+      content: resolvedMessage,
+      attachments,
+      ...(!validSessionId && msg.sandboxProfile !== undefined ? { metadata: { sandboxProfile: msg.sandboxProfile } } : {}),
+    };
 
     // 构建用户消息展示内容（纯文本 + 结构化附件）
     const AI_FALLBACK_TEXT = 'Please check the attachments I uploaded';

@@ -693,7 +693,7 @@ export function useSession(
     localStorage.removeItem(`agentChat.model.${targetId}`);
     if (sessionIdRef.current === targetId) {
       cbRef.current.cancelActiveStream();
-      cbRef.current.resetMessages();
+      cbRef.current.resetMessages(); cbRef.current.onNewSession?.();
       setSessionId(null);
       setTokenUsage(null);
       setContextUsage(null);

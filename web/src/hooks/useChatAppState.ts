@@ -726,7 +726,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
       if (!sid || sessionId !== sid) return;
       reconcileServerInterjections(sessionId, serverQueued);
-    }, onSandboxProfile: hydrateSandboxProfile, onSessionActivated: (sessionId: string) => { selectExistingSandboxProfile(); immediateSessionIdRef.current = sessionId; queuedSessionIdRef.current = sessionId; wsLatestSessionIdRef.current = { value: sessionId }; }, onNewSession: startNewSandboxProfile,
+    }, onSandboxProfile: hydrateSandboxProfile, onActivate: (sessionId: string) => { selectExistingSandboxProfile(); immediateSessionIdRef.current = sessionId; }, onNewSession: startNewSandboxProfile,
   }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, reconcileServerInterjections, hydrateSandboxProfile, selectExistingSandboxProfile, startNewSandboxProfile]);
 
   const session = useSession(sessionCallbacks, { initialSessionId: urlState.sessionId });

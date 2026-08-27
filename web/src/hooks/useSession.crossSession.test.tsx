@@ -97,7 +97,7 @@ describe("useSession 跨会话详情请求隔离", () => {
     let activeSessionId = currentSessionId;
     let displayedProfile = currentProfile;
     const callbacks = makeCallbacks();
-    callbacks.onSessionActivated = vi.fn((sessionId) => { activeSessionId = sessionId; displayedProfile = "coding"; });
+    callbacks.onActivate = vi.fn((sessionId) => { activeSessionId = sessionId; displayedProfile = "coding"; });
     callbacks.onSandboxProfile = vi.fn((sessionId, profile) => {
       if (sessionId === activeSessionId) displayedProfile = profile ?? "coding";
     });
@@ -119,7 +119,7 @@ describe("useSession 跨会话详情请求隔离", () => {
     await act(async () => { await result.current.handleDeleteSession(); });
 
     expect(result.current.sessionId).toBe(nextSessionId);
-    expect(callbacks.onSessionActivated).toHaveBeenCalledWith(nextSessionId);
+    expect(callbacks.onActivate).toHaveBeenCalledWith(nextSessionId);
     expect(displayedProfile).toBe(nextProfile);
   });
 

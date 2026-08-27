@@ -199,8 +199,12 @@ class AcsProductionSnatConfigTest(unittest.TestCase):
         self.assertEqual(len(configured), 32)
 
         max_running = int(values['ACS_SANDBOX_MAX_RUNNING'])
-        max_entries = int(values['ACS_SNAT_MAX_MANAGED_ENTRIES'])
-        self.assertLessEqual(max_running + len(configured) + 2, max_entries)
+        address_capacity = sum(ipaddress.ip_network(cidr).num_addresses for cidr in configured)
+        self.assertEqual(max_running, 5_000)
+        self.assertEqual(int(values['ACS_SANDBOX_TTL_MS']), 30 * 60_000)
+        self.assertEqual(int(values['ACS_SANDBOX_MAX_ALLOCATED_CPU_MILLICORES']), 10_000_000)
+        self.assertEqual(int(values['ACS_SANDBOX_MAX_ALLOCATED_MEMORY_MIB']), max_running * 4 * 1024)
+        self.assertLessEqual(max_running, address_capacity)
         self.assertLess(int(values['ACS_SANDBOX_WARN_RUNNING']), max_running)
         self.assertLess(
             int(values['ACS_SANDBOX_WARN_ALLOCATED_CPU_MILLICORES']),

@@ -13,6 +13,9 @@ import {
   type EgressSandboxProxyConfig,
 } from 'server/runtime/egressPolicy.js';
 
+const MAX_SANDBOX_COUNT = 10_000;
+const MAX_WEIGHTED_CAPACITY = 100_000_000;
+
 export interface AcsOrchestratorConfig {
   port: number;
   host: string;
@@ -310,12 +313,14 @@ export function parseRuntimeConfigPatch(input: unknown): AcsRuntimeConfigPatch {
     patch.maxRunningSandboxes = parseRuntimeConfigInt(
       'maxRunningSandboxes',
       raw.maxRunningSandboxes,
+      MAX_SANDBOX_COUNT,
     );
   }
   if ('warnRunningSandboxes' in raw) {
     patch.warnRunningSandboxes = parseRuntimeConfigInt(
       'warnRunningSandboxes',
       raw.warnRunningSandboxes,
+      MAX_SANDBOX_COUNT,
     );
   }
   for (const key of [
@@ -324,7 +329,7 @@ export function parseRuntimeConfigPatch(input: unknown): AcsRuntimeConfigPatch {
     'maxAllocatedMemoryMib',
     'warnAllocatedMemoryMib',
   ] as const) {
-    if (key in raw) patch[key] = parseRuntimeConfigInt(key, raw[key], 10_000_000);
+    if (key in raw) patch[key] = parseRuntimeConfigInt(key, raw[key], MAX_WEIGHTED_CAPACITY);
   }
   if ('executionMaintenance' in raw)
     patch.executionMaintenance = parseBool('executionMaintenance', raw.executionMaintenance);
@@ -516,11 +521,14 @@ export function applyRuntimeConfigPatch(
   };
   validateRuntimeConfigValues(next);
   if (config.snat?.mode === 'shared-cidr') {
-    const rollbackCapacity =
-      config.snat.maxManagedEntries - (config.snat.sharedCidrs?.length ?? 0) - 2;
-    if (next.maxRunningSandboxes <= 0 || next.maxRunningSandboxes > rollbackCapacity) {
+    // shared-cidr 只按网段创建 SNAT 条目；Sandbox 数量真正受 Pod 地址池容量约束。
+    const addressCapacity = (config.snat.sharedCidrs ?? []).reduce((total, value) => {
+      const cidr = parseIpv4Cidr(value);
+      return total + (cidr ? 2 ** (32 - cidr.prefixLength) : 0);
+    }, 0);
+    if (next.maxRunningSandboxes <= 0 || next.maxRunningSandboxes > addressCapacity) {
       throw new Error(
-        `maxRunningSandboxes ${next.maxRunningSandboxes} must be within shared-cidr rollback capacity 1..${rollbackCapacity}`,
+        `maxRunningSandboxes ${next.maxRunningSandboxes} must be within shared-cidr address capacity 1..${addressCapacity}`,
       );
     }
   }
@@ -686,23 +694,29 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     // SNAT 条目、超限直接 throw 且无降级，故高位安全阀只在 `shared-cidr`
     // （条目数由明确允许的网段数决定，与 pod 数解耦）下才真正可用。三维容量门禁
     // 只淘汰安全 Paused CR，绝不强停 Running；无安全候选时以结构化 503 fail closed。
-    maxRunningSandboxes: readIntEnv('ACS_SANDBOX_MAX_RUNNING', 200, { min: 0, max: 1_000 }),
-    warnRunningSandboxes: readIntEnv('ACS_SANDBOX_WARN_RUNNING', 150, { min: 0, max: 1_000 }),
+    maxRunningSandboxes: readIntEnv('ACS_SANDBOX_MAX_RUNNING', 200, {
+      min: 0,
+      max: MAX_SANDBOX_COUNT,
+    }),
+    warnRunningSandboxes: readIntEnv('ACS_SANDBOX_WARN_RUNNING', 150, {
+      min: 0,
+      max: MAX_SANDBOX_COUNT,
+    }),
     maxAllocatedCpuMillicores: readIntEnv('ACS_SANDBOX_MAX_ALLOCATED_CPU_MILLICORES', 0, {
       min: 0,
-      max: 10_000_000,
+      max: MAX_WEIGHTED_CAPACITY,
     }),
     warnAllocatedCpuMillicores: readIntEnv('ACS_SANDBOX_WARN_ALLOCATED_CPU_MILLICORES', 0, {
       min: 0,
-      max: 10_000_000,
+      max: MAX_WEIGHTED_CAPACITY,
     }),
     maxAllocatedMemoryMib: readIntEnv('ACS_SANDBOX_MAX_ALLOCATED_MEMORY_MIB', 0, {
       min: 0,
-      max: 10_000_000,
+      max: MAX_WEIGHTED_CAPACITY,
     }),
     warnAllocatedMemoryMib: readIntEnv('ACS_SANDBOX_WARN_ALLOCATED_MEMORY_MIB', 0, {
       min: 0,
-      max: 10_000_000,
+      max: MAX_WEIGHTED_CAPACITY,
     }),
     executionMaintenance: false,
     drainDeadlineMs: readIntEnv('ACS_ORCH_DRAIN_DEADLINE_MS', 120_000, {

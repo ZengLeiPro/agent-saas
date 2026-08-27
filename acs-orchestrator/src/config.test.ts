@@ -174,28 +174,42 @@ describe('ACS runtime config', () => {
     expect(() => parseRuntimeConfigPatch({ executionMaintenanceReason: 'x'.repeat(501) })).toThrow(
       /at most 500/,
     );
+    expect(
+      parseRuntimeConfigPatch({
+        maxRunningSandboxes: 5_000,
+        warnRunningSandboxes: 4_500,
+        maxAllocatedCpuMillicores: 10_000_000,
+        warnAllocatedCpuMillicores: 9_000_000,
+        maxAllocatedMemoryMib: 20_480_000,
+        warnAllocatedMemoryMib: 18_432_000,
+      }),
+    ).toMatchObject({
+      maxRunningSandboxes: 5_000,
+      maxAllocatedCpuMillicores: 10_000_000,
+      maxAllocatedMemoryMib: 20_480_000,
+    });
   });
 
-  it('rejects a hot running limit above shared-cidr rollback capacity', () => {
+  it('bounds a hot running limit by shared-cidr address capacity, not SNAT entry count', () => {
     const config = {
-      maxRunningSandboxes: 190,
-      warnRunningSandboxes: 150,
+      maxRunningSandboxes: 500,
+      warnRunningSandboxes: 450,
       drainDeadlineMs: 120_000,
       snat: {
         mode: 'shared-cidr',
         maxManagedEntries: 200,
-        sharedCidrs: Array.from({ length: 8 }, (_, index) => `172.16.${index}.0/24`),
+        sharedCidrs: ['172.16.0.0/24', '172.16.1.0/24'],
       },
     } as AcsOrchestratorConfig;
 
-    expect(() => applyRuntimeConfigPatch(config, { maxRunningSandboxes: 191 })).toThrow(
-      /rollback capacity 1\.\.190/,
+    expect(() => applyRuntimeConfigPatch(config, { maxRunningSandboxes: 513 })).toThrow(
+      /address capacity 1\.\.512/,
     );
     expect(() => applyRuntimeConfigPatch(config, { maxRunningSandboxes: 0 })).toThrow(
-      /rollback capacity 1\.\.190/,
+      /address capacity 1\.\.512/,
     );
-    expect(applyRuntimeConfigPatch(config, { maxRunningSandboxes: 190 }).maxRunningSandboxes).toBe(
-      190,
+    expect(applyRuntimeConfigPatch(config, { maxRunningSandboxes: 500 }).maxRunningSandboxes).toBe(
+      500,
     );
   });
 

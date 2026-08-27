@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
 import { appendResolvedRunSnapshot, ensureRuntimeHandRegistered } from '../runtime/rawRuntimeRunDispatch.js';
@@ -149,9 +150,10 @@ describe('Raw Runtime governance snapshot fail-closed', () => {
       packages: ['ripgrep'], envKeys: ['LANG'], setupCommands: ['echo ready'],
       resources: { cpu: '1', memoryMb: 512 },
     }));
+    const effectiveRecipeDigest = createHash('sha256').update(JSON.stringify(provision.mock.calls[0]![0])).digest('hex');
     expect(registered.at(-1)).toMatchObject({
       templateVersionId: 'env-v1',
-      recipeDigest: 'recipe-digest-v1',
+      recipeDigest: effectiveRecipeDigest,
       metadata: {
         provisionFailure: null,
         provision: { attempts: 0, lastStatus: 'ok' },

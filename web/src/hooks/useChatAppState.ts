@@ -7,6 +7,7 @@ import type { AppTab } from "@/types/sidebar";
 import type { CanonicalSettingsSectionId } from "@/types/settings";
 import type { WsEvent } from "@/types/ws";
 import type { WsEnvelope } from "@/lib/wsClient";
+import { useSandboxProfile } from "./useSandboxProfile";
 import { wsClient } from "@/lib/wsClient";
 import { authFetch } from "@/lib/authFetch";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
@@ -88,7 +89,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const { user } = useAuth();
   // 授权模式对所有用户生效（2026-07-02 起），用户在账户设置中自行切换。
   const authorizationModeEnabled = user?.preferences?.authorizationModeEnabled === true;
-
   // 从 URL 解析初始状态（仅执行一次）
   const [urlState] = useState(() => parseUrl());
 
@@ -288,7 +288,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   );
   const voiceCallbackRef = useRef(options?.onVoiceEvent);
   voiceCallbackRef.current = options?.onVoiceEvent;
-
   // ---- Model selection (with retry on WS reconnect) ----
   const [modelList, setModelList] = useState<ModelList | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
@@ -296,7 +295,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const effectiveAutoApproveRunShell = authorizationModeEnabled || autoApproveRunShell;
   const modelListRef = useRef(modelList);
   modelListRef.current = modelList;
-
   const fetchModelList = useCallback(() => {
     authFetch("/api/models")
       .then((r) => {
@@ -311,17 +309,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       })
       .catch(() => { });
   }, []);
-
   useEffect(() => {
     fetchModelList();
   }, [fetchModelList]);
-
   useEffect(() => {
     const handleDefaultModelChanged = () => { fetchModelList(); };
     window.addEventListener("agent:default-model-changed", handleDefaultModelChanged);
     return () => window.removeEventListener("agent:default-model-changed", handleDefaultModelChanged);
   }, [fetchModelList]);
-
   useEffect(() => {
     registerRefresh("models", async () => { fetchModelList(); });
     return () => unregisterRefresh("models");
@@ -349,6 +344,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const releaseAllInteractionResponses = useCallback((error: string) => { for (const [id, { generation }] of pendingInteractionResponsesRef.current) releaseInteractionResponse(id, generation, error); }, [releaseInteractionResponse]);
   // 同步更新的 sessionId ref（解决 React 批量更新时 sessionIdRef 延迟问题）
   const immediateSessionIdRef = useRef<string | null>(urlState.sessionId);
+  const { sandboxProfile, sandboxProfileRef, setSandboxProfile, startNewSandboxProfile, hydrateSandboxProfile } = useSandboxProfile(immediateSessionIdRef, sessionIdRef, loadingRef, urlState.sessionId ? "coding" : "daily");
   const trashPreviewSessionIdRef = useRef<string | null>(trashPreviewSessionId);
   trashPreviewSessionIdRef.current = trashPreviewSessionId;
   const refreshTokenUsageRef = useRef<() => void>(() => { });
@@ -730,8 +726,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
       if (!sid || sessionId !== sid) return;
       reconcileServerInterjections(sessionId, serverQueued);
-    },
-  }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, reconcileServerInterjections]);
+    }, onSandboxProfile: hydrateSandboxProfile, onSessionInvalidated: (id: string) => { const current = immediateSessionIdRef.current === id || sessionIdRef.current === id; if (immediateSessionIdRef.current === id) immediateSessionIdRef.current = null; if (sessionIdRef.current === id) sessionIdRef.current = null; if (queuedSessionIdRef.current === id) queuedSessionIdRef.current = null; if (wsLatestSessionIdRef.current?.value === id) wsLatestSessionIdRef.current = { value: null }; if (current) { mutateQueuedInterjections((prev) => prev); startNewSandboxProfile(); } }, onNewSession: startNewSandboxProfile,
+  }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, reconcileServerInterjections, hydrateSandboxProfile, mutateQueuedInterjections, startNewSandboxProfile]);
 
   const session = useSession(sessionCallbacks, { initialSessionId: urlState.sessionId });
   const markingReadSessionIdsRef = useRef(new Set<string>());
@@ -1033,9 +1029,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   // state：新会话空白态的顶部 banner 展示（会话入列表带 orgAgentId 后由列表接管）。
   const { pendingOrgAgentIdRef, pendingNewSessionGroupIdRef, pendingOrgAgentId, setPendingOrgAgentId, clearPendingOrgAgent, assignPendingGroup } = usePendingNewSessionTarget();
   const authOwnerKey = user ? `${user.tenantId}:${user.id}` : "anonymous";
-
   const selectSessionWithUrl = useCallback((id: string) => {
-    setTrashPreviewSessionId(null); // 选择正常会话时退出回收站预览
+    setTrashPreviewSessionId(null);
     clearPendingOrgAgent(); // 切换既有会话 = 放弃挂起的专职 Agent 新会话
     failAllProvisionalBatches('已切换会话，请重新发送');
     pendingNewSessionClientMsgIdRef.current = null;
@@ -1052,7 +1047,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   }, [clearPendingOrgAgent, failAllProvisionalBatches, markSessionRead, mutateQueuedInterjections, session.selectSession]);
 
   const newSessionWithUrl = useCallback((groupId: string | null = null) => {
-    setTrashPreviewSessionId(null);
+    setTrashPreviewSessionId(null); startNewSandboxProfile();
     clearPendingOrgAgent(); // 普通新会话 = 个人 Agent 路径
     failAllProvisionalBatches('已新建会话，请重新发送');
     pendingNewSessionClientMsgIdRef.current = null;
@@ -1063,7 +1058,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     wsLatestSessionIdRef.current = { value: null };
     session.newSession();
     pushUrl('chat', null);
-  }, [clearPendingOrgAgent, failAllProvisionalBatches, mutateQueuedInterjections, session.newSession]);
+  }, [clearPendingOrgAgent, failAllProvisionalBatches, mutateQueuedInterjections, session.newSession, startNewSandboxProfile]);
 
   /**
    * 企业专家新草稿：只切换前端会话目标，不制造 meta-only 空会话。
@@ -1072,7 +1067,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const startOrgAgentSession = useCallback((agentId: string, groupId: string | null = null): void => {
     const normalizedAgentId = agentId.trim();
     if (!normalizedAgentId || !user || loadingRef.current) return;
-    setTrashPreviewSessionId(null);
+    setTrashPreviewSessionId(null); startNewSandboxProfile();
     failAllProvisionalBatches('已新建专职 Agent 会话，请重新发送');
     immediateSessionIdRef.current = null;
     queuedSessionIdRef.current = null;
@@ -1085,7 +1080,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setPendingOrgAgentId(normalizedAgentId);
     pushUrl('chat', null);
     if (activeTabRef.current !== 'chat') setActiveTab('chat');
-  }, [failAllProvisionalBatches, mutateQueuedInterjections, session.newSession, setActiveTab, user]);
+  }, [failAllProvisionalBatches, mutateQueuedInterjections, session.newSession, setActiveTab, startNewSandboxProfile, user]);
 
   useEffect(() => {
     clearPendingOrgAgent();
@@ -1667,7 +1662,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               });
             }
           }
-          else if (e.type === 'session_deleted') sessionRef.current.removeSession(e.sessionId);
+          else if (e.type === 'session_deleted') {
+            if ((immediateSessionIdRef.current ?? sessionIdRef.current) === e.sessionId) {
+              immediateSessionIdRef.current = null; sessionIdRef.current = null; queuedSessionIdRef.current = null; wsLatestSessionIdRef.current = { value: null };
+            }
+            sessionRef.current.removeSession(e.sessionId);
+          }
           else if (e.type === 'message_queued') {
             const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
             if (sid === e.sessionId && !consumedInterjectionsRef.current.has({ clientMsgId: e.clientMsgId, sourceRunId: e.runId })) {
@@ -2076,7 +2076,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       // 新建会话 → replaceState（不创建历史记录）
       if (data.type === 'session' && 'sessionId' in data) {
         const authoritativeSessionId = (data as any).sessionId as string;
-        if (data.client_msg_id) confirmProvisionalSession(data.client_msg_id, authoritativeSessionId);
+        if (data.client_msg_id) confirmProvisionalSession(data.client_msg_id, authoritativeSessionId); if (data.sandboxProfile) hydrateSandboxProfile(authoritativeSessionId, data.sandboxProfile);
         // 自己发起的新会话流：id 确定后纳入未读追踪，确保切走后流完成（idle）时能标记未读
         trackedAiReplyStreamsRef.current.add((data as any).sessionId);
         // 专职 Agent 挂起 ref 此时才清（2026-07 审查 F9）：会话真实建立、
@@ -2496,7 +2496,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       clientCapabilities: ['replaceable_drafts'],
       client_msg_id: clientMsgId,
       message: inputText || "Please check the attachments I uploaded",
-      sessionId: activeSessionId || undefined,
+      sessionId: activeSessionId || undefined, ...(!activeSessionId ? { sandboxProfile: sandboxProfileRef.current } : {}),
       // 专职 Agent 绑定：仅新会话首条消息带（带 sessionId 时服务端以 meta 为准）
       ...(pendingOrgAgentIdRef.current && !activeSessionId
         ? { orgAgentId: pendingOrgAgentIdRef.current }
@@ -3007,7 +3007,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   return {
     messages: msg.messages,
     input,
-    loading,
+    loading, sandboxProfile, setSandboxProfile,
     sessionId: session.sessionId,
     sessions: session.sessions,
     activeTab,

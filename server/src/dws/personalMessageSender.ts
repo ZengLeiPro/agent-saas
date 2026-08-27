@@ -7,6 +7,7 @@ import { HttpTransport, type HttpTransportOptions } from '../runtime/httpTranspo
 import type { DwsWorkspacePrincipal } from './authFlow.js';
 import { deriveDwsPrincipalWorkspaceId, resolveDwsPrincipalCwd } from './authFlow.js';
 import { principalFor } from './agentAuthFlow.js';
+import { DWS_CONNECTOR_SANDBOX_RESOURCES } from './sandboxResources.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
 
 const DWS_MESSAGE_TIMEOUT_MS = 60_000;
@@ -78,6 +79,7 @@ export class DwsPersonalMessageSender implements DwsPersonalMessageSenderLike {
           sandboxScopeId: `${workspaceId}__dws_messages`,
           mountSubPath,
           executionTarget: 'server-remote',
+          sandboxResources: DWS_CONNECTOR_SANDBOX_RESOURCES,
         },
       },
     });

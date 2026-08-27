@@ -10,8 +10,9 @@ import type {
 } from './protocol.js';
 import type { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import { PersistentSandboxRunner } from './persistentRunner.js';
-import type { SandboxManager, SandboxRef } from './sandboxManager.js';
+import type { SandboxManager, SandboxRef, SandboxResourceOverride } from './sandboxManager.js';
 import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
+import { sandboxResourceOverride } from './provision.js';
 
 interface InvocationEntry {
   controller: AbortController;
@@ -50,12 +51,17 @@ export class AcsExecutor {
     options: { stream: boolean; signal?: AbortSignal },
   ): AsyncIterable<ToolInvocationStreamChunk> {
     const workspace = request.context.workspace;
-    const ref = this.sandboxManager.ref({
+    const resourceOverride = workspace.sandboxResources
+      ? sandboxResourceOverride({ workspaceId: workspace.id!, resources: workspace.sandboxResources }, this.config)
+      : undefined;
+    const sandboxIdentity = {
       workspaceId: workspace.id!,
       sessionId: workspace.sessionId!,
       sandboxScopeId: workspace.sandboxScopeId,
       mountSubPath: workspace.mountSubPath,
-    });
+      ...(resourceOverride ? { resources: resourceOverride } : {}),
+    };
+    const ref = this.sandboxManager.ref(sandboxIdentity);
     const invocationId = request.context.invocationId;
     const invocationKey = invocationId ?? `internal-${Date.now()}-${++this.invocationSeq}`;
     if (this.invocations.has(invocationKey)) {
@@ -72,12 +78,6 @@ export class AcsExecutor {
     this.invocations.set(invocationKey, { controller, sandboxName: ref.name });
     const releaseActive = this.activeRegistry?.acquire(ref.name, invocationKey);
     try {
-      const sandboxIdentity = {
-        workspaceId: workspace.id!,
-        sessionId: workspace.sessionId!,
-        sandboxScopeId: workspace.sandboxScopeId,
-        mountSubPath: workspace.mountSubPath,
-      };
       await this.ensureSandboxRunning(ref, sandboxIdentity, invocationKey);
       if (controller.signal.aborted) return;
       // 07-05：把 wire.context.env（parseWireRequest 已 allowlist 过滤过）透传给
@@ -198,23 +198,32 @@ export class AcsExecutor {
 
   private async ensureSandboxRunning(
     ref: SandboxRef,
-    identity: { workspaceId: string; sessionId: string; sandboxScopeId?: string; mountSubPath?: string },
+    identity: {
+      workspaceId: string;
+      sessionId: string;
+      sandboxScopeId?: string;
+      mountSubPath?: string;
+      resources?: SandboxResourceOverride;
+    },
     invocationKey: string,
   ): Promise<void> {
     const existingRunner = this.persistentRunners.get(ref.name);
-    const lastEnsure = this.ensureRunningAt.get(ref.name) ?? 0;
+    const resourceKey = JSON.stringify(ref.resources ?? null);
+    const ensureKey = `${ref.name}:${resourceKey}`;
+    const lastEnsure = this.ensureRunningAt.get(ensureKey) ?? 0;
     if (existingRunner?.isHealthy() && Date.now() - lastEnsure < 60_000) return;
-    const pending = this.ensureRunningPromises.get(ref.name);
+    const pending = this.ensureRunningPromises.get(ensureKey);
     if (pending) return await pending;
     const ensure = this.sandboxManager.ensureRunning(identity, {
       busySandboxNames: this.busySandboxNames(),
       activeKey: invocationKey,
-    }).then(() => {
-      this.ensureRunningAt.set(ref.name, Date.now());
+    }).then((result) => {
+      if (result.resourceDriftDeferred) this.ensureRunningAt.delete(ensureKey);
+      else this.ensureRunningAt.set(ensureKey, Date.now());
     }).finally(() => {
-      this.ensureRunningPromises.delete(ref.name);
+      this.ensureRunningPromises.delete(ensureKey);
     });
-    this.ensureRunningPromises.set(ref.name, ensure);
+    this.ensureRunningPromises.set(ensureKey, ensure);
     await ensure;
   }
 

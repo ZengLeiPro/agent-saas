@@ -52,6 +52,7 @@ describe('FileSessionCatalog', () => {
       cwd,
       transcriptPath: record.transcriptPath,
       modelRef: 'gpt-5.4-mini',
+      sandboxProfile: 'daily',
       executionTarget: 'server-local',
       status: 'running',
     });

@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import pg from 'pg';
 
+import type { SandboxProfile } from '@agent/shared';
 import type { ParsedTranscript } from '../transcripts/parse.js';
 import { COMPROMISED_LEGACY_SESSION_SHARE_TOKEN_HASHES } from './compromisedTokenHashes.js';
 
@@ -19,6 +20,7 @@ export interface SessionShareSnapshot {
     avatarVersion?: number;
   };
   source?: { type: string; label: string };
+  sandboxProfile?: SandboxProfile;
   lastRunState?: {
     runId: string;
     status: string;

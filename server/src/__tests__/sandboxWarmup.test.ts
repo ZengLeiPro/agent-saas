@@ -7,7 +7,7 @@ import type { TenantRemoteHandDispatchConfig } from '../runtime/rawRuntimeRunDis
 
 const AGENT_CWD = '/data/mount/agent';
 
-function record(overrides: Partial<RuntimeSessionRecord> = {}): RuntimeSessionRecord {
+function record(overrides: Partial<RuntimeSessionRecord> & { sandboxProfile?: 'daily' | 'coding' } = {}): RuntimeSessionRecord {
   return {
     sessionId: 'sess-1',
     userId: 'u-1',
@@ -38,11 +38,13 @@ function buildService(input: {
   hands?: TenantRemoteHandDispatchConfig[];
   fetchImpl?: typeof fetch;
   throttleMs?: number;
+  registeredHand?: { metadata: Record<string, unknown> } | null;
 }) {
   const fetchImpl = input.fetchImpl ?? (vi.fn(async () => new Response('', { status: 202 })) as unknown as typeof fetch);
   const service = new SandboxWarmupService({
     agentCwd: AGENT_CWD,
     sessionCatalog: { get: async () => input.record ?? null },
+    handStore: { get: async () => (input.registeredHand ?? null) as never },
     tenantRemoteHands: () => input.hands,
     tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => input.hands }),
     fetchImpl,
@@ -72,6 +74,39 @@ describe('SandboxWarmupService', () => {
       sandboxScopeId: 'ws-kaiyan-u1__workspaces_kaiyan_u-1__s_sess-1',
       mountSubPath: 'workspaces/kaiyan/u-1',
     });
+  });
+
+  it.each([
+    ['daily', { cpu: '1', memoryMb: 2_048 }],
+    ['coding', { cpu: '2', memoryMb: 4_096 }],
+  ] as const)('%s profile warmup 携带对应资源覆盖', async (sandboxProfile, resources) => {
+    const { service, fetchImpl } = buildService({
+      record: record({ sandboxProfile }),
+      hands: [acsHand()],
+    });
+    expect(await service.fireForSessionAsync('sess-1')).toBe('fired');
+    const [, init] = fetchImpl.mock.calls[0]!;
+    const body = JSON.parse((init as { body: string }).body);
+    expect(body.resources).toEqual(resources);
+  });
+
+  it('已注册 Environment Template hand 的最终资源优先于 profile', async () => {
+    const { service, fetchImpl } = buildService({
+      record: record({ sandboxProfile: 'daily' }),
+      hands: [acsHand()],
+      registeredHand: { metadata: { recipe: { resources: { cpu: '4', memoryMb: 8192 } } } },
+    });
+    expect(await service.fireForSessionAsync('sess-1')).toBe('fired');
+    const [, init] = fetchImpl.mock.calls[0]!;
+    expect(JSON.parse((init as { body: string }).body).resources).toEqual({ cpu: '4', memoryMb: 8192 });
+  });
+
+  it('旧 record 无 sandboxProfile 时不发送资源覆盖，保留 orchestrator 全局默认', async () => {
+    const { service, fetchImpl } = buildService({ record: record(), hands: [acsHand()] });
+    expect(await service.fireForSessionAsync('sess-1')).toBe('fired');
+    const [, init] = fetchImpl.mock.calls[0]!;
+    const body = JSON.parse((init as { body: string }).body);
+    expect(body).not.toHaveProperty('resources');
   });
 
   it('record 不存在（全新会话）时跳过，绝不自行推导身份映射', async () => {

@@ -3,6 +3,7 @@ import type { ChannelContext } from '../../../types/index.js';
 import { getTranscriptPath } from '../../../data/transcripts/store.js';
 import { readSessionMeta, writeSessionMeta, type SessionMeta } from '../../../data/transcripts/meta.js';
 import { resolveUserCwd } from '../../../workspace/resolver.js';
+import { resolveSessionSandboxProfile } from '../../../runtime/sandboxProfile.js';
 import {
   DingtalkVoiceService,
   DingtalkCardService,
@@ -62,7 +63,8 @@ export class DingtalkPostprocessor {
           username: context.user!.username,
           tenantId: context.user!.tenantId,
           channel: 'dingtalk',
-          createdAt: new Date().toISOString(),
+          sandboxProfile: resolveSessionSandboxProfile({ existing }),
+          createdAt: existing?.createdAt ?? new Date().toISOString(),
           ...(existing?.customTitle ? { customTitle: existing.customTitle } : {}),
         };
         return writeSessionMeta(transcriptPath, meta);

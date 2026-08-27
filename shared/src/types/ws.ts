@@ -3,6 +3,7 @@ import type {
     PluginInstallData,
     NotificationData,
     MemoryRecallData,
+    SandboxProfile,
 } from './session';
 import type { SubagentStatus } from './message';
 import type { TenantFeatureFlags } from './auth';
@@ -44,7 +45,7 @@ export type WsEvent =
     | { type: 'cancel_queued_result'; ok: boolean; sourceRunId: string; reason?: 'too_late' | 'not_found' | 'unsupported' | 'error' }
     | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number; sessionId?: string; runId?: string; status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; deliveryMode?: ChatDeliveryMode; queuePosition?: number }
     | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
-    | { type: 'session'; sessionId: string; client_msg_id?: string }
+    | { type: 'session'; sessionId: string; client_msg_id?: string; sandboxProfile?: SandboxProfile }
     | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string; draftId?: string; runId?: string }
     | { type: 'draft_reset'; draftId: string; attempt?: number }
     | { type: 'draft_commit'; draftId: string }

@@ -75,7 +75,7 @@ export function MobileLayout(props: LayoutProps) {
     messages, loading, isLoadingMessages, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
     retryMessage, forkFromMessage, lastMessageRef, scrollContainerRef, isNearBottomRef,
     handlePermissionResponse, handleAskUserResponse,
-    uploadedFiles, removeFile, input, uploading, uploadError, dismissUploadError, setInput,
+    uploadedFiles, removeFile, input, sandboxProfile, setSandboxProfile, uploading, uploadError, dismissUploadError, setInput,
     sendMessage, interjectMessage, sendVoiceMessage, stopping, stopGeneration, handleFileSelect, handleAssetSelect, handlePaste, ttsProps, ttsStateMap, modelList,
     queuedInterjections, cancelQueuedInterjection, editQueuedInterjection, resendQueuedInterjection, dismissQueuedInterjection,
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
@@ -565,6 +565,8 @@ export function MobileLayout(props: LayoutProps) {
               uploadedFiles={uploadedFiles}
               onRemoveFile={removeFile}
               input={input}
+              sandboxProfile={sandboxProfile}
+              onSandboxProfileChange={setSandboxProfile}
               uploading={uploading}
               uploadError={uploadError}
               onDismissUploadError={dismissUploadError}

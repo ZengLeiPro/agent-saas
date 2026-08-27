@@ -17,9 +17,10 @@ import {
   MAX_BODY_BYTES,
   buildToolsResponse,
   parseProvisionRecipe,
+  parseWarmupResources,
   parseWireRequest,
 } from './protocol.js';
-import { Provisioner } from './provision.js';
+import { Provisioner, sandboxResourceOverride } from './provision.js';
 import {
   SandboxCapacityError,
   SandboxManager,
@@ -617,9 +618,23 @@ async function handleWarmup(req: IncomingMessage, res: ServerResponse): Promise<
   if (!workspaceId || !sessionId) {
     return sendJson(res, 400, { status: 'error', error: 'workspaceId and sessionId are required' });
   }
+  const parsedResources = parseWarmupResources(raw.resources);
+  if (!parsedResources.ok) {
+    return sendJson(res, 400, { status: 'error', error: parsedResources.error });
+  }
+  const resourceOverride = parsedResources.value
+    ? sandboxResourceOverride({ workspaceId, resources: parsedResources.value }, config)
+    : undefined;
+  const ensureInput = {
+    workspaceId,
+    sessionId,
+    sandboxScopeId,
+    mountSubPath,
+    ...(resourceOverride ? { resources: resourceOverride } : {}),
+  };
   let ref: ReturnType<typeof sandboxManager.ref>;
   try {
-    ref = sandboxManager.ref({ workspaceId, sessionId, sandboxScopeId, mountSubPath });
+    ref = sandboxManager.ref(ensureInput);
   } catch (err) {
     return sendJson(res, 400, {
       status: 'error',
@@ -632,7 +647,7 @@ async function handleWarmup(req: IncomingMessage, res: ServerResponse): Promise<
   const startedAt = Date.now();
   try {
     await sandboxManager.ensureRunning(
-      { workspaceId, sessionId, sandboxScopeId, mountSubPath },
+      ensureInput,
       { busySandboxNames: executor.busySandboxNames(), activeKey },
     );
     logger.info(`sandbox_warmup_ok sandbox=${ref.name} totalMs=${Date.now() - startedAt}`);

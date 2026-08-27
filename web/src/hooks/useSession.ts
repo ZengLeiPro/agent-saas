@@ -4,7 +4,7 @@ import type {
   ApiSessionDetail,
   TokenUsage,
 } from "@/lib/sessionsApi";
-import type { AgentProfile, ContextUsageData } from "@agent/shared";
+import type { AgentProfile, ContextUsageData, SessionOwnerInfo } from "@agent/shared";
 import { formatRuntimeFailureMessage, isInsufficientCreditsFailure } from "@agent/shared";
 import {
   mergeServerMessagesWithLocalTail,
@@ -25,7 +25,6 @@ import {
   loadSessionListCache,
 } from "@/lib/sessionListCache";
 import { fetchGroupSessions } from "@agent/shared";
-import type { SessionOwnerInfo } from "@agent/shared";
 import type { MessageItem } from "@/components/types";
 import {
   appendPendingInteractions,
@@ -57,8 +56,8 @@ export interface SessionCallbacks {
     sessionId: string,
     queued: NonNullable<ApiSessionDetail["queuedMessages"]>,
   ) => void;
+  onSandboxProfile?: (sessionId: string, profile: ApiSessionDetail["sandboxProfile"], activate?: boolean) => void; onSessionInvalidated?: (sessionId: string, status: 403 | 404) => void; onNewSession?: () => void;
 }
-
 export interface SessionState {
   sessionId: string | null;
   sessions: ApiSessionListItem[];
@@ -392,7 +391,7 @@ export function useSession(
             data.owner?.username ??
             sessionsRef.current.find((s) => s.sessionId === id)?.owner
               ?.username;
-          const incomingMsgs = (await mapperPromise).mapSessionDetailToMessages(data, sessionOwner);
+          const mapper = await mapperPromise; if (isStale()) return; const incomingMsgs = mapper.mapSessionDetailToMessages(data, sessionOwner);
           let msgs = data.mode === "delta" && baseMessages
             ? mergeSessionMessageDelta(baseMessages, incomingMsgs)
             : incomingMsgs;
@@ -439,6 +438,7 @@ export function useSession(
             cbRef.current.onLastRunState?.(id, lrs);
           }
           cbRef.current.onQueuedMessages?.(id, data.queuedMessages ?? []);
+          cbRef.current.onSandboxProfile?.(id, data.sandboxProfile);
 
           if (isStale()) return;
           // preserveTail：refresh 时服务端 transcript 可能尚未写入最后一条 assistant text，
@@ -497,7 +497,7 @@ export function useSession(
         } else {
           console.error("加载会话详情失败:", response.statusText);
           if (response.status === 404 || response.status === 403) {
-            removeSession(id);
+            cbRef.current.onSessionInvalidated?.(id, response.status); removeSession(id);
             setSessionOwner(null);
             setTokenUsage(null);
             setContextUsage(null);
@@ -571,6 +571,24 @@ export function useSession(
     }
   }, [sessionOwner?.username]);
 
+  const selectSession = useCallback(
+    (id: string) => {
+      if (id === sessionId) return;
+      cbRef.current.cancelActiveStream();
+      cbRef.current.resetMessages();
+      setSessionId(sessionIdRef.current = id);
+      setSessionOwner(null);
+      setTokenUsage(null);
+      setContextUsage(null);
+      setHasMoreHistory(false);
+      setIsLoadingEarlier(false);
+      isNewSessionRef.current = false;
+      cbRef.current.onSandboxProfile?.(id, undefined, true);
+      loadDetailPromiseRef.current = loadSessionDetail(id);
+    },
+    [loadSessionDetail, sessionId],
+  );
+
   const confirmDeleteSessions = useCallback((ids: string[]) => {
     const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
     if (uniqueIds.length === 0) return;
@@ -639,17 +657,17 @@ export function useSession(
         (item) => !deletedIds.has(item.sessionId),
       );
       if (remainingSessions.length > 0) {
-        await loadSessionDetail(remainingSessions[0].sessionId);
+        selectSession(remainingSessions[0].sessionId); await loadDetailPromiseRef.current;
       } else {
         setSessionId(null);
         localStorage.removeItem(SESSION_STORAGE_KEY);
-        cbRef.current.resetMessages();
+        cbRef.current.resetMessages(); cbRef.current.onNewSession?.();
       }
     } catch (err) {
       console.error("删除会话失败:", err);
       alert("删除失败");
     }
-  }, [deleteSessionIds, loadSessionDetail, loadSessions, sessionId, sessions]);
+  }, [deleteSessionIds, loadSessions, selectSession, sessionId, sessions]);
 
   const updateSessionTitle = useCallback((targetId: string, title: string) => {
     setSessions((prev) =>
@@ -693,7 +711,7 @@ export function useSession(
     localStorage.removeItem(`agentChat.model.${targetId}`);
     if (sessionIdRef.current === targetId) {
       cbRef.current.cancelActiveStream();
-      cbRef.current.resetMessages();
+      cbRef.current.resetMessages(); cbRef.current.onNewSession?.();
       setSessionId(null);
       setTokenUsage(null);
       setContextUsage(null);
@@ -848,7 +866,7 @@ export function useSession(
     // 只有新建会话这条路径原先漏了）。
     ++loadNonceRef.current;
     cbRef.current.cancelActiveStream();
-    cbRef.current.resetMessages();
+    cbRef.current.resetMessages(); cbRef.current.onNewSession?.();
     isNewSessionRef.current = true;
     setSessionId(null);
     setSessionOwner(null);
@@ -859,27 +877,6 @@ export function useSession(
     setIsLoadingEarlier(false);
     localStorage.removeItem(SESSION_STORAGE_KEY);
   }, []);
-
-  const selectSession = useCallback(
-    (id: string) => {
-      if (id === sessionId) {
-        return;
-      }
-
-      cbRef.current.cancelActiveStream();
-      // 立即清空旧消息并切换 sessionId，避免短暂显示前一个会话的内容
-      cbRef.current.resetMessages();
-      setSessionId(id);
-      setSessionOwner(null);
-      setTokenUsage(null);
-      setContextUsage(null);
-      setHasMoreHistory(false);
-      setIsLoadingEarlier(false);
-      isNewSessionRef.current = false;
-      loadDetailPromiseRef.current = loadSessionDetail(id);
-    },
-    [loadSessionDetail, sessionId],
-  );
 
   const refreshTokenUsage = useCallback(async () => {
     if (sessionId) void fetchTokenUsage(sessionId);

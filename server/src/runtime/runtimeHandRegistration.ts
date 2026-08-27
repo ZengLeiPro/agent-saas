@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'crypto';
 
+import type { SandboxProfile } from '@agent/shared';
 import type { PgEnvironmentStore } from '../data/environments/index.js';
 import type { ExecutionTargetKind, ToolDescriptor } from '../agent/toolRuntime.js';
 import type { ExecutionTransportRegistry } from './executionTransport.js';
@@ -11,6 +12,7 @@ import {
   type WorkspaceRecipe,
 } from './handStore.js';
 import { HttpTransport } from './httpTransport.js';
+import { applySandboxProfileResources, LEGACY_SANDBOX_PROFILE, type SandboxResources } from './sandboxProfile.js';
 import {
   selectTenantRemoteHandsForRegistration,
   type TenantRemoteHandAuthTokenResolver,
@@ -92,6 +94,8 @@ export async function ensureRuntimeHandRegistered(params: {
   topLevelSessionId?: string;
   endpoint?: string;
   serverRemoteRecipe?: Partial<WorkspaceRecipe>;
+  sandboxProfile?: SandboxProfile;
+  sandboxResources?: SandboxResources;
   tenantRemoteHands?: TenantRemoteHandDispatchConfig[];
   tenantRemoteHandResolver?: TenantRemoteHandAuthTokenResolver;
   environmentStore?: PgEnvironmentStore;
@@ -150,9 +154,18 @@ export async function ensureRuntimeHandRegistered(params: {
   }
   const effectiveTemplateVersionId = currentEnvironmentInstance?.templateVersionId
     ?? params.environmentTemplateVersionId;
+  const profileRecipeBase = params.executionTarget === 'server-remote'
+    ? applySandboxProfileResources(
+        params.serverRemoteRecipe,
+        params.sandboxProfile ?? LEGACY_SANDBOX_PROFILE,
+      )
+    : params.serverRemoteRecipe;
+  const profileRecipe = params.sandboxResources
+    ? { ...profileRecipeBase, resources: { ...profileRecipeBase?.resources, ...params.sandboxResources } }
+    : profileRecipeBase;
   const baseRecipe = buildWorkspaceRecipe(
     params.workspaceId,
-    params.executionTarget === 'server-remote' ? params.serverRemoteRecipe : undefined,
+    params.executionTarget === 'server-remote' ? profileRecipe : undefined,
     params.sessionId,
     params.workspaceMountSubPath,
     params.topLevelSessionId,
@@ -189,7 +202,7 @@ export async function ensureRuntimeHandRegistered(params: {
           ...(baseRecipe.setupCommands ?? []),
           ...environmentVersion.recipe.setupCommands,
         ],
-        resources: { ...environmentVersion.recipe.resources },
+        resources: { ...baseRecipe.resources, ...environmentVersion.recipe.resources },
       }
     : baseRecipe;
   if (params.runtimeIsolationRequirement) {
@@ -198,8 +211,7 @@ export async function ensureRuntimeHandRegistered(params: {
     }
     recipe.runtimeIsolationRequirement = params.runtimeIsolationRequirement;
   }
-  const recipeDigest = environmentVersion?.digest
-    ?? createHash('sha256').update(JSON.stringify(recipe)).digest('hex');
+  const recipeDigest = createHash('sha256').update(JSON.stringify(recipe)).digest('hex');
   const defaultHandRegistration = {
     handId: defaultHandId,
     sessionId: params.sessionId,
@@ -331,7 +343,7 @@ export async function ensureRuntimeHandRegistered(params: {
         handId: defaultHandId,
         status: defaultProvisionFailure ? 'unhealthy' : 'ready',
         leaseExpiresAt,
-        recipeDigest,
+        recipeDigest: version.digest,
         expectedRevision: current.revision,
       });
     } else {
@@ -343,7 +355,7 @@ export async function ensureRuntimeHandRegistered(params: {
         templateVersionId: version.versionId,
         handId: defaultHandId,
         leaseExpiresAt,
-        recipeDigest,
+        recipeDigest: version.digest,
       });
       await params.environmentStore.transition({
         tenantId: params.userTenantId,

@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import type { SandboxProfile } from "@/types/sandboxProfile";
 
 interface ChatInputProps {
   input: string;
@@ -37,6 +38,8 @@ interface ChatInputProps {
   modelList?: ModelList | null;
   selectedModel?: string | null;
   sessionId?: string | null;
+  sandboxProfile?: SandboxProfile;
+  onSandboxProfileChange?: (profile: SandboxProfile) => void;
   onModelChange?: (ref: string) => void;
   modelSelectorOpen?: boolean;
   onModelSelectorOpenChange?: (open: boolean) => void;
@@ -85,6 +88,8 @@ export function ChatInput({
   modelList,
   selectedModel,
   sessionId,
+  sandboxProfile = "daily",
+  onSandboxProfileChange,
   onModelChange,
   modelSelectorOpen,
   onModelSelectorOpenChange,
@@ -226,6 +231,20 @@ export function ChatInput({
     if (!modelList) return [];
     return modelList.groups.filter((g) => !lockedGroupId || g.id === lockedGroupId);
   }, [modelList, lockedGroupId]);
+
+  const profileLocked = !!sessionId || isDisabled || loading;
+  const handleProfileKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (profileLocked || !onSandboxProfileChange) return;
+    let next: SandboxProfile | null = null;
+    if (event.key === "ArrowLeft" || event.key === "ArrowUp" || event.key === "Home") next = "daily";
+    if (event.key === "ArrowRight" || event.key === "ArrowDown" || event.key === "End") next = "coding";
+    if (!next) return;
+    event.preventDefault();
+    onSandboxProfileChange(next);
+    requestAnimationFrame(() => {
+      wrapperRef.current?.querySelector<HTMLButtonElement>(`[role="radio"][data-profile="${next}"]`)?.focus();
+    });
+  }, [onSandboxProfileChange, profileLocked]);
 
   const handleMicClick = useCallback(async () => {
     if (isDisabled) return;
@@ -456,6 +475,45 @@ export function ChatInput({
                   onChange={onFileSelect}
                   disabled={attachmentDisabled}
                 />
+                <div
+                  role="radiogroup"
+                  aria-label="沙箱档位"
+                  aria-disabled={profileLocked}
+                  onKeyDown={handleProfileKeyDown}
+                  className={cn(
+                    "ml-1 flex h-8 items-center rounded-full border border-border bg-muted/50 p-0.5",
+                    profileLocked && "opacity-70",
+                  )}
+                >
+                  {([
+                    { value: "daily" as const, label: "日常", tip: "适合日常问答与轻量任务" },
+                    { value: "coding" as const, label: "编程", tip: "适合编译测试、浏览器、音视频和大型文档处理" },
+                  ]).map((option) => {
+                    const checked = sandboxProfile === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        role="radio"
+                        data-profile={option.value}
+                        aria-checked={checked}
+                        aria-disabled={profileLocked}
+                        tabIndex={checked ? 0 : -1}
+                        title={option.tip}
+                        onClick={() => {
+                          if (!profileLocked) onSandboxProfileChange?.(option.value);
+                        }}
+                        className={cn(
+                          "h-6 rounded-full px-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          checked ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                          profileLocked && "cursor-not-allowed",
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="flex items-center gap-1">

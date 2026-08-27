@@ -8,7 +8,9 @@ import {
   type SessionIdentityBackfill,
   type SessionMeta,
 } from '../data/transcripts/meta.js';
+import type { SandboxProfile } from '@agent/shared';
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
+import { DEFAULT_SANDBOX_PROFILE, resolveSessionSandboxProfile } from './sandboxProfile.js';
 import type { AgentProfileSessionBinding } from '../data/agentProfiles/types.js';
 import {
   orgAgentRuntimePolicySchema,
@@ -100,6 +102,7 @@ export interface RuntimeSessionRecord extends Partial<AgentProfileSessionBinding
   cwd: string;
   transcriptPath: string;
   modelRef?: string;
+  sandboxProfile?: SandboxProfile;
   executionTarget?: ExecutionTargetKind;
   workspaceId?: string;
   status?: RuntimeSessionStatus;
@@ -203,6 +206,11 @@ export class FileSessionCatalog implements SessionCatalog {
       : existing?.memoryAutomationEligible === false || record.memoryAutomationEligible === false
         ? false
         : existing?.memoryAutomationEligible ?? record.memoryAutomationEligible;
+    const sandboxProfile = resolveSessionSandboxProfile({
+      existing,
+      requested: record.sandboxProfile,
+      ...(taskboardExecution ? { forceProfile: 'coding' as const } : {}),
+    });
     return {
       ...(existing ?? {}),
       userId: record.userId,
@@ -217,6 +225,7 @@ export class FileSessionCatalog implements SessionCatalog {
       runtimeStatus: record.status,
       updatedAt: record.updatedAt,
       ...(record.modelRef ? { model: record.modelRef } : {}),
+      sandboxProfile,
       ...(record.executionTarget ? { executionTarget: record.executionTarget } : {}),
       ...(record.kind ? { kind: record.kind } : {}),
       executionRole: record.executionRole,
@@ -249,6 +258,7 @@ export class FileSessionCatalog implements SessionCatalog {
       cwd: meta.cwd ?? this.options.agentCwd,
       transcriptPath,
       ...(meta.model ? { modelRef: meta.model } : {}),
+      sandboxProfile: resolveSessionSandboxProfile({ existing: meta }),
       ...(isExecutionTargetKind(meta.executionTarget) ? { executionTarget: meta.executionTarget } : {}),
       ...(meta.workspaceId ? { workspaceId: meta.workspaceId } : {}),
       ...(isRuntimeSessionStatus(meta.runtimeStatus) ? { status: meta.runtimeStatus } : {}),
@@ -289,6 +299,7 @@ export function createRuntimeSessionRecord(args: {
   channel: string;
   cwd: string;
   modelRef?: string;
+  sandboxProfile?: SandboxProfile;
   executionTarget?: ExecutionTargetKind;
   workspaceId?: string;
   status?: RuntimeSessionStatus;
@@ -318,6 +329,7 @@ export function createRuntimeSessionRecord(args: {
     cwd: args.cwd,
     transcriptPath: getTranscriptPath(args.cwd, args.sessionId, { userId: args.userId, tenantId: args.tenantId }),
     ...(args.modelRef ? { modelRef: args.modelRef } : {}),
+    sandboxProfile: args.sandboxProfile ?? DEFAULT_SANDBOX_PROFILE,
     ...(args.executionTarget ? { executionTarget: args.executionTarget } : {}),
     workspaceId: args.workspaceId ?? args.sessionId,
     status: args.status ?? 'running',

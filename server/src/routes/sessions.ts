@@ -75,18 +75,10 @@ import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import { isShareExpired, type SessionShareSnapshot, type SessionShareStore } from "../data/sessionShares/store.js";
 import { permanentlyDeleteSession, type SessionArtifactLifecycle } from './sessionPermanentDeletion.js';
 import type { SessionReadStateStore } from "../data/sessionReadStateStore.js";
-import {
-  collectSessionShareCandidateFiles,
-  normalizeSessionShareFilePath,
-  projectSessionShareSnapshot,
-  SessionShareProjectionError,
-} from "../data/sessionShares/publicProjection.js";
+import { collectSessionShareCandidateFiles, normalizeSessionShareFilePath, projectSessionShareSnapshot, SessionShareProjectionError } from "../data/sessionShares/publicProjection.js";
 import { openTrustedFile } from "../security/trustedFile.js";
-import type {
-  RuntimeSessionListQuery,
-  RuntimeSessionListResult,
-  RuntimeSessionProjectionRecord,
-} from "../runtime/sessionProjectionStore.js";
+import { resolveSessionSandboxProfile } from '../runtime/sandboxProfile.js';
+import type { RuntimeSessionListQuery, RuntimeSessionListResult, RuntimeSessionProjectionRecord } from "../runtime/sessionProjectionStore.js";
 // Session list enrichment and projection helpers.
 import {
   buildCronSessionIndex,
@@ -767,6 +759,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         transcriptPath,
         workspaceId: sessionId,
         runtimeStatus: "idle",
+        sandboxProfile: 'daily',
         orgAgentId,
       });
       sessionsListCache.clear();
@@ -779,6 +772,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           createdAtMs: now.getTime(),
           updatedAtMs: now.getTime(),
           source: { type: "web", label: "WEB" },
+          sandboxProfile: 'daily',
           owner: {
             userId: user.sub,
             username: user.username,
@@ -1021,6 +1015,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         blocks: parsed.blocks,
         ...(owner ? { owner } : {}),
         ...(source ? { source } : {}),
+        sandboxProfile: resolveSessionSandboxProfile({ existing: meta }),
         ...(lastRunState ? { lastRunState } : {}),
         ...(queuedMessages.length ? { queuedMessages } : {}),
       },
@@ -1556,6 +1551,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               ...(owner ? { owner } : {}),
               ...(agent ? { agent } : {}),
               ...(sessionModel ? { model: sessionModel } : {}),
+              sandboxProfile: resolveSessionSandboxProfile({ existing: meta }),
               ...orgAgentFields(meta, req.user),
               ...(cronInfo
                 ? { cronJobId: cronInfo.jobId, cronJobName: cronInfo.jobName }
@@ -1591,6 +1587,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               ...(owner ? { owner } : {}),
               ...(agent ? { agent } : {}),
               ...(sessionModel ? { model: sessionModel } : {}),
+              sandboxProfile: resolveSessionSandboxProfile({ existing: meta }),
               ...orgAgentFields(meta, req.user),
               ...(cronInfo
                 ? { cronJobId: cronInfo.jobId, cronJobName: cronInfo.jobName }
@@ -1606,6 +1603,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               ...(owner ? { owner } : {}),
               ...(agent ? { agent } : {}),
               ...(sessionModel ? { model: sessionModel } : {}),
+              sandboxProfile: resolveSessionSandboxProfile({ existing: meta }),
               ...orgAgentFields(meta, req.user),
               ...(cronInfo
                 ? { cronJobId: cronInfo.jobId, cronJobName: cronInfo.jobName }
@@ -1775,6 +1773,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             owner,
             agent,
             model: cronInfo?.model || meta.model,
+            sandboxProfile: resolveSessionSandboxProfile({ existing: meta }),
             deletedAt: meta.deletedAt,
             deletedBy: meta.deletedBy,
             hasTranscript: item.hasTranscript,

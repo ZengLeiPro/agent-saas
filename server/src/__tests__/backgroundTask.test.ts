@@ -315,7 +315,7 @@ describe('DurableBackgroundTaskService', () => {
         username: 'alice',
         tenantId: 'tenant-1',
         sessionId: 'parent-session-1',
-        executionTarget: 'server-container',
+        executionTarget: 'server-container', sandboxResources: { cpu: '2', memoryMb: 4096 },
       },
       sessionId: 'parent-session-1',
       runId: 'parent-run-1',
@@ -341,7 +341,7 @@ describe('DurableBackgroundTaskService', () => {
       shortTaskId: started.shortTaskId,
       orgAgentId: 'org-kaikai',
       executionMode: 'dispatcher',
-      executionRole: 'worker',
+      executionRole: 'worker', sandboxResources: { cpu: '2', memoryMb: 4096 },
       wakeState: 'none',
     });
     expect(sessionCatalog.records.get(task.sessionId)).toMatchObject({
@@ -595,7 +595,7 @@ describe('DurableBackgroundTaskService', () => {
       backgroundTaskType: 'command',
       backgroundTaskReady: false,
       commandPreview: 'pnpm build',
-      parentSessionId: 'parent-session-1',
+      parentSessionId: 'parent-session-1', sandboxResources: { cpu: '1', memoryMb: 2048 },
       wakeState: 'none',
     });
 
@@ -718,7 +718,7 @@ function commandContext(): ToolCallContext {
       tenantId: 'tenant-1',
       sessionId: 'parent-session-1',
       executionTarget: 'server-remote',
-      sandboxScopeId: 'workspace-user-1',
+      sandboxScopeId: 'workspace-user-1', sandboxResources: { cpu: '1', memoryMb: 2048 },
       mountSubPath: 'workspaces/tenant-1/user-1',
     },
     sessionId: 'parent-session-1',

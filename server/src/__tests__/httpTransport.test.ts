@@ -65,6 +65,16 @@ describe('HttpTransport.serializeRequest', () => {
     expect(wire.context.workspace.executionTarget).toBe('server-remote');
   });
 
+  it('serializes an explicit sandbox resource override and omits it by default', () => {
+    expect(serializeRequest(buildRequest()).context.workspace).not.toHaveProperty('sandboxResources');
+    const wire = serializeRequest(buildRequest({
+      context: {
+        workspace: { ...SAMPLE_WORKSPACE, sandboxResources: { cpu: '1', memoryMb: 2048 } },
+      },
+    }));
+    expect(wire.context.workspace.sandboxResources).toEqual({ cpu: '1', memoryMb: 2048 });
+  });
+
   it('preserves toolName / input / userId / username / sessionId', () => {
     const wire = serializeRequest(buildRequest());
     expect(wire.toolName).toBe('Write');

@@ -27,6 +27,7 @@ import {
   resolveDwsPrincipalCwd,
   type DwsWorkspacePrincipal,
 } from './authFlow.js';
+import { DWS_CONNECTOR_SANDBOX_RESOURCES } from './sandboxResources.js';
 import type { DwsConnectionStore } from './store.js';
 
 const businessInputSchema = z.object({
@@ -409,6 +410,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
           sandboxScopeId,
           mountSubPath,
           executionTarget: 'server-remote',
+          sandboxResources: DWS_CONNECTOR_SANDBOX_RESOURCES,
         },
       },
     });

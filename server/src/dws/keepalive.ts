@@ -7,6 +7,7 @@ import type { UserStore } from '../data/users/store.js';
 import { HttpTransport } from '../runtime/httpTransport.js';
 import { deriveStableWorkspaceId } from '../runtime/workspaceIdentity.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
+import { DWS_CONNECTOR_SANDBOX_RESOURCES } from './sandboxResources.js';
 import type {
   DwsAuthCheckResult,
   DwsConnectionRecord,
@@ -76,6 +77,7 @@ export class DwsAuthStatusRunner implements DwsAuthStatusRunnerLike {
           sandboxScopeId,
           mountSubPath,
           executionTarget: 'server-remote',
+          sandboxResources: DWS_CONNECTOR_SANDBOX_RESOURCES,
         },
       },
     });

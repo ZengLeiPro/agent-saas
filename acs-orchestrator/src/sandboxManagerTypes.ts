@@ -18,6 +18,8 @@ export interface SandboxRef {
   mountSubPath: string;
   /** per-tenant/workspace 规格覆盖；缺省时用全局默认。 */
   resources?: SandboxResourceOverride;
+  /** ensure 发现目标资源但因 busy/protection 暂未收敛；调用方不得写入成功快缓存。 */
+  resourceDriftDeferred?: true;
 }
 
 export interface SandboxCleanupReport {

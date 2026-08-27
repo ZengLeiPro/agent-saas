@@ -6,6 +6,7 @@ import { HttpTransport } from '../runtime/httpTransport.js';
 import type { DwsWorkspacePrincipal } from './authFlow.js';
 import { deriveDwsPrincipalWorkspaceId, resolveDwsPrincipalCwd } from './authFlow.js';
 import { principalFor } from './agentAuthFlow.js';
+import { DWS_CONNECTOR_SANDBOX_RESOURCES } from './sandboxResources.js';
 
 const EVENT_STREAM_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
 const MAX_LINE_BUFFER = 1024 * 1024;
@@ -216,6 +217,7 @@ export class DwsPersonalEventGateway {
             sandboxScopeId: `${workspaceId}__dws_events`,
             mountSubPath,
             executionTarget: 'server-remote',
+            sandboxResources: DWS_CONNECTOR_SANDBOX_RESOURCES,
           },
         },
       })) {

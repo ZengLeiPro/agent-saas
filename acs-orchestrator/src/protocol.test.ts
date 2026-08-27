@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildToolsResponse, parseProvisionRecipe, parseWireRequest } from './protocol.js';
+import { buildToolsResponse, parseProvisionRecipe, parseWarmupResources, parseWireRequest } from './protocol.js';
 
 describe('parseWireRequest', () => {
   it('requires workspace id and session id, and preserves sandbox scope', () => {
@@ -20,6 +20,33 @@ describe('parseWireRequest', () => {
       expect(parsed.value.context.workspace.sandboxScopeId).toBe('ws_1');
       expect(parsed.value.context.workspace.mountSubPath).toBe('workspaces/kaiyan/u-1');
       expect(parsed.value.context.invocationId).toBe('run-1:tool-1');
+    }
+  });
+
+  it('strictly parses an optional sandbox resource override', () => {
+    expect(parseWireRequest({
+      toolName: 'Shell',
+      input: {},
+      context: {
+        workspace: {
+          id: 'ws_1', sessionId: 'session-1',
+          sandboxResources: { cpu: '1', memoryMb: 2048 },
+        },
+      },
+    })).toMatchObject({
+      ok: true,
+      value: { context: { workspace: { sandboxResources: { cpu: '1', memoryMb: 2048 } } } },
+    });
+    for (const sandboxResources of [
+      { cpu: '0', memoryMb: 2048 },
+      { cpu: '1', memoryMb: 0 },
+      { cpu: '1', memoryMb: 2048, timeoutMs: 1 },
+      'daily',
+    ]) {
+      expect(parseWireRequest({
+        toolName: 'Shell', input: {},
+        context: { workspace: { id: 'ws_1', sessionId: 'session-1', sandboxResources } },
+      })).toMatchObject({ ok: false });
     }
   });
 

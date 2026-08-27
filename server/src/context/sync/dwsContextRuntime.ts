@@ -14,6 +14,7 @@ import {
   type DwsWorkspacePrincipal,
 } from '../../dws/authFlow.js';
 import type { DwsPersonalEvent } from '../../dws/personalEventGateway.js';
+import { DWS_CONNECTOR_SANDBOX_RESOURCES } from '../../dws/sandboxResources.js';
 import {
   deriveAgentWorkspaceMountSubPath,
 } from '../../dws/personalMessageSender.js';
@@ -483,6 +484,7 @@ export class DwsRemoteJsonExecutor implements DwsCliJsonExecutor {
           sandboxScopeId: `${workspaceId}__dws_context`,
           mountSubPath,
           executionTarget: 'server-remote',
+          sandboxResources: DWS_CONNECTOR_SANDBOX_RESOURCES,
         },
       },
     });

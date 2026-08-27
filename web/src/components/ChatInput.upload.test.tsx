@@ -91,6 +91,64 @@ describe("ChatInput 布局", () => {
   });
 });
 
+describe("ChatInput 沙箱档位", () => {
+  it("新会话默认日常并支持点击与方向键切换", () => {
+    const onChange = vi.fn();
+    const view = render(
+      <ChatInput
+        input=""
+        uploading={false}
+        hasUploadedFiles={false}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+        onFileSelect={vi.fn()}
+        sandboxProfile="daily"
+        onSandboxProfileChange={onChange}
+      />,
+    );
+
+    expect(screen.getByRole("radio", { name: "日常" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("radio", { name: "编程" }));
+    expect(onChange).toHaveBeenLastCalledWith("coding");
+
+    view.rerender(
+      <ChatInput
+        input=""
+        uploading={false}
+        hasUploadedFiles={false}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+        onFileSelect={vi.fn()}
+        sandboxProfile="daily"
+        onSandboxProfileChange={onChange}
+      />,
+    );
+    fireEvent.keyDown(screen.getByRole("radiogroup", { name: "沙箱档位" }), { key: "ArrowRight" });
+    expect(onChange).toHaveBeenLastCalledWith("coding");
+  });
+
+  it("已有会话按给定档位展示且禁止原地切换", () => {
+    const onChange = vi.fn();
+    renderInput({ sessionId: "session-1", sandboxProfile: "coding", onSandboxProfileChange: onChange });
+
+    expect(screen.getByRole("radio", { name: "编程" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("radiogroup", { name: "沙箱档位" }).getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(screen.getByRole("radio", { name: "日常" }));
+    fireEvent.keyDown(screen.getByRole("radiogroup", { name: "沙箱档位" }), { key: "ArrowLeft" });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("首条消息发送期间锁定档位，等待服务端确认会话", () => {
+    const onChange = vi.fn();
+    renderInput({ loading: true, sandboxProfile: "daily", onSandboxProfileChange: onChange });
+
+    expect(screen.getByRole("radiogroup", { name: "沙箱档位" }).getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(screen.getByRole("radio", { name: "编程" }));
+    fireEvent.keyDown(screen.getByRole("radiogroup", { name: "沙箱档位" }), { key: "ArrowRight" });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
 describe("ChatInput 附件来源入口", () => {
   it("首次点击立即显示更舒展的本地和云端文件选项", () => {
     renderInput({ onAssetSelect: vi.fn() });

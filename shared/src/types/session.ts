@@ -2,6 +2,9 @@ import type { AgentProfile } from './agent';
 import type { ToolPresentation } from '../lib/toolPresentation';
 import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure';
 
+/** ACS sandbox resource tier persisted on each session. */
+export type SandboxProfile = 'daily' | 'coding';
+
 /** 丰富的 owner 信息（含显示所需的头像、名字） */
 export interface SessionOwnerInfo {
   userId: string;
@@ -32,6 +35,7 @@ export interface ApiSessionListItem {
   owner?: SessionOwnerInfo;
   agent?: AgentProfile | null;
   model?: string;
+  sandboxProfile?: SandboxProfile;
   cronJobId?: string;
   cronJobName?: string;
   /** 公司级专职 Agent 绑定（2026-07 唯恩批次）；缺省 = 个人 Agent 会话 */
@@ -86,6 +90,7 @@ export interface ApiSessionDetail {
   before?: string;
   owner?: SessionOwnerInfo;
   source?: { type: string; label: string };
+  sandboxProfile?: SandboxProfile;
   /**
    * 最近一次 run 的终态。前端进会话时用于对账"后端早结束/失败、UI 仍在转" 的鬼状态。
    * 旧 transcript（无 run_state_changed 事件）会缺省此字段,前端走 legacy 路径。

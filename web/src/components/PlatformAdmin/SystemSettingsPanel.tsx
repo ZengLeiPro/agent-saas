@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SETTINGS_CONTENT_WIDTH, SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { MetricCard } from "@/components/PlatformAdmin/common";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
@@ -92,10 +93,35 @@ export function SystemSettingsPanel() {
       setSchedulerMessage(`顶层任务并发已调整为 ${runtimeScheduler.maxConcurrentRuns}`);
     } catch (err) {
       setSchedulerMessage(err instanceof Error ? err.message : String(err));
+      throw err;
     } finally {
       setSchedulerSaving(false);
     }
   }, []);
+
+  const schedulerDirty = scheduler !== null && schedulerMaxText !== String(scheduler.maxConcurrentRuns);
+  const saveSchedulerDraft = useCallback(async () => {
+    if (!scheduler) return;
+    try {
+      await saveScheduler(parseSchedulerLimit(schedulerMaxText, scheduler.maxConfigurableConcurrentRuns));
+    } catch (err) {
+      setSchedulerMessage(err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+  }, [saveScheduler, scheduler, schedulerMaxText]);
+  const discardSchedulerDraft = useCallback(() => {
+    if (!scheduler) return;
+    setSchedulerMaxText(String(scheduler.maxConcurrentRuns));
+    setSchedulerMessage(null);
+  }, [scheduler]);
+  useSettingsDirtyEntry({
+    id: "platform-runtime-scheduler",
+    label: "顶层任务调度并发",
+    dirty: schedulerDirty,
+    save: saveSchedulerDraft,
+    discard: discardSchedulerDraft,
+    draft: { maxConcurrentRuns: schedulerMaxText },
+  });
 
   const confirmSchedulerSave = useCallback(() => {
     if (!scheduler) return;
@@ -110,7 +136,7 @@ export function SystemSettingsPanel() {
           { label: "当前有效上限", value: scheduler.effectiveMaxConcurrentRuns },
         ],
         confirmLabel: "保存并热生效",
-        onConfirm: () => void saveScheduler(maxConcurrentRuns),
+        onConfirm: () => { void saveScheduler(maxConcurrentRuns).catch(() => undefined); },
       });
     } catch (err) {
       setSchedulerMessage(err instanceof Error ? err.message : String(err));
@@ -167,7 +193,7 @@ export function SystemSettingsPanel() {
               <CardTitle className="flex items-center gap-2 text-base"><SlidersHorizontal className="size-4" />顶层任务调度并发</CardTitle>
               <p className="mt-1 text-sm text-muted-foreground">期望值保存在运行配置中并热生效；降低并发不会中断正在运行的任务。</p>
             </div>
-            <Button variant="outline" size="sm" onClick={() => void loadScheduler()} disabled={schedulerLoading || schedulerSaving}>
+            <Button variant="outline" size="sm" onClick={() => void loadScheduler()} disabled={schedulerLoading || schedulerSaving || schedulerDirty}>
               {schedulerLoading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
               刷新
             </Button>
@@ -199,10 +225,10 @@ export function SystemSettingsPanel() {
                       inputMode="numeric"
                       value={schedulerMaxText}
                       onChange={(event) => { setSchedulerMaxText(event.target.value); setSchedulerMessage(null); }}
-                      disabled={!scheduler.editable || schedulerSaving || platformReadOnly}
+                      disabled={!scheduler.editable || schedulerLoading || schedulerSaving || platformReadOnly}
                     />
                   </div>
-                  <Button onClick={confirmSchedulerSave} disabled={!scheduler.editable || schedulerSaving || platformReadOnly || !schedulerMaxText}>
+                  <Button onClick={confirmSchedulerSave} disabled={!scheduler.editable || schedulerLoading || schedulerSaving || platformReadOnly || !schedulerMaxText}>
                     {schedulerSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
                     保存并热生效
                   </Button>

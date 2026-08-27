@@ -21,7 +21,7 @@ import { saveUserPreferences } from "@agent/shared";
 import type { LayoutProps } from "./types";
 import { hasSuccessfulFinalOutput } from "./firstDayGuideVisibility";
 import { useAuth } from "@/contexts/AuthContext";
-
+import { SettingsDirtyBoundary } from "@/components/PersonalSettings/dirtyRegistry";
 const GovernanceConsole = lazy(() => import("@/components/GovernanceConsole").then(m => ({ default: m.GovernanceConsole }))); const AnalysisWorkspaceContent = lazy(() => import("@/components/AnalysisWorkspaceContent").then(m => ({ default: m.AnalysisWorkspaceContent })));
 const CronManager = lazy(() => import("@/components/CronManager").then(m => ({ default: m.CronManager })));
 const UserManager = lazy(() => import("@/components/UserManager").then(m => ({ default: m.UserManager })));
@@ -855,7 +855,7 @@ export function DesktopLayout(props: LayoutProps) {
         )}
         {analysisMode && governanceRoute && <AnalysisWorkspaceContent route={governanceRoute} access={managementAccess} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}
           openFilePreview={openFilePreview} platformAdminSection={platformAdminSection} platformAdminEntityId={platformAdminEntityId} setPlatformAdminRoute={setPlatformAdminRoute} />}
-        {settingsMode && (
+        {settingsMode && <SettingsDirtyBoundary>{(dirtyController) => (
           <div className="absolute inset-0 z-30 min-h-0 overflow-hidden bg-card" data-testid="unified-settings-content">
             <div className={cn("h-full min-h-0", settingsTarget !== "personal" && "hidden")}>
               <Suspense fallback={SuspenseFallback}>
@@ -864,7 +864,7 @@ export function DesktopLayout(props: LayoutProps) {
                   section={settingsSection}
                   onSectionChange={setSettingsSection}
                   onClose={handleCloseUnifiedSettings}
-                  onNavigationControllerChange={handleSettingsControllerChange}
+                  onNavigationControllerChange={handleSettingsControllerChange} dirtyController={dirtyController}
                   renderMemory={() => <MemorySectionPanel />}
                   renderFiles={() => (
                     <FileBrowserLazy
@@ -932,7 +932,7 @@ export function DesktopLayout(props: LayoutProps) {
               </ManagementSettingsAccessGate>
             </Suspense>
           </div>
-        )}
+        )}</SettingsDirtyBoundary>}
         </div>
 
         {rightPanelOpen && (

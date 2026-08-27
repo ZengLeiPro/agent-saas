@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "@/lib/authFetch";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import type {
@@ -20,20 +20,26 @@ export function useAcsRuntimeConfig() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const requestGenerationRef = useRef(0);
+  const saveInFlightRef = useRef(false);
 
   const refresh = useCallback(async () => {
+    if (saveInFlightRef.current) return;
+    const generation = requestGenerationRef.current + 1;
+    requestGenerationRef.current = generation;
     setLoading(true);
     try {
       const res = await authFetch(ACS_RUNTIME_CONFIG_API);
       const data = (await res.json().catch(() => ({}))) as Partial<AcsRuntimeConfigResponse>;
       if (!res.ok || !data.runtimeConfig) throw new Error(data.error || `HTTP ${res.status}`);
+      if (generation !== requestGenerationRef.current) return;
       setConfig(data.runtimeConfig);
       setError(null);
       setSavedAt(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (generation === requestGenerationRef.current) setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (generation === requestGenerationRef.current) setLoading(false);
     }
   }, []);
 
@@ -45,6 +51,9 @@ export function useAcsRuntimeConfig() {
   }, [refresh]);
 
   const save = useCallback(async (next: AcsRuntimeConfig) => {
+    saveInFlightRef.current = true;
+    requestGenerationRef.current += 1;
+    setLoading(false);
     setSaving(true);
     try {
       const res = await authFetch(ACS_RUNTIME_CONFIG_API, {
@@ -62,6 +71,7 @@ export function useAcsRuntimeConfig() {
       setError(err instanceof Error ? err.message : String(err));
       throw err;
     } finally {
+      saveInFlightRef.current = false;
       setSaving(false);
     }
   }, []);

@@ -24,4 +24,10 @@ describe("DesktopLayout 初始会话接线", () => {
   it("能力中心与任务中心使用同一 Header 高度和水平位置", () => {
     expect(source).toContain('activeTab === "capabilities" || activeTab === "cron" ? "h-14 px-6"');
   });
+
+  it("个人、组织与平台设置共享同一个 dirty boundary", () => {
+    expect(source).toContain("{settingsMode && <SettingsDirtyBoundary>{(dirtyController) => (");
+    expect(source).toContain("onNavigationControllerChange={handleSettingsControllerChange} dirtyController={dirtyController}");
+    expect(source).toContain(")}</SettingsDirtyBoundary>}");
+  });
 });

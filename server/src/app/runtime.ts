@@ -2953,7 +2953,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         ...(runtimeAdmissionGuard ? { admission: runtimeAdmissionGuard.getSnapshot() } : {}),
       })
     : undefined;
-
   return {
     config,
     processRole,
@@ -3054,6 +3053,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     runtimeAuditQuery,
     runtimeRunStore: pgRunStore,
     runtimeSchedulerCapacity,
+    ...(runtimeAdmissionGuard ? { getRuntimeAdmissionSnapshot: () => runtimeAdmissionGuard.getSnapshot() } : {}),
     runtimePerformanceSnapshot,
     runtimeSessionProjectionStore: pgSessionProjectionStore,
     sessionReadStateStore: sessionReadStateStore!,

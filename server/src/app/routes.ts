@@ -144,9 +144,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getActiveStreamCount: () => channelManager.getActiveStreamCount(),
       getUploadMetrics: () => runtime.uploadManager.getMetricsSnapshot(),
       getActiveRunCounts: runtime.runtimeRunStore?.getActiveCounts
-        ? () => runtime.runtimeRunStore!.getActiveCounts!()
-        : undefined,
+        ? () => runtime.runtimeRunStore!.getActiveCounts!() : undefined,
       getIsDraining: () => channelManager.draining,
+      ...(runtime.getRuntimeAdmissionSnapshot ? { getRuntimeAdmissionSnapshot: runtime.getRuntimeAdmissionSnapshot } : {}),
       getSkillsWarmupStatus: () => runtime.getSkillsWarmupStatus(),
       ...(runtime.egressConfigStore
         ? {

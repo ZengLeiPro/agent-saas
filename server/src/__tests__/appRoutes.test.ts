@@ -244,6 +244,7 @@ describe('registerRoutes', () => {
       uploadManager: {
         getMetricsSnapshot: vi.fn(() => ({ activeUploads: 0 })),
       },
+      getRuntimeAdmissionSnapshot: vi.fn(() => ({ state: 'healthy', admitting: true })),
       cronRuntime: {
         service: null,
         cronRunsDir: '/runs',
@@ -258,6 +259,7 @@ describe('registerRoutes', () => {
       runtime.config,
       expect.objectContaining({
         getDispatchMetrics: expect.any(Function),
+        getRuntimeAdmissionSnapshot: runtime.getRuntimeAdmissionSnapshot,
       }),
     );
     expect(mocked.createUploadRouter).toHaveBeenCalledWith({

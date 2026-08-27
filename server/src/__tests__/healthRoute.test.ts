@@ -178,6 +178,30 @@ describe('health router', () => {
     });
   });
 
+  it('reports 503 when runtime admission is paused', async () => {
+    const server = await startHealthServer({
+      getRuntimeAdmissionSnapshot: () => ({
+        state: 'paused',
+        admitting: false,
+        reason: 'worker_cgroup_near_high',
+      }),
+    });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    const body = await response.json() as any;
+
+    expect(response.status).toBe(503);
+    expect(body).toMatchObject({
+      status: 'not_ready',
+      runtimeAdmission: {
+        state: 'paused',
+        admitting: false,
+        reason: 'worker_cgroup_near_high',
+      },
+    });
+  });
+
   it('reports 503 not-ready while draining', async () => {
     const server = await startHealthServer({
       getIsDraining: () => true,

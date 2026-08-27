@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { AppConfig } from '../types/index.js';
 import type { DispatchMetricsSnapshot } from '../engine/metricsStore.js';
+import type { RuntimeAdmissionSnapshot } from '../runtime/memoryPressureGuard.js';
 import type { ActiveRunCounts } from '../runtime/runStore.js';
 import type { UploadMetricsSnapshot } from '../uploads/manager.js';
 import { assertRuntimeEnvironmentSafety } from '../release/environmentSafety.js';
@@ -19,6 +20,7 @@ export interface HealthRouteOptions {
   getUploadMetrics?: () => UploadMetricsSnapshot;
   getActiveRunCounts?: () => Promise<ActiveRunCounts>;
   getIsDraining?: () => boolean;
+  getRuntimeAdmissionSnapshot?: () => RuntimeAdmissionSnapshot | undefined;
   /** Non-sensitive deployment identity. Staging must be safety-attested before ready. */
   getRuntimeIdentity?: () => RuntimeIdentity;
   getEnvironmentSafetyAttested?: () => boolean;
@@ -95,12 +97,14 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
     res.status(200).send('ok');
   });
 
-  // ready：可以接流量才 200（draining → 503）。蓝绿部署门禁在新色端口上等
-  // 它变 200 再切流。warmup 进度随载荷暴露但不 gate ready——skills 物化未
-  // 完成时 dispatch 路径的版本化同步兜底正确性，部署脚本自行决定是否等
-  // warmup.state=done 再切流。
+  // ready：可以接流量才 200（draining / runtime admission paused → 503）。
+  // 蓝绿部署门禁在新色端口上等它变 200 再切流。warmup 进度随载荷暴露但不
+  // gate ready——skills 物化未完成时 dispatch 路径的版本化同步兜底正确性，
+  // 部署脚本自行决定是否等 warmup.state=done 再切流。
   router.get('/healthz/ready', async (_req, res) => {
     const draining = options.getIsDraining?.() ?? false;
+    const runtimeAdmission = options.getRuntimeAdmissionSnapshot?.();
+    const runtimeReady = runtimeAdmission?.admitting !== false;
     const warmup = options.getSkillsWarmupStatus?.() ?? { state: 'done' as const };
     const release = options.getRuntimeIdentity?.() ?? runtimeIdentity;
     const safetyAttested =
@@ -113,6 +117,7 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
         status: 'not_ready',
         draining,
         warmup,
+        ...(runtimeAdmission ? { runtimeAdmission } : {}),
         integrationV3: {
           status: 'degraded',
           releaseReady: false,
@@ -123,10 +128,11 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
       return;
     }
     const releaseReady = integrationV3?.releaseReady !== false;
-    res.status(draining || !releaseReady || !safetyAttested ? 503 : 200).json({
-      status: draining ? 'draining' : releaseReady && safetyAttested ? 'ok' : 'not_ready',
+    res.status(draining || !runtimeReady || !releaseReady || !safetyAttested ? 503 : 200).json({
+      status: draining ? 'draining' : runtimeReady && releaseReady && safetyAttested ? 'ok' : 'not_ready',
       draining,
       warmup,
+      ...(runtimeAdmission ? { runtimeAdmission } : {}),
       ...(release ? { release: { ...release, safetyAttested } } : {}),
       ...(integrationV3 ? { integrationV3 } : {}),
     });

@@ -11,6 +11,8 @@ export interface MemoryPressureSample {
   cgroupCurrentBytes?: number;
   cgroupHighBytes?: number;
   cgroupMaxBytes?: number;
+  cgroupSlabReclaimableBytes?: number;
+  cgroupWorkingSetBytes?: number;
 }
 
 export interface RuntimeAdmissionSnapshot extends Partial<MemoryPressureSample> {
@@ -171,7 +173,10 @@ export class MemoryPressureGuard implements RuntimeAdmissionGuard {
     };
     if (state === 'paused') {
       this.options.logger?.warn(
-        `Runtime admission paused by memory pressure: reason=${reason ?? 'unknown'} available=${formatMib(sample.availableBytes)}MiB`,
+        `Runtime admission paused by memory pressure: reason=${reason ?? 'unknown'} available=${formatMib(sample.availableBytes)}MiB`
+        + `${sample.cgroupCurrentBytes !== undefined ? ` cgroupCurrent=${formatMib(sample.cgroupCurrentBytes)}MiB` : ''}`
+        + `${sample.cgroupWorkingSetBytes !== undefined ? ` cgroupWorkingSet=${formatMib(sample.cgroupWorkingSetBytes)}MiB` : ''}`
+        + `${sample.cgroupSlabReclaimableBytes !== undefined ? ` slabReclaimable=${formatMib(sample.cgroupSlabReclaimableBytes)}MiB` : ''}`,
       );
     } else if (previous === 'paused') {
       this.options.logger?.info(
@@ -197,11 +202,12 @@ export class MemoryPressureGuard implements RuntimeAdmissionGuard {
 
 function detectPressureReason(sample: MemoryPressureSample, enterAvailableBytes: number): string | undefined {
   if (sample.availableBytes < enterAvailableBytes) return 'host_mem_available_low';
+  const cgroupWorkingSetBytes = resolveCgroupWorkingSetBytes(sample);
   if (
-    sample.cgroupCurrentBytes !== undefined
+    cgroupWorkingSetBytes !== undefined
     && sample.cgroupHighBytes !== undefined
     && sample.cgroupHighBytes > 0
-    && sample.cgroupCurrentBytes >= sample.cgroupHighBytes * 0.90
+    && cgroupWorkingSetBytes >= sample.cgroupHighBytes * 0.90
   ) return 'worker_cgroup_near_high';
   if ((sample.psiFullAvg10 ?? 0) >= 2) return 'memory_psi_full';
   if ((sample.psiSomeAvg10 ?? 0) >= 10) return 'memory_psi_some';
@@ -212,13 +218,20 @@ function isRecoverySafe(sample: MemoryPressureSample, resumeAvailableBytes: numb
   if (sample.availableBytes <= resumeAvailableBytes) return false;
   if ((sample.psiFullAvg10 ?? 0) >= 1) return false;
   if ((sample.psiSomeAvg10 ?? 0) >= 5) return false;
+  const cgroupWorkingSetBytes = resolveCgroupWorkingSetBytes(sample);
   if (
-    sample.cgroupCurrentBytes !== undefined
+    cgroupWorkingSetBytes !== undefined
     && sample.cgroupHighBytes !== undefined
     && sample.cgroupHighBytes > 0
-    && sample.cgroupCurrentBytes > sample.cgroupHighBytes * 0.70
+    && cgroupWorkingSetBytes > sample.cgroupHighBytes * 0.70
   ) return false;
   return true;
+}
+
+function resolveCgroupWorkingSetBytes(sample: MemoryPressureSample): number | undefined {
+  if (sample.cgroupWorkingSetBytes !== undefined) return sample.cgroupWorkingSetBytes;
+  if (sample.cgroupCurrentBytes === undefined) return undefined;
+  return Math.max(0, sample.cgroupCurrentBytes - (sample.cgroupSlabReclaimableBytes ?? 0));
 }
 
 export async function readLinuxMemoryPressureSample(): Promise<MemoryPressureSample | null> {
@@ -250,23 +263,47 @@ function parseMemoryPsi(raw: string): Pick<MemoryPressureSample, 'psiSomeAvg10' 
 
 async function readCurrentCgroupMemory(): Promise<Pick<
   MemoryPressureSample,
-  'cgroupCurrentBytes' | 'cgroupHighBytes' | 'cgroupMaxBytes'
+  | 'cgroupCurrentBytes'
+  | 'cgroupHighBytes'
+  | 'cgroupMaxBytes'
+  | 'cgroupSlabReclaimableBytes'
+  | 'cgroupWorkingSetBytes'
 >> {
   const cgroup = await readFile('/proc/self/cgroup', 'utf8');
   const unified = cgroup.split('\n').find((line) => line.startsWith('0::'));
   if (!unified) return {};
   const relative = unified.slice(3).replace(/^\/+/, '');
   const root = join('/sys/fs/cgroup', relative);
-  const [current, high, max] = await Promise.all([
+  const [current, high, max, memoryStat] = await Promise.all([
     readCgroupLimit(join(root, 'memory.current')),
     readCgroupLimit(join(root, 'memory.high')),
     readCgroupLimit(join(root, 'memory.max')),
+    readFile(join(root, 'memory.stat'), 'utf8')
+      .then(parseCgroupMemoryStat)
+      .catch((): Record<string, number> => ({})),
   ]);
+  const slabReclaimable = memoryStat.slab_reclaimable;
+  const workingSet = current === undefined
+    ? undefined
+    : Math.max(0, current - (slabReclaimable ?? 0));
   return {
     ...(current !== undefined ? { cgroupCurrentBytes: current } : {}),
     ...(high !== undefined ? { cgroupHighBytes: high } : {}),
     ...(max !== undefined ? { cgroupMaxBytes: max } : {}),
+    ...(slabReclaimable !== undefined ? { cgroupSlabReclaimableBytes: slabReclaimable } : {}),
+    ...(workingSet !== undefined ? { cgroupWorkingSetBytes: workingSet } : {}),
   };
+}
+
+export function parseCgroupMemoryStat(raw: string): Record<string, number> {
+  const values: Record<string, number> = {};
+  for (const line of raw.split('\n')) {
+    const [key, rawValue] = line.trim().split(/\s+/, 2);
+    if (!key || rawValue === undefined) continue;
+    const value = Number(rawValue);
+    if (Number.isFinite(value) && value >= 0) values[key] = value;
+  }
+  return values;
 }
 
 async function readCgroupLimit(path: string): Promise<number | undefined> {

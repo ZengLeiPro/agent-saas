@@ -103,8 +103,8 @@ describe('辅助函数', () => {
     expect(ctrl.messages[0]).toMatchObject({ type: 'runtime_status', status: 'running', content: '正在思考' });
   });
 
-  it('upsertRuntimeStatusMessage：运行中工具之后不追加冗余思考状态', () => {
-    const ctrl = makeController([
+  it('upsertRuntimeStatusMessage：同 run 的运行中工具或流式正文不追加冗余思考状态', () => {
+    const runningTool = makeController([
       {
         id: 'tool',
         type: 'tool_use',
@@ -115,33 +115,57 @@ describe('辅助函数', () => {
         executionStatus: 'running',
       },
     ]);
+    upsertRuntimeStatusMessage(runningTool, 'running', { runId: 'run-1' });
+    expect(runningTool.messages).toHaveLength(1);
 
-    upsertRuntimeStatusMessage(ctrl, 'running', { runId: 'run-1' });
-    expect(ctrl.messages).toHaveLength(1);
-    expect(ctrl.messages[0]).toMatchObject({ type: 'tool_use', executionStatus: 'running' });
-
-    ctrl.updateMessageAt(0, (message) => (
-      message.type === 'tool_use'
-        ? { ...message, executionStatus: 'completed' as const, resultReady: true }
-        : message
-    ));
-    upsertRuntimeStatusMessage(ctrl, 'running', { runId: 'run-1' });
-    expect(ctrl.messages).toHaveLength(2);
-    expect(ctrl.messages[1]).toMatchObject({ type: 'runtime_status', status: 'running' });
-  });
-
-  it('upsertRuntimeStatusMessage：流式输出与运行中子 Agent 之后不追加冗余思考状态', () => {
     const streamingText = makeController([
       { id: 'text', type: 'text', content: '输出中', streaming: true, runId: 'run-1' },
     ]);
     upsertRuntimeStatusMessage(streamingText, 'running', { runId: 'run-1' });
     expect(streamingText.messages).toHaveLength(1);
+  });
 
-    const runningSubagent = makeController([
-      { id: 'subagent', type: 'subagent', toolId: 'tool-1', agentType: 'coder', status: 'running' },
+  it.each([
+    ['异 run 工具', { id: 'tool', type: 'tool_use', toolName: 'Shell', toolInput: '{}', toolId: 'tool-1', runId: 'old-run', executionStatus: 'running' }],
+    ['无归属思考', { id: 'thinking', type: 'thinking', content: '旧思考', streaming: true }],
+    ['无归属子 Agent', { id: 'subagent', type: 'subagent', toolId: 'tool-1', agentType: 'coder', status: 'running' }],
+  ] as const)('upsertRuntimeStatusMessage：%s 不能抑制新 run 状态', (_label, message) => {
+    const ctrl = makeController([message as MessageItem]);
+    upsertRuntimeStatusMessage(ctrl, 'running', { runId: 'new-run' });
+    expect(ctrl.messages).toHaveLength(2);
+    expect(ctrl.messages[1]).toMatchObject({ type: 'runtime_status', status: 'running', runId: 'new-run' });
+  });
+
+  it('upsertRuntimeStatusMessage：状态事件无 runId 时不把尾部活动视为同 run', () => {
+    const ctrl = makeController([
+      { id: 'tool', type: 'tool_use', toolName: 'Shell', toolInput: '{}', toolId: 'tool-1', runId: 'run-1', executionStatus: 'running' },
     ]);
-    upsertRuntimeStatusMessage(runningSubagent, 'running', { runId: 'run-1' });
-    expect(runningSubagent.messages).toHaveLength(1);
+    upsertRuntimeStatusMessage(ctrl, 'running');
+    expect(ctrl.messages).toHaveLength(2);
+    expect(ctrl.messages[1]).toMatchObject({ type: 'runtime_status', status: 'running' });
+  });
+
+  it.each([
+    ['completed', { executionStatus: 'completed' as const }],
+    ['failed', { executionStatus: 'failed' as const }],
+    ['cancelled', { executionStatus: 'cancelled' as const }],
+    ['resultReady', { executionStatus: 'running' as const, resultReady: true }],
+  ])('upsertRuntimeStatusMessage：streaming 工具进入 %s 终态后允许恢复思考状态', (_label, terminal) => {
+    const ctrl = makeController([
+      {
+        id: 'tool',
+        type: 'tool_use',
+        toolName: 'Shell',
+        toolInput: '{}',
+        toolId: 'tool-1',
+        runId: 'run-1',
+        streaming: true,
+        ...terminal,
+      },
+    ]);
+    upsertRuntimeStatusMessage(ctrl, 'running', { runId: 'run-1' });
+    expect(ctrl.messages).toHaveLength(2);
+    expect(ctrl.messages[1]).toMatchObject({ type: 'runtime_status', status: 'running' });
   });
 
   it('upsertRuntimeStatusMessage：runId 归属不同的状态行不得原地覆盖（2026-08-04）', () => {

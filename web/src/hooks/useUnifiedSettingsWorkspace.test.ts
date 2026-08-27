@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildGovernanceUrl } from "@/lib/governanceNavigation";
+import { pushAdminSettingsUrl } from "@/lib/urlSync";
 import { useUnifiedSettingsWorkspace } from "./useUnifiedSettingsWorkspace";
 
 const mocks = vi.hoisted(() => ({ navigateGovernance: vi.fn() }));
@@ -17,23 +18,26 @@ describe("useUnifiedSettingsWorkspace", () => {
     window.history.replaceState({}, "", "/tenant-admin/settings/users");
   });
 
-  it("组织治理入口复用 dirty guard 并捕获点击瞬间的显式目标组织", () => {
+  it("选择组织后切换设置叶子，dirty guard 仍捕获点击瞬间的目标组织", () => {
     const guarded = vi.fn();
     const { result } = renderHook(() => useUnifiedSettingsWorkspace({
-      settingsOpen: true,
+      settingsOpen: false,
       settingsSection: "account-security",
-      adminSettings: null,
+      adminSettings: { target: "tenant", section: "users" },
       openSettings: vi.fn(),
       closeSettings: vi.fn(),
       setSettingsSection: vi.fn(),
       openAdminSettings: vi.fn(),
       closeAdminSettings: vi.fn(),
-      setAdminSettingsSection: vi.fn(),
+      setAdminSettingsSection: (section) => pushAdminSettingsUrl("tenant", section),
       isPlatformAdmin: true,
     }));
 
-    act(() => result.current.onControllerChange({ dirty: true, requestNavigation: guarded }));
     window.history.replaceState({}, "", "/tenant-admin/settings/users?org=tenant-a");
+    act(() => result.current.navigate("tenant", "skills"));
+    expect(window.location.pathname).toBe("/tenant-admin/settings/skills");
+    expect(window.location.search).toBe("?org=tenant-a");
+    act(() => result.current.onControllerChange({ dirty: true, requestNavigation: guarded }));
     act(() => result.current.openOrganizationGovernance());
 
     expect(guarded).toHaveBeenCalledTimes(1);

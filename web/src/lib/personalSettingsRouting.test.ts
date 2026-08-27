@@ -10,6 +10,7 @@ import {
   parseUrl,
   pushAdminSettingsUrl,
   pushSettingsUrl,
+  replaceAdminSettingsUrl,
   readPersonalSettingsHistoryState,
 } from "./urlSync";
 import { governanceRoute } from "./governanceNavigation";
@@ -82,6 +83,29 @@ describe("V2 个人设置路由与来源返回", () => {
     expect(replace).toHaveBeenCalledWith({}, "", "/chat/source");
     expect(window.location.pathname).toBe("/settings/files-storage");
     expect(readPersonalSettingsHistoryState()).toEqual({ source: "/chat/source", depth: 1 });
+  });
+
+  it("组织设置切换叶子保留显式组织且丢弃叶子私有筛选", () => {
+    window.history.replaceState({}, "", "/tenant-admin/settings/users?org=tenant-a&tab=private");
+
+    pushAdminSettingsUrl("tenant", "skills", { source: "/chat/source", depth: 2 });
+
+    expect(window.location.pathname).toBe("/tenant-admin/settings/skills");
+    expect(window.location.search).toBe("?org=tenant-a");
+  });
+
+  it("同叶 push/replace 也归一化组织 scope，平台设置不继承 org", () => {
+    window.history.replaceState({}, "", "/tenant-admin/settings/skills?org=tenant-a&tab=private");
+    pushAdminSettingsUrl("tenant", "skills");
+    expect(window.location.search).toBe("?org=tenant-a");
+
+    window.history.replaceState({}, "", "/tenant-admin/settings/users?org=tenant-a&tab=private");
+    replaceAdminSettingsUrl("tenant", "users");
+    expect(window.location.search).toBe("?org=tenant-a");
+
+    pushAdminSettingsUrl("platform", "models");
+    expect(window.location.pathname).toBe("/platform-admin/settings/models");
+    expect(window.location.search).toBe("");
   });
 
   it("组织和平台设置沿用同一来源与深度，统一返回不会落回另一套设置", () => {

@@ -545,13 +545,19 @@ export function buildAdminSettingsUrl(target: AdminSettingsTarget, section?: str
   return settingsSectionsForScope(target).find((item) => item.id === sec)!.path;
 }
 
+function scopedAdminSettingsUrl(target: AdminSettingsTarget, section?: string | null): string {
+  const path = buildAdminSettingsUrl(target, section);
+  const scope = target === 'tenant' ? preserveSearchKeys(TENANT_ADMIN_SCOPE_KEYS) : undefined;
+  return `${path}${formatSearch(scope)}`;
+}
+
 export function pushAdminSettingsUrl(
   target: AdminSettingsTarget,
   section?: string | null,
   navigation?: PersonalSettingsHistoryState,
 ): void {
-  const next = buildAdminSettingsUrl(target, section);
-  if (window.location.pathname !== next) {
+  const next = scopedAdminSettingsUrl(target, section);
+  if (`${window.location.pathname}${window.location.search}` !== next) {
     if (maybeNavigateWithUpdate(next)) return;
     window.history.pushState(settingsHistoryState(navigation), '', next);
   }
@@ -562,8 +568,8 @@ export function replaceAdminSettingsUrl(
   section?: string | null,
   navigation?: PersonalSettingsHistoryState,
 ): void {
-  const next = buildAdminSettingsUrl(target, section);
-  if (window.location.pathname !== next) {
+  const next = scopedAdminSettingsUrl(target, section);
+  if (`${window.location.pathname}${window.location.search}` !== next) {
     window.history.replaceState(settingsHistoryState(navigation), '', next);
   }
 }

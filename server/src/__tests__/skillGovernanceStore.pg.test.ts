@@ -78,7 +78,7 @@ describePg('技能治理删除后同包重导 PostgreSQL 合同', () => {
     ]);
     expect([first.version.versionNumber, second.version.versionNumber, third?.version.versionNumber]).toEqual([1, 2, 3]);
     const versions = await store.listVersions(first.resource.skillId);
-    expect(versions.map(version => version.versionNumber)).toEqual([3, 2, 1]);
+    expect(versions.map(version => version.versionNumber)).toEqual([1, 2, 3]);
     expect(new Set(versions.map(version => version.digest)).size).toBe(3);
   });
 });

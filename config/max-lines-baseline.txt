@@ -27,7 +27,7 @@ server/src/__tests__/wsEventProcessor.test.ts	830	test
 server/src/agent/toolRuntime.ts	1560	production
 server/src/app/config.ts	1431	production
 server/src/app/routes.ts	1154	production
-server/src/app/runtime.ts	3116	production
+server/src/app/runtime.ts	3103	production
 server/src/app/runtimeGovernanceConnectors.ts	1246	production
 server/src/channels/web/channel.ts	4382	production
 server/src/cron/service.ts	1084	production

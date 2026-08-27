@@ -13,6 +13,7 @@ import {
   resolveDwsPrincipalCwd,
   type DwsWorkspacePrincipal,
 } from './authFlow.js';
+import { DWS_CONNECTOR_SANDBOX_RESOURCES } from './sandboxResources.js';
 
 const LOOKUP_BATCH_SIZE = 30;
 
@@ -182,6 +183,7 @@ export class DwsRequesterIdentityResolver {
             sandboxScopeId: `${workspaceId}__${mountSubPath.replace(/[^A-Za-z0-9_-]+/g, '_')}`,
             mountSubPath,
             executionTarget: 'server-remote',
+            sandboxResources: DWS_CONNECTOR_SANDBOX_RESOURCES,
           },
         },
       });

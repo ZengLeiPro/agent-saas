@@ -167,6 +167,7 @@ describe('DwsPersonalMessageSender transport', () => {
       sandboxScopeId: 'ws_tenant-a__agent_connector_oa-sales_dws__dws_messages',
       mountSubPath: 'workspaces/tenant-a/.agent-connectors-oa-sales/dws',
       executionTarget: 'server-remote',
+      sandboxResources: { cpu: '1', memoryMb: 2048 },
     });
   });
 

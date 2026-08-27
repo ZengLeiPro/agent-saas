@@ -12,6 +12,7 @@ export interface WireWorkspaceRef {
   sessionId?: string;
   sandboxScopeId?: string;
   mountSubPath?: string;
+  sandboxResources?: Pick<SandboxResourceSpec, 'cpu' | 'memoryMb'>;
   executionTarget?: string;
 }
 
@@ -55,6 +56,41 @@ export interface WorkspaceRecipe {
    * 它们参与 provision 指纹，改规格会触发 pod 重建。
    */
   resources?: { timeoutMs?: number; cpu?: string; memoryMb?: number };
+}
+
+export type SandboxResourceSpec = NonNullable<WorkspaceRecipe['resources']>;
+
+/** /warmup 资源覆盖必须 fail-closed；不能像兼容性的 provision recipe 一样静默忽略非法值。 */
+export function parseWarmupResources(value: unknown):
+  | { ok: true; value?: Pick<SandboxResourceSpec, 'cpu' | 'memoryMb'> }
+  | { ok: false; error: string } {
+  if (value === undefined) return { ok: true };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, error: 'resources 必须是对象' };
+  }
+  const raw = value as Record<string, unknown>;
+  const unknownKeys = Object.keys(raw).filter((key) => key !== 'cpu' && key !== 'memoryMb');
+  if (unknownKeys.length) return { ok: false, error: `resources 包含未知字段: ${unknownKeys.join(', ')}` };
+  if (raw.cpu === undefined && raw.memoryMb === undefined) {
+    return { ok: false, error: 'resources 至少需要 cpu 或 memoryMb' };
+  }
+  const parsed: Pick<SandboxResourceSpec, 'cpu' | 'memoryMb'> = {};
+  if (raw.cpu !== undefined) {
+    if (typeof raw.cpu !== 'string' || !/^\d+(?:\.\d+)?m?$/.test(raw.cpu.trim())) {
+      return { ok: false, error: 'resources.cpu 必须是正数 CPU quantity' };
+    }
+    const cpu = raw.cpu.trim();
+    const numeric = Number(cpu.endsWith('m') ? cpu.slice(0, -1) : cpu);
+    if (!(numeric > 0)) return { ok: false, error: 'resources.cpu 必须大于 0' };
+    parsed.cpu = cpu;
+  }
+  if (raw.memoryMb !== undefined) {
+    if (!Number.isSafeInteger(raw.memoryMb) || (raw.memoryMb as number) <= 0) {
+      return { ok: false, error: 'resources.memoryMb 必须是正整数' };
+    }
+    parsed.memoryMb = raw.memoryMb as number;
+  }
+  return { ok: true, value: parsed };
 }
 
 export interface ProvisioningLogEntry {
@@ -132,6 +168,10 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
     : undefined;
   const sandboxScope = parseSandboxScopeId(sandboxScopeId);
   if (sandboxScope.error) return { ok: false, error: sandboxScope.error };
+  const sandboxResources = parseWarmupResources(workspace.sandboxResources);
+  if (!sandboxResources.ok) {
+    return { ok: false, error: `context.workspace.sandboxResources 无效: ${sandboxResources.error}` };
+  }
   // wire env 双重防线：上游 HttpTransport 已过滤，服务端反序列化仍需再走
   // pickHandEnv，剥离危险或非法 key。空对象则不写字段。
   const rawEnv = context?.env;
@@ -152,6 +192,7 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
           sessionId,
           ...(sandboxScope.value ? { sandboxScopeId: sandboxScope.value } : {}),
           ...(mountSubPath.value ? { mountSubPath: mountSubPath.value } : {}),
+          ...(sandboxResources.value ? { sandboxResources: sandboxResources.value } : {}),
           ...(typeof workspace.userId === 'string' ? { userId: workspace.userId } : {}),
           ...(typeof workspace.username === 'string' ? { username: workspace.username } : {}),
           ...(typeof workspace.executionTarget === 'string' ? { executionTarget: workspace.executionTarget } : {}),

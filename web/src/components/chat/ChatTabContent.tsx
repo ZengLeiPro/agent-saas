@@ -15,6 +15,7 @@ import { ChatInput } from "@/components/ChatInput";
 import { AskUserPromptPanel } from "@/components/AskUserPromptPanel";
 import { QueuedMessageBar } from "@/components/QueuedMessageBar";
 import type { QueuedInterjection } from "@/hooks/useChatAppState";
+import type { SandboxProfile } from "@/types/sandboxProfile";
 
 interface ChatTabContentProps {
   messages: MessageItem[];
@@ -33,6 +34,8 @@ interface ChatTabContentProps {
   uploadedFiles: UploadedFile[];
   onRemoveFile: (index: number) => void;
   input: string;
+  sandboxProfile?: SandboxProfile;
+  onSandboxProfileChange?: (profile: SandboxProfile) => void;
   uploading: boolean;
   uploadError?: string | null;
   onDismissUploadError?: () => void;
@@ -172,6 +175,8 @@ export function ChatTabContent({
   uploadedFiles,
   onRemoveFile,
   input,
+  sandboxProfile = "daily",
+  onSandboxProfileChange,
   uploading,
   uploadError,
   onDismissUploadError,
@@ -311,6 +316,8 @@ export function ChatTabContent({
             modelList={modelList}
             selectedModel={selectedModel}
             sessionId={sessionId}
+            sandboxProfile={sandboxProfile}
+            onSandboxProfileChange={onSandboxProfileChange}
             onModelChange={onModelChange}
             modelSelectorOpen={modelSelectorOpen}
             onModelSelectorOpenChange={setModelSelectorOpen}
@@ -376,6 +383,8 @@ export function ChatTabContent({
               modelList={modelList}
               selectedModel={selectedModel}
               sessionId={sessionId}
+              sandboxProfile={sandboxProfile}
+              onSandboxProfileChange={onSandboxProfileChange}
               onModelChange={onModelChange}
               modelSelectorOpen={modelSelectorOpen}
               onModelSelectorOpenChange={setModelSelectorOpen}

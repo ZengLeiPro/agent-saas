@@ -12,6 +12,7 @@ export type {
 export { ACTIVITY_TYPES } from "./message";
 
 export type {
+  SandboxProfile,
   SessionOwnerInfo,
   SessionParticipants,
   ApiSessionListItem,

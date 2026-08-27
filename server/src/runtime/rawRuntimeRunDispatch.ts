@@ -136,13 +136,8 @@ import {
 } from './memoryConsolidationReplay.js';
 import { SessionContextService, SessionToolProvider } from './sessionContext.js';
 import { buildRuntimeReplayState, type RuntimeReplayState } from './replay.js';
-import {
-  createRuntimeSessionRecord,
-  resolveSessionMemoryPolicy,
-  FileSessionCatalog,
-  type RuntimeSessionRecord,
-  type SessionCatalog,
-} from './sessionCatalog.js';
+import { createRuntimeSessionRecord, resolveSessionMemoryPolicy, FileSessionCatalog, type RuntimeSessionRecord, type SessionCatalog } from './sessionCatalog.js';
+import { resolveSessionSandboxProfile, sandboxResourcesForSessionHand } from './sandboxProfile.js';
 import { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgAgentSessionResolution.js';
 export { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgAgentSessionResolution.js';
 import type { ApprovalRecord, EventStore, ModelAttachmentRef, PlatformEvent, QueuedInterjection, RunContext } from './types.js';
@@ -1340,6 +1335,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       cwd,
       transcriptPath,
       modelRef: sessionModelRef,
+      sandboxProfile: resolveSessionSandboxProfile({ existing: existingSession, requested: replaySourceSession ? 'daily' : message.metadata?.sandboxProfile, forceProfile: isTaskboardExecution ? 'coding' : undefined }),
       executionTarget,
       workspaceId,
       status: 'running', executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined,
@@ -1366,13 +1362,12 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     });
     // 预 provision（2026-08-10，A 方案批次 2）：session record 落库后立即异步拉起
     // Sandbox，让 pod 冷启动与模型首个 token 的思考时间重叠。
-    //
     // 为什么不能只依赖「输入框首次有效输入」预热：全新会话在 dispatch 前尚无 sessionId 和
     // sessionCatalog record，输入阶段无法锁定 scope；sandboxWarmup 也会跳过无 record 的会话。
     // 而 per-session Sandbox 下**每个新会话组都是一次冷启动**，
     // 实测新 pod 的 WaitForWorkspaceReady 7 次全部打满 30s——正是要消除的首屏等待。
     // fire-and-forget：内部自带 per-scope 节流与失败静默，不阻塞、不影响本次 run。
-    config.sandboxWarmup?.(sessionId);
+    if (typeof message.metadata?.environmentTemplateVersionId !== 'string') config.sandboxWarmup?.(sessionId);
     await hooks?.onSessionStart?.(sessionId, transcriptPath);
     yield { type: 'session_init', sessionId, runId };
 
@@ -1458,6 +1453,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       topLevelSessionId: sessionId,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
+      sandboxProfile: sessionRecord.sandboxProfile,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
       environmentStore: config.environmentStore,
@@ -1474,6 +1470,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       }), runtimeIsolationRequirement,
       logger: config.logger,
     });
+    if (typeof message.metadata?.environmentTemplateVersionId === 'string') config.sandboxWarmup?.(sessionId);
     const availableHands = config.handStore ? await config.handStore.listBySession(sessionId) : [];
     await appendResolvedRunSnapshot({
       config,
@@ -1587,7 +1584,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         cwd,
         workspaceId: sessionRecord.workspaceId ?? sessionId,
         topLevelSessionId: sessionId,
-        sandboxScopeId,
+        sandboxScopeId, sandboxResources: sandboxResourcesForSessionHand(availableHands, sessionId, executionTarget),
         mountSubPath: workspaceMountSubPath,
         tenantId: sessionRecord.tenantId,
         executionTarget,
@@ -2059,6 +2056,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       topLevelSessionId: request.sessionId,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
+      sandboxProfile: sessionRecord.sandboxProfile,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
       environmentStore: config.environmentStore,
@@ -2231,7 +2229,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           cwd,
           workspaceId: sessionRecord.workspaceId ?? request.sessionId,
           topLevelSessionId: request.sessionId,
-          sandboxScopeId,
+          sandboxScopeId, sandboxResources: sandboxResourcesForSessionHand(availableHands, request.sessionId, executionTarget),
           mountSubPath: workspaceMountSubPath,
           tenantId: sessionRecord.tenantId,
           executionTarget,
@@ -2539,6 +2537,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       topLevelSessionId: request.sessionId,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
+      sandboxProfile: sessionRecord.sandboxProfile,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
       environmentStore: config.environmentStore,
@@ -2712,7 +2711,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           cwd,
           workspaceId: sessionRecord.workspaceId ?? request.sessionId,
           topLevelSessionId: request.sessionId,
-          sandboxScopeId,
+          sandboxScopeId, sandboxResources: sandboxResourcesForSessionHand(availableHands, request.sessionId, executionTarget),
           mountSubPath: workspaceMountSubPath,
           tenantId: sessionRecord.tenantId,
           executionTarget,

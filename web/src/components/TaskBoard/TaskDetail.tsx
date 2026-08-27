@@ -36,7 +36,7 @@ import * as api from "./api";
 import { requestExecutionCancellation } from "./executionCancellation";
 import {
   boardAllows,
-  canUserTransitionTask,
+  canUserMoveTask,
   EXECUTION_STATUS_LABELS,
   INTEGRATION_SOURCE_STATE_LABELS,
   PRIORITY_LABELS,
@@ -49,9 +49,7 @@ import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from 
 import { canManuallyCompleteTask, TaskCompletionButton } from "./TaskCompletionButton";
 import { TaskDetailComments, EXECUTION_PURPOSE_LABELS } from "./TaskDetailComments";
 import { useTaskComments, useTaskExecutions } from "./hooks";
-
 type TaskDraftField = "description" | "attachments" | "priority" | "stageModels";
-
 const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review"];
 const ACTIVE_EXECUTION_STATUSES = new Set(["queued", "running", "waiting_user", "waiting_approval"]);
 
@@ -79,6 +77,7 @@ interface TaskDetailProps {
   board?: TaskBoard | null;
   boardReadOnly: boolean;
   canUpdateTask?: boolean;
+  canReorderTask?: boolean;
   canTransitionTask?: boolean;
   canArchiveTask?: boolean;
   canDeleteTask?: boolean;
@@ -113,6 +112,7 @@ export function TaskDetail({
   board = null,
   boardReadOnly,
   canUpdateTask = true,
+  canReorderTask = true,
   canTransitionTask = true,
   canArchiveTask = true,
   canDeleteTask = true,
@@ -315,11 +315,11 @@ export function TaskDetail({
       && currentTask?.status === "in_progress" && latestExecution?.purpose === "work")
     : (canRunCurrentTask && currentTask?.status !== "in_progress")
       || (!readOnly && canExecute && currentTask?.status === "in_progress" && executionActive);
+  const canMoveCurrentTaskTo = (status: TaskBoardStatus) => Boolean(currentTask && canUserMoveTask(
+    currentTask, currentTask.status, status, canReorderTask, canTransitionTask,
+  ));
   const canTransitionCurrentTask = Boolean(
-    currentTask
-    && !readOnly
-    && canTransitionTask
-    && TASKBOARD_STATUSES.some((status) => canUserTransitionTask(currentTask, currentTask.status, status)),
+    currentTask && !readOnly && TASKBOARD_STATUSES.some(canMoveCurrentTaskTo),
   );
   const canCompleteCurrentTask = canManuallyCompleteTask(currentTask, readOnly, canTransitionTask, executionActive, executionsReady && !executionsLoading && !executionsError);
   const isCurrentOperation = (requestId: number, operationTaskId: string) => (
@@ -382,7 +382,7 @@ export function TaskDetail({
 
   const changeStatus = async (status: TaskBoardStatus) => {
     if (!currentTask || !canTransitionCurrentTask || status === currentTask.status
-      || !canUserTransitionTask(currentTask, currentTask.status, status)) return;
+      || !canMoveCurrentTaskTo(status)) return;
     const operationTask = currentTask;
     const requestId = ++detailRequestRef.current;
     setSaving(true);
@@ -866,7 +866,7 @@ export function TaskDetail({
                           <SelectItem
                             key={status}
                             value={status}
-                            disabled={status !== currentTask.status && !canUserTransitionTask(currentTask, currentTask.status, status)}
+                            disabled={status !== currentTask.status && !canMoveCurrentTaskTo(status)}
                           >{STATUS_LABELS[status]}</SelectItem>
                         ))}
                       </SelectContent>

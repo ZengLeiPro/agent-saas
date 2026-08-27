@@ -2,6 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { AGENT_LEGACY_TRANSCRIPTS_ROOT, isValidSessionId } from './projectKey.js';
+import type { SandboxProfile } from '@agent/shared';
 import type { AgentProfileSessionBinding } from '../agentProfiles/types.js';
 import {
   atomicWriteTrustedFile,
@@ -39,6 +40,8 @@ export interface SessionMeta extends Partial<AgentProfileSessionBinding> {
   customTitle?: string;
   generatedTitle?: string;
   model?: string;
+  /** ACS sandbox resource tier. Legacy records without this field use coding. */
+  sandboxProfile?: SandboxProfile;
   /**
    * 公司级专职 Agent 绑定（2026-07 唯恩批次）。会话创建时由 dispatch/channel 写入；
    * 缺省 = 个人 Agent 会话（存量行为零变化）。PG meta_json 自动投影。

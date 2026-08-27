@@ -53,11 +53,7 @@ import { tenantAccessErrorMessage } from '../../data/tenants/access.js';
 import { speechToText } from '../../integrations/stt/sttClient.js';
 import { EventBufferStore } from './eventBuffer.js';
 import { clearSessionsListCache } from '../../routes/sessions.js';
-import {
-  extractTitleContext,
-  generateTitleWithFallback,
-  shouldGenerateTitleFromFirstMessage,
-} from '../../agent/titleGenerator.js';
+import { extractTitleContext, generateTitleWithFallback, shouldGenerateTitleFromFirstMessage } from '../../agent/titleGenerator.js';
 import { checkTopicScope, extractRecentUserMessages } from '../../agent/guardrail.js';
 import { isCompactCommand } from '../../agent/prompt.js';
 import { isAssignedToOrgAgent, parseOrgAgentAudience } from '../../data/orgAgents/store.js';
@@ -69,18 +65,12 @@ import { sensitiveActionAccessError, type SensitiveActionTarget } from './wsAuth
 import { EventBus, type SessionContext } from './eventBus.js';
 import type { WsChatMessage, WsRespondMessage, WsAbortMessage, WsRunStatusMessage, WsResumeMessage, WsSyncMessage, WsInboundMessage, ChatRejectReasonCode } from './wsTypes.js';
 import { appendLoginLog, detectLoginChannel } from '../../data/login-logs/index.js';
-import {
-  getUserExtraDirs,
-  isPathWithinAnyDirectory,
-  isPathWithinDirectory,
-} from '../../security/extraDirs.js';
+import { getUserExtraDirs, isPathWithinAnyDirectory, isPathWithinDirectory } from '../../security/extraDirs.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../../runtime/fileEventStore.js';
 import type { EventStore, PlatformEvent } from '../../runtime/types.js';
-import {
-  DEFAULT_EXECUTION_CONFIG,
-  resolveExecutionTarget,
-} from '../../runtime/executionConfig.js';
+import { DEFAULT_EXECUTION_CONFIG, resolveExecutionTarget } from '../../runtime/executionConfig.js';
 import { createRuntimeSessionRecord, resolveSessionMemoryPolicy } from '../../runtime/sessionCatalog.js';
+import { resolveSessionSandboxProfile } from '../../runtime/sandboxProfile.js';
 import { deriveStableWorkspaceId } from '../../runtime/workspaceIdentity.js';
 import type { RunRecord } from '../../runtime/runStore.js';
 import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
@@ -2577,14 +2567,6 @@ export class WebChannel implements BaseChannel {
       chatLogger.info(`Attachments: ${imageCount} image(s), ${fileCount} file(s)`);
     }
 
-    // 构造 InboundMessage
-    const inbound: InboundMessage = {
-      channel: 'web',
-      chatId: sessionId || '',
-      content: resolvedMessage,
-      attachments,
-    };
-
     // 构造 ChannelContext
     let userIdentity: ChannelContext['user'];
     if (user) {
@@ -2667,6 +2649,14 @@ export class WebChannel implements BaseChannel {
         }
       }
     }
+
+    const inbound: InboundMessage = {
+      channel: 'web',
+      chatId: validSessionId || '',
+      content: resolvedMessage,
+      attachments,
+      ...(!validSessionId && msg.sandboxProfile !== undefined ? { metadata: { sandboxProfile: msg.sandboxProfile } } : {}),
+    };
 
     // 构建用户消息展示内容（纯文本 + 结构化附件）
     const AI_FALLBACK_TEXT = 'Please check the attachments I uploaded';
@@ -2849,6 +2839,7 @@ export class WebChannel implements BaseChannel {
                 orgAgent: orgAgentRecord,
                 model,
                 executionTarget: resolvedExecutionTarget,
+                sandboxProfile: msg.sandboxProfile,
                 resolvedMessage,
                 userDisplayContent,
                 attachmentMeta,
@@ -2992,6 +2983,7 @@ export class WebChannel implements BaseChannel {
           channel: 'web',
           cwd: enqueueCwd,
           modelRef: model,
+          sandboxProfile: resolveSessionSandboxProfile({ existing: existingSessionRecord, requested: msg.sandboxProfile }),
           executionTarget: resolvedExecutionTarget,
           workspaceId: enqueueWorkspaceId,
           status: 'running',
@@ -3224,7 +3216,7 @@ export class WebChannel implements BaseChannel {
           client_msg_id: clientMsgId,
           ...(queuedTargetRunId ? { queued: true, deliveryMode: acceptedDeliveryMode, targetRunId: queuedTargetRunId, ...(queuePosition ? { queuePosition } : {}) } : {}),
         });
-        send({ type: 'session', sessionId: acceptedSessionId, client_msg_id: clientMsgId });
+        send({ type: 'session', sessionId: acceptedSessionId, client_msg_id: clientMsgId, sandboxProfile: sessionRecord.sandboxProfile });
         // 首条长消息不等待 Agent 输出；续聊时若仍无标题，也在本次输入后立即补偿。
         if (
           titleOwnerId
@@ -3901,6 +3893,7 @@ export class WebChannel implements BaseChannel {
     orgAgent: OrgAgentRecord;
     model?: string;
     executionTarget: ExecutionTargetKind;
+    sandboxProfile?: WsChatMessage['sandboxProfile'];
     resolvedMessage: string;
     userDisplayContent: string;
     attachmentMeta?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
@@ -3915,6 +3908,7 @@ export class WebChannel implements BaseChannel {
     const owner = args.sessionOwner ?? args.userIdentity;
     const cwd = args.targetCwd || resolveUserCwd(this.config.agentCwd!, args.userIdentity);
     const enqueueRuntime = this.config.enqueueRuntime?.enabled === false ? undefined : this.config.enqueueRuntime;
+    let sandboxProfile = resolveSessionSandboxProfile({ requested: args.sandboxProfile });
 
     // (a) enqueue 模式：session catalog upsert（status finished，无 run）——刷新后会话在列表可见
     let transcriptPath: string;
@@ -3922,6 +3916,7 @@ export class WebChannel implements BaseChannel {
       const existing = args.validSessionId
         ? await enqueueRuntime.sessionCatalog.get(sessionId).catch(() => null)
         : null;
+      sandboxProfile = resolveSessionSandboxProfile({ existing, requested: args.sandboxProfile });
       const record = createRuntimeSessionRecord({
         sessionId,
         userId: owner?.id,
@@ -3931,6 +3926,7 @@ export class WebChannel implements BaseChannel {
         channel: 'web',
         cwd,
         modelRef: args.model,
+        sandboxProfile,
         executionTarget: args.executionTarget,
         workspaceId: existing?.workspaceId ?? deriveStableWorkspaceId(owner, sessionId),
         status: 'finished',
@@ -3954,6 +3950,7 @@ export class WebChannel implements BaseChannel {
       // 不写则第二条消息 readSessionMeta 拿不到 orgAgentId → 静默回退个人 Agent 路径
       try {
         const existingMeta = await readSessionMeta(transcriptPath);
+        sandboxProfile = resolveSessionSandboxProfile({ existing: existingMeta, requested: args.sandboxProfile });
         const now = new Date().toISOString();
         await writeSessionMeta(transcriptPath, {
           ...(existingMeta ?? {}),
@@ -3964,6 +3961,7 @@ export class WebChannel implements BaseChannel {
             : {}),
           channel: existingMeta?.channel ?? 'web',
           cwd: existingMeta?.cwd ?? cwd,
+          sandboxProfile,
           orgAgentId: orgAgent.id,
           createdAt: existingMeta?.createdAt ?? now,
           updatedAt: now,
@@ -4013,7 +4011,7 @@ export class WebChannel implements BaseChannel {
       else this.wsSend(ws, data);
     };
     sendReply({ type: 'stream_id', streamId, client_msg_id: args.clientMsgId });
-    sendReply({ type: 'session', sessionId, client_msg_id: args.clientMsgId });
+    sendReply({ type: 'session', sessionId, client_msg_id: args.clientMsgId, sandboxProfile });
     this.eventBufferStore.create(sessionId, user?.sub);
     if (args.userDisplayContent || args.attachmentMeta) {
       this.eventBufferStore.push(sessionId, JSON.stringify({

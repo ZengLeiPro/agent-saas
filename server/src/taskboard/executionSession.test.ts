@@ -50,6 +50,7 @@ describe('reuseTaskboardSession', () => {
     await expect(reuse(legacySession())).resolves.toMatchObject({
       tenantId: identity.tenantId,
       sessionSource: 'taskboard_execution',
+      sandboxProfile: 'coding',
       memoryAutomationEligible: false,
     });
   });

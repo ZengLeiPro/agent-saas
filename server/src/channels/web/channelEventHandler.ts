@@ -131,6 +131,7 @@ export async function handleWebChannelEvents(
     const agentCwd = dependencies.agentCwd;
     const handler: EventHandler = {
       async onSessionInit(sessionId) {
+        let authoritativeSandboxProfile: SessionMeta['sandboxProfile'];
         if (bufferCtx && sessionId) {
           bufferCtx.sessionId = sessionId;
           sessionCtx.sessionId = sessionId;
@@ -172,8 +173,10 @@ export async function handleWebChannelEvents(
                 ...(modelRef ? { model: modelRef } : {}),
               };
               await writeSessionMeta(transcriptPath, updated);
+              authoritativeSandboxProfile = updated.sandboxProfile;
             } else {
-              // 新会话：写完整初始 meta
+              // 兼容非 raw dispatch 的调用方：只补齐基础 meta，不在事件层猜测资源档位。
+              // 正常同步路径中 raw dispatch 已在 session_init 前写入权威 pin。
               const meta: SessionMeta = {
                 userId: context.user.id,
                 username: context.user.username,
@@ -191,7 +194,12 @@ export async function handleWebChannelEvents(
           }
         }
         // 分组写入会同步校验 owner meta；必须在 meta 落盘后再把权威 sessionId 发给客户端。
-        send({ type: 'session', sessionId, ...(titleCtx?.clientMsgId ? { client_msg_id: titleCtx.clientMsgId } : {}) });
+        send({
+          type: 'session',
+          sessionId,
+          ...(titleCtx?.clientMsgId ? { client_msg_id: titleCtx.clientMsgId } : {}),
+          ...(authoritativeSandboxProfile ? { sandboxProfile: authoritativeSandboxProfile } : {}),
+        });
         // 新会话创建后立即清除缓存，确保客户端 loadSessions() 能发现新会话
         clearSessionsListCache();
         if (

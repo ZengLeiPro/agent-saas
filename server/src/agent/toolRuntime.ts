@@ -132,8 +132,8 @@ export interface WorkspaceRef {
    * 缺省时 sandbox 归属退回 workspace 级共享（旧行为，安全 fallback）。
    */
   topLevelSessionId?: string;
-  sandboxScopeId?: string;
-  mountSubPath?: string;
+  sandboxScopeId?: string; mountSubPath?: string;
+  /** Standalone connector ACS resource target; normal Agent calls inherit their profile. */ sandboxResources?: { cpu: string; memoryMb: number };
   executionTarget: ExecutionTargetKind;
   /**
    * Host-path guard for server-local execution. Raw runtime uses this as a
@@ -312,8 +312,7 @@ export interface WorkspaceProvider {
     /** 顶层会话组键（per-session Sandbox）。缺省时实现方回落 sessionId。 */
     topLevelSessionId?: string;
     workspaceId?: string;
-    sandboxScopeId?: string;
-    mountSubPath?: string;
+    sandboxScopeId?: string; mountSubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources'];
     executionTarget?: ExecutionTargetKind;
     sandboxPolicy?: WorkspaceRef['sandboxPolicy'];
   }): WorkspaceRef;
@@ -516,8 +515,7 @@ export class LocalWorkspaceProvider implements WorkspaceProvider {
     sessionId?: string;
     topLevelSessionId?: string;
     workspaceId?: string;
-    sandboxScopeId?: string;
-    mountSubPath?: string;
+    sandboxScopeId?: string; mountSubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources'];
     executionTarget?: ExecutionTargetKind;
     sandboxPolicy?: WorkspaceRef['sandboxPolicy'];
   }): WorkspaceRef {
@@ -539,8 +537,8 @@ export class LocalWorkspaceProvider implements WorkspaceProvider {
       // 顶层会话组归属：显式传入优先；缺省时退回自身 sessionId（顶层会话的自然语义）。
       // 子 Agent 路径由调用方显式传入父的 topLevelSessionId，故不会误取子会话 ID。
       topLevelSessionId: args.topLevelSessionId ?? args.sessionId,
-      sandboxScopeId: args.sandboxScopeId,
-      mountSubPath: args.mountSubPath,
+      sandboxScopeId: args.sandboxScopeId, mountSubPath: args.mountSubPath,
+      sandboxResources: args.sandboxResources,
       executionTarget: args.executionTarget ?? this.defaultExecutionTarget,
       ...(args.sandboxPolicy ? { sandboxPolicy: args.sandboxPolicy } : {}),
     };

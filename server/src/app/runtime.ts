@@ -1506,7 +1506,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 的环境（本地开发/测试）service 内部找不到 ACS hand 自然跳过。
   const sandboxWarmupService = new SandboxWarmupService({
     agentCwd,
-    sessionCatalog,
+    sessionCatalog, handStore: pgHandStore,
     tenantRemoteHands: () => config.tenantRemoteHands?.hands,
     tenantRemoteHandResolver,
     isExecutionEnabled: isRuntimeExecutionEnabled,

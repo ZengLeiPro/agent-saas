@@ -12,6 +12,7 @@ import type {
   DwsAuthSessionStore,
 } from './authStore.js';
 import { readDwsProfiles } from './keepalive.js';
+import { DWS_CONNECTOR_SANDBOX_RESOURCES } from './sandboxResources.js';
 import type { DwsConnectionStore } from './store.js';
 
 const DWS_DEVICE_FLOW_TIMEOUT_MS = 15 * 60 * 1_000;
@@ -100,6 +101,7 @@ export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
           sandboxScopeId,
           mountSubPath,
           executionTarget: 'server-remote',
+          sandboxResources: DWS_CONNECTOR_SANDBOX_RESOURCES,
         },
       },
     })) {
@@ -160,6 +162,7 @@ export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
             sandboxScopeId,
             mountSubPath,
             executionTarget: 'server-remote',
+          sandboxResources: DWS_CONNECTOR_SANDBOX_RESOURCES,
           },
         },
       });

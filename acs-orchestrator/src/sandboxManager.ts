@@ -13,6 +13,7 @@ import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './netwo
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
 import { deleteSandboxAndReclaimNetwork } from './sandboxDeletion.js';
 import { SingleflightCleanup } from './singleflightCleanup.js';
+import { hasSandboxResourceDrift, sameResourceTarget, sandboxResourceTarget } from './sandboxResourceDrift.js';
 import {
   type ManagedSandbox,
   type ManagedSandboxInventory,
@@ -101,12 +102,12 @@ const SANDBOX_TIMEZONE = 'Asia/Shanghai';
 const ENSURE_FAST_PATH_TTL_MS = 5 * 60_000;
 /** touch（lastActiveAt annotation patch，~0.2s）节流窗口；idle 判定为小时级，60s 精度足够。 */
 const TOUCH_THROTTLE_MS = 60_000;
+
 export class SandboxManager {
   private readonly networkPolicyManager: AcsNetworkPolicyManager;
   readonly snatManager: SnatManager;
   private readonly prewarmInFlight = new Map<string, Promise<void>>();
-  /** 同名 Sandbox 并发 ensureRunning 合流：后到者 join 先行者的 promise（消除 warmup/execute 并发 create 竞态与重复开销）。 */
-  private readonly ensureInFlight = new Map<string, Promise<SandboxRef>>();
+  private readonly ensureInFlight = new Map<string, { ref: SandboxRef; promise: Promise<SandboxRef> }>();
   /** Attestation 超时后服务端仍会继续；整段 probe 合流，避免重试持续创建临时 Sandbox。 */
   private readonly networkPolicyProbe = new SingleflightCleanup<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }>();
   private readonly capacityReservations = new CapacityReservations();
@@ -153,19 +154,21 @@ export class SandboxManager {
     options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string } = {},
   ): Promise<SandboxRef> {
     const ref = this.ref(input);
-    const inFlight = this.ensureInFlight.get(ref.name);
-    if (inFlight) {
-      // join 语义：忽略本次 options，等 leader 把 Sandbox 带到 Running 即可。
-      // 后到者不执行 recreate/capacity 分支，busy 断言由 leader 自己的 activeKey 保障。
-      this.logger.info(`sandbox_ensure_join name=${ref.name}`);
-      return await inFlight;
-    }
-    const promise = this.ensureRunningExclusive(ref, options);
-    this.ensureInFlight.set(ref.name, promise);
-    try {
+    while (true) {
+      const inFlight = this.ensureInFlight.get(ref.name);
+      if (inFlight) {
+        this.logger.info(`sandbox_ensure_join name=${ref.name}`);
+        const result = await inFlight.promise;
+        if (sameResourceTarget(inFlight.ref, ref)) return result;
+        // 不同 profile 不能并发 create；join leader 后重新进入 drift 检查。
+        this.logger.info(`sandbox_ensure_resource_followup name=${ref.name}`);
+        continue;
+      }
+      const promise = this.ensureRunningExclusive(ref, options);
+      const tracked = { ref, promise };
+      this.ensureInFlight.set(ref.name, tracked);
+      void promise.finally(() => this.ensureInFlight.get(ref.name) === tracked && this.ensureInFlight.delete(ref.name)).catch(() => {});
       return await promise;
-    } finally {
-      if (this.ensureInFlight.get(ref.name) === promise) this.ensureInFlight.delete(ref.name);
     }
   }
   private async ensureRunningExclusive(
@@ -173,7 +176,7 @@ export class SandboxManager {
     options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string } = {},
   ): Promise<SandboxRef> {
     const timing = createEnsureTiming(ref.name, this.logger);
-    let path = 'unknown';
+    let path = 'unknown'; let resourceDriftDeferred = false;
     let status: 'ok' | 'error' = 'error';
     try {
       await timing.step('waitPrewarm', () => this.waitForPrewarm(ref.name));
@@ -197,6 +200,16 @@ export class SandboxManager {
         );
         await timing.step('delete', () => this.delete(ref, { activeKey: options.activeKey }));
         existing = null;
+      }
+      if (existing && ref.resources && hasSandboxResourceDrift(existing, ref.resources, this.config)) {
+        const busy = this.isBusyForImageUpgrade(ref.name, options.busySandboxNames, options.activeKey) || Boolean(backgroundShellProtectionFromStatus(existing));
+        if (busy) {
+          path = 'defer_resource_changed_busy'; resourceDriftDeferred = true; this.logger.warn(`sandbox_resource_drift_deferred name=${ref.name} workspaceId=${ref.workspaceId} reason=busy`);
+        } else {
+          path = 'recreate_resource_changed'; this.logger.warn(`sandbox_resource_drift name=${ref.name} workspaceId=${ref.workspaceId}`);
+          await timing.step('deleteResourceDrift', () => this.delete(ref, { activeKey: options.activeKey }));
+          existing = null;
+        }
       }
       if (
         existing
@@ -231,7 +244,7 @@ export class SandboxManager {
             this.markEnsureFastPathVerified(ref.name);
             await timing.step('touch', () => this.touchThrottled(ref.name));
             status = 'ok';
-            return ref;
+            return resourceDriftDeferred ? { ...ref, resourceDriftDeferred: true } : ref;
           }
           await timing.step('delete', () => this.delete(ref, { activeKey: options.activeKey }));
           existing = null;
@@ -246,7 +259,7 @@ export class SandboxManager {
         this.markEnsureFastPathVerified(ref.name);
         await timing.step('touch', () => this.touchThrottled(ref.name));
         status = 'ok';
-        return ref;
+        return resourceDriftDeferred ? { ...ref, resourceDriftDeferred: true } : ref;
       }
       // already_running 快路径：5 分钟内完整校验过 networkPolicy+SNAT 的 Running
       // Sandbox，跳过两项 reconcile（合计 ~1.1s/次 kubectl/CLI 开销）。getStatus
@@ -256,7 +269,7 @@ export class SandboxManager {
         await timing.step('verifySnatCoverage', () => this.snatManager.assertSharedCidrCoverageForSandbox(ref));
         await timing.step('touch', () => this.touchThrottled(ref.name));
         status = 'ok';
-        return ref;
+        return resourceDriftDeferred ? { ...ref, resourceDriftDeferred: true } : ref;
       }
       await timing.step('networkPolicy', () => this.networkPolicyManager.reconcile(ref));
       if (existing.phase === 'Paused') {
@@ -275,7 +288,7 @@ export class SandboxManager {
       this.markEnsureFastPathVerified(ref.name);
       await timing.step('touch', () => this.touchThrottled(ref.name));
       status = 'ok';
-      return ref;
+      return resourceDriftDeferred ? { ...ref, resourceDriftDeferred: true } : ref;
     } finally {
       this.capacityReservations.release(ref.name);
       timing.finish(path, status);
@@ -988,13 +1001,7 @@ export class SandboxManager {
 
   private buildSandboxManifest(ref: SandboxRef): Record<string, unknown> {
     const now = new Date().toISOString();
-    // per-tenant/workspace 规格覆盖（2026-08-10，批次 3）：逐字段回落全局默认，
-    // 因此调用方可以只覆盖其中一项（如只调大内存）。ref.resources 参与 provision
-    // 指纹，改规格会触发 pod 重建——这正是期望行为。
-    const effectiveCpuRequest = ref.resources?.cpuRequest ?? this.config.cpuRequest;
-    const effectiveMemoryRequest = ref.resources?.memoryRequest ?? this.config.memoryRequest;
-    const effectiveCpuLimit = ref.resources?.cpuLimit ?? this.config.cpuLimit;
-    const effectiveMemoryLimit = ref.resources?.memoryLimit ?? this.config.memoryLimit;
+    const effectiveResources = sandboxResourceTarget(ref.resources, this.config);
     const labels = {
       'app.kubernetes.io/name': APP_LABEL,
       'app.kubernetes.io/managed-by': MANAGED_BY_LABEL,
@@ -1054,9 +1061,7 @@ export class SandboxManager {
         // 堆上限跟随**本 Sandbox 实际生效的**内存规格，而非全局默认——
         // per-tenant 覆盖后若仍按全局值算，大规格容器会白白浪费内存，
         // 小规格容器则会重新引发 oom_kill。
-        ...(nodeHeapLimitMb(effectiveMemoryLimit)
-          ? [{ name: 'NODE_OPTIONS', value: `--max-old-space-size=${nodeHeapLimitMb(effectiveMemoryLimit)}` }]
-          : []),
+        ...(nodeHeapLimitMb(effectiveResources.memoryLimit) ? [{ name: 'NODE_OPTIONS', value: `--max-old-space-size=${nodeHeapLimitMb(effectiveResources.memoryLimit)}` }] : []),
         // 出口代理与国内镜像源（2026-07-25）：由 server「网络出口」配置页下发。
         // 代理变量大小写各一份是刚需——curl/wget/git 与容器内 Chromium 只认小写，
         // Go 二进制（gh/aliyun/dws/lark-cli）优先读大写。未启用时这里为空数组。
@@ -1072,13 +1077,8 @@ export class SandboxManager {
         capabilities: { drop: ['ALL'] },
       },
       resources: {
-        requests: {
-          cpu: effectiveCpuRequest,
-          memory: effectiveMemoryRequest,
-        },
-        ...(effectiveCpuLimit || effectiveMemoryLimit
-          ? { limits: { ...(effectiveCpuLimit ? { cpu: effectiveCpuLimit } : {}), ...(effectiveMemoryLimit ? { memory: effectiveMemoryLimit } : {}) } }
-          : {}),
+        requests: { cpu: effectiveResources.cpuRequest, memory: effectiveResources.memoryRequest },
+        ...(effectiveResources.cpuLimit || effectiveResources.memoryLimit ? { limits: { ...(effectiveResources.cpuLimit ? { cpu: effectiveResources.cpuLimit } : {}), ...(effectiveResources.memoryLimit ? { memory: effectiveResources.memoryLimit } : {}) } } : {}),
       },
       ...(this.config.pvcName ? {
         volumeMounts: [{

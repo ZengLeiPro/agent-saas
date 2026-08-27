@@ -9,7 +9,7 @@ if (
   !username ||
   !password ||
   !/^rc-\d{8}-\d{2,}$/u.test(releaseId ?? '') ||
-  new URL(baseUrl).hostname !== 'api.staging.agent.kaiyan.net'
+  new URL(baseUrl).hostname !== 'staging-agent-api.kaiyan.net'
 ) {
   throw new Error(
     'usage: STAGING_E2E_USERNAME=... STAGING_E2E_PASSWORD=... reset-fixtures.mjs <staging-api-url> <release-id>',

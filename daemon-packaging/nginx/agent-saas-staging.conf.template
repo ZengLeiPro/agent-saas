@@ -5,10 +5,10 @@ upstream agent_saas_staging_api {
 
 server {
     listen 443 ssl http2;
-    server_name api.staging.agent.kaiyan.net;
+    server_name staging-agent-api.kaiyan.net;
 
-    ssl_certificate /etc/letsencrypt/live/api.staging.agent.kaiyan.net/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/api.staging.agent.kaiyan.net/privkey.pem;
+    ssl_certificate /etc/agent-saas-staging/tls/fullchain.pem;
+    ssl_certificate_key /etc/agent-saas-staging/tls/privkey.pem;
 
     location / {
         proxy_pass http://agent_saas_staging_api;

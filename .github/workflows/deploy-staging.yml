@@ -44,8 +44,8 @@ jobs:
       STAGING_E2E_USERNAME: ${{ secrets.STAGING_E2E_USERNAME }}
       STAGING_E2E_PASSWORD: ${{ secrets.STAGING_E2E_PASSWORD }}
       STAGING_SSH_KEY_PATH: /home/runner/.ssh/staging_key
-      STAGING_WEB_URL: https://staging.agent.kaiyan.net
-      STAGING_API_URL: https://api.staging.agent.kaiyan.net
+      STAGING_WEB_URL: https://staging-agent.kaiyan.net
+      STAGING_API_URL: https://staging-agent-api.kaiyan.net
       RELEASE_EVIDENCE_URL: ${{ vars.RELEASE_EVIDENCE_URL }}
       STAGING_ISOLATION_EVIDENCE_URL: ${{ vars.STAGING_ISOLATION_EVIDENCE_URL }}
       STAGING_SSH_HOST_KEY_SHA256: ${{ vars.STAGING_SSH_HOST_KEY_SHA256 }}
@@ -85,6 +85,25 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Verify Staging resources are ready for first deployment
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const plan = JSON.parse(readFileSync('infra/staging/resource-plan.json', 'utf8'));
+          const blockers = Array.isArray(plan.blockingConditions) ? plan.blockingConditions : [];
+          if (
+            plan.environment !== 'staging' ||
+            plan.status !== 'provisioned' ||
+            plan.firstDeploymentReadiness !== 'ready' ||
+            blockers.length > 0
+          ) {
+            throw new Error(
+              `Staging first deployment is blocked: status=${plan.status}, readiness=${plan.firstDeploymentReadiness}, blockers=${blockers.join(',')}`,
+            );
+          }
+          NODE
 
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v5

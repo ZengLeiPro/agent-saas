@@ -1,11 +1,12 @@
 # Staging 运行手册
 
 Staging 是独立的发布验证环境，不是生产配置的别名。资源权威清单位于
-`infra/staging/resource-plan.json`；其中任何 `UNASSIGNED` 都是上线阻断项。
+`infra/staging/resource-plan.json`。资源 `status=provisioned` 只表示云资源已创建；只有
+`firstDeploymentReadiness=ready` 且 `blockingConditions` 为空，首次 Workflow 才允许继续。
 
 ## 建立顺序
 
-1. 按资源清单创建 ECS、OSS、DNS/证书、数据库角色、NAS 隔离根和测试通知 sink。
+1. 按资源清单创建 ECS、OSS、DNS/证书、数据库角色和 NAS 隔离根；Staging 通知保持禁用。
 2. 将 `infra/staging/acs-runtime.yaml` 应用到明确的 Staging ACK/ACS context；创建
    `agent-saas-staging-acr` Secret 时只从密钥系统注入，不提交 Secret YAML。
 3. 安装三个 `*-staging.service`，创建独立 `/etc`、`/opt`、`/var/lib`、`/run/lock`
@@ -16,10 +17,16 @@ Staging 是独立的发布验证环境，不是生产配置的别名。资源权
 
 ## 必做验收
 
-先运行 `scripts/staging/assert-isolation.mjs`。证据文件必须由真实拒绝操作产生，包含资源
-身份、时间和结果；不得用配置文本替代。随后部署固定 RC，运行 Playwright Staging 套件。
-只有制品回读、真实 Agent → Worker → ACS → Sandbox 链路、反向隔离和清理全部成功，
-才能记录 `verified`。健康接口成功只证明进程存活。
+先运行 `scripts/staging/assert-isolation.mjs`。数据库、OSS、通知、API/Worker 和 ACS namespace
+边界必须由真实的生产访问拒绝产生证据；不得用配置文本替代。NAS 是复用生产文件系统的逻辑
+隔离：必须读回 Staging ECS 只挂载 `/agent-saas-staging` 子目录、客户端来源限制为单一 `/32`、
+权限为 `all_squash`，且当前挂载点看不到生产目录名；Sandbox 还必须读回独立 namespace、PVC 和
+workspace 路径。具备主机特权的身份仍可能重新挂载共享文件系统根目录，此残余风险必须以
+`privileged-host-can-remount-shared-filesystem-root` 明文绑定到证据，不能宣称物理隔离。
+
+随后部署固定 RC，运行 Playwright Staging 套件。只有制品回读、真实 Agent → Worker → ACS →
+Sandbox 链路、生产边界拒绝、共享 NAS 逻辑隔离和清理全部成功，才能记录
+`verified-with-accepted-residual-risk`。健康接口成功只证明进程存活。
 
 ## 回收
 

@@ -46,13 +46,15 @@ Variables：`PRODUCTION_OBSERVATION_URL`、`PRODUCTION_SSH_HOST_KEY_SHA256`、
 
 - `/release-evidence?sha=<full-sha>`：完整 SHA 对应的 Integration、CI、生产基线、迁移和
   N/N+1 兼容证据；同一 SHA 使用不可覆盖写入。
-- `/staging-isolation?releaseId=<rc-id>`：七项真实反向隔离拒绝证据；每次采集按时间和摘要追加。
+- `/staging-isolation?releaseId=<rc-id>`：五项真实生产访问拒绝，以及两项共享 NAS 逻辑隔离
+  读回证据；每次采集按时间和摘要追加，并显式记录主机特权身份可重新挂载文件系统根目录的
+  已接受残余风险。
 - `/production-observation?releaseId=<rc-id>&manifestDigest=<digest>`：绑定 RC 和 Manifest 的
   连续生产探针样本；每个样本追加保存。
 
 实际探针/集成系统用独立写身份通过 `POST` 写入，Workflow 只持有读身份并通过 `GET` 读取；
 两端都必须带 `Authorization: Bearer <token>`，读写 token 禁止复用。服务会重算 release
-evidence digest，校验隔离拒绝的新鲜度，
+evidence digest，校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜度，
 并校验生产样本的全部业务/运行检查。它不会在缺少真实探针时合成通过证据。运行参数：
 `RELEASE_EVIDENCE_ROOT=/var/lib/agent-saas-release-evidence`、
 `RELEASE_EVIDENCE_READ_TOKEN_FILE=<0600 read token file>`、
@@ -80,15 +82,16 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
 
 ## 外部设置
 
-- 旧 `ci.yml` 与 `acs-sandbox.yml` 保留 `workflow_dispatch`，仅用于尚未迁移到 RC Promotion 的
-  旧版本人工兼容部署；push/PR 仍只执行 CI，不自动部署生产。旧入口不生成不可变 RC、Staging E2E、
-  Promotion receipt 或 15 分钟生产观察证据，因此不得用于宣称新版发布契约已通过。完成旧版本迁移后
-  应再次关闭这两个兼容入口；新版本生产发布仍优先使用 `promote-release.yml`。
+- `ci.yml` 与 `acs-sandbox.yml` 永久保留 `workflow_dispatch` 人工部署入口，可按实际需要部署任意
+  新旧版本；push/PR 仍只执行 CI，不自动部署生产。这两个入口不生成不可变 RC、Staging E2E、
+  Promotion receipt 或 15 分钟生产观察证据，因此通过它们部署不等于新版发布契约已通过。
+  需要完整发布证据链时使用 `promote-release.yml`，但不得因此关闭两个既有人工入口。
 - GitHub main 与 RC tag ruleset 需一起应用 `config/github-main-ruleset.json`、
   `config/github-rc-tag-ruleset.json`；后者禁止更新或删除 `refs/tags/rc-*`。应用前导出旧规则作为回退。
 - main ruleset 按单人维护模式配置：不要求人工审批、CODEOWNER 审批或 Last Push Approval，但仍要求
   PR、Review 对话全部解决、分支基于最新 main，并通过 `Build & Check` 与 `ACS Impact Gate`。
-- Staging 资源按 `infra/staging/resource-plan.json` 创建，所有 `UNASSIGNED` 清零并完成反向隔离
-  实测后才允许首次运行。
+- Staging 资源按 `infra/staging/resource-plan.json` 创建；只有清单为 `provisioned`、
+  `firstDeploymentReadiness=ready`、`blockingConditions` 为空，并完成生产边界拒绝与共享 NAS
+  逻辑隔离实测后，才允许首次运行。
 - `fc.kaiyan.net` 是共享域名，所有流程均不得使用 `fc3-domain`；本工作流只使用 OSS、ECS 和
   已明确配置的增量 DNS/反向代理资源。

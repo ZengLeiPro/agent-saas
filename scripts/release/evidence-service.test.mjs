@@ -8,6 +8,10 @@ import {
   createValidReleaseEvidence,
   RELEASE_EVIDENCE_SHA,
 } from './release-evidence-fixture.test-helper.mjs';
+import {
+  REQUIRED_ISOLATION_PROBES,
+  SHARED_NAS_RESIDUAL_RISK,
+} from '../staging/assert-isolation.mjs';
 
 const READ_TOKEN = 'evidence-service-read-token-32-bytes-long';
 const WRITE_TOKEN = 'evidence-service-write-token-32-bytes-long';
@@ -104,26 +108,56 @@ test('produces fresh Staging isolation and Production observation responses', as
   };
   const readHeaders = { authorization: `Bearer ${READ_TOKEN}` };
   const isolationUrl = `http://127.0.0.1:${port}/staging-isolation?releaseId=${RELEASE_ID}`;
-  const probeIds = [
-    'database-role-cannot-read-or-write-production',
-    'oss-identity-cannot-write-production-bucket',
-    'nas-identity-cannot-traverse-production-root',
-    'notification-delivery-reaches-test-sink-only',
-    'api-worker-cannot-connect-production-hand-or-acs',
-    'acs-service-account-cannot-read-production-namespace-resources',
-    'sandbox-cannot-mount-or-traverse-production-workspace',
-  ];
   const isolation = {
     schemaVersion: 1,
     environment: 'staging',
-    probes: probeIds.map((id) => ({
-      id,
-      status: 'denied',
-      sourceEnvironment: 'staging',
-      targetEnvironment: 'production',
-      evidenceDigest: `sha256:${'e'.repeat(64)}`,
-      observedAt: new Date(NOW).toISOString(),
-    })),
+    probes: REQUIRED_ISOLATION_PROBES.map((id) => {
+      const common = {
+        id,
+        evidenceDigest: `sha256:${'e'.repeat(64)}`,
+        observedAt: new Date(NOW).toISOString(),
+      };
+      if (id === 'nas-client-is-all-squashed-and-mounted-to-staging-subdirectory') {
+        return {
+          ...common,
+          status: 'verified-with-accepted-residual-risk',
+          sourceEnvironment: 'staging',
+          targetEnvironment: 'staging',
+          observed: {
+            mountSource:
+              '020ksw7nv1wjde1xy9c-jsu59.cn-shenzhen.nas.aliyuncs.com:/agent-saas-staging',
+            mountTarget: '/mnt/agent-saas-staging',
+            serverPath: '/agent-saas-staging',
+            sourceCidr: '172.16.182.225/32',
+            userAccess: 'all_squash',
+            productionNamesVisible: false,
+            residualRisk: SHARED_NAS_RESIDUAL_RISK,
+          },
+        };
+      }
+      if (id === 'sandbox-workspace-uses-staging-only-pvc-and-paths') {
+        return {
+          ...common,
+          status: 'verified-with-accepted-residual-risk',
+          sourceEnvironment: 'staging',
+          targetEnvironment: 'staging',
+          observed: {
+            namespace: 'agent-saas-staging',
+            pvc: 'agent-saas-staging-workspace',
+            workspaceRoot: '/mnt/agent-saas-staging/workspaces',
+            productionWorkspaceMounted: false,
+            sharedFilesystemLogicalIsolation: true,
+            residualRisk: SHARED_NAS_RESIDUAL_RISK,
+          },
+        };
+      }
+      return {
+        ...common,
+        status: 'denied',
+        sourceEnvironment: 'staging',
+        targetEnvironment: 'production',
+      };
+    }),
   };
   assert.equal(
     (

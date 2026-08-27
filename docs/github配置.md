@@ -235,19 +235,29 @@ done
 
 ## 7. 写入配置值前的硬门禁
 
-先检查 Staging 资源是否仍有未分配项：
+先检查 Staging 资源是否达到首次部署就绪状态：
 
 ```bash
-if rg -n '"UNASSIGNED"' infra/staging/resource-plan.json; then
-  echo 'BLOCKED: Staging 仍有 UNASSIGNED，只能创建 Environment 空壳，不得填写占位值或运行 Workflow。' >&2
-  exit 1
-fi
+node <<'NODE'
+const { readFileSync } = require('node:fs');
+const plan = JSON.parse(readFileSync('infra/staging/resource-plan.json', 'utf8'));
+const blockers = Array.isArray(plan.blockingConditions) ? plan.blockingConditions : [];
+if (
+  plan.status !== 'provisioned' ||
+  plan.firstDeploymentReadiness !== 'ready' ||
+  blockers.length > 0
+) {
+  console.error(`BLOCKED: Staging 未达到首次部署就绪状态：${blockers.join(',')}`);
+  process.exit(1);
+}
+NODE
 ```
 
 还必须同时确认：
 
-- Staging ECS、数据库、NAS、ACS namespace、OSS 和 DNS 已真实创建并完成隔离验证。
-- `staging.agent.kaiyan.net` 与 `api.staging.agent.kaiyan.net` 已解析到正确的 Staging 资源。
+- Staging ECS、数据库、NAS、ACS namespace、OSS 和 DNS 已真实创建并完成隔离验证；共享 NAS
+  按清单中的 Staging 子目录、`all_squash` 和单一 `/32` 来源执行逻辑隔离，并接受清单所列残余风险。
+- `staging-agent.kaiyan.net` 与 `staging-agent-api.kaiyan.net` 已解析到正确的 Staging 资源。
 - Evidence Service 已部署，HTTPS、持久盘、只读 Token 与写入 Token 已分离。
 - Staging E2E 专用管理员账号已创建，且不是生产真人账号。
 - SSH ED25519 Host Key 指纹来自 ECS 控制台或服务器可信渠道，不得只信任公网

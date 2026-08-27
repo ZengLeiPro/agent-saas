@@ -2,7 +2,17 @@
   "schemaVersion": 1,
   "environment": "staging",
   "region": "cn-shenzhen",
-  "status": "planned",
+  "status": "provisioned",
+  "verificationStatus": "pending",
+  "firstDeploymentReadiness": "blocked",
+  "blockingConditions": [
+    "staging-acs-runtime-not-applied",
+    "staging-runtime-services-not-deployed",
+    "staging-database-migrations-not-applied",
+    "release-evidence-service-not-deployed",
+    "staging-e2e-test-identity-not-created",
+    "github-environments-not-configured"
+  ],
   "resources": {
     "web": {
       "bucket": "agent-saas-web-staging",
@@ -26,19 +36,22 @@
       "port": 3210
     },
     "database": {
-      "instanceId": "UNASSIGNED",
-      "reuseCandidateId": "pgm-wz96n2735914490l",
-      "reuseStatus": "blocked-production-databases-grant-public-connect",
+      "instanceId": "pgm-wz96n2735914490l",
+      "reuseStatus": "accepted-isolated-database-and-role",
       "database": "agent_saas_staging",
       "role": "agent_saas_staging"
     },
     "nas": {
-      "fileSystemId": "UNASSIGNED",
-      "reuseCandidateId": "020ksw7nv1wjde1xy9c",
-      "reuseStatus": "blocked-production-root-visible",
-      "disabledMountTarget": "020ksw7nv1wjde1xy9c-jsu59.cn-shenzhen.nas.aliyuncs.com",
-      "disabledAccessGroup": "agent_saas_staging_root_squash",
-      "mountRoot": "/mnt/agent-saas-staging"
+      "fileSystemId": "020ksw7nv1wjde1xy9c",
+      "reuseStatus": "accepted-logical-subdirectory-all-squash",
+      "mountTarget": "020ksw7nv1wjde1xy9c-jsu59.cn-shenzhen.nas.aliyuncs.com",
+      "accessGroup": "agent_saas_staging_root_squash",
+      "sourceCidr": "172.16.182.225/32",
+      "userAccess": "all_squash",
+      "serverPath": "/agent-saas-staging",
+      "mountRoot": "/mnt/agent-saas-staging",
+      "isolationLevel": "logical-shared-filesystem",
+      "residualRisk": "privileged-host-can-remount-shared-filesystem-root"
     },
     "vault": {
       "credentialNamespace": "STAGING_AGENT_SAAS",
@@ -47,9 +60,11 @@
     },
     "notifications": {
       "mode": "disabled",
-      "sinkId": "UNASSIGNED"
+      "sinkId": null,
+      "deliveryPolicy": "deny-all"
     },
     "acs": {
+      "status": "pending-bootstrap",
       "namespace": "agent-saas-staging",
       "pvc": "agent-saas-staging-workspace",
       "serviceAccount": "agent-saas-staging-orchestrator",
@@ -76,10 +91,10 @@
   "requiredEvidence": [
     "database-role-cannot-read-or-write-production",
     "oss-identity-cannot-write-production-bucket",
-    "nas-identity-cannot-traverse-production-root",
-    "notification-delivery-reaches-test-sink-only",
+    "nas-client-is-all-squashed-and-mounted-to-staging-subdirectory",
+    "notification-identity-cannot-deliver-to-production",
     "api-worker-cannot-connect-production-hand-or-acs",
     "acs-service-account-cannot-read-production-namespace-resources",
-    "sandbox-cannot-mount-or-traverse-production-workspace"
+    "sandbox-workspace-uses-staging-only-pvc-and-paths"
   ]
 }

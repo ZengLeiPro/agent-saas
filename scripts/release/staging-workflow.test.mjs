@@ -30,6 +30,11 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/u);
   assert.match(workflow, /test "\$\(git rev-parse HEAD\)" = "\$GITHUB_SHA"/u);
   assert.match(workflow, /environment: staging/u);
+  assert.match(workflow, /STAGING_WEB_URL: https:\/\/staging-agent\.kaiyan\.net/u);
+  assert.match(workflow, /STAGING_API_URL: https:\/\/staging-agent-api\.kaiyan\.net/u);
+  assert.match(workflow, /infra\/staging\/resource-plan\.json/u);
+  assert.match(workflow, /plan\.firstDeploymentReadiness !== 'ready'/u);
+  assert.match(workflow, /blockers\.length > 0/u);
   assert.match(workflow, /REUSE_RC=true/u);
   assert.match(workflow, /state staging_deployed/u);
   assert.match(workflow, /state verified/u);
@@ -55,13 +60,27 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /verify --root "\$target" --component server/u);
 });
 
-test('resource plan is fail-closed until every isolated cloud identity is assigned', async () => {
+test('resource plan records provisioned resources while first deployment remains fail-closed', async () => {
   const plan = JSON.parse(await readFile(resourcePath, 'utf8'));
   assert.equal(plan.environment, 'staging');
-  assert.equal(plan.status, 'planned');
+  assert.equal(plan.status, 'provisioned');
+  assert.equal(plan.verificationStatus, 'pending');
+  assert.equal(plan.firstDeploymentReadiness, 'blocked');
+  assert.ok(plan.blockingConditions.length > 0);
+  assert.ok(plan.blockingConditions.includes('staging-acs-runtime-not-applied'));
+  assert.ok(plan.blockingConditions.includes('release-evidence-service-not-deployed'));
   assert.notEqual(plan.resources.acs.namespace, 'agent-saas-coding');
+  assert.equal(plan.resources.acs.status, 'pending-bootstrap');
+  assert.equal(plan.resources.database.instanceId, 'pgm-wz96n2735914490l');
+  assert.equal(plan.resources.nas.isolationLevel, 'logical-shared-filesystem');
   assert.equal(plan.defaults.cronEnabled, false);
   assert.equal(plan.defaults.productionOAuthEnabled, false);
-  assert.ok(JSON.stringify(plan).includes('UNASSIGNED'));
+  assert.ok(!JSON.stringify(plan).includes('UNASSIGNED'));
   assert.equal(plan.requiredEvidence.length, 7);
+  assert.ok(
+    plan.requiredEvidence.includes(
+      'nas-client-is-all-squashed-and-mounted-to-staging-subdirectory',
+    ),
+  );
+  assert.ok(plan.requiredEvidence.includes('sandbox-workspace-uses-staging-only-pvc-and-paths'));
 });

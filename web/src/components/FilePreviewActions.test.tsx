@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FilePreviewActions, printFilePreviewElement } from "./FilePreviewActions";
@@ -66,6 +66,11 @@ describe("FilePreviewActions", () => {
     authFetch.mockResolvedValueOnce({ ok: true, blob: () => Promise.resolve(blob) });
     vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:markdown-download");
     const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    let cleanup: (() => void) | undefined;
+    vi.spyOn(window, "setTimeout").mockImplementation(((handler: TimerHandler) => {
+      if (typeof handler === "function") cleanup = () => handler();
+      return 1;
+    }) as typeof window.setTimeout);
     let clickedHref = "";
     let downloadName = "";
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
@@ -74,12 +79,40 @@ describe("FilePreviewActions", () => {
     });
 
     render(<FilePreviewActions filePath="assets/demo.md" />);
-    fireEvent.click(screen.getByRole("button", { name: "下载文件" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "下载文件" }));
+    });
 
-    await waitFor(() => expect(clickedHref).toBe("blob:markdown-download"));
+    expect(clickedHref).toBe("blob:markdown-download");
     expect(authFetch).toHaveBeenCalledWith(expect.stringContaining("download=1"));
     expect(downloadName).toBe("demo.md");
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    expect(cleanup).toBeTypeOf("function");
+    cleanup?.();
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:markdown-download");
+  });
+
+  it("公开分享页的 Markdown 下载使用分享文件 URL 和原文件名", async () => {
+    const blob = new Blob(["# shared"], { type: "text/markdown" });
+    authFetch.mockResolvedValueOnce({ ok: true, blob: () => Promise.resolve(blob) });
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:shared-markdown");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    let clickedHref = "";
+    let downloadName = "";
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      clickedHref = this.href;
+      downloadName = this.download;
+    });
+
+    render(<FilePreviewActions filePath="assets/共享 文档.md" shareToken="share/token" />);
+    fireEvent.click(screen.getByRole("button", { name: "下载文件" }));
+
+    await waitFor(() => expect(clickedHref).toBe("blob:shared-markdown"));
+    expect(authFetch).toHaveBeenCalledWith(expect.stringMatching(
+      /\/api\/share\/sessions\/share%2Ftoken\/file\?path=assets%2F%E5%85%B1%E4%BA%AB\+%E6%96%87%E6%A1%A3\.md&download=1$/,
+    ));
+    expect(downloadName).toBe("共享 文档.md");
+    expect(resolveImageSrc).not.toHaveBeenCalled();
   });
 
   it("文本类打印按钮把请求交给当前预览器", () => {

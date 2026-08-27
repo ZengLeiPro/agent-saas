@@ -36,11 +36,9 @@ async function downloadAsBlob(url: string, fileName: string): Promise<void> {
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
   const objectUrl = URL.createObjectURL(await response.blob());
-  try {
-    triggerBrowserDownload(objectUrl, fileName);
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
+  triggerBrowserDownload(objectUrl, fileName);
+  // 同步 revoke 在部分浏览器会取消尚未开始的下载，延后一轮再回收。
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
 }
 
 async function resolveWorkspaceFileUrl(filePath: string, owner?: string): Promise<string> {

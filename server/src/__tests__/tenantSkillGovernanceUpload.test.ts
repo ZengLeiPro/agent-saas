@@ -128,6 +128,7 @@ function oversizedZipMetadata(uncompressedSize = 101 * 1024 * 1024): Buffer {
 function rig(input: {
   getResource?: ReturnType<typeof vi.fn>;
   createAndPublish?: ReturnType<typeof vi.fn>;
+  restore?: ReturnType<typeof vi.fn>;
   poolVisibility?: Record<string, boolean>;
   users?: Array<{ id: string; username: string; tenantId: string; role: string }>;
 } = {}) {
@@ -146,8 +147,20 @@ function rig(input: {
     },
     created: true,
   }));
+  const restoreAndPublishResource = input.restore ?? vi.fn().mockImplementation(async value => ({
+    resource: {
+      skillId: value.skillId, tenantId: value.tenantId, scope: 'tenant', status: 'published',
+      currentVersionId: 'skillv-2', revision: value.expectedRevision + 1, createdAt: '2026-08-14T00:00:00.000Z',
+      createdBy: value.publishedBy, updatedAt: '2026-08-14T00:00:00.000Z', updatedBy: value.publishedBy,
+    },
+    version: {
+      versionId: 'skillv-2', skillId: value.skillId, versionNumber: 2, definition: value.definition,
+      digest: 'digest-2', publishedAt: '2026-08-14T00:00:00.000Z', publishedBy: value.publishedBy,
+    },
+    created: true,
+  }));
   const upload = createTenantSkillGovernanceUpload({
-    skills: { getResource, createAndPublishResource } as never,
+    skills: { getResource, createAndPublishResource, restoreAndPublishResource } as never,
     skillConfigStore: { getPoolVisibility: () => input.poolVisibility ?? {} } as never,
     userStore: { listAll: () => input.users ?? [] } as never,
     agentCwd: join(root, 'agents'),
@@ -158,6 +171,7 @@ function rig(input: {
     root,
     getResource,
     createAndPublishResource,
+    restoreAndPublishResource,
     upload,
     installedDir: (skillId: string) => join(root, 'tenant-skills', 'tenant-a', 'skills', skillId),
   };
@@ -285,6 +299,23 @@ describe('组织 Skill 治理上传服务', () => {
     expect(second.definition.legacySkillId).toBe('same-name');
     expect(existsSync(join(test.root, 'tenant-skills', 'tenant-a', 'skills', 'same-name', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(test.root, 'tenant-skills', 'tenant-b', 'skills', 'same-name', 'SKILL.md'))).toBe(true);
+  });
+
+  it('删除遗留治理资源后同名重导会恢复原组织资源并发布下一版本', async () => {
+    const resourceId = tenantSkillResourceId('tenant-a', 'restored-skill');
+    const test = rig({ getResource: vi.fn().mockResolvedValue({
+      skillId: resourceId, tenantId: 'tenant-a', scope: 'tenant', status: 'retired',
+      currentVersionId: 'skillv-1', revision: 3, createdAt: 'x', createdBy: 'admin-1', updatedAt: 'x', updatedBy: 'admin-1',
+    }) });
+    const result = await test.upload({
+      tenantId: 'tenant-a', actorUserId: 'admin-1', files: [uploadFile(validSkill('restored-skill'))],
+    });
+    expect(result).toMatchObject({ resource: { skillId: resourceId, status: 'published' }, version: { versionNumber: 2 } });
+    expect(test.restoreAndPublishResource).toHaveBeenCalledWith(expect.objectContaining({
+      skillId: resourceId, scope: 'tenant', expectedRevision: 3,
+    }));
+    expect(test.createAndPublishResource).not.toHaveBeenCalled();
+    expect(existsSync(join(test.installedDir('restored-skill'), 'SKILL.md'))).toBe(true);
   });
 
   it('同组织并发上传同名 Skill 时仅一个成功，且不覆盖胜出文件', async () => {

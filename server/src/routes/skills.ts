@@ -1,5 +1,4 @@
 import { basename, dirname, join } from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import {
   cp,
@@ -25,6 +24,7 @@ import { hasPlatformCapability } from '../auth/platformGovernance.js';
 import { auditLog } from '../data/login-logs/index.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
 import type { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
+import { archiveDeletedDirectory, deletePersonalSkillWithGovernance, deleteTenantSkillWithGovernance } from '../services/skillGovernanceDeletion.js';
 import { personalSkillResourceId, tenantSkillResourceId } from '../services/tenantSkillGovernanceUpload.js';
 import type { PlatformSkillConfig, TenantSkillRule } from '../data/skills/types.js';
 import {
@@ -60,7 +60,7 @@ export interface SkillsRouterDeps {
   tenantSkillsRootDir?: string;
   skillMaterialization?: SkillMaterializationCoordinator;
   skillGovernanceStore?: Pick<PgSkillGovernanceStore, 'getResource' | 'getVersion'>
-    & Partial<Pick<PgSkillGovernanceStore, 'listTenantSkillHistoricalProvenance' | 'listPersonalByOwner'>>;
+    & Partial<Pick<PgSkillGovernanceStore, 'listTenantSkillHistoricalProvenance' | 'listPersonalByOwner' | 'retire'>>;
   legacyWriteGate?: {
     assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
   };
@@ -279,16 +279,6 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     }
   }
 
-
-  async function archiveDeletedDirectory(targetDir: string): Promise<void> {
-    const parentDir = dirname(targetDir);
-    const archiveDir = join(parentDir, '.deleted-skills');
-    await mkdir(archiveDir, { recursive: true });
-    await rename(
-      targetDir,
-      join(archiveDir, `${basename(targetDir)}-${Date.now()}-${randomUUID()}`),
-    );
-  }
 
   /**
    * 递归探测目录内是否存在符号链接条目。
@@ -889,7 +879,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     }
 
     try {
-      await archiveDeletedDirectory(skillDir);
+      await deletePersonalSkillWithGovernance({ skillDir, skillId, tenantId: target.tenantId, userId: target.id, username: target.username, skillConfigStore, skillGovernanceStore });
       auditLog(req, 'skill_custom_deleted', `${target.username}/${skillId}`);
       res.json({ ok: true });
     } catch (err) {
@@ -1106,9 +1096,9 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     const skillDir = join(tenantSkillsDirFor(tenantId), skillId);
     if (!existsSync(skillDir)) return res.status(404).json({ error: `组织 ${tenantId} 中不存在技能“${skillId}”` });
     try {
-      await archiveDeletedDirectory(skillDir);
-      // ownSkills 规则条目保留作为「曾存在」记忆，驱动成员 workspace 清理残留副本；prune 时按目录现状清掉
-      await skillConfigStore.touchConfigVersion();
+      await deleteTenantSkillWithGovernance({
+        skillDir, skillId, tenantId, actorUserId: req.user!.sub, skillConfigStore, skillGovernanceStore,
+      });
       auditLog(req, 'skill_tenant_deleted', `${tenantId}/${skillId}`);
       res.json({ ok: true });
     } catch (err) {
@@ -1282,9 +1272,10 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     }
 
     try {
-      await archiveDeletedDirectory(skillDir);
-      // 从 selection 中移除，避免 dispatch listForUser / effective 集合出现孤儿 id
-      await setUserSkillSelected(skillConfigStore, username, skillId, false);
+      await deletePersonalSkillWithGovernance({
+        skillDir, skillId, tenantId: user.tenantId, userId: user.id, username,
+        skillConfigStore, skillGovernanceStore,
+      });
       auditLog(req, 'skill_custom_deleted', `${username}/${skillId}`);
       res.json({ ok: true });
     } catch (err) {

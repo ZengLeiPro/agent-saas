@@ -226,6 +226,7 @@ describe('registerRoutes', () => {
     };
 
     const runtime: any = {
+      processRole: 'ws-only',
       config: { server: {}, agent: { userOverrides: { zengky: { extraDirs: ['/Users/admin/code/kai'] } } } },
       agentCwd: '/agent',
       sessionBasePath: '/sessions',
@@ -244,6 +245,7 @@ describe('registerRoutes', () => {
       uploadManager: {
         getMetricsSnapshot: vi.fn(() => ({ activeUploads: 0 })),
       },
+      getRuntimeAdmissionSnapshot: vi.fn(() => ({ state: 'healthy', admitting: true })),
       cronRuntime: {
         service: null,
         cronRunsDir: '/runs',
@@ -258,8 +260,11 @@ describe('registerRoutes', () => {
       runtime.config,
       expect.objectContaining({
         getDispatchMetrics: expect.any(Function),
+        getRuntimeAdmissionSnapshot: expect.any(Function),
       }),
     );
+    const healthOptions = (mocked.createHealthRouter as any).mock.calls[0]?.[1];
+    expect(healthOptions.getRuntimeAdmissionSnapshot).not.toBe(runtime.getRuntimeAdmissionSnapshot);
     expect(mocked.createUploadRouter).toHaveBeenCalledWith({
       agentCwd: '/agent',
       uploadManager: runtime.uploadManager,

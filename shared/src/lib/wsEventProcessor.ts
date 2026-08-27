@@ -6,13 +6,12 @@
 import type { MessageItem } from '../types/message';
 import type { WsEvent } from '../types/ws';
 import { formatRuntimeFailureMessage, isInsufficientCreditsFailure, isSameRunMessage } from './runtimeErrorMessage';
-import { resolveRuntimeStatusPatch, type RuntimeStatus, type RuntimeStatusOptions } from './runtimeStatusTransition';
+import { hasTrailingActiveWork, resolveRuntimeStatusPatch, type RuntimeStatus, type RuntimeStatusOptions } from './runtimeStatusTransition';
 import { normalizeToolPresentation } from './toolPresentation';
 import { normalizeToolResultMetadata } from './toolResultMetadata';
 import { formatPermissionInput, isDedicatedToolName, resolvePlanModeDisplay } from './wsToolDisplay';
 import { handleArtifactDeliveryToolResult } from './artifactDeliveryMessage';
 import { applyInteractionResolution } from './wsInteractionResolution';
-
 export { resolvePlanModeDisplay } from './wsToolDisplay';
 import {
   findUserMsgIndexByClientId,
@@ -26,6 +25,7 @@ export function upsertRuntimeStatusMessage(
   options: RuntimeStatusOptions = {},
 ): void {
   const msgs = msg.messagesRef.current;
+  if (status === "running" && hasTrailingActiveWork(msgs, options.runId)) return;
   let idx = -1;
   for (let i = msgs.length - 1; i >= 0; i--) {
     const candidate = msgs[i];

@@ -1,9 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FilePreviewActions, printFilePreviewElement } from "./FilePreviewActions";
 
 const resolveImageSrc = vi.fn();
+const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
 
 vi.mock("@agent/shared", () => ({
   getPreviewFileType: (filePath: string) => {
@@ -16,6 +17,8 @@ vi.mock("@agent/shared", () => ({
   resolveImageSrc: (...args: unknown[]) => resolveImageSrc(...args),
 }));
 
+vi.mock("@/lib/authFetch", () => ({ authFetch }));
+
 vi.mock("@/platform/webConfig", () => ({
   webConfig: {
     platform: "web",
@@ -27,10 +30,12 @@ vi.mock("@/platform/webConfig", () => ({
 describe("FilePreviewActions", () => {
   beforeEach(() => {
     resolveImageSrc.mockReset();
+    authFetch.mockReset();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     document.body.classList.remove("file-preview-printing");
   });
 
@@ -51,6 +56,63 @@ describe("FilePreviewActions", () => {
     await waitFor(() => expect(clickedHref).toContain("download=1"));
     expect(clickedHref).toContain("path=assets%2Fdemo.pdf");
     expect(downloadName).toBe("demo.pdf");
+  });
+
+  it("Markdown 下载先转为 blob，避免跨域链接覆盖当前页面", async () => {
+    resolveImageSrc.mockResolvedValueOnce(
+      "https://api.example.com/api/file/download?path=assets%2Fdemo.md&token=jwt",
+    );
+    const blob = new Blob(["# demo"], { type: "text/markdown" });
+    authFetch.mockResolvedValueOnce({ ok: true, blob: () => Promise.resolve(blob) });
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:markdown-download");
+    const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    let cleanup: (() => void) | undefined;
+    vi.spyOn(window, "setTimeout").mockImplementation(((handler: TimerHandler) => {
+      if (typeof handler === "function") cleanup = () => handler();
+      return 1;
+    }) as typeof window.setTimeout);
+    let clickedHref = "";
+    let downloadName = "";
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      clickedHref = this.href;
+      downloadName = this.download;
+    });
+
+    render(<FilePreviewActions filePath="assets/demo.md" />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "下载文件" }));
+    });
+
+    expect(clickedHref).toBe("blob:markdown-download");
+    expect(authFetch).toHaveBeenCalledWith(expect.stringContaining("download=1"));
+    expect(downloadName).toBe("demo.md");
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    expect(cleanup).toBeTypeOf("function");
+    cleanup?.();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:markdown-download");
+  });
+
+  it("公开分享页的 Markdown 下载使用分享文件 URL 和原文件名", async () => {
+    const blob = new Blob(["# shared"], { type: "text/markdown" });
+    authFetch.mockResolvedValueOnce({ ok: true, blob: () => Promise.resolve(blob) });
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:shared-markdown");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    let clickedHref = "";
+    let downloadName = "";
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      clickedHref = this.href;
+      downloadName = this.download;
+    });
+
+    render(<FilePreviewActions filePath="assets/共享 文档.md" shareToken="share/token" />);
+    fireEvent.click(screen.getByRole("button", { name: "下载文件" }));
+
+    await waitFor(() => expect(clickedHref).toBe("blob:shared-markdown"));
+    expect(authFetch).toHaveBeenCalledWith(expect.stringMatching(
+      /\/api\/share\/sessions\/share%2Ftoken\/file\?path=assets%2F%E5%85%B1%E4%BA%AB\+%E6%96%87%E6%A1%A3\.md&download=1$/,
+    ));
+    expect(downloadName).toBe("共享 文档.md");
+    expect(resolveImageSrc).not.toHaveBeenCalled();
   });
 
   it("文本类打印按钮把请求交给当前预览器", () => {
@@ -81,6 +143,7 @@ describe("FilePreviewActions", () => {
 describe("printFilePreviewElement", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     document.body.classList.remove("file-preview-printing");
   });
 

@@ -79,7 +79,7 @@ export class FeishuOAuthError extends Error {
   }
 }
 
-/** Server-only implementation of the wire protocol used by @larksuite/cli@1.0.81. */
+/** Server-only implementation of the wire protocol used by @larksuite/cli@1.0.90. */
 export class FeishuOAuthClient {
   constructor(private readonly options: {
     appId: string;

@@ -174,28 +174,42 @@ describe('ACS runtime config', () => {
     expect(() => parseRuntimeConfigPatch({ executionMaintenanceReason: 'x'.repeat(501) })).toThrow(
       /at most 500/,
     );
+    expect(
+      parseRuntimeConfigPatch({
+        maxRunningSandboxes: 5_000,
+        warnRunningSandboxes: 4_500,
+        maxAllocatedCpuMillicores: 10_000_000,
+        warnAllocatedCpuMillicores: 9_000_000,
+        maxAllocatedMemoryMib: 20_480_000,
+        warnAllocatedMemoryMib: 18_432_000,
+      }),
+    ).toMatchObject({
+      maxRunningSandboxes: 5_000,
+      maxAllocatedCpuMillicores: 10_000_000,
+      maxAllocatedMemoryMib: 20_480_000,
+    });
   });
 
-  it('rejects a hot running limit above shared-cidr rollback capacity', () => {
+  it('bounds a hot running limit by shared-cidr address capacity, not SNAT entry count', () => {
     const config = {
-      maxRunningSandboxes: 190,
-      warnRunningSandboxes: 150,
+      maxRunningSandboxes: 500,
+      warnRunningSandboxes: 450,
       drainDeadlineMs: 120_000,
       snat: {
         mode: 'shared-cidr',
         maxManagedEntries: 200,
-        sharedCidrs: Array.from({ length: 8 }, (_, index) => `172.16.${index}.0/24`),
+        sharedCidrs: ['172.16.0.0/24', '172.16.1.0/24'],
       },
     } as AcsOrchestratorConfig;
 
-    expect(() => applyRuntimeConfigPatch(config, { maxRunningSandboxes: 191 })).toThrow(
-      /rollback capacity 1\.\.190/,
+    expect(() => applyRuntimeConfigPatch(config, { maxRunningSandboxes: 513 })).toThrow(
+      /address capacity 1\.\.512/,
     );
     expect(() => applyRuntimeConfigPatch(config, { maxRunningSandboxes: 0 })).toThrow(
-      /rollback capacity 1\.\.190/,
+      /address capacity 1\.\.512/,
     );
-    expect(applyRuntimeConfigPatch(config, { maxRunningSandboxes: 190 }).maxRunningSandboxes).toBe(
-      190,
+    expect(applyRuntimeConfigPatch(config, { maxRunningSandboxes: 500 }).maxRunningSandboxes).toBe(
+      500,
     );
   });
 
@@ -304,39 +318,13 @@ describe('ACS runtime config', () => {
     }
   });
 
-  it('uses 24 hours as the default sandbox unused TTL', () => {
+  it('uses 30 minutes as the default sandbox unused TTL', () => {
     const originalEnv = { ...process.env };
     process.env.ACS_ORCH_AUTH_TOKEN = 'orchestrator-token';
     process.env.ACS_SANDBOX_IMAGE = 'registry.example.com/agent-saas/acs-sandbox:test';
     delete process.env.ACS_SANDBOX_TTL_MS;
     try {
-      expect(loadConfigFromEnv().sandboxTtlMs).toBe(2 * 60 * 60_000);
-    } finally {
-      process.env = originalEnv;
-    }
-  });
-
-  it('uses six hours as the default sandbox CI TTL (as-ws-ci-* prefix)', () => {
-    const originalEnv = { ...process.env };
-    process.env.ACS_ORCH_AUTH_TOKEN = 'orchestrator-token';
-    process.env.ACS_SANDBOX_IMAGE = 'registry.example.com/agent-saas/acs-sandbox:test';
-    delete process.env.ACS_SANDBOX_CI_TTL_MS;
-    try {
-      expect(loadConfigFromEnv().sandboxCiTtlMs).toBe(60 * 60_000);
-    } finally {
-      process.env = originalEnv;
-    }
-  });
-
-  it('honors ACS_SANDBOX_CI_TTL_MS override (including 0 to disable)', () => {
-    const originalEnv = { ...process.env };
-    process.env.ACS_ORCH_AUTH_TOKEN = 'orchestrator-token';
-    process.env.ACS_SANDBOX_IMAGE = 'registry.example.com/agent-saas/acs-sandbox:test';
-    try {
-      process.env.ACS_SANDBOX_CI_TTL_MS = '1800000';
-      expect(loadConfigFromEnv().sandboxCiTtlMs).toBe(1_800_000);
-      process.env.ACS_SANDBOX_CI_TTL_MS = '0';
-      expect(loadConfigFromEnv().sandboxCiTtlMs).toBe(0);
+      expect(loadConfigFromEnv().sandboxTtlMs).toBe(30 * 60_000);
     } finally {
       process.env = originalEnv;
     }

@@ -1366,8 +1366,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
 
     const existingRuntime = activeRunsBySession.current.get(sessionId);
-    if (existingRuntime && isActiveRuntimeStatus(existingRuntime.status)
-      && (!existingRuntime.runId || !lastRunState.runId || existingRuntime.runId !== lastRunState.runId)) return;
+    // 详情历史终态不能结束已确认 active；实时 session_status / 关联 resume 负责收口。
+    if (isActiveRuntimeStatus(existingRuntime?.status)) return;
     const requestedRuntimeVersion = runtimeVersionBySessionRef.current.get(sessionId) ?? 0;
     const status = await fetchSessionStreamStatus(sessionId);
     if (!status || requestedRuntimeVersion !== (runtimeVersionBySessionRef.current.get(sessionId) ?? 0)) return;

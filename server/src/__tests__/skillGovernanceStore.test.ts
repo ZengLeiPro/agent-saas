@@ -240,6 +240,47 @@ describe('Governed Skill + Candidate 发布链', () => {
     expect(queries.filter(query => query === 'COMMIT')).toHaveLength(1);
   });
 
+  it('删除后同包重导保留 resourceId 并递增 version，后续内容变更继续创建下一版本', async () => {
+    const { pool, versions } = buildPool();
+    const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
+    const first = await store.createAndPublishResource({
+      skillId: 'restorable-skill', tenantId: 'acme', scope: 'tenant', definition, createdBy: 'org-admin',
+    });
+    const retired = await store.retire('acme', 'restorable-skill', first.resource.revision, 'org-admin');
+    const restored = await store.restoreAndPublishResource({
+      tenantId: 'acme', skillId: 'restorable-skill', scope: 'tenant', expectedRevision: retired.revision,
+      definition, publishedBy: 'org-admin',
+    });
+    expect(restored).toMatchObject({
+      created: true,
+      resource: { skillId: first.resource.skillId, status: 'published' },
+      version: { versionNumber: 2, definition: { restoredFromVersionId: first.version.versionId } },
+    });
+    expect(versions).toHaveLength(2);
+
+    const retiredAgain = await store.retire('acme', 'restorable-skill', restored.resource.revision, 'org-admin');
+    const changed = await store.restoreAndPublishResource({
+      tenantId: 'acme', skillId: 'restorable-skill', scope: 'tenant', expectedRevision: retiredAgain.revision,
+      definition: { ...definition, description: '更新后的销售流程' }, publishedBy: 'org-admin',
+    });
+    expect(changed).toMatchObject({ created: true, resource: { status: 'published' }, version: { versionNumber: 3 } });
+    expect(versions).toHaveLength(3);
+  });
+
+  it('恢复发布严格校验 scope 与 owner，不能接管其他个人资源', async () => {
+    const { pool } = buildPool();
+    const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
+    const first = await store.createAndPublishResource({
+      skillId: 'personal-restorable', tenantId: 'acme', scope: 'personal', ownerUserId: 'user-1',
+      definition, createdBy: 'user-1',
+    });
+    const retired = await store.retire('acme', 'personal-restorable', first.resource.revision, 'user-1');
+    await expect(store.restoreAndPublishResource({
+      tenantId: 'acme', skillId: 'personal-restorable', scope: 'personal', ownerUserId: 'user-2',
+      expectedRevision: retired.revision, definition, publishedBy: 'user-2',
+    })).rejects.toMatchObject({ code: 'SKILL_RESOURCE_NOT_FOUND' });
+  });
+
   it('新摘要算法带标记，历史查询不把它降级为旧摘要', async () => {
     const { pool } = buildPool();
     const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });

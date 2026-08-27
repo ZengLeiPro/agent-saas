@@ -51,17 +51,6 @@ export interface ManagedSandboxInventory extends ManagedSandbox {
 
 export const BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION = 'agent-saas.kaiyan.net/background-shell-protected-until';
 
-/**
- * 07-05：判断 sandbox 名字是否属于 CI 临时 sandbox（不是用户会话 sandbox）。
- * 命名约定：CI workflow 触发的 sandbox 名字都以 `as-ws-ci-` 开头
- * （acs-sandbox.yml build-deploy 里 build/smoke test 起的 sandbox），
- * 用户会话的 sandbox 是 `as-ws-<tenantId>-<userId>-workspace-<hash>` 形态。
- * 见生产 kubectl get sandbox 命名样本。
- */
-export function isCiSandboxName(name: string): boolean {
-  return name.startsWith('as-ws-ci-');
-}
-
 export function labelValue(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 40);
 }

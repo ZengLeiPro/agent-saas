@@ -239,7 +239,7 @@ RUN npm install -g dingtalk-workspace-cli@1.0.55 \
 
 # 飞书官方 CLI（能力中心飞书连接器 + feishu skill）。
 # @larksuite/cli 的 postinstall 会按当前平台下载官方二进制，bin 名为 lark-cli。
-RUN npm install -g @larksuite/cli@1.0.81 \
+RUN npm install -g @larksuite/cli@1.0.90 \
     && lark-cli --version \
     && mkdir -p /tmp/lark-smoke/config /tmp/lark-smoke/data \
     && output="$(LARKSUITE_CLI_CONFIG_DIR=/tmp/lark-smoke/config \

@@ -3,6 +3,7 @@ import { Download, Loader2, Printer } from "lucide-react";
 import { getPreviewFileType, resolveImageSrc } from "@agent/shared";
 
 import { Button } from "@/components/ui/button";
+import { authFetch } from "@/lib/authFetch";
 import { cn } from "@/lib/utils";
 import { publicSessionShareFileUrl } from "@/lib/sessionShareApi";
 
@@ -28,6 +29,16 @@ function triggerBrowserDownload(url: string, fileName: string): void {
   document.body.appendChild(anchor);
   anchor.click();
   document.body.removeChild(anchor);
+}
+
+async function downloadAsBlob(url: string, fileName: string): Promise<void> {
+  const response = await authFetch(url);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+  const objectUrl = URL.createObjectURL(await response.blob());
+  triggerBrowserDownload(objectUrl, fileName);
+  // 同步 revoke 在部分浏览器会取消尚未开始的下载，延后一轮再回收。
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
 }
 
 async function resolveWorkspaceFileUrl(filePath: string, owner?: string): Promise<string> {
@@ -93,7 +104,14 @@ export function FilePreviewActions({
   const handleDownload = async () => {
     setDownloading(true);
     try {
-      triggerBrowserDownload(withForcedDownload(await fileUrl()), fileName);
+      const url = withForcedDownload(await fileUrl());
+      if (previewType === "md") {
+        // 跨域 URL 会让浏览器忽略 <a download>，Markdown 随即覆盖当前页面。
+        // 转为同源 blob URL 后再触发下载，确保预览窗口保持不动。
+        await downloadAsBlob(url, fileName);
+      } else {
+        triggerBrowserDownload(url, fileName);
+      }
     } catch (error) {
       console.error("File download failed:", error);
     } finally {

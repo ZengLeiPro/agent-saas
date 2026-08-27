@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  BRAND_SEGMENTED_TABS_LIST_CLASS,
+  BRAND_SEGMENTED_TAB_TRIGGER_CLASS,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 import { navigateToHref } from "@/lib/urlSync";
 import { TaskBoardView } from "@/components/TaskBoard";
 import { CronScheduleView } from "./CronScheduleView";
@@ -61,10 +68,33 @@ export function CronManager({ onJobCountChange, headerNavigationTarget, headerAc
   };
 
   const navigation = (
-    <Tabs value={view} onValueChange={changeView}>
-      <TabsList className="h-9" aria-label="任务中心二级导航">
-        <TabsTrigger value="schedule">定时任务</TabsTrigger>
-        <TabsTrigger value="board">任务看板</TabsTrigger>
+    <Tabs value={view} onValueChange={changeView} className="min-w-0">
+      <TabsList
+        className={cn(
+          BRAND_SEGMENTED_TABS_LIST_CLASS,
+          "relative grid max-w-xl grid-cols-2",
+          headerNavigationTarget !== undefined && "w-[30rem] max-w-[min(30rem,calc(100vw-24rem))]",
+        )}
+        aria-label="任务中心二级导航"
+      >
+        <span
+          aria-hidden="true"
+          data-task-center-tab-indicator
+          className="pointer-events-none absolute inset-y-1 left-1 w-[calc((100%-0.5rem)/2)] rounded-[7px] bg-background shadow-[0_1px_4px_rgba(15,23,42,0.10)] transition-transform duration-300 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+          style={{ transform: `translateX(${view === "schedule" ? 0 : 100}%)` }}
+        />
+        <TabsTrigger
+          value="schedule"
+          className={cn(BRAND_SEGMENTED_TAB_TRIGGER_CLASS, "relative z-10 px-2 sm:px-3")}
+        >
+          定时任务
+        </TabsTrigger>
+        <TabsTrigger
+          value="board"
+          className={cn(BRAND_SEGMENTED_TAB_TRIGGER_CLASS, "relative z-10 px-2 sm:px-3")}
+        >
+          任务看板
+        </TabsTrigger>
       </TabsList>
     </Tabs>
   );
@@ -72,7 +102,7 @@ export function CronManager({ onJobCountChange, headerNavigationTarget, headerAc
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
       {headerNavigationTarget === undefined ? (
-        <div className="shrink-0 border-b border-border/60 px-4 pt-3 sm:px-6 sm:pt-4">
+        <div className="shrink-0 px-4 pt-4 sm:px-6 sm:pt-6">
           {navigation}
         </div>
       ) : headerNavigationTarget ? createPortal(navigation, headerNavigationTarget) : null}

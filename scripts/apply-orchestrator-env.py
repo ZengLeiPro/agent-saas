@@ -70,7 +70,7 @@ def desired_runtime_values(desired: dict[str, str]) -> dict[str, int]:
         if runtime_key == 'drainDeadlineMs':
             if value < 1_000 or value > 24 * 60 * 60_000:
                 raise ValueError(f'{env_key} 必须在 1000..86400000 之间')
-        elif value < 0 or value > (10_000_000 if 'ALLOCATED' in env_key else 1_000):
+        elif value < 0 or value > (100_000_000 if 'ALLOCATED' in env_key else 10_000):
             raise ValueError(f'{env_key} 超出允许范围')
         values[runtime_key] = value
     maximum = values.get('maxRunningSandboxes')

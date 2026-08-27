@@ -293,9 +293,7 @@ export class SkillConfigStore {
         selectedSkills: [...selected],
         revision: (current.revision ?? 0) + 1,
       };
-      this.data.users[username] = next;
-      this.bumpVersion();
-      await this.persist();
+      await this.persistUserSelection(username, next);
       return { selectedSkills: [...next.selectedSkills], revision: next.revision };
     });
   }
@@ -316,9 +314,7 @@ export class SkillConfigStore {
       if (enabled) selected.add(skillId);
       else selected.delete(skillId);
       const next = { selectedSkills: [...selected], revision: revision + 1 };
-      this.data.users[username] = next;
-      this.bumpVersion();
-      await this.persist();
+      await this.persistUserSelection(username, next);
       return { selectedSkills: [...next.selectedSkills], revision: next.revision };
     });
   }
@@ -326,12 +322,10 @@ export class SkillConfigStore {
   async setUserSelectedSkills(username: string, skills: string[]): Promise<void> {
     await this.serialize(async () => {
       const current = this.data.users[username] ?? { selectedSkills: [] };
-      this.data.users[username] = {
+      await this.persistUserSelection(username, {
         selectedSkills: skills,
         revision: (current.revision ?? 0) + 1,
-      };
-      this.bumpVersion();
-      await this.persist();
+      });
     });
   }
 
@@ -520,8 +514,14 @@ export class SkillConfigStore {
    * @param tenantOwnIdsByTenant 各租户自有 skill 目录的现存 ID；用于：
    *   1. 保留 selectedSkills 中的租户自有 skill（宽松并集：跨租户误保留仅是无害冗余，物化按本租户过滤）
    *   2. 清理 ownSkills 中目录已不存在的规则条目
+   * @param personalSkillIdsByUsername 各用户个人 skill 目录的现存 ID；必须按用户隔离，
+   *   否则启动 prune 会把个人 skill 当成已删除的 pool skill，从 selectedSkills 中移除。
    */
-  pruneStaleSkills(currentPoolIds: Set<string>, tenantOwnIdsByTenant: Record<string, Set<string>> = {}): number {
+  pruneStaleSkills(
+    currentPoolIds: Set<string>,
+    tenantOwnIdsByTenant: Record<string, Set<string>> = {},
+    personalSkillIdsByUsername: Record<string, Set<string>> = {},
+  ): number {
     let pruned = 0;
     const anyOwnIds = new Set<string>();
     for (const ids of Object.values(tenantOwnIdsByTenant)) {
@@ -542,9 +542,12 @@ export class SkillConfigStore {
         }
       }
     }
-    for (const config of Object.values(this.data.users)) {
+    for (const [username, config] of Object.entries(this.data.users)) {
       const before = config.selectedSkills.length;
-      config.selectedSkills = config.selectedSkills.filter(id => currentPoolIds.has(id) || anyOwnIds.has(id));
+      const personalIds = personalSkillIdsByUsername[username] ?? new Set<string>();
+      config.selectedSkills = config.selectedSkills.filter(id => (
+        currentPoolIds.has(id) || anyOwnIds.has(id) || personalIds.has(id)
+      ));
       if (config.selectedSkills.length !== before) config.revision = (config.revision ?? 0) + 1;
       pruned += before - config.selectedSkills.length;
     }
@@ -639,6 +642,21 @@ export class SkillConfigStore {
       exposure,
       usernames: Array.from(new Set((rule?.usernames ?? []).filter(Boolean))).sort(),
     };
+  }
+
+  private async persistUserSelection(username: string, next: UserSkillConfig): Promise<void> {
+    const previous = this.data.users[username];
+    const previousConfigVersion = this.data.configVersion;
+    this.data.users[username] = next;
+    this.bumpVersion();
+    try {
+      await this.persist();
+    } catch (error) {
+      if (previous) this.data.users[username] = previous;
+      else delete this.data.users[username];
+      this.data.configVersion = previousConfigVersion;
+      throw error;
+    }
   }
 
   private async persist(): Promise<void> {

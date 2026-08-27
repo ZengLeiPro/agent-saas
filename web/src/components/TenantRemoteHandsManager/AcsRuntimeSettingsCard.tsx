@@ -26,10 +26,10 @@ function draftMatchesConfig(draft: AcsRuntimeDraft, config: AcsRuntimeConfig): b
 
 function parseLimit(label: string, value: string): number {
   const trimmed = value.trim();
-  if (!/^\d+$/.test(trimmed)) throw new Error(`${label}必须是 0-1000 的整数`);
+  if (!/^\d+$/.test(trimmed)) throw new Error(`${label}必须是 0-10000 的整数`);
   const parsed = Number.parseInt(trimmed, 10);
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 1_000) {
-    throw new Error(`${label}必须是 0-1000 的整数`);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 10_000) {
+    throw new Error(`${label}必须是 0-10000 的整数`);
   }
   return parsed;
 }
@@ -133,7 +133,7 @@ export function AcsRuntimeSettingsCard({ readOnly }: { readOnly: boolean }) {
             <div className="space-y-1.5">
               <Label htmlFor="acs-max-running">最大运行环境数</Label>
               <Input id="acs-max-running" inputMode="numeric" value={maxRunningText} onChange={(event) => { setMaxRunningText(event.target.value); setLocalError(null); }} disabled={readOnly || loading || saving || !baseline} />
-              <p className="text-xs text-muted-foreground">0 表示不限制，最大 1000。</p>
+              <p className="text-xs text-muted-foreground">0 表示不限制，最大 10000。</p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="acs-warn-running">运行环境告警阈值</Label>

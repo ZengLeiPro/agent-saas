@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SettingsDirtyBoundary } from "@/components/PersonalSettings/dirtyRegistry";
@@ -105,19 +105,46 @@ describe("SystemSettingsPanel", () => {
     expect(mocks.updateSchedulerRuntimeConfig).not.toHaveBeenCalled();
   });
 
-  it("dirty guard 保存失败时继续阻止导航并保留草稿", async () => {
-    mocks.updateSchedulerRuntimeConfig.mockRejectedValueOnce(new Error("调度配置保存失败"));
-    const onNavigate = vi.fn();
-    renderGuardedPanel(onNavigate);
+  it("浏览器后退时保存调度草稿后才继续历史导航", async () => {
+    window.history.replaceState({ page: "source" }, "", "/settings/platform/system/source");
+    window.history.pushState({ __personalSettingsV2: { source: "/settings/platform/system/source", depth: 1 } }, "", "/settings/platform/system");
+    const onPopstate = vi.fn();
+    window.addEventListener("popstate", onPopstate);
+    renderGuardedPanel(vi.fn());
 
     const input = await screen.findByLabelText("期望并发");
     fireEvent.change(input, { target: { value: "20" } });
-    fireEvent.click(screen.getByRole("button", { name: "离开设置" }));
+    act(() => window.history.back());
+
+    expect(await screen.findByText("有未保存的更改")).toBeTruthy();
+    expect(window.location.pathname).toBe("/settings/platform/system");
+    expect(onPopstate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "保存并继续" }));
+
+    await waitFor(() => expect(window.location.pathname).toBe("/settings/platform/system/source"));
+    expect(mocks.updateSchedulerRuntimeConfig).toHaveBeenCalledWith(20);
+    expect(onPopstate).toHaveBeenCalledTimes(1);
+    window.removeEventListener("popstate", onPopstate);
+  });
+
+  it("浏览器后退时保存失败继续停留并保留调度草稿", async () => {
+    window.history.replaceState({ page: "source" }, "", "/settings/platform/system/source");
+    window.history.pushState({ __personalSettingsV2: { source: "/settings/platform/system/source", depth: 1 } }, "", "/settings/platform/system");
+    mocks.updateSchedulerRuntimeConfig.mockRejectedValueOnce(new Error("调度配置保存失败"));
+    const onPopstate = vi.fn();
+    window.addEventListener("popstate", onPopstate);
+    renderGuardedPanel(vi.fn());
+
+    const input = await screen.findByLabelText("期望并发");
+    fireEvent.change(input, { target: { value: "20" } });
+    act(() => window.history.back());
     fireEvent.click(await screen.findByRole("button", { name: "保存并继续" }));
 
     expect(await screen.findByText("调度配置保存失败")).toBeTruthy();
-    expect(onNavigate).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/settings/platform/system");
+    expect(onPopstate).not.toHaveBeenCalled();
     expect((input as HTMLInputElement).value).toBe("20");
+    window.removeEventListener("popstate", onPopstate);
   });
 
   it("调度刷新在途时禁用输入，响应后再采用服务端值", async () => {

@@ -10,6 +10,8 @@ import {
 } from "react";
 
 import { Button } from "@/components/ui/button";
+import { ensureAppHistoryIndex, readAppHistoryIndex } from "@/lib/appHistory";
+import { readPersonalSettingsHistoryState } from "@/lib/urlSync";
 import {
   Dialog,
   DialogContent,
@@ -45,6 +47,11 @@ const DirtyRegistryContext = createContext<DirtyRegistryContextValue | null>(nul
 
 function draftKey(id: string): string {
   return `${DRAFT_PREFIX}${id}`;
+}
+
+function historyIndex(): number | null {
+  const index = (window as Window & { navigation?: { currentEntry?: { index?: number } } }).navigation?.currentEntry?.index;
+  return typeof index === "number" ? index : null;
 }
 
 const SENSITIVE_DRAFT_KEYS = new Set([
@@ -118,6 +125,15 @@ export function SettingsDirtyBoundary({
   children: (controller: SettingsDirtyController) => ReactNode;
 }) {
   const entriesRef = useRef(new Map<string, SettingsDirtyEntry>());
+  const acceptedHistoryRef = useRef(typeof window === "undefined"
+    ? { href: "/", state: null, appIndex: null, browserIndex: null }
+    : {
+      href: `${window.location.pathname}${window.location.search}${window.location.hash}`,
+      state: window.history.state,
+      appIndex: readAppHistoryIndex(),
+      browserIndex: historyIndex(),
+    });
+  const historyTraversalRef = useRef<{ phase: "restore" | "resume"; step: number } | null>(null);
   const [version, setVersion] = useState(0);
   const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null);
   const [saving, setSaving] = useState(false);
@@ -157,6 +173,72 @@ export function SettingsDirtyBoundary({
     }
     setPendingNavigation(() => navigation);
   }, []);
+
+  useEffect(() => {
+    ensureAppHistoryIndex();
+    acceptedHistoryRef.current = {
+      href: `${window.location.pathname}${window.location.search}${window.location.hash}`,
+      state: window.history.state,
+      appIndex: readAppHistoryIndex(),
+      browserIndex: historyIndex(),
+    };
+  });
+
+  useEffect(() => {
+    // popstate 触发时 URL 已移动：先按 settings depth 原路返回当前页再弹框，继续时重放原步数。
+    const guardHistoryNavigation = (event: PopStateEvent) => {
+      const target = {
+        href: `${window.location.pathname}${window.location.search}${window.location.hash}`,
+        state: event.state,
+        appIndex: readAppHistoryIndex(event.state),
+        browserIndex: historyIndex(),
+      };
+      const traversal = historyTraversalRef.current;
+      if (traversal?.phase === "restore") {
+        event.stopImmediatePropagation();
+        acceptedHistoryRef.current = target;
+        historyTraversalRef.current = null;
+        requestNavigation(() => {
+          historyTraversalRef.current = { phase: "resume", step: traversal.step };
+          window.history.go(traversal.step);
+        });
+        return;
+      }
+      if (traversal?.phase === "resume") {
+        historyTraversalRef.current = null;
+        acceptedHistoryRef.current = target;
+        return;
+      }
+      if (event.isTrusted === false || ![...entriesRef.current.values()].some((entry) => entry.dirty)) {
+        acceptedHistoryRef.current = target;
+        return;
+      }
+      event.stopImmediatePropagation();
+      const currentDepth = readPersonalSettingsHistoryState(acceptedHistoryRef.current.state)?.depth ?? 0;
+      const targetDepth = readPersonalSettingsHistoryState(event.state)?.depth ?? 0;
+      const appStep = target.appIndex !== null && acceptedHistoryRef.current.appIndex !== null
+        ? target.appIndex - acceptedHistoryRef.current.appIndex
+        : 0;
+      const browserStep = target.browserIndex !== null && acceptedHistoryRef.current.browserIndex !== null
+        ? target.browserIndex - acceptedHistoryRef.current.browserIndex
+        : 0;
+      const step = appStep || browserStep || targetDepth - currentDepth;
+      if (!step) {
+        // 旧版本留下的无索引 entry 无法判断方向；优先保住草稿，确认后在当前 entry 应用目标。
+        const accepted = acceptedHistoryRef.current;
+        window.history.replaceState(accepted.state, "", accepted.href);
+        requestNavigation(() => {
+          window.history.replaceState(target.state, "", target.href);
+          window.dispatchEvent(new PopStateEvent("popstate", { state: target.state }));
+        });
+        return;
+      }
+      historyTraversalRef.current = { phase: "restore", step };
+      window.history.go(-step);
+    };
+    window.addEventListener("popstate", guardHistoryNavigation, true);
+    return () => window.removeEventListener("popstate", guardHistoryNavigation, true);
+  }, [requestNavigation]);
 
   const continueNavigation = useCallback(() => {
     const navigation = pendingNavigation;

@@ -10,7 +10,7 @@ import {
   Save,
   X,
 } from "lucide-react";
-import { authFetch } from "@/lib/authFetch";
+import { authFetch } from "@/lib/authFetch"; import { replaceAppHistoryUrl } from "@/lib/appHistory";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -608,7 +608,7 @@ export function PlatformBillingManager() {
     const params = new URLSearchParams();
     params.set("tab", activeTab);
     const next = `#${params.toString()}`;
-    if (window.location.hash !== next) window.history.replaceState(null, "", next);
+    if (window.location.hash !== next) replaceAppHistoryUrl(next);
   }, [activeTab]);
   useEffect(() => {
     if (!canReadFinance && ["usage-events", "pricing-versions", "audit"].includes(activeTab)) {

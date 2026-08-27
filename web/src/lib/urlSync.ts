@@ -9,6 +9,7 @@ import {
   parseGovernanceUrl,
   type GovernanceRouteState,
 } from '@/lib/governanceNavigation';
+import { pushAppHistoryState, replaceAppHistoryState } from '@/lib/appHistory';
 import { maybeNavigateWithUpdate } from '@/lib/swUpdate';
 import {
   getSettingsSection,
@@ -478,7 +479,7 @@ export function closePersonalSettingsHistory(fallbackUrl: string): 'back' | 'rep
     window.history.go(-current.depth);
     return 'back';
   }
-  window.history.replaceState({}, '', fallbackUrl);
+  replaceAppHistoryState({}, fallbackUrl);
   return 'replace';
 }
 
@@ -486,14 +487,14 @@ export function pushSettingsRoute(route: GovernanceRouteState, navigation?: Pers
   const next = buildGovernanceUrl(route);
   if (`${window.location.pathname}${window.location.search}` !== next) {
     if (maybeNavigateWithUpdate(next)) return;
-    window.history.pushState(settingsHistoryState(navigation), '', next);
+    pushAppHistoryState(settingsHistoryState(navigation), next);
   }
 }
 
 export function replaceSettingsRoute(route: GovernanceRouteState, navigation?: PersonalSettingsHistoryState): void {
   const next = buildGovernanceUrl(route);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    window.history.replaceState(settingsHistoryState(navigation), '', next);
+    replaceAppHistoryState(settingsHistoryState(navigation), next);
   }
 }
 
@@ -504,7 +505,7 @@ export function pushUrl(tab: AppTab, sessionId: string | null): void {
     // update-on-navigation：有 pending SW 更新且无守门条件时，
     // 本次跳转改为整页导航直达新版本（swUpdate.ts）
     if (maybeNavigateWithUpdate(next)) return;
-    window.history.pushState({}, '', next);
+    pushAppHistoryState({}, next);
   }
 }
 
@@ -512,7 +513,7 @@ export function pushUrl(tab: AppTab, sessionId: string | null): void {
 export function replaceUrl(tab: AppTab, sessionId: string | null): void {
   const next = buildUrl(tab, sessionId);
   if (window.location.pathname !== next) {
-    window.history.replaceState({}, '', next);
+    replaceAppHistoryState({}, next);
   }
 }
 
@@ -521,14 +522,14 @@ export function pushPlatformAdminUrl(state: { section?: PlatformAdminSection | n
   if (`${window.location.pathname}${window.location.search}` !== next) {
     const historyState = analysisHistoryStateForNavigation('push', next);
     if (!readAnalysisHistoryState(historyState) && maybeNavigateWithUpdate(next)) return;
-    window.history.pushState(historyState, '', next);
+    pushAppHistoryState(historyState, next);
   }
 }
 
 export function replacePlatformAdminUrl(state: { section?: PlatformAdminSection | null; entityId?: string | null; search?: string | URLSearchParams | Record<string, string | number | boolean | null | undefined> } = {}): void {
   const next = buildPlatformAdminUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    window.history.replaceState(analysisHistoryStateForNavigation('replace', next), '', next);
+    replaceAppHistoryState(analysisHistoryStateForNavigation('replace', next), next);
   }
 }
 
@@ -559,7 +560,7 @@ export function pushAdminSettingsUrl(
   const next = scopedAdminSettingsUrl(target, section);
   if (`${window.location.pathname}${window.location.search}` !== next) {
     if (maybeNavigateWithUpdate(next)) return;
-    window.history.pushState(settingsHistoryState(navigation), '', next);
+    pushAppHistoryState(settingsHistoryState(navigation), next);
   }
 }
 
@@ -570,7 +571,7 @@ export function replaceAdminSettingsUrl(
 ): void {
   const next = scopedAdminSettingsUrl(target, section);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    window.history.replaceState(settingsHistoryState(navigation), '', next);
+    replaceAppHistoryState(settingsHistoryState(navigation), next);
   }
 }
 
@@ -579,14 +580,14 @@ export function pushTenantAdminUrl(state: { section?: TenantAdminSection | null;
   if (`${window.location.pathname}${window.location.search}` !== next) {
     const historyState = analysisHistoryStateForNavigation('push', next);
     if (!readAnalysisHistoryState(historyState) && maybeNavigateWithUpdate(next)) return;
-    window.history.pushState(historyState, '', next);
+    pushAppHistoryState(historyState, next);
   }
 }
 
 export function replaceTenantAdminUrl(state: { section?: TenantAdminSection | null; search?: string | URLSearchParams | Record<string, string | number | boolean | null | undefined> } = {}): void {
   const next = buildTenantAdminUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    window.history.replaceState(analysisHistoryStateForNavigation('replace', next), '', next);
+    replaceAppHistoryState(analysisHistoryStateForNavigation('replace', next), next);
   }
 }
 
@@ -599,14 +600,14 @@ export function replaceTenantAdminUrl(state: { section?: TenantAdminSection | nu
 export function pushGovernanceUrl(state: GovernanceRouteState): void {
   const next = buildGovernanceUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    window.history.pushState(analysisHistoryStateForNavigation('push', next), '', next);
+    pushAppHistoryState(analysisHistoryStateForNavigation('push', next), next);
   }
 }
 
 export function replaceGovernanceUrl(state: GovernanceRouteState): void {
   const next = buildGovernanceUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    window.history.replaceState(analysisHistoryStateForNavigation('replace', next), '', next);
+    replaceAppHistoryState(analysisHistoryStateForNavigation('replace', next), next);
   }
 }
 
@@ -669,7 +670,7 @@ export function navigateToHref(href: string): void {
   if (`${window.location.pathname}${window.location.search}` !== href) {
     const historyState = analysisHistoryStateForNavigation('push', href);
     if (!readAnalysisHistoryState(historyState) && maybeNavigateWithUpdate(href)) return;
-    window.history.pushState(historyState, '', href);
+    pushAppHistoryState(historyState, href);
   }
   notifyRouteChange();
 }

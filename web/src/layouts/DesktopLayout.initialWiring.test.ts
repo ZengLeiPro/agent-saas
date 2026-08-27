@@ -26,10 +26,11 @@ describe("DesktopLayout 初始会话接线", () => {
   });
 
   it("个人、组织与平台设置共享 dirty boundary，并回传组织 Shell 实际目标", () => {
-    expect(source).toContain("{settingsMode && <SettingsDirtyBoundary>{(dirtyController) => (");
+    expect(source).toContain('const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry")');
+    expect(source).toContain("{settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary>{(dirtyController) => (");
     expect(source).toContain("onNavigationControllerChange={handleSettingsControllerChange} dirtyController={dirtyController}");
     expect(source).toContain("isPlatformAdmin, organizationSettingsTargetId");
     expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId}");
-    expect(source).toContain(")}</SettingsDirtyBoundary>}");
+    expect(source).toContain(")}</SettingsDirtyBoundary></Suspense>}");
   });
 });

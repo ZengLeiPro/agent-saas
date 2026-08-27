@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/swUpdate", () => ({ maybeNavigateWithUpdate: () => false }));
 
+import { readAppHistoryIndex } from "./appHistory";
 import {
   buildSettingsUrl,
   closePersonalSettingsHistory,
@@ -52,8 +53,10 @@ describe("V2 个人设置路由与来源返回", () => {
 
   it("页内深链累计来源深度，关闭一次退回来源；直达刷新用 replace", () => {
     pushSettingsUrl("account-security", { source: "/chat/source", depth: 1 });
+    expect(readAppHistoryIndex()).toBe(1);
     navigateSettingsRoute(governanceRoute("settings.personal.my-agent", { tab: "memory" }));
     expect(readPersonalSettingsHistoryState()).toEqual({ source: "/chat/source", depth: 2 });
+    expect(readAppHistoryIndex()).toBe(2);
     expect(window.location.href).toContain("/settings/my-agent?tab=memory");
 
     const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
@@ -63,7 +66,7 @@ describe("V2 个人设置路由与来源返回", () => {
     window.history.replaceState({}, "", "/settings/connections");
     const replace = vi.spyOn(window.history, "replaceState");
     expect(closePersonalSettingsHistory("/chat/source")).toBe("replace");
-    expect(replace).toHaveBeenLastCalledWith({}, "", "/chat/source");
+    expect(replace).toHaveBeenLastCalledWith(expect.objectContaining({ __appHistoryIndex: 0 }), "", "/chat/source");
   });
 
   it("直达设置深链后首次切页会先把当前历史位替换为产品来源", () => {
@@ -80,7 +83,7 @@ describe("V2 个人设置路由与来源返回", () => {
 
     act(() => result.current.setSettingsSection("files-storage"));
 
-    expect(replace).toHaveBeenCalledWith({}, "", "/chat/source");
+    expect(replace).toHaveBeenCalledWith(expect.objectContaining({ __appHistoryIndex: 0 }), "", "/chat/source");
     expect(window.location.pathname).toBe("/settings/files-storage");
     expect(readPersonalSettingsHistoryState()).toEqual({ source: "/chat/source", depth: 1 });
   });

@@ -306,7 +306,6 @@ gh secret set '<SECRET_NAME>' \
 - `STAGING_RELEASE_OSS_URI`
 - `RELEASE_EVIDENCE_URL`
 - `STAGING_ISOLATION_EVIDENCE_URL`
-- `STAGING_E2E_INTEGRATION_TASK_ID`
 - `STAGING_SSH_HOST_KEY_SHA256`
 
 格式要求：
@@ -314,8 +313,11 @@ gh secret set '<SECRET_NAME>' \
 - `STAGING_RELEASE_OSS_URI`：`oss://<真实 bucket>/<可选真实前缀>`。
 - `RELEASE_EVIDENCE_URL`：完整 HTTPS URL，端点为 `/release-evidence`，不附带查询参数。
 - `STAGING_ISOLATION_EVIDENCE_URL`：完整 HTTPS URL，端点为 `/staging-isolation`，不附带查询参数。
-- `STAGING_E2E_INTEGRATION_TASK_ID`：真实 Staging 集成任务 ID。
 - `STAGING_SSH_HOST_KEY_SHA256`：可信来源核验的 ED25519 指纹，格式为 `SHA256:...`。
+
+`STAGING_E2E_INTEGRATION_TASK_ID` 无需配置。Workflow 会在首个不可变 RC 启动并完成数据库迁移后，
+创建一个 `canceled` 的 Staging 隔离 fixture，事务性读回后仅写入当前 job 环境。它只用于验证
+Taskboard 迁移、租户归属和鉴权读取，不表示发生过真实合并。
 
 写入形式：
 

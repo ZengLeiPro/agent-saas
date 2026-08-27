@@ -43,6 +43,9 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   assert.match(workflow, /environment: staging/u);
   assert.match(workflow, /STAGING_WEB_URL: https:\/\/staging-agent\.kaiyan\.net/u);
   assert.match(workflow, /STAGING_API_URL: https:\/\/staging-agent-api\.kaiyan\.net/u);
+  assert.doesNotMatch(workflow, /vars\.STAGING_E2E_INTEGRATION_TASK_ID/u);
+  assert.match(workflow, /ensure-integration-fixture\.mjs/u);
+  assert.match(workflow, /STAGING_E2E_INTEGRATION_TASK_ID=\$integration_task_id/u);
   assert.match(workflow, /infra\/staging\/resource-plan\.json/u);
   assert.match(workflow, /plan\.firstDeploymentReadiness !== 'ready'/u);
   assert.match(workflow, /blockers\.length > 0/u);
@@ -53,6 +56,12 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   assert.match(workflow, /manifest-digest: \$MANIFEST_DIGEST/u);
   assert.match(workflow, /publish-release-record\.mjs/u);
   assert.doesNotMatch(workflow, /--clobber/u);
+  const deployIndex = workflow.indexOf('Deploy exact Staging API, Worker and ACS artifacts');
+  const migrationIndex = workflow.indexOf(
+    'Verify migrations and create isolated Integration fixture',
+  );
+  const e2eIndex = workflow.indexOf('Run real browser and ACS E2E');
+  assert.ok(deployIndex > 0 && deployIndex < migrationIndex && migrationIndex < e2eIndex);
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
 });
 
@@ -83,9 +92,10 @@ test('resource plan records provisioned resources while first deployment remains
   assert.ok(!plan.blockingConditions.includes('staging-acs-runtime-not-applied'));
   assert.ok(!plan.blockingConditions.includes('release-evidence-service-not-deployed'));
   assert.ok(!plan.blockingConditions.includes('staging-e2e-test-identity-not-created'));
-  assert.ok(plan.blockingConditions.includes('staging-database-migrations-not-applied'));
-  assert.ok(plan.blockingConditions.includes('staging-e2e-integration-task-not-created'));
+  assert.ok(!plan.blockingConditions.includes('staging-database-migrations-not-applied'));
+  assert.ok(!plan.blockingConditions.includes('staging-e2e-integration-task-not-created'));
   assert.ok(plan.blockingConditions.includes('github-environments-not-configured'));
+  assert.equal(plan.blockingConditions.length, 1);
   assert.notEqual(plan.resources.acs.namespace, 'agent-saas-coding');
   assert.equal(plan.resources.acs.status, 'applied');
   assert.equal(plan.resources.acs.clusterId, 'c819935b09a7d4a2a844561ef22a17448');
@@ -95,6 +105,7 @@ test('resource plan records provisioned resources while first deployment remains
   assert.equal(plan.resources.releaseEvidence.status, 'active-authenticated-and-readback-verified');
   assert.equal(plan.resources.egressProxy.listen, '127.0.0.1:3128');
   assert.equal(plan.resources.e2eIdentity.status, 'created-password-hash-verified');
+  assert.equal(plan.resources.e2eIdentity.integrationFixture.state, 'canceled');
   assert.equal(plan.defaults.cronEnabled, false);
   assert.equal(plan.defaults.productionOAuthEnabled, false);
   assert.ok(!JSON.stringify(plan).includes('UNASSIGNED'));

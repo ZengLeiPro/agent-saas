@@ -5,11 +5,7 @@
   "status": "provisioned",
   "verificationStatus": "pending",
   "firstDeploymentReadiness": "blocked",
-  "blockingConditions": [
-    "staging-database-migrations-not-applied",
-    "staging-e2e-integration-task-not-created",
-    "github-environments-not-configured"
-  ],
+  "blockingConditions": ["github-environments-not-configured"],
   "resources": {
     "web": {
       "bucket": "agent-saas-web-staging",
@@ -38,7 +34,7 @@
       "database": "agent_saas_staging",
       "role": "agent_saas_staging",
       "networkReadback": "reachable-from-staging-ecs",
-      "migrationStatus": "pending-first-immutable-release"
+      "migrationStatus": "automated-post-api-start-with-table-readback"
     },
     "nas": {
       "fileSystemId": "020ksw7nv1wjde1xy9c",
@@ -101,7 +97,13 @@
     "e2eIdentity": {
       "username": "staging-e2e-admin",
       "scope": "staging-only-platform-admin",
-      "status": "created-password-hash-verified"
+      "status": "created-password-hash-verified",
+      "integrationFixture": {
+        "status": "pending-first-immutable-release",
+        "creationGate": "post-migration-transactional-readback",
+        "state": "canceled",
+        "evidenceScope": "storage-and-authenticated-readback-only"
+      }
     }
   },
   "defaults": {

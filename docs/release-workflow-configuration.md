@@ -14,9 +14,13 @@ Secrets：`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`STAGING_ECS_HOS
 trace 核对工具调用/结果和 ACS 执行目标，并在前后精确清理该账号拥有的 Sandbox。不得复用真人账号。
 
 Variables：`STAGING_RELEASE_OSS_URI`、`RELEASE_EVIDENCE_URL`、
-`STAGING_ISOLATION_EVIDENCE_URL`、`STAGING_E2E_INTEGRATION_TASK_ID`、
-`STAGING_SSH_HOST_KEY_SHA256`。其余非敏感域名、OSS bucket 和 ACR repository identity 固定在
+`STAGING_ISOLATION_EVIDENCE_URL`、`STAGING_SSH_HOST_KEY_SHA256`。其余非敏感域名、OSS bucket 和 ACR repository identity 固定在
 Workflow 中，修改时必须走 PR 并通过 `Build & Check` 与 `ACS Impact Gate`。
+
+`STAGING_E2E_INTEGRATION_TASK_ID` 不再由管理员预先填写。首次不可变 RC 启动 API 并完成数据库
+迁移后，Workflow 在 Staging 数据库内事务性创建一个固定为 `canceled` 的隔离 fixture，权威读回
+Taskboard 表、owner、source 和状态后才把 task ID 写入当前 job 环境。该 fixture 只证明迁移后的
+真实存储与鉴权读取，不代表真实代码合并成功，也不能作为生产业务验收证据。
 
 `RELEASE_EVIDENCE_URL` 指向仓库已实现的 `evidence-service.mjs` 的
 `/release-evidence` 端点。返回记录必须通过 `release-evidence-schema.mjs` 的版本化完整 Schema，

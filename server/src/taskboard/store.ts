@@ -38,7 +38,8 @@ import { clearBoardCiPolicyForRepositoryChange, normalizeIntegrationPolicyCiFall
 import { discoverBoardCiPolicy } from './ciPolicyDiscovery.js';
 import { deleteStoredTask, rollbackStoredTask } from './storeTaskDelete.js';
 import { completeStoredTask } from './manualTaskCompletion.js';
-import { describeTaskUpdate, resolveTaskKindMutation } from './storeTaskPromotion.js';
+import { describeTaskUpdate, resolveTaskKindMutation, TASK_PROMOTION_WORKFLOW_ASSIGNMENTS } from './storeTaskPromotion.js';
+import { assertManualTaskMoveAllowed, isManualTaskRequeue, manualTaskRequeueResetSql, taskMoveChangeType } from './storeTaskRequeue.js';
 import {
   allowedActionsForRole,
   appendModelAssignments,
@@ -584,7 +585,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         params.push(input.description);
         assignments.push(`description=$${params.length}`);
       }
-      if (kindMutation.promoting) assignments.push("kind='delivery'", "status='todo'", 'completed_at=NULL', 'resume_context=NULL');
+      if (kindMutation.promoting) assignments.push(...TASK_PROMOTION_WORKFLOW_ASSIGNMENTS);
       if (input.branch !== undefined) {
         params.push(optionalText(input.branch));
         assignments.push(`branch=$${params.length}`);
@@ -630,20 +631,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       assertBoardRole(loaded.boardRole, input.status === loaded.task.status ? 'editor' : 'maintainer');
       assertExpectedVersion(loaded.task, input.expectedVersion);
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
+      const manuallyRequeued = isManualTaskRequeue(loaded.task, input.status);
       if (input.status !== loaded.task.status) {
-        if (loaded.task.kind === 'integration') {
-          throw new TaskboardValidationError(
-            'Integration state transitions are controlled by the integration workflow',
-            'TASKBOARD_PROTECTED_TRANSITION',
-          );
-        }
-        if (['in_progress', 'in_review', 'ready_to_merge', 'blocked', 'done'].includes(input.status)
-          || ['in_progress', 'in_review', 'ready_to_merge', 'blocked', 'done'].includes(loaded.task.status)) {
-          throw new TaskboardValidationError(
-            'This state transition requires a workflow command',
-            'TASKBOARD_PROTECTED_TRANSITION',
-          );
-        }
+        assertManualTaskMoveAllowed(loaded.task, input.status);
         await assertTaskHasNoActiveRuns(this, client, taskId);
       }
       if (input.previousTaskId === taskId || input.nextTaskId === taskId) {
@@ -692,7 +682,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
                   WHEN $4='done' AND t.status<>'done' THEN now()
                   WHEN $4='done' THEN t.completed_at
                   ELSE NULL
-                END,
+                END${manualTaskRequeueResetSql(manuallyRequeued)},
                 version=t.version+1,
                 updated_at=now()
            FROM ${this.boardsTable} b
@@ -701,7 +691,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         [taskId, identity.tenantId, identity.ownerUserId, input.status, sortOrder],
       );
       await appendTaskChange(this, client, taskId,
-        input.status === loaded.task.status ? 'task.reordered' : 'task.transitioned',
+        taskMoveChangeType(input.status === loaded.task.status, manuallyRequeued),
         'user', identity.ownerUserId, { from: loaded.task.status, to: input.status });
       return this.requireTask(client, identity, taskId, false);
     });

@@ -356,7 +356,7 @@ async function loadUnstartedIntegrationTasks(
                 ))
             OR (t.kind='delivery' AND t.status='in_review'
                 AND t.provider_pull_request_id IS NOT NULL)
-            OR (t.kind='delivery' AND t.status='todo'
+            OR (t.kind='delivery' AND t.status='todo' AND t.next_action='work'
                 AND (
                   (EXISTS (
                     SELECT 1 FROM ${host.executionsTable} retry_execution

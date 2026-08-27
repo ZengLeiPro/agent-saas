@@ -299,7 +299,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
       }
       return;
     }
-    if (status !== moved.status && (!canTransitionTask || !canUserTransitionTask(moved.kind, moved.status, status))) {
+    if (status !== moved.status && (!canTransitionTask || !canUserTransitionTask(moved, moved.status, status))) {
       setNotice("该任务状态由工作流推进，当前不能通过拖拽变更。");
       return;
     }

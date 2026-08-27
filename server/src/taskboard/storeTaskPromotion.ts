@@ -4,6 +4,11 @@ import type {
 } from '../../../shared/src/types/taskboard.js';
 import { TaskboardValidationError } from './types.js';
 
+export const TASK_PROMOTION_WORKFLOW_ASSIGNMENTS = [
+  "kind='delivery'", "status='todo'", 'completed_at=NULL', 'resume_context=NULL',
+  "next_action='none'", 'workflow_epoch=workflow_epoch+1', 'next_action_revision=next_action_revision+1',
+];
+
 export function resolveTaskKindMutation(
   task: TaskBoardTask,
   kind: TaskBoardTaskPatchInput['kind'],

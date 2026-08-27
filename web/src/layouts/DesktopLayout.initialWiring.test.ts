@@ -20,4 +20,8 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(source).toContain('if (!analysisMode && activeTab === "platform-admin"');
     expect(source).toContain('if (!analysisMode && activeTab === "tenant-admin"');
   });
+
+  it("能力中心与任务中心使用同一 Header 高度和水平位置", () => {
+    expect(source).toContain('activeTab === "capabilities" || activeTab === "cron" ? "h-14 px-6"');
+  });
 });

@@ -468,7 +468,7 @@ export function DesktopLayout(props: LayoutProps) {
         <header
           className={cn(
             "flex shrink-0 items-center gap-3",
-            activeTab === "capabilities" ? "h-14 px-6" : "h-12 px-4",
+            activeTab === "capabilities" || activeTab === "cron" ? "h-14 px-6" : "h-12 px-4",
             contentPanelFloating ? "bg-card" : "bg-background",
             capabilityReplayActive && "hidden",
           )}

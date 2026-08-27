@@ -85,7 +85,13 @@ export function GovernanceCapabilityNotice({
   );
 }
 
-export function OrganizationScopeBanner({ route }: { route: GovernanceRouteState }) {
+export function OrganizationScopeBanner({
+  route,
+  dirtyController,
+}: {
+  route: GovernanceRouteState;
+  dirtyController?: SettingsDirtyController;
+}) {
   const { user, isPlatformAdmin } = useAuth();
   const { tenants } = useTenants();
   const organizations = useMemo(() => filterCustomerOrganizations(tenants), [tenants]);
@@ -111,7 +117,9 @@ export function OrganizationScopeBanner({ route }: { route: GovernanceRouteState
         placeholder="请选择目标组织"
         onValueChange={(nextId) => {
           if (!nextId || nextId === currentId) return;
-          navigateToHref(buildOrganizationSwitchUrl(route, nextId));
+          const switchOrganization = () => navigateToHref(buildOrganizationSwitchUrl(route, nextId));
+          if (dirtyController) dirtyController.requestNavigation(switchOrganization);
+          else switchOrganization();
         }}
       />
     </div>
@@ -189,7 +197,7 @@ export function GovernanceConsole({
           <Badge variant="secondary" className="ml-auto shrink-0">{title}</Badge>
         </header>
 
-        {area === "organization" && <OrganizationScopeBanner route={route} />}
+        {area === "organization" && <OrganizationScopeBanner route={route} dirtyController={dirtyController} />}
 
         <nav className="flex shrink-0 gap-1 overflow-x-auto border-b bg-background px-3 py-2 md:px-5" aria-label={`${workspace.label}本地导航`}>
           {workspace.routes.filter((definition) => definition.navigation !== "detail").map((definition) => {

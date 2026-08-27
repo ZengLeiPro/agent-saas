@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SettingsDirtyBoundary } from "@/components/PersonalSettings/dirtyRegistry";
@@ -28,6 +29,16 @@ function renderGuardedPanel(onNavigate: () => void) {
       )}
     </SettingsDirtyBoundary>,
   );
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 const scheduler = {
@@ -159,5 +170,59 @@ describe("SystemSettingsPanel", () => {
 
     await waitFor(() => expect((input as HTMLInputElement).value).toBe("18"));
     expect((input as HTMLInputElement).disabled).toBe(false);
+  });
+
+  it("StrictMode 双初始 GET 的迟到旧响应不会覆盖已编辑草稿", async () => {
+    const first = deferred<{ runtimeScheduler: typeof scheduler }>();
+    const second = deferred<{ runtimeScheduler: typeof scheduler }>();
+    mocks.schedulerRuntimeConfig.mockReset()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    render(<StrictMode><SystemSettingsPanel /></StrictMode>);
+    await waitFor(() => expect(mocks.schedulerRuntimeConfig).toHaveBeenCalledTimes(2));
+
+    act(() => second.resolve({ runtimeScheduler: { ...scheduler, maxConcurrentRuns: 18, effectiveMaxConcurrentRuns: 18 } }));
+    const input = await screen.findByLabelText("期望并发");
+    await waitFor(() => expect((input as HTMLInputElement).value).toBe("18"));
+    fireEvent.change(input, { target: { value: "20" } });
+    await act(async () => {
+      first.resolve({ runtimeScheduler: { ...scheduler, maxConcurrentRuns: 12, effectiveMaxConcurrentRuns: 12 } });
+      await first.promise;
+      await Promise.resolve();
+    });
+
+    expect((input as HTMLInputElement).value).toBe("20");
+  });
+
+  it("保存使 StrictMode 迟到初始 GET 失效且 PATCH 结果保持权威", async () => {
+    const first = deferred<{ runtimeScheduler: typeof scheduler }>();
+    const second = deferred<{ runtimeScheduler: typeof scheduler }>();
+    const patch = deferred<{ runtimeScheduler: typeof scheduler }>();
+    mocks.schedulerRuntimeConfig.mockReset()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    mocks.updateSchedulerRuntimeConfig.mockReset().mockImplementationOnce(() => patch.promise);
+    render(<StrictMode><SystemSettingsPanel /></StrictMode>);
+    await waitFor(() => expect(mocks.schedulerRuntimeConfig).toHaveBeenCalledTimes(2));
+    act(() => second.resolve({ runtimeScheduler: scheduler }));
+
+    const input = await screen.findByLabelText("期望并发");
+    fireEvent.change(input, { target: { value: "20" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存并热生效" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "保存并热生效" }));
+    await waitFor(() => expect(mocks.updateSchedulerRuntimeConfig).toHaveBeenCalledWith(20));
+
+    await act(async () => {
+      patch.resolve({ runtimeScheduler: { ...scheduler, maxConcurrentRuns: 20, effectiveMaxConcurrentRuns: 20 } });
+      await patch.promise;
+    });
+    expect(await screen.findByText("顶层任务并发已调整为 20")).toBeTruthy();
+
+    await act(async () => {
+      first.resolve({ runtimeScheduler: { ...scheduler, maxConcurrentRuns: 12, effectiveMaxConcurrentRuns: 12 } });
+      await first.promise;
+      await Promise.resolve();
+    });
+    expect((input as HTMLInputElement).value).toBe("20");
   });
 });

@@ -1,8 +1,9 @@
+import { useState } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SettingsDirtyBoundary } from "@/components/PersonalSettings/dirtyRegistry";
+import { SettingsDirtyBoundary, useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { SystemSettingsPanel } from "@/components/PlatformAdmin/SystemSettingsPanel";
 import { TenantRemoteHandsManager } from "@/components/TenantRemoteHandsManager";
 import { governanceRoute } from "@/lib/governanceNavigation";
@@ -10,6 +11,7 @@ import { GovernanceConsole } from "./GovernanceConsole";
 
 const mocks = vi.hoisted(() => ({
   authFetch: vi.fn(),
+  tenants: [] as { id: string; name: string }[],
   scheduler: {
     status: "ok",
     sessionLockMode: "lease",
@@ -42,10 +44,23 @@ vi.mock("@/components/PlatformAdmin/api", () => ({
 }));
 vi.mock("@/lib/authFetch", () => ({ authFetch: mocks.authFetch }));
 vi.mock("@/components/UserManager/hooks", () => ({ useUsers: () => ({ users: [], loading: false }) }));
-vi.mock("@/components/TenantManager/hooks", () => ({ useTenants: () => ({ tenants: [], loading: false }) }));
+vi.mock("@/components/TenantManager/hooks", () => ({ useTenants: () => ({ tenants: mocks.tenants, loading: false }) }));
+
+function DirtyEditor() {
+  const [value, setValue] = useState("基线");
+  useSettingsDirtyEntry({
+    id: "governance-organization-dirty-test",
+    label: "公司信息",
+    dirty: value !== "基线",
+    save: () => undefined,
+    discard: () => setValue("基线"),
+  });
+  return <input aria-label="组织草稿" value={value} onChange={(event) => setValue(event.target.value)} />;
+}
 
 describe("治理控制台 dirty boundary", () => {
   beforeEach(() => {
+    mocks.tenants = [];
     window.history.replaceState({ __appHistoryIndex: 0 }, "", "/platform-console/overview/overview");
     window.history.pushState({ __appHistoryIndex: 1 }, "", "/platform-console/governance/system-settings");
     mocks.authFetch.mockReset().mockImplementation(async (input: string) => {
@@ -128,5 +143,39 @@ describe("治理控制台 dirty boundary", () => {
     expect(await screen.findByText("有未保存的更改")).toBeTruthy();
     expect(screen.getByText(/执行环境池尚未保存/)).toBeTruthy();
     expect(window.location.pathname).toBe("/platform-console/runtime/execution-providers");
+  });
+
+  it("组织治理作用域切换同样经过 dirty controller", async () => {
+    mocks.tenants = [
+      { id: "acme", name: "Acme" },
+      { id: "beta", name: "Beta" },
+    ];
+    window.history.replaceState({ __appHistoryIndex: 1 }, "", "/tenant-admin/settings/profile?org=acme");
+    render(
+      <SettingsDirtyBoundary>
+        {(dirtyController) => (
+          <GovernanceConsole
+            area="organization"
+            route={governanceRoute("organization.settings.profile", { orgId: "acme" })}
+            onExit={() => undefined}
+            dirtyController={dirtyController}
+          >
+            <DirtyEditor />
+          </GovernanceConsole>
+        )}
+      </SettingsDirtyBoundary>,
+    );
+    fireEvent.change(screen.getByLabelText("组织草稿"), { target: { value: "未保存公司信息" } });
+
+    await userEvent.click(screen.getByRole("combobox", { name: "切换组织" }));
+    await userEvent.click(screen.getByRole("option", { name: "Beta" }));
+    expect(await screen.findByText("有未保存的更改")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(window.location.search).toBe("?org=acme");
+
+    await userEvent.click(screen.getByRole("combobox", { name: "切换组织" }));
+    await userEvent.click(screen.getByRole("option", { name: "Beta" }));
+    fireEvent.click(await screen.findByRole("button", { name: "放弃更改" }));
+    await waitFor(() => expect(window.location.search).toBe("?org=beta"));
   });
 });

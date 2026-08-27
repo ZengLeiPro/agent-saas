@@ -31,8 +31,13 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(source).toContain("onNavigationControllerChange={handleSettingsControllerChange} dirtyController={dirtyController}");
     expect(source).toContain("isPlatformAdmin, organizationSettingsTargetId");
     expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId}");
+    expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId} dirtyController={dirtyController}");
     expect(source).toContain(")}</SettingsDirtyBoundary></Suspense>}");
     expect(source).toContain('<GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
+    expect(source).toContain('<GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
     expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (\n        <ManagementSettingsAccessGate scope="platform"');
+    expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (\n        <ManagementSettingsAccessGate scope="tenant"');
+    expect(analysisContentSource).toContain('<OrganizationScopeBanner route={route} dirtyController={dirtyController} />');
+    expect(analysisContentSource).toContain('dirtyController={dirtyController}');
   });
 });

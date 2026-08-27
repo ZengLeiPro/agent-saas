@@ -349,10 +349,10 @@ export function DesktopLayout(props: LayoutProps) {
 
   if (!analysisMode && activeTab === "tenant-admin" && governanceRoute?.area === "organization") {
     return (
-      <Suspense fallback={SuspenseFallback}>
+      <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary>{(dirtyController) => (
         <ManagementSettingsAccessGate scope="tenant" target="tenant" access={managementAccess}
           onRetry={managementAccess.retry} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}>
-          <GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")}>
+          <GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>
           <TenantAdminShell
             renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
             renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
@@ -370,8 +370,7 @@ export function DesktopLayout(props: LayoutProps) {
             governanceContentOnly
           />
           </GovernanceConsole>
-        </ManagementSettingsAccessGate>
-      </Suspense>
+        </ManagementSettingsAccessGate>)}</SettingsDirtyBoundary></Suspense>
     );
   }
 
@@ -900,7 +899,7 @@ export function DesktopLayout(props: LayoutProps) {
                     renderFiles={() => <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
                     renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
                     settingsOpen={settingsTarget === "tenant"}
-                    settingsContentOnly onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId}
+                    settingsContentOnly onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId} dirtyController={dirtyController}
                     settingsSection={(settingsTarget === "tenant" ? activeSettingsSection : "users") as TenantSection}
                     onSettingsSectionChange={(section) => handleSettingsNavigate("tenant", section)}
                     onSettingsClose={handleCloseUnifiedSettings}

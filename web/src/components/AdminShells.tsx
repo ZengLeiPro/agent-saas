@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNod
 import { ChevronLeft, Loader2, X } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
+import type { SettingsDirtyController } from "@/components/PersonalSettings/dirtyRegistry";
 import { SettingsPanelHeaderStickyProvider } from "@/components/SettingsCenter/SettingsPanelHeader";
 import {
   PLATFORM_SETTINGS_SECTIONS,
@@ -261,6 +262,7 @@ export function TenantAdminShell({
   governanceContentOnly = false,
   governanceContentEmbedded = false,
   onSettingsTargetTenantIdChange,
+  dirtyController,
 }: {
   renderUsers: (tenantId?: string, tenantName?: string) => ReactNode;
   renderSkills: (tenantId?: string, tenantName?: string) => ReactNode;
@@ -295,6 +297,8 @@ export function TenantAdminShell({
   renderAutomation?: () => ReactNode;
   /** 桌面统一设置回传实际组织目标；undefined 表示 Shell 尚不可用。 */
   onSettingsTargetTenantIdChange?: (tenantId: string | null | undefined) => void;
+  /** 统一设置或治理工作区的共享未保存导航保护。 */
+  dirtyController?: SettingsDirtyController;
 }) {
   const { user, isPlatformAdmin } = useAuth();
   const { tenants: allTenants, loading: tenantsLoading } = useTenants();
@@ -313,9 +317,13 @@ export function TenantAdminShell({
     && previousUrlTenantIdRef.current && !urlTenantId;
   const targetTenantId = urlTenantId || (missingActiveScope ? "" : fallbackTenantId);
   const setTargetTenantId = useCallback((next: string) => {
-    setFallbackTenantId(next);
-    shellUrl.set("org", next || null, HISTORY_PUSH);
-  }, [shellUrl]);
+    const changeTarget = () => {
+      setFallbackTenantId(next);
+      shellUrl.set("org", next || null, HISTORY_PUSH);
+    };
+    if (dirtyController) dirtyController.requestNavigation(changeTarget);
+    else changeTarget();
+  }, [dirtyController, shellUrl]);
 
   useEffect(() => {
     if (!isPlatformAdmin && !fallbackTenantId && user?.tenantId) setFallbackTenantId(user.tenantId);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, RefreshCw, Save, Send, SlidersHorizontal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,8 @@ export function SystemSettingsPanel() {
   const [schedulerSaving, setSchedulerSaving] = useState(false);
   const [schedulerMaxText, setSchedulerMaxText] = useState("");
   const [schedulerMessage, setSchedulerMessage] = useState<string | null>(null);
+  const schedulerRequestGenerationRef = useRef(0);
+  const schedulerSaveInFlightRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -52,22 +54,31 @@ export function SystemSettingsPanel() {
   }, []);
 
   const loadScheduler = useCallback(async () => {
+    if (schedulerSaveInFlightRef.current) return;
+    const generation = schedulerRequestGenerationRef.current + 1;
+    schedulerRequestGenerationRef.current = generation;
     setSchedulerLoading(true);
     try {
       const { runtimeScheduler } = await platformAdminApi.schedulerRuntimeConfig();
+      if (generation !== schedulerRequestGenerationRef.current || schedulerSaveInFlightRef.current) return;
       setScheduler(runtimeScheduler);
       setSchedulerMaxText(String(runtimeScheduler.maxConcurrentRuns));
       setSchedulerMessage(null);
     } catch (err) {
-      setSchedulerMessage(err instanceof Error ? err.message : String(err));
+      if (generation === schedulerRequestGenerationRef.current && !schedulerSaveInFlightRef.current) {
+        setSchedulerMessage(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setSchedulerLoading(false);
+      if (generation === schedulerRequestGenerationRef.current) setSchedulerLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void load();
     void loadScheduler();
+    return () => {
+      schedulerRequestGenerationRef.current += 1;
+    };
   }, [load, loadScheduler]);
 
   const sendTest = useCallback(async () => {
@@ -84,6 +95,9 @@ export function SystemSettingsPanel() {
   }, [load]);
 
   const saveScheduler = useCallback(async (maxConcurrentRuns: number) => {
+    schedulerSaveInFlightRef.current = true;
+    schedulerRequestGenerationRef.current += 1;
+    setSchedulerLoading(false);
     setSchedulerSaving(true);
     setSchedulerMessage(null);
     try {
@@ -95,6 +109,7 @@ export function SystemSettingsPanel() {
       setSchedulerMessage(err instanceof Error ? err.message : String(err));
       throw err;
     } finally {
+      schedulerSaveInFlightRef.current = false;
       setSchedulerSaving(false);
     }
   }, []);

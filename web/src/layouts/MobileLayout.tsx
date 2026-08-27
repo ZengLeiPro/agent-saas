@@ -254,6 +254,7 @@ export function MobileLayout(props: LayoutProps) {
   if (activeTab === "tenant-admin" && governanceRoute?.area === "organization") {
     return (
       <Suspense fallback={SuspenseFallback}>
+        <SettingsDirtyBoundary>{(dirtyController) => (
         <ManagementSettingsAccessGate
           scope="tenant"
           target="tenant"
@@ -261,7 +262,7 @@ export function MobileLayout(props: LayoutProps) {
           onRetry={managementAccess.retry}
           onReturnPersonal={handleReturnPersonalSettings}
         >
-          <GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")}>
+          <GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>
           <TenantAdminShell
             renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
             renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
@@ -279,7 +280,7 @@ export function MobileLayout(props: LayoutProps) {
             governanceContentOnly
           />
           </GovernanceConsole>
-        </ManagementSettingsAccessGate>
+        </ManagementSettingsAccessGate>)}</SettingsDirtyBoundary>
       </Suspense>
     );
   }
@@ -725,6 +726,7 @@ export function MobileLayout(props: LayoutProps) {
             renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
             settingsOpen
             settingsOnly
+            dirtyController={dirtyController}
             settingsSection={adminSettings.section as TenantSection}
             onSettingsSectionChange={(section) => dirtyController.requestNavigation(() => setAdminSettingsSection(section))}
             onSettingsClose={() => dirtyController.requestNavigation(closeAdminSettings)}

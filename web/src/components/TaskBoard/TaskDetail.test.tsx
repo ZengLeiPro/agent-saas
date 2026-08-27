@@ -224,26 +224,6 @@ describe("TaskDetail 草稿隔离", () => {
     expect((screen.getByRole("textbox", { name: "发表评论" }) as HTMLTextAreaElement).value).toBe("");
   }, 10_000);
 
-  it("只有排序权限的 editor 可在详情中将待推进任务移入需求池", async () => {
-    const user = userEvent.setup();
-    const todoTask = { ...taskOne, status: "todo" as const };
-    mocks.fetchTask.mockResolvedValue(todoTask);
-    const initialProps = props({
-      task: todoTask,
-      canReorderTask: true,
-      canTransitionTask: false,
-    });
-    render(<TaskDetail {...initialProps} />);
-    await waitFor(() => expect(initialProps.onTaskLoaded).toHaveBeenCalledWith(todoTask));
-
-    await user.click(screen.getByRole("combobox", { name: "任务状态" }));
-    expect(screen.getByRole("option", { name: "需求池" }).getAttribute("aria-disabled")).not.toBe("true");
-    expect(screen.getByRole("option", { name: "已取消" }).getAttribute("aria-disabled")).toBe("true");
-    await user.click(screen.getByRole("option", { name: "需求池" }));
-
-    await waitFor(() => expect(initialProps.onMove).toHaveBeenCalledWith(todoTask, "backlog"));
-  });
-
   it("旧任务保存返回时不会覆盖刚切换的新任务", async () => {
     const user = userEvent.setup();
     const pending = deferred<TaskBoardTask>();

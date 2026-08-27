@@ -36,9 +36,8 @@ import * as api from "./api";
 import { requestExecutionCancellation } from "./executionCancellation";
 import {
   boardAllows,
-  canUserTransitionTask,
+  canUserMoveTask,
   EXECUTION_STATUS_LABELS,
-  isTaskPlanningTransition,
   INTEGRATION_SOURCE_STATE_LABELS,
   PRIORITY_LABELS,
   STATUS_LABELS,
@@ -50,9 +49,7 @@ import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from 
 import { canManuallyCompleteTask, TaskCompletionButton } from "./TaskCompletionButton";
 import { TaskDetailComments, EXECUTION_PURPOSE_LABELS } from "./TaskDetailComments";
 import { useTaskComments, useTaskExecutions } from "./hooks";
-
 type TaskDraftField = "description" | "attachments" | "priority" | "stageModels";
-
 const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review"];
 const ACTIVE_EXECUTION_STATUSES = new Set(["queued", "running", "waiting_user", "waiting_approval"]);
 
@@ -318,15 +315,11 @@ export function TaskDetail({
       && currentTask?.status === "in_progress" && latestExecution?.purpose === "work")
     : (canRunCurrentTask && currentTask?.status !== "in_progress")
       || (!readOnly && canExecute && currentTask?.status === "in_progress" && executionActive);
-  const canMoveCurrentTaskTo = (status: TaskBoardStatus) => Boolean(
-    currentTask
-    && canUserTransitionTask(currentTask, currentTask.status, status)
-    && (canTransitionTask || (canReorderTask && isTaskPlanningTransition(currentTask.status, status))),
-  );
+  const canMoveCurrentTaskTo = (status: TaskBoardStatus) => Boolean(currentTask && canUserMoveTask(
+    currentTask, currentTask.status, status, canReorderTask, canTransitionTask,
+  ));
   const canTransitionCurrentTask = Boolean(
-    currentTask
-    && !readOnly
-    && TASKBOARD_STATUSES.some(canMoveCurrentTaskTo),
+    currentTask && !readOnly && TASKBOARD_STATUSES.some(canMoveCurrentTaskTo),
   );
   const canCompleteCurrentTask = canManuallyCompleteTask(currentTask, readOnly, canTransitionTask, executionActive, executionsReady && !executionsLoading && !executionsError);
   const isCurrentOperation = (requestId: number, operationTaskId: string) => (

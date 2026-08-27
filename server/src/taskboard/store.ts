@@ -39,7 +39,7 @@ import { discoverBoardCiPolicy } from './ciPolicyDiscovery.js';
 import { deleteStoredTask, rollbackStoredTask } from './storeTaskDelete.js';
 import { completeStoredTask } from './manualTaskCompletion.js';
 import { describeTaskUpdate, resolveTaskKindMutation, TASK_PROMOTION_WORKFLOW_ASSIGNMENTS } from './storeTaskPromotion.js';
-import { assertManualTaskMoveAllowed, isManualTaskRequeue, isTaskPlanningTransition, manualTaskRequeueResetSql, taskMoveChangeType } from './storeTaskRequeue.js';
+import { assertManualTaskMoveAllowed, isManualTaskRequeue, manualTaskMoveRole, manualTaskRequeueResetSql, taskMoveChangeType } from './storeTaskRequeue.js';
 import {
   allowedActionsForRole,
   appendModelAssignments,
@@ -628,12 +628,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   ): Promise<TaskBoardTask> {
     return this.withTransaction(async (client) => {
       const loaded = await this.requireTaskWithBoard(client, identity, taskId, true);
-      assertBoardRole(
-        loaded.boardRole,
-        input.status === loaded.task.status || isTaskPlanningTransition(loaded.task.status, input.status)
-          ? 'editor'
-          : 'maintainer',
-      );
+      assertBoardRole(loaded.boardRole, manualTaskMoveRole(loaded.task.status, input.status));
       assertExpectedVersion(loaded.task, input.expectedVersion);
       assertWritableTask(loaded.task, loaded.boardArchivedAt);
       const manuallyRequeued = isManualTaskRequeue(loaded.task, input.status);

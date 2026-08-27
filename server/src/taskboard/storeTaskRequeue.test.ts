@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { TaskBoardTask } from '../../../shared/src/types/taskboard.js';
 import { PgTaskboardStore } from './store.js';
-import { assertManualTaskRequeueAllowed, isManualTaskRequeue, isTaskPlanningTransition } from './storeTaskRequeue.js';
+import { assertManualTaskRequeueAllowed, isManualTaskRequeue, isTaskPlanningTransition, manualTaskMoveRole } from './storeTaskRequeue.js';
 import type { TaskboardIdentity } from './types.js';
 
 function task(overrides: Partial<TaskBoardTask> = {}): TaskBoardTask {
@@ -28,11 +28,13 @@ describe('manual task requeue', () => {
     expect(isManualTaskRequeue(task({ status: 'canceled' }), 'backlog')).toBe(false);
   });
 
-  it('recognizes only backlog/todo moves as planning transitions', () => {
+  it('recognizes only backlog/todo moves as editor planning transitions', () => {
     expect(isTaskPlanningTransition('todo', 'backlog')).toBe(true);
     expect(isTaskPlanningTransition('backlog', 'todo')).toBe(true);
     expect(isTaskPlanningTransition('todo', 'todo')).toBe(false);
     expect(isTaskPlanningTransition('canceled', 'backlog')).toBe(false);
+    expect(manualTaskMoveRole('todo', 'backlog')).toBe('editor');
+    expect(manualTaskMoveRole('canceled', 'backlog')).toBe('maintainer');
   });
 
   it.each(['delivery', 'advisory'] as const)('allows unclaimed %s tasks', (kind) => {

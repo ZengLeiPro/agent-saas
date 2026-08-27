@@ -109,6 +109,17 @@ export function isTaskPlanningTransition(from: TaskBoardStatus, to: TaskBoardSta
   return from !== to && [from, to].every((status) => status === "backlog" || status === "todo");
 }
 
+export function canUserMoveTask(
+  task: TaskBoardTask | TaskBoardTaskKind | undefined,
+  from: TaskBoardStatus,
+  to: TaskBoardStatus,
+  canReorder: boolean,
+  canTransition: boolean,
+): boolean {
+  return canUserTransitionTask(task, from, to)
+    && (canTransition || (canReorder && isTaskPlanningTransition(from, to)));
+}
+
 export function canUserTransitionTask(task: TaskBoardTask | TaskBoardTaskKind | undefined, from: TaskBoardStatus, to: TaskBoardStatus): boolean {
   const kind = typeof task === "string" ? task : task?.kind;
   if ((kind ?? "delivery") === "integration" || from === to) return false;

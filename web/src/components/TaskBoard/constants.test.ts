@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaskBoardTask } from "@agent/shared";
-import { canUserTransitionTask, isTaskPlanningTransition } from "./constants";
+import { canUserMoveTask, canUserTransitionTask, isTaskPlanningTransition } from "./constants";
 
 function task(overrides: Partial<TaskBoardTask> = {}): TaskBoardTask {
   return {
@@ -28,6 +28,15 @@ describe("isTaskPlanningTransition", () => {
     expect(isTaskPlanningTransition("backlog", "todo")).toBe(true);
     expect(isTaskPlanningTransition("todo", "todo")).toBe(false);
     expect(isTaskPlanningTransition("canceled", "backlog")).toBe(false);
+  });
+});
+
+describe("canUserMoveTask", () => {
+  it("允许 editor 规划态双向移动，但不放宽其他迁移", () => {
+    expect(canUserMoveTask(task({ status: "todo" }), "todo", "backlog", true, false)).toBe(true);
+    expect(canUserMoveTask(task({ status: "backlog" }), "backlog", "todo", true, false)).toBe(true);
+    expect(canUserMoveTask(task({ status: "canceled" }), "canceled", "backlog", true, false)).toBe(false);
+    expect(canUserMoveTask(task({ status: "canceled" }), "canceled", "todo", false, true)).toBe(true);
   });
 });
 

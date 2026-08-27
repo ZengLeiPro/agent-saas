@@ -88,6 +88,41 @@ describe("useSession 跨会话详情请求隔离", () => {
     expect(callbacks.onNewSession).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ["daily", "coding"],
+    ["coding", "daily"],
+  ] as const)("删除 %s 当前会话并自动切换后回填 %s 档位", async (currentProfile, nextProfile) => {
+    const currentSessionId = `${currentProfile}-session`;
+    const nextSessionId = `${nextProfile}-session`;
+    let activeSessionId = currentSessionId;
+    let displayedProfile = currentProfile;
+    const callbacks = makeCallbacks();
+    callbacks.onSessionActivated = vi.fn((sessionId) => { activeSessionId = sessionId; displayedProfile = "coding"; });
+    callbacks.onSandboxProfile = vi.fn((sessionId, profile) => {
+      if (sessionId === activeSessionId) displayedProfile = profile ?? "coding";
+    });
+    authFetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") return Promise.resolve(jsonResponse({}));
+      if (url.startsWith(`/api/sessions/${currentSessionId}`)) return Promise.resolve(jsonResponse({ blocks: [], sandboxProfile: currentProfile }));
+      if (url.startsWith(`/api/sessions/${nextSessionId}`)) return Promise.resolve(jsonResponse({ blocks: [], sandboxProfile: nextProfile }));
+      if (url.startsWith("/api/chat/interactions/pending")) return Promise.resolve(jsonResponse([]));
+      return Promise.resolve(jsonResponse({ sessions: [{ sessionId: nextSessionId, updatedAtMs: 1 }], hasMore: false }));
+    });
+    const { result } = renderHook(() => useSession(callbacks));
+
+    act(() => {
+      result.current.upsertSession({ sessionId: currentSessionId, updatedAtMs: 2 });
+      result.current.upsertSession({ sessionId: nextSessionId, updatedAtMs: 1 });
+    });
+    await act(async () => { await result.current.loadSessionDetail(currentSessionId); });
+    act(() => result.current.confirmDeleteSession(currentSessionId));
+    await act(async () => { await result.current.handleDeleteSession(); });
+
+    expect(result.current.sessionId).toBe(nextSessionId);
+    expect(callbacks.onSessionActivated).toHaveBeenCalledWith(nextSessionId);
+    expect(displayedProfile).toBe(nextProfile);
+  });
+
   it("新建会话会作废在飞的详情请求，草稿页不会被旧会话消息占领", async () => {
     const { release } = mockPendingDetail();
     const callbacks = makeCallbacks();

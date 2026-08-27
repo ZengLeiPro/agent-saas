@@ -10,7 +10,7 @@ import {
 } from "react";
 
 import { Button } from "@/components/ui/button";
-import { ensureAppHistoryIndex, readAppHistoryIndex } from "@/lib/appHistory";
+import { ensureAppHistoryIndex, pushAppHistoryState, readAppHistoryIndex } from "@/lib/appHistory";
 import { notifyRouteChange, readPersonalSettingsHistoryState } from "@/lib/urlSync";
 import {
   Dialog,
@@ -52,6 +52,31 @@ function draftKey(id: string): string {
 function historyIndex(): number | null {
   const index = (window as Window & { navigation?: { currentEntry?: { index?: number } } }).navigation?.currentEntry?.index;
   return typeof index === "number" ? index : null;
+}
+
+interface HistoryPoint {
+  href: string;
+  state: unknown;
+  appIndex: number | null;
+  browserIndex: number | null;
+}
+
+function historyStep(from: HistoryPoint, to: HistoryPoint): number {
+  const browserStep = from.browserIndex !== null && to.browserIndex !== null ? to.browserIndex - from.browserIndex : 0;
+  const appStep = from.appIndex !== null && to.appIndex !== null ? to.appIndex - from.appIndex : 0;
+  const fromDepth = readPersonalSettingsHistoryState(from.state)?.depth ?? 0;
+  const toDepth = readPersonalSettingsHistoryState(to.state)?.depth ?? 0;
+  return browserStep || appStep || toDepth - fromDepth;
+}
+
+function sameHistoryPoint(actual: HistoryPoint, expected: HistoryPoint): boolean {
+  const comparisons = [actual.href === expected.href];
+  if (actual.appIndex !== null && expected.appIndex !== null) comparisons.push(actual.appIndex === expected.appIndex);
+  if (actual.browserIndex !== null && expected.browserIndex !== null) comparisons.push(actual.browserIndex === expected.browserIndex);
+  const actualDepth = readPersonalSettingsHistoryState(actual.state)?.depth;
+  const expectedDepth = readPersonalSettingsHistoryState(expected.state)?.depth;
+  if (actualDepth !== undefined && expectedDepth !== undefined) comparisons.push(actualDepth === expectedDepth);
+  return comparisons.every(Boolean);
 }
 
 const SENSITIVE_DRAFT_KEYS = new Set([
@@ -133,9 +158,23 @@ export function SettingsDirtyBoundary({
       appIndex: readAppHistoryIndex(),
       browserIndex: historyIndex(),
     });
-  const historyTraversalRef = useRef<{ phase: "restore" | "resume"; step: number } | null>(null);
+  const historyTraversalRef = useRef<{
+    phase: "restore" | "resume";
+    step: number;
+    accepted: HistoryPoint;
+    target: HistoryPoint;
+    ignore?: boolean;
+  } | null>(null);
+  const ambiguousHistoryRef = useRef<{
+    accepted: { href: string; state: unknown };
+    target: { href: string; state: unknown };
+  } | null>(null);
   const [version, setVersion] = useState(0);
   const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null);
+  const pendingNavigationRef = useRef<(() => void) | null>(null);
+  const actionInFlightRef = useRef(false);
+  const continuationAfterRestoreRef = useRef<(() => void) | null>(null);
+  const [actionInFlight, setActionInFlight] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const register = useCallback((entry: SettingsDirtyEntry) => {
@@ -167,10 +206,12 @@ export function SettingsDirtyBoundary({
   }, [dirty]);
 
   const requestNavigation = useCallback((navigation: () => void) => {
+    if (actionInFlightRef.current) return;
     if (![...entriesRef.current.values()].some((entry) => entry.dirty)) {
       navigation();
       return;
     }
+    pendingNavigationRef.current = navigation;
     setPendingNavigation(() => navigation);
   }, []);
 
@@ -194,38 +235,70 @@ export function SettingsDirtyBoundary({
         browserIndex: historyIndex(),
       };
       const traversal = historyTraversalRef.current;
-      if (traversal?.phase === "restore") {
-        event.stopImmediatePropagation();
-        acceptedHistoryRef.current = target;
+      if (traversal) {
+        const expected = traversal.phase === "restore" ? traversal.accepted : traversal.target;
+        if (!sameHistoryPoint(target, expected)) {
+          event.stopImmediatePropagation();
+          const correction = historyStep(target, expected);
+          if (correction) window.history.go(correction);
+          return;
+        }
+        if (traversal.phase === "restore") {
+          event.stopImmediatePropagation();
+          acceptedHistoryRef.current = target;
+          historyTraversalRef.current = null;
+          if (traversal.ignore) {
+            const continuation = continuationAfterRestoreRef.current;
+            continuationAfterRestoreRef.current = null;
+            continuation?.();
+            return;
+          }
+          requestNavigation(() => {
+            historyTraversalRef.current = { ...traversal, phase: "resume" };
+            window.history.go(traversal.step);
+          });
+          return;
+        }
         historyTraversalRef.current = null;
-        requestNavigation(() => {
-          historyTraversalRef.current = { phase: "resume", step: traversal.step };
-          window.history.go(traversal.step);
-        });
+        acceptedHistoryRef.current = target;
         return;
       }
-      if (traversal?.phase === "resume") {
-        historyTraversalRef.current = null;
-        acceptedHistoryRef.current = target;
+      if (event.isTrusted === false) {
+        if (!actionInFlightRef.current) acceptedHistoryRef.current = target;
         return;
       }
-      if (event.isTrusted === false || ![...entriesRef.current.values()].some((entry) => entry.dirty)) {
+      if (!actionInFlightRef.current && ![...entriesRef.current.values()].some((entry) => entry.dirty)) {
         acceptedHistoryRef.current = target;
         return;
       }
       event.stopImmediatePropagation();
-      const currentDepth = readPersonalSettingsHistoryState(acceptedHistoryRef.current.state)?.depth ?? 0;
-      const targetDepth = readPersonalSettingsHistoryState(event.state)?.depth ?? 0;
-      const appStep = target.appIndex !== null && acceptedHistoryRef.current.appIndex !== null
-        ? target.appIndex - acceptedHistoryRef.current.appIndex
-        : 0;
-      const browserStep = target.browserIndex !== null && acceptedHistoryRef.current.browserIndex !== null
-        ? target.browserIndex - acceptedHistoryRef.current.browserIndex
-        : 0;
-      const step = appStep || browserStep || targetDepth - currentDepth;
+      const accepted = acceptedHistoryRef.current;
+      const step = historyStep(accepted, target);
+      if (actionInFlightRef.current) {
+        if (!step) {
+          // 无法判断方向时保留刚到达的旧目标槽，再新增当前 accepted 页，不能再次吞掉目标。
+          const accepted = acceptedHistoryRef.current;
+          window.history.replaceState(target.state, "", target.href);
+          const acceptedState = accepted.state && typeof accepted.state === "object"
+            ? accepted.state as Record<string, unknown>
+            : {};
+          pushAppHistoryState(acceptedState, accepted.href);
+          acceptedHistoryRef.current = {
+            href: accepted.href,
+            state: window.history.state,
+            appIndex: readAppHistoryIndex(),
+            browserIndex: historyIndex(),
+          };
+          return;
+        }
+        historyTraversalRef.current = { phase: "restore", step, accepted, target, ignore: true };
+        window.history.go(-step);
+        return;
+      }
       if (!step) {
         // 旧版本留下的无索引 entry 无法判断方向；优先保住草稿，确认后在当前 entry 应用目标。
         const accepted = acceptedHistoryRef.current;
+        ambiguousHistoryRef.current = { accepted, target };
         window.history.replaceState(accepted.state, "", accepted.href);
         requestNavigation(() => {
           window.history.replaceState(target.state, "", target.href);
@@ -233,20 +306,44 @@ export function SettingsDirtyBoundary({
         });
         return;
       }
-      historyTraversalRef.current = { phase: "restore", step };
+      historyTraversalRef.current = { phase: "restore", step, accepted, target };
       window.history.go(-step);
     };
     window.addEventListener("popstate", guardHistoryNavigation, true);
     return () => window.removeEventListener("popstate", guardHistoryNavigation, true);
   }, [requestNavigation]);
 
-  const continueNavigation = useCallback(() => {
-    const navigation = pendingNavigation;
+  const cancelNavigation = useCallback(() => {
+    const ambiguous = ambiguousHistoryRef.current;
+    ambiguousHistoryRef.current = null;
+    if (ambiguous) {
+      // 先还原被临时占用的旧目标 entry，再新增当前页；这样取消不会永久吞掉目标。
+      window.history.replaceState(ambiguous.target.state, "", ambiguous.target.href);
+      const acceptedState = ambiguous.accepted.state && typeof ambiguous.accepted.state === "object"
+        ? ambiguous.accepted.state as Record<string, unknown>
+        : {};
+      pushAppHistoryState(acceptedState, ambiguous.accepted.href);
+    }
+    pendingNavigationRef.current = null;
     setPendingNavigation(null);
+  }, []);
+
+  const continueNavigation = useCallback(() => {
+    const navigation = pendingNavigationRef.current;
+    ambiguousHistoryRef.current = null;
+    pendingNavigationRef.current = null;
+    setPendingNavigation(null);
+    if (historyTraversalRef.current?.phase === "restore" && historyTraversalRef.current.ignore) {
+      continuationAfterRestoreRef.current = navigation;
+      return;
+    }
     navigation?.();
-  }, [pendingNavigation]);
+  }, []);
 
   const saveAndContinue = useCallback(async () => {
+    if (actionInFlightRef.current) return;
+    actionInFlightRef.current = true;
+    setActionInFlight(true);
     setSaving(true);
     try {
       for (const entry of [...entriesRef.current.values()].filter((item) => item.dirty)) {
@@ -257,16 +354,26 @@ export function SettingsDirtyBoundary({
     } catch {
       // Editors own their safe, user-facing save error. Keep the navigation blocked.
     } finally {
+      actionInFlightRef.current = false;
+      setActionInFlight(false);
       setSaving(false);
     }
   }, [continueNavigation]);
 
   const discardAndContinue = useCallback(async () => {
-    for (const entry of [...entriesRef.current.values()].filter((item) => item.dirty)) {
-      await entry.discard();
-      clearSettingsDraft(entry.id);
+    if (actionInFlightRef.current) return;
+    actionInFlightRef.current = true;
+    setActionInFlight(true);
+    try {
+      for (const entry of [...entriesRef.current.values()].filter((item) => item.dirty)) {
+        await entry.discard();
+        clearSettingsDraft(entry.id);
+      }
+      continueNavigation();
+    } finally {
+      actionInFlightRef.current = false;
+      setActionInFlight(false);
     }
-    continueNavigation();
   }, [continueNavigation]);
 
   const value = useMemo(() => ({ register }), [register]);
@@ -274,7 +381,7 @@ export function SettingsDirtyBoundary({
   return (
     <DirtyRegistryContext.Provider value={value}>
       {children({ dirty, requestNavigation })}
-      <Dialog open={pendingNavigation !== null} onOpenChange={(open) => { if (!open && !saving) setPendingNavigation(null); }}>
+      <Dialog open={pendingNavigation !== null} onOpenChange={(open) => { if (!open && !actionInFlight) cancelNavigation(); }}>
         <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md">
           <DialogHeader>
             <DialogTitle>有未保存的更改</DialogTitle>
@@ -283,10 +390,10 @@ export function SettingsDirtyBoundary({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="sm:justify-between">
-            <Button type="button" variant="ghost" onClick={() => setPendingNavigation(null)} disabled={saving}>取消</Button>
+            <Button type="button" variant="ghost" onClick={cancelNavigation} disabled={actionInFlight}>取消</Button>
             <div className="flex gap-2">
-              <Button type="button" variant="outline" onClick={() => { void discardAndContinue(); }} disabled={saving}>放弃更改</Button>
-              <Button type="button" onClick={() => { void saveAndContinue(); }} disabled={saving}>{saving ? "正在保存" : "保存并继续"}</Button>
+              <Button type="button" variant="outline" onClick={() => { void discardAndContinue(); }} disabled={actionInFlight}>放弃更改</Button>
+              <Button type="button" onClick={() => { void saveAndContinue(); }} disabled={actionInFlight}>{saving ? "正在保存" : "保存并继续"}</Button>
             </div>
           </DialogFooter>
         </DialogContent>

@@ -4,6 +4,8 @@ export type NetworkPolicyMode = "isolated" | "public-egress" | "private-egress";
 export interface AcsRuntimeConfig {
   maxRunningSandboxes: number;
   warnRunningSandboxes: number;
+  minConfigurableRunningSandboxes?: number;
+  maxConfigurableRunningSandboxes?: number;
   drainDeadlineMs: number;
   persisted?: boolean;
 }

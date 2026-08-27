@@ -378,9 +378,10 @@ export function DesktopLayout(props: LayoutProps) {
   if (!analysisMode && activeTab === "platform-admin" && governanceRoute?.area === "platform") {
     return (
       <Suspense fallback={SuspenseFallback}>
+        <SettingsDirtyBoundary>{(dirtyController) => (
         <ManagementSettingsAccessGate scope="platform" target="platform" access={managementAccess}
           onRetry={managementAccess.retry} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}>
-          <GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")}>
+          <GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>
           <PlatformAdminShell
             renderTenants={() => <TenantManager />}
             renderSignupConfig={() => <SignupConfigManagerPanel />}
@@ -401,8 +402,7 @@ export function DesktopLayout(props: LayoutProps) {
             governanceRoute={governanceRoute}
             governanceContentOnly
           />
-          </GovernanceConsole>
-        </ManagementSettingsAccessGate>
+          </GovernanceConsole></ManagementSettingsAccessGate>)}</SettingsDirtyBoundary>
       </Suspense>
     );
   }

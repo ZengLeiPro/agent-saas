@@ -32,5 +32,7 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(source).toContain("isPlatformAdmin, organizationSettingsTargetId");
     expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId}");
     expect(source).toContain(")}</SettingsDirtyBoundary></Suspense>}");
+    expect(source).toContain('<GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
+    expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (\n        <ManagementSettingsAccessGate scope="platform"');
   });
 });

@@ -19,14 +19,25 @@ function WrappedDirtyHarness({ onNavigate }: { onNavigate: () => void }) {
   );
 }
 
-function RegisteredEditor({ requestNavigation, onNavigate }: { requestNavigation: (next: () => void) => void; onNavigate: () => void }) {
+function RegisteredEditor({
+  requestNavigation,
+  onNavigate,
+  onSave,
+}: {
+  requestNavigation: (next: () => void) => void;
+  onNavigate: () => void;
+  onSave?: () => Promise<void>;
+}) {
   const [value, setValue] = useState("");
   const [saved, setSaved] = useState("");
   useSettingsDirtyEntry({
     id: "test-editor",
     label: "测试编辑器",
     dirty: value !== saved,
-    save: () => setSaved(value),
+    save: async () => {
+      await onSave?.();
+      setSaved(value);
+    },
     discard: () => setValue(saved),
     draft: { value },
   });
@@ -87,6 +98,84 @@ describe("个人设置 dirty registry", () => {
     await waitFor(() => expect(window.location.pathname).toBe("/settings/source"));
     expect(onPopstate).toHaveBeenCalledTimes(3);
     window.removeEventListener("popstate", onPopstate);
+  });
+
+  it("pending save 时再次 Back/Forward 不会覆盖已确认目标", async () => {
+    window.history.replaceState({ __appHistoryIndex: 1 }, "", "/settings/source");
+    window.history.pushState({ __appHistoryIndex: 2 }, "", "/settings/current");
+    window.history.pushState({ __appHistoryIndex: 3 }, "", "/settings/forward");
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        window.addEventListener("popstate", () => resolve(), { once: true });
+        window.history.back();
+      });
+    });
+
+    let resolveSave!: () => void;
+    const onSave = vi.fn(() => new Promise<void>((resolve) => { resolveSave = resolve; }));
+    const syntheticTarget = vi.fn();
+    render(
+      <SettingsDirtyBoundary>
+        {({ requestNavigation }) => (
+          <RegisteredEditor requestNavigation={requestNavigation} onNavigate={syntheticTarget} onSave={onSave} />
+        )}
+      </SettingsDirtyBoundary>,
+    );
+    await userEvent.type(screen.getByLabelText("草稿"), "未保存");
+
+    act(() => window.history.back());
+    expect(await screen.findByText("有未保存的更改")).toBeTruthy();
+    expect(window.location.pathname).toBe("/settings/current");
+
+    const syntheticNavigationButton = screen.getByRole("button", { name: "切页", hidden: true });
+    await userEvent.click(screen.getByRole("button", { name: "保存并继续" }));
+    expect(onSave).toHaveBeenCalledTimes(1);
+    fireEvent.click(syntheticNavigationButton);
+
+    act(() => {
+      window.history.forward();
+      resolveSave();
+    });
+
+    await waitFor(() => expect(window.location.pathname).toBe("/settings/source"));
+    expect(syntheticTarget).not.toHaveBeenCalled();
+  });
+
+  it("restore 尚未完成时连续 Back/Forward 不会把重复 app index 的额外目标误认成恢复点", async () => {
+    window.history.replaceState({ __appHistoryIndex: 1 }, "", "/settings/source");
+    window.history.pushState({ __appHistoryIndex: 2 }, "", "/settings/current");
+    window.history.pushState({ __appHistoryIndex: 2 }, "", "/settings/forward");
+    const previousNavigation = Object.getOwnPropertyDescriptor(window, "navigation");
+    Object.defineProperty(window, "navigation", {
+      configurable: true,
+      value: {
+        get currentEntry() {
+          const index = window.location.pathname.endsWith("source") ? 1 : window.location.pathname.endsWith("current") ? 2 : 3;
+          return { index };
+        },
+      },
+    });
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        window.addEventListener("popstate", () => resolve(), { once: true });
+        window.history.back();
+      });
+    });
+    render(<WrappedDirtyHarness onNavigate={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText("草稿"), "未保存");
+
+    act(() => {
+      window.history.back();
+      window.history.forward();
+    });
+
+    expect(await screen.findByText("有未保存的更改")).toBeTruthy();
+    await waitFor(() => expect(window.location.pathname).toBe("/settings/current"));
+    await userEvent.click(screen.getByRole("button", { name: "放弃更改" }));
+    await waitFor(() => expect(window.location.pathname).toBe("/settings/source"));
+
+    if (previousNavigation) Object.defineProperty(window, "navigation", previousNavigation);
+    else delete (window as Window & { navigation?: unknown }).navigation;
   });
 
   it("app history index 可恢复无 depth 的 Forward 并保留原页", async () => {
@@ -152,6 +241,47 @@ describe("个人设置 dirty registry", () => {
     expect(window.location.pathname).toBe("/settings/current");
     await userEvent.click(screen.getByRole("button", { name: "放弃更改" }));
     await waitFor(() => expect(window.location.pathname).toBe("/settings/target"));
+
+    if (previousNavigation) Object.defineProperty(window, "navigation", previousNavigation);
+    else delete (window as Window & { navigation?: unknown }).navigation;
+  });
+
+  it("旧无索引 entry 取消后仍保留原目标供后续 Back/Forward", async () => {
+    window.history.replaceState({}, "", "/settings/current");
+    window.history.pushState({}, "", "/settings/target");
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        window.addEventListener("popstate", () => resolve(), { once: true });
+        window.history.back();
+      });
+    });
+    const previousNavigation = Object.getOwnPropertyDescriptor(window, "navigation");
+    Object.defineProperty(window, "navigation", { configurable: true, value: undefined });
+    render(<WrappedDirtyHarness onNavigate={vi.fn()} />);
+    const draft = screen.getByLabelText("草稿");
+    await userEvent.type(draft, "未保存");
+
+    act(() => window.history.forward());
+    expect(await screen.findByText("有未保存的更改")).toBeTruthy();
+    expect(window.location.pathname).toBe("/settings/current");
+    await userEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(window.location.pathname).toBe("/settings/current");
+
+    fireEvent.change(draft, { target: { value: "" } });
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        window.addEventListener("popstate", () => resolve(), { once: true });
+        window.history.back();
+      });
+    });
+    expect(window.location.pathname).toBe("/settings/target");
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        window.addEventListener("popstate", () => resolve(), { once: true });
+        window.history.forward();
+      });
+    });
+    expect(window.location.pathname).toBe("/settings/current");
 
     if (previousNavigation) Object.defineProperty(window, "navigation", previousNavigation);
     else delete (window as Window & { navigation?: unknown }).navigation;

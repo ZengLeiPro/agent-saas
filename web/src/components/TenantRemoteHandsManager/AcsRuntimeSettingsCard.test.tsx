@@ -32,6 +32,8 @@ function renderGuardedCard(onNavigate: () => void) {
 const runtimeConfig = {
   maxRunningSandboxes: 20,
   warnRunningSandboxes: 15,
+  minConfigurableRunningSandboxes: 1,
+  maxConfigurableRunningSandboxes: 8_192,
   drainDeadlineMs: 300_000,
   persisted: true,
 };
@@ -97,21 +99,49 @@ describe("AcsRuntimeSettingsCard", () => {
       warnRunningSandboxes: 4_500,
       drainDeadlineMs: 600_000,
     });
-    expect(screen.queryByText(/必须是 0-10000 的整数/)).toBeNull();
+    expect(screen.queryByText(/必须是 1-8192 的整数/)).toBeNull();
   });
 
-  it("接受 10000 高位边界并拒绝 10001", async () => {
+  it("旧 ACS 未返回容量边界时只保留现值，但仍可修改 drain", async () => {
+    const { minConfigurableRunningSandboxes: _min, maxConfigurableRunningSandboxes: _max, ...legacyConfig } = runtimeConfig;
+    mocks.authFetch.mockImplementation(async (_input: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") return jsonResponse({ status: "ok", runtimeConfig: JSON.parse(String(init.body)) });
+      return jsonResponse({ status: "ok", runtimeConfig: legacyConfig });
+    });
     render(<AcsRuntimeSettingsCard readOnly={false} />);
 
     const maxInput = await findLoadedMaxInput();
-    fireEvent.change(maxInput, { target: { value: "10000" } });
-    fireEvent.change(screen.getByLabelText("运行环境告警阈值"), { target: { value: "10000" } });
+    expect(screen.getByText("ACS 尚未返回容量边界；升级完成前仅允许保留当前上限 20。")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("排空超时（毫秒）"), { target: { value: "600000" } });
     fireEvent.click(screen.getByRole("button", { name: "保存 ACS 配置" }));
     await waitFor(() => expect(mocks.authFetch).toHaveBeenCalledTimes(2));
 
-    fireEvent.change(maxInput, { target: { value: "10001" } });
+    fireEvent.change(maxInput, { target: { value: "21" } });
     fireEvent.click(screen.getByRole("button", { name: "保存 ACS 配置" }));
-    expect(await screen.findByText("最大运行环境数必须是 0-10000 的整数")).toBeTruthy();
+    expect(await screen.findByText("最大运行环境数必须是 20-20 的整数")).toBeTruthy();
+    expect(mocks.authFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("按 ACS 返回的生产容量接受 8192，并拒绝 0 与 8193", async () => {
+    render(<AcsRuntimeSettingsCard readOnly={false} />);
+
+    const maxInput = await findLoadedMaxInput();
+    expect(screen.getByText("当前 ACS 可配置范围 1-8192。")).toBeTruthy();
+    fireEvent.change(maxInput, { target: { value: "8192" } });
+    fireEvent.change(screen.getByLabelText("运行环境告警阈值"), { target: { value: "8192" } });
+    mocks.authFetch.mockResolvedValueOnce(jsonResponse({
+      status: "ok",
+      runtimeConfig: { ...runtimeConfig, maxRunningSandboxes: 8_192, warnRunningSandboxes: 8_192 },
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "保存 ACS 配置" }));
+    await waitFor(() => expect(mocks.authFetch).toHaveBeenCalledTimes(2));
+
+    fireEvent.change(maxInput, { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存 ACS 配置" }));
+    expect(await screen.findByText("最大运行环境数必须是 1-8192 的整数")).toBeTruthy();
+    fireEvent.change(maxInput, { target: { value: "8193" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存 ACS 配置" }));
+    expect(await screen.findByText("最大运行环境数必须是 1-8192 的整数")).toBeTruthy();
     expect(mocks.authFetch).toHaveBeenCalledTimes(2);
   });
 
@@ -170,18 +200,15 @@ describe("AcsRuntimeSettingsCard", () => {
     expect((maxInput as HTMLInputElement).value).toBe("30");
   });
 
-  it("未保存 ACS 草稿不被后台刷新覆盖，放弃后恢复最新服务端配置", async () => {
+  it("未保存 ACS 草稿阻止后台刷新，放弃后恢复编辑前配置", async () => {
     const onNavigate = vi.fn();
     renderGuardedCard(onNavigate);
 
     const maxInput = await findLoadedMaxInput();
     fireEvent.change(maxInput, { target: { value: "30" } });
-    mocks.authFetch.mockResolvedValueOnce(jsonResponse({
-      status: "ok",
-      runtimeConfig: { ...runtimeConfig, maxRunningSandboxes: 40 },
-    }));
     await act(async () => { await refreshAll(); });
     expect((maxInput as HTMLInputElement).value).toBe("30");
+    expect(mocks.authFetch).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "离开设置" }));
 
     expect(await screen.findByText("有未保存的更改")).toBeTruthy();
@@ -190,8 +217,7 @@ describe("AcsRuntimeSettingsCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "放弃更改" }));
 
     await waitFor(() => expect(onNavigate).toHaveBeenCalledTimes(1));
-    expect((maxInput as HTMLInputElement).value).toBe("40");
-    expect(mocks.authFetch).toHaveBeenCalledTimes(2);
+    expect((maxInput as HTMLInputElement).value).toBe("20");
   });
 
   it("干净状态后台刷新同步最新服务端配置且不产生 dirty", async () => {
@@ -216,11 +242,11 @@ describe("AcsRuntimeSettingsCard", () => {
     renderGuardedCard(onNavigate);
 
     const maxInput = await findLoadedMaxInput();
-    fireEvent.change(maxInput, { target: { value: "30" } });
     let resolveStaleGet!: (response: Response) => void;
     mocks.authFetch.mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveStaleGet = resolve; }));
     let refreshPromise!: Promise<void>;
     act(() => { refreshPromise = refreshAll(); });
+    fireEvent.change(maxInput, { target: { value: "30" } });
     mocks.authFetch.mockResolvedValueOnce(jsonResponse({
       status: "ok",
       runtimeConfig: { ...runtimeConfig, maxRunningSandboxes: 30 },

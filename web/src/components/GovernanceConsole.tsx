@@ -26,6 +26,7 @@ import {
 } from "@/lib/governanceNavigation";
 import { navigateGovernance, navigateToHref } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
+import type { SettingsDirtyController } from "@/components/PersonalSettings/dirtyRegistry";
 
 export { getGovernanceUserMenuEntries } from "@/lib/governanceUserMenu";
 export type { GovernanceUserMenuEntry } from "@/lib/governanceUserMenu";
@@ -122,12 +123,14 @@ export function GovernanceConsole({
   route,
   children,
   onExit,
+  dirtyController,
   className,
 }: {
   area: Exclude<GovernanceArea, "settings">;
   route: GovernanceRouteState;
   children: ReactNode;
   onExit: () => void;
+  dirtyController?: SettingsDirtyController;
   className?: string;
 }) {
   const workspaces = GOVERNANCE_NAVIGATION[area];
@@ -136,12 +139,17 @@ export function GovernanceConsole({
     ?? workspace.routes.find((candidate) => candidate.id === route.routeId)
     ?? workspace.routes[0];
   const title = area === "platform" ? "平台控制台" : "组织控制台";
+  const requestNavigation = (navigation: () => void) => {
+    if (dirtyController) dirtyController.requestNavigation(navigation);
+    else navigation();
+  };
+  const navigateWithinConsole = (next: GovernanceRouteState) => requestNavigation(() => navigateTo(next));
 
   return (
     <div className={cn("flex h-full min-h-0 bg-muted/20", className)} data-testid={`${area}-console`}>
       <aside className="hidden w-56 shrink-0 flex-col border-r bg-card md:flex">
         <div className="flex h-14 items-center gap-2 border-b px-3">
-          <Button variant="ghost" size="icon" className="size-8" onClick={onExit} aria-label="返回产品">
+          <Button variant="ghost" size="icon" className="size-8" onClick={() => requestNavigation(onExit)} aria-label="返回产品">
             <ChevronLeft className="size-4" />
           </Button>
           <span className="font-semibold">{title}</span>
@@ -159,7 +167,7 @@ export function GovernanceConsole({
                   active ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 )}
                 aria-current={active ? "page" : undefined}
-                onClick={() => navigateTo(routeForDefinition(candidate.routes[0], route))}
+                onClick={() => navigateWithinConsole(routeForDefinition(candidate.routes[0], route))}
               >
                 <Icon className="size-4 shrink-0" />
                 <span>{candidate.label}</span>
@@ -171,7 +179,7 @@ export function GovernanceConsole({
 
       <section className="flex min-w-0 flex-1 flex-col">
         <header className="flex min-h-14 shrink-0 items-center gap-3 border-b bg-card px-3 md:px-5">
-          <Button variant="ghost" size="icon" className="size-8 md:hidden" onClick={onExit} aria-label="返回产品">
+          <Button variant="ghost" size="icon" className="size-8 md:hidden" onClick={() => requestNavigation(onExit)} aria-label="返回产品">
             <ChevronLeft className="size-4" />
           </Button>
           <div className="min-w-0">
@@ -195,7 +203,7 @@ export function GovernanceConsole({
                   active ? "bg-foreground font-medium text-background" : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 )}
                 aria-current={active ? "page" : undefined}
-                onClick={() => navigateTo(routeForDefinition(definition, route))}
+                onClick={() => navigateWithinConsole(routeForDefinition(definition, route))}
               >
                 {definition.label}
               </button>

@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 307240,
-    "startupCssGzipBytes": 33438,
-    "startupJsBrotliBytes": 244360,
-    "startupCssBrotliBytes": 26579,
-    "largestJsGzipBytes": 307240,
-    "largestCssGzipBytes": 33438,
-    "largestJsBrotliBytes": 244360,
-    "largestCssBrotliBytes": 26579,
-    "largestJs": "assets/index-CAe2FPPe.js",
-    "largestCss": "assets/index-B7U5ztA3.css"
+    "startupJsGzipBytes": 308098,
+    "startupCssGzipBytes": 33462,
+    "startupJsBrotliBytes": 245517,
+    "startupCssBrotliBytes": 26679,
+    "largestJsGzipBytes": 308098,
+    "largestCssGzipBytes": 33462,
+    "largestJsBrotliBytes": 245517,
+    "largestCssBrotliBytes": 26679,
+    "largestJs": "assets/index-Cd8qvTmr.js",
+    "largestCss": "assets/index-BUgjbKf6.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "现有基线在无功能改动构建时已超出 1024 B 容差；按当前可复现生产产物更新字节基线，绝对上限与容差保持不变",
-  "updatedAt": "2026-08-25"
+  "reason": "TASK-290 业务步骤展示与 TASK-282 ACS 规格选择均属于聊天首屏交互；集成后启动 JS Brotli 累计增加 1157 B，仍远低于绝对上限，记录当前可复现生产产物基线",
+  "updatedAt": "2026-08-27"
 }

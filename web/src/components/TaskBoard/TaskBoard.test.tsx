@@ -640,21 +640,18 @@ describe("TaskBoardView", () => {
       },
     });
     render(<TaskBoardView />);
-
     const integrationButton = await screen.findByRole("button", { name: "创建集成批次（0）" });
     const readyToMergeColumn = screen.getByRole("region", { name: "待合并列" });
     expect(readyToMergeColumn.contains(integrationButton)).toBe(true);
     expect((integrationButton as HTMLButtonElement).disabled).toBe(true);
     expect(integrationButton.className).not.toContain("bg-emerald-600");
     expect(screen.queryByText(/在“待合并”列勾选已复核且已绑定 PR 的交付任务/)).toBeNull();
-
     const choices = await screen.findAllByRole("checkbox", { name: "选择 TASK-1 加入人工集成批次" });
     await user.click(choices[0]);
     const activeIntegrationButton = screen.getByRole("button", { name: "创建集成批次（1）" });
     expect((activeIntegrationButton as HTMLButtonElement).disabled).toBe(false);
     expect(activeIntegrationButton.className).toContain("bg-emerald-600");
     await user.click(activeIntegrationButton);
-
     await waitFor(() => expect(mocks.createIntegrationBatch).toHaveBeenCalledWith("board-1", {
       deliveryTaskIds: [readyTask.id],
       expectedBoardVersion: integrationBoard.version,
@@ -675,7 +672,6 @@ describe("TaskBoardView", () => {
     };
     mocks.tasks = [taskOne, archivedTask];
     render(<TaskBoardView />);
-
     const archivedColumn = await screen.findByTestId("taskboard-archived-column");
     expect(archivedColumn.className).toContain("w-10");
     expect(within(archivedColumn).getByText("归档").className).toContain("writing-mode:vertical-rl");

@@ -197,6 +197,88 @@ describe('DWS device authorization flow', () => {
     expect(authStore.markFailed).not.toHaveBeenCalled();
   });
 
+  it('本地 profile 已不存在时仍清理陈旧连接账本', async () => {
+    const removeProfile = vi.fn(async () => 1);
+    const connectionStore: DwsConnectionStore = {
+      syncProfiles: vi.fn(async () => undefined),
+      claimDue: vi.fn(async () => null),
+      completeCheck: vi.fn(async () => undefined),
+      failCheck: vi.fn(async () => undefined),
+      releaseClaim: vi.fn(async () => undefined),
+      listForUser: vi.fn(async () => [{
+        tenantId: user().tenantId,
+        userId: user().id,
+        username: user().username,
+        profileId: 'ding-corp-1',
+        connectionStatus: 'disconnected' as const,
+        nextCheckAt: NOW,
+        consecutiveFailures: 0,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }]),
+      removeProfile,
+    };
+    const service = new DwsAuthFlowService({
+      agentCwd: '/missing-workspaces',
+      authSessionStore: {
+        createOrReuse: vi.fn(),
+        markAwaitingUser: vi.fn(),
+        markConnected: vi.fn(),
+        markFailed: vi.fn(),
+        getLatestForUser: vi.fn(),
+      },
+      connectionStore,
+      runner: {
+        login: vi.fn(),
+        logout: vi.fn(async () => { throw new Error('profile "ding-corp-1" not found'); }),
+      },
+    });
+
+    await expect(service.revokeProfile(user(), 'ding-corp-1')).resolves.toBeUndefined();
+    expect(removeProfile).toHaveBeenCalledWith(user().tenantId, user().id, 'ding-corp-1');
+  });
+
+  it('本地退出发生真实故障时保留连接账本并返回失败', async () => {
+    const removeProfile = vi.fn(async () => 1);
+    const connectionStore: DwsConnectionStore = {
+      syncProfiles: vi.fn(async () => undefined),
+      claimDue: vi.fn(async () => null),
+      completeCheck: vi.fn(async () => undefined),
+      failCheck: vi.fn(async () => undefined),
+      releaseClaim: vi.fn(async () => undefined),
+      listForUser: vi.fn(async () => [{
+        tenantId: user().tenantId,
+        userId: user().id,
+        username: user().username,
+        profileId: 'ding-corp-1',
+        connectionStatus: 'connected' as const,
+        nextCheckAt: NOW,
+        consecutiveFailures: 0,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }]),
+      removeProfile,
+    };
+    const service = new DwsAuthFlowService({
+      agentCwd: '/missing-workspaces',
+      authSessionStore: {
+        createOrReuse: vi.fn(),
+        markAwaitingUser: vi.fn(),
+        markConnected: vi.fn(),
+        markFailed: vi.fn(),
+        getLatestForUser: vi.fn(),
+      },
+      connectionStore,
+      runner: {
+        login: vi.fn(),
+        logout: vi.fn(async () => { throw new Error('hand-server 调用超时'); }),
+      },
+    });
+
+    await expect(service.revokeProfile(user(), 'ding-corp-1')).rejects.toThrow('hand-server 调用超时');
+    expect(removeProfile).not.toHaveBeenCalled();
+  });
+
   it('检测到上个进程遗留的授权会话时重新发起 device flow', async () => {
     const interrupted = session();
     const replacement = { ...session(), sessionId: 'auth-session-2' };

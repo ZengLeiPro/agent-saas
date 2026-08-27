@@ -73,7 +73,7 @@ export function CronManager({ onJobCountChange, headerNavigationTarget, headerAc
         className={cn(
           BRAND_SEGMENTED_TABS_LIST_CLASS,
           "relative grid max-w-xl grid-cols-2",
-          headerNavigationTarget !== undefined && "w-[30rem] max-w-[min(30rem,calc(100vw-24rem))]",
+          headerNavigationTarget !== undefined && "w-[15rem] max-w-[min(15rem,calc(100vw-24rem))]",
         )}
         aria-label="任务中心二级导航"
       >

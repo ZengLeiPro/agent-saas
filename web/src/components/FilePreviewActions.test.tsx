@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FilePreviewActions, printFilePreviewElement } from "./FilePreviewActions";
 
 const resolveImageSrc = vi.fn();
+const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
 
 vi.mock("@agent/shared", () => ({
   getPreviewFileType: (filePath: string) => {
@@ -16,6 +17,8 @@ vi.mock("@agent/shared", () => ({
   resolveImageSrc: (...args: unknown[]) => resolveImageSrc(...args),
 }));
 
+vi.mock("@/lib/authFetch", () => ({ authFetch }));
+
 vi.mock("@/platform/webConfig", () => ({
   webConfig: {
     platform: "web",
@@ -27,6 +30,7 @@ vi.mock("@/platform/webConfig", () => ({
 describe("FilePreviewActions", () => {
   beforeEach(() => {
     resolveImageSrc.mockReset();
+    authFetch.mockReset();
   });
 
   afterEach(() => {
@@ -59,8 +63,7 @@ describe("FilePreviewActions", () => {
       "https://api.example.com/api/file/download?path=assets%2Fdemo.md&token=jwt",
     );
     const blob = new Blob(["# demo"], { type: "text/markdown" });
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(blob) });
-    vi.stubGlobal("fetch", fetchMock);
+    authFetch.mockResolvedValueOnce({ ok: true, blob: () => Promise.resolve(blob) });
     vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:markdown-download");
     const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     let clickedHref = "";
@@ -74,7 +77,7 @@ describe("FilePreviewActions", () => {
     fireEvent.click(screen.getByRole("button", { name: "下载文件" }));
 
     await waitFor(() => expect(clickedHref).toBe("blob:markdown-download"));
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("download=1"));
+    expect(authFetch).toHaveBeenCalledWith(expect.stringContaining("download=1"));
     expect(downloadName).toBe("demo.md");
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:markdown-download");
   });

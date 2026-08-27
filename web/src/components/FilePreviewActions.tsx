@@ -3,6 +3,7 @@ import { Download, Loader2, Printer } from "lucide-react";
 import { getPreviewFileType, resolveImageSrc } from "@agent/shared";
 
 import { Button } from "@/components/ui/button";
+import { authFetch } from "@/lib/authFetch";
 import { cn } from "@/lib/utils";
 import { publicSessionShareFileUrl } from "@/lib/sessionShareApi";
 
@@ -31,7 +32,7 @@ function triggerBrowserDownload(url: string, fileName: string): void {
 }
 
 async function downloadAsBlob(url: string, fileName: string): Promise<void> {
-  const response = await fetch(url);
+  const response = await authFetch(url);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
   const objectUrl = URL.createObjectURL(await response.blob());

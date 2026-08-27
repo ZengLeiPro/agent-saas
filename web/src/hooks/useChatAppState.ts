@@ -349,7 +349,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const releaseAllInteractionResponses = useCallback((error: string) => { for (const [id, { generation }] of pendingInteractionResponsesRef.current) releaseInteractionResponse(id, generation, error); }, [releaseInteractionResponse]);
   // 同步更新的 sessionId ref（解决 React 批量更新时 sessionIdRef 延迟问题）
   const immediateSessionIdRef = useRef<string | null>(urlState.sessionId);
-  const { sandboxProfile, sandboxProfileRef, setSandboxProfile, selectExistingSandboxProfile, startNewSandboxProfile, hydrateSandboxProfile } = useSandboxProfile(immediateSessionIdRef, sessionIdRef);
+  const { sandboxProfile, sandboxProfileRef, setSandboxProfile, selectExistingSandboxProfile, startNewSandboxProfile, hydrateSandboxProfile } = useSandboxProfile(immediateSessionIdRef, sessionIdRef, loadingRef);
   const trashPreviewSessionIdRef = useRef<string | null>(trashPreviewSessionId);
   trashPreviewSessionIdRef.current = trashPreviewSessionId;
   const refreshTokenUsageRef = useRef<() => void>(() => { });
@@ -731,8 +731,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
       if (!sid || sessionId !== sid) return;
       reconcileServerInterjections(sessionId, serverQueued);
-    }, onSandboxProfile: hydrateSandboxProfile,
-  }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, reconcileServerInterjections, hydrateSandboxProfile]);
+    }, onSandboxProfile: hydrateSandboxProfile, onNewSession: startNewSandboxProfile,
+  }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, reconcileServerInterjections, hydrateSandboxProfile, startNewSandboxProfile]);
 
   const session = useSession(sessionCallbacks, { initialSessionId: urlState.sessionId });
   const markingReadSessionIdsRef = useRef(new Set<string>());
@@ -2076,7 +2076,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       // 新建会话 → replaceState（不创建历史记录）
       if (data.type === 'session' && 'sessionId' in data) {
         const authoritativeSessionId = (data as any).sessionId as string;
-        if (data.client_msg_id) confirmProvisionalSession(data.client_msg_id, authoritativeSessionId);
+        if (data.client_msg_id) confirmProvisionalSession(data.client_msg_id, authoritativeSessionId); if (data.sandboxProfile) hydrateSandboxProfile(authoritativeSessionId, data.sandboxProfile);
         // 自己发起的新会话流：id 确定后纳入未读追踪，确保切走后流完成（idle）时能标记未读
         trackedAiReplyStreamsRef.current.add((data as any).sessionId);
         // 专职 Agent 挂起 ref 此时才清（2026-07 审查 F9）：会话真实建立、

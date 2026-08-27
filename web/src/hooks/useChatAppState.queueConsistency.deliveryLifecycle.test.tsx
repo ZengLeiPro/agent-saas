@@ -24,6 +24,7 @@ const harness = vi.hoisted(() => {
       onLastRunState?: (sessionId: string, lastRunState: { status: string; runId: string; error?: string }) => void;
       onQueuedMessages?: (sessionId: string, messages: unknown[]) => void;
       onSandboxProfile?: (sessionId: string, profile: "daily" | "coding" | undefined) => void;
+      onNewSession?: () => void;
       cancelActiveStream?: () => void;
     },
     session: {
@@ -180,6 +181,7 @@ beforeEach(() => {
   Object.values(harness.session).forEach((value) => {
     if (typeof value === "function" && "mockClear" in value) (value as ReturnType<typeof vi.fn>).mockClear();
   });
+  harness.session.newSession.mockImplementation(() => harness.sessionCallbacks?.onNewSession?.());
   harness.authFetch.mockReset().mockResolvedValue(response({}, 404));
   let id = 0;
   vi.spyOn(globalThis.crypto, "randomUUID").mockImplementation(() => `00000000-0000-4000-8000-${String(++id).padStart(12, "0")}`);
@@ -194,13 +196,11 @@ describe("useChatAppState queue delivery lifecycle", () => {
   it("defaults new conversations to daily and sends the selected profile on the first WS chat", async () => {
     const { result } = renderHook(() => useChatAppState());
     expect(result.current.sandboxProfile).toBe("daily");
-
     act(() => {
       result.current.setSandboxProfile("coding");
       result.current.setInput("compile this");
     });
     await act(async () => { await result.current.sendMessage(); });
-
     expect(chatPayloads()[0]).toMatchObject({ message: "compile this", sandboxProfile: "coding" });
   });
 
@@ -208,14 +208,31 @@ describe("useChatAppState queue delivery lifecycle", () => {
     const { result } = renderHook(() => useChatAppState());
     act(() => result.current.selectSession("legacy-session"));
     expect(result.current.sandboxProfile).toBe("coding");
-
     act(() => result.current.setSandboxProfile("daily"));
     expect(result.current.sandboxProfile).toBe("coding");
-
     act(() => harness.sessionCallbacks?.onSandboxProfile?.("legacy-session", undefined));
     expect(result.current.sandboxProfile).toBe("coding");
     act(() => harness.sessionCallbacks?.onSandboxProfile?.("legacy-session", "daily"));
     expect(result.current.sandboxProfile).toBe("daily");
+  });
+
+  it("returns to daily when browser navigation opens a blank new conversation", () => {
+    const { result, rerender } = renderHook(() => useChatAppState());
+    harness.session.sessionId = "coding-session"; rerender();
+    act(() => harness.sessionCallbacks?.onSandboxProfile?.("coding-session", "coding"));
+    expect(result.current.sandboxProfile).toBe("coding");
+    window.history.pushState(null, "", "/chat/coding-session"); window.history.pushState(null, "", "/chat");
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    expect(harness.session.newSession).toHaveBeenCalledOnce(); expect(result.current.sandboxProfile).toBe("daily");
+  });
+
+  it("locks the draft profile while the first message is pending and adopts the session event authority", async () => {
+    const { result } = renderHook(() => useChatAppState());
+    act(() => result.current.setInput("first message")); await act(async () => { await result.current.sendMessage(); });
+    const clientMsgId = chatPayloads()[0]?.client_msg_id as string;
+    act(() => result.current.setSandboxProfile("coding")); expect(result.current.sandboxProfile).toBe("daily");
+    act(() => emit({ type: "session", sessionId: "session-authoritative", client_msg_id: clientMsgId, sandboxProfile: "coding" }));
+    expect(result.current.sandboxProfile).toBe("coding");
   });
 
   it("reconnects away from a draining server and lets retry resend the rejected message", async () => {

@@ -232,7 +232,7 @@ export function ChatInput({
     return modelList.groups.filter((g) => !lockedGroupId || g.id === lockedGroupId);
   }, [modelList, lockedGroupId]);
 
-  const profileLocked = !!sessionId || isDisabled;
+  const profileLocked = !!sessionId || isDisabled || loading;
   const handleProfileKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (profileLocked || !onSandboxProfileChange) return;
     let next: SandboxProfile | null = null;

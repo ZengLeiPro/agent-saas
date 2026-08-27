@@ -137,6 +137,16 @@ describe("ChatInput 沙箱档位", () => {
     fireEvent.keyDown(screen.getByRole("radiogroup", { name: "沙箱档位" }), { key: "ArrowLeft" });
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  it("首条消息发送期间锁定档位，等待服务端确认会话", () => {
+    const onChange = vi.fn();
+    renderInput({ loading: true, sandboxProfile: "daily", onSandboxProfileChange: onChange });
+
+    expect(screen.getByRole("radiogroup", { name: "沙箱档位" }).getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(screen.getByRole("radio", { name: "编程" }));
+    fireEvent.keyDown(screen.getByRole("radiogroup", { name: "沙箱档位" }), { key: "ArrowRight" });
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });
 
 describe("ChatInput 附件来源入口", () => {

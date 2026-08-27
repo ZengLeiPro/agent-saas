@@ -1335,7 +1335,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       cwd,
       transcriptPath,
       modelRef: sessionModelRef,
-      sandboxProfile: resolveSessionSandboxProfile({ existing: existingSession ?? replaySourceSession, requested: message.metadata?.sandboxProfile, forceProfile: isTaskboardExecution ? 'coding' : undefined }),
+      sandboxProfile: resolveSessionSandboxProfile({ existing: existingSession, requested: replaySourceSession ? 'daily' : message.metadata?.sandboxProfile, forceProfile: isTaskboardExecution ? 'coding' : undefined }),
       executionTarget,
       workspaceId,
       status: 'running', executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined,

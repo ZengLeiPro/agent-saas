@@ -56,7 +56,7 @@ export interface SessionCallbacks {
     sessionId: string,
     queued: NonNullable<ApiSessionDetail["queuedMessages"]>,
   ) => void;
-  onSandboxProfile?: (sessionId: string, profile: ApiSessionDetail["sandboxProfile"]) => void;
+  onSandboxProfile?: (sessionId: string, profile: ApiSessionDetail["sandboxProfile"]) => void; onNewSession?: () => void;
 }
 export interface SessionState {
   sessionId: string | null;
@@ -643,7 +643,7 @@ export function useSession(
       } else {
         setSessionId(null);
         localStorage.removeItem(SESSION_STORAGE_KEY);
-        cbRef.current.resetMessages();
+        cbRef.current.resetMessages(); cbRef.current.onNewSession?.();
       }
     } catch (err) {
       console.error("删除会话失败:", err);
@@ -848,7 +848,7 @@ export function useSession(
     // 只有新建会话这条路径原先漏了）。
     ++loadNonceRef.current;
     cbRef.current.cancelActiveStream();
-    cbRef.current.resetMessages();
+    cbRef.current.resetMessages(); cbRef.current.onNewSession?.();
     isNewSessionRef.current = true;
     setSessionId(null);
     setSessionOwner(null);

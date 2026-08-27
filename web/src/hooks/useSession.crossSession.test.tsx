@@ -60,6 +60,26 @@ beforeEach(() => {
 });
 
 describe("useSession 跨会话详情请求隔离", () => {
+  it("删除最后一个会话时通知上层恢复新会话默认状态", async () => {
+    const callbacks = makeCallbacks();
+    callbacks.onNewSession = vi.fn();
+    authFetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") return Promise.resolve(jsonResponse({}));
+      if (url.startsWith("/api/chat/interactions/pending")) return Promise.resolve(jsonResponse([]));
+      if (url.startsWith("/api/sessions/only-session")) return Promise.resolve(jsonResponse({ blocks: [] }));
+      return Promise.resolve(jsonResponse({ sessions: [], hasMore: false }));
+    });
+    const { result } = renderHook(() => useSession(callbacks));
+
+    act(() => result.current.upsertSession({ sessionId: "only-session", updatedAtMs: Date.now() }));
+    await act(async () => { await result.current.loadSessionDetail("only-session"); });
+    act(() => result.current.confirmDeleteSession("only-session"));
+    await act(async () => { await result.current.handleDeleteSession(); });
+
+    expect(result.current.sessionId).toBeNull();
+    expect(callbacks.onNewSession).toHaveBeenCalledOnce();
+  });
+
   it("新建会话会作废在飞的详情请求，草稿页不会被旧会话消息占领", async () => {
     const { release } = mockPendingDetail();
     const callbacks = makeCallbacks();

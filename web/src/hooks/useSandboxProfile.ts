@@ -5,6 +5,7 @@ import { resolveSessionSandboxProfile, type SandboxProfile } from "@/types/sandb
 export function useSandboxProfile(
   immediateSessionIdRef: MutableRefObject<string | null>,
   sessionIdRef: MutableRefObject<string | null>,
+  loadingRef: MutableRefObject<boolean>,
 ) {
   const [sandboxProfile, setSandboxProfileState] = useState<SandboxProfile>("daily");
   const sandboxProfileRef = useRef<SandboxProfile>("daily");
@@ -13,9 +14,9 @@ export function useSandboxProfile(
     setSandboxProfileState(profile);
   }, []);
   const setSandboxProfile = useCallback((profile: SandboxProfile) => {
-    if (immediateSessionIdRef.current || sessionIdRef.current) return;
+    if (immediateSessionIdRef.current || sessionIdRef.current || loadingRef.current) return;
     update(profile);
-  }, [immediateSessionIdRef, sessionIdRef, update]);
+  }, [immediateSessionIdRef, loadingRef, sessionIdRef, update]);
   const selectExistingSandboxProfile = useCallback(() => update("coding"), [update]);
   const startNewSandboxProfile = useCallback(() => update("daily"), [update]);
   const hydrateSandboxProfile = useCallback((sessionId: string, profile: unknown) => {

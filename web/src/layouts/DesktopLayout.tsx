@@ -116,7 +116,7 @@ export function DesktopLayout(props: LayoutProps) {
     onControllerChange: handleSettingsControllerChange,
   } = useUnifiedSettingsWorkspace({
     settingsOpen, settingsSection, adminSettings, openSettings, closeSettings, setSettingsSection,
-    openAdminSettings, closeAdminSettings, setAdminSettingsSection,
+    openAdminSettings, closeAdminSettings, setAdminSettingsSection, isPlatformAdmin,
   });
   const analysisMode = !settingsMode && isAnalysisRoute(governanceRoute); const accessTarget = managementAccessTarget({ settingsOpen, adminSettingsTarget: adminSettings?.target, activeTab, governanceArea: governanceRoute?.area });
   const managementAccess = useManagementSettingsAccess({ user: authUser, authLoading, authEnabled, active: accessTarget !== null || isAdmin }); const { open: handleOpenAnalysis, close: handleCloseAnalysis, navigate: handleAnalysisNavigate } = useUnifiedAnalysisWorkspace({ mode: analysisMode, governanceRoute, managementAccess, sessionId, pushActiveTab, setActiveTab });

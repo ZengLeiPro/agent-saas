@@ -726,8 +726,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
       if (!sid || sessionId !== sid) return;
       reconcileServerInterjections(sessionId, serverQueued);
-    }, onSandboxProfile: hydrateSandboxProfile, onNewSession: startNewSandboxProfile,
-  }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, reconcileServerInterjections, hydrateSandboxProfile, startNewSandboxProfile]);
+    }, onSandboxProfile: hydrateSandboxProfile, onSessionInvalidated: (id: string) => { const current = immediateSessionIdRef.current === id || sessionIdRef.current === id; if (immediateSessionIdRef.current === id) immediateSessionIdRef.current = null; if (sessionIdRef.current === id) sessionIdRef.current = null; if (queuedSessionIdRef.current === id) queuedSessionIdRef.current = null; if (wsLatestSessionIdRef.current?.value === id) wsLatestSessionIdRef.current = { value: null }; if (current) { mutateQueuedInterjections((prev) => prev); startNewSandboxProfile(); } }, onNewSession: startNewSandboxProfile,
+  }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, reconcileServerInterjections, hydrateSandboxProfile, mutateQueuedInterjections, startNewSandboxProfile]);
 
   const session = useSession(sessionCallbacks, { initialSessionId: urlState.sessionId });
   const markingReadSessionIdsRef = useRef(new Set<string>());

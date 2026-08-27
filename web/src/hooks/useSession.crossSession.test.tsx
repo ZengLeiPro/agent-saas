@@ -165,10 +165,11 @@ describe("useSession 跨会话详情请求隔离", () => {
     expect(displayedProfile).toBe(nextProfile);
   });
 
-  it.each([[500, "next-session"], [404, null]] as const)("删除后自动切换详情返回 %s 时会话归属保持一致", async (status, expectedSessionId) => {
+  it.each([[500, "next-session"], [404, null], [403, null]] as const)("删除后自动切换详情返回 %s 时会话归属保持一致", async (status, expectedSessionId) => {
     let activeSessionId: string | null = "current-session";
     const callbacks = makeCallbacks();
     callbacks.onSandboxProfile = vi.fn((sessionId, _profile, activate) => { if (activate) activeSessionId = sessionId; });
+    callbacks.onSessionInvalidated = vi.fn((sessionId) => { if (activeSessionId === sessionId) activeSessionId = null; });
     callbacks.onNewSession = vi.fn(() => { activeSessionId = null; });
     authFetchMock.mockImplementation((url: string, init?: RequestInit) => {
       if (init?.method === "DELETE") return Promise.resolve(jsonResponse({}));
@@ -187,6 +188,8 @@ describe("useSession 跨会话详情请求隔离", () => {
 
     expect(result.current.sessionId).toBe(expectedSessionId);
     expect(activeSessionId).toBe(expectedSessionId);
+    if (status === 403 || status === 404) expect(callbacks.onSessionInvalidated).toHaveBeenCalledWith("next-session", status);
+    else expect(callbacks.onSessionInvalidated).not.toHaveBeenCalled();
     expect(callbacks.resetMessages).toHaveBeenCalled();
   });
 

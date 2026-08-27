@@ -56,7 +56,7 @@ export interface SessionCallbacks {
     sessionId: string,
     queued: NonNullable<ApiSessionDetail["queuedMessages"]>,
   ) => void;
-  onSandboxProfile?: (sessionId: string, profile: ApiSessionDetail["sandboxProfile"], activate?: boolean) => void; onNewSession?: () => void;
+  onSandboxProfile?: (sessionId: string, profile: ApiSessionDetail["sandboxProfile"], activate?: boolean) => void; onSessionInvalidated?: (sessionId: string, status: 403 | 404) => void; onNewSession?: () => void;
 }
 export interface SessionState {
   sessionId: string | null;
@@ -497,7 +497,7 @@ export function useSession(
         } else {
           console.error("加载会话详情失败:", response.statusText);
           if (response.status === 404 || response.status === 403) {
-            removeSession(id);
+            cbRef.current.onSessionInvalidated?.(id, response.status); removeSession(id);
             setSessionOwner(null);
             setTokenUsage(null);
             setContextUsage(null);

@@ -2,7 +2,6 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatAppState } from "./useChatAppState";
 import type { UploadedFile } from "@/components/types";
-
 const harness = vi.hoisted(() => {
   const messageHandlers = new Set<(envelope: { data: unknown }) => void>();
   const stateHandlers = new Set<(state: string) => void>();
@@ -23,7 +22,7 @@ const harness = vi.hoisted(() => {
       onSessionsLoaded?: (sessions: Array<{ sessionId: string }>) => void;
       onLastRunState?: (sessionId: string, lastRunState: { status: string; runId: string; error?: string }) => void;
       onQueuedMessages?: (sessionId: string, messages: unknown[]) => void;
-      onSandboxProfile?: (sessionId: string, profile: "daily" | "coding" | undefined, activate?: boolean) => void;
+      onSandboxProfile?: (sessionId: string, profile: "daily" | "coding" | undefined, activate?: boolean) => void; onSessionInvalidated?: (sessionId: string, status: 403 | 404) => void;
       onNewSession?: () => void;
       cancelActiveStream?: () => void;
     },
@@ -128,24 +127,20 @@ vi.mock("@/lib/wsClient", () => ({
     },
   },
 }));
-
 function response(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json" },
   });
 }
-
 function emit(data: unknown): void {
   for (const handler of [...harness.messageHandlers]) handler({ data });
 }
-
 function chatPayloads(): Array<Record<string, unknown>> {
   return harness.sends.mock.calls
     .map(([payload]) => payload as Record<string, unknown>)
     .filter((payload) => payload.action === "chat");
 }
-
 const fileA: UploadedFile = {
   attachmentId: "att-a",
   originalName: "a.png",
@@ -164,7 +159,6 @@ const fileB: UploadedFile = {
   mimeType: "application/pdf",
   isImage: false,
 };
-
 beforeEach(() => {
   window.history.replaceState(null, "", "/chat");
   harness.messageHandlers.clear();
@@ -253,6 +247,12 @@ describe("useChatAppState queue delivery lifecycle", () => {
     expect(result.current.sandboxProfile).toBe("daily");
     act(() => result.current.setInput("after deletion")); await act(async () => { await result.current.sendMessage(); });
     expect(chatPayloads()[0]).toMatchObject({ sandboxProfile: "daily" }); expect(chatPayloads()[0].sessionId).toBeUndefined();
+  });
+  it.each([403, 404] as const)("详情返回 %s 时跨非聊天页清除失效归属并恢复可选草稿", async (status) => {
+    window.history.replaceState(null, "", "/chat/invalid-session"); harness.session.sessionId = "invalid-session"; harness.session.isNewSession = false; const { result, rerender } = renderHook(() => useChatAppState());
+    act(() => result.current.setActiveTab("files")); expect(window.location.pathname).not.toContain("invalid-session"); act(() => harness.sessionCallbacks?.onSessionInvalidated?.("invalid-session", status));
+    harness.session.sessionId = null; harness.session.isNewSession = true; rerender(); expect(result.current.sandboxProfile).toBe("daily"); act(() => result.current.setActiveTab("chat")); expect(window.location.pathname).not.toContain("invalid-session");
+    act(() => { result.current.setSandboxProfile("coding"); result.current.setInput("after invalidation"); }); await act(async () => { await result.current.sendMessage(); }); expect(chatPayloads()[0]).toMatchObject({ message: "after invalidation", sandboxProfile: "coding" }); expect(chatPayloads()[0].sessionId).toBeUndefined();
   });
   it("reconnects away from a draining server and lets retry resend the rejected message", async () => {
     harness.session.sessionId = "session-draining";

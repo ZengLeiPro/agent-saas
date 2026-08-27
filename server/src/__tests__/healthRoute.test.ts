@@ -1,9 +1,17 @@
 import express from 'express';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { Server } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createHealthRouter } from '../routes/health.js';
 import type { ActiveRunCounts } from '../runtime/runStore.js';
+import {
+  projectRuntimeWorkerReadyFile,
+  readActiveRuntimeWorkerAdmissionSnapshot,
+  resolveRuntimeAdmissionSnapshotReader,
+} from '../runtime/runtimeWorkerReadiness.js';
 
 const APP_CONFIG = {
   agent: { maxTurns: 4, permissionMode: 'ask' },
@@ -33,9 +41,11 @@ async function startHealthServer(options: Parameters<typeof createHealthRouter>[
 
 describe('health router', () => {
   const servers: Array<{ close(): Promise<void> }> = [];
+  const cleanupDirs: string[] = [];
 
   afterEach(async () => {
     await Promise.all(servers.splice(0).map((server) => server.close()));
+    for (const dir of cleanupDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
   it('keeps /healthz as a lightweight text probe', async () => {
@@ -199,6 +209,37 @@ describe('health router', () => {
         admitting: false,
         reason: 'worker_cgroup_near_high',
       },
+    });
+  });
+
+  it('fails ws-only readiness when the active runtime worker withdraws its readyfile', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'split-role-health-'));
+    cleanupDirs.push(dir);
+    const activeColorFile = join(dir, 'active-color');
+    const readyFile = join(dir, 'blue.ready');
+    writeFileSync(activeColorFile, 'blue\n');
+    const getActiveWorkerSnapshot = () => readActiveRuntimeWorkerAdmissionSnapshot({
+      activeColorFile,
+      readyFileForColor: () => readyFile,
+      isProcessAlive: () => true,
+    });
+    const getRuntimeAdmissionSnapshot = resolveRuntimeAdmissionSnapshotReader(
+      'ws-only',
+      () => ({ state: 'unknown', admitting: true }),
+      getActiveWorkerSnapshot,
+    );
+    projectRuntimeWorkerReadyFile(readyFile, { state: 'healthy', admitting: true }, 1234);
+    const server = await startHealthServer({ getRuntimeAdmissionSnapshot });
+    servers.push(server);
+
+    expect((await server.request('/api/healthz/ready')).status).toBe(200);
+
+    projectRuntimeWorkerReadyFile(readyFile, { state: 'paused', admitting: false }, 1234);
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      status: 'not_ready',
+      runtimeAdmission: { admitting: false, reason: 'runtime_worker_not_ready' },
     });
   });
 

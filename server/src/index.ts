@@ -19,6 +19,7 @@ import {
   runtimePerformanceSamplerIntervalMs,
 } from './runtime/runtimePerformanceSampler.js';
 import { isTransientNetworkError } from './utils/transientNetworkError.js';
+import { projectRuntimeWorkerReadyFile } from './runtime/runtimeWorkerReadiness.js';
 
 type ProcessRole = 'all' | 'ws-only' | 'scheduler-only' | 'runtime-worker';
 
@@ -27,6 +28,7 @@ let cronService: CronService | null | undefined;
 let httpServer: Server | undefined;
 let kbPreviewScheduler: KbPreviewScheduler | undefined;
 let runtimePerformanceSampler: RuntimePerformanceSampler | undefined;
+let runtimeReadyFileTimer: NodeJS.Timeout | undefined;
 
 const eventLoopDelayMonitor = monitorEventLoopDelay({ resolution: 20 });
 eventLoopDelayMonitor.enable();
@@ -73,6 +75,16 @@ function removeReadyFile(): void {
   try {
     fs.unlinkSync(readyFile);
   } catch { /* 不存在或不可删，忽略 */ }
+}
+
+function syncRuntimeWorkerReadyFile(): void {
+  const readyFile = process.env.AGENT_SAAS_READYFILE;
+  if (!readyFile) return;
+  try {
+    projectRuntimeWorkerReadyFile(readyFile, runtime?.getRuntimeAdmissionSnapshot?.());
+  } catch (err) {
+    serverLogger.warn(`Failed to project runtime worker readiness ${readyFile}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 function writeDrainMarker(snapshot?: {
@@ -122,8 +134,12 @@ async function startServer(): Promise<void> {
     if (processRole === 'runtime-worker') {
       runtime.startCronCoordinator();
       kbPreviewScheduler = startKbPreviewScheduler(runtime.processCwd);
+      syncRuntimeWorkerReadyFile();
+      runtimeReadyFileTimer = setInterval(syncRuntimeWorkerReadyFile, 1_000);
+      runtimeReadyFileTimer.unref?.();
+    } else {
+      writeReadyFile();
     }
-    writeReadyFile();
     serverLogger.info(`${processRole} process started; HTTP/WebSocket listeners are disabled`);
     void runtime.runDeferredStartupTasks();
     return;
@@ -310,6 +326,8 @@ let shuttingDown = false;
 async function shutdownCleanup(): Promise<void> {
   try {
     runtimePerformanceSampler?.stop();
+    if (runtimeReadyFileTimer) clearInterval(runtimeReadyFileTimer);
+    runtimeReadyFileTimer = undefined;
     httpServer?.close();
     cronService?.stop();
     await runtime?.contextPlaneShutdown?.();

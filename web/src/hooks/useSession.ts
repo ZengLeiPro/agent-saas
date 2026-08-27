@@ -56,7 +56,7 @@ export interface SessionCallbacks {
     sessionId: string,
     queued: NonNullable<ApiSessionDetail["queuedMessages"]>,
   ) => void;
-  onSandboxProfile?: (sessionId: string, profile: ApiSessionDetail["sandboxProfile"]) => void; onActivate?: (sessionId: string) => void; onNewSession?: () => void;
+  onSandboxProfile?: (sessionId: string, profile: ApiSessionDetail["sandboxProfile"]) => void; onNewSession?: () => void;
 }
 export interface SessionState {
   sessionId: string | null;
@@ -639,7 +639,7 @@ export function useSession(
         (item) => !deletedIds.has(item.sessionId),
       );
       if (remainingSessions.length > 0) {
-        const nextSessionId = remainingSessions[0].sessionId; cbRef.current.onActivate?.(nextSessionId); await loadSessionDetail(nextSessionId);
+        const nextSessionId = remainingSessions[0].sessionId; cbRef.current.onSandboxProfile?.(nextSessionId, undefined); await loadSessionDetail(nextSessionId);
       } else {
         setSessionId(null);
         localStorage.removeItem(SESSION_STORAGE_KEY);

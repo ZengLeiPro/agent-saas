@@ -21,6 +21,7 @@ export function useSandboxProfile(
   const selectExistingSandboxProfile = useCallback(() => update("coding"), [update]);
   const startNewSandboxProfile = useCallback(() => update("daily"), [update]);
   const hydrateSandboxProfile = useCallback((sessionId: string, profile: unknown) => {
+    if (profile === undefined) immediateSessionIdRef.current = sessionId;
     const activeSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
     if (activeSessionId && sessionId === activeSessionId) update(resolveSessionSandboxProfile(profile));
   }, [immediateSessionIdRef, sessionIdRef, update]);

@@ -97,9 +97,9 @@ describe("useSession 跨会话详情请求隔离", () => {
     let activeSessionId = currentSessionId;
     let displayedProfile = currentProfile;
     const callbacks = makeCallbacks();
-    callbacks.onActivate = vi.fn((sessionId) => { activeSessionId = sessionId; displayedProfile = "coding"; });
     callbacks.onSandboxProfile = vi.fn((sessionId, profile) => {
-      if (sessionId === activeSessionId) displayedProfile = profile ?? "coding";
+      if (profile === undefined) { activeSessionId = sessionId; displayedProfile = "coding"; return; }
+      if (sessionId === activeSessionId) displayedProfile = profile;
     });
     authFetchMock.mockImplementation((url: string, init?: RequestInit) => {
       if (init?.method === "DELETE") return Promise.resolve(jsonResponse({}));
@@ -119,7 +119,7 @@ describe("useSession 跨会话详情请求隔离", () => {
     await act(async () => { await result.current.handleDeleteSession(); });
 
     expect(result.current.sessionId).toBe(nextSessionId);
-    expect(callbacks.onActivate).toHaveBeenCalledWith(nextSessionId);
+    expect(callbacks.onSandboxProfile).toHaveBeenCalledWith(nextSessionId, undefined);
     expect(displayedProfile).toBe(nextProfile);
   });
 

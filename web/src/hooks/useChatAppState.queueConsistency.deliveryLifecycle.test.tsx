@@ -214,8 +214,8 @@ describe("useChatAppState queue delivery lifecycle", () => {
     expect(result.current.sandboxProfile).toBe("coding");
     act(() => harness.sessionCallbacks?.onSandboxProfile?.("legacy-session", undefined));
     expect(result.current.sandboxProfile).toBe("coding");
-    act(() => harness.sessionCallbacks?.onSandboxProfile?.("legacy-session", "daily"));
-    expect(result.current.sandboxProfile).toBe("daily");
+    act(() => harness.sessionCallbacks?.onSandboxProfile?.("legacy-session", "daily")); expect(result.current.sandboxProfile).toBe("daily");
+    act(() => harness.sessionCallbacks?.onSandboxProfile?.("next-legacy-session", undefined)); expect(result.current.sandboxProfile).toBe("coding");
   });
   it("returns to daily when browser navigation opens a blank new conversation", () => {
     const { result, rerender } = renderHook(() => useChatAppState());

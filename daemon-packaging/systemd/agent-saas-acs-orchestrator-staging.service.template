@@ -5,6 +5,13 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+User=agent-saas-staging
+Group=agent-saas-staging
+RuntimeDirectory=agent-saas-staging
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+StateDirectory=agent-saas-staging
+StateDirectoryMode=0750
 WorkingDirectory=/opt/agent-saas-staging/current/acs-orchestrator
 Environment=NODE_ENV=production
 Environment=AGENT_SAAS_ENVIRONMENT=staging
@@ -14,7 +21,8 @@ Environment=ACS_WORKSPACE_PVC=agent-saas-staging-workspace
 Environment=ACS_SERVICE_ACCOUNT=agent-saas-staging-orchestrator
 Environment=ACS_ORCH_RUNTIME_CONFIG_FILE=/var/lib/agent-saas-staging/acs/runtime-config.json
 Environment=ACS_RELEASE_IDENTITY_FILE=/etc/agent-saas-staging/acs-release-identity.json
-Environment=ACS_ORCH_PIDFILE=/run/agent-saas-acs-orchestrator-staging.pid
+Environment=ACS_ORCH_PIDFILE=/run/agent-saas-staging/acs-orchestrator.pid
+Environment=HOME=/var/lib/agent-saas-staging/acs
 Environment=KUBECONFIG=/etc/agent-saas-staging/kubeconfig
 EnvironmentFile=/etc/agent-saas-staging/acs-orchestrator.env
 ExecStart=/usr/bin/node --enable-source-maps dist/index.js

@@ -6,10 +6,8 @@
   "verificationStatus": "pending",
   "firstDeploymentReadiness": "blocked",
   "blockingConditions": [
-    "staging-runtime-services-not-deployed",
     "staging-database-migrations-not-applied",
-    "release-evidence-service-not-deployed",
-    "staging-e2e-test-identity-not-created",
+    "staging-e2e-integration-task-not-created",
     "github-environments-not-configured"
   ],
   "resources": {
@@ -38,7 +36,9 @@
       "instanceId": "pgm-wz96n2735914490l",
       "reuseStatus": "accepted-isolated-database-and-role",
       "database": "agent_saas_staging",
-      "role": "agent_saas_staging"
+      "role": "agent_saas_staging",
+      "networkReadback": "reachable-from-staging-ecs",
+      "migrationStatus": "pending-first-immutable-release"
     },
     "nas": {
       "fileSystemId": "020ksw7nv1wjde1xy9c",
@@ -55,7 +55,8 @@
     "vault": {
       "credentialNamespace": "STAGING_AGENT_SAAS",
       "backend": "encrypted-file",
-      "path": "/var/lib/agent-saas-staging/vault/secrets.enc"
+      "path": "/mnt/agent-saas-staging/runtime/vault/secrets.enc",
+      "status": "bootstrapped-and-token-binding-verified"
     },
     "notifications": {
       "mode": "disabled",
@@ -80,7 +81,27 @@
       "currentLink": "/opt/agent-saas-staging/current",
       "stateRoot": "/var/lib/agent-saas-staging",
       "configRoot": "/etc/agent-saas-staging",
-      "lockRoot": "/run/lock/agent-saas-staging"
+      "lockRoot": "/run/lock/agent-saas-staging",
+      "serviceUnits": "installed-enabled-inactive-until-first-rc",
+      "configurationStatus": "schema-and-fail-closed-safety-verified",
+      "accountSeed": "production-users-and-tenants-only-plus-dedicated-staging-e2e-admin"
+    },
+    "releaseEvidence": {
+      "service": "agent-saas-release-evidence-staging.service",
+      "baseUrl": "https://staging-agent-api.kaiyan.net/release-evidence",
+      "status": "active-authenticated-and-readback-verified"
+    },
+    "egressProxy": {
+      "service": "squid.service",
+      "listen": "127.0.0.1:3128",
+      "scope": "server-all-domains",
+      "failOpen": false,
+      "status": "active-local-only-and-https-probe-verified"
+    },
+    "e2eIdentity": {
+      "username": "staging-e2e-admin",
+      "scope": "staging-only-platform-admin",
+      "status": "created-password-hash-verified"
     }
   },
   "defaults": {

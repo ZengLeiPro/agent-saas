@@ -104,6 +104,8 @@ for (const [key, value] of Object.entries(desired)) lines.push(`${key}=${value}`
 fs.writeFileSync(`${envPath}.candidate`, `${lines.join('\n')}\n`, { mode: 0o600 });
 fs.renameSync(`${envPath}.candidate`, envPath);
 NODE
+chown root:agent-saas-staging "$server_env"
+chmod 0640 "$server_env"
 node - "$MANIFEST_PATH" "$acs_env" <<'NODE'
 const fs = require('node:fs');
 const [manifestPath, envPath] = process.argv.slice(2);
@@ -115,6 +117,8 @@ output.push(`ACS_SANDBOX_IMAGE=${reference}`);
 fs.writeFileSync(`${envPath}.candidate`, `${output.join('\n')}\n`, { mode: 0o600 });
 fs.renameSync(`${envPath}.candidate`, envPath);
 NODE
+chown root:agent-saas-staging "$acs_env"
+chmod 0640 "$acs_env"
 node - "$MANIFEST_PATH" "$acs_env" <<'NODE'
 const crypto = require('node:crypto');
 const fs = require('node:fs');

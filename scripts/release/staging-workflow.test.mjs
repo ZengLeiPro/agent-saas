@@ -8,6 +8,14 @@ const resourcePath = new URL('../../infra/staging/resource-plan.json', import.me
 const acsRuntimePath = new URL('../../infra/staging/acs-runtime.yaml', import.meta.url);
 const observationPath = new URL('./observe-production.mjs', import.meta.url);
 const isolationPath = new URL('../staging/assert-isolation.mjs', import.meta.url);
+const serverUnitPath = new URL(
+  '../../daemon-packaging/systemd/agent-saas-server-staging.service.template',
+  import.meta.url,
+);
+const workerUnitPath = new URL(
+  '../../daemon-packaging/systemd/agent-saas-runtime-worker-staging.service.template',
+  import.meta.url,
+);
 
 function runScriptLines(text) {
   const output = [];
@@ -59,6 +67,8 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /sandboxImageDigest/u);
   assert.match(deploy, /rollback_root/u);
   assert.match(deploy, /deployment_committed=true/u);
+  assert.match(deploy, /chown root:agent-saas-staging "\$server_env"/u);
+  assert.match(deploy, /chown root:agent-saas-staging "\$acs_env"/u);
   assert.match(deploy, /trap finish EXIT/u);
   assert.match(deploy, /verify --root "\$target" --component server/u);
 });
@@ -71,13 +81,20 @@ test('resource plan records provisioned resources while first deployment remains
   assert.equal(plan.firstDeploymentReadiness, 'blocked');
   assert.ok(plan.blockingConditions.length > 0);
   assert.ok(!plan.blockingConditions.includes('staging-acs-runtime-not-applied'));
-  assert.ok(plan.blockingConditions.includes('release-evidence-service-not-deployed'));
+  assert.ok(!plan.blockingConditions.includes('release-evidence-service-not-deployed'));
+  assert.ok(!plan.blockingConditions.includes('staging-e2e-test-identity-not-created'));
+  assert.ok(plan.blockingConditions.includes('staging-database-migrations-not-applied'));
+  assert.ok(plan.blockingConditions.includes('staging-e2e-integration-task-not-created'));
+  assert.ok(plan.blockingConditions.includes('github-environments-not-configured'));
   assert.notEqual(plan.resources.acs.namespace, 'agent-saas-coding');
   assert.equal(plan.resources.acs.status, 'applied');
   assert.equal(plan.resources.acs.clusterId, 'c819935b09a7d4a2a844561ef22a17448');
   assert.equal(plan.resources.acs.sharedComputePool, true);
   assert.equal(plan.resources.database.instanceId, 'pgm-wz96n2735914490l');
   assert.equal(plan.resources.nas.isolationLevel, 'logical-shared-filesystem');
+  assert.equal(plan.resources.releaseEvidence.status, 'active-authenticated-and-readback-verified');
+  assert.equal(plan.resources.egressProxy.listen, '127.0.0.1:3128');
+  assert.equal(plan.resources.e2eIdentity.status, 'created-password-hash-verified');
   assert.equal(plan.defaults.cronEnabled, false);
   assert.equal(plan.defaults.productionOAuthEnabled, false);
   assert.ok(!JSON.stringify(plan).includes('UNASSIGNED'));
@@ -103,5 +120,15 @@ test('Evidence Service dependencies suppress their standalone CLIs when bundled'
   for (const path of [observationPath, isolationPath]) {
     const source = await readFile(path, 'utf8');
     assert.match(source, /process\.env\.AGENT_SAAS_EMBEDDED !== 'true'/u);
+  }
+});
+
+test('Staging API and Worker keep mutable runtime data under the isolated NAS root', async () => {
+  for (const path of [serverUnitPath, workerUnitPath]) {
+    const unit = await readFile(path, 'utf8');
+    assert.match(unit, /User=agent-saas-staging/u);
+    assert.match(unit, /Group=agent-saas-staging/u);
+    assert.match(unit, /WorkingDirectory=\/mnt\/agent-saas-staging\/runtime\/server/u);
+    assert.match(unit, /ExecStart=.*\/opt\/agent-saas-staging\/current\/server\/dist\/index\.js/u);
   }
 });

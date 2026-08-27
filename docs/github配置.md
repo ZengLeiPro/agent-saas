@@ -3,6 +3,19 @@
 本文档用于配置 `ZengLeiPro/agent-saas` 的仓库 Ruleset，以及新版发布流程所需的
 `staging`、`production` GitHub Environment。
 
+当前值核验日期：`2026-08-27`。本文档按当前 macOS 工作站上的凭据来源编写，交给管理员或其
+自动化执行端时，必须在同一工作站和仓库目录执行。文档不包含任何 Secret 明文。
+
+开始前，承载本文档及新版发布实现的 PR 必须已经合并到 `main`。管理员应在 `main` 上确认至少
+存在以下契约；缺少任一项即停止，不得使用旧版文档继续配置：
+
+```bash
+test -f scripts/staging/ensure-integration-fixture.mjs
+grep -F 'Verify migrations and create isolated Integration fixture' \
+  .github/workflows/deploy-staging.yml
+grep -F 'github-environments-not-configured' infra/staging/resource-plan.json
+```
+
 配置必须分为两个阶段：
 
 1. 应用 Ruleset，并创建两个 Environment 的空壳和分支限制。
@@ -242,16 +255,28 @@ node <<'NODE'
 const { readFileSync } = require('node:fs');
 const plan = JSON.parse(readFileSync('infra/staging/resource-plan.json', 'utf8'));
 const blockers = Array.isArray(plan.blockingConditions) ? plan.blockingConditions : [];
+const allowedSelfReferentialBlocker =
+  blockers.length === 1 && blockers[0] === 'github-environments-not-configured';
 if (
   plan.status !== 'provisioned' ||
-  plan.firstDeploymentReadiness !== 'ready' ||
-  blockers.length > 0
+  (plan.firstDeploymentReadiness !== 'ready' && !allowedSelfReferentialBlocker) ||
+  (blockers.length > 0 && !allowedSelfReferentialBlocker)
 ) {
   console.error(`BLOCKED: Staging 未达到首次部署就绪状态：${blockers.join(',')}`);
   process.exit(1);
 }
+console.log(
+  allowedSelfReferentialBlocker
+    ? '允许继续：唯一 blocker 正是本次要完成的 GitHub Environments 配置'
+    : 'Staging 首次部署资源计划已 ready',
+);
 NODE
 ```
+
+这里唯一允许豁免的是本次操作自身将消除的
+`github-environments-not-configured`。其他任何 blocker 都必须停止。配置完成后管理员不得自行编辑
+`infra/staging/resource-plan.json` 或运行 Workflow；应先返回第 11 节报告，由仓库维护者在线读回后
+另行把资源计划切换为 `ready`。
 
 还必须同时确认：
 
@@ -310,10 +335,15 @@ gh secret set '<SECRET_NAME>' \
 
 格式要求：
 
-- `STAGING_RELEASE_OSS_URI`：`oss://<真实 bucket>/<可选真实前缀>`。
-- `RELEASE_EVIDENCE_URL`：完整 HTTPS URL，端点为 `/release-evidence`，不附带查询参数。
-- `STAGING_ISOLATION_EVIDENCE_URL`：完整 HTTPS URL，端点为 `/staging-isolation`，不附带查询参数。
-- `STAGING_SSH_HOST_KEY_SHA256`：可信来源核验的 ED25519 指纹，格式为 `SHA256:...`。
+| Variable                         | 当前确定值                                               |
+| -------------------------------- | -------------------------------------------------------- |
+| `STAGING_RELEASE_OSS_URI`        | `oss://agent-saas-release-records`                       |
+| `RELEASE_EVIDENCE_URL`           | `https://staging-agent-api.kaiyan.net/release-evidence`  |
+| `STAGING_ISOLATION_EVIDENCE_URL` | `https://staging-agent-api.kaiyan.net/staging-isolation` |
+| `STAGING_SSH_HOST_KEY_SHA256`    | `SHA256:g0fYRjn8eK4ohBjNVXMKgmLqSWW0u8SRi/ICEN/AEpA`     |
+
+发布记录 bucket 位于 `cn-shenzhen`，当前已读回 Versioning 为 `Enabled`。管理员仍需在最终报告中
+附上 WORM/保留策略读回；不得仅凭本文档文字假定保留策略有效。
 
 `STAGING_E2E_INTEGRATION_TASK_ID` 无需配置。Workflow 会在首个不可变 RC 启动并完成数据库迁移后，
 创建一个 `canceled` 的 Staging 隔离 fixture，事务性读回后仅写入当前 job 环境。它只用于验证
@@ -326,6 +356,63 @@ gh variable set '<VARIABLE_NAME>' \
   --repo ZengLeiPro/agent-saas \
   --env staging \
   --body '<VERIFIED_VALUE>'
+```
+
+### 8.3 当前工作站上的安全写入命令
+
+以下命令不会把 Secret 打印到终端。必须逐条执行并检查退出状态，禁止加 `set -x`：
+
+```bash
+set -euo pipefail
+
+TARGET_REPOSITORY='ZengLeiPro/agent-saas'
+STAGING_HOST='120.76.54.103'
+STAGING_USER='root'
+STAGING_KEY='/Users/kaiyan001/.ssh/id_ed25519'
+
+security find-generic-password \
+  -s agent-saas-staging-ram-access-key \
+  -a agent-saas-staging-deploy -w \
+  | jq -r .accessKeyId \
+  | gh secret set ALIYUN_ACCESS_KEY_ID --repo "$TARGET_REPOSITORY" --env staging
+
+security find-generic-password \
+  -s agent-saas-staging-ram-access-key \
+  -a agent-saas-staging-deploy -w \
+  | jq -r .accessKeySecret \
+  | gh secret set ALIYUN_ACCESS_KEY_SECRET --repo "$TARGET_REPOSITORY" --env staging
+
+printf '%s' "$STAGING_HOST" \
+  | gh secret set STAGING_ECS_HOST --repo "$TARGET_REPOSITORY" --env staging
+printf '%s' "$STAGING_USER" \
+  | gh secret set STAGING_ECS_USER --repo "$TARGET_REPOSITORY" --env staging
+gh secret set STAGING_ECS_SSH_KEY --repo "$TARGET_REPOSITORY" --env staging \
+  < "$STAGING_KEY"
+
+ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+  -i "$STAGING_KEY" "$STAGING_USER@$STAGING_HOST" \
+  'cat /etc/agent-saas-staging/release-evidence-read.token' \
+  | gh secret set RELEASE_EVIDENCE_TOKEN \
+      --repo "$TARGET_REPOSITORY" --env staging
+
+printf '%s' 'staging-e2e-admin' \
+  | gh secret set STAGING_E2E_USERNAME --repo "$TARGET_REPOSITORY" --env staging
+security find-generic-password \
+  -s agent-saas-staging-e2e -a staging-e2e-admin -w \
+  | gh secret set STAGING_E2E_PASSWORD --repo "$TARGET_REPOSITORY" --env staging
+
+gh variable set STAGING_RELEASE_OSS_URI \
+  --repo "$TARGET_REPOSITORY" --env staging \
+  --body 'oss://agent-saas-release-records'
+gh variable set RELEASE_EVIDENCE_URL \
+  --repo "$TARGET_REPOSITORY" --env staging \
+  --body 'https://staging-agent-api.kaiyan.net/release-evidence'
+gh variable set STAGING_ISOLATION_EVIDENCE_URL \
+  --repo "$TARGET_REPOSITORY" --env staging \
+  --body 'https://staging-agent-api.kaiyan.net/staging-isolation'
+gh variable set STAGING_SSH_HOST_KEY_SHA256 \
+  --repo "$TARGET_REPOSITORY" --env staging \
+  --body 'SHA256:g0fYRjn8eK4ohBjNVXMKgmLqSWW0u8SRi/ICEN/AEpA'
 ```
 
 ## 9. production Environment 值
@@ -367,11 +454,14 @@ gh secret set '<SECRET_NAME>' \
 
 格式要求：
 
-- `PRODUCTION_OBSERVATION_URL`：完整 HTTPS URL，端点为 `/production-observation`，不附带查询参数。
-- `PRODUCTION_SSH_HOST_KEY_SHA256`：可信来源核验的生产 ECS ED25519 指纹，格式为
-  `SHA256:...`。
-- `RELEASE_RECORD_OSS_URI`：必须与 `STAGING_RELEASE_OSS_URI` 完全相同，确保生产 Promotion
-  读取 Staging 生成的同一份不可变 RC 记录。
+| Variable                         | 当前确定值                                                    |
+| -------------------------------- | ------------------------------------------------------------- |
+| `PRODUCTION_OBSERVATION_URL`     | `https://staging-agent-api.kaiyan.net/production-observation` |
+| `PRODUCTION_SSH_HOST_KEY_SHA256` | `SHA256:IwX0iO/NoCSv02g4Zczm9+OD+ESws26lr09d0UWPlCI`          |
+| `RELEASE_RECORD_OSS_URI`         | `oss://agent-saas-release-records`                            |
+
+生产观察当前由隔离部署的 Evidence Service 统一提供读端点，因此 URL 使用 Staging API 域名，但其
+查询必须绑定生产 release ID 与 Manifest digest；这不表示生产应用部署在 Staging ECS。
 
 写入形式：
 
@@ -380,6 +470,53 @@ gh variable set '<VARIABLE_NAME>' \
   --repo ZengLeiPro/agent-saas \
   --env production \
   --body '<VERIFIED_VALUE>'
+```
+
+### 9.3 当前工作站上的生产配置命令
+
+生产 ECS 身份和观察证据只读 Token 的来源已确定。生产 RAM AccessKey 没有保存在当前 macOS
+Keychain，且 GitHub 无法反向读取现有 Repository Secret 明文；管理员必须从现有生产部署凭据的
+原始密码库取得 `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`，通过标准输入写入。拿不到
+原始来源时必须停止，不得把 Staging RAM、初始化 RAM 或临时高权限 RAM 当成生产发布身份。
+
+```bash
+set -euo pipefail
+
+TARGET_REPOSITORY='ZengLeiPro/agent-saas'
+PRODUCTION_HOST='47.106.14.205'
+PRODUCTION_USER='root'
+PRODUCTION_KEY='/Users/kaiyan001/Documents/Macbook_Pro.pem'
+STAGING_HOST='120.76.54.103'
+STAGING_KEY='/Users/kaiyan001/.ssh/id_ed25519'
+
+# 这两项由批准的生产凭据源通过标准输入写入：
+gh secret set ALIYUN_ACCESS_KEY_ID \
+  --repo "$TARGET_REPOSITORY" --env production
+gh secret set ALIYUN_ACCESS_KEY_SECRET \
+  --repo "$TARGET_REPOSITORY" --env production
+
+printf '%s' "$PRODUCTION_HOST" \
+  | gh secret set ECS_HOST --repo "$TARGET_REPOSITORY" --env production
+printf '%s' "$PRODUCTION_USER" \
+  | gh secret set ECS_USER --repo "$TARGET_REPOSITORY" --env production
+gh secret set ECS_SSH_KEY --repo "$TARGET_REPOSITORY" --env production \
+  < "$PRODUCTION_KEY"
+
+ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+  -i "$STAGING_KEY" "root@$STAGING_HOST" \
+  'cat /etc/agent-saas-staging/release-evidence-read.token' \
+  | gh secret set PRODUCTION_OBSERVATION_TOKEN \
+      --repo "$TARGET_REPOSITORY" --env production
+
+gh variable set PRODUCTION_OBSERVATION_URL \
+  --repo "$TARGET_REPOSITORY" --env production \
+  --body 'https://staging-agent-api.kaiyan.net/production-observation'
+gh variable set PRODUCTION_SSH_HOST_KEY_SHA256 \
+  --repo "$TARGET_REPOSITORY" --env production \
+  --body 'SHA256:IwX0iO/NoCSv02g4Zczm9+OD+ESws26lr09d0UWPlCI'
+gh variable set RELEASE_RECORD_OSS_URI \
+  --repo "$TARGET_REPOSITORY" --env production \
+  --body 'oss://agent-saas-release-records'
 ```
 
 ## 10. 最终读回验收

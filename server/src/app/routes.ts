@@ -107,8 +107,7 @@ import { initAuditLog, redactLegacyChatPreviewsInFile } from '../data/login-logs
 import { configureModelPricing } from '../data/usage/pricing.js';
 import { configureImageGenPricing } from '../data/usage/imageGenPricing.js';
 export function registerRoutes(app: Express, runtime: AppRuntime): void {
-  // 路由约定:
-  // - 通道消息入口路由（如 /api/chat、/api/dingtalk/webhook）由各 Channel.start() 注册
+  // 路由约定：通道消息入口路由（如 /api/chat、/api/dingtalk/webhook）由各 Channel.start() 注册
   // - 控制面/查询类路由由 app 统一注册
 
   // 兼容原权限治理挂载点；平台管理员现已统一为完整权限。

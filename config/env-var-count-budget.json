@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reason": "阶段 A Release Manifest 与 append-only attestation 本地不可变存储需要显式目录变量",
-  "updatedAt": "2026-08-26",
+  "reason": "Release Evidence Service 的持久化目录、监听地址、令牌文件及 Staging E2E 账号凭据需要显式环境变量",
+  "updatedAt": "2026-08-27",
   "domains": {
     "server": {
       "budget": 48,
@@ -132,7 +132,7 @@
       "names": ["BUNDLE_API_ORIGIN", "VITE_API_BASE", "VITE_WEB_ORIGIN"]
     },
     "deployment/scripts": {
-      "budget": 26,
+      "budget": 33,
       "names": [
         "AGENT_SAAS_RELEASE_ATTESTATION_DIR",
         "AGENT_SAAS_RELEASE_MANIFEST_DIR",
@@ -157,6 +157,13 @@
         "HTTPS_PROXY",
         "MODEL",
         "MP_WORKER_PROCESS_ROLE",
+        "RELEASE_EVIDENCE_HOST",
+        "RELEASE_EVIDENCE_PORT",
+        "RELEASE_EVIDENCE_READ_TOKEN_FILE",
+        "RELEASE_EVIDENCE_ROOT",
+        "RELEASE_EVIDENCE_WRITE_TOKEN_FILE",
+        "STAGING_E2E_PASSWORD",
+        "STAGING_E2E_USERNAME",
         "STRYKER_MODULE",
         "TASKBOARD_TABLE_PREFIX",
         "VERIFY_WS_MODEL"

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import type { Express, Request, Response } from 'express';
 import type { AppRuntime } from './runtime.js';
+import { resolveRuntimeAdmissionSnapshotReader } from '../runtime/runtimeWorkerReadiness.js';
 import { registerAudioTranscribeAdminRoute } from './audioTranscribeAdminRoute.js';
 import { registerGovernanceRoutes } from './governanceRoutes.js';
 import { activeOffboardingWriteFence, tenantFeatureGuard } from './routeGuards.js';
@@ -143,10 +144,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getDispatchMetrics: () => dispatchMetricsStore.getSnapshot(),
       getActiveStreamCount: () => channelManager.getActiveStreamCount(),
       getUploadMetrics: () => runtime.uploadManager.getMetricsSnapshot(),
-      getActiveRunCounts: runtime.runtimeRunStore?.getActiveCounts
-        ? () => runtime.runtimeRunStore!.getActiveCounts!()
-        : undefined,
+      getActiveRunCounts: runtime.runtimeRunStore?.getActiveCounts ? () => runtime.runtimeRunStore!.getActiveCounts!() : undefined,
       getIsDraining: () => channelManager.draining,
+      getRuntimeAdmissionSnapshot: resolveRuntimeAdmissionSnapshotReader(runtime.processRole, runtime.getRuntimeAdmissionSnapshot),
       getSkillsWarmupStatus: () => runtime.getSkillsWarmupStatus(),
       ...(runtime.egressConfigStore
         ? {

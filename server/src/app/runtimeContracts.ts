@@ -18,6 +18,7 @@ import type { ArtifactService } from '../runtime/artifactService.js';
 import type { ArtifactShareService } from '../runtime/artifactShareService.js';
 import type { ArtifactShareStore } from '../runtime/artifactShareStore.js';
 import type { SessionShareStore } from '../data/sessionShares/store.js';
+import type { RuntimeAdmissionSnapshot } from '../runtime/memoryPressureGuard.js';
 import type { RuntimePerformanceWorkloadSnapshot } from '../runtime/runtimePerformanceSampler.js';
 import type { RuntimeSchedulerCapacityController } from '../runtime/runtimeSchedulerConfigStore.js';
 import type { SandboxWarmupService } from '../runtime/sandboxWarmup.js';
@@ -327,6 +328,8 @@ export interface AppRuntime {
   runtimeRunStore?: PgRunStore;
   /** PG 统一持久化的顶层 run 并发控制；平台运行态页读取并热更新。 */
   runtimeSchedulerCapacity?: RuntimeSchedulerCapacityController;
+  /** Runtime Worker 当前资源准入状态；readiness 与运维观测共用同一快照。 */
+  getRuntimeAdmissionSnapshot?: () => RuntimeAdmissionSnapshot;
   /** Runtime Worker结构化性能采样：合并本地Scheduler、PG队列和资源准入快照。 */
   runtimePerformanceSnapshot?: () => Promise<RuntimePerformanceWorkloadSnapshot>;
   /** PG runtime session projection store（平台观测会话列表用；file backend 为 undefined）。 */

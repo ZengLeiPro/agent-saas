@@ -170,5 +170,11 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(serverEntry).toContain(
       'writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced })',
     );
+    expect(serverEntry).toContain(
+      'projectRuntimeWorkerReadyFile(readyFile, runtime?.getRuntimeAdmissionSnapshot?.())',
+    );
+    expect(serverEntry).toContain(
+      'runtimeReadyFileTimer = setInterval(syncRuntimeWorkerReadyFile, 1_000)',
+    );
   });
 });

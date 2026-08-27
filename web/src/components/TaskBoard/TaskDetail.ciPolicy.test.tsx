@@ -63,6 +63,11 @@ describe("TaskDetail CI 未配置闭环", () => {
     const onTaskLoaded = vi.fn();
     render(<TaskDetail {...props({ onConfigureCiPolicy, onExecute, onTaskLoaded })} />);
 
+    const compactStatus = await screen.findByRole("region", { name: "任务关键状态" });
+    expect(compactStatus.textContent).toContain("任务已阻塞");
+    expect(compactStatus.textContent).toContain("CI 门禁未配置");
+    expect(screen.queryByTestId("task-detail-information")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "展开任务详情" }));
     expect(await screen.findByLabelText("CI 门禁未配置")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "前往配置" }));
     expect(onConfigureCiPolicy).toHaveBeenCalledOnce();
@@ -75,12 +80,14 @@ describe("TaskDetail CI 未配置闭环", () => {
   });
 
   it("无策略或恢复权限时明确提示联系看板所有者", async () => {
+    const user = userEvent.setup();
     const readOnlyBoard: TaskBoard = {
       ...editableBoard, visibility: "organization", ownerUserId: "owner-1", canManage: false,
       allowedActions: ["board.read"],
     };
     render(<TaskDetail {...props({ board: readOnlyBoard, canTransitionTask: false, onConfigureCiPolicy: undefined })} />);
 
+    await user.click(await screen.findByRole("button", { name: "展开任务详情" }));
     expect(await screen.findByText(/请联系看板所有者配置/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "前往配置" })).toBeNull();
     expect(screen.queryByRole("button", { name: "恢复任务并重新检查" })).toBeNull();

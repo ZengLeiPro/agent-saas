@@ -97,6 +97,23 @@ describe('SkillConfigStore ownSkills', () => {
     expect(Object.keys(store.getTenantOwnSkillRules('wain'))).toEqual(['own_alive']);
   });
 
+  it('pruneStaleSkills 按用户保留仍在目录中的个人 skill，不因部署 warmup 自动下架', async () => {
+    await store.setUserSelectedSkills('alice', ['personal-alice', 'personal-gone']);
+    await store.setUserSelectedSkills('bob', ['personal-bob', 'personal-alice']);
+
+    store.pruneStaleSkills(
+      new Set(),
+      {},
+      {
+        alice: new Set(['personal-alice']),
+        bob: new Set(['personal-bob']),
+      },
+    );
+
+    expect(store.getUserSelectedSkills('alice')).toEqual(['personal-alice']);
+    expect(store.getUserSelectedSkills('bob')).toEqual(['personal-bob']);
+  });
+
   it('removeSkillReferences 清理平台、租户规则和全部用户选择引用', async () => {
     await store.setPoolVisibility({ doomed: true, keep: true });
     await store.setPlatformSkillConfigs({ doomed: { enabled: false, exposure: 'all', tenantIds: [] } });

@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs';
-import { readdir as readdirAsync } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'path';
 import { serverLogger, configureLogger } from '../utils/logger.js';
 import type { AppConfig } from '../types/index.js';
@@ -148,6 +147,7 @@ import {
 import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 import { resolveUserPersonalSkillIds as resolvePersonalSkillIds } from '../workspace/materialization/managedTenantSkills.js';
 import { createSkillDispatchState } from './skillDispatchState.js';
+import { collectSkillPruneInventory } from './skillPruneInventory.js';
 import { resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import { agentDir, resolveAgentPath } from '../workspace/namespace.js';
 import { CronLeadership } from '../runtime/cronLeadership.js';
@@ -550,32 +550,19 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
 
           // 3b. 全部 workspace 先按旧注册表完成撤销，再清理幽灵条目，避免首次
           // manifest 迁移时失去“该目录曾是系统技能”的识别依据。
-          const tenantOwnIdsByTenant: Record<string, Set<string>> = {};
-          const tenantsRoot = tenantSkillsRootDir;
-          if (existsSync(tenantsRoot)) {
-            for (const entry of await readdirAsync(tenantsRoot, { withFileTypes: true })) {
-              try {
-                if (!entry.isDirectory() || !TENANT_SLUG_PATTERN.test(entry.name)) continue;
-                const tenantSkillDir = resolveTenantSkillsDirFromRoot(
-                  tenantSkillsRootDir,
-                  entry.name,
-                );
-                const ownIds = new Set(
-                  (await readdirAsync(tenantSkillDir, { withFileTypes: true }))
-                    .filter((skill) => (
-                      skill.isDirectory()
-                      && SAFE_SKILL_NAME_RE.test(skill.name)
-                      && !currentPoolIds.has(skill.name)
-                    ))
-                    .map((skill) => skill.name),
-                );
-                tenantOwnIdsByTenant[entry.name] = ownIds;
-              } catch {
-                // 非法目录名或读取失败，跳过
-              }
-            }
-          }
-          const pruned = store.pruneStaleSkills(currentPoolIds, tenantOwnIdsByTenant);
+          // 用户目录同时承载物化 Skill 与个人 Skill；清理清单必须按用户隔离，
+          // 否则部署 warmup 会把个人 Skill 的启用记录当成幽灵条目删除。
+          const { tenantOwnIdsByTenant, personalSkillIdsByUsername } = await collectSkillPruneInventory({
+            users: allUsers,
+            agentCwd,
+            tenantSkillsRootDir,
+            currentPoolIds,
+          });
+          const pruned = store.pruneStaleSkills(
+            currentPoolIds,
+            tenantOwnIdsByTenant,
+            personalSkillIdsByUsername,
+          );
           if (pruned > 0) {
             serverLogger.info(`Skills config: pruned ${pruned} stale entries`);
             // prune 会 bump configVersion；再跑一轮精确 diff 只更新 manifest 版本，

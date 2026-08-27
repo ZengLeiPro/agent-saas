@@ -1366,8 +1366,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
 
     const existingRuntime = activeRunsBySession.current.get(sessionId);
-    if (isActiveRuntimeStatus(existingRuntime?.status) && existingRuntime?.runId && lastRunState.runId
-      && existingRuntime.runId !== lastRunState.runId) return;
+    if (existingRuntime && isActiveRuntimeStatus(existingRuntime.status)
+      && (!existingRuntime.runId || !lastRunState.runId || existingRuntime.runId !== lastRunState.runId)) return;
     const requestedRuntimeVersion = runtimeVersionBySessionRef.current.get(sessionId) ?? 0;
     const status = await fetchSessionStreamStatus(sessionId);
     if (!status || requestedRuntimeVersion !== (runtimeVersionBySessionRef.current.get(sessionId) ?? 0)) return;

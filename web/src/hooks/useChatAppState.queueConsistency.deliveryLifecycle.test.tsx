@@ -361,6 +361,24 @@ describe("useChatAppState queue delivery lifecycle", () => {
     expect(result.current.sessionRuntimeStatuses.get("session-running")).toBe("running");
   });
 
+  it("does not let a stale terminal snapshot clear an ID-less active lifecycle", async () => {
+    harness.session.sessionId = "session-running";
+    harness.session.isNewSession = false;
+    harness.authFetch.mockImplementation(async (url: string) => (
+      url.endsWith("/stream-status") ? response({ active: false }) : response({}, 404)
+    ));
+    const { result } = renderHook(() => useChatAppState());
+
+    act(() => emit({ type: "session_status", sessionId: "session-running", status: "running" }));
+    await act(async () => {
+      harness.sessionCallbacks?.onLastRunState?.("session-running", { status: "completed", runId: "run-previous" });
+      await Promise.resolve();
+    });
+
+    expect(result.current.runningSessionIds.has("session-running")).toBe(true);
+    expect(result.current.sessionRuntimeStatuses.get("session-running")).toBe("running");
+  });
+
   it("keeps a WS-confirmed runtime through active and inactive snapshots, then clears it on terminal", async () => {
     vi.useFakeTimers();
     harness.session.sessionId = "session-sleeping";

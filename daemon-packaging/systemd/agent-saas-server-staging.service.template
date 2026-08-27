@@ -6,14 +6,19 @@ RequiresMountsFor=/mnt/agent-saas-staging
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/agent-saas-staging/current/server
+User=agent-saas-staging
+Group=agent-saas-staging
+RuntimeDirectory=agent-saas-staging
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+WorkingDirectory=/mnt/agent-saas-staging/runtime/server
 Environment=NODE_ENV=production
 Environment=AGENT_SAAS_ENVIRONMENT=staging
 Environment=AGENT_SAAS_PROCESS_ROLE=ws-only
 Environment=AGENT_SAAS_CONFIG_PATH=/etc/agent-saas-staging/config.json
-Environment=AGENT_SAAS_PIDFILE=/run/agent-saas-server-staging.pid
+Environment=AGENT_SAAS_PIDFILE=/run/agent-saas-staging/server.pid
 EnvironmentFile=/etc/agent-saas-staging/server.env
-ExecStart=/usr/bin/node --enable-source-maps dist/index.js
+ExecStart=/usr/bin/node --enable-source-maps /opt/agent-saas-staging/current/server/dist/index.js
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reason": "Release Evidence Service 的持久化目录、监听地址、令牌文件及 Staging E2E 账号凭据需要显式环境变量",
+  "reason": "Staging bootstrap requires STAGING_VAULT_KEY for encrypted vault storage, ACS_ORCH_AUTH_TOKEN for isolated orchestrator authentication, and AGENT_SAAS_EMBEDDED to import evidence helpers without executing their CLI entrypoints.",
   "updatedAt": "2026-08-27",
   "domains": {
     "server": {
@@ -132,8 +132,10 @@
       "names": ["BUNDLE_API_ORIGIN", "VITE_API_BASE", "VITE_WEB_ORIGIN"]
     },
     "deployment/scripts": {
-      "budget": 33,
+      "budget": 36,
       "names": [
+        "ACS_ORCH_AUTH_TOKEN",
+        "AGENT_SAAS_EMBEDDED",
         "AGENT_SAAS_RELEASE_ATTESTATION_DIR",
         "AGENT_SAAS_RELEASE_MANIFEST_DIR",
         "AGENT_TRANSCRIPTS_ROOT",
@@ -164,6 +166,7 @@
         "RELEASE_EVIDENCE_WRITE_TOKEN_FILE",
         "STAGING_E2E_PASSWORD",
         "STAGING_E2E_USERNAME",
+        "STAGING_VAULT_KEY",
         "STRYKER_MODULE",
         "TASKBOARD_TABLE_PREFIX",
         "VERIFY_WS_MODEL"

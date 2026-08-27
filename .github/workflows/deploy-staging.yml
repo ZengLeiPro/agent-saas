@@ -44,14 +44,13 @@ jobs:
       STAGING_E2E_USERNAME: ${{ secrets.STAGING_E2E_USERNAME }}
       STAGING_E2E_PASSWORD: ${{ secrets.STAGING_E2E_PASSWORD }}
       STAGING_SSH_KEY_PATH: /home/runner/.ssh/staging_key
-      STAGING_WEB_URL: https://staging.agent.kaiyan.net
-      STAGING_API_URL: https://api.staging.agent.kaiyan.net
+      STAGING_WEB_URL: https://staging-agent.kaiyan.net
+      STAGING_API_URL: https://staging-agent-api.kaiyan.net
       RELEASE_EVIDENCE_URL: ${{ vars.RELEASE_EVIDENCE_URL }}
       STAGING_ISOLATION_EVIDENCE_URL: ${{ vars.STAGING_ISOLATION_EVIDENCE_URL }}
       STAGING_SSH_HOST_KEY_SHA256: ${{ vars.STAGING_SSH_HOST_KEY_SHA256 }}
       STAGING_RELEASE_OSS_URI: ${{ vars.STAGING_RELEASE_OSS_URI }}
       STAGING_WEB_OSS_URI: oss://agent-saas-web-staging
-      STAGING_E2E_INTEGRATION_TASK_ID: ${{ vars.STAGING_E2E_INTEGRATION_TASK_ID }}
       DISPATCH_REASON: ${{ inputs.reason || 'manual staging release' }}
 
     steps:
@@ -85,6 +84,25 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Verify Staging resources are ready for first deployment
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const plan = JSON.parse(readFileSync('infra/staging/resource-plan.json', 'utf8'));
+          const blockers = Array.isArray(plan.blockingConditions) ? plan.blockingConditions : [];
+          if (
+            plan.environment !== 'staging' ||
+            plan.status !== 'provisioned' ||
+            plan.firstDeploymentReadiness !== 'ready' ||
+            blockers.length > 0
+          ) {
+            throw new Error(
+              `Staging first deployment is blocked: status=${plan.status}, readiness=${plan.firstDeploymentReadiness}, blockers=${blockers.join(',')}`,
+            );
+          }
+          NODE
 
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v5
@@ -355,6 +373,26 @@ jobs:
             cmp "$source" "$RUNNER_TEMP/web-oss-readback/$relative"
           done < <(find "$RUNNER_TEMP/web-assets" -type f -print0)
           curl -fsS --retry 10 "$STAGING_WEB_URL" >/dev/null
+
+      - name: Verify migrations and create isolated Integration fixture
+        run: |
+          set -euo pipefail
+          test "$STAGING_E2E_USERNAME" = staging-e2e-admin
+          remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID"
+          scp -i ~/.ssh/staging_key scripts/staging/ensure-integration-fixture.mjs \
+            "$STAGING_ECS_USER@$STAGING_ECS_HOST:$remote/"
+          ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
+            "AGENT_SAAS_ENVIRONMENT=staging node '$remote/ensure-integration-fixture.mjs' '$STAGING_RELEASE_ID'" \
+            > "$RUNNER_TEMP/staging-integration-fixture.json"
+          test "$(jq -r .releaseId "$RUNNER_TEMP/staging-integration-fixture.json")" = \
+            "$STAGING_RELEASE_ID"
+          test "$(jq -r .migrationReadback.status "$RUNNER_TEMP/staging-integration-fixture.json")" = present
+          test "$(jq -r .fixture.state "$RUNNER_TEMP/staging-integration-fixture.json")" = canceled
+          test "$(jq -r .fixture.evidenceScope "$RUNNER_TEMP/staging-integration-fixture.json")" = \
+            storage-and-authenticated-readback-only
+          integration_task_id="$(jq -r .fixture.taskId "$RUNNER_TEMP/staging-integration-fixture.json")"
+          test "$integration_task_id" = staging-e2e-integration-task
+          echo "STAGING_E2E_INTEGRATION_TASK_ID=$integration_task_id" >> "$GITHUB_ENV"
 
       - name: Verify live reverse-isolation evidence
         run: |

@@ -1,4 +1,37 @@
 apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: agent-saas-staging-workspace
+  labels:
+    agent-saas.kaiyan.net/environment: staging
+spec:
+  accessModes:
+    - ReadWriteMany
+  capacity:
+    storage: 100Gi
+  csi:
+    driver: nasplugin.csi.alibabacloud.com
+    volumeAttributes:
+      path: /agent-saas-staging
+      server: 020ksw7nv1wjde1xy9c-tny86.cn-shenzhen.nas.aliyuncs.com
+    volumeHandle: agent-saas-staging-workspace
+  mountOptions:
+    - vers=3
+    - nolock
+    - proto=tcp
+    - rsize=1048576
+    - wsize=1048576
+    - hard
+    - timeo=600
+    - retrans=2
+    - noresvport
+    - acregmin=600
+    - acregmax=600
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: agent-saas-staging-nas-csi
+  volumeMode: Filesystem
+---
+apiVersion: v1
 kind: Namespace
 metadata:
   name: agent-saas-staging
@@ -21,12 +54,12 @@ metadata:
   namespace: agent-saas-staging
 spec:
   hard:
-    requests.cpu: "8"
-    requests.memory: 16Gi
-    limits.cpu: "8"
-    limits.memory: 16Gi
-    persistentvolumeclaims: "2"
-    pods: "8"
+    requests.cpu: '10'
+    requests.memory: 20Gi
+    limits.cpu: '20'
+    limits.memory: 40Gi
+    persistentvolumeclaims: '2'
+    pods: '12'
 ---
 apiVersion: v1
 kind: LimitRange
@@ -37,10 +70,10 @@ spec:
   limits:
     - type: Container
       defaultRequest:
-        cpu: "1"
+        cpu: '1'
         memory: 2Gi
       default:
-        cpu: "2"
+        cpu: '2'
         memory: 4Gi
 ---
 apiVersion: v1
@@ -51,10 +84,11 @@ metadata:
 spec:
   accessModes:
     - ReadWriteMany
+  volumeName: agent-saas-staging-workspace
   resources:
     requests:
       storage: 100Gi
-  storageClassName: alibabacloud-cnfs-nas
+  storageClassName: agent-saas-staging-nas-csi
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -62,15 +96,15 @@ metadata:
   name: agent-saas-staging-orchestrator
   namespace: agent-saas-staging
 rules:
-  - apiGroups: [""]
-    resources: ["pods", "pods/log"]
-    verbs: ["get", "list", "watch", "create", "delete"]
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["networkpolicies"]
-    verbs: ["get", "list", "create", "patch", "delete"]
-  - apiGroups: ["network.alibabacloud.com"]
-    resources: ["sandboxes", "trafficpolicies"]
-    verbs: ["get", "list", "watch", "create", "patch", "update", "delete"]
+  - apiGroups: ['']
+    resources: ['pods', 'pods/log']
+    verbs: ['get', 'list', 'watch', 'create', 'delete']
+  - apiGroups: ['networking.k8s.io']
+    resources: ['networkpolicies']
+    verbs: ['get', 'list', 'create', 'patch', 'delete']
+  - apiGroups: ['network.alibabacloud.com']
+    resources: ['sandboxes', 'trafficpolicies']
+    verbs: ['get', 'list', 'watch', 'create', 'patch', 'update', 'delete']
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -93,7 +127,7 @@ metadata:
   namespace: agent-saas-staging
 spec:
   podSelector: {}
-  policyTypes: ["Ingress", "Egress"]
+  policyTypes: ['Ingress', 'Egress']
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -102,7 +136,7 @@ metadata:
   namespace: agent-saas-staging
 spec:
   podSelector: {}
-  policyTypes: ["Egress"]
+  policyTypes: ['Egress']
   egress:
     - to:
         - namespaceSelector:

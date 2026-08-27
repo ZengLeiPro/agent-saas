@@ -2,37 +2,69 @@
   "schemaVersion": 1,
   "environment": "staging",
   "region": "cn-shenzhen",
-  "status": "planned",
+  "status": "provisioned",
+  "verificationStatus": "pending",
+  "firstDeploymentReadiness": "blocked",
+  "blockingConditions": ["github-environments-not-configured"],
   "resources": {
     "web": {
       "bucket": "agent-saas-web-staging",
-      "domain": "staging.agent.kaiyan.net"
+      "domain": "staging-agent.kaiyan.net",
+      "cnameTarget": "agent-saas-web-staging.oss-cn-shenzhen.aliyuncs.com",
+      "certificate": {
+        "provider": "letsencrypt-acme-sh",
+        "certId": "26863247-cn-hangzhou",
+        "fingerprintSha256": "E7:31:80:6A:C2:20:E2:D2:D0:2D:43:50:CB:00:DF:C4:A9:1B:F0:22:C5:52:6C:A5:87:A9:24:7E:07:93:E1:1B",
+        "renewalTimer": "agent-saas-staging-cert-renew.timer"
+      }
     },
     "api": {
       "ecsName": "stg-agent-saas-app-cn-shenzhen",
-      "domain": "api.staging.agent.kaiyan.net",
+      "instanceId": "i-wz94xd0v5xab8naa4kov",
+      "domain": "staging-agent-api.kaiyan.net",
+      "publicIp": "120.76.54.103",
+      "eipAllocationId": "eip-wz9o3xfat8yef886h0wlh",
+      "securityGroupId": "sg-wz93ys0n9pnv64x3j6h1",
+      "sshHostKeySha256": "SHA256:g0fYRjn8eK4ohBjNVXMKgmLqSWW0u8SRi/ICEN/AEpA",
       "port": 3210
     },
     "database": {
-      "instanceId": "UNASSIGNED",
+      "instanceId": "pgm-wz96n2735914490l",
+      "reuseStatus": "accepted-isolated-database-and-role",
       "database": "agent_saas_staging",
-      "role": "agent_saas_staging"
+      "role": "agent_saas_staging",
+      "networkReadback": "reachable-from-staging-ecs",
+      "migrationStatus": "automated-post-api-start-with-table-readback"
     },
     "nas": {
-      "fileSystemId": "UNASSIGNED",
-      "mountRoot": "/mnt/agent-saas-staging"
+      "fileSystemId": "020ksw7nv1wjde1xy9c",
+      "reuseStatus": "accepted-logical-subdirectory-all-squash",
+      "mountTarget": "020ksw7nv1wjde1xy9c-jsu59.cn-shenzhen.nas.aliyuncs.com",
+      "accessGroup": "agent_saas_staging_root_squash",
+      "sourceCidr": "172.16.182.225/32",
+      "userAccess": "all_squash",
+      "serverPath": "/agent-saas-staging",
+      "mountRoot": "/mnt/agent-saas-staging",
+      "isolationLevel": "logical-shared-filesystem",
+      "residualRisk": "privileged-host-can-remount-shared-filesystem-root"
     },
     "vault": {
       "credentialNamespace": "STAGING_AGENT_SAAS",
       "backend": "encrypted-file",
-      "path": "/var/lib/agent-saas-staging/vault/secrets.enc"
+      "path": "/mnt/agent-saas-staging/runtime/vault/secrets.enc",
+      "status": "bootstrapped-and-token-binding-verified"
     },
     "notifications": {
       "mode": "disabled",
-      "sinkId": "UNASSIGNED"
+      "sinkId": null,
+      "deliveryPolicy": "deny-all"
     },
     "acs": {
+      "status": "applied",
       "namespace": "agent-saas-staging",
+      "clusterId": "c819935b09a7d4a2a844561ef22a17448",
+      "sharedComputePool": true,
+      "pv": "agent-saas-staging-workspace",
       "pvc": "agent-saas-staging-workspace",
       "serviceAccount": "agent-saas-staging-orchestrator",
       "imagePullSecret": "agent-saas-staging-acr",
@@ -45,7 +77,33 @@
       "currentLink": "/opt/agent-saas-staging/current",
       "stateRoot": "/var/lib/agent-saas-staging",
       "configRoot": "/etc/agent-saas-staging",
-      "lockRoot": "/run/lock/agent-saas-staging"
+      "lockRoot": "/run/lock/agent-saas-staging",
+      "serviceUnits": "installed-enabled-inactive-until-first-rc",
+      "configurationStatus": "schema-and-fail-closed-safety-verified",
+      "accountSeed": "production-users-and-tenants-only-plus-dedicated-staging-e2e-admin"
+    },
+    "releaseEvidence": {
+      "service": "agent-saas-release-evidence-staging.service",
+      "baseUrl": "https://staging-agent-api.kaiyan.net/release-evidence",
+      "status": "active-authenticated-and-readback-verified"
+    },
+    "egressProxy": {
+      "service": "squid.service",
+      "listen": "127.0.0.1:3128",
+      "scope": "server-all-domains",
+      "failOpen": false,
+      "status": "active-local-only-and-https-probe-verified"
+    },
+    "e2eIdentity": {
+      "username": "staging-e2e-admin",
+      "scope": "staging-only-platform-admin",
+      "status": "created-password-hash-verified",
+      "integrationFixture": {
+        "status": "pending-first-immutable-release",
+        "creationGate": "post-migration-transactional-readback",
+        "state": "canceled",
+        "evidenceScope": "storage-and-authenticated-readback-only"
+      }
     }
   },
   "defaults": {
@@ -58,10 +116,10 @@
   "requiredEvidence": [
     "database-role-cannot-read-or-write-production",
     "oss-identity-cannot-write-production-bucket",
-    "nas-identity-cannot-traverse-production-root",
-    "notification-delivery-reaches-test-sink-only",
+    "nas-client-is-all-squashed-and-mounted-to-staging-subdirectory",
+    "notification-identity-cannot-deliver-to-production",
     "api-worker-cannot-connect-production-hand-or-acs",
     "acs-service-account-cannot-read-production-namespace-resources",
-    "sandbox-cannot-mount-or-traverse-production-workspace"
+    "sandbox-workspace-uses-staging-only-pvc-and-paths"
   ]
 }

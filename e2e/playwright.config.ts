@@ -1,7 +1,7 @@
 import { defineConfig } from 'playwright/test';
 
 const baseURL = process.env.STAGING_WEB_URL;
-if (!baseURL || new URL(baseURL).hostname !== 'staging.agent.kaiyan.net') {
+if (!baseURL || new URL(baseURL).hostname !== 'staging-agent.kaiyan.net') {
   throw new Error('STAGING_WEB_URL must be the fixed Staging Web domain');
 }
 

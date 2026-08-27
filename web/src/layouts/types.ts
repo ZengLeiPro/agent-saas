@@ -14,6 +14,7 @@ import type { AdminSettingsState, AdminSettingsTarget } from "@/lib/urlSync";
 import type { QueuedInterjection } from "@/hooks/useChatAppState";
 import type { PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
 import type { GovernanceRouteState } from "@/lib/governanceNavigation";
+import type { SandboxProfile } from "@/types/sandboxProfile";
 
 export interface LayoutProps {
   // 会话导航
@@ -86,6 +87,8 @@ export interface LayoutProps {
   uploadedFiles: UploadedFile[];
   removeFile: (index: number) => void;
   input: string;
+  sandboxProfile: SandboxProfile;
+  setSandboxProfile: (profile: SandboxProfile) => void;
   uploading: boolean;
   uploadError: string | null;
   dismissUploadError: () => void;

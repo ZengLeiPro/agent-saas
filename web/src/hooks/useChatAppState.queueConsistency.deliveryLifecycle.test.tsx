@@ -23,6 +23,7 @@ const harness = vi.hoisted(() => {
       onSessionsLoaded?: (sessions: Array<{ sessionId: string }>) => void;
       onLastRunState?: (sessionId: string, lastRunState: { status: string; runId: string; error?: string }) => void;
       onQueuedMessages?: (sessionId: string, messages: unknown[]) => void;
+      onSandboxProfile?: (sessionId: string, profile: "daily" | "coding" | undefined) => void;
       cancelActiveStream?: () => void;
     },
     session: {
@@ -190,6 +191,33 @@ afterEach(() => {
 });
 
 describe("useChatAppState queue delivery lifecycle", () => {
+  it("defaults new conversations to daily and sends the selected profile on the first WS chat", async () => {
+    const { result } = renderHook(() => useChatAppState());
+    expect(result.current.sandboxProfile).toBe("daily");
+
+    act(() => {
+      result.current.setSandboxProfile("coding");
+      result.current.setInput("compile this");
+    });
+    await act(async () => { await result.current.sendMessage(); });
+
+    expect(chatPayloads()[0]).toMatchObject({ message: "compile this", sandboxProfile: "coding" });
+  });
+
+  it("locks existing sessions and falls back legacy details without sandboxProfile to coding", () => {
+    const { result } = renderHook(() => useChatAppState());
+    act(() => result.current.selectSession("legacy-session"));
+    expect(result.current.sandboxProfile).toBe("coding");
+
+    act(() => result.current.setSandboxProfile("daily"));
+    expect(result.current.sandboxProfile).toBe("coding");
+
+    act(() => harness.sessionCallbacks?.onSandboxProfile?.("legacy-session", undefined));
+    expect(result.current.sandboxProfile).toBe("coding");
+    act(() => harness.sessionCallbacks?.onSandboxProfile?.("legacy-session", "daily"));
+    expect(result.current.sandboxProfile).toBe("daily");
+  });
+
   it("reconnects away from a draining server and lets retry resend the rejected message", async () => {
     harness.session.sessionId = "session-draining";
     harness.session.isNewSession = false;

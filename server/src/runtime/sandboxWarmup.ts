@@ -1,6 +1,8 @@
 import { deriveSandboxScopeId, deriveWorkspaceMountSubPath, type TenantRemoteHandDispatchConfig } from './rawRuntimeRunDispatch.js';
 import { selectTenantRemoteHandsForRegistration, type TenantRemoteHandAuthTokenResolver } from './tenantRemoteHandResolver.js';
 import type { SessionCatalog } from './sessionCatalog.js';
+import type { HandStore } from './handStore.js';
+import { applySandboxProfileResources, isSandboxProfile, sandboxResourcesFromHand } from './sandboxProfile.js';
 
 /**
  * Sandbox 预热服务（2026-07-31 冷启动治理批次）。
@@ -28,6 +30,7 @@ export interface SandboxWarmupLogger {
 export interface SandboxWarmupServiceOptions {
   agentCwd: string;
   sessionCatalog: Pick<SessionCatalog, 'get'>;
+  handStore?: Pick<HandStore, 'get'>;
   /** 与 dispatch 同源的 tenant remote hands 配置（延迟求值，支持热更新）。 */
   tenantRemoteHands: () => TenantRemoteHandDispatchConfig[] | undefined;
   tenantRemoteHandResolver: TenantRemoteHandAuthTokenResolver;
@@ -44,6 +47,14 @@ export interface SandboxWarmupServiceOptions {
 const DEFAULT_THROTTLE_MS = 60_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const THROTTLE_MAP_MAX_ENTRIES = 2_000;
+
+function resourcesForSandboxProfile(record: { sandboxProfile?: unknown }): { cpu: string; memoryMb: number } | undefined {
+  if (!isSandboxProfile(record.sandboxProfile)) return undefined;
+  const resources = applySandboxProfileResources(undefined, record.sandboxProfile).resources;
+  return resources?.cpu && resources.memoryMb
+    ? { cpu: resources.cpu, memoryMb: resources.memoryMb }
+    : undefined;
+}
 
 export class SandboxWarmupService {
   private readonly lastFiredAtByScope = new Map<string, number>();
@@ -93,6 +104,9 @@ export class SandboxWarmupService {
     const sandboxScopeId = entry.recipe?.sandboxScopeId
       ?? deriveSandboxScopeId({ workspaceId, mountSubPath, topLevelSessionId: sessionId });
 
+    // 已注册 hand 的 recipe 是 Environment Template 合并后的最终事实；首次注册前回退会话 profile。
+    const registeredHand = await this.options.handStore?.get(`${sessionId}:server-remote`);
+    const resources = sandboxResourcesFromHand(registeredHand) ?? resourcesForSandboxProfile(record);
     const scopeKey = `${entry.id}:${sandboxScopeId}`;
     const now = Date.now();
     const lastFiredAt = this.lastFiredAtByScope.get(scopeKey);
@@ -115,6 +129,7 @@ export class SandboxWarmupService {
           sessionId,
           ...(sandboxScopeId ? { sandboxScopeId } : {}),
           ...(mountSubPath ? { mountSubPath } : {}),
+          ...(resources ? { resources } : {}),
         }),
         signal: controller.signal,
       });

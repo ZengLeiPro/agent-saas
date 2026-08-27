@@ -9,7 +9,7 @@ import type {
 } from './modelRequestTypes.js';
 import type { ExecutionInvocationAudit } from '../agent/toolRuntime.js';
 import type { ToolPresentation } from '../agent/toolPresentationBuilder.js';
-import type { ToolAuthorization, ToolRisk, ExecutionTargetKind } from '../agent/toolRuntime.js';
+import type { ToolAuthorization, ToolRisk, ExecutionTargetKind, WorkspaceRef } from '../agent/toolRuntime.js';
 import type {
   AgentRunHooks,
   RuntimeDrainHandoffState,
@@ -57,7 +57,7 @@ export interface RunContext {
    */
   topLevelSessionId?: string;
   sandboxScopeId?: string;
-  mountSubPath?: string;
+  mountSubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources'];
   tenantId?: string;
   executionTarget?: ExecutionTargetKind;
   /** 当前任务从能力中心已启用连接器解析出的运行态凭据环境变量。 */

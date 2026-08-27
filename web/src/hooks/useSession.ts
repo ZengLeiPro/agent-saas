@@ -4,7 +4,7 @@ import type {
   ApiSessionDetail,
   TokenUsage,
 } from "@/lib/sessionsApi";
-import type { AgentProfile, ContextUsageData } from "@agent/shared";
+import type { AgentProfile, ContextUsageData, SessionOwnerInfo } from "@agent/shared";
 import { formatRuntimeFailureMessage, isInsufficientCreditsFailure } from "@agent/shared";
 import {
   mergeServerMessagesWithLocalTail,
@@ -25,7 +25,6 @@ import {
   loadSessionListCache,
 } from "@/lib/sessionListCache";
 import { fetchGroupSessions } from "@agent/shared";
-import type { SessionOwnerInfo } from "@agent/shared";
 import type { MessageItem } from "@/components/types";
 import {
   appendPendingInteractions,
@@ -57,8 +56,8 @@ export interface SessionCallbacks {
     sessionId: string,
     queued: NonNullable<ApiSessionDetail["queuedMessages"]>,
   ) => void;
+  onSandboxProfile?: (sessionId: string, profile: ApiSessionDetail["sandboxProfile"]) => void;
 }
-
 export interface SessionState {
   sessionId: string | null;
   sessions: ApiSessionListItem[];
@@ -439,6 +438,7 @@ export function useSession(
             cbRef.current.onLastRunState?.(id, lrs);
           }
           cbRef.current.onQueuedMessages?.(id, data.queuedMessages ?? []);
+          cbRef.current.onSandboxProfile?.(id, data.sandboxProfile);
 
           if (isStale()) return;
           // preserveTail：refresh 时服务端 transcript 可能尚未写入最后一条 assistant text，

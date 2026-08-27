@@ -69,7 +69,7 @@ function App() {
   );
 
   const {
-    messages, input, loading, sessionId, sessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, tenantAdminSection, settingsOpen, settingsSection,
+    messages, input, sandboxProfile, setSandboxProfile, loading, sessionId, sessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, tenantAdminSection, settingsOpen, settingsSection,
     uploadedFiles, uploading, uploadError, dismissUploadError, isDragging, isLoadingSessions, isLoadingMessages,
     hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
     deleteSessionId, deleteSessionCount, lastMessageRef, scrollContainerRef, isNearBottomRef,
@@ -230,7 +230,7 @@ function App() {
     messages, loading, isLoadingMessages, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
     retryMessage, forkFromMessage, lastMessageRef, scrollContainerRef, isNearBottomRef,
     handlePermissionResponse, handleAskUserResponse,
-    uploadedFiles, removeFile, input, uploading, uploadError, dismissUploadError, setInput,
+    uploadedFiles, removeFile, input, sandboxProfile, setSandboxProfile, uploading, uploadError, dismissUploadError, setInput,
     sendMessage, interjectMessage, sendVoiceMessage, stopping, stopGeneration, handleFileSelect, handleAssetSelect, handlePaste, ttsProps,
     queuedInterjections, cancelQueuedInterjection, editQueuedInterjection, resendQueuedInterjection, dismissQueuedInterjection,
     ttsStateMap: ttsPlayer.ttsStateMap, modelList,

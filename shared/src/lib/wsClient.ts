@@ -14,6 +14,7 @@
 
 import { getPlatform } from '../platform/context';
 import { TOKEN_KEY } from './constants';
+import type { SandboxProfile } from '../types/session';
 
 export type WsState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
 
@@ -32,6 +33,8 @@ export interface WsChatMessage {
     client_msg_id?: string;
     message: string;
     sessionId?: string;
+    /** Only honored when creating a session; persisted profile wins on continuation. */
+    sandboxProfile?: SandboxProfile;
     /**
      * 公司级专职 Agent 绑定（2026-07 唯恩批次）。仅新会话首条消息生效；
      * 带 sessionId 时服务端以会话 meta 为准（忽略客户端值）。

@@ -11,10 +11,13 @@ import type { AdminSettingsState, AdminSettingsTarget, PlatformAdminSection, Ten
 import type { ConnectionState } from "@/hooks/useConnectionState";
 import type { QueuedInterjection } from "@/lib/interjectionConsumption";
 import type { TerminalRuntimeStatus } from "./chatRuntimeHelpers";
+import type { SandboxProfile } from "@/types/sandboxProfile";
 
 export interface ChatAppState {
   messages: MessageItem[];
   input: string;
+  sandboxProfile: SandboxProfile;
+  setSandboxProfile: (profile: SandboxProfile) => void;
   loading: boolean;
   sessionId: string | null;
   sessions: ApiSessionListItem[];

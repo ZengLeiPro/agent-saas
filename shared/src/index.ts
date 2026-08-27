@@ -55,6 +55,7 @@ export type {
   ActivityGroup,
   BusinessStepSection,
   RenderItem,
+  SandboxProfile,
   SessionOwnerInfo,
   SessionParticipants,
   ApiSessionListItem,

@@ -595,6 +595,7 @@ export function serializeRequest(request: ToolInvocationRequest): WireToolInvoca
     sessionId: ws.sessionId,
     sandboxScopeId: ws.sandboxScopeId,
     mountSubPath: ws.mountSubPath,
+    ...(ws.sandboxResources ? { sandboxResources: ws.sandboxResources } : {}),
     executionTarget: ws.executionTarget,
   };
   return {

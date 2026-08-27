@@ -639,7 +639,7 @@ export class RawAgentLoop implements AgentLoop {
       topLevelSessionId: context.topLevelSessionId,
       workspaceId: context.workspaceId,
       sandboxScopeId: context.sandboxScopeId,
-      mountSubPath: context.mountSubPath,
+      mountSubPath: context.mountSubPath, sandboxResources: context.sandboxResources,
       executionTarget: context.executionTarget,
       sandboxPolicy: context.sandboxPolicy,
     });
@@ -1968,7 +1968,7 @@ export class RawAgentLoop implements AgentLoop {
         topLevelSessionId: context.topLevelSessionId,
         workspaceId: context.workspaceId,
         sandboxScopeId: context.sandboxScopeId,
-        mountSubPath: context.mountSubPath,
+        mountSubPath: context.mountSubPath, sandboxResources: context.sandboxResources,
         executionTarget: context.executionTarget,
         sandboxPolicy: context.sandboxPolicy,
       });
@@ -2402,7 +2402,7 @@ export class RawAgentLoop implements AgentLoop {
       topLevelSessionId: resumeContext.topLevelSessionId,
       workspaceId: resumeContext.workspaceId,
       sandboxScopeId: resumeContext.sandboxScopeId,
-      mountSubPath: resumeContext.mountSubPath,
+      mountSubPath: resumeContext.mountSubPath, sandboxResources: resumeContext.sandboxResources,
       executionTarget: approval.executionTarget ?? pendingState.approvalRequest?.executionTarget ?? resumeContext.executionTarget,
       sandboxPolicy: resumeContext.sandboxPolicy,
     });
@@ -2566,7 +2566,7 @@ export class RawAgentLoop implements AgentLoop {
       topLevelSessionId: context.topLevelSessionId,
       workspaceId: context.workspaceId,
       sandboxScopeId: context.sandboxScopeId,
-      mountSubPath: context.mountSubPath,
+      mountSubPath: context.mountSubPath, sandboxResources: context.sandboxResources,
       executionTarget: context.executionTarget,
       sandboxPolicy: context.sandboxPolicy,
     });

@@ -2,6 +2,7 @@ import type { ChannelContext } from '../../types/index.js';
 import { isModelOutputTransactionMode, resolveModelOutputTransactionMode } from '../modelOutputTransaction.js';
 import type { RunRecord } from '../runStore.js';
 import { deriveRuntimeIsolationRequirement, type RuntimeIsolationRequirement } from '../runtimeIsolationEvidence.js';
+import { parseSandboxResources, type SandboxResources } from '../sandboxProfile.js';
 
 export interface BackgroundTaskDwsCompletionRoute {
   accountId: string;
@@ -33,6 +34,7 @@ interface CommonBackgroundTaskMetadata {
   workspaceId: string;
   mountSubPath?: string;
   sandboxScopeId?: string;
+  sandboxResources?: SandboxResources;
   sandboxPolicy?: { denyRead: string[] };
   timezone?: string;
   parentChannel: ChannelContext['channel'];
@@ -77,6 +79,7 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
   }
 
   const sandboxPolicy = isSandboxPolicy(value.sandboxPolicy) ? value.sandboxPolicy : undefined;
+  const sandboxResources = parseSandboxResources(value.sandboxResources);
   const runtimeIsolationRequirement = parseRuntimeIsolationRequirement(value.runtimeIsolationRequirement);
   const dwsCompletionRoute = parseDwsCompletionRoute(value.dwsCompletionRoute);
   const executionMode = value.executionMode === 'dispatcher' ? 'dispatcher' as const
@@ -104,6 +107,7 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
       : resolveModelOutputTransactionMode(value),
     ...(metadataString(value, 'mountSubPath') ? { mountSubPath: metadataString(value, 'mountSubPath') } : {}),
     ...(metadataString(value, 'sandboxScopeId') ? { sandboxScopeId: metadataString(value, 'sandboxScopeId') } : {}),
+    ...(sandboxResources ? { sandboxResources } : {}),
     ...(metadataString(value, 'timezone') ? { timezone: metadataString(value, 'timezone') } : {}),
     ...(sandboxPolicy ? { sandboxPolicy } : {}),
     ...(runtimeIsolationRequirement ? { runtimeIsolationRequirement } : {}),

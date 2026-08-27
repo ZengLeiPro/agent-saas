@@ -84,6 +84,7 @@ export function canonicalizeDispatchPayload(
     channel: 'web',
     cwd: expectedCwd,
     modelRef: run.model,
+    sandboxProfile: 'coding',
     executionTarget,
     workspaceId: expectedWorkspaceId,
     status: 'running',

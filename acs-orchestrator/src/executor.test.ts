@@ -382,6 +382,53 @@ describe('spawnRunner 命令构造（A 方案批次 3：预编译 sandboxRunner�
   });
 });
 
+describe('AcsExecutor sandbox resource override', () => {
+  it('converts wire resources through provision semantics and passes them to ensureRunning', async () => {
+    const resources = { cpuLimit: '1', memoryLimit: '2048Mi' };
+    const ref: SandboxRef = {
+      name: 'as-dws-daily',
+      workspaceId: 'ws_dws',
+      sandboxScopeId: 'ws_dws__connector',
+      sessionId: 'dws-1',
+      mountSubPath: 'workspaces/tenant-a/.agent-connectors-a/dws',
+      resources,
+    };
+    const child = fakeChild();
+    const refFn = vi.fn(() => ref);
+    const ensureRunning = vi.fn(async () => ref);
+    const executor = new AcsExecutor(
+      baseConfig(),
+      { spawn: vi.fn(() => child) } as unknown as Kubectl,
+      { ref: refFn, ensureRunning } as unknown as SandboxManager,
+      noopLogger,
+      undefined,
+      { persistentRunner: false },
+    );
+    const iterator = executor.executeStream({
+      toolName: 'Shell',
+      input: { command: 'dws auth status' },
+      context: {
+        invocationId: 'dws-daily-1',
+        workspace: {
+          id: ref.workspaceId,
+          sessionId: ref.sessionId,
+          sandboxScopeId: ref.sandboxScopeId,
+          sandboxResources: { cpu: '1', memoryMb: 2048 },
+        },
+      },
+    }, { stream: true })[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'progress' } });
+    expect(refFn).toHaveBeenCalledWith(expect.objectContaining({ resources }));
+    expect(ensureRunning).toHaveBeenCalledWith(expect.objectContaining({ resources }), expect.any(Object));
+
+    executor.cancel('dws-daily-1');
+    child.stdout.end();
+    child.emit('close', null, 'SIGTERM');
+    await iterator.next();
+  });
+});
+
 describe('persistent sandbox runner', () => {
   it('reuses one kubectl exec connection across sequential invocations', async () => {
     const ref: SandboxRef = {
@@ -430,5 +477,30 @@ describe('persistent sandbox runner', () => {
     await expect(executor.execute(request)).resolves.toMatchObject({ status: 'success', content: 'ok' });
     expect(spawn).toHaveBeenCalledOnce();
     expect(ensureRunning).toHaveBeenCalledOnce();
+  });
+
+  it('does not cache a deferred resource drift as a successful ensure', async () => {
+    const ref: SandboxRef = {
+      name: 'as-drift-deferred',
+      workspaceId: 'ws_kaiyan__u-1',
+      sandboxScopeId: 'ws_kaiyan__u-1__s_top',
+      sessionId: 'session-1',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+      resources: { cpuLimit: '1', memoryLimit: '2048Mi' },
+    };
+    const ensureRunning = vi.fn()
+      .mockResolvedValueOnce({ ...ref, resourceDriftDeferred: true })
+      .mockResolvedValueOnce(ref);
+    const executor = new AcsExecutor(
+      baseConfig(),
+      {} as Kubectl,
+      { ensureRunning } as unknown as SandboxManager,
+      noopLogger,
+    );
+    (executor as any).persistentRunners.set(ref.name, { isHealthy: () => true });
+    const identity = { workspaceId: ref.workspaceId, sessionId: ref.sessionId, resources: ref.resources };
+    await (executor as any).ensureSandboxRunning(ref, identity, 'first');
+    await (executor as any).ensureSandboxRunning(ref, identity, 'second');
+    expect(ensureRunning).toHaveBeenCalledTimes(2);
   });
 });

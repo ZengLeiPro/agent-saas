@@ -62,6 +62,99 @@ class CasMemoryHandStore implements HandStore {
 }
 
 describe('runtime Hand normal provision generation CAS', () => {
+  it('maps the persisted sandbox profile into server-remote recipe resources', async () => {
+    const handStore = new CasMemoryHandStore();
+    const provision = vi.fn(async () => ({ status: 'ok' as const }));
+
+    await ensureRuntimeHandRegistered({
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: {
+        has: () => true,
+        get: () => ({ listInternalTools: () => [], provision }),
+      } as never,
+      executionTarget: 'server-remote',
+      sessionId: 'session-profile',
+      workspaceId: 'workspace-profile',
+      runId: 'run-profile',
+      tenantId: 'tenant-profile',
+      sandboxProfile: 'daily',
+      serverRemoteRecipe: { resources: { diskMb: 8192 } },
+    });
+
+    expect(provision).toHaveBeenCalledWith(expect.objectContaining({
+      resources: { cpu: '1', memoryMb: 2048, diskMb: 8192 },
+    }));
+  });
+
+  it('lets a child hand inherit the parent effective resources over its profile recipe', async () => {
+    const handStore = new CasMemoryHandStore();
+    const provision = vi.fn(async () => ({ status: 'ok' as const }));
+    await ensureRuntimeHandRegistered({
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [], provision }) } as never,
+      executionTarget: 'server-remote',
+      sessionId: 'child-session',
+      workspaceId: 'parent-workspace',
+      tenantId: 'tenant-child',
+      sandboxProfile: 'daily',
+      sandboxResources: { cpu: '4', memoryMb: 8192 },
+      serverRemoteRecipe: { resources: { diskMb: 16384 } },
+    });
+    expect(provision).toHaveBeenCalledWith(expect.objectContaining({
+      resources: { cpu: '4', memoryMb: 8192, diskMb: 16384 },
+    }));
+  });
+
+  it('keeps environment-template resources authoritative over the session profile', async () => {
+    const handStore = new CasMemoryHandStore();
+    const provision = vi.fn(async () => ({ status: 'ok' as const }));
+    const environmentStore = {
+      getInstance: vi.fn(async () => null),
+      getTemplateVersion: vi.fn(async () => ({
+        versionId: 'version-1',
+        templateId: 'template-1',
+        digest: 'template-digest',
+        recipe: {
+          packages: [],
+          envKeys: [],
+          setupCommands: [],
+          resources: { cpu: '4', memoryMb: 8192, diskMb: 16384 },
+        },
+      })),
+      getProvider: vi.fn(async () => ({ status: 'enabled' })),
+      getTemplate: vi.fn(async () => ({ status: 'published' })),
+      upsert: vi.fn(async () => undefined),
+      create: vi.fn(async (input) => input),
+      transition: vi.fn(async () => undefined),
+    };
+
+    await ensureRuntimeHandRegistered({
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: {
+        has: () => true,
+        get: () => ({ listInternalTools: () => [], provision }),
+      } as never,
+      executionTarget: 'server-remote',
+      sessionId: 'session-template',
+      workspaceId: 'workspace-template',
+      runId: 'run-template',
+      tenantId: 'tenant-template',
+      userTenantId: 'tenant-template',
+      userId: 'user-template',
+      sandboxProfile: 'daily',
+      environmentStore: environmentStore as never,
+      environmentTemplateVersionId: 'version-1',
+      authorizeEnvironmentTemplate: vi.fn(async () => true),
+    });
+
+    expect(provision).toHaveBeenCalledWith(expect.objectContaining({
+      resources: { cpu: '4', memoryMb: 8192, diskMb: 16384 },
+    }));
+  });
+
   it('does not let an older slow failure overwrite a newer successful attempt', async () => {
     const handStore = new CasMemoryHandStore();
     let releaseFirst!: () => void;

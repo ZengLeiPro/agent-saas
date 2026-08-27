@@ -7,6 +7,7 @@ import type { AppTab } from "@/types/sidebar";
 import type { CanonicalSettingsSectionId } from "@/types/settings";
 import type { WsEvent } from "@/types/ws";
 import type { WsEnvelope } from "@/lib/wsClient";
+import { useSandboxProfile } from "./useSandboxProfile";
 import { wsClient } from "@/lib/wsClient";
 import { authFetch } from "@/lib/authFetch";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
@@ -88,7 +89,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const { user } = useAuth();
   // 授权模式对所有用户生效（2026-07-02 起），用户在账户设置中自行切换。
   const authorizationModeEnabled = user?.preferences?.authorizationModeEnabled === true;
-
   // 从 URL 解析初始状态（仅执行一次）
   const [urlState] = useState(() => parseUrl());
 
@@ -349,6 +349,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const releaseAllInteractionResponses = useCallback((error: string) => { for (const [id, { generation }] of pendingInteractionResponsesRef.current) releaseInteractionResponse(id, generation, error); }, [releaseInteractionResponse]);
   // 同步更新的 sessionId ref（解决 React 批量更新时 sessionIdRef 延迟问题）
   const immediateSessionIdRef = useRef<string | null>(urlState.sessionId);
+  const { sandboxProfile, sandboxProfileRef, setSandboxProfile, selectExistingSandboxProfile, startNewSandboxProfile, hydrateSandboxProfile } = useSandboxProfile(immediateSessionIdRef, sessionIdRef);
   const trashPreviewSessionIdRef = useRef<string | null>(trashPreviewSessionId);
   trashPreviewSessionIdRef.current = trashPreviewSessionId;
   const refreshTokenUsageRef = useRef<() => void>(() => { });
@@ -730,8 +731,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
       if (!sid || sessionId !== sid) return;
       reconcileServerInterjections(sessionId, serverQueued);
-    },
-  }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, reconcileServerInterjections]);
+    }, onSandboxProfile: hydrateSandboxProfile,
+  }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, reconcileServerInterjections, hydrateSandboxProfile]);
 
   const session = useSession(sessionCallbacks, { initialSessionId: urlState.sessionId });
   const markingReadSessionIdsRef = useRef(new Set<string>());
@@ -1033,9 +1034,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   // state：新会话空白态的顶部 banner 展示（会话入列表带 orgAgentId 后由列表接管）。
   const { pendingOrgAgentIdRef, pendingNewSessionGroupIdRef, pendingOrgAgentId, setPendingOrgAgentId, clearPendingOrgAgent, assignPendingGroup } = usePendingNewSessionTarget();
   const authOwnerKey = user ? `${user.tenantId}:${user.id}` : "anonymous";
-
   const selectSessionWithUrl = useCallback((id: string) => {
-    setTrashPreviewSessionId(null); // 选择正常会话时退出回收站预览
+    setTrashPreviewSessionId(null); selectExistingSandboxProfile(); // detail 返回前兼容旧会话缺字段。
     clearPendingOrgAgent(); // 切换既有会话 = 放弃挂起的专职 Agent 新会话
     failAllProvisionalBatches('已切换会话，请重新发送');
     pendingNewSessionClientMsgIdRef.current = null;
@@ -1049,10 +1049,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     wsLatestSessionIdRef.current = { value: id };
     session.selectSession(id);
     pushUrl('chat', id);
-  }, [clearPendingOrgAgent, failAllProvisionalBatches, markSessionRead, mutateQueuedInterjections, session.selectSession]);
+  }, [clearPendingOrgAgent, failAllProvisionalBatches, markSessionRead, mutateQueuedInterjections, selectExistingSandboxProfile, session.selectSession]);
 
   const newSessionWithUrl = useCallback((groupId: string | null = null) => {
-    setTrashPreviewSessionId(null);
+    setTrashPreviewSessionId(null); startNewSandboxProfile();
     clearPendingOrgAgent(); // 普通新会话 = 个人 Agent 路径
     failAllProvisionalBatches('已新建会话，请重新发送');
     pendingNewSessionClientMsgIdRef.current = null;
@@ -1063,7 +1063,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     wsLatestSessionIdRef.current = { value: null };
     session.newSession();
     pushUrl('chat', null);
-  }, [clearPendingOrgAgent, failAllProvisionalBatches, mutateQueuedInterjections, session.newSession]);
+  }, [clearPendingOrgAgent, failAllProvisionalBatches, mutateQueuedInterjections, session.newSession, startNewSandboxProfile]);
 
   /**
    * 企业专家新草稿：只切换前端会话目标，不制造 meta-only 空会话。
@@ -1072,7 +1072,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const startOrgAgentSession = useCallback((agentId: string, groupId: string | null = null): void => {
     const normalizedAgentId = agentId.trim();
     if (!normalizedAgentId || !user || loadingRef.current) return;
-    setTrashPreviewSessionId(null);
+    setTrashPreviewSessionId(null); startNewSandboxProfile();
     failAllProvisionalBatches('已新建专职 Agent 会话，请重新发送');
     immediateSessionIdRef.current = null;
     queuedSessionIdRef.current = null;
@@ -1085,7 +1085,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setPendingOrgAgentId(normalizedAgentId);
     pushUrl('chat', null);
     if (activeTabRef.current !== 'chat') setActiveTab('chat');
-  }, [failAllProvisionalBatches, mutateQueuedInterjections, session.newSession, setActiveTab, user]);
+  }, [failAllProvisionalBatches, mutateQueuedInterjections, session.newSession, setActiveTab, startNewSandboxProfile, user]);
 
   useEffect(() => {
     clearPendingOrgAgent();
@@ -2496,7 +2496,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       clientCapabilities: ['replaceable_drafts'],
       client_msg_id: clientMsgId,
       message: inputText || "Please check the attachments I uploaded",
-      sessionId: activeSessionId || undefined,
+      sessionId: activeSessionId || undefined, ...(!activeSessionId ? { sandboxProfile: sandboxProfileRef.current } : {}),
       // 专职 Agent 绑定：仅新会话首条消息带（带 sessionId 时服务端以 meta 为准）
       ...(pendingOrgAgentIdRef.current && !activeSessionId
         ? { orgAgentId: pendingOrgAgentIdRef.current }
@@ -3007,7 +3007,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   return {
     messages: msg.messages,
     input,
-    loading,
+    loading, sandboxProfile, setSandboxProfile,
     sessionId: session.sessionId,
     sessions: session.sessions,
     activeTab,

@@ -5,6 +5,7 @@
  * 下行事件复用原 SSE 事件类型，包裹在带 eventId 的信封中。
  */
 
+import type { SandboxProfile } from '@agent/shared';
 import type {
     UploadedFileInfo,
     ContextUsageData,
@@ -51,6 +52,8 @@ export interface WsChatMessage {
     client_msg_id?: string;
     message: string;
     sessionId?: string;
+    /** 仅新会话首条消息生效；续聊以持久化值为准。 */
+    sandboxProfile?: SandboxProfile;
     /**
      * 公司级专职 Agent 绑定。**仅新会话首条消息生效**；带 sessionId 的消息
      * 以会话 meta 为准（不一致时 log warn 采用 meta，防伪造/串线）。
@@ -183,7 +186,7 @@ export type WsDownstreamEvent =
     | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number; sessionId?: string; runId?: string; status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; deliveryMode?: ChatDeliveryMode; queuePosition?: number }
     | { type: 'message_queued'; sessionId: string; runId: string; clientMsgId: string; deliveryMode: ChatDeliveryMode; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number; queuePosition?: number; targetRunId?: string }
     | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
-    | { type: 'session'; sessionId: string; client_msg_id?: string }
+    | { type: 'session'; sessionId: string; client_msg_id?: string; sandboxProfile?: SandboxProfile }
     | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string; draftId?: string; runId?: string }
     | { type: 'draft_reset'; draftId: string; attempt?: number }
     | { type: 'draft_commit'; draftId: string }

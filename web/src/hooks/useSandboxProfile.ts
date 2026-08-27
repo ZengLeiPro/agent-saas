@@ -18,19 +18,16 @@ export function useSandboxProfile(
     if (immediateSessionIdRef.current || sessionIdRef.current || loadingRef.current) return;
     update(profile);
   }, [immediateSessionIdRef, loadingRef, sessionIdRef, update]);
-  const selectExistingSandboxProfile = useCallback(() => update("coding"), [update]);
   const startNewSandboxProfile = useCallback(() => update("daily"), [update]);
-  const hydrateSandboxProfile = useCallback((sessionId: string, profile: unknown) => {
-    if (profile === undefined) immediateSessionIdRef.current = sessionId;
-    const activeSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
-    if (activeSessionId && sessionId === activeSessionId) update(resolveSessionSandboxProfile(profile));
+  const hydrateSandboxProfile = useCallback((sessionId: string, profile: unknown, activate?: boolean) => {
+    if (activate) immediateSessionIdRef.current = sessionId;
+    if (sessionId === (immediateSessionIdRef.current ?? sessionIdRef.current)) update(resolveSessionSandboxProfile(profile));
   }, [immediateSessionIdRef, sessionIdRef, update]);
 
   return {
     sandboxProfile,
     sandboxProfileRef,
     setSandboxProfile,
-    selectExistingSandboxProfile,
     startNewSandboxProfile,
     hydrateSandboxProfile,
   };

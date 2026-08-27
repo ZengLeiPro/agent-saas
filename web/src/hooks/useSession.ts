@@ -56,7 +56,7 @@ export interface SessionCallbacks {
     sessionId: string,
     queued: NonNullable<ApiSessionDetail["queuedMessages"]>,
   ) => void;
-  onSandboxProfile?: (sessionId: string, profile: ApiSessionDetail["sandboxProfile"]) => void; onNewSession?: () => void;
+  onSandboxProfile?: (sessionId: string, profile: ApiSessionDetail["sandboxProfile"], activate?: boolean) => void; onNewSession?: () => void;
 }
 export interface SessionState {
   sessionId: string | null;
@@ -391,7 +391,7 @@ export function useSession(
             data.owner?.username ??
             sessionsRef.current.find((s) => s.sessionId === id)?.owner
               ?.username;
-          const incomingMsgs = (await mapperPromise).mapSessionDetailToMessages(data, sessionOwner);
+          const mapper = await mapperPromise; if (isStale()) return; const incomingMsgs = mapper.mapSessionDetailToMessages(data, sessionOwner);
           let msgs = data.mode === "delta" && baseMessages
             ? mergeSessionMessageDelta(baseMessages, incomingMsgs)
             : incomingMsgs;
@@ -571,6 +571,24 @@ export function useSession(
     }
   }, [sessionOwner?.username]);
 
+  const selectSession = useCallback(
+    (id: string) => {
+      if (id === sessionId) return;
+      cbRef.current.cancelActiveStream();
+      cbRef.current.resetMessages();
+      setSessionId(sessionIdRef.current = id);
+      setSessionOwner(null);
+      setTokenUsage(null);
+      setContextUsage(null);
+      setHasMoreHistory(false);
+      setIsLoadingEarlier(false);
+      isNewSessionRef.current = false;
+      cbRef.current.onSandboxProfile?.(id, undefined, true);
+      loadDetailPromiseRef.current = loadSessionDetail(id);
+    },
+    [loadSessionDetail, sessionId],
+  );
+
   const confirmDeleteSessions = useCallback((ids: string[]) => {
     const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
     if (uniqueIds.length === 0) return;
@@ -639,7 +657,7 @@ export function useSession(
         (item) => !deletedIds.has(item.sessionId),
       );
       if (remainingSessions.length > 0) {
-        const nextSessionId = remainingSessions[0].sessionId; cbRef.current.onSandboxProfile?.(nextSessionId, undefined); await loadSessionDetail(nextSessionId);
+        selectSession(remainingSessions[0].sessionId); await loadDetailPromiseRef.current;
       } else {
         setSessionId(null);
         localStorage.removeItem(SESSION_STORAGE_KEY);
@@ -649,7 +667,7 @@ export function useSession(
       console.error("删除会话失败:", err);
       alert("删除失败");
     }
-  }, [deleteSessionIds, loadSessionDetail, loadSessions, sessionId, sessions]);
+  }, [deleteSessionIds, loadSessions, selectSession, sessionId, sessions]);
 
   const updateSessionTitle = useCallback((targetId: string, title: string) => {
     setSessions((prev) =>
@@ -859,27 +877,6 @@ export function useSession(
     setIsLoadingEarlier(false);
     localStorage.removeItem(SESSION_STORAGE_KEY);
   }, []);
-
-  const selectSession = useCallback(
-    (id: string) => {
-      if (id === sessionId) {
-        return;
-      }
-
-      cbRef.current.cancelActiveStream();
-      // 立即清空旧消息并切换 sessionId，避免短暂显示前一个会话的内容
-      cbRef.current.resetMessages();
-      setSessionId(id);
-      setSessionOwner(null);
-      setTokenUsage(null);
-      setContextUsage(null);
-      setHasMoreHistory(false);
-      setIsLoadingEarlier(false);
-      isNewSessionRef.current = false;
-      loadDetailPromiseRef.current = loadSessionDetail(id);
-    },
-    [loadSessionDetail, sessionId],
-  );
 
   const refreshTokenUsage = useCallback(async () => {
     if (sessionId) void fetchTokenUsage(sessionId);

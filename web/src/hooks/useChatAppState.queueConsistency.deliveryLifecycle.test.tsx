@@ -23,7 +23,7 @@ const harness = vi.hoisted(() => {
       onSessionsLoaded?: (sessions: Array<{ sessionId: string }>) => void;
       onLastRunState?: (sessionId: string, lastRunState: { status: string; runId: string; error?: string }) => void;
       onQueuedMessages?: (sessionId: string, messages: unknown[]) => void;
-      onSandboxProfile?: (sessionId: string, profile: "daily" | "coding" | undefined) => void;
+      onSandboxProfile?: (sessionId: string, profile: "daily" | "coding" | undefined, activate?: boolean) => void;
       onNewSession?: () => void;
       cancelActiveStream?: () => void;
     },
@@ -182,6 +182,7 @@ beforeEach(() => {
     if (typeof value === "function" && "mockClear" in value) (value as ReturnType<typeof vi.fn>).mockClear();
   });
   harness.session.newSession.mockImplementation(() => harness.sessionCallbacks?.onNewSession?.());
+  harness.session.selectSession.mockImplementation((sessionId: string) => harness.sessionCallbacks?.onSandboxProfile?.(sessionId, undefined, true));
   harness.session.removeSession.mockImplementation((sessionId: string) => {
     if (harness.session.sessionId !== sessionId) return;
     harness.session.sessionId = null;
@@ -215,7 +216,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
     act(() => harness.sessionCallbacks?.onSandboxProfile?.("legacy-session", undefined));
     expect(result.current.sandboxProfile).toBe("coding");
     act(() => harness.sessionCallbacks?.onSandboxProfile?.("legacy-session", "daily")); expect(result.current.sandboxProfile).toBe("daily");
-    act(() => harness.sessionCallbacks?.onSandboxProfile?.("next-legacy-session", undefined)); expect(result.current.sandboxProfile).toBe("coding");
+    act(() => harness.sessionCallbacks?.onSandboxProfile?.("stale-session", undefined)); expect(result.current.sandboxProfile).toBe("daily"); act(() => harness.sessionCallbacks?.onSandboxProfile?.("next-legacy-session", undefined, true)); expect(result.current.sandboxProfile).toBe("coding");
   });
   it("returns to daily when browser navigation opens a blank new conversation", () => {
     const { result, rerender } = renderHook(() => useChatAppState());

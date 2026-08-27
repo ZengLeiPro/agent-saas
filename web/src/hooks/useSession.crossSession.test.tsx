@@ -3,12 +3,22 @@
  * 会话 A 失败后，A 的「用户消息 + 失败提示」会跟着用户跑到新建会话草稿页 / 别的会话。
  * 根因是 newSession() 不作废在飞的详情请求，且 preserveTail 直接拿全局消息数组当基底。
  */
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const authFetchMock = vi.hoisted(() => vi.fn());
+const mapperGate = vi.hoisted(() => {
+  let pending: Promise<void> | null = null;
+  let release: (() => void) | null = null;
+  return {
+    hold: () => { pending = new Promise<void>((resolve) => { release = resolve; }); },
+    wait: () => pending ?? Promise.resolve(),
+    release: () => { release?.(); pending = null; release = null; },
+  };
+});
 
 vi.mock("@/lib/authFetch", () => ({ authFetch: authFetchMock }));
+vi.mock("@/lib/sessionMessageMapper", async (importOriginal) => { await mapperGate.wait(); return importOriginal(); });
 vi.mock("@/lib/preload", () => ({
   sessionsPreload: Promise.resolve({ sessions: [], hasMore: false }),
 }));
@@ -56,10 +66,42 @@ function mockPendingDetail(): { release: (body: unknown) => void; settled: Promi
 }
 
 beforeEach(() => {
+  mapperGate.release();
   authFetchMock.mockReset();
 });
 
 describe("useSession 跨会话详情请求隔离", () => {
+  it("mapper 延迟期间切换会话后 stale 详情不再触发任何归属副作用", async () => {
+    mapperGate.hold();
+    let activeSessionId = "legacy-a";
+    let displayedProfile = "coding";
+    const callbacks = makeCallbacks();
+    callbacks.onSandboxProfile = vi.fn((sessionId, profile) => {
+      if (sessionId === activeSessionId) displayedProfile = profile ?? "coding";
+    });
+    authFetchMock.mockImplementation((url: string) => {
+      if (url.startsWith("/api/sessions/legacy-a")) return Promise.resolve(jsonResponse({ blocks: [] }));
+      if (url.startsWith("/api/sessions/daily-b")) return Promise.resolve(jsonResponse({ blocks: [], sandboxProfile: "daily" }));
+      if (url.startsWith("/api/chat/interactions/pending")) return Promise.resolve(jsonResponse([]));
+      return Promise.resolve(jsonResponse({ sessions: [], hasMore: false }));
+    });
+    const { result } = renderHook(() => useSession(callbacks));
+
+    act(() => result.current.selectSession("legacy-a"));
+    const legacyPromise = result.current.loadDetailPromiseRef.current;
+    await waitFor(() => expect(authFetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/sessions/legacy-a")));
+    activeSessionId = "daily-b";
+    act(() => result.current.selectSession("daily-b"));
+    const dailyPromise = result.current.loadDetailPromiseRef.current;
+    mapperGate.release();
+    await act(async () => { await Promise.all([legacyPromise, dailyPromise]); });
+
+    expect(result.current.sessionId).toBe("daily-b");
+    expect(displayedProfile).toBe("daily");
+    expect(vi.mocked(callbacks.onSandboxProfile!).mock.calls.filter(([id, , activate]) => id === "legacy-a" && !activate)).toHaveLength(0);
+    expect(callbacks.onSandboxProfile).toHaveBeenCalledWith("daily-b", "daily");
+  });
+
   it("服务端广播删除当前会话时通知上层恢复新会话默认状态", async () => {
     const callbacks = makeCallbacks(); callbacks.onNewSession = vi.fn();
     const { result } = renderHook(() => useSession(callbacks));
@@ -97,9 +139,9 @@ describe("useSession 跨会话详情请求隔离", () => {
     let activeSessionId = currentSessionId;
     let displayedProfile = currentProfile;
     const callbacks = makeCallbacks();
-    callbacks.onSandboxProfile = vi.fn((sessionId, profile) => {
-      if (profile === undefined) { activeSessionId = sessionId; displayedProfile = "coding"; return; }
-      if (sessionId === activeSessionId) displayedProfile = profile;
+    callbacks.onSandboxProfile = vi.fn((sessionId, profile, activate) => {
+      if (activate) { activeSessionId = sessionId; displayedProfile = "coding"; }
+      if (sessionId === activeSessionId) displayedProfile = profile ?? "coding";
     });
     authFetchMock.mockImplementation((url: string, init?: RequestInit) => {
       if (init?.method === "DELETE") return Promise.resolve(jsonResponse({}));
@@ -119,8 +161,33 @@ describe("useSession 跨会话详情请求隔离", () => {
     await act(async () => { await result.current.handleDeleteSession(); });
 
     expect(result.current.sessionId).toBe(nextSessionId);
-    expect(callbacks.onSandboxProfile).toHaveBeenCalledWith(nextSessionId, undefined);
+    expect(callbacks.onSandboxProfile).toHaveBeenCalledWith(nextSessionId, undefined, true);
     expect(displayedProfile).toBe(nextProfile);
+  });
+
+  it.each([[500, "next-session"], [404, null]] as const)("删除后自动切换详情返回 %s 时会话归属保持一致", async (status, expectedSessionId) => {
+    let activeSessionId: string | null = "current-session";
+    const callbacks = makeCallbacks();
+    callbacks.onSandboxProfile = vi.fn((sessionId, _profile, activate) => { if (activate) activeSessionId = sessionId; });
+    callbacks.onNewSession = vi.fn(() => { activeSessionId = null; });
+    authFetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") return Promise.resolve(jsonResponse({}));
+      if (url.startsWith("/api/sessions/current-session")) return Promise.resolve(jsonResponse({ blocks: [], sandboxProfile: "daily" }));
+      if (url.startsWith("/api/sessions/next-session")) return Promise.resolve({ ok: false, status, statusText: `HTTP ${status}` } as Response);
+      return Promise.resolve(jsonResponse({ sessions: [{ sessionId: "next-session", updatedAtMs: 1 }], hasMore: false }));
+    });
+    const { result } = renderHook(() => useSession(callbacks));
+    act(() => {
+      result.current.upsertSession({ sessionId: "current-session", updatedAtMs: 2 });
+      result.current.upsertSession({ sessionId: "next-session", updatedAtMs: 1 });
+    });
+    await act(async () => { await result.current.loadSessionDetail("current-session"); });
+    act(() => result.current.confirmDeleteSession("current-session"));
+    await act(async () => { await result.current.handleDeleteSession(); });
+
+    expect(result.current.sessionId).toBe(expectedSessionId);
+    expect(activeSessionId).toBe(expectedSessionId);
+    expect(callbacks.resetMessages).toHaveBeenCalled();
   });
 
   it("新建会话会作废在飞的详情请求，草稿页不会被旧会话消息占领", async () => {

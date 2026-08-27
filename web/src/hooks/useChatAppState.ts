@@ -344,7 +344,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const releaseAllInteractionResponses = useCallback((error: string) => { for (const [id, { generation }] of pendingInteractionResponsesRef.current) releaseInteractionResponse(id, generation, error); }, [releaseInteractionResponse]);
   // 同步更新的 sessionId ref（解决 React 批量更新时 sessionIdRef 延迟问题）
   const immediateSessionIdRef = useRef<string | null>(urlState.sessionId);
-  const { sandboxProfile, sandboxProfileRef, setSandboxProfile, selectExistingSandboxProfile, startNewSandboxProfile, hydrateSandboxProfile } = useSandboxProfile(immediateSessionIdRef, sessionIdRef, loadingRef, urlState.sessionId ? "coding" : "daily");
+  const { sandboxProfile, sandboxProfileRef, setSandboxProfile, startNewSandboxProfile, hydrateSandboxProfile } = useSandboxProfile(immediateSessionIdRef, sessionIdRef, loadingRef, urlState.sessionId ? "coding" : "daily");
   const trashPreviewSessionIdRef = useRef<string | null>(trashPreviewSessionId);
   trashPreviewSessionIdRef.current = trashPreviewSessionId;
   const refreshTokenUsageRef = useRef<() => void>(() => { });
@@ -1030,7 +1030,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const { pendingOrgAgentIdRef, pendingNewSessionGroupIdRef, pendingOrgAgentId, setPendingOrgAgentId, clearPendingOrgAgent, assignPendingGroup } = usePendingNewSessionTarget();
   const authOwnerKey = user ? `${user.tenantId}:${user.id}` : "anonymous";
   const selectSessionWithUrl = useCallback((id: string) => {
-    setTrashPreviewSessionId(null); selectExistingSandboxProfile(); // detail 返回前兼容旧会话缺字段。
+    setTrashPreviewSessionId(null);
     clearPendingOrgAgent(); // 切换既有会话 = 放弃挂起的专职 Agent 新会话
     failAllProvisionalBatches('已切换会话，请重新发送');
     pendingNewSessionClientMsgIdRef.current = null;
@@ -1044,7 +1044,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     wsLatestSessionIdRef.current = { value: id };
     session.selectSession(id);
     pushUrl('chat', id);
-  }, [clearPendingOrgAgent, failAllProvisionalBatches, markSessionRead, mutateQueuedInterjections, selectExistingSandboxProfile, session.selectSession]);
+  }, [clearPendingOrgAgent, failAllProvisionalBatches, markSessionRead, mutateQueuedInterjections, session.selectSession]);
 
   const newSessionWithUrl = useCallback((groupId: string | null = null) => {
     setTrashPreviewSessionId(null); startNewSandboxProfile();
@@ -1126,7 +1126,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // Popstate refs（保持最新引用避免 effect 重注册）
   const selectSessionRawRef = useRef(session.selectSession);
-  selectSessionRawRef.current = (id) => { selectExistingSandboxProfile(); session.selectSession(id); };
+  selectSessionRawRef.current = session.selectSession;
   const newSessionRawRef = useRef(session.newSession);
   newSessionRawRef.current = session.newSession;
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile, writeFile } from 'node:fs/promises';
+import { canonicalJson, digestBuffer, DIGEST_PATTERN } from './artifact-lib.mjs';
 
 const REQUIRED_CHECKS = Object.freeze([
   'http',
@@ -14,13 +15,21 @@ const REQUIRED_CHECKS = Object.freeze([
   'login',
   'sessionRead',
   'taskboardRead',
+  'businessAcceptance',
 ]);
 
-export function evaluateObservationSamples(samples, releaseId, manifestDigest) {
+export function evaluateObservationSamples(
+  samples,
+  releaseId,
+  manifestDigest,
+  { requiredDurationMs = 15 * 60_000, maxSampleClockSkewMs = 60_000 } = {},
+) {
   if (!Array.isArray(samples) || samples.length === 0)
     return { ok: false, blockingReasons: ['Production observation has no samples.'] };
   const blockingReasons = [];
+  const businessAcceptanceDigests = new Set();
   let previousObservedAt = 0;
+  let previousCollectedAt = 0;
   for (const [index, sample] of samples.entries()) {
     if (sample.releaseId !== releaseId || sample.manifestDigest !== manifestDigest)
       blockingReasons.push(`sample ${index + 1} is not bound to the promoted release`);
@@ -28,10 +37,26 @@ export function evaluateObservationSamples(samples, releaseId, manifestDigest) {
     if (!Number.isFinite(observedAt) || observedAt <= previousObservedAt)
       blockingReasons.push(`sample ${index + 1} does not have a fresh increasing observedAt`);
     else previousObservedAt = observedAt;
+    const collectedAt = Date.parse(sample.collectedAt ?? '');
+    if (!Number.isFinite(collectedAt) || collectedAt <= previousCollectedAt)
+      blockingReasons.push(`sample ${index + 1} does not have a fresh increasing collectedAt`);
+    else previousCollectedAt = collectedAt;
+    if (
+      Number.isFinite(observedAt) &&
+      Number.isFinite(collectedAt) &&
+      Math.abs(observedAt - collectedAt) > maxSampleClockSkewMs
+    )
+      blockingReasons.push(`sample ${index + 1} observedAt is not close to actual collection time`);
     for (const check of REQUIRED_CHECKS) {
       if (sample.checks?.[check]?.status !== 'ok')
         blockingReasons.push(`sample ${index + 1} check ${check} is not ok`);
     }
+    const businessAcceptanceDigest = sample.checks?.businessAcceptance?.evidenceDigest;
+    if (!DIGEST_PATTERN.test(businessAcceptanceDigest ?? ''))
+      blockingReasons.push(
+        `sample ${index + 1} business acceptance is not bound to durable evidence`,
+      );
+    else businessAcceptanceDigests.add(businessAcceptanceDigest);
     const httpErrorRate = Number(sample.metrics?.httpErrorRate);
     if (!Number.isFinite(httpErrorRate) || httpErrorRate < 0 || httpErrorRate > 0.01)
       blockingReasons.push(
@@ -41,7 +66,23 @@ export function evaluateObservationSamples(samples, releaseId, manifestDigest) {
     if (!Number.isSafeInteger(duplicateExecutions) || duplicateExecutions !== 0)
       blockingReasons.push(`sample ${index + 1} observed duplicate execution`);
   }
-  return { ok: blockingReasons.length === 0, blockingReasons };
+  const firstCollectedAt = Date.parse(samples[0]?.collectedAt ?? '');
+  const lastCollectedAt = Date.parse(samples.at(-1)?.collectedAt ?? '');
+  if (
+    !Number.isFinite(firstCollectedAt) ||
+    !Number.isFinite(lastCollectedAt) ||
+    lastCollectedAt - firstCollectedAt < requiredDurationMs
+  ) {
+    blockingReasons.push('valid samples do not cover the required production observation window');
+  }
+  if (businessAcceptanceDigests.size !== 1)
+    blockingReasons.push('production samples do not bind one stable business acceptance result');
+  return {
+    ok: blockingReasons.length === 0,
+    blockingReasons,
+    businessAcceptanceEvidenceDigest:
+      businessAcceptanceDigests.size === 1 ? [...businessAcceptanceDigests][0] : null,
+  };
 }
 
 function options(argv) {
@@ -69,10 +110,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     throw new Error('Production observation must cover at least 15 minutes with bounded polling');
   const token = args['token-file'] ? (await readFile(args['token-file'], 'utf8')).trim() : '';
   const samples = [];
-  const deadline = Date.now() + durationMs;
-  do {
+  let deadline;
+  for (;;) {
     const url = new URL(args.url);
     url.searchParams.set('releaseId', args['release-id']);
+    url.searchParams.set('manifestDigest', args['manifest-digest']);
     const response = await fetch(url, {
       headers: token ? { authorization: `Bearer ${token}` } : {},
       signal: AbortSignal.timeout(15_000),
@@ -81,14 +123,17 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       throw new Error(`Production observation endpoint returned ${response.status}`);
     const sample = await response.json();
     samples.push({ ...sample, collectedAt: new Date().toISOString() });
-    if (Date.now() < deadline) await sleep(Math.min(intervalMs, deadline - Date.now()));
-  } while (Date.now() < deadline);
+    deadline ??= Date.now() + durationMs;
+    if (Date.now() >= deadline) break;
+    await sleep(Math.min(intervalMs, deadline - Date.now()));
+  }
   const evaluation = evaluateObservationSamples(
     samples,
     args['release-id'],
     args['manifest-digest'],
+    { requiredDurationMs: durationMs },
   );
-  const report = {
+  const reportBody = {
     schemaVersion: 1,
     releaseId: args['release-id'],
     manifestDigest: args['manifest-digest'],
@@ -104,8 +149,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       humanAcceptance: 'approval_attestation_required',
       productionComponents: evaluation.ok ? 'observed' : 'blocked',
       healthAndContinuousProbes: evaluation.ok ? 'passed' : 'failed',
-      businessAcceptance: 'separate_evidence_required',
+      businessAcceptance: evaluation.ok ? 'passed' : 'failed',
     },
+  };
+  const report = {
+    ...reportBody,
+    reportDigest: digestBuffer(Buffer.from(canonicalJson(reportBody))),
   };
   await writeFile(args.output, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' });
   process.stdout.write(`${JSON.stringify(report)}\n`);

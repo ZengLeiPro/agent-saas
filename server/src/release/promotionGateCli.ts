@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { canonicalJson } from '@agent/shared';
 import { ReleaseAttestationStore } from './releaseAttestationStore.js';
@@ -64,6 +65,25 @@ export function validateApprovalReason(
   }
   if (approval.releaseId !== expected.releaseId || approval.manifestDigest !== expected.digest)
     throw new Error('Approval attestation is not bound to this Manifest');
+  const e2e = approval.e2eSummary as Record<string, unknown> | undefined;
+  if (
+    e2e?.schemaVersion !== 1 ||
+    e2e.status !== 'passed' ||
+    e2e.traceMode !== 'on' ||
+    !Number.isSafeInteger(e2e.scenarioCount) ||
+    Number(e2e.scenarioCount) < 1 ||
+    !Number.isSafeInteger(e2e.executionCount) ||
+    Number(e2e.executionCount) < Number(e2e.scenarioCount) ||
+    !Array.isArray(e2e.projects) ||
+    !e2e.projects.includes('desktop-chromium') ||
+    !e2e.projects.includes('mobile-chromium')
+  ) {
+    throw new Error('Approval attestation lacks a passed scenario-level Staging E2E summary');
+  }
+  const { evidenceDigest, ...e2eBody } = e2e;
+  const expectedE2eDigest = `sha256:${createHash('sha256').update(canonicalJson(e2eBody)).digest('hex')}`;
+  if (evidenceDigest !== expectedE2eDigest)
+    throw new Error('Approval attestation Staging E2E summary digest is invalid');
   return approval;
 }
 

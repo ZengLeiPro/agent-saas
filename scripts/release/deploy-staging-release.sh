@@ -4,6 +4,7 @@ set -euo pipefail
 : "${RELEASE_DIR:?RELEASE_DIR is required}"
 : "${MANIFEST_PATH:?MANIFEST_PATH is required}"
 : "${EXPECTED_MANIFEST_DIGEST:?EXPECTED_MANIFEST_DIGEST is required}"
+: "${VERIFY_INSTALLED_SCRIPT:?VERIFY_INSTALLED_SCRIPT is required}"
 
 release_id="$(node -p "require(process.env.MANIFEST_PATH).releaseId")"
 release_sha="$(node -p "require(process.env.MANIFEST_PATH).releaseSha")"
@@ -23,36 +24,69 @@ flock -n 9 || { echo 'Another Staging deployment is active' >&2; exit 1; }
 
 previous="$(readlink -f "$current" 2>/dev/null || true)"
 candidate="$target.candidate-$GITHUB_RUN_ID"
-cleanup() { rm -rf "$candidate"; }
+rollback_root="$state_root/rollback-$release_id-$GITHUB_RUN_ID"
+mkdir -p "$rollback_root"
+server_env=/etc/agent-saas-staging/server.env
+acs_env=/etc/agent-saas-staging/acs-orchestrator.env
+acs_identity=/etc/agent-saas-staging/acs-release-identity.json
+cp -a "$server_env" "$rollback_root/server.env"
+cp -a "$acs_env" "$rollback_root/acs-orchestrator.env"
+had_previous_identity=false
+if [ -e "$acs_identity" ]; then
+  had_previous_identity=true
+  cp -a "$acs_identity" "$rollback_root/acs-release-identity.json"
+fi
+deployment_committed=false
 rollback() {
+  cp -a "$rollback_root/server.env" "$server_env"
+  cp -a "$rollback_root/acs-orchestrator.env" "$acs_env"
+  if [ "$had_previous_identity" = true ]; then
+    cp -a "$rollback_root/acs-release-identity.json" "$acs_identity"
+  else
+    rm -f "$acs_identity"
+  fi
   if [ -n "$previous" ] && [ -d "$previous" ]; then
     ln -sfn "$previous" "$current"
-    systemctl restart agent-saas-acs-orchestrator-staging.service || true
-    systemctl restart agent-saas-server-staging.service || true
-    systemctl restart agent-saas-runtime-worker-staging.service || true
+  else
+    rm -f "$current"
   fi
+  systemctl restart agent-saas-acs-orchestrator-staging.service || true
+  systemctl restart agent-saas-server-staging.service || true
+  systemctl restart agent-saas-runtime-worker-staging.service || true
 }
-trap cleanup EXIT
-trap 'rollback' ERR
+finish() {
+  status=$?
+  trap - EXIT
+  rm -rf "$candidate"
+  if [ "$deployment_committed" = false ]; then rollback; fi
+  exit "$status"
+}
+trap finish EXIT
+trap 'exit 130' HUP INT TERM
 
 if [ -d "$target" ]; then
-  test -f "$target/manifest.json"
+  node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component server
+  node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component acs
   existing="$(node -p "require('$target/manifest.json').digest")"
   test "$existing" = "$manifest_digest" || { echo 'Immutable Staging release conflicts' >&2; exit 1; }
 else
   rm -rf "$candidate"
-  mkdir -p "$candidate/server" "$candidate/web" "$candidate/acs-orchestrator"
-  tar -xzf "$RELEASE_DIR/server-bundle.tgz" -C "$candidate/server"
+  mkdir -p "$candidate/server" "$candidate/web" "$candidate/acs-orchestrator" "$candidate/.release"
+  install -m 0444 "$RELEASE_DIR/server-bundle.tgz" "$candidate/.release/server-bundle.tgz"
+  install -m 0444 "$RELEASE_DIR/acs-orchestrator.tgz" "$candidate/.release/acs-orchestrator.tgz"
+  tar -xzf "$candidate/.release/server-bundle.tgz" -C "$candidate/server"
   tar -xzf "$RELEASE_DIR/web-assets.tgz" -C "$candidate/web"
-  tar -xzf "$RELEASE_DIR/acs-orchestrator.tgz" -C "$candidate/acs-orchestrator"
+  tar -xzf "$candidate/.release/acs-orchestrator.tgz" -C "$candidate/acs-orchestrator"
   test -s "$candidate/server/dist/index.js"
   test -s "$candidate/acs-orchestrator/dist/index.js"
   install -m 0444 "$MANIFEST_PATH" "$candidate/manifest.json"
+  node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component server
+  node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component acs
   mv "$candidate" "$target"
 fi
 
 ln -sfn "$target" "$current"
-node - "$MANIFEST_PATH" /etc/agent-saas-staging/server.env <<'NODE'
+node - "$MANIFEST_PATH" "$server_env" <<'NODE'
 const fs = require('node:fs');
 const [manifestPath, envPath] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -70,7 +104,7 @@ for (const [key, value] of Object.entries(desired)) lines.push(`${key}=${value}`
 fs.writeFileSync(`${envPath}.candidate`, `${lines.join('\n')}\n`, { mode: 0o600 });
 fs.renameSync(`${envPath}.candidate`, envPath);
 NODE
-node - "$MANIFEST_PATH" /etc/agent-saas-staging/acs-orchestrator.env <<'NODE'
+node - "$MANIFEST_PATH" "$acs_env" <<'NODE'
 const fs = require('node:fs');
 const [manifestPath, envPath] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -81,7 +115,7 @@ output.push(`ACS_SANDBOX_IMAGE=${reference}`);
 fs.writeFileSync(`${envPath}.candidate`, `${output.join('\n')}\n`, { mode: 0o600 });
 fs.renameSync(`${envPath}.candidate`, envPath);
 NODE
-node - "$MANIFEST_PATH" /etc/agent-saas-staging/acs-orchestrator.env <<'NODE'
+node - "$MANIFEST_PATH" "$acs_env" <<'NODE'
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const [manifestPath, envPath] = process.argv.slice(2);
@@ -143,5 +177,6 @@ if (acs.orchestratorArtifactDigest !== manifest.components.acs.orchestratorArtif
 NODE
 
 install -m 0444 "$MANIFEST_PATH" "$state_root/releases/$release_id.manifest.json"
-trap - ERR
+deployment_committed=true
+trap - HUP INT TERM
 echo "$release_id deployed to isolated Staging runtime"

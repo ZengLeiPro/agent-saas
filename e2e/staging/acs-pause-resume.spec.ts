@@ -1,5 +1,12 @@
 import { expect, test } from 'playwright/test';
-import { apiLogin, authorizedJson, login, required, sendAgentCase } from './helpers';
+import {
+  apiLogin,
+  authorizedJson,
+  currentSessionId,
+  login,
+  required,
+  sendAgentCase,
+} from './helpers';
 
 test('Sandbox Ready 到 Paused 再 Resume 后工作区继续可用', async ({ page, request }) => {
   await login(page);
@@ -8,13 +15,20 @@ test('Sandbox Ready 到 Paused 再 Resume 后工作区继续可用', async ({ pa
     'pause-seed',
     `写入 ${required('STAGING_RELEASE_ID')}-pause-proof.txt，内容为 pause-resume-proof。`,
   );
+  const sessionId = currentSessionId(page);
   const token = await apiLogin(request);
   const inventory = (await authorizedJson(
     request,
     token,
     '/api/admin/runtime-operations/acs/sandboxes',
-  )) as { items?: Array<{ name: string; status?: string }> };
-  const sandbox = inventory.items?.find((item) => String(item.name).includes('as-ws-'));
+  )) as {
+    sandboxes?: Array<{ name: string; status?: string; sessionId?: string }>;
+    items?: Array<{ name: string; status?: string; sessionId?: string }>;
+  };
+  const sandboxes = inventory.sandboxes ?? inventory.items ?? [];
+  const matches = sandboxes.filter((item) => item.sessionId === sessionId);
+  expect(matches).toHaveLength(1);
+  const sandbox = matches[0];
   expect(sandbox?.name).toBeTruthy();
   await authorizedJson(
     request,

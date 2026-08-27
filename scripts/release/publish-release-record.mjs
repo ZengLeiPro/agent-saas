@@ -8,7 +8,16 @@ export async function publishReleaseRecord({ manifestPath, indexPath, recordsRoo
   const manifest = JSON.parse(await readFile(resolve(manifestPath), 'utf8'));
   if (!/^rc-\d{8}-\d{2,}$/u.test(manifest.releaseId ?? '')) throw new Error('Invalid releaseId');
   const index = await verifyArtifactIndex(indexPath, manifest.releaseSha);
-  const manifestDigest = digestBuffer(Buffer.from(canonicalJson(manifest)));
+  const { digest: manifestDigest, ...manifestContent } = manifest;
+  const calculatedManifestDigest = digestBuffer(
+    Buffer.concat([
+      Buffer.from('agent-saas-release-manifest-v1\0'),
+      Buffer.from(canonicalJson(manifestContent)),
+    ]),
+  );
+  if (manifestDigest !== calculatedManifestDigest)
+    throw new Error('Release Manifest digest does not match canonical domain-separated content');
+  const manifestFileDigest = digestBuffer(Buffer.from(canonicalJson(manifest)));
   const target = join(resolve(recordsRoot), manifest.releaseId);
   const lockPath = `${target}.lock`;
   await mkdir(dirname(target), { recursive: true });
@@ -18,6 +27,7 @@ export async function publishReleaseRecord({ manifestPath, indexPath, recordsRoo
       const existing = JSON.parse(await readFile(join(target, 'record.json'), 'utf8'));
       if (
         existing.manifestDigest === manifestDigest &&
+        existing.manifestFileDigest === manifestFileDigest &&
         existing.artifactDigest === index.aggregateDigest
       )
         return existing;
@@ -33,6 +43,7 @@ export async function publishReleaseRecord({ manifestPath, indexPath, recordsRoo
       releaseId: manifest.releaseId,
       releaseSha: manifest.releaseSha,
       manifestDigest,
+      manifestFileDigest,
       artifactDigest: index.aggregateDigest,
       manifestFile: basename(manifestPath),
       artifactIndexFile: basename(indexPath),

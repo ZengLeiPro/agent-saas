@@ -46,14 +46,17 @@ jobs:
       PRODUCTION_OBSERVATION_TOKEN: ${{ secrets.PRODUCTION_OBSERVATION_TOKEN }}
       PRODUCTION_OBSERVATION_URL: ${{ vars.PRODUCTION_OBSERVATION_URL }}
       PRODUCTION_SSH_HOST_KEY_SHA256: ${{ vars.PRODUCTION_SSH_HOST_KEY_SHA256 }}
+      RELEASE_RECORD_OSS_URI: ${{ vars.RELEASE_RECORD_OSS_URI }}
+      RELEASE_ID_INPUT: ${{ inputs.release_id }}
+      PROMOTION_REASON: ${{ inputs.reason }}
 
     steps:
       - name: Validate promotion dispatch
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/main
-          printf '%s' "${{ inputs.release_id }}" | grep -Eq '^rc-[0-9]{8}-[0-9]{2,}$'
-          echo "RELEASE_ID=${{ inputs.release_id }}" >> "$GITHUB_ENV"
+          [[ "$RELEASE_ID_INPUT" =~ ^rc-[0-9]{8}-[0-9]{2,}$ ]]
+          printf 'RELEASE_ID=%s\n' "$RELEASE_ID_INPUT" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v5
         with:
@@ -72,13 +75,18 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/attestations"
           gh release download "$RELEASE_ID" --dir "$RUNNER_TEMP/release" \
-            --pattern manifest.json --pattern artifact-index.json --pattern "$RELEASE_ID.jsonl"
+            --pattern manifest.json --pattern artifact-index.json --pattern 'attestation-*.jsonl'
           mv "$RUNNER_TEMP/release/manifest.json" "$RUNNER_TEMP/manifest.json"
-          mv "$RUNNER_TEMP/release/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestations/"
+          node scripts/release/attestation-snapshot.mjs select \
+            "$RUNNER_TEMP/release"/attestation-*.jsonl \
+            "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl"
           pnpm exec tsx server/src/release/validateReleaseManifestCli.ts "$RUNNER_TEMP/manifest.json" "$RELEASE_ID"
           release_sha="$(jq -r .releaseSha "$RUNNER_TEMP/manifest.json")"
           manifest_digest="$(jq -r .digest "$RUNNER_TEMP/manifest.json")"
+          git fetch --no-tags origin "refs/tags/$RELEASE_ID:refs/tags/$RELEASE_ID"
           test "$(git rev-parse "$RELEASE_ID^{commit}")" = "$release_sha"
+          tag_object="$(git rev-parse "$RELEASE_ID^{tag}")"
+          git cat-file -p "$tag_object" | grep -Fx "manifest-digest: $manifest_digest"
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$release_sha" origin/main
           test "$(jq -r .promotionPolicy.appAcsCompatibility "$RUNNER_TEMP/manifest.json")" = n_and_n_plus_1
@@ -109,6 +117,9 @@ jobs:
           staging_reason="$(printf '%s' "$staging" | jq -r .reason)"
           deployment_id="$(printf '%s' "$staging_reason" | jq -r .stagingDeploymentId)"
           e2e_run_id="$(printf '%s' "$staging_reason" | jq -r .e2eRunId)"
+          e2e_summary="$(printf '%s' "$staging_reason" | jq -c .e2eSummary)"
+          printf '%s\n' "$e2e_summary" > "$RUNNER_TEMP/staging-e2e-summary.json"
+          node scripts/staging/summarize-e2e.mjs verify "$RUNNER_TEMP/staging-e2e-summary.json"
           printf '%s' "$deployment_id" | grep -Eq '^[1-9][0-9]*$'
           printf '%s' "$e2e_run_id" | grep -Eq '^[1-9][0-9]*$'
           test "$(printf '%s' "$staging_reason" | jq -r .manifestDigest)" = "$MANIFEST_DIGEST"
@@ -124,13 +135,18 @@ jobs:
           approval_reason="$(jq -nc \
             --arg releaseId "$RELEASE_ID" --arg manifestDigest "$MANIFEST_DIGEST" \
             --arg stagingDeploymentId "$deployment_id" --arg e2eRunId "$e2e_run_id" \
+            --argjson e2eSummary "$e2e_summary" \
             --arg triggeredAt "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
-            --arg reason "${{ inputs.reason }}" \
-            '{releaseId:$releaseId,manifestDigest:$manifestDigest,stagingDeploymentId:$stagingDeploymentId,e2eRunId:$e2eRunId,triggeredAt:$triggeredAt,reason:$reason}')"
+            --arg reason "$PROMOTION_REASON" \
+            '{releaseId:$releaseId,manifestDigest:$manifestDigest,stagingDeploymentId:$stagingDeploymentId,e2eRunId:$e2eRunId,e2eSummary:$e2eSummary,triggeredAt:$triggeredAt,reason:$reason}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
             --state approved --operation "approval:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR" \
             --reason "$approval_reason"
+          snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
+            "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
+          snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
+          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$snapshot_path"
 
       - name: Configure production SSH
         run: |
@@ -168,6 +184,26 @@ jobs:
           tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
           sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
 
+      - name: Verify immutable Manifest and artifact index from OSS record
+        run: |
+          set -euo pipefail
+          : "${RELEASE_RECORD_OSS_URI:?Missing production variable RELEASE_RECORD_OSS_URI}"
+          case "$RELEASE_RECORD_OSS_URI" in oss://*) ;; *) exit 1 ;; esac
+          record_uri="$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID"
+          mkdir -p "$RUNNER_TEMP/oss-record"
+          aliyun oss cp "$record_uri/manifest.json" "$RUNNER_TEMP/oss-record/manifest.json"
+          aliyun oss cp "$record_uri/artifact-index.json" "$RUNNER_TEMP/oss-record/artifact-index.json"
+          aliyun oss cp "$record_uri/record.json" "$RUNNER_TEMP/oss-record/record.json"
+          diff -u <(jq -S . "$RUNNER_TEMP/manifest.json") \
+            <(jq -S . "$RUNNER_TEMP/oss-record/manifest.json")
+          diff -u <(jq -S . "$RUNNER_TEMP/release/artifact-index.json") \
+            <(jq -S . "$RUNNER_TEMP/oss-record/artifact-index.json")
+          test "$(jq -r .releaseId "$RUNNER_TEMP/oss-record/record.json")" = "$RELEASE_ID"
+          test "$(jq -r .releaseSha "$RUNNER_TEMP/oss-record/record.json")" = "$RELEASE_SHA"
+          test "$(jq -r .manifestDigest "$RUNNER_TEMP/oss-record/record.json")" = "$MANIFEST_DIGEST"
+          test "$(jq -r .artifactDigest "$RUNNER_TEMP/oss-record/record.json")" = \
+            "$(jq -r .aggregateDigest "$RUNNER_TEMP/release/artifact-index.json")"
+
       - name: Prefetch and verify all selected artifacts
         run: |
           set -euo pipefail
@@ -180,6 +216,14 @@ jobs:
             fetch "$uri" "$RUNNER_TEMP/selected/$2"
             test "sha256:$(sha256sum "$RUNNER_TEMP/selected/$2" | cut -d' ' -f1)" = "$digest"
           done
+          cp "$RUNNER_TEMP/release/artifact-index.json" "$RUNNER_TEMP/selected/artifact-index.json"
+          sbom_path="$(jq -r .sbom.path "$RUNNER_TEMP/selected/artifact-index.json")"
+          [[ "$sbom_path" =~ ^[A-Za-z0-9._-]+$ ]]
+          artifact_base="$(jq -r .artifacts.serverBundle.uri "$RUNNER_TEMP/manifest.json")"
+          artifact_base="${artifact_base%/*}"
+          fetch "$artifact_base/$sbom_path" "$RUNNER_TEMP/selected/$sbom_path"
+          node scripts/release/verify-artifact.mjs \
+            "$RUNNER_TEMP/selected/artifact-index.json" "$RELEASE_SHA"
           expected_repository="$ACR_REGISTRY/$ACR_REPOSITORY"
           test "$(jq -r .artifacts.acsImage.repository "$RUNNER_TEMP/manifest.json")" = \
             "$expected_repository"
@@ -202,6 +246,21 @@ jobs:
           done
           test "$image_found" = true
 
+      - name: Mark and persist promotion started before any production write
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pnpm exec tsx server/src/release/releaseAttestationCli.ts \
+            --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
+            --state promoting --operation "promoting:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR"
+          snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
+            "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
+          snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
+          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$snapshot_path"
+          bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
+            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")"
+
       - name: Create GitHub Production Deployment
         env:
           GH_TOKEN: ${{ github.token }}
@@ -215,12 +274,6 @@ jobs:
           gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$id/statuses" \
             -f state=in_progress -f environment=production -f environment_url=https://agent.kaiyan.net >/dev/null
 
-      - name: Mark promotion started
-        run: |
-          pnpm exec tsx server/src/release/releaseAttestationCli.ts \
-            --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
-            --state promoting --operation "promoting:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR"
-
       - name: Upload immutable deploy payload and managed units
         run: |
           set -euo pipefail
@@ -230,6 +283,7 @@ jobs:
           scp -i ~/.ssh/production_key "$RUNNER_TEMP/selected/"*.tgz "$ECS_USER@$ECS_HOST:$remote/artifacts/"
           scp -i ~/.ssh/production_key "$RUNNER_TEMP/manifest.json" \
             scripts/release/deploy-production-release.sh scripts/release/write-production-identity.mjs \
+            scripts/release/verify-installed-release.mjs scripts/release/artifact-lib.mjs \
             "$ECS_USER@$ECS_HOST:$remote/"
           scp -i ~/.ssh/production_key \
             daemon-packaging/systemd/agent-saas-server@.service.template \
@@ -242,33 +296,135 @@ jobs:
              sudo install -m 0644 '$remote/agent-saas-acs-orchestrator.service.template' /etc/systemd/system/agent-saas-acs-orchestrator.service && \
              sudo systemctl daemon-reload"
 
+      - name: Persist ACS operation start receipt
+        id: start_acs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          outcome=started
+          [ "$(jq -r .components.acs.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
+          receipt_json="$(node scripts/release/write-operation-receipt.mjs \
+            --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component acs \
+            --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-acs-start" \
+            --actor "$GITHUB_ACTOR" --output "$RUNNER_TEMP/operation-receipts")"
+          receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
+          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
+          bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
+            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")"
+
       - name: Deploy exact ACS Orchestrator and Sandbox digest first
         id: deploy_acs
+        if: steps.start_acs.outcome == 'success'
         continue-on-error: true
         run: |
+          set -euo pipefail
           if [ "$(jq -r .components.acs.action "$RUNNER_TEMP/manifest.json")" = keep ]; then
             echo 'ACS already equals the frozen production baseline; keep without restart'
             exit 0
           fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+
+      - name: Persist ACS operation receipt
+        id: receipt_acs
+        if: always() && env.MANIFEST_DIGEST != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STEP_OUTCOME: ${{ steps.deploy_acs.outcome }}
+        run: |
+          set -euo pipefail
+          outcome=failed
+          [ "$STEP_OUTCOME" = success ] && outcome=succeeded
+          [ "$(jq -r .components.acs.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
+          [ "$STEP_OUTCOME" = skipped ] && outcome=skipped
+          receipt_json="$(node scripts/release/write-operation-receipt.mjs \
+            --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component acs \
+            --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-acs" \
+            --actor "$GITHUB_ACTOR" --output "$RUNNER_TEMP/operation-receipts")"
+          receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
+          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
+          bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
+            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")"
+
+      - name: Persist API and Worker operation start receipts
+        id: start_app
+        if: steps.deploy_acs.outcome == 'success' && steps.receipt_acs.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for component in api runtimeWorker; do
+            outcome=started
+            [ "$(jq -r ".components.$component.action" "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
+            receipt_json="$(node scripts/release/write-operation-receipt.mjs \
+              --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component "$component" \
+              --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$component-start" \
+              --actor "$GITHUB_ACTOR" --output "$RUNNER_TEMP/operation-receipts")"
+            receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
+            bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
+            bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
+              "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")"
+          done
 
       - name: Deploy API blue-green and hand off Runtime Worker
         id: deploy_app
-        if: steps.deploy_acs.outcome == 'success'
+        if: steps.start_app.outcome == 'success'
         continue-on-error: true
         run: |
+          set -euo pipefail
           if [ "$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")" = keep ]; then
             test "$(jq -r .components.runtimeWorker.action "$RUNNER_TEMP/manifest.json")" = keep
             echo 'API and Runtime Worker already equal the frozen production baseline; keep without cutover'
             exit 0
           fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=app RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=app RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+
+      - name: Persist API and Worker operation receipts
+        id: receipt_app
+        if: always() && env.MANIFEST_DIGEST != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STEP_OUTCOME: ${{ steps.deploy_app.outcome }}
+        run: |
+          set -euo pipefail
+          for component in api runtimeWorker; do
+            outcome=failed
+            [ "$STEP_OUTCOME" = success ] && outcome=succeeded
+            [ "$(jq -r ".components.$component.action" "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
+            [ "$STEP_OUTCOME" = skipped ] && outcome=skipped
+            receipt_json="$(node scripts/release/write-operation-receipt.mjs \
+              --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component "$component" \
+              --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$component" \
+              --actor "$GITHUB_ACTOR" --output "$RUNNER_TEMP/operation-receipts")"
+            receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
+            bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
+            bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
+              "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")"
+          done
+
+      - name: Persist Web operation start receipt
+        id: start_web
+        if: steps.deploy_app.outcome == 'success' && steps.receipt_app.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          outcome=started
+          [ "$(jq -r .components.web.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
+          receipt_json="$(node scripts/release/write-operation-receipt.mjs \
+            --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component web \
+            --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-web-start" \
+            --actor "$GITHUB_ACTOR" --output "$RUNNER_TEMP/operation-receipts")"
+          receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
+          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
+          bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
+            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")"
 
       - name: Publish Web entry last and retain prior hashed assets
         id: deploy_web
-        if: steps.deploy_acs.outcome == 'success' && steps.deploy_app.outcome == 'success'
+        if: steps.start_web.outcome == 'success'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -313,11 +469,41 @@ jobs:
             --exclude index.html --exclude release-identity.json
           aliyun oss cp "$RUNNER_TEMP/web-assets/release-identity.json" "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force
           aliyun oss cp "$RUNNER_TEMP/web-assets/index.html" "$PRODUCTION_WEB_OSS_URI/index.html" --force
+          rm -rf "$RUNNER_TEMP/web-oss-readback"
+          mkdir -p "$RUNNER_TEMP/web-oss-readback"
+          while IFS= read -r -d '' source; do
+            relative="${source#"$RUNNER_TEMP/web-assets/"}"
+            mkdir -p "$RUNNER_TEMP/web-oss-readback/$(dirname "$relative")"
+            aliyun oss cp "$PRODUCTION_WEB_OSS_URI/$relative" \
+              "$RUNNER_TEMP/web-oss-readback/$relative"
+            cmp "$source" "$RUNNER_TEMP/web-oss-readback/$relative"
+          done < <(find "$RUNNER_TEMP/web-assets" -type f -print0)
           curl -fsS --retry 10 -H 'cache-control: no-cache' \
             "https://agent.kaiyan.net/release-identity.json?release=$RELEASE_ID" \
             | jq -e --arg digest "$(jq -r .components.web.artifactDigest "$RUNNER_TEMP/manifest.json")" '.webDigest==$digest'
           web_committed=true
           trap - EXIT
+
+      - name: Persist Web operation receipt
+        id: receipt_web
+        if: always() && env.MANIFEST_DIGEST != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STEP_OUTCOME: ${{ steps.deploy_web.outcome }}
+        run: |
+          set -euo pipefail
+          outcome=failed
+          [ "$STEP_OUTCOME" = success ] && outcome=succeeded
+          [ "$(jq -r .components.web.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
+          [ "$STEP_OUTCOME" = skipped ] && outcome=skipped
+          receipt_json="$(node scripts/release/write-operation-receipt.mjs \
+            --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component web \
+            --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-web" \
+            --actor "$GITHUB_ACTOR" --output "$RUNNER_TEMP/operation-receipts")"
+          receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
+          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
+          bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
+            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")"
 
       - name: Read every live component and commit trusted identity only on complete convergence
         id: readback
@@ -329,7 +515,7 @@ jobs:
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
           scp -i ~/.ssh/production_key scripts/release/read-live-production-components.mjs \
             scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs \
-            scripts/release/artifact-lib.mjs \
+            scripts/release/verify-installed-release.mjs scripts/release/artifact-lib.mjs \
             "$ECS_USER@$ECS_HOST:$remote/"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
             "node '$remote/read-live-production-components.mjs' --output '$remote/production-after.json' >/dev/null"
@@ -367,11 +553,18 @@ jobs:
           if [ "$(jq -r .components.acs.action "$RUNNER_TEMP/manifest.json")" = deploy ]; then
             external_side_effects=unknown
           fi
+          rollback_attempted=false
+          if [ "${{ steps.deploy_acs.outcome }}" = failure ] || \
+             [ "${{ steps.deploy_app.outcome }}" = failure ] || \
+             [ "${{ steps.deploy_web.outcome }}" = failure ]; then
+            rollback_attempted=true
+          fi
           jq -n --arg releaseId "$RELEASE_ID" --argjson before "$before" --argjson target "$target" \
             --argjson observed "$observed" --argjson observationComplete "$observation_complete" \
             --arg externalSideEffects "$external_side_effects" \
+            --argjson rollbackAttempted "$rollback_attempted" \
             --arg databaseChange "$MIGRATION_PHASE" \
-            '{releaseId:$releaseId,before:$before,target:$target,observed:$observed,observationComplete:$observationComplete,externalSideEffects:$externalSideEffects,rollbackAttempted:false,databaseChange:$databaseChange}' \
+            '{releaseId:$releaseId,before:$before,target:$target,observed:$observed,observationComplete:$observationComplete,externalSideEffects:$externalSideEffects,rollbackAttempted:$rollbackAttempted,databaseChange:$databaseChange}' \
             > "$RUNNER_TEMP/reconcile-input.json"
           node scripts/release/reconcile-promotion.mjs "$RUNNER_TEMP/reconcile-input.json" "$RUNNER_TEMP/reconcile.json"
 
@@ -406,7 +599,23 @@ jobs:
             outcome=needs_human
             reason='component deployment completed but the production observation window failed'
           fi
+          if [ "$outcome" = completed ] && { \
+            [ "${{ steps.receipt_acs.outcome }}" != success ] || \
+            [ "${{ steps.receipt_app.outcome }}" != success ] || \
+            [ "${{ steps.receipt_web.outcome }}" != success ]; \
+          }; then
+            outcome=needs_human
+            reason='component convergence lacks one or more durable operation receipts'
+          fi
           migration_confirmation=not_required
+          observation_report_digest=null
+          business_acceptance_digest=null
+          if [ "${{ steps.observe.outcome }}" = success ]; then
+            observation_report_digest="$(jq -r .reportDigest "$RUNNER_TEMP/production-observation.json")"
+            business_acceptance_digest="$(jq -r .businessAcceptanceEvidenceDigest "$RUNNER_TEMP/production-observation.json")"
+            printf '%s' "$observation_report_digest" | grep -Eq '^sha256:[a-f0-9]{64}$'
+            printf '%s' "$business_acceptance_digest" | grep -Eq '^sha256:[a-f0-9]{64}$'
+          fi
           if [ "$MIGRATION_PHASE" = expand ]; then
             migration_confirmation=required_after_observation
             if [ "$outcome" = completed ] && [ "${{ steps.observe.outcome }}" = success ]; then
@@ -415,12 +624,19 @@ jobs:
           fi
           reason="$(jq -nc --arg summary "$reason" --arg migrationPhase "$MIGRATION_PHASE" \
             --arg migrationConfirmation "$migration_confirmation" \
-            '{summary:$summary,migration:{phase:$migrationPhase,confirmation:$migrationConfirmation,contractExecuted:false}}')"
+            --arg observationReportDigest "$observation_report_digest" \
+            --arg businessAcceptanceEvidenceDigest "$business_acceptance_digest" \
+            '{summary:$summary,migration:{phase:$migrationPhase,confirmation:$migrationConfirmation,contractExecuted:false},productionObservation:{reportDigest:$observationReportDigest,businessAcceptanceEvidenceDigest:$businessAcceptanceEvidenceDigest}}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
             --state "$outcome" --operation "outcome:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
             --actor "$GITHUB_ACTOR" --reason "$reason"
-          gh release upload "$RELEASE_ID" "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" --clobber
+          snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
+            "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
+          snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
+          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$snapshot_path"
+          bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
+            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")"
           state=failure
           [ "$outcome" = completed ] && state=success
           if printf '%s' "${PRODUCTION_DEPLOYMENT_ID:-}" | grep -Eq '^[0-9]+$'; then
@@ -434,7 +650,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: production-promotion-${{ inputs.release_id }}-${{ github.run_attempt }}
+          name: production-promotion-${{ env.RELEASE_ID }}-${{ github.run_attempt }}
           if-no-files-found: warn
           retention-days: 90
           path: |

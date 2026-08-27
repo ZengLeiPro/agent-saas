@@ -25,9 +25,17 @@ test('publishes once and makes the same operation idempotent', async () => {
   const indexPath = join(root, 'artifact-index.json');
   const manifestPath = join(root, 'manifest.json');
   await writeFile(indexPath, JSON.stringify(index));
-  await writeFile(manifestPath, JSON.stringify({ releaseId: 'rc-20260826-01', releaseSha: SHA }));
+  const manifestBody = { releaseId: 'rc-20260826-01', releaseSha: SHA };
+  const manifestDigest = digestBuffer(
+    Buffer.concat([
+      Buffer.from('agent-saas-release-manifest-v1\0'),
+      Buffer.from(canonicalJson(manifestBody)),
+    ]),
+  );
+  await writeFile(manifestPath, JSON.stringify({ ...manifestBody, digest: manifestDigest }));
   const args = { manifestPath, indexPath, recordsRoot: join(root, 'records') };
   const first = await publishReleaseRecord(args);
   const second = await publishReleaseRecord(args);
   assert.deepEqual(second, first);
+  assert.equal(first.manifestDigest, manifestDigest);
 });

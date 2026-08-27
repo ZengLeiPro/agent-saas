@@ -5,7 +5,10 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const targetPath = resolve(root, 'config/github-main-ruleset.json');
+const targetPaths = [
+  resolve(root, 'config/github-main-ruleset.json'),
+  resolve(root, 'config/github-rc-tag-ruleset.json'),
+];
 const repository = 'ZengLeiPro/agent-saas';
 
 export function inspectMainRuleset(rulesets, target) {
@@ -39,6 +42,23 @@ export function inspectMainRuleset(rulesets, target) {
   return { ok: reasons.length === 0, reasons };
 }
 
+export function inspectRcTagRuleset(rulesets, target) {
+  const actual = rulesets.find((ruleset) => ruleset.name === target.name);
+  if (!actual) return { ok: false, reasons: [`missing ruleset ${target.name}`] };
+  const reasons = [];
+  if (actual.enforcement !== 'active') reasons.push('RC tag ruleset is not active');
+  if (actual.target !== 'tag') reasons.push('RC ruleset target is not tag');
+  const includes = actual.conditions?.ref_name?.include ?? [];
+  if (!includes.includes('refs/tags/rc-*')) reasons.push('RC tag namespace is not included');
+  if ((actual.bypass_actors ?? []).length !== 0)
+    reasons.push('unexpected RC tag bypass actor is configured');
+  const byType = new Map((actual.rules ?? []).map((rule) => [rule.type, rule]));
+  for (const type of ['deletion', 'update']) {
+    if (!byType.has(type)) reasons.push(`missing RC tag ${type} rule`);
+  }
+  return { ok: reasons.length === 0, reasons };
+}
+
 function ghJson(args) {
   return JSON.parse(execFileSync('gh', args, { encoding: 'utf8' }));
 }
@@ -49,14 +69,19 @@ function listDetailedRulesets() {
 }
 
 function verify() {
-  const target = JSON.parse(readFileSync(targetPath, 'utf8'));
-  const result = inspectMainRuleset(listDetailedRulesets(), target);
-  if (!result.ok) {
-    process.stderr.write(`${result.reasons.join('\n')}\n`);
+  const targets = targetPaths.map((path) => JSON.parse(readFileSync(path, 'utf8')));
+  const rulesets = listDetailedRulesets();
+  const results = [
+    inspectMainRuleset(rulesets, targets[0]),
+    inspectRcTagRuleset(rulesets, targets[1]),
+  ];
+  const reasons = results.flatMap((result) => result.reasons);
+  if (reasons.length) {
+    process.stderr.write(`${reasons.join('\n')}\n`);
     process.exitCode = 1;
     return;
   }
-  process.stdout.write('main-release-admission ruleset verified\n');
+  process.stdout.write('main and immutable RC tag rulesets verified\n');
 }
 
 function option(name) {
@@ -71,7 +96,10 @@ function apply() {
   const repo = ghJson(['repo', 'view', repository, '--json', 'permissions']);
   if (repo.permissions?.admin !== true)
     throw new Error('GitHub Administration write permission is required');
-  const target = JSON.parse(readFileSync(targetPath, 'utf8'));
+  const targets = targetPaths.map((path) => ({
+    path,
+    value: JSON.parse(readFileSync(path, 'utf8')),
+  }));
   const before = listDetailedRulesets();
   const backupPath = resolve(
     option('--backup') ??
@@ -79,19 +107,21 @@ function apply() {
   );
   mkdirSync(dirname(backupPath), { recursive: true });
   writeFileSync(backupPath, `${JSON.stringify(before, null, 2)}\n`, { flag: 'wx' });
-  const existing = before.find((ruleset) => ruleset.name === target.name);
-  execFileSync(
-    'gh',
-    [
-      'api',
-      '--method',
-      existing ? 'PUT' : 'POST',
-      `repos/${repository}/rulesets${existing ? `/${existing.id}` : ''}`,
-      '--input',
-      targetPath,
-    ],
-    { stdio: 'inherit' },
-  );
+  for (const target of targets) {
+    const existing = before.find((ruleset) => ruleset.name === target.value.name);
+    execFileSync(
+      'gh',
+      [
+        'api',
+        '--method',
+        existing ? 'PUT' : 'POST',
+        `repos/${repository}/rulesets${existing ? `/${existing.id}` : ''}`,
+        '--input',
+        target.path,
+      ],
+      { stdio: 'inherit' },
+    );
+  }
   process.stdout.write(`Ruleset applied; rollback snapshot: ${backupPath}\n`);
   verify();
 }

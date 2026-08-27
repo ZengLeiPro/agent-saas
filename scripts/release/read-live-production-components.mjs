@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { execFileSync as defaultExecFileSync } from 'node:child_process';
-import { readFileSync as defaultReadFileSync } from 'node:fs';
+import { readFileSync as defaultReadFileSync, realpathSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
+import { verifyInstalledRelease } from './verify-installed-release.mjs';
 
 function requiredString(value, label, pattern) {
   if (typeof value !== 'string' || !pattern.test(value)) throw new Error(`${label} is invalid`);
@@ -150,12 +151,43 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     json(options['web-url'] ?? 'https://agent.kaiyan.net/release-identity.json'),
     json(options['acs-url'] ?? 'http://127.0.0.1:3400/health'),
   ]);
+  const apiRoot = realpathSync(`/opt/agent-saas-app/color/${apiUnit.color}`);
+  const workerRoot = realpathSync(`/opt/agent-saas-app/worker/${workerUnit.color}`);
+  if (apiRoot !== workerRoot)
+    throw new Error('Production API and Worker do not execute the same sealed server release');
+  const acsRoot = realpathSync('/opt/agent-saas/acs-current');
+  const [serverBytes, acsBytes] = await Promise.all([
+    verifyInstalledRelease(apiRoot, 'server'),
+    verifyInstalledRelease(acsRoot, 'acs'),
+  ]);
+  const components = validateLiveProductionComponents({ api, web, workerEnvironment, acs });
+  if (
+    serverBytes.artifactDigest !== components.api.artifactDigest ||
+    serverBytes.artifactDigest !== components.runtimeWorker.artifactDigest ||
+    acsBytes.artifactDigest !== components.acs.orchestratorArtifactDigest
+  ) {
+    throw new Error(
+      'Live component identity does not match independently recomputed installed bytes',
+    );
+  }
   const output = {
     schemaVersion: 1,
     environment: 'production',
     observedAt: new Date().toISOString(),
-    components: validateLiveProductionComponents({ api, web, workerEnvironment, acs }),
+    components,
     topology: { api: apiUnit, runtimeWorker: workerUnit },
+    byteEvidence: {
+      apiAndRuntimeWorker: {
+        root: apiRoot,
+        artifactDigest: serverBytes.artifactDigest,
+        contentDigest: serverBytes.contentDigest,
+      },
+      acs: {
+        root: acsRoot,
+        artifactDigest: acsBytes.artifactDigest,
+        contentDigest: acsBytes.contentDigest,
+      },
+    },
   };
   if (options.output)
     await writeFile(options.output, `${JSON.stringify(output, null, 2)}\n`, { flag: 'wx' });

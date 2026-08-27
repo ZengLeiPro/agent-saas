@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import { canonicalJson } from '@agent/shared';
 import { baselineFromState, validateApprovalReason } from './promotionGateCli.js';
 
 const SHA = 'a'.repeat(40);
@@ -33,12 +35,24 @@ describe('promotion gate evidence', () => {
   });
 
   it('requires structured approval bound to the exact release and Manifest', () => {
+    const e2eBody = {
+      schemaVersion: 1,
+      scenarioCount: 12,
+      executionCount: 24,
+      projects: ['desktop-chromium', 'mobile-chromium'],
+      traceMode: 'on',
+      status: 'passed',
+    };
     const valid = JSON.stringify({
       releaseId: 'rc-20260826-01',
       manifestDigest: DIGEST,
       stagingDeploymentId: '1',
       e2eRunId: '2',
       triggeredAt: '2026-08-26T00:00:00.000Z',
+      e2eSummary: {
+        ...e2eBody,
+        evidenceDigest: `sha256:${createHash('sha256').update(canonicalJson(e2eBody)).digest('hex')}`,
+      },
     });
     expect(
       validateApprovalReason(valid, { releaseId: 'rc-20260826-01', digest: DIGEST }),

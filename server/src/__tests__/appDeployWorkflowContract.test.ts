@@ -78,7 +78,7 @@ describe('App 生产部署门禁', () => {
     });
   });
 
-  it('停用旧生产 dispatch，并只保留固定 RC Promotion 手动入口', async () => {
+  it('保留受控旧版本 dispatch，并维持固定 RC Promotion 发布入口', async () => {
     const workflow = await readFile(workflowPath, 'utf-8');
     const promotion = await readFile(
       join(repoRoot, '.github/workflows/promote-release.yml'),
@@ -97,7 +97,9 @@ describe('App 生产部署门禁', () => {
     expect(planStart).toBeGreaterThan(-1);
     expect(ecsStart).toBeGreaterThan(planStart);
     expect(webStart).toBeGreaterThan(ecsStart);
-    expect(triggerBlock).not.toContain('workflow_dispatch:');
+    expect(triggerBlock).toContain('workflow_dispatch:');
+    expect(triggerBlock).toContain('force_ecs:');
+    expect(triggerBlock).toContain('type: boolean');
     expect(ecs).toContain('needs: [build, deploy_plan]');
     expect(ecs).toContain("github.event_name == 'workflow_dispatch'");
     expect(web).toContain('needs: [build, deploy_plan, deploy-ecs]');

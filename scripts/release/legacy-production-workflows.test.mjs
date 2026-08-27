@@ -13,15 +13,22 @@ function triggerBlock(workflow) {
   return workflow.slice(start + 4, Math.min(...boundaries));
 }
 
-test('legacy App and ACS workflows cannot be manually dispatched to production', async () => {
-  for (const name of ['ci.yml', 'acs-sandbox.yml']) {
+test('legacy App and ACS workflows expose explicit manual compatibility deployment', async () => {
+  for (const [name, forceInput] of [
+    ['ci.yml', 'force_ecs'],
+    ['acs-sandbox.yml', 'force'],
+  ]) {
     const workflow = await readFile(new URL(name, root), 'utf8');
-    assert.doesNotMatch(triggerBlock(workflow), /^\s*workflow_dispatch:/mu, name);
+    const triggers = triggerBlock(workflow);
+    assert.match(triggers, /^\s*workflow_dispatch:/mu, name);
+    assert.match(triggers, new RegExp(`^\\s{6}${forceInput}:$`, 'mu'), name);
+    assert.match(triggers, /type: boolean/u, name);
     assert.match(workflow, /github\.event_name == 'workflow_dispatch'/u);
+    assert.match(workflow, /github\.ref == 'refs\/heads\/main'/u);
   }
 });
 
-test('the immutable RC promotion workflow is the sole production dispatch entry', async () => {
+test('the immutable RC promotion workflow remains the release-bound production entry', async () => {
   const workflow = await readFile(new URL('promote-release.yml', root), 'utf8');
   assert.match(triggerBlock(workflow), /^\s*workflow_dispatch:/mu);
   assert.match(workflow, /release_id:/u);

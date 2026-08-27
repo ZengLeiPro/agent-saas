@@ -1,4 +1,4 @@
-name: ACS CI / Legacy Deploy Disabled
+name: ACS CI / Deploy
 
 on:
   pull_request:
@@ -34,6 +34,12 @@ on:
       - 'scripts/acs-verify-per-session.py'
       - 'scripts/test_acs_operational_scripts.py'
       - 'scripts/test_acr_webhook_redelivery.py'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force deploy even when no ACS-relevant change since the production SHA'
+        type: boolean
+        default: false
 
 env:
   NODE_VERSION: '22'

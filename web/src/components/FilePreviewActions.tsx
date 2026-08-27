@@ -30,6 +30,18 @@ function triggerBrowserDownload(url: string, fileName: string): void {
   document.body.removeChild(anchor);
 }
 
+async function downloadAsBlob(url: string, fileName: string): Promise<void> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+  const objectUrl = URL.createObjectURL(await response.blob());
+  try {
+    triggerBrowserDownload(objectUrl, fileName);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 async function resolveWorkspaceFileUrl(filePath: string, owner?: string): Promise<string> {
   return resolveImageSrc(filePath, owner);
 }
@@ -93,7 +105,14 @@ export function FilePreviewActions({
   const handleDownload = async () => {
     setDownloading(true);
     try {
-      triggerBrowserDownload(withForcedDownload(await fileUrl()), fileName);
+      const url = withForcedDownload(await fileUrl());
+      if (previewType === "md") {
+        // 跨域 URL 会让浏览器忽略 <a download>，Markdown 随即覆盖当前页面。
+        // 转为同源 blob URL 后再触发下载，确保预览窗口保持不动。
+        await downloadAsBlob(url, fileName);
+      } else {
+        triggerBrowserDownload(url, fileName);
+      }
     } catch (error) {
       console.error("File download failed:", error);
     } finally {

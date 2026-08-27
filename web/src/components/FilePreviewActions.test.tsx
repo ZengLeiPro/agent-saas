@@ -31,6 +31,7 @@ describe("FilePreviewActions", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     document.body.classList.remove("file-preview-printing");
   });
 
@@ -51,6 +52,31 @@ describe("FilePreviewActions", () => {
     await waitFor(() => expect(clickedHref).toContain("download=1"));
     expect(clickedHref).toContain("path=assets%2Fdemo.pdf");
     expect(downloadName).toBe("demo.pdf");
+  });
+
+  it("Markdown 下载先转为 blob，避免跨域链接覆盖当前页面", async () => {
+    resolveImageSrc.mockResolvedValueOnce(
+      "https://api.example.com/api/file/download?path=assets%2Fdemo.md&token=jwt",
+    );
+    const blob = new Blob(["# demo"], { type: "text/markdown" });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(blob) });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:markdown-download");
+    const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    let clickedHref = "";
+    let downloadName = "";
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      clickedHref = this.href;
+      downloadName = this.download;
+    });
+
+    render(<FilePreviewActions filePath="assets/demo.md" />);
+    fireEvent.click(screen.getByRole("button", { name: "下载文件" }));
+
+    await waitFor(() => expect(clickedHref).toBe("blob:markdown-download"));
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("download=1"));
+    expect(downloadName).toBe("demo.md");
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:markdown-download");
   });
 
   it("文本类打印按钮把请求交给当前预览器", () => {
@@ -81,6 +107,7 @@ describe("FilePreviewActions", () => {
 describe("printFilePreviewElement", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     document.body.classList.remove("file-preview-printing");
   });
 

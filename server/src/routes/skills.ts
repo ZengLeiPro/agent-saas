@@ -879,7 +879,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     }
 
     try {
-      await archiveDeletedDirectory(skillDir);
+      await deletePersonalSkillWithGovernance({ skillDir, skillId, tenantId: target.tenantId, userId: target.id, username: target.username, skillConfigStore, skillGovernanceStore });
       auditLog(req, 'skill_custom_deleted', `${target.username}/${skillId}`);
       res.json({ ok: true });
     } catch (err) {

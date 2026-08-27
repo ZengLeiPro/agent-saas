@@ -121,8 +121,11 @@ async function makeRig(opts: { seedPool?: boolean; sealedLegacyWrites?: boolean;
   writeFileSync(join(aliceSkillDir, 'SKILL.md'), '---\nname: alice_custom\ndescription: c\n---\nx');
   if (opts.governedDeletes) {
     const tenantSkillDir = join(tenantSkillsRootDir, 'kaiyan', 'skills', 'tenant_custom');
+    const adminSkillDir = join(agentCwd, DEFAULT_TENANT_ID, 'u-platform', '.ky-agent', 'skills', 'admin_custom');
     mkdirSync(tenantSkillDir, { recursive: true });
+    mkdirSync(adminSkillDir, { recursive: true });
     writeFileSync(join(tenantSkillDir, 'SKILL.md'), '---\nname: tenant_custom\ndescription: t\n---\nx');
+    writeFileSync(join(adminSkillDir, 'SKILL.md'), '---\nname: admin_custom\ndescription: a\n---\nx');
   }
 
   const app = express();
@@ -130,13 +133,16 @@ async function makeRig(opts: { seedPool?: boolean; sealedLegacyWrites?: boolean;
   let caller: JwtPayload | undefined = PLATFORM_ADMIN;
   let legacyGateCalls = 0;
   const skillConfigStore = fakeSkillConfigStore();
+  if (opts.governedDeletes) await skillConfigStore.setUserSelectedSkills('admin', ['admin_custom']);
   const userStore = fakeUserStore();
   const retireCalls: Array<{ tenantId: string; skillId: string; retiredBy: string }> = [];
   const governedResources = new Map<string, Record<string, unknown>>();
   if (opts.governedDeletes) {
     const personalId = personalSkillResourceId('u-ku', 'alice_custom');
+    const adminPersonalId = personalSkillResourceId('u-platform', 'admin_custom');
     const tenantId = tenantSkillResourceId('kaiyan', 'tenant_custom');
     governedResources.set(personalId, { skillId: personalId, tenantId: 'kaiyan', scope: 'personal', ownerUserId: 'u-ku', status: 'published', revision: 2 });
+    governedResources.set(adminPersonalId, { skillId: adminPersonalId, tenantId: DEFAULT_TENANT_ID, scope: 'personal', ownerUserId: 'u-platform', status: 'published', revision: 2 });
     governedResources.set(tenantId, { skillId: tenantId, tenantId: 'kaiyan', scope: 'tenant', status: 'published', revision: 2 });
   }
   const skillGovernanceStore = opts.governedDeletes ? {
@@ -336,9 +342,12 @@ describe('skills routes coverage', () => {
     h.setCaller(KAIYAN_USER);
     expect((await h.request('/api/skills/me/skills/alice_custom', { method: 'DELETE' })).status).toBe(200);
     h.setCaller(PLATFORM_ADMIN);
+    expect((await h.request('/api/skills/custom/admin/admin_custom', { method: 'DELETE' })).status).toBe(200);
+    expect(h.getLegacySelections('admin')).not.toContain('admin_custom');
     expect((await h.request('/api/skills/tenants/kaiyan/skills/tenant_custom', { method: 'DELETE' })).status).toBe(200);
     expect(h.getRetireCalls()).toEqual([
       { tenantId: 'kaiyan', skillId: personalSkillResourceId('u-ku', 'alice_custom'), retiredBy: 'u-ku' },
+      { tenantId: DEFAULT_TENANT_ID, skillId: personalSkillResourceId('u-platform', 'admin_custom'), retiredBy: 'u-platform' },
       { tenantId: 'kaiyan', skillId: tenantSkillResourceId('kaiyan', 'tenant_custom'), retiredBy: 'u-platform' },
     ]);
   });
@@ -349,6 +358,15 @@ describe('skills routes coverage', () => {
     h.setCaller(KAIYAN_USER);
     expect((await h.request('/api/skills/me/skills/alice_custom', { method: 'DELETE' })).status).toBe(500);
     expect((await h.request('/api/skills/me/skills/alice_custom/document')).status).toBe(200);
+  });
+
+  it('兼容删除入口退役失败时恢复目录与原选择', async () => {
+    await h.close();
+    h = await makeRig({ governedDeletes: true, retireFails: true });
+    h.setCaller(PLATFORM_ADMIN);
+    expect((await h.request('/api/skills/custom/admin/admin_custom', { method: 'DELETE' })).status).toBe(500);
+    expect((await h.request('/api/skills/custom/admin/admin_custom/document')).status).toBe(200);
+    expect(h.getLegacySelections('admin')).toContain('admin_custom');
   });
 
   it('治理资源退役失败时恢复组织技能目录并刷新配置版本', async () => {

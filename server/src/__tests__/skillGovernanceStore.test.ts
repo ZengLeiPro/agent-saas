@@ -240,7 +240,7 @@ describe('Governed Skill + Candidate 发布链', () => {
     expect(queries.filter(query => query === 'COMMIT')).toHaveLength(1);
   });
 
-  it('已退役 Skill 可恢复发布；相同内容复用 immutable version，变更内容创建下一版本', async () => {
+  it('删除后同包重导保留 resourceId 并递增 version，后续内容变更继续创建下一版本', async () => {
     const { pool, versions } = buildPool();
     const store = new PgSkillGovernanceStore({ pool, tablePrefix: 'test' });
     const first = await store.createAndPublishResource({
@@ -251,16 +251,20 @@ describe('Governed Skill + Candidate 发布链', () => {
       tenantId: 'acme', skillId: 'restorable-skill', scope: 'tenant', expectedRevision: retired.revision,
       definition, publishedBy: 'org-admin',
     });
-    expect(restored).toMatchObject({ created: false, resource: { status: 'published' }, version: { versionNumber: 1 } });
-    expect(versions).toHaveLength(1);
+    expect(restored).toMatchObject({
+      created: true,
+      resource: { skillId: first.resource.skillId, status: 'published' },
+      version: { versionNumber: 2, definition: { restoredFromVersionId: first.version.versionId } },
+    });
+    expect(versions).toHaveLength(2);
 
     const retiredAgain = await store.retire('acme', 'restorable-skill', restored.resource.revision, 'org-admin');
     const changed = await store.restoreAndPublishResource({
       tenantId: 'acme', skillId: 'restorable-skill', scope: 'tenant', expectedRevision: retiredAgain.revision,
       definition: { ...definition, description: '更新后的销售流程' }, publishedBy: 'org-admin',
     });
-    expect(changed).toMatchObject({ created: true, resource: { status: 'published' }, version: { versionNumber: 2 } });
-    expect(versions).toHaveLength(2);
+    expect(changed).toMatchObject({ created: true, resource: { status: 'published' }, version: { versionNumber: 3 } });
+    expect(versions).toHaveLength(3);
   });
 
   it('恢复发布严格校验 scope 与 owner，不能接管其他个人资源', async () => {

@@ -518,37 +518,42 @@ export class PgSkillGovernanceStore {
     if (current.revision !== input.expectedRevision) {
       throw new SkillGovernanceInvariantError('SKILL_RESOURCE_VERSION_CONFLICT');
     }
-    const digest = digestDefinition(input.definition);
+    let versionDefinition = input.definition;
+    let digest = digestDefinition(versionDefinition);
     const duplicate = await client.query(
       `SELECT * FROM ${this.versionsTable} WHERE skill_id=$1 AND digest=$2`, [input.skillId, digest],
     );
     if (duplicate.rows[0] && !input.restore) {
       return { resource: current, version: rowToVersion(duplicate.rows[0]), created: false };
     }
-    let versionRow = duplicate.rows[0];
-    if (!versionRow) {
-      const nextNumber = await client.query<{ next_version: string }>(
-        `SELECT COALESCE(MAX(version_number),0)+1 AS next_version FROM ${this.versionsTable} WHERE skill_id=$1`,
-        [input.skillId],
-      );
-      const versionId = `skillv-${randomUUID()}`;
-      const versionResult = await client.query(`
-        INSERT INTO ${this.versionsTable} (
-          version_id,skill_id,version_number,definition_json,digest,source_candidate_id,published_by
-        ) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7) RETURNING *
-      `, [
-        versionId, input.skillId, Number(nextNumber.rows[0]?.next_version ?? 1),
-        JSON.stringify(input.definition), digest, input.sourceCandidateId ?? null, input.publishedBy,
-      ]);
-      versionRow = versionResult.rows[0];
+    if (duplicate.rows[0]) {
+      versionDefinition = {
+        ...input.definition,
+        restoredFromVersionId: String(duplicate.rows[0].version_id),
+        restoredFromRevision: current.revision,
+      };
+      digest = digestDefinition(versionDefinition);
     }
+    const nextNumber = await client.query<{ next_version: string }>(
+      `SELECT COALESCE(MAX(version_number),0)+1 AS next_version FROM ${this.versionsTable} WHERE skill_id=$1`,
+      [input.skillId],
+    );
+    const versionId = `skillv-${randomUUID()}`;
+    const versionResult = await client.query(`
+      INSERT INTO ${this.versionsTable} (
+        version_id,skill_id,version_number,definition_json,digest,source_candidate_id,published_by
+      ) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7) RETURNING *
+    `, [
+      versionId, input.skillId, Number(nextNumber.rows[0]?.next_version ?? 1),
+      JSON.stringify(versionDefinition), digest, input.sourceCandidateId ?? null, input.publishedBy,
+    ]);
     const updated = await client.query(`
       UPDATE ${this.resourcesTable}
       SET status='published',current_version_id=$2,revision=revision+1,updated_at=NOW(),updated_by=$3
       WHERE skill_id=$1 AND revision=$4 RETURNING *
-    `, [input.skillId, versionRow.version_id, input.publishedBy, input.expectedRevision]);
+    `, [input.skillId, versionId, input.publishedBy, input.expectedRevision]);
     if (!updated.rows[0]) throw new SkillGovernanceInvariantError('SKILL_RESOURCE_VERSION_CONFLICT');
-    return { resource: rowToResource(updated.rows[0]), version: rowToVersion(versionRow), created: !duplicate.rows[0] };
+    return { resource: rowToResource(updated.rows[0]), version: rowToVersion(versionResult.rows[0]), created: true };
   }
 
   private async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {

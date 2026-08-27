@@ -144,6 +144,7 @@ import {
   scanPoolSkills as scanPoolSkillsForDispatch,
   scanTenantOwnSkillIds,
   scanUserCustomSkills,
+  scanUserCustomSkillsAsync,
 } from '../data/skills/scanner.js';
 import { resolveTenantSkillsDirFromRoot } from '../data/tenants/tenantSkillsPath.js';
 import { resolveUserPersonalSkillIds as resolvePersonalSkillIds } from '../workspace/materialization/managedTenantSkills.js';
@@ -575,7 +576,32 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
               }
             }
           }
-          const pruned = store.pruneStaleSkills(currentPoolIds, tenantOwnIdsByTenant);
+          // 用户目录同时承载物化的 pool/组织 skill 与个人 skill。prune 不能只认识前两类，
+          // 否则每次部署 warmup 都会把仍在目录中的个人 skill 从 selectedSkills 移除，
+          // 表现为「启用一段时间后自动下架」。按用户名扫描并传入，避免跨用户同名误保留。
+          const personalSkillIdsByUsername: Record<string, Set<string>> = {};
+          for (const user of allUsers) {
+            const workspaceUser = {
+              id: user.id,
+              username: user.username,
+              role: user.role as 'admin' | 'user',
+              tenantId: user.tenantId,
+            };
+            const userCwd = resolveUserCwd(agentCwd, workspaceUser);
+            const userSkillsDir = resolveAgentPath(userCwd, 'skills');
+            const excluded = new Set([
+              ...currentPoolIds,
+              ...(user.tenantId ? (tenantOwnIdsByTenant[user.tenantId] ?? new Set<string>()) : []),
+            ]);
+            personalSkillIdsByUsername[user.username] = new Set(
+              (await scanUserCustomSkillsAsync(userSkillsDir, excluded)).map((skill) => skill.id),
+            );
+          }
+          const pruned = store.pruneStaleSkills(
+            currentPoolIds,
+            tenantOwnIdsByTenant,
+            personalSkillIdsByUsername,
+          );
           if (pruned > 0) {
             serverLogger.info(`Skills config: pruned ${pruned} stale entries`);
             // prune 会 bump configVersion；再跑一轮精确 diff 只更新 manifest 版本，

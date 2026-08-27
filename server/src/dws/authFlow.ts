@@ -259,7 +259,13 @@ export class DwsAuthFlowService implements DwsAuthFlowServiceLike {
     if (!this.options.runner.logout || !this.options.connectionStore.removeProfile) {
       throw new Error('DWS 断开服务尚未配置');
     }
-    await this.options.runner.logout(user, [profileId]);
+    try {
+      await this.options.runner.logout(user, [profileId]);
+    } catch (error) {
+      // keepalive 账本可能比本地 DWS profile 晚一步收敛。profile 已不存在时，
+      // logout 的目标已经达成，继续清理平台账本，保证断开操作幂等。
+      if (!isDwsProfileMissingError(error)) throw error;
+    }
     await this.options.connectionStore.removeProfile(user.tenantId, user.id, profileId);
   }
 
@@ -366,6 +372,11 @@ export function deriveDwsWorkspaceMountSubPath(agentCwd: string, userCwd: string
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+function isDwsProfileMissingError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\bprofile\b.{0,512}\bnot found\b/i.test(message);
 }
 
 export function redactDwsError(error: unknown): string {

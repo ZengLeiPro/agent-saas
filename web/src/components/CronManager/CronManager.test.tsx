@@ -79,7 +79,7 @@ describe("CronManager 桌面布局", () => {
     expect(within(navigation).getByRole("tab", { name: "任务看板" })).toBeTruthy();
     expect(within(navigation).getByRole("tablist").className).toContain("bg-brand-50");
     expect(within(navigation).getByRole("tablist").className).toContain("h-10");
-    expect(within(navigation).getByRole("tablist").className).toContain("w-[30rem]");
+    expect(within(navigation).getByRole("tablist").className).toContain("w-[15rem]");
     expect(navigation.querySelector<HTMLElement>("[data-task-center-tab-indicator]")?.style.transform).toBe("translateX(0%)");
     expect(within(header).getByRole("button", { name: "刷新" })).toBeTruthy();
     expect(within(header).getByRole("button", { name: "新建" })).toBeTruthy();

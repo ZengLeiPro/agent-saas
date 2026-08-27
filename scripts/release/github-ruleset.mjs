@@ -26,12 +26,14 @@ export function inspectMainRuleset(rulesets, target) {
     if (!byType.has(type)) reasons.push(`missing ${type} rule`);
   }
   const pullRequest = byType.get('pull_request')?.parameters ?? {};
-  if (pullRequest.require_code_owner_review !== true)
-    reasons.push('CODEOWNER review is not required');
+  if (pullRequest.require_code_owner_review !== false)
+    reasons.push('CODEOWNER review must stay optional for single-maintainer merges');
+  if (pullRequest.require_last_push_approval !== false)
+    reasons.push('last-push approval must stay disabled for single-maintainer merges');
   if (pullRequest.required_review_thread_resolution !== true)
     reasons.push('conversation resolution is not required');
-  if (Number(pullRequest.required_approving_review_count ?? 0) < 1)
-    reasons.push('approving review is not required');
+  if (Number(pullRequest.required_approving_review_count ?? 0) !== 0)
+    reasons.push('approving review count must be zero for single-maintainer merges');
   const checks = byType.get('required_status_checks')?.parameters ?? {};
   const contexts = (checks.required_status_checks ?? []).map((check) => check.context);
   for (const context of ['Build & Check', 'ACS Impact Gate']) {
@@ -93,7 +95,7 @@ function apply() {
   if (option('--confirm') !== repository) {
     throw new Error(`Pass --confirm=${repository} for this exact repository`);
   }
-  const repo = ghJson(['repo', 'view', repository, '--json', 'permissions']);
+  const repo = ghJson(['api', `repos/${repository}`]);
   if (repo.permissions?.admin !== true)
     throw new Error('GitHub Administration write permission is required');
   const targets = targetPaths.map((path) => ({

@@ -16,7 +16,7 @@ trace 核对工具调用/结果和 ACS 执行目标，并在前后精确清理�
 Variables：`STAGING_RELEASE_OSS_URI`、`RELEASE_EVIDENCE_URL`、
 `STAGING_ISOLATION_EVIDENCE_URL`、`STAGING_E2E_INTEGRATION_TASK_ID`、
 `STAGING_SSH_HOST_KEY_SHA256`。其余非敏感域名、OSS bucket 和 ACR repository identity 固定在
-Workflow 中，修改时必须走 CODEOWNER 审核。
+Workflow 中，修改时必须走 PR 并通过 `Build & Check` 与 `ACS Impact Gate`。
 
 `RELEASE_EVIDENCE_URL` 指向仓库已实现的 `evidence-service.mjs` 的
 `/release-evidence` 端点。返回记录必须通过 `release-evidence-schema.mjs` 的版本化完整 Schema，
@@ -86,6 +86,8 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
   应再次关闭这两个兼容入口；新版本生产发布仍优先使用 `promote-release.yml`。
 - GitHub main 与 RC tag ruleset 需一起应用 `config/github-main-ruleset.json`、
   `config/github-rc-tag-ruleset.json`；后者禁止更新或删除 `refs/tags/rc-*`。应用前导出旧规则作为回退。
+- main ruleset 按单人维护模式配置：不要求人工审批、CODEOWNER 审批或 Last Push Approval，但仍要求
+  PR、Review 对话全部解决、分支基于最新 main，并通过 `Build & Check` 与 `ACS Impact Gate`。
 - Staging 资源按 `infra/staging/resource-plan.json` 创建，所有 `UNASSIGNED` 清零并完成反向隔离
   实测后才允许首次运行。
 - `fc.kaiyan.net` 是共享域名，所有流程均不得使用 `fc3-domain`；本工作流只使用 OSS、ECS 和

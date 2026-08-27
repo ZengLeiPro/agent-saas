@@ -4,6 +4,14 @@ import { TaskboardValidationError } from './types.js';
 const MANUAL_REQUEUE_STATUSES = new Set<TaskBoardStatus>(['ready_to_merge', 'done', 'canceled']);
 const WORKFLOW_PROTECTED_STATUSES = new Set<TaskBoardStatus>(['in_progress', 'in_review', 'ready_to_merge', 'blocked', 'done']);
 
+export function isTaskPlanningTransition(from: TaskBoardStatus, to: TaskBoardStatus): boolean {
+  return from !== to && [from, to].every((status) => status === 'backlog' || status === 'todo');
+}
+
+export function manualTaskMoveRole(from: TaskBoardStatus, to: TaskBoardStatus): 'editor' | 'maintainer' {
+  return from === to || isTaskPlanningTransition(from, to) ? 'editor' : 'maintainer';
+}
+
 export function isManualTaskRequeue(task: TaskBoardTask, status: TaskBoardStatus): boolean {
   return status === 'todo' && MANUAL_REQUEUE_STATUSES.has(task.status);
 }

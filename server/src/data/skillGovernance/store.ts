@@ -314,6 +314,26 @@ export class PgSkillGovernanceStore {
     }));
   }
 
+  async restoreAndPublishResource(input: {
+    tenantId: string;
+    skillId: string;
+    scope: GovernedSkillResource['scope'];
+    ownerUserId?: string;
+    expectedRevision: number;
+    definition: Record<string, unknown>;
+    publishedBy: string;
+  }): Promise<{ resource: GovernedSkillResource; version: GovernedSkillVersion; created: boolean }> {
+    assertGovernedSkillDefinitionSafe(input.definition);
+    return this.withTransaction(client => this.publishVersionInTransaction(client, {
+      skillId: input.skillId,
+      expectedRevision: input.expectedRevision,
+      definition: input.definition,
+      publishedBy: input.publishedBy,
+      expectedTenantId: input.tenantId,
+      restore: { scope: input.scope, ownerUserId: input.ownerUserId },
+    }));
+  }
+
   async createCandidate(input: {
     tenantId: string;
     ownerUserId: string;
@@ -475,6 +495,7 @@ export class PgSkillGovernanceStore {
     publishedBy: string;
     sourceCandidateId?: string;
     expectedTenantId?: string;
+    restore?: { scope: GovernedSkillResource['scope']; ownerUserId?: string };
   }): Promise<{ resource: GovernedSkillResource; version: GovernedSkillVersion; created: boolean }> {
     assertGovernedSkillDefinitionSafe(input.definition);
     const resourceResult = await client.query(
@@ -485,7 +506,15 @@ export class PgSkillGovernanceStore {
     if (input.expectedTenantId && current.tenantId !== input.expectedTenantId) {
       throw new SkillGovernanceInvariantError('SKILL_RESOURCE_TENANT_MISMATCH');
     }
-    if (current.status === 'retired') throw new SkillGovernanceInvariantError('SKILL_RESOURCE_RETIRED');
+    if (input.restore) {
+      if (current.scope !== input.restore.scope
+        || current.ownerUserId !== input.restore.ownerUserId
+        || !['published', 'retired'].includes(current.status)) {
+        throw new SkillGovernanceInvariantError('SKILL_RESOURCE_NOT_FOUND');
+      }
+    } else if (current.status === 'retired') {
+      throw new SkillGovernanceInvariantError('SKILL_RESOURCE_RETIRED');
+    }
     if (current.revision !== input.expectedRevision) {
       throw new SkillGovernanceInvariantError('SKILL_RESOURCE_VERSION_CONFLICT');
     }
@@ -493,27 +522,33 @@ export class PgSkillGovernanceStore {
     const duplicate = await client.query(
       `SELECT * FROM ${this.versionsTable} WHERE skill_id=$1 AND digest=$2`, [input.skillId, digest],
     );
-    if (duplicate.rows[0]) return { resource: current, version: rowToVersion(duplicate.rows[0]), created: false };
-    const nextNumber = await client.query<{ next_version: string }>(
-      `SELECT COALESCE(MAX(version_number),0)+1 AS next_version FROM ${this.versionsTable} WHERE skill_id=$1`,
-      [input.skillId],
-    );
-    const versionId = `skillv-${randomUUID()}`;
-    const versionResult = await client.query(`
-      INSERT INTO ${this.versionsTable} (
-        version_id,skill_id,version_number,definition_json,digest,source_candidate_id,published_by
-      ) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7) RETURNING *
-    `, [
-      versionId, input.skillId, Number(nextNumber.rows[0]?.next_version ?? 1),
-      JSON.stringify(input.definition), digest, input.sourceCandidateId ?? null, input.publishedBy,
-    ]);
+    if (duplicate.rows[0] && !input.restore) {
+      return { resource: current, version: rowToVersion(duplicate.rows[0]), created: false };
+    }
+    let versionRow = duplicate.rows[0];
+    if (!versionRow) {
+      const nextNumber = await client.query<{ next_version: string }>(
+        `SELECT COALESCE(MAX(version_number),0)+1 AS next_version FROM ${this.versionsTable} WHERE skill_id=$1`,
+        [input.skillId],
+      );
+      const versionId = `skillv-${randomUUID()}`;
+      const versionResult = await client.query(`
+        INSERT INTO ${this.versionsTable} (
+          version_id,skill_id,version_number,definition_json,digest,source_candidate_id,published_by
+        ) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7) RETURNING *
+      `, [
+        versionId, input.skillId, Number(nextNumber.rows[0]?.next_version ?? 1),
+        JSON.stringify(input.definition), digest, input.sourceCandidateId ?? null, input.publishedBy,
+      ]);
+      versionRow = versionResult.rows[0];
+    }
     const updated = await client.query(`
       UPDATE ${this.resourcesTable}
       SET status='published',current_version_id=$2,revision=revision+1,updated_at=NOW(),updated_by=$3
       WHERE skill_id=$1 AND revision=$4 RETURNING *
-    `, [input.skillId, versionId, input.publishedBy, input.expectedRevision]);
+    `, [input.skillId, versionRow.version_id, input.publishedBy, input.expectedRevision]);
     if (!updated.rows[0]) throw new SkillGovernanceInvariantError('SKILL_RESOURCE_VERSION_CONFLICT');
-    return { resource: rowToResource(updated.rows[0]), version: rowToVersion(versionResult.rows[0]), created: true };
+    return { resource: rowToResource(updated.rows[0]), version: rowToVersion(versionRow), created: !duplicate.rows[0] };
   }
 
   private async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {

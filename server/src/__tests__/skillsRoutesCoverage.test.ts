@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createSkillsRouter } from '../routes/skills.js';
+import { personalSkillResourceId, tenantSkillResourceId } from '../services/tenantSkillGovernanceUpload.js';
 import type { UserStore } from '../data/users/store.js';
 import type { UserRecord } from '../data/users/types.js';
 import { SkillSelectionVersionConflictError, type SkillConfigStore } from '../data/skills/store.js';
@@ -98,10 +99,11 @@ interface Rig {
   setCaller(c: JwtPayload | undefined): void;
   getLegacySelections(username: string): string[];
   getLegacyGateCalls(): number;
+  getRetireCalls(): Array<{ tenantId: string; skillId: string; retiredBy: string }>;
   close(): Promise<void>;
 }
 
-async function makeRig(opts: { seedPool?: boolean; sealedLegacyWrites?: boolean } = {}): Promise<Rig> {
+async function makeRig(opts: { seedPool?: boolean; sealedLegacyWrites?: boolean; governedDeletes?: boolean; retireFails?: boolean } = {}): Promise<Rig> {
   const tmpRoot = mkdtempSync(join(tmpdir(), 'skills-routes-cov-'));
   const agentCwd = join(tmpRoot, 'workspace');
   const sharedDir = join(tmpRoot, 'shared');
@@ -117,6 +119,11 @@ async function makeRig(opts: { seedPool?: boolean; sealedLegacyWrites?: boolean 
   const aliceSkillDir = join(agentCwd, 'kaiyan', 'u-ku', '.ky-agent', 'skills', 'alice_custom');
   mkdirSync(aliceSkillDir, { recursive: true });
   writeFileSync(join(aliceSkillDir, 'SKILL.md'), '---\nname: alice_custom\ndescription: c\n---\nx');
+  if (opts.governedDeletes) {
+    const tenantSkillDir = join(tenantSkillsRootDir, 'kaiyan', 'skills', 'tenant_custom');
+    mkdirSync(tenantSkillDir, { recursive: true });
+    writeFileSync(join(tenantSkillDir, 'SKILL.md'), '---\nname: tenant_custom\ndescription: t\n---\nx');
+  }
 
   const app = express();
   app.use(express.json());
@@ -124,11 +131,33 @@ async function makeRig(opts: { seedPool?: boolean; sealedLegacyWrites?: boolean 
   let legacyGateCalls = 0;
   const skillConfigStore = fakeSkillConfigStore();
   const userStore = fakeUserStore();
+  const retireCalls: Array<{ tenantId: string; skillId: string; retiredBy: string }> = [];
+  const governedResources = new Map<string, Record<string, unknown>>();
+  if (opts.governedDeletes) {
+    const personalId = personalSkillResourceId('u-ku', 'alice_custom');
+    const tenantId = tenantSkillResourceId('kaiyan', 'tenant_custom');
+    governedResources.set(personalId, { skillId: personalId, tenantId: 'kaiyan', scope: 'personal', ownerUserId: 'u-ku', status: 'published', revision: 2 });
+    governedResources.set(tenantId, { skillId: tenantId, tenantId: 'kaiyan', scope: 'tenant', status: 'published', revision: 2 });
+  }
+  const skillGovernanceStore = opts.governedDeletes ? {
+    getResource: async (skillId: string) => governedResources.get(skillId) ?? null,
+    getVersion: async () => null,
+    retire: async (tenantId: string, skillId: string, expectedRevision: number, retiredBy: string) => {
+      if (opts.retireFails) throw new Error('retire failed');
+      const current = governedResources.get(skillId);
+      if (!current || current.tenantId !== tenantId || current.revision !== expectedRevision) throw new Error('retire conflict');
+      const retired = { ...current, status: 'retired', revision: expectedRevision + 1 };
+      governedResources.set(skillId, retired);
+      retireCalls.push({ tenantId, skillId, retiredBy });
+      return retired;
+    },
+  } as never : undefined;
   app.use((req, _res, next) => { if (caller) req.user = caller; next(); });
   app.use('/api/skills', createSkillsRouter({
     skillConfigStore,
     userStore,
     agentCwd, sharedDir, tenantSkillsRootDir,
+    skillGovernanceStore,
     legacyWriteGate: opts.sealedLegacyWrites ? {
       assertLegacyWriteAllowed: async () => {
         legacyGateCalls++;
@@ -147,6 +176,7 @@ async function makeRig(opts: { seedPool?: boolean; sealedLegacyWrites?: boolean 
     setCaller(c) { caller = c; },
     getLegacySelections: username => skillConfigStore.getUserSelectedSkills(username),
     getLegacyGateCalls: () => legacyGateCalls,
+    getRetireCalls: () => retireCalls,
     close: async () => {
       await new Promise<void>(resolve => server.close(() => resolve()));
       rmSync(tmpRoot, { recursive: true, force: true });
@@ -298,6 +328,35 @@ describe('skills routes coverage', () => {
     expect((await ok.json() as { ok: boolean }).ok).toBe(true);
     // 再删 → 404（确认真删了）
     expect((await h.request('/api/skills/me/skills/alice_custom', { method: 'DELETE' })).status).toBe(404);
+  });
+
+  it('删除个人与组织技能时同步退役治理资源', async () => {
+    await h.close();
+    h = await makeRig({ governedDeletes: true });
+    h.setCaller(KAIYAN_USER);
+    expect((await h.request('/api/skills/me/skills/alice_custom', { method: 'DELETE' })).status).toBe(200);
+    h.setCaller(PLATFORM_ADMIN);
+    expect((await h.request('/api/skills/tenants/kaiyan/skills/tenant_custom', { method: 'DELETE' })).status).toBe(200);
+    expect(h.getRetireCalls()).toEqual([
+      { tenantId: 'kaiyan', skillId: personalSkillResourceId('u-ku', 'alice_custom'), retiredBy: 'u-ku' },
+      { tenantId: 'kaiyan', skillId: tenantSkillResourceId('kaiyan', 'tenant_custom'), retiredBy: 'u-platform' },
+    ]);
+  });
+
+  it('治理资源退役失败时恢复个人技能目录，允许再次读取', async () => {
+    await h.close();
+    h = await makeRig({ governedDeletes: true, retireFails: true });
+    h.setCaller(KAIYAN_USER);
+    expect((await h.request('/api/skills/me/skills/alice_custom', { method: 'DELETE' })).status).toBe(500);
+    expect((await h.request('/api/skills/me/skills/alice_custom/document')).status).toBe(200);
+  });
+
+  it('治理资源退役失败时恢复组织技能目录并刷新配置版本', async () => {
+    await h.close();
+    h = await makeRig({ governedDeletes: true, retireFails: true });
+    h.setCaller(PLATFORM_ADMIN);
+    expect((await h.request('/api/skills/tenants/kaiyan/skills/tenant_custom', { method: 'DELETE' })).status).toBe(500);
+    expect((await h.request('/api/skills/tenants/kaiyan/skills/tenant_custom/document')).status).toBe(200);
   });
 
   it('治理封印后仍允许用户编辑和删除自己的自建 Skill', async () => {

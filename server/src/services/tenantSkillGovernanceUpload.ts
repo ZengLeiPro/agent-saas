@@ -28,7 +28,7 @@ export interface TenantSkillGovernanceUploadResult {
 }
 
 export interface TenantSkillGovernanceUploadDeps {
-  skills: Pick<PgSkillGovernanceStore, 'getResource' | 'createAndPublishResource'>;
+  skills: Pick<PgSkillGovernanceStore, 'getResource' | 'createAndPublishResource' | 'restoreAndPublishResource'>;
   skillConfigStore: Pick<SkillConfigStore, 'getPoolVisibility'>;
   userStore: Pick<UserStore, 'listAll'>;
   agentCwd: string;
@@ -99,31 +99,48 @@ export function createTenantSkillGovernanceUpload(deps: TenantSkillGovernanceUpl
         }
       }
       const resourceId = tenantSkillResourceId(input.tenantId, staged.skillId);
-      if (await deps.skills.getResource(resourceId)) throw duplicateSkillError(staged.skillId);
+      const existing = await deps.skills.getResource(resourceId);
+      const skillsParent = tenantSkillsDirFor(deps, input.tenantId);
+      if (existsSync(join(skillsParent, staged.skillId))) throw duplicateSkillError(staged.skillId);
+      if (existing && (existing.tenantId !== input.tenantId
+        || existing.scope !== 'tenant'
+        || !['published', 'retired'].includes(existing.status))) {
+        throw duplicateSkillError(staged.skillId);
+      }
+      const definition = {
+        schemaVersion: 1,
+        resourceType: 'skill',
+        scope: 'tenant',
+        tenantId: input.tenantId,
+        legacySkillId: staged.skillId,
+        source: 'governance_upload',
+        packageFormat: 'skill-package-v1',
+        contentDigestAlgorithm: MATERIALIZED_CONTENT_DIGEST_ALGORITHM,
+        name: staged.name,
+        description: staged.description,
+        contentDigest: staged.contentDigest,
+        fileCount: staged.fileCount,
+        totalBytes: staged.totalBytes,
+      };
 
-      installedDir = await moveStagedSkillIntoPlace(staged, tenantSkillsDirFor(deps, input.tenantId), false);
+      installedDir = await moveStagedSkillIntoPlace(staged, skillsParent, false);
       try {
-        const governed = await deps.skills.createAndPublishResource({
-          skillId: resourceId,
-          tenantId: input.tenantId,
-          scope: 'tenant',
-          definition: {
-            schemaVersion: 1,
-            resourceType: 'skill',
-            scope: 'tenant',
-            tenantId: input.tenantId,
-            legacySkillId: staged.skillId,
-            source: 'governance_upload',
-            packageFormat: 'skill-package-v1',
-            contentDigestAlgorithm: MATERIALIZED_CONTENT_DIGEST_ALGORITHM,
-            name: staged.name,
-            description: staged.description,
-            contentDigest: staged.contentDigest,
-            fileCount: staged.fileCount,
-            totalBytes: staged.totalBytes,
-          },
-          createdBy: input.actorUserId,
-        });
+        const governed = existing
+          ? await deps.skills.restoreAndPublishResource({
+              skillId: resourceId,
+              tenantId: input.tenantId,
+              scope: 'tenant',
+              expectedRevision: existing.revision,
+              definition,
+              publishedBy: input.actorUserId,
+            })
+          : await deps.skills.createAndPublishResource({
+              skillId: resourceId,
+              tenantId: input.tenantId,
+              scope: 'tenant',
+              definition,
+              createdBy: input.actorUserId,
+            });
         return {
           ok: true,
           status: 'succeeded',
@@ -163,7 +180,7 @@ export interface PersonalSkillGovernanceUploadResult {
 }
 
 export interface PersonalSkillGovernanceUploadDeps {
-  skills: Pick<PgSkillGovernanceStore, 'getResource' | 'createAndPublishResource'>;
+  skills: Pick<PgSkillGovernanceStore, 'getResource' | 'createAndPublishResource' | 'restoreAndPublishResource'>;
   skillConfigStore: SkillConfigStore;
   userStore: Pick<UserStore, 'findById'>;
   agentCwd: string;
@@ -201,38 +218,56 @@ export function createPersonalSkillGovernanceUpload(deps: PersonalSkillGovernanc
         );
       }
       const resourceId = personalSkillResourceId(actor.id, staged.skillId);
-      if (await deps.skills.getResource(resourceId)) throw duplicateSkillError(staged.skillId);
+      const existing = await deps.skills.getResource(resourceId);
       const userSkillsParent = userSkillsDir(deps, actor);
       if (existsSync(join(userSkillsParent, staged.skillId))) throw duplicateSkillError(staged.skillId);
+      if (existing && (existing.tenantId !== input.tenantId
+        || existing.scope !== 'personal'
+        || existing.ownerUserId !== actor.id
+        || !['published', 'retired'].includes(existing.status))) {
+        throw duplicateSkillError(staged.skillId);
+      }
+      const definition = {
+        schemaVersion: 1,
+        resourceType: 'skill',
+        scope: 'personal',
+        tenantId: input.tenantId,
+        ownerUserId: actor.id,
+        legacySkillId: staged.skillId,
+        source: 'governance_upload',
+        packageFormat: 'skill-package-v1',
+        contentDigestAlgorithm: MATERIALIZED_CONTENT_DIGEST_ALGORITHM,
+        name: staged.name,
+        description: staged.description,
+        contentDigest: staged.contentDigest,
+        fileCount: staged.fileCount,
+        totalBytes: staged.totalBytes,
+      };
+      const wasSelected = deps.skillConfigStore.getUserSelectedSkills(actor.username).includes(staged.skillId);
       const installedDir = await moveStagedSkillIntoPlace(staged, userSkillsParent, true);
       let selectionEnabled = false;
       try {
         // 先写默认选择，再发布治理资源。这样选择存储故障不会留下已发布但不可重试的资源。
         await setUserSkillSelected(deps.skillConfigStore, actor.username, staged.skillId, true);
         selectionEnabled = true;
-        const governed = await deps.skills.createAndPublishResource({
-          skillId: resourceId,
-          tenantId: input.tenantId,
-          scope: 'personal',
-          ownerUserId: actor.id,
-          definition: {
-            schemaVersion: 1,
-            resourceType: 'skill',
-            scope: 'personal',
-            tenantId: input.tenantId,
-            ownerUserId: actor.id,
-            legacySkillId: staged.skillId,
-            source: 'governance_upload',
-            packageFormat: 'skill-package-v1',
-            contentDigestAlgorithm: MATERIALIZED_CONTENT_DIGEST_ALGORITHM,
-            name: staged.name,
-            description: staged.description,
-            contentDigest: staged.contentDigest,
-            fileCount: staged.fileCount,
-            totalBytes: staged.totalBytes,
-          },
-          createdBy: actor.id,
-        });
+        const governed = existing
+          ? await deps.skills.restoreAndPublishResource({
+              skillId: resourceId,
+              tenantId: input.tenantId,
+              scope: 'personal',
+              ownerUserId: actor.id,
+              expectedRevision: existing.revision,
+              definition,
+              publishedBy: actor.id,
+            })
+          : await deps.skills.createAndPublishResource({
+              skillId: resourceId,
+              tenantId: input.tenantId,
+              scope: 'personal',
+              ownerUserId: actor.id,
+              definition,
+              createdBy: actor.id,
+            });
         return {
           ok: true,
           status: 'succeeded',
@@ -245,7 +280,7 @@ export function createPersonalSkillGovernanceUpload(deps: PersonalSkillGovernanc
         // 发布失败时回滚先写入的选择；失败本身不能把用户锁在脏偏好上。
         if (selectionEnabled) {
           try {
-            await setUserSkillSelected(deps.skillConfigStore, actor.username, staged.skillId, false);
+            await setUserSkillSelected(deps.skillConfigStore, actor.username, staged.skillId, wasSelected);
           } catch {
             // 原始错误更重要；若选择存储本身不可用，下一次重试会重新校正状态。
           }

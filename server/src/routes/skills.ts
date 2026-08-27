@@ -60,7 +60,7 @@ export interface SkillsRouterDeps {
   tenantSkillsRootDir?: string;
   skillMaterialization?: SkillMaterializationCoordinator;
   skillGovernanceStore?: Pick<PgSkillGovernanceStore, 'getResource' | 'getVersion'>
-    & Partial<Pick<PgSkillGovernanceStore, 'listTenantSkillHistoricalProvenance' | 'listPersonalByOwner'>>;
+    & Partial<Pick<PgSkillGovernanceStore, 'listTenantSkillHistoricalProvenance' | 'listPersonalByOwner' | 'retire'>>;
   legacyWriteGate?: {
     assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
   };
@@ -280,14 +280,17 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
   }
 
 
-  async function archiveDeletedDirectory(targetDir: string): Promise<void> {
+  async function archiveDeletedDirectory(targetDir: string): Promise<string> {
     const parentDir = dirname(targetDir);
     const archiveDir = join(parentDir, '.deleted-skills');
+    const archivedDir = join(archiveDir, `${basename(targetDir)}-${Date.now()}-${randomUUID()}`);
     await mkdir(archiveDir, { recursive: true });
-    await rename(
-      targetDir,
-      join(archiveDir, `${basename(targetDir)}-${Date.now()}-${randomUUID()}`),
-    );
+    await rename(targetDir, archivedDir);
+    return archivedDir;
+  }
+
+  async function restoreArchivedDirectory(archivedDir: string, targetDir: string): Promise<void> {
+    if (!existsSync(targetDir) && existsSync(archivedDir)) await rename(archivedDir, targetDir);
   }
 
   /**
@@ -1105,13 +1108,27 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     if (!skillId) return res.status(400).json({ error: 'Invalid skillId' });
     const skillDir = join(tenantSkillsDirFor(tenantId), skillId);
     if (!existsSync(skillDir)) return res.status(404).json({ error: `组织 ${tenantId} 中不存在技能“${skillId}”` });
+    let archivedDir: string | undefined;
+    let configTouched = false;
     try {
-      await archiveDeletedDirectory(skillDir);
+      const resource = await skillGovernanceStore?.getResource(tenantSkillResourceId(tenantId, skillId));
+      if (resource && (resource.tenantId !== tenantId || resource.scope !== 'tenant')) {
+        return res.status(409).json({ error: '组织技能治理归属不匹配' });
+      }
+      archivedDir = await archiveDeletedDirectory(skillDir);
       // ownSkills 规则条目保留作为「曾存在」记忆，驱动成员 workspace 清理残留副本；prune 时按目录现状清掉
       await skillConfigStore.touchConfigVersion();
+      configTouched = true;
+      if (resource && resource.status !== 'retired') {
+        if (!skillGovernanceStore?.retire) throw new Error('Skill governance retirement unavailable');
+        await skillGovernanceStore.retire(tenantId, resource.skillId, resource.revision, req.user!.sub);
+      }
+      archivedDir = undefined;
       auditLog(req, 'skill_tenant_deleted', `${tenantId}/${skillId}`);
       res.json({ ok: true });
     } catch (err) {
+      if (archivedDir) await restoreArchivedDirectory(archivedDir, skillDir).catch(() => undefined);
+      if (configTouched) await skillConfigStore.touchConfigVersion().catch(() => undefined);
       serverLogger.error(`DELETE /tenants/${tenantId}/skills/${skillId} error: ${err}`);
       res.status(500).json({ error: '删除组织技能失败' });
     }
@@ -1281,13 +1298,32 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
       return res.status(404).json({ error: `你的工作区中不存在技能“${skillId}”` });
     }
 
+    let archivedDir: string | undefined;
+    let selectionChanged = false;
+    const wasSelected = skillConfigStore.getUserSelectedSkills(username).includes(skillId);
     try {
-      await archiveDeletedDirectory(skillDir);
+      const resource = await skillGovernanceStore?.getResource(personalSkillResourceId(user.id, skillId));
+      if (resource && (resource.tenantId !== user.tenantId
+        || resource.scope !== 'personal'
+        || resource.ownerUserId !== user.id)) {
+        return res.status(409).json({ error: '个人技能治理归属不匹配' });
+      }
+      archivedDir = await archiveDeletedDirectory(skillDir);
       // 从 selection 中移除，避免 dispatch listForUser / effective 集合出现孤儿 id
       await setUserSkillSelected(skillConfigStore, username, skillId, false);
+      selectionChanged = true;
+      if (resource && resource.status !== 'retired') {
+        if (!skillGovernanceStore?.retire) throw new Error('Skill governance retirement unavailable');
+        await skillGovernanceStore.retire(user.tenantId, resource.skillId, resource.revision, user.id);
+      }
+      archivedDir = undefined;
       auditLog(req, 'skill_custom_deleted', `${username}/${skillId}`);
       res.json({ ok: true });
     } catch (err) {
+      if (selectionChanged && wasSelected) {
+        await setUserSkillSelected(skillConfigStore, username, skillId, true).catch(() => undefined);
+      }
+      if (archivedDir) await restoreArchivedDirectory(archivedDir, skillDir).catch(() => undefined);
       serverLogger.error(`DELETE /me/skills/${skillId} error: ${err}`);
       res.status(500).json({ error: '删除自定义技能失败' });
     }

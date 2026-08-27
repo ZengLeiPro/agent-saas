@@ -54,11 +54,65 @@ function historyIndex(): number | null {
   return typeof index === "number" ? index : null;
 }
 
+const DIRTY_HISTORY_ENTRY_PREFIX = "__settingsDirtyHistoryEntry_";
+const activeDirtyHistoryEntryIds = new Set<string>();
+let dirtyHistoryEntrySequence = 0;
+
 interface HistoryPoint {
   href: string;
   state: unknown;
   appIndex: number | null;
   browserIndex: number | null;
+  entryId: string | null;
+}
+
+function currentHistoryPoint(state: unknown = window.history.state): HistoryPoint {
+  return {
+    href: `${window.location.pathname}${window.location.search}${window.location.hash}`,
+    state,
+    appIndex: readAppHistoryIndex(state),
+    browserIndex: historyIndex(),
+    entryId: null,
+  };
+}
+
+function isHistoryStateRecord(state: unknown): state is Record<string, unknown> {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return false;
+  const prototype = Object.getPrototypeOf(state);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function stripDirtyHistoryEntryIds(state: unknown, ownedEntryId?: string): unknown {
+  if (!isHistoryStateRecord(state)) return state;
+  const markerKeys = Object.keys(state).filter((key) => (
+    key.startsWith(DIRTY_HISTORY_ENTRY_PREFIX)
+      && (ownedEntryId ? key === ownedEntryId : !activeDirtyHistoryEntryIds.has(key))
+  ));
+  if (markerKeys.length === 0) return state;
+  const cleanState = structuredClone(state);
+  markerKeys.forEach((key) => delete cleanState[key]);
+  return cleanState;
+}
+
+function tagCurrentHistoryPoint(point: HistoryPoint): HistoryPoint {
+  if (!isHistoryStateRecord(point.state)) return point;
+  const entryId = `${DIRTY_HISTORY_ENTRY_PREFIX}${Date.now().toString(36)}_${++dirtyHistoryEntrySequence}`;
+  const cleanState = stripDirtyHistoryEntryIds(point.state) as Record<string, unknown>;
+  const taggedState = structuredClone(cleanState);
+  taggedState[entryId] = true;
+  activeDirtyHistoryEntryIds.add(entryId);
+  window.history.replaceState(taggedState, "", point.href);
+  // ref 保留原始 clean state；entryId 只用于在物理槽中精确定位，绝不复制到其他 entry。
+  return { ...point, state: cleanState, appIndex: readAppHistoryIndex(cleanState), entryId };
+}
+
+function cleanCurrentHistoryPoint(point: HistoryPoint, entryId: string | null): HistoryPoint {
+  if (!entryId) return point;
+  activeDirtyHistoryEntryIds.delete(entryId);
+  if (!isHistoryStateRecord(point.state) || point.state[entryId] !== true) return point;
+  const state = stripDirtyHistoryEntryIds(point.state, entryId);
+  window.history.replaceState(state, "", point.href);
+  return currentHistoryPoint(state);
 }
 
 function historyStep(from: HistoryPoint, to: HistoryPoint): number {
@@ -69,13 +123,92 @@ function historyStep(from: HistoryPoint, to: HistoryPoint): number {
   return browserStep || appStep || toDepth - fromDepth;
 }
 
+function sameHistoryState(
+  actual: unknown,
+  expected: unknown,
+  actualToExpected = new WeakMap<object, object>(),
+  expectedToActual = new WeakMap<object, object>(),
+): boolean {
+  if (Object.is(actual, expected)) return true;
+  if (!actual || !expected || typeof actual !== "object" || typeof expected !== "object") return false;
+  const knownExpected = actualToExpected.get(actual);
+  const knownActual = expectedToActual.get(expected);
+  if (knownExpected || knownActual) return knownExpected === expected && knownActual === actual;
+  actualToExpected.set(actual, expected);
+  expectedToActual.set(expected, actual);
+  const compare = (left: unknown, right: unknown) => (
+    sameHistoryState(left, right, actualToExpected, expectedToActual)
+  );
+  if (actual instanceof Date || expected instanceof Date) {
+    return actual instanceof Date && expected instanceof Date && actual.getTime() === expected.getTime();
+  }
+  if (actual instanceof RegExp || expected instanceof RegExp) {
+    return actual instanceof RegExp && expected instanceof RegExp
+      && actual.source === expected.source && actual.flags === expected.flags;
+  }
+  if (actual instanceof ArrayBuffer || expected instanceof ArrayBuffer) {
+    if (!(actual instanceof ArrayBuffer) || !(expected instanceof ArrayBuffer)) return false;
+    const left = new Uint8Array(actual);
+    const right = new Uint8Array(expected);
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+  }
+  if (ArrayBuffer.isView(actual) || ArrayBuffer.isView(expected)) {
+    return ArrayBuffer.isView(actual) && ArrayBuffer.isView(expected)
+      && actual.constructor === expected.constructor
+      && actual.byteOffset === expected.byteOffset
+      && actual.byteLength === expected.byteLength
+      && compare(actual.buffer, expected.buffer);
+  }
+  if (actual instanceof Map || expected instanceof Map) {
+    if (!(actual instanceof Map) || !(expected instanceof Map) || actual.size !== expected.size) return false;
+    const left = [...actual.entries()];
+    const right = [...expected.entries()];
+    return left.every(([key, value], index) => compare(key, right[index][0]) && compare(value, right[index][1]));
+  }
+  if (actual instanceof Set || expected instanceof Set) {
+    if (!(actual instanceof Set) || !(expected instanceof Set) || actual.size !== expected.size) return false;
+    const right = [...expected.values()];
+    return [...actual.values()].every((value, index) => compare(value, right[index]));
+  }
+  if (Array.isArray(actual) || Array.isArray(expected)) {
+    if (!Array.isArray(actual) || !Array.isArray(expected) || actual.length !== expected.length) return false;
+    const actualKeys = Object.keys(actual);
+    const expectedKeys = Object.keys(expected);
+    return actualKeys.length === expectedKeys.length && actualKeys.every((key) => (
+      Object.prototype.hasOwnProperty.call(expected, key)
+        && compare(
+          (actual as unknown as Record<string, unknown>)[key],
+          (expected as unknown as Record<string, unknown>)[key],
+        )
+    ));
+  }
+  if (!isHistoryStateRecord(actual) || !isHistoryStateRecord(expected)) return false;
+  const actualEntries = Object.entries(actual).filter(([key]) => !key.startsWith(DIRTY_HISTORY_ENTRY_PREFIX));
+  const expectedEntries = Object.entries(expected).filter(([key]) => !key.startsWith(DIRTY_HISTORY_ENTRY_PREFIX));
+  return actualEntries.length === expectedEntries.length && actualEntries.every(([key, value]) => (
+    Object.prototype.hasOwnProperty.call(expected, key) && compare(value, expected[key])
+  ));
+}
+
 function sameHistoryPoint(actual: HistoryPoint, expected: HistoryPoint): boolean {
+  if (expected.entryId) return isHistoryStateRecord(actual.state) && actual.state[expected.entryId] === true;
   const comparisons = [actual.href === expected.href];
-  if (actual.appIndex !== null && expected.appIndex !== null) comparisons.push(actual.appIndex === expected.appIndex);
-  if (actual.browserIndex !== null && expected.browserIndex !== null) comparisons.push(actual.browserIndex === expected.browserIndex);
+  let hasCoordinate = false;
+  if (actual.appIndex !== null && expected.appIndex !== null) {
+    comparisons.push(actual.appIndex === expected.appIndex);
+    hasCoordinate = true;
+  }
+  if (actual.browserIndex !== null && expected.browserIndex !== null) {
+    comparisons.push(actual.browserIndex === expected.browserIndex);
+    hasCoordinate = true;
+  }
   const actualDepth = readPersonalSettingsHistoryState(actual.state)?.depth;
   const expectedDepth = readPersonalSettingsHistoryState(expected.state)?.depth;
-  if (actualDepth !== undefined && expectedDepth !== undefined) comparisons.push(actualDepth === expectedDepth);
+  if (actualDepth !== undefined && expectedDepth !== undefined) {
+    comparisons.push(actualDepth === expectedDepth);
+    hasCoordinate = true;
+  }
+  if (!hasCoordinate) comparisons.push(sameHistoryState(actual.state, expected.state));
   return comparisons.every(Boolean);
 }
 
@@ -150,25 +283,27 @@ export function SettingsDirtyBoundary({
   children: (controller: SettingsDirtyController) => ReactNode;
 }) {
   const entriesRef = useRef(new Map<string, SettingsDirtyEntry>());
-  const acceptedHistoryRef = useRef(typeof window === "undefined"
-    ? { href: "/", state: null, appIndex: null, browserIndex: null }
-    : {
-      href: `${window.location.pathname}${window.location.search}${window.location.hash}`,
-      state: window.history.state,
-      appIndex: readAppHistoryIndex(),
-      browserIndex: historyIndex(),
-    });
+  const acceptedHistoryRef = useRef<HistoryPoint>(typeof window === "undefined"
+    ? { href: "/", state: null, appIndex: null, browserIndex: null, entryId: null }
+    : currentHistoryPoint());
   const historyTraversalRef = useRef<{
     phase: "restore" | "resume";
     step: number;
     accepted: HistoryPoint;
     target: HistoryPoint;
+    remaining: number;
+    restoreDelta: number;
+    pendingDelta: number;
+    probeOpposite?: boolean;
+    searchDirection: number;
     ignore?: boolean;
   } | null>(null);
   const ambiguousHistoryRef = useRef<{
     accepted: { href: string; state: unknown };
-    target: { href: string; state: unknown };
+    displaced: { href: string; state: unknown };
+    preserveForward: boolean;
   } | null>(null);
+  const traversalTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [version, setVersion] = useState(0);
   const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null);
   const pendingNavigationRef = useRef<(() => void) | null>(null);
@@ -216,55 +351,158 @@ export function SettingsDirtyBoundary({
   }, []);
 
   useEffect(() => {
-    ensureAppHistoryIndex();
-    acceptedHistoryRef.current = {
-      href: `${window.location.pathname}${window.location.search}${window.location.hash}`,
-      state: window.history.state,
-      appIndex: readAppHistoryIndex(),
-      browserIndex: historyIndex(),
-    };
-  });
+    if (isHistoryStateRecord(window.history.state)) ensureAppHistoryIndex();
+    acceptedHistoryRef.current = currentHistoryPoint();
+  }, []);
 
   useEffect(() => {
-    // popstate 触发时 URL 已移动：先按 settings depth 原路返回当前页再弹框，继续时重放原步数。
-    const guardHistoryNavigation = (event: PopStateEvent) => {
-      const target = {
-        href: `${window.location.pathname}${window.location.search}${window.location.hash}`,
-        state: event.state,
-        appIndex: readAppHistoryIndex(event.state),
-        browserIndex: historyIndex(),
-      };
-      const traversal = historyTraversalRef.current;
-      if (traversal) {
-        const expected = traversal.phase === "restore" ? traversal.accepted : traversal.target;
-        if (!sameHistoryPoint(target, expected)) {
-          event.stopImmediatePropagation();
-          const correction = historyStep(target, expected);
-          if (correction) window.history.go(correction);
-          return;
-        }
-        if (traversal.phase === "restore") {
-          event.stopImmediatePropagation();
-          acceptedHistoryRef.current = target;
-          historyTraversalRef.current = null;
-          if (traversal.ignore) {
-            const continuation = continuationAfterRestoreRef.current;
-            continuationAfterRestoreRef.current = null;
-            continuation?.();
-            return;
-          }
-          requestNavigation(() => {
-            historyTraversalRef.current = { ...traversal, phase: "resume" };
-            window.history.go(traversal.step);
-          });
-          return;
-        }
-        historyTraversalRef.current = null;
-        acceptedHistoryRef.current = target;
+    const current = currentHistoryPoint();
+    if (!dirty) {
+      const entryId = acceptedHistoryRef.current.entryId;
+      if (entryId) acceptedHistoryRef.current = cleanCurrentHistoryPoint(current, entryId);
+      return;
+    }
+    // marker 只在本轮 dirty 存活；恢复命中、dirty 结束或 Boundary 卸载都会清理。
+    const tagged = tagCurrentHistoryPoint(current);
+    acceptedHistoryRef.current = tagged;
+    return () => {
+      const active = currentHistoryPoint();
+      const cleaned = cleanCurrentHistoryPoint(active, tagged.entryId);
+      if (sameHistoryPoint(active, tagged)) acceptedHistoryRef.current = cleaned;
+    };
+  }, [dirty]);
+
+  const beginAmbiguousNavigation = useCallback((
+    accepted: HistoryPoint,
+    displaced: HistoryPoint,
+    destination: HistoryPoint,
+    preserveForward = false,
+  ) => {
+    if (traversalTimeoutRef.current) clearTimeout(traversalTimeoutRef.current);
+    traversalTimeoutRef.current = null;
+    historyTraversalRef.current = null;
+    ambiguousHistoryRef.current = { accepted, displaced, preserveForward };
+    window.history.replaceState(accepted.state, "", accepted.href);
+    acceptedHistoryRef.current = currentHistoryPoint(accepted.state);
+    requestNavigation(() => {
+      window.history.replaceState(destination.state, "", destination.href);
+      notifyRouteChange(destination.state);
+    });
+  }, [requestNavigation]);
+
+  useEffect(() => {
+    const clearTraversalTimeout = () => {
+      if (traversalTimeoutRef.current) clearTimeout(traversalTimeoutRef.current);
+      traversalTimeoutRef.current = null;
+    };
+    const failTraversal = (traversal: NonNullable<typeof historyTraversalRef.current>) => {
+      const displaced = currentHistoryPoint();
+      clearTraversalTimeout();
+      historyTraversalRef.current = null;
+      if (!traversal.ignore) {
+        beginAmbiguousNavigation(traversal.accepted, displaced, traversal.target, true);
         return;
       }
+      window.history.replaceState(traversal.accepted.state, "", traversal.accepted.href);
+      acceptedHistoryRef.current = currentHistoryPoint(traversal.accepted.state);
+      const continuation = continuationAfterRestoreRef.current;
+      continuationAfterRestoreRef.current = null;
+      continuation?.();
+    };
+    const continueTraversal = (
+      traversal: NonNullable<typeof historyTraversalRef.current>,
+      delta: number,
+    ) => {
+      clearTraversalTimeout();
+      const nextTraversal = { ...traversal, pendingDelta: delta };
+      historyTraversalRef.current = nextTraversal;
+      window.history.go(delta);
+      traversalTimeoutRef.current = setTimeout(() => {
+        if (historyTraversalRef.current !== nextTraversal) return;
+        if (nextTraversal.phase === "restore" && nextTraversal.probeOpposite) {
+          continueTraversal({
+            ...nextTraversal,
+            pendingDelta: 0,
+            probeOpposite: false,
+            searchDirection: 1,
+          }, -nextTraversal.restoreDelta + 1);
+          return;
+        }
+        failTraversal(nextTraversal);
+      }, 1_500);
+    };
+
+    // popstate 触发时 URL 已移动：先恢复 accepted entry 再弹框，继续时重放原目标。
+    const guardHistoryNavigation = (event: PopStateEvent) => {
+      clearTraversalTimeout();
+      let target = currentHistoryPoint(event.state);
+      const traversal = historyTraversalRef.current;
+      if (traversal) {
+        const activeTraversal = traversal.phase === "restore"
+          ? { ...traversal, restoreDelta: traversal.restoreDelta + traversal.pendingDelta, pendingDelta: 0 }
+          : { ...traversal, pendingDelta: 0 };
+        if (activeTraversal.phase === "resume") {
+          // resume 使用 restore 阶段实际走过的物理距离反向重放；首个事件就是原始目标。
+          historyTraversalRef.current = null;
+          acceptedHistoryRef.current = target;
+          return;
+        }
+        if (!sameHistoryPoint(target, activeTraversal.accepted)) {
+          event.stopImmediatePropagation();
+          if (activeTraversal.remaining <= 0) {
+            failTraversal(activeTraversal);
+            return;
+          }
+          const correction = historyStep(target, activeTraversal.accepted);
+          // 无坐标时先逐槽扫描整个 Back 方向；只有到边界无事件，timeout 才越过起点改扫 Forward。
+          const delta = correction || activeTraversal.searchDirection;
+          if (!delta) {
+            failTraversal(activeTraversal);
+            return;
+          }
+          continueTraversal({ ...activeTraversal, remaining: activeTraversal.remaining - 1 }, delta);
+          return;
+        }
+        event.stopImmediatePropagation();
+        acceptedHistoryRef.current = activeTraversal.accepted;
+        historyTraversalRef.current = null;
+        if (activeTraversal.ignore) {
+          acceptedHistoryRef.current = cleanCurrentHistoryPoint(target, activeTraversal.accepted.entryId);
+          const continuation = continuationAfterRestoreRef.current;
+          continuationAfterRestoreRef.current = null;
+          continuation?.();
+          return;
+        }
+        requestNavigation(() => {
+          const resumeDelta = activeTraversal.accepted.browserIndex !== null && activeTraversal.target.browserIndex !== null
+            ? activeTraversal.step
+            : -activeTraversal.restoreDelta;
+          const resume = {
+            ...activeTraversal,
+            phase: "resume" as const,
+            step: resumeDelta,
+            accepted: acceptedHistoryRef.current,
+            remaining: Math.max(1, window.history.length),
+            pendingDelta: 0,
+            probeOpposite: false,
+            searchDirection: Math.sign(resumeDelta),
+          };
+          continueTraversal(resume, resumeDelta);
+        });
+        return;
+      }
+      const activeEntryId = acceptedHistoryRef.current.entryId;
+      const hasActiveMarker = Boolean(activeEntryId && isHistoryStateRecord(target.state)
+        && target.state[activeEntryId] === true);
+      if (!hasActiveMarker && isHistoryStateRecord(target.state)
+        && Object.keys(target.state).some((key) => key.startsWith(DIRTY_HISTORY_ENTRY_PREFIX))) {
+        const cleanState = stripDirtyHistoryEntryIds(target.state);
+        window.history.replaceState(cleanState, "", target.href);
+        target = currentHistoryPoint(cleanState);
+      }
       if (event.isTrusted === false) {
-        if (!actionInFlightRef.current) acceptedHistoryRef.current = target;
+        // route 同步使用 synthetic popstate；仍在 dirty accepted 槽时必须保留其唯一 marker。
+        if (!actionInFlightRef.current && !hasActiveMarker) acceptedHistoryRef.current = target;
         return;
       }
       if (!actionInFlightRef.current && ![...entriesRef.current.values()].some((entry) => entry.dirty)) {
@@ -274,56 +512,39 @@ export function SettingsDirtyBoundary({
       event.stopImmediatePropagation();
       const accepted = acceptedHistoryRef.current;
       const step = historyStep(accepted, target);
-      if (actionInFlightRef.current) {
-        if (!step) {
-          // 无法判断方向时保留刚到达的旧目标槽，再新增当前 accepted 页，不能再次吞掉目标。
-          const accepted = acceptedHistoryRef.current;
-          window.history.replaceState(target.state, "", target.href);
-          const acceptedState = accepted.state && typeof accepted.state === "object"
-            ? accepted.state as Record<string, unknown>
-            : {};
-          pushAppHistoryState(acceptedState, accepted.href);
-          acceptedHistoryRef.current = {
-            href: accepted.href,
-            state: window.history.state,
-            appIndex: readAppHistoryIndex(),
-            browserIndex: historyIndex(),
-          };
-          return;
-        }
-        historyTraversalRef.current = { phase: "restore", step, accepted, target, ignore: true };
-        window.history.go(-step);
-        return;
-      }
-      if (!step) {
-        // 旧版本留下的无索引 entry 无法判断方向；优先保住草稿，确认后在当前 entry 应用目标。
-        const accepted = acceptedHistoryRef.current;
-        ambiguousHistoryRef.current = { accepted, target };
-        window.history.replaceState(accepted.state, "", accepted.href);
-        requestNavigation(() => {
-          window.history.replaceState(target.state, "", target.href);
-          notifyRouteChange(target.state);
-        });
-        return;
-      }
-      historyTraversalRef.current = { phase: "restore", step, accepted, target };
-      window.history.go(-step);
+      const delta = step ? -step : -1;
+      continueTraversal({
+        phase: "restore",
+        step,
+        accepted,
+        target,
+        remaining: Math.max(1, window.history.length),
+        restoreDelta: 0,
+        pendingDelta: 0,
+        probeOpposite: !step,
+        searchDirection: step ? -Math.sign(step) : -1,
+        ignore: actionInFlightRef.current || undefined,
+      }, delta);
     };
     window.addEventListener("popstate", guardHistoryNavigation, true);
-    return () => window.removeEventListener("popstate", guardHistoryNavigation, true);
-  }, [requestNavigation]);
+    return () => {
+      clearTraversalTimeout();
+      window.removeEventListener("popstate", guardHistoryNavigation, true);
+    };
+  }, [beginAmbiguousNavigation, requestNavigation]);
 
   const cancelNavigation = useCallback(() => {
     const ambiguous = ambiguousHistoryRef.current;
     ambiguousHistoryRef.current = null;
-    if (ambiguous) {
-      // 先还原被临时占用的旧目标 entry，再新增当前页；这样取消不会永久吞掉目标。
-      window.history.replaceState(ambiguous.target.state, "", ambiguous.target.href);
-      const acceptedState = ambiguous.accepted.state && typeof ambiguous.accepted.state === "object"
-        ? ambiguous.accepted.state as Record<string, unknown>
-        : {};
+    if (ambiguous && !ambiguous.preserveForward) {
+      // 普通无坐标 fallback：还原 displaced 后新增 fresh accepted，且绝不复制旧 marker。
+      window.history.replaceState(ambiguous.displaced.state, "", ambiguous.displaced.href);
+      const cleanAcceptedState = stripDirtyHistoryEntryIds(ambiguous.accepted.state);
+      const acceptedState = isHistoryStateRecord(cleanAcceptedState) ? cleanAcceptedState : {};
       pushAppHistoryState(acceptedState, ambiguous.accepted.href);
+      acceptedHistoryRef.current = tagCurrentHistoryPoint(currentHistoryPoint());
     }
+    // traversal 超时已在当前物理槽恢复 accepted；取消时保持原位，避免 push 截断 Forward 栈。
     pendingNavigationRef.current = null;
     setPendingNavigation(null);
   }, []);
@@ -336,6 +557,11 @@ export function SettingsDirtyBoundary({
     if (historyTraversalRef.current?.phase === "restore" && historyTraversalRef.current.ignore) {
       continuationAfterRestoreRef.current = navigation;
       return;
+    }
+    const accepted = acceptedHistoryRef.current;
+    const current = currentHistoryPoint();
+    if (sameHistoryPoint(current, accepted)) {
+      acceptedHistoryRef.current = cleanCurrentHistoryPoint(current, accepted.entryId);
     }
     navigation?.();
   }, []);

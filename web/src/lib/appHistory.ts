@@ -10,7 +10,9 @@ export function ensureAppHistoryIndex(): number {
   const current = readAppHistoryIndex();
   if (current !== null) return current;
   const state = window.history.state;
-  window.history.replaceState({ ...(state && typeof state === "object" ? state : {}), [APP_HISTORY_INDEX_KEY]: 0 }, "");
+  const indexedState = state && typeof state === "object" ? structuredClone(state) as Record<string, unknown> : {};
+  indexedState[APP_HISTORY_INDEX_KEY] = 0;
+  window.history.replaceState(indexedState, "");
   return 0;
 }
 

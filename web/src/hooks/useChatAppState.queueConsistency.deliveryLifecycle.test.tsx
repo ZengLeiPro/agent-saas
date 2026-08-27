@@ -379,6 +379,31 @@ describe("useChatAppState queue delivery lifecycle", () => {
     expect(result.current.sessionRuntimeStatuses.get("session-running")).toBe("running");
   });
 
+  it("does not let a same-run terminal detail clear snapshot-confirmed activity after selection", async () => {
+    harness.authFetch.mockImplementation(async (url: string) => {
+      if (url === "/api/sessions/active-streams") {
+        return response({ sessions: [{ sessionId: "session-running", active: true, runId: "run-shared" }] });
+      }
+      if (url.endsWith("/stream-status")) return response({ active: false });
+      return response({}, 404);
+    });
+    const { result } = renderHook(() => useChatAppState());
+
+    await act(async () => {
+      harness.sessionCallbacks?.onSessionsLoaded?.([{ sessionId: "session-running" }]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => result.current.selectSession("session-running"));
+    await act(async () => {
+      harness.sessionCallbacks?.onLastRunState?.("session-running", { status: "completed", runId: "run-shared" });
+      await Promise.resolve();
+    });
+
+    expect(result.current.runningSessionIds.has("session-running")).toBe(true);
+    expect(result.current.sessionRuntimeStatuses.get("session-running")).toBe("running");
+  });
+
   it("keeps a WS-confirmed runtime through active and inactive snapshots, then clears it on terminal", async () => {
     vi.useFakeTimers();
     harness.session.sessionId = "session-sleeping";

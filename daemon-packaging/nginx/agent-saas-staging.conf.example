@@ -1,0 +1,46 @@
+server {
+    listen 80;
+    listen [::]:80;
+    server_name staging-agent-api.kaiyan.net;
+
+    return 308 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name staging-agent-api.kaiyan.net;
+
+    ssl_certificate /etc/agent-saas-staging/tls/fullchain.pem;
+    ssl_certificate_key /etc/agent-saas-staging/tls/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:AgentSaasStagingTLS:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    server_tokens off;
+    client_max_body_size 100m;
+
+    # 仅证明 ECS、DNS、Nginx 和 TLS 基础设施可用，不代表应用或业务验收通过。
+    location = /_staging/infra-ready {
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        return 200 '{"environment":"staging","state":"infra-only"}\n';
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:3210;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}

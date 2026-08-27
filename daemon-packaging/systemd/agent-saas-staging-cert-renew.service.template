@@ -1,0 +1,14 @@
+[Unit]
+Description=Renew and deploy Agent SaaS Staging TLS certificate
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/root/.acme.sh/acme.sh
+
+[Service]
+Type=oneshot
+ExecStart=/root/.acme.sh/acme.sh --cron --home /root/.acme.sh --config-home /root/.acme.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+PrivateTmp=true
+NoNewPrivileges=true

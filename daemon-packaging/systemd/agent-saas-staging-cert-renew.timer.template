@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Agent SaaS Staging TLS renewal check
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+RandomizedDelaySec=30m
+Persistent=true
+Unit=agent-saas-staging-cert-renew.service
+
+[Install]
+WantedBy=timers.target

@@ -6,20 +6,38 @@
   "resources": {
     "web": {
       "bucket": "agent-saas-web-staging",
-      "domain": "staging.agent.kaiyan.net"
+      "domain": "staging-agent.kaiyan.net",
+      "cnameTarget": "agent-saas-web-staging.oss-cn-shenzhen.aliyuncs.com",
+      "certificate": {
+        "provider": "letsencrypt-acme-sh",
+        "certId": "26863247-cn-hangzhou",
+        "fingerprintSha256": "E7:31:80:6A:C2:20:E2:D2:D0:2D:43:50:CB:00:DF:C4:A9:1B:F0:22:C5:52:6C:A5:87:A9:24:7E:07:93:E1:1B",
+        "renewalTimer": "agent-saas-staging-cert-renew.timer"
+      }
     },
     "api": {
       "ecsName": "stg-agent-saas-app-cn-shenzhen",
-      "domain": "api.staging.agent.kaiyan.net",
+      "instanceId": "i-wz94xd0v5xab8naa4kov",
+      "domain": "staging-agent-api.kaiyan.net",
+      "publicIp": "120.76.54.103",
+      "eipAllocationId": "eip-wz9o3xfat8yef886h0wlh",
+      "securityGroupId": "sg-wz93ys0n9pnv64x3j6h1",
+      "sshHostKeySha256": "SHA256:g0fYRjn8eK4ohBjNVXMKgmLqSWW0u8SRi/ICEN/AEpA",
       "port": 3210
     },
     "database": {
       "instanceId": "UNASSIGNED",
+      "reuseCandidateId": "pgm-wz96n2735914490l",
+      "reuseStatus": "blocked-production-databases-grant-public-connect",
       "database": "agent_saas_staging",
       "role": "agent_saas_staging"
     },
     "nas": {
       "fileSystemId": "UNASSIGNED",
+      "reuseCandidateId": "020ksw7nv1wjde1xy9c",
+      "reuseStatus": "blocked-production-root-visible",
+      "disabledMountTarget": "020ksw7nv1wjde1xy9c-jsu59.cn-shenzhen.nas.aliyuncs.com",
+      "disabledAccessGroup": "agent_saas_staging_root_squash",
       "mountRoot": "/mnt/agent-saas-staging"
     },
     "vault": {

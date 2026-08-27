@@ -103,6 +103,47 @@ describe('辅助函数', () => {
     expect(ctrl.messages[0]).toMatchObject({ type: 'runtime_status', status: 'running', content: '正在思考' });
   });
 
+  it('upsertRuntimeStatusMessage：运行中工具之后不追加冗余思考状态', () => {
+    const ctrl = makeController([
+      {
+        id: 'tool',
+        type: 'tool_use',
+        toolName: 'Shell',
+        toolInput: '{}',
+        toolId: 'tool-1',
+        runId: 'run-1',
+        executionStatus: 'running',
+      },
+    ]);
+
+    upsertRuntimeStatusMessage(ctrl, 'running', { runId: 'run-1' });
+    expect(ctrl.messages).toHaveLength(1);
+    expect(ctrl.messages[0]).toMatchObject({ type: 'tool_use', executionStatus: 'running' });
+
+    ctrl.updateMessageAt(0, (message) => (
+      message.type === 'tool_use'
+        ? { ...message, executionStatus: 'completed' as const, resultReady: true }
+        : message
+    ));
+    upsertRuntimeStatusMessage(ctrl, 'running', { runId: 'run-1' });
+    expect(ctrl.messages).toHaveLength(2);
+    expect(ctrl.messages[1]).toMatchObject({ type: 'runtime_status', status: 'running' });
+  });
+
+  it('upsertRuntimeStatusMessage：流式输出与运行中子 Agent 之后不追加冗余思考状态', () => {
+    const streamingText = makeController([
+      { id: 'text', type: 'text', content: '输出中', streaming: true, runId: 'run-1' },
+    ]);
+    upsertRuntimeStatusMessage(streamingText, 'running', { runId: 'run-1' });
+    expect(streamingText.messages).toHaveLength(1);
+
+    const runningSubagent = makeController([
+      { id: 'subagent', type: 'subagent', toolId: 'tool-1', agentType: 'coder', status: 'running' },
+    ]);
+    upsertRuntimeStatusMessage(runningSubagent, 'running', { runId: 'run-1' });
+    expect(runningSubagent.messages).toHaveLength(1);
+  });
+
   it('upsertRuntimeStatusMessage：runId 归属不同的状态行不得原地覆盖（2026-08-04）', () => {
     // 旧行为：目标 run 的 running 会把插话 run 的 queued 状态行覆盖成「正在思考」，
     // 用户误以为排队消息已开始处理。归属不同必须新建一条。

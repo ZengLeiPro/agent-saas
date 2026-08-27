@@ -10,6 +10,27 @@ export interface RuntimeStatusOptions {
 export type RuntimeStatusPatch = Pick<RuntimeStatusMessage, "status" | "content" | "streaming">
   & Partial<Pick<RuntimeStatusMessage, "streamId" | "runId">>;
 
+/** active_stream / session_status 重复广播 running 时，更精确的尾部活动应优先展示。 */
+export function hasTrailingActiveWork(messages: MessageItem[], runId?: string): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.type === "runtime_status") continue;
+    if (runId && "runId" in message && message.runId && message.runId !== runId) return false;
+    if ((message.type === "text" || message.type === "thinking") && message.streaming) return true;
+    if (message.type === "subagent" && message.status === "running") return true;
+    if (message.type === "tool_use") {
+      return message.streaming === true
+        || message.executionStatus === "running"
+        || (!message.resultReady
+          && message.executionStatus !== "completed"
+          && message.executionStatus !== "failed"
+          && message.executionStatus !== "cancelled");
+    }
+    return false;
+  }
+  return false;
+}
+
 function runtimeStatusText(status: RuntimeStatus): string {
   switch (status) {
     case "sending": return "正在发送消息";

@@ -25,9 +25,11 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(source).toContain('activeTab === "capabilities" || activeTab === "cron" ? "h-14 px-6"');
   });
 
-  it("个人、组织与平台设置共享同一个 dirty boundary", () => {
+  it("个人、组织与平台设置共享 dirty boundary，并回传组织 Shell 实际目标", () => {
     expect(source).toContain("{settingsMode && <SettingsDirtyBoundary>{(dirtyController) => (");
     expect(source).toContain("onNavigationControllerChange={handleSettingsControllerChange} dirtyController={dirtyController}");
+    expect(source).toContain("isPlatformAdmin, organizationSettingsTargetId");
+    expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId}");
     expect(source).toContain(")}</SettingsDirtyBoundary>}");
   });
 });

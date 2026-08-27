@@ -16,6 +16,7 @@ export function useUnifiedSettingsWorkspace({
   closeAdminSettings,
   setAdminSettingsSection,
   isPlatformAdmin,
+  organizationSettingsTargetId,
 }: {
   settingsOpen: boolean;
   settingsSection: SettingsSectionId;
@@ -27,6 +28,8 @@ export function useUnifiedSettingsWorkspace({
   closeAdminSettings: () => void;
   setAdminSettingsSection: (section: string) => void;
   isPlatformAdmin: boolean;
+  /** undefined=Tenant Shell 尚未报告；null=平台管理员明确未选择组织。 */
+  organizationSettingsTargetId?: string | null;
 }) {
   const mode = settingsOpen || adminSettings !== null;
   const target = settingsOpen ? "personal" as const : adminSettings?.target ?? "personal";
@@ -57,14 +60,16 @@ export function useUnifiedSettingsWorkspace({
     else openSettings(section);
   }, [mode, navigate, openSettings]);
   const openOrganizationGovernance = useCallback(() => {
-    const orgId = isPlatformAdmin && typeof window !== "undefined"
-      ? new URLSearchParams(window.location.search).get("org")
+    const orgId = isPlatformAdmin
+      ? organizationSettingsTargetId === undefined && typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("org")
+        : organizationSettingsTargetId ?? null
       : null;
     requestNavigation(() => navigateGovernance(governanceRoute(
       "organization.members.list",
       orgId ? { orgId } : {},
     )));
-  }, [isPlatformAdmin, requestNavigation]);
+  }, [isPlatformAdmin, organizationSettingsTargetId, requestNavigation]);
 
   return { mode, target, activeSection, navigate, close, open, openOrganizationGovernance, guardNavigation: requestNavigation, onControllerChange };
 }

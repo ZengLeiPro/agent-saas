@@ -105,7 +105,7 @@ export function DesktopLayout(props: LayoutProps) {
     startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   } = props;
 
-  const { user: authUser, updatePreferences, isLoading: authLoading, authEnabled } = useAuth();
+  const { user: authUser, updatePreferences, isLoading: authLoading, authEnabled } = useAuth(); const [organizationSettingsTargetId, setOrganizationSettingsTargetId] = useState<string | null>();
   const {
     mode: settingsMode,
     target: settingsTarget,
@@ -116,7 +116,7 @@ export function DesktopLayout(props: LayoutProps) {
     onControllerChange: handleSettingsControllerChange,
   } = useUnifiedSettingsWorkspace({
     settingsOpen, settingsSection, adminSettings, openSettings, closeSettings, setSettingsSection,
-    openAdminSettings, closeAdminSettings, setAdminSettingsSection, isPlatformAdmin,
+    openAdminSettings, closeAdminSettings, setAdminSettingsSection, isPlatformAdmin, organizationSettingsTargetId,
   });
   const analysisMode = !settingsMode && isAnalysisRoute(governanceRoute); const accessTarget = managementAccessTarget({ settingsOpen, adminSettingsTarget: adminSettings?.target, activeTab, governanceArea: governanceRoute?.area });
   const managementAccess = useManagementSettingsAccess({ user: authUser, authLoading, authEnabled, active: accessTarget !== null || isAdmin }); const { open: handleOpenAnalysis, close: handleCloseAnalysis, navigate: handleAnalysisNavigate } = useUnifiedAnalysisWorkspace({ mode: analysisMode, governanceRoute, managementAccess, sessionId, pushActiveTab, setActiveTab });
@@ -900,7 +900,7 @@ export function DesktopLayout(props: LayoutProps) {
                     renderFiles={() => <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
                     renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
                     settingsOpen={settingsTarget === "tenant"}
-                    settingsContentOnly
+                    settingsContentOnly onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId}
                     settingsSection={(settingsTarget === "tenant" ? activeSettingsSection : "users") as TenantSection}
                     onSettingsSectionChange={(section) => handleSettingsNavigate("tenant", section)}
                     onSettingsClose={handleCloseUnifiedSettings}

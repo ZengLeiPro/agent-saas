@@ -51,6 +51,56 @@ describe("useUnifiedSettingsWorkspace", () => {
     expect(buildGovernanceUrl(mocks.navigateGovernance.mock.calls[0][0])).toBe("/tenant-admin/members/list?org=tenant-a");
   });
 
+  it("跨设置分组后使用持久 Tenant Shell 的实际组织，而非当前 URL", () => {
+    const guarded = vi.fn();
+    window.history.replaceState({}, "", "/tenant-admin/settings/users");
+    const { result } = renderHook(() => useUnifiedSettingsWorkspace({
+      settingsOpen: false,
+      settingsSection: "account-security",
+      adminSettings: { target: "tenant", section: "users" },
+      openSettings: vi.fn(),
+      closeSettings: vi.fn(),
+      setSettingsSection: vi.fn(),
+      openAdminSettings: vi.fn(),
+      closeAdminSettings: vi.fn(),
+      setAdminSettingsSection: vi.fn(),
+      isPlatformAdmin: true,
+      organizationSettingsTargetId: "tenant-a",
+    }));
+
+    act(() => result.current.onControllerChange({ dirty: true, requestNavigation: guarded }));
+    act(() => result.current.openOrganizationGovernance());
+    window.history.replaceState({}, "", "/tenant-admin/settings/users?org=tenant-b");
+    act(() => guarded.mock.calls[0][0]());
+
+    expect(mocks.navigateGovernance.mock.calls[0][0]).toMatchObject({
+      routeId: "organization.members.list",
+      orgId: "tenant-a",
+    });
+    expect(buildGovernanceUrl(mocks.navigateGovernance.mock.calls[0][0])).toBe("/tenant-admin/members/list?org=tenant-a");
+  });
+
+  it("Shell 明确未选择组织时不回退 stale URL", () => {
+    window.history.replaceState({}, "", "/tenant-admin/settings/users?org=tenant-b");
+    const { result } = renderHook(() => useUnifiedSettingsWorkspace({
+      settingsOpen: false,
+      settingsSection: "account-security",
+      adminSettings: { target: "tenant", section: "users" },
+      openSettings: vi.fn(),
+      closeSettings: vi.fn(),
+      setSettingsSection: vi.fn(),
+      openAdminSettings: vi.fn(),
+      closeAdminSettings: vi.fn(),
+      setAdminSettingsSection: vi.fn(),
+      isPlatformAdmin: true,
+      organizationSettingsTargetId: null,
+    }));
+
+    act(() => result.current.openOrganizationGovernance());
+
+    expect(mocks.navigateGovernance.mock.calls[0][0]).toMatchObject({ orgId: null });
+  });
+
   it("未选择目标组织时不伪造平台默认组织", () => {
     const { result } = renderHook(() => useUnifiedSettingsWorkspace({
       settingsOpen: false,

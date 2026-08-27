@@ -293,9 +293,7 @@ export class SkillConfigStore {
         selectedSkills: [...selected],
         revision: (current.revision ?? 0) + 1,
       };
-      this.data.users[username] = next;
-      this.bumpVersion();
-      await this.persist();
+      await this.persistUserSelection(username, next);
       return { selectedSkills: [...next.selectedSkills], revision: next.revision };
     });
   }
@@ -316,9 +314,7 @@ export class SkillConfigStore {
       if (enabled) selected.add(skillId);
       else selected.delete(skillId);
       const next = { selectedSkills: [...selected], revision: revision + 1 };
-      this.data.users[username] = next;
-      this.bumpVersion();
-      await this.persist();
+      await this.persistUserSelection(username, next);
       return { selectedSkills: [...next.selectedSkills], revision: next.revision };
     });
   }
@@ -326,12 +322,10 @@ export class SkillConfigStore {
   async setUserSelectedSkills(username: string, skills: string[]): Promise<void> {
     await this.serialize(async () => {
       const current = this.data.users[username] ?? { selectedSkills: [] };
-      this.data.users[username] = {
+      await this.persistUserSelection(username, {
         selectedSkills: skills,
         revision: (current.revision ?? 0) + 1,
-      };
-      this.bumpVersion();
-      await this.persist();
+      });
     });
   }
 
@@ -639,6 +633,21 @@ export class SkillConfigStore {
       exposure,
       usernames: Array.from(new Set((rule?.usernames ?? []).filter(Boolean))).sort(),
     };
+  }
+
+  private async persistUserSelection(username: string, next: UserSkillConfig): Promise<void> {
+    const previous = this.data.users[username];
+    const previousConfigVersion = this.data.configVersion;
+    this.data.users[username] = next;
+    this.bumpVersion();
+    try {
+      await this.persist();
+    } catch (error) {
+      if (previous) this.data.users[username] = previous;
+      else delete this.data.users[username];
+      this.data.configVersion = previousConfigVersion;
+      throw error;
+    }
   }
 
   private async persist(): Promise<void> {

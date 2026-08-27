@@ -104,7 +104,9 @@ describe('DwsBusinessToolProvider', () => {
     expect(resolveDwsBusinessRisk({ args: ['doc', 'export', 'get'] })).toBe('dangerous');
     expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'future-verb'] })).toBe('dangerous');
     expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'list', '--action=delete'] })).toBe('dangerous');
-    expect(resolveDwsBusinessRisk({ args: ['auth', 'status'] })).toBe('dangerous');
+    expect(resolveDwsBusinessRisk({ args: ['auth', 'status'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['auth', 'login'] })).toBe('dangerous');
+    expect(resolveDwsBusinessRisk({ args: ['auth', 'status', '--verbose'] })).toBe('dangerous');
     expect(dwsBusinessToolDescriptor.resolveCallPolicy?.({ args: ['todo', 'list'] })).toEqual({ risk: 'safe' });
   });
 
@@ -216,6 +218,37 @@ describe('DwsBusinessToolProvider', () => {
     expect(request.input.command).toContain("'--profile' 'requester-profile-secret'");
     expect(request.input.command).toContain("'--yes'");
     expect(request.context.workspace).toMatchObject({ userId: 'user-a', username: 'alice' });
+  });
+
+  it('requester 模式允许在请求者自己的普通 Session 检查能力中心连接', async () => {
+    const { provider, invoke, context, auditStore } = setup({
+      sessionOrgAgentId: null,
+      sessionChannel: 'web',
+    });
+
+    await expect(provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['auth', 'status'], credentialMode: 'requester' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, context)).resolves.toMatchObject({ content: '{"ok":true}' });
+
+    expect(invoke.mock.calls[0]![0].input.command).toContain("'dws' 'auth' 'status' '--profile' 'requester-profile-secret'");
+    expect(auditStore.events[0]).toMatchObject({
+      targetType: 'user',
+      targetId: 'user-a',
+      metadata: { credentialMode: 'requester', sessionBound: false },
+    });
+  });
+
+  it('agent 模式在普通 Session 仍然拒绝借用未绑定的企业专家账号', async () => {
+    const { provider, invoke, context } = setup({ sessionOrgAgentId: null, sessionChannel: 'web' });
+
+    await expect(provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['calendar', 'event', 'list'], credentialMode: 'agent' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, context)).rejects.toThrow('不一致项：session.orgAgentId');
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it('管理员恢复其他用户会话时按会话归属者解析 requester，允许 workspace 保持当前操作者身份', async () => {

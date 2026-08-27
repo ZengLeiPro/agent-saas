@@ -39,7 +39,7 @@ const businessInputSchema = z.object({
 type DwsBusinessInput = z.infer<typeof businessInputSchema>;
 
 const ALLOWED_MODULES = new Set([
-  'agoal', 'aisearch', 'aitable', 'approval', 'attendance', 'axls', 'bot', 'calendar', 'chat',
+  'agoal', 'aisearch', 'aitable', 'approval', 'attendance', 'auth', 'axls', 'bot', 'calendar', 'chat',
   'contact', 'devdoc', 'ding', 'doc', 'drive', 'kb', 'mail', 'minutes', 'oa', 'report', 'sheet',
   'table', 'todo', 'wiki',
 ]);
@@ -77,10 +77,10 @@ export const dwsBusinessToolDescriptor: ToolDescriptor<DwsBusinessInput> = {
   displayName: '钉钉业务操作',
   label: '钉钉业务',
   description: [
-    '通过当前企业专家绑定的受控 DWS Broker 查询或写入钉钉业务数据。',
+    '通过受控 DWS Broker 查询或写入钉钉业务数据。',
     'args 只填写 dws 后面的参数数组，例如 ["calendar","event","list","--today"]；不要填写 dws、--profile、--format 或任何 token。',
-    'credentialMode=agent 表示以专家自身钉钉账号执行；requester 表示以当前请求者已连接的唯一钉钉账号执行。',
-    '写操作必须在用户明确要求或确认后传 confirmed=true；delete/remove/recall/revoke/approve/reject 等破坏性或高影响动作本阶段拒绝。',
+    'credentialMode=agent 表示以当前企业专家自身钉钉账号执行，要求 Session 绑定企业专家；requester 表示以当前请求者在能力中心连接的唯一钉钉账号执行，可用于请求者自己的普通 Session。',
+    'auth 模块只开放只读的 auth status；写操作必须在用户明确要求或确认后传 confirmed=true；delete/remove/recall/revoke/approve/reject 等破坏性或高影响动作本阶段拒绝。',
   ].join('\n'),
   schema: businessInputSchema,
   risk: 'workspace_write',
@@ -178,9 +178,11 @@ export class DwsBusinessToolProvider implements ToolProvider {
     const operatorCanActForSessionOwner = operator.id === identity.id
       || (operator.role === 'admin' && operator.tenantId === identity.tenantId)
       || operatorIsPlatformAdmin;
+    const orgAgentId = session?.orgAgentId;
+    const requiresOrgAgent = input.credentialMode === 'agent' || session?.channel === 'cron';
     const mismatchFields = [
       ...(!operatorCanActForSessionOwner ? ['operator.sessionOwnerTenantScope'] : []),
-      ...(!session?.orgAgentId ? ['session.orgAgentId'] : []),
+      ...(requiresOrgAgent && !orgAgentId ? ['session.orgAgentId'] : []),
       ...(session?.userId !== identity.id ? ['session.userId'] : []),
       ...(session?.tenantId !== identity.tenantId ? ['session.tenantId'] : []),
       ...(context.workspace.userId !== workspaceIdentity?.id ? ['workspace.userId'] : []),
@@ -211,7 +213,6 @@ export class DwsBusinessToolProvider implements ToolProvider {
         ? '此定时任务未绑定企业专家，无法使用 DWS Broker；请在目标企业专家会话中重新创建该定时任务'
         : `DWS Broker 会话绑定已失效（不一致项：${mismatchFields.join('、')}），请重新打开当前会话后重试`);
     }
-    if (!session?.orgAgentId) throw new Error('DWS Broker 会话绑定已失效，请重新打开当前会话后重试');
     let command: ClassifiedCommand;
     try {
       command = classifyCommand(input.args);
@@ -224,13 +225,15 @@ export class DwsBusinessToolProvider implements ToolProvider {
       throw new Error('DWS 写操作缺少用户明确确认');
     }
 
-    const account = (await this.options.accountStore.listForTenant(identity.tenantId))
-      .find(candidate => candidate.agentId === session.orgAgentId) ?? null;
-    if (!account || account.status !== 'active' || !account.profileId) {
+    const account = input.credentialMode === 'agent' && orgAgentId
+      ? (await this.options.accountStore.listForTenant(identity.tenantId))
+          .find(candidate => candidate.agentId === orgAgentId) ?? null
+      : null;
+    if (input.credentialMode === 'agent' && (!account || account.status !== 'active' || !account.profileId)) {
       await auditRejection('DWS_BUSINESS_AGENT_ACCOUNT_UNAVAILABLE');
       throw new Error('当前企业专家没有可用的钉钉账号授权');
     }
-    const delegation = input.credentialMode === 'agent'
+    const delegation = input.credentialMode === 'agent' && account
       ? await this.resolveAgentCredentialDelegation(
           identity.tenantId,
           identity.id,
@@ -249,15 +252,15 @@ export class DwsBusinessToolProvider implements ToolProvider {
       actorPersona: operator.role === 'admin' ? 'org_admin' as const : 'member' as const,
       actorTenantId: operator.tenantId,
       action: `dws.business.${command.risk}`,
-      targetType: 'org_agent',
-      targetId: session.orgAgentId,
+      targetType: orgAgentId ? 'org_agent' : 'user',
+      targetId: orgAgentId ?? identity.id,
       targetTenantId: identity.tenantId,
       purpose: 'execute registered DWS business action through credential broker',
       metadata: {
         module: command.module,
         commandPath: command.commandPath,
         credentialMode: input.credentialMode,
-        sessionBound: true,
+        sessionBound: Boolean(orgAgentId),
         sessionOwnerUserId: identity.id,
         sessionOwnerTenantId: identity.tenantId,
         operatorUserId: operator.id,
@@ -274,19 +277,23 @@ export class DwsBusinessToolProvider implements ToolProvider {
 
     let profileId: string | undefined;
     try {
-      const principalAndProfile = input.credentialMode === 'requester'
-        ? await this.resolveRequesterPrincipal(identity.tenantId, identity.id)
-        : {
-            principal: {
-              id: account.accountId,
-              username: account.displayName,
-              tenantId: account.tenantId,
-              role: 'user' as const,
-              principalType: 'agent' as const,
-              agentId: account.agentId,
-            },
-            profileId: account.profileId,
-          };
+      let principalAndProfile;
+      if (input.credentialMode === 'requester') {
+        principalAndProfile = await this.resolveRequesterPrincipal(identity.tenantId, identity.id);
+      } else {
+        if (!account?.profileId) throw new Error('当前企业专家没有可用的钉钉账号授权');
+        principalAndProfile = {
+          principal: {
+            id: account.accountId,
+            username: account.displayName,
+            tenantId: account.tenantId,
+            role: 'user' as const,
+            principalType: 'agent' as const,
+            agentId: account.agentId,
+          },
+          profileId: account.profileId,
+        };
+      }
       profileId = principalAndProfile.profileId;
       const result = await this.execute(
         principalAndProfile.principal,
@@ -472,10 +479,12 @@ function classifyCommand(args: string[]): ClassifiedCommand {
   if ([...pathTokens, ...flagNameTokens].some(token => DESTRUCTIVE_VERBS.has(token))) {
     throw new Error('DWS 破坏性或高影响动作本阶段未开放');
   }
+  const normalizedCommandPath = commandPath.map(token => token.toLowerCase()).join('.');
+  const isAuthStatus = normalizedCommandPath === 'auth.status' && trailingArgs.length === 0;
+  if (isAuthStatus) return { module, commandPath: normalizedCommandPath, risk: 'read' };
   if (pathTokens.some(token => FORBIDDEN_VERBS.has(token))) {
     throw new Error('DWS 命令超出业务 Broker 边界');
   }
-  const normalizedCommandPath = commandPath.map(token => token.toLowerCase()).join('.');
   if (trailingArgs.length > 0 && trailingArgs.every(token => token === '--help' || token === '-h')) {
     return { module, commandPath: normalizedCommandPath, risk: 'read' };
   }

@@ -24,6 +24,18 @@ function run(command, args, cwd = process.cwd()) {
   execFileSync(command, args, { cwd, stdio: 'inherit', env: process.env });
 }
 
+export function productionDeployArgs(project, target) {
+  return [
+    '--config.allowUnusedPatches=true',
+    '--filter',
+    project,
+    '--prod',
+    'deploy',
+    '--legacy',
+    target,
+  ];
+}
+
 async function pack(directory, target) {
   run('tar', ['-czf', target, '-C', directory, '.']);
   return { path: basename(target), ...(await digestFile(target)) };
@@ -44,7 +56,7 @@ export async function buildRelease(argv = process.argv) {
 
   run('pnpm', ['-F', 'server', 'build'], root);
   run('pnpm', ['-F', 'web', 'build:oss'], root);
-  run('pnpm', ['--filter', 'server', '--prod', 'deploy', '--legacy', join(stage, 'server')], root);
+  run('pnpm', productionDeployArgs('server', join(stage, 'server')), root);
   await rm(join(stage, 'server/dist'), { recursive: true, force: true });
   run('cp', ['-R', join(root, 'server/dist'), join(stage, 'server/dist')]);
   run('cp', [
@@ -60,18 +72,7 @@ export async function buildRelease(argv = process.argv) {
   };
   if (opts['include-acs']) {
     run('pnpm', ['-F', 'acs-orchestrator', 'build'], root);
-    run(
-      'pnpm',
-      [
-        '--filter',
-        'acs-orchestrator',
-        '--prod',
-        'deploy',
-        '--legacy',
-        join(stage, 'acs-orchestrator'),
-      ],
-      root,
-    );
+    run('pnpm', productionDeployArgs('acs-orchestrator', join(stage, 'acs-orchestrator')), root);
     await rm(join(stage, 'acs-orchestrator/dist'), { recursive: true, force: true });
     run('cp', ['-R', join(root, 'acs-orchestrator/dist'), join(stage, 'acs-orchestrator/dist')]);
     run('cp', [

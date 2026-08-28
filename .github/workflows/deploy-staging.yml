@@ -51,6 +51,7 @@ jobs:
       STAGING_SSH_HOST_KEY_SHA256: ${{ vars.STAGING_SSH_HOST_KEY_SHA256 }}
       STAGING_RELEASE_OSS_URI: ${{ vars.STAGING_RELEASE_OSS_URI }}
       STAGING_WEB_OSS_URI: oss://agent-saas-web-staging
+      RELEASE_RECORD_OSS_REGION: cn-shenzhen
       DISPATCH_REASON: ${{ inputs.reason || 'manual staging release' }}
 
     steps:
@@ -144,7 +145,8 @@ jobs:
           node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release/artifact-index.json" "$GITHUB_SHA" || {
             destination="$STAGING_RELEASE_OSS_URI/$STAGING_RELEASE_ID"
             rm -rf "$RUNNER_TEMP/release" && mkdir -p "$RUNNER_TEMP/release"
-            aliyun oss cp "$destination/" "$RUNNER_TEMP/release/" --recursive
+            aliyun --secure oss cp "$destination/" "$RUNNER_TEMP/release/" --recursive \
+              --region "$RELEASE_RECORD_OSS_REGION"
             node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release/artifact-index.json" "$GITHUB_SHA"
           }
           echo "MANIFEST_DIGEST=$manifest_digest" >> "$GITHUB_ENV"
@@ -202,10 +204,12 @@ jobs:
           : "${STAGING_RELEASE_OSS_URI:?Missing staging variable STAGING_RELEASE_OSS_URI}"
           case "$STAGING_RELEASE_OSS_URI" in oss://*) ;; *) echo 'Release URI must be OSS'; exit 1 ;; esac
           destination="$STAGING_RELEASE_OSS_URI/$STAGING_RELEASE_ID"
-          if aliyun oss stat "$destination/artifact-index.json" >/dev/null 2>&1; then
+          if aliyun --secure oss stat "$destination/artifact-index.json" \
+            --region "$RELEASE_RECORD_OSS_REGION" >/dev/null 2>&1; then
             rm -rf "$RUNNER_TEMP/release-saved"
             mkdir -p "$RUNNER_TEMP/release-saved"
-            aliyun oss cp "$destination/" "$RUNNER_TEMP/release-saved/" --recursive
+            aliyun --secure oss cp "$destination/" "$RUNNER_TEMP/release-saved/" \
+              --recursive --region "$RELEASE_RECORD_OSS_REGION"
             node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release-saved/artifact-index.json" "$GITHUB_SHA"
             rm -rf "$RUNNER_TEMP/release"
             mv "$RUNNER_TEMP/release-saved" "$RUNNER_TEMP/release"
@@ -216,7 +220,8 @@ jobs:
             done < <(find "$RUNNER_TEMP/release" -maxdepth 1 -type f -print0)
             rm -rf "$RUNNER_TEMP/release-saved"
             mkdir -p "$RUNNER_TEMP/release-saved"
-            aliyun oss cp "$destination/" "$RUNNER_TEMP/release-saved/" --recursive
+            aliyun --secure oss cp "$destination/" "$RUNNER_TEMP/release-saved/" \
+              --recursive --region "$RELEASE_RECORD_OSS_REGION"
             node scripts/release/verify-artifact.mjs \
               "$RUNNER_TEMP/release-saved/artifact-index.json" "$GITHUB_SHA"
           fi
@@ -269,9 +274,11 @@ jobs:
 
           records_root="$RUNNER_TEMP/immutable-release-records"
           record_uri="$STAGING_RELEASE_OSS_URI/records/$STAGING_RELEASE_ID"
-          if aliyun oss stat "$record_uri/record.json" >/dev/null 2>&1; then
+          if aliyun --secure oss stat "$record_uri/record.json" \
+            --region "$RELEASE_RECORD_OSS_REGION" >/dev/null 2>&1; then
             mkdir -p "$records_root/$STAGING_RELEASE_ID"
-            aliyun oss cp "$record_uri/" "$records_root/$STAGING_RELEASE_ID/" --recursive
+            aliyun --secure oss cp "$record_uri/" "$records_root/$STAGING_RELEASE_ID/" \
+              --recursive --region "$RELEASE_RECORD_OSS_REGION"
           fi
           node scripts/release/publish-release-record.mjs "$RUNNER_TEMP/manifest.json" \
             "$RUNNER_TEMP/release/artifact-index.json" "$records_root"
@@ -295,7 +302,7 @@ jobs:
           fetch() {
             local uri="$1" target="$2"
             case "$uri" in
-              oss://*) aliyun oss cp "$uri" "$target" ;;
+              oss://*) aliyun --secure oss cp "$uri" "$target" --region "$RELEASE_RECORD_OSS_REGION" ;;
               https://*) curl -fsSL --retry 3 "$uri" -o "$target" ;;
               *) echo "Unsupported immutable artifact URI: $uri" >&2; return 1 ;;
             esac
@@ -359,14 +366,15 @@ jobs:
             --arg configFingerprint "$(jq -r .digest "$RUNNER_TEMP/manifest.json")" \
             '{schemaVersion:1,environment:"staging",releaseId:$releaseId,releaseSha:$releaseSha,webDigest:$webDigest,configFingerprint:$configFingerprint}' \
             > "$RUNNER_TEMP/web-assets/release-identity.json"
-          aliyun oss sync "$RUNNER_TEMP/web-assets/" "$STAGING_WEB_OSS_URI/" --delete
+          aliyun --secure oss sync "$RUNNER_TEMP/web-assets/" "$STAGING_WEB_OSS_URI/" \
+            --delete --region "$RELEASE_RECORD_OSS_REGION"
           rm -rf "$RUNNER_TEMP/web-oss-readback"
           mkdir -p "$RUNNER_TEMP/web-oss-readback"
           while IFS= read -r -d '' source; do
             relative="${source#"$RUNNER_TEMP/web-assets/"}"
             mkdir -p "$RUNNER_TEMP/web-oss-readback/$(dirname "$relative")"
-            aliyun oss cp "$STAGING_WEB_OSS_URI/$relative" \
-              "$RUNNER_TEMP/web-oss-readback/$relative"
+            aliyun --secure oss cp "$STAGING_WEB_OSS_URI/$relative" \
+              "$RUNNER_TEMP/web-oss-readback/$relative" --region "$RELEASE_RECORD_OSS_REGION"
             cmp "$source" "$RUNNER_TEMP/web-oss-readback/$relative"
           done < <(find "$RUNNER_TEMP/web-assets" -type f -print0)
           curl -fsS --retry 10 "$STAGING_WEB_URL" >/dev/null

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import test from 'node:test';
 import {
+  hasSystemdEnvironment,
   parseReleaseEnvironment,
   readJson,
   validateLiveProductionComponents,
@@ -22,11 +23,12 @@ test('reads an independently attested production component matrix', () => {
       },
     },
     web: { schemaVersion: 1, environment: 'production', releaseSha: SHA, webDigest: DIGEST },
-    workerEnvironment: {
-      AGENT_SAAS_ENVIRONMENT: 'production',
+    workerReleaseEnvironment: {
       AGENT_SAAS_RELEASE_SHA: SHA,
       AGENT_SAAS_SERVER_DIGEST: DIGEST,
     },
+    workerSystemdEnvironment:
+      'NODE_ENV=production AGENT_SAAS_ENVIRONMENT=production AGENT_SAAS_PROCESS_ROLE=runtime-worker',
     acs: {
       environment: 'production',
       releaseIdentityAttested: true,
@@ -47,10 +49,64 @@ test('rejects unknown identity and ambiguous release environment', () => {
       validateLiveProductionComponents({
         api: { status: 'ok', release: { environment: 'production', safetyAttested: true } },
         web: {},
-        workerEnvironment: {},
+        workerReleaseEnvironment: {},
+        workerSystemdEnvironment: '',
         acs: {},
       }),
     /Web release identity/u,
+  );
+});
+
+test('trusts the running Worker systemd environment instead of a release env assertion', () => {
+  assert.equal(
+    hasSystemdEnvironment(
+      'NODE_ENV=production AGENT_SAAS_ENVIRONMENT=production AGENT_SAAS_PROCESS_ROLE=runtime-worker',
+      'AGENT_SAAS_ENVIRONMENT',
+      'production',
+    ),
+    true,
+  );
+  assert.equal(
+    hasSystemdEnvironment(
+      'NODE_ENV=production AGENT_SAAS_ENVIRONMENT=staging',
+      'AGENT_SAAS_ENVIRONMENT',
+      'production',
+    ),
+    false,
+  );
+
+  const common = {
+    api: {
+      status: 'ok',
+      release: {
+        environment: 'production',
+        safetyAttested: true,
+        releaseSha: SHA,
+        serverDigest: DIGEST,
+      },
+    },
+    web: { schemaVersion: 1, environment: 'production', releaseSha: SHA, webDigest: DIGEST },
+    workerReleaseEnvironment: {
+      AGENT_SAAS_ENVIRONMENT: 'production',
+      AGENT_SAAS_RELEASE_SHA: SHA,
+      AGENT_SAAS_SERVER_DIGEST: DIGEST,
+    },
+    acs: {
+      environment: 'production',
+      releaseIdentityAttested: true,
+      namespace: 'agent-saas-coding',
+      sourceSha: SHA,
+      orchestratorArtifactDigest: DIGEST,
+      sandboxImageDigest: DIGEST,
+    },
+  };
+  assert.throws(
+    () =>
+      validateLiveProductionComponents({
+        ...common,
+        workerSystemdEnvironment: 'AGENT_SAAS_ENVIRONMENT=staging',
+      }),
+    /Worker environment is not explicit/u,
   );
 });
 

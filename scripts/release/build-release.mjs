@@ -25,23 +25,19 @@ function run(command, args, cwd = process.cwd()) {
 }
 
 export function productionDeployArgs(project, target) {
-  return [
-    '--config.allowUnusedPatches=true',
-    '--filter',
-    project,
-    '--prod',
-    'deploy',
-    '--legacy',
-    target,
-  ];
+  return ['--config.allowUnusedPatches=true', '--filter', project, '--prod', 'deploy', target];
 }
 
 export function sbomListArgs() {
   return ['list', '--prod', '--recursive', '--depth', '0', '--json'];
 }
 
+export function packArgs(directory, target) {
+  return ['--no-xattrs', '-czf', target, '-C', directory, '.'];
+}
+
 async function pack(directory, target) {
-  run('tar', ['-czf', target, '-C', directory, '.']);
+  run('tar', packArgs(directory, target));
   return { path: basename(target), ...(await digestFile(target)) };
 }
 

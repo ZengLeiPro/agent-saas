@@ -100,6 +100,11 @@ export function TaskCard({
                 {TASK_KIND_LABELS[kind]}
               </Badge>
             ) : null}
+            {task.providerPullRequestId ? (
+              <Badge variant="secondary" className="font-normal">
+                PR {task.providerPullRequestId}
+              </Badge>
+            ) : null}
             {task.priority !== "none" ? (
               <Badge variant="outline" className={cn("font-normal", PRIORITY_CLASSES[task.priority])}>
                 {PRIORITY_LABELS[task.priority]}
@@ -110,12 +115,6 @@ export function TaskCard({
         {task.title ? (
           <div className="mt-2 line-clamp-2 text-sm font-medium leading-5 text-foreground">
             {task.title}
-          </div>
-        ) : null}
-        {task.providerPullRequestId ? (
-          <div className="mt-2 text-xs text-muted-foreground">
-            PR <span className="font-mono">{task.providerPullRequestId}</span>
-            {task.reviewedSubjectDigest ? <span className="ml-2 text-emerald-700 dark:text-emerald-400">已复核</span> : <span className="ml-2 text-amber-700 dark:text-amber-300">待复核</span>}
           </div>
         ) : null}
         {kind === "integration" ? (

@@ -108,6 +108,14 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ob
   assert.match(workflow, /Persist Web operation receipt/u);
   assert.match(deploy, /cleanup_app_failure/u);
   assert.match(deploy, /cleanup_acs_failure/u);
+  assert.match(deploy, /if \[ -L \/opt\/agent-saas\/acs-current \]; then/u);
+  assert.match(deploy, /Existing ACS release path must be a symlink/u);
+  assert.doesNotMatch(
+    deploy,
+    /previous="\$\(readlink -f \/opt\/agent-saas\/acs-current 2>\/dev\/null \|\| true\)"/u,
+  );
+  assert.match(deploy, /verify --root "\$target" --component acs >\/dev\/null/u);
+  assert.match(deploy, /verify --root "\$target" --component server >\/dev\/null/u);
   assert.match(deploy, /verify --root "\$target" --component server/u);
   assert.match(deploy, /releases\/\$artifact_digest/u);
   assert.match(deploy, /r\.environment !== 'production'/u);

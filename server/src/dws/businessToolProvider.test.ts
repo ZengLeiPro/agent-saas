@@ -27,6 +27,7 @@ function setup(input: {
   assignmentUnavailable?: boolean;
   sessionOrgAgentId?: string | null;
   sessionChannel?: 'web' | 'dingtalk' | 'cron';
+  requesterProfiles?: Array<Record<string, unknown>>;
 } = {}) {
   const auditStore = new InMemoryGovernanceAuditStore();
   const invoke = vi.fn().mockResolvedValue({
@@ -51,7 +52,7 @@ function setup(input: {
     } as never,
     assignmentStore: { listEffectiveResourceIds } as never,
     connectionStore: {
-      listForUser: vi.fn().mockResolvedValue([{
+      listForUser: vi.fn().mockResolvedValue(input.requesterProfiles ?? [{
         tenantId: 'tenant-a', userId: 'user-a', username: 'alice', profileId: 'requester-profile-secret',
         connectionStatus: 'connected', authenticated: true, refreshTokenValid: true,
       }]),
@@ -374,15 +375,75 @@ describe('DwsBusinessToolProvider', () => {
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('"operatorUserId":"user-b"'));
   });
 
-  it('对未绑定企业专家的 cron Session 返回可操作错误', async () => {
+  it('个人 Cron 未绑定企业专家时 requester 模式按创建者连接执行', async () => {
+    const { provider, invoke, context, auditStore } = setup({ sessionOrgAgentId: null, sessionChannel: 'cron' });
+
+    await expect(provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['drive', 'recent', '--help'], credentialMode: 'requester' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, context)).resolves.toMatchObject({ content: '{"ok":true}' });
+
+    expect(invoke.mock.calls[0]![0].input.command).toContain("'dws' 'drive' 'recent' '--help' '--profile' 'requester-profile-secret'");
+    expect(auditStore.events[0]).toMatchObject({
+      targetType: 'user',
+      targetId: 'user-a',
+      metadata: { credentialMode: 'requester', sessionBound: false },
+    });
+  });
+
+  it('agent 模式在未绑定企业专家的 cron Session 仍返回可操作错误', async () => {
+    const { provider, invoke, context } = setup({ sessionOrgAgentId: null, sessionChannel: 'cron' });
+
+    await expect(provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['calendar', 'event', 'list'], credentialMode: 'agent' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, context)).rejects.toThrow('请在目标企业专家会话中重新创建该定时任务');
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('个人 Cron 身份漂移时 requester 模式 fail closed', async () => {
     const { provider, invoke, context } = setup({ sessionOrgAgentId: null, sessionChannel: 'cron' });
 
     await expect(provider.invoke({
       toolId: 'DwsBusiness',
       input: { args: ['drive', 'recent', '--help'], credentialMode: 'requester' },
       authorization: { approved: true, source: 'policy_auto' },
-    }, context)).rejects.toThrow('请在目标企业专家会话中重新创建该定时任务');
+    }, {
+      ...context,
+      workspace: { ...context.workspace, userId: 'other-user' },
+    })).rejects.toThrow('不一致项：workspace.userId');
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('个人 Cron requester 连接缺失或存在多连接歧义时不回退企业专家', async () => {
+    for (const profiles of [
+      [],
+      [
+        {
+          tenantId: 'tenant-a', userId: 'user-a', username: 'alice', profileId: 'profile-1',
+          connectionStatus: 'connected', authenticated: true, refreshTokenValid: true,
+        },
+        {
+          tenantId: 'tenant-a', userId: 'user-a', username: 'alice', profileId: 'profile-2',
+          connectionStatus: 'connected', authenticated: true, refreshTokenValid: true,
+        },
+      ],
+    ]) {
+      const { provider, invoke, context } = setup({
+        sessionOrgAgentId: null,
+        sessionChannel: 'cron',
+        requesterProfiles: profiles as never,
+      });
+
+      await expect(provider.invoke({
+        toolId: 'DwsBusiness',
+        input: { args: ['auth', 'status'], credentialMode: 'requester' },
+        authorization: { approved: true, source: 'policy_auto' },
+      }, context)).rejects.toThrow(/没有已连接的钉钉账号|存在多个钉钉账号/);
+      expect(invoke).not.toHaveBeenCalled();
+    }
   });
 
   it('拒绝未确认写操作、外部 profile 参数与身份漂移', async () => {

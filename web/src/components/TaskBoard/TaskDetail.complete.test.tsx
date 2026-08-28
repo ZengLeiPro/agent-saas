@@ -78,6 +78,7 @@ describe("TaskDetail 人工完成", () => {
     const onTaskLoaded = vi.fn();
     render(<TaskDetail {...props({ onCompleteTask, onTaskLoaded })} />);
 
+    await user.click(await screen.findByRole("button", { name: "展开任务详情" }));
     await user.click(await screen.findByRole("button", { name: "完成任务" }));
     await waitFor(() => expect(onCompleteTask).toHaveBeenCalledWith(advisoryTask));
     expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("结束当前任务工作流"));

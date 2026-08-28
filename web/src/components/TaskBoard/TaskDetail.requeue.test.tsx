@@ -63,6 +63,7 @@ describe("TaskDetail 恢复待推进", () => {
     const componentProps = props(current, onMove);
     render(<TaskDetail {...componentProps} />);
 
+    await user.click(await screen.findByRole("button", { name: "展开任务详情" }));
     await user.click(await screen.findByRole("combobox", { name: "任务状态" }));
     await user.click(screen.getByRole("option", { name: "待推进" }));
 
@@ -72,10 +73,12 @@ describe("TaskDetail 恢复待推进", () => {
   });
 
   it("已被集成认领的待合并任务不能恢复", async () => {
+    const user = userEvent.setup();
     const current = task("ready_to_merge", "claimed");
     mocks.fetchTask.mockResolvedValue(current);
     render(<TaskDetail {...props(current)} />);
 
+    await user.click(await screen.findByRole("button", { name: "展开任务详情" }));
     expect((await screen.findByRole("combobox", { name: "任务状态" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

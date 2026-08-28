@@ -71,7 +71,7 @@ function App() {
   const {
     messages, input, sandboxProfile, setSandboxProfile, loading, sessionId, sessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, tenantAdminSection, settingsOpen, settingsSection,
     uploadedFiles, uploading, uploadError, dismissUploadError, isDragging, isLoadingSessions, isLoadingMessages,
-    hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
+    sessionLoadError, retrySessionLoad, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
     deleteSessionId, deleteSessionCount, lastMessageRef, scrollContainerRef, isNearBottomRef,
     setInput, setActiveTab, pushActiveTab, setPlatformAdminRoute, setTenantAdminRoute, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
@@ -227,7 +227,7 @@ function App() {
     isLoadingSessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, tenantAdminSection, setTenantAdminRoute, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
-    messages, loading, isLoadingMessages, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
+    messages, loading, isLoadingMessages, sessionLoadError, retrySessionLoad, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
     retryMessage, forkFromMessage, lastMessageRef, scrollContainerRef, isNearBottomRef,
     handlePermissionResponse, handleAskUserResponse,
     uploadedFiles, removeFile, input, sandboxProfile, setSandboxProfile, uploading, uploadError, dismissUploadError, setInput,

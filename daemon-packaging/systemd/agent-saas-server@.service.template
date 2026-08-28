@@ -29,7 +29,7 @@ RequiresMountsFor=/mnt/agent-workspaces /mnt/agent-saas
 [Service]
 Type=simple
 WorkingDirectory=/opt/agent-saas-app/color/%i/server
-BindPaths=/opt/agent-saas/server/data:/opt/agent-saas-app/color/%i/server/data
+BindPaths=/mnt/agent-saas/server-data:/opt/agent-saas-app/color/%i/server/data
 BindPaths=/opt/agent-saas/workspace-shared:/opt/agent-saas-app/color/%i/workspace-shared
 Environment=NODE_ENV=production
 Environment=AGENT_SAAS_CONFIG_PATH=/etc/agent-saas/config.json

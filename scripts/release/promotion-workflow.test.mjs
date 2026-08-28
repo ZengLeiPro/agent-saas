@@ -153,7 +153,7 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ob
   );
   assert.match(
     serverUnit,
-    /^BindPaths=\/opt\/agent-saas\/server\/data:\/opt\/agent-saas-app\/color\/%i\/server\/data$/mu,
+    /^BindPaths=\/mnt\/agent-saas\/server-data:\/opt\/agent-saas-app\/color\/%i\/server\/data$/mu,
   );
   assert.match(
     serverUnit,
@@ -161,7 +161,7 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ob
   );
   assert.match(
     workerUnit,
-    /^BindPaths=\/opt\/agent-saas\/server\/data:\/opt\/agent-saas-app\/worker\/%i\/server\/data$/mu,
+    /^BindPaths=\/mnt\/agent-saas\/server-data:\/opt\/agent-saas-app\/worker\/%i\/server\/data$/mu,
   );
   assert.match(
     workerUnit,

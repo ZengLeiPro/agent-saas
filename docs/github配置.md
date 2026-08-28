@@ -3,7 +3,7 @@
 本文档用于配置 `ZengLeiPro/agent-saas` 的仓库 Ruleset，以及新版发布流程所需的
 `staging`、`production` GitHub Environment。
 
-当前值核验日期：`2026-08-27`。本文档按当前 macOS 工作站上的凭据来源编写，交给管理员或其
+当前值核验日期：`2026-08-28`。本文档按当前 macOS 工作站上的凭据来源编写，交给管理员或其
 自动化执行端时，必须在同一工作站和仓库目录执行。文档不包含任何 Secret 明文。
 
 开始前，承载本文档及新版发布实现的 PR 必须已经合并到 `main`。管理员应在 `main` 上确认至少
@@ -13,7 +13,7 @@
 test -f scripts/staging/ensure-integration-fixture.mjs
 grep -F 'Verify migrations and create isolated Integration fixture' \
   .github/workflows/deploy-staging.yml
-grep -F 'github-environments-not-configured' infra/staging/resource-plan.json
+grep -F '"firstDeploymentReadiness": "ready"' infra/staging/resource-plan.json
 ```
 
 配置必须分为两个阶段：

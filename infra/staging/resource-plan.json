@@ -4,8 +4,8 @@
   "region": "cn-shenzhen",
   "status": "provisioned",
   "verificationStatus": "pending",
-  "firstDeploymentReadiness": "blocked",
-  "blockingConditions": ["github-environments-not-configured"],
+  "firstDeploymentReadiness": "ready",
+  "blockingConditions": [],
   "resources": {
     "web": {
       "bucket": "agent-saas-web-staging",

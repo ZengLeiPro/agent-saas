@@ -168,7 +168,9 @@ export async function fenceTaskExecutions(
       `INSERT INTO ${host.cancellationOutboxTable}
          (id,execution_id,run_id,task_id,reason,fence_epoch)
        VALUES ($1,$2,$3,$4,$5,$6)
-       ON CONFLICT (execution_id) DO NOTHING`,
+       ON CONFLICT (execution_id) DO UPDATE
+         SET reason=EXCLUDED.reason,fence_epoch=EXCLUDED.fence_epoch,status='pending',
+             attempts=0,last_error=NULL,updated_at=now()`,
       [randomUUID(), row.id, row.run_id, row.task_id, reason, row.fence_epoch],
     );
     await client.query(

@@ -114,6 +114,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const options = parse(process.argv);
   const runtime = readRuntimeIdentity({
     identityPath: '/etc/agent-saas/runtime-identity.json',
+    refreshTopologyObservation: true,
   });
   if (!runtime.ok) throw new Error(runtime.blockingReasons.join(' '));
   const [api, web, acs] = await Promise.all([

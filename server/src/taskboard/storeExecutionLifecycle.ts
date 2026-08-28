@@ -43,6 +43,7 @@ import {
   type TaskboardIdentity,
 } from './types.js';
 import { appendTaskChange } from './v2Store.js';
+import { EXECUTION_TRANSITIONED_REASON } from './workflow/cancellationOutbox.js';
 
 export function shouldPersistIntegrationDurableSession(
   integrationAgent: boolean,
@@ -514,9 +515,12 @@ async function completeExecutionInternal(
       );
       return { task: loaded.task, execution: currentExecution };
     }
-    const completionInput = input;
     const hasProtocolTransition = currentExecution.protocolVersion === 2
       && Boolean(executionResult.rows[0].transitioned_at);
+    // The durable protocol transition is the business terminal fact; a later Runtime stop only closes the old Run.
+    const completionInput = hasProtocolTransition && input.status !== 'succeeded'
+      ? { ...input, status: 'succeeded' as const, error: undefined }
+      : input;
     const unfinishedStage = currentExecution.protocolVersion === 2
       && input.status === 'succeeded'
       && !hasProtocolTransition;
@@ -629,10 +633,17 @@ async function completeExecutionInternal(
     const updated = await client.query(
       `UPDATE ${store.executionsTable}
           SET status=$2, error=$3, finished_at=now(), updated_at=now(),
+              terminal_reason_code=CASE WHEN terminal_reason_code=$4 THEN NULL ELSE terminal_reason_code END,
               reconcile_lease_id=NULL, reconcile_lease_expires_at=NULL
         WHERE run_id=$1
         RETURNING *`,
-      [runId, completionInput.status, optionalText(completionInput.error)],
+      [runId, completionInput.status, optionalText(completionInput.error), EXECUTION_TRANSITIONED_REASON],
+    );
+    await client.query(
+      `UPDATE ${store.cancellationOutboxTable}
+          SET status='completed',last_error=NULL,updated_at=now()
+        WHERE execution_id=$1 AND reason=$2 AND status IN ('pending','failed')`,
+      [currentExecution.id, EXECUTION_TRANSITIONED_REASON],
     );
     await client.query(
       `UPDATE ${store.executionOutboxTable}

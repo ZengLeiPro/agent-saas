@@ -17,6 +17,7 @@ import { MarkdownReadonly } from "@/components/MarkdownReadonly";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { DEFAULT_TENANT_ID } from "@/components/TenantManager/types";
+import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { fetchTenantCompanyInfo, updateTenantCompanyInfo } from "@agent/shared";
 
@@ -74,7 +75,7 @@ export function CompanyInfoSection({ tenantId, tenantName }: CompanyInfoSectionP
     };
   }, [tenantId]);
 
-  const handleSave = useCallback(async () => {
+  const saveContent = useCallback(async () => {
     setSaving(true);
     setSaveMsg(null);
     setSaveOk(false);
@@ -88,10 +89,24 @@ export function CompanyInfoSection({ tenantId, tenantName }: CompanyInfoSectionP
     } catch (err) {
       setSaveOk(false);
       setSaveMsg(`保存失败: ${err instanceof Error ? err.message : "未知错误"}`);
+      throw err;
     } finally {
       setSaving(false);
     }
   }, [content, tenantId]);
+  const discardContent = useCallback(() => {
+    setContent(initial.current);
+    setEditing(false);
+    setSaveMsg(null);
+    setSaveOk(false);
+  }, []);
+  useSettingsDirtyEntry({
+    id: `organization-company-info:${tenantId}`,
+    label: "公司信息",
+    dirty,
+    save: saveContent,
+    discard: discardContent,
+  });
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
@@ -110,7 +125,7 @@ export function CompanyInfoSection({ tenantId, tenantName }: CompanyInfoSectionP
               </span>
             )}
             {editing ? (
-              <Button onClick={handleSave} disabled={loading || saving || !dirty || readOnly}>
+              <Button onClick={() => void saveContent().catch(() => undefined)} disabled={loading || saving || !dirty || readOnly}>
                 {saving ? (
                   <Loader2 className="size-4 animate-spin" />
                 ) : (

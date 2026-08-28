@@ -52,6 +52,7 @@ const ToolControlsManagerPanel = lazy(() => import("@/components/ToolControlsMan
 const SignupConfigManagerPanel = lazy(() => import("@/components/SignupConfigManager").then(m => ({ default: m.SignupConfigManager })));
 const MemoryPollingManagerPanel = lazy(() => import("@/components/MemoryPollingManager").then(m => ({ default: m.MemoryPollingManager })));
 const SettingsModal = lazy(() => import("@/components/SettingsCenter").then(m => ({ default: m.SettingsModal })));
+const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry").then(m => ({ default: m.SettingsDirtyBoundary })));
 const CapabilityCenterPanel = lazy(() => import("@/components/CapabilityCenter").then(m => ({ default: m.CapabilityCenter })));
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
 const TenantAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.TenantAdminShell })));
@@ -253,6 +254,7 @@ export function MobileLayout(props: LayoutProps) {
   if (activeTab === "tenant-admin" && governanceRoute?.area === "organization") {
     return (
       <Suspense fallback={SuspenseFallback}>
+        <SettingsDirtyBoundary>{(dirtyController) => (
         <ManagementSettingsAccessGate
           scope="tenant"
           target="tenant"
@@ -260,7 +262,7 @@ export function MobileLayout(props: LayoutProps) {
           onRetry={managementAccess.retry}
           onReturnPersonal={handleReturnPersonalSettings}
         >
-          <GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")}>
+          <GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>
           <TenantAdminShell
             renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
             renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
@@ -278,7 +280,7 @@ export function MobileLayout(props: LayoutProps) {
             governanceContentOnly
           />
           </GovernanceConsole>
-        </ManagementSettingsAccessGate>
+        </ManagementSettingsAccessGate>)}</SettingsDirtyBoundary>
       </Suspense>
     );
   }
@@ -286,6 +288,7 @@ export function MobileLayout(props: LayoutProps) {
   if (activeTab === "platform-admin" && governanceRoute?.area === "platform") {
     return (
       <Suspense fallback={SuspenseFallback}>
+        <SettingsDirtyBoundary>{(dirtyController) => (
         <ManagementSettingsAccessGate
           scope="platform"
           target="platform"
@@ -293,7 +296,7 @@ export function MobileLayout(props: LayoutProps) {
           onRetry={managementAccess.retry}
           onReturnPersonal={handleReturnPersonalSettings}
         >
-          <GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")}>
+          <GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>
           <PlatformAdminShell
             renderTenants={() => <TenantManager />}
             renderSignupConfig={() => <SignupConfigManagerPanel />}
@@ -316,6 +319,7 @@ export function MobileLayout(props: LayoutProps) {
           />
           </GovernanceConsole>
         </ManagementSettingsAccessGate>
+        )}</SettingsDirtyBoundary>
       </Suspense>
     );
   }
@@ -703,6 +707,7 @@ export function MobileLayout(props: LayoutProps) {
           personalAgentEnabled={personalAgentEnabled}
         />
 
+        <SettingsDirtyBoundary>{(dirtyController) => (<>
         {adminSettings?.target === "tenant" && (
           <ManagementSettingsAccessGate
             scope="tenant"
@@ -721,9 +726,10 @@ export function MobileLayout(props: LayoutProps) {
             renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
             settingsOpen
             settingsOnly
+            dirtyController={dirtyController}
             settingsSection={adminSettings.section as TenantSection}
-            onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
-            onSettingsClose={closeAdminSettings}
+            onSettingsSectionChange={(section) => dirtyController.requestNavigation(() => setAdminSettingsSection(section))}
+            onSettingsClose={() => dirtyController.requestNavigation(closeAdminSettings)}
           />
           </ManagementSettingsAccessGate>
         )}
@@ -747,15 +753,16 @@ export function MobileLayout(props: LayoutProps) {
             renderEfficiency={() => <EfficiencyViewPanel />}
             activeSection={platformAdminSection}
             entityId={platformAdminEntityId}
-            onSectionChange={setPlatformAdminRoute}
+            onSectionChange={(section, entityId) => dirtyController.requestNavigation(() => setPlatformAdminRoute(section, entityId))}
             settingsOpen
             settingsOnly
             settingsSection={adminSettings.section as PlatformSection}
-            onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
-            onSettingsClose={closeAdminSettings}
+            onSettingsSectionChange={(section) => dirtyController.requestNavigation(() => setAdminSettingsSection(section))}
+            onSettingsClose={() => dirtyController.requestNavigation(closeAdminSettings)}
           />
           </ManagementSettingsAccessGate>
         )}
+        </>)}</SettingsDirtyBoundary>
         {/*
           组织/平台管理弹窗可从任意页面打开：openAdminSettings 只推 settings URL，
           不切 activeTab；弹窗统一由 settingsOnly shell 承载，关闭后回到原页面。

@@ -15,6 +15,7 @@ const McpAdminCatalogPanel = lazy(() => import("@/components/McpManager").then((
 const MemoryPollingManagerPanel = lazy(() => import("@/components/MemoryPollingManager").then((module) => ({ default: module.MemoryPollingManager })));
 const ModelManagerPanel = lazy(() => import("@/components/ModelManager").then((module) => ({ default: module.ModelManager })));
 const OrganizationScopeBanner = lazy(() => import("@/components/GovernanceConsole").then((module) => ({ default: module.OrganizationScopeBanner })));
+const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry").then((module) => ({ default: module.SettingsDirtyBoundary })));
 const OrgAgentManagerPanel = lazy(() => import("@/components/OrgAgentManager").then((module) => ({ default: module.OrgAgentManager })));
 const PlatformAdminShell = lazy(() => import("@/components/AdminShells").then((module) => ({ default: module.PlatformAdminShell })));
 const SignupConfigManagerPanel = lazy(() => import("@/components/SignupConfigManager").then((module) => ({ default: module.SignupConfigManager })));
@@ -55,9 +56,10 @@ export function AnalysisWorkspaceContent({
     return (
       <div className="absolute inset-0 z-30 min-h-0 overflow-hidden bg-card" data-testid="unified-analysis-content">
       <Suspense fallback={fallback}>
+        <SettingsDirtyBoundary>{(dirtyController) => (
         <ManagementSettingsAccessGate scope="tenant" target="tenant" access={access} onRetry={access.retry} onReturnPersonal={onReturnPersonal}>
           <div className="flex h-full min-h-0 flex-col">
-            <OrganizationScopeBanner route={route} />
+            <OrganizationScopeBanner route={route} dirtyController={dirtyController} />
             <div className="min-h-0 flex-1 overflow-hidden">
               <TenantAdminShell
                 renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
@@ -75,10 +77,11 @@ export function AnalysisWorkspaceContent({
                 governanceRoute={route}
                 governanceContentOnly
                 governanceContentEmbedded
+                dirtyController={dirtyController}
               />
             </div>
           </div>
-        </ManagementSettingsAccessGate>
+        </ManagementSettingsAccessGate>)}</SettingsDirtyBoundary>
       </Suspense>
       </div>
     );

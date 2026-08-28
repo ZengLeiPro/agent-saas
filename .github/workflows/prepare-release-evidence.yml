@@ -1,0 +1,307 @@
+name: Prepare Release Evidence
+
+on:
+  workflow_run:
+    workflows: ['App CI / Deploy']
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: release-evidence-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  prepare:
+    name: Generate, publish and read back immutable evidence
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      ECS_HOST: ${{ secrets.ECS_HOST }}
+      ECS_USER: ${{ secrets.ECS_USER }}
+      ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+      PRODUCTION_SSH_HOST_KEY_SHA256: ${{ vars.PRODUCTION_SSH_HOST_KEY_SHA256 }}
+      RELEASE_RECORD_OSS_URI: ${{ vars.RELEASE_RECORD_OSS_URI }}
+      RELEASE_RECORD_OSS_REGION: ${{ vars.RELEASE_RECORD_OSS_REGION }}
+      ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+      ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+      APP_CI_RUN_ID: ${{ github.event.workflow_run.id }}
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+
+    steps:
+      - name: Verify automatic Evidence Writer configuration
+        env:
+          PRODUCTION_OBSERVATION_URL: ${{ vars.PRODUCTION_OBSERVATION_URL }}
+          RELEASE_EVIDENCE_READ_TOKEN: ${{ secrets.PRODUCTION_OBSERVATION_TOKEN }}
+          RELEASE_EVIDENCE_WRITE_TOKEN: ${{ secrets.RELEASE_EVIDENCE_WRITE_TOKEN }}
+        run: |
+          set -euo pipefail
+          : "${PRODUCTION_OBSERVATION_URL:?Missing production variable PRODUCTION_OBSERVATION_URL}"
+          : "${RELEASE_EVIDENCE_READ_TOKEN:?Missing production Evidence read token}"
+          : "${RELEASE_EVIDENCE_WRITE_TOKEN:?Missing production Evidence write token}"
+          test "$RELEASE_EVIDENCE_READ_TOKEN" != "$RELEASE_EVIDENCE_WRITE_TOKEN"
+          case "$PRODUCTION_OBSERVATION_URL" in
+            https://*/production-observation) ;;
+            *) echo 'PRODUCTION_OBSERVATION_URL must be HTTPS and end with /production-observation' >&2; exit 1 ;;
+          esac
+
+      - name: Checkout exact successful main revision
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Verify completed App CI run and merged GitHub PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$RELEASE_SHA" | grep -Eq '^[a-f0-9]{40}$'
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          git fetch --quiet --no-tags origin main
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$APP_CI_RUN_ID" \
+            > "$RUNNER_TEMP/app-ci-run.json"
+          jq -e --arg sha "$RELEASE_SHA" '
+            .name == "App CI / Deploy" and
+            .event == "push" and
+            .head_branch == "main" and
+            .head_sha == $sha and
+            .status == "completed" and
+            .conclusion == "success"
+          ' "$RUNNER_TEMP/app-ci-run.json" >/dev/null
+
+          gh api -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/commits/$RELEASE_SHA/pulls" \
+            > "$RUNNER_TEMP/associated-pulls.json"
+          jq -e --arg sha "$RELEASE_SHA" '
+            map(select(
+              .state == "closed" and
+              .merged_at != null and
+              .base.ref == "main" and
+              .merge_commit_sha == $sha
+            )) |
+            if length == 1 then .[0] else error("Expected exactly one merged PR for Release SHA") end
+          ' "$RUNNER_TEMP/associated-pulls.json" > "$RUNNER_TEMP/release-pr.json"
+          jq -e '.number > 0 and (.head.sha | test("^[a-f0-9]{40}$"))' \
+            "$RUNNER_TEMP/release-pr.json" >/dev/null
+          jq '{
+            schemaVersion: 1,
+            finalPullRequest: {
+              number: .number,
+              headSha: .head.sha,
+              mergeCommitOid: .merge_commit_sha,
+              state: "MERGED"
+            },
+            sources: []
+          }' "$RUNNER_TEMP/release-pr.json" > "$RUNNER_TEMP/merge.json"
+
+      - name: Resolve ACS evidence for the same Release SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          base_sha="$(git rev-parse "$RELEASE_SHA^1")"
+          git diff --name-only "$base_sha" "$RELEASE_SHA" > "$RUNNER_TEMP/acs-changed-files.txt"
+          bash .github/scripts/acs-classify.sh \
+            "$RUNNER_TEMP/acs-changed-files.txt" "$base_sha" > "$RUNNER_TEMP/acs-classification.out"
+          cat "$RUNNER_TEMP/acs-classification.out"
+          publish="$(sed -n 's/^publish=//p' "$RUNNER_TEMP/acs-classification.out")"
+          contract_check="$(sed -n 's/^contract_check=//p' "$RUNNER_TEMP/acs-classification.out")"
+          case "$publish:$contract_check" in
+            false:false)
+              jq -n --arg sha "$RELEASE_SHA" --argjson appRunId "$APP_CI_RUN_ID" '{
+                appCi: {workflow: "Build & Check", status: "success", headSha: $sha, runId: $appRunId},
+                acsImpact: {workflow: "ACS Impact Gate", status: "not_required", headSha: $sha}
+              }' > "$RUNNER_TEMP/checks.json"
+              ;;
+            true:*|*:true)
+              acs_run=''
+              for attempt in $(seq 1 90); do
+                gh api --method GET \
+                  "repos/$GITHUB_REPOSITORY/actions/workflows/acs-sandbox.yml/runs" \
+                  -f head_sha="$RELEASE_SHA" -f event=push -f per_page=20 \
+                  > "$RUNNER_TEMP/acs-runs.json"
+                acs_run="$(jq -c --arg sha "$RELEASE_SHA" '
+                  [.workflow_runs[] | select(.head_sha == $sha and .event == "push")] |
+                  sort_by(.run_number) | last // empty
+                ' "$RUNNER_TEMP/acs-runs.json")"
+                if [ -z "$acs_run" ] || [ "$(printf '%s' "$acs_run" | jq -r .status)" != completed ]; then
+                  sleep 10
+                  continue
+                fi
+                test "$(printf '%s' "$acs_run" | jq -r .conclusion)" = success
+                acs_run_id="$(printf '%s' "$acs_run" | jq -r .id)"
+                gh api "repos/$GITHUB_REPOSITORY/actions/runs/$acs_run_id/jobs?filter=all" \
+                  > "$RUNNER_TEMP/acs-jobs.json"
+                if [ "$publish" = true ]; then
+                  jq -e '[.jobs[] | select(.name == "Gate (typecheck + test)" and .conclusion == "success")] | length == 1' \
+                    "$RUNNER_TEMP/acs-jobs.json" >/dev/null
+                fi
+                if [ "$contract_check" = true ]; then
+                  jq -e '[.jobs[] | select(.name == "ACS Contract Check" and .conclusion == "success")] | length == 1' \
+                    "$RUNNER_TEMP/acs-jobs.json" >/dev/null
+                fi
+                jq -n --arg sha "$RELEASE_SHA" --argjson appRunId "$APP_CI_RUN_ID" \
+                  --argjson acsRunId "$acs_run_id" '{
+                    appCi: {workflow: "Build & Check", status: "success", headSha: $sha, runId: $appRunId},
+                    acsImpact: {workflow: "ACS Impact Gate", status: "success", headSha: $sha, runId: $acsRunId}
+                  }' > "$RUNNER_TEMP/checks.json"
+                break
+              done
+              test -s "$RUNNER_TEMP/checks.json"
+              ;;
+            *)
+              echo 'Invalid ACS classification output' >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Configure pinned production read-only SSH
+        run: |
+          set -euo pipefail
+          : "${ECS_HOST:?Missing production secret ECS_HOST}"
+          : "${ECS_USER:?Missing production secret ECS_USER}"
+          : "${ECS_SSH_KEY:?Missing production secret ECS_SSH_KEY}"
+          : "${PRODUCTION_SSH_HOST_KEY_SHA256:?Missing pinned Production SSH host key fingerprint}"
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/production_evidence_key
+          chmod 600 ~/.ssh/production_evidence_key
+          ssh-keyscan -t ed25519 -H "$ECS_HOST" > "$RUNNER_TEMP/production-known-host"
+          test "$(ssh-keygen -lf "$RUNNER_TEMP/production-known-host" -E sha256 | awk '{print $2}')" = \
+            "$PRODUCTION_SSH_HOST_KEY_SHA256"
+          cat "$RUNNER_TEMP/production-known-host" >> ~/.ssh/known_hosts
+
+      - name: Read live Production state without mutation
+        run: |
+          set -euo pipefail
+          remote="/tmp/release-evidence-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          cleanup() {
+            ssh -i ~/.ssh/production_evidence_key "$ECS_USER@$ECS_HOST" "rm -rf -- '$remote'"
+          }
+          trap cleanup EXIT
+          ssh -i ~/.ssh/production_evidence_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
+          scp -i ~/.ssh/production_evidence_key scripts/release/read-production-state.mjs \
+            scripts/release/read-runtime-identity.mjs scripts/release/artifact-lib.mjs \
+            "$ECS_USER@$ECS_HOST:$remote/"
+          ssh -i ~/.ssh/production_evidence_key "$ECS_USER@$ECS_HOST" \
+            "node '$remote/read-production-state.mjs' --output '$remote/production.json' >/dev/null"
+          scp -i ~/.ssh/production_evidence_key "$ECS_USER@$ECS_HOST:$remote/production.json" \
+            "$RUNNER_TEMP/production.json"
+          test "$(jq -r .environment "$RUNNER_TEMP/production.json")" = production
+
+      - name: Install Alibaba Cloud CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz \
+            -o "$RUNNER_TEMP/aliyun.tgz"
+          tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
+          sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
+
+      - name: Bind immutable OSS artifacts to live Production
+        run: |
+          set -euo pipefail
+          : "${ALIBABACLOUD_ACCESS_KEY_ID:?Missing production secret ALIYUN_ACCESS_KEY_ID}"
+          : "${ALIBABACLOUD_ACCESS_KEY_SECRET:?Missing production secret ALIYUN_ACCESS_KEY_SECRET}"
+          : "${RELEASE_RECORD_OSS_URI:?Missing production variable RELEASE_RECORD_OSS_URI}"
+          : "${RELEASE_RECORD_OSS_REGION:?Missing production variable RELEASE_RECORD_OSS_REGION}"
+          case "$RELEASE_RECORD_OSS_URI" in oss://*) ;; *) exit 1 ;; esac
+          case "$RELEASE_RECORD_OSS_REGION" in cn-*) ;; *) exit 1 ;; esac
+          mkdir -p "$RUNNER_TEMP/baseline-indexes" "$RUNNER_TEMP/baseline-index-raw"
+          : > "$RUNNER_TEMP/baseline-index-uris.txt"
+          for prefix in baselines records; do
+            aliyun --secure oss ls "$RELEASE_RECORD_OSS_URI/$prefix/" \
+              --limited-num 1000 --region "$RELEASE_RECORD_OSS_REGION" \
+              > "$RUNNER_TEMP/$prefix-list.txt"
+            awk '$NF ~ /\/artifact-index\.json$/ {print $NF}' \
+              "$RUNNER_TEMP/$prefix-list.txt" >> "$RUNNER_TEMP/baseline-index-uris.txt"
+          done
+          sort -u -o "$RUNNER_TEMP/baseline-index-uris.txt" \
+            "$RUNNER_TEMP/baseline-index-uris.txt"
+          index_count="$(wc -l < "$RUNNER_TEMP/baseline-index-uris.txt" | tr -d ' ')"
+          test "$index_count" -gt 0
+          test "$index_count" -lt 1000
+          index_number=0
+          while IFS= read -r index_uri; do
+            index_number=$((index_number + 1))
+            raw="$RUNNER_TEMP/baseline-index-raw/$index_number.json"
+            target="$RUNNER_TEMP/baseline-indexes/$index_number.json"
+            aliyun --secure oss cp "$index_uri" "$raw" \
+              --region "$RELEASE_RECORD_OSS_REGION"
+            jq --arg indexUri "$index_uri" '. + {indexUri: $indexUri}' "$raw" > "$target"
+          done < "$RUNNER_TEMP/baseline-index-uris.txt"
+          node scripts/release/resolve-baseline-artifacts.mjs \
+            --production "$RUNNER_TEMP/production.json" \
+            --indexes "$RUNNER_TEMP/baseline-indexes" \
+            --output "$RUNNER_TEMP/baseline-artifacts.json"
+
+      - name: Generate and publish immutable Release Evidence
+        env:
+          PRODUCTION_OBSERVATION_URL: ${{ vars.PRODUCTION_OBSERVATION_URL }}
+          RELEASE_EVIDENCE_READ_TOKEN: ${{ secrets.PRODUCTION_OBSERVATION_TOKEN }}
+          RELEASE_EVIDENCE_WRITE_TOKEN: ${{ secrets.RELEASE_EVIDENCE_WRITE_TOKEN }}
+        run: |
+          set -euo pipefail
+          baseline="$(jq -r .components.api.gitSha "$RUNNER_TEMP/production.json")"
+          git cat-file -e "$baseline^{commit}"
+          git merge-base --is-ancestor "$baseline" "$RELEASE_SHA"
+          node scripts/release/classify-components.mjs \
+            --baseline "$baseline" --target "$RELEASE_SHA" \
+            > "$RUNNER_TEMP/classification.json"
+          node scripts/release/migration-plan.mjs \
+            --changed-paths "$RUNNER_TEMP/classification.json" --target "$RELEASE_SHA" \
+            > "$RUNNER_TEMP/migration.json"
+          node scripts/release/produce-release-evidence.mjs \
+            --sha "$RELEASE_SHA" \
+            --merge "$RUNNER_TEMP/merge.json" \
+            --checks "$RUNNER_TEMP/checks.json" \
+            --production "$RUNNER_TEMP/production.json" \
+            --baseline-artifacts "$RUNNER_TEMP/baseline-artifacts.json" \
+            --classification "$RUNNER_TEMP/classification.json" \
+            --migration "$RUNNER_TEMP/migration.json" \
+            --output "$RUNNER_TEMP/release-evidence.json"
+
+          : "${PRODUCTION_OBSERVATION_URL:?Missing production variable PRODUCTION_OBSERVATION_URL}"
+          : "${RELEASE_EVIDENCE_READ_TOKEN:?Missing production Evidence read token}"
+          : "${RELEASE_EVIDENCE_WRITE_TOKEN:?Missing production Evidence write token}"
+          release_evidence_url="$(node - <<'NODE'
+          const value = new URL(process.env.PRODUCTION_OBSERVATION_URL);
+          if (!value.pathname.endsWith('/production-observation')) {
+            throw new Error('PRODUCTION_OBSERVATION_URL must end with /production-observation');
+          }
+          value.pathname = value.pathname.replace(/\/production-observation$/u, '/release-evidence');
+          process.stdout.write(value.toString());
+          NODE
+          )"
+          node scripts/release/publish-release-evidence.mjs \
+            --input "$RUNNER_TEMP/release-evidence.json" \
+            --url "$release_evidence_url"
+
+          {
+            echo '### Immutable Release Evidence'
+            echo
+            echo "- Release SHA: \`$RELEASE_SHA\`"
+            echo "- Evidence digest: \`$(jq -r .evidenceDigest "$RUNNER_TEMP/release-evidence.json")\`"
+            echo "- Release PR: #$(jq -r .finalPullRequest.number "$RUNNER_TEMP/merge.json")"
+            echo '- Result: generated, written once, and read back with the separate read identity'
+          } >> "$GITHUB_STEP_SUMMARY"

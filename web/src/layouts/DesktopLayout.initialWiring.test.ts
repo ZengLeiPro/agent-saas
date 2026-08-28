@@ -24,4 +24,20 @@ describe("DesktopLayout 初始会话接线", () => {
   it("能力中心与任务中心使用同一 Header 高度和水平位置", () => {
     expect(source).toContain('activeTab === "capabilities" || activeTab === "cron" ? "h-14 px-6"');
   });
+
+  it("个人、组织与平台设置共享 dirty boundary，并回传组织 Shell 实际目标", () => {
+    expect(source).toContain('const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry")');
+    expect(source).toContain("{settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary>{(dirtyController) => (");
+    expect(source).toContain("onNavigationControllerChange={handleSettingsControllerChange} dirtyController={dirtyController}");
+    expect(source).toContain("isPlatformAdmin, organizationSettingsTargetId");
+    expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId}");
+    expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId} dirtyController={dirtyController}");
+    expect(source).toContain(")}</SettingsDirtyBoundary></Suspense>}");
+    expect(source).toContain('<GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
+    expect(source).toContain('<GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
+    expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (\n        <ManagementSettingsAccessGate scope="platform"');
+    expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (\n        <ManagementSettingsAccessGate scope="tenant"');
+    expect(analysisContentSource).toContain('<OrganizationScopeBanner route={route} dirtyController={dirtyController} />');
+    expect(analysisContentSource).toContain('dirtyController={dirtyController}');
+  });
 });

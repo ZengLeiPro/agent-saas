@@ -9,11 +9,13 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { SettingsTwoColumn } from "@/components/SettingsCenter/SettingsTwoColumn";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { useUsers } from "@/components/UserManager/hooks";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
+import { AcsRuntimeSettingsCard } from "./AcsRuntimeSettingsCard";
 import { useTenantRemoteHands } from "./hooks";
 import type {
   CredentialMode,
@@ -309,13 +311,13 @@ function healthMetadata(health?: HealthState): unknown {
 export function TenantRemoteHandsManager() {
   // 只读平台 admin：保存并生效/新增池/删除池 disabled；「健康检查」是服务端白名单放行的只读探测，保留可用
   const { platformReadOnly } = useAuth();
-  const { config, loading, saving, error, savedAt, healthById, refresh, save, probeHealth } = useTenantRemoteHands();
+  const [dirty, setDirty] = useState(false);
+  const { config, loading, saving, error, savedAt, healthById, refresh, save, probeHealth } = useTenantRemoteHands(dirty);
   const { users, loading: usersLoading } = useUsers();
   const { tenants, loading: tenantsLoading } = useTenants();
   const [draftHands, setDraftHands] = useState<EditableTenantRemoteHand[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
-  const [dirty, setDirty] = useState(false);
   const [userSearch, setUserSearch] = useState("");
   const [tenantSearch, setTenantSearch] = useState("");
 
@@ -364,13 +366,13 @@ export function TenantRemoteHandsManager() {
     setLocalError(null);
   }, [selectedHand]);
 
-  const handleSave = useCallback(async () => {
+  const saveDraft = useCallback(async () => {
     try {
       setLocalError(null);
       const payload = buildPayload(draftHands);
       const allHands = draftHands.filter((hand) => hand.rolloutEditorMode === "explicit" && hand.rolloutMode === "all");
       if (allHands.length > 0 && !window.confirm(`确认启用全部用户模式？涉及：${allHands.map((hand) => hand.id).join(", ")}`)) {
-        return;
+        throw new Error("已取消保存，仍停留在当前页面");
       }
       const saved = await save(payload);
       const next = saved.hands.map(toEditable);
@@ -379,8 +381,25 @@ export function TenantRemoteHandsManager() {
       setDirty(false);
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : String(err));
+      throw err;
     }
   }, [draftHands, save]);
+  const discardDraft = useCallback(() => {
+    if (!config) return;
+    const next = config.hands.map(toEditable);
+    setDraftHands(next);
+    setSelectedKey((current) => current && next.some((hand) => hand.clientKey === current) ? current : next[0]?.clientKey ?? null);
+    setLocalError(null);
+    setDirty(false);
+  }, [config]);
+  useSettingsDirtyEntry({
+    id: "platform-execution-providers",
+    label: "执行环境池",
+    dirty,
+    save: saveDraft,
+    discard: discardDraft,
+    secret: true,
+  });
 
   const handleHealth = useCallback(async () => {
     if (!selectedHand) return;
@@ -422,8 +441,8 @@ export function TenantRemoteHandsManager() {
           <>
             {dirty && <Badge variant="outline">有未保存更改</Badge>}
             {savedAt && !dirty && <Badge variant="secondary" className="gap-1"><CircleCheck className="size-3" />已保存并热生效</Badge>}
-            <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading || saving}><RefreshCw className="size-3.5" />刷新</Button>
-            <Button size="sm" onClick={handleSave} disabled={platformReadOnly || saving}>{saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}保存并生效</Button>
+            <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading || saving || dirty}><RefreshCw className="size-3.5" />刷新</Button>
+            <Button size="sm" onClick={() => { void saveDraft().catch(() => undefined); }} disabled={platformReadOnly || saving}>{saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}保存并生效</Button>
           </>
         )}
       />
@@ -435,6 +454,8 @@ export function TenantRemoteHandsManager() {
           <span>{localError || error}</span>
         </div>
       )}
+
+      <AcsRuntimeSettingsCard readOnly={platformReadOnly} />
 
       <SettingsTwoColumn
         sidebar={(

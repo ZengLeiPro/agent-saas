@@ -32,6 +32,8 @@ const TENANT_SETTINGS_ICONS: Record<TenantSettingsIconKey, LucideIcon> = {
 const PLATFORM_SETTINGS_ICONS: Record<PlatformSettingsIconKey, LucideIcon> = {
   org: EntityIcons.org,
   signup: EntityIcons.signup,
+  admin: EntityIcons.admin,
+  expert: EntityIcons.expert,
   model: EntityIcons.model,
   billing: EntityIcons.billing,
   "runtime-pool": EntityIcons.runtimePool,

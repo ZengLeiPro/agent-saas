@@ -102,8 +102,7 @@ interface DesktopSessionSidebarProps {
   settingsMode?: boolean;
   settingsTarget?: "personal" | AdminSettingsTarget;
   activeSettingsSection?: string;
-  onSettingsNavigate?: (target: "personal" | AdminSettingsTarget, section: string) => void;
-  onCloseSettings?: () => void;
+  onSettingsNavigate?: (target: "personal" | AdminSettingsTarget, section: string) => void; onOpenOrganizationGovernance?: () => void; onCloseSettings?: () => void;
   isAdmin?: boolean;
   settingsAccess?: ManagementSettingsAccess;
   /** 平台 admin（跨组织管理者）。组织管理入口对 admin 可见，平台管理入口仅平台 admin 可见。 */
@@ -969,7 +968,7 @@ export function DesktopSessionSidebar({
   settingsMode = false,
   settingsTarget = "personal",
   activeSettingsSection = "account-security",
-  onSettingsNavigate,
+  onSettingsNavigate, onOpenOrganizationGovernance,
   onCloseSettings,
   isAdmin = false,
   settingsAccess = { status: "ready", personalAllowed: true, tenantEntryAllowed: false, platformEntryAllowed: false, retry: () => undefined },
@@ -1687,7 +1686,7 @@ export function DesktopSessionSidebar({
         personalAgentEnabled={personalAgentEnabled}
         target={settingsTarget}
         activeSection={activeSettingsSection}
-        onNavigate={onSettingsNavigate}
+        onNavigate={onSettingsNavigate} onOpenOrganizationGovernance={onOpenOrganizationGovernance}
         onClose={onCloseSettings}
         onCollapse={onCollapse}
         onResizeMouseDown={sidebarLayout === "single" ? onSingleResizeMouseDown : (hasSecondPanel ? onSubResizeMouseDown : onMainResizeMouseDown)}

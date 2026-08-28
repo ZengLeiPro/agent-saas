@@ -1,4 +1,4 @@
-import { SettingsDirtyBoundary } from "@/components/PersonalSettings/dirtyRegistry";
+import { SettingsDirtyBoundary, type SettingsDirtyController } from "@/components/PersonalSettings/dirtyRegistry";
 import { SettingsModalInner, type SettingsModalProps } from "@/components/SettingsCenter/SettingsModal";
 
 export function SettingsModal(props: SettingsModalProps) {
@@ -9,10 +9,14 @@ export function SettingsModal(props: SettingsModalProps) {
   );
 }
 
-export function SettingsContent(props: SettingsModalProps) {
+export function SettingsContent({
+  dirtyController,
+  ...props
+}: SettingsModalProps & { dirtyController?: SettingsDirtyController }) {
+  if (dirtyController) return <SettingsModalInner {...props} dirtyController={dirtyController} embedded />;
   return (
     <SettingsDirtyBoundary>
-      {(dirtyController) => <SettingsModalInner {...props} dirtyController={dirtyController} embedded />}
+      {(controller) => <SettingsModalInner {...props} dirtyController={controller} embedded />}
     </SettingsDirtyBoundary>
   );
 }

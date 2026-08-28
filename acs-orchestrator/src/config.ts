@@ -204,6 +204,8 @@ export interface AcsEgressConfig {
 export interface AcsRuntimeConfigSnapshot {
   maxRunningSandboxes: number;
   warnRunningSandboxes: number;
+  minConfigurableRunningSandboxes: number;
+  maxConfigurableRunningSandboxes: number;
   maxAllocatedCpuMillicores: number;
   warnAllocatedCpuMillicores: number;
   maxAllocatedMemoryMib: number;
@@ -476,10 +478,22 @@ function validateRuntimeConfigValues(values: AcsRuntimeConfigPatch): void {
     throw new Error('warnAllocatedMemoryMib must be <= maxAllocatedMemoryMib');
 }
 
+function configurableRunningSandboxRange(config: AcsOrchestratorConfig): { min: number; max: number } {
+  if (config.snat?.mode !== 'shared-cidr') return { min: 0, max: MAX_SANDBOX_COUNT };
+  const max = (config.snat.sharedCidrs ?? []).reduce((total, value) => {
+    const cidr = parseIpv4Cidr(value);
+    return total + (cidr ? 2 ** (32 - cidr.prefixLength) : 0);
+  }, 0);
+  return { min: 1, max: Math.min(max, MAX_SANDBOX_COUNT) };
+}
+
 export function runtimeConfigSnapshot(config: AcsOrchestratorConfig): AcsRuntimeConfigSnapshot {
+  const runningSandboxRange = configurableRunningSandboxRange(config);
   return {
     maxRunningSandboxes: config.maxRunningSandboxes,
     warnRunningSandboxes: config.warnRunningSandboxes,
+    minConfigurableRunningSandboxes: runningSandboxRange.min,
+    maxConfigurableRunningSandboxes: runningSandboxRange.max,
     maxAllocatedCpuMillicores: config.maxAllocatedCpuMillicores,
     warnAllocatedCpuMillicores: config.warnAllocatedCpuMillicores,
     maxAllocatedMemoryMib: config.maxAllocatedMemoryMib,
@@ -522,13 +536,10 @@ export function applyRuntimeConfigPatch(
   validateRuntimeConfigValues(next);
   if (config.snat?.mode === 'shared-cidr') {
     // shared-cidr 只按网段创建 SNAT 条目；Sandbox 数量真正受 Pod 地址池容量约束。
-    const addressCapacity = (config.snat.sharedCidrs ?? []).reduce((total, value) => {
-      const cidr = parseIpv4Cidr(value);
-      return total + (cidr ? 2 ** (32 - cidr.prefixLength) : 0);
-    }, 0);
-    if (next.maxRunningSandboxes <= 0 || next.maxRunningSandboxes > addressCapacity) {
+    const range = configurableRunningSandboxRange(config);
+    if (next.maxRunningSandboxes < range.min || next.maxRunningSandboxes > range.max) {
       throw new Error(
-        `maxRunningSandboxes ${next.maxRunningSandboxes} must be within shared-cidr address capacity 1..${addressCapacity}`,
+        `maxRunningSandboxes ${next.maxRunningSandboxes} must be within shared-cidr address capacity ${range.min}..${range.max}`,
       );
     }
   }

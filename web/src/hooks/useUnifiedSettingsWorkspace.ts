@@ -1,7 +1,8 @@
 import { useCallback, useRef } from "react";
 
 import type { SettingsDirtyController } from "@/components/PersonalSettings/dirtyRegistry";
-import type { AdminSettingsState, AdminSettingsTarget } from "@/lib/urlSync";
+import { governanceRoute } from "@/lib/governanceNavigation";
+import { navigateGovernance, type AdminSettingsState, type AdminSettingsTarget } from "@/lib/urlSync";
 import type { SettingsSectionId } from "@/types/settings";
 
 export function useUnifiedSettingsWorkspace({
@@ -14,6 +15,8 @@ export function useUnifiedSettingsWorkspace({
   openAdminSettings,
   closeAdminSettings,
   setAdminSettingsSection,
+  isPlatformAdmin,
+  organizationSettingsTargetId,
 }: {
   settingsOpen: boolean;
   settingsSection: SettingsSectionId;
@@ -24,6 +27,9 @@ export function useUnifiedSettingsWorkspace({
   openAdminSettings: (target: AdminSettingsTarget, section?: string) => void;
   closeAdminSettings: () => void;
   setAdminSettingsSection: (section: string) => void;
+  isPlatformAdmin: boolean;
+  /** undefined=Tenant Shell 尚未报告；null=平台管理员明确未选择组织。 */
+  organizationSettingsTargetId?: string | null;
 }) {
   const mode = settingsOpen || adminSettings !== null;
   const target = settingsOpen ? "personal" as const : adminSettings?.target ?? "personal";
@@ -53,6 +59,17 @@ export function useUnifiedSettingsWorkspace({
     if (mode) navigate("personal", section);
     else openSettings(section);
   }, [mode, navigate, openSettings]);
+  const openOrganizationGovernance = useCallback(() => {
+    const orgId = isPlatformAdmin
+      ? organizationSettingsTargetId === undefined && typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("org")
+        : organizationSettingsTargetId ?? null
+      : null;
+    requestNavigation(() => navigateGovernance(governanceRoute(
+      "organization.members.list",
+      orgId ? { orgId } : {},
+    )));
+  }, [isPlatformAdmin, organizationSettingsTargetId, requestNavigation]);
 
-  return { mode, target, activeSection, navigate, close, open, onControllerChange };
+  return { mode, target, activeSection, navigate, close, open, openOrganizationGovernance, guardNavigation: requestNavigation, onControllerChange };
 }

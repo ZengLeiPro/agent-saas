@@ -78,6 +78,10 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     const resolved = await store.finishExecutionV2(identity, runId, input);
     expect(resolved).toMatchObject({ kind: 'advisory', status: 'todo' });
     expect(resolved).not.toHaveProperty('providerPullRequestId');
+    await expect(pool.query(
+      `SELECT status,reason FROM ${store.cancellationOutboxTable} WHERE execution_id=$1`,
+      [executionId],
+    )).resolves.toMatchObject({ rows: [{ status: 'pending', reason: 'execution_transitioned' }] });
     await expect(store.finishExecutionV2(identity, runId, input)).rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_FENCED' });
     await store.completeExecution(runId, {
       status: 'succeeded',
@@ -91,6 +95,10 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     expect(await store.listComments(identity, advisory.id)).toEqual([
       expect.objectContaining({ body: input.body, attachments: [expect.objectContaining({ originalName: '交付.txt' })] }),
     ]);
+    await expect(pool.query(
+      `SELECT status FROM ${store.cancellationOutboxTable} WHERE execution_id=$1`,
+      [executionId],
+    )).resolves.toMatchObject({ rows: [{ status: 'completed' }] });
     await expect(store.finishExecutionV2(identity, runId, { ...input, }))
       .rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_FENCED' });
   });

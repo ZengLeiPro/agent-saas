@@ -58,6 +58,7 @@ describe('integration cancellation convergence', () => {
     expect(cancellationOutboxCall?.[1]).toEqual([
       expect.any(String), 'execution-1', 'run-1', 'integration-1', 'integration_canceled', 2,
     ]);
+    expect(String(cancellationOutboxCall?.[0])).toContain('ON CONFLICT (execution_id) DO UPDATE');
     expect(query.mock.calls.some(([sql]) => String(sql).includes('SELECT 1 FROM executions'))).toBe(false);
   });
 

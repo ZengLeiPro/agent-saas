@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reason": "Staging bootstrap requires STAGING_VAULT_KEY for encrypted vault storage, ACS_ORCH_AUTH_TOKEN for isolated orchestrator authentication, and AGENT_SAAS_EMBEDDED to import evidence helpers without executing their CLI entrypoints.",
-  "updatedAt": "2026-08-27",
+  "reason": "自动 Release Evidence Writer 需要独立的 RELEASE_EVIDENCE_WRITE_TOKEN 写入身份，并使用 RELEASE_EVIDENCE_READ_TOKEN 完成写后只读校验",
+  "updatedAt": "2026-08-28",
   "domains": {
     "server": {
       "budget": 48,
@@ -132,7 +132,7 @@
       "names": ["BUNDLE_API_ORIGIN", "VITE_API_BASE", "VITE_WEB_ORIGIN"]
     },
     "deployment/scripts": {
-      "budget": 36,
+      "budget": 38,
       "names": [
         "ACS_ORCH_AUTH_TOKEN",
         "AGENT_SAAS_EMBEDDED",
@@ -161,8 +161,10 @@
         "MP_WORKER_PROCESS_ROLE",
         "RELEASE_EVIDENCE_HOST",
         "RELEASE_EVIDENCE_PORT",
+        "RELEASE_EVIDENCE_READ_TOKEN",
         "RELEASE_EVIDENCE_READ_TOKEN_FILE",
         "RELEASE_EVIDENCE_ROOT",
+        "RELEASE_EVIDENCE_WRITE_TOKEN",
         "RELEASE_EVIDENCE_WRITE_TOKEN_FILE",
         "STAGING_E2E_PASSWORD",
         "STAGING_E2E_USERNAME",

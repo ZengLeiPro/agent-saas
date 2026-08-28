@@ -12,7 +12,7 @@ import {
   type TaskBoardTask,
   type TaskBoardTaskPatchInput,
 } from "@agent/shared";
-import { Archive, ArchiveRestore, Bell, BellRing, Bot, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Settings2, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Bell, BellRing, Bot, ChevronDown, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Settings2, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -144,6 +144,7 @@ export function TaskDetail({
   const [saving, setSaving] = useState(false);
   const [watching, setWatching] = useState(false);
   const [watchLoading, setWatchLoading] = useState(false);
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const taskAttachments = useFileUpload("taskboard");
   const commentAttachments = useFileUpload("taskboard");
@@ -196,6 +197,7 @@ export function TaskDetail({
       refreshedExecutionRef.current = null;
       setWatching(task?.watched === true);
       setExecutionStartedTaskId(null);
+      setDetailsExpanded(false);
       setSaving(false);
     }
     if (!task) {
@@ -225,6 +227,8 @@ export function TaskDetail({
     task,
     taskAttachments.clearFiles,
   ]);
+
+  useEffect(() => { if (error) setDetailsExpanded(true); }, [error]);
 
   const taskId = task?.id ?? null;
   useEffect(() => {
@@ -322,6 +326,8 @@ export function TaskDetail({
     currentTask && !readOnly && TASKBOARD_STATUSES.some(canMoveCurrentTaskTo),
   );
   const canCompleteCurrentTask = canManuallyCompleteTask(currentTask, readOnly, canTransitionTask, executionActive, executionsReady && !executionsLoading && !executionsError);
+  const integrationMergedCount = integrationSourcesState.sources.filter((source) => source.state === "merged").length;
+  const integrationNeedsHumanCount = integrationSourcesState.sources.filter((source) => source.state === "needs_human").length;
   const isCurrentOperation = (requestId: number, operationTaskId: string) => (
     requestId === detailRequestRef.current && operationTaskId === draftTaskIdRef.current
   );
@@ -642,55 +648,72 @@ export function TaskDetail({
       open={active && open && !!task}
       onOpenChange={(nextOpen) => {
         if (!nextOpen && saving) return;
-        onOpenChange(nextOpen);
+        if (!nextOpen) setDetailsExpanded(false); onOpenChange(nextOpen);
       }}
     >
-      <SheetContent side="right" className="w-full gap-0 overflow-hidden p-0 sm:max-w-[95vw] xl:max-w-[1400px]">
+      <SheetContent side="right" className="w-full gap-0 overflow-hidden p-0 sm:max-w-[1040px]">
         {currentTask ? (
           <>
             <SheetHeader className="pr-12">
-              <SheetTitle className="truncate">{currentTask.title ? `${currentTask.identifier} · ${currentTask.title}` : currentTask.identifier}</SheetTitle>
-              <SheetDescription>
-                {boardReadOnly ? "归档看板只读" : archived ? "该任务已归档，可恢复后继续编辑" : "编辑任务并补充评论"}
-              </SheetDescription>
-            </SheetHeader>
-            <div data-testid="task-detail-columns" className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-2">
-              <div data-testid="task-detail-information" className="min-h-0 overflow-y-auto border-b p-4 sm:p-6 lg:border-b-0 lg:border-r">
-              <section aria-label="流程状态" className="mb-6 space-y-2 rounded-lg border bg-muted/20 p-4 text-sm">
-                <h3 className="text-sm font-semibold">流程状态（Task）</h3>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant={taskKind === "integration" ? "default" : "secondary"} className={taskKind === "integration" ? "bg-violet-600 hover:bg-violet-600" : ""}>{TASK_KIND_LABELS[taskKind]}</Badge>
-                  <Badge variant="outline">{STATUS_LABELS[currentTask.status]}</Badge>
-                  {currentTask.integrationState ? <Badge variant="outline">{INTEGRATION_SOURCE_STATE_LABELS[currentTask.integrationState]}</Badge> : null}
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => void toggleWatch()}
-                    disabled={watchLoading}
-                    aria-label={watching ? "取消关注任务" : "关注任务"}
-                    title={watching ? "取消关注；之后不再接收该任务关键状态通知" : "关注并接收该任务关键状态通知"}
-                  >
-                    {watchLoading ? <LoaderCircle className="animate-spin" /> : watching ? <BellRing /> : <Bell />}
-                    {watching ? "已关注" : "关注"}
+              <div className="flex flex-wrap items-center gap-2">
+                <SheetTitle className="mr-auto min-w-0 truncate">{currentTask.title ? `${currentTask.identifier} · ${currentTask.title}` : currentTask.identifier}</SheetTitle>
+                <Badge variant={taskKind === "integration" ? "default" : "secondary"} className={taskKind === "integration" ? "bg-violet-600 hover:bg-violet-600" : ""}>{TASK_KIND_LABELS[taskKind]}</Badge>
+                <Badge variant="outline">{STATUS_LABELS[currentTask.status]}</Badge>
+                <Badge variant="outline">{PRIORITY_LABELS[priority]}</Badge>
+                {currentTask.integrationState ? <Badge variant="outline">{INTEGRATION_SOURCE_STATE_LABELS[currentTask.integrationState]}</Badge> : null}
+                {taskKind === "integration" && integrationSourcesState.sources.length > 0 ? <Badge variant="outline">{integrationMergedCount}/{integrationSourcesState.sources.length} 已合并</Badge> : null}
+                {integrationNeedsHumanCount > 0 ? <Badge variant="destructive">{integrationNeedsHumanCount} 项需人工处理</Badge> : null}
+                {latestExecution ? <Badge variant="outline">{executionStatusLabel}</Badge> : null}
+                <Button type="button" size="sm" variant="ghost" onClick={() => void toggleWatch()} disabled={watchLoading}
+                  aria-label={watching ? "取消关注任务" : "关注任务"} title={watching ? "取消关注；之后不再接收该任务关键状态通知" : "关注并接收该任务关键状态通知"}>
+                  {watchLoading ? <LoaderCircle className="animate-spin" /> : watching ? <BellRing /> : <Bell />}
+                  <span className="sr-only">{watching ? "已关注" : "关注"}</span>
+                </Button>
+                {executionActive && latestExecution?.sessionId ? (
+                  <a href={`/chat/${encodeURIComponent(latestExecution.sessionId)}`} aria-label="打开当前执行会话" title="打开当前执行会话"
+                    className="inline-flex items-center gap-1 rounded-md border border-primary/30 px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/5">
+                    打开会话<ExternalLink className="size-3" />
+                  </a>
+                ) : null}
+                {canRunCurrentTask ? (
+                  <Button type="button" size="sm" disabled={saving || executionsLoading || executionActive}
+                    onClick={() => void startAgentExecution(taskKind === "integration" ? "work" : currentTask.status === "in_review" ? "review" : "work")}>
+                    {saving || executionActive ? <LoaderCircle className="animate-spin" /> : <Bot />}
+                    {executionActive && latestExecution ? executionStatusLabel : taskKind === "integration" ? "继续集成" : currentTask.status === "in_review" ? "独立复核"
+                      : currentTask.status === "in_progress" ? "恢复实施" : taskKind === "advisory" ? "开始分析/答复" : "开始实施"}
                   </Button>
-                  {executionActive && latestExecution?.sessionId ? (
-                    <a
-                      href={`/chat/${encodeURIComponent(latestExecution.sessionId)}`}
-                      className="inline-flex items-center gap-1 rounded-md border border-primary/30 px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/5"
-                      aria-label="打开当前执行会话"
-                      title="打开当前执行会话"
-                    >
-                      打开会话
-                      <ExternalLink className="size-3" />
-                    </a>
-                  ) : null}
-                  {taskKind === "advisory" && canTransitionTask && canUpdateTask && !readOnly ? (
-                    <Button type="button" size="sm" variant="outline" onClick={() => void promoteToDelivery()} disabled={saving || executionActive}>
-                      升级为交付任务
-                    </Button>
-                  ) : null}
-                </div>
+                ) : null}
+                {taskKind === "advisory" && canTransitionTask && canUpdateTask && !readOnly ? (
+                  <Button type="button" size="sm" variant="outline" onClick={() => void promoteToDelivery()} disabled={saving || executionActive}>
+                    升级为交付任务
+                  </Button>
+                ) : null}
+                <Button type="button" size="sm" variant="ghost" aria-expanded={detailsExpanded}
+                  aria-controls="task-detail-information" aria-label={detailsExpanded ? "收起任务详情" : "展开任务详情"}
+                  onClick={() => setDetailsExpanded((value) => !value)}>
+                  <ChevronDown className={`transition-transform ${detailsExpanded ? "rotate-180" : ""}`} />
+                  <span className="sr-only">{detailsExpanded ? "收起任务详情" : "展开任务详情"}</span>
+                </Button>
+              </div>
+              <SheetDescription className="sr-only">任务详情</SheetDescription>
+            </SheetHeader>
+            {!detailsExpanded && (executionsError || latestExecution?.error || integrationSourcesState.error
+              || currentTask.status === "blocked" || currentTask.providerCiStatus === "unconfigured"
+              || currentTask.integrationState === "needs_human" || integrationNeedsHumanCount > 0) ? (
+              <section aria-label="任务关键状态" className="space-y-1 border-b bg-amber-50 px-4 py-2 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100 sm:px-6">
+                {executionsError ? <p role="alert">{executionsError}</p> : null}
+                {latestExecution?.error ? <p className="line-clamp-2 whitespace-pre-wrap">{latestExecution.error}</p> : null}
+                {integrationSourcesState.error ? <p role="alert">{integrationSourcesState.error}</p> : null}
+                {currentTask.status === "blocked" ? <p>任务已阻塞，展开任务详情查看解除条件。</p> : null}
+                {currentTask.providerCiStatus === "unconfigured" ? <p>CI 门禁未配置，展开任务详情处理。</p> : null}
+                {currentTask.integrationState === "needs_human" || integrationNeedsHumanCount > 0 ? <p>集成来源需要人工处理，展开任务详情查看。</p> : null}
+              </section>
+            ) : null}
+            <div data-testid="task-detail-columns" className="flex min-h-0 flex-1 flex-col">
+              {detailsExpanded ? (
+                <div id="task-detail-information" data-testid="task-detail-information" className="max-h-[52vh] shrink-0 overflow-y-auto border-b p-4 sm:p-6">
+              <section aria-label="流程状态" className="mb-6 space-y-2 rounded-lg border bg-muted/20 p-4 text-sm">
+                <h3 className="text-sm font-semibold">流程与执行</h3>
                 {latestExecution ? (
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                     <span>
@@ -702,30 +725,6 @@ export function TaskDetail({
                 ) : null}
                 {executionsError ? <p role="alert" className="text-xs text-destructive">{executionsError}</p> : null}
                 {latestExecution?.error ? <p className="whitespace-pre-wrap text-xs text-destructive">{latestExecution.error}</p> : null}
-                {canRunCurrentTask && (
-                  (taskKind === "integration" && ["todo", "in_progress"].includes(currentTask.status))
-                  || (taskKind !== "integration" && currentTask.status === "todo")
-                  || (taskKind !== "integration" && currentTask.status === "in_review")
-                  || (taskKind !== "integration" && currentTask.status === "in_progress" && !executionActive)
-                ) ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => void startAgentExecution(
-                      taskKind === "integration" ? "work" : currentTask.status === "in_review" ? "review" : "work",
-                    )}
-                    disabled={saving || executionsLoading || executionActive}
-                  >
-                    {saving || executionActive ? <LoaderCircle className="animate-spin" /> : <Bot />}
-                    {executionActive && latestExecution
-                      ? executionStatusLabel
-                      : taskKind === "integration" ? "继续集成"
-                        : currentTask.status === "in_review" ? "独立复核"
-                          : currentTask.status === "in_progress" ? "恢复实施"
-                          : taskKind === "advisory" ? "开始分析/答复"
-                          : "开始实施"}
-                  </Button>
-                ) : null}
                 {taskKind === "integration" && !["done", "canceled"].includes(currentTask.status) ? (
                   <p className="text-xs text-muted-foreground">
                     一个持久 Integration Agent 自主完成组合、GitHub 合并与清理；只有需要人工决定时才会阻塞。
@@ -916,8 +915,8 @@ export function TaskDetail({
                   </div>
                 </section>
                 {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
-                <div className="flex flex-wrap gap-2">
-                  {!editReadOnly ? <Button type="submit" disabled={saving || taskAttachments.uploading}>保存任务</Button> : null}
+                {!editReadOnly ? <Button type="submit" disabled={saving || taskAttachments.uploading}>保存任务</Button> : null}
+                <div aria-label="任务操作" className="flex flex-wrap gap-2 border-t pt-4">
                   {!boardReadOnly && taskKind !== "integration" && canCancelExecution && latestExecutionActive ? (
                     <Button
                       type="button"
@@ -968,7 +967,8 @@ export function TaskDetail({
                   ) : null}
                 </div>
               </form>
-              </div>
+                </div>
+              ) : null}
 
               <TaskDetailComments
                 comments={comments}

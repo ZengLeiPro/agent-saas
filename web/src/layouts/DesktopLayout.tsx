@@ -21,7 +21,7 @@ import { saveUserPreferences } from "@agent/shared";
 import type { LayoutProps } from "./types";
 import { hasSuccessfulFinalOutput } from "./firstDayGuideVisibility";
 import { useAuth } from "@/contexts/AuthContext";
-
+const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry").then(m => ({ default: m.SettingsDirtyBoundary })));
 const GovernanceConsole = lazy(() => import("@/components/GovernanceConsole").then(m => ({ default: m.GovernanceConsole }))); const AnalysisWorkspaceContent = lazy(() => import("@/components/AnalysisWorkspaceContent").then(m => ({ default: m.AnalysisWorkspaceContent })));
 const CronManager = lazy(() => import("@/components/CronManager").then(m => ({ default: m.CronManager })));
 const UserManager = lazy(() => import("@/components/UserManager").then(m => ({ default: m.UserManager })));
@@ -105,18 +105,18 @@ export function DesktopLayout(props: LayoutProps) {
     startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   } = props;
 
-  const { user: authUser, updatePreferences, isLoading: authLoading, authEnabled } = useAuth();
+  const { user: authUser, updatePreferences, isLoading: authLoading, authEnabled } = useAuth(); const [organizationSettingsTargetId, setOrganizationSettingsTargetId] = useState<string | null>();
   const {
     mode: settingsMode,
     target: settingsTarget,
     activeSection: activeSettingsSection,
     navigate: handleSettingsNavigate,
     close: handleCloseUnifiedSettings,
-    open: handleOpenUnifiedSettings,
+    open: handleOpenUnifiedSettings, openOrganizationGovernance: handleOpenOrganizationGovernance,
     onControllerChange: handleSettingsControllerChange,
   } = useUnifiedSettingsWorkspace({
     settingsOpen, settingsSection, adminSettings, openSettings, closeSettings, setSettingsSection,
-    openAdminSettings, closeAdminSettings, setAdminSettingsSection,
+    openAdminSettings, closeAdminSettings, setAdminSettingsSection, isPlatformAdmin, organizationSettingsTargetId,
   });
   const analysisMode = !settingsMode && isAnalysisRoute(governanceRoute); const accessTarget = managementAccessTarget({ settingsOpen, adminSettingsTarget: adminSettings?.target, activeTab, governanceArea: governanceRoute?.area });
   const managementAccess = useManagementSettingsAccess({ user: authUser, authLoading, authEnabled, active: accessTarget !== null || isAdmin }); const { open: handleOpenAnalysis, close: handleCloseAnalysis, navigate: handleAnalysisNavigate } = useUnifiedAnalysisWorkspace({ mode: analysisMode, governanceRoute, managementAccess, sessionId, pushActiveTab, setActiveTab });
@@ -349,10 +349,10 @@ export function DesktopLayout(props: LayoutProps) {
 
   if (!analysisMode && activeTab === "tenant-admin" && governanceRoute?.area === "organization") {
     return (
-      <Suspense fallback={SuspenseFallback}>
+      <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary>{(dirtyController) => (
         <ManagementSettingsAccessGate scope="tenant" target="tenant" access={managementAccess}
           onRetry={managementAccess.retry} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}>
-          <GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")}>
+          <GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>
           <TenantAdminShell
             renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
             renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
@@ -370,17 +370,17 @@ export function DesktopLayout(props: LayoutProps) {
             governanceContentOnly
           />
           </GovernanceConsole>
-        </ManagementSettingsAccessGate>
-      </Suspense>
+        </ManagementSettingsAccessGate>)}</SettingsDirtyBoundary></Suspense>
     );
   }
 
   if (!analysisMode && activeTab === "platform-admin" && governanceRoute?.area === "platform") {
     return (
       <Suspense fallback={SuspenseFallback}>
+        <SettingsDirtyBoundary>{(dirtyController) => (
         <ManagementSettingsAccessGate scope="platform" target="platform" access={managementAccess}
           onRetry={managementAccess.retry} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}>
-          <GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")}>
+          <GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>
           <PlatformAdminShell
             renderTenants={() => <TenantManager />}
             renderSignupConfig={() => <SignupConfigManagerPanel />}
@@ -401,8 +401,7 @@ export function DesktopLayout(props: LayoutProps) {
             governanceRoute={governanceRoute}
             governanceContentOnly
           />
-          </GovernanceConsole>
-        </ManagementSettingsAccessGate>
+          </GovernanceConsole></ManagementSettingsAccessGate>)}</SettingsDirtyBoundary>
       </Suspense>
     );
   }
@@ -427,7 +426,7 @@ export function DesktopLayout(props: LayoutProps) {
         settingsMode={settingsMode}
         settingsTarget={settingsTarget}
         activeSettingsSection={activeSettingsSection}
-        onSettingsNavigate={handleSettingsNavigate}
+        onSettingsNavigate={handleSettingsNavigate} onOpenOrganizationGovernance={handleOpenOrganizationGovernance}
         onCloseSettings={handleCloseUnifiedSettings}
         isAdmin={isAdmin}
         isPlatformAdmin={isPlatformAdmin}
@@ -855,7 +854,7 @@ export function DesktopLayout(props: LayoutProps) {
         )}
         {analysisMode && governanceRoute && <AnalysisWorkspaceContent route={governanceRoute} access={managementAccess} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}
           openFilePreview={openFilePreview} platformAdminSection={platformAdminSection} platformAdminEntityId={platformAdminEntityId} setPlatformAdminRoute={setPlatformAdminRoute} />}
-        {settingsMode && (
+        {settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary>{(dirtyController) => (
           <div className="absolute inset-0 z-30 min-h-0 overflow-hidden bg-card" data-testid="unified-settings-content">
             <div className={cn("h-full min-h-0", settingsTarget !== "personal" && "hidden")}>
               <Suspense fallback={SuspenseFallback}>
@@ -864,7 +863,7 @@ export function DesktopLayout(props: LayoutProps) {
                   section={settingsSection}
                   onSectionChange={setSettingsSection}
                   onClose={handleCloseUnifiedSettings}
-                  onNavigationControllerChange={handleSettingsControllerChange}
+                  onNavigationControllerChange={handleSettingsControllerChange} dirtyController={dirtyController}
                   renderMemory={() => <MemorySectionPanel />}
                   renderFiles={() => (
                     <FileBrowserLazy
@@ -900,7 +899,7 @@ export function DesktopLayout(props: LayoutProps) {
                     renderFiles={() => <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
                     renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
                     settingsOpen={settingsTarget === "tenant"}
-                    settingsContentOnly
+                    settingsContentOnly onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId} dirtyController={dirtyController}
                     settingsSection={(settingsTarget === "tenant" ? activeSettingsSection : "users") as TenantSection}
                     onSettingsSectionChange={(section) => handleSettingsNavigate("tenant", section)}
                     onSettingsClose={handleCloseUnifiedSettings}
@@ -932,7 +931,7 @@ export function DesktopLayout(props: LayoutProps) {
               </ManagementSettingsAccessGate>
             </Suspense>
           </div>
-        )}
+        )}</SettingsDirtyBoundary></Suspense>}
         </div>
 
         {rightPanelOpen && (

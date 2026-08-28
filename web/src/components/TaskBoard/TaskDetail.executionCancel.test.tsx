@@ -88,6 +88,7 @@ describe("TaskDetail 终止执行", () => {
       onCommentsChanged={vi.fn(async () => undefined)}
     />);
 
+    await user.click(await screen.findByRole("button", { name: "展开任务详情" }));
     await user.click(await screen.findByRole("button", { name: "终止执行" }));
 
     await waitFor(() => expect(mocks.cancelExecution).toHaveBeenCalledWith(

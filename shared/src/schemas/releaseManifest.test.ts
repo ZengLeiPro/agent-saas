@@ -35,14 +35,14 @@ export function validManifestContent() {
     tag: 'rc-20260825-01',
     createdAt: '2026-08-25T08:00:00.000Z',
     createdBy: 'github-actions',
-    integrationCandidates: [
-      {
-        candidateId: '85a9cb68-4130-4c0a-aec3-e4cc9c671bd5',
-        revision: 2,
-        mergedCommitOid: RELEASE_SHA,
-      },
-    ],
-    sourcePullRequests: [183, 194],
+    releasePullRequest: {
+      number: 194,
+      headSha: 'c'.repeat(40),
+      mergeCommitOid: RELEASE_SHA,
+      state: 'MERGED' as const,
+    },
+    integrationCandidates: [],
+    sourcePullRequests: [194],
     productionBaseline,
     components: {
       web: { action: 'deploy' as const, sourceSha: RELEASE_SHA, artifactDigest: WEB_DIGEST },
@@ -72,13 +72,11 @@ export function validManifestContent() {
     checks: {
       appCi: { status: 'success' as const, headSha: RELEASE_SHA, runId: 123 },
       acsImpact: { status: 'not_required' as const, headSha: RELEASE_SHA },
-      integrationReceipt: { status: 'success' as const, subjectDigest: SERVER_DIGEST },
+      mergeReceipt: { status: 'success' as const, subjectDigest: SERVER_DIGEST },
     },
     promotionPolicy: {
       expiresAt: '2026-09-01T08:00:00.000Z',
       minimumPromotableSha: BASELINE_SHA,
-      appAcsCompatibility: 'n_and_n_plus_1' as const,
-      compatibilityEvidenceDigest: `sha256:${'8'.repeat(64)}`,
       requiresHumanApproval: true as const,
     },
     migrationPlan: {
@@ -115,19 +113,34 @@ describe('releaseManifestSchema', () => {
     ).toBe(false);
   });
 
-  it('requires traceable source evidence and coherent ACS check receipts', () => {
-    expect(
-      releaseManifestContentSchema.safeParse({
-        ...validManifestContent(),
-        integrationCandidates: [],
-      }).success,
-    ).toBe(false);
+  it('requires traceable GitHub merge evidence and coherent ACS check receipts', () => {
+    const missingMerge = validManifestContent();
+    delete (missingMerge as Partial<typeof missingMerge>).releasePullRequest;
+    delete (missingMerge.checks as Partial<typeof missingMerge.checks>).mergeReceipt;
+    expect(releaseManifestContentSchema.safeParse(missingMerge).success).toBe(false);
     const inconsistent = validManifestContent();
     (inconsistent.checks as unknown as Record<string, unknown>).acsImpact = {
       status: 'success',
       headSha: RELEASE_SHA,
     };
     expect(releaseManifestContentSchema.safeParse(inconsistent).success).toBe(false);
+  });
+
+  it('continues to accept immutable legacy Taskboard Integration manifests', () => {
+    const legacy = validManifestContent() as Record<string, any>;
+    delete legacy.releasePullRequest;
+    legacy.integrationCandidates = [
+      {
+        candidateId: '85a9cb68-4130-4c0a-aec3-e4cc9c671bd5',
+        revision: 2,
+        mergedCommitOid: RELEASE_SHA,
+      },
+    ];
+    legacy.checks.integrationReceipt = legacy.checks.mergeReceipt;
+    delete legacy.checks.mergeReceipt;
+    legacy.promotionPolicy.appAcsCompatibility = 'n_and_n_plus_1';
+    legacy.promotionPolicy.compatibilityEvidenceDigest = `sha256:${'8'.repeat(64)}`;
+    expect(releaseManifestContentSchema.safeParse(legacy).success).toBe(true);
   });
 
   it('binds deploy and keep source identities to release and baseline', () => {

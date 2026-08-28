@@ -72,6 +72,8 @@ describe('ACS runtime config', () => {
     expect(runtimeConfigSnapshot(config)).toMatchObject({
       maxRunningSandboxes: 4,
       warnRunningSandboxes: 3,
+      minConfigurableRunningSandboxes: 0,
+      maxConfigurableRunningSandboxes: 10_000,
       drainDeadlineMs: 900_000,
     });
     // 持久化文件自 2026-07-25 起额外包含 egress 段（缺省全关），
@@ -208,9 +210,42 @@ describe('ACS runtime config', () => {
     expect(() => applyRuntimeConfigPatch(config, { maxRunningSandboxes: 0 })).toThrow(
       /address capacity 1\.\.512/,
     );
-    expect(applyRuntimeConfigPatch(config, { maxRunningSandboxes: 500 }).maxRunningSandboxes).toBe(
-      500,
+    expect(applyRuntimeConfigPatch(config, { maxRunningSandboxes: 500 })).toMatchObject({
+      maxRunningSandboxes: 500,
+      minConfigurableRunningSandboxes: 1,
+      maxConfigurableRunningSandboxes: 512,
+    });
+  });
+
+  it('caps published shared-cidr capacity at the runtime-config protocol limit', () => {
+    const config = {
+      maxRunningSandboxes: 5_000,
+      warnRunningSandboxes: 4_500,
+      drainDeadlineMs: 120_000,
+      snat: { mode: 'shared-cidr', sharedCidrs: ['172.16.0.0/16'] },
+    } as AcsOrchestratorConfig;
+
+    expect(runtimeConfigSnapshot(config).maxConfigurableRunningSandboxes).toBe(10_000);
+    expect(() => applyRuntimeConfigPatch(config, { maxRunningSandboxes: 10_001 })).toThrow(
+      /address capacity 1\.\.10000/,
     );
+  });
+
+  it('publishes the production shared-cidr capacity as 1..8192', () => {
+    const productionEnv = readFileSync(new URL('../config/production.env', import.meta.url), 'utf-8');
+    const sharedCidrs = productionEnv.match(/^ACS_SNAT_SHARED_CIDRS=(.+)$/mu)?.[1]?.split(',') ?? [];
+    const config = {
+      maxRunningSandboxes: 5_000,
+      warnRunningSandboxes: 4_500,
+      drainDeadlineMs: 120_000,
+      snat: { mode: 'shared-cidr', sharedCidrs },
+    } as AcsOrchestratorConfig;
+
+    expect(sharedCidrs).toHaveLength(32);
+    expect(runtimeConfigSnapshot(config)).toMatchObject({
+      minConfigurableRunningSandboxes: 1,
+      maxConfigurableRunningSandboxes: 8_192,
+    });
   });
 
   it('loads desired network policy from env without claiming enforcement', () => {

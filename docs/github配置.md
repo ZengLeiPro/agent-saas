@@ -427,11 +427,14 @@ gh variable set STAGING_SSH_HOST_KEY_SHA256 \
 - `ECS_USER`
 - `ECS_SSH_KEY`
 - `PRODUCTION_OBSERVATION_TOKEN`
+- `RELEASE_EVIDENCE_WRITE_TOKEN`
 
 要求：
 
 - 使用生产专用、最小权限的 RAM 与 SSH 身份。
 - `PRODUCTION_OBSERVATION_TOKEN` 必须是生产观察证据服务的只读 Token。
+- `RELEASE_EVIDENCE_WRITE_TOKEN` 必须是同一 Evidence Service 的独立写 Token，仅供
+  `Prepare Release Evidence` 自动 Workflow 使用；禁止与只读 Token 相同。
 - Environment Secret 可以与现有 Repository Secret 使用同一真实生产凭据，但必须由可信凭据源重新写入；
   GitHub 不允许读取已保存 Secret 的明文。
 - 不得删除同名 Repository Secrets，旧人工部署入口仍依赖它们。
@@ -451,6 +454,7 @@ gh secret set '<SECRET_NAME>' \
 - `PRODUCTION_OBSERVATION_URL`
 - `PRODUCTION_SSH_HOST_KEY_SHA256`
 - `RELEASE_RECORD_OSS_URI`
+- `RELEASE_RECORD_OSS_REGION`
 
 格式要求：
 
@@ -459,6 +463,7 @@ gh secret set '<SECRET_NAME>' \
 | `PRODUCTION_OBSERVATION_URL`     | `https://staging-agent-api.kaiyan.net/production-observation` |
 | `PRODUCTION_SSH_HOST_KEY_SHA256` | `SHA256:IwX0iO/NoCSv02g4Zczm9+OD+ESws26lr09d0UWPlCI`          |
 | `RELEASE_RECORD_OSS_URI`         | `oss://agent-saas-release-records`                            |
+| `RELEASE_RECORD_OSS_REGION`      | `cn-shenzhen`                                                 |
 
 生产观察当前由隔离部署的 Evidence Service 统一提供读端点，因此 URL 使用 Staging API 域名，但其
 查询必须绑定生产 release ID 与 Manifest digest；这不表示生产应用部署在 Staging ECS。
@@ -508,6 +513,12 @@ ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
   | gh secret set PRODUCTION_OBSERVATION_TOKEN \
       --repo "$TARGET_REPOSITORY" --env production
 
+ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+  -i "$STAGING_KEY" "root@$STAGING_HOST" \
+  'cat /etc/agent-saas-staging/release-evidence-write.token' \
+  | gh secret set RELEASE_EVIDENCE_WRITE_TOKEN \
+      --repo "$TARGET_REPOSITORY" --env production
+
 gh variable set PRODUCTION_OBSERVATION_URL \
   --repo "$TARGET_REPOSITORY" --env production \
   --body 'https://staging-agent-api.kaiyan.net/production-observation'
@@ -517,6 +528,9 @@ gh variable set PRODUCTION_SSH_HOST_KEY_SHA256 \
 gh variable set RELEASE_RECORD_OSS_URI \
   --repo "$TARGET_REPOSITORY" --env production \
   --body 'oss://agent-saas-release-records'
+gh variable set RELEASE_RECORD_OSS_REGION \
+  --repo "$TARGET_REPOSITORY" --env production \
+  --body 'cn-shenzhen'
 ```
 
 ## 10. 最终读回验收

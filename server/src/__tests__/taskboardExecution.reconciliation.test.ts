@@ -47,6 +47,24 @@ describe('TaskboardExecutionCoordinator reconciliation', () => {
     expect(rig.store.finishWorkflowCancellation).toHaveBeenCalledWith('cancel-missing');
   });
 
+  it('handoff cancellation 收敛后在同一轮继续扫描下一阶段候选', async () => {
+    const order: string[] = [];
+    const rig = makeRig({
+      claimWorkflowCancellations: vi.fn(async () => [{
+        id: 'cancel-handoff', runId: 'run-handoff', reason: 'execution_transitioned',
+      }]),
+      finishWorkflowCancellation: vi.fn(async () => { order.push('handoff-finished'); }),
+      claimIntegrationDispatchCandidatesV2: vi.fn(async () => {
+        order.push('next-stage-scan');
+        return [];
+      }),
+    });
+
+    await rig.coordinator.reconcile();
+
+    expect(order).toEqual(['handoff-finished', 'next-stage-scan']);
+  });
+
   it('workflow cancellation CAS 输给 completed 终态时按 durable fact 收敛 outbox', async () => {
     const get = vi.fn()
       .mockResolvedValueOnce({

@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 
+import { replaceAppHistoryState } from "@/lib/appHistory";
 import {
   buildPlatformAdminUrl,
   buildTenantAdminUrl,
@@ -49,7 +50,7 @@ export function useAdminSettingsNavigation(deps: AdminSettingsNavigationDeps) {
     const currentUrl = `${window.location.pathname}${window.location.search}`;
     const fromSettingsRoute = isUnifiedSettingsUrl(currentUrl);
     const source = history?.source ?? (fromSettingsRoute ? returnUrl() : currentUrl);
-    if (!history && fromSettingsRoute) window.history.replaceState({}, "", source);
+    if (!history && fromSettingsRoute) replaceAppHistoryState({}, source);
     deps.openState(target, normalized);
     pushAdminSettingsUrl(target, normalized, { source, depth: history ? history.depth + 1 : 1 });
   }, [deps, returnUrl]);
@@ -67,7 +68,7 @@ export function useAdminSettingsNavigation(deps: AdminSettingsNavigationDeps) {
     const history = readPersonalSettingsHistoryState();
     const currentUrl = `${window.location.pathname}${window.location.search}`;
     const source = history?.source ?? returnUrl();
-    if (!history && isUnifiedSettingsUrl(currentUrl)) window.history.replaceState({}, "", source);
+    if (!history && isUnifiedSettingsUrl(currentUrl)) replaceAppHistoryState({}, source);
     deps.openState(current.target, normalized);
     pushAdminSettingsUrl(current.target, normalized, {
       source,

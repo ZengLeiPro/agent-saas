@@ -9,7 +9,7 @@ const sha = z.string().regex(/^[a-f0-9]{40}$/u);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
 const component = z.enum(['web', 'api', 'runtimeWorker', 'acs']);
 
-const integrationSnapshotSchema = z
+const mergeSnapshotSchema = z
   .object({
     schemaVersion: z.literal(1),
     task: z
@@ -18,7 +18,8 @@ const integrationSnapshotSchema = z
         revision: z.number().int().positive(),
         status: z.literal('merged'),
       })
-      .strict(),
+      .strict()
+      .optional(),
     finalPullRequest: z
       .object({
         number: z.number().int().positive(),
@@ -38,9 +39,18 @@ const integrationSnapshotSchema = z
           })
           .strict(),
       )
-      .min(1),
+      .default([]),
   })
-  .strict();
+  .strict()
+  .superRefine((snapshot, ctx) => {
+    if (!snapshot.task && snapshot.sources.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sources'],
+        message: 'Taskboard sources require an optional Taskboard task snapshot',
+      });
+    }
+  });
 
 const checksSchema = z
   .object({
@@ -125,26 +135,6 @@ const migrationSchema = z
   })
   .strict();
 
-const compatibilitySchema = z
-  .object({
-    schemaVersion: z.literal(1),
-    releaseSha: sha,
-    productionBaselineDigest: digest,
-    affectedComponents: z.array(component),
-    status: z.enum(['compatible', 'not_required']),
-    executedAt: z.string().datetime({ offset: true }),
-    checks: z.array(
-      z
-        .object({
-          name: z.string().min(1),
-          status: z.literal('passed'),
-          evidenceUri: z.string().url(),
-        })
-        .strict(),
-    ),
-  })
-  .strict();
-
 function parse(argv) {
   const output = {};
   for (let index = 2; index < argv.length; index += 2) {
@@ -172,10 +162,10 @@ function assertUnique(values, label) {
 export async function produceReleaseEvidence(options) {
   const releaseSha = String(options.sha ?? '');
   if (!sha.safeParse(releaseSha).success) throw new Error('--sha must be a complete SHA');
-  const integration = await readJson(
-    options.integration,
-    integrationSnapshotSchema,
-    'Integration snapshot',
+  const merge = await readJson(
+    options.merge ?? options.integration,
+    mergeSnapshotSchema,
+    'GitHub merge snapshot',
   );
   const checks = await readJson(options.checks, checksSchema, 'GitHub checks');
   const production = await readJson(options.production, productionStateSchema, 'Production state');
@@ -190,45 +180,24 @@ export async function produceReleaseEvidence(options) {
     'Release classification',
   );
   const migration = await readJson(options.migration, migrationSchema, 'Migration plan');
-  const compatibility = await readJson(
-    options.compatibility,
-    compatibilitySchema,
-    'Compatibility report',
-  );
 
   const { digest: productionDigest, ...productionBody } = production;
   if (digestBuffer(Buffer.from(canonicalJson(productionBody))) !== productionDigest) {
     throw new Error('Production state digest does not match its canonical body');
   }
-  if (integration.finalPullRequest.mergeCommitOid !== releaseSha)
-    throw new Error('Final Integration PR merge commit does not equal the release SHA');
+  if (merge.finalPullRequest.mergeCommitOid !== releaseSha)
+    throw new Error('Final GitHub PR merge commit does not equal the release SHA');
   if (checks.appCi.headSha !== releaseSha || checks.acsImpact.headSha !== releaseSha)
     throw new Error('GitHub checks are not bound to the release SHA');
   if ((checks.acsImpact.status === 'success') !== (checks.acsImpact.runId !== undefined)) {
     throw new Error('ACS Impact Gate run ID is inconsistent with its status');
   }
-  const sourcePullRequests = integration.sources
-    .map((source) => source.number)
-    .sort((a, b) => a - b);
-  assertUnique(sourcePullRequests, 'Integration source pull requests');
-  if (sourcePullRequests.includes(integration.finalPullRequest.number))
-    throw new Error('Final Integration PR cannot also be a source PR');
+  const sourcePullRequests = [
+    merge.finalPullRequest.number,
+    ...merge.sources.map((source) => source.number),
+  ].sort((a, b) => a - b);
+  assertUnique(sourcePullRequests, 'Release pull requests');
   assertUnique(classification.components, 'Affected components');
-  if (
-    compatibility.releaseSha !== releaseSha ||
-    compatibility.productionBaselineDigest !== production.digest ||
-    canonicalJson(compatibility.affectedComponents) !== canonicalJson(classification.components)
-  ) {
-    throw new Error('Compatibility report is not bound to this release and production baseline');
-  }
-  if (classification.components.length === 0) {
-    if (compatibility.status !== 'not_required' || compatibility.checks.length !== 0)
-      throw new Error(
-        'A governance-only release must use an empty not_required compatibility report',
-      );
-  } else if (compatibility.status !== 'compatible' || compatibility.checks.length === 0) {
-    throw new Error('A runtime release requires passed N/N+1 compatibility checks');
-  }
 
   const productionBaseline = {
     web: {
@@ -249,25 +218,27 @@ export async function produceReleaseEvidence(options) {
       sandboxImageDigest: production.components.acs.sandboxImageDigest,
     },
   };
-  const integrationReceiptBody = {
+  const mergeReceiptBody = {
     schemaVersion: 1,
-    task: integration.task,
-    finalPullRequest: integration.finalPullRequest,
-    sources: [...integration.sources].sort((left, right) => left.number - right.number),
+    finalPullRequest: merge.finalPullRequest,
+    ...(merge.task ? { task: merge.task } : {}),
+    sources: [...merge.sources].sort((left, right) => left.number - right.number),
   };
   const body = {
     schemaVersion: 1,
     ok: true,
     releaseSha,
-    compatibilityEvidenceDigest: digestBuffer(Buffer.from(canonicalJson(compatibility))),
     productionBaselineStatus: 'known',
-    integrationCandidates: [
-      {
-        candidateId: integration.task.id,
-        revision: integration.task.revision,
-        mergedCommitOid: integration.finalPullRequest.mergeCommitOid,
-      },
-    ],
+    releasePullRequest: merge.finalPullRequest,
+    integrationCandidates: merge.task
+      ? [
+          {
+            candidateId: merge.task.id,
+            revision: merge.task.revision,
+            mergedCommitOid: merge.finalPullRequest.mergeCommitOid,
+          },
+        ]
+      : [],
     sourcePullRequests,
     checks: {
       appCi: {
@@ -280,9 +251,9 @@ export async function produceReleaseEvidence(options) {
         headSha: checks.acsImpact.headSha,
         ...(checks.acsImpact.runId ? { runId: checks.acsImpact.runId } : {}),
       },
-      integrationReceipt: {
+      mergeReceipt: {
         status: 'success',
-        subjectDigest: digestBuffer(Buffer.from(canonicalJson(integrationReceiptBody))),
+        subjectDigest: digestBuffer(Buffer.from(canonicalJson(mergeReceiptBody))),
       },
     },
     productionBaseline,

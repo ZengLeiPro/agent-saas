@@ -108,7 +108,7 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ob
   assert.match(workflow, /verify-installed-release\.mjs/u);
   assert.match(workflow, /duration-ms 900000/u);
   assert.match(workflow, /separate_release/u);
-  assert.match(workflow, /compatibilityEvidenceDigest/u);
+  assert.doesNotMatch(workflow, /compatibilityEvidenceDigest|appAcsCompatibility/u);
   assert.match(workflow, /confirmed_after_observation/u);
   assert.match(workflow, /businessAcceptanceEvidenceDigest/u);
   assert.match(workflow, /observationReportDigest/u);

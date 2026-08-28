@@ -525,7 +525,7 @@ jobs:
           timeout "${REMOTE_DEPLOY_TIMEOUT_SECONDS}s" ssh -i ~/.ssh/ecs_deploy_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$ECS_USER@$ECS_HOST" \
-            "DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_RUN_ID}-${GITHUB_SHA}.tgz' RELEASE_ID='${SERVER_ARTIFACT_DIGEST#sha256:}' RELEASE_SHA='${GITHUB_SHA}' COMPAT_RELEASE_ID='${COMPAT_RELEASE_ID}' SERVER_ARTIFACT_DIGEST='${SERVER_ARTIFACT_DIGEST}' WORKER_DEPLOY_REQUIRED='${RUNTIME_WORKER_DEPLOY_REQUIRED}' bash -s" <<'REMOTE'
+            "DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_RUN_ID}-${GITHUB_SHA}.tgz' RELEASE_ID='${SERVER_ARTIFACT_DIGEST#sha256:}' RELEASE_SHA='${GITHUB_SHA}' COMPAT_RELEASE_ID='${COMPAT_RELEASE_ID}' SERVER_ARTIFACT_DIGEST='${SERVER_ARTIFACT_DIGEST}' WORKER_DEPLOY_REQUIRED='${RUNTIME_WORKER_DEPLOY_REQUIRED}' GITHUB_RUN_ID='${GITHUB_RUN_ID}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT}' bash -s" <<'REMOTE'
           # -E: 函数内失败也触发 ERR trap，保证任何失败都有 on_error 日志
           set -Eeuo pipefail
 
@@ -537,6 +537,8 @@ jobs:
           : "${COMPAT_RELEASE_ID:?missing COMPAT_RELEASE_ID}"
           : "${SERVER_ARTIFACT_DIGEST:?missing SERVER_ARTIFACT_DIGEST}"
           : "${WORKER_DEPLOY_REQUIRED:?missing WORKER_DEPLOY_REQUIRED}"
+          : "${GITHUB_RUN_ID:?missing GITHUB_RUN_ID}"
+          : "${GITHUB_RUN_ATTEMPT:?missing GITHUB_RUN_ATTEMPT}"
           case "$WORKER_DEPLOY_REQUIRED" in true|false) ;; *) echo "invalid WORKER_DEPLOY_REQUIRED=$WORKER_DEPLOY_REQUIRED"; exit 1 ;; esac
           actual_archive_digest="sha256:$(sha256sum "$RELEASE_TGZ" | cut -d' ' -f1)"
           test "$actual_archive_digest" = "$SERVER_ARTIFACT_DIGEST"

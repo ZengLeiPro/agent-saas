@@ -64,6 +64,10 @@ describe('ACS deploy workflow contract', () => {
       publish: 'true',
       contract_check: 'false',
     });
+    expect(classify(['.github/workflows/ci.yml'])).toMatchObject({
+      publish: 'true',
+      contract_check: 'false',
+    });
   });
 
   it('在等待镜像前拒绝已经落后于 main 的 dispatch', () => {

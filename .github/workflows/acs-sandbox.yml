@@ -26,6 +26,7 @@ on:
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
       - '.github/workflows/acs-sandbox.yml'
+      - '.github/workflows/ci.yml'
       - '.github/scripts/acs-classify.sh'
       - '.github/scripts/redeliver_acr_webhook.py'
       - 'scripts/apply-orchestrator-env.py'

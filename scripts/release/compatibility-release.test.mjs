@@ -120,6 +120,10 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(appWorkflow, /baselines\/web-/u);
   assert.match(appWorkflow, /Refresh trusted Production identity/u);
   assert.match(appWorkflow, /runtime worker rollout: required to converge/u);
+  assert.match(appWorkflow, /GITHUB_RUN_ID='\$\{GITHUB_RUN_ID\}'/u);
+  assert.match(appWorkflow, /GITHUB_RUN_ATTEMPT='\$\{GITHUB_RUN_ATTEMPT\}'/u);
+  assert.match(appWorkflow, /missing GITHUB_RUN_ID/u);
+  assert.match(appWorkflow, /missing GITHUB_RUN_ATTEMPT/u);
   assert.ok(
     appWorkflow.indexOf('Production identity atomically rebuilt') <
       appWorkflow.indexOf('drain signal SIGUSR2 sent to old color'),

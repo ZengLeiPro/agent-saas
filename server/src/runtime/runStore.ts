@@ -1312,10 +1312,10 @@ export class PgRunStore implements RunStore {
   async cancelActiveByUser(userId: string, reason: string): Promise<number> { return this.queries.cancelActiveByUser(userId, reason); }
   async cancelActiveByTenant(tenantId: string, reason: string): Promise<number> { return this.queries.cancelActiveByTenant(tenantId, reason); }
   async listActiveByUser(userId: string): Promise<RunRecord[]> { return this.queries.listActiveByUser(userId); }
-  async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> { return this.queries.findByIdempotencyKey(userId, idempotencyKey); }
+  async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
+    return this.queries.findByIdempotencyKey(userId, idempotencyKey);
+  }
   async getActiveBySession(sessionId: string): Promise<RunRecord | null> { return this.queries.getActiveBySession(sessionId); }
-  async getActiveDispatcherTaskByParentSession(sessionId: string): Promise<RunRecord | null> { return this.queries.getActiveDispatcherTaskByParentSession(sessionId); }
-
   async getActiveCounts(): Promise<ActiveRunCounts> { return this.queries.getActiveCounts(); }
   async listBySession(sessionId: string, options: { limit?: number; beforeUpdatedAt?: string } = {}): Promise<RunRecord[]> {
     return this.queries.listBySession(sessionId, options);

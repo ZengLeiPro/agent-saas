@@ -1024,8 +1024,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // ---- 企业专家草稿态（2026-07 唯恩批次）----
   // ref：sendChatViaWs 首条消息（无 sessionId）时带上 orgAgentId，收到 'session' 事件
-  //（会话真实建立、服务端已写 meta）后清除——ACK 只代表入队，rejected 后重发仍要带上
-  //（2026-07 审查 F9）；
+  //（会话真实建立、服务端已写 meta）后清除——ACK 只代表入队，rejected 后重发仍要带上（2026-07 审查 F9）；
   // state：新会话空白态的顶部 banner 展示（会话入列表带 orgAgentId 后由列表接管）。
   const { pendingOrgAgentIdRef, pendingNewSessionGroupIdRef, pendingOrgAgentId, setPendingOrgAgentId, clearPendingOrgAgent, assignPendingGroup } = usePendingNewSessionTarget();
   const authOwnerKey = user ? `${user.tenantId}:${user.id}` : "anonymous";
@@ -1039,13 +1038,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     immediateSessionIdRef.current = id;
     queuedSessionIdRef.current = id;
     mutateQueuedInterjections((prev) => prev);
-    // 与 immediateSessionIdRef 同帧同语义：wsLatestSessionIdRef 原先只写不清，会长期
-    // 指向上一个发过消息的会话，让终态守卫的回退值失效（2026-08-01 串会话路径）。
+    // 与 immediateSessionIdRef 同帧同语义：清掉上一个发过消息的会话，避免终态守卫回退值失效。
     wsLatestSessionIdRef.current = { value: id };
-    session.selectSession(id); if (isActiveRuntimeStatus(loadSessionRuntimeToRef(id)?.status)) { setLoading(true); dispatchConnection('connect'); }
+    session.selectSession(id);
+    if (isActiveRuntimeStatus(loadSessionRuntimeToRef(id)?.status)) {
+      setLoading(true); dispatchConnection('connect');
+    }
     pushUrl('chat', id);
   }, [clearPendingOrgAgent, dispatchConnection, failAllProvisionalBatches, loadSessionRuntimeToRef, markSessionRead, mutateQueuedInterjections, session.selectSession]);
-
   const newSessionWithUrl = useCallback((groupId: string | null = null) => {
     setTrashPreviewSessionId(null); startNewSandboxProfile();
     clearPendingOrgAgent(); // 普通新会话 = 个人 Agent 路径

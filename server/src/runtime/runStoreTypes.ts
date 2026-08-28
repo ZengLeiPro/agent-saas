@@ -282,8 +282,6 @@ export interface RunStore {
   get(runId: string): Promise<RunRecord | null>;
   findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null>;
   getActiveBySession?(sessionId: string): Promise<RunRecord | null>;
-  /** Dispatcher 前台会话关联的后台 Worker；供会话运行态恢复，不混入普通后台任务。 */
-  getActiveDispatcherTaskByParentSession?(sessionId: string): Promise<RunRecord | null>;
   cancelActiveByUser?(userId: string, reason: string): Promise<number>;
   cancelActiveByTenant?(tenantId: string, reason: string): Promise<number>;
   listActiveByUser?(userId: string): Promise<RunRecord[]>;

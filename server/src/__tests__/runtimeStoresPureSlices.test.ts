@@ -309,28 +309,6 @@ describe('Taskboard Session 活跃查询', () => {
   });
 });
 
-describe('Dispatcher 父会话活跃 Worker 查询', () => {
-  it('只纳入仍可停止的 dispatcher 后台任务', async () => {
-    const { store, query } = makeRunStoreRig([{ row_json: {
-      run_id: 'bg-drawing-1', session_id: 'sub-worker-1', tenant_id: 'tenant-a',
-      status: 'running', requested_at: '2026-08-28T09:00:00.000Z',
-      updated_at: '2026-08-28T09:01:00.000Z', metadata: {
-        backgroundTask: true, executionMode: 'dispatcher', parentSessionId: 'session-drawing',
-      },
-    } }]);
-
-    await expect(store.getActiveDispatcherTaskByParentSession('session-drawing'))
-      .resolves.toMatchObject({ runId: 'bg-drawing-1', sessionId: 'sub-worker-1', status: 'running' });
-    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
-    expect(sql).toContain("background.metadata->>'executionMode' = 'dispatcher'");
-    expect(sql).toContain("background.metadata->>'parentSessionId' = $1");
-    expect(sql).toContain("background.metadata->>'topLevelSessionId' = $1");
-    expect(sql).toContain("background.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')");
-    expect(sql).not.toContain("background.status IN ('completed','failed','cancelled','orphaned')");
-    expect(params).toEqual(['session-drawing']);
-  });
-});
-
 describe('sanitizeIdentifier（经 PgRunStore 构造函数驱动）', () => {
   it.each(['1bad', 'bad-prefix', 'bad;DROP TABLE x', 'bad prefix', ''])(
     '非法 tablePrefix %j 构造即 throw，错误消息回显原值',

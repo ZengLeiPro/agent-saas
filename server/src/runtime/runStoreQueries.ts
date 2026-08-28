@@ -337,23 +337,6 @@ export class PgRunStoreQueries {
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
   }
 
-  async getActiveDispatcherTaskByParentSession(sessionId: string): Promise<RunRecord | null> {
-    const result = await this.pool.query<{ row_json: RunRecord }>(`
-      SELECT row_to_json(background.*) AS row_json
-      FROM ${this.runsTable} background
-      WHERE background.metadata->>'backgroundTask' = 'true'
-        AND background.metadata->>'executionMode' = 'dispatcher'
-        AND (
-          background.metadata->>'parentSessionId' = $1
-          OR background.metadata->>'topLevelSessionId' = $1
-        )
-        AND background.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
-      ORDER BY background.updated_at DESC
-      LIMIT 1
-    `, [sessionId]);
-    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
-  }
-
   async getActiveCounts(): Promise<ActiveRunCounts> {
     const result = await this.pool.query<{
       pending: string | number | null;

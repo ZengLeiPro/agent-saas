@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { productionDeployArgs } from './build-release.mjs';
+import { productionDeployArgs, sbomListArgs } from './build-release.mjs';
 
 test('production deploy tolerates workspace patches unused by the selected package', () => {
   assert.deepEqual(productionDeployArgs('server', '/tmp/release/server'), [
@@ -12,4 +12,8 @@ test('production deploy tolerates workspace patches unused by the selected packa
     '--legacy',
     '/tmp/release/server',
   ]);
+});
+
+test('SBOM inventory stays bounded while the lockfile digest binds transitive dependencies', () => {
+  assert.deepEqual(sbomListArgs(), ['list', '--prod', '--recursive', '--depth', '0', '--json']);
 });

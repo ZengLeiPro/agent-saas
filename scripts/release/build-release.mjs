@@ -36,6 +36,10 @@ export function productionDeployArgs(project, target) {
   ];
 }
 
+export function sbomListArgs() {
+  return ['list', '--prod', '--recursive', '--depth', '0', '--json'];
+}
+
 async function pack(directory, target) {
   run('tar', ['-czf', target, '-C', directory, '.']);
   return { path: basename(target), ...(await digestFile(target)) };
@@ -90,7 +94,7 @@ export async function buildRelease(argv = process.argv) {
     sourceSha: opts.sha,
     lockfile: await digestFile(join(root, 'pnpm-lock.yaml')),
     packages: JSON.parse(
-      execFileSync('pnpm', ['list', '--prod', '--recursive', '--depth', 'Infinity', '--json'], {
+      execFileSync('pnpm', sbomListArgs(), {
         cwd: root,
         encoding: 'utf8',
         maxBuffer: 32 * 1024 * 1024,

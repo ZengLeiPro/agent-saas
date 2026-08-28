@@ -44,27 +44,14 @@ function productionState() {
 async function fixture(overrides = {}) {
   const root = await mkdtemp(join(tmpdir(), 'release-evidence-producer-'));
   const documents = {
-    integration: {
+    merge: {
       schemaVersion: 1,
-      task: {
-        id: '85a9cb68-4130-4c0a-aec3-e4cc9c671bd5',
-        revision: 3,
-        status: 'merged',
-      },
       finalPullRequest: {
         number: 300,
         headSha: 'c'.repeat(40),
         mergeCommitOid: RELEASE_SHA,
         state: 'MERGED',
       },
-      sources: [
-        {
-          number: 299,
-          headSha: 'd'.repeat(40),
-          state: 'MERGED',
-          reviewedSubjectDigest: DIGESTS.review,
-        },
-      ],
     },
     checks: {
       appCi: {
@@ -102,15 +89,6 @@ async function fixture(overrides = {}) {
       },
       blockingReasons: [],
     },
-    compatibility: {
-      schemaVersion: 1,
-      releaseSha: RELEASE_SHA,
-      productionBaselineDigest: productionState().digest,
-      affectedComponents: [],
-      status: 'not_required',
-      executedAt: '2026-08-28T01:00:00.000Z',
-      checks: [],
-    },
   };
   for (const [name, value] of Object.entries(overrides)) documents[name] = value;
   const options = { sha: RELEASE_SHA, output: join(root, 'evidence.json') };
@@ -129,8 +107,10 @@ test('produces digest-bound release evidence from independent authoritative inpu
 
   assert.deepEqual(stored, evidence);
   assert.equal(evidence.releaseSha, RELEASE_SHA);
-  assert.deepEqual(evidence.sourcePullRequests, [299]);
-  assert.equal(evidence.integrationCandidates[0].candidateId, documents.integration.task.id);
+  assert.equal(evidence.releasePullRequest.number, documents.merge.finalPullRequest.number);
+  assert.deepEqual(evidence.sourcePullRequests, [300]);
+  assert.deepEqual(evidence.integrationCandidates, []);
+  assert.equal(evidence.checks.mergeReceipt.status, 'success');
   const { evidenceDigest, ...body } = evidence;
   assert.equal(evidenceDigest, digestBuffer(Buffer.from(canonicalJson(body))));
 });
@@ -146,29 +126,42 @@ test('rejects production components tampered without recomputing the canonical d
   );
 });
 
-test('rejects a final Integration PR that is not the release commit', async () => {
+test('rejects a final GitHub PR that is not the release commit', async () => {
   const base = await fixture();
-  base.documents.integration.finalPullRequest.mergeCommitOid = 'e'.repeat(40);
-  await writeFile(base.options.integration, `${JSON.stringify(base.documents.integration)}\n`);
+  base.documents.merge.finalPullRequest.mergeCommitOid = 'e'.repeat(40);
+  await writeFile(base.options.merge, `${JSON.stringify(base.documents.merge)}\n`);
   await assert.rejects(produceReleaseEvidence(base.options), /does not equal the release SHA/u);
 });
 
-test('rejects reusing an externally merged Delivery PR as the final Integration PR', async () => {
+test('preserves optional Taskboard Integration audit evidence without requiring it', async () => {
   const base = await fixture();
-  base.documents.integration.finalPullRequest.number = base.documents.integration.sources[0].number;
-  await writeFile(base.options.integration, `${JSON.stringify(base.documents.integration)}\n`);
-
-  await assert.rejects(
-    produceReleaseEvidence(base.options),
-    /Final Integration PR cannot also be a source PR/u,
-  );
+  base.documents.merge.task = {
+    id: '85a9cb68-4130-4c0a-aec3-e4cc9c671bd5',
+    revision: 3,
+    status: 'merged',
+  };
+  base.documents.merge.sources = [
+    {
+      number: 299,
+      headSha: 'd'.repeat(40),
+      state: 'MERGED',
+      reviewedSubjectDigest: DIGESTS.review,
+    },
+  ];
+  await writeFile(base.options.merge, `${JSON.stringify(base.documents.merge)}\n`);
+  const evidence = await produceReleaseEvidence(base.options);
+  assert.deepEqual(evidence.sourcePullRequests, [299, 300]);
+  assert.equal(evidence.integrationCandidates[0].candidateId, base.documents.merge.task.id);
 });
 
-test('rejects synthetic compatibility for a runtime release', async () => {
+test('accepts a runtime release without a separate compatibility report', async () => {
   const base = await fixture();
   base.documents.classification.components = ['web'];
-  base.documents.compatibility.affectedComponents = ['web'];
-  for (const name of ['classification', 'compatibility'])
-    await writeFile(base.options[name], `${JSON.stringify(base.documents[name])}\n`);
-  await assert.rejects(produceReleaseEvidence(base.options), /requires passed N\/N\+1/u);
+  await writeFile(
+    base.options.classification,
+    `${JSON.stringify(base.documents.classification)}\n`,
+  );
+  const evidence = await produceReleaseEvidence(base.options);
+  assert.deepEqual(evidence.affectedComponents, ['web']);
+  assert.equal('compatibilityEvidenceDigest' in evidence, false);
 });

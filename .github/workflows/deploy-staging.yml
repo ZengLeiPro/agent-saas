@@ -171,9 +171,6 @@ jobs:
             --target "$GITHUB_SHA" > "$RUNNER_TEMP/migration-plan.json"
           diff <(jq -S .migrationPlan "$RUNNER_TEMP/migration-plan.json") \
                <(jq -S .migrationPlan "$RUNNER_TEMP/authoritative-evidence.json")
-          jq -e '.compatibilityEvidenceDigest | test("^sha256:[a-f0-9]{64}$")' \
-            "$RUNNER_TEMP/authoritative-evidence.json" >/dev/null
-
       - name: Resolve exact ACS image when required
         if: env.REUSE_RC != 'true'
         run: |

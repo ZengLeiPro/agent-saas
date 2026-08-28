@@ -55,6 +55,7 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   assert.match(workflow, /web-oss-readback/u);
   assert.match(workflow, /manifest-digest: \$MANIFEST_DIGEST/u);
   assert.match(workflow, /publish-release-record\.mjs/u);
+  assert.doesNotMatch(workflow, /compatibilityEvidenceDigest|N\/N\+1/u);
   assert.doesNotMatch(workflow, /--clobber/u);
   const deployIndex = workflow.indexOf('Deploy exact Staging API, Worker and ACS artifacts');
   const migrationIndex = workflow.indexOf(

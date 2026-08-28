@@ -33,13 +33,13 @@ function manifestFor(releaseId = 'rc-20260825-01') {
     tag: releaseId,
     createdAt: '2026-08-25T08:00:00.000Z',
     createdBy: 'test',
-    integrationCandidates: [
-      {
-        candidateId: '85a9cb68-4130-4c0a-aec3-e4cc9c671bd5',
-        revision: 1,
-        mergedCommitOid: SHA,
-      },
-    ],
+    releasePullRequest: {
+      number: 183,
+      headSha: 'c'.repeat(40),
+      mergeCommitOid: SHA,
+      state: 'MERGED' as const,
+    },
+    integrationCandidates: [],
     sourcePullRequests: [183],
     productionBaseline,
     components: {
@@ -66,13 +66,11 @@ function manifestFor(releaseId = 'rc-20260825-01') {
     checks: {
       appCi: { status: 'success' as const, headSha: SHA, runId: 123 },
       acsImpact: { status: 'not_required' as const, headSha: SHA },
-      integrationReceipt: { status: 'success' as const, subjectDigest: SERVER_DIGEST },
+      mergeReceipt: { status: 'success' as const, subjectDigest: SERVER_DIGEST },
     },
     promotionPolicy: {
       expiresAt: '2026-09-01T08:00:00.000Z',
       minimumPromotableSha: BASELINE,
-      appAcsCompatibility: 'n_and_n_plus_1' as const,
-      compatibilityEvidenceDigest: `sha256:${'8'.repeat(64)}`,
       requiresHumanApproval: true as const,
     },
     migrationPlan: {

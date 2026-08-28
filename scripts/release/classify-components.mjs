@@ -18,6 +18,7 @@ const PATH_COMPONENTS = Object.freeze([
   ['.husky/', []],
   ['docs/', []],
   ['scripts/release/', []],
+  ['infra/staging/', []],
   ['config/', []],
   ['mobile/', []],
   ['assets/', []],
@@ -94,7 +95,15 @@ export function readChangedPaths({
 }) {
   const output = execFileSync(
     'git',
-    ['diff', '--name-status', '--find-renames', '--find-copies', `${baseline}...${target}`],
+    [
+      '-c',
+      'core.quotePath=false',
+      'diff',
+      '--name-status',
+      '--find-renames',
+      '--find-copies',
+      `${baseline}...${target}`,
+    ],
     { cwd, encoding: 'utf8' },
   );
 

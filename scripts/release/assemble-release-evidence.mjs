@@ -47,7 +47,9 @@ export async function assembleReleaseEvidence(options) {
     createdAt,
     createdBy: options.actor,
     expiresAt,
-    compatibilityEvidenceDigest: authoritative.compatibilityEvidenceDigest,
+    ...(authoritative.releasePullRequest
+      ? { releasePullRequest: authoritative.releasePullRequest }
+      : {}),
     integrationCandidates: authoritative.integrationCandidates,
     sourcePullRequests: authoritative.sourcePullRequests,
     checks: authoritative.checks,

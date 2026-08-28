@@ -71,6 +71,14 @@ test('classifies root dependency files while explicitly ignoring release-only go
     components: [],
     blockingReason: null,
   });
+  assert.deepEqual(classifyPath('infra/staging/resource-plan.json'), {
+    components: [],
+    blockingReason: null,
+  });
+  assert.deepEqual(classifyPath('docs/github配置.md'), {
+    components: [],
+    blockingReason: null,
+  });
 });
 
 test('unknown paths fail closed while retaining mapped components', () => {
@@ -101,7 +109,15 @@ test('reads changed paths and retains both sides of cross-component renames', ()
   assert.deepEqual(calls, [
     [
       'git',
-      ['diff', '--name-status', '--find-renames', '--find-copies', `${SHA_A}...${SHA_B}`],
+      [
+        '-c',
+        'core.quotePath=false',
+        'diff',
+        '--name-status',
+        '--find-renames',
+        '--find-copies',
+        `${SHA_A}...${SHA_B}`,
+      ],
       { cwd: '/repo', encoding: 'utf8' },
     ],
   ]);

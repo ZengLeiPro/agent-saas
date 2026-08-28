@@ -78,7 +78,7 @@ export function TaskDetailComments({
   }, [comments.length, commentsLoading]);
 
   return (
-    <section aria-label="任务评论" className="flex min-h-0 flex-col bg-muted/10">
+    <section aria-label="任务评论" className="flex min-h-0 flex-1 flex-col bg-muted/10">
       <header className="flex items-center justify-between border-b bg-background px-4 py-3 sm:px-6">
         <div>
           <h3 className="text-sm font-semibold">评论（{comments.length}）</h3>

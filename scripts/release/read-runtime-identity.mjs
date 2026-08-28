@@ -29,7 +29,8 @@ function nonEmpty(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-function validateTopology(topology, reasons, now) {
+function validateTopology(identity, reasons, now) {
+  const topology = identity.topology;
   if (!topology || typeof topology !== 'object' || Array.isArray(topology)) {
     reasons.push('Production runtime identity topology must be an object.');
     return;
@@ -53,6 +54,7 @@ function validateTopology(topology, reasons, now) {
       'activeColorFile',
       'unit',
       'releaseSymlink',
+      'releaseTarget',
       'pidfile',
       ...(contract.readyfile ? ['readyfile'] : []),
     ];
@@ -61,6 +63,7 @@ function validateTopology(topology, reasons, now) {
         reasons.push(`Production runtime identity topology ${role}.${field} is required.`);
       else if (
         field !== 'activeColorFile' &&
+        field !== 'releaseTarget' &&
         COLOR_PATTERN.test(entry.activeColor ?? '') &&
         !entry[field].includes(entry.activeColor)
       )
@@ -85,6 +88,9 @@ function validateTopology(topology, reasons, now) {
             pidfile: `/run/agent-saas-runtime-worker-${entry.activeColor}.pid`,
             readyfile: `/run/agent-saas-runtime-worker-${entry.activeColor}.ready`,
           };
+    const artifactDigest = identity.components?.[contract.component]?.artifactDigest;
+    if (DIGEST_PATTERN.test(artifactDigest ?? ''))
+      expectedPaths.releaseTarget = `/opt/agent-saas-app/releases/${artifactDigest.slice(7)}`;
     for (const [field, expected] of Object.entries(expectedPaths)) {
       if (entry[field] !== expected)
         reasons.push(
@@ -94,6 +100,7 @@ function validateTopology(topology, reasons, now) {
     for (const field of [
       'activeColorFile',
       'releaseSymlink',
+      'releaseTarget',
       'pidfile',
       ...(contract.readyfile ? ['readyfile'] : []),
     ]) {
@@ -125,9 +132,9 @@ function observeTopology(
     }
     try {
       const target = String(realpathSync(entry.releaseSymlink));
-      if (!target.includes(identity.components?.[contract.component]?.gitSha ?? 'invalid'))
+      if (target !== entry.releaseTarget)
         reasons.push(
-          `Production runtime identity topology ${role}.releaseSymlink target does not match component SHA.`,
+          `Production runtime identity topology ${role}.releaseSymlink does not resolve to releaseTarget.`,
         );
     } catch {
       reasons.push(`Unable to resolve production release symlink for ${role}.`);
@@ -247,7 +254,7 @@ export function validateRuntimeIdentity(identity, options = {}) {
       );
     }
   }
-  validateTopology(identity.topology, blockingReasons, options.now ?? Date.now());
+  validateTopology(identity, blockingReasons, options.now ?? Date.now());
   observeTopology(identity, blockingReasons, {
     readFileSync: options.topologyReadFileSync ?? defaultReadFileSync,
     realpathSync: options.topologyRealpathSync ?? defaultRealpathSync,

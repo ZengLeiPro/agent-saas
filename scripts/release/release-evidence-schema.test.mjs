@@ -4,6 +4,7 @@ import {
   createValidReleaseEvidence,
   RELEASE_EVIDENCE_SHA,
 } from './release-evidence-fixture.test-helper.mjs';
+import { canonicalJson, digestBuffer } from './artifact-lib.mjs';
 import { validateReleaseEvidenceDocument } from './release-evidence-schema.mjs';
 
 test('accepts a complete release evidence document', () => {
@@ -15,9 +16,28 @@ test('accepts a complete release evidence document', () => {
   );
 });
 
+test('continues to accept immutable legacy Taskboard Integration evidence', () => {
+  const legacy = structuredClone(createValidReleaseEvidence());
+  delete legacy.releasePullRequest;
+  legacy.integrationCandidates = [
+    {
+      candidateId: '85a9cb68-4130-4c0a-aec3-e4cc9c671bd5',
+      revision: 3,
+      mergedCommitOid: RELEASE_EVIDENCE_SHA,
+    },
+  ];
+  legacy.checks.integrationReceipt = legacy.checks.mergeReceipt;
+  delete legacy.checks.mergeReceipt;
+  legacy.compatibilityEvidenceDigest = `sha256:${'8'.repeat(64)}`;
+  const { evidenceDigest: _previousDigest, ...body } = legacy;
+  legacy.evidenceDigest = digestBuffer(Buffer.from(canonicalJson(body)));
+  assert.equal(validateReleaseEvidenceDocument(legacy).releaseSha, RELEASE_EVIDENCE_SHA);
+});
+
 const invalidMutations = [
-  ['candidate identity', (value) => (value.integrationCandidates[0].candidateId = 'candidate')],
-  ['candidate SHA', (value) => (value.integrationCandidates[0].mergedCommitOid = 'b'.repeat(40))],
+  ['release PR SHA', (value) => (value.releasePullRequest.mergeCommitOid = 'b'.repeat(40))],
+  ['release PR membership', (value) => (value.sourcePullRequests = [202])],
+  ['merge receipt', (value) => delete value.checks.mergeReceipt],
   ['CI head SHA', (value) => (value.checks.appCi.headSha = 'b'.repeat(40))],
   ['CI run ID', (value) => (value.checks.appCi.runId = 0)],
   ['component matrix', (value) => delete value.productionBaseline.acs],

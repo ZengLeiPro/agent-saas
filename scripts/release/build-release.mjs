@@ -24,13 +24,31 @@ function run(command, args, cwd = process.cwd()) {
   execFileSync(command, args, { cwd, stdio: 'inherit', env: process.env });
 }
 
+export function productionDeployArgs(project, target) {
+  return ['--config.allowUnusedPatches=true', '--filter', project, '--prod', 'deploy', target];
+}
+
+export function sbomListArgs() {
+  return ['list', '--prod', '--recursive', '--depth', '0', '--json'];
+}
+
+export function packArgs(directory, target) {
+  return ['--no-xattrs', '-czf', target, '-C', directory, '.'];
+}
+
+export function assertProductionBuildPlatform(platform = process.platform) {
+  if (platform !== 'linux')
+    throw new Error('Production release artifacts must be built on Linux for native dependencies');
+}
+
 async function pack(directory, target) {
-  run('tar', ['-czf', target, '-C', directory, '.']);
+  run('tar', packArgs(directory, target));
   return { path: basename(target), ...(await digestFile(target)) };
 }
 
 export async function buildRelease(argv = process.argv) {
   const opts = options(argv);
+  assertProductionBuildPlatform();
   const root = process.cwd();
   const actualSha = execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: root,
@@ -44,7 +62,7 @@ export async function buildRelease(argv = process.argv) {
 
   run('pnpm', ['-F', 'server', 'build'], root);
   run('pnpm', ['-F', 'web', 'build:oss'], root);
-  run('pnpm', ['--filter', 'server', '--prod', 'deploy', '--legacy', join(stage, 'server')], root);
+  run('pnpm', productionDeployArgs('server', join(stage, 'server')), root);
   await rm(join(stage, 'server/dist'), { recursive: true, force: true });
   run('cp', ['-R', join(root, 'server/dist'), join(stage, 'server/dist')]);
   run('cp', [
@@ -60,18 +78,7 @@ export async function buildRelease(argv = process.argv) {
   };
   if (opts['include-acs']) {
     run('pnpm', ['-F', 'acs-orchestrator', 'build'], root);
-    run(
-      'pnpm',
-      [
-        '--filter',
-        'acs-orchestrator',
-        '--prod',
-        'deploy',
-        '--legacy',
-        join(stage, 'acs-orchestrator'),
-      ],
-      root,
-    );
+    run('pnpm', productionDeployArgs('acs-orchestrator', join(stage, 'acs-orchestrator')), root);
     await rm(join(stage, 'acs-orchestrator/dist'), { recursive: true, force: true });
     run('cp', ['-R', join(root, 'acs-orchestrator/dist'), join(stage, 'acs-orchestrator/dist')]);
     run('cp', [
@@ -89,7 +96,7 @@ export async function buildRelease(argv = process.argv) {
     sourceSha: opts.sha,
     lockfile: await digestFile(join(root, 'pnpm-lock.yaml')),
     packages: JSON.parse(
-      execFileSync('pnpm', ['list', '--prod', '--recursive', '--depth', 'Infinity', '--json'], {
+      execFileSync('pnpm', sbomListArgs(), {
         cwd: root,
         encoding: 'utf8',
         maxBuffer: 32 * 1024 * 1024,

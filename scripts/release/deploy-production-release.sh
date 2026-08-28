@@ -45,9 +45,18 @@ deploy_acs() {
   local acs_committed=false
   digest="$(node -p "require(process.env.MANIFEST_PATH).components.acs.orchestratorArtifactDigest.slice(7)")"
   target="/opt/agent-saas/acs-releases/$digest"
-  previous="$(readlink -f /opt/agent-saas/acs-current 2>/dev/null || true)"
+  previous=""
+  if [ -L /opt/agent-saas/acs-current ]; then
+    if ! previous="$(readlink -f /opt/agent-saas/acs-current)" || [ -z "$previous" ]; then
+      echo 'Existing ACS release link cannot be resolved' >&2
+      exit 1
+    fi
+  elif [ -e /opt/agent-saas/acs-current ]; then
+    echo 'Existing ACS release path must be a symlink' >&2
+    exit 1
+  fi
   if [ -d "$target" ]; then
-    node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component acs
+    node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component acs >/dev/null
   else
     candidate="$target.candidate-$GITHUB_RUN_ID"
     rm -rf "$candidate" && mkdir -p "$candidate/acs-orchestrator" "$candidate/.release"
@@ -55,7 +64,7 @@ deploy_acs() {
     tar -xzf "$candidate/.release/acs-orchestrator.tgz" -C "$candidate/acs-orchestrator"
     test -s "$candidate/acs-orchestrator/dist/index.js"
     install -m 0444 "$MANIFEST_PATH" "$candidate/manifest.json"
-    node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component acs
+    node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component acs >/dev/null
     mv "$candidate" "$target"
   fi
   env_backup="/etc/agent-saas/acs-orchestrator.env.before-$release_id"
@@ -153,7 +162,7 @@ deploy_app() {
   artifact_digest="$(node -p "require(process.env.MANIFEST_PATH).components.api.artifactDigest.slice(7)")"
   target="/opt/agent-saas-app/releases/$artifact_digest"
   if [ -d "$target" ]; then
-    node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component server
+    node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component server >/dev/null
   else
     candidate="$target.candidate-$GITHUB_RUN_ID"
     rm -rf "$candidate" && mkdir -p "$candidate/server" "$candidate/.release"
@@ -161,9 +170,10 @@ deploy_app() {
     tar -xzf "$candidate/.release/server-bundle.tgz" -C "$candidate/server"
     test -s "$candidate/server/dist/index.js"
     install -m 0444 "$MANIFEST_PATH" "$candidate/manifest.json"
-    node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component server
+    node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component server >/dev/null
     mv "$candidate" "$target"
   fi
+  mkdir -p "$target/server/data" "$target/workspace-shared"
   api_active="$(tr -d '[:space:]' </etc/agent-saas/active-color)"
   worker_active="$(tr -d '[:space:]' </etc/agent-saas/runtime-worker-active-color)"
   case "$api_active:$worker_active" in blue:blue|blue:green|green:blue|green:green) ;; *) exit 1 ;; esac

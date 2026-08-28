@@ -11,6 +11,17 @@ describe("MobileLayout 管理模块接线", () => {
     expect(orgAgentRendererCount).toBe(shellCount);
   });
 
+  it("组织与平台治理入口接入统一 dirty boundary", () => {
+    expect(source).toContain('const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry")');
+    expect(source).toContain('<GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
+    expect(source).toContain('<GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
+    expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (\n        <ManagementSettingsAccessGate\n          scope="platform"');
+    expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (\n        <ManagementSettingsAccessGate\n          scope="tenant"');
+    expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (<>\n        {adminSettings?.target === "tenant"');
+    expect(source).toContain('dirtyController={dirtyController}\n            settingsSection={adminSettings.section as TenantSection}');
+    expect(source).toContain('onSettingsClose={() => dirtyController.requestNavigation(closeAdminSettings)}');
+  });
+
   it("个人 Agent 移动端接入统一初始会话 composer", () => {
     expect(source).toContain("const chatEmptySlot = useMemo");
     expect(source).toContain("roleDetailId={roleDetailId}");

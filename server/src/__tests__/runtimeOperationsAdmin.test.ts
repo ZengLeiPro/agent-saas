@@ -140,6 +140,16 @@ describe('runtime operations admin router', () => {
         },
       });
 
+      const currentConfig = await fetch(`${baseUrl}/api/admin/runtime-operations/scheduler/runtime-config`);
+      expect(currentConfig.status).toBe(200);
+      await expect(readJson(currentConfig)).resolves.toMatchObject({
+        runtimeScheduler: {
+          maxConcurrentRuns: 16,
+          maxConfigurableConcurrentRuns: 64,
+          editable: true,
+        },
+      });
+
       const update = await fetch(`${baseUrl}/api/admin/runtime-operations/scheduler/runtime-config`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
@@ -231,6 +241,36 @@ describe('runtime operations admin router', () => {
       });
       expect(runtimeSchedulerCapacity.updateExecutionMaintenance).toHaveBeenCalledWith(false, '紧急止血', 'admin');
     }, { fetchImpl, runtimeSchedulerCapacity });
+  });
+
+  it('proxies ACS dynamic running capacity without exposing hand token to the browser', async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('http://acs-hand:3400/runtime-config');
+      expect(init?.method).toBe('GET');
+      expect(init?.headers).toMatchObject({ authorization: 'Bearer secret-token-123' });
+      return new Response(JSON.stringify({
+        status: 'ok',
+        runtimeConfig: {
+          maxRunningSandboxes: 5_000,
+          warnRunningSandboxes: 4_500,
+          minConfigurableRunningSandboxes: 1,
+          maxConfigurableRunningSandboxes: 8_192,
+          drainDeadlineMs: 900_000,
+          persisted: true,
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+
+    await withApp(async ({ baseUrl }) => {
+      const response = await fetch(`${baseUrl}/api/admin/runtime-operations/acs/runtime-config`);
+      expect(response.status).toBe(200);
+      await expect(readJson(response)).resolves.toMatchObject({
+        runtimeConfig: {
+          minConfigurableRunningSandboxes: 1,
+          maxConfigurableRunningSandboxes: 8_192,
+        },
+      });
+    }, { fetchImpl });
   });
 
   it('proxies ACS runtime config updates without exposing hand token to the browser', async () => {

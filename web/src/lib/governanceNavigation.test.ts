@@ -225,11 +225,11 @@ describe("history compatibility adapters", () => {
 
     const runs = governanceRoute("platform.runtime.runs", { entityId: "run-1" });
     pushGovernanceUrl(runs);
-    expect(push).toHaveBeenCalledWith({}, "", "/platform-console/runtime/runs/run-1");
+    expect(push).toHaveBeenCalledWith({ __appHistoryIndex: 1 }, "", "/platform-console/runtime/runs/run-1");
 
     const audit = governanceRoute("platform.governance.audit");
     replaceGovernanceUrl(audit);
-    expect(replace).toHaveBeenCalledWith({}, "", "/platform-console/governance/audit");
+    expect(replace).toHaveBeenCalledWith({ __appHistoryIndex: 1 }, "", "/platform-console/governance/audit");
 
     navigateGovernance(governanceRoute("organization.governance.qa", { orgId: "acme" }));
     expect(window.location.href).toContain("/tenant-admin/governance/qa?org=acme");

@@ -86,6 +86,8 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function expandTaskDetails() { fireEvent.click(screen.getByRole("button", { name: "展开任务详情" })); }
+
 function props(overrides: Partial<ComponentProps<typeof TaskDetail>> = {}) {
   return {
     open: true,
@@ -121,14 +123,12 @@ describe("TaskDetail 草稿隔离", () => {
     mocks.addComment.mockResolvedValue(undefined);
   });
 
-  it("桌面任务详情使用等宽双栏并保持两栏独立滚动", async () => {
-    render(<TaskDetail {...props()} />);
-    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
-
-    expect(screen.getByRole("dialog").className).toContain("sm:max-w-[95vw]");
-    expect(screen.getByTestId("task-detail-columns").className).toContain("lg:grid-cols-2");
-    expect(screen.getByTestId("task-detail-information").className).toContain("overflow-y-auto");
-    expect(screen.getByRole("region", { name: "任务评论" }).className).toContain("flex-col");
+  it("任务详情使用单栏评论主区，附加信息默认折叠且不显示标题摘要", async () => {
+    const user = userEvent.setup(); render(<TaskDetail {...props()} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); expect(screen.getByRole("dialog").className).toContain("sm:max-w-[1040px]"); expect(screen.getByTestId("task-detail-columns").className).toContain("flex-col");
+    expect(screen.queryByTestId("task-detail-information")).toBeNull(); expect(screen.queryByText("编辑任务并补充评论")).toBeNull();
+    expect(screen.getByRole("region", { name: "任务评论" }).className).toContain("flex-1"); const toggle = screen.getByRole("button", { name: "展开任务详情" }); expect(toggle.getAttribute("aria-expanded")).toBe("false"); await user.click(toggle);
+    expect(screen.getByTestId("task-detail-information").className).toContain("overflow-y-auto"); expect(screen.getByRole("button", { name: "收起任务详情" }).getAttribute("aria-expanded")).toBe("true");
   });
 
   it("评论按 Markdown 渲染并安全打开外部链接", async () => {
@@ -160,7 +160,7 @@ describe("TaskDetail 草稿隔离", () => {
     ];
     const { container } = render(<TaskDetail {...props()} />);
 
-    expect(await screen.findAllByText("实施阶段")).toHaveLength(2);
+    expect(await screen.findAllByText("实施阶段")).toHaveLength(1);
     expect(screen.getAllByRole("link", { name: "打开会话" })).toHaveLength(2);
     expect(screen.getAllByRole("link", { name: "打开会话" })[0]?.getAttribute("href")).toBe("/chat/session-work");
     expect(screen.queryByText("支持 Markdown 格式")).toBeNull();
@@ -191,7 +191,7 @@ describe("TaskDetail 草稿隔离", () => {
 
     mocks.executions = [];
     mocks.fetchTask.mockResolvedValue(taskTwo);
-    rerender(<TaskDetail {...props({ task: taskTwo })} />);
+    rerender(<TaskDetail {...props({ task: taskTwo })} />); expandTaskDetails();
     await waitFor(() => expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("任务二正文"));
     expect(screen.queryByTestId("task-description-comment")).toBeNull();
   });
@@ -200,7 +200,7 @@ describe("TaskDetail 草稿隔离", () => {
     const user = userEvent.setup();
     const initialProps = props();
     const { rerender } = render(<TaskDetail {...initialProps} />);
-    await waitFor(() => expect(initialProps.onTaskLoaded).toHaveBeenCalledWith(taskOne));
+    await waitFor(() => expect(initialProps.onTaskLoaded).toHaveBeenCalledWith(taskOne)); expandTaskDetails();
 
     const description = screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement;
     const comment = screen.getByRole("textbox", { name: "发表评论" }) as HTMLTextAreaElement;
@@ -219,7 +219,7 @@ describe("TaskDetail 草稿隔离", () => {
     expect((await screen.findByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("未保存的新正文");
     expect((screen.getByRole("textbox", { name: "发表评论" }) as HTMLTextAreaElement).value).toBe("任务一评论草稿");
 
-    rerender(<TaskDetail {...initialProps} task={taskTwo} />);
+    rerender(<TaskDetail {...initialProps} task={taskTwo} />); await user.click(await screen.findByRole("button", { name: "展开任务详情" }));
     await waitFor(() => expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("任务二正文"));
     expect((screen.getByRole("textbox", { name: "发表评论" }) as HTMLTextAreaElement).value).toBe("");
   }, 10_000);
@@ -230,7 +230,7 @@ describe("TaskDetail 草稿隔离", () => {
     const onUpdate = vi.fn(() => pending.promise);
     const initialProps = props({ onUpdate });
     const { rerender } = render(<TaskDetail {...initialProps} />);
-    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); expandTaskDetails();
 
     const description = screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement;
     await user.clear(description);
@@ -238,7 +238,7 @@ describe("TaskDetail 草稿隔离", () => {
     await user.click(screen.getByRole("button", { name: "保存任务" }));
     await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1));
 
-    rerender(<TaskDetail {...initialProps} task={taskTwo} />);
+    rerender(<TaskDetail {...initialProps} task={taskTwo} />); await user.click(await screen.findByRole("button", { name: "展开任务详情" }));
     await waitFor(() => expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("任务二正文"));
     await act(async () => {
       pending.resolve({ ...taskOne, description: "任务一已保存正文", version: 4 });
@@ -261,7 +261,7 @@ describe("TaskDetail 草稿隔离", () => {
       .mockRejectedValueOnce(new TaskBoardConflictError("版本冲突", current))
       .mockResolvedValueOnce(saved);
     render(<TaskDetail {...props({ onUpdate })} />);
-    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); expandTaskDetails();
 
     const description = screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement;
     await user.clear(description);
@@ -283,7 +283,7 @@ describe("TaskDetail 草稿隔离", () => {
       ...current, stageModels: { work: "group-a/model-c", review: "group-a/model-c" }, version: current.version + 1,
     }));
     render(<TaskDetail {...props({ onUpdate })} modelList={modelList} />);
-    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); expandTaskDetails();
 
     for (const purpose of ["实施阶段", "复核阶段"]) {
       await user.click(screen.getByRole("combobox", { name: `${purpose}运行模型` })); await user.click(screen.getByRole("option", { name: "模型 C" }));
@@ -340,7 +340,7 @@ describe("TaskDetail 草稿隔离", () => {
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
     const pickers = screen.getAllByLabelText("选择附件");
-    fireEvent.change(pickers[1], {
+    fireEvent.change(pickers[0], {
       target: { files: [new File(["record"], uploaded.originalName, { type: uploaded.mimeType })] },
     });
     await waitFor(() => expect(screen.getByText(uploaded.originalName)).toBeTruthy());
@@ -424,7 +424,7 @@ describe("TaskDetail 草稿隔离", () => {
     mocks.addComment.mockResolvedValue(published);
     mocks.continueTaskExecution.mockResolvedValue({ task: current, execution });
     render(<TaskDetail {...props({ task: current })} />);
-    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(current.id));
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(current.id)); expandTaskDetails();
 
     expect(screen.getByText(/一个持久 Integration Agent 自主完成组合/)).toBeTruthy();
     expect(screen.queryByText(/Candidate|重新排队/)).toBeNull();
@@ -647,10 +647,10 @@ describe("TaskDetail 草稿隔离", () => {
         updatedAt: taskOne.updatedAt,
       },
     ]);
-    render(<TaskDetail {...props({ task: integrationTask })} />);
+    render(<TaskDetail {...props({ task: integrationTask })} />); expandTaskDetails();
 
     expect(await screen.findByText("集成批次")).toBeTruthy();
-    expect(await screen.findByText("1/2 已合并")).toBeTruthy();
+    expect(await screen.findAllByText("1/2 已合并")).toHaveLength(2);
     expect(screen.getByText("处理中")).toBeTruthy();
     expect(screen.queryByText(/等待修复|重新复核|等待重试/)).toBeNull();
     expect(screen.getByText(/merged commit abc123/)).toBeTruthy();
@@ -666,8 +666,8 @@ describe("TaskDetail 草稿隔离", () => {
     mocks.fetchIntegrationSources.mockResolvedValue([{ id: "source-v3", integrationTaskId: integrationTask.id, deliveryTaskId: "delivery-v3",
       deliveryTaskIdentifier: "TASK-SOURCE", deliveryTaskTitle: "真实交付来源", repositoryId: "repo-1",
       providerPullRequestId: "pr-v3", reviewedSubjectDigest: "digest-v3", order: 0, state: "ready", attemptCount: 1, updatedAt: taskOne.updatedAt }]);
-    render(<TaskDetail {...props({ task: integrationTask })} />); await waitFor(() => expect(mocks.fetchIntegrationSources).toHaveBeenCalledWith(integrationTask.id));
-    expect(await screen.findByText(/TASK-SOURCE · 真实交付来源/)).toBeTruthy(); expect(screen.getByText("0/1 已合并")).toBeTruthy();
+    render(<TaskDetail {...props({ task: integrationTask })} />); await waitFor(() => expect(mocks.fetchIntegrationSources).toHaveBeenCalledWith(integrationTask.id)); expandTaskDetails();
+    expect(await screen.findByText(/TASK-SOURCE · 真实交付来源/)).toBeTruthy(); expect(screen.getAllByText("0/1 已合并")).toHaveLength(2);
   });
 
   it("Integration blocked 只提交一次人工决策并恢复同一个 Agent", async () => {
@@ -698,7 +698,7 @@ describe("TaskDetail 草稿隔离", () => {
     ]);
     mocks.resumeTask.mockResolvedValue(resumedTask);
     const prompt = vi.spyOn(window, "prompt").mockReturnValue("按当前批次继续处理");
-    render(<TaskDetail {...props({ task: integrationTask, canTransitionTask: true })} />);
+    render(<TaskDetail {...props({ task: integrationTask, canTransitionTask: true })} />); expandTaskDetails();
 
     const resume = await screen.findByRole("button", { name: "恢复 Integration Agent" });
     expect(screen.queryByRole("checkbox", { name: /选择恢复来源/ })).toBeNull();
@@ -748,7 +748,7 @@ describe("TaskDetail 草稿隔离", () => {
     vi.spyOn(window, "prompt").mockReturnValue("依赖已解除，恢复实施");
     const onExecute = vi.fn();
     const onTaskLoaded = vi.fn();
-    render(<TaskDetail {...props({ task: blockedTask, onExecute, onTaskLoaded, canTransitionTask: true })} />);
+    render(<TaskDetail {...props({ task: blockedTask, onExecute, onTaskLoaded, canTransitionTask: true })} />); expandTaskDetails();
 
     expect(screen.queryByRole("button", { name: "重新运行" })).toBeNull();
     await user.click(await screen.findByRole("button", { name: "恢复任务" }));
@@ -773,7 +773,7 @@ describe("TaskDetail 草稿隔离", () => {
     mocks.fetchTask.mockResolvedValue(emptyTitleTask);
     const onDeleteTask = vi.fn(async () => deleted);
     const onOpenChange = vi.fn();
-    render(<TaskDetail {...props({ task: emptyTitleTask, onDeleteTask, onOpenChange })} />);
+    render(<TaskDetail {...props({ task: emptyTitleTask, onDeleteTask, onOpenChange })} />); expandTaskDetails();
 
     await user.click(await screen.findByRole("button", { name: "删除任务" }));
     await waitFor(() => expect(onDeleteTask).toHaveBeenCalledWith(emptyTitleTask));
@@ -786,7 +786,7 @@ describe("TaskDetail 草稿隔离", () => {
     const user = userEvent.setup();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     const onDeleteTask = vi.fn();
-    render(<TaskDetail {...props({ task: taskOne, onDeleteTask })} />);
+    render(<TaskDetail {...props({ task: taskOne, onDeleteTask })} />); expandTaskDetails();
 
     await user.click(await screen.findByRole("button", { name: "删除任务" }));
     expect(onDeleteTask).not.toHaveBeenCalled();

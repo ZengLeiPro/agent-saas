@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "@/lib/authFetch";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import type {
+  AcsRuntimeConfig,
+  AcsRuntimeConfigResponse,
   HealthState,
   TenantRemoteHandHealthResponse,
   TenantRemoteHandsConfig,
@@ -10,16 +12,101 @@ import type {
 } from "./types";
 
 const API_BASE = "/api/admin/tenant-remote-hands";
+const ACS_RUNTIME_CONFIG_API = "/api/admin/runtime-operations/acs/runtime-config";
 
-export function useTenantRemoteHands() {
+export function useAcsRuntimeConfig(refreshBlocked = false) {
+  const [config, setConfig] = useState<AcsRuntimeConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const requestGenerationRef = useRef(0);
+  const saveInFlightRef = useRef(false);
+  const refreshBlockedRef = useRef(refreshBlocked);
+  refreshBlockedRef.current = refreshBlocked;
+
+  useEffect(() => {
+    if (refreshBlocked) setLoading(false);
+  }, [refreshBlocked]);
+
+  const refresh = useCallback(async () => {
+    if (saveInFlightRef.current || refreshBlockedRef.current) return;
+    const generation = requestGenerationRef.current + 1;
+    requestGenerationRef.current = generation;
+    setLoading(true);
+    try {
+      const res = await authFetch(ACS_RUNTIME_CONFIG_API);
+      const data = (await res.json().catch(() => ({}))) as Partial<AcsRuntimeConfigResponse>;
+      if (!res.ok || !data.runtimeConfig) throw new Error(data.error || `HTTP ${res.status}`);
+      if (generation !== requestGenerationRef.current || refreshBlockedRef.current) return;
+      setConfig(data.runtimeConfig);
+      setError(null);
+      setSavedAt(null);
+    } catch (err) {
+      if (generation === requestGenerationRef.current && !refreshBlockedRef.current) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      if (generation === requestGenerationRef.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  useEffect(() => {
+    registerRefresh("acsRuntimeConfig", refresh);
+    return () => unregisterRefresh("acsRuntimeConfig");
+  }, [refresh]);
+
+  const save = useCallback(async (next: AcsRuntimeConfig) => {
+    saveInFlightRef.current = true;
+    requestGenerationRef.current += 1;
+    setLoading(false);
+    setSaving(true);
+    try {
+      const res = await authFetch(ACS_RUNTIME_CONFIG_API, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next),
+      });
+      const data = (await res.json().catch(() => ({}))) as Partial<AcsRuntimeConfigResponse>;
+      if (!res.ok || !data.runtimeConfig) throw new Error(data.error || `HTTP ${res.status}`);
+      setConfig(data.runtimeConfig);
+      setSavedAt(Date.now());
+      setError(null);
+      return data.runtimeConfig;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      throw err;
+    } finally {
+      saveInFlightRef.current = false;
+      setSaving(false);
+    }
+  }, []);
+
+  return { config, loading, saving, error, savedAt, refresh, save };
+}
+
+export function useTenantRemoteHands(refreshBlocked = false) {
   const [config, setConfig] = useState<TenantRemoteHandsConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [healthById, setHealthById] = useState<Record<string, HealthState>>({});
+  const requestGenerationRef = useRef(0);
+  const saveInFlightRef = useRef(false);
+  const refreshBlockedRef = useRef(refreshBlocked);
+  refreshBlockedRef.current = refreshBlocked;
+
+  useEffect(() => {
+    if (refreshBlocked) setLoading(false);
+  }, [refreshBlocked]);
 
   const refresh = useCallback(async () => {
+    if (saveInFlightRef.current || refreshBlockedRef.current) return;
+    const generation = requestGenerationRef.current + 1;
+    requestGenerationRef.current = generation;
     setLoading(true);
     try {
       const res = await authFetch(API_BASE);
@@ -27,14 +114,17 @@ export function useTenantRemoteHands() {
       if (!res.ok || !data.tenantRemoteHands) {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
+      if (generation !== requestGenerationRef.current || refreshBlockedRef.current) return;
       setConfig(data.tenantRemoteHands);
       setHealthById({});
       setError(null);
       setSavedAt(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (generation === requestGenerationRef.current && !refreshBlockedRef.current) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setLoading(false);
+      if (generation === requestGenerationRef.current) setLoading(false);
     }
   }, []);
 
@@ -46,6 +136,9 @@ export function useTenantRemoteHands() {
   }, [refresh]);
 
   const save = useCallback(async (hands: TenantRemoteHandUpdate[]) => {
+    saveInFlightRef.current = true;
+    requestGenerationRef.current += 1;
+    setLoading(false);
     setSaving(true);
     try {
       const res = await authFetch(API_BASE, {
@@ -66,6 +159,7 @@ export function useTenantRemoteHands() {
       setError(err instanceof Error ? err.message : String(err));
       throw err;
     } finally {
+      saveInFlightRef.current = false;
       setSaving(false);
     }
   }, []);

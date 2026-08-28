@@ -24,18 +24,25 @@ Taskboard 表、owner、source 和状态后才把 task ID 写入当前 job 环�
 
 `RELEASE_EVIDENCE_URL` 指向仓库已实现的 `evidence-service.mjs` 的
 `/release-evidence` 端点。返回记录必须通过 `release-evidence-schema.mjs` 的版本化完整 Schema，
-绑定请求的完整 SHA，并包含 Integration Candidate、PR/check、当前生产矩阵及相互绑定的基线制品、
-合法且满足 API/Runtime Worker 耦合约束的组件分类、由 `migration-plan.mjs` 重算一致的迁移计划，
-以及真实 N/N+1 兼容测试报告的 `compatibilityEvidenceDigest`。Schema 校验和摘要复算都在不可变
+绑定请求的完整 SHA，并包含最终 GitHub PR 合并事实、PR/check、当前生产矩阵及相互绑定的基线制品、
+合法且满足 API/Runtime Worker 耦合约束的组件分类，以及由 `migration-plan.mjs` 重算一致的迁移计划。
+Taskboard Integration Candidate 仅作为可选审计信息，不是 RC 前置条件。Schema 校验和摘要复算都在不可变
 写入之前完成，字段未知、缺失或冲突时 fail closed，不会占用并毒化该 SHA 的记录路径。
 
 ## production
 
 Secrets：`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ECS_HOST`、`ECS_USER`、
-`ECS_SSH_KEY`、`PRODUCTION_OBSERVATION_TOKEN`。
+`ECS_SSH_KEY`、`PRODUCTION_OBSERVATION_TOKEN`、`RELEASE_EVIDENCE_WRITE_TOKEN`。
+
+`PRODUCTION_OBSERVATION_TOKEN` 是 Evidence Service 的只读身份；
+`RELEASE_EVIDENCE_WRITE_TOKEN` 是专用于自动任务调用不可覆盖 `POST /release-evidence` 的独立写
+身份。二者禁止复用。写 Token 只进入受 `main` 分支策略保护的 `Prepare Release Evidence`
+Workflow，不进入 Staging 部署或 Production Promotion Workflow。
 
 Variables：`PRODUCTION_OBSERVATION_URL`、`PRODUCTION_SSH_HOST_KEY_SHA256`、
-`RELEASE_RECORD_OSS_URI`。观察 URL 指向 `evidence-service.mjs` 的
+`RELEASE_RECORD_OSS_URI`、`RELEASE_RECORD_OSS_REGION`。OSS Region 必须是对应 bucket 的实际
+地域，Workflow 会对每次 OSS 请求显式传入，不依赖 runner 的隐式 CLI profile。观察 URL 指向
+`evidence-service.mjs` 的
 `/production-observation` 端点；端点必须返回
 绑定 release ID 和 Manifest digest 的连续探针样本，覆盖 HTTP/WS、Agent 首 Token/完整轮次/
 恢复、Worker lease、Integration gate、Sandbox 生命周期、Cron 去重以及登录/会话/任务看板
@@ -48,16 +55,17 @@ Variables：`PRODUCTION_OBSERVATION_URL`、`PRODUCTION_SSH_HOST_KEY_SHA256`、
 `daemon-packaging/systemd/agent-saas-release-evidence.service.template`，不是只保留 URL
 消费者。服务提供三个带 Bearer 鉴权的生产/读取端点：
 
-- `/release-evidence?sha=<full-sha>`：完整 SHA 对应的 Integration、CI、生产基线、迁移和
-  N/N+1 兼容证据；同一 SHA 使用不可覆盖写入。
+- `/release-evidence?sha=<full-sha>`：完整 SHA 对应的 GitHub 合并、CI、生产基线和迁移证据；
+  同一 SHA 使用不可覆盖写入。
 - `/staging-isolation?releaseId=<rc-id>`：五项真实生产访问拒绝，以及两项共享 NAS 逻辑隔离
   读回证据；每次采集按时间和摘要追加，并显式记录主机特权身份可重新挂载文件系统根目录的
   已接受残余风险。
 - `/production-observation?releaseId=<rc-id>&manifestDigest=<digest>`：绑定 RC 和 Manifest 的
   连续生产探针样本；每个样本追加保存。
 
-实际探针/集成系统用独立写身份通过 `POST` 写入，Workflow 只持有读身份并通过 `GET` 读取；
-两端都必须带 `Authorization: Bearer <token>`，读写 token 禁止复用。服务会重算 release
+实际探针与专用 Evidence Writer 使用独立写身份通过 `POST` 写入；Staging 部署和 Production
+Promotion Workflow 只持有读身份并通过 `GET` 读取。两端都必须带
+`Authorization: Bearer <token>`，读写 token 禁止复用。服务会重算 release
 evidence digest，校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜度，
 并校验生产样本的全部业务/运行检查。它不会在缺少真实探针时合成通过证据。运行参数：
 `RELEASE_EVIDENCE_ROOT=/var/lib/agent-saas-release-evidence`、
@@ -65,32 +73,30 @@ evidence digest，校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜度
 `RELEASE_EVIDENCE_WRITE_TOKEN_FILE=<0600 write token file>`、可选 `RELEASE_EVIDENCE_HOST` 和
 `RELEASE_EVIDENCE_PORT`。
 
-发布证据写入前使用 `scripts/release/produce-release-evidence.mjs` 汇合六类独立输入：Taskboard
-Integration 快照、GitHub checks、`read-production-state.mjs` 的生产读回、不可变基线制品、组件分类/
-迁移计划和 N/N+1 兼容报告。生产器要求最终 Integration PR 的 merge commit、两类 check 的
-`headSha` 都等于完整发布 SHA，并将 Integration 快照和兼容报告分别重算摘要；运行组件有变更时，
-兼容报告必须包含至少一项带证据 URI 的通过检查。仅治理文件变化时才允许
-`status=not_required`，且报告仍绑定发布 SHA、生产基线摘要和空的组件集合。生成结果通过写 Token
-`POST` 到服务后，必须再用只读 Token `GET` 回读并逐字节比较，写 Token 不得进入 Workflow。
+`Prepare Release Evidence` 在 `main` 的 `App CI / Deploy` 成功结束后自动运行，无需管理员手工生成
+或上传 JSON。它锁定该 CI 的完整 SHA，验证唯一关联的已合并 GitHub PR，使用与 ACS Workflow 相同
+的分类器决定 `ACS Impact Gate` 是否必要；必要时等待并验证同 SHA 的 ACS push run。随后通过固定
+host key 的 SSH 只读生产状态，在 `RELEASE_RECORD_OSS_URI` 的 `baselines/` 与 `records/` 中按每个
+组件的生产 source SHA 和 digest 解析不可变 artifact index，绑定四类基线制品。解析不依赖 GitHub
+Release 已存在，因此可覆盖首次 RC 前已经 seal 的生产基线；找不到摘要一致的对象时 fail closed。
+
+发布证据写入前使用 `scripts/release/produce-release-evidence.mjs` 汇合五类独立输入：GitHub
+合并快照与 checks、`read-production-state.mjs` 的生产读回、不可变基线制品、组件分类和迁移计划。
+生产器要求最终 GitHub PR 的 merge commit 与两类 check 的 `headSha` 都等于完整发布 SHA，并重算
+GitHub 合并快照摘要。普通 GitHub PR 与 Taskboard Integration PR 均可成为 RC 来源；若提供 Taskboard
+task/source 快照，会作为可选审计信息写入，但不会成为准入条件。生成结果由专用 Evidence Writer
+通过写 Token `POST` 到服务，再由 `publish-release-evidence.mjs` 使用只读 Token `GET` 回读并进行
+canonical JSON 比较。写 Token 不得进入任何部署或晋级 job。
 
 `STAGING_ISOLATION_EVIDENCE_URL` 应指向 `/staging-isolation`。Staging 与 Production 可部署
 相互隔离的实例和 token；反向代理必须只暴露 HTTPS，数据目录必须落在持久盘。服务落地和真实
 探针接入仍属于首次运行前的外部资源建设，不得用本地单测替代。
 
-### Delivery PR 被外部提前合并后的恢复
+### GitHub PR 作为 RC 来源
 
-Delivery PR 只有在 Taskboard 的 Delivery → 独立 Review → Integration 链内作为 source PR 时才是
-有效发布证据。若它在 Integration 前被 GitHub UI、管理员或其他外部流程提前合并，其原 Delivery
-证据立即失效；即使该 PR 的 merge commit 已位于 `main`，也不得把它补记、改名或复用为最终
-Integration PR。producer 会拒绝 `sources` 与 `finalPullRequest` 使用同一 PR number。
-
-恢复时必须创建新的 remediation Delivery，在独立分支上提交最小且有意义的发布治理修复和回归测试，
-再完整经过独立 Review。随后只能由 Taskboard Integration 将该 remediation Delivery PR 作为 source，
-创建不同编号的最终 Integration PR。发布证据中的 `releaseSha`、GitHub checks 的 `headSha` 和
-`finalPullRequest.mergeCommitOid` 必须重新绑定该 Integration PR 合入 `main` 后的完整 SHA；原提前
-合并 PR 的 SHA 不得作为恢复后的发布 SHA。自动化回归由
-`scripts/release/produce-release-evidence.test.mjs` 的
-`rejects reusing an externally merged Delivery PR as the final Integration PR` 场景验证。
+RC 来源只要求可验证的 GitHub PR 已合入 `main`，其 `mergeCommitOid` 等于发布 SHA，并且最终 SHA 的
+CI/check 已成功。Taskboard Delivery、Review 和 Integration 链仍可用于团队协作与附加审计，但不再是
+生成 RC 或晋级 Production 的必要条件。直接合并的 GitHub PR 无需创建 remediation Taskboard 链。
 
 ## 不可变发布记录
 
@@ -109,6 +115,9 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
 
 ## 外部设置
 
+- `prepare-release-evidence.yml` 自动完成 `main CI 成功 → Evidence 写入 → 独立读回`。若缺少
+  `production` Environment Secret `RELEASE_EVIDENCE_WRITE_TOKEN`，它必须 fail closed；不得回退为
+  人工伪造、复用只读 Token 或跳过生产基线读回。
 - `ci.yml` 与 `acs-sandbox.yml` 永久保留 `workflow_dispatch` 人工部署入口，可按实际需要部署任意
   新旧版本；push/PR 仍只执行 CI，不自动部署生产。这两个入口不生成不可变 RC、Staging E2E、
   Promotion receipt 或 15 分钟生产观察证据，因此通过它们部署不等于新版发布契约已通过。

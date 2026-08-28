@@ -85,7 +85,7 @@ describe("TaskDetail Session 活跃态", () => {
     render(<TaskDetail {...props()} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(runningTask.id));
 
-    expect(screen.getByText(/实施：/).textContent).toContain("主 Run 已结束 · 后台仍在执行");
+    expect(screen.getByText("主 Run 已结束 · 后台仍在执行")).toBeTruthy();
     expect(screen.getByRole("link", { name: "打开当前执行会话" }).getAttribute("href"))
       .toBe("/chat/session-terminal");
     expect(screen.queryByRole("button", { name: "恢复实施" })).toBeNull();

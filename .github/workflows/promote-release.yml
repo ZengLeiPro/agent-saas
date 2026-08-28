@@ -89,9 +89,6 @@ jobs:
           git cat-file -p "$tag_object" | grep -Fx "manifest-digest: $manifest_digest"
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$release_sha" origin/main
-          test "$(jq -r .promotionPolicy.appAcsCompatibility "$RUNNER_TEMP/manifest.json")" = n_and_n_plus_1
-          jq -e '.promotionPolicy.compatibilityEvidenceDigest | test("^sha256:[a-f0-9]{64}$")' \
-            "$RUNNER_TEMP/manifest.json" >/dev/null
           test "$(jq -r .migrationPlan.contract "$RUNNER_TEMP/manifest.json")" = separate_release
           migration_phase="$(jq -r .migrationPlan.phase "$RUNNER_TEMP/manifest.json")"
           migration_confirmation="$(jq -r .migrationPlan.confirmation "$RUNNER_TEMP/manifest.json")"

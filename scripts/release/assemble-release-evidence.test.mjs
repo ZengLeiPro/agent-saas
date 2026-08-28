@@ -75,11 +75,11 @@ test('fails closed on an unknown production baseline', async () => {
   );
 });
 
-test('fails closed without compatibility and migration evidence', async () => {
+test('fails closed without migration evidence', async () => {
   const root = await fixture();
   const path = join(root, 'authoritative.json');
   const value = JSON.parse(await (await import('node:fs/promises')).readFile(path, 'utf8'));
-  delete value.compatibilityEvidenceDigest;
+  delete value.migrationPlan;
   await writeFile(path, JSON.stringify(value));
   await assert.rejects(
     assembleReleaseEvidence({

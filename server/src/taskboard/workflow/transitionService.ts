@@ -18,6 +18,7 @@ import {
 } from '../v2Store.js';
 import { TaskboardNotFoundError, TaskboardValidationError, type TaskboardIdentity } from '../types.js';
 import { fenceTaskExecutions, loadWorkflowFacts } from './commandService.js';
+import { EXECUTION_TRANSITIONED_REASON } from './cancellationOutbox.js';
 import { assertCurrentPullRequestGate } from './pullRequestGate.js';
 import { assertIntegrationExecutionMigrated, decideTransition } from './decider.js';
 
@@ -204,9 +205,20 @@ async function recordExecutionFinishComment(
 async function markTransitioned(options: TaskboardV2StoreOptions, client: PoolClient, execution: TaskBoardExecution, status: string): Promise<void> {
   const updated = await client.query(
     `UPDATE ${options.executionsTable} SET transitioned_at=now(),fence_epoch=fence_epoch+1,
-       terminal_reason_code='execution_transitioned',updated_at=now()
-     WHERE id=$1 AND transitioned_at IS NULL RETURNING id`, [execution.id]);
-  if (!updated.rows[0]) throw new TaskboardValidationError(`Execution already transitioned to ${status}`, 'TASKBOARD_EXECUTION_FENCED');
+       terminal_reason_code=$2,updated_at=now()
+     WHERE id=$1 AND transitioned_at IS NULL
+     RETURNING id,run_id,task_id,fence_epoch`,
+    [execution.id, EXECUTION_TRANSITIONED_REASON],
+  );
+  const row = updated.rows[0];
+  if (!row) throw new TaskboardValidationError(`Execution already transitioned to ${status}`, 'TASKBOARD_EXECUTION_FENCED');
+  await client.query(
+    `INSERT INTO ${options.cancellationOutboxTable}
+       (id,execution_id,run_id,task_id,reason,fence_epoch)
+     VALUES ($1,$2,$3,$4,$5,$6)
+     ON CONFLICT (execution_id) DO NOTHING`,
+    [randomUUID(), row.id, row.run_id, row.task_id, EXECUTION_TRANSITIONED_REASON, row.fence_epoch],
+  );
 }
 
 async function updateTaskStatus(options: TaskboardV2StoreOptions, client: PoolClient, taskId: string, status: string): Promise<void> {

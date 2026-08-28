@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { packArgs, productionDeployArgs, sbomListArgs } from './build-release.mjs';
+import {
+  assertProductionBuildPlatform,
+  packArgs,
+  productionDeployArgs,
+  sbomListArgs,
+} from './build-release.mjs';
 
 test('production deploy tolerates workspace patches unused by the selected package', () => {
   assert.deepEqual(productionDeployArgs('server', '/tmp/release/server'), [
@@ -26,4 +31,12 @@ test('release archives omit host extended attributes', () => {
     '/tmp/stage/server',
     '.',
   ]);
+});
+
+test('production artifacts require a Linux build host for native dependencies', () => {
+  assert.doesNotThrow(() => assertProductionBuildPlatform('linux'));
+  assert.throws(
+    () => assertProductionBuildPlatform('darwin'),
+    /must be built on Linux for native dependencies/u,
+  );
 });

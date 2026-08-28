@@ -36,6 +36,11 @@ export function packArgs(directory, target) {
   return ['--no-xattrs', '-czf', target, '-C', directory, '.'];
 }
 
+export function assertProductionBuildPlatform(platform = process.platform) {
+  if (platform !== 'linux')
+    throw new Error('Production release artifacts must be built on Linux for native dependencies');
+}
+
 async function pack(directory, target) {
   run('tar', packArgs(directory, target));
   return { path: basename(target), ...(await digestFile(target)) };
@@ -43,6 +48,7 @@ async function pack(directory, target) {
 
 export async function buildRelease(argv = process.argv) {
   const opts = options(argv);
+  assertProductionBuildPlatform();
   const root = process.cwd();
   const actualSha = execFileSync('git', ['rev-parse', 'HEAD'], {
     cwd: root,

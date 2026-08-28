@@ -57,6 +57,20 @@ describe("TaskCard", () => {
     expect(screen.queryByText("无")).toBeNull();
   });
 
+  it("在卡片右上角以灰色胶囊展示 PR，并隐藏复核状态", () => {
+    renderCard(task({
+      providerPullRequestId: "235",
+      pullRequestNumber: 235,
+      reviewedSubjectDigest: "reviewed-digest",
+    }));
+
+    const pullRequestBadge = screen.getByText("PR 235");
+    expect(pullRequestBadge.className).toContain("bg-secondary");
+    expect(pullRequestBadge.parentElement?.className).toContain("justify-end");
+    expect(screen.queryByText("已复核")).toBeNull();
+    expect(screen.queryByText("待复核")).toBeNull();
+  });
+
   it("不展示 Agent 写入的无用标签", () => {
     renderCard(task({ labels: ["Agent 自动标签"] }));
 

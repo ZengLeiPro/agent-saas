@@ -42,4 +42,22 @@ describe("FileUpload 图片预览", () => {
 
     expect(screen.getByRole("img", { name: "第二张图片.png" })).toBeTruthy();
   });
+
+  it("重新打开后可通过远端地址预览没有 blob URL 的图片", async () => {
+    const persistedImage = { ...imageFiles[0], previewUrl: undefined };
+    const resolveFileUrl = vi.fn(async () => "/api/taskboard/tasks/task-1/attachments/attachment-1?token=test");
+    render(
+      <FileUpload
+        uploadedFiles={[persistedImage]}
+        onRemoveFile={vi.fn()}
+        resolveFileUrl={resolveFileUrl}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "预览图片：第一张图片.png" }));
+
+    const image = await screen.findByRole("img", { name: "第一张图片.png" });
+    expect(image.getAttribute("src")).toBe("/api/taskboard/tasks/task-1/attachments/attachment-1?token=test");
+    expect(resolveFileUrl).toHaveBeenCalledWith(persistedImage, false);
+  });
 });

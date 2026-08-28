@@ -1,8 +1,9 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { initPlatform, type PlatformDeps, type TaskBoardAttachment } from "@agent/shared";
-import { TaskAttachmentList } from "./TaskAttachments";
+import { TaskAttachmentField, TaskAttachmentList } from "./TaskAttachments";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import type { FileUploadState } from "@/hooks/useFileUpload";
 
 beforeAll(() => {
   initPlatform({
@@ -32,6 +33,27 @@ const fileAttachment: TaskBoardAttachment = {
   mimeType: "application/json",
   isImage: false,
 };
+
+describe("TaskAttachmentField", () => {
+  it("任务重新打开后，编辑态附件仍可从任务端点预览", async () => {
+    const upload = {
+      uploadedFiles: [imageAttachment],
+      uploading: false,
+      uploadError: null,
+      dismissUploadError: vi.fn(),
+      removeFile: vi.fn(),
+      handleFileSelect: vi.fn(),
+    } as unknown as FileUploadState;
+    render(<TaskAttachmentField taskId="task-1" upload={upload} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "预览图片：现场图.png" }));
+
+    const image = await screen.findByAltText("现场图.png");
+    expect(image.getAttribute("src")).toBe(
+      "https://api.example.com/api/taskboard/tasks/task-1/attachments/11111111-1111-4111-8111-111111111111?token=test-token",
+    );
+  });
+});
 
 describe("TaskAttachmentList", () => {
   it("点击评论图片时在当前页面打开预览，而不是触发下载导航", async () => {

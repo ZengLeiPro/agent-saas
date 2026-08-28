@@ -843,7 +843,7 @@ export function TaskDetail({
                         <TaskAttachmentList taskId={currentTask.id} attachments={taskAttachments.uploadedFiles} />
                       ) : (
                         <TaskAttachmentField
-                          upload={taskAttachments}
+                          upload={taskAttachments} taskId={currentTask.id}
                           disabled={saving}
                           onFilesChanged={() => dirtyFieldsRef.current.add("attachments")}
                         />

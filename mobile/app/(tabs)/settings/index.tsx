@@ -42,6 +42,8 @@ import {
 import type { AgentProfile } from "@agent/shared";
 import { fetchMyGovernanceSummary, type MyGovernanceSummary } from "@agent/shared/lib/governanceApi";
 import { showTextPrompt } from "../../../src/lib/prompt";
+import { isV1RouteAllowed } from "../../../src/app/v1Capabilities";
+import { getV1BuildProfile } from "../../../src/app/v1Runtime";
 
 const APP_VERSION = Constants.expoConfig?.version ?? "0.0.0";
 
@@ -68,6 +70,13 @@ export default function SettingsScreen() {
   const { level: fontSizeLevel, setLevel: setFontSizeLevel } = useFontSize();
   const [lanActive, setLanActiveState] = useState(isLanActive());
 
+  // V1 范围裁剪（M00-01）：生产构建隐藏延期菜单项。
+  const v1Profile = getV1BuildProfile();
+  const showAllAgents = isV1RouteAllowed("settings/all-agents", v1Profile);
+  const showCron = isV1RouteAllowed("cron", v1Profile);
+  const showGovernance = isV1RouteAllowed("settings/my-permissions", v1Profile);
+  const showConnections = isV1RouteAllowed("settings/connections", v1Profile);
+
   // Refresh LAN status indicator while settings page is visible
   useFocusEffect(
     useCallback(() => {
@@ -86,9 +95,9 @@ export default function SettingsScreen() {
       .catch(() => {});
   }, [user?.username]);
   useEffect(() => {
-    if (!user) return;
+    if (!user || !showGovernance) return;
     fetchMyGovernanceSummary().then(setGovernanceSummary).catch(() => setGovernanceSummary(null));
-  }, [user]);
+  }, [user, showGovernance]);
 
   const initial = (user?.username || "U").charAt(0).toUpperCase();
   const avatarUri = user?.avatar
@@ -359,19 +368,21 @@ export default function SettingsScreen() {
                 strokeWidth={2}
               />
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.row, styles.rowBorder]}
-              onPress={() => router.push("/settings/all-agents")}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.rowLabel}>所有 Agent</Text>
-              <ChevronRight
-                size={16}
-                color={colors.mutedForeground}
-                strokeWidth={2}
-              />
-            </TouchableOpacity>
-            {tenantFeatures.cronEnabled && (
+            {showAllAgents && (
+              <TouchableOpacity
+                style={[styles.row, styles.rowBorder]}
+                onPress={() => router.push("/settings/all-agents")}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.rowLabel}>所有 Agent</Text>
+                <ChevronRight
+                  size={16}
+                  color={colors.mutedForeground}
+                  strokeWidth={2}
+                />
+              </TouchableOpacity>
+            )}
+            {tenantFeatures.cronEnabled && showCron && (
               <TouchableOpacity
                 style={styles.row}
                 onPress={() => router.push("/cron")}
@@ -482,6 +493,7 @@ export default function SettingsScreen() {
         </View>
 
         {/* V2 Personal Governance */}
+        {showGovernance && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>个人治理</Text>
           <View style={styles.card}>
@@ -489,10 +501,12 @@ export default function SettingsScreen() {
               <Text style={styles.rowLabel}>我的权限</Text>
               <ChevronRight size={16} color={colors.mutedForeground} strokeWidth={2} />
             </TouchableOpacity>
+            {showConnections && (
             <TouchableOpacity style={[styles.row, styles.rowBorder]} onPress={() => router.push("/settings/connections")} activeOpacity={0.7}>
               <Text style={styles.rowLabel}>连接与授权</Text>
               <View style={styles.rowRight}><Text style={styles.rowValue}>Google Workspace 与 MCP</Text><ChevronRight size={16} color={colors.mutedForeground} strokeWidth={2} /></View>
             </TouchableOpacity>
+            )}
             <View style={[styles.row, styles.rowBorder]}>
               <Text style={styles.rowLabel}>文件与存储</Text>
               <Text style={styles.rowValue}>只读迁移态</Text>
@@ -507,6 +521,7 @@ export default function SettingsScreen() {
             </TouchableOpacity> : null}
           </View>
         </View>
+        )}
 
         {/* Logout */}
         <View style={styles.section}>

@@ -16,6 +16,8 @@ import { useForegroundRefresh } from "../src/hooks/useForegroundRefresh";
 import { useUpdateChecker } from "../src/hooks/useUpdateChecker";
 import { useShareIntentBridge } from "../src/hooks/useShareIntentBridge";
 import { AppErrorBoundary } from "../src/components/ErrorBoundary";
+import { isV1SegmentsAllowed, isProductionProfile } from "../src/app/v1Capabilities";
+import { getV1BuildProfile } from "../src/app/v1Runtime";
 
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import {
@@ -31,6 +33,7 @@ function AuthGate() {
   const colors = useColors();
   const segments = useSegments();
   const router = useRouter();
+  const v1Profile = getV1BuildProfile();
   useActivityReporter();
   useForegroundRefresh();
   useUpdateChecker();
@@ -40,15 +43,20 @@ function AuthGate() {
     if (loading) return;
 
     const inAuthGroup = segments[0] === "login";
-    // SPIKE: webview-spike 走 Web 端自己的登录，不需要原生登录态
-    const inSpike = segments[0] === "webview-spike";
 
-    if (!user && !inAuthGroup && !inSpike) {
+    // V1 范围裁剪（M00-01）：生产构建中，延期路由深链 fail closed，
+    // 直接回到对话 Tab；未登录则回登录页。未分类路由同样拒绝。
+    if (isProductionProfile(v1Profile) && !isV1SegmentsAllowed(segments, v1Profile)) {
+      router.replace(user ? "/(tabs)/chat" : "/login");
+      return;
+    }
+
+    if (!user && !inAuthGroup) {
       router.replace("/login");
     } else if (user && inAuthGroup) {
       router.replace("/(tabs)/chat");
     }
-  }, [user, loading, segments, router]);
+  }, [user, loading, segments, router, v1Profile]);
 
   return (
     <ChatAppStateProvider>
@@ -111,7 +119,6 @@ function AuthGate() {
           }}
         />
         <Stack.Screen name="login" />
-        <Stack.Screen name="webview-spike" />
         <Stack.Screen name="index" />
       </Stack>
     </ChatAppStateProvider>

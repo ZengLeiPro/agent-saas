@@ -49,6 +49,8 @@ import {
   DEFAULT_TENANT_SETTINGS,
 } from "@agent/shared";
 import { getServerUrl } from "../../platform/mobileConfig";
+import { isV1RouteAllowed } from "../../app/v1Capabilities";
+import { getV1BuildProfile } from "../../app/v1Runtime";
 
 interface AgentProfileEditorProps {
   username?: string;
@@ -75,6 +77,13 @@ export function AgentProfileEditor({
   const customSkillsEnabled = (
     user?.tenantFeatures ?? DEFAULT_TENANT_SETTINGS.features
   ).customSkillsEnabled;
+  // V1 范围裁剪（M00-01）：生产构建隐藏人格/记忆编辑、技能管理与「所有 Agent」返回。
+  const v1Profile = getV1BuildProfile();
+  const showPersonaEditor = isV1RouteAllowed("persona-editor", v1Profile);
+  const showSkills =
+    customSkillsEnabled && isV1RouteAllowed("settings/skills", v1Profile);
+  const showBackToAllAgents =
+    backToAllAgents && isV1RouteAllowed("settings/all-agents", v1Profile);
   const username = targetUsername || user?.username;
 
   const [name, setName] = useState("");
@@ -197,27 +206,29 @@ export function AgentProfileEditor({
       onPress: () => void handleResetAvatar(),
     });
   }
-  actionRows.push({
-    key: "persona",
-    Icon: Palette,
-    label: "人格定义",
-    onPress: () =>
-      router.push({
-        pathname: "/persona-editor",
-        params: { username: username!, mode: "persona" },
-      }),
-  });
-  actionRows.push({
-    key: "memory",
-    Icon: Layers,
-    label: "Agent 记忆",
-    onPress: () =>
-      router.push({
-        pathname: "/persona-editor",
-        params: { username: username!, mode: "memory" },
-      }),
-  });
-  if (customSkillsEnabled) {
+  if (showPersonaEditor) {
+    actionRows.push({
+      key: "persona",
+      Icon: Palette,
+      label: "人格定义",
+      onPress: () =>
+        router.push({
+          pathname: "/persona-editor",
+          params: { username: username!, mode: "persona" },
+        }),
+    });
+    actionRows.push({
+      key: "memory",
+      Icon: Layers,
+      label: "Agent 记忆",
+      onPress: () =>
+        router.push({
+          pathname: "/persona-editor",
+          params: { username: username!, mode: "memory" },
+        }),
+    });
+  }
+  if (showSkills) {
     actionRows.push({
       key: "skills",
       Icon: Puzzle,
@@ -352,7 +363,7 @@ export function AgentProfileEditor({
       <Stack.Screen
         options={{
           title: headerTitle,
-          ...(backToAllAgents
+          ...(showBackToAllAgents
             ? {
                 headerLeft: () => (
                   <BackButton

@@ -195,15 +195,15 @@ export async function loadSessionDetailRequest(
     if (isStale()) return;
     if (!response.ok) {
       console.error("加载会话详情失败:", response.statusText);
-      if (!opts?.silent && isCurrent()) {
-        deps.setSessionLoadError("会话暂时无法打开，请重试");
-      }
       if (response.status === 404 || response.status === 403) {
+        if (isCurrent()) deps.setSessionLoadError(null);
         deps.callbacksRef.current.onSessionInvalidated?.(id, response.status);
         deps.removeSession(id);
         deps.setSessionOwner(null);
         deps.setTokenUsage(null);
         deps.setContextUsage(null);
+      } else if (!opts?.silent && isCurrent()) {
+        deps.setSessionLoadError("会话暂时无法打开，请重试");
       }
       return;
     }

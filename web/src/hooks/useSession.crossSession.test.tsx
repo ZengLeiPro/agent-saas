@@ -191,8 +191,13 @@ describe("useSession 跨会话详情请求隔离", () => {
 
     expect(result.current.sessionId).toBe(expectedSessionId);
     expect(activeSessionId).toBe(expectedSessionId);
-    if (status === 403 || status === 404) expect(callbacks.onSessionInvalidated).toHaveBeenCalledWith("next-session", status);
-    else expect(callbacks.onSessionInvalidated).not.toHaveBeenCalled();
+    if (status === 403 || status === 404) {
+      expect(callbacks.onSessionInvalidated).toHaveBeenCalledWith("next-session", status);
+      expect(result.current.sessionLoadError).toBeNull();
+    } else {
+      expect(callbacks.onSessionInvalidated).not.toHaveBeenCalled();
+      expect(result.current.sessionLoadError).toBe("会话暂时无法打开，请重试");
+    }
     expect(callbacks.resetMessages).toHaveBeenCalled();
   });
 

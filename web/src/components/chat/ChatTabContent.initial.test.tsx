@@ -219,6 +219,17 @@ describe("ChatTabContent 初始会话", () => {
     expect(onRetrySessionLoad).toHaveBeenCalledTimes(2);
   });
 
+  it("会话失效清除错误后不再显示无效重试入口", () => {
+    const view = render(<ChatTabContent {...makeProps({
+      sessionLoadError: "会话暂时无法打开，请重试",
+      onRetrySessionLoad: vi.fn(),
+    })} />);
+
+    expect(screen.getByRole("button", { name: "重新加载" })).toBeTruthy();
+    view.rerender(<ChatTabContent {...makeProps({ sessionLoadError: null })} />);
+    expect(screen.queryByRole("button", { name: "重新加载" })).toBeNull();
+  });
+
   it("初始 placeholder 仍可正常驱动受控输入", () => {
     const onInputChange = vi.fn();
     render(<ChatTabContent {...makeProps({ onInputChange })} />);

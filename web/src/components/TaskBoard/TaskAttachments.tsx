@@ -17,12 +17,13 @@ export function toTaskBoardAttachments(files: readonly TaskBoardAttachment[]): T
 
 interface TaskAttachmentFieldProps {
   upload: FileUploadState;
+  taskId?: string;
   disabled?: boolean;
   className?: string;
   onFilesChanged?: () => void;
 }
 
-export function TaskAttachmentField({ upload, disabled, className, onFilesChanged }: TaskAttachmentFieldProps) {
+export function TaskAttachmentField({ upload, taskId, disabled, className, onFilesChanged }: TaskAttachmentFieldProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <div className={cn("space-y-1", className)}>
@@ -58,6 +59,13 @@ export function TaskAttachmentField({ upload, disabled, className, onFilesChange
           onFilesChanged?.();
         }}
         onDismissError={upload.dismissUploadError}
+        resolveFileUrl={taskId ? (file, download) => {
+          const taskScoped = file.attachmentId
+            && file.relativePath.startsWith(`taskboard/attachments/${taskId}/`);
+          return taskScoped
+            ? resolveTaskAttachmentSrc(taskId, file.attachmentId!, download)
+            : resolveImageSrc(file.relativePath);
+        } : undefined}
       />
     </div>
   );

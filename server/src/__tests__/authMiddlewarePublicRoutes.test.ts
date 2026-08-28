@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import express from "express";
 import type { Server } from "node:http";
+import jwt from "jsonwebtoken";
 
 import { createAuthMiddleware } from "../auth/middleware.js";
 
@@ -38,6 +39,8 @@ describe("auth middleware public routes", () => {
     app.get("/api/mcp/oauth/callback", (_req, res) => res.json({ ok: true }));
     app.get("/api/mcp/oauth/client-metadata", (_req, res) => res.json({ ok: true }));
     app.get("/api/protected", (_req, res) => res.json({ ok: true }));
+    app.get("/api/taskboard/tasks/:taskId/attachments/:attachmentId", (_req, res) => res.json({ ok: true }));
+    app.get("/api/taskboard/tasks/:taskId/attachments", (_req, res) => res.json({ ok: true }));
 
     server = await new Promise((resolve) => {
       const s = app.listen(0, "127.0.0.1", () => resolve(s));
@@ -99,6 +102,24 @@ describe("auth middleware public routes", () => {
   it("MCP OAuth 回调与 client metadata 免登录可达", async () => {
     expect((await fetch(`${baseUrl}/api/mcp/oauth/callback?state=test`)).status).toBe(200);
     expect((await fetch(`${baseUrl}/api/mcp/oauth/client-metadata`)).status).toBe(200);
+  });
+
+  it("任务附件图片允许使用查询参数 token 加载", async () => {
+    const token = jwt.sign({ sub: "user-1", username: "alice", role: "user", tenantId: "tenant-1" }, JWT_SECRET);
+    const response = await fetch(
+      `${baseUrl}/api/taskboard/tasks/task-1/attachments/attachment-1?token=${encodeURIComponent(token)}`,
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("任务附件相邻路径不接受查询参数 token（放行未扩大化）", async () => {
+    const token = jwt.sign({ sub: "user-1", username: "alice", role: "user", tenantId: "tenant-1" }, JWT_SECRET);
+    const response = await fetch(
+      `${baseUrl}/api/taskboard/tasks/task-1/attachments?token=${encodeURIComponent(token)}`,
+    );
+
+    expect(response.status).toBe(401);
   });
 
   it("非公开路径无 token 仍 401（放行未扩大化）", async () => {

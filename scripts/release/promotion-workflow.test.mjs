@@ -5,6 +5,10 @@ import test from 'node:test';
 
 const workflowPath = new URL('../../.github/workflows/promote-release.yml', import.meta.url);
 const deployPath = new URL('./deploy-production-release.sh', import.meta.url);
+const acsUnitPath = new URL(
+  '../../daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template',
+  import.meta.url,
+);
 
 function ordered(text, markers) {
   let cursor = -1;
@@ -87,6 +91,7 @@ test('all validation and prefetch precede mutation, then ACS, App, and Web conve
 test('workflow preserves partial matrices, rollback evidence, migrations, and observation boundaries', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const deploy = await readFile(deployPath, 'utf8');
+  const acsUnit = await readFile(acsUnitPath, 'utf8');
   assert.match(workflow, /read-live-production-components\.mjs/u);
   assert.match(workflow, /target_match=false/u);
   assert.match(workflow, /write-production-identity\.mjs/u);
@@ -129,5 +134,11 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ob
   assert.match(deploy, /rollback_root\/nginx-upstream\.conf/u);
   assert.match(deploy, /exit 20/u);
   assert.doesNotMatch(deploy, /pnpm (?:install|build)/u);
+  assert.match(acsUnit, /^User=root$/mu);
+  assert.match(acsUnit, /^Group=root$/mu);
+  assert.match(
+    acsUnit,
+    /^Environment=ACS_RELEASE_IDENTITY_FILE=\/etc\/agent-saas\/acs-release-identity\.json$/mu,
+  );
   execFileSync('bash', ['-n', deployPath.pathname]);
 });

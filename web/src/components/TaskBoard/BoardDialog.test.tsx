@@ -347,13 +347,13 @@ describe("BoardDialog", () => {
     };
     render(<BoardDialog open board={configuredBoard} onOpenChange={vi.fn()} onCreate={vi.fn()} onUpdate={onUpdate} />);
 
-    expect(await screen.findByText(/当前生效来源：看板 fallback/)).toBeTruthy();
-    expect(screen.getByText("GitHub 未声明 required checks。")).toBeTruthy();
+    expect(await screen.findByText(/当前使用 1 项看板备用门禁/)).toBeTruthy();
+    expect(screen.getByText(/只有 GitHub 明确未声明时/)).toBeTruthy();
     expect(screen.getByText(/optional-check · success · Optional App/)).toBeTruthy();
     const optional = screen.getByRole("checkbox", { name: "选择 observed check optional-check" });
     expect(optional.getAttribute("data-state")).toBe("unchecked");
     await user.click(optional);
-    expect((screen.getByRole("textbox", { name: "看板 fallback required contexts" }) as HTMLTextAreaElement).value)
+    expect((screen.getByRole("textbox", { name: "备用 required checks" }) as HTMLTextAreaElement).value)
       .toContain("optional-check | 7");
     await user.click(screen.getByRole("button", { name: "保存" }));
 
@@ -364,8 +364,31 @@ describe("BoardDialog", () => {
       expectedVersion: configuredBoard.version,
     }));
     expect(await screen.findByText("已保存，并按服务端最终策略回显。")).toBeTruthy();
-    expect((screen.getByRole("textbox", { name: "看板 fallback required contexts" }) as HTMLTextAreaElement).value)
+    expect((screen.getByRole("textbox", { name: "备用 required checks" }) as HTMLTextAreaElement).value)
       .toContain("optional-check | 7");
+  });
+
+  it("GitHub 已配置 required checks 时只显示自动托管结论，备用配置默认收起", async () => {
+    mocks.fetchBoardCiPolicyDiscovery.mockResolvedValueOnce({
+      ...discovery,
+      effectiveSource: "github",
+      githubRequiredChecks: [{ name: "Build & Check" }],
+      effectiveRequiredChecks: [{ name: "Build & Check" }],
+    });
+    const configuredBoard: TaskBoard = {
+      ...board,
+      repository: { provider: "github", repositoryId: discovery.repositoryId, owner: "acme", name: "app", baseBranch: "main", allowForkPullRequest: false },
+      integrationPolicy: {
+        schemaVersion: 1, enabled: true, revision: "r1",
+        trigger: { mode: "manual", allowedRoles: ["owner"] }, batch: { maxTasks: 10, selection: "priority_then_ready_at" },
+        execution: { mergeMethod: "squash", continueIndependentSources: true, autoResolveConflicts: true, maxAutomaticRemediationRounds: 2, maxTransientRetries: 3, requireGreenChecks: true, deleteRemoteBranch: false, deploy: false },
+      },
+    };
+
+    render(<BoardDialog open board={configuredBoard} onOpenChange={vi.fn()} onCreate={vi.fn()} onUpdate={vi.fn()} />);
+
+    expect(await screen.findByText(/已由 GitHub 管理，自动使用 1 项 required checks/)).toBeTruthy();
+    expect(screen.getByText("备用门禁（仅 GitHub 未配置时使用）").closest("details")).toHaveProperty("open", false);
   });
 
   it("无策略权限时只读展示发现结果与 App 来源", async () => {
@@ -382,9 +405,9 @@ describe("BoardDialog", () => {
     };
     render(<BoardDialog open board={readOnlyBoard} onOpenChange={vi.fn()} onCreate={vi.fn()} onUpdate={vi.fn()} />);
 
-    expect(await screen.findByText(/当前生效来源：看板 fallback/)).toBeTruthy();
+    expect(await screen.findByText(/当前使用 1 项看板备用门禁/)).toBeTruthy();
     expect(screen.getByRole("checkbox", { name: "选择 observed check optional-check" })).toHaveProperty("disabled", true);
-    expect(screen.getByRole("textbox", { name: "看板 fallback required contexts" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("textbox", { name: "备用 required checks" })).toHaveProperty("disabled", true);
   });
 
   it("显示 CI discovery 与保存错误，不伪装成功", async () => {
@@ -402,7 +425,7 @@ describe("BoardDialog", () => {
     };
     render(<BoardDialog open board={configuredBoard} onOpenChange={vi.fn()} onCreate={vi.fn()} onUpdate={onUpdate} />);
     expect(await screen.findByText("GitHub discovery unavailable")).toBeTruthy();
-    await user.type(screen.getByRole("textbox", { name: "看板 fallback required contexts" }), "manual-ci");
+    await user.type(screen.getByRole("textbox", { name: "备用 required checks" }), "manual-ci");
     await user.click(screen.getByRole("button", { name: "保存" }));
     expect(await screen.findByText("保存 CI policy 失败")).toBeTruthy();
   });
@@ -419,15 +442,15 @@ describe("BoardDialog", () => {
       },
     };
     render(<BoardDialog open board={configuredBoard} onOpenChange={vi.fn()} onCreate={vi.fn()} onUpdate={vi.fn()} />);
-    await screen.findByText(/当前生效来源：看板 fallback/);
+    await screen.findByText(/当前使用 1 项看板备用门禁/);
 
     const repositoryId = screen.getByRole("textbox", { name: "Repository ID" });
     await user.clear(repositoryId);
     await user.type(repositoryId, "github:tenant-1:acme/new-app");
 
-    expect(screen.getByText(/旧仓库 fallback 已清空/)).toBeTruthy();
+    expect(screen.getByText(/旧仓库的备用门禁已清空/)).toBeTruthy();
     expect(screen.queryByText(/optional-check · success/)).toBeNull();
-    expect((screen.getByRole("textbox", { name: "看板 fallback required contexts" }) as HTMLTextAreaElement).value).toBe("");
+    expect((screen.getByRole("textbox", { name: "备用 required checks" }) as HTMLTextAreaElement).value).toBe("");
   });
 
   it("PATCH 成功但最终策略回读失败时不显示绿色回显成功", async () => {
@@ -446,8 +469,8 @@ describe("BoardDialog", () => {
       },
     };
     render(<BoardDialog open board={configuredBoard} onOpenChange={vi.fn()} onCreate={vi.fn()} onUpdate={onUpdate} />);
-    await screen.findByText(/当前生效来源：看板 fallback/);
-    await user.type(screen.getByRole("textbox", { name: "看板 fallback required contexts" }), "\nmanual-ci");
+    await screen.findByText(/当前使用 1 项看板备用门禁/);
+    await user.type(screen.getByRole("textbox", { name: "备用 required checks" }), "\nmanual-ci");
     await user.click(screen.getByRole("button", { name: "保存" }));
 
     expect(await screen.findByText(/保存成功，但未能回读最终 CI 策略：discovery readback failed/)).toBeTruthy();

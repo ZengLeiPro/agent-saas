@@ -9,18 +9,18 @@ export function createValidReleaseEvidence(overrides = {}) {
     ok: true,
     releaseSha: RELEASE_EVIDENCE_SHA,
     productionBaselineStatus: 'known',
-    integrationCandidates: [
-      {
-        candidateId: '85a9cb68-4130-4c0a-aec3-e4cc9c671bd5',
-        revision: 3,
-        mergedCommitOid: RELEASE_EVIDENCE_SHA,
-      },
-    ],
+    releasePullRequest: {
+      number: 201,
+      headSha: 'c'.repeat(40),
+      mergeCommitOid: RELEASE_EVIDENCE_SHA,
+      state: 'MERGED',
+    },
+    integrationCandidates: [],
     sourcePullRequests: [201],
     checks: {
       appCi: { status: 'success', headSha: RELEASE_EVIDENCE_SHA, runId: 100 },
       acsImpact: { status: 'success', headSha: RELEASE_EVIDENCE_SHA, runId: 101 },
-      integrationReceipt: {
+      mergeReceipt: {
         status: 'success',
         subjectDigest: `sha256:${'6'.repeat(64)}`,
       },
@@ -72,7 +72,6 @@ export function createValidReleaseEvidence(overrides = {}) {
       confirmation: 'not_required',
       contract: 'separate_release',
     },
-    compatibilityEvidenceDigest: `sha256:${'8'.repeat(64)}`,
     ...overrides,
   };
   return { ...body, evidenceDigest: digestBuffer(Buffer.from(canonicalJson(body))) };

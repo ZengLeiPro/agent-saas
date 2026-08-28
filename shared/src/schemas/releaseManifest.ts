@@ -110,6 +110,20 @@ const integrationCandidateSchema = z
     mergedCommitOid: fullShaSchema,
   })
   .strict();
+const releasePullRequestSchema = z
+  .object({
+    number: z.number().int().positive(),
+    headSha: fullShaSchema,
+    mergeCommitOid: fullShaSchema,
+    state: z.literal('MERGED'),
+  })
+  .strict();
+const receiptSchema = z
+  .object({
+    status: z.literal('success'),
+    subjectDigest: sha256DigestSchema,
+  })
+  .strict();
 
 const ciCheckSchema = z
   .object({
@@ -134,7 +148,8 @@ export const releaseManifestContentSchema = z
     tag: releaseIdSchema,
     createdAt: utcTimestampSchema,
     createdBy: z.string().trim().min(1).max(256),
-    integrationCandidates: z.array(integrationCandidateSchema).min(1).max(1_000),
+    releasePullRequest: releasePullRequestSchema.optional(),
+    integrationCandidates: z.array(integrationCandidateSchema).max(1_000),
     sourcePullRequests: z.array(z.number().int().positive()).min(1).max(1_000),
     productionBaseline: releaseComponentMatrixSchema,
     components: releaseComponentsPlanSchema,
@@ -143,20 +158,16 @@ export const releaseManifestContentSchema = z
       .object({
         appCi: ciCheckSchema,
         acsImpact: acsImpactCheckSchema,
-        integrationReceipt: z
-          .object({
-            status: z.literal('success'),
-            subjectDigest: sha256DigestSchema,
-          })
-          .strict(),
+        mergeReceipt: receiptSchema.optional(),
+        integrationReceipt: receiptSchema.optional(),
       })
       .strict(),
     promotionPolicy: z
       .object({
         expiresAt: utcTimestampSchema,
         minimumPromotableSha: fullShaSchema,
-        appAcsCompatibility: z.literal('n_and_n_plus_1'),
-        compatibilityEvidenceDigest: sha256DigestSchema,
+        appAcsCompatibility: z.literal('n_and_n_plus_1').optional(),
+        compatibilityEvidenceDigest: sha256DigestSchema.optional(),
         requiresHumanApproval: z.literal(true),
       })
       .strict(),
@@ -172,6 +183,35 @@ export const releaseManifestContentSchema = z
   })
   .strict()
   .superRefine((manifest, ctx) => {
+    if (!manifest.checks.mergeReceipt && !manifest.checks.integrationReceipt) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['checks'],
+        message: 'A GitHub merge receipt or legacy Integration receipt is required',
+      });
+    }
+    if (manifest.releasePullRequest) {
+      if (manifest.releasePullRequest.mergeCommitOid !== manifest.releaseSha) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['releasePullRequest', 'mergeCommitOid'],
+          message: 'Release pull request mergeCommitOid must equal releaseSha',
+        });
+      }
+      if (!manifest.sourcePullRequests.includes(manifest.releasePullRequest.number)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['sourcePullRequests'],
+          message: 'sourcePullRequests must include the release pull request',
+        });
+      }
+    } else if (manifest.integrationCandidates.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['releasePullRequest'],
+        message: 'Direct GitHub releases require releasePullRequest evidence',
+      });
+    }
     if (manifest.tag !== manifest.releaseId) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

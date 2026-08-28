@@ -23,15 +23,18 @@ function evidence(): ReleaseCandidateEvidence {
     createdAt: '2026-08-26T00:00:00.000Z',
     createdBy: 'release-operator',
     expiresAt: '2026-08-27T00:00:00.000Z',
-    compatibilityEvidenceDigest: `sha256:${'8'.repeat(64)}`,
-    integrationCandidates: [
-      { candidateId: '85a9cb68-4130-4c0a-aec3-e4cc9c671bd5', revision: 3, mergedCommitOid: SHA },
-    ],
+    releasePullRequest: {
+      number: 201,
+      headSha: 'c'.repeat(40),
+      mergeCommitOid: SHA,
+      state: 'MERGED',
+    },
+    integrationCandidates: [],
     sourcePullRequests: [201],
     checks: {
       appCi: { status: 'success', headSha: SHA, runId: 100 },
       acsImpact: { status: 'success', headSha: SHA, runId: 101 },
-      integrationReceipt: { status: 'success', subjectDigest: `sha256:${'6'.repeat(64)}` },
+      mergeReceipt: { status: 'success', subjectDigest: `sha256:${'6'.repeat(64)}` },
     },
     productionBaseline,
     affectedComponents: ['api', 'runtimeWorker'],

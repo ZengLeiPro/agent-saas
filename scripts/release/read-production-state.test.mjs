@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { validateProductionObservations } from './read-production-state.mjs';
+import {
+  productionObservationUrl,
+  validateProductionObservations,
+} from './read-production-state.mjs';
 
 const SHA = 'a'.repeat(40);
 const SERVER = `sha256:${'1'.repeat(64)}`;
@@ -70,4 +73,15 @@ test('fails closed when any observer is unknown or disagrees', () => {
   const unknown = observations();
   unknown.web.webDigest = undefined;
   assert.throws(() => validateProductionObservations(unknown), /disagrees/u);
+});
+
+test('cache-busts external observers without changing the local ACS health route', () => {
+  assert.equal(
+    productionObservationUrl('https://agent.kaiyan.net/release-identity.json', 123).href,
+    'https://agent.kaiyan.net/release-identity.json?release_observation=123',
+  );
+  assert.equal(
+    productionObservationUrl('http://127.0.0.1:3400/health', 123).href,
+    'http://127.0.0.1:3400/health',
+  );
 });

@@ -19,7 +19,7 @@ export interface ReleaseCandidateEvidence {
   createdAt: string;
   createdBy: string;
   expiresAt: string;
-  compatibilityEvidenceDigest: string;
+  releasePullRequest?: ReleaseManifestContent['releasePullRequest'];
   integrationCandidates: ReleaseManifestContent['integrationCandidates'];
   sourcePullRequests: number[];
   checks: ReleaseManifestContent['checks'];
@@ -97,6 +97,7 @@ export function createReleaseCandidate(evidence: ReleaseCandidateEvidence): Rele
     tag: evidence.releaseId,
     createdAt: evidence.createdAt,
     createdBy: evidence.createdBy,
+    ...(evidence.releasePullRequest ? { releasePullRequest: evidence.releasePullRequest } : {}),
     integrationCandidates: evidence.integrationCandidates,
     sourcePullRequests: [...evidence.sourcePullRequests].sort((left, right) => left - right),
     productionBaseline: evidence.productionBaseline,
@@ -111,8 +112,6 @@ export function createReleaseCandidate(evidence: ReleaseCandidateEvidence): Rele
     promotionPolicy: {
       expiresAt: evidence.expiresAt,
       minimumPromotableSha: evidence.releaseSha,
-      appAcsCompatibility: 'n_and_n_plus_1',
-      compatibilityEvidenceDigest: evidence.compatibilityEvidenceDigest,
       requiresHumanApproval: true,
     },
     migrationPlan: evidence.migrationPlan,

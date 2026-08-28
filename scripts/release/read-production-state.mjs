@@ -82,9 +82,15 @@ export function validateProductionObservations({ runtime, api, web, acs }) {
   };
 }
 
-async function json(url) {
+export function productionObservationUrl(url, now = Date.now()) {
   const requestUrl = new URL(url);
-  requestUrl.searchParams.set('release_observation', String(Date.now()));
+  if (!['127.0.0.1', '::1', 'localhost'].includes(requestUrl.hostname))
+    requestUrl.searchParams.set('release_observation', String(now));
+  return requestUrl;
+}
+
+async function json(url) {
+  const requestUrl = productionObservationUrl(url);
   const response = await fetch(requestUrl, {
     headers: { 'cache-control': 'no-cache' },
     signal: AbortSignal.timeout(10_000),

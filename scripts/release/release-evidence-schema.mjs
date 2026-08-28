@@ -79,6 +79,20 @@ const integrationCandidateSchema = z
     mergedCommitOid: fullShaSchema,
   })
   .strict();
+const releasePullRequestSchema = z
+  .object({
+    number: z.number().int().positive(),
+    headSha: fullShaSchema,
+    mergeCommitOid: fullShaSchema,
+    state: z.literal('MERGED'),
+  })
+  .strict();
+const receiptSchema = z
+  .object({
+    status: z.literal('success'),
+    subjectDigest: sha256DigestSchema,
+  })
+  .strict();
 const appCiSchema = z
   .object({
     status: z.literal('success'),
@@ -100,20 +114,17 @@ export const releaseEvidenceSchema = z
     ok: z.literal(true),
     releaseSha: fullShaSchema,
     evidenceDigest: sha256DigestSchema,
-    compatibilityEvidenceDigest: sha256DigestSchema,
+    compatibilityEvidenceDigest: sha256DigestSchema.optional(),
     productionBaselineStatus: z.literal('known'),
-    integrationCandidates: z.array(integrationCandidateSchema).min(1).max(1_000),
+    releasePullRequest: releasePullRequestSchema.optional(),
+    integrationCandidates: z.array(integrationCandidateSchema).max(1_000),
     sourcePullRequests: z.array(z.number().int().positive()).min(1).max(1_000),
     checks: z
       .object({
         appCi: appCiSchema,
         acsImpact: acsImpactSchema,
-        integrationReceipt: z
-          .object({
-            status: z.literal('success'),
-            subjectDigest: sha256DigestSchema,
-          })
-          .strict(),
+        mergeReceipt: receiptSchema.optional(),
+        integrationReceipt: receiptSchema.optional(),
       })
       .strict(),
     productionBaseline: productionBaselineSchema,
@@ -130,6 +141,35 @@ export const releaseEvidenceSchema = z
   })
   .strict()
   .superRefine((evidence, ctx) => {
+    if (!evidence.checks.mergeReceipt && !evidence.checks.integrationReceipt) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['checks'],
+        message: 'A GitHub merge receipt or legacy Integration receipt is required',
+      });
+    }
+    if (evidence.releasePullRequest) {
+      if (evidence.releasePullRequest.mergeCommitOid !== evidence.releaseSha) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['releasePullRequest', 'mergeCommitOid'],
+          message: 'Release pull request mergeCommitOid must equal releaseSha',
+        });
+      }
+      if (!evidence.sourcePullRequests.includes(evidence.releasePullRequest.number)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['sourcePullRequests'],
+          message: 'sourcePullRequests must include the release pull request',
+        });
+      }
+    } else if (evidence.integrationCandidates.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['releasePullRequest'],
+        message: 'Direct GitHub releases require releasePullRequest evidence',
+      });
+    }
     if (
       new Set(evidence.sourcePullRequests).size !== evidence.sourcePullRequests.length ||
       evidence.sourcePullRequests.some(

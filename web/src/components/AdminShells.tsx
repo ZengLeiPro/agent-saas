@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNod
 import { ChevronLeft, Loader2, X } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 import { AdminSelect, type AdminSelectOption } from "@/components/ui/admin-select";
+import type { SettingsDirtyController } from "@/components/PersonalSettings/dirtyRegistry";
 import { SettingsPanelHeaderStickyProvider } from "@/components/SettingsCenter/SettingsPanelHeader";
 import {
   PLATFORM_SETTINGS_SECTIONS,
@@ -260,6 +261,8 @@ export function TenantAdminShell({
   governanceRoute,
   governanceContentOnly = false,
   governanceContentEmbedded = false,
+  onSettingsTargetTenantIdChange,
+  dirtyController,
 }: {
   renderUsers: (tenantId?: string, tenantName?: string) => ReactNode;
   renderSkills: (tenantId?: string, tenantName?: string) => ReactNode;
@@ -292,9 +295,13 @@ export function TenantAdminShell({
   governanceContentOnly?: boolean;
   governanceContentEmbedded?: boolean;
   renderAutomation?: () => ReactNode;
+  /** 桌面统一设置回传实际组织目标；undefined 表示 Shell 尚不可用。 */
+  onSettingsTargetTenantIdChange?: (tenantId: string | null | undefined) => void;
+  /** 统一设置或治理工作区的共享未保存导航保护。 */
+  dirtyController?: SettingsDirtyController;
 }) {
   const { user, isPlatformAdmin } = useAuth();
-  const { tenants: allTenants } = useTenants();
+  const { tenants: allTenants, loading: tenantsLoading } = useTenants();
   const tenants = filterCustomerOrganizations(allTenants);
   const [internalActive, setInternalActive] = useState<TenantSection>("overview");
   const active = activeAnalysisSection ?? internalActive;
@@ -303,22 +310,32 @@ export function TenantAdminShell({
   // 分享出去的组织分析链接必须落到同一个组织，而不是分享者自己的默认组织。
   const shellUrl = useAdminUrlQuery();
   const urlTenantId = governanceRoute?.orgId ?? shellUrl.get("org") ?? "";
-  const [fallbackTenantId, setFallbackTenantId] = useState(user?.tenantId ?? "");
-  const targetTenantId = urlTenantId || fallbackTenantId;
-  const setTargetTenantId = useCallback(
-    (next: string) => shellUrl.set("org", next || null, HISTORY_PUSH),
-    [shellUrl],
-  );
+  const [fallbackTenantId, setFallbackTenantId] = useState(isPlatformAdmin ? urlTenantId : user?.tenantId ?? "");
+  const settingsWasOpenRef = useRef(settingsOpen);
+  const previousUrlTenantIdRef = useRef(urlTenantId);
+  const missingActiveScope = isPlatformAdmin && settingsContentOnly && settingsOpen && settingsWasOpenRef.current
+    && previousUrlTenantIdRef.current && !urlTenantId;
+  const targetTenantId = urlTenantId || (missingActiveScope ? "" : fallbackTenantId);
+  const setTargetTenantId = useCallback((next: string) => {
+    const changeTarget = () => {
+      setFallbackTenantId(next);
+      shellUrl.set("org", next || null, HISTORY_PUSH);
+    };
+    if (dirtyController) dirtyController.requestNavigation(changeTarget);
+    else changeTarget();
+  }, [dirtyController, shellUrl]);
 
   useEffect(() => {
-    if (!fallbackTenantId && user?.tenantId) setFallbackTenantId(user.tenantId);
-  }, [fallbackTenantId, user?.tenantId]);
+    if (!isPlatformAdmin && !fallbackTenantId && user?.tenantId) setFallbackTenantId(user.tenantId);
+  }, [fallbackTenantId, isPlatformAdmin, user?.tenantId]);
 
-  // 管理弹窗路径（/tenant-admin/settings/*）不带 search，`org` 会暂时消失；
-  // 把最近一次的选择记进 fallback，避免打开再关闭管理弹窗后被打回自己的组织。
+  // 跨设置分组时暂存最近选择；若组织 Shell 始终处于前台且历史导航回到空 org，则视为明确清空。
   useEffect(() => {
     if (urlTenantId) setFallbackTenantId(urlTenantId);
-  }, [urlTenantId]);
+    else if (missingActiveScope) setFallbackTenantId("");
+    settingsWasOpenRef.current = settingsOpen;
+    previousUrlTenantIdRef.current = urlTenantId;
+  }, [missingActiveScope, settingsOpen, urlTenantId]);
 
   // 平台管理员的组织作用域必须来自显式 org 选择，不能用目录首项替代用户决策。
   const explicitPlatformTenantId = isPlatformAdmin && tenants.some(tenant => tenant.id === targetTenantId)
@@ -327,6 +344,13 @@ export function TenantAdminShell({
   const effectiveTenantId = isPlatformAdmin
     ? explicitPlatformTenantId
     : user?.tenantId || "";
+  useEffect(() => {
+    if (!settingsContentOnly) return;
+    onSettingsTargetTenantIdChange?.(isPlatformAdmin && tenantsLoading ? undefined : effectiveTenantId || null);
+  }, [effectiveTenantId, isPlatformAdmin, onSettingsTargetTenantIdChange, settingsContentOnly, tenantsLoading]);
+  useEffect(() => () => {
+    if (settingsContentOnly) onSettingsTargetTenantIdChange?.(undefined);
+  }, [onSettingsTargetTenantIdChange, settingsContentOnly]);
   const currentTenant = tenants.find(t => t.id === effectiveTenantId);
   const explicitPlatformTenant = tenants.find(t => t.id === explicitPlatformTenantId);
   const tenantSwitcherOptions: AdminSelectOption[] = [
@@ -578,6 +602,9 @@ export function PlatformAdminShell({
   const platformSectionsToRender: { id: PlatformSection; render: () => ReactNode }[] = [
     { id: "tenants", render: renderTenants },
     { id: "signup", render: () => renderSignupConfig ? renderSignupConfig() : null },
+    { id: "platform-admins", render: () => <PlatformAdminsPage /> },
+    { id: "agent-templates", render: () => <PlatformTemplateCatalogPage kind="agent" /> },
+    { id: "environment-templates", render: () => <PlatformTemplateCatalogPage kind="environment" /> },
     { id: "models", render: renderModels },
     { id: "billing", render: () => <PlatformBillingManager /> },
     { id: "remote-hands", render: renderRemoteHands },

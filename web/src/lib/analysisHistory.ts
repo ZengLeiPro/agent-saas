@@ -1,3 +1,4 @@
+import { pushAppHistoryState, replaceAppHistoryState } from "@/lib/appHistory";
 import { isAnalysisRoute } from "@/lib/analysisNavigation";
 import { parseGovernanceUrl } from "@/lib/governanceNavigation";
 
@@ -42,14 +43,14 @@ export function analysisHistoryStateForNavigation(
 export function markAnalysisHistoryEntry(source: string, depth: number): void {
   const state = window.history.state;
   const base = state && typeof state === "object" ? state : {};
-  window.history.replaceState({ ...base, [ANALYSIS_HISTORY_KEY]: { source, depth } }, "");
+  replaceAppHistoryState({ ...base, [ANALYSIS_HISTORY_KEY]: { source, depth } });
 }
 
 export function ensureAnalysisHistoryEntry(fallbackUrl: string): boolean {
   if (readAnalysisHistoryState()) return false;
   const currentUrl = `${window.location.pathname}${window.location.search}`;
-  window.history.replaceState({}, "", fallbackUrl);
-  window.history.pushState({}, "", currentUrl);
+  replaceAppHistoryState({}, fallbackUrl);
+  pushAppHistoryState({}, currentUrl);
   markAnalysisHistoryEntry(fallbackUrl, 1);
   return true;
 }

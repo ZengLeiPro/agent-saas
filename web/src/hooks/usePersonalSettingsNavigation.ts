@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 
 import type { GovernanceRouteState } from "@/lib/governanceNavigation";
+import { replaceAppHistoryState } from "@/lib/appHistory";
 import {
   buildPlatformAdminUrl,
   buildTenantAdminUrl,
@@ -50,7 +51,7 @@ export function usePersonalSettingsNavigation(deps: PersonalSettingsNavigationDe
     const current = readPersonalSettingsHistoryState();
     const fromSettingsRoute = isUnifiedSettingsUrl(currentUrl);
     const source = current?.source ?? (fromSettingsRoute ? returnUrl() : currentUrl);
-    if (!current && fromSettingsRoute) window.history.replaceState({}, "", source);
+    if (!current && fromSettingsRoute) replaceAppHistoryState({}, source);
     deps.openState(normalized, route);
     pushSettingsRoute(route, { source, depth: current ? current.depth + 1 : 1 });
   }, [deps, returnUrl]);
@@ -66,7 +67,7 @@ export function usePersonalSettingsNavigation(deps: PersonalSettingsNavigationDe
     const current = readPersonalSettingsHistoryState();
     const currentUrl = `${window.location.pathname}${window.location.search}`;
     const source = current?.source ?? (isUnifiedSettingsUrl(currentUrl) ? returnUrl() : currentUrl);
-    if (!current && isUnifiedSettingsUrl(currentUrl)) window.history.replaceState({}, "", source);
+    if (!current && isUnifiedSettingsUrl(currentUrl)) replaceAppHistoryState({}, source);
     deps.openState(normalized, route);
     pushSettingsRoute(route, { source, depth: current ? current.depth + 1 : 1 });
   }, [deps, returnUrl]);

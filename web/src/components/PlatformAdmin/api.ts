@@ -7,6 +7,7 @@ import type {
   PlatformSessionRecord,
   PlatformTrendResponse,
   RuntimeOperationsResponse,
+  RuntimeSchedulerConfigResponse,
   SandboxRecord,
   SessionDetailResponse,
   AlertingStatus,
@@ -134,6 +135,12 @@ export const platformAdminApi = {
   },
   runtimeOperations(): Promise<RuntimeOperationsResponse> {
     return getJson("/api/admin/runtime-operations");
+  },
+  schedulerRuntimeConfig(): Promise<RuntimeSchedulerConfigResponse> {
+    return getJson("/api/admin/runtime-operations/scheduler/runtime-config");
+  },
+  updateSchedulerRuntimeConfig(maxConcurrentRuns: number): Promise<RuntimeSchedulerConfigResponse> {
+    return mutateJson("/api/admin/runtime-operations/scheduler/runtime-config", "PATCH", { maxConcurrentRuns });
   },
   sandboxes(): Promise<{ sandboxes: SandboxRecord[] }> {
     return getJson("/api/admin/runtime-operations/acs/sandboxes");

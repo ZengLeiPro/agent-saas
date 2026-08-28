@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserManager } from "@/components/UserManager";
@@ -8,6 +8,7 @@ import { PlatformAdminShell, TenantAdminShell } from "./AdminShells";
 const adminShellMocks = vi.hoisted(() => ({
   auth: { user: { tenantId: "acme" }, isPlatformAdmin: false },
   tenants: [{ id: "acme", name: "Acme" }],
+  tenantsLoading: false,
   contextSnapshot: vi.fn(),
 }));
 
@@ -21,6 +22,7 @@ vi.mock("@agent/shared/lib/governanceApi", async (importOriginal) => {
     },
     governanceAccessApi: {
       ...actual.governanceAccessApi,
+      listPlatformAdmins: vi.fn().mockResolvedValue({ platformAdmins: [] }),
       listMemberships: vi.fn().mockResolvedValue({ memberships: [
         { userId: "member-1", persona: "member", isOwner: false, status: "active", version: 1, allowedActions: [] },
       ] }),
@@ -46,7 +48,7 @@ vi.mock("@/contexts/AuthContext", () => ({
   }),
 }));
 vi.mock("@/components/TenantManager/hooks", () => ({
-  useTenants: () => ({ tenants: adminShellMocks.tenants }),
+  useTenants: () => ({ tenants: adminShellMocks.tenants, loading: adminShellMocks.tenantsLoading }),
 }));
 vi.mock("@/components/PlatformAdmin/pages", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/PlatformAdmin/pages")>();
@@ -88,6 +90,7 @@ describe("AdminShells V2 内容适配", () => {
     window.history.replaceState({}, "", "/");
     adminShellMocks.auth = { user: { tenantId: "acme" }, isPlatformAdmin: false };
     adminShellMocks.tenants = [{ id: "acme", name: "Acme" }];
+    adminShellMocks.tenantsLoading = false;
     adminShellMocks.contextSnapshot.mockReset().mockResolvedValue({
       generatedAt: "2026-08-22T15:40:00.000Z", sources: [], consumers: [],
     });
@@ -169,6 +172,103 @@ describe("AdminShells V2 内容适配", () => {
     await userEvent.click(screen.getByRole("button", { name: "添加成员" }));
     expect(window.location.pathname).toBe("/tenant-admin/members/list");
     expect(window.location.search).toBe("?org=acme");
+  });
+
+  it("统一设置隐藏组织分组后继续回传持久 Shell 的实际组织", async () => {
+    adminShellMocks.auth = { user: { tenantId: "pantheon" }, isPlatformAdmin: true };
+    adminShellMocks.tenants = [
+      { id: "pantheon", name: "万神殿" },
+      { id: "acme", name: "Acme" },
+    ];
+    window.history.replaceState({}, "", "/tenant-admin/settings/users");
+    const onTargetChange = vi.fn();
+    const { rerender, unmount } = render(
+      <TenantAdminShell
+        {...commonTenantProps}
+        settingsOpen
+        settingsContentOnly
+        renderUsers={() => <div />}
+        onSettingsTargetTenantIdChange={onTargetChange}
+      />,
+    );
+    expect(onTargetChange).toHaveBeenLastCalledWith(null);
+    await userEvent.click(screen.getByRole("combobox", { name: "切换组织管理目标" }));
+    await userEvent.click(screen.getByRole("option", { name: "Acme" }));
+    expect(onTargetChange).toHaveBeenLastCalledWith("acme");
+    expect(window.location.search).toBe("?org=acme");
+
+    await userEvent.click(screen.getByRole("combobox", { name: "切换组织管理目标" }));
+    await userEvent.click(screen.getByRole("option", { name: "请选择目标组织" }));
+    expect(onTargetChange).toHaveBeenLastCalledWith(null);
+    expect(window.location.search).toBe("");
+    await userEvent.click(screen.getByRole("combobox", { name: "切换组织管理目标" }));
+    await userEvent.click(screen.getByRole("option", { name: "Acme" }));
+    expect(onTargetChange).toHaveBeenLastCalledWith("acme");
+
+    act(() => window.history.back());
+    await waitFor(() => expect(onTargetChange).toHaveBeenLastCalledWith(null));
+    act(() => window.history.forward());
+    await waitFor(() => expect(onTargetChange).toHaveBeenLastCalledWith("acme"));
+
+    window.history.replaceState({}, "", "/platform-admin/settings/models");
+    rerender(
+      <TenantAdminShell
+        {...commonTenantProps}
+        settingsOpen={false}
+        settingsContentOnly
+        renderUsers={() => <div />}
+        onSettingsTargetTenantIdChange={onTargetChange}
+      />,
+    );
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    expect(onTargetChange).toHaveBeenLastCalledWith("acme");
+
+    window.history.replaceState({}, "", "/tenant-admin/settings/skills");
+    rerender(
+      <TenantAdminShell
+        {...commonTenantProps}
+        settingsOpen
+        settingsContentOnly
+        settingsSection="skills"
+        renderUsers={() => <div />}
+        onSettingsTargetTenantIdChange={onTargetChange}
+      />,
+    );
+    expect(onTargetChange).toHaveBeenLastCalledWith("acme");
+
+    unmount();
+    expect(onTargetChange).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("平台组织目录加载完成前不把 URL 目标误报为明确未选择", () => {
+    adminShellMocks.auth = { user: { tenantId: "pantheon" }, isPlatformAdmin: true };
+    adminShellMocks.tenants = [];
+    adminShellMocks.tenantsLoading = true;
+    window.history.replaceState({}, "", "/tenant-admin/settings/users?org=acme");
+    const onTargetChange = vi.fn();
+    const { rerender } = render(
+      <TenantAdminShell
+        {...commonTenantProps}
+        settingsOpen
+        settingsContentOnly
+        renderUsers={() => <div />}
+        onSettingsTargetTenantIdChange={onTargetChange}
+      />,
+    );
+    expect(onTargetChange).toHaveBeenLastCalledWith(undefined);
+
+    adminShellMocks.tenants = [{ id: "acme", name: "Acme" }];
+    adminShellMocks.tenantsLoading = false;
+    rerender(
+      <TenantAdminShell
+        {...commonTenantProps}
+        settingsOpen
+        settingsContentOnly
+        renderUsers={() => <div />}
+        onSettingsTargetTenantIdChange={onTargetChange}
+      />,
+    );
+    expect(onTargetChange).toHaveBeenLastCalledWith("acme");
   });
 
   it("组织成员叶子读取治理 Membership，不回退 legacy UserManager 身份", async () => {
@@ -320,6 +420,34 @@ describe("AdminShells V2 内容适配", () => {
     );
     expect(await screen.findByText(expected)).toBeTruthy();
     expect(screen.queryByText("只读")).toBeNull();
+  });
+
+  it.each([
+    ["platform-admins", "平台管理员"],
+    ["agent-templates", "智能体模板"],
+    ["environment-templates", "环境模板"],
+  ] as const)("统一设置入口 %s 挂载既有治理页面", async (settingsSection, expectedTitle) => {
+    render(
+      <PlatformAdminShell
+        renderTenants={() => <div />}
+        renderModels={() => <div />}
+        renderRemoteHands={() => <div />}
+        renderToolControls={() => <div />}
+        renderMemoryPolling={() => <div />}
+        renderMcp={() => <div />}
+        renderSkills={() => <div />}
+        renderEfficiency={() => <div />}
+        activeSection="overview"
+        entityId={null}
+        onSectionChange={() => undefined}
+        settingsOpen
+        settingsContentOnly
+        settingsSection={settingsSection}
+        onSettingsSectionChange={() => undefined}
+        onSettingsClose={() => undefined}
+      />,
+    );
+    expect((await screen.findAllByText(expectedTitle)).length).toBeGreaterThan(0);
   });
 
   it("平台 Agent Template 叶子读取治理模板目录", async () => {

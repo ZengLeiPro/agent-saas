@@ -3,13 +3,40 @@
 set -euo pipefail
 : "${IMAGE:?missing IMAGE}"
 : "${IMAGE_TAG:?missing IMAGE_TAG}"
+: "${IMAGE_DIGEST:?missing IMAGE_DIGEST}"
+: "${ORCHESTRATOR_ARTIFACT_DIGEST:?missing ORCHESTRATOR_ARTIFACT_DIGEST}"
+: "${COMPAT_RELEASE_ID:?missing COMPAT_RELEASE_ID}"
 : "${ECS_DEPLOY_ROOT:?missing ECS_DEPLOY_ROOT}"
 : "${ACS_SERVICE_NAME:?missing ACS_SERVICE_NAME}"
 
-APP_DIR="$ECS_DEPLOY_ROOT"
+printf '%s' "$IMAGE_DIGEST" | grep -Eq '^sha256:[a-f0-9]{64}$'
+printf '%s' "$ORCHESTRATOR_ARTIFACT_DIGEST" | grep -Eq '^sha256:[a-f0-9]{64}$'
+printf '%s' "$COMPAT_RELEASE_ID" | grep -Eq '^rc-[0-9]{8}-[0-9]{2,}$'
+printf '%s' "$GITHUB_SHA" | grep -Eq '^[a-f0-9]{40}$'
+
+CURRENT_LINK="$ECS_DEPLOY_ROOT/acs-current"
+if [ ! -L "$CURRENT_LINK" ]; then
+  echo "ACS current release must be a symlink: $CURRENT_LINK" >&2
+  exit 1
+fi
+PREVIOUS_APP_DIR="$(readlink -f "$CURRENT_LINK")"
+test -d "$PREVIOUS_APP_DIR"
+APP_DIR="$ECS_DEPLOY_ROOT/acs-releases/${ORCHESTRATOR_ARTIFACT_DIGEST#sha256:}"
 ENV_FILE="/etc/agent-saas/acs-orchestrator.env"
+IDENTITY_FILE="/etc/agent-saas/acs-release-identity.json"
+IDENTITY_STATE_CAPTURED=false
+RUNTIME_IDENTITY_FILE="/etc/agent-saas/runtime-identity.json"
+test -s "$RUNTIME_IDENTITY_FILE"
+node -e "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8'))" \
+  "$RUNTIME_IDENTITY_FILE"
+RUNTIME_IDENTITY_BAK="/tmp/runtime-identity.before-acs-${GITHUB_RUN_ID}.json"
+cp "$RUNTIME_IDENTITY_FILE" "$RUNTIME_IDENTITY_BAK"
+runtime_identity_probe="/etc/agent-saas/.runtime-identity-write-probe-acs-${GITHUB_RUN_ID}"
+printf '{}\n' > "$runtime_identity_probe.candidate"
+mv "$runtime_identity_probe.candidate" "$runtime_identity_probe"
+rm -f "$runtime_identity_probe"
+RUNTIME_IDENTITY_UPDATED=false
 RELEASE_TGZ="/tmp/agent-saas-acs-release.tgz"
-APP_BAK_TGZ="/tmp/agent-saas-acs-app.bak.${GITHUB_RUN_ID}-${GITHUB_SHA:0:7}.tgz"
 # 07-05：SMOKE_SESSION 提前定型（改进 1A）。历史残留 CI sandbox（3d8h 前那批）
 # 是因为 SMOKE_SESSION 之前在第 5 步 smoke 阶段才赋值——provision/deploy 阶段失败时
 # cleanup 走到、SMOKE_SESSION 还是空 → cleanup 什么也不删 → sandbox 残留普通 TTL。
@@ -135,54 +162,58 @@ EOF
       || echo "failed to cancel pre-deploy SNAT maintenance; manual intervention required" >&2
   fi
   if [ "$deploy_status" -ne 0 ] \
-    && [ "${PROCESS_REPLACED:-false}" != "true" ] \
-    && [ -s "${APP_BAK_TGZ:-}" ]; then
+    && [ "${PROCESS_REPLACED:-false}" != "true" ]; then
     [ -s "${ENV_BAK:-}" ] && cp "$ENV_BAK" "$ENV_FILE"
     [ -s "${RUNTIME_CONFIG_BAK:-}" ] && cp "$RUNTIME_CONFIG_BAK" "$RUNTIME_CONFIG_FILE"
+    if [ "$IDENTITY_STATE_CAPTURED" = "true" ]; then
+      if [ "${HAD_IDENTITY:-false}" = "true" ] && [ -s "${IDENTITY_BAK:-}" ]; then
+        cp "$IDENTITY_BAK" "$IDENTITY_FILE"
+      else
+        rm -f "$IDENTITY_FILE"
+      fi
+    fi
+    ln -sfn "$PREVIOUS_APP_DIR" "$CURRENT_LINK"
     [ -n "${SNAT_OPERATION_STATE_FILE:-}" ] && rm -f "$SNAT_OPERATION_STATE_FILE"
-    find "$APP_DIR" -mindepth 1 -maxdepth 1 \
-      ! -name node_modules ! -name .git -exec rm -rf -- {} +
-    tar -xzf "$APP_BAK_TGZ" -C "$APP_DIR"
-    cd "$APP_DIR"
-    NODE_ENV=development pnpm install --frozen-lockfile --filter acs-orchestrator... --filter server... --filter shared... \
-      || echo "failed to restore rollback dependencies; manual intervention required" >&2
   fi
   rm -f "$RELEASE_TGZ" "$SMOKE_CLEANUP_ERROR" /tmp/acs-cleanup-sandboxes.json /tmp/acs-cleanup-health.json
-  if [ "$deploy_status" -eq 0 ]; then
-    rm -f "$APP_BAK_TGZ"
-  else
-    echo "preserving rollback source backup for manual retry: $APP_BAK_TGZ" >&2
-  fi
   return "$deploy_status"
 }
 trap cleanup EXIT
 
-# ── 1. 更新 orchestrator 源码（旧进程还在跑, 零影响）──
-mkdir -p "$APP_DIR"
-if [ -f "$APP_DIR/package.json" ]; then
-  tar --exclude='./node_modules' --exclude='./.git' --exclude='./tmp' \
-    -czf "$APP_BAK_TGZ" -C "$APP_DIR" .
+# ── 1. 安装按 artifact digest 寻址的 orchestrator release（旧进程零影响）──
+actual_archive_digest="sha256:$(sha256sum "$RELEASE_TGZ" | cut -d' ' -f1)"
+test "$actual_archive_digest" = "$ORCHESTRATOR_ARTIFACT_DIGEST"
+if [ -d "$APP_DIR" ]; then
+  node "$APP_DIR/scripts/release/verify-installed-release.mjs" \
+    --action verify --root "$APP_DIR" --component acs >/dev/null
+else
+  candidate="$APP_DIR.candidate-${GITHUB_RUN_ID}"
+  rm -rf "$candidate"
+  mkdir -p "$candidate/.release"
+  install -m 0444 "$RELEASE_TGZ" "$candidate/.release/acs-orchestrator.tgz"
+  tar -xzf "$RELEASE_TGZ" -C "$candidate"
+  test -f "$candidate/acs-orchestrator/dist/index.js"
+  test -f "$candidate/acs-orchestrator/dist/backgroundShellWorker.js"
+  test -f "$candidate/acs-orchestrator/dist/restorePerPodCli.js"
+  test -f "$candidate/acs-orchestrator/descriptions/Edit.md"
+  node "$candidate/scripts/release/seal-compatibility-release.mjs" \
+    --root "$candidate" --component acs --release-id "$COMPAT_RELEASE_ID" \
+    --sha "$GITHUB_SHA" --sandbox-image-digest "$IMAGE_DIGEST" >/dev/null
+  mv "$candidate" "$APP_DIR"
 fi
-tar -xzf "$RELEASE_TGZ" -C "$APP_DIR"
 cd "$APP_DIR"
-if command -v corepack >/dev/null 2>&1; then
-  corepack enable
-  corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
-fi
-NODE_ENV=development pnpm install --frozen-lockfile --filter acs-orchestrator... --filter server... --filter shared...
-# 2026-08-03 P3a：生产 orchestrator 改为 esbuild bundle + node dist 运行
-# （`pnpm start` 已指向 dist/index.js）。build 失败即中止部署（set -e），
-# 旧进程照常运行，无影响。
-pnpm -F acs-orchestrator build
-test -f "$APP_DIR/acs-orchestrator/dist/index.js"
-test -f "$APP_DIR/acs-orchestrator/dist/backgroundShellWorker.js"
-test -f "$APP_DIR/acs-orchestrator/dist/restorePerPodCli.js"
-test -f "$APP_DIR/acs-orchestrator/descriptions/Edit.md"
 
 # ── 2. 备份并更新镜像 env（新进程拉起时生效）──
 test -f "$ENV_FILE"
 ENV_BAK="${ENV_FILE}.bak.${GITHUB_RUN_ID}-${GITHUB_SHA:0:7}"
 cp "$ENV_FILE" "$ENV_BAK"
+HAD_IDENTITY=false
+IDENTITY_BAK="${IDENTITY_FILE}.bak.${GITHUB_RUN_ID}-${GITHUB_SHA:0:7}"
+if [ -f "$IDENTITY_FILE" ]; then
+  HAD_IDENTITY=true
+  cp "$IDENTITY_FILE" "$IDENTITY_BAK"
+fi
+IDENTITY_STATE_CAPTURED=true
 RUNTIME_CONFIG_FILE="$(grep '^ACS_ORCH_RUNTIME_CONFIG_FILE=' "$ENV_FILE" | head -n1 | cut -d= -f2- || true)"
 case "$RUNTIME_CONFIG_FILE" in
   /*) ;;
@@ -270,13 +301,22 @@ if prepare_snat_rollback; then
 else
   prepare_status=$?
   if [ "$prepare_status" -eq 2 ] \
-    && ! tar -tzf "$APP_BAK_TGZ" | grep -q '^./acs-orchestrator/src/snatOperations.ts$'; then
+    && [ ! -f "$PREVIOUS_APP_DIR/acs-orchestrator/src/snatOperations.ts" ]; then
     SNAT_ROLLBACK_OFFLINE_RESTORE=true
     echo "legacy baseline has no restore endpoint; rollback will require offline /32 restore"
   else
     exit "$prepare_status"
   fi
 fi
+
+CONFIG_FINGERPRINT="sha256:$(sha256sum "$ENV_FILE" | cut -d' ' -f1)"
+node "$APP_DIR/scripts/release/write-compatibility-acs-identity.mjs" \
+  --output "$IDENTITY_FILE" --release-id "$COMPAT_RELEASE_ID" --sha "$GITHUB_SHA" \
+  --orchestrator-digest "$ORCHESTRATOR_ARTIFACT_DIGEST" \
+  --sandbox-image-digest "$IMAGE_DIGEST" \
+  --namespace "${ACS_NAMESPACE:-agent-saas-coding}" \
+  --config-fingerprint "$CONFIG_FINGERPRINT" >/dev/null
+ln -sfn "$APP_DIR" "$CURRENT_LINK"
 
 # ── 3. Drain 旧进程: SIGUSR2 → 排空 inflight 后自退 →
 #      systemd Restart=always 5s 后自动拉起新代码+新 env ──
@@ -336,9 +376,9 @@ for _ in $(seq 1 120); do
 done
 
 rollback() {
-  echo "ROLLING BACK SNAT, source, env and runtime config..."
-  if [ ! -s "$APP_BAK_TGZ" ]; then
-    echo "source backup is unavailable; refusing rollback" >&2
+  echo "ROLLING BACK SNAT, release link, identity, env and runtime config..."
+  if [ ! -d "$PREVIOUS_APP_DIR" ]; then
+    echo "previous content-addressed release is unavailable; refusing rollback" >&2
     return 1
   fi
   if [ "$SNAT_ROLLBACK_PREPARED" != "true" ] \
@@ -360,14 +400,17 @@ rollback() {
   fi
   cp "$ENV_BAK" "$ENV_FILE"
   cp "$RUNTIME_CONFIG_BAK" "$RUNTIME_CONFIG_FILE"
+  if [ "$HAD_IDENTITY" = "true" ]; then
+    cp "$IDENTITY_BAK" "$IDENTITY_FILE"
+  else
+    rm -f "$IDENTITY_FILE"
+  fi
+  if [ "$RUNTIME_IDENTITY_UPDATED" = "true" ]; then
+    cp "$RUNTIME_IDENTITY_BAK" "$RUNTIME_IDENTITY_FILE"
+    RUNTIME_IDENTITY_UPDATED=false
+  fi
+  ln -sfn "$PREVIOUS_APP_DIR" "$CURRENT_LINK"
   rm -f "$SNAT_OPERATION_STATE_FILE"
-  find "$APP_DIR" -mindepth 1 -maxdepth 1 \
-    ! -name node_modules ! -name .git -exec rm -rf -- {} +
-  tar -xzf "$APP_BAK_TGZ" -C "$APP_DIR"
-  cd "$APP_DIR"
-  NODE_ENV=development pnpm install --frozen-lockfile --filter acs-orchestrator... --filter server... --filter shared...
-  rm -rf "$APP_DIR/acs-orchestrator/dist"
-  pnpm -F acs-orchestrator build
   systemctl restart "$ACS_SERVICE_NAME"
   for _ in $(seq 1 60); do
     if curl -fsS -m 5 http://127.0.0.1:3400/health >/dev/null 2>&1; then
@@ -552,6 +595,35 @@ NODE
   echo "false-paused gate passed: 0 broken paused sandboxes"
 fi
 
+# ── 5.6 从 ACS health 与当前 App/Web 现场原子重建 Production identity ──
+IDENTITY_SYNC_DIR="/tmp/agent-saas-runtime-identity-acs-${GITHUB_RUN_ID}"
+rm -rf "$IDENTITY_SYNC_DIR"
+mkdir -p "$IDENTITY_SYNC_DIR"
+IDENTITY_SYNCED=false
+for identity_attempt in $(seq 1 10); do
+  rm -f "$IDENTITY_SYNC_DIR/live.json" "$IDENTITY_SYNC_DIR/confirmed.json"
+  if node "$APP_DIR/scripts/release/read-live-production-components.mjs" \
+      --output "$IDENTITY_SYNC_DIR/live.json" >/dev/null \
+    && node "$APP_DIR/scripts/release/write-live-production-identity.mjs" \
+      --input "$IDENTITY_SYNC_DIR/live.json" --output "$RUNTIME_IDENTITY_FILE" >/dev/null; then
+    RUNTIME_IDENTITY_UPDATED=true
+    if node "$APP_DIR/scripts/release/read-production-state.mjs" \
+      --output "$IDENTITY_SYNC_DIR/confirmed.json" >/dev/null; then
+      IDENTITY_SYNCED=true
+      break
+    fi
+  fi
+  echo "Production identity convergence attempt $identity_attempt/10 failed" >&2
+  sleep 2
+done
+if [ "$IDENTITY_SYNCED" != "true" ]; then
+  echo "Production runtime identity failed to converge after ACS deployment; rolling ACS back" >&2
+  rollback
+  exit 1
+fi
+rm -rf "$IDENTITY_SYNC_DIR"
+echo "Production identity atomically rebuilt from live API/Worker/Web/ACS evidence"
+
 # ── 6. ImageCache: 为本次镜像提交缓存制作 + 清理旧缓存（2026-07-31 方案3-P0）──
 # 命中缓存的新 Sandbox 镜像拉取官方口径省 90%+。整段子 shell 容错：
 # 缓存制作失败只告警，绝不影响部署结果（无缓存时 Pod 回退正常拉取）。
@@ -595,4 +667,5 @@ fi
   exit 0
 )
 
+rm -f "$RUNTIME_IDENTITY_BAK"
 echo "ACS deploy OK: $IMAGE"

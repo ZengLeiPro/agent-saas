@@ -70,7 +70,7 @@ describe('ACS deploy workflow contract', () => {
     const checkoutIndex = workflow.indexOf('- name: Checkout exact dispatch commit');
     const verifyIndex = workflow.indexOf('- name: Verify dispatch still targets latest main');
     const waitIndex = workflow.indexOf('- name: Wait for ACR auto-build of HEAD');
-    const packIndex = workflow.indexOf('- name: Pack orchestrator release');
+    const packIndex = workflow.indexOf('- name: Pack and identify orchestrator release');
 
     expect(checkoutIndex).toBeGreaterThan(-1);
     expect(verifyIndex).toBeGreaterThan(checkoutIndex);

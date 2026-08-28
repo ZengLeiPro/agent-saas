@@ -261,6 +261,21 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertEqual(classified.returncode, 0, classified.stderr)
         self.assertIn('publish=true', classified.stdout)
 
+    def test_test_fixtures_are_contract_only_and_never_publish(self):
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
+            changed.write('acs-orchestrator/src/sandboxManagerTestFixtures.ts\n')
+            changed.flush()
+            classified = subprocess.run(
+                ['bash', str(ACS_CLASSIFIER), changed.name],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(classified.returncode, 0, classified.stderr)
+        self.assertIn('publish=false', classified.stdout)
+        self.assertIn('contract_check=true', classified.stdout)
+
     def test_verifies_per_pod_or_identical_shared_snat_before_process_replacement(self):
         prepare = self.deploy_script.index('if prepare_snat_rollback; then')
         replaced = self.deploy_script.index('PROCESS_REPLACED=true')
@@ -270,6 +285,14 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertIn('SNAT_ROLLBACK_SHARED_CONFIG_SAFE=true', before_replacement)
         self.assertIn('/snat/restore-per-pod', before_replacement)
         self.assertIn('rm -f "$SNAT_OPERATION_STATE_FILE"', self.deploy_script[prepare:replaced])
+
+    def test_writes_acs_identity_before_drain_and_rolls_back_runtime_identity(self):
+        identity_write = self.deploy_script.index('write-compatibility-acs-identity.mjs')
+        drain = self.deploy_script.index('draining orchestrator pid=')
+        self.assertLess(identity_write, drain)
+        self.assertIn('RUNTIME_IDENTITY_UPDATED=true', self.deploy_script)
+        rollback = self.deploy_script.split('\nrollback() {\n', 1)[1].split('\n}', 1)[0]
+        self.assertIn('cp "$RUNTIME_IDENTITY_BAK" "$RUNTIME_IDENTITY_FILE"', rollback)
 
     def test_code_rollback_does_not_depend_on_candidate_health(self):
         rollback = self.deploy_script.split('\nrollback() {\n', 1)[1].split('\n}', 1)[0]

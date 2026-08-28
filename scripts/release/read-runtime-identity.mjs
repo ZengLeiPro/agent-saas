@@ -15,6 +15,36 @@ const TOPOLOGY_ROLES = Object.freeze({
   },
 });
 
+function liveTopology(now, { readFileSync, realpathSync }) {
+  const topology = { observedAt: new Date(now).toISOString() };
+  for (const [role, contract] of Object.entries(TOPOLOGY_ROLES)) {
+    const activeColorFile =
+      role === 'api'
+        ? '/etc/agent-saas/active-color'
+        : '/etc/agent-saas/runtime-worker-active-color';
+    const activeColor = String(readFileSync(activeColorFile, 'utf8')).trim();
+    if (!COLOR_PATTERN.test(activeColor)) {
+      throw new Error(`Production ${role} active-color file is invalid.`);
+    }
+    const releaseSymlink =
+      role === 'api'
+        ? `/opt/agent-saas-app/color/${activeColor}`
+        : `/opt/agent-saas-app/worker/${activeColor}`;
+    topology[role] = {
+      activeColor,
+      activeColorFile,
+      unit: `${contract.unitPrefix}@${activeColor}.service`,
+      releaseSymlink,
+      releaseTarget: String(realpathSync(releaseSymlink)),
+      pidfile: `/run/${contract.unitPrefix}-${activeColor}.pid`,
+      ...(contract.readyfile
+        ? { readyfile: `/run/${contract.unitPrefix}-${activeColor}.ready` }
+        : {}),
+    };
+  }
+  return topology;
+}
+
 export function isFullSha(value) {
   return typeof value === 'string' && FULL_SHA_PATTERN.test(value);
 }
@@ -304,19 +334,29 @@ export function readRuntimeIdentity({
     };
   }
   const now = validationOptions.now ?? Date.now();
-  const validation = validateRuntimeIdentity(identity, {
+  let candidateIdentity = identity;
+  if (refreshTopologyObservation) {
+    try {
+      candidateIdentity = {
+        ...identity,
+        topology: liveTopology(now, {
+          readFileSync: validationOptions.topologyReadFileSync ?? defaultReadFileSync,
+          realpathSync: validationOptions.topologyRealpathSync ?? defaultRealpathSync,
+        }),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        identity,
+        blockingReasons: [`Unable to refresh live production topology: ${error.message}`],
+      };
+    }
+  }
+  const validation = validateRuntimeIdentity(candidateIdentity, {
     ...validationOptions,
     now,
     refreshTopologyObservation,
   });
-  if (validation.ok && refreshTopologyObservation) {
-    identity = {
-      ...identity,
-      topology: {
-        ...identity.topology,
-        observedAt: new Date(now).toISOString(),
-      },
-    };
-  }
+  if (validation.ok && refreshTopologyObservation) identity = candidateIdentity;
   return { ok: validation.ok, identity, blockingReasons: validation.blockingReasons };
 }

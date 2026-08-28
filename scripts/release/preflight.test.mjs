@@ -272,6 +272,42 @@ test('runtime identity fails closed for stale or unverifiable topology observati
   assert.equal(refreshed.ok, true);
   assert.equal(refreshed.identity.topology.observedAt, new Date(refreshedAt).toISOString());
 
+  const staleColorIdentity = productionIdentity({
+    topology: {
+      ...productionIdentity().topology,
+      api: {
+        ...productionIdentity().topology.api,
+        activeColor: 'green',
+        unit: 'agent-saas-server@green.service',
+        releaseSymlink: '/opt/agent-saas-app/color/green',
+        pidfile: '/run/agent-saas-server-green.pid',
+      },
+      runtimeWorker: {
+        ...productionIdentity().topology.runtimeWorker,
+        activeColor: 'blue',
+        unit: 'agent-saas-runtime-worker@blue.service',
+        releaseSymlink: '/opt/agent-saas-app/worker/blue',
+        pidfile: '/run/agent-saas-runtime-worker-blue.pid',
+        readyfile: '/run/agent-saas-runtime-worker-blue.ready',
+      },
+    },
+  });
+  const refreshedColors = readRuntimeIdentity({
+    identityPath: './production.json',
+    readFileSync: () => JSON.stringify(staleColorIdentity),
+    refreshTopologyObservation: true,
+    ...runtimeObservation(),
+    now: refreshedAt,
+  });
+  assert.equal(refreshedColors.ok, true);
+  assert.equal(refreshedColors.identity.topology.api.activeColor, 'blue');
+  assert.equal(refreshedColors.identity.topology.runtimeWorker.activeColor, 'green');
+  assert.equal(refreshedColors.identity.topology.api.unit, 'agent-saas-server@blue.service');
+  assert.equal(
+    refreshedColors.identity.topology.runtimeWorker.readyfile,
+    '/run/agent-saas-runtime-worker-green.ready',
+  );
+
   const refreshedButUnverifiable = readRuntimeIdentity({
     identityPath: './production.json',
     readFileSync: () => JSON.stringify(staleIdentity),

@@ -41,6 +41,11 @@ test('automatic Evidence Writer binds independent sources to one immutable SHA',
   assert.match(workflow, /workflow: "ACS Impact Gate"/u);
   assert.match(workflow, /Read live Production state without mutation/u);
   assert.match(workflow, /RELEASE_RECORD_OSS_URI/u);
+  assert.match(workflow, /RELEASE_RECORD_OSS_REGION/u);
+  assert.match(
+    workflow,
+    /aliyun --region "\$RELEASE_RECORD_OSS_REGION" --secure[\s\\]*oss (?:ls|cp)/u,
+  );
   assert.match(workflow, /resolve-baseline-artifacts\.mjs/u);
   assert.match(workflow, /produce-release-evidence\.mjs/u);
   assert.match(workflow, /publish-release-evidence\.mjs/u);

@@ -77,6 +77,21 @@ Integration 快照、GitHub checks、`read-production-state.mjs` 的生产读回
 相互隔离的实例和 token；反向代理必须只暴露 HTTPS，数据目录必须落在持久盘。服务落地和真实
 探针接入仍属于首次运行前的外部资源建设，不得用本地单测替代。
 
+### Delivery PR 被外部提前合并后的恢复
+
+Delivery PR 只有在 Taskboard 的 Delivery → 独立 Review → Integration 链内作为 source PR 时才是
+有效发布证据。若它在 Integration 前被 GitHub UI、管理员或其他外部流程提前合并，其原 Delivery
+证据立即失效；即使该 PR 的 merge commit 已位于 `main`，也不得把它补记、改名或复用为最终
+Integration PR。producer 会拒绝 `sources` 与 `finalPullRequest` 使用同一 PR number。
+
+恢复时必须创建新的 remediation Delivery，在独立分支上提交最小且有意义的发布治理修复和回归测试，
+再完整经过独立 Review。随后只能由 Taskboard Integration 将该 remediation Delivery PR 作为 source，
+创建不同编号的最终 Integration PR。发布证据中的 `releaseSha`、GitHub checks 的 `headSha` 和
+`finalPullRequest.mergeCommitOid` 必须重新绑定该 Integration PR 合入 `main` 后的完整 SHA；原提前
+合并 PR 的 SHA 不得作为恢复后的发布 SHA。自动化回归由
+`scripts/release/produce-release-evidence.test.mjs` 的
+`rejects reusing an externally merged Delivery PR as the final Integration PR` 场景验证。
+
 ## 不可变发布记录
 
 `STAGING_RELEASE_OSS_URI/records/<releaseId>/`（生产使用同值的

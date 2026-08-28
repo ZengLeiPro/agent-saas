@@ -153,6 +153,17 @@ test('rejects a final Integration PR that is not the release commit', async () =
   await assert.rejects(produceReleaseEvidence(base.options), /does not equal the release SHA/u);
 });
 
+test('rejects reusing an externally merged Delivery PR as the final Integration PR', async () => {
+  const base = await fixture();
+  base.documents.integration.finalPullRequest.number = base.documents.integration.sources[0].number;
+  await writeFile(base.options.integration, `${JSON.stringify(base.documents.integration)}\n`);
+
+  await assert.rejects(
+    produceReleaseEvidence(base.options),
+    /Final Integration PR cannot also be a source PR/u,
+  );
+});
+
 test('rejects synthetic compatibility for a runtime release', async () => {
   const base = await fixture();
   base.documents.classification.components = ['web'];

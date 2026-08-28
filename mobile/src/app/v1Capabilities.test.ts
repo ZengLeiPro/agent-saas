@@ -18,6 +18,7 @@ import {
   isV1RouteAllowed,
   isV1SegmentsAllowed,
   resolveV1BuildProfile,
+  resolveV1GateDecision,
 } from './v1Capabilities';
 
 const ALL_TABS = ['chat', 'files', 'settings'];
@@ -153,5 +154,73 @@ describe('getV1VisibleTabs（生产菜单快照）', () => {
   it('development / preview 保留全部 Tab', () => {
     expect(getV1VisibleTabs('development', ALL_TABS)).toEqual(ALL_TABS);
     expect(getV1VisibleTabs('preview', ALL_TABS)).toEqual(ALL_TABS);
+  });
+});
+
+describe('resolveV1GateDecision（根路由门禁决策，M00-01 返工）', () => {
+  const deferredRoutes: string[][] = [
+    ['oauth', 'callback'],
+    ['chat', 'html-preview'],
+    ['settings', 'connections'],
+    ['cron'],
+    ['settings', 'users'],
+    ['webview-spike'], // 墓碑路由
+    ['brand-new-page'], // 未分类路由
+  ];
+
+  it('production + 延期/未分类路由：不挂载（含鉴权 loading），按登录态重定向', () => {
+    for (const segments of deferredRoutes) {
+      // 鉴权 loading 中同样阻断（Review 指出的旧缺口）
+      expect(resolveV1GateDecision({
+        profile: 'production', segments, authLoading: true, hasUser: false,
+      })).toEqual({ mountRoute: false, redirectTo: '/login' });
+      // 已登录 -> 对话 Tab
+      expect(resolveV1GateDecision({
+        profile: 'production', segments, authLoading: false, hasUser: true,
+      })).toEqual({ mountRoute: false, redirectTo: '/(tabs)/chat' });
+      // 未登录 -> 登录页
+      expect(resolveV1GateDecision({
+        profile: 'production', segments, authLoading: false, hasUser: false,
+      })).toEqual({ mountRoute: false, redirectTo: '/login' });
+      // loading 中已缓存的旧登录态同样拒绝挂载
+      expect(resolveV1GateDecision({
+        profile: 'production', segments, authLoading: true, hasUser: true,
+      })).toEqual({ mountRoute: false, redirectTo: '/(tabs)/chat' });
+    }
+  });
+
+  it('production + 允许路由：挂载，loading 时不重定向', () => {
+    expect(resolveV1GateDecision({
+      profile: 'production', segments: ['(tabs)', 'chat'], authLoading: true, hasUser: false,
+    })).toEqual({ mountRoute: true, redirectTo: null });
+    expect(resolveV1GateDecision({
+      profile: 'production', segments: ['login'], authLoading: true, hasUser: true,
+    })).toEqual({ mountRoute: true, redirectTo: null });
+  });
+
+  it('production + 允许路由：loading 结束后按原 AuthGate 规则重定向', () => {
+    expect(resolveV1GateDecision({
+      profile: 'production', segments: ['(tabs)', 'chat'], authLoading: false, hasUser: false,
+    })).toEqual({ mountRoute: true, redirectTo: '/login' });
+    expect(resolveV1GateDecision({
+      profile: 'production', segments: ['login'], authLoading: false, hasUser: true,
+    })).toEqual({ mountRoute: true, redirectTo: '/(tabs)/chat' });
+    expect(resolveV1GateDecision({
+      profile: 'production', segments: ['(tabs)', 'chat'], authLoading: false, hasUser: true,
+    })).toEqual({ mountRoute: true, redirectTo: null });
+    expect(resolveV1GateDecision({
+      profile: 'production', segments: ['login'], authLoading: false, hasUser: false,
+    })).toEqual({ mountRoute: true, redirectTo: null });
+  });
+
+  it('非生产档位：任何路由都挂载且不做路由拒绝重定向', () => {
+    for (const segments of deferredRoutes) {
+      expect(resolveV1GateDecision({
+        profile: 'preview', segments, authLoading: false, hasUser: true,
+      })).toEqual({ mountRoute: true, redirectTo: null });
+      expect(resolveV1GateDecision({
+        profile: 'development', segments, authLoading: true, hasUser: false,
+      })).toEqual({ mountRoute: true, redirectTo: null });
+    }
   });
 });

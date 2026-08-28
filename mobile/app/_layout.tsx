@@ -1,14 +1,14 @@
 // Platform init must be the very first import
 import "../src/platform/init";
 
-import React, { useEffect } from "react";
-import { Stack, useRouter, useSegments } from "expo-router";
+import React from "react";
+import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { View } from "react-native";
 import { ShareIntentProvider } from "expo-share-intent";
-import { AuthProvider, useAuth } from "../src/contexts/AuthContext";
+import { AuthProvider } from "../src/contexts/AuthContext";
 import { ChatAppStateProvider } from "../src/contexts/ChatAppStateContext";
 import { PendingSharedFilesProvider } from "../src/contexts/PendingSharedFilesContext";
 import { useActivityReporter } from "../src/hooks/useActivityReporter";
@@ -16,8 +16,7 @@ import { useForegroundRefresh } from "../src/hooks/useForegroundRefresh";
 import { useUpdateChecker } from "../src/hooks/useUpdateChecker";
 import { useShareIntentBridge } from "../src/hooks/useShareIntentBridge";
 import { AppErrorBoundary } from "../src/components/ErrorBoundary";
-import { isV1SegmentsAllowed, isProductionProfile } from "../src/app/v1Capabilities";
-import { getV1BuildProfile } from "../src/app/v1Runtime";
+import { V1RouteGate } from "../src/app/V1RouteGate";
 
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import {
@@ -29,38 +28,16 @@ import {
 import { PromptHost } from "../src/components/overlays/PromptHost";
 
 function AuthGate() {
-  const { user, loading } = useAuth();
   const colors = useColors();
-  const segments = useSegments();
-  const router = useRouter();
-  const v1Profile = getV1BuildProfile();
   useActivityReporter();
   useForegroundRefresh();
   useUpdateChecker();
   useShareIntentBridge();
 
-  useEffect(() => {
-    if (loading) return;
-
-    const inAuthGroup = segments[0] === "login";
-
-    // V1 范围裁剪（M00-01）：生产构建中，延期路由深链 fail closed，
-    // 直接回到对话 Tab；未登录则回登录页。未分类路由同样拒绝。
-    if (isProductionProfile(v1Profile) && !isV1SegmentsAllowed(segments, v1Profile)) {
-      router.replace(user ? "/(tabs)/chat" : "/login");
-      return;
-    }
-
-    if (!user && !inAuthGroup) {
-      router.replace("/login");
-    } else if (user && inAuthGroup) {
-      router.replace("/(tabs)/chat");
-    }
-  }, [user, loading, segments, router, v1Profile]);
-
   return (
-    <ChatAppStateProvider>
-      <Stack
+    <V1RouteGate>
+      <ChatAppStateProvider>
+        <Stack
         screenOptions={
           {
             headerShown: false,
@@ -121,7 +98,8 @@ function AuthGate() {
         <Stack.Screen name="login" />
         <Stack.Screen name="index" />
       </Stack>
-    </ChatAppStateProvider>
+      </ChatAppStateProvider>
+    </V1RouteGate>
   );
 }
 

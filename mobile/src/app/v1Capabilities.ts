@@ -165,3 +165,56 @@ export function getV1VisibleTabs(
   if (!isProductionProfile(profile)) return [...allTabs];
   return allTabs.filter((tab) => V1_PRODUCTION_TABS.includes(tab));
 }
+
+// ── V1 路由门禁决策（M00-01 返工：渲染前 fail closed） ────────────────
+
+export interface V1GateInput {
+  profile: V1BuildProfile;
+  /** `useSegments()` 输出（含路由组段与动态段 pattern 名）。 */
+  segments: readonly string[];
+  authLoading: boolean;
+  hasUser: boolean;
+}
+
+export interface V1GateDecision {
+  /**
+   * 是否挂载目标路由。
+   * false = fail closed：渲染安全空壳，不挂载任何子路由/副作用。
+   */
+  mountRoute: boolean;
+  /** 需要重定向的目标；null = 无需重定向。 */
+  redirectTo: '/login' | '/(tabs)/chat' | null;
+}
+
+/**
+ * 根路由门禁的唯一决策函数（纯函数，供运行时与测试共用）。
+ *
+ * 关键不变量（Review 返工要求）：
+ * 1. 生产档位下，延期/未分类路由无论鉴权是否仍在 loading，
+ *    都不得挂载目标路由（mountRoute=false），先重定向到安全页；
+ * 2. 非生产档位不做路由裁剪；
+ * 3. 允许路由仅在鉴权状态明确后才执行登录/回跳重定向（loading 时不跳）。
+ */
+export function resolveV1GateDecision(input: V1GateInput): V1GateDecision {
+  const { profile, segments, authLoading, hasUser } = input;
+  if (
+    isProductionProfile(profile) &&
+    !isV1SegmentsAllowed(segments, profile)
+  ) {
+    return {
+      mountRoute: false,
+      redirectTo: hasUser ? '/(tabs)/chat' : '/login',
+    };
+  }
+  if (authLoading) {
+    return { mountRoute: true, redirectTo: null };
+  }
+  const inAuthGroup = segments[0] === 'login';
+  if (!hasUser && !inAuthGroup) {
+    return { mountRoute: true, redirectTo: '/login' };
+  }
+  if (hasUser && inAuthGroup) {
+    return { mountRoute: true, redirectTo: '/(tabs)/chat' };
+  }
+  return { mountRoute: true, redirectTo: null };
+}

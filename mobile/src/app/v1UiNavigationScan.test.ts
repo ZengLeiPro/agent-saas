@@ -38,6 +38,9 @@ const PRODUCTION_REACHABLE_UI: readonly string[] = [
   'app/settings/user-detail/[userId].tsx',
   'app/settings/agent-profile/index.tsx',
   'src/components/settings/AgentProfileEditor.tsx',
+  // 路由门禁本身也是生产可达代码（其 replace 目标为动态值，不受字符串扫描影响，
+  // 行为由 v1RouteGate.runtime.test.tsx 运行时守卫覆盖）
+  'src/app/V1RouteGate.tsx',
 ];
 
 /** 提取 push/replace/href 的字符串字面量目标（含模板字面量）。 */
@@ -112,7 +115,10 @@ describe('M00-01 生产界面导航扫描', () => {
 
   it('扫描能提取到导航目标（防止正则/路径失效导致空跑）', () => {
     expect(findings.length).toBeGreaterThan(5);
-    expect(findings.some((f) => f.target === 'login')).toBe(true);
+    // 登录/对话回跳等根导航目标（登录回跳现由 V1RouteGate 动态执行，
+    // 由 v1RouteGate.runtime.test.tsx 运行时断言；此处抽查静态导航样本）
+    expect(findings.some((f) => f.target === '(tabs)/chat')).toBe(true);
+    expect(findings.some((f) => f.target === 'settings/agent-profile')).toBe(true);
   });
 
   it('所有导航目标都能被能力清单解析（无未分类路由）', () => {

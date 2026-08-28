@@ -25,6 +25,17 @@ APP_DIR="$ECS_DEPLOY_ROOT/acs-releases/${ORCHESTRATOR_ARTIFACT_DIGEST#sha256:}"
 ENV_FILE="/etc/agent-saas/acs-orchestrator.env"
 IDENTITY_FILE="/etc/agent-saas/acs-release-identity.json"
 IDENTITY_STATE_CAPTURED=false
+RUNTIME_IDENTITY_FILE="/etc/agent-saas/runtime-identity.json"
+test -s "$RUNTIME_IDENTITY_FILE"
+node -e "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8'))" \
+  "$RUNTIME_IDENTITY_FILE"
+RUNTIME_IDENTITY_BAK="/tmp/runtime-identity.before-acs-${GITHUB_RUN_ID}.json"
+cp "$RUNTIME_IDENTITY_FILE" "$RUNTIME_IDENTITY_BAK"
+runtime_identity_probe="/etc/agent-saas/.runtime-identity-write-probe-acs-${GITHUB_RUN_ID}"
+printf '{}\n' > "$runtime_identity_probe.candidate"
+mv "$runtime_identity_probe.candidate" "$runtime_identity_probe"
+rm -f "$runtime_identity_probe"
+RUNTIME_IDENTITY_UPDATED=false
 RELEASE_TGZ="/tmp/agent-saas-acs-release.tgz"
 # 07-05：SMOKE_SESSION 提前定型（改进 1A）。历史残留 CI sandbox（3d8h 前那批）
 # 是因为 SMOKE_SESSION 之前在第 5 步 smoke 阶段才赋值——provision/deploy 阶段失败时
@@ -394,6 +405,10 @@ rollback() {
   else
     rm -f "$IDENTITY_FILE"
   fi
+  if [ "$RUNTIME_IDENTITY_UPDATED" = "true" ]; then
+    cp "$RUNTIME_IDENTITY_BAK" "$RUNTIME_IDENTITY_FILE"
+    RUNTIME_IDENTITY_UPDATED=false
+  fi
   ln -sfn "$PREVIOUS_APP_DIR" "$CURRENT_LINK"
   rm -f "$SNAT_OPERATION_STATE_FILE"
   systemctl restart "$ACS_SERVICE_NAME"
@@ -580,6 +595,35 @@ NODE
   echo "false-paused gate passed: 0 broken paused sandboxes"
 fi
 
+# ── 5.6 从 ACS health 与当前 App/Web 现场原子重建 Production identity ──
+IDENTITY_SYNC_DIR="/tmp/agent-saas-runtime-identity-acs-${GITHUB_RUN_ID}"
+rm -rf "$IDENTITY_SYNC_DIR"
+mkdir -p "$IDENTITY_SYNC_DIR"
+IDENTITY_SYNCED=false
+for identity_attempt in $(seq 1 10); do
+  rm -f "$IDENTITY_SYNC_DIR/live.json" "$IDENTITY_SYNC_DIR/confirmed.json"
+  if node "$APP_DIR/scripts/release/read-live-production-components.mjs" \
+      --output "$IDENTITY_SYNC_DIR/live.json" >/dev/null \
+    && node "$APP_DIR/scripts/release/write-live-production-identity.mjs" \
+      --input "$IDENTITY_SYNC_DIR/live.json" --output "$RUNTIME_IDENTITY_FILE" >/dev/null; then
+    RUNTIME_IDENTITY_UPDATED=true
+    if node "$APP_DIR/scripts/release/read-production-state.mjs" \
+      --output "$IDENTITY_SYNC_DIR/confirmed.json" >/dev/null; then
+      IDENTITY_SYNCED=true
+      break
+    fi
+  fi
+  echo "Production identity convergence attempt $identity_attempt/10 failed" >&2
+  sleep 2
+done
+if [ "$IDENTITY_SYNCED" != "true" ]; then
+  echo "Production runtime identity failed to converge after ACS deployment; rolling ACS back" >&2
+  rollback
+  exit 1
+fi
+rm -rf "$IDENTITY_SYNC_DIR"
+echo "Production identity atomically rebuilt from live API/Worker/Web/ACS evidence"
+
 # ── 6. ImageCache: 为本次镜像提交缓存制作 + 清理旧缓存（2026-07-31 方案3-P0）──
 # 命中缓存的新 Sandbox 镜像拉取官方口径省 90%+。整段子 shell 容错：
 # 缓存制作失败只告警，绝不影响部署结果（无缓存时 Pod 回退正常拉取）。
@@ -623,4 +667,5 @@ fi
   exit 0
 )
 
+rm -f "$RUNTIME_IDENTITY_BAK"
 echo "ACS deploy OK: $IMAGE"

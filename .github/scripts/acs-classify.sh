@@ -67,8 +67,8 @@ NODE
 
 is_publish_path() {
   case "$1" in
-    acs-orchestrator/*.test.ts)
-      # 纯测试文件不判定需要发布（归 contract_check）
+    acs-orchestrator/*.test.ts|acs-orchestrator/*TestFixtures.ts|acs-orchestrator/*TestHelpers.ts)
+      # 纯测试与测试辅助文件不判定需要发布（归 contract_check）
       return 1
       ;;
   esac
@@ -94,7 +94,7 @@ is_publish_path() {
 
 is_contract_check_path() {
   case "$1" in
-    server/src/runtime/rawAgentLoop.ts|server/src/runtime/rawRuntimeRunDispatch.ts|acs-orchestrator/*.test.ts|scripts/acs-verify-per-session.py|scripts/test_acs_operational_scripts.py|scripts/test_acr_webhook_redelivery.py)
+    server/src/runtime/rawAgentLoop.ts|server/src/runtime/rawRuntimeRunDispatch.ts|acs-orchestrator/*.test.ts|acs-orchestrator/*TestFixtures.ts|acs-orchestrator/*TestHelpers.ts|scripts/acs-verify-per-session.py|scripts/test_acs_operational_scripts.py|scripts/test_acr_webhook_redelivery.py)
       return 0
       ;;
   esac

@@ -120,6 +120,10 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(appWorkflow, /baselines\/web-/u);
   assert.match(appWorkflow, /Refresh trusted Production identity/u);
   assert.match(appWorkflow, /runtime worker rollout: required to converge/u);
+  assert.ok(
+    appWorkflow.indexOf('Production identity atomically rebuilt') <
+      appWorkflow.indexOf('drain signal SIGUSR2 sent to old color'),
+  );
   assert.match(acsWorkflow, /baselines\/acs-/u);
   assert.match(acsWorkflow, /ACS_IMAGE_REFERENCE/u);
   assert.match(acsWorkflow, /acs-release-identity\.json/u);

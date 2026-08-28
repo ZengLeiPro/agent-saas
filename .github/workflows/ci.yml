@@ -345,9 +345,13 @@ jobs:
           cp -R server/src/agent/descriptions "$stage/server/descriptions"
           cp -R daemon-packaging "$stage/daemon-packaging"
           install -m 0444 scripts/release/artifact-lib.mjs \
+            scripts/release/read-live-production-components.mjs \
+            scripts/release/read-production-state.mjs \
+            scripts/release/read-runtime-identity.mjs \
             scripts/release/seal-compatibility-release.mjs \
             scripts/release/verify-installed-release.mjs \
-            scripts/release/write-compatibility-app-env.mjs "$stage/scripts/release/"
+            scripts/release/write-compatibility-app-env.mjs \
+            scripts/release/write-live-production-identity.mjs "$stage/scripts/release/"
           tar --no-xattrs -czf server-bundle.tgz -C "$stage" .
           node scripts/release/create-component-artifact-index.mjs \
             --sha "$GITHUB_SHA" --name serverBundle --file server-bundle.tgz \
@@ -536,6 +540,16 @@ jobs:
           case "$WORKER_DEPLOY_REQUIRED" in true|false) ;; *) echo "invalid WORKER_DEPLOY_REQUIRED=$WORKER_DEPLOY_REQUIRED"; exit 1 ;; esac
           actual_archive_digest="sha256:$(sha256sum "$RELEASE_TGZ" | cut -d' ' -f1)"
           test "$actual_archive_digest" = "$SERVER_ARTIFACT_DIGEST"
+          RUNTIME_IDENTITY_FILE="/etc/agent-saas/runtime-identity.json"
+          test -s "$RUNTIME_IDENTITY_FILE"
+          node -e "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8'))" \
+            "$RUNTIME_IDENTITY_FILE"
+          RUNTIME_IDENTITY_BAK="/tmp/runtime-identity.before-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          cp "$RUNTIME_IDENTITY_FILE" "$RUNTIME_IDENTITY_BAK"
+          identity_probe="/etc/agent-saas/.runtime-identity-write-probe-${GITHUB_RUN_ID}"
+          printf '{}\n' > "$identity_probe.candidate"
+          mv "$identity_probe.candidate" "$identity_probe"
+          rm -f "$identity_probe"
 
           APP_LINK="$DEPLOY_ROOT/current"
           PREV_LINK="$DEPLOY_ROOT/previous"
@@ -1312,6 +1326,47 @@ jobs:
             log "runtime worker already active: color=$WORKER_IDLE release=$RELEASE_ID"
           fi
 
+          # ── 10.6 从已收敛的物理运行态原子重建 Production identity ──
+          # 这一步必须发生在旧 API drain 之前；不能让兼容入口只换字节、不换身份。
+          IDENTITY_SYNC_DIR="/tmp/agent-saas-runtime-identity-${GITHUB_RUN_ID}"
+          rm -rf "$IDENTITY_SYNC_DIR"
+          mkdir -p "$IDENTITY_SYNC_DIR"
+          IDENTITY_SYNCED=0
+          for identity_attempt in $(seq 1 10); do
+            rm -f "$IDENTITY_SYNC_DIR/live.json" "$IDENTITY_SYNC_DIR/confirmed.json"
+            if node "$RELEASE_DIR/scripts/release/read-live-production-components.mjs" \
+                --output "$IDENTITY_SYNC_DIR/live.json" >/dev/null \
+              && node "$RELEASE_DIR/scripts/release/write-live-production-identity.mjs" \
+                --input "$IDENTITY_SYNC_DIR/live.json" \
+                --output "$RUNTIME_IDENTITY_FILE" >/dev/null \
+              && node "$RELEASE_DIR/scripts/release/read-production-state.mjs" \
+                --output "$IDENTITY_SYNC_DIR/confirmed.json" >/dev/null; then
+              IDENTITY_SYNCED=1
+              break
+            fi
+            log "Production identity convergence attempt $identity_attempt/10 failed"
+            sleep 2
+          done
+          if [ "$IDENTITY_SYNCED" -ne 1 ]; then
+            log "ERROR: trusted Production identity could not be rebuilt; restoring API/Worker before draining old API"
+            cp "$RUNTIME_IDENTITY_BAK" "$RUNTIME_IDENTITY_FILE"
+            if [ -f "$UPSTREAM_BAK" ]; then
+              cp "$UPSTREAM_BAK" "$UPSTREAM_CONF"
+            fi
+            if [ -f "$API_SITE_BAK" ]; then
+              cp "$API_SITE_BAK" "$API_SITE_CONF"
+            fi
+            nginx -t
+            systemctl reload nginx
+            echo "$ACTIVE" > "$ACTIVE_COLOR_FILE"
+            systemctl enable "${SERVICE_NAME}@${ACTIVE}"
+            systemctl disable "${SERVICE_NAME}@${IDLE}"
+            TRAFFIC_SWITCHED=0
+            rollback_idle_and_exit
+          fi
+          rm -rf "$IDENTITY_SYNC_DIR"
+          log "Production identity atomically rebuilt from live API/Worker/Web/ACS evidence"
+
           # ── 11. 生成蓝绿 rollback.sh（幂等覆盖）：ssh 上来执行 bash /opt/agent-saas-app/rollback.sh ──
           # 快路径：上一色还在 drain 未退（进程仍跑旧代码）→ 直接把 nginx 翻回去；
           # 慢路径：上一色已退出 → color symlink 指向 previous release、start、等 ready、翻 nginx。
@@ -1443,7 +1498,7 @@ jobs:
           # 冷装全部依赖时与 active 服务争抢 CPU/IO/内存，破坏零停机保证。
           log "preserve pnpm store cache for the next isolated install"
           log "remove uploaded release archive"
-          rm -f "$RELEASE_TGZ" "$UPSTREAM_BAK" "$API_SITE_BAK"
+          rm -f "$RELEASE_TGZ" "$UPSTREAM_BAK" "$API_SITE_BAK" "$RUNTIME_IDENTITY_BAK"
           log "deploy ok: $RELEASE_ID active=$IDLE (old color $ACTIVE drain issued)"
           exit 0
           REMOTE

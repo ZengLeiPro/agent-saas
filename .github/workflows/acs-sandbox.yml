@@ -647,9 +647,13 @@ jobs:
             scripts/acs-tool-content-json.mjs \
             scripts/check-acs-shared-rollback-compatibility.mjs "$stage/scripts/"
           install -m 0444 scripts/release/artifact-lib.mjs \
+            scripts/release/read-live-production-components.mjs \
+            scripts/release/read-production-state.mjs \
+            scripts/release/read-runtime-identity.mjs \
             scripts/release/seal-compatibility-release.mjs \
             scripts/release/verify-installed-release.mjs \
-            scripts/release/write-compatibility-acs-identity.mjs "$stage/scripts/release/"
+            scripts/release/write-compatibility-acs-identity.mjs \
+            scripts/release/write-live-production-identity.mjs "$stage/scripts/release/"
           tar --no-xattrs -czf "$RUNNER_TEMP/acs-orchestrator.tgz" -C "$stage" .
           node scripts/release/create-component-artifact-index.mjs \
             --sha "$GITHUB_SHA" --name acsOrchestrator \

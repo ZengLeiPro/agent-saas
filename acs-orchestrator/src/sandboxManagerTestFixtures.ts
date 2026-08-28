@@ -28,7 +28,7 @@ export function baseConfig(): AcsOrchestratorConfig {
     sandboxRunAsGroup: 20,
     cpuRequest: '250m',
     memoryRequest: '512Mi',
-    sandboxWaitTimeoutMs: 1,
+    sandboxWaitTimeoutMs: 1_000,
     execTimeoutMs: 1,
     healthDeepCacheMs: 0,
     imageCacheEnabled: true,

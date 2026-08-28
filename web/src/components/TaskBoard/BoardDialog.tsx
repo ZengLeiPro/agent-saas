@@ -582,58 +582,70 @@ export function BoardDialog({
                   <p className="text-xs text-muted-foreground">仅作为 Integration Agent 的默认偏好，不构成额外的服务端流程门禁。</p>
                 </div>
                 <div className="space-y-3 rounded-md border p-3" aria-label="CI 门禁策略">
-                  <div>
-                    <p className="text-sm font-medium">CI 门禁策略</p>
-                    {repositoryCiPolicyReset ? <p className="text-xs text-amber-700 dark:text-amber-300">Repository ID 已变更；旧仓库 fallback 已清空。保存后可基于新仓库 observed checks 重新确认。</p> : null}
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">CI 门禁</p>
+                    {repositoryCiPolicyReset ? <p className="text-xs text-amber-700 dark:text-amber-300">Repository ID 已变更；旧仓库的备用门禁已清空。保存后会重新读取新仓库。</p> : null}
                     {ciPolicySaved && !dirtyFieldsRef.current.has("integrationPolicy") && !dirtyFieldsRef.current.has("repository")
                       ? <p className="text-xs text-emerald-700 dark:text-emerald-400">已保存，并按服务端最终策略回显。</p> : null}
-                    {ciDiscoveryLoading && !repositoryCiPolicyReset ? <p className="text-xs text-muted-foreground">正在读取 GitHub 门禁与近期检查…</p> : null}
+                    {ciDiscoveryLoading && !repositoryCiPolicyReset ? <p className="text-xs text-muted-foreground">正在读取 GitHub 门禁…</p> : null}
                     {ciDiscoveryError ? <p className="text-xs text-destructive">{ciDiscoveryError}</p> : null}
-                    {visibleCiDiscovery ? (
+                    {visibleCiDiscovery?.effectiveSource === "github" ? (
                       <p className="text-xs text-muted-foreground">
-                        当前生效来源：{visibleCiDiscovery.effectiveSource === "github" ? "GitHub required checks" : visibleCiDiscovery.effectiveSource === "board" ? "看板 fallback" : visibleCiDiscovery.effectiveSource === "unconfigured" ? "未配置（fail-closed）" : "Provider 不可判定"}
-                        {visibleCiDiscovery.providerPullRequestId ? ` · 最近 PR #${visibleCiDiscovery.providerPullRequestId}` : " · 暂无可发现的 PR 检查"}
+                        已由 GitHub 管理，自动使用 {visibleCiDiscovery.githubRequiredChecks.length} 项 required checks；看板无需重复配置。
                       </p>
+                    ) : visibleCiDiscovery?.effectiveSource === "board" ? (
+                      <p className="text-xs text-amber-700 dark:text-amber-300">
+                        GitHub 未配置 required checks，当前使用 {visibleCiDiscovery.boardRequiredChecks.length} 项看板备用门禁。
+                      </p>
+                    ) : visibleCiDiscovery?.effectiveSource === "unconfigured" ? (
+                      <p className="text-xs text-destructive">尚无 CI 门禁。建议在 GitHub 配置 required checks；否则交付会按 fail-closed 拒绝放行。</p>
+                    ) : visibleCiDiscovery?.effectiveSource === "unavailable" ? (
+                      <p className="text-xs text-destructive">暂时无法确认 GitHub 门禁，系统会按 fail-closed 拒绝放行。</p>
+                    ) : !board && !ciDiscoveryLoading ? (
+                      <p className="text-xs text-muted-foreground">保存看板后会自动读取 GitHub required checks，无需预先填写。</p>
                     ) : null}
                   </div>
-                  {visibleCiDiscovery ? (
-                    <div className="space-y-1 text-xs">
-                      <p className="font-medium">GitHub required checks</p>
-                      {visibleCiDiscovery.githubRequiredChecks.length
-                        ? visibleCiDiscovery.githubRequiredChecks.map((check) => <p key={`${check.name}-${check.appId ?? "any"}`}>{check.name}{check.appId ? ` · App ${check.appId}` : ""}</p>)
-                        : <p className="text-muted-foreground">GitHub 未声明 required checks。</p>}
+                  <details
+                    className="rounded-md bg-muted/40 px-3 py-2"
+                    key={visibleCiDiscovery?.effectiveSource ?? "pending"}
+                    open={visibleCiDiscovery?.effectiveSource === "board" || visibleCiDiscovery?.effectiveSource === "unconfigured"}
+                  >
+                    <summary className="cursor-pointer text-xs font-medium">备用门禁（仅 GitHub 未配置时使用）</summary>
+                    <div className="mt-3 space-y-3">
+                      <p className="text-xs text-muted-foreground">
+                        优先使用 GitHub branch protection / ruleset 声明的 required checks。只有 GitHub 明确未声明时，下面的看板规则才会生效。
+                      </p>
+                      {visibleCiDiscovery?.observedChecks.length ? (
+                        <div className="space-y-2">
+                          <p className="text-xs font-medium">从最近一次 PR 检查中选择</p>
+                          {visibleCiDiscovery.observedChecks.map((check) => (
+                            <label className="flex items-start gap-2 text-xs" key={`${check.name}-${check.appId ?? "any"}`}>
+                              <Checkbox
+                                aria-label={`选择 observed check ${check.name}`}
+                                checked={ciCheckSelected(ciRequiredChecks, check.name, check.appId)}
+                                onCheckedChange={(checked) => setObservedCheckSelected(check.name, check.appId, checked === true)}
+                                disabled={submitting || !canEditPolicy}
+                              />
+                              <span>{check.name} · {check.status}{check.appName ? ` · ${check.appName}` : check.appId ? ` · App ${check.appId}` : ""}</span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="space-y-2">
+                        <Label htmlFor="taskboard-ci-fallback">备用 required checks</Label>
+                        <Textarea
+                          id="taskboard-ci-fallback"
+                          value={ciRequiredChecks}
+                          onChange={(event) => { dirtyFieldsRef.current.add("integrationPolicy"); setCiPolicySaved(false); setCiRequiredChecks(event.target.value); }}
+                          placeholder={"每行：检查名称，或 检查名称 | GitHub App ID"}
+                          rows={3}
+                          disabled={submitting || !canEditPolicy}
+                        />
+                        <p className="text-xs text-muted-foreground">不要把普通 observed check 当成门禁；只有明确要求成功的检查才应加入。</p>
+                      </div>
                     </div>
-                  ) : null}
-                  {visibleCiDiscovery?.observedChecks.length ? (
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium">近期 PR observed checks（仅供选择，不会自动升级）</p>
-                      {visibleCiDiscovery.observedChecks.map((check) => (
-                        <label className="flex items-start gap-2 text-xs" key={`${check.name}-${check.appId ?? "any"}`}>
-                          <Checkbox
-                            aria-label={`选择 observed check ${check.name}`}
-                            checked={ciCheckSelected(ciRequiredChecks, check.name, check.appId)}
-                            onCheckedChange={(checked) => setObservedCheckSelected(check.name, check.appId, checked === true)}
-                            disabled={submitting || !canEditPolicy}
-                          />
-                          <span>{check.name} · {check.status}{check.appName ? ` · ${check.appName}` : check.appId ? ` · App ${check.appId}` : ""}</span>
-                        </label>
-                      ))}
-                    </div>
-                  ) : null}
-                  <div className="space-y-2">
-                    <Label htmlFor="taskboard-ci-fallback">看板 fallback required contexts</Label>
-                    <Textarea
-                      id="taskboard-ci-fallback"
-                      value={ciRequiredChecks}
-                      onChange={(event) => { dirtyFieldsRef.current.add("integrationPolicy"); setCiPolicySaved(false); setCiRequiredChecks(event.target.value); }}
-                      placeholder={"也可手工添加；每行：检查名称，或 检查名称 | GitHub App ID"}
-                      rows={3}
-                      disabled={submitting || !canEditPolicy}
-                    />
-                    <p className="text-xs text-muted-foreground">仅在 GitHub required checks 明确为空时生效；observed checks 必须由有权限用户显式勾选或填写。</p>
-                  </div>
+                  </details>
                 </div>
-                <p className="text-xs text-muted-foreground">CI 配置继续服务普通 Delivery Work/Review；Integration Agent 直接读取并遵守 GitHub required checks、branch protection 与 ruleset。</p>
               </>
             ) : <p className="text-xs text-muted-foreground">未关联仓库时不会创建或执行集成批次。</p>}
           </section>

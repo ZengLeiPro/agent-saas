@@ -82,20 +82,13 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /verify --root "\$target" --component server/u);
 });
 
-test('resource plan records provisioned resources while first deployment remains fail-closed', async () => {
+test('resource plan records provisioned resources ready for first deployment', async () => {
   const plan = JSON.parse(await readFile(resourcePath, 'utf8'));
   assert.equal(plan.environment, 'staging');
   assert.equal(plan.status, 'provisioned');
   assert.equal(plan.verificationStatus, 'pending');
-  assert.equal(plan.firstDeploymentReadiness, 'blocked');
-  assert.ok(plan.blockingConditions.length > 0);
-  assert.ok(!plan.blockingConditions.includes('staging-acs-runtime-not-applied'));
-  assert.ok(!plan.blockingConditions.includes('release-evidence-service-not-deployed'));
-  assert.ok(!plan.blockingConditions.includes('staging-e2e-test-identity-not-created'));
-  assert.ok(!plan.blockingConditions.includes('staging-database-migrations-not-applied'));
-  assert.ok(!plan.blockingConditions.includes('staging-e2e-integration-task-not-created'));
-  assert.ok(plan.blockingConditions.includes('github-environments-not-configured'));
-  assert.equal(plan.blockingConditions.length, 1);
+  assert.equal(plan.firstDeploymentReadiness, 'ready');
+  assert.deepEqual(plan.blockingConditions, []);
   assert.notEqual(plan.resources.acs.namespace, 'agent-saas-coding');
   assert.equal(plan.resources.acs.status, 'applied');
   assert.equal(plan.resources.acs.clusterId, 'c819935b09a7d4a2a844561ef22a17448');

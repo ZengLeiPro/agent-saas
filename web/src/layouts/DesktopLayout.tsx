@@ -90,7 +90,7 @@ export function DesktopLayout(props: LayoutProps) {
     isLoadingSessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, tenantAdminSection, setTenantAdminRoute, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
-    messages, loading, isLoadingMessages, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
+    messages, loading, isLoadingMessages, sessionLoadError, retrySessionLoad, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
     retryMessage, forkFromMessage, lastMessageRef, scrollContainerRef, isNearBottomRef,
     handlePermissionResponse, handleAskUserResponse,
     uploadedFiles, removeFile, input, sandboxProfile, setSandboxProfile, uploading, uploadError, dismissUploadError, setInput,
@@ -606,7 +606,7 @@ export function DesktopLayout(props: LayoutProps) {
             <ChatTabContent
               messages={messages}
               loading={loading}
-              isLoadingMessages={isLoadingMessages}
+              isLoadingMessages={isLoadingMessages} sessionLoadError={sessionLoadError} onRetrySessionLoad={retrySessionLoad}
               hasMoreHistory={hasMoreHistory}
               isLoadingEarlier={isLoadingEarlier}
               onLoadEarlier={loadEarlierMessages}

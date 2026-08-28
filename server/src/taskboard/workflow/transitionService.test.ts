@@ -70,7 +70,7 @@ describe('single Integration Agent finish transition', () => {
         return { rows: [] };
       }
       if (sql.includes('UPDATE executions') && sql.includes('transitioned_at=now()')) {
-        return { rows: [{ id: 'execution-1' }] };
+        return { rows: [{ id: 'execution-1', run_id: 'run-1', task_id: 'integration-1', fence_epoch: 1 }] };
       }
       if (sql.includes('SELECT t.*') && sql.includes('FROM tasks t WHERE')) {
         return { rows: [taskRow(status)] };
@@ -90,6 +90,11 @@ describe('single Integration Agent finish transition', () => {
     expect(sql).toContain('FOR UPDATE OF delivery');
     expect(sql.indexOf('FOR UPDATE OF delivery')).toBeLessThan(sql.indexOf("SET status='cancelled'"));
     expect(sql).toContain('INSERT INTO cancellations');
+    const handoff = query.mock.calls.find(([text, values]) => String(text).includes('INSERT INTO cancellations')
+      && (values as unknown[] | undefined)?.[1] === 'execution-1');
+    expect(handoff?.[1]).toEqual([
+      expect.any(String), 'execution-1', 'run-1', 'integration-1', 'execution_transitioned', 1,
+    ]);
     expect(sql).toContain("change_type");
     expect(sql).not.toContain('reviewed_subject_digest');
     expect(sql).not.toContain('provider_ci_status');
@@ -107,7 +112,9 @@ describe('single Integration Agent finish transition', () => {
         status = String(values[1]) as typeof status;
         return { rows: [] };
       }
-      if (sql.includes('UPDATE executions') && sql.includes('transitioned_at=now()')) return { rows: [{ id: 'execution-1' }] };
+      if (sql.includes('UPDATE executions') && sql.includes('transitioned_at=now()')) {
+        return { rows: [{ id: 'execution-1', run_id: 'run-1', task_id: 'integration-1', fence_epoch: 1 }] };
+      }
       if (sql.includes('SELECT t.*') && sql.includes('FROM tasks t WHERE')) return { rows: [taskRow(status)] };
       return { rows: [] };
     });

@@ -198,6 +198,38 @@ describe("ChatTabContent 初始会话", () => {
     expect(screen.getByTestId("queued-message-bar")).toBeTruthy();
   });
 
+  it("会话加载失败时退出初始态并提供原位重试", () => {
+    const onRetrySessionLoad = vi.fn();
+    const view = render(<ChatTabContent {...makeProps({
+      sessionLoadError: "会话加载超时，请重试",
+      onRetrySessionLoad,
+    })} />);
+
+    expect(screen.getByRole("alert").textContent).toContain("无需刷新页面");
+    expect(screen.getByTestId("chat-input").closest("[data-initial-conversation]")?.getAttribute("data-initial-conversation")).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
+    expect(onRetrySessionLoad).toHaveBeenCalledTimes(1);
+
+    view.rerender(<ChatTabContent {...makeProps({
+      messages: [{ id: "cached-1", type: "user", content: "缓存消息" }],
+      sessionLoadError: "会话加载超时，请重试",
+      onRetrySessionLoad,
+    })} />);
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(onRetrySessionLoad).toHaveBeenCalledTimes(2);
+  });
+
+  it("会话失效清除错误后不再显示无效重试入口", () => {
+    const view = render(<ChatTabContent {...makeProps({
+      sessionLoadError: "会话暂时无法打开，请重试",
+      onRetrySessionLoad: vi.fn(),
+    })} />);
+
+    expect(screen.getByRole("button", { name: "重新加载" })).toBeTruthy();
+    view.rerender(<ChatTabContent {...makeProps({ sessionLoadError: null })} />);
+    expect(screen.queryByRole("button", { name: "重新加载" })).toBeNull();
+  });
+
   it("初始 placeholder 仍可正常驱动受控输入", () => {
     const onInputChange = vi.fn();
     render(<ChatTabContent {...makeProps({ onInputChange })} />);

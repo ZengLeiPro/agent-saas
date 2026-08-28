@@ -52,6 +52,7 @@ import type { UserStore } from '../../data/users/store.js';
 import { tenantAccessErrorMessage } from '../../data/tenants/access.js';
 import { speechToText } from '../../integrations/stt/sttClient.js';
 import { EventBufferStore } from './eventBuffer.js';
+import { getActiveSessionActivity, getSessionActivityStreamStatus } from './sessionActivity.js';
 import { clearSessionsListCache } from '../../routes/sessions.js';
 import { extractTitleContext, generateTitleWithFallback, shouldGenerateTitleFromFirstMessage } from '../../agent/titleGenerator.js';
 import { checkTopicScope, extractRecentUserMessages } from '../../agent/guardrail.js';
@@ -221,7 +222,6 @@ export class WebChannel implements BaseChannel {
     }
     return undefined;
   }
-
   /**
    * 查询指定会话是否有活跃的 Agent 流。
    *
@@ -237,19 +237,9 @@ export class WebChannel implements BaseChannel {
     try {
       const runStore = this.config.enqueueRuntime?.runStore;
       if (runStore?.getActiveBySession) {
-        const activeRun = await runStore.getActiveBySession(sessionId);
-        if (activeRun) {
-          const streamId = this.findActiveStreamIdBySession(sessionId)
-            ?? (typeof activeRun.metadata?.streamId === 'string' ? activeRun.metadata.streamId : undefined);
-          return {
-            active: true,
-            ...(streamId ? { streamId } : {}),
-            runId: activeRun.runId,
-            status: activeRun.status,
-          };
-        }
-        // runStore 明确说没在跑 → 即使 buffer 还 active 也按 runStore 为准
-        return { active: false };
+        return await getSessionActivityStreamStatus(
+          runStore, sessionId, () => this.findActiveStreamIdBySession(sessionId),
+        );
       }
     } catch (err) {
       chatLogger.warn(`[stream-status] runStore.getActiveBySession 异常,降级查 buffer: ${err instanceof Error ? err.message : String(err)}`);
@@ -1542,7 +1532,7 @@ export class WebChannel implements BaseChannel {
         resolvedRunStatusReason = record.statusReason;
         hasSensitiveTarget = Boolean(record.userId || (record.tenantId && record.tenantId !== DEFAULT_TENANT_ID));
         if (hasSensitiveTarget && this.sensitiveActionAccessError(client, {
-          tenantId: record.tenantId, ownerUserId: record.userId,
+          tenantId: record.tenantId, ownerUserId: record.userId, ownerOnly: record.metadata?.backgroundTask === true && record.metadata.executionMode === 'dispatcher',
         })) {
           this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
           return;
@@ -2106,15 +2096,25 @@ export class WebChannel implements BaseChannel {
   ): Promise<boolean> {
     const runStore = this.config.enqueueRuntime?.runStore;
     if (!runStore) return false;
-    const activeRun = await runStore.getActiveBySession?.(sessionId);
-    if (!activeRun) return false;
+    const activity = await getActiveSessionActivity(runStore, sessionId);
+    if (!activity) return false;
+    const activeRun = activity.run;
     const active = this.findActiveStreamByRunId(activeRun.runId);
     const accessError = activeRun.userId || (activeRun.tenantId && activeRun.tenantId !== DEFAULT_TENANT_ID)
-      ? this.sensitiveActionAccessError(client, { tenantId: activeRun.tenantId, ownerUserId: activeRun.userId })
+      ? this.sensitiveActionAccessError(client, { tenantId: activeRun.tenantId, ownerUserId: activeRun.userId, ownerOnly: activity.kind === 'dispatcher_background' })
       : this.anonymousBindingAccessError(client, active?.entry.sessionId === sessionId ? active.entry.ws : undefined);
     if (accessError) return false;
     const tenantId = this.eventStoreTenantForClient(client, activeRun.tenantId, activeRun.userId);
     if (!tenantId) return false;
+    if (activity.kind === 'dispatcher_background') {
+      this.wsSend(client.ws, {
+        type: 'active_stream', sessionId, active: true,
+        runId: activeRun.runId,
+        status: activeRun.status,
+        ...(options.requestId ? { requestId: options.requestId } : {}),
+      });
+      return true;
+    }
     const streamId = typeof activeRun.metadata?.streamId === 'string' ? activeRun.metadata.streamId : activeRun.runId;
     this.eventBufferStore.create(sessionId, activeRun.userId);
     this.wsActiveStream.set(client.ws, streamId);

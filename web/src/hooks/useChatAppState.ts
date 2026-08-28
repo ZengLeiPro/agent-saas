@@ -1042,9 +1042,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     // 与 immediateSessionIdRef 同帧同语义：wsLatestSessionIdRef 原先只写不清，会长期
     // 指向上一个发过消息的会话，让终态守卫的回退值失效（2026-08-01 串会话路径）。
     wsLatestSessionIdRef.current = { value: id };
-    session.selectSession(id);
+    session.selectSession(id); if (isActiveRuntimeStatus(loadSessionRuntimeToRef(id)?.status)) { setLoading(true); dispatchConnection('connect'); }
     pushUrl('chat', id);
-  }, [clearPendingOrgAgent, failAllProvisionalBatches, markSessionRead, mutateQueuedInterjections, session.selectSession]);
+  }, [clearPendingOrgAgent, dispatchConnection, failAllProvisionalBatches, loadSessionRuntimeToRef, markSessionRead, mutateQueuedInterjections, session.selectSession]);
 
   const newSessionWithUrl = useCallback((groupId: string | null = null) => {
     setTrashPreviewSessionId(null); startNewSandboxProfile();
@@ -2671,7 +2671,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     await sessionRef.current.loadDetailPromiseRef.current;
     if (sessionIdRef.current !== targetSessionId) return;
 
-    // ① 从 Map 恢复该 session 的运行态到 ref（streamId/runId/cursor）
+    // ① 从 Map 恢复该 session 的运行态到 ref（streamId/runId/cursor）；attached 必须等本次 resume 确认
     loadSessionRuntimeToRef(targetSessionId);
 
     // ② HTTP /stream-status 探活（事实源已升级为 runStore,buffer 是兜底）

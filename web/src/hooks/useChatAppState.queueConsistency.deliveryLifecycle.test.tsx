@@ -321,7 +321,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(result.current.runningSessionIds.has("session-sleeping")).toBe(true);
+    expect(result.current.runningSessionIds.has("session-sleeping")).toBe(true); act(() => result.current.selectSession("session-sleeping")); expect(result.current.loading).toBe(true);
     harness.session.sessionId = "session-sleeping";
     harness.session.isNewSession = false;
     rerender();
@@ -329,7 +329,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
       (payload as { action?: string }).action === "resume"
     ))).toBe(true));
     expect(result.current.runningSessionIds.has("session-sleeping")).toBe(true);
-    expect(result.current.sessionRuntimeStatuses.get("session-sleeping")).toBe("running");
+    expect(result.current.sessionRuntimeStatuses.get("session-sleeping")).toBe("running"); const requestId = (harness.sends.mock.calls.find(([payload]) => (payload as { action?: string }).action === "resume")?.[0] as { requestId: string }).requestId; act(() => emit({ type: "active_stream", sessionId: "session-sleeping", active: false, runId: "run-sleeping", requestId })); expect(result.current.loading).toBe(false);
   });
   it("does not clear a current WS runtime from a stale terminal lastRunState", async () => {
     harness.session.sessionId = "session-running";

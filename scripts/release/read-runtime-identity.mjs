@@ -29,7 +29,7 @@ function nonEmpty(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-function validateTopology(identity, reasons, now) {
+function validateTopology(identity, reasons, now, refreshTopologyObservation) {
   const topology = identity.topology;
   if (!topology || typeof topology !== 'object' || Array.isArray(topology)) {
     reasons.push('Production runtime identity topology must be an object.');
@@ -38,7 +38,10 @@ function validateTopology(identity, reasons, now) {
   const observedAt = Date.parse(topology.observedAt ?? '');
   if (Number.isNaN(observedAt))
     reasons.push('Production runtime identity topology must have an ISO observedAt timestamp.');
-  else if (observedAt > now + 60_000 || now - observedAt > MAX_OBSERVATION_AGE_MS)
+  else if (
+    observedAt > now + 60_000 ||
+    (!refreshTopologyObservation && now - observedAt > MAX_OBSERVATION_AGE_MS)
+  )
     reasons.push('Production runtime identity topology observation is stale or in the future.');
   for (const [role, contract] of Object.entries(TOPOLOGY_ROLES)) {
     const entry = topology[role];
@@ -254,7 +257,12 @@ export function validateRuntimeIdentity(identity, options = {}) {
       );
     }
   }
-  validateTopology(identity, blockingReasons, options.now ?? Date.now());
+  validateTopology(
+    identity,
+    blockingReasons,
+    options.now ?? Date.now(),
+    options.refreshTopologyObservation === true,
+  );
   observeTopology(identity, blockingReasons, {
     readFileSync: options.topologyReadFileSync ?? defaultReadFileSync,
     realpathSync: options.topologyRealpathSync ?? defaultRealpathSync,
@@ -276,6 +284,7 @@ export function validateRuntimeIdentity(identity, options = {}) {
 export function readRuntimeIdentity({
   identityPath,
   readFileSync = defaultReadFileSync,
+  refreshTopologyObservation = false,
   ...validationOptions
 }) {
   if (!isLocalFilePath(identityPath))
@@ -294,6 +303,20 @@ export function readRuntimeIdentity({
       blockingReasons: [`Unable to read production runtime identity JSON: ${error.message}`],
     };
   }
-  const validation = validateRuntimeIdentity(identity, validationOptions);
+  const now = validationOptions.now ?? Date.now();
+  const validation = validateRuntimeIdentity(identity, {
+    ...validationOptions,
+    now,
+    refreshTopologyObservation,
+  });
+  if (validation.ok && refreshTopologyObservation) {
+    identity = {
+      ...identity,
+      topology: {
+        ...identity.topology,
+        observedAt: new Date(now).toISOString(),
+      },
+    };
+  }
   return { ok: validation.ok, identity, blockingReasons: validation.blockingReasons };
 }

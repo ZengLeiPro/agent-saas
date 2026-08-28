@@ -89,24 +89,29 @@ function createSessionDetailDeadline(controller: AbortController): {
 } {
   let timedOut = false;
   let onAbort: (() => void) | undefined;
-  const cancelled = new Promise<never>((_, reject) => {
-    onAbort = () => {
-      if (timedOut) {
-        reject(new SessionDetailTimeoutError());
-        return;
-      }
-      const error = new Error("Session aborted");
-      error.name = "AbortError";
-      reject(error);
-    };
-    controller.signal.addEventListener("abort", onAbort, { once: true });
-  });
+  let cancelled: Promise<never> | undefined;
+  const waitForCancellation = () => {
+    cancelled ??= new Promise<never>((_, reject) => {
+      onAbort = () => {
+        if (timedOut) {
+          reject(new SessionDetailTimeoutError());
+          return;
+        }
+        const error = new Error("Session aborted");
+        error.name = "AbortError";
+        reject(error);
+      };
+      if (controller.signal.aborted) onAbort();
+      else controller.signal.addEventListener("abort", onAbort, { once: true });
+    });
+    return cancelled;
+  };
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
   }, SESSION_DETAIL_TIMEOUT_MS);
   return {
-    wait: <T>(operation: Promise<T>) => Promise.race([operation, cancelled]),
+    wait: <T>(operation: Promise<T>) => Promise.race([operation, waitForCancellation()]),
     dispose: () => {
       clearTimeout(timer);
       if (onAbort) controller.signal.removeEventListener("abort", onAbort);

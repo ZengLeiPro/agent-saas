@@ -144,6 +144,103 @@ describe('useSession 会话详情加载韧性', () => {
     );
   });
 
+  it('缓存永久挂起时快速切换不会产生未处理 AbortError', async () => {
+    loadSessionMessageSnapshotMock
+      .mockReturnValueOnce(new Promise(() => undefined))
+      .mockResolvedValue(null);
+    authFetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/sessions/session-b?')) {
+        return Promise.resolve(detailResponse('会话 B'));
+      }
+      if (url.startsWith('/api/chat/interactions/pending')) {
+        return Promise.resolve(jsonResponse([]));
+      }
+      if (url.includes('/stats')) return Promise.resolve(jsonResponse({}));
+      return Promise.resolve(jsonResponse({ sessions: [], hasMore: false }));
+    });
+    const unhandledRejection = vi.fn();
+    process.on('unhandledRejection', unhandledRejection);
+
+    try {
+      const cb = callbacks();
+      const { result } = renderHook(() => useSession(cb));
+      act(() => result.current.selectSession('session-a'));
+      const firstLoad = result.current.loadDetailPromiseRef.current as Promise<void>;
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      act(() => result.current.selectSession('session-b'));
+      await act(async () => {
+        await result.current.loadDetailPromiseRef.current;
+        await vi.advanceTimersByTimeAsync(200);
+        await firstLoad;
+      });
+
+      expect(unhandledRejection).not.toHaveBeenCalled();
+      expect(result.current.sessionId).toBe('session-b');
+      expect(result.current.isLoadingMessages).toBe(false);
+      expect(cb.setMessages).toHaveBeenCalledWith(
+        expect.arrayContaining([expect.objectContaining({ content: '会话 B' })]),
+        undefined,
+      );
+    } finally {
+      process.off('unhandledRejection', unhandledRejection);
+    }
+  });
+
+  it('缓存永久挂起时新建会话不会产生未处理 AbortError', async () => {
+    loadSessionMessageSnapshotMock.mockReturnValue(new Promise(() => undefined));
+    const unhandledRejection = vi.fn();
+    process.on('unhandledRejection', unhandledRejection);
+
+    try {
+      const { result } = renderHook(() => useSession(callbacks()));
+      act(() => result.current.selectSession('session-a'));
+      const loading = result.current.loadDetailPromiseRef.current as Promise<void>;
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      act(() => result.current.newSession());
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200);
+        await loading;
+      });
+
+      expect(unhandledRejection).not.toHaveBeenCalled();
+      expect(result.current.sessionId).toBeNull();
+      expect(result.current.isLoadingMessages).toBe(false);
+    } finally {
+      process.off('unhandledRejection', unhandledRejection);
+    }
+  });
+
+  it('缓存永久挂起时卸载不会产生未处理 AbortError', async () => {
+    loadSessionMessageSnapshotMock.mockReturnValue(new Promise(() => undefined));
+    const unhandledRejection = vi.fn();
+    process.on('unhandledRejection', unhandledRejection);
+
+    try {
+      const { result, unmount } = renderHook(() => useSession(callbacks()));
+      act(() => result.current.selectSession('session-a'));
+      const loading = result.current.loadDetailPromiseRef.current as Promise<void>;
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      unmount();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200);
+        await loading;
+      });
+
+      expect(unhandledRejection).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandledRejection);
+    }
+  });
+
   it('快速切换会真正取消旧详情请求且只提交新会话', async () => {
     let firstSignal: AbortSignal | undefined;
     authFetchMock.mockImplementation((url: string, init?: RequestInit) => {

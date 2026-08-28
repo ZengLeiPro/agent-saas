@@ -230,8 +230,9 @@ jobs:
               [ -f "$marker" ] || exit 0
               color=$(tr -d "[:space:]" < "$marker")
               case "$color" in blue|green) ;; *) exit 0 ;; esac
-              target=$(readlink -f "$root/$color" 2>/dev/null || true)
-              [ -n "$target" ] && basename "$target"
+              release_env="/etc/agent-saas/server-$color.release.env"
+              [ -f "$release_env" ] || exit 0
+              sed -n "s/^AGENT_SAAS_RELEASE_SHA=//p" "$release_env" | head -n1
             ' 2>/dev/null || true)"
 
           printf '%s' "$production_ecs_sha" | grep -Eq '^[0-9a-f]{40}$' \
@@ -299,6 +300,10 @@ jobs:
       ECS_HOST: ${{ secrets.ECS_HOST }}
       ECS_USER: ${{ secrets.ECS_USER }}
       ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+      ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+      ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+      RELEASE_RECORD_OSS_URI: oss://agent-saas-release-records
+      RELEASE_RECORD_OSS_REGION: cn-shenzhen
       DEPLOY_ROOT: /opt/agent-saas-app
       # systemd 模板单元前缀：实际实例为 agent-saas-server@blue / agent-saas-server@green
       SERVICE_NAME: agent-saas-server
@@ -327,32 +332,34 @@ jobs:
       - name: Build server production bundle
         run: pnpm -F server build
 
-      - name: Pack ECS release
+      - name: Pack and identify ECS release
+        id: pack
         run: |
+          set -euo pipefail
           test -s server/dist/index.js
-          tar \
-            --exclude='./.git' \
-            --exclude='./node_modules' \
-            --exclude='./*/node_modules' \
-            --exclude='./web' \
-            --exclude='./server/data' \
-            --exclude='./logs' \
-            --exclude='./config.json' \
-            --exclude='./config.json.*' \
-            --exclude='./.env' \
-            --exclude='./.env.*' \
-            --exclude='./mobile/ios' \
-            --exclude='./mobile/android' \
-            -czf "$RUNNER_TEMP/agent-saas-release.tgz" .
-          if tar -tzf "$RUNNER_TEMP/agent-saas-release.tgz" | grep -Eq '^\./web(/|$)'; then
-            echo "ECS release boundary violated: web/ must not be packaged"
-            exit 1
-          fi
-          if ! tar -tzf "$RUNNER_TEMP/agent-saas-release.tgz" | grep -Eq '^\./server/dist/index\.js$'; then
-            echo "ECS release is missing server/dist/index.js"
-            exit 1
-          fi
-          mv "$RUNNER_TEMP/agent-saas-release.tgz" agent-saas-release.tgz
+          stage="$RUNNER_TEMP/server-release-stage"
+          mkdir -p "$stage/scripts/release" "$stage/workspace-shared"
+          pnpm --config.allowUnusedPatches=true --filter server --prod deploy "$stage/server"
+          rm -rf "$stage/server/dist" "$stage/server/descriptions"
+          cp -R server/dist "$stage/server/dist"
+          cp -R server/src/agent/descriptions "$stage/server/descriptions"
+          cp -R daemon-packaging "$stage/daemon-packaging"
+          install -m 0444 scripts/release/artifact-lib.mjs \
+            scripts/release/seal-compatibility-release.mjs \
+            scripts/release/verify-installed-release.mjs \
+            scripts/release/write-compatibility-app-env.mjs "$stage/scripts/release/"
+          tar --no-xattrs -czf server-bundle.tgz -C "$stage" .
+          node scripts/release/create-component-artifact-index.mjs \
+            --sha "$GITHUB_SHA" --name serverBundle --file server-bundle.tgz \
+            --output "$RUNNER_TEMP/server-artifact-index.json"
+          server_digest="$(jq -r .artifacts.serverBundle.digest "$RUNNER_TEMP/server-artifact-index.json")"
+          server_size="$(jq -r .artifacts.serverBundle.size "$RUNNER_TEMP/server-artifact-index.json")"
+          release_id="rc-$(date -u +%Y%m%d)-${GITHUB_RUN_ID}"
+          {
+            echo "SERVER_ARTIFACT_DIGEST=$server_digest"
+            echo "SERVER_ARTIFACT_SIZE=$server_size"
+            echo "COMPAT_RELEASE_ID=$release_id"
+          } >> "$GITHUB_ENV"
 
       - name: Configure SSH
         run: |
@@ -365,48 +372,36 @@ jobs:
           chmod 600 ~/.ssh/ecs_deploy_key
           ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts
 
+      - name: Install Alibaba Cloud CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz \
+            -o "$RUNNER_TEMP/aliyun.tgz"
+          tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
+          sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
+
+      - name: Persist immutable Server baseline
+        run: |
+          set -euo pipefail
+          : "${RELEASE_RECORD_OSS_URI:?Missing Release Record OSS URI}"
+          destination="$RELEASE_RECORD_OSS_URI/baselines/app-${GITHUB_SHA}-${SERVER_ARTIFACT_DIGEST#sha256:}"
+          bash scripts/release/upload-oss-object-immutable.sh \
+            server-bundle.tgz "$destination/server-bundle.tgz"
+          bash scripts/release/upload-oss-object-immutable.sh \
+            "$RUNNER_TEMP/server-artifact-index.json" "$destination/artifact-index.json"
+
       - name: Determine runtime worker rollout
         run: |
-          CURRENT_WORKER_SHA=$(ssh -i ~/.ssh/ecs_deploy_key \
-            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
-            "$ECS_USER@$ECS_HOST" '
-              set -e
-              marker=/etc/agent-saas/runtime-worker-active-color
-              root=/opt/agent-saas-app/worker
-              [ -f "$marker" ] || exit 0
-              color=$(tr -d "[:space:]" < "$marker")
-              case "$color" in blue|green) ;; *) exit 0 ;; esac
-              target=$(readlink -f "$root/$color" 2>/dev/null || true)
-              [ -n "$target" ] && basename "$target"
-            ')
-
-          if ! printf '%s' "$CURRENT_WORKER_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "RUNTIME_WORKER_DEPLOY_REQUIRED=true" >> "$GITHUB_ENV"
-            echo "runtime worker rollout: required (bootstrap or unreadable production baseline)"
-            exit 0
-          fi
-          if ! git cat-file -e "$CURRENT_WORKER_SHA^{commit}" 2>/dev/null; then
-            echo "RUNTIME_WORKER_DEPLOY_REQUIRED=true" >> "$GITHUB_ENV"
-            echo "runtime worker rollout: required (baseline $CURRENT_WORKER_SHA is outside checkout history)"
-            exit 0
-          fi
-
-          git diff --name-only "$CURRENT_WORKER_SHA" "$GITHUB_SHA" > "$RUNNER_TEMP/runtime-worker-changed-files.txt"
-          bash .github/scripts/runtime-worker-classify.sh "$RUNNER_TEMP/runtime-worker-changed-files.txt" \
-            | tee "$RUNNER_TEMP/runtime-worker-classification.txt"
-          REQUIRED=$(awk -F= '$1 == "required" { print $2 }' "$RUNNER_TEMP/runtime-worker-classification.txt")
-          if [ "$REQUIRED" != "true" ] && [ "$REQUIRED" != "false" ]; then
-            echo "invalid runtime worker classification: ${REQUIRED:-missing}"
-            exit 1
-          fi
-          echo "RUNTIME_WORKER_DEPLOY_REQUIRED=$REQUIRED" >> "$GITHUB_ENV"
-          echo "runtime worker baseline=$CURRENT_WORKER_SHA target=$GITHUB_SHA required=$REQUIRED"
+          # API 与 Runtime Worker 共享同一份 Server bundle。兼容部署若只切 API，
+          # 新的生产身份契约就会立即变成混合版本，因此旧入口也必须成对滚动。
+          echo "RUNTIME_WORKER_DEPLOY_REQUIRED=true" >> "$GITHUB_ENV"
+          echo "runtime worker rollout: required to converge the shared Server bundle identity"
 
       - name: Upload release
         run: |
           scp -i ~/.ssh/ecs_deploy_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
-            agent-saas-release.tgz \
+            server-bundle.tgz \
             "$ECS_USER@$ECS_HOST:/tmp/agent-saas-${GITHUB_RUN_ID}-${GITHUB_SHA}.tgz"
 
       - name: Start zero-downtime probe
@@ -526,7 +521,7 @@ jobs:
           timeout "${REMOTE_DEPLOY_TIMEOUT_SECONDS}s" ssh -i ~/.ssh/ecs_deploy_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$ECS_USER@$ECS_HOST" \
-            "DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_RUN_ID}-${GITHUB_SHA}.tgz' RELEASE_ID='${GITHUB_SHA}' WORKER_DEPLOY_REQUIRED='${RUNTIME_WORKER_DEPLOY_REQUIRED}' bash -s" <<'REMOTE'
+            "DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_RUN_ID}-${GITHUB_SHA}.tgz' RELEASE_ID='${SERVER_ARTIFACT_DIGEST#sha256:}' RELEASE_SHA='${GITHUB_SHA}' COMPAT_RELEASE_ID='${COMPAT_RELEASE_ID}' SERVER_ARTIFACT_DIGEST='${SERVER_ARTIFACT_DIGEST}' WORKER_DEPLOY_REQUIRED='${RUNTIME_WORKER_DEPLOY_REQUIRED}' bash -s" <<'REMOTE'
           # -E: 函数内失败也触发 ERR trap，保证任何失败都有 on_error 日志
           set -Eeuo pipefail
 
@@ -534,8 +529,13 @@ jobs:
           : "${SERVICE_NAME:?missing SERVICE_NAME}"
           : "${RELEASE_TGZ:?missing RELEASE_TGZ}"
           : "${RELEASE_ID:?missing RELEASE_ID}"
+          : "${RELEASE_SHA:?missing RELEASE_SHA}"
+          : "${COMPAT_RELEASE_ID:?missing COMPAT_RELEASE_ID}"
+          : "${SERVER_ARTIFACT_DIGEST:?missing SERVER_ARTIFACT_DIGEST}"
           : "${WORKER_DEPLOY_REQUIRED:?missing WORKER_DEPLOY_REQUIRED}"
           case "$WORKER_DEPLOY_REQUIRED" in true|false) ;; *) echo "invalid WORKER_DEPLOY_REQUIRED=$WORKER_DEPLOY_REQUIRED"; exit 1 ;; esac
+          actual_archive_digest="sha256:$(sha256sum "$RELEASE_TGZ" | cut -d' ' -f1)"
+          test "$actual_archive_digest" = "$SERVER_ARTIFACT_DIGEST"
 
           APP_LINK="$DEPLOY_ROOT/current"
           PREV_LINK="$DEPLOY_ROOT/previous"
@@ -725,30 +725,18 @@ jobs:
             exit 1
           fi
 
-          # ── 3. 解包 release + isolated 安装 server/shared 依赖 ──
+          # ── 3. 解包并封存 runner 上已完成 production deploy 的 Server bundle ──
           log "prepare release dir: $RELEASE_DIR"
           INSTALL_CLEANUP_ARMED=1
           mkdir -p "$RELEASE_DIR"
           log "extract release archive: $RELEASE_TGZ"
           tar -xzf "$RELEASE_TGZ" -C "$RELEASE_DIR"
-          ln -sfn "$DATA_DIR" "$RELEASE_DIR/server/data"
-
-          cd "$RELEASE_DIR"
-          log "prepare pnpm"
-          if command -v corepack >/dev/null 2>&1; then
-            corepack enable
-            corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
-          fi
-          log "remote pnpm isolated install start (low priority, persistent store cache)"
-          PNPM_INSTALL=(pnpm --config.node-linker=isolated --config.allow-unused-patches=true \
-            --network-concurrency=8 --child-concurrency=2 \
-            install --frozen-lockfile --filter server... --filter shared...)
-          if command -v ionice >/dev/null 2>&1; then
-            NODE_ENV=development nice -n 10 ionice -c 2 -n 7 "${PNPM_INSTALL[@]}"
-          else
-            NODE_ENV=development nice -n 10 "${PNPM_INSTALL[@]}"
-          fi
-          log "remote pnpm install done"
+          mkdir -p "$RELEASE_DIR/.release"
+          install -m 0444 "$RELEASE_TGZ" "$RELEASE_DIR/.release/server-bundle.tgz"
+          mkdir -p "$RELEASE_DIR/server/data" "$RELEASE_DIR/workspace-shared"
+          node "$RELEASE_DIR/scripts/release/seal-compatibility-release.mjs" \
+            --root "$RELEASE_DIR" --component server \
+            --release-id "$COMPAT_RELEASE_ID" --sha "$RELEASE_SHA" >/dev/null
           INSTALL_CLEANUP_ARMED=0
 
           # 每次发布都以仓库模板刷新 unit；systemd 仅 reload 定义，不重启当前 active
@@ -1078,6 +1066,13 @@ jobs:
             fi
             log "runtime worker unchanged: active=$WORKER_ACTIVE (pure Web/non-runtime release)"
           fi
+
+          node "$RELEASE_DIR/scripts/release/write-compatibility-app-env.mjs" \
+            --identity /etc/agent-saas/runtime-identity.json \
+            --api-output "/etc/agent-saas/server-${IDLE}.release.env" \
+            --worker-output "/etc/agent-saas/runtime-worker-${WORKER_IDLE}.release.env" \
+            --release-id "$COMPAT_RELEASE_ID" --sha "$RELEASE_SHA" \
+            --server-digest "$SERVER_ARTIFACT_DIGEST" >/dev/null
 
 
           if [ "$WORKER_DEPLOY_REQUIRED" = "true" ]; then
@@ -1526,6 +1521,29 @@ jobs:
           fi
           echo "zero-downtime gate passed"
 
+      - name: Refresh trusted Production identity
+        run: |
+          set -euo pipefail
+          remote="/tmp/production-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" "rm -rf -- '$remote'" || true
+          }
+          trap cleanup EXIT
+          ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
+          scp -i ~/.ssh/ecs_deploy_key \
+            scripts/release/artifact-lib.mjs \
+            scripts/release/read-live-production-components.mjs \
+            scripts/release/read-production-state.mjs \
+            scripts/release/read-runtime-identity.mjs \
+            scripts/release/verify-installed-release.mjs \
+            scripts/release/write-live-production-identity.mjs \
+            "$ECS_USER@$ECS_HOST:$remote/"
+          ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" \
+            "sudo node '$remote/read-live-production-components.mjs' --output '$remote/live.json' >/dev/null && \
+             sudo node '$remote/write-live-production-identity.mjs' --input '$remote/live.json' >/dev/null && \
+             sudo node '$remote/read-production-state.mjs' --output '$remote/confirmed.json' >/dev/null"
+          echo "Production identity refreshed from independently verified live components"
+
   # 前端静态托管在 OSS（bucket agent-saas-web，绑定 agent.kaiyan.net），
   # API/WS 走独立域名 api.agent.kaiyan.net（VITE_API_BASE 构建时注入）。
   # ECS 冷灾备使用同一份分域构建，但发布到独立 recovery-web 目录，
@@ -1551,6 +1569,10 @@ jobs:
     env:
       OSS_ACCESS_KEY_ID: ${{ secrets.OSS_WEB_DEPLOY_AK_ID }}
       OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_WEB_DEPLOY_AK_SECRET }}
+      ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+      ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+      RELEASE_RECORD_OSS_URI: oss://agent-saas-release-records
+      RELEASE_RECORD_OSS_REGION: cn-shenzhen
       OSS_REGION: cn-shenzhen
       OSS_BUCKET: agent-saas-web
       VITE_API_BASE: https://api.agent.kaiyan.net
@@ -1579,16 +1601,56 @@ jobs:
       - name: Build frontend (split-domain)
         run: pnpm -F web build:oss
 
-      - name: Install ossutil
+      - name: Pack and identify Web release
         run: |
+          set -euo pipefail
+          test -s web/dist/index.html
+          tar -C web/dist -czf "$RUNNER_TEMP/web-assets.tgz" .
+          node scripts/release/create-component-artifact-index.mjs \
+            --sha "$GITHUB_SHA" --name webAssets --file "$RUNNER_TEMP/web-assets.tgz" \
+            --output "$RUNNER_TEMP/web-artifact-index.json"
+          web_digest="$(jq -r .artifacts.webAssets.digest "$RUNNER_TEMP/web-artifact-index.json")"
+          release_id="rc-$(date -u +%Y%m%d)-${GITHUB_RUN_ID}"
+          {
+            echo "WEB_ARTIFACT_DIGEST=$web_digest"
+            echo "COMPAT_RELEASE_ID=$release_id"
+          } >> "$GITHUB_ENV"
+
+      - name: Install OSS clients
+        run: |
+          set -euo pipefail
           curl -sL https://gosspublic.alicdn.com/ossutil/v2/2.1.2/ossutil-2.1.2-linux-amd64.zip -o /tmp/ossutil.zip
           unzip -o -q /tmp/ossutil.zip -d /tmp
           sudo install /tmp/ossutil-2.1.2-linux-amd64/ossutil /usr/local/bin/ossutil
           ossutil version
+          curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz \
+            -o "$RUNNER_TEMP/aliyun.tgz"
+          tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
+          sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
+
+      - name: Persist immutable Web baseline
+        run: |
+          set -euo pipefail
+          : "${RELEASE_RECORD_OSS_URI:?Missing Release Record OSS URI}"
+          destination="$RELEASE_RECORD_OSS_URI/baselines/web-${GITHUB_SHA}-${WEB_ARTIFACT_DIGEST#sha256:}"
+          bash scripts/release/upload-oss-object-immutable.sh \
+            "$RUNNER_TEMP/web-assets.tgz" "$destination/web-assets.tgz"
+          bash scripts/release/upload-oss-object-immutable.sh \
+            "$RUNNER_TEMP/web-artifact-index.json" "$destination/artifact-index.json"
+
+      - name: Write Web release identity
+        run: |
+          jq -n \
+            --arg releaseId "$COMPAT_RELEASE_ID" \
+            --arg releaseSha "$GITHUB_SHA" \
+            --arg webDigest "$WEB_ARTIFACT_DIGEST" \
+            --arg configFingerprint "$(jq -r .aggregateDigest "$RUNNER_TEMP/web-artifact-index.json")" \
+            '{schemaVersion:1,environment:"production",releaseId:$releaseId,releaseSha:$releaseSha,webDigest:$webDigest,configFingerprint:$configFingerprint}' \
+            > web/dist/release-identity.json
 
       - name: Snapshot current Web entry files
         run: |
-          for f in manifest.webmanifest index.html sw.js; do
+          for f in manifest.webmanifest release-identity.json index.html sw.js; do
             ossutil cp "oss://$OSS_BUCKET/$f" \
               "oss://$OSS_BUCKET/_releases/$GITHUB_SHA/previous/$f" -f \
               --region "$OSS_REGION" --copy-props default
@@ -1656,7 +1718,10 @@ jobs:
           ossutil cp manifest.webmanifest "oss://$OSS_BUCKET/manifest.webmanifest" -f \
             --region "$OSS_REGION" --cache-control "no-cache" \
             --content-type "application/manifest+json"
-          # 4) HTML 切入口；sw.js 必须最后上传，避免引用尚未就位的 Workbox 文件
+          # 4) 发布身份与 HTML 切入口；sw.js 必须最后上传，避免引用尚未就位的 Workbox 文件
+          ossutil cp release-identity.json "oss://$OSS_BUCKET/release-identity.json" -f \
+            --region "$OSS_REGION" --cache-control "no-cache" \
+            --content-type "application/json; charset=utf-8"
           ossutil cp index.html "oss://$OSS_BUCKET/index.html" -f --region "$OSS_REGION" \
             --cache-control "no-cache" --content-type "text/html; charset=utf-8"
           ossutil cp sw.js "oss://$OSS_BUCKET/sw.js" -f --region "$OSS_REGION" \
@@ -1667,6 +1732,9 @@ jobs:
         run: |
           node web/scripts/check-live-oss.mjs
           node web/scripts/check-live-compression.mjs
+          curl -fsS --retry 10 -H 'cache-control: no-cache' \
+            "https://agent.kaiyan.net/release-identity.json?release=$COMPAT_RELEASE_ID" \
+            | jq -e --arg digest "$WEB_ARTIFACT_DIGEST" '.environment=="production" and .webDigest==$digest'
 
       - name: Package recovery Web release
         run: |
@@ -1714,7 +1782,7 @@ jobs:
 
       - name: Snapshot successful Web release
         run: |
-          for f in manifest.webmanifest index.html sw.js; do
+          for f in manifest.webmanifest release-identity.json index.html sw.js; do
             ossutil cp "oss://$OSS_BUCKET/$f" \
               "oss://$OSS_BUCKET/_releases/$GITHUB_SHA/current/$f" -f \
               --region "$OSS_REGION" --copy-props default
@@ -1745,8 +1813,31 @@ jobs:
             echo "previous Web snapshot unavailable; nothing to restore"
             exit 0
           fi
-          for f in manifest.webmanifest index.html sw.js; do
+          for f in manifest.webmanifest release-identity.json index.html sw.js; do
             ossutil cp "oss://$OSS_BUCKET/_releases/$GITHUB_SHA/previous/$f" \
               "oss://$OSS_BUCKET/$f" -f --region "$OSS_REGION" --copy-props default
           done
           echo "previous Web entry files restored after failed deployment"
+
+      - name: Refresh trusted Production identity
+        run: |
+          set -euo pipefail
+          remote="/tmp/production-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-web"
+          cleanup() {
+            ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" "rm -rf -- '$remote'" || true
+          }
+          trap cleanup EXIT
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
+          scp -i ~/.ssh/ecs_recovery_key \
+            scripts/release/artifact-lib.mjs \
+            scripts/release/read-live-production-components.mjs \
+            scripts/release/read-production-state.mjs \
+            scripts/release/read-runtime-identity.mjs \
+            scripts/release/verify-installed-release.mjs \
+            scripts/release/write-live-production-identity.mjs \
+            "$ECS_USER@$ECS_HOST:$remote/"
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo node '$remote/read-live-production-components.mjs' --output '$remote/live.json' >/dev/null && \
+             sudo node '$remote/write-live-production-identity.mjs' --input '$remote/live.json' >/dev/null && \
+             sudo node '$remote/read-production-state.mjs' --output '$remote/confirmed.json' >/dev/null"
+          echo "Production identity refreshed after Web deployment"

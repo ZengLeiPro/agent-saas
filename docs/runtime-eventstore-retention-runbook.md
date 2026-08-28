@@ -55,6 +55,10 @@ pnpm -C server maintenance:runtime-events -- \
   --batch-limit 1000 --max-batches-per-category 1
 ```
 
+生产主机上没有源码检出与 tsx，改用随 release 交付的 Admin Runner（同一 release、依赖和配置）：
+`node dist/admin/runtime-events-maintenance.mjs …`，加载环境与配置的方式见
+[`admin-runner.md`](admin-runner.md)。参数语义与本节完全一致。
+
 不传 `--execute-retention` 时只执行 SELECT；不推进 billing projection、不取行锁、不 DELETE。输出只代表“下一批候选”，审批材料须同时保存 watermarks、分类候选数、表/索引大小及 `stats_reset`。
 
 ## 5. 显式授权后分批删除
@@ -68,6 +72,9 @@ pnpm -C server maintenance:runtime-events -- \
   --authorization-ref <CHG/审批单号> \
   --batch-limit 1000 --max-batches-per-category 1
 ```
+
+生产主机等价命令：`node dist/admin/runtime-events-maintenance.mjs …`（同参数，见
+[`admin-runner.md`](admin-runner.md)）。
 
 每次执行后重跑 dry-run并观察 DB CPU/IOPS、复制延迟、锁等待、WAL、可用空间与应用错误率。任一越过审批阈值、watermark 变化异常、长锁等待、备份状态异常即停止；删除无 SQL 回滚，只能走已验证的隔离恢复/PITR 决策流程。不得在本任务中直接连生产或试删。
 

@@ -20,7 +20,6 @@ import {
 } from "@/lib/messageCache";
 import {
   appendPendingInteractions,
-  recordPerformanceMeasure,
   type PendingInteraction,
 } from "./sessionMessageHelpers";
 
@@ -60,8 +59,7 @@ interface SessionDetailLoaderDependencies {
 
 class SessionDetailTimeoutError extends Error {
   constructor() {
-    super("Session detail request timed out");
-    this.name = "SessionDetailTimeoutError";
+    super("Session timeout");
   }
 }
 
@@ -97,7 +95,7 @@ function createSessionDetailDeadline(controller: AbortController): {
         reject(new SessionDetailTimeoutError());
         return;
       }
-      const error = new Error("Session detail request aborted");
+      const error = new Error("Session aborted");
       error.name = "AbortError";
       reject(error);
     };
@@ -173,7 +171,6 @@ export async function loadSessionDetailRequest(
   }
 
   try {
-    const requestStartedAt = performance.now();
     const params = new URLSearchParams();
     params.set("limit", String(SESSION_DETAIL_PAGE_SIZE));
     if (opts?.silent) params.set("silent", "1");
@@ -186,15 +183,8 @@ export async function loadSessionDetailRequest(
         { signal: controller.signal },
       ),
     );
-    const responseReceivedAt = performance.now();
-    recordPerformanceMeasure(
-      "agent-saas:session-detail-fetch",
-      requestStartedAt,
-      responseReceivedAt,
-    );
     if (isStale()) return;
     if (!response.ok) {
-      console.error("加载会话详情失败:", response.statusText);
       if (response.status === 404 || response.status === 403) {
         if (isCurrent()) deps.setSessionLoadError(null);
         deps.callbacksRef.current.onSessionInvalidated?.(id, response.status);
@@ -203,18 +193,12 @@ export async function loadSessionDetailRequest(
         deps.setTokenUsage(null);
         deps.setContextUsage(null);
       } else if (!opts?.silent && isCurrent()) {
-        deps.setSessionLoadError("会话暂时无法打开，请重试");
+        deps.setSessionLoadError("会话无法打开，请重试");
       }
       return;
     }
 
     const data: ApiSessionDetail = await deadline.wait(response.json());
-    const responseParsedAt = performance.now();
-    recordPerformanceMeasure(
-      "agent-saas:session-detail-json",
-      responseReceivedAt,
-      responseParsedAt,
-    );
     if (isStale()) return;
     const sessionOwner =
       data.owner?.username ??
@@ -285,19 +269,6 @@ export async function loadSessionDetailRequest(
     }
     deps.setSessionLoadError(null);
     deps.callbacksRef.current.setMessages(finalMsgs, opts);
-    const messagesCommittedAt = performance.now();
-    recordPerformanceMeasure(
-      "agent-saas:session-detail-map-commit",
-      responseParsedAt,
-      messagesCommittedAt,
-    );
-    requestAnimationFrame(() => {
-      recordPerformanceMeasure(
-        "agent-saas:session-detail-visible",
-        requestStartedAt,
-        performance.now(),
-      );
-    });
     deps.setSessionId(deps.sessionIdRef.current = id);
     deps.setSessionOwner(data.owner ?? null);
     deps.setHasMoreHistory(!historyComplete);
@@ -335,9 +306,6 @@ export async function loadSessionDetailRequest(
       } else if (!isAbortError(error)) {
         deps.setSessionLoadError("会话加载失败，请检查网络后重试");
       }
-    }
-    if (!isAbortError(error) && !(error instanceof SessionDetailTimeoutError)) {
-      console.error("加载会话详情失败:", error);
     }
   } finally {
     deadline.dispose();

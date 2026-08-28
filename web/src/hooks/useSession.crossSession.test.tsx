@@ -196,7 +196,7 @@ describe("useSession 跨会话详情请求隔离", () => {
       expect(result.current.sessionLoadError).toBeNull();
     } else {
       expect(callbacks.onSessionInvalidated).not.toHaveBeenCalled();
-      expect(result.current.sessionLoadError).toBe("会话暂时无法打开，请重试");
+      expect(result.current.sessionLoadError).toBe("会话无法打开，请重试");
     }
     expect(callbacks.resetMessages).toHaveBeenCalled();
   });
